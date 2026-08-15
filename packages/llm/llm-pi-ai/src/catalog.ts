@@ -15,6 +15,7 @@
 import { builtinProviders, getBuiltinModels, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all'
 import type { BuiltinProvider } from '@earendil-works/pi-ai/providers/all'
 import type {
+  AnthropicMessagesCompat,
   Api,
   Model,
   ModelCost,
@@ -196,6 +197,13 @@ export interface PiAiCompatProfile {
   thinkingFormat?: PiAiThinkingFormat
   /** Whether the endpoint accepts `reasoning_effort`; absent keeps the catalog entry's, then pi-ai's baseURL-derived guess. */
   supportsReasoningEffort?: boolean
+  /**
+   * anthropic-messages only: dispatch thinking as `adaptive` + carry the
+   * effort level in `output_config.effort` (pi-ai's Claude-client spelling)
+   * instead of `budget_tokens`. Needed for gateways that ignore the thinking
+   * parameter outright and honor only `output_config.effort`.
+   */
+  forceAdaptiveThinking?: boolean
 }
 
 /** One configured model entry: an id plus the catalog fields it overrides. */
@@ -391,16 +399,35 @@ function resolveModelCompat(
   route: PiAiCompatProfile | undefined,
   base: Model<Api> | undefined,
   api: string,
-): { compat: OpenAICompletionsCompat } | Record<string, never> {
+): { compat: OpenAICompletionsCompat } | { compat: AnthropicMessagesCompat } | Record<string, never> {
   const thinkingFormat = entry.compat?.thinkingFormat ?? route?.thinkingFormat
   const supportsReasoningEffort = entry.compat?.supportsReasoningEffort ?? route?.supportsReasoningEffort
-  if (thinkingFormat === undefined && supportsReasoningEffort === undefined) return {}
+  const forceAdaptiveThinking = entry.compat?.forceAdaptiveThinking ?? route?.forceAdaptiveThinking
+  if (thinkingFormat === undefined && supportsReasoningEffort === undefined && forceAdaptiveThinking === undefined) return {}
   if (api !== 'openai-completions') {
     if (entry.compat?.thinkingFormat !== undefined || entry.compat?.supportsReasoningEffort !== undefined) {
       invalid(provider, `model "${entry.id}" sets compat reasoning switches, but its api is "${api}";`
         + ' thinkingFormat and supportsReasoningEffort exist only on openai-completions')
     }
+    // forceAdaptiveThinking is the one switch that lives outside
+    // openai-completions: anthropic-messages dispatch reads it to carry the
+    // effort level as output_config.effort instead of budget_tokens.
+    if (api === 'anthropic-messages') {
+      if (forceAdaptiveThinking === undefined) return {}
+      // The `base.api === api` guard proves the protocol match at runtime;
+      // Model<Api>'s compat union cannot express it, hence the cast.
+      const inherited = (base?.api === api ? base.compat : undefined) as AnthropicMessagesCompat | undefined
+      return { compat: { ...inherited, forceAdaptiveThinking } }
+    }
+    if (entry.compat?.forceAdaptiveThinking !== undefined) {
+      invalid(provider, `model "${entry.id}" sets compat.forceAdaptiveThinking, but its api is "${api}";`
+        + ' it exists only on anthropic-messages')
+    }
     return {}
+  }
+  if (entry.compat?.forceAdaptiveThinking !== undefined) {
+    invalid(provider, `model "${entry.id}" sets compat.forceAdaptiveThinking, but its api is "${api}";`
+      + ' it exists only on anthropic-messages')
   }
   // The installed entry's compat matches the entry's OWN api — a route-level
   // `api` repoint (an anthropic catalog served through an OpenAI-compatible
@@ -485,8 +512,9 @@ export function resolveRouteModels(request: RouteCatalogRequest): RouteCatalog {
       + ' must be listed in configuration')
   }
   const routeApi = sharedCatalogApi(defaults)
-  const routeCompatDefined = request.compat?.thinkingFormat !== undefined
+  const routeOpenAiSwitches = request.compat?.thinkingFormat !== undefined
     || request.compat?.supportsReasoningEffort !== undefined
+  const routeAdaptiveSwitch = request.compat?.forceAdaptiveThinking !== undefined
   const seen = new Set<string>()
   const configuredMaxTokens = new Map<string, number>()
   const models = entries.map((entry) => {
@@ -538,9 +566,13 @@ export function resolveRouteModels(request: RouteCatalogRequest): RouteCatalog {
       ...resolveModelCompat(provider, entry, request.compat, base, api),
     }
   })
-  if (routeCompatDefined && !models.some(model => model.api === 'openai-completions')) {
+  if (routeOpenAiSwitches && !models.some(model => model.api === 'openai-completions')) {
     invalid(provider, 'sets compat reasoning switches, but no model on the route speaks openai-completions;'
       + ' thinkingFormat and supportsReasoningEffort exist only on that protocol')
+  }
+  if (routeAdaptiveSwitch && !models.some(model => model.api === 'anthropic-messages')) {
+    invalid(provider, 'sets compat.forceAdaptiveThinking, but no model on the route speaks anthropic-messages;'
+      + ' the switch exists only on that protocol')
   }
   return { models, configuredMaxTokens }
 }
