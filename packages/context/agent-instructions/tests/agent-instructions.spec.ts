@@ -39,7 +39,7 @@ import {
   reconcileInstructionContext,
   type InstructionVersionCache,
 } from '../src/state.ts'
-import { resolveConfig } from '../src/config.ts'
+import { resolveConfig, workspaceBaselineIdentity } from '../src/config.ts'
 import { candidateScopeKey, renderInstructionChanges, renderWorkspaceInstructionSet, USER_GLOBAL_DIRECTORY, USER_GLOBAL_FILE } from '../src/render.ts'
 import { MockAdapter, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 
@@ -551,6 +551,68 @@ describe('workspace context instruction discovery', () => {
       await rm(root, { recursive: true, force: true })
       await rm(home, { recursive: true, force: true })
     }
+  })
+
+  it('loads only the earliest existing candidate of each list per directory under first-existing selection', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'CLAUDE.md'), 'root claude rule')
+      await write(join(root, 'AGENTS.md'), 'root agents rule')
+      await write(join(root, 'pkg/AGENTS.md'), 'pkg agents rule')
+      await mkdir(join(root, 'pkg/empty'), { recursive: true })
+
+      const files = await discoverBaselineInstructionFiles({
+        cwd: join(root, 'pkg/empty'),
+        dshHome: home,
+        instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md'],
+        candidateSelection: 'first-existing',
+      })
+
+      expect(files.map(file => file.displayPath)).toEqual(['CLAUDE.md', 'pkg/AGENTS.md'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('applies first-existing selection independently to the base and local overlay lists', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'CLAUDE.md'), 'root claude rule')
+      await write(join(root, 'AGENTS.md'), 'root agents rule')
+      await write(join(root, 'CLAUDE.local.md'), 'local claude rule')
+      await write(join(root, 'AGENTS.local.md'), 'local agents rule')
+
+      const files = await discoverBaselineInstructionFiles({
+        cwd: root,
+        dshHome: home,
+        instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md'],
+        localInstructionFileCandidates: ['CLAUDE.local.md', 'AGENTS.local.md'],
+        candidateSelection: 'first-existing',
+      })
+
+      expect(files.map(file => file.displayPath)).toEqual(['CLAUDE.md', 'CLAUDE.local.md'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('defaults candidate selection to all-existing and flips the baseline identity per mode', () => {
+    const allExisting = resolveConfig({ dshHome: '/dsh-home', maxBytes: 65536 })
+    expect(allExisting.candidateSelection).toBe('all-existing')
+    const firstExisting = resolveConfig({
+      dshHome: '/dsh-home',
+      maxBytes: 65536,
+      candidateSelection: 'first-existing',
+    })
+    expect(firstExisting.candidateSelection).toBe('first-existing')
+    expect(workspaceBaselineIdentity(firstExisting, '/repo', '/repo'))
+      .not.toBe(workspaceBaselineIdentity(allExisting, '/repo', '/repo'))
   })
 
   it('ignores configured instruction candidates that are not same-directory file names', async () => {
@@ -1230,6 +1292,47 @@ describe('workspace context request injection', () => {
       const repeated = stubAgent(root, [...resumed.session.events])
       await composeBaselinePrefix(resumedCtx, repeated)
       expect(baselineEvents(repeated)).toHaveLength(2)
+    } finally {
+      await originalCtx.fiber.dispose()
+      await resumedCtx.fiber.dispose()
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('recomposes the baseline when the selection mode flips between resumes', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    const originalCtx = new Context()
+    const resumedCtx = new Context()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'AGENTS.md'), 'agents rule')
+      await write(join(root, 'CLAUDE.md'), 'claude rule')
+      await mountWorkspaceContext(originalCtx, { dshHome: home, maxBytes: 65536 })
+      const original = stubAgent(root)
+      await composeBaselinePrefix(originalCtx, original)
+      expect(derivedText(original)).toContain('Instructions from: AGENTS.md')
+      expect(derivedText(original)).toContain('Instructions from: CLAUDE.md')
+
+      await mountWorkspaceContext(resumedCtx, {
+        dshHome: home,
+        maxBytes: 65536,
+        instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md'],
+        candidateSelection: 'first-existing',
+      })
+      const resumed = stubAgent(root, [...original.session.events])
+      await composeBaselinePrefix(resumedCtx, resumed)
+
+      const baselines = baselineEvents(resumed)
+      expect(baselines).toHaveLength(2)
+      const replacement = baselines.at(-1)
+      const replacementText = replacement?.type === 'user/message'
+        ? blocksText(replacement.data.content)
+        : ''
+      expect(replacementText).toContain('replaces all earlier workspace instruction baselines')
+      expect(replacementText).toContain('Instructions from: CLAUDE.md')
+      expect(replacementText).not.toContain('Instructions from: AGENTS.md')
     } finally {
       await originalCtx.fiber.dispose()
       await resumedCtx.fiber.dispose()
@@ -2722,6 +2825,110 @@ describe('dynamic nested workspace context injection', () => {
       expect(text).toContain(`Additional instructions from: ${join('pkg', 'AGENTS.md')}`)
       expect(text).toContain('native package rule')
       expect(text.indexOf(join('pkg', 'CLAUDE.local.md'))).toBeLessThan(text.indexOf(join('pkg', 'AGENTS.md')))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('promotes the next existing sibling in a nested scope when the preferred candidate is deleted under first-existing', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'pkg/CLAUDE.md'), 'preferred package rule')
+      await write(join(root, 'pkg/AGENTS.md'), 'fallback package rule')
+      await write(join(root, 'pkg/deep/file.txt'), 'hello')
+      const ctx = new Context()
+      await mountFileToolsAndWorkspaceContext(ctx, {
+        dshHome: home,
+        maxBytes: 65536,
+        instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md'],
+        candidateSelection: 'first-existing',
+      })
+      const agent = stubAgent(root)
+
+      await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: CallId('read-nested-preferred-candidate'),
+        name: 'read',
+        arguments: { file_path: join('pkg', 'deep', 'file.txt') },
+        agent,
+      })
+
+      const initial = blocksText((await syncedWorkspaceContext(ctx, agent)).content)
+      expect(initial).toContain(`Additional instructions from: ${join('pkg', 'CLAUDE.md')}`)
+      expect(initial).toContain('preferred package rule')
+      expect(initial).not.toContain('fallback package rule')
+      await appendAdditionalContexts(ctx, agent)
+      await rm(join(root, 'pkg/CLAUDE.md'))
+      await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: CallId('read-after-preferred-deleted'),
+        name: 'read',
+        arguments: { file_path: join('pkg', 'deep', 'file.txt') },
+        agent,
+      })
+
+      const promotion = await syncedWorkspaceContext(ctx, agent)
+      expect(promotion.source).toMatchObject({
+        changes: [
+          { action: 'remove', scope: sk('pkg', 'CLAUDE.md'), path: join('pkg', 'CLAUDE.md') },
+          { action: 'set', scope: sk('pkg', 'AGENTS.md'), path: join('pkg', 'AGENTS.md') },
+        ],
+      })
+      expect(blocksText(promotion.content)).toContain('fallback package rule')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+
+  it('suppresses a previously loaded sibling in a nested scope when a preferred candidate is created under first-existing', async () => {
+    const root = await tempRepo()
+    const home = await tempRepo()
+    try {
+      await mkdir(join(root, '.git'), { recursive: true })
+      await write(join(root, 'pkg/AGENTS.md'), 'fallback package rule')
+      await write(join(root, 'pkg/deep/file.txt'), 'hello')
+      const ctx = new Context()
+      await mountFileToolsAndWorkspaceContext(ctx, {
+        dshHome: home,
+        maxBytes: 65536,
+        instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md'],
+        candidateSelection: 'first-existing',
+      })
+      const agent = stubAgent(root)
+
+      await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: CallId('read-nested-fallback-candidate'),
+        name: 'read',
+        arguments: { file_path: join('pkg', 'deep', 'file.txt') },
+        agent,
+      })
+      const initial = blocksText((await syncedWorkspaceContext(ctx, agent)).content)
+      expect(initial).toContain(`Additional instructions from: ${join('pkg', 'AGENTS.md')}`)
+      await appendAdditionalContexts(ctx, agent)
+      await write(join(root, 'pkg/CLAUDE.md'), 'preferred package rule')
+      await ctx.tools.execute({
+        signal: testToolSignal,
+        callId: CallId('read-after-preferred-created'),
+        name: 'read',
+        arguments: { file_path: join('pkg', 'deep', 'file.txt') },
+        agent,
+      })
+
+      const suppression = await syncedWorkspaceContext(ctx, agent)
+      expect(suppression.source).toMatchObject({
+        changes: [
+          { action: 'set', scope: sk('pkg', 'CLAUDE.md'), path: join('pkg', 'CLAUDE.md') },
+          { action: 'remove', scope: sk('pkg', 'AGENTS.md'), path: join('pkg', 'AGENTS.md') },
+        ],
+      })
+      const text = blocksText(suppression.content)
+      expect(text).toContain(`Instructions removed: ${join('pkg', 'AGENTS.md')}`)
+      expect(text).toContain('preferred package rule')
     } finally {
       await rm(root, { recursive: true, force: true })
       await rm(home, { recursive: true, force: true })

@@ -321,6 +321,12 @@ export async function reconcileInstructionContext(
     items.push({ change, file: { absolutePath: `removed:${scope}`, displayPath: path, content: '' } })
     versionUpdates.push({ change })
   }
+  // Drop a scope without loading it: remove any rendered copy, else forget stale metadata.
+  const suppressScope = (scope: string): void => {
+    const previous = effective.get(scope)
+    if (previous === undefined || previous.action === 'remove') versions.delete(scope)
+    else pushRemoval(scope, previous.path)
+  }
   const scopesByDirectory = new Map<string, string[]>()
   for (const scope of scopes) {
     const { directory } = decodeScopeKey(scope)
@@ -328,15 +334,37 @@ export async function reconcileInstructionContext(
     if (directoryScopes === undefined) scopesByDirectory.set(directory, [scope])
     else directoryScopes.push(scope)
   }
+  const firstExisting = resolved.candidateSelection === 'first-existing'
+  type CandidateSlot = 'base' | 'local'
+  // A candidate name resolves to its earliest configured list, so a name
+  // carried by both lists occupies the base slot.
+  const candidateSlot = (scope: string): { slot: CandidateSlot; index: number } => {
+    const { candidateName } = decodeScopeKey(scope)
+    const baseIndex = resolved.instructionFileCandidates.indexOf(candidateName)
+    if (baseIndex >= 0) return { slot: 'base', index: baseIndex }
+    return { slot: 'local', index: resolved.localInstructionFileCandidates.indexOf(candidateName) }
+  }
   for (const [directory, directoryScopes] of scopesByDirectory) {
+    // first-existing needs deterministic candidate order to pick and re-pick the
+    // winning sibling; all-existing keeps the insertion order it dedups on today.
+    const orderedScopes = firstExisting
+      ? [...directoryScopes].sort((left, right) => {
+        const a = candidateSlot(left)
+        const b = candidateSlot(right)
+        if (a.slot !== b.slot) return a.slot === 'base' ? -1 : 1
+        return (a.index < 0 ? Number.MAX_SAFE_INTEGER : a.index) - (b.index < 0 ? Number.MAX_SAFE_INTEGER : b.index)
+      })
+      : directoryScopes
     const probedScopes: string[] = []
-    for (const scope of directoryScopes) {
+    for (const scope of orderedScopes) {
+      // first-existing skips this optimization: a baseline-excluded winner still
+      // holds its list's slot, and probing it keeps the winner decision current
+      // when the excluded-scope cache predates this pass.
       if (options.excludedBaselineScopes !== undefined
+        && !firstExisting
         && baselineScopes.has(scope)
         && options.excludedBaselineScopes.has(scope)) {
-        const previous = effective.get(scope)
-        if (previous === undefined || previous.action === 'remove') versions.delete(scope)
-        else pushRemoval(scope, previous.path)
+        suppressScope(scope)
       } else {
         probedScopes.push(scope)
       }
@@ -345,8 +373,16 @@ export async function reconcileInstructionContext(
     const versionUpdateStart = versionUpdates.length
     const addedAbsolutePaths: string[] = []
     const priorVersions = new Map(probedScopes.map(scope => [scope, versions.get(scope)]))
+    const winnerHeld: Record<CandidateSlot, boolean> = { base: false, local: false }
     for (const scope of probedScopes) {
       const previous = effective.get(scope)
+      const slot = firstExisting ? candidateSlot(scope) : undefined
+      if (slot !== undefined && winnerHeld[slot.slot]) {
+        // A later candidate of a list whose winner was already found this pass:
+        // suppress it regardless of content, removing any rendered copy.
+        suppressScope(scope)
+        continue
+      }
       const probe = await probeScopeInstruction(scope, projectRoot, resolved, fileSystem, options.signal)
       if (probe.kind === 'unavailable') {
         if (previous === undefined || previous.action === 'remove') continue
@@ -364,11 +400,12 @@ export async function reconcileInstructionContext(
         break
       }
       if (probe.kind === 'absent') {
-        if (previous === undefined || previous.action === 'remove') versions.delete(scope)
-        else pushRemoval(scope, previous.path)
+        suppressScope(scope)
         continue
       }
       const { file: probedFile } = probe
+      // A present probe wins its list even when the content read later fails.
+      if (slot !== undefined) winnerHeld[slot.slot] = true
       if (seenAbsolutePaths.has(probedFile.absolutePath)) continue
       seenAbsolutePaths.add(probedFile.absolutePath)
       addedAbsolutePaths.push(probedFile.absolutePath)

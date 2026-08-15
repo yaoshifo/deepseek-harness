@@ -14,6 +14,13 @@ const DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES = ['AGENTS.local.md', 'CLAUDE.lo
 const DEFAULT_MAX_SOURCE_BYTES = 1_048_576
 const RESERVED_PATH_SEGMENTS = new Set(['', '.', '..'])
 
+/**
+ * Per-directory candidate selection: `all-existing` loads every existing
+ * candidate in each list; `first-existing` loads only the earliest existing
+ * candidate of each list and suppresses its later siblings.
+ */
+export type CandidateSelection = 'all-existing' | 'first-existing'
+
 /** User-facing workspace instruction loader configuration. */
 export interface Config {
   /** Harness home containing the fixed user-global `AGENTS.md`; defaults to `$DSH_HOME` or `~/.dsh`. */
@@ -34,6 +41,12 @@ export interface Config {
    * under the same per-directory trimmed-content dedup; empty disables the overlay.
    */
   localInstructionFileCandidates?: string[]
+  /**
+   * Rule applied per directory to both candidate lists: `all-existing` (default)
+   * loads every existing candidate; `first-existing` loads only the earliest
+   * existing candidate per list. The user-global slot ignores this field.
+   */
+  candidateSelection?: CandidateSelection
 }
 
 export const Config: z<Config> = z.object({
@@ -43,6 +56,7 @@ export const Config: z<Config> = z.object({
   maxSourceBytes: z.number().step(1).min(1).default(DEFAULT_MAX_SOURCE_BYTES),
   instructionFileCandidates: z.array(z.string()).default([...DEFAULT_INSTRUCTION_FILE_CANDIDATES]),
   localInstructionFileCandidates: z.array(z.string()).default([...DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES]),
+  candidateSelection: z.union(['all-existing', 'first-existing'] as const).default('all-existing'),
 })
 
 /** Normalized instruction discovery configuration. */
@@ -51,6 +65,7 @@ export interface ResolvedDiscoveryConfig {
   projectRootMarkers: string[]
   instructionFileCandidates: string[]
   localInstructionFileCandidates: string[]
+  candidateSelection: CandidateSelection
 }
 
 /** Normalized configuration used by discovery and reconciliation. */
@@ -78,6 +93,7 @@ export function workspaceBaselineIdentity(
     maxSourceBytes: config.maxSourceBytes,
     instructionFileCandidates: config.instructionFileCandidates,
     localInstructionFileCandidates: config.localInstructionFileCandidates,
+    candidateSelection: config.candidateSelection,
   })
 }
 
@@ -100,7 +116,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
  * @returns normalized home, root markers, and instruction candidates.
  */
 export function resolveDiscoveryConfig(
-  config: Pick<Config, 'dshHome' | 'projectRootMarkers' | 'instructionFileCandidates' | 'localInstructionFileCandidates'>,
+  config: Pick<Config, 'dshHome' | 'projectRootMarkers' | 'instructionFileCandidates' | 'localInstructionFileCandidates' | 'candidateSelection'>,
 ): ResolvedDiscoveryConfig {
   return {
     dshHome: resolveDshHome(config.dshHome),
@@ -113,6 +129,7 @@ export function resolveDiscoveryConfig(
       config.localInstructionFileCandidates,
       DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES,
     ),
+    candidateSelection: config.candidateSelection ?? 'all-existing',
   }
 }
 

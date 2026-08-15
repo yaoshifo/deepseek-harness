@@ -10,7 +10,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { FileSystem, FsInfo, FsTarget, FsVersion } from '@deepseek-ai/dsh-fs'
 import { assertNever } from '@deepseek-ai/dsh-llm'
 import { dshHomeDisplay } from '@deepseek-ai/dsh-home-paths'
-import { resolveConfig, resolveDiscoveryConfig, type ResolvedConfig } from './config.ts'
+import { resolveConfig, resolveDiscoveryConfig, type CandidateSelection, type ResolvedConfig } from './config.ts'
 import { trimmedInstructionDigest } from './digest.ts'
 import {
   decodeScopeKey,
@@ -52,6 +52,7 @@ interface DiscoverOptions {
   projectRootMarkers?: string[]
   instructionFileCandidates?: string[]
   localInstructionFileCandidates?: string[]
+  candidateSelection?: CandidateSelection
   projectRoot?: string
   signal?: AbortSignal
 }
@@ -236,10 +237,11 @@ export function relativeDisplay(root: string, path: string): string {
   return relative(root, path)
 }
 
-async function allExistingInstructionFiles(
+async function directoryInstructionFiles(
   dir: string,
   root: string,
   instructionFileCandidates: readonly string[],
+  candidateSelection: CandidateSelection,
   fileSystem?: FileSystem,
   signal?: AbortSignal,
 ): Promise<DiscoveredInstructionFile[]> {
@@ -250,6 +252,9 @@ async function allExistingInstructionFiles(
     switch (probe.kind) {
       case 'present':
         found.push({ absolutePath: path, displayPath: relativeDisplay(root, path), ...probe.info })
+        // first-existing stops at the earliest present candidate; a present
+        // probe wins even when its content later fails to read.
+        if (candidateSelection === 'first-existing') return found
         continue
       // A missing candidate is skipped; a transient provider failure skips only
       // that candidate so the remaining independent candidates still load.
@@ -300,7 +305,14 @@ async function discoverInstructionFiles(
     ?? await findProjectRoot(cwd, config.projectRootMarkers, fileSystem, options.signal)
   for (const dir of ancestorChain(projectRoot, cwd)) {
     for (const candidates of [config.instructionFileCandidates, config.localInstructionFileCandidates]) {
-      for (const file of await allExistingInstructionFiles(dir, projectRoot, candidates, fileSystem, options.signal)) {
+      for (const file of await directoryInstructionFiles(
+        dir,
+        projectRoot,
+        candidates,
+        config.candidateSelection,
+        fileSystem,
+        options.signal,
+      )) {
         addFile(file)
       }
     }

@@ -142,6 +142,7 @@ export function apply(ctx: Context, config: Config): void {
         maxSourceBytes: resolved.maxSourceBytes,
         instructionFileCandidates: resolved.instructionFileCandidates,
         localInstructionFileCandidates: resolved.localInstructionFileCandidates,
+        candidateSelection: resolved.candidateSelection,
         projectRoot,
         replacePreviousBaseline,
         signal,

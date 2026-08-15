@@ -129,10 +129,23 @@ export interface Config {
    * under the same per-directory trimmed-content dedup; empty disables the overlay.
    */
   localInstructionFileCandidates?: string[]
+  /**
+   * Rule applied per directory to both candidate lists: `all-existing` (default)
+   * loads every existing candidate; `first-existing` loads only the earliest
+   * existing candidate per list. The user-global slot ignores this field.
+   */
+  candidateSelection?: CandidateSelection
 }
+
+/**
+ * Per-directory candidate selection: `all-existing` loads every existing
+ * candidate in each list; `first-existing` loads only the earliest existing
+ * candidate of each list and suppresses its later siblings.
+ */
+export type CandidateSelection = 'all-existing' | 'first-existing'
 ```
 
-来源：[`packages/context/agent-instructions/src/config.ts:18`](../packages/context/agent-instructions/src/config.ts)
+来源：[`packages/context/agent-instructions/src/config.ts:25`](../packages/context/agent-instructions/src/config.ts)
 
 <a id="deepseek-aidsh-agent-loop"></a>
 
