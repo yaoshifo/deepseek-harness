@@ -27,6 +27,12 @@ linkWorkspacePackages: true
 overrides:
   '@deepseek-ai/cosmokit': 'link:vendor/cosmokit'
   '@deepseek-ai/schemastery': 'link:vendor/schemastery'
+  # TEMP (2026-08-16): pnpm's fetcher fails on this platform binary from
+  # npmmirror with error 23 (curl pulls the same URL fine); pinned to a
+  # pre-downloaded tarball so installs proceed. Revert when the fetch path
+  # recovers. (The @openai/codex platform variant hit the same error but
+  # ignores overrides — it needed a one-off local scoped registry instead.)
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.220': 'file:/home/hm/.cache/cc-tarballs/claude-agent-sdk-linux-x64-0.3.220.tgz'
 
 peerDependencyRules:
   allowedVersions:

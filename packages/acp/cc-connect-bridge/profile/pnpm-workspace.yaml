@@ -1,0 +1,10 @@
+# pnpm 11 settings for the profile dir: allow native postinstalls the dsh
+# runtime needs, and skip the minimum-release-age supply-chain gate (we pin
+# exact @deepseek-ai versions instead).
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': true
+  koffi: true
+  node-pty: true
+  protobufjs: true
+minimumReleaseAge: 0

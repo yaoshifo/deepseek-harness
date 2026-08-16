@@ -1,0 +1,5 @@
+# The cc-connect bridge bundle patch: mounts the bridge plugin row on top of
+# whatever the profile's earlier bundles (dsh-base) already installed.
+- insert:
+    - id: cc-connect-bridge
+      name: '@deepseek-ai/dsh-cc-connect-bridge'
