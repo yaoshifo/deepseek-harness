@@ -65,3 +65,24 @@ node /tmp/bridge-hmr-smoke.mjs                        # 真实进程 HMR 恢复 
 ```
 
 依赖版本随 harness workspace（`workspace:^` 解析到本仓 pinned 源，含 fork 补丁的 agent/llm-pi-ai 等）。
+
+### 在本仓库开发速查（fork 侧，2026-08-16 迁移时趟平）
+
+**改包 → 生效链路**：`pnpm run build:lib`（tsc -b 产 `lib/types`，tsdown 打 `lib/*.js`，workspace glob 自动含本包）→ profile `link:` 直读 `lib/` → **下一个 spawn 的会话**即用新代码，无需任何 reinstall。
+
+**新增 workspace 包的接入清单**（下次照走）：
+1. `package.json` 依赖用 `workspace:^`（peer + dev 模式见 `packages/acp/acp`）
+2. 包 `tsconfig.json`：extends `tsconfig.base.json`，references 列依赖包（vendor 三件 + 所用 core 包）
+3. **`tsconfig.host.json` references 登记**（漏了 typecheck 不看新包）
+4. **`src/invariant.ts` 必须有**——`scripts/test-invariants` 按包名拓扑断言全覆盖，缺了报 220 vs 221（模板照抄 dsh-acp 的空 companion）
+5. 测试文件放 `tests/`、命名 `*.spec.ts`（根 vitest glob 才会发现）；tsdown entry 只认 `{index,invariant,startup}.js`——package.json exports 别声明 tsdown 不产物的子路径
+
+**严格编译/门禁坑**（迁移时全部撞过）：
+- `noUncheckedIndexedAccess`：`mock.calls[0]![0]` 补 `!`
+- `exactOptionalPropertyTypes`：可选字段赋 `undefined` 需类型显式 `| undefined`
+- `noUnusedParameters`：waterfall 未用的 `next` 参数写 `_next`
+- oxlint 禁 `Function` 类型（用具名函数签名）
+- lefthook lint(staged) 自动 fix 后工作区与 staged 分叉 → commit 撤回 "conflict while merging unstaged changes" → 把 hook 改过的文件 `git add` 后重提即可
+- third-party notices hook 按 `.pnpm/<pkg>@<ver>/` registry 布局找 manifest——`file:` override 安装的包留空壳会 ENOENT，把 `file+` 目录软链进 `@<ver>` 布局补齐
+
+**pnpm install 网络坑（本机）**：pnpm fetcher 从 npmmirror 拉 85MB+ 平台 tarball 稳定 `error (23)`（curl 同 URL 可过）；`fetch-timeout`/串行/换 registry 均无效。分级解法：独立平台包名 → `pnpm-workspace.yaml` overrides `file:` 指预下载 tarball（根 `.npmrc` 未提交，指 npmmirror）；同包名平台版本变体（如 `@openai/codex@0.147.0-linux-x64`）override 拦不住、lockfile 加 `tarball:` 被 shape 校验拒 → 只能本地 scoped registry（node 脚本 serve packument+tarball，`.npmrc` 加 `@scope:registry=http://127.0.0.1:<port>`，装完删行）。遗留：`pnpm-workspace.yaml` 的 TEMP claude-sdk override，网络恢复后删去重装。
