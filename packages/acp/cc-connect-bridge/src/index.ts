@@ -17,10 +17,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { JsonRpcLineTransport } from '@deepseek-ai/dsh-sdk-protocol'
 import type { Readable, Writable } from 'node:stream'
+import { registerEnterPlanMode } from './enter-plan-mode.js'
+import { scratchpadContextText } from './scratchpad.js'
 import { CcConnectBridgeServer } from './server.js'
 
 export * from './server.js'
 export * from './types.js'
+export * from './enter-plan-mode.js'
+export * from './scratchpad.js'
 
 export const name = 'cc-connect-bridge'
 // Only the agent factory is required; the LLM seam and prompt sections are
@@ -87,7 +91,16 @@ export function apply(ctx: Context, config: BridgeConfig): void {
     } else if (append !== undefined && append !== '') {
       promptCtx.systemPrompt.section({ name: 'cc-connect', order: 45, text: append })
     }
+    // Session scratchpad announcement rides the runtime context (per-session
+    // path; empty when the Go backend did not provision one).
+    const scratchpad = scratchpadContextText(process.env.CC_SCRATCHPAD)
+    if (scratchpad !== '') {
+      promptCtx.systemPrompt.context({ name: 'cc-connect:scratchpad', order: 50, text: scratchpad })
+    }
   })
+
+  // Agent-initiated plan-mode entry, mirrored against dsh-plan-mode's exit tool.
+  registerEnterPlanMode(ctx)
 
   ctx.effect(() => () => { transport.close() }, 'cc-connect-bridge: close transport')
 }
