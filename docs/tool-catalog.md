@@ -37,6 +37,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-subagent-report` | `report` | `ctx.subagents`, `ctx.systemPrompt`, `a live continuable in-process child Agent` | `tool/call`, `tool/result`, `a user-role message in the direct parent session` | - | Registered per continuable in-process child rather than globally, so this schema is visible only inside such a child and survives its global `toolFilter`. The same contribution installs the child-scoped `tool:report` prompt section, which this catalog does not render. The parent-facing `send_message` tool is installed independently. |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`, `job_list`, `job_output` | `ctx.tools`, `ctx.jobs`, `ctx.systemPrompt` | `tool/call`, `tool/result`, `user/message via agent.inject() for background completion notices` | - | The kind-agnostic background-job controller: background bash commands, PTY sends, and subagents are read, listed, and killed through the same three tools. Loading the plugin attaches the controller that arms producers' `ctx.jobs.start()`. |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`, `owning Agent session` | `tool/call`, `todo/write`, `tool/result` | - | todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task. |
+| `@deepseek-ai/dsh-tool-claude-memory` | `memory_delete`, `memory_list`, `memory_read`, `memory_write` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agents`, `host ~/.claude directory` | `tool/call`, `user/message (sourced claude-memory index injection)`, `tool/result` | - | The four memory tools share Claude Code's own per-project memory directory (`~/.claude/projects/<slug>/memory/`) through host `node:fs`, never the swappable `ctx.fs` provider. `maxIndexBytes` is required with no default, so the catalog states its choice: 25,600, Claude Code's session-start read budget. The plugin also contributes a memory-strategy system-prompt section and a one-time session-start MEMORY.md index injection; the model-facing strategy text and tool descriptions live in the package README. |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`, `ctx.workflowEngine`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents the script children)` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`, `web_search` | `ctx.tools`, `ctx.web`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | web_search and web_fetch keep provider selection behind ctx.web so model-visible schemas stay stable across backend swaps. |
 
@@ -1728,6 +1729,93 @@ Record and update a structured task list for the current work. Send the ENTIRE l
 Source: [`packages/todo/tool-todo/src/index.ts`](../packages/todo/tool-todo/src/index.ts)
 
 todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task.
+
+<a id="deepseek-aidsh-tool-claude-memory"></a>
+
+## `@deepseek-ai/dsh-tool-claude-memory`
+
+### `memory_delete`
+
+These tools operate only inside your persistent memory directory shared with Claude Code. Delete one memory file that turned out to be wrong, then remove its line from MEMORY.md.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "File name inside the memory directory."
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
+```
+
+Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/tool-claude-memory/src/index.ts)
+
+### `memory_list`
+
+These tools operate only inside your persistent memory directory shared with Claude Code. List every file in the memory directory with byte sizes and modification times. MEMORY.md is the index; every other file is one remembered fact.
+
+```json
+{
+  "type": "object",
+  "properties": {}
+}
+```
+
+Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/tool-claude-memory/src/index.ts)
+
+### `memory_read`
+
+These tools operate only inside your persistent memory directory shared with Claude Code. Read one file verbatim, for example MEMORY.md or a topic memory file.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "File name inside the memory directory, e.g. MEMORY.md."
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
+```
+
+Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/tool-claude-memory/src/index.ts)
+
+### `memory_write`
+
+These tools operate only inside your persistent memory directory shared with Claude Code. Write one memory file with the COMPLETE content (full replacement, no partial edits). The directory is created on demand; no mkdir is needed. Frontmatter provenance (node_type, originSessionId) is backfilled automatically. After writing a memory file, add or update its one-line pointer in MEMORY.md.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md."
+    },
+    "content": {
+      "type": "string",
+      "description": "The complete new file content, including frontmatter."
+    }
+  },
+  "required": [
+    "name",
+    "content"
+  ]
+}
+```
+
+Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/tool-claude-memory/src/index.ts)
+
+The four memory tools share Claude Code's own per-project memory directory (`~/.claude/projects/<slug>/memory/`) through host `node:fs`, never the swappable `ctx.fs` provider. `maxIndexBytes` is required with no default, so the catalog states its choice: 25,600, Claude Code's session-start read budget. The plugin also contributes a memory-strategy system-prompt section and a one-time session-start MEMORY.md index injection; the model-facing strategy text and tool descriptions live in the package README.
 
 <a id="deepseek-aidsh-tool-workflow"></a>
 

@@ -198,7 +198,10 @@ export function findViolations(
 // Run only when invoked as a script, not when imported by the spec.
 if (process.argv[1] && import.meta.filename === resolve(process.argv[1])) {
   // Archived notes remain valid link targets, but their historical outbound links are frozen.
-  const files = uniqueRepoFiles(root, PATTERNS, isArchivedAgentNotePath)
+  // Snapshot expected outputs are generated fixtures, not repo-authored prose: model-facing
+  // prompt text they capture can contain literal markdown links that target nothing.
+  const files = uniqueRepoFiles(root, PATTERNS, relativePath =>
+    isArchivedAgentNotePath(relativePath) || relativePath.split('/').includes('snapshots'))
   const anchorsOf = anchorCache()
   const all = files.flatMap(file => findViolations(file.abs, anchorsOf))
   const checked = files.length

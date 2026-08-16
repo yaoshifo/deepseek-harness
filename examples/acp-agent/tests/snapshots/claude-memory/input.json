@@ -1,0 +1,7 @@
+{
+  "steps": [
+    { "op": "initialize" },
+    { "op": "newSession" },
+    { "op": "prompt", "text": "Read your memory index with memory_read, then save one new memory noting that this project deploys with pnpm (type feedback, with Why and How to apply), then reply DONE." }
+  ]
+}

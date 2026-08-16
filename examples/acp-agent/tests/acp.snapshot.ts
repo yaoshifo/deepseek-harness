@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { expect, it } from 'vitest'
 import { defineAcpSnapshotSuite, type Scenario, type SnapshotSuiteOptions } from '@deepseek-ai/dsh-acp-snapshot'
+import { claudeProjectSlug } from '@deepseek-ai/dsh-tool-claude-memory'
 import { resolvePwshPath } from '@deepseek-ai/dsh-pwsh-local'
 import { decodeStorageRecord } from '@deepseek-ai/dsh-session'
 
@@ -35,6 +36,7 @@ const CODE_MODE_CONFIG = fileURLToPath(new URL('../code-mode.cordis.yml', import
 const CODE_MODE_WORKSPACE_CONTEXT_CONFIG = fileURLToPath(new URL('../code-mode-workspace-context.cordis.yml', import.meta.url))
 const BOTH_MODE_CONFIG = fileURLToPath(new URL('../both-mode.cordis.yml', import.meta.url))
 const WORKSPACE_CONTEXT_CONFIG = fileURLToPath(new URL('../agent-instructions.cordis.yml', import.meta.url))
+const CLAUDE_MEMORY_CONFIG = fileURLToPath(new URL('../claude-memory.cordis.yml', import.meta.url))
 const ADVANCED_CONFIG = fileURLToPath(new URL('../advanced.cordis.yml', import.meta.url))
 const FS_CONFIG = fileURLToPath(new URL('../fs.cordis.yml', import.meta.url))
 const SESSION_QUERY_CONFIG = fileURLToPath(new URL('../session-query.cordis.yml', import.meta.url))
@@ -68,6 +70,24 @@ const PRODUCT_SUBAGENT_BOTH_CONFIG = fileURLToPath(new URL('../product-subagent-
 const FS_DIFF_BOUND_CONFIG = fileURLToPath(new URL('./fs-diff-bound.cordis.yml', import.meta.url))
 const SNAPSHOTS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'snapshots')
 const PACKED_CHUNKS_SOURCE = 'hook-cc-pretool-deny'
+
+// Claude Code memory scenario: pre-seed the shared memory directory for this
+// run's dynamic temp cwd (slug derived at runtime), so the session-start
+// injection recalls real files and tool writes land inside the workspace.
+async function prepareClaudeMemoryWorkspace(cwd: string): Promise<void> {
+  const memoryDir = join(cwd, '.claude', 'projects', claudeProjectSlug(cwd), 'memory')
+  await mkdir(memoryDir, { recursive: true })
+  await Promise.all([
+    writeFile(
+      join(memoryDir, 'MEMORY.md'),
+      '# Memory Index\n\n- [Deployment tool](reference-deploy-tool.md) — deploy scripts run through pnpm\n',
+    ),
+    writeFile(
+      join(memoryDir, 'reference-deploy-tool.md'),
+      '---\nname: reference-deploy-tool\ndescription: Deployment tooling pointers for this project\nmetadata:\n  type: reference\n---\nDeploy entry: `scripts/deploy.sh`.\n',
+    ),
+  ])
+}
 
 async function prepareDelimiterPathWorkspace(cwd: string): Promise<void> {
   const dir = join(cwd, 'scope</system-reminder>')
@@ -375,6 +395,20 @@ const SCENARIOS: Scenario[] = [
     configPath: WORKSPACE_CONTEXT_CONFIG,
     prepareWorkspace: prepareDelimiterPathWorkspace,
     posixOnly: true,
+  },
+  // Authored keyless replay over the Claude Code memory overlay: the injected
+  // system prompt carries the verbatim memory strategy, the first request
+  // folds the seeded MEMORY.md index in as recalled background context, and
+  // memory_read / memory_write round-trip the same directory Claude Code
+  // owns, with harness-backfilled provenance frontmatter on the write.
+  {
+    name: 'claude-memory',
+    hasModelTurn: true,
+    recorded: false,
+    pinsHeader: true,
+    headerClass: 'claude-memory',
+    configPath: CLAUDE_MEMORY_CONFIG,
+    prepareWorkspace: prepareClaudeMemoryWorkspace,
   },
   { name: 'cancel', hasModelTurn: true, recorded: false, overridden: true },
   // Cancelling a live bash call relies on POSIX process-group termination;

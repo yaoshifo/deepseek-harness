@@ -837,6 +837,19 @@ describe('refreshFixtureReplacements', () => {
     expect(refreshFixtureReplacements(logs, fixtures)).toEqual([
       { from: 'new-parent', to: 'old-parent' },
       { from: '/new', to: '/old' },
+      { from: '-new', to: '-old' },
+    ])
+  })
+
+  it('maps a fresh cwd slug onto the {{cwdSlug}} token for a tokenized fixture', () => {
+    const log = (content: string): HarvestedLog => ({ id: 'diagnostic', createdAt: 1, content })
+    const freshCwd = '/tmp/dsh-acp-snap-cwd-x1'
+    const logs = [log(`{"type":"session","id":"a","cwd":"${freshCwd}"}\n`)]
+    const fixtures = ['{"type":"session","id":"old","cwd":"{{cwd}}"}\n']
+    expect(refreshFixtureReplacements(logs, fixtures)).toEqual([
+      { from: 'a', to: 'old' },
+      { from: freshCwd, to: '{{cwd}}' },
+      { from: '-tmp-dsh-acp-snap-cwd-x1', to: '{{cwdSlug}}' },
     ])
   })
 

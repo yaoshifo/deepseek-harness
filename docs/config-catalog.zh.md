@@ -1064,6 +1064,13 @@ export interface PiAiCompatProfile {
   thinkingFormat?: PiAiThinkingFormat
   /** Whether the endpoint accepts `reasoning_effort`; absent keeps the catalog entry's, then pi-ai's baseURL-derived guess. */
   supportsReasoningEffort?: boolean
+  /**
+   * anthropic-messages only: dispatch thinking as `adaptive` + carry the
+   * effort level in `output_config.effort` (pi-ai's Claude-client spelling)
+   * instead of `budget_tokens`. Needed for gateways that ignore the thinking
+   * parameter outright and honor only `output_config.effort`.
+   */
+  forceAdaptiveThinking?: boolean
 }
 
 /** One request modality a pi-ai model may accept. */
@@ -2386,6 +2393,30 @@ export interface Config {
 ```
 
 来源：[`packages/shell/tool-bash-persistent/src/index.ts:405`](../packages/shell/tool-bash-persistent/src/index.ts)
+
+<a id="deepseek-aidsh-tool-claude-memory"></a>
+
+## `@deepseek-ai/dsh-tool-claude-memory`
+
+需要：`tools` · `systemPrompt` · `agents`
+
+```ts config-catalog
+/** Model-facing memory compatibility configuration. Invalid values fail plugin load. */
+export interface Config {
+  /** Claude Code home directory holding `projects/`. Defaults to `~/.claude`. */
+  claudeHome?: string
+  /**
+   * Required byte budget for the MEMORY.md index loaded into context, matching
+   * Claude Code's 25 KB session-start read. Every composition states its
+   * prompt-budget choice explicitly.
+   */
+  maxIndexBytes: number
+  /** Line budget for the same read; Claude Code loads the first 200 lines. */
+  maxIndexLines?: number
+}
+```
+
+Source: [`packages/memory/tool-claude-memory/src/index.ts:56`](../packages/memory/tool-claude-memory/src/index.ts)
 
 <a id="deepseek-aidsh-tool-fs"></a>
 

@@ -26,6 +26,7 @@ import { type AgentUnderTest, type HarvestedLog, type InputScript, runScenario }
 import {
   type CwdPathMode,
   type NormalizeContext,
+  cwdSlugOf,
   extractSnapshotSpillPaths,
   normalizeSessionLog,
   normalizeStdout,
@@ -751,6 +752,17 @@ export function refreshFixtureReplacements(logs: HarvestedLog[], fixtures: strin
       if (typeof from === 'string' && typeof to === 'string' && from.length > 0 && from !== to) {
         replacements.push({ from, to })
       }
+    }
+    // Content can embed the cwd's separator-free slug (Claude-style project
+    // slugs). Map the fresh run's slug onto the fixture's spelling — an
+    // already-tokenized fixture maps onto the `{{cwdSlug}}` token.
+    const freshSlug = typeof fresh?.cwd === 'string' ? cwdSlugOf(fresh.cwd) : undefined
+    const existingCwd = existing?.cwd
+    const existingSlug = existingCwd === '{{cwd}}'
+      ? '{{cwdSlug}}'
+      : typeof existingCwd === 'string' ? cwdSlugOf(existingCwd) : undefined
+    if (freshSlug !== undefined && existingSlug !== undefined && freshSlug !== existingSlug) {
+      replacements.push({ from: freshSlug, to: existingSlug })
     }
     // Stabilize snapshot spill paths: match by filename suffix so the raw
     // fixture does not churn on every refresh from a different session run.

@@ -8,6 +8,7 @@
 
 const SESSION_ID = '{{sessionId}}'
 const CWD = '{{cwd}}'
+const CWD_SLUG = '{{cwdSlug}}'
 const SYSTEM = '{{system}}'
 const TOOLS = '{{tools}}'
 const EVENT_TIME = '{{eventTime}}'
@@ -136,8 +137,36 @@ function replaceCwd(value: string, ctx: NormalizeContext, replacement: string): 
 }
 
 /** Replace cwd, session ids, and any stray UUID with stable tokens in a string. */
+/**
+ * Fold one cwd spelling to its separator-free slug form, or `undefined` when nothing folds.
+ * @param spelling - one absolute filesystem spelling of the run's cwd.
+ * @returns the slug (every `/` and `.` folded to `-`), or `undefined` when the spelling is
+ * itself unchanged (already a token) or still contains separators (Windows drive paths).
+ */
+export function cwdSlugOf(spelling: string): string | undefined {
+  const slug = spelling.replace(/[/.]/g, '-')
+  if (slug === spelling || /[\\/]/.test(slug)) return undefined
+  return slug
+}
+
+/** Tokenize a standalone cwd slug; text glued to it with slug characters stays verbatim. */
+function tokenizeCwdSlug(value: string, spelling: string): string {
+  const slug = cwdSlugOf(spelling)
+  if (slug === undefined) return value
+  return value.replace(
+    new RegExp(`(?<![A-Za-z0-9._-])${escapeRegExp(slug)}(?![A-Za-z0-9._-])`, 'g'),
+    CWD_SLUG,
+  )
+}
+
 function scrubString(value: string, ctx: NormalizeContext, cwdPathMode: CwdPathMode): string {
   let out = replaceCwd(value, ctx, CWD)
+  // Content can embed separator-free derivatives of the cwd, such as Claude
+  // Code project slugs (every `/` and `.` folded to `-`). Tokenize each known
+  // spelling's slug the same way the spelling itself is tokenized.
+  for (const spelling of [ctx.cwd, ...ctx.cwdAliases ?? []]) {
+    out = tokenizeCwdSlug(out, spelling)
+  }
   // Filesystem APIs can report one directory with several spellings. Replace
   // every known spelling longest-first so a shorter alias cannot corrupt a
   // longer one before it is tokenized. macOS additionally symlinks
@@ -197,7 +226,8 @@ function tokenizeFixtureString(value: string, ctx: NormalizeContext, basename: s
     + String.raw`(?=$|[\\/\s<>'"()\[\]{},;:!?=])`,
     'g',
   )
-  return exact.replace(absoluteCwd, CWD).split(`/private${CWD}`).join(CWD)
+  const tokenized = exact.replace(absoluteCwd, CWD).split(`/private${CWD}`).join(CWD)
+  return tokenizeCwdSlug(tokenized, ctx.cwd)
 }
 
 /** Recursively replace generated-cwd spellings while preserving every other JSON value. */

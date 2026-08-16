@@ -46,6 +46,18 @@ describe('normalizeStdout', () => {
     expect(out).not.toContain(ctx.sessionIds[0] as string)
   })
 
+  it('scrubs a standalone cwd slug (separators and dots folded) but not glued slug text', () => {
+    const slug = (ctx.cwd as string | undefined ?? '').replace(/[/.]/g, '-')
+    const raw = JSON.stringify({
+      jsonrpc: '2.0', method: 'session/update',
+      params: { project: slug, memoryDir: `${ctx.cwd}/.claude/projects/${slug}/memory`, glued: `${slug}-backup` },
+    })
+    const frame = JSON.parse(normalizeStdout(raw, ctx)) as { params: Record<string, string> }
+    expect(frame.params.project).toBe('{{cwdSlug}}')
+    expect(frame.params.memoryDir).toBe('{{cwd}}/.claude/projects/{{cwdSlug}}/memory')
+    expect(frame.params.glued).toBe(`${slug}-backup`)
+  })
+
   it('scrubs cwd at file URI and chained-punctuation boundaries', () => {
     const raw = JSON.stringify({
       jsonrpc: '2.0',

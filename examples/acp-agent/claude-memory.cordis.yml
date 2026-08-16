@@ -1,0 +1,14 @@
+# Claude Code memory snapshot overlay: mount the memory plugin with its home
+# inside the scenario's temporary cwd, so the prepared MEMORY.md is recalled at
+# session start and tool writes land inside the workspace.
+- id: base
+  name: '@deepseek-ai/cordis-plugin-include'
+  config:
+    path: ./cordis.yml
+    patches:
+      - insert:
+          - id: claude-memory
+            name: '@deepseek-ai/dsh-tool-claude-memory'
+            config:
+              claudeHome: !!js process.cwd() + '/.claude'
+              maxIndexBytes: 25600

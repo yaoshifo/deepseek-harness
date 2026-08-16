@@ -118,6 +118,7 @@ New behavior attaches to a documented extension point. Changing the loop itself 
 | Confine spawned processes | use a `ctx.sandbox` backend; consumers wrap argv before spawning |
 | Intercept a request, tool, or turn | use its `agent/*` or `tools/*` event; `agent/turn-stopping` stops a turn |
 | Add model-facing context | call `agent.inject()`; it lands in the next admitted request |
+| Share Claude Code's persistent memory | mount `dsh-tool-claude-memory`; it reuses `~/.claude/projects/<slug>/memory/` directly |
 | Add UI or editor integration | drive `ctx.agents` and render from `session/event` |
 | Add a Web Client Chat node | register a `ConversationNodeDefinition` + keyed renderer |
 | Add durable session state | extend `SessionEventMap`; render and replay from the log |

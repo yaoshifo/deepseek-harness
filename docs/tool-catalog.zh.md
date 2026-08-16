@@ -39,6 +39,7 @@
 | `@deepseek-ai/dsh-tool-subagent-report` | `report` | `ctx.subagents`、`ctx.systemPrompt`、`a live continuable in-process child Agent` | `tool/call`、`tool/result`、`a user-role message in the direct parent session` | - | 按可继续的进程内子级注册，而非全局注册，因此该 schema 仅在这种子级内部可见，并且不受其全局 `toolFilter` 影响。同一份贡献还会安装子级作用域的 `tool:report` 系统提示词 section，本目录不渲染该 section。面向父级的 `send_message` 工具单独安装。 |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`、`job_list`、`job_output` | `ctx.tools`、`ctx.jobs`、`ctx.systemPrompt` | `tool/call`、`tool/result`、`user/message via agent.inject() for background completion notices` | - | 与任务种类无关的后台任务控制器：后台 bash 命令、PTY 发送和 subagent 都通过相同的 3 个工具读取、列出和终止。加载该插件会挂接控制器，从而启用生产方的 `ctx.jobs.start()`。 |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`、`owning Agent session` | `tool/call`、`todo/write`、`tool/result` | - | todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为检查清单。`allowParallelInProgress` 是没有默认值的必填项，因此本目录明确选择 `true`，对应描述允许同时存在多个 `in_progress` 项。选择 `false` 的部署会获得同一工具，但描述会要求只能有 1 个活动任务。 |
+| `@deepseek-ai/dsh-tool-claude-memory` | `memory_delete`、`memory_list`、`memory_read`、`memory_write` | `ctx.tools`、`ctx.systemPrompt`、`ctx.agents`、`host ~/.claude directory` | `tool/call`、`user/message (sourced claude-memory index injection)`、`tool/result` | - | 四个 memory 工具经宿主 `node:fs` 直接共享 Claude Code 自己的按项目记忆目录（`~/.claude/projects/<slug>/memory/`），绝不经过可替换的 `ctx.fs` provider。`maxIndexBytes` 必填且无默认，本目录声明其取值：25,600，即 Claude Code 会话开始的读取预算。该插件还贡献记忆策略系统提示 section 与一次性的会话开始 MEMORY.md 索引注入；模型可见的策略文本与工具描述见包 README。 |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`、`ctx.workflowEngine`、`ctx.systemPrompt`、`a calling Agent (exec.agent parents the script children)` | `tool/call`、`tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`、`web_search` | `ctx.tools`、`ctx.web`、`ctx.systemPrompt` | `tool/call`、`tool/result` | - | web_search 和 web_fetch 将提供方选择置于 ctx.web 之后，使模型可见 schema 在更换后端时保持稳定。 |
 
@@ -1732,6 +1733,92 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
 来源：[`packages/todo/tool-todo/src/index.ts`](../packages/todo/tool-todo/src/index.ts)
 
 todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为检查清单。`allowParallelInProgress` 是没有默认值的必填项，因此本目录明确选择 `true`，对应描述允许同时存在多个 `in_progress` 项。选择 `false` 的部署会获得同一工具，但描述会要求只能有 1 个活动任务。
+
+
+## `@deepseek-ai/dsh-tool-claude-memory`
+
+### `memory_delete`
+
+这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。删除一条被证明错误的记忆文件，并从 MEMORY.md 中移除对应行。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "File name inside the memory directory."
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
+```
+
+Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/tool-claude-memory/src/index.ts)
+
+### `memory_list`
+
+这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。列出记忆目录中的全部文件及其字节大小与修改时间。MEMORY.md 是索引；其余每个文件是一条记住的事实。
+
+```json
+{
+  "type": "object",
+  "properties": {}
+}
+```
+
+Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/tool-claude-memory/src/index.ts)
+
+### `memory_read`
+
+这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。逐字读取一个文件，例如 MEMORY.md 或某个主题记忆文件。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "File name inside the memory directory, e.g. MEMORY.md."
+    }
+  },
+  "required": [
+    "name"
+  ]
+}
+```
+
+Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/tool-claude-memory/src/index.ts)
+
+### `memory_write`
+
+这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。写入完整内容的记忆文件（整文件替换，不做局部编辑）。目录按需创建，无需 mkdir。frontmatter 溯源（node_type、originSessionId）会自动回填。写完记忆文件后，在 MEMORY.md 中新增或更新其单行指针。
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md."
+    },
+    "content": {
+      "type": "string",
+      "description": "The complete new file content, including frontmatter."
+    }
+  },
+  "required": [
+    "name",
+    "content"
+  ]
+}
+```
+
+Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/tool-claude-memory/src/index.ts)
+
+四个 memory 工具经宿主 `node:fs` 直接共享 Claude Code 自己的按项目记忆目录（`~/.claude/projects/<slug>/memory/`），绝不经过可替换的 `ctx.fs` provider。`maxIndexBytes` 必填且无默认，本目录声明其取值：25,600，即 Claude Code 会话开始的读取预算。该插件还贡献记忆策略系统提示 section 与一次性的会话开始 MEMORY.md 索引注入；模型可见的策略文本与工具描述见包 README。
 
 <a id="deepseek-aidsh-tool-workflow"></a>
 

@@ -1,0 +1,32 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      { "type": "tool-call-delta", "index": 0, "id": "call_memory_index", "name": "memory_read", "argumentsDelta": "{\"name\":\"MEMORY.md\"}" },
+      { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_memory_index", "name": "memory_read", "arguments": "{\"name\":\"MEMORY.md\"}" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      { "type": "tool-call-delta", "index": 0, "id": "call_memory_save", "name": "memory_write", "argumentsDelta": "{\"name\":\"feedback-deploy-pnpm.md\",\"content\":\"---\\nname: feedback-deploy-pnpm\\ndescription: This project deploys with pnpm, never npm or yarn\\nmetadata:\\n  type: feedback\\n---\\nThis project deploys with pnpm.\\n\\n**Why:** The workspace is pnpm-based; npm installs corrupt the lockfile.\\n\\n**How to apply:** Run installs and script entry through pnpm.\"}" },
+      { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_memory_save", "name": "memory_write", "arguments": "{\"name\":\"feedback-deploy-pnpm.md\",\"content\":\"---\\nname: feedback-deploy-pnpm\\ndescription: This project deploys with pnpm, never npm or yarn\\nmetadata:\\n  type: feedback\\n---\\nThis project deploys with pnpm.\\n\\n**Why:** The workspace is pnpm-based; npm installs corrupt the lockfile.\\n\\n**How to apply:** Run installs and script entry through pnpm.\"}" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "DONE" },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "DONE" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  }
+]
