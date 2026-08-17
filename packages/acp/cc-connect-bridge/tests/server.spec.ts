@@ -118,6 +118,14 @@ describe('initialize', () => {
     await expect(server.initialize({ cwd: '/x', provider: 'p', model: 'm', maxTokens: 0 }))
       .rejects.toThrow(TypeError)
   })
+
+  it('keeps the built-in default route when initialize supplies empty provider/model', async () => {
+    const { server, registry } = makeServer()
+    await server.initialize({ cwd: '/base', provider: '', model: '' })
+    await server.createSession({ sessionId: 's1' })
+    const args = registry.create.mock.calls[0]![0]
+    expect(args.agentOptions).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  })
 })
 
 describe('session/create', () => {

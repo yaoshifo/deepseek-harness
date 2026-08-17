@@ -130,8 +130,10 @@ export class CcConnectBridgeServer {
       throw new TypeError('initialize maxTokens must be a positive safe integer')
     }
     this.cwd = resolve(params.cwd)
-    this.provider = params.provider
-    this.model = params.model
+    // Empty provider/model would fall through to the agent loop's terminal
+    // "has no provider/model" error; keep the last meaningful route instead.
+    this.provider = params.provider || this.provider
+    this.model = params.model || this.model
     this.maxTokens = params.maxTokens
     this.reasoningEffort = params.reasoningEffort
     return { serverInfo: { name: 'dsh-cc-connect-bridge', version: '0.1.0' } }
