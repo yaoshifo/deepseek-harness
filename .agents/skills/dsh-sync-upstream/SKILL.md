@@ -1,6 +1,6 @@
 ---
 name: dsh-sync-upstream
-description: Use when syncing the GitHub upstream (deepseek-ai/deepseek-harness) into the fork's secondary-development branch dev — triggers include "同步上游", "master 有更新", "合到 dev", "sync upstream", "merge upstream into dev". Guarded routine fork maintenance: preview, merge, verify, confirm, push.
+description: "Use when syncing the GitHub upstream (deepseek-ai/deepseek-harness) into the fork's secondary-development branch dev — triggers include 「同步上游」「master 有更新」「合到 dev」「sync upstream」「merge upstream into dev」. Guarded routine fork maintenance: preview, merge, verify, confirm, push."
 ---
 
 # DSH Sync Upstream
