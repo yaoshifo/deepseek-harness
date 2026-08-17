@@ -12,7 +12,7 @@ Claude Code 记忆兼容:dsh 会话直接读写 Claude Code 拥有的按项目�
 2. **会话开始索引注入**:每个会话第一个被采纳的 step 把该项目的 `MEMORY.md`(前 `maxIndexLines` 行或 `maxIndexBytes` 字节,先到为准)折入持久上下文,作为带 source 的 `user/message`(`{ kind: 'claude-memory', version: 1, project, digest }`),由插件自有的 `<system-reminder>` 框架包裹,并声明召回的记忆是背景上下文而非用户指令。注入在每份会话日志中至多发生一次(resume 与 compaction 不重注入;模型用 `memory_read` 获取更新状态)。没有 `MEMORY.md` 就不注入。
 3. **四个工具**(`ctx.tools`),只在记忆目录内操作,直接走宿主 `node:fs`——绝不经过可替换的 `ctx.fs` provider,使共享目录在任何部署形态下都留在本机:`memory_list`、`memory_read`、`memory_write`、`memory_delete`。
 
-`memory_write` 会在已有 frontmatter `metadata:` 块内兜底补上 `node_type: memory` 与 `originSessionId`(dsh 会话 id),对齐 Claude Code harness 在模型 Write 后补写的行为;没有 `metadata:` 块的 frontmatter 与纯正文原样通过。对 `MEMORY.md` 的写入超出任一预算时仍然成功,但返回"把细节移入主题文件并重写索引"的警告。索引行始终由模型撰写——插件绝不生成或改写索引条目,因为单行 hook 的质量正是召回可用性的来源。
+`memory_write` 会在已有 frontmatter `metadata:` 块内兜底补上 `node_type: memory` 与 `originSessionId`(dsh 会话 id),对齐 Claude Code harness 在模型 Write 后补写的行为;没有 `metadata:` 块的 frontmatter 与纯正文原样通过。主题文件名统一规范化为 `.md` 后缀(`MEMORY.md` 保持原名),使索引链接与工具调用一致;写入结果回告实际落盘名,读/删未命中时把 `.md` 后缀按加上/去掉各重试一次,自愈旧会话留下的无扩展名文件。对 `MEMORY.md` 的写入超出任一预算时仍然成功,但返回"把细节移入主题文件并重写索引"的警告。索引行始终由模型撰写——插件绝不生成或改写索引条目,因为单行 hook 的质量正是召回可用性的来源。
 
 ## slug 编码
 
@@ -89,7 +89,7 @@ Before saving, check for an existing file that already covers it. Update that fi
 
 #### 模型看到什么
 
-四个生成的 schema([`memory_list` / `memory_read` / `memory_write` / `memory_delete`](../../../docs/tool-catalog.md#deepseek-aidsh-tool-claude-memory))。结果:`memory_list` 渲染 `name (bytes)` 行或 `No memory directory yet.`;`memory_read` 原文返回;`memory_write` 渲染 `Wrote <lines> lines (<bytes>B)[ + provenance frontmatter][. <index warning>]`;`memory_delete` 渲染 `Deleted.` 或 `No such file.`。稳定失败:`Error: invalid memory name: …`(单段校验)、`Error: memory not found: <name>`、`Error: memory tools require a session working directory`、`Error: memory tools require an owning agent session`。
+四个生成的 schema([`memory_list` / `memory_read` / `memory_write` / `memory_delete`](../../../docs/tool-catalog.md#deepseek-aidsh-tool-claude-memory))。结果:`memory_list` 渲染 `name (bytes)` 行或 `No memory directory yet.`;`memory_read` 原文返回(未命中时按 `.md` 后缀双向重试);`memory_write` 渲染 `Wrote <lines> lines (<bytes>B) to <name>[ + provenance frontmatter][. <index warning>]`;`memory_delete` 渲染 `Deleted.` 或 `No such file.`。稳定失败:`Error: invalid memory name: …`(单段校验)、`Error: memory not found: <name>`、`Error: memory tools require a session working directory`、`Error: memory tools require an owning agent session`。
 
 #### Token 开销
 

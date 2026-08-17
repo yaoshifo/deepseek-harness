@@ -173,7 +173,7 @@ export function apply(ctx: Context, config: Config): void {
     description: TOOLS_DESCRIPTION
       + 'Read one file verbatim, for example MEMORY.md or a topic memory file.',
     parameters: {
-      name: { type: 'string', required: true, description: 'File name inside the memory directory, e.g. MEMORY.md.' },
+      name: { type: 'string', required: true, description: 'File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md. On a miss, the .md suffix is retried added or removed.' },
     },
     output: {
       schema: { type: 'object', additionalProperties: false, properties: { content: { type: 'string', required: true } } },
@@ -195,7 +195,7 @@ export function apply(ctx: Context, config: Config): void {
       + '(node_type, originSessionId) is backfilled automatically. After writing a memory file, '
       + 'add or update its one-line pointer in MEMORY.md.',
     parameters: {
-      name: { type: 'string', required: true, description: 'File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md.' },
+      name: { type: 'string', required: true, description: 'File name inside the memory directory; a missing .md suffix is appended automatically. MEMORY.md is the index.' },
       content: { type: 'string', required: true, description: 'The complete new file content, including frontmatter.' },
     },
     output: {
@@ -203,6 +203,7 @@ export function apply(ctx: Context, config: Config): void {
         type: 'object',
         additionalProperties: false,
         properties: {
+          name: { type: 'string', required: true },
           bytes: { type: 'number', required: true },
           lines: { type: 'number', required: true },
           annotations: { type: 'array', required: true, items: { type: 'string', enum: ['provenance'] } },
@@ -210,8 +211,8 @@ export function apply(ctx: Context, config: Config): void {
         },
       },
       render: (_args, value) => [{ type: 'text', text: value.warning === undefined
-        ? `Wrote ${value.lines} lines (${value.bytes}B)${value.annotations.includes('provenance') ? ' + provenance frontmatter' : ''}.`
-        : `Wrote ${value.lines} lines (${value.bytes}B). ${value.warning}` }],
+        ? `Wrote ${value.lines} lines (${value.bytes}B) to ${value.name}${value.annotations.includes('provenance') ? ' + provenance frontmatter' : ''}.`
+        : `Wrote ${value.lines} lines (${value.bytes}B) to ${value.name}. ${value.warning}` }],
     },
     async execute(args, exec) {
       const { cwd, sessionId } = memorySession(exec.agent)
@@ -224,7 +225,7 @@ export function apply(ctx: Context, config: Config): void {
     description: TOOLS_DESCRIPTION
       + 'Delete one memory file that turned out to be wrong, then remove its line from MEMORY.md.',
     parameters: {
-      name: { type: 'string', required: true, description: 'File name inside the memory directory.' },
+      name: { type: 'string', required: true, description: 'File name inside the memory directory, e.g. feedback-foo.md. On a miss, the .md suffix is retried added or removed.' },
     },
     output: {
       schema: { type: 'object', additionalProperties: false, properties: { deleted: { type: 'boolean', required: true } } },

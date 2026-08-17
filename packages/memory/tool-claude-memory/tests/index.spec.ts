@@ -130,10 +130,12 @@ describe('memory tools', () => {
     context = ctx
     const agent = makeAgent(ctx, { cwd: CWD })
     const write = await call(ctx, 'memory_write', {
-      name: 'feedback-x.md',
+      name: 'feedback-x',
       content: '---\nname: feedback-x\nmetadata:\n  type: feedback\n---\nbody',
     }, agent)
     expect(write.isError).toBe(false)
+    if (write.isError) throw new Error('expected success')
+    expect((write.value as { name: string }).name).toBe('feedback-x.md')
     const read = await call(ctx, 'memory_read', { name: 'feedback-x.md' }, agent)
     expect(read.isError).toBe(false)
     if (read.isError) throw new Error('expected success')

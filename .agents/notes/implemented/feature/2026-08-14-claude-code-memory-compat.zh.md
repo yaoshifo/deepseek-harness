@@ -18,7 +18,7 @@ harness 缺少 Claude Code 持久 auto memory 的等价物:`dsh-agent-instructio
 
 工具走宿主 `node:fs`,绝不走 `ctx.fs` provider:文件系统能力按部署可替换(e2b 沙箱指向远端世界),经它路由记忆 IO 会切断机器本地的共享契约。这是对 provider 可替换性的一个刻意例外,理由是外部产品拥有存储位置。
 
-与 Claude Code 对齐意味着无 schema 强制:frontmatter 质量、索引行 hook、写前去重、删除错误记忆都交给提示词自治。插件只强制信任边界(单段文件名),并在 Claude Code 同样出手的地方补 harness 价值——向已有 frontmatter `metadata:` 块内增量回填 `node_type: memory`/`originSessionId` 溯源(只增量、绝不合成),以及对超预算的 `MEMORY.md` 写入给出事后警告。索引行绝不自动生成;单行 hook 是召回工件,生成的 hook 会无声劣化召回质量。
+与 Claude Code 对齐意味着无 schema 强制:frontmatter 质量、索引行 hook、写前去重、删除错误记忆都交给提示词自治。插件只强制信任边界(单段文件名,并按[记忆文件名后缀规范化](../bug-fix/2026-08-17-memory-name-suffix-normalization.md)统一为 `.md` 后缀),并在 Claude Code 同样出手的地方补 harness 价值——向已有 frontmatter `metadata:` 块内增量回填 `node_type: memory`/`originSessionId` 溯源(只增量、绝不合成),以及对超预算的 `MEMORY.md` 写入给出事后警告。索引行绝不自动生成;单行 hook 是召回工件,生成的 hook 会无声劣化召回质量。
 
 ## Alternatives considered
 

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/memory/tool-claude-memory/README.md
-README.md: d785b9b5bf5bc260f7855a516c9b16302e0a7460
-README.zh.md: cec409a5608f9db18d87bc30379304243e488028
+README.md: b09db8adeb86ce8cbbbee2cfd7df72f0e9609c9b
+README.zh.md: 5b952e405bbf71bfa1f38a3d2f270a5e939d2948

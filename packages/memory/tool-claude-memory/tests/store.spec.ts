@@ -49,8 +49,9 @@ describe('name validation', () => {
     await expect(deleteMemory(root, CWD, name)).rejects.toThrow(/memory name/)
   })
 
-  it('accepts a plain single-segment name without forcing the .md suffix', async () => {
-    const result = await writeMemory(root, CWD, 'plain-name.md', 'body', 's1', LIMITS)
+  it('keeps MEMORY.md exact and reports its stored name', async () => {
+    const result = await writeMemory(root, CWD, 'MEMORY.md', '# Memory Index\n', 's1', LIMITS)
+    expect(result.name).toBe('MEMORY.md')
     expect(result.annotations).toEqual([])
   })
 })
@@ -82,9 +83,34 @@ describe('readMemory', () => {
   it('returns undefined for a missing file', async () => {
     expect(await readMemory(root, CWD, 'missing.md')).toBeUndefined()
   })
+
+  it('reads an extension-less orphan through its .md spelling', async () => {
+    await seed({ orphan: 'legacy body' })
+    expect(await readMemory(root, CWD, 'orphan.md')).toBe('legacy body')
+  })
+
+  it('reads a .md file through its extension-less spelling', async () => {
+    await seed({ 'spelled.md': 'body' })
+    expect(await readMemory(root, CWD, 'spelled')).toBe('body')
+  })
+
+  it('rethrows real IO errors and gives a bare .md name no alternate', async () => {
+    await mkdir(join(dir(), 'a-directory'), { recursive: true })
+    await expect(readMemory(root, CWD, 'a-directory.md')).rejects.toThrow()
+    await expect(deleteMemory(root, CWD, 'a-directory.md')).rejects.toThrow()
+    expect(await readMemory(root, CWD, '.md')).toBeUndefined()
+    expect(await deleteMemory(root, CWD, '.md')).toBe(false)
+  })
 })
 
 describe('writeMemory', () => {
+  it('appends .md to an extension-less name and reports the stored name', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    const result = await writeMemory(root, CWD, 'slug-only', 'body', 's1', LIMITS)
+    expect(result.name).toBe('slug-only.md')
+    expect(await readMemory(root, CWD, 'slug-only.md')).toBe('body')
+  })
+
   it('creates the directory lazily and reports size', async () => {
     await rm(dir(), { recursive: true, force: true })
     const result = await writeMemory(root, CWD, 'fresh.md', 'one\ntwo\n', 's1', LIMITS)
@@ -182,6 +208,14 @@ describe('deleteMemory', () => {
     await seed({ 'doomed.md': 'x' })
     expect(await deleteMemory(root, CWD, 'doomed.md')).toBe(true)
     expect(await readMemory(root, CWD, 'doomed.md')).toBeUndefined()
+  })
+
+  it('deletes through the alternate .md spelling when the exact name misses', async () => {
+    await seed({ 'gone-legacy': 'x', 'stays.md': 'x' })
+    expect(await deleteMemory(root, CWD, 'gone-legacy.md')).toBe(true)
+    expect(await readMemory(root, CWD, 'gone-legacy')).toBeUndefined()
+    expect(await deleteMemory(root, CWD, 'stays')).toBe(true)
+    expect(await readMemory(root, CWD, 'stays.md')).toBeUndefined()
   })
 
   it('returns false for a missing file or directory', async () => {

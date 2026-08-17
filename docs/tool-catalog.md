@@ -745,7 +745,7 @@ Source: [`packages/fs/tool-fs-search/src/index.ts`](../packages/fs/tool-fs-searc
 
 ### `grep`
 
-Search file contents with a ripgrep regular expression. Returns matching lines with line numbers, grouped by file. Returns the first 250 matches inline; a capped result reports where the complete match list was saved. Use read on a matched file for surrounding context.
+Search file contents with a ripgrep regular expression. Returns matching lines with line numbers, grouped by file. Returns the first 250 matches inline; a capped result reports where the complete match list was saved. For code symbols — definitions, references, or implementations — prefer the lsp tool: it resolves the symbol semantically instead of matching text. Use read on a matched file for surrounding context.
 
 ```json
 {
@@ -1744,7 +1744,7 @@ These tools operate only inside your persistent memory directory shared with Cla
   "properties": {
     "name": {
       "type": "string",
-      "description": "File name inside the memory directory."
+      "description": "File name inside the memory directory, e.g. feedback-foo.md. On a miss, the .md suffix is retried added or removed."
     }
   },
   "required": [
@@ -1778,7 +1778,7 @@ These tools operate only inside your persistent memory directory shared with Cla
   "properties": {
     "name": {
       "type": "string",
-      "description": "File name inside the memory directory, e.g. MEMORY.md."
+      "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md. On a miss, the .md suffix is retried added or removed."
     }
   },
   "required": [
@@ -1799,7 +1799,7 @@ These tools operate only inside your persistent memory directory shared with Cla
   "properties": {
     "name": {
       "type": "string",
-      "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md."
+      "description": "File name inside the memory directory; a missing .md suffix is appended automatically. MEMORY.md is the index."
     },
     "content": {
       "type": "string",

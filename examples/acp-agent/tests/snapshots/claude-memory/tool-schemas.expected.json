@@ -208,7 +208,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "File name inside the memory directory."
+            "description": "File name inside the memory directory, e.g. feedback-foo.md. On a miss, the .md suffix is retried added or removed."
           }
         },
         "required": [
@@ -232,7 +232,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "File name inside the memory directory, e.g. MEMORY.md."
+            "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md. On a miss, the .md suffix is retried added or removed."
           }
         },
         "required": [
@@ -248,7 +248,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md."
+            "description": "File name inside the memory directory; a missing .md suffix is appended automatically. MEMORY.md is the index."
           },
           "content": {
             "type": "string",

@@ -1747,7 +1747,7 @@ todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为
   "properties": {
     "name": {
       "type": "string",
-      "description": "File name inside the memory directory."
+      "description": "File name inside the memory directory, e.g. feedback-foo.md. On a miss, the .md suffix is retried added or removed."
     }
   },
   "required": [
@@ -1781,7 +1781,7 @@ Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/t
   "properties": {
     "name": {
       "type": "string",
-      "description": "File name inside the memory directory, e.g. MEMORY.md."
+      "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md. On a miss, the .md suffix is retried added or removed."
     }
   },
   "required": [
@@ -1802,7 +1802,7 @@ Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/t
   "properties": {
     "name": {
       "type": "string",
-      "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md."
+      "description": "File name inside the memory directory; a missing .md suffix is appended automatically. MEMORY.md is the index."
     },
     "content": {
       "type": "string",

@@ -25,6 +25,8 @@ export interface MemoryEntry {
 
 /** Outcome of one {@link writeMemory} call. */
 export interface MemoryWriteResult {
+  /** On-disk file name after `.md` normalization. */
+  name: string
   /** UTF-8 byte size of the stored content. */
   bytes: number
   /** Line count of the stored content. */
@@ -63,6 +65,36 @@ function assertMemoryName(name: string): void {
     || name === '.' || name === '..'
   ) {
     throw new Error(`invalid memory name: ${JSON.stringify(name)}`)
+  }
+}
+
+/**
+ * The on-disk name for one memory write: every topic file carries the `.md`
+ * suffix so index links and tool calls agree; `MEMORY.md` stays exact.
+ */
+function resolveMemoryFileName(name: string): string {
+  return name === 'MEMORY.md' || name.endsWith('.md') ? name : `${name}.md`
+}
+
+/**
+ * The alternate spelling for one missed memory name — with or without the
+ * `.md` suffix — so reads and deletes heal extension-less legacy files and
+ * names the writer normalized. `undefined` when no distinct alternate exists.
+ */
+function alternateMemoryName(name: string): string | undefined {
+  if (name.endsWith('.md')) {
+    return name.length > '.md'.length ? name.slice(0, -'.md'.length) : undefined
+  }
+  return `${name}.md`
+}
+
+/** Read one UTF-8 file, mapping ENOENT to `undefined` so a miss stays distinguishable from failure. */
+async function readFileOrNull(path: string, signal?: AbortSignal): Promise<string | undefined> {
+  try {
+    return await readFile(path, { encoding: 'utf8', signal })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
   }
 }
 
@@ -141,22 +173,23 @@ export async function listMemory(claudeHome: string, cwd: string): Promise<Memor
 }
 
 /**
- * Read one memory file verbatim.
+ * Read one memory file verbatim. A miss is retried once with the `.md` suffix
+ * added or removed, healing extension-less legacy files and normalized names.
  *
  * @param claudeHome - root holding `projects/`.
  * @param cwd - absolute POSIX session working directory.
  * @param name - single-segment file name inside the memory directory.
  * @param signal - cancellation for the read.
- * @returns the file content, or `undefined` when the file does not exist.
+ * @returns the file content, or `undefined` when neither spelling exists.
  */
 export async function readMemory(claudeHome: string, cwd: string, name: string, signal?: AbortSignal): Promise<string | undefined> {
   assertMemoryName(name)
-  try {
-    return await readFile(join(resolveMemoryDir(claudeHome, cwd), name), { encoding: 'utf8', signal })
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw error
-  }
+  const dir = resolveMemoryDir(claudeHome, cwd)
+  const exact = await readFileOrNull(join(dir, name), signal)
+  if (exact !== undefined) return exact
+  const alternate = alternateMemoryName(name)
+  if (alternate === undefined) return undefined
+  return await readFileOrNull(join(dir, alternate), signal)
 }
 
 /**
@@ -171,7 +204,7 @@ export async function readMemory(claudeHome: string, cwd: string, name: string, 
  * @param sessionId - the writing dsh session id, recorded as provenance.
  * @param limits - index budget applied to a MEMORY.md write.
  * @param signal - cancellation for directory creation and the write.
- * @returns the stored size, line count, provenance annotation, and any index warning.
+ * @returns the stored name, size, line count, provenance annotation, and any index warning.
  */
 export async function writeMemory(
   claudeHome: string,
@@ -183,20 +216,22 @@ export async function writeMemory(
   signal?: AbortSignal,
 ): Promise<MemoryWriteResult> {
   assertMemoryName(name)
+  const fileName = resolveMemoryFileName(name)
   const dir = resolveMemoryDir(claudeHome, cwd)
   await mkdir(dir, { recursive: true })
   let stored = content
   const annotations: ('provenance')[] = []
-  if (name !== 'MEMORY.md') {
+  if (fileName !== 'MEMORY.md') {
     const backfilled = backfillProvenance(content, sessionId)
     stored = backfilled.content
     if (backfilled.backfilled) annotations.push('provenance')
   }
-  const temp = join(dir, `.${name}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`)
+  const temp = join(dir, `.${fileName}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`)
   await writeFile(temp, stored, { encoding: 'utf8', signal })
-  await rename(temp, join(dir, name))
-  const warning = name === 'MEMORY.md' ? indexWarning(stored, limits) : undefined
+  await rename(temp, join(dir, fileName))
+  const warning = fileName === 'MEMORY.md' ? indexWarning(stored, limits) : undefined
   return {
+    name: fileName,
     bytes: Buffer.byteLength(stored, 'utf8'),
     lines: countLines(stored),
     annotations,
@@ -205,7 +240,8 @@ export async function writeMemory(
 }
 
 /**
- * Delete one memory file.
+ * Delete one memory file. A miss is retried once with the `.md` suffix added
+ * or removed, mirroring {@link readMemory}.
  *
  * @param claudeHome - root holding `projects/`.
  * @param cwd - absolute POSIX session working directory.
@@ -214,8 +250,16 @@ export async function writeMemory(
  */
 export async function deleteMemory(claudeHome: string, cwd: string, name: string): Promise<boolean> {
   assertMemoryName(name)
+  const dir = resolveMemoryDir(claudeHome, cwd)
+  const alternate = alternateMemoryName(name)
+  return await removeOnce(join(dir, name))
+    || (alternate !== undefined && await removeOnce(join(dir, alternate)))
+}
+
+/** Remove one file, mapping ENOENT to `false` so a miss stays distinguishable from failure. */
+async function removeOnce(path: string): Promise<boolean> {
   try {
-    await rm(join(resolveMemoryDir(claudeHome, cwd), name))
+    await rm(path)
     return true
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
