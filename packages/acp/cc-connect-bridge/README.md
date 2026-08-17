@@ -42,6 +42,8 @@ dsh 与 cc-connect 是两个进程层——agent 在 dsh 层自我修改，**cc-
 | `~/.dsh/AGENTS.md`（全局指令） | 立即 | 同 CLAUDE.md 监听 |
 | 本包源码（`src/`） | 下一会话（新进程）：`link:` 软链直读，`pnpm run build:lib` 后即生效，无需 reinstall | per-session spawn |
 
+**改 lib 源码的一键生效**：`./reload.sh`（本包）——构建 host 面 + SIGTERM 回收空闲 dsh 进程。各会话下一条消息由 engine 以同 session id respawn 并 resume（上下文保留），cc-connect 零重启。从 dsh 会话内（如 agent 自改 harness 后）跑会**自动跳过调用者自己的进程**（/proc 祖先探测），不会自杀当前 turn；其它 mid-turn 会话的当前 turn 会被打断（transcript 回退到最近完整 turn，重发即恢复）；有长任务在跑时用 `--no-recycle` 只构建。
+
 已知天花板：HMR 发生在 turn 进行中时，恢复不在 prompt 路径上——由 cc-connect 侧 stall watchdog 兜底；transcript 恢复到最近完整 turn 边界。
 
 默认 sandbox 为 workspace-write：写 `~/.dsh/**`、`~/.claude/skills/**` 等 workspace 外路径会被拦并触发升级审批（cc-connect 飞书审批卡放行单次写入，审计事件落 session log）。想零摩擦可在 profile patch 里把 `sandbox-policy.mode` 改为 `danger-full-access`。
