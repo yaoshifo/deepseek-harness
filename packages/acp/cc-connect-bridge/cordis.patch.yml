@@ -3,3 +3,19 @@
 - insert:
     - id: cc-connect-bridge
       name: '@deepseek-ai/dsh-cc-connect-bridge'
+
+# cc-connect 场景下 agent 需要完整文件系统与 keychain 访问（git/gh 凭证、
+# 构建产物等），对齐 claudecode 后端的无 bash 沙箱行为。workspace-write 会
+# 阻断 gh 读 macOS keychain（GitHub OAuth token 存此），致 git pull 认证失败。
+- id: sandbox-policy
+  config:
+    mode: 'danger-full-access'
+    workspaceRoot: !!js process.cwd()
+
+# permission-presets 需显式 defaultPreset：sandbox mode=danger-full-access 时
+# composed defaults（sandbox=danger-full-access + approval 读 env DSH_PERMISSION_MODE
+# 默认 ask）匹配不到 preset（danger-full-access preset 要 approval=never）→
+# dsh boot 崩 exit 1。defaultPreset 绕过 composed 匹配直接指定。
+- id: permission
+  config:
+    defaultPreset: danger-full-access
