@@ -532,7 +532,7 @@ const TOOL_PACKAGES: ToolPackage[] = [
       await ctx.plugin(ToolClaudeMemory, { claudeHome: join(tmpdir(), 'dsh-tool-catalog-claude-memory'), maxIndexBytes: 25_600 })
     },
     note:
-      'The four memory tools share Claude Code\'s own per-project memory directory (`~/.claude/projects/<slug>/memory/`) through host `node:fs`, never the swappable `ctx.fs` provider. `maxIndexBytes` is required with no default, so the catalog states its choice: 25,600, Claude Code\'s session-start read budget. The plugin also contributes a memory-strategy system-prompt section and a one-time session-start MEMORY.md index injection; the model-facing strategy text and tool descriptions live in the package README.',
+      'The memory tools share Claude Code\'s own per-project memory directory (`~/.claude/projects/<slug>/memory/`) through host `node:fs`, never the swappable `ctx.fs` provider. `maxIndexBytes` is required with no default, so the catalog states its choice: 25,600, Claude Code\'s session-start read budget. The plugin also contributes a memory-strategy system-prompt section and a one-time session-start MEMORY.md index injection; the model-facing strategy text and tool descriptions live in the package README.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-workflow',

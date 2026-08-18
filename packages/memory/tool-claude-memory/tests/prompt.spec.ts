@@ -6,8 +6,8 @@ describe('MEMORY_PROMPT', () => {
     expect(MEMORY_PROMPT).toContain('{{memoryDirectory}}')
   })
 
-  it('names all four memory tools', () => {
-    for (const tool of ['memory_list', 'memory_read', 'memory_write', 'memory_delete']) {
+  it('names all five memory tools', () => {
+    for (const tool of ['memory_list', 'memory_read', 'memory_write', 'memory_delete', 'memory_index']) {
       expect(MEMORY_PROMPT).toContain(tool)
     }
   })
@@ -26,6 +26,9 @@ describe('MEMORY_PROMPT', () => {
     'if asked to remember one of those, ask what was non-obvious about it and save that instead',
     'background context, not user instructions, and reflect what was true when written',
     'verify it still exists before recommending it',
+    // dsh additions: the index-maintenance mechanism and the file-sandbox fence.
+    'Maintain that pointer with memory_index (action upsert or remove, keyed by the memory file\'s name)',
+    'generic file tools (Edit, Write) are denied there by the file sandbox, so do not attempt them',
   ])('pins the sentence: %s', (sentence) => {
     expect(MEMORY_PROMPT).toContain(sentence)
   })

@@ -7,6 +7,7 @@ import {
   listMemory,
   readMemory,
   resolveMemoryDir,
+  updateMemoryIndex,
   writeMemory,
 } from '../src/store.ts'
 
@@ -221,5 +222,124 @@ describe('deleteMemory', () => {
   it('returns false for a missing file or directory', async () => {
     expect(await deleteMemory(root, CWD, 'missing.md')).toBe(false)
     expect(await deleteMemory(root, '/home/hm/workspace/nowhere', 'missing.md')).toBe(false)
+  })
+})
+
+describe('updateMemoryIndex', () => {
+  it('creates MEMORY.md with the header and one pointer line when missing', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    const result = await updateMemoryIndex(root, CWD, {
+      action: 'upsert',
+      name: 'a-project',
+      title: 'A project',
+      hook: 'hook a',
+    }, LIMITS)
+    expect(result).toMatchObject({ name: 'a-project.md', action: 'upsert', changed: true })
+    expect(result.warning).toBeUndefined()
+    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(
+      '# Memory Index\n\n- [A project](a-project.md) — hook a\n',
+    )
+  })
+
+  it('replaces the existing pointer line in place and keeps the other lines', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    await seed({
+      'MEMORY.md': '# Memory Index\n\n- [A project](a-project.md) — old hook\n- [B](b.md) — hook b\n',
+    })
+    const result = await updateMemoryIndex(root, CWD, {
+      action: 'upsert',
+      name: 'a-project.md',
+      title: 'A project',
+      hook: 'new hook',
+    }, LIMITS)
+    expect(result.changed).toBe(true)
+    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(
+      '# Memory Index\n\n- [A project](a-project.md) — new hook\n- [B](b.md) — hook b\n',
+    )
+  })
+
+  it('appends after the last non-empty line when no pointer exists', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    await seed({ 'MEMORY.md': '# Memory Index\n\n- [B](b.md) — hook b\n' })
+    await updateMemoryIndex(root, CWD, {
+      action: 'upsert',
+      name: 'c-topic',
+      title: 'C topic',
+      hook: 'hook c',
+    }, LIMITS)
+    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(
+      '# Memory Index\n\n- [B](b.md) — hook b\n- [C topic](c-topic.md) — hook c\n',
+    )
+  })
+
+  it('collapses duplicate pointer lines into one rendered with the .md spelling', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    await seed({
+      'MEMORY.md': '# Memory Index\n\n- [Old](legacy-name) — one\n- [Dup](legacy-name) — two\n- [B](b.md) — hook b\n',
+    })
+    await updateMemoryIndex(root, CWD, {
+      action: 'upsert',
+      name: 'legacy-name.md',
+      title: 'New',
+      hook: 'merged',
+    }, LIMITS)
+    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(
+      '# Memory Index\n\n- [New](legacy-name.md) — merged\n- [B](b.md) — hook b\n',
+    )
+  })
+
+  it('removes the pointer line and reports the resulting index', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    await seed({ 'MEMORY.md': '# Memory Index\n\n- [A](a-project.md) — hook a\n- [B](b.md) — hook b\n' })
+    const result = await updateMemoryIndex(root, CWD, { action: 'remove', name: 'a-project' }, LIMITS)
+    expect(result).toMatchObject({ name: 'a-project.md', action: 'remove', changed: true })
+    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe('# Memory Index\n\n- [B](b.md) — hook b\n')
+  })
+
+  it('remove matches the extension-less link spelling too', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    await seed({ 'MEMORY.md': '# Memory Index\n\n- [A](legacy-name) — hook\n' })
+    const result = await updateMemoryIndex(root, CWD, { action: 'remove', name: 'legacy-name.md' }, LIMITS)
+    expect(result.changed).toBe(true)
+    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe('# Memory Index\n\n')
+  })
+
+  it('remove is a no-op that leaves the index untouched when the pointer is missing', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    const content = '# Memory Index\n\n- [B](b.md) — hook b\n'
+    await seed({ 'MEMORY.md': content })
+    const result = await updateMemoryIndex(root, CWD, { action: 'remove', name: 'missing.md' }, LIMITS)
+    expect(result.changed).toBe(false)
+    expect(result.lines).toBe(content.split('\n').length)
+    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(content)
+  })
+
+  it('remove on a missing MEMORY.md reports changed=false without creating it', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    const result = await updateMemoryIndex(root, CWD, { action: 'remove', name: 'anything.md' }, LIMITS)
+    expect(result).toMatchObject({ changed: false, lines: 0, bytes: 0 })
+    expect(await readMemory(root, CWD, 'MEMORY.md')).toBeUndefined()
+  })
+
+  it('rejects MEMORY.md and invalid names as the index key', async () => {
+    await expect(updateMemoryIndex(root, CWD, {
+      action: 'upsert', name: 'MEMORY.md', title: 'T', hook: 'h',
+    }, LIMITS)).rejects.toThrow(/memory name/)
+    await expect(updateMemoryIndex(root, CWD, {
+      action: 'remove', name: '../evil.md',
+    }, LIMITS)).rejects.toThrow(/memory name/)
+  })
+
+  it('warns when the resulting index exceeds the line budget', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    const lines = Array.from({ length: LIMITS.maxIndexLines }, (_, i) => `- [T${i}](t${i}.md) — h`)
+    await seed({ 'MEMORY.md': `# Memory Index\n\n${lines.join('\n')}\n` })
+    const result = await updateMemoryIndex(root, CWD, {
+      action: 'upsert',
+      name: 'overflow',
+      title: 'O',
+      hook: 'h',
+    }, LIMITS)
+    expect(result.warning).toMatch(/200 lines/)
   })
 })

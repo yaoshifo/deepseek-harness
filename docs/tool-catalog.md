@@ -37,7 +37,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-tool-subagent-report` | `report` | `ctx.subagents`, `ctx.systemPrompt`, `a live continuable in-process child Agent` | `tool/call`, `tool/result`, `a user-role message in the direct parent session` | - | Registered per continuable in-process child rather than globally, so this schema is visible only inside such a child and survives its global `toolFilter`. The same contribution installs the child-scoped `tool:report` prompt section, which this catalog does not render. The parent-facing `send_message` tool is installed independently. |
 | `@deepseek-ai/dsh-tool-jobs` | `job_kill`, `job_list`, `job_output` | `ctx.tools`, `ctx.jobs`, `ctx.systemPrompt` | `tool/call`, `tool/result`, `user/message via agent.inject() for background completion notices` | - | The kind-agnostic background-job controller: background bash commands, PTY sends, and subagents are read, listed, and killed through the same three tools. Loading the plugin attaches the controller that arms producers' `ctx.jobs.start()`. |
 | `@deepseek-ai/dsh-tool-todo` | `todo_write` | `ctx.tools`, `owning Agent session` | `tool/call`, `todo/write`, `tool/result` | - | todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task. |
-| `@deepseek-ai/dsh-tool-claude-memory` | `memory_delete`, `memory_list`, `memory_read`, `memory_write` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agents`, `host ~/.claude directory` | `tool/call`, `user/message (sourced claude-memory index injection)`, `tool/result` | - | The four memory tools share Claude Code's own per-project memory directory (`~/.claude/projects/<slug>/memory/`) through host `node:fs`, never the swappable `ctx.fs` provider. `maxIndexBytes` is required with no default, so the catalog states its choice: 25,600, Claude Code's session-start read budget. The plugin also contributes a memory-strategy system-prompt section and a one-time session-start MEMORY.md index injection; the model-facing strategy text and tool descriptions live in the package README. |
+| `@deepseek-ai/dsh-tool-claude-memory` | `memory_delete`, `memory_index`, `memory_list`, `memory_read`, `memory_write` | `ctx.tools`, `ctx.systemPrompt`, `ctx.agents`, `host ~/.claude directory` | `tool/call`, `user/message (sourced claude-memory index injection)`, `tool/result` | - | The memory tools share Claude Code's own per-project memory directory (`~/.claude/projects/<slug>/memory/`) through host `node:fs`, never the swappable `ctx.fs` provider. `maxIndexBytes` is required with no default, so the catalog states its choice: 25,600, Claude Code's session-start read budget. The plugin also contributes a memory-strategy system-prompt section and a one-time session-start MEMORY.md index injection; the model-facing strategy text and tool descriptions live in the package README. |
 | `@deepseek-ai/dsh-tool-workflow` | `workflow` | `ctx.tools`, `ctx.workflowEngine`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents the script children)` | `tool/call`, `tool/result` | - | - |
 | `@deepseek-ai/dsh-tool-web` | `web_fetch`, `web_search` | `ctx.tools`, `ctx.web`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | web_search and web_fetch keep provider selection behind ctx.web so model-visible schemas stay stable across backend swaps. |
 
@@ -1736,7 +1736,7 @@ todo_write is session-owned state; UIs render the latest todo/write event as a c
 
 ### `memory_delete`
 
-These tools operate only inside your persistent memory directory shared with Claude Code. Delete one memory file that turned out to be wrong, then remove its line from MEMORY.md.
+These tools operate only inside your persistent memory directory shared with Claude Code. Delete one memory file that turned out to be wrong, then remove its line from MEMORY.md with memory_index.
 
 ```json
 {
@@ -1748,6 +1748,44 @@ These tools operate only inside your persistent memory directory shared with Cla
     }
   },
   "required": [
+    "name"
+  ]
+}
+```
+
+Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/tool-claude-memory/src/index.ts)
+
+### `memory_index`
+
+These tools operate only inside your persistent memory directory shared with Claude Code. Upsert or remove one pointer line in the MEMORY.md index, keyed by the memory file's name. Prefer this over rewriting the whole index with memory_write.
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "description": "upsert inserts or updates the pointer line; remove deletes it.",
+      "enum": [
+        "upsert",
+        "remove"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "description": "Memory file the pointer line links to, e.g. feedback-foo.md; a missing .md suffix is appended automatically."
+    },
+    "title": {
+      "type": "string",
+      "description": "Pointer-line link text; required for upsert and must stay single-line."
+    },
+    "hook": {
+      "type": "string",
+      "description": "One-line hook rendered after the em dash; required for upsert and must stay single-line."
+    }
+  },
+  "required": [
+    "action",
     "name"
   ]
 }
@@ -1791,7 +1829,7 @@ Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/t
 
 ### `memory_write`
 
-These tools operate only inside your persistent memory directory shared with Claude Code. Write one memory file with the COMPLETE content (full replacement, no partial edits). The directory is created on demand; no mkdir is needed. Frontmatter provenance (node_type, originSessionId) is backfilled automatically. After writing a memory file, add or update its one-line pointer in MEMORY.md.
+These tools operate only inside your persistent memory directory shared with Claude Code. Write one memory file with the COMPLETE content (full replacement, no partial edits). The directory is created on demand; no mkdir is needed. Frontmatter provenance (node_type, originSessionId) is backfilled automatically. After writing a memory file, add or update its one-line pointer in MEMORY.md with memory_index.
 
 ```json
 {
@@ -1815,7 +1853,7 @@ These tools operate only inside your persistent memory directory shared with Cla
 
 Source: [`packages/memory/tool-claude-memory/src/index.ts`](../packages/memory/tool-claude-memory/src/index.ts)
 
-The four memory tools share Claude Code's own per-project memory directory (`~/.claude/projects/<slug>/memory/`) through host `node:fs`, never the swappable `ctx.fs` provider. `maxIndexBytes` is required with no default, so the catalog states its choice: 25,600, Claude Code's session-start read budget. The plugin also contributes a memory-strategy system-prompt section and a one-time session-start MEMORY.md index injection; the model-facing strategy text and tool descriptions live in the package README.
+The memory tools share Claude Code's own per-project memory directory (`~/.claude/projects/<slug>/memory/`) through host `node:fs`, never the swappable `ctx.fs` provider. `maxIndexBytes` is required with no default, so the catalog states its choice: 25,600, Claude Code's session-start read budget. The plugin also contributes a memory-strategy system-prompt section and a one-time session-start MEMORY.md index injection; the model-facing strategy text and tool descriptions live in the package README.
 
 <a id="deepseek-aidsh-tool-workflow"></a>
 

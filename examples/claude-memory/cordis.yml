@@ -2,7 +2,8 @@
 # ~/.claude/projects/<slug>/memory/ directory with Claude Code: the session
 # start injects the project's MEMORY.md index, the system prompt carries the
 # verbatim Claude Code memory strategy, and memory_list/memory_read/
-# memory_write/memory_delete read and write the same files Claude Code does.
+# memory_write/memory_delete/memory_index read and write the same files
+# Claude Code does.
 - insert:
     - id: claude-memory
       name: '@deepseek-ai/dsh-tool-claude-memory'

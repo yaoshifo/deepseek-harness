@@ -177,6 +177,48 @@ describe('memory tools', () => {
     expect(result.isError).toBe(true)
     void agent
   })
+
+  it('upserts and removes a pointer line through memory_index', async () => {
+    const ctx = await setup()
+    context = ctx
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const upsert = await call(ctx, 'memory_index', {
+      action: 'upsert',
+      name: 'feedback-x',
+      title: 'Feedback X',
+      hook: 'about x',
+    }, agent)
+    expect(upsert.isError).toBe(false)
+    if (upsert.isError) throw new Error('expected success')
+    expect(upsert.value).toMatchObject({ name: 'feedback-x.md', action: 'upsert', changed: true })
+    const indexed = await call(ctx, 'memory_read', { name: 'MEMORY.md' }, agent)
+    expect(indexed.isError).toBe(false)
+    if (indexed.isError) throw new Error('expected success')
+    expect((indexed.value as { content: string }).content).toContain('- [Feedback X](feedback-x.md) — about x')
+    const remove = await call(ctx, 'memory_index', { action: 'remove', name: 'feedback-x.md' }, agent)
+    expect(remove.isError).toBe(false)
+    if (remove.isError) throw new Error('expected success')
+    expect(remove.value).toMatchObject({ name: 'feedback-x.md', action: 'remove', changed: true })
+    const after = await call(ctx, 'memory_read', { name: 'MEMORY.md' }, agent)
+    expect(after.isError).toBe(false)
+    if (after.isError) throw new Error('expected success')
+    expect((after.value as { content: string }).content).not.toContain('](feedback-x.md)')
+  })
+
+  it('rejects a memory_index upsert missing title or hook, and multi-line values', async () => {
+    const ctx = await setup()
+    context = ctx
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const bare = await call(ctx, 'memory_index', { action: 'upsert', name: 'x' }, agent)
+    expect(bare.isError).toBe(true)
+    const multiline = await call(ctx, 'memory_index', {
+      action: 'upsert',
+      name: 'x',
+      title: 'T\nT',
+      hook: 'h',
+    }, agent)
+    expect(multiline.isError).toBe(true)
+  })
 })
 
 /** Enter-message count for one decision; rejects non-enter outcomes loudly. */

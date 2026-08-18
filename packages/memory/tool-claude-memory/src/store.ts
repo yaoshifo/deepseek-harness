@@ -37,6 +37,39 @@ export interface MemoryWriteResult {
   warning?: string
 }
 
+/** One MEMORY.md pointer-line change: insert-or-update, or remove. */
+export type MemoryIndexChange =
+  | {
+    readonly action: 'upsert'
+    /** The memory file the pointer line links to; `.md` is normalized like every other name. */
+    readonly name: string
+    /** The link text, rendered as `- [title](name.md) — hook`. */
+    readonly title: string
+    /** The one-line hook rendered after the em dash. */
+    readonly hook: string
+  }
+  | {
+    readonly action: 'remove'
+    /** The memory file whose pointer line is removed. */
+    readonly name: string
+  }
+
+/** Outcome of one {@link updateMemoryIndex} call. */
+export interface MemoryIndexResult {
+  /** The memory file name after `.md` normalization. */
+  name: string
+  /** Which change ran. */
+  action: 'upsert' | 'remove'
+  /** Whether MEMORY.md content actually changed; a no-op writes nothing. */
+  changed: boolean
+  /** Line count of the resulting index (0 when no index exists). */
+  lines: number
+  /** UTF-8 byte size of the resulting index (0 when no index exists). */
+  bytes: number
+  /** Present when the resulting index exceeded a limit; the change still succeeded. */
+  warning?: string
+}
+
 /** Index budget applied to MEMORY.md writes. */
 export interface IndexLimits {
   maxIndexLines: number
@@ -265,4 +298,114 @@ async function removeOnce(path: string): Promise<boolean> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
     throw error
   }
+}
+
+/**
+ * Upsert or remove one memory file's pointer line in MEMORY.md, keyed by the
+ * line's link target. Matching tolerates both `.md` spellings and collapses
+ * duplicate lines into one; an upsert with no match appends after the last
+ * non-empty line, creating the index with its `# Memory Index` header when
+ * missing. A no-op remove writes nothing. The write is the same atomic
+ * temp-and-rename as {@link writeMemory}, with the same last-write-wins
+ * semantics against a concurrent full-index `memory_write`.
+ *
+ * @param claudeHome - root holding `projects/`.
+ * @param cwd - absolute POSIX session working directory.
+ * @param change - the pointer-line upsert or remove.
+ * @param limits - index budget applied to the resulting MEMORY.md.
+ * @param signal - cancellation for the directory creation and the write.
+ * @returns the normalized name, whether content changed, and the resulting index stats.
+ */
+export async function updateMemoryIndex(
+  claudeHome: string,
+  cwd: string,
+  change: MemoryIndexChange,
+  limits: IndexLimits,
+  signal?: AbortSignal,
+): Promise<MemoryIndexResult> {
+  assertMemoryName(change.name)
+  if (change.name === 'MEMORY.md') {
+    throw new Error(`invalid memory name: ${JSON.stringify(change.name)} (the index cannot point at itself)`)
+  }
+  const fileName = resolveMemoryFileName(change.name)
+  const alternate = alternateMemoryName(fileName)
+  const dir = resolveMemoryDir(claudeHome, cwd)
+  const current = await readFileOrNull(join(dir, 'MEMORY.md'), signal)
+  if (current === undefined && change.action === 'remove') {
+    return { name: fileName, action: 'remove', changed: false, lines: 0, bytes: 0 }
+  }
+
+  /** Whether one line is a pointer to this memory file under either spelling. */
+  const pointsAt = (line: string): boolean =>
+    line.includes(`](${fileName})`) || (alternate !== undefined && line.includes(`](${alternate})`))
+
+  if (current === undefined) {
+    // A missing index gains its canonical header and the first pointer line.
+    const stored = change.action === 'upsert'
+      ? `# Memory Index\n\n- [${change.title}](${fileName}) — ${change.hook}\n`
+      : ''
+    if (stored === '') {
+      return { name: fileName, action: 'remove', changed: false, lines: 0, bytes: 0 }
+    }
+    await writeStoredIndex(dir, stored, signal)
+    const warning = indexWarning(stored, limits)
+    return {
+      name: fileName,
+      action: 'upsert',
+      changed: true,
+      lines: countLines(stored),
+      bytes: Buffer.byteLength(stored, 'utf8'),
+      ...(warning !== undefined ? { warning } : {}),
+    }
+  }
+
+  const result: string[] = []
+  let changed = false
+  let placed = false
+  for (const line of current.split('\n')) {
+    if (!pointsAt(line)) {
+      result.push(line)
+      continue
+    }
+    changed = true
+    if (change.action === 'upsert' && !placed) {
+      result.push(`- [${change.title}](${fileName}) — ${change.hook}`)
+      placed = true
+    }
+  }
+  if (change.action === 'upsert' && !placed) {
+    let at = result.length
+    while (at > 0 && (result[at - 1] ?? '').trim() === '') at--
+    result.splice(at, 0, `- [${change.title}](${fileName}) — ${change.hook}`)
+    changed = true
+  }
+  if (!changed) {
+    return {
+      name: fileName,
+      action: change.action,
+      changed: false,
+      lines: countLines(current),
+      bytes: Buffer.byteLength(current, 'utf8'),
+    }
+  }
+
+  const stored = result.join('\n')
+  await writeStoredIndex(dir, stored, signal)
+  const warning = indexWarning(stored, limits)
+  return {
+    name: fileName,
+    action: change.action,
+    changed: true,
+    lines: countLines(stored),
+    bytes: Buffer.byteLength(stored, 'utf8'),
+    ...(warning !== undefined ? { warning } : {}),
+  }
+}
+
+/** Atomically replace MEMORY.md with `stored` through a temp file and rename. */
+async function writeStoredIndex(dir: string, stored: string, signal?: AbortSignal): Promise<void> {
+  await mkdir(dir, { recursive: true })
+  const temp = join(dir, `.MEMORY.md.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`)
+  await writeFile(temp, stored, { encoding: 'utf8', signal })
+  await rename(temp, join(dir, 'MEMORY.md'))
 }

@@ -4,7 +4,7 @@
  * Shares one machine-local memory directory per working directory with Claude
  * Code (`~/.claude/projects/<slug>/memory/`): the verbatim memory strategy
  * enters the system prompt, the MEMORY.md index enters durable context once
- * per session, and four memory tools read and write the same files Claude Code
+ * per session, and the memory tools read and write the same files Claude Code
  * reads and writes. Storage goes through `node:fs` directly — never the
  * swappable `ctx.fs` provider — so the shared directory stays machine-local in
  * every deployment shape.
@@ -22,8 +22,8 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { hasMemoryInjection, readMemoryIndex, renderIndexInjection } from './inject.ts'
 import { MEMORY_PROMPT } from './prompt.ts'
 import { claudeProjectSlug } from './slug.ts'
-import { deleteMemory, listMemory, readMemory, resolveMemoryDir, writeMemory } from './store.ts'
-import type { IndexLimits } from './store.ts'
+import { deleteMemory, listMemory, readMemory, resolveMemoryDir, updateMemoryIndex, writeMemory } from './store.ts'
+import type { IndexLimits, MemoryIndexChange } from './store.ts'
 
 export { claudeProjectSlug } from './slug.ts'
 export {
@@ -31,9 +31,10 @@ export {
   listMemory,
   readMemory,
   resolveMemoryDir,
+  updateMemoryIndex,
   writeMemory,
 } from './store.ts'
-export type { IndexLimits, MemoryEntry, MemoryWriteResult } from './store.ts'
+export type { IndexLimits, MemoryEntry, MemoryIndexChange, MemoryIndexResult, MemoryWriteResult } from './store.ts'
 export { hasMemoryInjection, readMemoryIndex, renderIndexInjection } from './inject.ts'
 export type { MemoryIndexContent } from './inject.ts'
 export { MEMORY_PROMPT } from './prompt.ts'
@@ -73,7 +74,7 @@ export const Config: z<Config> = z.object({
   maxIndexLines: z.number(),
 })
 
-/** Description fragments shared by the four memory tools. */
+/** Description fragment shared by every memory tool. */
 const TOOLS_DESCRIPTION =
   'These tools operate only inside your persistent memory directory shared with Claude Code. '
 
@@ -115,8 +116,19 @@ function memoryCwd(agent: { session: { header: { cwd?: string } } } | undefined)
   return cwd !== undefined && isPosixCwd(cwd) ? cwd : undefined
 }
 
+/** Require a non-empty, single-line `memory_index` upsert field. */
+function singleLine(field: 'title' | 'hook', value: string | undefined): string {
+  if (value === undefined || value.trim() === '') {
+    throw new Error(`memory_index upsert requires a non-empty ${field}`)
+  }
+  if (value.includes('\n')) {
+    throw new Error(`memory_index upsert ${field} must be a single line`)
+  }
+  return value
+}
+
 /**
- * Register the memory strategy section, the four memory tools, and the
+ * Register the memory strategy section, the memory tools, and the
  * one-time session-start index injection.
  *
  * @param ctx - registrant context carrying the consumed services.
@@ -193,7 +205,7 @@ export function apply(ctx: Context, config: Config): void {
       + 'Write one memory file with the COMPLETE content (full replacement, no partial edits). '
       + 'The directory is created on demand; no mkdir is needed. Frontmatter provenance '
       + '(node_type, originSessionId) is backfilled automatically. After writing a memory file, '
-      + 'add or update its one-line pointer in MEMORY.md.',
+      + 'add or update its one-line pointer in MEMORY.md with memory_index.',
     parameters: {
       name: { type: 'string', required: true, description: 'File name inside the memory directory; a missing .md suffix is appended automatically. MEMORY.md is the index.' },
       content: { type: 'string', required: true, description: 'The complete new file content, including frontmatter.' },
@@ -223,7 +235,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.tools.register(defineTool({
     name: 'memory_delete',
     description: TOOLS_DESCRIPTION
-      + 'Delete one memory file that turned out to be wrong, then remove its line from MEMORY.md.',
+      + 'Delete one memory file that turned out to be wrong, then remove its line from MEMORY.md with memory_index.',
     parameters: {
       name: { type: 'string', required: true, description: 'File name inside the memory directory, e.g. feedback-foo.md. On a miss, the .md suffix is retried added or removed.' },
     },
@@ -234,6 +246,54 @@ export function apply(ctx: Context, config: Config): void {
     async execute(args, exec) {
       const { cwd } = memorySession(exec.agent)
       return { deleted: await deleteMemory(claudeHome, cwd, args.name) }
+    },
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'memory_index',
+    description: TOOLS_DESCRIPTION
+      + 'Upsert or remove one pointer line in the MEMORY.md index, keyed by the memory file\'s name. '
+      + 'Prefer this over rewriting the whole index with memory_write.',
+    parameters: {
+      action: { type: 'string', required: true, enum: ['upsert', 'remove'], description: 'upsert inserts or updates the pointer line; remove deletes it.' },
+      name: { type: 'string', required: true, description: 'Memory file the pointer line links to, e.g. feedback-foo.md; a missing .md suffix is appended automatically.' },
+      title: { type: 'string', description: 'Pointer-line link text; required for upsert and must stay single-line.' },
+      hook: { type: 'string', description: 'One-line hook rendered after the em dash; required for upsert and must stay single-line.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          name: { type: 'string', required: true },
+          action: { type: 'string', required: true, enum: ['upsert', 'remove'] },
+          changed: { type: 'boolean', required: true },
+          lines: { type: 'number', required: true },
+          bytes: { type: 'number', required: true },
+          warning: { type: 'string' },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: (value.action === 'upsert'
+          ? `Upserted index pointer for ${value.name}; index now ${value.lines} lines (${value.bytes}B).`
+          : value.changed
+            ? `Removed index pointer for ${value.name}; index now ${value.lines} lines (${value.bytes}B).`
+            : `No index pointer for ${value.name}.`)
+          + (value.warning === undefined ? '' : ` ${value.warning}`),
+      }],
+    },
+    async execute(args, exec) {
+      const { cwd } = memorySession(exec.agent)
+      const change: MemoryIndexChange = args.action === 'remove'
+        ? { action: 'remove', name: args.name }
+        : {
+          action: 'upsert',
+          name: args.name,
+          title: singleLine('title', args.title),
+          hook: singleLine('hook', args.hook),
+        }
+      return await updateMemoryIndex(claudeHome, cwd, change, limits, exec.signal)
     },
   }))
 

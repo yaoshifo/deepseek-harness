@@ -113,7 +113,7 @@ describe('claude-memory real Loader composition through cordis.yml', () => {
     ])
     await seedIndex(join(root!, 'claude'), '# Memory Index\n- [A](a.md) — hook')
 
-    for (const tool of ['memory_list', 'memory_read', 'memory_write', 'memory_delete']) {
+    for (const tool of ['memory_list', 'memory_read', 'memory_write', 'memory_delete', 'memory_index']) {
       expect(toolNames(ctx)).toContain(tool)
     }
 
@@ -147,6 +147,16 @@ describe('claude-memory real Loader composition through cordis.yml', () => {
       agent,
     })
     expect(write.isError).toBe(false)
+    const index = await ctx.tools.execute({
+      signal,
+      callId: CallId('loader-index'),
+      name: 'memory_index',
+      arguments: { action: 'upsert', name: 'feedback-loader', title: 'Feedback loader', hook: 'loader hook' },
+      agent,
+    })
+    expect(index.isError).toBe(false)
+    if (index.isError) throw new Error('expected success')
+    expect(index.value).toMatchObject({ name: 'feedback-loader.md', changed: true })
   }, 30_000)
 
   it('fails loading when maxIndexBytes is omitted', async () => {
