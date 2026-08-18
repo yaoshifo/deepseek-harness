@@ -61,7 +61,7 @@ function convertInlineHTML(source: string): string {
   s = s.replace(reInlineCodeHTML, m => nextPH(`<code>${escapeHTML(m.slice(1, -1))}</code>`))
 
   // 2. Extract links → placeholder (text & URL escaped)
-  s = s.replace(reLinkHTML, (m, text: string, url: string) =>
+  s = s.replace(reLinkHTML, (_m, text: string, url: string) =>
     nextPH(`<a href="${escapeHTML(url)}">${escapeHTML(text)}</a>`))
 
   // 2b. Wikilinks: [[Link|Text]] → Text, [[Link]] → Link
