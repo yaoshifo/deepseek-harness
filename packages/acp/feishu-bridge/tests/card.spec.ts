@@ -67,7 +67,7 @@ describe('appendIntoLastCollapsible', () => {
     ]
     const got = appendIntoLastCollapsible(elements, action)
     const form = got[0] as CardForm
-    const panel = form.elements[0]
+    const panel = form.elements[0]!
     expect(panel).toMatchObject({ kind: 'collapsiblePanel' })
     expect(panel.kind === 'collapsiblePanel' ? panel.elements.length : 0).toBe(2)
     if (panel.kind === 'collapsiblePanel') {
@@ -91,8 +91,8 @@ describe('appendIntoLastCollapsible', () => {
     const got = appendIntoLastCollapsible(elements, action)
     const first = got[0] as CardForm
     const second = got[1] as CardForm
-    const firstPanel = first.elements[0]
-    const secondPanel = second.elements[0]
+    const firstPanel = first.elements[0]!
+    const secondPanel = second.elements[0]!
     expect(firstPanel.kind === 'collapsiblePanel' ? firstPanel.elements.length : 0).toBe(1)
     expect(secondPanel.kind === 'collapsiblePanel' ? secondPanel.elements.length : 0).toBe(2)
     if (secondPanel.kind === 'collapsiblePanel') {
