@@ -229,3 +229,21 @@
     # Per-project extras (inside a projects[] row):
     #   adminFrom: "ou_xxx,ou_yyy"         # privileged-command allowlist; * = all
     #   interactiveIdleTimeoutMins: 30     # idle reaper threshold
+    #   resetOnIdleMins: 720               # rotate chat to a fresh session after N idle minutes
+    #   filterExternalSessions: true       # /list only shows engine-tracked sessions
+    #   providerShortcuts:                 # quick switch + new session (/strong → glm)
+    #     strong: glm
+    #     weak: mimo
+    #   predictNext:                       # next-message prediction card (#33)
+    #     enabled: true
+    #     provider: turbo                  # named route for the prediction fork
+    #     timeoutSec: 120
+    #     mode: lightweight                # lightweight | resume (fork live transcript)
+    #   turnSummary:                       # one-line turn summary on the insight card
+    #     enabled: true
+    #     provider: turbo
+    #     timeoutSec: 30
+    #   autoCompress:                      # compress context past a token threshold
+    #     enabled: true
+    #     maxTokens: 80000
+    #     minGapMins: 30

@@ -126,6 +126,19 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 - 实现：#47/#48 plan/reply HTML（渲染会话 = create + seed + complete prompt + 无工具 + stall 重试）、#51 Lucide、predict_next #33、turn_summary、NO_REPLY #28、撤回取消 #30、dir_scan #3、usage #1、/provider #9/#12、feishu_workspace #18（CC_FEISHU_* 进工具上下文）、`feishu_bridge_lark` 工具。
 - 验收：测试绿；feature 对照表初稿（61 项全列）。
 
+- **M7-c provider 切换 + 会话散件域进度（2026-08-19，测试先行）**：代码与移植测试完成，包内 1419 vitest 全绿（基线 1349 + 70）、包级 oxlint/typecheck 0。范围与落点：
+  - **/provider 命令族 #9**（`src/engine/provider-commands.ts` + `provider.ts`，Go engine_provider.go/provider.go）：bare 列表（▶ 当前标记 + 切换提示，纯文本面——provider 卡留待 M7 渲染域）、`switch <name>`（清 agent session id + 历史，下条消息起新会话走新路由）、`switch <name> --resume`（D1 路径：保留 sessionId，adapter dispose + resume 新 agentOptions）、`current`/`clear`（clear 走 adapter setActiveProvider('') 清空语义，回退 dsh 默认路由）；切换持久化经 ProjectStateStore `active_provider`（Go 写 config.toml，TS cordis.yml 运行时只读，同 monitor_chats 覆盖模式），装配时 projectState.activeProvider() 覆盖配置默认。**不迁移**：add/remove/presets（GitHub 预设拉取）——provider 是 profile 命名路由（D2），运行时无法创建 llm 路由；provider 卡（act:/provider 按钮）留待渲染域；per-provider context_window（#12）消费方是 ctx indicator（usage 域），仅落 `getProviderModel` 纯函数（predictNext 标签消费）。
+  - **provider_shortcuts**：engine.providerShortcuts + dispatchCommand 未知命令时的 shortcut 挂点（Go handleCommand 的 provider_shortcut 分支）→ cmdProviderShortcut（切换 + 新会话 + 持久化）。
+  - **predict_next #33 + turn_summary**（`src/engine/predict.ts`，Go engine_predict.go）：generatePrediction（lightweight 单发查询 / resume fork 双模式，首行 ≤200 字符）、generateTurnSummary（≤120 runes，短回复 ≤150 runes 跳过）、sendInsightCard（Go 保形：每 fork 到达即增量发卡——先 summary-only 后 combined；✨/📝/💡 标题 + 发送(cmd:)/屏蔽(act:/nopred)按钮；turnSeq 防过期；洞察卡的原位更新不迁移——TS 完成通知无句柄，洞察卡以新卡投递）、triggerInsights 挂在 handleResultEvent 完成通知后（静默 turn 与有排队消息跳过）、act:/nopred 卡片动作（禁用本会话预测 + 原位刷新确认卡）；**/btw** 旁路提问（Go cmdBtw：live session → 持久化 sessionId 回退，worktree/override 工作目录传给 fork，300s 超时，绝不降级为主会话消息）。
+  - **撤回取消 #30**（`src/engine/recall.ts` + platform）：cancelQueuedByMessageID（inflight 优先于 queued，cancelled/inflight/not_found 三态 + 本地化回复；TS 排队消息自带附件，Go staged-attachment 分支不适用）+ RecallNotifier 能力接口 + platform `im.message.recalled_v1` 订阅（payload 根层扁平 snake_case，同 card.action.trigger 实测约定）+ engine.start() 接线。
+  - **reset_on_idle**（`src/engine/session-misc.ts`，Go maybeAutoResetSessionOnIdle）：handleMessage 取锁后轮换陈旧会话（有 backend id 或历史才轮换；旧会话历史与 agent id 保留可 /switch 回；graceful 关闭提示）；slash 命令不触发（命令分发在取锁前）。
+  - **auto_compress**：SessionCompressor 能力（DshAgentSession.compress → ctx.compaction.compactNow，Go 的 "/compact" 消息往返变为原生服务调用；compaction 服务未加载时报 not-supported）+ /compress 命令 + turn 结束触发（estimateTokensWithPendingAssistant ≥ maxTokens 且距上次 ≥ minGap；通知带 token 估计）。**天花板**：Go runCompress 的压缩后事件排水/权限自动批准由 dsh compactNow 内部承担。
+  - **filter_external_sessions**：机制 M1 已有（applySessionFilter + knownAgentSessionIDs），本轮接配置（setFilterExternalSessions）+ 移植 Go FilterExternalSessions 测试两例。
+  - **NO_REPLY #28**：M2 已移植（message-split.ts + 引擎路径），本轮补引擎级测试（裸 NO_REPLY 全静默 + 尾部标记剥离后投递正文）。
+  - **session_cleanup_days：记录不迁移**——TS /list 是 live-session-only 视图（M1 定型，adapter.listSessions 只枚举活会话），无持久化会话枚举/删除能力（无 SessionDeleter），Go cleanupOldSessions 的 🧹 清理按钮无处落地。
+  - 配置（index.ts schema + 装配 + profile 模板同步）：`predictNext{enabled,provider,timeoutSec,prompt,mode}`（默认 120s/lightweight）、`turnSummary{enabled,provider,timeoutSec,prompt}`（默认 30s）、`autoCompress{enabled,maxTokens,minGapMins}`（默认 gap 30min）、`providerShortcuts`、`resetOnIdleMins`、`filterExternalSessions`；装配顺序调整：projectState 先建（active_provider 恢复先于 adapter 构造）。
+  - 测试：provider(4) + provider-commands(11) + predict(22) + recall(4) + feishu/message-recalled(3) + session-misc(15) + assembly-misc(11) = +70。adapter 改动：setActiveProvider('') 清空语义、DshAgentSession 构造接 ctx（compress 用）。真机 /provider 切换冒烟归父会话。
+
 **M8 Cutover**
 - 记账驴日常使用回归 1-2 周 → 其余 8 个 project 逐个迁配置（用户操作旧系统摘除+重启，父会话加新配置+reload）→ 全量切换后用户停用旧 systemd、归档 cc-connect-bridge 包 → 新包 README + 运维文档（部署/回退/配置映射表/systemd 自启说明）。
 

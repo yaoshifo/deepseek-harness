@@ -219,6 +219,12 @@ export interface FeishuChatUpdatedEvent {
   after_change?: { name?: string; avatar?: string }
 }
 
+/** Inbound im.message.recalled_v1 payload (structural slice, root-level snake_case). */
+export interface FeishuRecallEvent {
+  message_id?: string
+  chat_id?: string
+}
+
 /** Handle for an in-place editable preview card (Go feishuPreviewHandle). */
 export class FeishuPreviewHandle {
   readonly messageID: string
@@ -348,6 +354,8 @@ export class FeishuPlatform implements Platform {
   private chatRenamedHandler: ((sessionKey: string, newName: string) => void) | undefined
   /** Engine callback for group name/avatar changes (Go chatChangedHandler). */
   private chatChangedHandler: ((sessionKey: string) => void) | undefined
+  /** Engine callback for message recalls (im.message.recalled_v1, Go recallHandler, #30). */
+  private recallHandler: ((messageID: string) => void) | undefined
 
   private spinnerOnce: Promise<void> | undefined
   private thinkingImgKey = ''
@@ -443,6 +451,8 @@ export class FeishuPlatform implements Platform {
         this.onCardAction(data as CardActionTriggerEvent)
       } else if (eventType === 'im.chat.updated_v1') {
         this.onChatUpdated(data as FeishuChatUpdatedEvent)
+      } else if (eventType === 'im.message.recalled_v1') {
+        this.onMessageRecalled(data as FeishuRecallEvent)
       }
     })
   }
@@ -772,6 +782,27 @@ export class FeishuPlatform implements Platform {
   /** Register the engine callback invoked on group name/avatar change (Go SetChatChangedHandler). */
   setChatChangedHandler(handler: (sessionKey: string) => void): void {
     this.chatChangedHandler = handler
+  }
+
+  /** Register the engine callback invoked on message recall (Go SetRecallHandler, #30). */
+  setRecallHandler(handler: (messageID: string) => void): void {
+    this.recallHandler = handler
+  }
+
+  /**
+   * Handle one im.message.recalled_v1 event (Go onMessageRecalled): forward
+   * the recalled message id to the engine so it cancels the queued copy.
+   * Fields sit at the ROOT of the parsed payload in snake_case (the live
+   * flattened convention, same as card.action.trigger).
+   */
+  onMessageRecalled(event: FeishuRecallEvent): void {
+    const messageID = event.message_id ?? ''
+    if (messageID === '') return
+    if (this.recallHandler === undefined) {
+      console.warn(`${this.tag()}: recall handler not set — engine wiring regression`)
+      return
+    }
+    this.recallHandler(messageID)
   }
 
   /** Whether the chat is /spawn-created (external predicate or the store). */
@@ -2433,6 +2464,9 @@ async function defaultWsStart(
     },
     'im.chat.updated_v1': (data: unknown) => {
       onRawEvent('im.chat.updated_v1', data)
+    },
+    'im.message.recalled_v1': (data: unknown) => {
+      onRawEvent('im.message.recalled_v1', data)
     },
   })
   const wsClient = new sdk.WSClient({ appId: appID, appSecret, domain: sdk.Domain.Feishu })

@@ -11,7 +11,7 @@
 | ✂️ | 不迁移（附理由，出处 MIGRATION.md §0） |
 | ❓ | 待核实（证据不足，宁标勿猜） |
 
-统计：✅ 30 · 📋 19 · ✂️ 10 · ❓ 2，合计 61。
+统计：✅ 34 · 📋 15 · ✂️ 10 · ❓ 2，合计 61。
 
 | # | 特性 | 状态 | 里程碑 | 落点 / 理由 |
 |---|---|---|---|---|
@@ -23,10 +23,10 @@
 | 6 | ExitPlanMode 前先以 markdown 展示 plan 内容 | ✅ | M3 | plan 域 |
 | 7 | flip minimax 修复（IsActive 纯缓存名比对） | ✂️ | — | §0 裁定；新架构 provider 切换为 dispose + 同 sessionId resume 重建（D1），无旧缓存比对路径 |
 | 8 | 图片发送改用文件路径（不 base64 内嵌） | ❓ | — | 平台侧图片下载已实现（M4 media）；adapter.send 目前仅附文件名注记，图片进模型上下文的通路未接线——dsh 原生图片消息格式与归属里程碑待核实 |
-| 9 | 全局 Providers：跨项目共享模型配置 + /provider 切换 | 📋 | M7 | /provider 命令；多路由基建（providers map + 路由名引用）已随 D2 落地 |
+| 9 | 全局 Providers：跨项目共享模型配置 + /provider 切换 | ✅ | M7-c | /provider list/switch/current/clear + provider_shortcuts（/strong 等）+ 切换持久化（project state）；add/remove/presets 不迁移——provider = profile 命名路由，运行时不可创建 |
 | 10 | tool_progress：quiet 模式工具进度卡片 | ✅ | M2 | 真机验证（display 转发补齐后） |
 | 11 | reply_footer 默认关闭（ctx/余额只走 ✅ 通知） | ❓ | — | `features.replyFooter` 键已声明但未见接线；「默认关」语义天然成立，Codex 式页脚本体是否单独实现待核实（完整状态页脚属 #26、M7） |
-| 12 | per-provider context_window | 📋 | M7 | /provider 域 |
+| 12 | per-provider context_window | 📋 | M7 | 消费方是 ctx indicator（#14/#26 完整状态页脚，usage 域）；/provider 切换本体已随 M7-c 落地 |
 | 13 | 消息排队机制（session 启动期不丢弃） | ✅ | M1 | engine 事件循环 |
 | 14 | ctx indicator 移至 ✅ 通知（原始 token 累积值） | ✅ | M2 | 完成通知 |
 | 15 | auto-approve 不跳过 AskUserQuestion / ExitPlanMode | ✅ | M3 | 审批域 |
@@ -42,12 +42,12 @@
 | 25 | 累计 Token 追踪 + 每轮增量显示 | ✅ | M2 | 完成通知 ctx 行 |
 | 26 | 统一多行状态页脚（model/ctx/workdir/git/RAM） | ✅ | M2 | 基础页脚完成；完整状态页脚（model/ctx%/git 分支/RAM 行）M7 补（engine 内 TODO(M7) 注记） |
 | 27 | allow_chat 白名单过滤 + 共享 WebSocket | ✅ | M1 | 共享 WS 由 node-sdk 每 app 一个 client 天然承担 |
-| 28 | NO_REPLY 标记静默回复 | 📋 | M7 | isSilentReply |
+| 28 | NO_REPLY 标记静默回复 | ✅ | M2 | isSilentReply/stripTrailingSilent 引擎 reply 路径（M2 移植）；M7-c 补引擎级投递抑制测试 |
 | 29 | plan_max_len 配置 | ✅ | M3 | display.planMaxLen |
-| 30 | 消息撤回取消排队消息 | 📋 | M7 | RecallNotifier + im.message.recalled_v1 |
+| 30 | 消息撤回取消排队消息 | ✅ | M7-c | cancelQueuedByMessageID + platform im.message.recalled_v1（根层扁平 snake_case）+ engine.start 接线 |
 | 31 | AskUserQuestion 卡片增强（header + 选项预览） | ✅ | M3 | 问题卡渲染 |
 | 32 | 流式卡片合并（progress + summary 统一卡片） | ✅ | M2 | streaming 域 |
-| 33 | Predict Next：回复后预测用户下一步 | 📋 | M7 | fork 轻会话 + 预测卡 |
+| 33 | Predict Next：回复后预测用户下一步 | ✅ | M7-c | generatePrediction（lightweight/resume 双模式）+ 洞察卡（发送/屏蔽按钮，turnSeq 防过期）+ turn_summary 合并卡片 + /btw 旁路提问 |
 | 34 | /spawn（/sp）：快速创建独立任务群聊 | ✅ | M4 | 真机三轮冒烟通过 |
 | 35 | Pin 每条用户消息到 Pin 面板（spawn 群） | ✅ | M4 | MessagePinAppender；子项 #35a（spawn 群反馈精简）：topnotice 门控已对齐（spawn 群默认关），表情关闭门控未见移植——TS 引擎尚未接线 startTyping/Done/CrossMark 反应链，随 E 群清查/M7 核实 |
 | 36 | /fork（/fk）：复制上下文的隔离分支群 | ✅ | M4 | completedTurnPrefix seed（原生 agents.create）；天花板：父会话需 live（代码内已注记） |

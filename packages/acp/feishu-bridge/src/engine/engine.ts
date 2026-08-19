@@ -149,9 +149,12 @@ import { newAsyncSender, type AsyncSender } from '../async-sender.js'
 import { readFileSync, statSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
-import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier } from '../core/types.js'
+import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asRecallNotifier } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
 import { executeCardAction } from './cron-commands.js'
+import { cancelQueuedByMessageID } from './recall.js'
+import { triggerInsights } from './predict.js'
+import { defaultAutoCompressMinGapMs, estimateTokensWithPendingAssistant, maybeAutoResetSessionOnIdle, runCompress } from './session-misc.js'
 import type { RelayManager } from './relay.js'
 import {
   armResearchManualAskTimeout,
@@ -269,6 +272,16 @@ export class InteractiveState {
   approveAll = false
   /** Number of auto-compaction events this session (Go state.compactionCount). M3. */
   compactionCount = 0
+  /** True while a predict-next fork is in-flight for this session (Go state). */
+  predictNextRunning = false
+  /** True once the user clicked 屏蔽; reset on /new (Go state.predictNextDisabled). */
+  predictNextDisabled = false
+  /** True while a turn-summary fork is in-flight for this session (Go state). */
+  turnSummaryRunning = false
+  /** Timestamp of the last auto compression (Go state.lastAutoCompressAt). */
+  lastAutoCompressAt = 0
+  /** Token estimate recorded when the last auto compression armed. */
+  lastAutoCompressTokens = 0
   /** Per-state async sender serializing platform PATCHes (Go state.sender). */
   sender: AsyncSender | undefined
   /** The turn's active streaming preview (bound for bump routing). */
@@ -615,6 +628,31 @@ export class Engine {
   adminFrom = ''
   /** /list etc. only show cc-connect-tracked sessions when true. */
   filterExternalSessions = false
+  /** Quick provider commands (/strong → provider name; Go providerShortcuts). */
+  providerShortcuts: Record<string, string> = {}
+  /** Executor for a provider shortcut (armed by registerProviderCommands). */
+  providerShortcutHandler: ((p: Platform, msg: Message, providerName: string) => void) | undefined
+  /** Persists the active provider name across restarts (Go providerSaveFunc). */
+  providerSaveFunc: ((name: string) => void) | undefined
+  /** Predict-next config (#33, Go SetPredictNextConfig). */
+  predictNextEnabled = false
+  predictNextProvider = ''
+  predictNextModel = ''
+  predictNextTimeout = 0
+  predictNextPrompt = ''
+  /** true = fork the live transcript (resume); false = one-shot compact query. */
+  predictNextResume = false
+  /** Turn-summary config (Go SetTurnSummaryConfig). */
+  turnSummaryEnabled = false
+  turnSummaryProvider = ''
+  turnSummaryTimeout = 0
+  turnSummaryPrompt = ''
+  /** Auto session rotation after idle (Go SetResetOnIdle); 0 disables. */
+  resetOnIdle = 0
+  /** Auto context compression (Go SetAutoCompressConfig). */
+  autoCompressEnabled = false
+  autoCompressMaxTokens = 0
+  autoCompressMinGap = 0
 
   private reaperTimer: ReturnType<typeof setInterval> | undefined
 
@@ -719,6 +757,12 @@ export class Engine {
       const changed = asChatChangedNotifier(p)
       if (changed !== undefined) {
         changed.setChatChangedHandler((sessionKey) => { this.onChatChanged(sessionKey) })
+      }
+      // Recall wiring (#30, Go engine.go platform startup): a recalled
+      // message is cancelled from whichever session's queue holds it.
+      const recall = asRecallNotifier(p)
+      if (recall !== undefined) {
+        recall.setRecallHandler((messageID) => { cancelQueuedByMessageID(this, messageID) })
       }
     }
     if (startErrs.length === this.platforms.length && this.platforms.length > 0) {
@@ -852,19 +896,24 @@ export class Engine {
       return
     }
 
+    // reset_on_idle: rotate a stale chat to a fresh session before the turn
+    // runs (Go maybeAutoResetSessionOnIdle). The old session keeps its
+    // history and agent id for /switch back.
+    const activeSession = maybeAutoResetSessionOnIdle(this, p, msg, session) ?? session
+
     // A real human message resuming a subtask group starts a new work cycle:
     // re-arm the one-shot report flag so the agent's report (and the
     // first-turn auto-report) can deliver again after a prior cycle already
     // reported. No-op for synthetic injections (empty userID) and non-subtask
     // sessions. Runs after the lock is acquired so it only fires on a
     // genuinely new turn (Go rearmSubtaskReportOnHumanTurn).
-    this.rearmSubtaskReportOnHumanTurn(msg, session, this.sessions)
+    this.rearmSubtaskReportOnHumanTurn(msg, activeSession, this.sessions)
     // A real human message into a background session (subtask group /
     // chatroom role) re-enables auto-render for it from this point on.
-    this.markUserInterjectedOnHumanTurn(msg, session, this.sessions)
+    this.markUserInterjectedOnHumanTurn(msg, activeSession, this.sessions)
 
     this.ensureInteractiveStateForQueueing(msg.sessionKey, p, msg.replyCtx)
-    void this.processInteractiveMessageWith(p, msg, session)
+    void this.processInteractiveMessageWith(p, msg, activeSession)
   }
 
   /** Resolve aliases on the content or its first word (Go resolveAlias). */
@@ -885,7 +934,16 @@ export class Engine {
     const parts = raw.trim().split(/\s+/)
     const cmd = (parts.shift() ?? '').replace(/^\//, '').toLowerCase()
     const cmdID = this.commandResolver?.(cmd) ?? (this.commandHandlers?.get(cmd) !== undefined ? cmd : '')
-    if (cmdID === '') return false
+    if (cmdID === '') {
+      // Provider shortcuts (/strong → provider + new session) claim unknown
+      // commands before they fall through to the agent (Go handleCommand).
+      const shortcut = this.providerShortcuts[cmd]
+      if (shortcut !== undefined && this.providerShortcutHandler !== undefined) {
+        this.providerShortcutHandler(p, msg, shortcut)
+        return true
+      }
+      return false
+    }
     if (this.commandGate?.(cmdID, p, msg)) return true
     const handler = this.commandHandlers?.get(cmdID)
     if (handler === undefined) return false
@@ -935,6 +993,62 @@ export class Engine {
   /** Set the admin user list for privileged commands. */
   setAdminFrom(adminFrom: string): void {
     this.adminFrom = adminFrom
+  }
+
+  /** Register provider shortcut commands, e.g. { strong: 'glm' } (Go SetProviderShortcuts). */
+  setProviderShortcuts(shortcuts: Record<string, string>): void {
+    this.providerShortcuts = shortcuts
+  }
+
+  /** Set the active-provider persistence hook (Go SetProviderSaveFunc). */
+  setProviderSaveFunc(fn: (name: string) => void): void {
+    this.providerSaveFunc = fn
+  }
+
+  /**
+   * Configure predict-next (#33, Go SetPredictNextConfig). mode 'resume'
+   * forks the live transcript; anything else uses the lightweight one-shot
+   * query.
+   */
+  setPredictNextConfig(enabled: boolean, provider: string, model: string, timeoutMs: number, prompt: string, mode: string): void {
+    this.predictNextEnabled = enabled
+    this.predictNextProvider = provider
+    this.predictNextModel = model
+    this.predictNextTimeout = timeoutMs
+    this.predictNextPrompt = prompt
+    this.predictNextResume = mode === 'resume'
+  }
+
+  /** Configure turn-summary generation (Go SetTurnSummaryConfig). */
+  setTurnSummaryConfig(enabled: boolean, provider: string, timeoutMs: number, prompt: string): void {
+    this.turnSummaryEnabled = enabled
+    this.turnSummaryProvider = provider
+    this.turnSummaryTimeout = timeoutMs
+    this.turnSummaryPrompt = prompt
+  }
+
+  /** Auto session rotation after idle (Go SetResetOnIdle); <= 0 disables. */
+  setResetOnIdle(ms: number): void {
+    this.resetOnIdle = ms > 0 ? ms : 0
+  }
+
+  /** Auto context compression (Go SetAutoCompressConfig); minGap <= 0 falls back to 30min. */
+  setAutoCompressConfig(enabled: boolean, maxTokens: number, minGapMs: number): void {
+    this.autoCompressEnabled = enabled
+    this.autoCompressMaxTokens = maxTokens
+    this.autoCompressMinGap = minGapMs > 0 ? minGapMs : defaultAutoCompressMinGapMs
+  }
+
+  /** /list etc. only show engine-tracked sessions when true (Go SetFilterExternalSessions). */
+  setFilterExternalSessions(v: boolean): void {
+    this.filterExternalSessions = v
+  }
+
+  /** Disable predict-next for one session (the 屏蔽 button; Go SetPredictNextDisabled). */
+  setPredictNextDisabled(sessionKey: string): void {
+    const st = this.interactiveStates.get(sessionKey)
+    if (st === undefined) return
+    st.predictNextDisabled = true
   }
 
   // ── queueing (#13) ──────────────────────────────────────────────────────
@@ -1758,7 +1872,7 @@ export class Engine {
     state: InteractiveState,
     session: Session,
     sessions: SessionManager,
-    _sessionKey: string,
+    sessionKey: string,
     replyCtx: unknown,
     event: Event,
     textParts: string[],
@@ -1901,6 +2015,25 @@ export class Engine {
         } catch (error) {
           console.warn(`completion notification failed: ${String(error)}`)
         }
+      }
+    }
+
+    // Insight card (#33 + turn_summary, Go engine_events.go's post-turn
+    // block): fire-and-forget forks for the turn summary and next-message
+    // prediction; both skip silent turns and turns with queued follow-ups.
+    triggerInsights(this, state, session, p, replyCtx, sessionKey, sendCompletionNotification, isSilent)
+
+    // Auto-compress (Go triggerAutoCompress): when the token estimate
+    // crosses the configured cap outside the min gap, compact the live
+    // session's context before the queued messages continue this loop.
+    if (this.autoCompressEnabled && this.autoCompressMaxTokens > 0) {
+      const estimate = estimateTokensWithPendingAssistant(session.getHistory(0), '')
+      const last = state.lastAutoCompressAt
+      if (estimate >= this.autoCompressMaxTokens && (last === 0 || Date.now() - last >= this.autoCompressMinGap)) {
+        state.lastAutoCompressAt = Date.now()
+        state.lastAutoCompressTokens = estimate
+        if (pendingSend !== undefined) await pendingSend.catch(() => undefined)
+        await runCompress(this, state, p, replyCtx, true)
       }
     }
 
@@ -4321,6 +4454,23 @@ export class Engine {
         }
         await this.replyWithCard(p, msg.replyCtx, card)
       }
+      return
+    }
+    // Predict-next 屏蔽 button (#33): stop predicting for this session until
+    // /new, then re-render the pressed card as the confirmation.
+    if (cmd === '/nopred') {
+      this.setPredictNextDisabled(msg.sessionKey)
+      const card = newCard().title('🚫 已屏蔽猜你想问', 'red').markdown('本会话不再显示预测卡片。`/new` 后恢复。').build()
+      const refresher = asCardRefresher(p)
+      if (refresher !== undefined) {
+        try {
+          await refresher.refreshCard(msg.sessionKey, card)
+          return
+        } catch (error) {
+          console.warn(`engine: card refresh failed, sending a new card (${msg.sessionKey}): ${String(error)}`)
+        }
+      }
+      await this.replyWithCard(p, msg.replyCtx, card)
       return
     }
     if (cmd !== '/wt') {
