@@ -52,13 +52,23 @@ describe('PermissionWhileSendBlocked', () => {
     })
     sess.channel.push({ type: 'result', content: 'ok', done: true })
 
-    await Promise.race([
-      e.processInteractiveEvents(state, session, e.sessions, key, 'm1', Promise.resolve(undefined), 'ctx'),
-      new Promise((_, reject) => { setTimeout(() => { reject(new Error('timeout')) }, 3000) }),
-    ])
+    // The loop parks on the permission wait (Go semantics): poll until the
+    // prompt is out, then resolve the pending so the loop can drain the rest.
+    const loopDone = e.processInteractiveEvents(state, session, e.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+    const deadline = Date.now() + 3000
+    while (state.pending === undefined && Date.now() < deadline) {
+      await new Promise((r) => { setTimeout(r, 10) })
+    }
 
     const sent = p.getSent()
     expect(sent.length).toBeGreaterThan(0)
+    expect(state.pending?.requestID).toBe('req-blocked-send')
+
+    state.pending?.resolve()
+    await Promise.race([
+      loopDone,
+      new Promise((_, reject) => { setTimeout(() => { reject(new Error('timeout')) }, 3000) }),
+    ])
   })
 })
 
@@ -128,8 +138,12 @@ describe('Ps_BlockedOnPermission_RoutesToQueue', () => {
   })
 })
 
-describe('UnsolicitedReader_PermissionDeny', () => {
-  it('genuine background Bash is auto-denied', async () => {
+describe('ForegroundPermissionSurfaces_Bash', () => {
+  it('foreground Bash surfaces a pending permission (Go engine_events.go ~4106)', async () => {
+    // Go auto-denies a genuine-background Bash only in runUnsolicitedReader;
+    // TS has no background reader yet, so the foreground loop surfaces every
+    // permission (the gate itself stays covered by the pure-function table
+    // tests). Background auto-deny returns with the unsolicited reader.
     const { e } = newEngine()
     const p = createStubPlatform()
     const sess = newControllableSession('unsol-perm')
@@ -151,13 +165,20 @@ describe('UnsolicitedReader_PermissionDeny', () => {
     })
     sess.channel.close()
 
+    const loopDone = e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, 'ctx')
+    const deadline = Date.now() + 3000
+    while (state.pending === undefined && Date.now() < deadline) {
+      await new Promise((r) => { setTimeout(r, 10) })
+    }
+
+    expect(state.pending?.requestID).toBe('req-1')
+    expect(sess.permResponses).toEqual([])
+
+    state.pending?.resolve()
     await Promise.race([
-      e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, 'ctx'),
+      loopDone,
       new Promise((_, reject) => { setTimeout(() => { reject(new Error('timeout')) }, 3000) }),
     ])
-
-    expect(sess.permResponses.length).toBeGreaterThanOrEqual(1)
-    expect(sess.permResponses[0]!.result.behavior).toBe('deny')
   })
 })
 

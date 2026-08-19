@@ -19,6 +19,7 @@ import {
   createStubInlineButtonPlatform,
   createStubPlatform,
   createRecordingAgentSession,
+  newControllableSession,
   newPendingPermission,
 } from '../stubs/engine-stubs.js'
 import type { Message } from '../../src/core/types.js'
@@ -361,4 +362,48 @@ describe('handlePendingPermission ExitPlanMode approval', () => {
       expect(state.approveAll).toBe(c.wantAll)
     })
   }
+})
+
+describe('ForegroundPermissionSurfaces', () => {
+  it('a foreground write-tool permission sends a card and parks (not auto-denied)', async () => {
+    // Go's foreground reply loop creates pendingPermission for EVERY
+    // EventPermissionRequest after the auto-approve branch (engine_events.go
+    // ~4106); the shouldSurfaceUnsolicitedPermission gate belongs to the
+    // background unsolicited reader only. The TS port wrongly applied the
+    // background gate in processInteractiveEvents, so sandbox-escalation
+    // approvals auto-denied on the real machine.
+    const p = createStubPlatform()
+    const engine = new Engine('test', createStubAgent(), [p], '', 'en')
+    const sess = newControllableSession('fg-perm')
+    const key = 'test:user3'
+    const session = engine.sessions.getOrCreateActive(key)
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = p
+    state.replyCtx = 'ctx'
+    engine.interactiveStates.set(key, state)
+
+    sess.channel.push({
+      type: 'permission_request',
+      requestID: 'req-fg',
+      toolName: 'write',
+      toolInput: '/Users/hm/Desktop/x.txt',
+      content: '',
+      done: false,
+    })
+    sess.channel.close()
+    const loop = engine.processInteractiveEvents(state, session, engine.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+    await new Promise((r) => { setTimeout(r, 50) })
+
+    expect(state.permissionPending).toBe(true)
+    expect(state.pending?.requestID).toBe('req-fg')
+    expect(state.pending?.toolName).toBe('write')
+    const sent = p.getSent().map(x => String(x)).join('\n')
+    expect(sent).toContain('write')
+
+    // Resolve the pending to unblock the parked loop.
+    state.pending?.resolve()
+    await loop
+    expect(state.permissionPending).toBe(false)
+  })
 })

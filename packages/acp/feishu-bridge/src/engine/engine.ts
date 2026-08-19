@@ -1462,18 +1462,11 @@ export class Engine {
             break
           }
 
-          // Check if this unsolicited permission should surface to the user.
-          // Non-surfaced permissions (background Bash without approveAll) are
-          // auto-denied so the agent can continue without hanging.
-          if (!this.shouldSurfaceUnsolicitedPermission(event.toolName ?? '', isAskQuestion, false, autoApprove)) {
-            if (state.agentSession !== undefined) {
-              void state.agentSession.respondPermission(event.requestID ?? '', {
-                behavior: 'deny',
-                message: buildDenyMessage(''),
-              }).catch(() => {})
-            }
-            break
-          }
+          // Foreground turn (Go engine_events.go ~4106): every permission
+          // request surfaces as a pending permission — the unsolicited gate
+          // (shouldSurfaceUnsolicitedPermission) belongs to the background
+          // reader TS does not have yet. Gating here auto-denied
+          // sandbox-escalation approvals on the real machine.
 
           // Surface: create pending permission and send card.
           let resolveFn!: () => void
