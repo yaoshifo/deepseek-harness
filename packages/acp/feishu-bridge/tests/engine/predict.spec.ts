@@ -18,7 +18,7 @@ import {
   registerPredictCommands,
   sendInsightCard,
 } from '../../src/engine/predict.js'
-import type { Agent, Message } from '../../src/core/types.js'
+import type { Agent, ForkQuerierWithProvider, Message } from '../../src/core/types.js'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -53,31 +53,33 @@ function msg(overrides: Partial<Message> = {}): Message {
 }
 
 /** Agent with a recording ForkQuerier (Go stubForkQuerierAgent). */
-function forkAgent(resp: string): Agent & { gotSessionID: string; gotWorkDir: string; gotPrompt: string; calls: number } {
-  const rec = {
+type ForkAgent = Agent & ForkQuerierWithProvider & { gotSessionID: string; gotWorkDir: string; gotPrompt: string; calls: number }
+
+function forkAgent(resp: string): ForkAgent {
+  const rec: ForkAgent = {
     gotSessionID: '',
     gotWorkDir: '',
     gotPrompt: '',
     calls: 0,
     ...createStubAgent(),
-  }
-  rec.forkQuery = async (sessionID: string, question: string, workDir: string) => {
-    rec.gotSessionID = sessionID
-    rec.gotWorkDir = workDir
-    rec.gotPrompt = question
-    rec.calls++
-    return resp
-  }
-  rec.forkSessionWithProvider = async (sessionID: string, question: string) => {
-    rec.gotSessionID = sessionID
-    rec.gotPrompt = question
-    rec.calls++
-    return resp
-  }
-  rec.lightweightQuery = async (prompt: string) => {
-    rec.gotPrompt = prompt
-    rec.calls++
-    return resp
+    forkQuery: async (sessionID: string, question: string, workDir: string) => {
+      rec.gotSessionID = sessionID
+      rec.gotWorkDir = workDir
+      rec.gotPrompt = question
+      rec.calls++
+      return resp
+    },
+    forkSessionWithProvider: async (sessionID: string, question: string) => {
+      rec.gotSessionID = sessionID
+      rec.gotPrompt = question
+      rec.calls++
+      return resp
+    },
+    lightweightQuery: async (prompt: string) => {
+      rec.gotPrompt = prompt
+      rec.calls++
+      return resp
+    },
   }
   return rec
 }
@@ -190,7 +192,7 @@ describe('generatePrediction', () => {
   it('uses forkSessionWithProvider in resume mode', async () => {
     const p = createStubCardPlatform('test')
     let forked: string[] = []
-    const agent: Agent = {
+    const agent: Agent & ForkQuerierWithProvider = {
       ...createStubAgent(),
       forkQuery: async () => '',
       forkSessionWithProvider: async (sessionID: string, question: string, provider: string) => {
@@ -239,8 +241,8 @@ describe('generateTurnSummary', () => {
     e.setTurnSummaryConfig(true, 'mimo', 1000, '')
 
     const history = [
-      { role: 'user' as const, content: '修一下 provider 切换的 bug' },
-      { role: 'assistant' as const, content: '改了三处' },
+      { role: 'user' as const, content: '修一下 provider 切换的 bug', timestamp: '1' },
+      { role: 'assistant' as const, content: '改了三处', timestamp: '2' },
     ]
     const out = await generateTurnSummary(e, history)
     expect(out).toBe('重构了 provider.ts')
@@ -264,17 +266,17 @@ describe('generateTurnSummary', () => {
 describe('buildSummaryContext', () => {
   it('extracts the last user and assistant entries with caps', () => {
     const ctx = buildSummaryContext([
-      { role: 'user', content: 'first question' },
-      { role: 'assistant', content: 'first answer' },
-      { role: 'user', content: 'last question' },
-      { role: 'assistant', content: 'last answer' },
+      { role: 'user' as const, content: 'first question', timestamp: '1' },
+      { role: 'assistant' as const, content: 'first answer', timestamp: '2' },
+      { role: 'user' as const, content: 'last question', timestamp: '3' },
+      { role: 'assistant' as const, content: 'last answer', timestamp: '4' },
     ])
     expect(ctx).toBe('User asked: last question\nAssistant replied: last answer\n')
   })
 
   it('truncates long entries', () => {
     const long = 'x'.repeat(600)
-    const ctx = buildSummaryContext([{ role: 'user', content: long }])
+    const ctx = buildSummaryContext([{ role: 'user' as const, content: long, timestamp: '1' }])
     expect(ctx.length).toBeLessThan(long.length)
     expect(ctx).toContain('...')
   })

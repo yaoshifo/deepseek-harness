@@ -143,7 +143,7 @@ describe('pollItemToMessage (via listMonitorMessages)', () => {
   })
 
   it('skips the bot\'s own messages (open_id and app_id senders)', async () => {
-    const mk = (sender: FeishuListItem['sender']): FeishuApiClient => pollApi({
+    const mk = (sender: NonNullable<FeishuListItem['sender']>): FeishuApiClient => pollApi({
       items: [{
         messageId: 'om_x',
         msgType: 'text',

@@ -13,11 +13,11 @@ import { describe, expect, it } from 'vitest'
 import { Engine } from '../../src/engine/engine.js'
 import { registerProviderCommands } from '../../src/engine/provider-commands.js'
 import { registerSessionCommands } from '../../src/engine/commands.js'
-import type { Agent, Message } from '../../src/core/types.js'
+import type { Agent, Message, ProviderSwitcher } from '../../src/core/types.js'
 import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
 
 /** Go stubProviderAgent: a ProviderSwitcher over a static route table. */
-function providerAgent(providers: string[], active: string): Agent & {
+function providerAgent(providers: string[], active: string): Agent & ProviderSwitcher & {
   calls: string[]
   getActive(): string
 } {

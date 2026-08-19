@@ -393,7 +393,11 @@ describe('formatGitBranch', () => {
 // ── buildStatusFooter / buildStatusFooterElements ──────────────────────────
 
 /** Agent stub carrying the model/effort/workdir caps the footer probes. */
-function footerAgent(model: string, effort: string, workDir: string): Agent {
+function footerAgent(model: string, effort: string, workDir: string): Agent & {
+  getModel(): string
+  getReasoningEffort(): string
+  getWorkDir(): string
+} {
   return {
     ...createStubAgent(),
     getModel: () => model,
@@ -630,7 +634,7 @@ describe('buildReplyFooter', () => {
 /** Drive one full turn through processInteractiveEvents and return sent texts. */
 async function runTurn(e: Engine, state: InteractiveState, session: Session, sessionKey: string, content: string): Promise<string[]> {
   const p = state.platform as ReturnType<typeof createStubPlatform> & Platform
-  const channel = (state.agentSession as { channel: { push(ev: unknown): void } }).channel
+  const channel = (state.agentSession as unknown as { channel: { push(ev: unknown): void } }).channel
   channel.push({ type: 'result', content, done: true })
   await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
   return p.getSent()
@@ -823,7 +827,7 @@ describe('sendTurnCompletionCard', () => {
   })
 })
 
-function collectJumpLinkURLs(card: Card): string[] {
+function collectJumpLinkURLs(card: Pick<Card, 'elements'>): string[] {
   const urls: string[] = []
   const walk = (elements: CardElement[]): void => {
     for (const el of elements) {
@@ -840,7 +844,7 @@ function collectJumpLinkURLs(card: Card): string[] {
 
 function jumpLinkInsideCollapsible(card: Card): boolean {
   const inner = card.elements.find(el => el.kind === 'collapsiblePanel') as { elements: CardElement[] } | undefined
-  return inner !== undefined && collectJumpLinkURLs({ header: undefined, elements: inner.elements, permBody: '' }).length > 0
+  return inner !== undefined && collectJumpLinkURLs({ elements: inner.elements }).length > 0
 }
 
 function collectMarkdown(card: Card): string[] {

@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform } from '../../src/feishu/platform.js'
+import { FeishuPlatform, type FeishuChatUpdatedEvent } from '../../src/feishu/platform.js'
 
 function newPlatform(options: Partial<ConstructorParameters<typeof FeishuPlatform>[0]> = {}): FeishuPlatform {
   return new FeishuPlatform({
@@ -73,7 +73,7 @@ describe('onChatUpdated', () => {
     const h = withHandlers(p)
     await p.start(() => {})
 
-    deliver?.('im.chat.updated_v1', { chat_id: 'oc_1', after_change: { name: '改名' } } satisfies ChatUpdatedEvent)
+    deliver?.('im.chat.updated_v1', { chat_id: 'oc_1', after_change: { name: '改名' } } satisfies FeishuChatUpdatedEvent)
 
     expect(h.renamed).toEqual([['feishu:oc_1', '改名']])
   })

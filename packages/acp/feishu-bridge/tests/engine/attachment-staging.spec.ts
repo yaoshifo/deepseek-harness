@@ -147,7 +147,7 @@ describe('stageAttachments', () => {
     const p = createStubPlatform()
     const sends: Array<{ prompt: string; images: number }> = []
     let session: AgentSession | undefined
-    const agent: Agent = {
+    const agent: Agent & { getWorkDir(): string } = {
       ...createStubAgent(),
       getWorkDir: () => workDir,
       startSession: async () => {

@@ -514,7 +514,7 @@ describe('llmTriage', () => {
 
   it('drops when no provider can be resolved', async () => {
     const a = createGroupNameSwitcherAgent('', { resp: '{"actionable": true, "dir": "/pay", "task": "x"}' })
-    const e = triageEngine(a, [{ path: '/pay' }])
+    const e = triageEngine(a, [{ path: '/pay', description: '' }])
     e.monitor.triageProvider = ''
 
     const res = await e.monitor.llmTriage('something', 'oc_x')
@@ -523,19 +523,19 @@ describe('llmTriage', () => {
 
   it('drops non-actionable responses', async () => {
     const a = createGroupNameSwitcherAgent('p', { resp: '{"actionable": false, "dir": "", "task": ""}' })
-    const e = triageEngine(a, [{ path: '/pay' }])
+    const e = triageEngine(a, [{ path: '/pay', description: '' }])
     expect((await e.monitor.llmTriage('早上好', 'oc_x')).action).toBe('drop')
   })
 
   it('clarifies when the dir is unknown but monitorDirs exist', async () => {
     const a = createGroupNameSwitcherAgent('p', { resp: '{"actionable": true, "dir": "/invented", "task": "x"}' })
-    const e = triageEngine(a, [{ path: '/pay' }])
+    const e = triageEngine(a, [{ path: '/pay', description: '' }])
     expect((await e.monitor.llmTriage('bug', 'oc_x')).action).toBe('clarify')
   })
 
   it('passes allow-listed candidates through on clarify', async () => {
     const a = createGroupNameSwitcherAgent('p', { resp: '{"actionable": true, "dir": "", "task": "查日志", "candidates": ["/pay", "/auth"]}' })
-    const e = triageEngine(a, [{ path: '/pay' }, { path: '/auth' }])
+    const e = triageEngine(a, [{ path: '/pay', description: '' }, { path: '/auth', description: '' }])
     const res = await e.monitor.llmTriage('登录失败', 'oc_x')
     expect(res.action).toBe('clarify')
     expect(equalStrings(res.candidates, ['/pay', '/auth'])).toBe(true)
@@ -543,7 +543,7 @@ describe('llmTriage', () => {
 
   it('clarifies with undefined candidates when all are unknown', async () => {
     const a = createGroupNameSwitcherAgent('p', { resp: '{"actionable": true, "dir": "", "task": "x", "candidates": ["/fake"]}' })
-    const e = triageEngine(a, [{ path: '/pay' }])
+    const e = triageEngine(a, [{ path: '/pay', description: '' }])
     const res = await e.monitor.llmTriage('bug', 'oc_x')
     expect(res.action).toBe('clarify')
     expect(res.candidates).toBeUndefined()
@@ -557,7 +557,7 @@ describe('llmTriage', () => {
 
   it('spawns when dir and candidates are both given and dir is known', async () => {
     const a = createGroupNameSwitcherAgent('p', { resp: '{"actionable": true, "dir": "/pay", "task": "排查", "candidates": ["/auth"]}' })
-    const e = triageEngine(a, [{ path: '/pay' }, { path: '/auth' }])
+    const e = triageEngine(a, [{ path: '/pay', description: '' }, { path: '/auth', description: '' }])
     const res = await e.monitor.llmTriage('bug', 'oc_x')
     expect(res.action).toBe('spawn')
     expect(res.dir).toBe('/pay')
@@ -608,7 +608,7 @@ describe('askMonitorClarification', () => {
   })
 
   it('falls back to all monitorDirs when candidates are empty', () => {
-    const { e, p } = newEng([{ path: '/a' }, { path: '/b' }])
+    const { e, p } = newEng([{ path: '/a', description: '' }, { path: '/b', description: '' }])
     e.monitor.askMonitorClarification(p, msgFor('bug'), 'r', '', undefined)
     expect(e.sessions.getOrCreateActive(sk).getPendingMonitorClarification()?.options).toHaveLength(3)
   })
@@ -667,7 +667,7 @@ describe('askMonitorClarification', () => {
   })
 
   it('dispatch mode falls back to monitorDirs when the scan is empty', () => {
-    const { e, p } = newEng([{ path: '/pay' }, { path: '/auth' }])
+    const { e, p } = newEng([{ path: '/pay', description: '' }, { path: '/auth', description: '' }])
     e.monitor.setMode('dispatch')
     e.monitor.askMonitorClarification(p, msgFor('bug'), 'r', '', undefined)
     expect(e.sessions.getOrCreateActive(sk).getPendingMonitorClarification()?.options).toHaveLength(3)
@@ -676,7 +676,7 @@ describe('askMonitorClarification', () => {
   it('monitor mode ignores the dir scan and uses monitorDirs', () => {
     const ws = tempDir()
     mkdirSync(join(ws, 'riskai'), { recursive: true })
-    const { e, p } = newEng([{ path: '/pay' }])
+    const { e, p } = newEng([{ path: '/pay', description: '' }])
     e.monitor.setMode('monitor')
     const dh = new DirHistory(tempDir())
     dh.setScanPaths(e.name, [ws])
@@ -701,7 +701,11 @@ describe('resolveMonitorClarification', () => {
     e.sessions.getOrCreateActive(sk).setPendingMonitorClarification({
       origText: '原始告警',
       origTask: '查日志',
+      origMessageID: '',
+      origReactionID: '',
       origUserID: 'u1',
+      images: [],
+      origReplyCtx: undefined,
       options: dirOpts,
       askedAt: Date.now() - ageMs,
     } satisfies MonitorClarification)
@@ -1118,8 +1122,12 @@ describe('reaction cleanup regressions', () => {
     const sk = 'feishu:oc_x:u1'
     e.sessions.getOrCreateActive(sk).setPendingMonitorClarification({
       origText: '原始告警',
-      origReplyCtx: 'rc',
+      origTask: '',
+      origMessageID: 'om_1',
       origReactionID: 'react-OnIt',
+      origUserID: 'u1',
+      images: [],
+      origReplyCtx: 'rc',
       options: [{ label: '支付', dir: '/pay' }],
       askedAt: Date.now(),
     } satisfies MonitorClarification)

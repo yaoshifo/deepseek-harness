@@ -65,7 +65,7 @@ function createHarness(parents: DshAgentLike[] = []): Harness {
           disposed: false,
           followup(message: unknown): void {
             agent.followups.push(message as { content?: Array<{ type: string; text: string }> })
-            agent.status = 'running'
+            ;(agent as { status: string }).status = 'running'
             // Fire the scripted reply one microtask later — after the
             // one-shot loop has started awaiting the event channel.
             void Promise.resolve().then(() => {

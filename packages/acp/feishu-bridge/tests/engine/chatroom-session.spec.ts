@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '../../src/engine/session.js'
+import { ChatroomEndBarrier, ChatroomGather } from '../../src/engine/chatroom.js'
 
 describe('chatroom session fields persist', () => {
   it('chatroom hub/role/asked round-trip through save/load', async () => {
@@ -84,8 +85,11 @@ describe('chatroom session fields persist', () => {
     const role = sm1.getOrCreateActive('test:role-chat')
     role.setChatroomHubKey('test:hub:user-1')
     role.setChatroomInFlight(true)
-    role.setPendingGather({ seq: 1, question: 'q', expected: new Set(), collected: new Map() })
-    role.setPendingEndBarrier({ expected: new Set(['taleb']), collected: new Map() })
+    const gather = new ChatroomGather('q', 1)
+    role.setPendingGather(gather)
+    const barrier = new ChatroomEndBarrier()
+    barrier.expected.add('taleb')
+    role.setPendingEndBarrier(barrier)
     sm1.save()
 
     const sm2 = new SessionManager(store)

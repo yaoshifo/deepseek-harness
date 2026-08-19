@@ -53,10 +53,10 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => { setTimeout(resolve, 0) })
 }
 
-async function waitFor(cond: () => boolean, what: string, timeoutMs = 2000): Promise<void> {
+async function waitFor(cond: () => boolean | Promise<boolean>, what: string, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
-    if (cond()) return
+    if (await cond()) return
     if (Date.now() > deadline) throw new Error(`timeout waiting for: ${what}`)
     await settle()
   }
@@ -98,7 +98,8 @@ function cardTitle(card: unknown): string {
 
 /** The armed role-picker state (the pick module's engine-keyed map). */
 function pickStateOf(e: Engine, hub: string): { chatroomPick?: ChatroomPickState } {
-  return { chatroomPick: getChatroomPickState(e, hub) }
+  const state = getChatroomPickState(e, hub)
+  return state === undefined ? {} : { chatroomPick: state }
 }
 
 describe('StartChatroom', () => {

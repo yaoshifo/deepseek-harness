@@ -18,16 +18,16 @@ import {
 
 /** Go limitEntry literal for a TOKENS_LIMIT session window (unit 3 = hours). */
 function sessionLimit(pct: number): GlmLimitEntry {
-  return { type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: pct }
+  return { type: 'TOKENS_LIMIT', unit: 3, number: 5, usage: 0, currentValue: 0, percentage: pct, remaining: 0, nextResetTime: 0 }
 }
 
 /** Go limitEntry literal for a weekly TOKENS_LIMIT (unit 6). */
 function weeklyLimit(pct: number): GlmLimitEntry {
-  return { type: 'TOKENS_LIMIT', unit: 6, number: 1, percentage: pct }
+  return { type: 'TOKENS_LIMIT', unit: 6, number: 1, usage: 0, currentValue: 0, percentage: pct, remaining: 0, nextResetTime: 0 }
 }
 
 function mcpLimit(pct: number): GlmLimitEntry {
-  return { type: 'TIME_LIMIT', unit: 5, number: 1, percentage: pct }
+  return { type: 'TIME_LIMIT', unit: 5, number: 1, usage: 0, currentValue: 0, percentage: pct, remaining: 0, nextResetTime: 0 }
 }
 
 /** Stub fetch replying with the given JSON body and status. */
@@ -268,5 +268,5 @@ describe('minimax provider', () => {
 function asFetcher(p: UsageProvider): { fetchSummary(): Promise<string> } {
   const f = p as UsageProvider & { fetchSummary?: () => Promise<string> }
   if (typeof f.fetchSummary !== 'function') throw new Error('provider lacks fetchSummary')
-  return f
+  return f as UsageProvider & { fetchSummary(): Promise<string> }
 }

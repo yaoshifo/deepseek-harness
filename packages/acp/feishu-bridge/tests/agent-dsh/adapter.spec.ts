@@ -569,7 +569,7 @@ async function startedProvider(): Promise<{
   ask: (req: Record<string, unknown>) => Promise<unknown>
 }> {
   const { adapter, providers } = createUserQuestionsHarness()
-  const session = await adapter.startSession('')
+  const session = (await adapter.startSession('')) as DshAgentSession
   const provider = providers[0]
   if (provider === undefined) throw new Error('userQuestions provider was not registered')
   return { session, ask: req => provider.ask(req) }

@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import type { Agent, AgentSession, Platform } from '../../src/core/types.js'
+import type { Agent, AgentSession, Platform, RenderQuerier } from '../../src/core/types.js'
 import { errRenderStalled } from '../../src/engine/plan-render.js'
 import { createStubAgent, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.js'
 
@@ -24,7 +24,7 @@ export interface RenderAgentCall {
   sessionEnv: string[]
 }
 
-export interface RenderAgent extends Agent {
+export interface RenderAgent extends Agent, RenderQuerier {
   getCalls(): RenderAgentCall[]
   cancelledCount(): number
 }
@@ -148,6 +148,7 @@ export function createReconstructFilePlatform(): ReconstructFilePlatform {
 /** A platform recording updateCardWithHandle calls (Go stubCardUpdatePlatform). */
 export interface StubCardUpdatePlatform extends Platform {
   updated: Array<{ handle: unknown; card: unknown }>
+  sendCardWithHandle?(replyCtx: unknown, card: unknown): Promise<unknown>
   updateCardWithHandle(handle: unknown, card: unknown): Promise<void>
 }
 

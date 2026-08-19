@@ -26,7 +26,7 @@ function newClient(block = false): RecordingClient {
     create: async () => undefined,
     updateChat: async (params) => {
       if (block) await gate
-      renames.push({ chatId: params.chatId, name: params.name })
+      renames.push({ chatId: params.chatId, ...(params.name !== undefined ? { name: params.name } : {}) })
       return { code: 0, msg: '' }
     },
   }

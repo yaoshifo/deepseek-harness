@@ -622,7 +622,7 @@ describe('spawn rename skips chatroom sessions', () => {
     const p = createStubTitleRenamePlatform('test')
     const base = createGroupNameAgent({ resp: 'LLM 群名' })
     const sess = newBlockingSendSession('flow-turn')
-    const flowAgent: Agent & GroupNameAgentState = { ...base, startSession: async () => sess }
+    const flowAgent: Agent & { state: GroupNameAgentState } = { ...base, startSession: async () => sess }
     const e = new Engine('test', flowAgent, [p], '', 'en')
     e.setGroupNameConfig(groupNameEnabled, 'p', 1000, '')
 

@@ -254,12 +254,12 @@ function compressorSession(id: string): ControllableAgentSession & { compressCal
 describe('estimateTokensWithPendingAssistant', () => {
   it('estimates one token per four runes including the pending reply', () => {
     const history = [
-      { role: 'user' as const, content: 'a'.repeat(40) },
-      { role: 'assistant' as const, content: 'b'.repeat(10) },
+      { role: 'user' as const, content: 'a'.repeat(40), timestamp: '1' },
+      { role: 'assistant' as const, content: 'b'.repeat(10), timestamp: '2' },
     ]
     expect(estimateTokensWithPendingAssistant(history, 'c'.repeat(6))).toBe(14)
     expect(estimateTokensWithPendingAssistant([], '')).toBe(0)
-    expect(estimateTokensWithPendingAssistant([{ role: 'user', content: 'x'.repeat(400) }], '')).toBe(100)
+    expect(estimateTokensWithPendingAssistant([{ role: 'user' as const, content: 'x'.repeat(400), timestamp: '1' }], '')).toBe(100)
   })
 })
 

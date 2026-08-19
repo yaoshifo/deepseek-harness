@@ -126,7 +126,7 @@ describe('DshAgentAdapter bare persona setup hook', () => {
                   },
                 }
               },
-            })
+            } as unknown as Parameters<NonNullable<DshCreateOptionsLike['setup']>>[0])
           }
           const handle: DshAgentHandleLike = {
             agent,

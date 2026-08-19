@@ -13,10 +13,12 @@ import type {
   ButtonOption,
   Event,
   EventChannel,
+  ForkQuerierWithProvider,
   Message,
   PendingPermission,
   PermissionResult,
   Platform,
+  ProviderSwitcher,
   UserQuestion,
 } from '../../src/core/types.js'
 import { EventChannel as EventChannelImpl } from '../../src/core/types.js'
@@ -721,7 +723,7 @@ export function createGroupNameAgent(opts: {
   resp?: string
   err?: Error
   blockUntilSignal?: boolean
-}): Agent & { state: GroupNameAgentState } {
+}): Agent & { state: GroupNameAgentState } & ForkQuerierWithProvider {
   const state: GroupNameAgentState = { gotPrompt: '', gotProvider: '', callCount: 0 }
   return {
     ...createStubAgent(),
@@ -747,7 +749,7 @@ export function createGroupNameAgent(opts: {
 /** Go stubGroupNameAgentSwitcher: adds ProviderSwitcher with an active provider. */
 export function createGroupNameSwitcherAgent(
   activeName: string, opts: { resp?: string; err?: Error },
-): Agent & { state: GroupNameAgentState } {
+): Agent & { state: GroupNameAgentState } & ForkQuerierWithProvider & ProviderSwitcher {
   const base = createGroupNameAgent(opts)
   return {
     ...base,
