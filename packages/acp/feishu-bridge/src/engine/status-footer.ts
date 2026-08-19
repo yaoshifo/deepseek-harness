@@ -477,15 +477,15 @@ export async function buildStatusFooterElements(inputs: StatusFooterInputs): Pro
     const collapsibleTitle = usageCollapsibleTitle !== ''
       ? usageCollapsibleTitle
       : (modelLine !== '' ? modelLine : '▸ 详细信息')
+    // No CardForm wrapper: Feishu schema 2.0 rejects a form without a submit
+    // button (card error 300123), and the form only existed for the
+    // unported form_submit hint buttons — collapsible_panel is a direct
+    // body element.
     result.push({
-      kind: 'form',
-      name: 'status_footer_form',
-      elements: [{
-        kind: 'collapsiblePanel',
-        expanded: false,
-        title: collapsibleTitle,
-        elements: collapsed,
-      }],
+      kind: 'collapsiblePanel',
+      expanded: false,
+      title: collapsibleTitle,
+      elements: collapsed,
     })
   }
   if (collapsed.length === 0 && modelLine !== '') {

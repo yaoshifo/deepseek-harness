@@ -209,18 +209,23 @@ export const dangerBtn = (text: string, value: string): CardButton => ({ text, t
  */
 export function appendIntoLastCollapsible(elements: CardElement[], el: CardElement): CardElement[] {
   for (let i = elements.length - 1; i >= 0; i--) {
-    const form = elements[i]
-    if (form?.kind !== 'form') {
-      continue
+    const cur = elements[i]
+    // Direct panel (schema 2.0 forbids submit-less form wrappers)…
+    if (cur?.kind === 'collapsiblePanel') {
+      const panel: CardCollapsiblePanel = { ...cur, elements: [...cur.elements, el] }
+      return elements.map((e, idx) => (idx === i ? panel : e))
     }
-    for (const [j, fe] of form.elements.entries()) {
-      if (fe.kind === 'collapsiblePanel') {
-        const panel: CardCollapsiblePanel = { ...fe, elements: [...fe.elements, el] }
-        const updatedForm: CardForm = {
-          ...form,
-          elements: form.elements.map((e, idx) => (idx === j ? panel : e)),
+    // …or a legacy form-wrapped panel (Go kept the form for form_submit hints).
+    if (cur?.kind === 'form') {
+      for (const [j, fe] of (cur as CardForm).elements.entries()) {
+        if (fe.kind === 'collapsiblePanel') {
+          const panel: CardCollapsiblePanel = { ...fe, elements: [...fe.elements, el] }
+          const updatedForm: CardForm = {
+            ...(cur as CardForm),
+            elements: (cur as CardForm).elements.map((e, idx) => (idx === j ? panel : e)),
+          }
+          return elements.map((e, idx) => (idx === i ? updatedForm : e))
         }
-        return elements.map((e, idx) => (idx === i ? updatedForm : e))
       }
     }
   }

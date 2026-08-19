@@ -468,9 +468,7 @@ describe('buildStatusFooterElements', () => {
       editorUrl: '',
     })
     expect(headerSuffix).toMatch(/^📁 repo/)
-    const form = elements.find(e => e.kind === 'form') as { kind: 'form'; elements: CardElement[] }
-    expect(form).toBeDefined()
-    const panel = form.elements[0] as {
+    const panel = elements.find(e => e.kind === 'collapsiblePanel') as unknown as {
       kind: 'collapsiblePanel'
       expanded?: boolean
       title?: string
@@ -512,8 +510,7 @@ describe('buildStatusFooterElements', () => {
       sessionKey: '',
       editorUrl: '',
     })
-    const form = elements.find(e => e.kind === 'form') as { elements: CardElement[] }
-    const panel = form.elements[0] as { elements: Array<{ content: string }> }
+    const panel = elements.find(e => e.kind === 'collapsiblePanel') as unknown as { elements: Array<{ content: string }> }
     expect(panel.elements.map(m => m.content)).toContain('💾 RAM: 60%')
   })
 
@@ -528,8 +525,7 @@ describe('buildStatusFooterElements', () => {
       sessionKey: '',
       editorUrl: 'https://code.example.com',
     })
-    const form = elements.find(e => e.kind === 'form') as { elements: CardElement[] }
-    const panel = form.elements[0] as { elements: CardElement[] }
+    const panel = elements.find(e => e.kind === 'collapsiblePanel') as unknown as { elements: CardElement[] }
     const actions = panel.elements.find(e => e.kind === 'actions') as {
       buttons: Array<{ text: string; url?: string }>
     }
@@ -772,8 +768,7 @@ describe('sendTurnCompletionCard', () => {
     const card = p.handleCards[0]!
     expect(card.header?.color).toBe('purple')
     expect(card.header?.title).toContain('12s')
-    const form = card.elements.find(el => el.kind === 'form') as { elements: CardElement[] }
-    const panel = form.elements[0] as { title?: string; elements: Array<{ content: string }> }
+    const panel = card.elements.find(el => el.kind === 'collapsiblePanel') as unknown as { title?: string; elements: Array<{ content: string }> }
     expect(panel.title).toBe('⌛ wk: 50%(10%)')
     expect(panel.elements.map(m => m.content)).toContain('🤖 glm-4.7')
     expect(panel.elements.map(m => m.content)).toContain('📊 ctx: +1k=10k · 3 api')
@@ -844,8 +839,7 @@ function collectJumpLinkURLs(card: Card): string[] {
 }
 
 function jumpLinkInsideCollapsible(card: Card): boolean {
-  const panel = card.elements.find(el => el.kind === 'form') as { elements: CardElement[] } | undefined
-  const inner = panel?.elements[0] as { elements: CardElement[] } | undefined
+  const inner = card.elements.find(el => el.kind === 'collapsiblePanel') as { elements: CardElement[] } | undefined
   return inner !== undefined && collectJumpLinkURLs({ header: undefined, elements: inner.elements, permBody: '' }).length > 0
 }
 
