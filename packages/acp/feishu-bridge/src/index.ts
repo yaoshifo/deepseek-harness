@@ -1,6 +1,6 @@
 /**
  * Feishu bridge plugin: cc-connect's engine + Feishu platform orchestration
- * migrated into one long-lived dsh process (see ./docs/MIGRATION.md). M0
+ * migrated into one long-lived dsh process (see MIGRATION.md). M0
  * ships only the plugin skeleton and pure-logic foundations; the engine and
  * Feishu wiring land in M1+.
  *
@@ -37,7 +37,7 @@ import { registerPredictCommands } from './engine/predict.js'
 import { registerSessionMiscCommands } from './engine/session-misc.js'
 import { getProviderModel } from './engine/provider.js'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.js'
-import type { StreamPreviewCfg } from './streaming.js'
+import type { StreamPreviewCfg } from './streaming.ts'
 
 export const name = 'feishu-bridge'
 

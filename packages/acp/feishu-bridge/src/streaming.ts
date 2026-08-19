@@ -42,6 +42,7 @@ export const maxAnalysisDisplayChars = 6000
 
 /** Streaming preview behavior switches (Go StreamPreviewCfg). */
 export interface StreamPreviewCfg {
+  /** Whether streaming preview cards are sent at all. */
   enabled: boolean
   /** Platforms where streaming preview is disabled. */
   disabledPlatforms?: string[]

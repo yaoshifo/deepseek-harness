@@ -217,12 +217,12 @@ export function appendIntoLastCollapsible(elements: CardElement[], el: CardEleme
     }
     // …or a legacy form-wrapped panel (Go kept the form for form_submit hints).
     if (cur?.kind === 'form') {
-      for (const [j, fe] of (cur as CardForm).elements.entries()) {
+      for (const [j, fe] of cur.elements.entries()) {
         if (fe.kind === 'collapsiblePanel') {
           const panel: CardCollapsiblePanel = { ...fe, elements: [...fe.elements, el] }
           const updatedForm: CardForm = {
-            ...(cur as CardForm),
-            elements: (cur as CardForm).elements.map((e, idx) => (idx === j ? panel : e)),
+            ...cur,
+            elements: cur.elements.map((e, idx) => (idx === j ? panel : e)),
           }
           return elements.map((e, idx) => (idx === i ? updatedForm : e))
         }

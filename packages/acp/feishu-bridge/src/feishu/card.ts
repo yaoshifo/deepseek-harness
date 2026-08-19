@@ -14,7 +14,7 @@ import { finalizeFeishuCardMarkdown } from './markdown.js'
 export type FeishuCardMap = Record<string, unknown>
 
 /**
- * 卡片紧凑基线（docs/card_style_guide.md）：body/header padding 统一
+ * 卡片紧凑基线（cc-connect 的 card_style_guide）：body/header padding 统一
  * "4px 12px 4px 12px"，body vertical_spacing 统一 "0px"。所有 body/header
  * 构造都必须走这两个常量，避免渲染路径漂移。
  */

@@ -773,7 +773,8 @@ export class FeishuPlatform implements Platform {
       if (actionVal === 'perm:allow') content = 'allow'
       else if (actionVal === 'perm:deny') {
         content = 'deny'
-        const reason = String(action.formValue?.deny_reason ?? '')
+        const raw = action.formValue?.deny_reason
+        const reason = typeof raw === 'string' ? raw : ''
         if (reason.trim() !== '') content = `deny\x00${reason.trim()}`
       } else if (actionVal === 'perm:allow_all') content = 'allow all'
       else return
