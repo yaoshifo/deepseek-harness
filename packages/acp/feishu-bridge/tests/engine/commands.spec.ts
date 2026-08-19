@@ -1,10 +1,12 @@
 import { mkdtemp, mkdir } from 'node:fs/promises'
+import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Engine, InteractiveState, stripUserID } from '../../src/engine/engine.js'
 import { DirHistory } from '../../src/engine/dir-history.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
+import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.js'
 import { cmdDir, cmdList, cmdNew, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.js'
 import type { Agent, AgentSessionInfo, Message } from '../../src/core/types.js'
 import {
@@ -120,6 +122,50 @@ describe('/status', () => {
       expect(p.sent).toHaveLength(1)
       expect(p.sent[0]).toContain('Status')
       expect(p.sent[0]).not.toContain('[← Back]')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('includes the cron line when the session has jobs (M6a leftover wiring)', async () => {
+    const { e, p, dispose } = newEngine()
+    try {
+      const scheduler = new CronScheduler(new CronStore(mkdtempSync(join(tmpdir(), 'fb-statuscron-'))))
+      e.cronScheduler = scheduler
+      const job = new CronJob()
+      job.id = 'cron_1'
+      job.project = 'test'
+      job.sessionKey = msg().sessionKey
+      job.cronExpr = '0 6 * * *'
+      job.prompt = 'daily report'
+      job.enabled = true
+      job.createdAt = new Date().toISOString()
+      scheduler.addJob(job)
+      const job2 = new CronJob()
+      job2.id = 'cron_2'
+      job2.project = 'test'
+      job2.sessionKey = msg().sessionKey
+      job2.cronExpr = '0 7 * * *'
+      job2.prompt = 'other'
+      job2.enabled = false
+      job2.createdAt = new Date().toISOString()
+      scheduler.addJob(job2)
+
+      await cmdStatus(e, p, msg())
+      expect(p.sent).toHaveLength(1)
+      expect(p.sent[0]).toContain('Cron jobs: 2 (enabled: 1)')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('omits the cron line when the session has no jobs', async () => {
+    const { e, p, dispose } = newEngine()
+    try {
+      e.cronScheduler = new CronScheduler(new CronStore(mkdtempSync(join(tmpdir(), 'fb-statuscron2-'))))
+      await cmdStatus(e, p, msg())
+      expect(p.sent).toHaveLength(1)
+      expect(p.sent[0]).not.toContain('Cron jobs:')
     } finally {
       dispose()
     }

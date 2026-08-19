@@ -23,6 +23,8 @@ import { CronScheduler, CronStore } from './engine/cron.js'
 import { registerCronCommands } from './engine/cron-commands.js'
 import { RelayManager } from './engine/relay.js'
 import { registerRelayCommands } from './engine/relay-commands.js'
+import { MonitorExampleStore, type MonitorDirEntry, type MonitorRuleEntry } from './engine/monitor.js'
+import { registerMonitorCommands } from './engine/monitor-commands.js'
 import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from './tools/subtask.js'
 import { registerCronTool } from './tools/cron.js'
 import { registerRelayTool } from './tools/relay.js'
@@ -113,6 +115,8 @@ export interface ProjectConfig {
   groupName?: GroupNameConfig
   /** Multi-role chatroom tuning (Go [chatroom]). */
   chatroom?: ChatroomConfig
+  /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
+  monitor?: MonitorConfig
   /** Comma-separated user IDs allowed to run privileged commands; '*' = all (Go admin_from). */
   adminFrom?: string
   /** Minutes before an idle interactive session is reaped (Go interactive_idle_timeout_mins). */
@@ -189,6 +193,69 @@ export interface CronConfig {
 export interface RelayConfig {
   /** Max seconds to wait for a relay response; 0 disables; default 120 (Go relay.timeout_secs). */
   timeoutSecs?: number
+}
+
+/** One entry in the monitor dir menu (Go MonitorDirCfg). */
+export interface MonitorDirConfig {
+  /** Directory path the LLM routes to. */
+  path: string
+  /** One-line description the LLM matches against. */
+  description?: string
+}
+
+/** A deterministic monitor rule: regex → dir (Go MonitorRuleCfg). */
+export interface MonitorRuleConfig {
+  /** Regex matched against the message text. */
+  pattern: string
+  /** Directory the matching message spawns into. */
+  dir: string
+  /** First-instruction template; {{message}} = the message text. */
+  task?: string
+  /** Fire-and-forget: the child never reports back to the hub (Go no_report). */
+  noReport?: boolean
+}
+
+/**
+ * Monitor-group mode (#53, Go [projects.monitor]): the bot observes the
+ * listed chats, triages each message (rules first, then an LLM side query
+ * with /learn few-shot examples), and spawns an isolated subgroup in a
+ * configured directory for actionable ones.
+ */
+export interface MonitorConfig {
+  /** Master switch. */
+  enabled?: boolean
+  /** Comma-separated chat IDs to monitor, or "*" for every group the bot is in. */
+  chats?: string
+  /** Recent messages fed to LLM triage as context; 0 = single-message triage. */
+  contextWindow?: number
+  /** Post a heads-up card when a subgroup is spawned; default true. */
+  spawnNotice?: boolean
+  /** Cap on active (not /done) subgroups per monitored chat; default 5. */
+  maxConcurrent?: number
+  /** Named provider route for the LLM triage fork; empty = active provider. */
+  triageProvider?: string
+  /** Triage prompt override; empty = the built-in mode default. */
+  triagePrompt?: string
+  /** Directory menu the LLM picks from. */
+  dirs?: MonitorDirConfig[]
+  /** Deterministic fast-path rules. */
+  rules?: MonitorRuleConfig[]
+  /** /learn teaching mechanism; default true. */
+  learnEnabled?: boolean
+  /** Cap on learned examples injected into the triage prompt; default 20. */
+  learnMaxExamples?: number
+  /** Emoji reacted on acted-on messages; 'none' disables; default 'Get'. */
+  reactEmoji?: string
+  /** Poll each chat for messages that never arrive as events; default 30; 0 = off. */
+  pollIntervalSec?: number
+  /** open_id owning subgroups spawned for sender-less webhook cards. */
+  fallbackUser?: string
+  /** 'monitor' (alert triage, default) or 'dispatch' (hub dispatcher). */
+  mode?: string
+  /** Route same-dir alerts into the existing active subgroup; default true. */
+  coalesceEnabled?: boolean
+  /** Coalescing window in seconds; default 300; 0 = no age limit. */
+  coalesceWindowSec?: number
 }
 
 /**
@@ -301,6 +368,33 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <moderatorDir>/research)'),
       researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
     }).description('Multi-role chatroom tuning (Go [chatroom])'),
+    monitor: Schema.object({
+      enabled: Schema.boolean().description('Monitor-group mode master switch (#53)'),
+      chats: Schema.string().description('Comma-separated monitored chat IDs, or * for all groups'),
+      contextWindow: Schema.natural().description('Recent messages fed to LLM triage as context; 0 = single-message'),
+      spawnNotice: Schema.boolean().description('Heads-up card when a subgroup is spawned; default true'),
+      maxConcurrent: Schema.natural().description('Cap on active subgroups per monitored chat; default 5'),
+      triageProvider: Schema.string().description('Named provider route for the LLM triage fork (default: active)'),
+      triagePrompt: Schema.string().description('Triage prompt override (default: built-in mode default)'),
+      dirs: Schema.array(Schema.object({
+        path: Schema.string().required().description('Directory path the LLM routes to'),
+        description: Schema.string().description('One-line description the LLM matches against'),
+      })).description('Directory menu the LLM picks from (Go [[projects.monitor.dirs]])'),
+      rules: Schema.array(Schema.object({
+        pattern: Schema.string().required().description('Regex matched against the message text'),
+        dir: Schema.string().required().description('Directory the matching message spawns into'),
+        task: Schema.string().description('First-instruction template; {{message}} = the message text'),
+        noReport: Schema.boolean().description('Fire-and-forget: the child never reports back (no_report)'),
+      })).description('Deterministic fast-path rules (Go [[projects.monitor.rules]])'),
+      learnEnabled: Schema.boolean().description('/learn teaching mechanism; default true'),
+      learnMaxExamples: Schema.natural().description('Cap on learned examples in the triage prompt; default 20'),
+      reactEmoji: Schema.string().description('Emoji reacted on acted-on messages; none disables; default Get'),
+      pollIntervalSec: Schema.natural().description('Poll chats for event-less messages in seconds; default 30; 0 = off'),
+      fallbackUser: Schema.string().description('open_id owning subgroups spawned for sender-less webhook cards'),
+      mode: Schema.string().description('monitor (alert triage, default) or dispatch (hub dispatcher)'),
+      coalesceEnabled: Schema.boolean().description('Route same-dir alerts into the existing active subgroup; default true'),
+      coalesceWindowSec: Schema.natural().description('Coalescing window in seconds; default 300; 0 = no age limit'),
+    }).description('Monitor-group mode (#53)'),
     adminFrom: Schema.string().description('Comma-separated admin user IDs; * = all'),
     interactiveIdleTimeoutMins: Schema.natural().description('Idle reaper threshold in minutes'),
   })).default([]).description('Projects bound to Feishu apps'),
@@ -573,6 +667,9 @@ export function buildProjectAssembly(
   registerChatroomCommands(engine)
   wireGroupName(engine, project)
   wireChatroom(engine, config.chatroom, project.chatroom, dataRoot)
+  // M6b: monitor domain (#53) — config block → engine MonitorCore + the
+  // /monitor command family + runtime persistence via the project state.
+  wireMonitor(engine, project, projectDataDir, projectState)
 
   // M6: process-wide cron + relay services (Go main registers every engine
   // into the shared CronScheduler / RelayManager and attaches both).
@@ -703,4 +800,74 @@ function wireChatroom(
   }
   // Research venv provisioning defaults ON (Go wire.go: nil → enabled).
   engine.setChatroomResearchPythonEnv(cfg.researchPythonEnv !== false)
+}
+
+/**
+ * Configure the monitor domain (#53, Go main.go wireMonitor): compile the
+ * deterministic rules (an invalid pattern is skipped with a warning), apply
+ * the Go defaults (spawn_notice 5/…), persist /monitor runtime edits through
+ * the project state store (Go rewrote config.toml; the profile's cordis.yml
+ * is read-only at runtime here, so state.json carries the override), and
+ * register the /monitor command family.
+ * @param engine - The project's engine.
+ * @param project - The project row carrying the optional monitor section.
+ * @param projectDataDir - The project's data directory (examples store).
+ * @param projectState - The persisted per-project state store.
+ */
+function wireMonitor(engine: Engine, project: ProjectConfig, projectDataDir: string, projectState: ProjectStateStore): void {
+  registerMonitorCommands(engine)
+  const m = project.monitor
+  if (m === undefined || m.enabled !== true) {
+    engine.monitor.setConfig({
+      enabled: false, chats: '', contextWindow: 0, spawnNotice: false, maxConcurrent: 0,
+      triageProvider: '', triagePrompt: '', dirs: [], rules: [], learnEnabled: false, learnMax: 0,
+      reactEmoji: '', pollIntervalMs: 0, fallbackUser: '', examples: undefined, mode: '',
+    })
+    engine.monitor.setCoalesce(false, 0)
+    return
+  }
+
+  const dirs: MonitorDirEntry[] = (m.dirs ?? []).map(d => ({ path: d.path, description: d.description ?? '' }))
+  const rules: MonitorRuleEntry[] = []
+  for (const r of m.rules ?? []) {
+    try {
+      rules.push({ pattern: new RegExp(r.pattern), dir: r.dir, task: r.task ?? '', noReport: r.noReport === true })
+    } catch (error) {
+      console.error(`monitor: invalid rule pattern, skipping (pattern=${r.pattern} dir=${r.dir}): ${String(error)}`)
+    }
+  }
+
+  const pollIntervalSec = m.pollIntervalSec ?? 30
+  // A persisted /monitor edit wins over the configured chats/mode so the
+  // runtime toggle survives restarts (Go rewrote config.toml instead).
+  const chats = projectState.monitorChats() !== '' ? projectState.monitorChats() : (m.chats ?? '')
+  const mode = projectState.monitorMode() !== '' ? projectState.monitorMode() : (m.mode ?? '')
+
+  engine.monitor.saveChats = (c: string) => {
+    projectState.setMonitorChats(c)
+    projectState.save()
+  }
+  engine.monitor.saveMode = (v: string) => {
+    projectState.setMonitorMode(v)
+    projectState.save()
+  }
+  engine.monitor.setConfig({
+    enabled: true,
+    chats,
+    contextWindow: m.contextWindow ?? 0,
+    spawnNotice: m.spawnNotice ?? true,
+    maxConcurrent: m.maxConcurrent ?? 5,
+    triageProvider: m.triageProvider ?? '',
+    triagePrompt: m.triagePrompt ?? '',
+    dirs,
+    rules,
+    learnEnabled: m.learnEnabled ?? true,
+    learnMax: m.learnMaxExamples ?? 20,
+    reactEmoji: m.reactEmoji === 'none' ? '' : (m.reactEmoji ?? 'Get'),
+    pollIntervalMs: pollIntervalSec > 0 ? pollIntervalSec * 1000 : 0,
+    fallbackUser: m.fallbackUser ?? '',
+    examples: new MonitorExampleStore(join(projectDataDir, 'monitor_examples.json')),
+    mode,
+  })
+  engine.monitor.setCoalesce(m.coalesceEnabled ?? true, (m.coalesceWindowSec ?? 300) * 1000)
 }

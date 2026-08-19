@@ -14,6 +14,10 @@ import { dirname } from 'node:path'
 interface ProjectStateData {
   work_dir_override?: string
   workspace_dir_overrides?: Record<string, string> | undefined
+  /** Runtime /monitor chats override (#53; empty = use config). */
+  monitor_chats?: string
+  /** Runtime /monitor mode override (#53; empty = use config). */
+  monitor_mode?: string
 }
 
 /** Persists lightweight runtime state for one project. */
@@ -59,6 +63,24 @@ export class ProjectStateStore {
 
   clearWorkDirOverride(): void {
     this.setWorkDirOverride('')
+  }
+
+  /** The runtime /monitor chats override ('' when unset). */
+  monitorChats(): string {
+    return this.state.monitor_chats ?? ''
+  }
+
+  setMonitorChats(chats: string): void {
+    this.state.monitor_chats = chats
+  }
+
+  /** The runtime /monitor mode override ('' when unset). */
+  monitorMode(): string {
+    return this.state.monitor_mode ?? ''
+  }
+
+  setMonitorMode(mode: string): void {
+    this.state.monitor_mode = mode
   }
 
   /** Persist synchronously (Go saveLocked). */

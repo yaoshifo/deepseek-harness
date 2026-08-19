@@ -132,3 +132,291 @@ export function stripMentions(text: string, mentions: FeishuMention[] | undefine
   }
   return text.trim()
 }
+
+// ── interactive-card text extraction (Go feishu_extract.go, #53 poll path) ──
+
+/**
+ * Returned by {@link extractInteractiveCardText} when a card yields no
+ * textual content. The poll path treats it as "no text" so an image-only
+ * card can fall back to downloading its embedded images.
+ */
+export const interactiveCardPlaceholder = '[interactive card]'
+
+/**
+ * Return the card JSON, unwrapping the two known delivery wrappers:
+ * {"json_card":"<escaped JSON>"} (quoted-message fetch) and
+ * {"type":"raw_card_content","raw_card_content":"<escaped JSON>"} (inbound
+ * event / list response). Direct card JSON is returned as-is (Go
+ * unwrapCardContent).
+ */
+export function unwrapCardContent(content: string): string {
+  let wrapper: { json_card?: string; raw_card_content?: string }
+  try {
+    wrapper = JSON.parse(content) as typeof wrapper
+  } catch {
+    return content
+  }
+  if (wrapper.raw_card_content !== undefined && wrapper.raw_card_content !== '') return wrapper.raw_card_content
+  if (wrapper.json_card !== undefined && wrapper.json_card !== '') return wrapper.json_card
+  return content
+}
+
+/** Structural slice of one schema 2.0 card element (Go extractCardElements's anon struct). */
+interface CardElem {
+  tag?: string
+  content?: string
+  title?: unknown
+  text?: unknown
+  elements?: unknown[]
+  property?: {
+    content?: string
+    contents?: unknown
+    language?: string
+    elements?: unknown[]
+    text?: unknown
+    items?: unknown
+    columns?: unknown
+    rows?: unknown
+    title?: unknown
+  }
+}
+function asCardElem(raw: unknown): CardElem | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  return raw
+}
+
+/** Recursively extract text from schema 2.0 card elements (Go extractCardElements). */
+function extractCardElements(elements: unknown[], parts: string[]): void {
+  for (const raw of elements) {
+    const elem = asCardElem(raw)
+    if (elem === undefined) continue
+    const prop = elem.property ?? {}
+    switch (elem.tag) {
+      case 'code_block': {
+        const lines = Array.isArray(prop.contents) ? prop.contents : []
+        const codeLines: string[] = []
+        for (const line of lines) {
+          let lineText = ''
+          const tokens = (line as { contents?: unknown } | null)?.contents
+          if (Array.isArray(tokens)) {
+            for (const tok of tokens) {
+              const t = asCardElem(tok)
+              if (t?.content !== undefined) lineText += t.content
+            }
+          }
+          codeLines.push(lineText)
+        }
+        const code = codeLines.join('')
+        if (code.trim() !== '') {
+          parts.push(prop.language !== undefined && prop.language !== '' ? `\`\`\`${prop.language}\n${code}\`\`\`` : `\`\`\`\n${code}\`\`\``)
+        }
+        break
+      }
+      case 'code_span':
+        if (prop.content !== undefined && prop.content !== '') parts.push(`\`${prop.content}\``)
+        break
+      case 'hr':
+        parts.push('---')
+        break
+      case 'column_set': {
+        // Schema 2.0 layout: columns[] → each column's property.elements hold
+        // the real content. Recurse so column-based alert metrics are not lost.
+        const cols = Array.isArray(prop.columns) ? prop.columns : []
+        for (const col of cols) {
+          const colElements = asCardElem(col)?.property?.elements
+          if (Array.isArray(colElements) && colElements.length > 0) extractCardElements(colElements, parts)
+        }
+        break
+      }
+      case 'table':
+        extractCardTable(prop.columns, prop.rows, parts)
+        break
+      case 'list':
+        extractCardListItems(prop.items, parts)
+        break
+      default: {
+        let content = prop.content ?? ''
+        if (content === '') content = elem.content ?? ''
+        if (content !== '') parts.push(content)
+        // Schema 2.0 div 的 property.text 是富文本容器：lark_md 被飞书解析成
+        // text.property.elements[] 里的 plain_text 序列，实际文本在
+        // plain_text.property.content。递归提取才不丢正文。
+        if (prop.text !== undefined && prop.text !== null) {
+          const textElem = asCardElem(prop.text)
+          if (textElem !== undefined) {
+            const tp = textElem.property ?? {}
+            if (Array.isArray(tp.elements) && tp.elements.length > 0) {
+              extractCardElements(tp.elements, parts)
+            } else if (Array.isArray(textElem.elements) && textElem.elements.length > 0) {
+              extractCardElements(textElem.elements, parts)
+            } else {
+              const tc = textElem.content ?? tp.content ?? ''
+              if (tc !== '') parts.push(tc)
+            }
+          }
+        }
+        // Schema 1.0 风格 div/columns：元素根级直接挂 text =
+        // {"tag":"lark_md"/"plain_text","content":"…"}。webhook 机器人和多数
+        // 告警卡片仍发根级 text，不在这里取就会整段正文丢失。
+        if (elem.text !== undefined && elem.text !== null) {
+          const t = asCardElem(elem.text)
+          const tc = t?.content ?? t?.property?.content ?? ''
+          if (tc !== '') parts.push(tc)
+        }
+        break
+      }
+    }
+    if (Array.isArray(prop.elements) && prop.elements.length > 0) {
+      extractCardElements(prop.elements, parts)
+    }
+  }
+}
+
+/** Extract a markdown table from a card table element (Go extractCardTable). */
+function extractCardTable(columnsRaw: unknown, rowsRaw: unknown, parts: string[]): void {
+  const columns = Array.isArray(columnsRaw)
+    ? columnsRaw.flatMap((c) => {
+      if (typeof c !== 'object' || c === null) return []
+      const col = c as { displayName?: string; name?: string }
+      return [{ displayName: col.displayName ?? '', name: col.name ?? '' }]
+    })
+    : []
+  if (columns.length === 0) return
+  const rows: unknown[] = Array.isArray(rowsRaw) ? rowsRaw : []
+
+  parts.push(`| ${columns.map(c => c.displayName).join(' | ')} |`)
+  parts.push(`| ${columns.map(() => '---').join(' | ')} |`)
+  for (const row of rows) {
+    const cells = columns.map(() => '')
+    if (typeof row === 'object' && row !== null) {
+      for (const [key, value] of Object.entries(row)) {
+        const idx = columns.findIndex(c => c.name === key)
+        if (idx === -1) continue
+        const cellParts: string[] = []
+        const data = (value as { data?: unknown }).data
+        if (data !== undefined && data !== null) extractCardElements([data], cellParts)
+        cells[idx] = cellParts.join(' ')
+      }
+    }
+    parts.push(`| ${cells.join(' | ')} |`)
+  }
+}
+
+/** Extract text from a card list element's items (Go extractCardListItems). */
+function extractCardListItems(itemsRaw: unknown, parts: string[]): void {
+  const items = Array.isArray(itemsRaw) ? itemsRaw : []
+  for (const item of items) {
+    const elements = (item as { elements?: unknown } | null)?.elements
+    if (!Array.isArray(elements)) continue
+    const itemParts: string[] = []
+    extractCardElements(elements, itemParts)
+    if (itemParts.length > 0) parts.push(`- ${itemParts.join(' ')}`)
+  }
+}
+
+/**
+ * Extract readable text from a Feishu interactive card JSON (Go
+ * extractInteractiveCardText): header title first (schema 2.0 nested or
+ * legacy flat) so the alert name leads, then body elements (schema 2.0
+ * property.elements / direct elements, or legacy flat text elements).
+ */
+export function extractInteractiveCardText(content: string): string {
+  const cardJSON = unwrapCardContent(content)
+  let card: Record<string, unknown>
+  try {
+    card = JSON.parse(cardJSON) as Record<string, unknown>
+  } catch {
+    return interactiveCardPlaceholder
+  }
+  const parts: string[] = []
+
+  // Header title — schema 2.0 (header.property.title.property.content or
+  // header.title.content) or legacy (header.title.content as plain string).
+  const header = asCardElem(card.header)
+  if (header !== undefined) {
+    const t = asCardElem(header.property)?.title ?? header.title
+    const title = asCardElem(t)
+    const text = title?.property?.content ?? title?.content ?? ''
+    if (text !== '') parts.push(text)
+  }
+  // Legacy direct title string.
+  if (parts.length === 0 && typeof card.title === 'string' && card.title !== '') {
+    parts.push(card.title)
+  }
+
+  // Schema 2.0: body.property.elements (standard) or body.elements (simplified).
+  let hasBody = false
+  const body = asCardElem(card.body)
+  if (body !== undefined) {
+    hasBody = true
+    const propElements = body.property?.elements
+    if (Array.isArray(propElements) && propElements.length > 0) {
+      extractCardElements(propElements, parts)
+    } else if (Array.isArray(body.elements) && body.elements.length > 0) {
+      extractCardElements(body.elements, parts)
+    }
+  }
+
+  // Legacy: flat/nested elements (cards without a schema 2.0 body). The text
+  // lives in the element's root `text` field (Go's anon struct reads Text).
+  if (!hasBody) {
+    const rawList = Array.isArray(card.elements) ? card.elements as unknown[] : undefined
+    let elements: unknown[] | undefined
+    if (rawList !== undefined) {
+      const nested: unknown = rawList[0]
+      elements = Array.isArray(nested) ? rawList.flat() : rawList
+    }
+    for (const el of elements ?? []) {
+      const elem = asCardElem(el)
+      const text = typeof elem?.text === 'string' ? elem.text : ''
+      if (elem !== undefined && elem.tag === 'text' && text.trim() !== '') {
+        parts.push(text)
+      }
+    }
+  }
+
+  if (parts.length === 0) return interactiveCardPlaceholder
+  return parts.join('\n')
+}
+
+/**
+ * Pull readable text from a listed message's content by type (Go
+ * extractPollText): text JSON, post rich text (both the pure-array form the
+ * list API returns and the locale-wrapped whole-post form), or an interactive
+ * card.
+ */
+export function extractPollText(msgType: string, content: string): string {
+  switch (msgType) {
+    case 'text': {
+      try {
+        return (JSON.parse(content) as { text?: string }).text ?? ''
+      } catch {
+        return ''
+      }
+    }
+    case 'post':
+      return extractPostPlainText(content)
+    case 'interactive':
+      return extractInteractiveCardText(content)
+    default:
+      return ''
+  }
+}
+
+/**
+ * Deduped image keys embedded in a card JSON, first-seen order, regardless of
+ * nesting (schema 1.0 image_key / schema 2.0 img_key). Run on UNWRAPPED card
+ * JSON so escaped wrappers don't break the match (Go extractCardImageKeys).
+ */
+export function extractCardImageKeys(cardJSON: string): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  const re = /"(?:image_key|img_key)"\s*:\s*"([^"]+)"/g
+  for (const m of cardJSON.matchAll(re)) {
+    const k = m[1] ?? ''
+    if (k === '' || seen.has(k)) continue
+    seen.add(k)
+    out.push(k)
+  }
+  return out
+}

@@ -398,7 +398,7 @@ describe('ForegroundPermissionSurfaces', () => {
     expect(state.permissionPending).toBe(true)
     expect(state.pending?.requestID).toBe('req-fg')
     expect(state.pending?.toolName).toBe('write')
-    const sent = p.getSent().map(x => String(x)).join('\n')
+    const sent = p.getSent().join('\n')
     expect(sent).toContain('write')
 
     // Resolve the pending to unblock the parked loop.

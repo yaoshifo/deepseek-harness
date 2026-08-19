@@ -540,6 +540,7 @@ export function executeChatroomTopicPickAction(e: Engine, sessionKey: string, ar
  * Returns undefined when there is nothing to swap in (unknown toggle).
  */
 export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: string, args: string): Card | undefined {
+
   if (cmd === '/chatroom-pick') {
     executeChatroomPickAction(e, sessionKey, args)
     if (args.startsWith('cancel')) {

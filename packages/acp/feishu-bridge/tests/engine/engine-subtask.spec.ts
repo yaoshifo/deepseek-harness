@@ -517,8 +517,8 @@ describe('reportSubtaskTimeout', () => {
   it('skips a monitor parent', async () => {
     const p = createStubCardPlatformFull('test')
     const e = newSubtaskTestEngine(p)
-    e.monitorEnabled = true
-    e.setMonitorChats('oc_monitor')
+    e.monitor.enabled = true
+    e.monitor.setChats('oc_monitor')
 
     const child = e.sessions.getOrCreateActive('test:child-chat')
     child.setParentSessionKey('test:oc_monitor:user-1')
