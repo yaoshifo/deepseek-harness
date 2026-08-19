@@ -1197,12 +1197,33 @@ export class Engine {
 
           // Send the appropriate prompt card.
           if (isAskQuestion && p !== undefined) {
-            void this.sendAskQuestionPrompt(p, replyCtx, [{
-              question: event.content || 'Question',
-              header: '',
-              options: [],
-              multiSelect: false,
-            }], 0)
+            // Extract questions from toolInputRaw (set by the adapter's
+            // userQuestions provider); fall back to a generic question.
+            type RawQ = {
+              question: string
+              header?: string
+              options?: Array<{ label: string; description?: string }>
+              multiSelect?: boolean
+            }
+            const rawQs = event.toolInputRaw?.questions as RawQ[] | undefined
+            const questions: UserQuestion[] = rawQs !== undefined && rawQs.length > 0
+              ? rawQs.map(q => ({
+                question: q.question,
+                header: q.header ?? '',
+                options: (q.options ?? []).map(o => ({
+                  label: o.label,
+                  description: o.description ?? '',
+                })),
+                multiSelect: q.multiSelect ?? false,
+              }))
+              : [{
+                question: event.content || 'Question',
+                header: '',
+                options: [],
+                multiSelect: false,
+              }]
+            pending.questions = questions
+            void this.sendAskQuestionPrompt(p, replyCtx, questions, 0)
           } else if (p !== undefined) {
             const permLimit = this.display.toolMaxLen
             const rawInput = event.toolInput ?? ''

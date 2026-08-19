@@ -133,6 +133,8 @@ export class DshAgentAdapter {
   private env: string[] = []
   private modeOverride = ''
   private readonly disposers: Array<() => void> = []
+  /** Whether the userQuestions provider has been registered (lazy, M3). */
+  private uqRegistered = false
 
   constructor(ctx: DshContextLike, cfg: DshAdapterConfig) {
     this.ctx = ctx
@@ -169,46 +171,53 @@ export class DshAgentAdapter {
       const outcome = await target.awaitPermissionResponse(requestID, r.signal)
       return outcome
     }))
-    // M3: Register the userQuestions provider. When the agent calls
-    // AskUserQuestion, dsh routes it here; we emit a permission_request
-    // event with the questions data and await the engine's response.
+  }
+
+  /**
+   * Lazily register the userQuestions provider on first agent creation
+   * (M3). At constructor time the user-questions service may not be
+   * composed yet; by the first session creation the plugin tree is fully
+   * loaded and ctx.get('userQuestions') resolves.
+   */
+  private ensureUserQuestionsProvider(): void {
+    if (this.uqRegistered) return
+    this.uqRegistered = true
     type UserQuestionsService = {
       registerProvider(p: {
         ask(req: UserQuestionsAskRequest): Promise<UserQuestionsAskResult>
       }): () => void
     }
-    const uq = ctx.get('userQuestions') as UserQuestionsService | undefined
-    if (uq !== undefined) {
-      this.disposers.push(uq.registerProvider({
-        ask: async (request) => {
-          const sessionID = request.agent?.session?.id ?? ''
-          const target = this.liveSessions.get(sessionID)
-          if (target === undefined) return { answers: [] }
-          const requestID = `askq-${Date.now()}`
-          const qs = request.questions as RawAskQuestionItem[]
-          const questions = qs.map(q => ({
-            question: q.question,
-            header: q.header ?? '',
-            options: (q.options ?? []).map(o => ({
-              label: o.label, description: o.description ?? '',
-            })),
-            multiSelect: q.multiSelect ?? false,
-          }))
-          target.emitPermissionRequest({
-            requestID,
-            toolName: 'AskUserQuestion',
-            toolInput: '',
-            toolInputRaw: { questions },
-          })
-          const outcome = await target.awaitPermissionResponse(
-            requestID, request.signal,
-          )
-          return {
-            answers: [{ id: '', selected: [outcome], custom: outcome }],
-          }
-        },
-      }))
-    }
+    const uq = this.ctx.get('userQuestions') as UserQuestionsService | undefined
+    if (uq === undefined) return
+    this.disposers.push(uq.registerProvider({
+      ask: async (request) => {
+        const sessionID = request.agent?.session?.id ?? ''
+        const target = this.liveSessions.get(sessionID)
+        if (target === undefined) return { answers: [] }
+        const requestID = `askq-${Date.now()}`
+        const qs = request.questions as RawAskQuestionItem[]
+        const questions = qs.map(q => ({
+          question: q.question,
+          header: q.header ?? '',
+          options: (q.options ?? []).map(o => ({
+            label: o.label, description: o.description ?? '',
+          })),
+          multiSelect: q.multiSelect ?? false,
+        }))
+        target.emitPermissionRequest({
+          requestID,
+          toolName: 'AskUserQuestion',
+          toolInput: '',
+          toolInputRaw: { questions },
+        })
+        const outcome = await target.awaitPermissionResponse(
+          requestID, request.signal,
+        )
+        return {
+          answers: [{ id: '', selected: [outcome], custom: outcome }],
+        }
+      },
+    }))
   }
 
   /** Agent display name (engine /status, /list headers). */
@@ -275,6 +284,9 @@ export class DshAgentAdapter {
       })
     }
     const session = new DshAgentSession(key, handle)
+    // Lazily register the userQuestions provider now that the plugin tree
+    // is fully loaded (at constructor time it may not be available yet).
+    this.ensureUserQuestionsProvider()
     if (this.modeOverride !== '') {
       // TODO(M3): map onto ctx.get('planMode').set(agent, mode) once the
       // permission-mode milestone lands; the override is consumed here.
