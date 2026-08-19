@@ -42,11 +42,11 @@ export interface FileAttachment {
   fileName: string
 }
 
-/** One turn in a conversation history. */
+/** One turn in a conversation history (timestamp is an ISO string, like Go time.Time's JSON form). */
 export interface HistoryEntry {
   role: 'user' | 'assistant'
   content: string
-  timestamp: number
+  timestamp: string
 }
 
 /** A session as reported by the agent backend (for /list, /switch). */
@@ -213,10 +213,10 @@ export interface SessionModeInjector {
 /** Structural checks replacing Go's interface type assertions. */
 export function asSessionEnvInjector(a: Agent): SessionEnvInjector | undefined {
   const candidate = a as Partial<SessionEnvInjector>
-  return typeof candidate.setSessionEnv === 'function' ? candidate : undefined
+  return typeof candidate.setSessionEnv === 'function' ? (candidate as SessionEnvInjector) : undefined
 }
 
 export function asSessionModeInjector(a: Agent): SessionModeInjector | undefined {
   const candidate = a as Partial<SessionModeInjector>
-  return typeof candidate.setSessionMode === 'function' ? candidate : undefined
+  return typeof candidate.setSessionMode === 'function' ? (candidate as SessionModeInjector) : undefined
 }

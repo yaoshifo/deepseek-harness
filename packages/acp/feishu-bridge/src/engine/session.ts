@@ -106,7 +106,7 @@ export class Session {
   }
 
   /** Save the current agentSessionID to pastAgentSessionIDs (no duplicates). */
-  private recordPastAgentSessionID(): void {
+  recordPastAgentSessionID(): void {
     if (this.agentSessionID === '' || this.agentSessionID === ContinueSession) return
     if (this.pastAgentSessionIDs.includes(this.agentSessionID)) return
     this.pastAgentSessionIDs.push(this.agentSessionID)
