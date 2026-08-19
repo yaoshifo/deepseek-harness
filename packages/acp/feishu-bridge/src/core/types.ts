@@ -134,6 +134,8 @@ export interface Message {
   quotedText: string
   /** Permission mode override for this message ('' = project default; Go ModeOverride). */
   modeOverride?: string
+  /** Message creation time in seconds (Go CreateTime); 0/undefined when unknown. */
+  createTime?: number
 }
 
 /** Agent output event kinds (Go EventType). M1 handles text/thinking/tool/result/error/permission. */
@@ -167,6 +169,12 @@ export interface Event {
   outputTokens?: number
   numTurns?: number
   arrivedAt?: number
+}
+
+/** Whether content is a /monitor command — exact word, not /monitoring (Go core.IsMonitorCommand). */
+export function isMonitorCommand(content: string): boolean {
+  const c = content.trim()
+  return c.startsWith('/monitor') && (c.length === 8 || c[8] === ' ')
 }
 
 /**
@@ -612,6 +620,46 @@ export interface BotIdentityProvider {
   botDisplayName(): string
 }
 
+/**
+ * Platform that can add an emoji reaction and return its ID for later
+ * removal (Go ReactionManager). monitorReact uses it so a dropped triage can
+ * unreact without orphaning the "picked up" mark.
+ */
+export interface ReactionManager {
+  addReactionWithID(replyCtx: unknown, emoji: string): Promise<string>
+  removeReaction(replyCtx: unknown, reactionID: string): Promise<void>
+}
+
+/**
+ * Platform that can brand a chat as the monitor dispatch hub: rename it and
+ * set a named icon avatar (Go ChatBrander).
+ */
+export interface ChatBrander {
+  brandChat(sessionKey: string, groupName: string, iconName: string): Promise<void>
+}
+
+/**
+ * Platform that can list a monitored chat's recent messages, backing the
+ * monitor polling fallback (#53): catches webhook-bot / other-app card
+ * messages that never arrive as events.
+ */
+export interface MonitorPoller {
+  /** Create time (seconds) of the chat's newest message; 0 for an empty chat. */
+  latestMessageTime(chatID: string): Promise<number>
+  /** Messages created after afterSec (exclusive of newer-than), oldest-first. */
+  listMonitorMessages(chatID: string, afterSec: number, limit: number): Promise<Message[]>
+}
+
+/**
+ * Platform receiving runtime monitor config pushes (Go
+ * MonitorChatConfigurable): the monitored chat set and the fallback user that
+ * owns subgroups spawned for sender-less webhook cards.
+ */
+export interface MonitorChatConfigurable {
+  setMonitorChats(chats: string): void
+  setMonitorFallbackUser(openID: string): void
+}
+
 /** The platform's own active-tag name, falling back to the global default (Go activeTagNameFor). */
 export function activeTagNameFor(p: Platform): string {
   const namer = withMethod<ActiveTagNamer>(p, 'activeTagName')
@@ -749,4 +797,29 @@ export function asSpawnedChatActiveChecker(p: Platform): SpawnedChatActiveChecke
 
 export function asBotIdentityProvider(p: Platform): BotIdentityProvider | undefined {
   return withMethod<BotIdentityProvider>(p, 'botDisplayName')
+}
+
+export function asReactionManager(p: Platform): ReactionManager | undefined {
+  const candidate = p as Partial<ReactionManager>
+  return typeof candidate.addReactionWithID === 'function' && typeof candidate.removeReaction === 'function'
+    ? candidate as ReactionManager
+    : undefined
+}
+
+export function asChatBrander(p: Platform): ChatBrander | undefined {
+  return withMethod<ChatBrander>(p, 'brandChat')
+}
+
+export function asMonitorPoller(p: Platform): MonitorPoller | undefined {
+  const candidate = p as Partial<MonitorPoller>
+  return typeof candidate.latestMessageTime === 'function' && typeof candidate.listMonitorMessages === 'function'
+    ? candidate as MonitorPoller
+    : undefined
+}
+
+export function asMonitorChatConfigurable(p: Platform): MonitorChatConfigurable | undefined {
+  const candidate = p as Partial<MonitorChatConfigurable>
+  return typeof candidate.setMonitorChats === 'function'
+    ? candidate as MonitorChatConfigurable
+    : undefined
 }

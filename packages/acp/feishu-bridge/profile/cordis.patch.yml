@@ -177,6 +177,30 @@
     #   sessionMode: reuse                 # reuse | new_per_run
     # relay:                               # bot-to-bot relay (/bind)
     #   timeoutSecs: 120                   # wait per relay response; 0 disables
+    # Per-project monitor block (#53): observe + triage + auto-spawn subgroups.
+    #   monitor:
+    #     enabled: true
+    #     chats: "oc_xxx"                  # comma-separated chat IDs; * = all groups
+    #     mode: monitor                    # monitor (alert triage) | dispatch (hub)
+    #     spawnNotice: true                # heads-up card on spawn
+    #     maxConcurrent: 5                 # active-subgroup cap per monitored chat
+    #     triageProvider: mify-dsh         # LLM triage route; empty = active
+    #     pollIntervalSec: 30              # poll for event-less webhook cards; 0 = off
+    #     fallbackUser: ou_xxx             # owner for sender-less webhook cards
+    #     coalesceEnabled: true            # same-dir alerts join the active subgroup
+    #     coalesceWindowSec: 300           # 0 = no age limit
+    #     contextWindow: 0                 # messages of LLM triage context; 0 = single
+    #     learnEnabled: true               # /learn few-shot teaching
+    #     learnMaxExamples: 20
+    #     reactEmoji: Get                  # OnIt reaction; none disables
+    #     dirs:                            # directory menu the LLM routes to
+    #       - path: /Users/hm/workspace/riskai
+    #         description: riskai 风控服务
+    #     rules:                           # deterministic fast-path
+    #       - pattern: "panic|500|报错"
+    #         dir: /Users/hm/workspace/riskai
+    #         task: "排查：{{message}}"    # {{message}} = the message text
+    #         noReport: false              # fire-and-forget child
     # streamPreview:                       # streaming preview tuning
     #   enabled: true
     #   intervalMs: 800

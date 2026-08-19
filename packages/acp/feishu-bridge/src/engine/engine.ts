@@ -153,6 +153,7 @@ import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatar
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
 import { executeCardAction } from './cron-commands.js'
 import type { RelayManager } from './relay.js'
+import { MonitorCore, isMonitorCommand } from './monitor.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -436,7 +437,7 @@ function statIsDir(path: string): boolean {
  * Chat ID from "<platform>:<chatID>[:<userID>]" when the platform segment
  * matches platformName (Go chatIDFromSessionKey).
  */
-function chatIDFromSessionKey(sessionKey: string, platformName: string): string {
+export function chatIDFromSessionKey(sessionKey: string, platformName: string): string {
   const parts = sessionKey.split(':', 3)
   if (parts.length < 2 || parts[0] !== platformName) return ''
   return parts[1] ?? ''
@@ -536,8 +537,8 @@ export class Engine {
   groupNameTimeout = 0
   groupNamePrompt = ''
   groupNameSetAvatar = false
-  /** Monitor-mode config surface; full monitor domain arrives with M6 (Go monitorEnabled). */
-  monitorEnabled = false
+  /** The monitor domain state machine (Go engine_monitor.go; reached as engine.monitor). */
+  readonly monitor: MonitorCore
   /** Cron scheduler shared across engines (Go cronScheduler; null = cron off). */
   cronScheduler: CronScheduler | undefined
   /** Relay manager shared across engines (Go relayManager; null = relay off). */
@@ -547,8 +548,6 @@ export class Engine {
   private readonly pendingRename = new Set<string>()
   /** Ring buffer of recently used group icons for prompt dedup (Go recentIcons). */
   private recentIcons: string[] = []
-  /** Config-driven monitor chat list (Go monitorChats atomic value). */
-  private monitorChatsStr = ''
 
   /** key = sessionKey (interactiveKey; workspace prefixes arrive in a later M). */
   readonly interactiveStates = new Map<string, InteractiveState>()
@@ -583,6 +582,7 @@ export class Engine {
     this.sessions = new SessionManager(sessionStorePath)
     this.i18n = new I18n(lang)
     this.sessions.invalidateForAgent(agent.name())
+    this.monitor = new MonitorCore(this)
   }
 
   // ── configuration setters used by ported tests ─────────────────────────
@@ -713,6 +713,7 @@ export class Engine {
 
   /** Stop platforms and close all interactive agent sessions (Go Stop). */
   async stop(): Promise<void> {
+    this.monitor.stopMonitorPoll()
     for (const p of this.platforms) await p.stop()
     const states = [...this.interactiveStates.values()]
     this.interactiveStates.clear()
@@ -750,6 +751,14 @@ export class Engine {
   handleMessage(p: Platform, msg: Message): void {
     const content = msg.content.trim()
     if (content === '' && msg.images.length === 0 && msg.files.length === 0) return
+
+    // Monitor mode (#53): route monitored-chat messages to triage instead of
+    // an interactive agent session. The monitored chat never runs an agent.
+    // /monitor is exempted so it reaches the normal command dispatcher.
+    if (!isMonitorCommand(msg.content) && this.isMonitorChat(msg)) {
+      this.monitor.handleMonitorMessage(p, msg)
+      return
+    }
 
     const resolved = this.resolveAlias(content)
     if (msg.extraContent !== '') {
@@ -2759,7 +2768,8 @@ export class Engine {
     // Try inline buttons
     const ibs = p as Platform & InlineButtonSender
     if (typeof ibs.sendWithButtons === 'function') {
-      const questionText = total > 1 ? `${q.question} (${qIdx + 1}/${total})` : q.question
+      const headerPrefix = q.header !== '' ? `[${q.header}] ` : ''
+      const questionText = `${headerPrefix}❓ *${q.question}*${titleSuffix}`
       const buttons = optionButtons.map(b => [{ text: b.text, data: b.value }])
       try {
         await ibs.sendWithButtons(replyCtx, questionText, buttons)
@@ -2770,7 +2780,7 @@ export class Engine {
     }
 
     // Plain text fallback
-    const lines = [q.question]
+    const lines = [`${q.header !== '' ? `[${q.header}] ` : ''}❓ ${q.question}${titleSuffix}`]
     if (q.multiSelect) lines.push(this.i18n.t(MsgAskQuestionMulti))
     for (let i = 0; i < q.options.length; i++) {
       const opt = q.options[i]
@@ -3635,16 +3645,17 @@ export class Engine {
 
   /** Config-driven monitor chat check (Go isMonitorChat). */
   isMonitorChat(msg: Message): boolean {
-    if (!this.monitorEnabled) return false
-    if (this.monitorChatsStr === '') return false
+    if (!this.monitor.enabled) return false
+    const chats = this.monitor.chatsVal()
+    if (chats === '') return false
     const chatID = chatIDFromSessionKey(msg.sessionKey, msg.platform)
     if (chatID === '') return false
-    return AllowList(this.monitorChatsStr, chatID)
+    return AllowList(chats, chatID)
   }
 
-  /** Set the monitor chat list (Go setMonitorChats; full monitor domain is M6). */
+  /** Set the monitor chat list (Go setMonitorChats; runtime application goes through MonitorCore). */
   setMonitorChats(chats: string): void {
-    this.monitorChatsStr = chats
+    this.monitor.setChats(chats)
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -3961,9 +3972,20 @@ export class Engine {
    * (Go sendAsCard).
    */
   async sendAsCard(p: Platform, replyCtx: unknown, content: string, header: CardHeader): Promise<void> {
+    await this.sendAsCardWithButtons(p, replyCtx, content, header, [])
+  }
+
+  /**
+   * sendAsCard plus an optional row of buttons appended after the markdown
+   * body (Go sendAsCardWithButtons). Monitor spawn/coalesce notices use it
+   * for their jump buttons; the plain-text fallback keeps the header title.
+   */
+  async sendAsCardWithButtons(p: Platform, replyCtx: unknown, content: string, header: CardHeader, buttons: CardButton[]): Promise<void> {
     const cs = asCardSender(p)
     if (cs !== undefined) {
-      const card = newCard().title(header.title, header.color).markdown(content).build()
+      const builder = newCard().title(header.title, header.color).markdown(content)
+      if (buttons.length > 0) builder.buttons(...buttons)
+      const card = builder.build()
       try {
         await cs.sendCard(replyCtx, card)
         return

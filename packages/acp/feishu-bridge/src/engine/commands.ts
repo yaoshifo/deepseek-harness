@@ -56,6 +56,7 @@ import {
   MsgSpawnGroupReady,
   MsgSpawnUnknownFlag,
   MsgStatusAgentSID,
+  MsgStatusCron,
   MsgStatusSession,
   MsgStatusSessionKey,
   MsgStatusTitle,
@@ -91,8 +92,8 @@ import { extractChannelID } from './engine.js'
 
 const listPageSize = 5
 
-/** Command IDs gated behind admin_from (Go privilegedCommands, M1 subset). */
-const privilegedCommands = new Set(['dir'])
+/** Command IDs gated behind admin_from (Go privilegedCommands, M1 subset + monitor). */
+const privilegedCommands = new Set(['dir', 'monitor'])
 
 /** Canonical command names and their aliases (Go builtinCommands subset). */
 export const builtinCommands: Array<{ names: string[]; id: string }> = [
@@ -382,6 +383,21 @@ export async function cmdStatus(e: Engine, p: Platform, msg: Message): Promise<v
   let sessionDisplayName = sessions.getSessionName(s.getAgentSessionID())
   if (sessionDisplayName === '') sessionDisplayName = s.getName()
   const sessionStr = e.i18n.tf(MsgStatusSession, sessionDisplayName, s.getHistory(0).length)
+
+  // Cron line (Go engine_cmd_misc.go): the session's job count when any
+  // exist — the M6a leftover /status wiring.
+  let cronStr = ''
+  if (e.cronScheduler !== undefined) {
+    const jobs = e.cronScheduler.store().listBySessionKey(msg.sessionKey)
+    if (jobs.length > 0) {
+      let enabledCount = 0
+      for (const j of jobs) {
+        if (j.enabled) enabledCount++
+      }
+      cronStr = e.i18n.tf(MsgStatusCron, jobs.length, enabledCount)
+    }
+  }
+
   const sessionKeyStr = e.i18n.tf(MsgStatusSessionKey, msg.sessionKey)
   let agentSIDStr = ''
   const agentSID = s.getAgentSessionID()
@@ -391,7 +407,7 @@ export async function cmdStatus(e: Engine, p: Platform, msg: Message): Promise<v
 
   await e.reply(p, msg.replyCtx, e.i18n.tf(MsgStatusTitle,
     e.name, agent.name(), workDirStr, platformStr, uptimeStr, langStr,
-    modeStr, sessionStr, '', sessionKeyStr, agentSIDStr, userIDStr, ''))
+    modeStr, sessionStr, cronStr, sessionKeyStr, agentSIDStr, userIDStr, ''))
 }
 
 function formatUptime(ms: number): string {

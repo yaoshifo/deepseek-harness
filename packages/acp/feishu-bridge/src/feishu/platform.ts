@@ -23,7 +23,8 @@ import { readFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { MessageDedup, isOldMessage } from '../dedup.js'
 import { AllowList } from './allowlist.js'
-import { extractPostPlainText, hasHumanMention, isBotMentioned, stripMentions } from './extract.js'
+import { extractPollText, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, stripMentions, unwrapCardContent, extractCardImageKeys } from './extract.js'
+import { isMonitorCommand } from '../core/types.js'
 import type { FeishuMention } from './extract.js'
 import type { Card } from '../card.js'
 import { renderCard } from './card.js'
@@ -56,6 +57,53 @@ export interface FeishuReplyContext {
   messageID: string
   chatID: string
   sessionKey: string
+}
+
+/** One item of an im.message.list response, as consumed by the monitor poll path. */
+export interface FeishuListItem {
+  messageId: string
+  msgType: string
+  content: string
+  /** Unix milliseconds as a decimal string, like the API returns. */
+  createTime: string
+  sender?: {
+    id?: string
+    idType?: string
+    senderType?: string
+  }
+}
+
+/** Parse a Feishu create_time (unix ms as a decimal string) into seconds; 0 on garbage (Go msgTimeSec). */
+function msgTimeSec(ms: string): number {
+  const n = Number.parseInt(ms, 10)
+  if (!Number.isFinite(n)) return 0
+  return Math.trunc(n / 1000)
+}
+
+/** An all-empty Message literal for the poll path's spread base. */
+function emptyMessageShape(): Message {
+  return {
+    sessionKey: '',
+    platform: '',
+    messageID: '',
+    userID: '',
+    userName: '',
+    chatName: '',
+    chatType: '',
+    content: '',
+    originalContent: '',
+    images: [],
+    files: [],
+    extraContent: '',
+    replyCtx: undefined,
+    fromVoice: false,
+    isSpawnedGroup: false,
+    isPermissionAction: false,
+    isAskqCardAction: false,
+    isCardAction: false,
+    parentMessageID: '',
+    quotedText: '',
+  }
 }
 
 /**
@@ -113,6 +161,16 @@ export interface FeishuApiClient {
   uploadFile?(params: { data: Uint8Array; fileName: string; fileType: FeishuFileType }): Promise<string>
   /** Download a message resource's bytes (Im.MessageResource.Get). */
   downloadMessageResource?(params: { messageId: string; fileKey: string; type: string }): Promise<Uint8Array>
+  /**
+   * List a chat's messages (Im.Message.List) with raw_card_content delivery
+   * so interactive cards stay readable; backs the monitor poll fallback.
+   */
+  listMessages?(params: {
+    chatId: string
+    sortType: 'ByCreateTimeDesc' | 'ByCreateTimeAsc'
+    pageSize: number
+    startTimeSec?: number
+  }): Promise<FeishuListItem[]>
   /** Fetch the bot's own identity (GET /open-apis/bot/v3/info, bare HTTP). */
   getBotInfo?(): Promise<{ openID: string; avatarURL: string; appName: string }>
 }
@@ -306,6 +364,10 @@ export class FeishuPlatform implements Platform {
   private displayName: string
   /** Document frequency of words across workspace project names (Go dirWordFreq). */
   private dirWordFreq: Record<string, number> = {}
+  /** #53: comma-separated monitored chat IDs, or "*"; "" = monitor off (Go monitorChats). */
+  private monitorChats = ''
+  /** #53: open_id owning subgroups spawned for sender-less webhook cards (Go monitorFallbackUser). */
+  private monitorFallbackUser = ''
   /** One-shot cache/store load + dir-tag derivation. */
   private initOnce: Promise<void> | undefined
 
@@ -445,9 +507,11 @@ export class FeishuPlatform implements Platform {
 
     const chatType = msg.chat_type ?? ''
     const isSpawned = this.isSpawned(chatID)
-
+    const isMonitor = this.isMonitorChat(chatID)
+    // /monitor 命令豁免 @-drop，与下方 allow_chat 闸一致：让命令能从未监控新群发起（#53）
+    const isMonitorCmd = isMonitorCommand(msg.content ?? '')
     // Group messages require an @bot mention unless group_reply_all is set.
-    if (chatType === 'group' && this.o.groupReplyAll !== true && !isSpawned
+    if (chatType === 'group' && this.o.groupReplyAll !== true && !isSpawned && !isMonitor && !isMonitorCmd
       && (this.o.botOpenID ?? '') !== '') {
       if (!isBotMentioned(msg.mentions, this.o.botOpenID ?? '')) {
         // Feishu @all sends {"text":"@_all"} with zero mentions.
@@ -464,7 +528,7 @@ export class FeishuPlatform implements Platform {
     if (isSpawned && hasHumanMention(msg.mentions)) return
 
     if (!AllowList(this.o.allowFrom ?? '', userID)) return
-    if (chatType === 'group' && !AllowList(this.o.allowChat ?? '', chatID) && !isSpawned) return
+    if (chatType === 'group' && !AllowList(this.o.allowChat ?? '', chatID) && !isSpawned && !isMonitor && !isMonitorCmd) return
     if (chatType !== 'group' && this.o.groupOnly === true) return
 
     if (msg.content === undefined) return
@@ -642,6 +706,15 @@ export class FeishuPlatform implements Platform {
         label, '', replyCtx, isSpawned, '', false, true)
       return
     }
+
+    // cmd: → command shortcut from a card button; forward as a message
+    // (Go bridge.go: the /learn list's delete buttons use this).
+    if (actionVal.startsWith('cmd:')) {
+      const cmdText = actionVal.slice('cmd:'.length)
+      this.dispatch(sessionKey, messageID, userID, chatID, 'group',
+        cmdText, '', replyCtx, isSpawned, '')
+      return
+    }
   }
 
   /**
@@ -701,6 +774,32 @@ export class FeishuPlatform implements Platform {
   private isSpawned(chatID: string): boolean {
     if (this.o.isSpawnedChat !== undefined) return this.o.isSpawnedChat(chatID)
     return this.spawnStore.isSpawned(chatID)
+  }
+
+  /**
+   * Configure which chats are in monitor mode (#53, Go SetMonitorChats).
+   * Pushed by the engine from [projects.monitor] chats. Empty = monitor off.
+   */
+  setMonitorChats(chats: string): void {
+    this.monitorChats = chats
+  }
+
+  /**
+   * Set the open_id used as the subgroup owner when a polled monitored
+   * message has no human sender (Go SetMonitorFallbackUser).
+   */
+  setMonitorFallbackUser(openID: string): void {
+    this.monitorFallbackUser = openID
+  }
+
+  /**
+   * Whether chatID is a monitored chat. Empty monitorChats means monitoring
+   * is disabled (NOT "monitor all" — AllowList("") would wrongly pass
+   * everything), so guard explicitly (Go isMonitorChat).
+   */
+  private isMonitorChat(chatID: string): boolean {
+    if (this.monitorChats === '') return false
+    return AllowList(this.monitorChats, chatID)
   }
 
   private dispatch(
@@ -1172,7 +1271,7 @@ export class FeishuPlatform implements Platform {
     }
   }
 
-  private async removeReaction(messageID: string, reactionID: string): Promise<void> {
+  private async removeReactionByID(messageID: string, reactionID: string): Promise<void> {
     if (reactionID === '' || messageID === '') return
     try {
       await this.withRetry('remove reaction', () => this.request('remove reaction', async (client) => {
@@ -1182,6 +1281,12 @@ export class FeishuPlatform implements Platform {
     } catch (error) {
       console.warn(`feishu: remove reaction failed: ${String(error)}`)
     }
+  }
+
+  /** Remove a previously added reaction by its ID (Go ReactionManager.RemoveReaction). */
+  async removeReaction(replyCtx: unknown, reactionID: string): Promise<void> {
+    const messageID = (replyCtx as Partial<FeishuReplyContext> | undefined)?.messageID ?? ''
+    await this.removeReactionByID(messageID, reactionID)
   }
 
   private readonly pendingTypingRemovals = new Map<string, string>()
@@ -1197,7 +1302,7 @@ export class FeishuPlatform implements Platform {
     return () => {
       const reactionID = this.pendingTypingRemovals.get(messageID) ?? ''
       this.pendingTypingRemovals.delete(messageID)
-      void this.removeReaction(messageID, reactionID)
+      void this.removeReactionByID(messageID, reactionID)
     }
   }
 
@@ -1480,6 +1585,140 @@ export class FeishuPlatform implements Platform {
     await this.renameChat(chatID, groupName)
   }
 
+  // ── monitor polling fallback (#53, Go feishu_monitor_poll.go) ────────────
+
+  /**
+   * Create time (seconds) of the newest message in the chat, seeding the
+   * poll high-water mark so history isn't replayed (Go LatestMessageTime).
+   */
+  async latestMessageTime(chatID: string): Promise<number> {
+    const items = await this.listMessages(chatID, 0, 'ByCreateTimeDesc', 1)
+    if (items.length === 0) return 0
+    return msgTimeSec(items[0]?.createTime ?? '')
+  }
+
+  /**
+   * Messages created after afterSec (exclusive), oldest-first, as fully-built
+   * Messages with extracted text (Go ListMonitorMessages). Skips the bot's
+   * own messages. Catches webhook-bot / other-app card messages that never
+   * arrive as events.
+   */
+  async listMonitorMessages(chatID: string, afterSec: number, limit: number): Promise<Message[]> {
+    const pageSize = limit <= 0 ? 20 : limit
+    const items = await this.listMessages(chatID, afterSec, 'ByCreateTimeAsc', pageSize)
+    const out: Message[] = []
+    for (const m of items) {
+      const msg = await this.pollItemToMessage(m, chatID)
+      if (msg !== undefined) out.push(msg)
+    }
+    return out
+  }
+
+  /**
+   * List a chat's messages via im.message.list. Requests the full schema 2.0
+   * card JSON (raw_card_content) instead of the degraded img+"请升级"
+   * placeholder the default returns — without it, interactive-card text is
+   * unreadable (Go listMessages).
+   */
+  private async listMessages(chatID: string, afterSec: number, sortType: 'ByCreateTimeDesc' | 'ByCreateTimeAsc', pageSize: number): Promise<FeishuListItem[]> {
+    return this.withRetry('message.list', () => this.request('message.list', async (client) => {
+      if (client.listMessages === undefined) throw new ErrNotSupported('feishu client without message listing support')
+      return client.listMessages({
+        chatId: chatID,
+        sortType,
+        pageSize,
+        ...(afterSec > 0 ? { startTimeSec: afterSec } : {}),
+      })
+    }))
+  }
+
+  /**
+   * Convert a listed message into a Message for triage (Go
+   * pollItemToMessage). Undefined for messages that should be skipped (the
+   * bot's own, no extractable text, or no owner for a sender-less card).
+   */
+  private async pollItemToMessage(m: FeishuListItem, chatID: string): Promise<Message | undefined> {
+    // Skip the bot's own messages (spawn notices, /learn acks). App messages
+    // carry sender.id = app_id (not the bot open_id), so match both.
+    if (m.sender?.id !== undefined) {
+      if (m.sender.id === (this.o.botOpenID ?? '')) return undefined
+      if (m.sender.senderType === 'app' && m.sender.id === this.opts.appID) return undefined
+    }
+
+    // Subgroup owner: the sender if a human user, else the configured
+    // fallback (webhook-bot/other-app cards have no human sender). Skip early
+    // when neither is available — SpawnSubtask needs an owner, and there's no
+    // point extracting/downloading content we can't act on.
+    let userID = ''
+    if (m.sender?.id !== undefined && m.sender.idType === 'open_id' && m.sender.senderType === 'user') {
+      userID = m.sender.id
+    }
+    if (userID === '') userID = this.monitorFallbackUser
+    if (userID === '') {
+      console.warn(`${this.tag()}: monitor: poll message has no human sender and no fallback_user; skipping`)
+      return undefined
+    }
+
+    const text = stripMentions(extractPollText(m.msgType, m.content), undefined, this.o.botOpenID ?? '')
+
+    // Triage is text-based (rule patterns + an LLM prompt over the message
+    // text), so a card with no usable text — empty, or just the
+    // "[interactive card]" placeholder — can't be routed even if it carries a
+    // screenshot. Drop it here rather than downloading images we'd have
+    // nowhere to send. (Image-only alerts need at least a title/body to
+    // triage; the screenshot then attaches to that text.)
+    if (text.trim() === '' || text.trim() === interactiveCardPlaceholder) return undefined
+
+    // Attach embedded card images (e.g. an alert screenshot) so they reach
+    // the subgroup alongside the triaged text. Capped; download failures are
+    // skipped so one bad image doesn't drop the whole alert.
+    const images = await this.downloadCardImages(m.messageId, m.content)
+
+    const sessionKey = `${this.tag()}:${chatID}:${userID}`
+    const replyCtx: FeishuReplyContext = { messageID: m.messageId, chatID, sessionKey }
+    return {
+      ...emptyMessageShape(),
+      sessionKey,
+      platform: this.name(),
+      messageID: m.messageId,
+      userID,
+      // The TS platform never resolves contact names (userName stays '' on
+      // the event path too); the poll path matches that ceiling.
+      userName: '',
+      chatType: 'group',
+      content: text,
+      images,
+      replyCtx,
+      createTime: msgTimeSec(m.createTime),
+    }
+  }
+
+  /**
+   * Fetch embedded card images by key (Go downloadCardImages). Capped so a
+   * card with many images can't flood downloads; a failed download is logged
+   * and skipped — the remaining images still flow through.
+   */
+  private async downloadCardImages(messageID: string, content: string): Promise<ImageAttachment[]> {
+    if (messageID === '') return []
+    const keys = extractCardImageKeys(unwrapCardContent(content))
+    if (keys.length === 0) return []
+    const maxCardImages = 9
+    const capped = keys.slice(0, maxCardImages)
+    if (keys.length > maxCardImages) {
+      console.warn(`${this.tag()}: monitor: card has many images, truncating (want=${keys.length} kept=${maxCardImages})`)
+    }
+    const out: ImageAttachment[] = []
+    for (const key of capped) {
+      try {
+        const [data, mimeType] = await this.downloadImage(messageID, key)
+        out.push({ mimeType, data })
+      } catch (error) {
+        console.warn(`${this.tag()}: monitor: download card image failed (key=${key}): ${String(error)}`)
+      }
+    }
+    return out
+  }
+
   /**
    * Stamp one shared Lucide icon avatar across a chatroom family (Go
    * SetChatroomFamilyAvatar): hub plus role/assistant child groups. One
@@ -1705,7 +1944,10 @@ export class FeishuPlatform implements Platform {
       failure = err
     }
     if (failure !== undefined) {
-      throw new Error(`${this.tag()}: list chat members: ${errorMessage(failure)}`)
+      // Carry the partial roster on the thrown error so best-effort callers
+      // (monitor dispatch member-copy) can still copy what was fetched — Go
+      // returns (partial, err) from the same situation.
+      throw Object.assign(new Error(`${this.tag()}: list chat members: ${errorMessage(failure)}`), { partial: ids })
     }
     return ids
   }
@@ -2119,6 +2361,34 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
         chunks.push(chunk as Buffer)
       }
       return new Uint8Array(Buffer.concat(chunks))
+    },
+    async listMessages({ chatId, sortType, pageSize, startTimeSec }) {
+      const resp = await client.im.message.list({
+        params: {
+          container_id_type: 'chat',
+          container_id: chatId,
+          sort_type: sortType,
+          page_size: pageSize,
+          // Request the full schema 2.0 card JSON instead of the degraded
+          // img+"请升级" placeholder the default returns — the value
+          // lark-cli uses; without it, interactive-card text is unreadable.
+          card_msg_content_type: 'raw_card_content',
+          ...(startTimeSec !== undefined ? { start_time: String(startTimeSec) } : {}),
+        },
+      }, opts)
+      return (resp.data?.items ?? []).map(item => ({
+        messageId: item.message_id ?? '',
+        msgType: item.msg_type ?? '',
+        content: item.body?.content ?? '',
+        createTime: item.create_time ?? '',
+        ...(item.sender !== undefined ? {
+          sender: {
+            id: item.sender.id,
+            idType: item.sender.id_type,
+            senderType: item.sender.sender_type,
+          },
+        } : {}),
+      }))
     },
     async getBotInfo() {
       const token = (await fetchTenantToken()).trim()

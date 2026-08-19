@@ -78,6 +78,12 @@ export class Session {
   researchDispatched = false
   /** Gather-round stamp on a role session; in-memory only (Go ChatroomAskSeq). */
   chatroomAskSeq = 0
+  /**
+   * Pending monitor dir-clarification on this chat (Go
+   * PendingMonitorClarification); in-memory only — a restart mid-clarify
+   * loses it and an orphan card click falls through to normal triage.
+   */
+  private pendingMonitorClarification: import('./monitor.js').MonitorClarification | undefined
   /** Permission mode pinned for a /spawn //fork child; in-memory only (Go InheritedMode). */
   inheritedMode = ''
   /** Armed subtask gather barrier on a parent session; in-memory only (Go PendingSubtaskGather). */
@@ -336,6 +342,14 @@ export class Session {
 
   setMonitorChild(v: boolean): void {
     this.monitorChild = v
+  }
+
+  getPendingMonitorClarification(): import('./monitor.js').MonitorClarification | undefined {
+    return this.pendingMonitorClarification
+  }
+
+  setPendingMonitorClarification(pc: import('./monitor.js').MonitorClarification | undefined): void {
+    this.pendingMonitorClarification = pc
   }
 
   /** Most recent assistant turn's text, or '' when none. */
