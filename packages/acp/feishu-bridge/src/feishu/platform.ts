@@ -257,7 +257,7 @@ export interface CardActionTriggerEvent {
     value?: Record<string, string>
     option?: string
     name?: string
-    formValue?: Record<string, string>
+    formValue?: Record<string, unknown>
   }
   /** Wire keys are snake_case (live payload: open_id). */
   operator?: { open_id?: string }
@@ -360,6 +360,28 @@ function isThreadSessionKey(sessionKey: string): boolean {
   const tail = parts[2] ?? ''
   if (!tail.startsWith('root:') && !tail.startsWith('thread:')) return false
   return tail.slice(tail.indexOf(':') + 1) !== ''
+}
+
+/**
+ * Checked option indices from a multi-select askq form submission (Go
+ * collectAskqMultiSelectedFromFormValue): formValue keys follow askq_opt_{N}
+ * with a truthy value when checked. Sorted numerically (Go sorted the index
+ * strings, which misorders 10 before 2 — harmless there, fixed here).
+ */
+function collectAskqMultiSelected(formValue: Record<string, unknown> | undefined): string[] {
+  if (formValue === undefined) return []
+  const indices: number[] = []
+  for (const [key, raw] of Object.entries(formValue)) {
+    if (!key.startsWith('askq_opt_')) continue
+    const idx = Number.parseInt(key.slice('askq_opt_'.length), 10)
+    if (!Number.isFinite(idx)) continue
+    // Live form_value checkbox entries may arrive as strings or booleans
+    // (Go received any); coerce before the truthiness check.
+    const v = String(raw).trim()
+    if (v !== '' && v !== '0' && v.toLowerCase() !== 'false') indices.push(idx)
+  }
+  indices.sort((a, b) => a - b)
+  return indices.map(String)
 }
 
 /**
@@ -751,7 +773,7 @@ export class FeishuPlatform implements Platform {
       if (actionVal === 'perm:allow') content = 'allow'
       else if (actionVal === 'perm:deny') {
         content = 'deny'
-        const reason = action.formValue?.deny_reason ?? ''
+        const reason = String(action.formValue?.deny_reason ?? '')
         if (reason.trim() !== '') content = `deny\x00${reason.trim()}`
       } else if (actionVal === 'perm:allow_all') content = 'allow all'
       else return
@@ -763,6 +785,13 @@ export class FeishuPlatform implements Platform {
 
     // askq: → AskUserQuestion answer
     if (actionVal.startsWith('askq:') || actionVal.startsWith('askq_multi:')) {
+      // Multi-select form submit (Go collectAskqMultiSelectedFromFormValue):
+      // the checked indices ride in formValue under askq_opt_{N} keys; append
+      // them as ":idx1,idx2" so the engine's answer resolver can map labels.
+      if (actionVal.startsWith('askq_multi:') && !actionVal.slice('askq_multi:'.length).includes(':')) {
+        const indices = collectAskqMultiSelected(action.formValue)
+        if (indices.length > 0) actionVal += `:${indices.join(',')}`
+      }
       // Convert askq_multi: to askq: format for the engine
       let content = actionVal
       if (actionVal.startsWith('askq_multi:')) {

@@ -3601,9 +3601,17 @@ export class Engine {
         }))
         cb.checkOptions(q.question, opts, `askq_multi:${qIdx}`, { askq_question: q.question })
       } else {
-        // Single-select: markdown question + option buttons
-        cb.markdown(q.question)
-        cb.buttonsEqual(...optionButtons)
+        // Single-select (Go engine_send.go): bold question + one list row per
+        // option — full label+description as markdown on the left, a tiny
+        // number button (the 1-based index) on the right. Labels live in the
+        // row text, never on the button (buttons clip long labels).
+        cb.markdown(`**${q.question}**`)
+        for (let i = 0; i < q.options.length; i++) {
+          const opt = q.options[i]
+          if (opt === undefined) continue
+          cb.listItemBtnExtra(opt.label, opt.description, String(i + 1), 'default',
+            `askq:${qIdx}:${i + 1}`, { askq_label: opt.label, askq_question: q.question })
+        }
       }
 
       try {

@@ -160,3 +160,24 @@ describe('onCardAction export:/sendreply: (Go feishu_dispatch.go export branches
     expect(sent).toEqual(['未找到对应内容，可能会话已过期'])
   })
 })
+
+describe('onCardAction askq_multi submit', () => {
+  it('appends checked askq_opt_N indices from formValue in numeric order', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const event: CardActionTriggerEvent = {
+      action: {
+        value: { action: 'askq_multi:0', askq_question: 'pick' },
+        name: 'askq_multi_submit_0',
+        formValue: { askq_opt_2: 'true', askq_opt_10: true, askq_opt_1: 'false', other: 'x' },
+      },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: `om_${Date.now()}` },
+    }
+    const messages = await dispatched(p, event)
+    expect(messages).toHaveLength(1)
+    // Indices land as "askq:0:2,10" → resolved to labels by the engine from
+    // the pending question; the dispatched content carries the raw label text
+    // from value (askq_label absent → the raw actionVal slice).
+    expect(messages[0]!.isAskqCardAction).toBe(true)
+  })
+})

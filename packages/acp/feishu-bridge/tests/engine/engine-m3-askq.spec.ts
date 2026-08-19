@@ -315,3 +315,34 @@ describe('handlePendingPermission AskUserQuestion variants', () => {
     expect(p.getSent()).toEqual([])
   })
 })
+
+describe('AskQuestionCardShape_GoReplica', () => {
+  it('single-select renders list rows: full label+description left, number button right (Go ListItemBtnExtra)', async () => {
+    const e = newTestEngine()
+    const p = createStubCardPlatform('feishu')
+
+    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0)
+
+    const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
+    expect(card.elements.length).toBe(4) // 1 markdown question + 3 list rows
+    const q = card.elements[0] as { kind: string; content: string }
+    expect(q.kind).toBe('markdown')
+    expect(q.content).toBe('**Which database?**')
+    for (let i = 0; i < 3; i++) {
+      const row = card.elements[i + 1] as {
+        kind: string
+        text: string
+        description: string
+        btnText: string
+        btnType: string
+        btnValue: string
+        extra?: Record<string, string>
+      }
+      expect(row.kind).toBe('listItem')
+      expect(row.text).toContain(['PostgreSQL', 'SQLite', 'MySQL'][i])
+      expect(row.description).toContain(i === 0 ? 'Recommended' : i === 1 ? 'Lightweight' : 'Popular')
+      expect(row.btnText).toBe(String(i + 1))
+      expect(row.btnValue).toBe(`askq:0:${i + 1}`)
+    }
+  })
+})
