@@ -174,7 +174,11 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
       engine.setDisplayConfig({
         ...(config.display.thinkingMessages !== undefined ? { thinkingMessages: config.display.thinkingMessages } : {}),
         ...(config.display.thinkingMaxLen !== undefined ? { thinkingMaxLen: config.display.thinkingMaxLen } : {}),
+        ...(config.display.toolMaxLen !== undefined ? { toolMaxLen: config.display.toolMaxLen } : {}),
+        ...(config.display.planMaxLen !== undefined ? { planMaxLen: config.display.planMaxLen } : {}),
         ...(config.display.toolMessages !== undefined ? { toolMessages: config.display.toolMessages } : {}),
+        ...(config.display.toolProgress !== undefined ? { toolProgress: config.display.toolProgress } : {}),
+        ...(config.display.progressSpinner !== undefined ? { progressSpinner: config.display.progressSpinner } : {}),
       })
     }
 
