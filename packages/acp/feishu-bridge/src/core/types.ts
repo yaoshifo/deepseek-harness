@@ -848,3 +848,70 @@ export function asMonitorChatConfigurable(p: Platform): MonitorChatConfigurable 
     ? candidate as MonitorChatConfigurable
     : undefined
 }
+
+// ── M7 plan/reply HTML render capability interfaces (Go interfaces.go) ─────
+
+/**
+ * Agent that can spawn an isolated, non-plan-mode "render session" (Go
+ * RenderQuerier): a standalone one-shot agent with tool access, a
+ * complete-replacement system prompt, and an explicit sessionEnv so
+ * concurrent render sessions don't crosstalk via a shared env slot.
+ */
+export interface RenderQuerier {
+  /**
+   * Run a standalone query with an injected system prompt. `providerName`
+   * selects the provider route; `sessionEnv` is passed through verbatim and
+   * must not be sourced from a shared slot. Returns the session's trimmed
+   * stdout (expected one-line confirmation).
+   */
+  renderQuery(prompt: string, providerName: string, systemPrompt: string, sessionEnv: string[], signal?: AbortSignal): Promise<string>
+}
+
+/** Agent whose render-session effort can be overridden per project (Go RenderEffortSetter). */
+export interface RenderEffortSetter {
+  setRenderEffort(effort: string): void
+}
+
+/** Optional: platform can send standalone image messages (Go ImageSender). */
+export interface ImageSender {
+  sendImage(replyCtx: unknown, img: ImageAttachment): Promise<void>
+}
+
+/** Optional: platform can upload images and return a platform image key (Go ImageUploader). */
+export interface ImageUploader {
+  uploadImage(img: ImageAttachment): Promise<string>
+}
+
+/** Optional: platform can PATCH the render-status line on a sent green card (Go RenderStatusUpdater). */
+export interface RenderStatusUpdater {
+  updateRenderStatus(replyCtx: unknown, exportKey: string, statusText: string): Promise<void>
+}
+
+export function asRenderQuerier(a: Agent): RenderQuerier | undefined {
+  return withMethod<RenderQuerier>(a, 'renderQuery')
+}
+
+export function asRenderEffortSetter(a: Agent): RenderEffortSetter | undefined {
+  return withMethod<RenderEffortSetter>(a, 'setRenderEffort')
+}
+
+export function asImageSender(p: Platform): ImageSender | undefined {
+  return withMethod<ImageSender>(p, 'sendImage')
+}
+
+export function asImageUploader(p: Platform): ImageUploader | undefined {
+  return withMethod<ImageUploader>(p, 'uploadImage')
+}
+
+export function asRenderStatusUpdater(p: Platform): RenderStatusUpdater | undefined {
+  return withMethod<RenderStatusUpdater>(p, 'updateRenderStatus')
+}
+
+/** Optional: platform registers the engine's export-content lookup for export:/sendreply: card buttons (Go ReplyExporter). */
+export interface ReplyExporter {
+  setExportHandler(handler: (sessionKey: string, exportKey: string) => { text: string; ok: boolean }): void
+}
+
+export function asReplyExporter(p: Platform): ReplyExporter | undefined {
+  return withMethod<ReplyExporter>(p, 'setExportHandler')
+}

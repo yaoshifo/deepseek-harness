@@ -23,6 +23,7 @@ import { readFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { MessageDedup, isOldMessage } from '../dedup.js'
 import { AllowList } from './allowlist.js'
+import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.js'
 import { extractPollText, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, stripMentions, unwrapCardContent, extractCardImageKeys } from './extract.js'
 import { isMonitorCommand } from '../core/types.js'
 import type { FeishuMention } from './extract.js'
@@ -348,6 +349,8 @@ export class FeishuPlatform implements Platform {
   private chatRenamedHandler: ((sessionKey: string, newName: string) => void) | undefined
   /** Engine callback for group name/avatar changes (Go chatChangedHandler). */
   private chatChangedHandler: ((sessionKey: string) => void) | undefined
+  /** Engine export-content lookup for the 📄/💬 buttons (Go exportHandler). */
+  private exportHandler: ((sessionKey: string, exportKey: string) => { text: string; ok: boolean }) | undefined
 
   private spinnerOnce: Promise<void> | undefined
   private thinkingImgKey = ''
@@ -719,6 +722,59 @@ export class FeishuPlatform implements Platform {
         cmdText, '', replyCtx, isSpawned, '')
       return
     }
+
+    // export: → send the cached reply/plan text as a .md file attachment
+    // (Go feishu_dispatch.go export branch, Go SafeGo → floating promise).
+    if (actionVal.startsWith('export:')) {
+      const exportKey = actionVal.slice('export:'.length)
+      void (async () => {
+        if (this.exportHandler === undefined) {
+          console.warn('export: no handler registered')
+          return
+        }
+        const { text, ok } = this.exportHandler(sessionKey, exportKey)
+        if (!ok || text === '') {
+          await this.reply(replyCtx, '导出失败：未找到对应内容，可能会话已过期')
+          return
+        }
+        const namePrefix = exportKey.startsWith('plan:') ? 'plan' : 'reply'
+        const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15).replace(/(\d{8})(\d{6})/, '$1_$2')
+        await this.sendFile(replyCtx, {
+          mimeType: 'text/markdown',
+          data: new TextEncoder().encode(text),
+          fileName: `${namePrefix}_${stamp}.md`,
+        }).catch((error: unknown) => {
+          console.warn(`export file send failed: ${String(error)}`)
+        })
+      })()
+      return
+    }
+
+    // sendreply: → send the cached full reply as new chat messages (sibling
+    // of export:, Go feishu_dispatch.go sendreply branch).
+    if (actionVal.startsWith('sendreply:')) {
+      const exportKey = actionVal.slice('sendreply:'.length)
+      void (async () => {
+        if (this.exportHandler === undefined) {
+          console.warn('sendreply: no handler registered')
+          return
+        }
+        const { text, ok } = this.exportHandler(sessionKey, exportKey)
+        if (!ok || text === '') {
+          await this.reply(replyCtx, '未找到对应内容，可能会话已过期')
+          return
+        }
+        for (const chunk of splitMessage(text, MaxPlatformMessageLen)) {
+          try {
+            await this.reply(replyCtx, chunk)
+          } catch (error) {
+            console.warn(`sendreply: reply send failed: ${String(error)}`)
+            break
+          }
+        }
+      })()
+      return
+    }
   }
 
   /**
@@ -772,6 +828,11 @@ export class FeishuPlatform implements Platform {
   /** Register the engine callback invoked on group name/avatar change (Go SetChatChangedHandler). */
   setChatChangedHandler(handler: (sessionKey: string) => void): void {
     this.chatChangedHandler = handler
+  }
+
+  /** Register the engine's export-content lookup (Go SetExportHandler, Go ReplyExporter). */
+  setExportHandler(handler: (sessionKey: string, exportKey: string) => { text: string; ok: boolean }): void {
+    this.exportHandler = handler
   }
 
   /** Whether the chat is /spawn-created (external predicate or the store). */

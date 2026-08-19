@@ -226,6 +226,13 @@
     #   patchRateIntervalMs: 120           # global card PATCH rate limit
     #   stallTimeoutSecs: 200
     #   stallMaxRetries: 3
+    # Per-project plan/reply HTML render block (#47/#48, Go [projects.plan_render]):
+    #   planRender:
+    #     enabled: true                    # opt-in; default off
+    #     provider: mify-dsh               # render-session route; empty = active
+    #     effort: low                      # low/medium/high/max/off; always-thinking models need low+
+    #     timeoutSec: 600                  # fork timeout; speculative pre-render caps at 360
+    #     renderPngScript: /abs/render-png.sh  # HTML→PNG script; empty = send .html instead of image
     # Per-project extras (inside a projects[] row):
     #   adminFrom: "ou_xxx,ou_yyy"         # privileged-command allowlist; * = all
     #   interactiveIdleTimeoutMins: 30     # idle reaper threshold

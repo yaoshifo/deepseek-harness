@@ -220,6 +220,49 @@ const oneShotDefaultTimeoutMs = 10 * 60_000
 /** Lightweight-query budget (Go LightweightQuery: 90s). */
 export const lightweightQueryTimeoutMs = 90_000
 
+/** Render-session fork budget (Go dsh RenderQuery: 15 minutes). */
+export const renderQueryTimeoutMs = 15 * 60_000
+
+/**
+ * Map a claudecode-style effort alias onto the dsh per-session reasoning
+ * effort (Go renderReasoningLevel). Render one-shots default to 'low' — deep
+ * reasoning only burns the fork budget. 'off'/'none' omits the reasoning
+ * option entirely (no thinking field on the wire); MODEL-DEPENDENT ceiling:
+ * always-thinking models (e.g. glm-5.3 via mify) reject the omitted thinking
+ * field with 400 — configure effort 'low' or higher for those. A rejected
+ * effort is swallowed by the engine and falls back to the markdown card.
+ */
+export function renderReasoningLevel(effort: string): string {
+  switch (effort.toLowerCase().trim()) {
+    case 'off':
+    case 'none':
+      return 'off'
+    case 'medium':
+    case 'med':
+      return 'medium'
+    case 'high':
+      return 'high'
+    case 'max':
+      return 'high'
+    default:
+      return 'low'
+  }
+}
+
+/**
+ * Creation-time setup hook registering a complete-replacement system prompt
+ * (the same `complete: true` section mechanism as the chatroom bare persona).
+ */
+function buildCompletePromptSetup(systemPrompt: string): import('@deepseek-ai/dsh-agent').AgentSetup {
+  return (agentCtx) => {
+    const promptSvc = agentCtx.get('systemPrompt') as
+      | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
+      | undefined
+    if (promptSvc === undefined) return
+    promptSvc.section({ name: 'feishu-bridge-render-session', order: 0, text: systemPrompt, complete: true })
+  }
+}
+
 /** Adapter configuration (providers + active route). */
 export class DshAgentAdapter {
   private readonly ctx: DshContextLike
@@ -228,6 +271,8 @@ export class DshAgentAdapter {
   private readonly liveSessions = new Map<string, DshAgentSession>()
   private env: string[] = []
   private modeOverride = ''
+  /** Raw plan_render.effort alias consumed by {@link renderQuery} (Go renderEffort). */
+  private renderEffort = ''
   /** Mutable work dir: the engine's per-chat override switches it around StartSession (Go WorkDirSwitcher). */
   private workDir: string
   private readonly disposers: Array<() => void> = []
@@ -449,6 +494,42 @@ export class DshAgentAdapter {
   }
 
   /**
+   * Store the project's plan_render.effort alias (Go SetRenderEffort): the
+   * engine's effort config reaches the render session's reasoning level
+   * instead of being silently dropped. Raw alias; {@link renderQuery} maps
+   * it (see renderReasoningLevel for the model-dependent "off" ceiling).
+   */
+  setRenderEffort(effort: string): void {
+    this.renderEffort = effort
+  }
+
+  /**
+   * RenderQuerier (Go dsh RenderQuery): an isolated render session — fresh
+   * session (no resume), whole-prompt replacement via the setup hook, full
+   * tools, explicit sessionEnv so concurrent renders don't crosstalk. The
+   * render one-shot does not need deep reasoning, so an unset effort
+   * defaults to 'low' (an unset effort once made renders burn ~21k thinking
+   * chars for an 84-char artifact). The 15m budget mirrors the Go fork.
+   */
+  async renderQuery(
+    prompt: string,
+    providerName: string,
+    systemPrompt: string,
+    sessionEnv: string[],
+    signal?: AbortSignal,
+  ): Promise<string> {
+    void sessionEnv // dsh one-shots spawn in-process (no subprocess env; Go env is claudecode-specific)
+    return this.oneShotQuery({
+      prompt,
+      providerName,
+      systemPromptComplete: systemPrompt,
+      reasoning: renderReasoningLevel(this.renderEffort),
+      ...(signal !== undefined ? { signal } : {}),
+      timeoutMs: renderQueryTimeoutMs,
+    })
+  }
+
+  /**
    * ProviderSwitcher (Go dsh ProviderSwitcher): the named-route registry and
    * its active pointer. Route DETAIL (service route name, model) stays owned
    * by the plugin config — the switcher surface only owns membership and the
@@ -503,6 +584,7 @@ export class DshAgentAdapter {
     seed?: readonly SessionEvent[]
     signal?: AbortSignal
     timeoutMs?: number
+    systemPromptComplete?: string
   }): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? oneShotDefaultTimeoutMs
     const ctl = new AbortController()
@@ -510,10 +592,17 @@ export class DshAgentAdapter {
     opts.signal?.addEventListener('abort', onCallerAbort, { once: true })
     const timer = setTimeout(() => { ctl.abort() }, timeoutMs)
 
+    // A complete-replacement system prompt rides the creation-time setup hook
+    // (plan D3, same mechanism as the chatroom bare persona): the render
+    // session's prompt replaces the whole system prompt, not a section.
+    const setup = opts.systemPromptComplete !== undefined
+      ? buildCompletePromptSetup(opts.systemPromptComplete)
+      : undefined
     const handle = await this.ctx.agents.create({
       sessionId: SessionId(freshNativeSessionId()),
       meta: { cwd: opts.workDir !== undefined && opts.workDir !== '' ? opts.workDir : this.cfg.cwd },
       ...(opts.seed !== undefined && opts.seed.length > 0 ? { seed: opts.seed } : {}),
+      ...(setup !== undefined ? { setup } : {}),
       agentOptions: this.agentOptionsForQuery(opts.providerName ?? '', opts.reasoning ?? ''),
     })
     const session = new DshAgentSession(`oneshot-${Date.now()}`, handle)

@@ -190,3 +190,42 @@ describe('buildProjectAssembly config wiring', () => {
     expect(engine.streamPreview.minDeltaChars).toBe(15)
   })
 })
+
+describe('buildProjectAssembly plan_render wiring (Go [projects.plan_render], #47/#48)', () => {
+  it('defaults to disabled when the block is absent or enabled is not true', () => {
+    expect(assemble(baseConfig(), project()).engine.planRenderEnabled).toBe(false)
+    const cfg = baseConfig()
+    const proj = { ...project(), planRender: { enabled: false } }
+    expect(assemble(cfg, proj).engine.planRenderEnabled).toBe(false)
+  })
+
+  it('maps provider/timeout/PNG script onto the engine when enabled', () => {
+    const proj: ProjectConfig = {
+      ...project(),
+      planRender: {
+        enabled: true,
+        provider: 'mify-dsh',
+        timeoutSec: 120,
+        renderPngScript: '/abs/render-png.sh',
+      },
+    }
+    const { engine } = assemble(baseConfig(), proj)
+    expect(engine.planRenderEnabled).toBe(true)
+    expect(engine.planRenderProvider).toBe('mify-dsh')
+    expect(engine.planRenderTimeoutMs).toBe(120_000)
+    expect(engine.planRenderPngScript).toBe('/abs/render-png.sh')
+  })
+
+  it('maps the effort alias onto the adapter (Go SetRenderEffort)', async () => {
+    const proj: ProjectConfig = {
+      ...project(),
+      planRender: { enabled: true, effort: 'off' },
+    }
+    const { engine } = assemble(baseConfig(), proj)
+    expect(engine.planRenderEnabled).toBe(true)
+    // The adapter consumed the alias at assembly time (renderReasoningLevel
+    // mapping is covered by the adapter spec); the engine carries no effort
+    // field of its own — effort is adapter-owned (Go parity).
+    expect(engine.planRenderProvider).toBe('')
+  })
+})

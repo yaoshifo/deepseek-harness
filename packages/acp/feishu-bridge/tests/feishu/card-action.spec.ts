@@ -98,3 +98,65 @@ describe('onCardAction act: dispatch', () => {
     expect(messages[0]!.content).toBe('allow')
   })
 })
+
+describe('onCardAction export:/sendreply: (Go feishu_dispatch.go export branches)', () => {
+  it('export: sends the cached content as a plan_<stamp>.md attachment', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setExportHandler((sessionKey, _exportKey) => {
+      expect(sessionKey).toBe('feishu:oc_1:ou_9')
+      return { text: '# plan body', ok: true }
+    })
+    // sendFile goes through the feishu API client; without one it rejects —
+    // the platform lacks a client in tests, so we assert the handler path
+    // via the reply-side effect: stub sendFile at the instance level.
+    const files: Array<{ fileName: string; mimeType: string; text: string }> = []
+    p.sendFile = async (_rc, file) => {
+      files.push({ fileName: file.fileName, mimeType: file.mimeType, text: Buffer.from(file.data).toString('utf8') })
+    }
+    await p.start(() => {})
+    p.onCardAction(cardEvent({ action: 'export:plan:1', value: { action: 'export:plan:1', session_key: 'feishu:oc_1:ou_9' } }))
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    expect(files).toHaveLength(1)
+    expect(files[0]!.fileName.startsWith('plan_')).toBe(true)
+    expect(files[0]!.fileName.endsWith('.md')).toBe(true)
+    expect(files[0]!.mimeType).toBe('text/markdown')
+    expect(files[0]!.text).toBe('# plan body')
+  })
+
+  it('export: with missing content replies the expired notice', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setExportHandler(() => ({ text: '', ok: false }))
+    const sent: string[] = []
+    p.reply = async (_rc, content) => { sent.push(content) }
+    await p.start(() => {})
+    p.onCardAction(cardEvent({ action: 'export:om_1', value: { action: 'export:om_1', session_key: 'feishu:oc_1:ou_9' } }))
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    expect(sent).toEqual(['导出失败：未找到对应内容，可能会话已过期'])
+  })
+
+  it('sendreply: replies the cached full content', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setExportHandler(() => ({ text: 'full reply', ok: true }))
+    const sent: string[] = []
+    p.reply = async (_rc, content) => { sent.push(content) }
+    await p.start(() => {})
+    p.onCardAction(cardEvent({ action: 'sendreply:om_1', value: { action: 'sendreply:om_1', session_key: 'feishu:oc_1:ou_9' } }))
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    expect(sent).toEqual(['full reply'])
+  })
+
+  it('sendreply: with missing content replies the expired notice', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setExportHandler(() => ({ text: '', ok: false }))
+    const sent: string[] = []
+    p.reply = async (_rc, content) => { sent.push(content) }
+    await p.start(() => {})
+    p.onCardAction(cardEvent({ action: 'sendreply:om_1', value: { action: 'sendreply:om_1', session_key: 'feishu:oc_1:ou_9' } }))
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    expect(sent).toEqual(['未找到对应内容，可能会话已过期'])
+  })
+})

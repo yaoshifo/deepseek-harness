@@ -250,3 +250,56 @@ describe('ProviderSwitcher (naming fallback source)', () => {
     })
   })
 })
+
+describe('renderQuery (Go dsh RenderQuery)', () => {
+  it('runs a fresh session on the named route at the mapped effort with a complete-replacement system prompt', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    a.setRenderEffort('max')
+    h.script.push({ text: '片段已写入：/tmp/x.html' })
+
+    const answer = await a.renderQuery('render prompt', 'turbo', 'render system prompt', ['CC_SESSION_KEY=k'])
+
+    expect(answer).toBe('片段已写入：/tmp/x.html')
+    expect(h.creates).toHaveLength(1)
+    expect(h.creates[0]!.agentOptions).toEqual({ provider: 'turbo-route', model: 'turbo-5', reasoningEffort: 'high' })
+    // The complete system prompt rides the setup hook as a complete:true
+    // section (the D3 bare-persona mechanism).
+    const setup = h.creates[0]!.setup as ((agentCtx: unknown) => void) | undefined
+    expect(setup).toBeTypeOf('function')
+    const sections: Array<{ name: string; order: number; text: string; complete?: boolean }> = []
+    setup?.({
+      get: () => ({
+        section: (sec: { name: string; order: number; text: string; complete?: boolean }) => { sections.push(sec) },
+      }),
+    })
+    expect(sections).toEqual([{ name: 'feishu-bridge-render-session', order: 0, text: 'render system prompt', complete: true }])
+    expect(h.agents[0]!.disposed).toBe(true)
+  })
+
+  it('defaults to low effort when no render effort is configured', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    h.script.push({ text: 'ok' })
+
+    await a.renderQuery('p', 'glm', 'sp', [])
+
+    expect(h.creates[0]!.agentOptions).toEqual({ provider: 'glm-route', model: 'glm-5.3', reasoningEffort: 'low' })
+  })
+})
+
+describe('renderReasoningLevel', () => {
+  it('maps claudecode-style effort aliases onto dsh reasoning levels', async () => {
+    const { renderReasoningLevel } = await import('../../src/agent-dsh/adapter.js')
+    expect(renderReasoningLevel('')).toBe('low')
+    expect(renderReasoningLevel('low')).toBe('low')
+    expect(renderReasoningLevel('minimal')).toBe('low')
+    expect(renderReasoningLevel('medium')).toBe('medium')
+    expect(renderReasoningLevel('med')).toBe('medium')
+    expect(renderReasoningLevel('high')).toBe('high')
+    expect(renderReasoningLevel('max')).toBe('high')
+    expect(renderReasoningLevel('off')).toBe('off')
+    expect(renderReasoningLevel('none')).toBe('off')
+    expect(renderReasoningLevel(' HIGH ')).toBe('high')
+  })
+})
