@@ -994,7 +994,7 @@ export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): v
  * cleanupOneChat). asChild=true skips a dirty worktree (the caller
  * summarizes) instead of showing the interactive card.
  */
-async function cleanupOneChat(
+export async function cleanupOneChat(
   e: Engine, p: Platform, sessionKey: string, replyCtx: unknown, asChild: boolean,
 ): Promise<{ name: string; dirty: boolean }> {
   const sess = e.sessions.getOrCreateActive(sessionKey)
