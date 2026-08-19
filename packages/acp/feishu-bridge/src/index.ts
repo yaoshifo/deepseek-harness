@@ -29,6 +29,7 @@ import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from './tools/subta
 import { registerCronTool } from './tools/cron.js'
 import { registerRelayTool } from './tools/relay.js'
 import { registerChatroomTool } from './tools/chatroom.js'
+import { registerLarkTool, type LarkRoute } from './tools/lark.js'
 import { registerChatroomCommands } from './engine/chatroom-cmd.js'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.js'
 import type { StreamPreviewCfg } from './streaming.js'
@@ -99,6 +100,18 @@ export interface GroupNameConfig {
   setAvatar?: boolean
 }
 
+/** The bot's default Feishu Wiki/Drive location (Go FeishuWorkspaceConfig, #18). */
+export interface FeishuWorkspaceConfig {
+  /** Wiki space id surfaced as CC_FEISHU_WIKI_SPACE_ID. */
+  wikiSpaceId?: string
+  /** Drive folder token surfaced as CC_FEISHU_FOLDER_TOKEN. */
+  folderToken?: string
+  /** Wiki parent node token surfaced as CC_FEISHU_WIKI_NODE_TOKEN. */
+  wikiNodeToken?: string
+  /** Natural-language description surfaced as CC_FEISHU_WORKSPACE_DESC. */
+  description?: string
+}
+
 /** One bound project: an agent working dir plus the Feishu bot serving it. */
 export interface ProjectConfig {
   /** Unique project name used in routing, logs, and tool output. */
@@ -117,6 +130,10 @@ export interface ProjectConfig {
   chatroom?: ChatroomConfig
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
   monitor?: MonitorConfig
+  /** Parent dirs whose subdirs are auto-listed in /dir (Go dir_scan_paths, #3). */
+  dirScanPaths?: string[]
+  /** The bot's default Feishu Wiki/Drive location (Go feishu_workspace, #18). */
+  feishuWorkspace?: FeishuWorkspaceConfig
   /** Comma-separated user IDs allowed to run privileged commands; '*' = all (Go admin_from). */
   adminFrom?: string
   /** Minutes before an idle interactive session is reaped (Go interactive_idle_timeout_mins). */
@@ -396,6 +413,13 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       coalesceWindowSec: Schema.natural().description('Coalescing window in seconds; default 300; 0 = no age limit'),
     }).description('Monitor-group mode (#53)'),
     adminFrom: Schema.string().description('Comma-separated admin user IDs; * = all'),
+    dirScanPaths: Schema.array(Schema.string()).description('Parent dirs whose subdirs are auto-listed in /dir (Go dir_scan_paths, #3)'),
+    feishuWorkspace: Schema.object({
+      wikiSpaceId: Schema.string().description('Default wiki space id (CC_FEISHU_WIKI_SPACE_ID)'),
+      folderToken: Schema.string().description('Default Drive folder token (CC_FEISHU_FOLDER_TOKEN)'),
+      wikiNodeToken: Schema.string().description('Default wiki parent node token (CC_FEISHU_WIKI_NODE_TOKEN)'),
+      description: Schema.string().description('Natural-language description of this workspace'),
+    }).description("The bot's default Feishu Wiki/Drive location (#18)"),
     interactiveIdleTimeoutMins: Schema.natural().description('Idle reaper threshold in minutes'),
   })).default([]).description('Projects bound to Feishu apps'),
   providers: Schema.dict(Schema.object({
@@ -538,6 +562,17 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   registerCronTool(ctx, route)
   registerRelayTool(ctx, route)
   registerChatroomTool(ctx, route)
+  // The lark passthrough routes to the caller's project BOT credentials
+  // (plan D4): bot mode mints a TAT in-process, --as user prepends the
+  // project's --profile (Go `cc-connect lark` wrapper semantics).
+  const larkRoute = (caller: unknown): LarkRoute | undefined => {
+    const target = route(caller)
+    if (target === undefined) return undefined
+    const project = config.projects.find(p => p.name === target.engine.name)
+    if (project === undefined) return undefined
+    return { ...target, creds: { appId: project.feishu.appId, appSecret: project.feishu.appSecret } }
+  }
+  registerLarkTool(ctx, larkRoute, undefined, dataRoot)
 }
 
 /**
@@ -652,12 +687,27 @@ export function buildProjectAssembly(
   })
 
   const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language))
+  // #18: the bot's default Feishu workspace → CC_FEISHU_* session env,
+  // surfaced to the agent through the adapter's setup hook.
+  if (project.feishuWorkspace !== undefined) {
+    engine.setFeishuWorkspace({
+      wikiSpaceId: project.feishuWorkspace.wikiSpaceId ?? '',
+      folderToken: project.feishuWorkspace.folderToken ?? '',
+      wikiNodeToken: project.feishuWorkspace.wikiNodeToken ?? '',
+      description: project.feishuWorkspace.description ?? '',
+    })
+  }
   const projectState = new ProjectStateStore(join(projectDataDir, 'state.json'))
   engine.setProjectStateStore(projectState)
   const effectiveWorkDir = applyProjectStateOverride(adapter, project.workdir, projectState)
   engine.setBaseWorkDir(effectiveWorkDir)
   const dirHistory = sharedDirHistory ?? new DirHistory(dataRoot)
   engine.setDirHistory(dirHistory)
+  // Live-scan roots for /dir's bare-name resolution and suggestion list
+  // (Go main: dir_scan_paths with ~ expanded, #3).
+  if (project.dirScanPaths !== undefined && project.dirScanPaths.length > 0) {
+    dirHistory.setScanPaths(project.name, project.dirScanPaths.map(p => expandHome(p)))
+  }
   // Seed the MRU with the startup dir (Go main ensures the initial workdir
   // is in history so /dir <n> can return to it).
   if (effectiveWorkDir !== '' && !dirHistory.contains(project.name, effectiveWorkDir)) {

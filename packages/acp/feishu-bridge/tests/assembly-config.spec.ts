@@ -111,6 +111,33 @@ describe('buildProjectAssembly config wiring', () => {
     expect(second.engine.dirHistory?.list('smoke-project')).toContain(workdirA)
   })
 
+  it('wires dir_scan_paths onto the dir history (Go DirScanPaths, #3)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fb-scan-'))
+    const scanRoot = join(root, 'scan-root')
+    await mkdir(join(scanRoot, 'child-a'), { recursive: true })
+    const secondRoot = join(root, 'second-scan')
+    await mkdir(join(secondRoot, 'child-b'), { recursive: true })
+    const { engine } = assemble(baseConfig(), {
+      ...project(),
+      dirScanPaths: [scanRoot, secondRoot],
+    }, root)
+    expect(engine.dirHistory?.resolveScanPath('smoke-project', 'child-a')).toBe(join(scanRoot, 'child-a'))
+    expect(engine.dirHistory?.resolveScanPath('smoke-project', 'child-b')).toBe(join(secondRoot, 'child-b'))
+  })
+
+  it('wires feishu_workspace onto the engine (#18)', () => {
+    expect(assemble(baseConfig()).engine.feishuWorkspaceEnv()).toEqual([])
+    const { engine } = assemble(baseConfig(), {
+      ...project(),
+      feishuWorkspace: { wikiSpaceId: '7000', folderToken: 'fldcn1', wikiNodeToken: '', description: 'Team docs' },
+    })
+    expect(engine.feishuWorkspaceEnv()).toEqual([
+      'CC_FEISHU_WIKI_SPACE_ID=7000',
+      'CC_FEISHU_FOLDER_TOKEN=fldcn1',
+      'CC_FEISHU_WORKSPACE_DESC=Team docs',
+    ])
+  })
+
   it('wires idle_timeout_mins and display.stall_timeout_secs onto the event idle timeout', () => {
     expect(assemble({ ...baseConfig(), idleTimeoutMins: 30 }).engine.eventIdleTimeout).toBe(30 * 60_000)
     // 0 disables the timeout.

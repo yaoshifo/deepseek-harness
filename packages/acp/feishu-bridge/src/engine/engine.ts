@@ -20,6 +20,8 @@ import {
   MsgAgentProcessExited,
   MsgAskQuestionMulti,
   MsgAskQuestionTitle,
+  MsgAttachmentsDiscarded,
+  MsgAttachmentsStaged,
   MsgDoneReplyParentHeader,
   MsgError,
   MsgFailedToStartAgentSession,
@@ -69,6 +71,7 @@ import type {
   AgentSession,
   CardSender,
   Event,
+  FeishuWorkspaceInfo,
   FileAttachment,
   ImageAttachment,
   InlineButtonSender,
@@ -116,6 +119,7 @@ import {
 } from './permission.js'
 import { CardButton, CardCheckOption, newCard, type Card, type CardHeader } from '../card.js'
 import { Session, SessionManager } from './session.js'
+import { pendingDirFor, saveFilesToDir, saveImagesToDir, spliceStagedAttachments, type StagedAttachment } from './attachments.js'
 import { childLabel, SubtaskGather } from './subtask.js'
 import {
   createWorktree,
@@ -147,6 +151,7 @@ import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, Stream
 import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.js'
 import { newAsyncSender, type AsyncSender } from '../async-sender.js'
 import { readFileSync, statSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
 import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier } from '../core/types.js'
@@ -273,6 +278,10 @@ export class InteractiveState {
   sender: AsyncSender | undefined
   /** The turn's active streaming preview (bound for bump routing). */
   preview: StreamPreview | undefined
+  /** Staging dir for pure-attachment messages awaiting the next text (#8). */
+  pendingDir = ''
+  /** Staged attachments to splice into the next prompt (Go pendingAttachments). */
+  pendingAttachments: StagedAttachment[] = []
 
   private stopWaiters: Array<() => void> = []
 
@@ -303,6 +312,22 @@ export class InteractiveState {
     this.lastActivity = Date.now()
   }
 
+  /**
+   * Extract staged attachment paths and clear them so they are consumed
+   * exactly once (Go drainStagedAttachmentPaths); pendingDir is preserved
+   * for cleanup.
+   */
+  drainStagedAttachmentPaths(): { imagePaths: string[]; filePaths: string[] } {
+    const imagePaths: string[] = []
+    const filePaths: string[] = []
+    for (const a of this.pendingAttachments) {
+      if (a.kind === 'image') imagePaths.push(a.path)
+      else filePaths.push(a.path)
+    }
+    this.pendingAttachments = []
+    return { imagePaths, filePaths }
+  }
+
   beginTurn(): void {
     this.activeTurns++
     this.touchActivity()
@@ -318,6 +343,12 @@ export class InteractiveState {
     if (this.effectiveIdleTimeout > 0) return this.effectiveIdleTimeout
     return fallback
   }
+}
+
+/** Whether every workspace field is empty (Go FeishuWorkspaceInfo.IsEmpty). */
+function feishuWorkspaceIsEmpty(info: FeishuWorkspaceInfo | undefined): boolean {
+  return info === undefined
+    || (info.wikiSpaceId === '' && info.folderToken === '' && info.wikiNodeToken === '' && info.description === '')
 }
 
 /** Cancellable sleep for the idle slot of the event-loop race. */
@@ -533,6 +564,8 @@ export class Engine {
   bumpDebounceInterval = 2000
   injectSender = false
   attachmentSendEnabled = true
+  /** Bot's default Feishu workspace routing (#18); undefined = feature off. */
+  feishuWorkspace: FeishuWorkspaceInfo | undefined
   eventIdleTimeout = defaultEventIdleTimeout
   stallMaxRetries = defaultStallMaxRetries
   maxQueuedMessages = defaultMaxQueuedMessages
@@ -663,6 +696,27 @@ export class Engine {
   /** Toggle side-channel attachment delivery (Go SetAttachmentSendEnabled). */
   setAttachmentSendEnabled(enabled: boolean): void {
     this.attachmentSendEnabled = enabled
+  }
+
+  /**
+   * Record the bot's default Feishu workspace location (Go SetFeishuWorkspace,
+   * #18). Non-empty fields surface as CC_FEISHU_* entries when a session
+   * starts; nil or all-empty disables the feature.
+   */
+  setFeishuWorkspace(info: FeishuWorkspaceInfo | undefined): void {
+    this.feishuWorkspace = feishuWorkspaceIsEmpty(info) ? undefined : info
+  }
+
+  /** The CC_FEISHU_* env entries for the configured workspace (Go feishuWorkspaceEnv). */
+  feishuWorkspaceEnv(): string[] {
+    const w = this.feishuWorkspace
+    if (w === undefined) return []
+    const env: string[] = []
+    if (w.wikiSpaceId !== '') env.push(`CC_FEISHU_WIKI_SPACE_ID=${w.wikiSpaceId}`)
+    if (w.folderToken !== '') env.push(`CC_FEISHU_FOLDER_TOKEN=${w.folderToken}`)
+    if (w.wikiNodeToken !== '') env.push(`CC_FEISHU_WIKI_NODE_TOKEN=${w.wikiNodeToken}`)
+    if (w.description !== '') env.push(`CC_FEISHU_WORKSPACE_DESC=${w.description}`)
+    return env
   }
 
   /** Inject the sender identity header into prompts (Go SetInjectSender). */
@@ -828,6 +882,14 @@ export class Engine {
     if (routePendingHumanReply(this, p, msg.sessionKey, content)) return
     if (this.handlePendingPermission(p, msg, content)) return
 
+    // Pure attachment (no text) — stage to disk and wait for the next text
+    // message instead of firing an empty-intent agent turn (#8, Go
+    // stageAttachments): Feishu image/file messages cannot carry text.
+    if (content === '' && (msg.images.length > 0 || msg.files.length > 0)) {
+      this.stageAttachments(p, msg, msg.sessionKey)
+      return
+    }
+
     const session = this.sessions.getOrCreateActive(msg.sessionKey)
     this.sessions.updateUserMeta(msg.sessionKey, msg.userName, msg.chatName)
     if (msg.userID !== '' && session.getSpawnUserID() !== msg.userID) {
@@ -989,6 +1051,89 @@ export class Engine {
     }
   }
 
+  /**
+   * Stage a pure-attachment message (no text) to the per-state pending
+   * directory and record the paths so the next text message attaches them
+   * (Go stageAttachments, #8). Feishu image/file messages cannot carry text,
+   * so this buffers them until the user follows up instead of firing an
+   * empty-intent agent turn.
+   */
+  stageAttachments(p: Platform, msg: Message, interactiveKey: string): void {
+    const workDir = this.effectiveWorkDirForPending(interactiveKey)
+    if (workDir === '') {
+      console.warn(`stageAttachments: no workDir resolvable; cannot stage (${interactiveKey})`)
+      return
+    }
+    const dir = pendingDirFor(workDir, interactiveKey)
+    const imagePaths = saveImagesToDir(dir, msg.images)
+    const filePaths = saveFilesToDir(dir, msg.files)
+
+    this.ensureInteractiveStateForQueueing(interactiveKey, p, msg.replyCtx)
+    const st = this.interactiveStates.get(interactiveKey)
+    if (st === undefined) return
+
+    let fileList = ''
+    if (st.pendingDir === '') st.pendingDir = dir
+    for (const imgPath of imagePaths) {
+      st.pendingAttachments.push({ messageID: msg.messageID, kind: 'image', path: imgPath })
+    }
+    for (const filePath of filePaths) {
+      st.pendingAttachments.push({ messageID: msg.messageID, kind: 'file', path: filePath })
+    }
+    if (msg.files.length > 0) {
+      const names = msg.files.map(f => f.fileName).filter(n => n !== '')
+      if (names.length > 0) fileList = `: ${names.join(', ')}`
+    }
+    st.touchActivity()
+    let imgN = 0
+    let fileN = 0
+    for (const a of st.pendingAttachments) {
+      if (a.kind === 'image') imgN++
+      else fileN++
+    }
+    void this.reply(p, msg.replyCtx, this.i18n.tf(MsgAttachmentsStaged, imgN, fileN, fileList))
+  }
+
+  /**
+   * Clear all staged attachment state and asynchronously remove the pending
+   * dir (Go discardStagedAttachments). notify=true also tells the user the
+   * staged attachments were dropped; /stop passes false because its stop card
+   * is already user feedback.
+   */
+  discardStagedAttachments(state: InteractiveState, notify: boolean): boolean {
+    const pendingDir = state.pendingDir
+    const hasStaged = state.pendingAttachments.length > 0
+    state.pendingDir = ''
+    state.pendingAttachments = []
+    if (notify && hasStaged) {
+      const platform = state.platform
+      if (platform !== undefined) void this.reply(platform, state.replyCtx, this.i18n.t(MsgAttachmentsDiscarded))
+    }
+    if (pendingDir !== '') {
+      void rm(pendingDir, { recursive: true, force: true }).catch((error: unknown) => {
+        console.warn(`discardStagedAttachments: remove pending dir failed (${pendingDir}): ${String(error)}`)
+      })
+    }
+    return hasStaged
+  }
+
+  /**
+   * The directory the agent session will run in, so staged attachments land
+   * where the agent can later read them (Go effectiveWorkDirForPending,
+   * single-workspace shape: per-chat override, then the agent's workDir,
+   * then the engine base).
+   */
+  private effectiveWorkDirForPending(interactiveKey: string): string {
+    const override = this.perChatWorkDir(this.dirOverrideKey(interactiveKey))
+    if (override !== '') return override
+    const switcher = this.agent as { getWorkDir?: () => string }
+    if (typeof switcher.getWorkDir === 'function') {
+      const wd = switcher.getWorkDir().trim()
+      if (wd !== '') return wd
+    }
+    return this.baseWorkDir
+  }
+
   // ── turn processing ─────────────────────────────────────────────────────
 
   /** Run one user turn end-to-end (Go processInteractiveMessageWith, M1 subset). */
@@ -1031,7 +1176,11 @@ export class Engine {
 
         if (state.eventsNeedResync) state.agentSession.events().drain()
 
-        const promptContent = this.buildSenderPrompt(msg.content, msg.userID, msg.userName, msg.platform, msg.sessionKey)
+        let promptContent = this.buildSenderPrompt(msg.content, msg.userID, msg.userName, msg.platform, msg.sessionKey)
+        // Splice staged attachment paths from earlier pure-attachment
+        // messages into this turn's prompt (#8).
+        const { imagePaths, filePaths } = state.drainStagedAttachmentPaths()
+        promptContent = spliceStagedAttachments(promptContent, imagePaths, filePaths)
         state.fromVoice = msg.fromVoice
         state.sideText = ''
         state.lastPrompt = promptContent
@@ -1168,12 +1317,25 @@ export class Engine {
     return newState
   }
 
-  /** Carry queued messages from a placeholder state into the live one. */
+  /**
+   * Carry queued messages and staged attachments from a placeholder state
+   * into the live one (Go adoptPendingFromPlaceholder): a pure-attachment
+   * message creates a placeholder via stageAttachments, and the next text
+   * message swaps in the real state here.
+   */
   private adoptPendingFromPlaceholder(existing: InteractiveState | undefined, fresh: InteractiveState): void {
     if (existing === undefined) return
     if (existing.pendingMessages.length > 0) {
       fresh.pendingMessages = [...existing.pendingMessages, ...fresh.pendingMessages]
       existing.pendingMessages = []
+    }
+    if (existing.pendingAttachments.length > 0) {
+      fresh.pendingAttachments = [...existing.pendingAttachments, ...fresh.pendingAttachments]
+      existing.pendingAttachments = []
+    }
+    if (existing.pendingDir !== '') {
+      fresh.pendingDir = existing.pendingDir
+      existing.pendingDir = ''
     }
   }
 
@@ -1181,7 +1343,6 @@ export class Engine {
    * Per-session env (Go buildSessionEnv). CC_SESSION rides alongside
    * CC_SESSION_KEY because dsh scrubs credential-shaped env names (any
    * *KEY*) from Bash-tool children, which would silently drop CC_SESSION_KEY.
-   * The feishu-workspace entries arrive with the workspace milestone (M7).
    */
   buildSessionEnv(ccKey: string, session: Session): string[] {
     const envVars = [
@@ -1189,6 +1350,9 @@ export class Engine {
       `CC_SESSION_KEY=${ccKey}`,
       `CC_SESSION=${ccKey}`,
     ]
+    // Feishu workspace routing (#18): the adapter's setup hook surfaces
+    // these to the agent (the D3 replacement for Go's subprocess env).
+    envVars.push(...this.feishuWorkspaceEnv())
     if (session.getResearchAssistant()) {
       envVars.push('CC_RESEARCH_ASSISTANT=1')
     }
@@ -1923,13 +2087,15 @@ export class Engine {
       if (pendingSend !== undefined) await pendingSend.catch(() => undefined)
 
       const queuedPrompt = this.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey)
+      const { imagePaths: qImgs, filePaths: qFiles } = state.drainStagedAttachmentPaths()
+      const splicedPrompt = spliceStagedAttachments(queuedPrompt, qImgs, qFiles)
       session.addHistory('user', queued.content)
       // Chatroom ask metadata is consumed at drain time — the queued ask's
       // turn is starting now.
       this.stampChatroomAskOnTurnStart(session, queued.chatroomAskSeq, queued.chatroomAwaitAssistant)
       state.inflightMessage = queued
       this.i18n.detectAndSet(queued.content)
-      const sendDone = state.agentSession.send(queuedPrompt, queued.images, queued.files)
+      const sendDone = state.agentSession.send(splicedPrompt, queued.images, queued.files)
         .then((): undefined => undefined, (error: unknown): unknown => error)
       return { kind: 'queued', sendDone }
     }
@@ -2059,7 +2225,9 @@ export class Engine {
       if (this.debounceInterval > 0) await this.debounceWaitAndMerge(state, queued)
 
       this.i18n.detectAndSet(queued.content)
-      const prompt = this.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey)
+      let prompt = this.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey)
+      const { imagePaths: dImgs, filePaths: dFiles } = state.drainStagedAttachmentPaths()
+      prompt = spliceStagedAttachments(prompt, dImgs, dFiles)
 
       if (state.agentSession === undefined || !state.agentSession.alive()) {
         state.inflightMessage = undefined
@@ -2160,6 +2328,7 @@ export class Engine {
       if (state !== undefined) {
         state.markStopped()
         this.notifyDroppedQueuedMessages(state, new Error('session reset'))
+        this.discardStagedAttachments(state, true)
       }
       if (agentSession !== undefined) {
         await this.closeAgentSessionWithTimeout(sessionKey, agentSession)
@@ -2196,6 +2365,9 @@ export class Engine {
     state.markStopped()
     this.interactiveStates.delete(sessionKey)
     this.notifyDroppedQueuedMessages(state, new Error('session reset'))
+    // Staged attachments die with the session: without this the pendingDir
+    // leaks on disk (Go regression test for /new and /stop).
+    this.discardStagedAttachments(state, false)
     if (state.agentSession !== undefined) {
       void state.agentSession.close().catch((error: unknown) => {
         console.error(`engine: stop close failed (${sessionKey}): ${String(error)}`)

@@ -550,9 +550,18 @@ export async function dirApply(
 function resolveDir(e: Engine, arg: string): string | undefined {
   let newDir = expandTilde(arg.trim())
   if (!newDir.startsWith('/')) {
+    // Relative bare names resolve ONLY against scan roots (Go resolveDir):
+    // no work-dir/cwd fallback, so a typo'd name cannot silently land under
+    // an unrelated directory. After an exact miss, the fuzzy fallback picks
+    // the closest scanned/MRU basename (#3).
     const hit = e.dirHistory?.resolveScanPath(e.name, newDir)
-    if (hit === undefined) return undefined
-    newDir = hit
+    if (hit !== undefined) {
+      newDir = hit
+    } else {
+      const fuzzy = e.dirHistory?.resolveScanPathFuzzy(e.name, newDir)
+      if (fuzzy === undefined) return undefined
+      newDir = fuzzy
+    }
   }
   try {
     if (!statSyncIsDir(newDir)) return undefined

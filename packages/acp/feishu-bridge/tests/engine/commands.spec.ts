@@ -1,5 +1,5 @@
 import { mkdtemp, mkdir } from 'node:fs/promises'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -407,6 +407,25 @@ describe('/dir', () => {
       expect(agent.getWorkDir()).toBe(temp)
       expect(p.sent).toHaveLength(1)
       expect(p.sent[0]).toContain(missingDir)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('falls back to a fuzzy scan-path match for bare names (#3)', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'dirscan-'))
+    mkdirSync(join(parent, 'ainvest'))
+    const store = new ProjectStateStore(join(temp, 'state', 'test.state.json'))
+    const { e, p, dispose } = newEngine(workDirAgent(temp))
+    try {
+      e.setProjectStateStore(store)
+      const dh = new DirHistory(temp)
+      dh.setScanPaths('test', [parent])
+      e.setDirHistory(dh)
+      const m = msg()
+      await cmdDir(e, p, m, ['invest'])
+      expect(store.workspaceDirOverride(stripUserID(m.sessionKey))).toBe(join(parent, 'ainvest'))
+      expect(p.sent[0]).toContain(join(parent, 'ainvest'))
     } finally {
       dispose()
     }

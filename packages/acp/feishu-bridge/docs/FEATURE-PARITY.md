@@ -11,28 +11,28 @@
 | ✂️ | 不迁移（附理由，出处 MIGRATION.md §0） |
 | ❓ | 待核实（证据不足，宁标勿猜） |
 
-统计：✅ 30 · 📋 19 · ✂️ 10 · ❓ 2，合计 61。
+统计：✅ 33 · 📋 20 · ✂️ 10 · ❓ 0，合计 61（#11 由 ❓ 归档为 📋，#3/#8/#18 于 M7-d 落地）。
 
 | # | 特性 | 状态 | 里程碑 | 落点 / 理由 |
 |---|---|---|---|---|
 | 1 | UsageProvider：配置式服务商余量信息（/usage + buildCompletionUsage + ActiveDetector） | 📋 | M7 | usage 域 |
 | 2 | notify_on_complete：任务完成后触发飞书通知红点 | ✅ | M2 | `projects[].feishu.notifyOnComplete`；真机验证（✅ 通知 tokens 行） |
-| 3 | dir_scan_paths：自动扫描子目录加入 /dir 列表 | 📋 | M7 | dir_scan |
+| 3 | dir_scan_paths：自动扫描子目录加入 /dir 列表 | ✅ | M7-d | `dirScanPaths` 配置 + `setScanPaths` 装配 + 模糊兜底（resolveScanPathFuzzy 随迁），/dir 建议列表与裸名解析全链路 |
 | 4 | 多选问题（MultiSelect）：checker+form 渲染 | ✅ | M3 | askq_multi 回调路径 |
 | 5 | Inline Plan 去重（两条路径不重复显示） | ✅ | M3 | plan 域 |
 | 6 | ExitPlanMode 前先以 markdown 展示 plan 内容 | ✅ | M3 | plan 域 |
 | 7 | flip minimax 修复（IsActive 纯缓存名比对） | ✂️ | — | §0 裁定；新架构 provider 切换为 dispose + 同 sessionId resume 重建（D1），无旧缓存比对路径 |
-| 8 | 图片发送改用文件路径（不 base64 内嵌） | ❓ | — | 平台侧图片下载已实现（M4 media）；adapter.send 目前仅附文件名注记，图片进模型上下文的通路未接线——dsh 原生图片消息格式与归属里程碑待核实 |
+| 8 | 图片发送改用文件路径（不 base64 内嵌） | ✅ | M7-d | 核实结论：Go dsh 后端从不把图片字节放进模型上下文——纯附件消息落盘 `<workDir>/.cc-connect/pending/<hash>/` 暂存、下一条文本消息以路径 bullets 拼进 prompt；带文字消息经 dshSession.Send 落盘 `.cc-connect/attachments` 并附路径注记。TS 已保形接线（stageAttachments/drain/splice/discard + adapter.send 落盘注记） |
 | 9 | 全局 Providers：跨项目共享模型配置 + /provider 切换 | 📋 | M7 | /provider 命令；多路由基建（providers map + 路由名引用）已随 D2 落地 |
 | 10 | tool_progress：quiet 模式工具进度卡片 | ✅ | M2 | 真机验证（display 转发补齐后） |
-| 11 | reply_footer 默认关闭（ctx/余额只走 ✅ 通知） | ❓ | — | `features.replyFooter` 键已声明但未见接线；「默认关」语义天然成立，Codex 式页脚本体是否单独实现待核实（完整状态页脚属 #26、M7） |
+| 11 | reply_footer 默认关闭（ctx/余额只走 ✅ 通知） | 📋 | M7 usage 域 | 核实结论：Go 语义 = 每条就地回复追加 Codex 式状态行（model · reasoning effort · ctx% 或 usage · workdir，engine_send.go buildReplyFooter），数据面依赖 model/effort 能力getter 与 ctx%/usage 计算（#1 usage 域）。`features.replyFooter` 键未转发 → 默认关语义成立；页脚本体随 #1 usage 域实现，避免与本里程碑并行群撞车 |
 | 12 | per-provider context_window | 📋 | M7 | /provider 域 |
 | 13 | 消息排队机制（session 启动期不丢弃） | ✅ | M1 | engine 事件循环 |
 | 14 | ctx indicator 移至 ✅ 通知（原始 token 累积值） | ✅ | M2 | 完成通知 |
 | 15 | auto-approve 不跳过 AskUserQuestion / ExitPlanMode | ✅ | M3 | 审批域 |
 | 16 | GLM 反爬指纹绕过（rewrite_tui_fingerprint） | ✂️ | — | §0：由 profile 的 llm 路由承担（plain model name 规避 + forceAdaptiveThinking 兼容项）；providerproxy 整体不迁移 |
 | 17 | --as user 透传 + lark-auth 编排 | 📋 | M7 | feishu_bridge_lark 透传工具（D4） |
-| 18 | feishu_workspace：每 bot 默认飞书空间（CC_FEISHU_* 注入） | 📋 | M7 | CC_FEISHU_* 进工具上下文 |
+| 18 | feishu_workspace：每 bot 默认飞书空间（CC_FEISHU_* 注入） | ✅ | M7-d | `feishuWorkspace` 配置块 → engine `setFeishuWorkspace`/`feishuWorkspaceEnv`（含 relay 注入）→ adapter setup 钩子注入系统提示段（D3 替代进程 env） |
 | 19 | tool_progress 合并 entry + ToolID 匹配 + 失败保留 | ✅ | M2 | progress 域 |
 | 20 | restrict_to_workdir：限制 bot 只访问项目目录 | ✅ | M3 | 以 D3 setup 钩子 restrict()（dsh 原生）承担，不再写 .claude/settings.local.json deny 规则 |
 | 21 | Feishu Card Schema 2.0 迁移 | ✅ | M2 | card 构造器全集 |
