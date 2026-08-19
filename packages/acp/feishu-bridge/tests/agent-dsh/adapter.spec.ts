@@ -365,7 +365,7 @@ describe('DshAgentAdapter', () => {
       const got = await channel.receive()
       if (got.done) throw new Error('channel closed before result')
       if (got.event.type === 'result') {
-        result = got as typeof result
+        result = got
         break
       }
     }

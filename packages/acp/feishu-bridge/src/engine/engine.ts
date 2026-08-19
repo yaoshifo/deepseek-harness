@@ -21,12 +21,14 @@ import {
   MsgError,
   MsgFailedToStartAgentSession,
   MsgMessageQueued,
+  MsgProcessing,
   MsgPreviousProcessing,
   MsgQueueFull,
   MsgSessionResumeDegraded,
   MsgSilentReply,
   MsgStallRetry,
   MsgStallTimeout,
+  MsgTurnCompleted,
 } from '../i18n/index.js'
 import type { Language } from '../i18n/index.js'
 import type {
@@ -41,6 +43,10 @@ import type {
 import { asSessionEnvInjector, asSessionModeInjector } from '../core/types.js'
 import { Session, SessionManager } from './session.js'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.js'
+import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.js'
+import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.js'
+import { newAsyncSender, type AsyncSender } from '../async-sender.js'
+import { asCompletionNotifier } from '../core/types.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -74,6 +80,8 @@ export interface DisplayCfg {
   thinkingMessages: boolean
   thinkingMaxLen: number
   toolMessages: boolean
+  /** In quiet mode, drive one progress card from tool events (Go tool_progress). */
+  toolProgress: boolean
 }
 
 /** A message queued while the session was busy (Go queuedMessage). */
@@ -122,6 +130,10 @@ export class InteractiveState {
   lastPrompt = ''
   /** Whether a permission prompt is parked on this state (full object in M3). */
   permissionPending = false
+  /** Per-state async sender serializing platform PATCHes (Go state.sender). */
+  sender: AsyncSender | undefined
+  /** The turn's active streaming preview (bound for bump routing). */
+  preview: StreamPreview | undefined
 
   private stopWaiters: Array<() => void> = []
 
@@ -267,7 +279,12 @@ export class Engine {
     thinkingMessages: true,
     thinkingMaxLen: defaultThinkingMaxLen,
     toolMessages: true,
+    toolProgress: false,
   }
+  /** Streaming preview switches (Go e.streamPreview). */
+  streamPreview: StreamPreviewCfg = defaultStreamPreviewCfg()
+  /** Quiet window after the last im.chat.updated event before a preview bump (Go var). */
+  bumpDebounceInterval = 2000
   injectSender = false
   attachmentSendEnabled = true
   eventIdleTimeout = defaultEventIdleTimeout
@@ -778,6 +795,30 @@ export class Engine {
     const channel = state.agentSession?.events()
     if (channel === undefined) return
 
+    // M2 preview machinery: one streamPreview + compact writer per turn,
+    // sharing the state's async sender so PATCHes stay off this loop.
+    const platform = state.platform ?? this.platforms[0]
+    if (platform === undefined) return
+    state.sender ??= newAsyncSender(sessionKey)
+    const sender = state.sender
+    const sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
+    state.preview = sp
+    const cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
+      this.i18n.currentLang(), undefined, sender)
+    this.bindActivePreview(sp, sessionKey)
+    // Placeholder card so the user sees visual feedback (with push) before
+    // the first agent event arrives.
+    if (this.display.toolProgress && sp.canPreview()) {
+      void sp.showPlaceholder(this.i18n.t(MsgProcessing))
+    }
+    let thinkingStreamed = false
+    let thinkingAccum = ''
+    let deltaAccum = ''
+    let deltaFlushed = false
+
+    /** Drain queued async PATCHes before a terminal card state. */
+    const barrier = (): Promise<void> => sender.barrier()
+
     let pendingSend = sendDone
     const stopP = state.stopSignal()
     let recvP: Promise<{ done: false; event: Event } | { done: true }> = channel.receive()
@@ -809,6 +850,14 @@ export class Engine {
       idleSleep?.cancel()
 
       if (outcome.kind === 'stop') {
+        await barrier()
+        if (state.isUserStopped()) {
+          // User stop: stopped terminal card, skipping cp.Finalize(Failed)
+          // which would clobber the ⏹ 已停止 card.
+          await sp.markStopped()
+        } else {
+          await sp.markFailed()
+        }
         state.eventsNeedResync = true
         return
       }
@@ -892,30 +941,74 @@ export class Engine {
       switch (event.type) {
         case 'thinking': {
           if (isEllipsisOnly(event.content)) break
+          // Thinking block complete: drop the streamed 💭 section.
+          if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
           if (!this.display.thinkingMessages && textParts.length > segmentStart) {
-            const segment = textParts.slice(segmentStart).join('')
-            if (segment !== '' && p !== undefined) {
-              for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-                await this.send(p, replyCtx, chunk)
+            if (this.display.toolProgress && sp.canPreview()) {
+              // Keep the preview alive for tool progress; one thinking entry
+              // only when it was not already streamed above.
+              if (!thinkingStreamed && event.content !== '') {
+                const body = event.content.trim().replaceAll('```', "'''")
+                await sp.appendProgress(newToolProgressEntry('Thinking', body, ''))
               }
-            }
-            segmentStart = textParts.length
-            silentHold = false
-          }
-          if (this.display.thinkingMessages && event.content !== '' && p !== undefined) {
-            if (textParts.length > segmentStart) {
+            } else if (sp.canPreview()) {
+              await sp.completeAndDetach()
+              segmentStart = textParts.length
+            } else {
+              // Preview degraded — send the accumulated segment directly.
               const segment = textParts.slice(segmentStart).join('')
-              if (segment !== '') {
+              if (segment !== '' && p !== undefined) {
                 for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
                   await this.send(p, replyCtx, chunk)
                 }
               }
               segmentStart = textParts.length
+            }
+            if (!sp.inProgressMode()) segmentStart = textParts.length
+            silentHold = false
+          }
+          if (this.display.thinkingMessages && event.content !== '' && p !== undefined) {
+            if (textParts.length > segmentStart) {
+              if (!sp.canPreview()) {
+                const segment = textParts.slice(segmentStart).join('')
+                if (segment !== '') {
+                  for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
+                    await this.send(p, replyCtx, chunk)
+                  }
+                }
+              }
+              segmentStart = textParts.length
               silentHold = false
             }
+            await sp.completeAndDetach()
             const preview = truncateIf(event.content, this.display.thinkingMaxLen)
-            await this.send(p, replyCtx, this.i18n.tf('thinking', preview))
+            const thinkingMsg = this.i18n.tf('thinking', preview)
+            if (!await cp.appendEvent('thinking', preview, '', thinkingMsg)) {
+              await this.send(p, replyCtx, thinkingMsg)
+            }
           }
+          thinkingStreamed = false
+          thinkingAccum = ''
+          break
+        }
+
+        case 'text_delta': {
+          // Preview-only incremental text; the full block still arrives via
+          // EventText and is reconciled at turn end.
+          deltaAccum += event.content
+          if (couldBeSilentPrefix(deltaAccum)) break
+          deltaFlushed = true
+          if (sp.canPreview() && sp.inProgressMode()) await sp.appendAnalysisText(deltaAccum)
+          else if (sp.canPreview()) await sp.appendText(event.content)
+          break
+        }
+
+        case 'thinking_delta': {
+          // Preview-only: stream thinking into the 💭 section; the full
+          // EventThinking block clears it and dedups.
+          thinkingAccum += event.content
+          thinkingStreamed = true
+          if (sp.canPreview()) await sp.appendThinking(thinkingAccum)
           break
         }
 
@@ -923,10 +1016,34 @@ export class Engine {
           toolCount++
           activeToolCalls++
           state.activeToolCalls = activeToolCalls
+          if (this.display.toolProgress && sp.canPreview()) {
+            await sp.appendProgress(newToolProgressEntry(event.toolName ?? '', event.toolInput ?? '', event.toolID ?? ''))
+          }
           break
         }
 
         case 'tool_result': {
+          if (this.display.toolMessages) {
+            const result = (event.toolResult ?? '').trim() || event.content.trim()
+            if (result !== '' && p !== undefined) {
+              const entry = {
+                kind: 'tool_result' as const,
+                tool: event.toolName ?? '',
+                text: result,
+              }
+              if (!await cp.appendStructured(entry, result)) {
+                if (!suppressStandaloneToolResultEvent(p)) {
+                  await this.send(p, replyCtx, result)
+                }
+              }
+            }
+          } else if (this.display.toolProgress) {
+            // Quiet mode: update the last tool entry with its result.
+            const result = (event.toolResult ?? '').trim() || event.content.trim()
+            if (result !== '' || event.done) {
+              await sp.updateToolResult(event.toolID ?? '', result, true)
+            }
+          }
           activeToolCalls = Math.max(0, activeToolCalls - 1)
           state.activeToolCalls = activeToolCalls
           break
@@ -934,14 +1051,39 @@ export class Engine {
 
         case 'text': {
           if (isEllipsisOnly(event.content)) break
+          // Real text ends the streaming-thinking state (safety net for
+          // agents that only emit thinking deltas); empty content carriers
+          // (session ids) must not flip 思考中↔执行中.
+          if (thinkingStreamed && event.content !== '') {
+            await sp.clearThinking()
+            thinkingAccum = ''
+          }
           const text = event.content
           if (text !== '' && !isSilentReply(text)) {
             textParts.push(text)
-            const segmentText = textParts.slice(segmentStart).join('')
-            if (silentHold) {
-              if (!couldBeSilentPrefix(segmentText)) silentHold = false
-            } else if (couldBeSilentPrefix(segmentText)) {
-              silentHold = true
+            if (deltaFlushed) {
+              // This block was already previewed via deltas; textParts (the
+              // final-message source of truth) is still updated.
+              deltaAccum = ''
+              deltaFlushed = false
+            } else {
+              const segmentText = textParts.slice(segmentStart).join('')
+              if (silentHold) {
+                if (!couldBeSilentPrefix(segmentText)) {
+                  silentHold = false
+                  if (sp.canPreview() && sp.inProgressMode()) await sp.appendAnalysisText(segmentText)
+                  else if (sp.inProgressMode() && p !== undefined) await this.send(p, replyCtx, segmentText)
+                  else if (sp.canPreview()) await sp.appendText(segmentText)
+                }
+              } else if (couldBeSilentPrefix(segmentText)) {
+                silentHold = true
+              } else if (sp.canPreview() && sp.inProgressMode()) {
+                await sp.appendAnalysisText(text)
+              } else if (sp.inProgressMode() && p !== undefined) {
+                await this.send(p, replyCtx, text)
+              } else if (sp.canPreview()) {
+                await sp.appendText(text)
+              }
             }
           }
           const eventSessionID = event.sessionID ?? ''
@@ -967,7 +1109,7 @@ export class Engine {
         case 'result': {
           const finished = await this.handleResultEvent(
             state, session, sessions, sessionKey, replyCtx, event,
-            textParts, segmentStart, toolCount, pendingSend)
+            textParts, segmentStart, toolCount, pendingSend, sp, cp, barrier)
           if (finished.kind === 'queued') {
             // A queued message takes over this loop as a fresh turn (Go
             // in-loop drain): reset per-turn state and continue.
@@ -977,6 +1119,10 @@ export class Engine {
             silentHold = false
             activeToolCalls = 0
             state.activeToolCalls = 0
+            thinkingStreamed = false
+            thinkingAccum = ''
+            deltaAccum = ''
+            deltaFlushed = false
             pendingSend = finished.sendDone
             if (state.agentSession !== undefined) recvP = state.agentSession.events().receive()
             state.lastEventAt = Date.now()
@@ -987,6 +1133,7 @@ export class Engine {
 
         case 'error': {
           state.eventsNeedResync = true
+          await sp.markFailed()
           if (event.error !== undefined && p !== undefined) {
             await this.send(p, replyCtx, this.i18n.tf(MsgError, event.error.message))
           }
@@ -1024,6 +1171,9 @@ export class Engine {
     segmentStart: number,
     toolCount: number,
     pendingSend: Promise<unknown> | undefined,
+    sp: StreamPreview,
+    cp: CompactProgressWriter,
+    barrier: () => Promise<void>,
   ): Promise<{ kind: 'done' } | { kind: 'queued'; sendDone: Promise<unknown> }> {
     // Persist via the live session id (event.sessionID may be empty).
     if (state.agentSession !== undefined) {
@@ -1075,10 +1225,18 @@ export class Engine {
     const suppressDuplicate = normalizedBase !== '' && normalizedBase === state.sideText
     state.sideText = ''
 
-    if (p !== undefined && !isSilent) {
+    /** Whether the final card landed; the ✅ notification follows it. */
+    let sendCompletionNotification = false
+    if (isSilent) {
+      await sp.setAnalysisText(this.i18n.t(MsgSilentReply))
+      await sp.markCompleted()
+      await sp.detachPreview()
+      sendCompletionNotification = true
+    } else if (p !== undefined) {
       if (suppressDuplicate) {
         // The side channel already delivered this exact text; only the
         // appended metadata (footer) is worth sending.
+        await sp.discard()
         const metaOnly = cleanResponse.startsWith(baseResponse)
           ? cleanResponse.slice(baseResponse.length).trim()
           : cleanResponse.trim()
@@ -1087,9 +1245,11 @@ export class Engine {
             await this.send(p, replyCtx, chunk)
           }
         }
-      } else if (toolCount > 0 && segmentStart > 0) {
+        sendCompletionNotification = true
+      } else if (toolCount > 0 && segmentStart > 0 && !sp.inProgressMode()) {
         // Prior segments were already surfaced between tools; deliver only
         // the unsent remainder.
+        await sp.discard()
         const unsent = textParts.slice(segmentStart).join('')
         const [uStripped, uOk] = stripTrailingSilent(unsent)
         const deliver = uOk ? uStripped : unsent
@@ -1098,9 +1258,45 @@ export class Engine {
             await this.send(p, replyCtx, chunk)
           }
         }
+        sendCompletionNotification = true
+      } else if (sp.inProgressMode()) {
+        if (sp.isDegraded()) {
+          await sp.discard()
+          await sp.deliverAnswer(fullResponse)
+        } else {
+          // Keep 实时播报 on the last streamed segment; only fall back to
+          // the full response when nothing was streamed live.
+          await sp.setAnalysisTextIfEmpty(fullResponse)
+          await sp.markCompleted()
+          await sp.detachPreview()
+        }
+        sendCompletionNotification = true
+      } else if (await sp.finish(fullResponse)) {
+        // Finalized in place via the stream preview.
+        sendCompletionNotification = true
       } else if (cleanResponse !== '') {
         for (const chunk of splitMessage(cleanResponse, MaxPlatformMessageLen)) {
           await this.send(p, replyCtx, chunk)
+        }
+        sendCompletionNotification = true
+      }
+    }
+
+    // Guarantee the terminal PATCH has landed before the ✅ notification so
+    // the progress card is not still mid-state when the push arrives.
+    await barrier()
+    void cp
+    if (sendCompletionNotification && p !== undefined && state.pendingMessages.length === 0) {
+      const notifier = asCompletionNotifier(p)
+      if (notifier !== undefined) {
+        let usageMsg = this.i18n.t(MsgTurnCompleted)
+        const inTok = event.totalInputTokens ?? 0
+        const outTok = event.outputTokens ?? 0
+        if (inTok > 0 || outTok > 0) usageMsg += ` · tokens ${inTok}+${outTok}`
+        try {
+          await notifier.sendCompletionNotification(replyCtx, usageMsg)
+        } catch (error) {
+          console.warn(`completion notification failed: ${String(error)}`)
         }
       }
     }
@@ -1463,5 +1659,38 @@ export class Engine {
     }
     for (const img of images) await media.sendImage?.(replyCtx, img)
     for (const file of files) await media.sendFile?.(replyCtx, file)
+  }
+
+  // ---------------------------------------------------------------------
+  // Active-preview bump routing (chat rename/avatar system notices push the
+  // preview card off the tail; bump reissues it as the latest message)
+  // ---------------------------------------------------------------------
+
+  private activePreview: StreamPreview | undefined
+  private activePreviewSession = ''
+  private bumpTimer: ReturnType<typeof setTimeout> | undefined
+
+  /** Bind the session's active preview for bump routing (Go bindActivePreview). */
+  bindActivePreview(sp: StreamPreview, sessionKey: string): void {
+    this.activePreview = sp
+    this.activePreviewSession = sessionKey
+  }
+
+  /** Reissue the bound preview when it belongs to the given session. */
+  bumpActivePreviewForSession(sessionKey: string): void {
+    if (this.activePreview === undefined || this.activePreviewSession !== sessionKey) return
+    void this.activePreview.bumpToEnd()
+  }
+
+  /**
+   * Coalesce rapid im.chat.updated events (rename + avatar ~1.4s apart) into
+   * one bump after the quiet window; only the last notice matters.
+   */
+  onChatChanged(sessionKey: string): void {
+    if (this.bumpTimer !== undefined) clearTimeout(this.bumpTimer)
+    this.bumpTimer = setTimeout(() => {
+      this.bumpTimer = undefined
+      this.bumpActivePreviewForSession(sessionKey)
+    }, this.bumpDebounceInterval)
   }
 }

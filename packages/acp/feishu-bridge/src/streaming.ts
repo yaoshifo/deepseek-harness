@@ -1152,7 +1152,7 @@ export class StreamPreview {
    * back to chunked text) so it is never lost when the card cannot show it.
    * Must NOT hold the lock.
    */
-  private async deliverAnswer(text: string): Promise<void> {
+  async deliverAnswer(text: string): Promise<void> {
     if (text.trim() === '') return
     const fs = asFileSender(this.platform)
     if (fs !== undefined) {

@@ -7,11 +7,11 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  Card,
   dangerBtn,
   defaultBtn,
   newCard,
   primaryBtn,
-  type Card,
   type CardButton,
   type CardColumnSet,
 } from '../../src/card.js'
@@ -191,24 +191,23 @@ describe('renderCardMap', () => {
   })
 
   it('column_set has no margin', () => {
-    const card: Card = {
-      elements: [
-        {
-          kind: 'columnSet',
-          columns: [
-            {
-              width: 'auto',
-              elements: [{ kind: 'actions', buttons: [primaryBtn('run', 'cmd:/run')], layout: 'row' }],
-            },
-            {
-              width: 'weighted',
-              weight: 1,
-              elements: [{ kind: 'input', name: 'arg', placeholder: '参数' }],
-            },
-          ],
-        } satisfies CardColumnSet,
-      ],
-    }
+    const card = new Card()
+    card.elements = [
+      {
+        kind: 'columnSet',
+        columns: [
+          {
+            width: 'auto',
+            elements: [{ kind: 'actions', buttons: [primaryBtn('run', 'cmd:/run')], layout: 'row' }],
+          },
+          {
+            width: 'weighted',
+            weight: 1,
+            elements: [{ kind: 'input', name: 'arg', placeholder: '参数' }],
+          },
+        ],
+      } satisfies CardColumnSet,
+    ]
     const got = decodeRenderedCard(card)
     const elements = getBodyElements(got)
     expect(elements.length).toBe(1)

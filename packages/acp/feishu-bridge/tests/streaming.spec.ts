@@ -196,7 +196,7 @@ function createFallbackCapablePlatform(opts: { updateErr?: Error; fileSendErr?: 
 
 /** Like the fallback platform but without FileSender (forces chunked text). */
 function createFallbackNoFilePlatform(updateErr?: Error): FallbackCapablePlatform {
-  const p = createFallbackCapablePlatform({ updateErr })
+  const p = createFallbackCapablePlatform(updateErr === undefined ? {} : { updateErr })
   const p2 = p as unknown as Record<string, unknown>
   delete p2.sendFile
   return p

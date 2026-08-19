@@ -78,6 +78,7 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 - 测试先行：card_test(8)/progress(5)/spinner(8)/streaming_test(68)/card_sanitize/feishu markdown 套件。
 - 实现：Card Schema 2.0 构造器全集（markdown/hr/button/note/column_set/collapsible_panel/form/checker）；进度卡（流式合并 #32、tool_progress 合并 #10/#19、思考/执行 GIF #54、placeholder #23）；完成卡（✅ 通知 #2/#14、状态页脚 #26、累计 token #25）；TopNotice #22；PATCH 限流 + 重试 + 11310 fallback 发 .md。
 - 验收：测试绿；真机长任务一轮，卡片与现网视觉对比（截图）。
+- **进度（2026-08-19）**：代码与移植测试完成——feishu markdown(34)/card 渲染(13)/spinner(11)/progress 注入(16)/cardcache(4)/patch ratelimit(7)/token retry(8)/transient retry(20)/streaming(65)/async sender(11)/progress payload+compact(21)/engine m2(16)，包内 587 vitest 全绿、包级 oxlint/typecheck 0。实现范围含：进度卡全路径（文本/结构化 payload、placeholder、思考 GIF、stop/export 按钮注入、per-card 缓存）、PATCH 令牌桶限流 + 瞬态/令牌双重重试、平台卡片收发（CardSender/WithUpdate/Preview/TopNotice/Pin/反应/完成通知）、engine 事件循环接入 preview（text/thinking/tool 事件、完成/失败/停止收尾、✅ 完成通知含 token 行、bump 防抖）。**未竟事项**：① 紫色通知卡与完整状态页脚（模型/ctx%/git 分支/RAM 行）依赖 M4 spawn 跳转/差异元素与 M7 usage 域，当前 ✅ 通知带精简 token 行；② card.action.trigger 回调分发与 askq/perm 卡片缓存读取（M3）；③ AskUserQuestion 纯文本 fallback 测试（M3）；④ 真机长任务冒烟（父会话）。另：仓级 lint 在 cc-connect-bridge 存在 16 个存量类型告警（M1 收尾提交即有，与迁移无关，包级门禁不受影响）。
 
 **M3 审批 / 问题 / Plan + per-agent 组装**
 - 测试先行：engine_test permission 段、plan 相关（两路径 #5/#6、plan_max_len #29）、AskUserQuestion（multi-select #4、卡片增强 #31）。
