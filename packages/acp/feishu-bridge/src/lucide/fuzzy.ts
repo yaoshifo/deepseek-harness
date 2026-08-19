@@ -64,11 +64,10 @@ export function levenshtein(a: string, b: string): number {
  * Avatar stroke width in 24-unit viewBox coordinates. Go used 14 with its
  * oksvg rasterizer; librsvg (sharp) lays out materially thicker strokes, and
  * 14 fills the icon area into a solid white square (~95% coverage vs oksvg's
- * ~70% "chunky but readable"). 6 is the measured librsvg equivalent of oksvg
- * 14 (wrench probe: 71.8% vs 70.6% icon-area coverage against a shipped Go
- * avatar).
+ * ~70%). oksvg-14 equivalence measured 6, but the user found that still too
+ * chunky; 3 is the user-picked value (comparison strip sent in chat, 2026-08-19).
  */
-const avatarStrokeWidth = 6
+const avatarStrokeWidth = 3
 
 export function wrapIconSVG(inner: string, strokeColor: string): string {
   // currentColor in Lucide semantics is the icon foreground color — same as
