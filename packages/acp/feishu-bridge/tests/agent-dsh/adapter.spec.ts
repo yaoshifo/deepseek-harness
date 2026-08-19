@@ -142,7 +142,9 @@ describe('DshAgentAdapter', () => {
     const session = await a.startSession('')
 
     expect(h.creates).toHaveLength(1)
-    expect(String(h.creates[0]!.sessionId)).toBe('feishu:oc_1:ou_9')
+    // A new engine session must NOT reuse the engine key as the native
+    // session id — that collides with the persisted log after /new.
+    expect(String(h.creates[0]!.sessionId)).toMatch(/^cc-\d{8}-\d{6}-[0-9a-f]{12}$/)
     expect(h.creates[0]!.meta).toEqual({ cwd: '/workspace/project' })
     expect(session.currentSessionID()).toBe('agent-1')
   })
@@ -372,6 +374,24 @@ describe('DshAgentAdapter', () => {
     if (result === undefined) throw new Error('no result event')
     expect(result.event.content).toBe('')
     expect(result.event.errorText).toBe('No API key for provider: glm')
+  })
+
+
+  it('generates a fresh native session id per new engine session (no persisted-log collision)', async () => {
+    // Live regression (M2 real-device): after /new, the next message tried
+    // ctx.agents.create under the engine key and collided with the persisted
+    // log of the chat's earlier session. New sessions must use generated
+    // cc-* ids, mirroring the Go backend.
+    const h = createHarness()
+    const a = newAdapter(h)
+    const first = await a.startSession('')
+    await first.close()
+    await a.startSession('')
+    const ids = h.creates.map(c => String(c.sessionId))
+    expect(ids).toHaveLength(2)
+    expect(ids[0]).toMatch(/^cc-\d{8}-\d{6}-[0-9a-f]{12}$/)
+    expect(ids[1]).toMatch(/^cc-\d{8}-\d{6}-[0-9a-f]{12}$/)
+    expect(ids[0]).not.toBe(ids[1])
   })
 
   it('error-text absent on a normal turn/end', async () => {

@@ -16,6 +16,7 @@
  * @module dsh-feishu-bridge/agent-dsh
  */
 
+import { randomBytes } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -37,6 +38,15 @@ export interface DshAgentLike {
   readonly status: 'idle' | 'running'
   followup(message: unknown): void
   cancel(cause: { kind: string }, options?: { keepInbox?: boolean }): void
+}
+
+/** Generated native session id for a NEW engine session (Go cc-... parity). */
+function freshNativeSessionId(): string {
+  const now = new Date()
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `cc-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}`
+    + `-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`
+    + `-${randomBytes(6).toString('hex')}`
 }
 
 /** Handle returned by ctx.agents.create/resume. */
@@ -174,8 +184,12 @@ export class DshAgentAdapter {
         agentOptions: this.routeAgentOptions(),
       })
     } else {
+      // Go parity: a NEW engine session gets a generated native session id
+      // (cc-YYYYMMDD-HHMMSS-hex). Creating under the engine key collides
+      // with the persisted log of any earlier session bound to the same
+      // chat — the live "id collision" failure observed right after /new.
       handle = await this.ctx.agents.create({
-        sessionId: SessionId(key),
+        sessionId: SessionId(freshNativeSessionId()),
         meta: { cwd: this.cfg.cwd },
         agentOptions: this.routeAgentOptions(),
       })
