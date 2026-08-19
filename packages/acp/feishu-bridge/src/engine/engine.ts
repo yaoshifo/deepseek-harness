@@ -144,7 +144,7 @@ import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type Compa
 import { newAsyncSender, type AsyncSender } from '../async-sender.js'
 import { readFileSync, statSync } from 'node:fs'
 import { join as joinPath } from 'node:path'
-import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter } from '../core/types.js'
+import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier } from '../core/types.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -610,10 +610,50 @@ export class Engine {
       } catch (error) {
         console.warn(`platform start failed: ${p.name()}: ${String(error)}`)
         startErrs.push(error)
+        continue
+      }
+      // Chat-update wiring (Go engine.go platform startup): renames sync
+      // session labels; name/avatar changes bump the active preview back to
+      // the chat tail after the change's system notice pushes it off.
+      const renamed = asChatRenamedNotifier(p)
+      if (renamed !== undefined) {
+        renamed.setChatRenamedHandler((sessionKey, newName) => { this.handleChatRenamed(sessionKey, newName) })
+      }
+      const changed = asChatChangedNotifier(p)
+      if (changed !== undefined) {
+        changed.setChatChangedHandler((sessionKey) => { this.onChatChanged(sessionKey) })
       }
     }
     if (startErrs.length === this.platforms.length && this.platforms.length > 0) {
       throw startErrs[0]
+    }
+  }
+
+  /**
+   * Reflect a group rename into session state so jump-button labels stay
+   * current (Go handleChatRenamed): the renamed chat's own session gets Name
+   * updated (parent→child labels), and any child whose ParentSessionKey
+   * points at it gets ParentChatName updated (child→parent labels).
+   */
+  handleChatRenamed(sessionKey: string, newName: string): void {
+    if (newName === '') return
+    const { idToKey } = this.sessions.sessionKeyMap()
+    let changed = false
+    for (const s of this.sessions.allSessions()) {
+      if (idToKey[s.id] === sessionKey) {
+        if (s.getName() !== newName) {
+          s.setName(newName)
+          changed = true
+        }
+      }
+      if (s.getParentSessionKey() === sessionKey && s.getParentChatName() !== newName) {
+        s.setParentChatName(newName)
+        changed = true
+      }
+    }
+    if (changed) {
+      this.sessions.save()
+      console.info(`chat renamed: session labels updated (${sessionKey} → ${newName})`)
     }
   }
 

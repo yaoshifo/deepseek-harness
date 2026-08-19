@@ -32,6 +32,7 @@ import type {
   FileAttachment,
   ImageAttachment,
   PermissionResult,
+  ProviderConfig,
 } from '../core/types.js'
 
 /** Minimal structural member of a dsh Agent the adapter drives. */
@@ -147,6 +148,12 @@ function completedTurnPrefix(parent: DshAgentLike): SessionEvent[] {
   if (lastEnd === undefined) return []
   return events.slice(0, lastEnd.seq + 1)
 }
+
+/** Default one-shot budget (Go oneShotQuery default timeout). */
+const oneShotDefaultTimeoutMs = 10 * 60_000
+
+/** Lightweight-query budget (Go LightweightQuery: 90s). */
+export const lightweightQueryTimeoutMs = 90_000
 
 /** Adapter configuration (providers + active route). */
 export class DshAgentAdapter {
@@ -273,14 +280,24 @@ export class DshAgentAdapter {
 
   /** agentOptions for the active route (with the [1m] alias stripped). */
   private routeAgentOptions(): { provider: string; model: string; reasoningEffort?: string } {
-    const route = this.activeRoute()
-    const provider = route?.provider ?? ''
-    const model = stripModelAlias(route?.model ?? '')
-    const reasoningEffort = route?.reasoningEffort
+    return this.agentOptionsForQuery('', '')
+  }
+
+  /**
+   * agentOptions for a one-shot query (Go spawnConfigFor): a named provider
+   * route when it matches, else the active route; `reasoning` (when
+   * non-empty) overrides the route's configured effort.
+   */
+  private agentOptionsForQuery(providerName: string, reasoning: string): { provider: string; model: string; reasoningEffort?: string } {
+    const route = providerName !== ''
+      ? (this.cfg.providers.find(p => p.name === providerName) ?? this.activeRoute())
+      : this.activeRoute()
     return {
-      provider,
-      model,
-      ...(reasoningEffort !== undefined && reasoningEffort !== '' ? { reasoningEffort } : {}),
+      provider: route?.provider ?? '',
+      model: stripModelAlias(route?.model ?? ''),
+      ...(reasoning !== ''
+        ? { reasoningEffort: reasoning }
+        : (route?.reasoningEffort !== undefined && route.reasoningEffort !== '' ? { reasoningEffort: route.reasoningEffort } : {})),
     }
   }
 
@@ -321,9 +338,160 @@ export class DshAgentAdapter {
    * The engine session key owning a live native agent id, when this adapter
    * owns it. Routes feishu_bridge_subtask tool calls from the caller agent
    * back to its engine session (plan D4 — caller-agent routing, no env).
+   * One-shot side-query sessions are deliberately excluded: they own no
+   * engine session, so their agents are foreign callers.
    */
   engineKeyForAgentID(nativeID: string): string | undefined {
-    return this.liveSessions.get(nativeID)?.sessionKey()
+    const session = this.liveSessions.get(nativeID)
+    if (session === undefined) return undefined
+    return this.sessionsByEngineKey.get(session.sessionKey()) === session ? session.sessionKey() : undefined
+  }
+
+  /**
+   * ForkQuerierWithProvider: a standalone one-shot turn without resuming
+   * anything (Go LightweightQuery — group naming, predict-next): the context
+   * lives in the prompt itself. Light text output needs no deep reasoning
+   * (and thinking would eat most of the 90s budget), so the query runs at
+   * reasoningEffort 'low'.
+   */
+  async lightweightQuery(prompt: string, providerName: string, signal?: AbortSignal): Promise<string> {
+    return this.oneShotQuery({
+      prompt,
+      providerName,
+      reasoning: 'low',
+      ...(signal !== undefined ? { signal } : {}),
+      timeoutMs: lightweightQueryTimeoutMs,
+    })
+  }
+
+  /**
+   * ForkQuerier: a side question against the full context of an existing
+   * session without affecting the main conversation (Go ForkQuery — the
+   * persisted-log copy becomes a completed-turn seed from the live parent).
+   */
+  async forkQuery(sessionID: string, question: string, workDir: string): Promise<string> {
+    return this.oneShotQuery({ prompt: question, workDir, seed: this.seedForLiveParent(sessionID) })
+  }
+
+  /** ForkQuerierWithProvider: {@link forkQuery} on a named provider route. */
+  async forkSessionWithProvider(sessionID: string, question: string, providerName: string, workDir: string): Promise<string> {
+    return this.oneShotQuery({
+      prompt: question,
+      providerName,
+      workDir,
+      seed: this.seedForLiveParent(sessionID),
+    })
+  }
+
+  /**
+   * ProviderSwitcher (Go dsh ProviderSwitcher): the named-route registry and
+   * its active pointer. Route DETAIL (service route name, model) stays owned
+   * by the plugin config — the switcher surface only owns membership and the
+   * active pointer, so an engine-side rebuild keeps detail for known names
+   * and carries none for freshly introduced ones.
+   */
+  setProviders(providers: ProviderConfig[]): void {
+    const byName = new Map(this.cfg.providers.map(r => [r.name, r]))
+    this.cfg.providers = providers.map(pc => byName.get(pc.name) ?? { name: pc.name, provider: '', model: '' })
+    if (!providers.some(pc => pc.name === this.cfg.activeProvider)) {
+      this.cfg.activeProvider = providers[0]?.name ?? ''
+    }
+  }
+
+  setActiveProvider(name: string): boolean {
+    if (!this.cfg.providers.some(r => r.name === name)) return false
+    this.cfg.activeProvider = name
+    return true
+  }
+
+  getActiveProvider(): ProviderConfig | undefined {
+    const name = this.cfg.activeProvider
+    return name !== '' && this.cfg.providers.some(r => r.name === name) ? { name } : undefined
+  }
+
+  listProviders(): ProviderConfig[] {
+    return this.cfg.providers.map(r => ({ name: r.name }))
+  }
+
+  /**
+   * The completed-turn seed for a one-shot side query against a live parent
+   * (Go copies the persisted log; the registry requires a balanced prefix,
+   * so an in-flight parent turn is excluded).
+   */
+  private seedForLiveParent(sessionID: string): readonly SessionEvent[] {
+    const parent = this.ctx.agents.get(SessionId(sessionID))
+    return parent !== undefined ? completedTurnPrefix(parent) : []
+  }
+
+  /**
+   * Run one standalone turn on a fresh native session and dispose it (Go
+   * oneShotQuery): create (optionally seeded, on the named route), send the
+   * prompt, collect the turn's final text, then close. A failed turn
+   * surfaces its error text; the timeout (or caller signal) aborts the wait
+   * and still disposes the session.
+   */
+  private async oneShotQuery(opts: {
+    prompt: string
+    providerName?: string
+    reasoning?: string
+    workDir?: string
+    seed?: readonly SessionEvent[]
+    signal?: AbortSignal
+    timeoutMs?: number
+  }): Promise<string> {
+    const timeoutMs = opts.timeoutMs ?? oneShotDefaultTimeoutMs
+    const ctl = new AbortController()
+    const onCallerAbort = (): void => { ctl.abort() }
+    opts.signal?.addEventListener('abort', onCallerAbort, { once: true })
+    const timer = setTimeout(() => { ctl.abort() }, timeoutMs)
+
+    const handle = await this.ctx.agents.create({
+      sessionId: SessionId(freshNativeSessionId()),
+      meta: { cwd: opts.workDir !== undefined && opts.workDir !== '' ? opts.workDir : this.cfg.cwd },
+      ...(opts.seed !== undefined && opts.seed.length > 0 ? { seed: opts.seed } : {}),
+      agentOptions: this.agentOptionsForQuery(opts.providerName ?? '', opts.reasoning ?? ''),
+    })
+    const session = new DshAgentSession(`oneshot-${Date.now()}`, handle)
+    this.liveSessions.set(session.currentSessionID(), session)
+    const aborted = new Promise<'aborted'>((resolve) => {
+      ctl.signal.addEventListener('abort', () => { resolve('aborted') }, { once: true })
+    })
+    try {
+      void session.send(opts.prompt, [], [])
+      let answer = ''
+      let errorText = ''
+      for (;;) {
+        if (ctl.signal.aborted) {
+          throw new Error(opts.signal?.aborted === true
+            ? 'dsh one-shot: aborted by caller'
+            : `dsh one-shot: timeout after ${String(timeoutMs)}ms`)
+        }
+        const received = await Promise.race([session.events().receive(), aborted])
+        if (received === 'aborted') {
+          throw new Error(opts.signal?.aborted === true
+            ? 'dsh one-shot: aborted by caller'
+            : `dsh one-shot: timeout after ${String(timeoutMs)}ms`)
+        }
+        if (received.done) break
+        const evt = received.event
+        if (evt.type === 'result') {
+          answer = evt.content
+          if (evt.errorText !== undefined && evt.errorText !== '') errorText = evt.errorText
+          break
+        }
+        if (evt.type === 'error') {
+          errorText = evt.errorText ?? String(evt.error)
+          break
+        }
+      }
+      if (errorText !== '') throw new Error(`dsh one-shot: ${errorText}`)
+      return answer.trim()
+    } finally {
+      clearTimeout(timer)
+      opts.signal?.removeEventListener('abort', onCallerAbort)
+      this.liveSessions.delete(session.currentSessionID())
+      await session.close()
+    }
   }
 
   /**

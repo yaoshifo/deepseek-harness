@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
+import { buildProjectAssembly, Config, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
 
 /** Structural Cordis slice the adapter consumes; nothing else boots. */
 function stubContext(): Context {
@@ -82,5 +82,53 @@ describe('buildProjectAssembly', () => {
     expect(bare.platform.notifyOnComplete).toBe(false)
     expect(bare.platform.topNoticeEnabled).toBe(false)
     expect(bare.platform.pinEnabled).toBe(false)
+  })
+})
+
+describe('buildProjectAssembly group naming (Go wireGroupName)', () => {
+  it('defaults group naming ON with 30s timeout and avatar set', () => {
+    // Go's default-on rule keyed on the claudecode agent; this plugin's agent
+    // is always dsh, so the default is on here too.
+    const { engine } = buildProjectAssembly(stubContext(), config(), project(), '/tmp/fb-root')
+    expect(engine.groupNameEnabled).toBe(true)
+    expect(engine.groupNameProvider).toBe('')
+    expect(engine.groupNameTimeout).toBe(30_000)
+    expect(engine.groupNamePrompt).toBe('')
+    expect(engine.groupNameSetAvatar).toBe(true)
+  })
+
+  it('honors an explicit groupName section', () => {
+    const proj = {
+      ...project(),
+      groupName: { provider: 'turbo', timeoutSec: 45, prompt: '起个短名', setAvatar: false },
+    }
+    const { engine } = buildProjectAssembly(stubContext(), config(), proj, '/tmp/fb-root')
+    expect(engine.groupNameEnabled).toBe(true)
+    expect(engine.groupNameProvider).toBe('turbo')
+    expect(engine.groupNameTimeout).toBe(45_000)
+    expect(engine.groupNamePrompt).toBe('起个短名')
+    expect(engine.groupNameSetAvatar).toBe(false)
+  })
+
+  it('disables group naming and avatars when groupName.enabled=false', () => {
+    const proj = { ...project(), groupName: { enabled: false } }
+    const { engine } = buildProjectAssembly(stubContext(), config(), proj, '/tmp/fb-root')
+    expect(engine.groupNameEnabled).toBe(false)
+    expect(engine.groupNameSetAvatar).toBe(false)
+  })
+
+  it('parses the groupName section through the Config schema', () => {
+    const parsed = Config({
+      projects: [{
+        name: 'p',
+        workdir: '/w',
+        feishu: { appId: 'a', appSecret: 's' },
+        groupName: { enabled: true, provider: 'turbo', timeoutSec: 45, setAvatar: false },
+      }],
+      providers: {},
+    })
+    expect(parsed.projects[0]?.groupName).toEqual({
+      enabled: true, provider: 'turbo', timeoutSec: 45, setAvatar: false,
+    })
   })
 })
