@@ -60,6 +60,7 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 - **按里程碑派子任务群**：每个 M（大 M 可拆 2 个）派一个子任务群，工作目录为本 worktree（自动加载本仓库 AGENTS.md 约定：oxlint、tests/ 目录、doc comment 风格）。brief 固定结构：① 本文件中该里程碑的范围（测试先行清单 + 实现清单 + 验收命令）；② 移植源文件绝对路径清单（cc-connect 仓库**只读**）；③ 完成后 `/done` 汇报测试结果。
 - **父会话职责**：派发与 brief 质量、验收（在 worktree 跑 vitest/lint/typecheck）、真机冒烟与 E2E、跨里程碑技术决策、提交信息审查；不亲自写移植代码，上下文留给编排。
 - **回灌**：子任务 `/done` 结果由父会话核验后计入里程碑完成，未过验收打回重派。
+- **daemon worktree 与 promote 流程**（M1 真机期形成）：daemon 运行代码来自独立 worktree `/home/hm/workspace/dsh-wt-fb-daemon`，固定在**父会话验收过的 commit**（detached），profile 的全部 `link:` 指向它——开发 worktree 的 churn 不影响运行中的 daemon。promote 步骤：`git checkout --detach <验收commit>` → `pnpm run build:lib:host` → `systemctl --user restart feishu-bridge`。**不追分支 tip**：子任务可能在里程碑中途提交暂态（曾出现 WIP commit 破坏仓级 typecheck 被 promote 拉入的情况）。开发分支纪律：验收前不 push；promote 只认验收 commit。daemon 由 systemd user unit `feishu-bridge.service` 监督（开机自启、Restart=on-failure、journal 留痕死因）；llm 路由 key 走 `apiKeyEnv` 引用，实际值在 unit 的 `Environment=`（0600）。
 
 ## 4. 迁移阶段（每阶段：测试先行 → 实现至绿 → 真机冒烟；上一阶段验收通过才进下一阶段）
 
