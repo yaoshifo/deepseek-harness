@@ -563,6 +563,16 @@ export class Engine {
     this.eventIdleTimeout = ms
   }
 
+  /** Stall retries before the idle kill (Go SetStallMaxRetries). */
+  setStallMaxRetries(n: number): void {
+    this.stallMaxRetries = n
+  }
+
+  /** Merge streaming-preview tuning over the current config (Go SetStreamPreviewCfg). */
+  setStreamPreviewCfg(cfg: Partial<StreamPreviewCfg>): void {
+    this.streamPreview = { ...this.streamPreview, ...cfg }
+  }
+
   /** Rapid-fire queued-message merge window in ms; 0 disables. */
   setDebounceInterval(ms: number): void {
     this.debounceInterval = ms

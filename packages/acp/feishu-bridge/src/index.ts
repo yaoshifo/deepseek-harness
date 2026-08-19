@@ -8,8 +8,8 @@
  */
 
 import { homedir } from 'node:os'
-import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdirSync, statSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
@@ -17,8 +17,11 @@ import type { ProviderRoute as AdapterProviderRoute } from './agent-dsh/adapter.
 import { FeishuPlatform } from './feishu/platform.js'
 import { Engine } from './engine/engine.js'
 import { ProjectStateStore } from './engine/project-state.js'
+import { DirHistory } from './engine/dir-history.js'
 import { registerSessionCommands } from './engine/commands.js'
 import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from './tools/subtask.js'
+import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.js'
+import type { StreamPreviewCfg } from './streaming.js'
 
 export const name = 'feishu-bridge'
 
@@ -100,6 +103,10 @@ export interface ProjectConfig {
   features?: FeatureSwitches
   /** LLM group-name generation (#49) + icon avatars (#52). */
   groupName?: GroupNameConfig
+  /** Comma-separated user IDs allowed to run privileged commands; '*' = all (Go admin_from). */
+  adminFrom?: string
+  /** Minutes before an idle interactive session is reaped (Go interactive_idle_timeout_mins). */
+  interactiveIdleTimeoutMins?: number
 }
 
 /** A named LLM route reference: the route itself lives in the profile's provider config (MIGRATION.md D2). */
@@ -124,8 +131,40 @@ export interface DisplayConfig {
   toolMessages?: boolean
   /** Show merged tool progress on the streaming card. */
   toolProgress?: boolean
-  /** Show the animated progress spinner. */
+  /** Show the animated progress spinner (forwarded to the platform, Go progress_spinner). */
   progressSpinner?: boolean
+  /** Minimum ms between card PATCH calls (forwarded to the platform, Go patch_rate_interval_ms). */
+  patchRateIntervalMs?: number
+  /** Seconds before a silent turn is treated as stalled (Go stall_timeout_secs). */
+  stallTimeoutSecs?: number
+  /** Stall retries before the idle kill (Go stall_max_retries). */
+  stallMaxRetries?: number
+}
+
+/** Per-session inbound message queue cap (Go [queue]). */
+export interface QueueConfig {
+  /** Max queued messages per session. */
+  maxDepth?: number
+}
+
+/** Recursive subtask delegation caps (Go [subtask]). */
+export interface SubtaskConfig {
+  /** Max recursive delegation depth. */
+  maxDepth?: number
+  /** Hard timeout for subtask sessions in seconds; 0 inherits the event idle timeout. */
+  timeoutSec?: number
+  /** Gather-barrier fallback timeout in seconds. */
+  gatherTimeoutSec?: number
+}
+
+/** /spawn //fork isolation defaults (Go [spawn]). */
+export interface SpawnConfig {
+  /** Default worktree isolation: 'auto' | 'on' | 'off'. */
+  worktree?: 'auto' | 'on' | 'off'
+  /** RAM% above which a warning card is sent; 0 disables the tier (default 80). */
+  memoryWarnPct?: number
+  /** RAM% above which spawn is declined; 0 disables the tier (default 90). */
+  memoryBlockPct?: number
 }
 
 /** Deployment config for the feishu-bridge plugin. */
@@ -138,6 +177,20 @@ export interface FeishuBridgeConfig {
   display?: DisplayConfig
   /** Root directory for per-project session stores. */
   dataDir?: string
+  /** Reply language: 'zh' | 'zh-TW' | 'ja' | 'es' | 'en'; anything else auto-detects (Go language). */
+  language?: string
+  /** Max minutes between agent events; 0 disables the stall kill (Go idle_timeout_mins). */
+  idleTimeoutMins?: number
+  /** Allow side-channel image/file delivery; default true (Go attachment_send). */
+  attachmentSend?: boolean
+  /** Inbound message queue cap (Go [queue]). */
+  queue?: QueueConfig
+  /** Subtask delegation caps (Go [subtask]). */
+  subtask?: SubtaskConfig
+  /** /spawn //fork isolation defaults (Go [spawn]). */
+  spawn?: SpawnConfig
+  /** Streaming preview tuning merged over the defaults (Go [stream_preview]). */
+  streamPreview?: Partial<StreamPreviewCfg>
 }
 
 export const Config: Schema<FeishuBridgeConfig> = Schema.object({
@@ -173,6 +226,8 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       prompt: Schema.string().description('Naming prompt override'),
       setAvatar: Schema.boolean().description('Set a Lucide group icon avatar (#52); default true'),
     }).description('LLM group naming and icon avatars (#49/#52)'),
+    adminFrom: Schema.string().description('Comma-separated admin user IDs; * = all'),
+    interactiveIdleTimeoutMins: Schema.natural().description('Idle reaper threshold in minutes'),
   })).default([]).description('Projects bound to Feishu apps'),
   providers: Schema.dict(Schema.object({
     route: Schema.string().required().description('LLM service route name from the profile'),
@@ -186,8 +241,34 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     toolMessages: Schema.boolean().description('Show tool messages'),
     toolProgress: Schema.boolean().description('Show merged tool progress'),
     progressSpinner: Schema.boolean().description('Show progress spinner'),
+    patchRateIntervalMs: Schema.natural().description('Minimum ms between card PATCH calls'),
+    stallTimeoutSecs: Schema.natural().description('Stall detection window in seconds'),
+    stallMaxRetries: Schema.natural().description('Stall retries before the idle kill'),
   }).description('Display defaults'),
   dataDir: Schema.string().description('Root directory for per-project session stores'),
+  language: Schema.string().description('Reply language (zh/zh-TW/ja/es/en; else auto-detect)'),
+  idleTimeoutMins: Schema.number().description('Max minutes between agent events; 0 disables'),
+  attachmentSend: Schema.boolean().description('Allow side-channel image/file delivery'),
+  queue: Schema.object({
+    maxDepth: Schema.natural().description('Max queued messages per session'),
+  }).description('Inbound queue cap'),
+  subtask: Schema.object({
+    maxDepth: Schema.natural().description('Max recursive delegation depth'),
+    timeoutSec: Schema.natural().description('Subtask hard timeout in seconds'),
+    gatherTimeoutSec: Schema.natural().description('Gather barrier fallback timeout in seconds'),
+  }).description('Subtask delegation caps'),
+  spawn: Schema.object({
+    worktree: Schema.union(['auto', 'on', 'off']).description('Default worktree isolation'),
+    memoryWarnPct: Schema.natural().description('RAM% warning threshold; 0 disables'),
+    memoryBlockPct: Schema.natural().description('RAM% block threshold; 0 disables'),
+  }).description('/spawn //fork isolation defaults'),
+  streamPreview: Schema.object({
+    enabled: Schema.boolean().description('Enable streaming preview'),
+    intervalMs: Schema.natural().description('Minimum ms between updates'),
+    minDeltaChars: Schema.natural().description('Minimum new chars before an update'),
+    maxChars: Schema.natural().description('Max preview length'),
+    disabledPlatforms: Schema.array(Schema.string()).description('Platforms without preview'),
+  }).description('Streaming preview tuning'),
 })
 
 /**
@@ -202,10 +283,13 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
  */
 export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   const dataRoot = config.dataDir ?? join(homedir(), '.dsh', 'feishu-bridge')
+  // One dir history for every project (Go main shares NewDirHistory(cfg.DataDir)
+  // across engines so /dir MRU entries land in a single store file).
+  const dirHistory = new DirHistory(dataRoot)
   /** One live project: its engine plus the adapter that owns its agents. */
   const live: Array<{ engine: Engine; adapter: DshAgentAdapter }> = []
   for (const project of config.projects) {
-    const { engine, adapter } = buildProjectAssembly(ctx, config, project, dataRoot)
+    const { engine, adapter } = buildProjectAssembly(ctx, config, project, dataRoot, dirHistory)
     live.push({ engine, adapter })
     if (project.features?.injectSender === true) engine.setInjectSender(true)
     if (project.features?.quiet === true) {
@@ -219,7 +303,6 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
         ...(config.display.planMaxLen !== undefined ? { planMaxLen: config.display.planMaxLen } : {}),
         ...(config.display.toolMessages !== undefined ? { toolMessages: config.display.toolMessages } : {}),
         ...(config.display.toolProgress !== undefined ? { toolProgress: config.display.toolProgress } : {}),
-        ...(config.display.progressSpinner !== undefined ? { progressSpinner: config.display.progressSpinner } : {}),
       })
     }
 
@@ -246,16 +329,59 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
 }
 
 /**
+ * Map a config language string to the engine i18n language (Go wire.go's
+ * switch over cfg.Language): recognized values pin the language, anything
+ * else falls back to auto-detection.
+ * @param value - Raw config string ('' or undefined allowed).
+ * @returns The pinned language, or the auto-detect sentinel.
+ */
+function languageOf(value: string | undefined): Language {
+  switch (value) {
+    case 'zh': case 'chinese': return langChinese
+    case 'zh-TW': case 'zh_TW': case 'zhtw': return langTraditionalChinese
+    case 'ja': case 'japanese': return langJapanese
+    case 'es': case 'spanish': return langSpanish
+    case 'en': case 'english': return langEnglish
+    default: return langAuto
+  }
+}
+
+/**
+ * Resolve the effective work dir at startup (Go applyProjectStateOverride):
+ * a persisted project-wide override from the project state store wins over
+ * the configured workdir when it still points at an existing directory.
+ * @param adapter - The agent adapter whose workdir may be switched.
+ * @param configured - The project's configured workdir.
+ * @param projectState - The persisted per-project state store.
+ * @returns The effective workdir for the engine's base work dir.
+ */
+function applyProjectStateOverride(adapter: DshAgentAdapter, configured: string, projectState: ProjectStateStore): string {
+  const override = projectState.workDirOverride()
+  if (override === '') return configured
+  const abs = resolve(override)
+  try {
+    if (statSync(abs).isDirectory()) {
+      adapter.setWorkDir(abs)
+      return abs
+    }
+  } catch {
+    // Missing directory: fall through to the configured workdir (Go logs and ignores).
+  }
+  return configured
+}
+
+/**
  * Assemble one project's adapter + platform + engine with its disk stores
- * wired (Go wire.go per-project wiring): the project state store carries
- * the per-chat workdir overrides (without it /spawn --dir and /dir resolve
- * nothing), and the platform dataDir persists the spawned-chat registry and
- * tag cache across restarts. Extracted from apply() so the wiring is
- * testable without booting Cordis.
+ * and config knobs wired (Go wire.go per-project wiring): the project state
+ * store carries the per-chat workdir overrides (without it /spawn --dir and
+ * /dir resolve nothing), the dir history backs /dir's MRU list, and the
+ * engine setters receive every config-sourced tunable. Extracted from
+ * apply() so the wiring is testable without booting Cordis.
  * @param ctx - Plugin context (the structural agents + on + get slice).
  * @param config - Validated plugin config.
  * @param project - The project row to assemble.
  * @param dataRoot - Root directory holding per-project state.
+ * @param sharedDirHistory - Dir history shared across projects (Go shares one store).
  * @returns The engine and the adapter owning its agents.
  */
 export function buildProjectAssembly(
@@ -263,6 +389,7 @@ export function buildProjectAssembly(
   config: FeishuBridgeConfig,
   project: ProjectConfig,
   dataRoot: string,
+  sharedDirHistory?: DirHistory,
 ): { engine: Engine; adapter: DshAgentAdapter; platform: FeishuPlatform } {
   const routeNames = Object.keys(config.providers)
   const activeProvider = project.agent?.provider ?? routeNames[0] ?? ''
@@ -298,6 +425,10 @@ export function buildProjectAssembly(
     groupReplyAll: project.features?.allowChat === true,
     projectName: project.name,
     workDir: project.workdir,
+    ...(config.display?.progressSpinner !== undefined ? { progressSpinner: config.display.progressSpinner } : {}),
+    ...(config.display?.patchRateIntervalMs !== undefined && config.display.patchRateIntervalMs > 0
+      ? { patchRateIntervalMs: config.display.patchRateIntervalMs }
+      : {}),
     ...(project.feishu.notifyOnComplete !== undefined ? { notifyOnComplete: project.feishu.notifyOnComplete } : {}),
     ...(project.feishu.reactionEmoji !== undefined ? { reactionEmoji: project.feishu.reactionEmoji } : {}),
     ...(project.feishu.doneEmoji !== undefined ? { doneEmoji: project.feishu.doneEmoji } : {}),
@@ -307,10 +438,60 @@ export function buildProjectAssembly(
     dataDir: projectDataDir,
   })
 
-  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), '')
-  engine.setProjectStateStore(new ProjectStateStore(join(projectDataDir, 'state.json')))
+  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language))
+  const projectState = new ProjectStateStore(join(projectDataDir, 'state.json'))
+  engine.setProjectStateStore(projectState)
+  const effectiveWorkDir = applyProjectStateOverride(adapter, project.workdir, projectState)
+  engine.setBaseWorkDir(effectiveWorkDir)
+  const dirHistory = sharedDirHistory ?? new DirHistory(dataRoot)
+  engine.setDirHistory(dirHistory)
+  // Seed the MRU with the startup dir (Go main ensures the initial workdir
+  // is in history so /dir <n> can return to it).
+  if (effectiveWorkDir !== '' && !dirHistory.contains(project.name, effectiveWorkDir)) {
+    dirHistory.add(project.name, effectiveWorkDir)
+  }
   registerSessionCommands(engine)
   wireGroupName(engine, project)
+
+  // Stall detection (Go [display] stall_*): wired first, then
+  // idle_timeout_mins below overrides it, matching wire.go's order.
+  if (config.display?.stallTimeoutSecs !== undefined) {
+    engine.setEventIdleTimeout(config.display.stallTimeoutSecs * 1000)
+  }
+  if (config.display?.stallMaxRetries !== undefined) {
+    engine.setStallMaxRetries(config.display.stallMaxRetries)
+  }
+  if (config.idleTimeoutMins !== undefined) {
+    engine.setEventIdleTimeout(config.idleTimeoutMins > 0 ? config.idleTimeoutMins * 60_000 : 0)
+  }
+  if (config.queue?.maxDepth !== undefined && config.queue.maxDepth > 0) {
+    engine.setMaxQueuedMessages(config.queue.maxDepth)
+  }
+  if (config.subtask?.maxDepth !== undefined && config.subtask.maxDepth > 0) {
+    engine.setSubtaskMaxDepth(config.subtask.maxDepth)
+  }
+  if (config.subtask?.timeoutSec !== undefined && config.subtask.timeoutSec > 0) {
+    engine.setSubtaskTimeout(config.subtask.timeoutSec * 1000)
+  }
+  if (config.subtask?.gatherTimeoutSec !== undefined && config.subtask.gatherTimeoutSec > 0) {
+    engine.setSubtaskGatherTimeout(config.subtask.gatherTimeoutSec * 1000)
+  }
+  if (config.spawn?.worktree !== undefined) {
+    engine.setSpawnWorktreeMode(config.spawn.worktree)
+  }
+  // RAM guard always wired with the 80/90 defaults so configs without the
+  // keys still get protection (Go EffectiveSpawnMemoryGuard).
+  engine.setSpawnMemoryGuard(config.spawn?.memoryWarnPct ?? 80, config.spawn?.memoryBlockPct ?? 90)
+  if (project.adminFrom !== undefined) {
+    engine.setAdminFrom(project.adminFrom)
+  }
+  if (project.interactiveIdleTimeoutMins !== undefined) {
+    engine.setInteractiveIdleTimeout(project.interactiveIdleTimeoutMins * 60_000)
+  }
+  engine.setAttachmentSendEnabled(config.attachmentSend !== false)
+  if (config.streamPreview !== undefined) {
+    engine.setStreamPreviewCfg(config.streamPreview)
+  }
   return { engine, adapter, platform }
 }
 

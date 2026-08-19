@@ -155,6 +155,37 @@
 
 # The feishu-bridge daemon plugin. projects are managed by the plugin config
 # (bots, workdirs, per-project features); starts empty until M1 cut-over.
+# Config surface mirrors src/index.ts Config (Go wire.go's config face):
 - id: feishu-bridge
   config:
     projects: []
+    # dataDir: ~/.dsh/feishu-bridge        # per-project session/state root
+    # language: zh                         # zh | zh-TW | ja | es | en; else auto-detect
+    # idleTimeoutMins: 120                 # stall kill window; 0 disables
+    # attachmentSend: true                 # side-channel image/file delivery
+    # queue: { maxDepth: 5 }               # per-session queued-message cap
+    # subtask:                             # recursive delegation caps
+    #   maxDepth: 3
+    #   timeoutSec: 0                      # 0 inherits idleTimeoutMins
+    #   gatherTimeoutSec: 1200
+    # spawn:                               # /spawn //fork defaults
+    #   worktree: auto                     # auto | on | off
+    #   memoryWarnPct: 80                  # 0 disables the warning tier
+    #   memoryBlockPct: 90                 # 0 disables the block tier
+    # streamPreview:                       # streaming preview tuning
+    #   enabled: true
+    #   intervalMs: 800
+    # display:                             # shared display defaults
+    #   thinkingMessages: true
+    #   thinkingMaxLen: 300
+    #   toolMaxLen: 400
+    #   planMaxLen: 4000
+    #   toolMessages: true
+    #   toolProgress: true
+    #   progressSpinner: true              # running-state header GIF
+    #   patchRateIntervalMs: 120           # global card PATCH rate limit
+    #   stallTimeoutSecs: 200
+    #   stallMaxRetries: 3
+    # Per-project extras (inside a projects[] row):
+    #   adminFrom: "ou_xxx,ou_yyy"         # privileged-command allowlist; * = all
+    #   interactiveIdleTimeoutMins: 30     # idle reaper threshold
