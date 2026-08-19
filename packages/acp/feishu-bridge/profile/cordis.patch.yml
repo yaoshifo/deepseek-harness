@@ -172,6 +172,11 @@
     #   worktree: auto                     # auto | on | off
     #   memoryWarnPct: 80                  # 0 disables the warning tier
     #   memoryBlockPct: 90                 # 0 disables the block tier
+    # cron:                                # scheduled-task defaults (/cron)
+    #   silent: false                      # suppress the ⏰ start notice
+    #   sessionMode: reuse                 # reuse | new_per_run
+    # relay:                               # bot-to-bot relay (/bind)
+    #   timeoutSecs: 120                   # wait per relay response; 0 disables
     # streamPreview:                       # streaming preview tuning
     #   enabled: true
     #   intervalMs: 800

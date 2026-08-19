@@ -48,6 +48,7 @@ import {
   MsgSubtaskGatherNoPending,
   MsgSubtaskSendNotChild,
   MsgSubtaskTimeout,
+  MsgToolResult,
   MsgTurnCompleted,
   MsgWorktreeCardTitle,
   MsgWorktreeCreateError,
@@ -73,6 +74,7 @@ import type {
   InlineButtonSender,
   Message,
   PendingPermission,
+  PermissionResult,
   Platform,
   UserQuestion,
 } from '../core/types.js'
@@ -80,6 +82,7 @@ import {
   asCardSender,
   asCardRefresher,
   asChatJumpURLer,
+  asCronReplyTargetResolver,
   asForkQuerierWithProvider,
   asForkSessionPreparer,
   asGroupIconAvatarSetter,
@@ -98,6 +101,7 @@ import {
   asWorkDirSwitcher,
   asWorktreeOrphanResolver,
   ContinueSession,
+  ErrNotSupported,
   ForkSessionPrefix,
   type GroupSpawnOptions,
 } from '../core/types.js'
@@ -143,8 +147,12 @@ import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, Stream
 import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.js'
 import { newAsyncSender, type AsyncSender } from '../async-sender.js'
 import { readFileSync, statSync } from 'node:fs'
+import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
 import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier } from '../core/types.js'
+import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
+import { executeCardAction } from './cron-commands.js'
+import type { RelayManager } from './relay.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -314,6 +322,28 @@ function plainSleep(ms: number): Promise<void> {
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
+}
+
+/** The run title a cron reply-target resolver sees (Go cronRunTitle). */
+function cronRunTitle(job: CronJob): string {
+  const desc = job.description.trim()
+  if (desc !== '') return truncateStr(desc, 60)
+  if (job.prompt !== '') return truncateStr(job.prompt, 60)
+  if (job.exec !== '') return truncateStr(job.exec, 60)
+  return 'cron'
+}
+
+/**
+ * The relay response when the wait aborted: partial text when any arrived,
+ * otherwise the abort reason (Go relayPartialResponseOrError).
+ */
+function relayPartialResponseOrError(signal: AbortSignal, textParts: string[]): string {
+  if (textParts.length === 0) {
+    throw signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason ?? 'relay: aborted'))
+  }
+  const resp = textParts.join('')
+  console.warn(`relay: context done before final result; returning partial response (response_len ${resp.length})`)
+  return resp
 }
 
 /** A promise that never resolves, typed as a never-matching race alternative. */
@@ -508,6 +538,10 @@ export class Engine {
   groupNameSetAvatar = false
   /** Monitor-mode config surface; full monitor domain arrives with M6 (Go monitorEnabled). */
   monitorEnabled = false
+  /** Cron scheduler shared across engines (Go cronScheduler; null = cron off). */
+  cronScheduler: CronScheduler | undefined
+  /** Relay manager shared across engines (Go relayManager; null = relay off). */
+  relayManager: RelayManager | undefined
 
   /** Session keys with a manual rename pending in the async LLM window (Go pendingRename). */
   private readonly pendingRename = new Set<string>()
@@ -607,6 +641,16 @@ export class Engine {
     const period = Math.max(1000, Math.min(ms, 60_000))
     this.reaperTimer = setInterval(() => { this.reapIdleInteractiveStates() }, period)
     this.reaperTimer.unref()
+  }
+
+  /** Attach the process-wide cron scheduler (Go SetCronScheduler). */
+  setCronScheduler(cs: CronScheduler): void {
+    this.cronScheduler = cs
+  }
+
+  /** Attach the process-wide relay manager (Go SetRelayManager). */
+  setRelayManager(rm: RelayManager): void {
+    this.relayManager = rm
   }
 
   // ── lifecycle ───────────────────────────────────────────────────────────
@@ -891,7 +935,7 @@ export class Engine {
   // ── turn processing ─────────────────────────────────────────────────────
 
   /** Run one user turn end-to-end (Go processInteractiveMessageWith, M1 subset). */
-  async processInteractiveMessageWith(p: Platform, msg: Message, session: Session): Promise<void> {
+  async processInteractiveMessageWith(p: Platform, msg: Message, session: Session, interactiveKey = msg.sessionKey): Promise<void> {
     let unlocked = false
     try {
       this.i18n.detectAndSet(msg.content)
@@ -900,7 +944,9 @@ export class Engine {
 
       this.handleSpawnedGroupFirstMessage(p, msg, session)
 
-      const state = await this.getOrCreateInteractiveStateWith(msg.sessionKey, p, msg.replyCtx, session)
+      // Go separates the interactive-state slot key from the CC_SESSION_KEY
+      // env key: cron new-per-run slots carry a #cron suffix the env must not.
+      const state = await this.getOrCreateInteractiveStateWith(interactiveKey, p, msg.replyCtx, session, msg.modeOverride ?? '', msg.sessionKey)
       try {
         state.turnSeq++
         state.platform = p
@@ -933,14 +979,14 @@ export class Engine {
         const sendDone = state.agentSession.send(promptContent, msg.images, msg.files)
           .then((): undefined => undefined, (error: unknown): unknown => error)
 
-        await this.processInteractiveEvents(state, session, this.sessions, msg.sessionKey, msg.messageID, sendDone, msg.replyCtx)
+        await this.processInteractiveEvents(state, session, this.sessions, interactiveKey, msg.messageID, sendDone, msg.replyCtx)
       } finally {
         state.endTurn()
       }
 
       // A message may have queued between the event loop seeing an empty
       // queue and returning (session still locked) — drain the orphans.
-      await this.drainPendingMessages(state, session, this.sessions, msg.sessionKey)
+      await this.drainPendingMessages(state, session, this.sessions, interactiveKey)
       unlocked = true
     } catch (error) {
       console.error(`engine: turn processing failed (${msg.sessionKey}): ${String(error)}`)
@@ -966,7 +1012,14 @@ export class Engine {
    * getOrCreateInteractiveStateWith, M1 subset without fork sentinels and
    * workspace overrides).
    */
-  async getOrCreateInteractiveStateWith(sessionKey: string, p: Platform, replyCtx: unknown, session: Session): Promise<InteractiveState> {
+  async getOrCreateInteractiveStateWith(
+    sessionKey: string,
+    p: Platform,
+    replyCtx: unknown,
+    session: Session,
+    modeOverride = '',
+    envKey = sessionKey,
+  ): Promise<InteractiveState> {
     // Wait out a concurrent teardown so two agents never resume the same
     // session id concurrently.
     for (;;) {
@@ -991,7 +1044,7 @@ export class Engine {
     }
 
     const agent = this.agent
-    const sessionEnv = this.buildSessionEnv(sessionKey, session)
+    const sessionEnv = this.buildSessionEnv(envKey, session)
 
     const startSessionID = session.getAgentSessionID()
 
@@ -1000,12 +1053,12 @@ export class Engine {
     const restoreWorkDir = this.applyWorkDirOverride(agent, sessionKey)
     let agentSession: AgentSession | undefined
     try {
-      agentSession = await this.startAgentLocked(agent, startSessionID, sessionEnv, '')
+      agentSession = await this.startAgentLocked(agent, startSessionID, sessionEnv, modeOverride)
     } catch (error) {
       if (startSessionID !== '') {
         console.error(`session resume failed, falling back to fresh session (${sessionKey}): ${String(error)}`)
         try {
-          agentSession = await this.startAgentLocked(agent, '', sessionEnv, '')
+          agentSession = await this.startAgentLocked(agent, '', sessionEnv, modeOverride)
           void this.reply(p, replyCtx, this.i18n.t(MsgSessionResumeDegraded))
         } catch (freshError) {
           console.error(`failed to start interactive session (${sessionKey}): ${String(freshError)}`)
@@ -2135,6 +2188,399 @@ export class Engine {
   private bumpTimer: ReturnType<typeof setTimeout> | undefined
 
   /** Bind the session's active preview for bump routing (Go bindActivePreview). */
+  // ── cron execution (Go engine.go ExecuteCronJob / executeCronShell) ─────
+
+  /**
+   * Run one cron job: resolve the target platform from the stored session
+   * key, reconstruct a proactive reply context, notify the chat (unless
+   * silent/muted), then either run the shell command or inject the prompt as
+   * a synthetic user message. Mute wraps the platform so nothing is sent.
+   * Multi-workspace agent selection is not ported (single workspace); an
+   * explicit job workDir switches the agent's work dir for the run instead.
+   */
+  async executeCronJob(job: CronJob): Promise<void> {
+    let sessionKey = job.sessionKey
+    let platformName = ''
+    const idx = sessionKey.indexOf(':')
+    if (idx > 0) platformName = sessionKey.slice(0, idx)
+
+    let targetPlatform: Platform | undefined
+    for (const p of this.platforms) {
+      if (p.name() === platformName) {
+        targetPlatform = p
+        break
+      }
+    }
+    // Fallback: a stored key may carry a workspace prefix (e.g.
+    // "/home/user/project:slack:C123:U456") — locate a known platform name
+    // inside the key and strip the prefix.
+    if (targetPlatform === undefined) {
+      for (const p of this.platforms) {
+        const needle = `:${p.name()}:`
+        const i = sessionKey.indexOf(needle)
+        if (i >= 0) {
+          targetPlatform = p
+          platformName = p.name()
+          sessionKey = sessionKey.slice(i + 1)
+          break
+        }
+      }
+    }
+    if (targetPlatform === undefined) {
+      throw new Error(`platform "${platformName}" not found for session "${job.sessionKey}"`)
+    }
+
+    const rc = asReplyContextReconstructor(targetPlatform)
+    if (rc === undefined) {
+      throw new Error(`platform "${platformName}" does not support proactive messaging (cron)`)
+    }
+
+    let runSessionKey = sessionKey
+    let replyCtx: unknown
+    if (!job.mute) {
+      const resolver = asCronReplyTargetResolver(targetPlatform)
+      if (resolver !== undefined) {
+        try {
+          const resolved = await resolver.resolveCronReplyTarget(sessionKey, cronRunTitle(job))
+          if (resolved[0] !== '') runSessionKey = resolved[0]
+          if (resolved[1] !== undefined) replyCtx = resolved[1]
+        } catch (error) {
+          if (!(error instanceof ErrNotSupported)) {
+            throw new Error(`resolve cron reply target: ${errorMessage(error)}`)
+          }
+        }
+      }
+    }
+    if (replyCtx === undefined) {
+      try {
+        replyCtx = await rc.reconstructReplyCtx(runSessionKey)
+      } catch (error) {
+        throw new Error(`reconstruct reply context: ${errorMessage(error)}`)
+      }
+    }
+
+    // Wrap the platform to discard all outgoing messages when muted.
+    const effectivePlatform = job.mute ? mutePlatform(targetPlatform) : targetPlatform
+
+    // Notify the user that a cron job is executing (unless silent/muted).
+    if (!job.mute) {
+      const silent = this.cronScheduler !== undefined && this.cronScheduler.isSilent(job)
+      if (!silent) {
+        let desc = job.description
+        if (desc === '') {
+          desc = job.isShellJob() ? truncateStr(job.exec, 40) : truncateStr(job.prompt, 40)
+        }
+        await this.send(targetPlatform, replyCtx, `⏰ ${desc}`)
+      }
+    }
+
+    if (job.isShellJob()) {
+      await this.executeCronShell(effectivePlatform, replyCtx, job)
+      return
+    }
+
+    const msg: Message = {
+      sessionKey,
+      platform: platformName,
+      messageID: '',
+      userID: 'cron',
+      userName: 'cron',
+      chatName: '',
+      chatType: '',
+      content: job.prompt,
+      originalContent: job.prompt,
+      images: [],
+      files: [],
+      extraContent: '',
+      replyCtx,
+      fromVoice: false,
+      isSpawnedGroup: false,
+      isPermissionAction: false,
+      isAskqCardAction: false,
+      isCardAction: false,
+      parentMessageID: '',
+      quotedText: '',
+      modeOverride: job.mode,
+    }
+
+    // An explicit job workDir switches the agent's working directory for
+    // this run (Go getOrCreateWorkspaceAgent; single-workspace ceiling — a
+    // per-workspace agent instance arrives with the workspace milestone).
+    let restoreWorkDir: (() => void) | undefined
+    if (job.workDir !== '') {
+      const wd = asWorkDirSwitcher(this.agent)
+      if (wd !== undefined) {
+        const prev = wd.getWorkDir()
+        wd.setWorkDir(job.workDir)
+        restoreWorkDir = () => { wd.setWorkDir(prev) }
+      } else {
+        console.warn(`cron: agent cannot switch work dir, using global (${job.workDir} / ${sessionKey})`)
+      }
+    }
+
+    const useNewSession = this.cronScheduler !== undefined
+      ? this.cronScheduler.usesNewSession(job)
+      : job.usesNewSessionPerRun()
+
+    try {
+      if (useNewSession) {
+        msg.sessionKey = runSessionKey
+        const session = this.sessions.newSideSession(runSessionKey, `cron-${job.id}`)
+        if (!session.tryLock()) {
+          throw new Error(`session "${runSessionKey}" is busy`)
+        }
+        const iKey = `${runSessionKey}#cron:${session.id}`
+        await this.processInteractiveMessageWith(effectivePlatform, msg, session, iKey)
+        await this.cleanupInteractiveState(iKey)
+        return
+      }
+
+      const session = this.sessions.getOrCreateActive(sessionKey)
+      if (!session.tryLock()) {
+        throw new Error(`session "${sessionKey}" is busy`)
+      }
+      await this.processInteractiveMessageWith(effectivePlatform, msg, session)
+    } finally {
+      restoreWorkDir?.()
+    }
+  }
+
+  /** Run a shell cron job and send the output to the chat (Go executeCronShell). */
+  async executeCronShell(p: Platform, replyCtx: unknown, job: CronJob): Promise<void> {
+    let workDir = job.workDir
+    if (workDir === '') {
+      const wd = asWorkDirSwitcher(this.agent)
+      if (wd !== undefined) workDir = wd.getWorkDir()
+    }
+    if (workDir === '') workDir = process.cwd()
+
+    const timeoutMs = job.executionTimeoutMs()
+    const ac = new AbortController()
+    const timer = timeoutMs > 0 ? setTimeout(() => { ac.abort() }, timeoutMs) : undefined
+    timer?.unref()
+    try {
+      const outcome = await new Promise<{ out: string; err: unknown }>((resolve) => {
+        let out = ''
+        const child = spawn('sh', ['-c', job.exec], { cwd: workDir, signal: ac.signal })
+        child.stdout.on('data', (d: Buffer) => { out += d.toString() })
+        child.stderr.on('data', (d: Buffer) => { out += d.toString() })
+        child.on('error', (err: Error) => { resolve({ out, err }) })
+        child.on('close', (code, signal) => {
+          if (ac.signal.aborted) {
+            resolve({ out, err: new Error('shell command timed out') })
+            return
+          }
+          resolve({ out, err: code === 0 ? undefined : new Error(`exit status ${code ?? signal}`) })
+        })
+      })
+      if (ac.signal.aborted) {
+        await this.send(p, replyCtx, `⏰ ⚠️ timeout: \`${truncateStr(job.exec, 60)}\``)
+        throw new Error('shell command timed out')
+      }
+      const result = outcome.out.trim()
+      if (outcome.err !== undefined) {
+        if (result !== '') {
+          await this.send(p, replyCtx, `⏰ ❌ \`${truncateStr(job.exec, 60)}\`\n\n${truncateStr(result, 3000)}\n\nerror: ${errorMessage(outcome.err)}`)
+        } else {
+          await this.send(p, replyCtx, `⏰ ❌ \`${truncateStr(job.exec, 60)}\`\nerror: ${errorMessage(outcome.err)}`)
+        }
+        throw new Error(`shell: ${errorMessage(outcome.err)}`)
+      }
+      const text = result === '' ? '(no output)' : result
+      await this.send(p, replyCtx, `⏰ ✅ \`${truncateStr(job.exec, 60)}\`\n\n${truncateStr(text, 3000)}`)
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+
+  // ── bot-to-bot relay (Go engine_cmd_relay.go HandleRelay) ───────────────
+
+  /**
+   * Handle one relayed message on a dedicated `relay:<from>:<chat>` session:
+   * start/resume the agent (falling back to a fresh session on a stale
+   * resume), auto-approve every permission, and collect text until the turn
+   * result. `signal` only bounds how long the caller waits — the agent
+   * finishes its turn in the background via drainRelaySession so the session
+   * stays resumable.
+   */
+  async handleRelay(signal: AbortSignal | undefined, fromProject: string, chatID: string, message: string): Promise<string> {
+    const relaySessionKey = `relay:${fromProject}:${chatID}`
+    const session = this.sessions.getOrCreateActive(relaySessionKey)
+
+    const relayEnv = this.buildSessionEnv(relaySessionKey, session)
+
+    let agentSession: AgentSession
+    try {
+      agentSession = await this.startAgentLocked(this.agent, session.getAgentSessionID(), relayEnv, '')
+    } catch (error) {
+      if (session.getAgentSessionID() !== '') {
+        // Resume failed — fall back to a fresh session so the relay is not
+        // permanently broken by a corrupted/stale session ID.
+        console.warn(`relay: session resume failed, trying fresh session (${relaySessionKey}): ${errorMessage(error)}`)
+        session.setAgentSessionID('', this.agent.name())
+        this.sessions.save()
+        try {
+          agentSession = await this.startAgentLocked(this.agent, '', relayEnv, '')
+        } catch (freshError) {
+          throw new Error(`start relay session: ${errorMessage(freshError)}`)
+        }
+      } else {
+        throw new Error(`start relay session: ${errorMessage(error)}`)
+      }
+    }
+
+    const newID = agentSession.currentSessionID()
+    if (newID !== '') {
+      if (session.compareAndSetAgentSessionID(newID, this.agent.name())) {
+        const pendingName = session.getName()
+        if (pendingName !== '' && pendingName !== 'session' && pendingName !== 'default') {
+          this.sessions.setSessionName(newID, pendingName)
+        }
+        this.sessions.save()
+      }
+    }
+
+    const rememberSessionID = (id: string): void => {
+      if (id === '') return
+      if (session.compareAndSetAgentSessionID(id, this.agent.name())) {
+        const pendingName = session.getName()
+        if (pendingName !== '' && pendingName !== 'session' && pendingName !== 'default') {
+          this.sessions.setSessionName(id, pendingName)
+        }
+        this.sessions.save()
+      }
+    }
+
+    try {
+      await agentSession.send(message, [], [])
+    } catch (error) {
+      await agentSession.close()
+      throw new Error(`send relay message: ${errorMessage(error)}`)
+    }
+
+    const textParts: string[] = []
+    for (;;) {
+      const r = await agentSession.events().receive()
+      if (r.done) break
+      const event = r.event
+      switch (event.type) {
+        case 'text':
+          if (event.content !== '') textParts.push(event.content)
+          if (event.sessionID !== undefined) rememberSessionID(event.sessionID)
+          break
+        case 'tool_result': {
+          let out = event.content.trim()
+          if (out === '') out = (event.toolResult ?? '').trim()
+          if (out !== '') {
+            const tn = (event.toolName ?? '').trim() || 'tool'
+            textParts.push(`${this.i18n.tf(MsgToolResult, tn, out)}\n\n`)
+          }
+          break
+        }
+        case 'result': {
+          rememberSessionID(agentSession.currentSessionID())
+          let resp = event.content
+          if (resp === '' && textParts.length > 0) resp = textParts.join('')
+          if (resp === '') resp = '(empty response)'
+          console.info(`relay: turn complete (from ${fromProject} to ${this.name}, response_len ${resp.length})`)
+          await agentSession.close()
+          return resp
+        }
+        case 'error':
+          await agentSession.close()
+          if (event.error !== undefined) throw event.error
+          if (event.errorText !== undefined && event.errorText !== '') throw new Error(event.errorText)
+          throw new Error('agent error (no details)')
+        case 'permission_request': {
+          // Auto-approve all permissions in relay mode.
+          const allow: PermissionResult = { behavior: 'allow' }
+          if (event.toolInputRaw !== undefined) allow.updatedInput = event.toolInputRaw
+          try {
+            await agentSession.respondPermission(event.requestID ?? '', allow)
+          } catch (error) {
+            console.warn(`relay: auto-approve respond permission failed (${event.requestID ?? ''}): ${String(error)}`)
+          }
+          break
+        }
+        default:
+          break
+      }
+      if (signal?.aborted) {
+        // Relay timed out. Let the agent finish its turn in the background
+        // so the session state is saved cleanly and stays resumable.
+        void this.drainRelaySession(agentSession, session, relaySessionKey)
+        return relayPartialResponseOrError(signal, textParts)
+      }
+    }
+
+    // Event channel closed without a result event.
+    await agentSession.close()
+
+    if (signal?.aborted) {
+      return relayPartialResponseOrError(signal, textParts)
+    }
+
+    if (textParts.length > 0) return textParts.join('')
+    throw new Error('relay: agent process exited without response')
+  }
+
+  /**
+   * After a relay timeout, let the agent finish its current turn in the
+   * background — saving the session ID for future resumption,
+   * auto-approving permissions — with a 10-minute safety timeout so a hung
+   * agent cannot leak the session (Go drainRelaySession).
+   */
+  private async drainRelaySession(agentSession: AgentSession, session: Session, relaySessionKey: string): Promise<void> {
+    let timeoutHit: (() => void) | undefined
+    const timeoutP = new Promise<'timeout'>((resolve) => { timeoutHit = () => { resolve('timeout') } })
+    const timer = setTimeout(() => { timeoutHit?.() }, 10 * 60_000)
+    timer.unref()
+    try {
+      for (;;) {
+        const outcome = await Promise.race([
+          agentSession.events().receive().then(r => ({ kind: 'recv' as const, r })),
+          timeoutP.then(() => ({ kind: 'timeout' as const, r: undefined })),
+        ])
+        if (outcome.kind === 'timeout') {
+          console.warn(`relay: background drain timed out, closing session (${relaySessionKey})`)
+          await agentSession.close()
+          return
+        }
+        if (outcome.r.done) {
+          // Event channel closed — session ended naturally.
+          await agentSession.close()
+          return
+        }
+        const ev = outcome.r.event
+        if (ev.sessionID !== undefined && ev.sessionID !== '') {
+          session.setAgentSessionID(ev.sessionID, this.agent.name())
+          this.sessions.save()
+        }
+        if (ev.type === 'result') {
+          console.info(`relay: background drain completed (agent finished turn) (${relaySessionKey})`)
+          await agentSession.close()
+          return
+        }
+        if (ev.type === 'error') {
+          console.warn(`relay: background drain got error (${relaySessionKey}): ${String(ev.error ?? ev.errorText ?? '')}`)
+          await agentSession.close()
+          return
+        }
+        if (ev.type === 'permission_request') {
+          const allow: PermissionResult = { behavior: 'allow' }
+          if (ev.toolInputRaw !== undefined) allow.updatedInput = ev.toolInputRaw
+          try {
+            await agentSession.respondPermission(ev.requestID ?? '', allow)
+          } catch (error) {
+            console.warn(`relay-drain: auto-approve respond permission failed (${ev.requestID ?? ''}): ${String(error)}`)
+          }
+        }
+      }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   bindActivePreview(sp: StreamPreview, sessionKey: string): void {
     this.activePreview = sp
     this.activePreviewSession = sessionKey
@@ -3621,6 +4067,12 @@ export class Engine {
     const spaceIdx = body.indexOf(' ')
     const cmd = spaceIdx === -1 ? body : body.slice(0, spaceIdx)
     const args = spaceIdx === -1 ? '' : body.slice(spaceIdx + 1).trim()
+    if (cmd === '/cron') {
+      // Cron card buttons only flip scheduler state; no card is re-rendered
+      // (Go executeCardAction's "/cron" case returns an empty string).
+      executeCardAction(this, cmd, args, msg.sessionKey)
+      return
+    }
     if (cmd !== '/wt') {
       console.info(`engine: card action has no handler yet, ignoring (${msg.sessionKey}: ${cmd})`)
       return
