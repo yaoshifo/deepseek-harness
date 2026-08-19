@@ -7,8 +7,15 @@
  * @module dsh-feishu-bridge
  */
 
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
+import { DshAgentAdapter } from './agent-dsh/adapter.js'
+import type { DshContextLike, ProviderRoute as AdapterProviderRoute } from './agent-dsh/adapter.js'
+import { FeishuPlatform } from './feishu/platform.js'
+import { Engine } from './engine/engine.js'
+import { registerSessionCommands } from './engine/commands.js'
 
 export const name = 'feishu-bridge'
 
@@ -92,6 +99,8 @@ export interface FeishuBridgeConfig {
   providers: Record<string, ProviderRoute>
   /** Display defaults shared by all projects. */
   display?: DisplayConfig
+  /** Root directory for per-project session stores. */
+  dataDir?: string
 }
 
 export const Config: Schema<FeishuBridgeConfig> = Schema.object({
@@ -128,17 +137,70 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     toolProgress: Schema.boolean().description('Show merged tool progress'),
     progressSpinner: Schema.boolean().description('Show progress spinner'),
   }).description('Display defaults'),
+  dataDir: Schema.string().description('Root directory for per-project session stores'),
 })
 
 /**
  * Start the bridge: one Engine + one Feishu WS platform per configured
- * project. TODO(M1, docs/MIGRATION.md §4): read config, create agent
- * sessions via `ctx.agents`, open the Feishu long connections, and register
- * the `feishu_bridge_*` tools.
+ * project (MIGRATION.md §1). An empty projects list idles gracefully — the
+ * M0 smoke behavior. TODO(M2+): card surfaces, tools, and the liveness
+ * watchdog arrive with their milestones.
  *
- * @param ctx - Plugin context.
+ * @param ctx - Plugin context (provides ctx.agents and event dispatch).
  * @param config - Validated plugin config.
  */
-export function apply(_ctx: Context, _config: FeishuBridgeConfig): void {
-  // TODO(M1, docs/MIGRATION.md §4): per-project Engine + Feishu platform startup.
+export function apply(ctx: Context, config: FeishuBridgeConfig): void {
+  const dataRoot = config.dataDir ?? join(homedir(), '.dsh', 'feishu-bridge')
+  for (const project of config.projects) {
+    const routeNames = Object.keys(config.providers)
+    const activeProvider = project.agent?.provider ?? routeNames[0] ?? ''
+    const routes: AdapterProviderRoute[] = routeNames.flatMap((routeName) => {
+      const route = config.providers[routeName]
+      if (route === undefined) return []
+      return [{
+        name: routeName,
+        provider: route.route,
+        model: route.model ?? '',
+        ...(routeName === activeProvider && project.agent?.reasoningEffort !== undefined
+          ? { reasoningEffort: project.agent.reasoningEffort }
+          : {}),
+      }]
+    })
+
+    // The structural slice (agents + on) is exactly what the real Cordis
+    // context provides; the cast documents that compatibility.
+    const agent = new DshAgentAdapter(ctx as unknown as DshContextLike, {
+      agentName: 'dsh',
+      cwd: project.workdir,
+      providers: routes,
+      activeProvider,
+    })
+
+    const platform = new FeishuPlatform({
+      appID: project.feishu.appId,
+      appSecret: project.feishu.appSecret,
+      groupReplyAll: project.features?.allowChat === true,
+    })
+
+    const engine = new Engine(project.name, agent, [platform], join(dataRoot, project.name, 'sessions.json'), '')
+    registerSessionCommands(engine)
+    if (project.features?.injectSender === true) engine.setInjectSender(true)
+    if (project.features?.quiet === true) {
+      engine.setDisplayConfig({ thinkingMessages: false, toolMessages: false })
+    }
+    if (config.display !== undefined) {
+      engine.setDisplayConfig({
+        ...(config.display.thinkingMessages !== undefined ? { thinkingMessages: config.display.thinkingMessages } : {}),
+        ...(config.display.thinkingMaxLen !== undefined ? { thinkingMaxLen: config.display.thinkingMaxLen } : {}),
+        ...(config.display.toolMessages !== undefined ? { toolMessages: config.display.toolMessages } : {}),
+      })
+    }
+
+    void engine.start().catch((error: unknown) => {
+      ctx.logger.error(`feishu-bridge: project ${project.name} failed to start: ${String(error)}`)
+    })
+    ctx.effect(() => {
+      return () => { void engine.stop() }
+    })
+  }
 }

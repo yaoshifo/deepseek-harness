@@ -490,9 +490,9 @@ describe('SessionManager agent invalidation', () => {
 
     const known = sm.knownAgentSessionIDs()
     expect(known).not.toBeNull()
-    expect(Object.keys(known)).toHaveLength(2)
-    expect('uuid-aaa' in known).toBe(true)
-    expect('uuid-bbb' in known).toBe(true)
+    expect(Object.keys(known ?? {})).toHaveLength(2)
+    expect('uuid-aaa' in (known ?? {})).toBe(true)
+    expect('uuid-bbb' in (known ?? {})).toBe(true)
   })
 })
 
@@ -626,8 +626,9 @@ describe('PastAgentSessionIDs', () => {
     const s3 = sm.newSession(userKey, 'session 3')
     s3.setAgentSessionID('codex-thread-3', 'codex')
 
-    const known = sm.knownAgentSessionIDs() ?? {}
-    expect(filterOwnedSessions(agentSessions, known)).toHaveLength(3)
+    const known = sm.knownAgentSessionIDs()
+    expect(known).not.toBeNull()
+    expect(filterOwnedSessions(agentSessions, known ?? {})).toHaveLength(3)
   })
 
   it('ResetAllSessionsBug', () => {

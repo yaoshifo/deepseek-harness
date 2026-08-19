@@ -9,24 +9,24 @@ import { DshAgentAdapter, DshAgentSession, stripModelAlias, type DshAgentHandleL
 interface RecordedAgent extends DshAgentLike {
   id: string
   followups: unknown[]
-  cancels: Array<{ cause: { kind: string }; keepInbox?: boolean }>
+  cancels: Array<{ cause: { kind: string }; keepInbox?: boolean | undefined }>
   disposed: boolean
-  emit(sessionId: string, event: { type: string } & Record<string, unknown>): void
+  emit(sessionId: string, event: Record<string, unknown>): void
 }
 
 function createFakeAgent(id: string, sink: (sessionId: string, event: Record<string, unknown>) => void): RecordedAgent {
-  const agent = {
+  const agent: RecordedAgent & { status: 'idle' | 'running' } = {
     id,
-    status: 'idle' as const,
+    status: 'idle',
     followups: [] as unknown[],
-    cancels: [] as Array<{ cause: { kind: string }; keepInbox?: boolean }>,
+    cancels: [] as Array<{ cause: { kind: string }; keepInbox?: boolean | undefined }>,
     disposed: false,
     followup(message: unknown): void {
       agent.followups.push(message)
       agent.status = 'running'
     },
     cancel(cause: { kind: string }, options?: { keepInbox?: boolean }): void {
-      agent.cancels.push({ cause, keepInbox: options?.keepInbox })
+      agent.cancels.push({ cause, ...(options?.keepInbox !== undefined ? { keepInbox: options.keepInbox } : {}) })
     },
     emit(sessionId: string, event: Record<string, unknown>): void {
       sink(sessionId, { type: event.type, ...event })
@@ -44,6 +44,16 @@ interface Harness {
   disposeAgent(agent: RecordedAgent): void
 }
 
+/** Text content block literal for assistant messages. */
+function textBlock(text: string): { type: 'text'; text: string } {
+  return { type: 'text', text }
+}
+
+/** Reasoning content block literal. */
+function reasoningBlock(text: string): { type: 'reasoning'; text: string } {
+  return { type: 'reasoning', text }
+}
+
 function createHarness(): Harness {
   const creates: DshCreateOptionsLike[] = []
   const resumes: DshCreateOptionsLike[] = []
@@ -51,7 +61,7 @@ function createHarness(): Harness {
   const sessionListeners: Array<(session: { id: unknown }, event: Record<string, unknown>) => void> = []
   const disposedListeners: Array<(payload: { agent: DshAgentLike }) => void> = []
 
-  const emit = (sessionId: string, event: { type: string } & Record<string, unknown>): void => {
+  const emit = (sessionId: string, event: Record<string, unknown>): void => {
     for (const l of sessionListeners) l({ id: sessionId }, event)
   }
   const disposeAgent = (agent: RecordedAgent): void => {
@@ -244,13 +254,13 @@ describe('DshAgentAdapter', () => {
       type: 'assistant/message',
       turn: 1,
       step: 1,
-      message: { content: [{ type: 'reasoning', text: 'hmm' } satisfies { type: 'reasoning' }] },
+      message: { content: [reasoningBlock('hmm')] },
     })
     h.emit(agentID, {
       type: 'assistant/message',
       turn: 1,
       step: 2,
-      message: { content: [{ type: 'text', text: 'partial' } satisfies { type: 'text' }] },
+      message: { content: [textBlock('partial')] },
     })
     h.emit(agentID, {
       type: 'tool/call',
@@ -264,13 +274,13 @@ describe('DshAgentAdapter', () => {
       type: 'tool/result',
       turn: 1,
       step: 2,
-      message: { content: [{ type: 'text', text: 'file list' } satisfies { type: 'text' }] },
+      message: { content: [textBlock('file list')] },
     })
     h.emit(agentID, {
       type: 'assistant/message',
       turn: 1,
       step: 3,
-      message: { content: [{ type: 'text', text: 'final answer' } satisfies { type: 'text' }] },
+      message: { content: [textBlock('final answer')] },
       usage: { inputTokens: 120, cacheReadTokens: 30, cacheCreationTokens: 10, outputTokens: 45 },
     })
     h.emit(agentID, { type: 'turn/end', turn: 1, reason: 'end_turn' })
@@ -302,7 +312,7 @@ describe('DshAgentAdapter', () => {
       type: 'assistant/message',
       turn: 1,
       step: 1,
-      message: { content: [{ type: 'text', text: 'done' } satisfies { type: 'text' }] },
+      message: { content: [textBlock('done')] },
       usage: { inputTokens: 200, cacheReadTokens: 50, cacheCreationTokens: 0, outputTokens: 10 },
     })
     h.emit(agentID, { type: 'turn/end', turn: 1, reason: 'end_turn' })
@@ -351,14 +361,14 @@ describe('DshAgentAdapter', () => {
     h.emit(s2.currentSessionID(), { type: 'turn/start', turn: 1 })
     h.emit(s2.currentSessionID(), {
       type: 'assistant/message',
-      message: { content: [{ type: 'text', text: 'for s2' } satisfies { type: 'text' }] },
+      message: { content: [textBlock('for s2')] },
     })
 
     const ch1 = s1.events()
     h.emit(s1.currentSessionID(), { type: 'turn/start', turn: 1 })
     h.emit(s1.currentSessionID(), {
       type: 'assistant/message',
-      message: { content: [{ type: 'text', text: 'for s1' } satisfies { type: 'text' }] },
+      message: { content: [textBlock('for s1')] },
     })
 
     const got1 = await ch1.receive()

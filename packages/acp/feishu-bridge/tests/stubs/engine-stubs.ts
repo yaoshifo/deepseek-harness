@@ -110,12 +110,12 @@ export function newControllableSession(id: string): ControllableAgentSession {
 }
 
 /** Go controllableAgent: controls which session StartSession returns. */
-export type ControllableAgent = Agent & { nextSession?: AgentSession }
+export type ControllableAgent = Agent & { nextSession?: AgentSession | undefined }
 
 export function createControllableAgent(nextSession?: AgentSession): ControllableAgent {
   return {
     name: () => 'controllable',
-    nextSession,
+    ...(nextSession !== undefined ? { nextSession } : {}),
     startSession: async () => nextSession ?? newControllableSession('default'),
     listSessions: async () => [],
     stop: async () => {},

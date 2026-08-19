@@ -277,7 +277,10 @@ export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: stri
  * Resolve a user query to an agent session: numeric index, exact name, ID
  * prefix, name prefix, then summary substring (Go matchSession).
  */
-export function matchSession(sessions: AgentSessionInfo[], manager: SessionManager, query: string): AgentSessionInfo | undefined {
+/** Name-lookup surface matchSession needs from a session manager. */
+export type SessionNameLookup = Pick<SessionManager, 'getSessionName'>
+
+export function matchSession(sessions: AgentSessionInfo[], manager: SessionNameLookup, query: string): AgentSessionInfo | undefined {
   if (sessions.length === 0) return undefined
   const idx = Number.parseInt(query, 10)
   if (Number.isInteger(idx) && String(idx) === query.trim() && idx >= 1 && idx <= sessions.length) {

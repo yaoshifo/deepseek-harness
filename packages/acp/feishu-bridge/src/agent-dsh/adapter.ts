@@ -108,7 +108,7 @@ export class DshAgentAdapter {
     this.cfg = cfg
     // session/event projection: route each durable event to the live
     // engine session sharing the agent/session id.
-    const onSessionEvent = (session: { id: unknown }, event: { type: string } & Record<string, unknown>): void => {
+    const onSessionEvent = (session: { id: unknown }, event: Record<string, unknown>): void => {
       const target = this.liveSessions.get(String(session.id))
       if (target !== undefined) target.projectSessionEvent(event)
     }
@@ -339,9 +339,9 @@ export class DshAgentSession implements AgentSession {
   }
 
   /** Project one durable session event into the engine Event stream. */
-  projectSessionEvent(event: { type: string } & Record<string, unknown>): void {
+  projectSessionEvent(event: Record<string, unknown>): void {
     this.lastActivityAt = Date.now()
-    switch (event.type) {
+    switch (toStr(event.type)) {
       case 'turn/start': {
         this.turnText = ''
         break
