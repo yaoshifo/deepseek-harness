@@ -13,7 +13,7 @@ describe('lucideIconSVG', () => {
     expect(svg).toContain('viewBox="0 0 24 24"')
     expect(svg).toContain('<path')
     expect(svg).toContain('stroke="#ffffff"')
-    expect(svg).toContain('stroke-width="14"')
+    expect(svg).toContain('stroke-width="6"')
   })
 
   it('DefaultStroke', () => {

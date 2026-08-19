@@ -60,11 +60,21 @@ export function levenshtein(a: string, b: string): number {
  * @param strokeColor - Stroke (and currentColor replacement) color.
  * @returns Complete SVG document string.
  */
+/**
+ * Avatar stroke width in 24-unit viewBox coordinates. Go used 14 with its
+ * oksvg rasterizer; librsvg (sharp) lays out materially thicker strokes, and
+ * 14 fills the icon area into a solid white square (~95% coverage vs oksvg's
+ * ~70% "chunky but readable"). 6 is the measured librsvg equivalent of oksvg
+ * 14 (wrench probe: 71.8% vs 70.6% icon-area coverage against a shipped Go
+ * avatar).
+ */
+const avatarStrokeWidth = 6
+
 export function wrapIconSVG(inner: string, strokeColor: string): string {
   // currentColor in Lucide semantics is the icon foreground color — same as
   // the stroke — so replacing it keeps hole/dot fills (e.g. tag) rendering.
   const colored = inner.replaceAll('currentColor', strokeColor)
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${strokeColor}" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">${colored}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${strokeColor}" stroke-width="${avatarStrokeWidth}" stroke-linecap="round" stroke-linejoin="round">${colored}</svg>`
 }
 
 /**
