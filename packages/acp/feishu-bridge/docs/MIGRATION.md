@@ -126,6 +126,7 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 - 实现：#47/#48 plan/reply HTML（渲染会话 = create + seed + complete prompt + 无工具 + stall 重试）、#51 Lucide、predict_next #33、turn_summary、NO_REPLY #28、撤回取消 #30、dir_scan #3、usage #1、/provider #9/#12、feishu_workspace #18（CC_FEISHU_* 进工具上下文）、`feishu_bridge_lark` 工具。
 - 验收：测试绿；feature 对照表初稿（61 项全列）。
 
+- **执行拆分（2026-08-19）**：M7 拆四群并行——a 渲染域（plan/reply HTML #47/#48，engine_plan_render 3777 行 + render-png 复用）；b usage 域 + 通知卡完整状态页脚（#1 + 紫色卡 + subtaskDiff 接入 + #11 replyFooter 核实）；c provider + 会话散件（#9/#12/#33/#28/#30 + reset_on_idle/auto_compress 等 C 类项）；d workspace/lark/媒体杂项（#18/#3/#8 + /learn 引用抓取 + README Known Limitations 债务）。engine.ts 热点纪律：各群逻辑收新文件、engine.ts 只加最小挂点；index.ts 本轮归 d 群系统性改动。真机冒烟项（渲染视觉/通知卡页脚//provider 切换/lark 工具）由父会话统一执行。
 **M8 Cutover**
 - 记账驴日常使用回归 1-2 周 → 其余 8 个 project 逐个迁配置（用户操作旧系统摘除+重启，父会话加新配置+reload）→ 全量切换后用户停用旧 systemd、归档 cc-connect-bridge 包 → 新包 README + 运维文档（部署/回退/配置映射表/systemd 自启说明）。
 
