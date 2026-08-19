@@ -220,3 +220,95 @@ export function asSessionModeInjector(a: Agent): SessionModeInjector | undefined
   const candidate = a as Partial<SessionModeInjector>
   return typeof candidate.setSessionMode === 'function' ? (candidate as SessionModeInjector) : undefined
 }
+
+/** Optional: platform can update a previously sent message in place (PATCH). */
+export interface MessageUpdater {
+  updateMessage(replyCtx: unknown, content: string): Promise<void>
+}
+
+/**
+ * Optional: platform can start a streaming preview message and return a
+ * handle for subsequent in-place edits.
+ */
+export interface PreviewStarter {
+  sendPreviewStart(replyCtx: unknown, content: string): Promise<unknown>
+}
+
+/** Optional: platform can delete a preview message when the final reply is sent separately. */
+export interface PreviewCleaner {
+  deletePreviewMessage(previewHandle: unknown): Promise<void>
+}
+
+/** Optional: platform wants the preview kept as the final delivered message. */
+export interface PreviewFinishPreference {
+  keepPreviewOnFinish(): boolean
+}
+
+/**
+ * Optional: platform streaming-preview cards have content limits beyond the
+ * core character cap (e.g. Feishu's 5-table card limit, API error 11310).
+ */
+export interface PreviewOverflowReporter {
+  previewOverflow(content: string): boolean
+}
+
+/** Optional: platform classifies PATCH failures as transient (rate limit). */
+export interface TransientPatchErrorChecker {
+  isTransientPatchError(err: unknown): boolean
+}
+
+/** Optional: platform renders a terminal "stopped" card in place on user stop. */
+export interface StoppedCardRenderer {
+  renderStoppedCard(replyCtx: unknown, previewMsgID: unknown): Promise<void>
+}
+
+/** Optional: platform can deliver file attachments. */
+export interface FileSender {
+  sendFile(replyCtx: unknown, file: FileAttachment): Promise<void>
+}
+
+/** Optional: platform sends a brief notification after the final in-place delivery. */
+export interface CompletionNotifier {
+  sendCompletionNotification(replyCtx: unknown, usageMsg: string): Promise<void>
+}
+
+/** Structural checks for the M2 card capability interfaces. */
+function withMethod<T>(obj: object, method: keyof T & string): T | undefined {
+  return typeof (obj as Partial<T>)[method] === 'function' ? (obj as T) : undefined
+}
+
+export function asMessageUpdater(p: Platform): MessageUpdater | undefined {
+  return withMethod<MessageUpdater>(p, 'updateMessage')
+}
+
+export function asPreviewStarter(p: Platform): PreviewStarter | undefined {
+  return withMethod<PreviewStarter>(p, 'sendPreviewStart')
+}
+
+export function asPreviewCleaner(p: Platform): PreviewCleaner | undefined {
+  return withMethod<PreviewCleaner>(p, 'deletePreviewMessage')
+}
+
+export function asPreviewFinishPreference(p: Platform): PreviewFinishPreference | undefined {
+  return withMethod<PreviewFinishPreference>(p, 'keepPreviewOnFinish')
+}
+
+export function asPreviewOverflowReporter(p: Platform): PreviewOverflowReporter | undefined {
+  return withMethod<PreviewOverflowReporter>(p, 'previewOverflow')
+}
+
+export function asTransientPatchErrorChecker(p: Platform): TransientPatchErrorChecker | undefined {
+  return withMethod<TransientPatchErrorChecker>(p, 'isTransientPatchError')
+}
+
+export function asStoppedCardRenderer(p: Platform): StoppedCardRenderer | undefined {
+  return withMethod<StoppedCardRenderer>(p, 'renderStoppedCard')
+}
+
+export function asFileSender(p: Platform): FileSender | undefined {
+  return withMethod<FileSender>(p, 'sendFile')
+}
+
+export function asCompletionNotifier(p: Platform): CompletionNotifier | undefined {
+  return withMethod<CompletionNotifier>(p, 'sendCompletionNotification')
+}
