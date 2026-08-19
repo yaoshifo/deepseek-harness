@@ -308,6 +308,8 @@ export class DshAgentAdapter {
   private readonly liveSessions = new Map<string, DshAgentSession>()
   private env: string[] = []
   private modeOverride = ''
+  /** Project-level default session mode ('' = no default; 'plan' starts every session in plan mode). */
+  private defaultMode = ''
   /** Raw plan_render.effort alias consumed by {@link renderQuery} (Go renderEffort). */
   private renderEffort = ''
   /** Mutable work dir: the engine's per-chat override switches it around StartSession (Go WorkDirSwitcher). */
@@ -479,6 +481,11 @@ export class DshAgentAdapter {
   /** SessionModeInjector: one-shot mode override consumed by startSession. */
   setSessionMode(mode: string): void {
     this.modeOverride = mode
+  }
+
+  /** Project default mode applied at every startSession when no one-shot override is armed (Go agent options mode). */
+  setDefaultMode(mode: string): void {
+    this.defaultMode = mode
   }
 
   /**
@@ -774,14 +781,16 @@ export class DshAgentAdapter {
     // Lazily register the userQuestions provider now that the plugin tree
     // is fully loaded (at constructor time it may not be available yet).
     this.ensureUserQuestionsProvider()
-    if (this.modeOverride !== '') {
-      // Apply the engine's mode override onto the native plan-mode
-      // controller (Go /mode + config mode=plan): plan → active, others off.
+    const mode = this.modeOverride !== '' ? this.modeOverride : this.defaultMode
+    if (mode !== '') {
+      // Apply the mode onto the native plan-mode controller (Go /mode +
+      // config mode=plan): plan → active, others off. The one-shot override
+      // clears; the project default persists for every subsequent session.
       const planMode = this.ctx.get('planMode') as
         | { set(agent: unknown, active: boolean): string }
         | undefined
       if (planMode !== undefined) {
-        planMode.set(handle.agent, this.modeOverride === 'plan')
+        planMode.set(handle.agent, mode === 'plan')
       }
       this.modeOverride = ''
     }

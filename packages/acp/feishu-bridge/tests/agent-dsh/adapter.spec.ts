@@ -741,3 +741,27 @@ it('tool/result with tool-result blocks projects the inner text as toolResult', 
   }
   expect(toolResultEvent?.toolResult).toBe('file header content')
 })
+
+it('defaultMode plan activates plan mode on every startSession (Go agent options mode=plan)', async () => {
+  const h = createHarness()
+  const planSets: boolean[] = []
+  h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
+  const a = newAdapter(h)
+  a.setDefaultMode('plan')
+
+  // Distinct engine keys: a live session with the same key short-circuits
+  // startSession before the mode application.
+  for (const key of ['feishu:oc_m1:ou_9', 'feishu:oc_m2:ou_9']) {
+    a.setSessionEnv([`CC_SESSION_KEY=${key}`])
+    await a.startSession('')
+  }
+  expect(planSets).toEqual([true, true])
+
+  // An explicit one-shot override wins once, then the default resumes.
+  a.setSessionMode('default')
+  a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_m3:ou_9'])
+  await a.startSession('')
+  a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_m4:ou_9'])
+  await a.startSession('')
+  expect(planSets).toEqual([true, true, false, true])
+})

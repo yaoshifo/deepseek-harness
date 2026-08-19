@@ -73,6 +73,8 @@ export interface AgentOptions {
   provider?: string
   /** Model override for the provider route. */
   model?: string
+  /** Default session mode: 'plan' starts every session in plan mode (Go agent options mode). */
+  mode?: string
   /** Reasoning effort passed through to `ctx.agents` agent options. */
   reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high'
 }
@@ -442,6 +444,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     agent: Schema.object({
       provider: Schema.string().description('Key into providers'),
       model: Schema.string().description('Model override'),
+      mode: Schema.string().description("Default session mode ('plan' = review before execution)"),
       reasoningEffort: Schema.union(['minimal', 'low', 'medium', 'high']).description('Reasoning effort'),
     }),
     features: Schema.object({
@@ -870,6 +873,9 @@ export function buildProjectAssembly(
     engine.setProviderShortcuts(project.providerShortcuts)
   }
   wireGroupName(engine, project)
+  if (project.agent?.mode !== undefined && project.agent.mode !== '') {
+    adapter.setDefaultMode(project.agent.mode)
+  }
   wirePlanRender(engine, adapter, project)
 
   wirePredictNext(engine, project, config.providers)

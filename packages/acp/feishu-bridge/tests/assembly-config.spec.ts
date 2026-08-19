@@ -302,3 +302,13 @@ describe('M7 usage/footer config wiring', () => {
     expect(assemble(baseConfig()).engine.usageProviders).toEqual([])
   })
 })
+
+describe('agent.mode default session mode wiring', () => {
+  it('forwards project.agent.mode onto the adapter (Go agent options mode=plan)', () => {
+    const { adapter } = assemble(baseConfig(), { ...project(), agent: { mode: 'plan' } })
+    expect((adapter as unknown as { defaultMode?: string }).defaultMode).toBe('plan')
+    // Absent mode leaves no default.
+    const bare = assemble(baseConfig(), project())
+    expect((bare.adapter as unknown as { defaultMode?: string }).defaultMode).toBe('')
+  })
+})
