@@ -210,12 +210,18 @@ export class DshAgentAdapter {
           toolInput: '',
           toolInputRaw: { questions },
         })
-        const outcome = await target.awaitPermissionResponse(
-          requestID, request.signal,
+        // Await the ANSWER TEXT (not the approval outcome): the engine's
+        // handlePendingPermission stores the collected answers and settles
+        // them through awaitPermissionResponse as the answer string for
+        // AskUserQuestion flows.
+        const answer = await target.awaitQuestionAnswer(
+          requestID, request.signal, qs.length,
         )
-        return {
-          answers: [{ id: '', selected: [outcome], custom: outcome }],
-        }
+        const items = qs.map((q, i) => ({
+          id: q.question,
+          selected: [answer[i] ?? ''],
+        }))
+        return { answers: items }
       },
     }))
   }
@@ -370,6 +376,8 @@ export class DshAgentSession implements AgentSession {
   lastActivityAt = Date.now()
   /** Pending permission responses: requestID → resolve function (M3). */
   private readonly pendingPermissions = new Map<string, (outcome: string) => void>()
+  /** Pending AskUserQuestion answers: requestID → settle + count (M3). */
+  private readonly pendingQuestionAnswers = new Map<string, { settle: (answers: string[]) => void; count: number }>()
 
   constructor(key: string, handle: DshAgentHandleLike) {
     this.key = key
@@ -451,6 +459,33 @@ export class DshAgentSession implements AgentSession {
   }
 
   /**
+   * Wait for the engine to deliver AskUserQuestion answers (M3). The
+   * engine's handlePendingPermission collects answers per question index
+   * and delivers them here as one array; entries stay empty strings until
+   * collected. Returns exactly `count` answer strings in question order.
+   */
+  awaitQuestionAnswer(requestID: string, signal: AbortSignal | undefined, count: number): Promise<string[]> {
+    return new Promise((resolve) => {
+      const settle = (answers: string[]): void => {
+        this.pendingQuestionAnswers.delete(requestID)
+        resolve(answers)
+      }
+      this.pendingQuestionAnswers.set(requestID, { settle, count })
+      if (signal !== undefined) {
+        signal.addEventListener('abort', () => { settle(new Array<string>(count).fill('')) }, { once: true })
+      }
+    })
+  }
+
+  /** Deliver collected AskUserQuestion answers for a pending request (M3). */
+  deliverQuestionAnswers(requestID: string, answers: string[]): void {
+    const entry = this.pendingQuestionAnswers.get(requestID)
+    if (entry !== undefined) {
+      entry.settle(answers)
+    }
+  }
+
+  /**
    * Resolve a pending permission request with the user's decision (M3).
    * Called by the engine's handlePendingPermission after the user responds.
    */
@@ -458,6 +493,12 @@ export class DshAgentSession implements AgentSession {
     const settle = this.pendingPermissions.get(requestID)
     if (settle !== undefined) {
       settle(result.behavior === 'allow' ? 'allowed-once' : 'rejected')
+    }
+    // AskUserQuestion flows ride the same request id: deliver the updated
+    // input's answers so the question waiter (if any) also settles.
+    const answers = (result.updatedInput?.answers) as Record<string, string> | undefined
+    if (answers !== undefined) {
+      this.deliverQuestionAnswers(requestID, Object.values(answers))
     }
     return Promise.resolve()
   }
