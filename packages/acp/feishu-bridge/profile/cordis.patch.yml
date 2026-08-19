@@ -71,12 +71,15 @@
       # One named route per cc-connect [[providers]] entry (MIGRATION.md D2):
       # the in-process engine selects a route per agent via
       # agentOptions.provider; credentials are inline, traffic goes DIRECT to
+      # Keys resolve by env-var reference (credential-ref): provision
+      # FB_GLM_API_KEY / FB_MINIMAX_API_KEY / FB_MIMO_API_KEY in the daemon
+      # environment (systemd unit Environment= lines).
       # the gateway (the Go providerproxy is retired — plain model names
       # avoid the bigmodel [1m] fingerprint gate; forceAdaptiveThinking
       # covers the thinking/effort quirk; retries ride dsh llm-retry).
       glm:
         displayName: GLM
-        apiKey: 1597e1ecbc2c4e4790bcce31842e6e19.zjRNydrWjZrHDdOd
+        apiKeyEnv: FB_GLM_API_KEY
         api: anthropic-messages
         baseURL: https://open.bigmodel.cn/api/anthropic
         reasoning: high
@@ -93,7 +96,7 @@
               high: high
       turbo:
         displayName: GLM Turbo
-        apiKey: 1597e1ecbc2c4e4790bcce31842e6e19.zjRNydrWjZrHDdOd
+        apiKeyEnv: FB_GLM_API_KEY
         api: anthropic-messages
         baseURL: https://open.bigmodel.cn/api/anthropic
         reasoning: high
@@ -110,7 +113,7 @@
               high: high
       minimax:
         displayName: MiniMax
-        apiKey: sk-cp-OOsw1RbBiwkgs8G2ZjwtJFGPnaL2S_RtRSQNzK0bPm2jNyBFJghfA0ppwu0-ZRmznfttL6leJuD4ew5HxeW_itXbd6WD-X9lCyU5Dnyb92Q-e7OKElqbh8
+        apiKeyEnv: FB_MINIMAX_API_KEY
         api: anthropic-messages
         baseURL: https://api.minimaxi.com/anthropic
         reasoning: high
@@ -127,7 +130,7 @@
               high: high
       mimo:
         displayName: MiMo
-        apiKey: tp-c3n8u0hjx0f0ze4p15u2ypnlrobxkfs69slf7kb48qklj67a
+        apiKeyEnv: FB_MIMO_API_KEY
         api: anthropic-messages
         baseURL: https://token-plan-cn.xiaomimimo.com/anthropic
         reasoning: high

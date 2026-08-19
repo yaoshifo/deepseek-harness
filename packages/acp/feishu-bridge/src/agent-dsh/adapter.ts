@@ -403,11 +403,19 @@ export class DshAgentSession implements AgentSession {
       }
       case 'turn/end': {
         // The turn's final reply is its last assistant text (the Go SDK
-        // `result` field equivalent); carry the turn's usage with it.
+        // `result` field equivalent); carry the turn's usage with it. An
+        // error-reasoned turn surfaces its message as errorText so the engine
+        // reports the failure instead of degrading to the silent-reply hint
+        // (observed live: "No API key for provider" showed as 🤫).
         this.lastText = this.turnText
+        const reason = event.reason as { kind?: unknown; error?: { message?: unknown } } | undefined
+        const errorText = reason !== undefined && reason.kind === 'error' && reason.error?.message !== undefined
+          ? toStr(reason.error.message)
+          : undefined
         this.channel.push({
           type: 'result',
           content: this.turnText,
+          ...(errorText !== undefined ? { errorText } : {}),
           done: true,
           ...this.usage,
         })

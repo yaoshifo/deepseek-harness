@@ -338,6 +338,67 @@ describe('DshAgentAdapter', () => {
     expect(result.event.outputTokens).toBe(10)
   })
 
+  it('surfaces an error-reasoned turn/end as errorText on the result', async () => {
+    // Live regression (M1 记账驴 cut-over): a "No API key for provider" turn
+    // error arrived as an empty result and the engine degraded it to the
+    // silent-reply hint instead of reporting the failure.
+    const h = createHarness()
+    const a = newAdapter(h)
+    const session = await a.startSession('')
+    const channel = session.events()
+    const agentID = session.currentSessionID()
+
+    h.emit(agentID, { type: 'turn/start', turn: 1 })
+    h.emit(agentID, {
+      type: 'turn/end',
+      turn: 1,
+      reason: { kind: 'error', error: { message: 'No API key for provider: glm', code: 'PI_AI_ERROR' } },
+    })
+
+    let result: { done: false; event: { type: string; content: string; errorText?: string } } | undefined
+    for (;;) {
+      const got = await channel.receive()
+      if (got.done) throw new Error('channel closed before result')
+      if (got.event.type === 'result') {
+        result = got as typeof result
+        break
+      }
+    }
+    if (result === undefined) throw new Error('no result event')
+    expect(result.event.content).toBe('')
+    expect(result.event.errorText).toBe('No API key for provider: glm')
+  })
+
+  it('error-text absent on a normal turn/end', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    const session = await a.startSession('')
+    const channel = session.events()
+    const agentID = session.currentSessionID()
+
+    h.emit(agentID, { type: 'turn/start', turn: 1 })
+    h.emit(agentID, {
+      type: 'assistant/message',
+      turn: 1,
+      step: 1,
+      message: { content: [textBlock('ok')] },
+    })
+    h.emit(agentID, { type: 'turn/end', turn: 1, reason: 'end_turn' })
+
+    let result: { event: { type: string; content: string; errorText?: string } } | undefined
+    for (;;) {
+      const got = await channel.receive()
+      if (got.done) throw new Error('channel closed before result')
+      if (got.event.type === 'result') {
+        result = got
+        break
+      }
+    }
+    if (result === undefined) throw new Error('no result event')
+    expect(result.event.content).toBe('ok')
+    expect(result.event.errorText).toBeUndefined()
+  })
+
   it('agent/disposed closes the channel (process-exit path)', async () => {
     const h = createHarness()
     const a = newAdapter(h)
