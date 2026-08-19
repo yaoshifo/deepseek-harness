@@ -160,72 +160,109 @@ Go 侧调用面 → `@larksuiteoapi/node-sdk`（1.73.0）对等映射，全部�
 
 WS 事件（im.message.receive_v1、card.action.trigger 等）走 node-sdk 内置长连接客户端。
 
-## 附录 B：跨服务器交接（2026-08-19）
+## 附录 B：跨服务器交接（2026-08-19，2026-08-19 更新为本机 macOS 环境）
 
 ### 当前进度快照
 
 - **M0 ✅** 骨架 + 纯逻辑（107 测试）
-- **M1 ✅** Engine 核心 + 适配器 + 文本收发；真机全链路验证通过（记账驴，2026-08-19 12:03）；真机修复三笔：inject 声明、apiKeyEnv 凭据引用、session 事件 payload 解包
-- **M2 ✅** 卡片系统全量（587 测试验收通过）；真机卡片冒烟被 /new 后的 id collision 阻断，已修复（6f01a3a6d5 生成 cc-* 原生 session id）**但未复测——新服务器第一件事**
-- **M3 ✅** 审批/问题/Plan + per-agent setup：代码验收通过（646 测试，2026-08-19 本机）；真机冒烟待测——需 WS 切换后进行。本机环境：macOS，开发虾 bot（`cli_a92f9b460e259bc7`，app_secret 从 macOS keychain 取），LLM 走本地代理 `127.0.0.1:18090`（mify-dsh 路由，model `zhipuai/glm-5.2`），profile 在 `~/.dsh/profiles/feishu-bridge/`，launchd plist 在 `~/Library/LaunchAgents/com.dsh.feishu-bridge.plist`
+- **M1 ✅** Engine 核心 + 适配器 + 文本收发；真机全链路验证通过（记账驴，旧服务器）；真机修复三笔：inject 声明、apiKeyEnv 凭据引用、session 事件 payload 解包
+- **M2 ✅** 卡片系统全量（587→646 测试）；真机卡片冒烟通过（本机 2026-08-19：流式卡更新 + 完成卡 + ✅ 通知，无重复发送——早期报告的「卡片+文本重复」未复现，根因是旧版本 CardSender 接口名错误）
+- **M3 ✅ 代码 + 真机冒烟双通过（2026-08-19 本机）**：646 测试全绿、lint/typecheck 0。真机验证：`/mode plan` 激活 ✅、AskUserQuestion 问题卡（多问题序列 (1/2)→(2/2)、选项按钮、Recommended 标记）✅、自由文本回答 "1" 解析为选项标签 ✅、答案回传 agent 继续 turn ✅。关键修复 4 笔见 M3 段落。
 - 后续 M4–M8 未开始；61 feature 对照表初稿未做
 
-### 仓库与分支
+### 本机环境（macOS，2026-08-19 已搭建完毕）
 
-- fork：`yaoshifo/deepseek-harness`（origin，HTTPS）；上游 `deepseek-ai/deepseek-harness`（upstream）
-- 分支：`feat/dsh-feishu-bridge`（自 dev `d8ec39a5de`）；cc-connect 仓库零改动、无需迁移
-- 新服务器布局（同分支不能被两个 worktree 同时检出）：
-  ```
-  git clone https://github.com/yaoshifo/deepseek-harness.git   # 主检出，随便停哪个分支
-  cd deepseek-harness && git checkout feat/dsh-feishu-bridge --detach 2>/dev/null || git checkout origin/feat/dsh-feishu-bridge
-  git worktree add /home/<user>/workspace/dsh-wt-feishu-bridge -b feat/dsh-feishu-bridge  # 开发 worktree（若分支已在主检出则去掉 -b 用 --detach）
-  git worktree add /home/<user>/workspace/dsh-wt-fb-daemon --detach <最新验收commit>       # daemon 固定 worktree
-  pnpm install --prefer-offline   # 两个 worktree 各一次
-  ```
+| 项目 | 值 |
+|------|-----|
+| 仓库 | `/Users/hm/workspace/deepseek-harness`（分支 `feat/dsh-feishu-bridge`，主检出即开发树） |
+| cc-connect 源（只读参照） | `/Users/hm/workspace/cc-connect`（Go 源码 + 运行中的旧二进制） |
+| 测试 bot | 开发虾（app_id `cli_a92f9b460e259bc7`） |
+| bot app_secret | macOS keychain：`security find-generic-password -a 'appsecret:cli_a92f9b460e259bc7' -w` |
+| LLM 路由 | mify-dsh：本地代理 `http://127.0.0.1:18090`（`/Users/hm/workspace/op-dev/rate-limit-logger/proxy.js` 转发 model.mify.ai.srv），model `zhipuai/glm-5.2` |
+| LLM API key | `~/.claude/rotate-key.sh`（3 key 轮换数组，任取其一）；profile 里 `apiKeyEnv: FB_MIFY_API_KEY` |
+| dsh profile | `~/.dsh/profiles/feishu-bridge/`（cordis.patch.yml 已配好开发虾 project 段 + mify-dsh 路由） |
+| launchd plist | `~/Library/LaunchAgents/com.dsh.feishu-bridge.plist`（FB_MIFY_API_KEY 在 EnvironmentVariables） |
+| daemon 日志 | `~/.dsh/feishu-bridge-stdout.log` / `~/.dsh/feishu-bridge-stderr.log` |
+| 旧 cc-connect | launchd `com.cc-connect.service`，读 `~/.cc-connect/config.toml`；开发虾段已注释（备份 `config.toml.bak-feishu-bridge`），运维虾仍跑旧系统 |
+| lark-cli | `~/.local/bin/lark-cli`（v1.0.69），user 身份已授权 `im:message`（发消息测冒烟用） |
 
-### 运行环境供给清单（新服务器）
+### daemon 操作命令
 
-1. **dsh CLI**：nvm node 22 + 全局安装（与旧服务器 `which dsh` 同源）；7GB 内存机器注意 M 级并行构建会挤爆内存，必要时错峰
-2. **profile**：`packages/acp/feishu-bridge/install.sh`（`FORK_DIR=` 指开发 worktree）→ `~/.dsh/profiles/feishu-bridge`；install.sh 不覆盖已存在文件
-3. **profile 里的记账驴 project 段**（模板 `projects: []`，需手工加；appSecret 是测试 bot，私有 fork 内嵌方便交接）：
-   ```yaml
-   - id: feishu-bridge
-     config:
-       projects:
-         - name: 记账驴
-           workdir: /home/<user>/workspace/money
-           feishu:
-             appId: cli_a9635d39e9f85bdf
-             appSecret: NGvgmC5FR1DML3CgaDHU2gUGFCULcO2S
-           agent:
-             provider: glm
-       providers:
-         glm: { route: glm, model: glm-5.3 }
-         turbo: { route: turbo, model: glm-5-turbo }
-         minimax: { route: minimax, model: MiniMax-M2.7 }
-         mimo: { route: mimo, model: mimo-v2.5-pro }
-       dataDir: /home/<user>/.dsh/feishu-bridge
-   ```
-4. **llm 路由 key**（systemd user unit `~/.config/systemd/user/feishu-bridge.service`，chmod 600）：`Environment=FB_GLM_API_KEY=…`（glm+turbo 共用）、`FB_MINIMAX_API_KEY=…`、`FB_MIMO_API_KEY=…`——值从旧服务器同名 unit 或 `~/.cc-connect/config.toml` 的 `[[providers]]` 段取
-5. systemd user 实例：`loginctl enable-linger <user>`；shell 里 `export XDG_RUNTIME_DIR=/run/user/$(id -u)` 后 `systemctl --user` 才可用；unit 模板其余字段（PATH 含 nvm bin、Restart=on-failure、日志 append）参照旧服务器 unit
-6. **agent 行为 parity（可选）**：`~/.dsh/AGENTS.md` 软链 `~/.claude/CLAUDE.md`；profile patch 的 `skill-filesystem.customSkillDirs` 指 `~/.claude/skills`；LSP 行按新服务器语言栈调整
-7. **会话存储**：`~/.dsh/cc-connect-sessions`（jsonl，按 cwd 嵌套）——延续旧会话则整目录 rsync，否则新开
+```sh
+# 重启（改代码后必须：build 两步 + reload）
+cd /Users/hm/workspace/deepseek-harness
+npx tsc -b packages/acp/feishu-bridge/tsconfig.json --force   # 第一步：tsc 产出 lib/types/*.js
+npx tsdown --env.DSH_BUILD_FACE host                            # 第二步：tsdown 从 lib/types 打包 lib/index.js
+launchctl unload ~/Library/LaunchAgents/com.dsh.feishu-bridge.plist
+> ~/.dsh/feishu-bridge-stdout.log; > ~/.dsh/feishu-bridge-stderr.log
+launchctl load ~/Library/LaunchAgents/com.dsh.feishu-bridge.plist
+```
+
+**关键坑：build 必须两步**。tsdown 的入口是 `lib/types/{index,invariant,startup}.js`（tsc 的产物），不直接读 `src/*.ts`。只跑 tsdown 会用旧的 lib/types 导致改动不生效（本轮调试时多次踩坑）。
+
+### 自动化冒烟测试流程（lark-cli 以 user 身份发消息）
+
+前置：`lark-cli auth status` 确认 user 身份 ready 且含 `im:message` scope（2026-08-19 已授权；过期则 `lark-cli auth login --scope "im:message.send_as_user im:message"`，拿 URL 给用户浏览器确认）。
+
+```sh
+CHAT=oc_8716afd14efebc177d6cab518d5d6374   # 开发虾测试群（bot 所在）
+
+# 1. 基础收发
+lark-cli im +messages-send --as user --chat-id $CHAT --text "/new"
+sleep 10
+lark-cli im +messages-send --as user --chat-id $CHAT --text "你好"
+sleep 25   # 等 agent 回复
+
+# 2. Plan 模式
+lark-cli im +messages-send --as user --chat-id $CHAT --text "/mode plan"
+sleep 8
+lark-cli im +messages-send --as user --chat-id $CHAT --text "加一个健康检查接口"
+
+# 3. AskUserQuestion（等待 agent 发问题卡后回答）
+lark-cli im +messages-send --as user --chat-id $CHAT --text "1"   # 数字索引=选项
+# 多问题会逐个发卡 (1/2) (2/2)，每张卡回答一次
+
+# 4. 验证结果：查群里最新消息
+lark-cli im +chat-messages-list --as bot --chat-id $CHAT | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for msg in d.get('data',{}).get('messages',[])[:4]:
+    print(f\"{msg.get('create_time')} | {msg.get('msg_type')} | {msg.get('content','')[:150]}\")"
+
+# 5. 查 daemon 日志排障
+grep -v '^\[info\]' ~/.dsh/feishu-bridge-stdout.log | tail -5
+grep -v 'message_read\|card.action\|spinner' ~/.dsh/feishu-bridge-stderr.log | tail -5
+```
+
+**注意**：
+- bot 自己发的消息（`--as bot`）不触发引擎回复——引擎只对用户消息响应；冒烟必须 `--as user`
+- 群消息默认需要 @bot，但 profile 里 `features.allowChat: true` 已关掉 @ 门槛
+- LLM 回复有随机性：同一任务 agent 可能这次问问题、下次直接给方案；要稳定触发 AskUserQuestion，在指令里明确写「用 ask_user_question 工具问我」
+- 卡片按钮回调（card.action.trigger）只能真实点击验证，无法用 API 模拟
 
 ### WS 独占（切换时序，重要）
 
-记账驴 app 的 WS 事件同一时刻只归一个进程消费。**旧服务器 `systemctl --user stop feishu-bridge` 之后，新服务器才能 `start`**（反之亦然）。旧系统的其余 8 个 bot 仍跑旧服务器 cc-connect，不受影响。
+开发虾 app 的 WS 事件同一时刻只归一个进程消费。当前状态：**新 feishu-bridge daemon 持有开发虾 WS**；旧 cc-connect 只剩运维虾。回滚方法：取消注释 `~/.cc-connect/config.toml` 的开发虾段 → `launchctl kickstart -k gui/$(id -u)/com.cc-connect.service` → `launchctl unload ~/Library/LaunchAgents/com.dsh.feishu-bridge.plist`。
 
-### 新服务器工作流（沿用第 3 节执行模型）
+### 遗留清单（下次继续）
 
-- 开发在 dev worktree（子任务派发/测试/lint/typecheck 验收）
-- promote 只认验收 commit：daemon worktree `git checkout --detach <commit>` → `pnpm run build:lib:host` → `systemctl --user restart feishu-bridge`
-- 真机验证：入站消息需 user 身份（记账驴 app 的 lark-cli user 授权已过期，旧服务器上 `lark-cli auth login --domain im` 可续期后 `--as user` 全自动发消息；或人工发）
+1. **ExitPlanMode plan-review intent 答案编码**：dsh plan-mode 的 exit_plan_mode 走 userQuestions 的 `intent.kind='plan-review'`（approve/decline 语义），当前 provider 按普通问题处理——需识别 intent 并把答案映射为批准/拒绝
+2. **审批卡真机测试**：workspace-write 沙箱模式在 macOS 上导致 daemon 崩溃（dsh landlock 兼容性），无法触发真机 permission_request；danger-full-access 下不会弹审批。需排查 sandbox 在 macOS 的兼容性或找替代触发方式
+3. **card.action.trigger 按钮回调真机验证**：代码已就绪（platform.ts onCardAction + engine handleMessage 路由），但问题卡的按钮点击未被真实测试过——文本回答已验证，按钮回调路径相同但未跑通
+4. **profile 模板更新**：`packages/acp/feishu-bridge/profile/` 里的模板还是 Linux 路径（/home/hm）+ glm 路由；本机用的是 profile 实例（install.sh 不覆盖），模板与实例已分叉——合并回 dev 前需统一
+5. **M2 遗留**：✅ 完成卡的完整状态页脚（model/workdir/RAM）与紫色通知卡依赖 M4/M7
+6. **spinner GIF 资源缺失**：`lib/../../assets/thinking.gif` 路径找不到（tsdown 打包后 assets 相对路径失效），stderr 每次报 ENOENT（不影响功能）
+7. 最终 cutover 时补：launchd plist 模板入 git、61 feature 对照表、运维文档
 
-### 遗留清单
+### M3 提交记录（feat/dsh-feishu-bridge，全部已 commit 未 push）
 
-1. M2 真机卡片冒烟（id-collision 修复后未复测）——新服务器首任务
-2. M3 在途 commit（旧服务器落地后 push，新服务器 pull）
-3. lark-cli user 授权续期（恢复全自动入站 E2E）
-4. 仓级 oxlint 在 cc-connect-bridge 包有 16 个存量类型告警（M1 前即存在，与迁移无关）
-5. ✅ 完成卡的完整状态页脚（model/workdir/RAM/Disk）与紫色通知卡依赖 M4/M7 域
-6. 最终 cutover 时补：systemd unit 模板入 git、61 feature 对照表、运维文档
+| commit | 内容 |
+|--------|------|
+| `db4ce0f52b` | M3 permission/question/plan 域移植（58 测试，646 全绿） |
+| `8bdbb94103` | adapter approval answerer 接线（ctx.on('approval/request')） |
+| `e48ab2bff5` | card.action.trigger 注册 + handleMessage permission 路由 |
+| `fc98d577f0` | lazy userQuestions provider + question 数据传递 |
+| `672ae772de` | CardSender 接口名修复（sendCard）——问题卡渲染根因 |
+| `c86779ae21` | 事件循环阻塞 permission wait + planMode 接线 |
+| `90de6e9004` | AskUserQuestion 答案交付拆分（awaitQuestionAnswer） |
+| `1cf0453557` | MIGRATION.md 真机验证记录 |
