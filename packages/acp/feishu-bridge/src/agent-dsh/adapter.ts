@@ -129,6 +129,25 @@ export class DshAgentAdapter {
       if (target !== undefined) target.markDisposed()
     }
     this.disposers.push(ctx.on('agent/disposed', onAgentDisposed))
+    // M3: Register the approval answerer. When dsh asks for tool permission,
+    // emit a permission_request event into the engine's EventChannel and wait
+    // for the engine's handlePendingPermission to call respondPermission.
+    this.disposers.push(ctx.on('approval/request', async (req: never, _next: never): Promise<string> => {
+      const r = req as { agent?: { session?: { id?: string } }; toolName?: string; callId?: string; reason?: string; signal?: AbortSignal }
+      const sessionID = r.agent?.session?.id ?? ''
+      const target = this.liveSessions.get(sessionID)
+      if (target === undefined) return 'unavailable'
+      const requestID = r.callId ?? sessionID
+      const toolInputRaw = r.reason !== undefined ? { reason: r.reason } : {}
+      target.emitPermissionRequest({
+        requestID,
+        toolName: r.toolName ?? '',
+        toolInput: r.reason ?? '',
+        toolInputRaw,
+      })
+      const outcome = await target.awaitPermissionResponse(requestID, r.signal)
+      return outcome
+    }))
   }
 
   /** Agent display name (engine /status, /list headers). */
@@ -270,6 +289,8 @@ export class DshAgentSession implements AgentSession {
   private lastText = ''
   private usage: { inputTokens?: number; totalInputTokens?: number; outputTokens?: number } = {}
   lastActivityAt = Date.now()
+  /** Pending permission responses: requestID → resolve function (M3). */
+  private readonly pendingPermissions = new Map<string, (outcome: string) => void>()
 
   constructor(key: string, handle: DshAgentHandleLike) {
     this.key = key
@@ -317,10 +338,48 @@ export class DshAgentSession implements AgentSession {
   }
 
   /**
-   * TODO(M3): permission decisions route through the approval service's
-   * answerer. M1 agents never emit permission_request, so this is a no-op.
+   * Emit a permission_request event into the engine's EventChannel (M3).
+   * The engine's event loop receives it, sends a permission card, and waits.
+   * The approval answerer awaits {@link awaitPermissionResponse}.
    */
-  respondPermission(_requestID: string, _result: PermissionResult): Promise<void> {
+  emitPermissionRequest(req: { requestID: string; toolName: string; toolInput: string; toolInputRaw: Record<string, unknown> }): void {
+    this.channel.push({
+      type: 'permission_request',
+      content: '',
+      toolName: req.toolName,
+      toolInput: req.toolInput,
+      toolInputRaw: req.toolInputRaw,
+      requestID: req.requestID,
+      done: false,
+    })
+  }
+
+  /**
+   * Wait for the engine to call {@link respondPermission} with the user's
+   * decision (M3). Returns the dsh approval outcome string.
+   */
+  awaitPermissionResponse(requestID: string, signal?: AbortSignal): Promise<string> {
+    return new Promise((resolve) => {
+      const settle = (outcome: string): void => {
+        this.pendingPermissions.delete(requestID)
+        resolve(outcome)
+      }
+      this.pendingPermissions.set(requestID, settle)
+      if (signal !== undefined) {
+        signal.addEventListener('abort', () => { settle('cancelled') }, { once: true })
+      }
+    })
+  }
+
+  /**
+   * Resolve a pending permission request with the user's decision (M3).
+   * Called by the engine's handlePendingPermission after the user responds.
+   */
+  respondPermission(requestID: string, result: PermissionResult): Promise<void> {
+    const settle = this.pendingPermissions.get(requestID)
+    if (settle !== undefined) {
+      settle(result.behavior === 'allow' ? 'allowed-once' : 'rejected')
+    }
     return Promise.resolve()
   }
 

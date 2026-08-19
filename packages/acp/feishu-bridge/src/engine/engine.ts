@@ -983,21 +983,24 @@ export class Engine {
       switch (event.type) {
         case 'thinking': {
           if (isEllipsisOnly(event.content)) break
+          // In quiet mode (thinkingMessages=false), thinking events must not
+          // affect the streaming preview — no clearThinking, no
+          // completeAndDetach, no text segment flush. Otherwise
+          // completeAndDetach sets degraded=true, causing the result handler
+          // to fall through to this.send() and duplicate the reply as plain
+          // text alongside the already-finalized card.
+          if (!this.display.thinkingMessages) {
+            thinkingStreamed = false
+            thinkingAccum = ''
+            break
+          }
           // Thinking block complete: drop the streamed 💭 section.
           if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
-          if (!this.display.thinkingMessages && textParts.length > segmentStart) {
-            if (this.display.toolProgress && sp.canPreview()) {
-              // Keep the preview alive for tool progress; one thinking entry
-              // only when it was not already streamed above.
-              if (!thinkingStreamed && event.content !== '') {
-                const body = event.content.trim().replaceAll('```', "'''")
-                await sp.appendProgress(newToolProgressEntry('Thinking', body, ''))
-              }
-            } else if (sp.canPreview()) {
+          if (textParts.length > segmentStart) {
+            if (sp.canPreview()) {
               await sp.completeAndDetach()
               segmentStart = textParts.length
             } else {
-              // Preview degraded — send the accumulated segment directly.
               const segment = textParts.slice(segmentStart).join('')
               if (segment !== '' && p !== undefined) {
                 for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
@@ -1009,7 +1012,7 @@ export class Engine {
             if (!sp.inProgressMode()) segmentStart = textParts.length
             silentHold = false
           }
-          if (this.display.thinkingMessages && event.content !== '' && p !== undefined) {
+          if (event.content !== '' && p !== undefined) {
             if (textParts.length > segmentStart) {
               if (!sp.canPreview()) {
                 const segment = textParts.slice(segmentStart).join('')
@@ -1050,7 +1053,7 @@ export class Engine {
           // EventThinking block clears it and dedups.
           thinkingAccum += event.content
           thinkingStreamed = true
-          if (sp.canPreview()) await sp.appendThinking(thinkingAccum)
+          if (this.display.thinkingMessages && sp.canPreview()) await sp.appendThinking(thinkingAccum)
           break
         }
 
@@ -1114,7 +1117,6 @@ export class Engine {
                 if (!couldBeSilentPrefix(segmentText)) {
                   silentHold = false
                   if (sp.canPreview() && sp.inProgressMode()) await sp.appendAnalysisText(segmentText)
-                  else if (sp.inProgressMode() && p !== undefined) await this.send(p, replyCtx, segmentText)
                   else if (sp.canPreview()) await sp.appendText(segmentText)
                 }
               } else if (couldBeSilentPrefix(segmentText)) {
