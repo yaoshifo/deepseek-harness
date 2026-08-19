@@ -19,6 +19,11 @@ import { registerSessionCommands } from './engine/commands.js'
 
 export const name = 'feishu-bridge'
 
+// ctx.agents is required from apply() onward (every engine session start).
+// Without this declaration Cordis refuses ctx.agents access with "cannot get
+// property without inject" — observed live on the M1 记账驴 cut-over.
+export const inject = ['agents']
+
 /** Feishu app credentials for one bot. Each app gets its own WS client (MIGRATION.md D5). */
 export interface FeishuAppConfig {
   /** Feishu open-platform app id (`cli_...`). */
