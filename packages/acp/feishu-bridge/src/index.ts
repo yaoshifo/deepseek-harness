@@ -31,6 +31,10 @@ import { registerCronTool } from './tools/cron.js'
 import { registerRelayTool } from './tools/relay.js'
 import { registerChatroomTool } from './tools/chatroom.js'
 import { registerChatroomCommands } from './engine/chatroom-cmd.js'
+import { registerProviderCommands } from './engine/provider-commands.js'
+import { registerPredictCommands } from './engine/predict.js'
+import { registerSessionMiscCommands } from './engine/session-misc.js'
+import { getProviderModel } from './engine/provider.js'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.js'
 import type { StreamPreviewCfg } from './streaming.js'
 
@@ -114,6 +118,42 @@ export interface PlanRenderConfig {
   timeoutSec?: number
 }
 
+/** Next-message prediction after each turn (Go [projects.predict_next], #33). */
+export interface PredictNextConfig {
+  /** Prediction on; default false. */
+  enabled?: boolean
+  /** Named provider route the prediction fork runs on. */
+  provider?: string
+  /** Prediction timeout in seconds (default 120). */
+  timeoutSec?: number
+  /** Prediction prompt override (default: the built-in Chinese prompt). */
+  prompt?: string
+  /** 'resume' forks the live transcript; default 'lightweight' one-shot query. */
+  mode?: string
+}
+
+/** One-line turn summary appended to the insight card (Go [projects.turn_summary]). */
+export interface TurnSummaryConfig {
+  /** Summary on; default false. */
+  enabled?: boolean
+  /** Named provider route the summary fork runs on. */
+  provider?: string
+  /** Summary timeout in seconds (default 30). */
+  timeoutSec?: number
+  /** Summary prompt override (default: the built-in Chinese prompt). */
+  prompt?: string
+}
+
+/** Automatic context compression (Go [projects.auto_compress]). */
+export interface AutoCompressConfig {
+  /** Compression on; default false. */
+  enabled?: boolean
+  /** Token estimate threshold that arms compression. */
+  maxTokens?: number
+  /** Minimum minutes between compressions (default 30). */
+  minGapMins?: number
+}
+
 /** One bound project: an agent working dir plus the Feishu bot serving it. */
 export interface ProjectConfig {
   /** Unique project name used in routing, logs, and tool output. */
@@ -130,6 +170,19 @@ export interface ProjectConfig {
   groupName?: GroupNameConfig
   /** Plan/reply HTML rendering (#47/#48). */
   planRender?: PlanRenderConfig
+
+  /** Next-message prediction after each turn (#33). */
+  predictNext?: PredictNextConfig
+  /** One-line turn summary on the insight card. */
+  turnSummary?: TurnSummaryConfig
+  /** Automatic context compression (Go [projects.auto_compress]). */
+  autoCompress?: AutoCompressConfig
+  /** Quick provider commands: /strong → provider name (Go provider_shortcuts). */
+  providerShortcuts?: Record<string, string>
+  /** Rotate the chat to a fresh session after N idle minutes (Go reset_on_idle_mins). */
+  resetOnIdleMins?: number
+  /** /list etc. only show engine-tracked sessions (Go filter_external_sessions). */
+  filterExternalSessions?: boolean
   /** Multi-role chatroom tuning (Go [chatroom]). */
   chatroom?: ChatroomConfig
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
@@ -394,6 +447,28 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       renderPngScript: Schema.string().description('HTML→PNG renderer script, absolute path; empty = send the .html file'),
       timeoutSec: Schema.natural().description('Render fork timeout in seconds (default 600, pre-render cap 360)'),
     }).description('Plan/reply HTML rendering (Go [projects.plan_render], #47/#48)'),
+
+    predictNext: Schema.object({
+      enabled: Schema.boolean().description('Predict the next user message after each turn (#33); default false'),
+      provider: Schema.string().description('Named provider route for the prediction fork'),
+      timeoutSec: Schema.natural().description('Prediction timeout in seconds (default 120)'),
+      prompt: Schema.string().description('Prediction prompt override'),
+      mode: Schema.string().description('resume (fork the live transcript) or lightweight (default)'),
+    }).description('Next-message prediction (#33, Go [projects.predict_next])'),
+    turnSummary: Schema.object({
+      enabled: Schema.boolean().description('One-line turn summary on the insight card; default false'),
+      provider: Schema.string().description('Named provider route for the summary fork'),
+      timeoutSec: Schema.natural().description('Summary timeout in seconds (default 30)'),
+      prompt: Schema.string().description('Summary prompt override'),
+    }).description('Turn summary (Go [projects.turn_summary])'),
+    autoCompress: Schema.object({
+      enabled: Schema.boolean().description('Compress the context when the token estimate crosses the cap; default false'),
+      maxTokens: Schema.natural().description('Token estimate threshold that arms compression'),
+      minGapMins: Schema.natural().description('Minimum minutes between compressions (default 30)'),
+    }).description('Automatic context compression (Go [projects.auto_compress])'),
+    providerShortcuts: Schema.dict(Schema.string()).description('Quick provider commands: /strong → provider name (Go provider_shortcuts)'),
+    resetOnIdleMins: Schema.natural().description('Rotate the chat to a fresh session after N idle minutes; 0 disables'),
+    filterExternalSessions: Schema.boolean().description('/list etc. only show engine-tracked sessions'),
     chatroom: Schema.object({
       rolesDir: Schema.string().description('Root directory holding one persona subdirectory per role'),
       maxRoles: Schema.natural().description('Cap on role agents per chatroom (default 5)'),
@@ -667,7 +742,15 @@ export function buildProjectAssembly(
   shared?: SharedProcessServices,
 ): { engine: Engine; adapter: DshAgentAdapter; platform: FeishuPlatform } {
   const routeNames = Object.keys(config.providers)
-  const activeProvider = project.agent?.provider ?? routeNames[0] ?? ''
+  const projectDataDir = join(dataRoot, project.name)
+  // The engine/platform stores assume the data dirs exist (Go main created
+  // cfg.DataDir upfront); without this the spawned-chat registry save ENOENTs.
+  mkdirSync(join(projectDataDir, 'sessions'), { recursive: true })
+  const projectState = new ProjectStateStore(join(projectDataDir, 'state.json'))
+  // A runtime /provider switch persists into the project state; it wins over
+  // the config default on restart (Go writes config.toml, this runtime is
+  // read-only — the same override pattern the monitor chats use).
+  const activeProvider = projectState.activeProvider() || project.agent?.provider || routeNames[0] || ''
   const routes: AdapterProviderRoute[] = routeNames.flatMap((routeName) => {
     const route = config.providers[routeName]
     if (route === undefined) return []
@@ -690,10 +773,6 @@ export function buildProjectAssembly(
     activeProvider,
   })
 
-  const projectDataDir = join(dataRoot, project.name)
-  // The engine/platform stores assume the data dirs exist (Go main created
-  // cfg.DataDir upfront); without this the spawned-chat registry save ENOENTs.
-  mkdirSync(join(projectDataDir, 'sessions'), { recursive: true })
   const platform = new FeishuPlatform({
     appID: project.feishu.appId,
     appSecret: project.feishu.appSecret,
@@ -714,7 +793,6 @@ export function buildProjectAssembly(
   })
 
   const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language))
-  const projectState = new ProjectStateStore(join(projectDataDir, 'state.json'))
   engine.setProjectStateStore(projectState)
   const effectiveWorkDir = applyProjectStateOverride(adapter, project.workdir, projectState)
   engine.setBaseWorkDir(effectiveWorkDir)
@@ -727,8 +805,23 @@ export function buildProjectAssembly(
   }
   registerSessionCommands(engine)
   registerChatroomCommands(engine)
+  // M7-c: /provider family + shortcuts, /btw + insight forks, /compress.
+  registerProviderCommands(engine)
+  registerPredictCommands(engine)
+  registerSessionMiscCommands(engine)
+  engine.setProviderSaveFunc((name) => {
+    projectState.setActiveProvider(name)
+    projectState.save()
+  })
+  if (project.providerShortcuts !== undefined) {
+    engine.setProviderShortcuts(project.providerShortcuts)
+  }
   wireGroupName(engine, project)
   wirePlanRender(engine, adapter, project)
+
+  wirePredictNext(engine, project, config.providers)
+  wireTurnSummary(engine, project)
+  wireSessionMisc(engine, project)
   wireChatroom(engine, config.chatroom, project.chatroom, dataRoot)
   // M6b: monitor domain (#53) — config block → engine MonitorCore + the
   // /monitor command family + runtime persistence via the project state.
@@ -848,6 +941,52 @@ function wirePlanRender(engine: Engine, adapter: DshAgentAdapter, project: Proje
     ...(r.renderPngScript !== undefined && r.renderPngScript !== '' ? { pngScript: expandHome(r.renderPngScript) } : {}),
   })
   if (r.effort !== undefined && r.effort !== '') adapter.setRenderEffort(r.effort)
+}
+
+/**
+ * Configure predict-next (Go wirePredictNext): the model label resolves from
+ * the provider route table; timeout defaults to 120s.
+ */
+function wirePredictNext(engine: Engine, project: ProjectConfig, providers: FeishuBridgeConfig['providers']): void {
+  const p = project.predictNext
+  if (p?.enabled !== true) {
+    engine.setPredictNextConfig(false, '', '', 0, '', '')
+    return
+  }
+  const timeoutSec = p.timeoutSec !== undefined && p.timeoutSec > 0 ? p.timeoutSec : 120
+  const model = getProviderModel(
+    Object.entries(providers).flatMap(([name, route]) =>
+      route.model !== undefined ? [{ name, model: route.model }] : []),
+    p.provider ?? '',
+    '',
+  )
+  engine.setPredictNextConfig(true, p.provider ?? '', model, timeoutSec * 1000, p.prompt ?? '', p.mode ?? '')
+}
+
+/** Configure turn-summary (Go wireTurnSummary): timeout defaults to 30s. */
+function wireTurnSummary(engine: Engine, project: ProjectConfig): void {
+  const t = project.turnSummary
+  if (t?.enabled !== true) {
+    engine.setTurnSummaryConfig(false, '', 0, '')
+    return
+  }
+  const timeoutSec = t.timeoutSec !== undefined && t.timeoutSec > 0 ? t.timeoutSec : 30
+  engine.setTurnSummaryConfig(true, t.provider ?? '', timeoutSec * 1000, t.prompt ?? '')
+}
+
+/**
+ * Configure the session misc domain (Go wire.go): reset_on_idle rotation,
+ * auto_compress thresholds, and the external-session filter.
+ */
+function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
+  if (project.resetOnIdleMins !== undefined) {
+    engine.setResetOnIdle(project.resetOnIdleMins * 60_000)
+  }
+  const a = project.autoCompress
+  if (a?.enabled === true) {
+    engine.setAutoCompressConfig(true, a.maxTokens ?? 0, (a.minGapMins ?? 0) * 60_000)
+  }
+  engine.setFilterExternalSessions(project.filterExternalSessions === true)
 }
 
 /** Expand a leading ~ in a config path so the config stays portable across machines (Go expandHome). */

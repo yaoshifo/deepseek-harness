@@ -18,6 +18,8 @@ interface ProjectStateData {
   monitor_chats?: string
   /** Runtime /monitor mode override (#53; empty = use config). */
   monitor_mode?: string
+  /** Runtime active-provider override from /provider switch (#9; empty = use config). */
+  active_provider?: string
 }
 
 /** Persists lightweight runtime state for one project. */
@@ -81,6 +83,15 @@ export class ProjectStateStore {
 
   setMonitorMode(mode: string): void {
     this.state.monitor_mode = mode
+  }
+
+  /** The runtime active-provider override ('' when unset = config default). */
+  activeProvider(): string {
+    return this.state.active_provider ?? ''
+  }
+
+  setActiveProvider(name: string): void {
+    this.state.active_provider = name
   }
 
   /** Persist synchronously (Go saveLocked). */

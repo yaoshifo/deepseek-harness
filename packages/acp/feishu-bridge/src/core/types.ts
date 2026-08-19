@@ -269,6 +269,15 @@ export interface Agent {
   stop(): Promise<void>
 }
 
+/**
+ * Agent session whose context can be compacted on demand (Go
+ * ContextCompressor, whose "/compact" message round-trip becomes a direct
+ * ctx.compaction.compactNow call in the dsh adapter).
+ */
+export interface SessionCompressor {
+  compress(signal?: AbortSignal): Promise<void>
+}
+
 /** Optional: agent accepts per-session env vars (CC_PROJECT, …). */
 export interface SessionEnvInjector {
   setSessionEnv(env: string[]): void
@@ -549,6 +558,14 @@ export interface ChatChangedNotifier {
   setChatChangedHandler(handler: (sessionKey: string) => void): void
 }
 
+/**
+ * Platform that detects message recalls (Go RecallNotifier, #30): the engine
+ * cancels the recalled message's queued entry before it reaches the agent.
+ */
+export interface RecallNotifier {
+  setRecallHandler(handler: (messageID: string) => void): void
+}
+
 /** Platform that can set a group avatar from a Lucide icon name (#52, Go GroupIconAvatarSetter). */
 export interface GroupIconAvatarSetter {
   setGroupIconAvatar(sessionKey: string, iconName: string, groupName: string): Promise<void>
@@ -759,6 +776,16 @@ export function asChatRenamedNotifier(p: Platform): ChatRenamedNotifier | undefi
 
 export function asChatChangedNotifier(p: Platform): ChatChangedNotifier | undefined {
   return withMethod<ChatChangedNotifier>(p, 'setChatChangedHandler')
+}
+
+export function asRecallNotifier(p: Platform): RecallNotifier | undefined {
+  return withMethod<RecallNotifier>(p, 'setRecallHandler')
+}
+
+export function asSessionCompressor(s: AgentSession | undefined): SessionCompressor | undefined {
+  return s !== undefined && typeof (s as Partial<SessionCompressor>).compress === 'function'
+    ? s as AgentSession & SessionCompressor
+    : undefined
 }
 
 export function asGroupIconAvatarSetter(p: Platform): GroupIconAvatarSetter | undefined {

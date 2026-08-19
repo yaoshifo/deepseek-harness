@@ -558,6 +558,12 @@ export class DshAgentAdapter {
   }
 
   setActiveProvider(name: string): boolean {
+    // '' clears the selection (Go SetActiveProvider("") semantics): the
+    // next startSession falls back to the dsh default route.
+    if (name === '') {
+      this.cfg.activeProvider = ''
+      return true
+    }
     if (!this.cfg.providers.some(r => r.name === name)) return false
     this.cfg.activeProvider = name
     return true
@@ -726,7 +732,7 @@ export class DshAgentAdapter {
         ...(setup !== undefined ? { setup } : {}),
       })
     }
-    const session = new DshAgentSession(key, handle)
+    const session = new DshAgentSession(key, handle, this.ctx)
     // Lazily register the userQuestions provider now that the plugin tree
     // is fully loaded (at constructor time it may not be available yet).
     this.ensureUserQuestionsProvider()
@@ -805,6 +811,7 @@ function thinkingOfBlocks(blocks: readonly ContentBlock[] | undefined): string {
 export class DshAgentSession implements AgentSession {
   private readonly key: string
   private handle: DshAgentHandleLike
+  private readonly ctx: DshContextLike | undefined
   private readonly channel = new EventChannel()
   private disposed = false
   private turnText = ''
@@ -816,9 +823,10 @@ export class DshAgentSession implements AgentSession {
   /** Pending AskUserQuestion answers: requestID → settle + count (M3). */
   private readonly pendingQuestionAnswers = new Map<string, { settle: (answers: string[]) => void; count: number }>()
 
-  constructor(key: string, handle: DshAgentHandleLike) {
+  constructor(key: string, handle: DshAgentHandleLike, ctx?: DshContextLike) {
     this.key = key
     this.handle = handle
+    this.ctx = ctx
   }
 
   /** The engine-side session key (diagnostics). */
@@ -832,6 +840,21 @@ export class DshAgentSession implements AgentSession {
 
   alive(): boolean {
     return !this.disposed
+  }
+
+  /**
+   * SessionCompressor (Go ContextCompressor "/compact"): trigger dsh's
+   * native manual compaction on this session's agent. Throws when the
+   * compaction service is not loaded in the runtime tree.
+   */
+  async compress(signal?: AbortSignal): Promise<void> {
+    const compaction = this.ctx?.get('compaction') as
+      | { compactNow(agent: unknown, signal: AbortSignal, sourceCommandId?: unknown): Promise<unknown> }
+      | undefined
+    if (compaction === undefined) {
+      throw new Error('compaction service not available')
+    }
+    await compaction.compactNow(this.handle.agent, signal ?? new AbortController().signal)
   }
 
   /** Most recent assistant text (listSessions summaries). */
