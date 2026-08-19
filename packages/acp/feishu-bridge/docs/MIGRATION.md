@@ -103,6 +103,7 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 
 - **E 群验收合并（2026-08-19）**：18 项 B 类接线修复（cf89cdaf6a，985 测试全绿；index.ts 三处冲突与 D 群 groupName 叠加保留）。生产 profile 已按旧 toml 补：language zh、display.stallTimeoutSecs 200/stallMaxRetries 3、adminFrom '*'、interactiveIdleTimeoutMins 30；重建 promote 后基础冒烟通过。**里程碑队列推进**：M5 chatroom 群、M6a cron+relay 群已派（装配面定型；命令注册各自独立文件避免撞车）；M6b monitor 群待 M5/M6a 合并后派；G 群沙箱调查在飞。
 
+- **遗留② 关闭 + 前台权限修复（2026-08-19）**：G 群调查证伪 landlock 归因（darwin 沙箱链是 seatbelt，landlock 不可达；rc.7 workspace-write 端到端健康；历史崩溃最可能是构建态一次性故障且证据被 '>' 截断）——profile 已切回 workspace-write（含 permission preset），daemon 无崩溃。真机随即暴露并修复 M3 权限域错层移植：前台事件循环错套了后台 unsolicited 门（shouldSurfaceUnsolicitedPermission），导致沙箱 escalation 审批静默自动拒绝；b488d22b3c 按 Go 语义改为前台一律 surface（后台 auto-deny 留待 unsolicited reader，纯函数表测仍覆盖门语义），重做两个固化错误语义的测试。**真机审批全链路通过**：escalation 审批卡（含 justification + 允许/全准/拒绝按钮）→ 文本「允许」解锁 → 文件落盘 → 完成通知。986 测试全绿。运维改进采纳：daemon 重启日志改保留轮换（mv 时间戳）不再截断。
 **M5 聊天室**
 - 测试先行：engine_chatroom_test(46)、gather/end/venv/roles/ledger 套件。
 - 实现：/chatroom #41、角色挑选 #43、--research #57、随便聊聊 #59、`feishu_bridge_chatroom` 工具族、bare persona。
@@ -258,7 +259,7 @@ grep -v 'message_read\|card.action\|spinner' ~/.dsh/feishu-bridge-stderr.log | t
 ### 遗留清单（下次继续）
 
 1. **ExitPlanMode plan-review intent 答案编码**：✅（M4-C，2026-08-19）adapter 的 userQuestions provider 识别 `intent.kind='plan-review'`，按 Go `planReviewItem` 语义渲染为 ExitPlanMode 权限卡（heading=plan 首行），allow→`selected:[intent.approve]`，deny→`selected:[]`+`custom:拒绝消息`（plan-mode 据此保持规划并回喂反馈）
-2. **审批卡真机测试**：workspace-write 沙箱模式在 macOS 上导致 daemon 崩溃（dsh landlock 兼容性），无法触发真机 permission_request；danger-full-access 下不会弹审批。需排查 sandbox 在 macOS 的兼容性或找替代触发方式
+2. ~~**审批卡真机测试**~~ ✅ 已关闭（2026-08-19）：G 群证伪 landlock 归因（darwin 走 seatbelt），workspace-write 切回后无崩溃；前台权限错层移植修复后审批卡真机全链路通过（见 M4 段记录）
 3. **card.action.trigger 按钮回调真机验证**：代码已就绪（platform.ts onCardAction + engine handleMessage 路由），但问题卡的按钮点击未被真实测试过——文本回答已验证，按钮回调路径相同但未跑通
 4. **profile 模板更新**：`packages/acp/feishu-bridge/profile/` 里的模板还是 Linux 路径（/home/hm）+ glm 路由；本机用的是 profile 实例（install.sh 不覆盖），模板与实例已分叉——合并回 dev 前需统一
 5. **M2 遗留**：✅ 完成卡的完整状态页脚（model/workdir/RAM）与紫色通知卡依赖 M4/M7
