@@ -12,17 +12,19 @@ import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
-import type { DshContextLike, ProviderRoute as AdapterProviderRoute } from './agent-dsh/adapter.js'
+import type { ProviderRoute as AdapterProviderRoute } from './agent-dsh/adapter.js'
 import { FeishuPlatform } from './feishu/platform.js'
 import { Engine } from './engine/engine.js'
 import { registerSessionCommands } from './engine/commands.js'
+import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from './tools/subtask.js'
 
 export const name = 'feishu-bridge'
 
 // ctx.agents is required from apply() onward (every engine session start).
 // Without this declaration Cordis refuses ctx.agents access with "cannot get
 // property without inject" — observed live on the M1 记账驴 cut-over.
-export const inject = ['agents']
+// ctx.tools carries the feishu_bridge_subtask tool family (plan D4).
+export const inject = ['agents', 'tools']
 
 /** Feishu app credentials for one bot. Each app gets its own WS client (MIGRATION.md D5). */
 export interface FeishuAppConfig {
@@ -147,15 +149,18 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
 
 /**
  * Start the bridge: one Engine + one Feishu WS platform per configured
- * project (MIGRATION.md §1). An empty projects list idles gracefully — the
- * M0 smoke behavior. TODO(M2+): card surfaces, tools, and the liveness
- * watchdog arrive with their milestones.
+ * project (MIGRATION.md §1), plus the process-wide feishu_bridge_subtask
+ * tool routed by caller agent (plan D4). An empty projects list idles
+ * gracefully — the M0 smoke behavior. TODO(M6+): cron/relay tools and the
+ * liveness watchdog arrive with their milestones.
  *
- * @param ctx - Plugin context (provides ctx.agents and event dispatch).
+ * @param ctx - Plugin context (provides ctx.agents, ctx.tools, and event dispatch).
  * @param config - Validated plugin config.
  */
 export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   const dataRoot = config.dataDir ?? join(homedir(), '.dsh', 'feishu-bridge')
+  /** One live project: its engine plus the adapter that owns its agents. */
+  const live: Array<{ engine: Engine; adapter: DshAgentAdapter }> = []
   for (const project of config.projects) {
     const routeNames = Object.keys(config.providers)
     const activeProvider = project.agent?.provider ?? routeNames[0] ?? ''
@@ -172,9 +177,9 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
       }]
     })
 
-    // The structural slice (agents + on) is exactly what the real Cordis
-    // context provides; the cast documents that compatibility.
-    const agent = new DshAgentAdapter(ctx as unknown as DshContextLike, {
+    // The structural slice (agents + on + get) is exactly what the real
+    // Cordis context provides; the adapter consumes it structurally.
+    const agent = new DshAgentAdapter(ctx, {
       agentName: 'dsh',
       cwd: project.workdir,
       providers: routes,
@@ -189,6 +194,7 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
 
     const engine = new Engine(project.name, agent, [platform], join(dataRoot, project.name, 'sessions.json'), '')
     registerSessionCommands(engine)
+    live.push({ engine, adapter: agent })
     if (project.features?.injectSender === true) engine.setInjectSender(true)
     if (project.features?.quiet === true) {
       engine.setDisplayConfig({ thinkingMessages: false, toolMessages: false })
@@ -208,4 +214,17 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
       return () => { void engine.stop() }
     })
   }
+
+  // Plan D4: one process-wide feishu_bridge_subtask tool routes each call by
+  // its CALLER agent back to the engine + engine session that agent belongs
+  // to — the Go CLI's CC_PROJECT/CC_SESSION_KEY env contract, without env.
+  registerSubtaskTool(ctx, (caller): SubtaskRoute | undefined => {
+    const id = agentIDOf(caller)
+    if (id === '') return undefined
+    for (const { engine, adapter } of live) {
+      const sessionKey = adapter.engineKeyForAgentID(id)
+      if (sessionKey !== undefined) return { engine, sessionKey }
+    }
+    return undefined
+  })
 }

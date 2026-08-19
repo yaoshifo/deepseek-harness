@@ -19,10 +19,12 @@
 import { randomBytes } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import {
   ContinueSession,
   EventChannel,
+  ForkSessionPrefix,
 } from '../core/types.js'
 import type {
   AgentSession,
@@ -36,6 +38,8 @@ import type {
 export interface DshAgentLike {
   readonly id: unknown
   readonly status: 'idle' | 'running'
+  /** The agent's durable session log (fork seeds slice its completed turns). */
+  readonly session: { readonly events: readonly SessionEvent[] }
   followup(message: unknown): void
   cancel(cause: { kind: string }, options?: { keepInbox?: boolean }): void
 }
@@ -82,7 +86,9 @@ export interface DshAgentHandleLike {
 export interface DshCreateOptionsLike {
   sessionId?: unknown
   resumeSessionId?: unknown
-  meta?: { cwd?: string }
+  meta?: { cwd?: string; parentSession?: unknown; seedLength?: number }
+  /** Fork seed: the parent's completed-turn prefix (see startSession). */
+  seed?: readonly SessionEvent[]
   agentOptions?: { provider?: string; model?: string; reasoningEffort?: string }
 }
 
@@ -125,6 +131,21 @@ export interface DshAdapterConfig {
 export function stripModelAlias(model: string): string {
   if (model.endsWith('[1m]')) return model.slice(0, -'[1m]'.length)
   return model
+}
+
+/**
+ * The balanced completed-turn prefix of a live parent agent's session log:
+ * every event up to and including the last `turn/end` (the in-flight turn is
+ * unbalanced and cannot replay as a child session). The /fork child is seeded
+ * with exactly this prefix, mirroring Go's copyForkSession on-disk copy.
+ * Because live sequence numbers equal array indexes, the slice stays a valid
+ * seed contiguous from seq 0.
+ */
+function completedTurnPrefix(parent: DshAgentLike): SessionEvent[] {
+  const events = parent.session.events
+  const lastEnd = events.findLast(e => e.type === 'turn/end')
+  if (lastEnd === undefined) return []
+  return events.slice(0, lastEnd.seq + 1)
 }
 
 /** Adapter configuration (providers + active route). */
@@ -271,20 +292,66 @@ export class DshAgentAdapter {
   }
 
   /**
+   * ForkSessionPreparer (Go PrepareForkSession): verify the fork source is
+   * reachable BEFORE the child group exists, so the engine's cross-workdir
+   * guard fails fast. The TS adapter seeds from the LIVE parent agent (Go
+   * reads the persisted log), so reachability = the parent being live.
+   */
+  prepareForkSession(origID: string, _parentWorkDir: string, _childWorkDir: string): Promise<void> {
+    if (this.ctx.agents.get(SessionId(origID)) === undefined) {
+      return Promise.reject(new Error(`dsh: fork source session "${origID}" not found`))
+    }
+    return Promise.resolve()
+  }
+
+  /**
+   * The engine session key owning a live native agent id, when this adapter
+   * owns it. Routes feishu_bridge_subtask tool calls from the caller agent
+   * back to its engine session (plan D4 — caller-agent routing, no env).
+   */
+  engineKeyForAgentID(nativeID: string): string | undefined {
+    return this.liveSessions.get(nativeID)?.sessionKey()
+  }
+
+  /**
    * Start (or resume) the agent session the engine identified. An empty id
    * (or the ContinueSession sentinel) creates a fresh native session keyed
-   * by the engine session key; a concrete id resumes that persisted session.
+   * by the engine session key; a concrete id resumes that persisted session;
+   * a `__fork__<origID>` sentinel creates a new session seeded with the
+   * parent's completed-turn prefix (Go /fork semantics).
    */
   async startSession(sessionID: string): Promise<AgentSession> {
     const envKey = this.env.find(e => e.startsWith('CC_SESSION_KEY='))?.slice('CC_SESSION_KEY='.length) ?? ''
     const key = envKey !== '' ? envKey : sessionID
-    const isResume = sessionID !== '' && sessionID !== ContinueSession
+    const isFork = sessionID.startsWith(ForkSessionPrefix)
+    const isResume = !isFork && sessionID !== '' && sessionID !== ContinueSession
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing
 
     let handle: DshAgentHandleLike
-    if (isResume) {
+    if (isFork) {
+      // Fork: copy the parent's completed turns into a fresh native session
+      // (seed), so the child inherits the conversation without appending to
+      // the parent's log. Only a LIVE parent can be seeded — Go reads the
+      // persisted log instead; when the source is gone this degrades to a
+      // fresh session exactly like Go does.
+      const origID = sessionID.slice(ForkSessionPrefix.length)
+      const parent = this.ctx.agents.get(SessionId(origID))
+      const seed = parent !== undefined ? completedTurnPrefix(parent) : []
+      if (seed.length === 0) {
+        console.warn(`agent-dsh: fork source has no seedable turns, starting fresh (orig=${origID})`)
+      }
+      handle = await this.ctx.agents.create({
+        sessionId: SessionId(freshNativeSessionId()),
+        meta: {
+          cwd: this.cfg.cwd,
+          ...(parent !== undefined ? { parentSession: SessionId(origID), seedLength: seed.length } : {}),
+        },
+        ...(seed.length > 0 ? { seed } : {}),
+        agentOptions: this.routeAgentOptions(),
+      })
+    } else if (isResume) {
       handle = await this.ctx.agents.resume({
         resumeSessionId: SessionId(sessionID),
         agentOptions: this.routeAgentOptions(),

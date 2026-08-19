@@ -12,6 +12,9 @@
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { atomicWriteFile } from '../atomicwrite.js'
+import type { GroupSpawnOptions, SpawnedChatInfo } from '../core/types.js'
+
+export type { GroupSpawnOptions, SpawnedChatInfo }
 
 /**
  * Persisted marker that a chat was /spawn-created. Field semantics follow Go's
@@ -32,22 +35,6 @@ export interface SpawnedChatMeta {
 
 /** How long a /done'd entry lingers before eviction (Go spawnedChatRetention). */
 export const spawnedChatRetention = 7 * 24 * 3600_000
-
-/** Controls how a spawned group is created (Go core.GroupSpawnOptions). */
-export interface GroupSpawnOptions {
-  /** Create a topic-style group where each thread gets its own session. */
-  topicGroup?: boolean
-  /** Effective working directory at spawn time, seeding the enterprise tag. */
-  workDir?: string
-}
-
-/** An active spawned group chat (Go core.SpawnedChatInfo). */
-export interface SpawnedChatInfo {
-  chatID: string
-  chatName: string
-  /** Originating bot identity (platform name). */
-  botName: string
-}
 
 /**
  * Extract the chat ID from a Feishu session key ("feishu:\<chatID\>[:...]");

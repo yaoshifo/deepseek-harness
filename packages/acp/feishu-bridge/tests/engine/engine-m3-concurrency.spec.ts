@@ -116,6 +116,7 @@ describe('Ps_BlockedOnPermission_RoutesToQueue', () => {
       isSpawnedGroup: false,
       isPermissionAction: false,
       isAskqCardAction: false,
+      isCardAction: false,
       parentMessageID: '',
       quotedText: '',
     }, key)

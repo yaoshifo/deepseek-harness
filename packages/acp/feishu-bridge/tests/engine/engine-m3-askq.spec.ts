@@ -48,6 +48,7 @@ function msg(overrides: Partial<Message> = {}): Message {
     isSpawnedGroup: false,
     isPermissionAction: false,
     isAskqCardAction: false,
+    isCardAction: false,
     parentMessageID: '',
     quotedText: '',
     ...overrides,

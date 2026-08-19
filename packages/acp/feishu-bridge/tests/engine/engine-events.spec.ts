@@ -51,6 +51,7 @@ function msg(overrides: Partial<Parameters<Engine['receiveMessage']>[1]> = {}) {
     isSpawnedGroup: false,
     isPermissionAction: false,
     isAskqCardAction: false,
+    isCardAction: false,
     parentMessageID: '',
     quotedText: '',
     ...overrides,

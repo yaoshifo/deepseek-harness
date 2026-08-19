@@ -18,6 +18,7 @@ function createFakeAgent(id: string, sink: (sessionId: string, event: Record<str
   const agent: RecordedAgent & { status: 'idle' | 'running' } = {
     id,
     status: 'idle',
+    session: { events: [] },
     followups: [] as unknown[],
     cancels: [] as Array<{ cause: { kind: string }; keepInbox?: boolean | undefined }>,
     disposed: false,
@@ -179,6 +180,17 @@ describe('DshAgentAdapter', () => {
 
     expect(h.creates).toHaveLength(1)
     expect(h.resumes).toHaveLength(0)
+  })
+
+  it('engineKeyForAgentID maps a live native agent id back to its engine key', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_4:ou_9'])
+
+    const session = await a.startSession('')
+
+    expect(a.engineKeyForAgentID(session.currentSessionID())).toBe('feishu:oc_4:ou_9')
+    expect(a.engineKeyForAgentID('agent-unknown')).toBeUndefined()
   })
 
   it('routes agentOptions through the active provider with [1m] stripped', async () => {

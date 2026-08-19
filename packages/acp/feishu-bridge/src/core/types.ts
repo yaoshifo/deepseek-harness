@@ -128,6 +128,8 @@ export interface Message {
   isSpawnedGroup: boolean
   isPermissionAction: boolean
   isAskqCardAction: boolean
+  /** A card.action.trigger button press with an act:/nav: value (M4). */
+  isCardAction: boolean
   parentMessageID: string
   quotedText: string
 }
@@ -318,6 +320,16 @@ export interface CardSender {
   replyCard(replyCtx: unknown, card: unknown): Promise<void>
 }
 
+/**
+ * Optional: platform can PATCH the card a card-action callback arrived on, so
+ * an act: button press replaces its own prompt card in place (Go returns the
+ * new card in the callback response; the async TS dispatch PATCHes the
+ * recorded message id instead).
+ */
+export interface CardRefresher {
+  refreshCard(sessionKey: string, card: unknown): Promise<void>
+}
+
 /** Optional: platform can send inline buttons (Go InlineButtonSender). */
 export interface InlineButtonSender {
   sendWithButtons(replyCtx: unknown, content: string, buttonRows: ButtonOption[][]): Promise<void>
@@ -373,6 +385,10 @@ export function asFileSender(p: Platform): FileSender | undefined {
 
 export function asCardSender(p: Platform): CardSender | undefined {
   return withMethod<CardSender>(p, 'sendCard')
+}
+
+export function asCardRefresher(p: Platform): CardRefresher | undefined {
+  return withMethod<CardRefresher>(p, 'refreshCard')
 }
 
 export function asInlineButtonSender(p: Platform): InlineButtonSender | undefined {

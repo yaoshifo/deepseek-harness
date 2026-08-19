@@ -130,6 +130,7 @@ const callerMsg = {
   isSpawnedGroup: false,
   isPermissionAction: false,
   isAskqCardAction: false,
+  isCardAction: false,
   parentMessageID: '',
   quotedText: '',
 } satisfies Message

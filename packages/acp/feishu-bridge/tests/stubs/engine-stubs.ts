@@ -346,6 +346,7 @@ export function newStubMessage(): Message {
     isSpawnedGroup: false,
     isPermissionAction: false,
     isAskqCardAction: false,
+    isCardAction: false,
     parentMessageID: '',
     quotedText: '',
   }

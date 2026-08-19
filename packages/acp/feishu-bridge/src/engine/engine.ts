@@ -78,6 +78,7 @@ import type {
 } from '../core/types.js'
 import {
   asCardSender,
+  asCardRefresher,
   asChatJumpURLer,
   asForkQuerierWithProvider,
   asForkSessionPreparer,
@@ -386,6 +387,7 @@ function emptyMessage(): Message {
     isSpawnedGroup: false,
     isPermissionAction: false,
     isAskqCardAction: false,
+    isCardAction: false,
     parentMessageID: '',
     quotedText: '',
   }
@@ -660,6 +662,16 @@ export class Engine {
       msg.content = resolved === '' ? msg.extraContent : `${msg.extraContent}\n${resolved}`
     } else {
       msg.content = resolved
+    }
+
+    // M4: card-button actions (act:) run their side effect and update the
+    // pressed card in place — before permission handling and long before any
+    // agent turn (Go handleCardNav).
+    if (msg.isCardAction) {
+      void this.handleCardAction(p, msg, content).catch((error: unknown) => {
+        console.error(`engine: card action failed (${msg.sessionKey}): ${String(error)}`)
+      })
+      return
     }
 
     // M3: Route permission responses to handlePendingPermission before normal
@@ -3519,6 +3531,37 @@ export class Engine {
     sess.setWorktreeInfo('', '', '', '')
     this.sessions.save()
     return memDir !== '' ? this.i18n.tf(MsgWorktreeOrphanKept, memDir) : ''
+  }
+
+  /**
+   * Handle one card-button action dispatched by a platform (Go handleCardNav,
+   * M4 subset: the worktree Keep/Remove card). `action` is the full act:
+   * value; the command runs its side effect and the pressed card is replaced
+   * in place via the platform's card refresher, falling back to a new card.
+   * Other act: commands are consumed silently — their render domains arrive
+   * with later milestones.
+   */
+  async handleCardAction(p: Platform, msg: Message, action: string): Promise<void> {
+    const body = action.slice('act:'.length)
+    const spaceIdx = body.indexOf(' ')
+    const cmd = spaceIdx === -1 ? body : body.slice(0, spaceIdx)
+    const args = spaceIdx === -1 ? '' : body.slice(spaceIdx + 1).trim()
+    if (cmd !== '/wt') {
+      console.info(`engine: card action has no handler yet, ignoring (${msg.sessionKey}: ${cmd})`)
+      return
+    }
+    const notification = await this.executeWorktreeAction(msg.sessionKey, args)
+    const card = this.renderWorktreeDoneCard(args, notification)
+    const refresher = asCardRefresher(p)
+    if (refresher !== undefined) {
+      try {
+        await refresher.refreshCard(msg.sessionKey, card)
+        return
+      } catch (error) {
+        console.warn(`engine: card refresh failed, sending a new card (${msg.sessionKey}): ${String(error)}`)
+      }
+    }
+    await this.replyWithCard(p, msg.replyCtx, card)
   }
 
   /** Resolve the agent's orphan project-data dir for a worktree path (Go resolveOrphanMemoryDir). */

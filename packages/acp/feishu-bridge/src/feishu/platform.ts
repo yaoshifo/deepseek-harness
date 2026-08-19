@@ -220,6 +220,8 @@ export interface FeishuPlatformOptions {
   botAvatarKey?: string
   /** Pre-resolved grayscaled bot avatar key (startup upload fills this at runtime). */
   botAvatarKeyGray?: string
+  /** Pre-seeded bot display name (app_name); the startup bot-info probe fills it at runtime. */
+  botDisplayName?: string
 }
 
 /** Feishu reply API code for a recalled/withdrawn target message. */
@@ -280,6 +282,8 @@ export class FeishuPlatform implements Platform {
   /** Bot avatar image keys, filled by the startup probe when it runs. */
   private botAvatarKey: string
   private botAvatarKeyGray: string
+  /** The bot's app_name (Go botDisplayName); labels the bot's p2p chat on jump buttons. */
+  private displayName: string
   /** Document frequency of words across workspace project names (Go dirWordFreq). */
   private dirWordFreq: Record<string, number> = {}
   /** One-shot cache/store load + dir-tag derivation. */
@@ -300,6 +304,7 @@ export class FeishuPlatform implements Platform {
     this.patchRL = new TokenBucketRateLimiter(options.patchRateIntervalMs ?? 120, 3)
     this.botAvatarKey = options.botAvatarKey ?? ''
     this.botAvatarKeyGray = options.botAvatarKeyGray ?? ''
+    this.displayName = options.botDisplayName ?? ''
     const projectName = options.projectName !== undefined && options.projectName !== '' ? options.projectName : this.name()
     const base = `${projectName}_${this.name()}`
     const dataDir = options.dataDir ?? ''
@@ -317,6 +322,11 @@ export class FeishuPlatform implements Platform {
   /** Platform name (session-key prefix). */
   name(): string {
     return this.o.tag ?? 'feishu'
+  }
+
+  /** The bot's display name (app_name), or '' before the probe resolves (Go BotDisplayName). */
+  botDisplayName(): string {
+    return this.displayName
   }
 
   private tag(): string {
@@ -362,6 +372,7 @@ export class FeishuPlatform implements Platform {
       if ((this.o.botOpenID ?? '') === '' && info.openID !== '') {
         this.o.botOpenID = info.openID
       }
+      if (info.appName !== '') this.displayName = info.appName
       if (info.avatarURL !== '') {
         void this.uploadBotAvatars(info.avatarURL)
       }
@@ -534,10 +545,11 @@ export class FeishuPlatform implements Platform {
   }
 
   /**
-   * Handle one card.action.trigger callback (Go onCardAction, M3 subset).
-   * Parses perm:/askq: action values and dispatches as synthetic messages
-   * with isPermissionAction/isAskqCardAction flags so the engine routes
-   * them to handlePendingPermission.
+   * Handle one card.action.trigger callback (Go onCardAction). Parses
+   * perm:/askq:/act: action values and dispatches synthetic messages with the
+   * matching flag so the engine routes them: permission responses to
+   * handlePendingPermission, act: button presses (the worktree Keep/Remove
+   * card) to the card-action handler.
    */
   onCardAction(event: CardActionTriggerEvent): void {
     const action = event.event?.action
@@ -565,9 +577,19 @@ export class FeishuPlatform implements Platform {
     }
     if (actionVal === '') return
 
-    const sessionKey = `feishu:${chatID}:${userID}`
+    const sessionKey = this.sessionKeyFromCardAction(chatID, userID, action.value ?? {})
     const replyCtx: FeishuReplyContext = { messageID, chatID, sessionKey }
     const isSpawned = this.isSpawned(chatID)
+
+    // act: → synchronous card action (Go runs it in the callback response and
+    // returns the updated card; the async TS dispatch instead PATCHes the
+    // recorded message id from the engine's card-action handler).
+    if (actionVal.startsWith('act:')) {
+      if (messageID !== '') this.cardActionMsgIDs.set(sessionKey, messageID)
+      this.dispatch(sessionKey, messageID, userID, chatID, 'group',
+        actionVal, '', replyCtx, isSpawned, '', false, false, [], [], true)
+      return
+    }
 
     // perm: → permission response
     if (actionVal.startsWith('perm:')) {
@@ -600,6 +622,19 @@ export class FeishuPlatform implements Platform {
     }
   }
 
+  /**
+   * Session key for a card-action callback (Go sessionKeyFromCardAction): the
+   * value's explicit session_key wins; otherwise spawned chats and
+   * share_session_in_channel key on the chat alone, everything else on
+   * chat+user — the same key an ordinary text message in that chat would use.
+   */
+  sessionKeyFromCardAction(chatID: string, userID: string, value: Record<string, string>): string {
+    if (value.session_key !== undefined && value.session_key !== '') return value.session_key
+    if (chatID !== '' && this.isSpawned(chatID)) return `${this.tag()}:${chatID}`
+    if (this.o.shareSessionInChannel === true) return `${this.tag()}:${chatID}`
+    return `${this.tag()}:${chatID}:${userID}`
+  }
+
   /** Whether the chat is /spawn-created (external predicate or the store). */
   private isSpawned(chatID: string): boolean {
     if (this.o.isSpawnedChat !== undefined) return this.o.isSpawnedChat(chatID)
@@ -621,6 +656,7 @@ export class FeishuPlatform implements Platform {
     isAskqCardAction = false,
     images: ImageAttachment[] = [],
     files: FileAttachment[] = [],
+    isCardAction = false,
   ): void {
     if (this.handler === undefined) return
     const message: Message = {
@@ -641,6 +677,7 @@ export class FeishuPlatform implements Platform {
       isSpawnedGroup,
       isPermissionAction,
       isAskqCardAction,
+      isCardAction,
       parentMessageID,
       quotedText: '',
     }
@@ -1184,14 +1221,41 @@ export class FeishuPlatform implements Platform {
 
   /**
    * Rename a chat via Im.Chat.Update. Only the name field is sent, leaving the
-   * avatar and other fields untouched.
+   * avatar and other fields untouched. `signal` mirrors Go's ctx propagation:
+   * an aborted signal fails the rename (before the call when already aborted,
+   * promptly when it aborts mid-flight) instead of letting a stale 30s rename
+   * deadline judge an already-delivered request as failed.
    */
-  private async renameChat(chatID: string, newName: string): Promise<void> {
-    await this.withRetry('rename chat', () => this.request('rename chat', async (client) => {
+  private async renameChat(chatID: string, newName: string, signal?: AbortSignal): Promise<void> {
+    await this.withAbort(() => this.withRetry('rename chat', () => this.request('rename chat', async (client) => {
       if (client.updateChat === undefined) throw new ErrNotSupported('feishu client without chat update support')
       const resp = await client.updateChat({ chatId: chatID, name: newName })
       this.ensureOk(resp, 'rename chat')
-    }))
+    })), signal)
+  }
+
+  /**
+   * Run `make()` but reject promptly when `signal` aborts. The thunk defers
+   * the request so an already-aborted signal fails before any API call; once
+   * in flight the request keeps running (the API client surface carries no
+   * cancellation), mirroring Go's real-world case where the PUT already
+   * reached Feishu.
+   */
+  private async withAbort<T>(make: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+    if (signal === undefined) return await make()
+    signal.throwIfAborted()
+    const op = make()
+    return await new Promise<T>((resolve, reject) => {
+      const onAbort = (): void => { reject(signal.reason instanceof Error ? signal.reason : new Error(`${this.tag()}: aborted`)) }
+      signal.addEventListener('abort', onAbort, { once: true })
+      op.then(
+        (value) => { signal.removeEventListener('abort', onAbort); resolve(value) },
+        (error: unknown) => {
+          signal.removeEventListener('abort', onAbort)
+          reject(error instanceof Error ? error : new Error(`${this.tag()}: rename failed: ${String(error)}`))
+        },
+      )
+    })
   }
 
   /**
@@ -1207,20 +1271,20 @@ export class FeishuPlatform implements Platform {
   }
 
   /** Rename a spawned chat only (Go RenameGroup, conservative default). */
-  async renameGroup(sessionKey: string, newName: string): Promise<void> {
+  async renameGroup(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
-    if (chatID === '' || !this.spawnStore.isSpawned(chatID)) return
-    await this.renameChat(chatID, newName)
+    if (chatID === '' || !this.isSpawned(chatID)) return
+    await this.renameChat(chatID, newName, signal)
   }
 
   /**
    * Rename any group, including user-owned ones (Go RenameGroupAny) — used by
    * /chatroom to rename the user's own hub group to the discussion topic.
    */
-  async renameGroupAny(sessionKey: string, newName: string): Promise<void> {
+  async renameGroupAny(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
     if (chatID === '') return
-    await this.renameChat(chatID, newName)
+    await this.renameChat(chatID, newName, signal)
   }
 
   /**
@@ -1411,7 +1475,7 @@ export class FeishuPlatform implements Platform {
    * SpawnGroup).
    */
   async spawnGroup(msg: Message, groupName: string, firstMsg: string): Promise<Message> {
-    return this.spawnGroupWithOptions(msg, groupName, firstMsg, {})
+    return this.spawnGroupWithOptions(msg, groupName, firstMsg, { topicGroup: false, workDir: '' })
   }
 
   /**
@@ -1425,7 +1489,7 @@ export class FeishuPlatform implements Platform {
     if (userID === '') {
       throw new Error('feishu: spawn: could not determine caller user ID')
     }
-    const chatType = opts.topicGroup === true ? 'thread' : 'chat'
+    const chatType = opts.topicGroup ? 'thread' : 'chat'
     const resp = await this.withRetry('spawn create chat', () => this.request('spawn create chat', async (client) => {
       if (client.createChat === undefined) throw new ErrNotSupported('feishu client without chat create support')
       const r = await client.createChat({
@@ -1444,13 +1508,13 @@ export class FeishuPlatform implements Platform {
     await this.spawnStore.save()
 
     const sessionKey = `${this.tag()}:${chatID}`
-    console.info(`${this.tag()}: spawned group chat (chat_id ${chatID}, user_id ${userID}, group_name ${groupName}, mode ${opts.topicGroup === true ? 'topic_group' : 'group'})`)
+    console.info(`${this.tag()}: spawned group chat (chat_id ${chatID}, user_id ${userID}, group_name ${groupName}, mode ${opts.topicGroup ? 'topic_group' : 'group'})`)
 
     // Apply the dir tag off the critical path; no active (❤️) tag on spawn —
     // the group is "active" by its color avatar alone.
     void (async () => {
       let tagName = this.tagManager.dirTagName
-      if (opts.workDir !== undefined && opts.workDir !== '') {
+      if (opts.workDir !== '') {
         const base = projectBaseForTag(opts.workDir)
         if (base !== '' && base !== '.') tagName = pickDirTagName(base, this.dirWordFreq)
       }
@@ -1479,6 +1543,7 @@ export class FeishuPlatform implements Platform {
       isSpawnedGroup: true,
       isPermissionAction: false,
       isAskqCardAction: false,
+      isCardAction: false,
       parentMessageID: '',
       quotedText: '',
     }
