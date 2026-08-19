@@ -12,6 +12,23 @@ import { iconsSpriteFull } from './sprite.js'
 // (?s) in the Go symbolRe becomes [\s\S] here; ids are [\w-].
 const symbolRe = /<symbol\s+id="([\w-]+)"([^>]*)>([\s\S]*?)<\/symbol>/g
 
+let iconIDCache: string[] | undefined
+
+/**
+ * All symbol ids in the Lucide sprite, lowercased (Go loadLucideIconIDs).
+ * Scans the sprite once and caches; group-name icon sampling reads this.
+ * @returns The cached id list.
+ */
+export function lucideIconIDs(): string[] {
+  if (iconIDCache === undefined) {
+    iconIDCache = []
+    for (const sm of iconsSpriteFull.matchAll(symbolRe)) {
+      iconIDCache.push((sm[1] ?? '').toLowerCase())
+    }
+  }
+  return iconIDCache
+}
+
 // Matches a single numeric token in an SVG path: integer, decimal, negative,
 // leading-dot decimal (.092), scientific notation (1e-5).
 const arcNumRe = /[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/g
