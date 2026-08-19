@@ -91,6 +91,7 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 - 测试先行：engine_subtask_test(41)、engine_groupname_test、feishu_spawn/tag/avatar/media/members 套件。
 - 实现：/spawn /fork /sp /fk、--worktree #39、--dir #37、/done --reply 回灌 #37、父子群 #38（跳转/notify/board）、群命名 #49 + Lucide 头像 #52、pin #35、深度限制；`feishu_bridge_subtask` 工具族 + 修订版 skill；/fork = agents.create + completedTurnPrefix seed（原生）。
 - 验收：测试绿；真机 /spawn → 子群工作 → /done --reply 全链路。
+- **执行拆分（2026-08-19，按 §3「大 M 可拆」）**：Wave 1 三群并行（worktree 隔离，流水线合并）——A engine 子任务域（engine_subtask/groupname/worktree + engine.go 增量，stub platform）；B feishu 平台域（spawn/tag/avatar/media/members/chatname，真实 platform + mock lark client）；C M3 遗留小修（① plan-review intent 答案编码、⑥ spinner GIF 路径）。A/B 能力方法签名共同锚定 Go `interfaces.go`（camelCase 化，结构化能力检测对齐现有 `MediaPlatform` 模式）。Wave 2 一群：D 集成（engine↔platform 接线核验、/fork seed、`feishu_bridge_subtask` 工具族、修订版 skill）。父会话负责合并、门禁、两步构建 promote、lark-cli 真机冒烟。
 
 **M5 聊天室**
 - 测试先行：engine_chatroom_test(46)、gather/end/venv/roles/ledger 套件。
