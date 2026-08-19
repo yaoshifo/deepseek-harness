@@ -11,6 +11,7 @@
 
 import { lucideIconIDs } from '../lucide/icon.js'
 import type { Session } from './session.js'
+import type { HistoryEntry } from '../core/types.js'
 
 /** Cap on generated/manual group names shared by every truncation helper (Go maxGroupNameRunes). */
 export const maxGroupNameRunes = 60
@@ -334,4 +335,58 @@ export function sessionExemptFromSpawnRename(session: Session): boolean {
   return session.getChatroomHubKey() !== ''
     || session.getChatroomDirectRole()
     || session.getResearchAssistant()
+}
+
+/** Per-user-message truncation cap for the compact context (Go maxPredictUserMsgLen). */
+const maxCompactUserMsgLen = 200
+
+/** Truncation cap for the last assistant message (Go maxPredictAssistantLen). */
+const maxCompactAssistantLen = 500
+
+/** Total cap for the compact context (Go maxPredictContextChars). */
+const maxCompactContextChars = 3000
+
+/**
+ * Collapse a conversation history into a compact text context for one-shot
+ * LLM queries (Go buildCompactContext, used by /rename's regeneration): the
+ * user messages (each truncated, oldest dropped past the total cap) plus the
+ * last assistant reply.
+ * @param entries - The session history.
+ * @returns The compact context text.
+ */
+export function buildCompactContext(entries: HistoryEntry[]): string {
+  const userMsgs: string[] = []
+  let lastAssistant = ''
+  for (const entry of entries) {
+    if (entry.role === 'user') {
+      userMsgs.push(entry.content.length > maxCompactUserMsgLen
+        ? `${entry.content.slice(0, maxCompactUserMsgLen)}...`
+        : entry.content)
+    } else {
+      lastAssistant = entry.content
+    }
+  }
+  let sb = ''
+  for (const m of userMsgs) {
+    sb += `User: ${m}\n`
+    if (sb.length >= maxCompactContextChars) {
+      // Keep only the last N user messages that fit.
+      const kept: string[] = []
+      let total = 0
+      for (let i = userMsgs.length - 1; i >= 0; i--) {
+        const line = `User: ${userMsgs[i]}\n`
+        if (total + line.length > maxCompactContextChars) break
+        kept.push(line)
+        total += line.length
+      }
+      sb = kept.reverse().join('')
+      break
+    }
+  }
+  if (lastAssistant !== '') {
+    sb += `\nAssistant: ${lastAssistant.length > maxCompactAssistantLen
+      ? `${lastAssistant.slice(0, maxCompactAssistantLen)}...`
+      : lastAssistant}\n`
+  }
+  return sb
 }

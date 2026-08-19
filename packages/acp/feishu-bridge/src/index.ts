@@ -60,6 +60,20 @@ export interface FeatureSwitches {
   showContextIndicator?: boolean
 }
 
+/** LLM group-name generation + Lucide icon avatars for one project (Go [projects.group_name], #49/#52). */
+export interface GroupNameConfig {
+  /** LLM naming on; default true (the dsh agent always supports it). */
+  enabled?: boolean
+  /** Named provider route the naming queries run on (default: the active route). */
+  provider?: string
+  /** LLM naming timeout in seconds (default 30). */
+  timeoutSec?: number
+  /** Naming prompt override (default: the built-in two-line name+icon prompt). */
+  prompt?: string
+  /** Set a Lucide group icon avatar after rename; default true (#52). */
+  setAvatar?: boolean
+}
+
 /** One bound project: an agent working dir plus the Feishu bot serving it. */
 export interface ProjectConfig {
   /** Unique project name used in routing, logs, and tool output. */
@@ -72,6 +86,8 @@ export interface ProjectConfig {
   agent?: AgentOptions
   /** Feature switches for this project. */
   features?: FeatureSwitches
+  /** LLM group-name generation (#49) + icon avatars (#52). */
+  groupName?: GroupNameConfig
 }
 
 /** A named LLM route reference: the route itself lives in the profile's provider config (MIGRATION.md D2). */
@@ -132,6 +148,13 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       injectSender: Schema.boolean().description('Prepend sender identity'),
       showContextIndicator: Schema.boolean().description('Append [ctx: ~N%]'),
     }),
+    groupName: Schema.object({
+      enabled: Schema.boolean().description('LLM group naming (#49); default true'),
+      provider: Schema.string().description('Named provider route for naming queries (default: active)'),
+      timeoutSec: Schema.natural().description('Naming LLM timeout in seconds (default 30)'),
+      prompt: Schema.string().description('Naming prompt override'),
+      setAvatar: Schema.boolean().description('Set a Lucide group icon avatar (#52); default true'),
+    }).description('LLM group naming and icon avatars (#49/#52)'),
   })).default([]).description('Projects bound to Feishu apps'),
   providers: Schema.dict(Schema.object({
     route: Schema.string().required().description('LLM service route name from the profile'),
@@ -258,5 +281,28 @@ export function buildProjectAssembly(
   const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), '')
   engine.setProjectStateStore(new ProjectStateStore(join(projectDataDir, 'state.json')))
   registerSessionCommands(engine)
+  wireGroupName(engine, project)
   return { engine, adapter, platform }
+}
+
+/**
+ * Configure LLM group-name generation + icon avatars (Go wireGroupName):
+ * enabled defaults ON — Go keyed the default on the claudecode agent, and
+ * this plugin's agent is always dsh, whose adapter implements the
+ * lightweight-query capability naming needs. Timeout defaults to 30s and
+ * setAvatar to true; an explicit groupName section overrides each field.
+ * @param engine - The project's engine.
+ * @param project - The project row carrying the optional groupName section.
+ */
+function wireGroupName(engine: Engine, project: ProjectConfig): void {
+  const g = project.groupName
+  if (g?.enabled === false) {
+    engine.setGroupNameConfig(false, '', 0, '')
+    engine.setGroupNameAvatarEnabled(false)
+    return
+  }
+  const timeoutSec = g?.timeoutSec !== undefined && g.timeoutSec > 0 ? g.timeoutSec : 30
+  engine.setGroupNameConfig(true, g?.provider ?? '', timeoutSec * 1000, g?.prompt ?? '')
+  // #52: default on; only an explicit setAvatar=false disables it.
+  engine.setGroupNameAvatarEnabled(g?.setAvatar !== false)
 }

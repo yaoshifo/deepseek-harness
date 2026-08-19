@@ -64,9 +64,17 @@ import {
   MsgSwitchSuccess,
   MsgWorktreeCreateError,
   MsgWorktreeNotGit,
+  MsgRenameSpawnedOnly,
+  MsgRenameNotSupported,
+  MsgRenameNoHistory,
+  MsgRenameBackendNotSupported,
+  MsgRenameUnchanged,
+  MsgRenameFailed,
+  MsgRenameError,
+  MsgRenameDone,
 } from '../i18n/index.js'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.js'
-import { asChatAvatarStateSwitcher, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, type GroupSpawnOptions } from '../core/types.js'
+import { asChatAvatarStateSwitcher, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, type GroupSpawnOptions } from '../core/types.js'
 import type { Engine } from './engine.js'
 import type { SessionManager } from './session.js'
 import { childLabel } from './subtask.js'
@@ -78,7 +86,7 @@ import {
   worktreeGone,
   worktreeRepoRoot,
 } from './worktree.js'
-import { maxGroupNameRunes } from './groupname.js'
+import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName } from './groupname.js'
 import { extractChannelID } from './engine.js'
 
 const listPageSize = 5
@@ -97,6 +105,7 @@ export const builtinCommands: Array<{ names: string[]; id: string }> = [
   { names: ['spawn', 'sp'], id: 'spawn' },
   { names: ['fork', 'fk'], id: 'fork' },
   { names: ['done'], id: 'done' },
+  { names: ['rename'], id: 'rename' },
 ]
 
 /** Resolve a typed command prefix to its canonical ID ('' when unknown). */
@@ -129,6 +138,7 @@ export function registerSessionCommands(e: Engine): () => void {
     ['spawn', (p, msg, args) => { void cmdSpawn(e, p, msg, args); return true }],
     ['fork', (p, msg, args) => { void cmdFork(e, p, msg, args); return true }],
     ['done', (p, msg, args) => { cmdDone(e, p, msg, args); return true }],
+    ['rename', (p, msg, args) => { void cmdRename(e, p, msg, args); return true }],
   ])
   e.commandHandlers = handlers
   e.commandResolver = matchPrefix
@@ -1040,4 +1050,97 @@ async function cleanupOneChat(
   }
   await e.finishWorktreeRemoval(p, ctx, sessionKey, false)
   return { name, dirty: false }
+}
+
+/**
+ * /rename: rename the current spawned sub-group. With a name argument it
+ * sets that name directly (and marks the manual rename so the async
+ * first-message LLM rename cannot clobber it); with no argument it
+ * regenerates a name from the full conversation history via
+ * LightweightQuery — the same engine as #49's first-message naming, but
+ * seeded with the whole talk instead of just message one, so the name can
+ * catch up as the task becomes clearer. No-op outside spawned groups (Go
+ * cmdRename).
+ */
+export async function cmdRename(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
+  if (!msg.isSpawnedGroup) {
+    void e.reply(p, msg.replyCtx, e.i18n.t(MsgRenameSpawnedOnly))
+    return
+  }
+  const renamer = asGroupRenamer(p)
+  if (renamer === undefined) {
+    void e.reply(p, msg.replyCtx, e.i18n.t(MsgRenameNotSupported))
+    return
+  }
+
+  // /rename <name...> → set directly, skipping the LLM. This is also the
+  // fallback path for backends without LightweightQuery.
+  const direct = sanitizeGroupName(args.join(' '))
+  if (direct !== '') {
+    try {
+      await renamer.renameGroup(msg.sessionKey, direct)
+    } catch (error) {
+      void e.reply(p, msg.replyCtx, e.i18n.tf(MsgRenameError, String(error)))
+      return
+    }
+    // 手动改名成功：标记该群名由用户指定。首条消息异步 LLM 改名
+    // （handleGroupNameGenerate 回调）会检查该标记并在命中时跳过，
+    // 避免覆盖用户手动起的群名。
+    e.markPendingRename(msg.sessionKey)
+    void e.reply(p, msg.replyCtx, e.i18n.tf(MsgRenameDone, direct))
+    return
+  }
+
+  // /rename (no args) → regenerate from the full conversation history.
+  const sess = e.sessions.getOrCreateActive(msg.sessionKey)
+  const history = sess.getHistory(0)
+  if (history.length === 0) {
+    void e.reply(p, msg.replyCtx, e.i18n.t(MsgRenameNoHistory))
+    return
+  }
+  const current = sess.getName()
+  const timeout = e.groupNameTimeout > 0 ? e.groupNameTimeout : 30_000
+  const replyCtx = msg.replyCtx
+  const sessionKey = msg.sessionKey
+  void (async () => {
+    try {
+      const [generated, icon] = await e.generateGroupName(
+        buildCompactContext(history),
+        AbortSignal.timeout(timeout),
+      )
+      if (generated === '') {
+        void e.reply(p, replyCtx, e.i18n.t(MsgRenameFailed))
+        return
+      }
+      const nameUnchanged = generated.trim().toLowerCase() === current.trim().toLowerCase()
+      if (!nameUnchanged) {
+        try {
+          await renamer.renameGroup(sessionKey, generated)
+        } catch (error) {
+          void e.reply(p, replyCtx, e.i18n.tf(MsgRenameError, String(error)))
+          return
+        }
+      }
+      // 头像刷新独立于改名：即使群名未变也重设头像（用户可能只为换图标而 /rename）。
+      if (e.groupNameSetAvatar && icon !== '') {
+        const setter = asGroupIconAvatarSetter(p)
+        if (setter !== undefined) {
+          try {
+            await setter.setGroupIconAvatar(sessionKey, icon, generated)
+            e.recordGroupIcon(icon)
+          } catch (error) {
+            console.warn(`rename: set icon avatar failed (${icon}): ${String(error)}`)
+          }
+        }
+      }
+      if (nameUnchanged) {
+        void e.reply(p, replyCtx, e.i18n.t(MsgRenameUnchanged))
+      } else {
+        void e.reply(p, replyCtx, e.i18n.tf(MsgRenameDone, generated))
+      }
+    } catch {
+      // Backend lacks ForkQuerierWithProvider → tell the user how to recover.
+      void e.reply(p, replyCtx, e.i18n.t(MsgRenameBackendNotSupported))
+    }
+  })()
 }

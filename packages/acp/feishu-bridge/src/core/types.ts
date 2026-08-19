@@ -478,6 +478,24 @@ export interface GroupRenamer {
   renameGroupAny(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
 }
 
+/**
+ * Platform that notifies the engine when a chat was renamed (Go
+ * ChatRenamedNotifier): the engine syncs session Name/ParentChatName labels
+ * so jump buttons stay current.
+ */
+export interface ChatRenamedNotifier {
+  setChatRenamedHandler(handler: (sessionKey: string, newName: string) => void): void
+}
+
+/**
+ * Platform that notifies the engine on chat name/avatar change (Go
+ * ChatChangedNotifier): the engine bumps the active preview card back to the
+ * chat tail after the change's system notice pushes it off.
+ */
+export interface ChatChangedNotifier {
+  setChatChangedHandler(handler: (sessionKey: string) => void): void
+}
+
 /** Platform that can set a group avatar from a Lucide icon name (#52, Go GroupIconAvatarSetter). */
 export interface GroupIconAvatarSetter {
   setGroupIconAvatar(sessionKey: string, iconName: string, groupName: string): Promise<void>
@@ -636,6 +654,14 @@ export function asGroupRenamer(p: Platform): GroupRenamer | undefined {
   return typeof candidate.renameGroup === 'function' && typeof candidate.renameGroupAny === 'function'
     ? candidate as GroupRenamer
     : undefined
+}
+
+export function asChatRenamedNotifier(p: Platform): ChatRenamedNotifier | undefined {
+  return withMethod<ChatRenamedNotifier>(p, 'setChatRenamedHandler')
+}
+
+export function asChatChangedNotifier(p: Platform): ChatChangedNotifier | undefined {
+  return withMethod<ChatChangedNotifier>(p, 'setChatChangedHandler')
 }
 
 export function asGroupIconAvatarSetter(p: Platform): GroupIconAvatarSetter | undefined {

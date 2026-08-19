@@ -150,6 +150,14 @@ export interface CardActionTriggerEvent {
   }
 }
 
+/** Inbound im.chat.updated_v1 payload (structural slice, M4). */
+export interface FeishuChatUpdatedEvent {
+  event?: {
+    chat_id?: string
+    after_change?: { name?: string; avatar?: string }
+  }
+}
+
 /** Handle for an in-place editable preview card (Go feishuPreviewHandle). */
 export class FeishuPreviewHandle {
   readonly messageID: string
@@ -268,6 +276,10 @@ export class FeishuPlatform implements Platform {
   readonly permBodyCache = new Map<string, string>()
   /** sessionKey → messageID tracked from card-action callbacks (M3 writes it). */
   readonly cardActionMsgIDs = new Map<string, string>()
+  /** Engine callback for group renames (im.chat.updated_v1, Go chatRenamedHandler). */
+  private chatRenamedHandler: ((sessionKey: string, newName: string) => void) | undefined
+  /** Engine callback for group name/avatar changes (Go chatChangedHandler). */
+  private chatChangedHandler: ((sessionKey: string) => void) | undefined
 
   private spinnerOnce: Promise<void> | undefined
   private thinkingImgKey = ''
@@ -278,7 +290,8 @@ export class FeishuPlatform implements Platform {
   /** Tag manager bound to this platform's API client. */
   private readonly tagManager: TagManager
   /** Chat-name TTL cache (Go chatNameCache). */
-  private readonly chatNames = new ChatNameCache()
+  /** Chat-name TTL cache (Go chatNameCache; rename events refresh it). */
+  readonly chatNames = new ChatNameCache()
   /** Bot avatar image keys, filled by the startup probe when it runs. */
   private botAvatarKey: string
   private botAvatarKeyGray: string
@@ -356,6 +369,8 @@ export class FeishuPlatform implements Platform {
         this.onMessage(data as FeishuReceiveEvent)
       } else if (eventType === 'card.action.trigger') {
         this.onCardAction(data as CardActionTriggerEvent)
+      } else if (eventType === 'im.chat.updated_v1') {
+        this.onChatUpdated(data as FeishuChatUpdatedEvent)
       }
     })
   }
@@ -633,6 +648,46 @@ export class FeishuPlatform implements Platform {
     if (chatID !== '' && this.isSpawned(chatID)) return `${this.tag()}:${chatID}`
     if (this.o.shareSessionInChannel === true) return `${this.tag()}:${chatID}`
     return `${this.tag()}:${chatID}:${userID}`
+  }
+
+  /**
+   * Handle one im.chat.updated_v1 event (Go onChatUpdated): a group rename
+   * refreshes the chat-name cache and notifies the engine so jump-button
+   * labels stay current; a name OR avatar change additionally notifies the
+   * chat-changed handler so the engine can bump the active preview card back
+   * to the chat tail (Feishu inserts a system notice that pushes it off).
+   * Other changes (permissions, etc.) insert no notices and are skipped.
+   */
+  onChatUpdated(event: FeishuChatUpdatedEvent): void {
+    const chatID = event.event?.chat_id ?? ''
+    const ac = event.event?.after_change
+    if (chatID === '' || ac === undefined) return
+    const sessionKey = `${this.tag()}:${chatID}`
+
+    if (ac.name !== undefined) {
+      const newName = ac.name.trim()
+      if (newName !== '') {
+        this.chatNames.setName(chatID, newName)
+        if (this.chatRenamedHandler !== undefined) {
+          console.info(`${this.tag()}: chat renamed (chat ${chatID} → ${newName})`)
+          this.chatRenamedHandler(sessionKey, newName)
+        }
+      }
+    }
+
+    if ((ac.name !== undefined || ac.avatar !== undefined) && this.chatChangedHandler !== undefined) {
+      this.chatChangedHandler(sessionKey)
+    }
+  }
+
+  /** Register the engine callback invoked on group rename (Go SetChatRenamedHandler). */
+  setChatRenamedHandler(handler: (sessionKey: string, newName: string) => void): void {
+    this.chatRenamedHandler = handler
+  }
+
+  /** Register the engine callback invoked on group name/avatar change (Go SetChatChangedHandler). */
+  setChatChangedHandler(handler: (sessionKey: string) => void): void {
+    this.chatChangedHandler = handler
   }
 
   /** Whether the chat is /spawn-created (external predicate or the store). */
@@ -2094,6 +2149,9 @@ async function defaultWsStart(
     },
     'card.action.trigger': (data: unknown) => {
       onRawEvent('card.action.trigger', data)
+    },
+    'im.chat.updated_v1': (data: unknown) => {
+      onRawEvent('im.chat.updated_v1', data)
     },
   })
   const wsClient = new sdk.WSClient({ appId: appID, appSecret, domain: sdk.Domain.Feishu })
