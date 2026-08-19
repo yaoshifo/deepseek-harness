@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  feishu-bridge launchd 模板（macOS 自启）。
+  安装：cp 到 ~/Library/LaunchAgents/com.dsh.feishu-bridge.plist，替换全部 @占位符@，
+  然后 launchctl load ~/Library/LaunchAgents/com.dsh.feishu-bridge.plist。
+  字段说明（运维细节见 docs/OPERATIONS.md §1.4）：
+  ProgramArguments: dsh 可执行文件 + profile 名，daemon 即 dsh --profile feishu-bridge。
+  EnvironmentVariables: profile 的 llm 路由 apiKeyEnv 所引用的变量（如 FB_MIFY_API_KEY）
+    在此给实际值；PATH 需含 node/pnpm/git 所在目录。
+  WorkingDirectory: 任意一个 project 的 workdir（占位即可，不影响各 project 路由）。
+  KeepAlive / RunAtLoad: 崩溃自动拉起 + 登录自启（对齐 MIGRATION.md D9 的 Restart 语义）。
+  StandardOutPath / StandardErrorPath: daemon 日志落盘位置。
+  安全：本文件含 API key，权限应收紧到 0600。
+-->
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>FB_MIFY_API_KEY</key>
+		<string>@LLM_API_KEY@</string>
+		<key>PATH</key>
+		<string>@PATH_VALUE@</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.dsh.feishu-bridge</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@DSH_BIN@</string>
+		<string>--profile</string>
+		<string>feishu-bridge</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>@LOG_DIR@/feishu-bridge-stderr.log</string>
+	<key>StandardOutPath</key>
+	<string>@LOG_DIR@/feishu-bridge-stdout.log</string>
+	<key>WorkingDirectory</key>
+	<string>@DEFAULT_WORKDIR@</string>
+</dict>
+</plist>
