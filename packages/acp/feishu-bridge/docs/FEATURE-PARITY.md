@@ -11,7 +11,7 @@
 | ✂️ | 不迁移（附理由，出处 MIGRATION.md §0） |
 | ❓ | 待核实（证据不足，宁标勿猜） |
 
-统计：✅ 30（其中 #49、#52 为 M4 收尾进行中）· 📋 19 · ✂️ 10 · ❓ 2，合计 61。
+统计：✅ 30 · 📋 19 · ✂️ 10 · ❓ 2，合计 61。
 
 | # | 特性 | 状态 | 里程碑 | 落点 / 理由 |
 |---|---|---|---|---|
@@ -63,10 +63,10 @@
 | 46 | mimocode agent 后端（第四后端） | ✂️ | — | 同 #45 |
 | 47 | plan→HTML engine 派生渲染（ExitPlanMode 异步出 HTML） | 📋 | M7 | 渲染会话 = create + seed + 无工具 + stall 重试 |
 | 48 | 回复 speculative 自动投递 HTML | 📋 | M7 | 复用 #47 fork 机制 |
-| 49 | 子群 LLM 自动命名（engine 侧 fork） | ✅ | M4（收尾进行中） | engine 侧完成（groupname 82 测试）；生产接线缺——config schema + setGroupNameConfig + adapter lightweightQuery（MIGRATION「打回 D 群的 M4 补缺」） |
+| 49 | 子群 LLM 自动命名（engine 侧 fork） | ✅ | M4 | 全链路完成并真机验证（2026-08-19：占位名「开发虾 副本」→ LLM 改名「登录页CSS对齐修复」）；config schema + setGroupNameConfig + adapter lightweightQuery 已随 D 群补缺合并 |
 | 50 | 防 MCP 工具自动后台化（env 注入） | ✂️ | — | 同 #44（CLAUDE_CODE_* spawn 契约族） |
 | 51 | Lucide 图标库增强 HTML 渲染 | 📋 | M7 | M0 已移植 lucide 纯逻辑（12 测试）；sprite 抽取/模板注入随 #47/#48 |
-| 52 | /spawn 子群按群名自动设 Lucide 图标头像 | ✅ | M4（收尾进行中） | 平台侧 avatar 已实现并真机验证（彩色/灰度）；随 #49 生产接线同期补齐 |
+| 52 | /spawn 子群按群名自动设 Lucide 图标头像 | ✅ | M4 | 真机验证：align-center-vertical 彩色+灰度双 key 上传（2026-08-19） |
 | 53 | Monitor 群监控 → 自主拉群排查 / 中枢分发 | 📋 | M6 | #53 全量（规则/LLM 分诊/coalesce/no_report/轮询兜底//monitor） |
 | 54 | 进度卡 header 思考/执行 GIF | ✅ | M2 | M4-C 修资源解析路径，真机确认 |
 | 55 | /fork 回滚（引用历史消息 fork 到某个 turn） | ✂️ | — | §0：claudecode-only。注：M4 Wave 1 记录曾将 fork-at 列为 M7 遗留（Go dsh 后端 #60 Phase 2 有 session-log 截断先例）；若 M7 决定以 dsh session log 实现，本行改 📋 |
