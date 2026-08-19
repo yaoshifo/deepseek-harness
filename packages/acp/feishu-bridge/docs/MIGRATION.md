@@ -109,10 +109,11 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 - 实现：/chatroom #41、角色挑选 #43、--research #57、随便聊聊 #59、`feishu_bridge_chatroom` 工具族、bare persona。
 - 验收：测试绿；真机一轮三人 chatroom。
 
-**M6 Monitor + Cron + Relay**
+**M6 Monitor + Cron + Relay（cron+relay ✅ 2026-08-19，monitor 待 M6b）**
 - 测试先行：engine_monitor_test(49)、monitor_cmd、cron_test(19)、feishu_monitor_poll。
 - 实现：#53 全部（观察/规则+LLM 分诊/dispatch 模式/coalesce/no_report/轮询兜底//monitor 命令）；cron 全量移植；relay；`feishu_bridge_cron`/`feishu_bridge_relay` 工具。
 - 验收：测试绿；真机监控群一条告警全链路 + 一条定时任务触发。
+- **M6a 进度（2026-08-19）**：cron+relay 移植完成（合并 commit 含 164c5b4edb，1058 测试全绿，+72：cron 30 + execute 3 + commands 6 + relay 11 + 工具 16 + 装配 6）。自写 5 域 cron 解析器（robfig 月/星期名与 @every 未移植——存量纯数字域；天花板已注明）；持久化 <dataDir>/crons/jobs.json 沿用 Go snake_case 键；/cron 全族命令 + feishu_bridge_cron/relay 工具族（caller agent 路由）；relay 绑定落盘 Go 键序。**真机冒烟通过**：/cron add（19:22 建）→ 准点触发（19:24 ⏰ 注入 + agent 执行 + 完成卡 + ✅ tokens）→ /cron del 清理。遗留：/status 的 cron 行未接（需改 commands.ts，避免与 chatroom 群撞车留待）；多工作空间 per-workspace agent、heartbeat 归后续。
 - **M6-a cron+relay 域进度（2026-08-19，monitor 域另派并行）**：代码与移植测试完成，包内 1056 vitest 全绿、包级 oxlint/typecheck 0。cron：`core/cron.go` → `src/engine/cron.ts`（CronJob/CronStore 落盘 `<dataDir>/crons/jobs.json` 沿用 Go snake_case 键；CronScheduler 自带标准 5 域 cron 解析器——robfig 的月份/星期名与 `@every` 描述符未移植，存量与测试均为纯数字域；mute/silent、session 复用与 new_per_run（每跑 `key#cron:<sid>` 独立 interactive 槽）、timeout_mins、编辑/校验、错过不补跑语义与 Go 一致）；`/cron` 命令族 + 列表卡（act:/cron 按钮走 handleCardAction 路由）在 `src/engine/cron-commands.ts`（registerCronCommands 合并进既有命令表，不碰 commands.ts）；`Engine.executeCronJob/executeCronShell`（工作目录切换走 WorkDirSwitcher——多工作空间 per-workspace agent 未移植的天花板；CronReplyTargetResolver 能力接口随迁仅测试桩实现）。relay：`core/relay.go`+`engine_cmd_relay.go`+cmdBind → `src/engine/relay.ts`/`src/engine/relay-commands.ts`（绑定落盘 `<dataDir>/relay_bindings.json` Go 键序；`Engine.handleRelay` 含超时部分回复 + 后台 drain 续命 + 陈旧 resume 回退；`/bind` 族）。配置：schema 加 `cron{silent,sessionMode}`/`relay{timeoutSecs}` 独立块，apply() 建 process-wide scheduler/manager、每引擎 registerEngine+setter，工具 `feishu_bridge_cron`(add/list/info/edit/del)/`feishu_bridge_relay`(send/bind/binding) 经 caller agent 路由注册。测试：cron.spec(30，cron_test.go 19 函数)+cron-execute(2)+cron-commands(6)+relay.spec(11，relay_test.go 5 函数+绑定生命周期)+cron-tool(8)+relay-tool(8)+cron-relay-assembly(6)=+71。真机定时触发归父会话冒烟。
 
 **M7 渲染 + Provider + 剩余 features**
