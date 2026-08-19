@@ -222,7 +222,8 @@ export function ev(partial: Partial<Event> & { type: Event['type'] }): Event {
  */
 export interface StubCardPlatform extends StubPlatform {
   sentCards: unknown[]
-  sendWithCard(replyCtx: unknown, card: unknown): Promise<void>
+  sendCard(replyCtx: unknown, card: unknown): Promise<void>
+  replyCard(replyCtx: unknown, card: unknown): Promise<void>
 }
 
 export function createStubCardPlatform(n = 'feishu'): StubCardPlatform {
@@ -230,7 +231,10 @@ export function createStubCardPlatform(n = 'feishu'): StubCardPlatform {
   const p: StubCardPlatform = {
     ...base,
     sentCards: [],
-    sendWithCard: async (_rc, card) => {
+    sendCard: async (_rc, card) => {
+      p.sentCards.push(card)
+    },
+    replyCard: async (_rc, card) => {
       p.sentCards.push(card)
     },
   }

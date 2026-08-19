@@ -1921,7 +1921,7 @@ export class Engine {
 
     // Try card with buttons (Feishu-style platforms)
     const cs = p as Platform & CardSender
-    if (typeof cs.sendWithCard === 'function') {
+    if (typeof cs.sendCard === 'function') {
       const body = this.i18n.tf(MsgPermCardBody, toolName, toolInput)
       const allowBtn: CardButton = { text: this.i18n.t(MsgPermBtnAllow), type: 'primary', value: 'perm:allow', name: 'perm_allow', actionType: 'form_submit', extra: { perm_label: `✅ ${this.i18n.t(MsgPermBtnAllow)}`, perm_color: 'green', perm_body: body } }
       const denyBtn: CardButton = { text: this.i18n.t(MsgPermBtnDeny), type: 'danger', value: 'perm:deny', name: 'perm_deny', actionType: 'form_submit', extra: { perm_label: `❌ ${this.i18n.t(MsgPermBtnDeny)}`, perm_color: 'red', perm_body: body } }
@@ -1937,7 +1937,7 @@ export class Engine {
         .build()
       card.permBody = body
       try {
-        await cs.sendWithCard(replyCtx, card)
+        await cs.sendCard(replyCtx, card)
         return
       } catch {
         // fall through to plain text
@@ -1969,7 +1969,7 @@ export class Engine {
 
     // Try card (Feishu-style platforms)
     const cs = p as Platform & CardSender
-    if (typeof cs.sendWithCard === 'function') {
+    if (typeof cs.sendCard === 'function') {
       const cardTitle = q.header !== '' ? q.header : this.i18n.t(MsgAskQuestionTitle)
       const cb = newCard().title(`‼️ ${cardTitle}${titleSuffix}`, 'blue')
 
@@ -1988,7 +1988,7 @@ export class Engine {
       }
 
       try {
-        await cs.sendWithCard(replyCtx, cb.build())
+        await cs.sendCard(replyCtx, cb.build())
         return
       } catch {
         // fall through to inline buttons

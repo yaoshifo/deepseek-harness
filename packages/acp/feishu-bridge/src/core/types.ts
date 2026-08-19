@@ -314,7 +314,8 @@ export interface FileSender {
 
 /** Optional: platform can send interactive cards (Go CardSender). */
 export interface CardSender {
-  sendWithCard(replyCtx: unknown, card: unknown): Promise<void>
+  sendCard(replyCtx: unknown, card: unknown): Promise<void>
+  replyCard(replyCtx: unknown, card: unknown): Promise<void>
 }
 
 /** Optional: platform can send inline buttons (Go InlineButtonSender). */
@@ -371,7 +372,7 @@ export function asFileSender(p: Platform): FileSender | undefined {
 }
 
 export function asCardSender(p: Platform): CardSender | undefined {
-  return withMethod<CardSender>(p, 'sendWithCard')
+  return withMethod<CardSender>(p, 'sendCard')
 }
 
 export function asInlineButtonSender(p: Platform): InlineButtonSender | undefined {
