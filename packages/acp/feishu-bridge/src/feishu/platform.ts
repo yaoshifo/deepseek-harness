@@ -262,7 +262,8 @@ export class FeishuPlatform implements Platform {
   readonly topNoticeEnabled: boolean
   /** Pin panel enabled (pin_user_messages). */
   readonly pinEnabled: boolean
-  private readonly spinnerEnabled: boolean
+  /** Running-state header GIF enabled (progress_spinner); observable for assembly tests. */
+  readonly spinnerEnabled: boolean
   /** Global limiter for every card PATCH entry point. */
   private readonly patchRL: TokenBucketRateLimiter
 
