@@ -288,8 +288,14 @@ export class DshAgentAdapter {
     // is fully loaded (at constructor time it may not be available yet).
     this.ensureUserQuestionsProvider()
     if (this.modeOverride !== '') {
-      // TODO(M3): map onto ctx.get('planMode').set(agent, mode) once the
-      // permission-mode milestone lands; the override is consumed here.
+      // Apply the engine's mode override onto the native plan-mode
+      // controller (Go /mode + config mode=plan): plan → active, others off.
+      const planMode = this.ctx.get('planMode') as
+        | { set(agent: unknown, active: boolean): string }
+        | undefined
+      if (planMode !== undefined) {
+        planMode.set(handle.agent, this.modeOverride === 'plan')
+      }
       this.modeOverride = ''
     }
     this.sessionsByEngineKey.set(key, session)

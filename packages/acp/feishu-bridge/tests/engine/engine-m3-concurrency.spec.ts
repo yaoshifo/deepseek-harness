@@ -182,14 +182,24 @@ describe('UnsolicitedReader_AskUserQuestion_SurfacedNotDenied', () => {
     })
     sess.channel.close()
 
-    await Promise.race([
-      e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, 'ctx'),
-      new Promise((_, reject) => { setTimeout(() => { reject(new Error('timeout')) }, 3000) }),
-    ])
+    // The event loop blocks on the permission wait (Go semantics). Poll
+    // until the pending is armed, assert on it, then resolve so the loop
+    // can exit cleanly before the timeout.
+    const loopDone = e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, 'ctx')
+    const deadline = Date.now() + 3000
+    while (state.pending === undefined && Date.now() < deadline) {
+      await new Promise((r) => { setTimeout(r, 10) })
+    }
 
     expect(state.pending, 'pending should be set for AskUserQuestion').toBeDefined()
     expect(state.pending?.requestID).toBe('req-askq-1')
     expect(sess.permResponses).toEqual([])
+
+    state.pending?.resolve()
+    await Promise.race([
+      loopDone,
+      new Promise((_, reject) => { setTimeout(() => { reject(new Error('timeout')) }, 3000) }),
+    ])
   })
 })
 

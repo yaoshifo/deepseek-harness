@@ -483,11 +483,10 @@ export class Engine {
       msg.content = resolved
     }
 
-    // M3: Route permission responses (allow/deny/allow_all) and AskUserQuestion
-    // card-button answers to handlePendingPermission before normal dispatch.
-    if (msg.isPermissionAction || msg.isAskqCardAction) {
-      if (this.handlePendingPermission(p, msg, content)) return
-    }
+    // M3: Route permission responses to handlePendingPermission before normal
+    // dispatch (Go engine.go: every message passes through this check —
+    // card-button actions AND free-text answers to a pending question).
+    if (this.handlePendingPermission(p, msg, content)) return
 
     const session = this.sessions.getOrCreateActive(msg.sessionKey)
     this.sessions.updateUserMeta(msg.sessionKey, msg.userName, msg.chatName)
@@ -1235,13 +1234,15 @@ export class Engine {
             void this.sendPermissionPrompt(p, replyCtx, prompt, toolName, toolInput)
           }
 
-          // Wait for user response or stop signal.
-          // Note: in the Go original the event loop blocks here until the
-          // user responds. In TS the event loop returns — the user response
-          // is handled by handlePendingPermission in a separate call, which
-          // resolves the pending and triggers the next turn.
-          // DO NOT await resolved here — the test expects the loop to exit
-          // after setting pending so the caller can verify state.
+          // Block on the user's response (Go select on pending.Resolved /
+          // stopCh). The loop stays parked here so post-answer events flow
+          // through this same loop; the receive-race's channel-closed branch
+          // never fires because we await before the next receive.
+          await Promise.race([
+            resolved,
+            state.stopSignal(),
+          ])
+          state.permissionPending = false
           break
         }
 
