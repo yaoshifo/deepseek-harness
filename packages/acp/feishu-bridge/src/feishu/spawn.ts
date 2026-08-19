@@ -77,6 +77,11 @@ export class SpawnedChatStore {
     this.file = file
   }
 
+  /** Persistence path ('' when persistence is disabled). */
+  get filePath(): string {
+    return this.file
+  }
+
   /**
    * Load the persisted registry (new `{"chats":{...}}` format, then the legacy
    * `{"chat_ids":[...]}` shape). Missing file is a clean start.

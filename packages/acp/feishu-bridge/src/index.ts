@@ -15,6 +15,7 @@ import { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { ProviderRoute as AdapterProviderRoute } from './agent-dsh/adapter.js'
 import { FeishuPlatform } from './feishu/platform.js'
 import { Engine } from './engine/engine.js'
+import { ProjectStateStore } from './engine/project-state.js'
 import { registerSessionCommands } from './engine/commands.js'
 import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from './tools/subtask.js'
 
@@ -162,39 +163,8 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   /** One live project: its engine plus the adapter that owns its agents. */
   const live: Array<{ engine: Engine; adapter: DshAgentAdapter }> = []
   for (const project of config.projects) {
-    const routeNames = Object.keys(config.providers)
-    const activeProvider = project.agent?.provider ?? routeNames[0] ?? ''
-    const routes: AdapterProviderRoute[] = routeNames.flatMap((routeName) => {
-      const route = config.providers[routeName]
-      if (route === undefined) return []
-      return [{
-        name: routeName,
-        provider: route.route,
-        model: route.model ?? '',
-        ...(routeName === activeProvider && project.agent?.reasoningEffort !== undefined
-          ? { reasoningEffort: project.agent.reasoningEffort }
-          : {}),
-      }]
-    })
-
-    // The structural slice (agents + on + get) is exactly what the real
-    // Cordis context provides; the adapter consumes it structurally.
-    const agent = new DshAgentAdapter(ctx, {
-      agentName: 'dsh',
-      cwd: project.workdir,
-      providers: routes,
-      activeProvider,
-    })
-
-    const platform = new FeishuPlatform({
-      appID: project.feishu.appId,
-      appSecret: project.feishu.appSecret,
-      groupReplyAll: project.features?.allowChat === true,
-    })
-
-    const engine = new Engine(project.name, agent, [platform], join(dataRoot, project.name, 'sessions.json'), '')
-    registerSessionCommands(engine)
-    live.push({ engine, adapter: agent })
+    const { engine, adapter } = buildProjectAssembly(ctx, config, project, dataRoot)
+    live.push({ engine, adapter })
     if (project.features?.injectSender === true) engine.setInjectSender(true)
     if (project.features?.quiet === true) {
       engine.setDisplayConfig({ thinkingMessages: false, toolMessages: false })
@@ -227,4 +197,62 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
     }
     return undefined
   })
+}
+
+/**
+ * Assemble one project's adapter + platform + engine with its disk stores
+ * wired (Go wire.go per-project wiring): the project state store carries
+ * the per-chat workdir overrides (without it /spawn --dir and /dir resolve
+ * nothing), and the platform dataDir persists the spawned-chat registry and
+ * tag cache across restarts. Extracted from apply() so the wiring is
+ * testable without booting Cordis.
+ * @param ctx - Plugin context (the structural agents + on + get slice).
+ * @param config - Validated plugin config.
+ * @param project - The project row to assemble.
+ * @param dataRoot - Root directory holding per-project state.
+ * @returns The engine and the adapter owning its agents.
+ */
+export function buildProjectAssembly(
+  ctx: Context,
+  config: FeishuBridgeConfig,
+  project: ProjectConfig,
+  dataRoot: string,
+): { engine: Engine; adapter: DshAgentAdapter; platform: FeishuPlatform } {
+  const routeNames = Object.keys(config.providers)
+  const activeProvider = project.agent?.provider ?? routeNames[0] ?? ''
+  const routes: AdapterProviderRoute[] = routeNames.flatMap((routeName) => {
+    const route = config.providers[routeName]
+    if (route === undefined) return []
+    return [{
+      name: routeName,
+      provider: route.route,
+      model: route.model ?? '',
+      ...(routeName === activeProvider && project.agent?.reasoningEffort !== undefined
+        ? { reasoningEffort: project.agent.reasoningEffort }
+        : {}),
+    }]
+  })
+
+  // The structural slice (agents + on + get) is exactly what the real
+  // Cordis context provides; the adapter consumes it structurally.
+  const adapter = new DshAgentAdapter(ctx, {
+    agentName: 'dsh',
+    cwd: project.workdir,
+    providers: routes,
+    activeProvider,
+  })
+
+  const projectDataDir = join(dataRoot, project.name)
+  const platform = new FeishuPlatform({
+    appID: project.feishu.appId,
+    appSecret: project.feishu.appSecret,
+    groupReplyAll: project.features?.allowChat === true,
+    projectName: project.name,
+    dataDir: projectDataDir,
+  })
+
+  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), '')
+  engine.setProjectStateStore(new ProjectStateStore(join(projectDataDir, 'state.json')))
+  registerSessionCommands(engine)
+  return { engine, adapter, platform }
 }
