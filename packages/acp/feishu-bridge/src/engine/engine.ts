@@ -945,6 +945,9 @@ export class Engine {
 
     const startSessionID = session.getAgentSessionID()
 
+    // Resolve per-chat workDir override so the agent session starts in the
+    // correct directory even in single-workspace mode (Go applyWorkDirOverride).
+    const restoreWorkDir = this.applyWorkDirOverride(agent, sessionKey)
     let agentSession: AgentSession | undefined
     try {
       agentSession = await this.startAgentLocked(agent, startSessionID, sessionEnv, '')
@@ -960,6 +963,8 @@ export class Engine {
       } else {
         console.error(`failed to start interactive session (${sessionKey}): ${String(error)}`)
       }
+    } finally {
+      restoreWorkDir()
     }
 
     if (agentSession === undefined) {
@@ -1778,11 +1783,11 @@ export class Engine {
 
   /**
    * Kill the stalled agent session and start a fresh resume, re-injecting the
-   * per-session env (Go restartAgentForStallRetry, M1 subset without the
-   * workDir override — the dsh adapter derives cwd at creation).
+   * per-session env and per-chat workDir override (Go
+   * restartAgentForStallRetry).
    */
   private async restartAgentForStallRetry(
-    state: InteractiveState, replyAgent: Agent, _sessionKey: string,
+    state: InteractiveState, replyAgent: Agent, sessionKey: string,
     oldEvents: { drain(): void },
   ): Promise<AgentSession | undefined> {
     const resumeID = state.agentSession?.currentSessionID() ?? ''
@@ -1797,6 +1802,9 @@ export class Engine {
 
     const retryEnv = state.sessionEnv
     const retryMode = state.effectiveMode
+    // Restore per-chat workDir override so --resume finds the session under
+    // the correct directory (Go stall-retry applyWorkDirOverride).
+    const restoreWorkDir = this.applyWorkDirOverride(replyAgent, sessionKey)
     try {
       const newSess = await this.startAgentLocked(replyAgent, resumeID, retryEnv, retryMode)
       state.agentSession = newSess
@@ -1805,6 +1813,8 @@ export class Engine {
     } catch (error) {
       console.error(`stall retry: failed to create new session: ${String(error)}`)
       return undefined
+    } finally {
+      restoreWorkDir()
     }
   }
 
@@ -2686,6 +2696,21 @@ export class Engine {
     const switcher = asWorkDirSwitcher(this.agent)
     if (switcher !== undefined) return switcher.getWorkDir()
     return (this.agent as { getWorkDir?: () => string }).getWorkDir?.().trim() ?? ''
+  }
+
+  /**
+   * Temporarily switch the shared agent's workDir to this chat's override
+   * (Go applyWorkDirOverride). Returns the restore closure; callers invoke
+   * it after StartSession. Agents without WorkDirSwitcher are a no-op.
+   */
+  private applyWorkDirOverride(agent: Agent, sessionKey: string): () => void {
+    const override = this.perChatWorkDir(this.dirOverrideKey(sessionKey))
+    if (override === '') return () => {}
+    const switcher = asWorkDirSwitcher(agent)
+    if (switcher === undefined) return () => {}
+    const saved = switcher.getWorkDir()
+    switcher.setWorkDir(override)
+    return () => { switcher.setWorkDir(saved) }
   }
 
   /** Resolve a user-supplied dir argument (Go Engine.resolveDir, engine-side copy). */

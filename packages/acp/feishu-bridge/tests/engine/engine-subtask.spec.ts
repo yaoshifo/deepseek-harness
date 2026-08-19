@@ -15,6 +15,7 @@ import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { Session } from '../../src/engine/session.js'
+import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { WorktreeMode } from '../../src/engine/worktree.js'
 import type { Agent, Message, Platform } from '../../src/core/types.js'
 import {
@@ -24,6 +25,7 @@ import {
   createStubSpawnerPinPlatform,
   createStubSpawnerPlatform,
   createForkPreparerAgent,
+  createWorkDirAgent,
   newStubMessage,
   type RecordedCard,
 } from '../stubs/engine-stubs.js'
@@ -309,6 +311,33 @@ describe('SpawnSubtask', () => {
     // Unattended spawn leaves the flag off.
     const { childKey: autoKey } = await e.spawnSubtask(parentKey, '', WorktreeMode.ForceOff, false, 'auto task', [], false)
     expect(e.sessions.getOrCreateActive(autoKey).getSubtaskAttended()).toBe(false)
+  })
+
+  it('starts the child session in the --dir override (workdir switcher)', async () => {
+    const p = createStubSpawnerPlatform()
+    // A WorkDirSwitcher agent records the dir it was switched to when the
+    // spawn-driven session start fires (Go applyWorkDirOverride semantics).
+    const agent = createWorkDirAgent('/base/dir')
+    const startedDirs: string[] = []
+    const baseStart = agent.startSession.bind(agent)
+    agent.startSession = async (id: string) => {
+      startedDirs.push(agent.getWorkDir())
+      return baseStart(id)
+    }
+    const e = newSubtaskTestEngine(p, agent)
+    // The dir override lives in the project state store; without it the
+    // engine has nothing to switch to.
+    const store = new ProjectStateStore(join(tmpdir(), `fb-spawn-state-${Date.now()}.json`))
+    e.setProjectStateStore(store)
+
+    const parentKey = 'test:parent-chat:user-1'
+    const dir = await mkdtemp(join(tmpdir(), 'fb-spawn-dir-'))
+    await e.spawnSubtask(parentKey, dir, WorktreeMode.ForceOff, false, 'work in dir', [], false)
+    await settle()
+
+    expect(startedDirs).toContain(dir)
+    // The override is temporary: the shared agent returns to its base dir.
+    expect(agent.getWorkDir()).toBe('/base/dir')
   })
 
   it('seeds the fork sentinel', async () => {

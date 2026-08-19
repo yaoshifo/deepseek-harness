@@ -158,6 +158,21 @@ describe('DshAgentAdapter', () => {
     expect(session.currentSessionID()).toBe('agent-1')
   })
 
+  it('WorkDirSwitcher: setWorkDir changes the create cwd without touching the config', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_10:ou_9'])
+    expect(a.getWorkDir()).toBe('/workspace/project')
+
+    // The engine switches the dir around StartSession (per-chat --dir
+    // override, Go applyWorkDirOverride) and restores it afterwards.
+    a.setWorkDir('/tmp/child-dir')
+    await a.startSession('')
+    a.setWorkDir('/workspace/project')
+
+    expect(h.creates[0]!.meta).toEqual({ cwd: '/tmp/child-dir' })
+  })
+
   it('resumes a persisted session with the same id', async () => {
     const h = createHarness()
     const a = newAdapter(h)

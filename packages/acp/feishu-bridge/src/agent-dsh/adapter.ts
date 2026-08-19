@@ -156,6 +156,8 @@ export class DshAgentAdapter {
   private readonly liveSessions = new Map<string, DshAgentSession>()
   private env: string[] = []
   private modeOverride = ''
+  /** Mutable work dir: the engine's per-chat override switches it around StartSession (Go WorkDirSwitcher). */
+  private workDir: string
   private readonly disposers: Array<() => void> = []
   /** Whether the userQuestions provider has been registered (lazy, M3). */
   private uqRegistered = false
@@ -163,6 +165,7 @@ export class DshAgentAdapter {
   constructor(ctx: DshContextLike, cfg: DshAdapterConfig) {
     this.ctx = ctx
     this.cfg = cfg
+    this.workDir = cfg.cwd
     // session/event projection: route each durable event to the live
     // engine session sharing the agent/session id.
     const onSessionEvent = (session: { id: unknown }, event: Record<string, unknown>): void => {
@@ -286,6 +289,16 @@ export class DshAgentAdapter {
     this.env = [...env]
   }
 
+  /** WorkDirSwitcher: the dir used for the next agents.create (Go SetWorkDir). */
+  setWorkDir(dir: string): void {
+    this.workDir = dir
+  }
+
+  /** WorkDirSwitcher: current work dir (Go GetWorkDir). */
+  getWorkDir(): string {
+    return this.workDir
+  }
+
   /** SessionModeInjector: one-shot mode override consumed by startSession. */
   setSessionMode(mode: string): void {
     this.modeOverride = mode
@@ -345,7 +358,7 @@ export class DshAgentAdapter {
       handle = await this.ctx.agents.create({
         sessionId: SessionId(freshNativeSessionId()),
         meta: {
-          cwd: this.cfg.cwd,
+          cwd: this.workDir,
           ...(parent !== undefined ? { parentSession: SessionId(origID), seedLength: seed.length } : {}),
         },
         ...(seed.length > 0 ? { seed } : {}),
@@ -363,7 +376,7 @@ export class DshAgentAdapter {
       // chat — the live "id collision" failure observed right after /new.
       handle = await this.ctx.agents.create({
         sessionId: SessionId(freshNativeSessionId()),
-        meta: { cwd: this.cfg.cwd },
+        meta: { cwd: this.workDir },
         agentOptions: this.routeAgentOptions(),
       })
     }
