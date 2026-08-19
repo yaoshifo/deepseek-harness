@@ -233,6 +233,17 @@
     #     effort: low                      # low/medium/high/max/off; always-thinking models need low+
     #     timeoutSec: 600                  # fork timeout; speculative pre-render caps at 360
     #     renderPngScript: /abs/render-png.sh  # HTML→PNG script; empty = send .html instead of image
+
+    #   editorUrl: https://code.example.com  # 🔗 Open Editor link in status footers
+    # usageProviders:                      # provider quota on the ✅ footer's ⌛ line
+    #   - type: glm                        # glm | minimax
+    #     options:
+    #       api_key: ref:your-glm-key      # credential reference (credentials capability)
+    #       region: cn                     # glm: cn switches to bigmodel endpoint
     # Per-project extras (inside a projects[] row):
+    #   contextWindow: 258400              # ctx-estimate window in tokens; 0 = 200k default
     #   adminFrom: "ou_xxx,ou_yyy"         # privileged-command allowlist; * = all
     #   interactiveIdleTimeoutMins: 30     # idle reaper threshold
+    #   features:
+    #     showContextIndicator: true       # 📊 ctx / 🍵 cache lines on the ✅ footer (default true)
+    #     replyFooter: true                # Codex-style *model · effort · workdir* reply footer (default false)

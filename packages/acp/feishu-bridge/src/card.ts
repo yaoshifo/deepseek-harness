@@ -534,6 +534,12 @@ export class CardBuilder {
     return this
   }
 
+  /** Append pre-built elements verbatim (composed cards like the completion footer). */
+  raw(...elements: CardElement[]): this {
+    this.card.elements.push(...elements)
+    return this
+  }
+
   /** Return the constructed card. */
   build(): Card {
     return Object.assign(new Card(), { header: this.card.header, elements: [...this.card.elements] })

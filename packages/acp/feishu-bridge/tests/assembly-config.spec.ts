@@ -229,3 +229,49 @@ describe('buildProjectAssembly plan_render wiring (Go [projects.plan_render], #4
     expect(engine.planRenderProvider).toBe('')
   })
 })
+
+describe('M7 usage/footer config wiring', () => {
+  it('wires display.editor_url onto the engine display config (Go EditorURL)', () => {
+    expect(assemble({ ...baseConfig(), display: { editorUrl: 'https://code.example.com' } }).engine.display.editorUrl)
+      .toBe('https://code.example.com')
+    expect(assemble(baseConfig()).engine.display.editorUrl).toBe('')
+  })
+
+  it('wires features.show_context_indicator (default on, Go SetShowContextIndicator)', () => {
+    expect(assemble(baseConfig()).engine.showContextIndicator).toBe(true)
+    const proj = { ...project(), features: { showContextIndicator: false } }
+    expect(assemble(baseConfig(), proj).engine.showContextIndicator).toBe(false)
+  })
+
+  it('wires context_window and re-applies the active provider window (Go SetContextWindow)', () => {
+    const proj = { ...project(), contextWindow: 128_000 }
+    expect(assemble(baseConfig(), proj).engine.contextWindow).toBe(128_000)
+    expect(assemble(baseConfig(), proj).engine.projectContextWindow).toBe(128_000)
+    // No project window: the 200k generic default stays (the dsh routes
+    // declare no context window of their own).
+    expect(assemble(baseConfig()).engine.contextWindow).toBe(200_000)
+  })
+
+  it('wires features.reply_footer (default off, Go SetReplyFooterEnabled)', () => {
+    expect(assemble(baseConfig()).engine.replyFooterEnabled).toBe(false)
+    const proj = { ...project(), features: { replyFooter: true } }
+    expect(assemble(baseConfig(), proj).engine.replyFooterEnabled).toBe(true)
+  })
+
+  it('builds usage_providers and skips invalid entries with a warning (Go buildUsageProviders)', () => {
+    const cfg: FeishuBridgeConfig = {
+      ...baseConfig(),
+      usageProviders: [
+        { type: 'glm', options: { api_key: 'k' } },
+        { type: 'nope', options: {} },
+      ],
+    }
+    const { engine } = assemble(cfg)
+    expect(engine.usageProviders).toHaveLength(1)
+    expect(engine.usageProviders[0]!.name()).toBe('glm')
+  })
+
+  it('leaves the engine without usage providers when none are configured', () => {
+    expect(assemble(baseConfig()).engine.usageProviders).toEqual([])
+  })
+})

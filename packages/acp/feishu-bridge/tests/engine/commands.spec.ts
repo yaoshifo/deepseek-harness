@@ -11,7 +11,9 @@ import { cmdDir, cmdList, cmdNew, cmdStatus, cmdStop, matchPrefix, matchSession,
 import type { Agent, AgentSessionInfo, Message } from '../../src/core/types.js'
 import {
   createStubAgent,
+  createStubCardPlatform,
   createStubPlatform,
+  createWorkDirAgent,
   newControllableSession,
   type StubPlatform,
 } from '../stubs/engine-stubs.js'
@@ -577,6 +579,34 @@ describe('/dir', () => {
       await waitForSent(p)
       expect(p.sent).toHaveLength(1)
       expect(p.sent[0]?.toLowerCase()).toContain('admin')
+    } finally {
+      dispose()
+    }
+  })
+})
+
+describe('/new status-footer card (M7)', () => {
+  it('sends the purple footer card on card platforms, resetting per-turn usage', async () => {
+    const cardP = createStubCardPlatform('feishu')
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [cardP], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      // A previous turn left usage state; /new must reset it before the card.
+      e.usage.ctxMsg = 'ctx: +1k=10k'
+      e.usage.tokenRateMsg = '500 t/s'
+
+      await cmdNew(e, cardP, msg({ sessionKey: 'feishu:oc_chat:ou_u' }), [])
+
+      expect(cardP.sentCards).toHaveLength(1)
+      const card = cardP.sentCards[0] as { header?: { title: string; color: string }; elements: Array<{ kind: string }> }
+      expect(card.header?.color).toBe('purple')
+      expect(card.header?.title).toContain('repo')
+      // Reset fields stay off the card (no 📊 / no t/s from the stale turn).
+      const contents = JSON.stringify(card.elements)
+      expect(contents).not.toContain('ctx: +1k')
+      expect(contents).not.toContain('500 t/s')
+      expect(e.usage.ctxMsg).toBe('')
+      expect(e.usage.tokenRateMsg).toBe('')
     } finally {
       dispose()
     }
