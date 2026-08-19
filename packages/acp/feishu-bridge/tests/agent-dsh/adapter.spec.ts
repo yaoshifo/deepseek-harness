@@ -29,7 +29,7 @@ function createFakeAgent(id: string, sink: (sessionId: string, event: Record<str
       agent.cancels.push({ cause, ...(options?.keepInbox !== undefined ? { keepInbox: options.keepInbox } : {}) })
     },
     emit(sessionId: string, event: Record<string, unknown>): void {
-      sink(sessionId, { type: event.type, ...event })
+      sink(sessionId, event)
     },
   }
   return agent
@@ -61,8 +61,13 @@ function createHarness(): Harness {
   const sessionListeners: Array<(session: { id: unknown }, event: Record<string, unknown>) => void> = []
   const disposedListeners: Array<(payload: { agent: DshAgentLike }) => void> = []
 
+  // Real `session/event` payloads arrive as durable SessionEvent records
+  // ({type, seq, time, data}); mirror that shape at the sink so the
+  // projection under test reads fields exactly as production delivers them
+  // (a flat shape once masked the payload-unwrap bug entirely).
   const emit = (sessionId: string, event: Record<string, unknown>): void => {
-    for (const l of sessionListeners) l({ id: sessionId }, event)
+    const { type, ...data } = event
+    for (const l of sessionListeners) l({ id: sessionId }, { type, seq: 0, time: 0, data })
   }
   const disposeAgent = (agent: RecordedAgent): void => {
     agent.disposed = true

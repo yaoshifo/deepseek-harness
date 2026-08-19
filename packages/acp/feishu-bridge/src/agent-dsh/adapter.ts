@@ -341,13 +341,19 @@ export class DshAgentSession implements AgentSession {
   /** Project one durable session event into the engine Event stream. */
   projectSessionEvent(event: Record<string, unknown>): void {
     this.lastActivityAt = Date.now()
+    // Durable session events carry their payload under `data` (SessionEvent
+    // = {type, seq, time, data}); every field read below comes from the
+    // unwrapped payload. Reading the flat shape silently produced empty
+    // results in production while flat-shaped harness emissions kept the
+    // tests green — the harness now emits the wrapped shape too.
+    const data = (event.data ?? {}) as Record<string, unknown>
     switch (toStr(event.type)) {
       case 'turn/start': {
         this.turnText = ''
         break
       }
       case 'assistant/chunk': {
-        const chunk = event.chunk as { type?: string; text?: string } | undefined
+        const chunk = data.chunk as { type?: string; text?: string } | undefined
         if (chunk?.type === 'text-delta') {
           this.channel.push({ type: 'text_delta', content: chunk.text ?? '', done: false })
         } else if (chunk?.type === 'reasoning-delta') {
@@ -356,7 +362,7 @@ export class DshAgentSession implements AgentSession {
         break
       }
       case 'assistant/message': {
-        const message = event.message as { content?: ContentBlock[] } | undefined
+        const message = data.message as { content?: ContentBlock[] } | undefined
         const text = textOfBlocks(message?.content)
         const thinking = thinkingOfBlocks(message?.content)
         if (text !== '') {
@@ -366,7 +372,7 @@ export class DshAgentSession implements AgentSession {
         if (thinking !== '') {
           this.channel.push({ type: 'thinking', content: thinking, done: false })
         }
-        const usage = event.usage as
+        const usage = data.usage as
           | { inputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; outputTokens?: number }
           | undefined
         if (usage !== undefined) {
@@ -383,16 +389,16 @@ export class DshAgentSession implements AgentSession {
       case 'tool/call': {
         this.channel.push({
           type: 'tool_use',
-          toolName: toStr(event.name),
-          toolInput: toStr(event.arguments),
-          toolID: toStr(event.callId),
+          toolName: toStr(data.name),
+          toolInput: toStr(data.arguments),
+          toolID: toStr(data.callId),
           content: '',
           done: false,
         })
         break
       }
       case 'tool/result': {
-        const message = event.message as { content?: ContentBlock[] } | undefined
+        const message = data.message as { content?: ContentBlock[] } | undefined
         this.channel.push({
           type: 'tool_result',
           toolResult: textOfBlocks(message?.content),
@@ -408,7 +414,7 @@ export class DshAgentSession implements AgentSession {
         // reports the failure instead of degrading to the silent-reply hint
         // (observed live: "No API key for provider" showed as 🤫).
         this.lastText = this.turnText
-        const reason = event.reason as { kind?: unknown; error?: { message?: unknown } } | undefined
+        const reason = data.reason as { kind?: unknown; error?: { message?: unknown } } | undefined
         const errorText = reason !== undefined && reason.kind === 'error' && reason.error?.message !== undefined
           ? toStr(reason.error.message)
           : undefined
