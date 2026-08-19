@@ -196,7 +196,8 @@ WS 事件（im.message.receive_v1、card.action.trigger 等）走 node-sdk 内�
 | LLM API key | `~/.claude/rotate-key.sh`（3 key 轮换数组，任取其一）；profile 里 `apiKeyEnv: FB_MIFY_API_KEY` |
 | dsh profile | `~/.dsh/profiles/feishu-bridge/`（cordis.patch.yml 已配好开发虾 project 段 + mify-dsh 路由） |
 | launchd plist | `~/Library/LaunchAgents/com.dsh.feishu-bridge.plist`（FB_MIFY_API_KEY 在 EnvironmentVariables） |
-| daemon 日志 | `~/.dsh/feishu-bridge-stdout.log` / `~/.dsh/feishu-bridge-stderr.log` |
+| daemon 日志 | `~/.dsh/feishu-bridge-stdout.log` / `~/.dsh/feishu-bridge-stderr.log`（重启时 mv 轮换保留） |
+| 监控群（M6b 冒烟用） | `oc_34a8faa3c14461fa7b79419e5cd89cee`（开发虾已在群内，bot 可读历史） |
 | 旧 cc-connect | launchd `com.cc-connect.service`，读 `~/.cc-connect/config.toml`；开发虾段已注释（备份 `config.toml.bak-feishu-bridge`），运维虾仍跑旧系统 |
 | lark-cli | `~/.local/bin/lark-cli`（v1.0.69），user 身份已授权 `im:message`（发消息测冒烟用） |
 
