@@ -872,6 +872,9 @@ importers:
       '@larksuiteoapi/node-sdk':
         specifier: ^1.53.0
         version: 1.73.0
+      sharp:
+        specifier: ^0.35.3
+        version: 0.35.3(@types/node@22.20.0)
 
   packages/api/gateway:
     dependencies:

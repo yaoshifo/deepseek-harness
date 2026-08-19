@@ -24,7 +24,8 @@
     "@deepseek-ai/dsh-llm": "workspace:^",
     "@deepseek-ai/dsh-session": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^",
-    "@larksuiteoapi/node-sdk": "^1.53.0"
+    "@larksuiteoapi/node-sdk": "^1.53.0",
+    "sharp": "^0.35.3"
   },
   "dsh": {
     "bundle": {
