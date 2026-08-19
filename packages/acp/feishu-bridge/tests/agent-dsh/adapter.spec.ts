@@ -40,6 +40,10 @@ interface Harness {
   creates: DshCreateOptionsLike[]
   resumes: DshCreateOptionsLike[]
   agents: RecordedAgent[]
+  /** Services ctx.get resolves (e.g. the fake userQuestions service). */
+  services: Record<string, unknown>
+  /** All ctx.on listeners keyed by event name. */
+  listeners: Map<string, Array<(...args: never[]) => unknown>>
   emit(sessionId: string, event: { type: string } & Record<string, unknown>): void
   disposeAgent(agent: RecordedAgent): void
 }
@@ -58,8 +62,8 @@ function createHarness(): Harness {
   const creates: DshCreateOptionsLike[] = []
   const resumes: DshCreateOptionsLike[] = []
   const agents: RecordedAgent[] = []
-  const sessionListeners: Array<(session: { id: unknown }, event: Record<string, unknown>) => void> = []
-  const disposedListeners: Array<(payload: { agent: DshAgentLike }) => void> = []
+  const services: Record<string, unknown> = {}
+  const listeners = new Map<string, Array<(...args: never[]) => unknown>>()
 
   // Real `session/event` payloads arrive as durable SessionEvent records
   // ({type, seq, time, data}); mirror that shape at the sink so the
@@ -67,11 +71,15 @@ function createHarness(): Harness {
   // (a flat shape once masked the payload-unwrap bug entirely).
   const emit = (sessionId: string, event: Record<string, unknown>): void => {
     const { type, ...data } = event
-    for (const l of sessionListeners) l({ id: sessionId }, { type, seq: 0, time: 0, data })
+    for (const l of listeners.get('session/event') ?? []) {
+      ;(l as unknown as (session: { id: unknown }, ev: Record<string, unknown>) => void)({ id: sessionId }, { type, seq: 0, time: 0, data })
+    }
   }
   const disposeAgent = (agent: RecordedAgent): void => {
     agent.disposed = true
-    for (const l of disposedListeners) l({ agent })
+    for (const l of listeners.get('agent/disposed') ?? []) {
+      ;(l as unknown as (payload: { agent: DshAgentLike }) => void)({ agent })
+    }
   }
 
   const counter = { n: 0 }
@@ -104,15 +112,14 @@ function createHarness(): Harness {
       get: (id: unknown) => agents.find(a => a.id === String(id) && !a.disposed),
     },
     on: (event: string, listener: (...args: never[]) => unknown) => {
-      const typed = listener as unknown as (session: { id: unknown }, ev: Record<string, unknown>) => void
-      const typedDisposed = listener as unknown as (payload: { agent: DshAgentLike }) => void
-      if (event === 'session/event') sessionListeners.push(typed)
-      if (event === 'agent/disposed') disposedListeners.push(typedDisposed)
+      const list = listeners.get(event) ?? []
+      list.push(listener)
+      listeners.set(event, list)
       return () => {}
     },
-    get: (_name: string) => undefined,
+    get: (name: string) => services[name],
   }
-  return { ctx, creates, resumes, agents, emit, disposeAgent }
+  return { ctx, creates, resumes, agents, services, listeners, emit, disposeAgent }
 }
 
 function newAdapter(h: Harness) {
@@ -476,5 +483,174 @@ describe('DshAgentAdapter', () => {
     await a.stop()
 
     expect(h.agents.every(agent => agent.disposed)).toBe(true)
+  })
+})
+
+/** Fake userQuestions service capturing the adapter's provider (M3). */
+interface FakeProvider {
+  ask(req: Record<string, unknown>): Promise<unknown>
+}
+
+function createUserQuestionsHarness(): { h: Harness; adapter: DshAgentAdapter; providers: FakeProvider[] } {
+  const h = createHarness()
+  const providers: FakeProvider[] = []
+  h.services.userQuestions = {
+    registerProvider(p: FakeProvider): () => void {
+      providers.push(p)
+      return () => {}
+    },
+  }
+  const adapter = newAdapter(h)
+  return { h, adapter, providers }
+}
+
+/** Structural copy of dsh's plan-review question item (AskUserQuestionItem). */
+function planReviewQuestion(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'plan-review',
+    header: 'Plan review',
+    question: 'Approve this plan and leave plan mode?',
+    detail: '# Fix spinner\n\n1. resolve asset path\n2. upload gif',
+    options: [
+      { label: 'Approve', description: 'Leave plan mode.' },
+      { label: 'Keep planning', description: 'Stay in plan mode.' },
+    ],
+    intent: { kind: 'plan-review', approve: 'Approve' },
+    ...overrides,
+  }
+}
+
+/** Start a session (registering the provider) and return it plus the ask function. */
+async function startedProvider(): Promise<{
+  session: DshAgentSession
+  ask: (req: Record<string, unknown>) => Promise<unknown>
+}> {
+  const { adapter, providers } = createUserQuestionsHarness()
+  const session = await adapter.startSession('')
+  const provider = providers[0]
+  if (provider === undefined) throw new Error('userQuestions provider was not registered')
+  return { session, ask: req => provider.ask(req) }
+}
+
+/** The next event on the session channel; fails the test when the channel is done. */
+async function nextEvent(session: DshAgentSession): Promise<Record<string, unknown>> {
+  const recv = await session.events().receive()
+  if (recv.done) throw new Error('channel closed before the expected event')
+  return recv.event as unknown as Record<string, unknown>
+}
+
+describe('DshAgentAdapter userQuestions provider', () => {
+  it('registers the provider on first session creation', async () => {
+    const { adapter, providers } = createUserQuestionsHarness()
+    expect(providers).toHaveLength(0)
+    await adapter.startSession('')
+    expect(providers).toHaveLength(1)
+  })
+
+  it('plan-review ask emits an ExitPlanMode permission request with the plan heading', async () => {
+    const { session, ask } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+
+    const event = await nextEvent(session)
+    expect(event.type).toBe('permission_request')
+    expect(event.toolName).toBe('ExitPlanMode')
+    // Go planReviewItem: the card heading is the first line of the plan.
+    expect(event.toolInput).toBe('# Fix spinner')
+    expect(event.toolInputRaw).toEqual({ plan: '# Fix spinner\n\n1. resolve asset path\n2. upload gif' })
+
+    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: { plan: 'x' } })
+    await askPromise
+  })
+
+  it('a single-line plan falls back to the question as the card heading', async () => {
+    const { session, ask } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [planReviewQuestion({ detail: '# One line plan' })],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+
+    const event = await nextEvent(session)
+    expect(event.toolName).toBe('ExitPlanMode')
+    // Go planReviewItem: no newline in the plan → the question is the heading.
+    expect(event.toolInput).toBe('Approve this plan and leave plan mode?')
+
+    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {} })
+    await askPromise
+  })
+
+  it('approving the plan review answers with the intent approve label', async () => {
+    const { session, ask } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    const event = await nextEvent(session)
+    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {} })
+
+    await expect(askPromise).resolves.toEqual({
+      answers: [{ id: 'plan-review', selected: ['Approve'] }],
+    })
+  })
+
+  it('denying the plan review declines with the deny message as custom feedback', async () => {
+    const { session, ask } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    const event = await nextEvent(session)
+    void session.respondPermission(String(event.requestID), { behavior: 'deny', message: 'add tests first' })
+
+    await expect(askPromise).resolves.toEqual({
+      answers: [{ id: 'plan-review', selected: [], custom: 'add tests first' }],
+    })
+  })
+
+  it('ordinary questions still emit AskUserQuestion and deliver collected answers', async () => {
+    const { session, ask } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [{ question: 'Which flavor?', options: [{ label: 'A' }, { label: 'B' }] }],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    const event = await nextEvent(session)
+    expect(event.toolName).toBe('AskUserQuestion')
+    const questions = (event.toolInputRaw as { questions?: Array<{ question: string }> }).questions
+    expect(questions?.[0]?.question).toBe('Which flavor?')
+
+    void session.respondPermission(String(event.requestID), {
+      behavior: 'allow',
+      updatedInput: { answers: { 'Which flavor?': 'A' } },
+    })
+
+    await expect(askPromise).resolves.toEqual({
+      answers: [{ id: 'Which flavor?', selected: ['A'] }],
+    })
+  })
+})
+
+describe('DshAgentAdapter approval answerer', () => {
+  it('resolves the engine decision to the dsh approval outcome', async () => {
+    const h = createUserQuestionsHarness()
+    const session = await h.adapter.startSession('')
+    const listener = h.h.listeners.get('approval/request')?.[0]
+    if (listener === undefined) throw new Error('approval/request listener was not registered')
+
+    const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-1',
+      reason: 'rm -rf /tmp/x',
+    })
+    void session.respondPermission('call-1', { behavior: 'allow' })
+
+    await expect(outcome).resolves.toBe('allowed-once')
   })
 })

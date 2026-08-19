@@ -247,12 +247,12 @@ grep -v 'message_read\|card.action\|spinner' ~/.dsh/feishu-bridge-stderr.log | t
 
 ### 遗留清单（下次继续）
 
-1. **ExitPlanMode plan-review intent 答案编码**：dsh plan-mode 的 exit_plan_mode 走 userQuestions 的 `intent.kind='plan-review'`（approve/decline 语义），当前 provider 按普通问题处理——需识别 intent 并把答案映射为批准/拒绝
+1. **ExitPlanMode plan-review intent 答案编码**：✅（M4-C，2026-08-19）adapter 的 userQuestions provider 识别 `intent.kind='plan-review'`，按 Go `planReviewItem` 语义渲染为 ExitPlanMode 权限卡（heading=plan 首行），allow→`selected:[intent.approve]`，deny→`selected:[]`+`custom:拒绝消息`（plan-mode 据此保持规划并回喂反馈）
 2. **审批卡真机测试**：workspace-write 沙箱模式在 macOS 上导致 daemon 崩溃（dsh landlock 兼容性），无法触发真机 permission_request；danger-full-access 下不会弹审批。需排查 sandbox 在 macOS 的兼容性或找替代触发方式
 3. **card.action.trigger 按钮回调真机验证**：代码已就绪（platform.ts onCardAction + engine handleMessage 路由），但问题卡的按钮点击未被真实测试过——文本回答已验证，按钮回调路径相同但未跑通
 4. **profile 模板更新**：`packages/acp/feishu-bridge/profile/` 里的模板还是 Linux 路径（/home/hm）+ glm 路由；本机用的是 profile 实例（install.sh 不覆盖），模板与实例已分叉——合并回 dev 前需统一
 5. **M2 遗留**：✅ 完成卡的完整状态页脚（model/workdir/RAM）与紫色通知卡依赖 M4/M7
-6. **spinner GIF 资源缺失**：`lib/../../assets/thinking.gif` 路径找不到（tsdown 打包后 assets 相对路径失效），stderr 每次报 ENOENT（不影响功能）
+6. **spinner GIF 资源缺失**：✅（M4-C，2026-08-19）`resolveSpinnerAsset`（src/feishu/spinner.ts）按候选目录解析（src 源码平面 `../../assets`、tsdown 打包后 `../assets`、输出旁 `assets`），platform.ts 上传处改用它；待 daemon 重建后真机确认 stderr 不再报 ENOENT
 7. 最终 cutover 时补：launchd plist 模板入 git、61 feature 对照表、运维文档
 
 ### M3 提交记录（feat/dsh-feishu-bridge，全部已 commit 未 push）

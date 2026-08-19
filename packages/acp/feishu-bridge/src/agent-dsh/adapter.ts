@@ -51,10 +51,13 @@ function freshNativeSessionId(): string {
 
 /** Structural slice of dsh AskUserQuestion items (M3 userQuestions provider). */
 interface RawAskQuestionItem {
+  id?: string
   question: string
   header?: string
+  detail?: string
   options?: Array<{ label: string; description?: string }>
   multiSelect?: boolean
+  intent?: { kind?: string; approve?: string }
 }
 
 /** Ask request the userQuestions service passes to the provider (M3). */
@@ -168,8 +171,8 @@ export class DshAgentAdapter {
         toolInput: r.reason ?? '',
         toolInputRaw,
       })
-      const outcome = await target.awaitPermissionResponse(requestID, r.signal)
-      return outcome
+      const decision = await target.awaitPermissionResponse(requestID, r.signal)
+      return decision.outcome
     }))
   }
 
@@ -194,8 +197,16 @@ export class DshAgentAdapter {
         const sessionID = request.agent?.session?.id ?? ''
         const target = this.liveSessions.get(sessionID)
         if (target === undefined) return { answers: [] }
-        const requestID = `askq-${Date.now()}`
         const qs = request.questions as RawAskQuestionItem[]
+        // Plan-review asks (exit_plan_mode) are permission decisions, not
+        // option menus: route them through the ExitPlanMode plan card and
+        // map the allow/deny verdict back to answer semantics (Go
+        // planReviewItem).
+        const review = qs.find(q => q.intent?.kind === 'plan-review')
+        if (review !== undefined) {
+          return target.answerPlanReview(review, request.signal)
+        }
+        const requestID = `askq-${Date.now()}`
         const questions = qs.map(q => ({
           question: q.question,
           header: q.header ?? '',
@@ -374,8 +385,8 @@ export class DshAgentSession implements AgentSession {
   private lastText = ''
   private usage: { inputTokens?: number; totalInputTokens?: number; outputTokens?: number } = {}
   lastActivityAt = Date.now()
-  /** Pending permission responses: requestID → resolve function (M3). */
-  private readonly pendingPermissions = new Map<string, (outcome: string) => void>()
+  /** Pending permission responses: requestID → settle function (M3). */
+  private readonly pendingPermissions = new Map<string, (decision: { outcome: string; behavior: 'allow' | 'deny'; message?: string }) => void>()
   /** Pending AskUserQuestion answers: requestID → settle + count (M3). */
   private readonly pendingQuestionAnswers = new Map<string, { settle: (answers: string[]) => void; count: number }>()
 
@@ -443,19 +454,51 @@ export class DshAgentSession implements AgentSession {
 
   /**
    * Wait for the engine to call {@link respondPermission} with the user's
-   * decision (M3). Returns the dsh approval outcome string.
+   * decision (M3). Returns the decision as both the dsh approval outcome
+   * string and the raw verdict the plan-review mapping reads.
    */
-  awaitPermissionResponse(requestID: string, signal?: AbortSignal): Promise<string> {
+  awaitPermissionResponse(requestID: string, signal?: AbortSignal): Promise<{ outcome: string; behavior: 'allow' | 'deny'; message?: string }> {
     return new Promise((resolve) => {
-      const settle = (outcome: string): void => {
+      const settle = (decision: { outcome: string; behavior: 'allow' | 'deny'; message?: string }): void => {
         this.pendingPermissions.delete(requestID)
-        resolve(outcome)
+        resolve(decision)
       }
       this.pendingPermissions.set(requestID, settle)
       if (signal !== undefined) {
-        signal.addEventListener('abort', () => { settle('cancelled') }, { once: true })
+        signal.addEventListener('abort', () => { settle({ outcome: 'cancelled', behavior: 'deny' }) }, { once: true })
       }
     })
+  }
+
+  /**
+   * Answer a plan-review ask (M3): render it as the ExitPlanMode permission
+   * card — the card heading is the plan's first line, falling back to the
+   * question — then map the user's verdict to answer semantics. Allow
+   * selects the intent's approve label; deny declines with the deny message
+   * as feedback so the model keeps planning (Go planReviewItem +
+   * RespondPermission).
+   */
+  answerPlanReview(item: RawAskQuestionItem, signal?: AbortSignal): Promise<UserQuestionsAskResult> {
+    const plan = item.detail ?? ''
+    let heading = item.question
+    const newline = plan.indexOf('\n')
+    if (newline > 0) heading = plan.slice(0, newline).trim()
+    const requestID = `askq-${Date.now()}`
+    this.emitPermissionRequest({
+      requestID,
+      toolName: 'ExitPlanMode',
+      toolInput: heading,
+      toolInputRaw: { plan },
+    })
+    const approve = item.intent?.approve ?? ''
+    return this.awaitPermissionResponse(requestID, signal).then(decision => ({
+      answers: [{
+        id: item.id ?? item.question,
+        ...(decision.behavior === 'allow'
+          ? { selected: [approve !== '' ? approve : 'Approve'] }
+          : { selected: [], custom: decision.message ?? '' }),
+      }],
+    }))
   }
 
   /**
@@ -492,7 +535,12 @@ export class DshAgentSession implements AgentSession {
   respondPermission(requestID: string, result: PermissionResult): Promise<void> {
     const settle = this.pendingPermissions.get(requestID)
     if (settle !== undefined) {
-      settle(result.behavior === 'allow' ? 'allowed-once' : 'rejected')
+      const behavior = result.behavior === 'allow' ? 'allow' as const : 'deny' as const
+      settle({
+        outcome: behavior === 'allow' ? 'allowed-once' : 'rejected',
+        behavior,
+        ...(result.message !== undefined ? { message: result.message } : {}),
+      })
     }
     // AskUserQuestion flows ride the same request id: deliver the updated
     // input's answers so the question waiter (if any) also settles.

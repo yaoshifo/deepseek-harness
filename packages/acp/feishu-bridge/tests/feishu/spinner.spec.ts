@@ -6,9 +6,12 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { buildProgressCardPayloadV2, type ProgressCardEntry } from '../../src/progress.js'
 import { buildPreviewCardJSON, markCardStopped } from '../../src/feishu/progress.js'
-import { noSpinner, type SpinnerCfg } from '../../src/feishu/spinner.js'
+import { noSpinner, resolveSpinnerAsset, type SpinnerCfg } from '../../src/feishu/spinner.js'
 import { jObj, jParse, jStr, type JsonObj } from '../stubs/json.js'
 
 function headerIcon(cardJSON: string): JsonObj | undefined {
@@ -117,5 +120,28 @@ describe('markCardStopped strips spinner icon', () => {
     const stopped = markCardStopped(cardJSON, 'sess-key')
     expect(hasHeaderIcon(stopped)).toBe(false)
     expect(stopped).toContain('已停止')
+  })
+})
+
+describe('resolveSpinnerAsset', () => {
+  it('resolves the packaged assets directory from the source plane', () => {
+    const path = resolveSpinnerAsset('thinking.gif')
+    expect(path).toBeDefined()
+    expect(path?.endsWith(join('assets', 'thinking.gif'))).toBe(true)
+  })
+
+  it('resolves assets one level above a bundled module (tsdown lib plane)', async () => {
+    // lib/index.js sits one level below the package root, like the tsdown
+    // bundle output; assets stay at the package root.
+    const pkg = await mkdtemp(join(tmpdir(), 'spinner-assets-'))
+    await mkdir(join(pkg, 'assets'))
+    await writeFile(join(pkg, 'assets', 'thinking.gif'), '')
+    const moduleDir = join(pkg, 'lib')
+
+    expect(resolveSpinnerAsset('thinking.gif', moduleDir)).toBe(join(pkg, 'assets', 'thinking.gif'))
+  })
+
+  it('returns undefined when no candidate directory holds the asset', () => {
+    expect(resolveSpinnerAsset('missing.gif')).toBeUndefined()
   })
 })

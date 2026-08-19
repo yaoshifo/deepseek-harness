@@ -16,8 +16,6 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { MessageDedup, isOldMessage } from '../dedup.js'
 import { AllowList } from './allowlist.js'
 import { extractPostPlainText, hasHumanMention, isBotMentioned, stripMentions } from './extract.js'
@@ -33,7 +31,7 @@ import {
   markCardStopped,
 } from './progress.js'
 import { previewOverflow as previewOverflowFn } from './markdown.js'
-import { noSpinner, type SpinnerCfg } from './spinner.js'
+import { noSpinner, resolveSpinnerAsset, type SpinnerCfg } from './spinner.js'
 import { parseProgressCardPayload, parseProgressStyle } from '../progress.js'
 import { TokenBucketRateLimiter, isTenantAccessTokenInvalid, withTransientRetry } from './retry.js'
 import { errorMessage } from './retry.js'
@@ -659,8 +657,11 @@ export class FeishuPlatform implements Platform {
         const client = await this.ensureApi()
         if (client.uploadImage === undefined) return ''
         try {
-          const dir = dirname(fileURLToPath(import.meta.url))
-          const data = new Uint8Array(await readFile(`${dir}/../../assets/${name}`))
+          // Resolve against this module's location so the path survives the
+          // tsdown bundle (lib/index.js) as well as the source tree.
+          const asset = resolveSpinnerAsset(name)
+          if (asset === undefined) throw new Error(`spinner asset not found (${name})`)
+          const data = new Uint8Array(await readFile(asset))
           return await client.uploadImage({ data, mimeType: 'image/gif', fileName: name })
         } catch (error) {
           console.warn(`feishu: upload spinner gif failed (${name}): ${String(error)}`)

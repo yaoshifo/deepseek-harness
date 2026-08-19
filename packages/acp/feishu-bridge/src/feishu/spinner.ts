@@ -1,12 +1,16 @@
 /**
  * Running-state header GIF selection ported from cc-connect
- * platform/feishu/feishu_spinner.go (pure selection logic; the GIF upload
- * lives on the platform). thinking.gif is a violet pulse ring (思考中);
- * executing.gif a Material-style spinner (执行中).
+ * platform/feishu/feishu_spinner.go (selection logic and asset-path
+ * resolution; the GIF upload lives on the platform). thinking.gif is a
+ * violet pulse ring (思考中); executing.gif a Material-style spinner
+ * (执行中).
  *
  * @module dsh-feishu-bridge/feishu-spinner
  */
 
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { ProgressCardEntry } from '../progress.js'
 
 /** Uploaded spinner image keys; enabled is false when both uploads failed. */
@@ -19,6 +23,26 @@ export interface SpinnerCfg {
 }
 
 export const noSpinner: SpinnerCfg = { enabled: false, thinkingKey: '', executingKey: '' }
+
+/**
+ * Resolve a spinner GIF asset path across run planes: the source tree
+ * (this module at src/feishu/ → package-root assets/), the tsdown bundle
+ * (inlined into lib/index.js → package-root assets/), or an assets/
+ * directory copied next to the built module. First existing candidate
+ * wins; undefined when none holds the asset.
+ *
+ * @param name Asset file name, e.g. `thinking.gif`.
+ * @param moduleDir Directory of the resolving module (defaults to this
+ *   module's own location; tests inject a bundled-layout directory).
+ * @returns The first existing candidate path, or undefined.
+ */
+export function resolveSpinnerAsset(name: string, moduleDir = dirname(fileURLToPath(import.meta.url))): string | undefined {
+  for (const dir of [join(moduleDir, '../../assets'), join(moduleDir, '../assets'), join(moduleDir, 'assets')]) {
+    const candidate = join(dir, name)
+    if (existsSync(candidate)) return candidate
+  }
+  return undefined
+}
 
 /**
  * Header-icon key for a text-path progress card: "thinking" → thinkingKey,
