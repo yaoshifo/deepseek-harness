@@ -136,26 +136,29 @@ export interface FeishuReceiveEvent {
   }
 }
 
-/** Inbound card.action.trigger payload (structural slice, M3). */
+/**
+ * Inbound card.action.trigger payload (structural slice). Fields sit at the
+ * ROOT of the parsed WS payload — the same flattened convention as
+ * {@link FeishuReceiveEvent} (SDK RequestHandle.parse unwraps the v2
+ * envelope's `event` object; confirmed against live payloads).
+ */
 export interface CardActionTriggerEvent {
-  event?: {
-    action?: {
-      value?: Record<string, string>
-      option?: string
-      name?: string
-      formValue?: Record<string, string>
-    }
-    operator?: { openId?: string }
-    context?: { openChatID?: string; openMessageID?: string }
+  action?: {
+    value?: Record<string, string>
+    option?: string
+    name?: string
+    formValue?: Record<string, string>
   }
+  /** Wire keys are snake_case (live payload: open_id). */
+  operator?: { open_id?: string }
+  /** Wire keys are snake_case (live payload: open_chat_id, open_message_id). */
+  context?: { open_chat_id?: string; open_message_id?: string }
 }
 
-/** Inbound im.chat.updated_v1 payload (structural slice, M4). */
+/** Inbound im.chat.updated_v1 payload (structural slice, root-level like FeishuReceiveEvent). */
 export interface FeishuChatUpdatedEvent {
-  event?: {
-    chat_id?: string
-    after_change?: { name?: string; avatar?: string }
-  }
+  chat_id?: string
+  after_change?: { name?: string; avatar?: string }
 }
 
 /** Handle for an in-place editable preview card (Go feishuPreviewHandle). */
@@ -574,11 +577,12 @@ export class FeishuPlatform implements Platform {
    * card) to the card-action handler.
    */
   onCardAction(event: CardActionTriggerEvent): void {
-    const action = event.event?.action
+    const action = event.action
     if (action === undefined) return
-    const chatID = event.event?.context?.openChatID ?? ''
-    const messageID = event.event?.context?.openMessageID ?? ''
-    const userID = event.event?.operator?.openId ?? ''
+    let chatID = event.context?.open_chat_id ?? ''
+    const messageID = event.context?.open_message_id ?? ''
+    const userID = event.operator?.open_id ?? ''
+    if (chatID === '') chatID = userID
 
     // Allow-chat filter
     if (chatID !== '' && !AllowList(this.o.allowChat ?? '', chatID)) return
@@ -666,8 +670,8 @@ export class FeishuPlatform implements Platform {
    * Other changes (permissions, etc.) insert no notices and are skipped.
    */
   onChatUpdated(event: FeishuChatUpdatedEvent): void {
-    const chatID = event.event?.chat_id ?? ''
-    const ac = event.event?.after_change
+    const chatID = event.chat_id ?? ''
+    const ac = event.after_change
     if (chatID === '' || ac === undefined) return
     const sessionKey = `${this.tag()}:${chatID}`
 

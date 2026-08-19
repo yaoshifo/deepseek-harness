@@ -35,7 +35,7 @@ describe('onChatUpdated', () => {
     const p = newPlatform()
     const h = withHandlers(p)
 
-    p.onChatUpdated({ event: { chat_id: 'oc_1', after_change: { name: '新群名' } } })
+    p.onChatUpdated({ chat_id: 'oc_1', after_change: { name: '新群名' } })
 
     expect(h.renamed).toEqual([['feishu:oc_1', '新群名']])
     expect(h.changed).toEqual(['feishu:oc_1'])
@@ -47,7 +47,7 @@ describe('onChatUpdated', () => {
     const p = newPlatform()
     const h = withHandlers(p)
 
-    p.onChatUpdated({ event: { chat_id: 'oc_1', after_change: { avatar: 'img_v2_new' } } })
+    p.onChatUpdated({ chat_id: 'oc_1', after_change: { avatar: 'img_v2_new' } })
 
     expect(h.renamed).toEqual([])
     expect(h.changed).toEqual(['feishu:oc_1'])
@@ -57,8 +57,8 @@ describe('onChatUpdated', () => {
     const p = newPlatform()
     const h = withHandlers(p)
 
-    p.onChatUpdated({ event: { chat_id: 'oc_1', after_change: { name: '   ' } } })
-    p.onChatUpdated({ event: { chat_id: 'oc_1' } })
+    p.onChatUpdated({ chat_id: 'oc_1', after_change: { name: '   ' } })
+    p.onChatUpdated({ chat_id: 'oc_1' })
     p.onChatUpdated({})
 
     expect(h.renamed).toEqual([])
@@ -73,7 +73,7 @@ describe('onChatUpdated', () => {
     const h = withHandlers(p)
     await p.start(() => {})
 
-    deliver?.('im.chat.updated_v1', { event: { chat_id: 'oc_1', after_change: { name: '改名' } } } satisfies ChatUpdatedEvent)
+    deliver?.('im.chat.updated_v1', { chat_id: 'oc_1', after_change: { name: '改名' } } satisfies ChatUpdatedEvent)
 
     expect(h.renamed).toEqual([['feishu:oc_1', '改名']])
   })

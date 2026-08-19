@@ -23,11 +23,9 @@ function cardEvent(overrides: {
 }): CardActionTriggerEvent {
   counter += 1
   return {
-    event: {
-      action: { value: { action: overrides.action ?? '', ...(overrides.value ?? {}) } },
-      operator: { openId: overrides.userID ?? 'ou_9' },
-      context: { openChatID: overrides.chatID ?? 'oc_1', openMessageID: `om_${counter}` },
-    },
+    action: { value: { action: overrides.action ?? '', ...(overrides.value ?? {}) } },
+    operator: { open_id: overrides.userID ?? 'ou_9' },
+    context: { open_chat_id: overrides.chatID ?? 'oc_1', open_message_id: `om_${counter}` },
   }
 }
 
