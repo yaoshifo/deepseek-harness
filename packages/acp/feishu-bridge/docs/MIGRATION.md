@@ -16,7 +16,7 @@
 4. 61 个 feature 逐项对照表：全量迁移 / 不适用裁剪（附理由）
 5. 最终 cutover 后旧 cc-connect systemd 停用（由用户手动执行）
 
-**范围声明（不做）**：Web UI / Management Server 不在本次范围；#55 /fork 回滚（claudecode-only）、#7、#44/#50、#58（Claude Code 特定机制，dsh 无此问题）不迁移；#16 指纹改写由 profile 的 llm 路由配置承担（plain model name 规避，已有先例）。
+**范围声明（不做）**：Web UI / Management Server 不在本次范围；#55 /fork 回滚（claudecode-only）、#7、#44/#50、#58（Claude Code 特定机制，dsh 无此问题）不迁移；#16 指纹改写由 profile 的 llm 路由配置承担（plain model name 规避，已有先例）；**Go `core/providerproxy.go`（LLM 流量代理：TUI 指纹改写、overload-400 改写、thinking 注入）整体不迁移**——现状 dsh 后端本就不经过它（`agent/dsh/` 零引用，仅 env 传凭据，llm-pi-ai 直连网关；proxy 只服务 claudecode 路径，该路径整体退役），新架构按 D2 四条命名路由直连，thinking/effort 由路由 `forceAdaptiveThinking` 兼容项承担（现网已验证）、重试由 dsh `llm-retry` 承担。
 
 ## 1. 总体架构
 
@@ -134,3 +134,25 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 3. 旧 cc-connect 在整个迁移期保持可用作行为参照与回退（最终 cutover 前不删）
 4. lark-cli user 授权 token 在迁移期有效（用于自动化入站消息）
 5. deepseek-harness 主检出停留在 dev，worktree 承载 feature 分支直到最终合并
+
+## 附录 A：飞书 API 覆盖盘点（M0 结论：node-sdk 无缺口）
+
+Go 侧调用面 → `@larksuiteoapi/node-sdk`（1.73.0）对等映射，全部覆盖：
+
+**typed 调用**（Go SDK 方法 → node-sdk client 同名域）：
+- `Im.Message`：Create / Reply / Patch（卡片更新）/ List / Get / Delete
+- `Im.Image.Create`、`Im.File.Create`（媒体上传）
+- `Im.Chat`：Create / Get / Update（建群/查群/改名等）
+- `Im.ChatMembers`：Create / GetByIterator（成员管理）
+- `Im.Pin.Create`（Pin 面板 #35）
+- `Im.MessageReaction`：Create / Delete（表情回应）
+- `Im.ChatTopNotice`：PutTopNotice / DeleteTopNotice（置顶横幅 #22）
+- `Contact.User.Get`（用户信息）
+
+**裸 HTTP**（TS 侧继续裸调，量小）：
+- `GET /open-apis/im/v1/messages/{id}?card_msg_content_type=raw_card_content`（取卡片原文）
+- `POST /open-apis/drive/v1/files/{token}/comments/{comment_id}/replies`（文档评论回复）
+- `GET /open-apis/bot/v3/info`（bot 信息）
+- tenant token 获取由 node-sdk 内部处理
+
+WS 事件（im.message.receive_v1、card.action.trigger 等）走 node-sdk 内置长连接客户端。

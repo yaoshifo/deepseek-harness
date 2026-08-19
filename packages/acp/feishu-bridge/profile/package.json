@@ -1,0 +1,28 @@
+{
+  "name": "feishu-bridge-profile",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-feishu-bridge"
+      ]
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-base": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-lsp": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-lsp-stdio": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-lsp": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-tool-session-query": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-feishu-bridge": "link:@FORK_DIR@/packages/acp/feishu-bridge",
+    "@deepseek-ai/dsh-agent": "link:@FORK_DIR@/packages/core/agent",
+    "@deepseek-ai/dsh-agent-loop": "link:@FORK_DIR@/packages/core/agent-loop",
+    "@deepseek-ai/dsh-llm-pi-ai": "link:@FORK_DIR@/packages/llm/llm-pi-ai",
+    "@deepseek-ai/dsh-tool-claude-memory": "link:@FORK_DIR@/packages/memory/tool-claude-memory",
+    "@deepseek-ai/dsh-tool-ask-user": "link:@FORK_DIR@/packages/interaction/tool-ask-user"
+  }
+}

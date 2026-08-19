@@ -19,6 +19,7 @@
     "cordis.patch.yml"
   ],
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.53.0",
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^"
   },

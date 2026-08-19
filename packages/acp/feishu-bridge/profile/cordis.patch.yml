@@ -1,0 +1,157 @@
+# feishu-bridge profile patch layer (hot-reloaded by Cordis HMR — editing
+# this file while the runtime is up applies transactionally, no restart).
+#
+# This profile hosts the dsh-feishu-bridge daemon: the plugin that replaces
+# the retired cc-connect Go binary (see packages/acp/feishu-bridge/docs/
+# MIGRATION.md). Rows mirror the production cc-connect profile where the
+# behavior is agent-runtime-generic; feishu bot/engine config lives in the
+# feishu-bridge plugin row instead of this file.
+
+- id: agent-instructions
+  config:
+    # Replaces the dsh-base row wholesale (patch config is key-replacement,
+    # not a deep merge), so maxBytes must be repeated.
+    maxBytes: 65536
+    instructionFileCandidates:
+      - CLAUDE.md
+    localInstructionFileCandidates:
+      - CLAUDE.local.md
+
+- id: skill-filesystem
+  config:
+    customSkillDirs:
+      # absolute path required: entries go through path.resolve, which does
+      # NOT expand "~"
+      - /home/hm/.claude/skills
+
+- id: sandbox-policy
+  config:
+    mode: danger-full-access
+
+# permission-presets need an explicit defaultPreset: with sandbox
+# mode=danger-full-access, composed defaults match no preset → dsh boot
+# crashes exit 1 without this.
+- id: permission
+  config:
+    defaultPreset: danger-full-access
+
+# plan:policy references ask_user_question, which dsh-base never mounts
+# (only CLI presets do) — mount it here; questions ride the bridge's
+# user-questions provider to the Feishu card.
+- insert:
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+
+# Built-in web_search resolves DEEPSEEK_API_KEY which this deployment never
+# configures — web-search-prime MCP is the working search path.
+- id: tool-web
+  disabled: true
+
+# str_replace_editor duplicates read/edit/write; all user-side guidance
+# references the latter.
+- id: tool-str-replace-editor
+  disabled: true
+
+- id: system-prompt
+  config:
+    includeHarnessIdentity: false
+    persona: ''
+
+- insert:
+    # Claude Code memory sharing: same ~/.claude/projects/<slug>/memory/
+    # directory as Claude Code.
+    - id: claude-memory
+      name: '@deepseek-ai/dsh-tool-claude-memory'
+      config:
+        maxIndexBytes: 25600
+
+- id: llm-pi-ai
+  config:
+    providers:
+      # One named route per cc-connect [[providers]] entry (MIGRATION.md D2):
+      # the in-process engine selects a route per agent via
+      # agentOptions.provider; credentials are inline, traffic goes DIRECT to
+      # the gateway (the Go providerproxy is retired — plain model names
+      # avoid the bigmodel [1m] fingerprint gate; forceAdaptiveThinking
+      # covers the thinking/effort quirk; retries ride dsh llm-retry).
+      glm:
+        displayName: GLM
+        apiKey: 1597e1ecbc2c4e4790bcce31842e6e19.zjRNydrWjZrHDdOd
+        api: anthropic-messages
+        baseURL: https://open.bigmodel.cn/api/anthropic
+        reasoning: high
+        compat:
+          forceAdaptiveThinking: true
+        models:
+          - id: glm-5.3
+            name: GLM 5.3
+            contextWindow: 1000000
+            reasoningEfforts:
+              "off": null
+              low: low
+              medium: medium
+              high: high
+      turbo:
+        displayName: GLM Turbo
+        apiKey: 1597e1ecbc2c4e4790bcce31842e6e19.zjRNydrWjZrHDdOd
+        api: anthropic-messages
+        baseURL: https://open.bigmodel.cn/api/anthropic
+        reasoning: high
+        compat:
+          forceAdaptiveThinking: true
+        models:
+          - id: glm-5-turbo
+            name: GLM 5 Turbo
+            contextWindow: 1000000
+            reasoningEfforts:
+              "off": null
+              low: low
+              medium: medium
+              high: high
+      minimax:
+        displayName: MiniMax
+        apiKey: sk-cp-OOsw1RbBiwkgs8G2ZjwtJFGPnaL2S_RtRSQNzK0bPm2jNyBFJghfA0ppwu0-ZRmznfttL6leJuD4ew5HxeW_itXbd6WD-X9lCyU5Dnyb92Q-e7OKElqbh8
+        api: anthropic-messages
+        baseURL: https://api.minimaxi.com/anthropic
+        reasoning: high
+        compat:
+          forceAdaptiveThinking: true
+        models:
+          - id: MiniMax-M2.7
+            name: MiniMax M2.7
+            contextWindow: 1000000
+            reasoningEfforts:
+              "off": null
+              low: low
+              medium: medium
+              high: high
+      mimo:
+        displayName: MiMo
+        apiKey: tp-c3n8u0hjx0f0ze4p15u2ypnlrobxkfs69slf7kb48qklj67a
+        api: anthropic-messages
+        baseURL: https://token-plan-cn.xiaomimimo.com/anthropic
+        reasoning: high
+        compat:
+          forceAdaptiveThinking: true
+        models:
+          - id: mimo-v2.5-pro
+            name: MiMo v2.5 Pro
+            contextWindow: 1000000
+            reasoningEfforts:
+              "off": null
+              low: low
+              medium: medium
+              high: high
+
+- id: session-persistence-jsonl
+  config:
+    # Same store the retired Go backend used (per-cwd nesting is done by the
+    # jsonl backend itself via meta.cwd) — existing sessions resume as-is.
+    root: /home/hm/.dsh/cc-connect-sessions
+    compression: zstd
+
+# The feishu-bridge daemon plugin. projects are managed by the plugin config
+# (bots, workdirs, per-project features); starts empty until M1 cut-over.
+- id: feishu-bridge
+  config:
+    projects: []
