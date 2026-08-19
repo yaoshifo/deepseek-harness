@@ -831,6 +831,9 @@ function textOfBlocks(blocks: readonly ContentBlock[] | undefined): string {
   let out = ''
   for (const block of blocks) {
     if (block.type === 'text') out += block.text
+    // Live tool results wrap their output in tool-result blocks whose inner
+    // content carries the text (dsh-llm ToolResultBlock).
+    else if (block.type === 'tool-result') out += textOfBlocks(block.content)
   }
   return out
 }

@@ -697,3 +697,47 @@ describe('DshAgentAdapter approval answerer', () => {
     await expect(outcome).resolves.toBe('allowed-once')
   })
 })
+
+it('tool/result with tool-result blocks projects the inner text as toolResult', async () => {
+  // Live dsh sessions wrap tool output in {type:'tool-result', content:[text]}
+  // blocks — not bare text blocks (observed on the real machine: the tool
+  // progress card rendered blank result sections).
+  const h = createHarness()
+  const a = newAdapter(h)
+  a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_tr:ou_9'])
+  const sess = await a.startSession('')
+  const channel = sess.events()
+  const agentID = sess.currentSessionID()
+
+  h.emit(agentID, {
+    type: 'tool/call',
+    turn: 1,
+    step: 1,
+    callId: 'call-9',
+    name: 'read',
+    arguments: '{"file_path":"/x/header.md"}',
+  })
+  h.emit(agentID, {
+    type: 'tool/result',
+    turn: 1,
+    step: 1,
+    message: {
+      content: [{
+        type: 'tool-result',
+        toolCallId: 'call-9',
+        content: [textBlock('file header content')],
+        isError: false,
+      }],
+    },
+  })
+  h.emit(agentID, { type: 'turn/end', turn: 1, reason: 'end_turn' })
+
+  let toolResultEvent: { toolResult?: string } | undefined
+  for (;;) {
+    const got = await channel.receive()
+    if (got.done) break
+    if (got.event.type === 'tool_result') toolResultEvent = got.event
+    if (got.event.type === 'result') break
+  }
+  expect(toolResultEvent?.toolResult).toBe('file header content')
+})
