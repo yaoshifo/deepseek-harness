@@ -191,6 +191,43 @@ export function normalizeArcFlags(d: string): string {
 }
 
 /**
+ * FNV-1a 32-bit hash over the UTF-8 bytes of `s` (Go fnv.New32a). Shared by
+ * {@link fallbackGroupIcon} and the Feishu group-avatar hue pick.
+ * @param s - Input string.
+ * @returns Unsigned 32-bit FNV-1a digest.
+ */
+export function fnv1a32(s: string): number {
+  const bytes = new TextEncoder().encode(s)
+  let h = 0x811c9dc5
+  for (const b of bytes) {
+    h ^= b
+    h = Math.imul(h, 0x01000193)
+  }
+  return h >>> 0
+}
+
+/** Fallback icon pool (Go core/engine_predict.go fallbackIcons). */
+const fallbackIcons = [
+  'hash', 'circle', 'square', 'diamond',
+  'hexagon', 'star', 'flag', 'bookmark',
+  'compass', 'route', 'layers', 'sparkles',
+  'lightbulb', 'feather', 'zap', 'globe',
+]
+
+/**
+ * Pick a deterministic fallback icon name from the pool by hashing `name`.
+ * Used when a group-name LLM output omits or misspells the icon line so the
+ * group avatar is still set instead of silently left default.
+ * @param name - Group name (or any seed); empty uses the first icon.
+ * @returns An icon name guaranteed to exist in the Lucide sprite.
+ */
+export function fallbackGroupIcon(name: string): string {
+  const first = fallbackIcons[0] ?? 'hash'
+  if (name === '') return first
+  return fallbackIcons[fnv1a32(name) % fallbackIcons.length] ?? first
+}
+
+/**
  * Look up an icon by name in the full Lucide sprite, wrap its symbol inner
  * into a standalone SVG (fill=none / stroke / stroke-width / line cap+join
  * applied — symbols carry only path data), and normalize arc flags. Used to
