@@ -26,6 +26,11 @@ import {
   EventChannel,
   ForkSessionPrefix,
 } from '../core/types.js'
+import {
+  buildChatroomSystemPrompt,
+  subtaskAgentSystemPrompt,
+  subtaskResearchAssistantPrompt,
+} from '../engine/chatroom-persona.js'
 import type {
   AgentSession,
   AgentSessionInfo,
@@ -91,6 +96,13 @@ export interface DshCreateOptionsLike {
   /** Fork seed: the parent's completed-turn prefix (see startSession). */
   seed?: readonly SessionEvent[]
   agentOptions?: { provider?: string; model?: string; reasoningEffort?: string }
+  /**
+   * Creation-time composition hook (plan D3): registers the chatroom bare
+   * persona as a `complete: true` system-prompt section on the agent's
+   * scoped context (the Go --bare DSH_CC_SYSTEM_PROMPT_COMPLETE equivalent).
+   * Typed as the real dsh AgentSetup so a production Context typechecks.
+   */
+  setup?: import('@deepseek-ai/dsh-agent').AgentSetup
 }
 
 /** Minimal ctx.agents registry surface (structural slice of AgentRegistry). */
@@ -147,6 +159,59 @@ function completedTurnPrefix(parent: DshAgentLike): SessionEvent[] {
   const lastEnd = events.findLast(e => e.type === 'turn/end')
   if (lastEnd === undefined) return []
   return events.slice(0, lastEnd.seq + 1)
+}
+
+/** Read an env-flag value ("1") from the injected env list. */
+function envHasFlag(env: string[], name: string): boolean {
+  return env.includes(`${name}=1`)
+}
+
+/** Read a plain env value ('' when absent). */
+function envValue(env: string[], name: string): string {
+  return env.find(e => e.startsWith(`${name}=`))?.slice(name.length + 1) ?? ''
+}
+
+/**
+ * Build the agents.create/resume setup hook for the env-flagged persona
+ * (Go isChatroomBareSession + buildChatroomSystemPrompt): chatroom role /
+ * direct-role / moderator sessions replace the whole system prompt; a
+ * research assistant appends its preamble as a normal section.
+ */
+function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
+  const isRole = envHasFlag(env, 'CC_CHATROOM_ROLE')
+  const isDirect = envHasFlag(env, 'CC_CHATROOM_DIRECT_ROLE')
+  const isModerator = envHasFlag(env, 'CC_CHATROOM_MODERATOR')
+  const isResearchAssistant = envHasFlag(env, 'CC_RESEARCH_ASSISTANT')
+  if (!isRole && !isDirect && !isModerator && !isResearchAssistant) return undefined
+
+  return (agentCtx) => {
+    const promptSvc = agentCtx.get('systemPrompt') as
+      | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
+      | undefined
+    if (promptSvc === undefined) return
+    if (isResearchAssistant && !isRole && !isDirect && !isModerator) {
+      // Research assistant: append the subtask + research contracts.
+      promptSvc.section({
+        name: 'feishu-bridge-research-assistant',
+        order: 120,
+        text: `${subtaskAgentSystemPrompt()}${subtaskResearchAssistantPrompt()}`,
+      })
+      return
+    }
+    const text = buildChatroomSystemPrompt({
+      workDir,
+      isRole,
+      isDirect,
+      isModerator,
+      research: envHasFlag(env, 'CC_CHATROOM_RESEARCH'),
+      researchAssistantChild: envValue(env, 'CC_RESEARCH_ASSISTANT_CHILD'),
+      ledgerDir: envValue(env, 'CC_CHATROOM_LEDGER'),
+      platformPrompt: '',
+    })
+    if (text !== '') {
+      promptSvc.section({ name: 'feishu-bridge-chatroom-persona', order: 0, text, complete: true })
+    }
+  }
 }
 
 /** Default one-shot budget (Go oneShotQuery default timeout). */
@@ -500,12 +565,20 @@ export class DshAgentAdapter {
    * by the engine session key; a concrete id resumes that persisted session;
    * a `__fork__<origID>` sentinel creates a new session seeded with the
    * parent's completed-turn prefix (Go /fork semantics).
+   *
+   * Chatroom bare sessions (role / direct-role / moderator, flagged through
+   * the injected env) carry a setup hook that replaces the whole system
+   * prompt with the flattened persona (Go isChatroomBareSession +
+   * buildChatroomSystemPrompt via DSH_CC_SYSTEM_PROMPT_COMPLETE; here the
+   * D3 `complete: true` prompt section). Research assistants get their
+   * preamble appended as a normal section instead.
    */
   async startSession(sessionID: string): Promise<AgentSession> {
     const envKey = this.env.find(e => e.startsWith('CC_SESSION_KEY='))?.slice('CC_SESSION_KEY='.length) ?? ''
     const key = envKey !== '' ? envKey : sessionID
     const isFork = sessionID.startsWith(ForkSessionPrefix)
     const isResume = !isFork && sessionID !== '' && sessionID !== ContinueSession
+    const setup = buildSessionSetup(this.env, this.workDir)
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing
@@ -531,11 +604,13 @@ export class DshAgentAdapter {
         },
         ...(seed.length > 0 ? { seed } : {}),
         agentOptions: this.routeAgentOptions(),
+        ...(setup !== undefined ? { setup } : {}),
       })
     } else if (isResume) {
       handle = await this.ctx.agents.resume({
         resumeSessionId: SessionId(sessionID),
         agentOptions: this.routeAgentOptions(),
+        ...(setup !== undefined ? { setup } : {}),
       })
     } else {
       // Go parity: a NEW engine session gets a generated native session id
@@ -546,6 +621,7 @@ export class DshAgentAdapter {
         sessionId: SessionId(freshNativeSessionId()),
         meta: { cwd: this.workDir },
         agentOptions: this.routeAgentOptions(),
+        ...(setup !== undefined ? { setup } : {}),
       })
     }
     const session = new DshAgentSession(key, handle)

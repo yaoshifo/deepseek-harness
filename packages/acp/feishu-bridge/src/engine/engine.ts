@@ -145,6 +145,22 @@ import { newAsyncSender, type AsyncSender } from '../async-sender.js'
 import { readFileSync, statSync } from 'node:fs'
 import { join as joinPath } from 'node:path'
 import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier } from '../core/types.js'
+import {
+  armResearchManualAskTimeout,
+  defaultChatroomGatherTimeout,
+  defaultChatroomResearchTimeout,
+  defaultMaxChatroomResearchRounds,
+  defaultMaxChatroomRoles,
+  maxChatroomResearchTimeout,
+  maxChatroomResearchRounds,
+  minChatroomResearchTimeout,
+  minChatroomResearchRounds,
+  maybeAutoRelayRole,
+  routePendingHumanReply,
+} from './chatroom.js'
+import { defaultChatroomRolesDir } from './chatroom-roles.js'
+import { chatroomLedgerDir as chatroomLedgerDirPath } from './chatroom-ledger.js'
+import { chatroomPickActive, executeChatroomCardAction } from './chatroom-pick.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -203,6 +219,9 @@ export interface QueuedMessage {
   userName: string
   msgPlatform: string
   msgSessionKey: string
+  /** Chatroom ask metadata carried through the queue to the drained turn (M5). */
+  chatroomAskSeq: number
+  chatroomAwaitAssistant: boolean
 }
 
 /**
@@ -368,7 +387,7 @@ interface CardMarkdownLike {
 }
 
 /** A fully-empty Message template for synthetic injections (Go &Message{}). */
-function emptyMessage(): Message {
+export function emptyMessage(): Message {
   return {
     sessionKey: '',
     platform: '',
@@ -417,7 +436,7 @@ function chatIDFromSessionKey(sessionKey: string, platformName: string): string 
  * the originating message (Go parentJumpButtons). Empty array when the
  * parent chat ID cannot be resolved.
  */
-function parentJumpButtons(parentSessionKey: string, parentName: string, p: Platform): CardButton[] {
+export function parentJumpButtons(parentSessionKey: string, parentName: string, p: Platform): CardButton[] {
   const pcid = chatIDFromSessionKey(parentSessionKey, p.name())
   if (pcid === '') return []
   let label = '↩ 父群'
@@ -430,7 +449,7 @@ function parentJumpButtons(parentSessionKey: string, parentName: string, p: Plat
  * Render parent/child jump buttons as a single markdown link line (Go
  * jumpButtonsMarkdown). ok=false when no button carries a URL.
  */
-function jumpButtonsMarkdown(buttons: CardButton[]): CardMarkdownLike & { ok: boolean } {
+export function jumpButtonsMarkdown(buttons: CardButton[]): CardMarkdownLike & { ok: boolean } {
   const parts: string[] = []
   for (const b of buttons) {
     if (b.url !== undefined && b.url !== '') parts.push(`[${b.text}](${b.url})`)
@@ -508,6 +527,30 @@ export class Engine {
   groupNameSetAvatar = false
   /** Monitor-mode config surface; full monitor domain arrives with M6 (Go monitorEnabled). */
   monitorEnabled = false
+
+  // ── chatroom config (Go engine chatroom* fields, M5) ────────────────────
+  /** Gather barrier fallback timeout override; 0 = default 20m (Go chatroomGatherTimeout). */
+  chatroomGatherTimeout = 0
+  /** End barrier drain timeout override; 0 = half the gather default (Go chatroomEndTimeout). */
+  chatroomEndTimeout = 0
+  /** Research gather round timeout override; 0 = default 60m (Go chatroomResearchTimeout). */
+  chatroomResearchTimeout = 0
+  /** Auto-mode research iteration cap override; 0 = default 3 (Go maxChatroomResearchRounds). */
+  maxChatroomResearchRounds = 0
+  /** Default research iteration driver when --mode is omitted (Go defaultChatroomResearchMode). */
+  defaultChatroomResearchMode = ''
+  /** Roles root override; '' = <configHome>/chatroom-roles (Go chatroomRolesDirCfg). */
+  chatroomRolesDirCfg = ''
+  /** Per-chatroom role cap override; 0 = default 5 (Go maxChatroomRolesCfg). */
+  maxChatroomRolesCfg = 0
+  /** Moderator data dir (holds per-chatroom ledgers); '' = ledger disabled (Go chatroomModeratorDirCfg). */
+  chatroomModeratorDirCfg = ''
+  /** Shared research-assistant workdir override (Go chatroomResearchWorkspaceCfg). */
+  chatroomResearchWorkspaceCfg = ''
+  /** Pre-provision the shared uv venv for research assistants (Go chatroomResearchPythonEnv). */
+  chatroomResearchPythonEnv = false
+  /** Whether role sessions run as isolated subagents; dsh uses bare personas (Go chatroomIsolateRoleContext). */
+  chatroomIsolateRoleContext = ''
 
   /** Session keys with a manual rename pending in the async LLM window (Go pendingRename). */
   private readonly pendingRename = new Set<string>()
@@ -727,6 +770,9 @@ export class Engine {
     // M3: Route permission responses to handlePendingPermission before normal
     // dispatch (Go engine.go: every message passes through this check —
     // card-button actions AND free-text answers to a pending question).
+    // Chatroom pending-human replies outrank it (Go orders routePendingHumanReply
+    // before permission handling).
+    if (routePendingHumanReply(this, p, msg.sessionKey, content)) return
     if (this.handlePendingPermission(p, msg, content)) return
 
     const session = this.sessions.getOrCreateActive(msg.sessionKey)
@@ -871,6 +917,8 @@ export class Engine {
       userName: msg.userName,
       msgPlatform: msg.platform,
       msgSessionKey: msg.sessionKey,
+      chatroomAskSeq: msg.chatroomAskSeq ?? 0,
+      chatroomAwaitAssistant: msg.chatroomAwaitAssistant ?? false,
     })
     void this.reply(p, msg.replyCtx, this.i18n.t(MsgMessageQueued))
     return true
@@ -897,6 +945,10 @@ export class Engine {
       this.i18n.detectAndSet(msg.content)
       const historyContent = msg.originalContent !== '' ? msg.originalContent : msg.content
       session.addHistory('user', historyContent)
+
+      // Chatroom ask metadata is consumed at turn START: a queued ask behind
+      // a busy turn must not stamp until the turn actually begins.
+      this.stampChatroomAskOnTurnStart(session, msg.chatroomAskSeq ?? 0, msg.chatroomAwaitAssistant ?? false)
 
       this.handleSpawnedGroupFirstMessage(p, msg, session)
 
@@ -1067,8 +1119,7 @@ export class Engine {
    * Per-session env (Go buildSessionEnv). CC_SESSION rides alongside
    * CC_SESSION_KEY because dsh scrubs credential-shaped env names (any
    * *KEY*) from Bash-tool children, which would silently drop CC_SESSION_KEY.
-   * The PATH/venv and feishu-workspace entries arrive with the chatroom (M5)
-   * and workspace (M7) milestones.
+   * The feishu-workspace entries arrive with the workspace milestone (M7).
    */
   buildSessionEnv(ccKey: string, session: Session): string[] {
     const envVars = [
@@ -1090,15 +1141,44 @@ export class Engine {
     }
     if (session.getChatroomHubKey() !== '') {
       envVars.push('CC_CHATROOM_ROLE=1')
+      const ledger = this.chatroomModeratorDir()
+      if (ledger.ok) {
+        envVars.push(`CC_CHATROOM_LEDGER=${chatroomLedgerDirPath(ledger.dir, session.getChatroomHubKey())}`)
+      }
+      // Research mode: the hub flagged this chatroom as research-driven.
+      // Tell the role so its contract knows to drive a full-CC assistant
+      // subgroup instead of answering from memory.
       const hub = this.sessions.getOrCreateActive(session.getChatroomHubKey())
       if (hub.getChatroomResearch()) {
         envVars.push('CC_CHATROOM_RESEARCH=1')
+        // Hand the role the session key of its pre-spawned idle assistant.
+        // CHILD is the scrub-safe alias role prompts reference (dsh strips
+        // *KEY* names from Bash-tool children); KEY stays for compatibility.
         const key = session.getResearchAssistantKey()
         if (key !== '') {
           envVars.push(`CC_RESEARCH_ASSISTANT_KEY=${key}`)
           envVars.push(`CC_RESEARCH_ASSISTANT_CHILD=${key}`)
         }
       }
+    } else if (session.getChatroomDirectRole()) {
+      // 1:1 direct role chat (no hub, no relay): the lightweight direct-role
+      // contract instead of the multi-role one.
+      envVars.push('CC_CHATROOM_DIRECT_ROLE=1')
+    }
+    // Mark the hub session driving a chatroom as the moderator so its agent
+    // session swaps to the bare persona (D3 setup hook).
+    if (session.getChatroomModerator()) {
+      envVars.push('CC_CHATROOM_MODERATOR=1')
+    }
+    // Shared research venv: rewrite the single PATH entry to prepend
+    // <venv>/bin and add VIRTUAL_ENV (Go buildSessionEnv research path).
+    const venv = session.getResearchVenv()
+    if (venv !== '') {
+      envVars.push(`VIRTUAL_ENV=${venv}`)
+      const pathIdx = envVars.findIndex(v => v.startsWith('PATH='))
+      const withBin = `${venv}/bin${pathIdx >= 0 ? `:${envVars[pathIdx]?.slice('PATH='.length)}` : `:${process.env.PATH ?? ''}`}`
+      if (pathIdx >= 0) envVars[pathIdx] = `PATH=${withBin}`
+      else envVars.push(`PATH=${withBin}`)
     }
     return envVars
   }
@@ -1462,6 +1542,24 @@ export class Engine {
             break
           }
 
+          // Chatroom role-pick: the moderator's ExitPlanMode is a formality
+          // (priming pre-bakes a trivial plan). Auto-approve so the user
+          // isn't prompted just to green-light reading role files +
+          // pick-roles — same semantics as the user clicking allow (grants
+          // approveAll for the rest of the turn). Only in the pick window.
+          if (event.toolName === 'ExitPlanMode' && chatroomPickActive(this, sessionKey)) {
+            state.approveAll = true
+            if (state.agentSession !== undefined) {
+              const autoInput = event.toolInputRaw ?? {}
+              void state.agentSession.respondPermission(event.requestID ?? '', {
+                behavior: 'allow',
+                updatedInput: autoInput,
+              }).catch(() => {})
+            }
+            console.info(`auto-approving ExitPlanMode (chatroom role-pick) (${sessionKey})`)
+            break
+          }
+
           // Check if this unsolicited permission should surface to the user.
           // Non-surfaced permissions (background Bash without approveAll) are
           // auto-denied so the agent can continue without hanging.
@@ -1521,6 +1619,9 @@ export class Engine {
                 multiSelect: false,
               }]
             pending.questions = questions
+            // Research-manual hub: arm the auto-default so the card cannot
+            // hang forever when the user never replies (feature #57).
+            armResearchManualAskTimeout(this, p, sessionKey, replyCtx, pending, 0)
             void this.sendAskQuestionPrompt(p, replyCtx, questions, 0)
           } else if (p !== undefined) {
             const permLimit = this.display.toolMaxLen
@@ -1663,6 +1764,10 @@ export class Engine {
     // agent finished without explicitly reporting, push the result to the
     // parent so it is never lost. One-shot (Go maybeAutoReportSubtask).
     this.maybeAutoReportSubtask(state, session, session.lastResultOrReply(), isSilent)
+    // Chatroom role turn-end: deterministically relay the role's reply to the
+    // hub and wake the moderator. Disjoint from the subtask hook above
+    // (chatroom roles keep depth=0).
+    maybeAutoRelayRole(this, state, session, session.lastResultOrReply(), isSilent)
 
     const p = state.platform
     const normalizedBase = baseResponse.trim()
@@ -1765,6 +1870,9 @@ export class Engine {
 
       const queuedPrompt = this.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey)
       session.addHistory('user', queued.content)
+      // Chatroom ask metadata is consumed at drain time — the queued ask's
+      // turn is starting now.
+      this.stampChatroomAskOnTurnStart(session, queued.chatroomAskSeq, queued.chatroomAwaitAssistant)
       state.inflightMessage = queued
       this.i18n.detectAndSet(queued.content)
       const sendDone = state.agentSession.send(queuedPrompt, queued.images, queued.files)
@@ -1804,6 +1912,7 @@ export class Engine {
       // the parent, deadlocking a gather (Go engine_events.go channel-closed
       // path).
       this.maybeAutoReportSubtask(state, session, fullResponse, isSilentReply(fullResponse))
+      maybeAutoRelayRole(this, state, session, fullResponse, isSilentReply(fullResponse))
 
       if (isSilentReply(fullResponse)) return
       const [stripped, ok] = stripTrailingSilent(fullResponse)
@@ -1908,6 +2017,9 @@ export class Engine {
 
       state.agentSession.events().drain()
       session.addHistory('user', queued.content)
+      // Chatroom ask metadata is consumed at drain time — the queued ask's
+      // turn is starting now.
+      this.stampChatroomAskOnTurnStart(session, queued.chatroomAskSeq, queued.chatroomAwaitAssistant)
 
       const sendDone = state.agentSession.send(prompt, queued.images, queued.files)
         .then((): undefined => undefined, (error: unknown): unknown => error)
@@ -2400,6 +2512,7 @@ export class Engine {
         if (!msg.isAskqCardAction) {
           void this.reply(p, msg.replyCtx, `✅ ${q.question}: **${answer}**`)
         }
+        armResearchManualAskTimeout(this, p, msg.sessionKey, msg.replyCtx, pending, curIdx + 1)
         void this.sendAskQuestionPrompt(p, msg.replyCtx, pending.questions, curIdx + 1)
         return true
       }
@@ -2467,6 +2580,110 @@ export class Engine {
   /** Override the recursive delegation cap (Go SetSubtaskMaxDepth). */
   setSubtaskMaxDepth(n: number): void {
     if (n > 0) this.subtaskMaxDepth = n
+  }
+
+  // ── chatroom configuration setters (Go engine_chatroom.go setters) ──────
+
+  /** Override the gather barrier fallback timeout; 0/negative keeps the default. */
+  setChatroomGatherTimeout(ms: number): void {
+    if (ms > 0) this.chatroomGatherTimeout = ms
+  }
+
+  /** Effective gather barrier timeout. */
+  chatroomGatherTimeoutDuration(): number {
+    return this.chatroomGatherTimeout > 0 ? this.chatroomGatherTimeout : defaultChatroomGatherTimeout
+  }
+
+  /** Override the end-barrier drain timeout. */
+  setChatroomEndTimeout(ms: number): void {
+    if (ms > 0) this.chatroomEndTimeout = ms
+  }
+
+  /**
+   * Effective end drain timeout: end waits for replies already generating,
+   * so it defaults to half the gather timeout rather than gather's full
+   * headroom.
+   */
+  chatroomEndTimeoutDuration(): number {
+    return this.chatroomEndTimeout > 0 ? this.chatroomEndTimeout : defaultChatroomGatherTimeout / 2
+  }
+
+  /** Override the research gather timeout, clamped to [1m, 24h]. */
+  setChatroomResearchTimeout(ms: number): void {
+    if (ms <= 0) return
+    this.chatroomResearchTimeout = Math.min(maxChatroomResearchTimeout, Math.max(minChatroomResearchTimeout, ms))
+  }
+
+  /** Effective research gather timeout. */
+  chatroomResearchTimeoutDuration(): number {
+    return this.chatroomResearchTimeout > 0 ? this.chatroomResearchTimeout : defaultChatroomResearchTimeout
+  }
+
+  /** Override the auto-mode research round cap, clamped to [1, 20]. */
+  setMaxChatroomResearchRounds(n: number): void {
+    if (n <= 0) return
+    this.maxChatroomResearchRounds = Math.min(maxChatroomResearchRounds, Math.max(minChatroomResearchRounds, n))
+  }
+
+  /** Effective auto-mode research round cap. */
+  maxChatroomResearchRoundsValue(): number {
+    return this.maxChatroomResearchRounds > 0 ? this.maxChatroomResearchRounds : defaultMaxChatroomResearchRounds
+  }
+
+  /** Default research iteration driver when --mode is omitted ('auto'|'manual'). */
+  setDefaultChatroomResearchMode(mode: string): void {
+    if (mode === 'auto' || mode === 'manual') this.defaultChatroomResearchMode = mode
+  }
+
+  /** Effective default research mode; unknown values behave as 'auto'. */
+  defaultChatroomResearchModeValue(): string {
+    return this.defaultChatroomResearchMode === 'manual' ? 'manual' : 'auto'
+  }
+
+  /** Override the root directory holding one persona subdirectory per role. */
+  setChatroomRolesDir(dir: string): void {
+    if (dir.trim() !== '') this.chatroomRolesDirCfg = dir
+  }
+
+  /** Effective roles root. */
+  chatroomRolesDir(): string {
+    return this.chatroomRolesDirCfg !== '' ? this.chatroomRolesDirCfg : defaultChatroomRolesDir()
+  }
+
+  /** Override the per-chatroom role cap. */
+  setMaxChatroomRoles(n: number): void {
+    if (n > 0) this.maxChatroomRolesCfg = n
+  }
+
+  /** Effective per-chatroom role cap. */
+  maxChatroomRoles(): number {
+    return this.maxChatroomRolesCfg > 0 ? this.maxChatroomRolesCfg : defaultMaxChatroomRoles
+  }
+
+  /** Set the moderator data dir (per-chatroom ledgers); '' disables the ledger. */
+  setChatroomModeratorDir(dir: string): void {
+    this.chatroomModeratorDirCfg = dir.trim()
+  }
+
+  /** The moderator dir and whether the ledger feature is enabled. */
+  chatroomModeratorDir(): { dir: string; ok: boolean } {
+    const dir = this.chatroomModeratorDirCfg.trim()
+    return { dir, ok: dir !== '' }
+  }
+
+  /** Set the shared research-assistant workdir. */
+  setChatroomResearchWorkspace(dir: string): void {
+    this.chatroomResearchWorkspaceCfg = dir
+  }
+
+  /** Toggle pre-provisioning the shared uv venv for research assistants. */
+  setChatroomResearchPythonEnv(enabled: boolean): void {
+    this.chatroomResearchPythonEnv = enabled
+  }
+
+  /** Role-session isolation switch (dsh uses bare personas; config parity only). */
+  setChatroomIsolateRoleContext(v: string): void {
+    this.chatroomIsolateRoleContext = v
   }
 
   /** Override default worktree isolation for /spawn //fork (Go SetSpawnWorktreeMode). */
@@ -3621,6 +3838,26 @@ export class Engine {
     const spaceIdx = body.indexOf(' ')
     const cmd = spaceIdx === -1 ? body : body.slice(0, spaceIdx)
     const args = spaceIdx === -1 ? '' : body.slice(spaceIdx + 1).trim()
+
+    // Chatroom pickers (#43 / #59): run the state machine and re-render the
+    // pressed card in place (Go handleCardNav's chatroom-pick routes).
+    if (cmd === '/chatroom-pick' || cmd === '/chatroom-topic-pick') {
+      const card = executeChatroomCardAction(this, msg.sessionKey, cmd, args)
+      if (card !== undefined) {
+        const refresher = asCardRefresher(p)
+        if (refresher !== undefined) {
+          try {
+            await refresher.refreshCard(msg.sessionKey, card)
+            return
+          } catch (error) {
+            console.warn(`engine: card refresh failed, sending a new card (${msg.sessionKey}): ${String(error)}`)
+          }
+        }
+        await this.replyWithCard(p, msg.replyCtx, card)
+      }
+      return
+    }
+
     if (cmd !== '/wt') {
       console.info(`engine: card action has no handler yet, ignoring (${msg.sessionKey}: ${cmd})`)
       return

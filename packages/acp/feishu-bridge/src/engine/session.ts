@@ -78,6 +78,26 @@ export class Session {
   researchDispatched = false
   /** Gather-round stamp on a role session; in-memory only (Go ChatroomAskSeq). */
   chatroomAskSeq = 0
+  /** Hub session driving a chatroom as the moderator (Go ChatroomModerator). */
+  chatroomModerator = false
+  /** Research iteration driver: 'auto' | 'manual' (Go ChatroomResearchMode). */
+  chatroomResearchMode = ''
+  /** Current research iteration round, 1-based (Go ChatroomResearchRound). */
+  chatroomResearchRound = 0
+  /** Per-invocation override of the auto-mode research round cap (Go ChatroomResearchMaxRounds). */
+  chatroomResearchMaxRounds = 0
+  /** Monotonic per-hub gather-round counter (Go ChatroomGatherSeq). */
+  chatroomGatherSeq = 0
+  /** Shared uv venv path for research assistants (Go ResearchVenv). */
+  researchVenv = ''
+  /** Role has an asked question whose turn is generating; in-memory only (Go ChatroomInFlight). */
+  chatroomInFlight = false
+  /** Hub-side pending role name for a routed human reply (Go PendingHumanQuestionRole). */
+  pendingHumanQuestionRole = ''
+  /** Armed chatroom gather barrier on a hub session; in-memory only (Go PendingGather). */
+  pendingGather: import('./chatroom.js').ChatroomGather | undefined
+  /** Armed chatroom end barrier on a hub session; in-memory only (Go PendingEndBarrier). */
+  pendingEndBarrier: import('./chatroom.js').ChatroomEndBarrier | undefined
   /** Permission mode pinned for a /spawn //fork child; in-memory only (Go InheritedMode). */
   inheritedMode = ''
   /** Armed subtask gather barrier on a parent session; in-memory only (Go PendingSubtaskGather). */
@@ -203,6 +223,22 @@ export class Session {
     this.chatroomHubKey = key
   }
 
+  getChatroomRoleName(): string {
+    return this.chatroomRoleName
+  }
+
+  setChatroomRoleName(name: string): void {
+    this.chatroomRoleName = name
+  }
+
+  getChatroomAsked(): boolean {
+    return this.chatroomAsked
+  }
+
+  setChatroomAsked(v: boolean): void {
+    this.chatroomAsked = v
+  }
+
   getChatroomResearch(): boolean {
     return this.chatroomResearch
   }
@@ -257,6 +293,86 @@ export class Session {
 
   setChatroomAskSeq(seq: number): void {
     this.chatroomAskSeq = seq
+  }
+
+  getChatroomModerator(): boolean {
+    return this.chatroomModerator
+  }
+
+  setChatroomModerator(v: boolean): void {
+    this.chatroomModerator = v
+  }
+
+  getChatroomResearchMode(): string {
+    return this.chatroomResearchMode
+  }
+
+  setChatroomResearchMode(mode: string): void {
+    this.chatroomResearchMode = mode
+  }
+
+  getChatroomResearchRound(): number {
+    return this.chatroomResearchRound
+  }
+
+  setChatroomResearchRound(round: number): void {
+    this.chatroomResearchRound = round
+  }
+
+  getChatroomResearchMaxRounds(): number {
+    return this.chatroomResearchMaxRounds
+  }
+
+  setChatroomResearchMaxRounds(n: number): void {
+    this.chatroomResearchMaxRounds = n
+  }
+
+  getChatroomGatherSeq(): number {
+    return this.chatroomGatherSeq
+  }
+
+  setChatroomGatherSeq(seq: number): void {
+    this.chatroomGatherSeq = seq
+  }
+
+  getResearchVenv(): string {
+    return this.researchVenv
+  }
+
+  setResearchVenv(v: string): void {
+    this.researchVenv = v
+  }
+
+  getChatroomInFlight(): boolean {
+    return this.chatroomInFlight
+  }
+
+  setChatroomInFlight(v: boolean): void {
+    this.chatroomInFlight = v
+  }
+
+  getPendingHumanQuestionRole(): string {
+    return this.pendingHumanQuestionRole
+  }
+
+  setPendingHumanQuestionRole(role: string): void {
+    this.pendingHumanQuestionRole = role
+  }
+
+  getPendingGather(): import('./chatroom.js').ChatroomGather | undefined {
+    return this.pendingGather
+  }
+
+  setPendingGather(g: import('./chatroom.js').ChatroomGather | undefined): void {
+    this.pendingGather = g
+  }
+
+  getPendingEndBarrier(): import('./chatroom.js').ChatroomEndBarrier | undefined {
+    return this.pendingEndBarrier
+  }
+
+  setPendingEndBarrier(b: import('./chatroom.js').ChatroomEndBarrier | undefined): void {
+    this.pendingEndBarrier = b
   }
 
   getInheritedMode(): string {
@@ -479,6 +595,13 @@ interface SerializedSession {
   research_assistant_key?: string
   research_assistant?: boolean
   research_awaiting_assistant?: boolean
+  chatroom_moderator?: boolean
+  chatroom_research_mode?: string
+  chatroom_research_round?: number
+  chatroom_research_max_rounds?: number
+  chatroom_gather_seq?: number
+  research_venv?: string
+  pending_human_question_role?: string
   history?: HistoryEntry[]
   created_at: string
   updated_at: string
@@ -517,6 +640,13 @@ function serializeSession(s: Session): SerializedSession {
     ...(s.researchAssistantKey !== '' ? { research_assistant_key: s.researchAssistantKey } : {}),
     ...(s.researchAssistant ? { research_assistant: true } : {}),
     ...(s.researchAwaitingAssistant ? { research_awaiting_assistant: true } : {}),
+    ...(s.chatroomModerator ? { chatroom_moderator: true } : {}),
+    ...(s.chatroomResearchMode !== '' ? { chatroom_research_mode: s.chatroomResearchMode } : {}),
+    ...(s.chatroomResearchRound !== 0 ? { chatroom_research_round: s.chatroomResearchRound } : {}),
+    ...(s.chatroomResearchMaxRounds !== 0 ? { chatroom_research_max_rounds: s.chatroomResearchMaxRounds } : {}),
+    ...(s.chatroomGatherSeq !== 0 ? { chatroom_gather_seq: s.chatroomGatherSeq } : {}),
+    ...(s.researchVenv !== '' ? { research_venv: s.researchVenv } : {}),
+    ...(s.pendingHumanQuestionRole !== '' ? { pending_human_question_role: s.pendingHumanQuestionRole } : {}),
     history: [...s.history],
     created_at: s.createdAt,
     updated_at: s.updatedAt,
@@ -556,6 +686,13 @@ function deserializeSession(raw: SerializedSession): Session {
   s.researchAssistantKey = raw.research_assistant_key ?? ''
   s.researchAssistant = raw.research_assistant ?? false
   s.researchAwaitingAssistant = raw.research_awaiting_assistant ?? false
+  s.chatroomModerator = raw.chatroom_moderator ?? false
+  s.chatroomResearchMode = raw.chatroom_research_mode ?? ''
+  s.chatroomResearchRound = raw.chatroom_research_round ?? 0
+  s.chatroomResearchMaxRounds = raw.chatroom_research_max_rounds ?? 0
+  s.chatroomGatherSeq = raw.chatroom_gather_seq ?? 0
+  s.researchVenv = raw.research_venv ?? ''
+  s.pendingHumanQuestionRole = raw.pending_human_question_role ?? ''
   s.history = raw.history ?? []
   s.createdAt = raw.created_at
   s.updatedAt = raw.updated_at

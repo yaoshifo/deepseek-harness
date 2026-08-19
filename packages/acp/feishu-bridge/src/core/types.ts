@@ -104,6 +104,10 @@ export interface PendingPermission {
   resolved: Promise<void>
   /** Internal resolve function paired with `resolved`. */
   resolve(): void
+  /** Research-manual AskUserQuestion auto-default timer (M5; stopped on resolve). */
+  autoTimer?: ReturnType<typeof setTimeout>
+  /** One-shot guard for the research-manual auto-default (Go autoFired). */
+  autoFired?: boolean
 }
 
 /** Card button callback action types for permission and askq flows. */
@@ -132,6 +136,14 @@ export interface Message {
   isCardAction: boolean
   parentMessageID: string
   quotedText: string
+  /**
+   * Internal chatroom metadata on synthetic ask messages injected into role
+   * sessions: the gather round stamp and the research dispatch-defer arm.
+   * Consumed at turn start (stampChatroomAskOnTurnStart) and never surfaced
+   * to the agent. 0/false for ordinary messages (Go ChatroomAskSeq etc.).
+   */
+  chatroomAskSeq?: number
+  chatroomAwaitAssistant?: boolean
 }
 
 /** Agent output event kinds (Go EventType). M1 handles text/thinking/tool/result/error/permission. */
@@ -321,6 +333,15 @@ export interface CardSender {
 }
 
 /**
+ * Optional: platform can send a card and return an updatable handle, then
+ * PATCH that card later (Go CardSenderWithUpdate — research progress cards).
+ */
+export interface CardSenderWithUpdate {
+  sendCardWithHandle(replyCtx: unknown, card: unknown): Promise<unknown>
+  updateCardWithHandle(handle: unknown, card: unknown): Promise<void>
+}
+
+/**
  * Optional: platform can PATCH the card a card-action callback arrived on, so
  * an act: button press replaces its own prompt card in place (Go returns the
  * new card in the callback response; the async TS dispatch PATCHes the
@@ -385,6 +406,10 @@ export function asFileSender(p: Platform): FileSender | undefined {
 
 export function asCardSender(p: Platform): CardSender | undefined {
   return withMethod<CardSender>(p, 'sendCard')
+}
+
+export function asCardSenderWithUpdate(p: Platform): CardSenderWithUpdate | undefined {
+  return withMethod<CardSenderWithUpdate>(p, 'sendCardWithHandle')
 }
 
 export function asCardRefresher(p: Platform): CardRefresher | undefined {

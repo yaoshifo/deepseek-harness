@@ -172,6 +172,17 @@
     #   worktree: auto                     # auto | on | off
     #   memoryWarnPct: 80                  # 0 disables the warning tier
     #   memoryBlockPct: 90                 # 0 disables the block tier
+    # chatroom:                            # multi-role chatroom tuning ([chatroom])
+    #   rolesDir: ~/.claude/chatroom-roles # one persona subdirectory per role
+    #   maxRoles: 5                        # role agents per chatroom cap
+    #   moderatorDir: ~/chatroom           # ledger home; empty disables ledgers
+    #   gatherTimeoutSec: 1200             # gather barrier fallback timeout
+    #   endTimeoutSec: 600                 # end barrier drain timeout
+    #   researchTimeoutSec: 3600           # research round timeout (clamped 60..86400)
+    #   maxResearchRounds: 3               # auto-mode research cap (clamped 1..20)
+    #   defaultResearchMode: auto          # auto | manual
+    #   researchWorkspace: ~/chatroom/research  # shared assistant workdir
+    #   researchPythonEnv: true            # pre-provision the shared uv venv
     # streamPreview:                       # streaming preview tuning
     #   enabled: true
     #   intervalMs: 800

@@ -20,6 +20,8 @@ import { ProjectStateStore } from './engine/project-state.js'
 import { DirHistory } from './engine/dir-history.js'
 import { registerSessionCommands } from './engine/commands.js'
 import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from './tools/subtask.js'
+import { registerChatroomTool } from './tools/chatroom.js'
+import { registerChatroomCommands } from './engine/chatroom-cmd.js'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.js'
 import type { StreamPreviewCfg } from './streaming.js'
 
@@ -103,6 +105,8 @@ export interface ProjectConfig {
   features?: FeatureSwitches
   /** LLM group-name generation (#49) + icon avatars (#52). */
   groupName?: GroupNameConfig
+  /** Multi-role chatroom tuning (Go [chatroom]). */
+  chatroom?: ChatroomConfig
   /** Comma-separated user IDs allowed to run privileged commands; '*' = all (Go admin_from). */
   adminFrom?: string
   /** Minutes before an idle interactive session is reaped (Go interactive_idle_timeout_mins). */
@@ -167,6 +171,30 @@ export interface SpawnConfig {
   memoryBlockPct?: number
 }
 
+/** Multi-role chatroom tuning (Go [chatroom], applied per project). */
+export interface ChatroomConfig {
+  /** Root directory holding one persona subdirectory per role; ~ expanded. */
+  rolesDir?: string
+  /** Cap on role agents per chatroom; 0 = default 5 (Go max_roles). */
+  maxRoles?: number
+  /** Moderator data dir holding per-chatroom ledgers; '' disables the ledger (Go moderator_dir). */
+  moderatorDir?: string
+  /** Gather barrier fallback timeout in seconds (Go gather_timeout_sec). */
+  gatherTimeoutSec?: number
+  /** End barrier drain timeout in seconds (Go end_timeout_sec). */
+  endTimeoutSec?: number
+  /** Research-mode gather round timeout in seconds, clamped to [60, 86400] (Go research_timeout_sec). */
+  researchTimeoutSec?: number
+  /** Auto-mode research iteration cap, clamped to [1, 20] (Go max_research_rounds). */
+  maxResearchRounds?: number
+  /** Default research iteration driver when --mode is omitted (Go default_research_mode). */
+  defaultResearchMode?: 'auto' | 'manual'
+  /** Shared research-assistant workdir; empty falls back to <moderatorDir>/research (Go research_workspace). */
+  researchWorkspace?: string
+  /** Pre-provision the shared uv venv for research assistants; default true (Go research_python_env). */
+  researchPythonEnv?: boolean
+}
+
 /** Deployment config for the feishu-bridge plugin. */
 export interface FeishuBridgeConfig {
   /** Projects bound to Feishu apps. */
@@ -189,6 +217,8 @@ export interface FeishuBridgeConfig {
   subtask?: SubtaskConfig
   /** /spawn //fork isolation defaults (Go [spawn]). */
   spawn?: SpawnConfig
+  /** Multi-role chatroom tuning shared as the per-project default (Go [chatroom]). */
+  chatroom?: ChatroomConfig
   /** Streaming preview tuning merged over the defaults (Go [stream_preview]). */
   streamPreview?: Partial<StreamPreviewCfg>
 }
@@ -226,6 +256,18 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       prompt: Schema.string().description('Naming prompt override'),
       setAvatar: Schema.boolean().description('Set a Lucide group icon avatar (#52); default true'),
     }).description('LLM group naming and icon avatars (#49/#52)'),
+    chatroom: Schema.object({
+      rolesDir: Schema.string().description('Root directory holding one persona subdirectory per role'),
+      maxRoles: Schema.natural().description('Cap on role agents per chatroom (default 5)'),
+      moderatorDir: Schema.string().description('Moderator data dir holding per-chatroom ledgers'),
+      gatherTimeoutSec: Schema.natural().description('Gather barrier fallback timeout in seconds (default 1200)'),
+      endTimeoutSec: Schema.natural().description('End barrier drain timeout in seconds (default 600)'),
+      researchTimeoutSec: Schema.natural().description('Research gather round timeout in seconds, clamped to [60, 86400]'),
+      maxResearchRounds: Schema.natural().description('Auto-mode research iteration cap, clamped to [1, 20]'),
+      defaultResearchMode: Schema.union(['auto', 'manual']).description('Default research driver when --mode is omitted'),
+      researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <moderatorDir>/research)'),
+      researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
+    }).description('Multi-role chatroom tuning (Go [chatroom])'),
     adminFrom: Schema.string().description('Comma-separated admin user IDs; * = all'),
     interactiveIdleTimeoutMins: Schema.natural().description('Idle reaper threshold in minutes'),
   })).default([]).description('Projects bound to Feishu apps'),
@@ -262,6 +304,18 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     memoryWarnPct: Schema.natural().description('RAM% warning threshold; 0 disables'),
     memoryBlockPct: Schema.natural().description('RAM% block threshold; 0 disables'),
   }).description('/spawn //fork isolation defaults'),
+  chatroom: Schema.object({
+    rolesDir: Schema.string().description('Root directory holding one persona subdirectory per role'),
+    maxRoles: Schema.natural().description('Cap on role agents per chatroom (default 5)'),
+    moderatorDir: Schema.string().description('Moderator data dir holding per-chatroom ledgers'),
+    gatherTimeoutSec: Schema.natural().description('Gather barrier fallback timeout in seconds (default 1200)'),
+    endTimeoutSec: Schema.natural().description('End barrier drain timeout in seconds (default 600)'),
+    researchTimeoutSec: Schema.natural().description('Research gather round timeout in seconds, clamped to [60, 86400]'),
+    maxResearchRounds: Schema.natural().description('Auto-mode research iteration cap, clamped to [1, 20]'),
+    defaultResearchMode: Schema.union(['auto', 'manual']).description('Default research driver when --mode is omitted'),
+    researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <moderatorDir>/research)'),
+    researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
+  }).description('Multi-role chatroom tuning (Go [chatroom]; per-project sections override)'),
   streamPreview: Schema.object({
     enabled: Schema.boolean().description('Enable streaming preview'),
     intervalMs: Schema.natural().description('Minimum ms between updates'),
@@ -314,10 +368,10 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
     })
   }
 
-  // Plan D4: one process-wide feishu_bridge_subtask tool routes each call by
-  // its CALLER agent back to the engine + engine session that agent belongs
-  // to — the Go CLI's CC_PROJECT/CC_SESSION_KEY env contract, without env.
-  registerSubtaskTool(ctx, (caller): SubtaskRoute | undefined => {
+  // Plan D4: one process-wide tool family routes each call by its CALLER
+  // agent back to the engine + engine session that agent belongs to — the
+  // Go CLI's CC_PROJECT/CC_SESSION_KEY env contract, without env.
+  const routeByCaller = (caller: unknown): SubtaskRoute | undefined => {
     const id = agentIDOf(caller)
     if (id === '') return undefined
     for (const { engine, adapter } of live) {
@@ -325,7 +379,9 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
       if (sessionKey !== undefined) return { engine, sessionKey }
     }
     return undefined
-  })
+  }
+  registerSubtaskTool(ctx, routeByCaller)
+  registerChatroomTool(ctx, routeByCaller)
 }
 
 /**
@@ -451,7 +507,9 @@ export function buildProjectAssembly(
     dirHistory.add(project.name, effectiveWorkDir)
   }
   registerSessionCommands(engine)
+  registerChatroomCommands(engine)
   wireGroupName(engine, project)
+  wireChatroom(engine, config.chatroom, project.chatroom, dataRoot)
 
   // Stall detection (Go [display] stall_*): wired first, then
   // idle_timeout_mins below overrides it, matching wire.go's order.
@@ -515,4 +573,58 @@ function wireGroupName(engine: Engine, project: ProjectConfig): void {
   engine.setGroupNameConfig(true, g?.provider ?? '', timeoutSec * 1000, g?.prompt ?? '')
   // #52: default on; only an explicit setAvatar=false disables it.
   engine.setGroupNameAvatarEnabled(g?.setAvatar !== false)
+}
+
+/** Expand a leading ~ in a config path so the config stays portable across machines (Go expandHome). */
+function expandHome(path: string): string {
+  const trimmed = path.trim()
+  const home = homedir()
+  if (trimmed === '~') return home
+  if (trimmed.startsWith('~/')) return join(home, trimmed.slice(2))
+  return trimmed
+}
+
+/**
+ * Configure the chatroom domain (Go wire.go's [chatroom] wiring): the
+ * project section overrides the shared top-level default per field. An
+ * empty moderatorDir stays EMPTY — unlike Go's configHome fallback, the
+ * ledger is opt-in here so default assemblies stay clean; explicit values
+ * (~ expanded) enable it.
+ */
+function wireChatroom(
+  engine: Engine,
+  shared: ChatroomConfig | undefined,
+  project: ChatroomConfig | undefined,
+  _dataRoot: string,
+): void {
+  const cfg: ChatroomConfig = { ...shared, ...project }
+  if (cfg.rolesDir !== undefined && cfg.rolesDir.trim() !== '') {
+    engine.setChatroomRolesDir(expandHome(cfg.rolesDir))
+  }
+  if (cfg.maxRoles !== undefined && cfg.maxRoles > 0) {
+    engine.setMaxChatroomRoles(cfg.maxRoles)
+  }
+  if (cfg.moderatorDir !== undefined) {
+    engine.setChatroomModeratorDir(expandHome(cfg.moderatorDir))
+  }
+  if (cfg.gatherTimeoutSec !== undefined && cfg.gatherTimeoutSec > 0) {
+    engine.setChatroomGatherTimeout(cfg.gatherTimeoutSec * 1000)
+  }
+  if (cfg.endTimeoutSec !== undefined && cfg.endTimeoutSec > 0) {
+    engine.setChatroomEndTimeout(cfg.endTimeoutSec * 1000)
+  }
+  if (cfg.researchTimeoutSec !== undefined && cfg.researchTimeoutSec > 0) {
+    engine.setChatroomResearchTimeout(cfg.researchTimeoutSec * 1000)
+  }
+  if (cfg.maxResearchRounds !== undefined && cfg.maxResearchRounds > 0) {
+    engine.setMaxChatroomResearchRounds(cfg.maxResearchRounds)
+  }
+  if (cfg.defaultResearchMode !== undefined) {
+    engine.setDefaultChatroomResearchMode(cfg.defaultResearchMode)
+  }
+  if (cfg.researchWorkspace !== undefined && cfg.researchWorkspace.trim() !== '') {
+    engine.setChatroomResearchWorkspace(expandHome(cfg.researchWorkspace))
+  }
+  // Research venv provisioning defaults ON (Go wire.go: nil → enabled).
+  engine.setChatroomResearchPythonEnv(cfg.researchPythonEnv !== false)
 }
