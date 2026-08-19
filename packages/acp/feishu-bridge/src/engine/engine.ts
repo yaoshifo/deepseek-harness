@@ -20,6 +20,7 @@ import {
   MsgAgentProcessExited,
   MsgAskQuestionMulti,
   MsgAskQuestionTitle,
+  MsgDoneReplyParentHeader,
   MsgError,
   MsgFailedToStartAgentSession,
   MsgMessageQueued,
@@ -38,11 +39,30 @@ import {
   MsgQueueFull,
   MsgSessionResumeDegraded,
   MsgSilentReply,
+  MsgSpawnGroupReady,
   MsgStallRetry,
   MsgStallTimeout,
+  MsgSubtaskChildBusy,
+  MsgSubtaskDiffSummary,
+  MsgSubtaskFollowupHeader,
+  MsgSubtaskGatherNoPending,
+  MsgSubtaskSendNotChild,
+  MsgSubtaskTimeout,
   MsgTurnCompleted,
+  MsgWorktreeCardTitle,
+  MsgWorktreeCreateError,
+  MsgWorktreeDirtyPrompt,
+  MsgWorktreeKeepBtn,
+  MsgWorktreeKept,
+  MsgWorktreeMemoryWarn,
+  MsgWorktreeOrphanCleaned,
+  MsgWorktreeOrphanKept,
+  MsgWorktreeRemoved,
+  MsgWorktreeRemoveBtn,
+  MsgWorktreeRemovedShort,
 } from '../i18n/index.js'
 import type { Language } from '../i18n/index.js'
+import { AllowList } from '../feishu/allowlist.js'
 import type {
   Agent,
   AgentSession,
@@ -56,7 +76,30 @@ import type {
   Platform,
   UserQuestion,
 } from '../core/types.js'
-import { asSessionEnvInjector, asSessionModeInjector } from '../core/types.js'
+import {
+  asCardSender,
+  asChatJumpURLer,
+  asForkQuerierWithProvider,
+  asForkSessionPreparer,
+  asGroupIconAvatarSetter,
+  asGroupRenamer,
+  asGroupSpawner,
+  asGroupSpawnerEx,
+  asMessagePinAppender,
+  asMessageReactionAdder,
+  asProviderSwitcher,
+  asReactionAdder,
+  asReplyContextReconstructor,
+  asSessionEnvInjector,
+  asSessionModeInjector,
+  asSpawnedChatActiveChecker,
+  asSpawnedChatStateUpdater,
+  asWorkDirSwitcher,
+  asWorktreeOrphanResolver,
+  ContinueSession,
+  ForkSessionPrefix,
+  type GroupSpawnOptions,
+} from '../core/types.js'
 import {
   isAllowResponse,
   isApproveAllResponse,
@@ -66,14 +109,41 @@ import {
   shouldSurfaceUnsolicitedPermission as shouldSurfaceHelper,
   buildDenyMessage,
 } from './permission.js'
-import { CardButton, CardCheckOption, newCard } from '../card.js'
+import { CardButton, CardCheckOption, newCard, type Card, type CardHeader } from '../card.js'
 import { Session, SessionManager } from './session.js'
+import { childLabel, SubtaskGather } from './subtask.js'
+import {
+  createWorktree,
+  gitDiffShortstat,
+  memoryHasContent,
+  parseWorktreeMode,
+  removeOrphanMemory,
+  removeWorktree,
+  slugify,
+  WorktreeMode,
+  worktreeRepoRoot,
+  type WorktreeCreateInfo,
+} from './worktree.js'
+import {
+  chatroomHubGroupName,
+  defaultGroupNamePrompt,
+  fallbackGroupIcon,
+  groupIconRecentMax,
+  iconsPerCategory,
+  maxGroupNameRunes,
+  parseGroupIcon,
+  sampleAcrossCategories,
+  sanitizeGroupName,
+  sessionExemptFromSpawnRename,
+  truncateGroupName,
+} from './groupname.js'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.js'
 import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.js'
 import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.js'
 import { newAsyncSender, type AsyncSender } from '../async-sender.js'
-import { readFileSync } from 'node:fs'
-import { asCompletionNotifier } from '../core/types.js'
+import { readFileSync, statSync } from 'node:fs'
+import { join as joinPath } from 'node:path'
+import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter } from '../core/types.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -285,6 +355,88 @@ export function extractPlatformName(sessionKey: string): string {
   return idx > 0 ? sessionKey.slice(0, idx) : ''
 }
 
+/** Default cap on recursive subtask delegation (Go defaultSubtaskMaxDepth). */
+export const defaultSubtaskMaxDepth = 3
+
+/** Default gather barrier fallback timeout: 20 minutes (Go defaultSubtaskGatherTimeout). */
+export const defaultSubtaskGatherTimeout = 20 * 60 * 1000
+
+/** A markdown card element body without the discriminator (buildSpawnNotifyCard input). */
+interface CardMarkdownLike {
+  content: string
+}
+
+/** A fully-empty Message template for synthetic injections (Go &Message{}). */
+function emptyMessage(): Message {
+  return {
+    sessionKey: '',
+    platform: '',
+    messageID: '',
+    userID: '',
+    userName: '',
+    chatName: '',
+    chatType: '',
+    content: '',
+    originalContent: '',
+    images: [],
+    files: [],
+    extraContent: '',
+    replyCtx: undefined,
+    fromVoice: false,
+    isSpawnedGroup: false,
+    isPermissionAction: false,
+    isAskqCardAction: false,
+    parentMessageID: '',
+    quotedText: '',
+  }
+}
+
+/** statSync isDirectory probe that reports false on error. */
+function statIsDir(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Chat ID from "<platform>:<chatID>[:<userID>]" when the platform segment
+ * matches platformName (Go chatIDFromSessionKey).
+ */
+function chatIDFromSessionKey(sessionKey: string, platformName: string): string {
+  const parts = sessionKey.split(':', 3)
+  if (parts.length < 2 || parts[0] !== platformName) return ''
+  return parts[1] ?? ''
+}
+
+/**
+ * A single "open parent group" jump button for a spawned child, derived from
+ * the originating message (Go parentJumpButtons). Empty array when the
+ * parent chat ID cannot be resolved.
+ */
+function parentJumpButtons(parentSessionKey: string, parentName: string, p: Platform): CardButton[] {
+  const pcid = chatIDFromSessionKey(parentSessionKey, p.name())
+  if (pcid === '') return []
+  let label = '↩ 父群'
+  if (parentName !== '') label = `↩ ${parentName}`
+  const url = asChatJumpURLer(p)?.chatJumpURL(pcid) ?? ''
+  return [{ text: label, type: 'default', value: '', url }]
+}
+
+/**
+ * Render parent/child jump buttons as a single markdown link line (Go
+ * jumpButtonsMarkdown). ok=false when no button carries a URL.
+ */
+function jumpButtonsMarkdown(buttons: CardButton[]): CardMarkdownLike & { ok: boolean } {
+  const parts: string[] = []
+  for (const b of buttons) {
+    if (b.url !== undefined && b.url !== '') parts.push(`[${b.text}](${b.url})`)
+  }
+  if (parts.length === 0) return { content: '', ok: false }
+  return { content: parts.join('  ·  '), ok: true }
+}
+
 function truncateIf(s: string, maxLen: number): string {
   if (maxLen <= 0) return s
   const runes = Array.from(s)
@@ -334,6 +486,33 @@ export class Engine {
   maxQueuedMessages = defaultMaxQueuedMessages
   debounceInterval = defaultDebounceInterval
   interactiveIdleTimeout = 0
+
+  /** Recursive subtask delegation cap override; 0 = defaultSubtaskMaxDepth (Go subtaskMaxDepth). */
+  subtaskMaxDepth = 0
+  /** Default worktree isolation for /spawn //fork (Go spawnWorktree). */
+  spawnWorktree: WorktreeMode = WorktreeMode.ForceOff
+  /** /spawn //fork RAM guard thresholds in percent; 0 disables a tier (Go spawnMemWarnPct/BlockPct). */
+  spawnMemWarnPct = 0
+  spawnMemBlockPct = 0
+  /** Hard timeout for subtask sessions; 0 inherits eventIdleTimeout (Go subtaskTimeout). */
+  subtaskTimeout = 0
+  /** Gather barrier fallback timeout; 0 = defaultSubtaskGatherTimeout (Go subtaskGatherTimeout). */
+  subtaskGatherTimeout = 0
+  /** LLM group-name generation switches (Go groupName* fields). */
+  groupNameEnabled = false
+  groupNameProvider = ''
+  groupNameTimeout = 0
+  groupNamePrompt = ''
+  groupNameSetAvatar = false
+  /** Monitor-mode config surface; full monitor domain arrives with M6 (Go monitorEnabled). */
+  monitorEnabled = false
+
+  /** Session keys with a manual rename pending in the async LLM window (Go pendingRename). */
+  private readonly pendingRename = new Set<string>()
+  /** Ring buffer of recently used group icons for prompt dedup (Go recentIcons). */
+  private recentIcons: string[] = []
+  /** Config-driven monitor chat list (Go monitorChats atomic value). */
+  private monitorChatsStr = ''
 
   /** key = sessionKey (interactiveKey; workspace prefixes arrive in a later M). */
   readonly interactiveStates = new Map<string, InteractiveState>()
@@ -512,6 +691,17 @@ export class Engine {
       return
     }
 
+    // A real human message resuming a subtask group starts a new work cycle:
+    // re-arm the one-shot report flag so the agent's report (and the
+    // first-turn auto-report) can deliver again after a prior cycle already
+    // reported. No-op for synthetic injections (empty userID) and non-subtask
+    // sessions. Runs after the lock is acquired so it only fires on a
+    // genuinely new turn (Go rearmSubtaskReportOnHumanTurn).
+    this.rearmSubtaskReportOnHumanTurn(msg, session, this.sessions)
+    // A real human message into a background session (subtask group /
+    // chatroom role) re-enables auto-render for it from this point on.
+    this.markUserInterjectedOnHumanTurn(msg, session, this.sessions)
+
     this.ensureInteractiveStateForQueueing(msg.sessionKey, p, msg.replyCtx)
     void this.processInteractiveMessageWith(p, msg, session)
   }
@@ -646,6 +836,8 @@ export class Engine {
       const historyContent = msg.originalContent !== '' ? msg.originalContent : msg.content
       session.addHistory('user', historyContent)
 
+      this.handleSpawnedGroupFirstMessage(p, msg, session)
+
       const state = await this.getOrCreateInteractiveStateWith(msg.sessionKey, p, msg.replyCtx, session)
       try {
         state.turnSeq++
@@ -655,6 +847,14 @@ export class Engine {
         if (state.agentSession === undefined) {
           await this.reply(p, msg.replyCtx, this.i18n.t(MsgFailedToStartAgentSession))
           return
+        }
+
+        // A /done'd spawned group auto-resumes on the next message, but its
+        // dimmed avatar / inactive state only recovers via /undone — mirror
+        // that recovery here, off the turn's hot path (Go
+        // reactivateSpawnedChatAvatar).
+        if (msg.isSpawnedGroup) {
+          void this.reactivateSpawnedChatAvatar(p, msg.sessionKey)
         }
 
         // TODO(M3): per-message mode override via LiveModeSwitcher.
@@ -797,11 +997,43 @@ export class Engine {
   }
 
   /**
-   * Per-session env (CC_SESSION_KEY, CC_PROJECT). TODO(M3): subtask/chatroom
-   * flags and workspace context when those milestones port their consumers.
+   * Per-session env (Go buildSessionEnv). CC_SESSION rides alongside
+   * CC_SESSION_KEY because dsh scrubs credential-shaped env names (any
+   * *KEY*) from Bash-tool children, which would silently drop CC_SESSION_KEY.
+   * The PATH/venv and feishu-workspace entries arrive with the chatroom (M5)
+   * and workspace (M7) milestones.
    */
-  buildSessionEnv(ccKey: string, _session: Session): string[] {
-    return [`CC_SESSION_KEY=${ccKey}`, `CC_PROJECT=${this.name}`]
+  buildSessionEnv(ccKey: string, session: Session): string[] {
+    const envVars = [
+      `CC_PROJECT=${this.name}`,
+      `CC_SESSION_KEY=${ccKey}`,
+      `CC_SESSION=${ccKey}`,
+    ]
+    if (session.getResearchAssistant()) {
+      envVars.push('CC_RESEARCH_ASSISTANT=1')
+    }
+    if (session.getSubtaskDepth() > 0) {
+      envVars.push('CC_SUBTASK=1', `CC_SUBTASK_DEPTH=${session.getSubtaskDepth()}`)
+      if (session.getSubtaskAttended()) {
+        envVars.push('CC_SUBTASK_ATTENDED=1')
+      }
+      if (session.getSubtaskNoReport()) {
+        envVars.push('CC_SUBTASK_NO_REPORT=1')
+      }
+    }
+    if (session.getChatroomHubKey() !== '') {
+      envVars.push('CC_CHATROOM_ROLE=1')
+      const hub = this.sessions.getOrCreateActive(session.getChatroomHubKey())
+      if (hub.getChatroomResearch()) {
+        envVars.push('CC_CHATROOM_RESEARCH=1')
+        const key = session.getResearchAssistantKey()
+        if (key !== '') {
+          envVars.push(`CC_RESEARCH_ASSISTANT_KEY=${key}`)
+          envVars.push(`CC_RESEARCH_ASSISTANT_CHILD=${key}`)
+        }
+      }
+    }
+    return envVars
   }
 
   /** SetSessionEnv + StartSession, serialized per engine (Go startAgentLocked). Public for the ported env-injection tests. */
@@ -1360,6 +1592,11 @@ export class Engine {
       }
     }
 
+    // First-turn fallback: if this is a delegated subtask session and the
+    // agent finished without explicitly reporting, push the result to the
+    // parent so it is never lost. One-shot (Go maybeAutoReportSubtask).
+    this.maybeAutoReportSubtask(state, session, session.lastResultOrReply(), isSilent)
+
     const p = state.platform
     const normalizedBase = baseResponse.trim()
     const suppressDuplicate = normalizedBase !== '' && normalizedBase === state.sideText
@@ -1495,6 +1732,12 @@ export class Engine {
       let fullResponse = textParts.join('')
       session.addHistory('assistant', fullResponse)
 
+      // Mirror the EventResult turn-end hook: without an EventResult (the
+      // process exited mid-turn) the subtask result would never report to
+      // the parent, deadlocking a gather (Go engine_events.go channel-closed
+      // path).
+      this.maybeAutoReportSubtask(state, session, fullResponse, isSilentReply(fullResponse))
+
       if (isSilentReply(fullResponse)) return
       const [stripped, ok] = stripTrailingSilent(fullResponse)
       if (ok && stripped.trim() === '') return
@@ -1571,6 +1814,12 @@ export class Engine {
       state.platform = queued.platform
       state.replyCtx = queued.replyCtx
       state.fromVoice = queued.fromVoice
+
+      // Re-arm the one-shot subtask auto-report for a message that queued
+      // behind a busy turn: the busy turn's auto-report already consumed any
+      // re-arm, so without this the drained turn's result would never report
+      // back (Go rearmSubtaskReportOnDrain).
+      this.rearmSubtaskReportOnDrain(session, sessions)
 
       if (this.debounceInterval > 0) await this.debounceWaitAndMerge(state, queued)
 
@@ -2137,5 +2386,1215 @@ export class Engine {
     pending.resolve()
     state.lastEventAt = Date.now()
     return true
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // M4: subtask orchestration (Go engine_subtask.go + engine_cmd_session.go)
+  // ──────────────────────────────────────────────────────────────
+
+  /** Override the recursive delegation cap (Go SetSubtaskMaxDepth). */
+  setSubtaskMaxDepth(n: number): void {
+    if (n > 0) this.subtaskMaxDepth = n
+  }
+
+  /** Override default worktree isolation for /spawn //fork (Go SetSpawnWorktreeMode). */
+  setSpawnWorktreeMode(s: string): void {
+    this.spawnWorktree = parseWorktreeMode(s)
+  }
+
+  /** Configure the /spawn //fork RAM guard; 0 disables a tier (Go SetSpawnMemoryGuard). */
+  setSpawnMemoryGuard(warnPct: number, blockPct: number): void {
+    this.spawnMemWarnPct = warnPct
+    this.spawnMemBlockPct = blockPct
+  }
+
+  /** Override the hard timeout for subtask sessions (Go SetSubtaskTimeout). */
+  setSubtaskTimeout(ms: number): void {
+    this.subtaskTimeout = ms
+  }
+
+  /** Override the gather barrier fallback timeout (Go SetSubtaskGatherTimeout). */
+  setSubtaskGatherTimeout(ms: number): void {
+    if (ms > 0) this.subtaskGatherTimeout = ms
+  }
+
+  /** Effective recursive delegation cap (Go maxSubtaskDepth). */
+  maxSubtaskDepth(): number {
+    return this.subtaskMaxDepth > 0 ? this.subtaskMaxDepth : defaultSubtaskMaxDepth
+  }
+
+  /** The first registered group-capable platform, or undefined (Go spawnCapablePlatform). */
+  spawnCapablePlatform(): Platform | undefined {
+    return this.platforms.find(p => asGroupSpawner(p) !== undefined)
+  }
+
+  /** Any platform that can reconstruct a reply context (report fallback). */
+  private reportCapablePlatform(): Platform | undefined {
+    const spawner = this.spawnCapablePlatform()
+    if (spawner !== undefined) return spawner
+    return this.platforms.find(p => asReplyContextReconstructor(p) !== undefined)
+  }
+
+  /**
+   * Completion-card elements surfacing a subtask's code-change footprint
+   * (one-line `git diff --shortstat`). Empty for depth-0 sessions and clean
+   * working trees (Go subtaskDiffElements).
+   */
+  async subtaskDiffElements(session: Session | undefined, workspaceDir: string): Promise<CardMarkdownLike[]> {
+    if (session === undefined || session.getSubtaskDepth() <= 0) return []
+    const s = await gitDiffShortstat(workspaceDir)
+    if (s === '') return []
+    return [{ content: `${this.i18n.t(MsgSubtaskDiffSummary)}: ${s}` }]
+  }
+
+  /**
+   * Create an isolated child group + session that runs a delegated piece of
+   * work in parallel, woken from the agent via the subtask tool (Go
+   * SpawnSubtask). Records parent linkage + delegation depth for the
+   * event-driven result reinjection (see reportSubtask) and auto-isolates
+   * the child in a git worktree when it shares the parent's repository.
+   * @returns The child group's display name and session key.
+   */
+  async spawnSubtask(
+    parentSessionKey: string,
+    dir: string,
+    wtPref: WorktreeMode,
+    forkContext: boolean,
+    message: string,
+    images: ImageAttachment[],
+    attended: boolean,
+  ): Promise<{ childName: string; childKey: string }> {
+    const p = this.spawnCapablePlatform()
+    if (p === undefined) {
+      throw new Error('subtask: no group-capable platform available')
+    }
+    const spawner = asGroupSpawner(p)
+    if (spawner === undefined) {
+      throw new Error(`subtask: platform "${p.name()}" cannot spawn groups`)
+    }
+
+    const firstMsg = message.trim()
+    // Idle spawn (empty message): create the group + session record but do
+    // NOT fire a first agent turn. Used by chatroom --research to pre-spawn
+    // an assistant that idles until the role sends it a real task.
+    const idle = firstMsg === ''
+    if (idle && wtPref !== WorktreeMode.ForceOff) {
+      throw new Error('subtask: idle spawn (empty message) requires --no-worktree')
+    }
+
+    const parent = this.sessions.getOrCreateActive(parentSessionKey)
+    const depth = parent.getSubtaskDepth() + 1
+    if (depth > this.maxSubtaskDepth()) {
+      throw new Error(`subtask: delegation depth limit reached (max ${this.maxSubtaskDepth()}) — complete this part yourself`)
+    }
+
+    // Fork mode: the child inherits the parent's conversation context.
+    // Require a real, started session to fork from — mirror cmdFork's guard.
+    let forkOrigID = ''
+    if (forkContext) {
+      forkOrigID = parent.getAgentSessionID()
+      if (forkOrigID === '' || forkOrigID === ContinueSession || forkOrigID.startsWith(ForkSessionPrefix)) {
+        throw new Error('subtask: --fork needs a started parent conversation to copy context from')
+      }
+    }
+
+    // Owning user for the new group: top-level chat keys embed it as the
+    // third segment; recursive subtasks store it on the parent session.
+    let userID = parent.getSpawnUserID()
+    if (userID === '') {
+      const parts = parentSessionKey.split(':')
+      if (parts.length >= 3) {
+        const third = parts.slice(2).join(':')
+        if (!third.startsWith('thread:') && !third.startsWith('root:')) userID = third
+      }
+    }
+
+    let groupName = firstMsg
+    // With LLM rename on, create the group under a neutral placeholder (the
+    // LLM overwrites it later, falling back to the first message); idle
+    // spawns have no first message and use the placeholder too.
+    if (this.groupNameEnabled || idle) {
+      groupName = `${this.name} 副本`
+    }
+    if (Array.from(groupName).length > maxGroupNameRunes) {
+      groupName = `${Array.from(groupName).slice(0, maxGroupNameRunes - 3).join('')}...`
+    }
+
+    // Resolve the child work dir, mirroring /dir resolution: parent's
+    // per-chat override (or agent base dir), then an explicit --dir.
+    let workDir = ''
+    const override = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
+    if (override !== '') workDir = override
+    else workDir = this.agentWorkDir()
+    if (dir !== '') {
+      const resolved = this.resolveDirPath(dir)
+      if (resolved === undefined) {
+        throw new Error(`subtask: --dir path invalid: ${dir}`)
+      }
+      workDir = resolved
+    }
+
+    // Worktree isolation: in auto mode, isolate only when the child shares
+    // the parent's git repository. Fail fast before creating the group.
+    let wtPath = ''
+    let wtBranch = ''
+    let wtBase = ''
+    let wtRoot = ''
+    let useWorktree = wtPref === WorktreeMode.ForceOn
+    if (wtPref === WorktreeMode.Auto && workDir !== '') {
+      const childRoot = await worktreeRepoRoot(workDir)
+      if (childRoot !== undefined) {
+        const parentDir = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
+        const parentRoot = parentDir === '' ? await worktreeRepoRoot(this.agentWorkDir()) : await worktreeRepoRoot(parentDir)
+        if (parentRoot === childRoot) useWorktree = true
+      }
+    }
+    if (useWorktree) {
+      const root = await worktreeRepoRoot(workDir)
+      if (root === undefined) {
+        throw new Error(`subtask: --worktree requires a git repository, but ${workDir} is not inside one`)
+      }
+      let created: WorktreeCreateInfo
+      try {
+        created = await createWorktree(root, slugify(firstMsg))
+      } catch (error) {
+        throw new Error(`subtask: worktree create failed: ${String(error instanceof Error ? error.message : error)}`)
+      }
+      wtPath = created.path
+      wtBranch = created.branch
+      wtBase = created.baseSHA
+      wtRoot = root
+      workDir = created.path
+    }
+
+    // Cross-workdir fork guard: fail fast BEFORE creating the group so the
+    // agent learns to drop -f and retry, leaving no orphan group (Go
+    // SpawnSubtask's PrepareForkSession check).
+    if (forkOrigID !== '') {
+      const prep = asForkSessionPreparer(this.agent)
+      if (prep !== undefined) {
+        let parentWorkDir = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
+        if (parentWorkDir === '') parentWorkDir = this.agentWorkDir()
+        try {
+          await prep.prepareForkSession(forkOrigID, parentWorkDir, workDir)
+        } catch (error) {
+          throw new Error(`subtask: --fork 跨目录不可达：${String(error instanceof Error ? error.message : error)}（父群目录 "${parentWorkDir}" ≠ 子任务目录 "${workDir}"；跨目录请去掉 -f 用全新上下文派发）`)
+        }
+      }
+    }
+
+    const spawnMsg: Message = {
+      ...emptyMessage(),
+      sessionKey: parentSessionKey,
+      platform: p.name(),
+      userID,
+    }
+    const spawnOpts: GroupSpawnOptions = { topicGroup: false, workDir }
+
+    const spawnerEx = asGroupSpawnerEx(p)
+    let syntheticMsg: Message | undefined
+    try {
+      syntheticMsg = spawnerEx !== undefined
+        ? await spawnerEx.spawnGroupWithOptions(spawnMsg, groupName, firstMsg, spawnOpts)
+        : await spawner.spawnGroup(spawnMsg, groupName, firstMsg)
+    } catch (error) {
+      throw new Error(`subtask: spawn group: ${String(error instanceof Error ? error.message : error)}`)
+    }
+
+    if (workDir !== '' && this.projectState !== undefined) {
+      this.projectState.setWorkspaceDirOverride(this.dirOverrideKey(syntheticMsg.sessionKey), workDir)
+      this.projectState.save()
+    }
+
+    // Record parent linkage + delegation depth so the child's report can
+    // push its result back and wake the parent.
+    const ns = this.sessions.getOrCreateActive(syntheticMsg.sessionKey)
+    ns.setParentSessionKey(parentSessionKey)
+    if (forkOrigID !== '') {
+      // Plant the fork sentinel; the session-start path expands it into a
+      // fork resume on the child's first turn and compareAndSet later
+      // overwrites it with the real ID.
+      ns.setAgentSessionID(`${ForkSessionPrefix}${forkOrigID}`, this.agent.name())
+    }
+    ns.setParentChatName(this.subtaskParentLabel(parent))
+    ns.setName(groupName)
+    ns.setSubtaskDepth(depth)
+    ns.setSubtaskAttended(attended)
+    if (userID !== '') ns.setSpawnUserID(userID)
+    if (wtPath !== '') ns.setWorktreeInfo(wtPath, wtBranch, wtBase, wtRoot)
+    this.sessions.save()
+
+    // Fold a late-spawned child into an armed gather barrier so gather also
+    // awaits it; without a barrier this is a no-op.
+    const gg = parent.getPendingSubtaskGather()
+    if (gg !== undefined) {
+      if (gg.addExpected(syntheticMsg.sessionKey, childLabel(ns))) {
+        console.info(`subtask: added late-spawned child to armed gather (parent=${parentSessionKey} child=${syntheticMsg.sessionKey})`)
+      }
+    }
+
+    // Notification card in the new group.
+    const cs = asCardSender(p)
+    if (cs !== undefined) {
+      const jumpMD = jumpButtonsMarkdown(parentJumpButtons(parentSessionKey, this.subtaskParentLabel(parent), p))
+      const card = this.buildSpawnNotifyCard(workDir, this.i18n.t(MsgSpawnGroupReady), '', jumpMD)
+      try {
+        await cs.sendCard(syntheticMsg.replyCtx, card)
+      } catch (error) {
+        console.warn(`subtask: card send failed (${p.name()}): ${String(error)}`)
+      }
+    }
+
+    if (!idle) {
+      // The synthetic first message never went through platform dispatch
+      // (which normally sets isSpawnedGroup), so mark it here — otherwise
+      // the pin panel and the first-message rename gate never fire for
+      // subtask groups.
+      syntheticMsg.isSpawnedGroup = true
+      if (images.length > 0) syntheticMsg.images = images
+      this.receiveMessageSafe(p, syntheticMsg)
+    }
+
+    console.info(`subtask: spawned (parent=${parentSessionKey} child=${syntheticMsg.sessionKey} depth=${depth} worktree=${wtPath !== ''} dir=${workDir})`)
+    this.markResearchDispatch(parent)
+    return { childName: groupName, childKey: syntheticMsg.sessionKey }
+  }
+
+  /** Fire-and-forget inbound delivery (Go SafeGo ReceiveMessage). */
+  private receiveMessageSafe(p: Platform, msg: Message): void {
+    try {
+      this.receiveMessage(p, msg)
+    } catch (error) {
+      console.error(`engine: receive-message failed (${msg.sessionKey}): ${String(error)}`)
+    }
+  }
+
+  /** The agent's base work dir, or '' when it has none (Go GetWorkDir probe). */
+  agentWorkDir(): string {
+    const switcher = asWorkDirSwitcher(this.agent)
+    if (switcher !== undefined) return switcher.getWorkDir()
+    return (this.agent as { getWorkDir?: () => string }).getWorkDir?.().trim() ?? ''
+  }
+
+  /** Resolve a user-supplied dir argument (Go Engine.resolveDir, engine-side copy). */
+  private resolveDirPath(arg: string): string | undefined {
+    let newDir = arg.trim()
+    const home = process.env.HOME ?? ''
+    if (newDir === '~') newDir = home
+    else if (newDir.startsWith('~/')) newDir = joinPath(home, newDir.slice(2))
+    try {
+      if (!statIsDir(newDir)) return undefined
+    } catch {
+      return undefined
+    }
+    return newDir
+  }
+
+  /** Flag a research-mode role that dispatched its assistant this turn (Go markResearchDispatch). */
+  markResearchDispatch(parent: Session): void {
+    if (parent.getChatroomHubKey() === '' || !parent.getResearchAwaitingAssistant()) return
+    parent.setResearchDispatched(true)
+    this.sessions.save()
+  }
+
+  /** Human label for the parent chat on jump buttons (Go subtaskParentLabel). */
+  subtaskParentLabel(parent: Session): string {
+    const n = parent.getName().trim()
+    if (n !== '' && n !== 'session' && n !== 'default') return n
+    return this.name
+  }
+
+  /**
+   * Push a child subtask's result back into its parent session, waking the
+   * parent agent to synthesize. Unlike `/done --reply`, it does NOT stop the
+   * child session (Go ReportSubtask). Empty result falls back to the child's
+   * last assistant reply.
+   */
+  reportSubtask(childSessionKey: string, result: string): void {
+    const p = this.reportCapablePlatform()
+    if (p === undefined) {
+      throw new Error('subtask: no platform available to deliver report')
+    }
+
+    const sess = this.sessions.getOrCreateActive(childSessionKey)
+    if (sess.getSubtaskReported()) {
+      // Already delivered: skip idempotently so a model re-calling report
+      // cannot flood the parent. Nil (not an error) so the agent does not retry.
+      console.info(`subtask: report already delivered, skipping duplicate (child=${childSessionKey})`)
+      return
+    }
+    // Fire-and-forget child (monitor no_report rule): never push a result
+    // card to the parent.
+    if (sess.getSubtaskNoReport()) {
+      console.info(`subtask: report skipped (no-report child=${childSessionKey})`)
+      return
+    }
+    if (result.trim() === '') result = sess.lastResultOrReply()
+    if (result.trim() === '') {
+      throw new Error('subtask: no result to report')
+    }
+    if (!this.replyToParent(p, sess, result)) {
+      throw new Error('subtask: this chat has no parent session to report back to')
+    }
+    // Consume the one-shot auto-fallback so the first-turn result does not
+    // also reinject this result.
+    sess.setSubtaskReported(true)
+    this.sessions.save()
+    console.info(`subtask: reported to parent (child=${childSessionKey})`)
+  }
+
+  /**
+   * Inject a follow-up message from a parent agent into one of its live
+   * subtask groups (Go SendToSubtask). Non-blocking; the child's reply folds
+   * back via the normal report path. Re-arms the one-shot auto-report.
+   */
+  async sendToSubtask(callerSessionKey: string, childSessionKey: string, message: string): Promise<void> {
+    const msg = message.trim()
+    if (msg === '') throw new Error('subtask: message is required')
+    if (childSessionKey.trim() === '') throw new Error('subtask: child session key is required')
+
+    const p = this.reportCapablePlatform()
+    if (p === undefined) throw new Error('subtask: no platform available to deliver follow-up')
+
+    const child = this.sessions.getOrCreateActive(childSessionKey)
+    if (child.getParentSessionKey() !== callerSessionKey) {
+      throw new Error(this.i18n.t(MsgSubtaskSendNotChild))
+    }
+    // Backpressure: a queued follow-up's answer would never report back (the
+    // in-flight turn's auto-report consumes any re-arm); reject instead.
+    if (child.isBusy()) {
+      throw new Error(this.i18n.t(MsgSubtaskChildBusy))
+    }
+
+    const r = asReplyContextReconstructor(p)
+    if (r === undefined) {
+      throw new Error(`subtask: platform "${p.name()}" cannot address the subtask group`)
+    }
+    let childRctx: unknown
+    try {
+      childRctx = await r.reconstructReplyCtx(childSessionKey)
+    } catch (error) {
+      throw new Error(`subtask: reconstruct child reply ctx: ${String(error instanceof Error ? error.message : error)}`)
+    }
+
+    // Re-arm the one-shot auto-report so the child's answer to this
+    // follow-up folds back to the parent.
+    child.setSubtaskReported(false)
+    this.sessions.save()
+
+    // Post the follow-up as a visible card in the child group first, so
+    // members see WHAT the parent asked (the injected message is silent).
+    await this.sendAsCard(p, childRctx, msg, { title: this.i18n.t(MsgSubtaskFollowupHeader), color: 'indigo' })
+
+    const childMsg: Message = {
+      ...emptyMessage(),
+      sessionKey: childSessionKey,
+      platform: p.name(),
+      userName: '[父任务追问]',
+      content: `[父任务追问] ${msg}`,
+      replyCtx: childRctx,
+    }
+    this.receiveMessageSafe(p, childMsg)
+
+    console.info(`subtask: parent sent follow-up to child (parent=${callerSessionKey} child=${childSessionKey})`)
+    this.markResearchDispatch(this.sessions.getOrCreateActive(callerSessionKey))
+  }
+
+  /**
+   * First-turn fallback: a subtask session that finishes its initial turn
+   * without an explicit report still pushes that turn's reply to the parent.
+   * One-shot per subtask (Go maybeAutoReportSubtask).
+   */
+  maybeAutoReportSubtask(state: InteractiveState | undefined, session: Session, baseResponse: string, isSilent: boolean): void {
+    if (session.getSubtaskDepth() <= 0 || session.getSubtaskReported() || session.getSubtaskAutoReportSuppressed() || isSilent) return
+    if (baseResponse.trim() === '' || state === undefined || state.platform === undefined) return
+    if (this.replyToParent(state.platform, session, baseResponse)) {
+      session.setSubtaskReported(true)
+      this.sessions.save()
+      console.info(`subtask: auto-reported first-turn result to parent (child=${session.id})`)
+    }
+  }
+
+  /**
+   * Disarm the one-shot first-turn auto-report when a user manually stops a
+   * delegated subtask group's turn (Go suppressSubtaskAutoReport). Explicit
+   * report paths ignore this flag.
+   */
+  suppressSubtaskAutoReport(sessionKey: string): void {
+    const sess = this.sessions.getOrCreateActive(sessionKey)
+    if (sess.getSubtaskDepth() > 0 && !sess.getSubtaskAutoReportSuppressed()) {
+      // Disarm only the one-shot auto-report; SubtaskReported gates explicit
+      // reports too and must not be touched here.
+      sess.setSubtaskAutoReportSuppressed(true)
+      this.sessions.save()
+      console.info(`subtask: user stopped turn, auto-report suppressed (child=${sess.id})`)
+    }
+  }
+
+  /**
+   * Reset the one-shot reported flag when a real human message starts a new
+   * turn in a subtask session, so a later explicit report is not silently
+   * dropped (Go rearmSubtaskReportOnHumanTurn). Synthetic injections carry
+   * an empty userID and are skipped.
+   */
+  rearmSubtaskReportOnHumanTurn(msg: Message, session: Session, sessions: SessionManager): void {
+    if (msg.userID === '' || session.getSubtaskDepth() <= 0 || !session.getSubtaskReported()) return
+    session.setSubtaskReported(false)
+    sessions.save()
+    console.info(`subtask: re-armed report on new human turn (child=${msg.sessionKey})`)
+  }
+
+  /**
+   * Re-arm the one-shot auto-report when a message that queued behind a busy
+   * subtask turn is drained (Go rearmSubtaskReportOnDrain).
+   */
+  rearmSubtaskReportOnDrain(session: Session, sessions: SessionManager): void {
+    if (session.getSubtaskDepth() <= 0 || !session.getSubtaskReported()) return
+    session.setSubtaskReported(false)
+    sessions.save()
+    console.info(`subtask: re-armed report on drained queued message (child=${session.id})`)
+  }
+
+  /**
+   * Consume chatroom ask metadata at the moment a role's turn actually
+   * starts (Go stampChatroomAskOnTurnStart). The chatroom gather flow that
+   * arms these lands with M5; kept for the turn-start contract.
+   */
+  stampChatroomAskOnTurnStart(session: Session, askSeq: number, awaitAssistant: boolean): void {
+    if (session.getChatroomHubKey() === '') return
+    if (askSeq !== 0) session.setChatroomAskSeq(askSeq)
+    if (awaitAssistant) session.setResearchAwaitingAssistant(true)
+    this.sessions.save()
+  }
+
+  /**
+   * Flip userInterjected when a real human sends a message into an otherwise
+   * background session (subtask group or chatroom role), re-enabling
+   * auto-render from that point (Go markUserInterjectedOnHumanTurn).
+   */
+  markUserInterjectedOnHumanTurn(msg: Message, session: Session, sessions: SessionManager): void {
+    if (msg.userID === '' || msg.isSpawnedGroup) return
+    if (session.getSubtaskDepth() <= 0 && session.getChatroomHubKey() === '') return
+    if (session.getUserInterjected()) return
+    session.setUserInterjected(true)
+    sessions.save()
+    console.info(`auto-render: user took over background session; render re-enabled (${msg.sessionKey})`)
+  }
+
+  /**
+   * A subtask session's interactive state was cleaned up without the subtask
+   * reporting — send a synthetic failure notification so the parent does not
+   * wait forever (Go reportSubtaskTimeout).
+   */
+  reportSubtaskTimeout(sessionKey: string): void {
+    const sess = this.sessions.getOrCreateActive(sessionKey)
+    if (sess.getSubtaskDepth() <= 0 || sess.getSubtaskReported() || sess.getParentSessionKey() === '') return
+
+    const p = this.reportCapablePlatform()
+    if (p === undefined) {
+      console.warn(`subtask timeout: no platform to deliver failure report (child=${sess.id})`)
+      sess.setSubtaskReported(true)
+      this.sessions.save()
+      return
+    }
+
+    // Monitor/dispatch parent: drop the timeout notice entirely — the
+    // monitored chat is an input-only surface and re-posting there risks
+    // re-triage as a fresh alert.
+    if (this.isMonitorChat({ ...emptyMessage(), sessionKey: sess.getParentSessionKey(), platform: p.name() })) return
+
+    const failureMsg = this.i18n.t(MsgSubtaskTimeout)
+    if (this.replyToParent(p, sess, failureMsg)) {
+      sess.setSubtaskReported(true)
+      this.sessions.save()
+      console.info(`subtask: reported timeout failure to parent (child=${sess.id})`)
+    }
+  }
+
+  /** Gather barrier fallback timeout (Go subtaskGatherTimeoutDuration). */
+  subtaskGatherTimeoutDuration(): number {
+    return this.subtaskGatherTimeout > 0 ? this.subtaskGatherTimeout : defaultSubtaskGatherTimeout
+  }
+
+  /**
+   * Install a fan-in barrier on the parent session so reports from its
+   * in-flight children accumulate and the parent is woken EXACTLY ONCE with
+   * the full set (or partial on timeout) (Go GatherSubtasks).
+   */
+  gatherSubtasks(parentSessionKey: string): void {
+    const p = this.reportCapablePlatform()
+    if (p === undefined) throw new Error('subtask: no platform available')
+    const parent = this.sessions.getOrCreateActive(parentSessionKey)
+    if (parent.getPendingSubtaskGather() !== undefined) {
+      throw new Error('subtask: a gather is already in progress on this session')
+    }
+    const { idToKey } = this.sessions.sessionKeyMap()
+    const g = new SubtaskGather()
+    for (const s of this.sessions.allSessions()) {
+      if (s.getParentSessionKey() !== parentSessionKey) continue
+      if (s.getSubtaskReported()) continue
+      const ck = idToKey[s.id] ?? ''
+      if (ck === '') continue
+      g.expected.set(ck, true)
+      g.labels.set(ck, childLabel(s))
+    }
+    if (g.expected.size === 0) {
+      throw new Error(this.i18n.t(MsgSubtaskGatherNoPending))
+    }
+    parent.setPendingSubtaskGather(g)
+    this.sessions.save()
+    const timeout = this.subtaskGatherTimeoutDuration()
+    g.timer = setTimeout(() => { this.fireSubtaskGatherTimeout(parentSessionKey) }, timeout)
+    g.timer.unref()
+    const timeoutS = Math.round(timeout / 1000)
+    console.info(`subtask: gather armed on parent (parent=${parentSessionKey} expected=${g.expected.size} timeoutS=${timeoutS})`)
+  }
+
+  /** Inject a synthetic [子任务汇总] message into the parent (Go wakeParentWithGather). */
+  private wakeParentWithGather(parentKey: string, summary: string): void {
+    const p = this.reportCapablePlatform()
+    if (p === undefined) {
+      console.warn(`subtask: no platform to deliver gather wake (parent=${parentKey})`)
+      return
+    }
+    const r = asReplyContextReconstructor(p)
+    if (r === undefined) return
+    void r.reconstructReplyCtx(parentKey).then(
+      (parentRctx) => {
+        this.receiveMessageSafe(p, {
+          ...emptyMessage(),
+          sessionKey: parentKey,
+          platform: p.name(),
+          userName: '[子任务]',
+          content: summary,
+          replyCtx: parentRctx,
+        })
+      },
+      (error: unknown) => {
+        console.warn(`subtask: reconstruct parent ctx for gather wake failed (parent=${parentKey}): ${String(error)}`)
+      },
+    )
+  }
+
+  /** Timer fallback: wake the parent with whatever arrived (Go fireSubtaskGatherTimeout). */
+  private fireSubtaskGatherTimeout(parentKey: string): void {
+    const parent = this.sessions.getOrCreateActive(parentKey)
+    const g = parent.getPendingSubtaskGather()
+    if (g === undefined) return
+    const { done, summary } = g.timeoutFire()
+    if (!done) return // already woken by the last report
+    parent.setPendingSubtaskGather(undefined)
+    this.sessions.save()
+    this.wakeParentWithGather(parentKey, summary)
+    console.info(`subtask: gather timed out; woke parent with partial results (parent=${parentKey})`)
+  }
+
+  /**
+   * Session keys of all descendants of rootKey, deepest-first so a caller
+   * can tear children down before parents. rootKey itself is excluded; a
+   * visited set guards against cycles (Go collectSubtree).
+   */
+  collectSubtree(rootKey: string): string[] {
+    const { idToKey } = this.sessions.sessionKeyMap()
+    const childrenOf = new Map<string, string[]>()
+    for (const s of this.sessions.allSessions()) {
+      const pk = s.getParentSessionKey()
+      if (pk === '') continue
+      const ck = idToKey[s.id] ?? ''
+      if (ck === '') continue
+      const list = childrenOf.get(pk)
+      if (list === undefined) childrenOf.set(pk, [ck])
+      else list.push(ck)
+    }
+    const visited = new Set<string>([rootKey])
+    const queue: string[] = []
+    for (const c of childrenOf.get(rootKey) ?? []) {
+      if (!visited.has(c)) {
+        visited.add(c)
+        queue.push(c)
+      }
+    }
+    const ordered: string[] = []
+    for (let i = 0; i < queue.length; i++) {
+      const cur = queue[i]
+      if (cur === undefined) continue
+      ordered.push(cur)
+      for (const gc of childrenOf.get(cur) ?? []) {
+        if (!visited.has(gc)) {
+          visited.add(gc)
+          queue.push(gc)
+        }
+      }
+    }
+    return ordered.reverse()
+  }
+
+  /**
+   * Push content from a child (spawned/forked/subtask) session back into its
+   * parent: show the result as a card in the parent chat and inject a
+   * synthetic "[子任务完成]" message that wakes the parent agent (Go
+   * replyToParent). Returns false when the child has no parent link or no
+   * reply-context reconstruction.
+   */
+  replyToParent(p: Platform, sess: Session, content: string): boolean {
+    const parentKey = sess.getParentSessionKey()
+    if (parentKey === '' || content.trim() === '') return false
+    const r = asReplyContextReconstructor(p)
+    if (r === undefined) return false
+    void r.reconstructReplyCtx(parentKey).then(
+      (parentRctx) => {
+        void this.deliverParentReply(p, sess, parentKey, parentRctx, content)
+      },
+      (error: unknown) => {
+        console.warn(`replyToParent: reconstruct reply ctx failed (parent=${parentKey}): ${String(error)}`)
+      },
+    )
+    return true
+  }
+
+  /** Async half of replyToParent once the parent reply ctx resolved. */
+  private async deliverParentReply(p: Platform, sess: Session, parentKey: string, parentRctx: unknown, content: string): Promise<void> {
+    await this.sendAsCard(p, parentRctx, content, {
+      title: this.i18n.tf(MsgDoneReplyParentHeader, childLabel(sess)),
+      color: 'indigo',
+    })
+
+    // Monitor-mode parent: the monitored chat has no interactive agent —
+    // post the card only, never inject the wake message.
+    const parentSess = this.sessions.getOrCreateActive(parentKey)
+    if (parentSess.getMonitorGroup()) {
+      const msgID = parentSess.getMonitorOriginMessageID()
+      if (msgID !== '') {
+        const mr = asMessageReactionAdder(p)
+        if (mr !== undefined) {
+          void mr.addReactionToMessage(chatIDFromSessionKey(parentKey, p.name()), msgID, 'Done')
+        }
+      }
+      return
+    }
+
+    // Gather barrier: bank this report and wake the parent only when all
+    // expected children have reported (or the timeout fires).
+    const childKey = this.sessions.sessionKeyMap().idToKey[sess.id] ?? ''
+    const g = parentSess.getPendingSubtaskGather()
+    if (g !== undefined) {
+      const { done, summary, alreadyWoken } = g.accumulate(childKey, childLabel(sess), content)
+      if (done) {
+        parentSess.setPendingSubtaskGather(undefined)
+        this.sessions.save()
+        this.wakeParentWithGather(parentKey, summary)
+        return
+      }
+      if (!alreadyWoken) return // banked; parent woken once when all report
+      // Barrier already completed but not yet cleared — fall through to a
+      // normal wake so this late report is not lost.
+    }
+
+    // The card body stays clean; the synthetic message the parent agent sees
+    // carries a hint with the child's session key so it can follow up via
+    // `subtask send --child <key>` even after context compaction.
+    let agentContent = `[子任务完成] ${childLabel(sess)}:\n\n${content}`
+    if (childKey !== '') {
+      agentContent += `\n\n(如需追问该子任务: cc-connect subtask send --child ${childKey} "...")`
+    }
+    this.receiveMessageSafe(p, {
+      ...emptyMessage(),
+      sessionKey: parentKey,
+      platform: p.name(),
+      userName: '[子任务]',
+      content: agentContent,
+      replyCtx: parentRctx,
+    })
+  }
+
+  /** Config-driven monitor chat check (Go isMonitorChat). */
+  isMonitorChat(msg: Message): boolean {
+    if (!this.monitorEnabled) return false
+    if (this.monitorChatsStr === '') return false
+    const chatID = chatIDFromSessionKey(msg.sessionKey, msg.platform)
+    if (chatID === '') return false
+    return AllowList(this.monitorChatsStr, chatID)
+  }
+
+  /** Set the monitor chat list (Go setMonitorChats; full monitor domain is M6). */
+  setMonitorChats(chats: string): void {
+    this.monitorChatsStr = chats
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // M4: group-name generation (Go engine_predict.go + engine_events.go)
+  // ──────────────────────────────────────────────────────────────
+
+  /** Configure LLM group-name generation (Go SetGroupNameConfig). */
+  setGroupNameConfig(enabled: boolean, provider: string, timeoutMs: number, prompt: string): void {
+    this.groupNameEnabled = enabled
+    this.groupNameProvider = provider
+    this.groupNameTimeout = timeoutMs
+    this.groupNamePrompt = prompt
+  }
+
+  /** Toggle the group-icon avatar follow-up after rename (Go SetGroupNameAvatarEnabled). */
+  setGroupNameAvatarEnabled(enabled: boolean): void {
+    this.groupNameSetAvatar = enabled
+  }
+
+  /** Mark a manual rename inside the async LLM window (Go markPendingRename). */
+  markPendingRename(sessionKey: string): void {
+    this.pendingRename.add(sessionKey)
+  }
+
+  /** Consume the manual-rename mark (Go clearPendingRename). */
+  clearPendingRename(sessionKey: string): void {
+    this.pendingRename.delete(sessionKey)
+  }
+
+  /** Whether a manual rename is pending for the session (Go hasPendingRename). */
+  hasPendingRename(sessionKey: string): boolean {
+    return this.pendingRename.has(sessionKey)
+  }
+
+  /** Snapshot of recently used group icons, oldest first (Go recentGroupIcons). */
+  recentGroupIcons(): string[] {
+    return [...this.recentIcons]
+  }
+
+  /** Record an icon into the recent ring buffer; empty and duplicates ignored (Go recordGroupIcon). */
+  recordGroupIcon(icon: string): void {
+    if (icon === '') return
+    if (this.recentIcons.includes(icon)) return
+    this.recentIcons.push(icon)
+    if (this.recentIcons.length > groupIconRecentMax) {
+      this.recentIcons = this.recentIcons.slice(this.recentIcons.length - groupIconRecentMax)
+    }
+  }
+
+  /**
+   * Build the full group-name prompt: pick the base (user custom or default
+   * template), fill {{icon_pool}} and {{recent_icons_rule}}, append the seed
+   * (Go buildGroupNamePrompt).
+   */
+  buildGroupNamePrompt(seed: string): string {
+    const base = this.groupNamePrompt === '' ? defaultGroupNamePrompt : this.groupNamePrompt
+    let out = base
+    if (out.includes('{{icon_pool}}')) {
+      out = out.replaceAll('{{icon_pool}}', sampleAcrossCategories(iconsPerCategory).join(', '))
+    }
+    if (out.includes('{{recent_icons_rule}}')) {
+      let rule = ''
+      const recent = this.recentGroupIcons()
+      if (recent.length > 0) {
+        rule = `- 避免重复：最近用过的图标有 ${recent.join('、')}，本次尽量换别的。`
+      }
+      out = out.replaceAll('{{recent_icons_rule}}', rule)
+    }
+    return out + seed.trim()
+  }
+
+  /**
+   * Fork an isolated lightweight query that produces a concise group name +
+   * Lucide icon from the seed (Go generateGroupName). Returns
+   * [name, icon]; the icon falls back to a deterministic pick when the LLM
+   * omits the second line.
+   */
+  async generateGroupName(seed: string, signal?: AbortSignal): Promise<[string, string]> {
+    const fq = asForkQuerierWithProvider(this.agent)
+    if (fq === undefined) {
+      throw new Error('group-name: agent does not implement ForkQuerierWithProvider')
+    }
+
+    let provider = this.groupNameProvider
+    if (provider === '') {
+      const sw = asProviderSwitcher(this.agent)
+      const ap = sw?.getActiveProvider()
+      if (ap !== undefined) provider = ap.name
+    }
+    if (provider === '') {
+      throw new Error('group-name: no provider configured and no active provider')
+    }
+
+    const fullPrompt = this.buildGroupNamePrompt(seed)
+    const resp = await fq.lightweightQuery(fullPrompt, provider, signal)
+
+    const name = sanitizeGroupName(resp)
+    let icon = parseGroupIcon(resp)
+    if (icon === '' && name !== '') {
+      // LLM occasionally omits the icon line — fall back by name hash so the
+      // avatar is always set rather than silently skipped.
+      icon = fallbackGroupIcon(name)
+    }
+    return [name, icon]
+  }
+
+  /**
+   * Generate a group name with the LLM and rename via the given renamer,
+   * optionally setting the icon avatar after a successful rename (Go
+   * renameGroupWithLLM). The rename uses its own 30s deadline, NOT the LLM
+   * query's — a slow LLM that exhausts the query deadline must not fail the
+   * rename HTTP call that actually reached the platform.
+   */
+  private async renameGroupWithLLM(
+    p: Platform,
+    sessionKey: string,
+    seed: string,
+    renamer: (key: string, name: string, signal?: AbortSignal) => Promise<void>,
+    querySignal: AbortSignal | undefined,
+    setAvatar: boolean,
+  ): Promise<{ name: string; icon: string }> {
+    const [name, icon] = await this.generateGroupName(seed, querySignal)
+    if (name === '') return { name: '', icon: '' }
+    const renameSignal = AbortSignal.timeout(30_000)
+    await renamer(sessionKey, name, renameSignal)
+    // After a successful rename, set the group avatar from the LLM's icon
+    // name; failure only warns. Icon validity is checked by the platform's
+    // sprite lookup, which silently skips unknown names.
+    if (setAvatar && this.groupNameSetAvatar && icon !== '') {
+      const setter = asGroupIconAvatarSetter(p)
+      if (setter !== undefined) {
+        try {
+          await setter.setGroupIconAvatar(sessionKey, icon, name)
+          this.recordGroupIcon(icon)
+        } catch (error) {
+          console.warn(`group-name: set icon avatar failed (${icon}): ${String(error)}`)
+        }
+      }
+    }
+    return { name, icon }
+  }
+
+  /**
+   * Async first-message rename for spawned groups: LLM-generate a concise
+   * name, falling back to the first message on failure/empty (Go
+   * handleGroupNameGenerate). Skips when a manual rename landed inside the
+   * LLM window; the mark is one-shot.
+   */
+  handleGroupNameGenerate(p: Platform, sessionKey: string, firstMessage: string, interactiveKey: string): void {
+    if (firstMessage === '') return
+    const timeout = this.groupNameTimeout > 0 ? this.groupNameTimeout : 30_000
+    void this.groupNameGenerateTask(p, sessionKey, firstMessage, timeout, interactiveKey)
+  }
+
+  private async groupNameGenerateTask(
+    p: Platform, sessionKey: string, seed: string, timeout: number, _interactiveKey: string,
+  ): Promise<void> {
+    // The mark means "a manual rename landed inside this window"; the window
+    // ends with this callback, so consume it one-shot — otherwise a /new
+    // first message would be wrongly skipped by an orphan mark.
+    try {
+      if (this.hasPendingRename(sessionKey)) {
+        console.info(`group-name: skipped async rename, group was manually renamed (${sessionKey})`)
+        return
+      }
+      const renamer = asGroupRenamer(p)
+      if (renamer === undefined) return
+      const queryCtl = new AbortController()
+      const timer = setTimeout(() => { queryCtl.abort() }, timeout)
+      try {
+        const { name } = await this.renameGroupWithLLM(
+          p, sessionKey, seed,
+          (key, n, signal) => renamer.renameGroup(key, n, signal),
+          queryCtl.signal, true,
+        )
+        if (name === '') {
+          await this.fallbackRename(renamer, sessionKey, seed)
+        }
+      } catch {
+        await this.fallbackRename(renamer, sessionKey, seed)
+      } finally {
+        clearTimeout(timer)
+      }
+    } finally {
+      this.clearPendingRename(sessionKey)
+    }
+  }
+
+  /** LLM failure/empty fallback: name the group after the user's first message (no avatar). */
+  private async fallbackRename(
+    renamer: { renameGroup(key: string, name: string, signal?: AbortSignal): Promise<void> },
+    sessionKey: string, seed: string,
+  ): Promise<void> {
+    console.warn(`group-name: generate failed, falling back to first message (${sessionKey})`)
+    const fallback = truncateGroupName(seed)
+    if (fallback === '') return
+    try {
+      await renamer.renameGroup(sessionKey, fallback)
+    } catch (error) {
+      console.warn(`group-name: fallback rename failed (${sessionKey}): ${String(error)}`)
+    }
+  }
+
+  /**
+   * First-message handling for spawned groups: pin-panel accumulation, the
+   * plain first-message rename when LLM naming is off, and the async LLM
+   * rename trigger when it is on (the pin/notice block in Go
+   * processInteractiveMessageWith; the top-notice banner stays disabled by
+   * default exactly like Go's spawnTopNoticeEnabled=false).
+   */
+  private handleSpawnedGroupFirstMessage(p: Platform, msg: Message, session: Session): void {
+    if (!msg.isSpawnedGroup) return
+    if (msg.messageID !== '') {
+      const appender = asMessagePinAppender(p)
+      if (appender !== undefined) {
+        const chatID = extractChannelID(msg.sessionKey)
+        const msgID = msg.messageID
+        void appender.addMessagePin(chatID, msgID).catch((error: unknown) => {
+          console.warn(`failed to add message pin (${msgID}): ${String(error)}`)
+        })
+      }
+    }
+    if (!session.isFirstMessage() || sessionExemptFromSpawnRename(session)) return
+    const raw = msg.originalContent !== '' ? msg.originalContent : msg.content
+    if (!this.groupNameEnabled) {
+      // Plain sync rename to the first message; with LLM naming on, the
+      // group is created under a placeholder and the LLM path is the sole
+      // naming source (its fallback covers failure).
+      const renamer = asGroupRenamer(p)
+      if (renamer === undefined) return
+      const name = truncateGroupName(raw)
+      if (name === '') return
+      void renamer.renameGroup(msg.sessionKey, name).catch((error: unknown) => {
+        console.warn(`failed to rename group (${msg.sessionKey}): ${String(error)}`)
+      })
+      return
+    }
+    const nameSeed = raw.trim()
+    if (nameSeed !== '') this.handleGroupNameGenerate(p, msg.sessionKey, nameSeed, msg.sessionKey)
+  }
+
+  /**
+   * Rename the user's own hub group to the chatroom topic (sync fallback),
+   * then overwrite with a concise LLM name a few seconds later (Go
+   * renameHubToTopic). With set_avatar on, the LLM's icon is stamped across
+   * the whole family via setChatroomFamilyAvatar.
+   */
+  renameHubToTopic(p: Platform, sessionKey: string, chatType: string, topic: string, childKeys: string[]): void {
+    if (chatType === 'p2p') return
+    const renamer = asGroupRenamer(p)
+    if (renamer === undefined) return
+    const name = chatroomHubGroupName(topic)
+    // Synchronous fallback: rename the hub to the topic text immediately.
+    void renamer.renameGroupAny(sessionKey, name).catch((error: unknown) => {
+      console.warn(`chatroom: failed to rename hub group to topic (${sessionKey}): ${String(error)}`)
+    })
+
+    // Async LLM overwrite; RenameGroupAny bypasses the spawned-chat guard
+    // because the hub may be a user-owned group.
+    const seed = topic.trim()
+    if (!this.groupNameEnabled || seed === '') return
+    const timeout = this.groupNameTimeout > 0 ? this.groupNameTimeout : 30_000
+    const capturedChildren = childKeys
+    void (async () => {
+      const queryCtl = new AbortController()
+      const timer = setTimeout(() => { queryCtl.abort() }, timeout)
+      try {
+        const { name: hubName, icon } = await this.renameGroupWithLLM(
+          p, sessionKey, seed,
+          (key, n, signal) => renamer.renameGroupAny(key, n, signal),
+          queryCtl.signal, false,
+        )
+        if (hubName === '' || icon === '' || !this.groupNameSetAvatar) return
+        const setter = asChatroomFamilyAvatarSetter(p)
+        if (setter === undefined) return
+        try {
+          await setter.setChatroomFamilyAvatar(sessionKey, capturedChildren, icon, hubName)
+          this.recordGroupIcon(icon)
+        } catch (error) {
+          console.warn(`chatroom: set family avatar failed (hub=${sessionKey}): ${String(error)}`)
+        }
+      } catch (error) {
+        console.warn(`chatroom: group-name LLM rename failed (${sessionKey}): ${String(error)}`)
+      } finally {
+        clearTimeout(timer)
+      }
+    })()
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // M4: spawn-notify / worktree cards + platform helpers
+  // ──────────────────────────────────────────────────────────────
+
+  /** Chat-jump URL for chatID when the platform can produce one (Go chatJumpURL). */
+  chatJumpURL(p: Platform | undefined, chatID: string): string {
+    if (p === undefined) return ''
+    return asChatJumpURLer(p)?.chatJumpURL(chatID) ?? ''
+  }
+
+  /** Build the spawn/fork readiness card (Go buildSpawnNotifyCard, purple header). */
+  buildSpawnNotifyCard(workDir: string, fallbackTitle: string, extraNote: string, jumpMD: CardMarkdownLike): Card {
+    const builder = newCard().title(fallbackTitle, 'purple')
+    // TODO(M7): the full status footer (model/ctx%/git branch/RAM) lands with
+    // the usage domain; the notify body is the note + jump links for now.
+    if (extraNote !== '') builder.markdown(extraNote)
+    if (jumpMD.content !== '') builder.markdown(jumpMD.content)
+    if (workDir !== '') builder.note(`📁 ${workDir}`)
+    return builder.build()
+  }
+
+  /**
+   * Send content as a card with the given header, falling back to bold-title
+   * plain text when the platform has no card support or the card send fails
+   * (Go sendAsCard).
+   */
+  async sendAsCard(p: Platform, replyCtx: unknown, content: string, header: CardHeader): Promise<void> {
+    const cs = asCardSender(p)
+    if (cs !== undefined) {
+      const card = newCard().title(header.title, header.color).markdown(content).build()
+      try {
+        await cs.sendCard(replyCtx, card)
+        return
+      } catch (error) {
+        console.error(`platform send card failed; falling back to plain send (${p.name()}): ${String(error)}`)
+      }
+    }
+    const fallback = header.title !== '' ? `**${header.title}**\n\n${content}` : content
+    await this.send(p, replyCtx, fallback)
+  }
+
+  /** Render a card through the CardSender path with a plain-text fallback (Go replyWithCard). */
+  async replyWithCard(p: Platform, replyCtx: unknown, card: Card): Promise<void> {
+    const cs = asCardSender(p)
+    if (cs !== undefined) {
+      try {
+        await cs.sendCard(replyCtx, card)
+        return
+      } catch (error) {
+        console.error(`platform send card failed; falling back to plain send (${p.name()}): ${String(error)}`)
+      }
+    }
+    await this.send(p, replyCtx, card.renderText())
+  }
+
+  /** The /done Keep/Remove prompt card for a dirty worktree (Go renderWorktreeCard). */
+  renderWorktreeCard(sessionKey: string): Card {
+    const [path, branch] = this.sessions.getOrCreateActive(sessionKey).getWorktreeInfo()
+    let md = this.i18n.tf(MsgWorktreeDirtyPrompt, branch, path)
+    const memDir = this.resolveOrphanMemoryDir(path)
+    if (memDir !== '') {
+      md += `\n${this.i18n.tf(MsgWorktreeMemoryWarn, joinPath(memDir, 'memory'))}`
+    }
+    return newCard()
+      .title(this.i18n.t(MsgWorktreeCardTitle), 'orange')
+      .markdown(md)
+      .buttons(
+        { text: this.i18n.t(MsgWorktreeKeepBtn), type: 'default', value: 'act:/wt keep' },
+        { text: this.i18n.t(MsgWorktreeRemoveBtn), type: 'danger', value: 'act:/wt remove' },
+      )
+      .build()
+  }
+
+  /** Terminal card after the user picks keep/remove (Go renderWorktreeDoneCard). */
+  renderWorktreeDoneCard(action: string, memNote: string): Card {
+    let msg = this.i18n.t(MsgWorktreeKept)
+    if (action.startsWith('remove')) msg = this.i18n.t(MsgWorktreeRemovedShort)
+    if (memNote !== '') msg += `\n${memNote}`
+    return newCard().title(this.i18n.t(MsgWorktreeCardTitle), 'turquoise').markdown(msg).build()
+  }
+
+  /**
+   * Handle the keep/remove choice from the worktree prompt card (Go
+   * executeWorktreeAction). Card-action routing arrives with the Wave-2
+   * integration; the engine-side action execution is this method.
+   */
+  async executeWorktreeAction(sessionKey: string, args: string): Promise<string> {
+    const sess = this.sessions.getOrCreateActive(sessionKey)
+    const [path, branch, , root] = sess.getWorktreeInfo()
+    if (path === '') return ''
+    // Resolve the orphan memory dir before clearing fields so both outcomes
+    // can report it. Memory fate follows the folder.
+    const memDir = this.resolveOrphanMemoryDir(path)
+    if (args.startsWith('remove')) {
+      try {
+        await removeWorktree(root, path, branch, true)
+      } catch (error) {
+        console.warn(`worktree: remove failed (${sessionKey}): ${String(error)}`)
+        // Folder not removed; fields preserved for retry, memory kept.
+        return memDir !== '' ? this.i18n.tf(MsgWorktreeOrphanKept, memDir) : ''
+      }
+      sess.setWorktreeInfo('', '', '', '')
+      this.sessions.save()
+      const cleaned = removeOrphanMemory(memDir === '' ? '' : memDir)
+      if (cleaned !== '') return this.i18n.tf(MsgWorktreeOrphanCleaned, cleaned)
+      return ''
+    }
+    // keep: folder stays on disk → memory stays.
+    sess.setWorktreeInfo('', '', '', '')
+    this.sessions.save()
+    return memDir !== '' ? this.i18n.tf(MsgWorktreeOrphanKept, memDir) : ''
+  }
+
+  /** Resolve the agent's orphan project-data dir for a worktree path (Go resolveOrphanMemoryDir). */
+  resolveOrphanMemoryDir(worktreePath: string): string {
+    const r = asWorktreeOrphanResolver(this.agent)
+    if (r === undefined) return ''
+    const dir = r.orphanProjectDir(worktreePath)
+    if (dir === undefined || dir === '') return ''
+    if (!memoryHasContent(dir)) return ''
+    return dir
+  }
+
+  /** Resolve and delete the orphan memory for a worktree path (Go cleanupWorktreeOrphanMemory). */
+  cleanupWorktreeOrphanMemory(worktreePath: string): string {
+    const dir = this.resolveOrphanMemoryDir(worktreePath)
+    if (dir === '') return ''
+    return removeOrphanMemory(dir)
+  }
+
+  /**
+   * Remove the worktree owned by sessionKey, clear the session's worktree
+   * metadata, and report the outcome (Go finishWorktreeRemoval).
+   */
+  async finishWorktreeRemoval(p: Platform, replyCtx: unknown, sessionKey: string, force: boolean): Promise<void> {
+    const sess = this.sessions.getOrCreateActive(sessionKey)
+    const [path, branch, , root] = sess.getWorktreeInfo()
+    if (path === '') return
+    const memDir = this.resolveOrphanMemoryDir(path)
+    let err: unknown
+    try {
+      await removeWorktree(root, path, branch, force)
+    } catch (error) {
+      err = error
+    }
+    // Always clear the Session worktree fields, even on error: a git failure
+    // must not leave the metadata permanently stuck.
+    sess.setWorktreeInfo('', '', '', '')
+    this.sessions.save()
+    if (err !== undefined) {
+      console.warn(`worktree removal failed; cleared session fields anyway (${sessionKey} ${path}): ${errorMessage(err)}`)
+      let msg = this.i18n.tf(MsgWorktreeCreateError, errorMessage(err))
+      if (memDir !== '') msg += `\n${this.i18n.tf(MsgWorktreeOrphanKept, memDir)}`
+      await this.reply(p, replyCtx, msg)
+      return
+    }
+    let msg = this.i18n.tf(MsgWorktreeRemoved, branch)
+    const cleaned = removeOrphanMemory(memDir === '' ? '' : memDir)
+    if (cleaned !== '') msg += `\n${this.i18n.tf(MsgWorktreeOrphanCleaned, cleaned)}`
+    await this.reply(p, replyCtx, msg)
+  }
+
+  /**
+   * Restore a /done'd spawned group's color avatar on the next message when
+   * the platform reports it inactive (Go reactivateSpawnedChatAvatar). The
+   * active-check guard keeps idempotent resumes from spamming avatar-update
+   * system messages.
+   */
+  async reactivateSpawnedChatAvatar(p: Platform, sessionKey: string): Promise<void> {
+    const checker = asSpawnedChatActiveChecker(p)
+    const switcher = asChatAvatarStateSwitcher(p)
+    if (checker === undefined || switcher === undefined) return
+    if (checker.isSpawnedChatActive(sessionKey)) return
+    try {
+      await switcher.setChatAvatarActive(sessionKey, true)
+    } catch (error) {
+      console.warn(`reactivate avatar failed (${sessionKey}): ${String(error)}`)
+    }
+  }
+
+  /** Mark a spawned chat done on the platform side (avatar axis owner). */
+  markSpawnedChatDone(p: Platform, sessionKey: string): void {
+    asSpawnedChatStateUpdater(p)?.markSpawnedChatDone(sessionKey)
+  }
+
+  /** Add an emoji reaction to the replied message when the platform can (Go AddReaction probe). */
+  addReaction(p: Platform, replyCtx: unknown, emoji: string): void {
+    asReactionAdder(p)?.addReaction(replyCtx, emoji)
   }
 }

@@ -1,17 +1,24 @@
 /**
  * Session-lifecycle commands ported from cc-connect core/engine_cmd_session.go
  * and the /dir machinery in engine_cmd_workspace.go: /new /stop /sessions
- * (/list) /switch /status /dir (+/cd alias), plain-text surface only — the
+ * (/list) /switch /status /dir (+/cd alias), plus the M4 spawn family
+ * (/spawn /sp, /fork /fk, /done --reply). Plain-text surface only — the
  * card renderers arrive with M2's card system.
  *
  * @module dsh-feishu-bridge/commands
  */
 
+import { readFileSync } from 'node:fs'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   MsgAdminRequired,
   MsgDisabledShort,
+  MsgDoneDirtyChildren,
+  MsgDonePrivateNotAllowed,
+  MsgDoneRecursiveSummary,
+  MsgDoneReplyNoParent,
+  MsgDoneUnknownFlag,
   MsgEnabledShort,
   MsgDirChanged,
   MsgDirCurrent,
@@ -25,7 +32,11 @@ import {
   MsgDirReset,
   MsgDirSessionReset,
   MsgDirUsage,
+  MsgDoneNotSupported,
   MsgExecutionStopped,
+  MsgForkGroupReady,
+  MsgForkNoContext,
+  MsgForkUnknownFlag,
   MsgListEmpty,
   MsgListError,
   MsgListPageHint,
@@ -35,6 +46,15 @@ import {
   MsgNewSessionCreated,
   MsgNewSessionCreatedName,
   MsgNoExecution,
+  MsgSpawnDirError,
+  MsgSpawnError,
+  MsgSpawnNotSupported,
+  MsgSpawnMemoryBlock,
+  MsgSpawnMemoryBlockTitle,
+  MsgSpawnMemoryWarn,
+  MsgSpawnMemoryWarnTitle,
+  MsgSpawnGroupReady,
+  MsgSpawnUnknownFlag,
   MsgStatusAgentSID,
   MsgStatusSession,
   MsgStatusSessionKey,
@@ -42,10 +62,23 @@ import {
   MsgStatusUserID,
   MsgSwitchNoMatch,
   MsgSwitchSuccess,
+  MsgWorktreeCreateError,
+  MsgWorktreeNotGit,
 } from '../i18n/index.js'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.js'
+import { asChatAvatarStateSwitcher, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, type GroupSpawnOptions } from '../core/types.js'
 import type { Engine } from './engine.js'
 import type { SessionManager } from './session.js'
+import { childLabel } from './subtask.js'
+import {
+  createWorktree,
+  resolveWorktreeUse,
+  slugify,
+  worktreeDirty,
+  worktreeGone,
+  worktreeRepoRoot,
+} from './worktree.js'
+import { maxGroupNameRunes } from './groupname.js'
 import { extractChannelID } from './engine.js'
 
 const listPageSize = 5
@@ -61,6 +94,9 @@ export const builtinCommands: Array<{ names: string[]; id: string }> = [
   { names: ['status'], id: 'status' },
   { names: ['stop'], id: 'stop' },
   { names: ['dir', 'cd'], id: 'dir' },
+  { names: ['spawn', 'sp'], id: 'spawn' },
+  { names: ['fork', 'fk'], id: 'fork' },
+  { names: ['done'], id: 'done' },
 ]
 
 /** Resolve a typed command prefix to its canonical ID ('' when unknown). */
@@ -90,6 +126,9 @@ export function registerSessionCommands(e: Engine): () => void {
       return true
     }],
     ['dir', (p, msg, args) => { void cmdDir(e, p, msg, args); return true }],
+    ['spawn', (p, msg, args) => { void cmdSpawn(e, p, msg, args); return true }],
+    ['fork', (p, msg, args) => { void cmdFork(e, p, msg, args); return true }],
+    ['done', (p, msg, args) => { cmdDone(e, p, msg, args); return true }],
   ])
   e.commandHandlers = handlers
   e.commandResolver = matchPrefix
@@ -107,6 +146,10 @@ export async function cmdNew(e: Engine, p: Platform, msg: Message, args: string[
   const old = sessions.getOrCreateActive(msg.sessionKey)
 
   e.stopInteractiveSession(msg.sessionKey)
+  // Clear an orphan pendingRename mark: a user /rename that landed after the
+  // LLM rename callback finished leaves a stale mark that would wrongly skip
+  // the new session's first-message rename (Go cmdNew).
+  e.clearPendingRename(msg.sessionKey)
 
   old.setAgentSessionID('', '')
   old.clearHistory()
@@ -355,6 +398,9 @@ function formatUptime(ms: number): string {
 
 /** /stop: stop the running turn (Go cmdStop). */
 export function cmdStop(e: Engine, _p: Platform, msg: Message): boolean {
+  // A user stop disarms the subtask one-shot auto-report — after the user
+  // takes over, later turns must not auto-report to the parent.
+  e.suppressSubtaskAutoReport(msg.sessionKey)
   return e.stopInteractiveSession(msg.sessionKey)
 }
 
@@ -519,3 +565,479 @@ export function gatePrivilegedCommand(e: Engine, cmdID: string, p: Platform, msg
 
 /** Channel ID helper re-exported for tests (Go extractChannelID). */
 export { extractChannelID }
+
+// ── M4: /spawn /fork /done (Go engine_cmd_session.go) ─────────────────────
+
+/**
+ * Pull a --dir/-d <path> option out of args: returns the path ('' if
+ * absent) and the remaining args (Go extractDirFlag).
+ */
+export function extractDirFlag(args: string[]): [string, string[]] {
+  let dir = ''
+  const out: string[] = []
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]
+    if (a === undefined) continue
+    if (a === '--dir' || a === '-d') {
+      if (i + 1 < args.length) {
+        dir = args[i + 1] ?? ''
+        i++
+      }
+      continue
+    }
+    out.push(a)
+  }
+  return [dir, out]
+}
+
+/** Strip a boolean --worktree / -w flag from args (Go extractWorktreeFlag). */
+export function extractWorktreeFlag(args: string[]): [boolean, string[]] {
+  let use = false
+  const out: string[] = []
+  for (const a of args) {
+    if (a === '--worktree' || a === '-w') {
+      use = true
+      continue
+    }
+    out.push(a)
+  }
+  return [use, out]
+}
+
+/** Whether any of the given flags appears in args (Go hasFlag). */
+function hasFlag(args: string[], ...flags: string[]): boolean {
+  return args.some(a => flags.includes(a))
+}
+
+/**
+ * The first "-"-prefixed token in args not in allowed; '' when every
+ * flag-like token was recognized (Go unknownFlag).
+ */
+function unknownFlag(args: string[], allowed: ReadonlySet<string>): string {
+  for (const a of args) {
+    if (a.length > 1 && a.startsWith('-') && !allowed.has(a)) return a
+  }
+  return ''
+}
+
+/**
+ * Whether a spawn should be blocked or merely warned at the given RAM usage
+ * (Go evalSpawnMemoryGuard). 0 disables a tier; block beats warn.
+ */
+export function evalSpawnMemoryGuard(ramPct: number, warnPct: number, blockPct: number): { block: boolean; warn: boolean } {
+  if (blockPct > 0 && ramPct >= blockPct) return { block: true, warn: false }
+  if (warnPct > 0 && ramPct >= warnPct) return { block: false, warn: true }
+  return { block: false, warn: false }
+}
+
+/** System RAM usage percentage from /proc/meminfo; false off-Linux or on failure (Go readMemUsedPct). */
+export function readMemUsedPct(): { pct: number; ok: boolean } {
+  let data: string
+  try {
+    data = readFileSync('/proc/meminfo', 'utf8')
+  } catch {
+    return { pct: 0, ok: false }
+  }
+  let memTotal = 0
+  let memAvailable = 0
+  for (const line of data.split('\n')) {
+    if (line.startsWith('MemTotal:')) {
+      memTotal = Number.parseInt(line.replace(/[^0-9]/g, ''), 10) || 0
+    } else if (line.startsWith('MemAvailable:')) {
+      memAvailable = Number.parseInt(line.replace(/[^0-9]/g, ''), 10) || 0
+    }
+  }
+  if (memTotal === 0) return { pct: 0, ok: false }
+  return { pct: Math.floor(((memTotal - memAvailable) * 100) / memTotal), ok: true }
+}
+
+/** Run the RAM guard before /spawn //fork create a group (Go checkSpawnMemoryGuard). */
+function checkSpawnMemoryGuard(e: Engine, p: Platform, replyCtx: unknown): boolean {
+  const { pct, ok } = readMemUsedPct()
+  if (!ok) return false
+  const { block, warn } = evalSpawnMemoryGuard(pct, e.spawnMemWarnPct, e.spawnMemBlockPct)
+  if (block) {
+    void e.sendAsCard(p, replyCtx, e.i18n.tf(MsgSpawnMemoryBlock, pct), { title: e.i18n.t(MsgSpawnMemoryBlockTitle), color: 'red' })
+    return true
+  }
+  if (warn) {
+    void e.sendAsCard(p, replyCtx, e.i18n.tf(MsgSpawnMemoryWarn, pct), { title: e.i18n.t(MsgSpawnMemoryWarnTitle), color: 'orange' })
+  }
+  return false
+}
+
+/** Resolve the repo root and create an isolated worktree for a child (Go setupWorktree). */
+async function setupWorktree(
+  e: Engine, p: Platform, msg: Message, workDir: string, firstMsg: string, auto: boolean,
+): Promise<{ path: string; branch: string; base: string; root: string } | undefined> {
+  const root = await worktreeRepoRoot(workDir).catch(() => undefined)
+  if (root === undefined) {
+    if (!auto) void e.reply(p, msg.replyCtx, e.i18n.tf(MsgWorktreeNotGit, workDir))
+    return undefined
+  }
+  try {
+    const created = await createWorktree(root, slugify(firstMsg))
+    return { path: created.path, branch: created.branch, base: created.baseSHA, root }
+  } catch (error) {
+    if (!auto) {
+      void e.reply(p, msg.replyCtx, e.i18n.tf(MsgWorktreeCreateError, String(error instanceof Error ? error.message : error)))
+    } else {
+      console.warn(`spawn: auto worktree create failed; continuing without isolation (${workDir}): ${String(error)}`)
+    }
+    return undefined
+  }
+}
+
+/** /spawn: create a new group running a delegated task (Go cmdSpawn). */
+export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
+  let threadFlag = false
+  const noThread: string[] = []
+  for (const a of args) {
+    if (a === '--thread' || a === '-t') {
+      threadFlag = true
+      continue
+    }
+    noThread.push(a)
+  }
+  const [dirArg, afterDir] = extractDirFlag(noThread)
+  const [flagWT, rest] = extractWorktreeFlag(afterDir)
+  const bad = unknownFlag(rest, new Set())
+  if (bad !== '') {
+    void e.reply(p, msg.replyCtx, e.i18n.tf(MsgSpawnUnknownFlag, bad))
+    return
+  }
+  const firstMsg = rest.join(' ').trim()
+  // TODO(M7): the quoted-plan spawn path (rolling the child back to the
+  // plan-producing turn) arrives with the plan-card domain.
+  const forkSentinelID = ''
+
+  let groupName = `${e.name} 副本`
+  // With LLM rename on the group is created under a neutral placeholder;
+  // off, the first message names the group.
+  if (firstMsg !== '' && !e.groupNameEnabled) groupName = firstMsg
+  if (Array.from(groupName).length > maxGroupNameRunes) {
+    groupName = `${Array.from(groupName).slice(0, maxGroupNameRunes - 3).join('')}...`
+  }
+
+  await spawnGroupCommon(e, p, msg, groupName, firstMsg, {
+    dirArg,
+    flagWT,
+    spawnOpts: { topicGroup: threadFlag, workDir: '' },
+    threadFlag,
+    forkSentinelID,
+    readyTitleKey: MsgSpawnGroupReady,
+  })
+}
+
+/** /fork: create a group whose session forks the current chat's context (Go cmdFork). */
+export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
+  const [dirArg, afterDir] = extractDirFlag(args)
+  const [flagWT, rest] = extractWorktreeFlag(afterDir)
+  const bad = unknownFlag(rest, new Set())
+  if (bad !== '') {
+    void e.reply(p, msg.replyCtx, e.i18n.tf(MsgForkUnknownFlag, bad))
+    return
+  }
+  const firstMsg = rest.join(' ').trim()
+
+  const { sessions } = commandContext(e, msg)
+  const origID = sessions.getOrCreateActive(msg.sessionKey).getAgentSessionID()
+  if (origID === '' || origID === ContinueSession || origID.startsWith(ForkSessionPrefix) || origID.startsWith(ForkAtSessionPrefix)) {
+    void e.reply(p, msg.replyCtx, e.i18n.t(MsgForkNoContext))
+    return
+  }
+
+  let groupName = `${e.name} 分支`
+  if (firstMsg !== '' && !e.groupNameEnabled) groupName = firstMsg
+  if (Array.from(groupName).length > maxGroupNameRunes) {
+    groupName = `${Array.from(groupName).slice(0, maxGroupNameRunes - 3).join('')}...`
+  }
+
+  // TODO(M7): the quoted-message rollback fork (PrepareForkAtSession)
+  // arrives with the fork-at domain.
+  const forkSentinelID = `${ForkSessionPrefix}${origID}`
+
+  await spawnGroupCommon(e, p, msg, groupName, firstMsg, {
+    dirArg,
+    flagWT,
+    spawnOpts: { topicGroup: false, workDir: '' },
+    threadFlag: false,
+    forkSentinelID,
+    readyTitleKey: MsgForkGroupReady,
+  })
+}
+
+/** The /spawn //fork difference points (Go spawnCommonOpts). */
+interface SpawnCommonOpts {
+  dirArg: string
+  flagWT: boolean
+  spawnOpts: GroupSpawnOptions
+  threadFlag: boolean
+  forkSentinelID: string
+  readyTitleKey: Parameters<Engine['i18n']['t']>[0]
+}
+
+/**
+ * The shared /spawn //fork group-creation skeleton: spawner assertion →
+ * memory guard → workdir resolution (per-chat override → agent base → --dir
+ * → worktree) → group creation → per-chat override persistence → child
+ * Session metadata → reaction → notify card → first-message injection (Go
+ * spawnGroupCommon).
+ */
+async function spawnGroupCommon(
+  e: Engine, p: Platform, msg: Message, groupName: string, firstMsg: string, opts: SpawnCommonOpts,
+): Promise<void> {
+  const spawner = asGroupSpawner(p)
+  if (spawner === undefined) {
+    void e.reply(p, msg.replyCtx, e.i18n.t(MsgSpawnNotSupported))
+    return
+  }
+  if (checkSpawnMemoryGuard(e, p, msg.replyCtx)) return
+
+  const spawnOpts: GroupSpawnOptions = { ...opts.spawnOpts }
+  let wtPath = ''
+  let wtBranch = ''
+  let wtBase = ''
+  let wtRoot = ''
+  {
+    let workDir = ''
+    const override = e.perChatWorkDir(e.dirOverrideKey(msg.sessionKey))
+    if (override !== '') workDir = override
+    else workDir = e.agentWorkDir()
+    if (opts.dirArg !== '') {
+      const resolved = resolveDir(e, opts.dirArg)
+      if (resolved === undefined) {
+        void e.reply(p, msg.replyCtx, e.i18n.tf(MsgSpawnDirError, opts.dirArg))
+        return
+      }
+      workDir = resolved
+    }
+    // Create an isolated git worktree before the group exists (fail fast to
+    // avoid orphan groups), then point the child's work dir at it.
+    const { use, auto } = resolveWorktreeUse(e.spawnWorktree, opts.flagWT)
+    if (use || auto) {
+      const wt = await setupWorktree(e, p, msg, workDir, firstMsg, auto)
+      if (wt !== undefined) {
+        wtPath = wt.path
+        wtBranch = wt.branch
+        wtBase = wt.base
+        wtRoot = wt.root
+        workDir = wt.path
+      } else if (!auto) {
+        return
+      }
+    }
+    spawnOpts.workDir = workDir
+  }
+
+  const spawnMsg: Message = msg
+  const spawnerEx = asGroupSpawnerEx(p)
+  let syntheticMsg: Message | undefined
+  try {
+    syntheticMsg = spawnerEx !== undefined
+      ? await spawnerEx.spawnGroupWithOptions(spawnMsg, groupName, firstMsg, spawnOpts)
+      : await spawner.spawnGroup(spawnMsg, groupName, firstMsg)
+  } catch (error) {
+    void e.reply(p, msg.replyCtx, e.i18n.tf(MsgSpawnError, String(error instanceof Error ? error.message : error)))
+    return
+  }
+
+  // Persist the resolved work_dir as the spawned chat's per-chat override so
+  // dir resolution and tag resolution cannot drift apart.
+  if (spawnOpts.workDir !== '' && e.projectState !== undefined) {
+    e.projectState.setWorkspaceDirOverride(e.dirOverrideKey(syntheticMsg.sessionKey), spawnOpts.workDir)
+    e.projectState.save()
+  }
+
+  // Record the originating session so the child can push its result back on
+  // /done --reply; /fork additionally seeds the fork sentinel.
+  {
+    const ns = e.sessions.getOrCreateActive(syntheticMsg.sessionKey)
+    if (opts.forkSentinelID !== '') ns.setAgentSessionID(opts.forkSentinelID, e.agent.name())
+    ns.setParentSessionKey(msg.sessionKey)
+    ns.setParentChatName(effectiveParentLabel(e, p, msg))
+    ns.setName(groupName)
+    if (msg.userID !== '') ns.setSpawnUserID(msg.userID)
+    if (wtPath !== '') ns.setWorktreeInfo(wtPath, wtBranch, wtBase, wtRoot)
+    // Inherit the parent's current effective permission mode so the child
+    // doesn't reset to the configured plan and re-prompt for an ExitPlanMode
+    // the parent already approved.
+    ns.setInheritedMode(parentEffectiveMode(e, msg.sessionKey))
+    e.sessions.save()
+  }
+
+  e.addReaction(p, msg.replyCtx, 'Done')
+
+  // Notification card for both paths (with and without user message).
+  {
+    const jumpMD = parentJumpButtonsFor(e, msg)
+    const card = e.buildSpawnNotifyCard(spawnOpts.workDir, e.i18n.t(opts.readyTitleKey), threadNote(opts.threadFlag), jumpMD)
+    void e.replyWithCard(p, syntheticMsg.replyCtx, card)
+  }
+
+  if (firstMsg !== '') {
+    // The synthetic first message never went through platform dispatch, so
+    // mark it here — otherwise the first-message rename and pin panel never
+    // fire for spawned groups.
+    syntheticMsg.isSpawnedGroup = true
+    e.receiveMessage(p, syntheticMsg)
+  }
+}
+
+/** Extra note for topic groups (Go spawnGroupCommon threadFlag branch). */
+function threadNote(threadFlag: boolean): string {
+  if (!threadFlag) return ''
+  return '在此群中每个话题自动拥有独立的会话，直接发消息即可开始。'
+}
+
+/** The parent chat's display name for jump buttons (Go effectiveParentLabel). */
+function effectiveParentLabel(e: Engine, p: Platform, msg: Message): string {
+  if (msg.chatType === 'p2p') {
+    const bi = p as { botDisplayName?: () => string }
+    if (typeof bi.botDisplayName === 'function') {
+      const n = bi.botDisplayName().trim()
+      if (n !== '') return n
+    }
+    return e.name
+  }
+  return msg.chatName
+}
+
+/** Parent's current effective permission mode, '' with no live state (Go parentEffectiveMode). */
+function parentEffectiveMode(e: Engine, sessionKey: string): string {
+  const state = e.interactiveStates.get(sessionKey)
+  if (state === undefined) return ''
+  return state.effectiveMode
+}
+
+/** Parent-jump markdown line for the spawn notify card. */
+function parentJumpButtonsFor(e: Engine, msg: Message): { content: string; ok: boolean } {
+  const pcid = extractChannelID(msg.sessionKey)
+  if (pcid === '') return { content: '', ok: false }
+  const url = e.chatJumpURL(msg.platform === '' ? undefined : e.platforms.find(pl => pl.name() === msg.platform), pcid)
+  if (url === '') return { content: '', ok: false }
+  return { content: `[↩ ${effectiveParentLabel(e, e.platforms[0] as Platform, msg)}](${url})`, ok: true }
+}
+
+/** /done: tear down a spawned group, optionally reporting to its parent (Go cmdDone). */
+export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): void {
+  const bad = unknownFlag(args, new Set(['-r', '--reply']))
+  if (bad !== '') {
+    void e.reply(p, msg.replyCtx, e.i18n.tf(MsgDoneUnknownFlag, bad))
+    return
+  }
+  const replyToParentFlag = hasFlag(args, '--reply', '-r')
+
+  // /done only makes sense in a spawned group; in a private chat it would
+  // recursively tear down the whole spawn subtree rooted here.
+  if (msg.chatType === 'p2p') {
+    void e.reply(p, msg.replyCtx, e.i18n.t(MsgDonePrivateNotAllowed))
+    return
+  }
+
+  if (asChatAvatarStateSwitcher(p) === undefined) {
+    void e.reply(p, msg.replyCtx, e.i18n.t(MsgDoneNotSupported))
+    return
+  }
+
+  // --reply: push this chat's last result to its parent before teardown.
+  if (replyToParentFlag) {
+    const sess = e.sessions.getOrCreateActive(msg.sessionKey)
+    if (sess.getParentSessionKey() === '') {
+      void e.reply(p, msg.replyCtx, e.i18n.t(MsgDoneReplyNoParent))
+    } else {
+      e.replyToParent(p, sess, sess.lastResultOrReply())
+    }
+  }
+
+  e.addReaction(p, msg.replyCtx, 'Done')
+
+  // Recursively tear down descendant subtask groups (deepest first), then
+  // this chat; git/worktree ops can be slow → run in the background.
+  const descendants = e.collectSubtree(msg.sessionKey)
+  const rootKey = msg.sessionKey
+  const rootCtx = msg.replyCtx
+  void (async () => {
+    const dirtyLines: string[] = []
+    for (const childKey of descendants) {
+      const { name, dirty } = await cleanupOneChat(e, p, childKey, undefined, true)
+      if (!dirty) continue
+      const url = e.chatJumpURL(p, extractChannelID(childKey))
+      dirtyLines.push(url !== '' ? `- [${name}](${url})` : `- ${name}`)
+    }
+    // Clean this chat last. As the chat the user is in, a dirty worktree
+    // here shows the interactive Keep/Remove card.
+    await cleanupOneChat(e, p, rootKey, rootCtx, false)
+
+    if (descendants.length > 0) {
+      void e.reply(p, rootCtx, e.i18n.tf(MsgDoneRecursiveSummary, descendants.length))
+    }
+    if (dirtyLines.length > 0) {
+      void e.reply(p, rootCtx, e.i18n.tf(MsgDoneDirtyChildren, dirtyLines.join('\n')))
+    }
+  })()
+}
+
+/**
+ * Tear down one chat's subtask state: stop its agent session, dim the
+ * avatar, mark the spawned chat done, and handle its worktree (Go
+ * cleanupOneChat). asChild=true skips a dirty worktree (the caller
+ * summarizes) instead of showing the interactive card.
+ */
+async function cleanupOneChat(
+  e: Engine, p: Platform, sessionKey: string, replyCtx: unknown, asChild: boolean,
+): Promise<{ name: string; dirty: boolean }> {
+  const sess = e.sessions.getOrCreateActive(sessionKey)
+  const name = childLabel(sess)
+
+  let ctx = replyCtx
+  if (ctx === undefined || ctx === null) {
+    const r = asReplyContextReconstructor(p)
+    if (r !== undefined) {
+      try {
+        ctx = await r.reconstructReplyCtx(sessionKey)
+      } catch {
+        ctx = undefined
+      }
+    }
+  }
+
+  e.stopInteractiveSession(sessionKey)
+
+  // /done dims the avatar and marks the chat inactive; the heart tag is
+  // untouched — tagging is the independent /tag-/untag axis.
+  const switcher = asChatAvatarStateSwitcher(p)
+  if (switcher !== undefined) {
+    try {
+      await switcher.setChatAvatarActive(sessionKey, false)
+    } catch (error) {
+      console.warn(`done: dim avatar failed (${sessionKey}): ${String(error)}`)
+    }
+  }
+  e.markSpawnedChatDone(p, sessionKey)
+
+  const [path, , base] = sess.getWorktreeInfo()
+  if (path === '') return { name, dirty: false }
+  let dirty: boolean
+  try {
+    dirty = await worktreeDirty(path, base)
+  } catch (derr) {
+    const errMsg = String(derr instanceof Error ? derr.message : derr)
+    if (worktreeGone(errMsg)) {
+      // Stale metadata only — clear it and report clean so callers don't
+      // falsely announce a Keep/Remove card.
+      await e.finishWorktreeRemoval(p, ctx, sessionKey, true)
+      return { name, dirty: false }
+    }
+    // Genuine uncertainty (permissions, corrupt repo): preserve and warn.
+    console.warn(`done: worktree dirty check failed; preserving (${sessionKey}): ${errMsg}`)
+    return { name, dirty: true }
+  }
+  if (dirty) {
+    if (asChild) return { name, dirty: true } // skip; caller summarizes
+    await e.replyWithCard(p, ctx, e.renderWorktreeCard(sessionKey))
+    return { name, dirty: true }
+  }
+  await e.finishWorktreeRemoval(p, ctx, sessionKey, false)
+  return { name, dirty: false }
+}

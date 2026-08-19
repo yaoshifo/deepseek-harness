@@ -64,6 +64,24 @@ export class Session {
   chatroomHubKey = ''
   chatroomRoleName = ''
   chatroomAsked = false
+  /** Hub session driving a research-mode chatroom (Go ChatroomResearch). */
+  chatroomResearch = false
+  /** Hub session converted into a 1:1 direct chatroom (Go ChatroomDirectRole). */
+  chatroomDirectRole = false
+  /** Session key of a research role's pre-spawned assistant subgroup (Go ResearchAssistantKey). */
+  researchAssistantKey = ''
+  /** Marks a pre-spawned research-assistant subgroup (Go ResearchAssistant). */
+  researchAssistant = false
+  /** Research role awaiting its assistant's report before concluding (Go ResearchAwaitingAssistant). */
+  researchAwaitingAssistant = false
+  /** Research role dispatched its assistant this round; in-memory only (Go ResearchDispatched). */
+  researchDispatched = false
+  /** Gather-round stamp on a role session; in-memory only (Go ChatroomAskSeq). */
+  chatroomAskSeq = 0
+  /** Permission mode pinned for a /spawn //fork child; in-memory only (Go InheritedMode). */
+  inheritedMode = ''
+  /** Armed subtask gather barrier on a parent session; in-memory only (Go PendingSubtaskGather). */
+  pendingSubtaskGather: import('./subtask.js').SubtaskGather | undefined
   history: HistoryEntry[] = []
   createdAt = nowISO()
   updatedAt = nowISO()
@@ -157,6 +175,22 @@ export class Session {
     return this.subtaskDepth
   }
 
+  getSubtaskAttended(): boolean {
+    return this.subtaskAttended
+  }
+
+  setSubtaskAttended(v: boolean): void {
+    this.subtaskAttended = v
+  }
+
+  getSubtaskAutoReportSuppressed(): boolean {
+    return this.subtaskAutoReportSuppressed
+  }
+
+  setSubtaskAutoReportSuppressed(v: boolean): void {
+    this.subtaskAutoReportSuppressed = v
+  }
+
   setSubtaskDepth(d: number): void {
     this.subtaskDepth = d
   }
@@ -167,6 +201,94 @@ export class Session {
 
   setChatroomHubKey(key: string): void {
     this.chatroomHubKey = key
+  }
+
+  getChatroomResearch(): boolean {
+    return this.chatroomResearch
+  }
+
+  setChatroomResearch(v: boolean): void {
+    this.chatroomResearch = v
+  }
+
+  getChatroomDirectRole(): boolean {
+    return this.chatroomDirectRole
+  }
+
+  setChatroomDirectRole(v: boolean): void {
+    this.chatroomDirectRole = v
+  }
+
+  getResearchAssistantKey(): string {
+    return this.researchAssistantKey
+  }
+
+  setResearchAssistantKey(key: string): void {
+    this.researchAssistantKey = key
+  }
+
+  getResearchAssistant(): boolean {
+    return this.researchAssistant
+  }
+
+  setResearchAssistant(v: boolean): void {
+    this.researchAssistant = v
+  }
+
+  getResearchAwaitingAssistant(): boolean {
+    return this.researchAwaitingAssistant
+  }
+
+  setResearchAwaitingAssistant(v: boolean): void {
+    this.researchAwaitingAssistant = v
+  }
+
+  getResearchDispatched(): boolean {
+    return this.researchDispatched
+  }
+
+  setResearchDispatched(v: boolean): void {
+    this.researchDispatched = v
+  }
+
+  getChatroomAskSeq(): number {
+    return this.chatroomAskSeq
+  }
+
+  setChatroomAskSeq(seq: number): void {
+    this.chatroomAskSeq = seq
+  }
+
+  getInheritedMode(): string {
+    return this.inheritedMode
+  }
+
+  setInheritedMode(mode: string): void {
+    this.inheritedMode = mode
+  }
+
+  getPendingSubtaskGather(): import('./subtask.js').SubtaskGather | undefined {
+    return this.pendingSubtaskGather
+  }
+
+  setPendingSubtaskGather(g: import('./subtask.js').SubtaskGather | undefined): void {
+    this.pendingSubtaskGather = g
+  }
+
+  getMonitorGroup(): boolean {
+    return this.monitorGroup
+  }
+
+  setMonitorGroup(v: boolean): void {
+    this.monitorGroup = v
+  }
+
+  getMonitorOriginMessageID(): string {
+    return this.monitorOriginMessageID
+  }
+
+  setMonitorOriginMessageID(id: string): void {
+    this.monitorOriginMessageID = id
   }
 
   /**
@@ -352,6 +474,11 @@ interface SerializedSession {
   chatroom_hub_key?: string
   chatroom_role_name?: string
   chatroom_asked?: boolean
+  chatroom_research?: boolean
+  chatroom_direct_role?: boolean
+  research_assistant_key?: string
+  research_assistant?: boolean
+  research_awaiting_assistant?: boolean
   history?: HistoryEntry[]
   created_at: string
   updated_at: string
@@ -385,6 +512,11 @@ function serializeSession(s: Session): SerializedSession {
     ...(s.chatroomHubKey !== '' ? { chatroom_hub_key: s.chatroomHubKey } : {}),
     ...(s.chatroomRoleName !== '' ? { chatroom_role_name: s.chatroomRoleName } : {}),
     ...(s.chatroomAsked ? { chatroom_asked: true } : {}),
+    ...(s.chatroomResearch ? { chatroom_research: true } : {}),
+    ...(s.chatroomDirectRole ? { chatroom_direct_role: true } : {}),
+    ...(s.researchAssistantKey !== '' ? { research_assistant_key: s.researchAssistantKey } : {}),
+    ...(s.researchAssistant ? { research_assistant: true } : {}),
+    ...(s.researchAwaitingAssistant ? { research_awaiting_assistant: true } : {}),
     history: [...s.history],
     created_at: s.createdAt,
     updated_at: s.updatedAt,
@@ -419,6 +551,11 @@ function deserializeSession(raw: SerializedSession): Session {
   s.chatroomHubKey = raw.chatroom_hub_key ?? ''
   s.chatroomRoleName = raw.chatroom_role_name ?? ''
   s.chatroomAsked = raw.chatroom_asked ?? false
+  s.chatroomResearch = raw.chatroom_research ?? false
+  s.chatroomDirectRole = raw.chatroom_direct_role ?? false
+  s.researchAssistantKey = raw.research_assistant_key ?? ''
+  s.researchAssistant = raw.research_assistant ?? false
+  s.researchAwaitingAssistant = raw.research_awaiting_assistant ?? false
   s.history = raw.history ?? []
   s.createdAt = raw.created_at
   s.updatedAt = raw.updated_at

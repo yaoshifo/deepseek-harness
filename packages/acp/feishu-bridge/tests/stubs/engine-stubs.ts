@@ -323,3 +323,322 @@ export function testMultiQuestions(): UserQuestion[] {
     },
   ]
 }
+
+// ── M4 stubs ──────────────────────────────────────────────────────────────
+
+/** A fully-empty Message (Go &Message{} literal used across M4 tests). */
+export function newStubMessage(): Message {
+  return {
+    sessionKey: '',
+    platform: '',
+    messageID: '',
+    userID: '',
+    userName: '',
+    chatName: '',
+    chatType: '',
+    content: '',
+    originalContent: '',
+    images: [],
+    files: [],
+    extraContent: '',
+    replyCtx: undefined,
+    fromVoice: false,
+    isSpawnedGroup: false,
+    isPermissionAction: false,
+    isAskqCardAction: false,
+    parentMessageID: '',
+    quotedText: '',
+  }
+}
+
+/** A built card as recorded by the card stubs (src/card.ts Card shape). */
+export interface RecordedCard {
+  header?: { title: string; color: string }
+  elements: Array<{ kind: string; content?: string }>
+}
+
+/**
+ * Go stubCardPlatform: records sent cards and their structure for assertion,
+ * reconstructs reply contexts ("reconstructed-ctx:<key>"), and produces chat
+ * jump URLs.
+ */
+export function createStubCardPlatformFull(n = 'test'): StubCardPlatform & {
+  reconstructReplyCtx(sessionKey: string): Promise<unknown>
+  chatJumpURL(chatID: string): string
+} {
+  const base = createStubCardPlatform(n)
+  return {
+    ...base,
+    reconstructReplyCtx: async (sessionKey: string) => `reconstructed-ctx:${sessionKey}`,
+    chatJumpURL: (chatID: string) => `https://applink.feishu.cn/client/chat/open?openChatId=${chatID}`,
+  }
+}
+
+/**
+ * Go stubSpawnerPlatform: a card-capable platform that can spawn groups.
+ * Each spawn returns a synthetic child message keyed off a monotonic counter.
+ */
+export interface StubSpawnerPlatform extends StubCardPlatform {
+  spawnCount: number
+  lastFirst: string
+  lastUserID: string
+  spawnGroup(msg: Message, groupName: string, firstMsg: string): Promise<Message>
+}
+
+export function createStubSpawnerPlatform(n = 'test'): StubSpawnerPlatform {
+  const base = createStubCardPlatformFull(n)
+  const p: StubSpawnerPlatform = {
+    ...base,
+    spawnCount: 0,
+    lastFirst: '',
+    lastUserID: '',
+    spawnGroup: async (msg, groupName, firstMsg) => {
+      p.spawnCount++
+      p.lastFirst = firstMsg
+      p.lastUserID = msg.userID
+      return {
+        ...newStubMessage(),
+        sessionKey: 'test:child-chat',
+        platform: p.n,
+        userID: msg.userID,
+        chatName: groupName,
+        replyCtx: 'child-ctx',
+        content: firstMsg,
+      }
+    },
+  }
+  return p
+}
+
+/**
+ * Go stubSpawnerPinPlatform: a spawner that captures the returned synthetic
+ * message (by reference, so mutations are visible) and records pin-panel
+ * calls.
+ */
+export interface StubSpawnerPinPlatform extends StubCardPlatform {
+  returnedMsg: Message | undefined
+  pins: string[]
+  spawnGroup(msg: Message, groupName: string, firstMsg: string): Promise<Message>
+  addMessagePin(chatID: string, messageID: string): Promise<void>
+}
+
+export function createStubSpawnerPinPlatform(n = 'test'): StubSpawnerPinPlatform {
+  const base = createStubCardPlatformFull(n)
+  const p: StubSpawnerPinPlatform = {
+    ...base,
+    returnedMsg: undefined,
+    pins: [],
+    spawnGroup: async (msg, groupName, firstMsg) => {
+      const m: Message = {
+        ...newStubMessage(),
+        sessionKey: 'test:child-chat',
+        platform: p.n,
+        userID: msg.userID,
+        chatName: groupName,
+        replyCtx: 'child-ctx',
+        content: firstMsg,
+        messageID: 'child-msg-1',
+      }
+      p.returnedMsg = m
+      return m
+    },
+    addMessagePin: async (_chatID, messageID) => {
+      p.pins.push(messageID)
+    },
+  }
+  return p
+}
+
+/**
+ * Go stubTitleRenamePlatform: records RenameGroup / SetGroupIconAvatar /
+ * SetChatroomFamilyAvatar calls. RenameGroup rejects an already-aborted
+ * signal so tests can reproduce the "rename reused the LLM's expired ctx"
+ * regression.
+ */
+export interface StubTitleRenamePlatform extends StubPlatform {
+  renamedKeys: string[]
+  renamedNames: string[]
+  avatarKeys: string[]
+  avatarIcons: string[]
+  avatarGroups: string[]
+  avatarErr?: Error
+  familyHub: string
+  familyChildren: string[]
+  familyIcon: string
+  familyName: string
+  familyCalls: number
+  renameGroup(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
+  renameGroupAny(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
+  setGroupIconAvatar(sessionKey: string, iconName: string, groupName: string): Promise<void>
+  setChatroomFamilyAvatar(hubKey: string, childKeys: string[], iconName: string, familyName: string): Promise<void>
+}
+
+export function createStubTitleRenamePlatform(n = 'test'): StubTitleRenamePlatform {
+  const base = createStubPlatform(n)
+  const p: StubTitleRenamePlatform = {
+    ...base,
+    renamedKeys: [],
+    renamedNames: [],
+    avatarKeys: [],
+    avatarIcons: [],
+    avatarGroups: [],
+    familyHub: '',
+    familyChildren: [],
+    familyIcon: '',
+    familyName: '',
+    familyCalls: 0,
+    renameGroup: async (key, name, signal) => {
+      // Mirror the real renameChat→withTransientRetry: an aborted signal
+      // fails even though the HTTP request would have gone through.
+      if (signal?.aborted) throw new Error('context canceled')
+      p.renamedKeys.push(key)
+      p.renamedNames.push(name)
+    },
+    renameGroupAny: async (key, name, signal) => p.renameGroup(key, name, signal),
+    setGroupIconAvatar: async (key, iconName, groupName) => {
+      p.avatarKeys.push(key)
+      p.avatarIcons.push(iconName)
+      p.avatarGroups.push(groupName)
+      if (p.avatarErr !== undefined) throw p.avatarErr
+    },
+    setChatroomFamilyAvatar: async (hubKey, childKeys, iconName, familyName) => {
+      p.familyHub = hubKey
+      p.familyChildren = [...childKeys]
+      p.familyIcon = iconName
+      p.familyName = familyName
+      p.familyCalls++
+    },
+  }
+  return p
+}
+
+/** Go noOverwriteStubAgent: the session reports an empty CurrentSessionID. */
+export function createNoOverwriteAgent(): Agent {
+  return {
+    ...createStubAgent(),
+    startSession: async () => ({
+      ...createStubAgentSession(),
+      currentSessionID: () => '',
+    }),
+  }
+}
+
+/** Agent with a settable work dir (Go stubWorkDirAgent). */
+export function createWorkDirAgent(workDir: string): Agent & { getWorkDir(): string; setWorkDir(d: string): void } {
+  let dir = workDir
+  return {
+    ...createStubAgent(),
+    getWorkDir: () => dir,
+    setWorkDir: (d: string) => { dir = d },
+  }
+}
+
+/**
+ * Go forkPreparerAgent: a work-dir agent whose PrepareForkSession records
+ * its arguments and returns the configured error.
+ */
+export function createForkPreparerAgent(workDir: string, forkErr: Error | undefined): Agent & {
+  prepared: boolean
+  gotOrigID: string
+  gotParentWorkDir: string
+  gotChildWorkDir: string
+  prepareForkSession(origID: string, parentWorkDir: string, childWorkDir: string): Promise<void>
+} {
+  const base = createWorkDirAgent(workDir)
+  const a = {
+    ...base,
+    prepared: false,
+    gotOrigID: '',
+    gotParentWorkDir: '',
+    gotChildWorkDir: '',
+    prepareForkSession: async (origID: string, parentWorkDir: string, childWorkDir: string): Promise<void> => {
+      a.prepared = true
+      a.gotOrigID = origID
+      a.gotParentWorkDir = parentWorkDir
+      a.gotChildWorkDir = childWorkDir
+      if (forkErr !== undefined) throw forkErr
+    },
+  }
+  return a
+}
+
+/**
+ * Recorded state of a stub group-name agent (Go stubGroupNameAgent's mutexed
+ * fields). Kept in a shared object so spreading the agent (to override
+ * startSession) preserves the recorded state — a spread copy of inline
+ * fields would never see the closure's writes.
+ */
+export interface GroupNameAgentState {
+  gotPrompt: string
+  gotProvider: string
+  callCount: number
+}
+
+/**
+ * Go stubGroupNameAgent: satisfies ForkQuerierWithProvider, recording
+ * LightweightQuery calls and returning a canned response/error. When
+ * blockUntilSignal is set, the query only returns once the caller's signal
+ * aborts — reproducing "the LLM used exactly the full ctx timeout".
+ */
+export function createGroupNameAgent(opts: {
+  resp?: string
+  err?: Error
+  blockUntilSignal?: boolean
+}): Agent & { state: GroupNameAgentState } {
+  const state: GroupNameAgentState = { gotPrompt: '', gotProvider: '', callCount: 0 }
+  return {
+    ...createStubAgent(),
+    state,
+    forkQuery: async () => '',
+    forkSessionWithProvider: async () => '',
+    lightweightQuery: async (prompt: string, provider: string, signal?: AbortSignal) => {
+      state.gotPrompt = prompt
+      state.gotProvider = provider
+      state.callCount++
+      if (opts.blockUntilSignal === true && signal !== undefined) {
+        if (signal.aborted) return opts.resp ?? ''
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => { resolve() }, { once: true })
+        })
+      }
+      if (opts.err !== undefined) throw opts.err
+      return opts.resp ?? ''
+    },
+  }
+}
+
+/** Go stubGroupNameAgentSwitcher: adds ProviderSwitcher with an active provider. */
+export function createGroupNameSwitcherAgent(
+  activeName: string, opts: { resp?: string; err?: Error },
+): Agent & { state: GroupNameAgentState } {
+  const base = createGroupNameAgent(opts)
+  return {
+    ...base,
+    setProviders: () => {},
+    setActiveProvider: () => false,
+    getActiveProvider: () => ({ name: activeName }),
+    listProviders: () => [],
+  }
+}
+
+/**
+ * Go blockingSendAgentSession: Send signals sendStarted then blocks until
+ * unblock resolves; the test pushes the turn's result event itself.
+ */
+export interface BlockingSendAgentSession extends ControllableAgentSession {
+  sendStarted: Promise<void>
+  unblock: () => void
+}
+
+export function newBlockingSendSession(id: string): BlockingSendAgentSession {
+  const s = newControllableSession(id)
+  let signalSend!: () => void
+  const sendStarted = new Promise<void>((resolve) => { signalSend = resolve })
+  let unblock!: () => void
+  const unblockP = new Promise<void>((resolve) => { unblock = resolve })
+  s.send = async () => {
+    signalSend()
+    await unblockP
+  }
+  return { ...s, sendStarted, unblock }
+}

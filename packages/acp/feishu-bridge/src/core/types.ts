@@ -382,3 +382,309 @@ export function asInlineButtonSender(p: Platform): InlineButtonSender | undefine
 export function asCompletionNotifier(p: Platform): CompletionNotifier | undefined {
   return withMethod<CompletionNotifier>(p, 'sendCompletionNotification')
 }
+
+// ── M4 subtask / group-management capability interfaces (Go interfaces.go) ──
+
+/** Reconstruct a reply context from a session key (Go ReplyContextReconstructor). */
+export interface ReplyContextReconstructor {
+  reconstructReplyCtx(sessionKey: string): Promise<unknown>
+}
+
+/** A configured LLM route an agent can switch between (Go ProviderConfig subset). */
+export interface ProviderConfig {
+  name: string
+}
+
+/**
+ * Agent that can fork side queries against a named provider (Go
+ * ForkQuerierWithProvider). `lightweightQuery` drives group-name generation.
+ */
+export interface ForkQuerierWithProvider {
+  forkQuery(sessionID: string, question: string, workDir: string): Promise<string>
+  forkSessionWithProvider(sessionID: string, question: string, providerName: string, workDir: string): Promise<string>
+  lightweightQuery(prompt: string, providerName: string, signal?: AbortSignal): Promise<string>
+}
+
+/** Agent whose active provider can be queried for fallbacks (Go ProviderSwitcher). */
+export interface ProviderSwitcher {
+  setProviders(providers: ProviderConfig[]): void
+  setActiveProvider(name: string): boolean
+  getActiveProvider(): ProviderConfig | undefined
+  listProviders(): ProviderConfig[]
+}
+
+/**
+ * Agent whose fork mechanism requires the source transcript to be reachable
+ * from the child's workDir (Go ForkSessionPreparer). The fork-at (rollback)
+ * members arrive with the quoted-message rollback milestone.
+ */
+export interface ForkSessionPreparer {
+  prepareForkSession(origID: string, parentWorkDir: string, childWorkDir: string): Promise<void>
+}
+
+/** Agent exposing a per-workspace project-data dir for orphan cleanup (Go WorktreeOrphanResolver). */
+export interface WorktreeOrphanResolver {
+  orphanProjectDir(workDir: string): string | undefined
+}
+
+/** Agent with a runtime-switchable working directory (Go WorkDirSwitcher). */
+export interface WorkDirSwitcher {
+  setWorkDir(dir: string): void
+  getWorkDir(): string
+}
+
+/** Options controlling how a spawned group is created (Go GroupSpawnOptions). */
+export interface GroupSpawnOptions {
+  /** Create a topic-style group where each thread gets its own session. */
+  topicGroup: boolean
+  /** Effective working directory at spawn time. */
+  workDir: string
+}
+
+/** Platform that can create a new group chat and inject a first message (Go GroupSpawner). */
+export interface GroupSpawner {
+  /** Returns a synthetic Message to feed Engine.receiveMessage for the first turn. */
+  spawnGroup(msg: Message, groupName: string, firstMsg: string): Promise<Message>
+}
+
+/** GroupSpawner extension supporting spawn options (Go GroupSpawnerEx). */
+export interface GroupSpawnerEx extends GroupSpawner {
+  spawnGroupWithOptions(msg: Message, groupName: string, firstMsg: string, opts: GroupSpawnOptions): Promise<Message>
+}
+
+/**
+ * Platform that can rename group chats (Go GroupRenamer). `renameGroup` only
+ * renames spawned groups; `renameGroupAny` renames any group including
+ * user-owned ones.
+ */
+export interface GroupRenamer {
+  renameGroup(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
+  renameGroupAny(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
+}
+
+/** Platform that can set a group avatar from a Lucide icon name (#52, Go GroupIconAvatarSetter). */
+export interface GroupIconAvatarSetter {
+  setGroupIconAvatar(sessionKey: string, iconName: string, groupName: string): Promise<void>
+}
+
+/** Platform that stamps one shared icon avatar across a chatroom family (Go ChatroomFamilyAvatarSetter). */
+export interface ChatroomFamilyAvatarSetter {
+  setChatroomFamilyAvatar(hubKey: string, childKeys: string[], iconName: string, familyName: string): Promise<void>
+}
+
+/**
+ * Platform that signals a spawned group's active state via the group avatar
+ * (#done dimming, Go ChatAvatarStateSwitcher).
+ */
+export interface ChatAvatarStateSwitcher {
+  setChatAvatarActive(sessionKey: string, active: boolean): Promise<void>
+}
+
+/** Platform that can list chat members and add members (Go ChatMemberManager). */
+export interface ChatMemberManager {
+  listChatMembers(sessionKey: string): Promise<string[]>
+  addChatMembers(sessionKey: string, userIDs: string[]): Promise<void>
+}
+
+/** Platform that can produce a URL opening a given chat (Go ChatJumpURLer). */
+export interface ChatJumpURLer {
+  chatJumpURL(chatID: string): string
+}
+
+/** Platform with a multi-message pin panel (Go MessagePinAppender). */
+export interface MessagePinAppender {
+  addMessagePin(chatID: string, messageID: string): Promise<void>
+}
+
+/** Platform with a single top-notice banner (Go TopNoticeSetter). */
+export interface TopNoticeSetter {
+  setTopNotice(chatID: string, messageID: string): Promise<void>
+  clearTopNotice(chatID: string, messageID: string): Promise<void>
+}
+
+/** Platform that can add an emoji reaction to the replied message (Go ReactionAdder). */
+export interface ReactionAdder {
+  addReaction(replyCtx: unknown, emoji: string): void
+}
+
+/** Platform that can add an emoji reaction to a specific message (Go MessageReactionAdder). */
+export interface MessageReactionAdder {
+  addReactionToMessage(chatID: string, messageID: string, emoji: string): Promise<void>
+}
+
+/** The default active tag applied to spawned groups (Go ActiveTagName). */
+export const ActiveTagName = '❤️'
+
+/** Platform whose active-tag name differs from the global default (Go ActiveTagNamer). */
+export interface ActiveTagNamer {
+  activeTagName(): string
+}
+
+/** Platform that can remove tags from chats, e.g. /done (Go ChatTagRemover). */
+export interface ChatTagRemover {
+  removeTagFromChat(sessionKey: string, tagName: string): Promise<void>
+}
+
+/** Platform that applies the active (heart) tag to a chat (Go ChatActiveTagger). */
+export interface ChatActiveTagger {
+  applyActiveTag(sessionKey: string): Promise<void>
+}
+
+/** An active spawned group chat as reported by the platform (Go SpawnedChatInfo). */
+export interface SpawnedChatInfo {
+  chatID: string
+  chatName: string
+  botName: string
+}
+
+/** Platform that returns active spawned chats for dashboard display (Go SpawnedChatLister). */
+export interface SpawnedChatLister {
+  listActiveSpawnedChats(): Promise<SpawnedChatInfo[]>
+}
+
+/** Platform that marks a spawned chat as active or inactive (Go SpawnedChatStateUpdater). */
+export interface SpawnedChatStateUpdater {
+  markSpawnedChatDone(sessionKey: string): void
+}
+
+/** Platform that marks a spawned chat as active again, the /undone path (Go SpawnedChatActivator). */
+export interface SpawnedChatActivator {
+  markSpawnedChatActive(sessionKey: string): void
+}
+
+/** Platform reporting whether a spawned chat is in the active (color-avatar) state (Go SpawnedChatActiveChecker). */
+export interface SpawnedChatActiveChecker {
+  isSpawnedChatActive(sessionKey: string): boolean
+}
+
+/** Platform that can report the bot's own display name (Go BotIdentityProvider). */
+export interface BotIdentityProvider {
+  botDisplayName(): string
+}
+
+/** The platform's own active-tag name, falling back to the global default (Go activeTagNameFor). */
+export function activeTagNameFor(p: Platform): string {
+  const namer = withMethod<ActiveTagNamer>(p, 'activeTagName')
+  const name = namer?.activeTagName() ?? ''
+  return name !== '' ? name : ActiveTagName
+}
+
+export function asReplyContextReconstructor(p: Platform): ReplyContextReconstructor | undefined {
+  return withMethod<ReplyContextReconstructor>(p, 'reconstructReplyCtx')
+}
+
+export function asForkQuerierWithProvider(a: Agent): ForkQuerierWithProvider | undefined {
+  const candidate = a as Partial<ForkQuerierWithProvider>
+  return typeof candidate.lightweightQuery === 'function'
+    && typeof candidate.forkQuery === 'function'
+    && typeof candidate.forkSessionWithProvider === 'function'
+    ? candidate as ForkQuerierWithProvider
+    : undefined
+}
+
+export function asProviderSwitcher(a: Agent): ProviderSwitcher | undefined {
+  const candidate = a as Partial<ProviderSwitcher>
+  return typeof candidate.getActiveProvider === 'function'
+    && typeof candidate.setActiveProvider === 'function'
+    && typeof candidate.setProviders === 'function'
+    && typeof candidate.listProviders === 'function'
+    ? candidate as ProviderSwitcher
+    : undefined
+}
+
+export function asForkSessionPreparer(a: Agent): ForkSessionPreparer | undefined {
+  return withMethod<ForkSessionPreparer>(a, 'prepareForkSession')
+}
+
+export function asWorktreeOrphanResolver(a: Agent): WorktreeOrphanResolver | undefined {
+  return withMethod<WorktreeOrphanResolver>(a, 'orphanProjectDir')
+}
+
+export function asWorkDirSwitcher(a: Agent): WorkDirSwitcher | undefined {
+  const candidate = a as Partial<WorkDirSwitcher>
+  return typeof candidate.getWorkDir === 'function' && typeof candidate.setWorkDir === 'function'
+    ? candidate as WorkDirSwitcher
+    : undefined
+}
+
+export function asGroupSpawner(p: Platform): GroupSpawner | undefined {
+  return withMethod<GroupSpawner>(p, 'spawnGroup')
+}
+
+export function asGroupSpawnerEx(p: Platform): GroupSpawnerEx | undefined {
+  return withMethod<GroupSpawnerEx>(p, 'spawnGroupWithOptions')
+}
+
+export function asGroupRenamer(p: Platform): GroupRenamer | undefined {
+  const candidate = p as Partial<GroupRenamer>
+  return typeof candidate.renameGroup === 'function' && typeof candidate.renameGroupAny === 'function'
+    ? candidate as GroupRenamer
+    : undefined
+}
+
+export function asGroupIconAvatarSetter(p: Platform): GroupIconAvatarSetter | undefined {
+  return withMethod<GroupIconAvatarSetter>(p, 'setGroupIconAvatar')
+}
+
+export function asChatroomFamilyAvatarSetter(p: Platform): ChatroomFamilyAvatarSetter | undefined {
+  return withMethod<ChatroomFamilyAvatarSetter>(p, 'setChatroomFamilyAvatar')
+}
+
+export function asChatAvatarStateSwitcher(p: Platform): ChatAvatarStateSwitcher | undefined {
+  return withMethod<ChatAvatarStateSwitcher>(p, 'setChatAvatarActive')
+}
+
+export function asChatMemberManager(p: Platform): ChatMemberManager | undefined {
+  const candidate = p as Partial<ChatMemberManager>
+  return typeof candidate.listChatMembers === 'function' && typeof candidate.addChatMembers === 'function'
+    ? candidate as ChatMemberManager
+    : undefined
+}
+
+export function asChatJumpURLer(p: Platform): ChatJumpURLer | undefined {
+  return withMethod<ChatJumpURLer>(p, 'chatJumpURL')
+}
+
+export function asMessagePinAppender(p: Platform): MessagePinAppender | undefined {
+  return withMethod<MessagePinAppender>(p, 'addMessagePin')
+}
+
+export function asTopNoticeSetter(p: Platform): TopNoticeSetter | undefined {
+  return withMethod<TopNoticeSetter>(p, 'setTopNotice')
+}
+
+export function asReactionAdder(p: Platform): ReactionAdder | undefined {
+  return withMethod<ReactionAdder>(p, 'addReaction')
+}
+
+export function asMessageReactionAdder(p: Platform): MessageReactionAdder | undefined {
+  return withMethod<MessageReactionAdder>(p, 'addReactionToMessage')
+}
+
+export function asChatTagRemover(p: Platform): ChatTagRemover | undefined {
+  return withMethod<ChatTagRemover>(p, 'removeTagFromChat')
+}
+
+export function asChatActiveTagger(p: Platform): ChatActiveTagger | undefined {
+  return withMethod<ChatActiveTagger>(p, 'applyActiveTag')
+}
+
+export function asSpawnedChatLister(p: Platform): SpawnedChatLister | undefined {
+  return withMethod<SpawnedChatLister>(p, 'listActiveSpawnedChats')
+}
+
+export function asSpawnedChatStateUpdater(p: Platform): SpawnedChatStateUpdater | undefined {
+  return withMethod<SpawnedChatStateUpdater>(p, 'markSpawnedChatDone')
+}
+
+export function asSpawnedChatActivator(p: Platform): SpawnedChatActivator | undefined {
+  return withMethod<SpawnedChatActivator>(p, 'markSpawnedChatActive')
+}
+
+export function asSpawnedChatActiveChecker(p: Platform): SpawnedChatActiveChecker | undefined {
+  return withMethod<SpawnedChatActiveChecker>(p, 'isSpawnedChatActive')
+}
+
+export function asBotIdentityProvider(p: Platform): BotIdentityProvider | undefined {
+  return withMethod<BotIdentityProvider>(p, 'botDisplayName')
+}
