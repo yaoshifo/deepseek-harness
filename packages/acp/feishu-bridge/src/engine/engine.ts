@@ -25,6 +25,7 @@ import {
   MsgFailedToStartAgentSession,
   MsgMessageQueued,
   MsgPermissionDenied,
+  MsgPlanExportBtn,
   MsgPermissionExpired,
   MsgPermissionHint,
   MsgPermissionPrompt,
@@ -146,10 +147,10 @@ import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './mess
 import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.js'
 import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.js'
 import { newAsyncSender, type AsyncSender } from '../async-sender.js'
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync, existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
-import { join as joinPath } from 'node:path'
-import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier } from '../core/types.js'
+import { basename, join as joinPath } from 'node:path'
+import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asReplyExporter } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
 import { executeCardAction } from './cron-commands.js'
 import type { RelayManager } from './relay.js'
@@ -170,6 +171,22 @@ import { defaultChatroomRolesDir } from './chatroom-roles.js'
 import { chatroomLedgerDir as chatroomLedgerDirPath } from './chatroom-ledger.js'
 import { chatroomPickActive, executeChatroomCardAction } from './chatroom-pick.js'
 import { MonitorCore, isMonitorCommand } from './monitor.js'
+import {
+  cancelRenders,
+  captureReplyForExport,
+  cleanupRenderedReplyHTML,
+  defaultReplyPreRenderLen,
+  displayReplyText,
+  launchPlanRender,
+  renderAndDeliverReply,
+  sendPlanCard,
+  shouldDiscardPreviewBeforeReplyRender,
+  shouldRenderPlan,
+  storePlanExport,
+  type PlanCardHandle,
+  type RenderCancelHandle,
+  type RenderStatusEntry,
+} from './plan-render.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -273,6 +290,30 @@ export class InteractiveState {
   sender: AsyncSender | undefined
   /** The turn's active streaming preview (bound for bump routing). */
   preview: StreamPreview | undefined
+
+  // ── M7 plan/reply HTML render state (Go interactiveState plan-render fields) ──
+  /** A plan render fork is running for this session (Go planRenderRunning). */
+  planRenderRunning = false
+  /** sha256 of the last rendered plan content (Go lastRenderedPlanHash). */
+  lastRenderedPlanHash = ''
+  /** Timestamp of the last plan render (Go lastRenderedPlanAt). */
+  lastRenderedPlanAt = 0
+  /** A speculative reply pre-render is running (Go preRenderRunning). */
+  preRenderRunning = false
+  /** exportKey of the running reply pre-render (Go preRenderingKey). */
+  preRenderingKey = ''
+  /** In-flight render fork cancels, drained by cancelRenders (Go renderCancels). */
+  renderCancels: RenderCancelHandle[] = []
+  /** exportKey → rendered reply HTML temp path; teardown reaps them (Go renderedReplyHTML). */
+  renderedReplyHTML: Map<string, string> | undefined
+  /** Latest render-task status per exportKey (Go renderStatuses). */
+  renderStatuses: Map<string, RenderStatusEntry> | undefined
+  /** Sent plan cards by exportKey for status PATCHes (Go planCardRender). */
+  planCardRender: Map<string, PlanCardHandle> | undefined
+  /** Full reply/plan content per export key for the export buttons (Go exportContent). */
+  exportContent: Map<string, string> | undefined
+  /** Clean reply text fallback for the export buttons (Go lastBaseResponse). */
+  lastBaseResponse = ''
 
   private stopWaiters: Array<() => void> = []
 
@@ -587,6 +628,16 @@ export class Engine {
   /** Whether role sessions run as isolated subagents; dsh uses bare personas (Go chatroomIsolateRoleContext). */
   chatroomIsolateRoleContext = ''
 
+  // ── M7 plan/reply HTML render config (Go planRender* fields) ────────────
+  /** plan_render enabled (Go planRenderEnabled; opt-in, default off). */
+  planRenderEnabled = false
+  /** Provider route override for render sessions; '' = active provider (Go planRenderProvider). */
+  planRenderProvider = ''
+  /** Render-session fork timeout; 0 = 600s default (Go planRenderTimeout). */
+  planRenderTimeoutMs = 0
+  /** HTML→PNG rasterizer script path; '' = fall back to the .html file (Go planRenderPngScript). */
+  planRenderPngScript = ''
+
   /** Session keys with a manual rename pending in the async LLM window (Go pendingRename). */
   private readonly pendingRename = new Set<string>()
   /** Ring buffer of recently used group icons for prompt dedup (Go recentIcons). */
@@ -633,6 +684,18 @@ export class Engine {
   /** Override intermediate-message display settings. */
   setDisplayConfig(cfg: Partial<DisplayCfg>): void {
     this.display = { ...this.display, ...cfg }
+  }
+
+  /**
+   * Configure the plan/reply HTML render domain (Go [projects.plan_render]):
+   * enabled opt-in, an optional provider-route override, a fork timeout in
+   * ms (0 = 600s default), and the HTML→PNG rasterizer script path.
+   */
+  setPlanRenderConfig(cfg: { enabled: boolean; provider?: string; timeoutMs?: number; pngScript?: string }): void {
+    this.planRenderEnabled = cfg.enabled
+    this.planRenderProvider = cfg.provider ?? ''
+    this.planRenderTimeoutMs = cfg.timeoutMs ?? 0
+    this.planRenderPngScript = cfg.pngScript ?? ''
   }
 
   /** Idle timeout before a silent turn is killed; 0 disables. */
@@ -719,6 +782,23 @@ export class Engine {
       const changed = asChatChangedNotifier(p)
       if (changed !== undefined) {
         changed.setChatChangedHandler((sessionKey) => { this.onChatChanged(sessionKey) })
+      }
+      // Export-button wiring (Go initPlatformCapabilities ReplyExporter): the
+      // 📄 导出文件 / 💬 查看完整回复 buttons look their content up here. Plan
+      // keys ("plan:<rev>") never fall back to the last reply — a missing plan
+      // key reports "session expired" instead of exporting the wrong content.
+      const exporter = asReplyExporter(p)
+      if (exporter !== undefined) {
+        exporter.setExportHandler((sessionKey, exportKey) => {
+          const state = this.interactiveStates.get(sessionKey)
+          if (state === undefined) return { text: '', ok: false }
+          if (exportKey !== '') {
+            const text = state.exportContent?.get(exportKey)
+            if (text !== undefined) return { text, ok: text !== '' }
+            if (exportKey.startsWith('plan:')) return { text: '', ok: false }
+          }
+          return { text: state.lastBaseResponse, ok: state.lastBaseResponse !== '' }
+        })
       }
     }
     if (startErrs.length === this.platforms.length && this.platforms.length > 0) {
@@ -1012,6 +1092,10 @@ export class Engine {
         state.turnSeq++
         state.platform = p
         state.replyCtx = msg.replyCtx
+        // The user is back with a new turn — abort in-flight HTML renders
+        // (Go cancelRenders at new-turn entry): a stale render is no longer
+        // worth burning tokens on.
+        cancelRenders(state)
 
         if (state.agentSession === undefined) {
           await this.reply(p, msg.replyCtx, this.i18n.t(MsgFailedToStartAgentSession))
@@ -1302,6 +1386,14 @@ export class Engine {
     let deltaAccum = ''
     let deltaFlushed = false
 
+    // Plan-mode tracking (Go engine_events.go): the plan .md path written by
+    // the agent, the content last sent as the plan card, and the revision
+    // counter for export keys / render artifacts.
+    let planFilePath = ''
+    let pendingPlanFilePath = ''
+    let sentPlanContent = ''
+    let planRevisionCount = 0
+
     /** Drain queued async PATCHes before a terminal card state. */
     const barrier = (): Promise<void> => sender.barrier()
 
@@ -1505,6 +1597,14 @@ export class Engine {
           toolCount++
           activeToolCalls++
           state.activeToolCalls = activeToolCalls
+          // Track plan file path for plan-mode support (Go): raw
+          // ToolInputRaw.file_path, not the summarized ToolInput.
+          if (event.toolName === 'Write') {
+            const fp = event.toolInputRaw?.file_path
+            if (typeof fp === 'string' && fp.includes('.claude/plans/')) {
+              pendingPlanFilePath = fp
+            }
+          }
           if (this.display.toolProgress && sp.canPreview()) {
             await sp.appendProgress(newToolProgressEntry(event.toolName ?? '', event.toolInput ?? '', event.toolID ?? ''))
           }
@@ -1512,6 +1612,12 @@ export class Engine {
         }
 
         case 'tool_result': {
+          // Promote the plan file path once its Write succeeded (Go): on
+          // denial the agent must still be able to revise the same file.
+          if (pendingPlanFilePath !== '' && event.toolName === 'Write' && event.done) {
+            planFilePath = pendingPlanFilePath
+            pendingPlanFilePath = ''
+          }
           if (this.display.toolMessages) {
             const result = (event.toolResult ?? '').trim() || event.content.trim()
             if (result !== '' && p !== undefined) {
@@ -1627,6 +1733,60 @@ export class Engine {
           // reader TS does not have yet. Gating here auto-denied
           // sandbox-escalation approvals on the real machine.
 
+          // ExitPlanMode: extract plan content early so the flushed text and
+          // the card below dedup plan text already streamed as EventText (Go
+          // engine_events.go). The plan file path wins; the inline plan in
+          // the tool input is the fallback for unreadable paths.
+          if (event.toolName === 'ExitPlanMode') {
+            planRevisionCount++
+            let activePlanFilePath = planFilePath
+            if (activePlanFilePath === '') {
+              const pfp = event.toolInputRaw?.planFilePath
+              if (typeof pfp === 'string') activePlanFilePath = pfp
+            }
+            let readFailed = false
+            if (activePlanFilePath !== '') {
+              try {
+                const newContent = readFileSync(activePlanFilePath, 'utf8').trim()
+                if (newContent !== '' && newContent !== sentPlanContent) sentPlanContent = newContent
+              } catch {
+                readFailed = true
+                console.warn(`plan file read failed (${activePlanFilePath})`)
+              }
+            }
+            if (activePlanFilePath === '' || readFailed) {
+              const inlinePlan = event.toolInputRaw?.plan
+              if (typeof inlinePlan === 'string') {
+                const trimmed = inlinePlan.trim()
+                if (trimmed !== '' && trimmed !== sentPlanContent) sentPlanContent = trimmed
+              }
+            }
+          }
+          // The plan card owns the exact plan text: strip it from the final
+          // reply source so it is not delivered twice.
+          if (event.toolName === 'ExitPlanMode' && sentPlanContent !== '') {
+            for (let i = segmentStart; i < textParts.length; i++) {
+              const part = textParts[i]
+              if (part !== undefined && part.includes(sentPlanContent)) {
+                textParts[i] = part.replace(sentPlanContent, '').trim()
+                break
+              }
+            }
+          }
+          // Pre-detach speculative reply render (Go captureReplyForExport +
+          // renderAndDeliverReply at a permission/AskUserQuestion): the
+          // pre-interaction segment exceeding the threshold renders now —
+          // the turn-end render would otherwise drop it. ExitPlanMode is
+          // excluded: the plan render covers this turn's product.
+          {
+            const captured = captureReplyForExport(sp, state)
+            const triggered = this.planRenderEnabled && event.toolName !== 'ExitPlanMode'
+              && captured.text !== '' && Array.from(captured.text).length >= defaultReplyPreRenderLen
+            if (triggered) {
+              renderAndDeliverReply(this, state, sessionKey, captured.text, captured.exportKey)
+            }
+          }
+
           // Surface: create pending permission and send card.
           let resolveFn!: () => void
           const resolved = new Promise<void>((r) => { resolveFn = r })
@@ -1644,6 +1804,29 @@ export class Engine {
           }
           state.pending = pending
           state.permissionPending = true
+
+          // Plan card + HTML render (Go engine_events.go ExitPlanMode branch,
+          // #47): the markdown card (with export button) is the always-on
+          // fallback; the render fork runs in addition and delivers an
+          // image. Skipped when the plan content is unchanged.
+          if (event.toolName === 'ExitPlanMode' && sentPlanContent !== '' && p !== undefined) {
+            const exportKey = `plan:${String(planRevisionCount)}`
+            storePlanExport(state, exportKey, sentPlanContent)
+            let activePlanFilePath = planFilePath
+            if (activePlanFilePath === '') {
+              const pfp = event.toolInputRaw?.planFilePath
+              if (typeof pfp === 'string') activePlanFilePath = pfp
+            }
+            if (activePlanFilePath !== '' && !existsSync(activePlanFilePath)) activePlanFilePath = ''
+            if (activePlanFilePath !== '') {
+              this.sendPlanContent(p, replyCtx, state, activePlanFilePath, planRevisionCount, exportKey)
+            } else {
+              this.sendInlinePlanContent(p, replyCtx, state, sentPlanContent, '', planRevisionCount, exportKey)
+            }
+            if (this.planRenderEnabled && shouldRenderPlan(state, sentPlanContent, planRevisionCount)) {
+              launchPlanRender(this, state, sessionKey, sentPlanContent, activePlanFilePath, planRevisionCount, exportKey)
+            }
+          }
 
           // Send the appropriate prompt card.
           if (isAskQuestion && p !== undefined) {
@@ -1697,6 +1880,13 @@ export class Engine {
             state.stopSignal(),
           ])
           state.permissionPending = false
+          // Reset for the new execution phase (Go engine_events.go post-
+          // permission reset): stale textParts from the pre-interaction
+          // segment would otherwise leak into the final reply and re-trigger
+          // the reply-HTML render a plan turn already covered.
+          textParts = []
+          segmentStart = 0
+          silentHold = false
           break
         }
 
@@ -1822,6 +2012,28 @@ export class Engine {
     // hub and wake the moderator. Disjoint from the subtask hook above
     // (chatroom roles keep depth=0).
     maybeAutoRelayRole(this, state, session, session.lastResultOrReply(), isSilent)
+
+    // Export-button + speculative reply-HTML auto-deliver (Go engine_events.go
+    // EventResult export block, #48): cache the full reply under the green
+    // card's export key, then fork a render when the display text (trailing
+    // 实时播报 segment, falling back to the full reply) clears the threshold.
+    {
+      let exportKey = ''
+      const ekp = sp.previewMsgID as { exportKey?: () => string } | undefined
+      if (ekp !== undefined && typeof ekp.exportKey === 'function') exportKey = ekp.exportKey()
+      if (shouldDiscardPreviewBeforeReplyRender(toolCount, segmentStart, sp.inProgressMode(), sp.isDegraded())) {
+        exportKey = ''
+      }
+      const displayText = displayReplyText(sp, baseResponse)
+      if (exportKey !== '') {
+        if (state.exportContent === undefined) state.exportContent = new Map()
+        state.exportContent.set(exportKey, baseResponse)
+      }
+      state.lastBaseResponse = baseResponse
+      if (this.planRenderEnabled && Array.from(displayText).length >= defaultReplyPreRenderLen) {
+        renderAndDeliverReply(this, state, _sessionKey, displayText, exportKey)
+      }
+    }
 
     const p = state.platform
     const normalizedBase = baseResponse.trim()
@@ -2154,6 +2366,10 @@ export class Engine {
       if (agentSession !== undefined) {
         state.closing = new Promise<void>((resolve) => { closingResolve = resolve })
       }
+      // Abort in-flight renders and reap recorded reply-HTML temp dirs (Go
+      // cancelRenders + the renderedReplyHTML drain in cleanupInteractiveState).
+      cancelRenders(state)
+      void cleanupRenderedReplyHTML(state)
     }
 
     try {
@@ -2194,6 +2410,9 @@ export class Engine {
 
     state.userStopped = true
     state.markStopped()
+    // Abort in-flight renders so their cancel handles don't orphan with the
+    // state and keep burning tokens on a stale HTML (Go cancelRenders).
+    cancelRenders(state)
     this.interactiveStates.delete(sessionKey)
     this.notifyDroppedQueuedMessages(state, new Error('session reset'))
     if (state.agentSession !== undefined) {
@@ -2745,16 +2964,17 @@ export class Engine {
 
   /**
    * Read a plan file, truncate to `display.planMaxLen` if configured, and send
-   * as plain text (Go sendPlanContent). Returns the (possibly truncated)
-   * content string. When `planMaxLen` is 0, no truncation is applied.
+   * as a plan card with an export button (Go sendPlanContent). Returns the
+   * (possibly truncated) content string for dedup. When `planMaxLen` is 0, no
+   * truncation is applied.
    */
   sendPlanContent(
     p: Platform,
     replyCtx: unknown,
-    _state: InteractiveState | undefined,
+    state: InteractiveState | undefined,
     filePath: string,
     _revision: number,
-    _exportKey: string,
+    exportKey: string,
   ): string {
     let content = ''
     try {
@@ -2762,6 +2982,7 @@ export class Engine {
     } catch {
       return ''
     }
+    if (content === '') return ''
     // Plan truncation uses "..." (three ASCII dots) to match the Go plan card
     // rendering, distinct from truncateIf's unicode ellipsis.
     const maxLen = this.display.planMaxLen
@@ -2771,8 +2992,39 @@ export class Engine {
         content = `${runes.slice(0, maxLen).join('')}...`
       }
     }
-    void this.send(p, replyCtx, content)
+    const name = basename(filePath).replace(/\.md$/, '')
+    sendPlanCard(this, p, replyCtx, state, exportKey, content,
+      { title: `计划·${name}`, color: 'blue' },
+      [{ text: this.i18n.t(MsgPlanExportBtn), type: 'default', value: `export:${exportKey}` }])
     return content
+  }
+
+  /**
+   * Send plan content passed inline in the ExitPlanMode tool input as a plan
+   * card with an export button (Go sendInlinePlanContent). Returns the
+   * trimmed content for dedup.
+   */
+  sendInlinePlanContent(
+    p: Platform,
+    replyCtx: unknown,
+    state: InteractiveState | undefined,
+    content: string,
+    filePath: string,
+    _revision: number,
+    exportKey: string,
+  ): string {
+    let body = content.trim()
+    if (body === '') return ''
+    const maxLen = this.display.planMaxLen
+    if (maxLen > 0) {
+      const runes = Array.from(body)
+      if (runes.length > maxLen) body = `${runes.slice(0, maxLen).join('')}...`
+    }
+    const title = filePath !== '' ? `计划·${basename(filePath).replace(/\.md$/, '')}` : '计划'
+    sendPlanCard(this, p, replyCtx, state, exportKey, body,
+      { title, color: 'blue' },
+      [{ text: this.i18n.t(MsgPlanExportBtn), type: 'default', value: `export:${exportKey}` }])
+    return body
   }
 
   /**
@@ -2929,6 +3181,11 @@ export class Engine {
       }
       return false
     }
+
+    // The user is back (permission allow/deny / AskUserQuestion option) — the
+    // idle window ended, so abort the auxiliary HTML render (Go cancelRenders
+    // in handlePendingPermission).
+    cancelRenders(state)
 
     const pending = state.pending
     if (pending === undefined) {
@@ -4294,6 +4551,9 @@ export class Engine {
    * with later milestones.
    */
   async handleCardAction(p: Platform, msg: Message, action: string): Promise<void> {
+    // Any card-button click means the user is back — abort in-flight HTML
+    // renders (Go handleCardNav's cancelRenders).
+    cancelRenders(this.interactiveStates.get(msg.sessionKey))
     const body = action.slice('act:'.length)
     const spaceIdx = body.indexOf(' ')
     const cmd = spaceIdx === -1 ? body : body.slice(0, spaceIdx)

@@ -99,6 +99,20 @@ export interface GroupNameConfig {
   setAvatar?: boolean
 }
 
+/** Plan/reply HTML rendering for one project (Go [projects.plan_render], #47/#48). */
+export interface PlanRenderConfig {
+  /** Async-render plan/reply to HTML; opt-in, default off. */
+  enabled?: boolean
+  /** Named provider route the render sessions run on (default: the active route). */
+  provider?: string
+  /** Render-session thinking effort alias: low/medium/high/max/off (default low). */
+  effort?: string
+  /** HTML→PNG renderer script (absolute path). Empty = deliver the .html file instead of an image. */
+  renderPngScript?: string
+  /** Render-session fork timeout in seconds (default 600; speculative pre-render caps at 360). */
+  timeoutSec?: number
+}
+
 /** One bound project: an agent working dir plus the Feishu bot serving it. */
 export interface ProjectConfig {
   /** Unique project name used in routing, logs, and tool output. */
@@ -113,6 +127,8 @@ export interface ProjectConfig {
   features?: FeatureSwitches
   /** LLM group-name generation (#49) + icon avatars (#52). */
   groupName?: GroupNameConfig
+  /** Plan/reply HTML rendering (#47/#48). */
+  planRender?: PlanRenderConfig
   /** Multi-role chatroom tuning (Go [chatroom]). */
   chatroom?: ChatroomConfig
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
@@ -356,6 +372,13 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       prompt: Schema.string().description('Naming prompt override'),
       setAvatar: Schema.boolean().description('Set a Lucide group icon avatar (#52); default true'),
     }).description('LLM group naming and icon avatars (#49/#52)'),
+    planRender: Schema.object({
+      enabled: Schema.boolean().description('Async-render plan/reply to HTML (#47/#48); default off'),
+      provider: Schema.string().description('Named provider route for render sessions (default: active)'),
+      effort: Schema.string().description('Render-session thinking effort alias: low/medium/high/max/off (default low)'),
+      renderPngScript: Schema.string().description('HTML→PNG renderer script, absolute path; empty = send the .html file'),
+      timeoutSec: Schema.natural().description('Render fork timeout in seconds (default 600, pre-render cap 360)'),
+    }).description('Plan/reply HTML rendering (Go [projects.plan_render], #47/#48)'),
     chatroom: Schema.object({
       rolesDir: Schema.string().description('Root directory holding one persona subdirectory per role'),
       maxRoles: Schema.natural().description('Cap on role agents per chatroom (default 5)'),
@@ -666,6 +689,7 @@ export function buildProjectAssembly(
   registerSessionCommands(engine)
   registerChatroomCommands(engine)
   wireGroupName(engine, project)
+  wirePlanRender(engine, adapter, project)
   wireChatroom(engine, config.chatroom, project.chatroom, dataRoot)
   // M6b: monitor domain (#53) — config block → engine MonitorCore + the
   // /monitor command family + runtime persistence via the project state.
@@ -746,6 +770,27 @@ function wireGroupName(engine: Engine, project: ProjectConfig): void {
   engine.setGroupNameConfig(true, g?.provider ?? '', timeoutSec * 1000, g?.prompt ?? '')
   // #52: default on; only an explicit setAvatar=false disables it.
   engine.setGroupNameAvatarEnabled(g?.setAvatar !== false)
+}
+
+/**
+ * Wire the plan/reply HTML render domain (Go wire.go plan_render block,
+ * #47/#48): engine switches + provider/timeout/PNG-script overrides, and the
+ * effort alias onto the adapter (Go SetRenderEffort — the channel that makes
+ * the effort config reach the render session's reasoning level).
+ */
+function wirePlanRender(engine: Engine, adapter: DshAgentAdapter, project: ProjectConfig): void {
+  const r = project.planRender
+  if (r?.enabled !== true) {
+    engine.setPlanRenderConfig({ enabled: false })
+    return
+  }
+  engine.setPlanRenderConfig({
+    enabled: true,
+    ...(r.provider !== undefined && r.provider !== '' ? { provider: r.provider } : {}),
+    ...(r.timeoutSec !== undefined && r.timeoutSec > 0 ? { timeoutMs: r.timeoutSec * 1000 } : {}),
+    ...(r.renderPngScript !== undefined && r.renderPngScript !== '' ? { pngScript: expandHome(r.renderPngScript) } : {}),
+  })
+  if (r.effort !== undefined && r.effort !== '') adapter.setRenderEffort(r.effort)
 }
 
 /** Expand a leading ~ in a config path so the config stays portable across machines (Go expandHome). */
