@@ -8,6 +8,7 @@
  */
 
 import { homedir } from 'node:os'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
@@ -243,6 +244,9 @@ export function buildProjectAssembly(
   })
 
   const projectDataDir = join(dataRoot, project.name)
+  // The engine/platform stores assume the data dirs exist (Go main created
+  // cfg.DataDir upfront); without this the spawned-chat registry save ENOENTs.
+  mkdirSync(join(projectDataDir, 'sessions'), { recursive: true })
   const platform = new FeishuPlatform({
     appID: project.feishu.appId,
     appSecret: project.feishu.appSecret,
