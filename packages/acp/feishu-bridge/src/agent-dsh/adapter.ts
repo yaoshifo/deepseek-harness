@@ -49,6 +49,26 @@ function freshNativeSessionId(): string {
     + `-${randomBytes(6).toString('hex')}`
 }
 
+/** Structural slice of dsh AskUserQuestion items (M3 userQuestions provider). */
+interface RawAskQuestionItem {
+  question: string
+  header?: string
+  options?: Array<{ label: string; description?: string }>
+  multiSelect?: boolean
+}
+
+/** Ask request the userQuestions service passes to the provider (M3). */
+interface UserQuestionsAskRequest {
+  questions: unknown[]
+  agent?: { session?: { id?: string } }
+  signal?: AbortSignal
+}
+
+/** Ask result the provider returns to the userQuestions service (M3). */
+interface UserQuestionsAskResult {
+  answers: Array<{ id: string; selected: string[]; custom?: string }>
+}
+
 /** Handle returned by ctx.agents.create/resume. */
 export interface DshAgentHandleLike {
   agent: DshAgentLike
@@ -74,6 +94,7 @@ export interface DshAgentsRegistryLike {
 export interface DshContextLike {
   agents: DshAgentsRegistryLike
   on(event: string, listener: (...args: never[]) => unknown): () => void
+  get(name: string): unknown
 }
 
 /** One named provider route (plan D2: one llm route per provider). */
@@ -148,6 +169,46 @@ export class DshAgentAdapter {
       const outcome = await target.awaitPermissionResponse(requestID, r.signal)
       return outcome
     }))
+    // M3: Register the userQuestions provider. When the agent calls
+    // AskUserQuestion, dsh routes it here; we emit a permission_request
+    // event with the questions data and await the engine's response.
+    type UserQuestionsService = {
+      registerProvider(p: {
+        ask(req: UserQuestionsAskRequest): Promise<UserQuestionsAskResult>
+      }): () => void
+    }
+    const uq = ctx.get('userQuestions') as UserQuestionsService | undefined
+    if (uq !== undefined) {
+      this.disposers.push(uq.registerProvider({
+        ask: async (request) => {
+          const sessionID = request.agent?.session?.id ?? ''
+          const target = this.liveSessions.get(sessionID)
+          if (target === undefined) return { answers: [] }
+          const requestID = `askq-${Date.now()}`
+          const qs = request.questions as RawAskQuestionItem[]
+          const questions = qs.map(q => ({
+            question: q.question,
+            header: q.header ?? '',
+            options: (q.options ?? []).map(o => ({
+              label: o.label, description: o.description ?? '',
+            })),
+            multiSelect: q.multiSelect ?? false,
+          }))
+          target.emitPermissionRequest({
+            requestID,
+            toolName: 'AskUserQuestion',
+            toolInput: '',
+            toolInputRaw: { questions },
+          })
+          const outcome = await target.awaitPermissionResponse(
+            requestID, request.signal,
+          )
+          return {
+            answers: [{ id: '', selected: [outcome], custom: outcome }],
+          }
+        },
+      }))
+    }
   }
 
   /** Agent display name (engine /status, /list headers). */

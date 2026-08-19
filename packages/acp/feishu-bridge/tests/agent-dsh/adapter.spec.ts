@@ -110,6 +110,7 @@ function createHarness(): Harness {
       if (event === 'agent/disposed') disposedListeners.push(typedDisposed)
       return () => {}
     },
+    get: (_name: string) => undefined,
   }
   return { ctx, creates, resumes, agents, emit, disposeAgent }
 }

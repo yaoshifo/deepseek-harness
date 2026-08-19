@@ -89,6 +89,20 @@ export interface FeishuReceiveEvent {
   }
 }
 
+/** Inbound card.action.trigger payload (structural slice, M3). */
+export interface CardActionTriggerEvent {
+  event?: {
+    action?: {
+      value?: Record<string, string>
+      option?: string
+      name?: string
+      formValue?: Record<string, string>
+    }
+    operator?: { openId?: string }
+    context?: { openChatID?: string; openMessageID?: string }
+  }
+}
+
 /** Handle for an in-place editable preview card (Go feishuPreviewHandle). */
 export class FeishuPreviewHandle {
   readonly messageID: string
@@ -235,6 +249,8 @@ export class FeishuPlatform implements Platform {
     await wsStart((eventType, data) => {
       if (eventType === 'im.message.receive_v1') {
         this.onMessage(data as FeishuReceiveEvent)
+      } else if (eventType === 'card.action.trigger') {
+        this.onCardAction(data as CardActionTriggerEvent)
       }
     })
   }
@@ -311,6 +327,73 @@ export class FeishuPlatform implements Platform {
     }
   }
 
+  /**
+   * Handle one card.action.trigger callback (Go onCardAction, M3 subset).
+   * Parses perm:/askq: action values and dispatches as synthetic messages
+   * with isPermissionAction/isAskqCardAction flags so the engine routes
+   * them to handlePendingPermission.
+   */
+  onCardAction(event: CardActionTriggerEvent): void {
+    const action = event.event?.action
+    if (action === undefined) return
+    const chatID = event.event?.context?.openChatID ?? ''
+    const messageID = event.event?.context?.openMessageID ?? ''
+    const userID = event.event?.operator?.openId ?? ''
+
+    // Allow-chat filter
+    if (chatID !== '' && !AllowList(this.o.allowChat ?? '', chatID)) return
+
+    // Resolve action value from value map, option, or button name
+    let actionVal = action.value?.action ?? ''
+    if (actionVal === '' && action.option !== '') actionVal = action.option ?? ''
+    if (actionVal === '') {
+      const name = action.name ?? ''
+      if (name === 'perm_allow') actionVal = 'perm:allow'
+      else if (name === 'perm_deny') actionVal = 'perm:deny'
+      else if (name === 'perm_allow_all') actionVal = 'perm:allow_all'
+      else if (name.startsWith('askq_multi_submit_')) actionVal = `askq_multi:${name.slice('askq_multi_submit_'.length)}`
+      else if (name.startsWith('askq_') && name !== 'askq_multi_submit_') {
+        // Single-select askq button: value carries "askq:qIdx:optIdx"
+        actionVal = action.value?.action ?? name
+      }
+    }
+    if (actionVal === '') return
+
+    const sessionKey = `feishu:${chatID}:${userID}`
+    const replyCtx: FeishuReplyContext = { messageID, chatID, sessionKey }
+    const isSpawned = this.o.isSpawnedChat?.(chatID) ?? false
+
+    // perm: → permission response
+    if (actionVal.startsWith('perm:')) {
+      let content = ''
+      if (actionVal === 'perm:allow') content = 'allow'
+      else if (actionVal === 'perm:deny') {
+        content = 'deny'
+        const reason = action.formValue?.deny_reason ?? ''
+        if (reason.trim() !== '') content = `deny\x00${reason.trim()}`
+      } else if (actionVal === 'perm:allow_all') content = 'allow all'
+      else return
+
+      this.dispatch(sessionKey, messageID, userID, chatID, 'group',
+        content, '', replyCtx, isSpawned, '', true, false)
+      return
+    }
+
+    // askq: → AskUserQuestion answer
+    if (actionVal.startsWith('askq:') || actionVal.startsWith('askq_multi:')) {
+      // Convert askq_multi: to askq: format for the engine
+      let content = actionVal
+      if (actionVal.startsWith('askq_multi:')) {
+        content = 'askq:' + actionVal.slice('askq_multi:'.length)
+      }
+      // Prefer the label from value for display
+      const label = action.value?.askq_label ?? content
+      this.dispatch(sessionKey, messageID, userID, chatID, 'group',
+        label, '', replyCtx, isSpawned, '', false, true)
+      return
+    }
+  }
+
   private dispatch(
     sessionKey: string,
     messageID: string,
@@ -322,6 +405,8 @@ export class FeishuPlatform implements Platform {
     replyCtx: FeishuReplyContext,
     isSpawnedGroup: boolean,
     parentMessageID: string,
+    isPermissionAction = false,
+    isAskqCardAction = false,
   ): void {
     if (this.handler === undefined) return
     const message: Message = {
@@ -340,8 +425,8 @@ export class FeishuPlatform implements Platform {
       replyCtx,
       fromVoice: false,
       isSpawnedGroup,
-      isPermissionAction: false,
-      isAskqCardAction: false,
+      isPermissionAction,
+      isAskqCardAction,
       parentMessageID,
       quotedText: '',
     }
@@ -967,6 +1052,9 @@ async function defaultWsStart(
   const dispatcher = new sdk.EventDispatcher({}).register({
     'im.message.receive_v1': (data: unknown) => {
       onRawEvent('im.message.receive_v1', data)
+    },
+    'card.action.trigger': (data: unknown) => {
+      onRawEvent('card.action.trigger', data)
     },
   })
   const wsClient = new sdk.WSClient({ appId: appID, appSecret, domain: sdk.Domain.Feishu })

@@ -483,7 +483,11 @@ export class Engine {
       msg.content = resolved
     }
 
-    // TODO(M3): pending-permission routing and AskUserQuestion card answers.
+    // M3: Route permission responses (allow/deny/allow_all) and AskUserQuestion
+    // card-button answers to handlePendingPermission before normal dispatch.
+    if (msg.isPermissionAction || msg.isAskqCardAction) {
+      if (this.handlePendingPermission(p, msg, content)) return
+    }
 
     const session = this.sessions.getOrCreateActive(msg.sessionKey)
     this.sessions.updateUserMeta(msg.sessionKey, msg.userName, msg.chatName)
