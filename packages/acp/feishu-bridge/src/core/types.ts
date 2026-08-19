@@ -62,7 +62,52 @@ export interface AgentSessionInfo {
 export interface PermissionResult {
   behavior: 'allow' | 'deny'
   updatedInput?: Record<string, unknown>
+  /** Deny reason message forwarded to the agent (Go PermissionResult.Message). */
+  message?: string
 }
+
+/** One choice in a UserQuestion (Go UserQuestionOption). */
+export interface UserQuestionOption {
+  label: string
+  description: string
+  /** Optional preview text shown below the option (Go Preview). */
+  preview?: string
+}
+
+/** A structured question from AskUserQuestion (Go UserQuestion). */
+export interface UserQuestion {
+  question: string
+  header: string
+  options: UserQuestionOption[]
+  multiSelect: boolean
+}
+
+/**
+ * A pending permission prompt parked on an InteractiveState (Go
+ * pendingPermission). `resolved` replaces Go's `chan struct{}` — call
+ * `resolve()` to settle; `isResolved()` checks.
+ */
+export interface PendingPermission {
+  requestID: string
+  toolName: string
+  toolInput: Record<string, unknown>
+  inputPreview: string
+  /** Non-empty when ToolName === "AskUserQuestion". */
+  questions: UserQuestion[]
+  /** Collected answers keyed by question index. */
+  answers: Map<number, string>
+  /** Index of the question currently being asked. */
+  currentQuestion: number
+  /** Set true when user denies. */
+  denied: boolean
+  /** Resolved promise; settled when user responds. */
+  resolved: Promise<void>
+  /** Internal resolve function paired with `resolved`. */
+  resolve(): void
+}
+
+/** Card button callback action types for permission and askq flows. */
+export type PermissionAction = 'perm:allow' | 'perm:deny' | 'perm:allow_all'
 
 /** Unified incoming message from any platform (Go core.Message). */
 export interface Message {
@@ -267,6 +312,22 @@ export interface FileSender {
   sendFile(replyCtx: unknown, file: FileAttachment): Promise<void>
 }
 
+/** Optional: platform can send interactive cards (Go CardSender). */
+export interface CardSender {
+  sendWithCard(replyCtx: unknown, card: unknown): Promise<void>
+}
+
+/** Optional: platform can send inline buttons (Go InlineButtonSender). */
+export interface InlineButtonSender {
+  sendWithButtons(replyCtx: unknown, content: string, buttonRows: ButtonOption[][]): Promise<void>
+}
+
+/** Clickable inline button (Go ButtonOption, re-exported from card.ts shape). */
+export interface ButtonOption {
+  text: string
+  data: string
+}
+
 /** Optional: platform sends a brief notification after the final in-place delivery. */
 export interface CompletionNotifier {
   sendCompletionNotification(replyCtx: unknown, usageMsg: string): Promise<void>
@@ -307,6 +368,14 @@ export function asStoppedCardRenderer(p: Platform): StoppedCardRenderer | undefi
 
 export function asFileSender(p: Platform): FileSender | undefined {
   return withMethod<FileSender>(p, 'sendFile')
+}
+
+export function asCardSender(p: Platform): CardSender | undefined {
+  return withMethod<CardSender>(p, 'sendWithCard')
+}
+
+export function asInlineButtonSender(p: Platform): InlineButtonSender | undefined {
+  return withMethod<InlineButtonSender>(p, 'sendWithButtons')
 }
 
 export function asCompletionNotifier(p: Platform): CompletionNotifier | undefined {

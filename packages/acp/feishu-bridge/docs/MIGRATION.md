@@ -81,10 +81,11 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 - 验收：测试绿；真机长任务一轮，卡片与现网视觉对比（截图）。
 - **进度（2026-08-19）**：代码与移植测试完成——feishu markdown(34)/card 渲染(13)/spinner(11)/progress 注入(16)/cardcache(4)/patch ratelimit(7)/token retry(8)/transient retry(20)/streaming(65)/async sender(11)/progress payload+compact(21)/engine m2(16)，包内 587 vitest 全绿、包级 oxlint/typecheck 0。实现范围含：进度卡全路径（文本/结构化 payload、placeholder、思考 GIF、stop/export 按钮注入、per-card 缓存）、PATCH 令牌桶限流 + 瞬态/令牌双重重试、平台卡片收发（CardSender/WithUpdate/Preview/TopNotice/Pin/反应/完成通知）、engine 事件循环接入 preview（text/thinking/tool 事件、完成/失败/停止收尾、✅ 完成通知含 token 行、bump 防抖）。**未竟事项**：① 紫色通知卡与完整状态页脚（模型/ctx%/git 分支/RAM 行）依赖 M4 spawn 跳转/差异元素与 M7 usage 域，当前 ✅ 通知带精简 token 行；② card.action.trigger 回调分发与 askq/perm 卡片缓存读取（M3）；③ AskUserQuestion 纯文本 fallback 测试（M3）；④ 真机长任务冒烟（父会话）。另：仓级 lint 在 cc-connect-bridge 存在 16 个存量类型告警（M1 收尾提交即有，与迁移无关，包级门禁不受影响）。
 
-**M3 审批 / 问题 / Plan + per-agent 组装（🔄 进行中 2026-08-19）**
+**M3 审批 / 问题 / Plan + per-agent 组装（✅ 代码验收 2026-08-19，646 测试；真机冒烟待测）**
 - 测试先行：engine_test permission 段、plan 相关（两路径 #5/#6、plan_max_len #29）、AskUserQuestion（multi-select #4、卡片增强 #31）。
 - 实现：approval/request → 审批卡；userQuestions provider → 问题卡；ExitPlanMode plan 卡；D3 的 setup 钩子全套（能力 prompt 工具版、restrict、mode 继承）；auto-approve 不跳过 #15；auto-compaction 卡 #24。
 - 验收：测试绿；真机 plan 模式 + 审批 + 提问各一轮。
+- **进度（2026-08-19）**：代码与移植测试完成——permission 基础(25)/AskUserQuestion(17)/ExitPlanMode+Plan(10)/并发边界(6)，包内 646 vitest 全绿、包级 oxlint/typecheck 0。实现范围含：`PendingPermission` 状态结构与 `handlePendingPermission` 全路径（allow/deny/approveAll/ExitPlanMode 级联/deny reason/AskUserQuestion 递进）、`sendPermissionPrompt` 三路径（card/inline-button/plain）、`sendAskQuestionPrompt` 三路径（card 含 checker/buttons/plain）、`shouldSurfaceUnsolicitedPermission`（#15 auto-approve 不跳过）、`resolveAskQuestionAnswer`/`buildAskQuestionResponse` 纯函数、`sendPlanContent`（planMaxLen 截断）、idle reaper 跳过 permission-wait 会话、`permission_request` 事件处理（auto-approve/auto-deny/surface 三分支）。**未竟事项**：① 真机 plan 模式 + 审批 + 提问冒烟（需 WS 切换后进行）；② per-agent setup 钩子（D3 能力 prompt/restrict/mode 继承）待 M4 agent-dsh 适配器深化；③ card.action.trigger 回调分发到 `handlePendingPermission` 的 platform.ts 注册待真机验证。
 
 **M4 子任务群 + fork**
 - 测试先行：engine_subtask_test(41)、engine_groupname_test、feishu_spawn/tag/avatar/media/members 套件。
@@ -166,7 +167,7 @@ WS 事件（im.message.receive_v1、card.action.trigger 等）走 node-sdk 内�
 - **M0 ✅** 骨架 + 纯逻辑（107 测试）
 - **M1 ✅** Engine 核心 + 适配器 + 文本收发；真机全链路验证通过（记账驴，2026-08-19 12:03）；真机修复三笔：inject 声明、apiKeyEnv 凭据引用、session 事件 payload 解包
 - **M2 ✅** 卡片系统全量（587 测试验收通过）；真机卡片冒烟被 /new 后的 id collision 阻断，已修复（6f01a3a6d5 生成 cc-* 原生 session id）**但未复测——新服务器第一件事**
-- **M3 🔄** 审批/问题/Plan + per-agent setup：子任务在旧服务器进行中，其最终 commit 落地后会追加推送到本分支——新服务器开始工作前先 `git pull`
+- **M3 ✅** 审批/问题/Plan + per-agent setup：代码验收通过（646 测试，2026-08-19 本机）；真机冒烟待测——需 WS 切换后进行。本机环境：macOS，开发虾 bot（`cli_a92f9b460e259bc7`，app_secret 从 macOS keychain 取），LLM 走本地代理 `127.0.0.1:18090`（mify-dsh 路由，model `zhipuai/glm-5.2`），profile 在 `~/.dsh/profiles/feishu-bridge/`，launchd plist 在 `~/Library/LaunchAgents/com.dsh.feishu-bridge.plist`
 - 后续 M4–M8 未开始；61 feature 对照表初稿未做
 
 ### 仓库与分支

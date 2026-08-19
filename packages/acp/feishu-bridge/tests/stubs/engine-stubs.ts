@@ -10,11 +10,14 @@ import type {
   Agent,
   AgentSession,
   AgentSessionInfo,
+  ButtonOption,
   Event,
   EventChannel,
   Message,
+  PendingPermission,
   PermissionResult,
   Platform,
+  UserQuestion,
 } from '../../src/core/types.js'
 import { EventChannel as EventChannelImpl } from '../../src/core/types.js'
 
@@ -209,4 +212,110 @@ export function createStubMediaPlatform(n = 'test'): StubMediaPlatform {
 /** Event factory matching the Go struct-literal shape used across tests. */
 export function ev(partial: Partial<Event> & { type: Event['type'] }): Event {
   return { content: '', done: false, ...partial }
+}
+
+// ── M3 stubs ─────────────────────────────────────────────────────────────
+
+/**
+ * Go stubCardPlatform: records sent cards and their structure for assertion.
+ * Mirrors cc-connect core/engine_test.go stubCardPlatform.
+ */
+export interface StubCardPlatform extends StubPlatform {
+  sentCards: unknown[]
+  sendWithCard(replyCtx: unknown, card: unknown): Promise<void>
+}
+
+export function createStubCardPlatform(n = 'feishu'): StubCardPlatform {
+  const base = createStubPlatform(n)
+  const p: StubCardPlatform = {
+    ...base,
+    sentCards: [],
+    sendWithCard: async (_rc, card) => {
+      p.sentCards.push(card)
+    },
+  }
+  return p
+}
+
+/**
+ * Go stubInlineButtonPlatform: records button content and rows.
+ * Mirrors cc-connect core/engine_test.go stubInlineButtonPlatform.
+ */
+export interface StubInlineButtonPlatform extends StubPlatform {
+  buttonContent: string
+  buttonRows: ButtonOption[][]
+  sendWithButtons(replyCtx: unknown, content: string, rows: ButtonOption[][]): Promise<void>
+}
+
+export function createStubInlineButtonPlatform(n = 'telegram'): StubInlineButtonPlatform {
+  const base = createStubPlatform(n)
+  const p: StubInlineButtonPlatform = {
+    ...base,
+    buttonContent: '',
+    buttonRows: [],
+    sendWithButtons: async (_rc, content, rows) => {
+      p.buttonContent = content
+      p.buttonRows = rows
+    },
+  }
+  return p
+}
+
+/**
+ * Create a PendingPermission matching the Go struct literal used in tests.
+ * The `resolved` promise + `resolve()` function replace Go's `chan struct{}`.
+ */
+export function newPendingPermission(overrides: Partial<PendingPermission> & { requestID: string }): PendingPermission {
+  let resolveFn: () => void = () => {}
+  const resolved = new Promise<void>((resolve) => { resolveFn = resolve })
+  return {
+    toolName: '',
+    toolInput: {},
+    inputPreview: '',
+    questions: [],
+    answers: new Map(),
+    currentQuestion: 0,
+    denied: false,
+    resolved,
+    resolve: (): void => { resolveFn() },
+    ...overrides,
+  }
+}
+
+/** Go testQuestions(): single-question fixture for AskUserQuestion tests. */
+export function testQuestions(): UserQuestion[] {
+  return [{
+    question: 'Which database?',
+    header: 'Setup',
+    options: [
+      { label: 'PostgreSQL', description: 'Recommended for production' },
+      { label: 'SQLite', description: 'Lightweight, file-based' },
+      { label: 'MySQL', description: 'Popular open-source' },
+    ],
+    multiSelect: false,
+  }]
+}
+
+/** Go testMultiQuestions(): two-question fixture for sequential AskUserQuestion. */
+export function testMultiQuestions(): UserQuestion[] {
+  return [
+    {
+      question: 'Which database?',
+      header: 'Database',
+      options: [
+        { label: 'PostgreSQL', description: '' },
+        { label: 'SQLite', description: '' },
+      ],
+      multiSelect: false,
+    },
+    {
+      question: 'Which framework?',
+      header: 'Framework',
+      options: [
+        { label: 'Gin', description: '' },
+        { label: 'Echo', description: '' },
+      ],
+      multiSelect: false,
+    },
+  ]
 }

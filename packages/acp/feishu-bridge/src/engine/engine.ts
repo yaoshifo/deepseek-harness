@@ -18,9 +18,21 @@
 import { I18n, langEnglish } from '../i18n/index.js'
 import {
   MsgAgentProcessExited,
+  MsgAskQuestionMulti,
+  MsgAskQuestionTitle,
   MsgError,
   MsgFailedToStartAgentSession,
   MsgMessageQueued,
+  MsgPermissionDenied,
+  MsgPermissionExpired,
+  MsgPermissionHint,
+  MsgPermissionPrompt,
+  MsgPermBtnAllow,
+  MsgPermBtnAllowAll,
+  MsgPermBtnDeny,
+  MsgPermCardBody,
+  MsgPermCardTitle,
+  MsgPermDenyReasonPlaceholder,
   MsgProcessing,
   MsgPreviousProcessing,
   MsgQueueFull,
@@ -34,18 +46,33 @@ import type { Language } from '../i18n/index.js'
 import type {
   Agent,
   AgentSession,
+  CardSender,
   Event,
   FileAttachment,
   ImageAttachment,
+  InlineButtonSender,
   Message,
+  PendingPermission,
   Platform,
+  UserQuestion,
 } from '../core/types.js'
 import { asSessionEnvInjector, asSessionModeInjector } from '../core/types.js'
+import {
+  isAllowResponse,
+  isApproveAllResponse,
+  isDenyResponse,
+  resolveAskQuestionAnswer as resolveAnswerHelper,
+  buildAskQuestionResponse as buildAnswerHelper,
+  shouldSurfaceUnsolicitedPermission as shouldSurfaceHelper,
+  buildDenyMessage,
+} from './permission.js'
+import { CardButton, CardCheckOption, newCard } from '../card.js'
 import { Session, SessionManager } from './session.js'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.js'
 import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.js'
 import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.js'
 import { newAsyncSender, type AsyncSender } from '../async-sender.js'
+import { readFileSync } from 'node:fs'
 import { asCompletionNotifier } from '../core/types.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
@@ -57,6 +84,9 @@ export const defaultMaxQueuedMessages = 5
 export const defaultDebounceInterval = 600
 
 const defaultThinkingMaxLen = 300
+
+/** Default max plan content length before truncation (0 = no truncation, Go defaultPlanMaxLen). */
+const defaultPlanMaxLen = 0
 
 /** Default idle timeout before a silent turn is killed (Go defaultEventIdleTimeout = 10min). */
 export const defaultEventIdleTimeout = 10 * 60 * 1000
@@ -82,6 +112,10 @@ export interface DisplayCfg {
   toolMessages: boolean
   /** In quiet mode, drive one progress card from tool events (Go tool_progress). */
   toolProgress: boolean
+  /** Max tool input preview length before truncation (Go ToolMaxLen). */
+  toolMaxLen: number
+  /** Max plan content length before truncation; 0 disables (Go PlanMaxLen). M3. */
+  planMaxLen: number
 }
 
 /** A message queued while the session was busy (Go queuedMessage). */
@@ -130,6 +164,12 @@ export class InteractiveState {
   lastPrompt = ''
   /** Whether a permission prompt is parked on this state (full object in M3). */
   permissionPending = false
+  /** The pending permission/AskUserQuestion prompt (Go state.pending). M3. */
+  pending: PendingPermission | undefined
+  /** Auto-approve all subsequent permission requests (Go state.approveAll). M3. */
+  approveAll = false
+  /** Number of auto-compaction events this session (Go state.compactionCount). M3. */
+  compactionCount = 0
   /** Per-state async sender serializing platform PATCHes (Go state.sender). */
   sender: AsyncSender | undefined
   /** The turn's active streaming preview (bound for bump routing). */
@@ -280,6 +320,8 @@ export class Engine {
     thinkingMaxLen: defaultThinkingMaxLen,
     toolMessages: true,
     toolProgress: false,
+    toolMaxLen: 0,
+    planMaxLen: defaultPlanMaxLen,
   }
   /** Streaming preview switches (Go e.streamPreview). */
   streamPreview: StreamPreviewCfg = defaultStreamPreviewCfg()
@@ -1100,9 +1142,79 @@ export class Engine {
         }
 
         case 'permission_request': {
-          // TODO(M3): permission prompt cards + approveAll. M1 agents without
-          // permission flows never emit this event.
+          const isAskQuestion = event.toolName === 'AskUserQuestion'
+          const autoApprove = state.approveAll
+
+          // Auto-approve: approveAll is set and this is not AskUserQuestion
+          // and not ExitPlanMode (the user must always review plan changes).
+          if (autoApprove && !isAskQuestion && event.toolName !== 'ExitPlanMode') {
+            if (state.agentSession !== undefined) {
+              const autoInput = event.toolInputRaw ?? {}
+              void state.agentSession.respondPermission(event.requestID ?? '', {
+                behavior: 'allow',
+                updatedInput: autoInput,
+              }).catch(() => {})
+            }
+            break
+          }
+
+          // Check if this unsolicited permission should surface to the user.
+          // Non-surfaced permissions (background Bash without approveAll) are
+          // auto-denied so the agent can continue without hanging.
+          if (!this.shouldSurfaceUnsolicitedPermission(event.toolName ?? '', isAskQuestion, false, autoApprove)) {
+            if (state.agentSession !== undefined) {
+              void state.agentSession.respondPermission(event.requestID ?? '', {
+                behavior: 'deny',
+                message: buildDenyMessage(''),
+              }).catch(() => {})
+            }
+            break
+          }
+
+          // Surface: create pending permission and send card.
+          let resolveFn!: () => void
+          const resolved = new Promise<void>((r) => { resolveFn = r })
+          const pending: PendingPermission = {
+            requestID: event.requestID ?? '',
+            toolName: event.toolName ?? '',
+            toolInput: event.toolInputRaw ?? {},
+            inputPreview: event.toolInput ?? '',
+            questions: [],
+            answers: new Map<number, string>(),
+            currentQuestion: 0,
+            denied: false,
+            resolved,
+            resolve: resolveFn,
+          }
+          state.pending = pending
           state.permissionPending = true
+
+          // Send the appropriate prompt card.
+          if (isAskQuestion && p !== undefined) {
+            void this.sendAskQuestionPrompt(p, replyCtx, [{
+              question: event.content || 'Question',
+              header: '',
+              options: [],
+              multiSelect: false,
+            }], 0)
+          } else if (p !== undefined) {
+            const permLimit = this.display.toolMaxLen
+            const rawInput = event.toolInput ?? ''
+            const toolInput = permLimit > 0
+              ? truncateIf(rawInput, Math.floor(permLimit * 8 / 5))
+              : rawInput
+            const toolName = event.toolName ?? ''
+            const prompt = this.i18n.tf(MsgPermissionPrompt, toolName, toolInput)
+            void this.sendPermissionPrompt(p, replyCtx, prompt, toolName, toolInput)
+          }
+
+          // Wait for user response or stop signal.
+          // Note: in the Go original the event loop blocks here until the
+          // user responds. In TS the event loop returns — the user response
+          // is handled by handlePendingPermission in a separate call, which
+          // resolves the pending and triggers the next turn.
+          // DO NOT await resolved here — the test expects the loop to exit
+          // after setting pending so the caller can verify state.
           break
         }
 
@@ -1586,6 +1698,9 @@ export class Engine {
     const targets: Array<[string, InteractiveState]> = []
     for (const [key, state] of this.interactiveStates) {
       if (state.activeTurns > 0) continue
+      // Skip sessions waiting for a permission response — the user may take
+      // a long time to decide, and reaping would lose the pending prompt.
+      if (state.pending !== undefined) continue
       if (state.lastActivity !== 0 && state.lastActivity < cutoff) targets.push([key, state])
     }
     for (const [key, state] of targets) {
@@ -1692,5 +1807,307 @@ export class Engine {
       this.bumpTimer = undefined
       this.bumpActivePreviewForSession(sessionKey)
     }, this.bumpDebounceInterval)
+  }
+
+  // ──────────────────────────────────────────────────────────────
+  // M3: Permission / AskUserQuestion / ExitPlanMode
+  // ──────────────────────────────────────────────────────────────
+
+  /** Whether an unsolicited permission should surface to the user (Go shouldSurfaceUnsolicitedPermission). */
+  shouldSurfaceUnsolicitedPermission(_toolName: string, isAskQuestion: boolean, stallRetried: boolean, autoApprove: boolean): boolean {
+    return shouldSurfaceHelper(_toolName, isAskQuestion, stallRetried, autoApprove)
+  }
+
+  /** Resolve user input into an AskUserQuestion answer (Go resolveAskQuestionAnswer). */
+  resolveAskQuestionAnswer(q: UserQuestion, input: string): string {
+    return resolveAnswerHelper(q, input)
+  }
+
+  /**
+   * Build updated tool input with collected answers (Go
+   * buildAskQuestionResponse, package-level).
+   */
+  static buildAskQuestionResponse(
+    originalInput: Record<string, unknown>,
+    questions: UserQuestion[],
+    collected: Map<number, string>,
+  ): Record<string, unknown> {
+    return buildAnswerHelper(originalInput, questions, collected)
+  }
+
+  /**
+   * Read a plan file, truncate to `display.planMaxLen` if configured, and send
+   * as plain text (Go sendPlanContent). Returns the (possibly truncated)
+   * content string. When `planMaxLen` is 0, no truncation is applied.
+   */
+  sendPlanContent(
+    p: Platform,
+    replyCtx: unknown,
+    _state: InteractiveState | undefined,
+    filePath: string,
+    _revision: number,
+    _exportKey: string,
+  ): string {
+    let content = ''
+    try {
+      content = readFileSync(filePath, 'utf8').trim()
+    } catch {
+      return ''
+    }
+    // Plan truncation uses "..." (three ASCII dots) to match the Go plan card
+    // rendering, distinct from truncateIf's unicode ellipsis.
+    const maxLen = this.display.planMaxLen
+    if (maxLen > 0) {
+      const runes = Array.from(content)
+      if (runes.length > maxLen) {
+        content = `${runes.slice(0, maxLen).join('')}...`
+      }
+    }
+    void this.send(p, replyCtx, content)
+    return content
+  }
+
+  /**
+   * Send a permission prompt card with Allow/Deny/AllowAll buttons
+   * (Go sendPermissionPrompt). Falls back to inline buttons, then plain text.
+   */
+  async sendPermissionPrompt(p: Platform, replyCtx: unknown, prompt: string, toolName: string, toolInput: string): Promise<void> {
+    // Try inline buttons first (Telegram-style platforms)
+    const ibs = p as Platform & InlineButtonSender
+    if (typeof ibs.sendWithButtons === 'function') {
+      const buttons = [
+        [
+          { text: this.i18n.t(MsgPermBtnAllow), data: 'perm:allow' },
+          { text: this.i18n.t(MsgPermBtnDeny), data: 'perm:deny' },
+        ],
+        [
+          { text: this.i18n.t(MsgPermBtnAllowAll), data: 'perm:allow_all' },
+        ],
+      ]
+      try {
+        await ibs.sendWithButtons(replyCtx, prompt, buttons)
+        return
+      } catch {
+        // fall through to card
+      }
+    }
+
+    // Try card with buttons (Feishu-style platforms)
+    const cs = p as Platform & CardSender
+    if (typeof cs.sendWithCard === 'function') {
+      const body = this.i18n.tf(MsgPermCardBody, toolName, toolInput)
+      const allowBtn: CardButton = { text: this.i18n.t(MsgPermBtnAllow), type: 'primary', value: 'perm:allow', name: 'perm_allow', actionType: 'form_submit', extra: { perm_label: `✅ ${this.i18n.t(MsgPermBtnAllow)}`, perm_color: 'green', perm_body: body } }
+      const denyBtn: CardButton = { text: this.i18n.t(MsgPermBtnDeny), type: 'danger', value: 'perm:deny', name: 'perm_deny', actionType: 'form_submit', extra: { perm_label: `❌ ${this.i18n.t(MsgPermBtnDeny)}`, perm_color: 'red', perm_body: body } }
+      const allowAllBtn: CardButton = { text: this.i18n.t(MsgPermBtnAllowAll), type: 'default', value: 'perm:allow_all', name: 'perm_allow_all', actionType: 'form_submit', extra: { perm_label: `✅ ${this.i18n.t(MsgPermBtnAllowAll)}`, perm_color: 'green', perm_body: body } }
+
+      const card = newCard()
+        .title(`‼️ ${this.i18n.t(MsgPermCardTitle)}`, 'red')
+        .form('perm_form',
+          { kind: 'markdown', content: body },
+          { kind: 'input', name: 'deny_reason', placeholder: this.i18n.t(MsgPermDenyReasonPlaceholder), maxLength: 1000 },
+          { kind: 'actions', buttons: [allowBtn, allowAllBtn, denyBtn], layout: 'equal_columns' },
+        )
+        .build()
+      card.permBody = body
+      try {
+        await cs.sendWithCard(replyCtx, card)
+        return
+      } catch {
+        // fall through to plain text
+      }
+    }
+
+    // Plain text fallback
+    await this.send(p, replyCtx, prompt)
+  }
+
+  /**
+   * Send an AskUserQuestion prompt card with option buttons
+   * (Go sendAskQuestionPrompt). Falls back to inline buttons, then plain text.
+   */
+  async sendAskQuestionPrompt(p: Platform, replyCtx: unknown, questions: UserQuestion[], qIdx: number): Promise<void> {
+    if (qIdx >= questions.length) return
+    const q = questions[qIdx]
+    if (q === undefined) return
+    const total = questions.length
+    const titleSuffix = total > 1 ? ` (${qIdx + 1}/${total})` : ''
+
+    // Build option buttons for single-select
+    const optionButtons: CardButton[] = q.options.map((opt, i) => ({
+      text: opt.label,
+      type: 'default',
+      value: `askq:${qIdx}:${i + 1}`,
+      extra: { askq_label: opt.label, askq_question: q.question },
+    }))
+
+    // Try card (Feishu-style platforms)
+    const cs = p as Platform & CardSender
+    if (typeof cs.sendWithCard === 'function') {
+      const cardTitle = q.header !== '' ? q.header : this.i18n.t(MsgAskQuestionTitle)
+      const cb = newCard().title(`‼️ ${cardTitle}${titleSuffix}`, 'blue')
+
+      if (q.multiSelect) {
+        // Multi-select: use checker + form for native checkbox experience
+        const opts: CardCheckOption[] = q.options.map((opt, i) => ({
+          label: opt.label,
+          description: opt.description,
+          value: String(i + 1),
+        }))
+        cb.checkOptions(q.question, opts, `askq_multi:${qIdx}`, { askq_question: q.question })
+      } else {
+        // Single-select: markdown question + option buttons
+        cb.markdown(q.question)
+        cb.buttonsEqual(...optionButtons)
+      }
+
+      try {
+        await cs.sendWithCard(replyCtx, cb.build())
+        return
+      } catch {
+        // fall through to inline buttons
+      }
+    }
+
+    // Try inline buttons
+    const ibs = p as Platform & InlineButtonSender
+    if (typeof ibs.sendWithButtons === 'function') {
+      const questionText = total > 1 ? `${q.question} (${qIdx + 1}/${total})` : q.question
+      const buttons = optionButtons.map(b => [{ text: b.text, data: b.value }])
+      try {
+        await ibs.sendWithButtons(replyCtx, questionText, buttons)
+        return
+      } catch {
+        // fall through to plain text
+      }
+    }
+
+    // Plain text fallback
+    const lines = [q.question]
+    if (q.multiSelect) lines.push(this.i18n.t(MsgAskQuestionMulti))
+    for (let i = 0; i < q.options.length; i++) {
+      const opt = q.options[i]
+      if (opt === undefined) continue
+      lines.push(`${i + 1}) ${opt.label}${opt.description !== '' ? ` — ${opt.description}` : ''}`)
+    }
+    await this.send(p, replyCtx, lines.join('\n'))
+  }
+
+  /**
+   * Route a permission response (allow/deny/approveAll/AskUserQuestion answer)
+   * from the user or card callback (Go handlePendingPermission). Returns true
+   * if the message was consumed as a permission response. Synchronous like the
+   * Go original — async side-effects (reply, respondPermission) fire as
+   * floating promises.
+   */
+  handlePendingPermission(p: Platform, msg: Message, content: string): boolean {
+    // Parse optional deny reason: feishu encodes as "deny\x00<reason>"
+    let denyReason = ''
+    const nulIdx = content.indexOf('\x00')
+    if (nulIdx >= 0) {
+      denyReason = content.slice(nulIdx + 1).trim()
+      content = content.slice(0, nulIdx)
+    }
+
+    const iKey = msg.sessionKey
+    const state = this.interactiveStates.get(iKey)
+    if (state === undefined) {
+      if (msg.isPermissionAction) {
+        const lower = content.toLowerCase().trim()
+        if (isAllowResponse(lower) || isDenyResponse(lower) || isApproveAllResponse(lower)) {
+          void this.reply(p, msg.replyCtx, this.i18n.t(MsgPermissionExpired))
+          return true
+        }
+      }
+      return false
+    }
+
+    const pending = state.pending
+    if (pending === undefined) {
+      if (msg.isPermissionAction) {
+        const lower = content.toLowerCase().trim()
+        if (isAllowResponse(lower) || isDenyResponse(lower) || isApproveAllResponse(lower)) {
+          void this.reply(p, msg.replyCtx, this.i18n.t(MsgPermissionExpired))
+          return true
+        }
+      }
+      return false
+    }
+
+    // AskUserQuestion: interpret user response as an answer, not a permission decision
+    if (pending.questions.length > 0) {
+      if (content === '' && (msg.files.length > 0 || msg.images.length > 0)) {
+        return false
+      }
+
+      const curIdx = pending.currentQuestion
+      const q = pending.questions[curIdx]
+      if (q === undefined) return false
+      const answer = this.resolveAskQuestionAnswer(q, content)
+      pending.answers.set(curIdx, answer)
+
+      // More questions remaining — advance to next
+      if (curIdx + 1 < pending.questions.length) {
+        pending.currentQuestion = curIdx + 1
+        if (!msg.isAskqCardAction) {
+          void this.reply(p, msg.replyCtx, `✅ ${q.question}: **${answer}**`)
+        }
+        void this.sendAskQuestionPrompt(p, msg.replyCtx, pending.questions, curIdx + 1)
+        return true
+      }
+
+      // All questions answered — build response and resolve
+      const updatedInput = buildAnswerHelper(pending.toolInput, pending.questions, pending.answers)
+      if (state.agentSession !== undefined) {
+        void state.agentSession.respondPermission(pending.requestID, { behavior: 'allow', updatedInput }).catch(() => {})
+      }
+      if (!msg.isAskqCardAction) {
+        void this.reply(p, msg.replyCtx, `✅ ${q.question}: **${answer}**`)
+      }
+
+      state.pending = undefined
+      pending.resolve()
+      state.lastEventAt = Date.now()
+      return true
+    }
+
+    const lower = content.toLowerCase().trim()
+
+    if (isApproveAllResponse(lower)) {
+      state.approveAll = true
+      if (state.agentSession !== undefined) {
+        void state.agentSession.respondPermission(pending.requestID, { behavior: 'allow', updatedInput: pending.toolInput }).catch(() => {})
+      }
+    } else if (isAllowResponse(lower)) {
+      // ExitPlanMode approval grants blanket approval for the rest of the turn
+      if (pending.toolName === 'ExitPlanMode') {
+        state.approveAll = true
+        state.effectiveMode = 'default'
+      }
+      if (state.agentSession !== undefined) {
+        void state.agentSession.respondPermission(pending.requestID, { behavior: 'allow', updatedInput: pending.toolInput }).catch(() => {})
+      }
+    } else if (isDenyResponse(lower)) {
+      pending.denied = true
+      const denyMessage = buildDenyMessage(denyReason)
+      if (state.agentSession !== undefined) {
+        void state.agentSession.respondPermission(pending.requestID, { behavior: 'deny', message: denyMessage }).catch(() => {})
+      }
+      // Denying ExitPlanMode resets approveAll
+      if (pending.toolName === 'ExitPlanMode') {
+        state.approveAll = false
+      }
+      // Card button deny: header already shows "❌ 已拒绝"; only send text for non-card deny
+      if (!msg.isPermissionAction) {
+        void this.reply(p, msg.replyCtx, this.i18n.t(MsgPermissionDenied))
+      }
+    } else {
+      void this.reply(p, msg.replyCtx, this.i18n.t(MsgPermissionHint))
+      return true
+    }
+
+    state.pending = undefined
+    pending.resolve()
+    state.lastEventAt = Date.now()
+    return true
   }
 }
