@@ -64,24 +64,24 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 
 ## 4. 迁移阶段（每阶段：测试先行 → 实现至绿 → 真机冒烟；上一阶段验收通过才进下一阶段）
 
-**M0 骨架 + 纯逻辑地基**
+**M0 骨架 + 纯逻辑地基（✅ 完成 2026-08-19，107 测试）**
 - worktree 建立 + pnpm install；本计划落盘；新包骨架/vitest 接入/lint 接入；配置 schema 骨架；进程空转冒烟（新 profile `~/.dsh/profiles/feishu-bridge`，dsh-base + 新插件 link）；node-sdk 依赖引入 + API 覆盖盘点。
 - 测试先行：纯逻辑套件——markdown_html(37)/lucide(12)/ratelimit(8)/dedup(4)/atomicwrite(4)/cli_escape/active_tag/card 核心/i18n——先移植先红，再移植对应纯函数至绿。
 - 验收：新包测试绿；`dsh --profile feishu-bridge` 起进程不退出不报错。
 
-**M1 Agent 适配器 + Engine 核心 + 文本收发**
+**M1 Agent 适配器 + Engine 核心 + 文本收发（✅ 完成 2026-08-19，360 测试 + 真机全链路验证）**
 - 测试先行：engine_test.go 核心事件段、session_test(51)、engine_cmd_session、stub 体系搭建（~20 个 stub struct → vi.fn 工厂）；DshAgentAdapter 单测。
 - 实现：Agent/AgentSession/Platform 接口 TS 版；适配器（create/resume/followup/cancel/mode 切换/provider 路由）；Engine 骨架（入站路由、thread 隔离、消息排队 #13、idle reaper、基础命令 /new /stop /status /sessions /resume /dir）；飞书最小平台（WS + 文本收发 + @解析 + allow_chat #27）。
 - 真机：记账驴切流（用户把该项目从旧 config 注释并手动重启旧 cc-connect；父会话起新进程）后一轮真实对话。
 - 验收：移植测试绿；真机对话 + /new + /resume 通过。
 
-**M2 卡片系统全量**
+**M2 卡片系统全量（✅ 代码验收 2026-08-19，587 测试；真机卡片冒烟待复测——见附录 B 遗留 1）**
 - 测试先行：card_test(8)/progress(5)/spinner(8)/streaming_test(68)/card_sanitize/feishu markdown 套件。
 - 实现：Card Schema 2.0 构造器全集（markdown/hr/button/note/column_set/collapsible_panel/form/checker）；进度卡（流式合并 #32、tool_progress 合并 #10/#19、思考/执行 GIF #54、placeholder #23）；完成卡（✅ 通知 #2/#14、状态页脚 #26、累计 token #25）；TopNotice #22；PATCH 限流 + 重试 + 11310 fallback 发 .md。
 - 验收：测试绿；真机长任务一轮，卡片与现网视觉对比（截图）。
 - **进度（2026-08-19）**：代码与移植测试完成——feishu markdown(34)/card 渲染(13)/spinner(11)/progress 注入(16)/cardcache(4)/patch ratelimit(7)/token retry(8)/transient retry(20)/streaming(65)/async sender(11)/progress payload+compact(21)/engine m2(16)，包内 587 vitest 全绿、包级 oxlint/typecheck 0。实现范围含：进度卡全路径（文本/结构化 payload、placeholder、思考 GIF、stop/export 按钮注入、per-card 缓存）、PATCH 令牌桶限流 + 瞬态/令牌双重重试、平台卡片收发（CardSender/WithUpdate/Preview/TopNotice/Pin/反应/完成通知）、engine 事件循环接入 preview（text/thinking/tool 事件、完成/失败/停止收尾、✅ 完成通知含 token 行、bump 防抖）。**未竟事项**：① 紫色通知卡与完整状态页脚（模型/ctx%/git 分支/RAM 行）依赖 M4 spawn 跳转/差异元素与 M7 usage 域，当前 ✅ 通知带精简 token 行；② card.action.trigger 回调分发与 askq/perm 卡片缓存读取（M3）；③ AskUserQuestion 纯文本 fallback 测试（M3）；④ 真机长任务冒烟（父会话）。另：仓级 lint 在 cc-connect-bridge 存在 16 个存量类型告警（M1 收尾提交即有，与迁移无关，包级门禁不受影响）。
 
-**M3 审批 / 问题 / Plan + per-agent 组装**
+**M3 审批 / 问题 / Plan + per-agent 组装（🔄 进行中 2026-08-19）**
 - 测试先行：engine_test permission 段、plan 相关（两路径 #5/#6、plan_max_len #29）、AskUserQuestion（multi-select #4、卡片增强 #31）。
 - 实现：approval/request → 审批卡；userQuestions provider → 问题卡；ExitPlanMode plan 卡；D3 的 setup 钩子全套（能力 prompt 工具版、restrict、mode 继承）；auto-approve 不跳过 #15；auto-compaction 卡 #24。
 - 验收：测试绿；真机 plan 模式 + 审批 + 提问各一轮。
@@ -158,3 +158,73 @@ Go 侧调用面 → `@larksuiteoapi/node-sdk`（1.73.0）对等映射，全部�
 - tenant token 获取由 node-sdk 内部处理
 
 WS 事件（im.message.receive_v1、card.action.trigger 等）走 node-sdk 内置长连接客户端。
+
+## 附录 B：跨服务器交接（2026-08-19）
+
+### 当前进度快照
+
+- **M0 ✅** 骨架 + 纯逻辑（107 测试）
+- **M1 ✅** Engine 核心 + 适配器 + 文本收发；真机全链路验证通过（记账驴，2026-08-19 12:03）；真机修复三笔：inject 声明、apiKeyEnv 凭据引用、session 事件 payload 解包
+- **M2 ✅** 卡片系统全量（587 测试验收通过）；真机卡片冒烟被 /new 后的 id collision 阻断，已修复（6f01a3a6d5 生成 cc-* 原生 session id）**但未复测——新服务器第一件事**
+- **M3 🔄** 审批/问题/Plan + per-agent setup：子任务在旧服务器进行中，其最终 commit 落地后会追加推送到本分支——新服务器开始工作前先 `git pull`
+- 后续 M4–M8 未开始；61 feature 对照表初稿未做
+
+### 仓库与分支
+
+- fork：`yaoshifo/deepseek-harness`（origin，HTTPS）；上游 `deepseek-ai/deepseek-harness`（upstream）
+- 分支：`feat/dsh-feishu-bridge`（自 dev `d8ec39a5de`）；cc-connect 仓库零改动、无需迁移
+- 新服务器布局（同分支不能被两个 worktree 同时检出）：
+  ```
+  git clone https://github.com/yaoshifo/deepseek-harness.git   # 主检出，随便停哪个分支
+  cd deepseek-harness && git checkout feat/dsh-feishu-bridge --detach 2>/dev/null || git checkout origin/feat/dsh-feishu-bridge
+  git worktree add /home/<user>/workspace/dsh-wt-feishu-bridge -b feat/dsh-feishu-bridge  # 开发 worktree（若分支已在主检出则去掉 -b 用 --detach）
+  git worktree add /home/<user>/workspace/dsh-wt-fb-daemon --detach <最新验收commit>       # daemon 固定 worktree
+  pnpm install --prefer-offline   # 两个 worktree 各一次
+  ```
+
+### 运行环境供给清单（新服务器）
+
+1. **dsh CLI**：nvm node 22 + 全局安装（与旧服务器 `which dsh` 同源）；7GB 内存机器注意 M 级并行构建会挤爆内存，必要时错峰
+2. **profile**：`packages/acp/feishu-bridge/install.sh`（`FORK_DIR=` 指开发 worktree）→ `~/.dsh/profiles/feishu-bridge`；install.sh 不覆盖已存在文件
+3. **profile 里的记账驴 project 段**（模板 `projects: []`，需手工加；appSecret 是测试 bot，私有 fork 内嵌方便交接）：
+   ```yaml
+   - id: feishu-bridge
+     config:
+       projects:
+         - name: 记账驴
+           workdir: /home/<user>/workspace/money
+           feishu:
+             appId: cli_a9635d39e9f85bdf
+             appSecret: NGvgmC5FR1DML3CgaDHU2gUGFCULcO2S
+           agent:
+             provider: glm
+       providers:
+         glm: { route: glm, model: glm-5.3 }
+         turbo: { route: turbo, model: glm-5-turbo }
+         minimax: { route: minimax, model: MiniMax-M2.7 }
+         mimo: { route: mimo, model: mimo-v2.5-pro }
+       dataDir: /home/<user>/.dsh/feishu-bridge
+   ```
+4. **llm 路由 key**（systemd user unit `~/.config/systemd/user/feishu-bridge.service`，chmod 600）：`Environment=FB_GLM_API_KEY=…`（glm+turbo 共用）、`FB_MINIMAX_API_KEY=…`、`FB_MIMO_API_KEY=…`——值从旧服务器同名 unit 或 `~/.cc-connect/config.toml` 的 `[[providers]]` 段取
+5. systemd user 实例：`loginctl enable-linger <user>`；shell 里 `export XDG_RUNTIME_DIR=/run/user/$(id -u)` 后 `systemctl --user` 才可用；unit 模板其余字段（PATH 含 nvm bin、Restart=on-failure、日志 append）参照旧服务器 unit
+6. **agent 行为 parity（可选）**：`~/.dsh/AGENTS.md` 软链 `~/.claude/CLAUDE.md`；profile patch 的 `skill-filesystem.customSkillDirs` 指 `~/.claude/skills`；LSP 行按新服务器语言栈调整
+7. **会话存储**：`~/.dsh/cc-connect-sessions`（jsonl，按 cwd 嵌套）——延续旧会话则整目录 rsync，否则新开
+
+### WS 独占（切换时序，重要）
+
+记账驴 app 的 WS 事件同一时刻只归一个进程消费。**旧服务器 `systemctl --user stop feishu-bridge` 之后，新服务器才能 `start`**（反之亦然）。旧系统的其余 8 个 bot 仍跑旧服务器 cc-connect，不受影响。
+
+### 新服务器工作流（沿用第 3 节执行模型）
+
+- 开发在 dev worktree（子任务派发/测试/lint/typecheck 验收）
+- promote 只认验收 commit：daemon worktree `git checkout --detach <commit>` → `pnpm run build:lib:host` → `systemctl --user restart feishu-bridge`
+- 真机验证：入站消息需 user 身份（记账驴 app 的 lark-cli user 授权已过期，旧服务器上 `lark-cli auth login --domain im` 可续期后 `--as user` 全自动发消息；或人工发）
+
+### 遗留清单
+
+1. M2 真机卡片冒烟（id-collision 修复后未复测）——新服务器首任务
+2. M3 在途 commit（旧服务器落地后 push，新服务器 pull）
+3. lark-cli user 授权续期（恢复全自动入站 E2E）
+4. 仓级 oxlint 在 cc-connect-bridge 包有 16 个存量类型告警（M1 前即存在，与迁移无关）
+5. ✅ 完成卡的完整状态页脚（model/workdir/RAM/Disk）与紫色通知卡依赖 M4/M7 域
+6. 最终 cutover 时补：systemd unit 模板入 git、61 feature 对照表、运维文档
