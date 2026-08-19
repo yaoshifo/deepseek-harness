@@ -31,6 +31,7 @@ import {
   subtaskAgentSystemPrompt,
   subtaskResearchAssistantPrompt,
 } from '../engine/chatroom-persona.js'
+import { appendFileRefs, saveFilesToDisk, saveImagesToDisk } from '../engine/attachments.js'
 import type {
   AgentSession,
   AgentSessionInfo,
@@ -172,17 +173,53 @@ function envValue(env: string[], name: string): string {
 }
 
 /**
+ * The #18 workspace routing section: CC_FEISHU_* env entries the engine
+ * attached to the session become a system-prompt section naming the bot's
+ * default Feishu workspace (the D3 setup-hook replacement for Go's
+ * subprocess env the feishu-search/lark-guide skills read).
+ *
+ * @param env - The session env built by the engine's buildSessionEnv.
+ * @returns The prompt section text; '' when no workspace is configured.
+ */
+export function feishuWorkspaceSection(env: string[]): string {
+  const wikiSpaceId = envValue(env, 'CC_FEISHU_WIKI_SPACE_ID')
+  const folderToken = envValue(env, 'CC_FEISHU_FOLDER_TOKEN')
+  const wikiNodeToken = envValue(env, 'CC_FEISHU_WIKI_NODE_TOKEN')
+  const description = envValue(env, 'CC_FEISHU_WORKSPACE_DESC')
+  if (wikiSpaceId === '' && folderToken === '' && wikiNodeToken === '' && description === '') return ''
+  const lines: string[] = ['\n### 默认飞书工作空间（本 bot 的文档路由）']
+  if (description !== '') lines.push(description)
+  if (wikiSpaceId !== '') lines.push(`- CC_FEISHU_WIKI_SPACE_ID=${wikiSpaceId}`)
+  if (folderToken !== '') lines.push(`- CC_FEISHU_FOLDER_TOKEN=${folderToken}`)
+  if (wikiNodeToken !== '') lines.push(`- CC_FEISHU_WIKI_NODE_TOKEN=${wikiNodeToken}`)
+  lines.push('')
+  lines.push('这是本 bot 的默认 Wiki 空间/知识库路由：搜索和创建飞书文档时优先圈定到这里。创建落位优先级 wiki_node_token > wiki_space_id > folder_token，有值直接用、不要 fallback。')
+  return `${lines.join('\n')}\n`
+}
+
+/**
  * Build the agents.create/resume setup hook for the env-flagged persona
  * (Go isChatroomBareSession + buildChatroomSystemPrompt): chatroom role /
  * direct-role / moderator sessions replace the whole system prompt; a
- * research assistant appends its preamble as a normal section.
+ * research assistant appends its preamble as a normal section. Plain
+ * sessions with a configured Feishu workspace get the #18 routing section.
  */
 function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
   const isRole = envHasFlag(env, 'CC_CHATROOM_ROLE')
   const isDirect = envHasFlag(env, 'CC_CHATROOM_DIRECT_ROLE')
   const isModerator = envHasFlag(env, 'CC_CHATROOM_MODERATOR')
   const isResearchAssistant = envHasFlag(env, 'CC_RESEARCH_ASSISTANT')
-  if (!isRole && !isDirect && !isModerator && !isResearchAssistant) return undefined
+  const workspaceText = feishuWorkspaceSection(env)
+  if (!isRole && !isDirect && !isModerator && !isResearchAssistant) {
+    // No persona and no workspace: no setup hook at all.
+    if (workspaceText === '') return undefined
+    return (agentCtx) => {
+      const promptSvc = agentCtx.get('systemPrompt') as
+        | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
+        | undefined
+      promptSvc?.section({ name: 'feishu-bridge-workspace', order: 110, text: workspaceText })
+    }
+  }
 
   return (agentCtx) => {
     const promptSvc = agentCtx.get('systemPrompt') as
@@ -732,7 +769,8 @@ export class DshAgentAdapter {
         ...(setup !== undefined ? { setup } : {}),
       })
     }
-    const session = new DshAgentSession(key, handle, this.ctx)
+    const session = new DshAgentSession(key, handle, this.workDir, this.ctx)
+
     // Lazily register the userQuestions provider now that the plugin tree
     // is fully loaded (at constructor time it may not be available yet).
     this.ensureUserQuestionsProvider()
@@ -822,10 +860,13 @@ export class DshAgentSession implements AgentSession {
   private readonly pendingPermissions = new Map<string, (decision: { outcome: string; behavior: 'allow' | 'deny'; message?: string }) => void>()
   /** Pending AskUserQuestion answers: requestID → settle + count (M3). */
   private readonly pendingQuestionAnswers = new Map<string, { settle: (answers: string[]) => void; count: number }>()
+  /** Where Send stages image/file bytes (Go dshSession.workDir). */
+  private readonly workDir: string
 
-  constructor(key: string, handle: DshAgentHandleLike, ctx?: DshContextLike) {
+  constructor(key: string, handle: DshAgentHandleLike, workDir = '', ctx?: DshContextLike) {
     this.key = key
     this.handle = handle
+    this.workDir = workDir
     this.ctx = ctx
   }
 
@@ -863,20 +904,19 @@ export class DshAgentSession implements AgentSession {
   }
 
   /**
-   * Send one user turn: a followup message carrying the prompt text plus
-   * attachment references (M1: paths are not staged yet — named attachments
-   * ride along as a note; media staging arrives with the media milestone).
+   * Send one user turn: a followup message carrying the prompt text. Image
+   * bytes are staged to workDir/.cc-connect/attachments and referenced by
+   * path in the prompt text (Go dshSession.Send) — the agent reads them with
+   * its own read/read_image tools; the model never receives raw image bytes.
    */
   send(prompt: string, images: ImageAttachment[], files: FileAttachment[]): Promise<void> {
     this.lastActivityAt = Date.now()
     let content = prompt
-    const names = [
-      ...images.map(i => i.fileName).filter(n => n !== undefined),
-      ...files.map(f => f.fileName),
-    ]
-    if (names.length > 0) {
-      content = `${content}\n\n(attachments: ${names.join(', ')})`
+    const imagePaths = saveImagesToDisk(this.workDir, images)
+    if (imagePaths.length > 0) {
+      content += `\n(Images saved locally, please read them: ${imagePaths.join(', ')})`
     }
+    content = appendFileRefs(content, saveFilesToDisk(this.workDir, files))
     this.handle.agent.followup(createUserMessage({
       content: [{ type: 'text', text: content }],
       source: { kind: 'user' },

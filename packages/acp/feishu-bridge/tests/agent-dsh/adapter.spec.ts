@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ContinueSession } from '../../src/core/types.js'
 import { DshAgentAdapter, DshAgentSession, stripModelAlias, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.js'
@@ -258,20 +261,33 @@ describe('DshAgentAdapter', () => {
     expect(s2.currentSessionID()).toBe(oldID)
   })
 
-  it('send posts followup user messages and records prompts', async () => {
+  it('send stages attachment bytes to disk and references their paths (#8)', async () => {
     const h = createHarness()
-    const a = newAdapter(h)
+    // A real temp cwd: the Go dshSession.Send semantics stage image/file
+    // bytes under <workDir>/.cc-connect/attachments and reference the paths.
+    const workDir = mkdtempSync(join(tmpdir(), 'adapter-att-'))
+    const a = new DshAgentAdapter(h.ctx, {
+      agentName: 'dsh',
+      cwd: workDir,
+      providers: [{ name: 'glm', provider: 'glm-route', model: 'glm-5.3[1m]' }],
+      activeProvider: 'glm',
+    })
     const session = await a.startSession('')
 
     await session.send('hello world', [], [])
-    await session.send('with file', [], [{ mimeType: 'text/plain', data: new Uint8Array([1]), fileName: 'a.txt' }])
+    await session.send('with file', [], [{ mimeType: 'text/plain', data: new TextEncoder().encode('F'), fileName: 'a.txt' }])
+    await session.send('with image', [{ mimeType: 'image/png', data: new TextEncoder().encode('I') }], [])
 
-    expect(h.agents[0]!.followups).toHaveLength(2)
+    expect(h.agents[0]!.followups).toHaveLength(3)
     const first = h.agents[0]!.followups[0] as { content: Array<{ type: string; text: string }>; role: string }
     expect(first.role).toBe('user')
     expect(first.content[0]).toEqual({ type: 'text', text: 'hello world' })
     const second = h.agents[0]!.followups[1] as { content: Array<{ type: string; text: string }> }
-    expect(second.content[0]!.text).toContain('attachments: a.txt')
+    expect(second.content[0]!.text).toContain('with file')
+    expect(second.content[0]!.text).toMatch(/\(Files saved locally, please read them: .*a\.txt\)/)
+    const third = h.agents[0]!.followups[2] as { content: Array<{ type: string; text: string }> }
+    expect(third.content[0]!.text).toMatch(/\(Images saved locally, please read them: .*\.png\)/)
+    expect(existsSync(join(workDir, '.cc-connect', 'attachments', 'a.txt'))).toBe(true)
   })
 
   it('cancelTurn cancels the in-flight turn as a user stop', async () => {

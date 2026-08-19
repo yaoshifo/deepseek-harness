@@ -266,3 +266,12 @@
     #     enabled: true
     #     maxTokens: 80000
     #     minGapMins: 30
+
+    #   dirScanPaths:                      # parent dirs auto-listed in /dir (#3)
+    #     - ~/workspace                    # subdirs become /dir suggestions and
+    #                                       # bare-name targets (~ expanded)
+    #   feishuWorkspace:                   # bot's default Feishu wiki/drive (#18)
+    #     wikiSpaceId: "7000"              # CC_FEISHU_WIKI_SPACE_ID routing
+    #     wikiNodeToken: "wikcn2"          # creation parent priority: node > space
+    #     folderToken: "fldcn1"            #   > folder
+    #     description: "团队知识库"          # natural-language context

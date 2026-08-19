@@ -1,16 +1,16 @@
 /**
  * Directory switch history ported from cc-connect core/dir_history.go:
- * per-project MRU list plus live-scanned parent dirs, JSON-persisted. M1
- * carries the exact-match scan resolution and MRU core; fuzzy fallback
- * (ResolveScanPathFuzzy) arrives with the milestone that ports its tests.
+ * per-project MRU list plus live-scanned parent dirs, JSON-persisted,
+ * including the fuzzy bare-name fallback (Go ResolveScanPathFuzzy, #3).
  *
  * @module dsh-feishu-bridge/dir-history
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { mkdirSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { basename, join, dirname } from 'node:path'
 import { atomicWriteFileSync } from '../atomicwrite.js'
+import { absLen, fuzzyThreshold, levenshtein } from '../lucide/fuzzy.js'
 
 /** Default MRU history length (Go DefaultDirHistorySize). */
 export const DefaultDirHistorySize = 10
@@ -82,6 +82,40 @@ export class DirHistory {
       }
     }
     return undefined
+  }
+
+  /**
+   * Fuzzy fallback after an exact scan miss (Go ResolveScanPathFuzzy): pick
+   * the closest candidate from the merged list by basename similarity.
+   *
+   * Scoring (lower wins): case-insensitive exact = 0 > prefix = 10 >
+   * substring = 20 > edit distance <= threshold = 30+distance. Inputs shorter
+   * than 2 characters are too ambiguous and never match; ties keep the
+   * earlier merged-list entry (MRU first).
+   */
+  resolveScanPathFuzzy(project: string, rel: string): string | undefined {
+    if (rel.length < 2) return undefined
+    const lrel = rel.toLowerCase()
+    let bestPath: string | undefined
+    let bestScore = -1
+    for (const cand of this.mergedList(project)) {
+      const name = basename(cand)
+      const lname = name.toLowerCase()
+      let score = -1
+      if (lrel === lname) score = 0
+      else if (lname.startsWith(lrel)) score = 10
+      else if (lname.includes(lrel)) score = 20
+      else if (absLen(rel, name) <= fuzzyThreshold(rel)) {
+        const d = levenshtein(lrel, lname)
+        if (d <= fuzzyThreshold(rel)) score = 30 + d
+      }
+      if (score < 0) continue
+      if (bestScore < 0 || score < bestScore) {
+        bestScore = score
+        bestPath = cand
+      }
+    }
+    return bestPath
   }
 
   /** Raise the MRU cap to at least the given value (Go EnsureSize). */

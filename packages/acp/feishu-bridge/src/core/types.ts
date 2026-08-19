@@ -42,6 +42,18 @@ export interface FileAttachment {
   fileName: string
 }
 
+/**
+ * The default Feishu Wiki/Drive location this project's bot operates in
+ * (Go FeishuWorkspaceInfo, #18). Non-empty fields surface as CC_FEISHU_* env
+ * entries on session start, scoping doc search/creation to this location.
+ */
+export interface FeishuWorkspaceInfo {
+  wikiSpaceId: string
+  folderToken: string
+  wikiNodeToken: string
+  description: string
+}
+
 /** One turn in a conversation history (timestamp is an ISO string, like Go time.Time's JSON form). */
 export interface HistoryEntry {
   role: 'user' | 'assistant'
@@ -136,6 +148,10 @@ export interface Message {
   isCardAction: boolean
   parentMessageID: string
   quotedText: string
+  /** Sender type of the quoted message ('user' | 'app'); set with quotedText. */
+  quotedSenderType?: string
+  /** Update time of the quoted message in unix ms (card PATCH time); /fork-rollback locator. */
+  quotedUpdateTimeMs?: number
   /** Permission mode override for this message ('' = project default; Go ModeOverride). */
   modeOverride?: string
   /**

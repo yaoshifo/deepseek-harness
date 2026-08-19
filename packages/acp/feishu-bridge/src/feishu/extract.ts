@@ -114,6 +114,20 @@ export function hasHumanMention(mentions: FeishuMention[] | undefined): boolean 
 }
 
 /**
+ * Replace @_user_N mention placeholders with @name in fetched quoted text
+ * (Go replaceMentions): unlike stripMentions nothing is removed — the quote
+ * keeps every speaker reference readable.
+ */
+export function replaceMentions(text: string, mentions: FeishuMention[] | undefined): string {
+  for (const m of mentions ?? []) {
+    if (m.key !== undefined && m.name !== undefined) {
+      text = text.replaceAll(m.key, `@${m.name}`)
+    }
+  }
+  return text
+}
+
+/**
  * Process @_user_N placeholders: the bot's own mention is removed; other
  * user mentions become @name (or are removed when unnamed) so the agent sees
  * who was referenced (Go stripMentions).

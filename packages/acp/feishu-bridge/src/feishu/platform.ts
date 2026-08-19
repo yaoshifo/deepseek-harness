@@ -24,7 +24,7 @@ import { basename, dirname, join } from 'node:path'
 import { MessageDedup, isOldMessage } from '../dedup.js'
 import { AllowList } from './allowlist.js'
 import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.js'
-import { extractPollText, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, stripMentions, unwrapCardContent, extractCardImageKeys } from './extract.js'
+import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.js'
 import { isMonitorCommand } from '../core/types.js'
 import type { FeishuMention } from './extract.js'
 import type { Card } from '../card.js'
@@ -80,6 +80,51 @@ function msgTimeSec(ms: string): number {
   if (!Number.isFinite(n)) return 0
   return Math.trunc(n / 1000)
 }
+
+/**
+ * Reply payload of the getMessage verb: the raw fields the quoted-message
+ * chain needs (Go fetchSingleMessage's decode of GET im/v1/messages/{id}).
+ */
+export interface FeishuQuotedMessage {
+  msgType: string
+  parentId: string
+  updateTimeMs: number
+  senderId: string
+  senderType: string
+  bodyContent: string
+  mentions?: FeishuMention[]
+}
+
+/** One entry of a fetched reply chain (Go chainMessage). */
+export interface ChainMessage {
+  senderName: string
+  senderType: string
+  text: string
+  parentId: string
+  updateTimeMs: number
+}
+
+/**
+ * Format a reply chain into a readable prefix (Go formatReplyChain): a
+ * single message keeps the legacy bracket format; multi-message chains use
+ * a numbered list with user/assistant role labels.
+ */
+export function formatReplyChain(chain: ChainMessage[]): string {
+  if (chain.length === 0) return ''
+  if (chain.length === 1) {
+    const only = chain[0] as ChainMessage
+    return `[Quoted message from ${only.senderName}]:\n${only.text}\n\n`
+  }
+  let out = `--- Reply chain (${chain.length} messages) ---\n`
+  for (const [i, msg] of chain.entries()) {
+    const role = msg.senderType === 'app' ? 'assistant' : 'user'
+    out += `[${i + 1}] ${msg.senderName} (${role}):\n${msg.text}\n\n`
+  }
+  return `${out}---\n\n`
+}
+
+/** Max parent messages traversed per inbound reply (Go maxReplyChainDepth). */
+const maxReplyChainDepth = 5
 
 /** An all-empty Message literal for the poll path's spread base. */
 function emptyMessageShape(): Message {
@@ -172,6 +217,12 @@ export interface FeishuApiClient {
     pageSize: number
     startTimeSec?: number
   }): Promise<FeishuListItem[]>
+  /**
+   * Fetch one message by id with raw_card_content delivery (GET
+   * im/v1/messages/{id}); undefined when the message is unreadable. Backs
+   * the quoted-message reply-chain fetch.
+   */
+  getMessage?(params: { messageId: string }): Promise<FeishuQuotedMessage | undefined>
   /** Fetch the bot's own identity (GET /open-apis/bot/v3/info, bare HTTP). */
   getBotInfo?(): Promise<{ openID: string; avatarURL: string; appName: string }>
 }
@@ -565,13 +616,13 @@ export class FeishuPlatform implements Platform {
       }
       text = stripMentions(text, mentions, this.o.botOpenID ?? '')
       if (text === '') return
-      this.dispatch(sessionKey, messageID, userID, chatID, chatType, text, '', replyCtx, isSpawned, parentID)
+      void this.dispatchWithQuote(sessionKey, messageID, userID, chatID, chatType, text, replyCtx, isSpawned, parentID)
       return
     }
     if (msgType === 'post') {
       const text = stripMentions(extractPostPlainText(content), mentions, this.o.botOpenID ?? '')
       if (text === '') return
-      this.dispatch(sessionKey, messageID, userID, chatID, chatType, text, '', replyCtx, isSpawned, parentID)
+      void this.dispatchWithQuote(sessionKey, messageID, userID, chatID, chatType, text, replyCtx, isSpawned, parentID)
       return
     }
     if (msgType === 'file') {
@@ -914,6 +965,7 @@ export class FeishuPlatform implements Platform {
     images: ImageAttachment[] = [],
     files: FileAttachment[] = [],
     isCardAction = false,
+    quoted?: { text: string; senderType: string; updateTimeMs: number },
   ): void {
     if (this.handler === undefined) return
     const message: Message = {
@@ -936,12 +988,120 @@ export class FeishuPlatform implements Platform {
       isAskqCardAction,
       isCardAction,
       parentMessageID,
-      quotedText: '',
+      quotedText: quoted?.text ?? '',
+      ...(quoted !== undefined ? { quotedSenderType: quoted.senderType, quotedUpdateTimeMs: quoted.updateTimeMs } : {}),
     }
     // Async dispatch keeps the SDK event loop free of engine IO (Go SafeGo).
     void Promise.resolve().then(() => this.handler?.(this, message)).catch((error: unknown) => {
       console.error(`feishu: dispatch failed (${sessionKey}): ${String(error)}`)
     })
+  }
+
+  /**
+   * Fetch the reply chain a text message quotes (when it is a reply) and
+   * dispatch with the formatted prefix as extraContent (Go dispatchMessage's
+   * quoted-prefix block). Skipped inside isolated threads — the thread
+   * already carries the context and a long prefix would drown the user's
+   * text. Any fetch failure degrades to dispatching without the quote.
+   */
+  private async dispatchWithQuote(
+    sessionKey: string,
+    messageID: string,
+    userID: string,
+    chatID: string,
+    chatType: string,
+    text: string,
+    replyCtx: FeishuReplyContext,
+    isSpawned: boolean,
+    parentID: string,
+  ): Promise<void> {
+    let prefix = ''
+    let quoted: ChainMessage | undefined
+    if (parentID !== '' && !(this.o.threadIsolation === true && isThreadSessionKey(sessionKey))) {
+      ({ prefix, quoted } = await this.fetchQuotedMessage(parentID))
+    }
+    this.dispatch(
+      sessionKey, messageID, userID, chatID, chatType, text, prefix, replyCtx, isSpawned, parentID,
+      false, false, [], [], false,
+      quoted !== undefined ? { text: quoted.text, senderType: quoted.senderType, updateTimeMs: quoted.updateTimeMs } : undefined,
+    )
+  }
+
+  /**
+   * Fetch one message by id and extract its readable text (Go
+   * fetchSingleMessage); undefined on any failure or when nothing readable
+   * remains. Sender names are not resolved through the contact API (the TS
+   * platform never resolves contact names), so senders render as Bot/User.
+   */
+  private async fetchSingleMessage(messageID: string): Promise<ChainMessage | undefined> {
+    let raw: FeishuQuotedMessage | undefined
+    try {
+      raw = await this.request('message.get', async (client) => {
+        if (client.getMessage === undefined) throw new ErrNotSupported('feishu client without message fetch support')
+        return client.getMessage({ messageId: messageID })
+      })
+    } catch (error) {
+      console.warn(`${this.tag()}: fetch single message failed (${messageID}): ${String(error)}`)
+      return undefined
+    }
+    if (raw === undefined || raw.bodyContent === '') return undefined
+
+    let text = ''
+    switch (raw.msgType) {
+      case 'text':
+        try {
+          text = replaceMentions((JSON.parse(raw.bodyContent) as { text?: string }).text ?? '', raw.mentions)
+        } catch {
+          text = ''
+        }
+        break
+      case 'post':
+        text = extractPostPlainText(raw.bodyContent)
+        break
+      case 'interactive':
+        text = extractInteractiveCardText(raw.bodyContent)
+        break
+      default:
+        text = `[${raw.msgType}]`
+    }
+    if (text === '') return undefined
+    const senderName = raw.senderType === 'app' ? 'Bot' : 'User'
+    return {
+      senderName,
+      senderType: raw.senderType,
+      text,
+      parentId: raw.parentId,
+      updateTimeMs: raw.updateTimeMs,
+    }
+  }
+
+  /**
+   * Walk parent_id links up to {@link maxReplyChainDepth} entries and return
+   * the chain in chronological order (Go fetchReplyChain); stops on any
+   * failure, a circular reference, or the depth cap.
+   */
+  private async fetchReplyChain(parentID: string, maxDepth: number): Promise<ChainMessage[]> {
+    const chain: ChainMessage[] = []
+    const visited = new Set<string>()
+    let currentID = parentID
+    while (currentID !== '' && chain.length < maxDepth) {
+      if (visited.has(currentID)) break
+      visited.add(currentID)
+      const msg = await this.fetchSingleMessage(currentID)
+      if (msg === undefined) break
+      chain.push(msg)
+      currentID = msg.parentId
+    }
+    return chain.reverse()
+  }
+
+  /** Fetch the quoted chain plus its formatted prefix (Go fetchQuotedMessageWithMeta). */
+  private async fetchQuotedMessage(parentID: string): Promise<{ prefix: string; quoted?: ChainMessage }> {
+    const chain = await this.fetchReplyChain(parentID, maxReplyChainDepth)
+    const prefix = formatReplyChain(chain)
+    if (chain.length === 0) return { prefix }
+    const quotedMsg = chain[chain.length - 1]
+    return quotedMsg === undefined ? { prefix } : { prefix, quoted: quotedMsg }
   }
 
   /**
@@ -2499,6 +2659,42 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
         openID: data.bot?.open_id ?? '',
         avatarURL: data.bot?.avatar_url ?? '',
         appName: data.bot?.app_name ?? '',
+      }
+    },
+    async getMessage({ messageId }) {
+      // Bare HTTP like getBotInfo: the quoted-chain fetch needs the
+      // card_msg_content_type query the node-sdk's get typing lacks.
+      const token = (await fetchTenantToken()).trim()
+      const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}?card_msg_content_type=raw_card_content`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const payload = await resp.json() as {
+        code?: number
+        data?: {
+          items?: Array<{
+            msg_type?: string
+            parent_id?: string
+            update_time?: string
+            sender?: { id?: string; sender_type?: string }
+            body?: { content?: string }
+            mentions?: FeishuMention[]
+          }>
+        }
+      }
+      if (payload.code !== undefined && payload.code !== 0) {
+        throw new Error(`feishu: message get: code=${String(payload.code)}`)
+      }
+      const item = payload.data?.items?.[0]
+      if (item === undefined) return undefined
+      const ms = Number.parseInt(item.update_time ?? '', 10)
+      return {
+        msgType: item.msg_type ?? '',
+        parentId: item.parent_id ?? '',
+        updateTimeMs: Number.isFinite(ms) ? ms : 0,
+        senderId: item.sender?.id ?? '',
+        senderType: item.sender?.sender_type ?? '',
+        bodyContent: item.body?.content ?? '',
+        ...(item.mentions !== undefined ? { mentions: item.mentions } : {}),
       }
     },
   })
