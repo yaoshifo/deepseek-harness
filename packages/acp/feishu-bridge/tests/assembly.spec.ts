@@ -53,4 +53,34 @@ describe('buildProjectAssembly', () => {
     const { platform } = buildProjectAssembly(stubContext(), config(), project(), root)
     expect(platform.spawnStore.filePath).toBe(join(root, 'smoke-project', 'sessions', 'smoke-project_feishu_spawned.json'))
   })
+
+  it('forwards the feishu platform options (notify_on_complete & co.)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fb-assembly-'))
+    const cfg = config()
+    const proj = {
+      ...project(),
+      feishu: {
+        appId: 'cli_test',
+        appSecret: 'sec',
+        notifyOnComplete: true,
+        reactionEmoji: 'Get',
+        doneEmoji: 'Done',
+        cancelEmoji: 'CrossMark',
+        topNoticeFirstMessage: true,
+        pinUserMessages: true,
+      },
+    }
+    const { platform } = buildProjectAssembly(stubContext(), cfg, proj, root)
+    expect(platform.notifyOnComplete).toBe(true)
+    expect(platform.reactionEmoji).toBe('Get')
+    expect(platform.doneEmoji).toBe('Done')
+    expect(platform.cancelEmoji).toBe('CrossMark')
+    expect(platform.topNoticeEnabled).toBe(true)
+    expect(platform.pinEnabled).toBe(true)
+    // Defaults stay off when the config omits them.
+    const bare = buildProjectAssembly(stubContext(), config(), project(), root)
+    expect(bare.platform.notifyOnComplete).toBe(false)
+    expect(bare.platform.topNoticeEnabled).toBe(false)
+    expect(bare.platform.pinEnabled).toBe(false)
+  })
 })

@@ -250,12 +250,18 @@ export class FeishuPlatform implements Platform {
   readonly useInteractiveCard: boolean
   /** Validated progress style ("legacy" | "compact" | "card"). */
   readonly progressStyle: string
-  private readonly notifyOnComplete: boolean
-  private readonly reactionEmoji: string
-  private readonly doneEmoji: string
-  private readonly cancelEmoji: string
-  private readonly topNoticeEnabled: boolean
-  private readonly pinEnabled: boolean
+  /** ✅ notifications enabled (notify_on_complete). */
+  readonly notifyOnComplete: boolean
+  /** Configured reaction emoji (reaction_emoji). */
+  readonly reactionEmoji: string
+  /** Configured completion emoji (done_emoji). */
+  readonly doneEmoji: string
+  /** Configured stop emoji (cancel_emoji). */
+  readonly cancelEmoji: string
+  /** Top-notice banner enabled (topnotice_first_message). */
+  readonly topNoticeEnabled: boolean
+  /** Pin panel enabled (pin_user_messages). */
+  readonly pinEnabled: boolean
   private readonly spinnerEnabled: boolean
   /** Global limiter for every card PATCH entry point. */
   private readonly patchRL: TokenBucketRateLimiter

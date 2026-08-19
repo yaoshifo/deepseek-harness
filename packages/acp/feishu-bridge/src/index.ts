@@ -34,6 +34,18 @@ export interface FeishuAppConfig {
   appId: string
   /** Feishu open-platform app secret. */
   appSecret: string
+  /** ✅ push notification after in-place completion (Go notify_on_complete). */
+  notifyOnComplete?: boolean
+  /** Emoji reaction on the user's message; '' or 'none' disables (Go reaction_emoji). */
+  reactionEmoji?: string
+  /** Emoji reaction on the completion card; '' or 'none' disables (Go done_emoji). */
+  doneEmoji?: string
+  /** Emoji reaction when a turn is stopped; '' or 'none' disables (Go cancel_emoji). */
+  cancelEmoji?: string
+  /** Top-notice banner on the first turn's message (Go topnotice_first_message). */
+  topNoticeFirstMessage?: boolean
+  /** Accumulate messages into the chat's pin panel (Go pin_user_messages). */
+  pinUserMessages?: boolean
 }
 
 /** Agent assembly options for one project (MIGRATION.md D1/D3). */
@@ -119,6 +131,12 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     feishu: Schema.object({
       appId: Schema.string().required().description('Feishu app id'),
       appSecret: Schema.string().required().role('secret').description('Feishu app secret'),
+      notifyOnComplete: Schema.boolean().description('✅ notification after in-place completion'),
+      reactionEmoji: Schema.string().description('Reaction emoji on user message'),
+      doneEmoji: Schema.string().description('Reaction emoji on completion card'),
+      cancelEmoji: Schema.string().description('Reaction emoji on stopped card'),
+      topNoticeFirstMessage: Schema.boolean().description('Top-notice banner on first turn'),
+      pinUserMessages: Schema.boolean().description('Pin panel accumulation'),
     }).required(),
     agent: Schema.object({
       provider: Schema.string().description('Key into providers'),
@@ -256,6 +274,13 @@ export function buildProjectAssembly(
     appSecret: project.feishu.appSecret,
     groupReplyAll: project.features?.allowChat === true,
     projectName: project.name,
+    workDir: project.workdir,
+    ...(project.feishu.notifyOnComplete !== undefined ? { notifyOnComplete: project.feishu.notifyOnComplete } : {}),
+    ...(project.feishu.reactionEmoji !== undefined ? { reactionEmoji: project.feishu.reactionEmoji } : {}),
+    ...(project.feishu.doneEmoji !== undefined ? { doneEmoji: project.feishu.doneEmoji } : {}),
+    ...(project.feishu.cancelEmoji !== undefined ? { cancelEmoji: project.feishu.cancelEmoji } : {}),
+    ...(project.feishu.topNoticeFirstMessage !== undefined ? { topNoticeFirstMessage: project.feishu.topNoticeFirstMessage } : {}),
+    ...(project.feishu.pinUserMessages !== undefined ? { pinUserMessages: project.feishu.pinUserMessages } : {}),
     dataDir: projectDataDir,
   })
 
