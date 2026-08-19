@@ -132,6 +132,8 @@ export interface Message {
   isCardAction: boolean
   parentMessageID: string
   quotedText: string
+  /** Permission mode override for this message ('' = project default; Go ModeOverride). */
+  modeOverride?: string
 }
 
 /** Agent output event kinds (Go EventType). M1 handles text/thinking/tool/result/error/permission. */
@@ -406,6 +408,20 @@ export interface ReplyContextReconstructor {
   reconstructReplyCtx(sessionKey: string): Promise<unknown>
 }
 
+/**
+ * Optional platform capability redirecting where a cron run's replies go
+ * (Go CronReplyTargetResolver) — e.g. a fresh thread instead of the stored
+ * chat. Only test stubs implement it today.
+ */
+export interface CronReplyTargetResolver {
+  /**
+   * @param sessionKey - The job's stored session key.
+   * @param title - Human-readable run title for any UI the platform shows.
+   * @returns [resolvedSessionKey, replyCtx]; an empty key keeps the original.
+   */
+  resolveCronReplyTarget(sessionKey: string, title: string): Promise<[string, unknown]>
+}
+
 /** A configured LLM route an agent can switch between (Go ProviderConfig subset). */
 export interface ProviderConfig {
   name: string
@@ -605,6 +621,10 @@ export function activeTagNameFor(p: Platform): string {
 
 export function asReplyContextReconstructor(p: Platform): ReplyContextReconstructor | undefined {
   return withMethod<ReplyContextReconstructor>(p, 'reconstructReplyCtx')
+}
+
+export function asCronReplyTargetResolver(p: Platform): CronReplyTargetResolver | undefined {
+  return withMethod<CronReplyTargetResolver>(p, 'resolveCronReplyTarget')
 }
 
 export function asForkQuerierWithProvider(a: Agent): ForkQuerierWithProvider | undefined {

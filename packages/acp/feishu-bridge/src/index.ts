@@ -19,7 +19,13 @@ import { Engine } from './engine/engine.js'
 import { ProjectStateStore } from './engine/project-state.js'
 import { DirHistory } from './engine/dir-history.js'
 import { registerSessionCommands } from './engine/commands.js'
+import { CronScheduler, CronStore } from './engine/cron.js'
+import { registerCronCommands } from './engine/cron-commands.js'
+import { RelayManager } from './engine/relay.js'
+import { registerRelayCommands } from './engine/relay-commands.js'
 import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from './tools/subtask.js'
+import { registerCronTool } from './tools/cron.js'
+import { registerRelayTool } from './tools/relay.js'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.js'
 import type { StreamPreviewCfg } from './streaming.js'
 
@@ -167,6 +173,29 @@ export interface SpawnConfig {
   memoryBlockPct?: number
 }
 
+/** Cron job behavior defaults, shared by every project (Go [cron]). */
+export interface CronConfig {
+  /** Suppress cron start notifications by default (Go cron.silent). */
+  silent?: boolean
+  /** Default session mode: 'reuse' (default) or 'new_per_run' (Go cron.session_mode). */
+  sessionMode?: string
+}
+
+/** Bot-to-bot relay behavior, shared by every project (Go [relay]). */
+export interface RelayConfig {
+  /** Max seconds to wait for a relay response; 0 disables; default 120 (Go relay.timeout_secs). */
+  timeoutSecs?: number
+}
+
+/**
+ * Process-wide services every project's engine registers into (Go main
+ * wiring): one CronStore + CronScheduler and one RelayManager per daemon.
+ */
+export interface SharedProcessServices {
+  cronScheduler?: CronScheduler
+  relayManager?: RelayManager
+}
+
 /** Deployment config for the feishu-bridge plugin. */
 export interface FeishuBridgeConfig {
   /** Projects bound to Feishu apps. */
@@ -189,6 +218,10 @@ export interface FeishuBridgeConfig {
   subtask?: SubtaskConfig
   /** /spawn //fork isolation defaults (Go [spawn]). */
   spawn?: SpawnConfig
+  /** Cron job behavior defaults (Go [cron]). */
+  cron?: CronConfig
+  /** Bot-to-bot relay behavior (Go [relay]). */
+  relay?: RelayConfig
   /** Streaming preview tuning merged over the defaults (Go [stream_preview]). */
   streamPreview?: Partial<StreamPreviewCfg>
 }
@@ -262,6 +295,13 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     memoryWarnPct: Schema.natural().description('RAM% warning threshold; 0 disables'),
     memoryBlockPct: Schema.natural().description('RAM% block threshold; 0 disables'),
   }).description('/spawn //fork isolation defaults'),
+  cron: Schema.object({
+    silent: Schema.boolean().description('Suppress cron start notifications by default (Go cron.silent)'),
+    sessionMode: Schema.string().description('Default session mode: reuse (default) or new_per_run (Go cron.session_mode)'),
+  }).description('Cron job defaults (Go [cron])'),
+  relay: Schema.object({
+    timeoutSecs: Schema.natural().description('Max seconds to wait for a relay response; 0 disables (default 120)'),
+  }).description('Bot-to-bot relay (Go [relay])'),
   streamPreview: Schema.object({
     enabled: Schema.boolean().description('Enable streaming preview'),
     intervalMs: Schema.natural().description('Minimum ms between updates'),
@@ -273,10 +313,12 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
 
 /**
  * Start the bridge: one Engine + one Feishu WS platform per configured
- * project (MIGRATION.md §1), plus the process-wide feishu_bridge_subtask
- * tool routed by caller agent (plan D4). An empty projects list idles
- * gracefully — the M0 smoke behavior. TODO(M6+): cron/relay tools and the
- * liveness watchdog arrive with their milestones.
+ * project (MIGRATION.md §1), plus the process-wide feishu_bridge_subtask /
+ * feishu_bridge_cron / feishu_bridge_relay tools routed by caller agent
+ * (plan D4) and the shared cron scheduler + relay manager (Go main wiring:
+ * one CronStore at `<dataDir>/crons/jobs.json`, one RelayManager at
+ * `<dataDir>/relay_bindings.json`, every engine registered into both). An
+ * empty projects list idles gracefully — the M0 smoke behavior.
  *
  * @param ctx - Plugin context (provides ctx.agents, ctx.tools, and event dispatch).
  * @param config - Validated plugin config.
@@ -286,10 +328,22 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   // One dir history for every project (Go main shares NewDirHistory(cfg.DataDir)
   // across engines so /dir MRU entries land in a single store file).
   const dirHistory = new DirHistory(dataRoot)
+  // Process-wide cron + relay (Go main: cfg.Cron → scheduler defaults,
+  // cfg.Relay → timeout; engines register into both).
+  const cronScheduler = new CronScheduler(new CronStore(dataRoot))
+  const relayManager = new RelayManager(dataRoot)
+  const shared: SharedProcessServices = { cronScheduler, relayManager }
+  if (config.cron?.silent === true) cronScheduler.setDefaultSilent(true)
+  if (config.cron?.sessionMode !== undefined && config.cron.sessionMode !== '') {
+    cronScheduler.setDefaultSessionMode(config.cron.sessionMode)
+  }
+  if (config.relay?.timeoutSecs !== undefined) {
+    relayManager.setTimeoutMs(config.relay.timeoutSecs > 0 ? config.relay.timeoutSecs * 1000 : 0)
+  }
   /** One live project: its engine plus the adapter that owns its agents. */
   const live: Array<{ engine: Engine; adapter: DshAgentAdapter }> = []
   for (const project of config.projects) {
-    const { engine, adapter } = buildProjectAssembly(ctx, config, project, dataRoot, dirHistory)
+    const { engine, adapter } = buildProjectAssembly(ctx, config, project, dataRoot, dirHistory, shared)
     live.push({ engine, adapter })
     if (project.features?.injectSender === true) engine.setInjectSender(true)
     if (project.features?.quiet === true) {
@@ -314,10 +368,16 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
     })
   }
 
-  // Plan D4: one process-wide feishu_bridge_subtask tool routes each call by
-  // its CALLER agent back to the engine + engine session that agent belongs
-  // to — the Go CLI's CC_PROJECT/CC_SESSION_KEY env contract, without env.
-  registerSubtaskTool(ctx, (caller): SubtaskRoute | undefined => {
+  // Start the cron scheduler after every engine registered (Go main).
+  cronScheduler.start()
+  ctx.effect(() => {
+    return () => { cronScheduler.stop() }
+  })
+
+  // Plan D4: one process-wide tool family per domain, each routed by its
+  // CALLER agent back to the engine + engine session that agent belongs to
+  // — the Go CLI's CC_PROJECT/CC_SESSION_KEY env contract, without env.
+  const route = (caller: unknown): SubtaskRoute | undefined => {
     const id = agentIDOf(caller)
     if (id === '') return undefined
     for (const { engine, adapter } of live) {
@@ -325,7 +385,10 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
       if (sessionKey !== undefined) return { engine, sessionKey }
     }
     return undefined
-  })
+  }
+  registerSubtaskTool(ctx, route)
+  registerCronTool(ctx, route)
+  registerRelayTool(ctx, route)
 }
 
 /**
@@ -390,6 +453,7 @@ export function buildProjectAssembly(
   project: ProjectConfig,
   dataRoot: string,
   sharedDirHistory?: DirHistory,
+  shared?: SharedProcessServices,
 ): { engine: Engine; adapter: DshAgentAdapter; platform: FeishuPlatform } {
   const routeNames = Object.keys(config.providers)
   const activeProvider = project.agent?.provider ?? routeNames[0] ?? ''
@@ -452,6 +516,19 @@ export function buildProjectAssembly(
   }
   registerSessionCommands(engine)
   wireGroupName(engine, project)
+
+  // M6: process-wide cron + relay services (Go main registers every engine
+  // into the shared CronScheduler / RelayManager and attaches both).
+  if (shared?.cronScheduler !== undefined) {
+    shared.cronScheduler.registerEngine(project.name, engine)
+    engine.setCronScheduler(shared.cronScheduler)
+    registerCronCommands(engine)
+  }
+  if (shared?.relayManager !== undefined) {
+    shared.relayManager.registerEngine(project.name, engine)
+    engine.setRelayManager(shared.relayManager)
+    registerRelayCommands(engine)
+  }
 
   // Stall detection (Go [display] stall_*): wired first, then
   // idle_timeout_mins below overrides it, matching wire.go's order.
