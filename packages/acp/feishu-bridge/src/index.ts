@@ -26,6 +26,7 @@ import { registerRelayCommands } from './engine/relay-commands.js'
 import { MonitorExampleStore, type MonitorDirEntry, type MonitorRuleEntry } from './engine/monitor.js'
 import { registerMonitorCommands } from './engine/monitor-commands.js'
 import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from './tools/subtask.js'
+import { createUsageProvider, type UsageProvider } from './engine/usage.js'
 import { registerCronTool } from './tools/cron.js'
 import { registerRelayTool } from './tools/relay.js'
 import { registerChatroomTool } from './tools/chatroom.js'
@@ -117,6 +118,8 @@ export interface ProjectConfig {
   chatroom?: ChatroomConfig
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
   monitor?: MonitorConfig
+  /** Model context window in tokens; 0 = the 200k default (Go context_window). */
+  contextWindow?: number
   /** Comma-separated user IDs allowed to run privileged commands; '*' = all (Go admin_from). */
   adminFrom?: string
   /** Minutes before an idle interactive session is reaped (Go interactive_idle_timeout_mins). */
@@ -153,6 +156,8 @@ export interface DisplayConfig {
   stallTimeoutSecs?: number
   /** Stall retries before the idle kill (Go stall_max_retries). */
   stallMaxRetries?: number
+  /** Editor base URL linked from status footers (Go editor_url; '' disables). */
+  editorUrl?: string
 }
 
 /** Per-session inbound message queue cap (Go [queue]). */
@@ -321,6 +326,16 @@ export interface FeishuBridgeConfig {
   chatroom?: ChatroomConfig
   /** Streaming preview tuning merged over the defaults (Go [stream_preview]). */
   streamPreview?: Partial<StreamPreviewCfg>
+  /** Provider quota displays appended to the completion footer (Go usage_providers). */
+  usageProviders?: UsageProviderConfig[]
+}
+
+/** One provider quota display entry (Go UsageProviderConfig). */
+export interface UsageProviderConfig {
+  /** Provider type key: 'glm' or 'minimax'. */
+  type: string
+  /** Provider-specific options (e.g. api_key, region). */
+  options?: Record<string, unknown>
 }
 
 export const Config: Schema<FeishuBridgeConfig> = Schema.object({
@@ -395,6 +410,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       coalesceEnabled: Schema.boolean().description('Route same-dir alerts into the existing active subgroup; default true'),
       coalesceWindowSec: Schema.natural().description('Coalescing window in seconds; default 300; 0 = no age limit'),
     }).description('Monitor-group mode (#53)'),
+    contextWindow: Schema.natural().description('Model context window in tokens; 0 = 200k default (Go context_window)'),
     adminFrom: Schema.string().description('Comma-separated admin user IDs; * = all'),
     interactiveIdleTimeoutMins: Schema.natural().description('Idle reaper threshold in minutes'),
   })).default([]).description('Projects bound to Feishu apps'),
@@ -413,6 +429,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     patchRateIntervalMs: Schema.natural().description('Minimum ms between card PATCH calls'),
     stallTimeoutSecs: Schema.natural().description('Stall detection window in seconds'),
     stallMaxRetries: Schema.natural().description('Stall retries before the idle kill'),
+    editorUrl: Schema.string().description('Editor base URL linked from status footers (Go editor_url)'),
   }).description('Display defaults'),
   dataDir: Schema.string().description('Root directory for per-project session stores'),
   language: Schema.string().description('Reply language (zh/zh-TW/ja/es/en; else auto-detect)'),
@@ -457,6 +474,10 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     maxChars: Schema.natural().description('Max preview length'),
     disabledPlatforms: Schema.array(Schema.string()).description('Platforms without preview'),
   }).description('Streaming preview tuning'),
+  usageProviders: Schema.array(Schema.object({
+    type: Schema.string().required().description('Provider type: glm | minimax'),
+    options: Schema.dict(Schema.any()).description('Provider options (api_key, region)'),
+  })).description('Provider quota displays appended to the completion footer (Go usage_providers)'),
 })
 
 /**
@@ -538,6 +559,24 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   registerCronTool(ctx, route)
   registerRelayTool(ctx, route)
   registerChatroomTool(ctx, route)
+}
+
+/**
+ * Create the configured usage providers, skipping entries whose factory
+ * rejects (Go main.go buildUsageProviders warns and continues).
+ * @param entries - The usage_providers config rows.
+ * @returns The live providers for one engine's completion footer.
+ */
+function buildUsageProviders(entries: UsageProviderConfig[]): UsageProvider[] {
+  const providers: UsageProvider[] = []
+  for (const entry of entries) {
+    try {
+      providers.push(createUsageProvider(entry.type, entry.options ?? {}))
+    } catch (error) {
+      console.warn(`usage provider init failed (type=${entry.type}): ${String(error)}`)
+    }
+  }
+  return providers
 }
 
 /**
@@ -723,6 +762,24 @@ export function buildProjectAssembly(
   if (config.streamPreview !== undefined) {
     engine.setStreamPreviewCfg(config.streamPreview)
   }
+
+  if (config.display?.editorUrl !== undefined) {
+    engine.setDisplayConfig({ editorUrl: config.display.editorUrl })
+  }
+
+  // M7 usage domain (Go wire.go): ctx indicator + context window + provider
+  // quota displays + the Codex-style reply footer.
+  if (project.features?.showContextIndicator !== undefined) {
+    engine.setShowContextIndicator(project.features.showContextIndicator)
+  }
+  if (project.contextWindow !== undefined) {
+    engine.setContextWindow(project.contextWindow)
+  }
+  engine.applyActiveProviderContextWindow()
+  if (project.features?.replyFooter !== undefined) {
+    engine.setReplyFooterEnabled(project.features.replyFooter)
+  }
+  engine.setUsageProviders(buildUsageProviders(config.usageProviders ?? []))
   return { engine, adapter, platform }
 }
 

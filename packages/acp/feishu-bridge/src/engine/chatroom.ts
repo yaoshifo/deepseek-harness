@@ -411,15 +411,18 @@ export async function startChatroom(
     if (userID !== '') ns.setSpawnUserID(userID)
     e.sessions.save()
 
-    // Ready card in the role group (mirrors cmdSpawn).
+    // Ready card in the role group (mirrors cmdSpawn — sent synchronously in
+    // order, like Go's in-loop SendCard).
     const cs = asCardSender(p)
     if (cs !== undefined) {
       const note = `${name} · ${dir}\n${e.i18n.t('chatroom_topic_label')} ${topic}`
       const jumpMD = jumpButtonsMarkdown(parentJumpButtons(hubSessionKey, hubLabel, p))
-      const card = e.buildSpawnNotifyCard(dir, e.i18n.t('chatroom_ready'), note, jumpMD)
-      void cs.sendCard(syntheticMsg.replyCtx, card).catch((error: unknown) => {
+      try {
+        const card = await e.buildSpawnNotifyCard(dir, e.i18n.t('chatroom_ready'), note, jumpMD, syntheticMsg.sessionKey)
+        await cs.sendCard(syntheticMsg.replyCtx, card)
+      } catch (error) {
         console.warn(`chatroom: ready card send failed (role=${name}): ${String(error)}`)
-      })
+      }
     }
     out.push({ name, sessionKey: syntheticMsg.sessionKey, dir })
   }

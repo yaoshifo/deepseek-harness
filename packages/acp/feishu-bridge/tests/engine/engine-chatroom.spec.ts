@@ -491,7 +491,9 @@ describe('cmdChatroom', () => {
 
     handler?.(p, hubMsg(hub), ['taleb,munger', '议题二'])
     await waitFor(() => p.count === 2, 'roles spawned')
-    expect(e.sessions.getOrCreateActive(hub).getChatroomDirectRole()).toBe(false)
+    // The ready cards now carry the status footer (async git probe), so the
+    // after-start flag clear trails the last spawn by a beat.
+    await waitFor(() => !e.sessions.getOrCreateActive(hub).getChatroomDirectRole(), 'direct flag cleared')
   })
 
   it('stashes --research/--mode/--max-rounds on the picker path', async () => {
@@ -516,8 +518,13 @@ describe('cmdChatroom', () => {
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['--research', 'taleb,munger', '研究中国股市是否过热'])
-    // 2 role groups + 2 research-assistant subgroups = 4.
+    // 2 role groups + 2 research-assistant subgroups = 4. The assistant
+    // sessions register per role after that role's ready card (whose footer
+    // runs an async git probe), so wait for both.
     await waitFor(() => p.count === 4, '2 roles + 2 assistants')
+    await waitFor(() => e.collectSubtree(hub)
+      .map(k => e.sessions.getOrCreateActive(k))
+      .filter(sess => sess.getResearchAssistant()).length === 2, 'assistant sessions registered')
     const s = e.sessions.getOrCreateActive(hub)
     expect(s.getChatroomResearch()).toBe(true)
     expect(s.getChatroomResearchMode()).toBe('auto')

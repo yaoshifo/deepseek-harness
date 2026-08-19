@@ -81,6 +81,7 @@ import type {
 import {
   asCardSender,
   asCardRefresher,
+  asCardSenderWithUpdate,
   asChatJumpURLer,
   asCronReplyTargetResolver,
   asForkQuerierWithProvider,
@@ -97,6 +98,7 @@ import {
   asSessionEnvInjector,
   asSessionModeInjector,
   asSpawnedChatActiveChecker,
+  asSpawnedChatLister,
   asSpawnedChatStateUpdater,
   asWorkDirSwitcher,
   asWorktreeOrphanResolver,
@@ -114,7 +116,25 @@ import {
   shouldSurfaceUnsolicitedPermission as shouldSurfaceHelper,
   buildDenyMessage,
 } from './permission.js'
-import { CardButton, CardCheckOption, newCard, type Card, type CardHeader } from '../card.js'
+import { CardButton, CardCheckOption, newCard, appendIntoLastCollapsible, type Card, type CardElement, type CardHeader } from '../card.js'
+import {
+  appendReplyFooter,
+  buildCompletionUsage as buildCompletionUsageFields,
+  parseSelfReportedCtx,
+  stripCtxSelfReport,
+  buildReplyFooter as buildReplyFooterText,
+  buildStatusFooter as buildStatusFooterText,
+  buildStatusFooterElements as buildFooterElements,
+  CompletionUsageFields,
+  replyFooterContextText,
+  setCompletionDurations as setDurations,
+  setTokenRate as setTokenRateMsg,
+  unionDuration,
+  type BuildCompletionUsageArgs,
+  type ContextUsage,
+  type Interval,
+} from './status-footer.js'
+import type { UsageProvider } from './usage.js'
 import { Session, SessionManager } from './session.js'
 import { childLabel, SubtaskGather } from './subtask.js'
 import {
@@ -212,6 +232,8 @@ export interface DisplayCfg {
   toolMaxLen: number
   /** Max plan content length before truncation; 0 disables (Go PlanMaxLen). M3. */
   planMaxLen: number
+  /** Editor base URL linked from status footers (Go EditorURL; '' disables). M7. */
+  editorUrl: string
 }
 
 /** A message queued while the session was busy (Go queuedMessage). */
@@ -269,6 +291,18 @@ export class InteractiveState {
   approveAll = false
   /** Number of auto-compaction events this session (Go state.compactionCount). M3. */
   compactionCount = 0
+  /** Cumulative non-cached input tokens across turns (Go state.cumulativeInputTokens). M7. */
+  cumulativeInputTokens = 0
+  /** Cumulative cache-hit input tokens across turns (Go state.cumulativeCacheInputTokens). M7. */
+  cumulativeCacheInputTokens = 0
+  /** Handle of the last ✅ completion notification card (Go state.notificationHandle). M7. */
+  notificationHandle: unknown
+  /** Footer text of the last completion notification (Go state.notificationFooterMsg). M7. */
+  notificationFooterMsg = ''
+  /** Footer elements of the last completion notification (Go state.notificationFooterElements). M7. */
+  notificationFooterElements: CardElement[] = []
+  /** Header suffix of the last completion notification (Go state.notificationHeaderSuffix). M7. */
+  notificationHeaderSuffix = ''
   /** Per-state async sender serializing platform PATCHes (Go state.sender). */
   sender: AsyncSender | undefined
   /** The turn's active streaming preview (bound for bump routing). */
@@ -318,6 +352,18 @@ export class InteractiveState {
     if (this.effectiveIdleTimeout > 0) return this.effectiveIdleTimeout
     return fallback
   }
+}
+
+/**
+ * Per-turn wall-clock anchors feeding the completion footer (Go turnStart /
+ * agentStartTime / nonModelIntervals): the token rate's thinking time is the
+ * agent span minus tool-execution and permission waits, with parallel tool
+ * windows merged once (Go unionDuration).
+ */
+export interface TurnTiming {
+  turnStart: number
+  agentStart: number
+  intervals: Interval[]
 }
 
 /** Cancellable sleep for the idle slot of the event-loop race. */
@@ -489,6 +535,33 @@ export function jumpButtonsMarkdown(buttons: CardButton[]): CardMarkdownLike & {
   return { content: parts.join('  ·  '), ok: true }
 }
 
+/** Session's display name: its own name, the chat's user meta, or the key (Go sessionDisplayName). */
+function sessionDisplayName(s: Session | undefined, sessions: SessionManager, sessionKey: string): string {
+  const own = s?.getName().trim()
+  if (own !== undefined && own !== '') return own
+  const meta = sessions.getUserMeta(sessionKey)
+  const chatName = meta?.chatName.trim() ?? ''
+  if (chatName !== '') return chatName
+  return sessionKey
+}
+
+/** Breadcrumb of ancestor chats ending in the current chat's name (Go breadcrumbMarkdown). */
+function breadcrumbMarkdown(
+  chain: Array<{ chatID: string; name: string }>,
+  currentName: string,
+  p: Platform,
+): CardMarkdownLike | undefined {
+  if (chain.length === 0) return undefined
+  const parts: string[] = []
+  for (const n of chain) {
+    const name = n.name !== '' ? n.name : n.chatID
+    const url = asChatJumpURLer(p)?.chatJumpURL(n.chatID) ?? ''
+    parts.push(`[${name}](${url})`)
+  }
+  parts.push(currentName !== '' ? currentName : '本群')
+  return { content: `📍 ${parts.join(' › ')}` }
+}
+
 function truncateIf(s: string, maxLen: number): string {
   if (maxLen <= 0) return s
   const runes = Array.from(s)
@@ -526,6 +599,7 @@ export class Engine {
     toolProgress: false,
     toolMaxLen: 0,
     planMaxLen: defaultPlanMaxLen,
+    editorUrl: '',
   }
   /** Streaming preview switches (Go e.streamPreview). */
   streamPreview: StreamPreviewCfg = defaultStreamPreviewCfg()
@@ -587,6 +661,24 @@ export class Engine {
   /** Whether role sessions run as isolated subagents; dsh uses bare personas (Go chatroomIsolateRoleContext). */
   chatroomIsolateRoleContext = ''
 
+  // ── usage + status footer (Go engine usage* fields, M7) ─────────────────
+  /** Generic fallback context window for heuristic ctx estimates (Go modelContextWindow). */
+  readonly modelContextWindow = 200_000
+  /** Whether the ctx/cache lines are shown on the completion footer (Go showContextIndicator). */
+  showContextIndicator = true
+  /** Effective context window in tokens (Go contextWindow). */
+  contextWindow = this.modelContextWindow
+  /** Project-level fallback window (Go projectContextWindow). */
+  projectContextWindow = this.modelContextWindow
+  /** Provider quota summaries appended to the completion footer (Go usageProviders). */
+  usageProviders: UsageProvider[] = []
+  /** Per-turn completion footer fields (Go completionUsage* fields). */
+  readonly usage = new CompletionUsageFields()
+  /** Whether the Codex-style reply footer is appended to replies (Go replyFooterEnabled). */
+  replyFooterEnabled = false
+  /** Agent-level usage fetch cache for the reply footer (Go replyFooterUsageCache). */
+  private readonly replyFooterUsageCache = { text: '', fetchedAt: 0 }
+
   /** Session keys with a manual rename pending in the async LLM window (Go pendingRename). */
   private readonly pendingRename = new Set<string>()
   /** Ring buffer of recently used group icons for prompt dedup (Go recentIcons). */
@@ -633,6 +725,35 @@ export class Engine {
   /** Override intermediate-message display settings. */
   setDisplayConfig(cfg: Partial<DisplayCfg>): void {
     this.display = { ...this.display, ...cfg }
+  }
+
+  /** Toggle the ctx/cache lines on the completion footer (Go SetShowContextIndicator). */
+  setShowContextIndicator(show: boolean): void {
+    this.showContextIndicator = show
+  }
+
+  /** Set the project-level context window fallback (Go SetContextWindow). */
+  setContextWindow(w: number): void {
+    this.contextWindow = w
+    this.projectContextWindow = w
+  }
+
+  /** Re-resolve the context window from the active provider (Go ApplyActiveProviderContextWindow). */
+  applyActiveProviderContextWindow(): void {
+    const active = asProviderSwitcher(this.agent)?.getActiveProvider()
+    this.contextWindow = active?.contextWindow && active.contextWindow > 0
+      ? active.contextWindow
+      : this.projectContextWindow
+  }
+
+  /** Set the provider quota list appended to the completion footer (Go SetUsageProviders). */
+  setUsageProviders(providers: UsageProvider[]): void {
+    this.usageProviders = providers
+  }
+
+  /** Toggle the Codex-style reply footer (Go SetReplyFooterEnabled). */
+  setReplyFooterEnabled(show: boolean): void {
+    this.replyFooterEnabled = show
   }
 
   /** Idle timeout before a silent turn is killed; 0 disables. */
@@ -1277,6 +1398,12 @@ export class Engine {
     let silentHold = false
     let activeToolCalls = 0
     let stallRetries = 0
+    // Completion-footer timing (Go turnStart/agentStartTime/nonModelIntervals):
+    // tool executions and permission waits open intervals subtracted from the
+    // agent span when computing the token rate.
+    const timing: TurnTiming = { turnStart: Date.now(), agentStart: Date.now(), intervals: [] }
+    const openToolIntervals = new Map<string, number>()
+    let toolIntervalSeq = 0
 
     const channel = state.agentSession?.events()
     if (channel === undefined) return
@@ -1505,6 +1632,8 @@ export class Engine {
           toolCount++
           activeToolCalls++
           state.activeToolCalls = activeToolCalls
+          const toolKey = event.toolID !== undefined && event.toolID !== '' ? event.toolID : `#t${++toolIntervalSeq}`
+          openToolIntervals.set(toolKey, Date.now())
           if (this.display.toolProgress && sp.canPreview()) {
             await sp.appendProgress(newToolProgressEntry(event.toolName ?? '', event.toolInput ?? '', event.toolID ?? ''))
           }
@@ -1512,6 +1641,12 @@ export class Engine {
         }
 
         case 'tool_result': {
+          const closeKey = event.toolID !== undefined && event.toolID !== '' ? event.toolID : `#t${toolIntervalSeq}`
+          const closedStart = openToolIntervals.get(closeKey)
+          if (closedStart !== undefined) {
+            openToolIntervals.delete(closeKey)
+            timing.intervals.push({ start: closedStart, end: Date.now() })
+          }
           if (this.display.toolMessages) {
             const result = (event.toolResult ?? '').trim() || event.content.trim()
             if (result !== '' && p !== undefined) {
@@ -1692,18 +1827,26 @@ export class Engine {
           // stopCh). The loop stays parked here so post-answer events flow
           // through this same loop; the receive-race's channel-closed branch
           // never fires because we await before the next receive.
+          const permWaitStart = Date.now()
           await Promise.race([
             resolved,
             state.stopSignal(),
           ])
+          timing.intervals.push({ start: permWaitStart, end: Date.now() })
           state.permissionPending = false
           break
         }
 
         case 'result': {
+          // Tool calls still open (no tool_result) close now so their wait
+          // still leaves the thinking-time span (Go closes at result too).
+          for (const start of openToolIntervals.values()) {
+            timing.intervals.push({ start, end: Date.now() })
+          }
+          openToolIntervals.clear()
           const finished = await this.handleResultEvent(
             state, session, sessions, sessionKey, replyCtx, event,
-            textParts, segmentStart, toolCount, pendingSend, sp, cp, barrier)
+            textParts, segmentStart, toolCount, pendingSend, sp, cp, barrier, timing)
           if (finished.kind === 'queued') {
             // A queued message takes over this loop as a fresh turn (Go
             // in-loop drain): reset per-turn state and continue.
@@ -1758,7 +1901,7 @@ export class Engine {
     state: InteractiveState,
     session: Session,
     sessions: SessionManager,
-    _sessionKey: string,
+    sessionKey: string,
     replyCtx: unknown,
     event: Event,
     textParts: string[],
@@ -1768,6 +1911,7 @@ export class Engine {
     sp: StreamPreview,
     cp: CompactProgressWriter,
     barrier: () => Promise<void>,
+    timing: TurnTiming,
   ): Promise<{ kind: 'done' } | { kind: 'queued'; sendDone: Promise<unknown> }> {
     // Persist via the live session id (event.sessionID may be empty).
     if (state.agentSession !== undefined) {
@@ -1799,7 +1943,13 @@ export class Engine {
         : this.i18n.t(MsgSilentReply)
     }
 
-    const baseResponse = fullResponse.replace(/[ \n]+$/, '')
+    // Context usage indicator: prefer SDK tokens, fall back to the agent's
+    // self-reported [ctx: ~N%] line — which is stripped from the delivered
+    // reply and surfaced on the ✅ notification instead (Go sdkPlausible /
+    // selfPct + ctxSelfReportRe).
+    const sdkPlausible = (event.inputTokens ?? 0) >= 100
+    const selfPct = parseSelfReportedCtx(fullResponse)
+    const baseResponse = stripCtxSelfReport(fullResponse).replace(/[\n ]+$/, '')
     session.addHistory('assistant', baseResponse)
     if (sdkResult !== '') session.setLastResult(sdkResult)
     sessions.save()
@@ -1813,6 +1963,44 @@ export class Engine {
         else cleanResponse = stripped
       }
     }
+
+    // Turn token accounting feeds the ✅ footer's ctx/hit lines (Go turnDelta
+    // / cumulative counters at engine_events.go:4630).
+    const turnDelta = event.inputTokens ?? 0
+    state.cumulativeInputTokens += turnDelta
+    const totalInput = event.totalInputTokens !== undefined && event.totalInputTokens > 0
+      ? event.totalInputTokens
+      : turnDelta
+    const cacheDelta = Math.max(0, totalInput - turnDelta)
+    state.cumulativeCacheInputTokens += cacheDelta
+    await this.buildCompletionUsage({
+      totalInputTokens: totalInput,
+      sdkPlausible,
+      selfPct,
+      nonCachedDelta: turnDelta,
+      nonCachedCum: state.cumulativeInputTokens,
+      cachedDelta: cacheDelta,
+      cachedCum: state.cumulativeCacheInputTokens,
+      numTurns: event.numTurns ?? 0,
+      compactionCount: state.compactionCount,
+    })
+    // The rate's thinking time is the agent wall-clock minus tool/permission
+    // waits, with parallel tools merged (Go thinkingTime).
+    const agentDurationMs = Math.max(0, Date.now() - timing.agentStart)
+    this.setTokenRate(event.outputTokens ?? 0, Math.max(0, agentDurationMs - unionDuration(timing.intervals)))
+
+    // Codex-style reply footer rides the delivered reply (Go buildReplyFooter).
+    if (!isSilent) {
+      const replyAgent = state.agent ?? this.agent
+      const footer = await this.buildReplyFooter(
+        replyAgent,
+        state.agentSession,
+        '',
+        replyFooterContextText(this.replyFooterSessionContextUsage(state.agentSession), this.i18n),
+      )
+      if (footer !== '') cleanResponse = appendReplyFooter(cleanResponse, footer)
+    }
+    fullResponse = cleanResponse
 
     // First-turn fallback: if this is a delegated subtask session and the
     // agent finished without explicitly reporting, push the result to the
@@ -1890,18 +2078,10 @@ export class Engine {
     await barrier()
     void cp
     if (sendCompletionNotification && p !== undefined && state.pendingMessages.length === 0) {
-      const notifier = asCompletionNotifier(p)
-      if (notifier !== undefined) {
-        let usageMsg = this.i18n.t(MsgTurnCompleted)
-        const inTok = event.totalInputTokens ?? 0
-        const outTok = event.outputTokens ?? 0
-        if (inTok > 0 || outTok > 0) usageMsg += ` · tokens ${inTok}+${outTok}`
-        try {
-          await notifier.sendCompletionNotification(replyCtx, usageMsg)
-        } catch (error) {
-          console.warn(`completion notification failed: ${String(error)}`)
-        }
-      }
+      this.setCompletionDurations(agentDurationMs, Date.now() - timing.turnStart)
+      await this.sendTurnCompletionCard(
+        state, p, replyCtx, session, sessionKey,
+        this.perChatWorkDir(this.dirOverrideKey(sessionKey)))
     }
 
     // Queued messages take over this loop as a fresh turn (Go in-loop drain).
@@ -3184,6 +3364,209 @@ export class Engine {
     return [{ content: `${this.i18n.t(MsgSubtaskDiffSummary)}: ${s}` }]
   }
 
+  // ── status footer + completion notification (Go engine_cmd_misc.go, M7) ──
+
+  /** Build and store the per-turn completion usage fields (Go buildCompletionUsage). */
+  async buildCompletionUsage(args: BuildCompletionUsageArgs): Promise<void> {
+    await buildCompletionUsageFields(this.usage, this.showContextIndicator, this.usageProviders, this.baseWorkDir, args)
+  }
+
+  /** Record agent processing time for the completion header (Go setCompletionDurations). */
+  setCompletionDurations(agentDurationMs: number, turnDurationMs: number): void {
+    setDurations(this.usage, agentDurationMs, turnDurationMs)
+  }
+
+  /** Compute the per-turn output-token rate (Go setTokenRate). */
+  setTokenRate(outputTokens: number, thinkingTimeMs: number): void {
+    setTokenRateMsg(this.usage, outputTokens, thinkingTimeMs)
+  }
+
+  /** Plain-text status footer (Go buildStatusFooter). */
+  async buildStatusFooter(
+    prefix: string,
+    agent: Agent | undefined,
+    workspaceDir: string,
+    agentSessionID: string,
+    sessionKey: string,
+  ): Promise<string> {
+    return buildStatusFooterText(prefix, {
+      fields: this.usage,
+      agent,
+      workspaceDir,
+      agentSessionID,
+      sessionKey,
+      editorUrl: this.display.editorUrl,
+    })
+  }
+
+  /** Structured footer elements for the purple notification card (Go buildStatusFooterElements). */
+  async buildStatusFooterElements(
+    agent: Agent | undefined,
+    workspaceDir: string,
+    agentSessionID: string,
+    sessionKey: string,
+  ): Promise<{ headerSuffix: string; elements: CardElement[] }> {
+    return buildFooterElements({
+      fields: this.usage,
+      agent,
+      workspaceDir,
+      agentSessionID,
+      sessionKey,
+      editorUrl: this.display.editorUrl,
+    })
+  }
+
+  /** Codex-style reply footer (Go buildReplyFooter). */
+  async buildReplyFooter(
+    agent: Agent | undefined,
+    agentSession: AgentSession | undefined,
+    workspaceDir: string,
+    contextLeft: string,
+  ): Promise<string> {
+    if (!this.replyFooterEnabled || agent === undefined) return ''
+    return buildReplyFooterText(
+      { i18n: this.i18n, cache: this.replyFooterUsageCache },
+      agent,
+      agentSession,
+      workspaceDir,
+      contextLeft,
+    )
+  }
+
+  /** Session's context-usage snapshot for the reply footer (Go replyFooterSessionContextUsage). */
+  replyFooterSessionContextUsage(session: AgentSession | undefined): ContextUsage | undefined {
+    return (session as { getContextUsage?: () => ContextUsage | undefined } | undefined)?.getContextUsage?.()
+  }
+
+  /**
+   * Spawn parent/child jump links for the notification card (Go
+   * spawnJumpMarkdown): a breadcrumb for children, one button per active
+   * child group for parents. Returned as a markdown line so it folds inside
+   * the collapsible panel.
+   */
+  async spawnJumpMarkdown(
+    p: Platform,
+    sessions: SessionManager,
+    cur: Session,
+    sessionKey: string,
+  ): Promise<CardMarkdownLike | undefined> {
+    if (cur.getParentSessionKey() !== '') {
+      const chain = this.ancestorChain(p, sessions, cur)
+      const currentName = sessionDisplayName(cur, sessions, sessionKey)
+      return breadcrumbMarkdown(chain, currentName, p)
+    }
+    const md = jumpButtonsMarkdown(await this.spawnJumpButtons(p, sessions, cur, sessionKey))
+    return md.ok ? md : undefined
+  }
+
+  /** Parent→child or child→parent jump buttons (Go spawnJumpButtons). */
+  private async spawnJumpButtons(p: Platform, sessions: SessionManager, cur: Session, sessionKey: string): Promise<CardButton[]> {
+    const jump: CardButton[] = []
+    const parentKey = cur.getParentSessionKey()
+    if (parentKey !== '') {
+      const pcid = chatIDFromSessionKey(parentKey, p.name())
+      if (pcid !== '') {
+        let name = cur.getParentChatName()
+        if (name === '') name = sessionDisplayName(undefined, sessions, parentKey)
+        jump.push({ text: `↩ ${name}`, type: 'primary', value: '', url: this.chatJumpURL(p, pcid) })
+      }
+      return jump
+    }
+
+    const active = new Set((await asSpawnedChatLister(p)?.listActiveSpawnedChats() ?? []).map(c => c.chatID))
+    const { idToKey } = sessions.sessionKeyMap()
+    const seen = new Set<string>()
+    for (const s of sessions.allSessions()) {
+      if (s.getParentSessionKey() !== sessionKey) continue
+      const ck = idToKey[s.id] ?? ''
+      const ccid = chatIDFromSessionKey(ck, p.name())
+      if (ccid === '' || seen.has(ccid)) continue
+      if (active.size > 0 && !active.has(ccid)) continue
+      seen.add(ccid)
+      jump.push({ text: sessionDisplayName(s, sessions, ck), type: 'primary', value: '', url: this.chatJumpURL(p, ccid) })
+    }
+    return jump
+  }
+
+  /** Ancestor spawned chats of cur, root first (Go ancestorChain). */
+  private ancestorChain(p: Platform, sessions: SessionManager, cur: Session): Array<{ chatID: string; name: string }> {
+    const { idToKey } = sessions.sessionKeyMap()
+    const keyToSession = new Map<string, Session>()
+    for (const s of sessions.allSessions()) {
+      const k = idToKey[s.id]
+      if (k !== undefined) keyToSession.set(k, s)
+    }
+    const chain: Array<{ chatID: string; name: string }> = []
+    const visited = new Set<string>()
+    let parentKey = cur.getParentSessionKey()
+    while (parentKey !== '' && !visited.has(parentKey)) {
+      visited.add(parentKey)
+      const ps = keyToSession.get(parentKey)
+      const cid = chatIDFromSessionKey(parentKey, p.name())
+      // Include every ancestor except the top-level bot DM; ancestors absent
+      // from the local store stay with unknown parentage (Go mirrors).
+      if (cid !== '' && !(ps !== undefined && ps.getParentSessionKey() === '')) {
+        chain.push({ chatID: cid, name: sessionDisplayName(ps, sessions, parentKey) })
+      }
+      if (ps === undefined) break
+      parentKey = ps.getParentSessionKey()
+    }
+    return chain.reverse()
+  }
+
+  /**
+   * Emit the ✅ completion notification card (purple header, status footer:
+   * model/ctx/workdir/git + spawn jump links + subtask diff) when no queued
+   * messages remain (Go sendTurnCompletionCard). Card-update platforms get
+   * the structured card and keep its handle; others fall back to the plain
+   * completion notifier.
+   */
+  async sendTurnCompletionCard(
+    state: InteractiveState,
+    p: Platform,
+    replyCtx: unknown,
+    session: Session,
+    sessionKey: string,
+    workspaceDir: string,
+  ): Promise<void> {
+    if (state.pendingMessages.length > 0) return
+    const footerMsg = await this.buildStatusFooter(
+      this.i18n.t(MsgTurnCompleted), this.agent, workspaceDir, session.getAgentSessionID(), sessionKey)
+    const cu = asCardSenderWithUpdate(p)
+    if (cu !== undefined) {
+      const { headerSuffix, elements } = await this.buildStatusFooterElements(
+        this.agent, workspaceDir, session.getAgentSessionID(), sessionKey)
+      let footerElements = elements
+      const jumpMD = await this.spawnJumpMarkdown(p, this.sessions, session, sessionKey)
+      if (jumpMD !== undefined && jumpMD.content !== '') {
+        footerElements = appendIntoLastCollapsible(footerElements, { kind: 'markdown', content: jumpMD.content })
+      }
+      footerElements = [...footerElements, ...(await this.subtaskDiffElements(session, workspaceDir)).map(d => ({ kind: 'markdown' as const, content: d.content }))]
+      if (footerElements.length > 0 || headerSuffix !== '') {
+        const card = newCard().title(headerSuffix, 'purple')
+        for (const el of footerElements) card.raw(el)
+        try {
+          const h = await cu.sendCardWithHandle(replyCtx, card.build())
+          state.notificationHandle = h
+          state.notificationFooterMsg = footerMsg
+          state.notificationFooterElements = footerElements
+          state.notificationHeaderSuffix = headerSuffix
+        } catch (error) {
+          console.warn(`notification card send failed (${p.name()}): ${String(error)}`)
+        }
+      }
+      return
+    }
+    const notifier = asCompletionNotifier(p)
+    if (notifier !== undefined && footerMsg !== '') {
+      try {
+        await notifier.sendCompletionNotification(replyCtx, footerMsg)
+      } catch (error) {
+        console.warn(`completion notification failed (${p.name()}): ${String(error)}`)
+      }
+    }
+  }
+
   /**
    * Create an isolated child group + session that runs a delegated piece of
    * work in parallel, woken from the agent via the subtask tool (Go
@@ -3370,11 +3753,19 @@ export class Engine {
       }
     }
 
-    // Notification card in the new group.
+    // Notification card in the new group. Reset the per-turn usage fields
+    // first so the parent's last-turn ctx numbers don't bleed onto the
+    // child's readiness card (Go buildCompletionUsage(0) before the card).
     const cs = asCardSender(p)
     if (cs !== undefined) {
+      await this.buildCompletionUsage({
+        totalInputTokens: 0, sdkPlausible: false, selfPct: 0,
+        nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
+        numTurns: 0, compactionCount: 0,
+      })
       const jumpMD = jumpButtonsMarkdown(parentJumpButtons(parentSessionKey, this.subtaskParentLabel(parent), p))
-      const card = this.buildSpawnNotifyCard(workDir, this.i18n.t(MsgSpawnGroupReady), '', jumpMD)
+      const card = await this.buildSpawnNotifyCard(
+        workDir, this.i18n.t(MsgSpawnGroupReady), '', jumpMD, syntheticMsg.sessionKey)
       try {
         await cs.sendCard(syntheticMsg.replyCtx, card)
       } catch (error) {
@@ -4171,15 +4562,32 @@ export class Engine {
     return asChatJumpURLer(p)?.chatJumpURL(chatID) ?? ''
   }
 
-  /** Build the spawn/fork readiness card (Go buildSpawnNotifyCard, purple header). */
-  buildSpawnNotifyCard(workDir: string, fallbackTitle: string, extraNote: string, jumpMD: CardMarkdownLike): Card {
-    const builder = newCard().title(fallbackTitle, 'purple')
-    // TODO(M7): the full status footer (model/ctx%/git branch/RAM) lands with
-    // the usage domain; the notify body is the note + jump links for now.
-    if (extraNote !== '') builder.markdown(extraNote)
-    if (jumpMD.content !== '') builder.markdown(jumpMD.content)
-    if (workDir !== '') builder.note(`📁 ${workDir}`)
-    return builder.build()
+  /**
+   * Build the spawn/fork readiness card (Go buildSpawnNotifyCard, purple
+   * header): the full status footer elements plus the note and jump links.
+   */
+  async buildSpawnNotifyCard(
+    workDir: string,
+    fallbackTitle: string,
+    extraNote: string,
+    jumpMD: CardMarkdownLike,
+    sessionKey = '',
+  ): Promise<Card> {
+    const { headerSuffix, elements } = await this.buildStatusFooterElements(this.agent, workDir, '', sessionKey)
+    const title = headerSuffix !== '' ? headerSuffix : fallbackTitle
+    const builder = newCard().title(title, 'purple')
+    let els = elements
+    if (extraNote !== '') els = [...els, { kind: 'markdown', content: extraNote }]
+    if (jumpMD.content !== '') {
+      // Jump links fold into the collapsible panel — feishu does not fold
+      // column_set/button rows, so they stay markdown (Go mirrors).
+      els = appendIntoLastCollapsible(els, { kind: 'markdown', content: jumpMD.content })
+    }
+    if (els.length === 0 && workDir !== '') {
+      // No footer state at all: keep the minimal workdir note.
+      return builder.note(`📁 ${workDir}`).build()
+    }
+    return builder.raw(...els).build()
   }
 
   /**

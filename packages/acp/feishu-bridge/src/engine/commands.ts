@@ -75,7 +75,8 @@ import {
   MsgRenameDone,
 } from '../i18n/index.js'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.js'
-import { asChatAvatarStateSwitcher, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, type GroupSpawnOptions } from '../core/types.js'
+import { asCardSender, asChatAvatarStateSwitcher, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, type GroupSpawnOptions } from '../core/types.js'
+import { newCard } from '../card.js'
 import type { Engine } from './engine.js'
 import type { SessionManager } from './session.js'
 import { childLabel } from './subtask.js'
@@ -172,7 +173,32 @@ export async function cmdNew(e: Engine, p: Platform, msg: Message, args: string[
   const prefix = name === ''
     ? e.i18n.t(MsgNewSessionCreated)
     : e.i18n.tf(MsgNewSessionCreatedName, name)
-  await e.reply(p, msg.replyCtx, prefix)
+  // Unified status footer card (/new has no token count): reset the per-turn
+  // usage fields first so the previous turn's numbers don't bleed in (Go
+  // buildCompletionUsage(0) + the purple card at engine_cmd_session.go:78).
+  await e.buildCompletionUsage({
+    totalInputTokens: 0, sdkPlausible: false, selfPct: 0,
+    nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
+    numTurns: 0, compactionCount: 0,
+  })
+  const workDir = e.perChatWorkDir(e.dirOverrideKey(msg.sessionKey))
+  const cs = asCardSender(p)
+  if (cs !== undefined) {
+    const { headerSuffix, elements } = await e.buildStatusFooterElements(e.agent, workDir, '', msg.sessionKey)
+    const title = headerSuffix !== '' ? headerSuffix : prefix
+    if (elements.length > 0 || title !== '') {
+      const card = newCard().title(title, 'purple').raw(...elements).build()
+      try {
+        await cs.sendCard(msg.replyCtx, card)
+        return
+      } catch (error) {
+        console.warn(`/new card send failed (${p.name()}): ${String(error)}`)
+      }
+    }
+    await e.reply(p, msg.replyCtx, prefix)
+    return
+  }
+  await e.reply(p, msg.replyCtx, await e.buildStatusFooter(prefix, e.agent, workDir, '', msg.sessionKey))
 }
 
 /** The engine-facing session/agent context for commands (M1: single workspace). */
@@ -897,8 +923,9 @@ async function spawnGroupCommon(
   // Notification card for both paths (with and without user message).
   {
     const jumpMD = parentJumpButtonsFor(e, msg)
-    const card = e.buildSpawnNotifyCard(spawnOpts.workDir, e.i18n.t(opts.readyTitleKey), threadNote(opts.threadFlag), jumpMD)
-    void e.replyWithCard(p, syntheticMsg.replyCtx, card)
+    const readyTitle = e.i18n.t(opts.readyTitleKey)
+    void e.buildSpawnNotifyCard(spawnOpts.workDir, readyTitle, threadNote(opts.threadFlag), jumpMD, syntheticMsg.sessionKey)
+      .then(card => e.replyWithCard(p, syntheticMsg.replyCtx, card))
   }
 
   if (firstMsg !== '') {

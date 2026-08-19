@@ -343,6 +343,19 @@ export class DshAgentAdapter {
     return this.cfg.providers.find(p => p.name === this.cfg.activeProvider)
   }
 
+  /**
+   * ModelSwitcher (Go ModelSwitcher): the active route's model, for the
+   * status footer's 🤖 line. The [1m] alias stays stripped for display.
+   */
+  getModel(): string {
+    return stripModelAlias(this.activeRoute()?.model ?? '')
+  }
+
+  /** The active route's reasoning effort, for the reply footer (Go GetReasoningEffort). */
+  getReasoningEffort(): string {
+    return this.activeRoute()?.reasoningEffort ?? ''
+  }
+
   /** agentOptions for the active route (with the [1m] alias stripped). */
   private routeAgentOptions(): { provider: string; model: string; reasoningEffort?: string } {
     return this.agentOptionsForQuery('', '')

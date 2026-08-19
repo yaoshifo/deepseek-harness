@@ -36,7 +36,7 @@ function cronMsg(content: string) {
 }
 
 describe('registerCronCommands', () => {
-  it('merges into the session command table and keeps /new dispatchable', () => {
+  it('merges into the session command table and keeps /new dispatchable', async () => {
     const { e, disposeSession } = newEngine()
     const p = e.platforms[0] as ReturnType<typeof createStubCardPlatform>
     e.cronScheduler = new CronScheduler(new CronStore(tempDir()))
@@ -47,13 +47,17 @@ describe('registerCronCommands', () => {
 
       expect(e.dispatchCommand(p, cronMsg('/cron list'), '/cron list')).toBe(true)
       // /cron list on an empty store replies the empty message.
-      let sent = p.getSent()
+      const sent = p.getSent()
       expect(sent[sent.length - 1]).toBe(e.i18n.t(MsgCronEmpty))
 
       expect(e.dispatchCommand(p, cronMsg('/cr list'), '/cr list')).toBe(true)
       expect(e.dispatchCommand(p, cronMsg('/new'), '/new')).toBe(true)
-      sent = p.getSent()
-      expect(sent[sent.length - 1]).toContain('New session')
+      // M7: /new now sends the purple status-footer card (Go cmdNew) — an
+      // async build — so drain the command's promise before probing the card
+      // and the session reset instead of the old synchronous text reply.
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(p.sentCards).toHaveLength(1)
+      expect(e.sessions.getOrCreateActive('test:ch1').getHistory(0)).toHaveLength(0)
     } finally {
       disposeCron()
       disposeSession()
