@@ -41,3 +41,5 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 - **多工作空间（multi-workspace）未迁移**：channel→workspace 绑定（Go workspace_binding.go）与 per-workspace agent 池未接线；单工作空间 + `/dir` per-chat override 承担现网需求，E 群清查记为 C 类。
 - **/fork 只能从 live 父会话 seed**：Go 读持久化日志复制已完成 turns，TS 侧父会话不在内存时退化为全新会话（adapter startSession 的已注释天花板）。
 - **chatroom picker 状态为内存态**：daemon 重启后旧选择卡成孤儿（Go 保形）；plan-render/usage/predict-next 等 M7 剩余域按 MIGRATION.md 队列推进。
+- **`nav:/help` 按钮无效**：cron 卡片的返回按钮指向 Go 的 help 卡体系（`renderHelpGroupCard` + `nav:` 帮助导航），该体系未移植；点击会进 engine 打 "no handler" 日志而非静默消失。根治是移植 help 卡族；`/dir` 选择卡同样因此不带返回按钮。
+- **`/list`、`/status`、`/switch` 仍是纯文本**：Go 侧渲染 `renderListCardSafe`/`renderStatusCard` 卡片并带 `act:/list switch|delete N` 动作；TS 命令保持文本输出，待该渲染域移植。

@@ -520,6 +520,16 @@ export function asCardSender(p: Platform): CardSender | undefined {
 }
 
 /**
+ * Whether the platform can render interactive cards (Go supportsCards).
+ *
+ * @param p - the platform to inspect.
+ * @returns true when the platform implements the CardSender capability.
+ */
+export function supportsCards(p: Platform): boolean {
+  return asCardSender(p) !== undefined
+}
+
+/**
  * Structural check for the {@link CardSenderWithUpdate} capability.
  *
  * @param p - the platform to inspect.

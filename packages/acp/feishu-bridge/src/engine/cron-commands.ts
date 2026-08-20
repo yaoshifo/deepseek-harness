@@ -11,15 +11,10 @@
 
 import { Msg } from '../i18n/index.js'
 import { defaultBtn, dangerBtn, newCard, primaryBtn, type Card, type CardButton } from '../card.js'
-import { asCardSender, type Message, type Platform } from '../core/types.js'
+import { supportsCards, type Message, type Platform } from '../core/types.js'
 import type { Engine } from './engine.js'
 import { isAdmin } from './commands.js'
 import { CronJob, cronExprToHuman, generateCronID, truncateStr } from './cron.js'
-
-/** Whether the platform can render interactive cards (Go supportsCards). */
-function supportsCards(p: Platform): boolean {
-  return asCardSender(p) !== undefined
-}
 
 /** Prefix-match a subcommand against candidates (Go matchSubCommand). */
 function matchSubCommand(input: string, candidates: string[]): string {

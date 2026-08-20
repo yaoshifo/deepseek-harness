@@ -7,12 +7,15 @@
  */
 
 import { execFile } from 'node:child_process'
+import { mkdirSync, mkdtempSync } from 'node:fs'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { Engine } from '../../src/engine/engine.js'
+import { DirHistory } from '../../src/engine/dir-history.js'
+import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { createWorktree } from '../../src/engine/worktree.js'
 import { createStubAgent, createStubCardPlatform, newStubMessage, type RecordedCard, type StubCardPlatform } from '../stubs/engine-stubs.js'
 import type { Message, Platform } from '../../src/core/types.js'
@@ -20,7 +23,7 @@ import type { Message, Platform } from '../../src/core/types.js'
 const execFileP = promisify(execFile)
 
 interface RefreshingPlatform extends StubCardPlatform {
-  refreshed: Array<{ sessionKey: string; body: string }>
+  refreshed: Array<{ sessionKey: string; body: string; card: unknown }>
   refreshCard(sessionKey: string, card: unknown): Promise<void>
 }
 
@@ -30,7 +33,7 @@ function newRefreshingPlatform(n = 'test'): RefreshingPlatform {
     ...base,
     refreshed: [],
     refreshCard: async (sessionKey, card) => {
-      p.refreshed.push({ sessionKey, body: cardBody(card) })
+      p.refreshed.push({ sessionKey, body: cardBody(card), card })
     },
   }
   return p
@@ -140,6 +143,131 @@ describe('handleCardAction act:/wt', () => {
     const e = newEngine(p)
 
     e.receiveMessage(p, cardActionMsg('test:child-chat', 'act:/model 3'))
+    await new Promise((resolve) => { setTimeout(resolve, 50) })
+
+    expect(p.refreshed).toEqual([])
+    expect(p.sentCards).toEqual([])
+    expect(p.getSent()).toEqual([])
+  })
+})
+
+describe('handleCardAction /dir', () => {
+  const SK = 'test:chat1:u1'
+
+  /** Engine wired for /dir card actions: work-dir agent, history, override store. */
+  function newDirEngine(p: Platform, dirs: string[], current: string): Engine {
+    const agent = { ...createStubAgent(), getWorkDir: () => dirs[0] ?? '' }
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dh = new DirHistory(mkdtempSync(join(tmpdir(), 'fb-diract-')))
+    for (const d of dirs) dh.add('test', d)
+    e.setDirHistory(dh)
+    const store = new ProjectStateStore(join(mkdtempSync(join(tmpdir(), 'fb-diract-state-')), 'test.state.json'))
+    e.setProjectStateStore(store)
+    e.setBaseWorkDir(dirs[0] ?? '')
+    e.projectState?.setWorkspaceDirOverride(e.dirOverrideKey(SK), current)
+    return e
+  }
+
+  function makeDirs(n: number): string[] {
+    const root = mkdtempSync(join(tmpdir(), 'fb-diract-dirs-'))
+    const dirs: string[] = []
+    for (let i = 1; i <= n; i++) {
+      const d = join(root, `d${i}`)
+      mkdirSync(d)
+      dirs.push(d)
+    }
+    return dirs
+  }
+
+  function markdowns(card: unknown): string[] {
+    const c = card as RecordedCard
+    return c.elements
+      .filter(el => el.kind === 'markdown')
+      .map(el => (el as { content?: string }).content ?? '')
+  }
+
+  it('act:/dir select N switches the override and PATCHes the card with the reset notice', async () => {
+    const dirs = makeDirs(3)
+    const p = newRefreshingPlatform()
+    const e = newDirEngine(p, dirs, dirs[0] ?? '')
+    const dh = e.dirHistory
+    const target = dh?.get('test', 2) ?? ''
+
+    e.receiveMessage(p, cardActionMsg(SK, 'act:/dir select 2'))
+    await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+    expect(e.projectState?.workspaceDirOverride(e.dirOverrideKey(SK))).toBe(target)
+    expect(p.refreshed[0]!.sessionKey).toBe(SK)
+    expect(markdowns(p.refreshed[0]!.card)).toContain('Session ended. Next conversation will start a new Agent session.')
+  })
+
+  it('act:/dir reset restores the base work dir', async () => {
+    const dirs = makeDirs(3)
+    const p = newRefreshingPlatform()
+    const e = newDirEngine(p, dirs, dirs[1] ?? '')
+
+    e.receiveMessage(p, cardActionMsg(SK, 'act:/dir reset'))
+    await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+    expect(e.projectState?.workspaceDirOverride(e.dirOverrideKey(SK))).toBe('')
+    expect(p.getSent()).toEqual([])
+  })
+
+  it('act:/dir prev switches to the previous history entry', async () => {
+    const dirs = makeDirs(3)
+    const p = newRefreshingPlatform()
+    const e = newDirEngine(p, dirs, dirs[0] ?? '')
+    const prev = e.dirHistory?.get('test', 2) ?? ''
+
+    e.receiveMessage(p, cardActionMsg(SK, 'act:/dir prev'))
+    await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+    expect(e.projectState?.workspaceDirOverride(e.dirOverrideKey(SK))).toBe(prev)
+  })
+
+  it('act:/dir select with an invalid index re-renders without the notice and without switching', async () => {
+    const dirs = makeDirs(3)
+    const p = newRefreshingPlatform()
+    const e = newDirEngine(p, dirs, dirs[0] ?? '')
+
+    e.receiveMessage(p, cardActionMsg(SK, 'act:/dir select 99'))
+    await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+    expect(e.projectState?.workspaceDirOverride(e.dirOverrideKey(SK))).toBe(dirs[0] ?? '')
+  })
+
+  it('nav:/dir N only turns the page: no side effect, requested page rendered', async () => {
+    const dirs = makeDirs(7)
+    const p = newRefreshingPlatform()
+    const e = newDirEngine(p, dirs, dirs[0] ?? '')
+
+    e.receiveMessage(p, cardActionMsg(SK, 'nav:/dir 2'))
+    await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+    expect(e.projectState?.workspaceDirOverride(e.dirOverrideKey(SK))).toBe(dirs[0] ?? '')
+    expect(markdowns(p.refreshed[0]!.card)).not.toContain('Session ended. Next conversation will start a new Agent session.')
+  })
+
+  it('falls back to a new card when the platform cannot PATCH', async () => {
+    const dirs = makeDirs(3)
+    const p = createStubCardPlatform('test')
+    const e = newDirEngine(p, dirs, dirs[0] ?? '')
+
+    e.receiveMessage(p, cardActionMsg(SK, 'act:/dir select 2'))
+    await waitFor(() => p.sentCards.length === 1, 'fallback card')
+
+    expect(p.sentCards).toHaveLength(1)
+    const card = p.sentCards[0] as { header?: { color: string } }
+    expect(card.header?.color).toBe('turquoise')
+  })
+
+  it('unknown nav: commands are consumed without a turn or a card', async () => {
+    const dirs = makeDirs(2)
+    const p = newRefreshingPlatform()
+    const e = newDirEngine(p, dirs, dirs[0] ?? '')
+
+    // The cron card's back button value: no help-card handler exists yet.
+    e.receiveMessage(p, cardActionMsg(SK, 'nav:/help'))
     await new Promise((resolve) => { setTimeout(resolve, 50) })
 
     expect(p.refreshed).toEqual([])

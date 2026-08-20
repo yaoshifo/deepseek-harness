@@ -374,6 +374,44 @@ describe('/dir', () => {
     }
   })
 
+  it('sends the picker card on card platforms instead of plain text', async () => {
+    const cardP = createStubCardPlatform('feishu')
+    const e = new Engine('test', workDirAgent('/tmp/project-a'), [cardP], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      await cmdDir(e, cardP, msg(), [])
+      expect(cardP.sentCards).toHaveLength(1)
+      const card = cardP.sentCards[0] as { header?: { title: string; color: string } }
+      expect(card.header).toEqual({ title: 'Working directory', color: 'turquoise' })
+      expect(cardP.getSent()).toHaveLength(0)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('replies with the picker card after a successful switch on card platforms', async () => {
+    const nextDir = join(temp, 'next')
+    await mkdir(nextDir)
+    const store = new ProjectStateStore(join(temp, 'state', 'test.state.json'))
+    const cardP = createStubCardPlatform('feishu')
+    const e = new Engine('test', workDirAgent(temp), [cardP], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      e.setProjectStateStore(store)
+      const m = msg()
+      await cmdDir(e, cardP, m, [nextDir])
+      expect(store.workspaceDirOverride(stripUserID(m.sessionKey))).toBe(nextDir)
+      expect(cardP.sentCards).toHaveLength(1)
+      const card = cardP.sentCards[0] as { header?: { color: string }; elements: Array<{ kind: string; content?: string }> }
+      expect(card.header?.color).toBe('turquoise')
+      const mds = card.elements.filter(el => el.kind === 'markdown')
+      expect(mds.some(el => el.content === 'Session ended. Next conversation will start a new Agent session.')).toBe(true)
+      expect(cardP.getSent()).toHaveLength(0)
+    } finally {
+      dispose()
+    }
+  })
+
   it('switches the directory and resets the session', async () => {
     const nextDir = join(temp, 'next')
     await mkdir(nextDir)

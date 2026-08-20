@@ -128,6 +128,8 @@ import { spawn } from 'node:child_process'
 import { basename, join as joinPath } from 'node:path'
 import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asRecallNotifier, asReplyExporter } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
+import { commandContext, dirApply } from './commands.js'
+import { renderDirCardSafe } from './dir-card.js'
 import { executeCardAction } from './cron-commands.js'
 import { cancelQueuedByMessageID } from './recall.js'
 import { triggerInsights } from './predict.js'
@@ -5856,27 +5858,71 @@ export class Engine {
 
   /**
    * Handle one card-button action dispatched by a platform (Go handleCardNav,
-   * M4 subset: the worktree Keep/Remove card). `action` is the full act:
-   * value; the command runs its side effect and the pressed card is replaced
-   * in place via the platform's card refresher, falling back to a new card.
-   * Other act: commands are consumed silently — their render domains arrive
-   * with later milestones.
+   * M4 subset: the worktree Keep/Remove card and the /dir picker card).
+   * `action` is the full act:/nav: value; `act:` runs the command's side
+   * effect and the pressed card is replaced in place via the platform's card
+   * refresher (falling back to a new card), while `nav:` only re-renders
+   * (Go handleCardNav's prefix split). Other commands are consumed silently —
+   * their render domains arrive with later milestones.
    * @param p - Platform the card action arrived on.
    * @param msg - The card-action message.
-   * @param action - Full act: value carried by the pressed button.
+   * @param action - Full act:/nav: value carried by the pressed button.
    */
   async handleCardAction(p: Platform, msg: Message, action: string): Promise<void> {
     // Any card-button click means the user is back — abort in-flight HTML
     // renders (Go handleCardNav's cancelRenders).
     cancelRenders(this.interactiveStates.get(msg.sessionKey))
-    const body = action.slice('act:'.length)
+    const colonIdx = action.indexOf(':')
+    if (colonIdx === -1) return
+    const prefix = action.slice(0, colonIdx)
+    if (prefix !== 'act' && prefix !== 'nav') return
+    const body = action.slice(colonIdx + 1)
     const spaceIdx = body.indexOf(' ')
     const cmd = spaceIdx === -1 ? body : body.slice(0, spaceIdx)
     const args = spaceIdx === -1 ? '' : body.slice(spaceIdx + 1).trim()
     if (cmd === '/cron') {
       // Cron card buttons only flip scheduler state; no card is re-rendered
       // (Go executeCardAction's "/cron" case returns an empty string).
-      executeCardAction(this, cmd, args, msg.sessionKey)
+      if (prefix === 'act') executeCardAction(this, cmd, args, msg.sessionKey)
+      return
+    }
+
+    if (cmd === '/dir') {
+      // act:/dir switches first (select N / reset / prev, Go executeCardAction
+      // mapping); nav:/dir only turns the page.
+      let notice = ''
+      let page = 1
+      if (prefix === 'act') {
+        const fields = args.split(/\s+/).filter(f => f !== '')
+        const sub = fields[0] ?? ''
+        let applyArgs: string[] | undefined
+        if (sub === 'select' && fields.length >= 2) applyArgs = [fields[1] ?? '']
+        else if (sub === 'reset') applyArgs = ['reset']
+        else if (sub === 'prev') applyArgs = ['-']
+        if (applyArgs !== undefined) {
+          const { agent, sessions, interactiveKey } = commandContext(this, msg)
+          const [errMsg] = await dirApply(this, agent, sessions, interactiveKey, msg.sessionKey, applyArgs)
+          if (errMsg !== '') {
+            console.info(`engine: dir card action failed (${msg.sessionKey}): ${errMsg}`)
+          } else {
+            notice = this.i18n.t(Msg.DirSessionReset)
+          }
+        }
+      } else {
+        const n = Number.parseInt(args, 10)
+        if (Number.isInteger(n) && n > 0) page = n
+      }
+      const card = renderDirCardSafe(this, msg.sessionKey, page, notice)
+      const refresher = asCardRefresher(p)
+      if (refresher !== undefined) {
+        try {
+          await refresher.refreshCard(msg.sessionKey, card)
+          return
+        } catch (error) {
+          console.warn(`engine: card refresh failed, sending a new card (${msg.sessionKey}): ${String(error)}`)
+        }
+      }
+      await this.replyWithCard(p, msg.replyCtx, card)
       return
     }
 

@@ -2,8 +2,9 @@
  * Session-lifecycle commands ported from cc-connect core/engine_cmd_session.go
  * and the /dir machinery in engine_cmd_workspace.go: /new /stop /sessions
  * (/list) /switch /status /dir (+/cd alias), plus the M4 spawn family
- * (/spawn /sp, /fork /fk, /done --reply). Plain-text surface only — the
- * card renderers arrive with M2's card system.
+ * (/spawn /sp, /fork /fk, /done --reply). /dir renders the picker card on
+ * card platforms (dir-card.ts) with a plain-text fallback; the other
+ * commands stay plain text.
  *
  * @module dsh-feishu-bridge/commands
  */
@@ -13,7 +14,7 @@ import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Msg } from '../i18n/index.js'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.js'
-import { asCardSender, asChatAvatarStateSwitcher, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, type GroupSpawnOptions } from '../core/types.js'
+import { asCardSender, asChatAvatarStateSwitcher, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.js'
 import { newCard } from '../card.js'
 import type { Engine } from './engine.js'
 import type { SessionManager } from './session.js'
@@ -27,6 +28,7 @@ import {
   worktreeRepoRoot,
 } from './worktree.js'
 import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName } from './groupname.js'
+import { renderDirCardSafe } from './dir-card.js'
 import { extractChannelID } from './engine.js'
 
 const listPageSize = 5
@@ -151,8 +153,13 @@ export async function cmdNew(e: Engine, p: Platform, msg: Message, args: string[
   await e.reply(p, msg.replyCtx, await e.buildStatusFooter(prefix, e.agent, workDir, '', msg.sessionKey))
 }
 
-/** The engine-facing session/agent context for commands (M1: single workspace). */
-function commandContext(e: Engine, _msg: Message): { agent: Engine['agent']; sessions: SessionManager; interactiveKey: string } {
+/**
+ * The engine-facing session/agent context for commands (M1: single workspace).
+ * @param e - The engine owning the session state.
+ * @param _msg - The triggering chat message (only its session key is read).
+ * @returns The agent, session manager, and interactive key the command acts on.
+ */
+export function commandContext(e: Engine, _msg: Message): { agent: Engine['agent']; sessions: SessionManager; interactiveKey: string } {
   return { agent: e.agent, sessions: e.sessions, interactiveKey: _msg.sessionKey }
 }
 
@@ -434,7 +441,8 @@ export function cmdStop(e: Engine, _p: Platform, msg: Message): boolean {
 }
 
 /**
- * /dir: show or switch the agent's working directory (Go cmdDir, text path).
+ * /dir: show or switch the agent's working directory (Go cmdDir): the picker
+ * card on card platforms, plain text otherwise.
  * @param e - The engine owning the dir override and history.
  * @param p - The platform that delivered the command.
  * @param msg - The triggering chat message.
@@ -453,6 +461,10 @@ export async function cmdDir(e: Engine, p: Platform, msg: Message, args: string[
   if (override !== '') currentDir = override
 
   if (args.length === 0) {
+    if (supportsCards(p)) {
+      await e.replyWithCard(p, msg.replyCtx, renderDirCardSafe(e, msg.sessionKey, 1, ''))
+      return
+    }
     let sb = e.i18n.tf(Msg.DirCurrent, currentDir)
     if (e.dirHistory !== undefined) {
       const history = e.dirHistory.list(e.name)
@@ -484,6 +496,10 @@ export async function cmdDir(e: Engine, p: Platform, msg: Message, args: string[
   const [errMsg, successMsg] = await dirApply(e, agent, sessions, interactiveKey, msg.sessionKey, args)
   if (errMsg !== '') {
     await e.reply(p, msg.replyCtx, errMsg)
+    return
+  }
+  if (supportsCards(p)) {
+    await e.replyWithCard(p, msg.replyCtx, renderDirCardSafe(e, msg.sessionKey, 1, e.i18n.t(Msg.DirSessionReset)))
     return
   }
   await e.reply(p, msg.replyCtx, `${successMsg}\n\n${e.i18n.t(Msg.DirSessionReset)}`)

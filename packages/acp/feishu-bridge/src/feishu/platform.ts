@@ -772,10 +772,11 @@ export class FeishuPlatform implements Platform {
     const replyCtx: FeishuReplyContext = { messageID, chatID, sessionKey }
     const isSpawned = this.isSpawned(chatID)
 
-    // act: → synchronous card action (Go runs it in the callback response and
-    // returns the updated card; the async TS dispatch instead PATCHes the
-    // recorded message id from the engine's card-action handler).
-    if (actionVal.startsWith('act:')) {
+    // act: → synchronous card action; nav: → page-turn-only card action (Go
+    // runs both in the callback response and returns the updated card; the
+    // async TS dispatch instead PATCHes the recorded message id from the
+    // engine's card-action handler, which distinguishes the prefixes).
+    if (actionVal.startsWith('act:') || actionVal.startsWith('nav:')) {
       if (messageID !== '') this.cardActionMsgIDs.set(sessionKey, messageID)
       this.dispatch(sessionKey, messageID, userID, chatID, 'group',
         actionVal, '', replyCtx, isSpawned, '', false, false, [], [], true)

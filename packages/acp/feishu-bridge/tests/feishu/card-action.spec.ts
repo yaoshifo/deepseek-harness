@@ -60,6 +60,16 @@ describe('onCardAction act: dispatch', () => {
     expect(p.cardActionMsgIDs.get('feishu:oc_1:ou_9')).toBe(messages[0]!.messageID)
   })
 
+  it('routes nav:/dir page turns through the same card-action path', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages = await dispatched(p, cardEvent({ action: 'nav:/dir 2' }))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('nav:/dir 2')
+    expect(messages[0]!.isCardAction).toBe(true)
+    expect(messages[0]!.sessionKey).toBe('feishu:oc_1:ou_9')
+    expect(p.cardActionMsgIDs.get('feishu:oc_1:ou_9')).toBe(messages[0]!.messageID)
+  })
+
   it('keys spawned chats on the chat alone', async () => {
     const p = newPlatform({ allowChat: '*', isSpawnedChat: chatID => chatID === 'oc_spawn' })
     const messages = await dispatched(p, cardEvent({ action: 'act:/wt remove', chatID: 'oc_spawn' }))
