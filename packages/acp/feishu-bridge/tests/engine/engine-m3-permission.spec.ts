@@ -442,6 +442,7 @@ describe('PostPermissionCardRestart', () => {
     state.replyCtx = 'ctx'
     engine.interactiveStates.set(key, state)
 
+    sess.channel.push({ type: 'text', content: 'intro narration before the plan', done: false })
     sess.channel.push({ type: 'tool_use', toolName: 'Bash', toolInput: 'ls', content: '', done: false })
     sess.channel.push({ type: 'permission_request', requestID: 'req-r', toolName: 'write', toolInput: '/tmp/x', content: '', done: false })
     sess.channel.push({ type: 'tool_use', toolName: 'Bash', toolInput: 'cat /tmp/x', content: '', done: false })
@@ -453,6 +454,12 @@ describe('PostPermissionCardRestart', () => {
       await new Promise((r) => { setTimeout(r, 10) })
     }
     expect(state.pending?.requestID).toBe('req-r')
+    // Pre-card detach (Go engine_events.go ~4192-4225): the live card is
+    // finalized BEFORE the user answers, so its updates stop at permission
+    // time; the accumulated text stays on the card (preview active) instead
+    // of being re-sent as a plain message.
+    const oldCardUpdates = updates.filter(u => u.handle === 'handle-1').length
+    expect(oldCardUpdates).toBeGreaterThan(0)
     state.pending?.resolve()
     await loop
     await new Promise((r) => { setTimeout(r, 50) })
@@ -462,5 +469,9 @@ describe('PostPermissionCardRestart', () => {
     // The post-approval tool progress lands on the NEW card only.
     expect(updates.some(u => u.handle === 'handle-2')).toBe(true)
     expect(updates.every(u => u.handle !== 'handle-1' || !u.content.includes('cat /tmp/x'))).toBe(true)
+    // The old card is never touched again after the permission card went out.
+    expect(updates.filter(u => u.handle === 'handle-1').length).toBe(oldCardUpdates)
+    // Preview active: the pre-interaction text is not re-sent as a message.
+    expect(p.getSent().join('\n')).not.toContain('intro narration')
   })
 })

@@ -2484,6 +2484,29 @@ export class Engine {
                 break
               }
             }
+            await sp.removeText(sentPlanContent)
+          }
+          // Pre-card flush + detach (Go engine_events.go ~4192-4225): with the
+          // preview degraded the accumulated text segment is sent as plain
+          // messages now — the live card cannot carry it; segmentStart
+          // advances either way. The live card is completed and detached
+          // BEFORE the permission card reaches the user, so the
+          // post-resolution restart below finds no started preview in the
+          // normal flow and stays a safety net.
+          {
+            const previewActive = sp.canPreview()
+            if (textParts.length > segmentStart) {
+              if (p !== undefined && !previewActive) {
+                const segment = textParts.slice(segmentStart).join('')
+                if (segment !== '') {
+                  for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
+                    await this.send(p, replyCtx, chunk)
+                  }
+                }
+              }
+              segmentStart = textParts.length
+              silentHold = false
+            }
           }
           // Pre-detach speculative reply render (Go captureReplyForExport +
           // renderAndDeliverReply at a permission/AskUserQuestion): the
@@ -2494,6 +2517,11 @@ export class Engine {
             const captured = captureReplyForExport(sp, state)
             const triggered = this.planRenderEnabled && event.toolName !== 'ExitPlanMode'
               && captured.text !== '' && Array.from(captured.text).length >= defaultReplyPreRenderLen
+              && !session.shouldSuppressAutoRender()
+            // Drain async preview updates so a stale running PATCH cannot
+            // overwrite the completed card (Go barrier before detach).
+            await barrier()
+            await sp.completeAndDetach()
             if (triggered) {
               renderAndDeliverReply(this, state, sessionKey, captured.text, captured.exportKey)
             }
