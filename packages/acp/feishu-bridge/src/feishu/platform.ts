@@ -28,7 +28,7 @@ import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extr
 import { isMonitorCommand } from '../core/types.js'
 import { hintCategoryOfCode, parseHintButtonName } from '../engine/hints-panel.js'
 import type { FeishuMention } from './extract.js'
-import type { Card } from '../card.js'
+import type { Card, CardListItem } from '../card.js'
 import { newCard } from '../card.js'
 import { renderCard, renderCardMap, type FeishuCardMap } from './card.js'
 import {
@@ -261,6 +261,106 @@ export interface CardActionCallbackResponse {
 }
 
 /**
+ * One option of an AskUserQuestion card, captured with its description so the
+ * frozen confirmation card can redisplay the full option set (Go askqOpt).
+ */
+interface AskqOpt {
+  label: string
+  description: string
+}
+
+/**
+ * Question text and full option list of an AskUserQuestion card (Go askqMeta).
+ * Feishu form_submit callbacks do not carry action.value, and button-click
+ * callbacks only carry the selected option, so the platform caches the set at
+ * send time (mirroring permBodyCache) and reads it back on submit.
+ */
+interface AskqMeta {
+  question: string
+  options: AskqOpt[]
+}
+
+/**
+ * Parse the 1-based selected option indices encoded in an askq action value
+ * (Go askqParseSelectedIndices). Accepted forms: "askq:{q}:{idx}",
+ * "askq:{q}:{i1},{i2}", "askq_multi:{q}:{i1},{i2}". Indices < 1 are filtered
+ * so an empty-selection submit ("askq:0:0") is not treated as selecting item 0.
+ * @param content - The askq action value carrying the encoded selection.
+ * @returns Sorted 1-based indices; empty when no index segment is present.
+ */
+function askqParseSelectedIndices(content: string): number[] {
+  const parts = content.split(':')
+  const idxPart = parts[2] ?? ''
+  if (parts.length < 3 || idxPart === '') return []
+  const out: number[] = []
+  for (const p of idxPart.split(',')) {
+    const n = Number.parseInt(p.trim(), 10)
+    if (Number.isInteger(n) && n >= 1) out.push(n)
+  }
+  out.sort((a, b) => a - b)
+  return out
+}
+
+/**
+ * Build the frozen confirmation card preserving all options with the selected
+ * ones marked and no interactive elements, so the choice stays reviewable
+ * (Go buildAskqFrozenCard).
+ * @param title - Card title, e.g. "✅ Option B" or "✅ 已提交选择".
+ * @param question - The question text; '' omits it.
+ * @param opts - Full option set as cached at send time.
+ * @param selected - 1-based indices the user picked.
+ * @returns The frozen card.
+ */
+function buildAskqFrozenCard(title: string, question: string, opts: AskqOpt[], selected: Set<number>): Card {
+  const cb = newCard().title(title, 'green')
+  let body = ''
+  if (question !== '') body += question
+  if (opts.length > 0) {
+    if (body !== '') body += '\n\n'
+    for (const [i, o] of opts.entries()) {
+      body += `${selected.has(i + 1) ? '✅' : '◻️'} **${o.label}**`
+      if (o.description !== '') body += `\n${o.description}`
+      body += '\n'
+    }
+  }
+  if (body !== '') cb.markdown(body.replace(/\n$/, ''))
+  return cb.build()
+}
+
+/**
+ * Build the AskUserQuestion confirm response (Go buildAskqConfirmResponse):
+ * with the cached option set, a frozen card preserving every option with the
+ * selection marked; without it (session expired / restarted), the minimal
+ * confirmation card. Shared by the single- and multi-select branches.
+ * @param sessionKey - Session key stamped into the rendered card.
+ * @param title - Card title carrying the outcome.
+ * @param question - The question text; '' omits it.
+ * @param answerLabel - Human-readable answer for the minimal fallback card.
+ * @param meta - Cached option set, undefined when gone.
+ * @param selected - 1-based indices the user picked.
+ * @returns The callback response replacing the pressed card.
+ */
+function buildAskqConfirmResponse(
+  sessionKey: string,
+  title: string,
+  question: string,
+  answerLabel: string,
+  meta: AskqMeta | undefined,
+  selected: Set<number>,
+): CardActionCallbackResponse {
+  let data: FeishuCardMap
+  if (meta !== undefined && meta.options.length > 0) {
+    data = renderCardMap(buildAskqFrozenCard(title, question, meta.options, selected), sessionKey)
+  } else {
+    const cb = newCard().title(title, 'green')
+    if (question !== '') cb.markdown(question)
+    cb.markdown(`**→ ${answerLabel}**`)
+    data = renderCardMap(cb.build(), sessionKey)
+  }
+  return { card: { type: 'raw', data } }
+}
+
+/**
  * Inbound card.action.trigger payload (structural slice). Fields sit at the
  * ROOT of the parsed WS payload — the same flattened convention as
  * {@link FeishuReceiveEvent} (SDK RequestHandle.parse unwraps the v2
@@ -451,6 +551,10 @@ export class FeishuPlatform implements Platform {
   private readonly renderStatusText = new Map<string, string>()
   /** sessionKey → permission card body (M3 card-action replacement). */
   readonly permBodyCache = new Map<string, string>()
+  /** sessionKey → AskUserQuestion option set (Go askqMetaCache): cached at send time to rebuild the frozen confirm card. */
+  readonly askqMetaCache = new Map<string, AskqMeta>()
+  /** messageID → answered marker (Go askqAnswered): dedups repeated askq callbacks on one card. */
+  readonly askqAnswered = new Map<string, true>()
   /** sessionKey → messageID tracked from card-action callbacks (M3 writes it). */
   readonly cardActionMsgIDs = new Map<string, string>()
   /** Engine callback for group renames (im.chat.updated_v1, Go chatRenamedHandler). */
@@ -868,18 +972,29 @@ export class FeishuPlatform implements Platform {
           permColor = 'green'
         }
       }
-      if (permBody === '') {
-        permBody = this.permBodyCache.get(sessionKey) ?? ''
-        this.permBodyCache.delete(sessionKey)
-      }
+      if (permBody === '') permBody = this.permBodyCache.get(sessionKey) ?? ''
+      // Deviates from Go (which deletes only when it read the cache): the
+      // entry is consumed either way, so a stale body never leaks into the
+      // next permission card.
+      this.permBodyCache.delete(sessionKey)
       if (permColor === '') permColor = 'green'
       const cb = newCard().title(permLabel, permColor)
       if (permBody !== '') cb.markdown(permBody)
       return { card: { type: 'raw', data: renderCardMap(cb.build(), sessionKey) } }
     }
 
-    // askq: → AskUserQuestion answer
+    // askq: → AskUserQuestion answer with a frozen confirm card (Go
+    // feishu_dispatch.go askq branches): the callback response replaces the
+    // pressed card with all options preserved and the selection marked, so
+    // the choice stays reviewable and the card stops being interactive.
     if (actionVal.startsWith('askq:') || actionVal.startsWith('askq_multi:')) {
+      // Dedup per card message (Go askqAnswered): a double-click or a Feishu
+      // callback retry during the frozen-card window would otherwise forward
+      // the same answer to the engine twice.
+      if (messageID !== '') {
+        if (this.askqAnswered.has(messageID)) return undefined
+        this.askqAnswered.set(messageID, true)
+      }
       // Multi-select form submit (Go collectAskqMultiSelectedFromFormValue):
       // the checked indices ride in formValue under askq_opt_{N} keys; append
       // them as ":idx1,idx2" so the engine's answer resolver can map labels.
@@ -896,7 +1011,13 @@ export class FeishuPlatform implements Platform {
       const label = action.value?.askq_label ?? content
       this.dispatch(sessionKey, messageID, userID, chatID, 'group',
         label, '', replyCtx, isSpawned, '', false, true)
-      return
+
+      const meta = this.askqMetaCache.get(sessionKey)
+      this.askqMetaCache.delete(sessionKey)
+      const question = action.value?.askq_question ?? meta?.question ?? ''
+      const selected = new Set(askqParseSelectedIndices(actionVal))
+      const title = actionVal.startsWith('askq_multi:') ? '✅ 已提交选择' : `✅ ${label}`
+      return buildAskqConfirmResponse(sessionKey, title, question, label, meta, selected)
     }
 
     // cmd: → command shortcut from a card button; forward as a message
@@ -1426,6 +1547,7 @@ export class FeishuPlatform implements Platform {
     const rc = this.requireReplyCtx(replyCtx)
     const permBody = card.permBody ?? ''
     if (permBody !== '') this.permBodyCache.set(rc.sessionKey, permBody)
+    this.cacheAskqMeta(rc.sessionKey, card)
     const cardJSON = renderCard(card, rc.sessionKey)
     if (!this.shouldUseThreadOrReplyAPI(rc)) {
       if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
@@ -1448,6 +1570,7 @@ export class FeishuPlatform implements Platform {
     if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
     const permBody = card.permBody ?? ''
     if (permBody !== '') this.permBodyCache.set(rc.sessionKey, permBody)
+    this.cacheAskqMeta(rc.sessionKey, card)
     if (this.o.noReplyToTrigger !== true && this.shouldReplyInThread(rc)) {
       await this.replyCard(replyCtx, card)
       return
@@ -1455,6 +1578,41 @@ export class FeishuPlatform implements Platform {
     const cardJSON = renderCard(card, rc.sessionKey)
     await this.withRetry('send card', () => this.request('send card', client =>
       client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })))
+  }
+
+  /**
+   * Cache the labels and question of an AskUserQuestion card (single- or
+   * multi-select) at send time (Go cacheAskqMeta): a submit callback cannot
+   * carry the full option set, so it is read back on submit to rebuild the
+   * frozen confirm card.
+   * @param sessionKey - Session the card was sent to.
+   * @param card - The card being sent.
+   */
+  private cacheAskqMeta(sessionKey: string, card: Card): void {
+    // Single-select: each option is a listItem whose btnValue is "askq:{qIdx}:{optIdx}".
+    const items: CardListItem[] = []
+    for (const elem of card.elements) {
+      if (elem.kind === 'listItem' && elem.btnValue.startsWith('askq:')) items.push(elem)
+    }
+    if (items.length > 0) {
+      let question = ''
+      const options: AskqOpt[] = items.map((it) => {
+        if (question === '') question = it.extra?.askq_question ?? ''
+        return { label: it.text, description: it.description ?? '' }
+      })
+      this.askqMetaCache.set(sessionKey, { question, options })
+      return
+    }
+    // Multi-select: one checkOptions element holds all options.
+    for (const elem of card.elements) {
+      if (elem.kind === 'checkOptions') {
+        this.askqMetaCache.set(sessionKey, {
+          question: elem.question ?? '',
+          options: elem.options.map(o => ({ label: o.label, description: o.description ?? '' })),
+        })
+        return
+      }
+    }
   }
 
   /**
