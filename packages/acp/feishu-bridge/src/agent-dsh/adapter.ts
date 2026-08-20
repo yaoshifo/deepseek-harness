@@ -141,6 +141,9 @@ export interface DshAdapterConfig {
  * Strip the "[1m]" model alias: it is fingerprint-gated to genuine Claude
  * Code clients on some gateways (bigmodel coding plan); the plain name
  * accepts any client and carries the same window (Go dshSession).
+ *
+ * @param model - the model name, possibly carrying the "[1m]" alias suffix.
+ * @returns the model name with the "[1m]" suffix removed.
  */
 export function stripModelAlias(model: string): string {
   if (model.endsWith('[1m]')) return model.slice(0, -'[1m]'.length)
@@ -268,6 +271,9 @@ export const renderQueryTimeoutMs = 15 * 60_000
  * always-thinking models (e.g. glm-5.3 via mify) reject the omitted thinking
  * field with 400 — configure effort 'low' or higher for those. A rejected
  * effort is swallowed by the engine and falls back to the markdown card.
+ *
+ * @param effort - the claudecode-style effort alias to map.
+ * @returns the dsh reasoning effort level; unknown aliases map to 'low'.
  */
 export function renderReasoningLevel(effort: string): string {
   switch (effort.toLowerCase().trim()) {
@@ -417,12 +423,20 @@ export class DshAgentAdapter {
     }))
   }
 
-  /** Agent display name (engine /status, /list headers). */
+  /**
+   * Agent display name (engine /status, /list headers).
+   *
+   * @returns the configured agent display name.
+   */
   name(): string {
     return this.cfg.agentName
   }
 
-  /** The active named route. */
+  /**
+   * The active named route.
+   *
+   * @returns the route whose name matches the active provider, when one is configured.
+   */
   activeRoute(): ProviderRoute | undefined {
     return this.cfg.providers.find(p => p.name === this.cfg.activeProvider)
   }
@@ -430,12 +444,18 @@ export class DshAgentAdapter {
   /**
    * ModelSwitcher (Go ModelSwitcher): the active route's model, for the
    * status footer's 🤖 line. The [1m] alias stays stripped for display.
+   *
+   * @returns the active route's model with the [1m] alias stripped.
    */
   getModel(): string {
     return stripModelAlias(this.activeRoute()?.model ?? '')
   }
 
-  /** The active route's reasoning effort, for the reply footer (Go GetReasoningEffort). */
+  /**
+   * The active route's reasoning effort, for the reply footer (Go GetReasoningEffort).
+   *
+   * @returns the active route's reasoning effort, or '' when unset.
+   */
   getReasoningEffort(): string {
     return this.activeRoute()?.reasoningEffort ?? ''
   }
@@ -463,27 +483,47 @@ export class DshAgentAdapter {
     }
   }
 
-  /** SessionEnvInjector: per-session env captured for the next startSession. */
+  /**
+   * SessionEnvInjector: per-session env captured for the next startSession.
+   *
+   * @param env - the KEY=value entries captured for the next startSession.
+   */
   setSessionEnv(env: string[]): void {
     this.env = [...env]
   }
 
-  /** WorkDirSwitcher: the dir used for the next agents.create (Go SetWorkDir). */
+  /**
+   * WorkDirSwitcher: the dir used for the next agents.create (Go SetWorkDir).
+   *
+   * @param dir - the working directory for the next agents.create.
+   */
   setWorkDir(dir: string): void {
     this.workDir = dir
   }
 
-  /** WorkDirSwitcher: current work dir (Go GetWorkDir). */
+  /**
+   * WorkDirSwitcher: current work dir (Go GetWorkDir).
+   *
+   * @returns the current working directory.
+   */
   getWorkDir(): string {
     return this.workDir
   }
 
-  /** SessionModeInjector: one-shot mode override consumed by startSession. */
+  /**
+   * SessionModeInjector: one-shot mode override consumed by startSession.
+   *
+   * @param mode - the mode name armed for the next startSession ('plan' or a non-plan mode).
+   */
   setSessionMode(mode: string): void {
     this.modeOverride = mode
   }
 
-  /** Project default mode applied at every startSession when no one-shot override is armed (Go agent options mode). */
+  /**
+   * Project default mode applied at every startSession when no one-shot override is armed (Go agent options mode).
+   *
+   * @param mode - the project default mode name ('plan' or a non-plan mode).
+   */
   setDefaultMode(mode: string): void {
     this.defaultMode = mode
   }
@@ -493,6 +533,10 @@ export class DshAgentAdapter {
    * reachable BEFORE the child group exists, so the engine's cross-workdir
    * guard fails fast. The TS adapter seeds from the LIVE parent agent (Go
    * reads the persisted log), so reachability = the parent being live.
+   *
+   * @param origID - the native id of the fork source session.
+   * @param _parentWorkDir - unused: the TS adapter seeds from the live parent, not the on-disk log.
+   * @param _childWorkDir - unused: seeding happens at startSession, not here.
    */
   prepareForkSession(origID: string, _parentWorkDir: string, _childWorkDir: string): Promise<void> {
     if (this.ctx.agents.get(SessionId(origID)) === undefined) {
@@ -507,6 +551,9 @@ export class DshAgentAdapter {
    * back to its engine session (plan D4 — caller-agent routing, no env).
    * One-shot side-query sessions are deliberately excluded: they own no
    * engine session, so their agents are foreign callers.
+   *
+   * @param nativeID - the native dsh agent id to resolve.
+   * @returns the owning engine session key, or undefined when this adapter owns no live session with that id.
    */
   engineKeyForAgentID(nativeID: string): string | undefined {
     const session = this.liveSessions.get(nativeID)
@@ -520,6 +567,11 @@ export class DshAgentAdapter {
    * lives in the prompt itself. Light text output needs no deep reasoning
    * (and thinking would eat most of the 90s budget), so the query runs at
    * reasoningEffort 'low'.
+   *
+   * @param prompt - the standalone question; all context lives in the prompt itself.
+   * @param providerName - the named provider route to run on.
+   * @param signal - caller abort; rejects the wait and still disposes the session.
+   * @returns the turn's final text.
    */
   async lightweightQuery(prompt: string, providerName: string, signal?: AbortSignal): Promise<string> {
     return this.oneShotQuery({
@@ -535,12 +587,25 @@ export class DshAgentAdapter {
    * ForkQuerier: a side question against the full context of an existing
    * session without affecting the main conversation (Go ForkQuery — the
    * persisted-log copy becomes a completed-turn seed from the live parent).
+   *
+   * @param sessionID - the native id of the live parent session to seed from.
+   * @param question - the side question asked against the parent's context.
+   * @param workDir - the working directory for the one-shot session.
+   * @returns the answer text.
    */
   async forkQuery(sessionID: string, question: string, workDir: string): Promise<string> {
     return this.oneShotQuery({ prompt: question, workDir, seed: this.seedForLiveParent(sessionID) })
   }
 
-  /** ForkQuerierWithProvider: {@link forkQuery} on a named provider route. */
+  /**
+   * ForkQuerierWithProvider: {@link forkQuery} on a named provider route.
+   *
+   * @param sessionID - the native id of the live parent session to seed from.
+   * @param question - the side question asked against the parent's context.
+   * @param providerName - the named provider route to run on.
+   * @param workDir - the working directory for the one-shot session.
+   * @returns the answer text.
+   */
   async forkSessionWithProvider(sessionID: string, question: string, providerName: string, workDir: string): Promise<string> {
     return this.oneShotQuery({
       prompt: question,
@@ -555,6 +620,8 @@ export class DshAgentAdapter {
    * engine's effort config reaches the render session's reasoning level
    * instead of being silently dropped. Raw alias; {@link renderQuery} maps
    * it (see renderReasoningLevel for the model-dependent "off" ceiling).
+   *
+   * @param effort - the raw effort alias from the project's plan_render config.
    */
   setRenderEffort(effort: string): void {
     this.renderEffort = effort
@@ -567,6 +634,13 @@ export class DshAgentAdapter {
    * render one-shot does not need deep reasoning, so an unset effort
    * defaults to 'low' (an unset effort once made renders burn ~21k thinking
    * chars for an 84-char artifact). The 15m budget mirrors the Go fork.
+   *
+   * @param prompt - the render task prompt.
+   * @param providerName - the named provider route to run on.
+   * @param systemPrompt - the complete-replacement system prompt for the render session.
+   * @param sessionEnv - accepted for Go parity; dsh one-shots spawn in-process, so it is unused.
+   * @param signal - caller abort; rejects the wait and still disposes the session.
+   * @returns the session's trimmed stdout.
    */
   async renderQuery(
     prompt: string,
@@ -592,6 +666,8 @@ export class DshAgentAdapter {
    * by the plugin config — the switcher surface only owns membership and the
    * active pointer, so an engine-side rebuild keeps detail for known names
    * and carries none for freshly introduced ones.
+   *
+   * @param providers - the new provider name set; known names keep their configured route detail.
    */
   setProviders(providers: ProviderConfig[]): void {
     const byName = new Map(this.cfg.providers.map(r => [r.name, r]))
@@ -601,6 +677,12 @@ export class DshAgentAdapter {
     }
   }
 
+  /**
+   * ProviderSwitcher: point the active route at a known name.
+   *
+   * @param name - the route name to activate, or '' to clear the selection.
+   * @returns whether the name exists in the registry; clearing always succeeds.
+   */
   setActiveProvider(name: string): boolean {
     // '' clears the selection (Go SetActiveProvider("") semantics): the
     // next startSession falls back to the dsh default route.
@@ -613,11 +695,21 @@ export class DshAgentAdapter {
     return true
   }
 
+  /**
+   * ProviderSwitcher: the active route as a name-only config.
+   *
+   * @returns the active provider, or undefined when the selection is empty or unknown.
+   */
   getActiveProvider(): ProviderConfig | undefined {
     const name = this.cfg.activeProvider
     return name !== '' && this.cfg.providers.some(r => r.name === name) ? { name } : undefined
   }
 
+  /**
+   * ProviderSwitcher: the registry's routes as name-only configs.
+   *
+   * @returns the configured routes.
+   */
   listProviders(): ProviderConfig[] {
     return this.cfg.providers.map(r => ({ name: r.name }))
   }
@@ -724,6 +816,11 @@ export class DshAgentAdapter {
    * buildChatroomSystemPrompt via DSH_CC_SYSTEM_PROMPT_COMPLETE; here the
    * D3 `complete: true` prompt section). Research assistants get their
    * preamble appended as a normal section instead.
+   *
+   * @param sessionID - the engine-provided id: '' or the ContinueSession
+   * sentinel creates fresh, a concrete id resumes, and `__fork__<origID>`
+   * seeds from the parent.
+   * @returns the live session bound to the engine session key.
    */
   async startSession(sessionID: string): Promise<AgentSession> {
     const envKey = this.env.find(e => e.startsWith('CC_SESSION_KEY='))?.slice('CC_SESSION_KEY='.length) ?? ''
@@ -803,6 +900,8 @@ export class DshAgentAdapter {
    * TODO(M7 usage): dsh has no native "list persisted sessions" API on the
    * registry yet; /sessions relies on this returning what the backend knows.
    * M1 reports none — the parent session verifies the real surface.
+   *
+   * @returns the live sessions with native ids and last-activity timestamps.
    */
   listSessions(): Promise<AgentSessionInfo[]> {
     return Promise.resolve([...this.liveSessions.values()].map(s => ({
@@ -867,6 +966,7 @@ export class DshAgentSession implements AgentSession {
   private turnText = ''
   private lastText = ''
   private usage: { inputTokens?: number; totalInputTokens?: number; outputTokens?: number } = {}
+  /** Last-activity timestamp (ms), updated on send and every projected event. */
   lastActivityAt = Date.now()
   /** Pending permission responses: requestID → settle function (M3). */
   private readonly pendingPermissions = new Map<string, (decision: { outcome: string; behavior: 'allow' | 'deny'; message?: string }) => void>()
@@ -882,7 +982,11 @@ export class DshAgentSession implements AgentSession {
     this.ctx = ctx
   }
 
-  /** The engine-side session key (diagnostics). */
+  /**
+   * The engine-side session key (diagnostics).
+   *
+   * @returns the engine-side session key.
+   */
   sessionKey(): string {
     return this.key
   }
@@ -899,6 +1003,8 @@ export class DshAgentSession implements AgentSession {
    * SessionCompressor (Go ContextCompressor "/compact"): trigger dsh's
    * native manual compaction on this session's agent. Throws when the
    * compaction service is not loaded in the runtime tree.
+   *
+   * @param signal - abort forwarded to the compaction service.
    */
   async compress(signal?: AbortSignal): Promise<void> {
     const compaction = this.ctx?.get('compaction') as
@@ -910,7 +1016,11 @@ export class DshAgentSession implements AgentSession {
     await compaction.compactNow(this.handle.agent, signal ?? new AbortController().signal)
   }
 
-  /** Most recent assistant text (listSessions summaries). */
+  /**
+   * Most recent assistant text (listSessions summaries).
+   *
+   * @returns the last completed turn's final text ('' before the first turn ends).
+   */
   lastAssistantText(): string {
     return this.lastText
   }
@@ -940,6 +1050,8 @@ export class DshAgentSession implements AgentSession {
    * Emit a permission_request event into the engine's EventChannel (M3).
    * The engine's event loop receives it, sends a permission card, and waits.
    * The approval answerer awaits {@link awaitPermissionResponse}.
+   *
+   * @param req - the permission request fields forwarded onto the event stream.
    */
   emitPermissionRequest(req: { requestID: string; toolName: string; toolInput: string; toolInputRaw: Record<string, unknown> }): void {
     this.channel.push({
@@ -957,6 +1069,10 @@ export class DshAgentSession implements AgentSession {
    * Wait for the engine to call {@link respondPermission} with the user's
    * decision (M3). Returns the decision as both the dsh approval outcome
    * string and the raw verdict the plan-review mapping reads.
+   *
+   * @param requestID - the id matching the emitted permission_request event.
+   * @param signal - abort; settles as a cancelled/deny decision.
+   * @returns the user's decision as a dsh outcome string plus the allow/deny verdict.
    */
   awaitPermissionResponse(requestID: string, signal?: AbortSignal): Promise<{ outcome: string; behavior: 'allow' | 'deny'; message?: string }> {
     return new Promise((resolve) => {
@@ -978,6 +1094,10 @@ export class DshAgentSession implements AgentSession {
    * selects the intent's approve label; deny declines with the deny message
    * as feedback so the model keeps planning (Go planReviewItem +
    * RespondPermission).
+   *
+   * @param item - the plan-review ask rendered onto the ExitPlanMode card.
+   * @param signal - abort; settles as a deny with no feedback message.
+   * @returns the ask result with the approved or declined answer selected.
    */
   answerPlanReview(item: RawAskQuestionItem, signal?: AbortSignal): Promise<UserQuestionsAskResult> {
     const plan = item.detail ?? ''
@@ -1007,6 +1127,11 @@ export class DshAgentSession implements AgentSession {
    * engine's handlePendingPermission collects answers per question index
    * and delivers them here as one array; entries stay empty strings until
    * collected. Returns exactly `count` answer strings in question order.
+   *
+   * @param requestID - the id of the pending question request.
+   * @param signal - abort; settles with empty answers.
+   * @param count - the number of questions whose answers to wait for.
+   * @returns the collected answer strings, in question order.
    */
   awaitQuestionAnswer(requestID: string, signal: AbortSignal | undefined, count: number): Promise<string[]> {
     return new Promise((resolve) => {
@@ -1021,7 +1146,12 @@ export class DshAgentSession implements AgentSession {
     })
   }
 
-  /** Deliver collected AskUserQuestion answers for a pending request (M3). */
+  /**
+   * Deliver collected AskUserQuestion answers for a pending request (M3).
+   *
+   * @param requestID - the id of the pending request to settle.
+   * @param answers - the collected answer strings.
+   */
   deliverQuestionAnswers(requestID: string, answers: string[]): void {
     const entry = this.pendingQuestionAnswers.get(requestID)
     if (entry !== undefined) {
@@ -1080,7 +1210,11 @@ export class DshAgentSession implements AgentSession {
     this.handle.agent.cancel({ kind: 'user' }, { keepInbox: false })
   }
 
-  /** Project one durable session event into the engine Event stream. */
+  /**
+   * Project one durable session event into the engine Event stream.
+   *
+   * @param event - the durable session event ({type, seq, time, data}).
+   */
   projectSessionEvent(event: Record<string, unknown>): void {
     this.lastActivityAt = Date.now()
     // Durable session events carry their payload under `data` (SessionEvent

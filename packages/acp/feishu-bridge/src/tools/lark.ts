@@ -84,7 +84,12 @@ const feishuOpenBaseURL = 'https://open.feishu.cn'
 
 // ── pure argument classification (ported 1:1 from lark_cmd.go) ────────────
 
-/** Whether args request user identity via `--as user` / `--as=user`. */
+/**
+ * Whether args request user identity via `--as user` / `--as=user`.
+ *
+ * @param args - The lark-cli argument tokens the model passed in.
+ * @returns True when the invocation should run under user identity.
+ */
 export function isAsUser(args: string[]): boolean {
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? ''
@@ -94,7 +99,12 @@ export function isAsUser(args: string[]): boolean {
   return false
 }
 
-/** Whether args target the `auth` resource (login/logout/status/whoami). */
+/**
+ * Whether args target the `auth` resource (login/logout/status/whoami).
+ *
+ * @param args - The lark-cli argument tokens the model passed in.
+ * @returns True when the invocation is an lark-cli auth subcommand.
+ */
 export function isAuthSubcommand(args: string[]): boolean {
   for (let i = 0; i + 1 < args.length; i++) {
     if ((args[i] ?? '') === 'auth') {
@@ -105,7 +115,12 @@ export function isAuthSubcommand(args: string[]): boolean {
   return false
 }
 
-/** Value of the first `--profile X` / `--profile=X`, or '' when absent/malformed. */
+/**
+ * Value of the first `--profile X` / `--profile=X`, or '' when absent/malformed.
+ *
+ * @param args - The lark-cli argument tokens the model passed in.
+ * @returns The first profile value, or '' when no well-formed `--profile` flag is present.
+ */
 export function extractProfileFlag(args: string[]): string {
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? ''
@@ -115,7 +130,12 @@ export function extractProfileFlag(args: string[]): string {
   return ''
 }
 
-/** Whether args target `im +chat-messages-list` (the native listing path). */
+/**
+ * Whether args target `im +chat-messages-list` (the native listing path).
+ *
+ * @param args - The lark-cli argument tokens the model passed in.
+ * @returns True when the invocation should bypass lark-cli for the native OpenAPI listing.
+ */
 export function isChatMessagesList(args: string[]): boolean {
   for (let i = 0; i + 1 < args.length; i++) {
     if ((args[i] ?? '') === 'im' && args[i + 1] === '+chat-messages-list') return true
@@ -176,7 +196,14 @@ export function parseListMessagesArgs(args: string[]): { opts: ListMsgOpts; erro
   return { opts }
 }
 
-/** Build the List Messages request URL (Go buildListMessagesURL). */
+/**
+ * Build the List Messages request URL (Go buildListMessagesURL).
+ *
+ * @param baseURL - The Feishu OpenAPI base URL.
+ * @param opts - The parsed listing options to encode as query parameters.
+ * @param pageToken - The pagination token from the previous page; '' omits the parameter.
+ * @returns The full request URL with encoded query string.
+ */
 export function buildListMessagesURL(baseURL: string, opts: ListMsgOpts, pageToken: string): string {
   const q = new URLSearchParams()
   q.set('container_id', opts.chatId)
@@ -188,7 +215,13 @@ export function buildListMessagesURL(baseURL: string, opts: ListMsgOpts, pageTok
   return `${baseURL}/open-apis/im/v1/messages?${q.toString()}`
 }
 
-/** Best-effort decode of a message body.content into plain text. */
+/**
+ * Best-effort decode of a message body.content into plain text.
+ *
+ * @param msgType - The Feishu message type, e.g. `text`, `markdown`, or `post`.
+ * @param bodyContent - The raw JSON `body.content` string of the message item.
+ * @returns The decoded plain text; '' for unsupported types or unparseable content.
+ */
 export function decodeMessageText(msgType: string, bodyContent: string): string {
   if (bodyContent === '') return ''
   if (msgType === 'text' || msgType === 'markdown') {
@@ -211,7 +244,12 @@ export function decodeMessageText(msgType: string, bodyContent: string): string 
   return ''
 }
 
-/** Project a raw Feishu message item into a stable output shape (Go cleanMessageItem). */
+/**
+ * Project a raw Feishu message item into a stable output shape (Go cleanMessageItem).
+ *
+ * @param item - One raw message item from the List Messages API.
+ * @returns The projected item: ids, timestamps, sender, body content, and decoded text.
+ */
 export function cleanMessageItem(item: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (typeof item.message_id === 'string') out.message_id = item.message_id
@@ -231,7 +269,13 @@ export function cleanMessageItem(item: Record<string, unknown>): Record<string, 
   return out
 }
 
-/** Compare dotted versions numerically, ignoring v prefix and git suffixes; sign only. */
+/**
+ * Compare dotted versions numerically, ignoring v prefix and git suffixes; sign only.
+ *
+ * @param a - The left-hand version string.
+ * @param b - The right-hand version string.
+ * @returns Negative when a < b, positive when a > b, zero when equal.
+ */
 export function compareVersions(a: string, b: string): number {
   const pa = parseVersionTriple(a)
   const pb = parseVersionTriple(b)
@@ -255,7 +299,12 @@ function parseVersionTriple(v: string): [number, number, number] {
   return out
 }
 
-/** Extract the version from `lark-cli --version` output; throws on garbage. */
+/**
+ * Extract the version from `lark-cli --version` output; throws on garbage.
+ *
+ * @param out - The raw stdout of a `lark-cli --version` run.
+ * @returns The stripped version string (no `v` prefix).
+ */
 export function parseLarkCLIVersionOutput(out: string): string {
   let s = out.trim()
   if (s === '') throw new Error('empty --version output')
@@ -269,7 +318,12 @@ export function parseLarkCLIVersionOutput(out: string): string {
   return v
 }
 
-/** Whether an installed lark-cli version satisfies {@link minLarkCLIVersion}. */
+/**
+ * Whether an installed lark-cli version satisfies {@link minLarkCLIVersion}.
+ *
+ * @param installed - The installed lark-cli version string.
+ * @returns The upgrade error when the version is too old, undefined when satisfied.
+ */
 export function checkLarkCLIVersionAgainstMin(installed: string): Error | undefined {
   if (compareVersions(installed, minLarkCLIVersion) < 0) {
     return new Error(
@@ -284,7 +338,13 @@ export function checkLarkCLIVersionAgainstMin(installed: string): Error | undefi
 
 // ── runner ────────────────────────────────────────────────────────────────
 
-/** Mint a tenant access token with the project's bot credentials. */
+/**
+ * Mint a tenant access token with the project's bot credentials.
+ *
+ * @param creds - The project's bot app id and secret.
+ * @param deps - The injectable fetch surface used for the OpenAPI call.
+ * @returns The tenant access token, valid until it expires server-side.
+ */
 export async function fetchTenantAccessToken(creds: LarkCreds, deps: LarkRunnerDeps): Promise<string> {
   const resp = await deps.fetch(`${feishuOpenBaseURL}/open-apis/auth/v3/tenant_access_token/internal`, {
     method: 'POST',
@@ -299,7 +359,12 @@ export async function fetchTenantAccessToken(creds: LarkCreds, deps: LarkRunnerD
   return result.tenant_access_token
 }
 
-/** Try to find a resource token in lark-cli's create-command JSON output. */
+/**
+ * Try to find a resource token in lark-cli's create-command JSON output.
+ *
+ * @param output - The raw stdout of a lark-cli create command.
+ * @returns The first resource token field found, or '' when absent or the output is not JSON.
+ */
 export function extractResourceToken(output: string): string {
   let result: {
     data?: {
@@ -319,7 +384,12 @@ export function extractResourceToken(output: string): string {
   return d.doc_id ?? d.token ?? d.app_token ?? d.spread?.token ?? d.base?.base_token ?? ''
 }
 
-/** Map a lark-cli resource command to the Feishu permission type. */
+/**
+ * Map a lark-cli resource command to the Feishu permission type.
+ *
+ * @param args - The lark-cli argument tokens; the first token names the resource command.
+ * @returns The Feishu permission type (`docx`, `sheet`, `bitable`, `wiki`), or '' for unknown resources.
+ */
 export function extractResourceType(args: string[]): string {
   switch (args[0]) {
     case 'docs': return 'docx'
@@ -350,6 +420,11 @@ function isCreateCommand(args: string[]): boolean {
  * Returns the combined child output as the model-facing message; throws on
  * setup failures (missing lark-cli, version too old, token minting failure,
  * cross-project profile escape).
+ *
+ * @param creds - The project's bot credentials.
+ * @param args - The lark-cli argument tokens the model passed in.
+ * @param opts - Injectable runner deps plus the optional dataDir backing the version cache.
+ * @returns The combined child output (stdout, plus stderr when non-empty) as the model-facing message.
  */
 export async function runLarkInvocation(
   creds: LarkCreds,
@@ -503,7 +578,12 @@ async function writeVersionCache(deps: LarkRunnerDeps, cachePath: string, mtimeK
   }
 }
 
-/** Resolve a binary through PATH (Go exec.LookPath). */
+/**
+ * Resolve a binary through PATH (Go exec.LookPath).
+ *
+ * @param bin - The executable name to locate.
+ * @returns The first executable candidate path, or '' when not found.
+ */
 export function lookPath(bin: string): string {
   for (const dir of (process.env.PATH ?? '').split(':')) {
     if (dir === '') continue
@@ -565,6 +645,7 @@ async function runChatMessagesListNative(args: string[], creds: LarkCreds, deps:
  * @param ctx - registrant context carrying the tool registry.
  * @param route - resolves the calling agent to its engine + credentials.
  * @param deps - injectable process/IO surface; defaults to real child_process + fetch.
+ * @param dataDir - directory for the lark-cli version cache; omit to skip the version gate.
  * @returns the exact disposer that unregisters the tool.
  */
 export function registerLarkTool(ctx: Context, route: LarkAgentRouter, deps?: LarkRunnerDeps, dataDir?: string): () => void {
@@ -605,7 +686,11 @@ export function registerLarkTool(ctx: Context, route: LarkAgentRouter, deps?: La
   }))
 }
 
-/** Real child_process + fetch runner surface. */
+/**
+ * Real child_process + fetch runner surface.
+ *
+ * @returns The deps that spawn real lark-cli children and call the real Feishu OpenAPI.
+ */
 export function defaultLarkDeps(): LarkRunnerDeps {
   const execFileAsync = promisify(execFile)
   return {

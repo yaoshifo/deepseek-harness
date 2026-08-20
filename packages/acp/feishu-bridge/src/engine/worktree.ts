@@ -40,7 +40,10 @@ export function setGitRunner(runner: GitRunner | undefined): void {
   gitRunner = runner ?? defaultGitRunner
 }
 
-/** Internal escape hatch for tests asserting the default is restored. */
+/**
+ * Internal escape hatch for tests asserting the default is restored.
+ * @returns The runner currently in effect (the default when none was injected).
+ */
 export function currentGitRunner(): GitRunner {
   return gitRunner
 }
@@ -59,7 +62,11 @@ export enum WorktreeMode {
   ForceOn = 2,
 }
 
-/** Parse a [spawn].worktree config value (Go parseWorktreeMode). */
+/**
+ * Parse a [spawn].worktree config value (Go parseWorktreeMode).
+ * @param s - Raw config value; matched case-insensitively after trimming.
+ * @returns The parsed mode; unrecognized values fall back to Auto.
+ */
 export function parseWorktreeMode(s: string): WorktreeMode {
   switch (s.trim().toLowerCase()) {
     case 'on': case 'true': case '1': case 'yes':
@@ -71,7 +78,11 @@ export function parseWorktreeMode(s: string): WorktreeMode {
   }
 }
 
-/** Whether a child should inherit the parent's conversation context (Go parseForkMode). */
+/**
+ * Whether a child should inherit the parent's conversation context (Go parseForkMode).
+ * @param s - Raw config value; matched case-insensitively after trimming.
+ * @returns True only for on/true/1/yes; anything else is false.
+ */
 export function parseForkMode(s: string): boolean {
   switch (s.trim().toLowerCase()) {
     case 'on': case 'true': case '1': case 'yes':
@@ -84,6 +95,10 @@ export function parseForkMode(s: string): boolean {
 /**
  * Git repository root containing dir, or undefined when dir is not inside a
  * git working tree (Go worktreeRepoRoot).
+ *
+ * @param dir - Directory to resolve from.
+ * @returns The absolute repository root, or undefined when dir is not inside a
+ * git working tree.
  */
 export async function worktreeRepoRoot(dir: string): Promise<string | undefined> {
   let out: string
@@ -106,6 +121,10 @@ export interface WorktreeCreateInfo {
  * Add a new git worktree under `<repoRoot>/.claude/worktrees/<slug>` on a
  * fresh branch `cc/<slug>` based on the repo's current HEAD (Go
  * createWorktree).
+ *
+ * @param repoRoot - Repository root to create the worktree in.
+ * @param slug - Unique name for the worktree directory and its branch.
+ * @returns The new worktree's path, branch name, and base commit SHA.
  */
 export async function createWorktree(repoRoot: string, slug: string): Promise<WorktreeCreateInfo> {
   const baseOut = await runGit(repoRoot, ['rev-parse', 'HEAD'])
@@ -121,6 +140,10 @@ export async function createWorktree(repoRoot: string, slug: string): Promise<Wo
 /**
  * Whether the worktree has uncommitted changes or commits ahead of its base —
  * work that would be lost on removal (Go worktreeDirty).
+ *
+ * @param path - Worktree directory to check.
+ * @param baseSHA - Commit the worktree branched from; '' skips the ahead check.
+ * @returns Whether uncommitted changes or commits ahead of baseSHA exist.
  */
 export async function worktreeDirty(path: string, baseSHA: string): Promise<boolean> {
   const status = await runGit(path, ['status', '--porcelain'])
@@ -138,6 +161,11 @@ export async function worktreeDirty(path: string, baseSHA: string): Promise<bool
  * combining the configured spawn mode with an explicit -w flag (Go
  * resolveWorktreeUse). When auto=true the caller probes the repo root and
  * silently skips isolation for a non-git workDir.
+ *
+ * @param mode - Configured [spawn].worktree mode.
+ * @param flag - Explicit -w flag from the spawn request.
+ * @returns use: whether isolation applies; auto: whether the caller must
+ * probe the repo root first.
  */
 export function resolveWorktreeUse(mode: WorktreeMode, flag: boolean): { use: boolean; auto: boolean } {
   if (flag || mode === WorktreeMode.ForceOn) return { use: true, auto: false }
@@ -149,6 +177,9 @@ export function resolveWorktreeUse(mode: WorktreeMode, flag: boolean): { use: bo
  * One-line summary of uncommitted changes in dir (e.g. "3 files changed, 47
  * insertions(+), 8 deletions(-)"), or '' when there is nothing to summarize
  * or dir is not a git working tree (Go gitDiffShortstat).
+ *
+ * @param dir - Working directory to summarize.
+ * @returns The shortstat line, or '' when empty or not a git working tree.
  */
 export async function gitDiffShortstat(dir: string): Promise<string> {
   let out: string
@@ -164,6 +195,9 @@ export async function gitDiffShortstat(dir: string): Promise<string> {
  * Whether a `git worktree remove` error means the worktree is already gone —
  * directory deleted out-of-band, or never/no-longer registered (Go
  * worktreeGone).
+ *
+ * @param errMsg - Error message from a failed `git worktree remove`.
+ * @returns Whether the error indicates the worktree no longer exists.
  */
 export function worktreeGone(errMsg: string): boolean {
   const m = errMsg.toLowerCase()
@@ -177,6 +211,11 @@ export function worktreeGone(errMsg: string): boolean {
  * already-gone worktree is treated as success (prune + best-effort branch
  * delete). When force is true the worktree is removed even with uncommitted
  * changes (Go removeWorktree).
+ *
+ * @param repoRoot - Repository root that owns the worktree.
+ * @param path - Worktree directory to remove.
+ * @param branch - Branch to delete afterwards; '' skips branch deletion.
+ * @param force - Remove even when the worktree has uncommitted changes.
  */
 export async function removeWorktree(repoRoot: string, path: string, branch: string, force: boolean): Promise<void> {
   const args = ['worktree', 'remove']
@@ -203,6 +242,9 @@ export async function removeWorktree(repoRoot: string, path: string, branch: str
  * Whether `<dir>/memory` holds at least one non-empty file (or any
  * subdirectory). An empty or missing memory/ dir is "no memory" (Go
  * memoryHasContent).
+ *
+ * @param dir - Directory whose memory/ subtree to inspect.
+ * @returns Whether memory/ holds at least one non-empty file or subdirectory.
  */
 export function memoryHasContent(dir: string): boolean {
   let entries
@@ -229,6 +271,9 @@ export function memoryHasContent(dir: string): boolean {
 /**
  * Delete the memory/ subtree under dir, but nothing else. Returns the removed
  * path, or '' when there was no memory to remove (Go removeOrphanMemory).
+ *
+ * @param dir - Directory whose memory/ subtree to delete.
+ * @returns The removed memory/ path, or '' when there was nothing to remove.
  */
 export function removeOrphanMemory(dir: string): string {
   if (!memoryHasContent(dir)) return ''
@@ -246,6 +291,10 @@ export function removeOrphanMemory(dir: string): string {
  * Turn a first message into a filesystem/branch-safe slug, capped to ~30
  * runes and suffixed with a timestamp to keep worktree paths unique (Go
  * slugify).
+ *
+ * @param firstMsg - First message of the task the worktree is created for.
+ * @param now - Timestamp used for the uniqueness suffix.
+ * @returns The sanitized slug, `<base>-<MMDD-HHmmss>`, defaulting to `task`.
  */
 export function slugify(firstMsg: string, now = new Date()): string {
   let b = ''

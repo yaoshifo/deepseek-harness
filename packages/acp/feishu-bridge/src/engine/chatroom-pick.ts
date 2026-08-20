@@ -89,17 +89,31 @@ export interface PickerStates {
 
 const pickerMaps = new WeakMap<Engine, PickerStates>()
 
-/** The armed role-picker state for a session key (undefined when none). */
+/** The armed role-picker state for a session key (undefined when none).
+ *
+ * @param e - Engine owning the picker maps.
+ * @param sessionKey - Hub session key.
+ * @returns the armed role-picker state, or undefined when none.
+ */
 export function getChatroomPickState(e: Engine, sessionKey: string): ChatroomPickState | undefined {
   return pickers(e).chatroomPick.get(sessionKey)
 }
 
-/** The armed topic-picker state for a session key (undefined when none). */
+/** The armed topic-picker state for a session key (undefined when none).
+ *
+ * @param e - Engine owning the picker maps.
+ * @param sessionKey - Hub session key.
+ * @returns the armed topic-picker state, or undefined when none.
+ */
 export function getChatroomTopicPickState(e: Engine, sessionKey: string): ChatroomTopicPickState | undefined {
   return pickers(e).chatroomTopicPick.get(sessionKey)
 }
 
-/** Drop the armed role-picker state (picker cleared / reset). */
+/** Drop the armed role-picker state (picker cleared / reset).
+ *
+ * @param e - Engine owning the picker maps.
+ * @param sessionKey - Hub session key whose picker state is dropped.
+ */
 export function clearChatroomPickState(e: Engine, sessionKey: string): void {
   pickers(e).chatroomPick.delete(sessionKey)
 }
@@ -116,6 +130,10 @@ function pickers(e: Engine): PickerStates {
 /**
  * Whether the session is in a picker's "picking" phase (moderator awake,
  * user hasn't confirmed). Used to auto-approve the moderator's ExitPlanMode.
+ *
+ * @param e - Engine owning the picker maps.
+ * @param sessionKey - Hub session key.
+ * @returns true when either picker is in its picking phase.
  */
 export function chatroomPickActive(e: Engine, sessionKey: string): boolean {
   const m = pickers(e)
@@ -146,6 +164,11 @@ function simpleCard(title: string, color: string, content: string): Card {
 /**
  * /chatroom <topic> with no roles named: wake the moderator to recommend
  * roles and arm the picker state. No roles are spawned here.
+ *
+ * @param e - Engine whose moderator agent is woken.
+ * @param p - Platform used for the picking notice card and the wake message.
+ * @param msg - Triggering message; its session key becomes the hub.
+ * @param topic - Topic the moderator recommends roles for.
  */
 export function beginChatroomPick(e: Engine, p: Platform, msg: Message, topic: string): void {
   const rolesDir = e.chatroomRolesDir()
@@ -214,7 +237,12 @@ function armChatroomPickWatchdog(e: Engine, p: Platform, hubKey: string): void {
   timer.unref()
 }
 
-/** Render the role picker card from the state (Go renderChatroomPickCard). */
+/** Render the role picker card from the state (Go renderChatroomPickCard).
+ *
+ * @param e - Engine providing i18n strings.
+ * @param ps - Role-picker state to render.
+ * @returns the role picker card.
+ */
 export function renderChatroomPickCard(e: Engine, ps: ChatroomPickState): Card {
   const cb = newCard().title(e.i18n.t(Msg.ChatroomPickTitle), 'purple')
   cb.markdown(`### ${e.i18n.t(Msg.ChatroomTopicLabel)}\n${ps.topic}`)
@@ -240,6 +268,10 @@ export function renderChatroomPickCard(e: Engine, ps: ChatroomPickState): Card {
 /**
  * Validate the moderator's recommendations, flip to 'select', and push the
  * picker card to the hub group (Go RenderChatroomPickCard, the API entry).
+ *
+ * @param e - Engine owning the picker state.
+ * @param hubKey - Hub session key the picker is armed on.
+ * @param recs - Moderator recommendations to validate and preselect from.
  */
 export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: ChatroomRolePick[]): void {
   const ps = pickers(e).chatroomPick.get(hubKey)
@@ -293,6 +325,10 @@ export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: C
  * The picker state machine behind the /chatroom-pick card actions: toggle
  * selects/deselects a role; confirm dispatches to finalizeChatroomPick (1
  * role → direct mode, ≥2 → spawn + moderator); cancel clears the picker.
+ *
+ * @param e - Engine owning the picker state.
+ * @param sessionKey - Hub session key the card action targets.
+ * @param args - Space-separated action words: 'toggle <name>', 'confirm', or 'cancel'.
  */
 export function executeChatroomPickAction(e: Engine, sessionKey: string, args: string): void {
   const ps = pickers(e).chatroomPick.get(sessionKey)
@@ -342,6 +378,10 @@ export function executeChatroomPickAction(e: Engine, sessionKey: string, args: s
  * /chatroom with no topic: the moderator scans the role directory and recent
  * notes, proposes candidate topics; the user picks one, then the #43 role
  * picker takes over (Go beginChatroomTopicPick).
+ *
+ * @param e - Engine whose moderator agent is woken.
+ * @param p - Platform used for the picking notice card and the wake message.
+ * @param msg - Triggering message; its session key becomes the hub.
  */
 export function beginChatroomTopicPick(e: Engine, p: Platform, msg: Message): void {
   const rolesDir = e.chatroomRolesDir()
@@ -406,7 +446,12 @@ function armChatroomTopicPickWatchdog(e: Engine, p: Platform, hubKey: string): v
   timer.unref()
 }
 
-/** Render the single-select topic picker card (Go renderChatroomTopicPickCard). */
+/** Render the single-select topic picker card (Go renderChatroomTopicPickCard).
+ *
+ * @param e - Engine providing i18n strings.
+ * @param ps - Topic-picker state to render.
+ * @returns the single-select topic picker card.
+ */
 export function renderChatroomTopicPickCard(e: Engine, ps: ChatroomTopicPickState): Card {
   const cb = newCard().title(e.i18n.t(Msg.ChatroomTopicPickTitle), 'purple')
   for (const t of ps.recs) {
@@ -432,7 +477,12 @@ export function renderChatroomTopicPickCard(e: Engine, ps: ChatroomTopicPickStat
   return cb.build()
 }
 
-/** The #59 API entry: validate topics, flip to 'select', push the card (Go RenderChatroomTopicPickCard). */
+/** The #59 API entry: validate topics, flip to 'select', push the card (Go RenderChatroomTopicPickCard).
+ *
+ * @param e - Engine owning the picker state.
+ * @param hubKey - Hub session key the picker is armed on.
+ * @param topics - Moderator-proposed candidate topics to display.
+ */
 export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, topics: ChatroomTopicPick[]): void {
   const ps = pickers(e).chatroomTopicPick.get(hubKey)
   if (ps === undefined) {
@@ -472,7 +522,12 @@ export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, to
   }
 }
 
-/** The #59 single-select state machine behind the card actions (radio semantics). */
+/** The #59 single-select state machine behind the card actions (radio semantics).
+ *
+ * @param e - Engine owning the picker state.
+ * @param sessionKey - Hub session key the card action targets.
+ * @param args - Space-separated action words: 'toggle <title>', 'confirm', or 'cancel'.
+ */
 export function executeChatroomTopicPickAction(e: Engine, sessionKey: string, args: string): void {
   const ps = pickers(e).chatroomTopicPick.get(sessionKey)
   if (ps === undefined) return
@@ -515,6 +570,12 @@ export function executeChatroomTopicPickAction(e: Engine, sessionKey: string, ar
  * machine executes first (Go executeCardAction), then the reply card renders
  * (cancelled / re-rendered picker with hint / transitional starting card).
  * Returns undefined when there is nothing to swap in (unknown toggle).
+ *
+ * @param e - Engine owning the picker states.
+ * @param sessionKey - Hub session key the card action targets.
+ * @param cmd - Card command path: '/chatroom-pick' or '/chatroom-topic-pick'.
+ * @param args - Action words forwarded to the picker state machine.
+ * @returns the replacement card, or undefined when nothing should swap in.
  */
 export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: string, args: string): Card | undefined {
 

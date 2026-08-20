@@ -20,7 +20,12 @@ export interface StagedAttachment {
   path: string
 }
 
-/** File extension for an image MIME type (Go ImageExtFromMime). */
+/**
+ * File extension for an image MIME type (Go ImageExtFromMime).
+ *
+ * @param mime - MIME type of an image attachment; unknown types map to PNG.
+ * @returns The file extension including the leading dot.
+ */
 export function imageExtFromMime(mime: string): string {
   switch (mime) {
     case 'image/jpeg': return '.jpg'
@@ -30,7 +35,13 @@ export function imageExtFromMime(mime: string): string {
   }
 }
 
-/** Write image attachments into dir and return their paths (Go saveImagesToDir). */
+/**
+ * Write image attachments into dir and return their paths (Go saveImagesToDir).
+ *
+ * @param dir - Destination directory, created if missing.
+ * @param images - Image attachments to write; empty input skips the directory.
+ * @returns Paths of the images actually written; failed writes are skipped.
+ */
 export function saveImagesToDir(dir: string, images: ImageAttachment[]): string[] {
   if (images.length === 0) return []
   try {
@@ -53,7 +64,13 @@ export function saveImagesToDir(dir: string, images: ImageAttachment[]): string[
   return paths
 }
 
-/** Write file attachments into dir and return their paths (Go saveFilesToDir). */
+/**
+ * Write file attachments into dir and return their paths (Go saveFilesToDir).
+ *
+ * @param dir - Destination directory, created if missing.
+ * @param files - File attachments to write; empty input skips the directory.
+ * @returns Paths of the files actually written; failed writes are skipped.
+ */
 export function saveFilesToDir(dir: string, files: FileAttachment[]): string[] {
   if (files.length === 0) return []
   try {
@@ -76,17 +93,35 @@ export function saveFilesToDir(dir: string, files: FileAttachment[]): string[] {
   return paths
 }
 
-/** Save images to workDir/.cc-connect/attachments (Go SaveImagesToDisk). */
+/**
+ * Save images to workDir/.cc-connect/attachments (Go SaveImagesToDisk).
+ *
+ * @param workDir - Session workspace root.
+ * @param images - Image attachments to write.
+ * @returns Paths of the images actually written.
+ */
 export function saveImagesToDisk(workDir: string, images: ImageAttachment[]): string[] {
   return saveImagesToDir(join(workDir, '.cc-connect', 'attachments'), images)
 }
 
-/** Save files to workDir/.cc-connect/attachments (adapter send path). */
+/**
+ * Save files to workDir/.cc-connect/attachments (adapter send path).
+ *
+ * @param workDir - Session workspace root.
+ * @param files - File attachments to write.
+ * @returns Paths of the files actually written.
+ */
 export function saveFilesToDisk(workDir: string, files: FileAttachment[]): string[] {
   return saveFilesToDir(join(workDir, '.cc-connect', 'attachments'), files)
 }
 
-/** Append file path references to a prompt (Go AppendFileRefs). */
+/**
+ * Append file path references to a prompt (Go AppendFileRefs).
+ *
+ * @param prompt - Existing prompt text; may be empty.
+ * @param filePaths - Local paths of saved files the agent should read.
+ * @returns The prompt with the reference line appended, or the prompt unchanged when there are no paths.
+ */
 export function appendFileRefs(prompt: string, filePaths: string[]): string {
   if (filePaths.length === 0) return prompt
   const ref = `(Files saved locally, please read them: ${filePaths.join(', ')})`
@@ -94,7 +129,13 @@ export function appendFileRefs(prompt: string, filePaths: string[]): string {
   return `${prompt}\n\n${ref}`
 }
 
-/** Append image paths as a markdown bullet list with no prose (Go AppendImageRefs). */
+/**
+ * Append image paths as a markdown bullet list with no prose (Go AppendImageRefs).
+ *
+ * @param prompt - Existing prompt text; may be empty.
+ * @param imagePaths - Local paths of saved images the agent should read.
+ * @returns The prompt with the bullet list appended, or the prompt unchanged when there are no paths.
+ */
 export function appendImageRefs(prompt: string, imagePaths: string[]): string {
   if (imagePaths.length === 0) return prompt
   const ref = imagePaths.map(p => `- ${p}`).join('\n')
@@ -106,6 +147,11 @@ export function appendImageRefs(prompt: string, imagePaths: string[]): string {
  * Splice staged image/file paths into a prompt as a markdown bullet list
  * (Go spliceStagedAttachments): images first, then files, all as plain
  * `- <path>` bullets.
+ *
+ * @param prompt - Existing prompt text; may be empty.
+ * @param imagePaths - Local paths of staged images, listed first.
+ * @param filePaths - Local paths of staged files, listed after the images.
+ * @returns The prompt with all staged paths appended as bullets, or the prompt unchanged when nothing is staged.
  */
 export function spliceStagedAttachments(prompt: string, imagePaths: string[], filePaths: string[]): string {
   return appendImageRefs(prompt, [...imagePaths, ...filePaths])
@@ -116,6 +162,10 @@ export function spliceStagedAttachments(prompt: string, imagePaths: string[], fi
  * next text message (Go pendingDirFor): namespaced by a short hash of the
  * interactive key so concurrent chats under the same workDir never collide,
  * and outside .cc-connect/attachments (which the agent clears per Send).
+ *
+ * @param workspaceDir - Session workspace root.
+ * @param interactiveKey - Key of the interactive session waiting for attachments.
+ * @returns The pending directory path for that session.
  */
 export function pendingDirFor(workspaceDir: string, interactiveKey: string): string {
   const sum = createHash('sha256').update(interactiveKey).digest('hex').slice(0, 12)

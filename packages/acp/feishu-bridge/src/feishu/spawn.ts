@@ -114,32 +114,54 @@ export class SpawnedChatStore {
     }
   }
 
-  /** Whether the chat is /spawn-created. */
+  /**
+   * Whether the chat is /spawn-created.
+   * @param chatID - Chat ID.
+   * @returns True when the chat is registered.
+   */
   isSpawned(chatID: string): boolean {
     return this.chats.has(chatID)
   }
 
-  /** Whether the spawned chat is active (color-avatar state). */
+  /**
+   * Whether the spawned chat is active (color-avatar state).
+   * @param chatID - Chat ID.
+   * @returns True when the chat is registered with active=true.
+   */
   isActive(chatID: string): boolean {
     return this.chats.get(chatID)?.active === true
   }
 
-  /** The chat's meta, if registered. */
+  /**
+   * The chat's meta, if registered.
+   * @param chatID - Chat ID.
+   * @returns The chat's meta, or undefined when not registered.
+   */
   get(chatID: string): SpawnedChatMeta | undefined {
     return this.chats.get(chatID)
   }
 
-  /** Set a chat's meta in memory only; persist via {@link save}. */
+  /**
+   * Set a chat's meta in memory only; persist via {@link save}.
+   * @param chatID - Chat ID.
+   * @param meta - The meta to store.
+   */
   set(chatID: string, meta: SpawnedChatMeta): void {
     this.chats.set(chatID, meta)
   }
 
-  /** All registered chat IDs (for tag discovery scans). */
+  /**
+   * All registered chat IDs (for tag discovery scans).
+   * @returns Every registered chat ID.
+   */
   chatIDs(): string[] {
     return [...this.chats.keys()]
   }
 
-  /** Snapshot of entries for listing. */
+  /**
+   * Snapshot of entries for listing.
+   * @returns Copy of the [chatID, meta] pairs.
+   */
   entries(): Array<[string, SpawnedChatMeta]> {
     return [...this.chats.entries()]
   }
@@ -170,7 +192,10 @@ export class SpawnedChatStore {
     }
   }
 
-  /** Mark a spawned chat done (inactive) and persist. */
+  /**
+   * Mark a spawned chat done (inactive) and persist.
+   * @param chatID - Chat ID.
+   */
   async markDone(chatID: string): Promise<void> {
     const meta = this.chats.get(chatID)
     if (meta === undefined) return
@@ -179,7 +204,10 @@ export class SpawnedChatStore {
     await this.save()
   }
 
-  /** Mark a spawned chat active again (inverse of /done) and persist. */
+  /**
+   * Mark a spawned chat active again (inverse of /done) and persist.
+   * @param chatID - Chat ID.
+   */
   async markActive(chatID: string): Promise<void> {
     const meta = this.chats.get(chatID)
     if (meta === undefined) return

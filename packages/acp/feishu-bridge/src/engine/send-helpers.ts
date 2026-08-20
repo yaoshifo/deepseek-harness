@@ -17,6 +17,9 @@ const fallbackInlineWsRe = /[^\S\n]{3,}/g
  * Strip markdown syntax and HTML from card-fallback text: removes code
  * fences, bold/strike/inline-code markers, dividers, HTML tags, list and
  * heading prefixes, and collapses long inline whitespace runs.
+ *
+ * @param s - the card body text to sanitize.
+ * @returns the plain text safe to send after a card send fails.
  */
 export function toPlainTextForFallback(s: string): string {
   for (const marker of ['```', '**', '~~', '`', '---']) {
@@ -31,7 +34,12 @@ export function toPlainTextForFallback(s: string): string {
 const maxSummaryUserMsgLen = 500
 const maxSummaryAssistantLen = 4000
 
-/** Build the compact last-user/last-assistant context for fork queries. */
+/**
+ * Build the compact last-user/last-assistant context for fork queries.
+ *
+ * @param entries - the session history to scan for the latest user and assistant turns.
+ * @returns the "User asked / Assistant replied" context block, '' when history has neither.
+ */
 export function buildSummaryContext(entries: HistoryEntry[]): string {
   let lastUser = ''
   let lastAssistant = ''

@@ -129,6 +129,9 @@ export async function runCompress(
 
 /**
  * Register the /compress command on an engine. Returns the disposer.
+ *
+ * @param e - the engine to register the command and resolver prefix on.
+ * @returns the disposer removing the handler and restoring the resolver.
  */
 export function registerSessionMiscCommands(e: Engine): () => void {
   const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()

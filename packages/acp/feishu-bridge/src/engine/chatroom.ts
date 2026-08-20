@@ -126,6 +126,12 @@ export class ChatroomGather {
    * (or the timeout already did) — the caller owns the wake and MUST deliver
    * wakeContent to the moderator. An empty/silent reply still counts as
    * "replied" so a NO_REPLY role does not stall the barrier.
+   *
+   * @param roleName - The role whose reply is recorded.
+   * @param reply - The role's reply text; empty counts as a NO_REPLY.
+   * @returns done=true when this call completed the barrier (caller owns
+   * the wake and must deliver wakeContent); otherwise done=false with an
+   * empty wakeContent.
    */
   accumulate(roleName: string, reply: string): { done: boolean; wakeContent: string } {
     if (this.woken) return { done: false, wakeContent: '' }
@@ -137,7 +143,12 @@ export class ChatroomGather {
     return { done: true, wakeContent: this.summary() }
   }
 
-  /** Timer-side completion; done=false when replies already completed the barrier. */
+  /** Timer-side completion; done=false when replies already completed the barrier.
+   *
+   * @returns done=true when the timeout owns the wake, with the summary
+   * wake text and the sorted names of roles that never replied; otherwise
+   * done=false.
+   */
   timeoutFire(): { done: boolean; wake: string; missing: string[] } {
     if (this.woken) return { done: false, wake: '', missing: [] }
     this.woken = true
@@ -146,11 +157,15 @@ export class ChatroomGather {
     return { done: true, wake, missing }
   }
 
+  /** Stop the fallback timer once the barrier completes (early or timed out). */
   stopTimer(): void {
     stopFallbackTimer(this.timer, (t: ReturnType<typeof setTimeout> | undefined) => { this.timer = t })
   }
 
-  /** The wake message: broadcast question + each role's reply, role-tagged. */
+  /** The wake message: broadcast question + each role's reply, role-tagged.
+   *
+   * @returns The full wake text delivered to the moderator.
+   */
   summary(): string {
     const lines: string[] = []
     lines.push('[并行收集完成]\n')
@@ -172,8 +187,11 @@ export class ChatroomGather {
  * teardown so none are silently dropped. Same one-shot-wake discipline.
  */
 export class ChatroomEndBarrier {
+  /** Role names whose final replies are still awaited. */
   readonly expected = new Set<string>()
+  /** Role name → final reply text, filled in as replies arrive. */
   readonly collected = new Map<string, string>()
+  /** Fallback drain timer; stopped when the last reply completes the barrier. */
   timer: ReturnType<typeof setTimeout> | undefined
   private woken = false
 
@@ -181,6 +199,12 @@ export class ChatroomEndBarrier {
    * Record a role's final reply; done=true means this was the last expected
    * reply — the caller finalizes the chatroom and wakes the moderator once
    * with the summary.
+   *
+   * @param roleName - The role whose final reply is recorded.
+   * @param reply - The role's final reply text; empty counts as NO_REPLY.
+   * @returns done=true when this was the last expected reply (caller
+   * finalizes the chatroom and wakes the moderator with summary);
+   * otherwise done=false.
    */
   accumulate(roleName: string, reply: string): { done: boolean; summary: string } {
     if (this.woken) return { done: false, summary: '' }
@@ -196,6 +220,10 @@ export class ChatroomEndBarrier {
    * Force completion on timeout. The caller is expected to have reconciled
    * first (dropped roles whose in-flight flag already cleared), so any name
    * remaining is a genuine timeout.
+   *
+   * @returns done=true with the closing summary (prefixed by the timed-out
+   * role names when any); done=false when replies already completed the
+   * barrier.
    */
   timeoutFire(): { done: boolean; summary: string } {
     if (this.woken) return { done: false, summary: '' }
@@ -214,7 +242,10 @@ export class ChatroomEndBarrier {
     stopFallbackTimer(this.timer, (t: ReturnType<typeof setTimeout> | undefined) => { this.timer = t })
   }
 
-  /** The closing summary (Go summarizeEndLocked). */
+  /** The closing summary (Go summarizeEndLocked).
+   *
+   * @returns The closing text delivered to the moderator, each reply truncated to 200 runes.
+   */
   summarizeEnd(): string {
     const lines: string[] = []
     lines.push('[聊天室收尾完成]\n')
@@ -232,17 +263,26 @@ export class ChatroomEndBarrier {
     return lines.join('')
   }
 
-  /** Snapshot of outstanding role names (unordered). */
+  /** Snapshot of outstanding role names (unordered).
+   *
+   * @returns The outstanding role names in set order.
+   */
   expectedSnapshot(): string[] {
     return [...this.expected]
   }
 
-  /** Outstanding role names, sorted (for display). */
+  /** Outstanding role names, sorted (for display).
+   *
+   * @returns The outstanding role names, sorted alphabetically.
+   */
   expectedRemaining(): string[] {
     return [...this.expected].sort()
   }
 
-  /** Drop a role from the outstanding set (it relayed via the normal path). */
+  /** Drop a role from the outstanding set (it relayed via the normal path).
+   *
+   * @param roleName - The role no longer being waited on.
+   */
   forgetExpected(roleName: string): void {
     this.expected.delete(roleName)
   }
@@ -250,7 +290,11 @@ export class ChatroomEndBarrier {
 
 // ── group naming ──────────────────────────────────────────────────────────
 
-/** Role group display name: 「聊天室·<role>」, truncated to the rune ceiling. */
+/** Role group display name: 「聊天室·<role>」, truncated to the rune ceiling.
+ *
+ * @param role - The role name to embed.
+ * @returns The group display name, truncated with a "..." tail when it exceeds the rune ceiling.
+ */
 export function chatroomGroupName(role: string): string {
   let name = `聊天室·${role}`
   if (Array.from(name).length > maxGroupNameRunes) {
@@ -262,7 +306,11 @@ export function chatroomGroupName(role: string): string {
 /** Re-exported for the command module (Go chatroomHubGroupName). */
 export { chatroomHubGroupName }
 
-/** Research assistant subgroup display name: 「聊天室·助手·<role>」. */
+/** Research assistant subgroup display name: 「聊天室·助手·<role>」.
+ *
+ * @param roleName - The role name to embed after the assistant prefix.
+ * @returns The group display name, with the role-name tail truncated when the full name exceeds the rune ceiling.
+ */
 export function chatroomAssistantGroupName(roleName: string): string {
   const name = `聊天室·助手·${roleName}`
   if (Array.from(name).length <= maxGroupNameRunes) return name
@@ -275,14 +323,24 @@ export function chatroomAssistantGroupName(roleName: string): string {
 
 // ── roles listing / resolution ────────────────────────────────────────────
 
-/** The ledger directory for a chatroom hub, or undefined when the ledger is off. */
+/** The ledger directory for a chatroom hub, or undefined when the ledger is off.
+ *
+ * @param e - Engine carrying the moderator-dir configuration.
+ * @param hubKey - Session key of the chatroom hub.
+ * @returns The hub's ledger directory, or undefined when no moderator dir is configured.
+ */
 export function chatroomLedgerDirFor(e: Engine, hubKey: string): string | undefined {
   const dir = e.chatroomModeratorDir().dir
   if (dir === '') return undefined
   return chatroomLedgerDir(dir, hubKey)
 }
 
-/** The roles in a chatroom (sessions whose chatroomHubKey matches). */
+/** The roles in a chatroom (sessions whose chatroomHubKey matches).
+ *
+ * @param e - Engine carrying the session registry and per-chat workdirs.
+ * @param hubKey - Session key of the chatroom hub.
+ * @returns One entry per live role session, each with name, session key, and persona workdir.
+ */
 export function listChatroomRoles(e: Engine, hubKey: string): ChatroomRole[] {
   const { idToKey } = e.sessions.sessionKeyMap()
   const out: ChatroomRole[] = []
@@ -302,6 +360,12 @@ export function listChatroomRoles(e: Engine, hubKey: string): ChatroomRole[] {
 /**
  * Resolve a role reference — a session key or a role name within the
  * chatroom — to the role's session key. Never creates sessions.
+ *
+ * @param e - Engine carrying the session registry and i18n surface.
+ * @param hubKey - Session key of the chatroom hub that scopes the search.
+ * @param ref - The reference to resolve: a role session key or a role name.
+ * @returns The matching role's session key.
+ * @throws When the reference is empty or matches no role in the chatroom.
  */
 export function resolveChatroomRole(e: Engine, hubKey: string, ref: string): string {
   const trimmed = ref.trim()
@@ -337,6 +401,12 @@ function groupSpawnerOf(
  * StartChatroom spawns one isolated group per role, each with its own workdir
  * = the role's persona directory, linked to the hub as children. Roles start
  * IDLE — the moderator drives turns via askRole.
+ *
+ * @param e - Engine carrying the session registry, platform, and role configs.
+ * @param hubSessionKey - Session key of the moderator hub the roles attach to.
+ * @param roleNames - Role names to spawn; empty defaults to every configured role.
+ * @param topic - The discussion topic, written to the ledger and ready cards.
+ * @returns One entry per spawned role, in the order spawned.
  */
 export async function startChatroom(
   e: Engine, hubSessionKey: string, roleNames: string[] | undefined, topic: string,
@@ -432,6 +502,11 @@ export async function startChatroom(
  * Post the moderator's question to a role's group (visible card) and inject
  * it into the role session as a new turn, re-arming the one-shot relay.
  * Non-blocking. The role is addressed by name or session key.
+ *
+ * @param e - Engine carrying the session registry and i18n surface.
+ * @param callerHubKey - Session key of the chatroom hub the role must belong to.
+ * @param roleRef - The role to ask: a role name or session key.
+ * @param question - The moderator's question text; empty is rejected.
  */
 export async function askRole(e: Engine, callerHubKey: string, roleRef: string, question: string): Promise<void> {
   const q = question.trim()
@@ -519,6 +594,11 @@ async function askRoleInternal(
  * GatherRoles broadcasts the SAME question to every role at once (each in its
  * own group) and sets up a barrier on the hub so the moderator is woken
  * EXACTLY ONCE with all replies collected. Non-blocking.
+ *
+ * @param e - Engine carrying the session registry and gather timeouts.
+ * @param hubKey - Session key of the chatroom hub.
+ * @param question - The question broadcast to every role; empty is rejected.
+ * @param research - True to run a research round (longer timeout, round cap, progress card).
  */
 export function gatherRoles(e: Engine, hubKey: string, question: string, research: boolean): void {
   const q = question.trim()
@@ -598,7 +678,14 @@ function fireGatherTimeout(e: Engine, hubKey: string): void {
   console.info(`chatroom: gather timed out; woke moderator with partial replies (hub=${hubKey})`)
 }
 
-/** The research gather progress card; terminal is '' (X/N), 'done', or 'timedout'. */
+/** The research gather progress card; terminal is '' (X/N), 'done', or 'timedout'.
+ *
+ * @param e - Engine carrying the i18n surface.
+ * @param done - Number of role replies collected so far.
+ * @param total - Total number of roles in the gather.
+ * @param terminal - Terminal state ('' for live progress, 'done', or 'timedout').
+ * @returns The progress card for the current state.
+ */
 export function buildResearchProgressCard(e: Engine, done: number, total: number, terminal: string): Card {
   let title = e.i18n.t(Msg.ChatroomResearchProgressTitle)
   let body = e.i18n.tf(Msg.ChatroomResearchProgressBody, done, total)
@@ -650,6 +737,12 @@ function updateResearchProgressCard(e: Engine, p: Platform, g: ChatroomGather, t
 /**
  * Prefix a partial-gather wake with the NAMED list of timed-out roles and
  * each role's state (dispatched assistant / in-flight / never started).
+ *
+ * @param e - Engine carrying the session registry and i18n surface.
+ * @param hubKey - Session key of the chatroom hub.
+ * @param missing - Names of the roles that did not reply in time.
+ * @param base - The partial wake text (broadcast question + collected replies).
+ * @returns The timeout prefix joined with base, ready to wake the moderator.
  */
 export function buildGatherTimeoutWake(e: Engine, hubKey: string, missing: string[], base: string): string {
   const sts: string[] = []
@@ -671,6 +764,10 @@ export function buildGatherTimeoutWake(e: Engine, hubKey: string, missing: strin
 /**
  * Deliver a synthetic message to the hub session re-arming the moderator for
  * the next orchestration step (Go wakeChatroomModerator).
+ *
+ * @param e - Engine carrying the session registry and i18n surface.
+ * @param hubKey - Session key of the chatroom hub to wake.
+ * @param content - The wake message text delivered to the moderator.
  */
 export function wakeChatroomModerator(e: Engine, hubKey: string, content: string): void {
   const p = e.spawnCapablePlatform()
@@ -705,6 +802,10 @@ export function wakeChatroomModerator(e: Engine, hubKey: string, content: string
  * A role asks the human a question whose answer only the human knows: mark
  * the hub pending, post a ⏸ card, and do NOT wake the moderator — the
  * discussion is suspended (Go AskHuman).
+ *
+ * @param e - Engine carrying the session registry and i18n surface.
+ * @param roleSessionKey - Session key of the asking role; must belong to a chatroom.
+ * @param question - The question for the human; empty is rejected.
  */
 export async function askHuman(e: Engine, roleSessionKey: string, question: string): Promise<void> {
   const q = question.trim()
@@ -747,6 +848,12 @@ export async function askHuman(e: Engine, roleSessionKey: string, question: stri
  * Route the human's reply to a pending ask-human question back to the asking
  * role (via askRole) and clear the pending flag. Returns true when the
  * message was consumed; slash commands pass through untouched.
+ *
+ * @param e - Engine carrying the session registry.
+ * @param _p - Platform of the inbound message (unused; askRole resolves its own).
+ * @param hubKey - Session key of the chatroom hub holding the pending flag.
+ * @param content - The human's reply text.
+ * @returns True when the reply was routed to the pending role; false when no question is pending or the message is a slash command.
  */
 export function routePendingHumanReply(e: Engine, _p: Platform, hubKey: string, content: string): boolean {
   const roleName = e.sessions.getOrCreateActive(hubKey).getPendingHumanQuestionRole().trim()
@@ -775,6 +882,12 @@ export function routePendingHumanReply(e: Engine, _p: Platform, hubKey: string, 
  * All session/barrier state mutations run synchronously (Go's mutex-guarded
  * sequence); only the platform sends (relay card, ledger append, wake) ride
  * the async reply-context reconstruction.
+ *
+ * @param e - Engine carrying the session registry and i18n surface.
+ * @param state - Interactive state of the finished turn; its platform addresses the hub.
+ * @param session - The role session whose turn just ended.
+ * @param baseResponse - The role's reply text for this turn.
+ * @param isSilent - True when the turn ran in silent mode (no relay card, wake still fires).
  */
 export function maybeAutoRelayRole(
   e: Engine,
@@ -945,6 +1058,10 @@ export function maybeAutoRelayRole(
  * Tear down all role groups in a chatroom (children of the hub with a
  * chatroom hub key), reusing /done's recursive cleanup. The hub session
  * itself is left intact.
+ *
+ * @param e - Engine carrying the session registry and platform.
+ * @param hubKey - Session key of the chatroom hub to tear down.
+ * @returns 'ended' with the removed-role count, or 'pending' with the in-flight roles being drained.
  */
 export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   const p = e.spawnCapablePlatform()
@@ -1001,6 +1118,10 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
  * Tear down every chatroom role under the hub: stops each role session,
  * clears the chatroom marking, and drops the end barrier. The Session
  * records themselves are kept. Returns the number of roles removed.
+ *
+ * @param e - Engine carrying the session registry and platform.
+ * @param hubKey - Session key of the chatroom hub whose roles are removed.
+ * @returns The number of role sessions cleaned up (0 when no platform is available).
  */
 export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
   const p = e.spawnCapablePlatform()
@@ -1041,7 +1162,12 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
   return removed
 }
 
-/** finalizeChatroomEnd + the closing-summary wake off the turn-end stack (Go finalizeChatroomEndAsync). */
+/** finalizeChatroomEnd + the closing-summary wake off the turn-end stack (Go finalizeChatroomEndAsync).
+ *
+ * @param e - Engine carrying the session registry and platform.
+ * @param hubKey - Session key of the chatroom hub to finalize.
+ * @param summary - The closing summary delivered to the moderator after teardown.
+ */
 export function finalizeChatroomEndAsync(e: Engine, hubKey: string, summary: string): void {
   void Promise.resolve().then(() => {
     finalizeChatroomEnd(e, hubKey)
@@ -1067,7 +1193,13 @@ function fireEndTimeout(e: Engine, hubKey: string): void {
   console.info(`chatroom: end barrier timed out; finalizing with partial replies (hub=${hubKey})`)
 }
 
-/** The session key of the chatroom role with the given name under hubKey, or ''. */
+/** The session key of the chatroom role with the given name under hubKey, or ''.
+ *
+ * @param e - Engine carrying the session registry.
+ * @param hubKey - Session key of the chatroom hub to search under.
+ * @param roleName - The chatroom role name to look up.
+ * @returns The role's session key, or '' when no such role exists.
+ */
 export function findRoleKeyByName(e: Engine, hubKey: string, roleName: string): string {
   for (const childKey of e.collectSubtree(hubKey)) {
     const sess = e.sessions.getOrCreateActive(childKey)
@@ -1083,6 +1215,11 @@ export function findRoleKeyByName(e: Engine, hubKey: string, roleName: string): 
 /**
  * Update the ledger's synthesis (or subproblems) section with the
  * moderator's running synthesis (Go NoteChatroom).
+ *
+ * @param e - Engine carrying the moderator-dir configuration.
+ * @param hubKey - Session key of the chatroom hub whose ledger is updated.
+ * @param section - Ledger section to write: 'synthesis' (default) or 'subproblems'.
+ * @param text - The synthesis/subproblems text; empty is rejected.
  */
 export async function noteChatroom(e: Engine, hubKey: string, section: string, text: string): Promise<void> {
   text = text.trim()
@@ -1105,7 +1242,10 @@ export async function noteChatroom(e: Engine, hubKey: string, section: string, t
 
 // ── research flags / venv ─────────────────────────────────────────────────
 
-/** Reset all research-mode fields on a hub session (Go clearChatroomResearchFlags). */
+/** Reset all research-mode fields on a hub session (Go clearChatroomResearchFlags).
+ *
+ * @param hub - The hub session whose research flags are reset.
+ */
 export function clearChatroomResearchFlags(hub: Session): void {
   hub.setChatroomResearch(false)
   hub.setChatroomResearchMode('')
@@ -1116,6 +1256,9 @@ export function clearChatroomResearchFlags(hub: Session): void {
 /**
  * The shared workdir for research-mode assistant subgroups: the configured
  * workspace, else <moderatorDir>/research, else '' (Go chatroomResearchWorkspace).
+ *
+ * @param e - Engine carrying the workspace and moderator-dir configuration.
+ * @returns The shared research workdir, or '' when nothing is configured.
  */
 export function chatroomResearchWorkspace(e: Engine): string {
   const ws = e.chatroomResearchWorkspaceCfg.trim()
@@ -1150,6 +1293,10 @@ let researchVenvChain: Promise<unknown> = Promise.resolve()
  * ('', undefined) when the feature switch is off; ('', Error) when uv is
  * unavailable or creation fails — /chatroom --research gates startup on it.
  * Idempotent: an existing .venv is reused without re-installing.
+ *
+ * @param e - Engine carrying the research-python-env feature switch.
+ * @param ws - The shared research workspace directory; empty rejects.
+ * @returns The venv's absolute path, undefined when the switch is off; rejects when creation fails.
  */
 export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string | undefined> {
   if (!e.chatroomResearchPythonEnv) return Promise.resolve(undefined)
@@ -1209,6 +1356,13 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
  * #57): only a research chatroom hub in manual mode is affected. The timer
  * synthesizes a click on the first option and routes it through the SAME
  * handlePendingPermission path as a real user answer.
+ *
+ * @param e - Engine carrying the session registry and i18n surface.
+ * @param p - Platform the pending card was posted on.
+ * @param sessionKey - Session key of the moderator hub that issued the card.
+ * @param replyCtx - Reply context for the timeout notice message.
+ * @param pending - The pending permission entry for this AskUserQuestion card.
+ * @param qIdx - 0-based index of the question the default answer targets.
  */
 export function armResearchManualAskTimeout(
   e: Engine,

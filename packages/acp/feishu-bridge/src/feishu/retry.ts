@@ -25,13 +25,21 @@ export const retryTiming = {
 /** Feishu's "invalid tenant access token" business code. */
 const tenantTokenInvalidCode = '99991663'
 
-/** Whether an error indicates the cached tenant access token went stale. */
-/** Render an unknown error as display text (Go err.Error()). */
+/**
+ * Render an unknown error as display text (Go err.Error()).
+ * @param err - The thrown value.
+ * @returns The error's message text.
+ */
 export function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message
   return String(err)
 }
 
+/**
+ * Whether an error indicates the cached tenant access token went stale.
+ * @param err - The thrown value.
+ * @returns True when the error text carries the invalid-token code or wording.
+ */
 export function isTenantAccessTokenInvalid(err: unknown): boolean {
   if (err === undefined || err === null) return false
   const msg = errorMessage(err).toLowerCase()
@@ -63,7 +71,11 @@ const transientSubstrings = [
   'unexpected eof',
 ]
 
-/** Whether the error is transient and should be retried with backoff. */
+/**
+ * Whether the error is transient and should be retried with backoff.
+ * @param err - The thrown value.
+ * @returns True when the error text matches a transient network symptom.
+ */
 export function isTransientError(err: unknown): boolean {
   if (err === undefined || err === null) return false
   const msg = errorMessage(err).toLowerCase()
@@ -83,6 +95,10 @@ function deadline(ms: number): { promise: Promise<never>; cancel: () => void } {
  * Run fn with exponential-backoff retry on transient errors (jitter up to
  * +25% of the delay to avoid thundering-herd retries). Non-transient errors
  * return immediately; the per-attempt deadline bounds each call.
+ * @param operation - Operation label used in retry warnings and error messages.
+ * @param fn - The API call to attempt.
+ * @param signal - Aborts the retry loop between attempts.
+ * @returns The value resolved by fn on success.
  */
 export async function withTransientRetry<T>(
   operation: string,
@@ -137,7 +153,10 @@ export class TokenBucketRateLimiter {
     this.lastRefill = Date.now()
   }
 
-  /** Wait until one token is available. */
+  /**
+   * Wait until one token is available.
+   * @param signal - Rejects the wait when aborted.
+   */
   wait(signal?: AbortSignal): Promise<void> {
     if (signal === undefined) return this.waitForToken()
     return new Promise<void>((resolve, reject) => {

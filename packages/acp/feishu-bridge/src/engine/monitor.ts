@@ -184,7 +184,11 @@ export class MonitorExampleStore {
     return id
   }
 
-  /** Delete by ID; false when absent. */
+  /**
+   * Delete by ID; false when absent.
+   * @param id - the ID returned by {@link add}.
+   * @returns whether an example was deleted.
+   */
   delete(id: string): boolean {
     const idx = this.examples.findIndex(ex => ex.id === id)
     if (idx === -1) return false
@@ -193,12 +197,20 @@ export class MonitorExampleStore {
     return true
   }
 
-  /** The most recent n examples (last n by insertion order). */
+  /**
+   * The most recent n examples (last n by insertion order).
+   * @param n - number of examples to return; non-positive yields [].
+   * @returns copies of the newest n examples.
+   */
   recentN(n: number): MonitorExample[] {
     if (n <= 0 || this.examples.length === 0) return []
     return this.examples.slice(-n).map(ex => ({ ...ex }))
   }
 
+  /**
+   * Every stored example in insertion order.
+   * @returns copies of all examples.
+   */
   all(): MonitorExample[] {
     return this.examples.map(ex => ({ ...ex }))
   }
@@ -244,7 +256,11 @@ export interface MonitorClarification {
 export { isMonitorCommand } from '../core/types.js'
 import { isMonitorCommand } from '../core/types.js'
 
-/** Parse the raw comma-separated monitor chats string into a trimmed, de-duplicated list. */
+/**
+ * Parse the raw comma-separated monitor chats string into a trimmed, de-duplicated list.
+ * @param raw - the raw chats config value.
+ * @returns the unique chat IDs in order.
+ */
 export function splitMonitorChats(raw: string): string[] {
   const trimmed = raw.trim()
   if (trimmed === '') return []
@@ -259,12 +275,22 @@ export function splitMonitorChats(raw: string): string[] {
   return out
 }
 
-/** Whether chatID is in the raw chats string. */
+/**
+ * Whether chatID is in the raw chats string.
+ * @param raw - the raw chats config value.
+ * @param chatID - the chat ID to look for.
+ * @returns whether the chat is monitored.
+ */
 export function containsMonitorChat(raw: string, chatID: string): boolean {
   return splitMonitorChats(raw).includes(chatID)
 }
 
-/** The new raw chats string with chatID appended; "" or "*" collapses to chatID. Idempotent. */
+/**
+ * The new raw chats string with chatID appended; "" or "*" collapses to chatID. Idempotent.
+ * @param raw - the raw chats config value.
+ * @param chatID - the chat ID to add.
+ * @returns the updated raw chats string.
+ */
 export function addMonitorChat(raw: string, chatID: string): string {
   const id = chatID.trim()
   if (id === '') return raw
@@ -273,7 +299,12 @@ export function addMonitorChat(raw: string, chatID: string): string {
   return `${raw},${id}`
 }
 
-/** The new raw chats string with chatID removed; "" when the list becomes empty. */
+/**
+ * The new raw chats string with chatID removed; "" when the list becomes empty.
+ * @param raw - the raw chats config value.
+ * @param chatID - the chat ID to remove.
+ * @returns the updated raw chats string.
+ */
 export function removeMonitorChat(raw: string, chatID: string): string {
   const id = chatID.trim()
   return splitMonitorChats(raw).filter(c => c !== id).join(',')
@@ -283,6 +314,8 @@ export function removeMonitorChat(raw: string, chatID: string): string {
  * Extract the JSON triage verdict from the LLM output (Go
  * parseTriageResponse). Candidates are parsed tolerantly (non-string
  * elements skipped). Returns not-actionable on any parse failure.
+ * @param resp - the raw LLM triage output.
+ * @returns the parsed verdict; not-actionable on any parse failure.
  */
 export function parseTriageResponse(resp: string): { actionable: boolean; dir: string; task: string; candidates: string[] } {
   const start = resp.indexOf('{')
@@ -314,7 +347,12 @@ export function parseTriageResponse(resp: string): { actionable: boolean; dir: s
   }
 }
 
-/** Map a clarification answer (an option label) to the chosen dir (Go matchClarifyAnswer). */
+/**
+ * Map a clarification answer (an option label) to the chosen dir (Go matchClarifyAnswer).
+ * @param answer - the user's reply text, expected to be an option label.
+ * @param options - the card options the answer is matched against.
+ * @returns the chosen dir, whether the skip sentinel matched, and whether any option matched.
+ */
 export function matchClarifyAnswer(answer: string, options: MonitorClarifyOption[]): { dir: string; isSkip: boolean; matched: boolean } {
   const a = answer.trim()
   if (a === '') return { dir: '', isSkip: false, matched: false }
@@ -345,6 +383,9 @@ function matchDir(v: string, dirs: MonitorDirEntry[]): string {
  * Split a /learn instruction into (dir, instruction, drop) (Go parseLearnDir).
  * The dir is pinned via `--dir <path-or-desc>` or by mentioning a configured
  * dir's path/description; `--ignore` marks a no-response example and wins.
+ * @param body - the /learn text after the command word.
+ * @param dirs - the configured directory menu used to resolve the dir.
+ * @returns the resolved dir, the remaining instruction, and the drop flag.
  */
 export function parseLearnDir(body: string, dirs: MonitorDirEntry[]): { dir: string; instruction: string; drop: boolean } {
   if (learnIgnoreFlagRe.test(body)) {
@@ -382,6 +423,8 @@ export function parseLearnDir(body: string, dirs: MonitorDirEntry[]): { dir: str
  * Pull the quoted message text out of a reply's extraContent (single-quote
  * format "[Quoted message from <sender>]:\n<text>\n\n"); anything else is
  * returned trimmed as-is (Go extractQuotedText).
+ * @param extra - the reply's extraContent.
+ * @returns the quoted message text, or the trimmed input when it is not a quote.
  */
 export function extractQuotedText(extra: string): string {
   const trimmed = extra.trim()
@@ -392,7 +435,12 @@ export function extractQuotedText(extra: string): string {
   return trimmed.slice(idx + ']:\n'.length).trim()
 }
 
-/** IDs excluding the skip values, order preserved (Go filterExcept). */
+/**
+ * IDs excluding the skip values, order preserved (Go filterExcept).
+ * @param ids - candidate IDs.
+ * @param skip - IDs to exclude; empty strings are ignored.
+ * @returns ids without the skip values.
+ */
 export function filterExcept(ids: string[], skip: string[]): string[] {
   const skipSet = new Set(skip.filter(s => s !== ''))
   return ids.filter(id => !skipSet.has(id))
@@ -403,7 +451,12 @@ function containsDir(dirs: string[], target: string): boolean {
   return dirs.includes(target)
 }
 
-/** Truncate to n runes with an ellipsis (Go monitor truncate). */
+/**
+ * Truncate to n runes with an ellipsis (Go monitor truncate).
+ * @param s - the text to truncate.
+ * @param n - maximum rune count.
+ * @returns the original text when short enough, else the first n runes plus an ellipsis.
+ */
 export function truncateMonitor(s: string, n: number): string {
   const runes = Array.from(s)
   if (runes.length <= n) return s
@@ -499,32 +552,51 @@ export class MonitorCore {
   // Runtime-mutable config (Go atomic.Pointer fields; /monitor commands write
   // while triage readers run — plain fields are safe in the single-threaded
   // event loop).
+  /** Whether monitor mode is enabled. */
   enabled = false
+  /** Raw monitored-chats config value: comma-separated chat IDs, "" (none), or "*". */
   chats = ''
+  /** Triage mode: "" / "monitor" (alert triage) or "dispatch" (hub routing). */
   mode = ''
+  /** Rolling context messages fed to LLM triage; 0 disables the context block. */
   contextWindow = 0
+  /** Whether a card is posted when a subgroup is spawned. */
   spawnNotice = true
+  /** Max concurrent subgroups per monitored chat; 0 = unlimited. */
   maxConcurrent = 0
+  /** Provider name for the LLM triage side query; "" = the active provider. */
   triageProvider = ''
+  /** Base triage prompt; "" = the mode's default prompt. */
   triagePrompt = ''
+  /** Directory menu offered to LLM triage and clarification cards. */
   dirs: MonitorDirEntry[] = []
+  /** Deterministic triage rules tried before the LLM. */
   rules: MonitorRuleEntry[] = []
+  /** Whether /learn few-shot teaching is active. */
   learnEnabled = false
+  /** Max learned examples fed into the triage prompt. */
   learnMax = 0
+  /** Emoji reacted on message pickup; "" = none. */
   reactEmoji = ''
+  /** Polling fallback interval in ms; 0 = off. */
   pollIntervalMs = 0
+  /** The /learn example store, when learning is configured. */
   examples: MonitorExampleStore | undefined
+  /** Whether same-dir alerts coalesce into the active subgroup. */
   coalesceEnabled = false
+  /** How recent (ms) a subgroup spawn stays coalescible. */
   coalesceWindowMs = 0
 
   /** Injected config persistence (Go monitorSaveChats/monitorSaveMode; undefined = skip persist). */
   saveChats: ((chats: string) => void) | undefined
+  /** Mode counterpart of {@link saveChats}. */
   saveMode: ((mode: string) => void) | undefined
 
   /** Per-chat dedup windows, poll high-water marks, triage context buffers, coalesce metadata. */
   private readonly seen = new Map<string, MonitorSeenSet>()
   /** Poll high-water marks (chatID → newest seen create_time, seconds) and seed completion flags. */
   lastTime: Record<string, number> = {}
+  /** Whether the poll high-water mark was seeded for each chat. */
   seeded: Record<string, boolean> = {}
   private buffers: Record<string, string[]> = {}
   /** Originating dir + spawn time of monitor-spawned subgroups (in-memory only). */
@@ -543,6 +615,7 @@ export class MonitorCore {
    * Configure monitor mode (#53) and push the chat set to every platform
    * that implements MonitorChatConfigurable (Go SetMonitorConfig). Restarts
    * the poller and, in dispatch mode, brands the configured chats as hubs.
+   * @param o - the full monitor configuration to apply.
    */
   setConfig(o: MonitorConfigInput): void {
     this.enabled = o.enabled
@@ -591,24 +664,44 @@ export class MonitorCore {
     }
   }
 
-  /** Configure alert coalescing (#53): same-dir alerts within the window route into the existing active subgroup. */
+  /**
+   * Configure alert coalescing (#53): same-dir alerts within the window route into the existing active subgroup.
+   * @param enabled - whether to coalesce same-dir alerts.
+   * @param windowMs - how recent a spawn stays coalescible; 0 = no age limit.
+   */
   setCoalesce(enabled: boolean, windowMs: number): void {
     this.coalesceEnabled = enabled
     this.coalesceWindowMs = windowMs
   }
 
+  /**
+   * The raw monitored-chats config value.
+   * @returns the current chats string.
+   */
   chatsVal(): string {
     return this.chats
   }
 
+  /**
+   * Overwrite the in-memory chats value.
+   * @param c - the new raw chats string.
+   */
   setChats(c: string): void {
     this.chats = c
   }
 
+  /**
+   * The current triage mode.
+   * @returns the mode string, "" before any setConfig.
+   */
   modeVal(): string {
     return this.mode
   }
 
+  /**
+   * Overwrite the in-memory mode value.
+   * @param m - the new mode string.
+   */
   setMode(m: string): void {
     this.mode = m
   }
@@ -619,6 +712,8 @@ export class MonitorCore {
    * Route a monitored-chat message: /learn teaching command or triage →
    * spawn (Go handleMonitorMessage). Dedup by message id so the event path
    * and the polling path don't double-process.
+   * @param p - the platform that delivered the message.
+   * @param msg - the monitored-chat message to route.
    */
   handleMonitorMessage(p: Platform, msg: Message): void {
     // Skip engine-synthesized messages injected via ReceiveMessage (subtask
@@ -652,18 +747,23 @@ export class MonitorCore {
     return asMonitorPoller(p)
   }
 
-  /** The explicit list of monitored chat IDs; "*" (all chats) is not supported for polling. */
+  /**
+   * The explicit list of monitored chat IDs; "*" (all chats) is not supported for polling.
+   * @returns the explicit chat IDs; empty when off or "*".
+   */
   monitorChatIDs(): string[] {
     if (this.chats === '' || this.chats === '*') return []
     return splitMonitorChats(this.chats)
   }
 
+  /** Start the polling fallback loop; a no-op when already running. */
   startMonitorPoll(): void {
     if (this.pollTimer !== undefined) return
     const gen = ++this.pollGen
     void this.monitorPollLoop(gen)
   }
 
+  /** Stop the polling loop and invalidate any loop still in its seeding pass. */
   stopMonitorPoll(): void {
     this.pollGen++ // a loop still seeding observes the bump and never arms its timer
     if (this.pollTimer !== undefined) {
@@ -688,7 +788,10 @@ export class MonitorCore {
     this.pollTimer.unref()
   }
 
-  /** One poll tick over every monitored chat (Go monitorPollOnce). */
+  /**
+   * One poll tick over every monitored chat (Go monitorPollOnce).
+   * @param poller - the platform's monitor-message lister.
+   */
   async monitorPollOnce(poller: MonitorPoller): Promise<void> {
     const p = this.e.spawnCapablePlatform()
     if (p === undefined) return
@@ -739,10 +842,21 @@ export class MonitorCore {
     return true
   }
 
+  /**
+   * Whether a message ID is in the chat's dedup window.
+   * @param chatID - the monitored chat.
+   * @param msgID - the message ID.
+   * @returns whether the ID was already processed.
+   */
   seenHas(chatID: string, msgID: string): boolean {
     return this.seen.get(chatID)?.has(msgID) ?? false
   }
 
+  /**
+   * Add a message ID to the chat's dedup window, evicting the oldest at the cap.
+   * @param chatID - the monitored chat.
+   * @param msgID - the message ID.
+   */
   seenAdd(chatID: string, msgID: string): void {
     let s = this.seen.get(chatID)
     if (s === undefined) {
@@ -754,7 +868,11 @@ export class MonitorCore {
 
   // ── triage → spawn ───────────────────────────────────────────────────────
 
-  /** Rules → LLM triage, then spawn a subgroup for actionable messages (Go triageAndSpawn). */
+  /**
+   * Rules → LLM triage, then spawn a subgroup for actionable messages (Go triageAndSpawn).
+   * @param p - the platform that delivered the message.
+   * @param msg - the message to triage.
+   */
   async triageAndSpawn(p: Platform, msg: Message): Promise<void> {
     const text = msg.content.trim()
     if (text === '') return
@@ -813,6 +931,12 @@ export class MonitorCore {
    * The shared "spawn subgroup + mark sessions + notify" tail (Go
    * spawnMonitorSubgroup). The reaction is removed on capacity/spawn failure;
    * on success a Done reaction marks the original message dispatched.
+   * @param p - the platform that will host the subgroup.
+   * @param msg - the originating monitored-chat message.
+   * @param dir - the directory the subgroup works in.
+   * @param task - the task instruction injected as the subgroup's first message.
+   * @param noReport - whether the child suppresses its result card.
+   * @param reactionID - the pickup reaction to remove or mark Done.
    */
   async spawnMonitorSubgroup(p: Platform, msg: Message, dir: string, task: string, noReport: boolean, reactionID: string): Promise<void> {
     const chatID = chatIDFromSessionKey(msg.sessionKey, msg.platform)
@@ -899,7 +1023,11 @@ export class MonitorCore {
     console.info(`monitor: spawned subgroup (chat=${chatID} dir=${dir} child=${childKey})`)
   }
 
-  /** (dir, task, noReport) when a configured rule matches the text, else empty (Go rulePass). */
+  /**
+   * (dir, task, noReport) when a configured rule matches the text, else empty (Go rulePass).
+   * @param text - the message text to match.
+   * @returns the matched rule's dir, rendered task, and noReport flag, or empty values.
+   */
   rulePass(text: string): { dir: string; task: string; noReport: boolean } {
     for (const r of this.rules) {
       if (r.pattern.test(text)) {
@@ -909,6 +1037,12 @@ export class MonitorCore {
     return { dir: '', task: '', noReport: false }
   }
 
+  /**
+   * Apply a rule's task template to the message text.
+   * @param template - the task template; each "{{message}}" placeholder gets the text.
+   * @param text - the message text.
+   * @returns the rendered task, or the bare text when the template is blank.
+   */
   renderTask(template: string, text: string): string {
     const t = template.trim()
     if (t === '') return text
@@ -924,7 +1058,12 @@ export class MonitorCore {
     return ''
   }
 
-  /** Remove a previously added reaction (best-effort, Go monitorUnreact). */
+  /**
+   * Remove a previously added reaction (best-effort, Go monitorUnreact).
+   * @param p - the platform the reaction lives on.
+   * @param msg - the message the reaction was added to.
+   * @param reactionID - the reaction ID returned by the pickup react.
+   */
   monitorUnreact(p: Platform, msg: Message, reactionID: string): void {
     this.monitorUnreactByCtx(p, msg.replyCtx, reactionID)
   }
@@ -942,6 +1081,9 @@ export class MonitorCore {
    * resolveMonitorClarification). True when the message was consumed (a
    * button answer or a skip); false lets the caller continue to /learn →
    * triage.
+   * @param p - the platform the clarification card lives on.
+   * @param msg - the incoming message to match as an answer.
+   * @returns whether the message was consumed as a clarification answer.
    */
   resolveMonitorClarification(p: Platform, msg: Message): boolean {
     const sess = this.e.sessions.getOrCreateActive(msg.sessionKey)
@@ -999,7 +1141,14 @@ export class MonitorCore {
     return true
   }
 
-  /** Ask the monitor-chat user to pick a dir among candidates (Go askMonitorClarification). */
+  /**
+   * Ask the monitor-chat user to pick a dir among candidates (Go askMonitorClarification).
+   * @param p - the platform to send the card on.
+   * @param msg - the originating message.
+   * @param reactionID - the pickup reaction to remove when no option can be offered.
+   * @param task - the task to re-inject when a dir is chosen.
+   * @param candidates - allow-listed dirs for the buttons; undefined = the full pool.
+   */
   askMonitorClarification(p: Platform, msg: Message, reactionID: string, task: string, candidates: string[] | undefined): void {
     const chatID = chatIDFromSessionKey(msg.sessionKey, msg.platform)
     const hadCandidates = (candidates?.length ?? 0) > 0
@@ -1108,6 +1257,9 @@ export class MonitorCore {
    * Run a LightweightQuery side session to judge the message (Go llmTriage):
    * drop (noise / infra error / no dir to offer), spawn (actionable + dir
    * known), or clarify (actionable but dir uncertain).
+   * @param text - the message text to judge.
+   * @param chatID - the monitored chat, for logs and the context buffer.
+   * @returns the triage action; drop when triage cannot run or is uncertain.
    */
   async llmTriage(text: string, chatID: string): Promise<TriageResult> {
     const fq = asForkQuerierWithProvider(this.e.agent)
@@ -1167,7 +1319,12 @@ export class MonitorCore {
     return this.dirs.some(d => d.path === dir)
   }
 
-  /** Build the LLM triage prompt: mode base + dir menu + few-shot + context (Go buildTriagePrompt). */
+  /**
+   * Build the LLM triage prompt: mode base + dir menu + few-shot + context (Go buildTriagePrompt).
+   * @param text - the message text to judge.
+   * @param chatID - the monitored chat whose context buffer is appended.
+   * @returns the assembled prompt.
+   */
   buildTriagePrompt(text: string, chatID: string): string {
     let base = this.triagePrompt
     if (base === '') {
@@ -1255,7 +1412,11 @@ export class MonitorCore {
     return out
   }
 
-  /** Remember a freshly spawned subgroup's dir + spawn time for coalescing. */
+  /**
+   * Remember a freshly spawned subgroup's dir + spawn time for coalescing.
+   * @param childKey - the spawned subgroup's session key.
+   * @param dir - the directory the subgroup was spawned into.
+   */
   recordMonitorChild(childKey: string, dir: string): void {
     this.childMeta[childKey] = { dir, spawnedAt: Date.now() }
   }
@@ -1265,6 +1426,10 @@ export class MonitorCore {
    * (Go pickCoalesceChild). Children absent from the meta map (spawned before
    * a restart) are skipped — their age is unknown. Lazily GCs meta entries
    * for children no longer active.
+   * @param activeKeys - session keys of currently active subgroups.
+   * @param dir - the alert's directory to match.
+   * @param now - current epoch ms for the window check.
+   * @returns the newest in-window child key, or "" to force a fresh spawn.
    */
   pickCoalesceChild(activeKeys: string[], dir: string, now: number): string {
     const active = new Set(activeKeys)
@@ -1332,7 +1497,14 @@ export class MonitorCore {
 
   // ── notices ──────────────────────────────────────────────────────────────
 
-  /** Card announcing the new subgroup, with a jump button (Go sendMonitorSpawnNotice). */
+  /**
+   * Card announcing the new subgroup, with a jump button (Go sendMonitorSpawnNotice).
+   * @param p - the platform to send the card on.
+   * @param replyCtx - the monitored chat's reply context.
+   * @param childChat - the spawned subgroup's chat ID for the jump button.
+   * @param dir - the directory the subgroup works in.
+   * @param origText - the originating message text quoted in the card.
+   */
   async sendMonitorSpawnNotice(p: Platform, replyCtx: unknown, childChat: string, dir: string, origText: string): Promise<void> {
     const dispatch = this.modeVal() === 'dispatch'
     let headerTitle = this.e.i18n.t(Msg.MonitorPullGroupTitle)
@@ -1457,6 +1629,8 @@ export class MonitorCore {
    * update in-memory state, push to platforms, and restart the poller (Go
    * persistAndApplyMonitorChats). Transactional: on save failure, memory is
    * untouched.
+   * @param newChats - the new raw chats string.
+   * @returns the save error, or undefined on success.
    */
   persistAndApplyMonitorChats(newChats: string): Error | undefined {
     if (this.saveChats !== undefined) {
@@ -1478,6 +1652,8 @@ export class MonitorCore {
    * Write the new mode string to config, then update in-memory state (Go
    * persistAndApplyMonitorMode). Mode does not affect platform pushes or the
    * poller.
+   * @param newMode - the new mode string.
+   * @returns the save error, or undefined on success.
    */
   persistAndApplyMonitorMode(newMode: string): Error | undefined {
     if (this.saveMode !== undefined) {
@@ -1491,7 +1667,11 @@ export class MonitorCore {
     return undefined
   }
 
-  /** Brand one chat as the dispatch hub (name + trending-up-down icon), async fire-and-forget. */
+  /**
+   * Brand one chat as the dispatch hub (name + trending-up-down icon), async fire-and-forget.
+   * @param p - the platform that can brand the chat.
+   * @param sessionKey - the hub chat's session key.
+   */
   brandDispatchChat(p: Platform, sessionKey: string): void {
     if (asChatBrander(p) === undefined) return
     void this.brandChatSync(p, sessionKey)

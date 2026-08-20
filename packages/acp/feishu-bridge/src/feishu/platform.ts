@@ -108,6 +108,8 @@ export interface ChainMessage {
  * Format a reply chain into a readable prefix (Go formatReplyChain): a
  * single message keeps the legacy bracket format; multi-message chains use
  * a numbered list with user/assistant role labels.
+ * @param chain - Quoted messages in chronological order.
+ * @returns Prefix prepended to the reply content; empty for an empty chain.
  */
 export function formatReplyChain(chain: ChainMessage[]): string {
   if (chain.length === 0) return ''
@@ -152,14 +154,14 @@ function emptyMessageShape(): Message {
   }
 }
 
+/** Params for a reply API call. */
+export interface FeishuReplyParams { messageId: string; msgType: string; content: string; replyInThread?: boolean }
+
 /**
  * Outbound message API surface the platform needs (node-sdk subset). M1's
  * reply/create are required; the M2 verbs are optional so minimal test
  * fakes keep working — card paths fail loud when a verb is missing.
  */
-/** Params for a reply API call. */
-export interface FeishuReplyParams { messageId: string; msgType: string; content: string; replyInThread?: boolean }
-
 export interface FeishuApiClient {
   reply(params: FeishuReplyParams): Promise<{ messageId?: string } | undefined>
   create(params: { chatId: string; msgType: string; content: string }): Promise<{ messageId?: string } | undefined>
@@ -279,8 +281,11 @@ export interface FeishuRecallEvent {
 
 /** Handle for an in-place editable preview card (Go feishuPreviewHandle). */
 export class FeishuPreviewHandle {
+  /** Message id of the sent preview card. */
   readonly messageID: string
+  /** Chat the preview card was sent to. */
   readonly chatID: string
+  /** Session the preview card belongs to. */
   readonly sessionKey: string
 
   constructor(messageID: string, chatID: string, sessionKey: string) {
@@ -289,7 +294,10 @@ export class FeishuPreviewHandle {
     this.sessionKey = sessionKey
   }
 
-  /** Stable per-turn key for associating exported content (Go ExportKey). */
+  /**
+   * Stable per-turn key for associating exported content (Go ExportKey).
+   * @returns The handle's message id.
+   */
   exportKey(): string {
     return this.messageID
   }
@@ -493,7 +501,10 @@ export class FeishuPlatform implements Platform {
     return this.o.tag ?? 'feishu'
   }
 
-  /** The bot's display name (app_name), or '' before the probe resolves (Go BotDisplayName). */
+  /**
+   * The bot's display name (app_name), or '' before the probe resolves (Go BotDisplayName).
+   * @returns The resolved app_name, or an empty string before the startup probe runs.
+   */
   botDisplayName(): string {
     return this.displayName
   }
@@ -579,7 +590,10 @@ export class FeishuPlatform implements Platform {
     // process exit (watchdog arrives with the liveness milestone).
   }
 
-  /** Handle one im.message.receive_v1 event (Go onMessage). */
+  /**
+   * Handle one im.message.receive_v1 event (Go onMessage).
+   * @param event - Raw im.message.receive_v1 payload.
+   */
   onMessage(event: FeishuReceiveEvent): void {
     const msg = event.message
     const msgType = msg.message_type ?? ''
@@ -725,6 +739,7 @@ export class FeishuPlatform implements Platform {
    * matching flag so the engine routes them: permission responses to
    * handlePendingPermission, act: button presses (the worktree Keep/Remove
    * card) to the card-action handler.
+   * @param event - Raw card.action.trigger payload.
    */
   onCardAction(event: CardActionTriggerEvent): void {
     const action = event.action
@@ -873,6 +888,10 @@ export class FeishuPlatform implements Platform {
    * value's explicit session_key wins; otherwise spawned chats and
    * share_session_in_channel key on the chat alone, everything else on
    * chat+user — the same key an ordinary text message in that chat would use.
+   * @param chatID - Chat the card action fired in.
+   * @param userID - Open id of the user who triggered the action.
+   * @param value - Action value map; an explicit session_key entry wins.
+   * @returns The derived session key.
    */
   sessionKeyFromCardAction(chatID: string, userID: string, value: Record<string, string>): string {
     if (value.session_key !== undefined && value.session_key !== '') return value.session_key
@@ -888,6 +907,7 @@ export class FeishuPlatform implements Platform {
    * chat-changed handler so the engine can bump the active preview card back
    * to the chat tail (Feishu inserts a system notice that pushes it off).
    * Other changes (permissions, etc.) insert no notices and are skipped.
+   * @param event - Raw im.chat.updated_v1 payload.
    */
   onChatUpdated(event: FeishuChatUpdatedEvent): void {
     const chatID = event.chat_id ?? ''
@@ -911,22 +931,34 @@ export class FeishuPlatform implements Platform {
     }
   }
 
-  /** Register the engine callback invoked on group rename (Go SetChatRenamedHandler). */
+  /**
+   * Register the engine callback invoked on group rename (Go SetChatRenamedHandler).
+   * @param handler - Callback receiving the session key and the new chat name.
+   */
   setChatRenamedHandler(handler: (sessionKey: string, newName: string) => void): void {
     this.chatRenamedHandler = handler
   }
 
-  /** Register the engine callback invoked on group name/avatar change (Go SetChatChangedHandler). */
+  /**
+   * Register the engine callback invoked on group name/avatar change (Go SetChatChangedHandler).
+   * @param handler - Callback receiving the session key.
+   */
   setChatChangedHandler(handler: (sessionKey: string) => void): void {
     this.chatChangedHandler = handler
   }
 
-  /** Register the engine's export-content lookup (Go SetExportHandler, Go ReplyExporter). */
+  /**
+   * Register the engine's export-content lookup (Go SetExportHandler, Go ReplyExporter).
+   * @param handler - Lookup returning the cached text for a session's export key.
+   */
   setExportHandler(handler: (sessionKey: string, exportKey: string) => { text: string; ok: boolean }): void {
     this.exportHandler = handler
   }
 
-  /** Register the engine callback invoked on message recall (Go SetRecallHandler, #30). */
+  /**
+   * Register the engine callback invoked on message recall (Go SetRecallHandler, #30).
+   * @param handler - Callback receiving the recalled message id.
+   */
   setRecallHandler(handler: (messageID: string) => void): void {
     this.recallHandler = handler
   }
@@ -936,6 +968,7 @@ export class FeishuPlatform implements Platform {
    * the recalled message id to the engine so it cancels the queued copy.
    * Fields sit at the ROOT of the parsed payload in snake_case (the live
    * flattened convention, same as card.action.trigger).
+   * @param event - Raw im.message.recalled_v1 payload.
    */
   onMessageRecalled(event: FeishuRecallEvent): void {
     const messageID = event.message_id ?? ''
@@ -956,6 +989,7 @@ export class FeishuPlatform implements Platform {
   /**
    * Configure which chats are in monitor mode (#53, Go SetMonitorChats).
    * Pushed by the engine from [projects.monitor] chats. Empty = monitor off.
+   * @param chats - Comma-separated chat IDs, or "*"; empty disables monitor mode.
    */
   setMonitorChats(chats: string): void {
     this.monitorChats = chats
@@ -964,6 +998,7 @@ export class FeishuPlatform implements Platform {
   /**
    * Set the open_id used as the subgroup owner when a polled monitored
    * message has no human sender (Go SetMonitorFallbackUser).
+   * @param openID - open_id owning subgroup spawns for sender-less messages.
    */
   setMonitorFallbackUser(openID: string): void {
     this.monitorFallbackUser = openID
@@ -1139,6 +1174,10 @@ export class FeishuPlatform implements Platform {
    * chat alone; thread isolation splits group conversations by thread or
    * reply root; otherwise per-user (or per-chat with
    * share_session_in_channel).
+   * @param msg - Inbound message fields; thread/root ids drive thread isolation.
+   * @param chatID - Chat the message arrived in.
+   * @param userID - Sender open_id.
+   * @returns The derived session key.
    */
   makeSessionKey(msg: FeishuReceiveEvent['message'], chatID: string, userID: string): string {
     const tag = this.name()
@@ -1265,7 +1304,11 @@ export class FeishuPlatform implements Platform {
   // Cards (CardSender / CardSenderWithUpdate)
   // ---------------------------------------------------------------------
 
-  /** Send a structured card quoting the trigger message (Go ReplyCard). */
+  /**
+   * Send a structured card quoting the trigger message (Go ReplyCard).
+   * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
+   * @param card - Structured card to render and send.
+   */
   async replyCard(replyCtx: unknown, card: Card): Promise<void> {
     const rc = this.requireReplyCtx(replyCtx)
     const permBody = card.permBody ?? ''
@@ -1282,7 +1325,11 @@ export class FeishuPlatform implements Platform {
       client.reply({ messageId: rc.messageID, msgType: 'interactive', content: cardJSON, replyInThread })))
   }
 
-  /** Send a structured card as a new message to the chat (Go SendCard). */
+  /**
+   * Send a structured card as a new message to the chat (Go SendCard).
+   * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
+   * @param card - Structured card to render and send.
+   */
   async sendCard(replyCtx: unknown, card: Card): Promise<void> {
     const rc = this.requireReplyCtx(replyCtx)
     if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
@@ -1297,7 +1344,12 @@ export class FeishuPlatform implements Platform {
       client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })))
   }
 
-  /** Send a card and return a handle for subsequent PATCH updates. */
+  /**
+   * Send a card and return a handle for subsequent PATCH updates.
+   * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
+   * @param card - Structured card to render and send.
+   * @returns Handle identifying the sent card message.
+   */
   async sendCardWithHandle(replyCtx: unknown, card: Card): Promise<FeishuPreviewHandle> {
     const rc = this.requireReplyCtx(replyCtx)
     if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
@@ -1309,7 +1361,11 @@ export class FeishuPlatform implements Platform {
     return new FeishuPreviewHandle(msgID, rc.chatID, rc.sessionKey)
   }
 
-  /** PATCH an existing card identified by handle. */
+  /**
+   * PATCH an existing card identified by handle.
+   * @param handle - Preview handle from sendCardWithHandle.
+   * @param card - Structured card to render and PATCH.
+   */
   async updateCardWithHandle(handle: unknown, card: Card): Promise<void> {
     const h = requirePreviewHandle(handle)
     const cardJSON = renderCard(card, h.sessionKey)
@@ -1317,7 +1373,11 @@ export class FeishuPlatform implements Platform {
     await this.withRetry('update card by handle', () => this.patchMessage(h.messageID, cardJSON))
   }
 
-  /** PATCH a card tracked from the most recent card-action callback. */
+  /**
+   * PATCH a card tracked from the most recent card-action callback.
+   * @param sessionKey - Session whose tracked card message to PATCH.
+   * @param card - Structured card to render and PATCH.
+   */
   async refreshCard(sessionKey: string, card: Card): Promise<void> {
     const msgID = this.cardActionMsgIDs.get(sessionKey) ?? ''
     if (msgID === '') throw new Error(`feishu: no tracked card messageID for session ${sessionKey}`)
@@ -1330,22 +1390,36 @@ export class FeishuPlatform implements Platform {
   // Streaming preview
   // ---------------------------------------------------------------------
 
-  /** Keep the preview card as the final delivered message (Go KeepPreviewOnFinish). */
+  /**
+   * Keep the preview card as the final delivered message (Go KeepPreviewOnFinish).
+   * @returns Whether the preview card stays as the final message.
+   */
   keepPreviewOnFinish(): boolean {
     return this.useInteractiveCard
   }
 
-  /** Whether the platform renders structured progress payloads. */
+  /**
+   * Whether the platform renders structured progress payloads.
+   * @returns Always true on this platform.
+   */
   supportsProgressCardPayload(): boolean {
     return true
   }
 
-  /** Whether content exceeds the preview card's table limit (11310 guard). */
+  /**
+   * Whether content exceeds the preview card's table limit (11310 guard).
+   * @param content - Rendered content to test.
+   * @returns Whether the content exceeds the limit.
+   */
   previewOverflow(content: string): boolean {
     return previewOverflowFn(content)
   }
 
-  /** Whether a PATCH failure is a transient rate-limit (230020). */
+  /**
+   * Whether a PATCH failure is a transient rate-limit (230020).
+   * @param err - Error from a PATCH attempt.
+   * @returns Whether the error is a transient rate-limit.
+   */
   isTransientPatchError(err: unknown): boolean {
     return err instanceof Error && err.message.includes('code=230020')
   }
@@ -1374,7 +1448,10 @@ export class FeishuPlatform implements Platform {
     return this.spinnerOnce
   }
 
-  /** Current spinner config, uploading on first use. */
+  /**
+   * Current spinner config, uploading on first use.
+   * @returns Spinner config, or the no-spinner config when disabled or upload failed.
+   */
   async spinnerCfg(): Promise<SpinnerCfg> {
     if (!this.spinnerEnabled || !this.useInteractiveCard) return noSpinner
     await this.ensureSpinnerKeys()
@@ -1386,6 +1463,9 @@ export class FeishuPlatform implements Platform {
    * Send a new preview card message and return a handle for subsequent
    * edits. The pre-button card JSON is cached per messageID so stop-card
    * rebuilds never append a second button row.
+   * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
+   * @param content - Initial preview content.
+   * @returns Handle for subsequent in-place edits.
    */
   async sendPreviewStart(replyCtx: unknown, content: string): Promise<FeishuPreviewHandle> {
     if (!this.useInteractiveCard) throw new ErrNotSupported('feishu: preview start without interactive cards')
@@ -1419,6 +1499,8 @@ export class FeishuPlatform implements Platform {
    * Edit the preview card in place. The rendered card JSON is cached
    * pre-button; the stop button and (on green) the export/reply buttons are
    * injected per PATCH, deferring to the latest render-status text.
+   * @param previewHandle - Preview handle from sendPreviewStart.
+   * @param content - Updated content, or a serialized progress payload.
    */
   async updateMessage(previewHandle: unknown, content: string): Promise<void> {
     if (!this.useInteractiveCard) throw new ErrNotSupported('feishu: update message without interactive cards')
@@ -1441,6 +1523,9 @@ export class FeishuPlatform implements Platform {
    * Refresh the render-status line on a previously sent green card (#47/#48):
    * rebuild from the pre-button cache, re-inject stop + reply buttons plus
    * the status, PATCH in place.
+   * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
+   * @param exportKey - Turn key identifying the card to refresh.
+   * @param statusText - Render-status line to display.
    */
   async updateRenderStatus(replyCtx: unknown, exportKey: string, statusText: string): Promise<void> {
     if (!this.useInteractiveCard) throw new ErrNotSupported('feishu: update render status without interactive cards')
@@ -1460,6 +1545,8 @@ export class FeishuPlatform implements Platform {
    * PATCH the active preview card to a stopped terminal state (⏹ 已停止 +
    * ▶ 继续执行) so a user stop is not overwritten by the default failed-card
    * PATCH. A cache miss errors so the caller falls back.
+   * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
+   * @param previewMsgID - Preview handle of the active card.
    */
   async renderStoppedCard(replyCtx: unknown, previewMsgID: unknown): Promise<void> {
     if (!this.useInteractiveCard) throw new ErrNotSupported('feishu: stopped card without interactive cards')
@@ -1478,7 +1565,10 @@ export class FeishuPlatform implements Platform {
     return base
   }
 
-  /** Remove a preview message and its caches (Go DeletePreviewMessage). */
+  /**
+   * Remove a preview message and its caches (Go DeletePreviewMessage).
+   * @param previewHandle - Preview handle of the message to remove.
+   */
   async deletePreviewMessage(previewHandle: unknown): Promise<void> {
     if (!this.useInteractiveCard) throw new ErrNotSupported('feishu: delete preview without interactive cards')
     const h = requirePreviewHandle(previewHandle)
@@ -1490,7 +1580,10 @@ export class FeishuPlatform implements Platform {
     await this.withRetry('delete preview message', () => boundDelete({ messageId: h.messageID }))
   }
 
-  /** Block until the global PATCH limiter allows one call. */
+  /**
+   * Block until the global PATCH limiter allows one call.
+   * @param signal - Aborts the wait for a limiter slot.
+   */
   async patchRateWait(signal?: AbortSignal): Promise<void> {
     await this.patchRL.wait(signal)
   }
@@ -1510,13 +1603,19 @@ export class FeishuPlatform implements Platform {
   /**
    * Brief new message after the in-place completion PATCH so Feishu
    * generates a notification badge; usage text stays out of the card body.
+   * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
+   * @param usageMsg - Usage summary text; empty skips the notification.
    */
   async sendCompletionNotification(replyCtx: unknown, usageMsg: string): Promise<void> {
     if (!this.notifyOnComplete || usageMsg === '') return
     await this.reply(replyCtx, usageMsg)
   }
 
-  /** Set the chat's top-notice banner to a message (Go SetTopNotice). */
+  /**
+   * Set the chat's top-notice banner to a message (Go SetTopNotice).
+   * @param chatID - Chat whose banner to set.
+   * @param messageID - Message the banner points at.
+   */
   async setTopNotice(chatID: string, messageID: string): Promise<void> {
     if (!this.topNoticeEnabled) throw new ErrNotSupported('feishu: top notice disabled')
     await this.withRetry('top_notice.put', () => this.request('top_notice.put', async (client) => {
@@ -1525,7 +1624,11 @@ export class FeishuPlatform implements Platform {
     }))
   }
 
-  /** Remove the chat's top-notice banner (Go ClearTopNotice). */
+  /**
+   * Remove the chat's top-notice banner (Go ClearTopNotice).
+   * @param chatID - Chat whose banner to remove.
+   * @param _messageID - Unused; the banner is chat-scoped.
+   */
   async clearTopNotice(chatID: string, _messageID: string): Promise<void> {
     if (!this.topNoticeEnabled) throw new ErrNotSupported('feishu: top notice disabled')
     await this.withRetry('top_notice.delete', () => this.request('top_notice.delete', async (client) => {
@@ -1534,7 +1637,11 @@ export class FeishuPlatform implements Platform {
     }))
   }
 
-  /** Pin a message into the chat's pin panel (Go AddMessagePin). */
+  /**
+   * Pin a message into the chat's pin panel (Go AddMessagePin).
+   * @param _chatID - Unused; pins are message-scoped.
+   * @param messageID - Message to pin.
+   */
   async addMessagePin(_chatID: string, messageID: string): Promise<void> {
     if (!this.pinEnabled) throw new ErrNotSupported('feishu: pin disabled')
     await this.withRetry('pin.create', () => this.request('pin.create', async (client) => {
@@ -1569,7 +1676,11 @@ export class FeishuPlatform implements Platform {
     }
   }
 
-  /** Remove a previously added reaction by its ID (Go ReactionManager.RemoveReaction). */
+  /**
+   * Remove a previously added reaction by its ID (Go ReactionManager.RemoveReaction).
+   * @param replyCtx - Reply context carrying the reacted message id.
+   * @param reactionID - Reaction id returned by addReactionWithID.
+   */
   async removeReaction(replyCtx: unknown, reactionID: string): Promise<void> {
     const messageID = (replyCtx as Partial<FeishuReplyContext> | undefined)?.messageID ?? ''
     await this.removeReactionByID(messageID, reactionID)
@@ -1577,7 +1688,11 @@ export class FeishuPlatform implements Platform {
 
   private readonly pendingTypingRemovals = new Map<string, string>()
 
-  /** Add the typing emoji and return a stop function removing it. */
+  /**
+   * Add the typing emoji and return a stop function removing it.
+   * @param replyCtx - Reply context carrying the trigger message id.
+   * @returns Stop function that removes the typing reaction.
+   */
   startTyping(replyCtx: unknown): () => void {
     const messageID = (replyCtx as Partial<FeishuReplyContext> | undefined)?.messageID ?? ''
     if (messageID === '') return () => {}
@@ -1592,17 +1707,27 @@ export class FeishuPlatform implements Platform {
     }
   }
 
-  /** Done-reaction push after a quiet multi-round turn (Go AddDoneReaction). */
+  /**
+   * Done-reaction push after a quiet multi-round turn (Go AddDoneReaction).
+   * @param replyCtx - Reply context carrying the trigger message id.
+   */
   addDoneReaction(replyCtx: unknown): void {
     this.fireAndForgetReaction(replyCtx, this.doneEmoji)
   }
 
-  /** Cancelled-reaction after a user stop (Go AddCancelledReaction). */
+  /**
+   * Cancelled-reaction after a user stop (Go AddCancelledReaction).
+   * @param replyCtx - Reply context carrying the trigger message id.
+   */
   addCancelledReaction(replyCtx: unknown): void {
     this.fireAndForgetReaction(replyCtx, this.cancelEmoji)
   }
 
-  /** Arbitrary emoji acknowledgment (Go AddReaction). */
+  /**
+   * Arbitrary emoji acknowledgment (Go AddReaction).
+   * @param replyCtx - Reply context carrying the trigger message id.
+   * @param emoji - Emoji type to add.
+   */
   addReaction(replyCtx: unknown, emoji: string): void {
     this.fireAndForgetReaction(replyCtx, emoji)
   }
@@ -1614,7 +1739,12 @@ export class FeishuPlatform implements Platform {
     void this.addReactionWithEmoji(messageID, emoji)
   }
 
-  /** Synchronous reaction returning an ID (Go AddReactionWithID). */
+  /**
+   * Synchronous reaction returning an ID (Go AddReactionWithID).
+   * @param replyCtx - Reply context carrying the trigger message id.
+   * @param emoji - Emoji type to add.
+   * @returns The reaction id, or '' when the add failed.
+   */
   async addReactionWithID(replyCtx: unknown, emoji: string): Promise<string> {
     const messageID = (replyCtx as Partial<FeishuReplyContext> | undefined)?.messageID ?? ''
     if (messageID === '') return ''
@@ -1624,6 +1754,8 @@ export class FeishuPlatform implements Platform {
   /**
    * Rebuild a reply context from a session key for proactive sends (cron,
    * tools). The chat ID is the key's second segment.
+   * @param sessionKey - Session key whose second segment is the chat id.
+   * @returns Reply context with an empty message id for new-message sends.
    */
   reconstructReplyCtx(sessionKey: string): Promise<FeishuReplyContext> {
     const parts = sessionKey.split(':')
@@ -1723,7 +1855,12 @@ export class FeishuPlatform implements Platform {
     }))
   }
 
-  /** Rename a spawned chat only (Go RenameGroup, conservative default). */
+  /**
+   * Rename a spawned chat only (Go RenameGroup, conservative default).
+   * @param sessionKey - Session key identifying the spawned chat.
+   * @param newName - New group name.
+   * @param signal - Aborts the rename; an aborted signal fails it.
+   */
   async renameGroup(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
     if (chatID === '' || !this.isSpawned(chatID)) return
@@ -1733,6 +1870,9 @@ export class FeishuPlatform implements Platform {
   /**
    * Rename any group, including user-owned ones (Go RenameGroupAny) — used by
    * /chatroom to rename the user's own hub group to the discussion topic.
+   * @param sessionKey - Session key identifying the group.
+   * @param newName - New group name.
+   * @param signal - Aborts the rename; an aborted signal fails it.
    */
   async renameGroupAny(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
@@ -1744,6 +1884,8 @@ export class FeishuPlatform implements Platform {
    * Switch a spawned group's avatar state: active=true restores the color
    * avatar, false grays it. Per-group custom keys (#52) win over the global
    * bot avatar; a missing gray key skips dimming rather than failing /done.
+   * @param sessionKey - Session key identifying the spawned group.
+   * @param active - true restores the color avatar, false grays it.
    */
   async setChatAvatarActive(sessionKey: string, active: boolean): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
@@ -1813,6 +1955,9 @@ export class FeishuPlatform implements Platform {
    * upload color + gray versions, set the color one as the chat avatar, and
    * persist both keys on the spawned-chat meta so /done dimming restores the
    * custom avatar instead of the global bot avatar.
+   * @param sessionKey - Session key identifying the group.
+   * @param iconName - Lucide icon name; fuzzy and hashed-pool fallbacks apply.
+   * @param groupName - Group name, seeding the background color and fallbacks.
    */
   async setGroupIconAvatar(sessionKey: string, iconName: string, groupName: string): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
@@ -1850,6 +1995,9 @@ export class FeishuPlatform implements Platform {
    * Brand a non-spawned chat with a fixed name and Lucide icon avatar (Go
    * BrandChat) — the monitor dispatch hub. No SpawnedChatMeta side effects;
    * the avatar is best-effort and the rename error is the return value.
+   * @param sessionKey - Session key identifying the chat.
+   * @param groupName - Fixed name to apply.
+   * @param iconName - Lucide icon name for the avatar.
    */
   async brandChat(sessionKey: string, groupName: string, iconName: string): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
@@ -1876,6 +2024,8 @@ export class FeishuPlatform implements Platform {
   /**
    * Create time (seconds) of the newest message in the chat, seeding the
    * poll high-water mark so history isn't replayed (Go LatestMessageTime).
+   * @param chatID - Chat to inspect.
+   * @returns Create time in seconds of the newest message, or 0 when none.
    */
   async latestMessageTime(chatID: string): Promise<number> {
     const items = await this.listMessages(chatID, 0, 'ByCreateTimeDesc', 1)
@@ -1888,6 +2038,10 @@ export class FeishuPlatform implements Platform {
    * Messages with extracted text (Go ListMonitorMessages). Skips the bot's
    * own messages. Catches webhook-bot / other-app card messages that never
    * arrive as events.
+   * @param chatID - Chat to poll.
+   * @param afterSec - High-water mark; messages created after it (exclusive).
+   * @param limit - Max messages to return; non-positive means 20.
+   * @returns Fully-built Messages, oldest first, bot's own excluded.
    */
   async listMonitorMessages(chatID: string, afterSec: number, limit: number): Promise<Message[]> {
     const pageSize = limit <= 0 ? 20 : limit
@@ -2012,6 +2166,10 @@ export class FeishuPlatform implements Platform {
    * is never tracked as spawned; children get per-group color/gray keys so
    * chatroom-end /done dims via the gray icon. Without children the gray
    * upload is skipped.
+   * @param hubKey - Session key of the hub group.
+   * @param childKeys - Session keys of the role/assistant child groups.
+   * @param iconName - Lucide icon rendered onto every group.
+   * @param familyName - Family name seeding the color and fallbacks.
    */
   async setChatroomFamilyAvatar(hubKey: string, childKeys: string[], iconName: string, familyName: string): Promise<void> {
     let rendered: { svg: string; key: string }
@@ -2060,6 +2218,10 @@ export class FeishuPlatform implements Platform {
    * an active spawned chat, apply the dir tag asynchronously, and return a
    * synthetic message the engine feeds back to trigger the first turn (Go
    * SpawnGroup).
+   * @param msg - Caller message providing the user id and name.
+   * @param groupName - Name for the new group.
+   * @param firstMsg - Initial message forwarded into the group; empty skips.
+   * @returns Synthetic message the engine feeds back as the first turn.
    */
   async spawnGroup(msg: Message, groupName: string, firstMsg: string): Promise<Message> {
     return this.spawnGroupWithOptions(msg, groupName, firstMsg, { topicGroup: false, workDir: '' })
@@ -2069,6 +2231,11 @@ export class FeishuPlatform implements Platform {
    * Spawn with options (Go SpawnGroupWithOptions): topic groups use
    * group_message_type=thread; a non-default workDir re-derives the dir tag
    * from that directory.
+   * @param msg - Caller message providing the user id and name.
+   * @param groupName - Name for the new group.
+   * @param firstMsg - Initial message forwarded into the group; empty skips.
+   * @param opts - Spawn options: topic-group mode and workDir for the dir tag.
+   * @returns Synthetic message the engine feeds back as the first turn.
    */
   async spawnGroupWithOptions(msg: Message, groupName: string, firstMsg: string, opts: GroupSpawnOptions): Promise<Message> {
     await this.ensureInit()
@@ -2146,7 +2313,11 @@ export class FeishuPlatform implements Platform {
     return synthetic
   }
 
-  /** The applink that opens chatID when clicked (Go ChatJumpURL). */
+  /**
+   * The applink that opens chatID when clicked (Go ChatJumpURL).
+   * @param chatID - Chat the link opens.
+   * @returns Applink URL that opens the chat when clicked.
+   */
   chatJumpURL(chatID: string): string {
     return `https://applink.feishu.cn/client/chat/open?openChatId=${chatID}`
   }
@@ -2187,6 +2358,8 @@ export class FeishuPlatform implements Platform {
    * the bot itself (Go ListChatMembers). A page error mid-iteration still
    * returns the partial page collected on the last attempt so a dispatch
    * member-copy does not silently zero out.
+   * @param sessionKey - Session key identifying the chat.
+   * @returns Member open_ids excluding the bot itself.
    */
   async listChatMembers(sessionKey: string): Promise<string[]> {
     const chatID = extractFeishuChatID(sessionKey)
@@ -2242,6 +2415,8 @@ export class FeishuPlatform implements Platform {
    * Add open_ids to the chat identified by sessionKey (Go AddChatMembers):
    * the bot and duplicates are skipped, requests batch at 50, and a batch
    * failure is logged without aborting the remaining batches.
+   * @param sessionKey - Session key identifying the chat.
+   * @param userIDs - open_ids to add; the bot and duplicates are skipped.
    */
   async addChatMembers(sessionKey: string, userIDs: string[]): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
@@ -2264,12 +2439,19 @@ export class FeishuPlatform implements Platform {
     }
   }
 
-  /** This bot's resolved active-tag name (Go ActiveTagName). */
+  /**
+   * This bot's resolved active-tag name (Go ActiveTagName).
+   * @returns The resolved active-tag name.
+   */
   activeTagName(): string {
     return this.tagManager.activeTagName()
   }
 
-  /** Remove a tag from a chat (Go RemoveTagFromChat, /done). */
+  /**
+   * Remove a tag from a chat (Go RemoveTagFromChat, /done).
+   * @param sessionKey - Session key identifying the chat.
+   * @param tagName - Tag to remove.
+   */
   async removeTagFromChat(sessionKey: string, tagName: string): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
     if (chatID === '') {
@@ -2279,7 +2461,10 @@ export class FeishuPlatform implements Platform {
     await this.tagManager.removeTagFromChat(chatID, tagName)
   }
 
-  /** Attach the active (heart) tag to a chat (Go ApplyActiveTag). */
+  /**
+   * Attach the active (heart) tag to a chat (Go ApplyActiveTag).
+   * @param sessionKey - Session key identifying the chat.
+   */
   async applyActiveTag(sessionKey: string): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
     if (chatID === '') {
@@ -2289,7 +2474,10 @@ export class FeishuPlatform implements Platform {
     await this.tagManager.resolveAndAttachActiveTag(chatID)
   }
 
-  /** Mark a spawned chat done (inactive) — Go MarkSpawnedChatDone. */
+  /**
+   * Mark a spawned chat done (inactive) — Go MarkSpawnedChatDone.
+   * @param sessionKey - Session key identifying the spawned chat.
+   */
   async markSpawnedChatDone(sessionKey: string): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
     if (chatID === '') return
@@ -2297,7 +2485,10 @@ export class FeishuPlatform implements Platform {
     await this.spawnStore.markDone(chatID)
   }
 
-  /** Mark a spawned chat active again — Go MarkSpawnedChatActive. */
+  /**
+   * Mark a spawned chat active again — Go MarkSpawnedChatActive.
+   * @param sessionKey - Session key identifying the spawned chat.
+   */
   async markSpawnedChatActive(sessionKey: string): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
     if (chatID === '') return
@@ -2309,6 +2500,8 @@ export class FeishuPlatform implements Platform {
    * Whether a spawned chat is in the active (color-avatar) state; lets the
    * engine skip redundant avatar reactivation that would emit a spurious
    * "更新了群头像" system message.
+   * @param sessionKey - Session key identifying the spawned chat.
+   * @returns Whether the chat is in the active (color-avatar) state.
    */
   isSpawnedChatActive(sessionKey: string): boolean {
     return this.spawnStore.isActive(extractFeishuChatID(sessionKey))
@@ -2334,6 +2527,7 @@ export class FeishuPlatform implements Platform {
    * List all spawned chats that are still active (Go ListActiveSpawnedChats):
    * legacy entries without a resolved activity are backfilled via the tag
    * API, names resolve through the TTL cache (at most 8 in flight).
+   * @returns Active spawned chats with resolved display names.
    */
   async listActiveSpawnedChats(): Promise<SpawnedChatInfo[]> {
     await this.ensureInit()
@@ -2376,6 +2570,8 @@ export class FeishuPlatform implements Platform {
   /**
    * Upload image bytes and return the image_key without sending a message
    * (Go UploadImage); the engine embeds images inside cards with it.
+   * @param img - Image bytes and metadata to upload.
+   * @returns The uploaded image's image_key.
    */
   async uploadImage(img: ImageAttachment): Promise<string> {
     const key = await this.withRetry('upload image', () => this.request('upload image', async (client) => {
@@ -2386,7 +2582,11 @@ export class FeishuPlatform implements Platform {
     return key
   }
 
-  /** Send an image message quoting the trigger when one exists (Go SendImage). */
+  /**
+   * Send an image message quoting the trigger when one exists (Go SendImage).
+   * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
+   * @param img - Image attachment to upload and send.
+   */
   async sendImage(replyCtx: unknown, img: ImageAttachment): Promise<void> {
     const rc = this.requireReplyCtx(replyCtx)
     const imageKey = await this.uploadImage(img)
@@ -2396,6 +2596,8 @@ export class FeishuPlatform implements Platform {
   /**
    * Send a file message: upload with the detected Feishu file type, then send
    * (Go SendFile).
+   * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
+   * @param file - File attachment to upload and send.
    */
   async sendFile(replyCtx: unknown, file: FileAttachment): Promise<void> {
     const rc = this.requireReplyCtx(replyCtx)
@@ -2444,6 +2646,9 @@ export class FeishuPlatform implements Platform {
    * — directly through reply, never via the agent handler, so a download
    * failure must not wake the agent. Hard-coded Chinese (the primary user
    * language); upgrade path: an i18n handle on the platform.
+   * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
+   * @param kind - Attachment kind label shown to the user.
+   * @param name - Attachment file name; empty omits it from the message.
    */
   async replyDownloadError(replyCtx: unknown, kind: string, name: string): Promise<void> {
     const label = name === '' ? kind : `${kind}「${name}」`

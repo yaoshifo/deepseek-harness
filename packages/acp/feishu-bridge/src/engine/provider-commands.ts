@@ -79,6 +79,9 @@ function providerListText(e: Engine, switcher: ProviderSwitcher): string {
 /**
  * Register the /provider command family and the provider-shortcut dispatch
  * hook on an engine. Returns the disposer.
+ *
+ * @param e - Engine to register the command handler, resolver, and shortcut hook on.
+ * @returns Disposer removing the handler and restoring the previous state.
  */
 export function registerProviderCommands(e: Engine): () => void {
   const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()

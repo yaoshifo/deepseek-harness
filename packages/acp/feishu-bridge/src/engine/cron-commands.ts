@@ -51,6 +51,9 @@ function cronTimeFormat(t: Date, now: Date): string {
  * chains the prefix resolver so `/cron` and its ≥2-char prefixes resolve
  * while every other command keeps its current resolution. Returns the
  * disposer.
+ *
+ * @param e - The engine to register the commands on.
+ * @returns Disposer that removes the handler and restores the resolver.
  */
 export function registerCronCommands(e: Engine): () => void {
   const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()
@@ -69,7 +72,14 @@ export function registerCronCommands(e: Engine): () => void {
   }
 }
 
-/** The /cron list card with per-job buttons (Go Engine.renderCronCard). */
+/**
+ * The /cron list card with per-job buttons (Go Engine.renderCronCard).
+ *
+ * @param e - The engine whose scheduler holds the jobs.
+ * @param sessionKey - Only jobs created in this session are listed.
+ * @param _userID - Unused (Go passes it through); kept for signature parity.
+ * @returns The rendered card, or an informational card when no jobs exist.
+ */
 export function renderCronCard(e: Engine, sessionKey: string, _userID: string): Card {
   const scheduler = e.cronScheduler
   if (scheduler === undefined) {
@@ -143,7 +153,14 @@ function simpleCard(title: string, color: string, body: string): Card {
   return newCard().title(title, color).markdown(body).build()
 }
 
-/** The `/cron` dispatcher (Go Engine.cmdCron). */
+/**
+ * The `/cron` dispatcher (Go Engine.cmdCron).
+ *
+ * @param e - The engine handling the command.
+ * @param p - The platform the command arrived on.
+ * @param msg - The triggering chat message.
+ * @param args - Command arguments; the first selects the subcommand.
+ */
 export async function cmdCron(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const scheduler = e.cronScheduler
   if (scheduler === undefined) {
@@ -196,7 +213,14 @@ export async function cmdCron(e: Engine, p: Platform, msg: Message, args: string
   }
 }
 
-/** `/cron add <min> <hour> <day> <month> <weekday> <prompt...>` (Go cmdCronAdd). */
+/**
+ * `/cron add <min> <hour> <day> <month> <weekday> <prompt...>` (Go cmdCronAdd).
+ *
+ * @param e - The engine handling the command.
+ * @param p - The platform the command arrived on.
+ * @param msg - The triggering chat message.
+ * @param args - The five cron fields followed by the prompt text.
+ */
 export async function cmdCronAdd(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (args.length < 6) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronAddUsage))
@@ -225,7 +249,14 @@ export async function cmdCronAdd(e: Engine, p: Platform, msg: Message, args: str
   await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.CronAdded, job.id, cronExpr, truncateStr(prompt, 60)))
 }
 
-/** `/cron addexec <min> <hour> <day> <month> <weekday> <shell command...>` (Go cmdCronAddExec, admin-only). */
+/**
+ * `/cron addexec <min> <hour> <day> <month> <weekday> <shell command...>` (Go cmdCronAddExec, admin-only).
+ *
+ * @param e - The engine handling the command.
+ * @param p - The platform the command arrived on.
+ * @param msg - The triggering chat message.
+ * @param args - The five cron fields followed by the shell command.
+ */
 export async function cmdCronAddExec(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (!isAdmin(e, msg.userID)) {
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.AdminRequired, '/cron addexec'))
@@ -259,7 +290,13 @@ export async function cmdCronAddExec(e: Engine, p: Platform, msg: Message, args:
   await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.CronAddedExec, job.id, cronExpr, truncateStr(shellCmd, 60)))
 }
 
-/** `/cron list` as plain text (Go cmdCronList). */
+/**
+ * `/cron list` as plain text (Go cmdCronList).
+ *
+ * @param e - The engine whose project's jobs are listed.
+ * @param p - The platform the command arrived on.
+ * @param msg - The triggering chat message.
+ */
 export async function cmdCronList(e: Engine, p: Platform, msg: Message): Promise<void> {
   const scheduler = e.cronScheduler
   if (scheduler === undefined) return
@@ -309,7 +346,14 @@ export async function cmdCronList(e: Engine, p: Platform, msg: Message): Promise
   await e.reply(p, msg.replyCtx, sb)
 }
 
-/** `/cron del <id>` (Go cmdCronDel). */
+/**
+ * `/cron del <id>` (Go cmdCronDel).
+ *
+ * @param e - The engine handling the command.
+ * @param p - The platform the command arrived on.
+ * @param msg - The triggering chat message.
+ * @param args - The id of the job to delete.
+ */
 export async function cmdCronDel(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (args.length === 0) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronDelUsage))
@@ -323,7 +367,15 @@ export async function cmdCronDel(e: Engine, p: Platform, msg: Message, args: str
   }
 }
 
-/** `/cron enable|disable <id>` (Go cmdCronToggle). */
+/**
+ * `/cron enable|disable <id>` (Go cmdCronToggle).
+ *
+ * @param e - The engine handling the command.
+ * @param p - The platform the command arrived on.
+ * @param msg - The triggering chat message.
+ * @param args - The id of the job to toggle.
+ * @param enable - true enables the job, false disables it.
+ */
 export async function cmdCronToggle(e: Engine, p: Platform, msg: Message, args: string[], enable: boolean): Promise<void> {
   if (args.length === 0) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronDelUsage))
@@ -343,7 +395,15 @@ export async function cmdCronToggle(e: Engine, p: Platform, msg: Message, args: 
   await e.reply(p, msg.replyCtx, enable ? e.i18n.tf(Msg.CronEnabled, id) : e.i18n.tf(Msg.CronDisabled, id))
 }
 
-/** `/cron mute|unmute <id>` (Go cmdCronMute). */
+/**
+ * `/cron mute|unmute <id>` (Go cmdCronMute).
+ *
+ * @param e - The engine handling the command.
+ * @param p - The platform the command arrived on.
+ * @param msg - The triggering chat message.
+ * @param args - The id of the job to (un)mute.
+ * @param mute - true mutes the job, false unmutes it.
+ */
 export async function cmdCronMute(e: Engine, p: Platform, msg: Message, args: string[], mute: boolean): Promise<void> {
   if (args.length === 0) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronDelUsage))
@@ -361,6 +421,10 @@ export async function cmdCronMute(e: Engine, p: Platform, msg: Message, args: st
  * `/cron setup` (Go cmdCronSetup). The dsh agent receives its bridge
  * instructions through the per-agent setup hook (plan D3) rather than a
  * memory file, so the setup result is always the native one.
+ *
+ * @param e - The engine handling the command.
+ * @param p - The platform the command arrived on.
+ * @param msg - The triggering chat message.
  */
 export async function cmdCronSetup(e: Engine, p: Platform, msg: Message): Promise<void> {
   await e.reply(p, msg.replyCtx, e.i18n.t(Msg.SetupNative))
@@ -370,6 +434,11 @@ export async function cmdCronSetup(e: Engine, p: Platform, msg: Message): Promis
  * Execute a card-button action for the cron domain (Go
  * Engine.executeCardAction's "/cron" case): `act:/cron <sub> <id>` buttons
  * enable/disable/delete/mute/unmute jobs.
+ *
+ * @param e - The engine whose scheduler holds the jobs.
+ * @param cmd - Action domain; only '/cron' is handled.
+ * @param args - `<sub> <id>` action payload.
+ * @param _sessionKey - Unused; kept for the shared action-handler signature.
  */
 export function executeCardAction(e: Engine, cmd: string, args: string, _sessionKey: string): void {
   if (cmd !== '/cron') return

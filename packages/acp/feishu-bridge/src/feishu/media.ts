@@ -7,10 +7,10 @@
  * @module dsh-feishu-bridge/feishu-media
  */
 
-/** Max size for downloaded message resources (Go maxFeishuDownloadBytes). */
 /** Feishu im/v1 upload file_type values (Go larkim.CreateFileFileType*). */
 export type FeishuFileType = 'pdf' | 'doc' | 'xls' | 'ppt' | 'mp4' | 'opus' | 'stream'
 
+/** Max size for downloaded message resources (Go maxFeishuDownloadBytes). */
 export const maxFeishuDownloadBytes = 100 << 20
 
 /**

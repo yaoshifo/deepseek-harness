@@ -18,6 +18,11 @@ const TOOL = 'feishu_bridge_chatroom'
  * The default moderator priming: two-phase flow (clarify via parallel
  * gathers + AskUserQuestion, then decompose + serial roundtable), the relay
  * rules, and the closing HTML review flow (Go buildChatroomModeratorPriming).
+ *
+ * @param topic - Discussion topic.
+ * @param roles - Spawned roles the moderator orchestrates.
+ * @param ledgerDir - Shared ledger directory; '' omits the ledger sections.
+ * @returns the moderator wake prompt.
  */
 export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole[], ledgerDir: string): string {
   const sb: string[] = []
@@ -112,6 +117,13 @@ gather 和 ask 都有副作用（启动角色发言），plan mode 会拦它们�
  * The research-mode moderator priming: parallel independent research with
  * full assistants → synthesize → optional cross-round iteration (Go
  * buildChatroomResearchModeratorPriming).
+ *
+ * @param topic - Research topic.
+ * @param roles - Spawned research roles.
+ * @param ledgerDir - Shared ledger directory; '' omits the ledger sections.
+ * @param mode - 'manual' asks the user between rounds; anything else auto-iterates.
+ * @param maxRounds - Round cap that forces wrap-up in auto mode.
+ * @returns the research-mode moderator wake prompt.
  */
 export function buildChatroomResearchModeratorPriming(
   topic: string, roles: ChatroomRole[], ledgerDir: string, mode: string, maxRounds: number,
@@ -184,6 +196,11 @@ export function buildChatroomResearchModeratorPriming(
 /**
  * The #43 role-pick priming: recommend roles for the topic, call pick-roles,
  * end the turn (Go buildChatroomPickPriming).
+ *
+ * @param topic - Topic roles are recommended for.
+ * @param roleNames - Candidate role names enumerated from the roles dir.
+ * @param rolesDir - Root dir the moderator reads persona files from.
+ * @returns the role-pick priming prompt.
  */
 export function buildChatroomPickPriming(topic: string, roleNames: string[], rolesDir: string): string {
   return `[聊天室·角色挑选（步骤 0，在正式讨论前）]
@@ -210,6 +227,11 @@ pick-roles 有副作用。若处于 plan mode：先调 \`ExitPlanMode\` 带一�
  * The #59 topic-pick priming: propose candidate topics, call pick-topic,
  * end the turn (Go buildChatroomTopicPickPriming). The ledger-history hint
  * appears only when a moderator dir is configured.
+ *
+ * @param roleNames - Candidate role names enumerated from the roles dir.
+ * @param rolesDir - Root dir the moderator reads persona files from.
+ * @param modDir - Moderator home dir; non-empty adds the ledger-history hint.
+ * @returns the topic-pick priming prompt.
  */
 export function buildChatroomTopicPickPriming(roleNames: string[], rolesDir: string, modDir: string): string {
   // Ledger history is chatroom-scoped: only surfaced when ledgers live under

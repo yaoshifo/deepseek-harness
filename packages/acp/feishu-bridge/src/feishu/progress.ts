@@ -32,12 +32,25 @@ import {
   type ProgressCardPayload,
 } from '../progress.js'
 
-/** One-line markdown card body. */
+/**
+ * One-line markdown card body.
+ *
+ * @param content - Markdown body for the card.
+ * @returns Feishu interactive-card JSON string.
+ */
 export function buildCardJSON(content: string): string {
   return buildCardJSONWithHeader(content, '', '', '')
 }
 
-/** Markdown card with an optional header (title/template) and running-state GIF icon. */
+/**
+ * Markdown card with an optional header (title/template) and running-state GIF icon.
+ *
+ * @param content - Markdown body for the card.
+ * @param title - Header title; empty string omits the header.
+ * @param template - Header color template (e.g. "green").
+ * @param iconKey - Header custom_icon image key; empty string renders no icon.
+ * @returns Feishu interactive-card JSON string.
+ */
 export function buildCardJSONWithHeader(content: string, title: string, template: string, iconKey: string): string {
   const card: FeishuCardMap = {
     schema: '2.0',
@@ -62,6 +75,9 @@ export function buildCardJSONWithHeader(content: string, title: string, template
  * Outbound reply routing (Go buildReplyContent): plain text when no
  * markdown; card for markdown (schema 2.0 renders best); post-md fallback
  * only when the content exceeds the card table limit (API error 11310).
+ *
+ * @param content - Outbound reply text (may contain markdown).
+ * @returns Message type plus serialized body for the Feishu send API.
  */
 export function buildReplyContent(content: string): { msgType: string; body: string } {
   if (!containsMarkdown(content)) {
@@ -73,18 +89,36 @@ export function buildReplyContent(content: string): { msgType: string; body: str
   return { msgType: msgTypeInteractive, body: buildCardJSON(finalizeFeishuCardMarkdown(content)) }
 }
 
-/** Whether the progress lang is Chinese-like (titles/labels localize). */
+/**
+ * Whether the progress lang is Chinese-like (titles/labels localize).
+ *
+ * @param lang - Progress language tag.
+ * @returns True when labels should localize to Chinese.
+ */
 export function isZhLikeProgressLang(lang: string): boolean {
   return lang.trim().toLowerCase().startsWith('zh')
 }
 
-/** Normalize the agent label shown on progress cards. */
+/**
+ * Normalize the agent label shown on progress cards.
+ *
+ * @param agent - Raw agent name from the payload.
+ * @returns Trimmed label, or "Agent" when empty.
+ */
 export function progressAgentLabel(agent: string): string {
   const trimmed = agent.trim()
   return trimmed === '' ? 'Agent' : trimmed
 }
 
-/** Card title/template/footer for a progress state. */
+/**
+ * Card title/template/footer for a progress state.
+ *
+ * @param state - Payload state driving the title and template.
+ * @param lang - Progress language tag.
+ * @param _agent - Unused; kept for the Go signature.
+ * @param lastTS - Latest tool-call timestamp appended to the title; empty string omits it.
+ * @returns Card title, header color template, and footer text.
+ */
 export function progressStateMeta(
   state: ProgressCardPayload['state'],
   lang: string,
@@ -112,7 +146,13 @@ export function progressStateMeta(
   return { title, template, footer: '' }
 }
 
-/** Localized label for one progress entry kind. */
+/**
+ * Localized label for one progress entry kind.
+ *
+ * @param kind - Entry kind to label.
+ * @param lang - Progress language tag.
+ * @returns Localized label for the kind.
+ */
 export function progressKindLabel(kind: ProgressCardEntry['kind'], lang: string): string {
   const zh = isZhLikeProgressLang(lang)
   switch (kind) {
@@ -129,7 +169,12 @@ export function progressKindLabel(kind: ProgressCardEntry['kind'], lang: string)
   }
 }
 
-/** Prefer typed items; fall back to legacy entries with inferred kinds. */
+/**
+ * Prefer typed items; fall back to legacy entries with inferred kinds.
+ *
+ * @param payload - Parsed progress payload (may be undefined).
+ * @returns Typed items; legacy entries fall back to emoji-based kind inference.
+ */
 export function normalizeProgressItems(payload: ProgressCardPayload | undefined): ProgressCardEntry[] {
   if (payload === undefined) return []
   if ((payload.items ?? []).length > 0) return payload.items ?? []
@@ -147,7 +192,12 @@ export function normalizeProgressItems(payload: ProgressCardPayload | undefined)
   return out
 }
 
-/** Inline-code text: trim and neutralize backticks. */
+/**
+ * Inline-code text: trim and neutralize backticks.
+ *
+ * @param s - Raw text.
+ * @returns Trimmed text with backticks replaced by single quotes.
+ */
 export function inlineCodeText(s: string): string {
   return s.trim().replaceAll('`', "'")
 }
@@ -159,6 +209,9 @@ function isTodoWriteToolName(toolName: string): boolean {
 /**
  * Format TodoWrite JSON input into a readable markdown list; empty string
  * when parsing fails or no todos remain.
+ *
+ * @param text - Raw TodoWrite tool input JSON.
+ * @returns Markdown list with status icons, or empty string.
  */
 export function formatTodoWriteInput(text: string): string {
   let input: { todos?: Array<{ activeForm?: string; content?: string; status?: string }> }
@@ -213,6 +266,10 @@ export const maxProgressLineChars = 120
 /**
  * Normalize s to exactly maxLines lines: empty → placeholders, fewer →
  * padded, more → first maxLines-1 lines + "... (N more lines)".
+ *
+ * @param s - Raw text to normalize.
+ * @param maxLines - Exact line count to produce.
+ * @returns Text normalized to exactly maxLines lines.
  */
 export function padProgressLines(s: string, maxLines: number): string {
   if (maxLines <= 0) return s
@@ -233,7 +290,13 @@ export function padProgressLines(s: string, maxLines: number): string {
   return `${lines.slice(0, maxLines - 1).join('\n')}\n... (${extra} more lines)`
 }
 
-/** Pad/truncate lines within code blocks; text outside code blocks stays intact. */
+/**
+ * Pad/truncate lines within code blocks; text outside code blocks stays intact.
+ *
+ * @param s - Text possibly containing fenced code blocks.
+ * @param maxLines - Exact line count per code block.
+ * @returns Text with padded/truncated code blocks; other text intact.
+ */
 export function padCodeBlockContent(s: string, maxLines: number): string {
   if (maxLines <= 0 || !s.includes('```')) return s
   let b = ''
@@ -272,7 +335,13 @@ function trimTrailingNewlines(s: string): string {
   return s.replace(/\n+$/, '')
 }
 
-/** Format a tool input for the progress card (TodoWrite gets a markdown list). */
+/**
+ * Format a tool input for the progress card (TodoWrite gets a markdown list).
+ *
+ * @param toolName - Tool name; TodoWrite input renders as a markdown list.
+ * @param text - Raw tool input text.
+ * @returns Formatted markdown for the progress card entry.
+ */
 export function formatProgressToolInput(toolName: string, text: string): string {
   let t = text.trim()
   if (t === '') return ''
@@ -289,7 +358,12 @@ export function formatProgressToolInput(toolName: string, text: string): string 
   return `\`\`\`python\n${t}\n\`\`\``
 }
 
-/** Format a tool result for the progress card. */
+/**
+ * Format a tool result for the progress card.
+ *
+ * @param text - Raw tool result text.
+ * @returns Formatted markdown code block for the progress card entry.
+ */
 export function formatProgressToolResult(text: string): string {
   let t = text.trim()
   t = preprocessFeishuMarkdown(sanitizeMarkdownURLs(t))
@@ -298,12 +372,22 @@ export function formatProgressToolResult(text: string): string {
   return `\`\`\`python\n${t}\n\`\`\``
 }
 
-/** Localized "no output" label. */
+/**
+ * Localized "no output" label.
+ *
+ * @param lang - Progress language tag.
+ * @returns Localized "no output" label.
+ */
 export function progressNoOutputText(lang: string): string {
   return isZhLikeProgressLang(lang) ? '无输出' : 'No output'
 }
 
-/** Status dot for a tool-result entry: 🟢 success, 🔴 failure, ⚪ unknown. */
+/**
+ * Status dot for a tool-result entry: 🟢 success, 🔴 failure, ⚪ unknown.
+ *
+ * @param item - Tool-result entry whose success indicators decide the dot.
+ * @returns Status dot emoji.
+ */
 export function progressResultDot(item: ProgressCardEntry): string {
   if (item.success !== undefined) return item.success ? '🟢' : '🔴'
   if (item.exitCode !== undefined) return item.exitCode === 0 ? '🟢' : '🔴'
@@ -313,7 +397,13 @@ export function progressResultDot(item: ProgressCardEntry): string {
   return '⚪'
 }
 
-/** Render one progress entry as a card element map. */
+/**
+ * Render one progress entry as a card element map.
+ *
+ * @param item - Progress entry to render.
+ * @param lang - Progress language tag.
+ * @returns Card element map for the entry.
+ */
 export function renderProgressEntryElement(item: ProgressCardEntry, lang: string): FeishuCardMap {
   const text = item.text.trim() === '' ? ' ' : item.text.trim()
   switch (item.kind) {
@@ -355,7 +445,13 @@ export function renderProgressEntryElement(item: ProgressCardEntry, lang: string
   }
 }
 
-/** Build the structured progress card JSON from a payload. */
+/**
+ * Build the structured progress card JSON from a payload.
+ *
+ * @param payload - Structured progress payload.
+ * @param spin - Spinner configuration for the running-state header icon.
+ * @returns Feishu interactive-card JSON string.
+ */
 export function buildProgressCardJSONFromPayload(payload: ProgressCardPayload, spin: SpinnerCfg): string {
   const items = normalizeProgressItems(payload)
   if (items.length === 0) return buildCardJSON(' ')
@@ -440,6 +536,9 @@ export function buildProgressCardJSONFromPayload(payload: ProgressCardPayload, s
  * Parse the __cc_state__: / __cc_ts__: / __cc_tc__: prefixes injected by the
  * engine-side progress display; returns state, timestamp, tool count, and
  * the remaining content with prefix lines stripped.
+ *
+ * @param content - Raw progress text with optional prefix lines.
+ * @returns Parsed state, timestamp, tool count, and remaining content.
  */
 export function extractProgressState(content: string): { state: string; ts: string; tc: number; clean: string } {
   const statePrefix = '__cc_state__:'
@@ -482,13 +581,26 @@ export function extractProgressState(content: string): { state: string; ts: stri
   return { state, ts, tc, clean: content }
 }
 
-/** Extract just the timestamp prefix. */
+/**
+ * Extract just the timestamp prefix.
+ *
+ * @param content - Raw progress text with optional prefix lines.
+ * @returns Timestamp prefix and remaining content.
+ */
 export function extractProgressTimestamp(content: string): { ts: string; clean: string } {
   const { ts, clean } = extractProgressState(content)
   return { ts, clean }
 }
 
-/** Card header title and color template for a state string (+ts, +tool count). */
+/**
+ * Card header title and color template for a state string (+ts, +tool count).
+ *
+ * @param state - State string from the header protocol.
+ * @param zh - Localize the title to Chinese.
+ * @param ts - Timestamp appended to the title; empty string omits it.
+ * @param tc - Tool count appended when positive.
+ * @returns Card header title and color template.
+ */
 export function progressTitleAndColor(state: string, zh: boolean, ts: string, tc: number): { title: string; color: string } {
   let title: string
   let color: string
@@ -521,6 +633,9 @@ export function progressTitleAndColor(state: string, zh: boolean, ts: string, tc
  * (header paragraph ↔ code block) pack tightly. Blank lines inside code
  * blocks, between non-structural paragraphs, and adjacent to table rows are
  * preserved.
+ *
+ * @param s - Markdown text.
+ * @returns Text with structural blank lines removed.
  */
 export function collapseStructuralBlankLines(s: string): string {
   const lines = s.split('\n')
@@ -557,7 +672,13 @@ export function collapseStructuralBlankLines(s: string): string {
   return out.join('\n')
 }
 
-/** Build the streaming-preview card JSON (payload path or text path). */
+/**
+ * Build the streaming-preview card JSON (payload path or text path).
+ *
+ * @param content - Raw progress content: payload-prefixed, header-prefixed, or plain text.
+ * @param spin - Spinner configuration for the header icon.
+ * @returns Feishu interactive-card JSON string.
+ */
 export function buildPreviewCardJSON(content: string, spin: SpinnerCfg): string {
   const payload = parseProgressCardPayload(content)
   if (payload !== undefined) return buildProgressCardJSONFromPayload(payload, spin)
@@ -590,6 +711,12 @@ function parseMutable(cardJSON: string): MutableCardJSON | undefined {
 /**
  * Append the export/reply button row (plus optional render-status line) to a
  * completed (green) card. No-op for cards without a green header.
+ *
+ * @param cardJSON - Rendered card JSON to mutate.
+ * @param sessionKey - Session the buttons act on; empty string is a no-op.
+ * @param exportKey - Key identifying the exportable reply.
+ * @param statusText - Optional render-status line; empty string omits it.
+ * @returns Card JSON with the button row appended, or the input unchanged on no-op.
  */
 export function injectReplyButtons(cardJSON: string, sessionKey: string, exportKey: string, statusText: string): string {
   if (sessionKey === '') return cardJSON
@@ -649,6 +776,10 @@ export function injectReplyButtons(cardJSON: string, sessionKey: string, exportK
 /**
  * Append a ⏹ 停止执行 danger button to a still-running (yellow) card; no-op
  * on terminal (green/red) cards or cards without a header/body.
+ *
+ * @param cardJSON - Rendered card JSON to mutate.
+ * @param sessionKey - Session the stop command targets; empty string is a no-op.
+ * @returns Card JSON with the stop button appended, or the input unchanged.
  */
 export function injectStopButton(cardJSON: string, sessionKey: string): string {
   if (sessionKey === '') return cardJSON
@@ -683,6 +814,10 @@ export function injectStopButton(cardJSON: string, sessionKey: string): string {
 /**
  * Append the stopped-card footer: a disabled "⏹ 已停止" indicator beside an
  * active "▶ 继续执行" button (cmd:继续 resumes the same agent session).
+ *
+ * @param cardJSON - Rendered card JSON to mutate.
+ * @param sessionKey - Session the resume command targets; empty string is a no-op.
+ * @returns Card JSON with the stopped footer appended, or the input unchanged.
  */
 export function injectStoppedButtons(cardJSON: string, sessionKey: string): string {
   if (sessionKey === '') return cardJSON
@@ -729,6 +864,10 @@ export function injectStoppedButtons(cardJSON: string, sessionKey: string): stri
 /**
  * Turn a cached progress card into a stopped state: red "⏹ 已停止" header
  * (spinner icon dropped) plus the stopped-card footer, preserving the body.
+ *
+ * @param cardJSON - Cached card JSON to restyle.
+ * @param sessionKey - Session the resume command targets.
+ * @returns Card JSON restyled as stopped; unparseable input returns unchanged.
  */
 export function markCardStopped(cardJSON: string, sessionKey: string): string {
   const card = parseMutable(cardJSON)

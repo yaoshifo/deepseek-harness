@@ -42,7 +42,12 @@ export interface RelayResponse {
   response: string
 }
 
-/** Split a session key into [platform, chatID] (Go parseSessionKeyParts). */
+/**
+ * Split a session key into [platform, chatID] (Go parseSessionKeyParts).
+ *
+ * @param sessionKey - Session key in the form "platform:chatID:userID" or "relay:sourceProject:chatID".
+ * @returns The [platform, chatID] pair; for relay sessions the platform is "relay".
+ */
 export function parseSessionKeyParts(sessionKey: string): [platform: string, chatID: string] {
   // Format: "platform:chatID:userID"; relay form: "relay:sourceProject:chatID".
   const parts = sessionKey.split(':', 3)
@@ -75,17 +80,30 @@ export class RelayManager {
     if (this.storePath !== '') this.load()
   }
 
-  /** Map a project name to the engine relay sends target (Go RegisterEngine). */
+  /**
+   * Map a project name to the engine relay sends target (Go RegisterEngine).
+   *
+   * @param name - Project name used as the relay target key.
+   * @param e - Engine instance serving that project.
+   */
   registerEngine(name: string, e: Engine): void {
     this.engines.set(name, e)
   }
 
-  /** Override the relay response timeout; 0 disables it (Go SetTimeout). */
+  /**
+   * Override the relay response timeout; 0 disables it (Go SetTimeout).
+   *
+   * @param ms - Timeout in milliseconds; negative values are clamped to 0.
+   */
   setTimeoutMs(ms: number): void {
     this.timeoutMs = ms < 0 ? 0 : ms
   }
 
-  /** The configured relay wait (Go's private timeout field, exposed for tests). */
+  /**
+   * The configured relay wait (Go's private timeout field, exposed for tests).
+   *
+   * @returns The relay timeout in milliseconds; 0 means disabled.
+   */
   relayTimeoutMs(): number {
     return this.timeoutMs
   }
@@ -93,20 +111,34 @@ export class RelayManager {
   /**
    * The wait signal bounding one relay send (Go relayContext): undefined
    * when the timeout is disabled.
+   *
+   * @returns The abort signal for one relay send, or undefined when untimed.
    */
   relaySignal(): AbortSignal | undefined {
     if (this.timeoutMs <= 0) return undefined
     return AbortSignal.timeout(this.timeoutMs)
   }
 
-  /** Establish (or replace) a relay binding between bots in a group chat. */
+  /**
+   * Establish (or replace) a relay binding between bots in a group chat.
+   *
+   * @param platform - Platform name the chat belongs to.
+   * @param chatID - Group chat identifier.
+   * @param bots - Project name to bot display name pairs to bind.
+   */
   bind(platform: string, chatID: string, bots: Record<string, string>): void {
     this.bindings.set(chatID, { platform, chatID, bots })
     console.info(`relay: binding created (chat_id ${chatID}, bots ${JSON.stringify(bots)})`)
     this.save()
   }
 
-  /** Add a project to an existing binding, or create a new one. */
+  /**
+   * Add a project to an existing binding, or create a new one.
+   *
+   * @param platform - Platform name the chat belongs to.
+   * @param chatID - Group chat identifier.
+   * @param projectName - Project to add to the binding.
+   */
   addToBind(platform: string, chatID: string, projectName: string): void {
     let binding = this.bindings.get(chatID)
     if (binding === undefined) {
@@ -118,7 +150,13 @@ export class RelayManager {
     this.save()
   }
 
-  /** Remove a project from a binding; drops the binding when no bots remain. */
+  /**
+   * Remove a project from a binding; drops the binding when no bots remain.
+   *
+   * @param chatID - Group chat identifier.
+   * @param projectName - Project to remove from the binding.
+   * @returns Whether the project was bound in that chat.
+   */
   removeFromBind(chatID: string, projectName: string): boolean {
     const binding = this.bindings.get(chatID)
     if (binding === undefined) return false
@@ -136,29 +174,53 @@ export class RelayManager {
     return false
   }
 
-  /** The binding for a chat, or undefined when none. */
+  /**
+   * The binding for a chat, or undefined when none.
+   *
+   * @param chatID - Group chat identifier.
+   * @returns The binding registered for the chat, or undefined when unbound.
+   */
   getBinding(chatID: string): RelayBinding | undefined {
     return this.bindings.get(chatID)
   }
 
-  /** Remove the relay binding for a chat. */
+  /**
+   * Remove the relay binding for a chat.
+   *
+   * @param chatID - Group chat identifier whose binding is dropped.
+   */
   unbind(chatID: string): void {
     this.bindings.delete(chatID)
     console.info(`relay: binding removed (chat_id ${chatID})`)
     this.save()
   }
 
-  /** Whether a project engine is registered. */
+  /**
+   * Whether a project engine is registered.
+   *
+   * @param name - Project name to look up.
+   * @returns Whether an engine is registered under that project name.
+   */
   hasEngine(name: string): boolean {
     return this.engines.has(name)
   }
 
-  /** All registered engine names. */
+  /**
+   * All registered engine names.
+   *
+   * @returns The project names of every registered engine.
+   */
   listEngineNames(): string[] {
     return [...this.engines.keys()]
   }
 
-  /** The other bots bound in the same chat as the given project. */
+  /**
+   * The other bots bound in the same chat as the given project.
+   *
+   * @param chatID - Group chat identifier to inspect.
+   * @param selfProject - Project whose own entry is excluded from the result.
+   * @returns Project name to bot display name pairs for the other bound bots.
+   */
   listBoundBots(chatID: string, selfProject: string): Record<string, string> {
     const b = this.bindings.get(chatID)
     if (b === undefined) return {}
@@ -169,7 +231,12 @@ export class RelayManager {
     return others
   }
 
-  /** Deliver a message from one bot to another and return the response (Go Send). */
+  /**
+   * Deliver a message from one bot to another and return the response (Go Send).
+   *
+   * @param req - Relay request naming the source, target, and message.
+   * @returns The target project's response to the relayed message.
+   */
   async send(req: RelayRequest): Promise<RelayResponse> {
     let platform: string, chatID: string
     try {

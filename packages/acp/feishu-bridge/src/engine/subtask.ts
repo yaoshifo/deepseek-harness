@@ -123,8 +123,9 @@ export class SubtaskGather {
   }
 }
 
-/** Short attribution label for a spawned child session (Go childLabel). */
 /**
+ * Short attribution label for a spawned child session (Go childLabel).
+ *
  * @param s - The child session to label.
  * @returns The session's trimmed name, falling back to its id when unnamed.
  */

@@ -56,6 +56,12 @@ export interface StreamPreviewCfg {
   partial?: boolean
 }
 
+/**
+ * Default preview configuration: enabled on all platforms, 800ms update
+ * interval, 15-char minimum delta, 2000-char cap, partial streaming off.
+ *
+ * @returns A fresh cfg populated with the defaults above.
+ */
 export function defaultStreamPreviewCfg(): StreamPreviewCfg {
   return { enabled: true, disabledPlatforms: [], intervalMs: 800, minDeltaChars: 15, maxChars: 2000 }
 }
@@ -103,7 +109,9 @@ export class ProgressEntry {
   toolID = ''
   /** Tool entry: result text (appended with --- separator). */
   result = ''
+  /** Tool entry: whether the recorded result succeeded (rendered 🟢 vs 🔴). */
   success = false
+  /** Tool entry: whether a result has been recorded. */
   hasResult = false
   /** True for tool call entries (can receive result update). */
   isTool = false
@@ -124,7 +132,12 @@ export class ProgressEntry {
     Object.assign(this, init)
   }
 
-  /** Render this entry as the markdown shown in the progress card. */
+  /**
+   * Render this entry as the markdown shown in the progress card.
+   *
+   * @param isLatest - True for the newest entry (adds the 🚨 marker).
+   * @returns The markdown block for this entry.
+   */
   render(isLatest: boolean): string {
     if (!this.isTool) return this.text
     // Dynamic name truncation based on seq digit count.
@@ -182,7 +195,13 @@ export class ProgressEntry {
   }
 }
 
-/** Keep the first maxLines lines plus an overflow marker (Go truncateToMaxLines). */
+/**
+ * Keep the first maxLines lines plus an overflow marker (Go truncateToMaxLines).
+ *
+ * @param s - Text to truncate.
+ * @param maxLines - Maximum number of lines to keep.
+ * @returns s unchanged when it fits; otherwise the kept lines plus the overflow marker.
+ */
 export function truncateToMaxLines(s: string, maxLines: number): string {
   if (s === '' || maxLines <= 0) return s
   const lines = s.split('\n')
@@ -191,7 +210,13 @@ export function truncateToMaxLines(s: string, maxLines: number): string {
   return `${lines.slice(0, maxLines).join('\n')}\n... (${extra} more lines)`
 }
 
-/** Normalize s to exactly maxLines lines for stable card height. */
+/**
+ * Normalize s to exactly maxLines lines for stable card height.
+ *
+ * @param s - Text to normalize.
+ * @param maxLines - Exact line count to produce.
+ * @returns s padded with blank lines or truncated to exactly maxLines lines.
+ */
 export function padToFixedLines(s: string, maxLines: number): string {
   if (maxLines <= 0) return s
   if (s === '') return ' \n'.repeat(maxLines - 1) + ' '
@@ -219,6 +244,10 @@ const webTools = new Set(['WebSearch', 'WebFetch'])
 /**
  * The colored text_tag label for a tool in the progress card (icon + color
  * by tool family, name tail-truncated to maxLen).
+ *
+ * @param name - Full tool name; only its tail is kept when truncated.
+ * @param maxLen - Maximum displayed name length.
+ * @returns The text_tag markdown label.
  */
 export function toolTagForProgress(name: string, maxLen: number): string {
   let displayName = name
@@ -281,7 +310,13 @@ export function toolTagForProgress(name: string, maxLen: number): string {
   return `<text_tag color='${color}'>${icon} ${displayName}</text_tag>`
 }
 
-/** Parse a Skill tool call input into (skillName, args); empty for non-skill tools. */
+/**
+ * Parse a Skill tool call input into (skillName, args); empty for non-skill tools.
+ *
+ * @param toolName - Name of the invoked tool.
+ * @param toolInput - Raw tool input: "skill=..." or JSON with skill/args fields.
+ * @returns [skillName, args], or ["", ""] when not a skill call or unparseable.
+ */
 export function parseSkillToolUse(toolName: string, toolInput: string): [string, string] {
   if (toolName.toLowerCase() !== 'skill') return ['', '']
   if (toolInput.startsWith('skill=')) return [toolInput.slice('skill='.length).trim(), '']
@@ -299,6 +334,12 @@ export function parseSkillToolUse(toolName: string, toolInput: string): [string,
  * Build a tool progress entry: timestamped header, escaped body (bash gets a
  * language tag), Thinking entries flagged, and Skill entries relabeled with
  * the skill name.
+ *
+ * @param name - Invoked tool name; "Thinking" yields a thinking entry, "Bash" gets a bash language tag.
+ * @param summary - Tool input shown as the code block body.
+ * @param toolID - tool_use id for matching a later result update.
+ * @param now - Timestamp source for the header.
+ * @returns The constructed progress entry.
  */
 export function newToolProgressEntry(name: string, summary: string, toolID: string, now = new Date()): ProgressEntry {
   const ts = now.toTimeString().slice(0, 8)
@@ -329,7 +370,12 @@ export function newToolProgressEntry(name: string, summary: string, toolID: stri
   return entry
 }
 
-/** Escape markdown special characters (#, *, ~) in plain text. */
+/**
+ * Escape markdown special characters (#, *, ~) in plain text.
+ *
+ * @param s - Plain text to escape.
+ * @returns s with #, *, and ~ backslash-escaped.
+ */
 export function escapeMarkdownChars(s: string): string {
   return s.replaceAll('#', '\\#').replaceAll('*', '\\*').replaceAll('~', '\\~')
 }
@@ -358,20 +404,35 @@ export class StreamPreview {
   private readonly async: AsyncSender | undefined
   private readonly mu = new Mutex()
 
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * Full text accumulated from EventText events.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   fullText = ''
   private lastSentText = ''
   private lastSentAt = 0
   private lastSentViaUpdate = false
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * Platform message handle of the preview card; undefined until the card exists.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   previewMsgID: unknown
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * True once the preview stopped sending updates (patch failures, freeze, or terminal state).
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   degraded = false
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * Consecutive UpdateMessage failures; reaching maxConsecutivePatchFailures degrades the preview.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   failedPatchStreak = 0
 
   private progressMode = false
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * Visible tool-progress entries (circular buffer of maxProgressLines slots).
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   progressEntries: ProgressEntry[] = []
   private progressWriteIdx = 0
   private progressLatestIdx = 0
@@ -379,23 +440,44 @@ export class StreamPreview {
   private toolCallSeq = 0
   private failureCount = 0
   private compactCount = 0
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * Skill names invoked this turn (deduped, insertion-ordered).
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   skillNames: string[] = []
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * Latest EventText chunk shown in the 实时播报 section.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   analysisText = ''
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * True when the card shows a truncated 实时播报 and the full answer is delivered out-of-band.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   analysisTruncated = false
   private thinkingText = ''
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * True once the completed terminal card was rendered.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   completed = false
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * True once the failed terminal card was rendered.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   failed = false
   private todoItems: TodoItem[] = []
   private bgTaskHint = ''
 
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * Pending delayed-flush timer handle, if armed.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   timer: TimerHandle | undefined
-  /** @internal White-box: ported same-package tests read/write this directly. */
+  /**
+   * Timestamp of the last progress-card PATCH (throttle reference).
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
   lastProgressFlush = 0
 
   /** Session this preview belongs to (bump routing). */
@@ -426,6 +508,8 @@ export class StreamPreview {
   /**
    * Whether the platform supports message updating and is not disabled.
    * Mirrors Go canPreview (lock only guards memory visibility there).
+   *
+   * @returns True when the preview card may be sent and updated.
    */
   canPreview(): boolean {
     if (this.degraded || !this.cfg.enabled) return false
@@ -436,7 +520,11 @@ export class StreamPreview {
     return asMessageUpdater(this.platform) !== undefined
   }
 
-  /** Send an initial placeholder card before any agent events arrive. */
+  /**
+   * Send an initial placeholder card before any agent events arrive.
+   *
+   * @param placeholderText - Text shown on the placeholder card.
+   */
   async showPlaceholder(placeholderText: string): Promise<void> {
     await this.locked(async () => {
       if (this.degraded || !this.cfg.enabled || this.previewMsgID !== undefined) return
@@ -448,7 +536,11 @@ export class StreamPreview {
     })
   }
 
-  /** Add new text content and trigger a throttled flush if needed. */
+  /**
+   * Add new text content and trigger a throttled flush if needed.
+   *
+   * @param text - New text content to append to the accumulated fullText.
+   */
   async appendText(text: string): Promise<void> {
     await this.locked(async () => {
       if (this.degraded || !this.cfg.enabled) return
@@ -751,6 +843,9 @@ export class StreamPreview {
    * Called when the agent response completes: cancels timers and optionally
    * cleans up the preview message. Returns true when the final message was
    * delivered via the preview (caller should skip a separate send).
+   *
+   * @param finalTextIn - Full final response text; the transform is applied before use.
+   * @returns True when the final message was delivered via the preview.
    */
   async finish(finalTextIn: string): Promise<boolean> {
     return this.locked(async () => {
@@ -869,22 +964,36 @@ export class StreamPreview {
    * Whether the preview was delivered via in-place UpdateMessage at least
    * once — the user then only got the initial push, so a done reaction is
    * worth sending.
+   *
+   * @returns True when a done reaction is worth sending.
    */
   needsDoneReaction(): boolean {
     return this.previewMsgID !== undefined && this.lastSentViaUpdate
   }
 
-  /** Whether the progress card has been created. */
+  /**
+   * Whether the progress card has been created.
+   *
+   * @returns True once the preview message handle exists.
+   */
   hasStarted(): boolean {
     return this.previewMsgID !== undefined
   }
 
-  /** Whether tool-progress lines are being shown. */
+  /**
+   * Whether tool-progress lines are being shown.
+   *
+   * @returns True while the card is in progress mode.
+   */
   inProgressMode(): boolean {
     return this.progressMode
   }
 
-  /** Create the preview card immediately with placeholder text (push). */
+  /**
+   * Create the preview card immediately with placeholder text (push).
+   *
+   * @param text - Placeholder text pushed as the first preview card; ignored when empty.
+   */
   async forceStart(text: string): Promise<void> {
     if (text === '') return
     await this.locked(async () => {
@@ -893,7 +1002,11 @@ export class StreamPreview {
     })
   }
 
-  /** Replace the placeholder text with tool progress via PATCH (no push). */
+  /**
+   * Replace the placeholder text with tool progress via PATCH (no push).
+   *
+   * @param text - Progress text replacing the placeholder; ignored when empty.
+   */
   async updateProgress(text: string): Promise<void> {
     if (text === '') return
     await this.locked(async () => {
@@ -903,7 +1016,11 @@ export class StreamPreview {
     })
   }
 
-  /** Append a tool progress entry; PATCHes in-place after creation. */
+  /**
+   * Append a tool progress entry; PATCHes in-place after creation.
+   *
+   * @param entry - Tool or thinking entry to append to the progress ring buffer.
+   */
   async appendProgress(entry: ProgressEntry): Promise<void> {
     await this.locked(async () => {
       if (this.degraded || (entry.text === '' && !entry.isTool)) return
@@ -954,7 +1071,11 @@ export class StreamPreview {
     })
   }
 
-  /** Update the background-task hint at the card bottom and flush. */
+  /**
+   * Update the background-task hint at the card bottom and flush.
+   *
+   * @param hint - New hint line shown at the card bottom.
+   */
   async setBackgroundHint(hint: string): Promise<void> {
     await this.locked(async () => {
       if (this.bgTaskHint === hint) return
@@ -966,7 +1087,11 @@ export class StreamPreview {
     })
   }
 
-  /** Store the latest todo items (pinned section) and flush. */
+  /**
+   * Store the latest todo items (pinned section) and flush.
+   *
+   * @param items - Latest todo items to render in the pinned section.
+   */
   async updateTodoSection(items: TodoItem[]): Promise<void> {
     await this.locked(async () => {
       if (this.degraded) return
@@ -981,6 +1106,10 @@ export class StreamPreview {
   /**
    * Update the tool entry matching toolID with its result; empty toolID
    * falls back to the first pending entry.
+   *
+   * @param toolID - tool_use id of the call to update; empty matches the first pending entry.
+   * @param result - Result text shown below the call body.
+   * @param success - Whether the tool call succeeded (rendered 🟢 vs 🔴).
    */
   async updateToolResult(toolID: string, result: string, success: boolean): Promise<void> {
     await this.locked(async () => {
@@ -1070,7 +1199,11 @@ export class StreamPreview {
     }
   }
 
-  /** One final PATCH with the complete response text replacing the streamed text. */
+  /**
+   * One final PATCH with the complete response text replacing the streamed text.
+   *
+   * @param finalText - Complete response text for the final card body.
+   */
   async finalProgressDisplay(finalText: string): Promise<void> {
     await this.locked(async () => {
       if (this.degraded || this.previewMsgID === undefined) return
@@ -1088,7 +1221,11 @@ export class StreamPreview {
     })
   }
 
-  /** Update the 实时播报 section with the latest EventText chunk (replaced). */
+  /**
+   * Update the 实时播报 section with the latest EventText chunk (replaced).
+   *
+   * @param chunk - Latest EventText chunk; replaces the previous one.
+   */
   async appendAnalysisText(chunk: string): Promise<void> {
     if (chunk === '') return
     await this.locked(async () => {
@@ -1098,7 +1235,11 @@ export class StreamPreview {
     })
   }
 
-  /** Update the 💭 思考中 section with the latest thinking chunk. */
+  /**
+   * Update the 💭 思考中 section with the latest thinking chunk.
+   *
+   * @param chunk - Latest thinking chunk shown in the section.
+   */
   async appendThinking(chunk: string): Promise<void> {
     if (chunk === '') return
     await this.locked(async () => {
@@ -1121,21 +1262,33 @@ export class StreamPreview {
     })
   }
 
-  /** Replace the analysis text without flushing (completion-time injection). */
+  /**
+   * Replace the analysis text without flushing (completion-time injection).
+   *
+   * @param text - New analysis text for the 实时播报 section.
+   */
   async setAnalysisText(text: string): Promise<void> {
     return this.locked(() => {
       this.analysisText = text
     })
   }
 
-  /** Set the analysis text only when streaming has not populated it yet. */
+  /**
+   * Set the analysis text only when streaming has not populated it yet.
+   *
+   * @param text - Analysis text used only when the current one is empty.
+   */
   async setAnalysisTextIfEmpty(text: string): Promise<void> {
     return this.locked(() => {
       if (this.analysisText === '' && text !== '') this.analysisText = text
     })
   }
 
-  /** Remove one exact copy of content before a dedicated card takes ownership. */
+  /**
+   * Remove one exact copy of content before a dedicated card takes ownership.
+   *
+   * @param content - Exact text to remove once from fullText and analysisText.
+   */
   async removeText(content: string): Promise<void> {
     if (content === '') return
     return this.locked(() => {
@@ -1144,6 +1297,11 @@ export class StreamPreview {
     })
   }
 
+  /**
+   * Whether the preview stopped sending updates (patch failures, freeze, or terminal state).
+   *
+   * @returns True when no further updates will be sent.
+   */
   isDegraded(): boolean {
     return this.degraded
   }
@@ -1152,6 +1310,8 @@ export class StreamPreview {
    * Re-deliver the answer out-of-band (markdown file attachment, falling
    * back to chunked text) so it is never lost when the card cannot show it.
    * Must NOT hold the lock.
+   *
+   * @param text - Complete answer text to deliver.
    */
   async deliverAnswer(text: string): Promise<void> {
     if (text.trim() === '') return
@@ -1370,8 +1530,10 @@ export class StreamPreview {
    * Build the combined display text for the preview card: lead-in text,
    * todo/status block, tool progress entries, 实时播报 section, and the
    * background hint, with the state/ts/tc header protocol. Must hold the lock.
+   *
+   * @internal White-box: ported same-package tests call this directly. Caller must hold the lock.
+   * @returns The full markdown body for one preview-card PATCH.
    */
-  /** @internal White-box: ported same-package tests call this directly. Caller must hold the lock. */
   buildProgressDisplayLocked(): string {
     let b = ''
 
@@ -1476,7 +1638,17 @@ export class StreamPreview {
   }
 }
 
-/** Create a streaming preview (Go newStreamPreview). */
+/**
+ * Create a streaming preview (Go newStreamPreview).
+ *
+ * @param cfg - Preview behavior switches.
+ * @param p - Platform adapter used to send and update the card.
+ * @param replyCtx - Reply context the preview message is sent in.
+ * @param transform - Optional text transform applied before every send.
+ * @param as - Async sender serializing PATCHes; undefined sends inline.
+ * @param sessionKey - Session this preview belongs to (bump routing); empty when unknown.
+ * @returns A new idle preview; nothing is sent until an append or flush call.
+ */
 export function newStreamPreview(
   cfg: StreamPreviewCfg,
   p: Platform,

@@ -19,6 +19,10 @@ interface SendRequest {
   coalescable?: boolean
 }
 
+/**
+ * Serializes platform API calls onto a single background drain loop; a full
+ * queue drops (or inlines) requests instead of blocking the caller.
+ */
 export class AsyncSender {
   private readonly name: string
   private queue: SendRequest[] = []
@@ -76,6 +80,8 @@ export class AsyncSender {
   /**
    * Schedule fn on the consumer. A full queue drops the request with a
    * warning; enqueue never blocks the caller.
+   *
+   * @param fn - Operation to execute on the consumer.
    */
   enqueue(fn: () => void | Promise<void>): void {
     this.checkQueueDepth()
@@ -92,6 +98,8 @@ export class AsyncSender {
    * Schedule an idempotent full-state snapshot (e.g. a streaming PATCH);
    * stale copies queued behind a newer coalescable request are skipped,
    * bounding card lag to ~one RTT instead of the full backlog depth.
+   *
+   * @param fn - Idempotent full-state snapshot to execute on the consumer.
    */
   enqueueCoalescable(fn: () => void | Promise<void>): void {
     this.checkQueueDepth()
@@ -104,7 +112,11 @@ export class AsyncSender {
     void this.drain()
   }
 
-  /** Like {@link enqueue} but executes fn inline when the queue is full. */
+  /**
+   * Like {@link enqueue} but executes fn inline when the queue is full.
+   *
+   * @param fn - Operation to execute; runs inline when the queue is full.
+   */
   enqueueOrInline(fn: () => void | Promise<void>): void {
     this.checkQueueDepth()
     if (this.closed) return
@@ -145,7 +157,12 @@ export class AsyncSender {
   }
 }
 
-/** Create a running async sender (Go newAsyncSender). */
+/**
+ * Create a running async sender (Go newAsyncSender).
+ *
+ * @param name - Label used in failure and queue-depth warnings.
+ * @returns A sender whose drain loop starts on the first enqueue.
+ */
 export function newAsyncSender(name: string): AsyncSender {
   return new AsyncSender(name)
 }

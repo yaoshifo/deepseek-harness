@@ -52,15 +52,6 @@ export function levenshtein(a: string, b: string): number {
 }
 
 /**
- * Wrap a (arc-flag-normalized) Lucide symbol inner into a standalone,
- * rasterizable SVG. stroke-width 14 (not the Lucide default 2): on a 256px
- * canvas with the icon occupying the central 60%, a heavier stroke stays
- * legible.
- * @param inner - The symbol's inner markup.
- * @param strokeColor - Stroke (and currentColor replacement) color.
- * @returns Complete SVG document string.
- */
-/**
  * Avatar stroke width in 24-unit viewBox coordinates. Go used 14 with its
  * oksvg rasterizer; librsvg (sharp) lays out materially thicker strokes, and
  * 14 fills the icon area into a solid white square (~95% coverage vs oksvg's
@@ -69,6 +60,15 @@ export function levenshtein(a: string, b: string): number {
  */
 const avatarStrokeWidth = 3
 
+/**
+ * Wrap a (arc-flag-normalized) Lucide symbol inner into a standalone,
+ * rasterizable SVG. stroke-width 14 (not the Lucide default 2): on a 256px
+ * canvas with the icon occupying the central 60%, a heavier stroke stays
+ * legible.
+ * @param inner - The symbol's inner markup.
+ * @param strokeColor - Stroke (and currentColor replacement) color.
+ * @returns Complete SVG document string.
+ */
 export function wrapIconSVG(inner: string, strokeColor: string): string {
   // currentColor in Lucide semantics is the icon foreground color — same as
   // the stroke — so replacing it keeps hole/dot fills (e.g. tag) rendering.

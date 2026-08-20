@@ -27,6 +27,8 @@ import {
  * and chains the prefix resolver so `/monitor` and its ≥2-char prefixes
  * resolve while every other command keeps its current resolution. Returns
  * the disposer.
+ * @param e - the engine whose command table the family merges into.
+ * @returns the disposer removing the commands and restoring the resolver.
  */
 export function registerMonitorCommands(e: Engine): () => void {
   const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()
@@ -89,7 +91,13 @@ async function cmdMonitorMode(e: Engine, p: Platform, msg: Message, args: string
   await e.reply(p, msg.replyCtx, tr.tf(Msg.MonitorModeSet, val))
 }
 
-/** `/monitor` dispatcher (Go cmdMonitor). */
+/**
+ * `/monitor` dispatcher (Go cmdMonitor).
+ * @param e - the engine carrying the monitor state.
+ * @param p - the platform that delivered the command.
+ * @param msg - the command message.
+ * @param args - the command arguments after "monitor".
+ */
 export async function cmdMonitor(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const tr = e.i18n
   if (!e.monitor.enabled) {

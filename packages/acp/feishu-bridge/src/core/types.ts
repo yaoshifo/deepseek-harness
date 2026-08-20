@@ -199,7 +199,12 @@ export interface Event {
   arrivedAt?: number
 }
 
-/** Whether content is a /monitor command — exact word, not /monitoring (Go core.IsMonitorCommand). */
+/**
+ * Whether content is a /monitor command — exact word, not /monitoring (Go core.IsMonitorCommand).
+ *
+ * @param content - the message text to test.
+ * @returns whether the trimmed text is the /monitor word, optionally followed by arguments.
+ */
 export function isMonitorCommand(content: string): boolean {
   const c = content.trim()
   return c.startsWith('/monitor') && (c.length === 8 || c[8] === ' ')
@@ -215,7 +220,11 @@ export class EventChannel {
   private closed = false
   private waiters: Array<(r: { done: false; event: Event } | { done: true }) => void> = []
 
-  /** Push one buffered event; resolves a waiting receiver immediately. */
+  /**
+   * Push one buffered event; resolves a waiting receiver immediately.
+   *
+   * @param event - the event to deliver to the next receiver.
+   */
   push(event: Event): void {
     if (this.closed) return
     const waiter = this.waiters.shift()
@@ -236,6 +245,8 @@ export class EventChannel {
   /**
    * Receive the next event, or done once closed and drained. Resolving is
    * FIFO across competing receivers, mirroring Go channel semantics.
+   *
+   * @returns the next buffered event, or done once closed and drained.
    */
   receive(): Promise<{ done: false; event: Event } | { done: true }> {
     if (this.queue.length > 0) {
@@ -304,12 +315,23 @@ export interface SessionModeInjector {
   setSessionMode(mode: string): void
 }
 
-/** Structural checks replacing Go's interface type assertions. */
+/**
+ * Structural checks replacing Go's interface type assertions.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asSessionEnvInjector(a: Agent): SessionEnvInjector | undefined {
   const candidate = a as Partial<SessionEnvInjector>
   return typeof candidate.setSessionEnv === 'function' ? (candidate as SessionEnvInjector) : undefined
 }
 
+/**
+ * Structural check for the {@link SessionModeInjector} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asSessionModeInjector(a: Agent): SessionModeInjector | undefined {
   const candidate = a as Partial<SessionModeInjector>
   return typeof candidate.setSessionMode === 'function' ? (candidate as SessionModeInjector) : undefined
@@ -407,54 +429,132 @@ function withMethod<T>(obj: object, method: keyof T & string): T | undefined {
   return typeof (obj as Partial<T>)[method] === 'function' ? (obj as T) : undefined
 }
 
+/**
+ * Structural check for the {@link MessageUpdater} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asMessageUpdater(p: Platform): MessageUpdater | undefined {
   return withMethod<MessageUpdater>(p, 'updateMessage')
 }
 
+/**
+ * Structural check for the {@link PreviewStarter} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asPreviewStarter(p: Platform): PreviewStarter | undefined {
   return withMethod<PreviewStarter>(p, 'sendPreviewStart')
 }
 
+/**
+ * Structural check for the {@link PreviewCleaner} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asPreviewCleaner(p: Platform): PreviewCleaner | undefined {
   return withMethod<PreviewCleaner>(p, 'deletePreviewMessage')
 }
 
+/**
+ * Structural check for the {@link PreviewFinishPreference} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asPreviewFinishPreference(p: Platform): PreviewFinishPreference | undefined {
   return withMethod<PreviewFinishPreference>(p, 'keepPreviewOnFinish')
 }
 
+/**
+ * Structural check for the {@link PreviewOverflowReporter} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asPreviewOverflowReporter(p: Platform): PreviewOverflowReporter | undefined {
   return withMethod<PreviewOverflowReporter>(p, 'previewOverflow')
 }
 
+/**
+ * Structural check for the {@link TransientPatchErrorChecker} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asTransientPatchErrorChecker(p: Platform): TransientPatchErrorChecker | undefined {
   return withMethod<TransientPatchErrorChecker>(p, 'isTransientPatchError')
 }
 
+/**
+ * Structural check for the {@link StoppedCardRenderer} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asStoppedCardRenderer(p: Platform): StoppedCardRenderer | undefined {
   return withMethod<StoppedCardRenderer>(p, 'renderStoppedCard')
 }
 
+/**
+ * Structural check for the {@link FileSender} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asFileSender(p: Platform): FileSender | undefined {
   return withMethod<FileSender>(p, 'sendFile')
 }
 
+/**
+ * Structural check for the {@link CardSender} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asCardSender(p: Platform): CardSender | undefined {
   return withMethod<CardSender>(p, 'sendCard')
 }
 
+/**
+ * Structural check for the {@link CardSenderWithUpdate} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asCardSenderWithUpdate(p: Platform): CardSenderWithUpdate | undefined {
   return withMethod<CardSenderWithUpdate>(p, 'sendCardWithHandle')
 }
 
+/**
+ * Structural check for the {@link CardRefresher} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asCardRefresher(p: Platform): CardRefresher | undefined {
   return withMethod<CardRefresher>(p, 'refreshCard')
 }
 
+/**
+ * Structural check for the {@link InlineButtonSender} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asInlineButtonSender(p: Platform): InlineButtonSender | undefined {
   return withMethod<InlineButtonSender>(p, 'sendWithButtons')
 }
 
+/**
+ * Structural check for the {@link CompletionNotifier} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asCompletionNotifier(p: Platform): CompletionNotifier | undefined {
   return withMethod<CompletionNotifier>(p, 'sendCompletionNotification')
 }
@@ -722,21 +822,44 @@ export interface MonitorChatConfigurable {
   setMonitorFallbackUser(openID: string): void
 }
 
-/** The platform's own active-tag name, falling back to the global default (Go activeTagNameFor). */
+/**
+ * The platform's own active-tag name, falling back to the global default (Go activeTagNameFor).
+ *
+ * @param p - the platform to inspect.
+ * @returns the platform's active-tag name, or {@link ActiveTagName} when it has none.
+ */
 export function activeTagNameFor(p: Platform): string {
   const namer = withMethod<ActiveTagNamer>(p, 'activeTagName')
   const name = namer?.activeTagName() ?? ''
   return name !== '' ? name : ActiveTagName
 }
 
+/**
+ * Structural check for the {@link ReplyContextReconstructor} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asReplyContextReconstructor(p: Platform): ReplyContextReconstructor | undefined {
   return withMethod<ReplyContextReconstructor>(p, 'reconstructReplyCtx')
 }
 
+/**
+ * Structural check for the {@link CronReplyTargetResolver} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asCronReplyTargetResolver(p: Platform): CronReplyTargetResolver | undefined {
   return withMethod<CronReplyTargetResolver>(p, 'resolveCronReplyTarget')
 }
 
+/**
+ * Structural check for the {@link ForkQuerierWithProvider} capability (all three members required).
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asForkQuerierWithProvider(a: Agent): ForkQuerierWithProvider | undefined {
   const candidate = a as Partial<ForkQuerierWithProvider>
   return typeof candidate.lightweightQuery === 'function'
@@ -746,6 +869,12 @@ export function asForkQuerierWithProvider(a: Agent): ForkQuerierWithProvider | u
     : undefined
 }
 
+/**
+ * Structural check for the {@link ProviderSwitcher} capability (all four members required).
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asProviderSwitcher(a: Agent): ProviderSwitcher | undefined {
   const candidate = a as Partial<ProviderSwitcher>
   return typeof candidate.getActiveProvider === 'function'
@@ -756,14 +885,32 @@ export function asProviderSwitcher(a: Agent): ProviderSwitcher | undefined {
     : undefined
 }
 
+/**
+ * Structural check for the {@link ForkSessionPreparer} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asForkSessionPreparer(a: Agent): ForkSessionPreparer | undefined {
   return withMethod<ForkSessionPreparer>(a, 'prepareForkSession')
 }
 
+/**
+ * Structural check for the {@link WorktreeOrphanResolver} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asWorktreeOrphanResolver(a: Agent): WorktreeOrphanResolver | undefined {
   return withMethod<WorktreeOrphanResolver>(a, 'orphanProjectDir')
 }
 
+/**
+ * Structural check for the {@link WorkDirSwitcher} capability (both members required).
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asWorkDirSwitcher(a: Agent): WorkDirSwitcher | undefined {
   const candidate = a as Partial<WorkDirSwitcher>
   return typeof candidate.getWorkDir === 'function' && typeof candidate.setWorkDir === 'function'
@@ -771,14 +918,32 @@ export function asWorkDirSwitcher(a: Agent): WorkDirSwitcher | undefined {
     : undefined
 }
 
+/**
+ * Structural check for the {@link GroupSpawner} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asGroupSpawner(p: Platform): GroupSpawner | undefined {
   return withMethod<GroupSpawner>(p, 'spawnGroup')
 }
 
+/**
+ * Structural check for the {@link GroupSpawnerEx} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asGroupSpawnerEx(p: Platform): GroupSpawnerEx | undefined {
   return withMethod<GroupSpawnerEx>(p, 'spawnGroupWithOptions')
 }
 
+/**
+ * Structural check for the {@link GroupRenamer} capability (both members required).
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asGroupRenamer(p: Platform): GroupRenamer | undefined {
   const candidate = p as Partial<GroupRenamer>
   return typeof candidate.renameGroup === 'function' && typeof candidate.renameGroupAny === 'function'
@@ -786,36 +951,84 @@ export function asGroupRenamer(p: Platform): GroupRenamer | undefined {
     : undefined
 }
 
+/**
+ * Structural check for the {@link ChatRenamedNotifier} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asChatRenamedNotifier(p: Platform): ChatRenamedNotifier | undefined {
   return withMethod<ChatRenamedNotifier>(p, 'setChatRenamedHandler')
 }
 
+/**
+ * Structural check for the {@link ChatChangedNotifier} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asChatChangedNotifier(p: Platform): ChatChangedNotifier | undefined {
   return withMethod<ChatChangedNotifier>(p, 'setChatChangedHandler')
 }
 
+/**
+ * Structural check for the {@link RecallNotifier} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asRecallNotifier(p: Platform): RecallNotifier | undefined {
   return withMethod<RecallNotifier>(p, 'setRecallHandler')
 }
 
+/**
+ * Structural check for the {@link SessionCompressor} capability.
+ *
+ * @param s - the session to inspect; undefined passes through as undefined.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asSessionCompressor(s: AgentSession | undefined): SessionCompressor | undefined {
   return s !== undefined && typeof (s as Partial<SessionCompressor>).compress === 'function'
     ? s as AgentSession & SessionCompressor
     : undefined
 }
 
+/**
+ * Structural check for the {@link GroupIconAvatarSetter} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asGroupIconAvatarSetter(p: Platform): GroupIconAvatarSetter | undefined {
   return withMethod<GroupIconAvatarSetter>(p, 'setGroupIconAvatar')
 }
 
+/**
+ * Structural check for the {@link ChatroomFamilyAvatarSetter} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asChatroomFamilyAvatarSetter(p: Platform): ChatroomFamilyAvatarSetter | undefined {
   return withMethod<ChatroomFamilyAvatarSetter>(p, 'setChatroomFamilyAvatar')
 }
 
+/**
+ * Structural check for the {@link ChatAvatarStateSwitcher} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asChatAvatarStateSwitcher(p: Platform): ChatAvatarStateSwitcher | undefined {
   return withMethod<ChatAvatarStateSwitcher>(p, 'setChatAvatarActive')
 }
 
+/**
+ * Structural check for the {@link ChatMemberManager} capability (both members required).
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asChatMemberManager(p: Platform): ChatMemberManager | undefined {
   const candidate = p as Partial<ChatMemberManager>
   return typeof candidate.listChatMembers === 'function' && typeof candidate.addChatMembers === 'function'
@@ -823,54 +1036,132 @@ export function asChatMemberManager(p: Platform): ChatMemberManager | undefined 
     : undefined
 }
 
+/**
+ * Structural check for the {@link ChatJumpURLer} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asChatJumpURLer(p: Platform): ChatJumpURLer | undefined {
   return withMethod<ChatJumpURLer>(p, 'chatJumpURL')
 }
 
+/**
+ * Structural check for the {@link MessagePinAppender} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asMessagePinAppender(p: Platform): MessagePinAppender | undefined {
   return withMethod<MessagePinAppender>(p, 'addMessagePin')
 }
 
+/**
+ * Structural check for the {@link TopNoticeSetter} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asTopNoticeSetter(p: Platform): TopNoticeSetter | undefined {
   return withMethod<TopNoticeSetter>(p, 'setTopNotice')
 }
 
+/**
+ * Structural check for the {@link ReactionAdder} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asReactionAdder(p: Platform): ReactionAdder | undefined {
   return withMethod<ReactionAdder>(p, 'addReaction')
 }
 
+/**
+ * Structural check for the {@link MessageReactionAdder} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asMessageReactionAdder(p: Platform): MessageReactionAdder | undefined {
   return withMethod<MessageReactionAdder>(p, 'addReactionToMessage')
 }
 
+/**
+ * Structural check for the {@link ChatTagRemover} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asChatTagRemover(p: Platform): ChatTagRemover | undefined {
   return withMethod<ChatTagRemover>(p, 'removeTagFromChat')
 }
 
+/**
+ * Structural check for the {@link ChatActiveTagger} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asChatActiveTagger(p: Platform): ChatActiveTagger | undefined {
   return withMethod<ChatActiveTagger>(p, 'applyActiveTag')
 }
 
+/**
+ * Structural check for the {@link SpawnedChatLister} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asSpawnedChatLister(p: Platform): SpawnedChatLister | undefined {
   return withMethod<SpawnedChatLister>(p, 'listActiveSpawnedChats')
 }
 
+/**
+ * Structural check for the {@link SpawnedChatStateUpdater} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asSpawnedChatStateUpdater(p: Platform): SpawnedChatStateUpdater | undefined {
   return withMethod<SpawnedChatStateUpdater>(p, 'markSpawnedChatDone')
 }
 
+/**
+ * Structural check for the {@link SpawnedChatActivator} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asSpawnedChatActivator(p: Platform): SpawnedChatActivator | undefined {
   return withMethod<SpawnedChatActivator>(p, 'markSpawnedChatActive')
 }
 
+/**
+ * Structural check for the {@link SpawnedChatActiveChecker} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asSpawnedChatActiveChecker(p: Platform): SpawnedChatActiveChecker | undefined {
   return withMethod<SpawnedChatActiveChecker>(p, 'isSpawnedChatActive')
 }
 
+/**
+ * Structural check for the {@link BotIdentityProvider} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asBotIdentityProvider(p: Platform): BotIdentityProvider | undefined {
   return withMethod<BotIdentityProvider>(p, 'botDisplayName')
 }
 
+/**
+ * Structural check for the {@link ReactionManager} capability (both members required).
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asReactionManager(p: Platform): ReactionManager | undefined {
   const candidate = p as Partial<ReactionManager>
   return typeof candidate.addReactionWithID === 'function' && typeof candidate.removeReaction === 'function'
@@ -878,10 +1169,22 @@ export function asReactionManager(p: Platform): ReactionManager | undefined {
     : undefined
 }
 
+/**
+ * Structural check for the {@link ChatBrander} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asChatBrander(p: Platform): ChatBrander | undefined {
   return withMethod<ChatBrander>(p, 'brandChat')
 }
 
+/**
+ * Structural check for the {@link MonitorPoller} capability (both members required).
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asMonitorPoller(p: Platform): MonitorPoller | undefined {
   const candidate = p as Partial<MonitorPoller>
   return typeof candidate.latestMessageTime === 'function' && typeof candidate.listMonitorMessages === 'function'
@@ -889,6 +1192,12 @@ export function asMonitorPoller(p: Platform): MonitorPoller | undefined {
     : undefined
 }
 
+/**
+ * Structural check for the {@link MonitorChatConfigurable} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asMonitorChatConfigurable(p: Platform): MonitorChatConfigurable | undefined {
   const candidate = p as Partial<MonitorChatConfigurable>
   return typeof candidate.setMonitorChats === 'function'
@@ -934,22 +1243,52 @@ export interface RenderStatusUpdater {
   updateRenderStatus(replyCtx: unknown, exportKey: string, statusText: string): Promise<void>
 }
 
+/**
+ * Structural check for the {@link RenderQuerier} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asRenderQuerier(a: Agent): RenderQuerier | undefined {
   return withMethod<RenderQuerier>(a, 'renderQuery')
 }
 
+/**
+ * Structural check for the {@link RenderEffortSetter} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asRenderEffortSetter(a: Agent): RenderEffortSetter | undefined {
   return withMethod<RenderEffortSetter>(a, 'setRenderEffort')
 }
 
+/**
+ * Structural check for the {@link ImageSender} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asImageSender(p: Platform): ImageSender | undefined {
   return withMethod<ImageSender>(p, 'sendImage')
 }
 
+/**
+ * Structural check for the {@link ImageUploader} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asImageUploader(p: Platform): ImageUploader | undefined {
   return withMethod<ImageUploader>(p, 'uploadImage')
 }
 
+/**
+ * Structural check for the {@link RenderStatusUpdater} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asRenderStatusUpdater(p: Platform): RenderStatusUpdater | undefined {
   return withMethod<RenderStatusUpdater>(p, 'updateRenderStatus')
 }
@@ -959,6 +1298,12 @@ export interface ReplyExporter {
   setExportHandler(handler: (sessionKey: string, exportKey: string) => { text: string; ok: boolean }): void
 }
 
+/**
+ * Structural check for the {@link ReplyExporter} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
 export function asReplyExporter(p: Platform): ReplyExporter | undefined {
   return withMethod<ReplyExporter>(p, 'setExportHandler')
 }

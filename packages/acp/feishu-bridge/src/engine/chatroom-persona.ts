@@ -22,6 +22,9 @@ const claudeMDImportRe = /^[ \t]*@([A-Za-z0-9_./\-]+)[ \t]*$/m
 /**
  * Read <workDir>/CLAUDE.md and recursively inline any whole-line `@<path>`
  * import (Go loadFlattenedPersona). Returns '' when unreadable.
+ *
+ * @param workDir - Directory whose CLAUDE.md is read.
+ * @returns the flattened persona text, or '' when the file is unreadable.
  */
 export function loadFlattenedPersona(workDir: string): string {
   const mainPath = join(workDir, 'CLAUDE.md')
@@ -64,6 +67,9 @@ function flattenClaudeImports(content: string, baseDir: string, onPath: Set<stri
  * buildChatroomSystemPrompt): bridge base + safety floor + the applicable
  * contract (role / research role / direct) + ledger read instruction +
  * subtask plumbing + the flattened persona from the workdir's CLAUDE.md.
+ *
+ * @param opts - Role/moderator flags, ledger and assistant keys, workdir, and platform formatting prompt.
+ * @returns the assembled whole system prompt.
  */
 export function buildChatroomSystemPrompt(opts: {
   workDir: string
@@ -101,7 +107,10 @@ export function buildChatroomSystemPrompt(opts: {
   return b.join('')
 }
 
-/** The bridge identity a chatroom participant still needs (Go ChatroomRoleBaseSystemPrompt). */
+/** The bridge identity a chatroom participant still needs (Go ChatroomRoleBaseSystemPrompt).
+ *
+ * @returns the bridge identity preamble prepended to every chatroom prompt.
+ */
 export function chatroomRoleBaseSystemPrompt(): string {
   return `你正运行在 feishu-bridge 内部——一个把 AI coding agent 接到消息平台的桥。你的普通文本回复会自动投递给用户，正常回复即可。
 
@@ -115,6 +124,9 @@ export function chatroomRoleBaseSystemPrompt(): string {
 /**
  * The research-role pre-configured-assistant contract (Go
  * ChatroomResearchRolePrompt), with the assistant child key inlined.
+ *
+ * @param assistantChild - Session key of the pre-provisioned research assistant; '' when provisioning failed.
+ * @returns the research-role assistant contract prompt.
  */
 export function chatroomResearchRolePrompt(assistantChild: string): string {
   return `## 研究任务：用预配的助手子群干活
@@ -134,7 +146,10 @@ child 是预配助手的 session key${assistantChild !== '' ? `（本会话注�
 `
 }
 
-/** The non-coding-agent floor for chatroom roles with tool access (Go ChatroomSafetyFloorPrompt). */
+/** The non-coding-agent floor for chatroom roles with tool access (Go ChatroomSafetyFloorPrompt).
+ *
+ * @returns the tool-usage floor prompt.
+ */
 export function chatroomSafetyFloorPrompt(): string {
   return `
 
@@ -145,7 +160,10 @@ export function chatroomSafetyFloorPrompt(): string {
 `
 }
 
-/** The multi-role participation contract (Go ChatroomRoleContractPrompt). */
+/** The multi-role participation contract (Go ChatroomRoleContractPrompt).
+ *
+ * @returns the multi-role participation contract prompt.
+ */
 export function chatroomRoleContractPrompt(): string {
   return `
 
@@ -161,7 +179,10 @@ export function chatroomRoleContractPrompt(): string {
 `
 }
 
-/** The 1:1 direct-role contract (Go ChatroomDirectRoleContractPrompt). */
+/** The 1:1 direct-role contract (Go ChatroomDirectRoleContractPrompt).
+ *
+ * @returns the direct-role conversation contract prompt.
+ */
 export function chatroomDirectRoleContractPrompt(): string {
   return `
 
@@ -174,7 +195,11 @@ export function chatroomDirectRoleContractPrompt(): string {
 `
 }
 
-/** The read-the-ledger-first instruction (Go ChatroomLedgerReadPrompt). */
+/** The read-the-ledger-first instruction (Go ChatroomLedgerReadPrompt).
+ *
+ * @param ledgerDir - Shared ledger directory to read before answering.
+ * @returns the ledger-read instruction, or '' when ledgerDir is empty.
+ */
 export function chatroomLedgerReadPrompt(ledgerDir: string): string {
   if (ledgerDir === '') return ''
   return `
@@ -190,7 +215,10 @@ export function chatroomLedgerReadPrompt(ledgerDir: string): string {
 `
 }
 
-/** The subtask-child preamble (Go SubtaskAgentSystemPrompt, tool form). */
+/** The subtask-child preamble (Go SubtaskAgentSystemPrompt, tool form).
+ *
+ * @returns the report-back preamble for spawned subtask children.
+ */
 export function subtaskAgentSystemPrompt(): string {
   return `
 
@@ -208,7 +236,10 @@ report 只在真正完成时调用一次——不要在中间进度时调。
 `
 }
 
-/** The research-assistant preamble (Go SubtaskResearchAssistantPrompt). */
+/** The research-assistant preamble (Go SubtaskResearchAssistantPrompt).
+ *
+ * @returns the research-execution preamble for assistant children.
+ */
 export function subtaskResearchAssistantPrompt(): string {
   return `
 ### 你是一个并行研究作战室的研究助手

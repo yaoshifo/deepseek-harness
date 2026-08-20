@@ -8,19 +8,31 @@
 
 import type { UserQuestion } from '../core/types.js'
 
-/** Lowercase trimmed string matches an "allow" keyword (Go isAllowResponse). */
+/**
+ * Lowercase trimmed string matches an "allow" keyword (Go isAllowResponse).
+ * @param s - Lowercase trimmed user input.
+ * @returns True when the input is an "allow" keyword.
+ */
 export function isAllowResponse(s: string): boolean {
   const words = ['allow', 'yes', 'y', 'ok', '允许', '同意', '可以', '好', '好的', '是', '确认', 'approve']
   return words.includes(s)
 }
 
-/** Lowercase trimmed string matches a "deny" keyword (Go isDenyResponse). */
+/**
+ * Lowercase trimmed string matches a "deny" keyword (Go isDenyResponse).
+ * @param s - Lowercase trimmed user input.
+ * @returns True when the input is a "deny" keyword.
+ */
 export function isDenyResponse(s: string): boolean {
   const words = ['deny', 'no', 'n', 'reject', '拒绝', '不允许', '不行', '不', '否', '取消', 'cancel']
   return words.includes(s)
 }
 
-/** Lowercase trimmed string matches an "allow all" keyword (Go isApproveAllResponse). */
+/**
+ * Lowercase trimmed string matches an "allow all" keyword (Go isApproveAllResponse).
+ * @param s - Lowercase trimmed user input.
+ * @returns True when the input is an "allow all" keyword.
+ */
 export function isApproveAllResponse(s: string): boolean {
   const words = [
     'allow all', 'allowall', 'approve all', 'yes all',
@@ -36,6 +48,10 @@ export function isApproveAllResponse(s: string): boolean {
  * - Legacy format: "askq:N"
  * - Numeric index(es): "1" or "1,3,5" (multi-select)
  * - Free text: returned as-is
+ *
+ * @param q - The question whose options resolve index inputs.
+ * @param input - Raw user input (button callback payload, index(es), or free text).
+ * @returns The answer text: the selected option label(s), or the trimmed input.
  */
 export function resolveAskQuestionAnswer(q: UserQuestion, input: string): string {
   const trimmed = input.trim()
@@ -100,6 +116,11 @@ export function resolveAskQuestionAnswer(q: UserQuestion, input: string): string
  * (Go buildAskQuestionResponse). The answers map is keyed by question
  * index; the result carries the original fields plus an `answers` object
  * mapping question text to answer text.
+ *
+ * @param originalInput - The original tool input to carry over.
+ * @param questions - The questions asked in the tool call.
+ * @param collected - Answer text per question index.
+ * @returns The tool input with the `answers` object attached.
  */
 export function buildAskQuestionResponse(
   originalInput: Record<string, unknown>,
@@ -123,6 +144,12 @@ export function buildAskQuestionResponse(
  * surface to the user instead of being auto-denied (Go
  * shouldSurfaceUnsolicitedPermission). Auto-approve never surfaces;
  * AskUserQuestion and stall-retried turns always surface.
+ *
+ * @param _toolName - Unused in the ported rules (kept for Go parity).
+ * @param isAskQuestion - Whether the request is an AskUserQuestion call.
+ * @param stallRetried - Whether the turn already retried after a stall.
+ * @param autoApprove - Whether auto-approve is enabled for the chat.
+ * @returns True when the request should surface to the user.
  */
 export function shouldSurfaceUnsolicitedPermission(
   _toolName: string,
@@ -138,6 +165,9 @@ export function shouldSurfaceUnsolicitedPermission(
  * Native Claude Code deny message (Go handlePendingPermission deny branch).
  * The preamble mirrors the claude binary's uPe/wvt tool_result so the model
  * follows the rejection format with highest fidelity.
+ *
+ * @param denyReason - The user's free-text rejection reason; '' when none.
+ * @returns The deny tool_result message text.
  */
 export function buildDenyMessage(denyReason: string): string {
   const preamble = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file)."

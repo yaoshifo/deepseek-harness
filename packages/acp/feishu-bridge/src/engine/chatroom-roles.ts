@@ -11,14 +11,20 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-/** Claude config home: $CLAUDE_CONFIG_DIR, else ~/.claude (Go ClaudeConfigHomeDir). */
+/** Claude config home: $CLAUDE_CONFIG_DIR, else ~/.claude (Go ClaudeConfigHomeDir).
+ *
+ * @returns the Claude config home directory path.
+ */
 export function claudeConfigHomeDir(): string {
   const env = process.env.CLAUDE_CONFIG_DIR
   if (env !== undefined && env.trim() !== '') return env
   return join(homedir(), '.claude')
 }
 
-/** Default root holding one persona subdirectory per role. */
+/** Default root holding one persona subdirectory per role.
+ *
+ * @returns the default roles root under the Claude config home.
+ */
 export function defaultChatroomRolesDir(): string {
   return join(claudeConfigHomeDir(), 'chatroom-roles')
 }
@@ -26,6 +32,9 @@ export function defaultChatroomRolesDir(): string {
 /**
  * Reject names that could escape the roles root (path traversal) or contain
  * path separators — a role name is a single directory segment.
+ *
+ * @param name - Role name to check.
+ * @returns an Error describing the invalid name, or undefined when valid.
  */
 export function validRoleName(name: string): Error | undefined {
   const n = name.trim()
@@ -36,17 +45,32 @@ export function validRoleName(name: string): Error | undefined {
   return undefined
 }
 
-/** Absolute directory for a role under rolesDir. */
+/** Absolute directory for a role under rolesDir.
+ *
+ * @param rolesDir - Roles root directory.
+ * @param name - Role name (trimmed).
+ * @returns the role's absolute directory path.
+ */
 export function roleDir(rolesDir: string, name: string): string {
   return join(rolesDir, name.trim())
 }
 
-/** The persona file the agent loads natively. */
+/** The persona file the agent loads natively.
+ *
+ * @param rolesDir - Roles root directory.
+ * @param name - Role name.
+ * @returns the path to the role's CLAUDE.md persona file.
+ */
 export function roleCLAUDEMD(rolesDir: string, name: string): string {
   return join(roleDir(rolesDir, name), 'CLAUDE.md')
 }
 
-/** Whether the role has a CLAUDE.md persona file. */
+/** Whether the role has a CLAUDE.md persona file.
+ *
+ * @param rolesDir - Roles root directory.
+ * @param name - Role name.
+ * @returns true when the role's CLAUDE.md persona file exists.
+ */
 export function roleExists(rolesDir: string, name: string): boolean {
   if (validRoleName(name) !== undefined) return false
   try {
@@ -59,6 +83,9 @@ export function roleExists(rolesDir: string, name: string): boolean {
 /**
  * Enumerate roles under rolesDir (subdirectories that contain a CLAUDE.md).
  * A missing rolesDir yields an empty list — no error path for callers.
+ *
+ * @param rolesDir - Roles root directory to enumerate.
+ * @returns role names under rolesDir; empty when the dir is missing or unreadable.
  */
 export function listRoleNames(rolesDir: string): string[] {
   let entries: Array<{ name: string; isDirectory: () => boolean }>
@@ -85,6 +112,10 @@ export function listRoleNames(rolesDir: string): string[] {
  * the file is missing or does not follow the gen-thinker-role format.
  * Ceiling: hand-written or legacy variants (e.g. `总纲 = …`) return '' and
  * the caller shows the name only; upgrade path is a dedicated BLURB.md.
+ *
+ * @param rolesDir - Roles root directory.
+ * @param name - Role name.
+ * @returns the root mental model phrase, or '' when missing or unparsable.
  */
 export function roleEssence(rolesDir: string, name: string): string {
   let data: string

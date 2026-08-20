@@ -42,7 +42,10 @@ export type UsageProviderFactory = (opts: Record<string, unknown>) => UsageProvi
 
 const usageProviderFactories = new Map<string, UsageProviderFactory>()
 
-/** Register a provider factory under the given name (Go RegisterUsageProvider). */
+/** Register a provider factory under the given name (Go RegisterUsageProvider).
+ * @param name - Provider type key referenced from the usage_providers config.
+ * @param factory - Builds the provider from its config options.
+ */
 export function registerUsageProvider(name: string, factory: UsageProviderFactory): void {
   usageProviderFactories.set(name, factory)
 }
@@ -51,6 +54,7 @@ export function registerUsageProvider(name: string, factory: UsageProviderFactor
  * Create a UsageProvider by name from the registered factories.
  * @param name - Provider type key from the usage_providers config.
  * @param opts - Provider-specific options (e.g. api_key, region).
+ * @returns The provider built by the factory registered under name.
  * @throws When no factory is registered under the name (message lists the available ones).
  */
 export function createUsageProvider(name: string, opts: Record<string, unknown>): UsageProvider {
@@ -236,6 +240,9 @@ function glmMcpSegment(limits: GlmLimitEntry[]): string {
  * Render the GLM quota windows as a one-line summary (Go formatSummary):
  * weekly window when present ("wk: N%(M%)"), else the session window
  * ("5h: M%"); plus the MCP segment, nearest reset, and the work-hours marker.
+ *
+ * @param limits - Quota entries from the GLM API response.
+ * @returns The one-line summary, '' when no usable session window exists.
  */
 export function formatGlmSummary(limits: GlmLimitEntry[]): string {
   if (limits.length === 0) return ''
@@ -368,6 +375,10 @@ class MinimaxProvider extends CachedUsageProvider implements UsageActiveDetector
  * Render one MiniMax remains entry (the tail of Go tryURL): prompts used
  * percentage plus the weekly segment when the weekly total is non-zero.
  * The CN region converts model-call counts to prompts (÷15).
+ *
+ * @param remain - One model's remains entry from the Coding Plan API.
+ * @param region - 'cn' converts model-call counts to prompts; any other value keeps raw counts.
+ * @returns The prompts summary, '' when the interval total is zero after conversion.
  */
 export function formatMinimaxRemains(remain: MinimaxRemain, region: string): string {
   let total = remain.current_interval_total_count

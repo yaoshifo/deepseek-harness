@@ -770,6 +770,7 @@ function applyProjectStateOverride(adapter: DshAgentAdapter, configured: string,
  * @param project - The project row to assemble.
  * @param dataRoot - Root directory holding per-project state.
  * @param sharedDirHistory - Dir history shared across projects (Go shares one store).
+ * @param shared - Process-wide cron scheduler and relay manager the engine registers into.
  * @returns The engine and the adapter owning its agents.
  */
 export function buildProjectAssembly(

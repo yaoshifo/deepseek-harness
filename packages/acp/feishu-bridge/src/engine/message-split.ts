@@ -13,6 +13,10 @@ export const MaxPlatformMessageLen = 4000
 /**
  * Split a message into rune-safe chunks of at most maxLen code points,
  * preferring a newline boundary in the back half of each window.
+ *
+ * @param text - Message text to split; text within the limit is returned as-is.
+ * @param maxLen - Maximum chunk length in Unicode code points.
+ * @returns The chunks in order; never empty.
  */
 export function splitMessage(text: string, maxLen: number): string[] {
   const runes = Array.from(text)
@@ -37,7 +41,12 @@ export function splitMessage(text: string, maxLen: number): string[] {
   return chunks
 }
 
-/** Remove a trailing NO_REPLY marker; returns [strippedText, occurred]. */
+/**
+ * Remove a trailing NO_REPLY marker; returns [strippedText, occurred].
+ *
+ * @param text - Message text that may end with a NO_REPLY marker.
+ * @returns The text with the marker and trailing whitespace removed, and whether a marker was present.
+ */
 export function stripTrailingSilent(text: string): [string, boolean] {
   const stripped = text.replace(/(?:^|\s+|\*+)NO_REPLY\s*$/i, '')
   if (stripped === text) return [text, false]

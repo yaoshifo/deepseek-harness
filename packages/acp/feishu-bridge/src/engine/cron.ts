@@ -83,6 +83,8 @@ export class CronJob {
    * How long the scheduler waits for the job run to finish (Go
    * ExecutionTimeout): undefined uses 30 minutes, 0 waits without a limit,
    * >0 means that many minutes.
+   *
+   * @returns The timeout in milliseconds (0 = unlimited).
    */
   executionTimeoutMs(): number {
     if (this.timeoutMins === undefined) return defaultCronJobTimeoutMs
@@ -90,12 +92,21 @@ export class CronJob {
     return this.timeoutMins * 60_000
   }
 
-  /** Whether each run should use a new engine session instead of the active one. */
+  /**
+   * Whether each run should use a new engine session instead of the active one.
+   *
+   * @returns Whether session_mode normalizes to 'new_per_run'.
+   */
   usesNewSessionPerRun(): boolean {
     return normalizeCronSessionMode(this.sessionMode) === 'new_per_run'
   }
 
-  /** Parse one persisted row (Go json.Unmarshal); Go zero times become ''. */
+  /**
+   * Parse one persisted row (Go json.Unmarshal); Go zero times become ''.
+   *
+   * @param raw - Untyped JSON object with the Go snake_case keys.
+   * @returns The populated job; unknown fields are ignored.
+   */
   static fromJSON(raw: Record<string, unknown>): CronJob {
     const j = new CronJob()
     j.id = asString(raw.id)
@@ -118,7 +129,11 @@ export class CronJob {
     return j
   }
 
-  /** Serialize with the Go snake_case keys; empty optionals are omitted. */
+  /**
+   * Serialize with the Go snake_case keys; empty optionals are omitted.
+   *
+   * @returns A JSON-ready object of the job's set fields.
+   */
   toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = {
       id: this.id,
@@ -153,7 +168,12 @@ function asString(v: unknown): string {
   return typeof v === 'string' ? v : ''
 }
 
-/** Map CLI/API session-mode aliases to the canonical '' / 'new_per_run'. */
+/**
+ * Map CLI/API session-mode aliases to the canonical '' / 'new_per_run'.
+ *
+ * @param s - Raw session-mode string (case-insensitive).
+ * @returns The canonical mode, or the input unchanged when unrecognized.
+ */
 export function normalizeCronSessionMode(s: string): string {
   const low = s.trim().toLowerCase()
   if (low === '' || low === 'reuse') return ''
@@ -164,7 +184,11 @@ export function normalizeCronSessionMode(s: string): string {
 /** The permission modes a job may override with (Go validateCronJob). */
 const validJobModes = new Set(['default', 'bypassPermissions', 'acceptEdits', 'plan', 'auto', 'dontAsk'])
 
-/** Validate a job's session_mode/mode/timeout_mins (Go validateCronJob). */
+/**
+ * Validate a job's session_mode/mode/timeout_mins (Go validateCronJob).
+ *
+ * @param j - The job to check.
+ */
 export function validateCronJob(j: CronJob): void {
   const mode = normalizeCronSessionMode(j.sessionMode)
   if (mode !== '' && mode !== 'new_per_run') {
@@ -217,13 +241,22 @@ export class CronStore {
     }
   }
 
-  /** Append a job and persist. */
+  /**
+   * Append a job and persist.
+   *
+   * @param job - The job to store.
+   */
   add(job: CronJob): void {
     this.jobs.push(job)
     this.save()
   }
 
-  /** Remove a job by id; false when absent. */
+  /**
+   * Remove a job by id; false when absent.
+   *
+   * @param id - Job id to remove.
+   * @returns Whether a job was removed.
+   */
   remove(id: string): boolean {
     const idx = this.jobs.findIndex(j => j.id === id)
     if (idx === -1) return false
@@ -232,7 +265,13 @@ export class CronStore {
     return true
   }
 
-  /** Flip the enabled flag of a job; false when absent. */
+  /**
+   * Flip the enabled flag of a job; false when absent.
+   *
+   * @param id - Job id to update.
+   * @param enabled - New enabled value.
+   * @returns Whether the job was found.
+   */
   setEnabled(id: string, enabled: boolean): boolean {
     const j = this.jobs.find(j => j.id === id)
     if (j === undefined) return false
@@ -241,7 +280,13 @@ export class CronStore {
     return true
   }
 
-  /** Set the mute flag of a job; false when absent. */
+  /**
+   * Set the mute flag of a job; false when absent.
+   *
+   * @param id - Job id to update.
+   * @param mute - New mute value.
+   * @returns Whether the job was found.
+   */
   setMute(id: string, mute: boolean): boolean {
     const j = this.jobs.find(j => j.id === id)
     if (j === undefined) return false
@@ -250,7 +295,12 @@ export class CronStore {
     return true
   }
 
-  /** Toggle mute and return [newState, found]. */
+  /**
+   * Toggle mute and return [newState, found].
+   *
+   * @param id - Job id to toggle.
+   * @returns The new mute state and whether the job was found.
+   */
   toggleMute(id: string): [newState: boolean, ok: boolean] {
     const j = this.jobs.find(j => j.id === id)
     if (j === undefined) return [false, false]
@@ -259,7 +309,12 @@ export class CronStore {
     return [j.mute, true]
   }
 
-  /** Stamp the last-run time and error of a job. */
+  /**
+   * Stamp the last-run time and error of a job.
+   *
+   * @param id - Job id that just ran.
+   * @param err - Failure message to record; undefined marks success.
+   */
   markRun(id: string, err?: string): void {
     const j = this.jobs.find(j => j.id === id)
     if (j === undefined) return
@@ -268,22 +323,41 @@ export class CronStore {
     this.save()
   }
 
-  /** All jobs (shallow copy). */
+  /**
+   * All jobs (shallow copy).
+   *
+   * @returns A copy of the stored jobs.
+   */
   list(): CronJob[] {
     return [...this.jobs]
   }
 
-  /** Jobs belonging to one project. */
+  /**
+   * Jobs belonging to one project.
+   *
+   * @param project - Project name to filter by.
+   * @returns The matching jobs.
+   */
   listByProject(project: string): CronJob[] {
     return this.jobs.filter(j => j.project === project)
   }
 
-  /** Jobs bound to one session key. */
+  /**
+   * Jobs bound to one session key.
+   *
+   * @param sessionKey - Session key to filter by.
+   * @returns The matching jobs.
+   */
   listBySessionKey(sessionKey: string): CronJob[] {
     return this.jobs.filter(j => j.sessionKey === sessionKey)
   }
 
-  /** Look up one job. */
+  /**
+   * Look up one job.
+   *
+   * @param id - Job id to find.
+   * @returns The job, or undefined when absent.
+   */
   get(id: string): CronJob | undefined {
     return this.jobs.find(j => j.id === id)
   }
@@ -292,6 +366,11 @@ export class CronStore {
    * Modify one field of a cron job (Go CronStore.Update). id, created_at,
    * last_run, and last_error are read-only; false when the job is missing or
    * the field/value pair is invalid.
+   *
+   * @param id - Job id to update.
+   * @param field - Snake_case field name to set.
+   * @param value - New value; must match the field's type.
+   * @returns Whether the field was applied and persisted.
    */
   update(id: string, field: string, value: unknown): boolean {
     const readOnlyFields = new Set(['id', 'created_at', 'last_run', 'last_error'])
@@ -376,6 +455,9 @@ const fieldDefs: FieldDef[] = [
  * Parse a standard 5-field cron expression (`m h dom mon dow`) supporting
  * numbers, `*`, ranges, steps, and lists. Throws on any other syntax
  * (Go cron.ParseStandard error surface).
+ *
+ * @param expr - The raw expression string.
+ * @returns A schedule that computes the next matching time.
  */
 export function parseCronStandard(expr: string): CronSchedule {
   const fields = expr.trim().split(/\s+/)
@@ -504,33 +586,60 @@ export class CronScheduler {
     this.storeValue = store
   }
 
-  /** The backing store (Go Store()). */
+  /**
+   * The backing store (Go Store()).
+   *
+   * @returns The shared job store.
+   */
   store(): CronStore {
     return this.storeValue
   }
 
-  /** Map a project name to the engine its jobs execute on. */
+  /**
+   * Map a project name to the engine its jobs execute on.
+   *
+   * @param name - Project name jobs reference.
+   * @param e - Engine that will run those jobs.
+   */
   registerEngine(name: string, e: Engine): void {
     this.engines.set(name, e)
   }
 
-  /** Global default for suppressing cron start notifications. */
+  /**
+   * Global default for suppressing cron start notifications.
+   *
+   * @param silent - Default silent value for jobs without their own setting.
+   */
   setDefaultSilent(silent: boolean): void {
     this.defaultSilent = silent
   }
 
-  /** Global default session mode ('' / 'reuse' / 'new_per_run'). */
+  /**
+   * Global default session mode ('' / 'reuse' / 'new_per_run').
+   *
+   * @param mode - Raw mode string; normalized before storing.
+   */
   setDefaultSessionMode(mode: string): void {
     this.defaultSessionMode = normalizeCronSessionMode(mode)
   }
 
-  /** Whether the job should suppress the start notification. */
+  /**
+   * Whether the job should suppress the start notification.
+   *
+   * @param job - The job being asked about.
+   * @returns The job's own silent flag, or the global default.
+   */
   isSilent(job: CronJob): boolean {
     if (job.silent !== undefined) return job.silent
     return this.defaultSilent
   }
 
-  /** Whether the job should create a fresh session per run, honoring defaults. */
+  /**
+   * Whether the job should create a fresh session per run, honoring defaults.
+   *
+   * @param job - The job being asked about.
+   * @returns The job's resolved session mode outcome.
+   */
   usesNewSession(job: CronJob): boolean {
     if (job.sessionMode !== '') return job.usesNewSessionPerRun()
     return this.defaultSessionMode === 'new_per_run'
@@ -561,7 +670,11 @@ export class CronScheduler {
     }
   }
 
-  /** Validate, normalize, persist, and schedule one job (Go AddJob). */
+  /**
+   * Validate, normalize, persist, and schedule one job (Go AddJob).
+   *
+   * @param job - The job to add; must carry a valid expression.
+   */
   addJob(job: CronJob): void {
     validateCronJob(job)
     job.sessionMode = normalizeCronSessionMode(job.sessionMode)
@@ -574,20 +687,33 @@ export class CronScheduler {
     if (job.enabled) this.scheduleJob(job)
   }
 
-  /** Remove a stored job and its schedule; false when absent. */
+  /**
+   * Remove a stored job and its schedule; false when absent.
+   *
+   * @param id - Job id to remove.
+   * @returns Whether a job was removed.
+   */
   removeJob(id: string): boolean {
     this.entries.delete(id)
     return this.storeValue.remove(id)
   }
 
-  /** Enable and schedule a job; throws when absent. */
+  /**
+   * Enable and schedule a job; throws when absent.
+   *
+   * @param id - Job id to enable.
+   */
   enableJob(id: string): void {
     if (!this.storeValue.setEnabled(id, true)) throw new Error(`job "${id}" not found`)
     const job = this.storeValue.get(id)
     if (job !== undefined) this.scheduleJob(job)
   }
 
-  /** Disable a job and drop its schedule; throws when absent. */
+  /**
+   * Disable a job and drop its schedule; throws when absent.
+   *
+   * @param id - Job id to disable.
+   */
   disableJob(id: string): void {
     if (!this.storeValue.setEnabled(id, false)) throw new Error(`job "${id}" not found`)
     this.entries.delete(id)
@@ -597,6 +723,10 @@ export class CronScheduler {
    * Modify a field of a job and reschedule when needed (Go UpdateJob).
    * Throws when the job is missing, the field is read-only, or the value is
    * invalid.
+   *
+   * @param id - Job id to update.
+   * @param field - Snake_case field name to set.
+   * @param value - New value; must match the field's type.
    */
   updateJob(id: string, field: string, value: unknown): void {
     const job = this.storeValue.get(id)
@@ -633,7 +763,12 @@ export class CronScheduler {
     }
   }
 
-  /** The next scheduled run time for a job, or undefined when unscheduled. */
+  /**
+   * The next scheduled run time for a job, or undefined when unscheduled.
+   *
+   * @param jobID - Job id to look up.
+   * @returns The next fire time, or undefined when not armed.
+   */
   nextRun(jobID: string): Date | undefined {
     return this.entries.get(jobID)?.next
   }
@@ -703,6 +838,9 @@ export class CronScheduler {
  * Wrap a platform discarding all outgoing messages (Go mutePlatform): Reply
  * and Send become no-ops while every other capability delegates to the inner
  * platform.
+ *
+ * @param inner - The platform whose message sends should be suppressed.
+ * @returns The muting wrapper.
  */
 export function mutePlatform(inner: Platform): Platform {
   return {
@@ -714,7 +852,11 @@ export function mutePlatform(inner: Platform): Platform {
   }
 }
 
-/** Generate an 8-hex-char job id (Go GenerateCronID). */
+/**
+ * Generate an 8-hex-char job id (Go GenerateCronID).
+ *
+ * @returns A random id, unique with overwhelming probability.
+ */
 export function generateCronID(): string {
   return randomBytes(4).toString('hex')
 }
@@ -726,7 +868,13 @@ function errMessage(err: unknown): string {
   return JSON.stringify(err)
 }
 
-/** Truncate a string to n runes with an ellipsis (Go truncateStr). */
+/**
+ * Truncate a string to n runes with an ellipsis (Go truncateStr).
+ *
+ * @param s - The string to shorten.
+ * @param n - Maximum rune count before truncation.
+ * @returns The original string, or the first n runes plus '...'.
+ */
 export function truncateStr(s: string, n: number): string {
   const runes = Array.from(s)
   if (runes.length <= n) return s
@@ -776,6 +924,10 @@ function padZero(s: string): string {
 /**
  * Convert a standard 5-field cron expression to a human-readable string
  * (Go CronExprToHuman); unrecognized shapes return the raw expression.
+ *
+ * @param expr - The raw 5-field cron expression.
+ * @param lang - Language to render weekday/month names in.
+ * @returns The localized description, or the raw expression when unparseable.
  */
 export function cronExprToHuman(expr: string, lang: Language): string {
   const fields = expr.trim().split(/\s+/)

@@ -238,26 +238,47 @@ export interface QueuedMessage {
  * agent session id.
  */
 export class InteractiveState {
+  /** The live agent session handle; undefined before the first turn or after cleanup. */
   agentSession: AgentSession | undefined
+  /** Platform that carried the latest message for this session. */
   platform: Platform | undefined
+  /** Platform reply context for the latest message. */
   replyCtx: unknown
+  /** The agent this state's session was started against. */
   agent: Agent | undefined
+  /** Env entries injected at agent-session start (Go state.env). */
   sessionEnv: string[] = []
+  /** Resolves once a concurrent cleanup finished closing the agent session. */
   closing: Promise<void> | undefined
+  /** Whether markStopped fired (engine stop or session teardown). */
   stopped = false
+  /** Whether the user requested the stop (/stop, /new, /switch). */
   userStopped = false
+  /** Messages queued while a turn was running. */
   pendingMessages: QueuedMessage[] = []
+  /** The queued message currently driving a drained turn, if any. */
   inflightMessage: QueuedMessage | undefined
+  /** Last proactive side-channel text, for result-path duplicate suppression. */
   sideText = ''
+  /** Whether the event channel must be drained before the next turn. */
   eventsNeedResync = true
+  /** Mode override injected at session start; '' = none. */
   effectiveMode = ''
+  /** Per-state idle-timeout override; 0 falls back to the engine default. */
   effectiveIdleTimeout = 0
+  /** Timestamp of the last activity, feeding the idle reaper. */
   lastActivity = Date.now()
+  /** Turns currently in flight on this state. */
   activeTurns = 0
+  /** Timestamp of the last agent event, for stall confirmation. */
   lastEventAt = 0
+  /** Tool calls in flight; a positive count pauses the idle timer. */
   activeToolCalls = 0
+  /** Monotonic per-state turn counter. */
   turnSeq = 0
+  /** Whether the current turn's message arrived via voice. */
   fromVoice = false
+  /** The current turn's fully built prompt. */
   lastPrompt = ''
   /** Whether a permission prompt is parked on this state (full object in M3). */
   permissionPending = false
@@ -330,10 +351,18 @@ export class InteractiveState {
     return new Promise((resolve) => { this.stopWaiters.push(resolve) })
   }
 
+  /**
+   * Whether the state already transitioned to stopped.
+   * @returns true once `markStopped` has run.
+   */
   isStopped(): boolean {
     return this.stopped
   }
 
+  /**
+   * Whether the user (not the engine) requested the stop.
+   * @returns true when the stop originated from a user action.
+   */
   isUserStopped(): boolean {
     return this.userStopped
   }
@@ -347,6 +376,7 @@ export class InteractiveState {
     for (const w of waiters) w()
   }
 
+  /** Record now as the latest activity, restarting the idle-reaper window. */
   touchActivity(): void {
     this.lastActivity = Date.now()
   }
@@ -355,6 +385,7 @@ export class InteractiveState {
    * Extract staged attachment paths and clear them so they are consumed
    * exactly once (Go drainStagedAttachmentPaths); pendingDir is preserved
    * for cleanup.
+   * @returns Staged image paths and file paths, each consumed exactly once.
    */
   drainStagedAttachmentPaths(): { imagePaths: string[]; filePaths: string[] } {
     const imagePaths: string[] = []
@@ -367,17 +398,23 @@ export class InteractiveState {
     return { imagePaths, filePaths }
   }
 
+  /** Enter a turn: bump the in-flight count and touch activity. */
   beginTurn(): void {
     this.activeTurns++
     this.touchActivity()
   }
 
+  /** Leave a turn: drop the in-flight count and touch activity. */
   endTurn(): void {
     this.activeTurns--
     this.touchActivity()
   }
 
-  /** Effective per-turn idle timeout, falling back to the engine default. */
+  /**
+   * Effective per-turn idle timeout, falling back to the engine default.
+   * @param fallback - Timeout used when no per-state override is set.
+   * @returns The idle timeout in ms for this state's turns.
+   */
   idleTimeout(fallback: number): number {
     if (this.effectiveIdleTimeout > 0) return this.effectiveIdleTimeout
     return fallback
@@ -451,12 +488,20 @@ function relayPartialResponseOrError(signal: AbortSignal, textParts: string[]): 
 /** A promise that never resolves, typed as a never-matching race alternative. */
 const neverPromise = new Promise<{ kind: 'never' }>((): void => {})
 
-/** A bare NO_REPLY marker (case-insensitive, whitespace-padded). */
+/**
+ * A bare NO_REPLY marker (case-insensitive, whitespace-padded).
+ * @param text - Candidate reply text.
+ * @returns True when the text is exactly the silent-reply marker.
+ */
 export function isSilentReply(text: string): boolean {
   return /^\s*NO_REPLY\s*$/i.test(text)
 }
 
-/** Whether the trimmed text is still a case-insensitive prefix of NO_REPLY. */
+/**
+ * Whether the trimmed text is still a case-insensitive prefix of NO_REPLY.
+ * @param text - Streaming text accumulated so far.
+ * @returns True when the text could still grow into a silent-reply marker.
+ */
 export function couldBeSilentPrefix(text: string): boolean {
   const t = text.trim()
   if (t === '') return true
@@ -468,21 +513,33 @@ function isEllipsisOnly(text: string): boolean {
   return t === '...' || t === '…'
 }
 
-/** Channel ID from "platform:chatID[:userID]" (Go extractChannelID). */
+/**
+ * Channel ID from "platform:chatID[:userID]" (Go extractChannelID).
+ * @param sessionKey - Session key to split.
+ * @returns The chat ID segment, or '' when the key has no second segment.
+ */
 export function extractChannelID(sessionKey: string): string {
   const parts = sessionKey.split(':')
   if (parts.length >= 2) return parts[1] ?? ''
   return ''
 }
 
-/** Strip the trailing user ID: "platform:channel:user" → "platform:channel". */
+/**
+ * Strip the trailing user ID: "platform:channel:user" → "platform:channel".
+ * @param sessionKey - Session key to strip.
+ * @returns The key without the user segment, or unchanged when it has none.
+ */
 export function stripUserID(sessionKey: string): string {
   const parts = sessionKey.split(':')
   if (parts.length >= 3) return `${parts[0]}:${parts[1]}`
   return sessionKey
 }
 
-/** Platform name prefix of a session key. */
+/**
+ * Platform name prefix of a session key.
+ * @param sessionKey - Session key to split.
+ * @returns The platform segment, or '' when the key carries no colon.
+ */
 export function extractPlatformName(sessionKey: string): string {
   const idx = sessionKey.indexOf(':')
   return idx > 0 ? sessionKey.slice(0, idx) : ''
@@ -499,7 +556,10 @@ interface CardMarkdownLike {
   content: string
 }
 
-/** A fully-empty Message template for synthetic injections (Go &Message{}). */
+/**
+ * A fully-empty Message template for synthetic injections (Go &Message{}).
+ * @returns A Message with every field at its empty default.
+ */
 export function emptyMessage(): Message {
   return {
     sessionKey: '',
@@ -537,6 +597,9 @@ function statIsDir(path: string): boolean {
 /**
  * Chat ID from "<platform>:<chatID>[:<userID>]" when the platform segment
  * matches platformName (Go chatIDFromSessionKey).
+ * @param sessionKey - Session key to split.
+ * @param platformName - Platform segment the key must start with.
+ * @returns The chat ID, or '' on a platform mismatch or missing segment.
  */
 export function chatIDFromSessionKey(sessionKey: string, platformName: string): string {
   const parts = sessionKey.split(':', 3)
@@ -548,6 +611,10 @@ export function chatIDFromSessionKey(sessionKey: string, platformName: string): 
  * A single "open parent group" jump button for a spawned child, derived from
  * the originating message (Go parentJumpButtons). Empty array when the
  * parent chat ID cannot be resolved.
+ * @param parentSessionKey - Session key of the originating parent chat.
+ * @param parentName - Parent chat display name; '' uses the default label.
+ * @param p - Platform the parent chat lives on.
+ * @returns A zero- or one-element button array.
  */
 export function parentJumpButtons(parentSessionKey: string, parentName: string, p: Platform): CardButton[] {
   const pcid = chatIDFromSessionKey(parentSessionKey, p.name())
@@ -561,6 +628,8 @@ export function parentJumpButtons(parentSessionKey: string, parentName: string, 
 /**
  * Render parent/child jump buttons as a single markdown link line (Go
  * jumpButtonsMarkdown). ok=false when no button carries a URL.
+ * @param buttons - Jump buttons to render.
+ * @returns The markdown line and whether any button rendered.
  */
 export function jumpButtonsMarkdown(buttons: CardButton[]): CardMarkdownLike & { ok: boolean } {
   const parts: string[] = []
@@ -621,13 +690,20 @@ type ReconstructingPlatform = Platform & {
  * project (Go Engine, M1 subset).
  */
 export class Engine {
+  /** Project name this engine serves (also the CC_PROJECT env value). */
   readonly name: string
+  /** The agent every interactive session starts from. */
   readonly agent: Agent
+  /** Platforms routed between the chats and the agent. */
   readonly platforms: Platform[]
+  /** Session manager persisting per-chat session metadata. */
   readonly sessions: SessionManager
+  /** Message catalog for user-facing strings. */
   readonly i18n: I18n
+  /** Engine creation timestamp. */
   readonly startedAt = Date.now()
 
+  /** Intermediate-message display settings (Go e.display). */
   display: DisplayCfg = {
     thinkingMessages: true,
     thinkingMaxLen: defaultThinkingMaxLen,
@@ -641,14 +717,21 @@ export class Engine {
   streamPreview: StreamPreviewCfg = defaultStreamPreviewCfg()
   /** Quiet window after the last im.chat.updated event before a preview bump (Go var). */
   bumpDebounceInterval = 2000
+  /** Whether prompts get a sender-identity header prepended (Go injectSender). */
   injectSender = false
+  /** Whether proactive attachment sends are allowed (Go attachmentSendEnabled). */
   attachmentSendEnabled = true
   /** Bot's default Feishu workspace routing (#18); undefined = feature off. */
   feishuWorkspace: FeishuWorkspaceInfo | undefined
+  /** Idle timeout before a silent turn is killed; 0 disables. */
   eventIdleTimeout = defaultEventIdleTimeout
+  /** Stall retries before the idle kill. */
   stallMaxRetries = defaultStallMaxRetries
+  /** Per-session queued-message cap. */
   maxQueuedMessages = defaultMaxQueuedMessages
+  /** Rapid-fire queued-message merge window in ms; 0 disables. */
   debounceInterval = defaultDebounceInterval
+  /** Idle-reaper threshold reclaiming quiet interactive states; 0 disables. */
   interactiveIdleTimeout = 0
 
   /** Recursive subtask delegation cap override; 0 = defaultSubtaskMaxDepth (Go subtaskMaxDepth). */
@@ -657,6 +740,7 @@ export class Engine {
   spawnWorktree: WorktreeMode = WorktreeMode.ForceOff
   /** /spawn //fork RAM guard thresholds in percent; 0 disables a tier (Go spawnMemWarnPct/BlockPct). */
   spawnMemWarnPct = 0
+  /** RAM percentage at which /spawn //fork rejects the spawn outright (Go spawnMemBlockPct). */
   spawnMemBlockPct = 0
   /** Hard timeout for subtask sessions; 0 inherits eventIdleTimeout (Go subtaskTimeout). */
   subtaskTimeout = 0
@@ -664,9 +748,13 @@ export class Engine {
   subtaskGatherTimeout = 0
   /** LLM group-name generation switches (Go groupName* fields). */
   groupNameEnabled = false
+  /** Provider route for group-name queries; '' = the active provider. */
   groupNameProvider = ''
+  /** Group-name LLM query deadline in ms; 0 = 30s default. */
   groupNameTimeout = 0
+  /** Custom group-name prompt template; '' = the default template. */
   groupNamePrompt = ''
+  /** Whether the LLM's icon is stamped as the group avatar after rename. */
   groupNameSetAvatar = false
   /** The monitor domain state machine (Go engine_monitor.go; reached as engine.monitor). */
   readonly monitor: MonitorCore
@@ -762,22 +850,31 @@ export class Engine {
   providerSaveFunc: ((name: string) => void) | undefined
   /** Predict-next config (#33, Go SetPredictNextConfig). */
   predictNextEnabled = false
+  /** Provider route for predict-next forks; '' = the active provider. */
   predictNextProvider = ''
+  /** Model override for predict-next forks; '' = the provider default. */
   predictNextModel = ''
+  /** Predict-next fork deadline in ms; 0 = the default timeout. */
   predictNextTimeout = 0
+  /** Prompt template for predict-next forks. */
   predictNextPrompt = ''
   /** true = fork the live transcript (resume); false = one-shot compact query. */
   predictNextResume = false
   /** Turn-summary config (Go SetTurnSummaryConfig). */
   turnSummaryEnabled = false
+  /** Provider route for turn-summary forks; '' = the active provider. */
   turnSummaryProvider = ''
+  /** Turn-summary fork deadline in ms; 0 = the default timeout. */
   turnSummaryTimeout = 0
+  /** Prompt template for turn-summary forks. */
   turnSummaryPrompt = ''
   /** Auto session rotation after idle (Go SetResetOnIdle); 0 disables. */
   resetOnIdle = 0
   /** Auto context compression (Go SetAutoCompressConfig). */
   autoCompressEnabled = false
+  /** Token estimate that triggers auto compression; 0 = off. */
   autoCompressMaxTokens = 0
+  /** Minimum gap between auto compressions in ms. */
   autoCompressMinGap = 0
 
   private reaperTimer: ReturnType<typeof setInterval> | undefined
@@ -794,7 +891,10 @@ export class Engine {
 
   // ── configuration setters used by ported tests ─────────────────────────
 
-  /** Override intermediate-message display settings. */
+  /**
+   * Override intermediate-message display settings.
+   * @param cfg - Display fields to merge over the current config.
+   */
   setDisplayConfig(cfg: Partial<DisplayCfg>): void {
     this.display = { ...this.display, ...cfg }
   }
@@ -803,6 +903,7 @@ export class Engine {
    * Configure the plan/reply HTML render domain (Go [projects.plan_render]):
    * enabled opt-in, an optional provider-route override, a fork timeout in
    * ms (0 = 600s default), and the HTML→PNG rasterizer script path.
+   * @param cfg - Render config fields; optional members fall back to defaults.
    */
   setPlanRenderConfig(cfg: { enabled: boolean; provider?: string; timeoutMs?: number; pngScript?: string }): void {
     this.planRenderEnabled = cfg.enabled
@@ -811,12 +912,18 @@ export class Engine {
     this.planRenderPngScript = cfg.pngScript ?? ''
   }
 
-  /** Toggle the ctx/cache lines on the completion footer (Go SetShowContextIndicator). */
+  /**
+   * Toggle the ctx/cache lines on the completion footer (Go SetShowContextIndicator).
+   * @param show - Whether the lines are appended.
+   */
   setShowContextIndicator(show: boolean): void {
     this.showContextIndicator = show
   }
 
-  /** Set the project-level context window fallback (Go SetContextWindow). */
+  /**
+   * Set the project-level context window fallback (Go SetContextWindow).
+   * @param w - Context window size in tokens.
+   */
   setContextWindow(w: number): void {
     this.contextWindow = w
     this.projectContextWindow = w
@@ -830,42 +937,66 @@ export class Engine {
       : this.projectContextWindow
   }
 
-  /** Set the provider quota list appended to the completion footer (Go SetUsageProviders). */
+  /**
+   * Set the provider quota list appended to the completion footer (Go SetUsageProviders).
+   * @param providers - Providers whose quota lines are appended.
+   */
   setUsageProviders(providers: UsageProvider[]): void {
     this.usageProviders = providers
   }
 
-  /** Toggle the Codex-style reply footer (Go SetReplyFooterEnabled). */
+  /**
+   * Toggle the Codex-style reply footer (Go SetReplyFooterEnabled).
+   * @param show - Whether the footer is appended to replies.
+   */
   setReplyFooterEnabled(show: boolean): void {
     this.replyFooterEnabled = show
   }
 
-  /** Idle timeout before a silent turn is killed; 0 disables. */
+  /**
+   * Idle timeout before a silent turn is killed; 0 disables.
+   * @param ms - Timeout in milliseconds.
+   */
   setEventIdleTimeout(ms: number): void {
     this.eventIdleTimeout = ms
   }
 
-  /** Stall retries before the idle kill (Go SetStallMaxRetries). */
+  /**
+   * Stall retries before the idle kill (Go SetStallMaxRetries).
+   * @param n - Retry count.
+   */
   setStallMaxRetries(n: number): void {
     this.stallMaxRetries = n
   }
 
-  /** Merge streaming-preview tuning over the current config (Go SetStreamPreviewCfg). */
+  /**
+   * Merge streaming-preview tuning over the current config (Go SetStreamPreviewCfg).
+   * @param cfg - Preview fields to merge over the current config.
+   */
   setStreamPreviewCfg(cfg: Partial<StreamPreviewCfg>): void {
     this.streamPreview = { ...this.streamPreview, ...cfg }
   }
 
-  /** Rapid-fire queued-message merge window in ms; 0 disables. */
+  /**
+   * Rapid-fire queued-message merge window in ms; 0 disables.
+   * @param ms - Merge window in milliseconds.
+   */
   setDebounceInterval(ms: number): void {
     this.debounceInterval = ms
   }
 
-  /** Per-session queue cap. */
+  /**
+   * Per-session queue cap.
+   * @param n - Maximum queued messages per session.
+   */
   setMaxQueuedMessages(n: number): void {
     this.maxQueuedMessages = n
   }
 
-  /** Toggle side-channel attachment delivery (Go SetAttachmentSendEnabled). */
+  /**
+   * Toggle side-channel attachment delivery (Go SetAttachmentSendEnabled).
+   * @param enabled - Whether attachment sends are allowed.
+   */
   setAttachmentSendEnabled(enabled: boolean): void {
     this.attachmentSendEnabled = enabled
   }
@@ -874,12 +1005,16 @@ export class Engine {
    * Record the bot's default Feishu workspace location (Go SetFeishuWorkspace,
    * #18). Non-empty fields surface as CC_FEISHU_* entries when a session
    * starts; nil or all-empty disables the feature.
+   * @param info - Workspace fields; undefined or all-empty disables the feature.
    */
   setFeishuWorkspace(info: FeishuWorkspaceInfo | undefined): void {
     this.feishuWorkspace = feishuWorkspaceIsEmpty(info) ? undefined : info
   }
 
-  /** The CC_FEISHU_* env entries for the configured workspace (Go feishuWorkspaceEnv). */
+  /**
+   * The CC_FEISHU_* env entries for the configured workspace (Go feishuWorkspaceEnv).
+   * @returns KEY=VALUE env entries; empty when no workspace is configured.
+   */
   feishuWorkspaceEnv(): string[] {
     const w = this.feishuWorkspace
     if (w === undefined) return []
@@ -891,7 +1026,10 @@ export class Engine {
     return env
   }
 
-  /** Inject the sender identity header into prompts (Go SetInjectSender). */
+  /**
+   * Inject the sender identity header into prompts (Go SetInjectSender).
+   * @param enabled - Whether prompts carry the sender header.
+   */
   setInjectSender(enabled: boolean): void {
     this.injectSender = enabled
   }
@@ -899,6 +1037,7 @@ export class Engine {
   /**
    * Enable the idle reaper: periodically reclaim interactiveStates idle
    * beyond the threshold by closing the agent session. 0 disables.
+   * @param ms - Idle threshold in milliseconds; 0 disables the reaper.
    */
   setInteractiveIdleTimeout(ms: number): void {
     this.interactiveIdleTimeout = ms
@@ -912,12 +1051,18 @@ export class Engine {
     this.reaperTimer.unref()
   }
 
-  /** Attach the process-wide cron scheduler (Go SetCronScheduler). */
+  /**
+   * Attach the process-wide cron scheduler (Go SetCronScheduler).
+   * @param cs - Scheduler to attach; drives job execution and silence flags.
+   */
   setCronScheduler(cs: CronScheduler): void {
     this.cronScheduler = cs
   }
 
-  /** Attach the process-wide relay manager (Go SetRelayManager). */
+  /**
+   * Attach the process-wide relay manager (Go SetRelayManager).
+   * @param rm - Manager to attach; routes bot-to-bot relay messages.
+   */
   setRelayManager(rm: RelayManager): void {
     this.relayManager = rm
   }
@@ -981,6 +1126,8 @@ export class Engine {
    * current (Go handleChatRenamed): the renamed chat's own session gets Name
    * updated (parent→child labels), and any child whose ParentSessionKey
    * points at it gets ParentChatName updated (child→parent labels).
+   * @param sessionKey - Session key of the renamed chat.
+   * @param newName - The new chat name; empty renames are ignored.
    */
   handleChatRenamed(sessionKey: string, newName: string): void {
     if (newName === '') return
@@ -1017,21 +1164,37 @@ export class Engine {
     await this.agent.stop()
   }
 
-  /** Deliver a message into the engine (integration-test entry). */
+  /**
+   * Deliver a message into the engine (integration-test entry).
+   * @param p - Platform the message arrived on.
+   * @param msg - The inbound message.
+   */
   receiveMessage(p: Platform, msg: Message): void {
     this.handleMessage(p, msg)
   }
 
   // ── outbound wrappers ───────────────────────────────────────────────────
 
-  /** Reply with error logging (Go reply). */
+  /**
+   * Reply with error logging (Go reply).
+   * @param p - Platform to reply on.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param content - Text to send.
+   * @returns The platform send, with failures logged instead of thrown.
+   */
   reply(p: Platform, replyCtx: unknown, content: string): Promise<void> {
     return p.reply(replyCtx, content).catch((error: unknown) => {
       console.debug(`engine: reply failed (${p.name()}): ${String(error)}`)
     })
   }
 
-  /** Send with error logging (Go send). */
+  /**
+   * Send with error logging (Go send).
+   * @param p - Platform to send on.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param content - Text to send.
+   * @returns The platform send, with failures logged instead of thrown.
+   */
   send(p: Platform, replyCtx: unknown, content: string): Promise<void> {
     return p.send(replyCtx, content).catch((error: unknown) => {
       console.debug(`engine: send failed (${p.name()}): ${String(error)}`)
@@ -1040,7 +1203,11 @@ export class Engine {
 
   // ── inbound routing ─────────────────────────────────────────────────────
 
-  /** Route one inbound message (Go handleMessage, M1 subset). */
+  /**
+   * Route one inbound message (Go handleMessage, M1 subset).
+   * @param p - Platform the message arrived on.
+   * @param msg - The inbound message.
+   */
   handleMessage(p: Platform, msg: Message): void {
     const content = msg.content.trim()
     if (content === '' && msg.images.length === 0 && msg.files.length === 0) return
@@ -1130,7 +1297,11 @@ export class Engine {
     void this.processInteractiveMessageWith(p, msg, activeSession)
   }
 
-  /** Resolve aliases on the content or its first word (Go resolveAlias). */
+  /**
+   * Resolve aliases on the content or its first word (Go resolveAlias).
+   * @param content - Raw message content.
+   * @returns The content with any matched alias substituted.
+   */
   resolveAlias(content: string): string {
     if (this.aliases.size === 0) return content
     const exact = this.aliases.get(content)
@@ -1143,7 +1314,13 @@ export class Engine {
     return `${cmd} ${content.slice(spaceIdx + 1)}`
   }
 
-  /** Text slash-command dispatch; false lets the message reach the agent. */
+  /**
+   * Text slash-command dispatch; false lets the message reach the agent.
+   * @param p - Platform the command arrived on.
+   * @param msg - The inbound message.
+   * @param raw - Raw command line, including the leading slash.
+   * @returns True when a command consumed the message.
+   */
   dispatchCommand(p: Platform, msg: Message, raw: string): boolean {
     const parts = raw.trim().split(/\s+/)
     const cmd = (parts.shift() ?? '').replace(/^\//, '').toLowerCase()
@@ -1164,7 +1341,11 @@ export class Engine {
     return handler(p, msg, parts)
   }
 
-  /** Per-chat dir override for an interactive key (Go perChatWorkDir, M1 shape). */
+  /**
+   * Per-chat dir override for an interactive key (Go perChatWorkDir, M1 shape).
+   * @param key - Interactive session key.
+   * @returns The persisted workdir override, or '' when none is set.
+   */
   perChatWorkDir(key: string): string {
     return this.projectState?.workspaceDirOverride(this.dirOverrideKey(key)) ?? ''
   }
@@ -1172,12 +1353,18 @@ export class Engine {
   /**
    * Channel-level key for dir overrides: single-workspace strips the trailing
    * user ID so card actions and text messages map to the same slot.
+   * @param sessionKey - Interactive session key.
+   * @returns The channel-level key for the override slot.
    */
   dirOverrideKey(sessionKey: string): string {
     return stripUserID(sessionKey)
   }
 
-  /** Effective work dir for a command context (agent cwd or process cwd). */
+  /**
+   * Effective work dir for a command context (agent cwd or process cwd).
+   * @param msg - Message whose session key selects the per-chat override.
+   * @returns The resolved working directory.
+   */
   commandWorkDir(msg: Message): string {
     const switcher = this.agent as { getWorkDir?: () => string }
     if (typeof switcher.getWorkDir === 'function') {
@@ -1189,32 +1376,50 @@ export class Engine {
     return process.cwd()
   }
 
-  /** Register the persisted project-state store (/dir overrides). */
+  /**
+   * Register the persisted project-state store (/dir overrides).
+   * @param store - Store that persists per-project state.
+   */
   setProjectStateStore(store: import('./project-state.js').ProjectStateStore): void {
     this.projectState = store
   }
 
-  /** Register the directory history used by /dir. */
+  /**
+   * Register the directory history used by /dir.
+   * @param history - History that records directory switches.
+   */
   setDirHistory(history: import('./dir-history.js').DirHistory): void {
     this.dirHistory = history
   }
 
-  /** Set the base work dir restored by /dir reset. */
+  /**
+   * Set the base work dir restored by /dir reset.
+   * @param dir - Directory path.
+   */
   setBaseWorkDir(dir: string): void {
     this.baseWorkDir = dir
   }
 
-  /** Set the admin user list for privileged commands. */
+  /**
+   * Set the admin user list for privileged commands.
+   * @param adminFrom - Comma-separated admin user IDs ('*' = all, '' = deny).
+   */
   setAdminFrom(adminFrom: string): void {
     this.adminFrom = adminFrom
   }
 
-  /** Register provider shortcut commands, e.g. { strong: 'glm' } (Go SetProviderShortcuts). */
+  /**
+   * Register provider shortcut commands, e.g. { strong: 'glm' } (Go SetProviderShortcuts).
+   * @param shortcuts - Command word → provider name.
+   */
   setProviderShortcuts(shortcuts: Record<string, string>): void {
     this.providerShortcuts = shortcuts
   }
 
-  /** Set the active-provider persistence hook (Go SetProviderSaveFunc). */
+  /**
+   * Set the active-provider persistence hook (Go SetProviderSaveFunc).
+   * @param fn - Hook invoked with the provider name on every switch.
+   */
   setProviderSaveFunc(fn: (name: string) => void): void {
     this.providerSaveFunc = fn
   }
@@ -1223,6 +1428,12 @@ export class Engine {
    * Configure predict-next (#33, Go SetPredictNextConfig). mode 'resume'
    * forks the live transcript; anything else uses the lightweight one-shot
    * query.
+   * @param enabled - Whether next-message prediction runs after turns.
+   * @param provider - Provider route; '' = the active provider.
+   * @param model - Model override; '' = the provider default.
+   * @param timeoutMs - Fork deadline in ms; 0 = the default timeout.
+   * @param prompt - Prompt template for the prediction query.
+   * @param mode - 'resume' forks the live transcript; anything else is one-shot.
    */
   setPredictNextConfig(enabled: boolean, provider: string, model: string, timeoutMs: number, prompt: string, mode: string): void {
     this.predictNextEnabled = enabled
@@ -1233,7 +1444,13 @@ export class Engine {
     this.predictNextResume = mode === 'resume'
   }
 
-  /** Configure turn-summary generation (Go SetTurnSummaryConfig). */
+  /**
+   * Configure turn-summary generation (Go SetTurnSummaryConfig).
+   * @param enabled - Whether turn summaries run after turns.
+   * @param provider - Provider route; '' = the active provider.
+   * @param timeoutMs - Fork deadline in ms; 0 = the default timeout.
+   * @param prompt - Prompt template for the summary query.
+   */
   setTurnSummaryConfig(enabled: boolean, provider: string, timeoutMs: number, prompt: string): void {
     this.turnSummaryEnabled = enabled
     this.turnSummaryProvider = provider
@@ -1241,24 +1458,38 @@ export class Engine {
     this.turnSummaryPrompt = prompt
   }
 
-  /** Auto session rotation after idle (Go SetResetOnIdle); <= 0 disables. */
+  /**
+   * Auto session rotation after idle (Go SetResetOnIdle); <= 0 disables.
+   * @param ms - Idle threshold in ms; <= 0 disables rotation.
+   */
   setResetOnIdle(ms: number): void {
     this.resetOnIdle = ms > 0 ? ms : 0
   }
 
-  /** Auto context compression (Go SetAutoCompressConfig); minGap <= 0 falls back to 30min. */
+  /**
+   * Auto context compression (Go SetAutoCompressConfig); minGap <= 0 falls back to 30min.
+   * @param enabled - Whether auto compression is armed.
+   * @param maxTokens - Token estimate that triggers compression; 0 = off.
+   * @param minGapMs - Minimum gap between compressions; <= 0 uses the 30min default.
+   */
   setAutoCompressConfig(enabled: boolean, maxTokens: number, minGapMs: number): void {
     this.autoCompressEnabled = enabled
     this.autoCompressMaxTokens = maxTokens
     this.autoCompressMinGap = minGapMs > 0 ? minGapMs : defaultAutoCompressMinGapMs
   }
 
-  /** /list etc. only show engine-tracked sessions when true (Go SetFilterExternalSessions). */
+  /**
+   * /list etc. only show engine-tracked sessions when true (Go SetFilterExternalSessions).
+   * @param v - Whether externally-created sessions are hidden from listings.
+   */
   setFilterExternalSessions(v: boolean): void {
     this.filterExternalSessions = v
   }
 
-  /** Disable predict-next for one session (the 屏蔽 button; Go SetPredictNextDisabled). */
+  /**
+   * Disable predict-next for one session (the 屏蔽 button; Go SetPredictNextDisabled).
+   * @param sessionKey - Session to stop predicting for; unknown keys are ignored.
+   */
   setPredictNextDisabled(sessionKey: string): void {
     const st = this.interactiveStates.get(sessionKey)
     if (st === undefined) return
@@ -1271,6 +1502,10 @@ export class Engine {
    * Queue a message for delivery after the running turn. Only metadata is
    * stored — the event loop sends it after the turn's result (Go
    * queueMessageForBusySession).
+   * @param p - Platform the message arrived on.
+   * @param msg - The inbound message to queue.
+   * @param interactiveKey - Interactive-state slot key.
+   * @returns True when the message was queued or the queue reported full; false when the session cannot queue.
    */
   queueMessageForBusySession(p: Platform, msg: Message, interactiveKey: string): boolean {
     const state = this.interactiveStates.get(interactiveKey)
@@ -1305,7 +1540,12 @@ export class Engine {
     return true
   }
 
-  /** Create a placeholder state so startup-window messages queue (issue #565). */
+  /**
+   * Create a placeholder state so startup-window messages queue (issue #565).
+   * @param key - Interactive-state slot key.
+   * @param p - Platform the message arrived on.
+   * @param replyCtx - Platform reply context for later notifications.
+   */
   ensureInteractiveStateForQueueing(key: string, p: Platform, replyCtx: unknown): void {
     if (!this.interactiveStates.has(key)) {
       const state = new InteractiveState()
@@ -1323,6 +1563,9 @@ export class Engine {
    * (Go stageAttachments, #8). Feishu image/file messages cannot carry text,
    * so this buffers them until the user follows up instead of firing an
    * empty-intent agent turn.
+   * @param p - Platform the attachment arrived on.
+   * @param msg - The attachment-only message.
+   * @param interactiveKey - Interactive-state slot key.
    */
   stageAttachments(p: Platform, msg: Message, interactiveKey: string): void {
     const workDir = this.effectiveWorkDirForPending(interactiveKey)
@@ -1365,6 +1608,9 @@ export class Engine {
    * dir (Go discardStagedAttachments). notify=true also tells the user the
    * staged attachments were dropped; /stop passes false because its stop card
    * is already user feedback.
+   * @param state - State holding the staged attachments.
+   * @param notify - Whether to tell the user the attachments were dropped.
+   * @returns Whether anything had been staged.
    */
   discardStagedAttachments(state: InteractiveState, notify: boolean): boolean {
     const pendingDir = state.pendingDir
@@ -1402,7 +1648,13 @@ export class Engine {
 
   // ── turn processing ─────────────────────────────────────────────────────
 
-  /** Run one user turn end-to-end (Go processInteractiveMessageWith, M1 subset). */
+  /**
+   * Run one user turn end-to-end (Go processInteractiveMessageWith, M1 subset).
+   * @param p - Platform the message arrived on.
+   * @param msg - The inbound message driving the turn.
+   * @param session - Locked session the turn runs under.
+   * @param interactiveKey - Interactive-state slot key; defaults to msg.sessionKey.
+   */
   async processInteractiveMessageWith(p: Platform, msg: Message, session: Session, interactiveKey = msg.sessionKey): Promise<void> {
     let unlocked = false
     try {
@@ -1475,7 +1727,15 @@ export class Engine {
     }
   }
 
-  /** Sender-injection prompt prefix (Go buildSenderPrompt). */
+  /**
+   * Sender-injection prompt prefix (Go buildSenderPrompt).
+   * @param content - The message content.
+   * @param userID - Sender's platform user ID; '' disables injection.
+   * @param userName - Sender's display name; '' omits it from the header.
+   * @param platform - Platform name the message arrived on.
+   * @param sessionKey - Session key the chat ID is extracted from.
+   * @returns The content, with the sender header prepended when enabled.
+   */
   buildSenderPrompt(content: string, userID: string, userName: string, platform: string, sessionKey: string): string {
     if (!this.injectSender || userID === '') return content
     const chatID = extractChannelID(sessionKey)
@@ -1491,6 +1751,13 @@ export class Engine {
    * agent process whose session ID no longer matches (Go
    * getOrCreateInteractiveStateWith, M1 subset without fork sentinels and
    * workspace overrides).
+   * @param sessionKey - Interactive-state slot key.
+   * @param p - Platform the message arrived on.
+   * @param replyCtx - Platform reply context for error replies.
+   * @param session - Session whose agent-session ID arbitrates recycling.
+   * @param modeOverride - Mode injected at session start; '' = none.
+   * @param envKey - CC_SESSION_KEY env value; may differ from sessionKey (cron slots).
+   * @returns The live state, with a turn already begun.
    */
   async getOrCreateInteractiveStateWith(
     sessionKey: string,
@@ -1613,6 +1880,9 @@ export class Engine {
    * Per-session env (Go buildSessionEnv). CC_SESSION rides alongside
    * CC_SESSION_KEY because dsh scrubs credential-shaped env names (any
    * *KEY*) from Bash-tool children, which would silently drop CC_SESSION_KEY.
+   * @param ccKey - Value used for CC_SESSION_KEY / CC_SESSION.
+   * @param session - Session whose subtask/chatroom flags expand the env.
+   * @returns KEY=VALUE env entries for the agent session.
    */
   buildSessionEnv(ccKey: string, session: Session): string[] {
     const envVars = [
@@ -1679,7 +1949,14 @@ export class Engine {
     return envVars
   }
 
-  /** SetSessionEnv + StartSession, serialized per engine (Go startAgentLocked). Public for the ported env-injection tests. */
+  /**
+   * SetSessionEnv + StartSession, serialized per engine (Go startAgentLocked). Public for the ported env-injection tests.
+   * @param agent - Agent to start the session on.
+   * @param sessionID - Session to resume; '' starts a fresh session.
+   * @param env - Env entries injected before the start.
+   * @param modeOverride - Mode injected before the start; '' = none.
+   * @returns The started agent session.
+   */
   startAgentLocked(agent: Agent, sessionID: string, env: string[], modeOverride: string): Promise<AgentSession> {
     const inj = asSessionEnvInjector(agent)
     if (inj !== undefined && env.length > 0) inj.setSessionEnv(env)
@@ -1695,6 +1972,13 @@ export class Engine {
    * final reply, drain queued messages, and handle process exit (Go
    * processInteractiveEvents, M1 subset without preview cards and the
    * watchdog).
+   * @param state - Interactive state the turn runs on.
+   * @param session - Session accumulating the turn's history.
+   * @param sessions - Session manager for ID persistence.
+   * @param sessionKey - Interactive-state slot key.
+   * @param _msgID - Message ID retained for Go parity; unused.
+   * @param sendDone - Settled prompt-send promise; an error value fails the turn.
+   * @param replyCtx - Platform reply context for outgoing messages.
    */
   async processInteractiveEvents(
     state: InteractiveState,
@@ -2306,7 +2590,13 @@ export class Engine {
     }
   }
 
-  /** Whether the idle fire reflects a genuine stall (Go stallConfirmed). */
+  /**
+   * Whether the idle fire reflects a genuine stall (Go stallConfirmed).
+   * @param state - State whose last event timestamp is checked.
+   * @param now - Current timestamp in ms.
+   * @param idle - Effective idle timeout in ms.
+   * @returns True when no event arrived within the idle window.
+   */
   stallConfirmed(state: InteractiveState, now: number, idle: number): boolean {
     const last = state.lastEventAt
     if (last === 0) return true
@@ -2680,6 +2970,11 @@ export class Engine {
    * Process queued messages sequentially; each dispatched turn drains further
    * arrivals inside its own event loop. Returns true when the session lock
    * was released here (Go drainPendingMessages semantics).
+   * @param state - State holding the pending queue.
+   * @param session - Locked session the drained turns run under.
+   * @param sessions - Session manager for persistence.
+   * @param sessionKey - Interactive-state slot key.
+   * @returns True when the session lock was released here.
    */
   async drainPendingMessages(state: InteractiveState, session: Session, sessions: SessionManager, sessionKey: string): Promise<boolean> {
     for (;;) {
@@ -2731,7 +3026,12 @@ export class Engine {
     }
   }
 
-  /** Drain orphaned queue after the turn processor already exited. */
+  /**
+   * Drain orphaned queue after the turn processor already exited.
+   * @param session - Locked session whose queue is drained.
+   * @param sessions - Session manager for persistence.
+   * @param interactiveKey - Interactive-state slot key.
+   */
   async drainOrphanedQueue(session: Session, sessions: SessionManager, interactiveKey: string): Promise<void> {
     let unlocked = false
     try {
@@ -2770,7 +3070,11 @@ export class Engine {
     }
   }
 
-  /** Tell each queued sender their message will never be processed. */
+  /**
+   * Tell each queued sender their message will never be processed.
+   * @param state - State whose pending queue is dropped.
+   * @param reason - Failure surfaced to each queued sender.
+   */
   notifyDroppedQueuedMessages(state: InteractiveState, reason: Error): void {
     const remaining = state.pendingMessages
     state.pendingMessages = []
@@ -2786,6 +3090,8 @@ export class Engine {
    * expected state, cleanup is skipped when the map entry was replaced
    * (stale-goroutine guard, Go cleanupInteractiveState). The map entry is
    * deleted only after the agent session finished closing.
+   * @param sessionKey - Interactive-state slot key to clean up.
+   * @param expected - State the caller believes is mapped; cleanup is skipped when the slot holds a different one.
    */
   async cleanupInteractiveState(sessionKey: string, expected?: InteractiveState): Promise<void> {
     const state = this.interactiveStates.get(sessionKey)
@@ -2837,6 +3143,8 @@ export class Engine {
    * User-initiated stop (/stop, /new, /switch): flag userStopped, detach the
    * state, resolve queued senders, and close the agent session
    * asynchronously (Go stopInteractiveSession, M1 subset).
+   * @param sessionKey - Interactive-state slot key to stop.
+   * @returns True when a state was found and torn down.
    */
   stopInteractiveSession(sessionKey: string): boolean {
     const state = this.interactiveStates.get(sessionKey)
@@ -2882,7 +3190,11 @@ export class Engine {
 
   // ── proactive sends (cc-connect send tool surface) ──────────────────────
 
-  /** Send text to a session by key (Go SendToSession). */
+  /**
+   * Send text to a session by key (Go SendToSession).
+   * @param sessionKey - Target session key; '' uses the single active session.
+   * @param message - Text to send.
+   */
   async sendToSession(sessionKey: string, message: string): Promise<void> {
     return this.sendToSessionWithAttachments(sessionKey, message, [], [])
   }
@@ -2891,6 +3203,10 @@ export class Engine {
    * Send text/attachments to a session by key, recording sideText for the
    * result-path duplicate suppression (Go SendToSessionWithAttachments,
    * M1 subset: text + raw image/file sends, no card composition).
+   * @param sessionKey - Target session key; '' uses the single active session.
+   * @param message - Text to send; may be empty when attachments are present.
+   * @param images - Images delivered via the platform's sendImage.
+   * @param files - Files delivered via the platform's sendFile.
    */
   async sendToSessionWithAttachments(
     sessionKey: string, message: string,
@@ -2956,7 +3272,6 @@ export class Engine {
   private activePreviewSession = ''
   private bumpTimer: ReturnType<typeof setTimeout> | undefined
 
-  /** Bind the session's active preview for bump routing (Go bindActivePreview). */
   // ── cron execution (Go engine.go ExecuteCronJob / executeCronShell) ─────
 
   /**
@@ -2966,6 +3281,7 @@ export class Engine {
    * a synthetic user message. Mute wraps the platform so nothing is sent.
    * Multi-workspace agent selection is not ported (single workspace); an
    * explicit job workDir switches the agent's work dir for the run instead.
+   * @param job - The cron job to execute.
    */
   async executeCronJob(job: CronJob): Promise<void> {
     let sessionKey = job.sessionKey
@@ -3114,7 +3430,12 @@ export class Engine {
     }
   }
 
-  /** Run a shell cron job and send the output to the chat (Go executeCronShell). */
+  /**
+   * Run a shell cron job and send the output to the chat (Go executeCronShell).
+   * @param p - Platform the output is sent to.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param job - The shell cron job to run.
+   */
   async executeCronShell(p: Platform, replyCtx: unknown, job: CronJob): Promise<void> {
     let workDir = job.workDir
     if (workDir === '') {
@@ -3171,6 +3492,11 @@ export class Engine {
    * result. `signal` only bounds how long the caller waits — the agent
    * finishes its turn in the background via drainRelaySession so the session
    * stays resumable.
+   * @param signal - Bounds the caller's wait only; the agent finishes in the background.
+   * @param fromProject - Originating project of the relayed message.
+   * @param chatID - Chat the message was relayed from.
+   * @param message - Relayed message content.
+   * @returns The relayed turn's response text.
    */
   async handleRelay(signal: AbortSignal | undefined, fromProject: string, chatID: string, message: string): Promise<string> {
     const relaySessionKey = `relay:${fromProject}:${chatID}`
@@ -3350,12 +3676,20 @@ export class Engine {
     }
   }
 
+  /**
+   * Bind the session's active preview for bump routing (Go bindActivePreview).
+   * @param sp - The preview to reissue on bumps.
+   * @param sessionKey - Session the preview belongs to.
+   */
   bindActivePreview(sp: StreamPreview, sessionKey: string): void {
     this.activePreview = sp
     this.activePreviewSession = sessionKey
   }
 
-  /** Reissue the bound preview when it belongs to the given session. */
+  /**
+   * Reissue the bound preview when it belongs to the given session.
+   * @param sessionKey - Session whose bound preview is bumped.
+   */
   bumpActivePreviewForSession(sessionKey: string): void {
     if (this.activePreview === undefined || this.activePreviewSession !== sessionKey) return
     void this.activePreview.bumpToEnd()
@@ -3364,6 +3698,7 @@ export class Engine {
   /**
    * Coalesce rapid im.chat.updated events (rename + avatar ~1.4s apart) into
    * one bump after the quiet window; only the last notice matters.
+   * @param sessionKey - Session whose chat changed.
    */
   onChatChanged(sessionKey: string): void {
     if (this.bumpTimer !== undefined) clearTimeout(this.bumpTimer)
@@ -3377,12 +3712,24 @@ export class Engine {
   // M3: Permission / AskUserQuestion / ExitPlanMode
   // ──────────────────────────────────────────────────────────────
 
-  /** Whether an unsolicited permission should surface to the user (Go shouldSurfaceUnsolicitedPermission). */
+  /**
+   * Whether an unsolicited permission should surface to the user (Go shouldSurfaceUnsolicitedPermission).
+   * @param _toolName - Tool requesting permission; retained for Go parity, unused.
+   * @param isAskQuestion - Whether the request is an AskUserQuestion.
+   * @param stallRetried - Whether the turn already went through a stall retry.
+   * @param autoApprove - Whether the user enabled blanket approval.
+   * @returns True when the prompt card should be sent.
+   */
   shouldSurfaceUnsolicitedPermission(_toolName: string, isAskQuestion: boolean, stallRetried: boolean, autoApprove: boolean): boolean {
     return shouldSurfaceHelper(_toolName, isAskQuestion, stallRetried, autoApprove)
   }
 
-  /** Resolve user input into an AskUserQuestion answer (Go resolveAskQuestionAnswer). */
+  /**
+   * Resolve user input into an AskUserQuestion answer (Go resolveAskQuestionAnswer).
+   * @param q - The question being answered.
+   * @param input - Raw user input, free text or a 1-based option number.
+   * @returns The resolved answer string.
+   */
   resolveAskQuestionAnswer(q: UserQuestion, input: string): string {
     return resolveAnswerHelper(q, input)
   }
@@ -3390,6 +3737,10 @@ export class Engine {
   /**
    * Build updated tool input with collected answers (Go
    * buildAskQuestionResponse, package-level).
+   * @param originalInput - Raw AskUserQuestion tool input.
+   * @param questions - Questions whose answers were collected.
+   * @param collected - Question index → resolved answer.
+   * @returns The tool input with answers substituted.
    */
   static buildAskQuestionResponse(
     originalInput: Record<string, unknown>,
@@ -3404,6 +3755,13 @@ export class Engine {
    * as a plan card with an export button (Go sendPlanContent). Returns the
    * (possibly truncated) content string for dedup. When `planMaxLen` is 0, no
    * truncation is applied.
+   * @param p - Platform the card is sent to.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param state - Interactive state recording the plan export content.
+   * @param filePath - Plan markdown file to read.
+   * @param _revision - Plan revision counter; retained for Go parity, unused.
+   * @param exportKey - Export-button key the content is stored under.
+   * @returns The sent (possibly truncated) content, '' on read failure or empty content.
    */
   sendPlanContent(
     p: Platform,
@@ -3440,6 +3798,14 @@ export class Engine {
    * Send plan content passed inline in the ExitPlanMode tool input as a plan
    * card with an export button (Go sendInlinePlanContent). Returns the
    * trimmed content for dedup.
+   * @param p - Platform the card is sent to.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param state - Interactive state recording the plan export content.
+   * @param content - Inline plan content from the tool input.
+   * @param filePath - Plan file path used only for the card title; '' = generic title.
+   * @param _revision - Plan revision counter; retained for Go parity, unused.
+   * @param exportKey - Export-button key the content is stored under.
+   * @returns The sent (possibly truncated) content, '' when empty.
    */
   sendInlinePlanContent(
     p: Platform,
@@ -3467,6 +3833,11 @@ export class Engine {
   /**
    * Send a permission prompt card with Allow/Deny/AllowAll buttons
    * (Go sendPermissionPrompt). Falls back to inline buttons, then plain text.
+   * @param p - Platform the prompt is sent to.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param prompt - Prompt text for the plain-text fallback.
+   * @param toolName - Tool requesting permission, shown in the card body.
+   * @param toolInput - Tool input preview shown in the card body.
    */
   async sendPermissionPrompt(p: Platform, replyCtx: unknown, prompt: string, toolName: string, toolInput: string): Promise<void> {
     // Try inline buttons first (Telegram-style platforms)
@@ -3521,6 +3892,10 @@ export class Engine {
   /**
    * Send an AskUserQuestion prompt card with option buttons
    * (Go sendAskQuestionPrompt). Falls back to inline buttons, then plain text.
+   * @param p - Platform the prompt is sent to.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param questions - All questions in the prompt set.
+   * @param qIdx - Zero-based index of the question to render now.
    */
   async sendAskQuestionPrompt(p: Platform, replyCtx: unknown, questions: UserQuestion[], qIdx: number): Promise<void> {
     if (qIdx >= questions.length) return
@@ -3604,6 +3979,10 @@ export class Engine {
    * if the message was consumed as a permission response. Synchronous like the
    * Go original — async side-effects (reply, respondPermission) fire as
    * floating promises.
+   * @param p - Platform the response arrived on.
+   * @param msg - The inbound response message.
+   * @param content - Response text; feishu card denies may append "\x00<reason>".
+   * @returns True when the message was consumed as a permission response.
    */
   handlePendingPermission(p: Platform, msg: Message, content: string): boolean {
     // Parse optional deny reason: feishu encodes as "deny\x00<reason>"
@@ -3727,24 +4106,36 @@ export class Engine {
   // M4: subtask orchestration (Go engine_subtask.go + engine_cmd_session.go)
   // ──────────────────────────────────────────────────────────────
 
-  /** Override the recursive delegation cap (Go SetSubtaskMaxDepth). */
+  /**
+   * Override the recursive delegation cap (Go SetSubtaskMaxDepth).
+   * @param n - New delegation depth cap; <= 0 keeps the current value.
+   */
   setSubtaskMaxDepth(n: number): void {
     if (n > 0) this.subtaskMaxDepth = n
   }
 
   // ── chatroom configuration setters (Go engine_chatroom.go setters) ──────
 
-  /** Override the gather barrier fallback timeout; 0/negative keeps the default. */
+  /**
+   * Override the gather barrier fallback timeout; 0/negative keeps the default.
+   * @param ms - Timeout in ms; <= 0 keeps the default.
+   */
   setChatroomGatherTimeout(ms: number): void {
     if (ms > 0) this.chatroomGatherTimeout = ms
   }
 
-  /** Effective gather barrier timeout. */
+  /**
+   * Effective gather barrier timeout.
+   * @returns The configured timeout in ms, or the 20m default.
+   */
   chatroomGatherTimeoutDuration(): number {
     return this.chatroomGatherTimeout > 0 ? this.chatroomGatherTimeout : defaultChatroomGatherTimeout
   }
 
-  /** Override the end-barrier drain timeout. */
+  /**
+   * Override the end-barrier drain timeout.
+   * @param ms - Timeout in ms; <= 0 keeps the default.
+   */
   setChatroomEndTimeout(ms: number): void {
     if (ms > 0) this.chatroomEndTimeout = ms
   }
@@ -3753,116 +4144,181 @@ export class Engine {
    * Effective end drain timeout: end waits for replies already generating,
    * so it defaults to half the gather timeout rather than gather's full
    * headroom.
+   * @returns The configured timeout in ms, or half the gather default.
    */
   chatroomEndTimeoutDuration(): number {
     return this.chatroomEndTimeout > 0 ? this.chatroomEndTimeout : defaultChatroomGatherTimeout / 2
   }
 
-  /** Override the research gather timeout, clamped to [1m, 24h]. */
+  /**
+   * Override the research gather timeout, clamped to [1m, 24h].
+   * @param ms - Timeout in ms; <= 0 keeps the current value.
+   */
   setChatroomResearchTimeout(ms: number): void {
     if (ms <= 0) return
     this.chatroomResearchTimeout = Math.min(maxChatroomResearchTimeout, Math.max(minChatroomResearchTimeout, ms))
   }
 
-  /** Effective research gather timeout. */
+  /**
+   * Effective research gather timeout.
+   * @returns The configured timeout in ms, or the 60m default.
+   */
   chatroomResearchTimeoutDuration(): number {
     return this.chatroomResearchTimeout > 0 ? this.chatroomResearchTimeout : defaultChatroomResearchTimeout
   }
 
-  /** Override the auto-mode research round cap, clamped to [1, 20]. */
+  /**
+   * Override the auto-mode research round cap, clamped to [1, 20].
+   * @param n - Round cap; <= 0 keeps the current value.
+   */
   setMaxChatroomResearchRounds(n: number): void {
     if (n <= 0) return
     this.maxChatroomResearchRounds = Math.min(maxChatroomResearchRounds, Math.max(minChatroomResearchRounds, n))
   }
 
-  /** Effective auto-mode research round cap. */
+  /**
+   * Effective auto-mode research round cap.
+   * @returns The configured cap, or the default of 3.
+   */
   maxChatroomResearchRoundsValue(): number {
     return this.maxChatroomResearchRounds > 0 ? this.maxChatroomResearchRounds : defaultMaxChatroomResearchRounds
   }
 
-  /** Default research iteration driver when --mode is omitted ('auto'|'manual'). */
+  /**
+   * Default research iteration driver when --mode is omitted ('auto'|'manual').
+   * @param mode - Research mode; only 'auto' and 'manual' are accepted.
+   */
   setDefaultChatroomResearchMode(mode: string): void {
     if (mode === 'auto' || mode === 'manual') this.defaultChatroomResearchMode = mode
   }
 
-  /** Effective default research mode; unknown values behave as 'auto'. */
+  /**
+   * Effective default research mode; unknown values behave as 'auto'.
+   * @returns 'manual' when configured so, otherwise 'auto'.
+   */
   defaultChatroomResearchModeValue(): string {
     return this.defaultChatroomResearchMode === 'manual' ? 'manual' : 'auto'
   }
 
-  /** Override the root directory holding one persona subdirectory per role. */
+  /**
+   * Override the root directory holding one persona subdirectory per role.
+   * @param dir - Roles root path; blank keeps the current value.
+   */
   setChatroomRolesDir(dir: string): void {
     if (dir.trim() !== '') this.chatroomRolesDirCfg = dir
   }
 
-  /** Effective roles root. */
+  /**
+   * Effective roles root.
+   * @returns The configured roles root, or the default under configHome.
+   */
   chatroomRolesDir(): string {
     return this.chatroomRolesDirCfg !== '' ? this.chatroomRolesDirCfg : defaultChatroomRolesDir()
   }
 
-  /** Override the per-chatroom role cap. */
+  /**
+   * Override the per-chatroom role cap.
+   * @param n - Role cap; <= 0 keeps the current value.
+   */
   setMaxChatroomRoles(n: number): void {
     if (n > 0) this.maxChatroomRolesCfg = n
   }
 
-  /** Effective per-chatroom role cap. */
+  /**
+   * Effective per-chatroom role cap.
+   * @returns The configured cap, or the default of 5.
+   */
   maxChatroomRoles(): number {
     return this.maxChatroomRolesCfg > 0 ? this.maxChatroomRolesCfg : defaultMaxChatroomRoles
   }
 
-  /** Set the moderator data dir (per-chatroom ledgers); '' disables the ledger. */
+  /**
+   * Set the moderator data dir (per-chatroom ledgers); '' disables the ledger.
+   * @param dir - Moderator data dir; '' disables the ledger feature.
+   */
   setChatroomModeratorDir(dir: string): void {
     this.chatroomModeratorDirCfg = dir.trim()
   }
 
-  /** The moderator dir and whether the ledger feature is enabled. */
+  /**
+   * The moderator dir and whether the ledger feature is enabled.
+   * @returns The configured dir and ok=true when the ledger is enabled.
+   */
   chatroomModeratorDir(): { dir: string; ok: boolean } {
     const dir = this.chatroomModeratorDirCfg.trim()
     return { dir, ok: dir !== '' }
   }
 
-  /** Set the shared research-assistant workdir. */
+  /**
+   * Set the shared research-assistant workdir.
+   * @param dir - Workdir shared by research assistants.
+   */
   setChatroomResearchWorkspace(dir: string): void {
     this.chatroomResearchWorkspaceCfg = dir
   }
 
-  /** Toggle pre-provisioning the shared uv venv for research assistants. */
+  /**
+   * Toggle pre-provisioning the shared uv venv for research assistants.
+   * @param enabled - Whether the shared venv is pre-provisioned.
+   */
   setChatroomResearchPythonEnv(enabled: boolean): void {
     this.chatroomResearchPythonEnv = enabled
   }
 
-  /** Role-session isolation switch (dsh uses bare personas; config parity only). */
+  /**
+   * Role-session isolation switch (dsh uses bare personas; config parity only).
+   * @param v - Isolation value carried for config parity with Go.
+   */
   setChatroomIsolateRoleContext(v: string): void {
     this.chatroomIsolateRoleContext = v
   }
 
-  /** Override default worktree isolation for /spawn //fork (Go SetSpawnWorktreeMode). */
+  /**
+   * Override default worktree isolation for /spawn //fork (Go SetSpawnWorktreeMode).
+   * @param s - Worktree mode word: 'on', 'off', or 'auto'.
+   */
   setSpawnWorktreeMode(s: string): void {
     this.spawnWorktree = parseWorktreeMode(s)
   }
 
-  /** Configure the /spawn //fork RAM guard; 0 disables a tier (Go SetSpawnMemoryGuard). */
+  /**
+   * Configure the /spawn //fork RAM guard; 0 disables a tier (Go SetSpawnMemoryGuard).
+   * @param warnPct - RAM percentage that triggers a warning; 0 disables.
+   * @param blockPct - RAM percentage that rejects the spawn; 0 disables.
+   */
   setSpawnMemoryGuard(warnPct: number, blockPct: number): void {
     this.spawnMemWarnPct = warnPct
     this.spawnMemBlockPct = blockPct
   }
 
-  /** Override the hard timeout for subtask sessions (Go SetSubtaskTimeout). */
+  /**
+   * Override the hard timeout for subtask sessions (Go SetSubtaskTimeout).
+   * @param ms - Timeout in ms; 0 inherits eventIdleTimeout.
+   */
   setSubtaskTimeout(ms: number): void {
     this.subtaskTimeout = ms
   }
 
-  /** Override the gather barrier fallback timeout (Go SetSubtaskGatherTimeout). */
+  /**
+   * Override the gather barrier fallback timeout (Go SetSubtaskGatherTimeout).
+   * @param ms - Timeout in ms; <= 0 keeps the default.
+   */
   setSubtaskGatherTimeout(ms: number): void {
     if (ms > 0) this.subtaskGatherTimeout = ms
   }
 
-  /** Effective recursive delegation cap (Go maxSubtaskDepth). */
+  /**
+   * Effective recursive delegation cap (Go maxSubtaskDepth).
+   * @returns The configured cap, or the default of 3.
+   */
   maxSubtaskDepth(): number {
     return this.subtaskMaxDepth > 0 ? this.subtaskMaxDepth : defaultSubtaskMaxDepth
   }
 
-  /** The first registered group-capable platform, or undefined (Go spawnCapablePlatform). */
+  /**
+   * The first registered group-capable platform, or undefined (Go spawnCapablePlatform).
+   * @returns The first platform that can spawn groups, if any.
+   */
   spawnCapablePlatform(): Platform | undefined {
     return this.platforms.find(p => asGroupSpawner(p) !== undefined)
   }
@@ -3878,6 +4334,9 @@ export class Engine {
    * Completion-card elements surfacing a subtask's code-change footprint
    * (one-line `git diff --shortstat`). Empty for depth-0 sessions and clean
    * working trees (Go subtaskDiffElements).
+   * @param session - Child session whose workspace is measured.
+   * @param workspaceDir - Directory the diff runs in.
+   * @returns A zero- or one-element markdown-element array.
    */
   async subtaskDiffElements(session: Session | undefined, workspaceDir: string): Promise<CardMarkdownLike[]> {
     if (session === undefined || session.getSubtaskDepth() <= 0) return []
@@ -3888,22 +4347,41 @@ export class Engine {
 
   // ── status footer + completion notification (Go engine_cmd_misc.go, M7) ──
 
-  /** Build and store the per-turn completion usage fields (Go buildCompletionUsage). */
+  /**
+   * Build and store the per-turn completion usage fields (Go buildCompletionUsage).
+   * @param args - Turn token counters and self-reported context percent.
+   */
   async buildCompletionUsage(args: BuildCompletionUsageArgs): Promise<void> {
     await buildCompletionUsageFields(this.usage, this.showContextIndicator, this.usageProviders, this.baseWorkDir, args)
   }
 
-  /** Record agent processing time for the completion header (Go setCompletionDurations). */
+  /**
+   * Record agent processing time for the completion header (Go setCompletionDurations).
+   * @param agentDurationMs - Agent span of the turn in ms.
+   * @param turnDurationMs - Full turn span in ms.
+   */
   setCompletionDurations(agentDurationMs: number, turnDurationMs: number): void {
     setDurations(this.usage, agentDurationMs, turnDurationMs)
   }
 
-  /** Compute the per-turn output-token rate (Go setTokenRate). */
+  /**
+   * Compute the per-turn output-token rate (Go setTokenRate).
+   * @param outputTokens - Output tokens produced this turn.
+   * @param thinkingTimeMs - Agent wall-clock minus tool/permission waits, in ms.
+   */
   setTokenRate(outputTokens: number, thinkingTimeMs: number): void {
     setTokenRateMsg(this.usage, outputTokens, thinkingTimeMs)
   }
 
-  /** Plain-text status footer (Go buildStatusFooter). */
+  /**
+   * Plain-text status footer (Go buildStatusFooter).
+   * @param prefix - Label starting the footer, e.g. the completion title.
+   * @param agent - Agent whose model/provider lines are shown.
+   * @param workspaceDir - Working directory shown on the footer.
+   * @param agentSessionID - Agent session id; '' omits the session line.
+   * @param sessionKey - Session key shown on the footer.
+   * @returns The rendered footer text.
+   */
   async buildStatusFooter(
     prefix: string,
     agent: Agent | undefined,
@@ -3921,7 +4399,14 @@ export class Engine {
     })
   }
 
-  /** Structured footer elements for the purple notification card (Go buildStatusFooterElements). */
+  /**
+   * Structured footer elements for the purple notification card (Go buildStatusFooterElements).
+   * @param agent - Agent whose model/provider lines are shown.
+   * @param workspaceDir - Working directory shown on the footer.
+   * @param agentSessionID - Agent session id; '' omits the session line.
+   * @param sessionKey - Session key shown on the footer.
+   * @returns The header suffix and the card's footer elements.
+   */
   async buildStatusFooterElements(
     agent: Agent | undefined,
     workspaceDir: string,
@@ -3938,7 +4423,14 @@ export class Engine {
     })
   }
 
-  /** Codex-style reply footer (Go buildReplyFooter). */
+  /**
+   * Codex-style reply footer (Go buildReplyFooter).
+   * @param agent - Agent whose usage feeds the footer.
+   * @param agentSession - Live session providing usage; '' footer when undefined.
+   * @param workspaceDir - Working directory shown on the footer.
+   * @param contextLeft - Pre-rendered context-remaining line.
+   * @returns The footer text, '' when the feature is off or the agent is unknown.
+   */
   async buildReplyFooter(
     agent: Agent | undefined,
     agentSession: AgentSession | undefined,
@@ -3955,7 +4447,11 @@ export class Engine {
     )
   }
 
-  /** Session's context-usage snapshot for the reply footer (Go replyFooterSessionContextUsage). */
+  /**
+   * Session's context-usage snapshot for the reply footer (Go replyFooterSessionContextUsage).
+   * @param session - Agent session to probe.
+   * @returns The context usage, or undefined when the session exposes none.
+   */
   replyFooterSessionContextUsage(session: AgentSession | undefined): ContextUsage | undefined {
     return (session as { getContextUsage?: () => ContextUsage | undefined } | undefined)?.getContextUsage?.()
   }
@@ -3965,6 +4461,11 @@ export class Engine {
    * spawnJumpMarkdown): a breadcrumb for children, one button per active
    * child group for parents. Returned as a markdown line so it folds inside
    * the collapsible panel.
+   * @param p - Platform the jump URLs are built for.
+   * @param sessions - Session manager resolving display names.
+   * @param cur - Session the card is being built for.
+   * @param sessionKey - Session key of cur.
+   * @returns The markdown line, or undefined when no link applies.
    */
   async spawnJumpMarkdown(
     p: Platform,
@@ -4042,6 +4543,12 @@ export class Engine {
    * messages remain (Go sendTurnCompletionCard). Card-update platforms get
    * the structured card and keep its handle; others fall back to the plain
    * completion notifier.
+   * @param state - Turn state the notification closes out.
+   * @param p - Platform the notification is sent to.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param session - Session whose agent-session ID feeds the footer.
+   * @param sessionKey - Session key shown on the footer.
+   * @param workspaceDir - Working directory shown on the footer.
    */
   async sendTurnCompletionCard(
     state: InteractiveState,
@@ -4095,6 +4602,13 @@ export class Engine {
    * SpawnSubtask). Records parent linkage + delegation depth for the
    * event-driven result reinjection (see reportSubtask) and auto-isolates
    * the child in a git worktree when it shares the parent's repository.
+   * @param parentSessionKey - Session key of the delegating parent chat.
+   * @param dir - Explicit child work dir (--dir); '' resolves from the parent.
+   * @param wtPref - Worktree isolation preference for the child.
+   * @param forkContext - Whether the child copies the parent's conversation (--fork).
+   * @param message - First message delegating the work; '' spawns an idle child.
+   * @param images - Images attached to the first message.
+   * @param attended - Whether the child is an attended (user-visible) subtask.
    * @returns The child group's display name and session key.
    */
   async spawnSubtask(
@@ -4319,7 +4833,10 @@ export class Engine {
     }
   }
 
-  /** The agent's base work dir, or '' when it has none (Go GetWorkDir probe). */
+  /**
+   * The agent's base work dir, or '' when it has none (Go GetWorkDir probe).
+   * @returns The agent's configured working directory.
+   */
   agentWorkDir(): string {
     const switcher = asWorkDirSwitcher(this.agent)
     if (switcher !== undefined) return switcher.getWorkDir()
@@ -4355,14 +4872,21 @@ export class Engine {
     return newDir
   }
 
-  /** Flag a research-mode role that dispatched its assistant this turn (Go markResearchDispatch). */
+  /**
+   * Flag a research-mode role that dispatched its assistant this turn (Go markResearchDispatch).
+   * @param parent - Role session whose assistant dispatch is recorded.
+   */
   markResearchDispatch(parent: Session): void {
     if (parent.getChatroomHubKey() === '' || !parent.getResearchAwaitingAssistant()) return
     parent.setResearchDispatched(true)
     this.sessions.save()
   }
 
-  /** Human label for the parent chat on jump buttons (Go subtaskParentLabel). */
+  /**
+   * Human label for the parent chat on jump buttons (Go subtaskParentLabel).
+   * @param parent - Parent session whose name is used.
+   * @returns The parent's display name, or the engine name as fallback.
+   */
   subtaskParentLabel(parent: Session): string {
     const n = parent.getName().trim()
     if (n !== '' && n !== 'session' && n !== 'default') return n
@@ -4374,6 +4898,8 @@ export class Engine {
    * parent agent to synthesize. Unlike `/done --reply`, it does NOT stop the
    * child session (Go ReportSubtask). Empty result falls back to the child's
    * last assistant reply.
+   * @param childSessionKey - Session key of the reporting child.
+   * @param result - The child's result text; '' uses the child's last reply.
    */
   reportSubtask(childSessionKey: string, result: string): void {
     const p = this.reportCapablePlatform()
@@ -4412,6 +4938,9 @@ export class Engine {
    * Inject a follow-up message from a parent agent into one of its live
    * subtask groups (Go SendToSubtask). Non-blocking; the child's reply folds
    * back via the normal report path. Re-arms the one-shot auto-report.
+   * @param callerSessionKey - Session key of the parent issuing the follow-up.
+   * @param childSessionKey - Session key of the target child group.
+   * @param message - Follow-up text for the child.
    */
   async sendToSubtask(callerSessionKey: string, childSessionKey: string, message: string): Promise<void> {
     const msg = message.trim()
@@ -4469,6 +4998,10 @@ export class Engine {
    * First-turn fallback: a subtask session that finishes its initial turn
    * without an explicit report still pushes that turn's reply to the parent.
    * One-shot per subtask (Go maybeAutoReportSubtask).
+   * @param state - Turn state; its platform delivers the report.
+   * @param session - Child session that finished its first turn.
+   * @param baseResponse - The turn's clean reply text.
+   * @param isSilent - Whether the turn was a silent reply.
    */
   maybeAutoReportSubtask(state: InteractiveState | undefined, session: Session, baseResponse: string, isSilent: boolean): void {
     if (session.getSubtaskDepth() <= 0 || session.getSubtaskReported() || session.getSubtaskAutoReportSuppressed() || isSilent) return
@@ -4484,6 +5017,7 @@ export class Engine {
    * Disarm the one-shot first-turn auto-report when a user manually stops a
    * delegated subtask group's turn (Go suppressSubtaskAutoReport). Explicit
    * report paths ignore this flag.
+   * @param sessionKey - Session key of the stopped child.
    */
   suppressSubtaskAutoReport(sessionKey: string): void {
     const sess = this.sessions.getOrCreateActive(sessionKey)
@@ -4501,6 +5035,9 @@ export class Engine {
    * turn in a subtask session, so a later explicit report is not silently
    * dropped (Go rearmSubtaskReportOnHumanTurn). Synthetic injections carry
    * an empty userID and are skipped.
+   * @param msg - The inbound human message.
+   * @param session - Child session starting the new turn.
+   * @param sessions - Session manager persisting the flag reset.
    */
   rearmSubtaskReportOnHumanTurn(msg: Message, session: Session, sessions: SessionManager): void {
     if (msg.userID === '' || session.getSubtaskDepth() <= 0 || !session.getSubtaskReported()) return
@@ -4512,6 +5049,8 @@ export class Engine {
   /**
    * Re-arm the one-shot auto-report when a message that queued behind a busy
    * subtask turn is drained (Go rearmSubtaskReportOnDrain).
+   * @param session - Child session whose queued message is draining.
+   * @param sessions - Session manager persisting the flag reset.
    */
   rearmSubtaskReportOnDrain(session: Session, sessions: SessionManager): void {
     if (session.getSubtaskDepth() <= 0 || !session.getSubtaskReported()) return
@@ -4524,6 +5063,9 @@ export class Engine {
    * Consume chatroom ask metadata at the moment a role's turn actually
    * starts (Go stampChatroomAskOnTurnStart). The chatroom gather flow that
    * arms these lands with M5; kept for the turn-start contract.
+   * @param session - Role session the metadata is stamped on.
+   * @param askSeq - Chatroom ask sequence number; 0 keeps the current value.
+   * @param awaitAssistant - Whether the role awaits its research assistant.
    */
   stampChatroomAskOnTurnStart(session: Session, askSeq: number, awaitAssistant: boolean): void {
     if (session.getChatroomHubKey() === '') return
@@ -4536,6 +5078,9 @@ export class Engine {
    * Flip userInterjected when a real human sends a message into an otherwise
    * background session (subtask group or chatroom role), re-enabling
    * auto-render from that point (Go markUserInterjectedOnHumanTurn).
+   * @param msg - The inbound human message.
+   * @param session - Background session being taken over.
+   * @param sessions - Session manager persisting the flag.
    */
   markUserInterjectedOnHumanTurn(msg: Message, session: Session, sessions: SessionManager): void {
     if (msg.userID === '' || msg.isSpawnedGroup) return
@@ -4550,6 +5095,7 @@ export class Engine {
    * A subtask session's interactive state was cleaned up without the subtask
    * reporting — send a synthetic failure notification so the parent does not
    * wait forever (Go reportSubtaskTimeout).
+   * @param sessionKey - Session key of the timed-out child.
    */
   reportSubtaskTimeout(sessionKey: string): void {
     const sess = this.sessions.getOrCreateActive(sessionKey)
@@ -4576,7 +5122,10 @@ export class Engine {
     }
   }
 
-  /** Gather barrier fallback timeout (Go subtaskGatherTimeoutDuration). */
+  /**
+   * Gather barrier fallback timeout (Go subtaskGatherTimeoutDuration).
+   * @returns The configured timeout in ms, or the 20m default.
+   */
   subtaskGatherTimeoutDuration(): number {
     return this.subtaskGatherTimeout > 0 ? this.subtaskGatherTimeout : defaultSubtaskGatherTimeout
   }
@@ -4585,6 +5134,7 @@ export class Engine {
    * Install a fan-in barrier on the parent session so reports from its
    * in-flight children accumulate and the parent is woken EXACTLY ONCE with
    * the full set (or partial on timeout) (Go GatherSubtasks).
+   * @param parentSessionKey - Session key of the gathering parent.
    */
   gatherSubtasks(parentSessionKey: string): void {
     const p = this.reportCapablePlatform()
@@ -4658,6 +5208,8 @@ export class Engine {
    * Session keys of all descendants of rootKey, deepest-first so a caller
    * can tear children down before parents. rootKey itself is excluded; a
    * visited set guards against cycles (Go collectSubtree).
+   * @param rootKey - Session key whose descendants are collected.
+   * @returns Descendant session keys, deepest-first.
    */
   collectSubtree(rootKey: string): string[] {
     const { idToKey } = this.sessions.sessionKeyMap()
@@ -4700,6 +5252,10 @@ export class Engine {
    * synthetic "[子任务完成]" message that wakes the parent agent (Go
    * replyToParent). Returns false when the child has no parent link or no
    * reply-context reconstruction.
+   * @param p - Platform delivering the card and wake message.
+   * @param sess - Child session carrying the parent link.
+   * @param content - Result content to push.
+   * @returns True when the delivery was initiated.
    */
   replyToParent(p: Platform, sess: Session, content: string): boolean {
     const parentKey = sess.getParentSessionKey()
@@ -4772,7 +5328,11 @@ export class Engine {
     })
   }
 
-  /** Config-driven monitor chat check (Go isMonitorChat). */
+  /**
+   * Config-driven monitor chat check (Go isMonitorChat).
+   * @param msg - Message whose session key is checked against the allowlist.
+   * @returns True when the chat is a monitored chat.
+   */
   isMonitorChat(msg: Message): boolean {
     if (!this.monitor.enabled) return false
     const chats = this.monitor.chatsVal()
@@ -4782,7 +5342,10 @@ export class Engine {
     return AllowList(chats, chatID)
   }
 
-  /** Set the monitor chat list (Go setMonitorChats; runtime application goes through MonitorCore). */
+  /**
+   * Set the monitor chat list (Go setMonitorChats; runtime application goes through MonitorCore).
+   * @param chats - Allowlist of monitored chat IDs.
+   */
   setMonitorChats(chats: string): void {
     this.monitor.setChats(chats)
   }
@@ -4791,7 +5354,13 @@ export class Engine {
   // M4: group-name generation (Go engine_predict.go + engine_events.go)
   // ──────────────────────────────────────────────────────────────
 
-  /** Configure LLM group-name generation (Go SetGroupNameConfig). */
+  /**
+   * Configure LLM group-name generation (Go SetGroupNameConfig).
+   * @param enabled - Whether LLM naming runs for spawned groups.
+   * @param provider - Provider route for naming queries.
+   * @param timeoutMs - Query deadline in ms; 0 = 30s default.
+   * @param prompt - Custom prompt template; '' = the default template.
+   */
   setGroupNameConfig(enabled: boolean, provider: string, timeoutMs: number, prompt: string): void {
     this.groupNameEnabled = enabled
     this.groupNameProvider = provider
@@ -4799,32 +5368,51 @@ export class Engine {
     this.groupNamePrompt = prompt
   }
 
-  /** Toggle the group-icon avatar follow-up after rename (Go SetGroupNameAvatarEnabled). */
+  /**
+   * Toggle the group-icon avatar follow-up after rename (Go SetGroupNameAvatarEnabled).
+   * @param enabled - Whether the LLM's icon is stamped as the avatar.
+   */
   setGroupNameAvatarEnabled(enabled: boolean): void {
     this.groupNameSetAvatar = enabled
   }
 
-  /** Mark a manual rename inside the async LLM window (Go markPendingRename). */
+  /**
+   * Mark a manual rename inside the async LLM window (Go markPendingRename).
+   * @param sessionKey - Session key of the manually renamed group.
+   */
   markPendingRename(sessionKey: string): void {
     this.pendingRename.add(sessionKey)
   }
 
-  /** Consume the manual-rename mark (Go clearPendingRename). */
+  /**
+   * Consume the manual-rename mark (Go clearPendingRename).
+   * @param sessionKey - Session key whose pending-rename mark is removed.
+   */
   clearPendingRename(sessionKey: string): void {
     this.pendingRename.delete(sessionKey)
   }
 
-  /** Whether a manual rename is pending for the session (Go hasPendingRename). */
+  /**
+   * Whether a manual rename is pending for the session (Go hasPendingRename).
+   * @param sessionKey - Session key to check.
+   * @returns True when a manual rename is pending.
+   */
   hasPendingRename(sessionKey: string): boolean {
     return this.pendingRename.has(sessionKey)
   }
 
-  /** Snapshot of recently used group icons, oldest first (Go recentGroupIcons). */
+  /**
+   * Snapshot of recently used group icons, oldest first (Go recentGroupIcons).
+   * @returns The recent-icon ring buffer as an array.
+   */
   recentGroupIcons(): string[] {
     return [...this.recentIcons]
   }
 
-  /** Record an icon into the recent ring buffer; empty and duplicates ignored (Go recordGroupIcon). */
+  /**
+   * Record an icon into the recent ring buffer; empty and duplicates ignored (Go recordGroupIcon).
+   * @param icon - Lucide icon name to record.
+   */
   recordGroupIcon(icon: string): void {
     if (icon === '') return
     if (this.recentIcons.includes(icon)) return
@@ -4838,6 +5426,8 @@ export class Engine {
    * Build the full group-name prompt: pick the base (user custom or default
    * template), fill {{icon_pool}} and {{recent_icons_rule}}, append the seed
    * (Go buildGroupNamePrompt).
+   * @param seed - First message the name is derived from.
+   * @returns The full prompt for the naming query.
    */
   buildGroupNamePrompt(seed: string): string {
     const base = this.groupNamePrompt === '' ? defaultGroupNamePrompt : this.groupNamePrompt
@@ -4861,6 +5451,9 @@ export class Engine {
    * Lucide icon from the seed (Go generateGroupName). Returns
    * [name, icon]; the icon falls back to a deterministic pick when the LLM
    * omits the second line.
+   * @param seed - First message the name is derived from.
+   * @param signal - Aborts the query; the caller owns the deadline.
+   * @returns The generated [name, icon] pair.
    */
   async generateGroupName(seed: string, signal?: AbortSignal): Promise<[string, string]> {
     const fq = asForkQuerierWithProvider(this.agent)
@@ -4932,6 +5525,10 @@ export class Engine {
    * name, falling back to the first message on failure/empty (Go
    * handleGroupNameGenerate). Skips when a manual rename landed inside the
    * LLM window; the mark is one-shot.
+   * @param p - Platform the group lives on.
+   * @param sessionKey - Session key of the spawned group.
+   * @param firstMessage - First message used as the naming seed.
+   * @param interactiveKey - Interactive-state slot key of the group.
    */
   handleGroupNameGenerate(p: Platform, sessionKey: string, firstMessage: string, interactiveKey: string): void {
     if (firstMessage === '') return
@@ -5031,6 +5628,11 @@ export class Engine {
    * then overwrite with a concise LLM name a few seconds later (Go
    * renameHubToTopic). With set_avatar on, the LLM's icon is stamped across
    * the whole family via setChatroomFamilyAvatar.
+   * @param p - Platform the hub group lives on.
+   * @param sessionKey - Session key of the hub group.
+   * @param chatType - Chat type; 'p2p' chats are skipped.
+   * @param topic - Chatroom topic used as the naming seed.
+   * @param childKeys - Session keys of the hub's role chats for family avatars.
    */
   renameHubToTopic(p: Platform, sessionKey: string, chatType: string, topic: string, childKeys: string[]): void {
     if (chatType === 'p2p') return
@@ -5078,7 +5680,12 @@ export class Engine {
   // M4: spawn-notify / worktree cards + platform helpers
   // ──────────────────────────────────────────────────────────────
 
-  /** Chat-jump URL for chatID when the platform can produce one (Go chatJumpURL). */
+  /**
+   * Chat-jump URL for chatID when the platform can produce one (Go chatJumpURL).
+   * @param p - Platform that builds the URL; undefined yields ''.
+   * @param chatID - Chat the URL points at.
+   * @returns The jump URL, or '' when the platform cannot produce one.
+   */
   chatJumpURL(p: Platform | undefined, chatID: string): string {
     if (p === undefined) return ''
     return asChatJumpURLer(p)?.chatJumpURL(chatID) ?? ''
@@ -5087,6 +5694,12 @@ export class Engine {
   /**
    * Build the spawn/fork readiness card (Go buildSpawnNotifyCard, purple
    * header): the full status footer elements plus the note and jump links.
+   * @param workDir - Working directory shown on the card footer.
+   * @param fallbackTitle - Title used when the footer provides no header suffix.
+   * @param extraNote - Extra markdown appended after the footer elements.
+   * @param jumpMD - Jump links folded into the collapsible panel.
+   * @param sessionKey - Session key shown on the card footer.
+   * @returns The assembled card.
    */
   async buildSpawnNotifyCard(
     workDir: string,
@@ -5116,6 +5729,10 @@ export class Engine {
    * Send content as a card with the given header, falling back to bold-title
    * plain text when the platform has no card support or the card send fails
    * (Go sendAsCard).
+   * @param p - Platform the card is sent to.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param content - Markdown body of the card.
+   * @param header - Card title and color.
    */
   async sendAsCard(p: Platform, replyCtx: unknown, content: string, header: CardHeader): Promise<void> {
     await this.sendAsCardWithButtons(p, replyCtx, content, header, [])
@@ -5125,6 +5742,11 @@ export class Engine {
    * sendAsCard plus an optional row of buttons appended after the markdown
    * body (Go sendAsCardWithButtons). Monitor spawn/coalesce notices use it
    * for their jump buttons; the plain-text fallback keeps the header title.
+   * @param p - Platform the card is sent to.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param content - Markdown body of the card.
+   * @param header - Card title and color.
+   * @param buttons - Buttons appended after the body; empty renders none.
    */
   async sendAsCardWithButtons(p: Platform, replyCtx: unknown, content: string, header: CardHeader, buttons: CardButton[]): Promise<void> {
     const cs = asCardSender(p)
@@ -5143,7 +5765,12 @@ export class Engine {
     await this.send(p, replyCtx, fallback)
   }
 
-  /** Render a card through the CardSender path with a plain-text fallback (Go replyWithCard). */
+  /**
+   * Render a card through the CardSender path with a plain-text fallback (Go replyWithCard).
+   * @param p - Platform the card is sent to.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param card - Card to deliver.
+   */
   async replyWithCard(p: Platform, replyCtx: unknown, card: Card): Promise<void> {
     const cs = asCardSender(p)
     if (cs !== undefined) {
@@ -5157,7 +5784,11 @@ export class Engine {
     await this.send(p, replyCtx, card.renderText())
   }
 
-  /** The /done Keep/Remove prompt card for a dirty worktree (Go renderWorktreeCard). */
+  /**
+   * The /done Keep/Remove prompt card for a dirty worktree (Go renderWorktreeCard).
+   * @param sessionKey - Session whose worktree the card describes.
+   * @returns The assembled prompt card.
+   */
   renderWorktreeCard(sessionKey: string): Card {
     const [path, branch] = this.sessions.getOrCreateActive(sessionKey).getWorktreeInfo()
     let md = this.i18n.tf(Msg.WorktreeDirtyPrompt, branch, path)
@@ -5175,7 +5806,12 @@ export class Engine {
       .build()
   }
 
-  /** Terminal card after the user picks keep/remove (Go renderWorktreeDoneCard). */
+  /**
+   * Terminal card after the user picks keep/remove (Go renderWorktreeDoneCard).
+   * @param action - Chosen action; a 'remove' prefix renders the removed text.
+   * @param memNote - Orphan-memory note appended when non-empty.
+   * @returns The assembled terminal card.
+   */
   renderWorktreeDoneCard(action: string, memNote: string): Card {
     let msg = this.i18n.t(Msg.WorktreeKept)
     if (action.startsWith('remove')) msg = this.i18n.t(Msg.WorktreeRemovedShort)
@@ -5187,6 +5823,9 @@ export class Engine {
    * Handle the keep/remove choice from the worktree prompt card (Go
    * executeWorktreeAction). Card-action routing arrives with the Wave-2
    * integration; the engine-side action execution is this method.
+   * @param sessionKey - Session owning the worktree.
+   * @param args - Action argument: 'keep' or 'remove'.
+   * @returns The orphan-memory note for the terminal card, '' when none applies.
    */
   async executeWorktreeAction(sessionKey: string, args: string): Promise<string> {
     const sess = this.sessions.getOrCreateActive(sessionKey)
@@ -5222,6 +5861,9 @@ export class Engine {
    * in place via the platform's card refresher, falling back to a new card.
    * Other act: commands are consumed silently — their render domains arrive
    * with later milestones.
+   * @param p - Platform the card action arrived on.
+   * @param msg - The card-action message.
+   * @param action - Full act: value carried by the pressed button.
    */
   async handleCardAction(p: Platform, msg: Message, action: string): Promise<void> {
     // Any card-button click means the user is back — abort in-flight HTML
@@ -5291,7 +5933,11 @@ export class Engine {
     await this.replyWithCard(p, msg.replyCtx, card)
   }
 
-  /** Resolve the agent's orphan project-data dir for a worktree path (Go resolveOrphanMemoryDir). */
+  /**
+   * Resolve the agent's orphan project-data dir for a worktree path (Go resolveOrphanMemoryDir).
+   * @param worktreePath - Worktree whose orphan memory dir is resolved.
+   * @returns The dir with content, or '' when none applies.
+   */
   resolveOrphanMemoryDir(worktreePath: string): string {
     const r = asWorktreeOrphanResolver(this.agent)
     if (r === undefined) return ''
@@ -5301,7 +5947,11 @@ export class Engine {
     return dir
   }
 
-  /** Resolve and delete the orphan memory for a worktree path (Go cleanupWorktreeOrphanMemory). */
+  /**
+   * Resolve and delete the orphan memory for a worktree path (Go cleanupWorktreeOrphanMemory).
+   * @param worktreePath - Worktree whose orphan memory dir is deleted.
+   * @returns The removed dir, or '' when nothing was cleaned.
+   */
   cleanupWorktreeOrphanMemory(worktreePath: string): string {
     const dir = this.resolveOrphanMemoryDir(worktreePath)
     if (dir === '') return ''
@@ -5311,6 +5961,10 @@ export class Engine {
   /**
    * Remove the worktree owned by sessionKey, clear the session's worktree
    * metadata, and report the outcome (Go finishWorktreeRemoval).
+   * @param p - Platform the outcome is reported on.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param sessionKey - Session owning the worktree.
+   * @param force - Whether the removal ignores uncommitted changes.
    */
   async finishWorktreeRemoval(p: Platform, replyCtx: unknown, sessionKey: string, force: boolean): Promise<void> {
     const sess = this.sessions.getOrCreateActive(sessionKey)
@@ -5345,6 +5999,8 @@ export class Engine {
    * the platform reports it inactive (Go reactivateSpawnedChatAvatar). The
    * active-check guard keeps idempotent resumes from spamming avatar-update
    * system messages.
+   * @param p - Platform owning the spawned chat's avatar.
+   * @param sessionKey - Session key of the spawned chat.
    */
   async reactivateSpawnedChatAvatar(p: Platform, sessionKey: string): Promise<void> {
     const checker = asSpawnedChatActiveChecker(p)
@@ -5358,12 +6014,21 @@ export class Engine {
     }
   }
 
-  /** Mark a spawned chat done on the platform side (avatar axis owner). */
+  /**
+   * Mark a spawned chat done on the platform side (avatar axis owner).
+   * @param p - Platform owning the spawned chat's state.
+   * @param sessionKey - Session key of the spawned chat.
+   */
   markSpawnedChatDone(p: Platform, sessionKey: string): void {
     asSpawnedChatStateUpdater(p)?.markSpawnedChatDone(sessionKey)
   }
 
-  /** Add an emoji reaction to the replied message when the platform can (Go AddReaction probe). */
+  /**
+   * Add an emoji reaction to the replied message when the platform can (Go AddReaction probe).
+   * @param p - Platform the reaction is added on.
+   * @param replyCtx - Platform reply context identifying the message.
+   * @param emoji - Emoji name to react with.
+   */
   addReaction(p: Platform, replyCtx: unknown, emoji: string): void {
     asReactionAdder(p)?.addReaction(replyCtx, emoji)
   }

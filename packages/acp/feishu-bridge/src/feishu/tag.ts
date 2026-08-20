@@ -209,12 +209,20 @@ export class TagManager {
     }
   }
 
-  /** Seed the in-memory cache (tests, load-time recovery). */
+  /**
+   * Seed the in-memory cache (tests, load-time recovery).
+   * @param tagName - Tag name.
+   * @param id - Tag id to cache for the name.
+   */
   seedTagCache(tagName: string, id: string): void {
     this.tagIDCache.set(tagName, id)
   }
 
-  /** The cached id for a tag name, if any. */
+  /**
+   * The cached id for a tag name, if any.
+   * @param tagName - Tag name.
+   * @returns The cached id, or undefined when not cached.
+   */
   cachedTagID(tagName: string): string | undefined {
     return this.tagIDCache.get(tagName)
   }
@@ -362,6 +370,7 @@ export class TagManager {
    * creatable heart candidate; a name taken by another app fails creation and
    * is skipped. A cached candidate is adopted without any API call. Runs at
    * most once per process.
+   * @returns The claimed tag name, or '' when no candidate could be claimed.
    */
   async resolveActiveTagName(): Promise<string> {
     if (this.activeTagNameField !== '') return this.activeTagNameField
@@ -417,6 +426,7 @@ export class TagManager {
   /**
    * This bot's resolved active-tag name; falls back to the global default so
    * /done removal still targets a plausible heart.
+   * @returns The resolved name, or the global default heart name.
    */
   activeTagName(): string {
     if (this.activeTagNameField !== '') return this.activeTagNameField
@@ -490,6 +500,9 @@ export class TagManager {
    * Whether the chat currently carries a binding for the exact tag id. A bind
    * with a dead id returns code=0 while creating nothing, so binds are
    * verified by reading the relation back.
+   * @param chatID - Chat ID.
+   * @param tagID - Tag id to look for.
+   * @returns True when the chat carries the tag; false on query failure.
    */
   async chatHasTagID(chatID: string, tagID: string): Promise<boolean> {
     let resp: Awaited<ReturnType<TagApi['getTagRelation']>>
@@ -508,6 +521,8 @@ export class TagManager {
 
   /**
    * Whether the chat still carries the active (heart) tag.
+   * @param chatID - Chat ID.
+   * @returns True when the chat carries the active tag; false on query failure.
    */
   async chatHasActiveTag(chatID: string): Promise<boolean> {
     let resp: Awaited<ReturnType<TagApi['getTagRelation']>>

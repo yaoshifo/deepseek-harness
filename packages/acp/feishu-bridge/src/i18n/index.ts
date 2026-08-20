@@ -25,10 +25,15 @@ export type Language = '' | 'en' | 'zh' | 'zh-TW' | 'ja' | 'es' | (string & {})
 
 /** Auto-detect from user messages. */
 export const langAuto: Language = ''
+/** English. */
 export const langEnglish: Language = 'en'
+/** Simplified Chinese. */
 export const langChinese: Language = 'zh'
+/** Traditional Chinese. */
 export const langTraditionalChinese: Language = 'zh-TW'
+/** Japanese. */
 export const langJapanese: Language = 'ja'
+/** Spanish. */
 export const langSpanish: Language = 'es'
 
 /**
@@ -165,7 +170,11 @@ export class I18n {
     }
   }
 
-  /** The resolved language: fixed value, last detection, or English before any detection. */
+  /**
+   * The resolved language: fixed value, last detection, or English before any detection.
+   *
+   * @returns The language used for message lookups.
+   */
   currentLang(): Language {
     if (this.lang === langAuto) {
       if (this.detected !== '') {
@@ -176,7 +185,11 @@ export class I18n {
     return this.lang
   }
 
-  /** True for Simplified and Traditional Chinese. */
+  /**
+   * True for Simplified and Traditional Chinese.
+   *
+   * @returns True when the resolved language is a Chinese variant.
+   */
   isZhLike(): boolean {
     const l = this.currentLang()
     return l === langChinese || l === langTraditionalChinese

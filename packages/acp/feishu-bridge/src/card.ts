@@ -495,7 +495,16 @@ export class CardBuilder {
     return this
   }
 
-  /** Like {@link CardBuilder.listItemBtn} with extra callback data. */
+  /**
+   * Like {@link CardBuilder.listItemBtn} with extra callback data.
+   * @param label - Bold row text.
+   * @param description - Optional secondary text under the label.
+   * @param btnText - Display text on the row's button.
+   * @param btnType - Row button style: "primary", "default", or "danger".
+   * @param btnValue - Callback data for the row's button.
+   * @param extra - Additional key-value pairs carried in the button callback.
+   * @returns This builder, for chaining.
+   */
   listItemBtnExtra(
     label: string,
     description: string,
@@ -510,13 +519,32 @@ export class CardBuilder {
     return this
   }
 
-  /** Append a list row whose button opens a URL directly. */
+  /**
+   * Append a list row whose button opens a URL directly.
+   * @param text - Row description text.
+   * @param btnText - Display text on the row's button.
+   * @param btnType - Row button style: "primary", "default", or "danger".
+   * @param btnURL - URL the button opens (no callback).
+   * @returns This builder, for chaining.
+   */
   listItemURL(text: string, btnText: string, btnType: string, btnURL: string): this {
     this.card.elements.push({ kind: 'listItem', text, btnText, btnType, btnValue: '', btnUrl: btnURL })
     return this
   }
 
-  /** Append a list row with a URL (jump) button plus a second callback button, which may render disabled. */
+  /**
+   * Append a list row with a URL (jump) button plus a second callback button, which may render disabled.
+   * @param text - Row description text.
+   * @param btnText - Display text on the URL button.
+   * @param btnType - URL button style: "primary", "default", or "danger".
+   * @param btnURL - URL the first button opens (no callback).
+   * @param btn2Text - Display text on the second, callback button.
+   * @param btn2Type - Second button style: "primary", "default", or "danger".
+   * @param btn2Value - Callback data for the second button.
+   * @param btn2Disabled - When true, the second button renders disabled and carries no callback value.
+   * @param btn2Tip - Tooltip shown while the second button is disabled.
+   * @returns This builder, for chaining.
+   */
   listItemURLAction(text: string, btnText: string, btnType: string, btnURL: string,
     btn2Text: string, btn2Type: string, btn2Value: string, btn2Disabled: boolean, btn2Tip: string): this {
     this.card.elements.push({
@@ -535,7 +563,13 @@ export class CardBuilder {
     return this
   }
 
-  /** Append a dropdown selector; empty option lists are skipped. */
+  /**
+   * Append a dropdown selector; empty option lists are skipped.
+   * @param placeholder - Placeholder text shown before a choice is made.
+   * @param options - Dropdown items.
+   * @param initValue - Pre-selected option value (empty = none).
+   * @returns This builder, for chaining.
+   */
   select(placeholder: string, options: CardSelectOption[], initValue: string): this {
     if (options.length > 0) {
       this.card.elements.push({ kind: 'select', placeholder, options, initValue })
@@ -543,7 +577,14 @@ export class CardBuilder {
     return this
   }
 
-  /** Append a multi-select checkbox element; empty option lists are skipped. */
+  /**
+   * Append a multi-select checkbox element; empty option lists are skipped.
+   * @param question - Question text rendered above the checkboxes (empty = none).
+   * @param options - Checkbox items.
+   * @param action - Form submit action carried by the submit button's callback.
+   * @param extra - Additional key-value pairs carried in the submit callback.
+   * @returns This builder, for chaining.
+   */
   checkOptions(question: string, options: CardCheckOption[], action: string, extra?: Record<string, string>): this {
     if (options.length > 0) {
       this.card.elements.push(extra === undefined
@@ -553,7 +594,11 @@ export class CardBuilder {
     return this
   }
 
-  /** Append a footnote element; empty text is skipped. */
+  /**
+   * Append a footnote element; empty text is skipped.
+   * @param text - Footnote text.
+   * @returns This builder, for chaining.
+   */
   note(text: string): this {
     if (text !== '') {
       this.card.elements.push({ kind: 'note', text })
@@ -561,7 +606,12 @@ export class CardBuilder {
     return this
   }
 
-  /** Append a tagged footnote element (machine-readable tag); empty text is skipped. */
+  /**
+   * Append a tagged footnote element (machine-readable tag); empty text is skipped.
+   * @param tag - Machine-readable identifier, not displayed.
+   * @param text - Footnote text.
+   * @returns This builder, for chaining.
+   */
   taggedNote(tag: string, text: string): this {
     if (text !== '') {
       this.card.elements.push({ kind: 'note', text, tag })
@@ -569,7 +619,12 @@ export class CardBuilder {
     return this
   }
 
-  /** Append an image element; empty image keys are skipped. */
+  /**
+   * Append an image element; empty image keys are skipped.
+   * @param imageKey - Platform-specific image key (e.g. a Feishu image_key).
+   * @param alt - Alt text shown when the image fails to load.
+   * @returns This builder, for chaining.
+   */
   image(imageKey: string, alt: string): this {
     if (imageKey !== '') {
       this.card.elements.push({ kind: 'image', imageKey, alt })
@@ -581,6 +636,9 @@ export class CardBuilder {
    * Append a full-width image that shows the complete image without cropping
    * (Feishu scale_type=fit_horizontal). Use for tall screenshots where the
    * default crop_center would limit height and shrink width.
+   * @param imageKey - Platform-specific image key (e.g. a Feishu image_key).
+   * @param alt - Alt text shown when the image fails to load.
+   * @returns This builder, for chaining.
    */
   imageFill(imageKey: string, alt: string): this {
     if (imageKey !== '') {
@@ -589,7 +647,13 @@ export class CardBuilder {
     return this
   }
 
-  /** Append a collapsible panel; empty element lists are skipped. */
+  /**
+   * Append a collapsible panel; empty element lists are skipped.
+   * @param title - Panel header title.
+   * @param expanded - Initial expansion state.
+   * @param elements - Panel content elements.
+   * @returns This builder, for chaining.
+   */
   collapsiblePanel(title: string, expanded: boolean, ...elements: CardElement[]): this {
     if (elements.length > 0) {
       this.card.elements.push({ kind: 'collapsiblePanel', title, expanded, elements })
@@ -597,7 +661,12 @@ export class CardBuilder {
     return this
   }
 
-  /** Append a form container; empty element lists are skipped. */
+  /**
+   * Append a form container; empty element lists are skipped.
+   * @param name - Form component name (required by Feishu).
+   * @param elements - Form content elements (inputs, submit buttons, etc.).
+   * @returns This builder, for chaining.
+   */
   form(name: string, ...elements: CardElement[]): this {
     if (elements.length > 0) {
       this.card.elements.push({ kind: 'form', name, elements })
@@ -605,17 +674,27 @@ export class CardBuilder {
     return this
   }
 
-  /** Append pre-built elements verbatim (composed cards like the completion footer). */
+  /**
+   * Append pre-built elements verbatim (composed cards like the completion footer).
+   * @param elements - Elements to append as-is.
+   * @returns This builder, for chaining.
+   */
   raw(...elements: CardElement[]): this {
     this.card.elements.push(...elements)
     return this
   }
 
-  /** Return the constructed card. */
+  /**
+   * Return the constructed card.
+   * @returns The assembled card.
+   */
   build(): Card {
     return Object.assign(new Card(), { header: this.card.header, elements: [...this.card.elements] })
   }
 }
 
-/** Start a new card builder. */
+/**
+ * Start a new card builder.
+ * @returns A fresh builder with an empty card.
+ */
 export const newCard = (): CardBuilder => new CardBuilder()

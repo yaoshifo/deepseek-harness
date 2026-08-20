@@ -19,10 +19,16 @@ export type FeishuCardMap = Record<string, unknown>
  * 构造都必须走这两个常量，避免渲染路径漂移。
  */
 export const cardBodyPadding = '4px 12px 4px 12px'
+/** Body vertical spacing in the compact baseline. */
 export const cardBodyVerticalSpacing = '0px'
+/** Header padding in the compact baseline. */
 export const cardHeaderPadding = '4px 12px 4px 12px'
 
-/** Card body structure carrying the compact baseline. */
+/**
+ * Card body structure carrying the compact baseline.
+ * @param elements - Rendered body element maps.
+ * @returns The body map with compact padding and vertical spacing applied.
+ */
 export function compactCardBody(elements: FeishuCardMap[]): FeishuCardMap {
   return {
     padding: cardBodyPadding,
@@ -35,7 +41,12 @@ function plainText(content: string): FeishuCardMap {
   return { tag: 'plain_text', content }
 }
 
-/** Render a single CardElement into a Feishu card element map; unhandled kinds return undefined. */
+/**
+ * Render a single CardElement into a Feishu card element map; unhandled kinds return undefined.
+ * @param elem - Core card element to render.
+ * @param sessionKey - Session key stamped into button callback values (empty = omitted).
+ * @returns The schema 2.0 element map, or undefined when the kind has no Feishu rendering.
+ */
 export function renderElement(elem: CardElement, sessionKey: string): FeishuCardMap | undefined {
   switch (elem.kind) {
     case 'markdown':
@@ -335,7 +346,12 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
   }
 }
 
-/** Convert a core Card into the Feishu Interactive Card schema 2.0 map. */
+/**
+ * Convert a core Card into the Feishu Interactive Card schema 2.0 map.
+ * @param card - Card to render; undefined yields the bare schema/config skeleton.
+ * @param sessionKey - Session key stamped into interactive elements' callback values.
+ * @returns The rendered card map.
+ */
 export function renderCardMap(card: Card | undefined, sessionKey: string): FeishuCardMap {
   const result: FeishuCardMap = {
     schema: '2.0',
@@ -367,19 +383,32 @@ export function renderCardMap(card: Card | undefined, sessionKey: string): Feish
   return result
 }
 
-/** Convert a core Card into the Feishu Interactive Card JSON string. */
+/**
+ * Convert a core Card into the Feishu Interactive Card JSON string.
+ * @param card - Card to render; undefined yields the bare schema/config skeleton.
+ * @param sessionKey - Session key stamped into interactive elements' callback values.
+ * @returns The rendered card map as JSON.
+ */
 export function renderCard(card: Card | undefined, sessionKey: string): string {
   return JSON.stringify(renderCardMap(card, sessionKey))
 }
 
 const deleteModeCheckerNamePrefix = 'delete_sel_'
 
-/** Stable checker component name for a delete-mode session row. */
+/**
+ * Stable checker component name for a delete-mode session row.
+ * @param sessionID - Session identifier encoded into the name.
+ * @returns The prefixed, hex-encoded checker name.
+ */
 export function deleteModeCheckerName(sessionID: string): string {
   return deleteModeCheckerNamePrefix + Buffer.from(sessionID, 'utf8').toString('hex')
 }
 
-/** Recover the session ID from a delete-mode checker name. */
+/**
+ * Recover the session ID from a delete-mode checker name.
+ * @param name - Checker component name produced by {@link deleteModeCheckerName}.
+ * @returns The decoded session ID, or undefined when the name is not a checker name.
+ */
 export function parseDeleteModeCheckerName(name: string): string | undefined {
   if (!name.startsWith(deleteModeCheckerNamePrefix)) return undefined
   const raw = name.slice(deleteModeCheckerNamePrefix.length)

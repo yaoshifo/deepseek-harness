@@ -46,12 +46,20 @@ export class ChatNameCache {
     this.cache.set(chatID, value)
   }
 
-  /** Record a fresh successful name (rename events). */
+  /**
+   * Record a fresh successful name (rename events).
+   * @param chatID - Chat ID.
+   * @param name - Current display name.
+   */
   setName(chatID: string, name: string): void {
     this.cache.set(chatID, { name, at: Date.now() })
   }
 
-  /** The raw cached value, if any. */
+  /**
+   * The raw cached value, if any.
+   * @param chatID - Chat ID.
+   * @returns The cached entry (fresh, legacy string, or fail marker), or undefined when uncached.
+   */
   get(chatID: string): CacheValue | undefined {
     return this.cache.get(chatID)
   }

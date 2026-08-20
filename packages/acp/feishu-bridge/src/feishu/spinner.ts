@@ -22,6 +22,7 @@ export interface SpinnerCfg {
   executingKey: string
 }
 
+/** Spinner config with uploads disabled: no header icons, empty keys. */
 export const noSpinner: SpinnerCfg = { enabled: false, thinkingKey: '', executingKey: '' }
 
 /**
@@ -48,6 +49,9 @@ export function resolveSpinnerAsset(name: string, moduleDir = dirname(fileURLToP
  * Header-icon key for a text-path progress card: "thinking" → thinkingKey,
  * "" / "running" → executingKey, terminal states → none. An empty chosen key
  * falls back to the other so one failed upload doesn't suppress the icon.
+ * @param spin - Uploaded spinner keys.
+ * @param state - Progress state ('thinking', 'running', '', 'completed', 'failed').
+ * @returns The image key for the header icon, or '' when disabled or terminal.
  */
 export function spinnerKeyForState(spin: SpinnerCfg, state: string): string {
   if (!spin.enabled) return ''
@@ -71,6 +75,9 @@ export function spinnerKeyForState(spin: SpinnerCfg, state: string): string {
 /**
  * Header-icon key for a running-state card by latest entry kind:
  * tool_use/tool_result → executing, anything else → thinking.
+ * @param spin - Uploaded spinner keys.
+ * @param items - Progress card entries, latest last.
+ * @returns The image key for the header icon, or '' when disabled.
  */
 export function spinnerKeyForItems(spin: SpinnerCfg, items: ProgressCardEntry[]): string {
   if (!spin.enabled) return ''

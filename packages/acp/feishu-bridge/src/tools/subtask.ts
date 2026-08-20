@@ -160,7 +160,12 @@ export function registerSubtaskTool(ctx: Context, route: SubtaskAgentRouter): ()
   }))
 }
 
-/** Narrowing helper for the router's agent argument (structural dsh Agent). */
+/**
+ * Narrowing helper for the router's agent argument (structural dsh Agent).
+ *
+ * @param agent - The untyped caller agent value from the tool run context.
+ * @returns The agent's id, or '' when the value is not a bridge-owned agent.
+ */
 export function agentIDOf(agent: unknown): string {
   const id = (agent as AgentLike | undefined)?.id
   // dsh agent/session ids are branded strings; anything else is not a

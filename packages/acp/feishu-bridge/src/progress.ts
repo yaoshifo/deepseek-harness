@@ -53,8 +53,11 @@ export interface ProgressCardPayload {
 /** Marks a structured payload for card-style progress. */
 export const ProgressCardPayloadPrefix = '__cc_connect_progress_card_v1__:'
 
+/** Legacy progress style: per-event chat messages. */
 const progressStyleLegacy = 'legacy'
+/** Compact progress style: coalesced editable message. */
 const progressStyleCompact = 'compact'
+/** Card progress style: structured progress card payload. */
 const progressStyleCard = 'card'
 
 export { progressStyleLegacy, progressStyleCompact, progressStyleCard }
@@ -62,6 +65,10 @@ export { progressStyleLegacy, progressStyleCompact, progressStyleCard }
 /**
  * Validate and normalise a progress_style config value: "legacy" (default),
  * "compact", or "card".
+ *
+ * @param platformName - Platform name for the error message.
+ * @param raw - Config value to validate.
+ * @returns Normalized style name.
  */
 export function parseProgressStyle(platformName: string, raw: string): string {
   const v = raw.trim().toLowerCase()
@@ -77,7 +84,13 @@ export function parseProgressStyle(platformName: string, raw: string): string {
   }
 }
 
-/** Encode legacy text-only progress entries into a transport string. */
+/**
+ * Encode legacy text-only progress entries into a transport string.
+ *
+ * @param entries - Legacy text-only progress entries.
+ * @param truncated - Whether older entries were dropped.
+ * @returns Transport string with the payload prefix, or empty string when no entries survive.
+ */
 export function buildProgressCardPayload(entries: string[], truncated: boolean): string {
   const cleaned: string[] = []
   for (const entry of entries) {
@@ -108,7 +121,18 @@ function cleanEntry(item: ProgressCardEntry, text: string): ProgressCardEntry {
   return cleaned
 }
 
-/** Encode ordered typed progress events (V2) into a transport string. */
+/**
+ * Encode ordered typed progress events (V2) into a transport string.
+ *
+ * @param items - Ordered typed progress events.
+ * @param truncated - Whether older events were dropped.
+ * @param agent - Agent label for the card title.
+ * @param lang - Progress language tag.
+ * @param state - Card lifecycle state; empty string normalizes to running.
+ * @param extraTodos - Todo items for the dedicated task list section.
+ * @param lastTS - Latest tool-call timestamp for the card title.
+ * @returns Transport string with the payload prefix, or empty string when no items survive.
+ */
 export function buildProgressCardPayloadV2(
   items: ProgressCardEntry[],
   truncated: boolean,
@@ -138,7 +162,12 @@ export function buildProgressCardPayloadV2(
   return ProgressCardPayloadPrefix + JSON.stringify(payload)
 }
 
-/** Decode a structured progress payload; false when absent or malformed. */
+/**
+ * Decode a structured progress payload; false when absent or malformed.
+ *
+ * @param content - Raw content, possibly payload-prefixed.
+ * @returns Decoded payload with normalized items, or undefined when absent or malformed.
+ */
 export function parseProgressCardPayload(content: string): ProgressCardPayload | undefined {
   if (!content.startsWith(ProgressCardPayloadPrefix)) return undefined
   const raw = content.slice(ProgressCardPayloadPrefix.length)
@@ -174,7 +203,12 @@ export function parseProgressCardPayload(content: string): ProgressCardPayload |
   return payload
 }
 
-/** Infer the entry kind from a legacy emoji-prefixed text entry. */
+/**
+ * Infer the entry kind from a legacy emoji-prefixed text entry.
+ *
+ * @param entry - Legacy text entry.
+ * @returns Entry kind inferred from emoji prefixes and tool markers.
+ */
 export function inferLegacyEntryKind(entry: string): ProgressCardEntryKind {
   if (entry.startsWith('💭')) return 'thinking'
   if (entry.startsWith('🔧') || entry.includes('**Tool #')) return 'tool_use'

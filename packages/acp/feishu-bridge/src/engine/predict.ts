@@ -15,6 +15,7 @@ import type { Engine, InteractiveState } from './engine.js'
 import type { Session } from './session.js'
 import { buildCompactContext } from './groupname.js'
 
+/** Default predict-next prompt (Go defaultPredictPrompt) used unless the config overrides it. */
 export const defaultPredictPrompt = `你在预测人类用户接下来会输入什么
 
 # 规则
@@ -28,6 +29,7 @@ export const defaultPredictPrompt = `你在预测人类用户接下来会输入�
 现在预测：
 `
 
+/** Default turn-summary prompt (Go defaultSummaryPrompt) used unless the config overrides it. */
 export const defaultSummaryPrompt = `用一行简洁的话概括这轮 AI turn 做了什么。
 
 # 规则
@@ -52,7 +54,12 @@ const defaultInsightTimeoutMs = 120_000
 /** /btw fork deadline (Go cmdBtw's 300s context). */
 const btwTimeoutMs = 300_000
 
-/** The predict-next label: the model when set, else the provider name. */
+/**
+ * The predict-next label: the model when set, else the provider name.
+ *
+ * @param e - Engine carrying the predict-next config.
+ * @returns The label shown on the insight card.
+ */
 export function predictNextLabel(e: Engine): string {
   return e.predictNextModel !== '' ? e.predictNextModel : e.predictNextProvider
 }
@@ -285,6 +292,9 @@ export function triggerInsights(
 
 /**
  * Register the /btw command on an engine. Returns the disposer.
+ *
+ * @param e - Engine to register the command and resolver on.
+ * @returns Disposer removing the handler and restoring the previous resolver.
  */
 export function registerPredictCommands(e: Engine): () => void {
   const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()
@@ -309,6 +319,12 @@ export function registerPredictCommands(e: Engine): () => void {
  * from the live session, falling back to the persisted session id so /btw
  * works after a restart or idle-reap; the fork runs in the session's
  * workdir (worktree, /spawn --dir override, or the project default).
+ *
+ * @param e - Engine carrying the sessions and interactive states.
+ * @param p - Platform to reply on.
+ * @param msg - The /btw command message.
+ * @param args - Command arguments after /btw; the side question text.
+ * @returns True (the command is always consumed).
  */
 export function cmdBtw(e: Engine, p: Platform, msg: Message, args: string[]): boolean {
   let text = args.join(' ')

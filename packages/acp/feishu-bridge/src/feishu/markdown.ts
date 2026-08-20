@@ -10,7 +10,9 @@
 
 /** Outbound msg_type values (Go larkim.Msg.Type*). */
 export const msgTypeText = 'text'
+/** Outbound msg_type for rich-text post messages. */
 export const msgTypePost = 'post'
+/** Outbound msg_type for interactive cards. */
 export const msgTypeInteractive = 'interactive'
 
 /**
@@ -21,13 +23,21 @@ export const maxCardTables = 5
 
 const markdownIndicators = ['```', '**', '~~', '`', '\n- ', '\n* ', '\n1. ', '\n# ', '---']
 
-/** Whether s carries any markdown syntax worth rich rendering. */
+/**
+ * Whether s carries any markdown syntax worth rich rendering.
+ * @param s - Candidate message text.
+ * @returns True when any markdown indicator is present.
+ */
 export function containsMarkdown(s: string): boolean {
   const padded = `\n${s}`
   return markdownIndicators.some(ind => padded.includes(ind))
 }
 
-/** Whether s has code blocks or tables that require card rendering. */
+/**
+ * Whether s has code blocks or tables that require card rendering.
+ * @param s - Candidate message text.
+ * @returns True when a fenced code block or a table line is present.
+ */
 export function hasComplexMarkdown(s: string): boolean {
   if (s.includes('```')) return true
   // Table: line starting and ending with |
@@ -41,6 +51,8 @@ export function hasComplexMarkdown(s: string): boolean {
 /**
  * Count the distinct markdown tables in s: a table is a group of consecutive
  * lines where each line starts and ends with '|'.
+ * @param s - Markdown text to scan.
+ * @returns The number of distinct table groups.
  */
 export function countMarkdownTables(s: string): number {
   let count = 0
@@ -64,6 +76,8 @@ export function countMarkdownTables(s: string): number {
  * preview-card PATCH path cannot fall back to a non-card format mid-stream,
  * so excess tables are collapsed and the engine delivers the full answer
  * out-of-band (PreviewOverflowReporter / analysisTruncated).
+ * @param s - Markdown text to deliver.
+ * @returns The text with tables beyond maxCardTables replaced by a single marker line.
  */
 export function collapseExcessCardTables(s: string): string {
   if (countMarkdownTables(s) <= maxCardTables) return s
@@ -97,12 +111,20 @@ export function collapseExcessCardTables(s: string): string {
   return b.endsWith('\n') ? b.slice(0, -1) : b
 }
 
-/** Whether content overflows the streaming-preview card's table limit. */
+/**
+ * Whether content overflows the streaming-preview card's table limit.
+ * @param content - Candidate card markdown.
+ * @returns True when the table count exceeds maxCardTables.
+ */
 export function previewOverflow(content: string): boolean {
   return countMarkdownTables(content) > maxCardTables
 }
 
-/** Whether a line is a markdown table row. */
+/**
+ * Whether a line is a markdown table row.
+ * @param line - Line to test.
+ * @returns True when the line is a markdown table row.
+ */
 export function isTableRow(line: string): boolean {
   const t = line.trim()
   return t.startsWith('|') && t.includes('|')
@@ -113,6 +135,8 @@ export function isTableRow(line: string): boolean {
  * where a single \n is treated as whitespace (like HTML): converts \n between
  * non-empty lines to \n\n outside code blocks, preserves \n between adjacent
  * table rows, and ensures code fences start on their own line.
+ * @param md - Card markdown to normalize.
+ * @returns The markdown with Feishu-renderable line breaks.
  */
 export function preprocessFeishuMarkdown(md: string): string {
   // Pass 1: ensure code fences start on their own line.
@@ -154,7 +178,11 @@ export function preprocessFeishuMarkdown(md: string): string {
   return b
 }
 
-/** Feishu post hrefs must be HTTP(S); other schemes fail with code 230001. */
+/**
+ * Feishu post hrefs must be HTTP(S); other schemes fail with code 230001.
+ * @param u - Link URL to test.
+ * @returns True when the scheme is http:// or https://.
+ */
 export function isValidFeishuHref(u: string): boolean {
   return u.startsWith('http://') || u.startsWith('https://')
 }
@@ -166,6 +194,8 @@ const mdImageRe = /!\[([^\]]*)\]\(([^)]+)\)/g
  * Rewrite markdown links with non-HTTP(S) schemes to plain text and strip
  * image syntax, preventing Feishu API rejection (code 230001; cards also
  * reject external image URLs).
+ * @param md - Markdown to rewrite.
+ * @returns The markdown with image syntax stripped and non-HTTP(S) links converted to plain text.
  */
 export function sanitizeMarkdownURLs(md: string): string {
   const stripped = md.replace(mdImageRe, '[$1]')
@@ -204,6 +234,8 @@ function stripNonFeishuTags(line: string): string {
  * Strip HTML tags Feishu card markdown cannot render. Code fences are tracked
  * line-by-line and left verbatim; outside fences, non-whitelisted tags are
  * removed while the text between tags is kept.
+ * @param md - Markdown to clean.
+ * @returns The markdown with non-whitelisted HTML tags removed outside code fences.
  */
 export function sanitizeFeishuMarkdownHTML(md: string): string {
   const lines = md.split('\n')
@@ -223,12 +255,18 @@ export function sanitizeFeishuMarkdownHTML(md: string): string {
  * The full cleaning pipeline expected by a schema 2.0 {tag:"markdown"}
  * element: HTML strip → URL sanitize → line-break normalization (preprocess
  * last). Use everywhere card markdown content is assembled.
+ * @param md - Raw card markdown.
+ * @returns The markdown ready for a schema 2.0 markdown element.
  */
 export function finalizeFeishuCardMarkdown(md: string): string {
   return preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(md)))
 }
 
-/** Build a Feishu post message body using the md tag (normal chat font). */
+/**
+ * Build a Feishu post message body using the md tag (normal chat font).
+ * @param content - Markdown body text.
+ * @returns The serialized post message JSON.
+ */
 export function buildPostMdJSON(content: string): string {
   content = sanitizeMarkdownURLs(content)
   const post = {
@@ -263,6 +301,8 @@ const inlineMarkers: MarkerDef[] = [
 /**
  * Parse a single markdown line into Feishu post elements: **bold**, `code`,
  * ~~strike~~, *italic*, and [text](http url) links.
+ * @param line - A single markdown line.
+ * @returns The parsed inline elements.
  */
 export function parseInlineMarkdown(line: string): PostInlineElement[] {
   const elements: PostInlineElement[] = []

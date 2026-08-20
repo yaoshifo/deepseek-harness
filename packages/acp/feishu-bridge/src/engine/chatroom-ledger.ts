@@ -25,12 +25,21 @@ function serialize<T>(op: () => T): Promise<T> {
   return run
 }
 
-/** Path-safe id derived from s (sha256, first 16 hex chars). */
+/** Path-safe id derived from s (sha256, first 16 hex chars).
+ *
+ * @param s - Value to digest (a hub session key).
+ * @returns the 16-hex-char sha256 prefix of s.
+ */
 export function hashID(s: string): string {
   return createHash('sha256').update(s).digest('hex').slice(0, 16)
 }
 
-/** Absolute path to a chatroom's ledger directory. */
+/** Absolute path to a chatroom's ledger directory.
+ *
+ * @param moderatorDir - Chatroom home dir holding the ledgers/ subtree.
+ * @param hubKey - Hub session key the ledger belongs to.
+ * @returns the ledger directory path for that hub.
+ */
 export function chatroomLedgerDir(moderatorDir: string, hubKey: string): string {
   return join(moderatorDir, 'ledgers', hashID(hubKey))
 }
@@ -48,6 +57,10 @@ function nowClock(): string {
 /**
  * Write a fresh ledger (three files), creating the parent dir. Overwrites
  * any prior files — a new chatroom is a new discussion.
+ *
+ * @param dir - Ledger directory to create and populate.
+ * @param topic - Discussion topic written into the file headers.
+ * @param roles - Role names listed in the synthesis header.
  */
 export function initChatroomLedger(dir: string, topic: string, roles: string[]): Promise<void> {
   return serialize(() => {
@@ -75,7 +88,12 @@ export function initChatroomLedger(dir: string, topic: string, roles: string[]):
   })
 }
 
-/** Append a role's reply to RECORD.md (append-only). */
+/** Append a role's reply to RECORD.md (append-only).
+ *
+ * @param dir - Ledger directory.
+ * @param roleName - Role credited with the reply.
+ * @param reply - Reply text appended to the discussion record.
+ */
 export function appendChatroomLedger(dir: string, roleName: string, reply: string): Promise<void> {
   return serialize(() => {
     const time = nowClock().slice(11)
@@ -87,6 +105,9 @@ export function appendChatroomLedger(dir: string, roleName: string, reply: strin
 /**
  * Replace the content of SYNTHESIS.md after the `## 当前图景与进展`
  * header, preserving the file header (topic/roles/start).
+ *
+ * @param dir - Ledger directory.
+ * @param synthesis - New synthesis body replacing the old section.
  */
 export function updateChatroomLedgerSynthesis(dir: string, synthesis: string): Promise<void> {
   return serialize(() => {
@@ -103,6 +124,9 @@ export function updateChatroomLedgerSynthesis(dir: string, synthesis: string): P
 /**
  * Overwrite SUBPROBLEMS.md with the given text (子问题清单 + 进度): a fresh
  * list replaces the old one.
+ *
+ * @param dir - Ledger directory.
+ * @param text - New subproblem list body.
  */
 export function updateChatroomSubproblems(dir: string, text: string): Promise<void> {
   return serialize(() => {

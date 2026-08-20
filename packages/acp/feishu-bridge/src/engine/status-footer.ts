@@ -144,6 +144,9 @@ export interface Interval {
 /**
  * Total wall-clock covered by the union of the given intervals, merging
  * overlaps and adjacencies so parallel tools count once (Go unionDuration).
+ *
+ * @param intervals - [start, end] windows in milliseconds; order does not matter.
+ * @returns Union length in milliseconds; 0 for an empty list.
  */
 export function unionDuration(intervals: Interval[]): number {
   const sorted = [...intervals].sort((a, b) => a.start - b.start)
@@ -165,25 +168,42 @@ export function unionDuration(intervals: Interval[]): number {
 
 // ── token / duration formatters ────────────────────────────────────────────
 
-/** Compact token count, e.g. "8.4k" → "84k" style (Go formatTokenK, ceil). */
+/** Compact token count, e.g. "8.4k" → "84k" style (Go formatTokenK, ceil).
+ * @param tokens - Raw token count.
+ * @returns The count verbatim below 1000, else thousands rounded up with a "k" suffix.
+ */
 export function formatTokenK(tokens: number): string {
   if (tokens < 1000) return `${tokens}`
   return `${Math.ceil(tokens / 1000)}k`
 }
 
-/** "ctx: +delta=cum · N api [· duration]" (Go formatCtxTokensWithTotal). */
+/** "ctx: +delta=cum · N api [· duration]" (Go formatCtxTokensWithTotal).
+ * @param nonCachedDelta - Non-cached input tokens added this turn.
+ * @param nonCachedCum - Non-cached input tokens accumulated across turns.
+ * @param numTurns - API calls made so far.
+ * @param durationStr - Optional duration segment; '' omits the "· duration" part.
+ * @returns The formatted ctx line.
+ */
 export function formatCtxTokensWithTotal(nonCachedDelta: number, nonCachedCum: number, numTurns: number, durationStr: string): string {
   let s = `ctx: +${formatTokenK(nonCachedDelta)}=${formatTokenK(nonCachedCum)} · ${numTurns} api`
   if (durationStr !== '') s += ` · ${durationStr}`
   return s
 }
 
-/** "hit: +delta=cum · N zip" (Go formatCacheHitMsg). */
+/** "hit: +delta=cum · N zip" (Go formatCacheHitMsg).
+ * @param cachedDelta - Cached tokens added this turn.
+ * @param cachedCum - Cached tokens accumulated across turns.
+ * @param compactionCount - Compactions applied to the session so far.
+ * @returns The formatted cache-hit line.
+ */
 export function formatCacheHitMsg(cachedDelta: number, cachedCum: number, compactionCount: number): string {
   return `hit: +${formatTokenK(cachedDelta)}=${formatTokenK(cachedCum)} · ${compactionCount} zip`
 }
 
-/** Whole seconds under a minute, whole minutes above (Go formatTurnDuration). */
+/** Whole seconds under a minute, whole minutes above (Go formatTurnDuration).
+ * @param ms - Duration in milliseconds; non-positive yields ''.
+ * @returns The compact duration string.
+ */
 export function formatTurnDuration(ms: number): string {
   if (ms <= 0) return ''
   const secs = ms / 1000
@@ -195,13 +215,20 @@ export function formatTurnDuration(ms: number): string {
 const minTokensForRate = 10
 const minThinkingForRateMs = 200
 
-/** Formatted output-tokens-per-second string, or '' for a too-small turn (Go tokenRateMessage). */
+/** Formatted output-tokens-per-second string, or '' for a too-small turn (Go tokenRateMessage).
+ * @param outputTokens - Output tokens produced this turn; below the minimum sample size the rate is noise.
+ * @param thinkingTimeMs - Model-generation wall time this turn.
+ * @returns The formatted rate, or '' when either input is below its minimum.
+ */
 export function tokenRateMessage(outputTokens: number, thinkingTimeMs: number): string {
   if (outputTokens < minTokensForRate || thinkingTimeMs < minThinkingForRateMs) return ''
   return formatTokenRate(outputTokens / (thinkingTimeMs / 1000))
 }
 
-/** Format a tokens-per-second rate (Go formatTokenRate). */
+/** Format a tokens-per-second rate (Go formatTokenRate).
+ * @param tokensPerSec - Rate to render.
+ * @returns The rate with a " t/s" suffix; precision scales with magnitude.
+ */
 export function formatTokenRate(tokensPerSec: number): string {
   if (tokensPerSec >= 1000) return `${(tokensPerSec / 1000).toFixed(1)}k t/s`
   if (tokensPerSec >= 10) return `${Math.round(tokensPerSec)} t/s`
@@ -212,13 +239,19 @@ export function formatTokenRate(tokensPerSec: number): string {
 
 const ctxSelfReportRe = /\n?\[ctx: ~\d+%\]/g
 
-/** Extract the percentage from a self-reported "[ctx: ~XX%]" line (Go parseSelfReportedCtx). */
+/** Extract the percentage from a self-reported "[ctx: ~XX%]" line (Go parseSelfReportedCtx).
+ * @param s - Reply text possibly containing a self-reported ctx line.
+ * @returns The reported percentage, or 0 when absent.
+ */
 export function parseSelfReportedCtx(s: string): number {
   const m = /\[ctx: ~(\d+)%\]/.exec(s)
   return m === null ? 0 : Number.parseInt(m[1] ?? '0', 10)
 }
 
-/** Remove self-reported "[ctx: ~N%]" lines from a reply (Go ctxSelfReportRe.ReplaceAllString). */
+/** Remove self-reported "[ctx: ~N%]" lines from a reply (Go ctxSelfReportRe.ReplaceAllString).
+ * @param s - Reply text possibly containing self-reported ctx lines.
+ * @returns The reply with those lines removed.
+ */
 export function stripCtxSelfReport(s: string): string {
   return s.replace(ctxSelfReportRe, '')
 }
@@ -230,6 +263,8 @@ export function stripCtxSelfReport(s: string): string {
  * therefore showed no RAM line on macOS; here os.totalmem/freemem keep the
  * RAM segment cross-platform — a deliberate divergence so the current macOS
  * deployment still gets the 💾 line.
+ *
+ * @returns The usage line, with segments joined by " · "; '' when neither is available.
  */
 export function formatMemInfo(): string {
   const total = totalmem()
@@ -263,6 +298,9 @@ export const gitBranchCache = new Map<string, { line: string; files: string[]; a
  * Branch line + uncommitted file list for the notification footer (Go
  * formatGitBranch): "🌿 <branch>" clean, "🌿 <branch>(N uncommitted)" dirty,
  * or an empty line outside a repo.
+ *
+ * @param dir - Repository directory; '' yields an empty result.
+ * @returns The branch line and uncommitted file basenames, cached per dir for the TTL.
  */
 export async function formatGitBranch(dir: string): Promise<{ line: string; files: string[] }> {
   if (dir === '') return { line: '', files: [] }
@@ -310,7 +348,10 @@ async function formatGitBranchUncached(dir: string): Promise<{ line: string; fil
 
 // ── model / mode labels ────────────────────────────────────────────────────
 
-/** Short display label for the current permission mode (Go formatModeLabel). */
+/** Short display label for the current permission mode (Go formatModeLabel).
+ * @param agent - Agent to probe for its mode; undefined or default mode yields ''.
+ * @returns The compact mode label (e.g. "YOLO", "plan"), '' when unset.
+ */
 export function formatModeLabel(agent: Agent | undefined): string {
   const mode = (agent as { getMode?: () => string } | undefined)?.getMode?.() ?? ''
   switch (mode) {
@@ -329,6 +370,9 @@ export function formatModeLabel(agent: Agent | undefined): string {
  * ProviderSwitcher surface carries only route membership (no model detail),
  * so the ModelSwitcher probe runs first; the switcher's active name is the
  * fallback.
+ *
+ * @param agent - Agent to probe for its model; undefined yields ''.
+ * @returns The model name when known, else the active provider's model or name, else ''.
  */
 export function currentModelLabel(agent: Agent | undefined): string {
   const model = (agent as { getModel?: () => string } | undefined)?.getModel?.().trim()
@@ -350,7 +394,10 @@ export interface StatusFooterInputs {
   editorUrl: string
 }
 
-/** channel ID from "platform:channelID:userID" (Go extractChannelID). */
+/** channel ID from "platform:channelID:userID" (Go extractChannelID).
+ * @param sessionKey - Composite session key.
+ * @returns The middle segment, or '' when the key has no channel part.
+ */
 export function extractChannelID(sessionKey: string): string {
   const parts = sessionKey.split(':', 3)
   return parts.length >= 2 ? (parts[1] ?? '') : ''
@@ -370,6 +417,10 @@ function footerDir(inputs: StatusFooterInputs): string {
  * mirrors Go's signature but is never rendered there either — Go passes the
  * "✅ 完成" heading yet the body never appends it, so card-less platforms
  * receive only the status lines.
+ *
+ * @param _prefix - Unused heading kept for signature parity with Go; never rendered.
+ * @param inputs - Footer inputs; the fields, agent, and dirs decide which lines appear.
+ * @returns The status lines joined by a literal "\n", '' when no line applies.
  */
 export async function buildStatusFooter(_prefix: string, inputs: StatusFooterInputs): Promise<string> {
   const lines: string[] = []
@@ -417,6 +468,9 @@ export async function buildStatusFooter(_prefix: string, inputs: StatusFooterInp
  * session ids, titled by the provider usage line when present. Hints panels
  * (Go buildHintsPanelElements) are not ported — global hints config is a
  * recorded non-migration (MIGRATION.md E-group C list).
+ *
+ * @param inputs - Footer inputs; the fields, agent, and dirs decide which elements appear.
+ * @returns The header suffix plus card elements; both empty when nothing applies.
  */
 export async function buildStatusFooterElements(inputs: StatusFooterInputs): Promise<{ headerSuffix: string; elements: CardElement[] }> {
   const visible: CardElement[] = []
@@ -595,7 +649,10 @@ function formatReplyFooterUsage(report: UsageReport | undefined, i18n: I18n): st
   return i18n.tf(Msg.ReplyFooterRemaining, remaining)
 }
 
-/** The primary (5h) then weekly windows of the first bucket that has any (Go selectUsageWindows). */
+/** The primary (5h) then weekly windows of the first bucket that has any (Go selectUsageWindows).
+ * @param report - Agent-level quota report; undefined yields undefined.
+ * @returns The bucket's 5h window, else its weekly window, else its first, else undefined.
+ */
 export function selectUsageWindows(report: UsageReport | undefined): UsageWindow | undefined {
   if (report === undefined) return undefined
   for (const bucket of report.buckets) {
@@ -641,7 +698,11 @@ async function replyFooterUsageText(
   return text
 }
 
-/** "N% left" from a ContextUsage snapshot (Go replyFooterContextText). */
+/** "N% left" from a ContextUsage snapshot (Go replyFooterContextText).
+ * @param usage - Context-window snapshot; undefined yields ''.
+ * @param i18n - Locale used for the "N% left" phrasing.
+ * @returns The remaining percentage line, '' when usage cannot be derived.
+ */
 export function replyFooterContextText(usage: ContextUsage | undefined, i18n: I18n): string {
   if (usage === undefined || usage.contextWindow <= 0) return ''
   let usedTokens = usage.usedTokens
@@ -668,7 +729,10 @@ function replyFooterWorkDir(session: FooterCapSession | undefined, agent: Footer
   return dir === '' ? '' : compactReplyFooterPath(dir)
 }
 
-/** ~ for home, else the last two path segments (Go compactReplyFooterPath). */
+/** ~ for home, else the last two path segments (Go compactReplyFooterPath).
+ * @param path - Absolute path to shorten.
+ * @returns The display path: '~'-prefixed under home, "…/parent/leaf" elsewhere, '' for blank input.
+ */
 export function compactReplyFooterPath(path: string): string {
   const trimmed = path.trim()
   if (trimmed === '') return ''
@@ -684,7 +748,11 @@ export function compactReplyFooterPath(path: string): string {
   return trimmed
 }
 
-/** Append the footer as an emphasized last line (Go appendReplyFooter). */
+/** Append the footer as an emphasized last line (Go appendReplyFooter).
+ * @param content - Reply body; trailing newlines are trimmed before joining.
+ * @param footer - Footer text; '' returns the trimmed content unchanged.
+ * @returns The reply with the footer in emphasis on a new last line.
+ */
 export function appendReplyFooter(content: string, footer: string): string {
   if (footer === '') return content
   const trimmed = content.replace(/\n+$/, '')
@@ -698,6 +766,13 @@ export function appendReplyFooter(content: string, footer: string): string {
  * known. The dsh adapter exposes no UsageReporter/ContextUsageReporter, so
  * production footers carry model/effort/workdir; the usage paths stay for
  * agents that grow those caps (recorded in FEATURE-PARITY.md #11).
+ *
+ * @param deps - Engine dependencies: the i18n locale and the usage-summary cache.
+ * @param agent - Agent probed for model/effort/workdir when the session lacks them.
+ * @param session - Session whose model/effort/workdir take precedence over the agent's.
+ * @param workspaceDir - Explicit workdir override; blank falls back to session then agent.
+ * @param contextLeft - Precomputed "N% left" context text; blank triggers the quota fetch.
+ * @returns The dot-joined footer parts, '' when no status part is known.
  */
 export async function buildReplyFooter(
   deps: ReplyFooterDeps,

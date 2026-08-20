@@ -92,6 +92,8 @@ export interface PlanCardHandle {
  * SKILL.md in full, plus the stripped-down "render-only session" contract for
  * the plan sub-type. The fork must not re-load the skill or touch project
  * source; its stdout carries only a one-line confirmation.
+ *
+ * @returns The complete system prompt text for the plan render-session fork.
  */
 export function renderSessionPrompt(): string {
   return `${renderSkillPrompt}\n\n---\n\n你是 cc-connect 内部的一个「仅渲染」session，不是主 coding agent——不要去执行 plan、不要改项目源码。
@@ -117,6 +119,8 @@ export function renderSessionPrompt(): string {
 /**
  * Render-session prompt for the speculative reply→HTML auto-deliver at turn
  * end (Go RenderReplySummaryPrompt): same skill text, reply sub-type contract.
+ *
+ * @returns The complete system prompt text for the reply render-session fork.
  */
 export function renderReplySummaryPrompt(): string {
   return `${renderSkillPrompt}\n\n---\n\n你是 cc-connect 内部的一个「仅渲染」session，不是主 coding agent——不要对项目发起新的工具调用。
@@ -141,7 +145,12 @@ export function renderReplySummaryPrompt(): string {
 
 // ── pure title / path helpers ──────────────────────────────────────────────
 
-/** Session-key path sanitizer (Go sanitizeSessionKey): separators and colons become underscores. */
+/**
+ * Session-key path sanitizer (Go sanitizeSessionKey): separators and colons become underscores.
+ *
+ * @param s - Raw session key.
+ * @returns The session key with `/`, `\`, and `:` replaced by underscores.
+ */
 export function sanitizeSessionKey(s: string): string {
   return s.replaceAll('/', '_').replaceAll('\\', '_').replaceAll(':', '_')
 }
@@ -154,6 +163,10 @@ function planContentHash(s: string): string {
  * Derive a short, filesystem-safe display name from a document title (Go
  * slugifyTitle). CJK is kept; half-width path-unsafe characters are replaced.
  * Returns `fallback` when the title has no usable text.
+ *
+ * @param title - Raw document title, possibly multi-line Markdown.
+ * @param fallback - Value returned when nothing usable remains after sanitizing.
+ * @returns The slugified display name.
  */
 export function slugifyTitle(title: string, fallback: string): string {
   let line = title.includes('\n') ? title.slice(0, title.indexOf('\n')) : title
@@ -192,6 +205,9 @@ function cleanHTMLTitle(s: string): string {
  * Pull the document title from rendered HTML for the download filename
  * (Go extractHTMLTitle): `<title>` first, then the first `<h1>`; '' when
  * neither yields text.
+ *
+ * @param data - Rendered HTML source.
+ * @returns The extracted title, or '' when neither tag yields text.
  */
 export function extractHTMLTitle(data: string): string {
   const tm = htmlTitleRe.exec(data)
@@ -204,7 +220,12 @@ export function extractHTMLTitle(data: string): string {
   return ''
 }
 
-/** Text of the first Markdown heading line (Go extractMarkdownTitle), or ''. */
+/**
+ * Text of the first Markdown heading line (Go extractMarkdownTitle), or ''.
+ *
+ * @param markdown - Markdown source to scan.
+ * @returns The first heading's text, or '' when there is none.
+ */
 export function extractMarkdownTitle(markdown: string): string {
   const m = markdownHeadingRe.exec(markdown)
   if (m === null) return ''
@@ -216,6 +237,12 @@ export function extractMarkdownTitle(markdown: string): string {
  * (slugified plan title) becomes the basename; otherwise the plan .md
  * basename, or the session key inside a fresh cc-plan-render-* temp dir for
  * the reply sub-type. Revision > 1 adds a -vN suffix.
+ *
+ * @param planFilePath - Plan .md path; empty for the reply sub-type.
+ * @param sessionKey - Session key, used as the basename when no hint exists.
+ * @param nameHint - Slugified title preferred as the basename; may be empty.
+ * @param revision - Render revision; > 1 adds a -vN suffix.
+ * @returns The absolute HTML output path.
  */
 export function deriveHtmlPath(planFilePath: string, sessionKey: string, nameHint: string, revision: number): string {
   const suffix = revision > 1 ? `-v${String(revision)}` : ''
@@ -243,6 +270,8 @@ export function deriveHtmlPath(planFilePath: string, sessionKey: string, nameHin
  * .html inside). Guarded — only removes directories whose basename carries
  * the cc-plan-render- prefix; the plan sub-type's sibling .html is a user
  * artifact and is never touched (Go removeRenderedTemp).
+ *
+ * @param htmlPath - Path of the rendered .html whose temp dir is removed.
  */
 export async function removeRenderedTemp(htmlPath: string): Promise<void> {
   if (htmlPath === '') return
@@ -260,6 +289,9 @@ export async function removeRenderedTemp(htmlPath: string): Promise<void> {
  * assembled plan HTML to its pretty sibling path next to the plan .md. The
  * temp write path remains the delivery source of truth, so a failed copy only
  * means the sibling artifact is missing.
+ *
+ * @param src - Source file to read.
+ * @param dst - Destination path, with parent directories created as needed.
  */
 export function copyFileBestEffort(src: string, dst: string): void {
   let data: Buffer
@@ -292,6 +324,9 @@ const symbolRe = /<symbol\s+id="([\w-]+)"([^>]*)>([\s\S]*?)<\/symbol>/g
  * Lucide sprite containing only the referenced symbols, ids prefixed with
  * `icon-` (Go extractUsedIcons). Unknown ids are silently skipped (browsers
  * render nothing for unknown `<use>`).
+ *
+ * @param body - HTML body fragment to scan for icon references.
+ * @returns The minimal sprite `<svg>` markup, or '' when no known icon is referenced.
  */
 export function extractUsedIcons(body: string): string {
   const refs = [...body.matchAll(useIconRefRe)]
@@ -321,6 +356,10 @@ const inlineVarAttrReGlobal = /\s+(?:fill|stroke)="var\(--([A-Za-z0-9_-]+)\)"/g
  * Remove inline fill/stroke attributes referencing `:root` variables the
  * template does not define (Go sanitizeSVGVars): an invalid var() would fall
  * back to SVG's default black fill. Values with their own fallback are kept.
+ *
+ * @param body - HTML body fragment whose inline SVG attributes are inspected.
+ * @param tmpl - Template whose `:root` CSS defines the allowed variables.
+ * @returns The body with invalid var() attribute references removed.
  */
 export function sanitizeSVGVars(body: string, tmpl: string): string {
   const rootMatch = cssRootRe.exec(tmpl)
@@ -341,6 +380,9 @@ const svgHasViewBoxRe = /\bviewbox\b/i
  * numeric width/height, so scaling keeps the aspect ratio (Go
  * ensureSVGViewBox). Existing viewBox, percentage/non-numeric dimensions, or
  * no dimensions are left untouched.
+ *
+ * @param body - HTML body fragment containing inline SVG.
+ * @returns The body with viewBox attributes added where applicable.
  */
 export function ensureSVGViewBox(body: string): string {
   return body.replace(svgOpenTagRe, (tag, attrs: string) => {
@@ -362,6 +404,11 @@ export function ensureSVGViewBox(body: string): string {
  * `<title>` from the fragment's first `<h1>` prefixed by `titlePrefix`
  * (Go assembleHTML). This is the #47/#48 acceleration lever: the render
  * session only emits the body fragment, the engine injects the full CSS.
+ *
+ * @param subtype - 'plan' | 'reply'; unknown values fall back to the plan template.
+ * @param bodyFragment - Raw body fragment written by the render session.
+ * @param titlePrefix - Prefix prepended to the derived `<title>`.
+ * @returns The assembled single-file HTML document.
  */
 export function assembleHTML(subtype: string, bodyFragment: string, titlePrefix: string): string {
   const tmpl = subtype === 'reply' ? renderTemplateReply : renderTemplatePlan
@@ -382,7 +429,13 @@ export function assembleHTML(subtype: string, bodyFragment: string, titlePrefix:
   return out.replaceAll('{{TITLE}}', title)
 }
 
-/** Read the body fragment, assemble, and write back in place (Go assembleHTMLInPlace). */
+/**
+ * Read the body fragment, assemble, and write back in place (Go assembleHTMLInPlace).
+ *
+ * @param htmlPath - File holding the raw body fragment; overwritten with the assembled document.
+ * @param subtype - 'plan' | 'reply' sub-type selecting the template.
+ * @param titlePrefix - Prefix prepended to the derived `<title>`.
+ */
 export async function assembleHTMLInPlace(htmlPath: string, subtype: string, titlePrefix: string): Promise<void> {
   const body = await readFile(htmlPath, 'utf8')
   await writeFile(htmlPath, assembleHTML(subtype, body, titlePrefix), 'utf8')
@@ -400,6 +453,11 @@ export interface RenderCancelHandle {
  * render is running, the content changed since the last render (sha256), and
  * enough time elapsed since the last render. Revision 1 is always allowed.
  * Sets planRenderRunning on success — the caller must clear it.
+ *
+ * @param state - Per-session interactive state; undefined never renders.
+ * @param content - Plan markdown content, hashed for change detection.
+ * @param revision - ExitPlanMode revision; 1 bypasses hash and throttle checks.
+ * @returns Whether a render may start; planRenderRunning is set when true.
  */
 export function shouldRenderPlan(state: InteractiveState | undefined, content: string, revision: number): boolean {
   if (state === undefined) return false
@@ -413,13 +471,23 @@ export function shouldRenderPlan(state: InteractiveState | undefined, content: s
   return true
 }
 
-/** Release the per-session plan-render lock (Go clearPlanRenderRunning). */
+/**
+ * Release the per-session plan-render lock (Go clearPlanRenderRunning).
+ *
+ * @param state - Per-session state whose planRenderRunning flag is cleared.
+ */
 export function clearPlanRenderRunning(state: InteractiveState | undefined): void {
   if (state === undefined) return
   state.planRenderRunning = false
 }
 
-/** Add a cancel function to the in-flight set (Go registerRenderCancel). */
+/**
+ * Add a cancel function to the in-flight set (Go registerRenderCancel).
+ *
+ * @param state - Per-session interactive state holding the cancel set.
+ * @param cancel - The cancel function to track; undefined registers nothing.
+ * @returns The handle for later unregistration, or undefined when cancel is undefined.
+ */
 export function registerRenderCancel(state: InteractiveState, cancel: (() => void) | undefined): RenderCancelHandle | undefined {
   if (cancel === undefined) return undefined
   const h: RenderCancelHandle = { cancel }
@@ -427,7 +495,12 @@ export function registerRenderCancel(state: InteractiveState, cancel: (() => voi
   return h
 }
 
-/** Remove a finished fork's entry so a later cancelRenders cannot invoke it. */
+/**
+ * Remove a finished fork's entry so a later cancelRenders cannot invoke it.
+ *
+ * @param state - Per-session interactive state holding the cancel set.
+ * @param handle - Handle returned by registerRenderCancel; undefined is a no-op.
+ */
 export function unregisterRenderCancel(state: InteractiveState, handle: RenderCancelHandle | undefined): void {
   if (handle === undefined) return
   state.renderCancels = state.renderCancels.filter(h => h !== handle)
@@ -437,6 +510,8 @@ export function unregisterRenderCancel(state: InteractiveState, handle: RenderCa
  * Abort every in-flight render fork for this session (Go cancelRenders):
  * called when the user resumes the session — a stale HTML render is no
  * longer worth burning tokens on.
+ *
+ * @param state - Per-session state whose in-flight renders are aborted.
  */
 export function cancelRenders(state: InteractiveState | undefined): void {
   if (state === undefined) return
@@ -449,6 +524,10 @@ export function cancelRenders(state: InteractiveState | undefined): void {
  * Record a rendered reply HTML temp path keyed by exportKey so session
  * teardown can reap the cc-plan-render-* temp dirs (Go recordRenderedReply).
  * It is a cleanup manifest, NOT a click cache.
+ *
+ * @param state - Per-session interactive state receiving the manifest entry.
+ * @param exportKey - Export key identifying this turn's reply.
+ * @param htmlPath - Absolute path of the rendered reply HTML.
  */
 export function recordRenderedReply(state: InteractiveState, exportKey: string, htmlPath: string): void {
   if (exportKey === '' || htmlPath === '') return
@@ -456,14 +535,27 @@ export function recordRenderedReply(state: InteractiveState, exportKey: string, 
   state.renderedReplyHTML.set(exportKey, htmlPath)
 }
 
-/** Record the latest render status for exportKey (Go setRenderStatus). */
+/**
+ * Record the latest render status for exportKey (Go setRenderStatus).
+ *
+ * @param state - Per-session interactive state receiving the status entry.
+ * @param exportKey - Export key identifying the render task.
+ * @param kind - Whether the task renders a plan or a reply.
+ * @param status - The latest lifecycle status to record.
+ */
 export function setRenderStatus(state: InteractiveState, exportKey: string, kind: 'plan' | 'reply', status: RenderStatus): void {
   if (exportKey === '' ) return
   if (state.renderStatuses === undefined) state.renderStatuses = new Map()
   state.renderStatuses.set(exportKey, { kind, status, updatedAt: Date.now() })
 }
 
-/** Latest render status for exportKey, if any (Go getRenderStatus). */
+/**
+ * Latest render status for exportKey, if any (Go getRenderStatus).
+ *
+ * @param state - Per-session interactive state holding the status map.
+ * @param exportKey - Export key identifying the render task.
+ * @returns The recorded status entry, or undefined when none exists.
+ */
 export function getRenderStatus(state: InteractiveState, exportKey: string): RenderStatusEntry | undefined {
   if (exportKey === '') return undefined
   return state.renderStatuses?.get(exportKey)
@@ -473,6 +565,10 @@ export function getRenderStatus(state: InteractiveState, exportKey: string): Ren
  * Cache the full (untruncated) plan markdown under exportKey so the plan
  * card's export button can fetch it later (Go storePlanExport). Keyed by
  * "plan:<revision>" per ExitPlanMode revision.
+ *
+ * @param state - Per-session interactive state receiving the cached content.
+ * @param exportKey - Export key the plan card's export button will present.
+ * @param fullContent - The full untruncated plan markdown.
  */
 export function storePlanExport(state: InteractiveState, exportKey: string, fullContent: string): void {
   if (state.exportContent === undefined) state.exportContent = new Map()
@@ -485,6 +581,10 @@ export function storePlanExport(state: InteractiveState, exportKey: string, full
  * 实时播报 trailing segment, falls back to the full text; records both into
  * exportContent / lastBaseResponse so a button click during the pending
  * window exports this turn's reply, not the previous one.
+ *
+ * @param sp - The live stream preview carrying the export key and reply text.
+ * @param state - Per-session interactive state receiving the snapshot.
+ * @returns The captured export key and reply text; both '' when the text is empty.
  */
 export function captureReplyForExport(sp: StreamPreview, state: InteractiveState): { exportKey: string; text: string } {
   let exportKey = ''
@@ -510,6 +610,10 @@ export function captureReplyForExport(sp: StreamPreview, state: InteractiveState
 /**
  * Display summary for the speculative auto-deliver (Go displayReplyText):
  * prefer the trailing segment (实时播报), fall back to the full reply.
+ *
+ * @param sp - The live stream preview, if one exists.
+ * @param fullResponse - The full reply text, used when the preview has no analysis segment.
+ * @returns The text to feed the reply render.
  */
 export function displayReplyText(sp: StreamPreview | undefined, fullResponse: string): string {
   if (sp !== undefined) {
@@ -525,6 +629,12 @@ export function displayReplyText(sp: StreamPreview | undefined, fullResponse: st
  * render then drops the card's exportKey and avoids PATCHing a withdrawn
  * message. Covers degraded streaming and segmented tool replies; the
  * suppressDuplicate branch is computed later in the flow (Go ceiling kept).
+ *
+ * @param toolCount - Number of tool calls in the turn.
+ * @param segmentStart - Index of the current 实时播报 segment start, or 0.
+ * @param inProgress - Whether a segmented reply is still streaming.
+ * @param degraded - Whether streaming ran in degraded mode.
+ * @returns Whether the preview card will be discarded before the reply render.
  */
 export function shouldDiscardPreviewBeforeReplyRender(
   toolCount: number, segmentStart: number, inProgress: boolean, degraded: boolean,
@@ -534,7 +644,14 @@ export function shouldDiscardPreviewBeforeReplyRender(
 
 // ── status text + plan-card PATCH ─────────────────────────────────────────
 
-/** Map a render status to its i18n'd display label with an optional elapsed suffix (Go renderStatusText). */
+/**
+ * Map a render status to its i18n'd display label with an optional elapsed suffix (Go renderStatusText).
+ *
+ * @param e - Engine providing the i18n catalog.
+ * @param status - The render lifecycle status to label.
+ * @param elapsedMs - Elapsed milliseconds; > 0 appends a rounded seconds suffix where the status shows one.
+ * @returns The localized status label.
+ */
 export function renderStatusText(e: Engine, status: RenderStatus, elapsedMs: number): string {
   switch (status) {
     case 'rendering': {
@@ -558,6 +675,10 @@ export function renderStatusText(e: Engine, status: RenderStatus, elapsedMs: num
  * Clone `base` with the status text written into the button row's Note slot
  * (Go cloneCardWithStatusNote) so the status renders as a trailing column on
  * the button row. `base` is not mutated.
+ *
+ * @param base - The card to clone; undefined yields undefined.
+ * @param text - Status text written into the Note slot.
+ * @returns The cloned card, or undefined when `base` is undefined.
  */
 export function cloneCardWithStatusNote(base: Card | undefined, text: string): Card | undefined {
   if (base === undefined) return undefined
@@ -579,6 +700,12 @@ export function cloneCardWithStatusNote(base: Card | undefined, text: string): C
  * Record the plan render status and PATCH the plan card's status line in
  * place via CardSenderWithUpdate (Go updatePlanCardStatus). No-op when no
  * handle was stored — the markdown card remains the fallback.
+ *
+ * @param e - Engine providing i18n for the status label.
+ * @param state - Per-session state holding the plan-card handles.
+ * @param exportKey - Export key identifying the plan card.
+ * @param status - The render lifecycle status to record and display.
+ * @param elapsedMs - Elapsed milliseconds appended to the label when > 0.
  */
 export function updatePlanCardStatus(
   e: Engine, state: InteractiveState | undefined, exportKey: string, status: RenderStatus, elapsedMs: number,
@@ -601,6 +728,14 @@ export function updatePlanCardStatus(
  * Record the reply render status and PATCH the tool-progress green card's
  * status line via RenderStatusUpdater (Go patchReplyRenderStatus). The caller
  * resolves platform+replyCtx once so repeated transitions don't re-rebuild.
+ *
+ * @param e - Engine providing i18n for the status label.
+ * @param p - Platform to PATCH through; undefined records status only.
+ * @param replyCtx - Reply context addressing the green card.
+ * @param state - Per-session state receiving the status entry.
+ * @param exportKey - Export key identifying the reply render.
+ * @param status - The render lifecycle status to record and display.
+ * @param elapsedMs - Elapsed milliseconds appended to the label when > 0.
  */
 export function patchReplyRenderStatus(
   e: Engine, p: Platform | undefined, replyCtx: unknown, state: InteractiveState | undefined,
@@ -616,7 +751,13 @@ export function patchReplyRenderStatus(
   })
 }
 
-/** `<title>` prefix distinguishing plan/reply products (Go renderSubtypeTag). */
+/**
+ * `<title>` prefix distinguishing plan/reply products (Go renderSubtypeTag).
+ *
+ * @param e - Engine providing the i18n catalog.
+ * @param subtype - 'plan' | 'reply'; any other value yields no prefix.
+ * @returns The localized prefix ending in '·', or ''.
+ */
 export function renderSubtypeTag(e: Engine, subtype: string): string {
   switch (subtype) {
     case 'plan':
@@ -637,6 +778,17 @@ export function renderSubtypeTag(e: Engine, subtype: string): string {
  * fragment it wrote with the fixed template. Failures are logged and
  * swallowed. Returns success; a false result lets the caller clean up the
  * temp dir / retry.
+ *
+ * @param e - Engine providing the agent, provider config, and logging.
+ * @param logTag - Prefix for log lines, e.g. 'plan-render'.
+ * @param subtype - 'plan' | 'reply' sub-type selecting the template.
+ * @param sessionKey - Session key for logging.
+ * @param prompt - User-message prompt carrying html_path and the content.
+ * @param systemPrompt - System prompt for the render-session fork.
+ * @param htmlPath - Absolute path the fork must write the body fragment to.
+ * @param sessionEnv - Extra environment for the forked session.
+ * @param signal - Optional abort signal cancelling the fork.
+ * @returns Whether the fork produced an assembled HTML file.
  */
 export async function renderContentToHTML(
   e: Engine,
@@ -702,6 +854,15 @@ export async function renderContentToHTML(
  * CJK/space-laden title path is fragile for the LLM to reproduce verbatim —
  * and the engine best-effort copies the assembled HTML to the pretty sibling
  * path next to the plan .md. Returns the temp write path (delivery source).
+ *
+ * @param e - Engine used to fork the render session.
+ * @param sessionKey - Session key for temp-path derivation and logging.
+ * @param planMarkdown - The raw plan markdown to render.
+ * @param planFilePath - Plan .md path for the sibling artifact; may be empty.
+ * @param revision - ExitPlanMode revision for the -vN suffix.
+ * @param sessionEnv - Extra environment for the forked session.
+ * @param signal - Optional abort signal cancelling the fork.
+ * @returns The temp write path, whether or not the render succeeded.
  */
 export async function renderPlanToHTML(
   e: Engine,
@@ -731,6 +892,13 @@ export async function renderPlanToHTML(
  * renderReplyToHTML). Reply keeps the SimpleHTML-pre-rendered fragment flow;
  * on failure the temp dir deriveHtmlPath created is removed so it doesn't
  * orphan. Returns the html path (may not exist on failure).
+ *
+ * @param e - Engine used to fork the render session.
+ * @param sessionKey - Session key for temp-path derivation and logging.
+ * @param replyContent - The completed reply text to render.
+ * @param sessionEnv - Extra environment for the forked session.
+ * @param signal - Optional abort signal cancelling the fork.
+ * @returns The html path; the file may not exist on failure.
  */
 export async function renderReplyToHTML(
   e: Engine,
@@ -753,6 +921,12 @@ export async function renderReplyToHTML(
  * Read the render-session output file and send it as a .html attachment (Go
  * deliverReplyHTML) — the fallback path when PNG rasterization fails or the
  * platform cannot send images.
+ *
+ * @param _e - Engine; unused, kept for signature parity with the Go port.
+ * @param p - Platform that must support FileSender.
+ * @param replyCtx - Reply context to address the file message to.
+ * @param htmlPath - Path of the assembled HTML file to send.
+ * @param signal - Optional abort signal checked before reading and sending.
  */
 export async function deliverReplyHTML(_e: Engine, p: Platform, replyCtx: unknown, htmlPath: string, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted === true) throw new Error('render delivery aborted')
@@ -789,6 +963,10 @@ function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T> {
  * state.replyCtx; an async delivery can outlive the turn-end cleanup window
  * that nils it, so rebuild from the sessionKey when the platform supports it.
  * Returns a null replyCtx when reconstruction is unavailable.
+ *
+ * @param state - Per-session state holding the platform and replyCtx.
+ * @param sessionKey - Session key used to rebuild the reply context.
+ * @returns The resolved platform and a replyCtx that may be undefined.
  */
 export function resolveRenderReplyCtx(state: InteractiveState, sessionKey: string): { platform: Platform | undefined; replyCtx: unknown } {
   const p = state.platform
@@ -812,6 +990,11 @@ export function resolveRenderReplyCtx(state: InteractiveState, sessionKey: strin
  * Retina-2x PNG (Go renderHTMLToPNG). Up to three attempts (chromium
  * OOM-crashes are transient); a partial PNG written before a failure is
  * removed so a retry isn't a no-op.
+ *
+ * @param e - Engine providing the configured render-png script path.
+ * @param htmlPath - The assembled HTML file to rasterize.
+ * @param signal - Optional abort signal cancelling between attempts.
+ * @returns The written PNG path.
  */
 export async function renderHTMLToPNG(e: Engine, htmlPath: string, signal?: AbortSignal): Promise<string> {
   const script = e.planRenderPngScript
@@ -848,6 +1031,12 @@ export async function renderHTMLToPNG(e: Engine, htmlPath: string, signal?: Abor
  * completion card (Go deliverRenderedImage). Prefers a fit_horizontal card
  * (Feishu's msg_type=image caps tall-image height); falls back to a plain
  * image message, then to the .html file.
+ *
+ * @param e - Engine used for PNG rasterization and the HTML fallback.
+ * @param p - Platform delivering the image.
+ * @param replyCtx - Reply context to address the message to.
+ * @param htmlPath - The assembled HTML file to rasterize.
+ * @param signal - Optional abort signal cancelling the delivery.
  */
 export async function deliverRenderedImage(
   e: Engine, p: Platform, replyCtx: unknown, htmlPath: string, signal?: AbortSignal,
@@ -916,6 +1105,12 @@ export async function deliverRenderedImage(
  * render (new turn / card button → cancelRenders) or failed fork silently
  * skips delivery. Retries once when the first attempt stalls or times out
  * without producing a file (upstream LLM jitter).
+ *
+ * @param e - Engine used to fork and deliver the render.
+ * @param state - Per-session state guarding single-flight and cancel tracking.
+ * @param sessionKey - Session key for context reconstruction and logging.
+ * @param replyContent - The completed reply text to render.
+ * @param exportKey - Export key under which status and temp paths are recorded.
  */
 export function renderAndDeliverReply(
   e: Engine,
@@ -1019,6 +1214,14 @@ export function renderAndDeliverReply(
  * retries once when the first attempt produces no file (stall/timeout), then
  * delivers the image and PATCHes the plan card status. Runs in addition to
  * the markdown plan card, which is the always-available fallback.
+ *
+ * @param e - Engine used to fork and deliver the render.
+ * @param state - Per-session state receiving cancel registration and the render-lock release.
+ * @param sessionKey - Session key for context reconstruction and logging.
+ * @param sentPlanContent - The plan markdown already shown on the card.
+ * @param planFilePath - Plan .md path for the sibling artifact.
+ * @param revision - ExitPlanMode revision number.
+ * @param exportKey - Export key identifying this plan render.
  */
 export function launchPlanRender(
   e: Engine,
@@ -1091,7 +1294,11 @@ export function launchPlanRender(
   })()
 }
 
-/** Reap recorded reply-HTML temp dirs at session teardown (Go cleanupInteractiveState render segment). */
+/**
+ * Reap recorded reply-HTML temp dirs at session teardown (Go cleanupInteractiveState render segment).
+ *
+ * @param state - Per-session state whose recorded reply-HTML paths are reaped.
+ */
 export async function cleanupRenderedReplyHTML(state: InteractiveState | undefined): Promise<void> {
   if (state === undefined) return
   const paths = state.renderedReplyHTML
@@ -1106,6 +1313,15 @@ export async function cleanupRenderedReplyHTML(state: InteractiveState | undefin
  * Send the plan markdown card with its export button (Go sendPlanCard): when
  * the platform supports CardSenderWithUpdate, the card is sent with a handle
  * and its base recorded under exportKey so the render status can PATCH it.
+ *
+ * @param e - Engine used for the plain-text fallback.
+ * @param p - Platform to send the card through.
+ * @param replyCtx - Reply context to address the card to.
+ * @param state - Per-session state recording the card handle; undefined forces the plain path.
+ * @param exportKey - Export key under which the card handle is recorded.
+ * @param content - The plan markdown card body.
+ * @param header - Card header; undefined forces the plain path.
+ * @param buttons - Action buttons (e.g. export) appended to the card.
  */
 export function sendPlanCard(
   e: Engine,

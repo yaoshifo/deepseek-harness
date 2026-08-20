@@ -57,14 +57,24 @@ function normalizeProgressStyle(style: string): string {
   }
 }
 
-/** The platform's advertised progress style (legacy when unadvertised). */
+/**
+ * The platform's advertised progress style (legacy when unadvertised).
+ *
+ * @param p - Platform possibly exposing progressStyle().
+ * @returns Normalized progress style; legacy when unadvertised.
+ */
 export function progressStyleForPlatform(p: Platform): string {
   const provider = p as { progressStyle?: () => string }
   if (typeof provider.progressStyle !== 'function') return progressStyleLegacy
   return normalizeProgressStyle(provider.progressStyle())
 }
 
-/** Whether the platform advertises structured progress-card payloads. */
+/**
+ * Whether the platform advertises structured progress-card payloads.
+ *
+ * @param p - Platform possibly exposing supportsProgressCardPayload().
+ * @returns Whether the platform accepts structured progress-card payloads.
+ */
 export function progressCardPayloadForPlatform(p: Platform): boolean {
   const provider = p as { supportsProgressCardPayload?: () => boolean }
   return typeof provider.supportsProgressCardPayload === 'function' && provider.supportsProgressCardPayload()
@@ -85,6 +95,9 @@ function progressCardPayloadForTarget(p: Platform, replyCtx: unknown): boolean {
 /**
  * Whether a platform opts into progress styling but uses legacy mode: tool
  * results then skip the standalone chat message to avoid duplicate noise.
+ *
+ * @param p - Platform to inspect.
+ * @returns Whether standalone tool-result messages are suppressed.
  */
 export function suppressStandaloneToolResultEvent(p: Platform): boolean {
   const provider = p as { progressStyle?: () => string }
@@ -149,13 +162,29 @@ export class CompactProgressWriter {
   private updater: MessageUpdater | undefined
   private handle: unknown
 
-  /** @internal White-box: ported same-package tests read these. */
+  /**
+   * Whether the platform supports in-place updates so this writer is active.
+   *
+   * @internal White-box: ported same-package tests read these.
+   */
   enabled = false
-  /** @internal White-box: ported same-package tests read these. */
+  /**
+   * Whether a platform API call failed; later appends are skipped.
+   *
+   * @internal White-box: ported same-package tests read these.
+   */
   failed = false
-  /** @internal White-box: ported same-package tests read these. */
+  /**
+   * Normalized progress style for the target platform/reply context.
+   *
+   * @internal White-box: ported same-package tests read these.
+   */
   style: string
-  /** @internal White-box: ported same-package tests read these. */
+  /**
+   * Whether to transport structured payloads instead of markdown fallback text.
+   *
+   * @internal White-box: ported same-package tests read these.
+   */
   usePayload = false
   private readonly async: AsyncSender | undefined
 
@@ -198,23 +227,46 @@ export class CompactProgressWriter {
     }
   }
 
-  /** Store the latest todo items for display as a dedicated section. */
+  /**
+   * Store the latest todo items for display as a dedicated section.
+   *
+   * @param items - Latest todo items.
+   */
   setTodos(items: TodoItem[]): void {
     if (!this.enabled) return
     this.todos = items
   }
 
-  /** Append one progress item (info kind); see {@link appendStructured}. */
+  /**
+   * Append one progress item (info kind); see {@link appendStructured}.
+   *
+   * @param item - Text of the info-kind event.
+   * @returns True when this writer handled the item; false means the caller falls back to legacy sends.
+   */
   async append(item: string): Promise<boolean> {
     return this.appendEvent('info', item, '', item)
   }
 
-  /** Append one typed progress event; fallback is used for compact/plain rendering. */
+  /**
+   * Append one typed progress event; fallback is used for compact/plain rendering.
+   *
+   * @param kind - Event kind.
+   * @param text - Event text.
+   * @param tool - Tool name for tool events; empty string otherwise.
+   * @param fallback - Plain text used for compact-style rendering.
+   * @returns True when this writer handled the event; false means the caller falls back to legacy sends.
+   */
   async appendEvent(kind: ProgressCardEntryKind, text: string, tool: string, fallback: string): Promise<boolean> {
     return this.appendStructured({ kind, text, tool }, fallback)
   }
 
-  /** Append one structured progress event and update the in-place message. */
+  /**
+   * Append one structured progress event and update the in-place message.
+   *
+   * @param item - Structured progress event.
+   * @param fallbackIn - Plain text used for compact-style rendering.
+   * @returns True when this writer handled the event; false means the caller falls back to legacy sends.
+   */
   async appendStructured(item: ProgressCardEntry, fallbackIn: string): Promise<boolean> {
     if (!this.enabled || this.failed) return false
     let text = item.text.trim()
@@ -321,7 +373,12 @@ export class CompactProgressWriter {
     return true
   }
 
-  /** Update the card progress state (running/completed/failed) without appending. */
+  /**
+   * Update the card progress state (running/completed/failed) without appending.
+   *
+   * @param state - Terminal state to transition to; empty string normalizes to completed.
+   * @returns True when the card state was updated; false when disabled, failed, or unchanged.
+   */
   async finalize(state: ProgressCardState | ''): Promise<boolean> {
     if (!this.enabled || this.failed || this.style !== progressStyleCard || !this.usePayload || this.handle === undefined) {
       return false
@@ -343,7 +400,17 @@ export class CompactProgressWriter {
   }
 }
 
-/** Create a compact progress writer (Go newCompactProgressWriter). */
+/**
+ * Create a compact progress writer (Go newCompactProgressWriter).
+ *
+ * @param p - Platform to render progress on.
+ * @param replyCtx - Platform reply context the writer sends into.
+ * @param agentName - Agent label shown on the card.
+ * @param lang - Progress language tag.
+ * @param transform - Optional text transform applied to thinking/error/info text.
+ * @param as - Optional async sender queueing in-place updates.
+ * @returns The constructed compact progress writer.
+ */
 export function newCompactProgressWriter(
   p: Platform,
   replyCtx: unknown,

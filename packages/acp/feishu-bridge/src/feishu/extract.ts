@@ -59,6 +59,8 @@ function parsePostBody(content: string): PostBody {
 /**
  * Extract plain text from a Feishu post (rich text) JSON content string,
  * unwrapping locale keys ({"zh_cn": …}) first (Go extractPostPlainText).
+ * @param content - Raw content JSON of a post message.
+ * @returns The extracted plain text; empty when nothing textual is present.
  */
 export function extractPostPlainText(content: string): string {
   const post = parsePostBody(content)
@@ -97,7 +99,12 @@ export function extractPostPlainText(content: string): string {
   return parts.join('\n')
 }
 
-/** Whether at least one mention targets the bot's open_id. */
+/**
+ * Whether at least one mention targets the bot's open_id.
+ * @param mentions - Mentions delivered with the message, if any.
+ * @param botOpenID - The bot's own open_id.
+ * @returns True when the bot is mentioned.
+ */
 export function isBotMentioned(mentions: FeishuMention[] | undefined, botOpenID: string): boolean {
   for (const m of mentions ?? []) {
     if (m.id?.open_id !== undefined && m.id.open_id === botOpenID) return true
@@ -105,7 +112,11 @@ export function isBotMentioned(mentions: FeishuMention[] | undefined, botOpenID:
   return false
 }
 
-/** Whether at least one mention targets a human (MentionedType == "user"). */
+/**
+ * Whether at least one mention targets a human (MentionedType == "user").
+ * @param mentions - Mentions delivered with the message, if any.
+ * @returns True when a human is mentioned.
+ */
 export function hasHumanMention(mentions: FeishuMention[] | undefined): boolean {
   for (const m of mentions ?? []) {
     if (m.mentionedType === 'user') return true
@@ -117,6 +128,9 @@ export function hasHumanMention(mentions: FeishuMention[] | undefined): boolean 
  * Replace @_user_N mention placeholders with @name in fetched quoted text
  * (Go replaceMentions): unlike stripMentions nothing is removed — the quote
  * keeps every speaker reference readable.
+ * @param text - Quoted text containing @_user_N placeholders.
+ * @param mentions - Mentions delivered with the quoted message.
+ * @returns The text with each placeholder replaced by its @name.
  */
 export function replaceMentions(text: string, mentions: FeishuMention[] | undefined): string {
   for (const m of mentions ?? []) {
@@ -131,6 +145,10 @@ export function replaceMentions(text: string, mentions: FeishuMention[] | undefi
  * Process @_user_N placeholders: the bot's own mention is removed; other
  * user mentions become @name (or are removed when unnamed) so the agent sees
  * who was referenced (Go stripMentions).
+ * @param text - Message text containing @_user_N placeholders.
+ * @param mentions - Mentions delivered with the message.
+ * @param botOpenID - The bot's own open_id; its mention is removed outright.
+ * @returns The processed text, trimmed.
  */
 export function stripMentions(text: string, mentions: FeishuMention[] | undefined, botOpenID: string): string {
   if (mentions === undefined || mentions.length === 0) return text
@@ -162,6 +180,8 @@ export const interactiveCardPlaceholder = '[interactive card]'
  * {"type":"raw_card_content","raw_card_content":"<escaped JSON>"} (inbound
  * event / list response). Direct card JSON is returned as-is (Go
  * unwrapCardContent).
+ * @param content - Raw card content string, possibly wrapper-encoded.
+ * @returns The unescaped card JSON, or the input as-is when it is not a recognized wrapper.
  */
 export function unwrapCardContent(content: string): string {
   let wrapper: { json_card?: string; raw_card_content?: string }
@@ -333,6 +353,8 @@ function extractCardListItems(itemsRaw: unknown, parts: string[]): void {
  * extractInteractiveCardText): header title first (schema 2.0 nested or
  * legacy flat) so the alert name leads, then body elements (schema 2.0
  * property.elements / direct elements, or legacy flat text elements).
+ * @param content - Raw card content string (wrapper-encoded or direct card JSON).
+ * @returns The extracted text, or interactiveCardPlaceholder when the card yields no text.
  */
 export function extractInteractiveCardText(content: string): string {
   const cardJSON = unwrapCardContent(content)
@@ -398,6 +420,9 @@ export function extractInteractiveCardText(content: string): string {
  * extractPollText): text JSON, post rich text (both the pure-array form the
  * list API returns and the locale-wrapped whole-post form), or an interactive
  * card.
+ * @param msgType - Feishu msg_type of the listed message.
+ * @param content - Raw message content JSON.
+ * @returns The readable text for the type; empty for unsupported types.
  */
 export function extractPollText(msgType: string, content: string): string {
   switch (msgType) {
@@ -421,6 +446,8 @@ export function extractPollText(msgType: string, content: string): string {
  * Deduped image keys embedded in a card JSON, first-seen order, regardless of
  * nesting (schema 1.0 image_key / schema 2.0 img_key). Run on UNWRAPPED card
  * JSON so escaped wrappers don't break the match (Go extractCardImageKeys).
+ * @param cardJSON - Unwrapped card JSON string.
+ * @returns Deduped image keys in first-seen order.
  */
 export function extractCardImageKeys(cardJSON: string): string[] {
   const out: string[] = []

@@ -274,7 +274,13 @@ function formatModified(ts: number): string {
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-/** /switch (/resume): switch the chat to another agent session. */
+/**
+ * /switch (/resume): switch the chat to another agent session.
+ * @param e - The engine owning the session state.
+ * @param p - The platform that delivered the command.
+ * @param msg - The triggering chat message.
+ * @param args - The target session selector: list index, name, ID prefix, or summary substring.
+ */
 export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (args.length === 0) {
     await e.reply(p, msg.replyCtx, 'Usage: /switch <number | id_prefix | name>')
@@ -309,13 +315,17 @@ export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: stri
   // TODO(M7): resendLastAssistantMessage via HistoryProvider for context echo.
 }
 
-/**
- * Resolve a user query to an agent session: numeric index, exact name, ID
- * prefix, name prefix, then summary substring (Go matchSession).
- */
 /** Name-lookup surface matchSession needs from a session manager. */
 export type SessionNameLookup = Pick<SessionManager, 'getSessionName'>
 
+/**
+ * Resolve a user query to an agent session: numeric index, exact name, ID
+ * prefix, name prefix, then summary substring (Go matchSession).
+ * @param sessions - The agent session listing, in /list order.
+ * @param manager - Session manager consulted for user-assigned session names.
+ * @param query - The user's selector text.
+ * @returns The first matching session, or undefined when nothing matches.
+ */
 export function matchSession(sessions: AgentSessionInfo[], manager: SessionNameLookup, query: string): AgentSessionInfo | undefined {
   if (sessions.length === 0) return undefined
   const idx = Number.parseInt(query, 10)
@@ -341,7 +351,12 @@ export function matchSession(sessions: AgentSessionInfo[], manager: SessionNameL
   return undefined
 }
 
-/** /status: project/agent/session summary, plain text. */
+/**
+ * /status: project/agent/session summary, plain text.
+ * @param e - The engine owning the session state.
+ * @param p - The platform that delivered the command.
+ * @param msg - The triggering chat message.
+ */
 export async function cmdStatus(e: Engine, p: Platform, msg: Message): Promise<void> {
   const { agent, sessions } = commandContext(e, msg)
   const platNames = e.platforms.map(pl => pl.name())
@@ -404,7 +419,13 @@ function formatUptime(ms: number): string {
   return `${s}s`
 }
 
-/** /stop: stop the running turn (Go cmdStop). */
+/**
+ * /stop: stop the running turn (Go cmdStop).
+ * @param e - The engine owning the interactive session.
+ * @param _p - Unused platform, kept for handler-signature parity.
+ * @param msg - The triggering chat message.
+ * @returns Whether an interactive session was actually stopped.
+ */
 export function cmdStop(e: Engine, _p: Platform, msg: Message): boolean {
   // A user stop disarms the subtask one-shot auto-report — after the user
   // takes over, later turns must not auto-report to the parent.
@@ -412,7 +433,13 @@ export function cmdStop(e: Engine, _p: Platform, msg: Message): boolean {
   return e.stopInteractiveSession(msg.sessionKey)
 }
 
-/** /dir: show or switch the agent's working directory (Go cmdDir, text path). */
+/**
+ * /dir: show or switch the agent's working directory (Go cmdDir, text path).
+ * @param e - The engine owning the dir override and history.
+ * @param p - The platform that delivered the command.
+ * @param msg - The triggering chat message.
+ * @param args - The target: a path, history index, '-', 'reset', or 'help'/'-h'/'--help'; empty shows the current dir.
+ */
 export async function cmdDir(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const { agent, sessions, interactiveKey } = commandContext(e, msg)
   const switcher = agent as { getWorkDir?: () => string } | undefined
@@ -462,7 +489,16 @@ export async function cmdDir(e: Engine, p: Platform, msg: Message, args: string[
   await e.reply(p, msg.replyCtx, `${successMsg}\n\n${e.i18n.t(Msg.DirSessionReset)}`)
 }
 
-/** Apply a directory switch (Go dirApply, M1: single-workspace keying). */
+/**
+ * Apply a directory switch (Go dirApply, M1: single-workspace keying).
+ * @param e - The engine owning the dir override and history.
+ * @param agent - The agent whose base work dir backs the reset path.
+ * @param sessions - The session manager whose chat state is reset by the switch.
+ * @param interactiveKey - The interactive key whose dir override is rewritten.
+ * @param sessionKey - The session key whose chat state is reset by the switch.
+ * @param args - The target: a path, history index, '-', or 'reset'.
+ * @returns The error message at index 0 when the switch failed, otherwise the success message at index 1.
+ */
 export async function dirApply(
   e: Engine,
   agent: Engine['agent'],
@@ -564,7 +600,12 @@ function expandTilde(path: string): string {
   return path
 }
 
-/** Whether the message's user may run privileged commands (Go isAdmin). */
+/**
+ * Whether the message's user may run privileged commands (Go isAdmin).
+ * @param e - The engine carrying the configured admin_from allowlist.
+ * @param userID - The platform user ID to check, case-insensitively.
+ * @returns Whether userID is allowlisted in admin_from ('*' admits everyone).
+ */
 export function isAdmin(e: Engine, userID: string): boolean {
   const adminFrom = e.adminFrom.trim()
   if (adminFrom === '' || userID === '') return false
@@ -572,7 +613,14 @@ export function isAdmin(e: Engine, userID: string): boolean {
   return adminFrom.split(',').some(id => id.trim().toLowerCase() === userID.toLowerCase())
 }
 
-/** Privileged-command gate used by the engine's dispatchCommand. */
+/**
+ * Privileged-command gate used by the engine's dispatchCommand.
+ * @param e - The engine carrying the admin_from allowlist.
+ * @param cmdID - The canonical command ID being dispatched.
+ * @param p - The platform that delivered the command, used to send the denial reply.
+ * @param msg - The triggering chat message.
+ * @returns Whether the command was blocked with an admin-required reply; false lets dispatch proceed.
+ */
 export function gatePrivilegedCommand(e: Engine, cmdID: string, p: Platform, msg: Message): boolean {
   if (!privilegedCommands.has(cmdID)) return false
   if (isAdmin(e, msg.userID)) return false
@@ -588,6 +636,8 @@ export { extractChannelID }
 /**
  * Pull a --dir/-d <path> option out of args: returns the path ('' if
  * absent) and the remaining args (Go extractDirFlag).
+ * @param args - Raw command arguments to scan.
+ * @returns The --dir value ('' when absent) and the arguments without the flag pair.
  */
 export function extractDirFlag(args: string[]): [string, string[]] {
   let dir = ''
@@ -607,7 +657,11 @@ export function extractDirFlag(args: string[]): [string, string[]] {
   return [dir, out]
 }
 
-/** Strip a boolean --worktree / -w flag from args (Go extractWorktreeFlag). */
+/**
+ * Strip a boolean --worktree / -w flag from args (Go extractWorktreeFlag).
+ * @param args - Raw command arguments to scan.
+ * @returns Whether the flag was present, and the arguments without it.
+ */
 export function extractWorktreeFlag(args: string[]): [boolean, string[]] {
   let use = false
   const out: string[] = []
@@ -640,6 +694,10 @@ function unknownFlag(args: string[], allowed: ReadonlySet<string>): string {
 /**
  * Whether a spawn should be blocked or merely warned at the given RAM usage
  * (Go evalSpawnMemoryGuard). 0 disables a tier; block beats warn.
+ * @param ramPct - Current system RAM usage percentage.
+ * @param warnPct - Percentage at or above which to warn; 0 disables the warn tier.
+ * @param blockPct - Percentage at or above which to block; 0 disables the block tier.
+ * @returns The block and warn verdicts; both false below every enabled tier.
  */
 export function evalSpawnMemoryGuard(ramPct: number, warnPct: number, blockPct: number): { block: boolean; warn: boolean } {
   if (blockPct > 0 && ramPct >= blockPct) return { block: true, warn: false }
@@ -647,7 +705,10 @@ export function evalSpawnMemoryGuard(ramPct: number, warnPct: number, blockPct: 
   return { block: false, warn: false }
 }
 
-/** System RAM usage percentage from /proc/meminfo; false off-Linux or on failure (Go readMemUsedPct). */
+/**
+ * System RAM usage percentage from /proc/meminfo; false off-Linux or on failure (Go readMemUsedPct).
+ * @returns The used-memory percentage and whether the reading succeeded.
+ */
 export function readMemUsedPct(): { pct: number; ok: boolean } {
   let data: string
   try {
@@ -705,7 +766,13 @@ async function setupWorktree(
   }
 }
 
-/** /spawn: create a new group running a delegated task (Go cmdSpawn). */
+/**
+ * /spawn: create a new group running a delegated task (Go cmdSpawn).
+ * @param e - The engine owning spawn and session state.
+ * @param p - The platform that must support group spawning.
+ * @param msg - The triggering chat message.
+ * @param args - The delegated task text, with optional --dir/-d, --worktree/-w, and --thread/-t flags.
+ */
 export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   let threadFlag = false
   const noThread: string[] = []
@@ -746,7 +813,13 @@ export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: strin
   })
 }
 
-/** /fork: create a group whose session forks the current chat's context (Go cmdFork). */
+/**
+ * /fork: create a group whose session forks the current chat's context (Go cmdFork).
+ * @param e - The engine owning spawn and session state.
+ * @param p - The platform that must support group spawning.
+ * @param msg - The triggering chat message, whose chat must hold a forkable agent session.
+ * @param args - The first message for the forked group, with optional --dir/-d and --worktree/-w flags.
+ */
 export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const [dirArg, afterDir] = extractDirFlag(args)
   const [flagWT, rest] = extractWorktreeFlag(afterDir)
@@ -937,7 +1010,13 @@ function parentJumpButtonsFor(e: Engine, msg: Message): { content: string; ok: b
   return { content: `[↩ ${effectiveParentLabel(e, e.platforms[0] as Platform, msg)}](${url})`, ok: true }
 }
 
-/** /done: tear down a spawned group, optionally reporting to its parent (Go cmdDone). */
+/**
+ * /done: tear down a spawned group, optionally reporting to its parent (Go cmdDone).
+ * @param e - The engine owning the spawned-chat subtree.
+ * @param p - The platform that must support avatar-state switching.
+ * @param msg - The triggering chat message, which must come from a spawned group.
+ * @param args - Optional --reply/-r to push this chat's last result to its parent before teardown.
+ */
 export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): void {
   const bad = unknownFlag(args, new Set(['-r', '--reply']))
   if (bad !== '') {
@@ -1001,6 +1080,12 @@ export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): v
  * avatar, mark the spawned chat done, and handle its worktree (Go
  * cleanupOneChat). asChild=true skips a dirty worktree (the caller
  * summarizes) instead of showing the interactive card.
+ * @param e - The engine owning the chat's session and interactive state.
+ * @param p - The platform the chat lives on.
+ * @param sessionKey - The chat's session key.
+ * @param replyCtx - Reply context for the interactive Keep/Remove card; reconstructed from the platform when undefined.
+ * @param asChild - Whether this is a descendant teardown, which skips the dirty-worktree card.
+ * @returns The chat's display name and whether its worktree was left dirty.
  */
 export async function cleanupOneChat(
   e: Engine, p: Platform, sessionKey: string, replyCtx: unknown, asChild: boolean,
@@ -1069,6 +1154,10 @@ export async function cleanupOneChat(
  * seeded with the whole talk instead of just message one, so the name can
  * catch up as the task becomes clearer. No-op outside spawned groups (Go
  * cmdRename).
+ * @param e - The engine owning the group-name generation.
+ * @param p - The platform that must support group renaming.
+ * @param msg - The triggering chat message, which must come from a spawned group.
+ * @param args - The new name; empty regenerates a name from the conversation history.
  */
 export async function cmdRename(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (!msg.isSpawnedGroup) {

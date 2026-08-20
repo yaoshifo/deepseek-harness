@@ -117,7 +117,11 @@ const iconCategoryRules: IconCategoryRule[] = [
 /** The category for icons matching no rule (Go iconCategoryMisc). */
 export const iconCategoryMisc = 'misc'
 
-/** Classify a single icon name into a category (Go classifyIcon). */
+/**
+ * Classify a single icon name into a category (Go classifyIcon).
+ * @param id - The Lucide icon name, e.g. 'git-branch'.
+ * @returns The category ID; 'misc' when no substring rule matches.
+ */
 export function classifyIcon(id: string): string {
   for (const r of iconCategoryRules) {
     if (id.includes(r.substr)) return r.cat
@@ -130,6 +134,7 @@ let iconCategoriesCache: Map<string, string[]> | undefined
 /**
  * Lazily built category → icon id list (misc included, but sampling skips
  * it). Scans the Lucide sprite once (Go loadIconCategories).
+ * @returns The cached category → icon id list mapping.
  */
 export function loadIconCategories(): Map<string, string[]> {
   if (iconCategoriesCache === undefined) {
@@ -147,6 +152,9 @@ export function loadIconCategories(): Map<string, string[]> {
 /**
  * Sample n items from ids without replacement (partial Fisher-Yates, input
  * untouched). n<=0 yields []; n>=len yields a full copy (Go sampleSubset).
+ * @param ids - The population to sample from; never mutated.
+ * @param n - How many items to draw.
+ * @returns The sampled items, in shuffled order.
  */
 export function sampleSubset(ids: string[], n: number): string[] {
   if (n <= 0 || ids.length === 0) return []
@@ -164,6 +172,8 @@ export function sampleSubset(ids: string[], n: number): string[] {
 /**
  * Sample perCat icons from every category (skipping misc), shuffled together
  * so no category block gets a positional bias (Go sampleAcrossCategories).
+ * @param perCat - How many icons to draw from each category.
+ * @returns The combined per-category samples, fully shuffled.
  */
 export function sampleAcrossCategories(perCat: number): string[] {
   const cats = loadIconCategories()
@@ -185,6 +195,8 @@ export function sampleAcrossCategories(perCat: number): string[] {
  * Replace whitespace-delimited absolute/home path tokens with their basename
  * so a path echoed by the LLM or the first-message fallback cannot blow the
  * group name up to a 60-rune path dump (Go shortenGroupPathTokens).
+ * @param s - The candidate group-name text.
+ * @returns The text with every path token replaced by its capped basename; the original string when unchanged.
  */
 export function shortenGroupPathTokens(s: string): string {
   const fields = s.split(/\s+/).filter(f => f !== '')
@@ -226,6 +238,8 @@ function abbrevPathToken(tok: string): string {
  * Turn raw name text (LLM output or a user-supplied name) into a single-line
  * group name within the 60-rune cap, stripping surrounding quotes/backticks.
  * Returns '' when there is no non-empty line (Go sanitizeGroupName).
+ * @param raw - The raw name text, typically LLM output or user input.
+ * @returns The first non-empty line as a single-line name within the rune cap; '' when none.
  */
 export function sanitizeGroupName(raw: string): string {
   for (const rawLine of raw.split('\n')) {
@@ -247,6 +261,8 @@ export function sanitizeGroupName(raw: string): string {
  * Take the second non-empty line of the LLM's two-line output as the Lucide
  * icon name: lowercased, quotes stripped; "-" or missing means no icon (Go
  * parseGroupIcon).
+ * @param raw - The LLM's full two-line output.
+ * @returns The icon name, or '' for "-", a missing line, or no output.
  */
 export function parseGroupIcon(raw: string): string {
   let nonEmpty = 0
@@ -293,6 +309,8 @@ function fnv1a32(s: string): number {
  * Deterministic fallback icon for a group name (Go FallbackGroupIcon). Used
  * when the LLM omitted or gave an invalid icon name so the avatar is still
  * set rather than silently skipped.
+ * @param name - The group name to key the choice on.
+ * @returns An icon from the fallback pool, stable for the same name.
  */
 export function fallbackGroupIcon(name: string): string {
   if (name === '') return fallbackIcons[0] ?? 'hash'
@@ -303,6 +321,8 @@ export function fallbackGroupIcon(name: string): string {
  * Trim raw message text into a usable group name: trim, first line, path-token
  * abbreviation, 60-rune cap with "..." (Go truncateGroupName). Used by the
  * first-message rename and the LLM-failure fallback.
+ * @param s - The raw message text to derive a name from.
+ * @returns The first line, path tokens abbreviated, capped at the 60-rune limit.
  */
 export function truncateGroupName(s: string): string {
   s = s.trim()
@@ -318,6 +338,8 @@ export function truncateGroupName(s: string): string {
 /**
  * Hub group name derived from the chatroom topic: the topic truncated to the
  * 60-rune ceiling, no prefix (Go chatroomHubGroupName).
+ * @param topic - The chatroom topic.
+ * @returns The topic itself when short enough, else its 60-rune truncation with "...".
  */
 export function chatroomHubGroupName(topic: string): string {
   if (Array.from(topic).length > maxGroupNameRunes) {
@@ -330,6 +352,8 @@ export function chatroomHubGroupName(topic: string): string {
  * Whether a session's group keeps a fixed name that first-message spawn
  * renaming must not clobber: chatroom role groups, research-assistant
  * groups, and direct-role groups (Go sessionExemptFromSpawnRename).
+ * @param session - The spawned chat's session.
+ * @returns Whether the session's group name is fixed and spawn renaming must skip it.
  */
 export function sessionExemptFromSpawnRename(session: Session): boolean {
   return session.getChatroomHubKey() !== ''
