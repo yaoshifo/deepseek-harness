@@ -364,14 +364,16 @@ function buildAskqConfirmResponse(
  * Inbound card.action.trigger payload (structural slice). Fields sit at the
  * ROOT of the parsed WS payload — the same flattened convention as
  * {@link FeishuReceiveEvent} (SDK RequestHandle.parse unwraps the v2
- * envelope's `event` object; confirmed against live payloads).
+ * envelope's `event` object and passes keys through unmodified; the root
+ * nesting was confirmed against live payloads, the `form_value` key name
+ * against the Go SDK's card event struct json tag).
  */
 export interface CardActionTriggerEvent {
   action?: {
     value?: Record<string, string>
     option?: string
     name?: string
-    formValue?: Record<string, unknown>
+    form_value?: Record<string, unknown>
   }
   /** Wire keys are snake_case (live payload: open_id). */
   operator?: { open_id?: string }
@@ -493,7 +495,7 @@ function isThreadSessionKey(sessionKey: string): boolean {
 
 /**
  * Checked option indices from a multi-select askq form submission (Go
- * collectAskqMultiSelectedFromFormValue): formValue keys follow askq_opt_{N}
+ * collectAskqMultiSelectedFromFormValue): form_value keys follow askq_opt_{N}
  * with a truthy value when checked. Sorted numerically (Go sorted the index
  * strings, which misorders 10 before 2 — harmless there, fixed here).
  */
@@ -943,7 +945,7 @@ export class FeishuPlatform implements Platform {
       if (actionVal === 'perm:allow') content = 'allow'
       else if (actionVal === 'perm:deny') {
         content = 'deny'
-        const raw = action.formValue?.deny_reason
+        const raw = action.form_value?.deny_reason
         const reason = typeof raw === 'string' ? raw : ''
         if (reason.trim() !== '') content = `deny\x00${reason.trim()}`
       } else if (actionVal === 'perm:allow_all') content = 'allow all'
@@ -964,7 +966,7 @@ export class FeishuPlatform implements Platform {
         } else if (actionVal === 'perm:deny') {
           permLabel = '❌ 已拒绝'
           permColor = 'red'
-          const raw = action.formValue?.deny_reason
+          const raw = action.form_value?.deny_reason
           const reason = typeof raw === 'string' ? raw.trim() : ''
           if (reason !== '') permBody = `> ${reason}`
         } else {
@@ -996,10 +998,10 @@ export class FeishuPlatform implements Platform {
         this.askqAnswered.set(messageID, true)
       }
       // Multi-select form submit (Go collectAskqMultiSelectedFromFormValue):
-      // the checked indices ride in formValue under askq_opt_{N} keys; append
+      // the checked indices ride in form_value under askq_opt_{N} keys; append
       // them as ":idx1,idx2" so the engine's answer resolver can map labels.
       if (actionVal.startsWith('askq_multi:') && !actionVal.slice('askq_multi:'.length).includes(':')) {
-        const indices = collectAskqMultiSelected(action.formValue)
+        const indices = collectAskqMultiSelected(action.form_value)
         if (indices.length > 0) actionVal += `:${indices.join(',')}`
       }
       // Convert askq_multi: to askq: format for the engine
@@ -1025,7 +1027,7 @@ export class FeishuPlatform implements Platform {
     // append their input field's value and echo the command back).
     if (actionVal.startsWith('cmd:')) {
       let cmdText = actionVal.slice('cmd:'.length)
-      const fv = action.formValue
+      const fv = action.form_value
       if (fv !== undefined) {
         const argName = action.value?._arg
         if (argName !== undefined && argName !== '') {

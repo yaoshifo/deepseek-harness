@@ -161,7 +161,7 @@ describe('onCardAction perm: in-place card update (Go feishu_dispatch.go perm br
     await p.start(() => {})
     p.permBodyCache.set('feishu:oc_1:ou_9', 'cached perm body')
     const event: CardActionTriggerEvent = {
-      action: { name: 'perm_deny', formValue: { deny_reason: '  scope too broad  ' } },
+      action: { name: 'perm_deny', form_value: { deny_reason: '  scope too broad  ' } },
       operator: { open_id: 'ou_9' },
       context: { open_chat_id: 'oc_1', open_message_id: 'om_p2' },
     }
@@ -257,13 +257,13 @@ describe('onCardAction export:/sendreply: (Go feishu_dispatch.go export branches
 })
 
 describe('onCardAction askq_multi submit', () => {
-  it('appends checked askq_opt_N indices from formValue in numeric order', async () => {
+  it('appends checked askq_opt_N indices from form_value in numeric order', async () => {
     const p = newPlatform({ allowChat: '*' })
     const event: CardActionTriggerEvent = {
       action: {
         value: { action: 'askq_multi:0', askq_question: 'pick' },
         name: 'askq_multi_submit_0',
-        formValue: { askq_opt_2: 'true', askq_opt_10: true, askq_opt_1: 'false', other: 'x' },
+        form_value: { askq_opt_2: 'true', askq_opt_10: true, askq_opt_1: 'false', other: 'x' },
       },
       operator: { open_id: 'ou_9' },
       context: { open_chat_id: 'oc_1', open_message_id: `om_${Date.now()}` },
@@ -273,6 +273,7 @@ describe('onCardAction askq_multi submit', () => {
     // Indices land as "askq:0:2,10" → resolved to labels by the engine from
     // the pending question; the dispatched content carries the raw label text
     // from value (askq_label absent → the raw actionVal slice).
+    expect(messages[0]!.content).toBe('askq:0:2,10')
     expect(messages[0]!.isAskqCardAction).toBe(true)
   })
 })
@@ -304,7 +305,7 @@ describe('onCardAction hint buttons (Go feishu_dispatch.go hint__ branch)', () =
       action: {
         name: hintButtonName('wp', '/tdd'),
         value: { _arg: 'hint_arg_0' },
-        formValue: { hint_arg_0: '先写失败测试' },
+        form_value: { hint_arg_0: '先写失败测试' },
       },
       operator: { open_id: 'ou_9' },
       context: { open_chat_id: 'oc_1', open_message_id: 'om_h2' },
@@ -319,7 +320,7 @@ describe('onCardAction hint buttons (Go feishu_dispatch.go hint__ branch)', () =
     const event: CardActionTriggerEvent = {
       action: {
         name: hintButtonName('co', '/done'),
-        formValue: { hint_arg_0: '', other: 'fallback' },
+        form_value: { hint_arg_0: '', other: 'fallback' },
       },
       operator: { open_id: 'ou_9' },
       context: { open_chat_id: 'oc_1', open_message_id: 'om_h3' },
@@ -409,7 +410,7 @@ describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq bran
     await p.sendCard({ messageID: 'om_t', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, card)
 
     const event: CardActionTriggerEvent = {
-      action: { name: 'askq_multi_submit_0', formValue: { askq_opt_1: 'true', askq_opt_2: true } },
+      action: { name: 'askq_multi_submit_0', form_value: { askq_opt_1: 'true', askq_opt_2: true } },
       operator: { open_id: 'ou_9' },
       context: { open_chat_id: 'oc_1', open_message_id: 'om_askq_1' },
     }
@@ -440,7 +441,7 @@ describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq bran
       ],
     })
     const event: CardActionTriggerEvent = {
-      action: { name: 'askq_multi_submit_0', formValue: { askq_opt_2: true } },
+      action: { name: 'askq_multi_submit_0', form_value: { askq_opt_2: true } },
       operator: { open_id: 'ou_9' },
       context: { open_chat_id: 'oc_1', open_message_id: 'om_m2' },
     }
