@@ -60,10 +60,12 @@ describe('buildHintsPanelElements', () => {
     const els = buildHintsPanelElements(['/a', '/b', '/c', '/d'], [], undefined)
     expect(els).toHaveLength(2)
     expect(textsOf(els[0]!)).toEqual(['/a', '/b', '/c'])
-    expect(els[0]!.kind === 'actions' && els[0]!.layout).toBe('equal_columns')
     expect(textsOf(els[1]!)).toEqual(['/d'])
-    if (els[0]!.kind === 'actions') {
-      const btn = els[0]!.buttons[0]!
+    const row = els[0]!
+    expect(row.kind).toBe('actions')
+    if (row.kind === 'actions') {
+      expect(row.layout).toBe('equal_columns')
+      const btn = row.buttons[0]!
       expect(btn.value).toBe('cmd:/a')
       expect(btn.actionType).toBe('form_submit')
       expect(btn.name).toBe(hintButtonName('c', '/a'))
@@ -124,10 +126,11 @@ describe('buildHintsCommonElements', () => {
     usage.increment('hints_common', '好')
     const els = buildHintsCommonElements(['/done', '好', '/spawn'], usage)
     expect(els).toHaveLength(1)
-    expect(textsOf(els[0]!)).toEqual(['好', '/done', '/spawn'])
-    if (els[0]!.kind === 'actions') {
-      expect(els[0]!.buttons[0]?.name).toBe(hintButtonName('co', '好'))
-      expect(els[0]!.buttons[0]?.value).toBe('cmd:好')
+    const row = els[0]!
+    expect(textsOf(row)).toEqual(['好', '/done', '/spawn'])
+    if (row.kind === 'actions') {
+      expect(row.buttons[0]?.name).toBe(hintButtonName('co', '好'))
+      expect(row.buttons[0]?.value).toBe('cmd:好')
     }
   })
 })
