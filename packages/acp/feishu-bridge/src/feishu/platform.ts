@@ -3003,6 +3003,29 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
 }
 
 /**
+ * Event registrations for the default WS dispatcher (Go
+ * feishu_lifecycle.go): the four routed event types pass through to the
+ * raw-event callback; the reaction echo events our own add/removeReaction
+ * triggers carry explicit no-op handlers — without one the node-sdk warns
+ * "no im.message.reaction.* handle" on every reaction.
+ * @param onRawEvent - Raw-event sink receiving the event type and payload.
+ * @returns Event-type → handler map for EventDispatcher.register.
+ */
+export function wsEventRegistrations(
+  onRawEvent: (eventType: string, data: unknown) => void,
+): Record<string, (data: unknown) => void> {
+  const route = (eventType: string) => (data: unknown): void => { onRawEvent(eventType, data) }
+  return {
+    'im.message.receive_v1': route('im.message.receive_v1'),
+    'card.action.trigger': route('card.action.trigger'),
+    'im.chat.updated_v1': route('im.chat.updated_v1'),
+    'im.message.recalled_v1': route('im.message.recalled_v1'),
+    'im.message.reaction.created_v1': () => {},
+    'im.message.reaction.deleted_v1': () => {},
+  }
+}
+
+/**
  * Default WS bootstrap over the SDK's long-connection client (plan D5):
  * one WSClient per app, dispatcher wired for im.message.receive_v1.
  */
@@ -3012,20 +3035,7 @@ async function defaultWsStart(
   onRawEvent: (eventType: string, data: unknown) => void,
 ): Promise<void> {
   const sdk = await import('@larksuiteoapi/node-sdk')
-  const dispatcher = new sdk.EventDispatcher({}).register({
-    'im.message.receive_v1': (data: unknown) => {
-      onRawEvent('im.message.receive_v1', data)
-    },
-    'card.action.trigger': (data: unknown) => {
-      onRawEvent('card.action.trigger', data)
-    },
-    'im.chat.updated_v1': (data: unknown) => {
-      onRawEvent('im.chat.updated_v1', data)
-    },
-    'im.message.recalled_v1': (data: unknown) => {
-      onRawEvent('im.message.recalled_v1', data)
-    },
-  })
+  const dispatcher = new sdk.EventDispatcher({}).register(wsEventRegistrations(onRawEvent))
   const wsClient = new sdk.WSClient({ appId: appID, appSecret, domain: sdk.Domain.Feishu })
   await wsClient.start({ eventDispatcher: dispatcher })
 }

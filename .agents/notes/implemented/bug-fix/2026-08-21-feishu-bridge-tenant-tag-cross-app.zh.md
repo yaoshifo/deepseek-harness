@@ -24,4 +24,4 @@ Status: implemented
 
 ## Testing
 
-`tests/feishu/tag-cache-share.spec.ts`：bot A 的 create 返回 id；bot B 的 create 返回跨 app 402-无-id 占名回复；B 经 sibling 缓存文件解析出该 id，两个缓存文件都落在共享目录（而非 per-project sessions 目录）。包全量套件（1879 测试）保持绿。
+`tests/feishu/tag-cache-share.spec.ts`：bot A 的 create 返回 id；bot B 的 create 返回跨 app 402-无-id 占名回复；B 经 sibling 缓存文件解析出该 id，两个缓存文件都落在共享目录（而非 per-project sessions 目录）。包全量套件（1874 测试）保持绿。

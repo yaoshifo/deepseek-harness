@@ -24,4 +24,4 @@ Two bridge projects in one tenant resolve each other's tag ids through the share
 
 ## Testing
 
-`tests/feishu/tag-cache-share.spec.ts`: bot A's create returns an id; bot B's create returns the cross-app 402-without-id squat reply; B resolves the id through the sibling cache file, and both cache files land in the shared directory (not the per-project sessions dir). The full package suite (1879 tests) stayed green.
+`tests/feishu/tag-cache-share.spec.ts`: bot A's create returns an id; bot B's create returns the cross-app 402-without-id squat reply; B resolves the id through the sibling cache file, and both cache files land in the shared directory (not the per-project sessions dir). The full package suite (1874 tests) stayed green.
