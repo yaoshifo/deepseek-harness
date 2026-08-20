@@ -9,8 +9,10 @@
 #
 # Refuses to run from inside the daemon (e.g. an agent session it hosts): the
 # restart would kill the script's own process tree before `launchctl load`.
-# Mid-turn sessions lose the current turn (transcript rolls back to the last
-# complete turn; resend to retry) — run when sessions are idle.
+# If the script still dies between unload and load, a trap re-loads the
+# service so the bot is never left stranded offline. Mid-turn sessions lose
+# the current turn (transcript rolls back to the last complete turn; resend
+# to retry) — run when sessions are idle.
 #
 # macOS launchd only; Linux uses `systemctl --user restart feishu-bridge`
 # (OPERATIONS.md §5).
@@ -33,7 +35,21 @@ esac
 [ "$(uname)" = Darwin ] || { echo "error: launchd is macOS-only; on Linux use: systemctl --user restart feishu-bridge" >&2; exit 1; }
 [ -f "$PLIST" ] || { echo "error: plist not found: $PLIST" >&2; exit 1; }
 
-# Walk the ppid chain and refuse when an ancestor is the daemon itself.
+# Refuse to run from inside the daemon (e.g. an agent session it hosts): the
+# restart would kill the script's own process tree before `launchctl load`.
+# Primary signal: dsh exports DSH_SESSION_JSONL into every bash-tool execution
+# and the daemon's sessions live under the feishu-bridge store, so the path
+# names the hosting daemon. XPC_SERVICE_NAME cannot serve here — the bash-tool
+# sandbox rewrites the child's copy to a literal 0 — and the ppid walk below
+# dies on its first hop because the sandbox denies ps (both verified in the
+# 2026-08-20 outage, which this guard now prevents). The walk stays as the
+# fallback for a manually started daemon outside any dsh session.
+case "${DSH_SESSION_JSONL:-}" in
+  "${DSH_HOME:-$HOME/.dsh}/feishu-bridge-sessions/"*)
+    echo "error: this shell runs inside the $LABEL daemon (session store ${DSH_SESSION_JSONL}); restarting it would abort this turn. Run from a plain terminal." >&2
+    exit 1
+    ;;
+esac
 p=$$
 while [ "$p" -gt 1 ]; do
   p=$(ps -o ppid= -p "$p" | tr -d ' ') || break
@@ -54,10 +70,29 @@ fi
 
 echo "==> restarting daemon $LABEL"
 launchctl unload "$PLIST"
+# Between unload and load, any exit must put the service back: an abort or the
+# daemon teardown killing this script's own tree once stranded the bot offline
+# (2026-08-20). EXIT covers abort paths; TERM/INT cover teardown kills. The
+# load retries because launchctl load right after unload can fail with an
+# Input/output error while launchd still settles the removal. SIGKILL cannot
+# be caught and stays a residual risk.
+restore() {
+  i=0
+  while [ "$i" -lt 10 ]; do
+    launchctl load "$PLIST" 2>/dev/null && return 0
+    i=$((i + 1))
+    sleep 0.5
+  done
+  echo "error: could not re-load $LABEL; run manually: launchctl load $PLIST" >&2
+  return 0
+}
+trap restore EXIT
+trap 'restore; trap - EXIT; exit 143' TERM
+trap 'restore; trap - EXIT; exit 130' INT
 i=0
 while pgrep -f "bin\.js --profile $PROFILE" >/dev/null 2>&1; do
   i=$((i + 1))
-  [ "$i" -gt 20 ] && { echo "error: old daemon still running after 10s; aborting before load" >&2; exit 1; }
+  [ "$i" -gt 20 ] && { echo "error: old daemon still running after 10s; service re-loaded, retry from a plain terminal" >&2; exit 1; }
   sleep 0.5
 done
 
@@ -67,6 +102,7 @@ for log in stdout stderr; do
 done
 
 launchctl load "$PLIST"
+trap - EXIT TERM INT
 sleep 2
 launchctl list | grep -q "^[-0-9]*.*[[:space:]]$LABEL\$" || { echo "error: daemon not in launchctl list after load" >&2; exit 1; }
 

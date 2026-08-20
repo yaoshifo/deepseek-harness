@@ -134,7 +134,7 @@ launchd 模板把标准输出/错误写到 `@LOG_DIR@/feishu-bridge-stdout.log` 
 
 ### 3.3 reload 流程
 
-- TS 代码改动（macOS 一键）：`packages/acp/feishu-bridge/reload.sh`——§1.3 两步构建 → `launchctl unload`/`load` → 日志轮换 → WS 就绪探活；`--skip-build` 跳过构建（构建已在别处完成时）。在 daemon 内的会话里执行会被拒绝（重启会中断自身 turn），须从普通终端跑；进行中 turn 会回滚到最后完整 turn。
+- TS 代码改动（macOS 一键）：`packages/acp/feishu-bridge/reload.sh`——§1.3 两步构建 → `launchctl unload`/`load` → 日志轮换 → WS 就绪探活；`--skip-build` 跳过构建（构建已在别处完成时）。在 daemon 内的会话里执行会被拒绝（重启会中断自身 turn；由 bash 环境里的 `DSH_SESSION_JSONL` 判定——agent 沙箱会把 `XPC_SERVICE_NAME` 改写成字面量 `0`、并拒绝 `ps`，两者都不可用），须从普通终端跑；进行中 turn 会回滚到最后完整 turn。unload 与 load 之间脚本若因任何原因退出，会自动重试 `launchctl load` 恢复服务。
 - TS 代码改动（Linux）：§1.3 两步构建 → `systemctl --user restart feishu-bridge`。
 - profile yml / 插件 config 改动：Cordis HMR 事务热载，无需重启。
 
