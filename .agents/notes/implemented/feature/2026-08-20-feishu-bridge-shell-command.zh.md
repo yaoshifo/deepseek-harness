@@ -2,7 +2,7 @@
 
 Status: implemented
 
-[English](2026-08-22-feishu-bridge-shell-command.md) | 中文
+[English](2026-08-20-feishu-bridge-shell-command.md) | 中文
 
 ## Problem
 
@@ -22,7 +22,7 @@ cc-connect → feishu-bridge 迁移以 `docs/FEATURE-PARITY.md` 为验收对照�
 
 ## Consequences
 
-`/shell` 与 `!` 在聊天里恢复可用，由 `admin_from` 管理。本 note 提到的两个后续项已于同日在 `feature/2026-08-22-feishu-bridge-seven-commands.md` 落地：`/help` 已注册且列表从注册表动态生成，误导性的 `message_help` 大段（连同六个 `help_*_section` 条目）已删除。命令清单本身仍是具名缺口——剩余未裁定命令见该 note 与 README Known Limitations。超时消息保留 Go 冻结的 "(60s)" 措辞，即使 `--timeout` 设了别的值。
+`/shell` 与 `!` 在聊天里恢复可用，由 `admin_from` 管理。本 note 提到的两个后续项已于同日在 `feature/2026-08-20-feishu-bridge-seven-commands.md` 落地：`/help` 已注册且列表从注册表动态生成，误导性的 `message_help` 大段（连同六个 `help_*_section` 条目）已删除。命令清单本身仍是具名缺口——剩余未裁定命令见该 note 与 README Known Limitations。超时消息保留 Go 冻结的 "(60s)" 措辞，即使 `--timeout` 设了别的值。
 
 ## Testing
 

@@ -2,7 +2,7 @@
 
 Status: implemented
 
-English | [中文](2026-08-22-feishu-bridge-seven-commands.zh.md)
+English | [中文](2026-08-20-feishu-bridge-seven-commands.zh.md)
 
 ## Problem
 
@@ -24,7 +24,7 @@ Two per-domain modules, both following the established merge-into-command-table 
 
 ## Consequences
 
-The command count rises from 19 to 26. `/help` can no longer lie: it lists exactly what the engine has registered, in every language that has one-liners. The remaining gap is ~27 commands without individual rulings (`/whoami`, `/history`, `/current`, `/search`, `/delete`, `/name`, `/memory`, `/model`, `/reasoning`, `/mode`, `/lang`, `/quiet`, `/tts`, `/allow`, `/skills`, `/config`, `/show`, `/diff`, …), recorded in the README's Known Limitations for an M8 ruling pass; `/usage`, `/web`, `/upgrade`, `/restart`, `/doctor`, `/version`, `/workspace` keep their existing cut rulings. FEATURE-PARITY #38 is corrected to state that the command surface landed 2026-08-22.
+The command count rises from 19 to 26. `/help` can no longer lie: it lists exactly what the engine has registered, in every language that has one-liners. The remaining gap is ~27 commands without individual rulings (`/whoami`, `/history`, `/current`, `/search`, `/delete`, `/name`, `/memory`, `/model`, `/reasoning`, `/mode`, `/lang`, `/quiet`, `/tts`, `/allow`, `/skills`, `/config`, `/show`, `/diff`, …), recorded in the README's Known Limitations for an M8 ruling pass; `/usage`, `/web`, `/upgrade`, `/restart`, `/doctor`, `/version`, `/workspace` keep their existing cut rulings. FEATURE-PARITY #38 is corrected to state that the command surface landed 2026-08-20.
 
 ## Testing
 

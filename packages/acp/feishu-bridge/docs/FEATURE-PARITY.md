@@ -54,7 +54,7 @@
 | 35 | Pin 每条用户消息到 Pin 面板（spawn 群） | ✅ | M4 | MessagePinAppender；子项 #35a（spawn 群反馈精简）：topnotice 门控已对齐（spawn 群默认关），表情关闭门控未见移植——TS 引擎尚未接线 startTyping/Done/CrossMark 反应链，随 E 群清查/M7 核实 |
 | 36 | /fork（/fk）：复制上下文的隔离分支群 | ✅ | M4 | completedTurnPrefix seed（原生 agents.create）；天花板：父会话需 live（代码内已注记） |
 | 37 | /done --reply 回灌父会话 + /spawn --dir 换目录 | ✅ | M4 | 真机验证（--dir 修复后） |
-| 38 | 父子群视觉关联（跳转按钮 + /notify + /board 树形） | ✅ | M4 | 跳转卡完成；/notify /board 命令本体 2026-08-22 补齐（M4 时仅 spawn 通知卡在，命令未注册）；im.chat.updated_v1 改名同步属 M4 收尾（D 群补缺进行中） |
+| 38 | 父子群视觉关联（跳转按钮 + /notify + /board 树形） | ✅ | M4 | 跳转卡完成；/notify /board 命令本体 2026-08-20 补齐（M4 时仅 spawn 通知卡在，命令未注册）；im.chat.updated_v1 改名同步属 M4 收尾（D 群补缺进行中） |
 | 39 | /spawn /fork --worktree：子群跑独立 git worktree | ✅ | M4 | act:/wt Keep/Remove 卡回调完成 |
 | 40 | subtask CLI：agent 自主多 agent 协作（spawn/report） | ✅ | M4 | feishu_bridge_subtask 工具族 + 修订版 skill；真机全链路 |
 | 41 | /chatroom：多 agent 圆桌聊天室 | ✅ | M5 | 真机全链路：角色挑选卡 → 多轮 gather relay → end barrier → synthesis + roles_removed 回收 |

@@ -2,7 +2,7 @@
 
 Status: implemented
 
-English | [中文](2026-08-22-feishu-bridge-shell-command.zh.md)
+English | [中文](2026-08-20-feishu-bridge-shell-command.zh.md)
 
 ## Problem
 
@@ -22,7 +22,7 @@ Deliberate cuts, unchanged from the M4-E C-class rulings: `disabled_commands` an
 
 ## Consequences
 
-`/shell` and `!` work again in chat, admin-gated by `admin_from`. Two follow-ups from this note landed the same day in `feature/2026-08-22-feishu-bridge-seven-commands.md`: `/help` now exists and generates its list from the registered handlers, and the misleading `message_help` blob (plus the six `help_*_section` entries) was deleted. The command inventory itself remains a named gap — see that note and the README's Known Limitations for the remaining unruled commands. The timeout message keeps Go's frozen "(60s)" wording even when `--timeout` sets another value.
+`/shell` and `!` work again in chat, admin-gated by `admin_from`. Two follow-ups from this note landed the same day in `feature/2026-08-20-feishu-bridge-seven-commands.md`: `/help` now exists and generates its list from the registered handlers, and the misleading `message_help` blob (plus the six `help_*_section` entries) was deleted. The command inventory itself remains a named gap — see that note and the README's Known Limitations for the remaining unruled commands. The timeout message keeps Go's frozen "(60s)" wording even when `--timeout` sets another value.
 
 ## Testing
 

@@ -2,7 +2,7 @@
 
 Status: implemented
 
-[English](2026-08-22-feishu-bridge-seven-commands.md) | 中文
+[English](2026-08-20-feishu-bridge-seven-commands.md) | 中文
 
 ## Problem
 
@@ -24,7 +24,7 @@ Status: implemented
 
 ## Consequences
 
-命令数从 19 升至 26。`/help` 不再可能说谎：它列出的就是引擎注册的命令，凡有单行翻译的语言都成立。剩余缺口是约 27 条无逐条裁定的命令（`/whoami`、`/history`、`/current`、`/search`、`/delete`、`/name`、`/memory`、`/model`、`/reasoning`、`/mode`、`/lang`、`/quiet`、`/tts`、`/allow`、`/skills`、`/config`、`/show`、`/diff` 等），记入 README Known Limitations 待 M8 裁定；`/usage`、`/web`、`/upgrade`、`/restart`、`/doctor`、`/version`、`/workspace` 维持既有裁剪裁定。FEATURE-PARITY #38 已修正为命令面于 2026-08-22 落地。
+命令数从 19 升至 26。`/help` 不再可能说谎：它列出的就是引擎注册的命令，凡有单行翻译的语言都成立。剩余缺口是约 27 条无逐条裁定的命令（`/whoami`、`/history`、`/current`、`/search`、`/delete`、`/name`、`/memory`、`/model`、`/reasoning`、`/mode`、`/lang`、`/quiet`、`/tts`、`/allow`、`/skills`、`/config`、`/show`、`/diff` 等），记入 README Known Limitations 待 M8 裁定；`/usage`、`/web`、`/upgrade`、`/restart`、`/doctor`、`/version`、`/workspace` 维持既有裁剪裁定。FEATURE-PARITY #38 已修正为命令面于 2026-08-20 落地。
 
 ## Testing
 
