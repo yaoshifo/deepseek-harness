@@ -2,7 +2,7 @@
 
 逐项对照迁移源 `cc-connect` 的 `docs/features.md`（#1–#61；#35a「spawn 群反馈精简」作为 #35 的子项并入该行，编号总数恰为 61）。每行给出一句话描述与迁移状态，M7 验收逐项复核后更新本表。里程碑定义、架构决策与裁剪范围声明见 [MIGRATION.md](MIGRATION.md)（§0 范围声明、§4 阶段、D1–D10 决策）。
 
-状态以 MIGRATION.md 里程碑记录加本 worktree 代码现状（2026-08-19）为准。Web UI / Management Server 不编号、整体在范围外（§0），不在本表。
+状态以 MIGRATION.md 里程碑记录加本 worktree 代码现状（2026-08-20）为准。Web UI / Management Server 不编号、整体在范围外（§0），不在本表。
 
 | 状态 | 含义 |
 |---|---|
@@ -11,9 +11,7 @@
 | ✂️ | 不迁移（附理由，出处 MIGRATION.md §0） |
 | ❓ | 待核实（证据不足，宁标勿猜） |
 
-统计：✅ 34 · 📋 15 · ✂️ 10 · ❓ 2，合计 61。
-
-统计：✅ 33 · 📋 20 · ✂️ 10 · ❓ 0，合计 61（#11 由 ❓ 归档为 📋，#3/#8/#18 于 M7-d 落地）。
+统计：✅ 51 · ✂️ 10 · 📋 0 · ❓ 0，合计 61（M5–M7 验收后全量复核更新；#62 为迁移期补充行不计入）。
 
 补充行（不在源 61 项内，迁移期发现的能力缺口）：#62 send CLI 附件投递。
 
@@ -26,24 +24,16 @@
 | 5 | Inline Plan 去重（两条路径不重复显示） | ✅ | M3 | plan 域 |
 | 6 | ExitPlanMode 前先以 markdown 展示 plan 内容 | ✅ | M3 | plan 域 |
 | 7 | flip minimax 修复（IsActive 纯缓存名比对） | ✂️ | — | §0 裁定；新架构 provider 切换为 dispose + 同 sessionId resume 重建（D1），无旧缓存比对路径 |
-| 8 | 图片发送改用文件路径（不 base64 内嵌） | ❓ | — | 平台侧图片下载已实现（M4 media）；adapter.send 目前仅附文件名注记，图片进模型上下文的通路未接线——dsh 原生图片消息格式与归属里程碑待核实 |
+| 8 | 图片发送改用文件路径（不 base64 内嵌） | ✅ | M7-d | 核实结论：Go dsh 后端从不把图片字节放进模型上下文——纯附件消息落盘 `<workDir>/.cc-connect/pending/<hash>/` 暂存、下一条文本消息以路径 bullets 拼进 prompt；带文字消息经 dshSession.Send 落盘 `.cc-connect/attachments` 并附路径注记。TS 已保形接线（stageAttachments/drain/splice/discard + adapter.send 落盘注记） |
 | 9 | 全局 Providers：跨项目共享模型配置 + /provider 切换 | ✅ | M7-c | /provider list/switch/current/clear + provider_shortcuts（/strong 等）+ 切换持久化（project state）；add/remove/presets 不迁移——provider = profile 命名路由，运行时不可创建 |
 | 10 | tool_progress：quiet 模式工具进度卡片 | ✅ | M2 | 真机验证（display 转发补齐后） |
 | 11 | reply_footer 默认关闭（ctx/余额只走 ✅ 通知） | ✅ | M7-b | 已核实并接线：Go 语义 = 每条非静默回复尾部追加 `*model · effort · 余额% · workdir*`（engine_send.go buildReplyFooter），默认关。TS 完整移植（`status-footer.ts` buildReplyFooter，能力面探测 getSession→agent）；天花板：dsh adapter 无 UsageReporter/ContextUsageReporter，生产页脚只含 model · effort · workdir（余额段空缺，能力面就绪待 adapter 生长） |
-
-| 8 | 图片发送改用文件路径（不 base64 内嵌） | ✅ | M7-d | 核实结论：Go dsh 后端从不把图片字节放进模型上下文——纯附件消息落盘 `<workDir>/.cc-connect/pending/<hash>/` 暂存、下一条文本消息以路径 bullets 拼进 prompt；带文字消息经 dshSession.Send 落盘 `.cc-connect/attachments` 并附路径注记。TS 已保形接线（stageAttachments/drain/splice/discard + adapter.send 落盘注记） |
-| 9 | 全局 Providers：跨项目共享模型配置 + /provider 切换 | 📋 | M7 | /provider 命令；多路由基建（providers map + 路由名引用）已随 D2 落地 |
-| 10 | tool_progress：quiet 模式工具进度卡片 | ✅ | M2 | 真机验证（display 转发补齐后） |
-| 11 | reply_footer 默认关闭（ctx/余额只走 ✅ 通知） | 📋 | M7 usage 域 | 核实结论：Go 语义 = 每条就地回复追加 Codex 式状态行（model · reasoning effort · ctx% 或 usage · workdir，engine_send.go buildReplyFooter），数据面依赖 model/effort 能力getter 与 ctx%/usage 计算（#1 usage 域）。`features.replyFooter` 键未转发 → 默认关语义成立；页脚本体随 #1 usage 域实现，避免与本里程碑并行群撞车 |
-| 12 | per-provider context_window | 📋 | M7 | /provider 域 |
-
-| 11 | reply_footer 默认关闭（ctx/余额只走 ✅ 通知） | ❓ | — | `features.replyFooter` 键已声明但未见接线；「默认关」语义天然成立，Codex 式页脚本体是否单独实现待核实（完整状态页脚属 #26、M7） |
-| 12 | per-provider context_window | 📋 | M7 | 消费方是 ctx indicator（#14/#26 完整状态页脚，usage 域）；/provider 切换本体已随 M7-c 落地 |
+| 12 | per-provider context_window | ✅ | M7-b | ctx% 消费方落地（状态页脚 ctx 行：SDK token 累积 + project 级 `contextWindow` 单值，默认 200k）。天花板：per-provider 细化未接线——`ProviderRoute` 无该字段、adapter `getActiveProvider` 仅回 name（`applyActiveProviderContextWindow` 恒走 project 回退），多路由窗口差异显著时需补 |
 | 13 | 消息排队机制（session 启动期不丢弃） | ✅ | M1 | engine 事件循环 |
 | 14 | ctx indicator 移至 ✅ 通知（原始 token 累积值） | ✅ | M7-b | 完整版：SDK token 累积（turnDelta/cum + cache delta/cum + numTurns + compaction）与 self-report `[ctx: ~N%]` 剥离均已接入 |
 | 15 | auto-approve 不跳过 AskUserQuestion / ExitPlanMode | ✅ | M3 | 审批域 |
 | 16 | GLM 反爬指纹绕过（rewrite_tui_fingerprint） | ✂️ | — | §0：由 profile 的 llm 路由承担（plain model name 规避 + forceAdaptiveThinking 兼容项）；providerproxy 整体不迁移 |
-| 17 | --as user 透传 + lark-auth 编排 | 📋 | M7 | feishu_bridge_lark 透传工具（D4） |
+| 17 | --as user 透传 + lark-auth 编排 | ✅ | M7-d | `feishu_bridge_lark` 透传工具：bot 进程内 mint TAT + LARKSUITE_CLI_* 注入，`--as user` / auth 子命令走 `--profile <app_id>` 前置，`im +chat-messages-list` 原生直调 raw_card_content |
 | 18 | feishu_workspace：每 bot 默认飞书空间（CC_FEISHU_* 注入） | ✅ | M7-d | `feishuWorkspace` 配置块 → engine `setFeishuWorkspace`/`feishuWorkspaceEnv`（含 relay 注入）→ adapter setup 钩子注入系统提示段（D3 替代进程 env） |
 | 19 | tool_progress 合并 entry + ToolID 匹配 + 失败保留 | ✅ | M2 | progress 域 |
 | 20 | restrict_to_workdir：限制 bot 只访问项目目录 | ✅ | M3 | 以 D3 setup 钩子 restrict()（dsh 原生）承担，不再写 .claude/settings.local.json deny 规则 |
@@ -67,25 +57,25 @@
 | 38 | 父子群视觉关联（跳转按钮 + /notify + /board 树形） | ✅ | M4 | 跳转/notify/board 完成；im.chat.updated_v1 改名同步属 M4 收尾（D 群补缺进行中） |
 | 39 | /spawn /fork --worktree：子群跑独立 git worktree | ✅ | M4 | act:/wt Keep/Remove 卡回调完成 |
 | 40 | subtask CLI：agent 自主多 agent 协作（spawn/report） | ✅ | M4 | feishu_bridge_subtask 工具族 + 修订版 skill；真机全链路 |
-| 41 | /chatroom：多 agent 圆桌聊天室 | 📋 | M5 | chatroom 域 |
-| 42 | subtask gather：批量回报屏障（父 agent 等齐再综合） | 📋 | M7 | 屏障机制与 M5 chatroom gather 同源，落点可能随排期提前 |
-| 43 | /chatroom 角色挑选多选卡 + 单角色直聊 | 📋 | M5 | chatroom 域 |
+| 41 | /chatroom：多 agent 圆桌聊天室 | ✅ | M5 | 真机全链路：角色挑选卡 → 多轮 gather relay → end barrier → synthesis + roles_removed 回收 |
+| 42 | subtask gather：批量回报屏障（父 agent 等齐再综合） | ✅ | M4 | `feishu_bridge_subtask` gather action + subtask.gather_timeout_sec 装配（M4-E 接线）；chatroom gather 屏障同源（M5） |
+| 43 | /chatroom 角色挑选多选卡 + 单角色直聊 | ✅ | M5 | chatroom-pick.ts 状态机 + startChatroomDirectRole 1:1 直聊 |
 | 44 | 禁用 Claude Code 后台 subagent（env 注入） | ✂️ | — | CLAUDE_CODE_* env 注入是 CLI 子进程 spawn 契约；dsh 原生 agent 无 stream-json turn 边界溢出问题（§0） |
 | 45 | opencode agent 后端（第三后端） | ✂️ | — | 多 CLI 后端模型退役：agent 会话经 ctx.agents 原生创建（§1），无 CLI 子进程后端 |
 | 46 | mimocode agent 后端（第四后端） | ✂️ | — | 同 #45 |
-| 47 | plan→HTML engine 派生渲染（ExitPlanMode 异步出 HTML） | 📋 | M7 | 渲染会话 = create + seed + 无工具 + stall 重试 |
-| 48 | 回复 speculative 自动投递 HTML | 📋 | M7 | 复用 #47 fork 机制 |
+| 47 | plan→HTML engine 派生渲染（ExitPlanMode 异步出 HTML） | ✅ | M7 | plan-render.ts 渲染会话（create + seed + 无工具 + stall 重试）；真机首通（HTML→PNG→群内图片卡） |
+| 48 | 回复 speculative 自动投递 HTML | ✅ | M7 | 复用渲染会话 fork 机制；真机长回复触发自动渲染投递 |
 | 49 | 子群 LLM 自动命名（engine 侧 fork） | ✅ | M4 | 全链路完成并真机验证（2026-08-19：占位名「开发虾 副本」→ LLM 改名「登录页CSS对齐修复」）；config schema + setGroupNameConfig + adapter lightweightQuery 已随 D 群补缺合并 |
 | 50 | 防 MCP 工具自动后台化（env 注入） | ✂️ | — | 同 #44（CLAUDE_CODE_* spawn 契约族） |
-| 51 | Lucide 图标库增强 HTML 渲染 | 📋 | M7 | M0 已移植 lucide 纯逻辑（12 测试）；sprite 抽取/模板注入随 #47/#48 |
+| 51 | Lucide 图标库增强 HTML 渲染 | ✅ | M7 | lucide/sprite.ts 抽取 + plan-render-templates.ts 模板注入（M0 纯逻辑随迁） |
 | 52 | /spawn 子群按群名自动设 Lucide 图标头像 | ✅ | M4 | 真机验证：align-center-vertical 彩色+灰度双 key 上传（2026-08-19） |
-| 53 | Monitor 群监控 → 自主拉群排查 / 中枢分发 | 📋 | M6 | #53 全量（规则/LLM 分诊/coalesce/no_report/轮询兜底//monitor） |
+| 53 | Monitor 群监控 → 自主拉群排查 / 中枢分发 | ✅ | M6 | 规则快路 + LLM 分诊 + dispatch/monitor 双模式 + coalesce + no_report + 轮询兜底 + /monitor；真机告警全链路（拉群排查 → /done --reply 回报） |
 | 54 | 进度卡 header 思考/执行 GIF | ✅ | M2 | M4-C 修资源解析路径，真机确认 |
 | 55 | /fork 回滚（引用历史消息 fork 到某个 turn） | ✂️ | — | §0：claudecode-only。注：M4 Wave 1 记录曾将 fork-at 列为 M7 遗留（Go dsh 后端 #60 Phase 2 有 session-log 截断先例）；若 M7 决定以 dsh session log 实现，本行改 📋 |
-| 56 | monitor no_report 规则（子群免回报父群） | 📋 | M6 | 随 #53 全量 |
-| 57 | /chatroom --research 并行研究作战室 | 📋 | M5 | chatroom 域 |
+| 56 | monitor no_report 规则（子群免回报父群） | ✅ | M6 | monitor.ts no_report，随 #53 全量 |
+| 57 | /chatroom --research 并行研究作战室 | ✅ | M5 | research venv provisioning + uv hooks + armResearchManualAskTimeout |
 | 58 | 跨会话消息观察（SendMessage/ListAgents 核查记录） | ✂️ | — | Claude Code 特定机制的升级核查记录；dsh 无此问题（§0） |
-| 59 | /chatroom 随便聊聊（topic-pick 单选卡） | 📋 | M5 | chatroom 域 |
+| 59 | /chatroom 随便聊聊（topic-pick 单选卡） | ✅ | M5 | chatroom-pick.ts 选题单选卡状态机 |
 | 60 | dsh agent 后端（三层桥接入） | ✂️ | — | 被新架构本体取代：旧三层桥（Go agent/dsh + stdio JSON-RPC + bridge profile）正是本次迁移消除的层（§0）；能力由 agent-dsh/ 适配器直接承担 |
 | 61 | dsh bash sandbox 关闭（danger-full-access） | ✂️ | — | 配置层承担：feishu-bridge profile 的 sandbox-policy override（cordis.patch.yml），无引擎代码可迁 |
 | 62 | `cc-connect send` CLI：agent 把生成的文件/图片作为消息投递给用户（side-channel 附件回传） | ✅ | M8 前 | `src/tools/send.ts` `feishu_bridge_send` 工具（D4 caller-agent 路由）→ `Engine.sendToSessionWithAttachments`（引擎/平台侧 M1 起已在，只缺工具层消费方）；chatroom persona 恢复 Go `ChatroomRoleBaseSystemPrompt` 投递段；天花板：本地路径 only（Go 的 http 拉取不移植）、mime 按「单一 files 参数 + 检测分类」。i18n `relay_setup_ok`/`cron_setup_ok` 为残留（Go 记忆文件写入机制在 dsh 下过时，见 README Known Limitations） |
