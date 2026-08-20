@@ -2074,9 +2074,9 @@ export class Engine {
     if (platform === undefined) return
     state.sender ??= newAsyncSender(sessionKey)
     const sender = state.sender
-    const sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
+    let sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
     state.preview = sp
-    const cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
+    let cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
       this.i18n.currentLang(), undefined, sender)
     this.bindActivePreview(sp, sessionKey)
     // Placeholder card so the user sees visual feedback (with push) before
@@ -2594,12 +2594,39 @@ export class Engine {
           ])
           timing.intervals.push({ start: permWaitStart, end: Date.now() })
           state.permissionPending = false
-          // Reset for the new execution phase (Go engine_events.go post-
-          // permission reset): stale textParts from the pre-interaction
-          // segment would otherwise leak into the final reply and re-trigger
-          // the reply-HTML render a plan turn already covered.
+          // After user interaction, finalize the old card and start fresh
+          // (Go engine_events.go post-permission block): flush the
+          // un-flushed text segment, complete + detach the pre-interaction
+          // card, then create new sp/cp and pre-create the execution-phase
+          // placeholder so post-approval execution lands on a new card
+          // instead of appending to the pre-interaction one.
+          if (sp.hasStarted()) {
+            if (textParts.length > segmentStart && p !== undefined) {
+              const segment = textParts.slice(segmentStart).join('')
+              if (segment !== '') {
+                for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
+                  await this.send(p, replyCtx, chunk)
+                }
+              }
+            }
+            segmentStart = textParts.length
+            await sp.completeAndDetach()
+          }
+          sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
+          cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
+            this.i18n.currentLang(), undefined, sender)
+          this.bindActivePreview(sp, sessionKey)
+          state.preview = sp
+          if (this.display.toolProgress && sp.canPreview()) {
+            void sp.showPlaceholder(this.i18n.t(Msg.Processing))
+          }
+          // Reset for the new execution phase — the old sp/cp tracked
+          // pre-interaction state; stale textParts would leak into the final
+          // reply and re-trigger the reply-HTML render a plan turn already
+          // covered.
           textParts = []
           segmentStart = 0
+          toolCount = 0
           silentHold = false
           break
         }

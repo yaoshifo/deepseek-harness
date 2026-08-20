@@ -407,3 +407,60 @@ describe('ForegroundPermissionSurfaces', () => {
     expect(state.permissionPending).toBe(false)
   })
 })
+
+describe('PostPermissionCardRestart', () => {
+  it('resolving a permission finalizes the old preview card and starts a fresh one', async () => {
+    // Go engine_events.go post-permission block: after user interaction the
+    // pre-interaction card is completed and detached, new sp/cp are created,
+    // and a fresh placeholder opens — post-approval execution must not keep
+    // PATCHing the pre-interaction tool-progress card.
+    const p = createStubPlatform()
+    let nextID = 0
+    const starts: string[] = []
+    const updates: Array<{ handle: unknown; content: string }> = []
+    const preview = p as typeof p & {
+      sendPreviewStart(rc: unknown, content: string): Promise<unknown>
+      updateMessage(handle: unknown, content: string): Promise<void>
+    }
+    preview.sendPreviewStart = async (_rc, content) => {
+      nextID++
+      starts.push(`start:${content}`)
+      return `handle-${nextID}`
+    }
+    preview.updateMessage = async (handle, content) => {
+      updates.push({ handle, content })
+    }
+
+    const engine = new Engine('test', createStubAgent(), [p], '', 'en')
+    engine.setDisplayConfig({ thinkingMessages: false, toolProgress: true })
+    const sess = newControllableSession('perm-restart')
+    const key = 'test:user4'
+    const session = engine.sessions.getOrCreateActive(key)
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = p
+    state.replyCtx = 'ctx'
+    engine.interactiveStates.set(key, state)
+
+    sess.channel.push({ type: 'tool_use', toolName: 'Bash', toolInput: 'ls', content: '', done: false })
+    sess.channel.push({ type: 'permission_request', requestID: 'req-r', toolName: 'write', toolInput: '/tmp/x', content: '', done: false })
+    sess.channel.push({ type: 'tool_use', toolName: 'Bash', toolInput: 'cat /tmp/x', content: '', done: false })
+    sess.channel.push({ type: 'text', content: 'done', done: false })
+    sess.channel.push({ type: 'result', content: 'done', done: true })
+
+    const loop = engine.processInteractiveEvents(state, session, engine.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+    for (let i = 0; i < 100 && state.pending === undefined; i++) {
+      await new Promise((r) => { setTimeout(r, 10) })
+    }
+    expect(state.pending?.requestID).toBe('req-r')
+    state.pending?.resolve()
+    await loop
+    await new Promise((r) => { setTimeout(r, 50) })
+
+    // Turn-entry placeholder + post-approval placeholder: a fresh card.
+    expect(starts.length).toBe(2)
+    // The post-approval tool progress lands on the NEW card only.
+    expect(updates.some(u => u.handle === 'handle-2')).toBe(true)
+    expect(updates.every(u => u.handle !== 'handle-1' || !u.content.includes('cat /tmp/x'))).toBe(true)
+  })
+})
