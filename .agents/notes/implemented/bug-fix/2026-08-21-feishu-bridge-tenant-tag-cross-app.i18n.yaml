@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-21-feishu-bridge-tenant-tag-cross-app.md
+2026-08-21-feishu-bridge-tenant-tag-cross-app.md: 7c64f4c3e45da61f46b592aa300739a8a5334a47
+2026-08-21-feishu-bridge-tenant-tag-cross-app.zh.md: 4d7ab8722cbb48a1e5d8716db7e8d5d618efa5f4

@@ -806,6 +806,11 @@ export function buildProjectAssembly(
   // The engine/platform stores assume the data dirs exist (Go main created
   // cfg.DataDir upfront); without this the spawned-chat registry save ENOENTs.
   mkdirSync(join(projectDataDir, 'sessions'), { recursive: true })
+  // Shared tag-id cache directory for every project's bot (Go's single
+  // sessions dir): the sibling-cache lookup resolves a tenant tag id created
+  // by another bot when this bot's own create hits 402-without-id.
+  const sharedTagCacheDir = join(dataRoot, 'sessions')
+  mkdirSync(sharedTagCacheDir, { recursive: true })
   const projectState = new ProjectStateStore(join(projectDataDir, 'state.json'))
   // A runtime /provider switch persists into the project state; it wins over
   // the config default on restart (Go writes config.toml, this runtime is
@@ -840,6 +845,7 @@ export function buildProjectAssembly(
     groupReplyAll: project.features?.allowChat === true,
     projectName: project.name,
     workDir: project.workdir,
+    tagCacheDir: sharedTagCacheDir,
     ...(config.display?.progressSpinner !== undefined ? { progressSpinner: config.display.progressSpinner } : {}),
     ...(config.display?.patchRateIntervalMs !== undefined && config.display.patchRateIntervalMs > 0
       ? { patchRateIntervalMs: config.display.patchRateIntervalMs }
