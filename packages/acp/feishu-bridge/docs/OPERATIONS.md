@@ -133,9 +133,9 @@ launchd 模板把标准输出/错误写到 `@LOG_DIR@/feishu-bridge-stdout.log` 
 
 ### 3.3 reload 流程
 
-- TS 代码改动：§1.3 两步构建 → 重启进程（macOS `launchctl unload` + `load`；Linux `systemctl --user restart feishu-bridge`）。
+- TS 代码改动（macOS 一键）：`packages/acp/feishu-bridge/reload.sh`——§1.3 两步构建 → `launchctl unload`/`load` → 日志轮换 → WS 就绪探活；`--skip-build` 跳过构建（构建已在别处完成时）。在 daemon 内的会话里执行会被拒绝（重启会中断自身 turn），须从普通终端跑；进行中 turn 会回滚到最后完整 turn。
+- TS 代码改动（Linux）：§1.3 两步构建 → `systemctl --user restart feishu-bridge`。
 - profile yml / 插件 config 改动：Cordis HMR 事务热载，无需重启。
-- TODO(M8)：reload 脚本封装与 idle 会话回收（对齐旧 cc-connect-bridge 的 reload.sh 语义）。
 
 ## 4. 回退（回旧 cc-connect）
 
