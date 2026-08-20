@@ -177,6 +177,22 @@ function envValue(env: string[], name: string): string {
 }
 
 /**
+ * Whether the session env flags mark it unattended, the sessions Go's
+ * effectiveMode elevates to bypassPermissions: agent-delegated subtask
+ * children without a human in the group, and chatroom role / direct-role
+ * personas — approval prompts there stall on nobody who can answer. An
+ * attended subtask (a human has spoken in the child group) and a moderator
+ * keep the normal approval path.
+ *
+ * @param env - The session env built by the engine's buildSessionEnv.
+ * @returns True when tool-permission requests auto-approve for this session.
+ */
+export function sessionBypassesPermissions(env: string[]): boolean {
+  const unattendedSubtask = envHasFlag(env, 'CC_SUBTASK') && !envHasFlag(env, 'CC_SUBTASK_ATTENDED')
+  return unattendedSubtask || envHasFlag(env, 'CC_CHATROOM_ROLE') || envHasFlag(env, 'CC_CHATROOM_DIRECT_ROLE')
+}
+
+/**
  * The #18 workspace routing section: CC_FEISHU_* env entries the engine
  * attached to the session become a system-prompt section naming the bot's
  * default Feishu workspace (the D3 setup-hook replacement for Go's
@@ -360,6 +376,10 @@ export class DshAgentAdapter {
       const sessionID = r.agent?.session?.id ?? ''
       const target = this.liveSessions.get(sessionID)
       if (target === undefined) return 'unavailable'
+      // Go autoApprove: an unattended session approves directly — questions
+      // (AskUserQuestion / ExitPlanMode) ride the separate userQuestions
+      // channel and still surface as cards (#15).
+      if (target.bypassPermissions) return 'allowed-once'
       const requestID = r.callId ?? sessionID
       const toolInputRaw = r.reason !== undefined ? { reason: r.reason } : {}
       target.emitPermissionRequest({
@@ -884,12 +904,17 @@ export class DshAgentAdapter {
         ...(setup !== undefined ? { setup } : {}),
       })
     }
-    const session = new DshAgentSession(key, handle, this.workDir, this.ctx)
+    const bypass = sessionBypassesPermissions(this.env)
+    const session = new DshAgentSession(key, handle, this.workDir, this.ctx, bypass)
 
     // Lazily register the userQuestions provider now that the plugin tree
     // is fully loaded (at constructor time it may not be available yet).
     this.ensureUserQuestionsProvider()
-    const mode = this.modeOverride !== '' ? this.modeOverride : this.defaultMode
+    // Go effectiveMode: an unattended session overrides ANY configured or
+    // overridden mode with bypassPermissions — which also means plan mode
+    // stays off (a delegated child nobody can approve must not stall on an
+    // ExitPlanMode card).
+    const mode = bypass ? 'bypassPermissions' : (this.modeOverride !== '' ? this.modeOverride : this.defaultMode)
     if (mode !== '') {
       // Apply the mode onto the native plan-mode controller (Go /mode +
       // config mode=plan): plan → active, others off. The one-shot override
@@ -985,12 +1010,15 @@ export class DshAgentSession implements AgentSession {
   private readonly pendingQuestionAnswers = new Map<string, { settle: (answers: string[]) => void; count: number }>()
   /** Where Send stages image/file bytes (Go dshSession.workDir). */
   private readonly workDir: string
+  /** Auto-approve tool permissions (Go permMode bypassPermissions / autoApprove). */
+  readonly bypassPermissions: boolean
 
-  constructor(key: string, handle: DshAgentHandleLike, workDir = '', ctx?: DshContextLike) {
+  constructor(key: string, handle: DshAgentHandleLike, workDir = '', ctx?: DshContextLike, bypassPermissions = false) {
     this.key = key
     this.handle = handle
     this.workDir = workDir
     this.ctx = ctx
+    this.bypassPermissions = bypassPermissions
   }
 
   /**

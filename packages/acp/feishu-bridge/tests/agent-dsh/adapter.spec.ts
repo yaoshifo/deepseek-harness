@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ContinueSession } from '../../src/core/types.js'
-import { DshAgentAdapter, DshAgentSession, stripModelAlias, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.js'
+import { DshAgentAdapter, DshAgentSession, sessionBypassesPermissions, stripModelAlias, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.js'
 
 // DshAgentAdapter unit tests: ctx.agents create/resume, followup/cancel call
 // sequences, provider routing, [1m] stripping, dispose+resume provider
@@ -764,4 +764,82 @@ it('defaultMode plan activates plan mode on every startSession (Go agent options
   a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_m4:ou_9'])
   await a.startSession('')
   expect(planSets).toEqual([true, true, false, true])
+})
+
+describe('sessionBypassesPermissions (Go effectiveMode → bypassPermissions)', () => {
+  it('elevates unattended subtasks and chatroom roles, not attended ones or moderators', () => {
+    expect(sessionBypassesPermissions(['CC_SUBTASK=1'])).toBe(true)
+    expect(sessionBypassesPermissions(['CC_SUBTASK=1', 'CC_SUBTASK_ATTENDED=1'])).toBe(false)
+    expect(sessionBypassesPermissions(['CC_CHATROOM_ROLE=1'])).toBe(true)
+    expect(sessionBypassesPermissions(['CC_CHATROOM_DIRECT_ROLE=1'])).toBe(true)
+    expect(sessionBypassesPermissions(['CC_CHATROOM_MODERATOR=1'])).toBe(false)
+    expect(sessionBypassesPermissions(['CC_SESSION_KEY=feishu:oc_1:ou_9'])).toBe(false)
+    expect(sessionBypassesPermissions([])).toBe(false)
+  })
+})
+
+describe('effectiveMode bypass wiring', () => {
+  it('an unattended subtask session auto-approves tool permissions without a card', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    a.setSessionEnv(['CC_SESSION_KEY=feishu:child:ou_9', 'CC_SUBTASK=1', 'CC_SUBTASK_DEPTH=1'])
+    const session = await a.startSession('')
+    const listener = h.listeners.get('approval/request')?.[0]
+    if (listener === undefined) throw new Error('approval/request listener was not registered')
+
+    const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-1',
+      reason: 'rm -rf /tmp/x',
+    })
+    // Settles with no respondPermission call: the answerer short-circuited
+    // before emitting any permission_request toward the engine.
+    await expect(outcome).resolves.toBe('allowed-once')
+  })
+
+  it('a chatroom role session auto-approves too', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    a.setSessionEnv(['CC_SESSION_KEY=feishu:role:ou_9', 'CC_CHATROOM_ROLE=1'])
+    const session = await a.startSession('')
+    const listener = h.listeners.get('approval/request')?.[0]
+    if (listener === undefined) throw new Error('approval/request listener was not registered')
+    const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-2',
+    })
+    await expect(outcome).resolves.toBe('allowed-once')
+  })
+
+  it('an attended subtask keeps the normal approval card path', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    a.setSessionEnv(['CC_SESSION_KEY=feishu:child:ou_9', 'CC_SUBTASK=1', 'CC_SUBTASK_ATTENDED=1'])
+    const session = await a.startSession('')
+    const listener = h.listeners.get('approval/request')?.[0]
+    if (listener === undefined) throw new Error('approval/request listener was not registered')
+    const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-3',
+    })
+    // Still waiting for the engine decision until respondPermission fires.
+    const probe = await Promise.race([outcome.then(() => 'settled'), new Promise((r) => { setTimeout(() => { r('pending') }, 30) })])
+    expect(probe).toBe('pending')
+    void session.respondPermission('call-3', { behavior: 'allow' })
+    await expect(outcome).resolves.toBe('allowed-once')
+  })
+
+  it('bypass overrides the plan default so subtask children never enter plan mode', async () => {
+    const h = createHarness()
+    const planSets: boolean[] = []
+    h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
+    const a = newAdapter(h)
+    a.setDefaultMode('plan')
+    a.setSessionEnv(['CC_SESSION_KEY=feishu:child:ou_9', 'CC_SUBTASK=1'])
+    await a.startSession('')
+    expect(planSets).toEqual([false])
+  })
 })

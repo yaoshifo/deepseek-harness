@@ -14,7 +14,7 @@ Plugin structure:
 | `src/tools/` | the `feishu_bridge_subtask / cron / relay / chatroom / lark / send` tool families (D4: caller-agent routing, no env needed) |
 | `skills/` | revised skills (`feishu-bridge-` prefix), loaded through the profile's `customSkillDirs` |
 
-Model-visible surface: inbound messages (with reply-chain prefixes and staged-attachment path notes) enter the prompt; outbound goes through the card system (progress cards, completion cards, approval cards); CC_FEISHU_* workspace routing is injected as a system-prompt section through the D3 setup hook.
+Model-visible surface: inbound messages (with reply-chain prefixes and staged-attachment path notes) enter the prompt; outbound goes through the card system (progress cards, completion cards, approval cards); CC_FEISHU_* workspace routing is injected as a system-prompt section through the D3 setup hook. Unattended sessions (agent-delegated subtask children without a human, chatroom role / direct-role personas) auto-approve tool permissions and never enter plan mode — Go effectiveMode's bypassPermissions — while AskUserQuestion and plan cards still surface there (attended subtasks and moderators keep full approval).
 
 ## Model Experience
 
