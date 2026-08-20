@@ -15,6 +15,8 @@
 
 统计：✅ 33 · 📋 20 · ✂️ 10 · ❓ 0，合计 61（#11 由 ❓ 归档为 📋，#3/#8/#18 于 M7-d 落地）。
 
+补充行（不在源 61 项内，迁移期发现的能力缺口）：#62 send CLI 附件投递。
+
 | # | 特性 | 状态 | 里程碑 | 落点 / 理由 |
 |---|---|---|---|---|
 | 1 | UsageProvider：配置式服务商余量信息（/usage + buildCompletionUsage + ActiveDetector） | ✅ | M7-b | `src/engine/usage.ts`（glm/minimax 工厂注册 + 5min 缓存 + ActiveDetector/SyncUsageFetcher 能力面）+ `usage_providers` 配置块；/usage 命令本体未移植（Go 无对应输出需求方，quota 已上 ✅ 页脚 ⌛ 行） |
@@ -86,3 +88,4 @@
 | 59 | /chatroom 随便聊聊（topic-pick 单选卡） | 📋 | M5 | chatroom 域 |
 | 60 | dsh agent 后端（三层桥接入） | ✂️ | — | 被新架构本体取代：旧三层桥（Go agent/dsh + stdio JSON-RPC + bridge profile）正是本次迁移消除的层（§0）；能力由 agent-dsh/ 适配器直接承担 |
 | 61 | dsh bash sandbox 关闭（danger-full-access） | ✂️ | — | 配置层承担：feishu-bridge profile 的 sandbox-policy override（cordis.patch.yml），无引擎代码可迁 |
+| 62 | `cc-connect send` CLI：agent 把生成的文件/图片作为消息投递给用户（side-channel 附件回传） | ✅ | M8 前 | `src/tools/send.ts` `feishu_bridge_send` 工具（D4 caller-agent 路由）→ `Engine.sendToSessionWithAttachments`（引擎/平台侧 M1 起已在，只缺工具层消费方）；chatroom persona 恢复 Go `ChatroomRoleBaseSystemPrompt` 投递段；天花板：本地路径 only（Go 的 http 拉取不移植）、mime 按「单一 files 参数 + 检测分类」。i18n `relay_setup_ok`/`cron_setup_ok` 为残留（Go 记忆文件写入机制在 dsh 下过时，见 README Known Limitations） |

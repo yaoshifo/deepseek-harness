@@ -1353,6 +1353,20 @@ export class Engine {
   }
 
   /**
+   * The session's effective working directory: its per-chat /dir override,
+   * else the agent's base work dir (the send tool resolves relative
+   * attachment paths against this, the way the Go CLI resolved against the
+   * agent subprocess's cwd).
+   * @param sessionKey - Interactive session key.
+   * @returns The resolved working directory; '' when neither is set.
+   */
+  sessionWorkDir(sessionKey: string): string {
+    const override = this.perChatWorkDir(this.dirOverrideKey(sessionKey))
+    if (override !== '') return override
+    return this.agentWorkDir()
+  }
+
+  /**
    * Channel-level key for dir overrides: single-workspace strips the trailing
    * user ID so card actions and text messages map to the same slot.
    * @param sessionKey - Interactive session key.

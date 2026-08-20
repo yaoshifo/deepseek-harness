@@ -1015,7 +1015,7 @@ export interface MonitorRuleConfig {
 }
 ```
 
-Source: [`packages/acp/feishu-bridge/src/index.ts:389`](../packages/acp/feishu-bridge/src/index.ts)
+Source: [`packages/acp/feishu-bridge/src/index.ts:390`](../packages/acp/feishu-bridge/src/index.ts)
 
 <a id="deepseek-aidsh-fs-local"></a>
 

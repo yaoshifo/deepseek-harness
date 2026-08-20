@@ -7,8 +7,8 @@
  * section through the agents.create/resume setup hook (plan D3).
  *
  * Tool references are rewritten from the `cc-connect` Bash CLI to the
- * feishu_bridge tools (plan D4). File delivery (`feishu_bridge send`) is not
- * ported yet — the persona omits it until the send tool lands (M7).
+ * feishu_bridge tools (plan D4), including file delivery through
+ * `feishu_bridge_send`.
  *
  * @module dsh-feishu-bridge/chatroom-persona
  */
@@ -112,9 +112,18 @@ export function buildChatroomSystemPrompt(opts: {
  * @returns the bridge identity preamble prepended to every chatroom prompt.
  */
 export function chatroomRoleBaseSystemPrompt(): string {
-  return `你正运行在 feishu-bridge 内部——一个把 AI coding agent 接到消息平台的桥。你的普通文本回复会自动投递给用户，正常回复即可。
+  return `你正运行在 feishu-bridge 内部——一个把 AI coding agent 接到消息平台的桥。你的普通文本回复会自动投递给用户，正常回复即可，不要用工具发普通文本回复。
 
 ## 可用工具
+
+### 把生成的图片或文件发回给用户
+当你生成了需要发给用户的本地图片或文件时，用 feishu_bridge_send 工具：
+
+  files: ["/absolute/path/to/image.png"]
+  files: ["/absolute/path/to/report.pdf", "/absolute/path/to/chart.png"]
+  message: "<可选的一句话说明>"
+
+文件路径写绝对路径最稳；图片会以图片消息发出、其余以文件消息发出。仅用于需要投递给用户的生成产物。如果你带了 message，不要在普通回复里重复同一句，因为普通回复也会自动投递。
 
 ### 编排工具（feishu_bridge_chatroom / feishu_bridge_subtask）
 多角色聊天室的编排动作（ask/gather/note/end/ask-human）经 feishu_bridge_chatroom 工具执行；派发助手/子任务经 feishu_bridge_subtask 工具执行。普通文本回复不要用工具发——直接回复即可。
@@ -140,7 +149,7 @@ child 是预配助手的 session key${assistantChild !== '' ? `（本会话注�
 
 **助手已预配共享 Python 环境**（uv venv）：所有角色的助手共用同一个 venv，pip install 装的包彼此共享、装一次即可。派装包任务时直接让助手执行 pip install 即可，不必让助手各自新建 venv——环境已就绪。
 
-助手干完会把结果作为 [子任务完成] 消息注入你的上下文、唤醒你。基于结果（数据、指标、发现）结合人设视角给出观点。**默认不出图**——你和助手都是文本模型、看不懂图片，分析必须基于脚本输出的数值/表格；仅当用户明确要求可视化时，才让助手出图。研究是你的活儿，助手只是你的手：你要判断查什么、怎么解读、结论是什么。
+助手干完会把结果作为 [子任务完成] 消息注入你的上下文、唤醒你。基于结果（数据、指标、发现）结合人设视角给出观点。**默认不出图**——你和助手都是文本模型、看不懂图片，分析必须基于脚本输出的数值/表格；仅当用户明确要求可视化时，才让助手出图并用 feishu_bridge_send 发出。研究是你的活儿，助手只是你的手：你要判断查什么、怎么解读、结论是什么。
 
 **协作纪律（重要）**：feishu_bridge_subtask 的 spawn / send 都是**非阻塞**的——派完一个任务**立即结束本轮**，等 [子任务完成] 回来唤醒你再继续（追问或下结论）。**禁止**轮询、重发、循环等待、check 状态——发了就等。一次只派一个任务，等结果回来再派下一个；若 send 返回"助手忙碌"，立即停下等 [子任务完成]，不要重试。report 是**助手**回传结果用的，你不要调。
 `
@@ -246,7 +255,7 @@ export function subtaskResearchAssistantPrompt(): string {
 你在为一个聊天室角色做研究执行：下数据、跑脚本、做分析。遵守：
 
 - **在当前工作目录工作**——你的 cwd 是共享研究工作区，已配好 Python 虚拟环境。所有脚本和数据写到**当前目录**，不要写 /tmp——便于用户事后审计你的计算来源。跑脚本用 \`$VIRTUAL_ENV/bin/python script.py\`（已装 akshare/pandas/numpy/requests）；若缺你要的包，\`$VIRTUAL_ENV/bin/python -m pip install <pkg>\` 装到同一 venv，别退回系统 python。
-- **默认不出图**——你和你的角色都是文本模型、看不懂图片。结论用数值/表格给出；仅当角色明确要求可视化时才出图。
+- **默认不出图**——你和你的角色都是文本模型、看不懂图片。结论用数值/表格给出；仅当角色明确要求可视化时才出图，并用 feishu_bridge_send 发出。
 - **report 前把关键数据/指标写进 report 文本**——父角色只能看到 report 的内容，图表和文件它看不到。每个关键数字标注**来源**（akshare 接口名 / web 搜索关键词）和**抓取日期**，让结论可追溯、可复现。
 - 你只做研究执行：查什么、怎么解读、结论是什么由角色判断，不要替它做综合判断。完成全部任务后再调 feishu_bridge_subtask 的 action: report（report 一次，不要中间进度调）。
 `

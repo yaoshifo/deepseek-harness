@@ -30,6 +30,7 @@ import { createUsageProvider, type UsageProvider } from './engine/usage.js'
 import { registerCronTool } from './tools/cron.js'
 import { registerRelayTool } from './tools/relay.js'
 import { registerChatroomTool } from './tools/chatroom.js'
+import { registerSendTool } from './tools/send.js'
 import { registerLarkTool, type LarkRoute } from './tools/lark.js'
 import { registerChatroomCommands } from './engine/chatroom-cmd.js'
 import { registerProviderCommands } from './engine/provider-commands.js'
@@ -685,6 +686,7 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   registerCronTool(ctx, route)
   registerRelayTool(ctx, route)
   registerChatroomTool(ctx, route)
+  registerSendTool(ctx, route)
   // The lark passthrough routes to the caller's project BOT credentials
   // (plan D4): bot mode mints a TAT in-process, --as user prepends the
   // project's --profile (Go `cc-connect lark` wrapper semantics).

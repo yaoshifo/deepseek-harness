@@ -51,6 +51,8 @@ describe('buildChatroomSystemPrompt', () => {
       platformPrompt: '',
     })
     expect(text).toContain('feishu-bridge')
+    expect(text).toContain('feishu_bridge_send')
+    expect(text).toContain('把生成的图片或文件发回给用户')
     expect(text).toContain('多角色聊天室的一个参与者')
     expect(text).toContain('共享账本——回答前先读')
     expect(text).toContain('/data/ledgers/abc')
