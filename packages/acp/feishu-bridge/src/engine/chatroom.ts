@@ -24,27 +24,7 @@ import type { Message, PendingPermission, Platform } from '../core/types.js'
 import { asCardSender, asCardSenderWithUpdate, asReplyContextReconstructor } from '../core/types.js'
 import { newCard } from '../card.js'
 import type { Card } from '../card.js'
-import {
-  MsgChatroomAskHeader,
-  MsgChatroomAskNotInRoom,
-  MsgChatroomGatherAskHumanBlocked,
-  MsgChatroomGatherHeader,
-  MsgChatroomGatherTimeout,
-  MsgChatroomGatherTimedOutDispatched,
-  MsgChatroomGatherTimedOutIdle,
-  MsgChatroomGatherTimedOutInFlight,
-  MsgChatroomNoRoles,
-  MsgChatroomPendingBody,
-  MsgChatroomPendingHeader,
-  MsgChatroomReminder,
-  MsgChatroomResearchProgressBody,
-  MsgChatroomResearchProgressDone,
-  MsgChatroomResearchProgressTimedOut,
-  MsgChatroomResearchProgressTimedOutTitle,
-  MsgChatroomResearchProgressTitle,
-  MsgChatroomRoleNotFound,
-  MsgChatroomRoleReplyHeader,
-} from '../i18n/keys.js'
+import { Msg } from '../i18n/keys.js'
 import {
   appendChatroomLedger,
   chatroomLedgerDir,
@@ -71,8 +51,14 @@ export const defaultMaxChatroomResearchRounds = 3
 
 /** Research config ranges (Go constants, mirrored from config). */
 export const minChatroomResearchTimeout = 60 * 1000
+
+/** Upper bound a configured research gather timeout may take. */
 export const maxChatroomResearchTimeout = 24 * 60 * 60 * 1000
+
+/** Lower bound a configured research round cap may take. */
 export const minChatroomResearchRounds = 1
+
+/** Upper bound a configured research round cap may take. */
 export const maxChatroomResearchRounds = 20
 
 /** How long a research-manual AskUserQuestion card waits before answering itself (Go var). */
@@ -116,9 +102,13 @@ function stopFallbackTimer(
  * persisted.
  */
 export class ChatroomGather {
+  /** The question the moderator broadcast to every role in this gather. */
   readonly question: string
+  /** Gather round stamp; role turns carry it so stale replies are detectable. */
   readonly seq: number
+  /** Role names whose replies are still awaited. */
   readonly expected = new Set<string>()
+  /** Role name → reply text, filled in as replies arrive. */
   readonly collected = new Map<string, string>()
   /** Fallback wake timer; stopped on early completion. */
   timer: ReturnType<typeof setTimeout> | undefined
@@ -325,7 +315,7 @@ export function resolveChatroomRole(e: Engine, hubKey: string, ref: string): str
       return k
     }
   }
-  throw new Error(e.i18n.tf(MsgChatroomRoleNotFound, trimmed))
+  throw new Error(e.i18n.tf(Msg.ChatroomRoleNotFound, trimmed))
 }
 
 // ── spawning ──────────────────────────────────────────────────────────────
@@ -454,10 +444,10 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
   const roleKey = resolveChatroomRole(e, callerHubKey, roleRef)
   const role = e.sessions.getOrCreateActive(roleKey)
   if (role.getChatroomHubKey() !== callerHubKey) {
-    throw new Error(e.i18n.t(MsgChatroomAskNotInRoom))
+    throw new Error(e.i18n.t(Msg.ChatroomAskNotInRoom))
   }
   const roleName = role.getChatroomRoleName()
-  await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(MsgChatroomAskHeader, roleName), 0, false)
+  await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(Msg.ChatroomAskHeader, roleName), 0, false)
   console.info(`chatroom: moderator asked role (hub=${callerHubKey} role=${roleKey})`)
 }
 
@@ -539,7 +529,7 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   const p = e.spawnCapablePlatform()
   if (p === undefined) throw new Error('chatroom: no platform available')
   const roles = listChatroomRoles(e, hubKey)
-  if (roles.length === 0) throw new Error(e.i18n.t(MsgChatroomNoRoles))
+  if (roles.length === 0) throw new Error(e.i18n.t(Msg.ChatroomNoRoles))
 
   // Set up the fan-in barrier BEFORE broadcasting so the first role reply
   // can't race ahead and find no pendingGather.
@@ -581,7 +571,7 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
     ? `[并行研究] 本轮并行研究，各自独立、互不可见。用你的助手（feishu_bridge_subtask 工具 action: send）下数据、跑脚本、算关键指标，基于实证作答（默认不出图，用数值说话）。不要用 ask-human。研究任务如下：\n\n${q}`
     : `[并行收集] 本轮并行收集各角色独立判断，不要用 ask-human，按下面的问题作答。\n\n${q}`
   for (const r of roles) {
-    void askRoleInternal(e, p, hubKey, r.sessionKey, r.name, roleQ, e.i18n.tf(MsgChatroomGatherHeader, r.name), g.seq, research)
+    void askRoleInternal(e, p, hubKey, r.sessionKey, r.name, roleQ, e.i18n.tf(Msg.ChatroomGatherHeader, r.name), g.seq, research)
       .catch((error: unknown) => {
         console.warn(`chatroom: gather broadcast to role failed (role=${r.name}): ${String(error)}`)
       })
@@ -610,13 +600,13 @@ function fireGatherTimeout(e: Engine, hubKey: string): void {
 
 /** The research gather progress card; terminal is '' (X/N), 'done', or 'timedout'. */
 export function buildResearchProgressCard(e: Engine, done: number, total: number, terminal: string): Card {
-  let title = e.i18n.t(MsgChatroomResearchProgressTitle)
-  let body = e.i18n.tf(MsgChatroomResearchProgressBody, done, total)
+  let title = e.i18n.t(Msg.ChatroomResearchProgressTitle)
+  let body = e.i18n.tf(Msg.ChatroomResearchProgressBody, done, total)
   if (terminal === 'done') {
-    title = e.i18n.t(MsgChatroomResearchProgressDone)
+    title = e.i18n.t(Msg.ChatroomResearchProgressDone)
   } else if (terminal === 'timedout') {
-    title = e.i18n.t(MsgChatroomResearchProgressTimedOutTitle)
-    body = e.i18n.tf(MsgChatroomResearchProgressTimedOut, done, total)
+    title = e.i18n.t(Msg.ChatroomResearchProgressTimedOutTitle)
+    body = e.i18n.tf(Msg.ChatroomResearchProgressTimedOut, done, total)
   }
   return newCard().title(title, 'indigo').markdown(body).build()
 }
@@ -668,14 +658,14 @@ export function buildGatherTimeoutWake(e: Engine, hubKey: string, missing: strin
     const rk = findRoleKeyByName(e, hubKey, name)
     if (rk !== '') role = e.sessions.getOrCreateActive(rk)
     if (role !== undefined && role.getResearchDispatched()) {
-      sts.push(e.i18n.tf(MsgChatroomGatherTimedOutDispatched, name))
+      sts.push(e.i18n.tf(Msg.ChatroomGatherTimedOutDispatched, name))
     } else if (role !== undefined && role.getChatroomInFlight()) {
-      sts.push(e.i18n.tf(MsgChatroomGatherTimedOutInFlight, name))
+      sts.push(e.i18n.tf(Msg.ChatroomGatherTimedOutInFlight, name))
     } else {
-      sts.push(e.i18n.tf(MsgChatroomGatherTimedOutIdle, name))
+      sts.push(e.i18n.tf(Msg.ChatroomGatherTimedOutIdle, name))
     }
   }
-  return `${e.i18n.tf(MsgChatroomGatherTimeout, missing.length, sts.join('、'))}\n\n${base}`
+  return `${e.i18n.tf(Msg.ChatroomGatherTimeout, missing.length, sts.join('、'))}\n\n${base}`
 }
 
 /**
@@ -689,7 +679,7 @@ export function wakeChatroomModerator(e: Engine, hubKey: string, content: string
   if (r === undefined) return
   void r.reconstructReplyCtx(hubKey).then(
     (hubRctx) => {
-      const wake = `${content}\n\n${e.i18n.t(MsgChatroomReminder)}`
+      const wake = `${content}\n\n${e.i18n.t(Msg.ChatroomReminder)}`
       try {
         e.receiveMessage(p, {
           ...emptyMessage(),
@@ -731,7 +721,7 @@ export async function askHuman(e: Engine, roleSessionKey: string, question: stri
   // Reject ask-human while a gather is in flight: the moderator collects
   // role questions centrally and asks the user once via a multi-select card.
   if (e.sessions.getOrCreateActive(hubKey).getPendingGather() !== undefined) {
-    throw new Error(e.i18n.t(MsgChatroomGatherAskHumanBlocked))
+    throw new Error(e.i18n.t(Msg.ChatroomGatherAskHumanBlocked))
   }
   const r = asReplyContextReconstructor(p)
   if (r === undefined) {
@@ -744,9 +734,9 @@ export async function askHuman(e: Engine, roleSessionKey: string, question: stri
   hub.setPendingHumanQuestionRole(roleName)
   e.sessions.save()
 
-  const body = e.i18n.tf(MsgChatroomPendingBody, roleName, q, roleName)
+  const body = e.i18n.tf(Msg.ChatroomPendingBody, roleName, q, roleName)
   try {
-    await e.sendAsCard(p, hubRctx, body, { title: e.i18n.tf(MsgChatroomPendingHeader, roleName), color: 'green' })
+    await e.sendAsCard(p, hubRctx, body, { title: e.i18n.tf(Msg.ChatroomPendingHeader, roleName), color: 'green' })
   } catch (error) {
     console.warn(`chatroom: pending-question card send failed (role=${roleName}): ${String(error)}`)
   }
@@ -835,7 +825,7 @@ export function maybeAutoRelayRole(
   const relayRoleReply = (hubRctx: unknown): void => {
     if (reply === '' || isSilent) return
     const content = `【${roleName}】${reply}`
-    void e.sendAsCard(p, hubRctx, content, { title: e.i18n.tf(MsgChatroomRoleReplyHeader, roleName), color: 'green' })
+    void e.sendAsCard(p, hubRctx, content, { title: e.i18n.tf(Msg.ChatroomRoleReplyHeader, roleName), color: 'green' })
       .catch((error: unknown) => {
         console.warn(`chatroom: relay card failed (role=${roleName}): ${String(error)}`)
       })
@@ -917,7 +907,7 @@ export function maybeAutoRelayRole(
   }
 
   // --- Serial path (free-form roundtable) ---
-  const reminder = e.i18n.t(MsgChatroomReminder)
+  const reminder = e.i18n.t(Msg.ChatroomReminder)
   let wake: string
   if (reply !== '' && !isSilent) {
     wake = `[聊天室·${roleName} 发言]\n\n${reply}\n\n${reminder}`

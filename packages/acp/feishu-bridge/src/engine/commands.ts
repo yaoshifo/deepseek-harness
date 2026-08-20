@@ -11,69 +11,7 @@
 import { readFileSync } from 'node:fs'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
-import {
-  MsgAdminRequired,
-  MsgDisabledShort,
-  MsgDoneDirtyChildren,
-  MsgDonePrivateNotAllowed,
-  MsgDoneRecursiveSummary,
-  MsgDoneReplyNoParent,
-  MsgDoneUnknownFlag,
-  MsgEnabledShort,
-  MsgDirChanged,
-  MsgDirCurrent,
-  MsgDirHistoryHint,
-  MsgDirHistoryTitle,
-  MsgDirInvalidIndex,
-  MsgDirInvalidPath,
-  MsgDirNoHistory,
-  MsgDirNoPrevious,
-  MsgDirNotSupported,
-  MsgDirReset,
-  MsgDirSessionReset,
-  MsgDirUsage,
-  MsgDoneNotSupported,
-  MsgExecutionStopped,
-  MsgForkGroupReady,
-  MsgForkNoContext,
-  MsgForkUnknownFlag,
-  MsgListEmpty,
-  MsgListError,
-  MsgListPageHint,
-  MsgListSwitchHint,
-  MsgListTitle,
-  MsgListTitlePaged,
-  MsgNewSessionCreated,
-  MsgNewSessionCreatedName,
-  MsgNoExecution,
-  MsgSpawnDirError,
-  MsgSpawnError,
-  MsgSpawnNotSupported,
-  MsgSpawnMemoryBlock,
-  MsgSpawnMemoryBlockTitle,
-  MsgSpawnMemoryWarn,
-  MsgSpawnMemoryWarnTitle,
-  MsgSpawnGroupReady,
-  MsgSpawnUnknownFlag,
-  MsgStatusAgentSID,
-  MsgStatusCron,
-  MsgStatusSession,
-  MsgStatusSessionKey,
-  MsgStatusTitle,
-  MsgStatusUserID,
-  MsgSwitchNoMatch,
-  MsgSwitchSuccess,
-  MsgWorktreeCreateError,
-  MsgWorktreeNotGit,
-  MsgRenameSpawnedOnly,
-  MsgRenameNotSupported,
-  MsgRenameNoHistory,
-  MsgRenameBackendNotSupported,
-  MsgRenameUnchanged,
-  MsgRenameFailed,
-  MsgRenameError,
-  MsgRenameDone,
-} from '../i18n/index.js'
+import { Msg } from '../i18n/index.js'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.js'
 import { asCardSender, asChatAvatarStateSwitcher, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, type GroupSpawnOptions } from '../core/types.js'
 import { newCard } from '../card.js'
@@ -110,7 +48,11 @@ export const builtinCommands: Array<{ names: string[]; id: string }> = [
   { names: ['rename'], id: 'rename' },
 ]
 
-/** Resolve a typed command prefix to its canonical ID ('' when unknown). */
+/**
+ * Resolve a typed command prefix to its canonical ID ('' when unknown).
+ * @param cmd - The typed command token, possibly a unique ≥2-char prefix of an alias.
+ * @returns The canonical command ID, or '' when no builtin matches.
+ */
 export function matchPrefix(cmd: string): string {
   for (const entry of builtinCommands) {
     if (entry.names.some(n => n === cmd || (n.startsWith(cmd) && cmd.length >= 2))) return entry.id
@@ -121,6 +63,8 @@ export function matchPrefix(cmd: string): string {
 /**
  * Register the M1 session commands on an engine (replaces Go's compile-time
  * dispatch table). Returns the disposer.
+ * @param e - The engine whose command dispatch table to install.
+ * @returns The disposer restoring the engine's dispatch slots to their prior unset state.
  */
 export function registerSessionCommands(e: Engine): () => void {
   const handlers: Map<string, (p: Platform, msg: Message, args: string[]) => boolean> = new Map([
@@ -130,9 +74,9 @@ export function registerSessionCommands(e: Engine): () => void {
     ['status', (p, msg) => { void cmdStatus(e, p, msg); return true }],
     ['stop', (p, msg) => {
       if (cmdStop(e, p, msg)) {
-        void e.reply(p, msg.replyCtx, e.i18n.t(MsgExecutionStopped))
+        void e.reply(p, msg.replyCtx, e.i18n.t(Msg.ExecutionStopped))
       } else {
-        void e.reply(p, msg.replyCtx, e.i18n.t(MsgNoExecution))
+        void e.reply(p, msg.replyCtx, e.i18n.t(Msg.NoExecution))
       }
       return true
     }],
@@ -152,7 +96,13 @@ export function registerSessionCommands(e: Engine): () => void {
   }
 }
 
-/** /new: stop the current interactive session and start a fresh one. */
+/**
+ * /new: stop the current interactive session and start a fresh one.
+ * @param e - The engine owning the session state.
+ * @param p - The platform that delivered the command.
+ * @param msg - The triggering chat message.
+ * @param args - The optional name for the new session.
+ */
 export async function cmdNew(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const { sessions } = commandContext(e, msg)
   const old = sessions.getOrCreateActive(msg.sessionKey)
@@ -171,8 +121,8 @@ export async function cmdNew(e: Engine, p: Platform, msg: Message, args: string[
   sessions.newSession(msg.sessionKey, name)
 
   const prefix = name === ''
-    ? e.i18n.t(MsgNewSessionCreated)
-    : e.i18n.tf(MsgNewSessionCreatedName, name)
+    ? e.i18n.t(Msg.NewSessionCreated)
+    : e.i18n.tf(Msg.NewSessionCreatedName, name)
   // Unified status footer card (/new has no token count): reset the per-turn
   // usage fields first so the previous turn's numbers don't bleed in (Go
   // buildCompletionUsage(0) + the purple card at engine_cmd_session.go:78).
@@ -206,7 +156,13 @@ function commandContext(e: Engine, _msg: Message): { agent: Engine['agent']; ses
   return { agent: e.agent, sessions: e.sessions, interactiveKey: _msg.sessionKey }
 }
 
-/** /list (/sessions): enumerate agent sessions, plain-text surface. */
+/**
+ * /list (/sessions): enumerate agent sessions, plain-text surface.
+ * @param e - The engine owning the session state.
+ * @param p - The platform that delivered the command.
+ * @param msg - The triggering chat message.
+ * @param args - The optional 1-based page number to display.
+ */
 export async function cmdList(e: Engine, p: Platform, msg: Message, args?: string[]): Promise<void> {
   const argList = args ?? []
   const { agent, sessions } = commandContext(e, msg)
@@ -214,13 +170,13 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
   try {
     agentSessions = await agent.listSessions()
   } catch (error) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgListError, String(error)))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ListError, String(error)))
     return
   }
   agentSessions = applySessionFilter(e, agentSessions, sessions)
   enrichSessionSummaries(sessions, agentSessions)
   if (agentSessions.length === 0) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgListEmpty))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ListEmpty))
     return
   }
 
@@ -243,9 +199,9 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
 
   let sb = ''
   if (totalPages > 1) {
-    sb += e.i18n.tf(MsgListTitlePaged, agentName, total, page, totalPages)
+    sb += e.i18n.tf(Msg.ListTitlePaged, agentName, total, page, totalPages)
   } else {
-    sb += e.i18n.tf(MsgListTitle, agentName, total)
+    sb += e.i18n.tf(Msg.ListTitle, agentName, total)
   }
   for (let i = start; i < end; i++) {
     const s = agentSessions[i]
@@ -263,8 +219,8 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
     }
     sb += `${marker} **${i + 1}.** ${displayName} · **${s.messageCount}** msgs · ${formatModified(s.modifiedAt)}\n`
   }
-  if (totalPages > 1) sb += e.i18n.tf(MsgListPageHint, page, totalPages)
-  sb += e.i18n.t(MsgListSwitchHint)
+  if (totalPages > 1) sb += e.i18n.tf(Msg.ListPageHint, page, totalPages)
+  sb += e.i18n.t(Msg.ListSwitchHint)
   await e.reply(p, msg.replyCtx, sb)
 }
 
@@ -337,7 +293,7 @@ export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: stri
 
   const matched = matchSession(agentSessions, sessions, query)
   if (matched === undefined) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgSwitchNoMatch, query))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.SwitchNoMatch, query))
     return
   }
 
@@ -349,7 +305,7 @@ export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: stri
   if (shortID.length > 12) shortID = shortID.slice(0, 12)
   let displayName = sessions.getSessionName(matched.id)
   if (displayName === '') displayName = matched.summary
-  await e.reply(p, msg.replyCtx, e.i18n.tf(MsgSwitchSuccess, displayName, shortID, matched.messageCount))
+  await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.SwitchSuccess, displayName, shortID, matched.messageCount))
   // TODO(M7): resendLastAssistantMessage via HistoryProvider for context echo.
 }
 
@@ -400,15 +356,15 @@ export async function cmdStatus(e: Engine, p: Platform, msg: Message): Promise<v
     const mode = modeSwitcher.getMode()
     if (mode !== '') modeStr += e.i18n.tf('status_mode', mode)
   }
-  const thinkingStr = e.display.thinkingMessages ? e.i18n.t(MsgEnabledShort) : e.i18n.t(MsgDisabledShort)
-  const toolStr = e.display.toolMessages ? e.i18n.t(MsgEnabledShort) : e.i18n.t(MsgDisabledShort)
+  const thinkingStr = e.display.thinkingMessages ? e.i18n.t(Msg.EnabledShort) : e.i18n.t(Msg.DisabledShort)
+  const toolStr = e.display.toolMessages ? e.i18n.t(Msg.EnabledShort) : e.i18n.t(Msg.DisabledShort)
   modeStr += e.i18n.tf('status_thinking_messages', thinkingStr)
   modeStr += e.i18n.tf('status_tool_messages', toolStr)
 
   const s = sessions.getOrCreateActive(msg.sessionKey)
   let sessionDisplayName = sessions.getSessionName(s.getAgentSessionID())
   if (sessionDisplayName === '') sessionDisplayName = s.getName()
-  const sessionStr = e.i18n.tf(MsgStatusSession, sessionDisplayName, s.getHistory(0).length)
+  const sessionStr = e.i18n.tf(Msg.StatusSession, sessionDisplayName, s.getHistory(0).length)
 
   // Cron line (Go engine_cmd_misc.go): the session's job count when any
   // exist — the M6a leftover /status wiring.
@@ -420,18 +376,18 @@ export async function cmdStatus(e: Engine, p: Platform, msg: Message): Promise<v
       for (const j of jobs) {
         if (j.enabled) enabledCount++
       }
-      cronStr = e.i18n.tf(MsgStatusCron, jobs.length, enabledCount)
+      cronStr = e.i18n.tf(Msg.StatusCron, jobs.length, enabledCount)
     }
   }
 
-  const sessionKeyStr = e.i18n.tf(MsgStatusSessionKey, msg.sessionKey)
+  const sessionKeyStr = e.i18n.tf(Msg.StatusSessionKey, msg.sessionKey)
   let agentSIDStr = ''
   const agentSID = s.getAgentSessionID()
-  if (agentSID !== '') agentSIDStr = e.i18n.tf(MsgStatusAgentSID, agentSID)
+  if (agentSID !== '') agentSIDStr = e.i18n.tf(Msg.StatusAgentSID, agentSID)
   let userIDStr = ''
-  if (msg.userID !== '') userIDStr = e.i18n.tf(MsgStatusUserID, msg.userID)
+  if (msg.userID !== '') userIDStr = e.i18n.tf(Msg.StatusUserID, msg.userID)
 
-  await e.reply(p, msg.replyCtx, e.i18n.tf(MsgStatusTitle,
+  await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.StatusTitle,
     e.name, agent.name(), workDirStr, platformStr, uptimeStr, langStr,
     modeStr, sessionStr, cronStr, sessionKeyStr, agentSIDStr, userIDStr, ''))
 }
@@ -461,7 +417,7 @@ export async function cmdDir(e: Engine, p: Platform, msg: Message, args: string[
   const { agent, sessions, interactiveKey } = commandContext(e, msg)
   const switcher = agent as { getWorkDir?: () => string } | undefined
   if (switcher === undefined || typeof switcher.getWorkDir !== 'function') {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgDirNotSupported))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.DirNotSupported))
     return
   }
 
@@ -470,12 +426,12 @@ export async function cmdDir(e: Engine, p: Platform, msg: Message, args: string[
   if (override !== '') currentDir = override
 
   if (args.length === 0) {
-    let sb = e.i18n.tf(MsgDirCurrent, currentDir)
+    let sb = e.i18n.tf(Msg.DirCurrent, currentDir)
     if (e.dirHistory !== undefined) {
       const history = e.dirHistory.list(e.name)
       if (history.length > 0) {
         sb += '\n\n'
-        sb += e.i18n.t(MsgDirHistoryTitle)
+        sb += e.i18n.t(Msg.DirHistoryTitle)
         for (let i = 0; i < history.length; i++) {
           const dir = history[i]
           if (dir === undefined) continue
@@ -483,7 +439,7 @@ export async function cmdDir(e: Engine, p: Platform, msg: Message, args: string[
           sb += `\n  ${marker} ${i + 1}. ${dir}`
         }
         sb += '\n\n'
-        sb += e.i18n.t(MsgDirHistoryHint)
+        sb += e.i18n.t(Msg.DirHistoryHint)
       }
     }
     await e.reply(p, msg.replyCtx, sb)
@@ -493,7 +449,7 @@ export async function cmdDir(e: Engine, p: Platform, msg: Message, args: string[
   if (args.length === 1) {
     const first = (args[0] ?? '').trim().toLowerCase()
     if (first === 'help' || first === '-h' || first === '--help') {
-      await e.reply(p, msg.replyCtx, e.i18n.t(MsgDirUsage))
+      await e.reply(p, msg.replyCtx, e.i18n.t(Msg.DirUsage))
       return
     }
   }
@@ -503,7 +459,7 @@ export async function cmdDir(e: Engine, p: Platform, msg: Message, args: string[
     await e.reply(p, msg.replyCtx, errMsg)
     return
   }
-  await e.reply(p, msg.replyCtx, `${successMsg}\n\n${e.i18n.t(MsgDirSessionReset)}`)
+  await e.reply(p, msg.replyCtx, `${successMsg}\n\n${e.i18n.t(Msg.DirSessionReset)}`)
 }
 
 /** Apply a directory switch (Go dirApply, M1: single-workspace keying). */
@@ -517,7 +473,7 @@ export async function dirApply(
 ): Promise<[errMsg: string, successMsg: string]> {
   const switcher = agent as { getWorkDir?: () => string }
   if (typeof switcher.getWorkDir !== 'function') {
-    return [e.i18n.t(MsgDirNotSupported), '']
+    return [e.i18n.t(Msg.DirNotSupported), '']
   }
   let currentDir = switcher.getWorkDir()
   const override = e.perChatWorkDir(e.dirOverrideKey(interactiveKey))
@@ -534,7 +490,7 @@ export async function dirApply(
     e.projectState?.clearWorkspaceDirOverride(e.dirOverrideKey(interactiveKey))
     e.projectState?.save()
     e.dirHistory?.add(e.name, baseDir)
-    return ['', e.i18n.tf(MsgDirReset, baseDir)]
+    return ['', e.i18n.tf(Msg.DirReset, baseDir)]
   }
 
   const arg = args.join(' ')
@@ -544,20 +500,20 @@ export async function dirApply(
   if (Number.isInteger(idx) && String(idx) === arg.trim() && idx > 0) {
     if (e.dirHistory !== undefined) {
       newDir = e.dirHistory.get(e.name, idx)
-      if (newDir === '') return [e.i18n.tf(MsgDirInvalidIndex, idx), '']
+      if (newDir === '') return [e.i18n.tf(Msg.DirInvalidIndex, idx), '']
     } else {
-      return [e.i18n.t(MsgDirNoHistory), '']
+      return [e.i18n.t(Msg.DirNoHistory), '']
     }
   } else if (arg === '-') {
     if (e.dirHistory !== undefined) {
       newDir = e.dirHistory.previous(e.name)
-      if (newDir === '') return [e.i18n.t(MsgDirNoPrevious), '']
+      if (newDir === '') return [e.i18n.t(Msg.DirNoPrevious), '']
     } else {
-      return [e.i18n.t(MsgDirNoHistory), '']
+      return [e.i18n.t(Msg.DirNoHistory), '']
     }
   } else {
     const resolved = resolveDir(e, arg)
-    if (resolved === undefined) return [e.i18n.tf(MsgDirInvalidPath, arg), '']
+    if (resolved === undefined) return [e.i18n.tf(Msg.DirInvalidPath, arg), '']
     newDir = resolved
   }
 
@@ -569,7 +525,7 @@ export async function dirApply(
   e.dirHistory?.add(e.name, newDir)
   e.projectState?.setWorkspaceDirOverride(e.dirOverrideKey(interactiveKey), newDir)
   e.projectState?.save()
-  return ['', e.i18n.tf(MsgDirChanged, newDir)]
+  return ['', e.i18n.tf(Msg.DirChanged, newDir)]
 }
 
 /** Resolve a user-supplied dir argument (tilde expansion + scan paths + stat). */
@@ -620,7 +576,7 @@ export function isAdmin(e: Engine, userID: string): boolean {
 export function gatePrivilegedCommand(e: Engine, cmdID: string, p: Platform, msg: Message): boolean {
   if (!privilegedCommands.has(cmdID)) return false
   if (isAdmin(e, msg.userID)) return false
-  void e.reply(p, msg.replyCtx, e.i18n.tf(MsgAdminRequired, `/${cmdID}`))
+  void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.AdminRequired, `/${cmdID}`))
   return true
 }
 
@@ -718,11 +674,11 @@ function checkSpawnMemoryGuard(e: Engine, p: Platform, replyCtx: unknown): boole
   if (!ok) return false
   const { block, warn } = evalSpawnMemoryGuard(pct, e.spawnMemWarnPct, e.spawnMemBlockPct)
   if (block) {
-    void e.sendAsCard(p, replyCtx, e.i18n.tf(MsgSpawnMemoryBlock, pct), { title: e.i18n.t(MsgSpawnMemoryBlockTitle), color: 'red' })
+    void e.sendAsCard(p, replyCtx, e.i18n.tf(Msg.SpawnMemoryBlock, pct), { title: e.i18n.t(Msg.SpawnMemoryBlockTitle), color: 'red' })
     return true
   }
   if (warn) {
-    void e.sendAsCard(p, replyCtx, e.i18n.tf(MsgSpawnMemoryWarn, pct), { title: e.i18n.t(MsgSpawnMemoryWarnTitle), color: 'orange' })
+    void e.sendAsCard(p, replyCtx, e.i18n.tf(Msg.SpawnMemoryWarn, pct), { title: e.i18n.t(Msg.SpawnMemoryWarnTitle), color: 'orange' })
   }
   return false
 }
@@ -733,7 +689,7 @@ async function setupWorktree(
 ): Promise<{ path: string; branch: string; base: string; root: string } | undefined> {
   const root = await worktreeRepoRoot(workDir).catch(() => undefined)
   if (root === undefined) {
-    if (!auto) void e.reply(p, msg.replyCtx, e.i18n.tf(MsgWorktreeNotGit, workDir))
+    if (!auto) void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.WorktreeNotGit, workDir))
     return undefined
   }
   try {
@@ -741,7 +697,7 @@ async function setupWorktree(
     return { path: created.path, branch: created.branch, base: created.baseSHA, root }
   } catch (error) {
     if (!auto) {
-      void e.reply(p, msg.replyCtx, e.i18n.tf(MsgWorktreeCreateError, String(error instanceof Error ? error.message : error)))
+      void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.WorktreeCreateError, String(error instanceof Error ? error.message : error)))
     } else {
       console.warn(`spawn: auto worktree create failed; continuing without isolation (${workDir}): ${String(error)}`)
     }
@@ -764,7 +720,7 @@ export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: strin
   const [flagWT, rest] = extractWorktreeFlag(afterDir)
   const bad = unknownFlag(rest, new Set())
   if (bad !== '') {
-    void e.reply(p, msg.replyCtx, e.i18n.tf(MsgSpawnUnknownFlag, bad))
+    void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.SpawnUnknownFlag, bad))
     return
   }
   const firstMsg = rest.join(' ').trim()
@@ -786,7 +742,7 @@ export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: strin
     spawnOpts: { topicGroup: threadFlag, workDir: '' },
     threadFlag,
     forkSentinelID,
-    readyTitleKey: MsgSpawnGroupReady,
+    readyTitleKey: Msg.SpawnGroupReady,
   })
 }
 
@@ -796,7 +752,7 @@ export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string
   const [flagWT, rest] = extractWorktreeFlag(afterDir)
   const bad = unknownFlag(rest, new Set())
   if (bad !== '') {
-    void e.reply(p, msg.replyCtx, e.i18n.tf(MsgForkUnknownFlag, bad))
+    void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ForkUnknownFlag, bad))
     return
   }
   const firstMsg = rest.join(' ').trim()
@@ -804,7 +760,7 @@ export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string
   const { sessions } = commandContext(e, msg)
   const origID = sessions.getOrCreateActive(msg.sessionKey).getAgentSessionID()
   if (origID === '' || origID === ContinueSession || origID.startsWith(ForkSessionPrefix) || origID.startsWith(ForkAtSessionPrefix)) {
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgForkNoContext))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.ForkNoContext))
     return
   }
 
@@ -824,7 +780,7 @@ export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string
     spawnOpts: { topicGroup: false, workDir: '' },
     threadFlag: false,
     forkSentinelID,
-    readyTitleKey: MsgForkGroupReady,
+    readyTitleKey: Msg.ForkGroupReady,
   })
 }
 
@@ -850,7 +806,7 @@ async function spawnGroupCommon(
 ): Promise<void> {
   const spawner = asGroupSpawner(p)
   if (spawner === undefined) {
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgSpawnNotSupported))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.SpawnNotSupported))
     return
   }
   if (checkSpawnMemoryGuard(e, p, msg.replyCtx)) return
@@ -868,7 +824,7 @@ async function spawnGroupCommon(
     if (opts.dirArg !== '') {
       const resolved = resolveDir(e, opts.dirArg)
       if (resolved === undefined) {
-        void e.reply(p, msg.replyCtx, e.i18n.tf(MsgSpawnDirError, opts.dirArg))
+        void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.SpawnDirError, opts.dirArg))
         return
       }
       workDir = resolved
@@ -899,7 +855,7 @@ async function spawnGroupCommon(
       ? await spawnerEx.spawnGroupWithOptions(spawnMsg, groupName, firstMsg, spawnOpts)
       : await spawner.spawnGroup(spawnMsg, groupName, firstMsg)
   } catch (error) {
-    void e.reply(p, msg.replyCtx, e.i18n.tf(MsgSpawnError, String(error instanceof Error ? error.message : error)))
+    void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.SpawnError, String(error instanceof Error ? error.message : error)))
     return
   }
 
@@ -985,7 +941,7 @@ function parentJumpButtonsFor(e: Engine, msg: Message): { content: string; ok: b
 export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): void {
   const bad = unknownFlag(args, new Set(['-r', '--reply']))
   if (bad !== '') {
-    void e.reply(p, msg.replyCtx, e.i18n.tf(MsgDoneUnknownFlag, bad))
+    void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.DoneUnknownFlag, bad))
     return
   }
   const replyToParentFlag = hasFlag(args, '--reply', '-r')
@@ -993,12 +949,12 @@ export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): v
   // /done only makes sense in a spawned group; in a private chat it would
   // recursively tear down the whole spawn subtree rooted here.
   if (msg.chatType === 'p2p') {
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgDonePrivateNotAllowed))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.DonePrivateNotAllowed))
     return
   }
 
   if (asChatAvatarStateSwitcher(p) === undefined) {
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgDoneNotSupported))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.DoneNotSupported))
     return
   }
 
@@ -1006,7 +962,7 @@ export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): v
   if (replyToParentFlag) {
     const sess = e.sessions.getOrCreateActive(msg.sessionKey)
     if (sess.getParentSessionKey() === '') {
-      void e.reply(p, msg.replyCtx, e.i18n.t(MsgDoneReplyNoParent))
+      void e.reply(p, msg.replyCtx, e.i18n.t(Msg.DoneReplyNoParent))
     } else {
       e.replyToParent(p, sess, sess.lastResultOrReply())
     }
@@ -1032,10 +988,10 @@ export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): v
     await cleanupOneChat(e, p, rootKey, rootCtx, false)
 
     if (descendants.length > 0) {
-      void e.reply(p, rootCtx, e.i18n.tf(MsgDoneRecursiveSummary, descendants.length))
+      void e.reply(p, rootCtx, e.i18n.tf(Msg.DoneRecursiveSummary, descendants.length))
     }
     if (dirtyLines.length > 0) {
-      void e.reply(p, rootCtx, e.i18n.tf(MsgDoneDirtyChildren, dirtyLines.join('\n')))
+      void e.reply(p, rootCtx, e.i18n.tf(Msg.DoneDirtyChildren, dirtyLines.join('\n')))
     }
   })()
 }
@@ -1116,12 +1072,12 @@ export async function cleanupOneChat(
  */
 export async function cmdRename(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (!msg.isSpawnedGroup) {
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgRenameSpawnedOnly))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.RenameSpawnedOnly))
     return
   }
   const renamer = asGroupRenamer(p)
   if (renamer === undefined) {
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgRenameNotSupported))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.RenameNotSupported))
     return
   }
 
@@ -1132,14 +1088,14 @@ export async function cmdRename(e: Engine, p: Platform, msg: Message, args: stri
     try {
       await renamer.renameGroup(msg.sessionKey, direct)
     } catch (error) {
-      void e.reply(p, msg.replyCtx, e.i18n.tf(MsgRenameError, String(error)))
+      void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.RenameError, String(error)))
       return
     }
     // 手动改名成功：标记该群名由用户指定。首条消息异步 LLM 改名
     // （handleGroupNameGenerate 回调）会检查该标记并在命中时跳过，
     // 避免覆盖用户手动起的群名。
     e.markPendingRename(msg.sessionKey)
-    void e.reply(p, msg.replyCtx, e.i18n.tf(MsgRenameDone, direct))
+    void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.RenameDone, direct))
     return
   }
 
@@ -1147,7 +1103,7 @@ export async function cmdRename(e: Engine, p: Platform, msg: Message, args: stri
   const sess = e.sessions.getOrCreateActive(msg.sessionKey)
   const history = sess.getHistory(0)
   if (history.length === 0) {
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgRenameNoHistory))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.RenameNoHistory))
     return
   }
   const current = sess.getName()
@@ -1161,7 +1117,7 @@ export async function cmdRename(e: Engine, p: Platform, msg: Message, args: stri
         AbortSignal.timeout(timeout),
       )
       if (generated === '') {
-        void e.reply(p, replyCtx, e.i18n.t(MsgRenameFailed))
+        void e.reply(p, replyCtx, e.i18n.t(Msg.RenameFailed))
         return
       }
       const nameUnchanged = generated.trim().toLowerCase() === current.trim().toLowerCase()
@@ -1169,7 +1125,7 @@ export async function cmdRename(e: Engine, p: Platform, msg: Message, args: stri
         try {
           await renamer.renameGroup(sessionKey, generated)
         } catch (error) {
-          void e.reply(p, replyCtx, e.i18n.tf(MsgRenameError, String(error)))
+          void e.reply(p, replyCtx, e.i18n.tf(Msg.RenameError, String(error)))
           return
         }
       }
@@ -1186,13 +1142,13 @@ export async function cmdRename(e: Engine, p: Platform, msg: Message, args: stri
         }
       }
       if (nameUnchanged) {
-        void e.reply(p, replyCtx, e.i18n.t(MsgRenameUnchanged))
+        void e.reply(p, replyCtx, e.i18n.t(Msg.RenameUnchanged))
       } else {
-        void e.reply(p, replyCtx, e.i18n.tf(MsgRenameDone, generated))
+        void e.reply(p, replyCtx, e.i18n.tf(Msg.RenameDone, generated))
       }
     } catch {
       // Backend lacks ForkQuerierWithProvider → tell the user how to recover.
-      void e.reply(p, replyCtx, e.i18n.t(MsgRenameBackendNotSupported))
+      void e.reply(p, replyCtx, e.i18n.t(Msg.RenameBackendNotSupported))
     }
   })()
 }

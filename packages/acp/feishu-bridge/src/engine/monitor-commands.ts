@@ -10,24 +10,7 @@
  * @module dsh-feishu-bridge/monitor-commands
  */
 
-import {
-  MsgMonitorAdded,
-  MsgMonitorAlready,
-  MsgMonitorDisabled,
-  MsgMonitorListEmpty,
-  MsgMonitorListTitle,
-  MsgMonitorModeBad,
-  MsgMonitorModeCurrent,
-  MsgMonitorModeNoDirs,
-  MsgMonitorModeSet,
-  MsgMonitorModeSetDispatchHub,
-  MsgMonitorNoChat,
-  MsgMonitorNotInList,
-  MsgMonitorRemoved,
-  MsgMonitorSaveFailed,
-  MsgMonitorStarMode,
-  MsgMonitorUsage,
-} from '../i18n/index.js'
+import { Msg } from '../i18n/index.js'
 import type { Message, Platform } from '../core/types.js'
 import type { Engine } from './engine.js'
 import { chatIDFromSessionKey } from './engine.js'
@@ -68,17 +51,17 @@ async function cmdMonitorMode(e: Engine, p: Platform, msg: Message, args: string
   if (args.length === 0) {
     let cur = e.monitor.modeVal()
     if (cur === '') cur = 'monitor'
-    await e.reply(p, msg.replyCtx, tr.tf(MsgMonitorModeCurrent, cur))
+    await e.reply(p, msg.replyCtx, tr.tf(Msg.MonitorModeCurrent, cur))
     return
   }
   const val = (args[0] ?? '').trim().toLowerCase()
   if (val !== 'dispatch' && val !== 'monitor') {
-    await e.reply(p, msg.replyCtx, tr.tf(MsgMonitorModeBad, val))
+    await e.reply(p, msg.replyCtx, tr.tf(Msg.MonitorModeBad, val))
     return
   }
   const err = e.monitor.persistAndApplyMonitorMode(val)
   if (err !== undefined) {
-    await e.reply(p, msg.replyCtx, tr.tf(MsgMonitorSaveFailed, err))
+    await e.reply(p, msg.replyCtx, tr.tf(Msg.MonitorSaveFailed, err))
     return
   }
   if (val === 'dispatch') {
@@ -86,31 +69,31 @@ async function cmdMonitorMode(e: Engine, p: Platform, msg: Message, args: string
     // brand it as the Mailroom. p2p / no chatID only switches the mode.
     const chatID = chatIDFromSessionKey(msg.sessionKey, msg.platform)
     if (msg.chatType === 'p2p' || chatID === '') {
-      await e.reply(p, msg.replyCtx, tr.tf(MsgMonitorModeSet, val))
+      await e.reply(p, msg.replyCtx, tr.tf(Msg.MonitorModeSet, val))
     } else {
       if (e.monitor.chatsVal() !== '*' && !containsMonitorChat(e.monitor.chatsVal(), chatID)) {
         const chatErr = e.monitor.persistAndApplyMonitorChats(addMonitorChat(e.monitor.chatsVal(), chatID))
         if (chatErr !== undefined) {
-          await e.reply(p, msg.replyCtx, tr.tf(MsgMonitorSaveFailed, chatErr))
+          await e.reply(p, msg.replyCtx, tr.tf(Msg.MonitorSaveFailed, chatErr))
           return
         }
       }
       e.monitor.brandDispatchChat(p, msg.sessionKey)
-      await e.reply(p, msg.replyCtx, tr.t(MsgMonitorModeSetDispatchHub))
+      await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorModeSetDispatchHub))
     }
     if (e.monitor.dirs.length === 0) {
-      await e.reply(p, msg.replyCtx, tr.t(MsgMonitorModeNoDirs))
+      await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorModeNoDirs))
     }
     return
   }
-  await e.reply(p, msg.replyCtx, tr.tf(MsgMonitorModeSet, val))
+  await e.reply(p, msg.replyCtx, tr.tf(Msg.MonitorModeSet, val))
 }
 
 /** `/monitor` dispatcher (Go cmdMonitor). */
 export async function cmdMonitor(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const tr = e.i18n
   if (!e.monitor.enabled) {
-    await e.reply(p, msg.replyCtx, tr.t(MsgMonitorDisabled))
+    await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorDisabled))
     return
   }
   let sub = ''
@@ -130,24 +113,24 @@ export async function cmdMonitor(e: Engine, p: Platform, msg: Message, args: str
   switch (sub) {
     case '': case 'on': {
       if (chatID === '') {
-        await e.reply(p, msg.replyCtx, tr.t(MsgMonitorNoChat))
+        await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorNoChat))
         return
       }
       if (e.monitor.chatsVal() === '*') {
-        await e.reply(p, msg.replyCtx, tr.t(MsgMonitorStarMode))
+        await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorStarMode))
         return
       }
       if (containsMonitorChat(e.monitor.chatsVal(), chatID)) {
-        await e.reply(p, msg.replyCtx, tr.t(MsgMonitorAlready))
+        await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorAlready))
         return
       }
       const newChats = addMonitorChat(e.monitor.chatsVal(), chatID)
       const err = e.monitor.persistAndApplyMonitorChats(newChats)
       if (err !== undefined) {
-        await e.reply(p, msg.replyCtx, tr.tf(MsgMonitorSaveFailed, err))
+        await e.reply(p, msg.replyCtx, tr.tf(Msg.MonitorSaveFailed, err))
         return
       }
-      await e.reply(p, msg.replyCtx, tr.t(MsgMonitorAdded))
+      await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorAdded))
       if (e.monitor.modeVal() === 'dispatch') {
         e.monitor.brandDispatchChat(p, msg.sessionKey)
       }
@@ -155,28 +138,28 @@ export async function cmdMonitor(e: Engine, p: Platform, msg: Message, args: str
     }
     case 'off': {
       if (chatID === '') {
-        await e.reply(p, msg.replyCtx, tr.t(MsgMonitorNoChat))
+        await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorNoChat))
         return
       }
       if (e.monitor.chatsVal() === '*') {
-        await e.reply(p, msg.replyCtx, tr.t(MsgMonitorStarMode))
+        await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorStarMode))
         return
       }
       if (!containsMonitorChat(e.monitor.chatsVal(), chatID)) {
-        await e.reply(p, msg.replyCtx, tr.t(MsgMonitorNotInList))
+        await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorNotInList))
         return
       }
       const newChats = removeMonitorChat(e.monitor.chatsVal(), chatID)
       const err = e.monitor.persistAndApplyMonitorChats(newChats)
       if (err !== undefined) {
-        await e.reply(p, msg.replyCtx, tr.tf(MsgMonitorSaveFailed, err))
+        await e.reply(p, msg.replyCtx, tr.tf(Msg.MonitorSaveFailed, err))
         return
       }
-      await e.reply(p, msg.replyCtx, tr.t(MsgMonitorRemoved))
+      await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorRemoved))
       return
     }
     default:
-      await e.reply(p, msg.replyCtx, tr.t(MsgMonitorUsage))
+      await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorUsage))
   }
 }
 
@@ -185,14 +168,14 @@ async function replyMonitorList(e: Engine, p: Platform, msg: Message): Promise<v
   const tr = e.i18n
   const chats = e.monitor.chatsVal()
   if (chats === '') {
-    await e.reply(p, msg.replyCtx, tr.t(MsgMonitorListEmpty))
+    await e.reply(p, msg.replyCtx, tr.t(Msg.MonitorListEmpty))
     return
   }
   if (chats === '*') {
-    await e.reply(p, msg.replyCtx, `${tr.t(MsgMonitorListTitle)}: *`)
+    await e.reply(p, msg.replyCtx, `${tr.t(Msg.MonitorListTitle)}: *`)
     return
   }
-  const sb: string[] = [tr.t(MsgMonitorListTitle), ':\n']
+  const sb: string[] = [tr.t(Msg.MonitorListTitle), ':\n']
   splitMonitorChats(chats).forEach((c, i) => { sb.push(`${i + 1}. ${c}\n`) })
   await e.reply(p, msg.replyCtx, sb.join(''))
 }

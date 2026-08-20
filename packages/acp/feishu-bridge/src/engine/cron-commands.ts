@@ -9,40 +9,7 @@
  * @module dsh-feishu-bridge/cron-commands
  */
 
-import {
-  MsgAdminRequired,
-  MsgCardBack,
-  MsgCardTitleCron,
-  MsgCronAddExecUsage,
-  MsgCronAddUsage,
-  MsgCronAdded,
-  MsgCronAddedExec,
-  MsgCronBtnDelete,
-  MsgCronBtnDisable,
-  MsgCronBtnEnable,
-  MsgCronBtnMute,
-  MsgCronBtnUnmute,
-  MsgCronCardHint,
-  MsgCronDelUsage,
-  MsgCronDeleted,
-  MsgCronDisabled,
-  MsgCronEmpty,
-  MsgCronEnabled,
-  MsgCronFailedSuffix,
-  MsgCronIDLabel,
-  MsgCronLastRunLabel,
-  MsgCronListFooter,
-  MsgCronListTitle,
-  MsgCronMuted,
-  MsgCronNextRunLabel,
-  MsgCronNotAvailable,
-  MsgCronNotFound,
-  MsgCronScheduleLabel,
-  MsgCronUnmuted,
-  MsgCronUsage,
-  MsgError,
-  MsgSetupNative,
-} from '../i18n/index.js'
+import { Msg } from '../i18n/index.js'
 import { defaultBtn, dangerBtn, newCard, primaryBtn, type Card, type CardButton } from '../card.js'
 import { asCardSender, type Message, type Platform } from '../core/types.js'
 import type { Engine } from './engine.js'
@@ -106,19 +73,19 @@ export function registerCronCommands(e: Engine): () => void {
 export function renderCronCard(e: Engine, sessionKey: string, _userID: string): Card {
   const scheduler = e.cronScheduler
   if (scheduler === undefined) {
-    return simpleCard(e.i18n.t(MsgCardTitleCron), 'orange', e.i18n.t(MsgCronNotAvailable))
+    return simpleCard(e.i18n.t(Msg.CardTitleCron), 'orange', e.i18n.t(Msg.CronNotAvailable))
   }
 
   const jobs = scheduler.store().listBySessionKey(sessionKey)
   if (jobs.length === 0) {
-    return simpleCard(e.i18n.t(MsgCardTitleCron), 'orange', e.i18n.t(MsgCronEmpty))
+    return simpleCard(e.i18n.t(Msg.CardTitleCron), 'orange', e.i18n.t(Msg.CronEmpty))
   }
 
   const lang = e.i18n.currentLang()
   const now = new Date()
 
-  const cb = newCard().title(e.i18n.t(MsgCardTitleCron), 'orange')
-  cb.markdownf(e.i18n.t(MsgCronListTitle), jobs.length)
+  const cb = newCard().title(e.i18n.t(Msg.CardTitleCron), 'orange')
+  cb.markdownf(e.i18n.t(Msg.CronListTitle), jobs.length)
 
   for (const j of jobs) {
     const status = j.enabled
@@ -135,16 +102,16 @@ export function renderCronCard(e: Engine, sessionKey: string, _userID: string): 
 
     let sb = ''
     sb += `${status} ${desc}\n`
-    sb += e.i18n.tf(MsgCronIDLabel, j.id)
-    sb += e.i18n.tf(MsgCronScheduleLabel, human, j.cronExpr)
+    sb += e.i18n.tf(Msg.CronIDLabel, j.id)
+    sb += e.i18n.tf(Msg.CronScheduleLabel, human, j.cronExpr)
     const nextRun = scheduler.nextRun(j.id)
     if (nextRun !== undefined) {
-      sb += e.i18n.tf(MsgCronNextRunLabel, cronTimeFormat(nextRun, now))
+      sb += e.i18n.tf(Msg.CronNextRunLabel, cronTimeFormat(nextRun, now))
     }
     if (j.lastRun !== '') {
-      sb += e.i18n.tf(MsgCronLastRunLabel, cronTimeFormat(new Date(j.lastRun), now))
+      sb += e.i18n.tf(Msg.CronLastRunLabel, cronTimeFormat(new Date(j.lastRun), now))
       if (j.lastError !== '') {
-        sb += e.i18n.tf(MsgCronFailedSuffix, `<text_tag color='red'>${truncateStr(j.lastError, 40)}</text_tag>`)
+        sb += e.i18n.tf(Msg.CronFailedSuffix, `<text_tag color='red'>${truncateStr(j.lastError, 40)}</text_tag>`)
       }
       sb += '\n'
     }
@@ -152,22 +119,22 @@ export function renderCronCard(e: Engine, sessionKey: string, _userID: string): 
 
     const btns: CardButton[] = []
     if (j.enabled) {
-      btns.push(defaultBtn(e.i18n.t(MsgCronBtnDisable), `act:/cron disable ${j.id}`))
+      btns.push(defaultBtn(e.i18n.t(Msg.CronBtnDisable), `act:/cron disable ${j.id}`))
     } else {
-      btns.push(primaryBtn(e.i18n.t(MsgCronBtnEnable), `act:/cron enable ${j.id}`))
+      btns.push(primaryBtn(e.i18n.t(Msg.CronBtnEnable), `act:/cron enable ${j.id}`))
     }
     if (j.mute) {
-      btns.push(defaultBtn(e.i18n.t(MsgCronBtnUnmute), `act:/cron unmute ${j.id}`))
+      btns.push(defaultBtn(e.i18n.t(Msg.CronBtnUnmute), `act:/cron unmute ${j.id}`))
     } else {
-      btns.push(defaultBtn(e.i18n.t(MsgCronBtnMute), `act:/cron mute ${j.id}`))
+      btns.push(defaultBtn(e.i18n.t(Msg.CronBtnMute), `act:/cron mute ${j.id}`))
     }
-    btns.push(dangerBtn(e.i18n.t(MsgCronBtnDelete), `act:/cron delete ${j.id}`))
+    btns.push(dangerBtn(e.i18n.t(Msg.CronBtnDelete), `act:/cron delete ${j.id}`))
     cb.buttonsEqual(...btns)
   }
 
   cb.divider()
-  cb.note(e.i18n.t(MsgCronCardHint))
-  cb.buttons(defaultBtn(e.i18n.t(MsgCardBack), 'nav:/help'))
+  cb.note(e.i18n.t(Msg.CronCardHint))
+  cb.buttons(defaultBtn(e.i18n.t(Msg.CardBack), 'nav:/help'))
   return cb.build()
 }
 
@@ -180,7 +147,7 @@ function simpleCard(title: string, color: string, body: string): Card {
 export async function cmdCron(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const scheduler = e.cronScheduler
   if (scheduler === undefined) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgCronNotAvailable))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronNotAvailable))
     return
   }
 
@@ -225,14 +192,14 @@ export async function cmdCron(e: Engine, p: Platform, msg: Message, args: string
       await cmdCronSetup(e, p, msg)
       break
     default:
-      await e.reply(p, msg.replyCtx, e.i18n.t(MsgCronUsage))
+      await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronUsage))
   }
 }
 
 /** `/cron add <min> <hour> <day> <month> <weekday> <prompt...>` (Go cmdCronAdd). */
 export async function cmdCronAdd(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (args.length < 6) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgCronAddUsage))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronAddUsage))
     return
   }
 
@@ -251,22 +218,22 @@ export async function cmdCronAdd(e: Engine, p: Platform, msg: Message, args: str
   try {
     e.cronScheduler?.addJob(job)
   } catch (error) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgError, String(error instanceof Error ? error.message : error)))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.Error, String(error instanceof Error ? error.message : error)))
     return
   }
 
-  await e.reply(p, msg.replyCtx, e.i18n.tf(MsgCronAdded, job.id, cronExpr, truncateStr(prompt, 60)))
+  await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.CronAdded, job.id, cronExpr, truncateStr(prompt, 60)))
 }
 
 /** `/cron addexec <min> <hour> <day> <month> <weekday> <shell command...>` (Go cmdCronAddExec, admin-only). */
 export async function cmdCronAddExec(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (!isAdmin(e, msg.userID)) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgAdminRequired, '/cron addexec'))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.AdminRequired, '/cron addexec'))
     return
   }
 
   if (args.length < 6) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgCronAddExecUsage))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronAddExecUsage))
     return
   }
 
@@ -285,11 +252,11 @@ export async function cmdCronAddExec(e: Engine, p: Platform, msg: Message, args:
   try {
     e.cronScheduler?.addJob(job)
   } catch (error) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgError, String(error instanceof Error ? error.message : error)))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.Error, String(error instanceof Error ? error.message : error)))
     return
   }
 
-  await e.reply(p, msg.replyCtx, e.i18n.tf(MsgCronAddedExec, job.id, cronExpr, truncateStr(shellCmd, 60)))
+  await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.CronAddedExec, job.id, cronExpr, truncateStr(shellCmd, 60)))
 }
 
 /** `/cron list` as plain text (Go cmdCronList). */
@@ -298,14 +265,14 @@ export async function cmdCronList(e: Engine, p: Platform, msg: Message): Promise
   if (scheduler === undefined) return
   const jobs = scheduler.store().listByProject(e.name)
   if (jobs.length === 0) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgCronEmpty))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronEmpty))
     return
   }
 
   const lang = e.i18n.currentLang()
   const now = new Date()
   let sb = ''
-  sb += e.i18n.tf(MsgCronListTitle, jobs.length)
+  sb += e.i18n.tf(Msg.CronListTitle, jobs.length)
   sb += '\n'
   sb += '\n'
 
@@ -322,15 +289,15 @@ export async function cmdCronList(e: Engine, p: Platform, msg: Message): Promise
 
     sb += `ID: ${j.id}\n`
 
-    sb += e.i18n.tf(MsgCronScheduleLabel, cronExprToHuman(j.cronExpr, lang), j.cronExpr)
+    sb += e.i18n.tf(Msg.CronScheduleLabel, cronExprToHuman(j.cronExpr, lang), j.cronExpr)
 
     const nextRun = scheduler.nextRun(j.id)
     if (nextRun !== undefined) {
-      sb += e.i18n.tf(MsgCronNextRunLabel, cronTimeFormat(nextRun, now))
+      sb += e.i18n.tf(Msg.CronNextRunLabel, cronTimeFormat(nextRun, now))
     }
 
     if (j.lastRun !== '') {
-      sb += e.i18n.tf(MsgCronLastRunLabel, cronTimeFormat(new Date(j.lastRun), now))
+      sb += e.i18n.tf(Msg.CronLastRunLabel, cronTimeFormat(new Date(j.lastRun), now))
       if (j.lastError !== '') {
         sb += ` (failed: ${truncateStr(j.lastError, 40)})`
       }
@@ -338,28 +305,28 @@ export async function cmdCronList(e: Engine, p: Platform, msg: Message): Promise
     }
   }
 
-  sb += `\n${e.i18n.t(MsgCronListFooter)}`
+  sb += `\n${e.i18n.t(Msg.CronListFooter)}`
   await e.reply(p, msg.replyCtx, sb)
 }
 
 /** `/cron del <id>` (Go cmdCronDel). */
 export async function cmdCronDel(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (args.length === 0) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgCronDelUsage))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronDelUsage))
     return
   }
   const id = args[0] ?? ''
   if (e.cronScheduler?.removeJob(id)) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgCronDeleted, id))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.CronDeleted, id))
   } else {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgCronNotFound, id))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.CronNotFound, id))
   }
 }
 
 /** `/cron enable|disable <id>` (Go cmdCronToggle). */
 export async function cmdCronToggle(e: Engine, p: Platform, msg: Message, args: string[], enable: boolean): Promise<void> {
   if (args.length === 0) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgCronDelUsage))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronDelUsage))
     return
   }
   const id = args[0] ?? ''
@@ -370,24 +337,24 @@ export async function cmdCronToggle(e: Engine, p: Platform, msg: Message, args: 
       e.cronScheduler?.disableJob(id)
     }
   } catch (error) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgError, String(error instanceof Error ? error.message : error)))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.Error, String(error instanceof Error ? error.message : error)))
     return
   }
-  await e.reply(p, msg.replyCtx, enable ? e.i18n.tf(MsgCronEnabled, id) : e.i18n.tf(MsgCronDisabled, id))
+  await e.reply(p, msg.replyCtx, enable ? e.i18n.tf(Msg.CronEnabled, id) : e.i18n.tf(Msg.CronDisabled, id))
 }
 
 /** `/cron mute|unmute <id>` (Go cmdCronMute). */
 export async function cmdCronMute(e: Engine, p: Platform, msg: Message, args: string[], mute: boolean): Promise<void> {
   if (args.length === 0) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgCronDelUsage))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronDelUsage))
     return
   }
   const id = args[0] ?? ''
   if (!e.cronScheduler?.store().setMute(id, mute)) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgCronNotFound, id))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.CronNotFound, id))
     return
   }
-  await e.reply(p, msg.replyCtx, mute ? e.i18n.tf(MsgCronMuted, id) : e.i18n.tf(MsgCronUnmuted, id))
+  await e.reply(p, msg.replyCtx, mute ? e.i18n.tf(Msg.CronMuted, id) : e.i18n.tf(Msg.CronUnmuted, id))
 }
 
 /**
@@ -396,7 +363,7 @@ export async function cmdCronMute(e: Engine, p: Platform, msg: Message, args: st
  * memory file, so the setup result is always the native one.
  */
 export async function cmdCronSetup(e: Engine, p: Platform, msg: Message): Promise<void> {
-  await e.reply(p, msg.replyCtx, e.i18n.t(MsgSetupNative))
+  await e.reply(p, msg.replyCtx, e.i18n.t(Msg.SetupNative))
 }
 
 /**

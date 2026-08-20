@@ -15,56 +15,7 @@
  * @module dsh-feishu-bridge/engine
  */
 
-import { I18n, langEnglish } from '../i18n/index.js'
-import {
-  MsgAgentProcessExited,
-  MsgAskQuestionMulti,
-  MsgAskQuestionTitle,
-  MsgAttachmentsDiscarded,
-  MsgAttachmentsStaged,
-  MsgDoneReplyParentHeader,
-  MsgError,
-  MsgFailedToStartAgentSession,
-  MsgMessageQueued,
-  MsgPermissionDenied,
-  MsgPlanExportBtn,
-  MsgPermissionExpired,
-  MsgPermissionHint,
-  MsgPermissionPrompt,
-  MsgPermBtnAllow,
-  MsgPermBtnAllowAll,
-  MsgPermBtnDeny,
-  MsgPermCardBody,
-  MsgPermCardTitle,
-  MsgPermDenyReasonPlaceholder,
-  MsgProcessing,
-  MsgPreviousProcessing,
-  MsgQueueFull,
-  MsgSessionResumeDegraded,
-  MsgSilentReply,
-  MsgSpawnGroupReady,
-  MsgStallRetry,
-  MsgStallTimeout,
-  MsgSubtaskChildBusy,
-  MsgSubtaskDiffSummary,
-  MsgSubtaskFollowupHeader,
-  MsgSubtaskGatherNoPending,
-  MsgSubtaskSendNotChild,
-  MsgSubtaskTimeout,
-  MsgToolResult,
-  MsgTurnCompleted,
-  MsgWorktreeCardTitle,
-  MsgWorktreeCreateError,
-  MsgWorktreeDirtyPrompt,
-  MsgWorktreeKeepBtn,
-  MsgWorktreeKept,
-  MsgWorktreeMemoryWarn,
-  MsgWorktreeOrphanCleaned,
-  MsgWorktreeOrphanKept,
-  MsgWorktreeRemoved,
-  MsgWorktreeRemoveBtn,
-  MsgWorktreeRemovedShort,
-} from '../i18n/index.js'
+import { Msg, I18n, langEnglish } from '../i18n/index.js'
 import type { Language } from '../i18n/index.js'
 import { AllowList } from '../feishu/allowlist.js'
 import type {
@@ -1154,7 +1105,7 @@ export class Engine {
           void this.drainOrphanedQueue(session, this.sessions, msg.sessionKey)
         }
       } else {
-        void this.reply(p, msg.replyCtx, this.i18n.t(MsgPreviousProcessing))
+        void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PreviousProcessing))
       }
       return
     }
@@ -1331,7 +1282,7 @@ export class Engine {
       return false
     }
     if (state.pendingMessages.length >= this.maxQueuedMessages) {
-      void this.reply(p, msg.replyCtx, this.i18n.tf(MsgQueueFull, state.pendingMessages.length))
+      void this.reply(p, msg.replyCtx, this.i18n.tf(Msg.QueueFull, state.pendingMessages.length))
       return true
     }
     state.pendingMessages.push({
@@ -1350,7 +1301,7 @@ export class Engine {
       chatroomAskSeq: msg.chatroomAskSeq ?? 0,
       chatroomAwaitAssistant: msg.chatroomAwaitAssistant ?? false,
     })
-    void this.reply(p, msg.replyCtx, this.i18n.t(MsgMessageQueued))
+    void this.reply(p, msg.replyCtx, this.i18n.t(Msg.MessageQueued))
     return true
   }
 
@@ -1406,7 +1357,7 @@ export class Engine {
       if (a.kind === 'image') imgN++
       else fileN++
     }
-    void this.reply(p, msg.replyCtx, this.i18n.tf(MsgAttachmentsStaged, imgN, fileN, fileList))
+    void this.reply(p, msg.replyCtx, this.i18n.tf(Msg.AttachmentsStaged, imgN, fileN, fileList))
   }
 
   /**
@@ -1422,7 +1373,7 @@ export class Engine {
     state.pendingAttachments = []
     if (notify && hasStaged) {
       const platform = state.platform
-      if (platform !== undefined) void this.reply(platform, state.replyCtx, this.i18n.t(MsgAttachmentsDiscarded))
+      if (platform !== undefined) void this.reply(platform, state.replyCtx, this.i18n.t(Msg.AttachmentsDiscarded))
     }
     if (pendingDir !== '') {
       void rm(pendingDir, { recursive: true, force: true }).catch((error: unknown) => {
@@ -1478,7 +1429,7 @@ export class Engine {
         cancelRenders(state)
 
         if (state.agentSession === undefined) {
-          await this.reply(p, msg.replyCtx, this.i18n.t(MsgFailedToStartAgentSession))
+          await this.reply(p, msg.replyCtx, this.i18n.t(Msg.FailedToStartAgentSession))
           return
         }
 
@@ -1588,7 +1539,7 @@ export class Engine {
         console.error(`session resume failed, falling back to fresh session (${sessionKey}): ${String(error)}`)
         try {
           agentSession = await this.startAgentLocked(agent, '', sessionEnv, modeOverride)
-          void this.reply(p, replyCtx, this.i18n.t(MsgSessionResumeDegraded))
+          void this.reply(p, replyCtx, this.i18n.t(Msg.SessionResumeDegraded))
         } catch (freshError) {
           console.error(`failed to start interactive session (${sessionKey}): ${String(freshError)}`)
         }
@@ -1784,7 +1735,7 @@ export class Engine {
     // Placeholder card so the user sees visual feedback (with push) before
     // the first agent event arrives.
     if (this.display.toolProgress && sp.canPreview()) {
-      void sp.showPlaceholder(this.i18n.t(MsgProcessing))
+      void sp.showPlaceholder(this.i18n.t(Msg.Processing))
     }
     let thinkingStreamed = false
     let thinkingAccum = ''
@@ -1856,7 +1807,7 @@ export class Engine {
           }
           const p = state.platform
           if (p !== undefined) {
-            await this.send(p, replyCtx, this.i18n.tf(MsgError, errorMessage(outcome.error)))
+            await this.send(p, replyCtx, this.i18n.tf(Msg.Error, errorMessage(outcome.error)))
           }
           return
         }
@@ -1877,7 +1828,7 @@ export class Engine {
             if (stallPlatform !== undefined) {
               const idleSec = Math.round(state.idleTimeout(this.eventIdleTimeout) / 1000)
               await this.send(stallPlatform, replyCtx,
-                this.i18n.tf(MsgStallRetry, idleSec, stallRetries, this.stallMaxRetries))
+                this.i18n.tf(Msg.StallRetry, idleSec, stallRetries, this.stallMaxRetries))
             }
             textParts = []
             segmentStart = 0
@@ -1897,7 +1848,7 @@ export class Engine {
         const p = state.platform
         if (p !== undefined) {
           await this.send(p, replyCtx,
-            this.i18n.tf(MsgStallTimeout, Math.round(state.idleTimeout(this.eventIdleTimeout) / 1000), this.stallMaxRetries))
+            this.i18n.tf(Msg.StallTimeout, Math.round(state.idleTimeout(this.eventIdleTimeout) / 1000), this.stallMaxRetries))
         }
         await this.cleanupInteractiveState(sessionKey, state)
         return
@@ -2281,7 +2232,7 @@ export class Engine {
               ? truncateIf(rawInput, Math.floor(permLimit * 8 / 5))
               : rawInput
             const toolName = event.toolName ?? ''
-            const prompt = this.i18n.tf(MsgPermissionPrompt, toolName, toolInput)
+            const prompt = this.i18n.tf(Msg.PermissionPrompt, toolName, toolInput)
             void this.sendPermissionPrompt(p, replyCtx, prompt, toolName, toolInput)
           }
 
@@ -2341,7 +2292,7 @@ export class Engine {
           state.eventsNeedResync = true
           await sp.markFailed()
           if (event.error !== undefined && p !== undefined) {
-            await this.send(p, replyCtx, this.i18n.tf(MsgError, event.error.message))
+            await this.send(p, replyCtx, this.i18n.tf(Msg.Error, event.error.message))
           }
           if (state.agentSession === undefined || !state.agentSession.alive()) {
             this.notifyDroppedQueuedMessages(state, event.error ?? new Error('agent error'))
@@ -2408,8 +2359,8 @@ export class Engine {
     if (preferJoined) fullResponse = joined
     if (fullResponse === '') {
       fullResponse = event.errorText !== undefined && event.errorText !== ''
-        ? this.i18n.tf(MsgError, event.errorText)
-        : this.i18n.t(MsgSilentReply)
+        ? this.i18n.tf(Msg.Error, event.errorText)
+        : this.i18n.t(Msg.SilentReply)
     }
 
     // Context usage indicator: prefer SDK tokens, fall back to the agent's
@@ -2510,7 +2461,7 @@ export class Engine {
     /** Whether the final card landed; the ✅ notification follows it. */
     let sendCompletionNotification = false
     if (isSilent) {
-      await sp.setAnalysisText(this.i18n.t(MsgSilentReply))
+      await sp.setAnalysisText(this.i18n.t(Msg.SilentReply))
       await sp.markCompleted()
       await sp.detachPreview()
       sendCompletionNotification = true
@@ -2605,7 +2556,7 @@ export class Engine {
 
       if (state.agentSession === undefined || !state.agentSession.alive()) {
         state.inflightMessage = undefined
-        await this.send(queued.platform, queued.replyCtx, this.i18n.tf(MsgError, 'agent session ended'))
+        await this.send(queued.platform, queued.replyCtx, this.i18n.tf(Msg.Error, 'agent session ended'))
         this.notifyDroppedQueuedMessages(state, new Error('agent session ended'))
         return { kind: 'done' }
       }
@@ -2646,7 +2597,7 @@ export class Engine {
     await this.cleanupInteractiveState(sessionKey, state)
 
     if (unexpectedExit && closedPlatform !== undefined) {
-      await this.send(closedPlatform, replyCtx, this.i18n.t(MsgAgentProcessExited))
+      await this.send(closedPlatform, replyCtx, this.i18n.t(Msg.AgentProcessExited))
     }
 
     if (textParts.length > 0) {
@@ -2757,7 +2708,7 @@ export class Engine {
 
       if (state.agentSession === undefined || !state.agentSession.alive()) {
         state.inflightMessage = undefined
-        await this.send(queued.platform, queued.replyCtx, this.i18n.tf(MsgError, 'agent session ended'))
+        await this.send(queued.platform, queued.replyCtx, this.i18n.tf(Msg.Error, 'agent session ended'))
         this.notifyDroppedQueuedMessages(state, new Error('agent session ended'))
         session.unlock()
         return false
@@ -2824,7 +2775,7 @@ export class Engine {
     const remaining = state.pendingMessages
     state.pendingMessages = []
     for (const q of remaining) {
-      void this.send(q.platform, q.replyCtx, this.i18n.tf(MsgError, reason.message))
+      void this.send(q.platform, q.replyCtx, this.i18n.tf(Msg.Error, reason.message))
     }
   }
 
@@ -3291,7 +3242,7 @@ export class Engine {
           if (out === '') out = (event.toolResult ?? '').trim()
           if (out !== '') {
             const tn = (event.toolName ?? '').trim() || 'tool'
-            textParts.push(`${this.i18n.tf(MsgToolResult, tn, out)}\n\n`)
+            textParts.push(`${this.i18n.tf(Msg.ToolResult, tn, out)}\n\n`)
           }
           break
         }
@@ -3481,7 +3432,7 @@ export class Engine {
     const name = basename(filePath).replace(/\.md$/, '')
     sendPlanCard(this, p, replyCtx, state, exportKey, content,
       { title: `计划·${name}`, color: 'blue' },
-      [{ text: this.i18n.t(MsgPlanExportBtn), type: 'default', value: `export:${exportKey}` }])
+      [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }])
     return content
   }
 
@@ -3509,7 +3460,7 @@ export class Engine {
     const title = filePath !== '' ? `计划·${basename(filePath).replace(/\.md$/, '')}` : '计划'
     sendPlanCard(this, p, replyCtx, state, exportKey, body,
       { title, color: 'blue' },
-      [{ text: this.i18n.t(MsgPlanExportBtn), type: 'default', value: `export:${exportKey}` }])
+      [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }])
     return body
   }
 
@@ -3523,11 +3474,11 @@ export class Engine {
     if (typeof ibs.sendWithButtons === 'function') {
       const buttons = [
         [
-          { text: this.i18n.t(MsgPermBtnAllow), data: 'perm:allow' },
-          { text: this.i18n.t(MsgPermBtnDeny), data: 'perm:deny' },
+          { text: this.i18n.t(Msg.PermBtnAllow), data: 'perm:allow' },
+          { text: this.i18n.t(Msg.PermBtnDeny), data: 'perm:deny' },
         ],
         [
-          { text: this.i18n.t(MsgPermBtnAllowAll), data: 'perm:allow_all' },
+          { text: this.i18n.t(Msg.PermBtnAllowAll), data: 'perm:allow_all' },
         ],
       ]
       try {
@@ -3541,16 +3492,16 @@ export class Engine {
     // Try card with buttons (Feishu-style platforms)
     const cs = p as Platform & CardSender
     if (typeof cs.sendCard === 'function') {
-      const body = this.i18n.tf(MsgPermCardBody, toolName, toolInput)
-      const allowBtn: CardButton = { text: this.i18n.t(MsgPermBtnAllow), type: 'primary', value: 'perm:allow', name: 'perm_allow', actionType: 'form_submit', extra: { perm_label: `✅ ${this.i18n.t(MsgPermBtnAllow)}`, perm_color: 'green', perm_body: body } }
-      const denyBtn: CardButton = { text: this.i18n.t(MsgPermBtnDeny), type: 'danger', value: 'perm:deny', name: 'perm_deny', actionType: 'form_submit', extra: { perm_label: `❌ ${this.i18n.t(MsgPermBtnDeny)}`, perm_color: 'red', perm_body: body } }
-      const allowAllBtn: CardButton = { text: this.i18n.t(MsgPermBtnAllowAll), type: 'default', value: 'perm:allow_all', name: 'perm_allow_all', actionType: 'form_submit', extra: { perm_label: `✅ ${this.i18n.t(MsgPermBtnAllowAll)}`, perm_color: 'green', perm_body: body } }
+      const body = this.i18n.tf(Msg.PermCardBody, toolName, toolInput)
+      const allowBtn: CardButton = { text: this.i18n.t(Msg.PermBtnAllow), type: 'primary', value: 'perm:allow', name: 'perm_allow', actionType: 'form_submit', extra: { perm_label: `✅ ${this.i18n.t(Msg.PermBtnAllow)}`, perm_color: 'green', perm_body: body } }
+      const denyBtn: CardButton = { text: this.i18n.t(Msg.PermBtnDeny), type: 'danger', value: 'perm:deny', name: 'perm_deny', actionType: 'form_submit', extra: { perm_label: `❌ ${this.i18n.t(Msg.PermBtnDeny)}`, perm_color: 'red', perm_body: body } }
+      const allowAllBtn: CardButton = { text: this.i18n.t(Msg.PermBtnAllowAll), type: 'default', value: 'perm:allow_all', name: 'perm_allow_all', actionType: 'form_submit', extra: { perm_label: `✅ ${this.i18n.t(Msg.PermBtnAllowAll)}`, perm_color: 'green', perm_body: body } }
 
       const card = newCard()
-        .title(`‼️ ${this.i18n.t(MsgPermCardTitle)}`, 'red')
+        .title(`‼️ ${this.i18n.t(Msg.PermCardTitle)}`, 'red')
         .form('perm_form',
           { kind: 'markdown', content: body },
-          { kind: 'input', name: 'deny_reason', placeholder: this.i18n.t(MsgPermDenyReasonPlaceholder), maxLength: 1000 },
+          { kind: 'input', name: 'deny_reason', placeholder: this.i18n.t(Msg.PermDenyReasonPlaceholder), maxLength: 1000 },
           { kind: 'actions', buttons: [allowBtn, allowAllBtn, denyBtn], layout: 'equal_columns' },
         )
         .build()
@@ -3589,7 +3540,7 @@ export class Engine {
     // Try card (Feishu-style platforms)
     const cs = p as Platform & CardSender
     if (typeof cs.sendCard === 'function') {
-      const cardTitle = q.header !== '' ? q.header : this.i18n.t(MsgAskQuestionTitle)
+      const cardTitle = q.header !== '' ? q.header : this.i18n.t(Msg.AskQuestionTitle)
       const cb = newCard().title(`‼️ ${cardTitle}${titleSuffix}`, 'blue')
 
       if (q.multiSelect) {
@@ -3638,7 +3589,7 @@ export class Engine {
 
     // Plain text fallback
     const lines = [`${q.header !== '' ? `[${q.header}] ` : ''}❓ ${q.question}${titleSuffix}`]
-    if (q.multiSelect) lines.push(this.i18n.t(MsgAskQuestionMulti))
+    if (q.multiSelect) lines.push(this.i18n.t(Msg.AskQuestionMulti))
     for (let i = 0; i < q.options.length; i++) {
       const opt = q.options[i]
       if (opt === undefined) continue
@@ -3669,7 +3620,7 @@ export class Engine {
       if (msg.isPermissionAction) {
         const lower = content.toLowerCase().trim()
         if (isAllowResponse(lower) || isDenyResponse(lower) || isApproveAllResponse(lower)) {
-          void this.reply(p, msg.replyCtx, this.i18n.t(MsgPermissionExpired))
+          void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PermissionExpired))
           return true
         }
       }
@@ -3686,7 +3637,7 @@ export class Engine {
       if (msg.isPermissionAction) {
         const lower = content.toLowerCase().trim()
         if (isAllowResponse(lower) || isDenyResponse(lower) || isApproveAllResponse(lower)) {
-          void this.reply(p, msg.replyCtx, this.i18n.t(MsgPermissionExpired))
+          void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PermissionExpired))
           return true
         }
       }
@@ -3759,10 +3710,10 @@ export class Engine {
       }
       // Card button deny: header already shows "❌ 已拒绝"; only send text for non-card deny
       if (!msg.isPermissionAction) {
-        void this.reply(p, msg.replyCtx, this.i18n.t(MsgPermissionDenied))
+        void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PermissionDenied))
       }
     } else {
-      void this.reply(p, msg.replyCtx, this.i18n.t(MsgPermissionHint))
+      void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PermissionHint))
       return true
     }
 
@@ -3932,7 +3883,7 @@ export class Engine {
     if (session === undefined || session.getSubtaskDepth() <= 0) return []
     const s = await gitDiffShortstat(workspaceDir)
     if (s === '') return []
-    return [{ content: `${this.i18n.t(MsgSubtaskDiffSummary)}: ${s}` }]
+    return [{ content: `${this.i18n.t(Msg.SubtaskDiffSummary)}: ${s}` }]
   }
 
   // ── status footer + completion notification (Go engine_cmd_misc.go, M7) ──
@@ -4102,7 +4053,7 @@ export class Engine {
   ): Promise<void> {
     if (state.pendingMessages.length > 0) return
     const footerMsg = await this.buildStatusFooter(
-      this.i18n.t(MsgTurnCompleted), this.agent, workspaceDir, session.getAgentSessionID(), sessionKey)
+      this.i18n.t(Msg.TurnCompleted), this.agent, workspaceDir, session.getAgentSessionID(), sessionKey)
     const cu = asCardSenderWithUpdate(p)
     if (cu !== undefined) {
       const { headerSuffix, elements } = await this.buildStatusFooterElements(
@@ -4336,7 +4287,7 @@ export class Engine {
       })
       const jumpMD = jumpButtonsMarkdown(parentJumpButtons(parentSessionKey, this.subtaskParentLabel(parent), p))
       const card = await this.buildSpawnNotifyCard(
-        workDir, this.i18n.t(MsgSpawnGroupReady), '', jumpMD, syntheticMsg.sessionKey)
+        workDir, this.i18n.t(Msg.SpawnGroupReady), '', jumpMD, syntheticMsg.sessionKey)
       try {
         await cs.sendCard(syntheticMsg.replyCtx, card)
       } catch (error) {
@@ -4472,12 +4423,12 @@ export class Engine {
 
     const child = this.sessions.getOrCreateActive(childSessionKey)
     if (child.getParentSessionKey() !== callerSessionKey) {
-      throw new Error(this.i18n.t(MsgSubtaskSendNotChild))
+      throw new Error(this.i18n.t(Msg.SubtaskSendNotChild))
     }
     // Backpressure: a queued follow-up's answer would never report back (the
     // in-flight turn's auto-report consumes any re-arm); reject instead.
     if (child.isBusy()) {
-      throw new Error(this.i18n.t(MsgSubtaskChildBusy))
+      throw new Error(this.i18n.t(Msg.SubtaskChildBusy))
     }
 
     const r = asReplyContextReconstructor(p)
@@ -4498,7 +4449,7 @@ export class Engine {
 
     // Post the follow-up as a visible card in the child group first, so
     // members see WHAT the parent asked (the injected message is silent).
-    await this.sendAsCard(p, childRctx, msg, { title: this.i18n.t(MsgSubtaskFollowupHeader), color: 'indigo' })
+    await this.sendAsCard(p, childRctx, msg, { title: this.i18n.t(Msg.SubtaskFollowupHeader), color: 'indigo' })
 
     const childMsg: Message = {
       ...emptyMessage(),
@@ -4617,7 +4568,7 @@ export class Engine {
     // re-triage as a fresh alert.
     if (this.isMonitorChat({ ...emptyMessage(), sessionKey: sess.getParentSessionKey(), platform: p.name() })) return
 
-    const failureMsg = this.i18n.t(MsgSubtaskTimeout)
+    const failureMsg = this.i18n.t(Msg.SubtaskTimeout)
     if (this.replyToParent(p, sess, failureMsg)) {
       sess.setSubtaskReported(true)
       this.sessions.save()
@@ -4653,7 +4604,7 @@ export class Engine {
       g.labels.set(ck, childLabel(s))
     }
     if (g.expected.size === 0) {
-      throw new Error(this.i18n.t(MsgSubtaskGatherNoPending))
+      throw new Error(this.i18n.t(Msg.SubtaskGatherNoPending))
     }
     parent.setPendingSubtaskGather(g)
     this.sessions.save()
@@ -4769,7 +4720,7 @@ export class Engine {
   /** Async half of replyToParent once the parent reply ctx resolved. */
   private async deliverParentReply(p: Platform, sess: Session, parentKey: string, parentRctx: unknown, content: string): Promise<void> {
     await this.sendAsCard(p, parentRctx, content, {
-      title: this.i18n.tf(MsgDoneReplyParentHeader, childLabel(sess)),
+      title: this.i18n.tf(Msg.DoneReplyParentHeader, childLabel(sess)),
       color: 'indigo',
     })
 
@@ -5209,27 +5160,27 @@ export class Engine {
   /** The /done Keep/Remove prompt card for a dirty worktree (Go renderWorktreeCard). */
   renderWorktreeCard(sessionKey: string): Card {
     const [path, branch] = this.sessions.getOrCreateActive(sessionKey).getWorktreeInfo()
-    let md = this.i18n.tf(MsgWorktreeDirtyPrompt, branch, path)
+    let md = this.i18n.tf(Msg.WorktreeDirtyPrompt, branch, path)
     const memDir = this.resolveOrphanMemoryDir(path)
     if (memDir !== '') {
-      md += `\n${this.i18n.tf(MsgWorktreeMemoryWarn, joinPath(memDir, 'memory'))}`
+      md += `\n${this.i18n.tf(Msg.WorktreeMemoryWarn, joinPath(memDir, 'memory'))}`
     }
     return newCard()
-      .title(this.i18n.t(MsgWorktreeCardTitle), 'orange')
+      .title(this.i18n.t(Msg.WorktreeCardTitle), 'orange')
       .markdown(md)
       .buttons(
-        { text: this.i18n.t(MsgWorktreeKeepBtn), type: 'default', value: 'act:/wt keep' },
-        { text: this.i18n.t(MsgWorktreeRemoveBtn), type: 'danger', value: 'act:/wt remove' },
+        { text: this.i18n.t(Msg.WorktreeKeepBtn), type: 'default', value: 'act:/wt keep' },
+        { text: this.i18n.t(Msg.WorktreeRemoveBtn), type: 'danger', value: 'act:/wt remove' },
       )
       .build()
   }
 
   /** Terminal card after the user picks keep/remove (Go renderWorktreeDoneCard). */
   renderWorktreeDoneCard(action: string, memNote: string): Card {
-    let msg = this.i18n.t(MsgWorktreeKept)
-    if (action.startsWith('remove')) msg = this.i18n.t(MsgWorktreeRemovedShort)
+    let msg = this.i18n.t(Msg.WorktreeKept)
+    if (action.startsWith('remove')) msg = this.i18n.t(Msg.WorktreeRemovedShort)
     if (memNote !== '') msg += `\n${memNote}`
-    return newCard().title(this.i18n.t(MsgWorktreeCardTitle), 'turquoise').markdown(msg).build()
+    return newCard().title(this.i18n.t(Msg.WorktreeCardTitle), 'turquoise').markdown(msg).build()
   }
 
   /**
@@ -5250,18 +5201,18 @@ export class Engine {
       } catch (error) {
         console.warn(`worktree: remove failed (${sessionKey}): ${String(error)}`)
         // Folder not removed; fields preserved for retry, memory kept.
-        return memDir !== '' ? this.i18n.tf(MsgWorktreeOrphanKept, memDir) : ''
+        return memDir !== '' ? this.i18n.tf(Msg.WorktreeOrphanKept, memDir) : ''
       }
       sess.setWorktreeInfo('', '', '', '')
       this.sessions.save()
       const cleaned = removeOrphanMemory(memDir === '' ? '' : memDir)
-      if (cleaned !== '') return this.i18n.tf(MsgWorktreeOrphanCleaned, cleaned)
+      if (cleaned !== '') return this.i18n.tf(Msg.WorktreeOrphanCleaned, cleaned)
       return ''
     }
     // keep: folder stays on disk → memory stays.
     sess.setWorktreeInfo('', '', '', '')
     this.sessions.save()
-    return memDir !== '' ? this.i18n.tf(MsgWorktreeOrphanKept, memDir) : ''
+    return memDir !== '' ? this.i18n.tf(Msg.WorktreeOrphanKept, memDir) : ''
   }
 
   /**
@@ -5378,14 +5329,14 @@ export class Engine {
     this.sessions.save()
     if (err !== undefined) {
       console.warn(`worktree removal failed; cleared session fields anyway (${sessionKey} ${path}): ${errorMessage(err)}`)
-      let msg = this.i18n.tf(MsgWorktreeCreateError, errorMessage(err))
-      if (memDir !== '') msg += `\n${this.i18n.tf(MsgWorktreeOrphanKept, memDir)}`
+      let msg = this.i18n.tf(Msg.WorktreeCreateError, errorMessage(err))
+      if (memDir !== '') msg += `\n${this.i18n.tf(Msg.WorktreeOrphanKept, memDir)}`
       await this.reply(p, replyCtx, msg)
       return
     }
-    let msg = this.i18n.tf(MsgWorktreeRemoved, branch)
+    let msg = this.i18n.tf(Msg.WorktreeRemoved, branch)
     const cleaned = removeOrphanMemory(memDir === '' ? '' : memDir)
-    if (cleaned !== '') msg += `\n${this.i18n.tf(MsgWorktreeOrphanCleaned, cleaned)}`
+    if (cleaned !== '') msg += `\n${this.i18n.tf(Msg.WorktreeOrphanCleaned, cleaned)}`
     await this.reply(p, replyCtx, msg)
   }
 

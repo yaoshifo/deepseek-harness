@@ -22,20 +22,7 @@
 
 import type { Message, Platform, ProviderSwitcher } from '../core/types.js'
 import { asProviderSwitcher } from '../core/types.js'
-import {
-  MsgProviderCleared,
-  MsgProviderCurrent,
-  MsgProviderHotSwitched,
-  MsgProviderListEmpty,
-  MsgProviderListTitle,
-  MsgProviderNone,
-  MsgProviderNotSupported,
-  MsgProviderShortcutNew,
-  MsgProviderSwitchHint,
-  MsgProviderSwitched,
-  MsgProviderNotFound,
-  MsgProviderUnknownFlag,
-} from '../i18n/index.js'
+import { Msg } from '../i18n/index.js'
 import type { Engine } from './engine.js'
 
 /** Prefix-match a subcommand against candidates (Go matchSubCommand). */
@@ -76,17 +63,17 @@ function parseProviderResumeFlag(args: string[]): { name: string; resume: boolea
 function providerListText(e: Engine, switcher: ProviderSwitcher): string {
   const current = switcher.getActiveProvider()
   const providers = switcher.listProviders()
-  if (current === undefined && providers.length === 0) return e.i18n.t(MsgProviderNone)
+  if (current === undefined && providers.length === 0) return e.i18n.t(Msg.ProviderNone)
   let sb = ''
   if (current !== undefined) {
-    sb += `${e.i18n.tf(MsgProviderCurrent, current.name)}\n\n`
+    sb += `${e.i18n.tf(Msg.ProviderCurrent, current.name)}\n\n`
   }
-  sb += e.i18n.t(MsgProviderListTitle)
+  sb += e.i18n.t(Msg.ProviderListTitle)
   for (const prov of providers) {
     const marker = current !== undefined && prov.name === current.name ? '▶ ' : '  '
     sb += `${marker}${prov.name}\n`
   }
-  return sb + `\n${e.i18n.t(MsgProviderSwitchHint)}`
+  return sb + `\n${e.i18n.t(Msg.ProviderSwitchHint)}`
 }
 
 /**
@@ -118,7 +105,7 @@ export function registerProviderCommands(e: Engine): () => void {
 async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const switcher = asProviderSwitcher(e.agent)
   if (switcher === undefined) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgProviderNotSupported))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ProviderNotSupported))
     return
   }
 
@@ -132,7 +119,7 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
     case 'list': {
       const providers = switcher.listProviders()
       if (providers.length === 0) {
-        await e.reply(p, msg.replyCtx, e.i18n.t(MsgProviderListEmpty))
+        await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ProviderListEmpty))
         return
       }
       await e.reply(p, msg.replyCtx, providerListText(e, switcher))
@@ -145,7 +132,7 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
       }
       const bad = unknownFlag(args.slice(1), { '-r': true, '--resume': true })
       if (bad !== '') {
-        await e.reply(p, msg.replyCtx, e.i18n.tf(MsgProviderUnknownFlag, bad))
+        await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderUnknownFlag, bad))
         return
       }
       const { name, resume } = parseProviderResumeFlag(args.slice(1))
@@ -155,10 +142,10 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
     case 'current': {
       const current = switcher.getActiveProvider()
       if (current === undefined) {
-        await e.reply(p, msg.replyCtx, e.i18n.t(MsgProviderNone))
+        await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ProviderNone))
         return
       }
-      await e.reply(p, msg.replyCtx, e.i18n.tf(MsgProviderCurrent, current.name))
+      await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderCurrent, current.name))
       return
     }
     case 'clear':
@@ -171,13 +158,13 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
       s.clearHistory()
       e.sessions.save()
       saveProvider(e, '')
-      await e.reply(p, msg.replyCtx, e.i18n.t(MsgProviderCleared))
+      await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ProviderCleared))
       return
     }
     default: {
       const bad = unknownFlag(args, { '-r': true, '--resume': true })
       if (bad !== '') {
-        await e.reply(p, msg.replyCtx, e.i18n.tf(MsgProviderUnknownFlag, bad))
+        await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderUnknownFlag, bad))
         return
       }
       const { name, resume } = parseProviderResumeFlag(args)
@@ -200,7 +187,7 @@ function saveProvider(e: Engine, name: string): void {
 /** /provider switch: rotate to a fresh session on the new route (Go switchProvider). */
 async function switchProvider(e: Engine, p: Platform, msg: Message, switcher: ProviderSwitcher, name: string): Promise<void> {
   if (!switcher.setActiveProvider(name)) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgProviderNotFound, name))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, name))
     return
   }
   e.stopInteractiveSession(msg.sessionKey)
@@ -209,13 +196,13 @@ async function switchProvider(e: Engine, p: Platform, msg: Message, switcher: Pr
   s.clearHistory()
   e.sessions.save()
   saveProvider(e, name)
-  await e.reply(p, msg.replyCtx, e.i18n.tf(MsgProviderSwitched, name))
+  await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderSwitched, name))
 }
 
 /** /provider switch --resume: keep the transcript, swap the route (Go switchProviderResume). */
 async function switchProviderResume(e: Engine, p: Platform, msg: Message, switcher: ProviderSwitcher, name: string): Promise<void> {
   if (!switcher.setActiveProvider(name)) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgProviderNotFound, name))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, name))
     return
   }
   const s = e.sessions.getOrCreateActive(msg.sessionKey)
@@ -230,18 +217,18 @@ async function switchProviderResume(e: Engine, p: Platform, msg: Message, switch
   }
   e.sessions.save()
   saveProvider(e, name)
-  await e.reply(p, msg.replyCtx, e.i18n.tf(MsgProviderHotSwitched, name))
+  await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderHotSwitched, name))
 }
 
 /** A provider shortcut (/strong): switch + fresh session in one step (Go cmdProviderShortcut). */
 async function cmdProviderShortcut(e: Engine, p: Platform, msg: Message, providerName: string): Promise<void> {
   const switcher = asProviderSwitcher(e.agent)
   if (switcher === undefined) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgProviderNotSupported))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ProviderNotSupported))
     return
   }
   if (!switcher.setActiveProvider(providerName)) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(MsgProviderNotFound, providerName))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, providerName))
     return
   }
 
@@ -252,5 +239,5 @@ async function cmdProviderShortcut(e: Engine, p: Platform, msg: Message, provide
   e.sessions.save()
   e.sessions.newSession(msg.sessionKey, '')
   saveProvider(e, providerName)
-  await e.reply(p, msg.replyCtx, e.i18n.tf(MsgProviderShortcutNew, providerName))
+  await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderShortcutNew, providerName))
 }

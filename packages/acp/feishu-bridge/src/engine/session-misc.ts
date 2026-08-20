@@ -13,16 +13,7 @@
 
 import type { Message, Platform } from '../core/types.js'
 import { asSessionCompressor } from '../core/types.js'
-import {
-  MsgCompressDone,
-  MsgCompressing,
-  MsgCompressNoSession,
-  MsgCompressNotSupported,
-  MsgError,
-  MsgPreviousProcessing,
-  MsgSessionAutoResetIdle,
-  MsgSessionClosingGraceful,
-} from '../i18n/index.js'
+import { Msg } from '../i18n/index.js'
 import type { Engine, InteractiveState } from './engine.js'
 import type { HistoryEntry } from '../core/types.js'
 import type { Session } from './session.js'
@@ -78,13 +69,13 @@ export function maybeAutoResetSessionOnIdle(
   if (hasAgent) {
     // The close can take up to two minutes (stop hooks); tell the user
     // before blocking (Go cmdNew's same rationale).
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgSessionClosingGraceful))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.SessionClosingGraceful))
   }
 
   e.stopInteractiveSession(msg.sessionKey)
   session.unlockWithoutUpdate()
   const fresh = e.sessions.newSession(msg.sessionKey, '')
-  void e.reply(p, msg.replyCtx, e.i18n.tf(MsgSessionAutoResetIdle, Math.round(e.resetOnIdle / 60_000)))
+  void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.SessionAutoResetIdle, Math.round(e.resetOnIdle / 60_000)))
   return fresh
 }
 
@@ -111,12 +102,12 @@ export async function runCompress(
   if (p === undefined) return
   const compressor = asSessionCompressor(state.agentSession)
   if (compressor === undefined) {
-    if (!auto) await e.reply(p, replyCtx, e.i18n.t(MsgCompressNotSupported))
+    if (!auto) await e.reply(p, replyCtx, e.i18n.t(Msg.CompressNotSupported))
     return
   }
 
   if (auto) {
-    let notice = e.i18n.t(MsgCompressing)
+    let notice = e.i18n.t(Msg.Compressing)
     if (state.lastAutoCompressTokens > 0) {
       notice += ` (~${Math.round(state.lastAutoCompressTokens / 1000)}k tokens)`
     }
@@ -126,10 +117,10 @@ export async function runCompress(
   try {
     await compressor.compress()
     state.compactionCount++
-    if (!auto) await e.reply(p, replyCtx, e.i18n.t(MsgCompressDone))
+    if (!auto) await e.reply(p, replyCtx, e.i18n.t(Msg.CompressDone))
   } catch (error) {
     if (!auto) {
-      await e.reply(p, replyCtx, e.i18n.tf(MsgError, String(error)))
+      await e.reply(p, replyCtx, e.i18n.tf(Msg.Error, String(error)))
     } else {
       console.error(`auto-compress: failed: ${String(error)}`)
     }
@@ -160,15 +151,15 @@ export function registerSessionMiscCommands(e: Engine): () => void {
 async function cmdCompress(e: Engine, p: Platform, msg: Message): Promise<void> {
   const state = e.interactiveStates.get(msg.sessionKey)
   if (state?.agentSession === undefined || !state.agentSession.alive()) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgCompressNoSession))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CompressNoSession))
     return
   }
   const session = e.sessions.getOrCreateActive(msg.sessionKey)
   if (!session.tryLock()) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgPreviousProcessing))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.PreviousProcessing))
     return
   }
-  await e.send(p, msg.replyCtx, e.i18n.t(MsgCompressing))
+  await e.send(p, msg.replyCtx, e.i18n.t(Msg.Compressing))
   try {
     await runCompress(e, state, p, msg.replyCtx, false)
   } finally {

@@ -33,15 +33,7 @@ import {
   type Platform,
   type UserQuestion,
 } from '../core/types.js'
-import {
-  MsgMonitorClarifyCancelled,
-  MsgMonitorClarifyTimeout,
-  MsgMonitorDispatchGroupName,
-  MsgMonitorDispatchTitle,
-  MsgMonitorJumpBtn,
-  MsgMonitorPullGroupTitle,
-  MsgMonitorSpawnFailed,
-} from '../i18n/index.js'
+import { Msg } from '../i18n/index.js'
 import type { CardButton, CardHeader } from '../card.js'
 import type { Engine } from './engine.js'
 import type { Session, SessionManager } from './session.js'
@@ -175,7 +167,15 @@ export class MonitorExampleStore {
     }
   }
 
-  /** Append a learned example and return its ID. */
+  /**
+   * Append a learned example and return its ID.
+   * @param example - the quoted message text being taught.
+   * @param dir - the configured dir the example routes to; "" when unbound.
+   * @param instruction - the handling requirement taught for the example.
+   * @param drop - whether the example marks messages needing no response.
+   * @param createdAt - creation time, epoch seconds.
+   * @returns the stored example's ID.
+   */
   add(example: string, dir: string, instruction: string, drop: boolean, createdAt: number): string {
     this.nextID++
     const id = `L${this.nextID}`
@@ -844,7 +844,7 @@ export class MonitorCore {
     } catch (error) {
       this.monitorUnreact(p, msg, reactionID)
       console.error(`monitor: spawn failed (chat=${chatID} dir=${dir}): ${String(error)}`)
-      await this.e.send(p, msg.replyCtx, this.e.i18n.tf(MsgMonitorSpawnFailed, String(error)))
+      await this.e.send(p, msg.replyCtx, this.e.i18n.tf(Msg.MonitorSpawnFailed, String(error)))
       return
     }
     // Record the child's dir + spawn time so later same-dir alerts can
@@ -954,7 +954,7 @@ export class MonitorCore {
       sess.setPendingMonitorClarification(undefined)
       this.e.sessions.save()
       this.monitorUnreactByCtx(p, pc.origReplyCtx, pc.origReactionID)
-      void this.e.send(p, pc.origReplyCtx, this.e.i18n.t(MsgMonitorClarifyTimeout))
+      void this.e.send(p, pc.origReplyCtx, this.e.i18n.t(Msg.MonitorClarifyTimeout))
       console.info(`monitor: clarification timed out (chat=${chatID})`)
       return false
     }
@@ -977,7 +977,7 @@ export class MonitorCore {
 
     if (isSkip) {
       this.monitorUnreactByCtx(p, pc.origReplyCtx, pc.origReactionID)
-      void this.e.send(p, pc.origReplyCtx, this.e.i18n.t(MsgMonitorClarifyCancelled))
+      void this.e.send(p, pc.origReplyCtx, this.e.i18n.t(Msg.MonitorClarifyCancelled))
       console.info(`monitor: clarification skipped by user (chat=${chatID})`)
       return true
     }
@@ -1335,12 +1335,12 @@ export class MonitorCore {
   /** Card announcing the new subgroup, with a jump button (Go sendMonitorSpawnNotice). */
   async sendMonitorSpawnNotice(p: Platform, replyCtx: unknown, childChat: string, dir: string, origText: string): Promise<void> {
     const dispatch = this.modeVal() === 'dispatch'
-    let headerTitle = this.e.i18n.t(MsgMonitorPullGroupTitle)
-    if (dispatch) headerTitle = this.e.i18n.t(MsgMonitorDispatchTitle)
+    let headerTitle = this.e.i18n.t(Msg.MonitorPullGroupTitle)
+    if (dispatch) headerTitle = this.e.i18n.t(Msg.MonitorDispatchTitle)
     const base = basename(dir)
     if (base !== '' && base !== '.') headerTitle += ` ${base}`
     const jumpURL = this.e.chatJumpURL(p, childChat)
-    const buttons: CardButton[] = [{ text: this.e.i18n.t(MsgMonitorJumpBtn), type: 'primary', value: '', url: jumpURL }]
+    const buttons: CardButton[] = [{ text: this.e.i18n.t(Msg.MonitorJumpBtn), type: 'primary', value: '', url: jumpURL }]
     const body = `> ${truncateMonitor(origText, 200)}`
     const header: CardHeader = { title: headerTitle, color: 'indigo' }
     await this.e.sendAsCardWithButtons(p, replyCtx, body, header, buttons)
@@ -1349,7 +1349,7 @@ export class MonitorCore {
   /** Heads-up that the alert was forwarded into an existing subgroup (Go sendMonitorCoalesceNotice). */
   private async sendMonitorCoalesceNotice(p: Platform, replyCtx: unknown, childChat: string, origText: string): Promise<void> {
     const headerTitle = '📌 补充告警已并入排查群'
-    const buttons: CardButton[] = [{ text: this.e.i18n.t(MsgMonitorJumpBtn), type: 'primary', value: '', url: this.e.chatJumpURL(p, childChat) }]
+    const buttons: CardButton[] = [{ text: this.e.i18n.t(Msg.MonitorJumpBtn), type: 'primary', value: '', url: this.e.chatJumpURL(p, childChat) }]
     const body = `> ${truncateMonitor(origText, 200)}`
     const header: CardHeader = { title: headerTitle, color: 'indigo' }
     await this.e.sendAsCardWithButtons(p, replyCtx, body, header, buttons)
@@ -1500,7 +1500,7 @@ export class MonitorCore {
   private async brandChatSync(p: Platform, sessionKey: string): Promise<void> {
     const brander = asChatBrander(p)
     if (brander === undefined) return
-    const name = this.e.i18n.t(MsgMonitorDispatchGroupName)
+    const name = this.e.i18n.t(Msg.MonitorDispatchGroupName)
     try {
       await brander.brandChat(sessionKey, name, 'trending-up-down')
     } catch (error) {

@@ -184,16 +184,37 @@ export type CardElement =
   | CardInput
   | CardColumnSet
 
-/** Shorthand constructor for a plain button. */
+/**
+ * Shorthand constructor for a plain button.
+ * @param text - Display text on the button.
+ * @param type - Button style: "primary", "default", or "danger".
+ * @param value - Callback data returned when clicked.
+ * @returns The assembled button.
+ */
 export const btn = (text: string, type: string, value: string): CardButton => ({ text, type, value })
 
-/** Shorthand constructor for a primary-styled button. */
+/**
+ * Shorthand constructor for a primary-styled button.
+ * @param text - Display text on the button.
+ * @param value - Callback data returned when clicked.
+ * @returns The assembled primary button.
+ */
 export const primaryBtn = (text: string, value: string): CardButton => ({ text, type: 'primary', value })
 
-/** Shorthand constructor for a default-styled button. */
+/**
+ * Shorthand constructor for a default-styled button.
+ * @param text - Display text on the button.
+ * @param value - Callback data returned when clicked.
+ * @returns The assembled default button.
+ */
 export const defaultBtn = (text: string, value: string): CardButton => ({ text, type: 'default', value })
 
-/** Shorthand constructor for a danger-styled button. */
+/**
+ * Shorthand constructor for a danger-styled button.
+ * @param text - Display text on the button.
+ * @param value - Callback data returned when clicked.
+ * @returns The assembled danger button.
+ */
 export const dangerBtn = (text: string, value: string): CardButton => ({ text, type: 'danger', value })
 
 /**
@@ -237,12 +258,17 @@ export function appendIntoLastCollapsible(elements: CardElement[], el: CardEleme
  * Interactive Card, etc.) or degraded to plain text.
  */
 export class Card {
+  /** Optional colored title bar rendered above the elements. */
   header?: CardHeader
+  /** Ordered card content elements. */
   elements: CardElement[] = []
   /** Metadata cached by platforms for callback card replacement. */
   permBody?: string
 
-  /** Convert the card to plain text for platforms without rich-card support. */
+  /**
+   * Convert the card to plain text for platforms without rich-card support.
+   * @returns The markdown-flavored plain-text rendering.
+   */
   renderText(): string {
     let sb = ''
 
@@ -326,6 +352,7 @@ export class Card {
   /**
    * Whether the card contains interactive elements. Top level only — a
    * button inside a collapsible panel does not count, mirroring Go.
+   * @returns True when any top-level element is interactive.
    */
   hasButtons(): boolean {
     return this.elements.some(e =>
@@ -335,6 +362,7 @@ export class Card {
   /**
    * Extract all buttons as rows (one row per actions element; list items
    * become single-button rows), walking into forms and collapsible panels.
+   * @returns Button rows in element order, each row holding its buttons' text and callback data.
    */
   collectButtons(): ButtonOption[][] {
     const rows: ButtonOption[][] = []
@@ -376,13 +404,22 @@ export class Card {
 export class CardBuilder {
   private readonly card: Card = new Card()
 
-  /** Set the card header with a title and color. */
+  /**
+   * Set the card header with a title and color.
+   * @param title - Header title text.
+   * @param color - Header color name (e.g. "blue", "green").
+   * @returns This builder, for chaining.
+   */
   title(title: string, color: string): this {
     this.card.header = { title, color }
     return this
   }
 
-  /** Append a markdown text element; empty content is skipped. */
+  /**
+   * Append a markdown text element; empty content is skipped.
+   * @param content - Markdown source text.
+   * @returns This builder, for chaining.
+   */
   markdown(content: string): this {
     if (content !== '') {
       this.card.elements.push({ kind: 'markdown', content })
@@ -390,18 +427,30 @@ export class CardBuilder {
     return this
   }
 
-  /** Append a Go-style formatted markdown text element. */
+  /**
+   * Append a Go-style formatted markdown text element.
+   * @param format - sprintf-style format string.
+   * @param args - Values substituted into the format placeholders.
+   * @returns This builder, for chaining.
+   */
   markdownf(format: string, ...args: unknown[]): this {
     return this.markdown(sprintf(format, ...args))
   }
 
-  /** Append a horizontal divider. */
+  /**
+   * Append a horizontal divider.
+   * @returns This builder, for chaining.
+   */
   divider(): this {
     this.card.elements.push({ kind: 'divider' })
     return this
   }
 
-  /** Append an action row with the given buttons; empty rows are skipped. */
+  /**
+   * Append an action row with the given buttons; empty rows are skipped.
+   * @param buttons - Buttons forming the row.
+   * @returns This builder, for chaining.
+   */
   buttons(...buttons: CardButton[]): this {
     if (buttons.length > 0) {
       this.card.elements.push({ kind: 'actions', buttons, layout: 'row' })
@@ -409,7 +458,11 @@ export class CardBuilder {
     return this
   }
 
-  /** Append an action row where each button takes equal width on platforms with richer layouts. */
+  /**
+   * Append an action row where each button takes equal width on platforms with richer layouts.
+   * @param buttons - Buttons forming the row.
+   * @returns This builder, for chaining.
+   */
   buttonsEqual(...buttons: CardButton[]): this {
     if (buttons.length > 0) {
       this.card.elements.push({ kind: 'actions', buttons, layout: 'equal_columns' })
@@ -417,13 +470,26 @@ export class CardBuilder {
     return this
   }
 
-  /** Append a list row: description on the left, default-styled button on the right. */
+  /**
+   * Append a list row: description on the left, default-styled button on the right.
+   * @param desc - Row description text.
+   * @param btnText - Display text on the row's button.
+   * @param btnValue - Callback data for the row's button.
+   * @returns This builder, for chaining.
+   */
   listItem(desc: string, btnText: string, btnValue: string): this {
     this.card.elements.push({ kind: 'listItem', text: desc, btnText, btnType: 'default', btnValue })
     return this
   }
 
-  /** Like {@link CardBuilder.listItem} with an explicit button type. */
+  /**
+   * Like {@link CardBuilder.listItem} with an explicit button type.
+   * @param desc - Row description text.
+   * @param btnText - Display text on the row's button.
+   * @param btnType - Row button style: "primary", "default", or "danger".
+   * @param btnValue - Callback data for the row's button.
+   * @returns This builder, for chaining.
+   */
   listItemBtn(desc: string, btnText: string, btnType: string, btnValue: string): this {
     this.card.elements.push({ kind: 'listItem', text: desc, btnText, btnType, btnValue })
     return this

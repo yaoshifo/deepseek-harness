@@ -8,7 +8,7 @@
  * @module dsh-feishu-bridge/feishu-markdown
  */
 
-/** Outbound msg_type values (Go larkim.MsgType*). */
+/** Outbound msg_type values (Go larkim.Msg.Type*). */
 export const msgTypeText = 'text'
 export const msgTypePost = 'post'
 export const msgTypeInteractive = 'interactive'

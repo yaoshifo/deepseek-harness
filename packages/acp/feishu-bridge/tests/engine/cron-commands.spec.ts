@@ -19,7 +19,7 @@ import { RelayManager } from '../../src/engine/relay.js'
 import { Engine } from '../../src/engine/engine.js'
 import { registerSessionCommands } from '../../src/engine/commands.js'
 import { createStubAgent, createStubCardPlatform, newStubMessage } from '../stubs/engine-stubs.js'
-import { MsgCronEmpty } from '../../src/i18n/index.js'
+import { Msg } from '../../src/i18n/index.js'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'fb-croncmd-'))
@@ -48,7 +48,7 @@ describe('registerCronCommands', () => {
       expect(e.dispatchCommand(p, cronMsg('/cron list'), '/cron list')).toBe(true)
       // /cron list on an empty store replies the empty message.
       const sent = p.getSent()
-      expect(sent[sent.length - 1]).toBe(e.i18n.t(MsgCronEmpty))
+      expect(sent[sent.length - 1]).toBe(e.i18n.t(Msg.CronEmpty))
 
       expect(e.dispatchCommand(p, cronMsg('/cr list'), '/cr list')).toBe(true)
       expect(e.dispatchCommand(p, cronMsg('/new'), '/new')).toBe(true)

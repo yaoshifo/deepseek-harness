@@ -35,16 +35,23 @@ export const defaultCronJobTimeoutMs = 30 * 60_000
 
 /** A persisted scheduled task (Go CronJob). On-disk keys stay snake_case. */
 export class CronJob {
+  /** Unique job id (8 hex chars from {@link generateCronID}). */
   id = ''
+  /** Project (engine) name the job executes on. */
   project = ''
+  /** Key of the chat session the job was created in. */
   sessionKey = ''
+  /** Standard 5-field cron expression. */
   cronExpr = ''
+  /** Prompt injected on each run; empty for exec jobs. */
   prompt = ''
   /** Shell command; mutually exclusive with prompt. */
   exec = ''
   /** Working directory for exec; empty = agent work_dir. */
   workDir = ''
+  /** Optional user label shown in listings; '' falls back to prompt/exec. */
   description = ''
+  /** Whether the scheduler fires this job. */
   enabled = false
   /** Suppress the start notification; undefined = use the global default. */
   silent: boolean | undefined
@@ -60,9 +67,14 @@ export class CronJob {
   createdAt = ''
   /** Last run time (ISO string; '' = never). */
   lastRun = ''
+  /** Error message of the last run; '' when it succeeded. */
   lastError = ''
 
-  /** True when the job runs a shell command directly. */
+  /**
+   * True when the job runs a shell command directly.
+   *
+   * @returns Whether exec is set instead of a prompt.
+   */
   isShellJob(): boolean {
     return this.exec !== ''
   }

@@ -14,17 +14,7 @@ import { emptyMessage } from './engine.js'
 import type { Message, Platform } from '../core/types.js'
 import { asCardSender, asGroupRenamer } from '../core/types.js'
 import { newCard } from '../card.js'
-import {
-  MsgChatroomDirectStarted,
-  MsgChatroomMaxRoundsRange,
-  MsgChatroomPickTitle,
-  MsgChatroomResearchNeedsUv,
-  MsgChatroomResearchSingleRole,
-  MsgChatroomReady,
-  MsgChatroomTopicLabel,
-  MsgChatroomUsage,
-  MsgSpawnNotSupported,
-} from '../i18n/keys.js'
+import { Msg } from '../i18n/keys.js'
 import {
   chatroomAssistantGroupName,
   chatroomLedgerDirFor,
@@ -62,6 +52,7 @@ function matchChatroomPrefix(cmd: string): string {
  * its session commands registered — the handler map gains one entry and the
  * resolver is wrapped (the shared commands.ts table stays untouched).
  *
+ * @param e - Engine whose command handler map and resolver gain the entry.
  * @returns the disposer removing the registration.
  */
 export function registerChatroomCommands(e: Engine): () => void {
@@ -89,6 +80,11 @@ export function registerChatroomCommands(e: Engine): () => void {
  * /chatroom [--roles a,b] <topic…> | /chatroom a,b <topic…> | /chatroom
  * <topic…> | /chatroom — list, single-role direct chat, research mode, the
  * #43 role picker, and the #59 topic picker (Go cmdChatroom).
+ *
+ * @param e - Engine whose sessions, platforms, and pickers drive the flow.
+ * @param p - Platform that delivered the command message.
+ * @param msg - Triggering message; its session key is the hub.
+ * @param args - Raw tokens after the command word (flags and topic words).
  */
 export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   // `/chatroom list` (or 列表) lists every available role — pure display, no
@@ -98,7 +94,7 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
     return
   }
   if (e.spawnCapablePlatform() === undefined) {
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgSpawnNotSupported))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.SpawnNotSupported))
     return
   }
   // Parse: the first positional token is treated as a roles list only if it
@@ -138,7 +134,7 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
     if (a === '--max-rounds') {
       const next = args[i + 1]
       if (next === undefined) {
-        await e.reply(p, msg.replyCtx, e.i18n.tf(MsgChatroomMaxRoundsRange, maxChatroomResearchRounds))
+        await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ChatroomMaxRoundsRange, maxChatroomResearchRounds))
         return
       }
       i++
@@ -146,7 +142,7 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
       // Reject instead of silently dropping an invalid value — the moderator
       // would otherwise believe the cap took effect.
       if (Number.isNaN(n) || n < minChatroomResearchRounds || n > maxChatroomResearchRounds) {
-        await e.reply(p, msg.replyCtx, e.i18n.tf(MsgChatroomMaxRoundsRange, maxChatroomResearchRounds))
+        await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ChatroomMaxRoundsRange, maxChatroomResearchRounds))
         return
       }
       maxRounds = n
@@ -171,7 +167,7 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
     // topics; the user picks one, then enters the #43 role picker. Naming
     // roles without a topic is a misuse → usage error.
     if (gotRoles || roles.length > 0) {
-      await e.reply(p, msg.replyCtx, e.i18n.t(MsgChatroomUsage))
+      await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomUsage))
       return
     }
     if (!(await gateResearchUvOrFail(e, p, msg, research))) return
@@ -188,7 +184,7 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   // this chat, no moderator. Research mode does not apply — reject it.
   if (roles.length === 1) {
     if (research) {
-      await e.reply(p, msg.replyCtx, e.i18n.t(MsgChatroomResearchSingleRole))
+      await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomResearchSingleRole))
       return
     }
     await startChatroomDirectRole(e, p, msg, roles[0] ?? '', topic)
@@ -225,6 +221,12 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
 /**
  * Persist the --research / --mode / --max-rounds flags onto the hub session
  * so they survive the async picker flows (Go stashChatroomResearchFlags).
+ *
+ * @param e - Engine whose session store holds the hub session.
+ * @param hubKey - Session key of the hub (group) session to stamp.
+ * @param research - Whether --research was given; false scrubs stale flags.
+ * @param mode - Requested research mode; anything but 'auto'/'manual' resolves to the configured default.
+ * @param maxRounds - Per-invocation round cap override; 0 keeps the configured cap.
  */
 export function stashChatroomResearchFlags(
   e: Engine, hubKey: string, research: boolean, mode: string, maxRounds: number,
@@ -260,7 +262,7 @@ async function gateResearchUvOrFail(e: Engine, p: Platform, msg: Message, resear
     await ensureResearchPythonEnv(e, chatroomResearchWorkspace(e))
   } catch (error) {
     console.warn(`chatroom: research venv provisioning failed; blocking startup: ${String(error)}`)
-    await e.reply(p, msg.replyCtx, e.i18n.t(MsgChatroomResearchNeedsUv))
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomResearchNeedsUv))
     return false
   }
   return true
@@ -305,6 +307,12 @@ async function cmdChatroomList(e: Engine, p: Platform, msg: Message): Promise<vo
  * so the direct-role contract injects while the hub key stays '' (relay
  * dormant). The topic is then fed as a normal user turn (Go
  * startChatroomDirectRole).
+ *
+ * @param e - Engine owning sessions and project state.
+ * @param p - Platform used for the notice card and the wake message.
+ * @param msg - Triggering message; its hub session becomes the role session.
+ * @param role - Role directory name under the roles dir.
+ * @param topic - Conversation topic, fed to the role as the first user turn.
  */
 export async function startChatroomDirectRole(
   e: Engine, p: Platform, msg: Message, role: string, topic: string,
@@ -335,8 +343,8 @@ export async function startChatroomDirectRole(
   const cs = asCardSender(p)
   if (cs !== undefined) {
     void cs.sendCard(msg.replyCtx, newCard()
-      .title(e.i18n.t(MsgChatroomPickTitle), 'green')
-      .markdown(`${e.i18n.tf(MsgChatroomDirectStarted, role)}\n\n${e.i18n.t(MsgChatroomTopicLabel)}: ${topic}`)
+      .title(e.i18n.t(Msg.ChatroomPickTitle), 'green')
+      .markdown(`${e.i18n.tf(Msg.ChatroomDirectStarted, role)}\n\n${e.i18n.t(Msg.ChatroomTopicLabel)}: ${topic}`)
       .build()).catch(() => {})
   }
 
@@ -364,6 +372,15 @@ export async function startChatroomDirectRole(
  * workdir, post a summary card, pre-spawn research assistants, and wake the
  * moderator with the orchestration contract (Go afterChatroomStarted).
  * Async where the platform/spawn surface awaits (Go ran these inline).
+ *
+ * @param e - Engine owning sessions, spawn, and project state.
+ * @param p - Platform used for cards, renames, and the moderator wake.
+ * @param sessionKey - Hub (moderator) session key.
+ * @param userID - User the moderator wake turn is attributed to.
+ * @param chatType - Chat type of the hub, forwarded to the group rename.
+ * @param rctx - Reply context the summary card posts into.
+ * @param started - Roles spawned by startChatroom.
+ * @param topic - Discussion topic.
  */
 export async function afterChatroomStarted(
   e: Engine,
@@ -404,7 +421,7 @@ export async function afterChatroomStarted(
 
   // Summary card in the hub.
   const sb: string[] = []
-  sb.push(`${e.i18n.t(MsgChatroomTopicLabel)}: ${topic}\n`)
+  sb.push(`${e.i18n.t(Msg.ChatroomTopicLabel)}: ${topic}\n`)
   for (const r of started) {
     sb.push(`• ${r.name}\n`)
   }
@@ -412,7 +429,7 @@ export async function afterChatroomStarted(
     sb.push(`\n账本目录：${ledgerDir}\n（含 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md；角色回答前会读；主持用 feishu_bridge_chatroom 工具 action: note 更新综述，加 section: subproblems 更新子问题清单）\n`)
   }
   sb.push('\n主持人正在开场…')
-  void e.sendAsCard(p, rctx, sb.join(''), { title: e.i18n.t(MsgChatroomReady), color: 'purple' })
+  void e.sendAsCard(p, rctx, sb.join(''), { title: e.i18n.t(Msg.ChatroomReady), color: 'purple' })
 
   // Research mode: pre-spawn a full-CC assistant subgroup for each role so
   // the role can drive it to fetch data / run scripts without needing coding

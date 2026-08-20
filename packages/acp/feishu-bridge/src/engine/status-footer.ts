@@ -19,7 +19,7 @@ import type { Agent, AgentSession } from '../core/types.js'
 import { asProviderSwitcher } from '../core/types.js'
 import type { CardButton, CardElement, CardMarkdown } from '../card.js'
 import type { I18n } from '../i18n/index.js'
-import { MsgReplyFooterRemaining } from '../i18n/index.js'
+import { Msg } from '../i18n/index.js'
 import type { SyncUsageFetcher, UsageProvider } from './usage.js'
 
 const execFileP = promisify(execFile)
@@ -67,6 +67,12 @@ type MaybeSyncFetcher = UsageProvider & Partial<SyncUsageFetcher>
  * Build and store the per-turn completion usage fields (Go
  * buildCompletionUsage): ctx/cache lines when the indicator is on, provider
  * quota summaries, and the RAM/disk line.
+ *
+ * @param fields - Mutable per-turn fields the footer reads; reset and repopulated here.
+ * @param showContextIndicator - Whether to render the 📊 ctx and 🍵 cache lines at all.
+ * @param usageProviders - Candidate providers; ones whose isActive rejects the work dir are skipped.
+ * @param baseWorkDir - Work dir passed to each provider's active detection.
+ * @param args - Turn-token accounting for the ctx/cache lines.
  */
 export async function buildCompletionUsage(
   fields: CompletionUsageFields,
@@ -105,7 +111,11 @@ export async function buildCompletionUsage(
   fields.providerMsg = usageParts.length > 0 ? `💰 ${usageParts.join(' · ')}` : ''
 }
 
-/** Record agent processing time for the completion header (Go setCompletionDurations). */
+/** Record agent processing time for the completion header (Go setCompletionDurations).
+ * @param fields - Mutable per-turn fields holding the rendered duration line.
+ * @param agentDurationMs - Model-processing wall time; non-positive falls back to the full turn duration.
+ * @param turnDurationMs - Full turn wall time, used when the agent duration is unknown.
+ */
 export function setCompletionDurations(fields: CompletionUsageFields, agentDurationMs: number, turnDurationMs: number): void {
   if (agentDurationMs <= 0) {
     fields.agentDurationMsg = formatTurnDuration(turnDurationMs)
@@ -114,7 +124,11 @@ export function setCompletionDurations(fields: CompletionUsageFields, agentDurat
   fields.agentDurationMsg = formatTurnDuration(agentDurationMs)
 }
 
-/** Compute and store the per-turn output-token rate (Go setTokenRate). */
+/** Compute and store the per-turn output-token rate (Go setTokenRate).
+ * @param fields - Mutable per-turn fields holding the rendered rate line.
+ * @param outputTokens - Output tokens produced this turn.
+ * @param thinkingTimeMs - Model-generation wall time this turn.
+ */
 export function setTokenRate(fields: CompletionUsageFields, outputTokens: number, thinkingTimeMs: number): void {
   fields.tokenRateMsg = tokenRateMessage(outputTokens, thinkingTimeMs)
 }
@@ -578,7 +592,7 @@ function formatReplyFooterUsage(report: UsageReport | undefined, i18n: I18n): st
   const window = selectUsageWindows(report)
   if (window === undefined) return ''
   const remaining = Math.min(100, Math.max(0, 100 - window.usedPercent))
-  return i18n.tf(MsgReplyFooterRemaining, remaining)
+  return i18n.tf(Msg.ReplyFooterRemaining, remaining)
 }
 
 /** The primary (5h) then weekly windows of the first bucket that has any (Go selectUsageWindows). */
@@ -638,12 +652,12 @@ export function replyFooterContextText(usage: ContextUsage | undefined, i18n: I1
     } else return ''
   }
   const baseline = Math.max(0, usage.baselineTokens)
-  if (usage.contextWindow <= baseline) return i18n.tf(MsgReplyFooterRemaining, 0)
+  if (usage.contextWindow <= baseline) return i18n.tf(Msg.ReplyFooterRemaining, 0)
   const effectiveWindow = usage.contextWindow - baseline
   const effectiveUsed = Math.max(0, usedTokens - baseline)
   const remaining = Math.max(0, effectiveWindow - effectiveUsed)
   const left = Math.min(100, Math.max(0, Math.round((remaining / effectiveWindow) * 100)))
-  return i18n.tf(MsgReplyFooterRemaining, left)
+  return i18n.tf(Msg.ReplyFooterRemaining, left)
 }
 
 /** Footer workdir: override, then session, then agent (Go replyFooterWorkDir). */

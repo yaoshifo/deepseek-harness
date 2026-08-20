@@ -43,7 +43,7 @@ import {
 } from '../../src/engine/plan-render.js'
 import { diagramCSS, diagramDefs, renderTemplatePlan, renderTemplateReply } from '../../src/engine/plan-render-templates.js'
 import type { StreamPreview } from '../../src/streaming.js'
-import { MsgRenderStatusDelivered, MsgRenderStatusFailed, MsgRenderStatusRendering } from '../../src/i18n/keys.js'
+import { Msg } from '../../src/i18n/keys.js'
 import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.js'
 import type { Platform } from '../../src/core/types.js'
 import { createCardUpdatePlatform } from './plan-render-helpers.js'
@@ -254,12 +254,12 @@ describe('RenderCancels', () => {
 describe('RenderStatusText_AppendsElapsed', () => {
   it('delivered/rendering append rounded seconds; cancelled/failed ignore elapsed', () => {
     const e = newTestEngine()
-    expect(renderStatusText(e, 'delivered', 67_000)).toBe(`${e.i18n.t(MsgRenderStatusDelivered)} 67s`)
-    expect(renderStatusText(e, 'delivered', 0)).toBe(e.i18n.t(MsgRenderStatusDelivered))
-    expect(renderStatusText(e, 'delivered', 67_600)).toBe(`${e.i18n.t(MsgRenderStatusDelivered)} 68s`)
-    expect(renderStatusText(e, 'rendering', 99_000)).toBe(`${e.i18n.t(MsgRenderStatusRendering)} 99s`)
-    expect(renderStatusText(e, 'rendering', 0)).toBe(e.i18n.t(MsgRenderStatusRendering))
-    expect(renderStatusText(e, 'failed', 99_000)).toBe(e.i18n.t(MsgRenderStatusFailed))
+    expect(renderStatusText(e, 'delivered', 67_000)).toBe(`${e.i18n.t(Msg.RenderStatusDelivered)} 67s`)
+    expect(renderStatusText(e, 'delivered', 0)).toBe(e.i18n.t(Msg.RenderStatusDelivered))
+    expect(renderStatusText(e, 'delivered', 67_600)).toBe(`${e.i18n.t(Msg.RenderStatusDelivered)} 68s`)
+    expect(renderStatusText(e, 'rendering', 99_000)).toBe(`${e.i18n.t(Msg.RenderStatusRendering)} 99s`)
+    expect(renderStatusText(e, 'rendering', 0)).toBe(e.i18n.t(Msg.RenderStatusRendering))
+    expect(renderStatusText(e, 'failed', 99_000)).toBe(e.i18n.t(Msg.RenderStatusFailed))
   })
 })
 
@@ -286,7 +286,7 @@ describe('UpdatePlanCardStatus', () => {
     expect(p.updated[0]?.handle).toBe('h1')
     const card = p.updated[0]?.card as { elements: Array<{ kind: string; note?: string }> }
     const actions = card.elements.find(el => el.kind === 'actions')
-    expect(actions?.note).toBe(e.i18n.t(MsgRenderStatusDelivered))
+    expect(actions?.note).toBe(e.i18n.t(Msg.RenderStatusDelivered))
     // baseCard must be untouched (clone, not mutate).
     expect(baseCard.elements.some(el => el.kind === 'actions' && el.note !== undefined)).toBe(false)
 

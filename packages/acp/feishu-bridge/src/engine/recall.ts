@@ -10,7 +10,7 @@
  */
 
 import type { Engine } from './engine.js'
-import { MsgCancelQueuedByRecall, MsgRecallAlreadyProcessing } from '../i18n/index.js'
+import { Msg } from '../i18n/index.js'
 
 /** Outcome of a recall cancellation (Go recallResult). */
 export type RecallResult = 'cancelled' | 'inflight' | 'not_found'
@@ -28,7 +28,7 @@ export type RecallResult = 'cancelled' | 'inflight' | 'not_found'
 export function cancelQueuedByMessageID(e: Engine, messageID: string): RecallResult {
   for (const state of e.interactiveStates.values()) {
     if (state.inflightMessage !== undefined && state.inflightMessage.messageID === messageID) {
-      void e.reply(state.inflightMessage.platform, state.inflightMessage.replyCtx, e.i18n.t(MsgRecallAlreadyProcessing))
+      void e.reply(state.inflightMessage.platform, state.inflightMessage.replyCtx, e.i18n.t(Msg.RecallAlreadyProcessing))
       return 'inflight'
     }
     const idx = state.pendingMessages.findIndex(qm => qm.messageID === messageID)
@@ -36,7 +36,7 @@ export function cancelQueuedByMessageID(e: Engine, messageID: string): RecallRes
       const matched = state.pendingMessages[idx]
       state.pendingMessages.splice(idx, 1)
       if (matched !== undefined) {
-        void e.reply(matched.platform, matched.replyCtx, e.i18n.t(MsgCancelQueuedByRecall))
+        void e.reply(matched.platform, matched.replyCtx, e.i18n.t(Msg.CancelQueuedByRecall))
       }
       return 'cancelled'
     }

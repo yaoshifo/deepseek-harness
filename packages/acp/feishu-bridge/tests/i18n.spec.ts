@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  Msg,
   ALL_MSG_KEYS,
   type Language,
   type MsgKey,
@@ -10,8 +11,6 @@ import {
   langChinese,
   langEnglish,
   messages,
-  MsgNameSet,
-  MsgStarting,
 } from '../src/i18n/index.js'
 
 // Ported from cc-connect core/i18n/i18n_test.go (11 Go tests).
@@ -23,12 +22,12 @@ import {
 describe('I18n', () => {
   it('DefaultLanguage', () => {
     const i = new I18n(langEnglish)
-    expect(i.t(MsgStarting)).not.toBe('')
+    expect(i.t(Msg.Starting)).not.toBe('')
   })
 
   it('Chinese', () => {
     const i = new I18n(langChinese)
-    const got = i.t(MsgStarting)
+    const got = i.t(Msg.Starting)
     expect(got).not.toBe('')
     // Should contain Chinese characters, not English
     expect(got).not.toBe('⏳ Processing...')
@@ -37,7 +36,7 @@ describe('I18n', () => {
   it('FallbackToEnglish', () => {
     // Language is an open union (Go's `type Language string`), so no cast needed.
     const i = new I18n('nonexistent')
-    expect(i.t(MsgStarting)).not.toBe('')
+    expect(i.t(Msg.Starting)).not.toBe('')
   })
 
   it('MissingKey', () => {
@@ -49,7 +48,7 @@ describe('I18n', () => {
 
   it('Tf', () => {
     const i = new I18n(langEnglish)
-    expect(i.tf(MsgNameSet, 'myname', 'abc123')).not.toBe('')
+    expect(i.tf(Msg.NameSet, 'myname', 'abc123')).not.toBe('')
   })
 
   it('AllKeysHaveEnglish', () => {

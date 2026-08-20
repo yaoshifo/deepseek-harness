@@ -39,14 +39,7 @@ import {
 } from '../core/types.js'
 import { markdownToSimpleHTML } from '../markdown/markdown-html.js'
 import { iconsSpriteFull } from '../lucide/sprite.js'
-import {
-  MsgRenderStatusCancelled,
-  MsgRenderStatusDelivered,
-  MsgRenderStatusFailed,
-  MsgRenderStatusRendering,
-  MsgRenderTagPlan,
-  MsgRenderTagReply,
-} from '../i18n/keys.js'
+import { Msg } from '../i18n/keys.js'
 import { stripTrailingSilent } from './message-split.js'
 import { diagramCSS, diagramDefs, renderSkillPrompt, renderTemplatePlan, renderTemplateReply } from './plan-render-templates.js'
 import type { Engine, InteractiveState } from './engine.js'
@@ -545,19 +538,19 @@ export function shouldDiscardPreviewBeforeReplyRender(
 export function renderStatusText(e: Engine, status: RenderStatus, elapsedMs: number): string {
   switch (status) {
     case 'rendering': {
-      let text = e.i18n.t(MsgRenderStatusRendering)
+      let text = e.i18n.t(Msg.RenderStatusRendering)
       if (elapsedMs > 0) text += ` ${String(Math.round(elapsedMs / 1000))}s`
       return text
     }
     case 'delivered': {
-      let text = e.i18n.t(MsgRenderStatusDelivered)
+      let text = e.i18n.t(Msg.RenderStatusDelivered)
       if (elapsedMs > 0) text += ` ${String(Math.round(elapsedMs / 1000))}s`
       return text
     }
     case 'cancelled':
-      return e.i18n.t(MsgRenderStatusCancelled)
+      return e.i18n.t(Msg.RenderStatusCancelled)
     case 'failed':
-      return e.i18n.t(MsgRenderStatusFailed)
+      return e.i18n.t(Msg.RenderStatusFailed)
   }
 }
 
@@ -627,9 +620,9 @@ export function patchReplyRenderStatus(
 export function renderSubtypeTag(e: Engine, subtype: string): string {
   switch (subtype) {
     case 'plan':
-      return `${e.i18n.t(MsgRenderTagPlan)}·`
+      return `${e.i18n.t(Msg.RenderTagPlan)}·`
     case 'reply':
-      return `${e.i18n.t(MsgRenderTagReply)}·`
+      return `${e.i18n.t(Msg.RenderTagReply)}·`
     default:
       return ''
   }

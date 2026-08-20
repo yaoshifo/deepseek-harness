@@ -14,30 +14,7 @@ import type { Message, Platform } from '../core/types.js'
 import { asCardSender, asReplyContextReconstructor } from '../core/types.js'
 import { newCard } from '../card.js'
 import type { Card } from '../card.js'
-import {
-  MsgChatroomNoRolesConfigured,
-  MsgChatroomPickCancel,
-  MsgChatroomPickConfirm,
-  MsgChatroomPickEmpty,
-  MsgChatroomPickPicking,
-  MsgChatroomPickRecommended,
-  MsgChatroomPickSelect,
-  MsgChatroomPickSelected,
-  MsgChatroomPickSelectedCount,
-  MsgChatroomPickTitle,
-  MsgChatroomPickTooMany,
-  MsgChatroomTopicLabel,
-  MsgChatroomTopicPickCancel,
-  MsgChatroomTopicPickConfirm,
-  MsgChatroomTopicPickEmpty,
-  MsgChatroomTopicPickNotSelected,
-  MsgChatroomTopicPickPick,
-  MsgChatroomTopicPickPicked,
-  MsgChatroomTopicPickPickedHint,
-  MsgChatroomTopicPickPicking,
-  MsgChatroomTopicPickTitle,
-  MsgChatroomTopicPickWatchdogHint,
-} from '../i18n/keys.js'
+import { Msg } from '../i18n/keys.js'
 import { listRoleNames } from './chatroom-roles.js'
 import { buildChatroomPickPriming, buildChatroomTopicPickPriming } from './chatroom-priming.js'
 import { clearChatroomResearchFlags, startChatroom } from './chatroom.js'
@@ -174,7 +151,7 @@ export function beginChatroomPick(e: Engine, p: Platform, msg: Message, topic: s
   const rolesDir = e.chatroomRolesDir()
   const all = listRoleNames(rolesDir)
   if (all.length === 0) {
-    throw new Error(e.i18n.t(MsgChatroomNoRolesConfigured))
+    throw new Error(e.i18n.t(Msg.ChatroomNoRolesConfigured))
   }
   // Bind the moderator workdir so the moderator agent runs in the chatroom home.
   const home = e.chatroomModeratorDir()
@@ -197,7 +174,7 @@ export function beginChatroomPick(e: Engine, p: Platform, msg: Message, topic: s
 
   const cs = asCardSender(p)
   if (cs !== undefined) {
-    void cs.sendCard(msg.replyCtx, simpleCard(e.i18n.t(MsgChatroomPickTitle), 'purple', e.i18n.t(MsgChatroomPickPicking))).catch(() => {})
+    void cs.sendCard(msg.replyCtx, simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'purple', e.i18n.t(Msg.ChatroomPickPicking))).catch(() => {})
   }
 
   armChatroomPickWatchdog(e, p, msg.sessionKey)
@@ -239,23 +216,23 @@ function armChatroomPickWatchdog(e: Engine, p: Platform, hubKey: string): void {
 
 /** Render the role picker card from the state (Go renderChatroomPickCard). */
 export function renderChatroomPickCard(e: Engine, ps: ChatroomPickState): Card {
-  const cb = newCard().title(e.i18n.t(MsgChatroomPickTitle), 'purple')
-  cb.markdown(`### ${e.i18n.t(MsgChatroomTopicLabel)}\n${ps.topic}`)
+  const cb = newCard().title(e.i18n.t(Msg.ChatroomPickTitle), 'purple')
+  cb.markdown(`### ${e.i18n.t(Msg.ChatroomTopicLabel)}\n${ps.topic}`)
   for (const r of ps.recs) {
     const sel = ps.selected.get(r.name) === true
     const marker = sel ? '☑' : '◻'
     let desc = `${marker} **${r.name}**`
-    if (r.recommended) desc += `  「${e.i18n.t(MsgChatroomPickRecommended)}」`
+    if (r.recommended) desc += `  「${e.i18n.t(Msg.ChatroomPickRecommended)}」`
     if (r.blurb !== '') desc += `\n${r.blurb}`
-    const btnText = sel ? e.i18n.t(MsgChatroomPickSelected) : e.i18n.t(MsgChatroomPickSelect)
+    const btnText = sel ? e.i18n.t(Msg.ChatroomPickSelected) : e.i18n.t(Msg.ChatroomPickSelect)
     const btnType = sel ? 'primary' : 'default'
     cb.listItemBtn(desc, btnText, btnType, `act:/chatroom-pick toggle ${r.name}`)
   }
-  cb.taggedNote('chatroom-pick-count', e.i18n.tf(MsgChatroomPickSelectedCount, ps.selected.size))
+  cb.taggedNote('chatroom-pick-count', e.i18n.tf(Msg.ChatroomPickSelectedCount, ps.selected.size))
   if (ps.hint !== '') cb.note(ps.hint)
   cb.buttons(
-    { text: e.i18n.t(MsgChatroomPickConfirm), type: 'primary', value: 'act:/chatroom-pick confirm' },
-    { text: e.i18n.t(MsgChatroomPickCancel), type: 'default', value: 'act:/chatroom-pick cancel' },
+    { text: e.i18n.t(Msg.ChatroomPickConfirm), type: 'primary', value: 'act:/chatroom-pick confirm' },
+    { text: e.i18n.t(Msg.ChatroomPickCancel), type: 'default', value: 'act:/chatroom-pick cancel' },
   )
   return cb.build()
 }
@@ -337,12 +314,12 @@ export function executeChatroomPickAction(e: Engine, sessionKey: string, args: s
     }
     case 'confirm': {
       if (ps.selected.size === 0) {
-        ps.hint = e.i18n.t(MsgChatroomPickEmpty)
+        ps.hint = e.i18n.t(Msg.ChatroomPickEmpty)
         return
       }
       const max = e.maxChatroomRoles()
       if (ps.selected.size > max) {
-        ps.hint = e.i18n.tf(MsgChatroomPickTooMany, ps.selected.size, max)
+        ps.hint = e.i18n.tf(Msg.ChatroomPickTooMany, ps.selected.size, max)
         return
       }
       const names = [...ps.selected.keys()].sort()
@@ -370,7 +347,7 @@ export function beginChatroomTopicPick(e: Engine, p: Platform, msg: Message): vo
   const rolesDir = e.chatroomRolesDir()
   const all = listRoleNames(rolesDir)
   if (all.length === 0) {
-    throw new Error(e.i18n.t(MsgChatroomNoRolesConfigured))
+    throw new Error(e.i18n.t(Msg.ChatroomNoRolesConfigured))
   }
   const home = e.chatroomModeratorDir()
   if (home.ok) {
@@ -391,7 +368,7 @@ export function beginChatroomTopicPick(e: Engine, p: Platform, msg: Message): vo
 
   const cs = asCardSender(p)
   if (cs !== undefined) {
-    void cs.sendCard(msg.replyCtx, simpleCard(e.i18n.t(MsgChatroomTopicPickTitle), 'purple', e.i18n.t(MsgChatroomTopicPickPicking))).catch(() => {})
+    void cs.sendCard(msg.replyCtx, simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'purple', e.i18n.t(Msg.ChatroomTopicPickPicking))).catch(() => {})
   }
 
   armChatroomTopicPickWatchdog(e, p, msg.sessionKey)
@@ -417,7 +394,7 @@ function armChatroomTopicPickWatchdog(e: Engine, p: Platform, hubKey: string): v
     const ps = pickers(e).chatroomTopicPick.get(hubKey)
     if (ps === undefined || ps.phase !== 'picking') return
     ps.phase = 'select'
-    ps.hint = e.i18n.t(MsgChatroomTopicPickWatchdogHint)
+    ps.hint = e.i18n.t(Msg.ChatroomTopicPickWatchdogHint)
     const card = renderChatroomTopicPickCard(e, ps)
     const cs = asCardSender(p)
     if (cs !== undefined) {
@@ -431,26 +408,26 @@ function armChatroomTopicPickWatchdog(e: Engine, p: Platform, hubKey: string): v
 
 /** Render the single-select topic picker card (Go renderChatroomTopicPickCard). */
 export function renderChatroomTopicPickCard(e: Engine, ps: ChatroomTopicPickState): Card {
-  const cb = newCard().title(e.i18n.t(MsgChatroomTopicPickTitle), 'purple')
+  const cb = newCard().title(e.i18n.t(Msg.ChatroomTopicPickTitle), 'purple')
   for (const t of ps.recs) {
     const sel = ps.selected === t.title
     const marker = sel ? '◉' : '○'
     let desc = `${marker} **${t.title}**`
-    if (t.recommended) desc += `  「${e.i18n.t(MsgChatroomPickRecommended)}」`
+    if (t.recommended) desc += `  「${e.i18n.t(Msg.ChatroomPickRecommended)}」`
     if (t.blurb !== '') desc += `\n${t.blurb}`
-    const btnText = sel ? e.i18n.t(MsgChatroomTopicPickPicked) : e.i18n.t(MsgChatroomTopicPickPick)
+    const btnText = sel ? e.i18n.t(Msg.ChatroomTopicPickPicked) : e.i18n.t(Msg.ChatroomTopicPickPick)
     const btnType = sel ? 'primary' : 'default'
     cb.listItemBtn(desc, btnText, btnType, `act:/chatroom-topic-pick toggle ${t.title}`)
   }
   if (ps.selected === '') {
-    cb.taggedNote('chatroom-topic-pick-status', e.i18n.t(MsgChatroomTopicPickNotSelected))
+    cb.taggedNote('chatroom-topic-pick-status', e.i18n.t(Msg.ChatroomTopicPickNotSelected))
   } else {
-    cb.taggedNote('chatroom-topic-pick-status', e.i18n.tf(MsgChatroomTopicPickPickedHint, ps.selected))
+    cb.taggedNote('chatroom-topic-pick-status', e.i18n.tf(Msg.ChatroomTopicPickPickedHint, ps.selected))
   }
   if (ps.hint !== '') cb.note(ps.hint)
   cb.buttons(
-    { text: e.i18n.t(MsgChatroomTopicPickConfirm), type: 'primary', value: 'act:/chatroom-topic-pick confirm' },
-    { text: e.i18n.t(MsgChatroomTopicPickCancel), type: 'default', value: 'act:/chatroom-topic-pick cancel' },
+    { text: e.i18n.t(Msg.ChatroomTopicPickConfirm), type: 'primary', value: 'act:/chatroom-topic-pick confirm' },
+    { text: e.i18n.t(Msg.ChatroomTopicPickCancel), type: 'default', value: 'act:/chatroom-topic-pick cancel' },
   )
   return cb.build()
 }
@@ -515,7 +492,7 @@ export function executeChatroomTopicPickAction(e: Engine, sessionKey: string, ar
     }
     case 'confirm': {
       if (ps.selected === '') {
-        ps.hint = e.i18n.t(MsgChatroomTopicPickEmpty)
+        ps.hint = e.i18n.t(Msg.ChatroomTopicPickEmpty)
         return
       }
       const { selected: topic, userID, chatType } = ps
@@ -544,14 +521,14 @@ export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: st
   if (cmd === '/chatroom-pick') {
     executeChatroomPickAction(e, sessionKey, args)
     if (args.startsWith('cancel')) {
-      return simpleCard(e.i18n.t(MsgChatroomPickTitle), 'grey', e.i18n.t('chatroom_pick_cancelled'))
+      return simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'grey', e.i18n.t('chatroom_pick_cancelled'))
     }
     if (args.startsWith('confirm')) {
       // executeChatroomPickAction may have refused to confirm (empty or
       // over-max) and left the picker alive; re-render it with its hint.
       const ps = pickers(e).chatroomPick.get(sessionKey)
       if (ps !== undefined && ps.phase === 'select') return renderChatroomPickCard(e, ps)
-      return simpleCard(e.i18n.t(MsgChatroomPickTitle), 'purple', e.i18n.t('chatroom_pick_starting'))
+      return simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'purple', e.i18n.t('chatroom_pick_starting'))
     }
     // toggle: re-render the picker from current state.
     const ps = pickers(e).chatroomPick.get(sessionKey)
@@ -561,12 +538,12 @@ export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: st
   if (cmd === '/chatroom-topic-pick') {
     executeChatroomTopicPickAction(e, sessionKey, args)
     if (args.startsWith('cancel')) {
-      return simpleCard(e.i18n.t(MsgChatroomTopicPickTitle), 'grey', e.i18n.t('chatroom_topic_pick_cancelled'))
+      return simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'grey', e.i18n.t('chatroom_topic_pick_cancelled'))
     }
     if (args.startsWith('confirm')) {
       // The state machine already cleared state + armed the async finalize;
       // show a transitional card in place of the picker.
-      return simpleCard(e.i18n.t(MsgChatroomTopicPickTitle), 'purple', e.i18n.t('chatroom_topic_pick_starting'))
+      return simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'purple', e.i18n.t('chatroom_topic_pick_starting'))
     }
     const ps = pickers(e).chatroomTopicPick.get(sessionKey)
     if (ps === undefined || ps.phase !== 'select') return undefined
@@ -634,6 +611,6 @@ async function finalizeChatroomTopicPick(
   try {
     beginChatroomPick(e, p, msg, topic)
   } catch (error) {
-    void e.sendAsCard(p, rctx, String(error instanceof Error ? error.message : error), { title: e.i18n.t(MsgChatroomTopicPickTitle), color: 'red' })
+    void e.sendAsCard(p, rctx, String(error instanceof Error ? error.message : error), { title: e.i18n.t(Msg.ChatroomTopicPickTitle), color: 'red' })
   }
 }

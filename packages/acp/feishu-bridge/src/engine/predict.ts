@@ -10,7 +10,7 @@
 
 import { asCardSender, asForkQuerierWithProvider, type HistoryEntry, type Message, type Platform } from '../core/types.js'
 import { dangerBtn, newCard, primaryBtn } from '../card.js'
-import { MsgBtwEmpty, MsgBtwNoSession, MsgBtwSendFailed, MsgBtwTimeout } from '../i18n/index.js'
+import { Msg } from '../i18n/index.js'
 import type { Engine, InteractiveState } from './engine.js'
 import type { Session } from './session.js'
 import { buildCompactContext } from './groupname.js'
@@ -316,7 +316,7 @@ export function cmdBtw(e: Engine, p: Platform, msg: Message, args: string[]): bo
     text = text === '' ? msg.extraContent : `${msg.extraContent}\n${text}`
   }
   if (text === '') {
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgBtwEmpty))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.BtwEmpty))
     return true
   }
 
@@ -333,13 +333,13 @@ export function cmdBtw(e: Engine, p: Platform, msg: Message, args: string[]): bo
     }
   }
   if (sessionID === '') {
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgBtwNoSession))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.BtwNoSession))
     return true
   }
 
   const fq = asForkQuerierWithProvider(e.agent)
   if (fq === undefined) {
-    void e.reply(p, msg.replyCtx, e.i18n.t(MsgBtwNoSession))
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.BtwNoSession))
     return true
   }
   // The session's workdir: worktree path, per-chat override, or ''.
@@ -353,13 +353,13 @@ export function cmdBtw(e: Engine, p: Platform, msg: Message, args: string[]): bo
         new Promise<'timeout'>((resolve) => { setTimeout(() => { resolve('timeout') }, btwTimeoutMs) }),
       ])
       if (resp === 'timeout') {
-        await e.reply(p, msg.replyCtx, e.i18n.t(MsgBtwTimeout))
+        await e.reply(p, msg.replyCtx, e.i18n.t(Msg.BtwTimeout))
       } else if (resp !== '') {
         await e.reply(p, msg.replyCtx, resp)
       }
     } catch (error) {
       console.error(`btw: fork query failed: ${String(error)}`)
-      await e.reply(p, msg.replyCtx, e.i18n.t(MsgBtwSendFailed))
+      await e.reply(p, msg.replyCtx, e.i18n.t(Msg.BtwSendFailed))
     }
   })()
   return true
