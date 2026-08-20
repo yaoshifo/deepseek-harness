@@ -1,18 +1,20 @@
-# deploy 模板
+# deploy templates
 
-feishu-bridge daemon 的进程监督模板，占位符统一用 `@NAME@` 记法，安装时替换：
+English | [中文](README.zh.md)
 
-| 占位符 | 含义 |
+Process-supervision templates for the feishu-bridge daemon. Placeholders use the uniform `@NAME@` notation and are substituted at install time:
+
+| Placeholder | Meaning |
 |---|---|
-| `@DSH_BIN@` | dsh 可执行文件绝对路径 |
-| `@LLM_API_KEY@` | profile 的 llm 路由 `apiKeyEnv`（`FB_MIFY_API_KEY`）所引用的 API key 实际值 |
-| `@DEFAULT_WORKDIR@` | 任意一个 project 的 workdir（不影响各 project 路由） |
-| `@LOG_DIR@` | daemon 日志目录（仅 launchd 模板用；systemd 走 journal） |
-| `@PATH_VALUE@` | 需含 node/pnpm/git 的 PATH（仅 launchd 模板用） |
+| `@DSH_BIN@` | absolute path of the dsh executable |
+| `@LLM_API_KEY@` | the actual API key referenced by the profile's llm route `apiKeyEnv` (`FB_MIFY_API_KEY`) |
+| `@DEFAULT_WORKDIR@` | any one project's workdir (does not affect per-project routing) |
+| `@LOG_DIR@` | daemon log directory (launchd template only; systemd uses the journal) |
+| `@PATH_VALUE@` | a PATH containing node/pnpm/git (launchd template only) |
 
-| 文件 | 平台 | 安装位置 |
+| File | Platform | Install location |
 |---|---|---|
-| `com.dsh.feishu-bridge.plist.template` | macOS launchd | `~/Library/LaunchAgents/com.dsh.feishu-bridge.plist`，`launchctl load` |
-| `feishu-bridge.service.template` | Linux systemd（user unit） | `~/.config/systemd/user/feishu-bridge.service`，`systemctl --user enable --now` |
+| `com.dsh.feishu-bridge.plist.template` | macOS launchd | `~/Library/LaunchAgents/com.dsh.feishu-bridge.plist`, `launchctl load` |
+| `feishu-bridge.service.template` | Linux systemd (user unit) | `~/.config/systemd/user/feishu-bridge.service`, `systemctl --user enable --now` |
 
-两模板都含 API key，装好后权限收紧到 0600。装载步骤、reload 流程与回退时序见 [docs/OPERATIONS.md](../docs/OPERATIONS.md)。
+Both templates embed the API key; tighten permissions to 0600 after installation. Loading steps, the reload flow, and the rollback sequence live in [docs/OPERATIONS.md](../docs/OPERATIONS.md).

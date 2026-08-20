@@ -1,90 +1,110 @@
 # dsh-cc-connect-bridge
 
-cc-connect 的 DeepSeek Harness（dsh）桥插件：一个 Cordis 插件 + 专用 profile，把 dsh 的能力缝（agents registry / approval / user-questions / plan-mode / system-prompt）翻译成 stdio JSON-RPC 协议，供 cc-connect 的 `agent/dsh` Go 后端消费。
+English | [中文](README.zh.md)
 
-2026-08-16 从独立仓库 `~/workspace/dsh-cc-connect-bridge` 迁入 harness（`file:` 拷贝部署 → `link:` 软链直读）。
+The DeepSeek Harness (dsh) bridge plugin for cc-connect: one Cordis plugin plus a dedicated profile that translates dsh capability seams (agents registry / approval / user-questions / plan-mode / system-prompt) into the stdio JSON-RPC protocol consumed by cc-connect's `agent/dsh` Go backend.
 
-在 dsh 官方 SDK 协议（initialize / session/prompt / shutdown + session.event 等通知）之上扩展：
+Migrated into the harness from the standalone repository `~/workspace/dsh-cc-connect-bridge` on 2026-08-16 (`file:` copy deployment → `link:` symlinked direct read).
 
-| 方向 | 方法 | 说明 |
+Extensions on top of the official dsh SDK protocol (initialize / session/prompt / shutdown + session.event notifications):
+
+| Direction | Method | Notes |
 |---|---|---|
 | client→server | `initialize` | `{cwd, provider, model, maxTokens?}` |
-| client→server | `session/create` | `{sessionId, resumeSessionId?, cwd?, planMode?, approvalPolicy?}`（官方 SDK 无 resume） |
+| client→server | `session/create` | `{sessionId, resumeSessionId?, cwd?, planMode?, approvalPolicy?}` (the official SDK has no resume) |
 | client→server | `session/prompt` | `{sessionId, contentBlocks}` → `{messageId}` |
-| client→server | `session/cancel` | `{sessionId, keepInbox?}` → `agent.cancel`（官方 SDK 无 cancel） |
-| client→server | `session/configure` | `{sessionId, planMode?, approvalPolicy?}` 运行中切换 |
-| client→server | `session/command` | `{sessionId, line}` 经 dsh 命令注册表分发（如 `/compact`）；`{dispatched, text?}`，未注册命令 `dispatched:false` 供回落普通 prompt |
-| client→server | `shutdown` | dispose 全部会话并退程 |
-| server→client | `approval/ask`（请求） | dsh `approval/request` waterfall → 飞书审批卡；响应 `{outcome}` |
-| server→client | `question/ask`（请求） | dsh user-questions 单一 provider → 承载 `ask_user_question` 与 **exit_plan_mode 的 plan review**（intent.kind==='plan-review'） |
-| server→client | `session.event` / `session.status`（通知） | 原样转发 |
+| client→server | `session/cancel` | `{sessionId, keepInbox?}` → `agent.cancel` (the official SDK has no cancel) |
+| client→server | `session/configure` | `{sessionId, planMode?, approvalPolicy?}` switched mid-run |
+| client→server | `session/command` | `{sessionId, line}` dispatched through the dsh command registry (e.g. `/compact`); `{dispatched, text?}`, unregistered commands return `dispatched:false` for fallback to a plain prompt |
+| client→server | `shutdown` | disposes every session and exits |
+| server→client | `approval/ask` (request) | dsh `approval/request` waterfall → Feishu approval card; response `{outcome}` |
+| server→client | `question/ask` (request) | single dsh user-questions provider → carries `ask_user_question` and **the exit_plan_mode plan review** (intent.kind==='plan-review') |
+| server→client | `session.event` / `session.status` (notifications) | forwarded verbatim |
 
-system prompt 注入：`DSH_CC_APPEND_SYSTEM_PROMPT`（追加段，`--append-system-prompt` 等价）/ `DSH_CC_SYSTEM_PROMPT_COMPLETE`（整体替换，chatroom bare 等价）。
+System prompt injection: `DSH_CC_APPEND_SYSTEM_PROMPT` (appended section, `--append-system-prompt` equivalent) / `DSH_CC_SYSTEM_PROMPT_COMPLETE` (full replacement, chatroom-bare equivalent).
 
-## 安装
+## Install
 
 ```bash
-./install.sh    # 写 ~/.dsh/profiles/cc-connect（模板仅缺失时；patch.yml 永不覆盖）+ pnpm install + 软链 ~/.dsh/AGENTS.md
+./install.sh    # writes ~/.dsh/profiles/cc-connect (templates only when missing; patch.yml is never overwritten) + pnpm install + symlinks ~/.dsh/AGENTS.md
 ```
 
-要求：node ≥22.19、pnpm ≥11、harness workspace 已 `pnpm install && pnpm run build:lib`（bridge 随 workspace 一起构建）。
+Requirements: node ≥22.19, pnpm ≥11, the harness workspace already run through `pnpm install && pnpm run build:lib` (the bridge builds with the workspace).
 
-## 自进化（hot reload）姿势
+## Self-modification (hot reload) workflow
 
-dsh 与 cc-connect 是两个进程层——agent 在 dsh 层自我修改，**cc-connect 全程无需重启**：
+dsh and cc-connect are two process layers — the agent modifies itself at the dsh layer, and **cc-connect never needs a restart**:
 
-| 改什么 | 生效时机 | 机制 |
+| What changes | When it takes effect | Mechanism |
 |---|---|---|
-| profile `cordis.patch.yml`（插件配置） | 当前会话：重载即时，agent 被事务重载 dispose 后由桥**自动 resume 恢复**（下次 prompt 时透明重建，重放 planMode/approval 覆盖） | Cordis HMR 事务重载（`watchUserPatches`）+ 桥 `ensureLive` |
-| CLAUDE.md / AGENTS.md | 立即 | agent-instructions 文件监听 |
-| `~/.claude/skills/**`（含新增） | 立即 | skill-filesystem chokidar watch |
-| 新装插件（profile `package.json` + `pnpm install`） | 下一会话（新进程） | per-session spawn + resume |
-| `~/.dsh/AGENTS.md`（全局指令） | 立即 | 同 CLAUDE.md 监听 |
-| 本包源码（`src/`） | 下一会话（新进程）：`link:` 软链直读，`pnpm run build:lib` 后即生效，无需 reinstall | per-session spawn |
+| profile `cordis.patch.yml` (plugin config) | current session: reload is immediate; after the transactional reload disposes the agent, the bridge **resumes it automatically** (transparently rebuilt on the next prompt, replaying planMode/approval overrides) | Cordis HMR transactional reload (`watchUserPatches`) + bridge `ensureLive` |
+| CLAUDE.md / AGENTS.md | immediately | agent-instructions file watching |
+| `~/.claude/skills/**` (additions included) | immediately | skill-filesystem chokidar watch |
+| newly installed plugins (profile `package.json` + `pnpm install`) | next session (new process) | per-session spawn + resume |
+| `~/.dsh/AGENTS.md` (global instructions) | immediately | same watch as CLAUDE.md |
+| this package's source (`src/`) | next session (new process): read directly through the `link:` symlink, effective after `pnpm run build:lib` with no reinstall | per-session spawn |
 
-**改 lib 源码的一键生效**：`./reload.sh`（本包）——构建 host 面 + SIGTERM 回收空闲 dsh 进程。各会话下一条消息由 engine 以同 session id respawn 并 resume（上下文保留），cc-connect 零重启。从 dsh 会话内（如 agent 自改 harness 后）跑会**自动跳过调用者自己的进程**（/proc 祖先探测），不会自杀当前 turn；其它 mid-turn 会话的当前 turn 会被打断（transcript 回退到最近完整 turn，重发即恢复）；有长任务在跑时用 `--no-recycle` 只构建。
+**One-command propagation for lib source changes**: `./reload.sh` (this package) — builds the host face and SIGTERM-recycles idle dsh processes. Each session's next message is respawned by the engine with the same session id and resumed (context preserved), with zero cc-connect restarts. Run from inside a dsh session (e.g. after the agent modifies the harness itself), it **automatically skips the caller's own process** (/proc ancestry probe) so the current turn never kills itself; other mid-turn sessions have their current turn interrupted (transcript rolls back to the last complete turn; resending resumes); pass `--no-recycle` to build only while long tasks are running.
 
-已知天花板：HMR 发生在 turn 进行中时，恢复不在 prompt 路径上——由 cc-connect 侧 stall watchdog 兜底；transcript 恢复到最近完整 turn 边界。
+## Pitfalls
 
-默认 sandbox 为 workspace-write：写 `~/.dsh/**`、`~/.claude/skills/**` 等 workspace 外路径会被拦并触发升级审批（cc-connect 飞书审批卡放行单次写入，审计事件落 session log）。想零摩擦可在 profile patch 里把 `sandbox-policy.mode` 改为 `danger-full-access`。
+- **Literal `{{...}}` inside a system-prompt section is parsed by dsh as a variable reference**: names failing `/^[a-z][a-z0-9_]*$/` or unregistered → assembly throws and aborts the whole turn. cc-connect's render prompt carries an `{{ICONS}}` marker (#51), so dsh-side render instructions travel as a user message (not interpolated) rather than a system section.
+- **Request ids are strings** `req_<uuid>` (generated by `JsonRpcLineTransport`); client responses must echo them verbatim.
+- The bridge profile's pnpm-workspace.yaml needs an `allowBuilds` allowlist + `minimumReleaseAge: 0` (pnpm 11 blocks recently published packages by default).
 
-## 踩坑
+## Conflict list
 
-- **system prompt section 里的字面 `{{...}}` 会被 dsh 当变量引用解析**：名字不合 `/^[a-z][a-z0-9_]*$/` 或未注册 → 组装时抛错中止整轮。cc-connect 的渲染 prompt 带 `{{ICONS}}` 标记（#51），因此 dsh 侧渲染指令走用户消息（不插值）而非 system section。
-- **请求 id 是字符串** `req_<uuid>`（`JsonRpcLineTransport` 生成），客户端应答必须原样回显。
-- 桥 profile 的 pnpm-workspace.yaml 需 `allowBuilds` 白名单 + `minimumReleaseAge: 0`（pnpm 11 默认拦新发布的包）。
+- `userQuestions` is a **single provider** — this bridge occupies the only provider slot. Do not add other UI-facing plugins to the profile (web frontend, interactive TUI); startup fails with `DUPLICATE_PROVIDER`.
+- approval is a waterfall with multiple answerers and is compatible with the ecosystem's approval plugins.
 
-## 冲突清单
-
-- `userQuestions` 是**单 provider**——本桥占用唯一 provider 位。不要往 profile 里加其它 UI 类插件（web 前端、交互式 TUI），会 `DUPLICATE_PROVIDER` 启动失败。
-- approval 是 waterfall 多 answerer，与生态审批插件兼容。
-
-## 开发
+## Development
 
 ```bash
-pnpm exec vitest run packages/acp/cc-connect-bridge   # fake registry 单测（含 HMR dispose 恢复用例）
-node /tmp/bridge-hmr-smoke.mjs                        # 真实进程 HMR 恢复 smoke（隔离 session root）
+pnpm exec vitest run packages/acp/cc-connect-bridge   # fake-registry unit tests (HMR dispose-recovery cases included)
+node /tmp/bridge-hmr-smoke.mjs                        # real-process HMR recovery smoke (isolated session root)
 ```
 
-依赖版本随 harness workspace（`workspace:^` 解析到本仓 pinned 源，含 fork 补丁的 agent/llm-pi-ai 等）。
+Dependency versions ride the harness workspace (`workspace:^` resolves to this repository's pinned sources, fork-patched agent/llm-pi-ai included).
 
-### 在本仓库开发速查（fork 侧，2026-08-16 迁移时趟平）
+### In-repository development quick reference (fork side, leveled during the 2026-08-16 migration)
 
-**改包 → 生效链路**：`pnpm run build:lib`（tsc -b 产 `lib/types`，tsdown 打 `lib/*.js`，workspace glob 自动含本包）→ profile `link:` 直读 `lib/` → **下一个 spawn 的会话**即用新代码，无需任何 reinstall。
+**Changed package → propagation chain**: `pnpm run build:lib` (tsc -b emits `lib/types`, tsdown bundles `lib/*.js`, the workspace glob includes this package automatically) → the profile reads `lib/` directly via `link:` → **the next spawned session** runs the new code, with no reinstall of any kind.
 
-**新增 workspace 包的接入清单**（下次照走）：
-1. `package.json` 依赖用 `workspace:^`（peer + dev 模式见 `packages/acp/acp`）
-2. 包 `tsconfig.json`：extends `tsconfig.base.json`，references 列依赖包（vendor 三件 + 所用 core 包）
-3. **`tsconfig.host.json` references 登记**（漏了 typecheck 不看新包）
-4. **`src/invariant.ts` 必须有**——`scripts/test-invariants` 按包名拓扑断言全覆盖，缺了报 220 vs 221（模板照抄 dsh-acp 的空 companion）
-5. 测试文件放 `tests/`、命名 `*.spec.ts`（根 vitest glob 才会发现）；tsdown entry 只认 `{index,invariant,startup}.js`——package.json exports 别声明 tsdown 不产物的子路径
+**Checklist for adding a workspace package** (follow it again next time):
+1. `package.json` dependencies use `workspace:^` (see `packages/acp/acp` for the peer + dev pattern)
+2. the package's `tsconfig.json`: extends `tsconfig.base.json`, references lists the dependency packages (the three vendor ones + the core packages used)
+3. **register it in `tsconfig.host.json` references** (miss it and typecheck skips the new package)
+4. **`src/invariant.ts` is mandatory** — `scripts/test-invariants` asserts full coverage by package-name topology; a missing one reports 220 vs 221 (copy the empty companion from dsh-acp as a template)
+5. test files live in `tests/` named `*.spec.ts` (only then does the root vitest glob find them); the tsdown entry only recognizes `{index,invariant,startup}.js` — do not declare subpaths in package.json exports that tsdown produces no artifact for
 
-**严格编译/门禁坑**（迁移时全部撞过）：
-- `noUncheckedIndexedAccess`：`mock.calls[0]![0]` 补 `!`
-- `exactOptionalPropertyTypes`：可选字段赋 `undefined` 需类型显式 `| undefined`
-- `noUnusedParameters`：waterfall 未用的 `next` 参数写 `_next`
-- oxlint 禁 `Function` 类型（用具名函数签名）
-- lefthook lint(staged) 自动 fix 后工作区与 staged 分叉 → commit 撤回 "conflict while merging unstaged changes" → 把 hook 改过的文件 `git add` 后重提即可
-- third-party notices hook 按 `.pnpm/<pkg>@<ver>/` registry 布局找 manifest——`file:` override 安装的包留空壳会 ENOENT，把 `file+` 目录软链进 `@<ver>` 布局补齐
+**Strict-compilation / gate pitfalls** (all hit during the migration):
+- `noUncheckedIndexedAccess`: `mock.calls[0]![0]` needs the `!`
+- `exactOptionalPropertyTypes`: assigning `undefined` to an optional field requires the type to say `| undefined` explicitly
+- `noUnusedParameters`: an unused waterfall `next` parameter is written `_next`
+- oxlint bans the `Function` type (use named function signatures)
+- lefthook lint(staged) auto-fixing diverges the worktree from staged → the commit is rolled back with "conflict while merging unstaged changes" → `git add` the hook-modified files and commit again
+- the third-party-notices hook locates manifests by the `.pnpm/<pkg>@<ver>/` registry layout — packages installed via `file:` overrides leave empty shells that ENOENT; symlink the `file+` directory into the `@<ver>` layout to fill the gap
 
-**pnpm install 网络坑（本机）**：pnpm fetcher 从 npmmirror 拉 85MB+ 平台 tarball 稳定 `error (23)`（curl 同 URL 可过）；`fetch-timeout`/串行/换 registry 均无效。分级解法：独立平台包名 → `pnpm-workspace.yaml` overrides `file:` 指预下载 tarball（根 `.npmrc` 未提交，指 npmmirror）；同包名平台版本变体（如 `@openai/codex@0.147.0-linux-x64`）override 拦不住、lockfile 加 `tarball:` 被 shape 校验拒 → 只能本地 scoped registry（node 脚本 serve packument+tarball，`.npmrc` 加 `@scope:registry=http://127.0.0.1:<port>`，装完删行）。遗留：`pnpm-workspace.yaml` 的 TEMP claude-sdk override，网络恢复后删去重装。
+**pnpm install network pitfalls (this machine)**: the pnpm fetcher pulling 85MB+ platform tarballs from npmmirror fails reliably with `error (23)` (curl on the same URL works); `fetch-timeout`/serial fetches/switching registries all fail. Tiered workaround: distinct platform package name → `pnpm-workspace.yaml` overrides with `file:` pointing at a pre-downloaded tarball (the root `.npmrc` is uncommitted and points at npmmirror); same-name platform version variants (e.g. `@openai/codex@0.147.0-linux-x64`) cannot be intercepted by overrides, and adding `tarball:` to the lockfile is rejected by shape validation → the only route is a local scoped registry (a node script serving packument+tarball, `.npmrc` gaining `@scope:registry=http://127.0.0.1:<port>`, removing the line after install). Leftover: the TEMP claude-sdk override in `pnpm-workspace.yaml`; remove and reinstall once the network recovers.
+
+## Model Experience
+
+### Request context and condition
+
+#### What the model sees
+
+This plugin never constructs LLM requests itself — every model input goes through the dsh agent layer (fully replayable from the session log). The bridge's model-visible contribution is environment-variable-driven conditional system-prompt injection: the value of `DSH_CC_APPEND_SYSTEM_PROMPT` enters the system prompt as an appended section; `DSH_CC_SYSTEM_PROMPT_COMPLETE` replaces the system prompt wholesale. User-message contentBlocks pass through from cc-connect verbatim; a `session/command` line that hits the dsh command registry is dispatched as a command instead of entering the prompt.
+
+#### Token effect
+
+Conditional injection: with neither environment variable set there is zero direct token cost; the appended section is injected once per session, its length equal to the variable value.
+
+#### KV Cache effect
+
+The system-prompt section is fixed within a session (prefix-stable); mid-run `session/configure` switches only planMode/approvalPolicy and never touches the system prompt, so the prefix cache is preserved.
+
+## Known Limitations and Deferred Work
+
+- **userQuestions is a single-provider slot**: this bridge occupies the only provider slot; adding another UI-facing plugin to the profile (web frontend, interactive TUI) fails startup with `DUPLICATE_PROVIDER`.
+- **Mid-turn HMR recovery is not on the prompt path**: the cc-connect-side stall watchdog is the fallback; the transcript rolls back to the last complete turn boundary, and resending the interrupted turn resumes it.
+- **pnpm 11 compatibility constraint on the profile**: the bridge profile's pnpm-workspace.yaml needs an `allowBuilds` allowlist plus `minimumReleaseAge: 0`, otherwise installs are blocked.
