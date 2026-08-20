@@ -11,9 +11,9 @@
 | ✂️ | 不迁移（附理由，出处 MIGRATION.md §0） |
 | ❓ | 待核实（证据不足，宁标勿猜） |
 
-统计：✅ 51 · ✂️ 10 · 📋 0 · ❓ 0，合计 61（M5–M7 验收后全量复核更新；#62 为迁移期补充行不计入）。
+统计：✅ 51 · ✂️ 10 · 📋 0 · ❓ 0，合计 61（M5–M7 验收后全量复核更新；#62、#63 为迁移期补充行不计入——#63 为唯一 📋 待迁项）。
 
-补充行（不在源 61 项内，迁移期发现的能力缺口）：#62 send CLI 附件投递。
+补充行（不在源 61 项内，迁移期发现的能力缺口）：#62 send CLI 附件投递；#63 后台任务可视化（源 Go `b5d15a0b`，2026-08-18，晚于源表冻结）。
 
 | # | 特性 | 状态 | 里程碑 | 落点 / 理由 |
 |---|---|---|---|---|
@@ -79,3 +79,4 @@
 | 60 | dsh agent 后端（三层桥接入） | ✂️ | — | 被新架构本体取代：旧三层桥（Go agent/dsh + stdio JSON-RPC + bridge profile）正是本次迁移消除的层（§0）；能力由 agent-dsh/ 适配器直接承担 |
 | 61 | dsh bash sandbox 关闭（danger-full-access） | ✂️ | — | 配置层承担：feishu-bridge profile 的 sandbox-policy override（cordis.patch.yml），无引擎代码可迁 |
 | 62 | `cc-connect send` CLI：agent 把生成的文件/图片作为消息投递给用户（side-channel 附件回传） | ✅ | M8 前 | `src/tools/send.ts` `feishu_bridge_send` 工具（D4 caller-agent 路由）→ `Engine.sendToSessionWithAttachments`（引擎/平台侧 M1 起已在，只缺工具层消费方）；chatroom persona 恢复 Go `ChatroomRoleBaseSystemPrompt` 投递段；天花板：本地路径 only（Go 的 http 拉取不移植）、mime 按「单一 files 参数 + 检测分类」。i18n `relay_setup_ok`/`cron_setup_ok` 为残留（Go 记忆文件写入机制在 dsh 下过时，见 README Known Limitations） |
+| 63 | 后台任务可视化：前台进度卡「💡 有 N 个后台任务正在运行」提示 + 未请求回合 header「🔄 后台任务完成，正在处理...」 | 📋 | M8 前 | 渲染半边已随 M2 迁入（`streaming.ts` `setBackgroundHint`/`bgTaskHint`；i18n `bg_task_running`/`bg_task_processing` 为死键，保留待接线，勿删）；缺引擎接线：adapter `tool/call` 检测 `run_in_background` → 引擎 `backgroundTasksPending` 计数 → 设/清卡片提示。**依赖**：计数递减与 🔄 header 文案在 Go `runUnsolicitedReader` 内（engine_events.go:3043 / :2628），即 M4-E C 类「unsolicited 三超时」同源机制——接线须与 unsolicited reader 移植同批，单独接线提示只增不减 |

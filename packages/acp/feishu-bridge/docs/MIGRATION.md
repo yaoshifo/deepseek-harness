@@ -329,6 +329,7 @@ grep -v 'message_read\|card.action\|spinner' ~/.dsh/feishu-bridge-stderr.log | t
 5. **M2 遗留**：✅ 完成卡的完整状态页脚（model/workdir/RAM）与紫色通知卡依赖 M4/M7
 6. **spinner GIF 资源缺失**：✅（M4-C，2026-08-19）`resolveSpinnerAsset`（src/feishu/spinner.ts）按候选目录解析（src 源码平面 `../../assets`、tsdown 打包后 `../assets`、输出旁 `assets`），platform.ts 上传处改用它；待 daemon 重建后真机确认 stderr 不再报 ENOENT
 7. 最终 cutover 时补：launchd plist 模板入 git、61 feature 对照表、运维文档
+8. **后台任务可视化待迁（FEATURE-PARITY #63）**：源 Go `b5d15a0b`（2026-08-18），渲染半边 M2 已迁（`streaming.ts` setBackgroundHint + i18n 死键），引擎接线（`run_in_background` 检测 → `backgroundTasksPending` 计数 → 设/清提示）依赖未移植的 unsolicited reader 机制（M4-E C 类），须同批移植——单独接线提示只增不减
 
 ### M3 提交记录（feat/dsh-feishu-bridge，全部已 commit 未 push）
 
