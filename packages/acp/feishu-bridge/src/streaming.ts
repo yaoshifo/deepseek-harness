@@ -283,6 +283,7 @@ export function toolTagForProgress(name: string, maxLen: number): string {
       icon = '📚'
       break
     case 'TodoWrite':
+    case 'todo_write':
     case 'TaskCreate':
     case 'TaskUpdate':
     case 'TaskList':

@@ -11,7 +11,9 @@ import {
   ProgressCardPayloadPrefix,
   buildProgressCardPayload,
   buildProgressCardPayloadV2,
+  isTodoToolName,
   parseProgressCardPayload,
+  parseTodoItems,
   progressStyleCard,
   progressStyleCompact,
 } from '../src/progress.js'
@@ -123,6 +125,39 @@ describe('progress card payload', () => {
     expect(parseProgressCardPayload('plain text')).toBeUndefined()
     expect(parseProgressCardPayload(`${ProgressCardPayloadPrefix}{not-json`)).toBeUndefined()
     expect(parseProgressCardPayload(`${ProgressCardPayloadPrefix}{"entries":[]}`)).toBeUndefined()
+  })
+})
+
+describe('isTodoToolName', () => {
+  it('matches dsh todo_write and Claude-style TodoWrite', () => {
+    expect(isTodoToolName('todo_write')).toBe(true)
+    expect(isTodoToolName('TodoWrite')).toBe(true)
+    expect(isTodoToolName('  todowrite ')).toBe(true)
+  })
+
+  it('rejects other tool names', () => {
+    expect(isTodoToolName('bash')).toBe(false)
+    expect(isTodoToolName('todo_write_extra')).toBe(false)
+    expect(isTodoToolName('')).toBe(false)
+  })
+})
+
+describe('parseTodoItems', () => {
+  it('parses a todo_write input into TodoItem[]', () => {
+    const items = parseTodoItems('{"todos":[{"content":"step one","status":"in_progress"},{"content":"step two","status":"pending"}]}')
+    expect(items).toEqual([
+      { content: 'step one', status: 'in_progress' },
+      { content: 'step two', status: 'pending' },
+    ])
+  })
+
+  it('returns an empty list for an empty todos array', () => {
+    expect(parseTodoItems('{"todos":[]}')).toEqual([])
+  })
+
+  it('returns undefined for malformed JSON or a non-todo shape', () => {
+    expect(parseTodoItems('not json')).toBeUndefined()
+    expect(parseTodoItems('{"other":1}')).toBeUndefined()
   })
 })
 

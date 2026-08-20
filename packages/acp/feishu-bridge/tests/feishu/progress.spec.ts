@@ -9,6 +9,8 @@
 import { describe, expect, it } from 'vitest'
 import { jArr, jObj, jParse, jStr, type JsonObj } from '../stubs/json.js'
 import {
+  collapseStructuralBlankLines,
+  formatProgressToolInput,
   injectReplyButtons,
   injectStopButton,
   injectStoppedButtons,
@@ -86,6 +88,34 @@ describe('injectReplyButtons', () => {
   }
 })
 
+describe('formatProgressToolInput todo rendering', () => {
+  const todoJson = JSON.stringify({
+    todos: [
+      { content: 'step one', status: 'completed' },
+      { content: 'step two', status: 'in_progress' },
+    ],
+  })
+
+  it('renders a dsh todo_write input as a status-icon checklist', () => {
+    const out = formatProgressToolInput('todo_write', todoJson)
+    expect(out).toContain('✅ step one')
+    expect(out).toContain('🔄 step two')
+    expect(out).not.toContain('```')
+  })
+
+  it('renders a Claude-style TodoWrite input as a status-icon checklist', () => {
+    const out = formatProgressToolInput('TodoWrite', todoJson)
+    expect(out).toContain('✅ step one')
+    expect(out).toContain('🔄 step two')
+    expect(out).not.toContain('```')
+  })
+
+  it('falls back to a code block for non-todo tools', () => {
+    const out = formatProgressToolInput('bash', 'echo hi')
+    expect(out).toContain('```')
+  })
+})
+
 describe('injectReplyButtons status text', () => {
   function findButtonColumnSet(cardJSON: string): JsonObj | undefined {
     const card = jParse(cardJSON)
@@ -138,5 +168,43 @@ describe('injectReplyButtons status text', () => {
     expect(jArr(cs?.columns).length).toBe(3)
     const div = jObj(jArr(jObj(jArr(cs?.columns)[2]).elements)[0])
     expect(jStr(jObj(div.text).content)).toBe('✅ 已发送')
+  })
+})
+
+describe('collapseStructuralBlankLines', () => {
+  it('removes only blanks adjacent to fences, keeping the header line', () => {
+    const in1 = '```bash\necho hi\n```\n\n**10:00:01** 🔍 `Read` · 3 🔴\n\n```text\nRead -> x\n```\n'
+    const want = '```bash\necho hi\n```\n**10:00:01** 🔍 `Read` · 3 🔴\n```text\nRead -> x\n```\n'
+    expect(collapseStructuralBlankLines(in1)).toBe(want)
+  })
+
+  it('preserves a blank between two non-structural paragraphs', () => {
+    const in2 = 'para one\n\npara two'
+    expect(collapseStructuralBlankLines(in2)).toBe(in2)
+  })
+
+  it('preserves a blank between a bold header and a list', () => {
+    const in3 = '**改动明细：**\n\n- item one\n\n- item two'
+    expect(collapseStructuralBlankLines(in3)).toBe(in3)
+  })
+
+  it('removes a blank adjacent to an ATX heading', () => {
+    expect(collapseStructuralBlankLines('# 标题\n\npara')).toBe('# 标题\npara')
+    expect(collapseStructuralBlankLines('para\n\n## 子标题')).toBe('para\n## 子标题')
+  })
+
+  it('treats a hash-prefixed reference as a plain paragraph', () => {
+    const in4 = 'para one\n\n#59（随便聊聊）不是标题'
+    expect(collapseStructuralBlankLines(in4)).toBe(in4)
+  })
+
+  it('preserves blanks inside a code block', () => {
+    const in5 = '```text\na\n\nb\n```'
+    expect(collapseStructuralBlankLines(in5)).toBe(in5)
+  })
+
+  it('preserves a blank adjacent to a table row', () => {
+    const in6 = 'para\n\n| a | b |\n|---|---|\n| 1 | 2 |'
+    expect(collapseStructuralBlankLines(in6)).toBe(in6)
   })
 })

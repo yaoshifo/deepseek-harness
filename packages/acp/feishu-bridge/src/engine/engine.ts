@@ -120,6 +120,7 @@ import {
 } from './groupname.js'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.js'
 import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.js'
+import { isTodoToolName, parseTodoItems } from '../progress.js'
 import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.js'
 import { newAsyncSender, type AsyncSender } from '../async-sender.js'
 import { readFileSync, statSync, existsSync } from 'node:fs'
@@ -2310,6 +2311,16 @@ export class Engine {
           }
           const toolKey = event.toolID !== undefined && event.toolID !== '' ? event.toolID : `#t${++toolIntervalSeq}`
           openToolIntervals.set(toolKey, Date.now())
+          // A todo-list tool call replaces the pinned todo section (dsh
+          // `todo_write`, Claude-style `TodoWrite`); an unparseable input
+          // keeps the last list.
+          if (isTodoToolName(event.toolName ?? '')) {
+            const items = parseTodoItems(event.toolInput ?? '')
+            if (items !== undefined) {
+              if (sp.canPreview()) await sp.updateTodoSection(items)
+              cp.setTodos(items)
+            }
+          }
           if (this.display.toolProgress && sp.canPreview()) {
             await sp.appendProgress(newToolProgressEntry(event.toolName ?? '', event.toolInput ?? '', event.toolID ?? ''))
           }
@@ -2683,7 +2694,21 @@ export class Engine {
             deltaAccum = ''
             deltaFlushed = false
             pendingSend = finished.sendDone
-            if (state.agentSession !== undefined) recvP = state.agentSession.events().receive()
+            // The finished turn's completion degraded its preview (a terminal
+            // card accepts no further PATCHes); the queued turn must not keep
+            // PATCHing it or silently drop its tool progress — start a fresh
+            // card, mirroring the post-permission restart below.
+            sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
+            cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
+              this.i18n.currentLang(), undefined, sender)
+            this.bindActivePreview(sp, sessionKey)
+            state.preview = sp
+            if (this.display.toolProgress && sp.canPreview()) {
+              void sp.showPlaceholder(this.i18n.t(Msg.Processing))
+            }
+            // recvP keeps the receive armed at the top of this iteration:
+            // re-arming here would orphan that waiter, which then steals the
+            // queued turn's first event.
             state.lastEventAt = Date.now()
             continue
           }

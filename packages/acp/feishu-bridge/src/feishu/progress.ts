@@ -27,7 +27,9 @@ import {
 import { cardHeaderPadding, compactCardBody, type FeishuCardMap } from './card.js'
 import { noSpinner, spinnerKeyForItems, spinnerKeyForState, type SpinnerCfg } from './spinner.js'
 import {
+  isTodoToolName,
   parseProgressCardPayload,
+  parseTodoItems,
   type ProgressCardEntry,
   type ProgressCardPayload,
 } from '../progress.js'
@@ -202,30 +204,21 @@ export function inlineCodeText(s: string): string {
   return s.trim().replaceAll('`', "'")
 }
 
-function isTodoWriteToolName(toolName: string): boolean {
-  return toolName.trim().toLowerCase() === 'todowrite'
-}
-
 /**
- * Format TodoWrite JSON input into a readable markdown list; empty string
+ * Format a todo-list tool input into a readable markdown list; empty string
  * when parsing fails or no todos remain.
  *
- * @param text - Raw TodoWrite tool input JSON.
+ * @param text - Raw todo tool input JSON.
  * @returns Markdown list with status icons, or empty string.
  */
 export function formatTodoWriteInput(text: string): string {
-  let input: { todos?: Array<{ activeForm?: string; content?: string; status?: string }> }
-  try {
-    input = JSON.parse(text) as typeof input
-  } catch {
-    return ''
-  }
-  if ((input.todos ?? []).length === 0) return ''
+  const items = parseTodoItems(text)
+  if (items === undefined || items.length === 0) return ''
 
   let sb = ''
-  for (const todo of input.todos ?? []) {
+  for (const todo of items) {
     let icon: string
-    switch ((todo.status ?? '').trim().toLowerCase()) {
+    switch (todo.status.trim().toLowerCase()) {
       case 'completed':
         icon = '✅'
         break
@@ -239,14 +232,11 @@ export function formatTodoWriteInput(text: string): string {
         icon = '•'
         break
     }
-    const content = (todo.content ?? '').trim()
-    if (content === '') continue
-
     // Escape markdown special characters
-    const safeContent = content.replaceAll('`', "'")
+    const safeContent = todo.content.replaceAll('`', "'")
     sb += `${icon} ${safeContent}`
-    const activeForm = (todo.activeForm ?? '').trim()
-    if (activeForm !== '' && activeForm !== content) {
+    const activeForm = todo.activeForm ?? ''
+    if (activeForm !== '' && activeForm !== todo.content) {
       sb += ` _(${activeForm.replaceAll('`', "'")})_`
     }
     sb += '\n'
@@ -336,9 +326,9 @@ function trimTrailingNewlines(s: string): string {
 }
 
 /**
- * Format a tool input for the progress card (TodoWrite gets a markdown list).
+ * Format a tool input for the progress card (todo tools get a markdown list).
  *
- * @param toolName - Tool name; TodoWrite input renders as a markdown list.
+ * @param toolName - Tool name; `todo_write`/`TodoWrite` input renders as a markdown list.
  * @param text - Raw tool input text.
  * @returns Formatted markdown for the progress card entry.
  */
@@ -346,7 +336,7 @@ export function formatProgressToolInput(toolName: string, text: string): string 
   let t = text.trim()
   if (t === '') return ''
 
-  if (isTodoWriteToolName(toolName)) {
+  if (isTodoToolName(toolName)) {
     const formatted = formatTodoWriteInput(t)
     if (formatted !== '') return formatted
     return `\`\`\`python\n${padProgressLines(t, maxProgressEntryLines)}\n\`\`\``

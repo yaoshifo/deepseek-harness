@@ -1133,3 +1133,118 @@ describe('idle reaper', () => {
     expect(e.interactiveStates.has('test:reap')).toBe(true)
   })
 })
+
+describe('todo_write progress section', () => {
+  /** Stub platform with preview start/update capture (permission-spec pattern). */
+  function newPreviewCaptureEngine(): { e: Engine; updates: string[]; starts: string[] } {
+    const p = createStubPlatform()
+    const updates: string[] = []
+    const starts: string[] = []
+    const preview = p as typeof p & {
+      sendPreviewStart(rc: unknown, content: string): Promise<unknown>
+      updateMessage(handle: unknown, content: string): Promise<void>
+    }
+    preview.sendPreviewStart = async (_rc, content) => {
+      starts.push(content)
+      return `handle-${starts.length}`
+    }
+    preview.updateMessage = async (_handle, content) => {
+      updates.push(content)
+    }
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    e.setDisplayConfig({ toolProgress: true })
+    return { e, updates, starts }
+  }
+
+  async function runTurn(e: Engine, events: Array<Record<string, unknown>>): Promise<void> {
+    const sess = newControllableSession('todo-turn')
+    const key = 'test:todo-section'
+    const session = e.sessions.getOrCreateActive(key)
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = e.platforms[0]
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    for (const ev of events) sess.channel.push(ev as never)
+    await e.processInteractiveEvents(state, session, e.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+  }
+
+  it('renders todo_write items in the pinned todo section of the preview card', async () => {
+    const { e, updates } = newPreviewCaptureEngine()
+    await runTurn(e, [
+      { type: 'tool_use', toolName: 'todo_write', toolID: 't1', toolInput: JSON.stringify({ todos: [
+        { content: '分析需求', status: 'completed' },
+        { content: '实现修复', status: 'in_progress' },
+      ] }), content: '', done: false },
+      { type: 'tool_result', toolID: 't1', toolName: 'todo_write', toolResult: 'ok', content: '', done: true },
+      { type: 'result', content: 'done', done: true },
+    ])
+    const last = updates.at(-1) ?? ''
+    expect(last, `updates=${JSON.stringify(updates)}`).toContain('✅ 分析需求')
+    expect(last).toContain('🔄 实现修复')
+  })
+
+  it('clears the todo section when todo_write replaces the list with an empty one', async () => {
+    const { e, updates } = newPreviewCaptureEngine()
+    await runTurn(e, [
+      { type: 'tool_use', toolName: 'todo_write', toolID: 't1', toolInput: JSON.stringify({ todos: [{ content: '分析需求', status: 'completed' }] }), content: '', done: false },
+      { type: 'tool_use', toolName: 'todo_write', toolID: 't2', toolInput: '{"todos":[]}', content: '', done: false },
+      { type: 'tool_result', toolID: 't2', toolName: 'todo_write', toolResult: 'ok', content: '', done: true },
+      { type: 'result', content: 'done', done: true },
+    ])
+    const last = updates.at(-1) ?? ''
+    expect(last, `updates=${JSON.stringify(updates)}`).not.toContain('✅ 分析需求')
+  })
+
+  it('renders the todo section on a queued follow-up turn (fresh preview card)', async () => {
+    const { e, updates, starts } = newPreviewCaptureEngine()
+    const sess = newControllableSession('todo-queued')
+    const key = 'test:todo-queued'
+    const session = e.sessions.getOrCreateActive(key)
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = e.platforms[0]
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+
+    // A message queued while turn 1 runs: turn 1's result handler hands the
+    // loop to it via the in-loop queued arm.
+    const platform = e.platforms[0] as Platform
+    expect(e.queueMessageForBusySession(platform, msg({ sessionKey: key, content: 'todo turn' }), key)).toBe(true)
+
+    // Turn 2's live events are pushed from the session's send hook: the
+    // queued arm drains the channel BEFORE send, so events pushed at send
+    // time mirror the real arrival order. Real adapters push asynchronously
+    // (LLM stream), so defer past the loop's receive re-arm.
+    const origSend = sess.send.bind(sess)
+    const session2 = sess as unknown as { send(prompt: string, images: never[], files: never[]): Promise<void> }
+    session2.send = (prompt: string, images: never[], files: never[]) => {
+      if (prompt.includes('todo turn')) {
+        setTimeout(() => {
+          sess.channel.push({ type: 'tool_use', toolName: 'todo_write', toolID: 't2', toolInput: JSON.stringify({ todos: [
+            { content: '排查根因', status: 'completed' },
+            { content: '修复验证', status: 'in_progress' },
+          ] }), content: '', done: false } as never)
+          sess.channel.push({ type: 'tool_result', toolResult: 'ok', content: '', done: true } as never)
+          sess.channel.push({ type: 'result', content: '清单已建', done: true } as never)
+        }, 10)
+      }
+      return origSend(prompt, images, files)
+    }
+
+    sess.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: '{"command":"echo hi"}', toolID: 't1', content: '', done: false } as never)
+    sess.channel.push({ type: 'tool_result', toolResult: 'hi', content: '', done: true } as never)
+    sess.channel.push({ type: 'result', content: 'turn one done', done: true } as never)
+
+    await e.processInteractiveEvents(state, session, e.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+    await new Promise((r) => { setTimeout(r, 50) })
+
+    const last = updates.at(-1) ?? ''
+    expect(starts.length, `starts=${JSON.stringify(starts)}`).toBe(2)
+    expect(last, `updates=${JSON.stringify(updates)}`).toContain('✅ 排查根因')
+    expect(last).toContain('🔄 修复验证')
+    expect(last).toContain('清单已建')
+    // The queued turn's card starts clean: turn 1's entry does not leak.
+    expect(last).not.toContain('bash')
+  })
+})
