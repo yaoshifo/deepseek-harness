@@ -39,6 +39,8 @@ const DESCRIPTION =
   'Delegate parallel work to isolated subtask groups and collect their results. '
   + 'Each spawned subtask is an independent chat session the user can see and join, '
   + 'optionally in its own working directory and git worktree, running in parallel with you. '
+  + 'Work in a different directory is delegated through this tool only: the child runs there '
+  + 'and loads that directory\'s instruction files. '
   + 'spawn: dispatch one self-contained task brief (the child runs in parallel and wakes you '
   + 'with its result when it reports back); default worktree isolation is "auto" — isolated '
   + 'when the child shares your repository; fork=true copies your conversation context into '
@@ -75,7 +77,9 @@ export function registerSubtaskTool(ctx: Context, route: SubtaskAgentRouter): ()
       },
       dir: {
         type: 'string',
-        description: 'spawn only: the child\'s working directory (default: this session\'s).',
+        description: 'spawn only: the child\'s working directory (default: this session\'s). Work that lives in a '
+          + 'different project must be delegated with this: the child runs there and loads that project\'s '
+          + 'instruction files.',
       },
       worktree: {
         type: 'string',

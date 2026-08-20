@@ -132,6 +132,18 @@ describe('feishu_bridge_subtask registration', () => {
     test.dispose() // idempotent
     expect(test.ctx.tools.get('feishu_bridge_subtask')).toBeUndefined()
   })
+
+  it('states the cross-directory delegation contract in the model-facing wording', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:parent' }))
+    const tool = test.ctx.tools.get('feishu_bridge_subtask')
+    expect(tool?.description).toContain('different directory')
+    const dir = (tool?.parameters as {
+      properties?: { dir?: { description?: string } }
+    }).properties?.dir?.description
+    expect(dir).toContain('different project')
+    expect(dir).toContain('instruction files')
+  })
 })
 
 describe('feishu_bridge_subtask action routing', () => {
