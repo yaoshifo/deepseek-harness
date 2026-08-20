@@ -169,11 +169,35 @@ describe('DshAgentAdapter bare persona setup hook', () => {
   it('registers the research-assistant preamble as a non-complete section', async () => {
     const sections: RecordedSection[] = []
     const a = newAdapter(createHarness({ sections }), '/ws')
-    a.setSessionEnv(['CC_SESSION_KEY=test:assistant-1', 'CC_RESEARCH_ASSISTANT=1'])
+    a.setSessionEnv(['CC_SESSION_KEY=test:assistant-1', 'CC_SUBTASK=1', 'CC_RESEARCH_ASSISTANT=1'])
     await a.startSession('')
     expect(sections).toHaveLength(1)
     expect(sections[0]?.complete).toBeUndefined()
+    expect(sections[0]?.text).toContain('被派发子任务的子 agent')
     expect(sections[0]?.text).toContain('并行研究作战室的研究助手')
+  })
+
+  it('registers the report-back preamble for a plain subtask child', async () => {
+    const sections: RecordedSection[] = []
+    const a = newAdapter(createHarness({ sections }), '/ws')
+    a.setSessionEnv(['CC_SESSION_KEY=test:child-1', 'CC_SUBTASK=1', 'CC_SUBTASK_DEPTH=1'])
+    await a.startSession('')
+    expect(sections).toHaveLength(1)
+    expect(sections[0]?.complete).toBeUndefined()
+    expect(sections[0]?.text).toContain('被派发子任务的子 agent')
+    expect(sections[0]?.text).toContain('feishu_bridge_subtask')
+  })
+
+  it('registers the no-report preamble for a no-report subtask child', async () => {
+    const sections: RecordedSection[] = []
+    const a = newAdapter(createHarness({ sections }), '/ws')
+    a.setSessionEnv(['CC_SESSION_KEY=test:child-2', 'CC_SUBTASK=1', 'CC_SUBTASK_NO_REPORT=1'])
+    await a.startSession('')
+    expect(sections).toHaveLength(1)
+    expect(sections[0]?.complete).toBeUndefined()
+    expect(sections[0]?.text).toContain('被派发执行单一任务的子 agent')
+    expect(sections[0]?.text).toContain('feishu_bridge_send')
+    expect(sections[0]?.text).toContain('无需回报')
   })
 
   it('registers nothing for plain sessions', async () => {

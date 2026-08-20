@@ -245,6 +245,20 @@ report 只在真正完成时调用一次——不要在中间进度时调。
 `
 }
 
+/** The fire-and-forget child preamble (Go SubtaskNoReportAgentSystemPrompt, tool form).
+ *
+ * @returns the no-report preamble for monitor no_report children.
+ */
+export function subtaskNoReportAgentSystemPrompt(): string {
+  return `
+### 你是一个被派发执行单一任务的子 agent
+直接在本群完成任务。把产物（图片、文件等）用 feishu_bridge_send 工具（files: 路径数组）发到本群即可——用户在本群查看结果。
+
+- 本任务无需回报：不要调 feishu_bridge_subtask 的 report，也不要派发子任务。
+- 完成并发出产物后正常结束本轮即可，无需任何收尾动作。
+`
+}
+
 /** The research-assistant preamble (Go SubtaskResearchAssistantPrompt).
  *
  * @returns the research-execution preamble for assistant children.

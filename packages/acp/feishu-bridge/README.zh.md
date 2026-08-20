@@ -22,7 +22,7 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 
 #### 模型可见内容
 
-本插件不直接构造 LLM 请求——所有模型输入经 dsh agent 层（会话日志可完整重放），插件贡献的模型可见文本均为条件注入且按 Go 原文保形：入站 prompt 携带用户文本、引用链前缀（`[Quoted message from X]:` 单条格式或 `--- Reply chain (n messages) ---` 编号链）、暂存附件路径 bullets 与 `(Images saved locally, please read them: <paths>)` / `(Files saved locally, ...)` 注记；配置了 feishuWorkspace 的项目经 setup 钩子随会话注入「默认飞书工作空间」系统提示段（CC_FEISHU_* 值 + 创建优先级；chatroom bare persona 整体替换系统提示、不含此段）；`feishu_bridge_subtask / cron / relay / chatroom / lark / send` 工具族注册进 dsh 工具目录，lark 工具结果为 lark-cli 子进程 stdout/stderr 原文，`feishu_bridge_send`（Go `cc-connect send` CLI 的工具形）把本地文件以图片/文件消息投递到用户所在会话（经 `Engine.sendToSessionWithAttachments`）；chatroom bare persona 携带 Go `ChatroomRoleBaseSystemPrompt` 的产物投递段。
+本插件不直接构造 LLM 请求——所有模型输入经 dsh agent 层（会话日志可完整重放），插件贡献的模型可见文本均为条件注入且按 Go 原文保形：入站 prompt 携带用户文本、引用链前缀（`[Quoted message from X]:` 单条格式或 `--- Reply chain (n messages) ---` 编号链）、暂存附件路径 bullets 与 `(Images saved locally, please read them: <paths>)` / `(Files saved locally, ...)` 注记；配置了 feishuWorkspace 的项目经 setup 钩子随会话注入「默认飞书工作空间」系统提示段（CC_FEISHU_* 值 + 创建优先级；chatroom bare persona 整体替换系统提示、不含此段）；`feishu_bridge_subtask / cron / relay / chatroom / lark / send` 工具族注册进 dsh 工具目录，lark 工具结果为 lark-cli 子进程 stdout/stderr 原文，`feishu_bridge_send`（Go `cc-connect send` CLI 的工具形）把本地文件以图片/文件消息投递到用户所在会话（经 `Engine.sendToSessionWithAttachments`）；chatroom bare persona 携带 Go `ChatroomRoleBaseSystemPrompt` 的产物投递段，subtask 子会话以非 complete 段追加回报/no-report 前导（Go `buildAppendSystemPrompt` 的 `CC_SUBTASK` 分支）。
 
 #### token 开销
 

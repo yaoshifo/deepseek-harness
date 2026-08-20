@@ -29,6 +29,7 @@ import {
 import {
   buildChatroomSystemPrompt,
   subtaskAgentSystemPrompt,
+  subtaskNoReportAgentSystemPrompt,
   subtaskResearchAssistantPrompt,
 } from '../engine/chatroom-persona.js'
 import { appendFileRefs, saveFilesToDisk, saveImagesToDisk } from '../engine/attachments.js'
@@ -203,24 +204,43 @@ export function feishuWorkspaceSection(env: string[]): string {
 /**
  * Build the agents.create/resume setup hook for the env-flagged persona
  * (Go isChatroomBareSession + buildChatroomSystemPrompt): chatroom role /
- * direct-role / moderator sessions replace the whole system prompt; a
- * research assistant appends its preamble as a normal section. Plain
- * sessions with a configured Feishu workspace get the #18 routing section.
+ * direct-role / moderator sessions replace the whole system prompt. A
+ * subtask child (Go buildAppendSystemPrompt's CC_SUBTASK branch) appends the
+ * report / no-report preamble as a normal section — research assistants add
+ * their contract on top. Plain sessions with a configured Feishu workspace
+ * get only the #18 routing section.
  */
 function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
   const isRole = envHasFlag(env, 'CC_CHATROOM_ROLE')
   const isDirect = envHasFlag(env, 'CC_CHATROOM_DIRECT_ROLE')
   const isModerator = envHasFlag(env, 'CC_CHATROOM_MODERATOR')
+  const isSubtask = envHasFlag(env, 'CC_SUBTASK')
   const isResearchAssistant = envHasFlag(env, 'CC_RESEARCH_ASSISTANT')
+  const isNoReport = envHasFlag(env, 'CC_SUBTASK_NO_REPORT')
   const workspaceText = feishuWorkspaceSection(env)
-  if (!isRole && !isDirect && !isModerator && !isResearchAssistant) {
-    // No persona and no workspace: no setup hook at all.
-    if (workspaceText === '') return undefined
+  if (!isRole && !isDirect && !isModerator) {
+    if (!isSubtask) {
+      // No persona and no workspace: no setup hook at all.
+      if (workspaceText === '') return undefined
+      return (agentCtx) => {
+        const promptSvc = agentCtx.get('systemPrompt') as
+          | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
+          | undefined
+        promptSvc?.section({ name: 'feishu-bridge-workspace', order: 110, text: workspaceText })
+      }
+    }
+    const preamble = isNoReport
+      ? subtaskNoReportAgentSystemPrompt()
+      : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt() : ''}`
     return (agentCtx) => {
       const promptSvc = agentCtx.get('systemPrompt') as
         | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
         | undefined
-      promptSvc?.section({ name: 'feishu-bridge-workspace', order: 110, text: workspaceText })
+      if (promptSvc === undefined) return
+      if (workspaceText !== '') {
+        promptSvc.section({ name: 'feishu-bridge-workspace', order: 110, text: workspaceText })
+      }
+      promptSvc.section({ name: 'feishu-bridge-subtask-preamble', order: 120, text: preamble })
     }
   }
 
@@ -229,15 +249,6 @@ function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai
       | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
       | undefined
     if (promptSvc === undefined) return
-    if (isResearchAssistant && !isRole && !isDirect && !isModerator) {
-      // Research assistant: append the subtask + research contracts.
-      promptSvc.section({
-        name: 'feishu-bridge-research-assistant',
-        order: 120,
-        text: `${subtaskAgentSystemPrompt()}${subtaskResearchAssistantPrompt()}`,
-      })
-      return
-    }
     const text = buildChatroomSystemPrompt({
       workDir,
       isRole,

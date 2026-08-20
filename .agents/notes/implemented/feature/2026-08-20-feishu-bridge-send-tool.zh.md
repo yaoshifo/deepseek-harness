@@ -24,7 +24,7 @@ Status: implemented
 
 ## Consequences
 
-agent 现在可以把任意本地产物作为真正的文件/图片消息投递到用户所在会话，受 `attachmentSend` 门控、由 caller agent 路由——最后一个没有进程内等价物的 Go CLI 面就此闭合（FEATURE-PARITY #62 行）。monitor `no_report` 子群与 chatroom 角色经共享的工具注册和恢复的 persona 段获得同一能力。调查顺带发现两个同族 prompt 接线缺口，本笔未修：普通 subtask 子会话（`CC_SUBTASK=1` 非 research）从未收到 `subtaskAgentSystemPrompt` 回报前导，`CC_SUBTASK_NO_REPORT` 从未收到 no-report 前导——`buildSessionSetup` 只消费 research-assistant 旗标。M4 冒烟靠工具自述的 report 动作和用户手敲 `/done` 掩盖了两者；它们值得单独一笔。
+agent 现在可以把任意本地产物作为真正的文件/图片消息投递到用户所在会话，受 `attachmentSend` 门控、由 caller agent 路由——最后一个没有进程内等价物的 Go CLI 面就此闭合（FEATURE-PARITY #62 行）。monitor `no_report` 子群与 chatroom 角色经共享的工具注册和恢复的 persona 段获得同一能力。调查顺带发现：普通 subtask 子会话（`CC_SUBTASK=1` 非 research）从未收到 `subtaskAgentSystemPrompt` 回报前导，`CC_SUBTASK_NO_REPORT` 从未收到 no-report 前导——`buildSessionSetup` 只消费 research-assistant 旗标，而 Go 的 `buildAppendSystemPrompt` 以 `CC_SUBTASK` 为键（research assistant 恒带两旗标）。同日已修：adapter 的 subtask 分支保形移植 Go 的 `CC_SUBTASK` 选择（回报前导；no-report 前导经新增的 `subtaskNoReportAgentSystemPrompt`；research 契约叠加其上），并补上 Go 经 env 注入的 workspace section。
 
 ## Testing
 
