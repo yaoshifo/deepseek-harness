@@ -346,6 +346,13 @@ export interface FeishuPlatformOptions {
   patchRateIntervalMs?: number
   /** Data directory for persisted state (Go cc_data_dir); empty disables persistence. */
   dataDir?: string
+  /**
+   * Shared directory for this bot's tag-id cache (Go kept every bot's
+   * `<project>_feishu_tag_cache.json` in one shared sessions dir, which is what
+   * makes the sibling-cache id fallback work across bots of one tenant). Falls
+   * back to `<dataDir>/sessions` when absent.
+   */
+  tagCacheDir?: string
   /** Project name seeding cache file names and the active-tag fallback (Go cc_project). */
   projectName?: string
   /** Working directory seeding the spawned-chat dir tag (Go cc_work_dir). */
@@ -364,9 +371,11 @@ export interface FeishuPlatformOptions {
 const feishuCodeMessageWithdrawn = 230011
 
 function isThreadSessionKey(sessionKey: string): boolean {
-  const parts = sessionKey.split(':', 3)
-  if (parts.length !== 3) return false
-  const tail = parts[2] ?? ''
+  // Go strings.SplitN(key, ":", 3): the third field is the REMAINDER, which
+  // JS split(limit) truncates — slice-join instead so "thread:x" survives.
+  const parts = sessionKey.split(':')
+  if (parts.length < 3) return false
+  const tail = parts.slice(2).join(':')
   if (!tail.startsWith('root:') && !tail.startsWith('thread:')) return false
   return tail.slice(tail.indexOf(':') + 1) !== ''
 }
@@ -490,9 +499,13 @@ export class FeishuPlatform implements Platform {
     const dataDir = options.dataDir ?? ''
     const sessionsDir = dataDir === '' ? '' : join(dataDir, 'sessions')
     this.spawnStore = new SpawnedChatStore(sessionsDir === '' ? '' : join(sessionsDir, `${base}_spawned.json`))
+    // The tag cache is tenant-shared state (sibling lookup reuses ids created
+    // by other bots), unlike the spawned registry which is this bot's private
+    // state — hence the separate directory.
+    const tagCacheDir = options.tagCacheDir ?? sessionsDir
     this.tagManager = new TagManager({
       api: this.tagApi(),
-      tagCacheFile: sessionsDir === '' ? '' : join(sessionsDir, `${base}_tag_cache.json`),
+      tagCacheFile: tagCacheDir === '' ? '' : join(tagCacheDir, `${base}_tag_cache.json`),
       projectName,
       ...(options.activeTagOverride !== undefined ? { activeTagOverride: options.activeTagOverride } : {}),
       spawnedChatIDs: () => this.spawnStore.chatIDs(),
@@ -1526,12 +1539,15 @@ export class FeishuPlatform implements Platform {
     const cardJSON = injectStopButton(preButtonJSON, rc.sessionKey)
 
     const msgID = await this.withRetry('send preview', () => this.request('send preview', async (client) => {
-      if (this.shouldUseThreadOrReplyAPI(rc)) {
+      // Go SendPreviewStart: reply only under thread isolation so the card
+      // lands in the triggering thread; otherwise a new message — never a
+      // reply, which would quote the user's trigger message.
+      if (this.shouldReplyInThread(rc)) {
         const resp = await client.reply({
           messageId: rc.messageID,
           msgType: 'interactive',
           content: cardJSON,
-          replyInThread: this.shouldReplyInThread(rc),
+          replyInThread: true,
         })
         return resp?.messageId ?? ''
       }
