@@ -22,7 +22,7 @@ cc-connect → feishu-bridge 迁移以 `docs/FEATURE-PARITY.md` 为验收对照�
 
 ## Consequences
 
-`/shell` 与 `!` 在聊天里恢复可用，由 `admin_from` 管理。两个已知缺口保持开放：命令清单本身（~34 条 Go builtin 命令未移植且无逐条裁定），以及 `message_help` i18n 文案——它仍在宣传不存在的命令，包括自身都未注册的 `/help`。在命令清单 diff 落地（M8）之前，用户输入 `/help` 得到的是 agent 而不是命令列表。超时消息保留 Go 冻结的 "(60s)" 措辞，即使 `--timeout` 设了别的值。
+`/shell` 与 `!` 在聊天里恢复可用，由 `admin_from` 管理。本 note 提到的两个后续项已于同日在 `feature/2026-08-22-feishu-bridge-seven-commands.md` 落地：`/help` 已注册且列表从注册表动态生成，误导性的 `message_help` 大段（连同六个 `help_*_section` 条目）已删除。命令清单本身仍是具名缺口——剩余未裁定命令见该 note 与 README Known Limitations。超时消息保留 Go 冻结的 "(60s)" 措辞，即使 `--timeout` 设了别的值。
 
 ## Testing
 

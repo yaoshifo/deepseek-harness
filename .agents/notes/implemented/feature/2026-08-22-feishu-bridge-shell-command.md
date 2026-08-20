@@ -22,7 +22,7 @@ Deliberate cuts, unchanged from the M4-E C-class rulings: `disabled_commands` an
 
 ## Consequences
 
-`/shell` and `!` work again in chat, admin-gated by `admin_from`. Two known gaps remain open: the command inventory itself (~34 Go builtin commands unported without individual rulings), and the `message_help` i18n text, which still advertises commands that do not exist — including `/help`, which is not registered either. Until an inventory diff lands (M8), a user typing `/help` gets the agent, not a command list. The timeout message keeps Go's frozen "(60s)" wording even when `--timeout` sets another value.
+`/shell` and `!` work again in chat, admin-gated by `admin_from`. Two follow-ups from this note landed the same day in `feature/2026-08-22-feishu-bridge-seven-commands.md`: `/help` now exists and generates its list from the registered handlers, and the misleading `message_help` blob (plus the six `help_*_section` entries) was deleted. The command inventory itself remains a named gap — see that note and the README's Known Limitations for the remaining unruled commands. The timeout message keeps Go's frozen "(60s)" wording even when `--timeout` sets another value.
 
 ## Testing
 

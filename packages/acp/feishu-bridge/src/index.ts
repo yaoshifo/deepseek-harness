@@ -21,6 +21,8 @@ import { DirHistory } from './engine/dir-history.js'
 import { HintUsage } from './engine/hint-usage.js'
 import { registerSessionCommands } from './engine/commands.js'
 import { registerShellCommands } from './engine/shell-commands.js'
+import { registerSpawnFamilyCommands } from './engine/spawn-family-commands.js'
+import { registerMiscCommands } from './engine/misc-commands.js'
 import { CronScheduler, CronStore } from './engine/cron.js'
 import { registerCronCommands } from './engine/cron-commands.js'
 import { RelayManager } from './engine/relay.js'
@@ -898,6 +900,9 @@ export function buildProjectAssembly(
   registerChatroomCommands(engine)
   // M8 前: /shell + "!" prefix shortcut (Go cmdShell).
   registerShellCommands(engine)
+  // M8 前: /tag /untag /undone /notify /board (Go spawn family) + /help /ps.
+  registerSpawnFamilyCommands(engine)
+  registerMiscCommands(engine)
   // M7-c: /provider family + shortcuts, /btw + insight forks, /compress.
   registerProviderCommands(engine)
   registerPredictCommands(engine)
