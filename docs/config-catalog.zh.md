@@ -721,6 +721,8 @@ export interface ProviderRoute {
   route: string
   /** Model override applied when sessions use this route. */
   model?: string
+  /** Context window in tokens for this route's models; 0/unset = the project-level context_window (Go ContextWindow, #12). */
+  contextWindow?: number
 }
 
 /** How intermediate messages (thinking, tool output) are shown (MIGRATION.md M2/M3). */

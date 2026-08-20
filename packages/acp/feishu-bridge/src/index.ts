@@ -223,6 +223,8 @@ export interface ProviderRoute {
   route: string
   /** Model override applied when sessions use this route. */
   model?: string
+  /** Context window in tokens for this route's models; 0/unset = the project-level context_window (Go ContextWindow, #12). */
+  contextWindow?: number
 }
 
 /** How intermediate messages (thinking, tool output) are shown (MIGRATION.md M2/M3). */
@@ -551,6 +553,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   providers: Schema.dict(Schema.object({
     route: Schema.string().required().description('LLM service route name from the profile'),
     model: Schema.string().description('Model override'),
+    contextWindow: Schema.natural().description('Context window in tokens for this route; 0 = project context_window / 200k default (#12)'),
   })).default({}).description('Named LLM routes (MIGRATION.md D2)'),
   display: Schema.object({
     thinkingMessages: Schema.boolean().description('Show thinking messages'),
@@ -815,6 +818,7 @@ export function buildProjectAssembly(
       name: routeName,
       provider: route.route,
       model: route.model ?? '',
+      ...(route.contextWindow !== undefined ? { contextWindow: route.contextWindow } : {}),
       ...(routeName === activeProvider && project.agent?.reasoningEffort !== undefined
         ? { reasoningEffort: project.agent.reasoningEffort }
         : {}),

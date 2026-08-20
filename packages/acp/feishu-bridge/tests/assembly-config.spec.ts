@@ -313,6 +313,25 @@ describe('M7 usage/footer config wiring', () => {
     expect(assemble(baseConfig()).engine.contextWindow).toBe(200_000)
   })
 
+  it('wires per-provider context_window and applies the active route window (Go ProviderConfig.ContextWindow)', () => {
+    const cfg: FeishuBridgeConfig = {
+      ...baseConfig(),
+      providers: {
+        'mify-dsh': { route: 'mify-dsh', model: 'glm-5.2' },
+        turbo: { route: 'turbo', model: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      },
+    }
+    // Active route (first key) without its own window: project window / 200k default.
+    expect(assemble(cfg).engine.contextWindow).toBe(200_000)
+    const proj = { ...project(), contextWindow: 128_000 }
+    expect(assemble(cfg, proj).engine.contextWindow).toBe(128_000)
+    // Active turbo: the route window wins over the project window, and the
+    // adapter exposes it for engine-side re-resolution on /provider switch.
+    const active = assemble(cfg, { ...proj, agent: { provider: 'turbo' } })
+    expect(active.engine.contextWindow).toBe(1_000_000)
+    expect(active.adapter.getActiveProvider()).toEqual({ name: 'turbo', contextWindow: 1_000_000 })
+  })
+
   it('wires features.reply_footer (default off, Go SetReplyFooterEnabled)', () => {
     expect(assemble(baseConfig()).engine.replyFooterEnabled).toBe(false)
     const proj = { ...project(), features: { replyFooter: true } }

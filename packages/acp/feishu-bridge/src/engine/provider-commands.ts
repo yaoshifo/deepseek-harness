@@ -155,6 +155,7 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
     case 'reset':
     case 'none': {
       switcher.setActiveProvider('')
+      e.applyActiveProviderContextWindow()
       e.stopInteractiveSession(msg.sessionKey)
       const s = e.sessions.getOrCreateActive(msg.sessionKey)
       s.setAgentSessionID('', '')
@@ -193,6 +194,7 @@ async function switchProvider(e: Engine, p: Platform, msg: Message, switcher: Pr
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, name))
     return
   }
+  e.applyActiveProviderContextWindow()
   e.stopInteractiveSession(msg.sessionKey)
   const s = e.sessions.getOrCreateActive(msg.sessionKey)
   s.setAgentSessionID('', '')
@@ -208,6 +210,7 @@ async function switchProviderResume(e: Engine, p: Platform, msg: Message, switch
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, name))
     return
   }
+  e.applyActiveProviderContextWindow()
   const s = e.sessions.getOrCreateActive(msg.sessionKey)
   const agentSessionID = s.getAgentSessionID()
   const agentType = s.agentType
@@ -234,6 +237,7 @@ async function cmdProviderShortcut(e: Engine, p: Platform, msg: Message, provide
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, providerName))
     return
   }
+  e.applyActiveProviderContextWindow()
 
   e.stopInteractiveSession(msg.sessionKey)
   const old = e.sessions.getOrCreateActive(msg.sessionKey)

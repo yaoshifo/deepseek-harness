@@ -127,6 +127,8 @@ export interface ProviderRoute {
   provider: string
   model: string
   reasoningEffort?: string
+  /** Context window in tokens; 0/unset = the project-level window (Go ContextWindow, #12). */
+  contextWindow?: number
 }
 
 /** Adapter construction config. */
@@ -727,13 +729,17 @@ export class DshAgentAdapter {
   }
 
   /**
-   * ProviderSwitcher: the active route as a name-only config.
+   * ProviderSwitcher: the active route as a name-only config plus its
+   * context window, which the engine re-resolves on every switch (Go
+   * ProviderConfig.ContextWindow).
    *
    * @returns the active provider, or undefined when the selection is empty or unknown.
    */
   getActiveProvider(): ProviderConfig | undefined {
     const name = this.cfg.activeProvider
-    return name !== '' && this.cfg.providers.some(r => r.name === name) ? { name } : undefined
+    if (name === '' || !this.cfg.providers.some(r => r.name === name)) return undefined
+    const route = this.cfg.providers.find(r => r.name === name)
+    return { name, ...(route?.contextWindow !== undefined ? { contextWindow: route.contextWindow } : {}) }
   }
 
   /**

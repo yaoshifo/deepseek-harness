@@ -146,6 +146,22 @@ describe('stripModelAlias', () => {
 })
 
 describe('DshAgentAdapter', () => {
+  it('getActiveProvider exposes the route context window (Go ProviderConfig.ContextWindow)', () => {
+    const h = createHarness()
+    const a = new DshAgentAdapter(h.ctx, {
+      agentName: 'dsh',
+      cwd: '/workspace/project',
+      providers: [
+        { name: 'glm', provider: 'glm-route', model: 'glm-5.3[1m]' },
+        { name: 'turbo', provider: 'turbo-route', model: 'deepseek-v4-flash', contextWindow: 1_000_000 },
+      ],
+      activeProvider: 'glm',
+    })
+    expect(a.getActiveProvider()).toEqual({ name: 'glm' })
+    expect(a.setActiveProvider('turbo')).toBe(true)
+    expect(a.getActiveProvider()).toEqual({ name: 'turbo', contextWindow: 1_000_000 })
+  })
+
   it('creates a fresh native session keyed by the engine session key', async () => {
     const h = createHarness()
     const a = newAdapter(h)

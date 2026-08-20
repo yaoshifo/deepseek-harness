@@ -17,7 +17,7 @@ import type { Agent, Message, ProviderSwitcher } from '../../src/core/types.js'
 import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
 
 /** Go stubProviderAgent: a ProviderSwitcher over a static route table. */
-function providerAgent(providers: string[], active: string): Agent & ProviderSwitcher & {
+function providerAgent(providers: string[], active: string, windows: Record<string, number> = {}): Agent & ProviderSwitcher & {
   calls: string[]
   getActive(): string
 } {
@@ -34,7 +34,7 @@ function providerAgent(providers: string[], active: string): Agent & ProviderSwi
       current = name
       return true
     },
-    getActiveProvider: () => (current !== '' ? { name: current } : undefined),
+    getActiveProvider: () => (current !== '' ? { name: current, ...(windows[current] !== undefined ? { contextWindow: windows[current] } : {}) } : undefined),
     listProviders: () => providers.map(name => ({ name })),
   }
 }
@@ -117,6 +117,27 @@ describe('/provider switch', () => {
     expect(s.getHistory(0).length).toBe(0)
     expect(saved).toEqual(['azure'])
     expect(p.getSent()).toEqual([e.i18n.tf('provider_switched', 'azure')])
+    dispose()
+  })
+
+  it('re-resolves the context window from the switched provider (Go applyActiveProviderContextWindow)', async () => {
+    const agent = providerAgent(['openai', 'azure'], 'openai', { azure: 1_000_000 })
+    const { e, p, dispose } = newEngine(agent)
+    e.setContextWindow(128_000)
+
+    e.dispatchCommand(p, msg(), '/provider switch azure')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(e.contextWindow).toBe(1_000_000)
+
+    // Switching back to a route without its own window restores the project fallback.
+    e.dispatchCommand(p, msg(), '/provider switch openai')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(e.contextWindow).toBe(128_000)
+
+    // Clearing the selection also falls back to the project window.
+    e.dispatchCommand(p, msg(), '/provider clear')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(e.contextWindow).toBe(128_000)
     dispose()
   })
 
@@ -224,6 +245,24 @@ describe('provider shortcuts', () => {
     expect(old.getHistory(0).length).toBe(0)
     expect(e.sessions.getOrCreateActive('test:user1')).not.toBe(old)
     expect(p.getSent()).toEqual([e.i18n.tf('provider_shortcut_new', 'mimo')])
+    disposeProvider()
+  })
+
+  it('re-resolves the context window after a shortcut switch and switch --resume', async () => {
+    const agent = providerAgent(['glm', 'mimo'], 'glm', { mimo: 512_000 })
+    const p = createStubPlatform('test')
+    const e = new Engine('test', agent, [p], '', 'en')
+    const disposeProvider = registerProviderCommands(e)
+    e.setProviderShortcuts({ weak: 'mimo' })
+    e.setContextWindow(128_000)
+
+    e.dispatchCommand(p, msg(), '/weak')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(e.contextWindow).toBe(512_000)
+
+    e.dispatchCommand(p, msg(), '/provider glm --resume')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(e.contextWindow).toBe(128_000)
     disposeProvider()
   })
 

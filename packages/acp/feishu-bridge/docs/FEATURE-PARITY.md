@@ -28,7 +28,7 @@
 | 9 | 全局 Providers：跨项目共享模型配置 + /provider 切换 | ✅ | M7-c | /provider list/switch/current/clear + provider_shortcuts（/strong 等）+ 切换持久化（project state）；add/remove/presets 不迁移——provider = profile 命名路由，运行时不可创建 |
 | 10 | tool_progress：quiet 模式工具进度卡片 | ✅ | M2 | 真机验证（display 转发补齐后） |
 | 11 | reply_footer 默认关闭（ctx/余额只走 ✅ 通知） | ✅ | M7-b | 已核实并接线：Go 语义 = 每条非静默回复尾部追加 `*model · effort · 余额% · workdir*`（engine_send.go buildReplyFooter），默认关。TS 完整移植（`status-footer.ts` buildReplyFooter，能力面探测 getSession→agent）；天花板：dsh adapter 无 UsageReporter/ContextUsageReporter，生产页脚只含 model · effort · workdir（余额段空缺，能力面就绪待 adapter 生长） |
-| 12 | per-provider context_window | ✅ | M7-b | ctx% 消费方落地（状态页脚 ctx 行：SDK token 累积 + project 级 `contextWindow` 单值，默认 200k）。天花板：per-provider 细化未接线——`ProviderRoute` 无该字段、adapter `getActiveProvider` 仅回 name（`applyActiveProviderContextWindow` 恒走 project 回退），多路由窗口差异显著时需补 |
+| 12 | per-provider context_window | ✅ | M8 前 | `providers[].contextWindow` 配置 → adapter 路由携带 → `getActiveProvider()` 带出 → 装配与 /provider 全部切换点（switch / --resume / clear / shortcut）后 `applyActiveProviderContextWindow()` 重算；未声明窗口的路由回退 project 级 `contextWindow`（默认 200k）。补齐 FEATURE-PARITY 复核时发现的天花板 |
 | 13 | 消息排队机制（session 启动期不丢弃） | ✅ | M1 | engine 事件循环 |
 | 14 | ctx indicator 移至 ✅ 通知（原始 token 累积值） | ✅ | M7-b | 完整版：SDK token 累积（turnDelta/cum + cache delta/cum + numTurns + compaction）与 self-report `[ctx: ~N%]` 剥离均已接入 |
 | 15 | auto-approve 不跳过 AskUserQuestion / ExitPlanMode | ✅ | M3 | 审批域 |
