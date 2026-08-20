@@ -1074,8 +1074,9 @@ export async function deliverRenderedImage(
     if (cardSender !== undefined && uploader !== undefined) {
       try {
         const imageKey = await withTimeout(sendTimeoutMs, () => uploader.uploadImage(img))
+        // Go: NewCard().ImageFill(imageKey, title) — no card header; the
+        // delivered card is just the full-width image.
         const cb = newCard()
-        if (title !== '') cb.title(title, 'blue')
         cb.imageFill(imageKey, title)
         await withTimeout(sendTimeoutMs, () => cardSender.sendCard(replyCtx, cb.build()))
         return

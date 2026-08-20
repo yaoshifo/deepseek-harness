@@ -117,7 +117,10 @@ describe('DeliverRenderedImage', () => {
     expect(p.cards).toHaveLength(1)
     expect(p.images).toHaveLength(0)
     expect(p.uploaded).toBe(1)
-    const card = p.cards[0] as { elements: Array<{ kind: string; scaleType?: string }> }
+    // Go deliverRenderedImage: ImageFill only — no card header/title, the
+    // delivered card is just the full-width image.
+    const card = p.cards[0] as { header?: unknown; elements: Array<{ kind: string; scaleType?: string }> }
+    expect(card.header).toBeUndefined()
     expect(card.elements).toHaveLength(1)
     expect(card.elements[0]?.kind).toBe('image')
     expect(card.elements[0]?.scaleType).toBe('fit_horizontal')
