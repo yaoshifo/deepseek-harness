@@ -293,4 +293,16 @@ describe('buildPreviewCardJSON', () => {
     expect(out).toContain('| A |')
     expect(out).toContain('| E |')
   })
+
+  it('keeps paragraph breaks in the reply below tool entries', () => {
+    // Schema 2.0 card markdown renders a single \n as whitespace, so the
+    // blank lines separating a bold header from its list must survive the
+    // preview-card pipeline.
+    const reply = '**改动明细：**\n\n- item one\n\n- item two'
+    const tool = '**10:00:01** <text_tag color=\'blue\'>bash</text_tag> · 1 🟢\n```text\ncmd\n---\nok\n```'
+    const content = `__cc_state__:completed\n__cc_ts__:10:00:05\n__cc_tc__:1\n${tool}\n${reply}`
+    const card = jParse(buildPreviewCardJSON(content, noSpinner))
+    const md = jStr(jObj(jArr(jObj(card.body).elements)[0]).content)
+    expect(md).toContain('**改动明细：**\n\n- item one\n\n- item two')
+  })
 })

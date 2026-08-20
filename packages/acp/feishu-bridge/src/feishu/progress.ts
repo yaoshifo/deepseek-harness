@@ -635,7 +635,7 @@ export function collapseStructuralBlankLines(s: string): string {
   const isHeading = (l: string): boolean => {
     const t = l.trim()
     if (isFence(l)) return false
-    const n = t.length - (t.length - t.replace(/^#+/, '').length)
+    const n = t.length - t.replace(/^#+/, '').length
     return n > 0 && (t.length === n || t.charAt(n) === ' ' || t.charAt(n) === '\t')
   }
   const isStructural = (l: string): boolean => isFence(l) || isHeading(l)
