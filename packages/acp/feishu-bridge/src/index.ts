@@ -20,6 +20,7 @@ import { ProjectStateStore } from './engine/project-state.js'
 import { DirHistory } from './engine/dir-history.js'
 import { HintUsage } from './engine/hint-usage.js'
 import { registerSessionCommands } from './engine/commands.js'
+import { registerShellCommands } from './engine/shell-commands.js'
 import { CronScheduler, CronStore } from './engine/cron.js'
 import { registerCronCommands } from './engine/cron-commands.js'
 import { RelayManager } from './engine/relay.js'
@@ -895,6 +896,8 @@ export function buildProjectAssembly(
   }
   registerSessionCommands(engine)
   registerChatroomCommands(engine)
+  // M8 前: /shell + "!" prefix shortcut (Go cmdShell).
+  registerShellCommands(engine)
   // M7-c: /provider family + shortcuts, /btw + insight forks, /compress.
   registerProviderCommands(engine)
   registerPredictCommands(engine)

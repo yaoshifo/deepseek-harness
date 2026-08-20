@@ -130,6 +130,7 @@ import { basename, join as joinPath } from 'node:path'
 import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
 import { commandContext, dirApply } from './commands.js'
+import { runBangShell } from './shell-commands.js'
 import { renderDirCardSafe } from './dir-card.js'
 import { executeCardAction } from './cron-commands.js'
 import { cancelQueuedByMessageID } from './recall.js'
@@ -1262,6 +1263,17 @@ export class Engine {
     // before permission handling).
     if (routePendingHumanReply(this, p, msg.sessionKey, content)) return
     if (this.handlePendingPermission(p, msg, content)) return
+
+    // "!" prefix: treat as a shell command (same as /shell). Placed after
+    // permission handling so "!yes" answers a pending permission instead
+    // (Go engine.go "!" branch).
+    if (msg.images.length === 0 && content.startsWith('!')) {
+      const shellCmd = content.slice(1).trim()
+      if (shellCmd !== '') {
+        runBangShell(this, p, msg, shellCmd)
+        return
+      }
+    }
 
     // Pure attachment (no text) — stage to disk and wait for the next text
     // message instead of firing an empty-intent agent turn (#8, Go
