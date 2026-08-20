@@ -213,7 +213,7 @@ export interface ProjectConfig {
   feishuWorkspace?: FeishuWorkspaceConfig
   /** Comma-separated user IDs allowed to run privileged commands; '*' = all (Go admin_from). */
   adminFrom?: string
-  /** Minutes before an idle interactive session is reaped (Go interactive_idle_timeout_mins). */
+  /** Minutes before an idle interactive session is reaped; default 120; 0 disables (Go interactive_idle_timeout_mins). */
   interactiveIdleTimeoutMins?: number
 }
 
@@ -548,7 +548,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       wikiNodeToken: Schema.string().description('Default wiki parent node token (CC_FEISHU_WIKI_NODE_TOKEN)'),
       description: Schema.string().description('Natural-language description of this workspace'),
     }).description("The bot's default Feishu Wiki/Drive location (#18)"),
-    interactiveIdleTimeoutMins: Schema.natural().description('Idle reaper threshold in minutes'),
+    interactiveIdleTimeoutMins: Schema.natural().default(120).description('Idle reaper threshold in minutes; default 120; 0 disables'),
   })).default([]).description('Projects bound to Feishu apps'),
   providers: Schema.dict(Schema.object({
     route: Schema.string().required().description('LLM service route name from the profile'),

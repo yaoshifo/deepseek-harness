@@ -711,7 +711,7 @@ export interface ProjectConfig {
   feishuWorkspace?: FeishuWorkspaceConfig
   /** Comma-separated user IDs allowed to run privileged commands; '*' = all (Go admin_from). */
   adminFrom?: string
-  /** Minutes before an idle interactive session is reaped (Go interactive_idle_timeout_mins). */
+  /** Minutes before an idle interactive session is reaped; default 120; 0 disables (Go interactive_idle_timeout_mins). */
   interactiveIdleTimeoutMins?: number
 }
 

@@ -234,6 +234,8 @@ describe('buildProjectAssembly config wiring', () => {
 
   it('wires the per-project interactive idle timeout (Go SetInteractiveIdleTimeout)', () => {
     expect(assemble(baseConfig(), { ...project(), interactiveIdleTimeoutMins: 15 }).engine.interactiveIdleTimeout).toBe(15 * 60_000)
+    // Hand-built config bypasses the schema; production configs go through the
+    // Cordis loader, which fills the schema default 120 for an absent field.
     expect(assemble(baseConfig()).engine.interactiveIdleTimeout).toBe(0)
   })
 

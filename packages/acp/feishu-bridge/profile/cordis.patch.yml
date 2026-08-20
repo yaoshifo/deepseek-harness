@@ -251,7 +251,7 @@
     # Per-project extras (inside a projects[] row):
     #   contextWindow: 258400              # ctx-estimate window in tokens; 0 = 200k default
     #   adminFrom: "ou_xxx,ou_yyy"         # privileged-command allowlist; * = all
-    #   interactiveIdleTimeoutMins: 30     # idle reaper threshold
+    #   interactiveIdleTimeoutMins: 30     # idle reaper threshold; default 120; 0 disables
     #   features:
     #     showContextIndicator: true       # 📊 ctx / 🍵 cache lines on the ✅ footer (default true)
     #     replyFooter: true                # Codex-style *model · effort · workdir* reply footer (default false)
