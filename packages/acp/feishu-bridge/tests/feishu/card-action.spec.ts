@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { FeishuPlatform, type CardActionTriggerEvent } from '../../src/feishu/platform.js'
+import { hintButtonName } from '../../src/engine/hints-panel.js'
 import type { Message } from '../../src/core/types.js'
 
 let counter = 0
@@ -189,5 +190,68 @@ describe('onCardAction askq_multi submit', () => {
     // the pending question; the dispatched content carries the raw label text
     // from value (askq_label absent → the raw actionVal slice).
     expect(messages[0]!.isAskqCardAction).toBe(true)
+  })
+})
+
+describe('onCardAction hint buttons (Go feishu_dispatch.go hint__ branch)', () => {
+  it('decodes a compact hint name and dispatches it as a command with echo', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const clicks: Array<{ hint: string; category: string }> = []
+    p.setHintClickHandler((hint, category) => { clicks.push({ hint, category }) })
+    const replies: string[] = []
+    p.reply = async (_rc, content) => { replies.push(content) }
+    const event: CardActionTriggerEvent = {
+      action: { name: hintButtonName('c', '/new') },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_h1' },
+    }
+    const messages = await dispatched(p, event)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('/new')
+    expect(clicks).toEqual([{ hint: '/new', category: 'hints' }])
+    expect(replies).toEqual(['/new'])
+  })
+
+  it('appends the _arg form value to a with_param hint and reports its category', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const clicks: Array<{ hint: string; category: string }> = []
+    p.setHintClickHandler((hint, category) => { clicks.push({ hint, category }) })
+    const event: CardActionTriggerEvent = {
+      action: {
+        name: hintButtonName('wp', '/tdd'),
+        value: { _arg: 'hint_arg_0' },
+        formValue: { hint_arg_0: '先写失败测试' },
+      },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_h2' },
+    }
+    const messages = await dispatched(p, event)
+    expect(messages[0]!.content).toBe('/tdd 先写失败测试')
+    expect(clicks).toEqual([{ hint: '/tdd', category: 'hints_with_param' }])
+  })
+
+  it('falls back to the first non-empty form value without _arg', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const event: CardActionTriggerEvent = {
+      action: {
+        name: hintButtonName('co', '/done'),
+        formValue: { hint_arg_0: '', other: 'fallback' },
+      },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_h3' },
+    }
+    const messages = await dispatched(p, event)
+    expect(messages[0]!.content).toBe('/done fallback')
+  })
+
+  it('ignores an undecodable hint name', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const event: CardActionTriggerEvent = {
+      action: { name: 'hint__c__!!!not-base64!!!' },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_h4' },
+    }
+    const messages = await dispatched(p, event)
+    expect(messages).toHaveLength(0)
   })
 })

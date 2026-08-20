@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
+import { HintUsage } from '../src/engine/hint-usage.js'
 import { WorktreeMode } from '../src/engine/worktree.js'
 
 /** Structural Cordis slice the adapter consumes; nothing else boots. */
@@ -123,6 +124,39 @@ describe('buildProjectAssembly config wiring', () => {
     }, root)
     expect(engine.dirHistory?.resolveScanPath('smoke-project', 'child-a')).toBe(join(scanRoot, 'child-a'))
     expect(engine.dirHistory?.resolveScanPath('smoke-project', 'child-b')).toBe(join(secondRoot, 'child-b'))
+  })
+
+  it('wires the three global hint groups onto the engine (Go SetHints* in wire.go)', () => {
+    const cfg = {
+      ...baseConfig(),
+      hints: ['/new'],
+      hints_with_param: ['/tdd'],
+      hints_common: ['/done'],
+    }
+    const { engine } = assemble(cfg)
+    expect(engine.hints).toEqual(['/new'])
+    expect(engine.hintsWithParam).toEqual(['/tdd'])
+    expect(engine.hintsCommon).toEqual(['/done'])
+  })
+
+  it('leaves the hint groups empty and hint usage unset without config', () => {
+    const { engine } = assemble(baseConfig())
+    expect(engine.hints).toEqual([])
+    expect(engine.hintsWithParam).toEqual([])
+    expect(engine.hintsCommon).toEqual([])
+    expect(engine.hintUsage).toBeUndefined()
+  })
+
+  it('shares one hint usage across projects at the data root (Go NewHintUsage(cfg.DataDir))', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fb-hints-'))
+    await mkdir(join(root, 'workdir-a'))
+    await mkdir(join(root, 'workdir-b'))
+    const sharedUsage = new HintUsage(root)
+    const a = buildProjectAssembly(stubContext(), { ...baseConfig(), hints: ['/new'] }, { ...project(), workdir: join(root, 'workdir-a') }, root, undefined, undefined, sharedUsage)
+    const b = buildProjectAssembly(stubContext(), baseConfig(), { ...project(), name: 'other-project', workdir: join(root, 'workdir-b') }, root, undefined, undefined, sharedUsage)
+    expect(b.engine.hintUsage).toBe(a.engine.hintUsage)
+    b.engine.hintUsage?.increment('hints', '/new')
+    expect(a.engine.hintUsage?.sortedByFrequency('hints', ['/list', '/new'])).toEqual(['/new', '/list'])
   })
 
   it('wires feishu_workspace onto the engine (#18)', () => {

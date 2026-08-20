@@ -126,7 +126,7 @@ import { readFileSync, statSync, existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { basename, join as joinPath } from 'node:path'
-import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asRecallNotifier, asReplyExporter } from '../core/types.js'
+import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
 import { commandContext, dirApply } from './commands.js'
 import { renderDirCardSafe } from './dir-card.js'
@@ -838,6 +838,14 @@ export class Engine {
   projectState: import('./project-state.js').ProjectStateStore | undefined
   /** Directory switch history (/dir). */
   dirHistory: import('./dir-history.js').DirHistory | undefined
+  /** Compact hint commands shown on status footers and /hint (Go e.hints). */
+  hints: string[] = []
+  /** Hints whose input field value appends to the command (Go e.hintsWithParam). */
+  hintsWithParam: string[] = []
+  /** Always-visible hint commands (Go e.hintsCommon). */
+  hintsCommon: string[] = []
+  /** Click counts ordering the hint buttons; undefined keeps config order (Go e.hintUsage). */
+  hintUsage: import('./hint-usage.js').HintUsage | undefined
   /** Base working directory for /dir reset. */
   baseWorkDir = ''
   /** Comma-separated admin user IDs ('*' = all allowed users; '' = deny). */
@@ -1109,6 +1117,13 @@ export class Engine {
           }
           return { text: state.lastBaseResponse, ok: state.lastBaseResponse !== '' }
         })
+      }
+
+      // Hint-button click counting (Go engine.go SetHintClickHandler): each
+      // click feeds the shared HintUsage so buttons reorder by frequency.
+      const hintClick = asHintClickReporter(p)
+      if (hintClick !== undefined) {
+        hintClick.setHintClickHandler((hintText, category) => { this.hintUsage?.increment(category, hintText) })
       }
 
       // Recall wiring (#30, Go engine.go platform startup): a recalled
@@ -1406,6 +1421,38 @@ export class Engine {
    */
   setDirHistory(history: import('./dir-history.js').DirHistory): void {
     this.dirHistory = history
+  }
+
+  /**
+   * Set the compact hint commands (Go SetHints).
+   * @param hints - Hint command texts.
+   */
+  setHints(hints: string[]): void {
+    this.hints = hints
+  }
+
+  /**
+   * Set the hints that append their input field's value (Go SetHintsWithParam).
+   * @param hints - Hint command texts.
+   */
+  setHintsWithParam(hints: string[]): void {
+    this.hintsWithParam = hints
+  }
+
+  /**
+   * Set the always-visible hint commands (Go SetHintsCommon).
+   * @param hints - Hint command texts.
+   */
+  setHintsCommon(hints: string[]): void {
+    this.hintsCommon = hints
+  }
+
+  /**
+   * Register the shared hint click counts (Go SetHintUsage).
+   * @param usage - Count store shared across engines.
+   */
+  setHintUsage(usage: import('./hint-usage.js').HintUsage): void {
+    this.hintUsage = usage
   }
 
   /**
@@ -4436,6 +4483,9 @@ export class Engine {
       agentSessionID,
       sessionKey,
       editorUrl: this.display.editorUrl,
+      ...(this.hints.length > 0 || this.hintsWithParam.length > 0 || this.hintsCommon.length > 0
+        ? { hints: { hints: this.hints, hintsWithParam: this.hintsWithParam, hintsCommon: this.hintsCommon, usage: this.hintUsage } }
+        : {}),
     })
   }
 

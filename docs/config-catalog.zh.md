@@ -661,6 +661,12 @@ export interface FeishuBridgeConfig {
   streamPreview?: Partial<StreamPreviewCfg>
   /** Provider quota displays appended to the completion footer (Go usage_providers). */
   usageProviders?: UsageProviderConfig[]
+  /** Compact hint commands on status footers and /hint (Go hints). */
+  hints?: string[]
+  /** Hints whose input field value appends to the command (Go hints_with_param). */
+  hints_with_param?: string[]
+  /** Always-visible hint commands (Go hints_common). */
+  hints_common?: string[]
 }
 
 /** One bound project: an agent working dir plus the Feishu bot serving it. */
@@ -1017,7 +1023,7 @@ export interface MonitorRuleConfig {
 }
 ```
 
-来源：[`packages/acp/feishu-bridge/src/index.ts:389`](../packages/acp/feishu-bridge/src/index.ts)
+来源：[`packages/acp/feishu-bridge/src/index.ts:390`](../packages/acp/feishu-bridge/src/index.ts)
 
 <a id="deepseek-aidsh-fs-local"></a>
 

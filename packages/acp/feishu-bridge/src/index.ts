@@ -18,6 +18,7 @@ import { FeishuPlatform } from './feishu/platform.js'
 import { Engine } from './engine/engine.js'
 import { ProjectStateStore } from './engine/project-state.js'
 import { DirHistory } from './engine/dir-history.js'
+import { HintUsage } from './engine/hint-usage.js'
 import { registerSessionCommands } from './engine/commands.js'
 import { CronScheduler, CronStore } from './engine/cron.js'
 import { registerCronCommands } from './engine/cron-commands.js'
@@ -418,6 +419,12 @@ export interface FeishuBridgeConfig {
   streamPreview?: Partial<StreamPreviewCfg>
   /** Provider quota displays appended to the completion footer (Go usage_providers). */
   usageProviders?: UsageProviderConfig[]
+  /** Compact hint commands on status footers and /hint (Go hints). */
+  hints?: string[]
+  /** Hints whose input field value appends to the command (Go hints_with_param). */
+  hints_with_param?: string[]
+  /** Always-visible hint commands (Go hints_common). */
+  hints_common?: string[]
 }
 
 /** One provider quota display entry (Go UsageProviderConfig). */
@@ -605,6 +612,9 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     type: Schema.string().required().description('Provider type: glm | minimax'),
     options: Schema.dict(Schema.any()).description('Provider options (api_key, region)'),
   })).description('Provider quota displays appended to the completion footer (Go usage_providers)'),
+  hints: Schema.array(Schema.string()).description('Compact hint commands shown on status footers and /hint (Go hints)'),
+  hints_with_param: Schema.array(Schema.string()).description('Hints that append their input field value (Go hints_with_param)'),
+  hints_common: Schema.array(Schema.string()).description('Always-visible hint commands (Go hints_common)'),
 })
 
 /**
@@ -624,6 +634,9 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   // One dir history for every project (Go main shares NewDirHistory(cfg.DataDir)
   // across engines so /dir MRU entries land in a single store file).
   const dirHistory = new DirHistory(dataRoot)
+  // One hint click-count store for every project (Go main shares
+  // NewHintUsage(cfg.DataDir) across engines so buttons reorder globally).
+  const hintUsage = new HintUsage(dataRoot)
   // Process-wide cron + relay (Go main: cfg.Cron → scheduler defaults,
   // cfg.Relay → timeout; engines register into both).
   const cronScheduler = new CronScheduler(new CronStore(dataRoot))
@@ -639,7 +652,7 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   /** One live project: its engine plus the adapter that owns its agents. */
   const live: Array<{ engine: Engine; adapter: DshAgentAdapter }> = []
   for (const project of config.projects) {
-    const { engine, adapter } = buildProjectAssembly(ctx, config, project, dataRoot, dirHistory, shared)
+    const { engine, adapter } = buildProjectAssembly(ctx, config, project, dataRoot, dirHistory, shared, hintUsage)
     live.push({ engine, adapter })
     if (project.features?.injectSender === true) engine.setInjectSender(true)
     if (project.features?.quiet === true) {
@@ -773,6 +786,7 @@ function applyProjectStateOverride(adapter: DshAgentAdapter, configured: string,
  * @param dataRoot - Root directory holding per-project state.
  * @param sharedDirHistory - Dir history shared across projects (Go shares one store).
  * @param shared - Process-wide cron scheduler and relay manager the engine registers into.
+ * @param sharedHintUsage - Hint click counts shared across projects (Go shares one store).
  * @returns The engine and the adapter owning its agents.
  */
 export function buildProjectAssembly(
@@ -782,6 +796,7 @@ export function buildProjectAssembly(
   dataRoot: string,
   sharedDirHistory?: DirHistory,
   shared?: SharedProcessServices,
+  sharedHintUsage?: HintUsage,
 ): { engine: Engine; adapter: DshAgentAdapter; platform: FeishuPlatform } {
   const routeNames = Object.keys(config.providers)
   const projectDataDir = join(dataRoot, project.name)
@@ -852,6 +867,12 @@ export function buildProjectAssembly(
   engine.setBaseWorkDir(effectiveWorkDir)
   const dirHistory = sharedDirHistory ?? new DirHistory(dataRoot)
   engine.setDirHistory(dirHistory)
+  // Global hint groups + the shared click-count store (Go wire.go SetHints*,
+  // main.go SetHintUsage).
+  engine.setHints(config.hints ?? [])
+  engine.setHintsWithParam(config.hints_with_param ?? [])
+  engine.setHintsCommon(config.hints_common ?? [])
+  if (sharedHintUsage !== undefined) engine.setHintUsage(sharedHintUsage)
   // Live-scan roots for /dir's bare-name resolution and suggestion list
   // (Go main: dir_scan_paths with ~ expanded, #3).
   if (project.dirScanPaths !== undefined && project.dirScanPaths.length > 0) {

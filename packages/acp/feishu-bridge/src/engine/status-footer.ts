@@ -21,6 +21,8 @@ import type { CardButton, CardElement, CardMarkdown } from '../card.js'
 import type { I18n } from '../i18n/index.js'
 import { Msg } from '../i18n/index.js'
 import type { SyncUsageFetcher, UsageProvider } from './usage.js'
+import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.js'
+import type { HintUsage } from './hint-usage.js'
 
 const execFileP = promisify(execFile)
 
@@ -385,13 +387,14 @@ export function currentModelLabel(agent: Agent | undefined): string {
 // ── status footer builders ─────────────────────────────────────────────────
 
 /** Inputs the footer builders read (a structural slice of the engine). */
-export interface StatusFooterInputs {
-  fields: CompletionUsageFields
+export interface StatusFooterInputs {  fields: CompletionUsageFields
   agent: Agent | undefined
   workspaceDir: string
   agentSessionID: string
   sessionKey: string
   editorUrl: string
+  /** Hint groups + click counts; undefined renders no hint panels. */
+  hints?: { hints: string[]; hintsWithParam: string[]; hintsCommon: string[]; usage?: HintUsage | undefined }
 }
 
 /** channel ID from "platform:channelID:userID" (Go extractChannelID).
@@ -466,8 +469,8 @@ export async function buildStatusFooter(_prefix: string, inputs: StatusFooterInp
  * buildStatusFooterElements). Header suffix carries workdir/branch +
  * duration + token rate; the collapsible panel folds model/ctx/cache/RAM/
  * session ids, titled by the provider usage line when present. Hints panels
- * (Go buildHintsPanelElements) are not ported — global hints config is a
- * recorded non-migration (MIGRATION.md E-group C list).
+ * (Go buildHintsPanelElements) fold into the collapsible and wrap it in
+ * status_footer_form; common hints append as an always-visible form.
  *
  * @param inputs - Footer inputs; the fields, agent, and dirs decide which elements appear.
  * @returns The header suffix plus card elements; both empty when nothing applies.
@@ -540,24 +543,38 @@ export async function buildStatusFooterElements(inputs: StatusFooterInputs): Pro
     return { headerSuffix: '', elements: [] }
   }
 
+  // Hints panels fold into the main collapsible (Go buildHintsPanelElements
+  // merge); the form wrapper lets the form_submit buttons submit (schema 2.0
+  // forms need a submit descendant, so it only appears with hints).
+  const hintPanels = inputs.hints === undefined
+    ? []
+    : buildHintsPanelElements(inputs.hints.hints, inputs.hints.hintsWithParam, inputs.hints.usage)
+  collapsed.push(...hintPanels)
+
   const result = [...visible]
   if (collapsed.length > 0) {
     const collapsibleTitle = usageCollapsibleTitle !== ''
       ? usageCollapsibleTitle
       : (modelLine !== '' ? modelLine : '▸ 详细信息')
-    // No CardForm wrapper: Feishu schema 2.0 rejects a form without a submit
-    // button (card error 300123), and the form only existed for the
-    // unported form_submit hint buttons — collapsible_panel is a direct
-    // body element.
-    result.push({
+    const panel: CardElement = {
       kind: 'collapsiblePanel',
       expanded: false,
       title: collapsibleTitle,
       elements: collapsed,
-    })
+    }
+    result.push(hintPanels.length > 0
+      ? { kind: 'form', name: 'status_footer_form', elements: [panel] }
+      : panel)
   }
   if (collapsed.length === 0 && modelLine !== '') {
     result.push({ kind: 'markdown', content: modelLine })
+  }
+  // Common hints stay always-visible at the card bottom (Go hints_common_form).
+  if (inputs.hints !== undefined) {
+    const commonElements = buildHintsCommonElements(inputs.hints.hintsCommon, inputs.hints.usage)
+    if (commonElements.length > 0) {
+      result.push({ kind: 'form', name: 'hints_common_form', elements: commonElements })
+    }
   }
   return { headerSuffix, elements: result }
 }

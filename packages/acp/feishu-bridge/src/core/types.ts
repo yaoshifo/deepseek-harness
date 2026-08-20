@@ -1317,3 +1317,18 @@ export interface ReplyExporter {
 export function asReplyExporter(p: Platform): ReplyExporter | undefined {
   return withMethod<ReplyExporter>(p, 'setExportHandler')
 }
+
+/** Optional: platform receives hint-button clicks so the engine counts them (Go HintClickReporter). */
+export interface HintClickReporter {
+  setHintClickHandler(handler: (hintText: string, category: 'hints' | 'hints_with_param' | 'hints_common') => void): void
+}
+
+/**
+ * Structural check for the {@link HintClickReporter} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asHintClickReporter(p: Platform): HintClickReporter | undefined {
+  return withMethod<HintClickReporter>(p, 'setHintClickHandler')
+}

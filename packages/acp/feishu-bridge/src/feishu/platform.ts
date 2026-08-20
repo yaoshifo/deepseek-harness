@@ -26,6 +26,7 @@ import { AllowList } from './allowlist.js'
 import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.js'
 import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.js'
 import { isMonitorCommand } from '../core/types.js'
+import { hintCategoryOfCode, parseHintButtonName } from '../engine/hints-panel.js'
 import type { FeishuMention } from './extract.js'
 import type { Card } from '../card.js'
 import { renderCard } from './card.js'
@@ -441,6 +442,8 @@ export class FeishuPlatform implements Platform {
   /** Engine callback for message recalls (im.message.recalled_v1, Go recallHandler, #30). */
   private recallHandler: ((messageID: string) => void) | undefined
 
+  private hintClickHandler: ((hintText: string, category: 'hints' | 'hints_with_param' | 'hints_common') => void) | undefined
+
   private spinnerOnce: Promise<void> | undefined
   private thinkingImgKey = ''
   private executingImgKey = ''
@@ -755,6 +758,8 @@ export class FeishuPlatform implements Platform {
     // Resolve action value from value map, option, or button name
     let actionVal = action.value?.action ?? ''
     if (actionVal === '' && action.option !== '') actionVal = action.option ?? ''
+    let hintButton = false
+    let hintClick: { category: 'hints' | 'hints_with_param' | 'hints_common'; hintText: string } | undefined
     if (actionVal === '') {
       const name = action.name ?? ''
       if (name === 'perm_allow') actionVal = 'perm:allow'
@@ -764,6 +769,15 @@ export class FeishuPlatform implements Platform {
       else if (name.startsWith('askq_') && name !== 'askq_multi_submit_') {
         // Single-select askq button: value carries "askq:qIdx:optIdx"
         actionVal = action.value?.action ?? name
+      } else if (name.startsWith('hint__')) {
+        // Hint form submit (Go feishu_dispatch.go): the callback omits
+        // action.value, so the command is recovered from the button name.
+        const parsed = parseHintButtonName(name)
+        if (parsed !== undefined) {
+          hintButton = true
+          hintClick = { category: hintCategoryOfCode(parsed.category), hintText: parsed.hintText }
+          actionVal = `cmd:${parsed.hintText}`
+        }
       }
     }
     if (actionVal === '') return
@@ -822,9 +836,35 @@ export class FeishuPlatform implements Platform {
     }
 
     // cmd: → command shortcut from a card button; forward as a message
-    // (Go bridge.go: the /learn list's delete buttons use this).
+    // (Go bridge.go: the /learn list's delete buttons use this; hint buttons
+    // append their input field's value and echo the command back).
     if (actionVal.startsWith('cmd:')) {
-      const cmdText = actionVal.slice('cmd:'.length)
+      let cmdText = actionVal.slice('cmd:'.length)
+      const fv = action.formValue
+      if (fv !== undefined) {
+        const argName = action.value?._arg
+        if (argName !== undefined && argName !== '') {
+          const arg = fv[argName]
+          if (typeof arg === 'string' && arg !== '') cmdText += ` ${arg}`
+        } else {
+          for (const v of Object.values(fv)) {
+            if (typeof v === 'string' && v !== '') {
+              cmdText += ` ${v}`
+              break
+            }
+          }
+        }
+      }
+      if (hintButton) {
+        if (hintClick !== undefined && this.hintClickHandler !== undefined) {
+          this.hintClickHandler(hintClick.hintText, hintClick.category)
+        }
+        const echoText = cmdText
+        const echoCtx = { chatID, sessionKey } as FeishuReplyContext
+        void this.reply(echoCtx, echoText).catch((error: unknown) => {
+          console.warn(`${this.tag()}: hint echo failed: ${String(error)}`)
+        })
+      }
       this.dispatch(sessionKey, messageID, userID, chatID, 'group',
         cmdText, '', replyCtx, isSpawned, '')
       return
@@ -962,6 +1002,14 @@ export class FeishuPlatform implements Platform {
    */
   setRecallHandler(handler: (messageID: string) => void): void {
     this.recallHandler = handler
+  }
+
+  /**
+   * Register the engine callback invoked on hint-button clicks (Go SetHintClickHandler).
+   * @param handler - Callback receiving the hint text and its config category.
+   */
+  setHintClickHandler(handler: (hintText: string, category: 'hints' | 'hints_with_param' | 'hints_common') => void): void {
+    this.hintClickHandler = handler
   }
 
   /**

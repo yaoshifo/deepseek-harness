@@ -549,6 +549,54 @@ describe('buildStatusFooterElements', () => {
     expect(headerSuffix).toBe('')
     expect(elements).toEqual([])
   })
+
+  it('folds hint buttons into a form-wrapped collapsible and appends common hints (Go buildHintsPanelElements merge)', async () => {
+    const f = new CompletionUsageFields()
+    f.ctxMsg = 'ctx: +1k=10k'
+    const { elements } = await buildStatusFooterElements({
+      fields: f,
+      agent: footerAgent('m', '', '/w/repo'),
+      workspaceDir: '',
+      agentSessionID: '',
+      sessionKey: '',
+      editorUrl: '',
+      hints: { hints: ['/new'], hintsWithParam: [], hintsCommon: ['/done'] },
+    })
+    // Collapsible rides inside status_footer_form so its form_submit hint
+    // buttons submit (schema 2.0 form needs a submit descendant).
+    const form = elements.find(e => e.kind === 'form') as unknown as {
+      name?: string
+      elements: CardElement[]
+    }
+    expect(form.name).toBe('status_footer_form')
+    const panel = form.elements.find(e => e.kind === 'collapsiblePanel') as unknown as { elements: CardElement[] }
+    const hintActions = panel.elements.find(e => e.kind === 'actions') as {
+      buttons: Array<{ text: string; value: string }>
+    }
+    expect(hintActions.buttons[0]!.text).toBe('/new')
+    expect(hintActions.buttons[0]!.value).toBe('cmd:/new')
+    // Common hints: trailing always-visible form.
+    const commonForm = elements[elements.length - 1] as unknown as { kind: string; name?: string; elements: CardElement[] }
+    expect(commonForm.kind).toBe('form')
+    expect(commonForm.name).toBe('hints_common_form')
+    const commonActions = commonForm.elements[0] as { buttons: Array<{ text: string }> }
+    expect(commonActions.buttons[0]!.text).toBe('/done')
+  })
+
+  it('renders common hints even when the usage state is otherwise empty', async () => {
+    const { elements } = await buildStatusFooterElements({
+      fields: new CompletionUsageFields(),
+      agent: undefined,
+      workspaceDir: '',
+      agentSessionID: '',
+      sessionKey: '',
+      editorUrl: '',
+      hints: { hints: [], hintsWithParam: [], hintsCommon: ['/done'] },
+    })
+    // Go early-returns on a fully empty footer state — hints only ride
+    // footers that already carry content (workdir, usage, duration).
+    expect(elements).toEqual([])
+  })
 })
 
 // ── buildReplyFooter (Go engine_send.go) ───────────────────────────────────

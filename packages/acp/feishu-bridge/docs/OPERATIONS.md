@@ -75,6 +75,7 @@ Linux 部署面用 systemd user unit（§5）。
 | `[projects.platforms.options]` `app_id` / `app_secret` | `config.projects[].feishu.appId` / `.appSecret` | |
 | `[projects.platforms.options]` `thread_isolation` | — | TODO(M8)：thread 隔离的配置键核实 |
 | `dir_scan_paths` | `config.projects[].dirScanPaths` | /dir 子目录扫描建议列表 + 裸名解析（~ 展开；M7-d #3） |
+| `hints` / `hints_with_param` / `hints_common`（顶层） | 插件行 `config.hints` / `.hints_with_param` / `.hints_common` | 完成卡快捷提示按钮 + `/hint` 卡；点击计数持久化 `<dataDir>/hint_usage.json` 并按频率排序（M8 前补充 4） |
 | `[projects.feishu_workspace]` `wiki_space_id` / `folder_token` / `wiki_node_token` / `description` | `config.projects[].feishuWorkspace.wikiSpaceId` / `.folderToken` / `.wikiNodeToken` / `.description` | bot 默认飞书空间，经 setup 钩子注入（M7-d #18）；创建落位优先级 wikiNodeToken > wikiSpaceId > folderToken |
 | `[display]` `tool_messages` / `tool_progress` / `plan_max_len` / `thinking_messages` / `thinking_max_len` | 插件行 `config.display.toolMessages` / `.toolProgress` / `.planMaxLen` / `.thinkingMessages` / `.thinkingMaxLen` | 键名 camelCase；`progress_spinner` 同理（`progressSpinner`） |
 | （隐含）会话存储位置 | `session-persistence-jsonl` 行 `config.root` | 旧 dsh 后端为 `~/.dsh/cc-connect-sessions`，新 daemon 用 `~/.dsh/feishu-bridge-sessions`，root 可对齐实现 resume 兼容（TODO(M8)：cutover 会话兼容验证） |

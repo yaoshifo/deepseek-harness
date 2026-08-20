@@ -175,6 +175,14 @@
     # cron:                                # scheduled-task defaults (/cron)
     #   silent: false                      # suppress the ⏰ start notice
     #   sessionMode: reuse                 # reuse | new_per_run
+    # hints:                               # quick-prompt buttons (Go hints):
+    #   - /new                             #   folded into the ✅ footer panel
+    #   - commit and push
+    # hints_with_param:                    # one row each with an input field
+    #   - /tdd                             #   (value appended to the command)
+    #   - /draw
+    # hints_common:                        # always-visible bottom buttons
+    #   - /done
     # relay:                               # bot-to-bot relay (/bind)
     #   timeoutSecs: 120                   # wait per relay response; 0 disables
     # chatroom:                            # multi-role chatroom tuning ([chatroom])

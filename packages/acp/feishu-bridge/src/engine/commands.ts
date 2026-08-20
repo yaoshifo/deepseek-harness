@@ -28,6 +28,7 @@ import {
   worktreeRepoRoot,
 } from './worktree.js'
 import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName } from './groupname.js'
+import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.js'
 import { renderDirCardSafe } from './dir-card.js'
 import { extractChannelID } from './engine.js'
 
@@ -48,6 +49,7 @@ export const builtinCommands: Array<{ names: string[]; id: string }> = [
   { names: ['fork', 'fk'], id: 'fork' },
   { names: ['done'], id: 'done' },
   { names: ['rename'], id: 'rename' },
+  { names: ['hint'], id: 'hint' },
 ]
 
 /**
@@ -87,6 +89,7 @@ export function registerSessionCommands(e: Engine): () => void {
     ['fork', (p, msg, args) => { void cmdFork(e, p, msg, args); return true }],
     ['done', (p, msg, args) => { cmdDone(e, p, msg, args); return true }],
     ['rename', (p, msg, args) => { void cmdRename(e, p, msg, args); return true }],
+    ['hint', (p, msg) => { void cmdHint(e, p, msg); return true }],
   ])
   e.commandHandlers = handlers
   e.commandResolver = matchPrefix
@@ -356,6 +359,56 @@ export function matchSession(sessions: AgentSessionInfo[], manager: SessionNameL
     if (summary !== '' && summary.toLowerCase().includes(queryLower)) return candidate
   }
   return undefined
+}
+
+/**
+ * /hint: show the configured hint buttons as a card, or a numbered text list
+ * on platforms without cards (Go cmdHint / renderHintsCard).
+ * @param e - The engine whose hint groups to render.
+ * @param p - The platform that delivered the command.
+ * @param msg - The triggering chat message.
+ */
+export async function cmdHint(e: Engine, p: Platform, msg: Message): Promise<void> {
+  if (e.hints.length === 0 && e.hintsWithParam.length === 0 && e.hintsCommon.length === 0) {
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.HintsEmpty))
+    return
+  }
+  const cs = asCardSender(p)
+  if (cs !== undefined) {
+    const common = buildHintsCommonElements(e.hintsCommon, e.hintUsage)
+    const panels = buildHintsPanelElements(e.hints, e.hintsWithParam, e.hintUsage)
+    const card = newCard()
+    if (common.length > 0) card.form('hints_common_form', ...common)
+    if (panels.length > 0) {
+      card.form('hints_form', {
+        kind: 'collapsiblePanel',
+        expanded: false,
+        title: `💡 ${e.i18n.t(Msg.BuiltinCmdHint)}`,
+        elements: panels,
+      })
+    }
+    try {
+      await cs.sendCard(msg.replyCtx, card.build())
+      return
+    } catch (error) {
+      console.warn(`/hint card send failed (${p.name()}): ${String(error)}`)
+    }
+  }
+  const lines: string[] = []
+  let idx = 0
+  for (const h of e.hintsCommon) {
+    idx++
+    lines.push(`  ${idx}. ${h}`)
+  }
+  for (const h of e.hints) {
+    idx++
+    lines.push(`  ${idx}. ${h}`)
+  }
+  for (const h of e.hintsWithParam) {
+    idx++
+    lines.push(`  ${idx}. ${h}`)
+  }
+  await e.reply(p, msg.replyCtx, lines.join('\n'))
 }
 
 /**

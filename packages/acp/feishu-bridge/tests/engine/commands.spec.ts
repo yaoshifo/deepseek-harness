@@ -4,10 +4,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Engine, InteractiveState, stripUserID } from '../../src/engine/engine.js'
+import type { Card } from '../../src/card.js'
 import { DirHistory } from '../../src/engine/dir-history.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.js'
-import { cmdDir, cmdList, cmdNew, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.js'
+import { cmdDir, cmdHint, cmdList, cmdNew, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.js'
 import type { Agent, AgentSessionInfo, Message } from '../../src/core/types.js'
 import {
   createStubAgent,
@@ -113,6 +114,68 @@ describe('matchSession', () => {
 
   it('returns undefined on no match', () => {
     expect(matchSession(sessions, { getSessionName: () => '' }, 'nonexistent')).toBeUndefined()
+  })
+})
+
+describe('/hint (Go cmdHint / renderHintsCard)', () => {
+  it('replies the empty notice when no hints are configured', async () => {
+    const { e, p, dispose } = newEngine()
+    try {
+      await cmdHint(e, p, msg())
+      expect(p.sent).toEqual(['No hints configured'])
+    } finally {
+      dispose()
+    }
+  })
+
+  it('numbers every group in the plain-text fallback (common, hints, with_param)', async () => {
+    const { e, p, dispose } = newEngine()
+    try {
+      e.setHintsCommon(['/done'])
+      e.setHints(['/new'])
+      e.setHintsWithParam(['/tdd'])
+      await cmdHint(e, p, msg())
+      expect(p.sent).toHaveLength(1)
+      expect(p.sent[0]).toContain('1. /done')
+      expect(p.sent[0]).toContain('2. /new')
+      expect(p.sent[0]).toContain('3. /tdd')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('renders the hints card on card platforms', async () => {
+    const p = createStubCardPlatform('feishu')
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      e.setHintsCommon(['/done'])
+      e.setHints(['/new'])
+      e.setHintsWithParam(['/tdd'])
+      await cmdHint(e, p, msg())
+      expect(p.sentCards).toHaveLength(1)
+      const card = p.sentCards[0] as Card
+      const commonForm = card.elements.find(el => el.kind === 'form' && el.name === 'hints_common_form') as
+        | { elements: Array<{ kind: string; buttons?: Array<{ text: string; value: string }> }> }
+        | undefined
+      expect(commonForm).toBeDefined()
+      expect(commonForm!.elements[0]!.buttons![0]!.text).toBe('/done')
+      expect(commonForm!.elements[0]!.buttons![0]!.value).toBe('cmd:/done')
+      const hintsForm = card.elements.find(el => el.kind === 'form' && el.name === 'hints_form') as
+        | { elements: Array<{ kind: string; title?: string; elements: unknown[] }> }
+        | undefined
+      expect(hintsForm).toBeDefined()
+      expect(hintsForm!.elements[0]!.kind).toBe('collapsiblePanel')
+      expect(hintsForm!.elements[0]!.title).toBe('💡 Show configured hint buttons')
+      expect(hintsForm!.elements[0]!.elements.length).toBe(3) // /new row, divider, /tdd row
+    } finally {
+      dispose()
+    }
+  })
+
+  it('matchPrefix resolves hint', () => {
+    expect(matchPrefix('hint')).toBe('hint')
+    expect(matchPrefix('hi')).toBe('hint')
   })
 })
 
