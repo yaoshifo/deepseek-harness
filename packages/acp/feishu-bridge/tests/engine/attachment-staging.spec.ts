@@ -114,7 +114,7 @@ describe('save helpers and pendingDirFor', () => {
 
     expect(pendingDirFor('/work', 'key-1')).toBe(pendingDirFor('/work', 'key-1'))
     expect(pendingDirFor('/work', 'key-1')).not.toBe(pendingDirFor('/work', 'key-2'))
-    expect(pendingDirFor('/work', 'k').startsWith('/work/.cc-connect/pending/')).toBe(true)
+    expect(pendingDirFor('/work', 'k').startsWith('/work/.feishu-bridge/pending/')).toBe(true)
   })
 })
 

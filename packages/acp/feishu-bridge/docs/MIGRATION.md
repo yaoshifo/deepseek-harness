@@ -168,6 +168,8 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 
 **M8 前补充 6：权限前后预览卡生命周期两半边移植（2026-08-20，测试先行，+1 测试，1844 全绿）**：用户真机反馈两笔——① plan 卡（ExitPlanMode 审批）批准后，后续执行的 tool progress 不开新卡、继续 PATCH plan 之前的旧进度卡；② 修复①后批准与新进度卡之间又多出一张重复文本的普通卡。根因：Go 权限处理是两半边——**权限卡发出时**（engine_events.go ~4192-4225）`sp.removeText(plan内容)` + 预览降级才 flush 文本段（`segmentStart` 无条件推进）+ `barrier` + `completeAndDetach` 活卡在用户回答前终结；**解决后**（`pending.Resolved` 之后）flush 剩余段 + 兜底 detach + 新建 sp/cp + 重绑 + 预建执行占位卡 + 重置四项。TS 两半都没移植（只有文本重置）：第一轮只补了解决后半边 → 症状②（flush 把段发了出去）；本轮补齐卡前半边后解决后的 flush 自然为空，症状①②同消。顺带补两处小缺口：`!session.shouldSuppressAutoRender()` 进 reply 预渲染触发条件、`sp.removeText(sentPlanContent)` 进 plan 剥离块。**独立缺口仍未迁**：Go 批准时归档 plan 文件（`pendingPlanArchive`，带时间戳后缀复制）TS 无对应。Agent Note `bug-fix/2026-08-20-feishu-bridge-post-permission-card-restart.md`（中英+sidecar）。测试：`PostPermissionCardRestart`（text → tool_use → write 权限 → resolve → tool_use → result，断言两次 start、旧卡在权限卡后零更新、文本不重发、新卡承接批准后进度）。**真机验证**：plan 卡出现瞬间旧进度卡转绿；批准后直接开新进度卡、无中间普通卡。
 
+**M8 前补充 7：附件暂存目录改名 `.feishu-bridge`（2026-08-20，测试先行，1844 全绿）**：workDir 下的附件暂存根目录由 `.cc-connect` 改名 `.feishu-bridge`（`pending/<hash>` 与 `attachments` 子结构不变，唯一硬编码点 `src/engine/attachments.ts`）——cc-connect 已退役，目录名不再引用旧系统；**有意偏离 Go 保形**（Go 原名 `.cc-connect`）。pending 为瞬态目录（drain/discard 即删）、attachments 每次 Send 后由 agent 清空，无需数据迁移，旧目录残留视为死数据；仍跑旧 Go 进程的 project 写自己的 `.cc-connect`，不受影响。测试同步改前缀断言（attachment-staging / adapter 各 1）。
+
 **M8 Cutover**
 - 记账驴日常使用回归 1-2 周 → 其余 8 个 project 逐个迁配置（用户操作旧系统摘除+重启，父会话加新配置+reload）→ 全量切换后用户停用旧 systemd、归档 cc-connect-bridge 包 → 新包 README + 运维文档（部署/回退/配置映射表/systemd 自启说明）。
 

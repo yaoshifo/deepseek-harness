@@ -280,7 +280,7 @@ describe('DshAgentAdapter', () => {
   it('send stages attachment bytes to disk and references their paths (#8)', async () => {
     const h = createHarness()
     // A real temp cwd: the Go dshSession.Send semantics stage image/file
-    // bytes under <workDir>/.cc-connect/attachments and reference the paths.
+    // bytes under <workDir>/.feishu-bridge/attachments and reference the paths.
     const workDir = mkdtempSync(join(tmpdir(), 'adapter-att-'))
     const a = new DshAgentAdapter(h.ctx, {
       agentName: 'dsh',
@@ -303,7 +303,7 @@ describe('DshAgentAdapter', () => {
     expect(second.content[0]!.text).toMatch(/\(Files saved locally, please read them: .*a\.txt\)/)
     const third = h.agents[0]!.followups[2] as { content: Array<{ type: string; text: string }> }
     expect(third.content[0]!.text).toMatch(/\(Images saved locally, please read them: .*\.png\)/)
-    expect(existsSync(join(workDir, '.cc-connect', 'attachments', 'a.txt'))).toBe(true)
+    expect(existsSync(join(workDir, '.feishu-bridge', 'attachments', 'a.txt'))).toBe(true)
   })
 
   it('cancelTurn cancels the in-flight turn as a user stop', async () => {

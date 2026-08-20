@@ -24,7 +24,7 @@
 | 5 | Inline Plan 去重（两条路径不重复显示） | ✅ | M3 | plan 域 |
 | 6 | ExitPlanMode 前先以 markdown 展示 plan 内容 | ✅ | M3 | plan 域 |
 | 7 | flip minimax 修复（IsActive 纯缓存名比对） | ✂️ | — | §0 裁定；新架构 provider 切换为 dispose + 同 sessionId resume 重建（D1），无旧缓存比对路径 |
-| 8 | 图片发送改用文件路径（不 base64 内嵌） | ✅ | M7-d | 核实结论：Go dsh 后端从不把图片字节放进模型上下文——纯附件消息落盘 `<workDir>/.cc-connect/pending/<hash>/` 暂存、下一条文本消息以路径 bullets 拼进 prompt；带文字消息经 dshSession.Send 落盘 `.cc-connect/attachments` 并附路径注记。TS 已保形接线（stageAttachments/drain/splice/discard + adapter.send 落盘注记） |
+| 8 | 图片发送改用文件路径（不 base64 内嵌） | ✅ | M7-d | 核实结论：Go dsh 后端从不把图片字节放进模型上下文——纯附件消息落盘 `<workDir>/.cc-connect/pending/<hash>/` 暂存（Go 原名，TS 改名 `.feishu-bridge`）、下一条文本消息以路径 bullets 拼进 prompt；带文字消息经 dshSession.Send 落盘 attachments 目录并附路径注记。TS 已接线（stageAttachments/drain/splice/discard + adapter.send 落盘注记）；暂存根目录有意改名 `.feishu-bridge`（cc-connect 退役，M8 前补充 7），子结构与语义不变 |
 | 9 | 全局 Providers：跨项目共享模型配置 + /provider 切换 | ✅ | M7-c | /provider list/switch/current/clear + provider_shortcuts（/strong 等）+ 切换持久化（project state）；add/remove/presets 不迁移——provider = profile 命名路由，运行时不可创建 |
 | 10 | tool_progress：quiet 模式工具进度卡片 | ✅ | M2 | 真机验证（display 转发补齐后） |
 | 11 | reply_footer 默认关闭（ctx/余额只走 ✅ 通知） | ✅ | M7-b | 已核实并接线：Go 语义 = 每条非静默回复尾部追加 `*model · effort · 余额% · workdir*`（engine_send.go buildReplyFooter），默认关。TS 完整移植（`status-footer.ts` buildReplyFooter，能力面探测 getSession→agent）；天花板：dsh adapter 无 UsageReporter/ContextUsageReporter，生产页脚只含 model · effort · workdir（余额段空缺，能力面就绪待 adapter 生长） |

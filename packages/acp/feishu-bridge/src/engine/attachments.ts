@@ -94,25 +94,25 @@ export function saveFilesToDir(dir: string, files: FileAttachment[]): string[] {
 }
 
 /**
- * Save images to workDir/.cc-connect/attachments (Go SaveImagesToDisk).
+ * Save images to workDir/.feishu-bridge/attachments (Go SaveImagesToDisk).
  *
  * @param workDir - Session workspace root.
  * @param images - Image attachments to write.
  * @returns Paths of the images actually written.
  */
 export function saveImagesToDisk(workDir: string, images: ImageAttachment[]): string[] {
-  return saveImagesToDir(join(workDir, '.cc-connect', 'attachments'), images)
+  return saveImagesToDir(join(workDir, '.feishu-bridge', 'attachments'), images)
 }
 
 /**
- * Save files to workDir/.cc-connect/attachments (adapter send path).
+ * Save files to workDir/.feishu-bridge/attachments (adapter send path).
  *
  * @param workDir - Session workspace root.
  * @param files - File attachments to write.
  * @returns Paths of the files actually written.
  */
 export function saveFilesToDisk(workDir: string, files: FileAttachment[]): string[] {
-  return saveFilesToDir(join(workDir, '.cc-connect', 'attachments'), files)
+  return saveFilesToDir(join(workDir, '.feishu-bridge', 'attachments'), files)
 }
 
 /**
@@ -161,7 +161,7 @@ export function spliceStagedAttachments(prompt: string, imagePaths: string[], fi
  * The per-state staging directory for attachments waiting for the user's
  * next text message (Go pendingDirFor): namespaced by a short hash of the
  * interactive key so concurrent chats under the same workDir never collide,
- * and outside .cc-connect/attachments (which the agent clears per Send).
+ * and outside .feishu-bridge/attachments (which the agent clears per Send).
  *
  * @param workspaceDir - Session workspace root.
  * @param interactiveKey - Key of the interactive session waiting for attachments.
@@ -169,5 +169,5 @@ export function spliceStagedAttachments(prompt: string, imagePaths: string[], fi
  */
 export function pendingDirFor(workspaceDir: string, interactiveKey: string): string {
   const sum = createHash('sha256').update(interactiveKey).digest('hex').slice(0, 12)
-  return join(workspaceDir, '.cc-connect', 'pending', sum)
+  return join(workspaceDir, '.feishu-bridge', 'pending', sum)
 }

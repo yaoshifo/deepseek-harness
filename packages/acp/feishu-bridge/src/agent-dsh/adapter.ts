@@ -1072,7 +1072,7 @@ export class DshAgentSession implements AgentSession {
 
   /**
    * Send one user turn: a followup message carrying the prompt text. Image
-   * bytes are staged to workDir/.cc-connect/attachments and referenced by
+   * bytes are staged to workDir/.feishu-bridge/attachments and referenced by
    * path in the prompt text (Go dshSession.Send) — the agent reads them with
    * its own read/read_image tools; the model never receives raw image bytes.
    */
