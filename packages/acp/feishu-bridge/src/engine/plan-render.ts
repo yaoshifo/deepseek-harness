@@ -1314,6 +1314,9 @@ export async function cleanupRenderedReplyHTML(state: InteractiveState | undefin
  * Send the plan markdown card with its export button (Go sendPlanCard): when
  * the platform supports CardSenderWithUpdate, the card is sent with a handle
  * and its base recorded under exportKey so the render status can PATCH it.
+ * The returned promise settles only after the card send completed (or fell
+ * back) — callers must await it before sending the permission card so the
+ * chat order stays plan → approval (Go sends synchronously, same guarantee).
  *
  * @param e - Engine used for the plain-text fallback.
  * @param p - Platform to send the card through.
@@ -1323,6 +1326,7 @@ export async function cleanupRenderedReplyHTML(state: InteractiveState | undefin
  * @param content - The plan markdown card body.
  * @param header - Card header; undefined forces the plain path.
  * @param buttons - Action buttons (e.g. export) appended to the card.
+ * @returns Promise settling after the card (or its fallback) was sent.
  */
 export function sendPlanCard(
   e: Engine,
@@ -1333,7 +1337,7 @@ export function sendPlanCard(
   content: string,
   header: CardHeader | undefined,
   buttons: CardButton[],
-): void {
+): Promise<void> {
   if (state !== undefined && header !== undefined) {
     const cu = asCardSenderWithUpdate(p)
     if (cu !== undefined) {
@@ -1341,7 +1345,7 @@ export function sendPlanCard(
       baseCard.header = header
       baseCard.elements = [{ kind: 'markdown', content }]
       if (buttons.length > 0) baseCard.elements.push({ kind: 'actions', buttons, layout: 'row' })
-      void cu.sendCardWithHandle(replyCtx, baseCard).then((handle) => {
+      return cu.sendCardWithHandle(replyCtx, baseCard).then((handle) => {
         if (state.planCardRender === undefined) state.planCardRender = new Map()
         state.planCardRender.set(exportKey, { handle, baseCard })
         return undefined
@@ -1349,10 +1353,9 @@ export function sendPlanCard(
         console.warn(`plan card send with handle failed, falling back to plain card: ${String(error)}`)
         return sendPlanCardPlain(e, p, replyCtx, content, header, buttons)
       })
-      return
     }
   }
-  void sendPlanCardPlain(e, p, replyCtx, content, header, buttons)
+  return sendPlanCardPlain(e, p, replyCtx, content, header, buttons)
 }
 
 async function sendPlanCardPlain(

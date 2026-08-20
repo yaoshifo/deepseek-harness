@@ -110,6 +110,85 @@ describe('onCardAction act: dispatch', () => {
   })
 })
 
+describe('onCardAction perm: in-place card update (Go feishu_dispatch.go perm branch)', () => {
+  it('builds the resolved card from the button value extras when present', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    const resp = p.onCardAction(cardEvent({
+      action: 'perm:allow',
+      value: {
+        action: 'perm:allow',
+        perm_label: '✅ Allow',
+        perm_color: 'green',
+        perm_body: 'Agent wants to use **Bash**',
+      },
+    }))
+    expect(resp?.card.type).toBe('raw')
+    const header = (resp!.card.data as { header: { title: { content: string }; template: string } }).header
+    expect(header.title.content).toBe('✅ Allow')
+    expect(header.template).toBe('green')
+    const body = (resp!.card.data as { body: { elements: Array<{ tag: string; content?: string }> } }).body
+    expect(body.elements[0]).toEqual({ tag: 'markdown', content: 'Agent wants to use **Bash**' })
+  })
+
+  it('falls back to the fixed labels and permBodyCache when the callback omits action.value', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    p.permBodyCache.set('feishu:oc_1:ou_9', 'cached perm body')
+    const event: CardActionTriggerEvent = {
+      action: { name: 'perm_allow' },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_p1' },
+    }
+    const resp = p.onCardAction(event) as { card: { type: string; data: Record<string, unknown> } } | undefined
+    expect(resp?.card.type).toBe('raw')
+    const header = (resp!.card.data as { header: { title: { content: string }; template: string } }).header
+    expect(header.title.content).toBe('✅ 已允许')
+    expect(header.template).toBe('green')
+    const body = (resp!.card.data as { body: { elements: Array<{ tag: string; content: string }> } }).body
+    expect(body.elements[0]).toEqual({ tag: 'markdown', content: 'cached perm body' })
+    // LoadAndDelete semantics (Go sync.Map LoadAndDelete)
+    expect(p.permBodyCache.has('feishu:oc_1:ou_9')).toBe(false)
+  })
+
+  it('shows the deny reason as the quoted body on a card deny', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    p.permBodyCache.set('feishu:oc_1:ou_9', 'cached perm body')
+    const event: CardActionTriggerEvent = {
+      action: { name: 'perm_deny', formValue: { deny_reason: '  scope too broad  ' } },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_p2' },
+    }
+    const resp = p.onCardAction(event) as { card: { type: string; data: Record<string, unknown> } } | undefined
+    const header = (resp!.card.data as { header: { title: { content: string }; template: string } }).header
+    expect(header.title.content).toBe('❌ 已拒绝')
+    expect(header.template).toBe('red')
+    const body = (resp!.card.data as { body: { elements: Array<{ tag: string; content: string }> } }).body
+    expect(body.elements[0]).toEqual({ tag: 'markdown', content: '> scope too broad' })
+  })
+
+  it('labels allow_all with its fixed fallback', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    const event: CardActionTriggerEvent = {
+      action: { name: 'perm_allow_all' },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_p3' },
+    }
+    const resp = p.onCardAction(event) as { card: { type: string; data: Record<string, unknown> } } | undefined
+    const header = (resp!.card.data as { header: { title: { content: string }; template: string } }).header
+    expect(header.title.content).toBe('✅ 已全部允许')
+    expect(header.template).toBe('green')
+  })
+
+  it('returns no card response for non-perm actions', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    expect(p.onCardAction(cardEvent({ action: 'act:/wt keep' }))).toBeUndefined()
+  })
+})
+
 describe('onCardAction export:/sendreply: (Go feishu_dispatch.go export branches)', () => {
   it('export: sends the cached content as a plan_<stamp>.md attachment', async () => {
     const p = newPlatform({ allowChat: '*' })

@@ -26,6 +26,12 @@ describe('wsEventRegistrations', () => {
     ])
   })
 
+  it('propagates the raw-event callback return value as the handler result', () => {
+    const marker = { card: { type: 'raw', data: { schema: '2.0' } } }
+    const reg = wsEventRegistrations(() => marker)
+    expect(reg['card.action.trigger']?.({})).toBe(marker)
+  })
+
   it('registers no-op handlers for the reaction echo events', () => {
     const seen: Array<[string, unknown]> = []
     const reg = wsEventRegistrations((eventType, data) => { seen.push([eventType, data]) })

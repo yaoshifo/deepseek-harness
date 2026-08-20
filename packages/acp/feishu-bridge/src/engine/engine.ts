@@ -2570,9 +2570,9 @@ export class Engine {
             }
             if (activePlanFilePath !== '' && !existsSync(activePlanFilePath)) activePlanFilePath = ''
             if (activePlanFilePath !== '') {
-              this.sendPlanContent(p, replyCtx, state, activePlanFilePath, planRevisionCount, exportKey)
+              await this.sendPlanContent(p, replyCtx, state, activePlanFilePath, planRevisionCount, exportKey)
             } else {
-              this.sendInlinePlanContent(p, replyCtx, state, sentPlanContent, '', planRevisionCount, exportKey)
+              await this.sendInlinePlanContent(p, replyCtx, state, sentPlanContent, '', planRevisionCount, exportKey)
             }
             if (this.planRenderEnabled && shouldRenderPlan(state, sentPlanContent, planRevisionCount)) {
               launchPlanRender(this, state, sessionKey, sentPlanContent, activePlanFilePath, planRevisionCount, exportKey)
@@ -2619,7 +2619,7 @@ export class Engine {
               : rawInput
             const toolName = event.toolName ?? ''
             const prompt = this.i18n.tf(Msg.PermissionPrompt, toolName, toolInput)
-            void this.sendPermissionPrompt(p, replyCtx, prompt, toolName, toolInput)
+            await this.sendPermissionPrompt(p, replyCtx, prompt, toolName, toolInput)
           }
 
           // Block on the user's response (Go select on pending.Resolved /
@@ -3897,7 +3897,8 @@ export class Engine {
    * Read a plan file, truncate to `display.planMaxLen` if configured, and send
    * as a plan card with an export button (Go sendPlanContent). Returns the
    * (possibly truncated) content string for dedup. When `planMaxLen` is 0, no
-   * truncation is applied.
+   * truncation is applied. The card send is awaited (Go sends synchronously)
+   * so the permission card follows it in the chat.
    * @param p - Platform the card is sent to.
    * @param replyCtx - Platform reply context addressing the chat.
    * @param state - Interactive state recording the plan export content.
@@ -3906,14 +3907,14 @@ export class Engine {
    * @param exportKey - Export-button key the content is stored under.
    * @returns The sent (possibly truncated) content, '' on read failure or empty content.
    */
-  sendPlanContent(
+  async sendPlanContent(
     p: Platform,
     replyCtx: unknown,
     state: InteractiveState | undefined,
     filePath: string,
     _revision: number,
     exportKey: string,
-  ): string {
+  ): Promise<string> {
     let content = ''
     try {
       content = readFileSync(filePath, 'utf8').trim()
@@ -3931,7 +3932,7 @@ export class Engine {
       }
     }
     const name = basename(filePath).replace(/\.md$/, '')
-    sendPlanCard(this, p, replyCtx, state, exportKey, content,
+    await sendPlanCard(this, p, replyCtx, state, exportKey, content,
       { title: `计划·${name}`, color: 'blue' },
       [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }])
     return content
@@ -3940,7 +3941,8 @@ export class Engine {
   /**
    * Send plan content passed inline in the ExitPlanMode tool input as a plan
    * card with an export button (Go sendInlinePlanContent). Returns the
-   * trimmed content for dedup.
+   * trimmed content for dedup. The card send is awaited (Go sends
+   * synchronously) so the permission card follows it in the chat.
    * @param p - Platform the card is sent to.
    * @param replyCtx - Platform reply context addressing the chat.
    * @param state - Interactive state recording the plan export content.
@@ -3950,7 +3952,7 @@ export class Engine {
    * @param exportKey - Export-button key the content is stored under.
    * @returns The sent (possibly truncated) content, '' when empty.
    */
-  sendInlinePlanContent(
+  async sendInlinePlanContent(
     p: Platform,
     replyCtx: unknown,
     state: InteractiveState | undefined,
@@ -3958,7 +3960,7 @@ export class Engine {
     filePath: string,
     _revision: number,
     exportKey: string,
-  ): string {
+  ): Promise<string> {
     let body = content.trim()
     if (body === '') return ''
     const maxLen = this.display.planMaxLen
@@ -3967,7 +3969,7 @@ export class Engine {
       if (runes.length > maxLen) body = `${runes.slice(0, maxLen).join('')}...`
     }
     const title = filePath !== '' ? `计划·${basename(filePath).replace(/\.md$/, '')}` : '计划'
-    sendPlanCard(this, p, replyCtx, state, exportKey, body,
+    await sendPlanCard(this, p, replyCtx, state, exportKey, body,
       { title, color: 'blue' },
       [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }])
     return body

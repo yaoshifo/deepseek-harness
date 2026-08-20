@@ -29,7 +29,8 @@ import { isMonitorCommand } from '../core/types.js'
 import { hintCategoryOfCode, parseHintButtonName } from '../engine/hints-panel.js'
 import type { FeishuMention } from './extract.js'
 import type { Card } from '../card.js'
-import { renderCard } from './card.js'
+import { newCard } from '../card.js'
+import { renderCard, renderCardMap, type FeishuCardMap } from './card.js'
 import {
   buildPreviewCardJSON,
   buildProgressCardJSONFromPayload,
@@ -250,6 +251,16 @@ export interface FeishuReceiveEvent {
 }
 
 /**
+ * card.action.trigger callback response replacing the pressed card in place
+ * (Go callback.CardActionTriggerResponse with a raw card payload). The WS
+ * dispatcher's handler return value travels back to Feishu as the callback
+ * response, which swaps the card the user pressed.
+ */
+export interface CardActionCallbackResponse {
+  card: { type: 'raw'; data: FeishuCardMap }
+}
+
+/**
  * Inbound card.action.trigger payload (structural slice). Fields sit at the
  * ROOT of the parsed WS payload — the same flattened convention as
  * {@link FeishuReceiveEvent} (SDK RequestHandle.parse unwraps the v2
@@ -325,7 +336,7 @@ export interface FeishuPlatformOptions {
   /** Outbound API client; defaults to the node-sdk-backed client. */
   apiClient?: FeishuApiClient
   /** WS bootstrap receiving the raw-event callback; defaults to WSClient. */
-  wsStart?: (onRawEvent: (eventType: string, data: unknown) => void) => Promise<void>
+  wsStart?: (onRawEvent: (eventType: string, data: unknown) => unknown) => Promise<void>
   /** Interactive cards and preview PATCHes (Go enable_feishu_card; default true). */
   useInteractiveCard?: boolean
   /** "legacy" (default), "compact", or "card" (Go progress_style). */
@@ -550,13 +561,19 @@ export class FeishuPlatform implements Platform {
     await wsStart((eventType, data) => {
       if (eventType === 'im.message.receive_v1') {
         this.onMessage(data as FeishuReceiveEvent)
-      } else if (eventType === 'card.action.trigger') {
-        this.onCardAction(data as CardActionTriggerEvent)
-      } else if (eventType === 'im.chat.updated_v1') {
+        return undefined
+      }
+      if (eventType === 'card.action.trigger') {
+        return this.onCardAction(data as CardActionTriggerEvent)
+      }
+      if (eventType === 'im.chat.updated_v1') {
         this.onChatUpdated(data as FeishuChatUpdatedEvent)
-      } else if (eventType === 'im.message.recalled_v1') {
+        return undefined
+      }
+      if (eventType === 'im.message.recalled_v1') {
         this.onMessageRecalled(data as FeishuRecallEvent)
       }
+      return undefined
     })
   }
 
@@ -754,10 +771,14 @@ export class FeishuPlatform implements Platform {
    * perm:/askq:/act: action values and dispatches synthetic messages with the
    * matching flag so the engine routes them: permission responses to
    * handlePendingPermission, act: button presses (the worktree Keep/Remove
-   * card) to the card-action handler.
+   * card) to the card-action handler. The perm: branch additionally returns a
+   * card response so Feishu replaces the pressed card with the resolved
+   * state (Go returns it in the callback response).
    * @param event - Raw card.action.trigger payload.
+   * @returns The callback response replacing the pressed card, undefined when
+   *   the action produces no card update.
    */
-  onCardAction(event: CardActionTriggerEvent): void {
+  onCardAction(event: CardActionTriggerEvent): CardActionCallbackResponse | undefined {
     const action = event.action
     if (action === undefined) return
     let chatID = event.context?.open_chat_id ?? ''
@@ -810,7 +831,9 @@ export class FeishuPlatform implements Platform {
       return
     }
 
-    // perm: → permission response
+    // perm: → permission response with in-place card update (Go
+    // feishu_dispatch.go perm branch): the resolved card rides back as the
+    // callback response so the pressed card swaps to the outcome state.
     if (actionVal.startsWith('perm:')) {
       let content = ''
       if (actionVal === 'perm:allow') content = 'allow'
@@ -820,11 +843,39 @@ export class FeishuPlatform implements Platform {
         const reason = typeof raw === 'string' ? raw : ''
         if (reason.trim() !== '') content = `deny\x00${reason.trim()}`
       } else if (actionVal === 'perm:allow_all') content = 'allow all'
-      else return
+      else return undefined
 
       this.dispatch(sessionKey, messageID, userID, chatID, 'group',
         content, '', replyCtx, isSpawned, '', true, false)
-      return
+
+      let permLabel = action.value?.perm_label ?? ''
+      let permColor = action.value?.perm_color ?? ''
+      let permBody = action.value?.perm_body ?? ''
+      if (permLabel === '') {
+        // form_submit callbacks omit action.value; build the response from
+        // the determined action.
+        if (actionVal === 'perm:allow') {
+          permLabel = '✅ 已允许'
+          permColor = 'green'
+        } else if (actionVal === 'perm:deny') {
+          permLabel = '❌ 已拒绝'
+          permColor = 'red'
+          const raw = action.formValue?.deny_reason
+          const reason = typeof raw === 'string' ? raw.trim() : ''
+          if (reason !== '') permBody = `> ${reason}`
+        } else {
+          permLabel = '✅ 已全部允许'
+          permColor = 'green'
+        }
+      }
+      if (permBody === '') {
+        permBody = this.permBodyCache.get(sessionKey) ?? ''
+        this.permBodyCache.delete(sessionKey)
+      }
+      if (permColor === '') permColor = 'green'
+      const cb = newCard().title(permLabel, permColor)
+      if (permBody !== '') cb.markdown(permBody)
+      return { card: { type: 'raw', data: renderCardMap(cb.build(), sessionKey) } }
     }
 
     // askq: → AskUserQuestion answer
@@ -3005,16 +3056,17 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
 /**
  * Event registrations for the default WS dispatcher (Go
  * feishu_lifecycle.go): the four routed event types pass through to the
- * raw-event callback; the reaction echo events our own add/removeReaction
- * triggers carry explicit no-op handlers — without one the node-sdk warns
- * "no im.message.reaction.* handle" on every reaction.
+ * raw-event callback — whose return value travels back as the callback
+ * response (card.action.trigger card updates); the reaction echo events our
+ * own add/removeReaction triggers carry explicit no-op handlers — without
+ * one the node-sdk warns "no im.message.reaction.* handle" on every reaction.
  * @param onRawEvent - Raw-event sink receiving the event type and payload.
  * @returns Event-type → handler map for EventDispatcher.register.
  */
 export function wsEventRegistrations(
-  onRawEvent: (eventType: string, data: unknown) => void,
-): Record<string, (data: unknown) => void> {
-  const route = (eventType: string) => (data: unknown): void => { onRawEvent(eventType, data) }
+  onRawEvent: (eventType: string, data: unknown) => unknown,
+): Record<string, (data: unknown) => unknown> {
+  const route = (eventType: string) => (data: unknown): unknown => onRawEvent(eventType, data)
   return {
     'im.message.receive_v1': route('im.message.receive_v1'),
     'card.action.trigger': route('card.action.trigger'),

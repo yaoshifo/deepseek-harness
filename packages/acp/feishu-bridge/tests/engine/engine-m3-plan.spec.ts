@@ -17,6 +17,7 @@ import {
   createRecordingAgentSession,
   createStubAgent,
   createStubPlatform,
+  newControllableSession,
   newPendingPermission,
 } from '../stubs/engine-stubs.js'
 import type { Message } from '../../src/core/types.js'
@@ -103,7 +104,7 @@ describe('NonPlanToolKeepsEffectiveMode', () => {
 })
 
 describe('PlanMaxLen', () => {
-  it('NoTruncation: plan under limit sent intact', () => {
+  it('NoTruncation: plan under limit sent intact', async () => {
     const p = createStubPlatform('feishu')
     const e = newTestEngine()
     const tmpDir = mkdtempSync(join(tmpdir(), 'plan-test-'))
@@ -111,7 +112,7 @@ describe('PlanMaxLen', () => {
     const tmpFile = join(tmpDir, 'test-plan.md')
     writeFileSync(tmpFile, planContent, 'utf8')
 
-    const result = e.sendPlanContent(p, 'replyCtx', undefined, tmpFile, 1, '')
+    const result = await e.sendPlanContent(p, 'replyCtx', undefined, tmpFile, 1, '')
     expect(result).not.toBe('')
 
     const sentMsg = p.getSent()[0]!
@@ -120,7 +121,7 @@ describe('PlanMaxLen', () => {
     expect(sentMsg).not.toContain('...')
   })
 
-  it('TruncationWhenExceeded: long plan truncated with ...', () => {
+  it('TruncationWhenExceeded: long plan truncated with ...', async () => {
     const p = createStubPlatform('feishu')
     const e = newTestEngine()
     e.display.planMaxLen = 100
@@ -128,12 +129,12 @@ describe('PlanMaxLen', () => {
     const tmpFile = join(tmpDir, 'long-plan.md')
     writeFileSync(tmpFile, 'x'.repeat(200), 'utf8')
 
-    e.sendPlanContent(p, 'replyCtx', undefined, tmpFile, 1, '')
+    await e.sendPlanContent(p, 'replyCtx', undefined, tmpFile, 1, '')
     const sentMsg = p.getSent()[0]!
     expect(sentMsg).toContain('...')
   })
 
-  it('ZeroNoTruncation: PlanMaxLen=0 sends full content', () => {
+  it('ZeroNoTruncation: PlanMaxLen=0 sends full content', async () => {
     const p = createStubPlatform('feishu')
     const e = newTestEngine()
     e.display.planMaxLen = 0
@@ -141,7 +142,7 @@ describe('PlanMaxLen', () => {
     const tmpFile = join(tmpDir, 'huge-plan.md')
     writeFileSync(tmpFile, 'A'.repeat(50000), 'utf8')
 
-    const result = e.sendPlanContent(p, 'replyCtx', undefined, tmpFile, 1, '')
+    const result = await e.sendPlanContent(p, 'replyCtx', undefined, tmpFile, 1, '')
     expect(result).toHaveLength(50000)
     const sentMsg = p.getSent()[0]!
     expect(sentMsg).not.toContain('...')
@@ -207,5 +208,65 @@ describe('PlanFilePath_OnlyAfterWrite', () => {
       pendingPlanFilePath = ''
     }
     expect(planFilePath).toBe(fp)
+  })
+})
+
+describe('PlanCardBeforePermissionCard', () => {
+  it('the ExitPlanMode permission card is sent only after the plan card send completes', async () => {
+    // Go engine_events.go sends the plan card synchronously before
+    // sendPermissionPrompt, so the chat always shows plan → approval. The TS
+    // port fire-and-forget both sends, letting the small permission card
+    // beat the large plan card to Feishu. The plan-card send must be awaited.
+    const p = createStubPlatform('feishu') as ReturnType<typeof createStubPlatform> & {
+      sendCardWithHandle: (rc: unknown, card: unknown) => Promise<unknown>
+      sendCard: (rc: unknown, card: unknown) => Promise<void>
+    }
+    const order: string[] = []
+    let releasePlan!: () => void
+    const gate = new Promise<void>((resolve) => { releasePlan = resolve })
+    p.sendCardWithHandle = async () => {
+      order.push('plan:start')
+      await gate
+      order.push('plan:done')
+      return 'plan-handle'
+    }
+    p.sendCard = async () => {
+      order.push('perm:start')
+      order.push('perm:done')
+    }
+
+    const engine = new Engine('test', createStubAgent(), [p], '', 'en')
+    const sess = newControllableSession('plan-order')
+    const key = 'feishu:oc_plan:u1'
+    const session = engine.sessions.getOrCreateActive(key)
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = p
+    state.replyCtx = 'ctx'
+    engine.interactiveStates.set(key, state)
+
+    sess.channel.push({
+      type: 'permission_request',
+      requestID: 'req-plan',
+      toolName: 'ExitPlanMode',
+      toolInput: '{"plan": "1. step one"}',
+      toolInputRaw: { plan: '1. step one' },
+      content: '',
+      done: false,
+    })
+    sess.channel.close()
+    const loop = engine.processInteractiveEvents(state, session, engine.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+    await new Promise((r) => { setTimeout(r, 50) })
+
+    // While the plan-card send is still gated, the permission card must not
+    // have started. (Broken behavior: 'perm:start' arrives during the gate.)
+    expect(order).toEqual(['plan:start'])
+
+    releasePlan()
+    await new Promise((r) => { setTimeout(r, 20) })
+    expect(order).toEqual(['plan:start', 'plan:done', 'perm:start', 'perm:done'])
+
+    state.pending?.resolve()
+    await loop
   })
 })
