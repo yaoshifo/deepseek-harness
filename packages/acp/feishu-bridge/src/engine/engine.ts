@@ -4530,6 +4530,14 @@ export class Engine {
       if (state.agentSession !== undefined) {
         void state.agentSession.respondPermission(pending.requestID, { behavior: 'deny', message: denyMessage }).catch(() => {})
       }
+      // An ordinary-tool deny note has no other channel to the model (the
+      // approval seam carries outcomes only, so the wrapped message above is
+      // dropped downstream): steer the raw note so it lands next to the
+      // rejection error. Plan-review denies deliver the note as custom
+      // feedback instead — steering there would duplicate it.
+      if (note !== '' && pending.toolName !== 'ExitPlanMode' && state.agentSession !== undefined) {
+        state.agentSession.steer(note)
+      }
       // Denying ExitPlanMode resets approveAll
       if (pending.toolName === 'ExitPlanMode') {
         state.approveAll = false

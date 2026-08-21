@@ -27,7 +27,7 @@ ExitPlanMode 权限卡只有一个自由文本输入框，但只有拒绝按钮�
 
 ## Consequences
 
-带补充批准计划只在飞书卡片流程生效；纯文本裁决（`allow <文字>`）仍是整词匹配，cc-connect-bridge / Web UI 行为不变。普通工具权限也会把 allow 侧 message 上传到 approval answerer，后者仍会丢弃（与丢弃 deny 理由的既有行为一致）——这是本次改动暴露出的移植缺口，另行上报。若用户在 settle 到 steer 的窗口内停止轮次，steer 由下一轮领取而不是丢失。
+带补充批准计划只在飞书卡片流程生效；纯文本裁决（`allow <文字>`）仍是整词匹配，cc-connect-bridge / Web UI 行为不变。普通工具权限也会把 allow 侧 message 上传到 approval answerer，后者会丢弃——审批 seam 只传 outcome，allow 侧 note 在普通工具上没有消费方（deny 侧后来补上了：[拒绝理由经 steer 送达](2026-08-22-feishu-bridge-deny-reason-steer.md)拒绝现场）。若用户在 settle 到 steer 的窗口内停止轮次，steer 由下一轮领取而不是丢失。
 
 ## Testing
 

@@ -14,7 +14,7 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 | `src/tools/` | `feishu_bridge_subtask / cron / relay / chatroom / lark / send` 工具族（D4：caller agent 路由，免 env） |
 | `skills/` | 修订版技能（`feishu-bridge-` 前缀），经 profile `customSkillDirs` 加载 |
 
-模型可见面：入站消息（含引用链前缀、暂存附件路径注记）进 prompt；出站经卡片系统（进度卡/完成卡/审批卡）；CC_FEISHU_* 工作空间路由经 D3 setup 钩子注入系统提示段。无人值守会话（无人类在群的 agent 派发子任务、chatroom 角色/直聊人设）自动批准工具审批且不进 plan 模式——Go effectiveMode 的 bypassPermissions——AskUserQuestion 与 plan 卡仍照常出现（attended 子任务与 moderator 保留完整审批）。计划审批可以附带一条输入框文字；该补充以用户消息 steer 进运行中的轮次、紧随批准 tool_result，因为评审答案本身必须保持仅 `selected`（任何 `custom` 都会被读作「继续规划」反馈）。
+模型可见面：入站消息（含引用链前缀、暂存附件路径注记）进 prompt；出站经卡片系统（进度卡/完成卡/审批卡）；CC_FEISHU_* 工作空间路由经 D3 setup 钩子注入系统提示段。无人值守会话（无人类在群的 agent 派发子任务、chatroom 角色/直聊人设）自动批准工具审批且不进 plan 模式——Go effectiveMode 的 bypassPermissions——AskUserQuestion 与 plan 卡仍照常出现（attended 子任务与 moderator 保留完整审批）。计划审批可以附带一条输入框文字；该补充以用户消息 steer 进运行中的轮次、紧随批准 tool_result，因为评审答案本身必须保持仅 `selected`（任何 `custom` 都会被读作「继续规划」反馈）。普通工具的拒绝理由同样经该 steer 通道逐字送达——审批 seam 只传 outcome，包装后的原生拒绝文案在下游会被丢弃。
 
 ## Model Experience
 
