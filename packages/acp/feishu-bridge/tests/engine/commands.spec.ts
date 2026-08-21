@@ -8,11 +8,12 @@ import type { Card } from '../../src/card.js'
 import { DirHistory } from '../../src/engine/dir-history.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.js'
-import { cmdDir, cmdHint, cmdList, cmdNew, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.js'
+import { cmdDir, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.js'
 import type { Agent, AgentSessionInfo, Message } from '../../src/core/types.js'
 import {
   createStubAgent,
   createStubCardPlatform,
+  createStubChatroomSpawner,
   createStubPlatform,
   createWorkDirAgent,
   newControllableSession,
@@ -727,6 +728,54 @@ describe('/new status-footer card (M7)', () => {
       expect(contents).not.toContain('500 t/s')
       expect(e.usage.ctxMsg).toBe('')
       expect(e.usage.tokenRateMsg).toBe('')
+    } finally {
+      dispose()
+    }
+  })
+})
+
+describe('/spawn readiness card (Go buildCompletionUsage(0) parity)', () => {
+  /** Wait until at least `count` cards were recorded (the send is async). */
+  async function waitForCards(p: { sentCards: unknown[] }, count = 1, timeoutMs = 2000): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    while (p.sentCards.length < count && Date.now() < deadline) {
+      await new Promise((resolve) => { setTimeout(resolve, 5) })
+    }
+  }
+
+  it('sends a purple readiness card without the parent turn\'s duration/rate, bare and with a task', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      // Parent-chat residue from its last turn must not bleed onto the
+      // child's readiness card (Go zeroes buildCompletionUsage first).
+      e.usage.tokenRateMsg = '500 t/s'
+      e.usage.agentDurationMsg = '18s'
+      const parentMsg = (): Message => msg({
+        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
+      })
+
+      await cmdSpawn(e, p, parentMsg(), [])
+      await waitForCards(p)
+      expect(p.sentCards.length).toBeGreaterThanOrEqual(1)
+      const bare = p.sentCards[0] as { header?: { title: string; color: string }; elements: unknown[] }
+      expect(bare.header?.color).toBe('purple')
+      expect(bare.header?.title).toContain('repo')
+      expect(bare.header?.title).not.toContain('18s')
+      expect(bare.header?.title).not.toContain('500 t/s')
+      expect(JSON.stringify(bare.elements)).not.toContain('500 t/s')
+      expect(e.usage.tokenRateMsg).toBe('')
+      expect(e.usage.agentDurationMsg).toBe('')
+
+      // The with-message path sends the same readiness card before the
+      // first message is injected.
+      e.usage.tokenRateMsg = '42 t/s'
+      await cmdSpawn(e, p, parentMsg(), ['delegated task'])
+      await waitForCards(p, 2)
+      const withTask = p.sentCards[1] as { header?: { title: string; color: string }; elements: unknown[] }
+      expect(withTask.header?.color).toBe('purple')
+      expect(withTask.header?.title).not.toContain('42 t/s')
     } finally {
       dispose()
     }
