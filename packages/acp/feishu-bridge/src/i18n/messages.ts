@@ -489,7 +489,6 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   rate_limited: { en: '⏳ You are sending messages too fast. Please wait a moment.', zh: '⏳ 消息发送过快，请稍后再试。', 'zh-TW': '⏳ 訊息發送過快，請稍後再試。', ja: '⏳ メッセージの送信が速すぎます。しばらくお待ちください。', es: '⏳ Estás enviando mensajes demasiado rápido. Espera un momento.' },
   ps_sent: { en: '✅ P.S. delivered.', zh: '✅ P.S. 已送达。', 'zh-TW': '✅ P.S. 已送達。', ja: '✅ P.S. を送信しました。', es: '✅ P.S. entregado.' },
   silent_reply: { en: '🤫 The model chose not to reply.', zh: '🤫 模型选择不回复。' },
-  ps_send_failed: { en: '❌ Failed to deliver P.S.', zh: '❌ P.S. 发送失败。', 'zh-TW': '❌ P.S. 傳送失敗。', ja: '❌ P.S. の送信に失敗しました。', es: '❌ Error al entregar el P.S.' },
   ps_empty: { en: 'Usage: `/ps <message>`', zh: '用法：`/ps <消息>`', 'zh-TW': '用法：`/ps <訊息>`', ja: '使い方：`/ps <メッセージ>`', es: 'Uso: `/ps <mensaje>`' },
   ps_no_session: { en: 'No task is currently running.', zh: '当前没有正在执行的任务。', 'zh-TW': '目前沒有正在執行的任務。', ja: '現在実行中のタスクはありません。', es: 'No hay ninguna tarea en ejecución.' },
   btw_sent: { en: '✅ Side question delivered.', zh: '✅ 旁路提问已送达。', 'zh-TW': '✅ 旁路提問已送達。', ja: '✅ サイド質問を送信しました。', es: '✅ Pregunta lateral entregada.' },

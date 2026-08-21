@@ -136,7 +136,7 @@ function cmdPs(e: Engine, p: Platform, msg: Message, args: string[]): boolean {
     })
     .catch((error: unknown) => {
       console.error(`ps: send failed: ${String(error)}`)
-      void e.reply(p, msg.replyCtx, e.i18n.t(Msg.PsSendFailed))
+      void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.Error, String(error)))
     })
   return true
 }
