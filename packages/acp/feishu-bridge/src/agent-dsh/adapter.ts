@@ -19,13 +19,15 @@
 import { randomBytes } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import {
   ContinueSession,
   EventChannel,
+  ForkAtSessionPrefix,
   ForkSessionPrefix,
 } from '../core/types.js'
+import { locateForkCut } from './fork-at.js'
 import {
   buildChatroomSystemPrompt,
   subtaskAgentSystemPrompt,
@@ -119,6 +121,20 @@ export interface DshContextLike {
   agents: DshAgentsRegistryLike
   on(event: string, listener: (...args: never[]) => unknown): () => void
   get(name: string): unknown
+}
+
+/**
+ * Structural slice of the `sessionPersistence` service the fork-at path
+ * consumes: read the source log and persist the truncated copy. The profile's
+ * jsonl backend (same on-disk format as Go's session root) satisfies it.
+ */
+export interface DshPersistenceLike {
+  /** Immutable header plus current logical event log (live snapshot for a live session). */
+  inspect(id: unknown): Promise<{ meta: SessionHeader; events: readonly SessionEvent[] }>
+  /** Register a new session's metadata (lazy until the first append). */
+  create(meta: SessionHeader): Promise<void>
+  /** Durably persist a contiguous event batch. */
+  append(id: unknown, events: readonly SessionEvent[]): Promise<void>
 }
 
 /** One named provider route (plan D2: one llm route per provider). */
@@ -591,6 +607,60 @@ export class DshAgentAdapter {
   }
 
   /**
+   * ForkAtPreparer (Go PrepareForkAtSession): copy the source transcript
+   * through the sessionPersistence service, truncated to the turn the quoted
+   * message belongs to, and persist the copy under a fresh id whose header
+   * records childWorkDir — the engine starts the child with the
+   * `__forkat__<newID>` sentinel, which startSession resumes directly. Unlike
+   * Go (raw log-file copy) this needs no filesystem reachability: the service
+   * resolves ids globally, and the source may be live or merely persisted.
+   *
+   * @param origID - the native id of the fork source session.
+   * @param childWorkDir - the directory the copy's header records as cwd.
+   * @param quotedText - the quoted-message text as the platform delivered it.
+   * @param quotedSenderType - 'app' or 'user' sender of the quoted message.
+   * @param quotedTimeMs - update time of the quoted message in unix ms; 0 = unknown.
+   * @returns the fresh native id of the persisted truncated copy.
+   */
+  async prepareForkAtSession(
+    origID: string,
+    childWorkDir: string,
+    quotedText: string,
+    quotedSenderType: string,
+    quotedTimeMs: number,
+  ): Promise<string> {
+    const persistence = this.ctx.get('sessionPersistence') as DshPersistenceLike | undefined
+    if (persistence === undefined) {
+      throw new Error('dsh: sessionPersistence service unavailable for fork-at')
+    }
+    let inspection: { meta: SessionHeader; events: readonly SessionEvent[] }
+    try {
+      inspection = await persistence.inspect(SessionId(origID))
+    } catch (error) {
+      throw new Error(`dsh: fork-at source session "${origID}" not found: ${String(error instanceof Error ? error.message : error)}`)
+    }
+    const keep = locateForkCut(inspection.events, {
+      quotedText,
+      senderType: quotedSenderType,
+      quotedTimeMs,
+    })
+    const newID = freshNativeSessionId()
+    // Go writeForkedLog parity: the copy's header rewrites only id and cwd,
+    // keeping the lineage fields (createdAt, parentSession, …). seedLength is
+    // re-stamped to the kept prefix — the whole copied log is inherited
+    // history, and the boundary lets replay tell it from the child's own
+    // turns (the fork-child-replay-seed-boundary Agent Note's rule).
+    await persistence.create({
+      ...inspection.meta,
+      id: SessionId(newID),
+      ...(childWorkDir !== '' ? { cwd: childWorkDir } : {}),
+      seedLength: keep,
+    })
+    await persistence.append(SessionId(newID), inspection.events.slice(0, keep))
+    return newID
+  }
+
+  /**
    * The engine session key owning a live native agent id, when this adapter
    * owns it. Routes feishu_bridge_subtask tool calls from the caller agent
    * back to its engine session (plan D4 — caller-agent routing, no env).
@@ -857,7 +927,9 @@ export class DshAgentAdapter {
    * (or the ContinueSession sentinel) creates a fresh native session keyed
    * by the engine session key; a concrete id resumes that persisted session;
    * a `__fork__<origID>` sentinel creates a new session seeded with the
-   * parent's completed-turn prefix (Go /fork semantics).
+   * parent's completed-turn prefix (Go /fork semantics); a
+   * `__forkat__<newID>` sentinel resumes the persisted truncated copy a
+   * rollback fork prepared (Go /fork on a quoted message).
    *
    * Chatroom bare sessions (role / direct-role / moderator, flagged through
    * the injected env) carry a setup hook that replaces the whole system
@@ -867,22 +939,33 @@ export class DshAgentAdapter {
    * preamble appended as a normal section instead.
    *
    * @param sessionID - the engine-provided id: '' or the ContinueSession
-   * sentinel creates fresh, a concrete id resumes, and `__fork__<origID>`
-   * seeds from the parent.
+   * sentinel creates fresh, a concrete id resumes, `__fork__<origID>`
+   * seeds from the parent, and `__forkat__<newID>` resumes the truncated
+   * rollback copy.
    * @returns the live session bound to the engine session key.
    */
   async startSession(sessionID: string): Promise<AgentSession> {
     const envKey = this.env.find(e => e.startsWith('CC_SESSION_KEY='))?.slice('CC_SESSION_KEY='.length) ?? ''
     const key = envKey !== '' ? envKey : sessionID
     const isFork = sessionID.startsWith(ForkSessionPrefix)
-    const isResume = !isFork && sessionID !== '' && sessionID !== ContinueSession
+    const isForkAt = sessionID.startsWith(ForkAtSessionPrefix)
+    const isResume = !isFork && !isForkAt && sessionID !== '' && sessionID !== ContinueSession
     const setup = buildSessionSetup(this.env, this.workDir)
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing
 
     let handle: DshAgentHandleLike
-    if (isFork) {
+    if (isForkAt) {
+      // Rollback fork: the truncated copy already exists in persistence under
+      // a fresh id written by prepareForkAtSession; resume it directly (Go
+      // agent/dsh/session.go resume branch — no seed, no cross-id copy).
+      handle = await this.ctx.agents.resume({
+        resumeSessionId: SessionId(sessionID.slice(ForkAtSessionPrefix.length)),
+        agentOptions: this.routeAgentOptions(),
+        ...(setup !== undefined ? { setup } : {}),
+      })
+    } else if (isFork) {
       // Fork: copy the parent's completed turns into a fresh native session
       // (seed), so the child inherits the conversation without appending to
       // the parent's log. Only a LIVE parent can be seeded — Go reads the

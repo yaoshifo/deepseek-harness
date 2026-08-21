@@ -59,6 +59,7 @@ import {
   asWorktreeOrphanResolver,
   ContinueSession,
   ErrNotSupported,
+  ForkAtSessionPrefix,
   ForkSessionPrefix,
   type GroupSpawnOptions,
 } from '../core/types.js'
@@ -1955,7 +1956,14 @@ export class Engine {
         console.error(`session resume failed, falling back to fresh session (${sessionKey}): ${String(error)}`)
         try {
           agentSession = await this.startAgentLocked(agent, '', sessionEnv, modeOverride)
-          void this.reply(p, replyCtx, this.i18n.t(Msg.SessionResumeDegraded))
+          // A rollback fork whose truncated transcript cannot be resumed gets
+          // the fork-degrade wording (Go's __forkat__ guard replies
+          // MsgForkCrossWorkDirDegraded); every other resume keeps the
+          // generic message.
+          const degradeKey = startSessionID.startsWith(ForkAtSessionPrefix)
+            ? Msg.ForkCrossWorkDirDegraded
+            : Msg.SessionResumeDegraded
+          void this.reply(p, replyCtx, this.i18n.t(degradeKey))
         } catch (freshError) {
           console.error(`failed to start interactive session (${sessionKey}): ${String(freshError)}`)
         }

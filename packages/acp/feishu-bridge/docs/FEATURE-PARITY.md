@@ -11,7 +11,7 @@
 | ✂️ | 不迁移（附理由，出处 MIGRATION.md §0） |
 | ❓ | 待核实（证据不足，宁标勿猜） |
 
-统计：✅ 50 · ✂️ 11 · 📋 1（#63）· ❓ 0，合计 61（M5–M7 验收后全量复核更新；#62 为迁移期补充行不计入）。
+统计：✅ 51 · ✂️ 10 · 📋 1（#63）· ❓ 0，合计 61（M5–M7 验收后全量复核更新；#62 为迁移期补充行不计入）。
 
 补充行（不在源 61 项内，迁移期发现的能力缺口）：#62 send CLI 附件投递；#63 后台任务可视化（源 Go `b5d15a0b`，2026-08-18，晚于源表冻结）。
 
@@ -71,7 +71,7 @@
 | 52 | /spawn 子群按群名自动设 Lucide 图标头像 | ✅ | M4 | 真机验证：align-center-vertical 彩色+灰度双 key 上传（2026-08-19） |
 | 53 | Monitor 群监控 → 自主拉群排查 / 中枢分发 | ✅ | M6 | 规则快路 + LLM 分诊 + dispatch/monitor 双模式 + coalesce + no_report + 轮询兜底 + /monitor；真机告警全链路（拉群排查 → /done --reply 回报） |
 | 54 | 进度卡 header 思考/执行 GIF | ✅ | M2 | M4-C 修资源解析路径，真机确认 |
-| 55 | /fork 回滚（引用历史消息 fork 到某个 turn） | ✂️ | — | §0：claudecode-only。注：M4 Wave 1 记录曾将 fork-at 列为 M7 遗留（Go dsh 后端 #60 Phase 2 有 session-log 截断先例）；若 M7 决定以 dsh session log 实现，本行改 📋 |
+| 55 | /fork 回滚（引用历史消息 fork 到某个 turn） | ✅ | M8 | 经 sessionPersistence inspect 定位（10 分钟时间窗 + 文本前缀匹配，Go locateForkCut 保形）+ 截断前缀 create/append 到新 id，`__forkat__` 哨兵 resume；父会话无需 live（优于 #36 的 live-only 天花板，仅此路径）。引用计划卡 `/spawn` 回滚（Go spawnFromQuotedPlan）仍为 commands.ts TODO |
 | 56 | monitor no_report 规则（子群免回报父群） | ✅ | M6 | monitor.ts no_report，随 #53 全量 |
 | 57 | /chatroom --research 并行研究作战室 | ✅ | M5 | research venv provisioning + uv hooks + armResearchManualAskTimeout |
 | 58 | 跨会话消息观察（SendMessage/ListAgents 核查记录） | ✂️ | — | Claude Code 特定机制的升级核查记录；dsh 无此问题（§0） |

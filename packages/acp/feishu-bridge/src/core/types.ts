@@ -622,11 +622,36 @@ export interface ProviderSwitcher {
 
 /**
  * Agent whose fork mechanism requires the source transcript to be reachable
- * from the child's workDir (Go ForkSessionPreparer). The fork-at (rollback)
- * members arrive with the quoted-message rollback milestone.
+ * from the child's workDir (Go ForkSessionPreparer).
  */
 export interface ForkSessionPreparer {
   prepareForkSession(origID: string, parentWorkDir: string, childWorkDir: string): Promise<void>
+}
+
+/**
+ * Agent that can prepare a rollback fork (Go PrepareForkAtSession on
+ * ForkSessionPreparer): copy the source transcript, truncate it to the turn
+ * the quoted message belongs to, and persist the copy under a fresh id the
+ * engine later resumes via the `__forkat__` sentinel. Kept a separate
+ * interface from {@link ForkSessionPreparer} so the subtask cross-workdir
+ * guard's structural check stays a single-method probe.
+ */
+export interface ForkAtPreparer {
+  /**
+   * @param origID - the native id of the fork source session.
+   * @param childWorkDir - the directory the truncated copy's header records as cwd.
+   * @param quotedText - the quoted-message text as the platform delivered it.
+   * @param quotedSenderType - 'app' or 'user' sender of the quoted message.
+   * @param quotedTimeMs - update time of the quoted message in unix ms; 0 = unknown.
+   * @returns the fresh native id of the persisted truncated copy.
+   */
+  prepareForkAtSession(
+    origID: string,
+    childWorkDir: string,
+    quotedText: string,
+    quotedSenderType: string,
+    quotedTimeMs: number,
+  ): Promise<string>
 }
 
 /** Agent exposing a per-workspace project-data dir for orphan cleanup (Go WorktreeOrphanResolver). */
@@ -906,6 +931,16 @@ export function asProviderSwitcher(a: Agent): ProviderSwitcher | undefined {
  */
 export function asForkSessionPreparer(a: Agent): ForkSessionPreparer | undefined {
   return withMethod<ForkSessionPreparer>(a, 'prepareForkSession')
+}
+
+/**
+ * Structural check for the {@link ForkAtPreparer} capability.
+ *
+ * @param a - the agent to probe.
+ * @returns the capability when the agent implements rollback-fork preparation.
+ */
+export function asForkAtPreparer(a: Agent): ForkAtPreparer | undefined {
+  return withMethod<ForkAtPreparer>(a, 'prepareForkAtSession')
 }
 
 /**

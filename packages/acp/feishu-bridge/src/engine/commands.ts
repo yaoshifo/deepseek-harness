@@ -14,7 +14,7 @@ import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Msg } from '../i18n/index.js'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.js'
-import { asCardSender, asChatAvatarStateSwitcher, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.js'
+import { asCardSender, asChatAvatarStateSwitcher, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.js'
 import { newCard } from '../card.js'
 import type { Engine } from './engine.js'
 import type { SessionManager } from './session.js'
@@ -899,7 +899,7 @@ export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string
   }
   const firstMsg = rest.join(' ').trim()
 
-  const { sessions } = commandContext(e, msg)
+  const { agent, sessions } = commandContext(e, msg)
   const origID = sessions.getOrCreateActive(msg.sessionKey).getAgentSessionID()
   if (origID === '' || origID === ContinueSession || origID.startsWith(ForkSessionPrefix) || origID.startsWith(ForkAtSessionPrefix)) {
     void e.reply(p, msg.replyCtx, e.i18n.t(Msg.ForkNoContext))
@@ -912,9 +912,40 @@ export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string
     groupName = `${Array.from(groupName).slice(0, maxGroupNameRunes - 3).join('')}...`
   }
 
-  // TODO(M7): the quoted-message rollback fork (PrepareForkAtSession)
-  // arrives with the fork-at domain.
-  const forkSentinelID = `${ForkSessionPrefix}${origID}`
+  // Rollback fork: when the user replied to a historical message, truncate the
+  // transcript to that turn and resume from the copy (Go cmdFork quoted
+  // branch). Without a quote — or with --worktree, whose path is only known
+  // inside spawnGroupCommon so the truncated copy cannot be placed ahead of
+  // time — this stays a whole-session fork.
+  let forkSentinelID = `${ForkSessionPrefix}${origID}`
+  if (msg.parentMessageID !== '' && (msg.quotedUpdateTimeMs ?? 0) > 0 && !flagWT) {
+    const prep = asForkAtPreparer(agent)
+    if (prep === undefined) {
+      void e.reply(p, msg.replyCtx, e.i18n.t(Msg.ForkAtNotSupported))
+      return
+    }
+    // Resolve the source transcript's workDir from the per-chat override (set
+    // by /dir), then the agent's workDir, then the engine base workDir (Go
+    // parity; the shared agent slot would miss transcripts under an override).
+    let parentWorkDir = e.perChatWorkDir(e.dirOverrideKey(msg.sessionKey))
+    if (parentWorkDir === '') parentWorkDir = e.agentWorkDir()
+    if (parentWorkDir === '') parentWorkDir = e.baseWorkDir
+    let childWorkDir = parentWorkDir
+    if (dirArg !== '') {
+      const resolved = resolveDir(e, dirArg)
+      if (resolved !== undefined) childWorkDir = resolved
+    }
+    try {
+      const newID = await prep.prepareForkAtSession(
+        origID, childWorkDir, msg.quotedText, msg.quotedSenderType ?? '', msg.quotedUpdateTimeMs ?? 0,
+      )
+      forkSentinelID = `${ForkAtSessionPrefix}${newID}`
+    } catch (error) {
+      console.warn(`fork-at: truncate failed (orig=${origID}): ${String(error instanceof Error ? error.message : error)}`)
+      void e.reply(p, msg.replyCtx, e.i18n.t(Msg.ForkAtTruncateFailed))
+      return
+    }
+  }
 
   await spawnGroupCommon(e, p, msg, groupName, firstMsg, {
     dirArg,
