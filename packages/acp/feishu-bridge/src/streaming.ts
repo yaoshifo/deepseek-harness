@@ -280,6 +280,7 @@ export function toolTagForProgress(name: string, maxLen: number): string {
       icon = '❓'
       break
     case 'Skill':
+    case 'skill':
       icon = '📚'
       break
     case 'TodoWrite':
@@ -315,17 +316,18 @@ export function toolTagForProgress(name: string, maxLen: number): string {
  * Parse a Skill tool call input into (skillName, args); empty for non-skill tools.
  *
  * @param toolName - Name of the invoked tool.
- * @param toolInput - Raw tool input: "skill=..." or JSON with skill/args fields.
+ * @param toolInput - Raw tool input: "skill=..." or JSON with skill/args fields
+ * (claudecode/opencode) or a name field (dsh).
  * @returns [skillName, args], or ["", ""] when not a skill call or unparseable.
  */
 export function parseSkillToolUse(toolName: string, toolInput: string): [string, string] {
   if (toolName.toLowerCase() !== 'skill') return ['', '']
   if (toolInput.startsWith('skill=')) return [toolInput.slice('skill='.length).trim(), '']
   try {
-    const m = JSON.parse(toolInput) as { skill?: unknown; args?: unknown }
-    const name = typeof m.skill === 'string' ? m.skill : ''
+    const m = JSON.parse(toolInput) as { skill?: unknown; name?: unknown; args?: unknown }
+    const skill = typeof m.skill === 'string' ? m.skill : typeof m.name === 'string' ? m.name : ''
     const args = typeof m.args === 'string' ? m.args : ''
-    return [name, args]
+    return [skill, args]
   } catch {
     return ['', '']
   }

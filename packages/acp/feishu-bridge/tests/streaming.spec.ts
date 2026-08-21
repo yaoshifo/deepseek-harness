@@ -1071,6 +1071,9 @@ describe('skill progress entries', () => {
       ['claudecode json', 'Skill', '{"skill":"tdd","args":"foo bar"}', 'tdd', 'foo bar'],
       ['claudecode no args', 'Skill', '{"skill":"draw"}', 'draw', ''],
       ['opencode skill=', 'skill', 'skill=tdd', 'tdd', ''],
+      ['dsh json name', 'skill', '{"name":"tdd"}', 'tdd', ''],
+      ['skill field wins over name', 'Skill', '{"skill":"a","name":"b"}', 'a', ''],
+      ['dsh json empty object', 'skill', '{}', '', ''],
       ['non-skill tool', 'Bash', 'ls -la', '', ''],
       ['bad json', 'Skill', 'not json', '', ''],
       ['empty input', 'Skill', '', '', ''],
@@ -1121,6 +1124,13 @@ describe('skill progress entries', () => {
     const out = e.render(false)
     expect(out).toContain('📚 tdd')
     expect(out).not.toContain('📚 Skill')
+  })
+
+  it('render falls back to the 📚 generic tag for unparseable dsh skill calls', () => {
+    const e = newToolProgressEntry('skill', '{"x":1}', 'tid')
+    expect(e.skillName).toBe('')
+    const out = e.render(false)
+    expect(out).toContain("<text_tag color='blue'>📚 skill</text_tag>")
   })
 })
 
