@@ -18,6 +18,8 @@
     "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tool-lsp": "0.1.0-rc.6",
     "@deepseek-ai/dsh-tool-session-query": "0.1.0-rc.6",
+    "typescript": "6.0.3",
+    "typescript-language-server": "5.3.0",
     "@deepseek-ai/dsh-feishu-bridge": "link:@FORK_DIR@/packages/acp/feishu-bridge",
     "@deepseek-ai/dsh-agent": "link:@FORK_DIR@/packages/core/agent",
     "@deepseek-ai/dsh-agent-loop": "link:@FORK_DIR@/packages/core/agent-loop",

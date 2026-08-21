@@ -65,6 +65,73 @@
       config:
         maxIndexBytes: 25600
 
+    # lsp capability: M0 迁移自 cc-connect profile 漏抄的三行补齐（依赖一直
+    # 在本 profile 的 package.json 里，行没抄）。lsp-stdio 一条坏 server 条目
+    # （命令缺失/启动失败）会在加载时 fail-loud 挡掉全部 provider，部署前先
+    # 逐个验命令存在。typescript server 来自本 profile 的 dependencies
+    # （typescript-language-server + typescript，pnpm install 后在
+    # node_modules/.bin）；系统 server 用裸名，须能从 daemon PATH 解析，
+    # launchd 环境 PATH 不可靠时改绝对路径。
+    - id: lsp
+      name: '@deepseek-ai/dsh-lsp'
+
+    - id: lsp-stdio
+      name: '@deepseek-ai/dsh-lsp-stdio'
+      config:
+        servers:
+          typescript:
+            command: /home/hm/.dsh/profiles/feishu-bridge/node_modules/.bin/typescript-language-server
+            # v5 移除了 --tsserver-path：tsserver 从工作区 node_modules 自动解析
+            args:
+              - --stdio
+            extensionToLanguage:
+              .ts: typescript
+              .tsx: typescriptreact
+              .mts: typescript
+              .cts: typescript
+              .js: javascript
+              .jsx: javascriptreact
+              .mjs: javascript
+              .cjs: javascript
+          python:
+            command: pyright-langserver
+            args:
+              - --stdio
+            extensionToLanguage:
+              .py: python
+              .pyi: python
+          go:
+            command: gopls
+            args: []
+            extensionToLanguage:
+              .go: go
+          # jdtls 的 wrapper 默认 JAVA_HOME 指向最新 openjdk，按部署机钉住 LTS；
+          # -data 缺省按 cwd 自动派生缓存目录（单实例跨项目共享，切换项目重建
+          # 索引——lsp-stdio 已知限制，Java 低频可接受）
+          java:
+            command: jdtls
+            env:
+              JAVA_HOME: /opt/homebrew/opt/openjdk@21
+            extensionToLanguage:
+              .java: java
+          rust:
+            command: rust-analyzer
+            args: []
+            extensionToLanguage:
+              .rs: rust
+          clangd:
+            command: clangd
+            args: []
+            extensionToLanguage:
+              .c: c
+              .h: c
+              .cpp: cpp
+              .cc: cpp
+              .hpp: cpp
+
+    - id: tool-lsp
+      name: '@deepseek-ai/dsh-tool-lsp'
+
 - id: llm-pi-ai
   config:
     providers:
