@@ -5019,18 +5019,18 @@ export class Engine {
       workDir = created.path
     }
 
-    // Cross-workdir fork guard: fail fast BEFORE creating the group so the
-    // agent learns to drop -f and retry, leaving no orphan group (Go
-    // SpawnSubtask's PrepareForkSession check).
+    // Fork-source guard: fail fast BEFORE creating the group so the agent
+    // learns to drop -f and retry, leaving no orphan group (Go
+    // SpawnSubtask's PrepareForkSession check). In TS this checks existence
+    // (live registry or persistence), not directory locality — the seed
+    // source resolves globally by id, so cross-directory forks work.
     if (forkOrigID !== '') {
       const prep = asForkSessionPreparer(this.agent)
       if (prep !== undefined) {
-        let parentWorkDir = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
-        if (parentWorkDir === '') parentWorkDir = this.agentWorkDir()
         try {
-          await prep.prepareForkSession(forkOrigID, parentWorkDir, workDir)
+          await prep.prepareForkSession(forkOrigID, '', '')
         } catch (error) {
-          throw new Error(`subtask: --fork 跨目录不可达：${String(error instanceof Error ? error.message : error)}（父群目录 "${parentWorkDir}" ≠ 子任务目录 "${workDir}"；跨目录请去掉 -f 用全新上下文派发）`)
+          throw new Error(`subtask: --fork 父会话不可达：${String(error instanceof Error ? error.message : error)}（fork 源会话既不在内存也不在持久化日志中；请确认父会话存在，或去掉 -f 用全新上下文派发）`)
         }
       }
     }

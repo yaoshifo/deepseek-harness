@@ -405,12 +405,12 @@ describe('SpawnSubtask', () => {
     expect(p.returnedMsg?.isSpawnedGroup).toBe(true)
   })
 
-  it('fails fast on a cross-workdir fork', async () => {
+  it('fails fast when the fork source is unreachable', async () => {
     const parentDir = await mkdtemp(join(tmpdir(), 'fb-fork-parent-'))
     const childDir = await mkdtemp(join(tmpdir(), 'fb-fork-child-'))
 
     const p = createStubSpawnerPlatform()
-    const agent = createForkPreparerAgent(parentDir, new Error('cross-workdir unreachable'))
+    const agent = createForkPreparerAgent(parentDir, new Error('fork source not found'))
     const e = new Engine('test', agent, [p], '', 'en')
 
     const parentKey = 'test:parent-chat:user-1'
@@ -423,8 +423,10 @@ describe('SpawnSubtask', () => {
     expect(p.spawnCount).toBe(0)
     expect(agent.prepared).toBe(true)
     expect(agent.gotOrigID).toBe('real-parent-uuid')
-    expect(agent.gotParentWorkDir).toBe(parentDir)
-    expect(agent.gotChildWorkDir).toBe(childDir)
+    // The guard checks source existence only — TS resolves fork sources
+    // globally by id, so no workDir locality is passed through.
+    expect(agent.gotParentWorkDir).toBe('')
+    expect(agent.gotChildWorkDir).toBe('')
     await e.stop()
   })
 

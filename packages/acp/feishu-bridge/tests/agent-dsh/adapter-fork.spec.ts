@@ -2,16 +2,18 @@
  * /fork wiring (Go agent/dsh/fork.go): a session id carrying the __fork__
  * sentinel creates a NEW native session seeded with the parent's balanced
  * completed-turn prefix — the child inherits the conversation context without
- * appending to the parent's log. A missing/unreadable source degrades to a
- * fresh session (Go behavior), while PrepareForkSession fails fast so the
- * engine's cross-workdir guard fires before the group is created.
+ * appending to the parent's log. The seed source resolves live-first, then
+ * the persisted log (Go reads disk): a merely-persisted parent still forks.
+ * A missing/unreadable source degrades to a fresh session, while
+ * PrepareForkSession fails fast so the engine's guard fires before the group
+ * is created.
  */
 
 import { describe, expect, it } from 'vitest'
 import { ForkSessionPrefix } from '../../src/core/types.js'
-import { DshAgentAdapter, type DshAgentLike } from '../../src/agent-dsh/adapter.js'
+import { DshAgentAdapter, type DshAgentLike, type DshPersistenceLike } from '../../src/agent-dsh/adapter.js'
 import type { DshCreateOptionsLike, DshContextLike } from '../../src/agent-dsh/adapter.js'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 
 interface FakeSession {
   events: SessionEvent[]
@@ -36,7 +38,21 @@ function parentAgent(id: string, events: SessionEvent[]): ParentAgent {
   }
 }
 
-function createHarness(parents: ParentAgent[] = []): {
+/** A persisted source the seed path can fall back to (Go's on-disk transcript). */
+function fakePersistence(stored: Map<string, SessionEvent[]>): DshPersistenceLike {
+  return {
+    inspect: async (id: unknown) => {
+      const events = stored.get(String(id))
+      if (events === undefined) throw new Error(`session "${String(id)}" not found`)
+      const meta = { version: 0, id: String(id), createdAt: 0 } as SessionHeader
+      return { meta, events }
+    },
+    create: async () => {},
+    append: async () => {},
+  }
+}
+
+function createHarness(parents: ParentAgent[] = [], persistence?: DshPersistenceLike): {
   ctx: DshContextLike
   creates: DshCreateOptionsLike[]
   resumes: DshCreateOptionsLike[]
@@ -65,7 +81,7 @@ function createHarness(parents: ParentAgent[] = []): {
       get: (id: unknown) => parents.find(a => a.id === String(id)),
     },
     on: () => () => {},
-    get: () => undefined,
+    get: (name: string) => (name === 'sessionPersistence' ? persistence : undefined),
   }
   return { ctx, creates, resumes }
 }
@@ -127,6 +143,43 @@ describe('fork session seed', () => {
     expect(h.creates[0]!.seed).toBeUndefined()
     expect(session.alive()).toBe(true)
   })
+
+  it('seeds from the persisted log when the parent is not live', async () => {
+    // daemon restarted / idle-reaped: the parent exists only in persistence
+    const events = [...turn(0), ...turn(4), ev('turn/start', 8), ev('user/message', 9)] // open last turn
+    const h = createHarness([], fakePersistence(new Map([['cc-cold', events]])))
+    const adapter = newAdapter(h.ctx)
+
+    await adapter.startSession(`${ForkSessionPrefix}cc-cold`)
+
+    const opts = h.creates[0]!
+    expect((opts.seed ?? []).map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+    expect(String(opts.meta?.parentSession)).toBe('cc-cold')
+    expect(opts.meta?.seedLength).toBe(8)
+  })
+
+  it('prefers the live parent over the stale persisted log', async () => {
+    // write-behind lag: persistence is missing the parent's latest turn
+    const persisted = [...turn(0)]
+    const live = [...turn(0), ...turn(4)]
+    const h = createHarness([parentAgent('cc-parent-3', live)], fakePersistence(new Map([['cc-parent-3', persisted]])))
+    const adapter = newAdapter(h.ctx)
+
+    await adapter.startSession(`${ForkSessionPrefix}cc-parent-3`)
+
+    const opts = h.creates[0]!
+    expect((opts.seed ?? []).map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+  })
+
+  it('degrades to a fresh session when the source is nowhere, persistence present', async () => {
+    const h = createHarness([], fakePersistence(new Map()))
+    const adapter = newAdapter(h.ctx)
+
+    const session = await adapter.startSession(`${ForkSessionPrefix}cc-gone`)
+
+    expect(h.creates[0]!.seed).toBeUndefined()
+    expect(session.alive()).toBe(true)
+  })
 })
 
 describe('prepareForkSession (ForkSessionPreparer)', () => {
@@ -137,8 +190,22 @@ describe('prepareForkSession (ForkSessionPreparer)', () => {
       .resolves.toBeUndefined()
   })
 
+  it('resolves when the fork source is merely persisted', async () => {
+    const h = createHarness([], fakePersistence(new Map([['cc-cold', turn(0)]])))
+    const adapter = newAdapter(h.ctx)
+    await expect(adapter.prepareForkSession('cc-cold', '/workspace/project', '/workspace/child'))
+      .resolves.toBeUndefined()
+  })
+
   it('fails fast when the fork source session is not found', async () => {
     const h = createHarness([])
+    const adapter = newAdapter(h.ctx)
+    await expect(adapter.prepareForkSession('cc-gone', '/workspace/project', '/workspace/child'))
+      .rejects.toThrow('not found')
+  })
+
+  it('fails fast when the source is nowhere, persistence present', async () => {
+    const h = createHarness([], fakePersistence(new Map()))
     const adapter = newAdapter(h.ctx)
     await expect(adapter.prepareForkSession('cc-gone', '/workspace/project', '/workspace/child'))
       .rejects.toThrow('not found')

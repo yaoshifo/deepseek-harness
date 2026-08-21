@@ -52,7 +52,7 @@
 | 33 | Predict Next：回复后预测用户下一步 | ✅ | M7-c | generatePrediction（lightweight/resume 双模式）+ 洞察卡（发送/屏蔽按钮，turnSeq 防过期）+ turn_summary 合并卡片 + /btw 旁路提问 |
 | 34 | /spawn（/sp）：快速创建独立任务群聊 | ✅ | M4 | 真机三轮冒烟通过 |
 | 35 | Pin 每条用户消息到 Pin 面板（spawn 群） | ✅ | M4 | MessagePinAppender；子项 #35a（spawn 群反馈精简）：topnotice 门控已对齐（spawn 群默认关）；表情链裁定不迁（2026-08-21 用户裁定）——platform 的 startTyping/Done/CrossMark 机制已移植但引擎不接调用点（Go engine_events.go:1370/4981/5317、engine_predict.go:81），进度卡/完成卡已承担全部反馈 |
-| 36 | /fork（/fk）：复制上下文的隔离分支群 | ✅ | M4 | completedTurnPrefix seed（原生 agents.create）；天花板：父会话需 live（代码内已注记） |
+| 36 | /fork（/fk）：复制上下文的隔离分支群 | ✅ | M4 | completedTurnPrefix seed（原生 agents.create）；M8 前补充 19 解除 live-only 天花板：seed live 优先、持久化兜底（Go 读盘对齐） |
 | 37 | /done --reply 回灌父会话 + /spawn --dir 换目录 | ✅ | M4 | 真机验证（--dir 修复后） |
 | 38 | 父子群视觉关联（跳转按钮 + /notify + /board 树形） | ✅ | M4 | 跳转卡完成；/notify /board 命令本体 2026-08-20 补齐（M4 时仅 spawn 通知卡在，命令未注册）；im.chat.updated_v1 改名同步属 M4 收尾（D 群补缺进行中） |
 | 39 | /spawn /fork --worktree：子群跑独立 git worktree | ✅ | M4 | act:/wt Keep/Remove 卡回调完成 |
