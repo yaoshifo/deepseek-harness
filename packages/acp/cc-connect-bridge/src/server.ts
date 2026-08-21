@@ -268,7 +268,7 @@ export class CcConnectBridgeServer {
     const commands = this.ctx.get('commands')
     if (commands === undefined) return { dispatched: false }
     const controller = new AbortController()
-    const execution = await commands.execute(rec.handle.agent, params.line, controller.signal)
+    const execution = await commands.execute(rec.handle.agent, params.line, [], controller.signal)
     if (execution === undefined) return { dispatched: false }
     return {
       dispatched: true,
