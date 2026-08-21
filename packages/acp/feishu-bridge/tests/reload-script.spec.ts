@@ -157,4 +157,19 @@ describe.skipIf(process.platform !== 'darwin')('reload.sh', () => {
     expect(result.code).toBe(0)
     expect((await s.kinds()).filter(k => k !== 'list')).toEqual(['unload', 'load'])
   }, 10000)
+
+  it('FB_RELOAD_FROM_DAEMON=1 bypasses the ppid walk (the /reload detached spawn)', async () => {
+    const s = await stage(false, true, 'none')
+    const result = await runScript({ ...s.env, FB_RELOAD_FROM_DAEMON: '1' })
+    expect(result.code).toBe(0)
+    expect((await s.kinds()).filter(k => k !== 'list')).toEqual(['unload', 'load'])
+  }, 10000)
+
+  it('FB_RELOAD_FROM_DAEMON=1 still refuses a daemon-hosted session (DSH_SESSION_JSONL guard stays)', async () => {
+    const s = await stage(false, false)
+    const result = await runScript({ ...s.env, FB_RELOAD_FROM_DAEMON: '1' })
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('inside the com.dsh.feishu-bridge daemon')
+    expect(await s.kinds()).toEqual([])
+  }, 10000)
 })

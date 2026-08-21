@@ -639,6 +639,12 @@ export const ALL_MSG_KEYS = [
   'chatroom_topic_pick_starting',
   'chatroom_topic_pick_watchdog_hint',
   'chatroom_gather_ask_human_blocked',
+  'reload',
+  'reload_usage',
+  'reload_started',
+  'reload_failed',
+  'reload_in_progress',
+  'reload_script_missing',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -1282,4 +1288,10 @@ export const Msg = {
   ChatroomTopicPickStarting: 'chatroom_topic_pick_starting',
   ChatroomTopicPickWatchdogHint: 'chatroom_topic_pick_watchdog_hint',
   ChatroomGatherAskHumanBlocked: 'chatroom_gather_ask_human_blocked',
+  BuiltinCmdReload: 'reload',
+  ReloadUsage: 'reload_usage',
+  ReloadStarted: 'reload_started',
+  ReloadFailed: 'reload_failed',
+  ReloadInProgress: 'reload_in_progress',
+  ReloadScriptMissing: 'reload_script_missing',
 } as const

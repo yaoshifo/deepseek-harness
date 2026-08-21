@@ -9,6 +9,9 @@
 #
 # Refuses to run from inside the daemon (e.g. an agent session it hosts): the
 # restart would kill the script's own process tree before `launchctl load`.
+# The daemon's own /reload command is the sanctioned exception: it spawns this
+# script detached (setsid) with FB_RELOAD_FROM_DAEMON=1, which skips only the
+# ppid-walk guard — the detached process outlives the daemon teardown.
 # If the script still dies between unload and load, a trap re-loads the
 # service so the bot is never left stranded offline. Mid-turn sessions lose
 # the current turn (transcript rolls back to the last complete turn; resend
@@ -50,15 +53,23 @@ case "${DSH_SESSION_JSONL:-}" in
     exit 1
     ;;
 esac
-p=$$
-while [ "$p" -gt 1 ]; do
-  p=$(ps -o ppid= -p "$p" | tr -d ' ') || break
-  case "$p" in ''|*[!0-9]*) break ;; esac
-  if ps -o command= -p "$p" | grep -q "bin\.js --profile $PROFILE"; then
-    echo "error: this shell runs inside the $LABEL daemon (pid $p); restarting it would abort this turn. Run from a plain terminal." >&2
-    exit 1
-  fi
-done
+# FB_RELOAD_FROM_DAEMON=1 skips only the ppid walk: the daemon's own /reload
+# command spawns this script detached (setsid), so the walk would always see
+# the live daemon as an ancestor and false-positive — while the detached spawn
+# is exactly the safe case the walk approximates. The DSH_SESSION_JSONL guard
+# above still refuses daemon-hosted sessions, so an agent cannot use this
+# variable to bypass it.
+if [ "${FB_RELOAD_FROM_DAEMON:-}" != 1 ]; then
+  p=$$
+  while [ "$p" -gt 1 ]; do
+    p=$(ps -o ppid= -p "$p" | tr -d ' ') || break
+    case "$p" in ''|*[!0-9]*) break ;; esac
+    if ps -o command= -p "$p" | grep -q "bin\.js --profile $PROFILE"; then
+      echo "error: this shell runs inside the $LABEL daemon (pid $p); restarting it would abort this turn. Run from a plain terminal." >&2
+      exit 1
+    fi
+  done
+fi
 
 if [ "$BUILD" -eq 1 ]; then
   echo "==> building host-face libs in $FORK_DIR"
