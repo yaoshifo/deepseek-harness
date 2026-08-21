@@ -47,7 +47,7 @@ worktree: on
 
 - `dir` — 子任务的工作目录（默认是本群目录）。
 - `worktree` — **默认就带 `on`。** 它让子任务跑在专属的 git worktree + branch 里，这样并行子群改同一个仓库时永远不会互相覆盖。养成每次 spawn 都带上的习惯。只在隔离没意义时才降到 `off`：只读/调查任务、非 git 目录、或不同的仓库。（省略时是 `auto`——仅当目录是同一个仓库时才隔离——但宁可显式带 `on`，别依赖自动检测。）
-- `fork` — 把你完整的对话上下文复制进子任务（session fork），而不是从全新上下文开始。当子任务**依赖当前讨论**——探索发现、设计决策、用户在本群给的额外要求——**就上 `fork: true`**：它直接把你的上下文交给子群，省得你把这一切重写进 brief，也避免手写 brief 留下的缺口。代价：它复制整个 transcript，更费 token，且需要一个已经开过的对话来 fork。当任务自包含、一行 brief 就说清时，默认的全新上下文就够了。可与 worktree 组合。**跨目录时 fork 不可用**：fork 需要在子任务自己的目录下找到父会话的 transcript，父子目录不同就找不到——spawn 会在建群前直接报错拒绝（不会降级、不会建群）。`dir` 指向不同于本群的目录时，去掉 `fork`，用全新上下文 + 把依赖写进 brief。
+- `fork` — 把你完整的对话上下文复制进子任务（session fork），而不是从全新上下文开始。当子任务**依赖当前讨论**——探索发现、设计决策、用户在本群给的额外要求——**就上 `fork: true`**：它直接把你的上下文交给子群，省得你把这一切重写进 brief，也避免手写 brief 留下的缺口。代价：它复制整个 transcript，更费 token，且需要一个已经开过的对话来 fork。当任务自包含、一行 brief 就说清时，默认的全新上下文就够了。可与 worktree、`dir` 组合——跨目录 fork 可用（上下文从持久化日志复制，与目录无关）。
 - `message` 是子任务描述（成为子 agent 的首条消息和群名）。
 
 调用会返回子群的名称和 session key——**记下这个 key**，跟进（send）时要用的就是它。
@@ -115,7 +115,7 @@ message: "把完整报告内容贴出来"
 
 你（协调者——派发，别自己做 A/B）：
   feishu_bridge_subtask: action=spawn, message=<task A 自包含 brief>, dir=/path/A, worktree=on
-  feishu_bridge_subtask: action=spawn, message=<task B brief>, fork=true   # B 跟本群同目录、且需要我们的讨论（跨目录带 fork 会被拒）
+  feishu_bridge_subtask: action=spawn, message=<task B brief>, fork=true   # B 需要我们的讨论，fork 把上下文带给它
   feishu_bridge_subtask: action=gather                                     # 批量：两者都回报后唤醒一次
   → 回复 "已把 A 和 B 派发到独立群；等它们回报我来审查并合并结果。"
   → 结束这轮。

@@ -178,7 +178,19 @@ export function stripModelAlias(model: string): string {
  * seed contiguous from seq 0.
  */
 function completedTurnPrefix(parent: DshAgentLike): SessionEvent[] {
-  const events = parent.session.events
+  return trimCompletedTurnPrefix(parent.session.events)
+}
+
+/**
+ * Every event up to and including the last `turn/end` of an event log (the
+ * in-flight turn is unbalanced and cannot replay as a child session). Valid
+ * for both live registry views and persisted logs — sequence numbers equal
+ * array indexes in both, so the slice stays a seed contiguous from seq 0.
+ *
+ * @param events - the source session's event log.
+ * @returns the balanced completed-turn prefix; empty when no turn ended yet.
+ */
+function trimCompletedTurnPrefix(events: readonly SessionEvent[]): SessionEvent[] {
   const lastEnd = events.findLast(e => e.type === 'turn/end')
   if (lastEnd === undefined) return []
   return events.slice(0, lastEnd.seq + 1)
@@ -591,19 +603,47 @@ export class DshAgentAdapter {
 
   /**
    * ForkSessionPreparer (Go PrepareForkSession): verify the fork source is
-   * reachable BEFORE the child group exists, so the engine's cross-workdir
-   * guard fails fast. The TS adapter seeds from the LIVE parent agent (Go
-   * reads the persisted log), so reachability = the parent being live.
+   * reachable BEFORE the child group exists, so the engine's guard fails
+   * fast. Reachability = live in the registry OR present in the persisted
+   * log (Go reads disk, so a merely-persisted source forks too; the workDir
+   * arguments stay unused — the persistence service resolves ids globally,
+   * with none of Claude Code's per-cwd projects-dir locality).
    *
    * @param origID - the native id of the fork source session.
-   * @param _parentWorkDir - unused: the TS adapter seeds from the live parent, not the on-disk log.
+   * @param _parentWorkDir - unused: the seed source resolves live-first, then globally by id.
    * @param _childWorkDir - unused: seeding happens at startSession, not here.
    */
-  prepareForkSession(origID: string, _parentWorkDir: string, _childWorkDir: string): Promise<void> {
-    if (this.ctx.agents.get(SessionId(origID)) === undefined) {
-      return Promise.reject(new Error(`dsh: fork source session "${origID}" not found`))
+  async prepareForkSession(origID: string, _parentWorkDir: string, _childWorkDir: string): Promise<void> {
+    if (this.ctx.agents.get(SessionId(origID)) !== undefined) return
+    const seed = await this.persistedForkSeed(origID)
+    if (seed === undefined) {
+      throw new Error(`dsh: fork source session "${origID}" not found`)
     }
-    return Promise.resolve()
+  }
+
+  /**
+   * The completed-turn prefix of a session that lives only in persistence
+   * (daemon restart, idle-reaped parent) — the /fork seed fallback Go gets
+   * for free by reading the on-disk transcript.
+   *
+   * @param origID - the native id of the fork source session.
+   * @returns the persisted seed (possibly empty when the source has no
+   * completed turn), or undefined when the service is absent or the session
+   * is not in persistence.
+   */
+  private async persistedForkSeed(origID: string): Promise<SessionEvent[] | undefined> {
+    const persistence = this.ctx.get('sessionPersistence') as DshPersistenceLike | undefined
+    if (persistence === undefined) return undefined
+    let events: readonly SessionEvent[]
+    try {
+      events = (await persistence.inspect(SessionId(origID))).events
+    } catch {
+      // The backend rejects unknown ids; that rejection is the only error
+      // path (inspect of an existing session resolves), and it means "no
+      // persisted seed".
+      return undefined
+    }
+    return trimCompletedTurnPrefix(events)
   }
 
   /**
@@ -968,20 +1008,28 @@ export class DshAgentAdapter {
     } else if (isFork) {
       // Fork: copy the parent's completed turns into a fresh native session
       // (seed), so the child inherits the conversation without appending to
-      // the parent's log. Only a LIVE parent can be seeded — Go reads the
-      // persisted log instead; when the source is gone this degrades to a
-      // fresh session exactly like Go does.
+      // the parent's log. The seed source resolves live-first — the registry's
+      // in-memory log is fresher than the write-behind persisted one — then
+      // falls back to the persisted log, so a merely-persisted parent (daemon
+      // restart, idle-reaped) still forks (Go reads the transcript file).
+      // When the source is gone this degrades to a fresh session.
       const origID = sessionID.slice(ForkSessionPrefix.length)
       const parent = this.ctx.agents.get(SessionId(origID))
-      const seed = parent !== undefined ? completedTurnPrefix(parent) : []
-      if (seed.length === 0) {
+      let seeded: SessionEvent[] | undefined
+      if (parent !== undefined) {
+        seeded = completedTurnPrefix(parent)
+      } else {
+        seeded = await this.persistedForkSeed(origID)
+      }
+      const seed = seeded ?? []
+      if (seeded === undefined || seed.length === 0) {
         console.warn(`agent-dsh: fork source has no seedable turns, starting fresh (orig=${origID})`)
       }
       handle = await this.ctx.agents.create({
         sessionId: SessionId(freshNativeSessionId()),
         meta: {
           cwd: this.workDir,
-          ...(parent !== undefined ? { parentSession: SessionId(origID), seedLength: seed.length } : {}),
+          ...(seeded !== undefined ? { parentSession: SessionId(origID), seedLength: seed.length } : {}),
         },
         ...(seed.length > 0 ? { seed } : {}),
         agentOptions: this.routeAgentOptions(),
