@@ -860,8 +860,9 @@ export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: strin
     return
   }
   const firstMsg = rest.join(' ').trim()
-  // TODO(M7): the quoted-plan spawn path (rolling the child back to the
-  // plan-producing turn) arrives with the plan-card domain.
+  // Quoted-plan cards are NOT a spawn rollback trigger (user ruling
+  // 2026-08-22): quoting the plan card with /fork already rolls back to the
+  // plan-producing turn, and feishu_bridge_subtask's fork covers delegation.
   const forkSentinelID = ''
 
   let groupName = `${e.name} 副本`
