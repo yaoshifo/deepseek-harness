@@ -39,11 +39,23 @@ dev 上 `git merge master`。用 merge 不用 rebase：保留 dev 已推送的�
 
 **成功标准**：出现 `Merge branch 'master' into dev` 提交。
 
-### 4. 依赖与 typecheck
+### 4. 依赖、再生成与 typecheck
 
-`CI=true pnpm install`（CI=true 必带，见 Gotcha 1）→ `pnpm run typecheck`（会顺带构建部分包，属正常）。
+`CI=true pnpm install`（CI=true 必带，见 Gotcha 1）→ **跑全部五个生成器** → `pnpm run typecheck`（会顺带构建部分包，属正常）。
 
-**成功标准**：两条命令 exit 0。
+生成产物（api-catalog、config-catalog、tool-catalog、图文档、client slot-catalog）的冲突解法是取一侧后靠再生成收敛，fork 本地包会自动回到生成结果：
+
+```sh
+pnpm run gen-cordis-api        # packages/extensions/tool-cordis/src/api-catalog.ts
+pnpm run gen-config-catalog    # docs/config-catalog.md
+pnpm run gen-tool-catalog      # docs/tool-catalog.md
+pnpm run gen-doc-graphs        # docs/ 事件矩阵等 8 个图文档
+pnpm run gen-client-catalog    # cordis-client-runner 的 slot-catalog（易漏，漏了到 doc-sync 才炸）
+```
+
+生成后中文对侧（`.zh.md`）按需回填 fork 段落，再 `pnpm run verify-translation-pairing --write <owner.md>` 重写受影响配对记录——pre-commit 的暂存配对检查用**暂存内容**比对，改完必须重新 `git add`。
+
+**成功标准**：三条命令 exit 0，生成器无一遗漏。
 
 ### 5. 聚焦测试
 
@@ -53,8 +65,8 @@ dev 上 `git merge master`。用 merge 不用 rebase：保留 dev 已推送的�
 
 ### 6. 失败分流
 
-- `EACCES: mkdtemp /home/hm/.dsh-*` 且命令 stderr 带 `landlock-run` → 宿主沙箱环境问题：按仓库 AGENTS.md「Host sandbox failures」用最窄放权**原样重跑**该测试文件，过即证明非回归
-- 其它失败 → 先判归因：该测试在合并前的 dev（`origin/dev`）上是否也红？dev 既有欠账或合并引入的语义冲突，都修在 merge 之后、**单独提交**，commit message 注明归因
+- `EACCES`/`EPERM` 且 stderr 是对 `$HOME` 下路径（`/home/hm/.dsh-*`、`acp-snap-cwd-*` 等）的 mkdtemp → 宿主沙箱环境问题：按仓库 AGENTS.md「Host sandbox failures」用最窄放权**原样重跑**该测试文件，过即证明非回归
+- 其它失败 → 先判归因：该测试在合并前的 dev（`origin/dev`）上是否也红？归因的标准做法是临时 worktree 复跑：`git worktree add /tmp/dev-premerge origin/dev` + `CI=true pnpm install` + `pnpm run build` + 只跑失败的套件，用完 `git worktree remove --force`。dev 既有欠账或合并引入的语义冲突，都修在 merge 之后、**单独提交**，commit message 注明归因
 
 **成功标准**：聚焦测试集全绿，每个修复独立成提交。
 
@@ -70,5 +82,8 @@ dev 上 `git merge master`。用 merge 不用 rebase：保留 dev 已推送的�
 - 症状：merge-tree 零冲突但测试红 → 做法：merge-tree 只保证文本干净；上游重构内部接口造成的语义冲突靠 typecheck + 聚焦测试抓。
 - 症状：产品沙箱测试 `EACCES mkdtemp /home/hm/.dsh-*` → 做法：宿主 landlock 沙箱挡 $HOME 写入。放权原样重跑即绿，别当回归修。
 - 症状：gen-tool-catalog 断言实际比预期多出 fork 工具 → 做法：fork 加工具包要同步三处：`scripts/gen-tool-catalog.ts` 的 TOOL_PACKAGES、重新生成 `docs/tool-catalog.md`、`packages/core/tools/tests/gen-tool-catalog.spec.ts` 的硬编码清单（`node --import tsx/esm scripts/gen-tool-catalog.ts --check` 验证）。
+- 症状：上游新增门禁暴露 fork 既有欠账（如 zh 链接 locale 规则、fixture 守卫）→ 做法：归因确认非合并引入后当独立提交修掉；注意门禁只认固定模式（语言切换行必须是 `[English](…) | 中文` 顺序）。
+- 症状：refresh（`DSH_SNAPSHOT=refresh`）重写的期望文件在下次 replay 失败 → 做法：refresh 是「先写后比」，会把被测应用的**瞬时**行为烤进 fixture（实例：initialize 竞态让 `promptCapabilities.image` 一次性翻成 false）。refresh 产物一律 diff 审查后才可提交，initialize 期取值的变化未经普通 replay 确认视为可疑；机械噪音（比较器会归一化的裸 UUID）直接回滚即可。详见 Agent Note `implemented/process/2026-08-21-snapshot-refresh-transient-capability.md`。
+- 症状：批量回滚 refresh 噪音文件时把手工修复一起冲掉 → 做法：回滚前先提交已完成的未提交修复，或按显式文件清单回滚，不要按 `git diff --name-only` 全量循环。
 - 规则：修复一律新提交，不 amend、不混入 merge commit（仓库规约：优先新提交）。
 - 规则：push 是外部可见操作，确认后再推；`origin/master` 每次一并推。
