@@ -467,7 +467,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   command_timeout: { en: '⏰ Command timed out (60s): `%s`', zh: '⏰ 命令超时 (60秒): `%s`', 'zh-TW': '⏰ 命令逾時 (60秒): `%s`', ja: '⏰ コマンドがタイムアウトしました (60秒): `%s`', es: '⏰ Comando agotado (60s): `%s`' },
   stall_retry: { en: '⚠️ Agent stalled (no response for %v), retrying (%d/%d)...', zh: '⚠️ Agent 无响应超时（%v），正在重试（%d/%d）...' },
   stall_timeout: { en: '💀 Agent stopped responding (no output for %v, %d retries exhausted). Session terminated — use /new to start a fresh session.', zh: '💀 Agent 长时间无响应（%v 无输出，已重试 %d 次均失败）。会话已终止，请 /new 开始新会话。' },
-  watchdog_reset: { en: '⚠️ Session was reset because it stopped responding. Please resend your last message.', zh: '⚠️ 当前会话因长时间无响应已被自动重置，请重新发送上一条消息。' },
+  watchdog_reset: { en: '⚠️ Session was reset because this turn exceeded the maximum turn duration. Please resend your last message.', zh: '⚠️ 当前会话因本轮执行超出时长上限已被自动重置，请重新发送上一条消息。' },
   delete_active_denied: { en: '❌ Cannot delete the currently active session. Switch to another session first.', zh: '❌ 不能删除当前活跃会话，请先切换到其他会话。', 'zh-TW': '❌ 不能刪除當前活躍會話，請先切換到其他會話。', ja: '❌ 現在アクティブなセッションは削除できません。先に別のセッションに切り替えてください。', es: '❌ No se puede eliminar la sesión activa. Cambie a otra sesión primero.' },
   delete_not_supported: { en: '❌ This agent does not support session deletion.', zh: '❌ 当前 Agent 不支持删除会话。', 'zh-TW': '❌ 當前 Agent 不支持刪除會話。', ja: '❌ このエージェントはセッション削除をサポートしていません。', es: '❌ Este agente no admite la eliminación de sesiones.' },
   delete_mode_title: { en: 'Delete Sessions', zh: '删除会话', 'zh-TW': '刪除會話', ja: 'セッション削除', es: 'Eliminar sesiones' },

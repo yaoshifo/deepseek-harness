@@ -1443,7 +1443,7 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     } finally {
       clearInterval(trickle)
     }
-    expect(p.getSent().some(s => s.includes('stopped responding')), `sent=${JSON.stringify(p.getSent())}`).toBe(true)
+    expect(p.getSent().some(s => s.includes('exceeded the maximum turn duration')), `sent=${JSON.stringify(p.getSent())}`).toBe(true)
     expect(e.interactiveStates.has(key)).toBe(false)
   })
 
@@ -1475,6 +1475,6 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     clearInterval(trickle)
     sess.channel.push({ type: 'result', content: 'done', done: true } as never)
     await done
-    expect(p.getSent().some(s => s.includes('stopped responding'))).toBe(false)
+    expect(p.getSent().some(s => s.includes('exceeded the maximum turn duration'))).toBe(false)
   })
 })
