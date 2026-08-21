@@ -478,6 +478,7 @@ const SCENARIOS: Scenario[] = [
     name: 'claude-memory',
     hasModelTurn: true,
     recorded: false,
+    overridden: true,
     pinsHeader: true,
     headerClass: 'claude-memory',
     configPath: CLAUDE_MEMORY_CONFIG,

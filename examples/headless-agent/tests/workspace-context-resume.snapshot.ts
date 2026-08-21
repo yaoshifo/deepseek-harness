@@ -8,12 +8,7 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
-import {
-  normalizeSessionLog,
-  normalizeSessionSnapshot,
-  scrubRequestHeaders,
-  type NormalizeContext,
-} from '@deepseek-ai/dsh-acp-snapshot'
+import { normalizeSessionSnapshot, type NormalizeContext } from '@deepseek-ai/dsh-acp-snapshot'
 import { LOADER_SMOKE_TEST_TIMEOUT_MS, runLoaderSmoke } from '@deepseek-ai/dsh-loader-smoke'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, {
@@ -274,7 +269,7 @@ describe('agent-instructions resume snapshot', () => {
       },
       inspect: async () => {
         const normalization: NormalizeContext = { sessionIds: [sessionId], cwd }
-        const session = scrubRequestHeaders(normalizeSessionLog(await readFile(sessionPath, 'utf8'), normalization))
+        const session = normalizeSessionSnapshot(await readFile(sessionPath, 'utf8'), normalization)
         if (refreshing) {
           await mkdir(dirname(modeFlipExpected), { recursive: true })
           await writeFile(modeFlipExpected, session)
@@ -337,7 +332,7 @@ describe('agent-instructions resume snapshot', () => {
       },
       inspect: async () => {
         const normalization: NormalizeContext = { sessionIds: [sessionId], cwd }
-        const session = scrubRequestHeaders(normalizeSessionLog(await readFile(sessionPath, 'utf8'), normalization))
+        const session = normalizeSessionSnapshot(await readFile(sessionPath, 'utf8'), normalization)
         if (refreshing) {
           await mkdir(dirname(promotionExpected), { recursive: true })
           await writeFile(promotionExpected, session)
