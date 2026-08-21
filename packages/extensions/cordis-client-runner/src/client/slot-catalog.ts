@@ -878,7 +878,6 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     ],
     ownerPropsReferences: [
       'ImageAttachmentRef',
-      'Message',
     ],
     standardProps: [
       'useSessions: SnapshotSelectorHook<SessionListState>',

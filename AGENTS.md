@@ -38,7 +38,7 @@ packages/    @deepseek-ai/dsh-<pkg> workspaces at packages/<group>/<pkg>/
   identity/    anonymous identity
   settings/    user-settings capability + file provider
   credentials/ credential/authorization capabilities + env/.env provider
-  acp/         automation-only Agent Client Protocol server + cc-connect/feishu bridges (fork-local, see their READMEs)
+  acp/         automation-only Agent Client Protocol server + fork-local cc-connect/feishu bridges
   interaction/ approval/interaction capabilities, permission, commands, ask-user
   boot/        shared app-bin glue
   sdk/         JSON-RPC protocol, server, and TypeScript client
@@ -71,7 +71,7 @@ pnpm run typecheck
 pnpm run lint
 pnpm run duplication    # cross-file TypeScript clone detection
 pnpm run build          # tsc emits lib/types, tsdown bundles runtime
-packages/acp/{cc-connect-bridge,feishu-bridge}/reload.sh  # make bridge changes live: host build; cc-connect recycles idle dsh sessions (no cc-connect restart), feishu-bridge restarts its launchd daemon (WS-ready gated)
+packages/acp/{cc-connect-bridge,feishu-bridge}/reload.sh  # make bridge changes live: host build; cc-connect recycles idle dsh sessions (no restart), feishu-bridge restarts launchd (WS-ready gated)
 pnpm run hygiene        # knip + publint + workspace constraints + NodeNext consumer check
 pnpm run check:windows-wine  # ONLY for known Windows failures (needs wine); CI owns this signal
 pnpm run doc-sync       # all documentation gates; leaf list in scripts/run-gates.ts
