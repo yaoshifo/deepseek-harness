@@ -240,6 +240,7 @@
     { "path": "./packages/test-support/agent-loop-testkit" },
     { "path": "./packages/acp/acp" },
     { "path": "./packages/acp/cc-connect-bridge" },
+    { "path": "./packages/acp/feishu-bridge" },
     { "path": "./packages/examples/acp-demo" },
     { "path": "./packages/bundle/base" },
     { "path": "./packages/bundle/headless" },

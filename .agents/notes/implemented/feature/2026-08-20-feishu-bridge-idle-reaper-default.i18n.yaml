@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-20-feishu-bridge-idle-reaper-default.md
+2026-08-20-feishu-bridge-idle-reaper-default.md: 69fd7cf91965c74f775278baccfce8c423423e43
+2026-08-20-feishu-bridge-idle-reaper-default.zh.md: 3cf8c277eea459e51ac3ce17f1be6f865774bcd9

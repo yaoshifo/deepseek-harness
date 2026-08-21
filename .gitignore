@@ -1,5 +1,8 @@
 CLAUDE.local.md
 .env
+*.pem
+credentials.json
+.cc-connect/
 node_modules/
 lib/
 *.tsbuildinfo

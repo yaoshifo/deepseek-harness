@@ -1,0 +1,352 @@
+# feishu-bridge profile patch layer (hot-reloaded by Cordis HMR — editing
+# this file while the runtime is up applies transactionally, no restart).
+#
+# This profile hosts the dsh-feishu-bridge daemon: the plugin that replaces
+# the retired cc-connect Go binary (see packages/acp/feishu-bridge/docs/
+# MIGRATION.md). Rows mirror the production cc-connect profile where the
+# behavior is agent-runtime-generic; feishu bot/engine config lives in the
+# feishu-bridge plugin row instead of this file.
+
+- id: agent-instructions
+  config:
+    # Replaces the dsh-base row wholesale (patch config is key-replacement,
+    # not a deep merge), so maxBytes must be repeated.
+    maxBytes: 65536
+    instructionFileCandidates:
+      - CLAUDE.md
+    localInstructionFileCandidates:
+      - CLAUDE.local.md
+
+- id: skill-filesystem
+  config:
+    customSkillDirs:
+      # absolute path required: entries go through path.resolve, which does
+      # NOT expand "~"
+      - /home/hm/.claude/skills
+
+- id: sandbox-policy
+  config:
+    mode: danger-full-access
+
+# permission-presets need an explicit defaultPreset: with sandbox
+# mode=danger-full-access, composed defaults match no preset → dsh boot
+# crashes exit 1 without this.
+- id: permission
+  config:
+    defaultPreset: danger-full-access
+
+# plan:policy references ask_user_question, which dsh-base never mounts
+# (only CLI presets do) — mount it here; questions ride the bridge's
+# user-questions provider to the Feishu card.
+- insert:
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+
+# Built-in web_search resolves DEEPSEEK_API_KEY which this deployment never
+# configures — web-search-prime MCP is the working search path.
+- id: tool-web
+  disabled: true
+
+# str_replace_editor duplicates read/edit/write; all user-side guidance
+# references the latter.
+- id: tool-str-replace-editor
+  disabled: true
+
+- id: system-prompt
+  config:
+    includeHarnessIdentity: false
+    persona: ''
+
+- insert:
+    # Claude Code memory sharing: same ~/.claude/projects/<slug>/memory/
+    # directory as Claude Code.
+    - id: claude-memory
+      name: '@deepseek-ai/dsh-tool-claude-memory'
+      config:
+        maxIndexBytes: 25600
+
+    # lsp capability: M0 迁移自 cc-connect profile 漏抄的三行补齐（依赖一直
+    # 在本 profile 的 package.json 里，行没抄）。lsp-stdio 一条坏 server 条目
+    # （命令缺失/启动失败）会在加载时 fail-loud 挡掉全部 provider，部署前先
+    # 逐个验命令存在。typescript server 来自本 profile 的 dependencies
+    # （typescript-language-server + typescript，pnpm install 后在
+    # node_modules/.bin）；系统 server 用裸名，须能从 daemon PATH 解析，
+    # launchd 环境 PATH 不可靠时改绝对路径。
+    - id: lsp
+      name: '@deepseek-ai/dsh-lsp'
+
+    - id: lsp-stdio
+      name: '@deepseek-ai/dsh-lsp-stdio'
+      config:
+        servers:
+          typescript:
+            command: /home/hm/.dsh/profiles/feishu-bridge/node_modules/.bin/typescript-language-server
+            # v5 移除了 --tsserver-path：tsserver 从工作区 node_modules 自动解析
+            args:
+              - --stdio
+            extensionToLanguage:
+              .ts: typescript
+              .tsx: typescriptreact
+              .mts: typescript
+              .cts: typescript
+              .js: javascript
+              .jsx: javascriptreact
+              .mjs: javascript
+              .cjs: javascript
+          python:
+            command: pyright-langserver
+            args:
+              - --stdio
+            extensionToLanguage:
+              .py: python
+              .pyi: python
+          go:
+            command: gopls
+            args: []
+            extensionToLanguage:
+              .go: go
+          # jdtls 的 wrapper 默认 JAVA_HOME 指向最新 openjdk，按部署机钉住 LTS；
+          # -data 缺省按 cwd 自动派生缓存目录（单实例跨项目共享，切换项目重建
+          # 索引——lsp-stdio 已知限制，Java 低频可接受）
+          java:
+            command: jdtls
+            env:
+              JAVA_HOME: /opt/homebrew/opt/openjdk@21
+            extensionToLanguage:
+              .java: java
+          rust:
+            command: rust-analyzer
+            args: []
+            extensionToLanguage:
+              .rs: rust
+          clangd:
+            command: clangd
+            args: []
+            extensionToLanguage:
+              .c: c
+              .h: c
+              .cpp: cpp
+              .cc: cpp
+              .hpp: cpp
+
+    - id: tool-lsp
+      name: '@deepseek-ai/dsh-tool-lsp'
+
+- id: llm-pi-ai
+  config:
+    providers:
+      # One named route per cc-connect [[providers]] entry (MIGRATION.md D2):
+      # the in-process engine selects a route per agent via
+      # agentOptions.provider; credentials are inline, traffic goes DIRECT to
+      # Keys resolve by env-var reference (credential-ref): provision
+      # FB_GLM_API_KEY / FB_MINIMAX_API_KEY / FB_MIMO_API_KEY in the daemon
+      # environment (systemd unit Environment= lines).
+      # the gateway (the Go providerproxy is retired — plain model names
+      # avoid the bigmodel [1m] fingerprint gate; forceAdaptiveThinking
+      # covers the thinking/effort quirk; retries ride dsh llm-retry).
+      glm:
+        displayName: GLM
+        apiKeyEnv: FB_GLM_API_KEY
+        api: anthropic-messages
+        baseURL: https://open.bigmodel.cn/api/anthropic
+        reasoning: high
+        compat:
+          forceAdaptiveThinking: true
+        models:
+          - id: glm-5.3
+            name: GLM 5.3
+            contextWindow: 1000000
+            reasoningEfforts:
+              "off": null
+              low: low
+              medium: medium
+              high: high
+      turbo:
+        displayName: GLM Turbo
+        apiKeyEnv: FB_GLM_API_KEY
+        api: anthropic-messages
+        baseURL: https://open.bigmodel.cn/api/anthropic
+        reasoning: high
+        compat:
+          forceAdaptiveThinking: true
+        models:
+          - id: glm-5-turbo
+            name: GLM 5 Turbo
+            contextWindow: 1000000
+            reasoningEfforts:
+              "off": null
+              low: low
+              medium: medium
+              high: high
+      minimax:
+        displayName: MiniMax
+        apiKeyEnv: FB_MINIMAX_API_KEY
+        api: anthropic-messages
+        baseURL: https://api.minimaxi.com/anthropic
+        reasoning: high
+        compat:
+          forceAdaptiveThinking: true
+        models:
+          - id: MiniMax-M2.7
+            name: MiniMax M2.7
+            contextWindow: 1000000
+            reasoningEfforts:
+              "off": null
+              low: low
+              medium: medium
+              high: high
+      mimo:
+        displayName: MiMo
+        apiKeyEnv: FB_MIMO_API_KEY
+        api: anthropic-messages
+        baseURL: https://token-plan-cn.xiaomimimo.com/anthropic
+        reasoning: high
+        compat:
+          forceAdaptiveThinking: true
+        models:
+          - id: mimo-v2.5-pro
+            name: MiMo v2.5 Pro
+            contextWindow: 1000000
+            reasoningEfforts:
+              "off": null
+              low: low
+              medium: medium
+              high: high
+
+- id: session-persistence-jsonl
+  config:
+    # Same store the retired Go backend used (per-cwd nesting is done by the
+    # jsonl backend itself via meta.cwd) — existing sessions resume as-is.
+    root: /home/hm/.dsh/cc-connect-sessions
+    compression: zstd
+
+# The feishu-bridge daemon plugin. projects are managed by the plugin config
+# (bots, workdirs, per-project features); starts empty until M1 cut-over.
+# Config surface mirrors src/index.ts Config (Go wire.go's config face):
+- id: feishu-bridge
+  config:
+    projects: []
+    # dataDir: ~/.dsh/feishu-bridge        # per-project session/state root
+    # language: zh                         # zh | zh-TW | ja | es | en; else auto-detect
+    # idleTimeoutMins: 120                 # stall kill window; 0 disables
+    # attachmentSend: true                 # side-channel image/file delivery
+    # queue: { maxDepth: 5 }               # per-session queued-message cap
+    # subtask:                             # recursive delegation caps
+    #   maxDepth: 3
+    #   timeoutSec: 0                      # 0 inherits idleTimeoutMins
+    #   gatherTimeoutSec: 1200
+    # spawn:                               # /spawn //fork defaults
+    #   worktree: auto                     # auto | on | off
+    #   memoryWarnPct: 80                  # 0 disables the warning tier
+    #   memoryBlockPct: 90                 # 0 disables the block tier
+    # cron:                                # scheduled-task defaults (/cron)
+    #   silent: false                      # suppress the ⏰ start notice
+    #   sessionMode: reuse                 # reuse | new_per_run
+    # hints:                               # quick-prompt buttons (Go hints):
+    #   - /new                             #   folded into the ✅ footer panel
+    #   - commit and push
+    # hints_with_param:                    # one row each with an input field
+    #   - /tdd                             #   (value appended to the command)
+    #   - /draw
+    # hints_common:                        # always-visible bottom buttons
+    #   - /done
+    # relay:                               # bot-to-bot relay (/bind)
+    #   timeoutSecs: 120                   # wait per relay response; 0 disables
+    # chatroom:                            # multi-role chatroom tuning ([chatroom])
+    #   rolesDir: ~/.claude/chatroom-roles # one persona subdirectory per role
+    #   maxRoles: 5                        # role agents per chatroom cap
+    #   moderatorDir: ~/chatroom           # ledger home; empty disables ledgers
+    #   gatherTimeoutSec: 1200             # gather barrier fallback timeout
+    #   endTimeoutSec: 600                 # end barrier drain timeout
+    #   researchTimeoutSec: 3600           # research round timeout (clamped 60..86400)
+    #   maxResearchRounds: 3               # auto-mode research cap (clamped 1..20)
+    #   defaultResearchMode: auto          # auto | manual
+    #   researchWorkspace: ~/chatroom/research  # shared assistant workdir
+    #   researchPythonEnv: true            # pre-provision the shared uv venv
+    # Per-project monitor block (#53): observe + triage + auto-spawn subgroups.
+    #   monitor:
+    #     enabled: true
+    #     chats: "oc_xxx"                  # comma-separated chat IDs; * = all groups
+    #     mode: monitor                    # monitor (alert triage) | dispatch (hub)
+    #     spawnNotice: true                # heads-up card on spawn
+    #     maxConcurrent: 5                 # active-subgroup cap per monitored chat
+    #     triageProvider: mify-dsh         # LLM triage route; empty = active
+    #     pollIntervalSec: 30              # poll for event-less webhook cards; 0 = off
+    #     fallbackUser: ou_xxx             # owner for sender-less webhook cards
+    #     coalesceEnabled: true            # same-dir alerts join the active subgroup
+    #     coalesceWindowSec: 300           # 0 = no age limit
+    #     contextWindow: 0                 # messages of LLM triage context; 0 = single
+    #     learnEnabled: true               # /learn few-shot teaching
+    #     learnMaxExamples: 20
+    #     reactEmoji: Get                  # OnIt reaction; none disables
+    #     dirs:                            # directory menu the LLM routes to
+    #       - path: /Users/hm/workspace/riskai
+    #         description: riskai 风控服务
+    #     rules:                           # deterministic fast-path
+    #       - pattern: "panic|500|报错"
+    #         dir: /Users/hm/workspace/riskai
+    #         task: "排查：{{message}}"    # {{message}} = the message text
+    #         noReport: false              # fire-and-forget child
+    # streamPreview:                       # streaming preview tuning
+    #   enabled: true
+    #   intervalMs: 800
+    # display:                             # shared display defaults
+    #   thinkingMessages: true
+    #   thinkingMaxLen: 300
+    #   toolMaxLen: 400
+    #   planMaxLen: 4000
+    #   toolMessages: true
+    #   toolProgress: true
+    #   progressSpinner: true              # running-state header GIF
+    #   patchRateIntervalMs: 120           # global card PATCH rate limit
+    #   stallTimeoutSecs: 200
+    #   stallMaxRetries: 3
+    # Per-project plan/reply HTML render block (#47/#48, Go [projects.plan_render]):
+    #   planRender:
+    #     enabled: true                    # opt-in; default off
+    #     provider: mify-dsh               # render-session route; empty = active
+    #     effort: low                      # low/medium/high/max/off; always-thinking models need low+
+    #     timeoutSec: 600                  # fork timeout; speculative pre-render caps at 360
+    #     renderPngScript: /abs/render-png.sh  # HTML→PNG script; empty = send .html instead of image
+
+    #   editorUrl: https://code.example.com  # 🔗 Open Editor link in status footers
+    # usageProviders:                      # provider quota on the ✅ footer's ⌛ line
+    #   - type: glm                        # glm | minimax
+    #     options:
+    #       api_key: ref:your-glm-key      # credential reference (credentials capability)
+    #       region: cn                     # glm: cn switches to bigmodel endpoint
+    # Per-project extras (inside a projects[] row):
+    #   contextWindow: 258400              # ctx-estimate window in tokens; 0 = 200k default
+    #   adminFrom: "ou_xxx,ou_yyy"         # privileged-command allowlist; * = all
+    #   interactiveIdleTimeoutMins: 30     # idle reaper threshold; default 120; 0 disables
+    #   features:
+    #     showContextIndicator: true       # 📊 ctx / 🍵 cache lines on the ✅ footer (default true)
+    #     replyFooter: true                # Codex-style *model · effort · workdir* reply footer (default false)
+
+    #   resetOnIdleMins: 720               # rotate chat to a fresh session after N idle minutes
+    #   filterExternalSessions: true       # /list only shows engine-tracked sessions
+    #   providerShortcuts:                 # quick switch + new session (/strong → glm)
+    #     strong: glm
+    #     weak: mimo
+    #   predictNext:                       # next-message prediction card (#33)
+    #     enabled: true
+    #     provider: turbo                  # named route for the prediction fork
+    #     timeoutSec: 120
+    #     mode: lightweight                # lightweight | resume (fork live transcript)
+    #   turnSummary:                       # one-line turn summary on the insight card
+    #     enabled: true
+    #     provider: turbo
+    #     timeoutSec: 30
+    #   autoCompress:                      # compress context past a token threshold
+    #     enabled: true
+    #     maxTokens: 80000
+    #     minGapMins: 30
+
+    #   dirScanPaths:                      # parent dirs auto-listed in /dir (#3)
+    #     - ~/workspace                    # subdirs become /dir suggestions and
+    #                                       # bare-name targets (~ expanded)
+    #   feishuWorkspace:                   # bot's default Feishu wiki/drive (#18)
+    #     wikiSpaceId: "7000"              # CC_FEISHU_WIKI_SPACE_ID routing
+    #     wikiNodeToken: "wikcn2"          # creation parent priority: node > space
+    #     folderToken: "fldcn1"            #   > folder
+    #     description: "团队知识库"          # natural-language context

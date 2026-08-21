@@ -1,0 +1,24 @@
+# feishu-bridge systemd user unit 模板（Linux 部署面，MIGRATION.md D9）。
+# 安装：cp 到 ~/.config/systemd/user/feishu-bridge.service，替换全部 @占位符@，然后
+#   systemctl --user daemon-reload && systemctl --user enable --now feishu-bridge
+# 开机自启需 loginctl enable-linger <user>；运维细节见 docs/OPERATIONS.md §5。
+# 安全：本文件含 API key，权限应收紧到 0600。
+[Unit]
+Description=dsh feishu-bridge daemon (Feishu WS bridge)
+After=network-online.target
+
+[Service]
+Type=simple
+# dsh 可执行文件 + profile 名（与 launchd 模板的 ProgramArguments 等价）
+ExecStart=@DSH_BIN@ --profile feishu-bridge
+# 任意一个 project 的 workdir（占位即可，不影响各 project 路由）
+WorkingDirectory=@DEFAULT_WORKDIR@
+# profile 的 llm 路由 apiKeyEnv 所引用的变量在此给实际值
+Environment=FB_MIFY_API_KEY=@LLM_API_KEY@
+# 崩溃自动拉起（断线重连由 SDK + watchdog 承担，进程退出交给 systemd）
+Restart=on-failure
+RestartSec=5
+# 死因留痕：journalctl --user -u feishu-bridge
+
+[Install]
+WantedBy=default.target

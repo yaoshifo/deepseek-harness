@@ -1,0 +1,49 @@
+# dsh-feishu-bridge
+
+English | [中文](README.zh.md)
+
+cc-connect's orchestration capability (engine + Feishu platform) migrated into dsh as a single plugin: one long-lived dsh process assembles, per configured project, an Engine plus a Feishu WS platform (official node-sdk long connection, D5); agent sessions are created natively through `ctx.agents`, with no bridge protocol left. The migration plan, milestones, and decision records live in [docs/MIGRATION.md](docs/MIGRATION.md); the 61-item feature comparison in [docs/FEATURE-PARITY.md](docs/FEATURE-PARITY.md); deployment and configuration mapping in [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+Plugin structure:
+
+| Directory | Contents |
+|---|---|
+| `src/engine/` | faithful port of Go `core/`: the event state machine, sessions, commands, cron, relay, chatroom, monitor, i18n, attachment staging |
+| `src/feishu/` | port of Go `platform/feishu/`: WS, API client, cards, progress cards, chat management, tags, avatars, media, quoted-message fetching |
+| `src/agent-dsh/` | Agent interface → `ctx.agents` adapter (D1/D3: setup hooks, provider routing, approval/question/plan wiring) |
+| `src/tools/` | the `feishu_bridge_subtask / cron / relay / chatroom / lark / send` tool families (D4: caller-agent routing, no env needed) |
+| `skills/` | revised skills (`feishu-bridge-` prefix), loaded through the profile's `customSkillDirs` |
+
+Model-visible surface: inbound messages (with reply-chain prefixes and staged-attachment path notes) enter the prompt; outbound goes through the card system (progress cards, completion cards, approval cards); CC_FEISHU_* workspace routing is injected as a system-prompt section through the D3 setup hook. Unattended sessions (agent-delegated subtask children without a human, chatroom role / direct-role personas) auto-approve tool permissions and never enter plan mode — Go effectiveMode's bypassPermissions — while AskUserQuestion and plan cards still surface there (attended subtasks and moderators keep full approval). A plan-review approval may carry a typed note; the supplement is steered into the running turn as a user message next to the approval tool result, because the review answer itself must stay `selected`-only (any `custom` reads as keep-planning feedback). An ordinary-tool deny note rides the same steer channel verbatim — the approval seam carries outcomes only, so the wrapped native deny message is dropped downstream otherwise.
+
+## Model Experience
+
+### Request context and condition
+
+#### What the model sees
+
+This plugin never constructs LLM requests itself — every model input goes through the dsh agent layer (fully replayable from the session log), and all model-visible text the plugin contributes is conditionally injected and preserved verbatim from the Go original: the inbound prompt carries the user text, the reply-chain prefix (`[Quoted message from X]:` single-message form or `--- Reply chain (n messages) ---` numbered chain), staged-attachment path bullets, and `(Images saved locally, please read them: <paths>)` / `(Files saved locally, ...)` notes; projects with feishuWorkspace configured get a "default Feishu workspace" system-prompt section injected with the session through the setup hook (CC_FEISHU_* values + creation precedence; a chatroom bare persona replaces the system prompt wholesale and omits this section); the `feishu_bridge_subtask / cron / relay / chatroom / lark / send` tool families register into the dsh tool catalog, lark tool results are the lark-cli subprocess stdout/stderr verbatim, and `feishu_bridge_send` (the Go `cc-connect send` CLI's tool form) delivers local files to the user's chat as image/file messages through `Engine.sendToSessionWithAttachments`; chatroom bare personas carry the file-delivery section from Go `ChatroomRoleBaseSystemPrompt`, and subtask children append the report / no-report preamble (Go `buildAppendSystemPrompt`'s `CC_SUBTASK` branch) as a non-complete section.
+
+#### Token effect
+
+Conditional injection: with no attachments, no reply chain, and no workspace configured, the direct token cost is zero; reply chains cap at 5 messages; attachment notes carry paths only, never bytes.
+
+#### KV Cache effect
+
+Reply prefixes and attachment notes are appended inside each user message (append-only conversation prefix, cache-friendly); the workspace system-prompt section is a fixed per-session prefix segment, prefix-stable within a session; lark tool results enter the context once as tool messages and never rewrite history.
+
+## Known Limitations and Deferred Work
+
+- **The lark tool supports only the Feishu domain (open.feishu.cn)**: the plugin's platform side never ported Go `larkCreds.Brand` (the lark.com dual domain); introducing a brand dimension into `src/tools/lark.ts` and the platform client is the path when lark.com is needed.
+- **The send tool reads local paths only**: Go's CLI also fetched http(s) URLs for `--image/--file`; agent artifacts live on disk, so the fetch branch is not ported. The i18n `relay_setup_ok`/`cron_setup_ok` messages remain ported-but-unwired residue: their Go callers write the CLI instructions into agent memory files, a path obsolete under dsh (every session has the native system-prompt mechanism).
+- **Quoted-message sender names are not resolved**: the platform never resolves contact names through the directory API (a deliberate cut since M1); senders render as `User`/`Bot` in reply chains; add a `resolveUserName` cache on the platform when real names are needed.
+- **`reply_footer` (#11) balance segment is pending adapter growth**: the footer itself is wired (M7-b, `status-footer.ts` buildReplyFooter, default off); the usage/balance segment stays empty until the dsh adapter grows a UsageReporter (the capability seam is ready).
+- **Inbound voice messages are dropped (ruled out)**: Go transcribed them via `[speech]` (Whisper-compatible providers); the TS platform drops `audio` messages by user ruling (2026-08-21 audit). The `voice_*` i18n strings are ported-but-unwired residue; porting `speech.go` is the upgrade path if voice input is ever needed.
+- **Agent failures surface raw and unclassified (ruled out)**: Go's failure_classify.go (seven error classes driving user-facing text) plus redact/ (secret scrubbing before display) are not ported, per the same ruling; the raw error text reaches the chat.
+- **Card button callbacks cannot be tested automatically**: `card.action.trigger` can only be verified by real-device clicks (the Feishu platform has no callback-simulation API); button paths are covered by pure-function table tests plus real-device smoke runs.
+- **Multi-workspace is not migrated**: the channel→workspace binding (Go workspace_binding.go) and the per-workspace agent pool are not wired; single workspace + `/dir` per-chat override carries production needs, classified C in the group-E audit.
+- **A fork whose source is gone degrades silently**: the seed resolves live-first, then from the sessionPersistence log (a merely-persisted parent — after a daemon restart or idle reap — still forks, matching Go's on-disk read); only when the source is nowhere does the fork start a fresh session with a log warn and no chat message.
+- **Chatroom picker state is in-memory**: after a daemon restart, old pick cards become orphans (faithful to Go); remaining M7 domains (plan-render/usage/predict-next) advance per the MIGRATION.md queue.
+- **`nav:/help` buttons are inert**: the cron card's back button targets Go's help-card system (`renderHelpGroupCard` + the `nav:` help navigation), which is not ported; the click reaches the engine and logs "no handler" instead of silently vanishing. Porting the help-card family is the fix; the `/dir` picker card ships without a back button for the same reason.
+- **`/list`, `/status`, and `/switch` remain plain-text surfaces**: Go renders `renderListCardSafe`/`renderStatusCard` cards with `act:/list switch|delete N` actions; the TS commands keep their text output until that render domain is ported.
+- **The Go command inventory is intentionally partial**: `/shell` + `!`, `/tag`, `/untag`, `/undone`, `/notify`, `/board`, `/help`, and `/ps` landed (Agent Notes `feature/2026-08-20-feishu-bridge-shell-command.md` and `feature/2026-08-20-feishu-bridge-seven-commands.md`); a TS-native `/reload` additionally runs reload.sh detached for admins (see OPERATIONS.md §3.3; not a port of Go's `/restart`); `/help` generates its list from the registered handlers, so it cannot drift. The remaining ~27 of Go's 53 builtin commands are a deliberate curation (user ruling 2026-08-21): upgrade/restart/web/doctor/version are D-class cuts, and the rest (`/whoami`, `/history`, `/current`, `/search`, `/delete`, `/name`, `/memory`, `/model`, `/reasoning`, `/mode`, `/lang`, `/quiet`, `/tts`, `/allow`, `/config`, `/show`, `/diff`, …) stay unported by design; `/tts` additionally depends on the pending voice-capability ruling.

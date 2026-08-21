@@ -34,6 +34,9 @@ pre-commit:
     - name: whitespace (staged)
       run: git diff --cached --check
 
+    - name: secrets (staged)
+      run: node_modules/.bin/tsx scripts/verify-no-secrets.ts --cached {staged_files}
+
     - name: vendor manifest guard
       run: scripts/check-vendor-manifest.sh
 

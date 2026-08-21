@@ -1,0 +1,31 @@
+# Agent Note: feishu-bridge card-action callback responses and plan-before-approval ordering
+
+Status: implemented
+
+English | [中文](2026-08-20-feishu-bridge-permission-card-update-and-order.zh.md)
+
+## Problem
+
+Three user-visible defects on interactive cards, all Go-cc-connect behaviors lost in the TS port. First, clicking `‼️ 权限请求` Allow/Deny/Allow-All left the card untouched: Go's `onCardAction` perm branch (`platform/feishu/feishu_dispatch.go`) returns a `CardActionTriggerResponse` carrying a replacement card — title flips to `✅ 已允许` / `❌ 已拒绝` / `✅ 已全部允许` — and Feishu swaps the card from the callback response. The TS port rendered the button `extra` fields (`perm_label`/`perm_color`/`perm_body`) into the button value map and wrote `permBodyCache`, but never read either, so the callback response was empty. Second, AskUserQuestion cards had the same hole: Go freezes the answered card (all options preserved, the selection marked ✅/◻️, no interactive elements) in the callback response for both the single-select button click and the multi-select form submit, backed by an `askqMetaCache` (full option set cached at send time, because form_submit callbacks do not carry `action.value`) and an `askqAnswered` per-message dedup; the port dispatched the answer but returned nothing. Third, the approval card sometimes arrived before the plan card: Go's `sendPlanCard` and `sendPermissionPrompt` are synchronous blocking calls, so plan → approval order is structural; the TS port fire-and-forget both sends, and two concurrent Feishu HTTP calls race by server receive time — the small approval card regularly beats the large plan card.
+
+## Decision
+
+The `onCardAction` perm branch builds the resolved card exactly as Go does — extras from `action.value` when present, otherwise fixed fallback labels (`✅ 已允许` green / `❌ 已拒绝` red / `✅ 已全部允许` green), deny reason quoted as the body, remaining body from `permBodyCache` — and returns it as `{ card: { type: 'raw', data: renderCardMap(...) } }`. The askq branches (single- and multi-select) return a frozen confirm card built from `askqMetaCache` (written by `cacheAskqMeta` on every `sendCard`/`replyCard`, read-then-delete on submit; minimal `→ label` confirmation card when the cache is gone), with the `askqAnswered` map deduping repeated callbacks on one card message. The card travels back over the WS long connection: the node-sdk `WSClient` base64-encodes the `EventDispatcher` handler's return value into the callback response payload (`es/index.js` `handleEventData`), the same mechanism the Go oapi-sdk-go uses. To let the value flow, `wsEventRegistrations` and the `wsStart` raw-event callback now propagate handler return values; the other routed events keep returning `undefined`, so their responses stay empty as before. For ordering, `sendPlanCard` returns the send promise (handle recording stays in `.then`), `sendPlanContent`/`sendInlinePlanContent` await it, and the `permission_request` branch awaits the plan card send before `await sendPermissionPrompt(...)` — restoring Go's synchronous send order before the loop parks on the user's answer.
+
+Two deliberate deviations from Go, both recorded in code comments: `permBodyCache` entries are deleted unconditionally after a perm callback (Go deletes only when it read the cache, letting a stale entry survive an extras-carrying callback), and the multi-select branch keeps dispatching the engine protocol string (`askq:{q}:{i1},{i2}`) for engine-side label resolution instead of Go's platform-side resolution — the engine resolver already owned that mapping in the TS port.
+
+## Alternatives considered
+
+**PATCHing the pressed card instead of a callback response.** The `act:`/`nav:` branches already use the `refreshCard`/`cardActionMsgIDs` PATCH pattern, so this was the in-house precedent. Rejected as primary path: PATCH is a second network round trip and races the user's next view; the callback response is atomic and is exactly what Go does. If the WS callback response ever proves unreliable on real hardware, the PATCH pattern is the documented fallback.
+
+**Serializing all sends through the per-session AsyncSender.** Would fix ordering globally, but the AsyncSender exists for preview PATCH coalescing, not chat ordering; routing every card send through it changes latency characteristics far beyond the reported defect.
+
+**i18n keys for the fixed fallback labels.** Go hardcodes the Chinese labels at the platform layer, and the platform's dispatch paths already hardcode user-facing Chinese (`export:` failure notices). Adding an i18n dependency to the platform layer for three strings was scope expansion; parity literals won.
+
+## Consequences
+
+Click feedback is instant and atomic — the card the user pressed becomes the outcome state (or the frozen selection) with no extra message, and permission/AskUserQuestion cards stop being interactive after answering. `permBodyCache` and `askqMetaCache` entries are consumed on use, so a stale body or option set never leaks into the next card; `askqAnswered` grows one entry per answered card message and is never evicted (Go's sync.Map behaves the same). The plan card send now blocks the event loop until Feishu accepts it (or the fallback plain send completes); a slow plan-card send delays the approval card by one RTT — the same trade Go makes. Everything needs the real-machine smoke test (reload.sh + a plan-mode turn and an AskUserQuestion turn) before M8 cutover; the WS callback response path has never been exercised by this port before.
+
+## Testing
+
+`tests/feishu/card-action.spec.ts`: perm branch (extras path with cache cleanup, form_submit fallback + cache consumption, deny reason as quoted body, allow_all label, no card response for non-perm actions), ws return-value propagation, and the askq branches (send-time `cacheAskqMeta` for single- and multi-select, frozen card marking the checked subset, single-select frozen card, minimal fallback without cache, per-message dedup). `tests/engine/engine-m3-plan.spec.ts` `PlanCardBeforePermissionCard` gates the plan-card send and asserts the permission card does not start until the gate opens — the red run reproduced the reported inversion exactly. Full package suite 1890 green; `tsc --noEmit`, `verify-export-jsdoc`, and package lint clean.

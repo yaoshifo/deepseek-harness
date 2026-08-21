@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh 沙箱机制通俗解读</title>
+<style>
+:root {
+  --bg:#fafaf9; --fg:#1c1b1a; --muted:#6b6964; --border:#e6e4e0;
+  --accent:#c96442; --surface:#ffffff; --code-bg:#f4f4f2;
+}
+* { box-sizing:border-box; }
+body {
+  margin:0; background:var(--bg); color:var(--fg);
+  font:16px/1.75 "Noto Serif SC","Source Han Serif SC",ui-serif,Georgia,serif;
+}
+main { max-width:760px; margin:0 auto; padding:48px 32px 96px; }
+h1 { font-size:36px; letter-spacing:-0.02em; margin:0 0 16px; line-height:1.3; }
+h2 { font-size:24px; letter-spacing:-0.01em; margin:48px 0 16px; line-height:1.4; }
+h3 { font-size:18px; margin:32px 0 8px; }
+p { margin:0 0 16px; }
+.kicker { font-size:11px; text-transform:uppercase; letter-spacing:0.16em; color:var(--muted); margin-bottom:8px; font-family:"Inter",ui-sans-serif,system-ui; }
+a { color:var(--accent); text-decoration:none; border-bottom:1px solid var(--border); }
+.toc { font-size:13px; padding:16px 24px; border:1px solid var(--border); border-radius:8px; background:var(--surface); margin:24px 0 8px; }
+.toc .toc-label { font-size:11px; text-transform:uppercase; letter-spacing:0.16em; color:var(--muted); margin-bottom:8px; font-family:"Inter",ui-sans-serif,system-ui; }
+.toc a { display:block; padding:4px 0; color:var(--muted); border:0; }
+.toc a:hover { color:var(--accent); }
+code { font-family:"JetBrains Mono","IBM Plex Mono",ui-monospace,Menlo,monospace; background:var(--code-bg); padding:1px 5px; border-radius:4px; font-size:0.92em; }
+pre { background:var(--code-bg); border:1px solid var(--border); border-radius:8px; padding:14px 16px; overflow-x:auto; font-size:13px; line-height:1.55; }
+pre code { background:none; padding:0; }
+.callout { background:var(--surface); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:8px; padding:14px 18px; margin:24px 0; font-size:14px; }
+.callout .label { font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--accent); margin-bottom:6px; font-family:"Inter",ui-sans-serif,system-ui; font-weight:600; }
+table.compare { width:100%; border-collapse:collapse; font-size:14px; margin:24px 0; }
+table.compare th, table.compare td { border:1px solid var(--border); padding:10px 12px; text-align:left; vertical-align:top; }
+table.compare th { background:var(--surface); font-weight:600; font-family:"Inter",ui-sans-serif,system-ui; font-size:13px; }
+table.compare td:first-child { font-weight:500; background:var(--surface); font-family:"JetBrains Mono",ui-monospace,Menlo,monospace; font-size:12px; white-space:nowrap; }
+details { border:1px solid var(--border); border-radius:8px; padding:8px 16px; margin:16px 0; background:var(--surface); }
+details > summary { cursor:pointer; font-size:14px; font-weight:500; list-style:none; }
+details > summary::-webkit-details-marker { display:none; }
+svg.diagram, img.diagram { display:block; margin:32px auto; max-width:100%; height:auto; }
+.example { border:1px solid var(--border); border-left:3px solid #2e6b34; border-radius:8px; padding:14px 18px; margin:24px 0; font-size:14px; background:var(--surface); }
+.example .label { font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:#2e6b34; margin-bottom:6px; font-family:"Inter",ui-sans-serif,system-ui; font-weight:600; }
+.key-point { background:var(--surface); border:2px solid var(--accent); border-radius:8px; padding:16px 20px; margin:24px 0; font-size:15px; }
+.key-point .label { font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--accent); margin-bottom:6px; font-weight:600; font-family:"Inter",ui-sans-serif,system-ui; }
+hr.sep { border:0; border-top:1px solid var(--border); margin:40px 0; }
+.step { display:flex; gap:10px; margin:6px 0; font-size:14px; line-height:1.6; }
+.step .n { flex-shrink:0; width:22px; height:22px; border-radius:50%; background:var(--accent); color:var(--surface); display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:600; font-family:"Inter",ui-sans-serif,system-ui; }
+.lead { font-size:17px; color:var(--muted); margin-bottom:32px; line-height:1.7; }
+.icon { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; vertical-align:-4px; margin-right:8px; }
+@media (max-width:640px) {
+  main { padding:24px 16px 64px; }
+  h1 { font-size:28px; }
+  h2 { font-size:20px; }
+  table.compare { font-size:12px; }
+  table.compare td:first-child { white-space:normal; }
+}
+</style>
+</head>
+<body>
+<style>.icon{width:1em;height:1em;vertical-align:-0.125em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;display:inline-block}h1>.icon,h2>.icon{margin-right:6px;vertical-align:-0.2em;color:var(--accent)}.diagram .icon{height:1em;width:1em}.diagram .ico{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}</style><svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="icon-shield" viewBox="0 0 24 24">
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+    </symbol><symbol id="icon-layers" viewBox="0 0 24 24">
+      <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z" />
+      <path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12" />
+      <path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17" />
+    </symbol><symbol id="icon-key-round" viewBox="0 0 24 24">
+      <path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" />
+      <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />
+    </symbol></defs></svg>
+<main>
+
+<div class="kicker">DeepSeek Harness · 进程沙箱</div>
+<h1>dsh 沙箱机制通俗解读</h1>
+<p class="lead">三个权限档位、两道共享图纸的围挡、一条审批升级通道。用装修工地的类比讲清楚 dsh 怎么限定 AI agent 动手能落到哪里。</p>
+
+<div class="toc">
+  <div class="toc-label">目录</div>
+  <a href="#analogy">一个生活类比先看全貌</a>
+  <a href="#modes">三档「施工许可」</a>
+  <a href="#fences">两道围挡，共享一张图纸</a>
+  <a href="#escalation">拒绝是事实，升级走审批</a>
+  <a href="#boundary">边界与收尾</a>
+</div>
+
+<h2 id="analogy"><svg class="icon"><use href="#icon-shield"/></svg>一个生活类比先看全貌</h2>
+
+<p>想象你请了装修工人（AI agent）来家里干活。工人要刷墙、拧螺丝、搬东西——这些活你让他干，但你不想让他顺手翻卧室抽屉里的存折。</p>
+
+<p>沙箱就是那个工地围挡：它不改变工人会干什么活，只限定他动手能落到哪里。工人手伸出围挡外，被挡住；围挡内，随便干。dsh 给 agent 配的文件沙箱，本质上就是这道围挡——agent 可以读代码、改文件、跑命令，但它的每一次文件写入都会被检查"你落到的工作区外的路径了吗"。</p>
+
+<p>这里有一个关键特征容易被忽略：围挡只管"手能落到哪块地"，也就是文件效果（file effects）。工人能不能打电话、能不能看窗外——网络访问和进程可见性——不归这个围挡管。dsh 的沙箱是有意只覆盖文件写入这一层，不是一个通用安全沙箱。这是它的设计边界，不是缺陷。</p>
+
+<div class="key-point">
+  <div class="label">核心特征</div>
+  <p>三档文件效果权限 × 两道共享同一张图纸的围挡 × 拒绝即事实加一次性审批升级 × 找不到围挡就宁可不跑。它管的是"文件能落到哪"，不是通用安全沙箱。</p>
+</div>
+
+<h2 id="modes"><svg class="icon"><use href="#icon-layers"/></svg>三档「施工许可」</h2>
+
+<p>整个沙箱只有三个权限档位，整个系统就认这三个词，没有中间地带。这个封闭词汇表叫 <code>SandboxMode</code>，所有围挡、所有策略、所有审批都围绕它转。</p>
+
+<table class="compare">
+  <thead>
+    <tr><th>模式</th><th>意思</th><th>工人类比</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>read-only</td><td>只能看不能改，连一个字都写不了。POSIX 上还会给 shell 留一个 <code>/dev/null</code> 当接收器，让 <code>&gt;/dev/null</code> 能正常工作；Windows ACL 上不授予任何显式可写根目录。</td><td>工人只能看图纸，不能动工具</td></tr>
+    <tr><td>workspace-write</td><td>只能在指定工作区根目录下写入，外加平台临时区域（<code>/tmp</code>、<code>os.tmpdir()</code>）。这是大多数 agent 会话跑的默认档位。</td><td>工人能在客厅干活、废料临时堆门口，但不能进卧室</td></tr>
+    <tr><td>danger-full-access</td><td>不设围挡，整个家随便动。consumer 拿到这个模式时根本不调用 <code>ctx.sandbox</code>，直接 spawn 原始命令。</td><td>工人信任度满级，全屋放行</td></tr>
+  </tbody>
+</table>
+
+<p>前两档是"受约束的执行"——它们会到达沙箱提供方，被包一层 runner。第三档是"不受约束的执行"——它绕过沙箱，consumer 直接 spawn 原始 argv，不咨询 <code>ctx.sandbox</code>。</p>
+
+<div class="example">
+  <div class="label">举例</div>
+  <p>一个会话的 cwd 是 <code>/home/me/project</code>，模式是 <code>workspace-write</code>。agent 写 <code>/home/me/project/src/app.ts</code> ——通过，在工作区内。agent 写 <code>/etc/hosts</code> ——被挡，工作区外。agent 写 <code>/tmp/build.log</code> ——通过，在平台临时区域内。</p>
+</div>
+
+<div class="key-point">
+  <div class="label">注意第三档</div>
+  <p><code>danger-full-access</code> 不是"更宽的围挡"，而是"干脆不装围挡"。它是显式的无约束模式，不是更宽的沙箱 profile。你现在读这篇文档所在的会话就跑在这一档——运行时上下文里写着 <code>danger-full-access. The DSH file sandbox does not restrict file modifications</code>。</p>
+</div>
+
+<h2 id="fences"><svg class="icon"><use href="#icon-key-round"/></svg>两道围挡，共享一张图纸</h2>
+
+<p>这是 dsh 沙箱最关键的设计。agent 改文件有两条路：一条是让 bash 命令去改（<code>echo &gt; file</code>、<code>sed -i</code>），一条是让文件系统工具去改（edit、write 工具）。如果两道围挡各画各的图纸，就会出现"bash 能写但 fs 工具不让写"的分裂世界——agent 会困惑，会绕路，甚至被卡死在自相矛盾的权限里。</p>
+
+<p>dsh 的解法是：一个统一的策略归属（<code>ctx.sandboxPolicy</code>）给每次能力调用解析一份完整策略，两道围挡拿的是同一张图纸。</p>
+
+<svg class="diagram" viewBox="0 0 720 360" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8B8680"/>
+    </marker>
+  </defs>
+  <rect x="180" y="16" width="360" height="54" rx="6" fill="#FAF9F5" stroke="#C96442" stroke-width="2"/>
+  <text x="360" y="40" text-anchor="middle" font-family="Inter,ui-sans-serif,system-ui" font-size="15" font-weight="600" fill="#C96442">ctx.sandboxPolicy</text>
+  <text x="360" y="58" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="12" fill="#6b6964">统一策略归属 · 每次调用解析一份</text>
+  <path d="M 300 70 L 180 126" fill="none" stroke="#8B8680" stroke-width="1.5" marker-end="url(#arr1)"/>
+  <path d="M 420 70 L 540 126" fill="none" stroke="#8B8680" stroke-width="1.5" marker-end="url(#arr1)"/>
+  <rect x="30" y="126" width="300" height="92" rx="6" fill="#FAF9F5" stroke="#475569" stroke-width="1.5"/>
+  <text x="180" y="150" text-anchor="middle" font-family="Inter,ui-sans-serif,system-ui" font-size="15" font-weight="600" fill="#1c1b1a">bash 围挡</text>
+  <text x="180" y="170" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="#6b6964">dsh-bash-sandbox</text>
+  <text x="180" y="190" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="12" fill="#6b6964">内核级 runner 隔离</text>
+  <text x="180" y="208" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10" fill="#8B8680">bwrap · Landlock · Seatbelt · ACL</text>
+  <rect x="390" y="126" width="300" height="92" rx="6" fill="#FAF9F5" stroke="#475569" stroke-width="1.5"/>
+  <text x="540" y="150" text-anchor="middle" font-family="Inter,ui-sans-serif,system-ui" font-size="15" font-weight="600" fill="#1c1b1a">fs 围挡</text>
+  <text x="540" y="170" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="#6b6964">dsh-fs-sandbox</text>
+  <text x="540" y="190" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="12" fill="#6b6964">进程内规范化检查</text>
+  <text x="540" y="208" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="10" fill="#8B8680">canonicalize → contain</text>
+  <path d="M 180 218 L 300 286" fill="none" stroke="#8B8680" stroke-width="1.5" marker-end="url(#arr1)"/>
+  <path d="M 540 218 L 420 286" fill="none" stroke="#8B8680" stroke-width="1.5" marker-end="url(#arr1)"/>
+  <text x="360" y="252" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="13" fill="#C96442" font-style="italic">同一张图纸</text>
+  <rect x="180" y="286" width="360" height="54" rx="6" fill="#FAF9F5" stroke="#2e6b34" stroke-width="2"/>
+  <text x="360" y="310" text-anchor="middle" font-family="Inter,ui-sans-serif,system-ui" font-size="15" font-weight="600" fill="#2e6b34">同一个 workspaceRoot</text>
+  <text x="360" y="328" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="#6b6964">writableRoots() — 唯一可写集合来源</text>
+</svg>
+
+<p>bash 这道围挡（<code>dsh-bash-sandbox</code>）是内核级的。它把你要跑的命令 argv 包一层平台原生的隔离 runner——Linux 上优先用 bubblewrap，没有就用 Landlock；macOS 上用 sandbox-exec（Seatbelt）；Windows 上用 ACL 受限令牌。命令真正执行前，runner 就在内核层把"能写哪些路径"的围挡立好了。进程跑起来后，它和它 spawn 的所有子进程都逃不出这个围挡。</p>
+
+<p>fs 这道围挡（<code>dsh-fs-sandbox</code>）是进程内的。它继承自本地文件系统后端，在每次 <code>writeText</code>/<code>editText</code> 调用前，先把目标路径"规范化"——解析符号链接、拼出真实绝对位置——然后比对"这个真实位置在可写集合里吗"。不在就返回一个结构化的 <code>FS_SANDBOX_DENIED</code> 错误。它不是内核级隔离，而是可信代码里的一道闸。reads 永远放行——所有模式都允许读。</p>
+
+<p>两道围挡用的是同一个 <code>writableRoots()</code> 函数算出来的可写集合，所以它们永远不会对"同一个路径能不能写"给出不同答案。这就是"共享一张图纸"的字面含义——不是比喻，是代码里一个共享函数确保的。</p>
+
+<div class="example">
+  <div class="label">举例 · 两条路被挡，体验一致</div>
+  <p>agent 在 <code>workspace-write</code> 下跑 <code>bash -c "echo hi &gt; /etc/hosts"</code> → Linux runner 在内核层拒绝，stderr 出现 <code>EROFS</code>/<code>EACCES</code> 字样 → bash 工具认出这是沙箱拒绝（不是命令本身的报错），返回 <code>[sandbox: file access denied under workspace-write mode]</code>。</p>
+  <p>agent 改用 edit 工具改 <code>/etc/hosts</code> → fs 围栏在进程内拒绝，返回结构化的 <code>FS_SANDBOX_DENIED</code> → 工具层渲染成<strong>同一句</strong> <code>[sandbox: file access denied under workspace-write mode]</code>。</p>
+  <p>两条路被挡的体验完全一致，agent 不会因为换了工具就遇到不同的权限逻辑。</p>
+</div>
+
+<h2 id="escalation">拒绝是事实，升级走审批</h2>
+
+<p>沙箱的拒绝不是错误，是结果事实。被挡的命令照常返回，只是结果里多一行标记，告诉 agent "你被挡了，挡你的是哪个模式"。agent 拿到这个事实后可以决定怎么办——换个路径、放弃、或者申请升级。这个设计选择很关键：拒绝不抛异常、不中断对话，agent 可以像处理任何其他命令失败一样自然地处理它。</p>
+
+<svg class="diagram" viewBox="0 0 620 470" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8B8680"/>
+    </marker>
+  </defs>
+  <rect x="170" y="12" width="280" height="44" rx="6" fill="#FAF9F5" stroke="#e6e4e0" stroke-width="1.5"/>
+  <text x="310" y="40" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="14" fill="#1c1b1a">命令执行（workspace-write）</text>
+  <line x1="310" y1="56" x2="310" y2="78" stroke="#8B8680" stroke-width="1.5" marker-end="url(#arr2)"/>
+  <rect x="170" y="80" width="280" height="44" rx="6" fill="#FAF9F5" stroke="#e6e4e0" stroke-width="1.5"/>
+  <text x="310" y="108" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="14" fill="#1c1b1a">触碰工作区外路径</text>
+  <line x1="310" y1="124" x2="310" y2="146" stroke="#8B8680" stroke-width="1.5" marker-end="url(#arr2)"/>
+  <rect x="150" y="148" width="320" height="56" rx="6" fill="#FAF9F5" stroke="#C96442" stroke-width="1.5"/>
+  <text x="310" y="172" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="14" fill="#1c1b1a">被挡 — 返回结果事实</text>
+  <text x="310" y="192" text-anchor="middle" font-family="JetBrains Mono,monospace" font-size="11" fill="#C96442">[sandbox: file access denied]</text>
+  <line x1="310" y1="204" x2="310" y2="226" stroke="#8B8680" stroke-width="1.5" marker-end="url(#arr2)"/>
+  <rect x="130" y="228" width="360" height="44" rx="6" fill="#FAF9F5" stroke="#e6e4e0" stroke-width="1.5"/>
+  <text x="310" y="256" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="14" fill="#1c1b1a">agent 带权限 + 理由，重试一次</text>
+  <line x1="310" y1="272" x2="310" y2="294" stroke="#8B8680" stroke-width="1.5" marker-end="url(#arr2)"/>
+  <rect x="170" y="296" width="280" height="48" rx="6" fill="#FAF9F5" stroke="#C96442" stroke-width="2"/>
+  <text x="310" y="318" text-anchor="middle" font-family="Inter,ui-sans-serif,system-ui" font-size="14" font-weight="600" fill="#C96442">审批服务 ctx.approval</text>
+  <text x="310" y="334" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="11" fill="#6b6964">用户 / 客户端程序决定</text>
+  <path d="M 310 344 L 310 360 L 180 360 L 180 392" fill="none" stroke="#8B8680" stroke-width="1.5" marker-end="url(#arr2)"/>
+  <path d="M 310 360 L 440 360 L 440 392" fill="none" stroke="#8B8680" stroke-width="1.5" marker-end="url(#arr2)"/>
+  <rect x="60" y="392" width="240" height="56" rx="6" fill="#FAF9F5" stroke="#2e6b34" stroke-width="1.5"/>
+  <text x="180" y="416" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="13" font-weight="500" fill="#2e6b34">通过 → 本次更宽执行</text>
+  <text x="180" y="434" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="11" fill="#6b6964">只对这一次有效</text>
+  <rect x="320" y="392" width="240" height="56" rx="6" fill="#FAF9F5" stroke="#a13a1f" stroke-width="1.5"/>
+  <text x="440" y="416" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="13" font-weight="500" fill="#a13a1f">拒绝 / 取消 → 终局</text>
+  <text x="440" y="434" text-anchor="middle" font-family="Noto Serif SC,serif" font-size="11" fill="#6b6964">不能反复试</text>
+</svg>
+
+<p>内置的一条出路是一次性升级。流程是这样的：被挡后，结果里除了拒绝标记，还附带一句升级提示——可以带 <code>sandbox_permissions</code>（要哪一档更宽的权限）加 <code>justification</code>（一句话说明为什么这条命令需要更宽）重试一次。重试时，系统先走审批服务（<code>ctx.approval</code>）。在交互场景里，这会弹一个审批卡问用户；在自动化场景里，由客户端的程序策略决定。审批通过，这一次调用按更宽模式执行，只对这一次有效，不改变会话的常驻模式。审批被拒或取消，直接失败，不能反复试。</p>
+
+<p>这里有一条铁律：升级不能预先猜、不能反复试。agent 不能在还没被挡的时候就先带上最高权限"以防万一"，也不能被拒一次后换着花样重试绕过去。被拒一次就是终局。这个约束把升级限定在"确实被挡了、确实需要更宽、用户确实同意了"这个窄路径上，防止 agent 把升级当成常规手段滥用。</p>
+
+<div class="example">
+  <div class="label">举例 · git push 的升级</div>
+  <p>agent 要 <code>git push</code>，需要读取并使用 <code>~/.ssh</code> 里的密钥和 <code>~/.gitconfig</code>，这些都在工作区外 → 在 <code>workspace-write</code> 下被 bash 围挡拦住。</p>
+  <p>agent 带上 <code>sandbox_permissions: "danger-full-access"</code> 加 <code>justification: "git push 需要读取并使用 ~/.ssh 密钥和 ~/.gitconfig，这些在工作区外"</code> 重试 → 审批卡弹给你 → 你点"通过" → 这一次 push 按 <code>danger-full-access</code> 执行 → push 完了，下一次命令又回到 <code>workspace-write</code>。</p>
+</div>
+
+<div class="callout">
+  <div class="label">fail-closed 铁律</div>
+  <p>如果系统根本找不到能用的隔离 runner——比如 Linux 上既没装 bubblewrap，内核也不支持 Landlock——它直接报 <code>SANDBOX_UNAVAILABLE</code> 拒绝执行，<strong>绝不会静默地不放围挡就跑</strong>。宁可干不了，也不裸奔。这是整个沙箱设计的安全底线：受约束的执行要么真的被约束，要么不执行，不存在"约束没生效但还是跑了"这个状态。</p>
+</div>
+
+<h2 id="boundary">边界与收尾</h2>
+
+<div class="key-point">
+  <div class="label">一句话总结</div>
+  <p>dsh 沙箱 = 三档文件效果权限 × 两道共享同一张图纸的围挡（bash 内核级 + fs 进程内）× 拒绝即事实加一次性审批升级 × fail-closed。它管的是"文件能落到哪"，不是通用安全沙箱。</p>
+</div>
+
+<p>最后说清这套沙箱的边界，避免误用。它管的是"文件能落到哪"，不是通用安全沙箱——网络访问、进程可见性、系统调用、设备访问都不在它的词汇表里。它也不做容器级隔离：bubblewrap、Landlock、Seatbelt 都是"同世界"的围挡，共享宿主文件系统和内核；真正的容器、microVM、远程执行是替换整条能力链（<code>ctx.shell</code>、<code>ctx.fs</code>），而不是往这个 seam 加一个 provider。</p>
+
+<p>Windows 上的 ACL 围挡是"部分强制"（<code>enforcement: 'partial'</code>）——受限令牌必须保留 Everyone 组用于进程初始化，所以外部对象如果给 Everyone 授了写权限，就还能被写；NTFS 硬链接也会让一个文件对象同时出现在工作区内和工作区外。provider 会如实报告这个 partial，不会把边界吹成 full。对于需要绝对隔离不可信代码的场景，dsh 的立场是：文件围栏不是答案，那要靠 <code>ctx.shell</code> 配合容器级执行世界。这个 seam 有意把边界画在"够用且可移植"的位置上。</p>
+
+<hr class="sep">
+<p style="font-size:13px;color:var(--muted);">源码与文档：<code>packages/sandbox/sandbox/</code>（Service Definition）、<code>packages/sandbox/sandbox-local/</code>（平台 runner）、<code>packages/sandbox/sandbox-policy/</code>（策略归属）、<code>packages/shell/bash-sandbox/</code>（bash 消费方）、<code>packages/fs/fs-sandbox/</code>（fs 消费方）。设计依据见 <code>.agents/notes/implemented/feature/2026-07-06-sandbox.md</code>。</p>
+
+</main>
+</body>
+</html>
