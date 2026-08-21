@@ -2319,8 +2319,10 @@ export class Engine {
           activeToolCalls++
           state.activeToolCalls = activeToolCalls
           // Track plan file path for plan-mode support (Go): raw
-          // ToolInputRaw.file_path, not the summarized ToolInput.
-          if (event.toolName === 'Write') {
+          // ToolInputRaw.file_path, not the summarized ToolInput. A subagent
+          // child's Write never promotes on the parent — the child runs its
+          // own plan lifecycle.
+          if (event.toolName === 'Write' && event.fromSubagent !== true) {
             const fp = event.toolInputRaw?.file_path
             if (typeof fp === 'string' && fp.includes('.claude/plans/')) {
               pendingPlanFilePath = fp
@@ -2330,8 +2332,9 @@ export class Engine {
           openToolIntervals.set(toolKey, Date.now())
           // A todo-list tool call replaces the pinned todo section (dsh
           // `todo_write`, Claude-style `TodoWrite`); an unparseable input
-          // keeps the last list.
-          if (isTodoToolName(event.toolName ?? '')) {
+          // keeps the last list. A subagent child's todo list stays on the
+          // child transcript — it must not overwrite the parent's section.
+          if (isTodoToolName(event.toolName ?? '') && event.fromSubagent !== true) {
             const items = parseTodoItems(event.toolInput ?? '')
             if (items !== undefined) {
               if (sp.canPreview()) await sp.updateTodoSection(items)
@@ -2339,7 +2342,15 @@ export class Engine {
             }
           }
           if (this.display.toolProgress && sp.canPreview()) {
-            await sp.appendProgress(newToolProgressEntry(event.toolName ?? '', event.toolInput ?? '', event.toolID ?? ''))
+            // Subagent child calls show the delegation label on the header
+            // line; the real tool name rides the code block as `name -> input`.
+            const entry = newToolProgressEntry(
+              event.fromSubagent === true ? 'subagent' : (event.toolName ?? ''),
+              event.toolInput ?? '',
+              event.toolID ?? '',
+            )
+            if (event.fromSubagent === true) entry.fullName = event.toolName ?? ''
+            await sp.appendProgress(entry)
           }
           break
         }
@@ -2363,10 +2374,13 @@ export class Engine {
             if (result !== '' && p !== undefined) {
               const entry = {
                 kind: 'tool_result' as const,
-                tool: event.toolName ?? '',
+                tool: event.fromSubagent === true ? 'subagent' : (event.toolName ?? ''),
                 text: result,
               }
-              if (!await cp.appendStructured(entry, result)) {
+              // A subagent child's result stays on the progress card; the
+              // standalone-message fallback would drop child tool output
+              // straight into the chat.
+              if (!await cp.appendStructured(entry, result) && event.fromSubagent !== true) {
                 if (!suppressStandaloneToolResultEvent(p)) {
                   await this.send(p, replyCtx, result)
                 }
@@ -2381,6 +2395,16 @@ export class Engine {
           }
           activeToolCalls = Math.max(0, activeToolCalls - 1)
           state.activeToolCalls = activeToolCalls
+          break
+        }
+
+        case 'subagent_status': {
+          // Cumulative delegated-subagent count from the adapter's lineage
+          // projection; the card's pinned stats section renders it.
+          const count = Number.parseInt(event.content, 10)
+          if (Number.isFinite(count) && count >= 0 && sp.canPreview()) {
+            await sp.setSubagentCount(count)
+          }
           break
         }
 

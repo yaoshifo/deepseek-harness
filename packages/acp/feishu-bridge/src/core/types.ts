@@ -177,6 +177,7 @@ export type EventKind =
   | 'error'
   | 'permission_request'
   | 'thinking'
+  | 'subagent_status'
 
 /** A single piece of agent output streamed to the engine (Go Event). */
 export interface Event {
@@ -197,6 +198,8 @@ export interface Event {
   outputTokens?: number
   numTurns?: number
   arrivedAt?: number
+  /** True when the event projects a delegated subagent child session's activity. */
+  fromSubagent?: boolean
 }
 
 /**

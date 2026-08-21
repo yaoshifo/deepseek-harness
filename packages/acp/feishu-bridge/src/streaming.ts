@@ -471,6 +471,7 @@ export class StreamPreview {
   failed = false
   private todoItems: TodoItem[] = []
   private bgTaskHint = ''
+  private subagentCount = 0
 
   /**
    * Pending delayed-flush timer handle, if armed.
@@ -1107,6 +1108,23 @@ export class StreamPreview {
   }
 
   /**
+   * Update the cumulative subagent count shown in the pinned stats section.
+   * Zero hides the line; unchanged counts skip the flush.
+   *
+   * @param count - Number of delegated subagent child sessions that ever ran.
+   */
+  async setSubagentCount(count: number): Promise<void> {
+    await this.locked(async () => {
+      if (this.degraded || this.subagentCount === count) return
+      this.subagentCount = count
+      if (this.progressMode) {
+        const display = this.buildProgressDisplayLocked()
+        await this.flushProgressLocked(display)
+      }
+    })
+  }
+
+  /**
    * Update the tool entry matching toolID with its result; empty toolID
    * falls back to the first pending entry.
    *
@@ -1561,15 +1579,17 @@ export class StreamPreview {
       if (leadIn !== '') b += `${leadIn}\n`
     }
 
-    // Section 1: 待办事项 + 状态计数（失败/压缩/技能）in one code block.
+    // Section 1: 待办事项 + 状态计数（失败/压缩/技能/子代理）in one code block.
     const hasToolEntries = this.progressEntries.some(e => e.isTool)
-    const hasStatus = this.todoItems.length > 0 || this.failureCount > 0 || this.compactCount > 0 || this.skillNames.length > 0
+    const hasStatus = this.todoItems.length > 0 || this.failureCount > 0 || this.compactCount > 0
+      || this.skillNames.length > 0 || this.subagentCount > 0
     if (hasStatus) {
       b += '```\n'
-      // 摘要统计置顶（失败/压缩/技能）；待办跟在后面
+      // 摘要统计置顶（失败/压缩/技能/子代理）；待办跟在后面
       if (this.failureCount > 0) b += `🔴调用失败：${this.failureCount}/${this.progressTotalCount}\n`
       if (this.compactCount > 0) b += `🗜上下文压缩：${this.compactCount}次\n`
       if (this.skillNames.length > 0) b += `📚 技能：${this.skillNames.join('、')}\n`
+      if (this.subagentCount > 0) b += `🤖 Sub Agent：${this.subagentCount}\n`
       for (const item of this.todoItems) {
         let icon: string
         switch (item.status.trim().toLowerCase()) {

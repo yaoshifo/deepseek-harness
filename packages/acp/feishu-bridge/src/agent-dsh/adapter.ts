@@ -47,7 +47,7 @@ export interface DshAgentLike {
   readonly id: unknown
   readonly status: 'idle' | 'running'
   /** The agent's durable session log (fork seeds slice its completed turns). */
-  readonly session: { readonly events: readonly SessionEvent[] }
+  readonly session: { readonly events: readonly SessionEvent[]; readonly header?: { readonly parentSession?: unknown } }
   followup(message: unknown): void
   cancel(cause: { kind: string }, options?: { keepInbox?: boolean }): void
 }
@@ -286,6 +286,10 @@ function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai
 /** Default one-shot budget (Go oneShotQuery default timeout). */
 const oneShotDefaultTimeoutMs = 10 * 60_000
 
+/** Cap on parentSession links walked when attributing a subagent child to
+ * a live bridge session — guards against a corrupted lineage cycle. */
+const subagentLineageMaxDepth = 8
+
 /** Lightweight-query budget (Go LightweightQuery: 90s). */
 export const lightweightQueryTimeoutMs = 90_000
 
@@ -358,10 +362,18 @@ export class DshAgentAdapter {
     this.cfg = cfg
     this.workDir = cfg.cwd
     // session/event projection: route each durable event to the live
-    // engine session sharing the agent/session id.
-    const onSessionEvent = (session: { id: unknown }, event: Record<string, unknown>): void => {
+    // engine session sharing the agent/session id. Sessions outside
+    // liveSessions fall through to subagent-lineage attribution: a
+    // delegated child session's events project into its bridge ancestor's
+    // channel so the tool-process card shows the child's activity.
+    const onSessionEvent = (session: { id: unknown; header?: { parentSession?: unknown } }, event: Record<string, unknown>): void => {
       const target = this.liveSessions.get(String(session.id))
-      if (target !== undefined) target.projectSessionEvent(event)
+      if (target !== undefined) {
+        target.projectSessionEvent(event)
+        return
+      }
+      const ancestor = this.resolveSubagentAncestor(session)
+      if (ancestor !== undefined) ancestor.projectSubagentEvent(String(session.id), event)
     }
     this.disposers.push(ctx.on('session/event', onSessionEvent))
     // A disposed agent is the Go "process exited" signal: close the channel.
@@ -939,6 +951,34 @@ export class DshAgentAdapter {
   }
 
   /**
+   * Resolve the live bridge session that owns a non-bridge session's
+   * subagent lineage: walk `parentSession` links upward through the live
+   * agent registry until a bridge session matches. Grandchildren attribute
+   * to the same ancestor as direct children; a broken chain (mid-lineage
+   * session no longer live) drops the event, matching the pre-attribution
+   * behavior of invisible child activity.
+   *
+   * @param session - the emitting session carrying a `parentSession` header.
+   * @returns the owning live bridge session, or undefined when the lineage
+   *   does not reach one.
+   */
+  private resolveSubagentAncestor(session: { header?: { parentSession?: unknown } }): DshAgentSession | undefined {
+    let parent: unknown = session.header?.parentSession
+    for (let depth = 0; depth < subagentLineageMaxDepth; depth++) {
+      // Session ids (branded strings) key both maps; a non-string link is
+      // corrupt lineage and ends the walk.
+      if (typeof parent !== 'string') return undefined
+      const live = this.liveSessions.get(parent)
+      if (live !== undefined) return live
+      const agent = this.ctx.agents.get(parent)
+      const next = agent?.session.header?.parentSession
+      if (next === undefined) return undefined
+      parent = next
+    }
+    return undefined
+  }
+
+  /**
    * TODO(M7 usage): dsh has no native "list persisted sessions" API on the
    * registry yet; /sessions relies on this returning what the backend knows.
    * M1 reports none — the parent session verifies the real surface.
@@ -1018,6 +1058,8 @@ export class DshAgentSession implements AgentSession {
   private readonly workDir: string
   /** Auto-approve tool permissions (Go permMode bypassPermissions / autoApprove). */
   readonly bypassPermissions: boolean
+  /** Child sessions that ever ran a turn (cumulative subagent count on the card). */
+  private readonly seenChildren = new Set<string>()
 
   constructor(key: string, handle: DshAgentHandleLike, workDir = '', ctx?: DshContextLike, bypassPermissions = false) {
     this.key = key
@@ -1352,5 +1394,65 @@ export class DshAgentSession implements AgentSession {
       default:
         break
     }
+  }
+
+  /**
+   * Project one delegated subagent child session's durable event into the
+   * engine Event stream. Only tool calls, tool results, and the first
+   * turn edge flow through — a child's assistant text and reasoning stay on
+   * the child's own card-less transcript. Tool ids are namespaced with the
+   * child session id so a result matches its own call even while parent
+   * calls interleave.
+   *
+   * @param childSessionId - the emitting child session's id.
+   * @param event - the durable session event ({type, seq, time, data}).
+   */
+  projectSubagentEvent(childSessionId: string, event: Record<string, unknown>): void {
+    this.lastActivityAt = Date.now()
+    const data = (event.data ?? {}) as Record<string, unknown>
+    switch (toStr(event.type)) {
+      case 'turn/start': {
+        // Cumulative count: every child session that ever ran a turn counts
+        // once. Set.add returns the Set, not a boolean — gate on has() so a
+        // duplicate turn edge does not re-emit the count.
+        if (!this.seenChildren.has(childSessionId)) {
+          this.seenChildren.add(childSessionId)
+          this.emitSubagentCount()
+        }
+        break
+      }
+      case 'tool/call': {
+        this.channel.push({
+          type: 'tool_use',
+          toolName: toStr(data.name),
+          toolInput: toStr(data.arguments),
+          toolID: `${childSessionId}:${toStr(data.callId)}`,
+          content: '',
+          done: false,
+          fromSubagent: true,
+        })
+        break
+      }
+      case 'tool/result': {
+        const message = data.message as { callId?: unknown; content?: ContentBlock[] } | undefined
+        const callId = toStr(message?.callId)
+        this.channel.push({
+          type: 'tool_result',
+          toolResult: textOfBlocks(message?.content),
+          ...(callId !== '' ? { toolID: `${childSessionId}:${callId}` } : {}),
+          content: '',
+          done: false,
+          fromSubagent: true,
+        })
+        break
+      }
+      default:
+        break
+    }
+  }
+
+  /** Push the current seen-children count onto the channel (on change). */
+  private emitSubagentCount(): void {
+    this.channel.push({ type: 'subagent_status', content: String(this.seenChildren.size), done: false })
   }
 }

@@ -1134,6 +1134,34 @@ describe('skill progress entries', () => {
   })
 })
 
+describe('subagent progress entries', () => {
+  it('render labels the header line subagent and keeps the real tool in the body', () => {
+    const e = newToolProgressEntry('subagent', 'ls -la', 'child-1:c1')
+    e.fullName = 'read'
+    e.seq = 3
+    const out = e.render(false)
+    expect(out).toContain("<text_tag color='blue'>⚙️ subagent</text_tag> · 3")
+    expect(out).toContain('read -> ls -la')
+  })
+
+  it('setSubagentCount shows and hides the cumulative-count stats line', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(cfg({ maxChars: 5000 }), mp, 'ctx', undefined, undefined)
+    // Before any progress entry the count parks without a card flush.
+    await sp.setSubagentCount(3)
+    await sp.appendProgress(newToolProgressEntry('Bash', 'ls', 't1'))
+    expect(sp.buildProgressDisplayLocked()).toContain('🤖 Sub Agent：3')
+    await sp.setSubagentCount(2)
+    expect(sp.buildProgressDisplayLocked()).toContain('🤖 Sub Agent：2')
+    await sp.setSubagentCount(0)
+    expect(sp.buildProgressDisplayLocked()).not.toContain('Sub Agent')
+    // Unchanged counts skip the flush (no new message beyond the count change).
+    const before = mp.messages.length
+    await sp.setSubagentCount(0)
+    expect(mp.messages.length).toBe(before)
+  })
+})
+
 describe('bump to end', () => {
   it('reissues the card and deletes the old one', async () => {
     const mp = createMockBumpPlatform()
