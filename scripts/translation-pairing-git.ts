@@ -1,4 +1,4 @@
-/** Git-blob operations owned by the bilingual pairing workflow. */
+/** Git-blob operations shared by repository hook scripts (translation pairing, secret gate). */
 
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
