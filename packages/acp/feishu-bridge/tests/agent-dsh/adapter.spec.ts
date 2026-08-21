@@ -12,6 +12,7 @@ import { DshAgentAdapter, DshAgentSession, sessionBypassesPermissions, stripMode
 interface RecordedAgent extends DshAgentLike {
   id: string
   followups: unknown[]
+  steers: unknown[]
   cancels: Array<{ cause: { kind: string }; keepInbox?: boolean | undefined }>
   disposed: boolean
   emit(sessionId: string, event: Record<string, unknown>): void
@@ -23,13 +24,16 @@ function createFakeAgent(id: string, sink: (sessionId: string, event: Record<str
     status: 'idle',
     session: { events: [] },
     followups: [] as unknown[],
+    steers: [] as unknown[],
     cancels: [] as Array<{ cause: { kind: string }; keepInbox?: boolean | undefined }>,
     disposed: false,
     followup(message: unknown): void {
       agent.followups.push(message)
       agent.status = 'running'
     },
-    steer(): void {},
+    steer(message: unknown): void {
+      agent.steers.push(message)
+    },
     cancel(cause: { kind: string }, options?: { keepInbox?: boolean }): void {
       agent.cancels.push({ cause, ...(options?.keepInbox !== undefined ? { keepInbox: options.keepInbox } : {}) })
     },
@@ -584,12 +588,13 @@ function planReviewQuestion(overrides: Record<string, unknown> = {}): Record<str
 async function startedProvider(): Promise<{
   session: DshAgentSession
   ask: (req: Record<string, unknown>) => Promise<unknown>
+  agent: RecordedAgent
 }> {
-  const { adapter, providers } = createUserQuestionsHarness()
+  const { adapter, providers, h } = createUserQuestionsHarness()
   const session = (await adapter.startSession('')) as DshAgentSession
   const provider = providers[0]
   if (provider === undefined) throw new Error('userQuestions provider was not registered')
-  return { session, ask: req => provider.ask(req) }
+  return { session, ask: req => provider.ask(req), agent: h.agents[0]! }
 }
 
 /** The next event on the session channel; fails the test when the channel is done. */
@@ -659,7 +664,7 @@ describe('DshAgentAdapter userQuestions provider', () => {
   })
 
   it('denying the plan review declines with the deny message as custom feedback', async () => {
-    const { session, ask } = await startedProvider()
+    const { session, ask, agent } = await startedProvider()
 
     const askPromise = ask({
       questions: [planReviewQuestion()],
@@ -671,6 +676,55 @@ describe('DshAgentAdapter userQuestions provider', () => {
     await expect(askPromise).resolves.toEqual({
       answers: [{ id: 'plan-review', selected: [], custom: 'add tests first' }],
     })
+    expect(agent.steers).toHaveLength(0)
+  })
+
+  it('approving with a supplement steers it as a user message next to the approval', async () => {
+    const { session, ask, agent } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    const event = await nextEvent(session)
+    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {}, message: 'also update the README' })
+
+    // The answer stays selected-only: plan-mode treats any custom as
+    // keep-planning feedback, so the supplement cannot ride in the answer.
+    await expect(askPromise).resolves.toEqual({
+      answers: [{ id: 'plan-review', selected: ['Approve'] }],
+    })
+    expect(agent.steers).toHaveLength(1)
+    const steered = agent.steers[0] as { content: Array<{ type: string; text: string }> }
+    expect(steered.content).toEqual([{ type: 'text', text: 'also update the README' }])
+  })
+
+  it('approving without a supplement steers nothing', async () => {
+    const { session, ask, agent } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    const event = await nextEvent(session)
+    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {} })
+
+    await askPromise
+    expect(agent.steers).toHaveLength(0)
+  })
+
+  it('approving with a whitespace-only supplement steers nothing', async () => {
+    const { session, ask, agent } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    const event = await nextEvent(session)
+    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {}, message: '   ' })
+
+    await askPromise
+    expect(agent.steers).toHaveLength(0)
   })
 
   it('ordinary questions still emit AskUserQuestion and deliver collected answers', async () => {

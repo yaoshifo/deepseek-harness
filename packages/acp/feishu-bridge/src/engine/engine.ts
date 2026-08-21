@@ -4314,7 +4314,10 @@ export class Engine {
         .title(`‼️ ${this.i18n.t(Msg.PermCardTitle)}`, 'red')
         .form('perm_form',
           { kind: 'markdown', content: body },
-          { kind: 'input', name: 'deny_reason', placeholder: this.i18n.t(Msg.PermDenyReasonPlaceholder), maxLength: 1000 },
+          // The note input is dual-purpose: on a plan-review card the text
+          // rides alongside an approval as a supplement; elsewhere it is the
+          // deny reason.
+          { kind: 'input', name: 'perm_note', placeholder: this.i18n.t(toolName === 'ExitPlanMode' ? Msg.PermNotePlaceholder : Msg.PermDenyReasonPlaceholder), maxLength: 1000 },
           { kind: 'actions', buttons: [allowBtn, allowAllBtn, denyBtn], layout: 'equal_columns' },
         )
         .build()
@@ -4423,15 +4426,17 @@ export class Engine {
    * floating promises.
    * @param p - Platform the response arrived on.
    * @param msg - The inbound response message.
-   * @param content - Response text; feishu card denies may append "\x00<reason>".
+   * @param content - Response text; feishu card verdicts may append "\x00<note>".
    * @returns True when the message was consumed as a permission response.
    */
   handlePendingPermission(p: Platform, msg: Message, content: string): boolean {
-    // Parse optional deny reason: feishu encodes as "deny\x00<reason>"
-    let denyReason = ''
+    // Parse the optional card-form note: feishu encodes it as
+    // "<verdict>\x00<note>" — a deny reason, or an allow supplement on a
+    // plan-review card.
+    let note = ''
     const nulIdx = content.indexOf('\x00')
     if (nulIdx >= 0) {
-      denyReason = content.slice(nulIdx + 1).trim()
+      note = content.slice(nulIdx + 1).trim()
       content = content.slice(0, nulIdx)
     }
 
@@ -4508,7 +4513,7 @@ export class Engine {
     if (isApproveAllResponse(lower)) {
       state.approveAll = true
       if (state.agentSession !== undefined) {
-        void state.agentSession.respondPermission(pending.requestID, { behavior: 'allow', updatedInput: pending.toolInput }).catch(() => {})
+        void state.agentSession.respondPermission(pending.requestID, { behavior: 'allow', updatedInput: pending.toolInput, ...(note !== '' ? { message: note } : {}) }).catch(() => {})
       }
     } else if (isAllowResponse(lower)) {
       // ExitPlanMode approval grants blanket approval for the rest of the turn
@@ -4517,11 +4522,11 @@ export class Engine {
         state.effectiveMode = 'default'
       }
       if (state.agentSession !== undefined) {
-        void state.agentSession.respondPermission(pending.requestID, { behavior: 'allow', updatedInput: pending.toolInput }).catch(() => {})
+        void state.agentSession.respondPermission(pending.requestID, { behavior: 'allow', updatedInput: pending.toolInput, ...(note !== '' ? { message: note } : {}) }).catch(() => {})
       }
     } else if (isDenyResponse(lower)) {
       pending.denied = true
-      const denyMessage = buildDenyMessage(denyReason)
+      const denyMessage = buildDenyMessage(note)
       if (state.agentSession !== undefined) {
         void state.agentSession.respondPermission(pending.requestID, { behavior: 'deny', message: denyMessage }).catch(() => {})
       }

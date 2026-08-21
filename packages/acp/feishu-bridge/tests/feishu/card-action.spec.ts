@@ -161,7 +161,7 @@ describe('onCardAction perm: in-place card update (Go feishu_dispatch.go perm br
     await p.start(() => {})
     p.permBodyCache.set('feishu:oc_1:ou_9', 'cached perm body')
     const event: CardActionTriggerEvent = {
-      action: { name: 'perm_deny', form_value: { deny_reason: '  scope too broad  ' } },
+      action: { name: 'perm_deny', form_value: { perm_note: '  scope too broad  ' } },
       operator: { open_id: 'ou_9' },
       context: { open_chat_id: 'oc_1', open_message_id: 'om_p2' },
     }
@@ -171,6 +171,55 @@ describe('onCardAction perm: in-place card update (Go feishu_dispatch.go perm br
     expect(header.template).toBe('red')
     const body = (resp!.card.data as { body: { elements: Array<{ tag: string; content: string }> } }).body
     expect(body.elements[0]).toEqual({ tag: 'markdown', content: '> scope too broad' })
+  })
+
+  it('encodes the note as an allow supplement on a card allow', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages = await dispatched(p, {
+      action: { name: 'perm_allow', form_value: { perm_note: ' also add tests ' } },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_pa1' },
+    })
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('allow\x00also add tests')
+  })
+
+  it('encodes the note as an allow_all supplement on a card allow_all', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages = await dispatched(p, {
+      action: { name: 'perm_allow_all', form_value: { perm_note: 'also add tests' } },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_paa1' },
+    })
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('allow all\x00also add tests')
+  })
+
+  it('quotes the supplement under the resolved body on a card allow', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    p.permBodyCache.set('feishu:oc_1:ou_9', 'cached perm body')
+    const event: CardActionTriggerEvent = {
+      action: { name: 'perm_allow', form_value: { perm_note: 'also add tests' } },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_pa2' },
+    }
+    const resp = p.onCardAction(event) as { card: { type: string; data: Record<string, unknown> } } | undefined
+    const header = (resp!.card.data as { header: { title: { content: string }; template: string } }).header
+    expect(header.title.content).toBe('✅ 已允许')
+    const body = (resp!.card.data as { body: { elements: Array<{ tag: string; content?: string }> } }).body
+    expect(body.elements[0]).toEqual({ tag: 'markdown', content: 'cached perm body\n\n> also add tests' })
+  })
+
+  it('sends a bare allow when the note field is empty', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages = await dispatched(p, {
+      action: { name: 'perm_allow', form_value: { perm_note: '   ' } },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_pa3' },
+    })
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('allow')
   })
 
   it('labels allow_all with its fixed fallback', async () => {

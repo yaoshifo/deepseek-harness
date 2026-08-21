@@ -364,6 +364,63 @@ describe('handlePendingPermission ExitPlanMode approval', () => {
   }
 })
 
+describe('handlePendingPermission allow supplement', () => {
+  const cases = [
+    { name: 'exitplan_allow_note_becomes_message', tool: 'ExitPlanMode', content: 'allow', note: 'also add tests' },
+    { name: 'exitplan_allow_all_note_becomes_message', tool: 'ExitPlanMode', content: 'allow all', note: 'also add tests' },
+    { name: 'ordinary_tool_allow_note_becomes_message', tool: 'Bash', content: 'allow', note: 'also add tests' },
+  ] as const
+
+  for (const c of cases) {
+    it(c.name, () => {
+      const e = newTestEngine()
+      const p = createStubPlatform('test')
+      const rec = createRecordingAgentSession()
+      const state = new InteractiveState()
+      state.agentSession = rec
+      state.platform = p
+      state.replyCtx = 'ctx'
+      state.pending = newPendingPermission({
+        requestID: 'req-1',
+        toolName: c.tool,
+        toolInput: {},
+      })
+      e.interactiveStates.set('test:chat:user1', state)
+
+      const content = `${c.content}\x00${c.note}`
+      const handled = e.handlePendingPermission(p, msg({ content, isPermissionAction: true }), content)
+
+      expect(handled).toBe(true)
+      expect(rec.lastResult?.behavior).toBe('allow')
+      // The supplement rides as the raw note (unwrapped); only the deny path
+      // wraps it with the native rejection preamble.
+      expect(rec.lastResult?.message).toBe(c.note)
+    })
+  }
+
+  it('bare allow carries no message', () => {
+    const e = newTestEngine()
+    const p = createStubPlatform('test')
+    const rec = createRecordingAgentSession()
+    const state = new InteractiveState()
+    state.agentSession = rec
+    state.platform = p
+    state.replyCtx = 'ctx'
+    state.pending = newPendingPermission({
+      requestID: 'req-1',
+      toolName: 'ExitPlanMode',
+      toolInput: {},
+    })
+    e.interactiveStates.set('test:chat:user1', state)
+
+    const handled = e.handlePendingPermission(p, msg({ content: 'allow' }), 'allow')
+
+    expect(handled).toBe(true)
+    expect(rec.lastResult?.behavior).toBe('allow')
+    expect(rec.lastResult?.message).toBeUndefined()
+  })
+})
+
 describe('ForegroundPermissionSurfaces', () => {
   it('a foreground write-tool permission sends a card and parks (not auto-denied)', async () => {
     // Go's foreground reply loop creates pendingPermission for EVERY

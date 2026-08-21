@@ -397,6 +397,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   perm_card_title: { en: 'Permission Request', zh: '权限请求', 'zh-TW': '權限請求', ja: '権限リクエスト', es: 'Solicitud de permiso' },
   perm_card_body: { en: 'Agent wants to use **%s**:\n\n```\n%s\n```', zh: 'Agent 想要使用 **%s**:\n\n```\n%s\n```', 'zh-TW': 'Agent 想要使用 **%s**:\n\n```\n%s\n```', ja: 'エージェントが **%s** を使用しようとしています:\n\n```\n%s\n```', es: 'El agente quiere usar **%s**:\n\n```\n%s\n```' },
   perm_deny_reason_placeholder: { en: 'Optional: tell the agent why you\'re rejecting and how to adjust', zh: '可选：告诉 agent 为什么拒绝、想怎么改', 'zh-TW': '可選：告訴 agent 為什麼拒絕、想怎麼改', ja: '任意: 拒否する理由と望ましい変更方向をエージェントに伝える', es: 'Opcional: dile al agente por qué rechazas y cómo ajustar' },
+  perm_note_placeholder: { en: 'Optional: an extra request carried alongside your approval, or the reason when rejecting', zh: '可选：批准时作为补充要求一并执行，拒绝时作为修改意见', 'zh-TW': '可選：批准時作為補充要求一併執行，拒絕時作為修改意見', ja: '任意: 承認時は追加要件として実行に反映、拒否時は修正方針として伝わります', es: 'Opcional: al aprobar se añade como requisito extra; al rechazar, como motivo' },
   ask_question_title: { en: 'Agent Question', zh: 'Agent 提问', 'zh-TW': 'Agent 提問', ja: 'エージェントの質問', es: 'Pregunta del agente' },
   ask_question_multi: { en: ' (multiple selections allowed, separate with commas)', zh: '（可多选，用逗号分隔）', 'zh-TW': '（可多選，用逗號分隔）', ja: '（複数選択可、カンマで区切る）', es: ' (selección múltiple permitida, separe con comas)' },
   ask_question_answered: { en: 'Answer', zh: '已回答', 'zh-TW': '已回答', ja: '回答済み', es: 'Respondido' },

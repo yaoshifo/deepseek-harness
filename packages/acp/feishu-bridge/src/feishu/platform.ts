@@ -941,14 +941,14 @@ export class FeishuPlatform implements Platform {
     // feishu_dispatch.go perm branch): the resolved card rides back as the
     // callback response so the pressed card swaps to the outcome state.
     if (actionVal.startsWith('perm:')) {
+      const rawNote = action.form_value?.perm_note
+      const note = typeof rawNote === 'string' ? rawNote.trim() : ''
       let content = ''
-      if (actionVal === 'perm:allow') content = 'allow'
+      if (actionVal === 'perm:allow') content = note !== '' ? `allow\x00${note}` : 'allow'
       else if (actionVal === 'perm:deny') {
         content = 'deny'
-        const raw = action.form_value?.deny_reason
-        const reason = typeof raw === 'string' ? raw : ''
-        if (reason.trim() !== '') content = `deny\x00${reason.trim()}`
-      } else if (actionVal === 'perm:allow_all') content = 'allow all'
+        if (note !== '') content = `deny\x00${note}`
+      } else if (actionVal === 'perm:allow_all') content = note !== '' ? `allow all\x00${note}` : 'allow all'
       else return undefined
 
       this.dispatch(sessionKey, messageID, userID, chatID, 'group',
@@ -966,9 +966,7 @@ export class FeishuPlatform implements Platform {
         } else if (actionVal === 'perm:deny') {
           permLabel = '❌ 已拒绝'
           permColor = 'red'
-          const raw = action.form_value?.deny_reason
-          const reason = typeof raw === 'string' ? raw.trim() : ''
-          if (reason !== '') permBody = `> ${reason}`
+          if (note !== '') permBody = `> ${note}`
         } else {
           permLabel = '✅ 已全部允许'
           permColor = 'green'
@@ -979,6 +977,11 @@ export class FeishuPlatform implements Platform {
       // entry is consumed either way, so a stale body never leaks into the
       // next permission card.
       this.permBodyCache.delete(sessionKey)
+      // An allow/allow_all note rides as a quoted supplement under the
+      // resolved body (deny replaced the body outright above).
+      if (actionVal !== 'perm:deny' && note !== '') {
+        permBody = permBody === '' ? `> ${note}` : `${permBody}\n\n> ${note}`
+      }
       if (permColor === '') permColor = 'green'
       const cb = newCard().title(permLabel, permColor)
       if (permBody !== '') cb.markdown(permBody)

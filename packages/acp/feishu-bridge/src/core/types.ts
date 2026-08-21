@@ -74,7 +74,7 @@ export interface AgentSessionInfo {
 export interface PermissionResult {
   behavior: 'allow' | 'deny'
   updatedInput?: Record<string, unknown>
-  /** Deny reason message forwarded to the agent (Go PermissionResult.Message). */
+  /** Note forwarded to the agent: the deny reason, or an allow supplement on a plan review (Go PermissionResult.Message). */
   message?: string
 }
 
