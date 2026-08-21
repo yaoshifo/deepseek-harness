@@ -34,6 +34,7 @@ function parentAgent(id: string, events: SessionEvent[]): ParentAgent {
     status: 'idle',
     session: { events },
     followup: () => {},
+    steer: () => {},
     cancel: () => {},
   }
 }

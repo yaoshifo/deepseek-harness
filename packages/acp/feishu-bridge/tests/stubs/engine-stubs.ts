@@ -39,6 +39,7 @@ export function createStubAgent(): StubAgent {
 export function createStubAgentSession(): AgentSession {
   return {
     send: async () => {},
+    steer: () => {},
     respondPermission: async () => {},
     events: () => new EventChannelImpl(),
     currentSessionID: () => 'stub-session',
@@ -84,6 +85,7 @@ export interface ControllableAgentSession extends AgentSession {
   aliveFlag: boolean
   permResponses: Array<{ requestID: string; result: PermissionResult }>
   sendCalls: string[]
+  steerCalls: string[]
   eventsImpl(): EventChannel
 }
 
@@ -96,7 +98,11 @@ export function newControllableSession(id: string): ControllableAgentSession {
     aliveFlag: true,
     permResponses: [],
     sendCalls: [],
+    steerCalls: [],
     send: async () => {},
+    steer: (prompt: string) => {
+      s.steerCalls.push(prompt)
+    },
     respondPermission: async (requestID, result) => {
       s.permResponses.push({ requestID, result })
     },

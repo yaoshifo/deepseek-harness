@@ -51,6 +51,7 @@ export interface DshAgentLike {
   /** The agent's durable session log (fork seeds slice its completed turns). */
   readonly session: { readonly events: readonly SessionEvent[]; readonly header?: { readonly parentSession?: unknown } }
   followup(message: unknown): void
+  steer(message: unknown): void
   cancel(cause: { kind: string }, options?: { keepInbox?: boolean }): void
 }
 
@@ -1262,6 +1263,20 @@ export class DshAgentSession implements AgentSession {
       source: { kind: 'user' },
     }))
     return Promise.resolve()
+  }
+
+  /**
+   * AgentSession.steer: append mid-turn text to the agent's next-step inbox
+   * (agent-loop steer) — the driver claims it between steps, so the text
+   * reaches the model inside the running turn. Text only; /ps never carries
+   * attachments.
+   */
+  steer(prompt: string): void {
+    this.lastActivityAt = Date.now()
+    this.handle.agent.steer(createUserMessage({
+      content: [{ type: 'text', text: prompt }],
+      source: { kind: 'user' },
+    }))
   }
 
   /**

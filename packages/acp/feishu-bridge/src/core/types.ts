@@ -284,6 +284,13 @@ export interface Platform {
 /** A running agent session with a persistent process (Go AgentSession). */
 export interface AgentSession {
   send(prompt: string, images: ImageAttachment[], files: FileAttachment[]): Promise<void>
+  /**
+   * Append mid-turn text to the agent's next-step inbox: the driver claims it
+   * between steps, so the text reaches the model inside the running turn —
+   * including while the turn waits on a permission (agent-loop steer).
+   * @param prompt - The text to append; attachments never ride this path.
+   */
+  steer(prompt: string): void
   respondPermission(requestID: string, result: PermissionResult): Promise<void>
   events(): EventChannel
   currentSessionID(): string
