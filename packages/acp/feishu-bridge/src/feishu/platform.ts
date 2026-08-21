@@ -437,8 +437,12 @@ export interface FeishuPlatformOptions {
   isSpawnedChat?: (chatID: string) => boolean
   /** Outbound API client; defaults to the node-sdk-backed client. */
   apiClient?: FeishuApiClient
-  /** WS bootstrap receiving the raw-event callback; defaults to WSClient. */
-  wsStart?: (onRawEvent: (eventType: string, data: unknown) => unknown) => Promise<void>
+  /**
+   * WS bootstrap receiving the raw-event callback; defaults to WSClient.
+   * Resolves to a close handle for the transport when it owns one (test
+   * fakes may resolve undefined); `stop()` closes the connection through it.
+   */
+  wsStart?: (onRawEvent: (eventType: string, data: unknown) => unknown) => Promise<void | WsClose>
   /** Interactive cards and preview PATCHes (Go enable_feishu_card; default true). */
   useInteractiveCard?: boolean
   /** "legacy" (default), "compact", or "card" (Go progress_style). */
@@ -525,6 +529,7 @@ export class FeishuPlatform implements Platform {
   private handler: MessageHandler | undefined
   private api: FeishuApiClient | undefined
   private wsStarted = false
+  private wsClose: WsClose | undefined
 
   /** Interactive cards enabled (enable_feishu_card). */
   readonly useInteractiveCard: boolean
@@ -664,7 +669,7 @@ export class FeishuPlatform implements Platform {
       await this.probeBotInfo()
     }
     const wsStart = this.o.wsStart ?? (onRawEvent => defaultWsStart(this.opts.appID, this.opts.appSecret, onRawEvent))
-    await wsStart((eventType, data) => {
+    this.wsClose = (await wsStart((eventType, data) => {
       if (eventType === 'im.message.receive_v1') {
         this.onMessage(data as FeishuReceiveEvent)
         return undefined
@@ -680,7 +685,7 @@ export class FeishuPlatform implements Platform {
         this.onMessageRecalled(data as FeishuRecallEvent)
       }
       return undefined
-    })
+    })) ?? undefined
   }
 
   /** Fetch the bot's identity and upload its avatar pair (best-effort). */
@@ -724,9 +729,18 @@ export class FeishuPlatform implements Platform {
     }
   }
 
-  async stop(): Promise<void> {
-    // The node-sdk WSClient owns its reconnect loop; teardown relies on
-    // process exit (watchdog arrives with the liveness milestone).
+  /**
+   * Close the WS transport. Cordis HMR config reloads dispose the owning
+   * engine and rebuild it — without this close, the old WSClient stays
+   * connected and Feishu load-balances app events onto the zombie connection,
+   * where they reach the disposed engine and vanish. Idempotent; a platform
+   * that never started (or a test fake without a transport) is a no-op.
+   */
+  stop(): Promise<void> {
+    const close = this.wsClose
+    this.wsClose = undefined
+    if (close !== undefined) close()
+    return Promise.resolve()
   }
 
   /**
@@ -3241,16 +3255,28 @@ export function wsEventRegistrations(
 }
 
 /**
+ * Close handle for one started WS transport: severs the long connection so a
+ * disposed platform (Cordis HMR reload) stops receiving Feishu events.
+ */
+export type WsClose = () => void
+
+/**
  * Default WS bootstrap over the SDK's long-connection client (plan D5):
  * one WSClient per app, dispatcher wired for im.message.receive_v1.
+ *
+ * @returns A close handle for the client — without it an HMR-disposed
+ * platform's WSClient stays connected and Feishu keeps delivering app events
+ * to the zombie connection (load-balanced across the app's connections),
+ * silently dropping messages routed to the disposed engine.
  */
 async function defaultWsStart(
   appID: string,
   appSecret: string,
   onRawEvent: (eventType: string, data: unknown) => void,
-): Promise<void> {
+): Promise<WsClose> {
   const sdk = await import('@larksuiteoapi/node-sdk')
   const dispatcher = new sdk.EventDispatcher({}).register(wsEventRegistrations(onRawEvent))
   const wsClient = new sdk.WSClient({ appId: appID, appSecret, domain: sdk.Domain.Feishu })
   await wsClient.start({ eventDispatcher: dispatcher })
+  return () => { wsClient.close({ force: true }) }
 }

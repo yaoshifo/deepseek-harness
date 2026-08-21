@@ -342,3 +342,27 @@ describe('FeishuPlatform outbound', () => {
     expect(api.creates).toHaveLength(1)
   })
 })
+
+describe('FeishuPlatform WS teardown', () => {
+  it('stop() closes the WS handle returned by wsStart exactly once', async () => {
+    let closed = 0
+    const p = newPlatform({ wsStart: async () => () => { closed++ } })
+    await p.start(() => {})
+    expect(closed).toBe(0)
+    await p.stop()
+    expect(closed).toBe(1)
+    await p.stop()
+    expect(closed).toBe(1)
+  })
+
+  it('stop() tolerates a wsStart that returns no close handle', async () => {
+    const p = newPlatform()
+    await p.start(() => {})
+    await p.stop()
+  })
+
+  it('stop() before start() is a no-op', async () => {
+    const p = newPlatform({ wsStart: async () => () => { throw new Error('close must not run') } })
+    await p.stop()
+  })
+})
