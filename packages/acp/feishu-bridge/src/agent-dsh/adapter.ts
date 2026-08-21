@@ -1268,8 +1268,8 @@ export class DshAgentSession implements AgentSession {
   /**
    * AgentSession.steer: append mid-turn text to the agent's next-step inbox
    * (agent-loop steer) — the driver claims it between steps, so the text
-   * reaches the model inside the running turn. Text only; /ps never carries
-   * attachments.
+   * reaches the model inside the running turn. Text only; neither caller
+   * (/ps, a plan-review approval supplement) carries attachments.
    */
   steer(prompt: string): void {
     this.lastActivityAt = Date.now()
@@ -1326,7 +1326,11 @@ export class DshAgentSession implements AgentSession {
    * question — then map the user's verdict to answer semantics. Allow
    * selects the intent's approve label; deny declines with the deny message
    * as feedback so the model keeps planning (Go planReviewItem +
-   * RespondPermission).
+   * RespondPermission). An allow-side note is the user's supplement to the
+   * approved plan: it cannot ride in the answer (plan-mode treats any
+   * `custom` as keep-planning feedback), so it is steered as a user message
+   * consumed at the next step boundary, right after the approval tool
+   * result.
    *
    * @param item - the plan-review ask rendered onto the ExitPlanMode card.
    * @param signal - abort; settles as a deny with no feedback message.
@@ -1345,14 +1349,18 @@ export class DshAgentSession implements AgentSession {
       toolInputRaw: { plan },
     })
     const approve = item.intent?.approve ?? ''
-    return this.awaitPermissionResponse(requestID, signal).then(decision => ({
-      answers: [{
-        id: item.id ?? item.question,
-        ...(decision.behavior === 'allow'
-          ? { selected: [approve !== '' ? approve : 'Approve'] }
-          : { selected: [], custom: decision.message ?? '' }),
-      }],
-    }))
+    return this.awaitPermissionResponse(requestID, signal).then((decision) => {
+      const supplement = decision.behavior === 'allow' ? (decision.message ?? '').trim() : ''
+      if (supplement !== '') this.steer(supplement)
+      return {
+        answers: [{
+          id: item.id ?? item.question,
+          ...(decision.behavior === 'allow'
+            ? { selected: [approve !== '' ? approve : 'Approve'] }
+            : { selected: [], custom: decision.message ?? '' }),
+        }],
+      }
+    })
   }
 
   /**
