@@ -31,7 +31,7 @@ The user asked for a code-level verification that the cc-connect → dsh-feishu-
 
 ## Consequences
 
-Production gains flood protection and a trickle-forever bound with zero profile changes (Go defaults apply). The audit's P2 list — voice-message transcription (inbound audio is silently dropped today; the old production config had `[speech]` enabled), failure classification + redaction, `[hooks]`, comment-session driving, `[references]`, two embedded skills (feishu-search / lark-guide), lark_skills sync, sessions_tui / feishu setup wizard, heartbeat / skill_presets — stays pending a user ruling; each is recorded in README Known Limitations and MIGRATION.md 补充 16. The audit also confirmed the Go foreign-session-event leak fix (9323dd8d) is structurally resolved in TS by the adapter's session-id + lineage routing.
+Production gains flood protection and a trickle-forever bound with zero profile changes (Go defaults apply). The audit's P2 list — voice-message transcription (inbound audio is dropped today; the old production config had `[speech]` enabled), failure classification + redaction, `[hooks]`, comment-session driving, `[references]`, two embedded skills (feishu-search / lark-guide), lark_skills sync, sessions_tui / feishu setup wizard, heartbeat / skill_presets, the #35a reaction chain, and restrict_to_workdir (#20) — was ruled entirely unported by the user the same day; each cut is recorded in README Known Limitations, FEATURE-PARITY (#20 → ✂️), and MIGRATION.md 补充 16. The audit also confirmed the Go foreign-session-event leak fix (9323dd8d) is structurally resolved in TS by the adapter's session-id + lineage routing.
 
 ## Testing
 

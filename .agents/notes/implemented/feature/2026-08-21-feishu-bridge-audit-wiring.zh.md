@@ -31,7 +31,7 @@ Status: implemented
 
 ## Consequences
 
-生产在零 profile 改动下获得洪泛防护与慢滴流兜底（Go 默认值直接生效）。审计的 P2 清单——语音消息转写（当前入站 audio 被静默丢弃；旧生产配置启用了 `[speech]`）、失败分类+脱敏、`[hooks]`、评论会话驱动、`[references]`、两个 embedded skills（feishu-search / lark-guide）、lark_skills 同步、sessions_tui / feishu setup 向导、heartbeat / skill_presets——留待用户裁定；各项已记入 README Known Limitations 与 MIGRATION.md 补充 16。审计另确认 Go 的子代理事件泄漏修复（9323dd8d）在 TS 已由适配器的 session id + lineage 路由结构性解决。
+生产在零 profile 改动下获得洪泛防护与慢滴流兜底（Go 默认值直接生效）。审计的 P2 清单——语音消息转写（当前入站 audio 被丢弃；旧生产配置启用了 `[speech]`）、失败分类+脱敏、`[hooks]`、评论会话驱动、`[references]`、两个 embedded skills（feishu-search / lark-guide）、lark_skills 同步、sessions_tui / feishu setup 向导、heartbeat / skill_presets、#35a 表情链、restrict_to_workdir（#20）——当日由用户裁定全部不迁；每笔裁剪已记入 README Known Limitations、FEATURE-PARITY（#20 → ✂️）与 MIGRATION.md 补充 16。审计另确认 Go 的子代理事件泄漏修复（9323dd8d）在 TS 已由适配器的 session id + lineage 路由结构性解决。
 
 ## Testing
 
