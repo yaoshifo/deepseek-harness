@@ -2,7 +2,7 @@
 
 Status: implemented
 
-English | [中文](2026-08-22-feishu-bridge-fork-persisted-seed.zh.md)
+English | [中文](2026-08-21-feishu-bridge-fork-persisted-seed.zh.md)
 
 ## Problem
 

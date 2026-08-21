@@ -2,7 +2,7 @@
 
 Status: implemented
 
-English | [中文](2026-08-22-feishu-bridge-plan-approve-supplement.zh.md)
+English | [中文](2026-08-21-feishu-bridge-plan-approve-supplement.zh.md)
 
 ## Problem
 
@@ -27,7 +27,7 @@ The supplement rides as a steered user message, reusing the `/ps` channel ([ps s
 
 ## Consequences
 
-Approving a plan with a supplement works on the Feishu card flow only; plain-text verdicts (`allow <text>`) stay keyword-exact, and cc-connect-bridge / Web UI keep their current behavior. Ordinary tool permissions forward the allow-side message up to the approval answerer, which drops it — the approval seam carries outcomes only, so an allow-side note has no ordinary-tool consumer (the deny side gained one: [deny reasons are steered](2026-08-22-feishu-bridge-deny-reason-steer.md) next to the rejection). If the user stops the turn in the settle-to-steer window, the steer is claimed by the next turn instead of lost.
+Approving a plan with a supplement works on the Feishu card flow only; plain-text verdicts (`allow <text>`) stay keyword-exact, and cc-connect-bridge / Web UI keep their current behavior. Ordinary tool permissions forward the allow-side message up to the approval answerer, which drops it — the approval seam carries outcomes only, so an allow-side note has no ordinary-tool consumer (the deny side gained one: [deny reasons are steered](2026-08-21-feishu-bridge-deny-reason-steer.md) next to the rejection). If the user stops the turn in the settle-to-steer window, the steer is claimed by the next turn instead of lost.
 
 ## Testing
 

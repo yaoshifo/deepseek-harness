@@ -861,7 +861,7 @@ export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: strin
   }
   const firstMsg = rest.join(' ').trim()
   // Quoted-plan cards are NOT a spawn rollback trigger (user ruling
-  // 2026-08-22): quoting the plan card with /fork already rolls back to the
+  // 2026-08-21): quoting the plan card with /fork already rolls back to the
   // plan-producing turn, and feishu_bridge_subtask's fork covers delegation.
   const forkSentinelID = ''
 

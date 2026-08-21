@@ -30,7 +30,7 @@ cc-connect 的回滚 fork——回复一条历史消息（含计划卡片）再�
 
 ## Consequences
 
-回滚对仅持久化的父会话也生效，并在命令到子群首条消息之间扛得住 daemon 重启。交付时这一点严格优于普通 `/fork` 的 seed 路径（当时后者仍要求父会话 live）；该天花板后来对普通 `/fork` 也已解除（见 [fork-persisted-seed](../bug-fix/2026-08-22-feishu-bridge-fork-persisted-seed.md)）。
+回滚对仅持久化的父会话也生效，并在命令到子群首条消息之间扛得住 daemon 重启。交付时这一点严格优于普通 `/fork` 的 seed 路径（当时后者仍要求父会话 live）；该天花板后来对普通 `/fork` 也已解除（见 [fork-persisted-seed](../bug-fix/2026-08-21-feishu-bridge-fork-persisted-seed.md)）。
 
 引用时间戳取卡片的 PATCH 时间：被反复刷新的卡片可能漂出 10 分钟窗口，fork 于是响亮地失败（`fork_at_truncate_failed`，不建群），而不是静默 fork 整段会话——与 Go 接受的取舍相同。文本匹配按 rune 切前缀而 Go 按字节切；意图（被截断、被装饰的引用仍能命中原文）一致。
 

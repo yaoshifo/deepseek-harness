@@ -30,7 +30,7 @@ Divergences from Go, all deliberate: no `ForkAtTranscriptReachable` capability â
 
 ## Consequences
 
-Rollback works for merely-persisted parents and survives a daemon restart between the command and the child's first message. When shipped, this was strictly better than the plain `/fork` seed path, which then still required a live parent; that ceiling has since been lifted for plain `/fork` too ([fork-persisted-seed](../bug-fix/2026-08-22-feishu-bridge-fork-persisted-seed.md)).
+Rollback works for merely-persisted parents and survives a daemon restart between the command and the child's first message. When shipped, this was strictly better than the plain `/fork` seed path, which then still required a live parent; that ceiling has since been lifted for plain `/fork` too ([fork-persisted-seed](../bug-fix/2026-08-21-feishu-bridge-fork-persisted-seed.md)).
 
 The quoted timestamp is the card's PATCH time: a repeatedly refreshed card can drift past the 10-minute window, and the fork then fails loudly (`fork_at_truncate_failed`, no group) instead of silently forking the whole session â€” the same trade-off Go accepted. Text matching compares rune-sliced prefixes where Go byte-slices; the intent (a truncated, decorated quote still matches its source) is identical.
 

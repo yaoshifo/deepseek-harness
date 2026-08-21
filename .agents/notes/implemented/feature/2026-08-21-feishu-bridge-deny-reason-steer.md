@@ -2,7 +2,7 @@
 
 Status: implemented
 
-English | [中文](2026-08-22-feishu-bridge-deny-reason-steer.zh.md)
+English | [中文](2026-08-21-feishu-bridge-deny-reason-steer.zh.md)
 
 ## Problem
 
@@ -10,7 +10,7 @@ The permission card's deny path built a native-format rejection message — `bui
 
 ## Decision
 
-The engine's `handlePendingPermission` deny branch steers the raw note when it is non-empty, the pending tool is not `ExitPlanMode`, and an agent session exists: `state.agentSession.steer(note)`, verbatim, same channel as the [plan-approval supplement](2026-08-22-feishu-bridge-plan-approve-supplement.md) and [/ps](2026-08-21-feishu-bridge-ps-steer.md). The model sees the rejection error and the user's reason in the same turn. The wrapped `buildDenyMessage` still rides `PermissionResult.message` unchanged for the plan-review path, which consumes it as keep-planning feedback — hence the `ExitPlanMode` guard, which keeps the reason from being delivered twice.
+The engine's `handlePendingPermission` deny branch steers the raw note when it is non-empty, the pending tool is not `ExitPlanMode`, and an agent session exists: `state.agentSession.steer(note)`, verbatim, same channel as the [plan-approval supplement](2026-08-21-feishu-bridge-plan-approve-supplement.md) and [/ps](2026-08-21-feishu-bridge-ps-steer.md). The model sees the rejection error and the user's reason in the same turn. The wrapped `buildDenyMessage` still rides `PermissionResult.message` unchanged for the plan-review path, which consumes it as keep-planning feedback — hence the `ExitPlanMode` guard, which keeps the reason from being delivered twice.
 
 ## Alternatives considered
 
