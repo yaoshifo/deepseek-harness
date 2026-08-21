@@ -202,8 +202,16 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 
 **M8 前补充 23：普通工具拒绝理由经 steer 送达模型（2026-08-21，worktree 分支，测试先行，+3 测试）**：补充 21 落地时暴露的既有缺口（已核实为 Go 同构行为、非移植差异）——权限卡拒绝时 `handlePendingPermission` 把 `buildDenyMessage(note)`（原生措辞+理由）作为 `PermissionResult.message` 下发，但普通工具路径最终只发 `{outcome:'rejected'}`（Go `agent/dsh/session.go:403` 非 question 分支、TS approval answerer 只返回 `decision.outcome`），dsh core 据此生成固定文案 `Error: the user rejected tool "X"`（core tools/src/index.ts:1715）；审批 seam 的 `ApprovalOutcome` 是纯字符串联合，没有 message 通道——用户写的拒绝理由端到端只到原地换卡展示。落地：engine deny 分支在 `note` 非空且 `pending.toolName !== 'ExitPlanMode'` 且 `state.agentSession` 存在时 `state.agentSession.steer(note)` 逐字注入（与补充 21 的 allow 补充同构；plan-review 拒绝不 steer——理由已经由 `answerPlanReview` 以 `custom` 反馈送达，再 steer 会重复）。**否决方案**：给 `ApprovalOutcome` 加带 reason 的结构——跨包契约改动（波及 user-approval/plan-mode/apiproxy/Web UI/cc-connect），桥端 steer 零契约扰动已闭环；adapter approval answerer 侧 steer——那里只有包装后 message，原始 note 只在 engine 可得。测试：engine-m3-permission.spec 新 describe 三用例（Bash deny+note→包装 message 照发+steerCalls 逐字、ExitPlanMode deny+note→不 steer、裸 deny→不 steer）；RecordingAgentSession 加 `steerCalls` 记录。Agent Note `feature/2026-08-21-feishu-bridge-deny-reason-steer.md`（中英+sidecar；补充 21 note 的 Consequences「still drops it」句同步改写并交叉链接）。**留日常验证（真机）**：reload 后普通工具权限卡填理由点拒绝，验证模型下一步引用理由调整做法。
 
-**M8 Cutover**
-- 记账驴日常使用回归 1-2 周 → 其余 8 个 project 逐个迁配置（用户操作旧系统摘除+重启，父会话加新配置+reload）→ 全量切换后用户停用旧 systemd、归档 cc-connect-bridge 包 → 新包 README + 运维文档（部署/回退/配置映射表/systemd 自启说明）。
+**M8 Cutover（✅ 2026-08-21 完成，Dev 服务器批量切流；用户裁定放弃「记账驴回归 1-2 周后逐个迁」的原分阶段计划）**
+
+- **范围**：Dev 服务器 7 个 dsh 型 project（风控驴/运维驴/择时驴/赛博修麟/赛博江岐/教学驴/知识驴）一次性切到 feishu-bridge daemon，8 WS 全挂；赛博婷婷（claudecode 型）按用户决定留在 cc-connect，cc-connect.service 仅为其运行，cc-connect-bridge 包不归档；本机 launchd 侧（开发虾）不受影响。
+- **用户裁定**：全新会话开始（会话注册表不迁移，`~/.cc-connect/sessions/<project>_*.json` 原地保留作回退资产）；一次全切（单次 cc-connect 重启）。
+- **代码**：daemon worktree promote 到 dev tip c57d9a3de8。构建两个坑：完整构建需 host+client 两个相位（仅 host 相位缺 api-gateway 等 client 包的 Node 入口，CLI boot 报 ERR_MODULE_NOT_FOUND）；7.5G 内存机上 tsc 需 `NODE_OPTIONS=--max-old-space-size=6144`（默认堆上限 OOM）。systemd 单元 ExecStart 由 npm 全局 dsh（rc.6，与 worktree 插件差两个版本世代）改为 worktree `apps/cli/lib/bin.js`，与本机开发虾同构；stdout/stderr 改走 journal（原 append 到 /tmp 下的 scratch 路径，重启即失）。
+- **profile**：补全局键（language zh / hints×3 / display：stall 600·2·absolute 3600·editorUrl / chatroom / subtask 600）、lsp 三行 + 三个 bigmodel MCP 行（自 cc-connect profile 原样拷，agent 能力保真）、plan-mode override 行；记账驴条目补齐旧 toml 等价配置（mode: plan 等，M1 时漏配）。
+- **路径去 cc-connect 化**（用户要求）：会话 root `~/.dsh/cc-connect-sessions` → `~/.dsh/feishu-bridge-sessions`（mv，历史全保留，记账驴在途会话验证续接正常）；渲染工具拷至 `~/.dsh/feishu-bridge/tools/`（planRender 指新路径）；`~/.dsh/profiles/cc-connect` 归档进 `~/.cc-connect/backup-cutover-20260821/`。`~/.cc-connect/` 与 `~/workspace/cc-connect` 仓库本身保留（赛博婷婷的 cc-connect、教学驴 workdir 所在）。
+- **状态 seed**：10 个标签缓存 → 共享 `sessions/`；8 个 spawned 注册表 → 各 project 数据目录；monitor_examples（风控驴）；crons 10 条（Go 侧 jobs.json 置空防双跑——Go cron 对已注释 project 触发时报 project not found 跳过，但会刷错误日志）；hint_usage / dir_history / relay_bindings（旧名死绑定原样拷）。
+- **验证**：记账驴真机一轮（新会话 plan 模式生效、回复正常、0 报错）；cron 10 条载入；8 bot 头像探活；赛博婷婷随 cc-connect 重启正常（projects=1）。其余 bot 真机冒烟由用户日常使用回归。
+- **回退**：单 bot = 删 profile project 段（HMR）+ 取消注释 config.toml + 重启 cc-connect（需先取回归档的 `~/.dsh/profiles/cc-connect`）；整体 = 恢复 `config.toml.bak-cutover-20260821` + 停 feishu-bridge。root 已改名，回退后 Go 侧在旧路径空目录重建，预切流历史在新路径可找回。
 
 ## 5. E2E 测试策略（可自测的边界）
 
