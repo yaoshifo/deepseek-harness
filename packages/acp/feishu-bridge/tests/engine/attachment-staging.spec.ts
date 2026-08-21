@@ -153,6 +153,7 @@ describe('stageAttachments', () => {
       startSession: async () => {
         session = {
           send: async (prompt: string, images) => { sends.push({ prompt, images: images.length }) },
+          steer: () => {},
           respondPermission: async () => {},
           events: () => new EventChannel(),
           currentSessionID: () => 's1',

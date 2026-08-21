@@ -34,7 +34,7 @@ interface Harness {
 
 /** A live parent agent with the given durable events. */
 function parentAgent(id: string, events: SessionEvent[]): DshAgentLike {
-  return { id, status: 'idle', session: { events }, followup: () => {}, cancel: () => {} }
+  return { id, status: 'idle', session: { events }, followup: () => {}, steer: () => {}, cancel: () => {} }
 }
 
 function createHarness(parents: DshAgentLike[] = []): Harness {
@@ -80,6 +80,7 @@ function createHarness(parents: DshAgentLike[] = []): Harness {
               })
             })
           },
+          steer(): void {},
           cancel(): void {},
         }
         agents.push(agent)
@@ -99,6 +100,7 @@ function createHarness(parents: DshAgentLike[] = []): Harness {
           followups: [],
           disposed: false,
           followup(): void {},
+          steer(): void {},
           cancel(): void {},
         }
         agents.push(agent)

@@ -2,7 +2,10 @@
  * Misc command tests ported from cc-connect core: /help (Go cmdHelp; the
  * command list is generated from the registered handlers instead of Go's
  * hand-maintained message_help blob) and /ps (Go handleCommand "ps" case:
- * append text to a running task, queue when blocked, fall through when idle).
+ * append text to a running task, fall through when idle). The mid-turn
+ * append steers the running turn's next-step inbox instead of Go's stdin
+ * write, so the text reaches the model inside the current turn — including
+ * while the turn is blocked on a permission.
  *
  * @module dsh-feishu-bridge/tests-engine-misc-commands
  */
@@ -155,35 +158,37 @@ describe('/ps', () => {
     }
   })
 
-  it('sends into the running session mid-turn and reacts Done', async () => {
+  it('steers into the running session mid-turn and reacts Done', () => {
     const { e, p, disposeAll } = newEngine()
     const session = newControllableSession('s1')
-    const sent: string[] = []
-    session.send = async (prompt: string) => { sent.push(prompt) }
     try {
       const state = armedState(e, session)
       state.activeTurns = 1
       expect(e.dispatchCommand(p, miscMsg('/ps extra context'), '/ps extra context')).toBe(true)
-      await vi.waitFor(() => { expect(sent).toEqual(['extra context']) })
+      // Mid-turn the text steers the running turn's next-step inbox; a
+      // followup-level send would only queue the next turn.
+      expect(session.steerCalls).toEqual(['extra context'])
+      expect(session.sendCalls).toEqual([])
       expect(p.getSent()).toHaveLength(0)
     } finally {
       disposeAll()
     }
   })
 
-  it('queues instead of sending when the turn is blocked on a permission', async () => {
+  it('steers even when the turn is blocked on a permission', () => {
     const { e, p, disposeAll } = newEngine()
     const session = newControllableSession('s1')
-    const sent: string[] = []
-    session.send = async (prompt: string) => { sent.push(prompt) }
     try {
       const state = armedState(e, session)
       state.activeTurns = 1
       state.pending = newPendingPermission({ requestID: 'req-1', toolName: 'Bash', toolInput: {} })
       expect(e.dispatchCommand(p, miscMsg('/ps held back'), '/ps held back')).toBe(true)
-      await vi.waitFor(() => { expect(state.pendingMessages.length).toBe(1) })
-      expect(sent).toEqual([])
-      expect(p.getSent()[0]).toBe(e.i18n.t(Msg.MessageQueued))
+      // The in-process next-step inbox needs no stdin workaround: the text
+      // stays queued until the permission resolves, then lands in the same
+      // turn — never on the engine's busy-queue.
+      expect(session.steerCalls).toEqual(['held back'])
+      expect(state.pendingMessages).toHaveLength(0)
+      expect(p.getSent()).toHaveLength(0)
     } finally {
       disposeAll()
     }
@@ -192,15 +197,14 @@ describe('/ps', () => {
   it('falls through as a normal message when the agent is idle', () => {
     const { e, p, disposeAll } = newEngine()
     const session = newControllableSession('s1')
-    const sent: string[] = []
-    session.send = async (prompt: string) => { sent.push(prompt) }
     try {
       armedState(e, session) // live session, zero active turns
       const msg = miscMsg('/ps just a note')
       expect(e.dispatchCommand(p, msg, '/ps just a note')).toBe(false)
       // The /ps prefix is stripped so the text reaches the agent verbatim.
       expect(msg.content).toBe('just a note')
-      expect(sent).toEqual([])
+      expect(session.steerCalls).toEqual([])
+      expect(session.sendCalls).toEqual([])
     } finally {
       disposeAll()
     }

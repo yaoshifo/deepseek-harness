@@ -29,6 +29,7 @@ function createFakeAgent(id: string, sink: (sessionId: string, event: Record<str
       agent.followups.push(message)
       agent.status = 'running'
     },
+    steer(): void {},
     cancel(cause: { kind: string }, options?: { keepInbox?: boolean }): void {
       agent.cancels.push({ cause, ...(options?.keepInbox !== undefined ? { keepInbox: options.keepInbox } : {}) })
     },

@@ -8,10 +8,12 @@
  * family (renderHelpGroupCard + nav: help navigation) is not ported: /help
  * renders one markdown card / text reply.
  *
- * /ps appends text to a running task: mid-turn it is sent straight into the
- * live agent session (queued instead when the turn is blocked on a
- * permission, where a direct write would sit behind the CLI input queue);
- * when the agent is idle the command falls through as a normal message.
+ * /ps appends text to a running task: mid-turn it steers the agent's
+ * next-step inbox (agent-loop steer), so the text reaches the model inside
+ * the running turn — including while the turn is blocked on a permission,
+ * where Go's stdin write would have been swallowed and fell back to the
+ * busy-queue; when the agent is idle the command falls through as a normal
+ * message.
  *
  * Registration lives here (not in engine/commands.ts) so this domain cannot
  * collide with parallel work on that file; {@link registerMiscCommands}
@@ -105,10 +107,13 @@ async function cmdHelp(e: Engine, p: Platform, msg: Message, args: string[]): Pr
 
 /**
  * /ps <message>: append text to the currently running task (Go handleCommand
- * "ps" case). Mid-turn the text goes straight into the live agent session —
- * unless the turn is blocked on a permission, where it is queued as the next
- * turn. When the agent is idle the command returns false so the message
- * falls through to normal processing with the /ps prefix stripped.
+ * "ps" case). Mid-turn the text steers the agent's next-step inbox, so it
+ * reaches the model inside the running turn — including while the turn is
+ * blocked on a permission, where Go had to fall back to the busy-queue
+ * because a stdin write would be swallowed. A steer arriving as the turn
+ * closes stays in the inbox and is claimed at the next turn boundary, so no
+ * text is lost. When the agent is idle the command returns false so the
+ * message falls through to normal processing with the /ps prefix stripped.
  * @returns Whether the command consumed the message.
  */
 function cmdPs(e: Engine, p: Platform, msg: Message, args: string[]): boolean {
@@ -124,19 +129,7 @@ function cmdPs(e: Engine, p: Platform, msg: Message, args: string[]): boolean {
     msg.content = text
     return false
   }
-  // A turn blocked on a permission/plan approval would swallow a direct
-  // write behind the CLI's input queue; queue it as the next turn instead.
-  if (state.pending !== undefined) {
-    msg.content = text
-    if (e.queueMessageForBusySession(p, msg, msg.sessionKey)) return true
-  }
-  void state.agentSession.send(text, [], [])
-    .then(() => {
-      asReactionAdder(p)?.addReaction(msg.replyCtx, 'Done')
-    })
-    .catch((error: unknown) => {
-      console.error(`ps: send failed: ${String(error)}`)
-      void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.Error, String(error)))
-    })
+  state.agentSession.steer(text)
+  asReactionAdder(p)?.addReaction(msg.replyCtx, 'Done')
   return true
 }

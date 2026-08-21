@@ -114,6 +114,7 @@ describe('DshAgentAdapter bare persona setup hook', () => {
             session: { events: [] },
             disposed: false,
             followup: () => {},
+            steer: () => {},
             cancel: () => {},
           }
           agents.push(agent)

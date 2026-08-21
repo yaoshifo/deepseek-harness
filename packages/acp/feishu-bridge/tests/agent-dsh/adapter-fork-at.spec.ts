@@ -55,6 +55,7 @@ function agentWith(events: SessionEvent[], id = ''): FakeAgent {
     status: 'idle',
     session: { events },
     followup: () => {},
+    steer: () => {},
     cancel: () => {},
   }
 }
