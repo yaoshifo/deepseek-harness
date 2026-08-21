@@ -2115,7 +2115,11 @@ export class Engine {
 
     let pendingSend = sendDone
     const stopP = state.stopSignal()
-    let recvP: Promise<{ done: false; event: Event } | { done: true }> = channel.receive()
+    // The live session's event channel; swapped when a stall retry restarts
+    // the agent — re-arming recvP on the pre-retry channel would read its
+    // close as an agent exit on the very next event.
+    let events = channel
+    let recvP: Promise<{ done: false; event: Event } | { done: true }> = events.receive()
 
     /** One resolved arm of the loop's select (Go's select cases). */
     type LoopOutcome =
@@ -2194,7 +2198,8 @@ export class Engine {
             segmentStart = 0
             toolCount = 0
             silentHold = false
-            recvP = retry.events().receive()
+            events = retry.events()
+            recvP = events.receive()
             const retryChannel = retry
             const nextSend = retryChannel.send('继续', [], [])
               .then((): undefined => undefined, (error: unknown): unknown => error)
@@ -2223,7 +2228,7 @@ export class Engine {
 
       const event = outcome.event
       state.lastEventAt = Date.now()
-      recvP = channel.receive()
+      recvP = events.receive()
 
       if (state.isStopped()) {
         state.eventsNeedResync = true
