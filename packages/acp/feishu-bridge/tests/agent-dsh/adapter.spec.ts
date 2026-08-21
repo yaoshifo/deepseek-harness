@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { ContinueSession } from '../../src/core/types.js'
+import { ContinueSession, type Event } from '../../src/core/types.js'
 import { DshAgentAdapter, DshAgentSession, sessionBypassesPermissions, stripModelAlias, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.js'
 
 // DshAgentAdapter unit tests: ctx.agents create/resume, followup/cancel call
@@ -811,6 +811,101 @@ it('tool/result with tool-result blocks projects the inner text as toolResult', 
     if (got.event.type === 'result') break
   }
   expect(toolResultEvent?.toolResult).toBe('file header content')
+})
+
+it('tool/result projects the durable callId as toolID so the engine can close tool intervals', async () => {
+  // The engine's token-rate thinking time subtracts tool windows keyed by
+  // toolID; without it every window stays open until turn end and the rate
+  // explodes (observed live: a 60 t/s turn rendered as 225 t/s).
+  const h = createHarness()
+  const a = newAdapter(h)
+  a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_tr:ou_9'])
+  const sess = await a.startSession('')
+  const channel = sess.events()
+  const agentID = sess.currentSessionID()
+
+  h.emit(agentID, {
+    type: 'tool/call',
+    turn: 1,
+    step: 1,
+    callId: 'call-9',
+    name: 'read',
+    arguments: '{"file_path":"/x/header.md"}',
+  })
+  h.emit(agentID, {
+    type: 'tool/result',
+    turn: 1,
+    step: 1,
+    message: {
+      source: { kind: 'tool', callId: 'call-9' },
+      content: [{
+        type: 'tool-result',
+        toolCallId: 'call-9',
+        content: [textBlock('file header content')],
+        isError: false,
+      }],
+    },
+  })
+  h.emit(agentID, { type: 'turn/end', turn: 1, reason: 'end_turn' })
+
+  let toolResultEvent: { toolID?: string } | undefined
+  for (;;) {
+    const got = await channel.receive()
+    if (got.done) break
+    if (got.event.type === 'tool_result') toolResultEvent = got.event
+    if (got.event.type === 'result') break
+  }
+  expect(toolResultEvent?.toolID).toBe('call-9')
+})
+
+it('result carries the turn-wide usage sum and step count (Go accumulateUsage)', async () => {
+  // The token rate and ctx/hit footer lines divide or label by the whole
+  // turn's tokens; the last assistant/message alone undercounts multi-step
+  // turns and numTurns never projected (ctx "N api" read 0).
+  const h = createHarness()
+  const a = newAdapter(h)
+  a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_tr:ou_9'])
+  const sess = await a.startSession('')
+  const channel = sess.events()
+  const agentID = sess.currentSessionID()
+
+  const emitUsage = (step: number, usage: Record<string, number>): void => {
+    h.emit(agentID, { type: 'assistant/message', turn: 1, step, message: { content: [textBlock('x')] }, usage })
+  }
+  emitUsage(1, { inputTokens: 100, cacheReadTokens: 30, outputTokens: 50 })
+  emitUsage(2, { inputTokens: 60, cacheCreationTokens: 10, outputTokens: 90 })
+  h.emit(agentID, { type: 'turn/end', turn: 1, reason: 'end_turn' })
+
+  const results: Event[] = []
+  for (;;) {
+    const got = await channel.receive()
+    if (got.done) break
+    if (got.event.type === 'result') {
+      results.push(got.event)
+      break
+    }
+  }
+  expect(results[0]?.outputTokens).toBe(140)
+  expect(results[0]?.inputTokens).toBe(160)
+  expect(results[0]?.totalInputTokens).toBe(200)
+  expect(results[0]?.numTurns).toBe(2)
+
+  // The next turn starts from zero, not from the previous turn's sum.
+  emitUsage(1, { inputTokens: 5, outputTokens: 7 })
+  h.emit(agentID, { type: 'turn/end', turn: 2, reason: 'end_turn' })
+  let next: Event | undefined
+  for (;;) {
+    const got = await channel.receive()
+    if (got.done) break
+    if (got.event.type === 'result') {
+      next = got.event
+      break
+    }
+  }
+  if (next === undefined) throw new Error('expected a second result event')
+  expect(next.outputTokens).toBe(7)
+  expect(next.inputTokens).toBe(5)
+  expect(next.numTurns).toBe(1)
 })
 
 it('defaultMode plan activates plan mode on every startSession (Go agent options mode=plan)', async () => {

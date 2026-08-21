@@ -92,7 +92,15 @@ describe('DshAgentAdapter subagent lineage attribution', () => {
     h.agents.set('child-1', createAgent('child-1', bridgeID))
 
     h.emitSession({ id: 'child-1', header: { parentSession: bridgeID } }, { type: 'tool/call', callId: 'c1', name: 'bash', arguments: 'ls' })
-    h.emitSession({ id: 'child-1', header: { parentSession: bridgeID } }, { type: 'tool/result', message: { callId: 'c1', content: [{ type: 'text', text: 'file-a' }] } })
+    // Real durable tool-result messages carry the callId on message.source and
+    // repeat it on the tool-result block — not on a flat message.callId.
+    h.emitSession({ id: 'child-1', header: { parentSession: bridgeID } }, {
+      type: 'tool/result',
+      message: {
+        source: { kind: 'tool', callId: 'c1' },
+        content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'file-a' }] }],
+      },
+    })
 
     const got = await receiveN(bridge.events(), 2)
     expect(got[0]).toMatchObject({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'child-1:c1', fromSubagent: true })
