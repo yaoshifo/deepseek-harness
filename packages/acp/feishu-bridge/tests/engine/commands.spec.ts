@@ -398,7 +398,11 @@ describe('/stop', () => {
         new Promise((_, reject) => { setTimeout(() => { reject(new Error('event loop did not stop')) }, 2000) }),
       ])
 
-      expect(e.interactiveStates.has(key)).toBe(false)
+      // 2026-08-21 oc_6ee6 incident: the entry lingers with `closing` armed
+      // while the close is blocked, so a racing 「继续」 waits out the teardown
+      // instead of resuming the still-live session and degrading.
+      expect(e.interactiveStates.has(key)).toBe(true)
+      expect(e.interactiveStates.get(key)?.closing).toBeDefined()
 
       // Stale output after the stop must not reach the platform.
       sess.channel.push({ type: 'text', content: 'stale output', done: false })
@@ -409,6 +413,8 @@ describe('/stop', () => {
 
       releaseClose?.()
       await origClose()
+      await new Promise((resolve) => { setTimeout(resolve, 10) })
+      expect(e.interactiveStates.has(key)).toBe(false)
     } finally {
       dispose()
     }

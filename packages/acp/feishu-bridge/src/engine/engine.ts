@@ -195,6 +195,17 @@ const defaultStallMaxRetries = 1
 /** Bounded wait for an agent session to close during cleanup (Go agentCloseTimeout). */
 const agentCloseTimeout = 130_000
 
+/**
+ * Whether a resume error is dsh's live guard: the persisted session is still
+ * registered live, typically because its previous holder's teardown is still
+ * in flight (2026-08-21 oc_6ee6 incident).
+ * @param error - The error thrown by an agent session start.
+ * @returns True when retrying after the teardown completes may succeed.
+ */
+function isSessionLiveError(error: unknown): boolean {
+  return String(error).includes('while it is live')
+}
+
 /** Attachment sends blocked by config (Go ErrAttachmentSendDisabled). */
 export class ErrAttachmentSendDisabled extends Error {
   constructor() {
@@ -743,6 +754,10 @@ export class Engine {
   debounceInterval = defaultDebounceInterval
   /** Idle-reaper threshold reclaiming quiet interactive states; 0 disables. */
   interactiveIdleTimeout = 0
+  /** Live-guard resume retry budget in ms; a resume racing an in-flight agent teardown polls within it. */
+  private liveGuardRetryBudgetMs = agentCloseTimeout
+  /** Live-guard resume retry poll interval in ms. */
+  private liveGuardRetryIntervalMs = 500
 
   /** Recursive subtask delegation cap override; 0 = defaultSubtaskMaxDepth (Go subtaskMaxDepth). */
   subtaskMaxDepth = 0
@@ -987,6 +1002,18 @@ export class Engine {
    */
   setStallMaxRetries(n: number): void {
     this.stallMaxRetries = n
+  }
+
+  /**
+   * Live-guard resume retry budget and poll interval; a resume failing with
+   * "while it is live" (the session is still tearing down) is retried within
+   * the budget before the engine degrades to a fresh session.
+   * @param budgetMs - Total retry window in milliseconds.
+   * @param intervalMs - Delay between attempts in milliseconds.
+   */
+  setLiveGuardRetryBudgetMs(budgetMs: number, intervalMs: number): void {
+    this.liveGuardRetryBudgetMs = budgetMs
+    this.liveGuardRetryIntervalMs = intervalMs
   }
 
   /**
@@ -1949,26 +1976,39 @@ export class Engine {
     // correct directory even in single-workspace mode (Go applyWorkDirOverride).
     const restoreWorkDir = this.applyWorkDirOverride(agent, sessionKey)
     let agentSession: AgentSession | undefined
+    let degradedToFresh = false
     try {
-      agentSession = await this.startAgentLocked(agent, startSessionID, sessionEnv, modeOverride)
-    } catch (error) {
-      if (startSessionID !== '') {
-        console.error(`session resume failed, falling back to fresh session (${sessionKey}): ${String(error)}`)
-        try {
-          agentSession = await this.startAgentLocked(agent, '', sessionEnv, modeOverride)
-          // A rollback fork whose truncated transcript cannot be resumed gets
-          // the fork-degrade wording (Go's __forkat__ guard replies
-          // MsgForkCrossWorkDirDegraded); every other resume keeps the
-          // generic message.
-          const degradeKey = startSessionID.startsWith(ForkAtSessionPrefix)
-            ? Msg.ForkCrossWorkDirDegraded
-            : Msg.SessionResumeDegraded
-          void this.reply(p, replyCtx, this.i18n.t(degradeKey))
-        } catch (freshError) {
-          console.error(`failed to start interactive session (${sessionKey}): ${String(freshError)}`)
+      try {
+        agentSession = await this.startAgentLocked(agent, startSessionID, sessionEnv, modeOverride)
+      } catch (error) {
+        // A live-guard rejection means the persisted session is still being
+        // torn down (e.g. the user stopped it moments ago): the disposal is
+        // in flight, not gone, so poll within the budget before degrading.
+        if (startSessionID !== '' && isSessionLiveError(error)) {
+          console.warn(`session resume blocked by in-flight teardown, retrying (${sessionKey}): ${String(error)}`)
+          agentSession = await this.retryResumePastLiveGuard(agent, startSessionID, sessionEnv, modeOverride)
         }
-      } else {
-        console.error(`failed to start interactive session (${sessionKey}): ${String(error)}`)
+        if (agentSession === undefined) {
+          if (startSessionID !== '') {
+            console.error(`session resume failed, falling back to fresh session (${sessionKey}): ${String(error)}`)
+            try {
+              agentSession = await this.startAgentLocked(agent, '', sessionEnv, modeOverride)
+              degradedToFresh = true
+              // A rollback fork whose truncated transcript cannot be resumed gets
+              // the fork-degrade wording (Go's __forkat__ guard replies
+              // MsgForkCrossWorkDirDegraded); every other resume keeps the
+              // generic message.
+              const degradeKey = startSessionID.startsWith(ForkAtSessionPrefix)
+                ? Msg.ForkCrossWorkDirDegraded
+                : Msg.SessionResumeDegraded
+              void this.reply(p, replyCtx, this.i18n.t(degradeKey))
+            } catch (freshError) {
+              console.error(`failed to start interactive session (${sessionKey}): ${String(freshError)}`)
+            }
+          } else {
+            console.error(`failed to start interactive session (${sessionKey}): ${String(error)}`)
+          }
+        }
       }
     } finally {
       restoreWorkDir()
@@ -1987,7 +2027,17 @@ export class Engine {
 
     const newID = agentSession.currentSessionID()
     if (newID !== '') {
-      if (session.compareAndSetAgentSessionID(newID, agent.name())) {
+      // The degraded fallback REPLACES the unresumable id: compareAndSet's
+      // sticky concrete id would keep the chat pinned to the poisoned
+      // session, failing every later message the same way.
+      let bound: boolean
+      if (degradedToFresh) {
+        session.setAgentSessionID(newID, agent.name())
+        bound = true
+      } else {
+        bound = session.compareAndSetAgentSessionID(newID, agent.name())
+      }
+      if (bound) {
         const pendingName = session.getName()
         if (pendingName !== '' && pendingName !== 'session' && pendingName !== 'default') {
           this.sessions.setSessionName(newID, pendingName)
@@ -2120,6 +2170,37 @@ export class Engine {
     const modeInj = asSessionModeInjector(agent)
     if (modeInj !== undefined && modeOverride !== '') modeInj.setSessionMode(modeOverride)
     return agent.startSession(sessionID)
+  }
+
+  /**
+   * Poll-resume a session whose live-guard rejection may clear once an
+   * in-flight teardown finishes. Any non-live-guard error aborts the polling
+   * (the caller degrades); success returns the resumed session.
+   * @param agent - Agent to start the session on.
+   * @param sessionID - Session to resume.
+   * @param env - Env entries injected before each attempt.
+   * @param modeOverride - Mode injected at session start; '' = none.
+   * @returns The resumed agent session, or undefined when the budget ends.
+   */
+  private async retryResumePastLiveGuard(
+    agent: Agent, sessionID: string, env: string[], modeOverride: string,
+  ): Promise<AgentSession | undefined> {
+    const deadline = Date.now() + this.liveGuardRetryBudgetMs
+    for (;;) {
+      await cancellableSleep(this.liveGuardRetryIntervalMs).promise
+      try {
+        return await this.startAgentLocked(agent, sessionID, env, modeOverride)
+      } catch (error) {
+        if (!isSessionLiveError(error)) {
+          console.error(`session resume retry failed with a permanent error: ${String(error)}`)
+          return undefined
+        }
+        if (Date.now() >= deadline) {
+          console.error(`session resume retry budget exhausted (session ${sessionID})`)
+          return undefined
+        }
+      }
+    }
   }
 
   // ── event loop ──────────────────────────────────────────────────────────
@@ -3422,18 +3503,30 @@ export class Engine {
 
   /** Close with a bounded wait so a hung process cannot wedge cleanup. */
   private async closeAgentSessionWithTimeout(sessionKey: string, agentSession: AgentSession): Promise<void> {
+    // Boxed so the sleep's callback assignment escapes literal-type narrowing.
+    const timeout = { hit: false }
     await Promise.race([
-      agentSession.close(),
-      cancellableSleep(agentCloseTimeout).promise,
-    ]).catch((error: unknown) => {
-      console.error(`engine: agent session close failed (${sessionKey}): ${String(error)}`)
-    })
+      agentSession.close().catch((error: unknown) => {
+        console.error(`engine: agent session close failed (${sessionKey}): ${String(error)}`)
+      }),
+      cancellableSleep(agentCloseTimeout).promise.then(() => {
+        timeout.hit = true
+      }),
+    ])
+    if (timeout.hit) {
+      // Abandoned mid-close: the agent session may stay live in the agent's
+      // registry and block later resumes of the same id.
+      console.warn(`engine: agent session close timed out after ${String(agentCloseTimeout)}ms (${sessionKey})`)
+    }
   }
 
   /**
    * User-initiated stop (/stop, /new, /switch): flag userStopped, detach the
    * state, resolve queued senders, and close the agent session
-   * asynchronously (Go stopInteractiveSession, M1 subset).
+   * asynchronously (Go stopInteractiveSession, M1 subset). The entry stays in
+   * the map with `closing` set until the close settles, so a message racing
+   * the teardown waits it out instead of resuming the still-live session
+   * (2026-08-21 oc_6ee6 incident: stop → 「继续」 degraded to a fresh session).
    * @param sessionKey - Interactive-state slot key to stop.
    * @returns True when a state was found and torn down.
    */
@@ -3446,16 +3539,24 @@ export class Engine {
     // Abort in-flight renders so their cancel handles don't orphan with the
     // state and keep burning tokens on a stale HTML (Go cancelRenders).
     cancelRenders(state)
-    this.interactiveStates.delete(sessionKey)
     this.notifyDroppedQueuedMessages(state, new Error('session reset'))
     // Staged attachments die with the session: without this the pendingDir
     // leaks on disk (Go regression test for /new and /stop).
     this.discardStagedAttachments(state, false)
-    if (state.agentSession !== undefined) {
-      void state.agentSession.close().catch((error: unknown) => {
-        console.error(`engine: stop close failed (${sessionKey}): ${String(error)}`)
-      })
+    console.info(`stopping interactive session (${sessionKey})`)
+    const agentSession = state.agentSession
+    state.agentSession = undefined
+    if (agentSession === undefined) {
+      this.interactiveStates.delete(sessionKey)
+      return true
     }
+    state.closing = agentSession.close().catch((error: unknown) => {
+      console.error(`engine: stop close failed (${sessionKey}): ${String(error)}`)
+    }).finally(() => {
+      // A newer state may already have claimed the slot after the concurrent
+      // teardown wait; only the exact entry removes itself.
+      if (this.interactiveStates.get(sessionKey) === state) this.interactiveStates.delete(sessionKey)
+    })
     return true
   }
 
