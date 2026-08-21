@@ -1031,8 +1031,20 @@ async function spawnGroupCommon(
   {
     const jumpMD = parentJumpButtonsFor(e, msg)
     const readyTitle = e.i18n.t(opts.readyTitleKey)
-    void e.buildSpawnNotifyCard(spawnOpts.workDir, readyTitle, threadNote(opts.threadFlag), jumpMD, syntheticMsg.sessionKey)
-      .then(card => e.replyWithCard(p, syntheticMsg.replyCtx, card))
+    // Zero the per-turn usage first so the parent chat's last-turn
+    // duration/rate don't bleed onto the child's readiness card (Go
+    // buildCompletionUsage(0) before the card, engine_cmd_session.go).
+    await e.buildCompletionUsage({
+      totalInputTokens: 0, sdkPlausible: false, selfPct: 0,
+      nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
+      numTurns: 0, compactionCount: 0,
+    })
+    try {
+      const card = await e.buildSpawnNotifyCard(spawnOpts.workDir, readyTitle, threadNote(opts.threadFlag), jumpMD, syntheticMsg.sessionKey)
+      await e.replyWithCard(p, syntheticMsg.replyCtx, card)
+    } catch (error) {
+      console.warn(`spawn: card send failed (${p.name()}): ${String(error)}`)
+    }
   }
 
   if (firstMsg !== '') {
