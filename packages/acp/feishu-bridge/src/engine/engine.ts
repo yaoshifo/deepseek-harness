@@ -2292,8 +2292,12 @@ export class Engine {
     const stopP = state.stopSignal()
     // Hard cap (Go watchdog watchdogKillHard): a turn whose events keep
     // trickling in resets the idle timer forever, so the cap is enforced on
-    // event arrival. Research sessions lift it (Go isResearchSession).
-    const turnStart = Date.now()
+    // event arrival. Research sessions lift it (Go isResearchSession). The
+    // cap is per turn, not per run: a queued-message takeover resets
+    // turnStart below — a deliberate deviation from Go's per-run clock, where
+    // a follow-up message after a near-cap long turn inherits a nearly
+    // exhausted budget and is killed within minutes.
+    let turnStart = Date.now()
     const softCap = this.absoluteTurnMax(state.idleTimeout(this.eventIdleTimeout))
     const hardCapMs = softCap > 0 && !this.isResearchSession(session) ? softCap * 3 : 0
     // The live session's event channel; swapped when a stall retry restarts
@@ -2927,7 +2931,13 @@ export class Engine {
             textParts, segmentStart, toolCount, pendingSend, sp, cp, barrier, timing)
           if (finished.kind === 'queued') {
             // A queued message takes over this loop as a fresh turn (Go
-            // in-loop drain): reset per-turn state and continue.
+            // in-loop drain): reset per-turn state and continue. The watchdog
+            // clock resets too — the new turn is a different user instruction
+            // and must not inherit the previous long turn's spent budget.
+            // The stall-retry path deliberately does NOT reset it: it serves
+            // the same logical turn, and resetting would let an infinitely
+            // stalling/retrying session dodge the hard cap forever.
+            turnStart = Date.now()
             textParts = []
             segmentStart = 0
             toolCount = 0
