@@ -51,8 +51,28 @@ export function registerReloadCommands(e: Engine): () => void {
   }
 }
 
-/** reload.sh next to the package root (src/engine and lib/engine both sit one level below it). */
-const scriptPath = fileURLToPath(new URL('../../reload.sh', import.meta.url))
+/** reload.sh candidate locations across build layouts: '../../reload.sh' for
+ * the source/tsc layout (src/engine/<file>), '../reload.sh' for the tsdown
+ * bundle (lib/index.js inlines every engine module, so import.meta.url is the
+ * bundle file itself). */
+const scriptCandidates = ['../../reload.sh', '../reload.sh']
+
+/**
+ * Locate reload.sh from a module URL across the package's build layouts.
+ * @param fromURL - Module URL to resolve against (defaults to this module's).
+ * @returns The existing script path, or the last candidate when no layout
+ * matches (an installed bundle without the script — the path reported in the
+ * error reply; under the bundle layout it names the package root).
+ */
+export function resolveReloadScript(fromURL: string | URL = import.meta.url): string {
+  let miss = ''
+  for (const rel of scriptCandidates) {
+    const path = fileURLToPath(new URL(rel, fromURL))
+    if (existsSync(path)) return path
+    miss = path
+  }
+  return miss
+}
 
 /** In-flight reload: set at spawn, cleared on script exit; a daemon restart resets it with the process. */
 let reloading = false
@@ -67,6 +87,7 @@ let reloading = false
  * @param args - Optional --skip-build, passed through to the script.
  */
 async function cmdReload(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
+  const scriptPath = resolveReloadScript()
   const scriptArgs: string[] = []
   for (const a of args) {
     if (a === '--skip-build') {

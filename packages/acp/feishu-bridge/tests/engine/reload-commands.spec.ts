@@ -13,11 +13,11 @@ import { existsSync } from 'node:fs'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Engine } from '../../src/engine/engine.js'
 import { registerSessionCommands } from '../../src/engine/commands.js'
-import { registerReloadCommands } from '../../src/engine/reload-commands.js'
+import { registerReloadCommands, resolveReloadScript } from '../../src/engine/reload-commands.js'
 import { Msg } from '../../src/i18n/index.js'
 import {
   createStubAgent,
@@ -42,6 +42,7 @@ const mockSpawn = vi.mocked(spawn)
 const mockExists = vi.mocked(existsSync)
 
 const scriptPath = fileURLToPath(new URL('../../reload.sh', import.meta.url))
+const packageRoot = fileURLToPath(new URL('../..', import.meta.url))
 
 /** Captured 'exit'/'error' callbacks of the last fake child. */
 const childCbs = new Map<string, (arg: unknown) => void>()
@@ -163,10 +164,12 @@ describe('cmdReload', () => {
   it('missing reload.sh replies the script-missing error without spawning', async () => {
     const { e, p } = newEngine()
     currentPlatform = p
+    // Under the source-plane module URL the miss fallback is src/reload.sh.
+    const missPath = join(packageRoot, 'src', 'reload.sh')
     mockExists.mockReturnValue(false)
     try {
       expect(e.dispatchCommand(p, reloadMsg('/reload'), '/reload')).toBe(true)
-      await vi.waitFor(() => { expect(lastSent(p)).toContain(scriptPath) })
+      await vi.waitFor(() => { expect(lastSent(p)).toContain(missPath) })
       expect(mockSpawn).not.toHaveBeenCalled()
     } finally {
       mockExists.mockImplementation(path => realExistsSync(path))
@@ -236,5 +239,31 @@ describe('cmdReload', () => {
     childCbs.get('exit')?.(0)
     await new Promise((resolve) => { setTimeout(resolve, 20) })
     expect(p.getSent().length).toBe(sent)
+  })
+})
+
+describe('resolveReloadScript', () => {
+  it('resolves from the tsdown bundle layout (lib/index.js, no lib/engine/)', () => {
+    // The daemon loads the plugin through main: lib/index.js — a single
+    // tsdown bundle that inlines every engine module, so import.meta.url is
+    // the bundle file itself.
+    const from = pathToFileURL(join(packageRoot, 'lib', 'index.js'))
+    expect(resolveReloadScript(from)).toBe(scriptPath)
+  })
+
+  it('resolves from the source layout (src/engine/<file>)', () => {
+    const from = pathToFileURL(join(packageRoot, 'src', 'engine', 'reload-commands.ts'))
+    expect(resolveReloadScript(from)).toBe(scriptPath)
+  })
+
+  it('falls back to the last candidate when no layout matches', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'fb-reload-resolve-'))
+    try {
+      const from = pathToFileURL(join(dir, 'bundle.js'))
+      // Last candidate '../reload.sh' resolves against the module URL's directory.
+      expect(resolveReloadScript(from)).toBe(join(tmpdir(), 'reload.sh'))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
