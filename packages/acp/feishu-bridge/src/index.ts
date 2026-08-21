@@ -209,6 +209,8 @@ export interface ProjectConfig {
   groupName?: GroupNameConfig
   /** Plan/reply HTML rendering (#47/#48). */
   planRender?: PlanRenderConfig
+  /** Plans directory for presented-plan persistence; '' disables (default ~/.claude/plans). */
+  planDir?: string
 
   /** Next-message prediction after each turn (#33). */
   predictNext?: PredictNextConfig
@@ -521,6 +523,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       renderPngScript: Schema.string().description('HTML→PNG renderer script, absolute path; empty = send the .html file'),
       timeoutSec: Schema.natural().description('Render fork timeout in seconds (default 600, pre-render cap 360)'),
     }).description('Plan/reply HTML rendering (Go [projects.plan_render], #47/#48)'),
+    planDir: Schema.string().description('Directory presented plans are persisted to as .md; empty string disables (default ~/.claude/plans)'),
 
     predictNext: Schema.object({
       enabled: Schema.boolean().description('Predict the next user message after each turn (#33); default false'),
@@ -977,6 +980,9 @@ export function buildProjectAssembly(
     adapter.setDefaultMode(project.agent.mode)
   }
   wirePlanRender(engine, adapter, project)
+  if (project.planDir !== undefined) {
+    engine.setPlanDir(expandHome(project.planDir))
+  }
 
   wirePredictNext(engine, project, config.providers)
   wireTurnSummary(engine, project)

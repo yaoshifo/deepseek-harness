@@ -685,6 +685,8 @@ export interface ProjectConfig {
   groupName?: GroupNameConfig
   /** Plan/reply HTML rendering (#47/#48). */
   planRender?: PlanRenderConfig
+  /** Plans directory for presented-plan persistence; '' disables (default ~/.claude/plans). */
+  planDir?: string
 
   /** Next-message prediction after each turn (#33). */
   predictNext?: PredictNextConfig
@@ -1053,7 +1055,7 @@ export interface MonitorRuleConfig {
 }
 ```
 
-Source: [`packages/acp/feishu-bridge/src/index.ts:425`](../packages/acp/feishu-bridge/src/index.ts)
+Source: [`packages/acp/feishu-bridge/src/index.ts:427`](../packages/acp/feishu-bridge/src/index.ts)
 
 <a id="deepseek-aidsh-fs-local"></a>
 

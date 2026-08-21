@@ -127,6 +127,7 @@ import { newAsyncSender, type AsyncSender } from '../async-sender.js'
 import { RateLimiter } from '../ratelimit.js'
 import { readFileSync, statSync, existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { basename, join as joinPath } from 'node:path'
 import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter } from '../core/types.js'
@@ -172,6 +173,7 @@ import {
   type RenderCancelHandle,
   type RenderStatusEntry,
 } from './plan-render.js'
+import { savePlanFile } from './plan-file.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -821,6 +823,9 @@ export class Engine {
   planRenderTimeoutMs = 0
   /** HTML→PNG rasterizer script path; '' = fall back to the .html file (Go planRenderPngScript). */
   planRenderPngScript = ''
+  // ── plan-file persistence (Claude-Code-aligned plan .md records) ────────
+  /** Directory presented plans are written to; '' disables writing. */
+  planDir = joinPath(homedir(), '.claude', 'plans')
   // ── usage + status footer (Go engine usage* fields, M7) ─────────────────
   /** Generic fallback context window for heuristic ctx estimates (Go modelContextWindow). */
   readonly modelContextWindow = 200_000
@@ -945,6 +950,14 @@ export class Engine {
     this.planRenderProvider = cfg.provider ?? ''
     this.planRenderTimeoutMs = cfg.timeoutMs ?? 0
     this.planRenderPngScript = cfg.pngScript ?? ''
+  }
+
+  /**
+   * Set the plans directory presented plans are persisted to.
+   * @param dir - Absolute directory; '' disables plan-file persistence.
+   */
+  setPlanDir(dir: string): void {
+    this.planDir = dir
   }
 
   /**
@@ -2798,6 +2811,9 @@ export class Engine {
               if (typeof pfp === 'string') activePlanFilePath = pfp
             }
             if (activePlanFilePath !== '' && !existsSync(activePlanFilePath)) activePlanFilePath = ''
+            if (activePlanFilePath === '') {
+              activePlanFilePath = this.persistPlanFile(sentPlanContent)
+            }
             if (activePlanFilePath !== '') {
               await this.sendPlanContent(p, replyCtx, state, activePlanFilePath, planRevisionCount, exportKey)
             } else {
@@ -4140,6 +4156,38 @@ export class Engine {
     collected: Map<number, string>,
   ): Record<string, unknown> {
     return buildAnswerHelper(originalInput, questions, collected)
+  }
+
+  /**
+   * Current work dir for plan-file naming: the adapter's getWorkDir when
+   * present (mirrors commandWorkDir's structural probe), process.cwd
+   * otherwise.
+   * @returns The directory slugified into the plan-file basename.
+   */
+  private planWorkDir(): string {
+    const switcher = this.agent as { getWorkDir?: () => string }
+    if (typeof switcher.getWorkDir === 'function') {
+      const wd = switcher.getWorkDir().trim()
+      if (wd !== '') return wd
+    }
+    return process.cwd()
+  }
+
+  /**
+   * Persist a presented plan into the plans directory (Claude-Code-aligned
+   * `.md` record). Never throws: a write failure logs a warning and returns
+   * '' so the caller falls back to the inline plan card.
+   * @param content - Full plan markdown as presented.
+   * @returns The written file path, '' when persistence is off or failed.
+   */
+  private persistPlanFile(content: string): string {
+    if (this.planDir === '') return ''
+    try {
+      return savePlanFile(this.planDir, this.planWorkDir(), content)
+    } catch (error) {
+      console.warn(`plan file write failed (${this.planDir}): ${String(error)}`)
+      return ''
+    }
   }
 
   /**
