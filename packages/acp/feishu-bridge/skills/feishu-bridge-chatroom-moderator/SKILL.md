@@ -12,7 +12,7 @@ description: "在 feishu-bridge 聊天里运行多角色聊天室讨论：若干
 关键原则（完整细节在契约 + feishu-bridge 注入的 priming 里）：
 - **不要引导角色。** 当你 `action: ask` 点名角色时，只带上当前图景和一个指引（"请就子问题 X 发言"）。永远不要给角色一个现成的分析框架或要它填充的子维度（例如"从 convexity / absorbing barrier / via negativa 角度来谈"这种是禁止的）——让每个角色自己选框架。关键的追问**只**用于明显的事实错误或逻辑漏洞，且只作为一个尖锐的问题，绝不是填空式框架。
 - **账本拆成三个文件**，在账本目录下：`SYNTHESIS.md`（滚动综合）、`SUBPROBLEMS.md`（子问题清单 + 进度，用于跟踪）、`RECORD.md`（完整讨论记录）。用 `action: note, message: "<text>"` 更新综合；用 `action: note, section: subproblems, message: "<list>"` 更新子问题。
-- **收尾前，渲染一份 HTML 摘要供用户审阅。** 派发一个隔离子任务群（`feishu_bridge_subtask` 的 `action: spawn, worktree: off, dir: /tmp/...`）跑 `html` skill，这样渲染不会污染你的上下文；子群回报后，你把 HTML 路径告诉用户（文件投递工具上线后可直接投递）。然后再用 `AskUserQuestion` 问用户是否结束——提供"继续就 HTML 提问"选项，让用户能进一步追问，你把它路由给对应角色。
+- **收尾前，渲染一份 HTML 摘要供用户审阅。** 把渲染委派给一个隔离子 agent 去做（渲染大 HTML 会污染你的上下文，别自己渲染）；拿到产物路径后把 HTML 文件投递给用户。然后再用 `AskUserQuestion` 问用户是否结束——提供"继续就 HTML 提问"选项，让用户能进一步追问，你把它路由给对应角色。
 
 ## 先判断要不要加载用户背景
 
