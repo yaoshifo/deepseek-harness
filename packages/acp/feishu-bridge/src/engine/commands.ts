@@ -77,9 +77,9 @@ export function registerSessionCommands(e: Engine): () => void {
     ['switch', (p, msg, args) => { void cmdSwitch(e, p, msg, args); return true }],
     ['status', (p, msg) => { void cmdStatus(e, p, msg); return true }],
     ['stop', (p, msg) => {
-      if (cmdStop(e, p, msg)) {
-        void e.reply(p, msg.replyCtx, e.i18n.t(Msg.ExecutionStopped))
-      } else {
+      // A successful stop is acknowledged by the stopped-card PATCH (⏹ 已停止
+      // header); text only tells the user when there was nothing to stop.
+      if (!cmdStop(e, p, msg)) {
         void e.reply(p, msg.replyCtx, e.i18n.t(Msg.NoExecution))
       }
       return true

@@ -381,11 +381,7 @@ describe('/stop', () => {
 
       const done = e.processInteractiveEvents(state, session, e.sessions, key, 'msg-1', undefined, 'ctx')
 
-      const stopDone = (async () => {
-        if (cmdStop(e, p, msg({ sessionKey: key }))) {
-          await e.reply(p, 'ctx', e.i18n.t('execution_stopped'))
-        }
-      })()
+      const stopDone = Promise.resolve(cmdStop(e, p, msg({ sessionKey: key })))
 
       await Promise.race([closeStarted, new Promise((_, reject) => { setTimeout(() => { reject(new Error('close never started')) }, 2000) })])
 
@@ -406,10 +402,36 @@ describe('/stop', () => {
       sess.channel.push({ type: 'result', content: 'stale result', done: true })
       await new Promise((resolve) => { setTimeout(resolve, 50) })
 
-      expect(p.sent).toEqual([e.i18n.t('execution_stopped')])
+      expect(p.sent).toEqual([])
 
       releaseClose?.()
       await origClose()
+    } finally {
+      dispose()
+    }
+  })
+
+  it('stays silent on success; reports only when nothing is running', async () => {
+    const { e, p, dispose } = newEngine()
+    try {
+      const key = 'test:user1'
+      // No interactive state: /stop must tell the user nothing is running.
+      expect(e.dispatchCommand(p, msg({ sessionKey: key }), '/stop')).toBe(true)
+      await waitForSent(p)
+      expect(p.sent).toEqual([e.i18n.t('no_execution')])
+      p.sent.length = 0
+
+      const state = new InteractiveState()
+      state.agentSession = newControllableSession('stop-silent')
+      state.platform = p
+      state.replyCtx = 'ctx'
+      e.interactiveStates.set(key, state)
+
+      // Active session: the stopped card PATCH is the feedback; no text reply.
+      expect(e.dispatchCommand(p, msg({ sessionKey: key }), '/stop')).toBe(true)
+      await new Promise((resolve) => { setTimeout(resolve, 20) })
+      expect(p.sent).toEqual([])
+      expect(e.interactiveStates.has(key)).toBe(false)
     } finally {
       dispose()
     }
