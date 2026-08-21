@@ -60,7 +60,7 @@ Linux 部署面用 systemd user unit（§5）。
 | 旧 config.toml | 新 cordis.patch.yml | 说明 |
 |---|---|---|
 | `data_dir` | `feishu-bridge` 行 `config.dataDir` | 默认 `~/.dsh/feishu-bridge`（per-project store 根） |
-| `language` | — | TODO(M8)：i18n 语言接线方式核实 |
+| `language` | 插件行 `config.language`（'zh'/'zh-TW'/'ja'/'es'/'en'，其余自动探测） | |
 | `[platform_options.feishu]` `reaction_emoji` / `done_emoji` / `cancel_emoji` | `config.projects[].feishu.reactionEmoji` / `doneEmoji` / `cancelEmoji` | |
 | `[platform_options.feishu]` `notify_on_complete` | `config.projects[].feishu.notifyOnComplete` | |
 | `[platform_options.feishu]` `topnotice_first_message` | `config.projects[].feishu.topNoticeFirstMessage` | |
@@ -68,18 +68,22 @@ Linux 部署面用 systemd user unit（§5）。
 | `[[providers]]` `name` / `api_key` / `base_url` / `model` / `context_window` | `llm-pi-ai` 行 `providers.<route>`（`apiKeyEnv` 引用 + `baseURL` + `models[].contextWindow`）；插件行 `config.providers.<name>.route` / `.model` | key 实际值放 launchd/systemd 的 Environment（不在 yml）；`rewrite_tui_fingerprint` 不迁移（FEATURE-PARITY #16） |
 | `[[projects]]` `name` / `work_dir` | `config.projects[].name` / `.workdir` | |
 | `[projects.agent.options]` `provider` | `config.projects[].agent.provider` | 指向 `config.providers` 的键名 |
-| `[projects.agent.options]` `mode` | — | TODO(M8)：mode 与审批 preset 的映射关系核实 |
+| `[projects.agent.options]` `mode` | `config.projects[].agent.mode` | `'plan'` = 每会话默认计划模式（含审批 preset）；`/mode` 单次覆盖 |
 | 项目级 `quiet` | `config.projects[].features.quiet` | |
 | `[projects.platforms.options]` `allow_chat` | `config.projects[].features.allowChat` | |
 | `inject_sender` | `config.projects[].features.injectSender` | |
 | `[projects.platforms.options]` `app_id` / `app_secret` | `config.projects[].feishu.appId` / `.appSecret` | |
-| `[projects.platforms.options]` `thread_isolation` | — | TODO(M8)：thread 隔离的配置键核实 |
+| `[projects.platforms.options]` `thread_isolation` | `config.projects[].feishu.threadIsolation` | 每条消息话题独立会话；默认关 |
+| `[projects.platforms.options]` `allow_from` / `group_only` / `group_reply_all` / `share_session_in_channel` / `reply_to_trigger` / `respond_to_at_everyone_and_here` / `enable_feishu_card` / `progress_style` / `active_tag_name` | `config.projects[].feishu.allowFrom` / `.groupOnly` / — / `.shareSessionInChannel` / `.replyToTrigger` / `.respondToAtEveryoneAndHere` / `.enableFeishuCard` / `.progressStyle` / `.activeTagName` | 2026-08-21 补齐接线（此前机制在但配置不可达）；`group_reply_all` 由 `features.allowChat` 承担；`resolve_mentions` 随 mention resolution 未移植 |
 | `dir_scan_paths` | `config.projects[].dirScanPaths` | /dir 子目录扫描建议列表 + 裸名解析（~ 展开；M7-d #3） |
 | `hints` / `hints_with_param` / `hints_common`（顶层） | 插件行 `config.hints` / `.hints_with_param` / `.hints_common` | 完成卡快捷提示按钮 + `/hint` 卡；点击计数持久化 `<dataDir>/hint_usage.json` 并按频率排序（M8 前补充 4） |
 | `[projects.feishu_workspace]` `wiki_space_id` / `folder_token` / `wiki_node_token` / `description` | `config.projects[].feishuWorkspace.wikiSpaceId` / `.folderToken` / `.wikiNodeToken` / `.description` | bot 默认飞书空间，经 setup 钩子注入（M7-d #18）；创建落位优先级 wikiNodeToken > wikiSpaceId > folderToken |
 | `[display]` `tool_messages` / `tool_progress` / `plan_max_len` / `thinking_messages` / `thinking_max_len` | 插件行 `config.display.toolMessages` / `.toolProgress` / `.planMaxLen` / `.thinkingMessages` / `.thinkingMaxLen` | 键名 camelCase；`progress_spinner` 同理（`progressSpinner`） |
+| `[display]` `stall_timeout_secs` / `stall_max_retries` / `absolute_turn_timeout_secs` | `config.display.stallTimeoutSecs` / `.stallMaxRetries` / `.absoluteTurnTimeoutSecs` | absolute 为每回合墙钟上限：未设 = 2× stall 窗口、0 关闭；硬上限 3×（防慢滴流回合挂死，2026-08-21 接线） |
+| `[rate_limit]` `max_messages` / `window_secs` | 插件行 `config.rateLimit.maxMessages` / `.windowSecs` | 每 sessionKey 入站滑窗限流；默认 20 条/60s，`maxMessages: 0` 关闭（2026-08-21 接线） |
+| `[stream_preview]` `partial` | — | 不迁移：Go 侧该键只驱动 claudecode CLI 的 `--include-partial-messages`；dsh 适配器事件流无此区分、无消费方 |
 | （隐含）会话存储位置 | `session-persistence-jsonl` 行 `config.root` | 旧 dsh 后端为 `~/.dsh/cc-connect-sessions`，新 daemon 用 `~/.dsh/feishu-bridge-sessions`，root 可对齐实现 resume 兼容（TODO(M8)：cutover 会话兼容验证） |
-| `[chatroom]` / `[subtask]` / `[group_name]` / `[predict_next]` / `[turn_summary]` / `[plan_render]` / `[projects.monitor]` / cron / relay | — | TODO(M5/M6/M7)：各域落地后补映射行 |
+| `[chatroom]` / `[subtask]` / `[spawn]` / `[group_name]` / `[predict_next]` / `[turn_summary]` / `[plan_render]` / cron / relay / `[projects.monitor]` / `usage_providers` | 插件行 `config.chatroom` / `config.subtask` / `config.spawn` / `config.projects[].groupName` / `.predictNext` / `.turnSummary` / `.planRender` / `config.cron` / `config.relay` / `config.projects[].monitor` / `config.usageProviders` | 各域 M5–M7 已落地；键名 camelCase |
 
 脱敏示例（新配置形状，占位符）：
 

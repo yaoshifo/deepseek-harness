@@ -11,7 +11,7 @@
 | ✂️ | 不迁移（附理由，出处 MIGRATION.md §0） |
 | ❓ | 待核实（证据不足，宁标勿猜） |
 
-统计：✅ 51 · ✂️ 10 · 📋 0 · ❓ 0，合计 61（M5–M7 验收后全量复核更新；#62、#63 为迁移期补充行不计入——#63 为唯一 📋 待迁项）。
+统计：✅ 50 · ✂️ 10 · 📋 2（#20、#63）· ❓ 0，合计 61（M5–M7 验收后全量复核更新；#62 为迁移期补充行不计入）。
 
 补充行（不在源 61 项内，迁移期发现的能力缺口）：#62 send CLI 附件投递；#63 后台任务可视化（源 Go `b5d15a0b`，2026-08-18，晚于源表冻结）。
 
@@ -36,7 +36,7 @@
 | 17 | --as user 透传 + lark-auth 编排 | ✅ | M7-d | `feishu_bridge_lark` 透传工具：bot 进程内 mint TAT + LARKSUITE_CLI_* 注入，`--as user` / auth 子命令走 `--profile <app_id>` 前置，`im +chat-messages-list` 原生直调 raw_card_content |
 | 18 | feishu_workspace：每 bot 默认飞书空间（CC_FEISHU_* 注入） | ✅ | M7-d | `feishuWorkspace` 配置块 → engine `setFeishuWorkspace`/`feishuWorkspaceEnv`（含 relay 注入）→ adapter setup 钩子注入系统提示段（D3 替代进程 env） |
 | 19 | tool_progress 合并 entry + ToolID 匹配 + 失败保留 | ✅ | M2 | progress 域 |
-| 20 | restrict_to_workdir：限制 bot 只访问项目目录 | ✅ | M3 | 以 D3 setup 钩子 restrict()（dsh 原生）承担，不再写 .claude/settings.local.json deny 规则 |
+| 20 | restrict_to_workdir：限制 bot 只访问项目目录 | 📋 | M8 | 2026-08-21 审计核实：本行原标 ✅「D3 setup 钩子 restrict() 承担」不实——TS 全库无 restrict 通路（无配置字段，setup 钩子只注册系统提示段）；生产旧配置未启用该键，无现役影响。归 M8 裁定迁/裁（迁则由 dsh 原生 restrict 能力承担） |
 | 21 | Feishu Card Schema 2.0 迁移 | ✅ | M2 | card 构造器全集 |
 | 22 | TopNotice First Message（置顶横幅，单条） | ✅ | M2 | ChatTopNotice 路径 |
 | 23 | Placeholder Card：首条推送通知加速 | ✅ | M2 | showPlaceholder |
@@ -51,7 +51,7 @@
 | 32 | 流式卡片合并（progress + summary 统一卡片） | ✅ | M2 | streaming 域 |
 | 33 | Predict Next：回复后预测用户下一步 | ✅ | M7-c | generatePrediction（lightweight/resume 双模式）+ 洞察卡（发送/屏蔽按钮，turnSeq 防过期）+ turn_summary 合并卡片 + /btw 旁路提问 |
 | 34 | /spawn（/sp）：快速创建独立任务群聊 | ✅ | M4 | 真机三轮冒烟通过 |
-| 35 | Pin 每条用户消息到 Pin 面板（spawn 群） | ✅ | M4 | MessagePinAppender；子项 #35a（spawn 群反馈精简）：topnotice 门控已对齐（spawn 群默认关），表情关闭门控未见移植——TS 引擎尚未接线 startTyping/Done/CrossMark 反应链，随 E 群清查/M7 核实 |
+| 35 | Pin 每条用户消息到 Pin 面板（spawn 群） | ✅ | M4 | MessagePinAppender；子项 #35a（spawn 群反馈精简）：topnotice 门控已对齐（spawn 群默认关）；表情链未接线——platform 的 startTyping/Done/CrossMark 机制已移植但引擎无调用点（Go 在 engine_events.go:1370/4981/5317、engine_predict.go:81 四处调用，TS 仅 /tag /undone /ps 等个别 Done 点位），typing/CrossMark 反应在 TS 不出现（2026-08-21 审计，待裁定接线或裁剪） |
 | 36 | /fork（/fk）：复制上下文的隔离分支群 | ✅ | M4 | completedTurnPrefix seed（原生 agents.create）；天花板：父会话需 live（代码内已注记） |
 | 37 | /done --reply 回灌父会话 + /spawn --dir 换目录 | ✅ | M4 | 真机验证（--dir 修复后） |
 | 38 | 父子群视觉关联（跳转按钮 + /notify + /board 树形） | ✅ | M4 | 跳转卡完成；/notify /board 命令本体 2026-08-20 补齐（M4 时仅 spawn 通知卡在，命令未注册）；im.chat.updated_v1 改名同步属 M4 收尾（D 群补缺进行中） |

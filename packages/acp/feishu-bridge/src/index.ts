@@ -58,6 +58,24 @@ export interface FeishuAppConfig {
   appId: string
   /** Feishu open-platform app secret. */
   appSecret: string
+  /** Comma-separated user IDs allowed to talk to this bot; '*' or '' = everyone (Go allow_from). */
+  allowFrom?: string
+  /** Only answer group chats, drop p2p messages (Go group_only). */
+  groupOnly?: boolean
+  /** Share one session per chat instead of per user+chat (Go share_session_in_channel). */
+  shareSessionInChannel?: boolean
+  /** Isolate each message thread into its own session (Go thread_isolation). */
+  threadIsolation?: boolean
+  /** Reply to the triggering message instead of posting new; default true (Go reply_to_trigger). */
+  replyToTrigger?: boolean
+  /** Also answer @所有人/@所有人中提及本机器人 (Go respond_to_at_everyone_and_here). */
+  respondToAtEveryoneAndHere?: boolean
+  /** Interactive cards; default true (Go enable_feishu_card). */
+  enableFeishuCard?: boolean
+  /** Progress rendering: 'legacy' | 'compact' | 'card' (Go progress_style). */
+  progressStyle?: string
+  /** Explicit active-tag name override (Go active_tag_name). */
+  activeTagName?: string
   /** ✅ push notification after in-place completion (Go notify_on_complete). */
   notifyOnComplete?: boolean
   /** Emoji reaction on the user's message; '' or 'none' disables (Go reaction_emoji). */
@@ -252,6 +270,8 @@ export interface DisplayConfig {
   stallTimeoutSecs?: number
   /** Stall retries before the idle kill (Go stall_max_retries). */
   stallMaxRetries?: number
+  /** Per-turn wall-clock cap in seconds; unset = 2× idle, 0 disables (Go absolute_turn_timeout_secs). */
+  absoluteTurnTimeoutSecs?: number
   /** Editor base URL linked from status footers (Go editor_url; '' disables). */
   editorUrl?: string
 }
@@ -260,6 +280,14 @@ export interface DisplayConfig {
 export interface QueueConfig {
   /** Max queued messages per session. */
   maxDepth?: number
+}
+
+/** Per-session inbound rate limit (Go [rate_limit]). */
+export interface RateLimitConfig {
+  /** Messages allowed per window; 0 disables limiting. */
+  maxMessages?: number
+  /** Sliding window length in seconds. */
+  windowSecs?: number
 }
 
 /** Recursive subtask delegation caps (Go [subtask]). */
@@ -410,6 +438,8 @@ export interface FeishuBridgeConfig {
   attachmentSend?: boolean
   /** Inbound message queue cap (Go [queue]). */
   queue?: QueueConfig
+  /** Per-session inbound rate limit; defaults 20 messages / 60 s, maxMessages 0 disables (Go [rate_limit]). */
+  rateLimit?: RateLimitConfig
   /** Subtask delegation caps (Go [subtask]). */
   subtask?: SubtaskConfig
   /** /spawn //fork isolation defaults (Go [spawn]). */
@@ -447,6 +477,15 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     feishu: Schema.object({
       appId: Schema.string().required().description('Feishu app id'),
       appSecret: Schema.string().required().role('secret').description('Feishu app secret'),
+      allowFrom: Schema.string().description('Comma-separated user allowlist; * or empty = everyone'),
+      groupOnly: Schema.boolean().description('Only answer group chats (drop p2p)'),
+      shareSessionInChannel: Schema.boolean().description('One session per chat instead of per user+chat'),
+      threadIsolation: Schema.boolean().description('Isolate each message thread into its own session'),
+      replyToTrigger: Schema.boolean().description('Reply to the triggering message (default true)'),
+      respondToAtEveryoneAndHere: Schema.boolean().description('Answer @所有人 mentions of this bot'),
+      enableFeishuCard: Schema.boolean().description('Interactive cards (default true)'),
+      progressStyle: Schema.string().description("Progress rendering: 'legacy' | 'compact' | 'card'"),
+      activeTagName: Schema.string().description('Explicit active-tag name override'),
       notifyOnComplete: Schema.boolean().description('✅ notification after in-place completion'),
       reactionEmoji: Schema.string().description('Reaction emoji on user message'),
       doneEmoji: Schema.string().description('Reaction emoji on completion card'),
@@ -569,6 +608,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     patchRateIntervalMs: Schema.natural().description('Minimum ms between card PATCH calls'),
     stallTimeoutSecs: Schema.natural().description('Stall detection window in seconds'),
     stallMaxRetries: Schema.natural().description('Stall retries before the idle kill'),
+    absoluteTurnTimeoutSecs: Schema.natural().description('Per-turn wall-clock cap seconds; unset = 2× idle, 0 disables'),
     editorUrl: Schema.string().description('Editor base URL linked from status footers (Go editor_url)'),
   }).description('Display defaults'),
   dataDir: Schema.string().description('Root directory for per-project session stores'),
@@ -578,6 +618,10 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   queue: Schema.object({
     maxDepth: Schema.natural().description('Max queued messages per session'),
   }).description('Inbound queue cap'),
+  rateLimit: Schema.object({
+    maxMessages: Schema.natural().description('Messages allowed per window (default 20; 0 disables)'),
+    windowSecs: Schema.natural().description('Sliding window seconds (default 60)'),
+  }).description('Per-session inbound rate limit'),
   subtask: Schema.object({
     maxDepth: Schema.natural().description('Max recursive delegation depth'),
     timeoutSec: Schema.natural().description('Subtask hard timeout in seconds'),
@@ -854,6 +898,17 @@ export function buildProjectAssembly(
       ? { patchRateIntervalMs: config.display.patchRateIntervalMs }
       : {}),
     ...(project.feishu.notifyOnComplete !== undefined ? { notifyOnComplete: project.feishu.notifyOnComplete } : {}),
+    ...(project.feishu.allowFrom !== undefined ? { allowFrom: project.feishu.allowFrom } : {}),
+    ...(project.feishu.groupOnly !== undefined ? { groupOnly: project.feishu.groupOnly } : {}),
+    ...(project.feishu.shareSessionInChannel !== undefined ? { shareSessionInChannel: project.feishu.shareSessionInChannel } : {}),
+    ...(project.feishu.threadIsolation !== undefined ? { threadIsolation: project.feishu.threadIsolation } : {}),
+    ...(project.feishu.replyToTrigger === false ? { noReplyToTrigger: true } : {}),
+    ...(project.feishu.respondToAtEveryoneAndHere !== undefined
+      ? { respondToAtEveryoneAndHere: project.feishu.respondToAtEveryoneAndHere }
+      : {}),
+    ...(project.feishu.enableFeishuCard !== undefined ? { useInteractiveCard: project.feishu.enableFeishuCard } : {}),
+    ...(project.feishu.progressStyle !== undefined ? { progressStyle: project.feishu.progressStyle } : {}),
+    ...(project.feishu.activeTagName !== undefined ? { activeTagOverride: project.feishu.activeTagName } : {}),
     ...(project.feishu.reactionEmoji !== undefined ? { reactionEmoji: project.feishu.reactionEmoji } : {}),
     ...(project.feishu.doneEmoji !== undefined ? { doneEmoji: project.feishu.doneEmoji } : {}),
     ...(project.feishu.cancelEmoji !== undefined ? { cancelEmoji: project.feishu.cancelEmoji } : {}),
@@ -949,11 +1004,20 @@ export function buildProjectAssembly(
   if (config.display?.stallMaxRetries !== undefined) {
     engine.setStallMaxRetries(config.display.stallMaxRetries)
   }
+  if (config.display?.absoluteTurnTimeoutSecs !== undefined) {
+    engine.setAbsoluteTurnTimeoutSecs(config.display.absoluteTurnTimeoutSecs)
+  }
   if (config.idleTimeoutMins !== undefined) {
     engine.setEventIdleTimeout(config.idleTimeoutMins > 0 ? config.idleTimeoutMins * 60_000 : 0)
   }
   if (config.queue?.maxDepth !== undefined && config.queue.maxDepth > 0) {
     engine.setMaxQueuedMessages(config.queue.maxDepth)
+  }
+  // Go wire.go always arms the limiter with 20/60 defaults unless max_messages=0.
+  {
+    const maxMessages = config.rateLimit?.maxMessages ?? 20
+    const windowSecs = config.rateLimit?.windowSecs ?? 60
+    engine.setRateLimitCfg(maxMessages, windowSecs * 1000)
   }
   if (config.subtask?.maxDepth !== undefined && config.subtask.maxDepth > 0) {
     engine.setSubtaskMaxDepth(config.subtask.maxDepth)

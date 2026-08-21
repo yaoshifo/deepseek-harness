@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   couldBeSilentPrefix,
   defaultEventIdleTimeout,
@@ -1246,5 +1246,122 @@ describe('todo_write progress section', () => {
     expect(last).toContain('清单已建')
     // The queued turn's card starts clean: turn 1's entry does not leak.
     expect(last).not.toContain('bash')
+  })
+})
+
+describe('rate limit (Go checkRateLimit)', () => {
+  it('third message in the window replies rate-limited and is dropped', async () => {
+    const { e, p } = newEngine()
+    const key = 'test:rl-user'
+    const state = new InteractiveState()
+    state.agentSession = newQueuingSession('qs-rl')
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    // Busy session: allowed messages queue instead of starting a turn.
+    const session = e.sessions.getOrCreateActive(key)
+    expect(session.tryLock()).toBe(true)
+
+    e.setRateLimitCfg(2, 60_000)
+    e.handleMessage(p, msg({ sessionKey: key, content: 'one' }))
+    e.handleMessage(p, msg({ sessionKey: key, content: 'two' }))
+    expect(state.pendingMessages).toHaveLength(2)
+
+    e.handleMessage(p, msg({ sessionKey: key, content: 'three' }))
+    await vi.waitFor(() => { expect(p.getSent().join('\n')).toContain('⏳') })
+    expect(state.pendingMessages, 'rate-limited message never queues').toHaveLength(2)
+  })
+
+  it('limiter absent passes everything (Go nil rateLimiter)', () => {
+    const { e } = newEngine()
+    const m = msg({ sessionKey: 'test:any', content: 'x' })
+    for (let i = 0; i < 30; i++) expect(e.checkRateLimit(m)).toBe(true)
+  })
+})
+
+describe('absolute turn timeout (Go watchdog hard cap)', () => {
+  it('absoluteTurnMax defaults to 2× idle; explicit set applies, 0 disables', () => {
+    const { e } = newEngine()
+    expect(e.absoluteTurnMax(1000)).toBe(2000)
+    e.setAbsoluteTurnTimeoutSecs(5)
+    expect(e.absoluteTurnMax(1000)).toBe(5000)
+    e.setAbsoluteTurnTimeoutSecs(0)
+    expect(e.absoluteTurnMax(1000)).toBe(0)
+  })
+
+  it('isResearchSession matches research assistants and research-hub roles', () => {
+    const { e } = newEngine()
+    expect(e.isResearchSession(undefined)).toBe(false)
+    const role = e.sessions.getOrCreateActive('test:role')
+    expect(e.isResearchSession(role)).toBe(false)
+    const hub = e.sessions.getOrCreateActive('test:hub')
+    hub.chatroomResearch = true
+    role.chatroomHubKey = 'test:hub'
+    expect(e.isResearchSession(role)).toBe(true)
+    const assistant = e.sessions.getOrCreateActive('test:assistant')
+    assistant.researchAssistant = true
+    expect(e.isResearchSession(assistant)).toBe(true)
+  })
+
+  it('hard cap kills a trickle-forever turn on the next event', async () => {
+    const { e, p } = newEngine()
+    e.setEventIdleTimeout(400)
+    const key = 'test:hard-cap'
+    const sess = newControllableSession('hard-cap')
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    const session = e.sessions.getOrCreateActive(key)
+    session.tryLock()
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, undefined)
+    // Trickle events every 150 ms (< idle 400 ms) keep the stall path from
+    // firing; the hard cap is 3 × (2 × idle) = 2400 ms.
+    const trickle = setInterval(() => {
+      sess.channel.push({ type: 'text', content: 'tick', done: false } as never)
+    }, 150)
+    try {
+      await Promise.race([
+        done,
+        new Promise((_, reject) => { setTimeout(() => { reject(new Error('hard cap did not fire')) }, 8000) }),
+      ])
+    } finally {
+      clearInterval(trickle)
+    }
+    expect(p.getSent().some(s => s.includes('stopped responding')), `sent=${JSON.stringify(p.getSent())}`).toBe(true)
+    expect(e.interactiveStates.has(key)).toBe(false)
+  })
+
+  it('research sessions lift the hard cap (Go researchExempt)', async () => {
+    const { e, p } = newEngine()
+    e.setEventIdleTimeout(400)
+    e.setAbsoluteTurnTimeoutSecs(1)
+    const key = 'test:hard-cap-research'
+    const sess = newControllableSession('hard-cap-research')
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    const session = e.sessions.getOrCreateActive(key)
+    session.researchAssistant = true
+    session.tryLock()
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, undefined)
+    // Hard cap would be 3 s without the exemption; trickle past it.
+    const trickle = setInterval(() => {
+      sess.channel.push({ type: 'text', content: 'tick', done: false } as never)
+    }, 150)
+    await new Promise((resolve) => { setTimeout(resolve, 3400) })
+    let settled = false
+    void done.then(() => { settled = true })
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+    expect(settled, 'research turn must survive past the hard cap').toBe(false)
+    clearInterval(trickle)
+    sess.channel.push({ type: 'result', content: 'done', done: true } as never)
+    await done
+    expect(p.getSent().some(s => s.includes('stopped responding'))).toBe(false)
   })
 })

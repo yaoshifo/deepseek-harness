@@ -123,6 +123,7 @@ import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, Stream
 import { isTodoToolName, parseTodoItems } from '../progress.js'
 import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.js'
 import { newAsyncSender, type AsyncSender } from '../async-sender.js'
+import { RateLimiter } from '../ratelimit.js'
 import { readFileSync, statSync, existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
@@ -731,6 +732,10 @@ export class Engine {
   eventIdleTimeout = defaultEventIdleTimeout
   /** Stall retries before the idle kill. */
   stallMaxRetries = defaultStallMaxRetries
+  /** Explicit per-turn wall-clock cap in ms; used only when set (Go absoluteTurnTimeout). */
+  private absoluteTurnTimeout = 0
+  /** Whether absoluteTurnTimeout was set explicitly (false = 2× idle fallback). */
+  private absoluteTurnTimeoutSet = false
   /** Per-session queued-message cap. */
   maxQueuedMessages = defaultMaxQueuedMessages
   /** Rapid-fire queued-message merge window in ms; 0 disables. */
@@ -854,6 +859,8 @@ export class Engine {
   adminFrom = ''
   /** /list etc. only show cc-connect-tracked sessions when true. */
   filterExternalSessions = false
+  /** Per-session inbound rate limiter; undefined = unlimited (Go e.rateLimiter). */
+  private rateLimiter: RateLimiter | undefined
   /** Quick provider commands (/strong → provider name; Go providerShortcuts). */
   providerShortcuts: Record<string, string> = {}
   /** Executor for a provider shortcut (armed by registerProviderCommands). */
@@ -982,11 +989,68 @@ export class Engine {
   }
 
   /**
+   * Explicit per-turn wall-clock cap (Go SetAbsoluteTurnTimeout); an explicit
+   * 0 disables the cap, unset falls back to 2× idle.
+   * @param secs - Cap in seconds.
+   */
+  setAbsoluteTurnTimeoutSecs(secs: number): void {
+    this.absoluteTurnTimeout = secs * 1000
+    this.absoluteTurnTimeoutSet = true
+  }
+
+  /**
+   * Per-turn absolute wall-clock cap (Go absoluteTurnMax).
+   * @param idle - The session's idle timeout in ms.
+   * @returns The cap in ms; 0 disables.
+   */
+  absoluteTurnMax(idle: number): number {
+    if (this.absoluteTurnTimeoutSet) return this.absoluteTurnTimeout
+    return idle * 2
+  }
+
+  /**
+   * Whether the session is research-critical (#57) and exempt from the hard
+   * cap (Go isResearchSession).
+   * @param sess - The session, when found.
+   * @returns True for research assistants and research-hub chatroom roles.
+   */
+  isResearchSession(sess: Session | undefined): boolean {
+    if (sess === undefined) return false
+    if (sess.researchAssistant) return true
+    if (sess.chatroomHubKey !== '') {
+      const hub = this.sessions.findActive(sess.chatroomHubKey)
+      if (hub !== undefined && hub.chatroomResearch) return true
+    }
+    return false
+  }
+
+  /**
    * Merge streaming-preview tuning over the current config (Go SetStreamPreviewCfg).
    * @param cfg - Preview fields to merge over the current config.
    */
   setStreamPreviewCfg(cfg: Partial<StreamPreviewCfg>): void {
     this.streamPreview = { ...this.streamPreview, ...cfg }
+  }
+
+  /**
+   * Configure per-session message rate limiting (Go SetRateLimitCfg).
+   * @param maxMessages - Messages allowed per window; 0 disables limiting.
+   * @param windowMs - Sliding window length in milliseconds.
+   */
+  setRateLimitCfg(maxMessages: number, windowMs: number): void {
+    this.rateLimiter?.stop()
+    this.rateLimiter = maxMessages > 0 ? new RateLimiter(maxMessages, windowMs) : undefined
+  }
+
+  /**
+   * Whether one inbound message is within the rate limit (Go checkRateLimit;
+   * the [users] role path is not ported, so the global limiter keys by
+   * sessionKey like Go's legacy path).
+   * @param msg - The inbound message.
+   * @returns True when the message is allowed.
+   */
+  checkRateLimit(msg: Message): boolean {
+    return this.rateLimiter?.allow(msg.sessionKey) ?? true
   }
 
   /**
@@ -1180,6 +1244,7 @@ export class Engine {
       if (state.agentSession !== undefined) await state.agentSession.close()
     }
     if (this.reaperTimer !== undefined) clearInterval(this.reaperTimer)
+    this.rateLimiter?.stop()
     await this.agent.stop()
   }
 
@@ -1253,6 +1318,14 @@ export class Engine {
       void this.handleCardAction(p, msg, content).catch((error: unknown) => {
         console.error(`engine: card action failed (${msg.sessionKey}): ${String(error)}`)
       })
+      return
+    }
+
+    // Rate limit check (Go engine.go: after content merge, before permission
+    // and chatroom-reply routing).
+    if (!this.checkRateLimit(msg)) {
+      console.info(`engine: message rate limited (session=${msg.sessionKey} user=${msg.userID})`)
+      void this.reply(p, msg.replyCtx, this.i18n.t(Msg.RateLimited))
       return
     }
 
@@ -2115,6 +2188,12 @@ export class Engine {
 
     let pendingSend = sendDone
     const stopP = state.stopSignal()
+    // Hard cap (Go watchdog watchdogKillHard): a turn whose events keep
+    // trickling in resets the idle timer forever, so the cap is enforced on
+    // event arrival. Research sessions lift it (Go isResearchSession).
+    const turnStart = Date.now()
+    const softCap = this.absoluteTurnMax(state.idleTimeout(this.eventIdleTimeout))
+    const hardCapMs = softCap > 0 && !this.isResearchSession(session) ? softCap * 3 : 0
     // The live session's event channel; swapped when a stall retry restarts
     // the agent — re-arming recvP on the pre-retry channel would read its
     // close as an agent exit on the very next event.
@@ -2229,6 +2308,17 @@ export class Engine {
       const event = outcome.event
       state.lastEventAt = Date.now()
       recvP = events.receive()
+
+      if (hardCapMs > 0 && Date.now() - turnStart > hardCapMs) {
+        console.error(`watchdog: hard turn cap exceeded, force cleanup (${sessionKey})`)
+        state.eventsNeedResync = true
+        const p = state.platform
+        if (p !== undefined) {
+          await this.send(p, replyCtx, this.i18n.t(Msg.WatchdogReset))
+        }
+        await this.cleanupInteractiveState(sessionKey, state)
+        return
+      }
 
       if (state.isStopped()) {
         state.eventsNeedResync = true

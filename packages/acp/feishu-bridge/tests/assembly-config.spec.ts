@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
+import type { Engine } from '../src/engine/engine.js'
 import { HintUsage } from '../src/engine/hint-usage.js'
 import { WorktreeMode } from '../src/engine/worktree.js'
 
@@ -185,9 +186,50 @@ describe('buildProjectAssembly config wiring', () => {
     expect(assemble({ ...baseConfig(), display: { stallMaxRetries: 3 } }).engine.stallMaxRetries).toBe(3)
   })
 
+  it('wires display.absolute_turn_timeout_secs; unset keeps the 2× idle fallback', () => {
+    expect(assemble({ ...baseConfig(), display: { absoluteTurnTimeoutSecs: 5 } }).engine.absoluteTurnMax(1000)).toBe(5000)
+    expect(assemble({ ...baseConfig(), display: { absoluteTurnTimeoutSecs: 0 } }).engine.absoluteTurnMax(1000)).toBe(0)
+    expect(assemble(baseConfig()).engine.absoluteTurnMax(1000)).toBe(2000)
+  })
+
   it('forwards display.progress_spinner to the platform (Go platform opts)', () => {
     expect(assemble({ ...baseConfig(), display: { progressSpinner: false } }).platform.spinnerEnabled).toBe(false)
     expect(assemble(baseConfig()).platform.spinnerEnabled).toBe(true)
+  })
+
+  it('forwards the feishu platform option keys (Go platform_options.feishu)', () => {
+    const proj = project()
+    proj.feishu = {
+      ...proj.feishu,
+      allowFrom: 'ou_owner',
+      groupOnly: true,
+      shareSessionInChannel: true,
+      threadIsolation: true,
+      replyToTrigger: false,
+      respondToAtEveryoneAndHere: true,
+      enableFeishuCard: false,
+      progressStyle: 'compact',
+      activeTagName: 'harness',
+    }
+    const { platform } = assemble(baseConfig(), proj)
+    // Options without public observable fields are asserted through the
+    // construction options object; enforcement lives in platform.spec.
+    const o = (platform as unknown as { o: import('../src/feishu/platform.js').FeishuPlatformOptions }).o
+    expect(o.allowFrom).toBe('ou_owner')
+    expect(o.groupOnly).toBe(true)
+    expect(o.shareSessionInChannel).toBe(true)
+    expect(o.threadIsolation).toBe(true)
+    expect(o.noReplyToTrigger).toBe(true)
+    expect(o.respondToAtEveryoneAndHere).toBe(true)
+    expect(o.activeTagOverride).toBe('harness')
+    expect(platform.useInteractiveCard).toBe(false)
+    expect(platform.progressStyle).toBe('compact')
+    // Unset keys stay undefined so platform defaults apply (Go zero values).
+    const bare = (assemble(baseConfig()).platform as unknown as { o: import('../src/feishu/platform.js').FeishuPlatformOptions }).o
+    expect(bare.allowFrom).toBeUndefined()
+    expect(bare.threadIsolation).toBeUndefined()
+    expect(assemble(baseConfig()).platform.useInteractiveCard).toBe(true)
+    expect(assemble(baseConfig()).platform.progressStyle).toBe('legacy')
   })
 
   it('forwards display.patch_rate_interval_ms to the platform PATCH limiter', async () => {
@@ -202,6 +244,20 @@ describe('buildProjectAssembly config wiring', () => {
     expect(assemble({ ...baseConfig(), queue: { maxDepth: 9 } }).engine.maxQueuedMessages).toBe(9)
     // Non-positive values are ignored (Go guard).
     expect(assemble({ ...baseConfig(), queue: { maxDepth: 0 } }).engine.maxQueuedMessages).toBe(5)
+  })
+
+  it('wires rate_limit with the Go 20/60 defaults (Go wire.go)', () => {
+    const m = { sessionKey: 'test:rl' } as Parameters<typeof Engine.prototype.checkRateLimit>[0]
+    const { engine } = assemble({ ...baseConfig(), rateLimit: { maxMessages: 3, windowSecs: 60 } })
+    expect(engine.checkRateLimit(m)).toBe(true)
+    expect(engine.checkRateLimit(m)).toBe(true)
+    expect(engine.checkRateLimit(m)).toBe(true)
+    expect(engine.checkRateLimit(m)).toBe(false)
+    const def = assemble(baseConfig()).engine
+    for (let i = 0; i < 20; i++) expect(def.checkRateLimit(m)).toBe(true)
+    expect(def.checkRateLimit(m)).toBe(false)
+    const off = assemble({ ...baseConfig(), rateLimit: { maxMessages: 0 } }).engine
+    for (let i = 0; i < 25; i++) expect(off.checkRateLimit(m)).toBe(true)
   })
 
   it('wires the subtask caps (Go SetSubtaskMaxDepth/Timeout/GatherTimeout)', () => {

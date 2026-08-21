@@ -140,7 +140,7 @@ export function registerSessionMiscCommands(e: Engine): () => void {
   e.commandHandlers = handlers
   const prevResolver = e.commandResolver
   e.commandResolver = (cmd: string): string => {
-    if (cmd === 'compress' || (cmd.length >= 2 && 'compress'.startsWith(cmd))) return 'compress'
+    if (cmd === 'compress' || cmd === 'compact' || (cmd.length >= 2 && 'compress'.startsWith(cmd))) return 'compress'
     return prevResolver?.(cmd) ?? ''
   }
   return () => {

@@ -264,6 +264,12 @@ describe('estimateTokensWithPendingAssistant', () => {
 })
 
 describe('/compress', () => {
+  it('resolves the compact alias (Go builtinCommands)', () => {
+    const { e } = newEngine(createStubAgent())
+    registerSessionMiscCommands(e)
+    expect(e.commandResolver?.('compact')).toBe('compress')
+  })
+
   it('compresses through the session compressor and replies done', async () => {
     const cs = compressorSession('s1')
     const { e, p } = newEngine({ ...createStubAgent(), startSession: async () => cs })

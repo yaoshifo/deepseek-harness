@@ -645,6 +645,8 @@ export interface FeishuBridgeConfig {
   attachmentSend?: boolean
   /** Inbound message queue cap (Go [queue]). */
   queue?: QueueConfig
+  /** Per-session inbound rate limit; defaults 20 messages / 60 s, maxMessages 0 disables (Go [rate_limit]). */
+  rateLimit?: RateLimitConfig
   /** Subtask delegation caps (Go [subtask]). */
   subtask?: SubtaskConfig
   /** /spawn //fork isolation defaults (Go [spawn]). */
@@ -745,6 +747,8 @@ export interface DisplayConfig {
   stallTimeoutSecs?: number
   /** Stall retries before the idle kill (Go stall_max_retries). */
   stallMaxRetries?: number
+  /** Per-turn wall-clock cap in seconds; unset = 2× idle, 0 disables (Go absolute_turn_timeout_secs). */
+  absoluteTurnTimeoutSecs?: number
   /** Editor base URL linked from status footers (Go editor_url; '' disables). */
   editorUrl?: string
 }
@@ -753,6 +757,14 @@ export interface DisplayConfig {
 export interface QueueConfig {
   /** Max queued messages per session. */
   maxDepth?: number
+}
+
+/** Per-session inbound rate limit (Go [rate_limit]). */
+export interface RateLimitConfig {
+  /** Messages allowed per window; 0 disables limiting. */
+  maxMessages?: number
+  /** Sliding window length in seconds. */
+  windowSecs?: number
 }
 
 /** Recursive subtask delegation caps (Go [subtask]). */
@@ -843,6 +855,24 @@ export interface FeishuAppConfig {
   appId: string
   /** Feishu open-platform app secret. */
   appSecret: string
+  /** Comma-separated user IDs allowed to talk to this bot; '*' or '' = everyone (Go allow_from). */
+  allowFrom?: string
+  /** Only answer group chats, drop p2p messages (Go group_only). */
+  groupOnly?: boolean
+  /** Share one session per chat instead of per user+chat (Go share_session_in_channel). */
+  shareSessionInChannel?: boolean
+  /** Isolate each message thread into its own session (Go thread_isolation). */
+  threadIsolation?: boolean
+  /** Reply to the triggering message instead of posting new; default true (Go reply_to_trigger). */
+  replyToTrigger?: boolean
+  /** Also answer @所有人/@所有人中提及本机器人 (Go respond_to_at_everyone_and_here). */
+  respondToAtEveryoneAndHere?: boolean
+  /** Interactive cards; default true (Go enable_feishu_card). */
+  enableFeishuCard?: boolean
+  /** Progress rendering: 'legacy' | 'compact' | 'card' (Go progress_style). */
+  progressStyle?: string
+  /** Explicit active-tag name override (Go active_tag_name). */
+  activeTagName?: string
   /** ✅ push notification after in-place completion (Go notify_on_complete). */
   notifyOnComplete?: boolean
   /** Emoji reaction on the user's message; '' or 'none' disables (Go reaction_emoji). */
@@ -1023,7 +1053,7 @@ export interface MonitorRuleConfig {
 }
 ```
 
-Source: [`packages/acp/feishu-bridge/src/index.ts:396`](../packages/acp/feishu-bridge/src/index.ts)
+Source: [`packages/acp/feishu-bridge/src/index.ts:424`](../packages/acp/feishu-bridge/src/index.ts)
 
 <a id="deepseek-aidsh-fs-local"></a>
 

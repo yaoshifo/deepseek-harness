@@ -44,12 +44,12 @@ export const builtinCommands: Array<{ names: string[]; id: string }> = [
   { names: ['switch', 'resume'], id: 'switch' },
   { names: ['status'], id: 'status' },
   { names: ['stop'], id: 'stop' },
-  { names: ['dir', 'cd'], id: 'dir' },
+  { names: ['dir', 'cd', 'chdir', 'workdir'], id: 'dir' },
   { names: ['spawn', 'sp'], id: 'spawn' },
   { names: ['fork', 'fk'], id: 'fork' },
   { names: ['done'], id: 'done' },
   { names: ['rename'], id: 'rename' },
-  { names: ['hint'], id: 'hint' },
+  { names: ['hint', 'ht'], id: 'hint' },
 ]
 
 /**

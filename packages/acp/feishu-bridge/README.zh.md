@@ -37,11 +37,13 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 - **lark 工具仅支持 Feishu 域（open.feishu.cn）**：插件平台侧整体未移植 Go `larkCreds.Brand`（lark.com 双域名）；需要 lark 域时在 `src/tools/lark.ts` 与平台 client 引入 brand 维度。
 - **send 工具只读本地路径**：Go CLI 的 `--image/--file` 还支持 http(s) URL 拉取；agent 产物都在磁盘上，该分支未移植。i18n 的 `relay_setup_ok`/`cron_setup_ok` 消息为保形移植残留：其 Go 调用方把 CLI 指令写进 agent 记忆文件，该机制在 dsh 下已过时（每个会话都有原生系统提示机制），不接线也不删除。
 - **引用消息的发送者名不解析**：平台从不经通讯录 API 解析联系人名（M1 起的既定裁剪），引用链里发送者渲染为 `User`/`Bot`；需要真名时随平台补 `resolveUserName` 缓存。
-- **`reply_footer`（#11）未接线**：Codex 式状态页脚依赖 model/effort 能力 getter 与 ctx%/usage 计算（#1 usage 域），归 M7 usage 里程碑；当前 `features.replyFooter` 键声明但不转发，默认关。
+- **`reply_footer`（#11）余额段待 adapter 生长**：页脚本体已接线（M7-b，`status-footer.ts` buildReplyFooter，默认关）；余额段在 dsh adapter 长出 UsageReporter 前保持空缺（能力面已就绪）。
+- **入站语音消息被静默丢弃**：Go 经 `[speech]`（Whisper 兼容厂商）转写后喂给 agent；TS 平台对 `audio` 消息直接丢弃（i18n 的 `voice_*` 文案为保形移植残留）。移植 speech.go 或改为回复「语音未启用」提示，待裁定（2026-08-21 审计）。
+- **agent 失败以原始报错呈现**：Go 的 failure_classify.go（七类失败分类驱动用户文案与重试决策）与 redact/（展示前脱敏）未移植；用户看到未分类未脱敏的原始错误文本。
 - **卡片按钮回调无法自动化测试**：`card.action.trigger` 只能真机点击验证（飞书平台无回调模拟 API）；按钮路径靠纯函数表测 + 真机冒烟覆盖。
 - **多工作空间（multi-workspace）未迁移**：channel→workspace 绑定（Go workspace_binding.go）与 per-workspace agent 池未接线；单工作空间 + `/dir` per-chat override 承担现网需求，E 群清查记为 C 类。
 - **/fork 只能从 live 父会话 seed**：Go 读持久化日志复制已完成 turns，TS 侧父会话不在内存时退化为全新会话（adapter startSession 的已注释天花板）。
 - **chatroom picker 状态为内存态**：daemon 重启后旧选择卡成孤儿（Go 保形）；plan-render/usage/predict-next 等 M7 剩余域按 MIGRATION.md 队列推进。
 - **`nav:/help` 按钮无效**：cron 卡片的返回按钮指向 Go 的 help 卡体系（`renderHelpGroupCard` + `nav:` 帮助导航），该体系未移植；点击会进 engine 打 "no handler" 日志而非静默消失。根治是移植 help 卡族；`/dir` 选择卡同样因此不带返回按钮。
 - **`/list`、`/status`、`/switch` 仍是纯文本**：Go 侧渲染 `renderListCardSafe`/`renderStatusCard` 卡片并带 `act:/list switch|delete N` 动作；TS 命令保持文本输出，待该渲染域移植。
-- **Go 命令清单仅部分移植**：`/shell`+`!`、`/tag`、`/untag`、`/undone`、`/notify`、`/board`、`/help`、`/ps` 已落地（Agent Note `feature/2026-08-20-feishu-bridge-shell-command.md` 与 `feature/2026-08-20-feishu-bridge-seven-commands.md`）；`/help` 列表从注册表动态生成、不会漂移。Go 52 条 builtin 命令仍缺约 27 条（`/whoami`、`/history`、`/current`、`/search`、`/delete`、`/name`、`/memory`、`/model`、`/reasoning`、`/mode`、`/lang`、`/quiet`、`/tts`、`/allow`、`/skills`、`/config`、`/show`、`/diff` 等；upgrade/restart/web/doctor/version 属 D 类裁剪）。逐条迁移/裁剪裁定挂 M8。
+- **Go 命令清单为有意筛选**：`/shell`+`!`、`/tag`、`/untag`、`/undone`、`/notify`、`/board`、`/help`、`/ps` 已落地（Agent Note `feature/2026-08-20-feishu-bridge-shell-command.md` 与 `feature/2026-08-20-feishu-bridge-seven-commands.md`）；`/help` 列表从注册表动态生成、不会漂移。Go 53 条 builtin 命令剩余约 27 条为有意裁剪（用户裁定 2026-08-21）：upgrade/restart/web/doctor/version 属 D 类，其余（`/whoami`、`/history`、`/current`、`/search`、`/delete`、`/name`、`/memory`、`/model`、`/reasoning`、`/mode`、`/lang`、`/quiet`、`/tts`、`/allow`、`/config`、`/show`、`/diff` 等）设计上不迁；`/tts` 另依赖待裁定的语音能力面。
