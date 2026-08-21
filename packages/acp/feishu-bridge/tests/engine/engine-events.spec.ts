@@ -364,6 +364,34 @@ describe('processInteractiveEvents side-channel dedup', () => {
   })
 })
 
+describe('processInteractiveEvents turn token rate', () => {
+  it('closes a tool interval on its matching tool_result so the rate spans post-tool generation', async () => {
+    const p = createStubMediaPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'tool_result', toolResult: 'out', toolID: 'call-1', content: '', done: false })
+    // Generation after the tool: if the interval closed at the tool_result,
+    // this span stays in the thinking time and the rate line renders; if it
+    // stayed open until the result, the thinking time collapses under the
+    // 200ms floor and tokenRateMsg is ''.
+    await new Promise(r => setTimeout(r, 300))
+    agentSession.channel.push({ type: 'result', content: 'answer', outputTokens: 300, inputTokens: 500, done: true })
+    await done
+
+    expect(e.usage.tokenRateMsg).not.toBe('')
+  })
+})
+
 describe('processInteractiveEvents channel closed', () => {
   it('notifies the user that the agent process exited', async () => {
     const p = createStubMediaPlatform()

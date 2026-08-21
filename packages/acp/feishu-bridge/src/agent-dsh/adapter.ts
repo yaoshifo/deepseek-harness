@@ -1121,6 +1121,21 @@ function thinkingOfBlocks(blocks: readonly ContentBlock[] | undefined): string {
   return out
 }
 
+/** Call id of a durable tool-result message, or '' when absent.
+ *
+ * The durable ToolMessage carries it on `source.callId`; the wire fallback is
+ * the `tool-result` content block's `toolCallId`. The engine keys tool-time
+ * intervals by this id (Go EventToolResult ToolID).
+ */
+function toolResultCallIdOf(message: { source?: { callId?: unknown }; content?: ContentBlock[] } | undefined): string {
+  const fromSource = toStr(message?.source?.callId)
+  if (fromSource !== '') return fromSource
+  for (const block of message?.content ?? []) {
+    if (block.type === 'tool-result') return toStr(block.toolCallId)
+  }
+  return ''
+}
+
 /** One live engine session backed by a native dsh agent. */
 export class DshAgentSession implements AgentSession {
   private readonly key: string
@@ -1130,7 +1145,10 @@ export class DshAgentSession implements AgentSession {
   private disposed = false
   private turnText = ''
   private lastText = ''
-  private usage: { inputTokens?: number; totalInputTokens?: number; outputTokens?: number } = {}
+  /** Turn-wide usage sums, reset on turn/start (Go accumulateUsage counters). */
+  private turnUsage = { inputTokens: 0, cachedTokens: 0, outputTokens: 0 }
+  /** Assistant messages seen this turn (Go turnSteps → result numTurns). */
+  private turnSteps = 0
   /** Last-activity timestamp (ms), updated on send and every projected event. */
   lastActivityAt = Date.now()
   /** Pending permission responses: requestID → settle function (M3). */
@@ -1396,6 +1414,8 @@ export class DshAgentSession implements AgentSession {
     switch (toStr(event.type)) {
       case 'turn/start': {
         this.turnText = ''
+        this.turnUsage = { inputTokens: 0, cachedTokens: 0, outputTokens: 0 }
+        this.turnSteps = 0
         break
       }
       case 'assistant/chunk': {
@@ -1418,18 +1438,15 @@ export class DshAgentSession implements AgentSession {
         if (thinking !== '') {
           this.channel.push({ type: 'thinking', content: thinking, done: false })
         }
+        // Fold this request's usage into the turn sum (Go accumulateUsage);
+        // the result event carries the sum, not the last request's slice.
         const usage = data.usage as
           | { inputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; outputTokens?: number }
           | undefined
-        if (usage !== undefined) {
-          const input = usage.inputTokens ?? 0
-          const cached = (usage.cacheReadTokens ?? 0) + (usage.cacheCreationTokens ?? 0)
-          this.usage = {
-            inputTokens: input,
-            totalInputTokens: input + cached,
-            ...(usage.outputTokens !== undefined ? { outputTokens: usage.outputTokens } : {}),
-          }
-        }
+        this.turnUsage.inputTokens += usage?.inputTokens ?? 0
+        this.turnUsage.cachedTokens += (usage?.cacheReadTokens ?? 0) + (usage?.cacheCreationTokens ?? 0)
+        this.turnUsage.outputTokens += usage?.outputTokens ?? 0
+        this.turnSteps += 1
         break
       }
       case 'tool/call': {
@@ -1444,10 +1461,12 @@ export class DshAgentSession implements AgentSession {
         break
       }
       case 'tool/result': {
-        const message = data.message as { content?: ContentBlock[] } | undefined
+        const message = data.message as { source?: { callId?: unknown }; content?: ContentBlock[] } | undefined
+        const callId = toolResultCallIdOf(message)
         this.channel.push({
           type: 'tool_result',
           toolResult: textOfBlocks(message?.content),
+          ...(callId !== '' ? { toolID: callId } : {}),
           content: '',
           done: false,
         })
@@ -1469,9 +1488,13 @@ export class DshAgentSession implements AgentSession {
           content: this.turnText,
           ...(errorText !== undefined ? { errorText } : {}),
           done: true,
-          ...this.usage,
+          inputTokens: this.turnUsage.inputTokens,
+          totalInputTokens: this.turnUsage.inputTokens + this.turnUsage.cachedTokens,
+          outputTokens: this.turnUsage.outputTokens,
+          numTurns: this.turnSteps,
         })
-        this.usage = {}
+        this.turnUsage = { inputTokens: 0, cachedTokens: 0, outputTokens: 0 }
+        this.turnSteps = 0
         break
       }
       default:
@@ -1517,8 +1540,8 @@ export class DshAgentSession implements AgentSession {
         break
       }
       case 'tool/result': {
-        const message = data.message as { callId?: unknown; content?: ContentBlock[] } | undefined
-        const callId = toStr(message?.callId)
+        const message = data.message as { source?: { callId?: unknown }; content?: ContentBlock[] } | undefined
+        const callId = toolResultCallIdOf(message)
         this.channel.push({
           type: 'tool_result',
           toolResult: textOfBlocks(message?.content),
