@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/memory/tool-claude-memory/README.md
 README.md: b8bf6675a6c9546a5a1af851fdbe7b570de787a8
-README.zh.md: efbd7d36d80c1af82fcc0ef7641a65c701cfc32b
+README.zh.md: 5d5ec90cac1cb16ab6ca3577fcd16870bcb7331a

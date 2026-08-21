@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-14-claude-code-memory-compat.md
 2026-08-14-claude-code-memory-compat.md: f35fdd42a0ee8fad79b931650874259d27e427aa
-2026-08-14-claude-code-memory-compat.zh.md: 3ddea2a58c9397e93f4aa957b4e5ed498168d061
+2026-08-14-claude-code-memory-compat.zh.md: 3f82fcfa517f086e8800b40311b48b2ae73860f4

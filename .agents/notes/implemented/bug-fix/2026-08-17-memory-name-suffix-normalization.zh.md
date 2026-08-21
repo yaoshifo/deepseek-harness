@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-文件名是信任边界上的输入,由 store 拥有其规范拼写;frontmatter 与内容仍交提示词自治,遵循 [claude-code-memory-compat](../feature/2026-08-14-claude-code-memory-compat.md) 的决定——文件名不是格式内容。
+文件名是信任边界上的输入,由 store 拥有其规范拼写;frontmatter 与内容仍交提示词自治,遵循 [claude-code-memory-compat](../feature/2026-08-14-claude-code-memory-compat.zh.md) 的决定——文件名不是格式内容。
 
 - `writeMemory` 把请求名解析为落盘名:`MEMORY.md` 保持原名,其余名字缺 `.md` 后缀时补上。写入结果回告实际落盘的 `name`,工具渲染它(`Wrote 3 lines (8B) to reference-foo.md …`),索引链接因此按真实存在的文件撰写。
 - `readMemory` 与 `deleteMemory` 在未命中时按另一种后缀拼写重试一次——带 `.md` 则去掉、不带则补上——自愈早于本规则写出的、以及 Claude Code 侧从不规范化的无扩展名文件。精确命中永远优先;重试对它不可达。

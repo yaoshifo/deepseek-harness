@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-21-feishu-bridge-ps-steer.md
 2026-08-21-feishu-bridge-ps-steer.md: cabaac53b2cf827a146b223a7e7ca386d0792a2c
-2026-08-21-feishu-bridge-ps-steer.zh.md: 07e5c8f669cec09fb391ef159397fd5b52c62a42
+2026-08-21-feishu-bridge-ps-steer.zh.md: 7777c37c47d2ddaefb4db01c6cd955071dd249d2

@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-engine 的 `handlePendingPermission` deny 分支在 note 非空、pending 工具不是 `ExitPlanMode`、且 agent session 存在时，把原始 note 逐字 steer：`state.agentSession.steer(note)`——与[计划批准补充](2026-08-21-feishu-bridge-plan-approve-supplement.md)和 [/ps](2026-08-21-feishu-bridge-ps-steer.md) 同一通道。模型在同一轮内看到拒绝错误与用户理由。包装后的 `buildDenyMessage` 仍照旧经 `PermissionResult.message` 下发，供 plan-review 路径消费（keep-planning 反馈）——因此需要 `ExitPlanMode` 守卫，避免理由被送达两次。
+engine 的 `handlePendingPermission` deny 分支在 note 非空、pending 工具不是 `ExitPlanMode`、且 agent session 存在时，把原始 note 逐字 steer：`state.agentSession.steer(note)`——与[计划批准补充](2026-08-21-feishu-bridge-plan-approve-supplement.zh.md)和 [/ps](2026-08-21-feishu-bridge-ps-steer.zh.md) 同一通道。模型在同一轮内看到拒绝错误与用户理由。包装后的 `buildDenyMessage` 仍照旧经 `PermissionResult.message` 下发，供 plan-review 路径消费（keep-planning 反馈）——因此需要 `ExitPlanMode` 守卫，避免理由被送达两次。
 
 ## Alternatives considered
 

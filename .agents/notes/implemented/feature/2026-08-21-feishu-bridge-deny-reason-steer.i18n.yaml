@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-21-feishu-bridge-deny-reason-steer.md
 2026-08-21-feishu-bridge-deny-reason-steer.md: d34f13347e0f214f094c33eae1bfe86968e52730
-2026-08-21-feishu-bridge-deny-reason-steer.zh.md: 78e45b29d2bc14b326c39ec1912698d44011e4f3
+2026-08-21-feishu-bridge-deny-reason-steer.zh.md: 21da6f3b7ac7989ba5203cae826f3ccb6291b95f

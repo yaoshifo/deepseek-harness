@@ -32,4 +32,4 @@ mid-turn `/ps` 文字在当前 turn 内对模型可见。model-visible ⟺ logge
 
 ## Related
 
-取代[再迁七条 cc-connect 命令](2026-08-20-feishu-bridge-seven-commands.md)的 `/ps` 部分；该 note 的其余六条命令与动态生成的 `/help` 不变。
+取代[再迁七条 cc-connect 命令](2026-08-20-feishu-bridge-seven-commands.zh.md)的 `/ps` 部分；该 note 的其余六条命令与动态生成的 `/help` 不变。

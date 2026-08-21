@@ -6,7 +6,7 @@ Status: implemented
 
 ## Problem
 
-通往记忆目录的两条写路径在设计上就分岔了:memory 工具走宿主 `node:fs`([claude-code-memory-compat](2026-08-14-claude-code-memory-compat.md) 的机器本地共享契约),通用 `edit`/`write` 走沙箱化的 `ctx.fs`,而 `workspace-write` 模式拒绝 `~/.claude`——它不在任何可写根之下。`MEMORY_PROMPT` 承诺逐字对齐 Claude Code,但在 Claude Code 里通用编辑工具写记忆目录是成功的,在 dsh 里则以 `FS_SANDBOX_DENIED` 失败。保留 Claude Code 习惯的模型会对 MEMORY.md 伸手用 `edit`,浪费一次调用,还会看到一条升级提示——而对该目录而言,提示里唯一更宽的模式是错误的补救。另外,维护索引需要全量内容重写 MEMORY.md,一行指针更新要重发整个索引。
+通往记忆目录的两条写路径在设计上就分岔了:memory 工具走宿主 `node:fs`([claude-code-memory-compat](2026-08-14-claude-code-memory-compat.zh.md) 的机器本地共享契约),通用 `edit`/`write` 走沙箱化的 `ctx.fs`,而 `workspace-write` 模式拒绝 `~/.claude`——它不在任何可写根之下。`MEMORY_PROMPT` 承诺逐字对齐 Claude Code,但在 Claude Code 里通用编辑工具写记忆目录是成功的,在 dsh 里则以 `FS_SANDBOX_DENIED` 失败。保留 Claude Code 习惯的模型会对 MEMORY.md 伸手用 `edit`,浪费一次调用,还会看到一条升级提示——而对该目录而言,提示里唯一更宽的模式是错误的补救。另外,维护索引需要全量内容重写 MEMORY.md,一行指针更新要重发整个索引。
 
 ## Decision
 

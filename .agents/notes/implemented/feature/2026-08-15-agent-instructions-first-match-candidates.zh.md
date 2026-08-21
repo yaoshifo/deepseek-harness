@@ -6,7 +6,7 @@ Status: implemented
 
 ## 问题
 
-`@deepseek-ai/dsh-agent-instructions` 会加载每个项目目录中 `instructionFileCandidates` 的所有现存条目，仅按目录折叠去首尾空白后内容相同的文件（见 [workspace context](../../implemented/feature/2026-06-24-workspace-context.md)；语义归 `packages/context/agent-instructions/src/config.ts` 与 `src/files.ts` 所有）。部署因此无法表达偏好顺序：默认 `['AGENTS.md', 'CLAUDE.md']` 下，内容不同的两个同级文件都会渲染，任何排序都压不掉靠后的那个。
+`@deepseek-ai/dsh-agent-instructions` 会加载每个项目目录中 `instructionFileCandidates` 的所有现存条目，仅按目录折叠去首尾空白后内容相同的文件（见 [workspace context](../../implemented/feature/2026-06-24-workspace-context.zh.md)；语义归 `packages/context/agent-instructions/src/config.ts` 与 `src/files.ts` 所有）。部署因此无法表达偏好顺序：默认 `['AGENTS.md', 'CLAUDE.md']` 下，内容不同的两个同级文件都会渲染，任何排序都压不掉靠后的那个。
 
 cc-connect 桥接 profile（本仓库之外的 `dsh-cc-connect-bridge` 仓库）在 2026-08-15 遇到了这一点：它希望两文件并存时 `CLAUDE.md` 胜出，同时只有 `AGENTS.md` 的项目仍由 `AGENTS.md` 兜底。配置表达不了这层意思，该 profile 只得钉死 `instructionFileCandidates: ['CLAUDE.md']`，于是所有只有 `AGENTS.md` 的项目悄悄失去了项目级指令。
 

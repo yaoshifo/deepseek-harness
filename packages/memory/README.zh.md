@@ -6,4 +6,4 @@
 
 | Package | Role | ctx key |
 |---|---|---|
-| [`tool-claude-memory/`](tool-claude-memory/README.md) | Claude Code `~/.claude/projects/<slug>/memory/` 共享:策略 section、会话开始索引注入、memory 工具 | — |
+| [`tool-claude-memory/`](tool-claude-memory/README.zh.md) | Claude Code `~/.claude/projects/<slug>/memory/` 共享:策略 section、会话开始索引注入、memory 工具 | — |

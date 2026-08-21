@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-17-memory-name-suffix-normalization.md
 2026-08-17-memory-name-suffix-normalization.md: 91ec4e4dd87c7f5e75af9015855c2975527bff60
-2026-08-17-memory-name-suffix-normalization.zh.md: 197df2b9a002cea3d3be2d739ffad6bf422a3324
+2026-08-17-memory-name-suffix-normalization.zh.md: a1205f2c86db88c4977e698d4c104fa8b01b6f8b

@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-21-feishu-bridge-plan-approve-supplement.md
 2026-08-21-feishu-bridge-plan-approve-supplement.md: 73234f6cf2fd3ba7b34e3bbf6d727985f5966fe6
-2026-08-21-feishu-bridge-plan-approve-supplement.zh.md: 76a6fdd97218b8fefe6747473f0c1863261174f8
+2026-08-21-feishu-bridge-plan-approve-supplement.zh.md: 1baa3b15a36ea1f3be2223454405546e29a0695d

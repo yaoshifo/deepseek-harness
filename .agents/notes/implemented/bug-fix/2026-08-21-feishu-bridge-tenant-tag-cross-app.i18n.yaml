@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-21-feishu-bridge-tenant-tag-cross-app.md
 2026-08-21-feishu-bridge-tenant-tag-cross-app.md: 7e8a37429ef71e6040eb74a021c444633dac75a1
-2026-08-21-feishu-bridge-tenant-tag-cross-app.zh.md: 2a8171a965c989640ca4e1fa48088aea75587e63
+2026-08-21-feishu-bridge-tenant-tag-cross-app.zh.md: 657edffd3454229676fb0b0ff51431a5c26da384

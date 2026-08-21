@@ -12,13 +12,13 @@ harness 缺少 Claude Code 持久 auto memory 的等价物:`dsh-agent-instructio
 
 `@deepseek-ai/dsh-tool-claude-memory`(`packages/memory/tool-claude-memory`)复用 Claude Code 自己的存储而非定义 dsh 原生存储:直接读写 `~/.claude/projects/<slug>/memory/`,`<slug>` 是会话 cwd 中每个 `/` 和 `.` 折叠为 `-` 的结果(磁盘实证:`/home/hm/.dsh/profiles/cc-connect` → `-home-hm--dsh-profiles-cc-connect`)。三个面对应 Claude Code 自己"持久引导 + 运行时召回"的拆分:
 
-- 系统提示 section(order 110,工具引导区),逐字照抄 Claude Code `## Memory` 策略,适配工具名、实例化的目录,以及 dsh 专属的索引维护/沙箱两句([memory-index-maintenance](2026-08-17-memory-index-maintenance.md))。`tests/prompt.spec.ts` 的锚点测试固化承重句,提示词漂移即必须更新 README verbatim 块与快照的可见行为变更。
+- 系统提示 section(order 110,工具引导区),逐字照抄 Claude Code `## Memory` 策略,适配工具名、实例化的目录,以及 dsh 专属的索引维护/沙箱两句([memory-index-maintenance](2026-08-17-memory-index-maintenance.zh.md))。`tests/prompt.spec.ts` 的锚点测试固化承重句,提示词漂移即必须更新 README verbatim 块与快照的可见行为变更。
 - 一次性会话开始 `user/message` 注入,内容为按预算截断的 `MEMORY.md` 索引,source 为 `{ kind: 'claude-memory', version: 1, project, digest }`,由插件自有的 `<system-reminder>`(含闭合标签转义)包裹,沿 `dsh-agent-instructions` 的 pre-step 模式折在认领的 prompt 之后。每份会话日志至多注入一次;resume 与 compaction 不重注入,模型经 `memory_read` 刷新。
 - `memory_list`/`memory_read`/`memory_write`/`memory_delete`/`memory_index` 五个工具操作该目录。
 
 工具走宿主 `node:fs`,绝不走 `ctx.fs` provider:文件系统能力按部署可替换(e2b 沙箱指向远端世界),经它路由记忆 IO 会切断机器本地的共享契约。这是对 provider 可替换性的一个刻意例外,理由是外部产品拥有存储位置。
 
-与 Claude Code 对齐意味着无 schema 强制:frontmatter 质量、索引行 hook、写前去重、删除错误记忆都交给提示词自治。插件只强制信任边界(单段文件名,并按[记忆文件名后缀规范化](../bug-fix/2026-08-17-memory-name-suffix-normalization.md)统一为 `.md` 后缀),并在 Claude Code 同样出手的地方补 harness 价值——向已有 frontmatter `metadata:` 块内增量回填 `node_type: memory`/`originSessionId` 溯源(只增量、绝不合成),以及对超预算的 `MEMORY.md` 写入给出事后警告。指针行仍由模型撰写:`memory_index` 每次调用按模型口述维护一行,绝不发明标题或 hook——生成的 hook 会无声劣化召回质量。
+与 Claude Code 对齐意味着无 schema 强制:frontmatter 质量、索引行 hook、写前去重、删除错误记忆都交给提示词自治。插件只强制信任边界(单段文件名,并按[记忆文件名后缀规范化](../bug-fix/2026-08-17-memory-name-suffix-normalization.zh.md)统一为 `.md` 后缀),并在 Claude Code 同样出手的地方补 harness 价值——向已有 frontmatter `metadata:` 块内增量回填 `node_type: memory`/`originSessionId` 溯源(只增量、绝不合成),以及对超预算的 `MEMORY.md` 写入给出事后警告。指针行仍由模型撰写:`memory_index` 每次调用按模型口述维护一行,绝不发明标题或 hook——生成的 hook 会无声劣化召回质量。
 
 ## Alternatives considered
 

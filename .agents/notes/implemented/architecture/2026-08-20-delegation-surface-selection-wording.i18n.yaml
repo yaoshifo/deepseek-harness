@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-20-delegation-surface-selection-wording.md
 2026-08-20-delegation-surface-selection-wording.md: bd2fa228a49e1a727c93f600322169c1edddf01a
-2026-08-20-delegation-surface-selection-wording.zh.md: 64169383e121c0b5ab0d7b82bc1b83ae7a298e00
+2026-08-20-delegation-surface-selection-wording.zh.md: 70534f1a85b89e71b16bf809cdb5e4ebae95de50

@@ -12,7 +12,7 @@ ExitPlanMode 权限卡只有一个自由文本输入框，但只有拒绝按钮�
 
 ## Decision
 
-补充文字以 steer 的用户消息送达，复用 `/ps` 通道（[ps steer](2026-08-21-feishu-bridge-ps-steer.md)）：
+补充文字以 steer 的用户消息送达，复用 `/ps` 通道（[ps steer](2026-08-21-feishu-bridge-ps-steer.zh.md)）：
 
 - 卡片表单字段由 `deny_reason` 改名 `perm_note`，变为双用途。计划审批卡（toolName `ExitPlanMode`）的 placeholder 同时说明两种语义；普通工具卡维持仅拒绝的措辞。
 - `onCardAction` 对 allow 与 allow-all 也读 `form_value.perm_note`，按 deny 已有的方式编码为 `allow\x00<note>` / `allow all\x00<note>`；原地换卡对两种裁决都把 note 以引用行展示在 body 下方。
@@ -27,7 +27,7 @@ ExitPlanMode 权限卡只有一个自由文本输入框，但只有拒绝按钮�
 
 ## Consequences
 
-带补充批准计划只在飞书卡片流程生效；纯文本裁决（`allow <文字>`）仍是整词匹配，cc-connect-bridge / Web UI 行为不变。普通工具权限也会把 allow 侧 message 上传到 approval answerer，后者会丢弃——审批 seam 只传 outcome，allow 侧 note 在普通工具上没有消费方（deny 侧后来补上了：[拒绝理由经 steer 送达](2026-08-21-feishu-bridge-deny-reason-steer.md)拒绝现场）。若用户在 settle 到 steer 的窗口内停止轮次，steer 由下一轮领取而不是丢失。
+带补充批准计划只在飞书卡片流程生效；纯文本裁决（`allow <文字>`）仍是整词匹配，cc-connect-bridge / Web UI 行为不变。普通工具权限也会把 allow 侧 message 上传到 approval answerer，后者会丢弃——审批 seam 只传 outcome，allow 侧 note 在普通工具上没有消费方（deny 侧后来补上了：[拒绝理由经 steer 送达](2026-08-21-feishu-bridge-deny-reason-steer.zh.md)拒绝现场）。若用户在 settle 到 steer 的窗口内停止轮次，steer 由下一轮领取而不是丢失。
 
 ## Testing
 

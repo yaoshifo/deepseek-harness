@@ -14,7 +14,7 @@ Status: implemented
 
 **`src/engine/spawn-family-commands.ts`** 保形移植 Go `cmdTag`/`cmdUntag`/`cmdUndone`/`cmdNotify`/`cmdDashboard`。标签轴与头像轴保持独立：`/tag`/`/untag` 只动 ❤️ 标签（成功仅打 reaction 无文本回复），`/undone` 恢复彩色头像并把 spawned 注册表翻回 active——与 `/done` 的置灰对称。`/notify` 经既有 `spawnJumpMarkdown` + `buildSpawnNotifyCard` 助手重发 spawn 就绪卡，含无子群兜底注记与清零的 usage 页脚。`/board` 只展示当前群的任务子树：聚合全部平台的 `listActiveSpawnedChats`、从 `sessionKeyMap` 推 parent→child 链、`familyChats` 上溯最顶层 spawn 祖先后收整棵子树，树以折叠面板下的群链接渲染、当前群标 ←。
 
-**`src/engine/misc-commands.ts`** 移植 `/help` 与 `/ps`。`/help` 有意偏离 Go：命令列表**动态生成**自 `e.commandHandlers` 键 × 各命令的 i18n 单行描述（加 provider 快捷行与前缀提示），`/help <cmd>` 经命令 resolver 解析到 `<cmd>_usage` i18n 键、缺失时回退单行描述。Go 的 `message_help` 静态大段、六个 `help_*_section` 条目、按钮式 help 卡族（`renderHelpGroupCard` + `nav:` 导航）删除不迁——手工维护的大段正是漂移出「宣传不存在命令」的机制本身。`/ps` 保形三分支：agent 空闲→剥前缀穿透为普通消息（handler 返回 false）；turn 中→直发 `agentSession.send` 加 Done reaction；turn 中且阻塞在权限审批→改排队为下一轮（直接写入会被 CLI 输入队列吞掉）。turn 中的投递现改走 agent-loop steer，见 [2026-08-21-feishu-bridge-ps-steer](2026-08-21-feishu-bridge-ps-steer.md)。
+**`src/engine/misc-commands.ts`** 移植 `/help` 与 `/ps`。`/help` 有意偏离 Go：命令列表**动态生成**自 `e.commandHandlers` 键 × 各命令的 i18n 单行描述（加 provider 快捷行与前缀提示），`/help <cmd>` 经命令 resolver 解析到 `<cmd>_usage` i18n 键、缺失时回退单行描述。Go 的 `message_help` 静态大段、六个 `help_*_section` 条目、按钮式 help 卡族（`renderHelpGroupCard` + `nav:` 导航）删除不迁——手工维护的大段正是漂移出「宣传不存在命令」的机制本身。`/ps` 保形三分支：agent 空闲→剥前缀穿透为普通消息（handler 返回 false）；turn 中→直发 `agentSession.send` 加 Done reaction；turn 中且阻塞在权限审批→改排队为下一轮（直接写入会被 CLI 输入队列吞掉）。turn 中的投递现改走 agent-loop steer，见 [2026-08-21-feishu-bridge-ps-steer](2026-08-21-feishu-bridge-ps-steer.zh.md)。
 
 ## Alternatives considered
 

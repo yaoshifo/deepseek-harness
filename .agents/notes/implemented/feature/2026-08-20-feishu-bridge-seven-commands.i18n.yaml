@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-20-feishu-bridge-seven-commands.md
 2026-08-20-feishu-bridge-seven-commands.md: 145618407a0ef474fc7bb44f4b4a7bfd2a72cb86
-2026-08-20-feishu-bridge-seven-commands.zh.md: a74d5ccfaabc7d79635f9bfb096ae4ea9a588e91
+2026-08-20-feishu-bridge-seven-commands.zh.md: 4298a8c5e4c57f562abad7a6db44534cd46ba912

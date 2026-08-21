@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-21-feishu-bridge-fork-at-rollback.md
 2026-08-21-feishu-bridge-fork-at-rollback.md: 5b38dd019754d7f90940c4355fdf9ec3f53cde30
-2026-08-21-feishu-bridge-fork-at-rollback.zh.md: 3362585e2592fb0d39255a95d74be6f36a042b49
+2026-08-21-feishu-bridge-fork-at-rollback.zh.md: d2f8a66a5b6dd681c4355605a24c3fb448e680be

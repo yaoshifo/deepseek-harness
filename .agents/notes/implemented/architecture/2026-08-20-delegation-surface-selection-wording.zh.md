@@ -13,7 +13,7 @@ Status: implemented
 
 ## Decision
 
-每个工具的 `description` 只陈述自己的委派事实；两边都不按名字引用对方工具（原生 `toolName` 是加载期配置，别的部署也未必挂载任何可跨目录的替代工具）。这遵循[工具指引归属规则](2026-07-05-prompt-variables-and-tool-guidance-ownership.md)：按工具的语义与选型指引放在工具描述里，不放 prompt section 或 persona。
+每个工具的 `description` 只陈述自己的委派事实；两边都不按名字引用对方工具（原生 `toolName` 是加载期配置，别的部署也未必挂载任何可跨目录的替代工具）。这遵循[工具指引归属规则](2026-07-05-prompt-variables-and-tool-guidance-ownership.zh.md)：按工具的语义与选型指引放在工具描述里，不放 prompt section 或 persona。
 
 - `dsh-tool-subagent` 的 spawn 与 fork 两个措辞版本都陈述：子 agent 共享本会话的工作目录及其指令文件，一次委派不能把它重定向到另一个目录。这句话描述的是能力（没有按次目录），不是 cwd 的取值，因此对部署级 config 固定了另一个目录的 out-of-process provider 也成立。
 - `feishu_bridge_subtask` 的 description 与 `dir` 参数陈述：另一个目录里的工作经由本工具委派——子任务在那里运行并加载那个项目的指令文件。

@@ -2,7 +2,7 @@
 
 Status: implemented
 
-中文 | [English](2026-08-21-feishu-bridge-tenant-tag-cross-app.md)
+[English](2026-08-21-feishu-bridge-tenant-tag-cross-app.md) | 中文
 
 ## Problem
 

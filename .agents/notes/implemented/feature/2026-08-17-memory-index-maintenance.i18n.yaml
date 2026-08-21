@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-17-memory-index-maintenance.md
 2026-08-17-memory-index-maintenance.md: 067b8d3846102d823406fa56a91b4deb8f465097
-2026-08-17-memory-index-maintenance.zh.md: 10d80dbddc8d9bd9d0873b17875ca9f71a21bb1a
+2026-08-17-memory-index-maintenance.zh.md: 21f8d4bf6cbbe8f5e71384f5f8771b809614a338
