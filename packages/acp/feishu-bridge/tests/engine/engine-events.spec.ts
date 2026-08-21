@@ -1134,28 +1134,28 @@ describe('idle reaper', () => {
   })
 })
 
-describe('todo_write progress section', () => {
-  /** Stub platform with preview start/update capture (permission-spec pattern). */
-  function newPreviewCaptureEngine(): { e: Engine; updates: string[]; starts: string[] } {
-    const p = createStubPlatform()
-    const updates: string[] = []
-    const starts: string[] = []
-    const preview = p as typeof p & {
-      sendPreviewStart(rc: unknown, content: string): Promise<unknown>
-      updateMessage(handle: unknown, content: string): Promise<void>
-    }
-    preview.sendPreviewStart = async (_rc, content) => {
-      starts.push(content)
-      return `handle-${starts.length}`
-    }
-    preview.updateMessage = async (_handle, content) => {
-      updates.push(content)
-    }
-    const e = new Engine('test', createStubAgent(), [p], '', 'en')
-    e.setDisplayConfig({ toolProgress: true })
-    return { e, updates, starts }
+/** Stub platform with preview start/update capture (permission-spec pattern). */
+function newPreviewCaptureEngine(): { e: Engine; updates: string[]; starts: string[] } {
+  const p = createStubPlatform()
+  const updates: string[] = []
+  const starts: string[] = []
+  const preview = p as typeof p & {
+    sendPreviewStart(rc: unknown, content: string): Promise<unknown>
+    updateMessage(handle: unknown, content: string): Promise<void>
   }
+  preview.sendPreviewStart = async (_rc, content) => {
+    starts.push(content)
+    return `handle-${starts.length}`
+  }
+  preview.updateMessage = async (_handle, content) => {
+    updates.push(content)
+  }
+  const e = new Engine('test', createStubAgent(), [p], '', 'en')
+  e.setDisplayConfig({ toolProgress: true })
+  return { e, updates, starts }
+}
 
+describe('todo_write progress section', () => {
   async function runTurn(e: Engine, events: Array<Record<string, unknown>>): Promise<void> {
     const sess = newControllableSession('todo-turn')
     const key = 'test:todo-section'
@@ -1246,6 +1246,91 @@ describe('todo_write progress section', () => {
     expect(last).toContain('清单已建')
     // The queued turn's card starts clean: turn 1's entry does not leak.
     expect(last).not.toContain('bash')
+  })
+})
+
+describe('quiet-mode thinking preview (cc-connect parity)', () => {
+  /**
+   * Quiet-mode preview-capture engine: thinkingMessages off (quiet), tool
+   * progress on — the live 开发虾 project config. cc-connect's quiet mode
+   * suppresses thinking *messages* but still streams the 💭 section and the
+   * 思考中 card-header state.
+   */
+  function newQuietCaptureEngine(): { e: Engine; updates: string[] } {
+    const { e, updates } = newPreviewCaptureEngine()
+    e.setDisplayConfig({ thinkingMessages: false })
+    return { e, updates }
+  }
+
+  /**
+   * Drive one quiet-mode turn with pacing: each element of `stages` is a
+   * batch of events, and `progressFlushInterval` (300ms) elapses between
+   * batches so throttled progress flushes (the 思考中 header PATCHes) land
+   * before the next state change, as they do over real multi-second thinking.
+   */
+  async function runQuietTurn(e: Engine, stages: Array<Array<Record<string, unknown>>>): Promise<void> {
+    const sess = newControllableSession('quiet-turn')
+    const key = 'test:quiet-thinking'
+    const session = e.sessions.getOrCreateActive(key)
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = e.platforms[0]
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    const loop = e.processInteractiveEvents(state, session, e.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+    stages.forEach((batch, i) => {
+      if (i > 0) setTimeout(() => { for (const ev of batch) sess.channel.push(ev as never) }, i * 400)
+      else for (const ev of batch) sess.channel.push(ev as never)
+    })
+    setTimeout(() => { sess.channel.push({ type: 'result', content: 'done', done: true } as never) }, stages.length * 400 + 100)
+    await loop
+  }
+
+  it('thinking deltas set the 思考中 header state in quiet mode', async () => {
+    const { e, updates } = newQuietCaptureEngine()
+    await runQuietTurn(e, [
+      [
+        { type: 'tool_use', toolName: 'Bash', toolID: 't1', toolInput: 'ls', content: '', done: false },
+        { type: 'tool_result', toolID: 't1', toolName: 'Bash', toolResult: 'ok', content: '', done: true },
+      ],
+      [{ type: 'thinking_delta', content: 'pondering the next step', done: false }],
+    ])
+    expect(updates.some(u => u.startsWith('__cc_state__:thinking')), `updates=${JSON.stringify(updates)}`).toBe(true)
+  })
+
+  it('the full thinking block clears the 思考中 header in quiet mode', async () => {
+    const { e, updates } = newQuietCaptureEngine()
+    await runQuietTurn(e, [
+      [
+        { type: 'tool_use', toolName: 'Bash', toolID: 't1', toolInput: 'ls', content: '', done: false },
+        { type: 'tool_result', toolID: 't1', toolName: 'Bash', toolResult: 'ok', content: '', done: true },
+      ],
+      [{ type: 'thinking_delta', content: 'pondering', done: false }],
+      [{ type: 'thinking', content: 'pondering the whole plan out loud', done: false }],
+    ])
+    // The delta set the header; the completed block must drop it again —
+    // no lingering 思考中 after thinking ends, and no thinking *message*
+    // is sent in quiet mode.
+    expect(updates.some(u => u.startsWith('__cc_state__:thinking')), `updates=${JSON.stringify(updates)}`).toBe(true)
+    const lastPreComplete = updates.filter(u => !u.startsWith('__cc_state__:completed')).at(-1) ?? ''
+    expect(lastPreComplete, `updates=${JSON.stringify(updates)}`).not.toContain('💭')
+    expect(lastPreComplete.startsWith('__cc_state__:thinking')).toBe(false)
+  })
+
+  it('a new tool call clears the 思考中 header (safety net)', async () => {
+    const { e, updates } = newQuietCaptureEngine()
+    await runQuietTurn(e, [
+      [
+        { type: 'tool_use', toolName: 'Bash', toolID: 't1', toolInput: 'ls', content: '', done: false },
+        { type: 'tool_result', toolID: 't1', toolName: 'Bash', toolResult: 'ok', content: '', done: true },
+      ],
+      [{ type: 'thinking_delta', content: 'pondering', done: false }],
+      [{ type: 'tool_use', toolName: 'Read', toolID: 't2', toolInput: 'a.ts', content: '', done: false }],
+    ])
+    expect(updates.some(u => u.startsWith('__cc_state__:thinking')), `updates=${JSON.stringify(updates)}`).toBe(true)
+    const lastPreComplete = updates.filter(u => !u.startsWith('__cc_state__:completed')).at(-1) ?? ''
+    expect(lastPreComplete, `updates=${JSON.stringify(updates)}`).not.toContain('💭')
+    expect(lastPreComplete.startsWith('__cc_state__:thinking')).toBe(false)
   })
 })
 

@@ -2330,19 +2330,21 @@ export class Engine {
       switch (event.type) {
         case 'thinking': {
           if (isEllipsisOnly(event.content)) break
+          // Thinking block complete: drop the streamed 💭 section. Runs even
+          // in quiet mode (Go parity — clearThinking precedes the
+          // !ThinkingMessages branch) so the 思考中 header does not linger.
+          if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
           // In quiet mode (thinkingMessages=false), thinking events must not
-          // affect the streaming preview — no clearThinking, no
-          // completeAndDetach, no text segment flush. Otherwise
-          // completeAndDetach sets degraded=true, causing the result handler
-          // to fall through to this.send() and duplicate the reply as plain
-          // text alongside the already-finalized card.
+          // affect the streaming preview — no completeAndDetach, no text
+          // segment flush. Otherwise completeAndDetach sets degraded=true,
+          // causing the result handler to fall through to this.send() and
+          // duplicate the reply as plain text alongside the already-finalized
+          // card.
           if (!this.display.thinkingMessages) {
             thinkingStreamed = false
             thinkingAccum = ''
             break
           }
-          // Thinking block complete: drop the streamed 💭 section.
-          if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
           if (textParts.length > segmentStart) {
             if (sp.canPreview()) {
               await sp.completeAndDetach()
@@ -2397,10 +2399,12 @@ export class Engine {
 
         case 'thinking_delta': {
           // Preview-only: stream thinking into the 💭 section; the full
-          // EventThinking block clears it and dedups.
+          // EventThinking block clears it and dedups. Not gated on
+          // thinkingMessages (Go parity): quiet mode suppresses thinking
+          // *messages*, not the streaming 思考中 header.
           thinkingAccum += event.content
           thinkingStreamed = true
-          if (this.display.thinkingMessages && sp.canPreview()) await sp.appendThinking(thinkingAccum)
+          if (sp.canPreview()) await sp.appendThinking(thinkingAccum)
           break
         }
 
@@ -2408,6 +2412,11 @@ export class Engine {
           toolCount++
           activeToolCalls++
           state.activeToolCalls = activeToolCalls
+          // Clear streaming-thinking state when a tool starts — the agent is
+          // no longer thinking once it invokes a tool (Go safety net for
+          // agents that only emit thinking_delta and never a full block).
+          if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
+          if (thinkingStreamed) thinkingAccum = ''
           // Track plan file path for plan-mode support (Go): raw
           // ToolInputRaw.file_path, not the summarized ToolInput. A subagent
           // child's Write never promotes on the parent — the child runs its
