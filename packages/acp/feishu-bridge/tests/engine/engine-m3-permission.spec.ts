@@ -331,6 +331,78 @@ describe('handlePendingPermission deny variants', () => {
   })
 })
 
+describe('handlePendingPermission deny reason steer', () => {
+  it('steers an ordinary-tool deny note next to the rejection', () => {
+    const e = newTestEngine()
+    const p = createStubPlatform('test')
+    const rec = createRecordingAgentSession()
+    const state = new InteractiveState()
+    state.agentSession = rec
+    state.platform = p
+    state.replyCtx = 'ctx'
+    state.pending = newPendingPermission({
+      requestID: 'req-1',
+      toolName: 'Bash',
+      toolInput: {},
+    })
+    e.interactiveStates.set('test:chat:user1', state)
+
+    const content = 'deny\x00use git clean instead'
+    const handled = e.handlePendingPermission(p, msg({ content, isPermissionAction: true }), content)
+
+    expect(handled).toBe(true)
+    // The wrapped native message still rides the permission result...
+    expect(rec.lastResult?.behavior).toBe('deny')
+    expect(rec.lastResult?.message).toContain('use git clean instead')
+    // ...and the raw note is steered verbatim as a user message.
+    expect(rec.steerCalls).toEqual(['use git clean instead'])
+  })
+
+  it('does not steer an ExitPlanMode deny note (custom feedback already delivers it)', () => {
+    const e = newTestEngine()
+    const p = createStubPlatform('test')
+    const rec = createRecordingAgentSession()
+    const state = new InteractiveState()
+    state.agentSession = rec
+    state.platform = p
+    state.replyCtx = 'ctx'
+    state.pending = newPendingPermission({
+      requestID: 'req-1',
+      toolName: 'ExitPlanMode',
+      toolInput: {},
+    })
+    e.interactiveStates.set('test:chat:user1', state)
+
+    const content = 'deny\x00narrow the scope'
+    const handled = e.handlePendingPermission(p, msg({ content, isPermissionAction: true }), content)
+
+    expect(handled).toBe(true)
+    expect(rec.lastResult?.behavior).toBe('deny')
+    expect(rec.steerCalls).toEqual([])
+  })
+
+  it('steers nothing on a bare deny', () => {
+    const e = newTestEngine()
+    const p = createStubPlatform('test')
+    const rec = createRecordingAgentSession()
+    const state = new InteractiveState()
+    state.agentSession = rec
+    state.platform = p
+    state.replyCtx = 'ctx'
+    state.pending = newPendingPermission({
+      requestID: 'req-1',
+      toolName: 'Bash',
+      toolInput: {},
+    })
+    e.interactiveStates.set('test:chat:user1', state)
+
+    const handled = e.handlePendingPermission(p, msg({ content: 'deny', isPermissionAction: true }), 'deny')
+
+    expect(handled).toBe(true)
+    expect(rec.steerCalls).toEqual([])
+  })
+})
+
 describe('handlePendingPermission ExitPlanMode approval', () => {
   const cases = [
     { name: 'exitplan_allow_sets_approveAll', tool: 'ExitPlanMode', content: 'allow', wantAll: true },

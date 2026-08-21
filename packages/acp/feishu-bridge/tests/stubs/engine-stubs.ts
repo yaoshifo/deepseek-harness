@@ -55,11 +55,15 @@ export function createRecordingAgentSession(): RecordingAgentSession {
     lastID: '',
     lastResult: undefined,
     calls: 0,
+    steerCalls: [] as string[],
   }
   s.respondPermission = async (id: string, res: PermissionResult) => {
     s.lastID = id
     s.lastResult = res
     s.calls++
+  }
+  s.steer = (prompt: string) => {
+    s.steerCalls.push(prompt)
   }
   return s
 }
@@ -69,6 +73,7 @@ export interface RecordingAgentSession extends AgentSession {
   lastID: string
   lastResult: PermissionResult | undefined
   calls: number
+  steerCalls: string[]
 }
 
 /**
