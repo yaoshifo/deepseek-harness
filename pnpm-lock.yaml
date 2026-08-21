@@ -7,7 +7,6 @@ settings:
 overrides:
   '@deepseek-ai/cosmokit': link:vendor/cosmokit
   '@deepseek-ai/schemastery': link:vendor/schemastery
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.220': file:/home/hm/.cache/cc-tarballs/claude-agent-sdk-linux-x64-0.3.220.tgz
 
 patchedDependencies:
   node-pty@1.2.0-beta.15: b40ae545608897914bd25fb009c97eeac478c34e8a910298ddcb01b746534bb0
@@ -9411,6 +9410,12 @@ packages:
     os: [linux]
     libc: [musl]
 
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.220':
+    resolution: {integrity: sha512-tkTJFnpR9VifvWX2fmkCAPkT6+8Wk/gVu8B5jsVekKZPiZoWRHmMXO30BnZn+f0TZhgYP+82PSX3S8crH1kn+w==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
   '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.220':
     resolution: {integrity: sha512-rIwgq0UwQExWl6KrHUyC4w5KwpL9l6nd95aUTx6RitexaAuEw//xtfTVLnuE4hDDQZFkzEwpdKc3nxDWoGcUbA==}
     cpu: [arm64]
@@ -15017,6 +15022,9 @@ snapshots:
   '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.220':
     optional: true
 
+  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.220':
+    optional: true
+
   '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.220':
     optional: true
 
@@ -15033,6 +15041,7 @@ snapshots:
       '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.220
       '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.220
       '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.220
+      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.220
       '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.220
       '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.220
       '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.220
