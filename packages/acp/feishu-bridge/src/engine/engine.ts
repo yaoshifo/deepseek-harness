@@ -275,6 +275,8 @@ export class InteractiveState {
   userStopped = false
   /** Whether engine.stop() is closing this turn (plugin reload or shutdown), not an agent crash. */
   engineStopped = false
+  /** Whether the engine-stop reload notice already went out for this state. */
+  stopNoticeSent = false
   /** Messages queued while a turn was running. */
   pendingMessages: QueuedMessage[] = []
   /** The queued message currently driving a drained turn, if any. */
@@ -1280,6 +1282,20 @@ export class Engine {
   /** Stop platforms and close all interactive agent sessions (Go Stop). */
   async stop(): Promise<void> {
     this.monitor.stopMonitorPoll()
+    // An in-flight turn's event loop may never resume before process exit
+    // (2026-08-22 oc_610e incident: exit_plan_mode interrupted mid-call, the
+    // loop never ran, no notice) — notify its chat here, while the platform
+    // can still send. The flag keeps the channel-closed path from repeating
+    // the notice when the loop does drain.
+    for (const state of this.interactiveStates.values()) {
+      if (state.activeTurns === 0 || state.stopNoticeSent) continue
+      state.stopNoticeSent = true
+      state.engineStopped = true
+      const platform = state.platform
+      if (platform !== undefined) {
+        await this.send(platform, state.replyCtx, this.i18n.t(Msg.PluginReloaded))
+      }
+    }
     for (const p of this.platforms) await p.stop()
     const states = [...this.interactiveStates.values()]
     this.interactiveStates.clear()
@@ -3289,7 +3305,8 @@ export class Engine {
     this.notifyDroppedQueuedMessages(state, new Error('agent process exited'))
     await this.cleanupInteractiveState(sessionKey, state)
 
-    if (unexpectedExit && closedPlatform !== undefined) {
+    if (unexpectedExit && closedPlatform !== undefined && !state.stopNoticeSent) {
+      state.stopNoticeSent = true
       await this.send(closedPlatform, replyCtx, state.engineStopped
         ? this.i18n.t(Msg.PluginReloaded)
         : this.i18n.t(Msg.AgentProcessExited))
