@@ -10,7 +10,7 @@ Status: implemented
 
 ## 决策
 
-`src/engine/reload-commands.ts` 新增 TS 原生 `/reload [--skip-build]` 命令（非 Go D 类裁剪 `/restart` 的移植）。handler 先回复「已启动」——`--skip-build` 数秒内就会重启 daemon，spawn 之后再发回复永远到不了——随后以 `spawn('sh', [reload.sh, ...], { detached: true, stdio: ['ignore', logFd, logFd] })` + `unref()` 运行脚本本体。setsid 脱离是承重设计：脚本亲手造成 daemon 之死、又必须活过这次死亡，所以它在动手之前先离开 daemon 的进程组。
+`src/engine/reload-commands.ts` 新增 TS 原生 `/reload [--skip-build]` 命令（非 Go D 类裁剪 `/restart` 的移植）。handler 先回复「已启动」——`--skip-build` 数秒内就会重启 daemon，spawn 之后再发回复永远到不了——随后以 `spawn(cmd, [argv...], { detached: true, stdio: ['ignore', logFd, logFd] })` + `unref()` 运行脚本本体（argv 由 `reloadSpawnArgv` 按平台构造）。脱离 daemon 之死是承重设计：脚本亲手造成 daemon 之死、又必须活过这次死亡。macOS 上 setsid 子进程天然活过 launchd teardown；Linux 上 spawn 需经 `systemd-run --user --scope` 包装——setsid 出不了 unit 的 cgroup，会被 restart 的 control-group kill 连带杀掉（见 [cgroup note](../bug-fix/2026-08-22-feishu-bridge-reload-linux-cgroup.zh.md)）。
 
 脚本路径经 `resolveReloadScript(import.meta.url)` 自定位，按序探测两种真实构建布局：`../../reload.sh` 对应源码/tsc 布局（`src/engine/<file>`），`../reload.sh` 对应 tsdown 单文件 bundle——daemon 走的 `main: lib/index.js` 把所有 engine 模块内联进一个文件，`import.meta.url` 是 bundle 文件本身，写死单一相对层级会解析成 `packages/acp/reload.sh`。手动重启后的首次真机 `/reload` 正是报了该路径的脚本缺失错误；源码平面的单测看不到这一层，因为测试布局恰好匹配写死的层级。live profile 把包符号链接进 repo，两种布局下 daemon 解析到的都是 repo checkout 里的脚本。
 
@@ -28,7 +28,7 @@ Status: implemented
 
 ## 后果
 
-admin 在聊天里即可触发完整的重建-重启；进行中会话仍会回滚到最后完整回合，与终端流程完全一致——已启动回复里写明了这一点。已知天花板：daemon 已重启之后才暴露的失败（如 WS 探活超时）无法产生聊天回复，监听器已随旧进程消亡，`feishu-bridge-reload.log` 是唯一记录，OPERATIONS.md §3.3 如实标注。脱离生存假设——launchd 的终止信号作用于任务的进程组而非 setsid 子进程——由真机冒烟验证；若不成立，bot 会离线直到手动 `launchctl load`，kickstart -k 是记录在案的回退方案。Linux 上脚本走 `systemctl --user restart` + journal WS 探活（2026-08-22 起支持，见 [Linux 分支 note](2026-08-22-feishu-bridge-reload-linux.zh.md)）。
+admin 在聊天里即可触发完整的重建-重启；进行中会话仍会回滚到最后完整回合，与终端流程完全一致——已启动回复里写明了这一点。已知天花板：daemon 已重启之后才暴露的失败（如 WS 探活超时）无法产生聊天回复，监听器已随旧进程消亡，`feishu-bridge-reload.log` 是唯一记录，OPERATIONS.md §3.3 如实标注。脱离生存假设——launchd 的终止信号作用于任务的进程组而非 setsid 子进程——由真机冒烟验证；若不成立，bot 会离线直到手动 `launchctl load`，kickstart -k 是记录在案的回退方案。Linux 上脚本走 `systemctl --user restart` + journal WS 探活（2026-08-22 起支持，见 [Linux 分支 note](2026-08-22-feishu-bridge-reload-linux.zh.md)）；spawn 侧的 cgroup 脱离是同日稍晚补上的（[cgroup note](../bug-fix/2026-08-22-feishu-bridge-reload-linux-cgroup.zh.md)）。
 
 ## 测试
 

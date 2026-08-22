@@ -12,8 +12,12 @@
 # Refuses to run from inside the daemon (e.g. an agent session it hosts): the
 # restart would kill the script's own process tree before the restart lands.
 # The daemon's own /reload command is the sanctioned exception: it spawns this
-# script detached (setsid) with FB_RELOAD_FROM_DAEMON=1, which skips only the
-# ppid-walk guard — the detached process outlives the daemon teardown.
+# script detached with FB_RELOAD_FROM_DAEMON=1, which skips only the
+# ppid-walk guard — the detached process outlives the daemon teardown. On
+# Linux that spawn goes through `systemd-run --user --scope`: setsid alone
+# keeps the child in the daemon unit's cgroup, which the restart's
+# control-group kill sweeps away mid-restart (2026-08-22); the scope unit is
+# a sibling and survives.
 # On macOS, if the script still dies between unload and load, a trap re-loads
 # the service so the bot is never left stranded offline; the Linux restart is
 # one atomic systemctl operation with no such window. Mid-turn sessions lose
