@@ -693,6 +693,180 @@ describe('processInteractiveEvents engine stop mid-handler', () => {
   })
 })
 
+/** Preview-recorder platform for the abnormal-exit finalize specs. */
+function createAbnormalExitRecorderPlatform(): StubPlatform & { messages: string[] } {
+  const messages: string[] = []
+  return Object.assign(createStubPlatform(), {
+    messages,
+    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      messages.push(`start:${content}`)
+      return 'preview-handle'
+    },
+    async updateMessage(_handle: unknown, content: string): Promise<void> {
+      messages.push(`update:${content}`)
+    },
+    async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
+      messages.push(`stopped:${String(id)}`)
+    },
+  })
+}
+
+describe('processInteractiveEvents abnormal-exit preview finalization', () => {
+  it('fails the preview card when the agent channel closes unexpectedly mid-turn', async () => {
+    const p = createAbnormalExitRecorderPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolProgress: true })
+    const sessionKey = 'test:closed-fails-card'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    await new Promise(r => setTimeout(r, 30))
+    await agentSession.close()
+    await done
+    await new Promise(r => setTimeout(r, 20))
+
+    expect(
+      p.messages.some(m => m.includes('__cc_state__:failed')),
+      `messages=${JSON.stringify(p.messages)}`,
+    ).toBe(true)
+  })
+
+  it('renders the failed card on a post-stop event arrival for non-user stops', async () => {
+    const messages: string[] = []
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
+    const p = Object.assign(createStubPlatform(), {
+      messages,
+      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+        await startGate
+        messages.push(`start:${content}`)
+        return 'preview-handle'
+      },
+      async updateMessage(_handle: unknown, content: string): Promise<void> {
+        messages.push(`update:${content}`)
+      },
+      async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
+        messages.push(`stopped:${String(id)}`)
+      },
+    })
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolProgress: true })
+    const sessionKey = 'test:post-stop-event-engine'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    await new Promise(r => setTimeout(r, 0))
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    await new Promise(r => setTimeout(r, 0))
+
+    // Non-user stop (external cleanupInteractiveState) while the loop parks
+    // mid-handler; one more event is buffered behind the stop.
+    state.markStopped()
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'pwd', toolID: 'call-2', content: '', done: false })
+    releaseStart!()
+    await done
+    await new Promise(r => setTimeout(r, 20))
+
+    expect(
+      messages.some(m => m.includes('__cc_state__:failed')),
+      `messages=${JSON.stringify(messages)}`,
+    ).toBe(true)
+  })
+
+  it('renders the stopped card once on a post-stop event arrival for user stops', async () => {
+    const messages: string[] = []
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
+    const p = Object.assign(createStubPlatform(), {
+      messages,
+      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+        await startGate
+        messages.push(`start:${content}`)
+        return 'preview-handle'
+      },
+      async updateMessage(_handle: unknown, content: string): Promise<void> {
+        messages.push(`update:${content}`)
+      },
+      async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
+        messages.push(`stopped:${String(id)}`)
+      },
+    })
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolProgress: true })
+    const sessionKey = 'test:post-stop-event-user'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    await new Promise(r => setTimeout(r, 0))
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    await new Promise(r => setTimeout(r, 0))
+
+    state.userStopped = true
+    state.markStopped()
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'pwd', toolID: 'call-2', content: '', done: false })
+    releaseStart!()
+    await done
+    await new Promise(r => setTimeout(r, 20))
+
+    expect(messages.filter(m => m.startsWith('stopped:')), `messages=${JSON.stringify(messages)}`).toHaveLength(1)
+  })
+})
+
+describe('stopInteractiveSession Interrupt preference', () => {
+  it('cancels the in-flight turn through cancelTurn before closing', async () => {
+    const { e, p } = newEngine()
+    const sessionKey = 'test:interrupt-preference'
+    e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const calls: string[] = []
+    agentSession.cancelTurn = () => { calls.push('cancel') }
+    const originalClose = agentSession.close.bind(agentSession)
+    agentSession.close = async () => { calls.push('close'); await originalClose() }
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    expect(e.stopInteractiveSession(sessionKey)).toBe(true)
+    expect(calls, `calls=${JSON.stringify(calls)}`).toEqual(['cancel', 'close'])
+  })
+
+  it('stops sessions without cancelTurn unchanged', async () => {
+    const { e, p } = newEngine()
+    const sessionKey = 'test:no-interrupter'
+    e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    expect(e.stopInteractiveSession(sessionKey)).toBe(true)
+    expect(agentSession.closed).toBe(true)
+  })
+})
+
 it('processInteractiveEvents persists the agent session ID', async () => {
   const { e, p } = newEngine()
   const path = `${process.env.VITEST_TMPDIR ?? '/tmp'}/fb-persist-${Date.now()}/sessions.json`

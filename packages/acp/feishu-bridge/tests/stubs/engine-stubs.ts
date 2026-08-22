@@ -91,6 +91,8 @@ export interface ControllableAgentSession extends AgentSession {
   permResponses: Array<{ requestID: string; result: PermissionResult }>
   sendCalls: string[]
   steerCalls: string[]
+  /** Optional Go AgentInterrupter capability for the Interrupt-preference specs. */
+  cancelTurn?: () => void
   eventsImpl(): EventChannel
 }
 

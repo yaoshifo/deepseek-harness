@@ -347,6 +347,26 @@ export function asSessionModeInjector(a: Agent): SessionModeInjector | undefined
   return typeof candidate.setSessionMode === 'function' ? (candidate as SessionModeInjector) : undefined
 }
 
+/**
+ * Optional: agent session supports fast user-stop cancellation of the
+ * in-flight turn (Go AgentInterrupter.Interrupt). Unlike close(), it keeps
+ * the session handle alive; the caller still closes afterwards.
+ */
+export interface AgentInterrupter {
+  cancelTurn(): void
+}
+
+/**
+ * Structural check for the {@link AgentInterrupter} capability.
+ *
+ * @param s - the agent session to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asAgentInterrupter(s: AgentSession): AgentInterrupter | undefined {
+  const candidate = s as Partial<AgentInterrupter>
+  return typeof candidate.cancelTurn === 'function' ? (candidate as AgentInterrupter) : undefined
+}
+
 /** Optional: platform can update a previously sent message in place (PATCH). */
 export interface MessageUpdater {
   updateMessage(replyCtx: unknown, content: string): Promise<void>

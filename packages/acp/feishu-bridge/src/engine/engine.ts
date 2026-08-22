@@ -34,6 +34,7 @@ import type {
   UserQuestion,
 } from '../core/types.js'
 import {
+  asAgentInterrupter,
   asCardSender,
   asCardRefresher,
   asCardSenderWithUpdate,
@@ -2448,6 +2449,18 @@ export class Engine {
               await this.send(stallPlatform, replyCtx,
                 this.i18n.tf(Msg.StallRetry, idleSec, stallRetries, this.stallMaxRetries))
             }
+            // Go parity: retire the stalled card with a failed render (the
+            // stalled turn did not complete) and give the resumed 「继续」
+            // turn a fresh card instead of PATCHing the stale one.
+            await sp.markFailed()
+            sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
+            cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
+              this.i18n.currentLang(), undefined, sender)
+            this.bindActivePreview(sp, sessionKey)
+            state.preview = sp
+            if (this.display.toolProgress && sp.canPreview()) {
+              void sp.showPlaceholder(this.i18n.t(Msg.Processing))
+            }
             textParts = []
             segmentStart = 0
             toolCount = 0
@@ -2469,6 +2482,9 @@ export class Engine {
           await this.send(p, replyCtx,
             this.i18n.tf(Msg.StallTimeout, Math.round(state.idleTimeout(this.eventIdleTimeout) / 1000), this.stallMaxRetries))
         }
+        // Go parity: fail the card before the kill so it cannot freeze in
+        // its Running state next to the stall-timeout notice.
+        await sp.markFailed()
         await this.cleanupInteractiveState(sessionKey, state)
         return
       }
@@ -2496,6 +2512,12 @@ export class Engine {
       }
 
       if (state.isStopped()) {
+        // Go parity: the post-stop event arrival renders the terminal card
+        // (user or engine stop → ⏹; any other stop → failed) instead of
+        // returning silently and freezing the card mid-state.
+        await barrier()
+        if (state.isUserStopped() || state.engineStopped) await sp.markStopped()
+        else await sp.markFailed()
         state.eventsNeedResync = true
         return
       }
@@ -3369,6 +3391,15 @@ export class Engine {
     this.notifyDroppedQueuedMessages(state, new Error('agent process exited'))
     await this.cleanupInteractiveState(sessionKey, state)
 
+    if (unexpectedExit && !state.engineStopped) {
+      // Go parity (cp.Finalize(Failed) on the unexpected-exit path, after its
+      // 2026-08-17 incident where the card froze mid-state until the user
+      // resent): fail the preview card rather than leaving it Running.
+      // Engine.stop deliberately leaves `stopped` unset (it distinguishes a
+      // reload from a crash) and already rendered its ⏹ card — skip it.
+      await state.preview?.markFailed()
+    }
+
     if (unexpectedExit && closedPlatform !== undefined && !state.stopNoticeSent) {
       state.stopNoticeSent = true
       await this.send(closedPlatform, replyCtx, state.engineStopped
@@ -3679,6 +3710,12 @@ export class Engine {
       this.interactiveStates.delete(sessionKey)
       return true
     }
+    // Fast user-stop cancellation (Go interruptAgentSessionWithTimeout's
+    // Interrupt preference): abort the in-flight turn with the user cause so
+    // the durable turn/end records `aborted/user`, not `aborted/disposed`.
+    // Unlike Go's either-or — where Interrupt kills the subprocess outright —
+    // the dsh cancel keeps the handle alive, so close() still owns teardown.
+    asAgentInterrupter(agentSession)?.cancelTurn()
     state.closing = agentSession.close().catch((error: unknown) => {
       console.error(`engine: stop close failed (${sessionKey}): ${String(error)}`)
     }).finally(() => {

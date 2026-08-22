@@ -83,7 +83,7 @@ interface Runtime {
   ctx: Context
   adapter: DshAgentAdapter
   engine: Engine
-  platform: StubPlatform
+  platform: StubPlatform & { messages: string[] }
   llm: StallScriptAdapter
 }
 
@@ -105,8 +105,22 @@ async function bootRuntime(script: ScriptEntry[]): Promise<Runtime> {
     providers: [{ name: 'mify', provider: 'mock', model: 'mock-model' }],
     activeProvider: 'mify',
   })
-  const platform = createStubPlatform()
+  const messages: string[] = []
+  const platform = Object.assign(createStubPlatform(), {
+    messages,
+    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      messages.push(`start:${content}`)
+      return 'preview-handle'
+    },
+    async updateMessage(_handle: unknown, content: string): Promise<void> {
+      messages.push(`update:${content}`)
+    },
+    async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
+      messages.push(`stopped:${String(id)}`)
+    },
+  })
   const engine = new Engine('stall-retry-test', adapter, [platform], sessionStore, 'en')
+  engine.setDisplayConfig({ toolProgress: true })
   engine.setEventIdleTimeout(400)
   engine.setStallMaxRetries(3)
 
@@ -157,9 +171,12 @@ describe('stall retry over the real dsh runtime', () => {
     await vi.waitFor(() => {
       expect(rt.platform.sent.some(s => s.includes('Agent stalled') || s.includes('无响应超时'))).toBe(true)
     }, { timeout: 5_000 })
-    // The retried 「继续」 turn completes and delivers the reply.
+    // The retried 「继续」 turn completes and delivers the reply (as a plain
+    // send, or on the preview card once toolProgress renders one).
     await vi.waitFor(() => {
-      expect(rt.platform.sent.some(s => s.includes('recovered'))).toBe(true)
+      const delivered = rt.platform.sent.some(s => s.includes('recovered'))
+        || rt.platform.messages.some(m => m.includes('recovered'))
+      expect(delivered).toBe(true)
     }, { timeout: 5_000 })
 
     // The retry must NOT be reported as an agent exit: the first event of the
@@ -183,5 +200,35 @@ describe('stall retry over the real dsh runtime', () => {
     expect(stalls).toBe(3)
     expect(rt.platform.sent.some(s => s.includes('exited unexpectedly') || s.includes('进程意外退出'))).toBe(false)
     expect(rt.engine.interactiveStates.has('test:ch:user1')).toBe(false)
+  })
+
+  it('retires the stalled card with a failed render and starts a fresh card for the retried turn', { timeout: 15_000 }, async () => {
+    const rt = await bootRuntime(['hang', { text: 'recovered', firstChunkDelayMs: 250 }])
+
+    receive(rt.engine, rt.platform, 'task')
+    await vi.waitFor(() => {
+      const delivered = rt.platform.sent.some(s => s.includes('recovered'))
+        || rt.platform.messages.some(m => m.includes('recovered'))
+      expect(delivered, `sent=${JSON.stringify(rt.platform.sent)} messages=${JSON.stringify(rt.platform.messages)}`).toBe(true)
+    }, { timeout: 10_000 })
+
+    const messages = rt.platform.messages
+    const failedIdx = messages.findIndex(m => m.includes('__cc_state__:failed'))
+    expect(failedIdx, `messages=${JSON.stringify(messages)}`).toBeGreaterThanOrEqual(0)
+    // The fresh card for the resumed turn starts after the failed one.
+    const startsAfter = messages.slice(failedIdx + 1).filter(m => m.startsWith('start:'))
+    expect(startsAfter, `messages=${JSON.stringify(messages)}`).not.toEqual([])
+  })
+
+  it('fails the preview card when stall retries are exhausted', async () => {
+    const rt = await bootRuntime(['hang', 'hang', 'hang', 'hang'])
+
+    receive(rt.engine, rt.platform, 'task')
+    await vi.waitFor(() => {
+      expect(rt.platform.sent.some(s => s.includes('Session terminated') || s.includes('会话已终止'))).toBe(true)
+    }, { timeout: 10_000 })
+    await vi.waitFor(() => {
+      expect(rt.platform.messages.some(m => m.includes('__cc_state__:failed'))).toBe(true)
+    }, { timeout: 2_000 })
   })
 })
