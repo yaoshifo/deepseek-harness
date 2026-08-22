@@ -173,3 +173,142 @@ describe.skipIf(process.platform !== 'darwin')('reload.sh', () => {
     expect(await s.kinds()).toEqual([])
   }, 10000)
 })
+
+/** Linux staging: real reload.sh driven through stubbed uname/systemctl/journalctl. */
+interface LinuxStaging {
+  env: NodeJS.ProcessEnv
+  /** Full systemctl argument lines in call order, e.g. ["--user cat feishu-bridge"]. */
+  calls: () => Promise<string[]>
+}
+
+/**
+ * Build a stub bin dir for the systemd path. `unitExists` makes the
+ * `systemctl cat` precheck fail; `wsOk` controls whether `systemctl restart`
+ * appends the WS-ready line to the (stubbed) journal; `psDaemon` makes the
+ * ppid walk see a daemon-shaped ancestor; `sessionStore` names the hosting
+ * daemon for the DSH_SESSION_JSONL guard.
+ */
+async function stageLinux(
+  opts: { unitExists?: boolean; wsOk?: boolean; psDaemon?: boolean; sessionStore?: string } = {},
+): Promise<LinuxStaging> {
+  const { unitExists = true, wsOk = true, psDaemon = false, sessionStore = 'none' } = opts
+  const root = await mkdtemp(join(tmpdir(), 'reload-linux-spec-'))
+  stubs.push(root)
+  const bin = join(root, 'bin')
+  const logDir = join(root, 'logs')
+  await mkdir(bin)
+  await mkdir(logDir)
+  const callsPath = join(root, 'systemctl-calls')
+  const journalPath = join(root, 'journal.log')
+  const dshHome = join(root, '.dsh')
+  const sessionJsonl = join(dshHome, `${sessionStore}-sessions`, 'workdir', 'cc-1', 'session.jsonl.zstd')
+  await writeFile(join(bin, 'uname'), [
+    '#!/bin/sh',
+    'echo Linux',
+  ].join('\n'), { mode: 0o755 })
+  // systemctl --user cat|restart UNIT — `cat` reports unit existence; `restart`
+  // simulates the new daemon writing its WS-ready line to the journal.
+  await writeFile(join(bin, 'systemctl'), [
+    '#!/bin/sh',
+    `echo "$*" >> ${callsPath}`,
+    'case "$2" in',
+    `  cat) exit ${unitExists ? 0 : 1} ;;`,
+    '  restart) if [ "$FB_SPEC_WS_OK" = 1 ]; then printf "ws client ready\\n" >> "$FB_SPEC_JOURNAL"; fi; exit 0 ;;',
+    'esac',
+    'exit 0',
+  ].join('\n'), { mode: 0o755 })
+  // journalctl --user -u UNIT [--since stamp | -n N]: replay the journal file.
+  await writeFile(join(bin, 'journalctl'), [
+    '#!/bin/sh',
+    `cat ${journalPath} 2>/dev/null`,
+    'exit 0',
+  ].join('\n'), { mode: 0o755 })
+  // No-op sleep so the 60-iteration WS probe exhausts in milliseconds.
+  await writeFile(join(bin, 'sleep'), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  await writeFile(join(bin, 'pgrep'), [
+    '#!/bin/sh',
+    'exit 1',
+  ].join('\n'), { mode: 0o755 })
+  await writeFile(join(bin, 'ps'), [
+    '#!/bin/sh',
+    'case "$2" in',
+    '  ppid=*) if [ "$4" = 4242 ]; then echo 1; else echo 4242; fi ;;',
+    '  command=*) if [ "$4" = 4242 ]; then echo "$FB_SPEC_ANCESTOR"; else echo "/bin/bash -c stub"; fi ;;',
+    'esac',
+    'exit 0',
+  ].join('\n'), { mode: 0o755 })
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH ?? ''}`,
+    // Never written: the Linux branch must not consult the plist — its
+    // basename only keeps the daemon label right in guard messages.
+    PLIST: join(root, 'com.dsh.feishu-bridge.plist'),
+    LOG_DIR: logDir,
+    FB_SPEC_WS_OK: wsOk ? '1' : '0',
+    FB_SPEC_JOURNAL: journalPath,
+    FB_SPEC_ANCESTOR: psDaemon
+      ? 'node /nowhere/apps/cli/lib/bin.js --profile feishu-bridge'
+      : '/sbin/launchd',
+    DSH_HOME: dshHome,
+    DSH_SESSION_ID: 'cc-20260822-174246-8add9cd530a3',
+    DSH_SESSION_JSONL: sessionJsonl,
+    XPC_SERVICE_NAME: '0',
+  }
+  const calls = () =>
+    readFile(callsPath, 'utf8')
+      .then(s => s.split('\n').filter(Boolean))
+      .catch(() => [] as string[])
+  return { env, calls }
+}
+
+describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('reload.sh on Linux/systemd', () => {
+  afterAll(async () => {
+    await Promise.all(stubs.map(dir => rm(dir, { recursive: true, force: true })))
+  })
+
+  it('restarts via systemctl and probes the journal for WS readiness', async () => {
+    const s = await stageLinux()
+    const result = await runScript(s.env)
+    expect(result.code).toBe(0)
+    expect(await s.calls()).toEqual(['--user cat feishu-bridge', '--user restart feishu-bridge'])
+  }, 10000)
+
+  it('refuses inside the daemon via DSH_SESSION_JSONL', async () => {
+    const s = await stageLinux({ sessionStore: 'feishu-bridge' })
+    const result = await runScript(s.env)
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('inside the com.dsh.feishu-bridge daemon')
+    expect(await s.calls()).toEqual([])
+  }, 10000)
+
+  it('fails loud before restart when the systemd unit is missing', async () => {
+    const s = await stageLinux({ unitExists: false })
+    const result = await runScript(s.env)
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('systemd unit')
+    expect(await s.calls()).toEqual(['--user cat feishu-bridge'])
+  }, 10000)
+
+  it('exits non-zero with the journal tail when WS readiness never appears', async () => {
+    const s = await stageLinux({ wsOk: false })
+    const result = await runScript(s.env)
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain("no 'ws client ready'")
+  }, 10000)
+
+  it('FB_RELOAD_FROM_DAEMON=1 bypasses the ppid walk (the /reload detached spawn)', async () => {
+    const s = await stageLinux({ psDaemon: true })
+    const result = await runScript({ ...s.env, FB_RELOAD_FROM_DAEMON: '1' })
+    expect(result.code).toBe(0)
+    expect(await s.calls()).toEqual(['--user cat feishu-bridge', '--user restart feishu-bridge'])
+  }, 10000)
+
+  it('FB_RELOAD_FROM_DAEMON=1 still refuses a daemon-hosted session (DSH_SESSION_JSONL guard stays)', async () => {
+    const s = await stageLinux({ sessionStore: 'feishu-bridge' })
+    const result = await runScript({ ...s.env, FB_RELOAD_FROM_DAEMON: '1' })
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('inside the com.dsh.feishu-bridge daemon')
+    expect(await s.calls()).toEqual([])
+  }, 10000)
+})
