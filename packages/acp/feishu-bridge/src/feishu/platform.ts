@@ -24,7 +24,7 @@ import { basename, dirname, join } from 'node:path'
 import { MessageDedup, isOldMessage } from '../dedup.js'
 import { AllowList } from './allowlist.js'
 import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.js'
-import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.js'
+import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostImageKeys, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.js'
 import { isMonitorCommand } from '../core/types.js'
 import { hintCategoryOfCode, parseHintButtonName } from '../engine/hints-panel.js'
 import type { FeishuMention } from './extract.js'
@@ -809,9 +809,7 @@ export class FeishuPlatform implements Platform {
       return
     }
     if (msgType === 'post') {
-      const text = stripMentions(extractPostPlainText(content), mentions, this.o.botOpenID ?? '')
-      if (text === '') return
-      void this.dispatchWithQuote(sessionKey, messageID, userID, chatID, chatType, text, replyCtx, isSpawned, parentID)
+      void this.dispatchPostMessage(sessionKey, messageID, userID, chatID, chatType, content, mentions, replyCtx, isSpawned, parentID)
       return
     }
     if (msgType === 'file') {
@@ -884,6 +882,57 @@ export class FeishuPlatform implements Platform {
       console.error(`${this.tag()}: download image failed: ${String(err)}`)
       await this.replyDownloadError(replyCtx, '图片', '')
     }
+  }
+
+  /**
+   * Post-message branch of Go dispatchMessage: image+text combined arrives as
+   * a rich-text post. The text is extracted with `[image]` placeholders and
+   * every embedded image is downloaded and attached, exactly like a pure
+   * image message.
+   */
+  private async dispatchPostMessage(
+    sessionKey: string,
+    messageID: string,
+    userID: string,
+    chatID: string,
+    chatType: string,
+    content: string,
+    mentions: FeishuMention[] | undefined,
+    replyCtx: FeishuReplyContext,
+    isSpawned: boolean,
+    parentID: string,
+  ): Promise<void> {
+    const text = stripMentions(extractPostPlainText(content), mentions, this.o.botOpenID ?? '')
+    if (text === '') return
+    const images = await this.downloadPostImages(messageID, content)
+    await this.dispatchWithQuote(sessionKey, messageID, userID, chatID, chatType, text, replyCtx, isSpawned, parentID, images)
+  }
+
+  /**
+   * Fetch images embedded in a post message by key, mirroring
+   * {@link FeishuPlatform.downloadCardImages}: capped so a post with many
+   * images can't flood downloads; a failed download is logged and skipped —
+   * the text still flows through.
+   */
+  private async downloadPostImages(messageID: string, content: string): Promise<ImageAttachment[]> {
+    if (messageID === '') return []
+    const keys = extractPostImageKeys(content)
+    if (keys.length === 0) return []
+    const maxPostImages = 9
+    const capped = keys.slice(0, maxPostImages)
+    if (keys.length > maxPostImages) {
+      console.warn(`${this.tag()}: post has many images, truncating (want=${keys.length} kept=${maxPostImages})`)
+    }
+    const out: ImageAttachment[] = []
+    for (const key of capped) {
+      try {
+        const [data, mimeType] = await this.downloadImage(messageID, key)
+        out.push({ mimeType, data })
+      } catch (error) {
+        console.warn(`${this.tag()}: download post image failed (key=${key}): ${String(error)}`)
+      }
+    }
+    return out
   }
 
   /**
@@ -1321,6 +1370,8 @@ export class FeishuPlatform implements Platform {
    * quoted-prefix block). Skipped inside isolated threads — the thread
    * already carries the context and a long prefix would drown the user's
    * text. Any fetch failure degrades to dispatching without the quote.
+   * Downloaded attachments (post-embedded images) ride along unchanged.
+   * @param images - Downloaded images to attach, e.g. a post's embedded images.
    */
   private async dispatchWithQuote(
     sessionKey: string,
@@ -1332,6 +1383,7 @@ export class FeishuPlatform implements Platform {
     replyCtx: FeishuReplyContext,
     isSpawned: boolean,
     parentID: string,
+    images: ImageAttachment[] = [],
   ): Promise<void> {
     let prefix = ''
     let quoted: ChainMessage | undefined
@@ -1340,7 +1392,7 @@ export class FeishuPlatform implements Platform {
     }
     this.dispatch(
       sessionKey, messageID, userID, chatID, chatType, text, prefix, replyCtx, isSpawned, parentID,
-      false, false, [], [], false,
+      false, false, images, [], false,
       quoted !== undefined ? { text: quoted.text, senderType: quoted.senderType, updateTimeMs: quoted.updateTimeMs } : undefined,
     )
   }
