@@ -22,6 +22,8 @@ interface PostElement {
   language?: string
   user_id?: string
   user_name?: string
+  /** Image key of an `img` element, downloadable via the message resource API. */
+  image_key?: string
 }
 
 interface PostBody {
@@ -97,6 +99,30 @@ export function extractPostPlainText(content: string): string {
     if (line.length > 0) parts.push(line.join(''))
   }
   return parts.join('\n')
+}
+
+/**
+ * Deduped image keys embedded in a post (rich text) message, in first-seen
+ * document order. Feishu delivers image+text combined as a post whose `img`
+ * elements carry an `image_key` downloadable through the message resource API
+ * like a pure image message.
+ * @param content - Raw content JSON of a post message.
+ * @returns Deduped image keys in document order.
+ */
+export function extractPostImageKeys(content: string): string[] {
+  const post = parsePostBody(content)
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const para of post.content ?? []) {
+    for (const elem of para) {
+      if (elem.tag !== 'img') continue
+      const key = elem.image_key ?? ''
+      if (key === '' || seen.has(key)) continue
+      seen.add(key)
+      out.push(key)
+    }
+  }
+  return out
 }
 
 /**

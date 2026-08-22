@@ -142,6 +142,25 @@ describe('pollItemToMessage (via listMonitorMessages)', () => {
     expect(out[0]?.content).toContain('支付告警')
   })
 
+  it('attaches embedded post images on the poll path', async () => {
+    const downloads = { n: 0 }
+    const p = newPollPlatform(pollApi({
+      downloads,
+      items: [{
+        messageId: 'om_post',
+        msgType: 'post',
+        content: '{"content":[[{"tag":"text","text":"支付异常"},{"tag":"img","image_key":"img_v2_p"}]]}',
+        createTime: '1690000000000',
+        sender: { id: 'ou_u', idType: 'open_id', senderType: 'user' },
+      }],
+    }))
+    const out = await p.listMonitorMessages('oc_chat', 0, 20)
+    expect(out).toHaveLength(1)
+    expect(downloads.n).toBe(1)
+    expect(out[0]?.images).toHaveLength(1)
+    expect(out[0]?.content).toContain('支付异常')
+  })
+
   it('skips the bot\'s own messages (open_id and app_id senders)', async () => {
     const mk = (sender: NonNullable<FeishuListItem['sender']>): FeishuApiClient => pollApi({
       items: [{

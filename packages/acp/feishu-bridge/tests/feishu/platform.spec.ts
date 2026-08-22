@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractPostPlainText, hasHumanMention, isBotMentioned, stripMentions } from '../../src/feishu/extract.js'
+import { extractPostImageKeys, extractPostPlainText, hasHumanMention, isBotMentioned, stripMentions } from '../../src/feishu/extract.js'
 import { AllowList } from '../../src/feishu/allowlist.js'
 import { FeishuPlatform, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.js'
 import type { Message } from '../../src/core/types.js'
@@ -51,6 +51,35 @@ describe('extractPostPlainText', () => {
 
   it('invalid JSON yields empty', () => {
     expect(extractPostPlainText('not json')).toBe('')
+  })
+})
+
+describe('extractPostImageKeys', () => {
+  it('collects image keys in order', () => {
+    const content = '{"content":[[{"tag":"text","text":"a"},{"tag":"img","image_key":"img_v2_1"}],[{"tag":"img","image_key":"img_v2_2"}]]}'
+    expect(extractPostImageKeys(content)).toEqual(['img_v2_1', 'img_v2_2'])
+  })
+
+  it('locale wrapped', () => {
+    const content = '{"zh_cn":{"content":[[{"tag":"img","image_key":"img_v2_1"}]]}}'
+    expect(extractPostImageKeys(content)).toEqual(['img_v2_1'])
+  })
+
+  it('dedups repeated keys', () => {
+    const content = '{"content":[[{"tag":"img","image_key":"k1"},{"tag":"img","image_key":"k1"},{"tag":"img","image_key":"k2"}]]}'
+    expect(extractPostImageKeys(content)).toEqual(['k1', 'k2'])
+  })
+
+  it('no images', () => {
+    expect(extractPostImageKeys('{"content":[[{"tag":"text","text":"hi"}]]}')).toEqual([])
+  })
+
+  it('empty key skipped', () => {
+    expect(extractPostImageKeys('{"content":[[{"tag":"img","image_key":""}]]}')).toEqual([])
+  })
+
+  it('invalid JSON yields empty', () => {
+    expect(extractPostImageKeys('not json')).toEqual([])
   })
 })
 
@@ -268,6 +297,64 @@ describe('FeishuPlatform dispatch', () => {
     }))
     expect(messages).toHaveLength(1)
     expect(messages[0]!.content).toBe('标题\n内容')
+  })
+
+  it('downloads embedded post images and attaches them alongside the text', async () => {
+    const downloaded: string[] = []
+    const api: FeishuApiClient = {
+      async reply() { return { messageId: 'om_ok' } },
+      async create() { return { messageId: 'om_ok' } },
+      async downloadMessageResource({ fileKey }) {
+        downloaded.push(fileKey)
+        return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x0a])
+      },
+    }
+    const p = newPlatform({ apiClient: api })
+    const messages = await dispatched(p, receiveEvent({
+      message_type: 'post',
+      content: '{"content":[[{"tag":"text","text":"看下这个图"},{"tag":"img","image_key":"img_v2_a"}]]}',
+    }))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('看下这个图[image]')
+    expect(downloaded).toEqual(['img_v2_a'])
+    expect(messages[0]!.images).toHaveLength(1)
+    expect(messages[0]!.images[0]!.mimeType).toBe('image/png')
+  })
+
+  it('skips a failed post image download but still dispatches the text', async () => {
+    const api: FeishuApiClient = {
+      async reply() { return { messageId: 'om_ok' } },
+      async create() { return { messageId: 'om_ok' } },
+      async downloadMessageResource() {
+        throw new Error('resource API code=400 msg=bad request')
+      },
+    }
+    const p = newPlatform({ apiClient: api })
+    const messages = await dispatched(p, receiveEvent({
+      message_type: 'post',
+      content: '{"content":[[{"tag":"text","text":"看下这个图"},{"tag":"img","image_key":"img_v2_bad"}]]}',
+    }))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('看下这个图[image]')
+    expect(messages[0]!.images).toHaveLength(0)
+  })
+
+  it('dispatches an image-only post as an attachment message', async () => {
+    const api: FeishuApiClient = {
+      async reply() { return { messageId: 'om_ok' } },
+      async create() { return { messageId: 'om_ok' } },
+      async downloadMessageResource() {
+        return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x0a])
+      },
+    }
+    const p = newPlatform({ apiClient: api })
+    const messages = await dispatched(p, receiveEvent({
+      message_type: 'post',
+      content: '{"content":[[{"tag":"img","image_key":"img_v2_only"}]]}',
+    }))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('[image]')
+    expect(messages[0]!.images).toHaveLength(1)
   })
 
   it('thread isolation keys group sessions by thread then root', () => {
