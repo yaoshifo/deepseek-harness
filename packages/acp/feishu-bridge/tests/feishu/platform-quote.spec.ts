@@ -160,3 +160,53 @@ describe('quoted message fetch on dispatch', () => {
     expect(messages[0]!.extraContent).toContain('进度卡内容')
   })
 })
+
+describe('monitor-chat exemption from thread isolation', () => {
+  // Under threadIsolation every group message derives a root:/thread: session
+  // key, so the quote-fetch skip would fire for monitored chats too — where
+  // the quote is /learn's data, not redundant session context.
+  it('fetches the quote in a monitored group under thread isolation', async () => {
+    const p = newPlatform(quoteApi({ om_parent: quoted({}) }), { threadIsolation: true })
+    p.setMonitorChats('oc_1')
+    const messages = await dispatched(p, receiveEvent({ chat_type: 'group', parent_id: 'om_parent' }))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.extraContent).toContain('[Quoted message from User]')
+    expect(messages[0]!.quotedText).toBe('支付服务 502 了')
+  })
+
+  it('still skips the quote in a non-monitored group under thread isolation', async () => {
+    let calls = 0
+    const api = quoteApi({ om_parent: quoted({}) })
+    api.getMessage = async () => { calls++; return undefined }
+    const p = newPlatform(api, { threadIsolation: true })
+    const messages = await dispatched(p, receiveEvent({ chat_type: 'group', parent_id: 'om_parent' }))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.extraContent).toBe('')
+    expect(calls).toBe(0)
+  })
+
+  it('replies inline from a monitored chat under thread isolation', async () => {
+    const api = quoteApi({})
+    const threadFlags: boolean[] = []
+    api.reply = async ({ replyInThread }) => {
+      threadFlags.push(replyInThread === true)
+      return { messageId: 'om_ok' }
+    }
+    const p = newPlatform(api, { threadIsolation: true })
+    p.setMonitorChats('oc_chat')
+    await p.send({ messageID: 'om_trigger', chatID: 'oc_chat', sessionKey: 'feishu:oc_chat:root:om_trigger' }, 'ack')
+    expect(threadFlags).toEqual([false])
+  })
+
+  it('still replies in thread from a non-monitored chat under thread isolation', async () => {
+    const api = quoteApi({})
+    const threadFlags: boolean[] = []
+    api.reply = async ({ replyInThread }) => {
+      threadFlags.push(replyInThread === true)
+      return { messageId: 'om_ok' }
+    }
+    const p = newPlatform(api, { threadIsolation: true })
+    await p.send({ messageID: 'om_trigger', chatID: 'oc_chat', sessionKey: 'feishu:oc_chat:root:om_trigger' }, 'ack')
+    expect(threadFlags).toEqual([true])
+  })
+})
