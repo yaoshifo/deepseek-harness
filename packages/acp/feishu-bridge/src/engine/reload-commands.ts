@@ -10,10 +10,13 @@
  * DSH_SESSION_JSONL guard still refuses daemon-hosted agent sessions that
  * reach for the variable manually.
  *
- * Ceiling: when the script fails after the daemon has already restarted
- * (e.g. the Feishu WS probe times out), this process is gone and only
- * feishu-bridge-reload.log records the failure — no chat reply is possible
- * for that window.
+ * Completion notice: the handler drops a pending-marker file before the
+ * spawn, and the restarted daemon calls {@link completePendingReload} once
+ * its platforms are live — the notice is delivered by the new process, whose
+ * ability to send it is itself the proof the restart landed. Ceiling: a
+ * failure that only appears after the restart (e.g. the WS probe timing out)
+ * still cannot produce a chat failure reply — only
+ * feishu-bridge-reload.log records it.
  *
  * Registration lives here (not in engine/commands.ts) so this domain cannot
  * collide with parallel work on that file; {@link registerReloadCommands}
@@ -23,7 +26,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, openSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Msg } from '../i18n/index.js'
@@ -80,6 +83,89 @@ export function resolveReloadScript(fromURL: string | URL = import.meta.url): st
 /** In-flight reload: set at spawn, cleared on script exit; a daemon restart resets it with the process. */
 let reloading = false
 
+/** Resolve the daemon's log directory for reload artifacts ($LOG_DIR, default ~/.dsh). */
+function reloadLogDir(): string {
+  return process.env.LOG_DIR ?? join(process.env.HOME ?? '', '.dsh')
+}
+
+/** On-disk record of an in-flight /reload, consumed by the restarted daemon. */
+interface ReloadPendingMarker {
+  /** PID of the daemon that started the reload — the notice fires only when it differs (a real restart, not an HMR re-apply). */
+  pid: number
+  /** Name of the platform that delivered the /reload command (Platform.name()). */
+  platform: string
+  /** The triggering message's reply context, round-tripped so the notice lands as a reply to the /reload message. */
+  replyCtx: unknown
+  /** Epoch ms when the reload started. */
+  at: number
+}
+
+/** Marker freshness window: the build takes minutes, the restart seconds; a marker older than this is stale. */
+const PENDING_TTL_MS = 15 * 60_000
+
+function pendingPath(): string {
+  return join(reloadLogDir(), 'feishu-bridge-reload-pending.json')
+}
+
+/**
+ * Deliver the completion notice for a /reload that restarted this process.
+ * Called once per daemon start, after every engine's platforms are live:
+ * with no marker it is a plain start; with the current process's own marker
+ * it is an HMR re-apply while the reload is still in flight (leave the
+ * marker for the real restart); any other fresh marker means this process is
+ * the reload's replacement — send the notice through the recorded platform
+ * and clear the marker. Every consumed path deletes it, so one daemon start
+ * produces at most one notice. Known gap: an unrelated crash-restart during
+ * a reload's build also delivers the notice (the daemon did restart; the
+ * wording claims nothing beyond that — details stay in the reload log).
+ *
+ * @param engines - The daemon's live engines (the recorded platform is
+ * looked up among them; its engine provides the i18n language).
+ */
+export async function completePendingReload(engines: readonly Engine[]): Promise<void> {
+  const path = pendingPath()
+  let raw: string
+  try {
+    raw = readFileSync(path, 'utf8')
+  } catch {
+    return // no marker: a plain daemon start
+  }
+  let marker: ReloadPendingMarker
+  try {
+    // Durable-boundary validation: only the primitives are checked; the
+    // opaque replyCtx is validated by Platform.send's requireReplyCtx.
+    const parsed = JSON.parse(raw) as Partial<ReloadPendingMarker>
+    if (typeof parsed.pid !== 'number' || typeof parsed.platform !== 'string' || typeof parsed.at !== 'number') {
+      throw new Error('marker field shape mismatch')
+    }
+    marker = { pid: parsed.pid, platform: parsed.platform, replyCtx: parsed.replyCtx, at: parsed.at }
+  } catch (error) {
+    console.warn(`/reload: dropping unreadable completion marker ${path}: ${String(error)}`)
+    rmSync(path, { force: true })
+    return
+  }
+  if (marker.pid === process.pid) return // HMR re-apply mid-reload; the restart (and the notice) is still ahead
+  try {
+    if (Date.now() - marker.at > PENDING_TTL_MS) {
+      console.warn(`/reload: dropping stale completion marker ${path} (started ${String(marker.at)})`)
+    } else {
+      const match = engines
+        .flatMap(e => e.platforms.map(p => ({ e, p })))
+        .find(({ p }) => p.name() === marker.platform)
+      if (match === undefined) {
+        console.warn(`/reload: completion marker names unknown platform ${marker.platform}; dropping it`)
+      } else {
+        await match.p.send(marker.replyCtx, match.e.i18n.tf(Msg.ReloadCompleted, join(reloadLogDir(), 'feishu-bridge-reload.log')))
+      }
+    }
+  } catch (error) {
+    // A failed send (e.g. the /reload message was withdrawn) must not
+    // resurrect the notice on the next daemon start.
+    console.warn(`/reload: completion notice failed: ${String(error)}`)
+  }
+  rmSync(path, { force: true })
+}
+
 /**
  * Spawn command and argv for a detached reload.sh on the given platform.
  *
@@ -135,12 +221,21 @@ async function cmdReload(e: Engine, p: Platform, msg: Message, args: string[]): 
     return
   }
 
-  const logPath = join(process.env.LOG_DIR ?? join(process.env.HOME ?? '', '.dsh'), 'feishu-bridge-reload.log')
+  const logPath = join(reloadLogDir(), 'feishu-bridge-reload.log')
   // Reply before spawning: --skip-build restarts the daemon within seconds,
   // and a post-restart reply would never arrive.
   await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ReloadStarted, logPath))
 
   reloading = true
+  // The restarted daemon reads this marker to deliver the completion notice
+  // (completePendingReload); a failure reply here clears it.
+  const marker: ReloadPendingMarker = { pid: process.pid, platform: p.name(), replyCtx: msg.replyCtx, at: Date.now() }
+  try {
+    writeFileSync(pendingPath(), JSON.stringify(marker))
+  } catch (error) {
+    // The reload is worth more than its notice; continue without one.
+    console.warn(`/reload: cannot write ${pendingPath()}; completion will not be notified: ${String(error)}`)
+  }
   let logFd: number | undefined
   try {
     logFd = openSync(logPath, 'a')
@@ -167,6 +262,9 @@ async function cmdReload(e: Engine, p: Platform, msg: Message, args: string[]): 
     // after a restart the listener died with the old process and the log is
     // the only record.
     if (code === 0) return
+    // The daemon survived, so no new process will ever consume the pending
+    // marker — clear it or the next unrelated daemon start would notify.
+    rmSync(pendingPath(), { force: true })
     void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ReloadFailed, code, logPath))
   }
   child.on('exit', (code) => { finish(code ?? -1) })

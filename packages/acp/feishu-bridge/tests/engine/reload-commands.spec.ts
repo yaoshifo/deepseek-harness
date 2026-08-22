@@ -2,22 +2,23 @@
  * /reload command tests: registration merge/dispose, exact-match resolver,
  * admin gate, argument validation, missing-script error, the detached spawn
  * contract (setsid + FB_RELOAD_FROM_DAEMON bypass + reply-before-spawn),
- * in-flight refusal, and exit-code failure reporting. The real daemon
- * restart is smoke-tested manually on the launchd deployment (the package's
- * OPERATIONS.md §3.3).
+ * in-flight refusal, exit-code failure reporting, the pending-completion
+ * marker lifecycle, and completePendingReload's startup notification. The
+ * real daemon restart is smoke-tested manually on the launchd deployment
+ * (the package's OPERATIONS.md §3.3).
  *
  * @module dsh-feishu-bridge/tests-engine-reload-commands
  */
 
 import { existsSync } from 'node:fs'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Engine } from '../../src/engine/engine.js'
 import { registerSessionCommands } from '../../src/engine/commands.js'
-import { reloadSpawnArgv, registerReloadCommands, resolveReloadScript } from '../../src/engine/reload-commands.js'
+import { completePendingReload, reloadSpawnArgv, registerReloadCommands, resolveReloadScript } from '../../src/engine/reload-commands.js'
 import { Msg } from '../../src/i18n/index.js'
 import {
   createStubAgent,
@@ -72,6 +73,22 @@ function newEngine(agent: Agent = createStubAgent()): { e: Engine; p: StubPlatfo
 
 function lastSent(p: StubPlatform): string {
   return p.getSent()[p.getSent().length - 1] ?? ''
+}
+
+/** Marker file path for the current test's temp LOG_DIR. */
+function pendingPath(): string {
+  return join(logDir, 'feishu-bridge-reload-pending.json')
+}
+
+/** Write a completion marker as cmdReload would (pid defaults to another process). */
+function writeMarker(fields: Record<string, unknown> = {}): void {
+  writeFileSync(pendingPath(), JSON.stringify({
+    pid: process.pid + 1,
+    platform: 'test',
+    replyCtx: { chatID: 'oc_x', sessionKey: 'test:oc_x', messageID: '' },
+    at: Date.now(),
+    ...fields,
+  }))
 }
 
 let realExistsSync: typeof import('node:fs').existsSync
@@ -242,6 +259,90 @@ describe('cmdReload', () => {
     childCbs.get('exit')?.(0)
     await new Promise((resolve) => { setTimeout(resolve, 20) })
     expect(p.getSent().length).toBe(sent)
+  })
+
+  it('writes a pending-completion marker before spawning', async () => {
+    const { e, p } = newEngine()
+    currentPlatform = p
+    expect(e.dispatchCommand(p, reloadMsg('/reload'), '/reload')).toBe(true)
+    await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(1) })
+    const marker = JSON.parse(readFileSync(pendingPath(), 'utf8')) as Record<string, unknown>
+    expect(marker.pid).toBe(process.pid)
+    expect(marker.platform).toBe('test')
+    // Round-trips the triggering message's reply context so the notice can
+    // land as a reply to the /reload message itself.
+    expect(marker.replyCtx).toBe('ctx')
+    expect(marker.at).toBeGreaterThan(0)
+  })
+
+  it('a non-zero script exit clears the pending marker alongside the failure reply', async () => {
+    const { e, p } = newEngine()
+    currentPlatform = p
+    expect(e.dispatchCommand(p, reloadMsg('/reload'), '/reload')).toBe(true)
+    await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(1) })
+    expect(existsSync(pendingPath())).toBe(true)
+    childCbs.get('exit')?.(2)
+    await vi.waitFor(() => { expect(lastSent(p)).toBe(e.i18n.tf(Msg.ReloadFailed, 2, join(logDir, 'feishu-bridge-reload.log'))) })
+    expect(existsSync(pendingPath())).toBe(false)
+  })
+})
+
+describe('completePendingReload', () => {
+  it('sends the completion notice through the matching platform and clears the marker', async () => {
+    const { e, p } = newEngine()
+    const sends: Array<{ rc: unknown; content: string }> = []
+    p.send = async (rc, content) => { sends.push({ rc, content }) }
+    writeMarker({ replyCtx: 'ctx-marker' })
+    await completePendingReload([e])
+    expect(sends).toEqual([{ rc: 'ctx-marker', content: e.i18n.tf(Msg.ReloadCompleted, join(logDir, 'feishu-bridge-reload.log')) }])
+    expect(existsSync(pendingPath())).toBe(false)
+  })
+
+  it('keeps the marker and stays silent when the pid matches (HMR re-apply mid-reload)', async () => {
+    const { e, p } = newEngine()
+    writeMarker({ pid: process.pid })
+    await completePendingReload([e])
+    expect(p.getSent()).toEqual([])
+    expect(existsSync(pendingPath())).toBe(true)
+  })
+
+  it('drops a stale marker without sending', async () => {
+    const { e, p } = newEngine()
+    writeMarker({ at: Date.now() - 15 * 60_000 - 1 })
+    await completePendingReload([e])
+    expect(p.getSent()).toEqual([])
+    expect(existsSync(pendingPath())).toBe(false)
+  })
+
+  it('drops the marker when no platform matches (project removed from config)', async () => {
+    const { e, p } = newEngine()
+    writeMarker({ platform: 'gone' })
+    await completePendingReload([e])
+    expect(p.getSent()).toEqual([])
+    expect(existsSync(pendingPath())).toBe(false)
+  })
+
+  it('is a no-op when no marker exists', async () => {
+    const { e, p } = newEngine()
+    await completePendingReload([e])
+    expect(p.getSent()).toEqual([])
+    expect(existsSync(pendingPath())).toBe(false)
+  })
+
+  it('drops a corrupt marker without sending', async () => {
+    const { e, p } = newEngine()
+    writeFileSync(pendingPath(), 'not json')
+    await completePendingReload([e])
+    expect(p.getSent()).toEqual([])
+    expect(existsSync(pendingPath())).toBe(false)
+  })
+
+  it('a send failure still clears the marker (no duplicate on the next start)', async () => {
+    const { e, p } = newEngine()
+    p.send = async () => { throw new Error('chat message withdrawn') }
+    writeMarker()
+    await completePendingReload([e])
+    expect(existsSync(pendingPath())).toBe(false)
   })
 })
 

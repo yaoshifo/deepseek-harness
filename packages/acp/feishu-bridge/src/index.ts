@@ -21,7 +21,7 @@ import { DirHistory } from './engine/dir-history.js'
 import { HintUsage } from './engine/hint-usage.js'
 import { registerSessionCommands } from './engine/commands.js'
 import { registerShellCommands } from './engine/shell-commands.js'
-import { registerReloadCommands } from './engine/reload-commands.js'
+import { registerReloadCommands, completePendingReload } from './engine/reload-commands.js'
 import { registerSpawnFamilyCommands } from './engine/spawn-family-commands.js'
 import { registerMiscCommands } from './engine/misc-commands.js'
 import { CronScheduler, CronStore } from './engine/cron.js'
@@ -705,6 +705,10 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   }
   /** One live project: its engine plus the adapter that owns its agents. */
   const live: Array<{ engine: Engine; adapter: DshAgentAdapter }> = []
+  // Engine starts are collected and awaited together after the loop, so the
+  // /reload completion notice runs exactly once per daemon start, after
+  // every platform is live (reload-commands.ts).
+  const starts: Array<Promise<void>> = []
   // The singleton userQuestions service takes one provider per application:
   // every adapter shares this routing so the second+ project's first session
   // does not collide (questions dispatch to the adapter owning the session).
@@ -727,13 +731,17 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
       })
     }
 
-    void engine.start().catch((error: unknown) => {
+    starts.push(engine.start().catch((error: unknown) => {
       ctx.logger.error(`feishu-bridge: project ${project.name} failed to start: ${String(error)}`)
-    })
+    }))
     ctx.effect(() => {
       return () => { void engine.stop() }
     })
   }
+
+  // The daemon is up: settle a /reload that restarted this process (each
+  // start already carries its own catch, so this always runs).
+  void Promise.all(starts).then(() => { void completePendingReload(live.map(({ engine }) => engine)) })
 
   // Start the cron scheduler after every engine registered (Go main).
   cronScheduler.start()
