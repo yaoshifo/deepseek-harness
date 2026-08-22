@@ -364,6 +364,68 @@ describe('processInteractiveEvents side-channel dedup', () => {
   })
 })
 
+/** Stub platform with the M2 preview capabilities, recording card PATCHes. */
+function createPreviewRecorderPlatform(): StubPlatform & { messages: string[] } {
+  const messages: string[] = []
+  return Object.assign(createStubPlatform(), {
+    messages,
+    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      messages.push(`start:${content}`)
+      return 'preview-handle'
+    },
+    async updateMessage(_rc: unknown, content: string): Promise<void> {
+      messages.push(`update:${content}`)
+    },
+  })
+}
+
+describe('processInteractiveEvents error-reasoned turn', () => {
+  it('marks the card failed and reports the error instead of the interim narration', async () => {
+    const p = createPreviewRecorderPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolProgress: true })
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const narration = '解压会话日志，看最后几条事件。'
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'zstd -dc session.jsonl.zstd', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'tool_result', toolResult: 'ok', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'text', content: narration, done: false })
+    agentSession.channel.push({ type: 'result', content: narration, errorText: '1301 sensitive content rejected', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    const finalCard = [...p.messages].reverse().find(m => m.includes('__cc_state__'))
+    expect(finalCard, `cards=${JSON.stringify(p.messages)}`).toContain('__cc_state__:failed')
+    expect(finalCard).toContain('1301 sensitive content rejected')
+    expect(finalCard).not.toContain('__cc_state__:completed')
+    expect(session.lastResultOrReply()).not.toContain(narration)
+  })
+
+  it('delivers the error as a plain message without a preview card', async () => {
+    const p = createStubPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    agentSession.channel.push({ type: 'result', content: '', errorText: 'No API key for provider', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(p.getSent().some(m => m.includes('No API key for provider')), `sent=${JSON.stringify(p.getSent())}`).toBe(true)
+  })
+})
+
 describe('processInteractiveEvents turn token rate', () => {
   it('closes a tool interval on its matching tool_result so the rate spans post-tool generation', async () => {
     const p = createStubMediaPlatform()

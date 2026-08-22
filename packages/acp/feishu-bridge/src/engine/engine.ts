@@ -3094,6 +3094,9 @@ export class Engine {
     state.permissionPending = false
 
     let fullResponse = event.content
+    // An error-reasoned turn reports its failure; interim narration it
+    // produced on the way is not the turn's reply.
+    const errored = event.errorText !== undefined && event.errorText !== ''
     const sdkResult = event.content.trim()
     const joined = textParts.length > 0 ? textParts.join('') : ''
     const preferJoined = (textParts.length > 0 && segmentStart === 0 && !this.display.toolMessages)
@@ -3101,11 +3104,11 @@ export class Engine {
       // A bare NO_REPLY final segment does not retroactively swallow earlier
       // substantive text — fall back to the accumulated reply.
       || (textParts.length > 0 && isSilentReply(fullResponse))
-    if (preferJoined) fullResponse = joined
-    if (fullResponse === '') {
-      fullResponse = event.errorText !== undefined && event.errorText !== ''
-        ? this.i18n.tf(Msg.Error, event.errorText)
-        : this.i18n.t(Msg.SilentReply)
+    if (preferJoined && !errored) fullResponse = joined
+    if (errored) {
+      fullResponse = this.i18n.tf(Msg.Error, event.errorText)
+    } else if (fullResponse === '') {
+      fullResponse = this.i18n.t(Msg.SilentReply)
     }
 
     // Context usage indicator: prefer SDK tokens, fall back to the agent's
@@ -3116,7 +3119,7 @@ export class Engine {
     const selfPct = parseSelfReportedCtx(fullResponse)
     const baseResponse = stripCtxSelfReport(fullResponse).replace(/[\n ]+$/, '')
     session.addHistory('assistant', baseResponse)
-    if (sdkResult !== '') session.setLastResult(sdkResult)
+    if (sdkResult !== '' && !errored) session.setLastResult(sdkResult)
     sessions.save()
 
     let isSilent = isSilentReply(baseResponse)
@@ -3205,7 +3208,20 @@ export class Engine {
 
     /** Whether the final card landed; the ✅ notification follows it. */
     let sendCompletionNotification = false
-    if (isSilent) {
+    if (errored && p !== undefined) {
+      // Ahead of every completion branch: red header with the error in place
+      // of the 实时播报 section on an active card, else a plain message.
+      if (sp.inProgressMode() && !sp.isDegraded()) {
+        await sp.setAnalysisText(fullResponse)
+        await sp.markFailed()
+        await sp.detachPreview()
+      } else {
+        await sp.discard()
+        for (const chunk of splitMessage(fullResponse, MaxPlatformMessageLen)) {
+          await this.send(p, replyCtx, chunk)
+        }
+      }
+    } else if (isSilent) {
       await sp.setAnalysisText(this.i18n.t(Msg.SilentReply))
       await sp.markCompleted()
       await sp.detachPreview()
