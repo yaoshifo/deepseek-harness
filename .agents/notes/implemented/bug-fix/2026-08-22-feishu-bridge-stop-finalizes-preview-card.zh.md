@@ -14,7 +14,7 @@ Status: implemented
 
 `stopInteractiveSession` 在 `state.markStopped()` 之后立即自行终结活动预览：fire-and-forget 调用 `state.preview.markStoppedSync()`（此前是死代码——Go 的 `stopInteractiveSession` 在同一位置调用 `sp.markStoppedSync()`，注释描述的正是同样的覆盖症状；端口时被丢掉），失败告警。`markStoppedSync` 先置 `degraded`——迟到的节流 flush 与 append 变为 no-op——再 barrier 排空 per-state async sender，使已入队的 Running PATCH 先落地，然后内联 PATCH ⏹ 卡。它在 preview 互斥锁上排队、位于任何在途 flush 之后，因此与已排队 Running 内容的顺序无需协调即可保持。
 
-`Engine.stop()` 在平台停止前为进行中的 turn 渲染同样的 ⏹ 终结（2026-08-22 oc_610e reload 事故：循环在进程退出前不再运行，别处无人能渲染），随同一提交交付。
+`Engine.stop()` 在平台停止前为进行中的 turn 渲染同样的 ⏹ 终结（2026-08-22 oc_610e reload 事故：循环在进程退出前不再运行，别处无人能渲染），由并行的 reload 修复以 `e7a3233fc6` 交付，该提交还让 `flushLocked` 以 `stoppedCardRendered` 闭锁，节流 flush 无法覆盖 ⏹ 卡。
 
 `StreamPreview` 增加 `stoppedCardRendered` 守卫（在 preview 锁下置位）：事件循环的 stop 分支与同步终结竞相渲染终态卡，输方直接返回、不再 PATCH。`resumeFromFreeze` 与 `degraded` 一同复位该守卫，维持「卡重新存活」这一单一不变量。
 

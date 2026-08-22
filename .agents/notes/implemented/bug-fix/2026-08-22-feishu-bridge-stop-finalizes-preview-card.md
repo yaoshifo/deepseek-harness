@@ -14,7 +14,7 @@ The stopped-card render lived in exactly one place: the event loop's 'stop' race
 
 `stopInteractiveSession` finalizes the active preview itself, right after `state.markStopped()`: it fire-and-forgets `state.preview.markStoppedSync()` (previously dead code — Go's `stopInteractiveSession` calls `sp.markStoppedSync()` at this exact site with a comment describing the same overwrite symptom; the port had dropped it) with a warning on failure. `markStoppedSync` sets `degraded` first — late throttled flushes and appends become no-ops — then barriers the per-state async sender so already-queued Running PATCHes land first, then PATCHes the ⏹ card inline. It queues on the preview mutex behind any in-flight flush, so ordering with queued Running content is preserved without coordination.
 
-`Engine.stop()` renders the same ⏹ finalize for in-flight turns before platforms stop (2026-08-22 oc_610e reload incident: the loop never resumed before process exit, so nothing else could render), shipped in the same commit.
+`Engine.stop()` renders the same ⏹ finalize for in-flight turns before platforms stop (2026-08-22 oc_610e reload incident: the loop never resumed before process exit, so nothing else could render), shipped by the parallel reload fix as `e7a3233fc6`, which also latches `flushLocked` on `stoppedCardRendered` so a throttled flush cannot overwrite the ⏹ card.
 
 `StreamPreview` gains a `stoppedCardRendered` guard set under the preview lock: the event loop's stop arm and the synchronous finalize race to render the terminal card, and the loser returns without PATCHing again. `resumeFromFreeze` resets the guard alongside `degraded`, keeping "the card is live again" one invariant.
 
