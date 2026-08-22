@@ -162,6 +162,7 @@ export interface QuestionRouting {
   registered: boolean
 }
 
+/** Per-project constructor options for the DSH agent adapter. */
 export interface DshAdapterConfig {
   agentName: string
   cwd: string
