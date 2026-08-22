@@ -84,7 +84,7 @@ Linux 部署面用 systemd user unit（§5）。
 | `[stream_preview]` `partial` | — | 不迁移：Go 侧该键只驱动 claudecode CLI 的 `--include-partial-messages`；dsh 适配器事件流无此区分、无消费方 |
 | （隐含）会话存储位置 | `session-persistence-jsonl` 行 `config.root` | cutover 时旧 root `~/.dsh/cc-connect-sessions` 已改名并沿用为 `~/.dsh/feishu-bridge-sessions`（历史日志随目录迁移，记账驴在途会话 resume 已验证）；7 个迁移 bot 按用户裁定全新会话开始，注册表未迁移 |
 | `[chatroom]` / `[subtask]` / `[spawn]` / `[group_name]` / `[predict_next]` / `[turn_summary]` / `[plan_render]` / cron / relay / `[projects.monitor]` / `usage_providers` | 插件行 `config.chatroom` / `config.subtask` / `config.spawn` / `config.projects[].groupName` / `.predictNext` / `.turnSummary` / `.planRender` / `config.cron` / `config.relay` / `config.projects[].monitor` / `config.usageProviders` | 各域 M5–M7 已落地；键名 camelCase |
-| —（Go 无对应，新增） | 插件行 `config.projects[].planDir` | ExitPlanMode 呈现时把完整计划落盘为 `.md`（对齐 Claude Code：默认 `~/.claude/plans/`，文件名 `<cwd-slug>-<标题slug>.md`，同名异文追加 `-YYYYMMDD-HHMMSS` 后缀、同文跳过；模型自写的 plan 文件优先不改写；写失败回退 inline 卡片）；`''` 关闭 |
+| —（Go 无对应，新增） | 插件行 `config.projects[].planDir` | ExitPlanMode 呈现时把完整计划落盘为 `.md`（对齐 Claude Code：默认 `~/.claude/plans/`，文件名 `<cwd-slug>-<标题slug>.md`，同名异文追加 `-YYYYMMDD-HHMMSS` 后缀、同文跳过；模型自写的 plan 文件优先不改写；写失败回退 inline 卡片）；卡片标题只显示标题部分——剥离与 workdir 匹配的 cwd-slug 前缀、保留时间戳后缀（2026-08-22，有意偏离 Go 的整 basename 标题）；`''` 关闭 |
 
 脱敏示例（新配置形状，占位符）：
 

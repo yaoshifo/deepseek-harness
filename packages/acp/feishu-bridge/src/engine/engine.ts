@@ -129,7 +129,7 @@ import { readFileSync, statSync, existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
-import { basename, join as joinPath } from 'node:path'
+import { join as joinPath } from 'node:path'
 import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
 import { commandContext, dirApply } from './commands.js'
@@ -173,7 +173,7 @@ import {
   type RenderCancelHandle,
   type RenderStatusEntry,
 } from './plan-render.js'
-import { savePlanFile } from './plan-file.js'
+import { planCardName, savePlanFile } from './plan-file.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -4298,7 +4298,7 @@ export class Engine {
         content = `${runes.slice(0, maxLen).join('')}...`
       }
     }
-    const name = basename(filePath).replace(/\.md$/, '')
+    const name = planCardName(filePath, this.planWorkDir())
     await sendPlanCard(this, p, replyCtx, state, exportKey, content,
       { title: `计划·${name}`, color: 'blue' },
       [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }])
@@ -4335,7 +4335,7 @@ export class Engine {
       const runes = Array.from(body)
       if (runes.length > maxLen) body = `${runes.slice(0, maxLen).join('')}...`
     }
-    const title = filePath !== '' ? `计划·${basename(filePath).replace(/\.md$/, '')}` : '计划'
+    const title = filePath !== '' ? `计划·${planCardName(filePath, this.planWorkDir())}` : '计划'
     await sendPlanCard(this, p, replyCtx, state, exportKey, body,
       { title, color: 'blue' },
       [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }])

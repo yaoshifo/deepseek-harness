@@ -3,7 +3,9 @@
  * plan to the configured plans directory, Claude-Code-aligned —
  * `<cwd-slug>-<title-slug>.md`, timestamp suffix when the name is taken by
  * different content, skip when identical, disabled by planDir '', and the
- * model-written plan file always wins untouched.
+ * model-written plan file always wins untouched. The plan card title derives
+ * from the same basename minus the cwd-slug prefix (zero information inside
+ * a project-bound chat).
  *
  * @module dsh-feishu-bridge/tests-engine-plan-file
  */
@@ -13,10 +15,12 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { Card } from '../../src/card.js'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { savePlanFile } from '../../src/engine/plan-file.js'
+import { planCardName, savePlanFile } from '../../src/engine/plan-file.js'
 import {
   createStubAgent,
+  createStubCardPlatform,
   createStubPlatform,
   newControllableSession,
 } from '../stubs/engine-stubs.js'
@@ -106,6 +110,22 @@ describe('savePlanFile', () => {
   })
 })
 
+// ── planCardName helper ─────────────────────────────────────────────────────
+
+describe('planCardName', () => {
+  it('strips the leading cwd-slug prefix', () => {
+    expect(planCardName('/root/.claude/plans/users-t-proj-a-重构登录流程.md', '/Users/t/Proj A')).toBe('重构登录流程')
+  })
+
+  it('keeps the timestamp suffix after stripping the prefix', () => {
+    expect(planCardName('/root/p/users-t-proj-a-重构登录流程-20260821-143015.md', '/Users/t/Proj A')).toBe('重构登录流程-20260821-143015')
+  })
+
+  it('keeps the full basename when it does not start with the workdir slug', () => {
+    expect(planCardName('/root/p/worktree-x-title.md', '/Users/t/Proj A')).toBe('worktree-x-title')
+  })
+})
+
 // ── engine event-loop integration ───────────────────────────────────────────
 
 const planBody = '# 计划标题\n\n步骤一：封装\n步骤二：接入'
@@ -186,5 +206,43 @@ describe('processInteractiveEvents plan persistence', () => {
     ])
 
     expect(p.getSent().join('\n')).toContain(planBody)
+  })
+})
+
+// ── plan card title derivation ──────────────────────────────────────────────
+
+describe('plan card title', () => {
+  it('sendPlanContent titles the card without the cwd-slug prefix', async () => {
+    const dir = tempDir('plan-file-')
+    const path = savePlanFile(dir, '/Users/t/Proj A', planBody)
+    const p = createStubCardPlatform('feishu')
+    const e = new Engine('test', agentWithWorkDir('/Users/t/Proj A'), [p], '', 'en')
+
+    await e.sendPlanContent(p, 'ctx', undefined, path, 1, 'plan:1')
+
+    expect(p.sentCards).toHaveLength(1)
+    expect((p.sentCards[0] as Card).header?.title).toBe('计划·计划标题')
+  })
+
+  it('sendInlinePlanContent uses the same prefix-stripped title from a file path', async () => {
+    const dir = tempDir('plan-file-')
+    const path = savePlanFile(dir, '/Users/t/Proj A', planBody)
+    const p = createStubCardPlatform('feishu')
+    const e = new Engine('test', agentWithWorkDir('/Users/t/Proj A'), [p], '', 'en')
+
+    await e.sendInlinePlanContent(p, 'ctx', undefined, planBody, path, 1, 'plan:1')
+
+    expect(p.sentCards).toHaveLength(1)
+    expect((p.sentCards[0] as Card).header?.title).toBe('计划·计划标题')
+  })
+
+  it('sendInlinePlanContent without a file path keeps the generic 计划 title', async () => {
+    const p = createStubCardPlatform('feishu')
+    const e = new Engine('test', agentWithWorkDir('/Users/t/Proj A'), [p], '', 'en')
+
+    await e.sendInlinePlanContent(p, 'ctx', undefined, planBody, '', 1, 'plan:1')
+
+    expect(p.sentCards).toHaveLength(1)
+    expect((p.sentCards[0] as Card).header?.title).toBe('计划')
   })
 })
