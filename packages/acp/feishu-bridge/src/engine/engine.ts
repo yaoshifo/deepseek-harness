@@ -1389,12 +1389,48 @@ export class Engine {
       return
     }
 
-    // M3: Route permission responses to handlePendingPermission before normal
-    // dispatch (Go engine.go: every message passes through this check —
-    // card-button actions AND free-text answers to a pending question).
-    // Chatroom pending-human replies outrank it (Go orders routePendingHumanReply
-    // before permission handling).
+    // Pure attachment (no text) — stage to disk and wait for the next text
+    // message instead of firing an empty-intent agent turn (#8, Go
+    // stageAttachments): Feishu image/file messages cannot carry text. Go
+    // stages before session creation and pending-question routing, so an
+    // image-only message never resolves a pending human question.
+    if (content === '' && (msg.images.length > 0 || msg.files.length > 0)) {
+      this.stageAttachments(p, msg, msg.sessionKey)
+      return
+    }
+
+    const session = this.sessions.getOrCreateActive(msg.sessionKey)
+    this.sessions.updateUserMeta(msg.sessionKey, msg.userName, msg.chatName)
+    // Capture the interacting user's ID before command dispatch: a session
+    // whose first message is a slash command must still record its spawner
+    // (Go engine.go — only persist on change to avoid a disk write per
+    // message).
+    if (msg.userID !== '' && session.getSpawnUserID() !== msg.userID) {
+      session.setSpawnUserID(msg.userID)
+      this.sessions.save()
+    }
+
+    // Chatroom pending-human replies outrank both command dispatch and
+    // permission handling (Go orders routePendingHumanReply before
+    // handleCommand). Slash commands pass through untouched.
     if (routePendingHumanReply(this, p, msg.sessionKey, content)) return
+
+    // Slash commands dispatch BEFORE permission handling (Go engine.go fix
+    // 60e20ef6): a registered command like /done must run while a permission
+    // card is pending instead of being swallowed as a non-keyword reply —
+    // /done tears the session down, unblocking the parked permission wait
+    // via its stop signal. AskUserQuestion card answers are exempt: an
+    // option label may start with "/" (e.g. "/chatroom 不带任何参数") and
+    // must resolve the pending question, never run as a command. Unregistered
+    // commands fall through to permission handling, then to the agent as a
+    // normal message.
+    if (!msg.isAskqCardAction && msg.images.length === 0 && content.startsWith('/')) {
+      if (this.dispatchCommand(p, msg, content)) return
+    }
+
+    // Permission responses route here after command dispatch (Go engine.go:
+    // every message passes through this check — card-button actions AND
+    // free-text answers to a pending question).
     if (this.handlePendingPermission(p, msg, content)) return
 
     // "!" prefix: treat as a shell command (same as /shell). Placed after
@@ -1406,25 +1442,6 @@ export class Engine {
         runBangShell(this, p, msg, shellCmd)
         return
       }
-    }
-
-    // Pure attachment (no text) — stage to disk and wait for the next text
-    // message instead of firing an empty-intent agent turn (#8, Go
-    // stageAttachments): Feishu image/file messages cannot carry text.
-    if (content === '' && (msg.images.length > 0 || msg.files.length > 0)) {
-      this.stageAttachments(p, msg, msg.sessionKey)
-      return
-    }
-
-    const session = this.sessions.getOrCreateActive(msg.sessionKey)
-    this.sessions.updateUserMeta(msg.sessionKey, msg.userName, msg.chatName)
-    if (msg.userID !== '' && session.getSpawnUserID() !== msg.userID) {
-      session.setSpawnUserID(msg.userID)
-      this.sessions.save()
-    }
-
-    if (msg.images.length === 0 && content.startsWith('/')) {
-      if (this.dispatchCommand(p, msg, content)) return
     }
 
     if (!session.tryLock()) {

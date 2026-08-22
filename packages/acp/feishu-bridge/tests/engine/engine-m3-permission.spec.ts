@@ -13,6 +13,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
+import { registerSessionCommands } from '../../src/engine/commands.js'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -21,8 +22,11 @@ import {
   createRecordingAgentSession,
   newControllableSession,
   newPendingPermission,
+  testQuestions,
+  type RecordingAgentSession,
+  type StubPlatform,
 } from '../stubs/engine-stubs.js'
-import type { Message } from '../../src/core/types.js'
+import type { Message, PendingPermission } from '../../src/core/types.js'
 
 function newTestEngine(): Engine {
   return new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')
@@ -602,5 +606,115 @@ describe('PostPermissionCardRestart', () => {
     expect(updates.filter(u => u.handle === 'handle-1').length).toBe(oldCardUpdates)
     // Preview active: the pre-interaction text is not re-sent as a message.
     expect(p.getSent().join('\n')).not.toContain('intro narration')
+  })
+})
+
+// Go engine.go order: slash-command dispatch (guarded against askq card
+// answers, commit 60e20ef6) runs BEFORE handlePendingPermission, so a
+// registered command like /done still executes while a plan card is pending.
+describe('handleMessage routing: slash commands vs pending permission', () => {
+  /** Engine with session commands registered (commands.spec.ts newEngine shape). */
+  function newRoutingEngine(): { e: Engine; p: StubPlatform; dispose: () => void } {
+    const p = createStubPlatform('test')
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    return { e, p, dispose }
+  }
+
+  /** State with a pending permission installed, mirroring a live permission card. */
+  function armPending(e: Engine, p: StubPlatform, pending: PendingPermission): { state: InteractiveState; rec: RecordingAgentSession } {
+    const rec = createRecordingAgentSession()
+    const state = new InteractiveState()
+    state.agentSession = rec
+    state.platform = p
+    state.replyCtx = 'ctx'
+    state.pending = pending
+    e.interactiveStates.set('test:chat:user1', state)
+    return { state, rec }
+  }
+
+  it('/done during a pending plan card dispatches the command, not the hint', () => {
+    const { e, p, dispose } = newRoutingEngine()
+    try {
+      const { state } = armPending(e, p, newPendingPermission({ requestID: 'req-1', toolName: 'ExitPlanMode', toolInput: {} }))
+
+      e.receiveMessage(p, msg({ content: '/done', chatType: 'p2p' }))
+
+      const sent = p.getSent().join('\n')
+      expect(sent).toContain('/done is only available in spawned group chats')
+      expect(sent).not.toContain('Waiting for permission response')
+      expect(state.pending).toBeDefined()
+    } finally {
+      dispose()
+    }
+  })
+
+  it('askq card answer with a /-prefixed label resolves the question, never dispatches a command (Go 60e20ef6)', () => {
+    const { e, p, dispose } = newRoutingEngine()
+    try {
+      const { rec } = armPending(e, p, newPendingPermission({
+        requestID: 'req-1',
+        toolName: 'AskUserQuestion',
+        toolInput: {},
+        questions: testQuestions(),
+      }))
+
+      e.receiveMessage(p, msg({ content: '/chatroom 不带任何参数', isAskqCardAction: true }))
+
+      // Card actions update the card in place — no ✅ text reply; the answer
+      // riding the permission response is the proof the question was resolved.
+      const answers = (rec.lastResult?.updatedInput as { answers?: Record<string, string> } | undefined)?.answers
+      expect(rec.lastResult?.behavior).toBe('allow')
+      expect(answers?.['Which database?']).toBe('/chatroom 不带任何参数')
+      expect(p.getSent().join('\n')).not.toContain('Waiting for permission response')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('free-text answer to a pending question still resolves it (c86779ae21 motivation preserved)', () => {
+    const { e, p, dispose } = newRoutingEngine()
+    try {
+      const { state } = armPending(e, p, newPendingPermission({
+        requestID: 'req-1',
+        toolName: 'AskUserQuestion',
+        toolInput: {},
+        questions: testQuestions(),
+      }))
+
+      e.receiveMessage(p, msg({ content: '1' }))
+
+      expect(p.getSent().join('\n')).toContain('✅ Which database?: **PostgreSQL**')
+      expect(state.pending).toBeUndefined()
+    } finally {
+      dispose()
+    }
+  })
+
+  it('non-keyword free text during a plain pending permission still gets the hint', () => {
+    const { e, p, dispose } = newRoutingEngine()
+    try {
+      const { state } = armPending(e, p, newPendingPermission({ requestID: 'req-1', toolName: 'ExitPlanMode', toolInput: {} }))
+
+      e.receiveMessage(p, msg({ content: '随便说说' }))
+
+      expect(p.getSent().join('\n')).toContain('Waiting for permission response')
+      expect(state.pending).toBeDefined()
+    } finally {
+      dispose()
+    }
+  })
+
+  it('unregistered slash command falls through dispatch to the hint', () => {
+    const { e, p, dispose } = newRoutingEngine()
+    try {
+      armPending(e, p, newPendingPermission({ requestID: 'req-1', toolName: 'ExitPlanMode', toolInput: {} }))
+
+      e.receiveMessage(p, msg({ content: '/nope' }))
+
+      expect(p.getSent().join('\n')).toContain('Waiting for permission response')
+    } finally {
+      dispose()
+    }
   })
 })
