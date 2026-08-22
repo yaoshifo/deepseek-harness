@@ -1369,8 +1369,10 @@ export class FeishuPlatform implements Platform {
    * dispatch with the formatted prefix as extraContent (Go dispatchMessage's
    * quoted-prefix block). Skipped inside isolated threads — the thread
    * already carries the context and a long prefix would drown the user's
-   * text. Any fetch failure degrades to dispatching without the quote.
-   * Downloaded attachments (post-embedded images) ride along unchanged.
+   * text — except in monitored chats: they never run an agent session, so
+   * the quote is /learn's data, not context the session already holds. Any
+   * fetch failure degrades to dispatching without the quote. Downloaded
+   * attachments (post-embedded images) ride along unchanged.
    * @param images - Downloaded images to attach, e.g. a post's embedded images.
    */
   private async dispatchWithQuote(
@@ -1387,7 +1389,7 @@ export class FeishuPlatform implements Platform {
   ): Promise<void> {
     let prefix = ''
     let quoted: ChainMessage | undefined
-    if (parentID !== '' && !(this.o.threadIsolation === true && isThreadSessionKey(sessionKey))) {
+    if (parentID !== '' && !(this.o.threadIsolation === true && isThreadSessionKey(sessionKey) && !this.isMonitorChat(chatID))) {
       ({ prefix, quoted } = await this.fetchQuotedMessage(parentID))
     }
     this.dispatch(
@@ -1530,6 +1532,10 @@ export class FeishuPlatform implements Platform {
 
   private shouldReplyInThread(rc: FeishuReplyContext): boolean {
     if (rc.messageID === '') return false
+    // Monitored chats reply inline: the poll path already does (per-user
+    // session keys), and a thread reply would open a new topic in the group
+    // on every ack.
+    if (this.isMonitorChat(rc.chatID)) return false
     return this.o.threadIsolation === true && isThreadSessionKey(rc.sessionKey)
   }
 

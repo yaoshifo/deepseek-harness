@@ -37,6 +37,7 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 - **lark 工具仅支持 Feishu 域（open.feishu.cn）**：插件平台侧整体未移植 Go `larkCreds.Brand`（lark.com 双域名）；需要 lark 域时在 `src/tools/lark.ts` 与平台 client 引入 brand 维度。
 - **send 工具只读本地路径**：Go CLI 的 `--image/--file` 还支持 http(s) URL 拉取；agent 产物都在磁盘上，该分支未移植。i18n 的 `relay_setup_ok`/`cron_setup_ok` 消息为保形移植残留：其 Go 调用方把 CLI 指令写进 agent 记忆文件，该机制在 dsh 下已过时（每个会话都有原生系统提示机制），不接线也不删除。
 - **引用消息的发送者名不解析**：平台从不经通讯录 API 解析联系人名（M1 起的既定裁剪），引用链里发送者渲染为 `User`/`Bot`；需要真名时随平台补 `resolveUserName` 缓存。
+- **`/learn` 引用仅在事件通路可用**：轮询兜底摄入的监控消息（`pollItemToMessage` 构造时不带 parent/引用信息）无法为 `/learn` 提供被引用示例；人类发的 `/learn` 走 WS 事件通路、能带上引用（监控群豁免 thread 隔离的引用抓取跳过）。
 - **`reply_footer`（#11）余额段待 adapter 生长**：页脚本体已接线（M7-b，`status-footer.ts` buildReplyFooter，默认关）；余额段在 dsh adapter 长出 UsageReporter 前保持空缺（能力面已就绪）。
 - **入站语音消息被丢弃（已裁定不迁）**：Go 经 `[speech]`（Whisper 兼容厂商）转写后喂给 agent；TS 平台按用户裁定（2026-08-21 审计）对 `audio` 消息直接丢弃。i18n 的 `voice_*` 文案为保形移植残留；将来需要语音输入时移植 speech.go 是升级路径。
 - **agent 失败以原始报错呈现（已裁定不迁）**：Go 的 failure_classify.go（七类失败分类驱动用户文案）与 redact/（展示前脱敏）按同一裁定不移植；用户看到原始错误文本。
