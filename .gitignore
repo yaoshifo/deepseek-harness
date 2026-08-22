@@ -3,6 +3,7 @@ CLAUDE.local.md
 *.pem
 credentials.json
 .cc-connect/
+.feishu-bridge/
 node_modules/
 lib/
 *.tsbuildinfo
