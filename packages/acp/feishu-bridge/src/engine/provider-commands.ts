@@ -156,6 +156,7 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
     case 'none': {
       switcher.setActiveProvider('')
       e.applyActiveProviderContextWindow()
+      e.syncUsageProvidersActive()
       e.stopInteractiveSession(msg.sessionKey)
       const s = e.sessions.getOrCreateActive(msg.sessionKey)
       s.setAgentSessionID('', '')
@@ -195,6 +196,7 @@ async function switchProvider(e: Engine, p: Platform, msg: Message, switcher: Pr
     return
   }
   e.applyActiveProviderContextWindow()
+  e.syncUsageProvidersActive()
   e.stopInteractiveSession(msg.sessionKey)
   const s = e.sessions.getOrCreateActive(msg.sessionKey)
   s.setAgentSessionID('', '')
@@ -211,6 +213,7 @@ async function switchProviderResume(e: Engine, p: Platform, msg: Message, switch
     return
   }
   e.applyActiveProviderContextWindow()
+  e.syncUsageProvidersActive()
   const s = e.sessions.getOrCreateActive(msg.sessionKey)
   const agentSessionID = s.getAgentSessionID()
   const agentType = s.agentType
@@ -238,6 +241,7 @@ async function cmdProviderShortcut(e: Engine, p: Platform, msg: Message, provide
     return
   }
   e.applyActiveProviderContextWindow()
+  e.syncUsageProvidersActive()
 
   e.stopInteractiveSession(msg.sessionKey)
   const old = e.sessions.getOrCreateActive(msg.sessionKey)

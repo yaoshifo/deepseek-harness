@@ -986,11 +986,30 @@ export class Engine {
   }
 
   /**
-   * Set the provider quota list appended to the completion footer (Go SetUsageProviders).
+   * Set the provider quota list appended to the completion footer (Go
+   * SetUsageProviders). Implementations of the optional active-detection
+   * capability are seeded with the current active provider name so their
+   * gate holds from the first turn.
    * @param providers - Providers whose quota lines are appended.
    */
   setUsageProviders(providers: UsageProvider[]): void {
     this.usageProviders = providers
+    this.syncUsageProvidersActive()
+  }
+
+  /**
+   * Push the active provider name into every usage provider implementing the
+   * optional active-detection capability (Go SetUsageProviders +
+   * engine_provider.go's switch/flip paths). Detectors gate their ⌛ summary
+   * on the name, so it must follow every active-route change — otherwise a
+   * matching provider's summary never appears.
+   */
+  syncUsageProvidersActive(): void {
+    const name = asProviderSwitcher(this.agent)?.getActiveProvider()?.name ?? ''
+    for (const up of this.usageProviders) {
+      const detector = up as UsageProvider & { setActiveProvider?: (name: string) => void }
+      if (typeof detector.setActiveProvider === 'function') detector.setActiveProvider(name)
+    }
   }
 
   /**

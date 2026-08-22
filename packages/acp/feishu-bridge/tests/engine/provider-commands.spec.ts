@@ -14,6 +14,7 @@ import { Engine } from '../../src/engine/engine.js'
 import { registerProviderCommands } from '../../src/engine/provider-commands.js'
 import { registerSessionCommands } from '../../src/engine/commands.js'
 import type { Agent, Message, ProviderSwitcher } from '../../src/core/types.js'
+import type { UsageProvider } from '../../src/engine/usage.js'
 import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
 
 /** Go stubProviderAgent: a ProviderSwitcher over a static route table. */
@@ -273,6 +274,89 @@ describe('provider shortcuts', () => {
 
     expect(e.dispatchCommand(p, msg(), '/strongs')).toBe(false)
     expect(p.getSent().length).toBe(0)
+    dispose()
+  })
+})
+
+// ── usage provider active sync (Go SetUsageProviders + switch paths) ──────
+
+/** Detector usage provider recording setActiveProvider calls and gating its summary on the recorded name. */
+type DetectorUsageProvider = UsageProvider & {
+  isActive(workDir: string): boolean
+  setActiveProvider(name: string): void
+  fetchSummary(): Promise<string>
+}
+
+function detectorUsageProvider(match: (active: string) => boolean, summary = 'wk: 84%(9%)') {
+  const state = { calls: [] as string[], active: '' }
+  const provider: DetectorUsageProvider = {
+    name: () => 'det',
+    summary: () => summary,
+    refresh: () => {},
+    isActive: (_workDir: string) => match(state.active),
+    setActiveProvider: (name: string) => { state.calls.push(name); state.active = name },
+    fetchSummary: async () => summary,
+  }
+  return { provider, state }
+}
+
+/** Turn accounting with all token counters zeroed (usage line only). */
+const zeroTurn = {
+  totalInputTokens: 0, sdkPlausible: false, selfPct: 0,
+  nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
+  numTurns: 0, compactionCount: 0,
+}
+
+describe('usage provider active sync (Go SetUsageProviders + switch paths)', () => {
+  it('seeds detectors with the active provider name, gating the ⌛ line (Go engine.go SetUsageProviders)', async () => {
+    const { e, dispose } = newEngine(providerAgent(['glm', 'minimax'], 'glm'))
+    const { provider, state } = detectorUsageProvider(active => active.startsWith('glm'))
+    e.setUsageProviders([provider])
+    expect(state.calls).toEqual(['glm'])
+
+    await e.buildCompletionUsage(zeroTurn)
+    expect(e.usage.providerMsg).toBe('💰 wk: 84%(9%)')
+    dispose()
+  })
+
+  it('hides the ⌛ line when the active provider is not the usage provider', async () => {
+    const { e, dispose } = newEngine(providerAgent(['glm', 'minimax'], 'minimax'))
+    const { provider } = detectorUsageProvider(active => active.startsWith('glm'))
+    e.setUsageProviders([provider])
+
+    await e.buildCompletionUsage(zeroTurn)
+    expect(e.usage.providerMsg).toBe('')
+    dispose()
+  })
+
+  it('switch, --resume, shortcut, and clear each re-sync the active name (Go engine_provider.go)', async () => {
+    const agent = providerAgent(['glm', 'minimax'], 'glm')
+    const p = createStubPlatform('test')
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerProviderCommands(e)
+    e.setProviderShortcuts({ mini: 'minimax' })
+    const { provider, state } = detectorUsageProvider(() => true)
+    e.setUsageProviders([provider])
+    state.calls.length = 0
+
+    e.dispatchCommand(p, msg(), '/provider switch minimax')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(state.calls).toEqual(['minimax'])
+
+    state.calls.length = 0
+    e.dispatchCommand(p, msg(), '/provider glm --resume')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(state.calls).toEqual(['glm'])
+
+    state.calls.length = 0
+    e.dispatchCommand(p, msg(), '/mini')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(state.calls).toEqual(['minimax'])
+
+    state.calls.length = 0
+    e.dispatchCommand(p, msg(), '/provider clear')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(state.calls).toEqual([''])
     dispose()
   })
 })
