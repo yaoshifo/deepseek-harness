@@ -210,13 +210,14 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 
 **M8 Cutover（✅ 2026-08-21 完成，Dev 服务器批量切流；用户裁定放弃「记账驴回归 1-2 周后逐个迁」的原分阶段计划）**
 
-- **范围**：Dev 服务器 7 个 dsh 型 project（风控驴/运维驴/择时驴/赛博修麟/赛博江岐/教学驴/知识驴）一次性切到 feishu-bridge daemon，8 WS 全挂；赛博婷婷（claudecode 型）按用户决定留在 cc-connect，cc-connect.service 仅为其运行，cc-connect-bridge 包不归档；本机 launchd 侧（开发虾）不受影响。
+- **范围**：Dev 服务器 7 个 dsh 型 project（风控驴/运维驴/择时驴/赛博修麟/赛博江岐/教学驴/知识驴）2026-08-21 一次性切到 feishu-bridge daemon；赛博婷婷（claudecode 型）2026-08-22 由用户决定同样切到 feishu-bridge（第 9 个 project、dsh 后端、全新会话——CC 会话格式本就无法迁入），cc-connect.service 随之停止并保持 disabled，Dev 上 cc-connect 退役；本机 launchd 侧（开发虾）不受影响。
 - **用户裁定**：全新会话开始（会话注册表不迁移，`~/.cc-connect/sessions/<project>_*.json` 原地保留作回退资产）；一次全切（单次 cc-connect 重启）。
 - **代码**：daemon worktree promote 到 dev tip c57d9a3de8。构建两个坑：完整构建需 host+client 两个相位（仅 host 相位缺 api-gateway 等 client 包的 Node 入口，CLI boot 报 ERR_MODULE_NOT_FOUND）；7.5G 内存机上 tsc 需 `NODE_OPTIONS=--max-old-space-size=6144`（默认堆上限 OOM）。systemd 单元 ExecStart 由 npm 全局 dsh（rc.6，与 worktree 插件差两个版本世代）改为 worktree `apps/cli/lib/bin.js`，与本机开发虾同构；stdout/stderr 改走 journal（原 append 到 /tmp 下的 scratch 路径，重启即失）。
 - **profile**：补全局键（language zh / hints×3 / display：stall 600·2·absolute 3600·editorUrl / chatroom / subtask 600）、lsp 三行 + 三个 bigmodel MCP 行（自 cc-connect profile 原样拷，agent 能力保真）、plan-mode override 行；记账驴条目补齐旧 toml 等价配置（mode: plan 等，M1 时漏配）。
-- **路径去 cc-connect 化**（用户要求）：会话 root `~/.dsh/cc-connect-sessions` → `~/.dsh/feishu-bridge-sessions`（mv，历史全保留，记账驴在途会话验证续接正常）；渲染工具拷至 `~/.dsh/feishu-bridge/tools/`（planRender 指新路径）；`~/.dsh/profiles/cc-connect` 归档进 `~/.cc-connect/backup-cutover-20260821/`。`~/.cc-connect/` 与 `~/workspace/cc-connect` 仓库本身保留（赛博婷婷的 cc-connect、教学驴 workdir 所在）。
+- **路径去 cc-connect 化**（用户要求）：会话 root `~/.dsh/cc-connect-sessions` → `~/.dsh/feishu-bridge-sessions`（mv，历史全保留，记账驴在途会话验证续接正常）；渲染工具拷至 `~/.dsh/feishu-bridge/tools/`（planRender 指新路径）；`~/.dsh/profiles/cc-connect` 归档进 `~/.cc-connect/backup-cutover-20260821/`。`~/.cc-connect/` 与 `~/workspace/cc-connect` 仓库本身保留（回退资产；教学驴 workdir 所在）。
 - **状态 seed**：10 个标签缓存 → 共享 `sessions/`；8 个 spawned 注册表 → 各 project 数据目录；monitor_examples（风控驴）；crons 10 条（Go 侧 jobs.json 置空防双跑——Go cron 对已注释 project 触发时报 project not found 跳过，但会刷错误日志）；hint_usage / dir_history / relay_bindings（旧名死绑定原样拷）。
-- **验证**：记账驴真机一轮（新会话 plan 模式生效、回复正常、0 报错）；cron 10 条载入；8 bot 头像探活；赛博婷婷随 cc-connect 重启正常（projects=1）。其余 bot 真机冒烟由用户日常使用回归。
+- **验证**：记账驴真机一轮（新会话 plan 模式生效、回复正常、0 报错）；cron 10 条载入；8 bot 头像探活。其余 bot 真机冒烟由用户日常使用回归。
+- **赛博婷婷切流（2026-08-22）**：与 7 bot 同流程（state seed：标签缓存 + spawned 注册表；注释 config.toml 段 + 停 cc-connect + profile 加第 9 个 project）。**踩坑**：切流脚本从 `config.toml.bak-tingting` 提取凭据时按「注释段」搜索，而该备份里赛博婷婷的段是未注释状态——知识驴的注释段延伸至文件尾、包含了赛博婷婷的名字，正则错取了知识驴的 appId/workdir，导致 profile 里的「赛博婷婷」实为知识驴的克隆（真正的赛博婷婷 app 从未接入、消息全无反应；表现为「WS 连上了但零事件」，排查时被当作事件投递问题绕了远路——临时 lark-cli 事件监听器收到真 app 的事件才定位）。教训：配置生成脚本必须断言提取到的 appId 等关键字段等于预期值，不能只断言 name。修正后（appId=cli_a96c8817…、workdir=tingting）真机 /spawn + 对话验证通过。
 - **回退**：单 bot = 删 profile project 段（HMR）+ 取消注释 config.toml + 重启 cc-connect（需先取回归档的 `~/.dsh/profiles/cc-connect`）；整体 = 恢复 `config.toml.bak-cutover-20260821` + 停 feishu-bridge。root 已改名，回退后 Go 侧在旧路径空目录重建，预切流历史在新路径可找回。
 
 ## 5. E2E 测试策略（可自测的边界）
