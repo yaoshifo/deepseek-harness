@@ -17,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Engine } from '../../src/engine/engine.js'
 import { registerSessionCommands } from '../../src/engine/commands.js'
-import { registerReloadCommands, resolveReloadScript } from '../../src/engine/reload-commands.js'
+import { reloadSpawnArgv, registerReloadCommands, resolveReloadScript } from '../../src/engine/reload-commands.js'
 import { Msg } from '../../src/i18n/index.js'
 import {
   createStubAgent,
@@ -182,8 +182,9 @@ describe('cmdReload', () => {
     expect(e.dispatchCommand(p, reloadMsg('/reload'), '/reload')).toBe(true)
     await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(1) })
     const [cmd, argv, opts] = mockSpawn.mock.calls[0] ?? []
-    expect(cmd).toBe('sh')
-    expect(argv).toEqual([scriptPath])
+    const spec = reloadSpawnArgv(process.platform, scriptPath, [])
+    expect(cmd).toBe(spec.cmd)
+    expect(argv).toEqual(spec.args)
     expect(opts?.detached).toBe(true)
     expect(opts?.stdio?.[0]).toBe('ignore')
     expect(opts?.env?.FB_RELOAD_FROM_DAEMON).toBe('1')
@@ -198,7 +199,9 @@ describe('cmdReload', () => {
     currentPlatform = p
     expect(e.dispatchCommand(p, reloadMsg('/reload --skip-build'), '/reload --skip-build')).toBe(true)
     await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(1) })
-    expect(mockSpawn.mock.calls[0]?.[1]).toEqual([scriptPath, '--skip-build'])
+    const spec = reloadSpawnArgv(process.platform, scriptPath, ['--skip-build'])
+    expect(mockSpawn.mock.calls[0]?.[0]).toBe(spec.cmd)
+    expect(mockSpawn.mock.calls[0]?.[1]).toEqual(spec.args)
   })
 
   it('refuses a second /reload while one is in flight, then recovers after failure', async () => {
@@ -239,6 +242,25 @@ describe('cmdReload', () => {
     childCbs.get('exit')?.(0)
     await new Promise((resolve) => { setTimeout(resolve, 20) })
     expect(p.getSent().length).toBe(sent)
+  })
+})
+
+describe('reloadSpawnArgv', () => {
+  it('escapes the daemon unit cgroup via a systemd-run scope on Linux', () => {
+    // A setsid child stays in feishu-bridge.service's cgroup and
+    // KillMode=control-group kills it mid-restart (2026-08-22 false-failure
+    // outage), so Linux must spawn through a sibling scope unit.
+    expect(reloadSpawnArgv('linux', '/x/reload.sh', ['--skip-build'])).toEqual({
+      cmd: 'systemd-run',
+      args: ['--user', '--scope', '--collect', 'sh', '/x/reload.sh', '--skip-build'],
+    })
+  })
+
+  it('spawns sh directly on macOS (launchd teardown leaves a setsid child alone)', () => {
+    expect(reloadSpawnArgv('darwin', '/x/reload.sh', [])).toEqual({
+      cmd: 'sh',
+      args: ['/x/reload.sh'],
+    })
   })
 })
 

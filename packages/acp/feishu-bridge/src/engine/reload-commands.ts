@@ -1,11 +1,14 @@
 /**
  * The `/reload` command: rebuild the host face and restart the daemon — the
  * chat-side entry to reload.sh (TS-native; no Go counterpart). The handler
- * spawns the script detached (setsid) so it survives the daemon teardown it
- * itself causes, with FB_RELOAD_FROM_DAEMON=1 skipping only the script's
- * ppid-walk guard (which would otherwise false-positive on the live daemon
- * ancestor); the DSH_SESSION_JSONL guard still refuses daemon-hosted agent
- * sessions that reach for the variable manually.
+ * spawns the script detached so it survives the daemon teardown it itself
+ * causes — directly with setsid on macOS, and through a `systemd-run --user
+ * --scope` sibling unit on Linux, where setsid alone stays in the daemon
+ * unit's cgroup and dies to the restart's control-group kill (2026-08-22).
+ * FB_RELOAD_FROM_DAEMON=1 skips only the script's ppid-walk guard (which
+ * would otherwise false-positive on the live daemon ancestor); the
+ * DSH_SESSION_JSONL guard still refuses daemon-hosted agent sessions that
+ * reach for the variable manually.
  *
  * Ceiling: when the script fails after the daemon has already restarted
  * (e.g. the Feishu WS probe times out), this process is gone and only
@@ -78,6 +81,31 @@ export function resolveReloadScript(fromURL: string | URL = import.meta.url): st
 let reloading = false
 
 /**
+ * Spawn command and argv for a detached reload.sh on the given platform.
+ *
+ * On Linux, `spawn(detached: true)` only setsids the child — it stays in the
+ * daemon unit's cgroup, and `systemctl --user restart` (KillMode=control-group)
+ * kills the whole cgroup, taking the script down mid-restart (the 2026-08-22
+ * dev outage: the restart landed but the script died before its WS probe and
+ * reported a false failure). A transient scope unit is a sibling of the daemon
+ * unit, outside its cgroup; `systemd-run` waits for the command, so exit-code
+ * reporting is unchanged. `--collect` garbage-collects the scope on exit; no
+ * fixed `--unit` name, so a leftover scope cannot collide. On macOS, launchd
+ * teardown leaves a setsid child alone, so the script spawns directly.
+ *
+ * @param platform - The platform to build the spawn for (the daemon's own).
+ * @param scriptPath - The located reload.sh path.
+ * @param scriptArgs - Arguments to pass through (e.g. --skip-build).
+ * @returns The command and its full argument list for `spawn`.
+ */
+export function reloadSpawnArgv(platform: NodeJS.Platform, scriptPath: string, scriptArgs: string[]): { cmd: string; args: string[] } {
+  if (platform === 'linux') {
+    return { cmd: 'systemd-run', args: ['--user', '--scope', '--collect', 'sh', scriptPath, ...scriptArgs] }
+  }
+  return { cmd: 'sh', args: [scriptPath, ...scriptArgs] }
+}
+
+/**
  * /reload [--skip-build]: spawn reload.sh detached and restart the daemon on
  * the latest build (the same effect as running the script from a plain
  * terminal).
@@ -123,7 +151,8 @@ async function cmdReload(e: Engine, p: Platform, msg: Message, args: string[]): 
     logFd = undefined
     console.warn(`/reload: cannot open ${logPath}; continuing with output discarded: ${String(error)}`)
   }
-  const child = spawn('sh', [scriptPath, ...scriptArgs], {
+  const spawnArgv = reloadSpawnArgv(process.platform, scriptPath, scriptArgs)
+  const child = spawn(spawnArgv.cmd, spawnArgv.args, {
     detached: true,
     stdio: logFd === undefined ? 'ignore' : ['ignore', logFd, logFd],
     env: { ...process.env, FB_RELOAD_FROM_DAEMON: '1' },

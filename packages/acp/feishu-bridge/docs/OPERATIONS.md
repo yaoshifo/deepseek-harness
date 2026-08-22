@@ -140,7 +140,7 @@ launchd 模板把标准输出/错误写到 `@LOG_DIR@/feishu-bridge-stdout.log` 
 ### 3.3 reload 流程
 
 - TS 代码改动（一键，双平台）：`packages/acp/feishu-bridge/reload.sh`——§1.3 两步构建 → 重启 daemon（macOS：`launchctl unload`/`load` + stdout/stderr 日志轮换；Linux：单条 `systemctl --user restart`，原子操作无空窗）→ WS 就绪探活（macOS 查轮换后的 stdout 日志，Linux 查 journal）；`--skip-build` 跳过构建（构建已在别处完成时）。在 daemon 内的会话里执行会被拒绝（重启会中断自身 turn；由 bash 环境里的 `DSH_SESSION_JSONL` 判定——agent 沙箱会把 `XPC_SERVICE_NAME` 改写成字面量 `0`、并拒绝 `ps`，两者都不可用），须从普通终端跑；进行中 turn 会回滚到最后完整 turn。macOS 上 unload 与 load 之间脚本若因任何原因退出，会自动重试 `launchctl load` 恢复服务。
-- 同一效果的聊天入口：admin 用户发 `/reload [--skip-build]`（TS 原生命令，无 Go 对应）。daemon 以 detached（setsid）子进程运行上述脚本并带 `FB_RELOAD_FROM_DAEMON=1`——该变量只豁免脚本的 ppid 守卫（detached 子进程正是该守卫想近似的安全场景），`DSH_SESSION_JSONL` 守卫不豁免。输出追加到 `$LOG_DIR`（默认 `~/.dsh`）的 `feishu-bridge-reload.log`；进行中仅允许一个 reload；脚本在重启之前失败（构建失败、plist/systemd unit 缺失）时 daemon 未重启、用户会收到失败回复，daemon 已重启后才发现的失败（如 WS 探活超时）只有该日志留痕。
+- 同一效果的聊天入口：admin 用户发 `/reload [--skip-build]`（TS 原生命令，无 Go 对应）。daemon 以 detached 子进程运行上述脚本并带 `FB_RELOAD_FROM_DAEMON=1`——该变量只豁免脚本的 ppid 守卫（detached 子进程正是该守卫想近似的安全场景），`DSH_SESSION_JSONL` 守卫不豁免。macOS 直接 setsid spawn（launchd teardown 打不到 setsid 子进程）；Linux 经 `systemd-run --user --scope` 生成兄弟 scope 单元——setsid 出不了 `feishu-bridge.service` 的 cgroup，`systemctl --user restart`（KillMode=control-group）会连带杀掉脚本造成重启成功但误报失败（2026-08-22 dev 事故）。输出追加到 `$LOG_DIR`（默认 `~/.dsh`）的 `feishu-bridge-reload.log`；进行中仅允许一个 reload；脚本在重启之前失败（构建失败、plist/systemd unit 缺失）时 daemon 未重启、用户会收到失败回复，daemon 已重启后才发现的失败（如 WS 探活超时）只有该日志留痕。
 - profile yml / 插件 config 改动：Cordis HMR 事务热载，无需重启。
 
 ## 4. 回退（回旧 cc-connect）
