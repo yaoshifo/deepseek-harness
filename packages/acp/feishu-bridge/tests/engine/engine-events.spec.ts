@@ -636,6 +636,63 @@ describe('processInteractiveEvents user stop mid-handler', () => {
   })
 })
 
+describe('processInteractiveEvents engine stop mid-handler', () => {
+  /**
+   * Engine.stop() (plugin reload) closes the agent session without resolving
+   * the stop arm, so a loop parked mid-handler exits via channel-close with
+   * no terminal card and the preview freezes in its Running state across the
+   * reload. The stop must finalize the card itself, before platforms stop.
+   */
+  it('finalizes the preview card on Engine.stop when the loop is mid-handler', async () => {
+    const messages: string[] = []
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
+    const p = Object.assign(createStubPlatform(), {
+      messages,
+      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+        await startGate
+        messages.push(`start:${content}`)
+        return 'preview-handle'
+      },
+      async updateMessage(_handle: unknown, content: string): Promise<void> {
+        messages.push(`update:${content}`)
+      },
+      async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
+        messages.push(`stopped:${String(id)}`)
+      },
+    })
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolProgress: true })
+    const sessionKey = 'test:engine-stop-mid-handler'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    state.beginTurn()
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    await new Promise(r => setTimeout(r, 0))
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    await new Promise(r => setTimeout(r, 0))
+
+    // markStoppedSync queues on the preview lock held by the gated first
+    // flush, so the stop cannot complete until the gate opens.
+    const stopping = e.stop()
+    releaseStart!()
+    await stopping
+    await done
+    await new Promise(r => setTimeout(r, 20))
+
+    const stoppedIdx = messages.findIndex(m => m.startsWith('stopped:'))
+    expect(stoppedIdx, `messages=${JSON.stringify(messages)}`).toBeGreaterThanOrEqual(0)
+    const afterStopped = messages.slice(stoppedIdx + 1).filter(m => m.startsWith('update:') || m.startsWith('start:'))
+    expect(afterStopped, `messages=${JSON.stringify(messages)}`).toEqual([])
+  })
+})
+
 it('processInteractiveEvents persists the agent session ID', async () => {
   const { e, p } = newEngine()
   const path = `${process.env.VITEST_TMPDIR ?? '/tmp'}/fb-persist-${Date.now()}/sessions.json`

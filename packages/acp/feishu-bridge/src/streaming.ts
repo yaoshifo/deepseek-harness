@@ -621,6 +621,12 @@ export class StreamPreview {
 
   /** Send the current preview text to the platform. Must hold the lock. */
   private async flushLocked(textIn: string): Promise<void> {
+    // Terminal latch: a throttled flush racing the stopped render must not
+    // overwrite the ⏹ card with Running content. Completed and failed cards
+    // rebuild with their own terminal state prefix, and the stall-retry flow
+    // keeps PATCHing a failed card for the retried turn, so only the stopped
+    // render (rendered out-of-band, no prefix on rebuild) latches flushes.
+    if (this.stoppedCardRendered) return
     let text = textIn
     if (this.transform !== undefined) text = this.transform(text)
     if (text === this.lastSentText || text === '') return

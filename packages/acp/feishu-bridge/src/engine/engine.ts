@@ -1314,6 +1314,18 @@ export class Engine {
       if (platform !== undefined) {
         await this.send(platform, state.replyCtx, this.i18n.t(Msg.PluginReloaded))
       }
+      // The stopped state never reaches the event loop's stop arm — the loop
+      // drains channel-close instead. Finalize the active preview card here,
+      // before platforms stop, or it freezes in its Running state across the
+      // reload.
+      const preview = state.preview
+      if (preview !== undefined) {
+        try {
+          await preview.markStoppedSync()
+        } catch (error) {
+          console.warn(`engine: stop preview finalize failed: ${String(error)}`)
+        }
+      }
     }
     for (const p of this.platforms) await p.stop()
     const states = [...this.interactiveStates.values()]

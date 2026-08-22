@@ -301,6 +301,19 @@ describe('StreamPreview', () => {
     expect(mp.stoppedCalls, 'resumeFromFreeze re-arms the stopped render').toBe(2)
   })
 
+  it('a throttled flush scheduled before a stopped render cannot PATCH after it', async () => {
+    const mp = createMockStopRendererPlatform()
+    const sp = newStreamPreview(cfg({ intervalMs: 100, minDeltaChars: 5 }), mp, 'ctx', undefined, undefined)
+    await sp.appendText('Hello ')
+    await sp.markStopped()
+    const sentAtStop = mp.messages.length
+    // Delta clears minDeltaChars but sits inside the throttle window, so the
+    // flush is timer-deferred — it must never land after the ⏹ card.
+    await sp.appendText('World and more text')
+    await sleep(200)
+    expect(mp.messages.slice(sentAtStop), `messages=${JSON.stringify(mp.messages)}`).toEqual([])
+  })
+
   it('markStoppedSync drains in-flight running PATCH before the stopped card', async () => {
     const mp = createRaceStopRenderer()
     const as = newAsyncSender('test-stop-race')
