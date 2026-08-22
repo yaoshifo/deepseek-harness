@@ -28,7 +28,7 @@ Status: implemented
 
 ## 后果
 
-admin 在聊天里即可触发完整的重建-重启；进行中会话仍会回滚到最后完整回合，与终端流程完全一致——已启动回复里写明了这一点。已知天花板：daemon 已重启之后才暴露的失败（如 WS 探活超时）无法产生聊天回复，监听器已随旧进程消亡，`feishu-bridge-reload.log` 是唯一记录，OPERATIONS.md §3.3 如实标注。脱离生存假设——launchd 的终止信号作用于任务的进程组而非 setsid 子进程——由真机冒烟验证；若不成立，bot 会离线直到手动 `launchctl load`，kickstart -k 是记录在案的回退方案。Linux 上脚本自身拒绝（launchd 检查），失败回复会转达该信息；systemd 流程保持手动。
+admin 在聊天里即可触发完整的重建-重启；进行中会话仍会回滚到最后完整回合，与终端流程完全一致——已启动回复里写明了这一点。已知天花板：daemon 已重启之后才暴露的失败（如 WS 探活超时）无法产生聊天回复，监听器已随旧进程消亡，`feishu-bridge-reload.log` 是唯一记录，OPERATIONS.md §3.3 如实标注。脱离生存假设——launchd 的终止信号作用于任务的进程组而非 setsid 子进程——由真机冒烟验证；若不成立，bot 会离线直到手动 `launchctl load`，kickstart -k 是记录在案的回退方案。Linux 上脚本走 `systemctl --user restart` + journal WS 探活（2026-08-22 起支持，见 [Linux 分支 note](2026-08-22-feishu-bridge-reload-linux.zh.md)）。
 
 ## 测试
 
