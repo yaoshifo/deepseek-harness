@@ -3624,11 +3624,12 @@ export class Engine {
 
   /**
    * User-initiated stop (/stop, /new, /switch): flag userStopped, detach the
-   * state, resolve queued senders, and close the agent session
-   * asynchronously (Go stopInteractiveSession, M1 subset). The entry stays in
-   * the map with `closing` set until the close settles, so a message racing
-   * the teardown waits it out instead of resuming the still-live session
-   * (2026-08-21 oc_6ee6 incident: stop → 「继续」 degraded to a fresh session).
+   * state, resolve queued senders, close the agent session, and finalize the
+   * active preview card asynchronously (Go stopInteractiveSession, M1
+   * subset). The entry stays in the map with `closing` set until the close
+   * settles, so a message racing the teardown waits it out instead of
+   * resuming the still-live session (2026-08-21 oc_6ee6 incident: stop →
+   * 「继续」 degraded to a fresh session).
    * @param sessionKey - Interactive-state slot key to stop.
    * @returns True when a state was found and torn down.
    */
@@ -3638,6 +3639,20 @@ export class Engine {
 
     state.userStopped = true
     state.markStopped()
+    // Finalize the active preview card here, not only in the event loop's
+    // stop arm: a loop parked mid-handler when the stop lands exits via
+    // channel-close and skips that arm, which froze the card in its Running
+    // state while the preview's throttled flush timers kept PATCHing
+    // (2026-08-22 oc_74a7 incident). markStoppedSync degrades the preview
+    // first (late flushes become no-ops) and queues on the preview lock, so
+    // in-flight and already-queued Running PATCHes still land before the ⏹
+    // card.
+    const preview = state.preview
+    if (preview !== undefined) {
+      void preview.markStoppedSync().catch((error: unknown) => {
+        console.warn(`engine: stop preview finalize failed (${sessionKey}): ${String(error)}`)
+      })
+    }
     // Abort in-flight renders so their cancel handles don't orphan with the
     // state and keep burning tokens on a stale HTML (Go cancelRenders).
     cancelRenders(state)

@@ -579,6 +579,63 @@ describe('processInteractiveEvents channel closed', () => {
   })
 })
 
+describe('processInteractiveEvents user stop mid-handler', () => {
+  /**
+   * Reproduces the 2026-08-22 oc_74a7 incident: a rate-limited Feishu
+   * sendPreviewStart holds the preview lock for seconds; the user /done lands
+   * while the event loop is parked inside sp.appendProgress. The loop then
+   * exits via channel-close without the stop arm, so the card must be
+   * finalized by stopInteractiveSession itself — a ⏹ stopped render, and no
+   * Running-state PATCH may land after it.
+   */
+  it('finalizes the preview card on stopInteractiveSession when the loop is mid-handler', async () => {
+    const messages: string[] = []
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
+    const p = Object.assign(createStubPlatform(), {
+      messages,
+      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+        await startGate
+        messages.push(`start:${content}`)
+        return 'preview-handle'
+      },
+      async updateMessage(_handle: unknown, content: string): Promise<void> {
+        messages.push(`update:${content}`)
+      },
+      async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
+        messages.push(`stopped:${String(id)}`)
+      },
+    })
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolProgress: true })
+    const sessionKey = 'test:stop-mid-handler'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    // Placeholder flush parks holding the preview lock inside sendPreviewStart.
+    await new Promise(r => setTimeout(r, 0))
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    // The loop picks the event up and parks in appendProgress on the lock.
+    await new Promise(r => setTimeout(r, 0))
+
+    e.stopInteractiveSession(sessionKey)
+    releaseStart!()
+    await done
+    await new Promise(r => setTimeout(r, 20))
+
+    const stoppedIdx = messages.findIndex(m => m.startsWith('stopped:'))
+    expect(stoppedIdx, `messages=${JSON.stringify(messages)}`).toBeGreaterThanOrEqual(0)
+    const afterStopped = messages.slice(stoppedIdx + 1).filter(m => m.startsWith('update:') || m.startsWith('start:'))
+    expect(afterStopped, `messages=${JSON.stringify(messages)}`).toEqual([])
+  })
+})
+
 it('processInteractiveEvents persists the agent session ID', async () => {
   const { e, p } = newEngine()
   const path = `${process.env.VITEST_TMPDIR ?? '/tmp'}/fb-persist-${Date.now()}/sessions.json`

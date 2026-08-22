@@ -288,6 +288,19 @@ describe('StreamPreview', () => {
     expect(mp.stoppedArg).toBe('preview-handle')
   })
 
+  it('stop terminal renders once across markStoppedSync and markStopped, re-armed by resumeFromFreeze', async () => {
+    const mp = createMockStopRendererPlatform()
+    const sp = newStreamPreview(cfg({ intervalMs: 100, minDeltaChars: 5 }), mp, 'ctx', undefined, undefined)
+    await sp.appendText('Hello ')
+    await sleep(150)
+    await sp.markStoppedSync()
+    await sp.markStopped()
+    expect(mp.stoppedCalls, 'the loser of the two stop renders must not PATCH again').toBe(1)
+    await sp.resumeFromFreeze()
+    await sp.markStopped()
+    expect(mp.stoppedCalls, 'resumeFromFreeze re-arms the stopped render').toBe(2)
+  })
+
   it('markStoppedSync drains in-flight running PATCH before the stopped card', async () => {
     const mp = createRaceStopRenderer()
     const as = newAsyncSender('test-stop-race')

@@ -469,6 +469,13 @@ export class StreamPreview {
    * @internal White-box: ported same-package tests read/write this directly.
    */
   failed = false
+  /**
+   * True once a stopped (⏹) terminal card render was initiated. Both the
+   * event loop's stop arm and stopInteractiveSession's synchronous finalize
+   * race to render it; the loser must not PATCH the card again.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
+  stoppedCardRendered = false
   private todoItems: TodoItem[] = []
   private bgTaskHint = ''
   private subagentCount = 0
@@ -809,6 +816,7 @@ export class StreamPreview {
     return this.locked(() => {
       if (this.previewMsgID !== undefined) {
         this.degraded = false
+        this.stoppedCardRendered = false
         // Reset the failure streak so the post-resume tolerance window
         // starts fresh.
         this.failedPatchStreak = 0
@@ -1483,7 +1491,8 @@ export class StreamPreview {
   async markStopped(): Promise<void> {
     await this.locked(async () => {
       this.cancelTimerLocked()
-      if (this.previewMsgID === undefined) return
+      if (this.previewMsgID === undefined || this.stoppedCardRendered) return
+      this.stoppedCardRendered = true
       const r = asStoppedCardRenderer(this.platform)
       if (r !== undefined) {
         const handle = this.previewMsgID
@@ -1522,7 +1531,8 @@ export class StreamPreview {
   async markStoppedSync(): Promise<void> {
     const state = await this.locked(async () => {
       this.cancelTimerLocked()
-      if (this.previewMsgID === undefined) return undefined
+      if (this.previewMsgID === undefined || this.stoppedCardRendered) return undefined
+      this.stoppedCardRendered = true
       this.degraded = true
       const r = asStoppedCardRenderer(this.platform)
       if (r === undefined) {
