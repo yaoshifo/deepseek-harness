@@ -431,6 +431,27 @@ describe('processInteractiveEvents channel closed', () => {
     expect(p.getSent()).toEqual([])
   })
 
+  it('engine stop reports the plugin reload instead of a process exit', async () => {
+    const p = createStubMediaPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    await e.stop()
+    await done
+
+    const sent = p.getSent()
+    expect(sent.some(m => m.includes(e.i18n.t('plugin_reloaded'))), `sent=${JSON.stringify(sent)}`).toBe(true)
+    expect(sent.some(m => m.includes(e.i18n.t('agent_process_exited')))).toBe(false)
+  })
+
   it('delivers partial text plus the exit notice', async () => {
     const p = createStubMediaPlatform()
     const { e } = newEngine(createStubAgent(), p)

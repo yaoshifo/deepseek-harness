@@ -273,6 +273,8 @@ export class InteractiveState {
   stopped = false
   /** Whether the user requested the stop (/stop, /new, /switch). */
   userStopped = false
+  /** Whether engine.stop() is closing this turn (plugin reload or shutdown), not an agent crash. */
+  engineStopped = false
   /** Messages queued while a turn was running. */
   pendingMessages: QueuedMessage[] = []
   /** The queued message currently driving a drained turn, if any. */
@@ -1282,6 +1284,9 @@ export class Engine {
     const states = [...this.interactiveStates.values()]
     this.interactiveStates.clear()
     for (const state of states) {
+      // Distinguish the deliberate teardown from an agent crash so the turn's
+      // channel-closed path reports the reload, not a process exit.
+      state.engineStopped = true
       if (state.agentSession !== undefined) await state.agentSession.close()
     }
     if (this.reaperTimer !== undefined) clearInterval(this.reaperTimer)
@@ -3285,7 +3290,9 @@ export class Engine {
     await this.cleanupInteractiveState(sessionKey, state)
 
     if (unexpectedExit && closedPlatform !== undefined) {
-      await this.send(closedPlatform, replyCtx, this.i18n.t(Msg.AgentProcessExited))
+      await this.send(closedPlatform, replyCtx, state.engineStopped
+        ? this.i18n.t(Msg.PluginReloaded)
+        : this.i18n.t(Msg.AgentProcessExited))
     }
 
     if (textParts.length > 0) {
