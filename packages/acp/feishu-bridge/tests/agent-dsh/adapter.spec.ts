@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ContinueSession, type Event } from '../../src/core/types.js'
-import { DshAgentAdapter, DshAgentSession, sessionBypassesPermissions, stripModelAlias, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.js'
+import { DshAgentAdapter, DshAgentSession, sessionBypassesPermissions, stripModelAlias, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
 
 // DshAgentAdapter unit tests: ctx.agents create/resume, followup/cancel call
 // sequences, provider routing, [1m] stripping, dispose+resume provider
@@ -605,6 +605,48 @@ async function nextEvent(session: DshAgentSession): Promise<Record<string, unkno
 }
 
 describe('DshAgentAdapter userQuestions provider', () => {
+
+  it('two adapters sharing question routing register one provider and route asks across adapters', async () => {
+    const h = createHarness()
+    const providers: FakeProvider[] = []
+    let current: FakeProvider | undefined
+    h.services.userQuestions = {
+      registerProvider(p: FakeProvider): () => void {
+        if (current !== undefined) throw new Error('a user-questions provider is already registered')
+        current = p
+        providers.push(p)
+        return () => { current = undefined }
+      },
+    }
+    const routing: QuestionRouting = { adapters: [], registered: false }
+    const cfg = (base: Partial<DshAdapterConfig> = {}): DshAdapterConfig => ({
+      agentName: 'dsh',
+      cwd: '/workspace/project',
+      providers: [{ name: 'glm', provider: 'glm-route', model: 'glm-5.3' }],
+      activeProvider: 'glm',
+      questionRouting: routing,
+      ...base,
+    })
+    const a = new DshAgentAdapter(h.ctx, cfg())
+    const b = new DshAgentAdapter(h.ctx, cfg())
+    await a.startSession('')
+    expect(providers).toHaveLength(1)
+    // The singleton service already holds a's provider: b's first session
+    // must not throw DUPLICATE_PROVIDER (multi-project deployment).
+    const sb = (await b.startSession('')) as DshAgentSession
+    expect(providers).toHaveLength(1)
+    // b's session questions route through the shared provider to b's target.
+    const askPromise = providers[0]!.ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: sb.currentSessionID() } },
+    })
+    const event = await nextEvent(sb)
+    expect(event.type).toBe('permission_request')
+    expect(event.toolName).toBe('ExitPlanMode')
+    void sb.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {} })
+    await askPromise
+  })
+
   it('registers the provider on first session creation', async () => {
     const { adapter, providers } = createUserQuestionsHarness()
     expect(providers).toHaveLength(0)

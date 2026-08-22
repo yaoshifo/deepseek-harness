@@ -8,12 +8,14 @@
  * @module dsh-feishu-bridge/tests-assembly-config
  */
 
+import { mkdtempSync } from 'node:fs'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
+import type { QuestionRouting } from '../src/agent-dsh/adapter.js'
 import type { Engine } from '../src/engine/engine.js'
 import { HintUsage } from '../src/engine/hint-usage.js'
 import { WorktreeMode } from '../src/engine/worktree.js'
@@ -421,5 +423,18 @@ describe('agent.mode default session mode wiring', () => {
     // Absent mode leaves no default.
     const bare = assemble(baseConfig(), project())
     expect((bare.adapter as unknown as { defaultMode?: string }).defaultMode).toBe('')
+  })
+})
+
+describe('shared userQuestions routing across projects', () => {
+  it('buildProjectAssembly forwards one shared routing object to every adapter', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fb-assembly-'))
+    const routing: QuestionRouting = { adapters: [], registered: false }
+    const a = buildProjectAssembly(stubContext(), baseConfig(), { ...project(), workdir: join(root, 'wd-a') }, root, undefined, undefined, undefined, routing)
+    const b = buildProjectAssembly(stubContext(), baseConfig(), { ...project(), name: 'other-project', workdir: join(root, 'wd-b') }, root, undefined, undefined, undefined, routing)
+    expect(routing.adapters).toEqual([a.adapter, b.adapter])
+    // Absent routing leaves the adapter's config without it (single-adapter fallback).
+    const solo = buildProjectAssembly(stubContext(), baseConfig(), project(), root)
+    expect(routing.adapters).not.toContain(solo.adapter)
   })
 })
