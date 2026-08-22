@@ -273,6 +273,10 @@ export class InteractiveState {
   stopped = false
   /** Whether the user requested the stop (/stop, /new, /switch). */
   userStopped = false
+  /** Whether engine.stop() is closing this turn (plugin reload or shutdown), not an agent crash. */
+  engineStopped = false
+  /** Whether the engine-stop reload notice already went out for this state. */
+  stopNoticeSent = false
   /** Messages queued while a turn was running. */
   pendingMessages: QueuedMessage[] = []
   /** The queued message currently driving a drained turn, if any. */
@@ -1297,10 +1301,27 @@ export class Engine {
   /** Stop platforms and close all interactive agent sessions (Go Stop). */
   async stop(): Promise<void> {
     this.monitor.stopMonitorPoll()
+    // An in-flight turn's event loop may never resume before process exit
+    // (2026-08-22 oc_610e incident: exit_plan_mode interrupted mid-call, the
+    // loop never ran, no notice) — notify its chat here, while the platform
+    // can still send. The flag keeps the channel-closed path from repeating
+    // the notice when the loop does drain.
+    for (const state of this.interactiveStates.values()) {
+      if (state.activeTurns === 0 || state.stopNoticeSent) continue
+      state.stopNoticeSent = true
+      state.engineStopped = true
+      const platform = state.platform
+      if (platform !== undefined) {
+        await this.send(platform, state.replyCtx, this.i18n.t(Msg.PluginReloaded))
+      }
+    }
     for (const p of this.platforms) await p.stop()
     const states = [...this.interactiveStates.values()]
     this.interactiveStates.clear()
     for (const state of states) {
+      // Distinguish the deliberate teardown from an agent crash so the turn's
+      // channel-closed path reports the reload, not a process exit.
+      state.engineStopped = true
       if (state.agentSession !== undefined) await state.agentSession.close()
     }
     if (this.reaperTimer !== undefined) clearInterval(this.reaperTimer)
@@ -2328,8 +2349,12 @@ export class Engine {
     const stopP = state.stopSignal()
     // Hard cap (Go watchdog watchdogKillHard): a turn whose events keep
     // trickling in resets the idle timer forever, so the cap is enforced on
-    // event arrival. Research sessions lift it (Go isResearchSession).
-    const turnStart = Date.now()
+    // event arrival. Research sessions lift it (Go isResearchSession). The
+    // cap is per turn, not per run: a queued-message takeover resets
+    // turnStart below — a deliberate deviation from Go's per-run clock, where
+    // a follow-up message after a near-cap long turn inherits a nearly
+    // exhausted budget and is killed within minutes.
+    let turnStart = Date.now()
     const softCap = this.absoluteTurnMax(state.idleTimeout(this.eventIdleTimeout))
     const hardCapMs = softCap > 0 && !this.isResearchSession(session) ? softCap * 3 : 0
     // The live session's event channel; swapped when a stall retry restarts
@@ -2963,7 +2988,13 @@ export class Engine {
             textParts, segmentStart, toolCount, pendingSend, sp, cp, barrier, timing)
           if (finished.kind === 'queued') {
             // A queued message takes over this loop as a fresh turn (Go
-            // in-loop drain): reset per-turn state and continue.
+            // in-loop drain): reset per-turn state and continue. The watchdog
+            // clock resets too — the new turn is a different user instruction
+            // and must not inherit the previous long turn's spent budget.
+            // The stall-retry path deliberately does NOT reset it: it serves
+            // the same logical turn, and resetting would let an infinitely
+            // stalling/retrying session dodge the hard cap forever.
+            turnStart = Date.now()
             textParts = []
             segmentStart = 0
             toolCount = 0
@@ -3310,8 +3341,11 @@ export class Engine {
     this.notifyDroppedQueuedMessages(state, new Error('agent process exited'))
     await this.cleanupInteractiveState(sessionKey, state)
 
-    if (unexpectedExit && closedPlatform !== undefined) {
-      await this.send(closedPlatform, replyCtx, this.i18n.t(Msg.AgentProcessExited))
+    if (unexpectedExit && closedPlatform !== undefined && !state.stopNoticeSent) {
+      state.stopNoticeSent = true
+      await this.send(closedPlatform, replyCtx, state.engineStopped
+        ? this.i18n.t(Msg.PluginReloaded)
+        : this.i18n.t(Msg.AgentProcessExited))
     }
 
     if (textParts.length > 0) {

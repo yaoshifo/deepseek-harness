@@ -13,7 +13,7 @@ import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
-import type { ProviderRoute as AdapterProviderRoute } from './agent-dsh/adapter.js'
+import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.js'
 import { FeishuPlatform } from './feishu/platform.js'
 import { Engine } from './engine/engine.js'
 import { ProjectStateStore } from './engine/project-state.js'
@@ -705,8 +705,12 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   }
   /** One live project: its engine plus the adapter that owns its agents. */
   const live: Array<{ engine: Engine; adapter: DshAgentAdapter }> = []
+  // The singleton userQuestions service takes one provider per application:
+  // every adapter shares this routing so the second+ project's first session
+  // does not collide (questions dispatch to the adapter owning the session).
+  const questionRouting: QuestionRouting = { adapters: [], registered: false }
   for (const project of config.projects) {
-    const { engine, adapter } = buildProjectAssembly(ctx, config, project, dataRoot, dirHistory, shared, hintUsage)
+    const { engine, adapter } = buildProjectAssembly(ctx, config, project, dataRoot, dirHistory, shared, hintUsage, questionRouting)
     live.push({ engine, adapter })
     if (project.features?.injectSender === true) engine.setInjectSender(true)
     if (project.features?.quiet === true) {
@@ -841,6 +845,7 @@ function applyProjectStateOverride(adapter: DshAgentAdapter, configured: string,
  * @param sharedDirHistory - Dir history shared across projects (Go shares one store).
  * @param shared - Process-wide cron scheduler and relay manager the engine registers into.
  * @param sharedHintUsage - Hint click counts shared across projects (Go shares one store).
+ * @param sharedQuestionRouting - userQuestions routing shared across projects (one provider per application).
  * @returns The engine and the adapter owning its agents.
  */
 export function buildProjectAssembly(
@@ -851,6 +856,7 @@ export function buildProjectAssembly(
   sharedDirHistory?: DirHistory,
   shared?: SharedProcessServices,
   sharedHintUsage?: HintUsage,
+  sharedQuestionRouting?: QuestionRouting,
 ): { engine: Engine; adapter: DshAgentAdapter; platform: FeishuPlatform } {
   const routeNames = Object.keys(config.providers)
   const projectDataDir = join(dataRoot, project.name)
@@ -888,6 +894,7 @@ export function buildProjectAssembly(
     cwd: project.workdir,
     providers: routes,
     activeProvider,
+    ...(sharedQuestionRouting !== undefined ? { questionRouting: sharedQuestionRouting } : {}),
   })
 
   const platform = new FeishuPlatform({

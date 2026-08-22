@@ -431,6 +431,70 @@ describe('processInteractiveEvents channel closed', () => {
     expect(p.getSent()).toEqual([])
   })
 
+  it('engine stop reports the plugin reload instead of a process exit', async () => {
+    const p = createStubMediaPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    await e.stop()
+    await done
+
+    const sent = p.getSent()
+    expect(sent.some(m => m.includes(e.i18n.t('plugin_reloaded'))), `sent=${JSON.stringify(sent)}`).toBe(true)
+    expect(sent.some(m => m.includes(e.i18n.t('agent_process_exited')))).toBe(false)
+  })
+
+  it('engine stop notifies an in-flight turn directly', async () => {
+    const p = createStubMediaPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    const sessionKey = 'test:user1'
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    state.beginTurn()
+    e.interactiveStates.set(sessionKey, state)
+
+    // No processInteractiveEvents loop runs: the stop's notice must not
+    // depend on the loop being scheduled before process exit.
+    await e.stop()
+
+    const sent = p.getSent()
+    expect(sent.some(m => m.includes(e.i18n.t('plugin_reloaded'))), `sent=${JSON.stringify(sent)}`).toBe(true)
+    expect(sent.some(m => m.includes(e.i18n.t('agent_process_exited')))).toBe(false)
+  })
+
+  it('engine stop notifies an in-flight turn once even when the loop also drains the close', async () => {
+    const p = createStubMediaPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    state.beginTurn()
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    await e.stop()
+    await done
+
+    const notice = e.i18n.t('plugin_reloaded')
+    const count = p.getSent().filter(m => m.includes(notice)).length
+    expect(count, `sent=${JSON.stringify(p.getSent())}`).toBe(1)
+  })
+
   it('delivers partial text plus the exit notice', async () => {
     const p = createStubMediaPlatform()
     const { e } = newEngine(createStubAgent(), p)
@@ -1445,6 +1509,63 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     }
     expect(p.getSent().some(s => s.includes('exceeded the maximum turn duration')), `sent=${JSON.stringify(p.getSent())}`).toBe(true)
     expect(e.interactiveStates.has(key)).toBe(false)
+  })
+
+  it('queued takeover resets the hard-cap clock (per-turn, not per-run)', async () => {
+    const { e, p } = newEngine()
+    e.setEventIdleTimeout(600)
+    const key = 'test:hard-cap-queued'
+    const sess = newQueuingSession('hard-cap-queued')
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = p
+    state.replyCtx = 'ctx'
+    state.pendingMessages = [{
+      platform: p, replyCtx: 'ctx-turn2', messageID: '', content: 'queued-msg',
+      images: [], files: [], fromVoice: false, isSpawnedGroup: false,
+      userID: '', userName: '', msgPlatform: 'test', msgSessionKey: key,
+      chatroomAskSeq: 0, chatroomAwaitAssistant: false,
+    }]
+    e.interactiveStates.set(key, state)
+    const session = e.sessions.getOrCreateActive(key)
+    session.tryLock()
+    session.addHistory('user', 'initial-msg')
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, key, 'msg1', Promise.resolve(undefined), undefined)
+    const trickle = setInterval(() => {
+      sess.channel.push({ type: 'text', content: 'tick', done: false } as never)
+    }, 150)
+    try {
+      // Turn 1 runs ~500 ms (hard cap is 3 × (2 × 600) = 3600 ms), then the
+      // queued message takes over as a fresh turn.
+      await new Promise((resolve) => { setTimeout(resolve, 500) })
+      sess.channel.push({ type: 'result', content: 'turn1', done: true } as never)
+      for (let i = 0; i < 200 && sess.sendCalls.length === 0; i++) {
+        await new Promise((resolve) => { setTimeout(resolve, 5) })
+      }
+      expect(sess.sendCalls.length, 'queued message must take over').toBe(1)
+
+      // ~3.85 s from run start: past the run-level deadline (3.6 s) but before
+      // the takeover's own deadline (~0.5 s + 3.6 s = 4.1 s). The per-turn
+      // reset must keep turn 2 alive here.
+      await new Promise((resolve) => { setTimeout(resolve, 3350) })
+      let settled = false
+      void done.then(() => { settled = true })
+      await new Promise((resolve) => { setTimeout(resolve, 20) })
+      expect(settled, 'turn 2 must survive past the run-level deadline').toBe(false)
+      expect(p.getSent().some(s => s.includes('exceeded the maximum turn duration'))).toBe(false)
+
+      // The reset cap still bites: past the takeover's own 3.6 s, the next
+      // trickle event force-cleans the session.
+      await Promise.race([
+        done,
+        new Promise((_, reject) => { setTimeout(() => { reject(new Error('hard cap did not fire on the second turn')) }, 5000) }),
+      ])
+      expect(p.getSent().some(s => s.includes('exceeded the maximum turn duration'))).toBe(true)
+      expect(e.interactiveStates.has(key)).toBe(false)
+    } finally {
+      clearInterval(trickle)
+    }
   })
 
   it('research sessions lift the hard cap (Go researchExempt)', async () => {

@@ -1,6 +1,6 @@
 # feishu-bridge 运维手册（部署 / 配置 / 运行 / 回退）
 
-骨架：已确定的事实直接写死，`TODO(M8)` 标记留待 cutover 期（M8）填充。迁移背景、架构决策与验收标准见 [MIGRATION.md](MIGRATION.md)；本文只回答「怎么部署、怎么配、怎么跑、怎么退」。feature 迁移状态见 [FEATURE-PARITY.md](FEATURE-PARITY.md)。
+骨架：已确定的事实直接写死，TODO 标记留待后续填充。迁移背景、架构决策与验收标准见 [MIGRATION.md](MIGRATION.md)；本文只回答「怎么部署、怎么配、怎么跑、怎么退」。feature 迁移状态见 [FEATURE-PARITY.md](FEATURE-PARITY.md)。
 
 本文示例一律使用占位符（`@REPO_DIR@`、`@DSH_BIN@`、`@LLM_API_KEY@` 等），不出现真实凭据。
 
@@ -13,7 +13,7 @@
 - 插件运行时依赖：`@larksuiteoapi/node-sdk`（WS 长连接）、`sharp`（Lucide 头像 SVG 栅格化）
 - 可选：lark-cli（真机冒烟与运维操作，见 MIGRATION.md 附录 B）
 
-TODO(M8)：最低版本清单与安装命令。
+TODO：最低版本清单与安装命令。
 
 ### 1.2 profile 安装
 
@@ -26,7 +26,7 @@ cd @REPO_DIR@/packages/acp/feishu-bridge
 
 - `cordis.patch.yml` 永远不会被 install 覆盖：它是运行期热改的配置层（Cordis HMR）。
 - feishu bot / 引擎配置写在 `cordis.patch.yml` 的 `feishu-bridge` 插件行 `config:` 下（见 §2 映射表）；LLM 路由、沙箱、会话存储写在同文件其余行。
-- TODO(M8)：`profile/` 模板与实例的路径统一（MIGRATION.md 附录 B 遗留 4：模板仍是 Linux 路径 + glm 路由）。
+- TODO：`profile/` 模板与实例的路径统一（MIGRATION.md 附录 B 遗留 4：模板仍是 Linux 路径 + glm 路由）。
 
 ### 1.3 两步构建（TS 代码改动生效）
 
@@ -49,7 +49,7 @@ cp @REPO_DIR@/packages/acp/feishu-bridge/deploy/com.dsh.feishu-bridge.plist.temp
 launchctl load ~/Library/LaunchAgents/com.dsh.feishu-bridge.plist
 ```
 
-LLM 路由 API key 走 `EnvironmentVariables`（profile 里 `apiKeyEnv` 引用的变量名，如 `FB_MIFY_API_KEY`）。TODO(M8)：plist 权限收紧（0600）与多机分发流程。
+LLM 路由 API key 走 `EnvironmentVariables`（profile 里 `apiKeyEnv` 引用的变量名，如 `FB_MIFY_API_KEY`）。TODO：plist 权限收紧（0600）与多机分发流程。
 
 Linux 部署面用 systemd user unit（§5）。
 
@@ -79,10 +79,10 @@ Linux 部署面用 systemd user unit（§5）。
 | `hints` / `hints_with_param` / `hints_common`（顶层） | 插件行 `config.hints` / `.hints_with_param` / `.hints_common` | 完成卡快捷提示按钮 + `/hint` 卡；点击计数持久化 `<dataDir>/hint_usage.json` 并按频率排序（M8 前补充 4） |
 | `[projects.feishu_workspace]` `wiki_space_id` / `folder_token` / `wiki_node_token` / `description` | `config.projects[].feishuWorkspace.wikiSpaceId` / `.folderToken` / `.wikiNodeToken` / `.description` | bot 默认飞书空间，经 setup 钩子注入（M7-d #18）；创建落位优先级 wikiNodeToken > wikiSpaceId > folderToken |
 | `[display]` `tool_messages` / `tool_progress` / `plan_max_len` / `thinking_messages` / `thinking_max_len` | 插件行 `config.display.toolMessages` / `.toolProgress` / `.planMaxLen` / `.thinkingMessages` / `.thinkingMaxLen` | 键名 camelCase；`progress_spinner` 同理（`progressSpinner`） |
-| `[display]` `stall_timeout_secs` / `stall_max_retries` / `absolute_turn_timeout_secs` | `config.display.stallTimeoutSecs` / `.stallMaxRetries` / `.absoluteTurnTimeoutSecs` | absolute 为每回合墙钟上限：未设 = 2× stall 窗口、0 关闭；硬上限 3×（防慢滴流回合挂死，2026-08-21 接线） |
+| `[display]` `stall_timeout_secs` / `stall_max_retries` / `absolute_turn_timeout_secs` | `config.display.stallTimeoutSecs` / `.stallMaxRetries` / `.absoluteTurnTimeoutSecs` | absolute 为每回合墙钟上限：未设 = 2× stall 窗口、0 关闭；硬上限 3×（防慢滴流回合挂死，2026-08-21 接线）。硬上限时钟按轮计量——排队消息接管为新轮时重置（2026-08-21，有意偏离 Go 的 per-run 计量）；stall-retry 重启不重置 |
 | `[rate_limit]` `max_messages` / `window_secs` | 插件行 `config.rateLimit.maxMessages` / `.windowSecs` | 每 sessionKey 入站滑窗限流；默认 20 条/60s，`maxMessages: 0` 关闭（2026-08-21 接线） |
 | `[stream_preview]` `partial` | — | 不迁移：Go 侧该键只驱动 claudecode CLI 的 `--include-partial-messages`；dsh 适配器事件流无此区分、无消费方 |
-| （隐含）会话存储位置 | `session-persistence-jsonl` 行 `config.root` | 旧 dsh 后端为 `~/.dsh/cc-connect-sessions`，新 daemon 用 `~/.dsh/feishu-bridge-sessions`，root 可对齐实现 resume 兼容（TODO(M8)：cutover 会话兼容验证） |
+| （隐含）会话存储位置 | `session-persistence-jsonl` 行 `config.root` | cutover 时旧 root `~/.dsh/cc-connect-sessions` 已改名并沿用为 `~/.dsh/feishu-bridge-sessions`（历史日志随目录迁移，记账驴在途会话 resume 已验证）；7 个迁移 bot 按用户裁定全新会话开始，注册表未迁移 |
 | `[chatroom]` / `[subtask]` / `[spawn]` / `[group_name]` / `[predict_next]` / `[turn_summary]` / `[plan_render]` / cron / relay / `[projects.monitor]` / `usage_providers` | 插件行 `config.chatroom` / `config.subtask` / `config.spawn` / `config.projects[].groupName` / `.predictNext` / `.turnSummary` / `.planRender` / `config.cron` / `config.relay` / `config.projects[].monitor` / `config.usageProviders` | 各域 M5–M7 已落地；键名 camelCase |
 | —（Go 无对应，新增） | 插件行 `config.projects[].planDir` | ExitPlanMode 呈现时把完整计划落盘为 `.md`（对齐 Claude Code：默认 `~/.claude/plans/`，文件名 `<cwd-slug>-<标题slug>.md`，同名异文追加 `-YYYYMMDD-HHMMSS` 后缀、同文跳过；模型自写的 plan 文件优先不改写；写失败回退 inline 卡片）；`''` 关闭 |
 
@@ -131,7 +131,7 @@ Linux 部署面用 systemd user unit（§5）。
 
 ### 3.1 日志
 
-launchd 模板把标准输出/错误写到 `@LOG_DIR@/feishu-bridge-stdout.log` 与 `feishu-bridge-stderr.log`（本机现值 `~/.dsh/`）。TODO(M8)：常用排障 grep 组合、日志轮转策略、watchdog 探活参数。
+launchd 模板把标准输出/错误写到 `@LOG_DIR@/feishu-bridge-stdout.log` 与 `feishu-bridge-stderr.log`（本机现值 `~/.dsh/`）。systemd 部署走默认 journal（`journalctl --user -u feishu-bridge`，轮转交给 journald）。TODO：常用排障 grep 组合、watchdog 探活参数。
 
 ### 3.2 WS 独占
 
@@ -152,7 +152,7 @@ launchd 模板把标准输出/错误写到 `@LOG_DIR@/feishu-bridge-stdout.log` 
 2. `launchctl kickstart -k gui/$(id -u)/com.cc-connect.service`（旧进程重启并拿回 WS）。
 3. `launchctl unload ~/Library/LaunchAgents/com.dsh.feishu-bridge.plist`（停新 daemon；若只回退部分 project，改从新 daemon 的 `cordis.patch.yml` 移除该 project 段——HMR 生效，不必停进程）。
 
-顺序不可换：先让旧进程拿回 WS，再停新进程。TODO(M8)：双活窗口内的消息补投语义与会话兼容（同 root resume）验证。
+顺序不可换：先让旧进程拿回 WS，再停新进程。切流窗口内（旧进程释放到新进程接管之间）用户消息不补投，挑空闲时段执行。
 
 ## 5. systemd 自启（Linux 部署面）
 
@@ -171,5 +171,5 @@ systemctl --user enable --now feishu-bridge
 - `Restart=on-failure`：进程内断线由 SDK 指数退避重连 + 探活 watchdog 兜底，进程退出交给 systemd 拉起。
 - 死因留痕：`journalctl --user -u feishu-bridge`。
 - LLM 路由 key 走 `Environment=`（`apiKeyEnv` 引用），unit 文件含密钥须收紧到 0600。
-- 开机自启：user unit 需要 `loginctl enable-linger <user>`（TODO(M8) 写入部署清单）。
+- 开机自启：user unit 需要 `loginctl enable-linger <user>`（Dev 部署已启用 linger）。
 - 重启后状态恢复：会话由 jsonl 日志在下一条消息时自动 resume；路由/cron/账本从磁盘 store 恢复；进行中 turn 回滚到最后完整 turn。

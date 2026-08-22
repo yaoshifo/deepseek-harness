@@ -149,12 +149,28 @@ export interface ProviderRoute {
 }
 
 /** Adapter construction config. */
+/**
+ * Process-wide userQuestions routing shared by every project's adapter: the
+ * singleton `userQuestions` service accepts exactly one provider, so one
+ * adapter registers it lazily and asks dispatch to the adapter owning the
+ * session (plan D4's caller-routing pattern, applied to questions).
+ */
+export interface QuestionRouting {
+  /** Adapters created by this plugin application, in creation order. */
+  adapters: DshAgentAdapter[]
+  /** Whether the shared provider has been registered (lazily, on first session). */
+  registered: boolean
+}
+
+/** Per-project constructor options for the DSH agent adapter. */
 export interface DshAdapterConfig {
   agentName: string
   cwd: string
   /** Named routes; the active one supplies create/resume agentOptions. */
   providers: ProviderRoute[]
   activeProvider: string
+  /** Shared routing for multi-project daemons; absent = single-adapter fallback. */
+  questionRouting?: QuestionRouting
 }
 
 /**
@@ -390,6 +406,7 @@ export class DshAgentAdapter {
     this.ctx = ctx
     this.cfg = cfg
     this.workDir = cfg.cwd
+    cfg.questionRouting?.adapters.push(this)
     // session/event projection: route each durable event to the live
     // engine session sharing the agent/session id. Sessions outside
     // liveSessions fall through to subagent-lineage attribution: a
@@ -440,11 +457,21 @@ export class DshAgentAdapter {
    * Lazily register the userQuestions provider on first agent creation
    * (M3). At constructor time the user-questions service may not be
    * composed yet; by the first session creation the plugin tree is fully
-   * loaded and ctx.get('userQuestions') resolves.
+   * loaded and ctx.get('userQuestions') resolves. With shared question
+   * routing the singleton service's one provider slot is taken exactly once
+   * per plugin application and asks dispatch to the owning adapter
+   * (multi-project daemons); without it the adapter registers for itself
+   * alone (single-adapter deployments and tests).
    */
   private ensureUserQuestionsProvider(): void {
-    if (this.uqRegistered) return
-    this.uqRegistered = true
+    const routing = this.cfg.questionRouting
+    if (routing !== undefined) {
+      if (routing.registered) return
+      routing.registered = true
+    } else {
+      if (this.uqRegistered) return
+      this.uqRegistered = true
+    }
     type UserQuestionsService = {
       registerProvider(p: {
         ask(req: UserQuestionsAskRequest): Promise<UserQuestionsAskResult>
@@ -454,47 +481,63 @@ export class DshAgentAdapter {
     if (uq === undefined) return
     this.disposers.push(uq.registerProvider({
       ask: async (request) => {
-        const sessionID = request.agent?.session?.id ?? ''
-        const target = this.liveSessions.get(sessionID)
-        if (target === undefined) return { answers: [] }
-        const qs = request.questions as RawAskQuestionItem[]
-        // Plan-review asks (exit_plan_mode) are permission decisions, not
-        // option menus: route them through the ExitPlanMode plan card and
-        // map the allow/deny verdict back to answer semantics (Go
-        // planReviewItem).
-        const review = qs.find(q => q.intent?.kind === 'plan-review')
-        if (review !== undefined) {
-          return target.answerPlanReview(review, request.signal)
+        const adapters = routing?.adapters ?? [this]
+        for (const adapter of adapters) {
+          const result = await adapter.handleUserQuestion(request)
+          if (result !== undefined) return result
         }
-        const requestID = `askq-${Date.now()}`
-        const questions = qs.map(q => ({
-          question: q.question,
-          header: q.header ?? '',
-          options: (q.options ?? []).map(o => ({
-            label: o.label, description: o.description ?? '',
-          })),
-          multiSelect: q.multiSelect ?? false,
-        }))
-        target.emitPermissionRequest({
-          requestID,
-          toolName: 'AskUserQuestion',
-          toolInput: '',
-          toolInputRaw: { questions },
-        })
-        // Await the ANSWER TEXT (not the approval outcome): the engine's
-        // handlePendingPermission stores the collected answers and settles
-        // them through awaitPermissionResponse as the answer string for
-        // AskUserQuestion flows.
-        const answer = await target.awaitQuestionAnswer(
-          requestID, request.signal, qs.length,
-        )
-        const items = qs.map((q, i) => ({
-          id: q.question,
-          selected: [answer[i] ?? ''],
-        }))
-        return { answers: items }
+        return { answers: [] }
       },
     }))
+  }
+
+  /**
+   * Handle one userQuestions ask for a session owned by this adapter.
+   *
+   * @param request - The ask request carrying the agent session id.
+   * @returns The answer result, or undefined when no live session of this
+   * adapter matches (the shared provider then tries the next adapter).
+   */
+  async handleUserQuestion(request: UserQuestionsAskRequest): Promise<UserQuestionsAskResult | undefined> {
+    const sessionID = request.agent?.session?.id ?? ''
+    const target = this.liveSessions.get(sessionID)
+    if (target === undefined) return undefined
+    const qs = request.questions as RawAskQuestionItem[]
+    // Plan-review asks (exit_plan_mode) are permission decisions, not
+    // option menus: route them through the ExitPlanMode plan card and
+    // map the allow/deny verdict back to answer semantics (Go
+    // planReviewItem).
+    const review = qs.find(q => q.intent?.kind === 'plan-review')
+    if (review !== undefined) {
+      return target.answerPlanReview(review, request.signal)
+    }
+    const requestID = `askq-${Date.now()}`
+    const questions = qs.map(q => ({
+      question: q.question,
+      header: q.header ?? '',
+      options: (q.options ?? []).map(o => ({
+        label: o.label, description: o.description ?? '',
+      })),
+      multiSelect: q.multiSelect ?? false,
+    }))
+    target.emitPermissionRequest({
+      requestID,
+      toolName: 'AskUserQuestion',
+      toolInput: '',
+      toolInputRaw: { questions },
+    })
+    // Await the ANSWER TEXT (not the approval outcome): the engine's
+    // handlePendingPermission stores the collected answers and settles
+    // them through awaitPermissionResponse as the answer string for
+    // AskUserQuestion flows.
+    const answer = await target.awaitQuestionAnswer(
+      requestID, request.signal, qs.length,
+    )
+    const items = qs.map((q, i) => ({
+      id: q.question,
+      selected: [answer[i] ?? ''],
+    }))
+    return { answers: items }
   }
 
   /**
