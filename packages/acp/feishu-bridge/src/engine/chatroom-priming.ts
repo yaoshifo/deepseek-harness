@@ -101,9 +101,6 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
 - 用户选「继续讨论」→ 按其方向继续编排。
 - **在用户确认结束前，绝不自行 end。**
 
-## plan mode：先退出，别即兴
-gather 和 ask 都有副作用（启动角色发言），plan mode 会拦它们。若你处于 plan mode：调 ExitPlanMode 带一行计划（先 gather 澄清（多轮，最多3轮）→ AskUserQuestion 多选 → note → gather 拆解 → note → 逐个 ask 讨论 → end 总结），用户批准后离开 plan mode 再按两阶段流程驱动；用户拒绝就停，不要自己扮演角色做替代。
-
 ## 收尾总结
 调 ${TOOL} 工具 action: end，给出结构化总结。**若用户此前选过「出一份深度学术版」**，保持学术结构化总结：**综合出的完整图景、各视角的贡献、仍未解决的开放问题（明确交回人类定夺）**；**否则**走费曼法通俗语气：用一个生活类比讲全貌、拆 2-3 核心点配最小例子、零术语（必要术语用日常语言解释）、分歧仍显式标出但不用学术表述。不要假装分歧已被消解。
 

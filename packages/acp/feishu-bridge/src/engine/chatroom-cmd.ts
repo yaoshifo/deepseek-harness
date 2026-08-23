@@ -348,15 +348,15 @@ export async function startChatroomDirectRole(
       .build()).catch(() => {})
   }
 
-  // Feed the topic as a normal user turn (no moderator priming). A short
-  // plan-mode hint is appended so the role exits plan mode before answering.
+  // Feed the topic as a normal user turn (no moderator priming). The session
+  // is a direct-role persona (bypass), so it can never be in plan mode.
   const wake: Message = {
     ...emptyMessage(),
     sessionKey: msg.sessionKey,
     platform: p.name(),
     userID: msg.userID,
     userName: msg.userName,
-    content: `${topic}\n\n（若你处于 plan mode，先用 ExitPlanMode 带一行计划，用户批准后再作答。）`,
+    content: topic,
     replyCtx: msg.replyCtx,
   }
   try {

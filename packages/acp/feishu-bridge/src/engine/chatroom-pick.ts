@@ -210,6 +210,10 @@ export function beginChatroomPick(e: Engine, p: Platform, msg: Message, topic: s
       userID: msg.userID,
       userName: '[聊天室]',
       content: buildChatroomPickPriming(topic, all, rolesDir),
+      // One-shot mode override: the pick turn must not run the plan-mode
+      // dance (a live hub agent process bypasses this; the engine's pick
+      // auto-approve remains the backstop there).
+      modeOverride: 'default',
       replyCtx: msg.replyCtx,
     })
   } catch (error) {
@@ -421,6 +425,9 @@ export function beginChatroomTopicPick(e: Engine, p: Platform, msg: Message): vo
       userID: msg.userID,
       userName: '[聊天室]',
       content: buildChatroomTopicPickPriming(all, rolesDir, home.dir),
+      // Same one-shot override as the role picker: keep plan mode off the
+      // topic-suggestion turn.
+      modeOverride: 'default',
       replyCtx: msg.replyCtx,
     })
   } catch (error) {

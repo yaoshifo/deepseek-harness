@@ -617,6 +617,13 @@ describe('buildChatroomModeratorPriming', () => {
     }
   })
 
+  it('never instructs an ExitPlanMode dance (moderator sessions are never in plan mode)', () => {
+    const priming = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')
+    for (const banned of ['plan mode', 'ExitPlanMode']) {
+      expect(priming).not.toContain(banned)
+    }
+  })
+
   it('uses 总分结构 wording and never induces a pyramid graphic', () => {
     const cases: Array<[string, string]> = [
       ['moderator', buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')],

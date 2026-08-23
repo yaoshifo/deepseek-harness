@@ -22,10 +22,6 @@ description: "在 feishu-bridge 聊天里运行多角色聊天室讨论：若干
 1. **澄清（多轮）** — `action: gather, message: "<q>"` 把一个问题并行广播给所有角色；engine 收齐它们的回复并唤醒你一次。问每个角色用户是否需要被追问，若是，让它给一个多选问题。合并/去重后通过原生 `AskUserQuestion`（MultiSelect）**一次性**问用户——本阶段**不要**让角色 `ask-human`。用 `note` 记下用户回答，再带上回答 `gather` 一次，让角色决定是否还要追问。循环：gather → AskUserQuestion → note → 再 gather，直到所有角色说"无需追问"（或在 3 轮后——把剩余问题作为开放问题带进阶段 2）。然后进入阶段 2。
 2. **拆解 + 讨论** — 再 `gather` 一次，按角色拆出子问题清单；你去重（不重做）并用 `action: note, section: subproblems` 记下合并后的清单。然后对**每个**子问题用 `action: ask, role: "<name>"` 驱动串行圆桌——每个角色都参与每个子问题，不管是谁提出的。只带图景 + 指引，不带框架。一个子问题充分讨论完才推进。所有子问题过后，回到原始问题做一轮综合，然后渲染 HTML 摘要并问用户是否 `end`。
 
-## 在 plan mode 下：先退出
-
-`gather` 和 `ask` 有副作用（启动真实角色轮次），plan mode 会拦住它们。如果你在 plan mode，调用 `ExitPlanMode` 带一个一行计划（gather 澄清（多轮，最多 3）→ AskUserQuestion 多选 → note → gather 拆解 → note → 每子问题 ask → end + 摘要）。批准后退出 plan mode，按契约驱动两阶段循环。若用户拒绝，停下——不要自己扮演参与者。
-
 ## 如果 `/chatroom` 还没跑过
 
 在 `/chatroom` 被调用前不存在任何角色群。如果用户想要聊天室但还没跑，告诉他们先跑 `/chatroom <topic>`——没给角色时默认用配置的 roles_dir（如 `books/thinkers/`）下所有角色。要挑特定角色：`/chatroom <role1>,<role2>,... <topic>`。

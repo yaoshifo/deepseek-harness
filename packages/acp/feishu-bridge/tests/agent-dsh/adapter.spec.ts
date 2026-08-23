@@ -992,6 +992,28 @@ it('defaultMode plan activates plan mode on every startSession (Go agent options
   expect(planSets).toEqual([true, true, false, true])
 })
 
+it('a chatroom moderator never enters plan mode (an inherited plan default is downgraded)', async () => {
+  const h = createHarness()
+  const planSets: boolean[] = []
+  h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
+  const a = newAdapter(h)
+  a.setDefaultMode('plan')
+  a.setSessionEnv(['CC_SESSION_KEY=feishu:hub:ou_9', 'CC_CHATROOM_MODERATOR=1'])
+  await a.startSession('')
+  expect(planSets).toEqual([false])
+})
+
+it('a chatroom moderator downgrades an explicit plan override too (one rule: moderators never plan)', async () => {
+  const h = createHarness()
+  const planSets: boolean[] = []
+  h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
+  const a = newAdapter(h)
+  a.setSessionMode('plan')
+  a.setSessionEnv(['CC_SESSION_KEY=feishu:hub:ou_9', 'CC_CHATROOM_MODERATOR=1'])
+  await a.startSession('')
+  expect(planSets).toEqual([false])
+})
+
 describe('sessionBypassesPermissions (Go effectiveMode → bypassPermissions)', () => {
   it('elevates unattended subtasks and chatroom roles, not attended ones or moderators', () => {
     expect(sessionBypassesPermissions(['CC_SUBTASK=1'])).toBe(true)

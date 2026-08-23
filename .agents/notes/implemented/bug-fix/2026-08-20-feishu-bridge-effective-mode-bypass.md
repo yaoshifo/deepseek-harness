@@ -18,7 +18,7 @@ Go's dsh backend computes an effective mode per session (`agent/dsh/dsh.go` effe
 
 **Bypass in the engine before the permission event is emitted.** Rejected: the engine's permission path is platform-agnostic and shared by other agent backends; Go put this decision in the dsh session where the env flags live, and the adapter is its TS counterpart.
 
-**Include moderators in the bypass.** Rejected: Go excludes them — the moderator is the one chatroom session a human actively drives, and its plan approvals are meaningful.
+**Include moderators in the bypass.** Rejected: Go excludes them — the moderator is the one chatroom session a human actively drives, so its tool approvals stay meaningful. Its plan approvals later proved noise, not signal: moderators now never enter plan mode ([chatroom moderators never enter plan mode](../feature/2026-08-23-feishu-bridge-chatroom-moderator-no-plan-mode.md), a deviation from Go effectiveMode limited to plan mode).
 
 ## Consequences
 

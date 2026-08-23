@@ -482,6 +482,20 @@ describe('cmdChatroom', () => {
     expect(e.perChatWorkDir(e.dirOverrideKey(hub))).toBe(roleDir(rolesDir, 'taleb'))
   })
 
+  it('direct-role wake carries the bare topic with no plan-mode hint', async () => {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    const wakes: Message[] = []
+    const orig = e.receiveMessage.bind(e)
+    e.receiveMessage = (plat, m) => { wakes.push(m); orig(plat, m) }
+    const handler = e.commandHandlers?.get('chatroom')
+    handler?.(p, hubMsg('test:hub:user-1'), ['taleb', '厚尾下的预测失效'])
+    await settle()
+    const wake = wakes.find(m => m.content.includes('厚尾下的预测失效'))
+    expect(wake?.content).toBe('厚尾下的预测失效')
+  })
+
   it('multi-role after a direct-role session clears the direct flag', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
@@ -592,6 +606,22 @@ describe('cmdChatroom', () => {
     expect(getChatroomTopicPickState(e, hub)?.phase).toBe('picking')
     expect(getChatroomPickState(e, hub)).toBeUndefined()
     expect(p.sentCards.some(c => cardBody(c).includes('候选题目'))).toBe(true)
+  })
+
+  it('pick wakes carry modeOverride default so the pick turn never runs in plan mode', async () => {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    const wakes: Message[] = []
+    const orig = e.receiveMessage.bind(e)
+    e.receiveMessage = (plat, m) => { wakes.push(m); orig(plat, m) }
+    const handler = e.commandHandlers?.get('chatroom')
+    handler?.(p, hubMsg('test:hub:user-1'), ['大模型时代程序员还要学算法吗'])
+    await settle()
+    expect(wakes.at(-1)?.modeOverride).toBe('default')
+    handler?.(p, hubMsg('test:hub:user-2'), [])
+    await settle()
+    expect(wakes.at(-1)?.modeOverride).toBe('default')
   })
 
   it('roles without topic falls back to usage (no picker armed)', async () => {

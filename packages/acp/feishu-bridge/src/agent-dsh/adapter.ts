@@ -229,7 +229,8 @@ function envValue(env: string[], name: string): string {
  * children without a human in the group, and chatroom role / direct-role
  * personas — approval prompts there stall on nobody who can answer. An
  * attended subtask (a human has spoken in the child group) and a moderator
- * keep the normal approval path.
+ * keep the normal approval path; a moderator additionally never enters
+ * plan mode (downgraded at session start, whatever the mode source).
  *
  * @param env - The session env built by the engine's buildSessionEnv.
  * @returns True when tool-permission requests auto-approve for this session.
@@ -1107,7 +1108,14 @@ export class DshAgentAdapter {
     // overridden mode with bypassPermissions — which also means plan mode
     // stays off (a delegated child nobody can approve must not stall on an
     // ExitPlanMode card).
-    const mode = bypass ? 'bypassPermissions' : (this.modeOverride !== '' ? this.modeOverride : this.defaultMode)
+    let mode = bypass ? 'bypassPermissions' : (this.modeOverride !== '' ? this.modeOverride : this.defaultMode)
+    // A chatroom moderator drives a running discussion, never an
+    // implementation: an inherited plan default (project agent.mode) would
+    // re-arm plan mode on every recycled start and stall the chatroom on an
+    // ExitPlanMode approval nobody needs to give. Roles and direct roles are
+    // covered by bypass above; the moderator keeps the normal tool-approval
+    // path (deliberate deviation from Go effectiveMode, plan mode only).
+    if (mode === 'plan' && envHasFlag(this.env, 'CC_CHATROOM_MODERATOR')) mode = 'default'
     if (mode !== '') {
       // Apply the mode onto the native plan-mode controller (Go /mode +
       // config mode=plan): plan → active, others off. The one-shot override

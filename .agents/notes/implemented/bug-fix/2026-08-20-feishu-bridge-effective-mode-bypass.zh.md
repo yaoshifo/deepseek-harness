@@ -18,7 +18,7 @@ Go 的 dsh 后端按会话计算 effective mode（`agent/dsh/dsh.go` effectiveMo
 
 **在 engine 侧、权限事件发出前 bypass。** 否决：engine 的权限路径是平台无关的、由其他 agent 后端共享；Go 把这个决策放在 env 旗标所在的 dsh 会话里，adapter 就是它的 TS 对应物。
 
-**把 moderator 也纳入 bypass。** 否决：Go 排除了它——moderator 是人类主动驱动的那个 chatroom 会话，它的 plan 审批有意义。
+**把 moderator 也纳入 bypass。** 否决：Go 排除了它——moderator 是人类主动驱动的那个 chatroom 会话，它的工具审批有意义。（其 plan 审批后来被证实是噪音而非信号：moderator 现已永不进入 plan 模式，见 [聊天室主持人永不进入 plan 模式](../feature/2026-08-23-feishu-bridge-chatroom-moderator-no-plan-mode.zh.md)——对 Go effectiveMode 的偏离仅限 plan 模式。）
 
 ## Consequences
 
