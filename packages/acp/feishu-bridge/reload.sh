@@ -3,7 +3,10 @@
 # host face, then restart the daemon under its supervisor — launchd
 # (unload/load) on macOS, `systemctl --user restart` on Linux. Engines and the
 # Feishu WS platform all live in the daemon process, so the daemon itself
-# restarts and sessions resume from the jsonl log on their next message.
+# restarts and sessions resume from the jsonl log on their next message. The
+# restart is also this deployment's config-apply gate: profile yml edits take
+# effect here (config HMR is off; see the bundle's cordis.patch.yml), and a
+# broken file aborts the preflight below before anything is stopped.
 #
 #   --skip-build   restart only (build already done elsewhere)
 #
@@ -88,6 +91,24 @@ if [ "$BUILD" -eq 1 ]; then
   for f in "$FORK_DIR/apps/cli/lib/bin.js" "$PKG_DIR/lib/index.js"; do
     [ -f "$f" ] && echo "    built: $f ($(date -r "$f" '+%Y-%m-%d %H:%M:%S'))"
   done
+fi
+
+# Config preflight before any stop/restart: compose the profile's patch layers
+# with the same loader the restart will boot (--dump-config parses without
+# booting, so no second process ever connects to Feishu). A broken
+# cordis.patch.yml aborts while the old daemon still runs — it keeps its
+# last-good tree, the group gets the /reload failure reply, and no systemd
+# crash-loop starts. Limit: dump mode evaluates no !!js and checks no plugin
+# schemas; those errors still surface only after the restart. The cordis.yml
+# root rewrite inside --dump-config is inert because this bundle disables the
+# hmr row (no module watcher on the profile dir) and the preflight never
+# touches the patch ymls the launcher's config watchers track.
+echo "==> validating profile config ($PROFILE)"
+CHECK_ERR="$LOG_DIR/feishu-bridge-config-check.err"
+if ! node "$FORK_DIR/apps/cli/lib/bin.js" --profile "$PROFILE" --dump-config >/dev/null 2>"$CHECK_ERR"; then
+  echo "error: profile config failed validation; daemon left running on the current config:" >&2
+  tail -5 "$CHECK_ERR" >&2 2>/dev/null || true
+  exit 1
 fi
 
 if [ "$OS" = Darwin ]; then

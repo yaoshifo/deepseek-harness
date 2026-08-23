@@ -24,7 +24,7 @@ cd @REPO_DIR@/packages/acp/feishu-bridge
 
 `install.sh` 把 `profile/` 下模板渲染到 `~/.dsh/profiles/feishu-bridge`（已存在的文件不动——profile 是自进化层），并在 profile 目录执行 `pnpm install`。要点：
 
-- `cordis.patch.yml` 永远不会被 install 覆盖：它是运行期热改的配置层（Cordis HMR）。
+- `cordis.patch.yml` 永远不会被 install 覆盖：它是运行期热改的配置层。生效方式由 `DSH_CONFIG_HMR_DISABLED` 决定——模板默认置位（§5）：改动经 `/reload` 重启生效，`reload.sh` 重启前先校验配置（§3.3）；不置位的部署保持 Cordis HMR 即时热载。
 - feishu bot / 引擎配置写在 `cordis.patch.yml` 的 `feishu-bridge` 插件行 `config:` 下（见 §2 映射表）；LLM 路由、沙箱、会话存储写在同文件其余行。
 - TODO：`profile/` 模板与实例的路径统一（MIGRATION.md 附录 B 遗留 4：模板仍是 Linux 路径 + glm 路由）。
 
@@ -142,7 +142,8 @@ launchd 模板把标准输出/错误写到 `@LOG_DIR@/feishu-bridge-stdout.log` 
 - TS 代码改动（一键，双平台）：`packages/acp/feishu-bridge/reload.sh`——§1.3 两步构建 → 重启 daemon（macOS：`launchctl unload`/`load` + stdout/stderr 日志轮换；Linux：单条 `systemctl --user restart`，原子操作无空窗）→ WS 就绪探活（macOS 查轮换后的 stdout 日志，Linux 查 journal）；`--skip-build` 跳过构建（构建已在别处完成时）。在 daemon 内的会话里执行会被拒绝（重启会中断自身 turn；由 bash 环境里的 `DSH_SESSION_JSONL` 判定——agent 沙箱会把 `XPC_SERVICE_NAME` 改写成字面量 `0`、并拒绝 `ps`，两者都不可用），须从普通终端跑；进行中 turn 会回滚到最后完整 turn。macOS 上 unload 与 load 之间脚本若因任何原因退出，会自动重试 `launchctl load` 恢复服务。
 - 同一效果的聊天入口：admin 用户发 `/reload [--skip-build]`（TS 原生命令，无 Go 对应）。daemon 以 detached 子进程运行上述脚本并带 `FB_RELOAD_FROM_DAEMON=1`——该变量只豁免脚本的 ppid 守卫（detached 子进程正是该守卫想近似的安全场景），`DSH_SESSION_JSONL` 守卫不豁免。macOS 直接 setsid spawn（launchd teardown 打不到 setsid 子进程）；Linux 经 `systemd-run --user --scope` 生成兄弟 scope 单元——setsid 出不了 `feishu-bridge.service` 的 cgroup，`systemctl --user restart`（KillMode=control-group）会连带杀掉脚本造成重启成功但误报失败（2026-08-22 dev 事故）。输出追加到 `$LOG_DIR`（默认 `~/.dsh`）的 `feishu-bridge-reload.log`；进行中仅允许一个 reload；脚本在重启之前失败（构建失败、plist/systemd unit 缺失）时 daemon 未重启、用户会收到失败回复。
 - 完成通知：spawn 前 handler 写 `$LOG_DIR/feishu-bridge-reload-pending.json`（pid、engine、platform、replyCtx、at）；新 daemon 所有平台就绪后读取标记，按（项目名 → 平台名）两级匹配定位当初发「已启动」回复的同一平台——未配 tag 的部署所有平台默认名都是 `feishu`，只按平台名匹配会选中不在群里的 bot 而被飞书 230002 拒绝（2026-08-22 dev 事故）——把「✅ Reload 完成」回复到原 `/reload` 消息上并删除标记，通知由新进程发出、能发出即证明重启落地。同 pid（HMR 插件重载在 reload 飞行中重跑 `apply()`）跳过且保留标记；超过 15 分钟视为陈旧静默丢弃；项目/平台已不在配置、标记损坏、发送失败均 warn 后丢弃。残留边界：reload 构建期间 daemon 独立崩溃由 systemd 拉起，也会收到通知（daemon 确实重启了，文案不声称构建结果，详情以日志为准）。daemon 已重启后才暴露的失败（如 WS 探活超时）仍只有日志留痕，无失败回复。
-- profile yml / 插件 config 改动：Cordis HMR 事务热载，无需重启。
+- 配置校验前置：构建完成后、任何 stop/restart 之前，脚本以 `dsh --profile feishu-bridge --dump-config` 解析 profile 各 patch 层（不 boot、不连飞书）。坏 `cordis.patch.yml`（YAML 语法、非数组、条目非映射、文件不可读）在旧 daemon 仍在运行时被拦截——daemon 保持当前配置继续跑，群里收到 `/reload` 失败回复，错误尾部在脚本输出与 `$LOG_DIR/feishu-bridge-config-check.err`。局限：dump 模式不求值 `!!js`、不校验插件 Config schema、不解析插件名——这类错误仍只在重启后的 boot 才暴露（fail-loud 崩溃，systemd 按 RestartSec 重试；修好文件即自愈）。该步骤会重写 profile 的 `cordis.yml` 空根文件，仅因本部署无任何 config watcher（bundle 已禁 `hmr` 行 + `DSH_CONFIG_HMR_DISABLED`）而惰性。
+- profile yml / 插件 config 改动：与 TS 改动同一入口 `/reload`（重启重读磁盘）。`DSH_CONFIG_HMR_DISABLED`（模板默认置位）关闭 Cordis HMR 即时热载；删除该行则回到事务热载、无需重启。
 
 ## 4. 回退（回旧 cc-connect）
 
@@ -150,7 +151,7 @@ launchd 模板把标准输出/错误写到 `@LOG_DIR@/feishu-bridge-stdout.log` 
 
 1. 取消注释 `~/.cc-connect/config.toml` 中该 project 段。
 2. `launchctl kickstart -k gui/$(id -u)/com.cc-connect.service`（旧进程重启并拿回 WS）。
-3. `launchctl unload ~/Library/LaunchAgents/com.dsh.feishu-bridge.plist`（停新 daemon；若只回退部分 project，改从新 daemon 的 `cordis.patch.yml` 移除该 project 段——HMR 生效，不必停进程）。
+3. `launchctl unload ~/Library/LaunchAgents/com.dsh.feishu-bridge.plist`（停新 daemon；若只回退部分 project，改从新 daemon 的 `cordis.patch.yml` 移除该 project 段，再 `/reload` 或重启 daemon 生效）。
 
 顺序不可换：先让旧进程拿回 WS，再停新进程。切流窗口内（旧进程释放到新进程接管之间）用户消息不补投，挑空闲时段执行。
 

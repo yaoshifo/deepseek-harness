@@ -15,6 +15,9 @@ ExecStart=@DSH_BIN@ --profile feishu-bridge
 WorkingDirectory=@DEFAULT_WORKDIR@
 # profile 的 llm 路由 apiKeyEnv 所引用的变量在此给实际值
 Environment=FB_MIFY_API_KEY=@LLM_API_KEY@
+# 关闭配置热载：profile yml 改动经 /reload 重启生效（reload.sh 重启前会校验
+# 配置；见 docs/OPERATIONS.md §3.3）。删除本行则回到 Cordis HMR 即时热载。
+Environment=DSH_CONFIG_HMR_DISABLED=1
 # 崩溃自动拉起（断线重连由 SDK + watchdog 承担，进程退出交给 systemd）
 Restart=on-failure
 RestartSec=5

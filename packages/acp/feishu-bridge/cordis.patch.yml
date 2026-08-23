@@ -3,3 +3,12 @@
 - insert:
     - id: feishu-bridge
       name: '@deepseek-ai/dsh-feishu-bridge'
+
+# The daemon's config-apply gate is /reload (the restart re-reads everything
+# from disk). Module-HMR watching only ever saw the profile directory, and the
+# reload.sh dump-config preflight rewrites the profile's cordis.yml root — a
+# live watcher would treat that rewrite as a config change and hot-reload the
+# old daemon mid-reload. Deployments without DSH_CONFIG_HMR_DISABLED keep
+# config HMR through the launcher's watch-only fallback.
+- id: hmr
+  disabled: true
