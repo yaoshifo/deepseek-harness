@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-22-feishu-bridge-plan-card-title-strips-cwd-slug.md
-2026-08-22-feishu-bridge-plan-card-title-strips-cwd-slug.md: d1e05d8a44dfaa2e98b611e0449222b8945b2855
-2026-08-22-feishu-bridge-plan-card-title-strips-cwd-slug.zh.md: 28e305be25b7a1ac39b864518768f7e1758b0c0c
+2026-08-22-feishu-bridge-plan-card-title-strips-cwd-slug.md: c2948ce6872a5b1d16ba59b40111ba85ce91d105
+2026-08-22-feishu-bridge-plan-card-title-strips-cwd-slug.zh.md: 54a1dc05af5ceb69a47752897e939ae8ca74681f

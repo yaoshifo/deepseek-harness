@@ -3,9 +3,8 @@
  * plan to the configured plans directory, Claude-Code-aligned —
  * `<cwd-slug>-<title-slug>.md`, timestamp suffix when the name is taken by
  * different content, skip when identical, disabled by planDir '', and the
- * model-written plan file always wins untouched. The plan card title derives
- * from the same basename minus the cwd-slug prefix (zero information inside
- * a project-bound chat).
+ * model-written plan file always wins untouched. The plan card header is the
+ * localized version identifier, not a file-name derivation.
  *
  * @module dsh-feishu-bridge/tests-engine-plan-file
  */
@@ -17,7 +16,7 @@ import { join } from 'node:path'
 
 import type { Card } from '../../src/card.js'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { planCardName, savePlanFile } from '../../src/engine/plan-file.js'
+import { savePlanFile } from '../../src/engine/plan-file.js'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -110,22 +109,6 @@ describe('savePlanFile', () => {
   })
 })
 
-// ── planCardName helper ─────────────────────────────────────────────────────
-
-describe('planCardName', () => {
-  it('strips the leading cwd-slug prefix', () => {
-    expect(planCardName('/root/.claude/plans/users-t-proj-a-重构登录流程.md', '/Users/t/Proj A')).toBe('重构登录流程')
-  })
-
-  it('keeps the timestamp suffix after stripping the prefix', () => {
-    expect(planCardName('/root/p/users-t-proj-a-重构登录流程-20260821-143015.md', '/Users/t/Proj A')).toBe('重构登录流程-20260821-143015')
-  })
-
-  it('keeps the full basename when it does not start with the workdir slug', () => {
-    expect(planCardName('/root/p/worktree-x-title.md', '/Users/t/Proj A')).toBe('worktree-x-title')
-  })
-})
-
 // ── engine event-loop integration ───────────────────────────────────────────
 
 const planBody = '# 计划标题\n\n步骤一：封装\n步骤二：接入'
@@ -212,7 +195,7 @@ describe('processInteractiveEvents plan persistence', () => {
 // ── plan card title derivation ──────────────────────────────────────────────
 
 describe('plan card title', () => {
-  it('sendPlanContent titles the card without the cwd-slug prefix', async () => {
+  it('sendPlanContent titles the first plan card with the localized bare Plan header', async () => {
     const dir = tempDir('plan-file-')
     const path = savePlanFile(dir, '/Users/t/Proj A', planBody)
     const p = createStubCardPlatform('feishu')
@@ -221,28 +204,38 @@ describe('plan card title', () => {
     await e.sendPlanContent(p, 'ctx', undefined, path, 1, 'plan:1')
 
     expect(p.sentCards).toHaveLength(1)
-    expect((p.sentCards[0] as Card).header?.title).toBe('计划·计划标题')
+    expect((p.sentCards[0] as Card).header?.title).toBe('Plan')
   })
 
-  it('sendInlinePlanContent uses the same prefix-stripped title from a file path', async () => {
+  it('sendPlanContent titles a revised plan card with the localized version header', async () => {
     const dir = tempDir('plan-file-')
     const path = savePlanFile(dir, '/Users/t/Proj A', planBody)
     const p = createStubCardPlatform('feishu')
-    const e = new Engine('test', agentWithWorkDir('/Users/t/Proj A'), [p], '', 'en')
+    const e = new Engine('test', agentWithWorkDir('/Users/t/Proj A'), [p], '', 'zh')
 
-    await e.sendInlinePlanContent(p, 'ctx', undefined, planBody, path, 1, 'plan:1')
+    await e.sendPlanContent(p, 'ctx', undefined, path, 2, 'plan:2')
 
     expect(p.sentCards).toHaveLength(1)
-    expect((p.sentCards[0] as Card).header?.title).toBe('计划·计划标题')
+    expect((p.sentCards[0] as Card).header?.title).toBe('计划 (v2)')
   })
 
-  it('sendInlinePlanContent without a file path keeps the generic 计划 title', async () => {
+  it('sendInlinePlanContent titles the card like the file-backed path', async () => {
     const p = createStubCardPlatform('feishu')
     const e = new Engine('test', agentWithWorkDir('/Users/t/Proj A'), [p], '', 'en')
 
-    await e.sendInlinePlanContent(p, 'ctx', undefined, planBody, '', 1, 'plan:1')
+    await e.sendInlinePlanContent(p, 'ctx', undefined, planBody, 1, 'plan:1')
 
     expect(p.sentCards).toHaveLength(1)
-    expect((p.sentCards[0] as Card).header?.title).toBe('计划')
+    expect((p.sentCards[0] as Card).header?.title).toBe('Plan')
+  })
+
+  it('sendInlinePlanContent titles a revised card with the version header', async () => {
+    const p = createStubCardPlatform('feishu')
+    const e = new Engine('test', agentWithWorkDir('/Users/t/Proj A'), [p], '', 'en')
+
+    await e.sendInlinePlanContent(p, 'ctx', undefined, planBody, 2, 'plan:2')
+
+    expect(p.sentCards).toHaveLength(1)
+    expect((p.sentCards[0] as Card).header?.title).toBe('Plan (v2)')
   })
 })

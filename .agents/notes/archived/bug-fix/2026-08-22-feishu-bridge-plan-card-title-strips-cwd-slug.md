@@ -1,6 +1,7 @@
 # Agent Note: Plan card title strips the cwd-slug prefix
 
 Status: implemented
+Archived: 2026-08-23
 
 English | [中文](2026-08-22-feishu-bridge-plan-card-title-strips-cwd-slug.zh.md)
 

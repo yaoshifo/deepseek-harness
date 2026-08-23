@@ -174,7 +174,7 @@ import {
   type RenderCancelHandle,
   type RenderStatusEntry,
 } from './plan-render.js'
-import { planCardName, savePlanFile } from './plan-file.js'
+import { savePlanFile } from './plan-file.js'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -2912,7 +2912,7 @@ export class Engine {
             if (activePlanFilePath !== '') {
               await this.sendPlanContent(p, replyCtx, state, activePlanFilePath, planRevisionCount, exportKey)
             } else {
-              await this.sendInlinePlanContent(p, replyCtx, state, sentPlanContent, '', planRevisionCount, exportKey)
+              await this.sendInlinePlanContent(p, replyCtx, state, sentPlanContent, planRevisionCount, exportKey)
             }
             if (this.planRenderEnabled && shouldRenderPlan(state, sentPlanContent, planRevisionCount)) {
               launchPlanRender(this, state, sessionKey, sentPlanContent, activePlanFilePath, planRevisionCount, exportKey)
@@ -4350,7 +4350,8 @@ export class Engine {
    * @param replyCtx - Platform reply context addressing the chat.
    * @param state - Interactive state recording the plan export content.
    * @param filePath - Plan markdown file to read.
-   * @param _revision - Plan revision counter; retained for Go parity, unused.
+   * @param revision - Plan revision counter, starting at 1; selects the card
+   * header's (vN) variant from the second presentation on.
    * @param exportKey - Export-button key the content is stored under.
    * @returns The sent (possibly truncated) content, '' on read failure or empty content.
    */
@@ -4359,7 +4360,7 @@ export class Engine {
     replyCtx: unknown,
     state: InteractiveState | undefined,
     filePath: string,
-    _revision: number,
+    revision: number,
     exportKey: string,
   ): Promise<string> {
     let content = ''
@@ -4378,11 +4379,24 @@ export class Engine {
         content = `${runes.slice(0, maxLen).join('')}...`
       }
     }
-    const name = planCardName(filePath, this.planWorkDir())
     await sendPlanCard(this, p, replyCtx, state, exportKey, content,
-      { title: `计划·${name}`, color: 'blue' },
+      { title: this.planCardTitle(revision), color: 'blue' },
       [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }])
     return content
+  }
+
+  /**
+   * Plan-card header title: the localized bare header for the first
+   * presentation, the (vN) variant from the second on. The plan's own title
+   * stays in the card body — deriving the header from it duplicated the
+   * body's first heading.
+   * @param revision - Plan revision counter, starting at 1.
+   * @returns The localized card title.
+   */
+  private planCardTitle(revision: number): string {
+    return revision > 1
+      ? this.i18n.tf(Msg.PlanContentHeaderRevision, revision)
+      : this.i18n.t(Msg.PlanContentHeader)
   }
 
   /**
@@ -4394,8 +4408,8 @@ export class Engine {
    * @param replyCtx - Platform reply context addressing the chat.
    * @param state - Interactive state recording the plan export content.
    * @param content - Inline plan content from the tool input.
-   * @param filePath - Plan file path used only for the card title; '' = generic title.
-   * @param _revision - Plan revision counter; retained for Go parity, unused.
+   * @param revision - Plan revision counter, starting at 1; selects the card
+   * header's (vN) variant from the second presentation on.
    * @param exportKey - Export-button key the content is stored under.
    * @returns The sent (possibly truncated) content, '' when empty.
    */
@@ -4404,8 +4418,7 @@ export class Engine {
     replyCtx: unknown,
     state: InteractiveState | undefined,
     content: string,
-    filePath: string,
-    _revision: number,
+    revision: number,
     exportKey: string,
   ): Promise<string> {
     let body = content.trim()
@@ -4415,9 +4428,8 @@ export class Engine {
       const runes = Array.from(body)
       if (runes.length > maxLen) body = `${runes.slice(0, maxLen).join('')}...`
     }
-    const title = filePath !== '' ? `计划·${planCardName(filePath, this.planWorkDir())}` : '计划'
     await sendPlanCard(this, p, replyCtx, state, exportKey, body,
-      { title, color: 'blue' },
+      { title: this.planCardTitle(revision), color: 'blue' },
       [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }])
     return body
   }

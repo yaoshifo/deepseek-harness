@@ -3,15 +3,13 @@
  * full plan markdown is written into the user-level plans directory as
  * `<cwd-slug>-<title-slug>.md`; a same-name file holding different content
  * gets a `-YYYYMMDD-HHMMSS`-suffixed sibling instead of an overwrite, and
- * identical content keeps the existing file untouched. The plan card title
- * derives from the same basename with the cwd-slug prefix removed — it only
- * disambiguates files on disk; the chat is already project-bound.
+ * identical content keeps the existing file untouched.
  *
  * @module dsh-feishu-bridge/plan-file
  */
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { join } from 'node:path'
 import { atomicWriteFileSync } from '../atomicwrite.js'
 import { extractMarkdownTitle, slugifyTitle } from './plan-render.js'
 
@@ -61,23 +59,4 @@ export function savePlanFile(dir: string, workdir: string, content: string, now:
   mkdirSync(dir, { recursive: true })
   atomicWriteFileSync(path, new TextEncoder().encode(`${content.trim()}\n`), PLAN_FILE_MODE)
   return path
-}
-
-/**
- * Plan card title name: the plan-file basename minus `.md` and minus the
- * leading `<cwd-slug>-` prefix when it matches `workdir`. The prefix only
- * disambiguates files on disk inside the shared plans directory; a chat is
- * already project-bound, so the card title shows just the title part. A
- * basename that does not start with the workdir slug (e.g. a plan file the
- * model wrote from a worktree session) is returned unchanged.
- *
- * @param filePath - Plan file path as persisted.
- * @param workdir - Project working directory the plan belongs to.
- * @returns Display name for the plan card title.
- */
-export function planCardName(filePath: string, workdir: string): string {
-  const name = basename(filePath).replace(/\.md$/, '')
-  const slug = cwdSlug(workdir)
-  const prefix = `${slug}-`
-  return slug !== '' && name.startsWith(prefix) ? name.slice(prefix.length) : name
 }

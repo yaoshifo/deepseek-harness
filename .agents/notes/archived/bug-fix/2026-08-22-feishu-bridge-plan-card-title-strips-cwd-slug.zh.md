@@ -1,6 +1,7 @@
 # Agent Note: 计划卡标题剥离 cwd-slug 前缀
 
 Status: implemented
+Archived: 2026-08-23
 
 [English](2026-08-22-feishu-bridge-plan-card-title-strips-cwd-slug.md) | 中文
 
