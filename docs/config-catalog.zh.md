@@ -406,28 +406,6 @@ export type Config = LocalConfig
 
 <a id="deepseek-aidsh-client-connection"></a>
 
-## `@deepseek-ai/dsh-cc-connect-bridge`
-
-需要：`agents`
-
-```ts config-catalog
-/** Deployment config plus runtime-only test hooks. */
-export interface BridgeConfig {
-  /** Transport input override; production uses `process.stdin`. */
-  input?: Readable
-  /** Transport output override; production uses `process.stdout`. */
-  output?: Writable
-  /** Process-exit override; production uses `process.exit`. */
-  exit?: (code: number) => void
-}
-```
-
-依赖：`Readable` (`node:stream`) · `Writable` (`node:stream`)
-
-来源：[`packages/acp/cc-connect-bridge/src/index.ts:35`](../packages/acp/cc-connect-bridge/src/index.ts)
-
-<a id="deepseek-aidsh-client-connection"></a>
-
 ## `@deepseek-ai/dsh-client-connection`
 
 需要：`webServer`

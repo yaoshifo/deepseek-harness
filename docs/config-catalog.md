@@ -402,28 +402,6 @@ Depends on: [`LocalConfig`](#deepseek-aidsh-bash-local)
 
 Source: [`packages/shell/bash-sandbox/src/index.ts:35`](../packages/shell/bash-sandbox/src/index.ts)
 
-<a id="deepseek-aidsh-cc-connect-bridge"></a>
-
-## `@deepseek-ai/dsh-cc-connect-bridge`
-
-Requires: `agents`
-
-```ts config-catalog
-/** Deployment config plus runtime-only test hooks. */
-export interface BridgeConfig {
-  /** Transport input override; production uses `process.stdin`. */
-  input?: Readable
-  /** Transport output override; production uses `process.stdout`. */
-  output?: Writable
-  /** Process-exit override; production uses `process.exit`. */
-  exit?: (code: number) => void
-}
-```
-
-Depends on: `Readable` (`node:stream`) · `Writable` (`node:stream`)
-
-Source: [`packages/acp/cc-connect-bridge/src/index.ts:35`](../packages/acp/cc-connect-bridge/src/index.ts)
-
 <a id="deepseek-aidsh-client-connection"></a>
 
 ## `@deepseek-ai/dsh-client-connection`

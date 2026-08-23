@@ -1,11 +1,9 @@
 #!/bin/sh
 # Make harness TS changes take effect on the feishu-bridge daemon: rebuild the
 # host face, then restart the daemon under its supervisor — launchd
-# (unload/load) on macOS, `systemctl --user restart` on Linux. Unlike
-# cc-connect-bridge's reload.sh there is no per-session respawn to lean on —
-# engines and the Feishu WS platform all live in the daemon process, so the
-# daemon itself restarts and sessions resume from the jsonl log on their next
-# message.
+# (unload/load) on macOS, `systemctl --user restart` on Linux. Engines and the
+# Feishu WS platform all live in the daemon process, so the daemon itself
+# restarts and sessions resume from the jsonl log on their next message.
 #
 #   --skip-build   restart only (build already done elsewhere)
 #
