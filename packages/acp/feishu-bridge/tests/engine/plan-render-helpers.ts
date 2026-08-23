@@ -17,7 +17,7 @@ import { errRenderStalled } from '../../src/engine/plan-render.js'
 import { createStubAgent, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.js'
 
 /** One recorded renderQuery invocation (Go renderAgentCall). */
-export interface RenderAgentCall {
+interface RenderAgentCall {
   prompt: string
   provider: string
   systemPrompt: string

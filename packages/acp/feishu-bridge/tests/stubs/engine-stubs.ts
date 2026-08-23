@@ -9,7 +9,6 @@
 import type {
   Agent,
   AgentSession,
-  AgentSessionInfo,
   ButtonOption,
   Event,
   EventChannel,
@@ -161,14 +160,6 @@ export function newResultAgentSession(result: string): ControllableAgentSession 
     }
   }
   return s
-}
-
-/** Session list stub (Go stubListAgent). */
-export function createListAgent(sessions: AgentSessionInfo[]): StubAgent {
-  return {
-    ...createStubAgent(),
-    listSessions: async () => sessions,
-  }
 }
 
 /** Go stubPlatformEngine: records Reply/Send texts. */
@@ -351,7 +342,7 @@ export function testMultiQuestions(): UserQuestion[] {
 // ── M5 stubs ──────────────────────────────────────────────────────────────
 
 /** A recorded RenameGroupAny invocation (Go stubRenameCall). */
-export interface StubRenameCall {
+interface StubRenameCall {
   key: string
   name: string
 }

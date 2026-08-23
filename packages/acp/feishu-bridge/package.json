@@ -1,8 +1,16 @@
 {
   "name": "@deepseek-ai/dsh-feishu-bridge",
   "description": "Feishu bridge plugin for DeepSeek Harness: engine + Feishu platform orchestration migrated from cc-connect (packages/acp/feishu-bridge/docs/MIGRATION.md)",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.1.1-rc.1",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/acp/feishu-bridge"
+  },
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -19,12 +27,12 @@
     }
   },
   "files": [
-    "lib",
+    "lib/index.js",
     "lib/invariant.js",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "lib/types/**/*.d.ts"
   ],
   "dependencies": {
-    "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-agent": "workspace:^",
     "@deepseek-ai/dsh-llm": "workspace:^",
     "@deepseek-ai/dsh-session": "workspace:^",
@@ -39,9 +47,11 @@
     }
   },
   "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/dsh-agent-loop": "workspace:^",
     "@deepseek-ai/dsh-agent-loop-testkit": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
