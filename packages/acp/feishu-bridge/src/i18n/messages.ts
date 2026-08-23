@@ -111,6 +111,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   chatroom_pick_empty: { en: 'Select at least 1 role.', zh: '至少选择 1 个角色。' },
   chatroom_pick_picking: { en: 'Picking roles for you based on the topic…', zh: '正在根据议题为你挑选角色…' },
   chatroom_pick_starting: { en: 'Starting the chatroom…', zh: '正在启动聊天室…' },
+  chatroom_pick_expired: { en: 'This selection has expired (daemon restart or timeout); send /chatroom again.', zh: '本次选择已失效（服务重启或超时），请重新发送 /chatroom。' },
   chatroom_topic_pick_title: { en: 'Suggest a topic', zh: '随便聊聊：选个题目' },
   chatroom_topic_pick_picking: { en: 'Asking the moderator for topic ideas based on your roles and recent interests…', zh: '正在让主持人结合角色和你的近期兴趣出候选题目…' },
   chatroom_topic_pick_pick: { en: 'Pick this', zh: '选这个' },

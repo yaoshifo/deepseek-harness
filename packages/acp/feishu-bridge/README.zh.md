@@ -44,7 +44,7 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 - **卡片按钮回调无法自动化测试**：`card.action.trigger` 只能真机点击验证（飞书平台无回调模拟 API）；按钮路径靠纯函数表测 + 真机冒烟覆盖。
 - **多工作空间（multi-workspace）未迁移**：channel→workspace 绑定（Go workspace_binding.go）与 per-workspace agent 池未接线；单工作空间 + `/dir` per-chat override 承担现网需求，E 群清查记为 C 类。
 - **fork 源彻底消失时静默降级**：seed 先取 live 注册表、再取 sessionPersistence 持久化日志（daemon 重启或 idle 回收后的仅持久化父会话也能 fork，与 Go 读盘一致）；只有源两边都找不到时才退化为全新会话，仅留日志 warn、不回复群消息。
-- **chatroom picker 状态为内存态**：daemon 重启后旧选择卡成孤儿（Go 保形）；plan-render/usage/predict-next 等 M7 剩余域按 MIGRATION.md 队列推进。
+- **chatroom picker 状态为内存态**：daemon 重启后已武装的 picker 丢失；孤儿选择卡的下一次点击会把卡原地替换为灰色「已失效」卡并提示重新 `/chatroom`（Go 的孤儿按钮为静默或假确认）；plan-render/usage/predict-next 等 M7 剩余域按 MIGRATION.md 队列推进。
 - **`nav:/help` 按钮无效**：cron 卡片的返回按钮指向 Go 的 help 卡体系（`renderHelpGroupCard` + `nav:` 帮助导航），该体系未移植；点击会进 engine 打 "no handler" 日志而非静默消失。根治是移植 help 卡族；`/dir` 选择卡同样因此不带返回按钮。
 - **`/list`、`/status`、`/switch` 仍是纯文本**：Go 侧渲染 `renderListCardSafe`/`renderStatusCard` 卡片并带 `act:/list switch|delete N` 动作；TS 命令保持文本输出，待该渲染域移植。
 - **Go 命令清单为有意筛选**：`/shell`+`!`、`/tag`、`/untag`、`/undone`、`/notify`、`/board`、`/help`、`/ps` 已落地（Agent Note `feature/2026-08-20-feishu-bridge-shell-command.md` 与 `feature/2026-08-20-feishu-bridge-seven-commands.md`）；TS 原生另加 `/reload`（admin，detached 运行 reload.sh，见 OPERATIONS.md §3.3；非 Go `/restart` 的移植）；`/help` 列表从注册表动态生成、不会漂移。Go 53 条 builtin 命令剩余约 27 条为有意裁剪（用户裁定 2026-08-21）：upgrade/restart/web/doctor/version 属 D 类，其余（`/whoami`、`/history`、`/current`、`/search`、`/delete`、`/name`、`/memory`、`/model`、`/reasoning`、`/mode`、`/lang`、`/quiet`、`/tts`、`/allow`、`/config`、`/show`、`/diff` 等）设计上不迁；`/tts` 另依赖待裁定的语音能力面。

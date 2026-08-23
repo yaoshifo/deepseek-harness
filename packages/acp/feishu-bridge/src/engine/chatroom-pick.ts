@@ -578,8 +578,15 @@ export function executeChatroomTopicPickAction(e: Engine, sessionKey: string, ar
  * @returns the replacement card, or undefined when nothing should swap in.
  */
 export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: string, args: string): Card | undefined {
+  // A picker with no armed state is an orphaned card (the engine-keyed maps
+  // died with a daemon restart or the pick watchdog): every action swaps the
+  // pressed card for the expired card — confirm used to reply 正在启动
+  // while starting nothing, and toggle was silently consumed.
 
   if (cmd === '/chatroom-pick') {
+    if (pickers(e).chatroomPick.get(sessionKey) === undefined) {
+      return simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'grey', e.i18n.t(Msg.ChatroomPickExpired))
+    }
     executeChatroomPickAction(e, sessionKey, args)
     if (args.startsWith('cancel')) {
       return simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'grey', e.i18n.t('chatroom_pick_cancelled'))
@@ -597,6 +604,9 @@ export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: st
     return renderChatroomPickCard(e, ps)
   }
   if (cmd === '/chatroom-topic-pick') {
+    if (pickers(e).chatroomTopicPick.get(sessionKey) === undefined) {
+      return simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'grey', e.i18n.t(Msg.ChatroomPickExpired))
+    }
     executeChatroomTopicPickAction(e, sessionKey, args)
     if (args.startsWith('cancel')) {
       return simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'grey', e.i18n.t('chatroom_topic_pick_cancelled'))

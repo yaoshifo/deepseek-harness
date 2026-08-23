@@ -27,6 +27,7 @@ import {
 import { roleDir } from '../../src/engine/chatroom-roles.js'
 import {
   clearChatroomPickState,
+  executeChatroomCardAction,
   executeChatroomPickAction,
   executeChatroomTopicPickAction,
   getChatroomPickState,
@@ -34,6 +35,7 @@ import {
   renderChatroomPickCardAndPush,
   renderChatroomTopicPickCardAndPush,
 } from '../../src/engine/chatroom-pick.js'
+import { Msg } from '../../src/i18n/keys.js'
 import type { Message, Platform } from '../../src/core/types.js'
 import {
   clearCards,
@@ -881,6 +883,29 @@ describe('ExecuteChatroomPickAction', () => {
     await settle()
     expect(ps.phase).toBe('select')
     expect(ps.hint).not.toBe('')
+    expect(p.count).toBe(0)
+  })
+})
+
+describe('orphaned picker cards (state lost to a daemon restart)', () => {
+  it('renders the expired card for any action when no picker state exists', async () => {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    const hub = 'test:hub:user-1'
+    const expired = e.i18n.t(Msg.ChatroomPickExpired)
+    const cases: Array<[cmd: string, args: string, title: Msg[keyof Msg]]> = [
+      ['/chatroom-pick', 'confirm', Msg.ChatroomPickTitle],
+      ['/chatroom-pick', 'toggle taleb', Msg.ChatroomPickTitle],
+      ['/chatroom-pick', 'cancel', Msg.ChatroomPickTitle],
+      ['/chatroom-topic-pick', 'confirm', Msg.ChatroomTopicPickTitle],
+    ]
+    for (const [cmd, args, title] of cases) {
+      const card = executeChatroomCardAction(e, hub, cmd, args)
+      expect(card, `${cmd} ${args}`).toBeDefined()
+      expect(card!.header?.color).toBe('grey')
+      expect(card!.header?.title).toBe(e.i18n.t(title))
+      expect(card!.renderText()).toContain(expired)
+    }
     expect(p.count).toBe(0)
   })
 })
