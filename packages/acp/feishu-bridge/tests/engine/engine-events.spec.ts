@@ -163,7 +163,7 @@ describe('buildSenderPrompt', () => {
     const { e } = newEngine()
     e.setInjectSender(true)
     expect(e.buildSenderPrompt('hello world', 'user123', 'Alice', 'feishu', 'feishu:channel42:user123'))
-      .toBe('[cc-connect sender_id=user123 sender_name="Alice" platform=feishu chat_id=channel42]\nhello world')
+      .toBe('[feishu-bridge sender_id=user123 sender_name="Alice" platform=feishu chat_id=channel42]\nhello world')
   })
 
   it('Disabled', () => {
@@ -182,14 +182,14 @@ describe('buildSenderPrompt', () => {
     const { e } = newEngine()
     e.setInjectSender(true)
     expect(e.buildSenderPrompt('hello', 'user1', '', 'feishu', 'feishu:ch:user1'))
-      .toBe('[cc-connect sender_id=user1 platform=feishu chat_id=ch]\nhello')
+      .toBe('[feishu-bridge sender_id=user1 platform=feishu chat_id=ch]\nhello')
   })
 
   it('NameWithSpaces', () => {
     const { e } = newEngine()
     e.setInjectSender(true)
     expect(e.buildSenderPrompt('hi', 'U999', 'Jim Tang', 'slack', 'slack:C012:U999'))
-      .toBe('[cc-connect sender_id=U999 sender_name="Jim Tang" platform=slack chat_id=C012]\nhi')
+      .toBe('[feishu-bridge sender_id=U999 sender_name="Jim Tang" platform=slack chat_id=C012]\nhi')
   })
 
   it.each([
@@ -1947,5 +1947,80 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     sess.channel.push({ type: 'result', content: 'done', done: true } as never)
     await done
     expect(p.getSent().some(s => s.includes('exceeded the maximum turn duration'))).toBe(false)
+  })
+})
+
+describe('processInteractiveEvents native signals (tool failure / compaction / todo snapshots)', () => {
+  function newQuietState() {
+    const p = createPreviewRecorderPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolMessages: false, toolProgress: true })
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+    return { e, p, session, state, agentSession, sessionKey }
+  }
+
+  it('marks the tool entry failed when the projection carries toolSuccess=false', async () => {
+    const { e, p, session, state, agentSession, sessionKey } = newQuietState()
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'tool_result', toolResult: 'exit 1', toolID: 'call-1', toolSuccess: false, content: '', done: false })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(p.messages.join('\n')).toContain('🔴调用失败：1/1')
+  })
+
+  it('keeps the entry green without toolSuccess (absent = success for other emitters)', async () => {
+    const { e, p, session, state, agentSession, sessionKey } = newQuietState()
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'tool_result', toolResult: 'ok', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(p.messages.join('\n')).not.toContain('🔴调用失败')
+  })
+
+  it('counts a compaction event on state and the card summary line', async () => {
+    const { e, p, session, state, agentSession, sessionKey } = newQuietState()
+    agentSession.channel.push({ type: 'compaction', content: '', done: false })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(state.compactionCount).toBe(1)
+    expect(p.messages.join('\n')).toContain('🗜上下文压缩：1次')
+  })
+
+  it('sends the compaction summary to chat when no preview card is active', async () => {
+    const { e, p, session, state, agentSession, sessionKey } = newQuietState()
+    e.setDisplayConfig({ toolMessages: false, toolProgress: false })
+    agentSession.channel.push({ type: 'compaction', content: '', done: false })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(p.getSent().some(s => s.includes('🗜 Context auto-compacted'))).toBe(true)
+  })
+
+  it('replaces the todo section from a todo_update event', async () => {
+    const { e, p, session, state, agentSession, sessionKey } = newQuietState()
+    agentSession.channel.push({ type: 'todo_update', todos: [{ content: 'ship it', status: 'in_progress' }], content: '', done: false })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(p.messages.join('\n')).toContain('🔄 ship it')
+  })
+
+  it('ignores a subagent child todo_update on the parent card', async () => {
+    const { e, p, session, state, agentSession, sessionKey } = newQuietState()
+    agentSession.channel.push({ type: 'todo_update', todos: [{ content: 'child-only', status: 'pending' }], fromSubagent: true, content: '', done: false })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(p.messages.join('\n')).not.toContain('child-only')
   })
 })

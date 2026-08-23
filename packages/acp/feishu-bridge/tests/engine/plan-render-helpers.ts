@@ -7,7 +7,7 @@
  * @module dsh-feishu-bridge/tests-plan-render-helpers
  */
 
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -169,8 +169,20 @@ export function newRenderEngine(agent: Agent, platform: Platform, opts: { timeou
   const e = new Engine('test', agent, [platform], '', 'en')
   e.planRenderEnabled = true
   e.planRenderProvider = 'p'
+  e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
   if (opts.timeoutMs !== undefined) e.planRenderTimeoutMs = opts.timeoutMs
   return e
+}
+
+/**
+ * The render skill body exactly as the dsh skill registry loads it:
+ * skills/feishu-bridge-render/SKILL.md minus frontmatter, trimmed — the
+ * single source the render-session prompts inline.
+ */
+export function renderSkillBodyFixture(): string {
+  const raw = readFileSync(new URL('../../skills/feishu-bridge-render/SKILL.md', import.meta.url), 'utf8')
+  const close = raw.indexOf('\n---\n', 3)
+  return raw.slice(close + 5).trim()
 }
 
 /** A ready interactive state bound to a platform + replyCtx (Go test setup). */

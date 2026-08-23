@@ -237,9 +237,11 @@ function padLineWidth(s: string, minW: number): string {
   return s + ' '.repeat(minW - s.length)
 }
 
-const editTools = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'MultiEdit', 'NotebookEdit'])
-const agentTools = new Set(['Agent', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'EnterPlanMode', 'ExitPlanMode'])
-const webTools = new Set(['WebSearch', 'WebFetch'])
+// Tool families for the tag color. Claude Code names (Read/Write/…) stay for
+// ported-test parity; the lowercase entries are the dsh-native tool names.
+const editTools = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'MultiEdit', 'NotebookEdit', 'read', 'write', 'edit', 'glob', 'grep', 'lsp', 'session_search', 'session_event_read', 'session_event_search', 'session_event_trace', 'memory_read', 'memory_list', 'memory_index', 'memory_write', 'memory_delete'])
+const agentTools = new Set(['Agent', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'EnterPlanMode', 'ExitPlanMode', 'subagent_fork', 'send_message', 'interrupt_agent', 'list_agents', 'report', 'workflow', 'ralph', 'create_goal', 'get_goal', 'job_list', 'job_output', 'job_kill', 'feishu_bridge_subtask', 'feishu_bridge_chatroom', 'feishu_bridge_relay', 'feishu_bridge_send'])
+const webTools = new Set(['WebSearch', 'WebFetch', 'web_search', 'web_fetch', 'feishu_bridge_lark', 'feishu_bridge_cron'])
 
 /**
  * The colored text_tag label for a tool in the progress card (icon + color
@@ -258,25 +260,36 @@ export function toolTagForProgress(name: string, maxLen: number): string {
     case 'Read':
     case 'Glob':
     case 'Grep':
+    case 'read':
+    case 'glob':
+    case 'grep':
+    case 'lsp':
       icon = '🔍'
       break
     case 'Write':
     case 'Edit':
     case 'MultiEdit':
     case 'NotebookEdit':
+    case 'write':
+    case 'edit':
       icon = '📝'
       break
     case 'WebFetch':
     case 'WebSearch':
+    case 'web_fetch':
+    case 'web_search':
+    case 'feishu_bridge_lark':
       icon = '🌐'
       break
     case 'Agent':
+    case 'subagent_fork':
       icon = '🤖'
       break
     case 'ExitPlanMode':
       icon = '📋'
       break
     case 'AskUserQuestion':
+    case 'ask_user_question':
       icon = '❓'
       break
     case 'Skill':
@@ -290,6 +303,9 @@ export function toolTagForProgress(name: string, maxLen: number): string {
     case 'TaskList':
     case 'TaskGet':
       icon = '📝'
+      break
+    case 'feishu_bridge_send':
+      icon = '📤'
       break
     case 'Thinking':
       icon = '💭'

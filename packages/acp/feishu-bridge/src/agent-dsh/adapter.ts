@@ -136,6 +136,8 @@ export interface DshPersistenceLike {
   create(meta: SessionHeader): Promise<void>
   /** Durably persist a contiguous event batch. */
   append(id: unknown, events: readonly SessionEvent[]): Promise<void>
+  /** Lightweight listing from metadata, without a full-log parse. */
+  list(signal?: AbortSignal): Promise<SessionHeader[]>
 }
 
 /** One named provider route (plan D2: one llm route per provider). */
@@ -391,6 +393,8 @@ export class DshAgentAdapter {
   private readonly cfg: DshAdapterConfig
   private readonly sessionsByEngineKey = new Map<string, DshAgentSession>()
   private readonly liveSessions = new Map<string, DshAgentSession>()
+  /** Staged fork-at seeds keyed by the sentinel id, consumed by startSession. */
+  private readonly forkAtSeeds = new Map<string, { seed: SessionEvent[]; parentID: string; childWorkDir: string }>()
   private env: string[] = []
   private modeOverride = ''
   /** Project-level default session mode ('' = no default; 'plan' starts every session in plan mode). */
@@ -692,20 +696,22 @@ export class DshAgentAdapter {
   }
 
   /**
-   * ForkAtPreparer (Go PrepareForkAtSession): copy the source transcript
-   * through the sessionPersistence service, truncated to the turn the quoted
-   * message belongs to, and persist the copy under a fresh id whose header
-   * records childWorkDir — the engine starts the child with the
-   * `__forkat__<newID>` sentinel, which startSession resumes directly. Unlike
-   * Go (raw log-file copy) this needs no filesystem reachability: the service
-   * resolves ids globally, and the source may be live or merely persisted.
+   * ForkAtPreparer (Go PrepareForkAtSession): truncate the source transcript
+   * (live snapshot or persisted log, resolved globally by the
+   * sessionPersistence service) to the turn the quoted message belongs to and
+   * stage the prefix under a fresh id; the engine starts the child with the
+   * `__forkat__<newID>` sentinel, which startSession consumes as one seeded
+   * `agents.create` — no persisted pre-copy (Go wrote a truncated log file
+   * only because its agent was an external `--resume` process). A daemon
+   * restart between prepare and start drops the staged seed; the sentinel
+   * then degrades to a fresh session with a warn.
    *
    * @param origID - the native id of the fork source session.
-   * @param childWorkDir - the directory the copy's header records as cwd.
+   * @param childWorkDir - the directory the child session records as cwd.
    * @param quotedText - the quoted-message text as the platform delivered it.
    * @param quotedSenderType - 'app' or 'user' sender of the quoted message.
    * @param quotedTimeMs - update time of the quoted message in unix ms; 0 = unknown.
-   * @returns the fresh native id of the persisted truncated copy.
+   * @returns the fresh native id the sentinel references.
    */
   async prepareForkAtSession(
     origID: string,
@@ -730,18 +736,7 @@ export class DshAgentAdapter {
       quotedTimeMs,
     })
     const newID = freshNativeSessionId()
-    // Go writeForkedLog parity: the copy's header rewrites only id and cwd,
-    // keeping the lineage fields (createdAt, parentSession, …). seedLength is
-    // re-stamped to the kept prefix — the whole copied log is inherited
-    // history, and the boundary lets replay tell it from the child's own
-    // turns (the fork-child-replay-seed-boundary Agent Note's rule).
-    await persistence.create({
-      ...inspection.meta,
-      id: SessionId(newID),
-      ...(childWorkDir !== '' ? { cwd: childWorkDir } : {}),
-      seedLength: keep,
-    })
-    await persistence.append(SessionId(newID), inspection.events.slice(0, keep))
+    this.forkAtSeeds.set(newID, { seed: [...inspection.events.slice(0, keep)], parentID: origID, childWorkDir })
     return newID
   }
 
@@ -1013,8 +1008,9 @@ export class DshAgentAdapter {
    * by the engine session key; a concrete id resumes that persisted session;
    * a `__fork__<origID>` sentinel creates a new session seeded with the
    * parent's completed-turn prefix (Go /fork semantics); a
-   * `__forkat__<newID>` sentinel resumes the persisted truncated copy a
-   * rollback fork prepared (Go /fork on a quoted message).
+   * `__forkat__<newID>` sentinel consumes the staged truncated prefix a
+   * rollback fork prepared (Go /fork on a quoted message) as one seeded
+   * create.
    *
    * Chatroom bare sessions (role / direct-role / moderator, flagged through
    * the injected env) carry a setup hook that replaces the whole system
@@ -1025,8 +1021,8 @@ export class DshAgentAdapter {
    *
    * @param sessionID - the engine-provided id: '' or the ContinueSession
    * sentinel creates fresh, a concrete id resumes, `__fork__<origID>`
-   * seeds from the parent, and `__forkat__<newID>` resumes the truncated
-   * rollback copy.
+   * seeds from the parent, and `__forkat__<newID>` consumes the staged
+   * rollback prefix.
    * @returns the live session bound to the engine session key.
    */
   async startSession(sessionID: string): Promise<AgentSession> {
@@ -1042,11 +1038,24 @@ export class DshAgentAdapter {
 
     let handle: DshAgentHandleLike
     if (isForkAt) {
-      // Rollback fork: the truncated copy already exists in persistence under
-      // a fresh id written by prepareForkAtSession; resume it directly (Go
-      // agent/dsh/session.go resume branch — no seed, no cross-id copy).
-      handle = await this.ctx.agents.resume({
-        resumeSessionId: SessionId(sessionID.slice(ForkAtSessionPrefix.length)),
+      // Rollback fork: consume the staged truncated prefix as one seeded
+      // create (the native replacement for Go's persisted pre-copy + resume).
+      // A missing entry means a daemon restart dropped the seed between
+      // prepare and start — degrade to a fresh session, like a sourceless
+      // plain fork.
+      const forkID = sessionID.slice(ForkAtSessionPrefix.length)
+      const prepared = this.forkAtSeeds.get(forkID)
+      this.forkAtSeeds.delete(forkID)
+      if (prepared === undefined) {
+        console.warn(`agent-dsh: fork-at staged seed lost (restart?), starting fresh (id=${forkID})`)
+      }
+      handle = await this.ctx.agents.create({
+        sessionId: SessionId(forkID),
+        meta: {
+          cwd: prepared !== undefined && prepared.childWorkDir !== '' ? prepared.childWorkDir : this.workDir,
+          ...(prepared !== undefined ? { parentSession: SessionId(prepared.parentID), seedLength: prepared.seed.length } : {}),
+        },
+        ...(prepared !== undefined && prepared.seed.length > 0 ? { seed: prepared.seed } : {}),
         agentOptions: this.routeAgentOptions(),
         ...(setup !== undefined ? { setup } : {}),
       })
@@ -1162,19 +1171,33 @@ export class DshAgentAdapter {
   }
 
   /**
-   * TODO(M7 usage): dsh has no native "list persisted sessions" API on the
-   * registry yet; /sessions relies on this returning what the backend knows.
-   * M1 reports none — the parent session verifies the real surface.
+   * Live sessions plus persisted ones from the session store (exclusive to
+   * this daemon): top-level sessions under this project's directory tree,
+   * newest first. Summaries/message counts arrive engine-side from the
+   * SessionManager's persisted history (`enrichSessionSummaries`); sessions
+   * from per-chat `/dir` overrides outside the tree stay unlisted, matching
+   * the Go per-cwd store semantics.
    *
-   * @returns the live sessions with native ids and last-activity timestamps.
+   * @returns the known sessions with native ids and timestamps.
    */
-  listSessions(): Promise<AgentSessionInfo[]> {
-    return Promise.resolve([...this.liveSessions.values()].map(s => ({
+  async listSessions(): Promise<AgentSessionInfo[]> {
+    const live = [...this.liveSessions.values()].map(s => ({
       id: s.currentSessionID(),
       summary: s.lastAssistantText().slice(0, 40),
       messageCount: 0,
       modifiedAt: s.lastActivityAt,
-    })))
+    }))
+    const persistence = this.ctx.get('sessionPersistence') as DshPersistenceLike | undefined
+    if (persistence === undefined) return live
+    const liveIDs = new Set(live.map(s => s.id))
+    const base = this.cfg.cwd
+    const headers = await persistence.list()
+    const persisted = headers
+      .filter(h => !liveIDs.has(String(h.id)))
+      .filter(h => h.parentSession === undefined)
+      .filter(h => h.cwd !== undefined && (h.cwd === base || h.cwd.startsWith(`${base}/`)))
+      .map(h => ({ id: String(h.id), summary: '', messageCount: 0, modifiedAt: h.createdAt }))
+    return [...persisted, ...live].sort((a, b) => b.modifiedAt - a.modifiedAt)
   }
 
   /** Dispose every live agent (engine shutdown). */
@@ -1588,10 +1611,30 @@ export class DshAgentSession implements AgentSession {
         this.channel.push({
           type: 'tool_result',
           toolResult: textOfBlocks(message?.content),
+          // The native event carries failure identity as `error`; the result
+          // text already describes the failure to the model, so the bridge
+          // only forwards success for the 🔴 marker.
+          ...(data.error !== undefined ? { toolSuccess: false } : {}),
           ...(callId !== '' ? { toolID: callId } : {}),
           content: '',
           done: false,
         })
+        break
+      }
+      case 'todo/write': {
+        // Whole-list snapshot from any todo producer; the engine treats it
+        // like a todo_write tool call (both may arrive — last write wins).
+        const todos = data.todos as Array<{ content?: unknown; status?: unknown }> | undefined
+        if (Array.isArray(todos)) {
+          const items = todos
+            .map(t => ({ content: toStr(t.content), status: toStr(t.status) }))
+            .filter(t => t.content !== '')
+          this.channel.push({ type: 'todo_update', todos: items, content: '', done: false })
+        }
+        break
+      }
+      case 'compaction/start': {
+        this.channel.push({ type: 'compaction', content: '', done: false })
         break
       }
       case 'turn/end': {

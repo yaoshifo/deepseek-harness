@@ -121,7 +121,7 @@ import {
   truncateGroupName,
 } from './groupname.js'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.js'
-import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.js'
+import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, ProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.js'
 import { isTodoToolName, parseTodoItems } from '../progress.js'
 import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.js'
 import { newAsyncSender, type AsyncSender } from '../async-sender.js'
@@ -830,6 +830,12 @@ export class Engine {
   planRenderTimeoutMs = 0
   /** HTML→PNG rasterizer script path; '' = fall back to the .html file (Go planRenderPngScript). */
   planRenderPngScript = ''
+  /**
+   * Resolves the feishu-bridge-render skill body from the dsh skill registry
+   * (the single source the render-session prompts inline); undefined = not
+   * wired, which fails loud at fork time.
+   */
+  planRenderSkillSource: (() => Promise<string | undefined>) | undefined
   // ── plan-file persistence (Claude-Code-aligned plan .md records) ────────
   /** Directory presented plans are written to; '' disables writing. */
   planDir = joinPath(homedir(), '.claude', 'plans')
@@ -957,6 +963,16 @@ export class Engine {
     this.planRenderProvider = cfg.provider ?? ''
     this.planRenderTimeoutMs = cfg.timeoutMs ?? 0
     this.planRenderPngScript = cfg.pngScript ?? ''
+  }
+
+  /**
+   * Wire the render-skill body source behind `ctx.skills.get` — the
+   * render-session prompts inline the resolved body; an unwired or empty
+   * source makes the next render fork throw with registration guidance.
+   * @param source - Async resolver for the skill body; undefined marks the feature unwired.
+   */
+  setPlanRenderSkillSource(source: (() => Promise<string | undefined>) | undefined): void {
+    this.planRenderSkillSource = source
   }
 
   /**
@@ -2070,9 +2086,9 @@ export class Engine {
     const chatID = extractChannelID(sessionKey)
     if (userName !== '') {
       const safeName = userName.replaceAll('"', "'").replaceAll('\n', ' ').replaceAll('\r', '')
-      return `[cc-connect sender_id=${userID} sender_name="${safeName}" platform=${platform} chat_id=${chatID}]\n${content}`
+      return `[feishu-bridge sender_id=${userID} sender_name="${safeName}" platform=${platform} chat_id=${chatID}]\n${content}`
     }
-    return `[cc-connect sender_id=${userID} platform=${platform} chat_id=${chatID}]\n${content}`
+    return `[feishu-bridge sender_id=${userID} platform=${platform} chat_id=${chatID}]\n${content}`
   }
 
   /**
@@ -2767,7 +2783,7 @@ export class Engine {
             // Quiet mode: update the last tool entry with its result.
               const result = (event.toolResult ?? '').trim() || event.content.trim()
               if (result !== '' || event.done) {
-                await sp.updateToolResult(event.toolID ?? '', result, true)
+                await sp.updateToolResult(event.toolID ?? '', result, event.toolSuccess !== false)
               }
             }
             activeToolCalls = Math.max(0, activeToolCalls - 1)
@@ -2781,6 +2797,29 @@ export class Engine {
             const count = Number.parseInt(event.content, 10)
             if (Number.isFinite(count) && count >= 0 && sp.canPreview()) {
               await sp.setSubagentCount(count)
+            }
+            break
+          }
+
+          case 'compaction': {
+          // Native compaction lifecycle replaces Go's stream-json text mining
+          // (Go engine_events.go EventCompaction).
+            state.compactionCount++
+            const summary = this.i18n.t(Msg.ContextCompacted)
+            if (this.display.toolProgress && sp.canPreview()) {
+              await sp.appendProgress(new ProgressEntry({ text: summary, isCompact: true }))
+            } else if (p !== undefined) {
+              await this.send(p, replyCtx, summary)
+            }
+            break
+          }
+
+          case 'todo_update': {
+          // Whole-list snapshot from a native todo producer; same handling as a
+          // todo_write tool call. A subagent child's list stays on the child.
+            if (event.fromSubagent !== true && event.todos !== undefined) {
+              if (sp.canPreview()) await sp.updateTodoSection(event.todos)
+              cp.setTodos(event.todos)
             }
             break
           }

@@ -41,7 +41,7 @@ import { markdownToSimpleHTML } from '../markdown/markdown-html.js'
 import { iconsSpriteFull } from '../lucide/sprite.js'
 import { Msg } from '../i18n/keys.js'
 import { stripTrailingSilent } from './message-split.js'
-import { diagramCSS, diagramDefs, renderSkillPrompt, renderTemplatePlan, renderTemplateReply } from './plan-render-templates.js'
+import { diagramCSS, diagramDefs, renderTemplatePlan, renderTemplateReply } from './plan-render-templates.js'
 import type { Engine, InteractiveState } from './engine.js'
 import type { StreamPreview } from '../streaming.js'
 
@@ -87,18 +87,41 @@ export interface PlanCardHandle {
   baseCard: Card
 }
 
+/** Registry name of the render skill whose body the render-session prompts inline. */
+export const renderSkillName = 'feishu-bridge-render'
+
 /**
- * Render-session system prompt (Go RenderSessionPrompt): the cc-connect-render
- * SKILL.md in full, plus the stripped-down "render-only session" contract for
- * the plan sub-type. The fork must not re-load the skill or touch project
- * source; its stdout carries only a one-line confirmation.
+ * Fail-loud guard for the render skill body: the render-session prompt must
+ * never silently inline an empty skill (misconfiguration fails loud). The body
+ * is resolved from the dsh skill registry — see {@link renderPlanToHTML}.
  *
+ * @param skillContent - Skill body from `ctx.skills.get(renderSkillName)`.
+ * @returns The content, guaranteed non-blank.
+ */
+function requireSkillContent(skillContent: string): string {
+  if (skillContent.trim() === '') {
+    throw new Error(
+      `plan render: skill "${renderSkillName}" is not resolvable from the dsh skill registry; `
+      + 'deploy skills/feishu-bridge-render/SKILL.md into a directory the profile\'s skill-filesystem '
+      + 'customSkillDirs loads before enabling plan_render',
+    )
+  }
+  return skillContent
+}
+
+/**
+ * Render-session system prompt (Go RenderSessionPrompt): the feishu-bridge-render
+ * SKILL.md body in full, plus the stripped-down "render-only session" contract for
+ * the plan sub-type. The fork must not touch project source; its stdout carries
+ * only a one-line confirmation.
+ *
+ * @param skillContent - The render skill body from the dsh skill registry.
  * @returns The complete system prompt text for the plan render-session fork.
  */
-export function renderSessionPrompt(): string {
-  return `${renderSkillPrompt}\n\n---\n\n你是 cc-connect 内部的一个「仅渲染」session，不是主 coding agent——不要去执行 plan、不要改项目源码。
+export function renderSessionPrompt(skillContent: string): string {
+  return `${requireSkillContent(skillContent)}\n\n---\n\n你是 feishu-bridge 的渲染会话，不是主 coding agent——不要去执行 plan、不要改项目源码。
 
-上方已是 cc-connect-render skill 的**完整内容**（含输出格式、预算+去重、组件、画图、红线全部规则）。**禁止**再调用 Skill tool 去加载 cc-connect-render——直接按上方内容执行，省一个来回。
+上方是渲染 skill 的**完整内容**（含输出格式、预算+去重、组件、画图、红线全部规则）——直接按上方规则执行。
 
 画 SVG 图解时也只写形状元素——**不写 xmlns、不写 <defs><marker>、不写默认 fill/stroke**（箭头用 marker-end="url(#cc-arrow)"，默认填充/描边由模板 CSS 提供）；写了白费输出 token。
 
@@ -120,12 +143,13 @@ export function renderSessionPrompt(): string {
  * Render-session prompt for the speculative reply→HTML auto-deliver at turn
  * end (Go RenderReplySummaryPrompt): same skill text, reply sub-type contract.
  *
+ * @param skillContent - The render skill body from the dsh skill registry.
  * @returns The complete system prompt text for the reply render-session fork.
  */
-export function renderReplySummaryPrompt(): string {
-  return `${renderSkillPrompt}\n\n---\n\n你是 cc-connect 内部的一个「仅渲染」session，不是主 coding agent——不要对项目发起新的工具调用。
+export function renderReplySummaryPrompt(skillContent: string): string {
+  return `${requireSkillContent(skillContent)}\n\n---\n\n你是 feishu-bridge 的渲染会话，不是主 coding agent——不要对项目发起新的工具调用。
 
-上方已是 cc-connect-render skill 的**完整内容**（含输出格式、预算+去重、组件、画图、红线全部规则）。**禁止**再调用 Skill tool 去加载 cc-connect-render——直接按上方内容执行，省一个来回。
+上方是渲染 skill 的**完整内容**（含输出格式、预算+去重、组件、画图、红线全部规则）——直接按上方规则执行。
 
 画 SVG 图解时也只写形状元素——**不写 xmlns、不写 <defs><marker>、不写默认 fill/stroke**（箭头用 marker-end="url(#cc-arrow)"，默认填充/描边由模板 CSS 提供）；写了白费输出 token。
 
@@ -772,6 +796,21 @@ export function renderSubtypeTag(e: Engine, subtype: string): string {
 // ── fork core ──────────────────────────────────────────────────────────────
 
 /**
+ * Resolve the render skill body from the engine's registry-backed source (the
+ * plugin wires it to `ctx.skills.get(renderSkillName)` — the plugin context is
+ * the nearest skill-registry access point; the engine keeps a plain function
+ * so these fork helpers stay independently testable). Throws with registration
+ * guidance when the skill is not resolvable — the render prompt never silently
+ * inlines an empty body.
+ *
+ * @param e - Engine carrying the wired skill source.
+ * @returns The non-blank render skill body.
+ */
+async function renderSkillBody(e: Engine): Promise<string> {
+  return requireSkillContent((await e.planRenderSkillSource?.()) ?? '')
+}
+
+/**
  * Shared fork core behind plan-render and reply-html (Go
  * renderContentToHTML): resolve the RenderQuerier + provider, fork the render
  * session with the caller-built prompt + system prompt, then wrap the body
@@ -873,13 +912,14 @@ export async function renderPlanToHTML(
   sessionEnv: string[],
   signal?: AbortSignal,
 ): Promise<string> {
+  const systemPrompt = renderSessionPrompt(await renderSkillBody(e))
   const nameHint = (() => {
     const title = extractMarkdownTitle(planMarkdown)
     return title !== '' ? slugifyTitle(title, '') : ''
   })()
   const writePath = deriveHtmlPath('', sessionKey, '', revision)
   const prompt = `按你的 system-prompt 指令把以下内容渲染成 HTML。\n\n<html_path>${writePath}</html_path>\n\n<plan-markdown>\n${planMarkdown}\n</plan-markdown>`
-  const ok = await renderContentToHTML(e, 'plan-render', 'plan', sessionKey, prompt, renderSessionPrompt(), writePath, sessionEnv, signal)
+  const ok = await renderContentToHTML(e, 'plan-render', 'plan', sessionKey, prompt, systemPrompt, writePath, sessionEnv, signal)
   if (ok) {
     const artifactPath = deriveHtmlPath(planFilePath, sessionKey, nameHint, revision)
     if (artifactPath !== '' && artifactPath !== writePath) copyFileBestEffort(writePath, artifactPath)
@@ -907,10 +947,11 @@ export async function renderReplyToHTML(
   sessionEnv: string[],
   signal?: AbortSignal,
 ): Promise<string> {
+  const systemPrompt = renderReplySummaryPrompt(await renderSkillBody(e))
   const htmlPath = deriveHtmlPath('', sessionKey, '', 0)
   const contentHTML = markdownToSimpleHTML(replyContent)
   const prompt = `按你的 system-prompt 指令把以下内容渲染成 HTML。\n\n<html_path>${htmlPath}</html_path>\n\n<plan-rendered-html>\n${contentHTML}\n</plan-rendered-html>`
-  const ok = await renderContentToHTML(e, 'reply-html', 'reply', sessionKey, prompt, renderReplySummaryPrompt(), htmlPath, sessionEnv, signal)
+  const ok = await renderContentToHTML(e, 'reply-html', 'reply', sessionKey, prompt, systemPrompt, htmlPath, sessionEnv, signal)
   if (!ok) await removeRenderedTemp(htmlPath)
   return htmlPath
 }
@@ -1136,6 +1177,17 @@ export function renderAndDeliverReply(
 
       const { platform, replyCtx } = resolveRenderReplyCtx(state, sessionKey)
       const renderStart = Date.now()
+      // Pre-flight the skill body: a missing registration is deterministic
+      // misconfiguration, so fail this render at once instead of feeding the
+      // retry loop rejections (renderReplyToHTML resolves the body again per
+      // attempt through the cached registry).
+      try {
+        await renderSkillBody(e)
+      } catch (error) {
+        console.error(`reply-html: ${error instanceof Error ? error.message : String(error)} (${sessionKey})`)
+        patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
+        return
+      }
       patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', 0)
       // Periodically refresh the elapsed "rendering" status so the user does
       // not mistake a slow render for a hang; stopped before the final PATCH
@@ -1243,6 +1295,17 @@ export function launchPlanRender(
     try {
       const renderStart = Date.now()
       updatePlanCardStatus(e, state, exportKey, 'rendering', 0)
+      // Pre-flight the skill body: a missing registration is deterministic
+      // misconfiguration, so fail this render at once instead of feeding the
+      // retry loop rejections (renderPlanToHTML resolves the body again per
+      // attempt through the cached registry).
+      try {
+        await renderSkillBody(e)
+      } catch (error) {
+        console.error(`plan-render: ${error instanceof Error ? error.message : String(error)} (${sessionKey})`)
+        updatePlanCardStatus(e, state, exportKey, 'failed', 0)
+        return
+      }
       const maxAttempts = 2
       let htmlPath = ''
       let succeeded = false

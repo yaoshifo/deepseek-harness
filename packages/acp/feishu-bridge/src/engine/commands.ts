@@ -265,6 +265,9 @@ function enrichSessionSummaries(sessions: SessionManager, agentSessions: AgentSe
     if (info === undefined) continue
     const s = sessions.findByAgentSessionID(info.id)
     if (s === undefined) continue
+    // Persisted-only sessions carry no count at the adapter boundary; the
+    // capped history length (max 100 entries) is the closest durable proxy.
+    if (info.messageCount === 0) info.messageCount = s.getHistory(0).length
     for (const entry of s.getHistory(0)) {
       if (entry.role === 'user' && entry.content !== '') {
         if (entry.content.startsWith('---\n')) break

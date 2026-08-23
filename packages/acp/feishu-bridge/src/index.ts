@@ -11,6 +11,7 @@ import { homedir } from 'node:os'
 import { mkdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import type { SkillRegistry } from '@deepseek-ai/dsh-skill'
 import Schema from '@deepseek-ai/schemastery'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.js'
@@ -42,6 +43,7 @@ import { registerProviderCommands } from './engine/provider-commands.js'
 import { registerPredictCommands } from './engine/predict.js'
 import { registerSessionMiscCommands } from './engine/session-misc.js'
 import { getProviderModel } from './engine/provider.js'
+import { renderSkillName } from './engine/plan-render.js'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.js'
 import type { StreamPreviewCfg } from './streaming.ts'
 
@@ -997,7 +999,7 @@ export function buildProjectAssembly(
   if (project.agent?.mode !== undefined && project.agent.mode !== '') {
     adapter.setDefaultMode(project.agent.mode)
   }
-  wirePlanRender(engine, adapter, project)
+  wirePlanRender(ctx, engine, adapter, project)
   if (project.planDir !== undefined) {
     engine.setPlanDir(expandHome(project.planDir))
   }
@@ -1118,9 +1120,14 @@ function wireGroupName(engine: Engine, project: ProjectConfig): void {
  * Wire the plan/reply HTML render domain (Go wire.go plan_render block,
  * #47/#48): engine switches + provider/timeout/PNG-script overrides, and the
  * effort alias onto the adapter (Go SetRenderEffort — the channel that makes
- * the effort config reach the render session's reasoning level).
+ * the effort config reach the render session's reasoning level). The
+ * render-session prompts inline the feishu-bridge-render skill body resolved
+ * from the dsh skill registry — resolved lazily at fork time so provider
+ * registration order across plugins cannot race the lookup; an unresolvable
+ * skill makes the fork throw with registration guidance (fails loud, the
+ * markdown card remains the fallback delivery).
  */
-function wirePlanRender(engine: Engine, adapter: DshAgentAdapter, project: ProjectConfig): void {
+function wirePlanRender(ctx: Context, engine: Engine, adapter: DshAgentAdapter, project: ProjectConfig): void {
   const r = project.planRender
   if (r?.enabled !== true) {
     engine.setPlanRenderConfig({ enabled: false })
@@ -1131,6 +1138,10 @@ function wirePlanRender(engine: Engine, adapter: DshAgentAdapter, project: Proje
     ...(r.provider !== undefined && r.provider !== '' ? { provider: r.provider } : {}),
     ...(r.timeoutSec !== undefined && r.timeoutSec > 0 ? { timeoutMs: r.timeoutSec * 1000 } : {}),
     ...(r.renderPngScript !== undefined && r.renderPngScript !== '' ? { pngScript: expandHome(r.renderPngScript) } : {}),
+  })
+  engine.setPlanRenderSkillSource(async () => {
+    const skills: SkillRegistry | undefined = ctx.get('skills')
+    return (await skills?.get(renderSkillName))?.content
   })
   if (r.effort !== undefined && r.effort !== '') adapter.setRenderEffort(r.effort)
 }

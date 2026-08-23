@@ -6,10 +6,14 @@
  *
  * Go's optional-capability interface checks (`if cs, ok := p.(CardSender)`)
  * become structural checks on optional methods (`isCardSender(p)` guards in
- * engine code).
+ * the engine). The `compaction`/`todo_update` event kinds carry the native
+ * dsh signals (compaction lifecycle, todo snapshots) the Go bridge had to
+ * mine from stream-json text.
  *
  * @module dsh-feishu-bridge/core-types
  */
+
+import type { TodoItem } from '../progress.js'
 
 /** Sentinel AgentSessionID telling the agent to resume the most recent session. */
 export const ContinueSession = '__continue__'
@@ -178,6 +182,8 @@ export type EventKind =
   | 'permission_request'
   | 'thinking'
   | 'subagent_status'
+  | 'compaction'
+  | 'todo_update'
 
 /** A single piece of agent output streamed to the engine (Go Event). */
 export interface Event {
@@ -187,6 +193,8 @@ export interface Event {
   toolInput?: string
   toolInputRaw?: Record<string, unknown>
   toolResult?: string
+  /** Tool result success; absent means success (emitters without failure identity). */
+  toolSuccess?: boolean
   toolID?: string
   sessionID?: string
   requestID?: string
@@ -198,6 +206,8 @@ export interface Event {
   outputTokens?: number
   numTurns?: number
   arrivedAt?: number
+  /** Whole-list todo snapshot carried by a `todo_update` event. */
+  todos?: TodoItem[]
   /** True when the event projects a delegated subagent child session's activity. */
   fromSubagent?: boolean
 }
@@ -683,20 +693,22 @@ export interface ForkSessionPreparer {
 
 /**
  * Agent that can prepare a rollback fork (Go PrepareForkAtSession on
- * ForkSessionPreparer): copy the source transcript, truncate it to the turn
- * the quoted message belongs to, and persist the copy under a fresh id the
- * engine later resumes via the `__forkat__` sentinel. Kept a separate
- * interface from {@link ForkSessionPreparer} so the subtask cross-workdir
- * guard's structural check stays a single-method probe.
+ * ForkSessionPreparer): truncate the source transcript to the turn the
+ * quoted message belongs to and stage the prefix under a fresh id the
+ * engine later starts via the `__forkat__` sentinel (one seeded create in
+ * the dsh adapter; Go had to persist a truncated log file for its external
+ * `--resume` process). Kept a separate interface from
+ * {@link ForkSessionPreparer} so the subtask cross-workdir guard's
+ * structural check stays a single-method probe.
  */
 export interface ForkAtPreparer {
   /**
    * @param origID - the native id of the fork source session.
-   * @param childWorkDir - the directory the truncated copy's header records as cwd.
+   * @param childWorkDir - the directory the child session records as cwd.
    * @param quotedText - the quoted-message text as the platform delivered it.
    * @param quotedSenderType - 'app' or 'user' sender of the quoted message.
    * @param quotedTimeMs - update time of the quoted message in unix ms; 0 = unknown.
-   * @returns the fresh native id of the persisted truncated copy.
+   * @returns the fresh native id the `__forkat__` sentinel references.
    */
   prepareForkAtSession(
     origID: string,

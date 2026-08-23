@@ -33,6 +33,9 @@
       "path": "../../llm/llm"
     },
     {
+      "path": "../../skill/skill"
+    },
+    {
       "path": "../../runtime-diagnostics/invariants"
     }
   ]

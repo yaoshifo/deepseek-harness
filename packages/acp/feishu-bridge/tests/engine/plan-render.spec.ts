@@ -46,7 +46,7 @@ import type { StreamPreview } from '../../src/streaming.js'
 import { Msg } from '../../src/i18n/keys.js'
 import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.js'
 import type { Platform } from '../../src/core/types.js'
-import { createCardUpdatePlatform } from './plan-render-helpers.js'
+import { createCardUpdatePlatform, renderSkillBodyFixture } from './plan-render-helpers.js'
 
 function newTestEngine(): Engine {
   return new Engine('test', createStubAgent(), [createCardUpdatePlatform()], '', 'en')
@@ -548,11 +548,12 @@ describe('RenderTemplatesDefineFlowDoneTokens', () => {
 
 describe('RenderPrompts_ExpressionContracts', () => {
   it('plan and reply prompts carry the required expression rules', () => {
-    const planPrompt = renderSessionPrompt()
+    const body = renderSkillBodyFixture()
+    const planPrompt = renderSessionPrompt(body)
     for (const want of ['目标或结论', '影响范围', '风险或约束', '验证状态', '关键决策', '技术准确性优先']) {
       expect(planPrompt).toContain(want)
     }
-    const replyPrompt = renderReplySummaryPrompt()
+    const replyPrompt = renderReplySummaryPrompt(body)
     for (const want of ['已完成', '关键结果', '未完成/风险', '后续', '查看', '尝试', '没有证据', '技术准确性优先']) {
       expect(replyPrompt).toContain(want)
     }
@@ -566,6 +567,27 @@ describe('RenderPrompts_ExpressionContracts', () => {
       expect(prompt).toContain('文字只表达结论')
       expect(prompt).toContain('测试函数名')
       void name
+    }
+  })
+})
+
+describe('RenderPrompts_RequireRegisteredSkillBody', () => {
+  it('throws with registration guidance when the skill body is missing or blank', () => {
+    for (const build of [() => renderSessionPrompt(''), () => renderReplySummaryPrompt('   ')]) {
+      expect(build).toThrow(/feishu-bridge-render/)
+    }
+  })
+})
+
+describe('RenderPrompts_SingleSourceWording', () => {
+  const body = '渲染 skill 正文替身——输出格式与红线规则。'
+  it('inlines the given skill body with the feishu-bridge render-session wording', () => {
+    for (const prompt of [renderSessionPrompt(body), renderReplySummaryPrompt(body)]) {
+      expect(prompt).toContain(body)
+      expect(prompt).toContain('你是 feishu-bridge 的渲染会话')
+      expect(prompt).toContain('上方是渲染 skill 的**完整内容**')
+      expect(prompt).not.toContain('cc-connect')
+      expect(prompt).not.toContain('Skill tool')
     }
   })
 })

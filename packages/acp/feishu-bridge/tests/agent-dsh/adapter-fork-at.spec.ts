@@ -1,11 +1,11 @@
 /**
  * Fork-at (rollback fork) wiring (Go agent/dsh/fork.go PrepareForkAtSession):
- * the adapter copies the parent's persisted transcript through the
- * sessionPersistence service, truncated to the turn the quoted message belongs
- * to, under a fresh id whose header records the child's workDir. The engine
- * starts the child with `__forkat__<newID>`, which startSession resumes
- * directly — no create, no seed. Unlike the plain `__fork__` seed path, the
- * source only needs to exist in persistence, not live in the registry.
+ * the adapter truncates the source transcript (live snapshot or persisted
+ * log) to the turn the quoted message belongs to and stages the prefix
+ * in memory; the engine starts the child with `__forkat__<newID>`, which
+ * startSession consumes as a seeded `agents.create` — one native step, no
+ * persisted pre-copy. Unlike the plain `__fork__` seed path, the source only
+ * needs to exist in persistence, not live in the registry.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -22,6 +22,7 @@ interface FakePersistence {
   inspect(id: unknown): Promise<{ meta: SessionHeader; events: SessionEvent[] }>
   create(meta: SessionHeader): Promise<void>
   append(id: unknown, events: readonly SessionEvent[]): Promise<void>
+  list(signal?: AbortSignal): Promise<SessionHeader[]>
 }
 
 function fakePersistence(stored: Map<string, { meta: SessionHeader; events: SessionEvent[] }>): FakePersistence {
@@ -41,6 +42,7 @@ function fakePersistence(stored: Map<string, { meta: SessionHeader; events: Sess
     append: async (id: unknown, events: readonly SessionEvent[]) => {
       persistence.appends.push({ id: String(id), events: [...events] })
     },
+    list: async () => [...stored.values()].map(hit => hit.meta),
   }
   return persistence
 }
@@ -105,7 +107,7 @@ function createHarness(persistence: FakePersistence | undefined): {
     agents: {
       create: async (options: DshCreateOptionsLike) => {
         creates.push(options)
-        return { agent: agentWith([]), dispose: async () => {} }
+        return { agent: agentWith([], typeof options.sessionId === 'string' ? options.sessionId : ''), dispose: async () => {} }
       },
       resume: async (options: DshCreateOptionsLike) => {
         resumes.push(options)
@@ -130,11 +132,11 @@ function newAdapter(ctx: DshContextLike): DshAgentAdapter {
 }
 
 describe('prepareForkAtSession', () => {
-  it('persists a truncated copy under a fresh id with the child cwd', async () => {
+  it('stages the truncated seed in memory without persisting a copy', async () => {
     const persistence = fakePersistence(new Map([
       ['cc-parent', { meta: parentHeader('/workspace/project'), events: twoTurnLog() }],
     ]))
-    const { ctx } = createHarness(persistence)
+    const { ctx, creates } = createHarness(persistence)
     const adapter = newAdapter(ctx)
 
     const newID = await adapter.prepareForkAtSession(
@@ -143,18 +145,34 @@ describe('prepareForkAtSession', () => {
 
     expect(newID).not.toBe('cc-parent')
     expect(newID).toMatch(/^cc-\d{8}-\d{6}-/)
-    expect(persistence.creates).toHaveLength(1)
-    expect(persistence.creates[0]?.id).toBe(newID)
-    expect(persistence.creates[0]?.cwd).toBe('/workspace/child')
-    // immutable lineage fields survive the copy (Go rewrites only id + cwd)
-    expect(persistence.creates[0]?.createdAt).toBe(1724300000000)
-    expect(persistence.creates[0]?.version).toBe(0)
-    expect(persistence.appends).toHaveLength(1)
-    expect(persistence.appends[0]?.id).toBe(newID)
+    // no persisted pre-copy: the child's own log is written by its session
+    expect(persistence.creates).toHaveLength(0)
+    expect(persistence.appends).toHaveLength(0)
+    expect(creates).toHaveLength(0)
+  })
+
+  it('seeds the child from the staged prefix on the __forkat__ sentinel', async () => {
+    const persistence = fakePersistence(new Map([
+      ['cc-parent', { meta: parentHeader('/workspace/project'), events: twoTurnLog() }],
+    ]))
+    const { ctx, resumes, creates } = createHarness(persistence)
+    const adapter = newAdapter(ctx)
+
+    const newID = await adapter.prepareForkAtSession(
+      'cc-parent', '/workspace/child', 'the login bug is fixed', 'app', 2000,
+    )
+    const session = await adapter.startSession(`${ForkAtSessionPrefix}${newID}`)
+
+    expect(resumes).toHaveLength(0)
+    expect(creates).toHaveLength(1)
+    expect(creates[0]?.sessionId).toBe(newID)
+    expect(creates[0]?.meta?.cwd).toBe('/workspace/child')
+    expect(creates[0]?.meta?.parentSession).toBe('cc-parent')
     // truncated at the FIRST turn/end — the logout turn is rolled back
-    expect(persistence.appends[0]?.events.map(e => e.seq)).toEqual([0, 1, 2, 3])
-    // the whole copied log is inherited history: the seed boundary marks it
-    expect(persistence.creates[0]?.seedLength).toBe(4)
+    expect((creates[0]?.seed as SessionEvent[]).map(e => e.seq)).toEqual([0, 1, 2, 3])
+    // the whole inherited prefix is marked as seed
+    expect(creates[0]?.meta?.seedLength).toBe(4)
+    expect(session.currentSessionID()).toBe(newID)
   })
 
   it('works for a cold parent absent from the live registry', async () => {
@@ -198,15 +216,15 @@ describe('prepareForkAtSession', () => {
 })
 
 describe('startSession __forkat__ sentinel', () => {
-  it('resumes the truncated copy directly without creating or seeding', async () => {
+  it('degrades to a fresh session when the staged seed is gone (daemon restart)', async () => {
     const persistence = fakePersistence(new Map())
     const { ctx, resumes, creates } = createHarness(persistence)
     const adapter = newAdapter(ctx)
 
-    const session = await adapter.startSession(`${ForkAtSessionPrefix}cc-truncated`)
-    expect(resumes).toHaveLength(1)
-    expect(resumes[0]?.resumeSessionId).toBe('cc-truncated')
-    expect(creates).toHaveLength(0)
-    expect(session.currentSessionID()).toBe('cc-truncated')
+    const session = await adapter.startSession(`${ForkAtSessionPrefix}cc-lost`)
+    expect(resumes).toHaveLength(0)
+    expect(creates).toHaveLength(1)
+    expect(creates[0]?.seed).toBeUndefined()
+    expect(session.currentSessionID()).toBe('cc-lost')
   })
 })

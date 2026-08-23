@@ -16,6 +16,7 @@ import { join } from 'node:path'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import {
   deliverReplyHTML,
+  getRenderStatus,
   launchPlanRender,
   renderAndDeliverReply,
   renderPlanToHTML,
@@ -38,6 +39,7 @@ import {
   newRenderEngine,
   newRenderState,
   pollUntil,
+  renderSkillBodyFixture,
   tempDir,
 } from './plan-render-helpers.js'
 
@@ -67,7 +69,7 @@ describe('RenderPlanToHTML', () => {
     expect(calls[0]!.prompt).toContain('<html_path>')
     expect(calls[0]!.prompt).toContain('plan A')
     expect(calls[0]!.prompt).not.toContain('<plan-rendered-html>')
-    expect(calls[0]!.systemPrompt).toBe(renderSessionPrompt())
+    expect(calls[0]!.systemPrompt).toBe(renderSessionPrompt(renderSkillBodyFixture()))
   })
 
   it('FailureSwallowed: a failing fork never propagates', async () => {
@@ -118,14 +120,43 @@ describe('RenderPlanToHTML', () => {
   it('AgentNotRenderQuerier: an agent without renderQuery is a silent no-op', async () => {
     const e = new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')
     e.planRenderProvider = 'p'
+    e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
     await renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1, [])
   })
 
   it('NoProviderSkips: an unresolved provider skips the fork entirely', async () => {
     const a = createRenderAgent()
     const e = new Engine('test', a, [createStubMediaPlatform()], '', 'en') // no provider configured
+    e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
     await renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1, [])
     expect(a.getCalls()).toHaveLength(0)
+  })
+})
+
+describe('RenderForks_RequireRegisteredSkill', () => {
+  it('rejects with registration guidance and never forks when the skill source is unwired', async () => {
+    const a = createRenderAgent()
+    const e = new Engine('test', a, [createStubMediaPlatform()], '', 'en')
+    e.planRenderProvider = 'p'
+
+    await expect(renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1, [])).rejects.toThrow(/feishu-bridge-render/)
+    await expect(renderReplyToHTML(e, 'sess', 'reply body', [])).rejects.toThrow(/feishu-bridge-render/)
+    expect(a.getCalls()).toHaveLength(0)
+  })
+
+  it('resolves the body through the engine skill source at fork time', async () => {
+    const a = createRenderAgent()
+    const e = newRenderEngine(a, createStubMediaPlatform())
+    let resolves = 0
+    e.planRenderSkillSource = () => {
+      resolves++
+      return Promise.resolve(renderSkillBodyFixture())
+    }
+
+    await renderReplyToHTML(e, 'sess', 'reply body', [])
+
+    expect(resolves).toBe(1)
+    expect(a.getCalls()[0]!.systemPrompt).toContain(renderSkillBodyFixture())
   })
 })
 
@@ -138,7 +169,7 @@ describe('RenderReplyToHTML', () => {
 
     const calls = a.getCalls()
     expect(calls).toHaveLength(1)
-    expect(calls[0]!.systemPrompt).toBe(renderReplySummaryPrompt())
+    expect(calls[0]!.systemPrompt).toBe(renderReplySummaryPrompt(renderSkillBodyFixture()))
     expect(calls[0]!.provider).toBe('p')
     expect(calls[0]!.prompt).toContain('reply body')
     expect(calls[0]!.prompt).toContain('<html_path>')
@@ -310,6 +341,37 @@ function cancelRendersFor(state: InteractiveState): void {
 }
 
 describe('LaunchPlanRender', () => {
+  it('MissingSkillFailsLoud: an unregistered render skill marks the render failed without forking', async () => {
+    const a = createRenderAgent()
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p)
+    e.planRenderSkillSource = undefined // skill not registered
+
+    const state = newRenderState(p)
+    expect(shouldRenderPlan(state, '# 计划', 1)).toBe(true)
+    launchPlanRender(e, state, 'feishu:user1', '# 计划', '', 1, 'plan:1')
+
+    await pollUntil(() => getRenderStatus(state, 'plan:1')?.status === 'failed', 2000)
+    expect(a.getCalls()).toHaveLength(0)
+    // the throttle lock is released so a fixed deployment can render again
+    expect(state.planRenderRunning).toBe(false)
+  })
+
+  it('ReplyPreRenderMissingSkill: the speculative reply render marks failed without delivering', async () => {
+    const a = createRenderAgent()
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p)
+    e.planRenderSkillSource = undefined
+
+    const state = newRenderState(p)
+    renderAndDeliverReply(e, state, 'feishu:user1', longText, 'om_card1')
+
+    await pollUntil(() => getRenderStatus(state, 'om_card1')?.status === 'failed', 2000)
+    expect(a.getCalls()).toHaveLength(0)
+    expect(p.files).toHaveLength(0)
+    expect(state.preRenderRunning).toBe(false)
+  })
+
   it('RetriesOnStall: the plan path retries once after a stall', async () => {
     const a = createRenderAgent({ stallCount: 1 })
     const p = createStubMediaPlatform()
