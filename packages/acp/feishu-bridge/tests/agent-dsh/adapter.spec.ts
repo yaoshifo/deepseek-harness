@@ -790,6 +790,24 @@ describe('DshAgentAdapter userQuestions provider', () => {
       answers: [{ id: 'Which flavor?', selected: ['A'] }],
     })
   })
+
+  it('answers echo the schema question id instead of the question text', async () => {
+    const { session, ask } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [{ id: 'next-step', question: 'Which flavor?', options: [{ label: 'A' }, { label: 'B' }] }],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    const event = await nextEvent(session)
+    void session.respondPermission(String(event.requestID), {
+      behavior: 'allow',
+      updatedInput: { answers: { 'Which flavor?': 'A' } },
+    })
+
+    await expect(askPromise).resolves.toEqual({
+      answers: [{ id: 'next-step', selected: ['A'] }],
+    })
+  })
 })
 
 describe('DshAgentAdapter approval answerer', () => {

@@ -534,7 +534,7 @@ export class DshAgentAdapter {
       requestID, request.signal, qs.length,
     )
     const items = qs.map((q, i) => ({
-      id: q.question,
+      id: q.id ?? q.question,
       selected: [answer[i] ?? ''],
     }))
     return { answers: items }

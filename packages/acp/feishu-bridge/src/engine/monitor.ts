@@ -1232,7 +1232,7 @@ export class MonitorCore {
       })),
       multiSelect: false,
     }
-    void this.e.sendAskQuestionPrompt(p, msg.replyCtx, [userQ], 0)
+    void this.e.sendAskQuestionPrompt(p, msg.replyCtx, [userQ], 0, msg.sessionKey)
     console.info(`monitor: clarification asked (chat=${chatID} candidates=${capped.length})`)
   }
 

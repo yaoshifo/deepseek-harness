@@ -2950,7 +2950,7 @@ export class Engine {
             // Research-manual hub: arm the auto-default so the card cannot
             // hang forever when the user never replies (feature #57).
             armResearchManualAskTimeout(this, p, sessionKey, replyCtx, pending, 0)
-            void this.sendAskQuestionPrompt(p, replyCtx, questions, 0)
+            void this.sendAskQuestionPrompt(p, replyCtx, questions, 0, sessionKey)
           } else if (p !== undefined) {
             const permLimit = this.display.toolMaxLen
             const rawInput = event.toolInput ?? ''
@@ -4491,8 +4491,9 @@ export class Engine {
    * @param replyCtx - Platform reply context addressing the chat.
    * @param questions - All questions in the prompt set.
    * @param qIdx - Zero-based index of the question to render now.
+   * @param sessionKey - Interactive-state slot key, logged on card send.
    */
-  async sendAskQuestionPrompt(p: Platform, replyCtx: unknown, questions: UserQuestion[], qIdx: number): Promise<void> {
+  async sendAskQuestionPrompt(p: Platform, replyCtx: unknown, questions: UserQuestion[], qIdx: number, sessionKey: string): Promise<void> {
     if (qIdx >= questions.length) return
     const q = questions[qIdx]
     if (q === undefined) return
@@ -4537,6 +4538,7 @@ export class Engine {
 
       try {
         await cs.sendCard(replyCtx, cb.build())
+        console.log(`engine: ask-question card sent (${sessionKey}, question ${qIdx + 1}/${total})`)
         return
       } catch {
         // fall through to inline buttons
@@ -4639,7 +4641,7 @@ export class Engine {
           void this.reply(p, msg.replyCtx, `✅ ${q.question}: **${answer}**`)
         }
         armResearchManualAskTimeout(this, p, msg.sessionKey, msg.replyCtx, pending, curIdx + 1)
-        void this.sendAskQuestionPrompt(p, msg.replyCtx, pending.questions, curIdx + 1)
+        void this.sendAskQuestionPrompt(p, msg.replyCtx, pending.questions, curIdx + 1, msg.sessionKey)
         return true
       }
 

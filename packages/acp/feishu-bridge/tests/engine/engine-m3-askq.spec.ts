@@ -109,7 +109,7 @@ describe('sendAskQuestionPrompt', () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
 
-    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0)
+    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0, 'test:askq')
 
     expect(p.sentCards).toHaveLength(1)
   })
@@ -118,7 +118,7 @@ describe('sendAskQuestionPrompt', () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
 
-    await e.sendAskQuestionPrompt(p, 'ctx', testMultiQuestions(), 0)
+    await e.sendAskQuestionPrompt(p, 'ctx', testMultiQuestions(), 0, 'test:askq')
 
     expect(p.sentCards).toHaveLength(1)
   })
@@ -127,7 +127,7 @@ describe('sendAskQuestionPrompt', () => {
     const e = newTestEngine()
     const p = createStubInlineButtonPlatform('telegram')
 
-    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0)
+    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0, 'test:askq')
 
     expect(p.buttonRows).toHaveLength(3)
     expect(p.buttonRows[0]![0]!.data).toBe('askq:0:1')
@@ -137,7 +137,7 @@ describe('sendAskQuestionPrompt', () => {
     const e = newTestEngine()
     const p = createStubPlatform('plain')
 
-    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0)
+    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0, 'test:askq')
 
     expect(p.getSent()).toHaveLength(1)
     const sentMsg = p.getSent()[0]!
@@ -321,7 +321,7 @@ describe('AskQuestionCardShape_GoReplica', () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
 
-    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0)
+    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0, 'test:askq')
 
     const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
     expect(card.elements.length).toBe(4) // 1 markdown question + 3 list rows
