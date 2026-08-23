@@ -84,6 +84,7 @@ function pendingPath(): string {
 function writeMarker(fields: Record<string, unknown> = {}): void {
   writeFileSync(pendingPath(), JSON.stringify({
     pid: process.pid + 1,
+    engine: 'test',
     platform: 'test',
     replyCtx: { chatID: 'oc_x', sessionKey: 'test:oc_x', messageID: '' },
     at: Date.now(),
@@ -268,6 +269,9 @@ describe('cmdReload', () => {
     await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(1) })
     const marker = JSON.parse(readFileSync(pendingPath(), 'utf8')) as Record<string, unknown>
     expect(marker.pid).toBe(process.pid)
+    // The engine (project) name disambiguates platforms: deployments without
+    // per-project tags make every platform default to the name 'feishu'.
+    expect(marker.engine).toBe('test')
     expect(marker.platform).toBe('test')
     // Round-trips the triggering message's reply context so the notice can
     // land as a reply to the /reload message itself.
@@ -309,6 +313,33 @@ describe('completePendingReload', () => {
   it('drops a stale marker without sending', async () => {
     const { e, p } = newEngine()
     writeMarker({ at: Date.now() - 15 * 60_000 - 1 })
+    await completePendingReload([e])
+    expect(p.getSent()).toEqual([])
+    expect(existsSync(pendingPath())).toBe(false)
+  })
+
+  it('sends through the recorded engine\'s platform when platform names collide (the 230002 incident)', async () => {
+    // Dev deployments configure no per-project tags, so every platform is
+    // named 'feishu'; picking the first match sent through a bot outside the
+    // chat and Feishu rejected it (230002 Bot/User can NOT be out of the chat).
+    const wrongPlatform = createStubPlatform('feishu')
+    const wrongEngine = new Engine('other', createStubAgent(), [wrongPlatform], '', 'en')
+    const wrongSends: string[] = []
+    wrongPlatform.send = async (_rc, content) => { wrongSends.push(content) }
+    const rightPlatform = createStubPlatform('feishu')
+    const rightEngine = new Engine('test', createStubAgent(), [rightPlatform], '', 'en')
+    const rightSends: string[] = []
+    rightPlatform.send = async (_rc, content) => { rightSends.push(content) }
+    writeMarker({ engine: 'test', platform: 'feishu' })
+    await completePendingReload([wrongEngine, rightEngine])
+    expect(wrongSends).toEqual([])
+    expect(rightSends).toEqual([rightEngine.i18n.tf(Msg.ReloadCompleted, join(logDir, 'feishu-bridge-reload.log'))])
+    expect(existsSync(pendingPath())).toBe(false)
+  })
+
+  it('drops the marker when no engine matches (project removed or renamed mid-reload)', async () => {
+    const { e, p } = newEngine()
+    writeMarker({ engine: 'gone' })
     await completePendingReload([e])
     expect(p.getSent()).toEqual([])
     expect(existsSync(pendingPath())).toBe(false)

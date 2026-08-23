@@ -92,6 +92,8 @@ function reloadLogDir(): string {
 interface ReloadPendingMarker {
   /** PID of the daemon that started the reload — the notice fires only when it differs (a real restart, not an HMR re-apply). */
   pid: number
+  /** Name of the engine (project) that handled the command — disambiguates platforms, which all default to 'feishu' when untagged. */
+  engine: string
   /** Name of the platform that delivered the /reload command (Platform.name()). */
   platform: string
   /** The triggering message's reply context, round-tripped so the notice lands as a reply to the /reload message. */
@@ -113,14 +115,16 @@ function pendingPath(): string {
  * with no marker it is a plain start; with the current process's own marker
  * it is an HMR re-apply while the reload is still in flight (leave the
  * marker for the real restart); any other fresh marker means this process is
- * the reload's replacement — send the notice through the recorded platform
- * and clear the marker. Every consumed path deletes it, so one daemon start
- * produces at most one notice. Known gap: an unrelated crash-restart during
- * a reload's build also delivers the notice (the daemon did restart; the
- * wording claims nothing beyond that — details stay in the reload log).
+ * the reload's replacement — send the notice through the recorded engine's
+ * platform and clear the marker. Every consumed path deletes it, so one
+ * daemon start produces at most one notice. Known gap: an unrelated
+ * crash-restart during a reload's build also delivers the notice (the daemon
+ * did restart; the wording claims nothing beyond that — details stay in the
+ * reload log).
  *
- * @param engines - The daemon's live engines (the recorded platform is
- * looked up among them; its engine provides the i18n language).
+ * @param engines - The daemon's live engines; the recorded (engine,
+ * platform) pair is looked up among them — both names, because tagless
+ * deployments name every platform 'feishu'.
  */
 export async function completePendingReload(engines: readonly Engine[]): Promise<void> {
   const path = pendingPath()
@@ -135,10 +139,10 @@ export async function completePendingReload(engines: readonly Engine[]): Promise
     // Durable-boundary validation: only the primitives are checked; the
     // opaque replyCtx is validated by Platform.send's requireReplyCtx.
     const parsed = JSON.parse(raw) as Partial<ReloadPendingMarker>
-    if (typeof parsed.pid !== 'number' || typeof parsed.platform !== 'string' || typeof parsed.at !== 'number') {
+    if (typeof parsed.pid !== 'number' || typeof parsed.engine !== 'string' || typeof parsed.platform !== 'string' || typeof parsed.at !== 'number') {
       throw new Error('marker field shape mismatch')
     }
-    marker = { pid: parsed.pid, platform: parsed.platform, replyCtx: parsed.replyCtx, at: parsed.at }
+    marker = { pid: parsed.pid, engine: parsed.engine, platform: parsed.platform, replyCtx: parsed.replyCtx, at: parsed.at }
   } catch (error) {
     console.warn(`/reload: dropping unreadable completion marker ${path}: ${String(error)}`)
     rmSync(path, { force: true })
@@ -149,13 +153,18 @@ export async function completePendingReload(engines: readonly Engine[]): Promise
     if (Date.now() - marker.at > PENDING_TTL_MS) {
       console.warn(`/reload: dropping stale completion marker ${path} (started ${String(marker.at)})`)
     } else {
-      const match = engines
-        .flatMap(e => e.platforms.map(p => ({ e, p })))
-        .find(({ p }) => p.name() === marker.platform)
-      if (match === undefined) {
-        console.warn(`/reload: completion marker names unknown platform ${marker.platform}; dropping it`)
+      // Two-level lookup (engine name, then platform name): the handler ran
+      // with p ∈ engine.platforms and that bot is in the chat, so this
+      // reproduces the exact sender of the "started" reply. A name-only
+      // platform match picks the first 'feishu' platform in a tagless
+      // multi-project deployment — a bot outside the chat, which Feishu
+      // rejects with 230002 (2026-08-22 dev incident).
+      const engine = engines.find(e => e.name === marker.engine)
+      const platform = engine?.platforms.find(p => p.name() === marker.platform)
+      if (engine === undefined || platform === undefined) {
+        console.warn(`/reload: completion marker names unknown engine ${marker.engine} or platform ${marker.platform}; dropping it`)
       } else {
-        await match.p.send(marker.replyCtx, match.e.i18n.tf(Msg.ReloadCompleted, join(reloadLogDir(), 'feishu-bridge-reload.log')))
+        await platform.send(marker.replyCtx, engine.i18n.tf(Msg.ReloadCompleted, join(reloadLogDir(), 'feishu-bridge-reload.log')))
       }
     }
   } catch (error) {
@@ -229,7 +238,7 @@ async function cmdReload(e: Engine, p: Platform, msg: Message, args: string[]): 
   reloading = true
   // The restarted daemon reads this marker to deliver the completion notice
   // (completePendingReload); a failure reply here clears it.
-  const marker: ReloadPendingMarker = { pid: process.pid, platform: p.name(), replyCtx: msg.replyCtx, at: Date.now() }
+  const marker: ReloadPendingMarker = { pid: process.pid, engine: e.name, platform: p.name(), replyCtx: msg.replyCtx, at: Date.now() }
   try {
     writeFileSync(pendingPath(), JSON.stringify(marker))
   } catch (error) {
