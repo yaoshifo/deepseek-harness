@@ -50,6 +50,7 @@ function fakePersistence(stored: Map<string, SessionEvent[]>): DshPersistenceLik
     },
     create: async () => {},
     append: async () => {},
+    list: async () => [],
   }
 }
 

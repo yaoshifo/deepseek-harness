@@ -8,12 +8,24 @@
  */
 import { describe, expect, it } from 'vitest'
 import { DshAgentAdapter } from '../../src/agent-dsh/adapter.js'
-import type { SessionHeader } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
 
 const PROJECT_DIR = '/home/hm/workspace/proj'
 
-function header(over: Partial<SessionHeader> & Pick<SessionHeader, 'id' | 'createdAt'>): SessionHeader {
-  return { version: 0, cwd: PROJECT_DIR, ...over }
+/** String ids in, branded header out: the brand is a type-level fact only. */
+function header(over: Partial<Omit<SessionHeader, 'id' | 'parentSession'>> & {
+  id: string
+  createdAt: SessionHeader['createdAt']
+  parentSession?: string
+}): SessionHeader {
+  const { id, parentSession, ...rest } = over
+  return {
+    version: 0,
+    cwd: PROJECT_DIR,
+    ...rest,
+    id: SessionId(id),
+    ...(parentSession === undefined ? {} : { parentSession: SessionId(parentSession) }),
+  }
 }
 
 function newAdapter(list: SessionHeader[]): DshAgentAdapter {
