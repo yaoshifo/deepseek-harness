@@ -294,6 +294,8 @@ export class InteractiveState {
   lastActivity = Date.now()
   /** Turns currently in flight on this state. */
   activeTurns = 0
+  /** Whether the orphan-watch receive is armed on the event channel. */
+  orphanWatchArmed = false
   /** Timestamp of the last agent event, for stall confirmation. */
   lastEventAt = 0
   /** Tool calls in flight; a positive count pauses the idle timer. */
@@ -1979,11 +1981,78 @@ export class Engine {
       // A message may have queued between the event loop seeing an empty
       // queue and returning (session still locked) — drain the orphans.
       await this.drainPendingMessages(state, session, this.sessions, interactiveKey)
+      this.armOrphanWatch(session, this.sessions, interactiveKey)
       unlocked = true
     } catch (error) {
       console.error(`engine: turn processing failed (${msg.sessionKey}): ${String(error)}`)
     } finally {
       if (!unlocked) session.unlock()
+    }
+  }
+
+  // ── orphan turn pump (engine-woken turns) ────────────────────────────────
+
+  /**
+   * Arm the orphan watch after every message-path event pump exited: engine
+   * turns woken without a user message (background job completion, background
+   * subagent report) push events onto a channel nobody reads, so their reply,
+   * progress card, and permission bridging were silently dropped and the idle
+   * reaper later disposed the parked turn (2026-08-23 oc_9956 incident). The
+   * watch parks one receive on the live channel; the first orphan event takes
+   * the session lock and runs a full pump over it.
+   * @param session - Session the orphan turn runs on; tryLock arbitrates
+   *   against a message-path pump.
+   * @param sessions - Session manager for persistence.
+   * @param interactiveKey - Interactive-state slot key.
+   */
+  armOrphanWatch(session: Session, sessions: SessionManager, interactiveKey: string): void {
+    const state = this.interactiveStates.get(interactiveKey)
+    if (state === undefined || state.orphanWatchArmed) return
+    if (state.agentSession === undefined || !state.agentSession.alive()) return
+    if (state.isStopped() || state.closing !== undefined) return
+    state.orphanWatchArmed = true
+    const channel = state.agentSession.events()
+    void channel.receive().then((r) => {
+      state.orphanWatchArmed = false
+      if (r.done) return
+      if (!session.tryLock()) {
+        // A message-path turn owns the session; its pump reads this event.
+        channel.push(r.event)
+        return
+      }
+      void this.runOrphanTurnPump(r.event, state, session, sessions, interactiveKey)
+    })
+  }
+
+  /**
+   * Run one engine-woken turn's event pump under the session lock taken by the
+   * orphan watch. Mirrors processInteractiveMessageWith's tail: release via
+   * drainPendingMessages, then re-arm the watch for a following orphan turn.
+   * @param firstEvent - Event the watch consumed; the pump starts on it.
+   * @param state - Interactive state the turn runs on.
+   * @param session - Locked session the turn runs under.
+   * @param sessions - Session manager for persistence.
+   * @param interactiveKey - Interactive-state slot key.
+   */
+  async runOrphanTurnPump(
+    firstEvent: Event,
+    state: InteractiveState,
+    session: Session,
+    sessions: SessionManager,
+    interactiveKey: string,
+  ): Promise<void> {
+    console.info(`engine: orphan turn pump started (${interactiveKey})`)
+    state.beginTurn()
+    try {
+      await this.processInteractiveEvents(
+        state, session, sessions, interactiveKey, '', undefined, state.replyCtx, firstEvent)
+      await this.drainPendingMessages(state, session, sessions, interactiveKey)
+    } catch (error) {
+      console.error(`engine: orphan turn failed (${interactiveKey}): ${String(error)}`)
+      session.unlock()
+    } finally {
+      state.endTurn()
+      this.armOrphanWatch(session, sessions, interactiveKey)
     }
   }
 
@@ -2300,6 +2369,8 @@ export class Engine {
    * @param _msgID - Message ID retained for Go parity; unused.
    * @param sendDone - Settled prompt-send promise; an error value fails the turn.
    * @param replyCtx - Platform reply context for outgoing messages.
+   * @param firstEvent - Event the orphan watch already consumed off the
+   *   channel; the loop processes it before arming its own receive.
    */
   async processInteractiveEvents(
     state: InteractiveState,
@@ -2309,6 +2380,7 @@ export class Engine {
     _msgID: string,
     sendDone: Promise<unknown> | undefined,
     replyCtx: unknown,
+    firstEvent?: Event,
   ): Promise<void> {
     let textParts: string[] = []
     let segmentStart = 0
@@ -2374,7 +2446,13 @@ export class Engine {
     // the agent — re-arming recvP on the pre-retry channel would read its
     // close as an agent exit on the very next event.
     let events = channel
-    let recvP: Promise<{ done: false; event: Event } | { done: true }> = events.receive()
+    // Re-armed before each event is processed; the loop's finally cancels the
+    // leftover parked waiter so an exited loop never steals the next event
+    // from a later receiver (orphan watch or the next turn's pump).
+    let recvArm = firstEvent !== undefined
+      ? { promise: Promise.resolve({ done: false as const, event: firstEvent }), cancel: (): void => {} }
+      : events.receiveArmed()
+    let recvP = recvArm.promise
 
     /** One resolved arm of the loop's select (Go's select cases). */
     type LoopOutcome =
@@ -2385,74 +2463,615 @@ export class Engine {
       | { kind: 'idle' }
       | { kind: 'never' }
 
-    for (;;) {
+    try {
+      for (;;) {
       // Idle timer: re-armed per iteration (Go reset-after-event); not armed
       // while a tool call is in flight (Go stops it on EventToolUse).
-      const idleMs = activeToolCalls === 0 ? state.idleTimeout(this.eventIdleTimeout) : 0
-      const idleSleep = idleMs > 0 ? cancellableSleep(idleMs) : undefined
-      const recvOutcome: Promise<LoopOutcome> = recvP.then(r =>
-        r.done ? { kind: 'closed' } : { kind: 'event', event: r.event })
-      const sendOutcome: Promise<LoopOutcome> = pendingSend !== undefined
-        ? pendingSend.then(e => ({ kind: 'send', error: e }))
-        : neverPromise
-      const stopOutcome: Promise<LoopOutcome> = stopP.then(() => ({ kind: 'stop' }))
-      const idleOutcome: Promise<LoopOutcome> = idleSleep !== undefined
-        ? idleSleep.promise.then(() => ({ kind: 'idle' }))
-        : neverPromise
-      const outcome: LoopOutcome = await Promise.race([recvOutcome, sendOutcome, stopOutcome, idleOutcome])
-      idleSleep?.cancel()
+        const idleMs = activeToolCalls === 0 ? state.idleTimeout(this.eventIdleTimeout) : 0
+        const idleSleep = idleMs > 0 ? cancellableSleep(idleMs) : undefined
+        const recvOutcome: Promise<LoopOutcome> = recvP.then(r =>
+          r.done ? { kind: 'closed' } : { kind: 'event', event: r.event })
+        const sendOutcome: Promise<LoopOutcome> = pendingSend !== undefined
+          ? pendingSend.then(e => ({ kind: 'send', error: e }))
+          : neverPromise
+        const stopOutcome: Promise<LoopOutcome> = stopP.then(() => ({ kind: 'stop' }))
+        const idleOutcome: Promise<LoopOutcome> = idleSleep !== undefined
+          ? idleSleep.promise.then(() => ({ kind: 'idle' }))
+          : neverPromise
+        const outcome: LoopOutcome = await Promise.race([recvOutcome, sendOutcome, stopOutcome, idleOutcome])
+        idleSleep?.cancel()
 
-      if (outcome.kind === 'stop') {
-        await barrier()
-        if (state.isUserStopped()) {
+        if (outcome.kind === 'stop') {
+          await barrier()
+          if (state.isUserStopped()) {
           // User stop: stopped terminal card, skipping cp.Finalize(Failed)
           // which would clobber the ⏹ 已停止 card.
-          await sp.markStopped()
-        } else {
-          await sp.markFailed()
-        }
-        state.eventsNeedResync = true
-        return
-      }
-
-      if (outcome.kind === 'send') {
-        pendingSend = undefined
-        if (outcome.error !== undefined) {
-          const errText = errorMessage(outcome.error)
-          console.error(`failed to send prompt (${sessionKey}): ${errText}`)
-          this.notifyDroppedQueuedMessages(state, new Error(errText))
-          if (state.agentSession === undefined || !state.agentSession.alive()) {
-            await this.cleanupInteractiveState(sessionKey, state)
+            await sp.markStopped()
+          } else {
+            await sp.markFailed()
           }
+          state.eventsNeedResync = true
+          return
+        }
+
+        if (outcome.kind === 'send') {
+          pendingSend = undefined
+          if (outcome.error !== undefined) {
+            const errText = errorMessage(outcome.error)
+            console.error(`failed to send prompt (${sessionKey}): ${errText}`)
+            this.notifyDroppedQueuedMessages(state, new Error(errText))
+            if (state.agentSession === undefined || !state.agentSession.alive()) {
+              await this.cleanupInteractiveState(sessionKey, state)
+            }
+            const p = state.platform
+            if (p !== undefined) {
+              await this.send(p, replyCtx, this.i18n.tf(Msg.Error, errorMessage(outcome.error)))
+            }
+            return
+          }
+          continue
+        }
+
+        if (outcome.kind === 'idle') {
+        // Re-verify against the last event arrival: a fire right after an
+        // event resolved is stale — keep waiting (Go stallConfirmed).
+          if (!this.stallConfirmed(state, Date.now(), state.idleTimeout(this.eventIdleTimeout))) continue
+
+          stallRetries++
+          if (stallRetries <= this.stallMaxRetries) {
+            const retry = await this.restartAgentForStallRetry(
+              state, state.agent ?? this.agent, sessionKey, channel)
+            if (retry !== undefined) {
+              const stallPlatform = state.platform
+              if (stallPlatform !== undefined) {
+                const idleSec = Math.round(state.idleTimeout(this.eventIdleTimeout) / 1000)
+                await this.send(stallPlatform, replyCtx,
+                  this.i18n.tf(Msg.StallRetry, idleSec, stallRetries, this.stallMaxRetries))
+              }
+              // Go parity: retire the stalled card with a failed render (the
+              // stalled turn did not complete) and give the resumed 「继续」
+              // turn a fresh card instead of PATCHing the stale one.
+              await sp.markFailed()
+              sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
+              cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
+                this.i18n.currentLang(), undefined, sender)
+              this.bindActivePreview(sp, sessionKey)
+              state.preview = sp
+              if (this.display.toolProgress && sp.canPreview()) {
+                void sp.showPlaceholder(this.i18n.t(Msg.Processing))
+              }
+              textParts = []
+              segmentStart = 0
+              toolCount = 0
+              silentHold = false
+              events = retry.events()
+              recvArm = events.receiveArmed()
+              recvP = recvArm.promise
+              const retryChannel = retry
+              const nextSend = retryChannel.send('继续', [], [])
+                .then((): undefined => undefined, (error: unknown): unknown => error)
+              pendingSend = nextSend
+              continue
+            }
+          }
+
+          console.error(`agent session idle timeout: no events for too long, killing session (${sessionKey})`)
+          state.eventsNeedResync = true
           const p = state.platform
           if (p !== undefined) {
-            await this.send(p, replyCtx, this.i18n.tf(Msg.Error, errorMessage(outcome.error)))
+            await this.send(p, replyCtx,
+              this.i18n.tf(Msg.StallTimeout, Math.round(state.idleTimeout(this.eventIdleTimeout) / 1000), this.stallMaxRetries))
+          }
+          // Go parity: fail the card before the kill so it cannot freeze in
+          // its Running state next to the stall-timeout notice.
+          await sp.markFailed()
+          await this.cleanupInteractiveState(sessionKey, state)
+          return
+        }
+
+        if (outcome.kind === 'closed' || outcome.kind === 'never') {
+          if (outcome.kind === 'closed') {
+            await this.handleChannelClosed(state, session, sessionKey, textParts, segmentStart, toolCount, replyCtx)
           }
           return
         }
-        continue
-      }
 
-      if (outcome.kind === 'idle') {
-        // Re-verify against the last event arrival: a fire right after an
-        // event resolved is stale — keep waiting (Go stallConfirmed).
-        if (!this.stallConfirmed(state, Date.now(), state.idleTimeout(this.eventIdleTimeout))) continue
+        const event = outcome.event
+        state.lastEventAt = Date.now()
+        recvArm = events.receiveArmed()
+        recvP = recvArm.promise
 
-        stallRetries++
-        if (stallRetries <= this.stallMaxRetries) {
-          const retry = await this.restartAgentForStallRetry(
-            state, state.agent ?? this.agent, sessionKey, channel)
-          if (retry !== undefined) {
-            const stallPlatform = state.platform
-            if (stallPlatform !== undefined) {
-              const idleSec = Math.round(state.idleTimeout(this.eventIdleTimeout) / 1000)
-              await this.send(stallPlatform, replyCtx,
-                this.i18n.tf(Msg.StallRetry, idleSec, stallRetries, this.stallMaxRetries))
+        if (hardCapMs > 0 && Date.now() - turnStart > hardCapMs) {
+          console.error(`watchdog: hard turn cap exceeded, force cleanup (${sessionKey})`)
+          state.eventsNeedResync = true
+          const p = state.platform
+          if (p !== undefined) {
+            await this.send(p, replyCtx, this.i18n.t(Msg.WatchdogReset))
+          }
+          await this.cleanupInteractiveState(sessionKey, state)
+          return
+        }
+
+        if (state.isStopped()) {
+        // Go parity: the post-stop event arrival renders the terminal card
+        // (user or engine stop → ⏹; any other stop → failed) instead of
+        // returning silently and freezing the card mid-state.
+          await barrier()
+          if (state.isUserStopped() || state.engineStopped) await sp.markStopped()
+          else await sp.markFailed()
+          state.eventsNeedResync = true
+          return
+        }
+
+        const p = state.platform
+
+        switch (event.type) {
+          case 'thinking': {
+            if (isEllipsisOnly(event.content)) break
+            // Thinking block complete: drop the streamed 💭 section. Runs even
+            // in quiet mode (Go parity — clearThinking precedes the
+            // !ThinkingMessages branch) so the 思考中 header does not linger.
+            if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
+            // In quiet mode (thinkingMessages=false), thinking events must not
+            // affect the streaming preview — no completeAndDetach, no text
+            // segment flush. Otherwise completeAndDetach sets degraded=true,
+            // causing the result handler to fall through to this.send() and
+            // duplicate the reply as plain text alongside the already-finalized
+            // card.
+            if (!this.display.thinkingMessages) {
+              thinkingStreamed = false
+              thinkingAccum = ''
+              break
             }
-            // Go parity: retire the stalled card with a failed render (the
-            // stalled turn did not complete) and give the resumed 「继续」
-            // turn a fresh card instead of PATCHing the stale one.
-            await sp.markFailed()
+            if (textParts.length > segmentStart) {
+              if (sp.canPreview()) {
+                await sp.completeAndDetach()
+                segmentStart = textParts.length
+              } else {
+                const segment = textParts.slice(segmentStart).join('')
+                if (segment !== '' && p !== undefined) {
+                  for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
+                    await this.send(p, replyCtx, chunk)
+                  }
+                }
+                segmentStart = textParts.length
+              }
+              if (!sp.inProgressMode()) segmentStart = textParts.length
+              silentHold = false
+            }
+            if (event.content !== '' && p !== undefined) {
+              if (textParts.length > segmentStart) {
+                if (!sp.canPreview()) {
+                  const segment = textParts.slice(segmentStart).join('')
+                  if (segment !== '') {
+                    for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
+                      await this.send(p, replyCtx, chunk)
+                    }
+                  }
+                }
+                segmentStart = textParts.length
+                silentHold = false
+              }
+              await sp.completeAndDetach()
+              const preview = truncateIf(event.content, this.display.thinkingMaxLen)
+              const thinkingMsg = this.i18n.tf('thinking', preview)
+              if (!await cp.appendEvent('thinking', preview, '', thinkingMsg)) {
+                await this.send(p, replyCtx, thinkingMsg)
+              }
+            }
+            thinkingStreamed = false
+            thinkingAccum = ''
+            break
+          }
+
+          case 'text_delta': {
+          // Preview-only incremental text; the full block still arrives via
+          // EventText and is reconciled at turn end.
+            deltaAccum += event.content
+            if (couldBeSilentPrefix(deltaAccum)) break
+            deltaFlushed = true
+            if (sp.canPreview() && sp.inProgressMode()) await sp.appendAnalysisText(deltaAccum)
+            else if (sp.canPreview()) await sp.appendText(event.content)
+            break
+          }
+
+          case 'thinking_delta': {
+          // Preview-only: stream thinking into the 💭 section; the full
+          // EventThinking block clears it and dedups. Not gated on
+          // thinkingMessages (Go parity): quiet mode suppresses thinking
+          // *messages*, not the streaming 思考中 header.
+            thinkingAccum += event.content
+            thinkingStreamed = true
+            if (sp.canPreview()) await sp.appendThinking(thinkingAccum)
+            break
+          }
+
+          case 'tool_use': {
+            toolCount++
+            activeToolCalls++
+            state.activeToolCalls = activeToolCalls
+            // Clear streaming-thinking state when a tool starts — the agent is
+            // no longer thinking once it invokes a tool (Go safety net for
+            // agents that only emit thinking_delta and never a full block).
+            if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
+            if (thinkingStreamed) thinkingAccum = ''
+            // Track plan file path for plan-mode support (Go): raw
+            // ToolInputRaw.file_path, not the summarized ToolInput. A subagent
+            // child's Write never promotes on the parent — the child runs its
+            // own plan lifecycle.
+            if (event.toolName === 'Write' && event.fromSubagent !== true) {
+              const fp = event.toolInputRaw?.file_path
+              if (typeof fp === 'string' && fp.includes('.claude/plans/')) {
+                pendingPlanFilePath = fp
+              }
+            }
+            const toolKey = event.toolID !== undefined && event.toolID !== '' ? event.toolID : `#t${++toolIntervalSeq}`
+            openToolIntervals.set(toolKey, Date.now())
+            // A todo-list tool call replaces the pinned todo section (dsh
+            // `todo_write`, Claude-style `TodoWrite`); an unparseable input
+            // keeps the last list. A subagent child's todo list stays on the
+            // child transcript — it must not overwrite the parent's section.
+            if (isTodoToolName(event.toolName ?? '') && event.fromSubagent !== true) {
+              const items = parseTodoItems(event.toolInput ?? '')
+              if (items !== undefined) {
+                if (sp.canPreview()) await sp.updateTodoSection(items)
+                cp.setTodos(items)
+              }
+            }
+            if (this.display.toolProgress && sp.canPreview()) {
+            // Subagent child calls show the delegation label on the header
+            // line; the real tool name rides the code block as `name -> input`.
+              const entry = newToolProgressEntry(
+                event.fromSubagent === true ? 'subagent' : (event.toolName ?? ''),
+                event.toolInput ?? '',
+                event.toolID ?? '',
+              )
+              if (event.fromSubagent === true) entry.fullName = event.toolName ?? ''
+              await sp.appendProgress(entry)
+            }
+            break
+          }
+
+          case 'tool_result': {
+          // Promote the plan file path once its Write succeeded (Go): on
+          // denial the agent must still be able to revise the same file.
+            if (pendingPlanFilePath !== '' && event.toolName === 'Write' && event.done) {
+              planFilePath = pendingPlanFilePath
+              pendingPlanFilePath = ''
+            }
+
+            const closeKey = event.toolID !== undefined && event.toolID !== '' ? event.toolID : `#t${toolIntervalSeq}`
+            const closedStart = openToolIntervals.get(closeKey)
+            if (closedStart !== undefined) {
+              openToolIntervals.delete(closeKey)
+              timing.intervals.push({ start: closedStart, end: Date.now() })
+            }
+            if (this.display.toolMessages) {
+              const result = (event.toolResult ?? '').trim() || event.content.trim()
+              if (result !== '' && p !== undefined) {
+                const entry = {
+                  kind: 'tool_result' as const,
+                  tool: event.fromSubagent === true ? 'subagent' : (event.toolName ?? ''),
+                  text: result,
+                }
+                // A subagent child's result stays on the progress card; the
+                // standalone-message fallback would drop child tool output
+                // straight into the chat.
+                if (!await cp.appendStructured(entry, result) && event.fromSubagent !== true) {
+                  if (!suppressStandaloneToolResultEvent(p)) {
+                    await this.send(p, replyCtx, result)
+                  }
+                }
+              }
+            } else if (this.display.toolProgress) {
+            // Quiet mode: update the last tool entry with its result.
+              const result = (event.toolResult ?? '').trim() || event.content.trim()
+              if (result !== '' || event.done) {
+                await sp.updateToolResult(event.toolID ?? '', result, true)
+              }
+            }
+            activeToolCalls = Math.max(0, activeToolCalls - 1)
+            state.activeToolCalls = activeToolCalls
+            break
+          }
+
+          case 'subagent_status': {
+          // Cumulative delegated-subagent count from the adapter's lineage
+          // projection; the card's pinned stats section renders it.
+            const count = Number.parseInt(event.content, 10)
+            if (Number.isFinite(count) && count >= 0 && sp.canPreview()) {
+              await sp.setSubagentCount(count)
+            }
+            break
+          }
+
+          case 'text': {
+            if (isEllipsisOnly(event.content)) break
+            // Real text ends the streaming-thinking state (safety net for
+            // agents that only emit thinking deltas); empty content carriers
+            // (session ids) must not flip 思考中↔执行中.
+            if (thinkingStreamed && event.content !== '') {
+              await sp.clearThinking()
+              thinkingAccum = ''
+            }
+            const text = event.content
+            if (text !== '' && !isSilentReply(text)) {
+              textParts.push(text)
+              if (deltaFlushed) {
+              // This block was already previewed via deltas; textParts (the
+              // final-message source of truth) is still updated.
+                deltaAccum = ''
+                deltaFlushed = false
+              } else {
+                const segmentText = textParts.slice(segmentStart).join('')
+                if (silentHold) {
+                  if (!couldBeSilentPrefix(segmentText)) {
+                    silentHold = false
+                    if (sp.canPreview() && sp.inProgressMode()) await sp.appendAnalysisText(segmentText)
+                    else if (sp.canPreview()) await sp.appendText(segmentText)
+                  }
+                } else if (couldBeSilentPrefix(segmentText)) {
+                  silentHold = true
+                } else if (sp.canPreview() && sp.inProgressMode()) {
+                  await sp.appendAnalysisText(text)
+                } else if (sp.inProgressMode() && p !== undefined) {
+                  await this.send(p, replyCtx, text)
+                } else if (sp.canPreview()) {
+                  await sp.appendText(text)
+                }
+              }
+            }
+            const eventSessionID = event.sessionID ?? ''
+            if (eventSessionID !== '') {
+              if (session.compareAndSetAgentSessionID(eventSessionID, this.agent.name())) {
+                const pendingName = session.getName()
+                if (pendingName !== '' && pendingName !== 'session' && pendingName !== 'default') {
+                  sessions.setSessionName(eventSessionID, pendingName)
+                }
+                sessions.save()
+              }
+            }
+            break
+          }
+
+          case 'permission_request': {
+            const isAskQuestion = event.toolName === 'AskUserQuestion'
+            const autoApprove = state.approveAll
+
+            // Auto-approve: approveAll is set and this is not AskUserQuestion
+            // and not ExitPlanMode (the user must always review plan changes).
+            if (autoApprove && !isAskQuestion && event.toolName !== 'ExitPlanMode') {
+              if (state.agentSession !== undefined) {
+                const autoInput = event.toolInputRaw ?? {}
+                void state.agentSession.respondPermission(event.requestID ?? '', {
+                  behavior: 'allow',
+                  updatedInput: autoInput,
+                }).catch(() => {})
+              }
+              break
+            }
+
+            // Chatroom role-pick: the moderator's ExitPlanMode is a formality
+            // (priming pre-bakes a trivial plan). Auto-approve so the user
+            // isn't prompted just to green-light reading role files +
+            // pick-roles — same semantics as the user clicking allow (grants
+            // approveAll for the rest of the turn). Only in the pick window.
+            if (event.toolName === 'ExitPlanMode' && chatroomPickActive(this, sessionKey)) {
+              state.approveAll = true
+              if (state.agentSession !== undefined) {
+                const autoInput = event.toolInputRaw ?? {}
+                void state.agentSession.respondPermission(event.requestID ?? '', {
+                  behavior: 'allow',
+                  updatedInput: autoInput,
+                }).catch(() => {})
+              }
+              console.info(`auto-approving ExitPlanMode (chatroom role-pick) (${sessionKey})`)
+              break
+            }
+            // Foreground turn (Go engine_events.go ~4106): every permission
+            // request surfaces as a pending permission — the unsolicited gate
+            // (shouldSurfaceUnsolicitedPermission) belongs to the background
+            // reader TS does not have yet. Gating here auto-denied
+            // sandbox-escalation approvals on the real machine.
+
+            // ExitPlanMode: extract plan content early so the flushed text and
+            // the card below dedup plan text already streamed as EventText (Go
+            // engine_events.go). The plan file path wins; the inline plan in
+            // the tool input is the fallback for unreadable paths.
+            if (event.toolName === 'ExitPlanMode') {
+              planRevisionCount++
+              let activePlanFilePath = planFilePath
+              if (activePlanFilePath === '') {
+                const pfp = event.toolInputRaw?.planFilePath
+                if (typeof pfp === 'string') activePlanFilePath = pfp
+              }
+              let readFailed = false
+              if (activePlanFilePath !== '') {
+                try {
+                  const newContent = readFileSync(activePlanFilePath, 'utf8').trim()
+                  if (newContent !== '' && newContent !== sentPlanContent) sentPlanContent = newContent
+                } catch {
+                  readFailed = true
+                  console.warn(`plan file read failed (${activePlanFilePath})`)
+                }
+              }
+              if (activePlanFilePath === '' || readFailed) {
+                const inlinePlan = event.toolInputRaw?.plan
+                if (typeof inlinePlan === 'string') {
+                  const trimmed = inlinePlan.trim()
+                  if (trimmed !== '' && trimmed !== sentPlanContent) sentPlanContent = trimmed
+                }
+              }
+            }
+            // The plan card owns the exact plan text: strip it from the final
+            // reply source so it is not delivered twice.
+            if (event.toolName === 'ExitPlanMode' && sentPlanContent !== '') {
+              for (let i = segmentStart; i < textParts.length; i++) {
+                const part = textParts[i]
+                if (part !== undefined && part.includes(sentPlanContent)) {
+                  textParts[i] = part.replace(sentPlanContent, '').trim()
+                  break
+                }
+              }
+              await sp.removeText(sentPlanContent)
+            }
+            // Pre-card flush + detach (Go engine_events.go ~4192-4225): with the
+            // preview degraded the accumulated text segment is sent as plain
+            // messages now — the live card cannot carry it; segmentStart
+            // advances either way. The live card is completed and detached
+            // BEFORE the permission card reaches the user, so the
+            // post-resolution restart below finds no started preview in the
+            // normal flow and stays a safety net.
+            {
+              const previewActive = sp.canPreview()
+              if (textParts.length > segmentStart) {
+                if (p !== undefined && !previewActive) {
+                  const segment = textParts.slice(segmentStart).join('')
+                  if (segment !== '') {
+                    for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
+                      await this.send(p, replyCtx, chunk)
+                    }
+                  }
+                }
+                segmentStart = textParts.length
+                silentHold = false
+              }
+            }
+            // Pre-detach speculative reply render (Go captureReplyForExport +
+            // renderAndDeliverReply at a permission/AskUserQuestion): the
+            // pre-interaction segment exceeding the threshold renders now —
+            // the turn-end render would otherwise drop it. ExitPlanMode is
+            // excluded: the plan render covers this turn's product.
+            {
+              const captured = captureReplyForExport(sp, state)
+              const triggered = this.planRenderEnabled && event.toolName !== 'ExitPlanMode'
+              && captured.text !== '' && Array.from(captured.text).length >= defaultReplyPreRenderLen
+              && !session.shouldSuppressAutoRender()
+              // Drain async preview updates so a stale running PATCH cannot
+              // overwrite the completed card (Go barrier before detach).
+              await barrier()
+              await sp.completeAndDetach()
+              if (triggered) {
+                renderAndDeliverReply(this, state, sessionKey, captured.text, captured.exportKey)
+              }
+            }
+
+            // Surface: create pending permission and send card.
+            let resolveFn!: () => void
+            const resolved = new Promise<void>((r) => { resolveFn = r })
+            const pending: PendingPermission = {
+              requestID: event.requestID ?? '',
+              toolName: event.toolName ?? '',
+              toolInput: event.toolInputRaw ?? {},
+              inputPreview: event.toolInput ?? '',
+              questions: [],
+              answers: new Map<number, string>(),
+              currentQuestion: 0,
+              denied: false,
+              resolved,
+              resolve: resolveFn,
+            }
+            state.pending = pending
+            state.permissionPending = true
+
+            // Plan card + HTML render (Go engine_events.go ExitPlanMode branch,
+            // #47): the markdown card (with export button) is the always-on
+            // fallback; the render fork runs in addition and delivers an
+            // image. Skipped when the plan content is unchanged.
+            if (event.toolName === 'ExitPlanMode' && sentPlanContent !== '' && p !== undefined) {
+              const exportKey = `plan:${String(planRevisionCount)}`
+              storePlanExport(state, exportKey, sentPlanContent)
+              let activePlanFilePath = planFilePath
+              if (activePlanFilePath === '') {
+                const pfp = event.toolInputRaw?.planFilePath
+                if (typeof pfp === 'string') activePlanFilePath = pfp
+              }
+              if (activePlanFilePath !== '' && !existsSync(activePlanFilePath)) activePlanFilePath = ''
+              if (activePlanFilePath === '') {
+                activePlanFilePath = this.persistPlanFile(sentPlanContent)
+              }
+              if (activePlanFilePath !== '') {
+                await this.sendPlanContent(p, replyCtx, state, activePlanFilePath, planRevisionCount, exportKey)
+              } else {
+                await this.sendInlinePlanContent(p, replyCtx, state, sentPlanContent, planRevisionCount, exportKey)
+              }
+              if (this.planRenderEnabled && shouldRenderPlan(state, sentPlanContent, planRevisionCount)) {
+                launchPlanRender(this, state, sessionKey, sentPlanContent, activePlanFilePath, planRevisionCount, exportKey)
+              }
+            }
+
+            // Send the appropriate prompt card.
+            if (isAskQuestion && p !== undefined) {
+            // Extract questions from toolInputRaw (set by the adapter's
+            // userQuestions provider); fall back to a generic question.
+              type RawQ = {
+                question: string
+                header?: string
+                options?: Array<{ label: string; description?: string }>
+                multiSelect?: boolean
+              }
+              const rawQs = event.toolInputRaw?.questions as RawQ[] | undefined
+              const questions: UserQuestion[] = rawQs !== undefined && rawQs.length > 0
+                ? rawQs.map(q => ({
+                  question: q.question,
+                  header: q.header ?? '',
+                  options: (q.options ?? []).map(o => ({
+                    label: o.label,
+                    description: o.description ?? '',
+                  })),
+                  multiSelect: q.multiSelect ?? false,
+                }))
+                : [{
+                  question: event.content || 'Question',
+                  header: '',
+                  options: [],
+                  multiSelect: false,
+                }]
+              pending.questions = questions
+              // Research-manual hub: arm the auto-default so the card cannot
+              // hang forever when the user never replies (feature #57).
+              armResearchManualAskTimeout(this, p, sessionKey, replyCtx, pending, 0)
+              void this.sendAskQuestionPrompt(p, replyCtx, questions, 0, sessionKey)
+            } else if (p !== undefined) {
+              const permLimit = this.display.toolMaxLen
+              const rawInput = event.toolInput ?? ''
+              const toolInput = permLimit > 0
+                ? truncateIf(rawInput, Math.floor(permLimit * 8 / 5))
+                : rawInput
+              const toolName = event.toolName ?? ''
+              const prompt = this.i18n.tf(Msg.PermissionPrompt, toolName, toolInput)
+              await this.sendPermissionPrompt(p, replyCtx, prompt, toolName, toolInput)
+            }
+
+            // Block on the user's response (Go select on pending.Resolved /
+            // stopCh). The loop stays parked here so post-answer events flow
+            // through this same loop; the receive-race's channel-closed branch
+            // never fires because we await before the next receive.
+            const permWaitStart = Date.now()
+            await Promise.race([
+              resolved,
+              state.stopSignal(),
+            ])
+            timing.intervals.push({ start: permWaitStart, end: Date.now() })
+            state.permissionPending = false
+            // After user interaction, finalize the old card and start fresh
+            // (Go engine_events.go post-permission block): flush the
+            // un-flushed text segment, complete + detach the pre-interaction
+            // card, then create new sp/cp and pre-create the execution-phase
+            // placeholder so post-approval execution lands on a new card
+            // instead of appending to the pre-interaction one.
+            if (sp.hasStarted()) {
+              if (textParts.length > segmentStart && p !== undefined) {
+                const segment = textParts.slice(segmentStart).join('')
+                if (segment !== '') {
+                  for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
+                    await this.send(p, replyCtx, chunk)
+                  }
+                }
+              }
+              segmentStart = textParts.length
+              await sp.completeAndDetach()
+            }
             sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
             cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
               this.i18n.currentLang(), undefined, sender)
@@ -2461,566 +3080,28 @@ export class Engine {
             if (this.display.toolProgress && sp.canPreview()) {
               void sp.showPlaceholder(this.i18n.t(Msg.Processing))
             }
+            // Reset for the new execution phase — the old sp/cp tracked
+            // pre-interaction state; stale textParts would leak into the final
+            // reply and re-trigger the reply-HTML render a plan turn already
+            // covered.
             textParts = []
             segmentStart = 0
             toolCount = 0
             silentHold = false
-            events = retry.events()
-            recvP = events.receive()
-            const retryChannel = retry
-            const nextSend = retryChannel.send('继续', [], [])
-              .then((): undefined => undefined, (error: unknown): unknown => error)
-            pendingSend = nextSend
-            continue
-          }
-        }
-
-        console.error(`agent session idle timeout: no events for too long, killing session (${sessionKey})`)
-        state.eventsNeedResync = true
-        const p = state.platform
-        if (p !== undefined) {
-          await this.send(p, replyCtx,
-            this.i18n.tf(Msg.StallTimeout, Math.round(state.idleTimeout(this.eventIdleTimeout) / 1000), this.stallMaxRetries))
-        }
-        // Go parity: fail the card before the kill so it cannot freeze in
-        // its Running state next to the stall-timeout notice.
-        await sp.markFailed()
-        await this.cleanupInteractiveState(sessionKey, state)
-        return
-      }
-
-      if (outcome.kind === 'closed' || outcome.kind === 'never') {
-        if (outcome.kind === 'closed') {
-          await this.handleChannelClosed(state, session, sessionKey, textParts, segmentStart, toolCount, replyCtx)
-        }
-        return
-      }
-
-      const event = outcome.event
-      state.lastEventAt = Date.now()
-      recvP = events.receive()
-
-      if (hardCapMs > 0 && Date.now() - turnStart > hardCapMs) {
-        console.error(`watchdog: hard turn cap exceeded, force cleanup (${sessionKey})`)
-        state.eventsNeedResync = true
-        const p = state.platform
-        if (p !== undefined) {
-          await this.send(p, replyCtx, this.i18n.t(Msg.WatchdogReset))
-        }
-        await this.cleanupInteractiveState(sessionKey, state)
-        return
-      }
-
-      if (state.isStopped()) {
-        // Go parity: the post-stop event arrival renders the terminal card
-        // (user or engine stop → ⏹; any other stop → failed) instead of
-        // returning silently and freezing the card mid-state.
-        await barrier()
-        if (state.isUserStopped() || state.engineStopped) await sp.markStopped()
-        else await sp.markFailed()
-        state.eventsNeedResync = true
-        return
-      }
-
-      const p = state.platform
-
-      switch (event.type) {
-        case 'thinking': {
-          if (isEllipsisOnly(event.content)) break
-          // Thinking block complete: drop the streamed 💭 section. Runs even
-          // in quiet mode (Go parity — clearThinking precedes the
-          // !ThinkingMessages branch) so the 思考中 header does not linger.
-          if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
-          // In quiet mode (thinkingMessages=false), thinking events must not
-          // affect the streaming preview — no completeAndDetach, no text
-          // segment flush. Otherwise completeAndDetach sets degraded=true,
-          // causing the result handler to fall through to this.send() and
-          // duplicate the reply as plain text alongside the already-finalized
-          // card.
-          if (!this.display.thinkingMessages) {
-            thinkingStreamed = false
-            thinkingAccum = ''
-            break
-          }
-          if (textParts.length > segmentStart) {
-            if (sp.canPreview()) {
-              await sp.completeAndDetach()
-              segmentStart = textParts.length
-            } else {
-              const segment = textParts.slice(segmentStart).join('')
-              if (segment !== '' && p !== undefined) {
-                for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-                  await this.send(p, replyCtx, chunk)
-                }
-              }
-              segmentStart = textParts.length
-            }
-            if (!sp.inProgressMode()) segmentStart = textParts.length
-            silentHold = false
-          }
-          if (event.content !== '' && p !== undefined) {
-            if (textParts.length > segmentStart) {
-              if (!sp.canPreview()) {
-                const segment = textParts.slice(segmentStart).join('')
-                if (segment !== '') {
-                  for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-                    await this.send(p, replyCtx, chunk)
-                  }
-                }
-              }
-              segmentStart = textParts.length
-              silentHold = false
-            }
-            await sp.completeAndDetach()
-            const preview = truncateIf(event.content, this.display.thinkingMaxLen)
-            const thinkingMsg = this.i18n.tf('thinking', preview)
-            if (!await cp.appendEvent('thinking', preview, '', thinkingMsg)) {
-              await this.send(p, replyCtx, thinkingMsg)
-            }
-          }
-          thinkingStreamed = false
-          thinkingAccum = ''
-          break
-        }
-
-        case 'text_delta': {
-          // Preview-only incremental text; the full block still arrives via
-          // EventText and is reconciled at turn end.
-          deltaAccum += event.content
-          if (couldBeSilentPrefix(deltaAccum)) break
-          deltaFlushed = true
-          if (sp.canPreview() && sp.inProgressMode()) await sp.appendAnalysisText(deltaAccum)
-          else if (sp.canPreview()) await sp.appendText(event.content)
-          break
-        }
-
-        case 'thinking_delta': {
-          // Preview-only: stream thinking into the 💭 section; the full
-          // EventThinking block clears it and dedups. Not gated on
-          // thinkingMessages (Go parity): quiet mode suppresses thinking
-          // *messages*, not the streaming 思考中 header.
-          thinkingAccum += event.content
-          thinkingStreamed = true
-          if (sp.canPreview()) await sp.appendThinking(thinkingAccum)
-          break
-        }
-
-        case 'tool_use': {
-          toolCount++
-          activeToolCalls++
-          state.activeToolCalls = activeToolCalls
-          // Clear streaming-thinking state when a tool starts — the agent is
-          // no longer thinking once it invokes a tool (Go safety net for
-          // agents that only emit thinking_delta and never a full block).
-          if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
-          if (thinkingStreamed) thinkingAccum = ''
-          // Track plan file path for plan-mode support (Go): raw
-          // ToolInputRaw.file_path, not the summarized ToolInput. A subagent
-          // child's Write never promotes on the parent — the child runs its
-          // own plan lifecycle.
-          if (event.toolName === 'Write' && event.fromSubagent !== true) {
-            const fp = event.toolInputRaw?.file_path
-            if (typeof fp === 'string' && fp.includes('.claude/plans/')) {
-              pendingPlanFilePath = fp
-            }
-          }
-          const toolKey = event.toolID !== undefined && event.toolID !== '' ? event.toolID : `#t${++toolIntervalSeq}`
-          openToolIntervals.set(toolKey, Date.now())
-          // A todo-list tool call replaces the pinned todo section (dsh
-          // `todo_write`, Claude-style `TodoWrite`); an unparseable input
-          // keeps the last list. A subagent child's todo list stays on the
-          // child transcript — it must not overwrite the parent's section.
-          if (isTodoToolName(event.toolName ?? '') && event.fromSubagent !== true) {
-            const items = parseTodoItems(event.toolInput ?? '')
-            if (items !== undefined) {
-              if (sp.canPreview()) await sp.updateTodoSection(items)
-              cp.setTodos(items)
-            }
-          }
-          if (this.display.toolProgress && sp.canPreview()) {
-            // Subagent child calls show the delegation label on the header
-            // line; the real tool name rides the code block as `name -> input`.
-            const entry = newToolProgressEntry(
-              event.fromSubagent === true ? 'subagent' : (event.toolName ?? ''),
-              event.toolInput ?? '',
-              event.toolID ?? '',
-            )
-            if (event.fromSubagent === true) entry.fullName = event.toolName ?? ''
-            await sp.appendProgress(entry)
-          }
-          break
-        }
-
-        case 'tool_result': {
-          // Promote the plan file path once its Write succeeded (Go): on
-          // denial the agent must still be able to revise the same file.
-          if (pendingPlanFilePath !== '' && event.toolName === 'Write' && event.done) {
-            planFilePath = pendingPlanFilePath
-            pendingPlanFilePath = ''
-          }
-
-          const closeKey = event.toolID !== undefined && event.toolID !== '' ? event.toolID : `#t${toolIntervalSeq}`
-          const closedStart = openToolIntervals.get(closeKey)
-          if (closedStart !== undefined) {
-            openToolIntervals.delete(closeKey)
-            timing.intervals.push({ start: closedStart, end: Date.now() })
-          }
-          if (this.display.toolMessages) {
-            const result = (event.toolResult ?? '').trim() || event.content.trim()
-            if (result !== '' && p !== undefined) {
-              const entry = {
-                kind: 'tool_result' as const,
-                tool: event.fromSubagent === true ? 'subagent' : (event.toolName ?? ''),
-                text: result,
-              }
-              // A subagent child's result stays on the progress card; the
-              // standalone-message fallback would drop child tool output
-              // straight into the chat.
-              if (!await cp.appendStructured(entry, result) && event.fromSubagent !== true) {
-                if (!suppressStandaloneToolResultEvent(p)) {
-                  await this.send(p, replyCtx, result)
-                }
-              }
-            }
-          } else if (this.display.toolProgress) {
-            // Quiet mode: update the last tool entry with its result.
-            const result = (event.toolResult ?? '').trim() || event.content.trim()
-            if (result !== '' || event.done) {
-              await sp.updateToolResult(event.toolID ?? '', result, true)
-            }
-          }
-          activeToolCalls = Math.max(0, activeToolCalls - 1)
-          state.activeToolCalls = activeToolCalls
-          break
-        }
-
-        case 'subagent_status': {
-          // Cumulative delegated-subagent count from the adapter's lineage
-          // projection; the card's pinned stats section renders it.
-          const count = Number.parseInt(event.content, 10)
-          if (Number.isFinite(count) && count >= 0 && sp.canPreview()) {
-            await sp.setSubagentCount(count)
-          }
-          break
-        }
-
-        case 'text': {
-          if (isEllipsisOnly(event.content)) break
-          // Real text ends the streaming-thinking state (safety net for
-          // agents that only emit thinking deltas); empty content carriers
-          // (session ids) must not flip 思考中↔执行中.
-          if (thinkingStreamed && event.content !== '') {
-            await sp.clearThinking()
-            thinkingAccum = ''
-          }
-          const text = event.content
-          if (text !== '' && !isSilentReply(text)) {
-            textParts.push(text)
-            if (deltaFlushed) {
-              // This block was already previewed via deltas; textParts (the
-              // final-message source of truth) is still updated.
-              deltaAccum = ''
-              deltaFlushed = false
-            } else {
-              const segmentText = textParts.slice(segmentStart).join('')
-              if (silentHold) {
-                if (!couldBeSilentPrefix(segmentText)) {
-                  silentHold = false
-                  if (sp.canPreview() && sp.inProgressMode()) await sp.appendAnalysisText(segmentText)
-                  else if (sp.canPreview()) await sp.appendText(segmentText)
-                }
-              } else if (couldBeSilentPrefix(segmentText)) {
-                silentHold = true
-              } else if (sp.canPreview() && sp.inProgressMode()) {
-                await sp.appendAnalysisText(text)
-              } else if (sp.inProgressMode() && p !== undefined) {
-                await this.send(p, replyCtx, text)
-              } else if (sp.canPreview()) {
-                await sp.appendText(text)
-              }
-            }
-          }
-          const eventSessionID = event.sessionID ?? ''
-          if (eventSessionID !== '') {
-            if (session.compareAndSetAgentSessionID(eventSessionID, this.agent.name())) {
-              const pendingName = session.getName()
-              if (pendingName !== '' && pendingName !== 'session' && pendingName !== 'default') {
-                sessions.setSessionName(eventSessionID, pendingName)
-              }
-              sessions.save()
-            }
-          }
-          break
-        }
-
-        case 'permission_request': {
-          const isAskQuestion = event.toolName === 'AskUserQuestion'
-          const autoApprove = state.approveAll
-
-          // Auto-approve: approveAll is set and this is not AskUserQuestion
-          // and not ExitPlanMode (the user must always review plan changes).
-          if (autoApprove && !isAskQuestion && event.toolName !== 'ExitPlanMode') {
-            if (state.agentSession !== undefined) {
-              const autoInput = event.toolInputRaw ?? {}
-              void state.agentSession.respondPermission(event.requestID ?? '', {
-                behavior: 'allow',
-                updatedInput: autoInput,
-              }).catch(() => {})
-            }
             break
           }
 
-          // Chatroom role-pick: the moderator's ExitPlanMode is a formality
-          // (priming pre-bakes a trivial plan). Auto-approve so the user
-          // isn't prompted just to green-light reading role files +
-          // pick-roles — same semantics as the user clicking allow (grants
-          // approveAll for the rest of the turn). Only in the pick window.
-          if (event.toolName === 'ExitPlanMode' && chatroomPickActive(this, sessionKey)) {
-            state.approveAll = true
-            if (state.agentSession !== undefined) {
-              const autoInput = event.toolInputRaw ?? {}
-              void state.agentSession.respondPermission(event.requestID ?? '', {
-                behavior: 'allow',
-                updatedInput: autoInput,
-              }).catch(() => {})
-            }
-            console.info(`auto-approving ExitPlanMode (chatroom role-pick) (${sessionKey})`)
-            break
-          }
-          // Foreground turn (Go engine_events.go ~4106): every permission
-          // request surfaces as a pending permission — the unsolicited gate
-          // (shouldSurfaceUnsolicitedPermission) belongs to the background
-          // reader TS does not have yet. Gating here auto-denied
-          // sandbox-escalation approvals on the real machine.
-
-          // ExitPlanMode: extract plan content early so the flushed text and
-          // the card below dedup plan text already streamed as EventText (Go
-          // engine_events.go). The plan file path wins; the inline plan in
-          // the tool input is the fallback for unreadable paths.
-          if (event.toolName === 'ExitPlanMode') {
-            planRevisionCount++
-            let activePlanFilePath = planFilePath
-            if (activePlanFilePath === '') {
-              const pfp = event.toolInputRaw?.planFilePath
-              if (typeof pfp === 'string') activePlanFilePath = pfp
-            }
-            let readFailed = false
-            if (activePlanFilePath !== '') {
-              try {
-                const newContent = readFileSync(activePlanFilePath, 'utf8').trim()
-                if (newContent !== '' && newContent !== sentPlanContent) sentPlanContent = newContent
-              } catch {
-                readFailed = true
-                console.warn(`plan file read failed (${activePlanFilePath})`)
-              }
-            }
-            if (activePlanFilePath === '' || readFailed) {
-              const inlinePlan = event.toolInputRaw?.plan
-              if (typeof inlinePlan === 'string') {
-                const trimmed = inlinePlan.trim()
-                if (trimmed !== '' && trimmed !== sentPlanContent) sentPlanContent = trimmed
-              }
-            }
-          }
-          // The plan card owns the exact plan text: strip it from the final
-          // reply source so it is not delivered twice.
-          if (event.toolName === 'ExitPlanMode' && sentPlanContent !== '') {
-            for (let i = segmentStart; i < textParts.length; i++) {
-              const part = textParts[i]
-              if (part !== undefined && part.includes(sentPlanContent)) {
-                textParts[i] = part.replace(sentPlanContent, '').trim()
-                break
-              }
-            }
-            await sp.removeText(sentPlanContent)
-          }
-          // Pre-card flush + detach (Go engine_events.go ~4192-4225): with the
-          // preview degraded the accumulated text segment is sent as plain
-          // messages now — the live card cannot carry it; segmentStart
-          // advances either way. The live card is completed and detached
-          // BEFORE the permission card reaches the user, so the
-          // post-resolution restart below finds no started preview in the
-          // normal flow and stays a safety net.
-          {
-            const previewActive = sp.canPreview()
-            if (textParts.length > segmentStart) {
-              if (p !== undefined && !previewActive) {
-                const segment = textParts.slice(segmentStart).join('')
-                if (segment !== '') {
-                  for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-                    await this.send(p, replyCtx, chunk)
-                  }
-                }
-              }
-              segmentStart = textParts.length
-              silentHold = false
-            }
-          }
-          // Pre-detach speculative reply render (Go captureReplyForExport +
-          // renderAndDeliverReply at a permission/AskUserQuestion): the
-          // pre-interaction segment exceeding the threshold renders now —
-          // the turn-end render would otherwise drop it. ExitPlanMode is
-          // excluded: the plan render covers this turn's product.
-          {
-            const captured = captureReplyForExport(sp, state)
-            const triggered = this.planRenderEnabled && event.toolName !== 'ExitPlanMode'
-              && captured.text !== '' && Array.from(captured.text).length >= defaultReplyPreRenderLen
-              && !session.shouldSuppressAutoRender()
-            // Drain async preview updates so a stale running PATCH cannot
-            // overwrite the completed card (Go barrier before detach).
-            await barrier()
-            await sp.completeAndDetach()
-            if (triggered) {
-              renderAndDeliverReply(this, state, sessionKey, captured.text, captured.exportKey)
-            }
-          }
-
-          // Surface: create pending permission and send card.
-          let resolveFn!: () => void
-          const resolved = new Promise<void>((r) => { resolveFn = r })
-          const pending: PendingPermission = {
-            requestID: event.requestID ?? '',
-            toolName: event.toolName ?? '',
-            toolInput: event.toolInputRaw ?? {},
-            inputPreview: event.toolInput ?? '',
-            questions: [],
-            answers: new Map<number, string>(),
-            currentQuestion: 0,
-            denied: false,
-            resolved,
-            resolve: resolveFn,
-          }
-          state.pending = pending
-          state.permissionPending = true
-
-          // Plan card + HTML render (Go engine_events.go ExitPlanMode branch,
-          // #47): the markdown card (with export button) is the always-on
-          // fallback; the render fork runs in addition and delivers an
-          // image. Skipped when the plan content is unchanged.
-          if (event.toolName === 'ExitPlanMode' && sentPlanContent !== '' && p !== undefined) {
-            const exportKey = `plan:${String(planRevisionCount)}`
-            storePlanExport(state, exportKey, sentPlanContent)
-            let activePlanFilePath = planFilePath
-            if (activePlanFilePath === '') {
-              const pfp = event.toolInputRaw?.planFilePath
-              if (typeof pfp === 'string') activePlanFilePath = pfp
-            }
-            if (activePlanFilePath !== '' && !existsSync(activePlanFilePath)) activePlanFilePath = ''
-            if (activePlanFilePath === '') {
-              activePlanFilePath = this.persistPlanFile(sentPlanContent)
-            }
-            if (activePlanFilePath !== '') {
-              await this.sendPlanContent(p, replyCtx, state, activePlanFilePath, planRevisionCount, exportKey)
-            } else {
-              await this.sendInlinePlanContent(p, replyCtx, state, sentPlanContent, planRevisionCount, exportKey)
-            }
-            if (this.planRenderEnabled && shouldRenderPlan(state, sentPlanContent, planRevisionCount)) {
-              launchPlanRender(this, state, sessionKey, sentPlanContent, activePlanFilePath, planRevisionCount, exportKey)
-            }
-          }
-
-          // Send the appropriate prompt card.
-          if (isAskQuestion && p !== undefined) {
-            // Extract questions from toolInputRaw (set by the adapter's
-            // userQuestions provider); fall back to a generic question.
-            type RawQ = {
-              question: string
-              header?: string
-              options?: Array<{ label: string; description?: string }>
-              multiSelect?: boolean
-            }
-            const rawQs = event.toolInputRaw?.questions as RawQ[] | undefined
-            const questions: UserQuestion[] = rawQs !== undefined && rawQs.length > 0
-              ? rawQs.map(q => ({
-                question: q.question,
-                header: q.header ?? '',
-                options: (q.options ?? []).map(o => ({
-                  label: o.label,
-                  description: o.description ?? '',
-                })),
-                multiSelect: q.multiSelect ?? false,
-              }))
-              : [{
-                question: event.content || 'Question',
-                header: '',
-                options: [],
-                multiSelect: false,
-              }]
-            pending.questions = questions
-            // Research-manual hub: arm the auto-default so the card cannot
-            // hang forever when the user never replies (feature #57).
-            armResearchManualAskTimeout(this, p, sessionKey, replyCtx, pending, 0)
-            void this.sendAskQuestionPrompt(p, replyCtx, questions, 0, sessionKey)
-          } else if (p !== undefined) {
-            const permLimit = this.display.toolMaxLen
-            const rawInput = event.toolInput ?? ''
-            const toolInput = permLimit > 0
-              ? truncateIf(rawInput, Math.floor(permLimit * 8 / 5))
-              : rawInput
-            const toolName = event.toolName ?? ''
-            const prompt = this.i18n.tf(Msg.PermissionPrompt, toolName, toolInput)
-            await this.sendPermissionPrompt(p, replyCtx, prompt, toolName, toolInput)
-          }
-
-          // Block on the user's response (Go select on pending.Resolved /
-          // stopCh). The loop stays parked here so post-answer events flow
-          // through this same loop; the receive-race's channel-closed branch
-          // never fires because we await before the next receive.
-          const permWaitStart = Date.now()
-          await Promise.race([
-            resolved,
-            state.stopSignal(),
-          ])
-          timing.intervals.push({ start: permWaitStart, end: Date.now() })
-          state.permissionPending = false
-          // After user interaction, finalize the old card and start fresh
-          // (Go engine_events.go post-permission block): flush the
-          // un-flushed text segment, complete + detach the pre-interaction
-          // card, then create new sp/cp and pre-create the execution-phase
-          // placeholder so post-approval execution lands on a new card
-          // instead of appending to the pre-interaction one.
-          if (sp.hasStarted()) {
-            if (textParts.length > segmentStart && p !== undefined) {
-              const segment = textParts.slice(segmentStart).join('')
-              if (segment !== '') {
-                for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-                  await this.send(p, replyCtx, chunk)
-                }
-              }
-            }
-            segmentStart = textParts.length
-            await sp.completeAndDetach()
-          }
-          sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
-          cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
-            this.i18n.currentLang(), undefined, sender)
-          this.bindActivePreview(sp, sessionKey)
-          state.preview = sp
-          if (this.display.toolProgress && sp.canPreview()) {
-            void sp.showPlaceholder(this.i18n.t(Msg.Processing))
-          }
-          // Reset for the new execution phase — the old sp/cp tracked
-          // pre-interaction state; stale textParts would leak into the final
-          // reply and re-trigger the reply-HTML render a plan turn already
-          // covered.
-          textParts = []
-          segmentStart = 0
-          toolCount = 0
-          silentHold = false
-          break
-        }
-
-        case 'result': {
+          case 'result': {
           // Tool calls still open (no tool_result) close now so their wait
           // still leaves the thinking-time span (Go closes at result too).
-          for (const start of openToolIntervals.values()) {
-            timing.intervals.push({ start, end: Date.now() })
-          }
-          openToolIntervals.clear()
-          const finished = await this.handleResultEvent(
-            state, session, sessions, sessionKey, replyCtx, event,
-            textParts, segmentStart, toolCount, pendingSend, sp, cp, barrier, timing)
-          if (finished.kind === 'queued') {
+            for (const start of openToolIntervals.values()) {
+              timing.intervals.push({ start, end: Date.now() })
+            }
+            openToolIntervals.clear()
+            const finished = await this.handleResultEvent(
+              state, session, sessions, sessionKey, replyCtx, event,
+              textParts, segmentStart, toolCount, pendingSend, sp, cp, barrier, timing)
+            if (finished.kind === 'queued') {
             // A queued message takes over this loop as a fresh turn (Go
             // in-loop drain): reset per-turn state and continue. The watchdog
             // clock resets too — the new turn is a different user instruction
@@ -3028,54 +3109,57 @@ export class Engine {
             // The stall-retry path deliberately does NOT reset it: it serves
             // the same logical turn, and resetting would let an infinitely
             // stalling/retrying session dodge the hard cap forever.
-            turnStart = Date.now()
-            textParts = []
-            segmentStart = 0
-            toolCount = 0
-            silentHold = false
-            activeToolCalls = 0
-            state.activeToolCalls = 0
-            thinkingStreamed = false
-            thinkingAccum = ''
-            deltaAccum = ''
-            deltaFlushed = false
-            pendingSend = finished.sendDone
-            // The finished turn's completion degraded its preview (a terminal
-            // card accepts no further PATCHes); the queued turn must not keep
-            // PATCHing it or silently drop its tool progress — start a fresh
-            // card, mirroring the post-permission restart below.
-            sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
-            cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
-              this.i18n.currentLang(), undefined, sender)
-            this.bindActivePreview(sp, sessionKey)
-            state.preview = sp
-            if (this.display.toolProgress && sp.canPreview()) {
-              void sp.showPlaceholder(this.i18n.t(Msg.Processing))
+              turnStart = Date.now()
+              textParts = []
+              segmentStart = 0
+              toolCount = 0
+              silentHold = false
+              activeToolCalls = 0
+              state.activeToolCalls = 0
+              thinkingStreamed = false
+              thinkingAccum = ''
+              deltaAccum = ''
+              deltaFlushed = false
+              pendingSend = finished.sendDone
+              // The finished turn's completion degraded its preview (a terminal
+              // card accepts no further PATCHes); the queued turn must not keep
+              // PATCHing it or silently drop its tool progress — start a fresh
+              // card, mirroring the post-permission restart below.
+              sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
+              cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
+                this.i18n.currentLang(), undefined, sender)
+              this.bindActivePreview(sp, sessionKey)
+              state.preview = sp
+              if (this.display.toolProgress && sp.canPreview()) {
+                void sp.showPlaceholder(this.i18n.t(Msg.Processing))
+              }
+              // recvP keeps the receive armed at the top of this iteration:
+              // re-arming here would orphan that waiter, which then steals the
+              // queued turn's first event.
+              state.lastEventAt = Date.now()
+              continue
             }
-            // recvP keeps the receive armed at the top of this iteration:
-            // re-arming here would orphan that waiter, which then steals the
-            // queued turn's first event.
-            state.lastEventAt = Date.now()
-            continue
+            return
           }
-          return
-        }
 
-        case 'error': {
-          state.eventsNeedResync = true
-          await sp.markFailed()
-          if (event.error !== undefined && p !== undefined) {
-            await this.send(p, replyCtx, this.i18n.tf(Msg.Error, event.error.message))
+          case 'error': {
+            state.eventsNeedResync = true
+            await sp.markFailed()
+            if (event.error !== undefined && p !== undefined) {
+              await this.send(p, replyCtx, this.i18n.tf(Msg.Error, event.error.message))
+            }
+            if (state.agentSession === undefined || !state.agentSession.alive()) {
+              this.notifyDroppedQueuedMessages(state, event.error ?? new Error('agent error'))
+            }
+            return
           }
-          if (state.agentSession === undefined || !state.agentSession.alive()) {
-            this.notifyDroppedQueuedMessages(state, event.error ?? new Error('agent error'))
-          }
-          return
-        }
 
-        default:
-          break
+          default:
+            break
+        }
       }
+    } finally {
+      recvArm.cancel()
     }
   }
 
@@ -3498,6 +3582,7 @@ export class Engine {
       const queued = state.pendingMessages.shift()
       if (queued === undefined) {
         session.unlock()
+        this.armOrphanWatch(session, sessions, sessionKey)
         return true
       }
       state.inflightMessage = queued

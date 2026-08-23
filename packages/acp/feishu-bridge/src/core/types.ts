@@ -252,11 +252,37 @@ export class EventChannel {
    * @returns the next buffered event, or done once closed and drained.
    */
   receive(): Promise<{ done: false; event: Event } | { done: true }> {
+    return this.receiveArmed().promise
+  }
+
+  /**
+   * Receive with a cancel arm: unlike a bare promise, the parked waiter can
+   * still be removed, so an event loop that exits without consuming never
+   * steals the next event from a later receiver.
+   *
+   * @returns the receive promise plus its cancel arm; cancel is a no-op once
+   *   the promise resolved.
+   */
+  receiveArmed(): { promise: Promise<{ done: false; event: Event } | { done: true }>; cancel(): void } {
     if (this.queue.length > 0) {
-      return Promise.resolve({ done: false, event: this.queue.shift() as Event })
+      return { promise: Promise.resolve({ done: false, event: this.queue.shift() as Event }), cancel: () => {} }
     }
-    if (this.closed) return Promise.resolve({ done: true } as const)
-    return new Promise((resolve) => { this.waiters.push(resolve) })
+    if (this.closed) {
+      return { promise: Promise.resolve({ done: true } as const), cancel: () => {} }
+    }
+    let waiter!: (r: { done: false; event: Event } | { done: true }) => void
+    const promise = new Promise<{ done: false; event: Event } | { done: true }>((resolve) => {
+      waiter = resolve
+      this.waiters.push(resolve)
+    })
+    let canceled = false
+    const cancel = (): void => {
+      if (canceled) return
+      canceled = true
+      const i = this.waiters.indexOf(waiter)
+      if (i >= 0) this.waiters.splice(i, 1)
+    }
+    return { promise, cancel }
   }
 
   /** Discard all buffered events without waiting (Go drainEvents). */
