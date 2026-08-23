@@ -734,8 +734,11 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
     starts.push(engine.start().catch((error: unknown) => {
       ctx.logger.error(`feishu-bridge: project ${project.name} failed to start: ${String(error)}`)
     }))
+    // Return the promise so Cordis unloading awaits the stop notices and
+    // terminal-card PATCHes; a `void` disposer let profile-boot exit first
+    // and froze running cards on the 2026-08-23 fb-envfix restart.
     ctx.effect(() => {
-      return () => { void engine.stop() }
+      return () => engine.stop()
     })
   }
 
