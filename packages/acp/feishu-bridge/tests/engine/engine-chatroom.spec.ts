@@ -35,7 +35,7 @@ import {
   renderChatroomPickCardAndPush,
   renderChatroomTopicPickCardAndPush,
 } from '../../src/engine/chatroom-pick.js'
-import { Msg } from '../../src/i18n/keys.js'
+import { Msg, type MsgKey } from '../../src/i18n/keys.js'
 import type { Message, Platform } from '../../src/core/types.js'
 import {
   clearCards,
@@ -893,7 +893,7 @@ describe('orphaned picker cards (state lost to a daemon restart)', () => {
     const e = newChatroomTestEngine(p)
     const hub = 'test:hub:user-1'
     const expired = e.i18n.t(Msg.ChatroomPickExpired)
-    const cases: Array<[cmd: string, args: string, title: Msg[keyof Msg]]> = [
+    const cases: Array<[cmd: string, args: string, title: MsgKey]> = [
       ['/chatroom-pick', 'confirm', Msg.ChatroomPickTitle],
       ['/chatroom-pick', 'toggle taleb', Msg.ChatroomPickTitle],
       ['/chatroom-pick', 'cancel', Msg.ChatroomPickTitle],
