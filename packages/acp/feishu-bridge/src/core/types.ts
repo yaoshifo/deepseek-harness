@@ -545,6 +545,8 @@ export interface TextPreviewContent {
   kind: 'text'
   text: string
   status?: ProgressStatus
+  /** Background-task hint; non-terminal cards render it beside the stop button, terminal cards inside the body. */
+  bgTaskHint?: string
 }
 
 /** Card-path preview content: a structured progress-card payload. */

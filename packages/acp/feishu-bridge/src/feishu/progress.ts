@@ -690,32 +690,42 @@ export function injectReplyButtons(cardJSON: string, sessionKey: string, exportK
     },
   ]
   // Render-task status line shares the button row (saves vertical space).
-  // text_size/text_color live on the plain_text text object, NOT the div
-  // top level (schema 2.0 rejects them at div level, code 230099).
-  if (statusText.trim() !== '') {
-    columns.push({
-      tag: 'column',
-      width: 'auto',
-      vertical_align: 'center',
-      elements: [{
-        tag: 'div',
-        text: { tag: 'plain_text', content: statusText, text_size: 'notation', text_color: 'grey' },
-      }],
-    })
-  }
+  if (statusText.trim() !== '') columns.push(notationColumn(statusText))
   elements.push({ tag: 'column_set', flex_mode: 'none', columns })
   return JSON.stringify(card)
 }
 
 /**
+ * Grey notation text column sharing a button row. text_size/text_color live
+ * on the plain_text text object, NOT the div top level (schema 2.0 rejects
+ * them at div level, code 230099).
+ *
+ * @param content - Notation text to render.
+ * @returns Column element for a column_set.
+ */
+function notationColumn(content: string): FeishuCardMap {
+  return {
+    tag: 'column',
+    width: 'auto',
+    vertical_align: 'center',
+    elements: [{
+      tag: 'div',
+      text: { tag: 'plain_text', content, text_size: 'notation', text_color: 'grey' },
+    }],
+  }
+}
+
+/**
  * Append a ⏹ 停止执行 danger button to a still-running (yellow) card; no-op
- * on terminal (green/red) cards or cards without a header/body.
+ * on terminal (green/red) cards or cards without a header/body. A non-empty
+ * hint rides the button row as a grey notation column beside the button.
  *
  * @param cardJSON - Rendered card JSON to mutate.
  * @param sessionKey - Session the stop command targets; empty string is a no-op.
- * @returns Card JSON with the stop button appended, or the input unchanged.
+ * @param hint - Background-task hint rendered beside the button; empty string omits it.
+ * @returns Card JSON with the stop button row appended, or the input unchanged.
  */
-export function injectStopButton(cardJSON: string, sessionKey: string): string {
+export function injectStopButton(cardJSON: string, sessionKey: string, hint = ''): string {
   if (sessionKey === '') return cardJSON
   const card = parseMutable(cardJSON)
   if (card === undefined) return cardJSON
@@ -726,22 +736,20 @@ export function injectStopButton(cardJSON: string, sessionKey: string): string {
   if (body === undefined) return cardJSON
   const elements = body.elements
   if (!Array.isArray(elements)) return cardJSON
-  elements.push({
-    tag: 'column_set',
-    flex_mode: 'none',
-    columns: [{
-      tag: 'column',
-      width: 'auto',
-      vertical_align: 'center',
-      elements: [{
-        tag: 'button',
-        size: 'tiny',
-        text: { tag: 'plain_text', content: '⏹ 停止执行' },
-        type: 'danger',
-        value: { action: 'cmd:/stop', session_key: sessionKey },
-      }],
+  const columns: FeishuCardMap[] = [{
+    tag: 'column',
+    width: 'auto',
+    vertical_align: 'center',
+    elements: [{
+      tag: 'button',
+      size: 'tiny',
+      text: { tag: 'plain_text', content: '⏹ 停止执行' },
+      type: 'danger',
+      value: { action: 'cmd:/stop', session_key: sessionKey },
     }],
-  })
+  }]
+  if (hint.trim() !== '') columns.push(notationColumn(hint))
+  elements.push({ tag: 'column_set', flex_mode: 'none', columns })
   return JSON.stringify(card)
 }
 

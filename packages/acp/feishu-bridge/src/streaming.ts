@@ -658,7 +658,12 @@ export class StreamPreview {
 
   /** Progress display text wrapped with its structured status. Must hold the lock. */
   private progressContentLocked(text: string): TextPreviewContent {
-    return { kind: 'text', text, status: this.progressStatusLocked() }
+    return {
+      kind: 'text',
+      text,
+      status: this.progressStatusLocked(),
+      ...(this.bgTaskHint !== '' ? { bgTaskHint: this.bgTaskHint } : {}),
+    }
   }
 
   /** Send the current preview content to the platform. Must hold the lock. */
@@ -675,7 +680,12 @@ export class StreamPreview {
     // renders the header state, and progress flushes have their own throttle.
     // Plain text skips unchanged or empty bodies.
     if (contentIn.status === undefined && (text === this.lastSentText || text === '')) return
-    const content: ProgressContent = { kind: 'text', text, ...(contentIn.status !== undefined ? { status: contentIn.status } : {}) }
+    const content: ProgressContent = {
+      kind: 'text',
+      text,
+      ...(contentIn.status !== undefined ? { status: contentIn.status } : {}),
+      ...(contentIn.bgTaskHint !== undefined ? { bgTaskHint: contentIn.bgTaskHint } : {}),
+    }
 
     const updater = asMessageUpdater(this.platform)
     if (updater === undefined) {
@@ -1139,9 +1149,10 @@ export class StreamPreview {
   }
 
   /**
-   * Update the background-task hint at the card bottom and flush.
+   * Update the background-task hint and flush. Non-terminal cards render it
+   * beside the stop button; terminal cards inside the body.
    *
-   * @param hint - New hint line shown at the card bottom.
+   * @param hint - New hint line shown with the card's button row.
    */
   async setBackgroundHint(hint: string): Promise<void> {
     await this.locked(async () => {
@@ -1617,9 +1628,11 @@ export class StreamPreview {
 
   /**
    * Build the combined display text for the preview card: lead-in text,
-   * todo/status block, tool progress entries, 实时播报 section, and the
-   * background hint. The card-header state travels beside the text as the
-   * structured {@link ProgressStatus} (progressStatusLocked). Must hold the lock.
+   * todo/status block, tool progress entries, 实时播报 section, and — on
+   * terminal cards only — the background hint (running cards carry it as the
+   * structured bgTaskHint field rendered beside the stop button). The
+   * card-header state travels beside the text as the structured
+   * {@link ProgressStatus} (progressStatusLocked). Must hold the lock.
    *
    * @internal White-box: ported same-package tests call this directly. Caller must hold the lock.
    * @returns The full markdown body for one preview-card PATCH.
@@ -1705,8 +1718,9 @@ export class StreamPreview {
       }
     }
 
-    // Section 4: 后台任务提示 (foreground path only)
-    if (this.bgTaskHint !== '') {
+    // Section 4: 后台任务提示 — 运行态随结构化 bgTaskHint 字段渲染在停止
+    // 按钮行内；正文仅终态卡承载（green 化后按钮行消失，提示不能丢）。
+    if (this.bgTaskHint !== '' && (this.completed || this.failed)) {
       b += '\n'
       b += this.bgTaskHint
     }

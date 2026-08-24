@@ -871,7 +871,7 @@ describe('StreamPreview', () => {
     expect(before).not.toContain('\n---\n')
   })
 
-  it('background hint appears and clears', async () => {
+  it('background hint leaves the body and rides the content field', async () => {
     const mp = createMockUpdaterPlatform()
     const sp = newStreamPreview(cfg({ maxChars: 5000 }), mp, 'ctx', undefined, undefined)
     await sp.appendProgress(new ProgressEntry({
@@ -881,11 +881,31 @@ describe('StreamPreview', () => {
       isTool: true,
       toolName: 'Bash',
     }))
-    await sleep(80)
-    await sp.setBackgroundHint('💡 有 1 个后台任务正在运行')
-    expect(sp.buildProgressDisplayLocked()).toContain('💡 有 1 个后台任务正在运行')
+    await sp.setBackgroundHint('💡 1 个后台任务')
+    await sleep(400)
+    expect(sp.buildProgressDisplayLocked()).not.toContain('💡 1 个后台任务')
+    const running = mp.contents[mp.contents.length - 1] as TextPreviewContent
+    expect(running.bgTaskHint).toBe('💡 1 个后台任务')
     await sp.setBackgroundHint('')
-    expect(sp.buildProgressDisplayLocked()).not.toContain('💡 有 1 个后台任务正在运行')
+    await sleep(400)
+    const cleared = mp.contents[mp.contents.length - 1] as TextPreviewContent
+    expect(cleared.bgTaskHint).toBeUndefined()
+  })
+
+  it('completed card keeps the background hint in the body', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(cfg({ maxChars: 5000 }), mp, 'ctx', undefined, undefined)
+    await sp.appendProgress(new ProgressEntry({
+      header: `**${new Date().toTimeString().slice(0, 8)}**`,
+      body: 'deploy --prod',
+      lang: 'bash',
+      isTool: true,
+      toolName: 'Bash',
+    }))
+    await sp.setBackgroundHint('💡 2 个后台任务')
+    await sp.markCompleted()
+    const final = mp.contents[mp.contents.length - 1] as TextPreviewContent
+    expect(final.text).toContain('💡 2 个后台任务')
   })
 })
 

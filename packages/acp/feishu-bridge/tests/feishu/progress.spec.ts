@@ -47,6 +47,41 @@ describe('injectStopButton', () => {
   }
 })
 
+describe('injectStopButton background hint', () => {
+  interface ColumnSet { tag: string; columns?: Array<{ tag: string }> }
+
+  function lastRow(out: string): ColumnSet {
+    const card = JSON.parse(out) as { body: { elements: ColumnSet[] } }
+    const row = card.body.elements.at(-1)
+    expect(row?.tag).toBe('column_set')
+    return row as ColumnSet
+  }
+
+  it('rides the stop-button row as a grey notation column', () => {
+    const out = injectStopButton(mkCard('yellow'), 'sk1', '💡 1 个后台任务')
+    const columns = lastRow(out).columns ?? []
+    expect(columns).toHaveLength(2)
+    expect(JSON.stringify(columns[0])).toContain('cmd:/stop')
+    const hintCol = JSON.stringify(columns[1])
+    expect(hintCol).toContain('💡 1 个后台任务')
+    expect(hintCol).toContain('"text_size":"notation"')
+    expect(hintCol).toContain('"text_color":"grey"')
+  })
+
+  it('empty hint keeps the single-column button row', () => {
+    for (const hint of ['', '   ']) {
+      const columns = lastRow(injectStopButton(mkCard('yellow'), 'sk1', hint)).columns ?? []
+      expect(columns).toHaveLength(1)
+    }
+  })
+
+  it('terminal cards inject no hint even when provided', () => {
+    for (const template of ['green', 'red']) {
+      expect(injectStopButton(mkCard(template), 'sk1', '💡 1 个后台任务')).toBe(mkCard(template))
+    }
+  })
+})
+
 describe('injectStoppedButtons', () => {
   const cases: Array<[name: string, sessionKey: string, wantDisabled: boolean, wantContinue: boolean]> = [
     ['with sessionKey shows both', 'sk1', true, true],

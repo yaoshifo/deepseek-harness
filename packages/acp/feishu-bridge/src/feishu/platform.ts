@@ -1773,7 +1773,7 @@ export class FeishuPlatform implements Platform {
 
     const spin = await this.spinnerCfg()
     const preButtonJSON = this.renderPreviewCard(content, spin)
-    const cardJSON = injectStopButton(preButtonJSON, rc.sessionKey)
+    const cardJSON = injectStopButton(preButtonJSON, rc.sessionKey, this.bgHintOf(content))
 
     const msgID = await this.withRetry('send preview', () => this.request('send preview', async (client) => {
       // Go SendPreviewStart: reply only under thread isolation so the card
@@ -1811,7 +1811,7 @@ export class FeishuPlatform implements Platform {
     const spin = await this.spinnerCfg()
     const cardJSON = this.renderPreviewCard(content, spin)
     this.lastProgressCard.set(h.messageID, cardJSON)
-    let json = injectStopButton(cardJSON, h.sessionKey)
+    let json = injectStopButton(cardJSON, h.sessionKey, this.bgHintOf(content))
     const statusText = this.renderStatusText.get(h.messageID) ?? ''
     json = injectReplyButtons(json, h.sessionKey, h.messageID, statusText)
     await this.patchRateWait()
@@ -1822,6 +1822,16 @@ export class FeishuPlatform implements Platform {
   private renderPreviewCard(content: ProgressContent, spin: SpinnerCfg): string {
     if (content.kind === 'card') return buildProgressCardJSONFromPayload(content.payload, spin)
     return buildPreviewCardJSON(content.text, spin, content.status)
+  }
+
+  /**
+   * Background-task hint carried by text-path preview content; the card
+   * payload path and an absent field carry none.
+   * @param content - Preview content being rendered.
+   * @returns Hint text for the stop-button row, or the empty string.
+   */
+  private bgHintOf(content: ProgressContent): string {
+    return content.kind === 'text' ? (content.bgTaskHint ?? '') : ''
   }
 
   /**
