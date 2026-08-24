@@ -247,6 +247,12 @@ export interface Event {
   todos?: TodoItem[]
   /** True when the event projects a delegated subagent child session's activity. */
   fromSubagent?: boolean
+  /**
+   * True for a `tool_use` whose arguments set `run_in_background` (e.g. a
+   * long Bash deploy): the call returns immediately and the task's real
+   * completion arrives as a later engine-woken turn.
+   */
+  toolBackground?: boolean
 }
 
 /**
@@ -385,6 +391,16 @@ export interface Agent {
  */
 export interface SessionCompressor {
   compress(signal?: AbortSignal): Promise<void>
+}
+
+/**
+ * Optional: agent can delete one of its persisted sessions (Go
+ * SessionDeleter). The dsh adapter does not implement it — the native
+ * sessionPersistence service is append-only — so deletion falls back to the
+ * bridge's own ledger until a native delete surface exists.
+ */
+export interface SessionDeleter {
+  deleteSession(sessionID: string): Promise<void>
 }
 
 /** Optional: agent accepts per-session env vars (CC_PROJECT, …). */
@@ -1140,6 +1156,16 @@ export function asSessionCompressor(s: AgentSession | undefined): SessionCompres
   return s !== undefined && typeof (s as Partial<SessionCompressor>).compress === 'function'
     ? s as AgentSession & SessionCompressor
     : undefined
+}
+
+/**
+ * Structural check for the {@link SessionDeleter} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asSessionDeleter(a: Agent): SessionDeleter | undefined {
+  return withMethod<SessionDeleter>(a, 'deleteSession')
 }
 
 /**

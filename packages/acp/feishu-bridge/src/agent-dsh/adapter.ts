@@ -1314,6 +1314,23 @@ function thinkingOfBlocks(blocks: readonly ContentBlock[] | undefined): string {
   return out
 }
 
+/**
+ * Whether a durable tool/call's arguments request background execution: the
+ * JSON `arguments` blob carrying `run_in_background: true` (the Bash-class
+ * background parameter). Unparseable arguments are foreground.
+ * @param argumentsValue - Raw `arguments` payload of a tool/call event.
+ * @returns The `toolBackground: true` event spread, or an empty spread.
+ */
+function toolBackgroundOf(argumentsValue: unknown): { toolBackground?: boolean } {
+  if (typeof argumentsValue !== 'string' || argumentsValue === '') return {}
+  try {
+    const parsed = JSON.parse(argumentsValue) as { run_in_background?: unknown }
+    return parsed.run_in_background === true ? { toolBackground: true } : {}
+  } catch {
+    return {}
+  }
+}
+
 /** Call id of a durable tool-result message, or '' when absent.
  *
  * The durable ToolMessage carries it on `source.callId`; the wire fallback is
@@ -1524,6 +1541,7 @@ export class DshAgentSession implements AgentSession {
           toolID: toStr(data.callId),
           content: '',
           done: false,
+          ...toolBackgroundOf(data.arguments),
         })
         break
       }

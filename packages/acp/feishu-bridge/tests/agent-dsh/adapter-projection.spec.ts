@@ -50,6 +50,34 @@ describe('projectSessionEvent tool/result failure identity', () => {
   })
 })
 
+describe('projectSessionEvent run_in_background detection', () => {
+  it('marks a tool call whose arguments set run_in_background', async () => {
+    const s = newSession()
+    const events = await project(s, {
+      type: 'tool/call', seq: 1, time: 0,
+      data: { callId: 'c1', name: 'bash', arguments: '{"command":"npm run build","run_in_background":true}' },
+    })
+    expect(events).toHaveLength(1)
+    expect(events[0]?.type).toBe('tool_use')
+    expect(events[0]?.toolBackground).toBe(true)
+  })
+
+  it('leaves the flag absent for foreground calls and unparseable arguments', async () => {
+    const s = newSession()
+    const fg = await project(s, {
+      type: 'tool/call', seq: 1, time: 0,
+      data: { callId: 'c1', name: 'bash', arguments: '{"command":"ls"}' },
+    })
+    expect(fg[0]?.toolBackground).toBeUndefined()
+
+    const bad = await project(s, {
+      type: 'tool/call', seq: 2, time: 0,
+      data: { callId: 'c2', name: 'bash', arguments: 'not json' },
+    })
+    expect(bad[0]?.toolBackground).toBeUndefined()
+  })
+})
+
 describe('projectSessionEvent todo/write snapshot', () => {
   it('maps the whole-list snapshot to a todo_update event', async () => {
     const s = newSession()

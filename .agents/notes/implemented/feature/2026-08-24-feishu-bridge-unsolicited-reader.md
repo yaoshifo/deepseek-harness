@@ -1,0 +1,34 @@
+# Agent Note: feishu-bridge unsolicited reader with four configurable budgets
+
+Status: implemented
+
+English | [中文](2026-08-24-feishu-bridge-unsolicited-reader.zh.md)
+
+## Problem
+
+The bridge consumed agent events only inside a turn's event pump. Between user turns nothing owned the channel except the one-shot orphan watch (commit 1b45a770ed), which had no notion of time: a background tool that hung forever, a `run_in_background` task whose completion turn never arrived, or duplicate result frames a model emits right after a user turn's ✅ card were all indistinguishable from genuine engine-woken turns — the last case popped a second streaming-plus-completion card for content the user had already seen (Go's spillover incident class). The `setBackgroundHint` machinery and `bg_task_*` i18n keys ported into `streaming.ts` had zero callers, and Go's `runUnsolicitedReader` — the always-on consumer with idle, tool-in-flight, background-grace, and spillover budgets — was unported. The roadmap had also ruled (FEATURE-PARITY.md): the background-task count must not be wired without the reader, because the decrement anchors to reader-consumed completion turns.
+
+## Decision
+
+The orphan watch becomes the unsolicited reader in `packages/acp/feishu-bridge/src/engine/engine.ts` (`startUnsolicitedReader` / `stopUnsolicitedReader` / `runUnsolicitedReader`), and the background-task count is wired end to end:
+
+- **Reader loop**: after every pump exit the reader parks a cancellable receive (`EventChannel.receiveArmed`) on the live channel plus an idle sleep. A substantive event (Go `isSubstantiveUnsolicitedEvent`: non-silent text, tool calls, results, errors — deltas, thinking, compaction, todo snapshots are dropped) runs a full orphan-turn pump under the session lock, exactly like the old watch; the loop then re-arms. A message-path turn entry disarms the reader first (its parked receive is cancelled, so it cannot steal the new turn's first event), and `stopInteractiveSession` / `cleanupInteractiveState` disarm on teardown.
+- **Four budgets**, all plugin `Config` fields under `projects[].unsolicited` (`idleSec`, `toolInFlightSec`, `backgroundGraceSec`, `spilloverSec`; engine defaults 60s / 30min / 30min / 0, the assembly wires the spillover default to 30s like Go's wire.go): idle disarms the reader (marking `eventsNeedResync` so the next foreground turn drains anything buffered later); a parked ask, a quiet in-flight tool, or pending background tasks each keep it alive within their budget, and budget exhaustion finalizes — the background grace additionally zeroes a never-completing task count. On a reader-woken turn the pump arms its idle at the tool-in-flight budget while tools are in flight, so a hung background tool cannot pin the processing card forever (user-driven turns keep the existing disarm-while-tool-in-flight behavior; Go bounds those with the watchdog instead).
+- **Spillover relay**: events within the grace after a foreground turn's completion (stamped `lastForegroundCompletionAt` at every user-driven result) relay as plain text — text accumulated, the final result sent as messages, history recorded, `setLastResult` updated, no cards, no completion card, no background-count decrement. Errors relay their message and end the reader.
+- **Background-task count**: the dsh adapter parses `tool/call` arguments and flags `run_in_background: true` as `Event.toolBackground`; the pump increments `state.backgroundTasksPending` on such a tool call and shows `bg_task_running` on the turn card (Go's foreground and reader branches unified into the one pump). The completion anchor is the reader-consumed turn's `result` event — in this harness a background task's completion arrives as a runtime notice that wakes a fresh turn whose durable events project onto the same channel, so the orphan pump consumes it and the count drops there (Go's reader EventResult, `!turnStartedBg`). Count zero clears the hint — the fix for Go's hint-never-dropping gap. The idle reaper skips states with pending background tasks so the grace is not cut short; the reader zeroing the count at grace exhaustion re-opens reaping.
+
+## Alternatives considered
+
+**A literal port of Go's reader as a lightweight relay for all engine-woken turns.** The bridge's orphan pump already delivers engine-woken turns through the full turn machinery (progress cards, ask-delegate permission bridging, insights), which is strictly richer than Go's reader relay; duplicating that logic in a second consumer would race the pump and double the surface. The reader keeps Go's *time* semantics and delegates *turn rendering* to the existing pump.
+
+**Decrementing the count on the foreground turn's result.** Go decrements only on reader-consumed results: the turn that started the task is not its completion. Anchoring anywhere else double-counts or never counts down.
+
+**Detecting background completion via a dedicated adapter notification.** The completion already arrives as a normal engine-woken turn on the existing channel (the mechanism the orphan-turn pump was built for); a second notification path would duplicate it.
+
+## Consequences
+
+Engine-woken turns now have time bounds: a hung background tool or a never-completing task pins neither the processing card nor the reader past its budget, and duplicate post-completion frames arrive as quiet plain text instead of a second ✅ card. The background-task hint finally closes its loop — count up when the tool call runs, count down and clear when the completion turn lands — and the reaper shield is bounded by the grace. Trade-offs: within the spillover window (default 30s after a user turn) engine-woken turns lose their cards and deliver plain text only (Go parity, but the bridge's richer orphan-pump treatment is bypassed for that window); a background turn whose tool legitimately runs quietly longer than the tool-in-flight budget is treated as hung and stall-retried (configurable, default 30min); and events the reader drops (thinking, compaction, todo snapshots between turns) never reach a pump — Go drops them too.
+
+## Testing
+
+`tests/engine/engine-unsolicited.spec.ts` — fake-timer coverage for all four budgets (idle disarm plus zero-disable, ask keep-alive, tool-in-flight keep-alive then finalize, background grace keep-alive then count reset), spillover plain-text relay versus full pump outside the window, non-substantive noise dropped, disarm on new turn, and the hint inc/dec closed loop over a real foreground-plus-completion turn pair. `tests/agent-dsh/adapter-projection.spec.ts` — `run_in_background` argument detection. The pre-existing orphan-turn, stall-retry, and engine-events suites (154 tests) pass unchanged. feishu-bridge suite: 2207 passing (9 pre-existing environment failures unrelated to this change: reload-script launchctl/systemd specs and one fork-at spec, all failing on the base commit too).

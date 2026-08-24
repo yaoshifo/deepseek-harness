@@ -109,7 +109,7 @@ describe('renderDirCard', () => {
     if (card === undefined) return
     expect(rows(card)).toHaveLength(0)
     expect(notes(card).map(n => n.text)).toEqual(['No directory history yet. Type `/dir <path>` to switch, or use **Reset** to restore the default.'])
-    expect(allButtons(card)).toEqual(['default:act:/dir reset'])
+    expect(allButtons(card)).toEqual(['default:act:/dir reset', 'default:nav:/help'])
   })
 
   it('paginates five rows per page with nav buttons and a page hint', () => {

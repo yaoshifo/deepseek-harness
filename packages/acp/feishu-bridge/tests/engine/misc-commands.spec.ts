@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { registerSessionCommands } from '../../src/engine/commands.js'
 import { registerShellCommands } from '../../src/engine/shell-commands.js'
-import { registerMiscCommands } from '../../src/engine/misc-commands.js'
+import { registerMiscCommands, renderHelpGroupCard } from '../../src/engine/misc-commands.js'
 import { Msg } from '../../src/i18n/index.js'
 import type { Card } from '../../src/card.js'
 import {
@@ -88,9 +88,11 @@ describe('/help', () => {
       expect(e.dispatchCommand(p, miscMsg('/help'), '/help')).toBe(true)
       await vi.waitFor(() => { expect(p.sentCards.length).toBeGreaterThanOrEqual(1) })
       const sent = (p.sentCards[p.sentCards.length - 1] as Card).renderText()
-      // Registered commands are listed with their one-line description.
+      // Registered commands are listed with their one-line description; the
+      // default card shows the session group, the other groups ride tabs.
       expect(sent).toContain('**/new**')
-      expect(sent).toContain('**/shell**')
+      expect(sent).toContain('[Tools & Automation]')
+      expect(renderHelpGroupCard(e, 'tools').renderText()).toContain('**/shell**')
       // Unregistered Go commands must not be advertised.
       expect(sent).not.toContain('/upgrade')
       expect(sent).not.toContain('/show')
