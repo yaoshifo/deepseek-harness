@@ -843,6 +843,25 @@ describe('chatroomPickActive', () => {
     clearChatroomPickState(e, hub)
     expect(chatroomPickActive(e, hub)).toBe(false)
   })
+
+  it('a plan-review ask inside the pick window auto-approves without a card', async () => {
+    const { chatroomPickActive } = await import('../../src/engine/chatroom-pick.js')
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    const hub = 'test:hub:user-1'
+    const handler = e.commandHandlers?.get('chatroom')
+    handler?.(p, hubMsg(hub), ['议题'])
+    await settle()
+    expect(chatroomPickActive(e, hub)).toBe(true)
+
+    // The moderator's plan review in the pick window is a formality (priming
+    // pre-bakes a trivial plan): the ask settles allowed-once with no card.
+    clearCards(p)
+    await expect(e.askUser(hub, { kind: 'plan-review', heading: '# P', plan: '# P' }))
+      .resolves.toEqual({ outcome: 'allowed-once' })
+    expect(p.sentCards).toHaveLength(0)
+  })
 })
 
 describe('ExecuteChatroomPickAction', () => {

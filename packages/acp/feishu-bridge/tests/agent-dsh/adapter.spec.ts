@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { ContinueSession, type Event } from '../../src/core/types.js'
+import { ContinueSession, type AskDecision, type AskDelegate, type AskRequest, type Event } from '../../src/core/types.js'
 import { DshAgentAdapter, DshAgentSession, sessionBypassesPermissions, stripModelAlias, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
 
 // DshAgentAdapter unit tests: ctx.agents create/resume, followup/cancel call
@@ -550,9 +550,29 @@ describe('DshAgentAdapter', () => {
   })
 })
 
-/** Fake userQuestions service capturing the adapter's provider (M3). */
+/** Fake userQuestions service capturing the adapter's provider. */
 interface FakeProvider {
   ask(req: Record<string, unknown>): Promise<unknown>
+}
+
+/** Recording ask delegate: captures delegated asks and settles them by hand (B2). */
+function recordingDelegate(): AskDelegate & {
+  calls: Array<{ sessionKey: string; request: AskRequest }>
+  settle(decision: AskDecision): void
+} {
+  const calls: Array<{ sessionKey: string; request: AskRequest }> = []
+  let resolveCurrent: ((d: AskDecision) => void) | undefined
+  const d = {
+    calls,
+    settle(decision: AskDecision): void {
+      resolveCurrent?.(decision)
+    },
+    askUser(sessionKey: string, request: AskRequest): Promise<AskDecision> {
+      calls.push({ sessionKey, request })
+      return new Promise<AskDecision>((resolve) => { resolveCurrent = resolve })
+    },
+  }
+  return d
 }
 
 function createUserQuestionsHarness(): { h: Harness; adapter: DshAgentAdapter; providers: FakeProvider[] } {
@@ -584,24 +604,21 @@ function planReviewQuestion(overrides: Record<string, unknown> = {}): Record<str
   }
 }
 
-/** Start a session (registering the provider) and return it plus the ask function. */
+/** Adapter with the delegate wired plus a started session and the ask function. */
 async function startedProvider(): Promise<{
   session: DshAgentSession
   ask: (req: Record<string, unknown>) => Promise<unknown>
   agent: RecordedAgent
+  adapter: DshAgentAdapter
+  delegate: ReturnType<typeof recordingDelegate>
 }> {
-  const { adapter, providers, h } = createUserQuestionsHarness()
+  const { h, adapter, providers } = createUserQuestionsHarness()
+  const delegate = recordingDelegate()
+  adapter.setAskDelegate(delegate)
   const session = (await adapter.startSession('')) as DshAgentSession
   const provider = providers[0]
   if (provider === undefined) throw new Error('userQuestions provider was not registered')
-  return { session, ask: req => provider.ask(req), agent: h.agents[0]! }
-}
-
-/** The next event on the session channel; fails the test when the channel is done. */
-async function nextEvent(session: DshAgentSession): Promise<Record<string, unknown>> {
-  const recv = await session.events().receive()
-  if (recv.done) throw new Error('channel closed before the expected event')
-  return recv.event as unknown as Record<string, unknown>
+  return { session, ask: req => provider.ask(req), agent: h.agents[0]!, adapter, delegate }
 }
 
 describe('DshAgentAdapter userQuestions provider', () => {
@@ -627,23 +644,26 @@ describe('DshAgentAdapter userQuestions provider', () => {
       questionRouting: routing,
       ...base,
     })
+    const da = recordingDelegate()
+    const db = recordingDelegate()
     const a = new DshAgentAdapter(h.ctx, cfg())
+    a.setAskDelegate(da)
     const b = new DshAgentAdapter(h.ctx, cfg())
+    b.setAskDelegate(db)
     await a.startSession('')
     expect(providers).toHaveLength(1)
     // The singleton service already holds a's provider: b's first session
     // must not throw DUPLICATE_PROVIDER (multi-project deployment).
     const sb = (await b.startSession('')) as DshAgentSession
     expect(providers).toHaveLength(1)
-    // b's session questions route through the shared provider to b's target.
+    // b's session questions route through the shared provider to b's delegate.
     const askPromise = providers[0]!.ask({
       questions: [planReviewQuestion()],
       agent: { session: { id: sb.currentSessionID() } },
     })
-    const event = await nextEvent(sb)
-    expect(event.type).toBe('permission_request')
-    expect(event.toolName).toBe('ExitPlanMode')
-    void sb.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {} })
+    await new Promise((r) => { setTimeout(r, 10) })
+    expect(db.calls).toHaveLength(1)
+    db.settle({ outcome: 'allowed-once' })
     await askPromise
   })
 
@@ -654,66 +674,64 @@ describe('DshAgentAdapter userQuestions provider', () => {
     expect(providers).toHaveLength(1)
   })
 
-  it('plan-review ask emits an ExitPlanMode permission request with the plan heading', async () => {
-    const { session, ask } = await startedProvider()
+  it('plan-review delegates the heading and plan for the plan card', async () => {
+    const { session, ask, delegate } = await startedProvider()
 
     const askPromise = ask({
       questions: [planReviewQuestion()],
       agent: { session: { id: session.currentSessionID() } },
     })
+    await new Promise((r) => { setTimeout(r, 10) })
 
-    const event = await nextEvent(session)
-    expect(event.type).toBe('permission_request')
-    expect(event.toolName).toBe('ExitPlanMode')
-    // Go planReviewItem: the card heading is the first line of the plan.
-    expect(event.toolInput).toBe('# Fix spinner')
-    expect(event.toolInputRaw).toEqual({ plan: '# Fix spinner\n\n1. resolve asset path\n2. upload gif' })
-
-    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: { plan: 'x' } })
+    expect(delegate.calls[0]?.sessionKey).toBe(session.sessionKey())
+    expect(delegate.calls[0]?.request).toEqual({
+      kind: 'plan-review',
+      heading: '# Fix spinner',
+      plan: '# Fix spinner\n\n1. resolve asset path\n2. upload gif',
+    })
+    delegate.settle({ outcome: 'allowed-once' })
     await askPromise
   })
 
   it('a single-line plan falls back to the question as the card heading', async () => {
-    const { session, ask } = await startedProvider()
+    const { session, ask, delegate } = await startedProvider()
 
     const askPromise = ask({
       questions: [planReviewQuestion({ detail: '# One line plan' })],
       agent: { session: { id: session.currentSessionID() } },
     })
+    await new Promise((r) => { setTimeout(r, 10) })
+    expect((delegate.calls[0]?.request as { heading?: string }).heading)
+      .toBe('Approve this plan and leave plan mode?')
 
-    const event = await nextEvent(session)
-    expect(event.toolName).toBe('ExitPlanMode')
-    // Go planReviewItem: no newline in the plan → the question is the heading.
-    expect(event.toolInput).toBe('Approve this plan and leave plan mode?')
-
-    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {} })
+    delegate.settle({ outcome: 'allowed-once' })
     await askPromise
   })
 
   it('approving the plan review answers with the intent approve label', async () => {
-    const { session, ask } = await startedProvider()
+    const { session, ask, delegate } = await startedProvider()
 
     const askPromise = ask({
       questions: [planReviewQuestion()],
       agent: { session: { id: session.currentSessionID() } },
     })
-    const event = await nextEvent(session)
-    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {} })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-once' })
 
     await expect(askPromise).resolves.toEqual({
       answers: [{ id: 'plan-review', selected: ['Approve'] }],
     })
   })
 
-  it('denying the plan review declines with the deny message as custom feedback', async () => {
-    const { session, ask, agent } = await startedProvider()
+  it('denying the plan review declines with the note as custom feedback', async () => {
+    const { session, ask, delegate, agent } = await startedProvider()
 
     const askPromise = ask({
       questions: [planReviewQuestion()],
       agent: { session: { id: session.currentSessionID() } },
     })
-    const event = await nextEvent(session)
-    void session.respondPermission(String(event.requestID), { behavior: 'deny', message: 'add tests first' })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'rejected', note: 'add tests first' })
 
     await expect(askPromise).resolves.toEqual({
       answers: [{ id: 'plan-review', selected: [], custom: 'add tests first' }],
@@ -721,15 +739,31 @@ describe('DshAgentAdapter userQuestions provider', () => {
     expect(agent.steers).toHaveLength(0)
   })
 
-  it('approving with a supplement steers it as a user message next to the approval', async () => {
-    const { session, ask, agent } = await startedProvider()
+  it('a cancelled plan review declines without feedback and steers nothing', async () => {
+    const { session, ask, delegate, agent } = await startedProvider()
 
     const askPromise = ask({
       questions: [planReviewQuestion()],
       agent: { session: { id: session.currentSessionID() } },
     })
-    const event = await nextEvent(session)
-    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {}, message: 'also update the README' })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'cancelled' })
+
+    await expect(askPromise).resolves.toEqual({
+      answers: [{ id: 'plan-review', selected: [], custom: '' }],
+    })
+    expect(agent.steers).toHaveLength(0)
+  })
+
+  it('approving with a supplement steers it as a user message next to the approval', async () => {
+    const { session, ask, delegate, agent } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-once', note: 'also update the README' })
 
     // The answer stays selected-only: plan-mode treats any custom as
     // keep-planning feedback, so the supplement cannot ride in the answer.
@@ -742,90 +776,215 @@ describe('DshAgentAdapter userQuestions provider', () => {
   })
 
   it('approving without a supplement steers nothing', async () => {
-    const { session, ask, agent } = await startedProvider()
+    const { session, ask, delegate, agent } = await startedProvider()
 
     const askPromise = ask({
       questions: [planReviewQuestion()],
       agent: { session: { id: session.currentSessionID() } },
     })
-    const event = await nextEvent(session)
-    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {} })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-once' })
 
     await askPromise
     expect(agent.steers).toHaveLength(0)
   })
 
   it('approving with a whitespace-only supplement steers nothing', async () => {
-    const { session, ask, agent } = await startedProvider()
+    const { session, ask, delegate, agent } = await startedProvider()
 
     const askPromise = ask({
       questions: [planReviewQuestion()],
       agent: { session: { id: session.currentSessionID() } },
     })
-    const event = await nextEvent(session)
-    void session.respondPermission(String(event.requestID), { behavior: 'allow', updatedInput: {}, message: '   ' })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-once', note: '   ' })
 
     await askPromise
     expect(agent.steers).toHaveLength(0)
   })
 
-  it('ordinary questions still emit AskUserQuestion and deliver collected answers', async () => {
-    const { session, ask } = await startedProvider()
+  it('ordinary questions delegate one ask and return the decision answers verbatim', async () => {
+    const { session, ask, delegate } = await startedProvider()
 
     const askPromise = ask({
       questions: [{ question: 'Which flavor?', options: [{ label: 'A' }, { label: 'B' }] }],
       agent: { session: { id: session.currentSessionID() } },
     })
-    const event = await nextEvent(session)
-    expect(event.toolName).toBe('AskUserQuestion')
-    const questions = (event.toolInputRaw as { questions?: Array<{ question: string }> }).questions
-    expect(questions?.[0]?.question).toBe('Which flavor?')
+    await new Promise((r) => { setTimeout(r, 10) })
+    const request = delegate.calls[0]?.request
+    expect(request?.kind).toBe('questions')
+    expect((request as { questions?: Array<{ question: string }> }).questions?.[0]?.question).toBe('Which flavor?')
 
-    void session.respondPermission(String(event.requestID), {
-      behavior: 'allow',
-      updatedInput: { answers: { 'Which flavor?': 'A' } },
-    })
+    delegate.settle({ answers: [{ id: 'Which flavor?', selected: ['A'] }] })
 
     await expect(askPromise).resolves.toEqual({
       answers: [{ id: 'Which flavor?', selected: ['A'] }],
     })
   })
 
-  it('answers echo the schema question id instead of the question text', async () => {
-    const { session, ask } = await startedProvider()
+  it('the decision answers keep the selected/custom split', async () => {
+    const { session, ask, delegate } = await startedProvider()
 
     const askPromise = ask({
-      questions: [{ id: 'next-step', question: 'Which flavor?', options: [{ label: 'A' }, { label: 'B' }] }],
+      questions: [{ id: 'next-step', question: 'Which flavor?', options: [{ label: 'A' }] }],
       agent: { session: { id: session.currentSessionID() } },
     })
-    const event = await nextEvent(session)
-    void session.respondPermission(String(event.requestID), {
-      behavior: 'allow',
-      updatedInput: { answers: { 'Which flavor?': 'A' } },
-    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ answers: [{ id: 'next-step', selected: [], custom: 'both, actually' }] })
 
     await expect(askPromise).resolves.toEqual({
-      answers: [{ id: 'next-step', selected: ['A'] }],
+      answers: [{ id: 'next-step', selected: [], custom: 'both, actually' }],
     })
+  })
+
+  it('without a delegate the ask fails safe with empty answers', async () => {
+    const { h, adapter, providers } = createUserQuestionsHarness()
+    // No setAskDelegate call.
+    const session = await adapter.startSession('')
+    void h
+    const askPromise = providers[0]!.ask({
+      questions: [{ question: 'Which flavor?' }],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await expect(askPromise).resolves.toEqual({ answers: [] })
   })
 })
 
 describe('DshAgentAdapter approval answerer', () => {
-  it('resolves the engine decision to the dsh approval outcome', async () => {
-    const h = createUserQuestionsHarness()
-    const session = await h.adapter.startSession('')
-    const listener = h.h.listeners.get('approval/request')?.[0]
+  /** Started session plus the registered approval/request listener. */
+  async function startedAnswerer(delegate?: AskDelegate): Promise<{
+    h: Harness
+    listener: (req: Record<string, unknown>) => Promise<unknown>
+    session: DshAgentSession
+  }> {
+    const h = createHarness()
+    const adapter = newAdapter(h)
+    if (delegate !== undefined) adapter.setAskDelegate(delegate)
+    const session = (await adapter.startSession('')) as DshAgentSession
+    const listener = h.listeners.get('approval/request')?.[0]
     if (listener === undefined) throw new Error('approval/request listener was not registered')
+    return { h, listener: listener as unknown as (req: Record<string, unknown>) => Promise<unknown>, session }
+  }
 
-    const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
+  it('delegates a permission ask and resolves the decision to the outcome', async () => {
+    const delegate = recordingDelegate()
+    const { listener, session } = await startedAnswerer(delegate)
+
+    const outcome = listener({
       agent: { session: { id: session.currentSessionID() } },
       toolName: 'Bash',
       callId: 'call-1',
       reason: 'rm -rf /tmp/x',
     })
-    void session.respondPermission('call-1', { behavior: 'allow' })
+    await new Promise((r) => { setTimeout(r, 10) })
+    expect(delegate.calls[0]?.request).toEqual({ kind: 'permission', toolName: 'Bash', preview: 'rm -rf /tmp/x' })
+    delegate.settle({ outcome: 'allowed-once' })
 
     await expect(outcome).resolves.toBe('allowed-once')
+  })
+
+  it('ApprovalRequest.toolInput wins over reason as the card preview', async () => {
+    const delegate = recordingDelegate()
+    const { listener, session } = await startedAnswerer(delegate)
+
+    const outcome = listener({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'write',
+      callId: 'call-2',
+      reason: 'write file',
+      toolInput: '{"file_path":"/tmp/a.txt","content":"x"}',
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    expect((delegate.calls[0]?.request as { preview?: string }).preview)
+      .toBe('{"file_path":"/tmp/a.txt","content":"x"}')
+    delegate.settle({ outcome: 'allowed-once' })
+    await outcome
+  })
+
+  it('a rejected decision returns ApprovalAnswer with the note', async () => {
+    const delegate = recordingDelegate()
+    const { listener, session } = await startedAnswerer(delegate)
+
+    const outcome = listener({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-3',
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'rejected', note: 'use git clean instead' })
+
+    await expect(outcome).resolves.toEqual({ outcome: 'rejected', note: 'use git clean instead' })
+  })
+
+  it('allowed-always returns the standing-grant outcome', async () => {
+    const delegate = recordingDelegate()
+    const { listener, session } = await startedAnswerer(delegate)
+
+    const outcome = listener({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-4',
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-always' })
+
+    await expect(outcome).resolves.toBe('allowed-always')
+  })
+
+  it('a cancelled decision returns cancelled', async () => {
+    const delegate = recordingDelegate()
+    const { listener, session } = await startedAnswerer(delegate)
+
+    const outcome = listener({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-5',
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'cancelled' })
+
+    await expect(outcome).resolves.toBe('cancelled')
+  })
+
+  it('an unattended chatroom-role session approves without delegating', async () => {
+    const delegate = recordingDelegate()
+    const h = createHarness()
+    const adapter = newAdapter(h)
+    adapter.setAskDelegate(delegate)
+    adapter.setSessionEnv(['CC_SESSION_KEY=feishu:oc_b:ou_1', 'CC_CHATROOM_ROLE=1'])
+    const session = (await adapter.startSession('')) as DshAgentSession
+    const listener = h.listeners.get('approval/request')?.[0] as unknown as (req: Record<string, unknown>) => Promise<unknown>
+
+    const outcome = listener({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-6',
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+
+    // Settles with no delegation: the answerer short-circuited.
+    await expect(outcome).resolves.toBe('allowed-once')
+    expect(delegate.calls).toHaveLength(0)
+  })
+
+  it('an unknown session fails closed as unavailable', async () => {
+    const delegate = recordingDelegate()
+    const { listener } = await startedAnswerer(delegate)
+
+    await expect(listener({
+      agent: { session: { id: 'no-such-session' } },
+      toolName: 'Bash',
+    })).resolves.toBe('unavailable')
+  })
+
+  it('without a delegate the answerer fails closed as unavailable', async () => {
+    const { listener, session } = await startedAnswerer()
+
+    const outcome = listener({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+    })
+    await expect(outcome).resolves.toBe('unavailable')
   })
 })
 
@@ -1062,8 +1221,10 @@ describe('effectiveMode bypass wiring', () => {
   })
 
   it('an attended subtask keeps the normal approval card path', async () => {
+    const delegate = recordingDelegate()
     const h = createHarness()
     const a = newAdapter(h)
+    a.setAskDelegate(delegate)
     a.setSessionEnv(['CC_SESSION_KEY=feishu:child:ou_9', 'CC_SUBTASK=1', 'CC_SUBTASK_ATTENDED=1'])
     const session = await a.startSession('')
     const listener = h.listeners.get('approval/request')?.[0]
@@ -1073,10 +1234,10 @@ describe('effectiveMode bypass wiring', () => {
       toolName: 'Bash',
       callId: 'call-3',
     })
-    // Still waiting for the engine decision until respondPermission fires.
+    // Still waiting for the engine decision until the delegate settles.
     const probe = await Promise.race([outcome.then(() => 'settled'), new Promise((r) => { setTimeout(() => { r('pending') }, 30) })])
     expect(probe).toBe('pending')
-    void session.respondPermission('call-3', { behavior: 'allow' })
+    delegate.settle({ outcome: 'allowed-once' })
     await expect(outcome).resolves.toBe('allowed-once')
   })
 

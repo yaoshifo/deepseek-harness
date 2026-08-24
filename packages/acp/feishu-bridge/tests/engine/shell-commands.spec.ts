@@ -18,10 +18,9 @@ import { registerSessionCommands } from '../../src/engine/commands.js'
 import { registerShellCommands } from '../../src/engine/shell-commands.js'
 import { Msg } from '../../src/i18n/index.js'
 import {
-  createRecordingAgentSession,
   createStubAgent,
   createStubPlatform,
-  newPendingPermission,
+  newPendingAsk,
   newStubMessage,
   testQuestions,
   type StubPlatform,
@@ -164,23 +163,19 @@ describe('"!" prefix shortcut', () => {
 
   it('a pending permission answer wins over the shell path (!yes)', async () => {
     const { e, p } = newEngine()
-    const rec = createRecordingAgentSession()
     const state = new InteractiveState()
-    state.agentSession = rec
     state.platform = p
     state.replyCtx = 'ctx'
-    state.pending = newPendingPermission({
-      requestID: 'req-1',
-      toolName: 'AskUserQuestion',
-      toolInput: { questions: [{ question: 'Which?' }] },
-      questions: testQuestions(),
+    state.pendingAsk = newPendingAsk({
+      request: { kind: 'questions', questions: testQuestions() },
     })
     e.interactiveStates.set('test:ch1', state)
 
     e.handleMessage(p, shellMsg('!yes'))
 
-    await vi.waitFor(() => { expect(rec.calls).toBe(1) })
-    expect(state.pending).toBeUndefined()
+    // "!yes" is free text for the first unanswered question; with a single
+    // question the ask settles (collected answer observable on the map).
+    expect(state.pendingAsk?.answers.get(0)?.custom).toBe('!yes')
     // The message never reached the shell executor.
     for (const line of p.getSent()) {
       expect(line).not.toContain('$ !yes')

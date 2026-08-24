@@ -74,14 +74,6 @@ export interface AgentSessionInfo {
   gitBranch?: string
 }
 
-/** Permission decision sent back to the agent. */
-export interface PermissionResult {
-  behavior: 'allow' | 'deny'
-  updatedInput?: Record<string, unknown>
-  /** Note forwarded to the agent: the deny reason, or an allow supplement on a plan review (Go PermissionResult.Message). */
-  message?: string
-}
-
 /** One choice in a UserQuestion (Go UserQuestionOption). */
 export interface UserQuestionOption {
   label: string
@@ -92,6 +84,8 @@ export interface UserQuestionOption {
 
 /** A structured question from AskUserQuestion (Go UserQuestion). */
 export interface UserQuestion {
+  /** Caller-stable question id echoed in the answer; defaults to the question text. */
+  id?: string
   question: string
   header: string
   options: UserQuestionOption[]
@@ -99,34 +93,76 @@ export interface UserQuestion {
 }
 
 /**
- * A pending permission prompt parked on an InteractiveState (Go
- * pendingPermission). `resolved` replaces Go's `chan struct{}` — call
- * `resolve()` to settle; `isResolved()` checks.
+ * One interactive ask delegated to the engine's `askUser` (B2): render ONE
+ * card and await the user's decision. Permission asks carry the native
+ * `ApprovalRequest` preview (`toolInput`, falling back to `reason`);
+ * plan-review asks carry the plan text from the userQuestions intent.
  */
-export interface PendingPermission {
-  requestID: string
-  toolName: string
-  toolInput: Record<string, unknown>
-  inputPreview: string
-  /** Non-empty when ToolName === "AskUserQuestion". */
-  questions: UserQuestion[]
-  /** Collected answers keyed by question index. */
-  answers: Map<number, string>
-  /** Index of the question currently being asked. */
-  currentQuestion: number
-  /** Set true when user denies. */
-  denied: boolean
-  /** Resolved promise; settled when user responds. */
-  resolved: Promise<void>
-  /** Internal resolve function paired with `resolved`. */
-  resolve(): void
-  /** Research-manual AskUserQuestion auto-default timer (M5; stopped on resolve). */
-  autoTimer?: ReturnType<typeof setTimeout>
-  /** One-shot guard for the research-manual auto-default (Go autoFired). */
-  autoFired?: boolean
+export type AskRequest =
+  | { kind: 'permission'; toolName: string; preview: string }
+  | { kind: 'plan-review'; heading: string; plan: string }
+  | { kind: 'questions'; questions: UserQuestion[] }
+
+/** One answered question in an {@link AskDecision}. */
+export interface AskDecisionAnswer {
+  /** The answered question's id. */
+  id: string
+  /** Labels of the chosen options. */
+  selected: string[]
+  /** Free-text answer, absent when the answer was a selection. */
+  custom?: string
 }
 
-/** Card button callback action types for permission and askq flows. */
+/** The user's decision on one ask, in the native answer structures. */
+export interface AskDecision {
+  /** Permission verdict; `'cancelled'` when the ask withdrew. Absent on questions asks. */
+  outcome?: 'allowed-once' | 'allowed-always' | 'rejected' | 'cancelled'
+  /** Card-input note riding the verdict (deny reason or allow supplement). */
+  note?: string
+  /** Answers in question order (questions asks). */
+  answers?: AskDecisionAnswer[]
+}
+
+/**
+ * The engine-side ask surface: the adapter's native approval answerer and
+ * userQuestions provider delegate card rendering and decision waiting here.
+ * Implemented by the engine; injected at assembly time to keep the
+ * engine→agent dependency one-directional.
+ */
+export interface AskDelegate {
+  /**
+   * Render one ask card and resolve with the user's decision.
+   * @param sessionKey - Interactive-state slot the ask is rendered on.
+   * @param request - What to ask (permission, plan review, or questions).
+   * @param signal - Abort; settles the decision as cancelled.
+   */
+  askUser(sessionKey: string, request: AskRequest, signal?: AbortSignal): Promise<AskDecision>
+}
+
+/** One collected answer inside a parked questions ask. */
+export interface PendingAskAnswer {
+  selected: string[]
+  custom?: string
+}
+
+/**
+ * One parked ask awaiting the user's card-button or text response (B2).
+ * Replaces the Go-era PendingPermission state machine: the promise lives in
+ * the delegate call, and this object carries only what response routing
+ * needs.
+ */
+export interface PendingAsk {
+  /** What was asked. */
+  request: AskRequest
+  /** Collected answers keyed by question index (questions asks). */
+  answers: Map<number, PendingAskAnswer>
+  /** Settles the askUser promise; the router calls it exactly once. */
+  resolve(decision: AskDecision): void
+  /** Research-manual whole-ask timeout (cleared on settle). */
+  autoTimer?: ReturnType<typeof setTimeout>
+}
+
+/** Card button callback action values for permission and askq flows. */
 export type PermissionAction = 'perm:allow' | 'perm:deny' | 'perm:allow_all'
 
 /** Unified incoming message from any platform (Go core.Message). */
@@ -170,7 +206,7 @@ export interface Message {
   createTime?: number
 }
 
-/** Agent output event kinds (Go EventType). M1 handles text/thinking/tool/result/error/permission. */
+/** Agent output event kinds (Go EventType). M1 handles text/thinking/tool/result/error. */
 export type EventKind =
   | 'text'
   | 'text_delta'
@@ -179,7 +215,6 @@ export type EventKind =
   | 'tool_result'
   | 'result'
   | 'error'
-  | 'permission_request'
   | 'thinking'
   | 'subagent_status'
   | 'compaction'
@@ -327,7 +362,6 @@ export interface AgentSession {
    * @param prompt - The text to append; attachments never ride this path.
    */
   steer(prompt: string): void
-  respondPermission(requestID: string, result: PermissionResult): Promise<void>
   events(): EventChannel
   currentSessionID(): string
   alive(): boolean

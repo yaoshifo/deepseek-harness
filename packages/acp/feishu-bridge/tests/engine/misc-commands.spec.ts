@@ -21,7 +21,7 @@ import {
   createStubAgent,
   createStubCardPlatformFull,
   newControllableSession,
-  newPendingPermission,
+  newPendingAsk,
   newStubMessage,
   type StubCardPlatform,
 } from '../stubs/engine-stubs.js'
@@ -181,7 +181,7 @@ describe('/ps', () => {
     try {
       const state = armedState(e, session)
       state.activeTurns = 1
-      state.pending = newPendingPermission({ requestID: 'req-1', toolName: 'Bash', toolInput: {} })
+      state.pendingAsk = newPendingAsk({ request: { kind: 'permission', toolName: 'Bash', preview: '' } })
       expect(e.dispatchCommand(p, miscMsg('/ps held back'), '/ps held back')).toBe(true)
       // The in-process next-step inbox needs no stdin workaround: the text
       // stays queued until the permission resolves, then lands in the same

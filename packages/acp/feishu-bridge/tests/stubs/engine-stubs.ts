@@ -14,8 +14,7 @@ import type {
   EventChannel,
   ForkQuerierWithProvider,
   Message,
-  PendingPermission,
-  PermissionResult,
+  PendingAsk,
   Platform,
   ProviderSwitcher,
   UserQuestion,
@@ -39,7 +38,6 @@ export function createStubAgentSession(): AgentSession {
   return {
     send: async () => {},
     steer: () => {},
-    respondPermission: async () => {},
     events: () => new EventChannelImpl(),
     currentSessionID: () => 'stub-session',
     alive: () => true,
@@ -47,19 +45,11 @@ export function createStubAgentSession(): AgentSession {
   }
 }
 
-/** Go recordingAgentSession: records RespondPermission calls. */
+/** A session recording steer calls (ask decisions no longer route through the session). */
 export function createRecordingAgentSession(): RecordingAgentSession {
   const s: RecordingAgentSession = {
     ...createStubAgentSession(),
-    lastID: '',
-    lastResult: undefined,
-    calls: 0,
     steerCalls: [] as string[],
-  }
-  s.respondPermission = async (id: string, res: PermissionResult) => {
-    s.lastID = id
-    s.lastResult = res
-    s.calls++
   }
   s.steer = (prompt: string) => {
     s.steerCalls.push(prompt)
@@ -67,11 +57,8 @@ export function createRecordingAgentSession(): RecordingAgentSession {
   return s
 }
 
-/** Go recordingAgentSession shape. */
+/** Recording session shape: steer calls only (B2). */
 export interface RecordingAgentSession extends AgentSession {
-  lastID: string
-  lastResult: PermissionResult | undefined
-  calls: number
   steerCalls: string[]
 }
 
@@ -87,7 +74,6 @@ export interface ControllableAgentSession extends AgentSession {
   closed: boolean
   sessionID: string
   aliveFlag: boolean
-  permResponses: Array<{ requestID: string; result: PermissionResult }>
   sendCalls: string[]
   steerCalls: string[]
   /** Optional Go AgentInterrupter capability for the Interrupt-preference specs. */
@@ -102,15 +88,11 @@ export function newControllableSession(id: string): ControllableAgentSession {
     closed: false,
     sessionID: id,
     aliveFlag: true,
-    permResponses: [],
     sendCalls: [],
     steerCalls: [],
     send: async () => {},
     steer: (prompt: string) => {
       s.steerCalls.push(prompt)
-    },
-    respondPermission: async (requestID, result) => {
-      s.permResponses.push({ requestID, result })
     },
     eventsImpl: () => channel,
     events: () => channel,
@@ -281,22 +263,13 @@ export function createStubInlineButtonPlatform(n = 'telegram'): StubInlineButton
 }
 
 /**
- * Create a PendingPermission matching the Go struct literal used in tests.
- * The `resolved` promise + `resolve()` function replace Go's `chan struct{}`.
+ * Create a parked PendingAsk whose decision a test settles by calling
+ * `resolve` (B2 replacement for the Go PendingPermission literals).
  */
-export function newPendingPermission(overrides: Partial<PendingPermission> & { requestID: string }): PendingPermission {
-  let resolveFn: () => void = () => {}
-  const resolved = new Promise<void>((resolve) => { resolveFn = resolve })
+export function newPendingAsk(overrides: Partial<PendingAsk> & { request: PendingAsk['request'] }): PendingAsk {
   return {
-    toolName: '',
-    toolInput: {},
-    inputPreview: '',
-    questions: [],
     answers: new Map(),
-    currentQuestion: 0,
-    denied: false,
-    resolved,
-    resolve: (): void => { resolveFn() },
+    resolve: () => {},
     ...overrides,
   }
 }

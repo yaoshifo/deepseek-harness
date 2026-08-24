@@ -101,13 +101,13 @@ describe('onCardAction act: dispatch', () => {
     expect(messages).toHaveLength(0)
   })
 
-  it('still routes perm: actions through the permission path', async () => {
+  it('still routes perm: actions through the permission path (B2: structured payload verbatim)', async () => {
     const p = newPlatform({ allowChat: '*' })
     const messages = await dispatched(p, cardEvent({ action: 'perm:allow' }))
     expect(messages).toHaveLength(1)
     expect(messages[0]!.isPermissionAction).toBe(true)
     expect(messages[0]!.isCardAction).toBe(false)
-    expect(messages[0]!.content).toBe('allow')
+    expect(messages[0]!.content).toBe('perm:allow')
   })
 })
 
@@ -181,7 +181,7 @@ describe('onCardAction perm: in-place card update (Go feishu_dispatch.go perm br
       context: { open_chat_id: 'oc_1', open_message_id: 'om_pa1' },
     })
     expect(messages).toHaveLength(1)
-    expect(messages[0]!.content).toBe('allow\x00also add tests')
+    expect(messages[0]!.content).toBe('perm:allow\x00also add tests')
   })
 
   it('encodes the note as an allow_all supplement on a card allow_all', async () => {
@@ -192,7 +192,7 @@ describe('onCardAction perm: in-place card update (Go feishu_dispatch.go perm br
       context: { open_chat_id: 'oc_1', open_message_id: 'om_paa1' },
     })
     expect(messages).toHaveLength(1)
-    expect(messages[0]!.content).toBe('allow all\x00also add tests')
+    expect(messages[0]!.content).toBe('perm:allow_all\x00also add tests')
   })
 
   it('quotes the supplement under the resolved body on a card allow', async () => {
@@ -219,7 +219,7 @@ describe('onCardAction perm: in-place card update (Go feishu_dispatch.go perm br
       context: { open_chat_id: 'oc_1', open_message_id: 'om_pa3' },
     })
     expect(messages).toHaveLength(1)
-    expect(messages[0]!.content).toBe('allow')
+    expect(messages[0]!.content).toBe('perm:allow')
   })
 
   it('labels allow_all with its fixed fallback', async () => {
@@ -390,7 +390,7 @@ describe('onCardAction hint buttons (Go feishu_dispatch.go hint__ branch)', () =
   })
 })
 
-describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq branches)', () => {
+describe('onCardAction ask card replacement (B2 multi-question card)', () => {
   /** Client whose create/reply mint message ids so sendCard succeeds offline. */
   function apiClient(): FeishuApiClient {
     let seq = 0
@@ -407,12 +407,12 @@ describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq bran
   }
 
   function cardBody(resp: { card: { data: Record<string, unknown> } }): { title: string; template: string; markdown: string } {
-    const header = (resp.card.data as { header: { title: { content: string }; template: string } }).header
+    const header = (resp.card.data as { header?: { title: { content: string }; template: string } }).header
     const elements = (resp.card.data as { body: { elements: Array<{ tag: string; content?: string }> } }).body.elements
-    return { title: header.title.content, template: header.template, markdown: elements.map(e => e.content ?? '').join('\n') }
+    return { title: header?.title.content ?? '', template: header?.template ?? '', markdown: elements.map(e => e.content ?? '').join('\n') }
   }
 
-  it('caches the multi-select option set at send time', async () => {
+  it('caches the full multi-select question set at send time', async () => {
     const p = newPlatform({ allowChat: '*', apiClient: apiClient() })
     await p.start(() => {})
     const card = newCard().checkOptions('Pick tools', [
@@ -420,16 +420,19 @@ describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq bran
       { label: 'Read', description: 'read files' },
     ], 'askq_multi:0', { askq_question: 'Pick tools' }).build()
     await p.sendCard({ messageID: 'om_t', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, card)
-    expect(p.askqMetaCache.get('feishu:oc_1:ou_9')).toEqual({
+    const meta = p.askqMetaCache.get('feishu:oc_1:ou_9')
+    expect(meta?.questions).toEqual([{
       question: 'Pick tools',
+      header: '',
       options: [
         { label: 'Bash', description: 'run commands' },
         { label: 'Read', description: 'read files' },
       ],
-    })
+      multiSelect: true,
+    }])
   })
 
-  it('caches the single-select option set at send time', async () => {
+  it('caches the single-select question set at send time', async () => {
     const p = newPlatform({ allowChat: '*', apiClient: apiClient() })
     await p.start(() => {})
     const cb = newCard()
@@ -438,16 +441,19 @@ describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq bran
         { askq_label: label, askq_question: 'Pick one' })
     }
     await p.sendCard({ messageID: 'om_t', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, cb.build())
-    expect(p.askqMetaCache.get('feishu:oc_1:ou_9')).toEqual({
+    const meta = p.askqMetaCache.get('feishu:oc_1:ou_9')
+    expect(meta?.questions).toEqual([{
       question: 'Pick one',
+      header: '',
       options: [
         { label: 'Option A', description: '' },
         { label: 'Option B', description: '' },
       ],
-    })
+      multiSelect: false,
+    }])
   })
 
-  it('multi submit returns a frozen card marking the checked options', async () => {
+  it('multi submit replaces the card with the selection marked and the question frozen', async () => {
     const p = newPlatform({ allowChat: '*', apiClient: apiClient() })
     await p.start(() => {})
     const messages: Message[] = []
@@ -465,17 +471,16 @@ describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq bran
     }
     const resp = p.onCardAction(event) as { card: { data: Record<string, unknown> } } | undefined
     expect(resp).toBeDefined()
-    const frozen = cardBody(resp!)
-    expect(frozen.title).toBe('✅ 已提交选择')
-    expect(frozen.template).toBe('green')
-    expect(frozen.markdown).toContain('Pick tools')
-    expect(frozen.markdown).toContain('✅ **Bash**')
-    expect(frozen.markdown).toContain('✅ **Read**')
+    const replaced = cardBody(resp!)
+    expect(replaced.markdown).toContain('Pick tools')
+    expect(replaced.markdown).toContain('✅ **Bash**')
+    expect(replaced.markdown).toContain('✅ **Read**')
     // The dispatched answer still reaches the engine exactly once.
     await new Promise((resolve) => { setTimeout(resolve, 10) })
     expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('askq:0:1,2')
     expect(messages[0]!.isAskqCardAction).toBe(true)
-    // The meta cache is consumed (Go LoadAndDelete).
+    // Every question answered: the meta cache is consumed.
     expect(p.askqMetaCache.has('feishu:oc_1:ou_9')).toBe(false)
   })
 
@@ -483,11 +488,16 @@ describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq bran
     const p = newPlatform({ allowChat: '*' })
     await p.start(() => {})
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      question: 'Pick tools',
-      options: [
-        { label: 'Bash', description: '' },
-        { label: 'Read', description: '' },
-      ],
+      title: '',
+      questions: [{
+        question: 'Pick tools',
+        header: '',
+        options: [
+          { label: 'Bash', description: '' },
+          { label: 'Read', description: '' },
+        ],
+        multiSelect: true,
+      }],
     })
     const event: CardActionTriggerEvent = {
       action: { name: 'askq_multi_submit_0', form_value: { askq_opt_2: true } },
@@ -495,19 +505,32 @@ describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq bran
       context: { open_chat_id: 'oc_1', open_message_id: 'om_m2' },
     }
     const resp = p.onCardAction(event) as { card: { data: Record<string, unknown> } } | undefined
-    const frozen = cardBody(resp!)
-    expect(frozen.markdown).toContain('◻️ **Bash**')
-    expect(frozen.markdown).toContain('✅ **Read**')
+    const replaced = cardBody(resp!)
+    expect(replaced.markdown).toContain('◻️ **Bash**')
+    expect(replaced.markdown).toContain('✅ **Read**')
   })
 
-  it('single-select click returns a frozen card with the chosen option marked', async () => {
+  it('a single-select click freezes its question and keeps later questions interactive', async () => {
     const p = newPlatform({ allowChat: '*' })
     await p.start(() => {})
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      question: 'Pick one',
-      options: [
-        { label: 'Option A', description: 'first' },
-        { label: 'Option B', description: 'second' },
+      title: '‼️ Ask',
+      questions: [
+        {
+          question: 'Pick one',
+          header: '',
+          options: [
+            { label: 'Option A', description: 'first' },
+            { label: 'Option B', description: 'second' },
+          ],
+          multiSelect: false,
+        },
+        {
+          question: 'Pick next',
+          header: '',
+          options: [{ label: 'Next A', description: '' }],
+          multiSelect: false,
+        },
       ],
     })
     const resp = p.onCardAction(cardEvent({
@@ -515,24 +538,29 @@ describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq bran
       value: { action: 'askq:0:2', askq_label: 'Option B', askq_question: 'Pick one' },
     })) as { card: { data: Record<string, unknown> } } | undefined
     expect(resp).toBeDefined()
-    const frozen = cardBody(resp!)
-    expect(frozen.title).toBe('✅ Option B')
-    expect(frozen.template).toBe('green')
-    expect(frozen.markdown).toContain('◻️ **Option A**')
-    expect(frozen.markdown).toContain('✅ **Option B**')
+    const replaced = cardBody(resp!)
+    expect(replaced.title).toBe('‼️ Ask')
+    expect(replaced.markdown).toContain('◻️ **Option A**')
+    expect(replaced.markdown).toContain('✅ **Option B**')
+    // The second question stays clickable: its row button survives.
+    const raw = JSON.stringify(resp!.card.data)
+    expect(raw).toContain('askq:1:1')
+    // One question of two answered: the cache survives for the next callback.
+    expect(p.askqMetaCache.has('feishu:oc_1:ou_9')).toBe(true)
   })
 
-  it('falls back to the minimal confirm card when the meta cache is gone', async () => {
+  it('without the meta cache the answer still dispatches (no card replacement)', async () => {
     const p = newPlatform({ allowChat: '*' })
-    await p.start(() => {})
+    const messages: Message[] = []
+    await p.start((_platform, msg) => { messages.push(msg) })
     const resp = p.onCardAction(cardEvent({
       action: 'askq:0:2',
       value: { action: 'askq:0:2', askq_label: 'Option B', askq_question: 'Pick one' },
     })) as { card: { data: Record<string, unknown> } } | undefined
-    const minimal = cardBody(resp!)
-    expect(minimal.title).toBe('✅ Option B')
-    expect(minimal.markdown).toContain('Pick one')
-    expect(minimal.markdown).toContain('**→ Option B**')
+    expect(resp).toBeUndefined()
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('askq:0:2')
   })
 
   it('dedups repeated callbacks on the same card message', async () => {
@@ -540,8 +568,13 @@ describe('onCardAction askq frozen confirm card (Go feishu_dispatch.go askq bran
     const messages: Message[] = []
     await p.start((_platform, msg) => { messages.push(msg) })
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      question: 'Pick one',
-      options: [{ label: 'Option A', description: '' }, { label: 'Option B', description: '' }],
+      title: '',
+      questions: [{
+        question: 'Pick one',
+        header: '',
+        options: [{ label: 'Option A', description: '' }, { label: 'Option B', description: '' }],
+        multiSelect: false,
+      }],
     })
     const event: CardActionTriggerEvent = {
       action: { value: { action: 'askq:0:2', askq_label: 'Option B' } },

@@ -20,7 +20,7 @@ import type { Engine, InteractiveState } from './engine.js'
 import type { Session } from './session.js'
 import { emptyMessage, jumpButtonsMarkdown, parentJumpButtons } from './engine.js'
 import { chatroomHubGroupName, maxGroupNameRunes } from './groupname.js'
-import type { Message, PendingPermission, Platform } from '../core/types.js'
+import type { Message, PendingAsk, Platform } from '../core/types.js'
 import { asCardSender, asCardSenderWithUpdate, asReplyContextReconstructor } from '../core/types.js'
 import { newCard } from '../card.js'
 import type { Card } from '../card.js'
@@ -1349,28 +1349,27 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
   return run
 }
 
-// ── research-manual AskUserQuestion auto-default ──────────────────────────
+// ── research-manual ask auto-default ──────────────────────────────────────
 
 /**
- * Arm the auto-default for a research-manual AskUserQuestion card (feature
- * #57): only a research chatroom hub in manual mode is affected. The timer
- * synthesizes a click on the first option and routes it through the SAME
- * handlePendingPermission path as a real user answer.
+ * Arm the whole-ask auto-default for a research-manual ask card (feature
+ * #57): only a research chatroom hub in manual mode is affected. One timer
+ * covers the ENTIRE card — on fire, every unanswered question defaults to
+ * its first option while already-collected answers are kept, and the ask
+ * settles once through the same settle path as a real user answer.
  *
  * @param e - Engine carrying the session registry and i18n surface.
  * @param p - Platform the pending card was posted on.
  * @param sessionKey - Session key of the moderator hub that issued the card.
  * @param replyCtx - Reply context for the timeout notice message.
- * @param pending - The pending permission entry for this AskUserQuestion card.
- * @param qIdx - 0-based index of the question the default answer targets.
+ * @param pending - The parked questions ask the timer guards.
  */
 export function armResearchManualAskTimeout(
   e: Engine,
   p: Platform,
   sessionKey: string,
   replyCtx: unknown,
-  pending: PendingPermission,
-  qIdx: number,
+  pending: PendingAsk,
 ): void {
   const sess = e.sessions.findActive(sessionKey)
   if (sess === undefined || !sess.getChatroomModerator() || !sess.getChatroomResearch()
@@ -1378,29 +1377,14 @@ export function armResearchManualAskTimeout(
     return
   }
   if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
-  // Track resolution without touching the pending object's resolve closure:
-  // the settled flag is what the timer polls (Go's select on Resolved).
-  const settled = { done: false }
-  void pending.resolved.then(() => {
-    settled.done = true
-    if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
-  })
   const timer = setTimeout(() => {
-    // The user answered in the meantime — don't double-resolve.
-    if (settled.done) return
-    if (pending.autoFired) return
-    pending.autoFired = true
-    console.info(`chatroom: research manual ask timed out; answering with default option (session=${sessionKey} questionIndex=${qIdx})`)
-    void e.reply(p, replyCtx, e.i18n.t('chatroom_research_ask_timeout'))
-    const synth = `askq:${qIdx}:1`
-    e.handlePendingPermission(p, {
-      ...emptyMessage(),
-      sessionKey,
-      platform: p.name(),
-      content: synth,
-      isAskqCardAction: true,
-      replyCtx,
-    }, synth)
+    // settlePendingAskDefaults no-ops once the user resolved (the engine's
+    // settle clears the parked ask first), so a late fire cannot
+    // double-settle — the notice only rides an actual default settlement.
+    if (e.settlePendingAskDefaults(sessionKey)) {
+      console.info(`chatroom: research manual ask timed out; applying default answers (session=${sessionKey})`)
+      void e.reply(p, replyCtx, e.i18n.t('chatroom_research_ask_timeout'))
+    }
   }, chatroomResearchManualAskTimeout.ms)
   pending.autoTimer = timer
   timer.unref()

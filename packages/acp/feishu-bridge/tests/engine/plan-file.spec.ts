@@ -41,19 +41,22 @@ function agentWithWorkDir(wd: string): ReturnType<typeof createStubAgent> {
   return Object.assign(createStubAgent(), { getWorkDir: () => wd })
 }
 
-/** Drive one turn's events through the engine loop (plan-render-fork pattern). */
-async function driveLoop(e: Engine, state: InteractiveState, sessionKey: string, events: Array<Record<string, unknown>>): Promise<void> {
+/** Run one turn's events through the engine loop, then drive a plan-review ask (B2 delegate). */
+async function drivePlanReview(
+  e: Engine, state: InteractiveState, sessionKey: string,
+  events: Array<Record<string, unknown>>, plan = planBody,
+): Promise<void> {
   const session = e.sessions.getOrCreateActive(sessionKey)
   const agentSession = newControllableSession('s1')
   state.agentSession = agentSession
   e.interactiveStates.set(sessionKey, state)
   for (const ev of events) agentSession.channel.push(ev as never)
-  const loopDone = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
-  // The permission card parks the turn; resolve it and end the turn.
-  await pollUntil(() => state.pending !== undefined, 2000)
-  state.pending?.resolve()
   agentSession.channel.push({ type: 'result', content: '', done: true })
-  await loopDone
+  await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+  const decision = e.askUser(sessionKey, { kind: 'plan-review', heading: plan.split('\n')[0] ?? plan, plan })
+  await pollUntil(() => state.pendingAsk !== undefined, 2000)
+  state.pendingAsk?.resolve({ outcome: 'allowed-once' })
+  await decision
 }
 
 // ── savePlanFile helper ─────────────────────────────────────────────────────
@@ -123,9 +126,7 @@ describe('processInteractiveEvents plan persistence', () => {
     state.platform = p
     state.replyCtx = 'ctx'
 
-    await driveLoop(e, state, 'slack:C1:U1', [
-      { type: 'permission_request', content: '', toolName: 'ExitPlanMode', toolInputRaw: { plan: planBody }, requestID: 'r1', done: false },
-    ])
+    await drivePlanReview(e, state, 'slack:C1:U1', [])
 
     const expected = join(plansDir, 'users-t-proj-a-计划标题.md')
     expect(existsSync(expected)).toBe(true)
@@ -142,9 +143,7 @@ describe('processInteractiveEvents plan persistence', () => {
     state.platform = p
     state.replyCtx = 'ctx'
 
-    await driveLoop(e, state, 'slack:C1:U1', [
-      { type: 'permission_request', content: '', toolName: 'ExitPlanMode', toolInputRaw: { plan: planBody }, requestID: 'r1', done: false },
-    ])
+    await drivePlanReview(e, state, 'slack:C1:U1', [])
 
     expect(readdirSync(plansDir)).toHaveLength(0)
     expect(p.getSent().join('\n')).toContain(planBody)
@@ -164,10 +163,9 @@ describe('processInteractiveEvents plan persistence', () => {
     state.platform = p
     state.replyCtx = 'ctx'
 
-    await driveLoop(e, state, 'slack:C1:U1', [
+    await drivePlanReview(e, state, 'slack:C1:U1', [
       { type: 'tool_use', content: '', toolName: 'Write', toolInputRaw: { file_path: modelFile, content: '由模型写入' }, requestID: 'w1', done: false },
       { type: 'tool_result', content: '', toolName: 'Write', requestID: 'w1', done: true },
-      { type: 'permission_request', content: '', toolName: 'ExitPlanMode', toolInputRaw: { plan: planBody }, requestID: 'r1', done: false },
     ])
 
     expect(readFileSync(modelFile, 'utf8')).toBe('# model plan\n由模型写入')
@@ -184,9 +182,7 @@ describe('processInteractiveEvents plan persistence', () => {
     state.platform = p
     state.replyCtx = 'ctx'
 
-    await driveLoop(e, state, 'slack:C1:U1', [
-      { type: 'permission_request', content: '', toolName: 'ExitPlanMode', toolInputRaw: { plan: planBody }, requestID: 'r1', done: false },
-    ])
+    await drivePlanReview(e, state, 'slack:C1:U1', [])
 
     expect(p.getSent().join('\n')).toContain(planBody)
   })

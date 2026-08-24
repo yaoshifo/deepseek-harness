@@ -443,13 +443,14 @@ describe('processInteractiveEvents render integration', () => {
     const leadText = '我先分析一下方案。'.repeat(60) // ≥500 runes → would trigger the reply pre-detach
     const planBody = '# 计划\n\n步骤一：封装\n步骤二：接入'
     agentSession.channel.push({ type: 'text', content: leadText, done: false })
-    agentSession.channel.push({ type: 'permission_request', content: '', toolName: 'ExitPlanMode', toolInputRaw: { plan: planBody }, requestID: 'r1', done: false })
 
     const loopDone = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
-
-    // Resolve the pending permission once it is parked.
-    await pollUntil(() => state.pending !== undefined, 2000)
-    state.pending?.resolve()
+    // The plan-review ask arrives through the delegate while the loop runs.
+    await pollUntil(() => state.textParts.length > 0, 2000)
+    const decision = e.askUser(sessionKey, { kind: 'plan-review', heading: '# 计划', plan: planBody })
+    await pollUntil(() => state.pendingAsk !== undefined, 2000)
+    state.pendingAsk?.resolve({ outcome: 'allowed-once' })
+    await decision
     agentSession.channel.push({ type: 'result', content: '', done: true })
     await loopDone
 
@@ -475,13 +476,12 @@ describe('processInteractiveEvents render integration', () => {
     e.interactiveStates.set(sessionKey, state)
 
     const planBody = '# 计划\n\n步骤一：封装\n步骤二：接入'
-    agentSession.channel.push({ type: 'permission_request', content: '', toolName: 'ExitPlanMode', toolInputRaw: { plan: planBody }, requestID: 'r1', done: false })
-
-    const loopDone = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
-    await pollUntil(() => state.pending !== undefined, 2000)
-    state.pending?.resolve()
+    const decision = e.askUser(sessionKey, { kind: 'plan-review', heading: '# 计划', plan: planBody })
+    await pollUntil(() => state.pendingAsk !== undefined, 2000)
+    state.pendingAsk?.resolve({ outcome: 'allowed-once' })
+    await decision
     agentSession.channel.push({ type: 'result', content: '', done: true })
-    await loopDone
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
 
     await pollUntil(() => a.getCalls().length >= 2, 3000)
     expect(a.getCalls()).toHaveLength(2)

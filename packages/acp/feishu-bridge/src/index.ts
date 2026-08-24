@@ -943,6 +943,10 @@ export function buildProjectAssembly(
 
   const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language))
 
+  // B2: native approval asks and userQuestions asks delegate card rendering
+  // and decision waiting to the engine's askUser.
+  adapter.setAskDelegate(engine)
+
 
   // #18: the bot's default Feishu workspace → CC_FEISHU_* session env,
   // surfaced to the agent through the adapter's setup hook.

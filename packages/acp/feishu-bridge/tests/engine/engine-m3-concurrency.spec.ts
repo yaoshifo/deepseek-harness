@@ -1,13 +1,10 @@
 /**
- * M3 concurrency/boundary tests ported from cc-connect core/engine_test.go:
- * permission-while-send-blocked, reapIdle skips permission-waiting session,
- * /ps blocked on permission routes to queue, unsolicited reader permission
- * deny, unsolicited reader AskUserQuestion surfaced not denied, and compact
- * progress coalesces thinking and tool use.
- *
- * Red phase: the engine methods (handlePendingPermission with unsolicited
- * reader, shouldSurfaceUnsolicitedPermission) do not exist yet — these tests
- * fail until the M3 implementation lands.
+ * M3→B2 concurrency/boundary tests: permission asks render while the prompt
+ * send is still blocked, reapIdle skips ask-waiting sessions, /ps blocked on
+ * an ask routes to the queue, questions asks are surfaced (not auto-denied),
+ * and compact progress coalesces thinking and tool use. The channel-pushed
+ * permission_request events are gone: asks arrive through the engine's
+ * askUser delegate while the event loop stays parked on its receive.
  *
  * @module dsh-feishu-bridge/tests-engine-m3-concurrency
  */
@@ -19,9 +16,10 @@ import {
   createStubPlatform,
   newControllableSession,
   newQueuingSession,
-  newPendingPermission,
+  newPendingAsk,
+  testQuestions,
 } from '../stubs/engine-stubs.js'
-import type { Agent, Platform } from '../../src/core/types.js'
+import type { Agent, Message, Platform } from '../../src/core/types.js'
 
 function newEngine(agent?: Agent, p?: Platform): { e: Engine } {
   const platform = p ?? createStubPlatform()
@@ -29,8 +27,8 @@ function newEngine(agent?: Agent, p?: Platform): { e: Engine } {
   return { e: engine }
 }
 
-describe('PermissionWhileSendBlocked', () => {
-  it('permission prompt is sent while Send is blocked', async () => {
+describe('AskWhileSendBlocked', () => {
+  it('the ask card renders while Send is still blocked', async () => {
     const { e } = newEngine()
     const p = createStubPlatform()
     const sess = newControllableSession('blk-perm')
@@ -42,29 +40,22 @@ describe('PermissionWhileSendBlocked', () => {
     state.replyCtx = 'ctx'
     e.interactiveStates.set(key, state)
 
-    sess.channel.push({
-      type: 'permission_request',
-      requestID: 'req-blocked-send',
-      toolName: 'write_file',
-      toolInput: '/tmp/x',
-      content: '',
-      done: false,
-    })
-    sess.channel.push({ type: 'result', content: 'ok', done: true })
+    // The prompt send never settles; the ask delegate renders regardless —
+    // it does not queue behind the event loop.
+    let unblock!: () => void
+    const blockedSend = new Promise<unknown>((resolve) => { unblock = () => { resolve(undefined) } })
+    const loopDone = e.processInteractiveEvents(state, session, e.sessions, key, 'm1', blockedSend, 'ctx')
 
-    // The loop parks on the permission wait (Go semantics): poll until the
-    // prompt is out, then resolve the pending so the loop can drain the rest.
-    const loopDone = e.processInteractiveEvents(state, session, e.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
-    const deadline = Date.now() + 3000
-    while (state.pending === undefined && Date.now() < deadline) {
-      await new Promise((r) => { setTimeout(r, 10) })
-    }
+    const decision = e.askUser(key, { kind: 'permission', toolName: 'write_file', preview: '/tmp/x' })
+    await new Promise((r) => { setTimeout(r, 30) })
 
-    const sent = p.getSent()
-    expect(sent.length).toBeGreaterThan(0)
-    expect(state.pending?.requestID).toBe('req-blocked-send')
+    expect(p.getSent().length).toBeGreaterThan(0)
+    expect(state.pendingAsk).toBeDefined()
 
-    state.pending?.resolve()
+    state.pendingAsk?.resolve({ outcome: 'allowed-once' })
+    await decision
+    unblock()
+    sess.channel.close()
     await Promise.race([
       loopDone,
       new Promise((_, reject) => { setTimeout(() => { reject(new Error('timeout')) }, 3000) }),
@@ -72,8 +63,8 @@ describe('PermissionWhileSendBlocked', () => {
   })
 })
 
-describe('ReapIdle_SkipsPermissionWait', () => {
-  it('idle reaper does not close a session waiting for permission', () => {
+describe('ReapIdle_SkipsAskWait', () => {
+  it('idle reaper does not close a session waiting on an ask', () => {
     const { e } = newEngine()
     e.setInteractiveIdleTimeout(50)
     const p = createStubPlatform()
@@ -83,7 +74,7 @@ describe('ReapIdle_SkipsPermissionWait', () => {
     state.agentSession = sess
     state.platform = p
     state.replyCtx = 'ctx'
-    state.pending = newPendingPermission({ requestID: 'req-1' })
+    state.pendingAsk = newPendingAsk({ request: { kind: 'permission', toolName: 'Bash', preview: '' } })
     state.lastActivity = Date.now() - 10_000
     e.interactiveStates.set(key, state)
 
@@ -94,8 +85,8 @@ describe('ReapIdle_SkipsPermissionWait', () => {
   })
 })
 
-describe('Ps_BlockedOnPermission_RoutesToQueue', () => {
-  it('message queues (not stdin) while permission is pending', () => {
+describe('Ps_BlockedOnAsk_RoutesToQueue', () => {
+  it('message queues (not stdin) while an ask is pending', () => {
     const { e } = newEngine()
     const p = createStubPlatform()
     const sess = newQueuingSession('ps-blocked')
@@ -104,11 +95,11 @@ describe('Ps_BlockedOnPermission_RoutesToQueue', () => {
     state.agentSession = sess
     state.platform = p
     state.replyCtx = 'ctx1'
-    state.pending = newPendingPermission({ requestID: 'req1' })
+    state.pendingAsk = newPendingAsk({ request: { kind: 'permission', toolName: 'Bash', preview: '' } })
     state.activeTurns = 1
     e.interactiveStates.set(key, state)
 
-    const ok = e.queueMessageForBusySession(p, {
+    const msg: Message = {
       sessionKey: key,
       platform: 'test',
       messageID: '',
@@ -129,7 +120,8 @@ describe('Ps_BlockedOnPermission_RoutesToQueue', () => {
       isCardAction: false,
       parentMessageID: '',
       quotedText: '',
-    }, key)
+    }
+    const ok = e.queueMessageForBusySession(p, msg, key)
 
     expect(ok).toBe(true)
     expect(sess.sendCalls, 'blocked → queued, not stdin').toEqual([])
@@ -138,90 +130,50 @@ describe('Ps_BlockedOnPermission_RoutesToQueue', () => {
   })
 })
 
-describe('ForegroundPermissionSurfaces_Bash', () => {
-  it('foreground Bash surfaces a pending permission (Go engine_events.go ~4106)', async () => {
+describe('ForegroundAskSurfaces_Bash', () => {
+  it('a foreground Bash ask surfaces a card (Go engine_events.go ~4106)', async () => {
     // Go auto-denies a genuine-background Bash only in runUnsolicitedReader;
-    // TS has no background reader yet, so the foreground loop surfaces every
-    // permission (the gate itself stays covered by the pure-function table
-    // tests). Background auto-deny returns with the unsolicited reader.
+    // TS has no background reader, so every foreground ask surfaces (the
+    // gate itself stays covered by the pure-function table tests).
     const { e } = newEngine()
     const p = createStubPlatform()
-    const sess = newControllableSession('unsol-perm')
     const key = 'test:perm:u1'
-    const session = e.sessions.getOrCreateActive(key)
     const state = new InteractiveState()
-    state.agentSession = sess
     state.platform = p
     state.replyCtx = 'ctx'
-    state.approveAll = false
     e.interactiveStates.set(key, state)
 
-    sess.channel.push({
-      type: 'permission_request',
-      requestID: 'req-1',
-      toolName: 'Bash',
-      content: '',
-      done: false,
-    })
-    sess.channel.close()
+    const decision = e.askUser(key, { kind: 'permission', toolName: 'Bash', preview: 'ls' })
+    await new Promise((r) => { setTimeout(r, 30) })
 
-    const loopDone = e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, 'ctx')
-    const deadline = Date.now() + 3000
-    while (state.pending === undefined && Date.now() < deadline) {
-      await new Promise((r) => { setTimeout(r, 10) })
-    }
+    expect(state.pendingAsk?.request.kind).toBe('permission')
+    expect(p.getSent().join('\n')).toContain('Bash')
 
-    expect(state.pending?.requestID).toBe('req-1')
-    expect(sess.permResponses).toEqual([])
-
-    state.pending?.resolve()
-    await Promise.race([
-      loopDone,
-      new Promise((_, reject) => { setTimeout(() => { reject(new Error('timeout')) }, 3000) }),
-    ])
+    state.pendingAsk?.resolve({ outcome: 'allowed-once' })
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
   })
 })
 
-describe('UnsolicitedReader_AskUserQuestion_SurfacedNotDenied', () => {
-  it('AskUserQuestion is surfaced (pending set), not auto-denied', async () => {
+describe('QuestionsAsk_SurfacedNotDenied', () => {
+  it('a questions ask is surfaced (parked), not auto-denied', async () => {
     const { e } = newEngine()
     const p = createStubPlatform()
-    const sess = newControllableSession('s-askq')
     const key = 'feishu:oc_askq'
-    const session = e.sessions.getOrCreateActive(key)
     const state = new InteractiveState()
-    state.agentSession = sess
     state.platform = p
     state.replyCtx = 'ctx-askq'
     e.interactiveStates.set(key, state)
 
-    sess.channel.push({
-      type: 'permission_request',
-      requestID: 'req-askq-1',
-      toolName: 'AskUserQuestion',
-      content: '',
-      done: false,
+    const decision = e.askUser(key, { kind: 'questions', questions: testQuestions() })
+    await new Promise((r) => { setTimeout(r, 30) })
+
+    expect(state.pendingAsk, 'ask should be parked for questions').toBeDefined()
+    expect(p.getSent().join('\n')).toContain('Which database?')
+
+    state.pendingAsk?.resolve({ answers: [{ id: 'Which database?', selected: ['PostgreSQL'] }] })
+    await expect(decision).resolves.toEqual({
+      answers: [{ id: 'Which database?', selected: ['PostgreSQL'] }],
     })
-    sess.channel.close()
-
-    // The event loop blocks on the permission wait (Go semantics). Poll
-    // until the pending is armed, assert on it, then resolve so the loop
-    // can exit cleanly before the timeout.
-    const loopDone = e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, 'ctx')
-    const deadline = Date.now() + 3000
-    while (state.pending === undefined && Date.now() < deadline) {
-      await new Promise((r) => { setTimeout(r, 10) })
-    }
-
-    expect(state.pending, 'pending should be set for AskUserQuestion').toBeDefined()
-    expect(state.pending?.requestID).toBe('req-askq-1')
-    expect(sess.permResponses).toEqual([])
-
-    state.pending?.resolve()
-    await Promise.race([
-      loopDone,
-      new Promise((_, reject) => { setTimeout(() => { reject(new Error('timeout')) }, 3000) }),
-    ])
   })
 })
 

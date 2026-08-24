@@ -1,12 +1,9 @@
 /**
- * M3 AskUserQuestion tests ported from cc-connect core/engine_test.go:
- * resolveAskQuestionAnswer (5 variants), buildAskQuestionResponse,
- * sendAskQuestionPrompt (4 platform variants), and handlePendingPermission
- * AskUserQuestion variants (single/multi/skip/card-button/text/stale).
- *
- * Red phase: the engine methods (resolveAskQuestionAnswer,
- * buildAskQuestionResponse, sendAskQuestionPrompt, handlePendingPermission)
- * do not exist yet — these tests fail until the M3 implementation lands.
+ * M3→B2 AskUserQuestion tests: the one-card multi-question rendering
+ * (sendAskQuestionsCard platform variants) and routeAskResponse question
+ * variants (single/multi/card-button/text/stale). The resolveAskQuestionAnswer
+ * and buildAskQuestionResponse pure-logic suites moved to ask.spec.ts with
+ * the B2 selected/custom split.
  *
  * @module dsh-feishu-bridge/tests-engine-m3-askq
  */
@@ -14,19 +11,24 @@
 import { describe, expect, it } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import {
-  createRecordingAgentSession,
   createStubAgent,
   createStubCardPlatform,
   createStubInlineButtonPlatform,
   createStubPlatform,
-  newPendingPermission,
   testMultiQuestions,
   testQuestions,
 } from '../stubs/engine-stubs.js'
-import type { Message, UserQuestion } from '../../src/core/types.js'
+import type { Message } from '../../src/core/types.js'
 
 function newTestEngine(): Engine {
   return new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')
+}
+
+/** An armed questions ask: engine, card platform, and the pending decision. */
+interface ArmedAsk {
+  e: Engine
+  p: ReturnType<typeof createStubCardPlatform>
+  decision: Promise<{ answers?: Array<{ id: string; selected: string[]; custom?: string }> }>
 }
 
 function msg(overrides: Partial<Message> = {}): Message {
@@ -55,79 +57,48 @@ function msg(overrides: Partial<Message> = {}): Message {
   }
 }
 
-describe('resolveAskQuestionAnswer', () => {
-  it('NumericIndex: "2" → SQLite', () => {
-    const e = newTestEngine()
-    const q = testQuestions()[0]!
-    expect(e.resolveAskQuestionAnswer(q, '2')).toBe('SQLite')
-  })
+/** Engine + state with a questions ask parked via askUser. */
+async function armedAsk(
+  questions = testQuestions(),
+): Promise<ArmedAsk> {
+  const e = newTestEngine()
+  const p = createStubCardPlatform('feishu')
+  const state = new InteractiveState()
+  state.platform = p
+  state.replyCtx = 'ctx'
+  e.interactiveStates.set('test:chat:user1', state)
+  const decision = e.askUser('test:chat:user1', { kind: 'questions', questions })
+  await new Promise((r) => { setTimeout(r, 10) })
+  return { e, p, decision }
+}
 
-  it('ButtonCallback: "askq:0:1" → PostgreSQL', () => {
-    const e = newTestEngine()
-    const q = testQuestions()[0]!
-    expect(e.resolveAskQuestionAnswer(q, 'askq:0:1')).toBe('PostgreSQL')
-  })
-
-  it('FreeText: "Redis" → Redis', () => {
-    const e = newTestEngine()
-    const q = testQuestions()[0]!
-    expect(e.resolveAskQuestionAnswer(q, 'Redis')).toBe('Redis')
-  })
-
-  it('MultiSelect: "1,3" → PostgreSQL, MySQL', () => {
-    const e = newTestEngine()
-    const q: UserQuestion = { ...testQuestions()[0]!, multiSelect: true }
-    expect(e.resolveAskQuestionAnswer(q, '1,3')).toBe('PostgreSQL, MySQL')
-  })
-
-  it('OutOfRange: "99" → raw "99"', () => {
-    const e = newTestEngine()
-    const q = testQuestions()[0]!
-    expect(e.resolveAskQuestionAnswer(q, '99')).toBe('99')
-  })
-})
-
-describe('buildAskQuestionResponse', () => {
-  it('preserves original input and adds answers map', () => {
-    const input = { questions: [{ question: 'Which?' }] }
-    const questions = testQuestions()
-    const result = Engine.buildAskQuestionResponse(
-      input,
-      questions,
-      new Map([[0, 'PostgreSQL']]),
-    )
-
-    const answers = result.answers as Record<string, unknown>
-    expect(answers).toBeDefined()
-    expect(answers[questions[0]!.question]).toBe('PostgreSQL')
-    expect(result.questions).toBeDefined()
-  })
-})
-
-describe('sendAskQuestionPrompt', () => {
-  it('CardPlatform: sends blue-header card with 3 askq buttons', async () => {
+describe('sendAskQuestionsCard', () => {
+  it('CardPlatform: one blue-header card for the whole ask', async () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
 
-    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0, 'test:askq')
+    await e.sendAskQuestionsCard(p, 'ctx', testQuestions(), 'test:askq')
 
     expect(p.sentCards).toHaveLength(1)
   })
 
-  it('CardPlatform_MultiQuestion_ShowsIndex: title contains (1/2)', async () => {
+  it('CardPlatform_MultiQuestion_OneCard: both questions ride the same card', async () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
 
-    await e.sendAskQuestionPrompt(p, 'ctx', testMultiQuestions(), 0, 'test:askq')
+    await e.sendAskQuestionsCard(p, 'ctx', testMultiQuestions(), 'test:askq')
 
     expect(p.sentCards).toHaveLength(1)
+    const card = p.sentCards[0] as { elements: Array<{ kind: string; content?: string }> }
+    const headings = card.elements.filter(el => el.kind === 'markdown')
+    expect(headings).toHaveLength(2)
   })
 
-  it('InlineButtonPlatform: 3 button rows with askq:0:N data', async () => {
+  it('InlineButtonPlatform: first question options as askq:0:N buttons', async () => {
     const e = newTestEngine()
     const p = createStubInlineButtonPlatform('telegram')
 
-    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0, 'test:askq')
+    await e.sendAskQuestionsCard(p, 'ctx', testQuestions(), 'test:askq')
 
     expect(p.buttonRows).toHaveLength(3)
     expect(p.buttonRows[0]![0]!.data).toBe('askq:0:1')
@@ -137,7 +108,7 @@ describe('sendAskQuestionPrompt', () => {
     const e = newTestEngine()
     const p = createStubPlatform('plain')
 
-    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0, 'test:askq')
+    await e.sendAskQuestionsCard(p, 'ctx', testQuestions(), 'test:askq')
 
     expect(p.getSent()).toHaveLength(1)
     const sentMsg = p.getSent()[0]!
@@ -145,183 +116,12 @@ describe('sendAskQuestionPrompt', () => {
     expect(sentMsg).toContain('1) PostgreSQL')
     expect(sentMsg).not.toContain('**')
   })
-})
 
-describe('handlePendingPermission AskUserQuestion variants', () => {
-  it('SingleQuestion: "2" resolves with answer', () => {
-    const e = newTestEngine()
-    const p = createStubPlatform('test')
-    const rec = createRecordingAgentSession()
-    const state = new InteractiveState()
-    state.agentSession = rec
-    state.platform = p
-    state.replyCtx = 'ctx'
-    state.pending = newPendingPermission({
-      requestID: 'req-1',
-      toolName: 'AskUserQuestion',
-      toolInput: { questions: [{ question: 'Which?' }] },
-      questions: testQuestions(),
-    })
-    e.interactiveStates.set('test:chat:user1', state)
-
-    const handled = e.handlePendingPermission(p, msg({ content: '2' }), '2')
-
-    expect(handled).toBe(true)
-    expect(rec.calls).toBe(1)
-    const answers = rec.lastResult?.updatedInput?.answers as Record<string, unknown>
-    expect(answers).toBeDefined()
-    expect(answers['Which database?']).toBe('SQLite')
-    expect(state.pending).toBeUndefined()
-  })
-
-  it('MultiQuestion_Sequential: first answer does not resolve', () => {
-    const e = newTestEngine()
-    const p = createStubPlatform('test')
-    const rec = createRecordingAgentSession()
-    const state = new InteractiveState()
-    state.agentSession = rec
-    state.platform = p
-    state.replyCtx = 'ctx'
-    state.pending = newPendingPermission({
-      requestID: 'req-1',
-      toolName: 'AskUserQuestion',
-      toolInput: { questions: [] },
-      questions: testMultiQuestions(),
-    })
-    e.interactiveStates.set('test:chat:user1', state)
-
-    const handled = e.handlePendingPermission(p, msg({ content: '1' }), '1')
-
-    expect(handled).toBe(true)
-    expect(rec.calls).toBe(0)
-    expect(state.pending).toBeDefined()
-    expect(state.pending?.currentQuestion).toBe(1)
-
-    const handled2 = e.handlePendingPermission(p, msg({ content: '2' }), '2')
-
-    expect(handled2).toBe(true)
-    expect(rec.calls).toBe(1)
-    const answers = rec.lastResult?.updatedInput?.answers as Record<string, unknown>
-    expect(answers['Which database?']).toBe('PostgreSQL')
-    expect(answers['Which framework?']).toBe('Echo')
-    expect(state.pending).toBeUndefined()
-  })
-
-  it('SkipsPermFlow: "allow" treated as free text answer', () => {
-    const e = newTestEngine()
-    const p = createStubPlatform('test')
-    const rec = createRecordingAgentSession()
-    const state = new InteractiveState()
-    state.agentSession = rec
-    state.platform = p
-    state.replyCtx = 'ctx'
-    state.pending = newPendingPermission({
-      requestID: 'req-1',
-      toolName: 'AskUserQuestion',
-      toolInput: { questions: [{ question: 'Which?' }] },
-      questions: testQuestions(),
-    })
-    e.interactiveStates.set('test:chat:user1', state)
-
-    const handled = e.handlePendingPermission(p, msg({ content: 'allow' }), 'allow')
-
-    expect(handled).toBe(true)
-    const answers = rec.lastResult?.updatedInput?.answers as Record<string, unknown>
-    expect(answers['Which database?']).toBe('allow')
-  })
-
-  it('CardButtonSkipsReply_SingleQuestion: no standalone reply', () => {
-    const e = newTestEngine()
-    const p = createStubPlatform('test')
-    const rec = createRecordingAgentSession()
-    const state = new InteractiveState()
-    state.agentSession = rec
-    state.platform = p
-    state.replyCtx = 'ctx'
-    state.pending = newPendingPermission({
-      requestID: 'req-1',
-      toolName: 'AskUserQuestion',
-      toolInput: { questions: [{ question: 'Which?' }] },
-      questions: testQuestions(),
-    })
-    e.interactiveStates.set('test:chat:user1', state)
-
-    const handled = e.handlePendingPermission(p, msg({ content: '2', isAskqCardAction: true }), '2')
-
-    expect(handled).toBe(true)
-    expect(rec.calls).toBe(1)
-    const answers = rec.lastResult?.updatedInput?.answers as Record<string, unknown>
-    expect(answers['Which database?']).toBe('SQLite')
-    expect(p.getSent()).toEqual([])
-  })
-
-  it('CardButtonSkipsReply_MultiQuestion_Middle: no ✅ reply', () => {
-    const e = newTestEngine()
-    const p = createStubPlatform('test')
-    const rec = createRecordingAgentSession()
-    const state = new InteractiveState()
-    state.agentSession = rec
-    state.platform = p
-    state.replyCtx = 'ctx'
-    state.pending = newPendingPermission({
-      requestID: 'req-1',
-      toolName: 'AskUserQuestion',
-      toolInput: { questions: [] },
-      questions: testMultiQuestions(),
-    })
-    e.interactiveStates.set('test:chat:user1', state)
-
-    const handled = e.handlePendingPermission(p, msg({ content: '1', isAskqCardAction: true }), '1')
-
-    expect(handled).toBe(true)
-    expect(rec.calls).toBe(0)
-    expect(state.pending).toBeDefined()
-    expect(state.pending?.currentQuestion).toBe(1)
-    for (const m of p.getSent()) {
-      expect(m).not.toContain('✅ Which database?')
-    }
-  })
-
-  it('TextAnswerKeepsFeedback: text answer sends ✅ feedback', () => {
-    const e = newTestEngine()
-    const p = createStubPlatform('test')
-    const rec = createRecordingAgentSession()
-    const state = new InteractiveState()
-    state.agentSession = rec
-    state.platform = p
-    state.replyCtx = 'ctx'
-    state.pending = newPendingPermission({
-      requestID: 'req-1',
-      toolName: 'AskUserQuestion',
-      toolInput: { questions: [{ question: 'Which?' }] },
-      questions: testQuestions(),
-    })
-    e.interactiveStates.set('test:chat:user1', state)
-
-    const handled = e.handlePendingPermission(p, msg({ content: '2' }), '2')
-
-    expect(handled).toBe(true)
-    expect(rec.calls).toBe(1)
-    expect(p.getSent()).toHaveLength(1)
-  })
-
-  it('StaleCardNotTreatedAsPerm: stale askq click → handled=false, no toast', () => {
-    const e = newTestEngine()
-    const p = createStubPlatform('test')
-
-    const handled = e.handlePendingPermission(p, msg({ content: 'yes', isAskqCardAction: true }), 'yes')
-
-    expect(handled).toBe(false)
-    expect(p.getSent()).toEqual([])
-  })
-})
-
-describe('AskQuestionCardShape_GoReplica', () => {
-  it('single-select renders list rows: full label+description left, number button right (Go ListItemBtnExtra)', async () => {
+  it('AskQuestionCardShape: single-select renders list rows with number buttons addressed by askq:{q}:{n}', async () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
 
-    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), 0, 'test:askq')
+    await e.sendAskQuestionsCard(p, 'ctx', testQuestions(), 'test:askq')
 
     const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
     expect(card.elements.length).toBe(4) // 1 markdown question + 3 list rows
@@ -334,9 +134,7 @@ describe('AskQuestionCardShape_GoReplica', () => {
         text: string
         description: string
         btnText: string
-        btnType: string
         btnValue: string
-        extra?: Record<string, string>
       }
       expect(row.kind).toBe('listItem')
       expect(row.text).toContain(['PostgreSQL', 'SQLite', 'MySQL'][i])
@@ -344,5 +142,102 @@ describe('AskQuestionCardShape_GoReplica', () => {
       expect(row.btnText).toBe(String(i + 1))
       expect(row.btnValue).toBe(`askq:0:${i + 1}`)
     }
+  })
+})
+
+describe('routeAskResponse question variants', () => {
+  it('SingleQuestion: "2" resolves with the option label', async () => {
+    const { e, p, decision } = await armedAsk()
+
+    const handled = e.routeAskResponse(p, msg({ content: '2' }), '2')
+
+    expect(handled).toBe(true)
+    await expect(decision).resolves.toEqual({
+      answers: [{ id: 'Which database?', selected: ['SQLite'] }],
+    })
+  })
+
+  it('MultiQuestion_OneCard: answers accumulate per question on the same parked ask', async () => {
+    const { e, p, decision } = await armedAsk(testMultiQuestions())
+
+    const handled = e.routeAskResponse(p, msg({ content: '1' }), '1')
+    expect(handled).toBe(true)
+    const handled2 = e.routeAskResponse(p, msg({ content: '2' }), '2')
+    expect(handled2).toBe(true)
+
+    await expect(decision).resolves.toEqual({
+      answers: [
+        { id: 'Which database?', selected: ['PostgreSQL'] },
+        { id: 'Which framework?', selected: ['Echo'] },
+      ],
+    })
+  })
+
+  it('SkipsPermFlow: "allow" treated as free-text custom answer', async () => {
+    const { e, p, decision } = await armedAsk()
+
+    const handled = e.routeAskResponse(p, msg({ content: 'allow' }), 'allow')
+
+    expect(handled).toBe(true)
+    await expect(decision).resolves.toEqual({
+      answers: [{ id: 'Which database?', selected: [], custom: 'allow' }],
+    })
+  })
+
+  it('CardButtonSkipsReply_SingleQuestion: no standalone reply', async () => {
+    const { e, p, decision } = await armedAsk()
+
+    const handled = e.routeAskResponse(p, msg({ content: '2', isAskqCardAction: true }), '2')
+
+    expect(handled).toBe(true)
+    await expect(decision).resolves.toEqual({
+      answers: [{ id: 'Which database?', selected: ['SQLite'] }],
+    })
+    expect(p.getSent()).toEqual([])
+  })
+
+  it('CardButton_MultiQuestion_Middle: no ✅ reply for card actions', async () => {
+    const { e, p } = await armedAsk(testMultiQuestions())
+
+    const handled = e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')
+
+    expect(handled).toBe(true)
+    for (const m of p.getSent()) {
+      expect(m).not.toContain('✅ Which database?')
+    }
+  })
+
+  it('TextAnswerKeepsFeedback: text answer sends ✅ feedback', async () => {
+    const { e, p } = await armedAsk()
+
+    const handled = e.routeAskResponse(p, msg({ content: '2' }), '2')
+
+    expect(handled).toBe(true)
+    expect(p.getSent()).toHaveLength(1)
+  })
+
+  it('StaleCardNotTreatedAsPerm: stale askq click → handled=false, no toast', () => {
+    const e = newTestEngine()
+    const p = createStubPlatform('test')
+
+    const handled = e.routeAskResponse(p, msg({ content: 'yes', isAskqCardAction: true }), 'yes')
+
+    expect(handled).toBe(false)
+    expect(p.getSent()).toEqual([])
+  })
+
+  it('second card answer for the same question updates it instead of settling early', async () => {
+    const { e, p, decision } = await armedAsk(testMultiQuestions())
+
+    e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')
+    e.routeAskResponse(p, msg({ content: 'askq:0:2', isAskqCardAction: true }), 'askq:0:2')
+    e.routeAskResponse(p, msg({ content: 'askq:1:1', isAskqCardAction: true }), 'askq:1:1')
+
+    await expect(decision).resolves.toEqual({
+      answers: [
+        { id: 'Which database?', selected: ['SQLite'] },
+        { id: 'Which framework?', selected: ['Gin'] },
+      ],
+    })
   })
 })

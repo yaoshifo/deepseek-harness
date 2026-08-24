@@ -34,10 +34,8 @@ import {
   createStubCardPlatformFull,
   createStubChatroomSpawner,
   createStubProgressCardPlatform,
-  newControllableSession,
-  newPendingPermission,
 } from '../stubs/engine-stubs.js'
-import type { Platform } from '../../src/core/types.js'
+import type { AskDecision, PendingAsk, Platform, UserQuestion } from '../../src/core/types.js'
 import type { RecordedCard } from '../stubs/engine-stubs.js'
 
 async function settle(): Promise<void> {
@@ -507,7 +505,7 @@ describe('research config range clamping', () => {
   })
 })
 
-// ── research-manual AskUserQuestion auto-default ──────────────────────────
+// ── research-manual whole-ask auto-default (B2: one timeout per card) ─────
 
 const savedTimeout = chatroomResearchManualAskTimeout.ms
 
@@ -521,87 +519,113 @@ const savedLookup = uvHooks.lookupPath
 const savedPipInstall = uvHooks.pipInstall
 
 describe('armResearchManualAskTimeout', () => {
-  it('resolves with the default (first option) and notifies the hub', async () => {
-    chatroomResearchManualAskTimeout.ms = 50
-    const p = createStubCardPlatformFull('test')
-    const e = newChatroomTestEngine(p)
-
+  /** Hub session armed as a manual-mode research moderator. */
+  function manualHub(e: Engine, mode: 'manual' | 'auto' = 'manual'): string {
     const hub = 'test:hub-chat:user-1'
     const sess = e.sessions.getOrCreateActive(hub)
     sess.setChatroomModerator(true)
     sess.setChatroomResearch(true)
-    sess.setChatroomResearchMode('manual')
+    sess.setChatroomResearchMode(mode)
+    return hub
+  }
 
-    const pending = newPendingPermission({
-      requestID: 'req-1',
-      toolInput: { question: '继续吗' },
-      questions: [{
-        question: '继续吗',
-        header: '',
-        options: [{ label: '继续迭代', description: '' }, { label: '结束', description: '' }],
-        multiSelect: false,
-      }],
-    })
-
-    const rec = newControllableSession('rec')
+  /** A parked questions ask with its settle recorder. */
+  function parkedAsk(e: Engine, p: Platform, hub: string, questions: UserQuestion[]): { pending: PendingAsk; settled: AskDecision[] } {
+    const settled: AskDecision[] = []
+    const pending: PendingAsk = {
+      request: { kind: 'questions', questions },
+      answers: new Map(),
+      resolve: (decision) => { settled.push(decision) },
+    }
     const state = new InteractiveState()
-    state.agentSession = rec
     state.platform = p
-    state.pending = pending
+    state.pendingAsk = pending
     e.interactiveStates.set(hub, state)
+    return { pending, settled }
+  }
+
+  it('settles the whole ask with defaults and notifies the hub', async () => {
+    chatroomResearchManualAskTimeout.ms = 50
+    const p = createStubCardPlatformFull('test')
+    const e = newChatroomTestEngine(p)
+    const hub = manualHub(e)
+
+    const { pending, settled } = parkedAsk(e, p, hub, [{
+      id: 'continue',
+      question: '继续吗',
+      header: '',
+      options: [{ label: '继续迭代', description: '' }, { label: '结束', description: '' }],
+      multiSelect: false,
+    }])
 
     const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.js')
-    armResearchManualAskTimeout(e, p, hub, 'ctx', pending, 0)
+    armResearchManualAskTimeout(e, p, hub, 'ctx', pending)
 
-    await waitFor(() => pending.autoFired === true, 'auto-answer fired')
-    // The auto-answer must deliver answers via respondPermission.
-    const resp = rec.permResponses.find(r => r.requestID === 'req-1')
-    expect(resp).toBeDefined()
-    const answers = resp?.result.updatedInput?.answers as Record<string, string> | undefined
-    expect(answers?.['继续吗']).toBe('继续迭代')
+    await waitFor(() => settled.length > 0, 'auto-answer fired')
+    // Unanswered questions default to their first option.
+    expect(settled[0]).toEqual({ answers: [{ id: 'continue', selected: ['继续迭代'] }] })
     // The timeout notice must reach the hub.
     expect(p.getSent().some(s => s.includes('已按默认选项推进'))).toBe(true)
+  })
+
+  it('keeps already-collected answers and defaults only the rest', async () => {
+    chatroomResearchManualAskTimeout.ms = 50
+    const p = createStubCardPlatformFull('test')
+    const e = newChatroomTestEngine(p)
+    const hub = manualHub(e)
+
+    const { pending, settled } = parkedAsk(e, p, hub, [
+      { id: 'db', question: 'Which database?', header: '', options: [{ label: 'PostgreSQL', description: '' }, { label: 'SQLite', description: '' }], multiSelect: false },
+      { id: 'fw', question: 'Which framework?', header: '', options: [{ label: 'Gin', description: '' }, { label: 'Echo', description: '' }], multiSelect: false },
+    ])
+    pending.answers.set(0, { selected: ['SQLite'] })
+
+    const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.js')
+    armResearchManualAskTimeout(e, p, hub, 'ctx', pending)
+
+    await waitFor(() => settled.length > 0, 'auto-answer fired')
+    expect(settled[0]).toEqual({
+      answers: [
+        { id: 'db', selected: ['SQLite'] },
+        { id: 'fw', selected: ['Gin'] },
+      ],
+    })
   })
 
   it('skips non-research (auto-mode) hubs', async () => {
     chatroomResearchManualAskTimeout.ms = 30
     const p = createStubCardPlatformFull('test')
     const e = newChatroomTestEngine(p)
-    const hub = 'test:hub-chat:user-1'
-    const sess = e.sessions.getOrCreateActive(hub)
-    sess.setChatroomModerator(true)
-    sess.setChatroomResearch(true)
-    sess.setChatroomResearchMode('auto')
+    const hub = manualHub(e, 'auto')
 
-    const pending = newPendingPermission({ requestID: 'req-1' })
+    const { pending, settled } = parkedAsk(e, p, hub, [{
+      id: 'q', question: '继续吗', header: '', options: [{ label: '继续', description: '' }], multiSelect: false,
+    }])
     const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.js')
-    armResearchManualAskTimeout(e, p, hub, 'ctx', pending, 0)
+    armResearchManualAskTimeout(e, p, hub, 'ctx', pending)
     await new Promise((resolve) => { setTimeout(resolve, 150) })
-    expect(pending.autoFired).toBeUndefined()
+    expect(settled).toHaveLength(0)
   })
 
   it('stops the timer when the user resolves first', async () => {
     chatroomResearchManualAskTimeout.ms = 50
     const p = createStubCardPlatformFull('test')
     const e = newChatroomTestEngine(p)
-    const hub = 'test:hub-chat:user-1'
-    const sess = e.sessions.getOrCreateActive(hub)
-    sess.setChatroomModerator(true)
-    sess.setChatroomResearch(true)
-    sess.setChatroomResearchMode('manual')
+    const hub = manualHub(e)
 
-    const pending = newPendingPermission({ requestID: 'req-1' })
-    const rec = newControllableSession('rec')
-    const state = new InteractiveState()
-    state.agentSession = rec
-    state.platform = p
-    e.interactiveStates.set(hub, state)
+    const { pending, settled } = parkedAsk(e, p, hub, [{
+      id: 'q', question: '继续吗', header: '', options: [{ label: '继续', description: '' }], multiSelect: false,
+    }])
 
     const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.js')
-    armResearchManualAskTimeout(e, p, hub, 'ctx', pending, 0)
-    pending.resolve() // user answered before the timer fired
+    armResearchManualAskTimeout(e, p, hub, 'ctx', pending)
+    // User answered before the timer fired: mirror the engine's settle, which
+    // clears the parked ask and the timer.
+    pending.resolve({ answers: [{ id: 'q', selected: ['继续'] }] })
+    if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
+    e.interactiveStates.get(hub)!.pendingAsk = undefined
     await new Promise((resolve) => { setTimeout(resolve, 150) })
-    expect(rec.permResponses).toHaveLength(0)
+    expect(settled).toHaveLength(1)
   })
 })
 

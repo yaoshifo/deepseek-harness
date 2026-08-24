@@ -87,7 +87,7 @@ describe('orphan turn pump', () => {
     expect(session.lastResult).toBe('subagent report summary')
   })
 
-  it('bridges an orphan turn permission request and shields it from the reaper', async () => {
+  it('bridges an orphan turn ask and shields it from the reaper', async () => {
     const agentSession = resultSession('s1', 'turn 1 done')
     const agent = createControllableAgent(agentSession)
     const { e, p } = newEngine(agent)
@@ -99,27 +99,26 @@ describe('orphan turn pump', () => {
     expect(session.lastResult).toBe('turn 1 done')
     p.clearSent()
 
-    // The parked ExitPlanMode-style permission (oc_9956 incident): the orphan
-    // pump must surface it as a pending permission, not drop it silently.
-    agentSession.channel.push({
-      type: 'permission_request', requestID: 'req-orphan', toolName: 'write',
-      toolInput: '/tmp/x', content: '', done: false,
-    })
-    await waitFor(() => e.interactiveStates.get(sessionKey)?.pending !== undefined)
+    // The parked approval (oc_9956 incident): the native answerer asks while
+    // no message pump is alive; the delegate must surface it as a parked ask,
+    // not drop it silently.
+    const decision = e.askUser(sessionKey, { kind: 'permission', toolName: 'write', preview: '/tmp/x' })
+    await waitFor(() => e.interactiveStates.get(sessionKey)?.pendingAsk !== undefined)
 
     const state = e.interactiveStates.get(sessionKey)
-    expect(state?.pending?.requestID).toBe('req-orphan')
-    expect(state?.pending?.toolName).toBe('write')
+    expect(state?.pendingAsk?.request.kind).toBe('permission')
     expect(p.getSent().join('\n')).toContain('write')
 
-    // The parked permission must not be reaped away with the session.
+    // The parked ask must not be reaped away with the session.
     e.interactiveIdleTimeout = 1
     await new Promise((r) => { setTimeout(r, 20) })
     e.reapIdleInteractiveStates()
     expect(e.interactiveStates.get(sessionKey)).toBeDefined()
 
-    // Unblock the parked orphan pump so the test session settles.
-    state?.pending?.resolve()
+    // The decision settles; the turn continues and its result still reaches
+    // the chat through the orphan watch.
+    state?.pendingAsk?.resolve({ outcome: 'allowed-once' })
+    await decision
     agentSession.channel.push({ type: 'result', content: 'post-approval reply', done: true })
     await waitFor(() => session.lastResult === 'post-approval reply')
   })

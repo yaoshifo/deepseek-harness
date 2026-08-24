@@ -38,9 +38,10 @@ import { appendFileRefs, saveFilesToDisk, saveImagesToDisk } from '../engine/att
 import type {
   AgentSession,
   AgentSessionInfo,
+  AskDelegate,
+  AskDecision,
   FileAttachment,
   ImageAttachment,
-  PermissionResult,
   ProviderConfig,
 } from '../core/types.js'
 
@@ -406,6 +407,18 @@ export class DshAgentAdapter {
   private readonly disposers: Array<() => void> = []
   /** Whether the userQuestions provider has been registered (lazy, M3). */
   private uqRegistered = false
+  /** Engine-side ask delegate (B2): renders ask cards and awaits decisions. */
+  private askDelegate: AskDelegate | undefined
+
+  /**
+   * Inject the engine-side ask delegate the native approval answerer and
+   * userQuestions provider route through (B2). Assembly wires it right after
+   * the Engine is constructed; without it native asks fail closed.
+   * @param d - The engine's ask surface.
+   */
+  setAskDelegate(d: AskDelegate): void {
+    this.askDelegate = d
+  }
 
   constructor(ctx: DshContextLike, cfg: DshAdapterConfig) {
     this.ctx = ctx
@@ -433,11 +446,20 @@ export class DshAgentAdapter {
       if (target !== undefined) target.markDisposed()
     }
     this.disposers.push(ctx.on('agent/disposed', onAgentDisposed))
-    // M3: Register the approval answerer. When dsh asks for tool permission,
-    // emit a permission_request event into the engine's EventChannel and wait
-    // for the engine's handlePendingPermission to call respondPermission.
-    this.disposers.push(ctx.on('approval/request', async (req: never, _next: never): Promise<string> => {
-      const r = req as { agent?: { session?: { id?: string } }; toolName?: string; callId?: string; reason?: string; signal?: AbortSignal }
+    // B2: the approval answerer. When dsh asks for tool permission, delegate
+    // "render one card and await the decision" to the engine's askUser and
+    // return the decision as the native ApprovalAnswer — the note rides the
+    // approval/decided audit pair and the tools layer folds it into the
+    // rejection text.
+    this.disposers.push(ctx.on('approval/request', async (req: never, _next: never): Promise<string | AskDecision> => {
+      const r = req as {
+        agent?: { session?: { id?: string } }
+        toolName?: string
+        callId?: string
+        reason?: string
+        toolInput?: string
+        signal?: AbortSignal
+      }
       const sessionID = r.agent?.session?.id ?? ''
       const target = this.liveSessions.get(sessionID)
       if (target === undefined) return 'unavailable'
@@ -445,16 +467,18 @@ export class DshAgentAdapter {
       // (AskUserQuestion / ExitPlanMode) ride the separate userQuestions
       // channel and still surface as cards (#15).
       if (target.bypassPermissions) return 'allowed-once'
-      const requestID = r.callId ?? sessionID
-      const toolInputRaw = r.reason !== undefined ? { reason: r.reason } : {}
-      target.emitPermissionRequest({
-        requestID,
+      if (this.askDelegate === undefined) return 'unavailable'
+      const decision = await this.askDelegate.askUser(target.sessionKey(), {
+        kind: 'permission',
         toolName: r.toolName ?? '',
-        toolInput: r.reason ?? '',
-        toolInputRaw,
-      })
-      const decision = await target.awaitPermissionResponse(requestID, r.signal)
-      return decision.outcome
+        // The asker's bounded UI preview (ApprovalRequest.toolInput) wins;
+        // the reason is the fallback.
+        preview: r.toolInput !== undefined && r.toolInput !== '' ? r.toolInput : (r.reason ?? ''),
+      }, r.signal)
+      if (decision.outcome === undefined) return 'cancelled'
+      return decision.note !== undefined && decision.note !== ''
+        ? { outcome: decision.outcome, note: decision.note }
+        : decision.outcome
     }))
   }
 
@@ -497,7 +521,10 @@ export class DshAgentAdapter {
   }
 
   /**
-   * Handle one userQuestions ask for a session owned by this adapter.
+   * Handle one userQuestions ask for a session owned by this adapter:
+   * delegate "render one card and await the decision" to the engine's
+   * askUser and map the decision onto the native answer structure —
+   * selections in `selected`, free text in `custom`.
    *
    * @param request - The ask request carrying the agent session id.
    * @returns The answer result, or undefined when no live session of this
@@ -509,40 +536,79 @@ export class DshAgentAdapter {
     if (target === undefined) return undefined
     const qs = request.questions as RawAskQuestionItem[]
     // Plan-review asks (exit_plan_mode) are permission decisions, not
-    // option menus: route them through the ExitPlanMode plan card and
-    // map the allow/deny verdict back to answer semantics (Go
-    // planReviewItem).
+    // option menus: route them through the plan card + permission card and
+    // map the verdict back to answer semantics (Go planReviewItem).
     const review = qs.find(q => q.intent?.kind === 'plan-review')
     if (review !== undefined) {
-      return target.answerPlanReview(review, request.signal)
+      return this.answerPlanReview(target, review, request.signal)
     }
-    const requestID = `askq-${Date.now()}`
-    const questions = qs.map(q => ({
-      question: q.question,
-      header: q.header ?? '',
-      options: (q.options ?? []).map(o => ({
-        label: o.label, description: o.description ?? '',
+    if (this.askDelegate === undefined) return { answers: [] }
+    const decision = await this.askDelegate.askUser(target.sessionKey(), {
+      kind: 'questions',
+      questions: qs.map(q => ({
+        id: q.id ?? q.question,
+        question: q.question,
+        header: q.header ?? '',
+        options: (q.options ?? []).map(o => ({
+          label: o.label, description: o.description ?? '',
+        })),
+        multiSelect: q.multiSelect ?? false,
       })),
-      multiSelect: q.multiSelect ?? false,
-    }))
-    target.emitPermissionRequest({
-      requestID,
-      toolName: 'AskUserQuestion',
-      toolInput: '',
-      toolInputRaw: { questions },
-    })
-    // Await the ANSWER TEXT (not the approval outcome): the engine's
-    // handlePendingPermission stores the collected answers and settles
-    // them through awaitPermissionResponse as the answer string for
-    // AskUserQuestion flows.
-    const answer = await target.awaitQuestionAnswer(
-      requestID, request.signal, qs.length,
-    )
-    const items = qs.map((q, i) => ({
-      id: q.id ?? q.question,
-      selected: [answer[i] ?? ''],
-    }))
-    return { answers: items }
+    }, request.signal)
+    return { answers: decision.answers ?? [] }
+  }
+
+  /**
+   * Answer a plan-review ask: render it as the plan card plus the
+   * permission card — the card heading is the plan's first line, falling
+   * back to the question — then map the user's verdict to answer semantics.
+   * Allow selects the intent's approve label; deny declines with the note as
+   * feedback so the model keeps planning (Go planReviewItem). An allow-side
+   * note is the user's supplement to the approved plan: it cannot ride in
+   * the answer (plan-mode treats any `custom` as keep-planning feedback), so
+   * it is steered as a user message consumed at the next step boundary,
+   * right after the approval tool result.
+   *
+   * @param target - The live session the plan review belongs to.
+   * @param item - The plan-review ask rendered onto the plan card.
+   * @param signal - Abort; settles as a deny with no feedback message.
+   * @returns The ask result with the approved or declined answer selected.
+   */
+  private async answerPlanReview(
+    target: DshAgentSession, item: RawAskQuestionItem, signal?: AbortSignal,
+  ): Promise<UserQuestionsAskResult> {
+    const plan = item.detail ?? ''
+    let heading = item.question
+    const newline = plan.indexOf('\n')
+    if (newline > 0) heading = plan.slice(0, newline).trim()
+    if (this.askDelegate === undefined) {
+      return { answers: [{ id: item.id ?? item.question, selected: [], custom: '' }] }
+    }
+    const decision = await this.askDelegate.askUser(target.sessionKey(), {
+      kind: 'plan-review',
+      heading,
+      plan,
+    }, signal)
+    const approve = item.intent?.approve ?? ''
+    if (decision.outcome === 'allowed-once' || decision.outcome === 'allowed-always') {
+      const supplement = (decision.note ?? '').trim()
+      if (supplement !== '') target.steer(supplement)
+      return {
+        answers: [{
+          id: item.id ?? item.question,
+          selected: [approve !== '' ? approve : 'Approve'],
+        }],
+      }
+    }
+    // A cancelled/withdrawn review declines without feedback.
+    const feedback = decision.outcome === 'rejected' ? (decision.note ?? '') : ''
+    return {
+      answers: [{
+        id: item.id ?? item.question,
+        selected: [],
+        custom: feedback,
+      }],
+    }
   }
 
   /**
@@ -1274,10 +1340,6 @@ export class DshAgentSession implements AgentSession {
   private turnSteps = 0
   /** Last-activity timestamp (ms), updated on send and every projected event. */
   lastActivityAt = Date.now()
-  /** Pending permission responses: requestID → settle function (M3). */
-  private readonly pendingPermissions = new Map<string, (decision: { outcome: string; behavior: 'allow' | 'deny'; message?: string }) => void>()
-  /** Pending AskUserQuestion answers: requestID → settle + count (M3). */
-  private readonly pendingQuestionAnswers = new Map<string, { settle: (answers: string[]) => void; count: number }>()
   /** Where Send stages image/file bytes (Go dshSession.workDir). */
   private readonly workDir: string
   /** Auto-approve tool permissions (Go permMode bypassPermissions / autoApprove). */
@@ -1369,150 +1431,6 @@ export class DshAgentSession implements AgentSession {
       content: [{ type: 'text', text: prompt }],
       source: { kind: 'user' },
     }))
-  }
-
-  /**
-   * Emit a permission_request event into the engine's EventChannel (M3).
-   * The engine's event loop receives it, sends a permission card, and waits.
-   * The approval answerer awaits {@link awaitPermissionResponse}.
-   *
-   * @param req - the permission request fields forwarded onto the event stream.
-   */
-  emitPermissionRequest(req: { requestID: string; toolName: string; toolInput: string; toolInputRaw: Record<string, unknown> }): void {
-    this.channel.push({
-      type: 'permission_request',
-      content: '',
-      toolName: req.toolName,
-      toolInput: req.toolInput,
-      toolInputRaw: req.toolInputRaw,
-      requestID: req.requestID,
-      done: false,
-    })
-  }
-
-  /**
-   * Wait for the engine to call {@link respondPermission} with the user's
-   * decision (M3). Returns the decision as both the dsh approval outcome
-   * string and the raw verdict the plan-review mapping reads.
-   *
-   * @param requestID - the id matching the emitted permission_request event.
-   * @param signal - abort; settles as a cancelled/deny decision.
-   * @returns the user's decision as a dsh outcome string plus the allow/deny verdict.
-   */
-  awaitPermissionResponse(requestID: string, signal?: AbortSignal): Promise<{ outcome: string; behavior: 'allow' | 'deny'; message?: string }> {
-    return new Promise((resolve) => {
-      const settle = (decision: { outcome: string; behavior: 'allow' | 'deny'; message?: string }): void => {
-        this.pendingPermissions.delete(requestID)
-        resolve(decision)
-      }
-      this.pendingPermissions.set(requestID, settle)
-      if (signal !== undefined) {
-        signal.addEventListener('abort', () => { settle({ outcome: 'cancelled', behavior: 'deny' }) }, { once: true })
-      }
-    })
-  }
-
-  /**
-   * Answer a plan-review ask (M3): render it as the ExitPlanMode permission
-   * card — the card heading is the plan's first line, falling back to the
-   * question — then map the user's verdict to answer semantics. Allow
-   * selects the intent's approve label; deny declines with the deny message
-   * as feedback so the model keeps planning (Go planReviewItem +
-   * RespondPermission). An allow-side note is the user's supplement to the
-   * approved plan: it cannot ride in the answer (plan-mode treats any
-   * `custom` as keep-planning feedback), so it is steered as a user message
-   * consumed at the next step boundary, right after the approval tool
-   * result.
-   *
-   * @param item - the plan-review ask rendered onto the ExitPlanMode card.
-   * @param signal - abort; settles as a deny with no feedback message.
-   * @returns the ask result with the approved or declined answer selected.
-   */
-  answerPlanReview(item: RawAskQuestionItem, signal?: AbortSignal): Promise<UserQuestionsAskResult> {
-    const plan = item.detail ?? ''
-    let heading = item.question
-    const newline = plan.indexOf('\n')
-    if (newline > 0) heading = plan.slice(0, newline).trim()
-    const requestID = `askq-${Date.now()}`
-    this.emitPermissionRequest({
-      requestID,
-      toolName: 'ExitPlanMode',
-      toolInput: heading,
-      toolInputRaw: { plan },
-    })
-    const approve = item.intent?.approve ?? ''
-    return this.awaitPermissionResponse(requestID, signal).then((decision) => {
-      const supplement = decision.behavior === 'allow' ? (decision.message ?? '').trim() : ''
-      if (supplement !== '') this.steer(supplement)
-      return {
-        answers: [{
-          id: item.id ?? item.question,
-          ...(decision.behavior === 'allow'
-            ? { selected: [approve !== '' ? approve : 'Approve'] }
-            : { selected: [], custom: decision.message ?? '' }),
-        }],
-      }
-    })
-  }
-
-  /**
-   * Wait for the engine to deliver AskUserQuestion answers (M3). The
-   * engine's handlePendingPermission collects answers per question index
-   * and delivers them here as one array; entries stay empty strings until
-   * collected. Returns exactly `count` answer strings in question order.
-   *
-   * @param requestID - the id of the pending question request.
-   * @param signal - abort; settles with empty answers.
-   * @param count - the number of questions whose answers to wait for.
-   * @returns the collected answer strings, in question order.
-   */
-  awaitQuestionAnswer(requestID: string, signal: AbortSignal | undefined, count: number): Promise<string[]> {
-    return new Promise((resolve) => {
-      const settle = (answers: string[]): void => {
-        this.pendingQuestionAnswers.delete(requestID)
-        resolve(answers)
-      }
-      this.pendingQuestionAnswers.set(requestID, { settle, count })
-      if (signal !== undefined) {
-        signal.addEventListener('abort', () => { settle(new Array<string>(count).fill('')) }, { once: true })
-      }
-    })
-  }
-
-  /**
-   * Deliver collected AskUserQuestion answers for a pending request (M3).
-   *
-   * @param requestID - the id of the pending request to settle.
-   * @param answers - the collected answer strings.
-   */
-  deliverQuestionAnswers(requestID: string, answers: string[]): void {
-    const entry = this.pendingQuestionAnswers.get(requestID)
-    if (entry !== undefined) {
-      entry.settle(answers)
-    }
-  }
-
-  /**
-   * Resolve a pending permission request with the user's decision (M3).
-   * Called by the engine's handlePendingPermission after the user responds.
-   */
-  respondPermission(requestID: string, result: PermissionResult): Promise<void> {
-    const settle = this.pendingPermissions.get(requestID)
-    if (settle !== undefined) {
-      const behavior = result.behavior === 'allow' ? 'allow' as const : 'deny' as const
-      settle({
-        outcome: behavior === 'allow' ? 'allowed-once' : 'rejected',
-        behavior,
-        ...(result.message !== undefined ? { message: result.message } : {}),
-      })
-    }
-    // AskUserQuestion flows ride the same request id: deliver the updated
-    // input's answers so the question waiter (if any) also settles.
-    const answers = (result.updatedInput?.answers) as Record<string, string> | undefined
-    if (answers !== undefined) {
-      this.deliverQuestionAnswers(requestID, Object.values(answers))
-    }
-    return Promise.resolve()
   }
 
   events(): EventChannel {
