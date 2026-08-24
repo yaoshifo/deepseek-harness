@@ -9,9 +9,11 @@
 
 import { homedir } from 'node:os'
 import { mkdirSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import type { Context } from '@deepseek-ai/cordis'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import type { Context, Fiber } from '@deepseek-ai/cordis'
 import type { SkillRegistry } from '@deepseek-ai/dsh-skill'
+import * as SkillFileSystem from '@deepseek-ai/dsh-skill-filesystem'
 // Type-only: pulls the 'subagent/end' event-map declaration merging the
 // settlement listener types against (the runtime itself is mounted by
 // dsh-base, not here).
@@ -65,6 +67,8 @@ export interface FeishuAppConfig {
   appId: string
   /** Feishu open-platform app secret. */
   appSecret: string
+  /** Session-key prefix and platform name; unique per project in multi-bot deployments (Go tag). */
+  tag?: string
   /** Comma-separated user IDs allowed to talk to this bot; '*' or '' = everyone (Go allow_from). */
   allowFrom?: string
   /** Only answer group chats, drop p2p messages (Go group_only). */
@@ -500,6 +504,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     feishu: Schema.object({
       appId: Schema.string().required().description('Feishu app id'),
       appSecret: Schema.string().required().role('secret').description('Feishu app secret'),
+      tag: Schema.string().description('Session-key prefix and platform name; unique per project in multi-bot deployments'),
       allowFrom: Schema.string().description('Comma-separated user allowlist; * or empty = everyone'),
       groupOnly: Schema.boolean().description('Only answer group chats (drop p2p)'),
       shareSessionInChannel: Schema.boolean().description('One session per chat instead of per user+chat'),
@@ -698,6 +703,28 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
 })
 
 /**
+ * Mount the package-bundled `skills/` directory as an isolated skill
+ * provider, so deployments get the bridge skills without hand-wiring
+ * `customSkillDirs` (an omission observed on the dev server). The isolated
+ * provider sees only its explicit root — project `.dsh/skills` entries keep
+ * their lower rank and still override bundled names.
+ * @param ctx - Plugin context; the `skills` service is provided by the host
+ *   composition (dsh-base), not mounted here.
+ * @returns The mounted plugin fiber; disposing it unregisters the provider.
+ */
+export function mountBundledSkills(ctx: Context): Fiber {
+  // Package-relative on purpose: both source runs (src/) and the bundled
+  // lib/index.js sit one level below the package root, and per-deployment
+  // profile paths cannot express this directory portably.
+  const skillsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills')
+  return ctx.plugin(SkillFileSystem, {
+    providerName: 'feishu-bridge-skills',
+    includeDefaultRoots: false,
+    customSkillDirs: [skillsDir],
+  })
+}
+
+/**
  * Start the bridge: one Engine + one Feishu WS platform per configured
  * project (MIGRATION.md §1), plus the process-wide feishu_bridge_subtask /
  * feishu_bridge_cron / feishu_bridge_relay tools routed by caller agent
@@ -710,6 +737,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
  * @param config - Validated plugin config.
  */
 export function apply(ctx: Context, config: FeishuBridgeConfig): void {
+  mountBundledSkills(ctx)
   const dataRoot = config.dataDir ?? join(homedir(), '.dsh', 'feishu-bridge')
   // One dir history for every project (Go main shares NewDirHistory(cfg.DataDir)
   // across engines so /dir MRU entries land in a single store file).
@@ -975,6 +1003,7 @@ export function buildProjectAssembly(
   const platform = new FeishuPlatform({
     appID: project.feishu.appId,
     appSecret: project.feishu.appSecret,
+    ...(project.feishu.tag !== undefined ? { tag: project.feishu.tag } : {}),
     groupReplyAll: project.features?.allowChat === true,
     projectName: project.name,
     workDir: project.workdir,

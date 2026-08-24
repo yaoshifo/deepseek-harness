@@ -12,7 +12,7 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 | `src/feishu/` | Go `platform/feishu/` 移植：WS、API client、卡片、进度卡、群管理、标签、头像、媒体、引用消息抓取 |
 | `src/agent-dsh/` | Agent 接口 → `ctx.agents` 适配器（D1/D3：setup 钩子、provider 路由、审批/问题/plan 接线） |
 | `src/tools/` | `feishu_bridge_subtask / cron / relay / chatroom / lark / send` 工具族（D4：caller agent 路由，免 env） |
-| `skills/` | 桥接 skill（`feishu-bridge-` 前缀）与部署的工作风格 skill（`tdd`、`skillify`），经 profile `customSkillDirs` 加载 |
+| `skills/` | 桥接 skill（`feishu-bridge-` 前缀）与部署的工作风格 skill（`tdd`、`skillify`），由 `apply()` 自动挂载为独立 skill provider，无需配置 `customSkillDirs` |
 
 原生子任务（去包袱 B4）：profile 的 `dsh-base` bundle 挂 `SubagentRuntime`（`settlementNotice: 'external'`，经本 bundle patch 覆盖）与 in-process spawn/fork providers，`feishu_bridge_subtask` 的无人值守派发因此以原生 continuable 子会话运行——没有飞书群——世系、深度与冷恢复归原生运行时；引擎只保留父系记录（持久化于 project state、重启存活）与自己创建的 worktree。结算经 `subagent/end` 监听到达引擎：从未显式回报的子任务仍以群路径同款卡片 + `[子任务完成]` 唤醒投递其末条助手输出，追问的回答会重新武装该投递。`send` 排队到子任务当前轮之后（对 Go busy-reject 的刻意偏离），`interrupt` 停止当前轮而不销毁子任务，`/done` 与 chatroom end 排空原生后代（打断 + 干净 worktree 回收）。再显式挂 `dsh-subagent` 的 profile 会在 `subagents` 服务名上相撞——该服务归本桥所有。attended 群（`/spawn`、monitor 子群、chatroom 预派助手）保持群路径不变。
 

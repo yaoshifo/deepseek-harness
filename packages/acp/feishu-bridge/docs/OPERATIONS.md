@@ -73,6 +73,7 @@ Linux 部署面用 systemd user unit（§5）。
 | `[projects.platforms.options]` `allow_chat` | `config.projects[].features.allowChat` | |
 | `inject_sender` | `config.projects[].features.injectSender` | |
 | `[projects.platforms.options]` `app_id` / `app_secret` | `config.projects[].feishu.appId` / `.appSecret` | |
+| `[projects.platforms.options]` `tag` | `config.projects[].feishu.tag` | 平台名与 session-key 前缀，多 bot 部署每项目唯一（缺省 `feishu`）；改名即更换存量 session key，进行中会话与 cron 任务的 `session_key` 需随迁 |
 | `[projects.platforms.options]` `thread_isolation` | `config.projects[].feishu.threadIsolation` | 每条消息话题独立会话；默认关 |
 | `[projects.platforms.options]` `allow_from` / `group_only` / `group_reply_all` / `share_session_in_channel` / `reply_to_trigger` / `respond_to_at_everyone_and_here` / `enable_feishu_card` / `progress_style` / `active_tag_name` | `config.projects[].feishu.allowFrom` / `.groupOnly` / — / `.shareSessionInChannel` / `.replyToTrigger` / `.respondToAtEveryoneAndHere` / `.enableFeishuCard` / `.progressStyle` / `.activeTagName` | 2026-08-21 补齐接线（此前机制在但配置不可达）；`group_reply_all` 由 `features.allowChat` 承担；`resolve_mentions` 随 mention resolution 未移植 |
 | `dir_scan_paths` | `config.projects[].dirScanPaths` | /dir 子目录扫描建议列表 + 裸名解析（~ 展开；M7-d #3） |
