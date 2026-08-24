@@ -31,6 +31,7 @@ import {
   formatTokenK,
   formatTokenRate,
   formatTurnDuration,
+  parseMemoryPressureFreePct,
   parseSelfReportedCtx,
   replyFooterContextText,
   setCompletionDurations,
@@ -324,6 +325,18 @@ describe('formatMemInfo', () => {
     const got = formatMemInfo()
     expect(got).toMatch(/^RAM: \d+%/)
     expect(got).toMatch(/Disk: \d+%(❗)?$/)
+  })
+})
+
+describe('parseMemoryPressureFreePct', () => {
+  it('reads the free percentage line from memory_pressure -Q output', () => {
+    const out = 'The system has 25769803776 bytes (1572864 pages).\n'
+      + 'System-wide memory free percentage: 37%\n'
+    expect(parseMemoryPressureFreePct(out)).toBe(37)
+  })
+
+  it('returns null when the line is absent', () => {
+    expect(parseMemoryPressureFreePct('memory_pressure: operation not permitted\n')).toBeNull()
   })
 })
 

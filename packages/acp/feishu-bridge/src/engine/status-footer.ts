@@ -10,7 +10,7 @@
  * @module dsh-feishu-bridge/engine-status-footer
  */
 
-import { execFile } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { statfsSync } from 'node:fs'
 import { homedir, totalmem, freemem } from 'node:os'
 import { basename } from 'node:path'
@@ -261,19 +261,52 @@ export function stripCtxSelfReport(s: string): string {
 // ── RAM / disk / git ───────────────────────────────────────────────────────
 
 /**
+ * Parse `memory_pressure -Q` output for its "System-wide memory free
+ * percentage: N%" line (Go-free darwin counterpart to reading /proc/meminfo).
+ *
+ * @param out - Full stdout of `memory_pressure -Q`.
+ * @returns The free-memory percentage, or null when the line is absent.
+ */
+export function parseMemoryPressureFreePct(out: string): number | null {
+  const m = /System-wide memory free percentage:\s*(\d+)/.exec(out)
+  return m === null ? null : Number.parseInt(m[1] ?? '0', 10)
+}
+
+/**
+ * System RAM used percentage on darwin via `memory_pressure -Q`.
+ *
+ * @returns The used percentage, or null when the binary is missing or its
+ *   output is unparseable, leaving the caller on the `total - freemem` path.
+ */
+function darwinMemUsedPct(): number | null {
+  try {
+    const out = execFileSync('memory_pressure', ['-Q'], { encoding: 'utf8' })
+    const freePct = parseMemoryPressureFreePct(out)
+    return freePct === null ? null : 100 - freePct
+  } catch {
+    // memory_pressure missing or failed; the caller falls back to totalmem/freemem.
+    return null
+  }
+}
+
+/**
  * "RAM: N%[❗] · Disk: M%[❗]" (Go formatMemInfo). Go read /proc/meminfo and
- * therefore showed no RAM line on macOS; here os.totalmem/freemem keep the
- * RAM segment cross-platform — a deliberate divergence so the current macOS
- * deployment still gets the 💾 line.
+ * therefore showed no RAM line on macOS; here the RAM segment stays
+ * cross-platform — a deliberate divergence so the current macOS deployment
+ * still gets the 💾 line. On darwin the used percentage comes from
+ * `memory_pressure -Q`: `os.freemem()` there counts only truly free pages,
+ * excluding reclaimable inactive/speculative/purgeable/compressed pages that
+ * macOS deliberately keeps cached, so `total - freemem` sits near 100% and the
+ * ❗ warning never clears.
  *
  * @returns The usage line, with segments joined by " · "; '' when neither is available.
  */
 export function formatMemInfo(): string {
   const total = totalmem()
-  const used = total - freemem()
   const parts: string[] = []
   if (total > 0) {
-    const pct = Math.floor((used * 100) / total)
+    const usedPct = process.platform === 'darwin' ? darwinMemUsedPct() : null
+    const pct = usedPct ?? Math.floor(((total - freemem()) * 100) / total)
     parts.push(`RAM: ${pct}%${pct > 85 ? '❗' : ''}`)
   }
   try {
