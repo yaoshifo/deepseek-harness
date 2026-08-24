@@ -2,9 +2,9 @@
  * Session-lifecycle commands ported from cc-connect core/engine_cmd_session.go
  * and the /dir machinery in engine_cmd_workspace.go: /new /stop /sessions
  * (/list) /switch /status /dir (+/cd alias), plus the M4 spawn family
- * (/spawn /sp, /fork /fk, /done --reply). /dir renders the picker card on
- * card platforms (dir-card.ts) with a plain-text fallback; the other
- * commands stay plain text.
+ * (/spawn /sp, /fork /fk, /done --reply). /list, /status, /switch (no
+ * argument), and /dir render their picker cards on card platforms
+ * (session-card.ts / dir-card.ts) with plain-text fallbacks.
  *
  * @module dsh-feishu-bridge/commands
  */
@@ -30,6 +30,7 @@ import {
 import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName } from './groupname.js'
 import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.js'
 import { renderDirCardSafe } from './dir-card.js'
+import { renderListCardSafe, renderStatusCard } from './session-card.js'
 import { extractChannelID } from './engine.js'
 
 const listPageSize = 5
@@ -167,7 +168,8 @@ export function commandContext(e: Engine, _msg: Message): { agent: Engine['agent
 }
 
 /**
- * /list (/sessions): enumerate agent sessions, plain-text surface.
+ * /list (/sessions): enumerate agent sessions — the session picker card on
+ * card platforms (session-card.ts), the plain-text listing otherwise.
  * @param e - The engine owning the session state.
  * @param p - The platform that delivered the command.
  * @param msg - The triggering chat message.
@@ -175,6 +177,10 @@ export function commandContext(e: Engine, _msg: Message): { agent: Engine['agent
  */
 export async function cmdList(e: Engine, p: Platform, msg: Message, args?: string[]): Promise<void> {
   const argList = args ?? []
+  if (supportsCards(p)) {
+    await e.replyWithCard(p, msg.replyCtx, await renderListCardSafe(e, msg.sessionKey, pageArg(argList)))
+    return
+  }
   const { agent, sessions } = commandContext(e, msg)
   let agentSessions: AgentSessionInfo[]
   try {
@@ -191,13 +197,8 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
   }
 
   const total = agentSessions.length
-  const totalPages = Math.ceil(total / listPageSize)
-  let page = 1
-  if (argList.length > 0) {
-    const n = Number.parseInt(argList[0] ?? '', 10)
-    if (Number.isInteger(n) && n > 0) page = n
-  }
-  if (page > totalPages) page = totalPages
+  let page = pageArg(argList)
+  if (page > totalPages(total)) page = totalPages(total)
 
   const start = (page - 1) * listPageSize
   const end = Math.min(start + listPageSize, total)
@@ -208,8 +209,8 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
   const liveSessions = liveAgentSessionIDs(e)
 
   let sb = ''
-  if (totalPages > 1) {
-    sb += e.i18n.tf(Msg.ListTitlePaged, agentName, total, page, totalPages)
+  if (totalPages(total) > 1) {
+    sb += e.i18n.tf(Msg.ListTitlePaged, agentName, total, page, totalPages(total))
   } else {
     sb += e.i18n.tf(Msg.ListTitle, agentName, total)
   }
@@ -229,13 +230,24 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
     }
     sb += `${marker} **${i + 1}.** ${displayName} · **${s.messageCount}** msgs · ${formatModified(s.modifiedAt)}\n`
   }
-  if (totalPages > 1) sb += e.i18n.tf(Msg.ListPageHint, page, totalPages)
+  if (totalPages(total) > 1) sb += e.i18n.tf(Msg.ListPageHint, page, totalPages(total))
   sb += e.i18n.t(Msg.ListSwitchHint)
   await e.reply(p, msg.replyCtx, sb)
 }
 
+/** Page count for a session listing at the /list page size. */
+export function totalPages(total: number): number {
+  return Math.max(1, Math.ceil(total / listPageSize))
+}
+
+/** Parse a 1-based page argument ('' and invalid values fall back to 1). */
+export function pageArg(args: string[]): number {
+  const n = Number.parseInt(args[0] ?? '', 10)
+  return Number.isInteger(n) && n > 0 ? n : 1
+}
+
 /** Agent session IDs with a live process (for /list markers). */
-function liveAgentSessionIDs(e: Engine): Record<string, true> {
+export function liveAgentSessionIDs(e: Engine): Record<string, true> {
   const live: Record<string, true> = {}
   for (const state of e.interactiveStates.values()) {
     if (state.agentSession !== undefined && state.agentSession.alive()) {
@@ -247,10 +259,31 @@ function liveAgentSessionIDs(e: Engine): Record<string, true> {
 }
 
 /** Conditionally filter to cc-connect-owned sessions (Go applySessionFilter). */
-function applySessionFilter(e: Engine, sessions: AgentSessionInfo[], sm: SessionManager): AgentSessionInfo[] {
+export function applySessionFilter(e: Engine, sessions: AgentSessionInfo[], sm: SessionManager): AgentSessionInfo[] {
   return e.filterExternalSessions
     ? filterOwned(sessions, sm.knownAgentSessionIDs())
     : sessions
+}
+
+/**
+ * The filtered, enriched session listing shared by the /list text surface,
+ * the session picker card, and the delete-mode card (Go
+ * applySessionFilter + enrichSessionSummaries over agent.ListSessions).
+ * @param e - The engine owning the session state.
+ * @param sessionKey - Session key whose chat the listing is rendered for.
+ * @returns The enriched sessions, or undefined when listing fails.
+ */
+export async function collectAgentSessions(e: Engine, sessionKey: string): Promise<AgentSessionInfo[] | undefined> {
+  const { agent, sessions } = commandContext(e, { sessionKey } as Message)
+  let agentSessions: AgentSessionInfo[]
+  try {
+    agentSessions = await agent.listSessions()
+  } catch {
+    return undefined
+  }
+  const filtered = applySessionFilter(e, agentSessions, sessions)
+  enrichSessionSummaries(sessions, filtered)
+  return filtered
 }
 
 function filterOwned(sessions: AgentSessionInfo[], known: Record<string, true> | null): AgentSessionInfo[] {
@@ -281,7 +314,7 @@ function enrichSessionSummaries(sessions: SessionManager, agentSessions: AgentSe
   }
 }
 
-function formatModified(ts: number): string {
+export function formatModified(ts: number): string {
   const d = new Date(ts)
   const pad = (n: number): string => String(n).padStart(2, '0')
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
@@ -296,6 +329,13 @@ function formatModified(ts: number): string {
  */
 export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (args.length === 0) {
+    // No selector: on card platforms the session list card doubles as the
+    // picker (one row button per session, Go cmdSwitch's card branch); text
+    // platforms keep the usage hint.
+    if (supportsCards(p)) {
+      await e.replyWithCard(p, msg.replyCtx, await renderListCardSafe(e, msg.sessionKey, 1))
+      return
+    }
     await e.reply(p, msg.replyCtx, 'Usage: /switch <number | id_prefix | name>')
     return
   }
@@ -421,6 +461,21 @@ export async function cmdHint(e: Engine, p: Platform, msg: Message): Promise<voi
  * @param msg - The triggering chat message.
  */
 export async function cmdStatus(e: Engine, p: Platform, msg: Message): Promise<void> {
+  if (supportsCards(p)) {
+    await e.replyWithCard(p, msg.replyCtx, renderStatusCard(e, msg.sessionKey, msg.userID))
+    return
+  }
+  await e.reply(p, msg.replyCtx, statusText(e, msg))
+}
+
+/**
+ * Assemble the full /status text (Go cmdStatus body), shared by the plain
+ * text reply and the status card's splitCardTitleBody rendering.
+ * @param e - The engine whose state is reported.
+ * @param msg - The triggering message (session key and user ID are read).
+ * @returns The formatted status text.
+ */
+export function statusText(e: Engine, msg: Message): string {
   const { agent, sessions } = commandContext(e, msg)
   const platNames = e.platforms.map(pl => pl.name())
   const platformStr = platNames.length === 0 ? '-' : platNames.join(', ')
@@ -465,9 +520,9 @@ export async function cmdStatus(e: Engine, p: Platform, msg: Message): Promise<v
   let userIDStr = ''
   if (msg.userID !== '') userIDStr = e.i18n.tf(Msg.StatusUserID, msg.userID)
 
-  await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.StatusTitle,
+  return e.i18n.tf(Msg.StatusTitle,
     e.name, agent.name(), workDirStr, platformStr, uptimeStr, langStr,
-    modeStr, sessionStr, cronStr, sessionKeyStr, agentSIDStr, userIDStr, ''))
+    modeStr, sessionStr, cronStr, sessionKeyStr, agentSIDStr, userIDStr, '')
 }
 
 function formatUptime(ms: number): string {

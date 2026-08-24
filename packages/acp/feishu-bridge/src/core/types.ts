@@ -387,6 +387,16 @@ export interface SessionCompressor {
   compress(signal?: AbortSignal): Promise<void>
 }
 
+/**
+ * Optional: agent can delete one of its persisted sessions (Go
+ * SessionDeleter). The dsh adapter does not implement it — the native
+ * sessionPersistence service is append-only — so deletion falls back to the
+ * bridge's own ledger until a native delete surface exists.
+ */
+export interface SessionDeleter {
+  deleteSession(sessionID: string): Promise<void>
+}
+
 /** Optional: agent accepts per-session env vars (CC_PROJECT, …). */
 export interface SessionEnvInjector {
   setSessionEnv(env: string[]): void
@@ -1140,6 +1150,16 @@ export function asSessionCompressor(s: AgentSession | undefined): SessionCompres
   return s !== undefined && typeof (s as Partial<SessionCompressor>).compress === 'function'
     ? s as AgentSession & SessionCompressor
     : undefined
+}
+
+/**
+ * Structural check for the {@link SessionDeleter} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asSessionDeleter(a: Agent): SessionDeleter | undefined {
+  return withMethod<SessionDeleter>(a, 'deleteSession')
 }
 
 /**

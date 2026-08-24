@@ -134,7 +134,9 @@ import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
 import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
-import { commandContext, dirApply } from './commands.js'
+import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.js'
+import { renderHelpGroupCard } from './misc-commands.js'
+import { executeDeleteModeAction, renderDeleteModeCard, renderListCardSafe, renderStatusCard } from './session-card.js'
 import { runBangShell } from './shell-commands.js'
 import { renderDirCardSafe } from './dir-card.js'
 import { executeCardAction } from './cron-commands.js'
@@ -339,6 +341,8 @@ export class InteractiveState {
   preview: StreamPreview | undefined
   /** The turn's compact progress writer; an ask resolution swaps it with the preview. */
   progressWriter: CompactProgressWriter | undefined
+  /** The delete-mode picker state machine (session-card.ts); undefined when idle. */
+  deleteMode: import('./session-card.js').DeleteModeState | undefined
 
   // ── turn surfaces shared with the ask delegate (B2) ──
   // The event loop owns these per turn, but an askUser running from the
@@ -571,6 +575,16 @@ export function extractChannelID(sessionKey: string): string {
   const parts = sessionKey.split(':')
   if (parts.length >= 2) return parts[1] ?? ''
   return ''
+}
+
+/**
+ * Parse a 1-based card page argument ('' and invalid values fall back to 1).
+ * @param args - Raw card-action argument text.
+ * @returns The positive integer it names, or 1.
+ */
+function parsePositiveInt(args: string): number {
+  const n = Number.parseInt(args, 10)
+  return Number.isInteger(n) && n > 0 ? n : 1
 }
 
 /**
@@ -6577,6 +6591,57 @@ export class Engine {
       return
     }
 
+    if (cmd === '/help') {
+      const card = renderHelpGroupCard(this, args)
+      await this.refreshOrReplyCard(p, msg, card)
+      return
+    }
+
+    if (cmd === '/list') {
+      const page = parsePositiveInt(args)
+      await this.refreshOrReplyCard(p, msg, await renderListCardSafe(this, msg.sessionKey, page))
+      return
+    }
+
+    if (cmd === '/status') {
+      await this.refreshOrReplyCard(p, msg, renderStatusCard(this, msg.sessionKey, msg.userID))
+      return
+    }
+
+    if (cmd === '/switch') {
+      // act:/switch runs the session swap (Go executeCardAction's "/switch"
+      // case: cleanup interactive state, switch, clear history), then
+      // re-renders the list card; nav:/switch just shows the picker.
+      if (prefix === 'act' && args !== '') {
+        const { agent, sessions, interactiveKey } = commandContext(this, msg)
+        const agentSessions = await collectAgentSessions(this, msg.sessionKey)
+        const matched = agentSessions === undefined ? undefined : matchSession(agentSessions, sessions, args)
+        if (matched !== undefined) {
+          this.stopInteractiveSession(interactiveKey)
+          const session = sessions.switchToAgentSession(msg.sessionKey, matched.id, agent.name(), matched.summary)
+          session.clearHistory()
+        } else {
+          console.info(`engine: switch card action matched no session (${msg.sessionKey}: ${args})`)
+        }
+      }
+      await this.refreshOrReplyCard(p, msg, await renderListCardSafe(this, msg.sessionKey, 1))
+      return
+    }
+
+    if (cmd === '/delete-mode') {
+      // Every action runs the state machine first, then re-renders the
+      // phase's card; cancel clears the picker, so the missing card falls
+      // back to the session list (Go handleCardNav's "/delete-mode" routes).
+      if (prefix === 'act') executeDeleteModeAction(this, msg.sessionKey, args, p, msg.replyCtx)
+      const card = await renderDeleteModeCard(this, msg.sessionKey)
+      if (card !== undefined) {
+        await this.refreshOrReplyCard(p, msg, card)
+        return
+      }
+      await this.refreshOrReplyCard(p, msg, await renderListCardSafe(this, msg.sessionKey, 1))
+      return
+    }
+
     if (cmd === '/dir') {
       // act:/dir switches first (select N / reset / prev, Go executeCardAction
       // mapping); nav:/dir only turns the page.
@@ -6657,6 +6722,27 @@ export class Engine {
     }
     const notification = await this.executeWorktreeAction(msg.sessionKey, args)
     const card = this.renderWorktreeDoneCard(args, notification)
+    const refresher = asCardRefresher(p)
+    if (refresher !== undefined) {
+      try {
+        await refresher.refreshCard(msg.sessionKey, card)
+        return
+      } catch (error) {
+        console.warn(`engine: card refresh failed, sending a new card (${msg.sessionKey}): ${String(error)}`)
+      }
+    }
+    await this.replyWithCard(p, msg.replyCtx, card)
+  }
+
+  /**
+   * PATCH the card a card-action callback arrived on in place, falling back
+   * to sending a new card when the platform cannot refresh (the pattern
+   * every handleCardAction branch shares).
+   * @param p - Platform the card action arrived on.
+   * @param msg - The card-action message addressing the chat.
+   * @param card - The replacement card.
+   */
+  private async refreshOrReplyCard(p: Platform, msg: Message, card: Card): Promise<void> {
     const refresher = asCardRefresher(p)
     if (refresher !== undefined) {
       try {
