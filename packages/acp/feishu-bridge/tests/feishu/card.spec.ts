@@ -318,9 +318,22 @@ describe('buildPreviewCardJSON', () => {
     // preview-card pipeline.
     const reply = '**改动明细：**\n\n- item one\n\n- item two'
     const tool = '**10:00:01** <text_tag color=\'blue\'>bash</text_tag> · 1 🟢\n```text\ncmd\n---\nok\n```'
-    const content = `__cc_state__:completed\n__cc_ts__:10:00:05\n__cc_tc__:1\n${tool}\n${reply}`
-    const card = jParse(buildPreviewCardJSON(content, noSpinner))
+    const content = `${tool}\n${reply}`
+    const status = { state: 'completed' as const, ts: '10:00:05', toolCallSeq: 1 }
+    const card = jParse(buildPreviewCardJSON(content, noSpinner, status))
     const md = jStr(jObj(jArr(jObj(card.body).elements)[0]).content)
     expect(md).toContain('**改动明细：**\n\n- item one\n\n- item two')
+  })
+
+  it('renders the header title and color from the structured status', () => {
+    const card = jParse(buildPreviewCardJSON('body', noSpinner, { state: 'completed', ts: '10:00:05', toolCallSeq: 3 }))
+    expect(jStr(jObj(card.header).template)).toBe('green')
+    expect(jStr(jObj(jObj(card.header).title).content)).toBe('执行完成 · 10:00:05 · 3')
+  })
+
+  it('renders the running default without status', () => {
+    const card = jParse(buildPreviewCardJSON('body', noSpinner))
+    expect(jStr(jObj(card.header).template)).toBe('yellow')
+    expect(jStr(jObj(jObj(card.header).title).content)).toBe('执行中')
   })
 })

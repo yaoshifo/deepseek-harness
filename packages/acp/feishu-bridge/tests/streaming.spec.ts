@@ -22,8 +22,8 @@ import {
   type StreamPreviewCfg,
 } from '../src/streaming.js'
 import { newAsyncSender } from '../src/async-sender.js'
-import type { FileAttachment, Platform, ProgressContent } from '../src/core/types.js'
-import { previewText } from './stubs/preview-content.js'
+import type { FileAttachment, Platform, ProgressContent, TextPreviewContent } from '../src/core/types.js'
+import { previewText, statusOf } from './stubs/preview-content.js'
 import { createStubPlatform, type StubPlatform } from './stubs/engine-stubs.js'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
@@ -31,20 +31,26 @@ const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(r
 /** Go mockUpdaterPlatform: Platform + MessageUpdater + PreviewStarter, records messages. */
 interface RecorderPlatform extends StubPlatform {
   messages: string[]
+  /** Raw structured content per platform call, in order. */
+  contents: ProgressContent[]
   sendPreviewStart(rc: unknown, content: ProgressContent): Promise<unknown>
   updateMessage(rc: unknown, content: ProgressContent): Promise<void>
 }
 
 function createMockUpdaterPlatform(): RecorderPlatform {
   const messages: string[] = []
+  const contents: ProgressContent[] = []
   return Object.assign(createStubPlatform(), {
     messages,
+    contents,
     async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
       messages.push(`start:${previewText(content)}`)
+      contents.push(content)
       return 'preview-handle'
     },
     async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
       messages.push(`update:${previewText(content)}`)
+      contents.push(content)
     },
   })
 }
@@ -54,9 +60,7 @@ function createRaceUpdater(): ReturnType<typeof createMockUpdaterPlatform> {
   const p = createMockUpdaterPlatform()
   const inner = p.updateMessage.bind(p)
   p.updateMessage = async (rc: unknown, content: ProgressContent) => {
-    const completed = content.kind === 'text'
-      && (content.text.includes('__cc_state__:completed') || content.status?.state === 'completed')
-    if (!completed) await sleep(80)
+    if (statusOf(content)?.state !== 'completed') await sleep(80)
     await inner(rc, content)
   }
   return p
@@ -99,12 +103,12 @@ function createRaceStopRenderer(): ReturnType<typeof createMockStopRendererPlatf
   const p = createMockStopRendererPlatform()
   const inner = p.updateMessage.bind(p)
   p.updateMessage = async (rc: unknown, content: ProgressContent) => {
-    if (!previewText(content).includes('__cc_state__:stopped')) await sleep(80)
+    await sleep(80) // running PATCHes stay slow; the stopped render is fast
     await inner(rc, content)
   }
   const renderInner = p.renderStoppedCard.bind(p)
   p.renderStoppedCard = async (rc: unknown, previewMsgID: unknown) => {
-    p.messages.push('stopped:__cc_state__:stopped')
+    p.messages.push('stopped:card')
     await renderInner(rc, previewMsgID)
   }
   return p
@@ -366,8 +370,7 @@ describe('StreamPreview', () => {
       await as.barrier()
       await sp.markStoppedSync()
       await as.barrier()
-      const last = mp.messages[mp.messages.length - 1] ?? ''
-      expect(last).toContain('__cc_state__:failed')
+      expect(lastTextContent(mp)?.status?.state).toBe('failed')
     } finally {
       as.close()
     }
@@ -413,9 +416,10 @@ describe('StreamPreview', () => {
     await sleep(100)
     const ok = await sp.finish('Hello World Final')
     expect(ok).toBe(true)
-    const last = mp.messages[mp.messages.length - 1] ?? ''
-    expect(last.startsWith('update:__cc_state__:completed\n__cc_ts__:')).toBe(true)
-    expect(last.endsWith('\nHello World Final')).toBe(true)
+    const last = lastTextContent(mp)
+    expect(last?.status?.state).toBe('completed')
+    expect(last?.status?.ts).not.toBe('')
+    expect(last?.text).toBe('Hello World Final')
   })
 
   it('freeze + finish deletes the stale preview', async () => {
@@ -452,10 +456,10 @@ describe('StreamPreview', () => {
     const ok = await sp.finish('Hello World Final')
     expect(ok).toBe(true)
     expect(mp.deleted.length).toBe(0)
-    const last = mp.messages[mp.messages.length - 1] ?? ''
     expect(mp.messages.length).toBeGreaterThanOrEqual(2)
-    expect(last.startsWith('update:__cc_state__:completed\n__cc_ts__:')).toBe(true)
-    expect(last.endsWith('\nHello World Final')).toBe(true)
+    const content = lastTextContent(mp)
+    expect(content?.status?.state).toBe('completed')
+    expect(content?.text).toBe('Hello World Final')
   })
 
   it('needsDoneReaction flips after UpdateMessage and clears on discard', async () => {
@@ -491,9 +495,9 @@ describe('StreamPreview', () => {
     expect(ok).toBe(true)
     expect(mp.messages.length).toBeGreaterThanOrEqual(2)
     expect(mp.messages[0]).toBe('start:See 📄 `src/app.ts:42`')
-    const last = mp.messages[mp.messages.length - 1] ?? ''
-    expect(last.startsWith('update:__cc_state__:completed\n__cc_ts__:')).toBe(true)
-    expect(last.endsWith('\nFinal 📄 `src/app.ts:42`')).toBe(true)
+    const last = lastTextContent(mp)
+    expect(last?.status?.state).toBe('completed')
+    expect(last?.text).toBe('Final 📄 `src/app.ts:42`')
   })
 
   it('renders the todo section and updates it', async () => {
@@ -534,16 +538,15 @@ describe('StreamPreview', () => {
     expect(last2).toContain('🔄 Update documentation')
   })
 
-  it('thinking is signaled via the state header, not the body', async () => {
+  it('thinking is signaled via the structured status, not the body', async () => {
     const mp = createMockUpdaterPlatform()
     const sp = newStreamPreview(cfg({ maxChars: 2000 }), mp, 'ctx', undefined, undefined)
     await sp.appendThinking('some reasoning that should NOT be shown in the body')
+    expect(sp.progressStatusLocked().state).toBe('thinking')
     const display = sp.buildProgressDisplayLocked()
-    expect(display.startsWith('__cc_state__:thinking\n')).toBe(true)
     expect(display).not.toContain('some reasoning that should NOT be shown in the body')
     await sp.clearThinking()
-    const display2 = sp.buildProgressDisplayLocked()
-    expect(display2.startsWith('__cc_state__:thinking\n')).toBe(false)
+    expect(sp.progressStatusLocked().state).toBe('running')
   })
 
   it('throttle timer resets to nil after firing', async () => {
@@ -597,7 +600,7 @@ describe('StreamPreview', () => {
     }
     await sleep(600)
     expect(mp.messages.length).toBeGreaterThanOrEqual(2)
-    const lastTS = lastCCTS(mp.messages)
+    const lastTS = lastCCTS(mp)
     expect(lastTS).not.toBe('')
     const lag = Date.now() - parseHMS(lastTS).getTime()
     expect(lag).toBeLessThanOrEqual(2000)
@@ -608,10 +611,10 @@ describe('StreamPreview', () => {
     const sp = newStreamPreview(cfg({ intervalMs: 200 }), mp, 'ctx', undefined, undefined)
     await sp.appendThinking('initial thought')
     await sleep(300)
-    const tsAtSilence = lastCCTS(mp.messages)
+    const tsAtSilence = lastCCTS(mp)
     expect(tsAtSilence).not.toBe('')
     await sleep(1500)
-    expect(lastCCTS(mp.messages)).toBe(tsAtSilence)
+    expect(lastCCTS(mp)).toBe(tsAtSilence)
     const lag = Date.now() - parseHMS(tsAtSilence).getTime()
     expect(lag).toBeGreaterThanOrEqual(1000)
   })
@@ -1086,8 +1089,7 @@ describe('completeAndDetach async ordering', () => {
       await as.barrier()
       const msgs = mp.messages
       expect(msgs.length).toBeGreaterThan(0)
-      const last = msgs[msgs.length - 1] ?? ''
-      expect(last).toContain('__cc_state__:completed')
+      expect(lastTextContent(mp)?.status?.state).toBe('completed')
     } finally {
       as.close()
     }
@@ -1261,15 +1263,18 @@ describe('bump to end', () => {
   })
 })
 
-/** Pull the last __cc_ts__ value out of the recorded messages. */
-function lastCCTS(messages: string[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i] ?? ''
-    const idx = msg.indexOf('__cc_ts__:')
-    if (idx < 0) continue
-    const rest = msg.slice(idx + '__cc_ts__:'.length)
-    const nl = rest.indexOf('\n')
-    return (nl >= 0 ? rest.slice(0, nl) : rest).trim()
+/** Last recorded content's text-path view, when it is text content. */
+function lastTextContent(mp: RecorderPlatform): TextPreviewContent | undefined {
+  const c = mp.contents[mp.contents.length - 1]
+  return c?.kind === 'text' ? c : undefined
+}
+
+/** Pull the last status timestamp out of the recorded contents. */
+function lastCCTS(mp: RecorderPlatform): string {
+  for (let i = mp.contents.length - 1; i >= 0; i--) {
+    const c = mp.contents[i]
+    const ts = c === undefined ? '' : statusOf(c)?.ts ?? ''
+    if (ts !== '') return ts
   }
   return ''
 }

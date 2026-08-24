@@ -10,6 +10,7 @@
 | B1 | 原生审批补齐：`allowed-always` 常驻授权、`ApprovalAnswer` 附言、`toolInput` 预览 | commit e704d3b8bb；seam note `feature/2026-07-06-approval-seam` 就地更新 |
 | B2 | 提问卡合并：`Engine.askUser` 直接类型化委托（`AskDelegate`）替代合成事件通路；多题一卡（已答冻结/未答可点/自由文本答第一未答题）；`perm:allow_all` → 原生 `allowed-always`、deny 附言进 `ApprovalAnswer.note`、卡片预览用 `toolInput`；`selected`/`custom` 分离；research-manual 整卡超时；删 `permission_request` EventKind、`PendingPermission`、`approveAll`、adapter 双等待表与词表主通路（净 −277 行，permission.ts 178→63）。遗留真机冒烟点：chatroom pick 窗口工具审批出卡、research 整卡超时端到端时序、ask 停留期间并发子会话事件落面 | Agent Note `simplification/2026-08-24-feishu-bridge-ask-delegate` |
 | B3 | `SubagentStartRequest.cwd`（能力门控 `cwdOverride`；worktree 编排刻意留调用方） | commit 4c6312829f；Agent Note `architecture/2026-08-23-subagent-cwd-override` |
+| B8 | 进度卡文本协议收敛：`ProgressContent` 判别联合（payload 对象直传 Platform 接缝）+ `ProgressStatus` 结构化状态取代 `__cc_state__` 头部行；`toolResultMeta` 与逐请求 usage 投影补全；prefix codec 收缩为接缝解码器，V1 构造器与 `extractProgressState`/`extractProgressTimestamp` 删除 | Agent Note `simplification/2026-08-24-feishu-bridge-preview-content-objects` |
 
 ## B4 无人值守子任务走原生（含 B3 桥侧消费）
 

@@ -17,7 +17,7 @@ import { previewText } from '../stubs/preview-content.js'
 interface PreviewPlatform extends Platform {
   messages: string[]
   sendPreviewStart(rc: unknown, content: ProgressContent): Promise<unknown>
-  updateMessage(rc: unknown, content: string): Promise<void>
+  updateMessage(rc: unknown, content: ProgressContent): Promise<void>
 }
 
 /** Platform with in-place preview support, recording every card PATCH. */

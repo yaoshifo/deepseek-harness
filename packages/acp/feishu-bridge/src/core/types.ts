@@ -238,10 +238,20 @@ export interface Event {
   done: boolean
   error?: Error
   errorText?: string
+  /**
+   * Token usage for this event: on `text`/`thinking` events it is the
+   * per-request usage of the assistant message that carried it; on `result`
+   * events it is the turn sum. Undefined means unreported.
+   */
   inputTokens?: number
+  /** Input tokens including cache reads/writes; same split as {@link inputTokens}. */
   totalInputTokens?: number
+  /** Output tokens; same split as {@link inputTokens}. */
   outputTokens?: number
+  /** API calls made this turn (result events). */
   numTurns?: number
+  /** Tool-private presentation payload from the native tool/result `meta` (e.g. fs contextual diffs). */
+  toolResultMeta?: unknown
   arrivedAt?: number
   /** Whole-list todo snapshot carried by a `todo_update` event. */
   todos?: TodoItem[]
@@ -453,13 +463,24 @@ export interface ProgressStatus {
   toolCallSeq: number
 }
 
+/** Text-path preview content: a display body with an optional structured status. */
+export interface TextPreviewContent {
+  kind: 'text'
+  text: string
+  status?: ProgressStatus
+}
+
+/** Card-path preview content: a structured progress-card payload. */
+export interface CardPreviewContent {
+  kind: 'card'
+  payload: ProgressCardPayload
+}
+
 /**
  * Content a preview-capable platform renders in place: a structured
  * progress-card payload, or text with an optional structured status.
  */
-export type ProgressContent =
-  | { kind: 'card'; payload: ProgressCardPayload }
-  | { kind: 'text'; text: string; status?: ProgressStatus }
+export type ProgressContent = TextPreviewContent | CardPreviewContent
 
 /** Optional: platform can update a previously sent message in place (PATCH). */
 export interface MessageUpdater {

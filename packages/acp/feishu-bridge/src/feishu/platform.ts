@@ -1821,7 +1821,7 @@ export class FeishuPlatform implements Platform {
   /** Render preview content into a card JSON string (payload or text path). */
   private renderPreviewCard(content: ProgressContent, spin: SpinnerCfg): string {
     if (content.kind === 'card') return buildProgressCardJSONFromPayload(content.payload, spin)
-    return buildPreviewCardJSON(content.text, spin)
+    return buildPreviewCardJSON(content.text, spin, content.status)
   }
 
   /**

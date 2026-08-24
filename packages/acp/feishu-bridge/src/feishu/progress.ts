@@ -1,7 +1,8 @@
 /**
  * Feishu progress-card assembly ported from cc-connect platform/feishu
  * feishu_progress.go: text-path and payload-path progress card JSON, the
- * __cc_state__/__cc_ts__/__cc_tc__ header protocol, structural blank-line
+ * structured preview status (formerly the __cc_state__/__cc_ts__/__cc_tc__
+ * header lines), structural blank-line
  * collapsing, and the stop/export button injections that mutate a rendered
  * card JSON in place. buildReplyContent (Go feishu_markdown.go) lives here
  * too: it needs buildCardJSON and markdown.ts must not import this module's
@@ -33,6 +34,7 @@ import {
   type ProgressCardEntry,
   type ProgressCardPayload,
 } from '../progress.js'
+import type { ProgressStatus } from '../core/types.js'
 
 /**
  * One-line markdown card body.
@@ -523,55 +525,6 @@ export function buildProgressCardJSONFromPayload(payload: ProgressCardPayload, s
 }
 
 /**
- * Parse the __cc_state__: / __cc_ts__: / __cc_tc__: prefixes injected by the
- * engine-side progress display; returns state, timestamp, tool count, and
- * the remaining content with prefix lines stripped.
- *
- * @param content - Raw progress text with optional prefix lines.
- * @returns Parsed state, timestamp, tool count, and remaining content.
- */
-export function extractProgressState(content: string): { state: string; ts: string; tc: number; clean: string } {
-  const statePrefix = '__cc_state__:'
-  const tsPrefix = '__cc_ts__:'
-  const tcPrefix = '__cc_tc__:'
-  let state = ''
-  let ts = ''
-  let tc = 0
-  if (content.startsWith(statePrefix)) {
-    const rest = content.slice(statePrefix.length)
-    const nl = rest.indexOf('\n')
-    if (nl === -1) return { state: rest.trim(), ts: '', tc: 0, clean: '' }
-    state = rest.slice(0, nl).trim()
-    content = rest.slice(nl + 1)
-  }
-  if (content.startsWith(tsPrefix)) {
-    const rest = content.slice(tsPrefix.length)
-    const nl = rest.indexOf('\n')
-    if (nl !== -1) {
-      ts = rest.slice(0, nl).trim()
-      content = rest.slice(nl + 1)
-    } else {
-      ts = rest.trim()
-      content = ''
-    }
-  }
-  if (content.startsWith(tcPrefix)) {
-    const rest = content.slice(tcPrefix.length)
-    const nl = rest.indexOf('\n')
-    if (nl !== -1) {
-      const v = Number.parseInt(rest.slice(0, nl).trim(), 10)
-      if (Number.isFinite(v)) tc = v
-      content = rest.slice(nl + 1)
-    } else {
-      const v = Number.parseInt(rest.trim(), 10)
-      if (Number.isFinite(v)) tc = v
-      content = ''
-    }
-  }
-  return { state, ts, tc, clean: content }
-}
-
-/**
  * Card header title and color template for a state string (+ts, +tool count).
  *
  * @param state - State string from the header protocol.
@@ -654,19 +607,20 @@ export function collapseStructuralBlankLines(s: string): string {
 /**
  * Build the streaming-preview card JSON (payload path or text path).
  *
- * @param content - Raw progress content: payload-prefixed, header-prefixed, or plain text.
+ * @param content - Text body; a payload-prefixed string takes the payload path.
  * @param spin - Spinner configuration for the header icon.
+ * @param status - Structured status driving the header title/color/icon; absent renders the running default.
  * @returns Feishu interactive-card JSON string.
  */
-export function buildPreviewCardJSON(content: string, spin: SpinnerCfg): string {
+export function buildPreviewCardJSON(content: string, spin: SpinnerCfg, status?: ProgressStatus): string {
   const payload = parseProgressCardPayload(content)
   if (payload !== undefined) return buildProgressCardJSONFromPayload(payload, spin)
-  const { state, ts, tc, clean } = extractProgressState(content)
-  let processed = clean
-  if (containsMarkdown(clean)) processed = preprocessFeishuMarkdown(clean)
+  const state = status?.state ?? ''
+  let processed = content
+  if (containsMarkdown(content)) processed = preprocessFeishuMarkdown(content)
   processed = collapseExcessCardTables(processed)
   processed = collapseStructuralBlankLines(processed)
-  const { title, color } = progressTitleAndColor(state, true, ts, tc)
+  const { title, color } = progressTitleAndColor(state, true, status?.ts ?? '', status?.toolCallSeq ?? 0)
   // Text-path card (placeholder / streaming preview): align the header icon
   // with the state — thinking → pulse ring, running/执行中 → Material spinner.
   return buildCardJSONWithHeader(sanitizeMarkdownURLs(processed), title, color, spinnerKeyForState(spin, state))

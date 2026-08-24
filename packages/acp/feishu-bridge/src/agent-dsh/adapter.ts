@@ -1498,18 +1498,28 @@ export class DshAgentSession implements AgentSession {
         const message = data.message as { content?: ContentBlock[] } | undefined
         const text = textOfBlocks(message?.content)
         const thinking = thinkingOfBlocks(message?.content)
-        if (text !== '') {
-          this.turnText = text
-          this.channel.push({ type: 'text', content: text, done: false })
-        }
-        if (thinking !== '') {
-          this.channel.push({ type: 'thinking', content: thinking, done: false })
-        }
-        // Fold this request's usage into the turn sum (Go accumulateUsage);
-        // the result event carries the sum, not the last request's slice.
         const usage = data.usage as
           | { inputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; outputTokens?: number }
           | undefined
+        // Per-request usage rides the event that projects the message (the
+        // text event, or the thinking event of a text-less message); the
+        // turn sum still rides the result event.
+        const requestUsage = usage === undefined ? undefined : {
+          inputTokens: usage.inputTokens ?? 0,
+          totalInputTokens: (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheCreationTokens ?? 0),
+          outputTokens: usage.outputTokens ?? 0,
+        }
+        if (text !== '') {
+          this.turnText = text
+          this.channel.push({ type: 'text', content: text, done: false, ...(requestUsage ?? {}) })
+        }
+        if (thinking !== '') {
+          // A text-less message projects its usage on the thinking event.
+          const thinkingUsage = text === '' ? requestUsage : undefined
+          this.channel.push({ type: 'thinking', content: thinking, done: false, ...(thinkingUsage ?? {}) })
+        }
+        // Fold this request's usage into the turn sum (Go accumulateUsage);
+        // the result event carries the sum, not the last request's slice.
         this.turnUsage.inputTokens += usage?.inputTokens ?? 0
         this.turnUsage.cachedTokens += (usage?.cacheReadTokens ?? 0) + (usage?.cacheCreationTokens ?? 0)
         this.turnUsage.outputTokens += usage?.outputTokens ?? 0
@@ -1538,6 +1548,7 @@ export class DshAgentSession implements AgentSession {
           // only forwards success for the 🔴 marker.
           ...(data.error !== undefined ? { toolSuccess: false } : {}),
           ...(callId !== '' ? { toolID: callId } : {}),
+          ...(data.meta !== undefined ? { toolResultMeta: data.meta } : {}),
           content: '',
           done: false,
         })

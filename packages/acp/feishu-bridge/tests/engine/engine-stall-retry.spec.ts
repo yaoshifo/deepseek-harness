@@ -24,7 +24,7 @@ import { DshAgentAdapter } from '../../src/agent-dsh/adapter.js'
 import { Engine } from '../../src/engine/engine.js'
 import { createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
 import type { ProgressContent } from '../../src/core/types.js'
-import { previewText } from '../stubs/preview-content.js'
+import { previewText, statusOf } from '../stubs/preview-content.js'
 
 /** One scripted model-call behavior. */
 type ScriptEntry =
@@ -85,7 +85,7 @@ interface Runtime {
   ctx: Context
   adapter: DshAgentAdapter
   engine: Engine
-  platform: StubPlatform & { messages: string[] }
+  platform: StubPlatform & { messages: string[]; states: Array<string | undefined> }
   llm: StallScriptAdapter
 }
 
@@ -108,14 +108,18 @@ async function bootRuntime(script: ScriptEntry[]): Promise<Runtime> {
     activeProvider: 'mify',
   })
   const messages: string[] = []
+  const states: Array<string | undefined> = []
   const platform = Object.assign(createStubPlatform(), {
     messages,
+    states,
     async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
       messages.push(`start:${previewText(content)}`)
+      states.push(statusOf(content)?.state)
       return 'preview-handle'
     },
     async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
       messages.push(`update:${previewText(content)}`)
+      states.push(statusOf(content)?.state)
     },
     async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
       messages.push(`stopped:${String(id)}`)
@@ -215,8 +219,8 @@ describe('stall retry over the real dsh runtime', () => {
     }, { timeout: 10_000 })
 
     const messages = rt.platform.messages
-    const failedIdx = messages.findIndex(m => m.includes('__cc_state__:failed'))
-    expect(failedIdx, `messages=${JSON.stringify(messages)}`).toBeGreaterThanOrEqual(0)
+    const failedIdx = rt.platform.states.lastIndexOf('failed')
+    expect(failedIdx, `messages=${JSON.stringify(messages)} states=${JSON.stringify(rt.platform.states)}`).toBeGreaterThanOrEqual(0)
     // The fresh card for the resumed turn starts after the failed one.
     const startsAfter = messages.slice(failedIdx + 1).filter(m => m.startsWith('start:'))
     expect(startsAfter, `messages=${JSON.stringify(messages)}`).not.toEqual([])
@@ -230,7 +234,7 @@ describe('stall retry over the real dsh runtime', () => {
       expect(rt.platform.sent.some(s => s.includes('Session terminated') || s.includes('会话已终止'))).toBe(true)
     }, { timeout: 10_000 })
     await vi.waitFor(() => {
-      expect(rt.platform.messages.some(m => m.includes('__cc_state__:failed'))).toBe(true)
+      expect(rt.platform.states.includes('failed')).toBe(true)
     }, { timeout: 2_000 })
   })
 })
