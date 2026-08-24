@@ -87,7 +87,10 @@ fi
 
 if [ "$BUILD" -eq 1 ]; then
   echo "==> building host-face libs in $FORK_DIR"
-  (cd "$FORK_DIR" && pnpm run build:lib:host)
+  # CI=true: pnpm's pre-run deps check auto-installs when the lockfile moved
+  # (e.g. after a pull); without it the modules-dir purge prompt aborts in
+  # this TTY-less script and /reload fails before the daemon restart.
+  (cd "$FORK_DIR" && CI=true pnpm run build:lib:host)
   for f in "$FORK_DIR/apps/cli/lib/bin.js" "$PKG_DIR/lib/index.js"; do
     [ -f "$f" ] && echo "    built: $f ($(date -r "$f" '+%Y-%m-%d %H:%M:%S'))"
   done
