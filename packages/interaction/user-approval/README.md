@@ -2,11 +2,11 @@
 
 English | [中文](README.zh.md)
 
-Channel-neutral one-shot approval seam. `ctx.approval.request(req)` returns `allowed-once`, `rejected`, `cancelled`, or `unavailable`; missing or failing answerers fail closed, and a grant applies only to the requested action. Exact event signatures live in the generated region of [approval.md](../../../docs/subsystems/approval.md#cordis-surface).
+Channel-neutral approval seam. `ctx.approval.request(req)` returns an `ApprovalResult`: an `allowed-once`, `allowed-always`, `rejected`, `cancelled`, or `unavailable` outcome plus an optional bounded answerer note; missing or failing answerers fail closed, and a grant applies only to the requested action. An answerer's `allowed-always` additionally records an in-memory standing grant, so later asks for the same (agent, tool) pair decide without dispatching — still audited as an asked/decided pair. Exact event signatures live in the generated region of [approval.md](../../../docs/subsystems/approval.md#cordis-surface).
 
 Each request must belong to an open agent turn. The service appends a paired `approval/asked` and `approval/decided` audit record, while the model sees only the resulting logged tool outcome. An aborted request resolves `cancelled`; an audit append that fails before commit rejects rather than returning an unlogged decision.
 
-Answerers are `approval/request` waterfall listeners. Return an outcome to answer for an owned agent or call `next()` to delegate. Agent-scoped listeners receive only that agent's requests; compose one terminal answerer per deployment because sibling listener order is not a policy priority mechanism. The ACP automation bridge supplies one-shot machine decisions for sessions it owns.
+Answerers are `approval/request` waterfall listeners. Return an outcome (or an `ApprovalAnswer` carrying a note) to answer for an owned agent or call `next()` to delegate. Agent-scoped listeners receive only that agent's requests; compose one terminal answerer per deployment because sibling listener order is not a policy priority mechanism. The ACP automation bridge supplies one-shot machine decisions for sessions it owns.
 
 `ApprovalPolicy` is `'ask'` or `'never'`. The effective value is the last `approval/policy` event, falling back to config; `setApprovalPolicy()` is the write path. `'never'` rejects before interactive dispatch. Both policies contribute their complete current meaning to the cache-safe runtime-context snapshot.
 
@@ -44,7 +44,7 @@ Append-only after retained history. An `ask`/`never` switch preserves the stable
 
 #### What the model sees
 
-`approval/asked` and `approval/decided` are log-only. The model sees only the asking consumer's eventual allowed, rejected, cancelled, or unavailable tool outcome; the human permission UI is not context.
+`approval/asked` and `approval/decided` are log-only. The model sees only the asking consumer's eventual allowed, rejected, cancelled, or unavailable tool outcome; the human permission UI is not context. An answerer note rides the asking consumer's denial text (for the tools pipeline: `the user rejected tool "<name>": <note>`); grant notes are not model-visible.
 
 #### Token effect
 
@@ -57,6 +57,7 @@ Append-only; newly visible content follows the reusable request prefix and does 
 ## Known Limitations and Deferred Work
 
 - **Requests are valid only inside an open turn** — an idle or between-turn caller throws before auditing; a durable out-of-turn approval workflow is deferred.
-- **Only one-shot grants exist** — the outcome vocabulary has `allowed-once` but no `allow-always`, remembered rule, revocation, or grant store; session policy is only `ask` / `never`.
-- **The request carries no tool arguments** — an answerer sees the tool name, reason, and optional call id; the ACP machine channel requires a call id and delegates requests without one.
+- **Standing grants are in-memory and per agent lifetime** — `allowed-always` skips re-asks for the same (agent, tool) pair until the agent object goes away; there is no revocation surface and no durable grant store, and session policy remains only `ask` / `never`.
+- **The tool-input preview is asker-bounded, not service-bounded** — `ApprovalRequest.toolInput` is UI-only (never audited; the raw arguments live in the paired `tool/call`), and answerers must apply their own display bounds; the ACP machine channel still requires a call id and delegates requests without one.
+- **The note channel stops at in-process answerers** — the api-proxy wire relay forwards outcomes only, so a remote client's commentary cannot ride `ApprovalAnswer.note`; extending the wire is deferred until a remote answerer needs it.
 - **No built-in answerer** — headless or incompletely composed deployments resolve `unavailable` and fail closed; the service itself never prompts a human.

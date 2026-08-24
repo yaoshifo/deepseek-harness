@@ -768,6 +768,46 @@ describe('ToolRuntime', () => {
       expect(result.content[0]).toMatchObject({ text: 'Error: the user rejected tool "echo"' })
     })
 
+    it('folds an answerer note into the rejection reason', async () => {
+      const ctx = await approvalSetup()
+      ctx.on('approval/request', () => Promise.resolve({ outcome: 'rejected' as ApprovalOutcome, note: 'use staging' }))
+      ctx.on('tools/pre-execute', async (_exec, _next): Promise<PreToolDecision> => ({ kind: 'ask' }))
+
+      const result = await ctx.tools.execute({ signal: testToolSignal, callId: CallId('c1'), name: 'echo', arguments: {}, agent: fakeAgent() })
+      expect(result.isError).toBe(true)
+      expect(result.content[0]).toMatchObject({ text: 'Error: the user rejected tool "echo": use staging' })
+    })
+
+    it('grants on allowed-always and skips re-asking the same tool for the agent', async () => {
+      const ctx = await approvalSetup()
+      const agent = fakeAgent()
+      let asks = 0
+      ctx.on('approval/request', () => {
+        asks += 1
+        return Promise.resolve<ApprovalOutcome>('allowed-always')
+      })
+      ctx.on('tools/pre-execute', async (_exec, _next): Promise<PreToolDecision> => ({ kind: 'ask' }))
+
+      const first = await ctx.tools.execute({ signal: testToolSignal, callId: CallId('c1'), name: 'echo', arguments: { text: 'a' }, agent })
+      const second = await ctx.tools.execute({ signal: testToolSignal, callId: CallId('c2'), name: 'echo', arguments: { text: 'b' }, agent })
+      expect(first).toMatchObject({ isError: false, content: [{ type: 'text', text: 'a' }] })
+      expect(second).toMatchObject({ isError: false, content: [{ type: 'text', text: 'b' }] })
+      expect(asks).toBe(1)
+    })
+
+    it('forwards a bounded toolInput preview to the answerer', async () => {
+      const ctx = await approvalSetup()
+      const seen: ApprovalRequest[] = []
+      ctx.on('approval/request', (req) => {
+        seen.push(req)
+        return Promise.resolve<ApprovalOutcome>('allowed-once')
+      })
+      ctx.on('tools/pre-execute', async (_exec, _next): Promise<PreToolDecision> => ({ kind: 'ask' }))
+
+      await ctx.tools.execute({ signal: testToolSignal, callId: CallId('c1'), name: 'echo', arguments: { text: 'hi' }, agent: fakeAgent() })
+      expect(seen[0]?.toolInput).toBe('{"text":"hi"}')
+    })
+
     it('denies with the cancellation reason on cancelled', async () => {
       const ctx = await approvalSetup()
       ctx.on('approval/request', () => Promise.resolve<ApprovalOutcome>('cancelled'))

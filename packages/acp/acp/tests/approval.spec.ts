@@ -28,7 +28,7 @@ describe('ACP machine permission policy', () => {
     harness = await makeBridgeHarness()
     harness.onPermission = () => ({ outcome: { outcome: 'selected', optionId: 'allow-once' } })
     const request = await ownedRequest()
-    await expect(harness.ctx.approval.request(request)).resolves.toBe('allowed-once')
+    await expect(harness.ctx.approval.request(request)).resolves.toMatchObject({ outcome: 'allowed-once' })
     expect(harness.permissionRequests[0]).toMatchObject({
       sessionId: request.agent.session.id,
       toolCall: { toolCallId: 'call-9' },
@@ -39,22 +39,22 @@ describe('ACP machine permission policy', () => {
     })
 
     harness.onPermission = () => ({ outcome: { outcome: 'selected', optionId: 'reject-once' } })
-    await expect(harness.ctx.approval.request(request)).resolves.toBe('rejected')
+    await expect(harness.ctx.approval.request(request)).resolves.toMatchObject({ outcome: 'rejected' })
   })
 
   it('maps cancellation and unknown choices without granting access', async () => {
     harness = await makeBridgeHarness()
     const request = await ownedRequest()
-    await expect(harness.ctx.approval.request(request)).resolves.toBe('cancelled')
+    await expect(harness.ctx.approval.request(request)).resolves.toMatchObject({ outcome: 'cancelled' })
     harness.onPermission = () => ({ outcome: { outcome: 'selected', optionId: 'unknown-grant' } })
-    await expect(harness.ctx.approval.request(request)).resolves.toBe('rejected')
+    await expect(harness.ctx.approval.request(request)).resolves.toMatchObject({ outcome: 'rejected' })
   })
 
   it('fails closed when the client errors the permission request', async () => {
     harness = await makeBridgeHarness()
     const request = await ownedRequest()
     harness.onPermission = () => { throw new Error('client gone') }
-    await expect(harness.ctx.approval.request(request)).resolves.toBe('unavailable')
+    await expect(harness.ctx.approval.request(request)).resolves.toMatchObject({ outcome: 'unavailable' })
   })
 
   it('delegates a same-id foreign agent', async () => {
@@ -64,7 +64,7 @@ describe('ACP machine permission policy', () => {
       session: { id: request.agent.session.id, events: [{ type: 'turn/start' }], append: () => ({}) },
     } as unknown as Agent
     await expect(harness.ctx.approval.request({ agent: foreign, toolName: 'bash', callId: CallId('call') }))
-      .resolves.toBe('unavailable')
+      .resolves.toMatchObject({ outcome: 'unavailable' })
     expect(harness.permissionRequests).toHaveLength(0)
   })
 
@@ -72,7 +72,7 @@ describe('ACP machine permission policy', () => {
     harness = await makeBridgeHarness()
     const request = await ownedRequest()
     await expect(harness.ctx.approval.request({ agent: request.agent, toolName: request.toolName }))
-      .resolves.toBe('unavailable')
+      .resolves.toMatchObject({ outcome: 'unavailable' })
     expect(harness.permissionRequests).toHaveLength(0)
   })
 })

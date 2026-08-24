@@ -690,7 +690,7 @@ describe('sandbox escalation through ctx.approval', () => {
 
   it('keeps the exhaustiveness backstop for a rogue approval implementation', async () => {
     const { ctx } = await setupSandboxed(true)
-    ctx.approval.request = () => Promise.resolve('rogue' as ApprovalOutcome)
+    ctx.approval.request = () => Promise.resolve({ outcome: 'rogue' as ApprovalOutcome })
     const result = await call(ctx, 'pwsh', escalate, sandboxAgent())
     expect(text(result)).toContain('unreachable variant in EscalationOutcome')
   })

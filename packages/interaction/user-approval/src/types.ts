@@ -23,7 +23,29 @@ export function ApprovalRequestId(id: string): ApprovalRequestId {
 }
 
 /**
- * Closed approval outcomes: a one-shot grant, explicit rejection, withdrawn
- * request, or unavailable answerer. Callers fail closed on `unavailable`.
+ * Closed approval outcomes: a one-shot grant, a standing grant for the rest of
+ * the agent's lifetime, explicit rejection, withdrawn request, or unavailable
+ * answerer. Callers fail closed on `unavailable`.
  */
-export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+export type ApprovalOutcome = 'allowed-once' | 'allowed-always' | 'rejected' | 'cancelled' | 'unavailable'
+
+/**
+ * A rich answerer return: an outcome plus an optional human note collected
+ * alongside the decision. Answerers may return a bare
+ * {@link ApprovalOutcome} instead; the service normalizes both shapes.
+ */
+export interface ApprovalAnswer {
+  readonly outcome: ApprovalOutcome
+  /** Human commentary riding the decision; bounded and trimmed by the service. */
+  readonly note?: string
+}
+
+/**
+ * The settled decision returned by {@link ApprovalService.request}: the closed
+ * outcome plus the answerer's note when one was given.
+ */
+export interface ApprovalResult {
+  readonly outcome: ApprovalOutcome
+  /** The answerer's note, already bounded and trimmed; absent when none was given. */
+  readonly note?: string
+}

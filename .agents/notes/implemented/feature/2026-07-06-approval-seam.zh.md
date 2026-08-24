@@ -1,4 +1,4 @@
-# Agent Note: 审批 seam——基于 waterfall（瀑布式事件）应答者的一次性权限决策
+# Agent Note: 审批 seam——基于 waterfall（瀑布式事件）应答者的封闭权限决策
 
 Status: implemented
 
@@ -27,7 +27,7 @@ Status: implemented
 
 仅有这条条目只提供机制，不提供通道：没有组合应答者时，每次 ask 都解析为 `unavailable`，发起请求的工具调用会被拒绝——无需配置即可做到故障时默认拒绝。组合 ACP 应用（`@deepseek-ai/dsh-acp-demo`，如 [acp-agent 示例的默认树](../../../../examples/acp-agent/README.zh.md)）即可闭环：其[仅面向自动化的桥接层](../simplification/2026-07-23-acp-automation-only-protocol.zh.md)注册一个应答者，向拥有该会话的客户端发送 `session/request_permission`，携带精确的工具调用 id 和一次性 allow/reject 选项。`policy: never` 是无人值守姿态：每次 ask 都会被确定性地自动拒绝，当前值也会加入运行时上下文快照。`policy` 在插件加载时对照封闭列表校验；非法值直接抛异常。
 
-组合部署的可观测行为：`allowed-once` 仅允许该次调用继续；拒绝、关闭和通道缺失以三种不同原因拒绝，模型可以区分；轮次内成功的请求会在发起请求的 agent 的会话日志上落一对持久化的 `approval/asked`/`approval/decided` 事件；授权不会在发起请求的调用结束后继续存在。空闲时的请求或审计追加失败会拒绝，而不会返回未经审计的决策。
+组合部署的可观测行为：`allowed-once` 仅允许该次调用继续；`allowed-always` 额外为 (agent, 工具) 对记录一条内存常驻授权，后续询问免于分发、直接判定，但仍落持久化的 `approval/asked`/`approval/decided` 事件对；拒绝、关闭和通道缺失以不同原因拒绝、模型可以区分，应答者附言随拒绝文案进入模型（`the user rejected tool "<name>": <note>`）；轮次内成功的请求审计在发起请求的 agent 的会话日志上。授权 memo 与 agent 对象同生共死——进程之外无持久化。空闲时的请求或审计追加失败会拒绝，而不会返回未经审计的决策。
 
 以下是该组合下的一次 ask，取自沙箱示例录制的 `escalation-approved` 场景——模型请求沙箱升级，门禁发起 ask，自动化客户端选择 Allow once：
 
@@ -51,7 +51,7 @@ tool/result      "escalated" — this one call ran under the wider mode; the gra
 
 #### seam：机制与策略分离
 
-经过校验并成功追加 `approval/asked` 后，服务将 `approval/request` waterfall 解析为 `allowed-once`、`rejected`、`cancelled` 或 `unavailable`。服务沿用只读的请求标识和 signal，将中止视为 `cancelled`，把应答者失败和无效返回统一转换为 `unavailable`，丢弃迟到的应答，并追加配对的 `approval/decided` 事件。提交前的审计失败会拒绝；追加后的观察者失败无法撤销权威事件。`allowed-once` 仅授权所询问的操作，而 `request()` 会拒绝进行中的轮次之外的调用，以保证审计对留在持久提交边界内。
+经过校验并成功追加 `approval/asked` 后，服务将 `approval/request` waterfall 解析为 `ApprovalResult`：`allowed-once`、`allowed-always`、`rejected`、`cancelled` 或 `unavailable` 之一，外加可选的有界（500 字符）应答者附言，随 `approval/decided` 落日志。应答者可返回裸结果或 `ApprovalAnswer`。服务沿用只读的请求标识和 signal，将中止视为 `cancelled`，把应答者失败和无效返回统一转换为 `unavailable`，丢弃迟到的应答，并追加配对的 `approval/decided` 事件。提交前的审计失败会拒绝；追加后的观察者失败无法撤销权威事件。`allowed-once` 仅授权所询问的操作；`allowed-always` 同时播下内存常驻授权 memo；`request()` 会拒绝进行中的轮次之外的调用，以保证审计对留在持久提交边界内。
 
 应答者是 `approval/request` waterfall 监听器。零监听器会直接落到 `unavailable`；识别该 agent 的监听器占用先到先得的决策槽，而不识别的监听器必须调用 `next()` 委派。监听器会随其 fiber 一同 dispose（资源释放），因此卸载通道后，请求会在故障时默认被拒绝。由于兄弟插件的注册顺序不确定，部署应组合一个终端应答者，并保留 `prepend` 给「决策或委派」门禁。
 
@@ -59,7 +59,7 @@ tool/result      "escalated" — this one call ran under the wider mode; the gra
 
 #### dsh-tools 中的 Ask 路由
 
-`ToolRuntime.execute()` 在派发前解析 `ask`：`allowed-once` 继续执行，而拒绝、取消和通道不可用产生三种不同的拒绝原因。机会性消费 `ctx.get('approval')`，让缺失或未挂载的服务失败关闭而不阻塞注册表 fiber。无 agent 的执行同样失败关闭，因为它既没有审计会话，也没有通道所有者。
+`ToolRuntime.execute()` 在派发前解析 `ask`：两种授权都继续执行，而拒绝（附言拼接在文案后）、取消和通道不可用产生不同的拒绝原因；发起方向应答者卡片转发有界的 `toolInput` 预览。机会性消费 `ctx.get('approval')`，让缺失或未挂载的服务失败关闭而不阻塞注册表 fiber。无 agent 的执行同样失败关闭，因为它既没有审计会话，也没有通道所有者。
 
 #### 每会话策略层
 
@@ -87,7 +87,7 @@ ACP 桥只应答其会话映射所拥有的精确 agent 对象。它携带既有
 
 ## 延后
 
-- **`allow_always` 授权存储**：兑现持久授权意味着设计存储、作用域标识（调用？路径？前缀？会话？时间窗口？）和撤销；在设计完成之前，只展示一次性选项（[沙箱 Agent Note](2026-07-06-sandbox.zh.md) § Escalation 记录了开放的作用域问题）。
+- **持久化的 `allow_always` 授权存储**：已交付的 `allowed-always` 是内存态 per-(agent, 工具) memo，无撤销面；持久授权仍意味着设计存储、超出工具名的作用域标识（路径？前缀？时间窗口？）和撤销（[沙箱 Agent Note](2026-07-06-sandbox.zh.md) § Escalation 记录了开放的作用域问题）。
 - **通过组合应答者录制由钩子驱动的 `ask`**：权限协议格式（wire format）已通过沙箱示例的升级分支录制。钩子矩阵中的 `hook-cc-pretool-ask` 固定无 ApprovalService 时的后备拒绝，而钩子生产者与应答者的组合仍留在单元测试层。
 - **将子 agent 的审批路由到父会话**：`subagent-acp` 的子侧自动应答自己的权限请求；将其委派给父控制器是独立的设计。
 
@@ -118,7 +118,7 @@ ACP 桥只应答其会话映射所拥有的精确 agent 对象。它携带既有
 ## 常见问题
 
 - **在完全没有应答者的部署中（headless、CI）会发生什么？** 每次 ask 都会沿空的 waterfall 落到 `unavailable`，工具调用以「no approval channel is available」原因被拒绝。失败关闭是零监听器的默认行为，不是配置。
-- **授权能持久化吗——「始终允许」？** 不能。`allowed-once` 仅授权单次被询问的操作，服务在请求之间不存储任何内容；`allow_always` 在授权存储设计完成之前刻意不展示（§ 延后）。
+- **授权能持久化吗——「始终允许」？** 进程内会：`allowed-always` 为 (agent, 工具) 对保留内存 memo 直至 agent 消亡。跨进程不能：`allowed-once` 仅授权单次被询问的操作，持久授权存储在设计完成之前刻意不做（§ 延后）。
 - **模型看到审批的什么？** 只看到发起方从结果派生的工具结果——审计对永远不进入 transcript（文本记录）。三种非授权原因各不相同，模型可以区分人类说「不」、提示被关闭、通道缺失。
 - **谁决定一次调用是否需要 ask？** 策略生产者：返回 `permissionDecision: ask` 的钩子、任何 `tools/pre-execute` 监听器、或沙箱升级门禁。seam 和桥只负责路由和应答；二者都不注入自己对「什么值得弹出提示」的判断。
 - **用户关闭提示或轮次在 ask 进行中中止时会发生什么？** 关闭映射为 `cancelled` 并携带自己的拒绝文本。已中止的 signal 直接结算为 `cancelled` 而不派发；ask 进行中的中止丢弃迟到的应答。当两个审计追加都提交时，任一路径都记录恰好一对事件，绝不会两对。

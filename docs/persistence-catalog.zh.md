@@ -172,11 +172,13 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 /**
  * The outcome of a prior `approval/asked` (same `id`) — log-only audit.
  * Exactly one per ask, appended when the outcome is known: a decision, a
- * cancellation, or the fail-closed `'unavailable'`.
+ * cancellation, or the fail-closed `'unavailable'`. `note` carries the
+ * answerer's bounded human commentary when one was given.
  */
 'approval/decided': {
   id: ApprovalRequestId
   outcome: ApprovalOutcome
+  note?: string
 }
 ```
 

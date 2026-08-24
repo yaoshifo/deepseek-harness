@@ -18,14 +18,42 @@
 type ApprovalRequestId = Branded<'ApprovalRequestId'>
 ```
 
-`ApprovalOutcome` 是闭合的，且失败时拒绝。`allowed-once` 仅授权所询问的那一个操作；调用方对 `rejected`、`cancelled` 和 `unavailable` 均执行拒绝。缺失、不负责该请求、抛异常或不合规的应答者会产生 `unavailable`，而非放行。
+`ApprovalOutcome` 是闭合的，且失败时拒绝。`allowed-once` 仅授权所询问的那一个操作；`allowed-always` 额外为 (agent, 工具) 对记录一条内存常驻授权，后续询问免于分发、直接判定；调用方对 `rejected`、`cancelled` 和 `unavailable` 均执行拒绝。缺失、不负责该请求、抛异常或不合规的应答者会产生 `unavailable`，而非放行。
 
 ```ts type-equiv
 /**
- * Closed approval outcomes: a one-shot grant, explicit rejection, withdrawn
- * request, or unavailable answerer. Callers fail closed on `unavailable`.
+ * Closed approval outcomes: a one-shot grant, a standing grant for the rest of
+ * the agent's lifetime, explicit rejection, withdrawn request, or unavailable
+ * answerer. Callers fail closed on `unavailable`.
  */
-type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
+type ApprovalOutcome = 'allowed-once' | 'allowed-always' | 'rejected' | 'cancelled' | 'unavailable'
+```
+
+应答者可返回裸结果，或返回携带有人类附言的 `ApprovalAnswer`；服务将两者归一，并把每次询问落定为唯一的 `ApprovalResult`。
+
+```ts type-equiv
+/**
+ * A rich answerer return: an outcome plus an optional human note collected
+ * alongside the decision. Answerers may return a bare
+ * {@link ApprovalOutcome} instead; the service normalizes both shapes.
+ */
+interface ApprovalAnswer {
+  readonly outcome: ApprovalOutcome
+  /** Human commentary riding the decision; bounded and trimmed by the service. */
+  readonly note?: string
+}
+```
+
+```ts type-equiv
+/**
+ * The settled decision returned by {@link ApprovalService.request}: the closed
+ * outcome plus the answerer's note when one was given.
+ */
+interface ApprovalResult {
+  readonly outcome: ApprovalOutcome
+  /** The answerer's note, already bounded and trimmed; absent when none was given. */
+  readonly note?: string
+}
 ```
 
 ## 按会话策略
@@ -74,6 +102,13 @@ interface ApprovalRequest {
   /** The asker's human-readable explanation of WHY it is asking. */
   readonly reason?: string
   /**
+   * The asker's preview of WHAT is being decided — the tool's arguments
+   * rendered for a UI card, already bounded by the asker. UI-only: it never
+   * enters the `approval/asked` audit event (the raw arguments already live
+   * in the paired `tool/call`).
+   */
+  readonly toolInput?: string
+  /**
    * Aborting withdraws the question: the request settles `'cancelled'`
    * immediately and a late answer from a still-pending answerer is discarded.
    */
@@ -116,20 +151,24 @@ setPolicy(agent: Agent, policy: ApprovalPolicy): void
  * The service borrows the request, agent, session, and live signal directly.
  * The request requires an open turn because the audit pair must be enclosed
  * by the durable log's commit/replay boundary; an idle ask rejects before
- * appending anything. The answerer phase always produces an outcome: an
+ * appending anything. The answerer phase always produces a result: an
  * aborted signal yields `'cancelled'`, a missing or throwing answerer yields
  * `'unavailable'` (fail closed), and a rogue non-vocabulary return value is
- * normalized to `'unavailable'`. A failure that prevents either audit append
- * from committing still rejects because returning an unlogged decision would
- * violate the pair. Session contains post-commit observer failures, so an
- * authoritative append cannot reject the request or suppress its matching
- * audit event.
+ * normalized to `'unavailable'`. An answerer's `'allowed-always'` grant
+ * additionally records a standing grant, so later asks for the same
+ * (agent, tool) pair decide `'allowed-always'` without dispatching — still
+ * audited as an asked/decided pair, like every deterministic decision. A
+ * failure that prevents either audit append from committing still rejects
+ * because returning an unlogged decision would violate the pair. Session
+ * contains post-commit observer failures, so an authoritative append cannot
+ * reject the request or suppress its matching audit event.
  * @param req - the pending decision (agent, tool identity, reason, signal).
- * @returns the closed outcome; `'allowed-once'` is the only grant.
+ * @returns the closed outcome plus the answerer's bounded note when given;
+ *   `'allowed-once'` and `'allowed-always'` are the only grants.
  * @throws when no turn is open or either audit event fails before the session
  *   append commit point.
  */
-async request(req: ApprovalRequest): Promise<ApprovalOutcome>
+async request(req: ApprovalRequest): Promise<ApprovalResult>
 
 /**
  * Read the session override without applying the configured default.
@@ -151,17 +190,18 @@ Source: [`packages/interaction/user-approval/src/index.ts`](../../packages/inter
 
 #### `approval/request` — waterfall
 
-Ask composed answerers for one decision. Return an outcome to claim the request or call `next()`; failure yields the fail-closed default. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+Ask composed answerers for one decision. Return an outcome (or an ApprovalAnswer carrying a note) to claim the request or call `next()`; failure yields the fail-closed default. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
 
 ```ts cordis-catalog
 /**
- * Ask composed answerers for one decision. Return an outcome to claim the
- * request or call `next()`; failure yields the fail-closed default.
+ * Ask composed answerers for one decision. Return an outcome (or an
+ * {@link ApprovalAnswer} carrying a note) to claim the request or call
+ * `next()`; failure yields the fail-closed default.
  * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
  * @param req - the pending decision (agent, tool identity, reason, signal).
  * @mode waterfall
  */
-'approval/request'(this: Scoped<ApprovalService>, req: ApprovalRequest, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome>
+'approval/request'(this: Scoped<ApprovalService>, req: ApprovalRequest, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome | ApprovalAnswer>
 ```
 
 Types: [Scoped](scope.zh.md)

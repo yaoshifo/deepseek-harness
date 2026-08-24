@@ -21,13 +21,14 @@ declare module '@deepseek-ai/cordis' {
 
   interface Events {
     /**
-     * Ask composed answerers for one decision. Return an outcome to claim the
-     * request or call `next()`; failure yields the fail-closed default.
+     * Ask composed answerers for one decision. Return an outcome (or an
+     * {@link ApprovalAnswer} carrying a note) to claim the request or call
+     * `next()`; failure yields the fail-closed default.
      * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
      * @param req - the pending decision (agent, tool identity, reason, signal).
      * @mode waterfall
      */
-    'approval/request'(this: Scoped<ApprovalService>, req: ApprovalRequest, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome>
+    'approval/request'(this: Scoped<ApprovalService>, req: ApprovalRequest, next: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome | ApprovalAnswer>
   }
 }
 
@@ -50,11 +51,13 @@ declare module '@deepseek-ai/dsh-session/types' {
     /**
      * The outcome of a prior `approval/asked` (same `id`) — log-only audit.
      * Exactly one per ask, appended when the outcome is known: a decision, a
-     * cancellation, or the fail-closed `'unavailable'`.
+     * cancellation, or the fail-closed `'unavailable'`. `note` carries the
+     * answerer's bounded human commentary when one was given.
      */
     'approval/decided': {
       id: ApprovalRequestId
       outcome: ApprovalOutcome
+      note?: string
     }
     /**
      * The session's approval policy was switched — log-only, durable,
@@ -73,13 +76,16 @@ declare module '@deepseek-ai/dsh-session/types' {
 }
 
 import { ApprovalRequestId } from './types.ts'
-import type { ApprovalOutcome } from './types.ts'
+import type { ApprovalAnswer, ApprovalOutcome, ApprovalResult } from './types.ts'
 
 export { ApprovalRequestId } from './types.ts'
-export type { ApprovalOutcome } from './types.ts'
+export type { ApprovalAnswer, ApprovalOutcome, ApprovalResult } from './types.ts'
 
 /** Every {@link ApprovalOutcome}, for runtime normalization of answerer returns. */
-const OUTCOMES: readonly ApprovalOutcome[] = ['allowed-once', 'rejected', 'cancelled', 'unavailable']
+const OUTCOMES: readonly ApprovalOutcome[] = ['allowed-once', 'allowed-always', 'rejected', 'cancelled', 'unavailable']
+
+/** Maximum retained note length; longer notes truncate after trimming. */
+const MAX_NOTE_LENGTH = 500
 
 /**
  * A session's approval policy — what happens to an {@link ApprovalService}
@@ -167,6 +173,13 @@ export interface ApprovalRequest {
   /** The asker's human-readable explanation of WHY it is asking. */
   readonly reason?: string
   /**
+   * The asker's preview of WHAT is being decided — the tool's arguments
+   * rendered for a UI card, already bounded by the asker. UI-only: it never
+   * enters the `approval/asked` audit event (the raw arguments already live
+   * in the paired `tool/call`).
+   */
+  readonly toolInput?: string
+  /**
    * Aborting withdraws the question: the request settles `'cancelled'`
    * immediately and a late answer from a still-pending answerer is discarded.
    */
@@ -193,6 +206,14 @@ export class ApprovalService extends Service {
   static Config: z<Config> = z.object({
     policy: z.union(['ask', 'never'] as const).default('ask'),
   })
+
+  /**
+   * Standing grants per live agent: tool names an answerer granted with
+   * `'allowed-always'`. In-memory and agent-lifetime scoped — a resumed or
+   * restarted session asks again (the durable policy channel,
+   * `approval/policy`, stays the mechanism for deployment-level stances).
+   */
+  private readonly standingGrants = new WeakMap<Agent, Set<string>>()
 
   constructor(ctx: Context, public config: Config) {
     super(ctx, 'approval')
@@ -241,20 +262,24 @@ export class ApprovalService extends Service {
    * The service borrows the request, agent, session, and live signal directly.
    * The request requires an open turn because the audit pair must be enclosed
    * by the durable log's commit/replay boundary; an idle ask rejects before
-   * appending anything. The answerer phase always produces an outcome: an
+   * appending anything. The answerer phase always produces a result: an
    * aborted signal yields `'cancelled'`, a missing or throwing answerer yields
    * `'unavailable'` (fail closed), and a rogue non-vocabulary return value is
-   * normalized to `'unavailable'`. A failure that prevents either audit append
-   * from committing still rejects because returning an unlogged decision would
-   * violate the pair. Session contains post-commit observer failures, so an
-   * authoritative append cannot reject the request or suppress its matching
-   * audit event.
+   * normalized to `'unavailable'`. An answerer's `'allowed-always'` grant
+   * additionally records a standing grant, so later asks for the same
+   * (agent, tool) pair decide `'allowed-always'` without dispatching — still
+   * audited as an asked/decided pair, like every deterministic decision. A
+   * failure that prevents either audit append from committing still rejects
+   * because returning an unlogged decision would violate the pair. Session
+   * contains post-commit observer failures, so an authoritative append cannot
+   * reject the request or suppress its matching audit event.
    * @param req - the pending decision (agent, tool identity, reason, signal).
-   * @returns the closed outcome; `'allowed-once'` is the only grant.
+   * @returns the closed outcome plus the answerer's bounded note when given;
+   *   `'allowed-once'` and `'allowed-always'` are the only grants.
    * @throws when no turn is open or either audit event fails before the session
    *   append commit point.
    */
-  async request(req: ApprovalRequest): Promise<ApprovalOutcome> {
+  async request(req: ApprovalRequest): Promise<ApprovalResult> {
     const session = req.agent.session
     if (!hasOpenTurn(session.events)) {
       throw new Error(
@@ -270,9 +295,26 @@ export class ApprovalService extends Service {
       ...req.callId !== undefined ? { callId: req.callId } : {},
       ...req.reason !== undefined ? { reason: req.reason } : {},
     })
-    const outcome = await this.decide(req, session)
-    session.append('approval/decided', { id, outcome })
-    return outcome
+    const result = this.standingGrants.get(req.agent)?.has(req.toolName) === true
+      ? { outcome: 'allowed-always' as const }
+      : await this.decide(req, session)
+    if (result.outcome === 'allowed-always') this.recordStandingGrant(req.agent, req.toolName)
+    session.append('approval/decided', {
+      id,
+      outcome: result.outcome,
+      ...result.note !== undefined ? { note: result.note } : {},
+    })
+    return result
+  }
+
+  /** Record a standing grant for one agent and tool, creating the set lazily. */
+  private recordStandingGrant(agent: Agent, toolName: string): void {
+    let granted = this.standingGrants.get(agent)
+    if (granted === undefined) {
+      granted = new Set<string>()
+      this.standingGrants.set(agent, granted)
+    }
+    granted.add(toolName)
   }
 
   /**
@@ -299,49 +341,66 @@ export class ApprovalService extends Service {
    * Dispatch the waterfall, contained and raced against the request signal.
    * @param req - the borrowed public request.
    * @param session - the request agent's session used for policy lookup.
-   * @returns the normalized closed outcome.
+   * @returns the normalized closed result (outcome plus bounded note).
    */
-  private async decide(req: ApprovalRequest, session: Session): Promise<ApprovalOutcome> {
+  private async decide(req: ApprovalRequest, session: Session): Promise<ApprovalResult> {
     const signal = req.signal
-    if (signal?.aborted) return 'cancelled'
+    if (signal?.aborted) return { outcome: 'cancelled' }
     // The 'never' policy is decided HERE, before any dispatch: a listener
     // registered with `prepend: true` after this service mounts would sit
     // ahead of any gate LISTENER, so a listener-shaped gate cannot keep the
     // documented promise that 'never' rejects deterministically regardless
     // of registration order — only the service's own request path can.
-    if (this.effectivePolicy(session) === 'never') return 'rejected'
+    if (this.effectivePolicy(session) === 'never') return { outcome: 'rejected' }
     // Enter the promise chain BEFORE dispatching: a listener that throws
     // SYNCHRONOUSLY (before its first await) must land in the same rejection
     // path as an async one — `Promise.resolve(call())` would let it escape
     // the containment into the caller.
-    const answer: Promise<ApprovalOutcome> = Promise.resolve().then(
+    const answer: Promise<ApprovalResult> = Promise.resolve().then(
       () => this.ctx.waterfall(
         scopeTarget(this, req.agent), 'approval/request', req,
         () => Promise.resolve<ApprovalOutcome>('unavailable'),
       ),
     ).then(
-      // Normalize a rogue (non-vocabulary) answerer return to the fail-closed
-      // outcome instead of leaking it into callers' closed-union switches.
-      outcome => OUTCOMES.includes(outcome) ? outcome : 'unavailable',
+      // Normalize bare outcomes and rich answers to one result shape; a rogue
+      // (non-vocabulary) answerer return fails the question closed instead of
+      // leaking into callers' closed-union switches.
+      answer => normalizeAnswer(answer),
       // A throwing answerer must fail the QUESTION closed, not the caller's
       // tool call open — the seam contains its callbacks.
-      () => 'unavailable',
+      () => ({ outcome: 'unavailable' as const }),
     )
     if (signal === undefined) return answer
-    return await new Promise<ApprovalOutcome>((resolve) => {
+    return await new Promise<ApprovalResult>((resolve) => {
       const onAbort = () => {
         signal.removeEventListener('abort', onAbort)
-        resolve('cancelled')
+        resolve({ outcome: 'cancelled' })
       }
       signal.addEventListener('abort', onAbort, { once: true })
-      void answer.then((outcome) => {
+      void answer.then((result) => {
         signal.removeEventListener('abort', onAbort)
         // After an abort won the race this resolve is a settled-promise no-op:
         // the late answer is discarded by construction.
-        resolve(outcome)
+        resolve(result)
       })
     })
   }
+}
+
+/** Normalize an answerer return (bare outcome or rich answer) to one bounded result. */
+function normalizeAnswer(answer: ApprovalOutcome | ApprovalAnswer): ApprovalResult {
+  // A rogue answerer can return anything at runtime despite the declared
+  // union, so every shape check runs on the widened value.
+  const value = answer as unknown
+  if (typeof value === 'string') {
+    return OUTCOMES.includes(value as ApprovalOutcome) ? { outcome: value as ApprovalOutcome } : { outcome: 'unavailable' }
+  }
+  if (value === null || typeof value !== 'object' || !OUTCOMES.includes((value as ApprovalAnswer).outcome)) {
+    return { outcome: 'unavailable' }
+  }
+  const rich = value as ApprovalAnswer
+  const note = typeof rich.note === 'string' ? rich.note.trim().slice(0, MAX_NOTE_LENGTH) : ''
+  return note !== '' ? { outcome: rich.outcome, note } : { outcome: rich.outcome }
 }
 
 export default ApprovalService

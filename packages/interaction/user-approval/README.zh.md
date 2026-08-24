@@ -2,11 +2,11 @@
 
 [English](README.md) | 中文
 
-与通道无关的一次性审批 seam。`ctx.approval.request(req)` 返回 `allowed-once`、`rejected`、`cancelled` 或 `unavailable`；应答者缺失或失败时会以拒绝方式关闭，授权也只适用于所请求的操作。确切事件签名见 [approval.md](../../../docs/subsystems/approval.zh.md#cordis-surface) 的生成区块。
+与通道无关的审批 seam。`ctx.approval.request(req)` 返回 `ApprovalResult`：一个 `allowed-once`、`allowed-always`、`rejected`、`cancelled` 或 `unavailable` 结果，外加可选的有界应答者附言；应答者缺失或失败时会以拒绝方式关闭，授权也只适用于所请求的操作。应答者返回的 `allowed-always` 会额外记录一条内存常驻授权，同一 (agent, 工具) 对的后续询问不再分发、直接判定——但仍以 asked/decided 事件对完整审计。确切事件签名见 [approval.md](../../../docs/subsystems/approval.zh.md#cordis-surface) 的生成区块。
 
 每个请求都必须属于一个尚未结束的 agent（智能体）轮次。服务会追加一对 `approval/asked` 与 `approval/decided` 审计记录，而模型只会看到由此产生且已写入日志的工具结果。已中止的请求会解析为 `cancelled`；如果审计记录的追加在提交前失败，Promise 会被拒绝，而不会返回一项未记录的决定。
 
-应答者是 `approval/request` waterfall（瀑布式事件）监听器。要回答其负责的 agent 请求，请返回一个结果；否则调用 `next()` 委托。限定到 agent 的监听器只接收该 agent 的请求；每项部署应当组合一个最终应答者，因为同级监听器的顺序不是策略优先级机制。ACP（Agent Client Protocol）自动化桥接层为其负责的会话提供一次性机器决定。
+应答者是 `approval/request` waterfall（瀑布式事件）监听器。要回答其负责的 agent 请求，请返回一个结果（或携带附言的 `ApprovalAnswer`）；否则调用 `next()` 委托。限定到 agent 的监听器只接收该 agent 的请求；每项部署应当组合一个最终应答者，因为同级监听器的顺序不是策略优先级机制。ACP（Agent Client Protocol）自动化桥接层为其负责的会话提供一次性机器决定。
 
 `ApprovalPolicy` 为 `'ask'` 或 `'never'`。实际值取最后一条 `approval/policy` 事件，并回退到配置；`setApprovalPolicy()` 是写入路径。`'never'` 会在交互式分发之前拒绝请求。两种策略都会将各自完整的当前含义贡献给缓存安全的运行时上下文快照。
 
@@ -44,7 +44,7 @@ Approval prompts are disabled in this session: actions that require approval are
 
 #### 模型看到的内容
 
-`approval/asked` 和 `approval/decided` 只写入日志。模型只会看到发起请求的消费方最终给出的允许、拒绝、取消或不可用工具结果；面向人类的权限 UI 不属于上下文。
+`approval/asked` 和 `approval/decided` 只写入日志。模型只会看到发起请求的消费方最终给出的允许、拒绝、取消或不可用工具结果；面向人类的权限 UI 不属于上下文。应答者附言随消费方的拒绝文案进入模型（工具流水线为 `the user rejected tool "<name>": <note>`）；授权附言对模型不可见。
 
 #### Token 影响
 
@@ -57,6 +57,7 @@ Approval prompts are disabled in this session: actions that require approval are
 ## 已知限制与暂缓事项
 
 - **请求只在尚未结束的轮次内有效**：在空闲时或轮次之间发起调用，会在审计前抛出异常；持久化的轮次外审批工作流仍属暂缓事项。
-- **仅存在一次性授权**：结果词汇包含 `allowed-once`，但不含 `allow-always`、已记住的规则、撤销或授权存储；会话策略只有 `ask`／`never`。
-- **请求不携带工具参数**：应答者会看到工具名称、原因和可选调用 id；ACP 机器通道要求调用 id，并会委托不含 id 的请求。
+- **常驻授权是内存态且以 agent 生命周期为界**：`allowed-always` 让同一 (agent, 工具) 对的后续询问免于重问，直到该 agent 对象消亡；没有撤销面、没有持久化授权存储，会话策略仍只有 `ask`／`never`。
+- **工具入参预览由发起方限界、服务不限界**：`ApprovalRequest.toolInput` 仅供 UI（不进审计；原始参数已在配对的 `tool/call` 里），应答者展示时需自行限界；ACP 机器通道仍要求调用 id，并会委托不含 id 的请求。
+- **附言通道止于进程内应答者**：api-proxy wire 中继只转发结果，远端客户端的评注无法经 `ApprovalAnswer.note` 传递；待远端应答者需要时再扩展 wire。
 - **没有内置应答者**：无头或组合不完整的部署会返回 `unavailable` 并以拒绝方式关闭；服务自身绝不会提示人类。

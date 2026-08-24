@@ -1703,17 +1703,22 @@ export class ToolRuntime extends Service {
         approvalCancelled: false,
       }
     }
-    const outcome = await approval.request({
+    const result = await approval.request({
       agent: exec.agent,
       toolName: exec.name,
       callId: exec.callId,
       ...ask.reason !== undefined ? { reason: ask.reason } : {},
+      toolInput: toolInputPreview(exec.arguments),
       signal: exec.signal,
     })
-    switch (outcome) {
-      case 'allowed-once': return { decision: { kind: 'allow' }, approvalCancelled: false }
+    const noteSuffix = result.note !== undefined ? `: ${result.note}` : ''
+    switch (result.outcome) {
+      // The approval seam records the standing grant; for THIS call an
+      // 'allowed-always' grant behaves exactly like a one-shot grant.
+      case 'allowed-once':
+      case 'allowed-always': return { decision: { kind: 'allow' }, approvalCancelled: false }
       case 'rejected': return {
-        decision: { kind: 'deny', reason: `the user rejected tool "${exec.name}"` },
+        decision: { kind: 'deny', reason: `the user rejected tool "${exec.name}"${noteSuffix}` },
         approvalCancelled: false,
       }
       case 'cancelled': return {
@@ -1724,7 +1729,7 @@ export class ToolRuntime extends Service {
         decision: { kind: 'deny', reason: `tool "${exec.name}" requires approval, but no approval channel is available` },
         approvalCancelled: false,
       }
-      default: return assertNever(outcome, 'ApprovalOutcome')
+      default: return assertNever(result.outcome, 'ApprovalOutcome')
     }
   }
 
@@ -1865,6 +1870,28 @@ export class ToolRuntime extends Service {
 /** Mint a same-process correlation token whose identity is its value. */
 function createExecutionToken(): ToolExecutionToken {
   return Symbol('dsh.tool.execution') as ToolExecutionToken
+}
+
+/** Maximum retained tool-input preview length passed to approval answerers. */
+const MAX_TOOL_INPUT_PREVIEW = 2000
+
+/**
+ * Render a tool call's arguments as the bounded preview approval answerers
+ * show on their decision cards. UI-only: the raw arguments already live in
+ * the paired `tool/call` session event, so the preview is never audited.
+ *
+ * @param args - the parsed tool-call arguments (schema-validated by the tool).
+ * @returns a bounded JSON rendering; a bare-string rendering when it is one.
+ */
+function toolInputPreview(args: unknown): string {
+  if (typeof args === 'string') return args.slice(0, MAX_TOOL_INPUT_PREVIEW)
+  try {
+    return JSON.stringify(args)?.slice(0, MAX_TOOL_INPUT_PREVIEW) ?? ''
+  } catch {
+    // ToolExecution documents JSON-serializable arguments; a cyclic value
+    // would rather fail visibly at its own serialization boundary.
+    return ''
+  }
 }
 
 function toolErrorResult(error: unknown): ToolExecutionResult {

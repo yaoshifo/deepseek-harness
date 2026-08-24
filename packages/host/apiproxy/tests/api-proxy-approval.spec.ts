@@ -98,7 +98,7 @@ describe('approval pending registry', () => {
     const envelope = mux.envelopes.find(e => e.payload.type === 'approval/requested') as RpcRequest<MuxFrame>
     const receipt = await api.respond(answer(envelope.rpcId, requested.sessionId, requested.approvalId, 'allowed-once'))
     expect(receipt).toEqual({ accepted: true })
-    await expect(asked).resolves.toBe('allowed-once')
+    await expect(asked).resolves.toMatchObject({ outcome: 'allowed-once' })
 
     const resolved = await mux.waitFor('approval/resolved')
     expect(resolved).toMatchObject({ approvalId: requested.approvalId, outcome: 'allowed-once' })
@@ -129,7 +129,7 @@ describe('approval pending registry', () => {
 
     const receipt = await api.respond(answer(secondEnvelope.rpcId, replayed.sessionId, replayed.approvalId, 'rejected'))
     expect(receipt).toEqual({ accepted: true })
-    await expect(asked).resolves.toBe('rejected')
+    await expect(asked).resolves.toMatchObject({ outcome: 'rejected' })
     second.abort()
   })
 
@@ -168,7 +168,7 @@ describe('approval pending registry', () => {
     const envelope = mux.envelopes.find(e => e.payload.type === 'approval/requested') as RpcRequest<MuxFrame>
 
     cancel.abort()
-    await expect(asked).resolves.toBe('cancelled')
+    await expect(asked).resolves.toMatchObject({ outcome: 'cancelled' })
     const resolved = await mux.waitFor('approval/resolved')
     expect(resolved).toMatchObject({ approvalId: requested.approvalId, outcome: 'cancelled' })
     expect(await api.respond(answer(envelope.rpcId, requested.sessionId, requested.approvalId, 'allowed-once')))
@@ -225,7 +225,7 @@ describe('approval pending registry', () => {
     const asked = ctx.approval.request({ agent: agentOf(ctx), toolName: 'bash' })
     const requested = requestedOf(await mux.waitFor('approval/requested'))
     await fiber.dispose()
-    await expect(asked).resolves.toBe('cancelled')
+    await expect(asked).resolves.toMatchObject({ outcome: 'cancelled' })
     const resolved = await mux.waitFor('approval/resolved')
     expect(resolved).toMatchObject({ approvalId: requested.approvalId, outcome: 'cancelled' })
     abort.abort()
@@ -243,7 +243,7 @@ describe('approval pending registry', () => {
     const envelope = mux.envelopes.find(e => e.payload.type === 'approval/requested') as RpcRequest<MuxFrame>
     expect(await api.respond(answer(envelope.rpcId, requested.sessionId, requested.approvalId, 'allowed-once')))
       .toEqual({ accepted: true })
-    await expect(asked).resolves.toBe('allowed-once')
+    await expect(asked).resolves.toMatchObject({ outcome: 'allowed-once' })
     // Late abort: the pending entry is gone; settle's delete-guard returns.
     cancel.abort()
     expect(mux.frames.filter(f => f.type === 'approval/resolved')).toHaveLength(1)
@@ -274,8 +274,8 @@ describe('approval pending registry', () => {
       .toEqual({ accepted: true })
     expect(await api.respond(answer(frameA.rpcId, agent.session.id, requestedOf(frameA.payload).approvalId, 'allowed-once')))
       .toEqual({ accepted: true })
-    await expect(askA).resolves.toBe('allowed-once')
-    await expect(askB).resolves.toBe('rejected')
+    await expect(askA).resolves.toMatchObject({ outcome: 'allowed-once' })
+    await expect(askB).resolves.toMatchObject({ outcome: 'rejected' })
     abort.abort()
   })
 
@@ -297,8 +297,8 @@ describe('approval pending registry', () => {
       .toEqual({ accepted: true })
     expect(await api.respond(answer(frameB.rpcId, agent.session.id, requestedOf(frameB.payload).approvalId, 'rejected')))
       .toEqual({ accepted: true })
-    await expect(askA).resolves.toBe('allowed-once')
-    await expect(askB).resolves.toBe('rejected')
+    await expect(askA).resolves.toMatchObject({ outcome: 'allowed-once' })
+    await expect(askB).resolves.toMatchObject({ outcome: 'rejected' })
     abort.abort()
   })
 

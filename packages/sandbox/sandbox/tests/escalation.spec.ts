@@ -64,7 +64,7 @@ describe('approveEscalation', () => {
   })
   /** An approver that records the request and returns a fixed outcome. */
   const approver = (outcome: EscalationOutcome, sink?: (req: unknown) => void): EscalationApprover => ({
-    request: async (request) => { sink?.(request); return outcome },
+    request: async (request) => { sink?.(request); return { outcome } },
   })
   const ingredients = (over: Partial<Parameters<typeof approveEscalation>[1]> = {}) => ({
     approver: approver('allowed-once'),
@@ -103,6 +103,19 @@ describe('approveEscalation', () => {
       .rejects.toThrow('approval for escalating to "workspace-write" was cancelled')
     await expect(approveEscalation(req(), ingredients({ approver: approver('unavailable') })))
       .rejects.toThrow('no approval channel is available')
+  })
+
+  it('grants the mode on allowed-always like a one-shot grant', async () => {
+    const granted = await approveEscalation(req(), ingredients({ approver: approver('allowed-always') }))
+    expect(granted).toBe('workspace-write')
+  })
+
+  it('appends the decision note to the rejection text', async () => {
+    const noted: EscalationApprover = {
+      request: async () => ({ outcome: 'rejected', note: 'narrower scope first' }),
+    }
+    await expect(approveEscalation(req(), ingredients({ approver: noted })))
+      .rejects.toThrow('the user rejected escalating this command to "workspace-write": narrower scope first')
   })
 
   it('an outcome outside the closed union trips the exhaustiveness guard (defensive)', async () => {

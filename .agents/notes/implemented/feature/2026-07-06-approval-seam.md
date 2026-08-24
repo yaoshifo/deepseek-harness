@@ -1,4 +1,4 @@
-# Agent Note: The approval seam — one-shot permission decisions over a waterfall of answerers
+# Agent Note: The approval seam — closed permission decisions over a waterfall of answerers
 
 Status: implemented
 
@@ -27,7 +27,7 @@ One `cordis.yml` entry mounts the seam. Not loading it is the fail-closed opt-ou
 
 The entry alone provides mechanism, not a channel: with no answerer composed, every ask resolves `unavailable` and the asking tool call denies — fail-closed needs no configuration. Composing the ACP app (`@deepseek-ai/dsh-acp-demo`, as in [the acp-agent example's default tree](../../../../examples/acp-agent/README.md)) completes the loop: its [automation-only bridge](../simplification/2026-07-23-acp-automation-only-protocol.md) registers an answerer that sends `session/request_permission` to the owning client with the exact tool-call id and one-shot allow/reject options. `policy: never` is the unattended stance — every ask auto-rejects deterministically, and the current value joins the runtime-context snapshot. `policy` is validated against the closed list at plugin load; anything else throws.
 
-What a composed deployment observes: `allowed-once` lets exactly that call proceed; rejection, dismissal, and channel absence deny with three distinct reasons the model can tell apart; a successful in-turn request lands a durable `approval/asked`/`approval/decided` pair on the asking agent's session log; nothing about a grant persists past the call that asked. An idle request or audit append failure rejects instead of returning an unaudited decision.
+What a composed deployment observes: `allowed-once` lets exactly that call proceed; `allowed-always` additionally records an in-memory standing grant for the (agent, tool) pair, so later asks decide without dispatching but still land the durable `approval/asked`/`approval/decided` pair; rejection, dismissal, and channel absence deny with distinct reasons the model can tell apart, and an answerer note rides the rejection text (`the user rejected tool "<name>": <note>`); a successful in-turn request audits on the asking agent's session log. The grant memo lives and dies with the agent object — nothing durable persists past the process. An idle request or audit append failure rejects instead of returning an unaudited decision.
 
 One ask under this composition, from the sandbox example's recorded `escalation-approved` scenario — the model requests a sandbox escalation, the gate asks, and the automation client selects Allow once:
 
@@ -51,7 +51,7 @@ The `escalation-rejected` twin ends in `{"outcome": "rejected"}` instead: nothin
 
 #### The seam: mechanism and policy split
 
-After validation and a successful `approval/asked` append, the service resolves the `approval/request` waterfall to `allowed-once`, `rejected`, `cancelled`, or `unavailable`. It borrows the readonly request identity and signal, treats abort as `cancelled`, contains answerer failures and invalid returns as `unavailable`, discards late answers, and appends the paired `approval/decided` event. Pre-commit audit failures reject; post-append observer failures cannot undo an authoritative event. `allowed-once` authorizes only the asked action, and `request()` rejects outside an open turn so the audit pair remains inside the durable commit boundary.
+After validation and a successful `approval/asked` append, the service resolves the `approval/request` waterfall to an `ApprovalResult`: an outcome of `allowed-once`, `allowed-always`, `rejected`, `cancelled`, or `unavailable` plus an optional bounded (500-char) answerer note that rides `approval/decided`. Answerers may return a bare outcome or an `ApprovalAnswer`. It borrows the readonly request identity and signal, treats abort as `cancelled`, contains answerer failures and invalid returns as `unavailable`, discards late answers, and appends the paired `approval/decided` event. Pre-commit audit failures reject; post-append observer failures cannot undo an authoritative event. `allowed-once` authorizes only the asked action; `allowed-always` also seeds the in-memory standing-grant memo; and `request()` rejects outside an open turn so the audit pair remains inside the durable commit boundary.
 
 Answerers are `approval/request` waterfall listeners. Zero listeners fall through to `unavailable`; a recognizing listener occupies the first-wins decision slot, while an unrecognized agent must delegate with `next()`. Listeners dispose with their fibers, so an unloaded channel fails closed. Because sibling registration order is not deterministic, a deployment composes one terminal answerer and reserves `prepend` for decide-or-delegate gates.
 
@@ -59,7 +59,7 @@ Answerers are `approval/request` waterfall listeners. Zero listeners fall throug
 
 #### Ask routing in dsh-tools
 
-`ToolRuntime.execute()` resolves `ask` before dispatch: `allowed-once` proceeds, while rejection, cancellation, and channel absence produce distinct deny reasons. Opportunistic `ctx.get('approval')` consumption lets an absent or unmounted service fail closed without gating the registry fiber. Agent-less execution also fails closed because it has neither an audit session nor a channel owner.
+`ToolRuntime.execute()` resolves `ask` before dispatch: both grants proceed, while rejection (with the note appended), cancellation, and channel absence produce distinct deny reasons; the asker forwards a bounded `toolInput` preview for answerer cards. Opportunistic `ctx.get('approval')` consumption lets an absent or unmounted service fail closed without gating the registry fiber. Agent-less execution also fails closed because it has neither an audit session nor a channel owner.
 
 #### The per-session policy tier
 
@@ -87,7 +87,7 @@ Snapshots record allowed and rejected sandbox escalation through `session/reques
 
 ## Deferred
 
-- **`allow_always` grant storage** — honoring a persistent grant means designing storage, scope identity (call? path? prefix? session? time window?), and revocation; until designed, only the one-shot options are advertised ([the sandbox Agent Note](2026-07-06-sandbox.md) § Escalation records the open scope question).
+- **Durable `allow_always` grant storage** — the shipped `allowed-always` is an in-memory per-(agent, tool) memo with no revocation surface; a durable grant still means designing storage, scope identity beyond the tool name (path? prefix? time window?), and revocation ([the sandbox Agent Note](2026-07-06-sandbox.md) § Escalation records the open scope question).
 - **A recorded hook-driven `ask` through a composed answerer** — the permission wire is recorded through the sandbox example's escalation branches. The hook matrix's `hook-cc-pretool-ask` pins the no-ApprovalService fallback denial, while the hook-producer-plus-answerer composition remains on the unit tier.
 - **Routing a child agent's approvals to the parent session** — `subagent-acp`'s child auto-answers its own permission requests; delegating them to the parent controller is its own design.
 
