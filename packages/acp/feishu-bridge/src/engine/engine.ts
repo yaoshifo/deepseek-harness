@@ -4097,8 +4097,11 @@ export class Engine {
    * key, reconstruct a proactive reply context, notify the chat (unless
    * silent/muted), then either run the shell command or inject the prompt as
    * a synthetic user message. Mute wraps the platform so nothing is sent.
-   * Multi-workspace agent selection is not ported (single workspace); an
-   * explicit job workDir switches the agent's work dir for the run instead.
+   * Prompt runs start in 'default' mode unless the job sets its own mode:
+   * an unattended run cannot approve an ExitPlanMode card, so a plan-mode
+   * project default must not apply. Multi-workspace agent selection is not
+   * ported (single workspace); an explicit job workDir switches the agent's
+   * work dir for the run instead.
    * @param job - The cron job to execute.
    */
   async executeCronJob(job: CronJob): Promise<void> {
@@ -4203,7 +4206,10 @@ export class Engine {
       isCardAction: false,
       parentMessageID: '',
       quotedText: '',
-      modeOverride: job.mode,
+      // An unattended run cannot approve an ExitPlanMode card: an unset job
+      // mode must not inherit a plan-mode project default (the stall this
+      // default exists to prevent); an explicit job.mode wins.
+      modeOverride: job.mode !== '' ? job.mode : 'default',
     }
 
     // An explicit job workDir switches the agent's working directory for

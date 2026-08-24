@@ -140,6 +140,72 @@ describe('ExecuteCronJob_NewSessionPerRun', () => {
   })
 })
 
+describe('ExecuteCronJob_UnattendedModeDefault', () => {
+  it("defaults an unset job mode to 'default' instead of inheriting the project mode", async () => {
+    const store = new CronStore(tempDir())
+    const scheduler = new CronScheduler(store)
+
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const agentSession = newResultAgentSession('run done')
+    const recordedModes: string[] = []
+    const agent: Agent & { setSessionMode(mode: string): void } = {
+      name: () => 'stub',
+      startSession: async () => agentSession,
+      listSessions: async () => [],
+      stop: async () => {},
+      setSessionMode: (mode: string) => { recordedModes.push(mode) },
+    }
+    const e = new Engine('test', agent, [platform], '', 'en')
+    e.cronScheduler = scheduler
+
+    const job = newJob({
+      id: 'um1',
+      sessionKey: 'discord:channel-1:user-1',
+      cronExpr: '0 6 * * *',
+      prompt: 'unattended check',
+      sessionMode: 'new_per_run',
+    })
+    store.add(job)
+
+    await e.executeCronJob(job)
+    // An unattended cron run cannot approve an ExitPlanMode card, so an
+    // unset job mode must not fall back to the project default (plan in
+    // production): the run starts in 'default' instead.
+    expect(recordedModes).toEqual(['default'])
+  })
+
+  it('passes an explicit job mode through verbatim', async () => {
+    const store = new CronStore(tempDir())
+    const scheduler = new CronScheduler(store)
+
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const agentSession = newResultAgentSession('run done')
+    const recordedModes: string[] = []
+    const agent: Agent & { setSessionMode(mode: string): void } = {
+      name: () => 'stub',
+      startSession: async () => agentSession,
+      listSessions: async () => [],
+      stop: async () => {},
+      setSessionMode: (mode: string) => { recordedModes.push(mode) },
+    }
+    const e = new Engine('test', agent, [platform], '', 'en')
+    e.cronScheduler = scheduler
+
+    const job = newJob({
+      id: 'um2',
+      sessionKey: 'discord:channel-1:user-1',
+      cronExpr: '0 6 * * *',
+      prompt: 'unattended check',
+      sessionMode: 'new_per_run',
+      mode: 'bypassPermissions',
+    })
+    store.add(job)
+
+    await e.executeCronJob(job)
+    expect(recordedModes).toEqual(['bypassPermissions'])
+  })
+})
+
 describe('ExecuteCronJob_WorkspacePrefixedSessionKey', () => {
   it('strips a workspace prefix by locating the platform name and keeps the stored key', async () => {
     const store = new CronStore(tempDir())
