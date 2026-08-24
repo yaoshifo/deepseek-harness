@@ -20,6 +20,28 @@ interface ProjectStateData {
   monitor_mode?: string
   /** Runtime active-provider override from /provider switch (#9; empty = use config). */
   active_provider?: string
+  /** Native continuable subtask children (de-baggage B4), keyed by native child id. */
+  native_children?: Record<string, NativeChildRecord> | undefined
+}
+
+/** One persisted native continuable subtask child (de-baggage B4). */
+export interface NativeChildRecord {
+  /** Engine session key (or native parent id) of the delegating parent. */
+  parent_key: string
+  /** Native session id of the delegating parent's live agent. */
+  parent_agent_session_id: string
+  /** Durable creation label (the brief's first line, capped). */
+  label: string
+  /** Worktree path the engine created for the child; '' = none. */
+  worktree_path: string
+  /** Worktree branch; '' = none. */
+  worktree_branch: string
+  /** Worktree base SHA; '' = none. */
+  worktree_base: string
+  /** Worktree repository root; '' = none. */
+  worktree_root: string
+  /** Whether the child already delivered its result to the parent. */
+  reported: boolean
 }
 
 /** Persists lightweight runtime state for one project. */
@@ -134,6 +156,38 @@ export class ProjectStateStore {
    */
   setActiveProvider(name: string): void {
     this.state.active_provider = name
+  }
+
+  /**
+   * All persisted native continuable subtask children, keyed by native child id.
+   * @returns A copy of the child map (never undefined).
+   */
+  nativeChildren(): Record<string, NativeChildRecord> {
+    return { ...this.state.native_children }
+  }
+
+  /**
+   * Record or replace one native child entry.
+   * @param childId - The durable native child session id.
+   * @param record - The child's parentage, label, worktree, and report state.
+   */
+  setNativeChild(childId: string, record: NativeChildRecord): void {
+    if (this.state.native_children === undefined) this.state.native_children = {}
+    this.state.native_children[childId] = record
+  }
+
+  /**
+   * Remove one native child entry (teardown / recycling).
+   * @param childId - The durable native child session id.
+   */
+  clearNativeChild(childId: string): void {
+    const children = this.state.native_children
+    if (children === undefined) return
+    const next: Record<string, NativeChildRecord> = {}
+    for (const [k, v] of Object.entries(children)) {
+      if (k !== childId) next[k] = v
+    }
+    this.state.native_children = Object.keys(next).length === 0 ? undefined : next
   }
 
   /** Persist synchronously (Go saveLocked). */

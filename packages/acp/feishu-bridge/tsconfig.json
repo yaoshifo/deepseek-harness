@@ -36,6 +36,15 @@
       "path": "../../skill/skill"
     },
     {
+      "path": "../../subagent/subagent"
+    },
+    {
+      "path": "../../subagent/subagent-fork-in-process"
+    },
+    {
+      "path": "../../subagent/subagent-spawn-in-process"
+    },
+    {
       "path": "../../runtime-diagnostics/invariants"
     }
   ]

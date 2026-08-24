@@ -13,6 +13,9 @@ import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SkillRegistry } from '@deepseek-ai/dsh-skill'
 import Schema from '@deepseek-ai/schemastery'
+import SubagentRuntime from '@deepseek-ai/dsh-subagent'
+import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
+import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.js'
 import { FeishuPlatform } from './feishu/platform.js'
@@ -704,6 +707,15 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
  */
 export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   const dataRoot = config.dataDir ?? join(homedir(), '.dsh', 'feishu-bridge')
+  // Native continuable subtasks (de-baggage B4): the bridge mounts the
+  // subagent runtime itself with external settlement delivery — the engine
+  // drives parent turns, so the runtime's own wake would spend a model
+  // request it never scheduled. Self-mounting keeps every profile working
+  // without subagent entries; a profile that ALSO loads dsh-subagent would
+  // collide on the 'subagents' service name (documented in the README).
+  ctx.plugin(SubagentRuntime, { settlementNotice: 'external' })
+  ctx.plugin(SubagentSpawn)
+  ctx.plugin(SubagentFork)
   // One dir history for every project (Go main shares NewDirHistory(cfg.DataDir)
   // across engines so /dir MRU entries land in a single store file).
   const dirHistory = new DirHistory(dataRoot)
@@ -783,11 +795,24 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
     }
     return undefined
   }
-  registerSubtaskTool(ctx, route)
+  // Native continuable children (de-baggage B4) own no engine session: their
+  // tool calls route to the engine that spawned them, keyed by the native
+  // child id. Only the subtask family consumes this — a native child calling
+  // cron/relay/chatroom/send has no engine chat to act on.
+  const nativeRoute = (caller: unknown): SubtaskRoute | undefined => {
+    const id = agentIDOf(caller)
+    if (id === '') return undefined
+    for (const { engine } of live) {
+      if (engine.ownsNativeChild(id)) return { engine, sessionKey: id, nativeChildId: id }
+    }
+    return undefined
+  }
+  registerSubtaskTool(ctx, route, nativeRoute)
   registerCronTool(ctx, route)
   registerRelayTool(ctx, route)
   registerChatroomTool(ctx, route)
   registerSendTool(ctx, route)
+  registerNativeSettlementListener(ctx, live)
   // The lark passthrough routes to the caller's project BOT credentials
   // (plan D4): bot mode mints a TAT in-process, --as user prepends the
   // project's --profile (Go `cc-connect lark` wrapper semantics).
@@ -799,6 +824,31 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
     return { ...target, creds: { appId: project.feishu.appId, appSecret: project.feishu.appSecret } }
   }
   registerLarkTool(ctx, larkRoute, undefined, dataRoot)
+}
+
+/**
+ * Wire the native settlement fallback (de-baggage B4): each continuable
+ * epoch that ends without an explicit report delivers its final assistant
+ * output through the owning engine — Go maybeAutoReportSubtask's native
+ * counterpart. `live` is captured by reference so entries added after
+ * registration (none today; apply() builds all projects first) still route.
+ *
+ * @param ctx - Plugin context carrying the event bus.
+ * @param live - Live project entries whose engines may own native children.
+ * @returns The event disposer.
+ */
+export function registerNativeSettlementListener(ctx: Context, live: ReadonlyArray<{ engine: Engine }>): () => void {
+  return ctx.on('subagent/end', (info: { id: string; lastAssistantMessage?: Array<{ type: string; text?: string }> }) => {
+    const output = (info.lastAssistantMessage ?? [])
+      .map(block => block.type === 'text' ? (block.text ?? '') : '')
+      .join('')
+    for (const { engine } of live) {
+      if (engine.ownsNativeChild(info.id)) {
+        engine.settleNativeChild(info.id, output)
+        return
+      }
+    }
+  })
 }
 
 /**

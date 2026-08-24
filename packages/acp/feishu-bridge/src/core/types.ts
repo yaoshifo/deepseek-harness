@@ -848,6 +848,63 @@ export interface ForkSessionPreparer {
 }
 
 /**
+ * What a native continuable-child spawn asks the adapter for (de-baggage
+ * B4): the provider choice mirrors the tool's fork flag, the persona is
+ * composed inside the adapter from the unattended-subtask preamble plus the
+ * workspace routing section, and the parent is identified by its live
+ * native session id.
+ */
+export interface ContinuableChildStart {
+  /** In-process provider: 'fork' seeds the parent's completed-turn prefix, 'spawn' starts fresh. */
+  provider: 'spawn' | 'fork'
+  /** The self-contained task brief delivered as the child's first user message. */
+  prompt: string
+  /** Absolute working directory the child session records as its cwd. */
+  cwd: string
+  /** Feishu workspace routing the child's persona section names; undefined = none. */
+  workspace: FeishuWorkspaceInfo | undefined
+  /** Delegation-depth cap the child enforces on its own descendants. */
+  maxDepth: number
+  /** Native session id of the live delegating parent. */
+  parentAgentSessionID: string
+}
+
+/**
+ * Agent that delegates continuable child sessions to the native subagent
+ * runtime (`ctx.subagents`, mounted with external settlement delivery).
+ * Child turns run on the native inbox FIFO; settlement reaches the engine
+ * through the `subagent/end` event, not a runtime parent wake.
+ */
+export interface ContinuableDelegator {
+  /**
+   * @param request - the child spawn request.
+   * @returns the durable native child session id and its creation label.
+   */
+  startContinuableChild(request: ContinuableChildStart): Promise<{ childId: string; label: string }>
+  /**
+   * Deliver a follow-up to a native child as its next FIFO turn; a running
+   * child queues it (the deliberate deviation from Go's busy-reject).
+   * @param parentAgentSessionID - native id of the live direct parent.
+   * @param childId - the durable native child session id.
+   * @param message - the follow-up text.
+   */
+  followupChild(parentAgentSessionID: string, childId: string, message: string): Promise<void>
+  /**
+   * Interrupt one native child's current turn (fire-and-return).
+   * @param parentAgentSessionID - native id of the live direct parent (the authority).
+   * @param childId - the durable native child session id.
+   */
+  interruptChild(parentAgentSessionID: string, childId: string): void
+  /**
+   * Push one native child's content to its durable direct parent through the
+   * runtime's report path — used when the parent is itself a native child.
+   * @param childId - the durable native child session id (the authority credential).
+   * @param content - the report text.
+   */
+  reportChildToNativeParent(childId: string, content: string): Promise<void>
+}
+
+/**
  * Agent that can prepare a rollback fork (Go PrepareForkAtSession on
  * ForkSessionPreparer): truncate the source transcript to the turn the
  * quoted message belongs to and stage the prefix under a fresh id the
@@ -1152,6 +1209,16 @@ export function asProviderSwitcher(a: Agent): ProviderSwitcher | undefined {
  */
 export function asForkSessionPreparer(a: Agent): ForkSessionPreparer | undefined {
   return withMethod<ForkSessionPreparer>(a, 'prepareForkSession')
+}
+
+/**
+ * Structural check for the {@link ContinuableDelegator} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asContinuableDelegator(a: Agent): ContinuableDelegator | undefined {
+  return withMethod<ContinuableDelegator>(a, 'startContinuableChild')
 }
 
 /**

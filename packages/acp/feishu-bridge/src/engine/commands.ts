@@ -1209,6 +1209,9 @@ export async function cmdDone(e: Engine, p: Platform, msg: Message, args: string
   const rootKey = msg.sessionKey
   const rootCtx = msg.replyCtx
   void (async () => {
+    // Native continuable descendants chain through the project state, not
+    // the session tree (de-baggage B4) — drain them alongside the groups.
+    await e.drainNativeDescendants([rootKey, ...descendants])
     const dirtyLines: string[] = []
     for (const childKey of descendants) {
       const { name, dirty } = await cleanupOneChat(e, p, childKey, undefined, true)

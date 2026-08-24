@@ -43,6 +43,7 @@ import type {
   AgentSessionInfo,
   AskDelegate,
   AskDecision,
+  ContinuableChildStart,
   FileAttachment,
   ImageAttachment,
   ProviderConfig,
@@ -145,6 +146,35 @@ export interface DshPersistenceLike {
   list(signal?: AbortSignal): Promise<SessionHeader[]>
   /** Absolute log-file path for a header without touching the filesystem (jsonl backend `locate`); absent on backends without files. */
   locate?(meta: SessionHeader): { path: string }
+}
+
+/**
+ * Structural slice of the `subagents` service the native continuable-child
+ * delegation surface uses. Loose id/message types: the real service's branded
+ * parameters are erased by the service-side cast, exactly like
+ * {@link DshPersistenceLike}.
+ */
+export interface DshSubagentsLike {
+  startContinuable(spec: {
+    provider: string
+    label: string
+    request: {
+      prompt: Array<Record<string, unknown>>
+      parent: unknown
+      maxDepth?: number
+      persona?: string
+      cwd?: string
+    }
+    signal: AbortSignal
+  }): Promise<{ childId: unknown }>
+  followup(
+    parent: unknown,
+    childId: unknown,
+    content: Array<Record<string, unknown>>,
+    options: { source: Record<string, unknown> },
+  ): Promise<unknown>
+  interrupt(targetSessionId: unknown, authority: Record<string, unknown>): void
+  reportFrom(child: unknown, content: Array<Record<string, unknown>>, options: { delivery: string; signal: AbortSignal }): Promise<unknown>
 }
 
 /** One named provider route (plan D2: one llm route per provider). */
@@ -314,6 +344,25 @@ export function feishuWorkspaceSection(options: SessionStartOptions | undefined)
 }
 
 /**
+ * Compose the persona a native continuable subtask child runs under (de-baggage
+ * B4): the same text the group-path child receives as prompt sections — the
+ * workspace routing section plus the subtask report preamble (subtask children
+ * deliberately omit the agent-conventions section: its closing
+ * ask_user_question findings card addresses a user chat this child does not
+ * have) — joined as one persona that shadows the deployment persona for this
+ * child.
+ *
+ * @param workspaceText - The #18 workspace routing section; '' omits it.
+ * @returns The composed persona text.
+ */
+export function unattendedSubtaskPersona(workspaceText: string): string {
+  const parts: string[] = []
+  if (workspaceText !== '') parts.push(workspaceText)
+  parts.push(subtaskAgentSystemPrompt())
+  return parts.join('\n\n')
+}
+
+/**
  * Build the agents.create/resume setup hook for the typed persona options
  * (Go isChatroomBareSession + buildChatroomSystemPrompt): chatroom role /
  * direct-role / moderator sessions replace the whole system prompt. A
@@ -379,6 +428,19 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
 
 /** Default one-shot budget (Go oneShotQuery default timeout). */
 const oneShotDefaultTimeoutMs = 10 * 60_000
+
+/** Continuable start/report admission budget: covers validation and inbox acceptance, not the turn. */
+const startContinuableTimeoutMs = 30_000
+
+/** Max runes of a native child's durable creation label (first line of the brief). */
+const nativeChildLabelMaxRunes = 60
+
+/** Durable creation label for a native child: the brief's first non-empty line, capped. */
+function labelOfBrief(brief: string): string {
+  const line = brief.split('\n').map(l => l.trim()).find(l => l !== '') ?? ''
+  const chars = Array.from(line)
+  return chars.length > nativeChildLabelMaxRunes ? `${chars.slice(0, nativeChildLabelMaxRunes - 1).join('')}…` : line
+}
 
 /** Cap on parentSession links walked when attributing a subagent child to
  * a live bridge session — guards against a corrupted lineage cycle. */
@@ -858,6 +920,108 @@ export class DshAgentAdapter {
     const session = this.liveSessions.get(nativeID)
     if (session === undefined) return undefined
     return this.sessionsByEngineKey.get(session.sessionKey()) === session ? session.sessionKey() : undefined
+  }
+
+  /** Resolve the subagents service slice, or fail loud when unmounted. */
+  private requireSubagents(): DshSubagentsLike {
+    const subagents = this.ctx.get('subagents') as DshSubagentsLike | undefined
+    if (subagents === undefined) {
+      throw new Error('dsh adapter: continuable subtasks require the subagents service (the bridge mounts SubagentRuntime)')
+    }
+    return subagents
+  }
+
+  /**
+   * ContinuableDelegator: establish one native continuable child under the
+   * live parent agent (de-baggage B4). The runtime validates and gates the
+   * request (cwd absolute, provider capabilities) and persists the child's
+   * lineage; settlement stays external — the engine learns of the child's
+   * epochs through `subagent/end`.
+   *
+   * @param request - provider, brief, cwd, persona, depth cap, and the live parent id.
+   * @returns the durable native child session id.
+   */
+  async startContinuableChild(request: ContinuableChildStart): Promise<{ childId: string; label: string }> {
+    const subagents = this.requireSubagents()
+    const parent = this.ctx.agents.get(SessionId(request.parentAgentSessionID))
+    if (parent === undefined) {
+      throw new Error('subtask: the parent agent session is not live; start it before delegating')
+    }
+    const label = labelOfBrief(request.prompt)
+    const started = await subagents.startContinuable({
+      provider: request.provider,
+      label,
+      request: {
+        prompt: [{ type: 'text', text: request.prompt }],
+        parent,
+        maxDepth: request.maxDepth,
+        persona: unattendedSubtaskPersona(feishuWorkspaceSection(
+          request.workspace === undefined ? undefined : { sessionKey: '', feishuWorkspace: request.workspace },
+        )),
+        // '' means "no override" — the runtime rejects a non-absolute cwd, and
+        // the child then inherits the parent's working directory.
+        ...(request.cwd !== '' ? { cwd: request.cwd } : {}),
+      },
+      signal: AbortSignal.timeout(startContinuableTimeoutMs),
+    })
+    return { childId: String(started.childId), label }
+  }
+
+  /**
+   * ContinuableDelegator: deliver a parent follow-up as the child's next FIFO
+   * turn. Native semantics queue behind a running turn — the deliberate
+   * deviation from Go's busy-reject, recorded in the B4 Agent Note.
+   *
+   * @param parentAgentSessionID - native id of the live direct parent.
+   * @param childId - the durable native child session id.
+   * @param message - the follow-up text.
+   */
+  async followupChild(parentAgentSessionID: string, childId: string, message: string): Promise<void> {
+    const subagents = this.requireSubagents()
+    const parent = this.ctx.agents.get(SessionId(parentAgentSessionID))
+    if (parent === undefined) {
+      throw new Error('subtask: the parent agent session is not live; cannot deliver the follow-up')
+    }
+    await subagents.followup(parent, SessionId(childId), [{ type: 'text', text: message }], {
+      source: { kind: 'coordinator', form: 'relay', senderSessionId: SessionId(parentAgentSessionID) },
+    })
+  }
+
+  /**
+   * ContinuableDelegator: interrupt one native child's current turn. An
+   * absent or idle target is an accepted no-op (runtime semantics).
+   *
+   * @param parentAgentSessionID - native id of the live direct parent (the authority).
+   * @param childId - the durable native child session id.
+   */
+  interruptChild(parentAgentSessionID: string, childId: string): void {
+    const subagents = this.requireSubagents()
+    const parent = this.ctx.agents.get(SessionId(parentAgentSessionID))
+    if (parent === undefined) {
+      throw new Error('subtask: the parent agent session is not live; cannot interrupt the child')
+    }
+    subagents.interrupt(SessionId(childId), { kind: 'ancestor', agent: parent })
+  }
+
+  /**
+   * ContinuableDelegator: push one native child's content to its durable
+   * direct parent through the runtime's report path — the parent is itself a
+   * native child, so the delivery target is the native inbox, not a Feishu
+   * chat. The live child agent is the authority credential.
+   *
+   * @param childId - the durable native child session id.
+   * @param content - the report text.
+   */
+  async reportChildToNativeParent(childId: string, content: string): Promise<void> {
+    const subagents = this.requireSubagents()
+    const child = this.ctx.agents.get(SessionId(childId))
+    if (child === undefined) {
+      throw new Error('subtask: the reporting child agent is not live')
+    }
+    await subagents.reportFrom(child, [{ type: 'text', text: content }], {
+      delivery: 'next-step',
+      signal: AbortSignal.timeout(startContinuableTimeoutMs),
+    })
   }
 
   /**

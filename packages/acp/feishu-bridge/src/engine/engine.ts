@@ -42,6 +42,7 @@ import {
   asCardRefresher,
   asCardSenderWithUpdate,
   asChatJumpURLer,
+  asContinuableDelegator,
   asCronReplyTargetResolver,
   asForkQuerierWithProvider,
   asForkSessionPreparer,
@@ -67,6 +68,7 @@ import {
   ForkSessionPrefix,
   type GroupSpawnOptions,
 } from '../core/types.js'
+import type { NativeChildRecord } from './project-state.js'
 import { shouldSurfaceUnsolicitedPermission as shouldSurfaceHelper } from './permission.js'
 import {
   askAnswerDisplay,
@@ -107,6 +109,7 @@ import {
   removeWorktree,
   slugify,
   WorktreeMode,
+  worktreeDirty,
   worktreeRepoRoot,
   type WorktreeCreateInfo,
 } from './worktree.js'
@@ -5706,52 +5709,9 @@ export class Engine {
       groupName = `${Array.from(groupName).slice(0, maxGroupNameRunes - 3).join('')}...`
     }
 
-    // Resolve the child work dir, mirroring /dir resolution: parent's
-    // per-chat override (or agent base dir), then an explicit --dir.
-    let workDir = ''
-    const override = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
-    if (override !== '') workDir = override
-    else workDir = this.agentWorkDir()
-    if (dir !== '') {
-      const resolved = this.resolveDirPath(dir)
-      if (resolved === undefined) {
-        throw new Error(`subtask: --dir path invalid: ${dir}`)
-      }
-      workDir = resolved
-    }
-
-    // Worktree isolation: in auto mode, isolate only when the child shares
-    // the parent's git repository. Fail fast before creating the group.
-    let wtPath = ''
-    let wtBranch = ''
-    let wtBase = ''
-    let wtRoot = ''
-    let useWorktree = wtPref === WorktreeMode.ForceOn
-    if (wtPref === WorktreeMode.Auto && workDir !== '') {
-      const childRoot = await worktreeRepoRoot(workDir)
-      if (childRoot !== undefined) {
-        const parentDir = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
-        const parentRoot = parentDir === '' ? await worktreeRepoRoot(this.agentWorkDir()) : await worktreeRepoRoot(parentDir)
-        if (parentRoot === childRoot) useWorktree = true
-      }
-    }
-    if (useWorktree) {
-      const root = await worktreeRepoRoot(workDir)
-      if (root === undefined) {
-        throw new Error(`subtask: --worktree requires a git repository, but ${workDir} is not inside one`)
-      }
-      let created: WorktreeCreateInfo
-      try {
-        created = await createWorktree(root, slugify(firstMsg))
-      } catch (error) {
-        throw new Error(`subtask: worktree create failed: ${String(error instanceof Error ? error.message : error)}`)
-      }
-      wtPath = created.path
-      wtBranch = created.branch
-      wtBase = created.baseSHA
-      wtRoot = root
-      workDir = created.path
-    }
+    // Resolve the child work dir and optional worktree isolation. Shared by
+    // the group path and the native continuable path (de-baggage B4).
+    const { workDir, wtPath, wtBranch, wtBase, wtRoot } = await this.resolveSubtaskWorkDir(parentSessionKey, dir, wtPref, firstMsg)
 
     // Fork-source guard: fail fast BEFORE creating the group so the agent
     // learns to drop -f and retry, leaving no orphan group (Go
@@ -5852,6 +5812,361 @@ export class Engine {
     console.info(`subtask: spawned (parent=${parentSessionKey} child=${syntheticMsg.sessionKey} depth=${depth} worktree=${wtPath !== ''} dir=${workDir})`)
     this.markResearchDispatch(parent)
     return { childName: groupName, childKey: syntheticMsg.sessionKey }
+  }
+
+  /**
+   * Resolve the child work dir and optional worktree isolation shared by the
+   * group and native spawn paths (de-baggage B4): the parent's per-chat
+   * override (or agent base dir), then an explicit --dir; auto-mode
+   * worktree isolation applies only when the child shares the parent's git
+   * repository, and the worktree is created up front so failures leave no
+   * child behind.
+   * @param parentSessionKey - Session key of the delegating parent chat.
+   * @param dir - Explicit child work dir (--dir); '' resolves from the parent.
+   * @param wtPref - Worktree isolation preference for the child.
+   * @param brief - The task brief, slugged into the worktree branch name.
+   * @returns The child's resolved work dir and worktree coordinates ('' = none).
+   */
+  private async resolveSubtaskWorkDir(
+    parentSessionKey: string,
+    dir: string,
+    wtPref: WorktreeMode,
+    brief: string,
+  ): Promise<{ workDir: string; wtPath: string; wtBranch: string; wtBase: string; wtRoot: string }> {
+    let workDir = ''
+    const override = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
+    if (override !== '') workDir = override
+    else workDir = this.agentWorkDir()
+    if (dir !== '') {
+      const resolved = this.resolveDirPath(dir)
+      if (resolved === undefined) {
+        throw new Error(`subtask: --dir path invalid: ${dir}`)
+      }
+      workDir = resolved
+    }
+
+    // Worktree isolation: in auto mode, isolate only when the child shares
+    // the parent's git repository. Fail fast before creating anything.
+    let wtPath = ''
+    let wtBranch = ''
+    let wtBase = ''
+    let wtRoot = ''
+    let useWorktree = wtPref === WorktreeMode.ForceOn
+    if (wtPref === WorktreeMode.Auto && workDir !== '') {
+      const childRoot = await worktreeRepoRoot(workDir)
+      if (childRoot !== undefined) {
+        const parentDir = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
+        const parentRoot = parentDir === '' ? await worktreeRepoRoot(this.agentWorkDir()) : await worktreeRepoRoot(parentDir)
+        if (parentRoot === childRoot) useWorktree = true
+      }
+    }
+    if (useWorktree) {
+      const root = await worktreeRepoRoot(workDir)
+      if (root === undefined) {
+        throw new Error(`subtask: --worktree requires a git repository, but ${workDir} is not inside one`)
+      }
+      let created: WorktreeCreateInfo
+      try {
+        created = await createWorktree(root, slugify(brief))
+      } catch (error) {
+        throw new Error(`subtask: worktree create failed: ${String(error instanceof Error ? error.message : error)}`)
+      }
+      wtPath = created.path
+      wtBranch = created.branch
+      wtBase = created.baseSHA
+      wtRoot = root
+      workDir = created.path
+    }
+    return { workDir, wtPath, wtBranch, wtBase, wtRoot }
+  }
+
+  /**
+   * Spawn an unattended child as a native continuable subagent session
+   * (de-baggage B4): no Feishu group, no user-visible surface — lineage,
+   * depth, and cold resume belong to the native runtime, the engine keeps
+   * only the parentage record (persisted in the project state) and the
+   * worktree it created. Settlement reaches the engine through the
+   * `subagent/end` event; the runtime's own parent wake is mounted
+   * 'external'.
+   * @param parentSessionKey - Session key of the delegating parent chat.
+   * @param dir - Explicit child work dir (--dir); '' resolves from the parent.
+   * @param wtPref - Worktree isolation preference for the child.
+   * @param forkContext - Whether the child copies the parent's conversation (--fork).
+   * @param brief - The self-contained task brief; '' is invalid here.
+   * @returns The child's durable native session id and label.
+   */
+  async spawnSubtaskNative(
+    parentSessionKey: string,
+    dir: string,
+    wtPref: WorktreeMode,
+    forkContext: boolean,
+    brief: string,
+  ): Promise<{ childName: string; childKey: string }> {
+    const briefText = brief.trim()
+    if (briefText === '') throw new Error('subtask: spawn requires a task brief (message)')
+    const delegator = asContinuableDelegator(this.agent)
+    if (delegator === undefined) {
+      throw new Error('subtask: the agent backend does not support native subtasks')
+    }
+
+    const parent = this.sessions.getOrCreateActive(parentSessionKey)
+    // Fork guard mirrors the group path: a fork needs a started parent
+    // conversation to copy context from.
+    if (forkContext) {
+      const forkOrigID = parent.getAgentSessionID()
+      if (forkOrigID === '' || forkOrigID === ContinueSession || forkOrigID.startsWith(ForkSessionPrefix)) {
+        throw new Error('subtask: --fork needs a started parent conversation to copy context from')
+      }
+    }
+    // The native runtime authorizes follow-ups and reports against the exact
+    // live direct parent, so the parent's agent session must be up.
+    const parentNativeID = this.liveNativeSessionID(parentSessionKey)
+    if (parentNativeID === '') {
+      throw new Error('subtask: the parent conversation has no live agent session; send it a message first')
+    }
+
+    const { workDir, wtPath, wtBranch, wtBase, wtRoot } = await this.resolveSubtaskWorkDir(parentSessionKey, dir, wtPref, briefText)
+
+    let childId: string
+    let label: string
+    try {
+      const started = await delegator.startContinuableChild({
+        provider: forkContext ? 'fork' : 'spawn',
+        prompt: briefText,
+        cwd: workDir,
+        workspace: this.feishuWorkspace,
+        maxDepth: this.maxSubtaskDepth(),
+        parentAgentSessionID: parentNativeID,
+      })
+      childId = started.childId
+      label = started.label
+    } catch (error) {
+      // A failed delegation must not leak the worktree it reserved.
+      if (wtPath !== '') await this.removeNativeWorktreeQuiet(wtPath, wtBranch, wtRoot, wtBase)
+      throw error
+    }
+
+    if (this.projectState !== undefined) {
+      this.projectState.setNativeChild(childId, {
+        parent_key: parentSessionKey,
+        parent_agent_session_id: parentNativeID,
+        label,
+        worktree_path: wtPath,
+        worktree_branch: wtBranch,
+        worktree_base: wtBase,
+        worktree_root: wtRoot,
+        reported: false,
+      })
+      this.projectState.save()
+    }
+
+    // Fold a late-spawned child into an armed gather barrier (no-op without one).
+    const gg = parent.getPendingSubtaskGather()
+    if (gg !== undefined) {
+      if (gg.addExpected(childId, label)) {
+        console.info(`subtask: added late-spawned native child to armed gather (parent=${parentSessionKey} child=${childId})`)
+      }
+    }
+
+    console.info(`subtask: spawned native (parent=${parentSessionKey} child=${childId} fork=${forkContext} worktree=${wtPath !== ''} dir=${workDir})`)
+    return { childName: label, childKey: childId }
+  }
+
+  /** Live native session id of an engine session's running agent ('' = none). */
+  private liveNativeSessionID(sessionKey: string): string {
+    const state = this.interactiveStates.get(sessionKey)
+    if (state?.agentSession === undefined || !state.agentSession.alive()) return ''
+    return state.agentSession.currentSessionID()
+  }
+
+  /** Remove a native child's worktree quietly (teardown paths; failures warn). */
+  private async removeNativeWorktreeQuiet(path: string, branch: string, root: string, base: string): Promise<void> {
+    if (path === '') return
+    try {
+      if (await worktreeDirty(path, base)) {
+        console.warn(`subtask: native child worktree is dirty; kept (${path})`)
+        return
+      }
+      await removeWorktree(root, path, branch, false)
+    } catch (error) {
+      console.warn(`subtask: native child worktree removal failed; kept (${path}): ${String(error instanceof Error ? error.message : error)}`)
+    }
+  }
+
+  /**
+   * All persisted native continuable children of this engine, keyed by child id.
+   * @returns The child records (empty map without a project state store).
+   */
+  nativeChildEntries(): Record<string, NativeChildRecord> {
+    return this.projectState?.nativeChildren() ?? {}
+  }
+
+  /**
+   * Whether this engine owns the given native child id (tool-call routing).
+   * @param childId - The durable native child session id.
+   * @returns True when the child was spawned by this engine.
+   */
+  ownsNativeChild(childId: string): boolean {
+    return this.nativeChildEntries()[childId] !== undefined
+  }
+
+  /**
+   * Update one persisted native child record (no-op without a store).
+   * @param childId - The durable native child session id.
+   * @param patch - Fields to overwrite on the record.
+   */
+  private updateNativeChild(childId: string, patch: Partial<NativeChildRecord>): void {
+    const entries = this.nativeChildEntries()
+    const current = entries[childId]
+    if (current === undefined || this.projectState === undefined) return
+    this.projectState.setNativeChild(childId, { ...current, ...patch })
+    this.projectState.save()
+  }
+
+  /**
+   * Push a native child's result back to its parent (de-baggage B4): an
+   * engine-session parent receives the same card + `[子任务完成]` wake the
+   * group path delivers; a native parent (itself a continuable child)
+   * receives the report through the runtime's native report path.
+   * Idempotent per child until a follow-up re-arms it.
+   * @param childId - The durable native child session id.
+   * @param result - The child's result text; '' uses the child's last reply.
+   */
+  async reportNativeChild(childId: string, result: string): Promise<void> {
+    const entry = this.nativeChildEntries()[childId]
+    if (entry === undefined) {
+      throw new Error('subtask: not a native child of this project')
+    }
+    if (entry.reported) {
+      console.info(`subtask: native report already delivered, skipping duplicate (child=${childId})`)
+      return
+    }
+    if (result.trim() === '') {
+      const entries = await this.recentTurns(childId)
+      const lastAssistant = [...entries].reverse().find(e => e.role === 'assistant')?.content ?? ''
+      result = lastAssistant
+    }
+    if (result.trim() === '') {
+      throw new Error('subtask: no result to report')
+    }
+
+    const nativeParent = this.nativeChildEntries()[entry.parent_key] !== undefined
+    if (nativeParent) {
+      const delegator = asContinuableDelegator(this.agent)
+      if (delegator === undefined) {
+        throw new Error('subtask: the agent backend does not support native subtasks')
+      }
+      await delegator.reportChildToNativeParent(childId, result.trim())
+      this.updateNativeChild(childId, { reported: true })
+      console.info(`subtask: native child reported to native parent (child=${childId})`)
+      return
+    }
+
+    const p = this.reportCapablePlatform()
+    if (p === undefined) {
+      throw new Error('subtask: no platform available to deliver report')
+    }
+    if (!this.replyNativeToParent(p, childId, entry, result.trim())) {
+      throw new Error('subtask: this chat has no parent session to report back to')
+    }
+    this.updateNativeChild(childId, { reported: true })
+    console.info(`subtask: native child reported to parent (child=${childId})`)
+  }
+
+  /**
+   * Settlement fallback (Go maybeAutoReportSubtask's native counterpart): the
+   * `subagent/end` listener calls this with the epoch's final assistant
+   * output, so a child that never explicitly reported still delivers — and a
+   * follow-up's answer re-arms the same delivery.
+   * @param childId - The durable native child session id.
+   * @param finalOutput - The epoch's final assistant text ('' re-reads the window).
+   */
+  settleNativeChild(childId: string, finalOutput: string): void {
+    const entry = this.nativeChildEntries()[childId]
+    if (entry === undefined || entry.reported) return
+    void this.reportNativeChild(childId, finalOutput).catch((error: unknown) => {
+      console.warn(`subtask: native settlement delivery failed (child=${childId}): ${String(error)}`)
+    })
+  }
+
+  /**
+   * Card + wake delivery for a native child's report to an engine-session
+   * parent — the native counterpart of {@link replyToParent}.
+   * @param p - Platform delivering the card and wake message.
+   * @param childId - The durable native child session id.
+   * @param entry - The child's persisted record.
+   * @param content - Result content to push.
+   * @returns True when the delivery was initiated.
+   */
+  private replyNativeToParent(p: Platform, childId: string, entry: NativeChildRecord, content: string): boolean {
+    if (entry.parent_key === '' || content.trim() === '') return false
+    const r = asReplyContextReconstructor(p)
+    if (r === undefined) return false
+    void r.reconstructReplyCtx(entry.parent_key).then(
+      (parentRctx) => {
+        void this.deliverParentReply(p, entry.parent_key, childId, entry.label, parentRctx, content)
+      },
+      (error: unknown) => {
+        console.warn(`replyNativeToParent: reconstruct reply ctx failed (parent=${entry.parent_key}): ${String(error)}`)
+      },
+    )
+    return true
+  }
+
+  /**
+   * Interrupt one native child's current turn (de-baggage B4's model-visible
+   * interruption surface).
+   * @param childId - The durable native child session id.
+   */
+  interruptNativeChild(childId: string): void {
+    const entry = this.nativeChildEntries()[childId]
+    if (entry === undefined) {
+      throw new Error('subtask: not a native child of this project')
+    }
+    const delegator = asContinuableDelegator(this.agent)
+    if (delegator === undefined) {
+      throw new Error('subtask: the agent backend does not support native subtasks')
+    }
+    // Prefer the parent's CURRENT live native session: a resumed parent keeps
+    // its id, and the runtime authorizes against the exact live ancestor.
+    const liveParent = this.liveNativeSessionID(entry.parent_key)
+    delegator.interruptChild(liveParent !== '' ? liveParent : entry.parent_agent_session_id, childId)
+    console.info(`subtask: interrupt requested for native child (child=${childId})`)
+  }
+
+  /**
+   * Tear down the native continuable descendants of the given root keys
+   * (de-baggage B4): interrupt each child's current turn, recycle a clean
+   * worktree, keep a dirty one, and drop the parentage records. Native
+   * grandchildren chain through native records, so a group descendant that
+   * spawned native children is covered by including it in the roots.
+   * @param rootKeys - Session keys whose native descendants to drain.
+   */
+  async drainNativeDescendants(rootKeys: string[]): Promise<void> {
+    const entries = this.nativeChildEntries()
+    const roots = new Set(rootKeys)
+    const toDrain: Array<[string, NativeChildRecord]> = []
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const [childId, rec] of Object.entries(entries)) {
+        if (toDrain.some(([id]) => id === childId)) continue
+        if (!roots.has(rec.parent_key)) continue
+        toDrain.push([childId, rec])
+        roots.add(childId) // a drained native child roots its own descendants
+        grew = true
+      }
+    }
+    for (const [childId, rec] of toDrain) {
+      try {
+        this.interruptNativeChild(childId)
+      } catch (error) {
+        console.warn(`subtask: native descendant interrupt failed (child=${childId}): ${String(error)}`)
+      }
+      await this.removeNativeWorktreeQuiet(rec.worktree_path, rec.worktree_branch, rec.worktree_root, rec.worktree_base)
+      this.projectState?.clearNativeChild(childId)
+    }
+    if (toDrain.length > 0) this.projectState?.save()
   }
 
   /** Fire-and-forget inbound delivery (Go SafeGo ReceiveMessage). */
@@ -5976,6 +6291,33 @@ export class Engine {
     const msg = message.trim()
     if (msg === '') throw new Error('subtask: message is required')
     if (childSessionKey.trim() === '') throw new Error('subtask: child session key is required')
+
+    // Native continuable child: the runtime inbox queues the follow-up
+    // behind the child's current turn — the deliberate deviation from Go's
+    // busy-reject (a queued follow-up's answer re-arms the settlement
+    // fallback, so it still folds back).
+    const nativeEntry = this.nativeChildEntries()[childSessionKey]
+    if (nativeEntry !== undefined) {
+      if (nativeEntry.parent_key !== callerSessionKey) {
+        throw new Error(this.i18n.t(Msg.SubtaskSendNotChild))
+      }
+      const delegator = asContinuableDelegator(this.agent)
+      if (delegator === undefined) {
+        throw new Error('subtask: the agent backend does not support native subtasks')
+      }
+      const liveParent = this.liveNativeSessionID(callerSessionKey)
+      if (liveParent === '' && !this.nativeChildEntries()[callerSessionKey]) {
+        throw new Error('subtask: the parent conversation has no live agent session')
+      }
+      this.updateNativeChild(childSessionKey, { reported: false })
+      await delegator.followupChild(
+        liveParent !== '' ? liveParent : nativeEntry.parent_agent_session_id,
+        childSessionKey,
+        msg,
+      )
+      console.info(`subtask: parent sent follow-up to native child (parent=${callerSessionKey} child=${childSessionKey})`)
+      return
+    }
 
     const p = this.reportCapablePlatform()
     if (p === undefined) throw new Error('subtask: no platform available to deliver follow-up')
@@ -6183,6 +6525,13 @@ export class Engine {
       g.expected.set(ck, true)
       g.labels.set(ck, childLabel(s))
     }
+    // Native continuable children join the same barrier; their reports
+    // bank through reportNativeChild → deliverParentReply's accumulate.
+    for (const [childId, rec] of Object.entries(this.nativeChildEntries())) {
+      if (rec.parent_key !== parentSessionKey || rec.reported) continue
+      g.expected.set(childId, true)
+      g.labels.set(childId, rec.label)
+    }
     if (g.expected.size === 0) {
       throw new Error(this.i18n.t(Msg.SubtaskGatherNoPending))
     }
@@ -6292,9 +6641,10 @@ export class Engine {
     if (parentKey === '' || content.trim() === '') return false
     const r = asReplyContextReconstructor(p)
     if (r === undefined) return false
+    const childKey = this.sessions.sessionKeyMap().idToKey[sess.id] ?? ''
     void r.reconstructReplyCtx(parentKey).then(
       (parentRctx) => {
-        void this.deliverParentReply(p, sess, parentKey, parentRctx, content)
+        void this.deliverParentReply(p, parentKey, childKey, childLabel(sess), parentRctx, content)
       },
       (error: unknown) => {
         console.warn(`replyToParent: reconstruct reply ctx failed (parent=${parentKey}): ${String(error)}`)
@@ -6303,10 +6653,22 @@ export class Engine {
     return true
   }
 
-  /** Async half of replyToParent once the parent reply ctx resolved. */
-  private async deliverParentReply(p: Platform, sess: Session, parentKey: string, parentRctx: unknown, content: string): Promise<void> {
+  /**
+   * Async half of {@link replyToParent} and {@link replyNativeToParent} once
+   * the parent reply ctx resolved. The child arrives as its key and label
+   * only, so group children and native continuable children share one
+   * delivery machine.
+   */
+  private async deliverParentReply(
+    p: Platform,
+    parentKey: string,
+    childKey: string,
+    label: string,
+    parentRctx: unknown,
+    content: string,
+  ): Promise<void> {
     await this.sendAsCard(p, parentRctx, content, {
-      title: this.i18n.tf(Msg.DoneReplyParentHeader, childLabel(sess)),
+      title: this.i18n.tf(Msg.DoneReplyParentHeader, label),
       color: 'indigo',
     })
 
@@ -6326,10 +6688,9 @@ export class Engine {
 
     // Gather barrier: bank this report and wake the parent only when all
     // expected children have reported (or the timeout fires).
-    const childKey = this.sessions.sessionKeyMap().idToKey[sess.id] ?? ''
     const g = parentSess.getPendingSubtaskGather()
     if (g !== undefined) {
-      const { done, summary, alreadyWoken } = g.accumulate(childKey, childLabel(sess), content)
+      const { done, summary, alreadyWoken } = g.accumulate(childKey, label, content)
       if (done) {
         parentSess.setPendingSubtaskGather(undefined)
         this.sessions.save()
@@ -6344,7 +6705,7 @@ export class Engine {
     // The card body stays clean; the synthetic message the parent agent sees
     // carries a hint with the child's session key so it can follow up via
     // `subtask send --child <key>` even after context compaction.
-    let agentContent = `[子任务完成] ${childLabel(sess)}:\n\n${content}`
+    let agentContent = `[子任务完成] ${label}:\n\n${content}`
     if (childKey !== '') {
       agentContent += `\n\n(如需追问该子任务: cc-connect subtask send --child ${childKey} "...")`
     }

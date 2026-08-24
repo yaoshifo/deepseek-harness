@@ -30,18 +30,22 @@ interface RoutedEngine {
   readonly engine: Engine
   readonly spawn: ReturnType<typeof vi.fn>
   readonly report: ReturnType<typeof vi.fn>
+  readonly reportNative: ReturnType<typeof vi.fn>
   readonly send: ReturnType<typeof vi.fn>
   readonly gather: ReturnType<typeof vi.fn>
+  readonly interrupt: ReturnType<typeof vi.fn>
 }
 
 function newRoutedEngine(name: string): RoutedEngine {
   const engine = new Engine(name, createStubAgent(), [createStubSpawnerPlatform()], '', 'en')
-  const spawn = vi.spyOn(engine, 'spawnSubtask')
+  const spawn = vi.spyOn(engine, 'spawnSubtaskNative')
     .mockResolvedValue({ childName: `${name} 任务`, childKey: `${name}:child-1` })
   const report = vi.spyOn(engine, 'reportSubtask').mockResolvedValue(undefined)
+  const reportNative = vi.spyOn(engine, 'reportNativeChild').mockResolvedValue(undefined)
   const send = vi.spyOn(engine, 'sendToSubtask').mockResolvedValue(undefined)
   const gather = vi.spyOn(engine, 'gatherSubtasks').mockReturnValue(undefined)
-  return { engine, spawn, report, send, gather }
+  const interrupt = vi.spyOn(engine, 'interruptNativeChild').mockReturnValue(undefined)
+  return { engine, spawn, report, reportNative, send, gather, interrupt }
 }
 
 function stubAgent(ctx: Context, id: string): Agent {
@@ -71,7 +75,10 @@ interface Harness {
 }
 
 /** Boot the tool over a real registry; the router maps agent ids to engines. */
-async function harness(route: (agent: unknown) => SubtaskRoute | undefined): Promise<Harness> {
+async function harness(
+  route?: (agent: unknown) => SubtaskRoute | undefined,
+  nativeRoute?: (agent: unknown) => SubtaskRoute | undefined,
+): Promise<Harness> {
   const ctx = new Context()
   contexts.push(ctx)
   await ctx.plugin(SessionStore)
@@ -80,7 +87,7 @@ async function harness(route: (agent: unknown) => SubtaskRoute | undefined): Pro
   await ctx.plugin(ToolRuntime)
   const agent = stubAgent(ctx, `subtask-tool-${Math.random()}`)
   ctx.agents.register(agent)
-  const dispose = registerSubtaskTool(ctx, route)
+  const dispose = registerSubtaskTool(ctx, route ?? (() => undefined), nativeRoute)
   return { ctx, agent, dispose }
 }
 
@@ -127,7 +134,7 @@ describe('feishu_bridge_subtask registration', () => {
     const schema = test.ctx.tools.get('feishu_bridge_subtask')?.parameters as {
       properties?: { action?: { enum?: string[] } }
     }
-    expect(schema.properties?.action?.enum).toEqual(['spawn', 'report', 'send', 'gather'])
+    expect(schema.properties?.action?.enum).toEqual(['spawn', 'report', 'send', 'gather', 'interrupt'])
     test.dispose()
     test.dispose() // idempotent
     expect(test.ctx.tools.get('feishu_bridge_subtask')).toBeUndefined()
@@ -158,7 +165,7 @@ describe('feishu_bridge_subtask action routing', () => {
       fork: true,
     })) as { status: string; message: string }
     expect(r.spawn).toHaveBeenCalledWith(
-      'test:parent-chat', '/abs/project-a', WorktreeMode.ForceOn, true, '迁移 project A 的 schema', [], false,
+      'test:parent-chat', '/abs/project-a', WorktreeMode.ForceOn, true, '迁移 project A 的 schema',
     )
     expect(v.status).toBe('ok')
     expect(v.message).toContain('test 任务')
@@ -170,7 +177,7 @@ describe('feishu_bridge_subtask action routing', () => {
     const r = newRoutedEngine('test')
     const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:p' }))
     await execute(test, { action: 'spawn', message: 'brief' })
-    expect(r.spawn).toHaveBeenCalledWith('test:p', '', WorktreeMode.Auto, false, 'brief', [], false)
+    expect(r.spawn).toHaveBeenCalledWith('test:p', '', WorktreeMode.Auto, false, 'brief')
   })
 
   it('spawn without a brief fails', async () => {
@@ -194,6 +201,31 @@ describe('feishu_bridge_subtask action routing', () => {
     const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:child-chat' }))
     await execute(test, { action: 'report' })
     expect(r.report).toHaveBeenCalledWith('test:child-chat', '')
+  })
+
+  it('report from a native child routes to reportNativeChild with the native id', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(undefined, () => ({ engine: r.engine, sessionKey: 'child-native-1', nativeChildId: 'child-native-1' }))
+    const v = value(await execute(test, { action: 'report', message: '结果' })) as { message: string }
+    expect(r.reportNative).toHaveBeenCalledWith('child-native-1', '结果')
+    expect(r.report).not.toHaveBeenCalled()
+    expect(v.message).toContain('Reported result back to the parent conversation')
+  })
+
+  it('interrupt routes to interruptNativeChild with the child key', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:p' }))
+    const v = value(await execute(test, { action: 'interrupt', child: 'test:child-1' })) as { message: string }
+    expect(r.interrupt).toHaveBeenCalledWith('test:child-1')
+    expect(v.message).toContain('Interrupt requested')
+  })
+
+  it('gather from a native child explains the per-report wake instead of arming a barrier', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(undefined, () => ({ engine: r.engine, sessionKey: 'child-native-1', nativeChildId: 'child-native-1' }))
+    const v = value(await execute(test, { action: 'gather' })) as { message: string }
+    expect(r.gather).not.toHaveBeenCalled()
+    expect(v.message).toContain('No barrier armed')
   })
 
   it('send routes to SendToSubtask with parent key, child key, and message', async () => {
