@@ -90,6 +90,7 @@ When required `gh`, `pnpm`, build, test, or generator commands fail because the 
 Run checks before pushes via [dsh-pre-push-checks](.agents/skills/dsh-pre-push-checks/SKILL.md); report only commands run. After `gh stack sync`, validate immediately; never merge before checks pass.
 
 - Match evidence to the surface: focused tests for behavior, snapshots for model or user output, `doc-sync` for docs, build/hygiene and built smokes for published paths, and real-API e2e for provider behavior.
+- **Fork policy (secondary development on `dev`, no upstream PRs):** skip `doc-sync` and the generated-document gates (`gen-*-catalog`, `gen-doc-graphs`, `gen-scoped-events`, `verify-translation-pairing`, `verify-type-equiv`); doc/source drift is accepted and needs no regeneration. This fork rule overrides the doc-sync requirement above and in linked skills. Exception: [dsh-sync-upstream](.agents/skills/dsh-sync-upstream/SKILL.md) step 4 still runs its five generators after upstream merges — `packages/extensions/tool-cordis/src/api-catalog.ts` is generated runtime source that tool-cordis imports, and with `doc-sync` skipped nothing else catches a missed generator.
 - Never default to the full suite or repeat a passing check for commit or push. CI owns exhaustive coverage and the platform matrix; rehearse all locally only by explicit request, for CI diagnosis, or for a repository-wide change.
 - `test:coverage`, not `test`, is the CI coverage gate ([why](docs/testing.md)).
 
