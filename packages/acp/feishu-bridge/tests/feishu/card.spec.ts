@@ -329,7 +329,7 @@ describe('buildPreviewCardJSON', () => {
     // Feishu card markdown renders **bold** only when the delimiters keep a
     // space on both sides; a closing ** glued to the next word shows raw **.
     const reply = '**运行在你安装 mico 的本地终端（你的电脑）上，不在 mico 服务器上。**mico 服务器只负责签发凭证和协调。'
-    const card = jParse(buildPreviewCardJSON(reply, noSpinner, { state: 'completed' }))
+    const card = jParse(buildPreviewCardJSON(reply, noSpinner, { state: 'completed', ts: '', toolCallSeq: 0 }))
     const md = jStr(jObj(jArr(jObj(card.body).elements)[0]).content)
     expect(md).toContain('**运行在你安装 mico 的本地终端（你的电脑）上，不在 mico 服务器上。** mico 服务器只负责签发凭证和协调。')
   })
