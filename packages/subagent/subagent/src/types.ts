@@ -76,12 +76,14 @@ export interface SubagentRunEndInfo {
  * Which START-TIME features a provider supports. Checked by the service before delegating to
  * {@link SubagentProvider.start}: a request that needs a capability the chosen provider lacks
  * is rejected with a typed error rather than accepted-then-ignored (the "fail loud, no silent
- * degradation" rule). These flags describe the ONE-SHOT
- * {@link SubagentProvider.start} path, where the provider composes the child;
- * continuable children are composed by the continuation manager itself and are
- * gated by {@link SubagentProvider.prepareContinuable} instead. Each flag
- * corresponds one-to-one to a {@link SubagentStartRequest} option: `depthLimit`
- * to `maxDepth`; the other names match.
+ * degradation" rule). Both start paths gate these flags against the request's
+ * option subset ({@link SubagentCapabilityOptions}): the ONE-SHOT
+ * {@link SubagentProvider.start} path, where the provider composes the child,
+ * and the continuable path, where the continuation manager composes the child
+ * itself while {@link SubagentProvider.prepareContinuable} method presence
+ * remains the continuable creation capability. Each flag corresponds one-to-one
+ * to a {@link SubagentStartRequest} option: `depthLimit` to `maxDepth`; the
+ * other names match.
  */
 export interface SubagentCapabilities {
   readonly outputSchema: boolean
@@ -89,11 +91,21 @@ export interface SubagentCapabilities {
   readonly toolFilter: boolean
   readonly persona: boolean
   /**
-   * Whether `start` honors a per-request {@link SubagentStartRequest.cwd}
-   * overriding the parent's working directory for the child session.
+   * Whether `start` and `startContinuable` honor a per-request
+   * {@link SubagentStartRequest.cwd} overriding the parent's working directory
+   * for the child session.
    */
   readonly cwdOverride: boolean
 }
+
+/**
+ * The capability-bearing option subset of a start request, shared by the
+ * one-shot and continuable start paths so both gate the same fields.
+ */
+export type SubagentCapabilityOptions = Pick<
+  SubagentStartRequest,
+  'outputSchema' | 'maxDepth' | 'toolFilter' | 'persona' | 'cwd'
+>
 
 /**
  * What a caller asks for when starting a ONE-SHOT subagent. The tool layer
@@ -154,9 +166,9 @@ export interface SubagentStartRequest {
   /**
    * Optional absolute working directory for the child session, overriding the
    * parent's cwd. Requires {@link SubagentCapabilities.cwdOverride}; a
-   * relative path is rejected at start. This is pure session metadata — git
-   * worktree isolation or other directory preparation stays with the caller,
-   * composing on top of the override.
+   * relative path is rejected at start and at startContinuable. This is pure
+   * session metadata — git worktree isolation or other directory preparation
+   * stays with the caller, composing on top of the override.
    */
   readonly cwd?: string
 }

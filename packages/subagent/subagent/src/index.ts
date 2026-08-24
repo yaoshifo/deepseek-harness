@@ -33,6 +33,7 @@
 
 import { Context, Service } from '@deepseek-ai/cordis'
 import { isAbsolute } from 'node:path'
+import z from '@deepseek-ai/schemastery'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import { assertObjectJsonSchema } from '@deepseek-ai/dsh-tools'
@@ -44,6 +45,7 @@ import type {
   ContinuableCreateSpec,
   ResolvedSubagentStartRequest,
   SubagentCapabilities,
+  SubagentCapabilityOptions,
   SubagentProvider,
   SubagentRun,
   SubagentRunEndInfo,
@@ -61,6 +63,7 @@ import type {
   SubagentFollowupOptions,
   SubagentInterruptAuthority,
   SubagentReportOptions,
+  SubagentSettlementDelivery,
 } from './continuation.ts'
 import SubagentActivationSetupRegistry from './activation-setup-registry.ts'
 import type { ContinuableSetupContribution } from './activation-setup-registry.ts'
@@ -77,6 +80,7 @@ export type {
   ContinuableCreateSpec,
   ResolvedSubagentStartRequest,
   SubagentCapabilities,
+  SubagentCapabilityOptions,
   SubagentProvider,
   SubagentResult,
   SubagentRun,
@@ -121,6 +125,7 @@ export type {
   SubagentReportMessageSource,
   SubagentReportOptions,
   SubagentSettledMessageSource,
+  SubagentSettlementDelivery,
 } from './continuation.ts'
 export type { ContinuableSetupContribution } from './activation-setup-registry.ts'
 export type { SubagentDescendantListEntry, SubagentListEntry } from './list-children.ts'
@@ -168,8 +173,26 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/**
+ * Loader-level configuration for the subagent runtime. Direct
+ * `ctx.plugin(SubagentRuntime, options)` callers may pass the same optional
+ * fields; unresolved fields keep their defaults.
+ */
+export interface SubagentRuntimeConfig {
+  /**
+   * Who delivers continuable settlement notices to the durable parent: the
+   * runtime's own inbox wake (`'inbox'`, default), or the deployment's
+   * `subagent/end` listener (`'external'`).
+   */
+  settlementNotice?: SubagentSettlementDelivery
+}
+
 /** Named provider registry with one-shot runs, durable discovery, and continuable-child operations. */
 export class SubagentRuntime extends Service {
+  static Config: z<SubagentRuntimeConfig> = z.object({
+    settlementNotice: z.union(['inbox', 'external'] as const).default('inbox'),
+  })
+
   private providers = new Map<string, SubagentProvider>()
   private continuations: SubagentContinuationManager | undefined
   /** Deployment contributions composed into unpublished continuable children. */
@@ -180,15 +203,19 @@ export class SubagentRuntime extends Service {
    * composes into the carrier.
    */
   private readonly emitLifecycle: LifecycleEmitter
+  /** Resolved settlement delivery mode; see {@link SubagentRuntimeConfig.settlementNotice}. */
+  private readonly settlementNotice: SubagentSettlementDelivery
 
-  constructor(ctx: Context) {
+  constructor(ctx: Context, config: SubagentRuntimeConfig = {}) {
     super(ctx, 'subagents')
+    this.settlementNotice = config.settlementNotice ?? 'inbox'
     this.emitLifecycle = createLifecycleEmitter(this.ctx, parent => scopeTarget(this, parent))
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {
+        assertStartCapabilities: (name, request) => { this.assertCapabilities(this.expectProvider(name), request) },
         prepareContinuable: (name, request) => this.prepareContinuable(name, request),
         observeActivation: (provider, childId, parent) => this.observeActivation(provider, childId, parent),
-      }, this.setupRegistry)
+      }, this.setupRegistry, this.settlementNotice)
       this.continuations = manager
       childCtx.effect(() => () => {
         /* v8 ignore else -- one injected binding owns the slot until its fiber disposes. */
@@ -501,7 +528,7 @@ export class SubagentRuntime extends Service {
   }
 
   /** Reject the first requested capability that the provider lacks. */
-  private assertCapabilities(provider: SubagentProvider, request: SubagentStartRequest): void {
+  private assertCapabilities(provider: SubagentProvider, request: SubagentCapabilityOptions): void {
     const needs: { when: boolean; cap: keyof SubagentCapabilities }[] = [
       { when: request.outputSchema !== undefined, cap: 'outputSchema' },
       { when: request.maxDepth !== undefined, cap: 'depthLimit' },

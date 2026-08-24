@@ -20,7 +20,7 @@ import SubagentRuntime, {
   SubagentError,
   SUBAGENT_DESCRIPTOR_VERSION,
 } from '../src/index.ts'
-import type { SubagentRunEndInfo, SubagentRunInfo } from '../src/index.ts'
+import type { SubagentRunEndInfo, SubagentRunInfo, SubagentRuntimeConfig } from '../src/index.ts'
 import * as SubagentInvariant from '../src/invariant.ts'
 
 type Script = ConstructorParameters<typeof MockAdapter>[0]
@@ -65,7 +65,10 @@ afterEach(async () => {
 })
 
 /** Boot the full continuable stack: loop, persistence, providers, and subagents. */
-async function setupWith(adapter: LlmAdapter, options: { persistence?: boolean } = {}) {
+async function setupWith(
+  adapter: LlmAdapter,
+  options: { persistence?: boolean; subagents?: SubagentRuntimeConfig } = {},
+) {
   const ctx = new Context()
   await mountAgentLoopTestDependencies(ctx)
   let disposePersistence: (() => Promise<void>) | undefined
@@ -81,7 +84,7 @@ async function setupWith(adapter: LlmAdapter, options: { persistence?: boolean }
     })
   }
   await ctx.plugin(AgentLoop, { agents: [] })
-  await ctx.plugin(SubagentRuntime)
+  await ctx.plugin(SubagentRuntime, options.subagents)
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
   ctx.llm.registerAdapter(['mock'], adapter)
@@ -89,7 +92,10 @@ async function setupWith(adapter: LlmAdapter, options: { persistence?: boolean }
   return { ctx, parent, disposePersistence, root }
 }
 
-async function setup(script: Script, options: { persistence?: boolean } = {}) {
+async function setup(
+  script: Script,
+  options: { persistence?: boolean; subagents?: SubagentRuntimeConfig } = {},
+) {
   const adapter = new MockAdapter(script)
   const booted = await setupWith(adapter, options)
   return { ...booted, adapter }
@@ -349,6 +355,44 @@ describe('SubagentRuntime.startContinuable', () => {
       request: { prompt: message('deep'), parent, maxDepth: Number.NaN },
     })).rejects.toThrow(/non-negative safe integer/)
     expect(ctx.agents.list().map(agent => agent.id)).toEqual([SessionId('parent')])
+  })
+
+  it('persists a caller cwd override into the continuable child session header', async () => {
+    const { ctx, parent } = await setup([textResponse('child answer')])
+    parkParent(ctx, parent)
+    const started = await ctx.subagents.startContinuable({
+      ...startSpec(parent),
+      request: { prompt: message('child task'), parent, cwd: '/tmp/dsh-cwd-override' },
+    })
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await ctx.sessionPersistence.load(started.childId)
+    expect(loaded.meta.cwd).toBe('/tmp/dsh-cwd-override')
+  })
+
+  it('rejects a relative continuable cwd override before reserving the child', async () => {
+    const { ctx, parent } = await setup([])
+    await expect(ctx.subagents.startContinuable({
+      ...startSpec(parent),
+      request: { prompt: message('child task'), parent, cwd: 'relative/path' },
+    })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
+    expect(ctx.agents.list().map(agent => agent.id)).toEqual([SessionId('parent')])
+  })
+
+  it('rejects a continuable cwd override on a provider without the capability', async () => {
+    const { ctx, parent } = await setup([])
+    const prepare = vi.fn()
+    ctx.subagents.registerProvider({
+      name: 'no-cwd',
+      capabilities: { outputSchema: true, depthLimit: true, toolFilter: true, persona: true, cwdOverride: false },
+      inheritsParentContext: false,
+      start: vi.fn(async () => { throw new Error('must not start') }),
+      prepareContinuable: prepare,
+    })
+    await expect(ctx.subagents.startContinuable({
+      ...startSpec(parent, 'no-cwd'),
+      request: { prompt: message('child task'), parent, cwd: '/tmp/elsewhere' },
+    })).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' })
+    expect(prepare).not.toHaveBeenCalled()
   })
 
   it('omits undeclared composition fields from the descriptor', async () => {
@@ -1688,6 +1732,21 @@ describe('continuable report delivery', () => {
 })
 
 describe('continuable settlement delivery', () => {
+  it('skips the parent wake when settlement notices are delivered externally', async () => {
+    const { ctx, parent, adapter } = await setup([textResponse('the answer')], {
+      subagents: { settlementNotice: 'external' },
+    })
+    const ends: SubagentRunEndInfo[] = []
+    ctx.on('subagent/end', info => void ends.push(info))
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await waitNoActivation(ctx, started.childId)
+    await vi.waitFor(() => { expect(ends).toHaveLength(1) })
+    // Only the child's model call happened: the parent was never woken, and no
+    // settlement notice reached its inbox.
+    expect(adapter.requests).toHaveLength(1)
+    expect(settlementNotices(parent)).toEqual([])
+  })
+
   it('tells the parent what the child finished with, without being asked', async () => {
     const { ctx, parent } = await setup([textResponse('the answer'), textResponse('parent ack')])
     const started = await ctx.subagents.startContinuable(startSpec(parent))

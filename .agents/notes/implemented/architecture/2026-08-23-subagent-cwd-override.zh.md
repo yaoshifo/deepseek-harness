@@ -12,7 +12,7 @@ feishu-bridge 的子任务编排支持跨目录派发（`--dir`）与 git worktr
 
 ## Decision
 
-原生 seam 只增加一个 start 期选项：`SubagentStartRequest.cwd`——可选绝对路径，覆盖父会话工作目录写入子会话 header。它由新增的 `SubagentCapabilities.cwdOverride` 旗标门控，在 `SubagentRuntime.start` 派发前校验（必须绝对路径），由 in-process driver 的 `childSessionMeta` 落实；所有进程外 backend 经 `NO_START_CAPABILITIES` 显式拒绝。`tool-subagent` 以配置门控（`allowCwdOverride`，默认 false）把它暴露为模型可见的 `cwd` 参数——工作区隔离保持默认姿态，禁用实例上强行传参会被执行期拒绝（与 `run_in_background` 同款执行期执法）。
+原生 seam 只增加一个 start 期选项：`SubagentStartRequest.cwd`——可选绝对路径，覆盖父会话工作目录写入子会话 header。它由新增的 `SubagentCapabilities.cwdOverride` 旗标门控，在 `SubagentRuntime.start` 与 `startContinuable` 中于派发或身份预留之前校验（必须绝对路径），由 in-process driver 的 `childSessionMeta` 落实；所有进程外 backend 经 `NO_START_CAPABILITIES` 显式拒绝。continuable 路径的同一套闸门随 seam 补齐桥侧前置时加入（见 [continuable bridge seam note](../feature/2026-08-24-subagent-continuable-bridge-seam.zh.md)）。`tool-subagent` 以配置门控（`allowCwdOverride`，默认 false）把它暴露为模型可见的 `cwd` 参数——工作区隔离保持默认姿态，禁用实例上强行传参会被执行期拒绝（与 `run_in_background` 同款执行期执法）。
 
 git worktree 编排刻意不进原生包：路径布局（`.claude/worktrees`）、分支命名、脏检查、keep/remove 生命周期都是部署约定。调用方在覆盖之上组合——先建 worktree，再把其路径作为 `cwd` 传入。桥保留 `engine/worktree.ts`，待其无人值守子任务迁往原生 start seam（批次 B4）时消费该覆盖。
 
