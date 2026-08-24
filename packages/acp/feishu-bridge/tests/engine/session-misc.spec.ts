@@ -1,7 +1,6 @@
 /**
  * Session-domain misc ported from cc-connect (M7-c):
- * reset_on_idle (Go maybeAutoResetSessionOnIdle + engine_test.go tests),
- * filter_external_sessions (/list owned-session filtering), and
+ * reset_on_idle (Go maybeAutoResetSessionOnIdle + engine_test.go tests) and
  * auto_compress (Go SetAutoCompressConfig + cmdCompress + the turn-end
  * trigger) re-based on dsh's native ctx.compaction service. The
  * session_cleanup_days /cleanup of Go is not ported — see MIGRATION.md.
@@ -18,7 +17,7 @@ import {
   registerSessionMiscCommands,
   runCompress,
 } from '../../src/engine/session-misc.js'
-import type { Agent, AgentSessionInfo, Message } from '../../src/core/types.js'
+import type { Agent, HistoryEntry, Message, RecentTurnsReader } from '../../src/core/types.js'
 import {
   createStubAgent,
   createStubPlatform,
@@ -60,51 +59,56 @@ function newEngine(agent: Agent): { e: Engine; p: StubPlatform } {
   return { e, p }
 }
 
+/** Agent whose recent-turn window serves a fixed entry list per native session id. */
+function windowAgent(entriesBySession: Record<string, HistoryEntry[]>): Agent & RecentTurnsReader {
+  return {
+    ...createStubAgent(),
+    recentTurns: async (id: string) => entriesBySession[id] ?? [],
+  }
+}
+
 // ── reset_on_idle (engine_test.go AutoResetOnIdle) ───────────────────────
 
 describe('reset_on_idle', () => {
   it('rotates a stale session to a fresh one and preserves the old session', async () => {
-    const { e, p } = newEngine({ ...createStubAgent(), startSession: async () => newResultAgentSession('fresh reply') })
+    const { e, p } = newEngine({
+      ...windowAgent({ 'old-session': [{ role: 'user', content: 'stale context', timestamp: '2026-01-01T00:00:00Z' }] }),
+      startSession: async () => newResultAgentSession('fresh reply'),
+    })
     e.setResetOnIdle(60 * 60_000)
     registerSessionCommands(e)
     const key = 'test:user1'
     const old = e.sessions.getOrCreateActive(key)
-    old.addHistory('user', 'stale context')
     old.setAgentSessionID('old-session', 'stub')
     old.updatedAt = new Date(Date.now() - 2 * 3_600_000).toISOString()
 
-    e.handleMessage(p, msg({ content: 'hello after idle', userID: 'u1' }))
+    await e.handleMessage(p, msg({ content: 'hello after idle', userID: 'u1' }))
     await vi.waitFor(() => {
-      const active = e.sessions.getOrCreateActive(key)
-      expect(active.id).not.toBe(old.id)
-      expect(active.getHistory(0).length).toBeGreaterThanOrEqual(2)
+      expect(e.sessions.getOrCreateActive(key).id).not.toBe(old.id)
     })
 
-    const active = e.sessions.getOrCreateActive(key)
-    const history = active.getHistory(0)
-    expect(history[0]?.role).toBe('user')
-    expect(history[0]?.content).toBe('hello after idle')
-    expect(history[1]?.content).toBe('fresh reply')
     // The old session keeps its identity for /switch back.
     expect(old.getAgentSessionID()).toBe('old-session')
-    expect(old.getHistory(0).length).toBe(1)
+    await vi.waitFor(() => { expect(p.getSent().length).toBeGreaterThan(1) })
     const sent = p.getSent()
     expect(sent[0]).toContain(e.i18n.t('session_auto_reset_idle').split('%d')[0] ?? 'auto-reset')
     expect(sent[sent.length - 1]).toBe('fresh reply')
   })
 
   it('does not rotate a fresh session', async () => {
-    const { e, p } = newEngine({ ...createStubAgent(), startSession: async () => newResultAgentSession('normal reply') })
+    const { e, p } = newEngine({
+      ...windowAgent({ 'existing-session': [{ role: 'user', content: 'recent context', timestamp: '2026-01-01T00:00:00Z' }] }),
+      startSession: async () => newResultAgentSession('normal reply'),
+    })
     e.setResetOnIdle(60 * 60_000)
     registerSessionCommands(e)
     const key = 'test:user1'
     const session = e.sessions.getOrCreateActive(key)
-    session.addHistory('user', 'recent context')
     session.setAgentSessionID('existing-session', 'stub')
     session.updatedAt = new Date(Date.now() - 5 * 60_000).toISOString()
 
-    e.handleMessage(p, msg({ content: 'follow up', userID: 'u1' }))
-    await vi.waitFor(() => { expect(session.getHistory(0).length).toBeGreaterThanOrEqual(2) })
+    await e.handleMessage(p, msg({ content: 'follow up', userID: 'u1' }))
+    await vi.waitFor(() => { expect(p.getSent().length).toBeGreaterThan(0) })
 
     expect(e.sessions.getOrCreateActive(key).id).toBe(session.id)
     for (const line of p.getSent()) {
@@ -113,84 +117,31 @@ describe('reset_on_idle', () => {
   })
 
   it('does not trigger for a slash command', async () => {
-    const { e, p } = newEngine(createStubAgent())
+    const { e, p } = newEngine(windowAgent({ 'old-session': [{ role: 'user', content: 'stale context', timestamp: '2026-01-01T00:00:00Z' }] }))
     e.setResetOnIdle(60 * 60_000)
     registerSessionCommands(e)
     const key = 'test:user1'
     const session = e.sessions.getOrCreateActive(key)
-    session.addHistory('user', 'stale context')
     session.setAgentSessionID('old-session', 'stub')
     session.updatedAt = new Date(Date.now() - 2 * 3_600_000).toISOString()
 
-    e.handleMessage(p, msg({ content: '/list', userID: 'u1' }))
+    await e.handleMessage(p, msg({ content: '/list', userID: 'u1' }))
     await new Promise(resolve => setTimeout(resolve, 30))
 
     expect(e.sessions.getOrCreateActive(key).id).toBe(session.id)
   })
 
-  it('a session with no history and no backend is never rotated', () => {
+  it('a session with no history and no backend is never rotated', async () => {
     const { e, p } = newEngine(createStubAgent())
     e.setResetOnIdle(60_000)
     const key = 'test:user1'
     const session = e.sessions.getOrCreateActive(key)
     session.updatedAt = new Date(Date.now() - 2 * 3_600_000).toISOString()
 
-    const rotated = maybeAutoResetSessionOnIdle(e, p, msg(), session)
+    const rotated = await maybeAutoResetSessionOnIdle(e, p, msg(), session)
 
     expect(rotated).toBeUndefined()
     expect(e.sessions.getOrCreateActive(key).id).toBe(session.id)
-  })
-})
-
-// ── filter_external_sessions (engine_test.go FilterExternalSessions) ─────
-
-function listAgent(sessions: AgentSessionInfo[]): Agent {
-  return { ...createStubAgent(), listSessions: async () => sessions }
-}
-
-describe('filter_external_sessions', () => {
-  it('only shows tracked sessions when enabled', async () => {
-    const agent = listAgent([
-      { id: 'tracked-1', summary: 'Tracked 1', messageCount: 5, modifiedAt: Date.now() },
-      { id: 'tracked-2', summary: 'Tracked 2', messageCount: 3, modifiedAt: Date.now() },
-      { id: 'external-1', summary: 'External CLI session', messageCount: 10, modifiedAt: Date.now() },
-    ])
-    const { e, p } = newEngine(agent)
-    registerSessionCommands(e)
-    e.setFilterExternalSessions(true)
-    const key = 'test:user1'
-    const s1 = e.sessions.getOrCreateActive(key)
-    s1.setAgentSessionID('tracked-1', 'dsh')
-    // s1's id moves on: 'tracked-1' lands in pastAgentSessionIDs and stays known.
-    s1.setAgentSessionID('', '')
-    const s2 = e.sessions.newSession(key, 'session2')
-    s2.setAgentSessionID('tracked-2', 'dsh')
-
-    e.dispatchCommand(p, msg(), '/list')
-    await vi.waitFor(() => { expect(p.getSent().length).toBe(1) })
-
-    const reply = p.getSent()[0] ?? ''
-    expect(reply).toContain('Tracked 1')
-    expect(reply).toContain('Tracked 2')
-    expect(reply).not.toContain('External CLI session')
-  })
-
-  it('shows all sessions by default', async () => {
-    const agent = listAgent([
-      { id: 'tracked-1', summary: 'Tracked session', messageCount: 5, modifiedAt: Date.now() },
-      { id: 'external-1', summary: 'External session', messageCount: 10, modifiedAt: Date.now() },
-    ])
-    const { e, p } = newEngine(agent)
-    registerSessionCommands(e)
-    const s = e.sessions.getOrCreateActive('test:user1')
-    s.setAgentSessionID('tracked-1', 'dsh')
-
-    e.dispatchCommand(p, msg(), '/list')
-    await vi.waitFor(() => { expect(p.getSent().length).toBe(1) })
-
-    const reply = p.getSent()[0] ?? ''
-    expect(reply).toContain('Tracked session')
-    expect(reply).toContain('External session')
   })
 })
 
@@ -212,10 +163,6 @@ describe('NO_REPLY turn suppression', () => {
     await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
 
     expect(p.getSent()).toEqual([])
-    // The agent's own decision stays in the transcript (Go records the
-    // original baseResponse).
-    const history = session.getHistory(0)
-    expect(history.some(h => h.role === 'assistant' && h.content.includes('NO_REPLY'))).toBe(true)
   })
 
   it('a trailing NO_REPLY marker strips the marker but delivers the text', async () => {
@@ -319,7 +266,14 @@ describe('/compress', () => {
 describe('auto_compress trigger', () => {
   it('fires runCompress after a long turn when the estimate crosses the cap', async () => {
     const cs = compressorSession('s1')
-    const agent = { ...createStubAgent(), startSession: async () => cs }
+    // The estimate reads the agent's recent-turn window for the live session.
+    const agent: Agent & RecentTurnsReader = {
+      ...createStubAgent(),
+      startSession: async () => cs,
+      recentTurns: async (id: string) => id === 's1'
+        ? [{ role: 'user', content: 'x'.repeat(200), timestamp: '2026-01-01T00:00:00Z' }]
+        : [],
+    }
     const { e, p } = newEngine(agent)
     registerSessionMiscCommands(e)
     e.setAutoCompressConfig(true, 10, 0)
@@ -330,7 +284,6 @@ describe('auto_compress trigger', () => {
     state.platform = p
     state.replyCtx = 'ctx'
     e.interactiveStates.set(sessionKey, state)
-    session.addHistory('user', 'x'.repeat(200))
 
     cs.channel.push({ type: 'result', content: 'y'.repeat(100), done: true })
     await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
@@ -342,7 +295,14 @@ describe('auto_compress trigger', () => {
 
   it('does not re-trigger within the min gap', async () => {
     const cs = compressorSession('s1')
-    const { e, p } = newEngine({ ...createStubAgent(), startSession: async () => cs })
+    const agent: Agent & RecentTurnsReader = {
+      ...createStubAgent(),
+      startSession: async () => cs,
+      recentTurns: async (id: string) => id === 's1'
+        ? [{ role: 'user', content: 'x'.repeat(200), timestamp: '2026-01-01T00:00:00Z' }]
+        : [],
+    }
+    const { e, p } = newEngine(agent)
     registerSessionMiscCommands(e)
     e.setAutoCompressConfig(true, 10, 30 * 60_000)
     const state = new InteractiveState()
@@ -352,7 +312,6 @@ describe('auto_compress trigger', () => {
     e.interactiveStates.set('test:user1', state)
     state.lastAutoCompressAt = Date.now()
     const session = e.sessions.getOrCreateActive('test:user1')
-    session.addHistory('user', 'x'.repeat(200))
 
     cs.channel.push({ type: 'result', content: 'y'.repeat(100), done: true })
     await e.processInteractiveEvents(state, session, e.sessions, 'test:user1', 'm1', undefined, state.replyCtx)
@@ -370,8 +329,6 @@ describe('auto_compress trigger', () => {
     state.platform = p
     state.replyCtx = 'ctx'
     e.interactiveStates.set('test:user1', state)
-    const session = e.sessions.getOrCreateActive('test:user1')
-    session.addHistory('user', 'locked-turn')
 
     await runCompress(e, state, p, 'ctx', false)
     expect(p.getSent().some(m => m.includes('busy'))).toBe(true)

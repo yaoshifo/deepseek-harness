@@ -38,7 +38,7 @@ function newRoutedEngine(name: string): RoutedEngine {
   const engine = new Engine(name, createStubAgent(), [createStubSpawnerPlatform()], '', 'en')
   const spawn = vi.spyOn(engine, 'spawnSubtask')
     .mockResolvedValue({ childName: `${name} 任务`, childKey: `${name}:child-1` })
-  const report = vi.spyOn(engine, 'reportSubtask').mockReturnValue(undefined)
+  const report = vi.spyOn(engine, 'reportSubtask').mockResolvedValue(undefined)
   const send = vi.spyOn(engine, 'sendToSubtask').mockResolvedValue(undefined)
   const gather = vi.spyOn(engine, 'gatherSubtasks').mockReturnValue(undefined)
   return { engine, spawn, report, send, gather }

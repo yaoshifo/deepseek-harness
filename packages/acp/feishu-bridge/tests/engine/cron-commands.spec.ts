@@ -57,7 +57,6 @@ describe('registerCronCommands', () => {
       // and the session reset instead of the old synchronous text reply.
       await new Promise(resolve => setTimeout(resolve, 0))
       expect(p.sentCards).toHaveLength(1)
-      expect(e.sessions.getOrCreateActive('test:ch1').getHistory(0)).toHaveLength(0)
     } finally {
       disposeCron()
       disposeSession()

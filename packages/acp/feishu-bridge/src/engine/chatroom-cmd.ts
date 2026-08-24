@@ -333,7 +333,6 @@ export async function startChatroomDirectRole(
   // Reset the agent session so the role persona loads cleanly from the new
   // workdir, rather than stacking on the prior assistant context.
   s.setAgentSessionID('', '')
-  s.clearHistory()
   s.setChatroomRoleName(role)
   s.setChatroomHubKey('') // critical: the relay stays dormant
   s.setChatroomDirectRole(true)

@@ -404,7 +404,8 @@ describe('processInteractiveEvents error-reasoned turn', () => {
     expect(finalCard, `cards=${JSON.stringify(p.messages)}`).toContain('__cc_state__:failed')
     expect(finalCard).toContain('1301 sensitive content rejected')
     expect(finalCard).not.toContain('__cc_state__:completed')
-    expect(session.lastResultOrReply()).not.toContain(narration)
+    // An errored turn never records a clean lastResult the narration could leak through.
+    expect(session.getLastResult()).not.toContain(narration)
   })
 
   it('delivers the error as a plain message without a preview card', async () => {
@@ -1019,7 +1020,6 @@ describe('message queueing', () => {
     }
     void turn2()
 
-    session.addHistory('user', 'initial-msg')
     const sendDone = Promise.resolve(undefined)
 
     await Promise.race([
@@ -1028,9 +1028,7 @@ describe('message queueing', () => {
     ])
 
     expect(state.pendingMessages).toHaveLength(0)
-    const history = session.getHistory(100)
-    expect(history.filter(h => h.role === 'assistant')).toHaveLength(2)
-    expect(history.filter(h => h.role === 'user').length).toBeGreaterThanOrEqual(2)
+    expect(sess.sendCalls.length).toBeGreaterThanOrEqual(1)
   })
 })
 
@@ -1790,11 +1788,11 @@ describe('rate limit (Go checkRateLimit)', () => {
     expect(session.tryLock()).toBe(true)
 
     e.setRateLimitCfg(2, 60_000)
-    e.handleMessage(p, msg({ sessionKey: key, content: 'one' }))
-    e.handleMessage(p, msg({ sessionKey: key, content: 'two' }))
+    void e.handleMessage(p, msg({ sessionKey: key, content: 'one' }))
+    void e.handleMessage(p, msg({ sessionKey: key, content: 'two' }))
     expect(state.pendingMessages).toHaveLength(2)
 
-    e.handleMessage(p, msg({ sessionKey: key, content: 'three' }))
+    void e.handleMessage(p, msg({ sessionKey: key, content: 'three' }))
     await vi.waitFor(() => { expect(p.getSent().join('\n')).toContain('⏳') })
     expect(state.pendingMessages, 'rate-limited message never queues').toHaveLength(2)
   })
@@ -1879,7 +1877,6 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     e.interactiveStates.set(key, state)
     const session = e.sessions.getOrCreateActive(key)
     session.tryLock()
-    session.addHistory('user', 'initial-msg')
 
     const done = e.processInteractiveEvents(state, session, e.sessions, key, 'msg1', Promise.resolve(undefined), undefined)
     const trickle = setInterval(() => {

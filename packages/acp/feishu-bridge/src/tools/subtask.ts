@@ -134,7 +134,7 @@ export function registerSubtaskTool(ctx: Context, route: SubtaskAgentRouter): ()
           }
         }
         case 'report': {
-          engine.reportSubtask(sessionKey, (args.message ?? '').trim())
+          await engine.reportSubtask(sessionKey, (args.message ?? '').trim())
           return { status: 'ok' as const, message: 'Reported result back to the parent conversation.' }
         }
         case 'send': {

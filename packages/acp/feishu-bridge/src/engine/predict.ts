@@ -225,14 +225,14 @@ export async function sendInsightCard(
  *
  * @param e - Engine carrying the configs.
  * @param state - The completed turn's interactive state.
- * @param session - The engine session holding the history.
+ * @param session - The engine session the conversation window belongs to.
  * @param p - The platform of the completed turn.
  * @param replyCtx - The turn's reply context.
  * @param sessionKey - The interactive state key of the turn.
  * @param sendCompletionNotification - Whether the turn surfaced a completion.
  * @param isSilent - Whether the reply was a silent NO_REPLY turn.
  */
-export function triggerInsights(
+export async function triggerInsights(
   e: Engine,
   state: InteractiveState,
   session: Session,
@@ -241,15 +241,18 @@ export function triggerInsights(
   sessionKey: string,
   sendCompletionNotification: boolean,
   isSilent: boolean,
-): void {
+): Promise<void> {
   if (!sendCompletionNotification || isSilent) return
   if (state.pendingMessages.length > 0) return
 
   let summaryCh: Promise<string> | undefined
   let predictCh: Promise<string> | undefined
 
+  // The conversation window is the adapter's recent-turn projection of the
+  // native session log.
+  const history = await e.recentTurnsOf(sessionKey, session)
+
   if (e.turnSummaryEnabled && !state.turnSummaryRunning) {
-    const history = session.getHistory(0)
     let lastAssistant = ''
     for (let i = history.length - 1; i >= 0; i--) {
       if (history[i]?.role === 'assistant') {
@@ -273,7 +276,7 @@ export function triggerInsights(
     const sid = state.agentSession?.currentSessionID() ?? ''
     const [wtPath] = session.getWorktreeInfo()
     const workDir = wtPath !== '' ? wtPath : e.perChatWorkDir(e.dirOverrideKey(sessionKey))
-    predictCh = generatePrediction(e, buildCompactContext(session.getHistory(0)), sid, workDir)
+    predictCh = generatePrediction(e, buildCompactContext(history), sid, workDir)
       .catch((error: unknown) => {
         console.error(`predict-next: failed: ${String(error)}`)
         return ''

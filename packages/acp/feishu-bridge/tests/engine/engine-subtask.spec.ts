@@ -17,7 +17,7 @@ import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { Session } from '../../src/engine/session.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { WorktreeMode } from '../../src/engine/worktree.js'
-import type { Agent, Message, Platform } from '../../src/core/types.js'
+import type { Agent, Message, Platform, RecentTurnsReader } from '../../src/core/types.js'
 import {
   createNoOverwriteAgent,
   createStubAgent,
@@ -39,6 +39,17 @@ async function settle(): Promise<void> {
 
 function newSubtaskTestEngine(p: Platform, agent: Agent = createStubAgent()): Engine {
   return new Engine('test', agent, [p], '', 'en')
+}
+
+/** Engine whose agent's recent-turn window serves one assistant entry for 'child-agent'. */
+function newReplyFallbackEngine(p: Platform, reply: string): Engine {
+  const agent: Agent & RecentTurnsReader = {
+    ...createStubAgent(),
+    recentTurns: async (id: string) => id === 'child-agent'
+      ? [{ role: 'assistant', content: reply, timestamp: '2026-01-01T00:00:00Z' }]
+      : [],
+  }
+  return newSubtaskTestEngine(p, agent)
 }
 
 function msg(overrides: Partial<Message> = {}): Message {
@@ -102,31 +113,32 @@ describe('replyToParent', () => {
 describe('ReportSubtask', () => {
   it('falls back to the last reply', async () => {
     const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
+    const e = newReplyFallbackEngine(p, 'fallback summary')
 
     const childKey = 'test:child-chat'
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey('test:parent-chat:user-1')
-    child.addHistory('assistant', 'fallback summary')
+    child.setAgentSessionID('child-agent', 'stub')
 
-    expect(() => { e.reportSubtask(childKey, '') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, '')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('fallback summary')
   })
 
   it('prefers the clean result over the narration blob', async () => {
     const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
+    // The window holds the full per-turn narration blob; lastResult holds
+    // the clean SDK final result.
+    const e = newReplyFallbackEngine(p, '我来使用... Now let me invoke... Let me search...')
 
     const childKey = 'test:child-chat'
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey('test:parent-chat:user-1')
-    // History holds the full per-turn narration blob; lastResult holds the
-    // clean SDK final result.
-    child.addHistory('assistant', '我来使用... Now let me invoke... Let me search...')
+    child.setAgentSessionID('child-agent', 'stub')
     child.setLastResult('回测完成：2026-06-05 触发 2 个实例')
 
-    expect(() => { e.reportSubtask(childKey, '') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, '')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
     const body = cardBody(p.sentCards[0])
@@ -142,7 +154,7 @@ describe('ReportSubtask', () => {
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey('test:parent-chat:user-1')
 
-    expect(() => { e.reportSubtask(childKey, '') }).toThrow()
+    await expect(e.reportSubtask(childKey, '')).rejects.toThrow('no result to report')
   })
 
   it('sets the reported flag', async () => {
@@ -153,9 +165,8 @@ describe('ReportSubtask', () => {
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey('test:parent-chat:user-1')
     child.setSubtaskDepth(1)
-    child.addHistory('assistant', 'done')
 
-    expect(() => { e.reportSubtask(childKey, 'explicit result') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'explicit result')).resolves.toBeUndefined()
     expect(child.getSubtaskReported()).toBe(true)
     await settle()
     expect(p.sentCards.length).toBe(1)
@@ -169,16 +180,15 @@ describe('ReportSubtask', () => {
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey('test:parent-chat:user-1')
     child.setSubtaskDepth(1)
-    child.addHistory('assistant', 'done')
 
     // First report delivers exactly one card to the parent.
-    expect(() => { e.reportSubtask(childKey, 'explicit result') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'explicit result')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
 
     // A model re-calling report must not re-inject: no duplicate card, no
     // error (idempotent).
-    expect(() => { e.reportSubtask(childKey, 'explicit result again') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'explicit result again')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
   })
@@ -192,9 +202,8 @@ describe('ReportSubtask', () => {
     child.setParentSessionKey('test:parent-chat:user-1')
     child.setSubtaskDepth(1)
     child.setSubtaskNoReport(true)
-    child.addHistory('assistant', 'drew the diagram')
 
-    expect(() => { e.reportSubtask(childKey, 'diagram sent') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'diagram sent')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(0)
     expect(child.getSubtaskReported()).toBe(false)
@@ -216,24 +225,27 @@ describe('ReportSubtask', () => {
     expect(child.getSubtaskReported()).toBe(false)
 
     // An explicit report after the stop must still deliver to the parent.
-    expect(() => { e.reportSubtask(childKey, 'explicit result after stop') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'explicit result after stop')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
     expect(child.getSubtaskReported()).toBe(true)
   })
 })
 
-describe('LastResultOrReply', () => {
-  it('prefers the clean result', () => {
-    const s = new Session()
-    s.addHistory('assistant', 'narration blob with tool chatter')
+describe('lastResultOrReply', () => {
+  it('prefers the clean result and falls back to the last assistant window entry', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newReplyFallbackEngine(p, 'narration blob with tool chatter')
+    const sessionKey = 'test:child-chat'
+    const s = e.sessions.getOrCreateActive(sessionKey)
+    s.setAgentSessionID('child-agent', 'stub')
 
-    // With no LastResult set, falls back to the last assistant entry.
-    expect(s.lastResultOrReply()).toBe('narration blob with tool chatter')
+    // With no LastResult set, falls back to the window's last assistant entry.
+    expect(await e.lastResultOrReply(sessionKey, s)).toBe('narration blob with tool chatter')
 
     // Once LastResult is set, it takes precedence.
     s.setLastResult('clean final summary')
-    expect(s.lastResultOrReply()).toBe('clean final summary')
+    expect(await e.lastResultOrReply(sessionKey, s)).toBe('clean final summary')
   })
 })
 
@@ -828,7 +840,7 @@ describe('rearmSubtaskReportOnHumanTurn', () => {
     e.rearmSubtaskReportOnHumanTurn(msg({ sessionKey: childKey, userID: 'u1' }), child, e.sessions)
 
     // Agent reports its new result — must deliver, not skip.
-    expect(() => { e.reportSubtask(childKey, 'new result') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'new result')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
   })
@@ -845,7 +857,7 @@ describe('rearmSubtaskReportOnHumanTurn', () => {
     expect(child.getSubtaskReported()).toBe(false)
 
     // Explicit report mid-turn delivers and re-sets the flag.
-    expect(() => { e.reportSubtask(childKey, 'result') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'result')).resolves.toBeUndefined()
     await settle()
     const delivered = p.sentCards.length
 

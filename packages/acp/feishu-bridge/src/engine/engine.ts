@@ -27,6 +27,7 @@ import type {
   Event,
   FeishuWorkspaceInfo,
   FileAttachment,
+  HistoryEntry,
   ImageAttachment,
   InlineButtonSender,
   Message,
@@ -51,6 +52,7 @@ import {
   asMessageReactionAdder,
   asProviderSwitcher,
   asReactionAdder,
+  asRecentTurnsReader,
   asReplyContextReconstructor,
   asSessionEnvInjector,
   asSessionModeInjector,
@@ -936,8 +938,6 @@ export class Engine {
   baseWorkDir = ''
   /** Comma-separated admin user IDs ('*' = all allowed users; '' = deny). */
   adminFrom = ''
-  /** /list etc. only show cc-connect-tracked sessions when true. */
-  filterExternalSessions = false
   /** Per-session inbound rate limiter; undefined = unlimited (Go e.rateLimiter). */
   private rateLimiter: RateLimiter | undefined
   /** Quick provider commands (/strong → provider name; Go providerShortcuts). */
@@ -1278,7 +1278,7 @@ export class Engine {
     const startErrs: unknown[] = []
     for (const p of this.platforms) {
       try {
-        await p.start((platform, msg) => { this.handleMessage(platform, msg) })
+        await p.start((platform, msg) => { void this.handleMessage(platform, msg) })
       } catch (error) {
         console.warn(`platform start failed: ${p.name()}: ${String(error)}`)
         startErrs.push(error)
@@ -1411,7 +1411,7 @@ export class Engine {
    * @param msg - The inbound message.
    */
   receiveMessage(p: Platform, msg: Message): void {
-    this.handleMessage(p, msg)
+    void this.handleMessage(p, msg)
   }
 
   // ── outbound wrappers ───────────────────────────────────────────────────
@@ -1449,7 +1449,7 @@ export class Engine {
    * @param p - Platform the message arrived on.
    * @param msg - The inbound message.
    */
-  handleMessage(p: Platform, msg: Message): void {
+  async handleMessage(p: Platform, msg: Message): Promise<void> {
     const content = msg.content.trim()
     if (content === '' && msg.images.length === 0 && msg.files.length === 0) return
 
@@ -1556,8 +1556,8 @@ export class Engine {
 
     // reset_on_idle: rotate a stale chat to a fresh session before the turn
     // runs (Go maybeAutoResetSessionOnIdle). The old session keeps its
-    // history and agent id for /switch back.
-    const activeSession = maybeAutoResetSessionOnIdle(this, p, msg, session) ?? session
+    // agent id for /switch back.
+    const activeSession = (await maybeAutoResetSessionOnIdle(this, p, msg, session)) ?? session
 
     // A real human message resuming a subtask group starts a new work cycle:
     // re-arm the one-shot report flag so the agent's report (and the
@@ -1802,11 +1802,68 @@ export class Engine {
   }
 
   /**
-   * /list etc. only show engine-tracked sessions when true (Go SetFilterExternalSessions).
-   * @param v - Whether externally-created sessions are hidden from listings.
+   * Agent session id a session-scoped recent-turn read should use: the live
+   * agent's id when one is up (the bridge mapping can lag mid-turn), else the
+   * bridge session's persisted mapping.
+   *
+   * @param sessionKey - Interactive-state slot key of the chat.
+   * @param session - The bridge session the read belongs to.
+   * @returns the live agent session id, the session's mapping, or ''.
    */
-  setFilterExternalSessions(v: boolean): void {
-    this.filterExternalSessions = v
+  activeAgentSessionID(sessionKey: string, session: Session): string {
+    const live = this.interactiveStates.get(sessionKey)?.agentSession
+    if (live !== undefined && live.alive()) {
+      const id = live.currentSessionID()
+      if (id !== '') return id
+    }
+    return session.getAgentSessionID()
+  }
+
+  /**
+   * Recent conversation window of a native session, projected by the agent
+   * from the native session log (RecentTurnsReader). Backends without the
+   * capability return [] — window readers are advisory surfaces (estimates,
+   * summaries), never turn-taking logic.
+   *
+   * @param agentSessionID - the native session id to read; '' returns [].
+   * @param limit - trailing-entry bound; <= 0 returns the whole window.
+   * @returns the trailing window entries, oldest first.
+   */
+  async recentTurns(agentSessionID: string, limit = 0): Promise<HistoryEntry[]> {
+    if (agentSessionID === '') return []
+    const reader = asRecentTurnsReader(this.agent)
+    if (reader === undefined) return []
+    return reader.recentTurns(agentSessionID, limit)
+  }
+
+  /**
+   * {@link recentTurns} for a chat's current session, resolving the native id
+   * from the live agent when one is up.
+   *
+   * @param sessionKey - Interactive-state slot key of the chat.
+   * @param session - The bridge session the read belongs to.
+   * @param limit - trailing-entry bound; <= 0 returns the whole window.
+   * @returns the trailing window entries, oldest first.
+   */
+  async recentTurnsOf(sessionKey: string, session: Session, limit = 0): Promise<HistoryEntry[]> {
+    return this.recentTurns(this.activeAgentSessionID(sessionKey, session), limit)
+  }
+
+  /**
+   * Clean SDK final result when available, else the last assistant reply
+   * from the session's recent-turn window (Go Session.lastResultOrReply).
+   *
+   * @param sessionKey - Interactive-state slot key of the chat.
+   * @param session - The bridge session the read belongs to.
+   * @returns lastResult when non-blank, else the last assistant entry's content.
+   */
+  async lastResultOrReply(sessionKey: string, session: Session): Promise<string> {
+    if (session.getLastResult().trim() !== '') return session.getLastResult()
+    const entries = await this.recentTurnsOf(sessionKey, session)
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i]?.role === 'assistant') return entries[i]?.content ?? ''
+    }
+    return ''
   }
 
   /**
@@ -1982,14 +2039,12 @@ export class Engine {
     let unlocked = false
     try {
       this.i18n.detectAndSet(msg.content)
-      const historyContent = msg.originalContent !== '' ? msg.originalContent : msg.content
-      session.addHistory('user', historyContent)
 
       // Chatroom ask metadata is consumed at turn START: a queued ask behind
       // a busy turn must not stamp until the turn actually begins.
       this.stampChatroomAskOnTurnStart(session, msg.chatroomAskSeq ?? 0, msg.chatroomAwaitAssistant ?? false)
 
-      this.handleSpawnedGroupFirstMessage(p, msg, session)
+      await this.handleSpawnedGroupFirstMessage(p, msg, session)
 
       // Go separates the interactive-state slot key from the CC_SESSION_KEY
       // env key: cron new-per-run slots carry a #cron suffix the env must not.
@@ -3073,7 +3128,6 @@ export class Engine {
     const sdkPlausible = (event.inputTokens ?? 0) >= 100
     const selfPct = parseSelfReportedCtx(fullResponse)
     const baseResponse = stripCtxSelfReport(fullResponse).replace(/[\n ]+$/, '')
-    session.addHistory('assistant', baseResponse)
     if (sdkResult !== '' && !errored) session.setLastResult(sdkResult)
     sessions.save()
 
@@ -3128,11 +3182,12 @@ export class Engine {
     // First-turn fallback: if this is a delegated subtask session and the
     // agent finished without explicitly reporting, push the result to the
     // parent so it is never lost. One-shot (Go maybeAutoReportSubtask).
-    this.maybeAutoReportSubtask(state, session, session.lastResultOrReply(), isSilent)
+    const resultOrReply = await this.lastResultOrReply(sessionKey, session)
+    this.maybeAutoReportSubtask(state, session, resultOrReply, isSilent)
     // Chatroom role turn-end: deterministically relay the role's reply to the
     // hub and wake the moderator. Disjoint from the subtask hook above
     // (chatroom roles keep depth=0).
-    maybeAutoRelayRole(this, state, session, session.lastResultOrReply(), isSilent)
+    maybeAutoRelayRole(this, state, session, resultOrReply, isSilent)
 
     // Export-button + speculative reply-HTML auto-deliver (Go engine_events.go
     // EventResult export block, #48): cache the full reply under the green
@@ -3245,13 +3300,13 @@ export class Engine {
     // Insight card (#33 + turn_summary, Go engine_events.go's post-turn
     // block): fire-and-forget forks for the turn summary and next-message
     // prediction; both skip silent turns and turns with queued follow-ups.
-    triggerInsights(this, state, session, p, replyCtx, sessionKey, sendCompletionNotification, isSilent)
+    void triggerInsights(this, state, session, p, replyCtx, sessionKey, sendCompletionNotification, isSilent)
 
     // Auto-compress (Go triggerAutoCompress): when the token estimate
     // crosses the configured cap outside the min gap, compact the live
     // session's context before the queued messages continue this loop.
     if (this.autoCompressEnabled && this.autoCompressMaxTokens > 0) {
-      const estimate = estimateTokensWithPendingAssistant(session.getHistory(0), '')
+      const estimate = estimateTokensWithPendingAssistant(await this.recentTurnsOf(sessionKey, session), '')
       const last = state.lastAutoCompressAt
       if (estimate >= this.autoCompressMaxTokens && (last === 0 || Date.now() - last >= this.autoCompressMinGap)) {
         state.lastAutoCompressAt = Date.now()
@@ -3282,7 +3337,6 @@ export class Engine {
       const queuedPrompt = this.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey)
       const { imagePaths: qImgs, filePaths: qFiles } = state.drainStagedAttachmentPaths()
       const splicedPrompt = spliceStagedAttachments(queuedPrompt, qImgs, qFiles)
-      session.addHistory('user', queued.content)
       // Chatroom ask metadata is consumed at drain time — the queued ask's
       // turn is starting now.
       this.stampChatroomAskOnTurnStart(session, queued.chatroomAskSeq, queued.chatroomAwaitAssistant)
@@ -3327,7 +3381,6 @@ export class Engine {
 
     if (state.textParts.length > 0) {
       let fullResponse = state.textParts.join('')
-      session.addHistory('assistant', fullResponse)
 
       // Mirror the EventResult turn-end hook: without an EventResult (the
       // process exited mid-turn) the subtask result would never report to
@@ -3446,7 +3499,6 @@ export class Engine {
       }
 
       state.agentSession.events().drain()
-      session.addHistory('user', queued.content)
       // Chatroom ask metadata is consumed at drain time — the queued ask's
       // turn is starting now.
       this.stampChatroomAskOnTurnStart(session, queued.chatroomAskSeq, queued.chatroomAwaitAssistant)
@@ -5593,7 +5645,7 @@ export class Engine {
    * @param childSessionKey - Session key of the reporting child.
    * @param result - The child's result text; '' uses the child's last reply.
    */
-  reportSubtask(childSessionKey: string, result: string): void {
+  async reportSubtask(childSessionKey: string, result: string): Promise<void> {
     const p = this.reportCapablePlatform()
     if (p === undefined) {
       throw new Error('subtask: no platform available to deliver report')
@@ -5612,7 +5664,7 @@ export class Engine {
       console.info(`subtask: report skipped (no-report child=${childSessionKey})`)
       return
     }
-    if (result.trim() === '') result = sess.lastResultOrReply()
+    if (result.trim() === '') result = await this.lastResultOrReply(childSessionKey, sess)
     if (result.trim() === '') {
       throw new Error('subtask: no result to report')
     }
@@ -6284,7 +6336,7 @@ export class Engine {
    * processInteractiveMessageWith; the top-notice banner stays disabled by
    * default exactly like Go's spawnTopNoticeEnabled=false).
    */
-  private handleSpawnedGroupFirstMessage(p: Platform, msg: Message, session: Session): void {
+  private async handleSpawnedGroupFirstMessage(p: Platform, msg: Message, session: Session): Promise<void> {
     if (!msg.isSpawnedGroup) return
     if (msg.messageID !== '') {
       const appender = asMessagePinAppender(p)
@@ -6296,7 +6348,11 @@ export class Engine {
         })
       }
     }
-    if (!session.isFirstMessage() || sessionExemptFromSpawnRename(session)) return
+    // First message = the chat's session has no conversation window yet. The
+    // agent session for this message does not exist before the interactive
+    // state is created, so an absent/empty live window is exactly "first".
+    if (sessionExemptFromSpawnRename(session)) return
+    if ((await this.recentTurnsOf(msg.sessionKey, session, 1)).length > 0) return
     const raw = msg.originalContent !== '' ? msg.originalContent : msg.content
     if (!this.groupNameEnabled) {
       // Plain sync rename to the first message; with LLM naming on, the
