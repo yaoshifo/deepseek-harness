@@ -32,6 +32,7 @@
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
+import { isAbsolute } from 'node:path'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import { assertObjectJsonSchema } from '@deepseek-ai/dsh-tools'
@@ -431,6 +432,12 @@ export class SubagentRuntime extends Service {
     const provider = this.expectProvider(name)
     this.assertCapabilities(provider, request)
     assertSubagentMaxDepth(request.maxDepth)
+    if (request.cwd !== undefined && !isAbsolute(request.cwd)) {
+      throw new SubagentError(
+        `subagent cwd override must be an absolute path, got "${request.cwd}"`,
+        'INVALID_ARGUMENT',
+      )
+    }
     if (request.outputSchema !== undefined) assertObjectJsonSchema(request.outputSchema)
     const descriptor = snapshotSubagentDescriptor({
       mode: 'one-shot',
@@ -500,6 +507,7 @@ export class SubagentRuntime extends Service {
       { when: request.maxDepth !== undefined, cap: 'depthLimit' },
       { when: request.toolFilter !== undefined, cap: 'toolFilter' },
       { when: request.persona !== undefined, cap: 'persona' },
+      { when: request.cwd !== undefined, cap: 'cwdOverride' },
     ]
     for (const { when, cap } of needs) {
       if (when && !provider.capabilities[cap]) {

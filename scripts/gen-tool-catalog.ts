@@ -107,7 +107,7 @@ const OUT = 'docs/tool-catalog.md'
 function registerCatalogSubagentProvider(ctx: Context, name: string): void {
   const provider: SubagentProvider = {
     name,
-    capabilities: { outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
+    capabilities: { outputSchema: true, depthLimit: true, toolFilter: true, persona: true, cwdOverride: true },
     inheritsParentContext: false,
     start: () => Promise.reject(new Error('tool-catalog provider cannot start a child')),
     // Declared so consumers configured for continuable background mode mount.

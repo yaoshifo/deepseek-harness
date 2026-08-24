@@ -17,6 +17,7 @@ const DEFAULT_CAPABILITIES: SubagentCapabilities = {
   depthLimit: true,
   toolFilter: true,
   persona: true,
+  cwdOverride: true,
 }
 
 /** Options for one scripted provider fixture. */

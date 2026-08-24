@@ -103,11 +103,13 @@ export function childSessionMeta(
   parent: Agent,
   childDepth: number,
   lineageSeedLength: number,
+  cwdOverride?: string,
 ): NonNullable<CreateAgentOptions['meta']> {
   const parentHeader = parent.session.header
   const agentPreset = parent.ctx.get('agentPresets')?.composedPreset(parent.ctx)
+  const cwd = cwdOverride ?? parentHeader.cwd
   return {
-    ...parentHeader.cwd !== undefined ? { cwd: parentHeader.cwd } : {},
+    ...cwd !== undefined ? { cwd } : {},
     ...agentPreset === undefined ? {} : { agentPreset },
     parentSession: parentHeader.id,
     // Navigation classification only; the descriptor remains the authority

@@ -17,6 +17,7 @@ import type {
   SubagentProvider,
   SubagentStartRequest,
 } from '@deepseek-ai/dsh-subagent'
+import { NO_START_CAPABILITIES } from '@deepseek-ai/dsh-subagent'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { type AcpRunSpec, DEFAULT_DISPOSE_EOF_GRACE_MS, DEFAULT_DISPOSE_GRACE_MS, type PermissionPolicy, startAcpRun } from './run.ts'
 
@@ -144,7 +145,7 @@ function resolveCwd(configured: string | undefined, request: SubagentStartReques
  * a request needing any of them before `start` runs).
  */
 class AcpProvider implements SubagentProvider {
-  readonly capabilities: SubagentCapabilities = { outputSchema: false, depthLimit: false, toolFilter: false, persona: false }
+  readonly capabilities: SubagentCapabilities = NO_START_CAPABILITIES
   // Context contract: an out-of-process ACP child starts fresh — no parent conversation crosses the process boundary.
   readonly inheritsParentContext = false
 

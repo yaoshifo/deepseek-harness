@@ -104,6 +104,15 @@ describe('dsh-subagent-spawn-in-process', () => {
     await run.dispose()
   })
 
+  it('stamps the child session cwd from the request override (cwdOverride capability)', async () => {
+    const { ctx, parent } = await setup([textResponse('hi')])
+    const run = await start(ctx, 'spawn', { prompt: [{ type: 'text', text: 'p' }], parent, cwd: '/tmp/child-workspace' })
+    await run.result
+    const child = ctx.agents.get(run.id)!
+    expect(child.session.header.cwd).toBe('/tmp/child-workspace')
+    await run.dispose()
+  })
+
   it('a fresh child does NOT inherit the parent conversation (its log starts empty before the prompt)', async () => {
     // Drive the parent through one real turn so it has history, THEN spawn.
     const { ctx, parent } = await setup([textResponse('parent turn'), textResponse('child sees nothing')])
@@ -285,7 +294,7 @@ describe('dsh-subagent-spawn-in-process', () => {
   it('advertises every start-time capability (depthLimit, outputSchema, toolFilter, persona)', async () => {
     const { ctx } = await setup([])
     const provider = ctx.subagents.getProvider('spawn')!
-    expect(provider.capabilities).toEqual({ outputSchema: true, depthLimit: true, toolFilter: true, persona: true })
+    expect(provider.capabilities).toEqual({ outputSchema: true, depthLimit: true, toolFilter: true, persona: true, cwdOverride: true })
   })
 
   it('unregisters the provider when its fiber is disposed (HMR safety)', async () => {

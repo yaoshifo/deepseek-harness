@@ -24,8 +24,8 @@ function fakeParent(id = 'parent-1'): Agent {
   return { id: SessionId(id) } as unknown as Agent
 }
 
-const ALL_CAPS: SubagentCapabilities = { outputSchema: true, depthLimit: true, toolFilter: true, persona: true }
-const NO_CAPS: SubagentCapabilities = { outputSchema: false, depthLimit: false, toolFilter: false, persona: false }
+const ALL_CAPS: SubagentCapabilities = { outputSchema: true, depthLimit: true, toolFilter: true, persona: true, cwdOverride: true }
+const NO_CAPS: SubagentCapabilities = { outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwdOverride: false }
 
 function baseRequest(overrides: Partial<SubagentStartRequest> = {}): SubagentStartRequest {
   return {
@@ -166,12 +166,22 @@ describe('SubagentRuntime', () => {
     ['depthLimit', { maxDepth: 1 }],
     ['toolFilter', { toolFilter: { deny: ['bash'] } }],
     ['persona', { persona: 'reviewer' }],
+    ['cwdOverride', { cwd: '/tmp/child-workspace' }],
   ] as const)('rejects unsupported %s before provider startup', async (_capability, override) => {
     const { subagents } = await service()
     const provider = new StubProvider('weak', NO_CAPS)
     subagents.registerProvider(provider)
     await expect(subagents.start('weak', baseRequest(override)))
       .rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' })
+    expect(provider.startCount).toBe(0)
+  })
+
+  it('rejects a relative cwd before provider startup', async () => {
+    const { subagents } = await service()
+    const provider = new StubProvider('strong')
+    subagents.registerProvider(provider)
+    await expect(subagents.start('strong', baseRequest({ cwd: 'relative/dir' })))
+      .rejects.toThrow('absolute')
     expect(provider.startCount).toBe(0)
   })
 

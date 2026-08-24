@@ -47,6 +47,13 @@ export interface Config {
    */
   backgroundMode?: 'one-shot' | 'continuable'
   /**
+   * Expose the model-facing `cwd` parameter (default false): an absolute path
+   * overriding the parent's working directory for the child session. Requires
+   * the provider's `cwdOverride` capability; disabled instances reject a
+   * forced cwd at execution time (workspace isolation stays the default).
+   */
+  allowCwdOverride?: boolean
+  /**
    * Agent options applied to every child; omitted fields use child-loop defaults.
    */
   agentOptions?: AgentOptions
@@ -82,6 +89,7 @@ export const Config: z<Config> = z.object({
   provider: z.string().required(),
   toolName: z.string().default('subagent'),
   enableRunInBackground: z.boolean().default(true),
+  allowCwdOverride: z.boolean().default(false),
   backgroundMode: z.union(['one-shot', 'continuable'] as const).default('one-shot'),
   // Prevent Schemastery from materializing omitted agentOptions as `{}`.
   agentOptions: z.object({
@@ -277,6 +285,24 @@ function resolveDelegationRun(
   }
 }
 
+/** Resolve the model's optional cwd override; disabled instances reject a forced value. */
+function resolveCwdOverride(
+  args: { readonly cwd?: unknown },
+  options: { readonly allowCwdOverride: boolean },
+): { readonly cwd?: string } {
+  const cwd = args.cwd
+  if (cwd === undefined) return {}
+  if (!options.allowCwdOverride) {
+    // Same enforcement stance as run_in_background: schema omission is
+    // advertising, not enforcement.
+    throw new Error('cwd is disabled for this tool instance (allowCwdOverride: false)')
+  }
+  if (typeof cwd !== 'string' || cwd === '') {
+    throw new Error('cwd must be a non-empty absolute path string')
+  }
+  return { cwd }
+}
+
 export function apply(ctx: Context, config: Config): void {
   // Direct apply() bypasses Schemastery's numeric constraints. A direct-apply
   // omission stays capless (the schema default only runs through the loader).
@@ -287,6 +313,7 @@ export function apply(ctx: Context, config: Config): void {
   }
   const backgroundEnabled = config.enableRunInBackground !== false
   const continuable = (config.backgroundMode ?? 'one-shot') === 'continuable'
+  const allowCwdOverride = config.allowCwdOverride === true
   const toolName = config.toolName ?? 'subagent'
   // Mirror provider lifecycle because sibling load order and HMR replacement
   // can change provider availability while this fiber remains active.
@@ -334,6 +361,12 @@ export function apply(ctx: Context, config: Config): void {
             description: continuable
               ? 'Whether to run in the background and return a durable subagent id immediately. Defaults to true. Set false to wait for the result when your next action depends on it.'
               : 'Whether to run as a background job and return its id. Defaults to false; collect with job_output or stop with job_kill.',
+          },
+        } : {},
+        ...allowCwdOverride ? {
+          cwd: {
+            type: 'string' as const,
+            description: 'Optional absolute working directory for the child session, overriding the parent\'s cwd. Prepare the directory (and any isolation like a git worktree) before delegating; the child runs there.',
           },
         } : {},
       },
@@ -395,6 +428,7 @@ export function apply(ctx: Context, config: Config): void {
           ...config.persona !== undefined ? { persona: config.persona } : {},
           ...config.toolFilter !== undefined ? { toolFilter: config.toolFilter } : {},
           ...maxDepth !== undefined ? { maxDepth } : {},
+          ...resolveCwdOverride(args, { allowCwdOverride }),
         }
 
         const runSpec = resolveDelegationRun(args, { backgroundEnabled, continuable })

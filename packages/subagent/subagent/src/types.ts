@@ -88,6 +88,11 @@ export interface SubagentCapabilities {
   readonly depthLimit: boolean
   readonly toolFilter: boolean
   readonly persona: boolean
+  /**
+   * Whether `start` honors a per-request {@link SubagentStartRequest.cwd}
+   * overriding the parent's working directory for the child session.
+   */
+  readonly cwdOverride: boolean
 }
 
 /**
@@ -146,6 +151,14 @@ export interface SubagentStartRequest {
    * persona (strict `{{…}}` interpolation against the registered variables).
    */
   readonly persona?: string
+  /**
+   * Optional absolute working directory for the child session, overriding the
+   * parent's cwd. Requires {@link SubagentCapabilities.cwdOverride}; a
+   * relative path is rejected at start. This is pure session metadata — git
+   * worktree isolation or other directory preparation stays with the caller,
+   * composing on top of the override.
+   */
+  readonly cwd?: string
 }
 
 /**
