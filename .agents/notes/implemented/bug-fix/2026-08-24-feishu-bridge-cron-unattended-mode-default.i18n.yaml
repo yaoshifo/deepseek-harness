@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-24-feishu-bridge-cron-unattended-mode-default.md
+2026-08-24-feishu-bridge-cron-unattended-mode-default.md: 436afa153e73024b0524531d684a90fa3a472eba
+2026-08-24-feishu-bridge-cron-unattended-mode-default.zh.md: 4dc16ab78b5d098c07046af0c54b17639adedca9
