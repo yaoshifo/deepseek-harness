@@ -893,7 +893,7 @@ export class Engine {
   subtaskMaxDepth = 0
   /** Default worktree isolation for /spawn //fork (Go spawnWorktree). */
   spawnWorktree: WorktreeMode = WorktreeMode.ForceOff
-  /** Branch child-worktree commits are expected to land in; '' keeps dirty children on /done (setSpawnIntegrateBranch). */
+  /** Integrate-branch override for /done merged auto-removal; '' uses each worktree's recorded base branch. */
   private spawnIntegrateBranch = ''
   /** /spawn //fork RAM guard thresholds in percent; 0 disables a tier (Go spawnMemWarnPct/BlockPct). */
   spawnMemWarnPct = 0
@@ -5326,22 +5326,15 @@ export class Engine {
   }
 
   /**
-   * Set the integration branch that lets /done auto-remove child worktrees:
-   * a child whose only dirty cause is commits already contained in this
-   * branch is removed without the Keep/Remove card. '' (the default)
-   * preserves every dirty child.
-   * @param s - Branch name, e.g. 'dev'; '' disables the auto-removal.
+   * Set the integrate-branch override for /done's merged auto-removal. The
+   * default containment target is the branch each worktree's HEAD was on at
+   * creation (effectiveSpawnIntegrate); this setting replaces that default
+   * for every worktree, e.g. a deployment whose checkouts roam feature
+   * branches but always land in 'dev'.
+   * @param s - Branch name, e.g. 'dev'; '' restores the per-worktree default.
    */
   setSpawnIntegrateBranch(s: string): void {
     this.spawnIntegrateBranch = s.trim()
-  }
-
-  /**
-   * The configured integration branch for dirty-child auto-removal ('' = none).
-   * @returns The branch name, or '' when auto-removal is disabled.
-   */
-  spawnIntegrate(): string {
-    return this.spawnIntegrateBranch
   }
 
   /**
@@ -5744,7 +5737,8 @@ export class Engine {
 
     // Resolve the child work dir and optional worktree isolation. Shared by
     // the group path and the native continuable path (de-baggage B4).
-    const { workDir, wtPath, wtBranch, wtBase, wtRoot } = await this.resolveSubtaskWorkDir(parentSessionKey, dir, wtPref, firstMsg)
+    const { workDir, wtPath, wtBranch, wtBase, wtBaseBranch, wtRoot } =
+      await this.resolveSubtaskWorkDir(parentSessionKey, dir, wtPref, firstMsg)
 
     // Fork-source guard: fail fast BEFORE creating the group so the agent
     // learns to drop -f and retry, leaving no orphan group (Go
@@ -5800,7 +5794,7 @@ export class Engine {
     ns.setSubtaskDepth(depth)
     ns.setSubtaskAttended(attended)
     if (userID !== '') ns.setSpawnUserID(userID)
-    if (wtPath !== '') ns.setWorktreeInfo(wtPath, wtBranch, wtBase, wtRoot)
+    if (wtPath !== '') ns.setWorktreeInfo(wtPath, wtBranch, wtBase, wtRoot, wtBaseBranch)
     this.sessions.save()
 
     // Fold a late-spawned child into an armed gather barrier so gather also
@@ -5865,7 +5859,7 @@ export class Engine {
     dir: string,
     wtPref: WorktreeMode,
     brief: string,
-  ): Promise<{ workDir: string; wtPath: string; wtBranch: string; wtBase: string; wtRoot: string }> {
+  ): Promise<{ workDir: string; wtPath: string; wtBranch: string; wtBase: string; wtBaseBranch: string; wtRoot: string }> {
     let workDir = ''
     const override = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
     if (override !== '') workDir = override
@@ -5883,6 +5877,7 @@ export class Engine {
     let wtPath = ''
     let wtBranch = ''
     let wtBase = ''
+    let wtBaseBranch = ''
     let wtRoot = ''
     let useWorktree = wtPref === WorktreeMode.ForceOn
     if (wtPref === WorktreeMode.Auto && workDir !== '') {
@@ -5907,10 +5902,11 @@ export class Engine {
       wtPath = created.path
       wtBranch = created.branch
       wtBase = created.baseSHA
+      wtBaseBranch = created.baseBranch
       wtRoot = root
       workDir = created.path
     }
-    return { workDir, wtPath, wtBranch, wtBase, wtRoot }
+    return { workDir, wtPath, wtBranch, wtBase, wtBaseBranch, wtRoot }
   }
 
   /**
@@ -5958,7 +5954,8 @@ export class Engine {
       throw new Error('subtask: the parent conversation has no live agent session; send it a message first')
     }
 
-    const { workDir, wtPath, wtBranch, wtBase, wtRoot } = await this.resolveSubtaskWorkDir(parentSessionKey, dir, wtPref, briefText)
+    const { workDir, wtPath, wtBranch, wtBase, wtBaseBranch, wtRoot } =
+      await this.resolveSubtaskWorkDir(parentSessionKey, dir, wtPref, briefText)
 
     let childId: string
     let label: string
@@ -5975,7 +5972,7 @@ export class Engine {
       label = started.label
     } catch (error) {
       // A failed delegation must not leak the worktree it reserved.
-      if (wtPath !== '') await this.removeNativeWorktreeQuiet(wtPath, wtBranch, wtRoot, wtBase)
+      if (wtPath !== '') await this.removeNativeWorktreeQuiet(wtPath, wtBranch, wtRoot, wtBase, wtBaseBranch)
       throw error
     }
 
@@ -5987,6 +5984,7 @@ export class Engine {
         worktree_path: wtPath,
         worktree_branch: wtBranch,
         worktree_base: wtBase,
+        worktree_base_branch: wtBaseBranch,
         worktree_root: wtRoot,
         reported: false,
       })
@@ -6013,11 +6011,11 @@ export class Engine {
   }
 
   /** Remove a native child's worktree quietly (teardown paths; failures warn). */
-  private async removeNativeWorktreeQuiet(path: string, branch: string, root: string, base: string): Promise<void> {
+  private async removeNativeWorktreeQuiet(path: string, branch: string, root: string, base: string, baseBranch: string): Promise<void> {
     if (path === '') return
     try {
       const dirty = await worktreeDirtyDetail(path, base)
-      if (dirty.uncommitted || !(await this.worktreeMergedLossless(root, branch, dirty.ahead))) {
+      if (dirty.uncommitted || !(await this.worktreeMergedLossless(root, branch, dirty.ahead, this.effectiveSpawnIntegrate(baseBranch)))) {
         console.warn(`subtask: native child worktree is dirty; kept (${path})`)
         return
       }
@@ -6028,16 +6026,28 @@ export class Engine {
   }
 
   /**
-   * Whether a dirty worktree's commits already landed in the configured
-   * integration branch, making removal lossless.
+   * The containment target for one worktree's merged auto-removal: the
+   * configured integrateBranch overrides, else the branch HEAD was on when
+   * the worktree was created; '' disables auto-removal for it.
+   * @param baseBranch - The worktree's recorded base branch ('' when unknown).
+   * @returns The branch to check containment against, or ''.
+   */
+  effectiveSpawnIntegrate(baseBranch: string): string {
+    return this.spawnIntegrateBranch !== '' ? this.spawnIntegrateBranch : baseBranch
+  }
+
+  /**
+   * Whether a dirty worktree's commits already landed in the containment
+   * target, making removal lossless.
    * @param root - Repository root that owns the worktree's branch.
    * @param branch - The worktree's branch.
    * @param ahead - Whether the worktree has commits ahead of its base.
+   * @param integrate - The containment target branch; '' never removes.
    * @returns True only when ahead and fully contained in the integrate branch.
    */
-  async worktreeMergedLossless(root: string, branch: string, ahead: boolean): Promise<boolean> {
-    if (!ahead || this.spawnIntegrateBranch === '') return false
-    return worktreeMergedInto(root, branch, this.spawnIntegrateBranch)
+  async worktreeMergedLossless(root: string, branch: string, ahead: boolean, integrate: string): Promise<boolean> {
+    if (!ahead || integrate === '') return false
+    return worktreeMergedInto(root, branch, integrate)
   }
 
   /**
@@ -6210,7 +6220,9 @@ export class Engine {
       } catch (error) {
         console.warn(`subtask: native descendant interrupt failed (child=${childId}): ${String(error)}`)
       }
-      await this.removeNativeWorktreeQuiet(rec.worktree_path, rec.worktree_branch, rec.worktree_root, rec.worktree_base)
+      await this.removeNativeWorktreeQuiet(
+        rec.worktree_path, rec.worktree_branch, rec.worktree_root, rec.worktree_base, rec.worktree_base_branch,
+      )
       this.projectState?.clearNativeChild(childId)
     }
     if (toDrain.length > 0) this.projectState?.save()
@@ -7284,14 +7296,14 @@ export class Engine {
         // Folder not removed; fields preserved for retry, memory kept.
         return memDir !== '' ? this.i18n.tf(Msg.WorktreeOrphanKept, memDir) : ''
       }
-      sess.setWorktreeInfo('', '', '', '')
+      sess.setWorktreeInfo('', '', '', '', '')
       this.sessions.save()
       const cleaned = removeOrphanMemory(memDir === '' ? '' : memDir)
       if (cleaned !== '') return this.i18n.tf(Msg.WorktreeOrphanCleaned, cleaned)
       return ''
     }
     // keep: folder stays on disk → memory stays.
-    sess.setWorktreeInfo('', '', '', '')
+    sess.setWorktreeInfo('', '', '', '', '')
     this.sessions.save()
     return memDir !== '' ? this.i18n.tf(Msg.WorktreeOrphanKept, memDir) : ''
   }
@@ -7539,7 +7551,7 @@ export class Engine {
     }
     // Always clear the Session worktree fields, even on error: a git failure
     // must not leave the metadata permanently stuck.
-    sess.setWorktreeInfo('', '', '', '')
+    sess.setWorktreeInfo('', '', '', '', '')
     this.sessions.save()
     if (err !== undefined) {
       console.warn(`worktree removal failed; cleared session fields anyway (${sessionKey} ${path}): ${errorMessage(err)}`)

@@ -115,16 +115,21 @@ export interface WorktreeCreateInfo {
   path: string
   branch: string
   baseSHA: string
+  /** Branch HEAD was on at creation — the default /done containment target; '' when detached or unresolvable. */
+  baseBranch: string
 }
 
 /**
  * Add a new git worktree under `<repoRoot>/.claude/worktrees/<slug>` on a
  * fresh branch `cc/<slug>` based on the repo's current HEAD (Go
- * createWorktree).
+ * createWorktree). The branch HEAD was on at creation is recorded as the
+ * worktree's base branch — the branch its commits are expected to land in,
+ * which /done's merged auto-removal checks against when no explicit
+ * integrateBranch is configured.
  *
  * @param repoRoot - Repository root to create the worktree in.
  * @param slug - Unique name for the worktree directory and its branch.
- * @returns The new worktree's path, branch name, and base commit SHA.
+ * @returns The new worktree's path, branch, base SHA, and base branch ('' when detached).
  */
 export async function createWorktree(repoRoot: string, slug: string): Promise<WorktreeCreateInfo> {
   const baseOut = await runGit(repoRoot, ['rev-parse', 'HEAD'])
@@ -134,7 +139,17 @@ export async function createWorktree(repoRoot: string, slug: string): Promise<Wo
   const path = join(repoRoot, '.claude', 'worktrees', slug)
 
   await runGit(repoRoot, ['worktree', 'add', '-b', branch, path, 'HEAD'])
-  return { path, branch, baseSHA }
+  // abbrev-ref reports 'HEAD' for a detached HEAD; normalize the unusable
+  // name to '' so callers treat it as "no known base branch".
+  let baseBranch = ''
+  try {
+    const nameOut = await runGit(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    const name = nameOut.trim()
+    baseBranch = name === 'HEAD' ? '' : name
+  } catch {
+    baseBranch = ''
+  }
+  return { path, branch, baseSHA, baseBranch }
 }
 
 /** The two independent reasons a worktree counts as dirty (Go worktreeDirty). */

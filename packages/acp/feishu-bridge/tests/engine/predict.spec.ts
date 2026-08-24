@@ -162,7 +162,7 @@ describe('/btw', () => {
     const sessionKey = 'feishu:oc_wt'
     const s = e.sessions.getOrCreateActive(sessionKey)
     s.setAgentSessionID('wt-sid', 'dsh')
-    s.setWorktreeInfo('/wt/path', 'branch', 'base', 'root')
+    s.setWorktreeInfo('/wt/path', 'branch', 'base', 'root', '')
 
     expect(e.dispatchCommand(p, msg({ sessionKey }), '/btw 状态')).toBe(true)
     await vi.waitFor(() => { expect(agent.calls).toBe(1) })

@@ -858,7 +858,7 @@ function checkSpawnMemoryGuard(e: Engine, p: Platform, replyCtx: unknown): boole
 /** Resolve the repo root and create an isolated worktree for a child (Go setupWorktree). */
 async function setupWorktree(
   e: Engine, p: Platform, msg: Message, workDir: string, firstMsg: string, auto: boolean,
-): Promise<{ path: string; branch: string; base: string; root: string } | undefined> {
+): Promise<{ path: string; branch: string; base: string; baseBranch: string; root: string } | undefined> {
   const root = await worktreeRepoRoot(workDir).catch(() => undefined)
   if (root === undefined) {
     if (!auto) void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.WorktreeNotGit, workDir))
@@ -866,7 +866,7 @@ async function setupWorktree(
   }
   try {
     const created = await createWorktree(root, slugify(firstMsg))
-    return { path: created.path, branch: created.branch, base: created.baseSHA, root }
+    return { path: created.path, branch: created.branch, base: created.baseSHA, baseBranch: created.baseBranch, root }
   } catch (error) {
     if (!auto) {
       void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.WorktreeCreateError, String(error instanceof Error ? error.message : error)))
@@ -1031,6 +1031,7 @@ async function spawnGroupCommon(
   let wtPath = ''
   let wtBranch = ''
   let wtBase = ''
+  let wtBaseBranch = ''
   let wtRoot = ''
   {
     let workDir = ''
@@ -1054,6 +1055,7 @@ async function spawnGroupCommon(
         wtPath = wt.path
         wtBranch = wt.branch
         wtBase = wt.base
+        wtBaseBranch = wt.baseBranch
         wtRoot = wt.root
         workDir = wt.path
       } else if (!auto) {
@@ -1091,7 +1093,7 @@ async function spawnGroupCommon(
     ns.setParentChatName(effectiveParentLabel(e, p, msg))
     ns.setName(groupName)
     if (msg.userID !== '') ns.setSpawnUserID(msg.userID)
-    if (wtPath !== '') ns.setWorktreeInfo(wtPath, wtBranch, wtBase, wtRoot)
+    if (wtPath !== '') ns.setWorktreeInfo(wtPath, wtBranch, wtBase, wtRoot, wtBaseBranch)
     // Inherit the parent's current effective permission mode so the child
     // doesn't reset to the configured plan and re-prompt for an ExitPlanMode
     // the parent already approved.
@@ -1277,7 +1279,7 @@ export async function cleanupOneChat(
   }
   e.markSpawnedChatDone(p, sessionKey)
 
-  const [path, branch, base, root] = sess.getWorktreeInfo()
+  const [path, branch, base, root, baseBranch] = sess.getWorktreeInfo()
   if (path === '') return { name, dirty: false }
   let detail: WorktreeDirtyDetail
   try {
@@ -1296,9 +1298,11 @@ export async function cleanupOneChat(
   }
   if (detail.uncommitted || detail.ahead) {
     // Commits ahead of base auto-remove when their content already landed in
-    // the configured integration branch; uncommitted changes never do.
-    if (!detail.uncommitted && await e.worktreeMergedLossless(root, branch, detail.ahead)) {
-      await e.finishWorktreeRemoval(p, ctx, sessionKey, false, e.spawnIntegrate())
+    // the worktree's containment target (explicit config, else the branch
+    // HEAD was on at creation); uncommitted changes never do.
+    const integrate = e.effectiveSpawnIntegrate(baseBranch)
+    if (!detail.uncommitted && await e.worktreeMergedLossless(root, branch, detail.ahead, integrate)) {
+      await e.finishWorktreeRemoval(p, ctx, sessionKey, false, integrate)
       return { name, dirty: false }
     }
     if (asChild) return { name, dirty: true } // skip; caller summarizes

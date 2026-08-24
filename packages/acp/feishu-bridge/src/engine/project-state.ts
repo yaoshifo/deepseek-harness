@@ -38,6 +38,8 @@ export interface NativeChildRecord {
   worktree_branch: string
   /** Worktree base SHA; '' = none. */
   worktree_base: string
+  /** Branch HEAD was on when the worktree was created; the default /done containment target ('' = unknown/none). */
+  worktree_base_branch: string
   /** Worktree repository root; '' = none. */
   worktree_root: string
   /** Whether the child already delivered its result to the parent. */

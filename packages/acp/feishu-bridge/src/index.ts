@@ -325,7 +325,7 @@ export interface SubtaskConfig {
 export interface SpawnConfig {
   /** Default worktree isolation: 'auto' | 'on' | 'off'. */
   worktree?: 'auto' | 'on' | 'off'
-  /** Branch child-worktree commits land in (e.g. 'dev'); /done auto-removes children contained in it. Unset keeps dirty children. */
+  /** Override for /done merged auto-removal's containment target (e.g. 'dev'); unset uses each worktree's recorded base branch. */
   integrateBranch?: string
   /** RAM% above which a warning card is sent; 0 disables the tier (default 80). */
   memoryWarnPct?: number
@@ -658,7 +658,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   }).description('Subtask delegation caps'),
   spawn: Schema.object({
     worktree: Schema.union(['auto', 'on', 'off']).description('Default worktree isolation'),
-    integrateBranch: Schema.string().description("Branch child-worktree commits land in (e.g. 'dev'); /done auto-removes merged children; unset keeps dirty children"),
+    integrateBranch: Schema.string().description("Override containment target for /done merged auto-removal (e.g. 'dev'); unset uses each worktree's creation-time base branch"),
     memoryWarnPct: Schema.natural().description('RAM% warning threshold; 0 disables'),
     memoryBlockPct: Schema.natural().description('RAM% block threshold; 0 disables'),
   }).description('/spawn //fork isolation defaults'),

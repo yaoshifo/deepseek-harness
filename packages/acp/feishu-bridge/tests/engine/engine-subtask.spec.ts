@@ -1170,7 +1170,7 @@ describe('reportNativeChild', () => {
       parent_key: parentKey,
       parent_agent_session_id: 'parent-native-1',
       label: 'render the summary',
-      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
       reported: false,
     })
     return r
@@ -1203,7 +1203,7 @@ describe('reportNativeChild', () => {
       parent_key: parentKey,
       parent_agent_session_id: 'parent-native-1',
       label: 'render the summary',
-      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
       reported: false,
     })
 
@@ -1220,7 +1220,7 @@ describe('reportNativeChild', () => {
       parent_key: parentKey,
       parent_agent_session_id: 'parent-native-1',
       label: 'parent native',
-      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
       reported: true,
     })
     const withNativeParent = e.nativeChildEntries()['native-child-1']!
@@ -1290,7 +1290,7 @@ describe('gather with native children', () => {
         parent_key: parentKey,
         parent_agent_session_id: 'parent-native-1',
         label: `task ${id}`,
-        worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '',
+        worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
         reported: false,
       })
     }
@@ -1319,15 +1319,15 @@ describe('drainNativeDescendants', () => {
     const { e, agent } = newNativeEngine(p, parentKey)
     e.projectState?.setNativeChild('native-child-1', {
       parent_key: parentKey, parent_agent_session_id: 'parent-native-1', label: 'a',
-      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '', reported: false,
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '', reported: false,
     })
     e.projectState?.setNativeChild('native-grandchild-1', {
       parent_key: 'native-child-1', parent_agent_session_id: 'native-child-1', label: 'g',
-      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '', reported: false,
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '', reported: false,
     })
     e.projectState?.setNativeChild('foreign-child', {
       parent_key: 'test:elsewhere:u1', parent_agent_session_id: 'x', label: 'f',
-      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '', reported: false,
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '', reported: false,
     })
 
     await e.drainNativeDescendants([parentKey])

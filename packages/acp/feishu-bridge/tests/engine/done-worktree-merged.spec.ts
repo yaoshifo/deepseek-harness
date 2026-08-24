@@ -1,9 +1,12 @@
 /**
  * /done merged-child auto-removal: a child worktree whose only dirty cause is
- * commits already contained in the configured spawn.integrateBranch is removed
- * automatically instead of being kept for the per-child Keep/Remove card;
- * unmerged commits, uncommitted changes, and the unset config all keep the
- * current preserve behavior.
+ * commits already contained in its containment target is removed automatically
+ * instead of being kept for the per-child Keep/Remove card. The target
+ * defaults to the branch HEAD was on when the worktree was created (per-repo,
+ * zero config); `spawn.integrateBranch` overrides it globally. Unmerged
+ * commits and uncommitted changes keep the preserve behavior, and a worktree
+ * created from a detached HEAD stays on the interactive path unless the
+ * override is configured.
  */
 
 import { execFile } from 'node:child_process'
@@ -45,9 +48,10 @@ async function initTestRepo(): Promise<string> {
   return root
 }
 
-/** Create a worktree and commit one edit on its branch. */
+/** Create a worktree (recording the creation-time base branch) and commit one edit on its branch. */
 async function committedWorktree(root: string, slug: string, content: string): Promise<WorktreeCreateInfo> {
   const wt = await createWorktree(root, slug)
+  expect(wt.baseBranch).toBe('main')
   await writeFile(join(wt.path, 'README.md'), content)
   await git(wt.path, 'add', 'README.md')
   await git(wt.path, 'commit', '-m', `work ${slug}`)
@@ -90,34 +94,63 @@ describe('worktreeMergedInto', () => {
   })
 })
 
-describe('cleanupOneChat merged auto-removal', () => {
-  it('removes a child whose commits landed in the integrate branch', async () => {
+describe('createWorktree base branch recording', () => {
+  it('records the branch HEAD was on; a detached HEAD records ""', async () => {
     const root = await initTestRepo()
-    const wt = await committedWorktree(root, 'merged', 'merged work\n')
+    await git(root, 'checkout', '--detach')
+    const wt = await createWorktree(root, 'detached')
+    expect(wt.baseBranch).toBe('')
+  })
+})
+
+describe('cleanupOneChat merged auto-removal', () => {
+  it('default-on: removes a merged child against its recorded base branch, no config', async () => {
+    const root = await initTestRepo()
+    const wt = await committedWorktree(root, 'default', 'merged work\n')
     await git(root, 'merge', wt.branch)
     const p = createStubCardPlatform('test')
     const e = newEngine(p)
-    e.setSpawnIntegrateBranch('main')
     const sess = e.sessions.getOrCreateActive('test:child')
-    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root)
+    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root, wt.baseBranch)
 
     const r = await cleanupOneChat(e, p, 'test:child', newStubMessage().replyCtx, true)
 
     expect(r.dirty).toBe(false)
-    expect(sess.getWorktreeInfo()).toEqual(['', '', '', ''])
+    expect(sess.getWorktreeInfo()).toEqual(['', '', '', '', ''])
     await expect(git(root, 'worktree', 'list')).resolves.not.toContain(wt.path)
     await expect(git(root, 'branch', '--list', wt.branch)).resolves.toBe('')
     expect(p.getSent().some(m => m.includes('main'))).toBe(true)
   })
 
-  it('keeps a merged child when no integrate branch is configured', async () => {
+  it('the integrateBranch override replaces the recorded base branch', async () => {
+    const root = await initTestRepo()
+    await git(root, 'branch', 'dev') // landing branch that is not the base branch
+    const wt = await committedWorktree(root, 'over', 'landed elsewhere\n')
+    await git(root, 'checkout', 'dev')
+    await git(root, 'merge', wt.branch)
+    await git(root, 'checkout', 'main')
+    const p = createStubCardPlatform('test')
+    const e = newEngine(p)
+    e.setSpawnIntegrateBranch('dev')
+    const sess = e.sessions.getOrCreateActive('test:child')
+    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root, '') // no recorded base branch
+
+    const r = await cleanupOneChat(e, p, 'test:child', newStubMessage().replyCtx, true)
+
+    expect(r.dirty).toBe(false)
+    expect(sess.getWorktreeInfo()).toEqual(['', '', '', '', ''])
+    await expect(git(root, 'worktree', 'list')).resolves.not.toContain(wt.path)
+    expect(p.getSent().some(m => m.includes('dev'))).toBe(true)
+  })
+
+  it('keeps a merged child with no recorded base branch and no override', async () => {
     const root = await initTestRepo()
     const wt = await committedWorktree(root, 'unconf', 'merged work\n')
     await git(root, 'merge', wt.branch)
     const p = createStubCardPlatform('test')
     const e = newEngine(p)
     const sess = e.sessions.getOrCreateActive('test:child')
-    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root)
+    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root, '') // detached creation, override unset
 
     const r = await cleanupOneChat(e, p, 'test:child', newStubMessage().replyCtx, true)
 
@@ -131,9 +164,8 @@ describe('cleanupOneChat merged auto-removal', () => {
     const wt = await committedWorktree(root, 'unmerged', 'unmerged work\n')
     const p = createStubCardPlatform('test')
     const e = newEngine(p)
-    e.setSpawnIntegrateBranch('main')
     const sess = e.sessions.getOrCreateActive('test:child')
-    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root)
+    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root, wt.baseBranch)
 
     const r = await cleanupOneChat(e, p, 'test:child', newStubMessage().replyCtx, true)
 
@@ -141,15 +173,14 @@ describe('cleanupOneChat merged auto-removal', () => {
     expect(existsSync(wt.path)).toBe(true)
   })
 
-  it('keeps uncommitted changes even with the integrate branch configured', async () => {
+  it('keeps uncommitted changes even with a containment target', async () => {
     const root = await initTestRepo()
     const wt = await createWorktree(root, 'dirty')
     await writeFile(join(wt.path, 'README.md'), 'uncommitted\n')
     const p = createStubCardPlatform('test')
     const e = newEngine(p)
-    e.setSpawnIntegrateBranch('main')
     const sess = e.sessions.getOrCreateActive('test:child')
-    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root)
+    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root, wt.baseBranch)
 
     const r = await cleanupOneChat(e, p, 'test:child', newStubMessage().replyCtx, false)
 

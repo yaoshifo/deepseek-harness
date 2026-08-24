@@ -77,6 +77,8 @@ export class Session {
   worktreeBranch = ''
   /** Base ref the worktree branch forked from. */
   worktreeBase = ''
+  /** Branch HEAD was on when the worktree was created; the default /done containment target ('' when unknown). */
+  worktreeBaseBranch = ''
   /** Repository root the worktree was created under. */
   worktreeRepoRoot = ''
   /** Agent session IDs previously held by this session, so owned-session filtering keeps recognizing them. */
@@ -225,12 +227,12 @@ export class Session {
   }
 
   /**
-   * Worktree metadata as [path, branch, base, root]; all empty when unset.
+   * Worktree metadata as [path, branch, base, root, baseBranch]; all empty when unset.
    *
-   * @returns the [path, branch, base, root] tuple.
+   * @returns the [path, branch, base, root, baseBranch] tuple.
    */
-  getWorktreeInfo(): [path: string, branch: string, base: string, root: string] {
-    return [this.worktreePath, this.worktreeBranch, this.worktreeBase, this.worktreeRepoRoot]
+  getWorktreeInfo(): [path: string, branch: string, base: string, root: string, baseBranch: string] {
+    return [this.worktreePath, this.worktreeBranch, this.worktreeBase, this.worktreeRepoRoot, this.worktreeBaseBranch]
   }
 
   /**
@@ -240,12 +242,14 @@ export class Session {
    * @param branch - the branch checked out in the worktree.
    * @param base - the base ref the branch forked from.
    * @param root - the repository root the worktree lives under.
+   * @param baseBranch - the branch HEAD was on at creation ('' when unknown).
    */
-  setWorktreeInfo(path: string, branch: string, base: string, root: string): void {
+  setWorktreeInfo(path: string, branch: string, base: string, root: string, baseBranch: string): void {
     this.worktreePath = path
     this.worktreeBranch = branch
     this.worktreeBase = base
     this.worktreeRepoRoot = root
+    this.worktreeBaseBranch = baseBranch
   }
 
   /**
@@ -1008,6 +1012,7 @@ interface SerializedSession {
   worktreePath?: string
   worktreeBranch?: string
   worktreeBase?: string
+  worktreeBaseBranch?: string
   worktreeRepoRoot?: string
   pastAgentSessionIDs?: string[]
   topNoticeMessageID?: string
@@ -1052,6 +1057,7 @@ function serializeSession(s: Session): SerializedSession {
     ...(s.worktreePath !== '' ? { worktreePath: s.worktreePath } : {}),
     ...(s.worktreeBranch !== '' ? { worktreeBranch: s.worktreeBranch } : {}),
     ...(s.worktreeBase !== '' ? { worktreeBase: s.worktreeBase } : {}),
+    ...(s.worktreeBaseBranch !== '' ? { worktreeBaseBranch: s.worktreeBaseBranch } : {}),
     ...(s.worktreeRepoRoot !== '' ? { worktreeRepoRoot: s.worktreeRepoRoot } : {}),
     ...(s.pastAgentSessionIDs.length > 0 ? { pastAgentSessionIDs: [...s.pastAgentSessionIDs] } : {}),
     ...(s.topNoticeMessageID !== '' ? { topNoticeMessageID: s.topNoticeMessageID } : {}),
@@ -1097,6 +1103,7 @@ function deserializeSession(raw: SerializedSession): Session {
   s.worktreePath = raw.worktreePath ?? ''
   s.worktreeBranch = raw.worktreeBranch ?? ''
   s.worktreeBase = raw.worktreeBase ?? ''
+  s.worktreeBaseBranch = raw.worktreeBaseBranch ?? ''
   s.worktreeRepoRoot = raw.worktreeRepoRoot ?? ''
   s.pastAgentSessionIDs = raw.pastAgentSessionIDs ?? []
   s.topNoticeMessageID = raw.topNoticeMessageID ?? ''
@@ -1157,6 +1164,7 @@ interface LegacySessionV1 {
   worktree_path?: string
   worktree_branch?: string
   worktree_base?: string
+  worktree_base_branch?: string
   worktree_repo_root?: string
   past_agent_session_ids?: string[]
   topnotice_message_id?: string
@@ -1201,6 +1209,7 @@ function deserializeSessionV1(raw: LegacySessionV1): Session {
     ...(raw.worktree_path !== undefined ? { worktreePath: raw.worktree_path } : {}),
     ...(raw.worktree_branch !== undefined ? { worktreeBranch: raw.worktree_branch } : {}),
     ...(raw.worktree_base !== undefined ? { worktreeBase: raw.worktree_base } : {}),
+    ...(raw.worktree_base_branch !== undefined ? { worktreeBaseBranch: raw.worktree_base_branch } : {}),
     ...(raw.worktree_repo_root !== undefined ? { worktreeRepoRoot: raw.worktree_repo_root } : {}),
     ...(raw.past_agent_session_ids !== undefined ? { pastAgentSessionIDs: raw.past_agent_session_ids } : {}),
     ...(raw.topnotice_message_id !== undefined ? { topNoticeMessageID: raw.topnotice_message_id } : {}),

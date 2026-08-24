@@ -95,14 +95,14 @@ describe('handleCardAction act:/wt', () => {
     const p = newRefreshingPlatform()
     const e = newEngine(p)
     const sess = e.sessions.getOrCreateActive('test:child-chat')
-    sess.setWorktreeInfo('/gone/wt', 'cc/x', 'abc', '/repo')
+    sess.setWorktreeInfo('/gone/wt', 'cc/x', 'abc', '/repo', '')
 
     e.receiveMessage(p, cardActionMsg('test:child-chat', 'act:/wt keep'))
     await waitFor(() => p.refreshed.length === 1, 'refreshCard')
 
     expect(p.refreshed[0]!.sessionKey).toBe('test:child-chat')
     expect(p.refreshed[0]!.body).not.toContain('/gone/wt') // terminal card, not the prompt
-    expect(sess.getWorktreeInfo()).toEqual(['', '', '', ''])
+    expect(sess.getWorktreeInfo()).toEqual(['', '', '', '', ''])
     // A card action never starts an agent turn.
     expect(p.getSent()).toEqual([])
     expect(p.sentCards).toEqual([])
@@ -115,12 +115,12 @@ describe('handleCardAction act:/wt', () => {
     const p = newRefreshingPlatform()
     const e = newEngine(p)
     const sess = e.sessions.getOrCreateActive('test:child-chat')
-    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root)
+    sess.setWorktreeInfo(wt.path, wt.branch, wt.baseSHA, root, wt.baseBranch)
 
     e.receiveMessage(p, cardActionMsg('test:child-chat', 'act:/wt remove'))
     await waitFor(() => p.refreshed.length === 1, 'refreshCard')
 
-    expect(sess.getWorktreeInfo()).toEqual(['', '', '', ''])
+    expect(sess.getWorktreeInfo()).toEqual(['', '', '', '', ''])
     const list = await execFileP('git', ['worktree', 'list'], { cwd: root })
     expect(list.stdout).not.toContain(wt.path)
   })
@@ -129,13 +129,13 @@ describe('handleCardAction act:/wt', () => {
     const p = createStubCardPlatform('test')
     const e = newEngine(p)
     const sess = e.sessions.getOrCreateActive('test:child-chat')
-    sess.setWorktreeInfo('/gone/wt', 'cc/x', 'abc', '/repo')
+    sess.setWorktreeInfo('/gone/wt', 'cc/x', 'abc', '/repo', '')
 
     e.receiveMessage(p, cardActionMsg('test:child-chat', 'act:/wt keep'))
     await waitFor(() => p.sentCards.length === 1, 'fallback card')
 
     expect(p.sentCards).toHaveLength(1)
-    expect(sess.getWorktreeInfo()).toEqual(['', '', '', ''])
+    expect(sess.getWorktreeInfo()).toEqual(['', '', '', '', ''])
   })
 
   it('unknown act: commands are consumed without a turn or a card', async () => {
