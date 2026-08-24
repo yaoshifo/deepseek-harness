@@ -122,7 +122,11 @@ if [ "$BUILD" -eq 1 ]; then
   # CI=true: pnpm's pre-run deps check auto-installs when the lockfile moved
   # (e.g. after a pull); without it the modules-dir purge prompt aborts in
   # this TTY-less script and /reload fails before the daemon restart.
-  (cd "$FORK_DIR" && CI=true pnpm run build:lib:host)
+  # NODE_OPTIONS: the default V8 heap (~2GiB on this 7.5GiB box) OOMs tsc -b
+  # with exit 134 once the workspace graph grows past a big merge (2026-08-24);
+  # 6144 is the ceiling proven here (same value the pre-push/typecheck
+  # workaround uses). ${NODE_OPTIONS:-…} keeps a manual run's own setting.
+  (cd "$FORK_DIR" && CI=true NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=6144}" pnpm run build:lib:host)
   for f in "$FORK_DIR/apps/cli/lib/bin.js" "$PKG_DIR/lib/index.js"; do
     [ -f "$f" ] && echo "    built: $f ($(date -r "$f" '+%Y-%m-%d %H:%M:%S'))"
   done
