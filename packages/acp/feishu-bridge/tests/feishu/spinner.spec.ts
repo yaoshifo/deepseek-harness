@@ -9,9 +9,10 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildProgressCardPayloadV2, type ProgressCardEntry } from '../../src/progress.js'
-import { buildPreviewCardJSON, markCardStopped } from '../../src/feishu/progress.js'
+import { buildProgressCardPayload, type ProgressCardEntry } from '../../src/progress.js'
+import { buildPreviewCardJSON, buildProgressCardJSONFromPayload, markCardStopped } from '../../src/feishu/progress.js'
 import { noSpinner, resolveSpinnerAsset, type SpinnerCfg } from '../../src/feishu/spinner.js'
+import type { ProgressStatus } from '../../src/core/types.js'
 import { jObj, jParse, jStr, type JsonObj } from '../stubs/json.js'
 
 function headerIcon(cardJSON: string): JsonObj | undefined {
@@ -70,8 +71,9 @@ describe('progress card spinner icon (payload path)', () => {
 
   for (const [name, entries, state, wantIcon] of cases) {
     it(name, () => {
-      const payload = buildProgressCardPayloadV2(entries, false, 'Claude', 'zh', state, [], '')
-      const cardJSON = buildPreviewCardJSON(payload, spin)
+      const payload = buildProgressCardPayload(entries, false, 'Claude', 'zh', state, [], '')
+      expect(payload).toBeDefined()
+      const cardJSON = buildProgressCardJSONFromPayload(payload!, spin)
       const icon = headerIcon(cardJSON)
       if (wantIcon === '') {
         expect(icon).toBeUndefined()
@@ -83,24 +85,24 @@ describe('progress card spinner icon (payload path)', () => {
   }
 
   it('disabled spinnerCfg produces no icon', () => {
-    const payload = buildProgressCardPayloadV2([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
-    expect(hasHeaderIcon(buildPreviewCardJSON(payload, noSpinner))).toBe(false)
+    const payload = buildProgressCardPayload([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
+    expect(hasHeaderIcon(buildProgressCardJSONFromPayload(payload!, noSpinner))).toBe(false)
   })
 })
 
 describe('progress card spinner icon (text path)', () => {
   const spin: SpinnerCfg = { enabled: true, thinkingKey: 'img_think', executingKey: 'img_exec' }
 
-  const cases: Array<[name: string, content: string, wantIcon: string]> = [
-    ['thinking state', '__cc_state__:thinking\npondering the design', 'img_think'],
-    ['running state (no prefix)', '**14:05:34** ⚙️ `Bash`\necho hello', 'img_exec'],
-    ['completed state', '__cc_state__:completed\ndone', ''],
-    ['failed state', '__cc_state__:failed\nboom', ''],
+  const cases: Array<[name: string, text: string, status: ProgressStatus | undefined, wantIcon: string]> = [
+    ['thinking state', 'pondering the design', { state: 'thinking', ts: '14:05:34', toolCallSeq: 0 }, 'img_think'],
+    ['running state (no status)', '**14:05:34** ⚙️ `Bash`\necho hello', undefined, 'img_exec'],
+    ['completed state', 'done', { state: 'completed', ts: '14:05:35', toolCallSeq: 0 }, ''],
+    ['failed state', 'boom', { state: 'failed', ts: '14:05:36', toolCallSeq: 0 }, ''],
   ]
 
-  for (const [name, content, wantIcon] of cases) {
+  for (const [name, text, status, wantIcon] of cases) {
     it(name, () => {
-      const cardJSON = buildPreviewCardJSON(content, spin)
+      const cardJSON = buildPreviewCardJSON(text, spin, status)
       const icon = headerIcon(cardJSON)
       if (wantIcon === '') {
         expect(icon).toBeUndefined()
@@ -114,8 +116,8 @@ describe('progress card spinner icon (text path)', () => {
 describe('markCardStopped strips spinner icon', () => {
   it('running card icon removed on stop', () => {
     const spin: SpinnerCfg = { enabled: true, thinkingKey: 'img_think', executingKey: 'img_exec' }
-    const payload = buildProgressCardPayloadV2([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
-    const cardJSON = buildPreviewCardJSON(payload, spin)
+    const payload = buildProgressCardPayload([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
+    const cardJSON = buildProgressCardJSONFromPayload(payload!, spin)
     expect(hasHeaderIcon(cardJSON)).toBe(true)
     const stopped = markCardStopped(cardJSON, 'sess-key')
     expect(hasHeaderIcon(stopped)).toBe(false)

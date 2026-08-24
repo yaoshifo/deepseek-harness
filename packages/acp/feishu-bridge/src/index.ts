@@ -12,6 +12,10 @@ import { mkdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SkillRegistry } from '@deepseek-ai/dsh-skill'
+// Type-only: pulls the 'subagent/end' event-map declaration merging the
+// settlement listener types against (the runtime itself is mounted by
+// dsh-base, not here).
+import type { SubagentRunEndInfo } from '@deepseek-ai/dsh-subagent'
 import Schema from '@deepseek-ai/schemastery'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.js'
@@ -183,6 +187,18 @@ export interface AutoCompressConfig {
   minGapMins?: number
 }
 
+/** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
+export interface UnsolicitedConfig {
+  /** Quiet seconds before the reader disarms (default 60; 0 = never). */
+  idleSec?: number
+  /** Quiet seconds an in-flight tool on a background turn keeps the reader alive (default 1800). */
+  toolInFlightSec?: number
+  /** Seconds pending background tasks keep the reader alive (default 1800). */
+  backgroundGraceSec?: number
+  /** Seconds after a foreground completion where duplicate frames relay as plain text (default 30; 0 = disabled). */
+  spilloverSec?: number
+}
+
 /** The bot's default Feishu Wiki/Drive location (Go FeishuWorkspaceConfig, #18). */
 export interface FeishuWorkspaceConfig {
   /** Wiki space id surfaced as CC_FEISHU_WIKI_SPACE_ID. */
@@ -224,8 +240,8 @@ export interface ProjectConfig {
   providerShortcuts?: Record<string, string>
   /** Rotate the chat to a fresh session after N idle minutes (Go reset_on_idle_mins). */
   resetOnIdleMins?: number
-  /** /list etc. only show engine-tracked sessions (Go filter_external_sessions). */
-  filterExternalSessions?: boolean
+  /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
+  unsolicited?: UnsolicitedConfig
   /** Multi-role chatroom tuning (Go [chatroom]). */
   chatroom?: ChatroomConfig
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
@@ -547,7 +563,12 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     }).description('Automatic context compression (Go [projects.auto_compress])'),
     providerShortcuts: Schema.dict(Schema.string()).description('Quick provider commands: /strong → provider name (Go provider_shortcuts)'),
     resetOnIdleMins: Schema.natural().description('Rotate the chat to a fresh session after N idle minutes; 0 disables'),
-    filterExternalSessions: Schema.boolean().description('/list etc. only show engine-tracked sessions'),
+    unsolicited: Schema.object({
+      idleSec: Schema.natural().description('Quiet seconds before the unsolicited reader disarms (default 60; 0 = never)'),
+      toolInFlightSec: Schema.natural().description('Quiet seconds a background turn\'s in-flight tool keeps the reader alive (default 1800)'),
+      backgroundGraceSec: Schema.natural().description('Seconds pending background tasks keep the reader alive (default 1800)'),
+      spilloverSec: Schema.natural().description('Seconds after a foreground completion where duplicate frames relay as plain text (default 30; 0 = disabled)'),
+    }).description('Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config)'),
     chatroom: Schema.object({
       rolesDir: Schema.string().description('Root directory holding one persona subdirectory per role'),
       maxRoles: Schema.natural().description('Cap on role agents per chatroom (default 5)'),
@@ -766,11 +787,24 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
     }
     return undefined
   }
-  registerSubtaskTool(ctx, route)
+  // Native continuable children (de-baggage B4) own no engine session: their
+  // tool calls route to the engine that spawned them, keyed by the native
+  // child id. Only the subtask family consumes this — a native child calling
+  // cron/relay/chatroom/send has no engine chat to act on.
+  const nativeRoute = (caller: unknown): SubtaskRoute | undefined => {
+    const id = agentIDOf(caller)
+    if (id === '') return undefined
+    for (const { engine } of live) {
+      if (engine.ownsNativeChild(id)) return { engine, sessionKey: id, nativeChildId: id }
+    }
+    return undefined
+  }
+  registerSubtaskTool(ctx, route, nativeRoute)
   registerCronTool(ctx, route)
   registerRelayTool(ctx, route)
   registerChatroomTool(ctx, route)
   registerSendTool(ctx, route)
+  registerNativeSettlementListener(ctx, live)
   // The lark passthrough routes to the caller's project BOT credentials
   // (plan D4): bot mode mints a TAT in-process, --as user prepends the
   // project's --profile (Go `cc-connect lark` wrapper semantics).
@@ -782,6 +816,31 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
     return { ...target, creds: { appId: project.feishu.appId, appSecret: project.feishu.appSecret } }
   }
   registerLarkTool(ctx, larkRoute, undefined, dataRoot)
+}
+
+/**
+ * Wire the native settlement fallback (de-baggage B4): each continuable
+ * epoch that ends without an explicit report delivers its final assistant
+ * output through the owning engine — Go maybeAutoReportSubtask's native
+ * counterpart. `live` is captured by reference so entries added after
+ * registration (none today; apply() builds all projects first) still route.
+ *
+ * @param ctx - Plugin context carrying the event bus.
+ * @param live - Live project entries whose engines may own native children.
+ * @returns The event disposer.
+ */
+export function registerNativeSettlementListener(ctx: Context, live: ReadonlyArray<{ engine: Engine }>): () => void {
+  return ctx.on('subagent/end', (info: SubagentRunEndInfo) => {
+    const output = (info.lastAssistantMessage ?? [])
+      .map(block => block.type === 'text' ? (block.text ?? '') : '')
+      .join('')
+    for (const { engine } of live) {
+      if (engine.ownsNativeChild(info.id)) {
+        engine.settleNativeChild(info.id, output)
+        return
+      }
+    }
+  })
 }
 
 /**
@@ -948,7 +1007,7 @@ export function buildProjectAssembly(
   adapter.setAskDelegate(engine)
 
 
-  // #18: the bot's default Feishu workspace → CC_FEISHU_* session env,
+  // #18: the bot's default Feishu workspace → the typed start options,
   // surfaced to the agent through the adapter's setup hook.
   if (project.feishuWorkspace !== undefined) {
     engine.setFeishuWorkspace({
@@ -1183,7 +1242,7 @@ function wireTurnSummary(engine: Engine, project: ProjectConfig): void {
 
 /**
  * Configure the session misc domain (Go wire.go): reset_on_idle rotation,
- * auto_compress thresholds, and the external-session filter.
+ * auto_compress thresholds, and the unsolicited-reader budgets.
  */
 function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
   if (project.resetOnIdleMins !== undefined) {
@@ -1193,7 +1252,15 @@ function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
   if (a?.enabled === true) {
     engine.setAutoCompressConfig(true, a.maxTokens ?? 0, (a.minGapMins ?? 0) * 60_000)
   }
-  engine.setFilterExternalSessions(project.filterExternalSessions === true)
+  // Spillover grace defaults ON at the assembly layer like Go's wire.go (the
+  // engine-level default is 0 so unit tests construct it disabled).
+  const u = project.unsolicited
+  engine.setUnsolicitedConfig({
+    idleTimeoutMs: u?.idleSec !== undefined ? u.idleSec * 1000 : undefined,
+    toolInFlightTimeoutMs: u?.toolInFlightSec !== undefined ? u.toolInFlightSec * 1000 : undefined,
+    backgroundGraceMs: u?.backgroundGraceSec !== undefined ? u.backgroundGraceSec * 1000 : undefined,
+    spilloverGraceMs: u?.spilloverSec !== undefined ? u.spilloverSec * 1000 : 30_000,
+  })
 }
 
 /** Expand a leading ~ in a config path so the config stays portable across machines (Go expandHome). */

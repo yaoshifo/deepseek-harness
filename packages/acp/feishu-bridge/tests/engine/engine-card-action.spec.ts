@@ -266,8 +266,7 @@ describe('handleCardAction /dir', () => {
     const p = newRefreshingPlatform()
     const e = newDirEngine(p, dirs, dirs[0] ?? '')
 
-    // The cron card's back button value: no help-card handler exists yet.
-    e.receiveMessage(p, cardActionMsg(SK, 'nav:/help'))
+    e.receiveMessage(p, cardActionMsg(SK, 'nav:/model'))
     await new Promise((resolve) => { setTimeout(resolve, 50) })
 
     expect(p.refreshed).toEqual([])

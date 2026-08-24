@@ -318,9 +318,31 @@ describe('buildPreviewCardJSON', () => {
     // preview-card pipeline.
     const reply = '**改动明细：**\n\n- item one\n\n- item two'
     const tool = '**10:00:01** <text_tag color=\'blue\'>bash</text_tag> · 1 🟢\n```text\ncmd\n---\nok\n```'
-    const content = `__cc_state__:completed\n__cc_ts__:10:00:05\n__cc_tc__:1\n${tool}\n${reply}`
-    const card = jParse(buildPreviewCardJSON(content, noSpinner))
+    const content = `${tool}\n${reply}`
+    const status = { state: 'completed' as const, ts: '10:00:05', toolCallSeq: 1 }
+    const card = jParse(buildPreviewCardJSON(content, noSpinner, status))
     const md = jStr(jObj(jArr(jObj(card.body).elements)[0]).content)
     expect(md).toContain('**改动明细：**\n\n- item one\n\n- item two')
+  })
+
+  it('pads bold delimiters glued to the following text so Feishu renders them', () => {
+    // Feishu card markdown renders **bold** only when the delimiters keep a
+    // space on both sides; a closing ** glued to the next word shows raw **.
+    const reply = '**运行在你安装 mico 的本地终端（你的电脑）上，不在 mico 服务器上。**mico 服务器只负责签发凭证和协调。'
+    const card = jParse(buildPreviewCardJSON(reply, noSpinner, { state: 'completed', ts: '', toolCallSeq: 0 }))
+    const md = jStr(jObj(jArr(jObj(card.body).elements)[0]).content)
+    expect(md).toContain('**运行在你安装 mico 的本地终端（你的电脑）上，不在 mico 服务器上。** mico 服务器只负责签发凭证和协调。')
+  })
+
+  it('renders the header title and color from the structured status', () => {
+    const card = jParse(buildPreviewCardJSON('body', noSpinner, { state: 'completed', ts: '10:00:05', toolCallSeq: 3 }))
+    expect(jStr(jObj(card.header).template)).toBe('green')
+    expect(jStr(jObj(jObj(card.header).title).content)).toBe('执行完成 · 10:00:05 · 3')
+  })
+
+  it('renders the running default without status', () => {
+    const card = jParse(buildPreviewCardJSON('body', noSpinner))
+    expect(jStr(jObj(card.header).template)).toBe('yellow')
+    expect(jStr(jObj(jObj(card.header).title).content)).toBe('执行中')
   })
 })

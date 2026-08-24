@@ -20,7 +20,8 @@ import {
   newPendingAsk,
   type StubPlatform,
 } from '../stubs/engine-stubs.js'
-import type { AskRequest, Message } from '../../src/core/types.js'
+import type { AskRequest, Message, ProgressContent } from '../../src/core/types.js'
+import { previewText } from '../stubs/preview-content.js'
 
 function newTestEngine(): Engine {
   return new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')
@@ -280,14 +281,14 @@ describe('AskSurfacesRestart', () => {
     const p = createStubPlatform()
     let nextID = 0
     const starts: string[] = []
-    const updates: Array<{ handle: unknown; content: string }> = []
+    const updates: Array<{ handle: unknown; content: ProgressContent }> = []
     const preview = p as typeof p & {
-      sendPreviewStart(rc: unknown, content: string): Promise<unknown>
-      updateMessage(handle: unknown, content: string): Promise<void>
+      sendPreviewStart(rc: unknown, content: ProgressContent): Promise<unknown>
+      updateMessage(handle: unknown, content: ProgressContent): Promise<void>
     }
     preview.sendPreviewStart = async (_rc, content) => {
       nextID++
-      starts.push(`start:${content}`)
+      starts.push(`start:${previewText(content)}`)
       return `handle-${nextID}`
     }
     preview.updateMessage = async (handle, content) => {

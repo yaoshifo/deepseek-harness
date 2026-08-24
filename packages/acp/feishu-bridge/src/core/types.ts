@@ -13,7 +13,7 @@
  * @module dsh-feishu-bridge/core-types
  */
 
-import type { TodoItem } from '../progress.js'
+import type { ProgressCardPayload, TodoItem } from '../progress.js'
 
 /** Sentinel AgentSessionID telling the agent to resume the most recent session. */
 export const ContinueSession = '__continue__'
@@ -48,8 +48,9 @@ export interface FileAttachment {
 
 /**
  * The default Feishu Wiki/Drive location this project's bot operates in
- * (Go FeishuWorkspaceInfo, #18). Non-empty fields surface as CC_FEISHU_* env
- * entries on session start, scoping doc search/creation to this location.
+ * (Go FeishuWorkspaceInfo, #18). Non-empty fields surface as the CC_FEISHU_*
+ * lines of the session's workspace routing section, scoping doc
+ * search/creation to this location.
  */
 export interface FeishuWorkspaceInfo {
   wikiSpaceId: string
@@ -238,15 +239,31 @@ export interface Event {
   done: boolean
   error?: Error
   errorText?: string
+  /**
+   * Token usage for this event: on `text`/`thinking` events it is the
+   * per-request usage of the assistant message that carried it; on `result`
+   * events it is the turn sum. Undefined means unreported.
+   */
   inputTokens?: number
+  /** Input tokens including cache reads/writes; same split as {@link inputTokens}. */
   totalInputTokens?: number
+  /** Output tokens; same split as {@link inputTokens}. */
   outputTokens?: number
+  /** API calls made this turn (result events). */
   numTurns?: number
+  /** Tool-private presentation payload from the native tool/result `meta` (e.g. fs contextual diffs). */
+  toolResultMeta?: unknown
   arrivedAt?: number
   /** Whole-list todo snapshot carried by a `todo_update` event. */
   todos?: TodoItem[]
   /** True when the event projects a delegated subagent child session's activity. */
   fromSubagent?: boolean
+  /**
+   * True for a `tool_use` whose arguments set `run_in_background` (e.g. a
+   * long Bash deploy): the call returns immediately and the task's real
+   * completion arrives as a later engine-woken turn.
+   */
+  toolBackground?: boolean
 }
 
 /**
@@ -370,10 +387,59 @@ export interface AgentSession {
   close(): Promise<void>
 }
 
+/**
+ * Typed per-session start metadata the engine hands to
+ * {@link Agent.startSession} (the replacement for the Go-era CC_* env-note
+ * array): persona flags, the engine session key, Feishu workspace routing,
+ * and the shared research venv. Absent groups mean the plain-session path.
+ */
+export interface SessionStartOptions {
+  /**
+   * Engine session key the live agent session is bound by. Distinct from the
+   * interactive-state slot key on cron new-per-run sessions, whose slot key
+   * carries a `#cron:` suffix the session key must not. '' falls back to the
+   * startSession sessionID.
+   */
+  sessionKey: string
+  /** Agent-delegated subtask child persona; absent = not a subtask. */
+  subtask?: {
+    /** A human has spoken in the child group (keeps the normal approval path). */
+    attended: boolean
+    /** The child never reports back (no-report preamble). */
+    noReport: boolean
+    /** The child is a research assistant: the research contract rides on top of the report preamble. */
+    researchAssistant: boolean
+  }
+  /** Chatroom persona; absent = plain session. */
+  chatroom?: {
+    /** Multi-role chatroom role session (bound to a hub). */
+    role: boolean
+    /** 1:1 direct role chat (no hub, no relay). */
+    directRole: boolean
+    /** Hub session driving the chatroom (bare persona, never plan mode). */
+    moderator: boolean
+    /** Shared chatroom ledger directory; '' when no moderator dir is configured. */
+    ledgerDir: string
+    /** The hub flagged this chatroom as research-driven. */
+    research: boolean
+    /** Session key of a research role's pre-spawned idle assistant; '' when none. */
+    researchAssistantChild: string
+  }
+  /** Default Feishu workspace routing (#18); absent = no routing section. */
+  feishuWorkspace?: FeishuWorkspaceInfo
+  /** Shared research venv; absent = none. */
+  venv?: {
+    /** venv root directory (Go VIRTUAL_ENV). */
+    virtualEnv: string
+    /** venv bin directory the Go subprocess PATH prepended. */
+    pathBin: string
+  }
+}
+
 /** An AI coding assistant backend (Go Agent). */
 export interface Agent {
   name(): string
-  startSession(sessionID: string): Promise<AgentSession>
+  startSession(sessionID: string, options?: SessionStartOptions): Promise<AgentSession>
   listSessions(): Promise<AgentSessionInfo[]>
   stop(): Promise<void>
 }
@@ -387,25 +453,19 @@ export interface SessionCompressor {
   compress(signal?: AbortSignal): Promise<void>
 }
 
-/** Optional: agent accepts per-session env vars (CC_PROJECT, …). */
-export interface SessionEnvInjector {
-  setSessionEnv(env: string[]): void
+/**
+ * Optional: agent can delete one of its persisted sessions (Go
+ * SessionDeleter). The dsh adapter does not implement it — the native
+ * sessionPersistence service is append-only — so deletion falls back to the
+ * bridge's own ledger until a native delete surface exists.
+ */
+export interface SessionDeleter {
+  deleteSession(sessionID: string): Promise<void>
 }
 
 /** Optional: agent accepts a one-shot mode override consumed by the next startSession. */
 export interface SessionModeInjector {
   setSessionMode(mode: string): void
-}
-
-/**
- * Structural checks replacing Go's interface type assertions.
- *
- * @param a - the agent to inspect.
- * @returns the capability view, or undefined when not implemented.
- */
-export function asSessionEnvInjector(a: Agent): SessionEnvInjector | undefined {
-  const candidate = a as Partial<SessionEnvInjector>
-  return typeof candidate.setSessionEnv === 'function' ? (candidate as SessionEnvInjector) : undefined
 }
 
 /**
@@ -439,9 +499,69 @@ export function asAgentInterrupter(s: AgentSession): AgentInterrupter | undefine
   return typeof candidate.cancelTurn === 'function' ? (candidate as AgentInterrupter) : undefined
 }
 
+/**
+ * Optional: agent projects a session's recent conversation window (user and
+ * assistant turns) from the native session log — live sessions from the
+ * adapter's incrementally maintained window, cold ones from the persisted
+ * log.
+ */
+export interface RecentTurnsReader {
+  /**
+   * Read a session's trailing conversation turns.
+   * @param agentSessionID - the native session id to read; '' returns [].
+   * @param limit - the number of trailing entries to return; <= 0 returns all.
+   * @returns the trailing window entries, oldest first.
+   */
+  recentTurns(agentSessionID: string, limit: number): Promise<HistoryEntry[]>
+}
+
+/**
+ * Structural check for the {@link RecentTurnsReader} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asRecentTurnsReader(a: Agent): RecentTurnsReader | undefined {
+  const candidate = a as Partial<RecentTurnsReader>
+  return typeof candidate.recentTurns === 'function' ? (candidate as RecentTurnsReader) : undefined
+}
+
+/**
+ * Structured preview-card status carried beside display text, replacing the
+ * `__cc_state__:`/`__cc_ts__:`/`__cc_tc__:` text header lines the engine-side
+ * preview used to prepend.
+ */
+export interface ProgressStatus {
+  /** Card lifecycle state; "running" matches the former headerless prefix. */
+  state: 'running' | 'completed' | 'failed' | 'thinking'
+  /** Timestamp (HH:MM:SS) appended to the card title; empty string omits it. */
+  ts: string
+  /** Tool-call count appended to the title when positive. */
+  toolCallSeq: number
+}
+
+/** Text-path preview content: a display body with an optional structured status. */
+export interface TextPreviewContent {
+  kind: 'text'
+  text: string
+  status?: ProgressStatus
+}
+
+/** Card-path preview content: a structured progress-card payload. */
+export interface CardPreviewContent {
+  kind: 'card'
+  payload: ProgressCardPayload
+}
+
+/**
+ * Content a preview-capable platform renders in place: a structured
+ * progress-card payload, or text with an optional structured status.
+ */
+export type ProgressContent = TextPreviewContent | CardPreviewContent
+
 /** Optional: platform can update a previously sent message in place (PATCH). */
 export interface MessageUpdater {
-  updateMessage(replyCtx: unknown, content: string): Promise<void>
+  updateMessage(replyCtx: unknown, content: ProgressContent): Promise<void>
 }
 
 /**
@@ -449,7 +569,7 @@ export interface MessageUpdater {
  * handle for subsequent in-place edits.
  */
 export interface PreviewStarter {
-  sendPreviewStart(replyCtx: unknown, content: string): Promise<unknown>
+  sendPreviewStart(replyCtx: unknown, content: ProgressContent): Promise<unknown>
 }
 
 /** Optional: platform can delete a preview message when the final reply is sent separately. */
@@ -725,6 +845,63 @@ export interface ProviderSwitcher {
  */
 export interface ForkSessionPreparer {
   prepareForkSession(origID: string, parentWorkDir: string, childWorkDir: string): Promise<void>
+}
+
+/**
+ * What a native continuable-child spawn asks the adapter for (de-baggage
+ * B4): the provider choice mirrors the tool's fork flag, the persona is
+ * composed inside the adapter from the unattended-subtask preamble plus the
+ * workspace routing section, and the parent is identified by its live
+ * native session id.
+ */
+export interface ContinuableChildStart {
+  /** In-process provider: 'fork' seeds the parent's completed-turn prefix, 'spawn' starts fresh. */
+  provider: 'spawn' | 'fork'
+  /** The self-contained task brief delivered as the child's first user message. */
+  prompt: string
+  /** Absolute working directory the child session records as its cwd. */
+  cwd: string
+  /** Feishu workspace routing the child's persona section names; undefined = none. */
+  workspace: FeishuWorkspaceInfo | undefined
+  /** Delegation-depth cap the child enforces on its own descendants. */
+  maxDepth: number
+  /** Native session id of the live delegating parent. */
+  parentAgentSessionID: string
+}
+
+/**
+ * Agent that delegates continuable child sessions to the native subagent
+ * runtime (`ctx.subagents`, mounted with external settlement delivery).
+ * Child turns run on the native inbox FIFO; settlement reaches the engine
+ * through the `subagent/end` event, not a runtime parent wake.
+ */
+export interface ContinuableDelegator {
+  /**
+   * @param request - the child spawn request.
+   * @returns the durable native child session id and its creation label.
+   */
+  startContinuableChild(request: ContinuableChildStart): Promise<{ childId: string; label: string }>
+  /**
+   * Deliver a follow-up to a native child as its next FIFO turn; a running
+   * child queues it (the deliberate deviation from Go's busy-reject).
+   * @param parentAgentSessionID - native id of the live direct parent.
+   * @param childId - the durable native child session id.
+   * @param message - the follow-up text.
+   */
+  followupChild(parentAgentSessionID: string, childId: string, message: string): Promise<void>
+  /**
+   * Interrupt one native child's current turn (fire-and-return).
+   * @param parentAgentSessionID - native id of the live direct parent (the authority).
+   * @param childId - the durable native child session id.
+   */
+  interruptChild(parentAgentSessionID: string, childId: string): void
+  /**
+   * Push one native child's content to its durable direct parent through the
+   * runtime's report path — used when the parent is itself a native child.
+   * @param childId - the durable native child session id (the authority credential).
+   * @param content - the report text.
+   */
+  reportChildToNativeParent(childId: string, content: string): Promise<void>
 }
 
 /**
@@ -1035,6 +1212,16 @@ export function asForkSessionPreparer(a: Agent): ForkSessionPreparer | undefined
 }
 
 /**
+ * Structural check for the {@link ContinuableDelegator} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asContinuableDelegator(a: Agent): ContinuableDelegator | undefined {
+  return withMethod<ContinuableDelegator>(a, 'startContinuableChild')
+}
+
+/**
  * Structural check for the {@link ForkAtPreparer} capability.
  *
  * @param a - the agent to probe.
@@ -1140,6 +1327,16 @@ export function asSessionCompressor(s: AgentSession | undefined): SessionCompres
   return s !== undefined && typeof (s as Partial<SessionCompressor>).compress === 'function'
     ? s as AgentSession & SessionCompressor
     : undefined
+}
+
+/**
+ * Structural check for the {@link SessionDeleter} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asSessionDeleter(a: Agent): SessionDeleter | undefined {
+  return withMethod<SessionDeleter>(a, 'deleteSession')
 }
 
 /**
@@ -1358,18 +1555,17 @@ export function asMonitorChatConfigurable(p: Platform): MonitorChatConfigurable 
 
 /**
  * Agent that can spawn an isolated, non-plan-mode "render session" (Go
- * RenderQuerier): a standalone one-shot agent with tool access, a
- * complete-replacement system prompt, and an explicit sessionEnv so
- * concurrent render sessions don't crosstalk via a shared env slot.
+ * RenderQuerier): a standalone one-shot agent with tool access and a
+ * complete-replacement system prompt. The one-shot spawns in-process with a
+ * fresh session, so concurrent renders cannot crosstalk.
  */
 export interface RenderQuerier {
   /**
    * Run a standalone query with an injected system prompt. `providerName`
-   * selects the provider route; `sessionEnv` is passed through verbatim and
-   * must not be sourced from a shared slot. Returns the session's trimmed
-   * stdout (expected one-line confirmation).
+   * selects the provider route. Returns the session's trimmed stdout
+   * (expected one-line confirmation).
    */
-  renderQuery(prompt: string, providerName: string, systemPrompt: string, sessionEnv: string[], signal?: AbortSignal): Promise<string>
+  renderQuery(prompt: string, providerName: string, systemPrompt: string, signal?: AbortSignal): Promise<string>
 }
 
 /** Agent whose render-session effort can be overridden per project (Go RenderEffortSetter). */

@@ -76,11 +76,9 @@ export function renderDirCard(e: Engine, sessionKey: string, page: number, notic
   actionRow.push(defaultBtn(e.i18n.t(Msg.DirCardReset), 'act:/dir reset'))
   cb.buttons(...actionRow)
 
-  // Go appends cardBackButton() (nav:/help) between the page buttons; the
-  // help-card system it navigates to is not ported yet, so the button would
-  // be inert — it returns together with the help-card milestone.
   const navBtns: CardButton[] = []
   if (totalPages > 1 && page > 1) navBtns.push(defaultBtn(e.i18n.t(Msg.CardPrev), `nav:/dir ${page - 1}`))
+  navBtns.push(defaultBtn(e.i18n.t(Msg.CardBack), 'nav:/help'))
   if (totalPages > 1 && page < totalPages) navBtns.push(defaultBtn(e.i18n.t(Msg.CardNext), `nav:/dir ${page + 1}`))
   cb.buttons(...navBtns)
 

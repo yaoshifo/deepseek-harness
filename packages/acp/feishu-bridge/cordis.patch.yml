@@ -12,3 +12,12 @@
 # config HMR through the launcher's watch-only fallback.
 - id: hmr
   disabled: true
+
+# The engine drives parent turns itself, so the subagent runtime's own wake
+# would spend a model request it never scheduled — deliver settlements
+# externally. dsh-base already mounts the runtime and the spawn/fork
+# providers; the bridge must not mount them again (DUPLICATE_PROVIDER), it
+# only overrides the delivery mode here.
+- id: subagent
+  config:
+    settlementNotice: external

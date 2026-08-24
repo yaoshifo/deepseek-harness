@@ -2,9 +2,9 @@
  * Session-lifecycle commands ported from cc-connect core/engine_cmd_session.go
  * and the /dir machinery in engine_cmd_workspace.go: /new /stop /sessions
  * (/list) /switch /status /dir (+/cd alias), plus the M4 spawn family
- * (/spawn /sp, /fork /fk, /done --reply). /dir renders the picker card on
- * card platforms (dir-card.ts) with a plain-text fallback; the other
- * commands stay plain text.
+ * (/spawn /sp, /fork /fk, /done --reply). /list, /status, /switch (no
+ * argument), and /dir render their picker cards on card platforms
+ * (session-card.ts / dir-card.ts) with plain-text fallbacks.
  *
  * @module dsh-feishu-bridge/commands
  */
@@ -30,6 +30,7 @@ import {
 import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName } from './groupname.js'
 import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.js'
 import { renderDirCardSafe } from './dir-card.js'
+import { renderListCardSafe, renderStatusCard } from './session-card.js'
 import { extractChannelID } from './engine.js'
 
 const listPageSize = 5
@@ -87,7 +88,7 @@ export function registerSessionCommands(e: Engine): () => void {
     ['dir', (p, msg, args) => { void cmdDir(e, p, msg, args); return true }],
     ['spawn', (p, msg, args) => { void cmdSpawn(e, p, msg, args); return true }],
     ['fork', (p, msg, args) => { void cmdFork(e, p, msg, args); return true }],
-    ['done', (p, msg, args) => { cmdDone(e, p, msg, args); return true }],
+    ['done', (p, msg, args) => { void cmdDone(e, p, msg, args); return true }],
     ['rename', (p, msg, args) => { void cmdRename(e, p, msg, args); return true }],
     ['hint', (p, msg) => { void cmdHint(e, p, msg); return true }],
   ])
@@ -119,7 +120,6 @@ export async function cmdNew(e: Engine, p: Platform, msg: Message, args: string[
   e.clearPendingRename(msg.sessionKey)
 
   old.setAgentSessionID('', '')
-  old.clearHistory()
   sessions.save()
 
   const name = args.length > 0 ? args.join(' ') : ''
@@ -167,7 +167,8 @@ export function commandContext(e: Engine, _msg: Message): { agent: Engine['agent
 }
 
 /**
- * /list (/sessions): enumerate agent sessions, plain-text surface.
+ * /list (/sessions): enumerate agent sessions — the session picker card on
+ * card platforms (session-card.ts), the plain-text listing otherwise.
  * @param e - The engine owning the session state.
  * @param p - The platform that delivered the command.
  * @param msg - The triggering chat message.
@@ -175,6 +176,10 @@ export function commandContext(e: Engine, _msg: Message): { agent: Engine['agent
  */
 export async function cmdList(e: Engine, p: Platform, msg: Message, args?: string[]): Promise<void> {
   const argList = args ?? []
+  if (supportsCards(p)) {
+    await e.replyWithCard(p, msg.replyCtx, await renderListCardSafe(e, msg.sessionKey, pageArg(argList)))
+    return
+  }
   const { agent, sessions } = commandContext(e, msg)
   let agentSessions: AgentSessionInfo[]
   try {
@@ -183,21 +188,15 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ListError, String(error)))
     return
   }
-  agentSessions = applySessionFilter(e, agentSessions, sessions)
-  enrichSessionSummaries(sessions, agentSessions)
+  await enrichSessionSummaries(e, agentSessions)
   if (agentSessions.length === 0) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ListEmpty))
     return
   }
 
   const total = agentSessions.length
-  const totalPages = Math.ceil(total / listPageSize)
-  let page = 1
-  if (argList.length > 0) {
-    const n = Number.parseInt(argList[0] ?? '', 10)
-    if (Number.isInteger(n) && n > 0) page = n
-  }
-  if (page > totalPages) page = totalPages
+  let page = pageArg(argList)
+  if (page > totalPages(total)) page = totalPages(total)
 
   const start = (page - 1) * listPageSize
   const end = Math.min(start + listPageSize, total)
@@ -208,8 +207,8 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
   const liveSessions = liveAgentSessionIDs(e)
 
   let sb = ''
-  if (totalPages > 1) {
-    sb += e.i18n.tf(Msg.ListTitlePaged, agentName, total, page, totalPages)
+  if (totalPages(total) > 1) {
+    sb += e.i18n.tf(Msg.ListTitlePaged, agentName, total, page, totalPages(total))
   } else {
     sb += e.i18n.tf(Msg.ListTitle, agentName, total)
   }
@@ -229,13 +228,24 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
     }
     sb += `${marker} **${i + 1}.** ${displayName} · **${s.messageCount}** msgs · ${formatModified(s.modifiedAt)}\n`
   }
-  if (totalPages > 1) sb += e.i18n.tf(Msg.ListPageHint, page, totalPages)
+  if (totalPages(total) > 1) sb += e.i18n.tf(Msg.ListPageHint, page, totalPages(total))
   sb += e.i18n.t(Msg.ListSwitchHint)
   await e.reply(p, msg.replyCtx, sb)
 }
 
+/** Page count for a session listing at the /list page size. */
+export function totalPages(total: number): number {
+  return Math.max(1, Math.ceil(total / listPageSize))
+}
+
+/** Parse a 1-based page argument ('' and invalid values fall back to 1). */
+export function pageArg(args: string[]): number {
+  const n = Number.parseInt(args[0] ?? '', 10)
+  return Number.isInteger(n) && n > 0 ? n : 1
+}
+
 /** Agent session IDs with a live process (for /list markers). */
-function liveAgentSessionIDs(e: Engine): Record<string, true> {
+export function liveAgentSessionIDs(e: Engine): Record<string, true> {
   const live: Record<string, true> = {}
   for (const state of e.interactiveStates.values()) {
     if (state.agentSession !== undefined && state.agentSession.alive()) {
@@ -246,29 +256,39 @@ function liveAgentSessionIDs(e: Engine): Record<string, true> {
   return live
 }
 
-/** Conditionally filter to cc-connect-owned sessions (Go applySessionFilter). */
-function applySessionFilter(e: Engine, sessions: AgentSessionInfo[], sm: SessionManager): AgentSessionInfo[] {
-  return e.filterExternalSessions
-    ? filterOwned(sessions, sm.knownAgentSessionIDs())
-    : sessions
+/**
+ * The enriched session listing shared by the /list text surface, the session
+ * picker card, and the delete-mode card (Go enrichSessionSummaries over
+ * agent.ListSessions).
+ * @param e - The engine owning the session state.
+ * @param sessionKey - Session key whose chat the listing is rendered for.
+ * @returns The enriched sessions, or undefined when listing fails.
+ */
+export async function collectAgentSessions(e: Engine, sessionKey: string): Promise<AgentSessionInfo[] | undefined> {
+  const { agent } = commandContext(e, { sessionKey } as Message)
+  let agentSessions: AgentSessionInfo[]
+  try {
+    agentSessions = await agent.listSessions()
+  } catch {
+    return undefined
+  }
+  await enrichSessionSummaries(e, agentSessions)
+  return agentSessions
 }
 
-function filterOwned(sessions: AgentSessionInfo[], known: Record<string, true> | null): AgentSessionInfo[] {
-  if (known === null || Object.keys(known).length === 0) return sessions
-  return sessions.filter(s => s.id in known)
-}
-
-/** Fill summaries from the first user history entry (Go enrichSessionSummaries). */
-function enrichSessionSummaries(sessions: SessionManager, agentSessions: AgentSessionInfo[]): void {
-  for (let i = 0; i < agentSessions.length; i++) {
-    const info = agentSessions[i]
-    if (info === undefined) continue
-    const s = sessions.findByAgentSessionID(info.id)
-    if (s === undefined) continue
-    // Persisted-only sessions carry no count at the adapter boundary; the
-    // capped history length (max 100 entries) is the closest durable proxy.
-    if (info.messageCount === 0) info.messageCount = s.getHistory(0).length
-    for (const entry of s.getHistory(0)) {
+/**
+ * Fill summaries and message counts from the sessions' recent-turn windows
+ * (Go enrichSessionSummaries). Each listed session is a user command away
+ * from a cold persistence.inspect — acceptable per /list invocation, and the
+ * adapter caches the folded windows in-process.
+ */
+async function enrichSessionSummaries(e: Engine, agentSessions: AgentSessionInfo[]): Promise<void> {
+  for (const info of agentSessions) {
+    const entries = await e.recentTurns(info.id)
+    // The adapter boundary carries no count; the capped window (100 entries)
+    // is the closest durable proxy.
+    if (info.messageCount === 0) info.messageCount = entries.length
+    for (const entry of entries) {
       if (entry.role === 'user' && entry.content !== '') {
         if (entry.content.startsWith('---\n')) break
         let summary = entry.content.replaceAll('\n', ' ')
@@ -281,7 +301,7 @@ function enrichSessionSummaries(sessions: SessionManager, agentSessions: AgentSe
   }
 }
 
-function formatModified(ts: number): string {
+export function formatModified(ts: number): string {
   const d = new Date(ts)
   const pad = (n: number): string => String(n).padStart(2, '0')
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
@@ -296,6 +316,13 @@ function formatModified(ts: number): string {
  */
 export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (args.length === 0) {
+    // No selector: on card platforms the session list card doubles as the
+    // picker (one row button per session, Go cmdSwitch's card branch); text
+    // platforms keep the usage hint.
+    if (supportsCards(p)) {
+      await e.replyWithCard(p, msg.replyCtx, await renderListCardSafe(e, msg.sessionKey, 1))
+      return
+    }
     await e.reply(p, msg.replyCtx, 'Usage: /switch <number | id_prefix | name>')
     return
   }
@@ -308,7 +335,6 @@ export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: stri
     await e.reply(p, msg.replyCtx, e.i18n.tf('error', String(error)))
     return
   }
-  agentSessions = applySessionFilter(e, agentSessions, sessions)
 
   const matched = matchSession(agentSessions, sessions, query)
   if (matched === undefined) {
@@ -317,8 +343,7 @@ export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: stri
   }
 
   e.stopInteractiveSession(interactiveKey)
-  const session = sessions.switchToAgentSession(msg.sessionKey, matched.id, agent.name(), matched.summary)
-  session.clearHistory()
+  sessions.switchToAgentSession(msg.sessionKey, matched.id, agent.name(), matched.summary)
 
   let shortID = matched.id
   if (shortID.length > 12) shortID = shortID.slice(0, 12)
@@ -421,6 +446,21 @@ export async function cmdHint(e: Engine, p: Platform, msg: Message): Promise<voi
  * @param msg - The triggering chat message.
  */
 export async function cmdStatus(e: Engine, p: Platform, msg: Message): Promise<void> {
+  if (supportsCards(p)) {
+    await e.replyWithCard(p, msg.replyCtx, await renderStatusCard(e, msg.sessionKey, msg.userID))
+    return
+  }
+  await e.reply(p, msg.replyCtx, await statusText(e, msg))
+}
+
+/**
+ * Assemble the full /status text (Go cmdStatus body), shared by the plain
+ * text reply and the status card's splitCardTitleBody rendering.
+ * @param e - The engine whose state is reported.
+ * @param msg - The triggering message (session key and user ID are read).
+ * @returns The formatted status text.
+ */
+export async function statusText(e: Engine, msg: Message): Promise<string> {
   const { agent, sessions } = commandContext(e, msg)
   const platNames = e.platforms.map(pl => pl.name())
   const platformStr = platNames.length === 0 ? '-' : platNames.join(', ')
@@ -442,7 +482,7 @@ export async function cmdStatus(e: Engine, p: Platform, msg: Message): Promise<v
   const s = sessions.getOrCreateActive(msg.sessionKey)
   let sessionDisplayName = sessions.getSessionName(s.getAgentSessionID())
   if (sessionDisplayName === '') sessionDisplayName = s.getName()
-  const sessionStr = e.i18n.tf(Msg.StatusSession, sessionDisplayName, s.getHistory(0).length)
+  const sessionStr = e.i18n.tf(Msg.StatusSession, sessionDisplayName, (await e.recentTurnsOf(msg.sessionKey, s)).length)
 
   // Cron line (Go engine_cmd_misc.go): the session's job count when any
   // exist — the M6a leftover /status wiring.
@@ -465,9 +505,9 @@ export async function cmdStatus(e: Engine, p: Platform, msg: Message): Promise<v
   let userIDStr = ''
   if (msg.userID !== '') userIDStr = e.i18n.tf(Msg.StatusUserID, msg.userID)
 
-  await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.StatusTitle,
+  return e.i18n.tf(Msg.StatusTitle,
     e.name, agent.name(), workDirStr, platformStr, uptimeStr, langStr,
-    modeStr, sessionStr, cronStr, sessionKeyStr, agentSIDStr, userIDStr, ''))
+    modeStr, sessionStr, cronStr, sessionKeyStr, agentSIDStr, userIDStr, '')
 }
 
 function formatUptime(ms: number): string {
@@ -593,7 +633,6 @@ export async function dirApply(
     await e.cleanupInteractiveState(interactiveKey)
     const s = sessions.getOrCreateActive(sessionKey)
     s.setAgentSessionID('', '')
-    s.clearHistory()
     sessions.save()
     e.projectState?.clearWorkspaceDirOverride(e.dirOverrideKey(interactiveKey))
     e.projectState?.save()
@@ -628,7 +667,6 @@ export async function dirApply(
   await e.cleanupInteractiveState(interactiveKey)
   const s = sessions.getOrCreateActive(sessionKey)
   s.setAgentSessionID('', '')
-  s.clearHistory()
   sessions.save()
   e.dirHistory?.add(e.name, newDir)
   e.projectState?.setWorkspaceDirOverride(e.dirOverrideKey(interactiveKey), newDir)
@@ -1133,7 +1171,7 @@ function parentJumpButtonsFor(e: Engine, msg: Message): { content: string; ok: b
  * @param msg - The triggering chat message, which must come from a spawned group.
  * @param args - Optional --reply/-r to push this chat's last result to its parent before teardown.
  */
-export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): void {
+export async function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const bad = unknownFlag(args, new Set(['-r', '--reply']))
   if (bad !== '') {
     void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.DoneUnknownFlag, bad))
@@ -1159,7 +1197,7 @@ export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): v
     if (sess.getParentSessionKey() === '') {
       void e.reply(p, msg.replyCtx, e.i18n.t(Msg.DoneReplyNoParent))
     } else {
-      e.replyToParent(p, sess, sess.lastResultOrReply())
+      e.replyToParent(p, sess, await e.lastResultOrReply(msg.sessionKey, sess))
     }
   }
 
@@ -1171,6 +1209,9 @@ export function cmdDone(e: Engine, p: Platform, msg: Message, args: string[]): v
   const rootKey = msg.sessionKey
   const rootCtx = msg.replyCtx
   void (async () => {
+    // Native continuable descendants chain through the project state, not
+    // the session tree (de-baggage B4) — drain them alongside the groups.
+    await e.drainNativeDescendants([rootKey, ...descendants])
     const dirtyLines: string[] = []
     for (const childKey of descendants) {
       const { name, dirty } = await cleanupOneChat(e, p, childKey, undefined, true)
@@ -1306,7 +1347,7 @@ export async function cmdRename(e: Engine, p: Platform, msg: Message, args: stri
 
   // /rename (no args) → regenerate from the full conversation history.
   const sess = e.sessions.getOrCreateActive(msg.sessionKey)
-  const history = sess.getHistory(0)
+  const history = await e.recentTurnsOf(msg.sessionKey, sess)
   if (history.length === 0) {
     void e.reply(p, msg.replyCtx, e.i18n.t(Msg.RenameNoHistory))
     return

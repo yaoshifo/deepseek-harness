@@ -29,6 +29,16 @@ function newEngineWith(p: StubTitleRenamePlatform, agent = createGroupNameAgent(
   return e
 }
 
+/** Agent whose recent-turn window holds one user entry for the mapped session. */
+function historyAgent(base = createGroupNameAgent({ resp: '调试 500 错误\nbug' })): typeof base {
+  return {
+    ...base,
+    recentTurns: async (id: string) => id === 'thread-1'
+      ? [{ role: 'user', content: '帮我修 500 错误', timestamp: '2026-01-01T00:00:00Z' }]
+      : [],
+  } as typeof base
+}
+
 describe('cmdRename direct path', () => {
   it('rejects non-spawned chats', async () => {
     const p = createStubTitleRenamePlatform()
@@ -80,9 +90,9 @@ describe('cmdRename direct path', () => {
 describe('cmdRename LLM path', () => {
   it('regenerates from the conversation history and refreshes the icon avatar', async () => {
     const p = createStubTitleRenamePlatform()
-    const e = newEngineWith(p)
+    const e = newEngineWith(p, historyAgent())
     const sess = e.sessions.getOrCreateActive('test:chat')
-    sess.addHistory('user', '帮我修 500 错误')
+    sess.setAgentSessionID('thread-1', 'stub')
 
     await cmdRename(e, p, msg({ isSpawnedGroup: true }), [])
 
@@ -104,9 +114,9 @@ describe('cmdRename LLM path', () => {
 
   it('reports an unsupported backend when the LLM query fails', async () => {
     const p = createStubTitleRenamePlatform()
-    const e = newEngineWith(p, createGroupNameAgent({ err: new Error('no provider') }))
+    const e = newEngineWith(p, historyAgent(createGroupNameAgent({ err: new Error('no provider') })))
     const sess = e.sessions.getOrCreateActive('test:chat')
-    sess.addHistory('user', '帮我修 500 错误')
+    sess.setAgentSessionID('thread-1', 'stub')
 
     await cmdRename(e, p, msg({ isSpawnedGroup: true }), [])
     await waitFor(() => p.getSent().length > 0, 'no reply')

@@ -17,6 +17,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
+import { stat } from 'node:fs/promises'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
@@ -27,6 +28,7 @@ import {
   ForkAtSessionPrefix,
   ForkSessionPrefix,
 } from '../core/types.js'
+import type { HistoryEntry } from '../core/types.js'
 import { locateForkCut } from './fork-at.js'
 import {
   agentConventionsPrompt,
@@ -41,9 +43,11 @@ import type {
   AgentSessionInfo,
   AskDelegate,
   AskDecision,
+  ContinuableChildStart,
   FileAttachment,
   ImageAttachment,
   ProviderConfig,
+  SessionStartOptions,
 } from '../core/types.js'
 
 /** Minimal structural member of a dsh Agent the adapter drives. */
@@ -140,6 +144,37 @@ export interface DshPersistenceLike {
   append(id: unknown, events: readonly SessionEvent[]): Promise<void>
   /** Lightweight listing from metadata, without a full-log parse. */
   list(signal?: AbortSignal): Promise<SessionHeader[]>
+  /** Absolute log-file path for a header without touching the filesystem (jsonl backend `locate`); absent on backends without files. */
+  locate?(meta: SessionHeader): { path: string }
+}
+
+/**
+ * Structural slice of the `subagents` service the native continuable-child
+ * delegation surface uses. Loose id/message types: the real service's branded
+ * parameters are erased by the service-side cast, exactly like
+ * {@link DshPersistenceLike}.
+ */
+export interface DshSubagentsLike {
+  startContinuable(spec: {
+    provider: string
+    label: string
+    request: {
+      prompt: Array<Record<string, unknown>>
+      parent: unknown
+      maxDepth?: number
+      persona?: string
+      cwd?: string
+    }
+    signal: AbortSignal
+  }): Promise<{ childId: unknown }>
+  followup(
+    parent: unknown,
+    childId: unknown,
+    content: Array<Record<string, unknown>>,
+    options: { source: Record<string, unknown> },
+  ): Promise<unknown>
+  interrupt(targetSessionId: unknown, authority: Record<string, unknown>): void
+  reportFrom(child: unknown, content: Array<Record<string, unknown>>, options: { delivery: string; signal: AbortSignal }): Promise<unknown>
 }
 
 /** One named provider route (plan D2: one llm route per provider). */
@@ -217,18 +252,57 @@ function trimCompletedTurnPrefix(events: readonly SessionEvent[]): SessionEvent[
   return events.slice(0, lastEnd.seq + 1)
 }
 
-/** Read an env-flag value ("1") from the injected env list. */
-function envHasFlag(env: string[], name: string): boolean {
-  return env.includes(`${name}=1`)
-}
+/**
+ * Cap on the per-session recent-turn window the adapter keeps — the read
+ * window size of the retired 100-entry bridge-side history copy.
+ */
+const recentTurnsWindowCap = 100
 
-/** Read a plain env value ('' when absent). */
-function envValue(env: string[], name: string): string {
-  return env.find(e => e.startsWith(`${name}=`))?.slice(name.length + 1) ?? ''
+/** Whether a text is only an ellipsis placeholder the engine never counts as reply text. */
+function isEllipsisOnly(text: string): boolean {
+  const t = text.trim()
+  return t === '...' || t === '…'
 }
 
 /**
- * Whether the session env flags mark it unattended, the sessions Go's
+ * Fold a session event log into the bridge's conversation window: one user
+ * entry per human `user/message` (synthetic plugin injections stay out) and
+ * one assistant entry per turn, joining that turn's assistant message texts —
+ * the shape the retired bridge-side history copy kept. Valid for live
+ * registry views and persisted logs alike.
+ *
+ * @param events - the source session's event log.
+ * @param cap - trailing-entry bound on the folded window.
+ * @returns the trailing window entries, oldest first.
+ */
+export function foldRecentTurns(events: readonly SessionEvent[], cap = recentTurnsWindowCap): HistoryEntry[] {
+  const out: HistoryEntry[] = []
+  let turnParts: string[] = []
+  for (const event of events) {
+    if (event.type === 'user/message') {
+      if (event.data.source.kind !== 'user') continue
+      const content = textOfBlocks(event.data.content)
+      if (content !== '') out.push({ role: 'user', content, timestamp: new Date(event.time).toISOString() })
+    } else if (event.type === 'assistant/message') {
+      const text = textOfBlocks(event.data.message.content)
+      if (text !== '' && !isEllipsisOnly(text)) turnParts.push(text)
+    } else if (event.type === 'turn/end') {
+      const content = turnParts.join('')
+      turnParts = []
+      if (content !== '') out.push({ role: 'assistant', content, timestamp: new Date(event.time).toISOString() })
+    }
+  }
+  return cap > 0 && out.length > cap ? out.slice(out.length - cap) : out
+}
+
+/** Trailing slice of a window; limit <= 0 returns all (Go Session.getHistory). */
+function windowSlice(entries: readonly HistoryEntry[], limit: number): HistoryEntry[] {
+  if (limit <= 0 || limit >= entries.length) return [...entries]
+  return entries.slice(entries.length - limit)
+}
+
+/**
+ * Whether the session-start options mark it unattended, the sessions Go's
  * effectiveMode elevates to bypassPermissions: agent-delegated subtask
  * children without a human in the group, and chatroom role / direct-role
  * personas — approval prompts there stall on nobody who can answer. An
@@ -236,28 +310,28 @@ function envValue(env: string[], name: string): string {
  * keep the normal approval path; a moderator additionally never enters
  * plan mode (downgraded at session start, whatever the mode source).
  *
- * @param env - The session env built by the engine's buildSessionEnv.
+ * @param options - The session-start options built by the engine's buildSessionStartOptions.
  * @returns True when tool-permission requests auto-approve for this session.
  */
-export function sessionBypassesPermissions(env: string[]): boolean {
-  const unattendedSubtask = envHasFlag(env, 'CC_SUBTASK') && !envHasFlag(env, 'CC_SUBTASK_ATTENDED')
-  return unattendedSubtask || envHasFlag(env, 'CC_CHATROOM_ROLE') || envHasFlag(env, 'CC_CHATROOM_DIRECT_ROLE')
+export function sessionBypassesPermissions(options: SessionStartOptions | undefined): boolean {
+  const unattendedSubtask = options?.subtask !== undefined && !options.subtask.attended
+  return unattendedSubtask || options?.chatroom?.role === true || options?.chatroom?.directRole === true
 }
 
 /**
- * The #18 workspace routing section: CC_FEISHU_* env entries the engine
- * attached to the session become a system-prompt section naming the bot's
- * default Feishu workspace (the D3 setup-hook replacement for Go's
- * subprocess env the feishu-search/lark-guide skills read).
+ * The #18 workspace routing section: the engine's workspace fields become a
+ * system-prompt section naming the bot's default Feishu workspace (the D3
+ * setup-hook replacement for Go's subprocess env the feishu-search/lark-guide
+ * skills read; the CC_FEISHU_* line names are the model-visible contract).
  *
- * @param env - The session env built by the engine's buildSessionEnv.
+ * @param options - The session-start options built by the engine's buildSessionStartOptions.
  * @returns The prompt section text; '' when no workspace is configured.
  */
-export function feishuWorkspaceSection(env: string[]): string {
-  const wikiSpaceId = envValue(env, 'CC_FEISHU_WIKI_SPACE_ID')
-  const folderToken = envValue(env, 'CC_FEISHU_FOLDER_TOKEN')
-  const wikiNodeToken = envValue(env, 'CC_FEISHU_WIKI_NODE_TOKEN')
-  const description = envValue(env, 'CC_FEISHU_WORKSPACE_DESC')
+export function feishuWorkspaceSection(options: SessionStartOptions | undefined): string {
+  const wikiSpaceId = options?.feishuWorkspace?.wikiSpaceId ?? ''
+  const folderToken = options?.feishuWorkspace?.folderToken ?? ''
+  const wikiNodeToken = options?.feishuWorkspace?.wikiNodeToken ?? ''
+  const description = options?.feishuWorkspace?.description ?? ''
   if (wikiSpaceId === '' && folderToken === '' && wikiNodeToken === '' && description === '') return ''
   const lines: string[] = ['\n### 默认飞书工作空间（本 bot 的文档路由）']
   if (description !== '') lines.push(description)
@@ -270,7 +344,26 @@ export function feishuWorkspaceSection(env: string[]): string {
 }
 
 /**
- * Build the agents.create/resume setup hook for the env-flagged persona
+ * Compose the persona a native continuable subtask child runs under (de-baggage
+ * B4): the same text the group-path child receives as prompt sections — the
+ * workspace routing section plus the subtask report preamble (subtask children
+ * deliberately omit the agent-conventions section: its closing
+ * ask_user_question findings card addresses a user chat this child does not
+ * have) — joined as one persona that shadows the deployment persona for this
+ * child.
+ *
+ * @param workspaceText - The #18 workspace routing section; '' omits it.
+ * @returns The composed persona text.
+ */
+export function unattendedSubtaskPersona(workspaceText: string): string {
+  const parts: string[] = []
+  if (workspaceText !== '') parts.push(workspaceText)
+  parts.push(subtaskAgentSystemPrompt())
+  return parts.join('\n\n')
+}
+
+/**
+ * Build the agents.create/resume setup hook for the typed persona options
  * (Go isChatroomBareSession + buildChatroomSystemPrompt): chatroom role /
  * direct-role / moderator sessions replace the whole system prompt. A
  * subtask child (Go buildAppendSystemPrompt's CC_SUBTASK branch) appends the
@@ -279,15 +372,13 @@ export function feishuWorkspaceSection(env: string[]): string {
  * section (order 10) and, when a Feishu workspace is configured, the #18
  * routing section on top.
  */
-function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
-  const isRole = envHasFlag(env, 'CC_CHATROOM_ROLE')
-  const isDirect = envHasFlag(env, 'CC_CHATROOM_DIRECT_ROLE')
-  const isModerator = envHasFlag(env, 'CC_CHATROOM_MODERATOR')
-  const isSubtask = envHasFlag(env, 'CC_SUBTASK')
-  const isResearchAssistant = envHasFlag(env, 'CC_RESEARCH_ASSISTANT')
-  const isNoReport = envHasFlag(env, 'CC_SUBTASK_NO_REPORT')
-  const workspaceText = feishuWorkspaceSection(env)
-  if (!isRole && !isDirect && !isModerator) {
+function buildSessionSetup(options: SessionStartOptions | undefined, workDir: string): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
+  const chatroom = options?.chatroom
+  const isSubtask = options?.subtask !== undefined
+  const isResearchAssistant = options?.subtask?.researchAssistant === true
+  const isNoReport = options?.subtask?.noReport === true
+  const workspaceText = feishuWorkspaceSection(options)
+  if (chatroom === undefined || (!chatroom.role && !chatroom.directRole && !chatroom.moderator)) {
     if (!isSubtask) {
       return (agentCtx) => {
         const promptSvc = agentCtx.get('systemPrompt') as
@@ -321,12 +412,12 @@ function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai
     if (promptSvc === undefined) return
     const text = buildChatroomSystemPrompt({
       workDir,
-      isRole,
-      isDirect,
-      isModerator,
-      research: envHasFlag(env, 'CC_CHATROOM_RESEARCH'),
-      researchAssistantChild: envValue(env, 'CC_RESEARCH_ASSISTANT_CHILD'),
-      ledgerDir: envValue(env, 'CC_CHATROOM_LEDGER'),
+      isRole: chatroom.role,
+      isDirect: chatroom.directRole,
+      isModerator: chatroom.moderator,
+      research: chatroom.research,
+      researchAssistantChild: chatroom.researchAssistantChild,
+      ledgerDir: chatroom.ledgerDir,
       platformPrompt: '',
     })
     if (text !== '') {
@@ -337,6 +428,19 @@ function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai
 
 /** Default one-shot budget (Go oneShotQuery default timeout). */
 const oneShotDefaultTimeoutMs = 10 * 60_000
+
+/** Continuable start/report admission budget: covers validation and inbox acceptance, not the turn. */
+const startContinuableTimeoutMs = 30_000
+
+/** Max runes of a native child's durable creation label (first line of the brief). */
+const nativeChildLabelMaxRunes = 60
+
+/** Durable creation label for a native child: the brief's first non-empty line, capped. */
+function labelOfBrief(brief: string): string {
+  const line = brief.split('\n').map(l => l.trim()).find(l => l !== '') ?? ''
+  const chars = Array.from(line)
+  return chars.length > nativeChildLabelMaxRunes ? `${chars.slice(0, nativeChildLabelMaxRunes - 1).join('')}…` : line
+}
 
 /** Cap on parentSession links walked when attributing a subagent child to
  * a live bridge session — guards against a corrupted lineage cycle. */
@@ -397,9 +501,10 @@ export class DshAgentAdapter {
   private readonly cfg: DshAdapterConfig
   private readonly sessionsByEngineKey = new Map<string, DshAgentSession>()
   private readonly liveSessions = new Map<string, DshAgentSession>()
+  /** Folded recent-turn windows of cold (not-live) sessions, keyed by native id. */
+  private readonly recentTurnsCache = new Map<string, HistoryEntry[]>()
   /** Staged fork-at seeds keyed by the sentinel id, consumed by startSession. */
   private readonly forkAtSeeds = new Map<string, { seed: SessionEvent[]; parentID: string; childWorkDir: string }>()
-  private env: string[] = []
   private modeOverride = ''
   /** Project-level default session mode ('' = no default; 'plan' starts every session in plan mode). */
   private defaultMode = ''
@@ -676,15 +781,6 @@ export class DshAgentAdapter {
   }
 
   /**
-   * SessionEnvInjector: per-session env captured for the next startSession.
-   *
-   * @param env - the KEY=value entries captured for the next startSession.
-   */
-  setSessionEnv(env: string[]): void {
-    this.env = [...env]
-  }
-
-  /**
    * WorkDirSwitcher: the dir used for the next agents.create (Go SetWorkDir).
    *
    * @param dir - the working directory for the next agents.create.
@@ -826,6 +922,108 @@ export class DshAgentAdapter {
     return this.sessionsByEngineKey.get(session.sessionKey()) === session ? session.sessionKey() : undefined
   }
 
+  /** Resolve the subagents service slice, or fail loud when unmounted. */
+  private requireSubagents(): DshSubagentsLike {
+    const subagents = this.ctx.get('subagents') as DshSubagentsLike | undefined
+    if (subagents === undefined) {
+      throw new Error('dsh adapter: continuable subtasks require the subagents service (mounted by dsh-base)')
+    }
+    return subagents
+  }
+
+  /**
+   * ContinuableDelegator: establish one native continuable child under the
+   * live parent agent (de-baggage B4). The runtime validates and gates the
+   * request (cwd absolute, provider capabilities) and persists the child's
+   * lineage; settlement stays external — the engine learns of the child's
+   * epochs through `subagent/end`.
+   *
+   * @param request - provider, brief, cwd, persona, depth cap, and the live parent id.
+   * @returns the durable native child session id.
+   */
+  async startContinuableChild(request: ContinuableChildStart): Promise<{ childId: string; label: string }> {
+    const subagents = this.requireSubagents()
+    const parent = this.ctx.agents.get(SessionId(request.parentAgentSessionID))
+    if (parent === undefined) {
+      throw new Error('subtask: the parent agent session is not live; start it before delegating')
+    }
+    const label = labelOfBrief(request.prompt)
+    const started = await subagents.startContinuable({
+      provider: request.provider,
+      label,
+      request: {
+        prompt: [{ type: 'text', text: request.prompt }],
+        parent,
+        maxDepth: request.maxDepth,
+        persona: unattendedSubtaskPersona(feishuWorkspaceSection(
+          request.workspace === undefined ? undefined : { sessionKey: '', feishuWorkspace: request.workspace },
+        )),
+        // '' means "no override" — the runtime rejects a non-absolute cwd, and
+        // the child then inherits the parent's working directory.
+        ...(request.cwd !== '' ? { cwd: request.cwd } : {}),
+      },
+      signal: AbortSignal.timeout(startContinuableTimeoutMs),
+    })
+    return { childId: String(started.childId), label }
+  }
+
+  /**
+   * ContinuableDelegator: deliver a parent follow-up as the child's next FIFO
+   * turn. Native semantics queue behind a running turn — the deliberate
+   * deviation from Go's busy-reject, recorded in the B4 Agent Note.
+   *
+   * @param parentAgentSessionID - native id of the live direct parent.
+   * @param childId - the durable native child session id.
+   * @param message - the follow-up text.
+   */
+  async followupChild(parentAgentSessionID: string, childId: string, message: string): Promise<void> {
+    const subagents = this.requireSubagents()
+    const parent = this.ctx.agents.get(SessionId(parentAgentSessionID))
+    if (parent === undefined) {
+      throw new Error('subtask: the parent agent session is not live; cannot deliver the follow-up')
+    }
+    await subagents.followup(parent, SessionId(childId), [{ type: 'text', text: message }], {
+      source: { kind: 'coordinator', form: 'relay', senderSessionId: SessionId(parentAgentSessionID) },
+    })
+  }
+
+  /**
+   * ContinuableDelegator: interrupt one native child's current turn. An
+   * absent or idle target is an accepted no-op (runtime semantics).
+   *
+   * @param parentAgentSessionID - native id of the live direct parent (the authority).
+   * @param childId - the durable native child session id.
+   */
+  interruptChild(parentAgentSessionID: string, childId: string): void {
+    const subagents = this.requireSubagents()
+    const parent = this.ctx.agents.get(SessionId(parentAgentSessionID))
+    if (parent === undefined) {
+      throw new Error('subtask: the parent agent session is not live; cannot interrupt the child')
+    }
+    subagents.interrupt(SessionId(childId), { kind: 'ancestor', agent: parent })
+  }
+
+  /**
+   * ContinuableDelegator: push one native child's content to its durable
+   * direct parent through the runtime's report path — the parent is itself a
+   * native child, so the delivery target is the native inbox, not a Feishu
+   * chat. The live child agent is the authority credential.
+   *
+   * @param childId - the durable native child session id.
+   * @param content - the report text.
+   */
+  async reportChildToNativeParent(childId: string, content: string): Promise<void> {
+    const subagents = this.requireSubagents()
+    const child = this.ctx.agents.get(SessionId(childId))
+    if (child === undefined) {
+      throw new Error('subtask: the reporting child agent is not live')
+    }
+    await subagents.reportFrom(child, [{ type: 'text', text: content }], {
+      delivery: 'next-step',
+      signal: AbortSignal.timeout(startContinuableTimeoutMs),
+    })
+  }
+
   /**
    * ForkQuerierWithProvider: a standalone one-shot turn without resuming
    * anything (Go LightweightQuery — group naming, predict-next): the context
@@ -895,15 +1093,14 @@ export class DshAgentAdapter {
   /**
    * RenderQuerier (Go dsh RenderQuery): an isolated render session — fresh
    * session (no resume), whole-prompt replacement via the setup hook, full
-   * tools, explicit sessionEnv so concurrent renders don't crosstalk. The
-   * render one-shot does not need deep reasoning, so an unset effort
-   * defaults to 'low' (an unset effort once made renders burn ~21k thinking
-   * chars for an 84-char artifact). The 15m budget mirrors the Go fork.
+   * tools. The render one-shot does not need deep reasoning, so an unset
+   * effort defaults to 'low' (an unset effort once made renders burn ~21k
+   * thinking chars for an 84-char artifact). The 15m budget mirrors the Go
+   * fork.
    *
    * @param prompt - the render task prompt.
    * @param providerName - the named provider route to run on.
    * @param systemPrompt - the complete-replacement system prompt for the render session.
-   * @param sessionEnv - accepted for Go parity; dsh one-shots spawn in-process, so it is unused.
    * @param signal - caller abort; rejects the wait and still disposes the session.
    * @returns the session's trimmed stdout.
    */
@@ -911,10 +1108,8 @@ export class DshAgentAdapter {
     prompt: string,
     providerName: string,
     systemPrompt: string,
-    sessionEnv: string[],
     signal?: AbortSignal,
   ): Promise<string> {
-    void sessionEnv // dsh one-shots spawn in-process (no subprocess env; Go env is claudecode-specific)
     return this.oneShotQuery({
       prompt,
       providerName,
@@ -1083,8 +1278,8 @@ export class DshAgentAdapter {
    * create.
    *
    * Chatroom bare sessions (role / direct-role / moderator, flagged through
-   * the injected env) carry a setup hook that replaces the whole system
-   * prompt with the flattened persona (Go isChatroomBareSession +
+   * the session-start options) carry a setup hook that replaces the whole
+   * system prompt with the flattened persona (Go isChatroomBareSession +
    * buildChatroomSystemPrompt via DSH_CC_SYSTEM_PROMPT_COMPLETE; here the
    * D3 `complete: true` prompt section). Research assistants get their
    * preamble appended as a normal section instead.
@@ -1093,15 +1288,17 @@ export class DshAgentAdapter {
    * sentinel creates fresh, a concrete id resumes, `__fork__<origID>`
    * seeds from the parent, and `__forkat__<newID>` consumes the staged
    * rollback prefix.
+   * @param options - typed per-session start metadata; a non-empty
+   * sessionKey overrides the sessionID as the engine session key the live
+   * session is bound by.
    * @returns the live session bound to the engine session key.
    */
-  async startSession(sessionID: string): Promise<AgentSession> {
-    const envKey = this.env.find(e => e.startsWith('CC_SESSION_KEY='))?.slice('CC_SESSION_KEY='.length) ?? ''
-    const key = envKey !== '' ? envKey : sessionID
+  async startSession(sessionID: string, options?: SessionStartOptions): Promise<AgentSession> {
+    const key = options !== undefined && options.sessionKey !== '' ? options.sessionKey : sessionID
     const isFork = sessionID.startsWith(ForkSessionPrefix)
     const isForkAt = sessionID.startsWith(ForkAtSessionPrefix)
     const isResume = !isFork && !isForkAt && sessionID !== '' && sessionID !== ContinueSession
-    const setup = buildSessionSetup(this.env, this.workDir)
+    const setup = buildSessionSetup(options, this.workDir)
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing
@@ -1177,8 +1374,13 @@ export class DshAgentAdapter {
         ...(setup !== undefined ? { setup } : {}),
       })
     }
-    const bypass = sessionBypassesPermissions(this.env)
+    const bypass = sessionBypassesPermissions(options)
     const session = new DshAgentSession(key, handle, this.workDir, this.ctx, bypass)
+    // Seed the recent-turn window from the log the agent carries (empty for a
+    // fresh session, the resumed/forked history otherwise) and drop any cold
+    // fold of this id — the live window is authoritative from here on.
+    session.seedRecentTurns(handle.agent.session.events)
+    this.recentTurnsCache.delete(session.currentSessionID())
 
     // Lazily register the userQuestions provider now that the plugin tree
     // is fully loaded (at constructor time it may not be available yet).
@@ -1194,7 +1396,7 @@ export class DshAgentAdapter {
     // ExitPlanMode approval nobody needs to give. Roles and direct roles are
     // covered by bypass above; the moderator keeps the normal tool-approval
     // path (deliberate deviation from Go effectiveMode, plan mode only).
-    if (mode === 'plan' && envHasFlag(this.env, 'CC_CHATROOM_MODERATOR')) mode = 'default'
+    if (mode === 'plan' && options?.chatroom?.moderator === true) mode = 'default'
     if (mode !== '') {
       // Apply the mode onto the native plan-mode controller (Go /mode +
       // config mode=plan): plan → active, others off. The one-shot override
@@ -1241,12 +1443,53 @@ export class DshAgentAdapter {
   }
 
   /**
+   * RecentTurnsReader: a session's trailing conversation window. Live
+   * sessions read the incrementally maintained in-memory window (seeded from
+   * the resumed/forked log at startSession); cold sessions fold the persisted
+   * log once and cache the result in-process. Unknown ids and a missing
+   * persistence service yield [] — window readers are advisory surfaces
+   * (estimates, summaries), never turn-taking logic.
+   *
+   * @param agentSessionID - the native session id to read; '' returns [].
+   * @param limit - trailing-entry bound; <= 0 returns the whole window.
+   * @returns the trailing window entries, oldest first.
+   */
+  async recentTurns(agentSessionID: string, limit: number): Promise<HistoryEntry[]> {
+    if (agentSessionID === '') return []
+    const live = this.liveSessions.get(agentSessionID)
+    if (live !== undefined) return live.recentTurns(limit)
+    const cached = this.recentTurnsCache.get(agentSessionID)
+    if (cached !== undefined) return windowSlice(cached, limit)
+    const persistence = this.ctx.get('sessionPersistence') as DshPersistenceLike | undefined
+    if (persistence === undefined) return []
+    let events: readonly SessionEvent[]
+    try {
+      events = (await persistence.inspect(SessionId(agentSessionID))).events
+    } catch {
+      // The backend rejects unknown ids; that rejection is the only error
+      // path here and means "no window".
+      return []
+    }
+    const folded = foldRecentTurns(events)
+    // Cold sessions never change; bound the cache so a long-lived daemon's
+    // /list enrichment cannot grow it without end.
+    if (this.recentTurnsCache.size >= 512) {
+      const oldest = this.recentTurnsCache.keys().next().value
+      if (oldest !== undefined) this.recentTurnsCache.delete(oldest)
+    }
+    this.recentTurnsCache.set(agentSessionID, folded)
+    return windowSlice(folded, limit)
+  }
+
+  /**
    * Live sessions plus persisted ones from the session store (exclusive to
    * this daemon): top-level sessions under this project's directory tree,
    * newest first. Summaries/message counts arrive engine-side from the
-   * SessionManager's persisted history (`enrichSessionSummaries`); sessions
-   * from per-chat `/dir` overrides outside the tree stay unlisted, matching
-   * the Go per-cwd store semantics.
+   * adapter's recent-turn window (`enrichSessionSummaries`); sessions from
+   * per-chat `/dir` overrides outside the tree stay unlisted, matching the
+   * Go per-cwd store semantics. Persisted recency is the JSONL log file's
+   * mtime (SessionHeader has no updatedAt); a backend without `locate` falls
+   * back to createdAt.
    *
    * @returns the known sessions with native ids and timestamps.
    */
@@ -1262,12 +1505,30 @@ export class DshAgentAdapter {
     const liveIDs = new Set(live.map(s => s.id))
     const base = this.cfg.cwd
     const headers = await persistence.list()
-    const persisted = headers
-      .filter(h => !liveIDs.has(String(h.id)))
-      .filter(h => h.parentSession === undefined)
-      .filter(h => h.cwd !== undefined && (h.cwd === base || h.cwd.startsWith(`${base}/`)))
-      .map(h => ({ id: String(h.id), summary: '', messageCount: 0, modifiedAt: h.createdAt }))
+    const persisted: AgentSessionInfo[] = []
+    for (const h of headers) {
+      if (liveIDs.has(String(h.id))) continue
+      if (h.parentSession !== undefined) continue
+      if (h.cwd === undefined || !(h.cwd === base || h.cwd.startsWith(`${base}/`))) continue
+      persisted.push({ id: String(h.id), summary: '', messageCount: 0, modifiedAt: await this.logMtimeMs(persistence, h) })
+    }
     return [...persisted, ...live].sort((a, b) => b.modifiedAt - a.modifiedAt)
+  }
+
+  /**
+   * Recency of a persisted session: the mtime of its log file when the
+   * backend can locate it, else the header's createdAt.
+   */
+  private async logMtimeMs(persistence: DshPersistenceLike, h: SessionHeader): Promise<number> {
+    const located = persistence.locate?.(h)
+    if (located !== undefined) {
+      try {
+        return (await stat(located.path)).mtimeMs
+      } catch {
+        // Materialization is lazy; a listed-but-unwritten log falls back.
+      }
+    }
+    return h.createdAt
   }
 
   /** Dispose every live agent (engine shutdown). */
@@ -1314,6 +1575,23 @@ function thinkingOfBlocks(blocks: readonly ContentBlock[] | undefined): string {
   return out
 }
 
+/**
+ * Whether a durable tool/call's arguments request background execution: the
+ * JSON `arguments` blob carrying `run_in_background: true` (the Bash-class
+ * background parameter). Unparseable arguments are foreground.
+ * @param argumentsValue - Raw `arguments` payload of a tool/call event.
+ * @returns The `toolBackground: true` event spread, or an empty spread.
+ */
+function toolBackgroundOf(argumentsValue: unknown): { toolBackground?: boolean } {
+  if (typeof argumentsValue !== 'string' || argumentsValue === '') return {}
+  try {
+    const parsed = JSON.parse(argumentsValue) as { run_in_background?: unknown }
+    return parsed.run_in_background === true ? { toolBackground: true } : {}
+  } catch {
+    return {}
+  }
+}
+
 /** Call id of a durable tool-result message, or '' when absent.
  *
  * The durable ToolMessage carries it on `source.callId`; the wire fallback is
@@ -1350,6 +1628,10 @@ export class DshAgentSession implements AgentSession {
   readonly bypassPermissions: boolean
   /** Child sessions that ever ran a turn (cumulative subagent count on the card). */
   private readonly seenChildren = new Set<string>()
+  /** Recent conversation window, bounded to recentTurnsWindowCap (the retired bridge history copy). */
+  private recentTurnsWindow: HistoryEntry[] = []
+  /** Assistant texts of the in-flight turn, joined into one window entry at turn/end. */
+  private turnWindowParts: string[] = []
 
   constructor(key: string, handle: DshAgentHandleLike, workDir = '', ctx?: DshContextLike, bypassPermissions = false) {
     this.key = key
@@ -1400,6 +1682,35 @@ export class DshAgentSession implements AgentSession {
    */
   lastAssistantText(): string {
     return this.lastText
+  }
+
+  /**
+   * Seed the recent-turn window from the agent's current event log (resumed
+   * or forked history); called once at startSession before any live event
+   * arrives, so window readers see pre-start turns immediately.
+   *
+   * @param events - the agent's session log at startSession time.
+   */
+  seedRecentTurns(events: readonly SessionEvent[]): void {
+    this.recentTurnsWindow = foldRecentTurns(events)
+  }
+
+  /**
+   * The session's trailing conversation window (RecentTurnsReader delegate).
+   *
+   * @param limit - trailing-entry bound; <= 0 returns the whole window.
+   * @returns the trailing window entries, oldest first.
+   */
+  recentTurns(limit: number): HistoryEntry[] {
+    return windowSlice(this.recentTurnsWindow, limit)
+  }
+
+  /** Append one window entry, bounding the window to recentTurnsWindowCap. */
+  private pushRecentTurn(entry: HistoryEntry): void {
+    this.recentTurnsWindow.push(entry)
+    if (this.recentTurnsWindow.length > recentTurnsWindowCap) {
+      this.recentTurnsWindow = this.recentTurnsWindow.slice(this.recentTurnsWindow.length - recentTurnsWindowCap)
+    }
   }
 
   /**
@@ -1483,6 +1794,21 @@ export class DshAgentSession implements AgentSession {
         this.turnText = ''
         this.turnUsage = { inputTokens: 0, cachedTokens: 0, outputTokens: 0 }
         this.turnSteps = 0
+        this.turnWindowParts = []
+        break
+      }
+      case 'user/message': {
+        // Human prompts enter the recent-turn window; synthetic injections
+        // (plugin context, notices) stay out, matching the retired
+        // bridge-side history's contents.
+        const source = data.source as { kind?: string } | undefined
+        if (source?.kind === 'user') {
+          const content = textOfBlocks(data.content as ContentBlock[] | undefined)
+          if (content !== '') {
+            const time = typeof event.time === 'number' ? event.time : Date.now()
+            this.pushRecentTurn({ role: 'user', content, timestamp: new Date(time).toISOString() })
+          }
+        }
         break
       }
       case 'assistant/chunk': {
@@ -1498,18 +1824,29 @@ export class DshAgentSession implements AgentSession {
         const message = data.message as { content?: ContentBlock[] } | undefined
         const text = textOfBlocks(message?.content)
         const thinking = thinkingOfBlocks(message?.content)
-        if (text !== '') {
-          this.turnText = text
-          this.channel.push({ type: 'text', content: text, done: false })
-        }
-        if (thinking !== '') {
-          this.channel.push({ type: 'thinking', content: thinking, done: false })
-        }
-        // Fold this request's usage into the turn sum (Go accumulateUsage);
-        // the result event carries the sum, not the last request's slice.
         const usage = data.usage as
           | { inputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; outputTokens?: number }
           | undefined
+        // Per-request usage rides the event that projects the message (the
+        // text event, or the thinking event of a text-less message); the
+        // turn sum still rides the result event.
+        const requestUsage = usage === undefined ? undefined : {
+          inputTokens: usage.inputTokens ?? 0,
+          totalInputTokens: (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheCreationTokens ?? 0),
+          outputTokens: usage.outputTokens ?? 0,
+        }
+        if (text !== '') {
+          this.turnText = text
+          this.channel.push({ type: 'text', content: text, done: false, ...(requestUsage ?? {}) })
+        }
+        if (text !== '' && !isEllipsisOnly(text)) this.turnWindowParts.push(text)
+        if (thinking !== '') {
+          // A text-less message projects its usage on the thinking event.
+          const thinkingUsage = text === '' ? requestUsage : undefined
+          this.channel.push({ type: 'thinking', content: thinking, done: false, ...(thinkingUsage ?? {}) })
+        }
+        // Fold this request's usage into the turn sum (Go accumulateUsage);
+        // the result event carries the sum, not the last request's slice.
         this.turnUsage.inputTokens += usage?.inputTokens ?? 0
         this.turnUsage.cachedTokens += (usage?.cacheReadTokens ?? 0) + (usage?.cacheCreationTokens ?? 0)
         this.turnUsage.outputTokens += usage?.outputTokens ?? 0
@@ -1524,6 +1861,7 @@ export class DshAgentSession implements AgentSession {
           toolID: toStr(data.callId),
           content: '',
           done: false,
+          ...toolBackgroundOf(data.arguments),
         })
         break
       }
@@ -1538,6 +1876,7 @@ export class DshAgentSession implements AgentSession {
           // only forwards success for the 🔴 marker.
           ...(data.error !== undefined ? { toolSuccess: false } : {}),
           ...(callId !== '' ? { toolID: callId } : {}),
+          ...(data.meta !== undefined ? { toolResultMeta: data.meta } : {}),
           content: '',
           done: false,
         })
@@ -1570,6 +1909,12 @@ export class DshAgentSession implements AgentSession {
         const errorText = reason !== undefined && reason.kind === 'error' && reason.error?.message !== undefined
           ? toStr(reason.error.message)
           : undefined
+        const turnContent = this.turnWindowParts.join('')
+        this.turnWindowParts = []
+        if (turnContent !== '') {
+          const time = typeof event.time === 'number' ? event.time : Date.now()
+          this.pushRecentTurn({ role: 'assistant', content: turnContent, timestamp: new Date(time).toISOString() })
+        }
         this.channel.push({
           type: 'result',
           content: this.turnText,

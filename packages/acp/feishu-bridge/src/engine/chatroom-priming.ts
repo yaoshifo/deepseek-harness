@@ -83,7 +83,7 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
 3. 仍有的分歧（默认展开）：用大白话列出各方仍未达成一致的地方——每条 = 分歧是什么 + 各方分别怎么看 + 这个分歧为什么存在（根本视角差异，不是谁对谁错）。不要假装分歧已被消解。
 4. 原始细节（默认折叠）：原始专业细节、各视角原话贡献、仍未解决的开放问题（明确交回人类定夺）。
 
-原则：信息不丢，只是换了一条理解路径——用生活类比建立直觉、用最小例子跨过门槛、用分歧清单标出边界。用户只看第一屏就懂大意，零操作。完成后调 feishu_bridge_subtask 工具 action: report，message: \"HTML 已生成：<path>\"』。**用子任务群是为了隔离 html 渲染，不污染你的 context**；子群用完不必清理（无 worktree，end 也不会误清它）。
+原则：信息不丢，只是换了一条理解路径——用生活类比建立直觉、用最小例子跨过门槛、用分歧清单标出边界。用户只看第一屏就懂大意，零操作。完成后调 feishu_bridge_subtask 工具 action: report，message: \"HTML 已生成：<path>\"』。**用子任务是为了隔离 html 渲染，不污染你的 context**；子任务无 worktree、会话日志持久保留，chatroom end 时自动回收。
 
 【学术深度版 brief】（用户选『出一份深度学术版』时用此 brief spawn 子任务）：读账本目录 ${ledgerDir} 下 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md，用 html skill 渲染一份【总分结构】总结 HTML，写到 ${ledgerDir}/summary-academic.html（与 summary.html 同目录，通俗版保留不替换）。务必按以下分层（覆盖 html skill 的默认模板）：
 
@@ -168,7 +168,7 @@ export function buildChatroomResearchModeratorPriming(
 3. 仍有的分歧（默认展开）：用大白话列出各方仍未达成一致的地方——每条 = 分歧是什么 + 各方分别怎么看 + 这个分歧为什么存在（根本视角差异，不是谁对谁错）。不要假装分歧已被消解。
 4. 原始细节（默认折叠）：原始数据、各视角原话贡献、仍未解决的开放问题（明确交回人类定夺）。
 
-原则：信息不丢，数据不丢，只是换了一条理解路径——用生活类比建立直觉、用日常语言解释数据含义、用分歧清单标出边界。完成后调 feishu_bridge_subtask 工具 action: report，message: \"HTML 已生成：<path>\"』。**用子任务群是为了隔离 html 渲染，不污染你的 context**；子群无 worktree，用完不必清理（end 也不会误清它）。
+原则：信息不丢，数据不丢，只是换了一条理解路径——用生活类比建立直觉、用日常语言解释数据含义、用分歧清单标出边界。完成后调 feishu_bridge_subtask 工具 action: report，message: \"HTML 已生成：<path>\"』。**用子任务是为了隔离 html 渲染，不污染你的 context**；子任务无 worktree、会话日志持久保留，chatroom end 时自动回收。
 
 【学术深度版 brief】（用户选『出一份深度学术版』时用此 brief spawn 子任务）：读账本目录 ${ledgerDir} 下 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md，用 html skill 渲染一份【总分结构】研究报告 HTML，写到 ${ledgerDir}/summary-academic.html（与 summary.html 同目录，通俗版保留不替换）。务必按以下分层（覆盖 html skill 的默认模板）：
 

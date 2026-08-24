@@ -99,20 +99,22 @@ describe('ExecuteCronJob_ResolvesCronReplyTarget', () => {
 })
 
 describe('ExecuteCronJob_NewSessionPerRun', () => {
-  it('runs on a side session whose env key carries no #cron suffix (Go ccSessionKey vs interactiveKey split)', async () => {
+  it('runs on a side session whose session key carries no #cron suffix (Go ccSessionKey vs interactiveKey split)', async () => {
     const store = new CronStore(tempDir())
     const scheduler = new CronScheduler(store)
     scheduler.setDefaultSessionMode('new_per_run')
 
     const platform = createStubCronReplyTargetPlatform('discord')
     const agentSession = newResultAgentSession('fresh run done')
-    const recordedEnv: string[] = []
-    const agent: Agent & { setSessionEnv(env: string[]): void } = {
+    const recordedKeys: string[] = []
+    const agent: Agent = {
       name: () => 'stub',
-      startSession: async () => agentSession,
+      startSession: async (_sessionID: string, options) => {
+        if (options !== undefined) recordedKeys.push(options.sessionKey)
+        return agentSession
+      },
       listSessions: async () => [],
       stop: async () => {},
-      setSessionEnv: (env: string[]) => { recordedEnv.push(...env) },
     }
     const e = new Engine('test', agent, [platform], '', 'en')
     e.cronScheduler = scheduler
@@ -126,14 +128,81 @@ describe('ExecuteCronJob_NewSessionPerRun', () => {
     store.add(job)
 
     await e.executeCronJob(job)
-    // The resolver redirected the run target, so the env key is the resolved
-    // key (Go passes runSessionKey as ccSessionKey) — never the slot suffix.
-    expect(recordedEnv.join('\n')).toContain('CC_SESSION_KEY=discord:thread-fresh')
-    expect(recordedEnv.join('\n')).not.toContain('#cron:')
+    // The resolver redirected the run target, so the session key is the
+    // resolved key (Go passes runSessionKey as ccSessionKey) — never the
+    // slot suffix.
+    expect(recordedKeys).toContain('discord:thread-fresh')
+    expect(recordedKeys.join('\n')).not.toContain('#cron:')
     // The run used a dedicated side session under the resolved key and its
     // interactive slot was cleaned up as soon as the turn finished.
     expect(e.sessions.listSessions('discord:thread-fresh')).toHaveLength(1)
     expect(e.interactiveStates.size).toBe(0)
+  })
+})
+
+describe('ExecuteCronJob_UnattendedModeDefault', () => {
+  it("defaults an unset job mode to 'default' instead of inheriting the project mode", async () => {
+    const store = new CronStore(tempDir())
+    const scheduler = new CronScheduler(store)
+
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const agentSession = newResultAgentSession('run done')
+    const recordedModes: string[] = []
+    const agent: Agent & { setSessionMode(mode: string): void } = {
+      name: () => 'stub',
+      startSession: async () => agentSession,
+      listSessions: async () => [],
+      stop: async () => {},
+      setSessionMode: (mode: string) => { recordedModes.push(mode) },
+    }
+    const e = new Engine('test', agent, [platform], '', 'en')
+    e.cronScheduler = scheduler
+
+    const job = newJob({
+      id: 'um1',
+      sessionKey: 'discord:channel-1:user-1',
+      cronExpr: '0 6 * * *',
+      prompt: 'unattended check',
+      sessionMode: 'new_per_run',
+    })
+    store.add(job)
+
+    await e.executeCronJob(job)
+    // An unattended cron run cannot approve an ExitPlanMode card, so an
+    // unset job mode must not fall back to the project default (plan in
+    // production): the run starts in 'default' instead.
+    expect(recordedModes).toEqual(['default'])
+  })
+
+  it('passes an explicit job mode through verbatim', async () => {
+    const store = new CronStore(tempDir())
+    const scheduler = new CronScheduler(store)
+
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const agentSession = newResultAgentSession('run done')
+    const recordedModes: string[] = []
+    const agent: Agent & { setSessionMode(mode: string): void } = {
+      name: () => 'stub',
+      startSession: async () => agentSession,
+      listSessions: async () => [],
+      stop: async () => {},
+      setSessionMode: (mode: string) => { recordedModes.push(mode) },
+    }
+    const e = new Engine('test', agent, [platform], '', 'en')
+    e.cronScheduler = scheduler
+
+    const job = newJob({
+      id: 'um2',
+      sessionKey: 'discord:channel-1:user-1',
+      cronExpr: '0 6 * * *',
+      prompt: 'unattended check',
+      sessionMode: 'new_per_run',
+      mode: 'bypassPermissions',
+    })
+    store.add(job)
+
+    await e.executeCronJob(job)
+    expect(recordedModes).toEqual(['bypassPermissions'])
   })
 })
 

@@ -326,7 +326,6 @@
     #     replyFooter: true                # Codex-style *model · effort · workdir* reply footer (default false)
 
     #   resetOnIdleMins: 720               # rotate chat to a fresh session after N idle minutes
-    #   filterExternalSessions: true       # /list only shows engine-tracked sessions
     #   providerShortcuts:                 # quick switch + new session (/strong → glm)
     #     strong: glm
     #     weak: mimo

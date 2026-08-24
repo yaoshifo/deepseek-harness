@@ -8,7 +8,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -17,7 +17,8 @@ import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { Session } from '../../src/engine/session.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { WorktreeMode } from '../../src/engine/worktree.js'
-import type { Agent, Message, Platform } from '../../src/core/types.js'
+import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, RecentTurnsReader } from '../../src/core/types.js'
+import { SubtaskGather } from '../../src/engine/subtask.js'
 import {
   createNoOverwriteAgent,
   createStubAgent,
@@ -26,6 +27,7 @@ import {
   createStubSpawnerPlatform,
   createForkPreparerAgent,
   createWorkDirAgent,
+  newControllableSession,
   newStubMessage,
   type RecordedCard,
 } from '../stubs/engine-stubs.js'
@@ -39,6 +41,17 @@ async function settle(): Promise<void> {
 
 function newSubtaskTestEngine(p: Platform, agent: Agent = createStubAgent()): Engine {
   return new Engine('test', agent, [p], '', 'en')
+}
+
+/** Engine whose agent's recent-turn window serves one assistant entry for 'child-agent'. */
+function newReplyFallbackEngine(p: Platform, reply: string): Engine {
+  const agent: Agent & RecentTurnsReader = {
+    ...createStubAgent(),
+    recentTurns: async (id: string) => id === 'child-agent'
+      ? [{ role: 'assistant', content: reply, timestamp: '2026-01-01T00:00:00Z' }]
+      : [],
+  }
+  return newSubtaskTestEngine(p, agent)
 }
 
 function msg(overrides: Partial<Message> = {}): Message {
@@ -102,31 +115,32 @@ describe('replyToParent', () => {
 describe('ReportSubtask', () => {
   it('falls back to the last reply', async () => {
     const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
+    const e = newReplyFallbackEngine(p, 'fallback summary')
 
     const childKey = 'test:child-chat'
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey('test:parent-chat:user-1')
-    child.addHistory('assistant', 'fallback summary')
+    child.setAgentSessionID('child-agent', 'stub')
 
-    expect(() => { e.reportSubtask(childKey, '') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, '')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('fallback summary')
   })
 
   it('prefers the clean result over the narration blob', async () => {
     const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
+    // The window holds the full per-turn narration blob; lastResult holds
+    // the clean SDK final result.
+    const e = newReplyFallbackEngine(p, '我来使用... Now let me invoke... Let me search...')
 
     const childKey = 'test:child-chat'
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey('test:parent-chat:user-1')
-    // History holds the full per-turn narration blob; lastResult holds the
-    // clean SDK final result.
-    child.addHistory('assistant', '我来使用... Now let me invoke... Let me search...')
+    child.setAgentSessionID('child-agent', 'stub')
     child.setLastResult('回测完成：2026-06-05 触发 2 个实例')
 
-    expect(() => { e.reportSubtask(childKey, '') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, '')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
     const body = cardBody(p.sentCards[0])
@@ -142,7 +156,7 @@ describe('ReportSubtask', () => {
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey('test:parent-chat:user-1')
 
-    expect(() => { e.reportSubtask(childKey, '') }).toThrow()
+    await expect(e.reportSubtask(childKey, '')).rejects.toThrow('no result to report')
   })
 
   it('sets the reported flag', async () => {
@@ -153,9 +167,8 @@ describe('ReportSubtask', () => {
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey('test:parent-chat:user-1')
     child.setSubtaskDepth(1)
-    child.addHistory('assistant', 'done')
 
-    expect(() => { e.reportSubtask(childKey, 'explicit result') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'explicit result')).resolves.toBeUndefined()
     expect(child.getSubtaskReported()).toBe(true)
     await settle()
     expect(p.sentCards.length).toBe(1)
@@ -169,16 +182,15 @@ describe('ReportSubtask', () => {
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey('test:parent-chat:user-1')
     child.setSubtaskDepth(1)
-    child.addHistory('assistant', 'done')
 
     // First report delivers exactly one card to the parent.
-    expect(() => { e.reportSubtask(childKey, 'explicit result') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'explicit result')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
 
     // A model re-calling report must not re-inject: no duplicate card, no
     // error (idempotent).
-    expect(() => { e.reportSubtask(childKey, 'explicit result again') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'explicit result again')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
   })
@@ -192,9 +204,8 @@ describe('ReportSubtask', () => {
     child.setParentSessionKey('test:parent-chat:user-1')
     child.setSubtaskDepth(1)
     child.setSubtaskNoReport(true)
-    child.addHistory('assistant', 'drew the diagram')
 
-    expect(() => { e.reportSubtask(childKey, 'diagram sent') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'diagram sent')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(0)
     expect(child.getSubtaskReported()).toBe(false)
@@ -216,24 +227,27 @@ describe('ReportSubtask', () => {
     expect(child.getSubtaskReported()).toBe(false)
 
     // An explicit report after the stop must still deliver to the parent.
-    expect(() => { e.reportSubtask(childKey, 'explicit result after stop') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'explicit result after stop')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
     expect(child.getSubtaskReported()).toBe(true)
   })
 })
 
-describe('LastResultOrReply', () => {
-  it('prefers the clean result', () => {
-    const s = new Session()
-    s.addHistory('assistant', 'narration blob with tool chatter')
+describe('lastResultOrReply', () => {
+  it('prefers the clean result and falls back to the last assistant window entry', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newReplyFallbackEngine(p, 'narration blob with tool chatter')
+    const sessionKey = 'test:child-chat'
+    const s = e.sessions.getOrCreateActive(sessionKey)
+    s.setAgentSessionID('child-agent', 'stub')
 
-    // With no LastResult set, falls back to the last assistant entry.
-    expect(s.lastResultOrReply()).toBe('narration blob with tool chatter')
+    // With no LastResult set, falls back to the window's last assistant entry.
+    expect(await e.lastResultOrReply(sessionKey, s)).toBe('narration blob with tool chatter')
 
     // Once LastResult is set, it takes precedence.
     s.setLastResult('clean final summary')
-    expect(s.lastResultOrReply()).toBe('clean final summary')
+    expect(await e.lastResultOrReply(sessionKey, s)).toBe('clean final summary')
   })
 })
 
@@ -828,7 +842,7 @@ describe('rearmSubtaskReportOnHumanTurn', () => {
     e.rearmSubtaskReportOnHumanTurn(msg({ sessionKey: childKey, userID: 'u1' }), child, e.sessions)
 
     // Agent reports its new result — must deliver, not skip.
-    expect(() => { e.reportSubtask(childKey, 'new result') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'new result')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
   })
@@ -845,7 +859,7 @@ describe('rearmSubtaskReportOnHumanTurn', () => {
     expect(child.getSubtaskReported()).toBe(false)
 
     // Explicit report mid-turn delivers and re-sets the flag.
-    expect(() => { e.reportSubtask(childKey, 'result') }).not.toThrow()
+    await expect(e.reportSubtask(childKey, 'result')).resolves.toBeUndefined()
     await settle()
     const delivered = p.sentCards.length
 
@@ -986,8 +1000,8 @@ describe('markUserInterjectedOnHumanTurn', () => {
   })
 })
 
-describe('buildSessionEnv', () => {
-  it('injects the research assistant key + scrub-safe alias', () => {
+describe('buildSessionStartOptions', () => {
+  it('injects the research assistant child key for research-driven roles', () => {
     const p = createStubCardPlatformFull('test')
     const e = newSubtaskTestEngine(p)
 
@@ -1000,36 +1014,384 @@ describe('buildSessionEnv', () => {
     role.setChatroomHubKey(hubKey)
     role.setResearchAssistantKey('test:assistant-chat')
 
-    const env = e.buildSessionEnv(roleKey, role)
-    // The CHILD alias is what role prompts reference: dsh's credential-shaped
-    // env scrub strips any *KEY* name from Bash-tool children.
-    expect(env).toContain('CC_RESEARCH_ASSISTANT_KEY=test:assistant-chat')
-    expect(env).toContain('CC_RESEARCH_ASSISTANT_CHILD=test:assistant-chat')
+    const options = e.buildSessionStartOptions(roleKey, role)
+    // The child key is what role prompts reference: the persona prompt
+    // hands the pre-spawned assistant's session key to the role.
+    expect(options.chatroom?.researchAssistantChild).toBe('test:assistant-chat')
   })
 
-  it('injects CC_RESEARCH_ASSISTANT only for research assistants', () => {
+  it('injects the research assistant contract only for research assistants', () => {
     const p = createStubCardPlatformFull('test')
     const e = newSubtaskTestEngine(p)
 
     const key = 'test:assistant-chat'
     const sess = e.sessions.getOrCreateActive(key)
+    sess.setSubtaskDepth(1)
     sess.setResearchAssistant(true)
 
-    expect(e.buildSessionEnv(key, sess)).toContain('CC_RESEARCH_ASSISTANT=1')
+    expect(e.buildSessionStartOptions(key, sess).subtask?.researchAssistant).toBe(true)
 
     sess.setResearchAssistant(false)
-    expect(e.buildSessionEnv(key, sess)).not.toContain('CC_RESEARCH_ASSISTANT=1')
+    expect(e.buildSessionStartOptions(key, sess).subtask?.researchAssistant).toBe(false)
   })
 
-  it('injects the CC_SESSION alias alongside CC_SESSION_KEY', () => {
+  it('binds the session key into the start options', () => {
     const p = createStubCardPlatformFull('test')
     const e = newSubtaskTestEngine(p)
 
     const key = 'feishu:oc_alias-chat'
     e.sessions.getOrCreateActive(key)
 
-    const env = e.buildSessionEnv(key, e.sessions.getOrCreateActive(key))
-    expect(env).toContain(`CC_SESSION_KEY=${key}`)
-    expect(env).toContain(`CC_SESSION=${key}`)
+    const options = e.buildSessionStartOptions(key, e.sessions.getOrCreateActive(key))
+    expect(options.sessionKey).toBe(key)
+  })
+})
+
+// ── native continuable children (de-baggage B4) ───────────────────────────
+
+/** Stub agent implementing the ContinuableDelegator seam, recording every call. */
+function createDelegatorAgent(): Agent & ContinuableDelegator & {
+  started: ContinuableChildStart[]
+  followups: Array<{ parent: string; child: string; message: string }>
+  interrupts: string[]
+  reports: Array<{ child: string; content: string }>
+  nextChildId: string
+} {
+  const agent = {
+    ...createStubAgent(),
+    started: [] as ContinuableChildStart[],
+    followups: [] as Array<{ parent: string; child: string; message: string }>,
+    interrupts: [] as string[],
+    reports: [] as Array<{ child: string; content: string }>,
+    nextChildId: 'native-child-1',
+    async startContinuableChild(request: ContinuableChildStart): Promise<{ childId: string; label: string }> {
+      agent.started.push(request)
+      return { childId: agent.nextChildId, label: request.prompt.split('\n')[0] ?? '' }
+    },
+    async followupChild(parent: string, child: string, message: string): Promise<void> {
+      agent.followups.push({ parent, child, message })
+    },
+    interruptChild(_parent: string, child: string): void {
+      agent.interrupts.push(child)
+    },
+    async reportChildToNativeParent(child: string, content: string): Promise<void> {
+      agent.reports.push({ child, content })
+    },
+  }
+  return agent
+}
+
+/** Engine with a live parent agent session on parentKey and a delegator agent. */
+function newNativeEngine(p: Platform, parentKey: string): {
+  e: Engine
+  agent: ReturnType<typeof createDelegatorAgent>
+} {
+  const agent = createDelegatorAgent()
+  const e = newSubtaskTestEngine(p, agent)
+  e.setProjectStateStore(new ProjectStateStore(''))
+  const state = new InteractiveState()
+  state.agentSession = newControllableSession('parent-native-1')
+  state.platform = p
+  state.replyCtx = 'parent-rctx'
+  e.interactiveStates.set(parentKey, state)
+  return { e, agent }
+}
+
+describe('spawnSubtaskNative', () => {
+  it('routes through the delegator and records parentage in the project state', async () => {
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:parent-chat:u1'
+    const { e, agent } = newNativeEngine(p, parentKey)
+
+    const { childName, childKey } = await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'render the summary')
+
+    expect(childKey).toBe('native-child-1')
+    expect(childName).toBe('render the summary')
+    expect(agent.started).toHaveLength(1)
+    expect(agent.started[0]?.provider).toBe('spawn')
+    expect(agent.started[0]?.prompt).toBe('render the summary')
+    expect(agent.started[0]?.parentAgentSessionID).toBe('parent-native-1')
+    const entry = e.nativeChildEntries()['native-child-1']
+    expect(entry?.parent_key).toBe(parentKey)
+    expect(entry?.parent_agent_session_id).toBe('parent-native-1')
+    expect(entry?.label).toBe('render the summary')
+    expect(entry?.reported).toBe(false)
+  })
+
+  it('routes fork=true through the fork provider and guards on a started parent', async () => {
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:p:u1'
+    const { e, agent } = newNativeEngine(p, parentKey)
+
+    // The parent's bridge session never started a conversation: fork refuses.
+    await expect(e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, true, 'brief')).rejects.toThrow('--fork')
+    expect(agent.started).toHaveLength(0)
+
+    e.sessions.getOrCreateActive(parentKey).setAgentSessionID('orig-1', 'stub')
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, true, 'brief')
+    expect(agent.started[0]?.provider).toBe('fork')
+  })
+
+  it('fails without a live parent agent session', async () => {
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:idle-parent:u1'
+    const { e } = newNativeEngine(p, parentKey)
+    e.interactiveStates.delete(parentKey)
+
+    await expect(e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')).rejects.toThrow('no live agent session')
+  })
+
+  it('isolates the child in a worktree and records its coordinates', async () => {
+    const root = await initTestRepo()
+    // macOS tmpdir symlinks (/var → /private/var): git reports real paths.
+    const realRoot = await realpath(root)
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:wt-parent:u1'
+    const { e, agent } = newNativeEngine(p, parentKey)
+
+    await e.spawnSubtaskNative(parentKey, root, WorktreeMode.ForceOn, false, 'repo work')
+
+    const cwd = agent.started[0]?.cwd ?? ''
+    expect(cwd).not.toBe(realRoot)
+    expect(cwd.startsWith(realRoot)).toBe(true)
+    const entry = e.nativeChildEntries()['native-child-1']
+    expect(entry?.worktree_path).toBe(cwd)
+    expect(entry?.worktree_root).toBe(realRoot)
+    expect(entry?.worktree_branch).not.toBe('')
+  })
+})
+
+describe('reportNativeChild', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  function armedEngine(p: Platform): ReturnType<typeof newNativeEngine> {
+    const r = newNativeEngine(p, parentKey)
+    r.e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'render the summary',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '',
+      reported: false,
+    })
+    return r
+  }
+
+  it('delivers the result card to the engine parent and is idempotent', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = armedEngine(p)
+
+    await e.reportNativeChild('native-child-1', 'all done')
+    await e.reportNativeChild('native-child-1', 'duplicate')
+
+    await settle()
+    expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('all done')
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+  })
+
+  it('falls back to the child window when the message is empty', async () => {
+    const p = createStubCardPlatformFull('test')
+    const reader: Agent & RecentTurnsReader = {
+      ...createStubAgent(),
+      recentTurns: async (id: string) => id === 'native-child-1'
+        ? [{ role: 'assistant', content: 'window answer', timestamp: '2026-01-01T00:00:00Z' }]
+        : [],
+    }
+    const e = newSubtaskTestEngine(p, reader)
+    e.setProjectStateStore(new ProjectStateStore(''))
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'render the summary',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '',
+      reported: false,
+    })
+
+    await e.reportNativeChild('native-child-1', '')
+    await settle()
+    expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('window answer')
+  })
+
+  it('routes to the native parent through the runtime report path', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agent } = armedEngine(p)
+    e.projectState?.setNativeChild('native-parent-1', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'parent native',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '',
+      reported: true,
+    })
+    const withNativeParent = e.nativeChildEntries()['native-child-1']!
+    e.projectState?.setNativeChild('native-child-1', { ...withNativeParent, parent_key: 'native-parent-1' })
+
+    await e.reportNativeChild('native-child-1', 'result for native parent')
+
+    expect(agent.reports).toEqual([{ child: 'native-child-1', content: 'result for native parent' }])
+    expect(p.sentCards.length).toBe(0)
+  })
+
+  it('settleNativeChild delivers once and skips an already-reported child', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = armedEngine(p)
+
+    e.settleNativeChild('native-child-1', 'settled output')
+    e.settleNativeChild('native-child-1', 'second epoch output')
+    await settle()
+
+    expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('settled output')
+  })
+})
+
+describe('SendToSubtask native children', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  it('queues through the delegator and re-arms the settlement fallback', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agent } = newNativeEngine(p, parentKey)
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
+    const entry = e.nativeChildEntries()['native-child-1']!
+    e.projectState?.setNativeChild('native-child-1', { ...entry, reported: true })
+
+    await e.sendToSubtask(parentKey, 'native-child-1', 'show the full report')
+
+    expect(agent.followups).toEqual([{ parent: 'parent-native-1', child: 'native-child-1', message: 'show the full report' }])
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
+  })
+
+  it('rejects a caller that is not the child parent', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
+
+    await expect(e.sendToSubtask('test:other-chat:u1', 'native-child-1', 'hi')).rejects.toThrow()
+  })
+
+  it('interruptNativeChild routes through the delegator', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agent } = newNativeEngine(p, parentKey)
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
+
+    e.interruptNativeChild('native-child-1')
+    expect(agent.interrupts).toEqual(['native-child-1'])
+  })
+})
+
+describe('gather with native children', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  it('banks native reports and wakes once with a combined summary', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    for (const id of ['native-child-1', 'native-child-2']) {
+      e.projectState?.setNativeChild(id, {
+        parent_key: parentKey,
+        parent_agent_session_id: 'parent-native-1',
+        label: `task ${id}`,
+        worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '',
+        reported: false,
+      })
+    }
+
+    e.gatherSubtasks(parentKey)
+    const parent = e.sessions.getOrCreateActive(parentKey)
+    expect(parent.getPendingSubtaskGather()?.expected.size).toBe(2)
+
+    await e.reportNativeChild('native-child-1', 'first result')
+    await settle()
+    expect(parent.getPendingSubtaskGather()).toBeDefined() // banked, not woken
+
+    await e.reportNativeChild('native-child-2', 'second result')
+    await settle()
+    expect(parent.getPendingSubtaskGather()).toBeUndefined() // barrier fired and cleared
+    const bodies = p.sentCards.map(cardBody).join('\n')
+    expect(bodies).toContain('first result')
+    expect(bodies).toContain('second result')
+  })
+})
+
+describe('drainNativeDescendants', () => {
+  it('interrupts and clears native descendants of the root, keeping records of others', async () => {
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:parent-chat:u1'
+    const { e, agent } = newNativeEngine(p, parentKey)
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey, parent_agent_session_id: 'parent-native-1', label: 'a',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '', reported: false,
+    })
+    e.projectState?.setNativeChild('native-grandchild-1', {
+      parent_key: 'native-child-1', parent_agent_session_id: 'native-child-1', label: 'g',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '', reported: false,
+    })
+    e.projectState?.setNativeChild('foreign-child', {
+      parent_key: 'test:elsewhere:u1', parent_agent_session_id: 'x', label: 'f',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_root: '', reported: false,
+    })
+
+    await e.drainNativeDescendants([parentKey])
+
+    expect(agent.interrupts.sort()).toEqual(['native-child-1', 'native-grandchild-1'])
+    expect(e.nativeChildEntries()['native-child-1']).toBeUndefined()
+    expect(e.nativeChildEntries()['native-grandchild-1']).toBeUndefined()
+    expect(e.nativeChildEntries()['foreign-child']).toBeDefined()
+  })
+})
+
+describe('SubtaskGather (direct)', () => {
+  it('wakes exactly once when every expected child reports', () => {
+    const g = new SubtaskGather()
+    expect(g.addExpected('a', 'A')).toBe(true)
+    expect(g.addExpected('b', 'B')).toBe(true)
+
+    const first = g.accumulate('a', 'A', 'result a')
+    expect(first.done).toBe(false)
+    const second = g.accumulate('b', 'B', 'result b')
+    expect(second.done).toBe(true)
+    expect(second.summary).toContain('【A】result a')
+    expect(second.summary).toContain('【B】result b')
+
+    // Post-wake reports fall through with alreadyWoken; the timeout is inert.
+    const late = g.accumulate('a', 'A', 'late')
+    expect(late).toEqual({ done: false, summary: '', alreadyWoken: true })
+    expect(g.timeoutFire().done).toBe(false)
+  })
+
+  it('records a late child outside the expected set without deferring the wake', () => {
+    const g = new SubtaskGather()
+    g.addExpected('a', 'A')
+    const late = g.accumulate('late-child', 'L', 'late result')
+    expect(late.done).toBe(false)
+    const done = g.accumulate('a', 'A', 'result a')
+    expect(done.done).toBe(true)
+    expect(done.summary).toContain('【L】late result')
+  })
+
+  it('addExpected after the wake is refused', () => {
+    const g = new SubtaskGather()
+    g.addExpected('a', 'A')
+    g.accumulate('a', 'A', 'done')
+    expect(g.addExpected('b', 'B')).toBe(false)
+  })
+
+  it('timeoutFire wakes with the partial summary and names the missing children', () => {
+    const g = new SubtaskGather()
+    g.addExpected('a', 'A')
+    g.addExpected('b', 'B')
+    g.accumulate('a', 'A', 'result a')
+    const fired = g.timeoutFire()
+    expect(fired.done).toBe(true)
+    expect(fired.summary).toContain('1 个子任务超时未回报')
+    expect(fired.summary).toContain('B')
+    expect(fired.summary).toContain('result a')
+  })
+
+  it('an empty report still counts as reported', () => {
+    const g = new SubtaskGather()
+    g.addExpected('a', 'A')
+    const done = g.accumulate('a', 'A', '')
+    expect(done.done).toBe(true)
+    expect(done.summary).toContain('（无内容 / NO_REPLY）')
   })
 })

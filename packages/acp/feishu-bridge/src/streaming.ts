@@ -22,6 +22,9 @@ import {
   asStoppedCardRenderer,
   asTransientPatchErrorChecker,
   type Platform,
+  type ProgressContent,
+  type ProgressStatus,
+  type TextPreviewContent,
 } from './core/types.js'
 import type { AsyncSender } from './async-sender.js'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './engine/message-split.js'
@@ -556,7 +559,7 @@ export class StreamPreview {
     await this.locked(async () => {
       if (this.degraded || !this.cfg.enabled || this.previewMsgID !== undefined) return
       this.progressMode = true
-      await this.flushLocked(placeholderText)
+      await this.flushLocked({ kind: 'text', text: placeholderText })
       // Reset throttle state so the first real appendText flushes immediately.
       this.lastSentAt = 0
       this.lastSentText = ''
@@ -592,7 +595,7 @@ export class StreamPreview {
         return
       }
       this.cancelTimerLocked()
-      await this.flushLocked(displayText)
+      await this.flushLocked({ kind: 'text', text: displayText })
     })
   }
 
@@ -605,7 +608,7 @@ export class StreamPreview {
       if (maxChars > 0 && runeCount(displayText) > maxChars) {
         displayText = `${Array.from(displayText).slice(0, maxChars).join('')}…`
       }
-      await this.flushLocked(displayText)
+      await this.flushLocked({ kind: 'text', text: displayText })
     })
   }
 
@@ -635,17 +638,44 @@ export class StreamPreview {
     }
   }
 
-  /** Send the current preview text to the platform. Must hold the lock. */
-  private async flushLocked(textIn: string): Promise<void> {
+  /**
+   * Structured status for the current progress display: terminal states win,
+   * streaming thinking shows 思考中, otherwise running. Must hold the lock.
+   *
+   * @internal White-box: ported same-package tests call this directly. Caller must hold the lock.
+   * @returns The status the platform layer renders the card header from.
+   */
+  progressStatusLocked(): ProgressStatus {
+    const state: ProgressStatus['state'] = this.completed
+      ? 'completed'
+      : this.failed
+        ? 'failed'
+        : this.thinkingText !== ''
+          ? 'thinking'
+          : 'running'
+    return { state, ts: hms(), toolCallSeq: this.toolCallSeq }
+  }
+
+  /** Progress display text wrapped with its structured status. Must hold the lock. */
+  private progressContentLocked(text: string): TextPreviewContent {
+    return { kind: 'text', text, status: this.progressStatusLocked() }
+  }
+
+  /** Send the current preview content to the platform. Must hold the lock. */
+  private async flushLocked(contentIn: TextPreviewContent): Promise<void> {
     // Terminal latch: a throttled flush racing the stopped render must not
     // overwrite the ⏹ card with Running content. Completed and failed cards
-    // rebuild with their own terminal state prefix, and the stall-retry flow
+    // rebuild with their own terminal status, and the stall-retry flow
     // keeps PATCHing a failed card for the retried turn, so only the stopped
-    // render (rendered out-of-band, no prefix on rebuild) latches flushes.
+    // render (rendered out-of-band, no status on rebuild) latches flushes.
     if (this.stoppedCardRendered) return
-    let text = textIn
+    let text = contentIn.text
     if (this.transform !== undefined) text = this.transform(text)
-    if (text === this.lastSentText || text === '') return
+    // Status-bearing (progress) content always PATCHes — an empty body still
+    // renders the header state, and progress flushes have their own throttle.
+    // Plain text skips unchanged or empty bodies.
+    if (contentIn.status === undefined && (text === this.lastSentText || text === '')) return
+    const content: ProgressContent = { kind: 'text', text, ...(contentIn.status !== undefined ? { status: contentIn.status } : {}) }
 
     const updater = asMessageUpdater(this.platform)
     if (updater === undefined) {
@@ -660,7 +690,7 @@ export class StreamPreview {
       if (starter !== undefined) {
         let handle: unknown
         try {
-          handle = await starter.sendPreviewStart(this.replyCtx, text)
+          handle = await starter.sendPreviewStart(this.replyCtx, content)
         } catch (error) {
           console.warn(`stream preview: start failed, degrading: ${String(error)}`)
           this.degraded = true
@@ -686,7 +716,7 @@ export class StreamPreview {
     // Update existing preview message
     if (this.async !== undefined) {
       const handle = this.previewMsgID
-      const content = text
+      const sentText = text
       // Optimistically update lastSentText so concurrent flushes with the
       // same content don't queue duplicate PATCHes; rewind on failure.
       const prevLastSentText = this.lastSentText
@@ -703,12 +733,12 @@ export class StreamPreview {
             // flush; must NOT count toward degradation.
             const checker = asTransientPatchErrorChecker(this.platform)
             if (checker !== undefined && checker.isTransientPatchError(error)) {
-              if (this.lastSentText === content) this.lastSentText = prevLastSentText
+              if (this.lastSentText === sentText) this.lastSentText = prevLastSentText
               return
             }
             this.failedPatchStreak++
             // Rewind only if no newer flush has overwritten lastSentText.
-            if (this.lastSentText === content) this.lastSentText = prevLastSentText
+            if (this.lastSentText === sentText) this.lastSentText = prevLastSentText
             if (this.failedPatchStreak >= maxConsecutivePatchFailures) {
               console.warn(`stream preview: too many consecutive async update failures, degrading (streak ${this.failedPatchStreak})`)
               this.degraded = true
@@ -723,7 +753,7 @@ export class StreamPreview {
       return
     }
     try {
-      await updater.updateMessage(this.previewMsgID, text)
+      await updater.updateMessage(this.previewMsgID, content)
     } catch (error) {
       const checker = asTransientPatchErrorChecker(this.platform)
       if (checker !== undefined && checker.isTransientPatchError(error)) {
@@ -753,10 +783,10 @@ export class StreamPreview {
       if (this.previewMsgID !== undefined && !this.degraded) {
         const updater = asMessageUpdater(this.platform)
         if (updater !== undefined) {
-          const text = this.buildFreezeTextLocked()
-          if (text !== '') {
+          const content = this.buildFreezeContentLocked()
+          if (content.text !== '') {
             try {
-              await updater.updateMessage(this.previewMsgID, text)
+              await updater.updateMessage(this.previewMsgID, content)
             } catch (error) {
               console.debug(`streaming update skipped: ${String(error)}`)
             }
@@ -780,32 +810,31 @@ export class StreamPreview {
       this.degraded = true
       let deliverText = ''
       let handle: unknown
-      let display = ''
+      let content: ProgressContent | undefined
       if (this.previewMsgID !== undefined) {
         this.completed = true
         handle = this.previewMsgID
         if (this.progressMode) {
           this.finalizePendingEntriesLocked(true)
-          display = this.buildProgressDisplayLocked()
+          content = this.progressContentLocked(this.buildProgressDisplayLocked())
           if (this.analysisTruncated) deliverText = this.analysisText
         } else {
-          const header = `__cc_state__:completed\n__cc_ts__:${hms()}\n`
           let text = this.fullText
           if (this.transform !== undefined) text = this.transform(text)
-          display = header + text
+          content = { kind: 'text', text, status: { state: 'completed', ts: hms(), toolCallSeq: 0 } }
         }
       }
       this.previewMsgID = undefined
-      return { handle, display, deliverText }
+      return { handle, content, deliverText }
     })
     // Drain async PATCHes queued before degraded=true so a stale running
     // snapshot cannot land after the completed PATCH below.
     if (this.async !== undefined) await this.async.barrier()
-    if (state.handle !== undefined) {
+    if (state.handle !== undefined && state.content !== undefined) {
       const updater = asMessageUpdater(this.platform)
       if (updater !== undefined) {
         try {
-          await updater.updateMessage(state.handle, state.display)
+          await updater.updateMessage(state.handle, state.content)
         } catch (error) {
           console.debug(`streaming update skipped: ${String(error)}`)
         }
@@ -814,12 +843,12 @@ export class StreamPreview {
     if (state.deliverText !== '') await this.deliverAnswer(state.deliverText)
   }
 
-  /** Text to display when freezing the preview (progress lines or fullText). */
-  private buildFreezeTextLocked(): string {
+  /** Content to display when freezing the preview (progress lines or fullText). */
+  private buildFreezeContentLocked(): TextPreviewContent {
     if (this.progressMode && this.progressEntries.length > 0) {
       let display = this.buildProgressDisplayLocked()
       if (this.transform !== undefined) display = this.transform(display)
-      return display
+      return this.progressContentLocked(display)
     }
     let text = this.fullText
     const maxChars = this.cfg.maxChars
@@ -827,7 +856,7 @@ export class StreamPreview {
       text = `${Array.from(text).slice(0, maxChars).join('')}…`
     }
     if (this.transform !== undefined) text = this.transform(text)
-    return text
+    return { kind: 'text', text }
   }
 
   /**
@@ -927,10 +956,14 @@ export class StreamPreview {
       }
 
       // In progressMode the final message only contains the AI response
-      // text; emit the completion marker so the platform greens the header.
-      const displayText = `__cc_state__:completed\n__cc_ts__:${hms()}\n${finalText}`
+      // text; the structured completion status greens the header.
+      const content: ProgressContent = {
+        kind: 'text',
+        text: finalText,
+        status: { state: 'completed', ts: hms(), toolCallSeq: 0 },
+      }
       try {
-        await updater.updateMessage(this.previewMsgID, displayText)
+        await updater.updateMessage(this.previewMsgID, content)
       } catch (error) {
         console.debug(`stream preview finish: final update FAILED, cleaning up preview: ${String(error)}`)
         // Update failed (e.g. too long for the edit API): delete the stale
@@ -964,20 +997,20 @@ export class StreamPreview {
    */
   private async bumpToEndLocked(): Promise<void> {
     if (this.previewMsgID === undefined || this.degraded || this.completed || this.failed) return
-    let display = this.buildProgressDisplayLocked()
-    if (display === '') display = this.lastSentText
+    // An empty body still bumps: the running-status header renders alone.
+    const content = this.progressContentLocked(this.buildProgressDisplayLocked())
     const starter = asPreviewStarter(this.platform)
     if (starter === undefined) return
     let newHandle: unknown
     try {
-      newHandle = await starter.sendPreviewStart(this.replyCtx, display)
+      newHandle = await starter.sendPreviewStart(this.replyCtx, content)
     } catch (error) {
       console.warn(`stream preview: bump SendPreviewStart failed: ${String(error)}`)
       return
     }
     const oldHandle = this.previewMsgID
     this.previewMsgID = newHandle
-    this.lastSentText = display
+    this.lastSentText = content.text
     this.lastSentViaUpdate = false
     const cleaner = asPreviewCleaner(this.platform)
     if (cleaner !== undefined) {
@@ -1032,7 +1065,7 @@ export class StreamPreview {
     if (text === '') return
     await this.locked(async () => {
       if (this.degraded || this.previewMsgID !== undefined) return
-      await this.flushLocked(text)
+      await this.flushLocked({ kind: 'text', text })
     })
   }
 
@@ -1046,7 +1079,7 @@ export class StreamPreview {
     await this.locked(async () => {
       if (this.degraded || this.previewMsgID === undefined || this.fullText !== '') return
       this.lastSentText = '' // force PATCH even if text is similar
-      await this.flushLocked(text)
+      await this.flushLocked({ kind: 'text', text })
     })
   }
 
@@ -1213,7 +1246,7 @@ export class StreamPreview {
           if (this.degraded || this.previewMsgID === undefined) return
           const display = this.buildProgressDisplayLocked()
           this.lastSentText = ''
-          await this.flushLocked(display)
+          await this.flushLocked(this.progressContentLocked(display))
           this.lastProgressFlush = Date.now()
         })
       }
@@ -1221,7 +1254,7 @@ export class StreamPreview {
     }
     this.lastProgressFlush = now
     this.lastSentText = ''
-    await this.flushLocked(text)
+    await this.flushLocked(this.progressContentLocked(text))
   }
 
   /**
@@ -1234,7 +1267,7 @@ export class StreamPreview {
     if (now - this.lastProgressFlush >= progressFlushInterval) {
       this.lastProgressFlush = now
       this.lastSentText = ''
-      await this.flushLocked(this.buildProgressDisplayLocked())
+      await this.flushLocked(this.progressContentLocked(this.buildProgressDisplayLocked()))
       return
     }
     // Within the throttle window: arm a delayed flush that rebuilds with the
@@ -1244,7 +1277,7 @@ export class StreamPreview {
         if (this.degraded || this.previewMsgID === undefined) return
         const display = this.buildProgressDisplayLocked()
         this.lastSentText = ''
-        await this.flushLocked(display)
+        await this.flushLocked(this.progressContentLocked(display))
         this.lastProgressFlush = Date.now()
       })
     }
@@ -1260,10 +1293,11 @@ export class StreamPreview {
       if (this.degraded || this.previewMsgID === undefined) return
       this.fullText = finalText
       const display = this.buildProgressDisplayLocked()
+      const content = this.progressContentLocked(display)
       const updater = asMessageUpdater(this.platform)
       if (updater === undefined) return
       try {
-        await updater.updateMessage(this.previewMsgID, display)
+        await updater.updateMessage(this.previewMsgID, content)
       } catch (error) {
         console.debug(`streaming update skipped: ${String(error)}`)
       }
@@ -1431,6 +1465,7 @@ export class StreamPreview {
       if (updater === undefined) return
       const answerText = this.analysisText
       const truncated = this.analysisTruncated
+      const content = this.progressContentLocked(display)
       if (this.async !== undefined) {
         const handle = this.previewMsgID
         this.lastSentText = display
@@ -1438,7 +1473,7 @@ export class StreamPreview {
         this.degraded = false
         this.async.enqueue(async () => {
           try {
-            await updater.updateMessage(handle, display)
+            await updater.updateMessage(handle, content)
           } catch (error) {
             console.warn(`stream preview: async markCompleted PATCH failed, sending fallback: ${String(error)}`)
             await this.fallbackSend(handle, answerText)
@@ -1449,7 +1484,7 @@ export class StreamPreview {
         return
       }
       try {
-        await updater.updateMessage(this.previewMsgID, display)
+        await updater.updateMessage(this.previewMsgID, content)
       } catch (error) {
         console.warn(`stream preview: markCompleted PATCH failed, sending fallback: ${String(error)}`)
         await this.fallbackSend(this.previewMsgID, answerText)
@@ -1476,6 +1511,7 @@ export class StreamPreview {
     this.failed = true
     this.finalizePendingEntriesLocked(false)
     const display = this.buildProgressDisplayLocked()
+    const content = this.progressContentLocked(display)
     const updater = asMessageUpdater(this.platform)
     if (updater === undefined) return
     const answerText = this.analysisText
@@ -1486,7 +1522,7 @@ export class StreamPreview {
       this.degraded = false
       this.async.enqueue(async () => {
         try {
-          await updater.updateMessage(handle, display)
+          await updater.updateMessage(handle, content)
         } catch (error) {
           console.warn(`stream preview: async markFailed PATCH failed, sending fallback: ${String(error)}`)
           await this.fallbackSend(handle, answerText)
@@ -1495,7 +1531,7 @@ export class StreamPreview {
       return
     }
     try {
-      await updater.updateMessage(this.previewMsgID, display)
+      await updater.updateMessage(this.previewMsgID, content)
     } catch (error) {
       console.warn(`stream preview: markFailed PATCH failed, sending fallback: ${String(error)}`)
       await this.fallbackSend(this.previewMsgID, answerText)
@@ -1582,28 +1618,14 @@ export class StreamPreview {
   /**
    * Build the combined display text for the preview card: lead-in text,
    * todo/status block, tool progress entries, 实时播报 section, and the
-   * background hint, with the state/ts/tc header protocol. Must hold the lock.
+   * background hint. The card-header state travels beside the text as the
+   * structured {@link ProgressStatus} (progressStatusLocked). Must hold the lock.
    *
    * @internal White-box: ported same-package tests call this directly. Caller must hold the lock.
    * @returns The full markdown body for one preview-card PATCH.
    */
   buildProgressDisplayLocked(): string {
     let b = ''
-
-    // State prefix for the platform layer to set card header color/title.
-    if (this.completed) {
-      b += '__cc_state__:completed\n'
-      b += `__cc_ts__:${hms()}\n`
-    } else if (this.failed) {
-      b += '__cc_state__:failed\n'
-      b += `__cc_ts__:${hms()}\n`
-    } else if (this.thinkingText !== '') {
-      b += '__cc_state__:thinking\n'
-      b += `__cc_ts__:${hms()}\n`
-    } else {
-      b += `__cc_ts__:${hms()}\n`
-    }
-    if (this.toolCallSeq > 0) b += `__cc_tc__:${this.toolCallSeq}\n`
 
     // Section 0: 回复正文 — assistant text accumulated before progressMode.
     if (this.fullText !== '') {

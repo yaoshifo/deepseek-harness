@@ -83,8 +83,9 @@ export function registerCronTool(ctx: Context, route: CronAgentRouter): () => vo
       },
       mode: {
         type: 'string',
-        description: 'add only: permission mode override for the run (default, bypassPermissions, acceptEdits, '
-          + 'plan, auto, dontAsk).',
+        description: 'add only: permission mode for the run (default, bypassPermissions, acceptEdits, '
+          + 'plan, auto, dontAsk); unset runs in default — an unattended run never inherits a '
+          + 'plan-mode project setting.',
       },
       workDir: {
         type: 'string',

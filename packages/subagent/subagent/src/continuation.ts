@@ -22,6 +22,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { isAbsolute } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {
   Agent,
@@ -49,7 +50,13 @@ import {
 import type { DelegatedPolicyOverrides } from './child-agent.ts'
 import { assertSubagentMaxDepth } from './depth.ts'
 import { seedDescriptorTurn } from './descriptor-seed.ts'
-import type { ContinuableCreateRequest, ContinuableCreateSpec, SubagentResult, SubagentStartRequest } from './types.ts'
+import type {
+  ContinuableCreateRequest,
+  ContinuableCreateSpec,
+  SubagentCapabilityOptions,
+  SubagentResult,
+  SubagentStartRequest,
+} from './types.ts'
 import type { ActivationObserver, ActivationTerminal } from './lifecycle.ts'
 import { SubagentError } from './error.ts'
 import type SubagentActivationSetupRegistry from './activation-setup-registry.ts'
@@ -99,6 +106,16 @@ declare module '@deepseek-ai/dsh-llm' {
 
 /** Deployment scheduling policy for accepted child reports. */
 export type SubagentReportDelivery = 'quiet' | 'next-step'
+
+/**
+ * Who delivers a continuable child's settlement notice to its durable parent.
+ * `'inbox'` (default) keeps the manager's own wake/inject delivery; `'external'`
+ * suppresses it entirely, leaving settlement observable only through the
+ * `subagent/end` event and the child's own Session — for deployments whose
+ * engine owns parent turn scheduling and would otherwise spend a model request
+ * on a wake it drives itself.
+ */
+export type SubagentSettlementDelivery = 'inbox' | 'external'
 
 /** Options for one continuable child's report to its direct parent. */
 export interface SubagentReportOptions {
@@ -171,6 +188,13 @@ type ActivationState = 'running' | 'waiting' | 'settled'
  * consumer outside this package supplies a host.
  */
 interface ContinuationHost {
+  /**
+   * Reject a continuable start request whose requested capabilities the named
+   * provider lacks, before the manager reserves any child identity.
+   * @param name - the configured provider name.
+   * @param request - the capability-bearing option subset of the delegation request.
+   */
+  assertStartCapabilities(name: string, request: SubagentCapabilityOptions): void
   /**
    * Resolve one provider's continuable-creation contribution, or reject when
    * the provider is unknown or lacks the capability.
@@ -373,6 +397,7 @@ export class SubagentContinuationManager {
     private readonly ctx: Context,
     private readonly host: ContinuationHost,
     private readonly setupRegistry: SubagentActivationSetupRegistry,
+    private readonly settlementDelivery: SubagentSettlementDelivery = 'inbox',
   ) {
     // Ordinary Cordis owner effects unwind in reverse registration order, which
     // cannot express the dynamic child graph. Register the private scope's
@@ -412,6 +437,13 @@ export class SubagentContinuationManager {
     this.assertAdmitting(parent)
     const persistence = this.requirePersistence()
     assertSubagentMaxDepth(request.maxDepth)
+    this.host.assertStartCapabilities(spec.provider, request)
+    if (request.cwd !== undefined && !isAbsolute(request.cwd)) {
+      throw new SubagentError(
+        `subagent cwd override must be an absolute path, got "${request.cwd}"`,
+        'INVALID_ARGUMENT',
+      )
+    }
     const childId = spec.childId ?? SessionId(randomUUID())
     this.assertChildIdAvailable(childId)
     const childDepth = resolveChildDepth(parent, request.maxDepth)
@@ -459,7 +491,7 @@ export class SubagentContinuationManager {
         childId,
         provider: spec.provider,
         parent,
-        create: { seed, meta: childSessionMeta(parent, childDepth, lineageSeedLength), delegatedPolicies },
+        create: { seed, meta: childSessionMeta(parent, childDepth, lineageSeedLength, request.cwd), delegatedPolicies },
         agentOptions: resolveChildAgentOptions(parent, request.agentOptions, childDepth),
         composition: { persona: request.persona, toolFilter: request.toolFilter },
         signal: spec.signal,
@@ -1460,6 +1492,12 @@ export class SubagentContinuationManager {
    * @param terminal - how this epoch ended, as the terminal edge will report it.
    */
   private notifySettlement(activation: Activation, terminal: ActivationTerminal): void {
+    // External delivery owns settlement: the deployment listens for `subagent/end`
+    // and drives the parent's next turn itself, so the runtime's wake or inject
+    // would only spend a model request the deployment never asked for. The
+    // child's own Session and the `subagent/end` event remain the full durable
+    // record, so nothing model-visible is lost.
+    if (this.settlementDelivery === 'external') return
     if (!activation.announced) return
     try {
       const parent = this.ctx.agents.get(activation.parentSession)

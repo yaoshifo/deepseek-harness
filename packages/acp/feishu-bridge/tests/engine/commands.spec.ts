@@ -335,13 +335,12 @@ describe('/switch', () => {
 })
 
 describe('/new', () => {
-  it('clears the agent session ID and history, then creates a session', async () => {
+  it('clears the agent session ID, then creates a session', async () => {
     const { e, p, dispose } = newEngine()
     try {
       const key = 'test:user1'
       const s = e.sessions.getOrCreateActive(key)
       s.setAgentSessionID('existing', 'stub')
-      s.addHistory('user', 'hello')
       const state = new InteractiveState()
       state.agentSession = newControllableSession('old')
       e.interactiveStates.set(key, state)
@@ -349,7 +348,6 @@ describe('/new', () => {
       await cmdNew(e, p, msg({ sessionKey: key }), [])
 
       expect(s.getAgentSessionID()).toBe('')
-      expect(s.getHistory(0)).toHaveLength(0)
       expect(e.interactiveStates.has(key)).toBe(false)
       expect(p.sent).toHaveLength(1)
     } finally {
@@ -520,13 +518,11 @@ describe('/dir', () => {
       const m = msg()
       const s = e.sessions.getOrCreateActive(m.sessionKey)
       s.setAgentSessionID('existing-session', 'test')
-      s.addHistory('user', 'hello')
 
       await cmdDir(e, p, m, [nextDir])
 
       expect(store.workspaceDirOverride(stripUserID(m.sessionKey))).toBe(nextDir)
       expect(s.getAgentSessionID()).toBe('')
-      expect(s.getHistory(0)).toHaveLength(0)
       expect(p.sent[0]).toContain(nextDir)
     } finally {
       dispose()
@@ -631,7 +627,6 @@ describe('/dir', () => {
       const s = e.sessions.getOrCreateActive(m.sessionKey)
       s.setAgentSessionID('existing-session', 'test')
       s.setName('old')
-      s.addHistory('user', 'hello')
 
       await cmdDir(e, p, m, ['reset'])
 
@@ -641,7 +636,6 @@ describe('/dir', () => {
       expect(reloaded.workspaceDirOverride(stripUserID(m.sessionKey))).toBe('')
       expect(s.getAgentSessionID()).toBe('')
       expect(s.getName()).toBe('old')
-      expect(s.getHistory(0)).toHaveLength(0)
       expect(p.sent[0]?.toLowerCase()).toContain('default')
     } finally {
       dispose()

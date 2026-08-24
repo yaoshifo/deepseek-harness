@@ -252,14 +252,60 @@ export function sanitizeFeishuMarkdownHTML(md: string): string {
 }
 
 /**
+ * Pad bold delimiters glued to adjacent text with a space on the glued side.
+ * Feishu card markdown renders **bold** / __bold__ only when the delimiters
+ * keep whitespace on both sides; a delimiter glued to the neighboring
+ * character (e.g. `**……上。**mico`) leaves the whole pair as raw text.
+ * Code fences, inline code spans, and runs of 3+ delimiters are untouched.
+ * @param md - Card markdown to pad.
+ * @returns The markdown with glued bold delimiters space-separated.
+ */
+export function padBoldDelimiters(md: string): string {
+  const boldPairRe = /(?<!\*)\*\*([^*\n]+)\*\*(?!\*)|(?<!_)__([^_\n]+)__(?!_)/g
+  const padLine = (line: string): string => {
+    // Mask inline code spans so their content is never padded.
+    const masks: string[] = []
+    const masked = line.replaceAll(/`[^`]*`/g, (m) => {
+      masks.push(m)
+      return `\u0000${masks.length - 1}\u0000`
+    })
+    let out = ''
+    let last = 0
+    for (const m of masked.matchAll(boldPairRe)) {
+      const s = m.index ?? 0
+      const e = s + m[0].length
+      out += masked.slice(last, s)
+      let seg = m[0]
+      const prev = s > 0 ? masked.charAt(s - 1) : ''
+      if (prev !== '' && !/\s/.test(prev)) seg = ` ${seg}`
+      const next = e < masked.length ? masked.charAt(e) : ''
+      if (next !== '' && !/\s/.test(next)) seg = `${seg} `
+      out += seg
+      last = e
+    }
+    out += masked.slice(last)
+    return out.replaceAll(/\u0000(\d+)\u0000/g, (_, i) => masks[Number(i)] ?? '')
+  }
+  const lines = md.split('\n')
+  let inCodeBlock = false
+  return lines
+    .map((line) => {
+      if (line.trim().startsWith('```')) inCodeBlock = !inCodeBlock
+      return inCodeBlock ? line : padLine(line)
+    })
+    .join('\n')
+}
+
+/**
  * The full cleaning pipeline expected by a schema 2.0 {tag:"markdown"}
- * element: HTML strip → URL sanitize → line-break normalization (preprocess
- * last). Use everywhere card markdown content is assembled.
+ * element: bold padding → HTML strip → URL sanitize → line-break
+ * normalization (preprocess last). Use everywhere card markdown content is
+ * assembled.
  * @param md - Raw card markdown.
  * @returns The markdown ready for a schema 2.0 markdown element.
  */
 export function finalizeFeishuCardMarkdown(md: string): string {
-  return preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(md)))
+  return preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(padBoldDelimiters(md))))
 }
 
 /**

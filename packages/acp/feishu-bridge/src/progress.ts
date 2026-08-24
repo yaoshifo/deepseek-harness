@@ -88,7 +88,14 @@ export interface ProgressCardPayload {
   lastTS?: string
 }
 
-/** Marks a structured payload for card-style progress. */
+/**
+ * Prefix marking a structured payload serialized into text content at the
+ * Platform seam (the `__cc_connect_progress_card_v1__:` JSON-in-string codec).
+ * Payload-style writers now pass {@link ProgressCardPayload} objects through
+ * the seam, so this codec only remains as the text-path decoder for prefixed
+ * strings; it is not the Feishu wire format (cards travel as rendered card
+ * JSON).
+ */
 export const ProgressCardPayloadPrefix = '__cc_connect_progress_card_v1__:'
 
 /** Legacy progress style: per-event chat messages. */
@@ -123,25 +130,7 @@ export function parseProgressStyle(platformName: string, raw: string): string {
 }
 
 /**
- * Encode legacy text-only progress entries into a transport string.
- *
- * @param entries - Legacy text-only progress entries.
- * @param truncated - Whether older entries were dropped.
- * @returns Transport string with the payload prefix, or empty string when no entries survive.
- */
-export function buildProgressCardPayload(entries: string[], truncated: boolean): string {
-  const cleaned: string[] = []
-  for (const entry of entries) {
-    const trimmed = entry.trim()
-    if (trimmed !== '') cleaned.push(trimmed)
-  }
-  if (cleaned.length === 0) return ''
-  const payload: ProgressCardPayload = { entries: cleaned, truncated }
-  return ProgressCardPayloadPrefix + JSON.stringify(payload)
-}
-
-/**
- * Trim one entry into its transport form. An empty kind (only possible from
+ * Trim one entry into its normalized form. An empty kind (only possible from
  * parsed JSON, where it is the Go zero value) normalizes to "info"; optional
  * fields drop when absent.
  */
@@ -160,7 +149,8 @@ function cleanEntry(item: ProgressCardEntry, text: string): ProgressCardEntry {
 }
 
 /**
- * Encode ordered typed progress events (V2) into a transport string.
+ * Build the normalized structured progress payload (V2) from ordered typed
+ * events.
  *
  * @param items - Ordered typed progress events.
  * @param truncated - Whether older events were dropped.
@@ -169,9 +159,9 @@ function cleanEntry(item: ProgressCardEntry, text: string): ProgressCardEntry {
  * @param state - Card lifecycle state; empty string normalizes to running.
  * @param extraTodos - Todo items for the dedicated task list section.
  * @param lastTS - Latest tool-call timestamp for the card title.
- * @returns Transport string with the payload prefix, or empty string when no items survive.
+ * @returns The normalized payload, or undefined when no items survive.
  */
-export function buildProgressCardPayloadV2(
+export function buildProgressCardPayload(
   items: ProgressCardEntry[],
   truncated: boolean,
   agent: string,
@@ -179,14 +169,14 @@ export function buildProgressCardPayloadV2(
   state: ProgressCardState | '',
   extraTodos: TodoItem[],
   lastTS: string,
-): string {
+): ProgressCardPayload | undefined {
   const cleaned: ProgressCardEntry[] = []
   for (const item of items) {
     const text = item.text.trim()
     if (text === '') continue
     cleaned.push(cleanEntry(item, text))
   }
-  if (cleaned.length === 0) return ''
+  if (cleaned.length === 0) return undefined
   const payload: ProgressCardPayload = {
     version: 2,
     agent: agent.trim(),
@@ -197,7 +187,7 @@ export function buildProgressCardPayloadV2(
     lastTS,
   }
   if (extraTodos.length > 0) payload.todos = extraTodos
-  return ProgressCardPayloadPrefix + JSON.stringify(payload)
+  return payload
 }
 
 /**

@@ -21,6 +21,12 @@ import { parseWorktreeMode } from '../engine/worktree.js'
 export interface SubtaskRoute {
   readonly engine: Engine
   readonly sessionKey: string
+  /**
+   * Native continuable child id (de-baggage B4): present when the caller is
+   * itself a native subtask child rather than an engine-owned session; the
+   * sessionKey then carries the same native id.
+   */
+  readonly nativeChildId?: string
 }
 
 /**
@@ -36,9 +42,9 @@ interface AgentLike {
 }
 
 const DESCRIPTION =
-  'Delegate parallel work to isolated subtask groups and collect their results. '
-  + 'Each spawned subtask is an independent chat session the user can see and join, '
-  + 'optionally in its own working directory and git worktree, running in parallel with you. '
+  'Delegate parallel work to isolated subtasks and collect their results. '
+  + 'Each spawned subtask is an independent agent session running in parallel with you, '
+  + 'optionally in its own working directory and git worktree. '
   + 'Work in a different directory is delegated through this tool only: the child runs there '
   + 'and loads that directory\'s instruction files. '
   + 'spawn: dispatch one self-contained task brief (the child runs in parallel and wakes you '
@@ -47,18 +53,25 @@ const DESCRIPTION =
   + 'the child (unsupported across a different dir). report: push THIS subtask\'s result back '
   + 'to the parent conversation that dispatched you — call exactly once when your work is '
   + 'complete; omit message to use your last reply. send: ask one of your running subtasks a '
-  + 'follow-up question (non-blocking; its answer wakes you). gather: after spawning all the '
-  + 'children you want to batch, arm a barrier so you are woken EXACTLY ONCE with a combined '
-  + 'summary instead of once per child (a timeout wakes you with partial results).'
+  + 'follow-up question (non-blocking; it is queued until the child\'s current turn finishes, '
+  + 'and its answer wakes you). gather: after spawning all the children you want to batch, arm '
+  + 'a barrier so you are woken EXACTLY ONCE with a combined summary instead of once per child '
+  + '(a timeout wakes you with partial results). interrupt: stop one of your running '
+  + 'subtasks\' current turn (the child session survives and can be asked again later).'
 
 /**
  * Register the `feishu_bridge_subtask` tool on `ctx.tools`.
  *
  * @param ctx - registrant context carrying the tool registry.
  * @param route - resolves the calling agent to its engine + session key.
+ * @param nativeRoute - resolves a native continuable-child caller to its owning engine.
  * @returns the exact disposer that unregisters the tool.
  */
-export function registerSubtaskTool(ctx: Context, route: SubtaskAgentRouter): () => void {
+export function registerSubtaskTool(
+  ctx: Context,
+  route: SubtaskAgentRouter,
+  nativeRoute?: SubtaskAgentRouter,
+): () => void {
   return ctx.tools.register(defineTool({
     name: 'feishu_bridge_subtask',
     description: DESCRIPTION,
@@ -66,9 +79,10 @@ export function registerSubtaskTool(ctx: Context, route: SubtaskAgentRouter): ()
       action: {
         type: 'string',
         required: true,
-        enum: ['spawn', 'report', 'send', 'gather'],
-        description: 'spawn = dispatch a new subtask group; report = deliver this subtask\'s result to its parent; '
-          + 'send = follow up on a running subtask; gather = wake me once after all in-flight subtasks report.',
+        enum: ['spawn', 'report', 'send', 'gather', 'interrupt'],
+        description: 'spawn = dispatch a new subtask; report = deliver this subtask\'s result to its parent; '
+          + 'send = follow up on a running subtask; gather = wake me once after all in-flight subtasks report; '
+          + 'interrupt = stop one subtask\'s current turn.',
       },
       message: {
         type: 'string',
@@ -94,7 +108,7 @@ export function registerSubtaskTool(ctx: Context, route: SubtaskAgentRouter): ()
       },
       child: {
         type: 'string',
-        description: 'send only: the target subtask\'s session key, from the spawn result.',
+        description: 'send/interrupt: the target subtask\'s session key, from the spawn result.',
       },
     },
     output: {
@@ -109,7 +123,7 @@ export function registerSubtaskTool(ctx: Context, route: SubtaskAgentRouter): ()
       render: (_args, value) => [{ type: 'text', text: value.message }],
     },
     async execute(args, exec) {
-      const target = route(exec.agent)
+      const target = route(exec.agent) ?? nativeRoute?.(exec.agent)
       if (target === undefined) {
         throw new Error('feishu_bridge_subtask: the calling session is not owned by a feishu-bridge project')
       }
@@ -118,23 +132,25 @@ export function registerSubtaskTool(ctx: Context, route: SubtaskAgentRouter): ()
         case 'spawn': {
           const brief = (args.message ?? '').trim()
           if (brief === '') throw new Error('feishu_bridge_subtask: spawn requires a task brief (message)')
-          const { childName, childKey } = await engine.spawnSubtask(
+          const { childName, childKey } = await engine.spawnSubtaskNative(
             sessionKey,
             args.dir ?? '',
             parseWorktreeMode(args.worktree ?? 'auto'),
             args.fork === true,
             brief,
-            [],
-            false,
           )
           return {
             status: 'ok' as const,
-            message: `Spawned subtask group "${childName}" (session ${childKey}). `
+            message: `Spawned subtask "${childName}" (session ${childKey}). `
               + 'It runs in parallel; you will be woken with its result when it reports back.',
           }
         }
         case 'report': {
-          engine.reportSubtask(sessionKey, (args.message ?? '').trim())
+          if (target.nativeChildId !== undefined) {
+            await engine.reportNativeChild(target.nativeChildId, (args.message ?? '').trim())
+          } else {
+            await engine.reportSubtask(sessionKey, (args.message ?? '').trim())
+          }
           return { status: 'ok' as const, message: 'Reported result back to the parent conversation.' }
         }
         case 'send': {
@@ -145,15 +161,33 @@ export function registerSubtaskTool(ctx: Context, route: SubtaskAgentRouter): ()
           await engine.sendToSubtask(sessionKey, child, question)
           return {
             status: 'ok' as const,
-            message: `Follow-up sent to subtask ${child}; its answer will wake you when ready.`,
+            message: `Follow-up sent to subtask ${child}; it is queued until the child's current turn finishes, `
+              + 'and its answer will wake you when ready.',
           }
         }
         case 'gather': {
+          if (target.nativeChildId !== undefined) {
+            return {
+              status: 'ok' as const,
+              message: 'No barrier armed: you are yourself a native subtask, so each child report wakes you '
+                + 'individually (native inbox semantics). Spawn-level batching applies to top-level conversations.',
+            }
+          }
           engine.gatherSubtasks(sessionKey)
           return {
             status: 'ok' as const,
             message: 'Gather armed: waiting for all in-flight subtasks to report, '
               + 'then you will be woken once with a summary.',
+          }
+        }
+        case 'interrupt': {
+          const child = (args.child ?? '').trim()
+          if (child === '') throw new Error('feishu_bridge_subtask: interrupt requires the target subtask\'s session key (child)')
+          engine.interruptNativeChild(child)
+          return {
+            status: 'ok' as const,
+            message: `Interrupt requested for subtask ${child}; its current turn stops but the session survives — `
+              + 'a later send reaches it again.',
           }
         }
         default:

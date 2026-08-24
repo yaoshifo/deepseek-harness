@@ -27,11 +27,13 @@ import type {
   Event,
   FeishuWorkspaceInfo,
   FileAttachment,
+  HistoryEntry,
   ImageAttachment,
   InlineButtonSender,
   Message,
   PendingAsk,
   Platform,
+  SessionStartOptions,
   UserQuestion,
 } from '../core/types.js'
 import {
@@ -40,6 +42,7 @@ import {
   asCardRefresher,
   asCardSenderWithUpdate,
   asChatJumpURLer,
+  asContinuableDelegator,
   asCronReplyTargetResolver,
   asForkQuerierWithProvider,
   asForkSessionPreparer,
@@ -51,8 +54,8 @@ import {
   asMessageReactionAdder,
   asProviderSwitcher,
   asReactionAdder,
+  asRecentTurnsReader,
   asReplyContextReconstructor,
-  asSessionEnvInjector,
   asSessionModeInjector,
   asSpawnedChatActiveChecker,
   asSpawnedChatLister,
@@ -65,6 +68,7 @@ import {
   ForkSessionPrefix,
   type GroupSpawnOptions,
 } from '../core/types.js'
+import type { NativeChildRecord } from './project-state.js'
 import { shouldSurfaceUnsolicitedPermission as shouldSurfaceHelper } from './permission.js'
 import {
   askAnswerDisplay,
@@ -105,6 +109,7 @@ import {
   removeWorktree,
   slugify,
   WorktreeMode,
+  worktreeDirty,
   worktreeRepoRoot,
   type WorktreeCreateInfo,
 } from './worktree.js'
@@ -134,7 +139,9 @@ import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
 import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
-import { commandContext, dirApply } from './commands.js'
+import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.js'
+import { renderHelpGroupCard } from './misc-commands.js'
+import { executeDeleteModeAction, renderDeleteModeCard, renderListCardSafe, renderStatusCard } from './session-card.js'
 import { runBangShell } from './shell-commands.js'
 import { renderDirCardSafe } from './dir-card.js'
 import { executeCardAction } from './cron-commands.js'
@@ -253,6 +260,26 @@ export interface QueuedMessage {
 }
 
 /**
+ * Stop handle for the unsolicited reader parked on an interactive state: the
+ * reader checks `stopped` between wake-ups and `cancelRecv` removes its parked
+ * channel receive so a disarmed reader never steals the next event from the
+ * turn taking the channel over.
+ */
+interface UnsolicitedReaderHandle {
+  stopped: boolean
+  cancelRecv(): void
+}
+
+/**
+ * Read a reader handle's stopped flag through a call: `stopUnsolicitedReader`
+ * flips it from outside this module's control flow (across awaits), which
+ * control-flow narrowing of the property access cannot see.
+ */
+function readerStopped(handle: UnsolicitedReaderHandle): boolean {
+  return handle.stopped
+}
+
+/**
  * A running interactive agent session and its turn state (Go interactiveState,
  * M1 subset). `closing` resolves when cleanup has fully torn the agent down so
  * a new turn for the same key waits instead of concurrently resuming the same
@@ -267,8 +294,8 @@ export class InteractiveState {
   replyCtx: unknown
   /** The agent this state's session was started against. */
   agent: Agent | undefined
-  /** Env entries injected at agent-session start (Go state.env). */
-  sessionEnv: string[] = []
+  /** Session-start options the agent session was started with; undefined on placeholder states (Go state.env). */
+  sessionStartOptions: SessionStartOptions | undefined
   /** Resolves once a concurrent cleanup finished closing the agent session. */
   closing: Promise<void> | undefined
   /** Whether markStopped fired (engine stop or session teardown). */
@@ -295,8 +322,6 @@ export class InteractiveState {
   lastActivity = Date.now()
   /** Turns currently in flight on this state. */
   activeTurns = 0
-  /** Whether the orphan-watch receive is armed on the event channel. */
-  orphanWatchArmed = false
   /** Timestamp of the last agent event, for stall confirmation. */
   lastEventAt = 0
   /** Tool calls in flight; a positive count pauses the idle timer. */
@@ -339,6 +364,16 @@ export class InteractiveState {
   preview: StreamPreview | undefined
   /** The turn's compact progress writer; an ask resolution swaps it with the preview. */
   progressWriter: CompactProgressWriter | undefined
+  /** The delete-mode picker state machine (session-card.ts); undefined when idle. */
+  deleteMode: import('./session-card.js').DeleteModeState | undefined
+  /** run_in_background tool calls whose completion turn has not arrived yet. */
+  backgroundTasksPending = 0
+  /** When the unsolicited reader began waiting past idle for pending background tasks. */
+  bgWaitStartedAt = 0
+  /** When the last foreground (user-driven) turn completed; anchors spillover. */
+  lastForegroundCompletionAt = 0
+  /** The unsolicited reader parked on this state; undefined when disarmed. */
+  unsolicitedReader: UnsolicitedReaderHandle | undefined
 
   // ── turn surfaces shared with the ask delegate (B2) ──
   // The event loop owns these per turn, but an askUser running from the
@@ -569,6 +604,30 @@ function isEllipsisOnly(text: string): boolean {
 }
 
 /**
+ * Whether an event represents real turn content the unsolicited reader should
+ * open a turn on, versus stream noise it must drop (Go
+ * isSubstantiveUnsolicitedEvent): a bare empty or silent-marker text frame
+ * (typical stray blip) and preview-only deltas never open one.
+ * @param event - The candidate event.
+ * @returns True for real content: non-silent text, tool calls, results, and errors.
+ */
+function isSubstantiveUnsolicitedEvent(event: Event): boolean {
+  switch (event.type) {
+    case 'text':
+      return event.content !== '' && !isSilentReply(event.content)
+    case 'tool_use':
+    case 'tool_result':
+    case 'result':
+    case 'error':
+      return true
+    default:
+      // Deltas, thinking blocks, compaction, and todo snapshots are handled
+      // by the turn pumps only (Go handles EventCompaction foreground-only).
+      return false
+  }
+}
+
+/**
  * Channel ID from "platform:chatID[:userID]" (Go extractChannelID).
  * @param sessionKey - Session key to split.
  * @returns The chat ID segment, or '' when the key has no second segment.
@@ -577,6 +636,16 @@ export function extractChannelID(sessionKey: string): string {
   const parts = sessionKey.split(':')
   if (parts.length >= 2) return parts[1] ?? ''
   return ''
+}
+
+/**
+ * Parse a 1-based card page argument ('' and invalid values fall back to 1).
+ * @param args - Raw card-action argument text.
+ * @returns The positive integer it names, or 1.
+ */
+function parsePositiveInt(args: string): number {
+  const n = Number.parseInt(args, 10)
+  return Number.isInteger(n) && n > 0 ? n : 1
 }
 
 /**
@@ -767,7 +836,7 @@ type ReconstructingPlatform = Platform & {
  * project (Go Engine, M1 subset).
  */
 export class Engine {
-  /** Project name this engine serves (also the CC_PROJECT env value). */
+  /** Project name this engine serves. */
   readonly name: string
   /** The agent every interactive session starts from. */
   readonly agent: Agent
@@ -942,8 +1011,14 @@ export class Engine {
   baseWorkDir = ''
   /** Comma-separated admin user IDs ('*' = all allowed users; '' = deny). */
   adminFrom = ''
-  /** /list etc. only show cc-connect-tracked sessions when true. */
-  filterExternalSessions = false
+  /** Quiet period after which the unsolicited reader disarms (0 = never). */
+  unsolicitedIdleTimeout = 60_000
+  /** How long a quiet in-flight tool keeps the unsolicited reader alive (0 = unbounded). */
+  unsolicitedToolInFlightTimeout = 30 * 60_000
+  /** How long pending background tasks keep the unsolicited reader alive (0 = no grace). */
+  unsolicitedBackgroundGrace = 30 * 60_000
+  /** Events this soon after a foreground completion relay as plain text (0 = disabled). */
+  unsolicitedSpilloverGrace = 0
   /** Per-session inbound rate limiter; undefined = unlimited (Go e.rateLimiter). */
   private rateLimiter: RateLimiter | undefined
   /** Quick provider commands (/strong → provider name; Go providerShortcuts). */
@@ -1213,27 +1288,12 @@ export class Engine {
 
   /**
    * Record the bot's default Feishu workspace location (Go SetFeishuWorkspace,
-   * #18). Non-empty fields surface as CC_FEISHU_* entries when a session
-   * starts; nil or all-empty disables the feature.
+   * #18). Non-empty fields surface as the workspace routing section when a
+   * session starts; nil or all-empty disables the feature.
    * @param info - Workspace fields; undefined or all-empty disables the feature.
    */
   setFeishuWorkspace(info: FeishuWorkspaceInfo | undefined): void {
     this.feishuWorkspace = feishuWorkspaceIsEmpty(info) ? undefined : info
-  }
-
-  /**
-   * The CC_FEISHU_* env entries for the configured workspace (Go feishuWorkspaceEnv).
-   * @returns KEY=VALUE env entries; empty when no workspace is configured.
-   */
-  feishuWorkspaceEnv(): string[] {
-    const w = this.feishuWorkspace
-    if (w === undefined) return []
-    const env: string[] = []
-    if (w.wikiSpaceId !== '') env.push(`CC_FEISHU_WIKI_SPACE_ID=${w.wikiSpaceId}`)
-    if (w.folderToken !== '') env.push(`CC_FEISHU_FOLDER_TOKEN=${w.folderToken}`)
-    if (w.wikiNodeToken !== '') env.push(`CC_FEISHU_WIKI_NODE_TOKEN=${w.wikiNodeToken}`)
-    if (w.description !== '') env.push(`CC_FEISHU_WORKSPACE_DESC=${w.description}`)
-    return env
   }
 
   /**
@@ -1284,7 +1344,7 @@ export class Engine {
     const startErrs: unknown[] = []
     for (const p of this.platforms) {
       try {
-        await p.start((platform, msg) => { this.handleMessage(platform, msg) })
+        await p.start((platform, msg) => { void this.handleMessage(platform, msg) })
       } catch (error) {
         console.warn(`platform start failed: ${p.name()}: ${String(error)}`)
         startErrs.push(error)
@@ -1417,7 +1477,7 @@ export class Engine {
    * @param msg - The inbound message.
    */
   receiveMessage(p: Platform, msg: Message): void {
-    this.handleMessage(p, msg)
+    void this.handleMessage(p, msg)
   }
 
   // ── outbound wrappers ───────────────────────────────────────────────────
@@ -1455,7 +1515,7 @@ export class Engine {
    * @param p - Platform the message arrived on.
    * @param msg - The inbound message.
    */
-  handleMessage(p: Platform, msg: Message): void {
+  async handleMessage(p: Platform, msg: Message): Promise<void> {
     const content = msg.content.trim()
     if (content === '' && msg.images.length === 0 && msg.files.length === 0) return
 
@@ -1562,8 +1622,8 @@ export class Engine {
 
     // reset_on_idle: rotate a stale chat to a fresh session before the turn
     // runs (Go maybeAutoResetSessionOnIdle). The old session keeps its
-    // history and agent id for /switch back.
-    const activeSession = maybeAutoResetSessionOnIdle(this, p, msg, session) ?? session
+    // agent id for /switch back.
+    const activeSession = (await maybeAutoResetSessionOnIdle(this, p, msg, session)) ?? session
 
     // A real human message resuming a subtask group starts a new work cycle:
     // re-arm the one-shot report flag so the agent's report (and the
@@ -1808,11 +1868,87 @@ export class Engine {
   }
 
   /**
-   * /list etc. only show engine-tracked sessions when true (Go SetFilterExternalSessions).
-   * @param v - Whether externally-created sessions are hidden from listings.
+   * Agent session id a session-scoped recent-turn read should use: the live
+   * agent's id when one is up (the bridge mapping can lag mid-turn), else the
+   * bridge session's persisted mapping.
+   *
+   * @param sessionKey - Interactive-state slot key of the chat.
+   * @param session - The bridge session the read belongs to.
+   * @returns the live agent session id, the session's mapping, or ''.
    */
-  setFilterExternalSessions(v: boolean): void {
-    this.filterExternalSessions = v
+  activeAgentSessionID(sessionKey: string, session: Session): string {
+    const live = this.interactiveStates.get(sessionKey)?.agentSession
+    if (live !== undefined && live.alive()) {
+      const id = live.currentSessionID()
+      if (id !== '') return id
+    }
+    return session.getAgentSessionID()
+  }
+
+  /**
+   * Recent conversation window of a native session, projected by the agent
+   * from the native session log (RecentTurnsReader). Backends without the
+   * capability return [] — window readers are advisory surfaces (estimates,
+   * summaries), never turn-taking logic.
+   *
+   * @param agentSessionID - the native session id to read; '' returns [].
+   * @param limit - trailing-entry bound; <= 0 returns the whole window.
+   * @returns the trailing window entries, oldest first.
+   */
+  async recentTurns(agentSessionID: string, limit = 0): Promise<HistoryEntry[]> {
+    if (agentSessionID === '') return []
+    const reader = asRecentTurnsReader(this.agent)
+    if (reader === undefined) return []
+    return reader.recentTurns(agentSessionID, limit)
+  }
+
+  /**
+   * {@link recentTurns} for a chat's current session, resolving the native id
+   * from the live agent when one is up.
+   *
+   * @param sessionKey - Interactive-state slot key of the chat.
+   * @param session - The bridge session the read belongs to.
+   * @param limit - trailing-entry bound; <= 0 returns the whole window.
+   * @returns the trailing window entries, oldest first.
+   */
+  async recentTurnsOf(sessionKey: string, session: Session, limit = 0): Promise<HistoryEntry[]> {
+    return this.recentTurns(this.activeAgentSessionID(sessionKey, session), limit)
+  }
+
+  /**
+   * Clean SDK final result when available, else the last assistant reply
+   * from the session's recent-turn window (Go Session.lastResultOrReply).
+   *
+   * @param sessionKey - Interactive-state slot key of the chat.
+   * @param session - The bridge session the read belongs to.
+   * @returns lastResult when non-blank, else the last assistant entry's content.
+   */
+  async lastResultOrReply(sessionKey: string, session: Session): Promise<string> {
+    if (session.getLastResult().trim() !== '') return session.getLastResult()
+    const entries = await this.recentTurnsOf(sessionKey, session)
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i]?.role === 'assistant') return entries[i]?.content ?? ''
+    }
+    return ''
+  }
+
+  /**
+   * Configure the unsolicited reader's four budgets (Go
+   * SetUnsolicitedSpilloverGrace / SetUnsolicitedToolInFlightTimeout /
+   * SetUnsolicitedBackgroundGrace; the idle timeout has no Go setter because
+   * Go hardwires its default). Zero disables a budget.
+   * @param cfg - Timeout fields; each 0 falls back to the engine default.
+   */
+  setUnsolicitedConfig(cfg: {
+    idleTimeoutMs?: number | undefined
+    toolInFlightTimeoutMs?: number | undefined
+    backgroundGraceMs?: number | undefined
+    spilloverGraceMs?: number | undefined
+  }): void {
+    if (cfg.idleTimeoutMs !== undefined) this.unsolicitedIdleTimeout = cfg.idleTimeoutMs
+    if (cfg.toolInFlightTimeoutMs !== undefined) this.unsolicitedToolInFlightTimeout = cfg.toolInFlightTimeoutMs
+    if (cfg.backgroundGraceMs !== undefined) this.unsolicitedBackgroundGrace = cfg.backgroundGraceMs
+    if (cfg.spilloverGraceMs !== undefined) this.unsolicitedSpilloverGrace = cfg.spilloverGraceMs
   }
 
   /**
@@ -1987,18 +2123,21 @@ export class Engine {
   async processInteractiveMessageWith(p: Platform, msg: Message, session: Session, interactiveKey = msg.sessionKey): Promise<void> {
     let unlocked = false
     try {
+      // A new user turn takes the event channel back from the unsolicited
+      // reader (Go stopUnsolicitedReader at turn entry): cancel its parked
+      // receive so it cannot steal this turn's first event.
+      this.stopUnsolicitedReader(this.interactiveStates.get(interactiveKey))
       this.i18n.detectAndSet(msg.content)
-      const historyContent = msg.originalContent !== '' ? msg.originalContent : msg.content
-      session.addHistory('user', historyContent)
 
       // Chatroom ask metadata is consumed at turn START: a queued ask behind
       // a busy turn must not stamp until the turn actually begins.
       this.stampChatroomAskOnTurnStart(session, msg.chatroomAskSeq ?? 0, msg.chatroomAwaitAssistant ?? false)
 
-      this.handleSpawnedGroupFirstMessage(p, msg, session)
+      await this.handleSpawnedGroupFirstMessage(p, msg, session)
 
-      // Go separates the interactive-state slot key from the CC_SESSION_KEY
-      // env key: cron new-per-run slots carry a #cron suffix the env must not.
+      // Go separates the interactive-state slot key from the session-key
+      // start option: cron new-per-run slots carry a #cron suffix the option
+      // must not.
       const state = await this.getOrCreateInteractiveStateWith(interactiveKey, p, msg.replyCtx, session, msg.modeOverride ?? '', msg.sessionKey)
       try {
         state.turnSeq++
@@ -2048,7 +2187,7 @@ export class Engine {
       // A message may have queued between the event loop seeing an empty
       // queue and returning (session still locked) — drain the orphans.
       await this.drainPendingMessages(state, session, this.sessions, interactiveKey)
-      this.armOrphanWatch(session, this.sessions, interactiveKey)
+      this.startUnsolicitedReader(session, this.sessions, interactiveKey)
       unlocked = true
     } catch (error) {
       console.error(`engine: turn processing failed (${msg.sessionKey}): ${String(error)}`)
@@ -2057,69 +2196,233 @@ export class Engine {
     }
   }
 
-  // ── orphan turn pump (engine-woken turns) ────────────────────────────────
+  // ── unsolicited reader (engine-woken turns between user turns) ───────────
 
   /**
-   * Arm the orphan watch after every message-path event pump exited: engine
-   * turns woken without a user message (background job completion, background
+   * Start the unsolicited reader after every event pump exited: engine turns
+   * woken without a user message (background job completion, background
    * subagent report) push events onto a channel nobody reads, so their reply,
    * progress card, and permission bridging were silently dropped and the idle
    * reaper later disposed the parked turn (2026-08-23 oc_9956 incident). The
-   * watch parks one receive on the live channel; the first orphan event takes
-   * the session lock and runs a full pump over it.
+   * reader parks on the live channel for as long as it stays quiet (idle
+   * timeout), keeps itself alive while an ask is parked, a tool call is in
+   * flight, or a background task is pending (each bounded by its grace), and
+   * runs a full pump over the first substantive event it consumes. Idempotent
+   * while a reader is already parked.
    * @param session - Session the orphan turn runs on; tryLock arbitrates
    *   against a message-path pump.
    * @param sessions - Session manager for persistence.
    * @param interactiveKey - Interactive-state slot key.
    */
-  armOrphanWatch(session: Session, sessions: SessionManager, interactiveKey: string): void {
+  startUnsolicitedReader(session: Session, sessions: SessionManager, interactiveKey: string): void {
     const state = this.interactiveStates.get(interactiveKey)
-    if (state === undefined || state.orphanWatchArmed) return
+    if (state === undefined) return
+    if (state.unsolicitedReader !== undefined && !state.unsolicitedReader.stopped) return
     if (state.agentSession === undefined || !state.agentSession.alive()) return
     if (state.isStopped() || state.closing !== undefined) return
-    state.orphanWatchArmed = true
-    const channel = state.agentSession.events()
-    void channel.receive().then((r) => {
-      state.orphanWatchArmed = false
-      if (r.done) return
-      if (!session.tryLock()) {
-        // A message-path turn owns the session; its pump reads this event.
-        channel.push(r.event)
-        return
-      }
-      void this.runOrphanTurnPump(r.event, state, session, sessions, interactiveKey)
-    })
+    const handle: UnsolicitedReaderHandle = { stopped: false, cancelRecv: () => {} }
+    state.unsolicitedReader = handle
+    void this.runUnsolicitedReader(handle, state, session, sessions, interactiveKey)
   }
 
   /**
-   * Run one engine-woken turn's event pump under the session lock taken by the
-   * orphan watch. Mirrors processInteractiveMessageWith's tail: release via
-   * drainPendingMessages, then re-arm the watch for a following orphan turn.
-   * @param firstEvent - Event the watch consumed; the pump starts on it.
-   * @param state - Interactive state the turn runs on.
-   * @param session - Locked session the turn runs under.
-   * @param sessions - Session manager for persistence.
-   * @param interactiveKey - Interactive-state slot key.
+   * Disarm a state's unsolicited reader so the next turn takes sole ownership
+   * of the event channel (Go stopUnsolicitedReader): the parked receive is
+   * cancelled so it cannot steal the new turn's first event.
+   * @param state - State whose reader is disarmed; undefined is a no-op.
    */
-  async runOrphanTurnPump(
-    firstEvent: Event,
+  stopUnsolicitedReader(state: InteractiveState | undefined): void {
+    if (state === undefined) return
+    const handle = state.unsolicitedReader
+    if (handle === undefined) return
+    handle.stopped = true
+    handle.cancelRecv()
+    if (state.unsolicitedReader === handle) state.unsolicitedReader = undefined
+  }
+
+  /**
+   * The unsolicited reader loop (Go runUnsolicitedReader, adapted to the
+   * bridge's pump architecture): consumes agent events between user turns,
+   * relays spillover duplicate frames as plain text, and runs full orphan-turn
+   * pumps for genuine engine-woken turns. Exits on idle (after the keep-alive
+   * graces), channel close, state replacement, or disarm.
+   */
+  private async runUnsolicitedReader(
+    handle: UnsolicitedReaderHandle,
     state: InteractiveState,
     session: Session,
     sessions: SessionManager,
     interactiveKey: string,
   ): Promise<void> {
-    console.info(`engine: orphan turn pump started (${interactiveKey})`)
-    state.beginTurn()
     try {
-      await this.processInteractiveEvents(
-        state, session, sessions, interactiveKey, '', undefined, state.replyCtx, firstEvent)
-      await this.drainPendingMessages(state, session, sessions, interactiveKey)
-    } catch (error) {
-      console.error(`engine: orphan turn failed (${interactiveKey}): ${String(error)}`)
-      session.unlock()
+      for (;;) {
+        if (handle.stopped) return
+        if (this.interactiveStates.get(interactiveKey) !== state) return
+        const agentSession = state.agentSession
+        if (agentSession === undefined || !agentSession.alive()) return
+        const channel = agentSession.events()
+        const arm = channel.receiveArmed()
+        handle.cancelRecv = () => { arm.cancel() }
+        const idleSleep = this.unsolicitedIdleTimeout > 0 ? cancellableSleep(this.unsolicitedIdleTimeout) : undefined
+        type Outcome =
+          | { kind: 'closed' }
+          | { kind: 'idle' }
+          | { kind: 'event'; event: Event }
+          | { kind: 'never' }
+        const outcome: Outcome = await Promise.race([
+          arm.promise.then(r => (r.done ? { kind: 'closed' } as const : { kind: 'event' as const, event: r.event })),
+          idleSleep !== undefined ? idleSleep.promise.then(() => ({ kind: 'idle' } as const)) : neverPromise,
+        ])
+        idleSleep?.cancel()
+        if (readerStopped(handle)) {
+          arm.cancel()
+          return
+        }
+
+        if (outcome.kind === 'closed' || outcome.kind === 'never') return
+
+        if (outcome.kind === 'idle') {
+          arm.cancel()
+          // A parked ask is the user thinking, not silence (Go hasPending).
+          if (state.pendingAsk !== undefined) continue
+          // A tool in flight emits no events while running; keep waiting up to
+          // the tool-in-flight budget so its result is not abandoned, unless
+          // the tool is genuinely hung.
+          if (state.activeToolCalls > 0 && this.unsolicitedToolInFlightTimeout > 0
+            && !this.stallConfirmed(state, Date.now(), this.unsolicitedToolInFlightTimeout)) continue
+          // A pending background task completes as a later engine-woken turn;
+          // keep the reader alive up to the background grace so the completion
+          // is consumed, then give up on a task that never completes.
+          if (state.backgroundTasksPending > 0 && this.unsolicitedBackgroundGrace > 0) {
+            if (state.bgWaitStartedAt === 0) state.bgWaitStartedAt = Date.now()
+            if (Date.now() - state.bgWaitStartedAt < this.unsolicitedBackgroundGrace) continue
+            console.info(`engine: unsolicited reader background-task grace exhausted (${interactiveKey}: ${state.backgroundTasksPending} pending)`)
+            state.backgroundTasksPending = 0
+            state.bgWaitStartedAt = 0
+          }
+          // Exit and mark resync: any event buffered after this point is
+          // drained by the next foreground turn instead of leaking into it.
+          state.eventsNeedResync = true
+          return
+        }
+
+        const event = outcome.event
+        state.lastEventAt = Date.now()
+        if (!isSubstantiveUnsolicitedEvent(event)) continue
+
+        // Spillover: duplicate frames right after a foreground turn's ✅
+        // completion are relayed as plain text — never a second streaming and
+        // completion card (Go unsolicitedSpilloverGrace).
+        const fgAt = state.lastForegroundCompletionAt
+        if (this.unsolicitedSpilloverGrace > 0 && fgAt > 0 && Date.now() - fgAt < this.unsolicitedSpilloverGrace) {
+          if (await this.relaySpilloverTurn(handle, state, session, sessions, event)) return
+          continue
+        }
+
+        if (!session.tryLock()) {
+          // A message-path turn owns the session; its pump reads this event.
+          channel.push(event)
+          handle.stopped = true
+          if (state.unsolicitedReader === handle) state.unsolicitedReader = undefined
+          return
+        }
+        console.info(`engine: orphan turn pump started (${interactiveKey})`)
+        state.beginTurn()
+        try {
+          await this.processInteractiveEvents(
+            state, session, sessions, interactiveKey, '', undefined, state.replyCtx, event, true)
+          await this.drainPendingMessages(state, session, sessions, interactiveKey)
+        } catch (error) {
+          console.error(`engine: orphan turn failed (${interactiveKey}): ${String(error)}`)
+          session.unlock()
+        } finally {
+          state.endTurn()
+        }
+        // Loop: re-arm for the next engine-woken turn.
+      }
     } finally {
-      state.endTurn()
-      this.armOrphanWatch(session, sessions, interactiveKey)
+      if (state.unsolicitedReader === handle) state.unsolicitedReader = undefined
+    }
+  }
+
+  /**
+   * Relay one spillover turn as plain text: consume events until the result,
+   * forwarding the final text without any card (Go's reader spillover
+   * branches). Tool calls are counted only; an error relays its message and
+   * ends the reader.
+   * @returns True when the reader must exit (error or channel close).
+   */
+  private async relaySpilloverTurn(
+    handle: UnsolicitedReaderHandle,
+    state: InteractiveState,
+    session: Session,
+    sessions: SessionManager,
+    firstEvent: Event,
+  ): Promise<boolean> {
+    const channel = state.agentSession?.events()
+    if (channel === undefined) return true
+    const p = state.platform
+    const parts: string[] = []
+    let pending: Event | undefined = firstEvent
+    for (;;) {
+      if (pending === undefined) {
+        const arm = channel.receiveArmed()
+        handle.cancelRecv = () => { arm.cancel() }
+        const idleSleep = this.unsolicitedIdleTimeout > 0 ? cancellableSleep(this.unsolicitedIdleTimeout) : undefined
+        const raced = await Promise.race([
+          arm.promise.then(r => (r.done ? { kind: 'closed' as const } : { kind: 'event' as const, event: r.event })),
+          idleSleep !== undefined ? idleSleep.promise.then(() => ({ kind: 'idle' } as const)) : neverPromise,
+        ])
+        idleSleep?.cancel()
+        if (readerStopped(handle)) {
+          arm.cancel()
+          return true
+        }
+        if (raced.kind === 'idle') {
+          // Quiet mid-relay: abandon the partial turn (Go retires on idle).
+          arm.cancel()
+          return false
+        }
+        if (raced.kind === 'closed' || raced.kind === 'never') return true
+        pending = raced.event
+      }
+      const event = pending
+      pending = undefined
+      state.lastEventAt = Date.now()
+      switch (event.type) {
+        case 'text': {
+          if (event.content !== '' && !isSilentReply(event.content)) parts.push(event.content)
+          break
+        }
+        case 'tool_use': {
+          state.activeToolCalls++
+          break
+        }
+        case 'tool_result': {
+          state.activeToolCalls = Math.max(0, state.activeToolCalls - 1)
+          break
+        }
+        case 'result': {
+          let full = event.content
+          if (parts.length > 0 && (full === '' || isSilentReply(full))) full = parts.join('')
+          if (full !== '' && !isSilentReply(full) && p !== undefined) {
+            for (const chunk of splitMessage(full, MaxPlatformMessageLen)) {
+              await this.send(p, state.replyCtx, chunk)
+            }
+          }
+          if (event.content.trim() !== '') session.setLastResult(event.content.trim())
+          sessions.save()
+          return false
+        }
+        case 'error': {
+          const text = event.errorText ?? event.error?.message ?? 'agent error'
+          if (p !== undefined) await this.send(p, state.replyCtx, this.i18n.tf(Msg.Error, text))
+          state.eventsNeedResync = true
+          return true
+        }
+        default:
+          break
+      }
     }
   }
 
@@ -2152,7 +2455,7 @@ export class Engine {
    * @param replyCtx - Platform reply context for error replies.
    * @param session - Session whose agent-session ID arbitrates recycling.
    * @param modeOverride - Mode injected at session start; '' = none.
-   * @param envKey - CC_SESSION_KEY env value; may differ from sessionKey (cron slots).
+   * @param envKey - sessionKey option handed to startSession; may differ from sessionKey (cron slots).
    * @returns The live state, with a turn already begun.
    */
   async getOrCreateInteractiveStateWith(
@@ -2187,7 +2490,7 @@ export class Engine {
     }
 
     const agent = this.agent
-    const sessionEnv = this.buildSessionEnv(envKey, session)
+    const startOptions = this.buildSessionStartOptions(envKey, session)
 
     const startSessionID = session.getAgentSessionID()
 
@@ -2198,20 +2501,20 @@ export class Engine {
     let degradedToFresh = false
     try {
       try {
-        agentSession = await this.startAgentLocked(agent, startSessionID, sessionEnv, modeOverride)
+        agentSession = await this.startAgentLocked(agent, startSessionID, startOptions, modeOverride)
       } catch (error) {
         // A live-guard rejection means the persisted session is still being
         // torn down (e.g. the user stopped it moments ago): the disposal is
         // in flight, not gone, so poll within the budget before degrading.
         if (startSessionID !== '' && isSessionLiveError(error)) {
           console.warn(`session resume blocked by in-flight teardown, retrying (${sessionKey}): ${String(error)}`)
-          agentSession = await this.retryResumePastLiveGuard(agent, startSessionID, sessionEnv, modeOverride)
+          agentSession = await this.retryResumePastLiveGuard(agent, startSessionID, startOptions, modeOverride)
         }
         if (agentSession === undefined) {
           if (startSessionID !== '') {
             console.error(`session resume failed, falling back to fresh session (${sessionKey}): ${String(error)}`)
             try {
-              agentSession = await this.startAgentLocked(agent, '', sessionEnv, modeOverride)
+              agentSession = await this.startAgentLocked(agent, '', startOptions, modeOverride)
               degradedToFresh = true
               // A rollback fork whose truncated transcript cannot be resumed gets
               // the fork-degrade wording (Go's __forkat__ guard replies
@@ -2270,7 +2573,7 @@ export class Engine {
     newState.platform = p
     newState.replyCtx = replyCtx
     newState.agent = agent
-    newState.sessionEnv = sessionEnv
+    newState.sessionStartOptions = startOptions
     newState.eventsNeedResync = true
     newState.effectiveIdleTimeout = this.eventIdleTimeout
     this.adoptPendingFromPlaceholder(this.interactiveStates.get(sessionKey), newState)
@@ -2303,92 +2606,76 @@ export class Engine {
   }
 
   /**
-   * Per-session env (Go buildSessionEnv). CC_SESSION rides alongside
-   * CC_SESSION_KEY because dsh scrubs credential-shaped env names (any
-   * *KEY*) from Bash-tool children, which would silently drop CC_SESSION_KEY.
-   * @param ccKey - Value used for CC_SESSION_KEY / CC_SESSION.
-   * @param session - Session whose subtask/chatroom flags expand the env.
-   * @returns KEY=VALUE env entries for the agent session.
+   * Typed per-session start options (Go buildSessionEnv): the engine session
+   * key plus the persona/workspace/venv metadata the adapter consumes at
+   * startSession. The hub lookup only runs for a session actually bound to a
+   * chatroom hub — getOrCreateActive materializes a session otherwise.
+   * @param ccKey - Value used as the options' sessionKey.
+   * @param session - Session whose subtask/chatroom flags expand the options.
+   * @returns The typed start options for the agent session.
    */
-  buildSessionEnv(ccKey: string, session: Session): string[] {
-    const envVars = [
-      `CC_PROJECT=${this.name}`,
-      `CC_SESSION_KEY=${ccKey}`,
-      `CC_SESSION=${ccKey}`,
-    ]
-    // Feishu workspace routing (#18): the adapter's setup hook surfaces
-    // these to the agent (the D3 replacement for Go's subprocess env).
-    envVars.push(...this.feishuWorkspaceEnv())
-    if (session.getResearchAssistant()) {
-      envVars.push('CC_RESEARCH_ASSISTANT=1')
-    }
-    if (session.getSubtaskDepth() > 0) {
-      envVars.push('CC_SUBTASK=1', `CC_SUBTASK_DEPTH=${session.getSubtaskDepth()}`)
-      if (session.getSubtaskAttended()) {
-        envVars.push('CC_SUBTASK_ATTENDED=1')
-      }
-      if (session.getSubtaskNoReport()) {
-        envVars.push('CC_SUBTASK_NO_REPORT=1')
-      }
-    }
-    if (session.getChatroomHubKey() !== '') {
-      envVars.push('CC_CHATROOM_ROLE=1')
+  buildSessionStartOptions(ccKey: string, session: Session): SessionStartOptions {
+    const hubKey = session.getChatroomHubKey()
+    const hub = hubKey !== '' ? this.sessions.getOrCreateActive(hubKey) : undefined
+    let chatroom: SessionStartOptions['chatroom'] | undefined
+    if (hubKey !== '') {
       const ledger = this.chatroomModeratorDir()
-      if (ledger.ok) {
-        envVars.push(`CC_CHATROOM_LEDGER=${chatroomLedgerDirPath(ledger.dir, session.getChatroomHubKey())}`)
+      chatroom = {
+        role: true,
+        directRole: false,
+        moderator: session.getChatroomModerator(),
+        ledgerDir: ledger.ok ? chatroomLedgerDirPath(ledger.dir, hubKey) : '',
+        // Research mode: the hub flagged this chatroom as research-driven.
+        // Tell the role so its contract knows to drive a full-CC assistant
+        // subgroup instead of answering from memory.
+        research: hub?.getChatroomResearch() === true,
+        researchAssistantChild: hub?.getChatroomResearch() === true ? session.getResearchAssistantKey() : '',
       }
-      // Research mode: the hub flagged this chatroom as research-driven.
-      // Tell the role so its contract knows to drive a full-CC assistant
-      // subgroup instead of answering from memory.
-      const hub = this.sessions.getOrCreateActive(session.getChatroomHubKey())
-      if (hub.getChatroomResearch()) {
-        envVars.push('CC_CHATROOM_RESEARCH=1')
-        // Hand the role the session key of its pre-spawned idle assistant.
-        // CHILD is the scrub-safe alias role prompts reference (dsh strips
-        // *KEY* names from Bash-tool children); KEY stays for compatibility.
-        const key = session.getResearchAssistantKey()
-        if (key !== '') {
-          envVars.push(`CC_RESEARCH_ASSISTANT_KEY=${key}`)
-          envVars.push(`CC_RESEARCH_ASSISTANT_CHILD=${key}`)
-        }
-      }
-    } else if (session.getChatroomDirectRole()) {
+    } else if (session.getChatroomDirectRole() || session.getChatroomModerator()) {
       // 1:1 direct role chat (no hub, no relay): the lightweight direct-role
       // contract instead of the multi-role one.
-      envVars.push('CC_CHATROOM_DIRECT_ROLE=1')
+      chatroom = {
+        role: false,
+        directRole: session.getChatroomDirectRole(),
+        moderator: session.getChatroomModerator(),
+        ledgerDir: '',
+        research: false,
+        researchAssistantChild: '',
+      }
     }
-    // Mark the hub session driving a chatroom as the moderator so its agent
-    // session swaps to the bare persona (D3 setup hook).
-    if (session.getChatroomModerator()) {
-      envVars.push('CC_CHATROOM_MODERATOR=1')
-    }
-    // Shared research venv: rewrite the single PATH entry to prepend
-    // <venv>/bin and add VIRTUAL_ENV (Go buildSessionEnv research path).
+    // Shared research venv (Go buildSessionEnv research path: VIRTUAL_ENV
+    // plus <venv>/bin prepended to the child PATH).
     const venv = session.getResearchVenv()
-    if (venv !== '') {
-      envVars.push(`VIRTUAL_ENV=${venv}`)
-      const pathIdx = envVars.findIndex(v => v.startsWith('PATH='))
-      const withBin = `${venv}/bin${pathIdx >= 0 ? `:${envVars[pathIdx]?.slice('PATH='.length)}` : `:${process.env.PATH ?? ''}`}`
-      if (pathIdx >= 0) envVars[pathIdx] = `PATH=${withBin}`
-      else envVars.push(`PATH=${withBin}`)
+    return {
+      sessionKey: ccKey,
+      ...(session.getSubtaskDepth() > 0
+        ? {
+          subtask: {
+            attended: session.getSubtaskAttended(),
+            noReport: session.getSubtaskNoReport(),
+            researchAssistant: session.getResearchAssistant(),
+          },
+        }
+        : {}),
+      ...(chatroom !== undefined ? { chatroom } : {}),
+      ...(this.feishuWorkspace !== undefined ? { feishuWorkspace: this.feishuWorkspace } : {}),
+      ...(venv !== '' ? { venv: { virtualEnv: venv, pathBin: `${venv}/bin` } } : {}),
     }
-    return envVars
   }
 
   /**
-   * SetSessionEnv + StartSession, serialized per engine (Go startAgentLocked). Public for the ported env-injection tests.
+   * StartSession with a one-shot mode override, serialized per engine (Go
+   * startAgentLocked). Public for the ported start-injection tests.
    * @param agent - Agent to start the session on.
    * @param sessionID - Session to resume; '' starts a fresh session.
-   * @param env - Env entries injected before the start.
+   * @param options - Typed start options handed through to the agent; undefined = plain session.
    * @param modeOverride - Mode injected before the start; '' = none.
    * @returns The started agent session.
    */
-  startAgentLocked(agent: Agent, sessionID: string, env: string[], modeOverride: string): Promise<AgentSession> {
-    const inj = asSessionEnvInjector(agent)
-    if (inj !== undefined && env.length > 0) inj.setSessionEnv(env)
+  startAgentLocked(agent: Agent, sessionID: string, options: SessionStartOptions | undefined, modeOverride: string): Promise<AgentSession> {
     const modeInj = asSessionModeInjector(agent)
     if (modeInj !== undefined && modeOverride !== '') modeInj.setSessionMode(modeOverride)
-    return agent.startSession(sessionID)
+    return agent.startSession(sessionID, options)
   }
 
   /**
@@ -2397,18 +2684,18 @@ export class Engine {
    * (the caller degrades); success returns the resumed session.
    * @param agent - Agent to start the session on.
    * @param sessionID - Session to resume.
-   * @param env - Env entries injected before each attempt.
+   * @param options - Typed start options handed to each attempt.
    * @param modeOverride - Mode injected at session start; '' = none.
    * @returns The resumed agent session, or undefined when the budget ends.
    */
   private async retryResumePastLiveGuard(
-    agent: Agent, sessionID: string, env: string[], modeOverride: string,
+    agent: Agent, sessionID: string, options: SessionStartOptions, modeOverride: string,
   ): Promise<AgentSession | undefined> {
     const deadline = Date.now() + this.liveGuardRetryBudgetMs
     for (;;) {
       await cancellableSleep(this.liveGuardRetryIntervalMs).promise
       try {
-        return await this.startAgentLocked(agent, sessionID, env, modeOverride)
+        return await this.startAgentLocked(agent, sessionID, options, modeOverride)
       } catch (error) {
         if (!isSessionLiveError(error)) {
           console.error(`session resume retry failed with a permanent error: ${String(error)}`)
@@ -2436,8 +2723,11 @@ export class Engine {
    * @param _msgID - Message ID retained for Go parity; unused.
    * @param sendDone - Settled prompt-send promise; an error value fails the turn.
    * @param replyCtx - Platform reply context for outgoing messages.
-   * @param firstEvent - Event the orphan watch already consumed off the
+   * @param firstEvent - Event the unsolicited reader already consumed off the
    *   channel; the loop processes it before arming its own receive.
+   * @param background - True when the reader woke this turn with no user
+   *   message: the placeholder distinguishes background-task completions and
+   *   the result consumes a pending background-task slot.
    */
   async processInteractiveEvents(
     state: InteractiveState,
@@ -2448,6 +2738,7 @@ export class Engine {
     sendDone: Promise<unknown> | undefined,
     replyCtx: unknown,
     firstEvent?: Event,
+    background = false,
   ): Promise<void> {
     // Turn surfaces live on the state (see InteractiveState): the ask
     // delegate running from the adapter's answerer shares them with the
@@ -2458,6 +2749,7 @@ export class Engine {
     state.silentHold = false
     let activeToolCalls = 0
     let stallRetries = 0
+    let turnStartedBg = false
     // Completion-footer state.timing (Go turnStart/agentStartTime): streamed
     // generation spans accumulate here; the token rate divides the turn's
     // output tokens by their union (see TurnTiming).
@@ -2480,9 +2772,15 @@ export class Engine {
     state.progressWriter = cp
     this.bindActivePreview(sp, sessionKey)
     // Placeholder card so the user sees visual feedback (with push) before
-    // the first agent event arrives.
+    // the first agent event arrives. A reader-woken turn with pending
+    // background tasks is likely a completion: distinct header (Go
+    // placeholderText), with the pending count riding the hint line.
     if (this.display.toolProgress && sp.canPreview()) {
-      void sp.showPlaceholder(this.i18n.t(Msg.Processing))
+      void sp.showPlaceholder(this.i18n.t(
+        background && state.backgroundTasksPending > 0 ? Msg.BgTaskProcessing : Msg.Processing))
+      if (background && state.backgroundTasksPending > 0) {
+        void sp.setBackgroundHint(this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending))
+      }
     }
     let thinkingStreamed = false
     let thinkingAccum = ''
@@ -2536,12 +2834,18 @@ export class Engine {
     try {
       for (;;) {
       // Idle timer: re-armed per iteration (Go reset-after-event); not armed
-      // while a tool call is in flight (Go stops it on EventToolUse) or an
-      // ask is parked (the user deciding is not a stall — the old loop parked
-      // on the ask's resolution with the timer cancelled).
-        const idleMs = activeToolCalls === 0 && state.pendingAsk === undefined
-          ? state.idleTimeout(this.eventIdleTimeout)
-          : 0
+      // while an ask is parked (the user deciding is not a stall — the old
+      // loop parked on the ask's resolution with the timer cancelled) or a
+      // tool call is in flight on a user-driven turn (Go stops it on
+      // EventToolUse). A reader-woken background turn arms the tool-in-flight
+      // budget instead of disarming entirely, so a hung background tool
+      // cannot pin the processing card forever (Go
+      // unsolicitedToolInFlightTimeout).
+        const idleMs = state.pendingAsk !== undefined
+          ? 0
+          : activeToolCalls > 0
+            ? (background ? this.unsolicitedToolInFlightTimeout : 0)
+            : state.idleTimeout(this.eventIdleTimeout)
         const idleSleep = idleMs > 0 ? cancellableSleep(idleMs) : undefined
         const recvOutcome: Promise<LoopOutcome> = recvP.then(r =>
           r.done ? { kind: 'closed' } : { kind: 'event', event: r.event })
@@ -2594,8 +2898,10 @@ export class Engine {
 
         if (outcome.kind === 'idle') {
         // Re-verify against the last event arrival: a fire right after an
-        // event resolved is stale — keep waiting (Go stallConfirmed).
-          if (!this.stallConfirmed(state, Date.now(), state.idleTimeout(this.eventIdleTimeout))) continue
+        // event resolved is stale — keep waiting (Go stallConfirmed). The
+        // window is the armed budget (turn idle, or tool-in-flight on a
+        // background turn).
+          if (idleMs <= 0 || !this.stallConfirmed(state, Date.now(), idleMs)) continue
 
           stallRetries++
           if (stallRetries <= this.stallMaxRetries) {
@@ -2773,6 +3079,17 @@ export class Engine {
             state.toolCount++
             activeToolCalls++
             state.activeToolCalls = activeToolCalls
+            if (event.toolBackground === true) {
+              // A run_in_background call returns immediately; its completion
+              // arrives as a later engine-woken turn. Count it so the reader
+              // stays alive for that turn and the card shows the running count
+              // (Go EventToolUse ToolBackground).
+              state.backgroundTasksPending++
+              turnStartedBg = true
+              if (this.display.toolProgress && sp.canPreview()) {
+                await sp.setBackgroundHint(this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending))
+              }
+            }
             // Clear streaming-thinking state when a tool starts — the agent is
             // no longer thinking once it invokes a tool (Go safety net for
             // agents that only emit thinking_delta and never a full block).
@@ -2949,7 +3266,7 @@ export class Engine {
             }
             const finished = await this.handleResultEvent(
               state, session, sessions, sessionKey, replyCtx, event,
-              pendingSend, sp, cp, barrier)
+              pendingSend, sp, cp, barrier, background, turnStartedBg)
             if (finished.kind === 'queued') {
             // A queued message takes over this loop as a fresh turn (Go
             // in-loop drain): reset per-turn state and continue. The watchdog
@@ -2965,6 +3282,7 @@ export class Engine {
               state.silentHold = false
               activeToolCalls = 0
               state.activeToolCalls = 0
+              turnStartedBg = false
               thinkingStreamed = false
               thinkingAccum = ''
               deltaAccum = ''
@@ -3040,6 +3358,8 @@ export class Engine {
     sp: StreamPreview,
     cp: CompactProgressWriter,
     barrier: () => Promise<void>,
+    background = false,
+    turnStartedBg = false,
   ): Promise<{ kind: 'done' } | { kind: 'queued'; sendDone: Promise<unknown> }> {
     // Persist via the live session id (event.sessionID may be empty).
     if (state.agentSession !== undefined) {
@@ -3051,6 +3371,23 @@ export class Engine {
             sessions.setSessionName(currentID, pendingName)
           }
         }
+      }
+    }
+    // A user-driven turn's completion anchors the spillover window: duplicate
+    // frames the model emits right after it relay as plain text, never as a
+    // second completion card (Go lastForegroundCompletionAt).
+    if (!background) state.lastForegroundCompletionAt = Date.now()
+    // A completed background turn consumes one pending run_in_background slot
+    // — but not the turn that started the task (its completion comes later),
+    // and the count clears the hint when it reaches zero (Go reader
+    // EventResult; the clear is the bridge's fix for the count never dropping).
+    if (background && !turnStartedBg && state.backgroundTasksPending > 0) {
+      state.backgroundTasksPending--
+      state.bgWaitStartedAt = 0
+      if (this.display.toolProgress && sp.canPreview()) {
+        await sp.setBackgroundHint(state.backgroundTasksPending > 0
+          ? this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending)
+          : '')
       }
     }
     state.eventsNeedResync = false
@@ -3079,7 +3416,6 @@ export class Engine {
     const sdkPlausible = (event.inputTokens ?? 0) >= 100
     const selfPct = parseSelfReportedCtx(fullResponse)
     const baseResponse = stripCtxSelfReport(fullResponse).replace(/[\n ]+$/, '')
-    session.addHistory('assistant', baseResponse)
     if (sdkResult !== '' && !errored) session.setLastResult(sdkResult)
     sessions.save()
 
@@ -3135,11 +3471,12 @@ export class Engine {
     // First-turn fallback: if this is a delegated subtask session and the
     // agent finished without explicitly reporting, push the result to the
     // parent so it is never lost. One-shot (Go maybeAutoReportSubtask).
-    this.maybeAutoReportSubtask(state, session, session.lastResultOrReply(), isSilent)
+    const resultOrReply = await this.lastResultOrReply(sessionKey, session)
+    this.maybeAutoReportSubtask(state, session, resultOrReply, isSilent)
     // Chatroom role turn-end: deterministically relay the role's reply to the
     // hub and wake the moderator. Disjoint from the subtask hook above
     // (chatroom roles keep depth=0).
-    maybeAutoRelayRole(this, state, session, session.lastResultOrReply(), isSilent)
+    maybeAutoRelayRole(this, state, session, resultOrReply, isSilent)
 
     // Export-button + speculative reply-HTML auto-deliver (Go engine_events.go
     // EventResult export block, #48): cache the full reply under the green
@@ -3252,13 +3589,13 @@ export class Engine {
     // Insight card (#33 + turn_summary, Go engine_events.go's post-turn
     // block): fire-and-forget forks for the turn summary and next-message
     // prediction; both skip silent turns and turns with queued follow-ups.
-    triggerInsights(this, state, session, p, replyCtx, sessionKey, sendCompletionNotification, isSilent)
+    void triggerInsights(this, state, session, p, replyCtx, sessionKey, sendCompletionNotification, isSilent)
 
     // Auto-compress (Go triggerAutoCompress): when the token estimate
     // crosses the configured cap outside the min gap, compact the live
     // session's context before the queued messages continue this loop.
     if (this.autoCompressEnabled && this.autoCompressMaxTokens > 0) {
-      const estimate = estimateTokensWithPendingAssistant(session.getHistory(0), '')
+      const estimate = estimateTokensWithPendingAssistant(await this.recentTurnsOf(sessionKey, session), '')
       const last = state.lastAutoCompressAt
       if (estimate >= this.autoCompressMaxTokens && (last === 0 || Date.now() - last >= this.autoCompressMinGap)) {
         state.lastAutoCompressAt = Date.now()
@@ -3289,7 +3626,6 @@ export class Engine {
       const queuedPrompt = this.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey)
       const { imagePaths: qImgs, filePaths: qFiles } = state.drainStagedAttachmentPaths()
       const splicedPrompt = spliceStagedAttachments(queuedPrompt, qImgs, qFiles)
-      session.addHistory('user', queued.content)
       // Chatroom ask metadata is consumed at drain time — the queued ask's
       // turn is starting now.
       this.stampChatroomAskOnTurnStart(session, queued.chatroomAskSeq, queued.chatroomAwaitAssistant)
@@ -3334,7 +3670,6 @@ export class Engine {
 
     if (state.textParts.length > 0) {
       let fullResponse = state.textParts.join('')
-      session.addHistory('assistant', fullResponse)
 
       // Mirror the EventResult turn-end hook: without an EventResult (the
       // process exited mid-turn) the subtask result would never report to
@@ -3388,13 +3723,13 @@ export class Engine {
     }
     oldEvents.drain()
 
-    const retryEnv = state.sessionEnv
+    const retryOptions = state.sessionStartOptions
     const retryMode = state.effectiveMode
     // Restore per-chat workDir override so --resume finds the session under
     // the correct directory (Go stall-retry applyWorkDirOverride).
     const restoreWorkDir = this.applyWorkDirOverride(replyAgent, sessionKey)
     try {
-      const newSess = await this.startAgentLocked(replyAgent, resumeID, retryEnv, retryMode)
+      const newSess = await this.startAgentLocked(replyAgent, resumeID, retryOptions, retryMode)
       state.agentSession = newSess
       state.eventsNeedResync = false
       return newSess
@@ -3423,7 +3758,7 @@ export class Engine {
       const queued = state.pendingMessages.shift()
       if (queued === undefined) {
         session.unlock()
-        this.armOrphanWatch(session, sessions, sessionKey)
+        this.startUnsolicitedReader(session, sessions, sessionKey)
         return true
       }
       state.inflightMessage = queued
@@ -3453,7 +3788,6 @@ export class Engine {
       }
 
       state.agentSession.events().drain()
-      session.addHistory('user', queued.content)
       // Chatroom ask metadata is consumed at drain time — the queued ask's
       // turn is starting now.
       this.stampChatroomAskOnTurnStart(session, queued.chatroomAskSeq, queued.chatroomAwaitAssistant)
@@ -3548,6 +3882,8 @@ export class Engine {
       if (agentSession !== undefined) {
         state.closing = new Promise<void>((resolve) => { closingResolve = resolve })
       }
+      // The reader must not consume off a channel whose agent is closing.
+      this.stopUnsolicitedReader(state)
       // Abort in-flight renders and reap recorded reply-HTML temp dirs (Go
       // cancelRenders + the renderedReplyHTML drain in cleanupInteractiveState).
       cancelRenders(state)
@@ -3608,6 +3944,7 @@ export class Engine {
 
     state.userStopped = true
     state.markStopped()
+    this.stopUnsolicitedReader(state)
     // Finalize the active preview card here, not only in the event loop's
     // stop arm: a loop parked mid-handler when the stop lands exits via
     // channel-close and skips that arm, which froze the card in its Running
@@ -3664,6 +4001,10 @@ export class Engine {
       // Skip sessions waiting for a permission response — the user may take
       // a long time to decide, and reaping would lose the pending prompt.
       if (state.pendingAsk !== undefined) continue
+      // Skip sessions with pending background tasks: the unsolicited reader
+      // is holding the channel open for the completion turn (bounded by the
+      // background grace, which zeroes the count when it exhausts).
+      if (state.backgroundTasksPending > 0) continue
       if (state.lastActivity !== 0 && state.lastActivity < cutoff) targets.push([key, state])
     }
     for (const [key, state] of targets) {
@@ -3763,8 +4104,11 @@ export class Engine {
    * key, reconstruct a proactive reply context, notify the chat (unless
    * silent/muted), then either run the shell command or inject the prompt as
    * a synthetic user message. Mute wraps the platform so nothing is sent.
-   * Multi-workspace agent selection is not ported (single workspace); an
-   * explicit job workDir switches the agent's work dir for the run instead.
+   * Prompt runs start in 'default' mode unless the job sets its own mode:
+   * an unattended run cannot approve an ExitPlanMode card, so a plan-mode
+   * project default must not apply. Multi-workspace agent selection is not
+   * ported (single workspace); an explicit job workDir switches the agent's
+   * work dir for the run instead.
    * @param job - The cron job to execute.
    */
   async executeCronJob(job: CronJob): Promise<void> {
@@ -3869,7 +4213,10 @@ export class Engine {
       isCardAction: false,
       parentMessageID: '',
       quotedText: '',
-      modeOverride: job.mode,
+      // An unattended run cannot approve an ExitPlanMode card: an unset job
+      // mode must not inherit a plan-mode project default (the stall this
+      // default exists to prevent); an explicit job.mode wins.
+      modeOverride: job.mode !== '' ? job.mode : 'default',
     }
 
     // An explicit job workDir switches the agent's working directory for
@@ -3986,11 +4333,11 @@ export class Engine {
     const relaySessionKey = `relay:${fromProject}:${chatID}`
     const session = this.sessions.getOrCreateActive(relaySessionKey)
 
-    const relayEnv = this.buildSessionEnv(relaySessionKey, session)
+    const relayOptions = this.buildSessionStartOptions(relaySessionKey, session)
 
     let agentSession: AgentSession
     try {
-      agentSession = await this.startAgentLocked(this.agent, session.getAgentSessionID(), relayEnv, '')
+      agentSession = await this.startAgentLocked(this.agent, session.getAgentSessionID(), relayOptions, '')
     } catch (error) {
       if (session.getAgentSessionID() !== '') {
         // Resume failed — fall back to a fresh session so the relay is not
@@ -3999,7 +4346,7 @@ export class Engine {
         session.setAgentSessionID('', this.agent.name())
         this.sessions.save()
         try {
-          agentSession = await this.startAgentLocked(this.agent, '', relayEnv, '')
+          agentSession = await this.startAgentLocked(this.agent, '', relayOptions, '')
         } catch (freshError) {
           throw new Error(`start relay session: ${errorMessage(freshError)}`)
         }
@@ -5373,52 +5720,9 @@ export class Engine {
       groupName = `${Array.from(groupName).slice(0, maxGroupNameRunes - 3).join('')}...`
     }
 
-    // Resolve the child work dir, mirroring /dir resolution: parent's
-    // per-chat override (or agent base dir), then an explicit --dir.
-    let workDir = ''
-    const override = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
-    if (override !== '') workDir = override
-    else workDir = this.agentWorkDir()
-    if (dir !== '') {
-      const resolved = this.resolveDirPath(dir)
-      if (resolved === undefined) {
-        throw new Error(`subtask: --dir path invalid: ${dir}`)
-      }
-      workDir = resolved
-    }
-
-    // Worktree isolation: in auto mode, isolate only when the child shares
-    // the parent's git repository. Fail fast before creating the group.
-    let wtPath = ''
-    let wtBranch = ''
-    let wtBase = ''
-    let wtRoot = ''
-    let useWorktree = wtPref === WorktreeMode.ForceOn
-    if (wtPref === WorktreeMode.Auto && workDir !== '') {
-      const childRoot = await worktreeRepoRoot(workDir)
-      if (childRoot !== undefined) {
-        const parentDir = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
-        const parentRoot = parentDir === '' ? await worktreeRepoRoot(this.agentWorkDir()) : await worktreeRepoRoot(parentDir)
-        if (parentRoot === childRoot) useWorktree = true
-      }
-    }
-    if (useWorktree) {
-      const root = await worktreeRepoRoot(workDir)
-      if (root === undefined) {
-        throw new Error(`subtask: --worktree requires a git repository, but ${workDir} is not inside one`)
-      }
-      let created: WorktreeCreateInfo
-      try {
-        created = await createWorktree(root, slugify(firstMsg))
-      } catch (error) {
-        throw new Error(`subtask: worktree create failed: ${String(error instanceof Error ? error.message : error)}`)
-      }
-      wtPath = created.path
-      wtBranch = created.branch
-      wtBase = created.baseSHA
-      wtRoot = root
-      workDir = created.path
-    }
+    // Resolve the child work dir and optional worktree isolation. Shared by
+    // the group path and the native continuable path (de-baggage B4).
+    const { workDir, wtPath, wtBranch, wtBase, wtRoot } = await this.resolveSubtaskWorkDir(parentSessionKey, dir, wtPref, firstMsg)
 
     // Fork-source guard: fail fast BEFORE creating the group so the agent
     // learns to drop -f and retry, leaving no orphan group (Go
@@ -5521,6 +5825,361 @@ export class Engine {
     return { childName: groupName, childKey: syntheticMsg.sessionKey }
   }
 
+  /**
+   * Resolve the child work dir and optional worktree isolation shared by the
+   * group and native spawn paths (de-baggage B4): the parent's per-chat
+   * override (or agent base dir), then an explicit --dir; auto-mode
+   * worktree isolation applies only when the child shares the parent's git
+   * repository, and the worktree is created up front so failures leave no
+   * child behind.
+   * @param parentSessionKey - Session key of the delegating parent chat.
+   * @param dir - Explicit child work dir (--dir); '' resolves from the parent.
+   * @param wtPref - Worktree isolation preference for the child.
+   * @param brief - The task brief, slugged into the worktree branch name.
+   * @returns The child's resolved work dir and worktree coordinates ('' = none).
+   */
+  private async resolveSubtaskWorkDir(
+    parentSessionKey: string,
+    dir: string,
+    wtPref: WorktreeMode,
+    brief: string,
+  ): Promise<{ workDir: string; wtPath: string; wtBranch: string; wtBase: string; wtRoot: string }> {
+    let workDir = ''
+    const override = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
+    if (override !== '') workDir = override
+    else workDir = this.agentWorkDir()
+    if (dir !== '') {
+      const resolved = this.resolveDirPath(dir)
+      if (resolved === undefined) {
+        throw new Error(`subtask: --dir path invalid: ${dir}`)
+      }
+      workDir = resolved
+    }
+
+    // Worktree isolation: in auto mode, isolate only when the child shares
+    // the parent's git repository. Fail fast before creating anything.
+    let wtPath = ''
+    let wtBranch = ''
+    let wtBase = ''
+    let wtRoot = ''
+    let useWorktree = wtPref === WorktreeMode.ForceOn
+    if (wtPref === WorktreeMode.Auto && workDir !== '') {
+      const childRoot = await worktreeRepoRoot(workDir)
+      if (childRoot !== undefined) {
+        const parentDir = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
+        const parentRoot = parentDir === '' ? await worktreeRepoRoot(this.agentWorkDir()) : await worktreeRepoRoot(parentDir)
+        if (parentRoot === childRoot) useWorktree = true
+      }
+    }
+    if (useWorktree) {
+      const root = await worktreeRepoRoot(workDir)
+      if (root === undefined) {
+        throw new Error(`subtask: --worktree requires a git repository, but ${workDir} is not inside one`)
+      }
+      let created: WorktreeCreateInfo
+      try {
+        created = await createWorktree(root, slugify(brief))
+      } catch (error) {
+        throw new Error(`subtask: worktree create failed: ${String(error instanceof Error ? error.message : error)}`)
+      }
+      wtPath = created.path
+      wtBranch = created.branch
+      wtBase = created.baseSHA
+      wtRoot = root
+      workDir = created.path
+    }
+    return { workDir, wtPath, wtBranch, wtBase, wtRoot }
+  }
+
+  /**
+   * Spawn an unattended child as a native continuable subagent session
+   * (de-baggage B4): no Feishu group, no user-visible surface — lineage,
+   * depth, and cold resume belong to the native runtime, the engine keeps
+   * only the parentage record (persisted in the project state) and the
+   * worktree it created. Settlement reaches the engine through the
+   * `subagent/end` event; the runtime's own parent wake is mounted
+   * 'external'.
+   * @param parentSessionKey - Session key of the delegating parent chat.
+   * @param dir - Explicit child work dir (--dir); '' resolves from the parent.
+   * @param wtPref - Worktree isolation preference for the child.
+   * @param forkContext - Whether the child copies the parent's conversation (--fork).
+   * @param brief - The self-contained task brief; '' is invalid here.
+   * @returns The child's durable native session id and label.
+   */
+  async spawnSubtaskNative(
+    parentSessionKey: string,
+    dir: string,
+    wtPref: WorktreeMode,
+    forkContext: boolean,
+    brief: string,
+  ): Promise<{ childName: string; childKey: string }> {
+    const briefText = brief.trim()
+    if (briefText === '') throw new Error('subtask: spawn requires a task brief (message)')
+    const delegator = asContinuableDelegator(this.agent)
+    if (delegator === undefined) {
+      throw new Error('subtask: the agent backend does not support native subtasks')
+    }
+
+    const parent = this.sessions.getOrCreateActive(parentSessionKey)
+    // Fork guard mirrors the group path: a fork needs a started parent
+    // conversation to copy context from.
+    if (forkContext) {
+      const forkOrigID = parent.getAgentSessionID()
+      if (forkOrigID === '' || forkOrigID === ContinueSession || forkOrigID.startsWith(ForkSessionPrefix)) {
+        throw new Error('subtask: --fork needs a started parent conversation to copy context from')
+      }
+    }
+    // The native runtime authorizes follow-ups and reports against the exact
+    // live direct parent, so the parent's agent session must be up.
+    const parentNativeID = this.liveNativeSessionID(parentSessionKey)
+    if (parentNativeID === '') {
+      throw new Error('subtask: the parent conversation has no live agent session; send it a message first')
+    }
+
+    const { workDir, wtPath, wtBranch, wtBase, wtRoot } = await this.resolveSubtaskWorkDir(parentSessionKey, dir, wtPref, briefText)
+
+    let childId: string
+    let label: string
+    try {
+      const started = await delegator.startContinuableChild({
+        provider: forkContext ? 'fork' : 'spawn',
+        prompt: briefText,
+        cwd: workDir,
+        workspace: this.feishuWorkspace,
+        maxDepth: this.maxSubtaskDepth(),
+        parentAgentSessionID: parentNativeID,
+      })
+      childId = started.childId
+      label = started.label
+    } catch (error) {
+      // A failed delegation must not leak the worktree it reserved.
+      if (wtPath !== '') await this.removeNativeWorktreeQuiet(wtPath, wtBranch, wtRoot, wtBase)
+      throw error
+    }
+
+    if (this.projectState !== undefined) {
+      this.projectState.setNativeChild(childId, {
+        parent_key: parentSessionKey,
+        parent_agent_session_id: parentNativeID,
+        label,
+        worktree_path: wtPath,
+        worktree_branch: wtBranch,
+        worktree_base: wtBase,
+        worktree_root: wtRoot,
+        reported: false,
+      })
+      this.projectState.save()
+    }
+
+    // Fold a late-spawned child into an armed gather barrier (no-op without one).
+    const gg = parent.getPendingSubtaskGather()
+    if (gg !== undefined) {
+      if (gg.addExpected(childId, label)) {
+        console.info(`subtask: added late-spawned native child to armed gather (parent=${parentSessionKey} child=${childId})`)
+      }
+    }
+
+    console.info(`subtask: spawned native (parent=${parentSessionKey} child=${childId} fork=${forkContext} worktree=${wtPath !== ''} dir=${workDir})`)
+    return { childName: label, childKey: childId }
+  }
+
+  /** Live native session id of an engine session's running agent ('' = none). */
+  private liveNativeSessionID(sessionKey: string): string {
+    const state = this.interactiveStates.get(sessionKey)
+    if (state?.agentSession === undefined || !state.agentSession.alive()) return ''
+    return state.agentSession.currentSessionID()
+  }
+
+  /** Remove a native child's worktree quietly (teardown paths; failures warn). */
+  private async removeNativeWorktreeQuiet(path: string, branch: string, root: string, base: string): Promise<void> {
+    if (path === '') return
+    try {
+      if (await worktreeDirty(path, base)) {
+        console.warn(`subtask: native child worktree is dirty; kept (${path})`)
+        return
+      }
+      await removeWorktree(root, path, branch, false)
+    } catch (error) {
+      console.warn(`subtask: native child worktree removal failed; kept (${path}): ${String(error instanceof Error ? error.message : error)}`)
+    }
+  }
+
+  /**
+   * All persisted native continuable children of this engine, keyed by child id.
+   * @returns The child records (empty map without a project state store).
+   */
+  nativeChildEntries(): Record<string, NativeChildRecord> {
+    return this.projectState?.nativeChildren() ?? {}
+  }
+
+  /**
+   * Whether this engine owns the given native child id (tool-call routing).
+   * @param childId - The durable native child session id.
+   * @returns True when the child was spawned by this engine.
+   */
+  ownsNativeChild(childId: string): boolean {
+    return this.nativeChildEntries()[childId] !== undefined
+  }
+
+  /**
+   * Update one persisted native child record (no-op without a store).
+   * @param childId - The durable native child session id.
+   * @param patch - Fields to overwrite on the record.
+   */
+  private updateNativeChild(childId: string, patch: Partial<NativeChildRecord>): void {
+    const entries = this.nativeChildEntries()
+    const current = entries[childId]
+    if (current === undefined || this.projectState === undefined) return
+    this.projectState.setNativeChild(childId, { ...current, ...patch })
+    this.projectState.save()
+  }
+
+  /**
+   * Push a native child's result back to its parent (de-baggage B4): an
+   * engine-session parent receives the same card + `[子任务完成]` wake the
+   * group path delivers; a native parent (itself a continuable child)
+   * receives the report through the runtime's native report path.
+   * Idempotent per child until a follow-up re-arms it.
+   * @param childId - The durable native child session id.
+   * @param result - The child's result text; '' uses the child's last reply.
+   */
+  async reportNativeChild(childId: string, result: string): Promise<void> {
+    const entry = this.nativeChildEntries()[childId]
+    if (entry === undefined) {
+      throw new Error('subtask: not a native child of this project')
+    }
+    if (entry.reported) {
+      console.info(`subtask: native report already delivered, skipping duplicate (child=${childId})`)
+      return
+    }
+    if (result.trim() === '') {
+      const entries = await this.recentTurns(childId)
+      const lastAssistant = [...entries].reverse().find(e => e.role === 'assistant')?.content ?? ''
+      result = lastAssistant
+    }
+    if (result.trim() === '') {
+      throw new Error('subtask: no result to report')
+    }
+
+    const nativeParent = this.nativeChildEntries()[entry.parent_key] !== undefined
+    if (nativeParent) {
+      const delegator = asContinuableDelegator(this.agent)
+      if (delegator === undefined) {
+        throw new Error('subtask: the agent backend does not support native subtasks')
+      }
+      await delegator.reportChildToNativeParent(childId, result.trim())
+      this.updateNativeChild(childId, { reported: true })
+      console.info(`subtask: native child reported to native parent (child=${childId})`)
+      return
+    }
+
+    const p = this.reportCapablePlatform()
+    if (p === undefined) {
+      throw new Error('subtask: no platform available to deliver report')
+    }
+    if (!this.replyNativeToParent(p, childId, entry, result.trim())) {
+      throw new Error('subtask: this chat has no parent session to report back to')
+    }
+    this.updateNativeChild(childId, { reported: true })
+    console.info(`subtask: native child reported to parent (child=${childId})`)
+  }
+
+  /**
+   * Settlement fallback (Go maybeAutoReportSubtask's native counterpart): the
+   * `subagent/end` listener calls this with the epoch's final assistant
+   * output, so a child that never explicitly reported still delivers — and a
+   * follow-up's answer re-arms the same delivery.
+   * @param childId - The durable native child session id.
+   * @param finalOutput - The epoch's final assistant text ('' re-reads the window).
+   */
+  settleNativeChild(childId: string, finalOutput: string): void {
+    const entry = this.nativeChildEntries()[childId]
+    if (entry === undefined || entry.reported) return
+    void this.reportNativeChild(childId, finalOutput).catch((error: unknown) => {
+      console.warn(`subtask: native settlement delivery failed (child=${childId}): ${String(error)}`)
+    })
+  }
+
+  /**
+   * Card + wake delivery for a native child's report to an engine-session
+   * parent — the native counterpart of {@link replyToParent}.
+   * @param p - Platform delivering the card and wake message.
+   * @param childId - The durable native child session id.
+   * @param entry - The child's persisted record.
+   * @param content - Result content to push.
+   * @returns True when the delivery was initiated.
+   */
+  private replyNativeToParent(p: Platform, childId: string, entry: NativeChildRecord, content: string): boolean {
+    if (entry.parent_key === '' || content.trim() === '') return false
+    const r = asReplyContextReconstructor(p)
+    if (r === undefined) return false
+    void r.reconstructReplyCtx(entry.parent_key).then(
+      (parentRctx) => {
+        void this.deliverParentReply(p, entry.parent_key, childId, entry.label, parentRctx, content)
+      },
+      (error: unknown) => {
+        console.warn(`replyNativeToParent: reconstruct reply ctx failed (parent=${entry.parent_key}): ${String(error)}`)
+      },
+    )
+    return true
+  }
+
+  /**
+   * Interrupt one native child's current turn (de-baggage B4's model-visible
+   * interruption surface).
+   * @param childId - The durable native child session id.
+   */
+  interruptNativeChild(childId: string): void {
+    const entry = this.nativeChildEntries()[childId]
+    if (entry === undefined) {
+      throw new Error('subtask: not a native child of this project')
+    }
+    const delegator = asContinuableDelegator(this.agent)
+    if (delegator === undefined) {
+      throw new Error('subtask: the agent backend does not support native subtasks')
+    }
+    // Prefer the parent's CURRENT live native session: a resumed parent keeps
+    // its id, and the runtime authorizes against the exact live ancestor.
+    const liveParent = this.liveNativeSessionID(entry.parent_key)
+    delegator.interruptChild(liveParent !== '' ? liveParent : entry.parent_agent_session_id, childId)
+    console.info(`subtask: interrupt requested for native child (child=${childId})`)
+  }
+
+  /**
+   * Tear down the native continuable descendants of the given root keys
+   * (de-baggage B4): interrupt each child's current turn, recycle a clean
+   * worktree, keep a dirty one, and drop the parentage records. Native
+   * grandchildren chain through native records, so a group descendant that
+   * spawned native children is covered by including it in the roots.
+   * @param rootKeys - Session keys whose native descendants to drain.
+   */
+  async drainNativeDescendants(rootKeys: string[]): Promise<void> {
+    const entries = this.nativeChildEntries()
+    const roots = new Set(rootKeys)
+    const toDrain: Array<[string, NativeChildRecord]> = []
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const [childId, rec] of Object.entries(entries)) {
+        if (toDrain.some(([id]) => id === childId)) continue
+        if (!roots.has(rec.parent_key)) continue
+        toDrain.push([childId, rec])
+        roots.add(childId) // a drained native child roots its own descendants
+        grew = true
+      }
+    }
+    for (const [childId, rec] of toDrain) {
+      try {
+        this.interruptNativeChild(childId)
+      } catch (error) {
+        console.warn(`subtask: native descendant interrupt failed (child=${childId}): ${String(error)}`)
+      }
+      await this.removeNativeWorktreeQuiet(rec.worktree_path, rec.worktree_branch, rec.worktree_root, rec.worktree_base)
+      this.projectState?.clearNativeChild(childId)
+    }
+    if (toDrain.length > 0) this.projectState?.save()
+  }
+
   /** Fire-and-forget inbound delivery (Go SafeGo ReceiveMessage). */
   private receiveMessageSafe(p: Platform, msg: Message): void {
     try {
@@ -5598,7 +6257,7 @@ export class Engine {
    * @param childSessionKey - Session key of the reporting child.
    * @param result - The child's result text; '' uses the child's last reply.
    */
-  reportSubtask(childSessionKey: string, result: string): void {
+  async reportSubtask(childSessionKey: string, result: string): Promise<void> {
     const p = this.reportCapablePlatform()
     if (p === undefined) {
       throw new Error('subtask: no platform available to deliver report')
@@ -5617,7 +6276,7 @@ export class Engine {
       console.info(`subtask: report skipped (no-report child=${childSessionKey})`)
       return
     }
-    if (result.trim() === '') result = sess.lastResultOrReply()
+    if (result.trim() === '') result = await this.lastResultOrReply(childSessionKey, sess)
     if (result.trim() === '') {
       throw new Error('subtask: no result to report')
     }
@@ -5643,6 +6302,33 @@ export class Engine {
     const msg = message.trim()
     if (msg === '') throw new Error('subtask: message is required')
     if (childSessionKey.trim() === '') throw new Error('subtask: child session key is required')
+
+    // Native continuable child: the runtime inbox queues the follow-up
+    // behind the child's current turn — the deliberate deviation from Go's
+    // busy-reject (a queued follow-up's answer re-arms the settlement
+    // fallback, so it still folds back).
+    const nativeEntry = this.nativeChildEntries()[childSessionKey]
+    if (nativeEntry !== undefined) {
+      if (nativeEntry.parent_key !== callerSessionKey) {
+        throw new Error(this.i18n.t(Msg.SubtaskSendNotChild))
+      }
+      const delegator = asContinuableDelegator(this.agent)
+      if (delegator === undefined) {
+        throw new Error('subtask: the agent backend does not support native subtasks')
+      }
+      const liveParent = this.liveNativeSessionID(callerSessionKey)
+      if (liveParent === '' && !this.nativeChildEntries()[callerSessionKey]) {
+        throw new Error('subtask: the parent conversation has no live agent session')
+      }
+      this.updateNativeChild(childSessionKey, { reported: false })
+      await delegator.followupChild(
+        liveParent !== '' ? liveParent : nativeEntry.parent_agent_session_id,
+        childSessionKey,
+        msg,
+      )
+      console.info(`subtask: parent sent follow-up to native child (parent=${callerSessionKey} child=${childSessionKey})`)
+      return
+    }
 
     const p = this.reportCapablePlatform()
     if (p === undefined) throw new Error('subtask: no platform available to deliver follow-up')
@@ -5850,6 +6536,13 @@ export class Engine {
       g.expected.set(ck, true)
       g.labels.set(ck, childLabel(s))
     }
+    // Native continuable children join the same barrier; their reports
+    // bank through reportNativeChild → deliverParentReply's accumulate.
+    for (const [childId, rec] of Object.entries(this.nativeChildEntries())) {
+      if (rec.parent_key !== parentSessionKey || rec.reported) continue
+      g.expected.set(childId, true)
+      g.labels.set(childId, rec.label)
+    }
     if (g.expected.size === 0) {
       throw new Error(this.i18n.t(Msg.SubtaskGatherNoPending))
     }
@@ -5959,9 +6652,10 @@ export class Engine {
     if (parentKey === '' || content.trim() === '') return false
     const r = asReplyContextReconstructor(p)
     if (r === undefined) return false
+    const childKey = this.sessions.sessionKeyMap().idToKey[sess.id] ?? ''
     void r.reconstructReplyCtx(parentKey).then(
       (parentRctx) => {
-        void this.deliverParentReply(p, sess, parentKey, parentRctx, content)
+        void this.deliverParentReply(p, parentKey, childKey, childLabel(sess), parentRctx, content)
       },
       (error: unknown) => {
         console.warn(`replyToParent: reconstruct reply ctx failed (parent=${parentKey}): ${String(error)}`)
@@ -5970,10 +6664,22 @@ export class Engine {
     return true
   }
 
-  /** Async half of replyToParent once the parent reply ctx resolved. */
-  private async deliverParentReply(p: Platform, sess: Session, parentKey: string, parentRctx: unknown, content: string): Promise<void> {
+  /**
+   * Async half of {@link replyToParent} and {@link replyNativeToParent} once
+   * the parent reply ctx resolved. The child arrives as its key and label
+   * only, so group children and native continuable children share one
+   * delivery machine.
+   */
+  private async deliverParentReply(
+    p: Platform,
+    parentKey: string,
+    childKey: string,
+    label: string,
+    parentRctx: unknown,
+    content: string,
+  ): Promise<void> {
     await this.sendAsCard(p, parentRctx, content, {
-      title: this.i18n.tf(Msg.DoneReplyParentHeader, childLabel(sess)),
+      title: this.i18n.tf(Msg.DoneReplyParentHeader, label),
       color: 'indigo',
     })
 
@@ -5993,10 +6699,9 @@ export class Engine {
 
     // Gather barrier: bank this report and wake the parent only when all
     // expected children have reported (or the timeout fires).
-    const childKey = this.sessions.sessionKeyMap().idToKey[sess.id] ?? ''
     const g = parentSess.getPendingSubtaskGather()
     if (g !== undefined) {
-      const { done, summary, alreadyWoken } = g.accumulate(childKey, childLabel(sess), content)
+      const { done, summary, alreadyWoken } = g.accumulate(childKey, label, content)
       if (done) {
         parentSess.setPendingSubtaskGather(undefined)
         this.sessions.save()
@@ -6011,7 +6716,7 @@ export class Engine {
     // The card body stays clean; the synthetic message the parent agent sees
     // carries a hint with the child's session key so it can follow up via
     // `subtask send --child <key>` even after context compaction.
-    let agentContent = `[子任务完成] ${childLabel(sess)}:\n\n${content}`
+    let agentContent = `[子任务完成] ${label}:\n\n${content}`
     if (childKey !== '') {
       agentContent += `\n\n(如需追问该子任务: cc-connect subtask send --child ${childKey} "...")`
     }
@@ -6289,7 +6994,7 @@ export class Engine {
    * processInteractiveMessageWith; the top-notice banner stays disabled by
    * default exactly like Go's spawnTopNoticeEnabled=false).
    */
-  private handleSpawnedGroupFirstMessage(p: Platform, msg: Message, session: Session): void {
+  private async handleSpawnedGroupFirstMessage(p: Platform, msg: Message, session: Session): Promise<void> {
     if (!msg.isSpawnedGroup) return
     if (msg.messageID !== '') {
       const appender = asMessagePinAppender(p)
@@ -6301,7 +7006,11 @@ export class Engine {
         })
       }
     }
-    if (!session.isFirstMessage() || sessionExemptFromSpawnRename(session)) return
+    // First message = the chat's session has no conversation window yet. The
+    // agent session for this message does not exist before the interactive
+    // state is created, so an absent/empty live window is exactly "first".
+    if (sessionExemptFromSpawnRename(session)) return
+    if ((await this.recentTurnsOf(msg.sessionKey, session, 1)).length > 0) return
     const raw = msg.originalContent !== '' ? msg.originalContent : msg.content
     if (!this.groupNameEnabled) {
       // Plain sync rename to the first message; with LLM naming on, the
@@ -6582,6 +7291,57 @@ export class Engine {
       return
     }
 
+    if (cmd === '/help') {
+      const card = renderHelpGroupCard(this, args)
+      await this.refreshOrReplyCard(p, msg, card)
+      return
+    }
+
+    if (cmd === '/list') {
+      const page = parsePositiveInt(args)
+      await this.refreshOrReplyCard(p, msg, await renderListCardSafe(this, msg.sessionKey, page))
+      return
+    }
+
+    if (cmd === '/status') {
+      await this.refreshOrReplyCard(p, msg, await renderStatusCard(this, msg.sessionKey, msg.userID))
+      return
+    }
+
+    if (cmd === '/switch') {
+      // act:/switch runs the session swap (Go executeCardAction's "/switch"
+      // case: cleanup interactive state and switch — the fresh session needs
+      // no history reset), then re-renders the list card; nav:/switch just
+      // shows the picker.
+      if (prefix === 'act' && args !== '') {
+        const { agent, sessions, interactiveKey } = commandContext(this, msg)
+        const agentSessions = await collectAgentSessions(this, msg.sessionKey)
+        const matched = agentSessions === undefined ? undefined : matchSession(agentSessions, sessions, args)
+        if (matched !== undefined) {
+          this.stopInteractiveSession(interactiveKey)
+          sessions.switchToAgentSession(msg.sessionKey, matched.id, agent.name(), matched.summary)
+        } else {
+          console.info(`engine: switch card action matched no session (${msg.sessionKey}: ${args})`)
+        }
+      }
+      await this.refreshOrReplyCard(p, msg, await renderListCardSafe(this, msg.sessionKey, 1))
+      return
+    }
+
+    if (cmd === '/delete-mode') {
+      // Every action runs the state machine first, then re-renders the
+      // phase's card; cancel clears the picker, so the missing card falls
+      // back to the session list (Go handleCardNav's "/delete-mode" routes).
+      if (prefix === 'act') executeDeleteModeAction(this, msg.sessionKey, args, p, msg.replyCtx)
+      const card = await renderDeleteModeCard(this, msg.sessionKey)
+      if (card !== undefined) {
+        await this.refreshOrReplyCard(p, msg, card)
+        return
+      }
+      await this.refreshOrReplyCard(p, msg, await renderListCardSafe(this, msg.sessionKey, 1))
+      return
+    }
+
     if (cmd === '/dir') {
       // act:/dir switches first (select N / reset / prev, Go executeCardAction
       // mapping); nav:/dir only turns the page.
@@ -6662,6 +7422,27 @@ export class Engine {
     }
     const notification = await this.executeWorktreeAction(msg.sessionKey, args)
     const card = this.renderWorktreeDoneCard(args, notification)
+    const refresher = asCardRefresher(p)
+    if (refresher !== undefined) {
+      try {
+        await refresher.refreshCard(msg.sessionKey, card)
+        return
+      } catch (error) {
+        console.warn(`engine: card refresh failed, sending a new card (${msg.sessionKey}): ${String(error)}`)
+      }
+    }
+    await this.replyWithCard(p, msg.replyCtx, card)
+  }
+
+  /**
+   * PATCH the card a card-action callback arrived on in place, falling back
+   * to sending a new card when the platform cannot refresh (the pattern
+   * every handleCardAction branch shares).
+   * @param p - Platform the card action arrived on.
+   * @param msg - The card-action message addressing the chat.
+   * @param card - The replacement card.
+   */
+  private async refreshOrReplyCard(p: Platform, msg: Message, card: Card): Promise<void> {
     const refresher = asCardRefresher(p)
     if (refresher !== undefined) {
       try {

@@ -24,6 +24,10 @@
 # one atomic systemctl operation with no such window. Mid-turn sessions lose
 # the current turn (transcript rolls back to the last complete turn; resend
 # to retry) — run when sessions are idle.
+# If the WS-ready probe times out, the script prints a rollback runbook from
+# the git state captured before the restart. Nothing rolls back automatically:
+# in single-tree dogfood this clone is the live workspace of concurrent agent
+# sessions, so git mutations are printed for a human in a plain terminal.
 set -eu
 
 PKG_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -84,6 +88,34 @@ if [ "$OS" = Darwin ]; then
 else
   systemctl --user cat "$UNIT" >/dev/null 2>&1 || { echo "error: systemd unit not found: $UNIT" >&2; exit 1; }
 fi
+
+# Best-effort rollback state, captured before anything stops: the WS-ready
+# probe prints it as a runbook when the restarted daemon never comes up. With
+# --skip-build the captured HEAD may already be past the code that was
+# actually built; the runbook is still the right first move.
+ROLLBACK_SHA=$(git -C "$FORK_DIR" rev-parse HEAD 2>/dev/null || true)
+ROLLBACK_DIRTY=false
+if [ -n "$(git -C "$FORK_DIR" status --porcelain 2>/dev/null | head -n 1)" ]; then
+  ROLLBACK_DIRTY=true
+fi
+
+# Printed when the WS-ready probe times out: the new build cannot boot and
+# the supervisor (launchd KeepAlive / systemd Restart) keeps crash-looping it
+# until the tree is rolled back. Executed by a human, never by this script.
+print_rollback_hint() {
+  if [ -z "$ROLLBACK_SHA" ]; then
+    echo "error: the restarted daemon never reached 'ws client ready'; the supervisor will keep crash-looping this build. Git state unavailable in $FORK_DIR — manually check out the last running commit, rebuild (CI=true pnpm run build:lib:host), and rerun $PKG_DIR/reload.sh --skip-build" >&2
+    return 0
+  fi
+  echo "error: the restarted daemon never reached 'ws client ready'; the supervisor will keep crash-looping this build. Roll back to the pre-reload tree:" >&2
+  echo "  cd $FORK_DIR" >&2
+  if [ "$ROLLBACK_DIRTY" = true ]; then
+    echo "  git stash push -m 'fb-reload-rollback $(date '+%Y%m%d%H%M')'   # the dirty tree shipped in the broken build" >&2
+  fi
+  echo "  git checkout $ROLLBACK_SHA" >&2
+  echo "  CI=true pnpm run build:lib:host" >&2
+  echo "  $PKG_DIR/reload.sh --skip-build   # restarts and re-probes WS readiness" >&2
+}
 
 if [ "$BUILD" -eq 1 ]; then
   echo "==> building host-face libs in $FORK_DIR"
@@ -161,6 +193,7 @@ if [ "$OS" = Darwin ]; then
     if [ "$i" -gt 60 ]; then
       echo "error: no 'ws client ready' in $STDOUT after 30s; recent stderr:" >&2
       tail -5 "$LOG_DIR/feishu-bridge-stderr.log" >&2 2>/dev/null || true
+      print_rollback_hint
       exit 1
     fi
     sleep 0.5
@@ -181,6 +214,7 @@ else
     if [ "$i" -gt 60 ]; then
       echo "error: no 'ws client ready' for $UNIT since restart; recent journal:" >&2
       journalctl --user -u "$UNIT" -n 5 2>/dev/null >&2 || true
+      print_rollback_hint
       exit 1
     fi
     sleep 0.5

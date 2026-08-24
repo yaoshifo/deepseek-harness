@@ -43,7 +43,7 @@ describe('sendPreviewStart routing', () => {
   it('sends the progress card as a new message, not a reply', async () => {
     const api = recordingClient()
     const p = newPlatform(api)
-    await p.sendPreviewStart(rc, 'thinking…')
+    await p.sendPreviewStart(rc, { kind: 'text', text: 'thinking…' })
     expect(api.creates).toBe(1)
     expect(api.replies).toBe(0)
   })
@@ -53,7 +53,7 @@ describe('sendPreviewStart routing', () => {
     const p = newPlatform(api, { threadIsolation: true })
     await p.sendPreviewStart(
       { messageID: 'om_trigger', chatID: 'oc_chat', sessionKey: 'feishu:oc_chat:thread:omt_1' },
-      'thinking…',
+      { kind: 'text', text: 'thinking…' },
     )
     expect(api.replies).toBe(1)
     expect(api.replyInThread).toEqual([true])

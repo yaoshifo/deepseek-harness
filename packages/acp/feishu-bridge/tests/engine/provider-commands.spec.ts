@@ -108,14 +108,12 @@ describe('/provider switch', () => {
     e.setProviderSaveFunc((name) => { saved.push(name) })
     const s = e.sessions.getOrCreateActive('test:user1')
     s.setAgentSessionID('agent-sid-1', 'dsh')
-    s.addHistory('user', 'hello')
 
     e.dispatchCommand(p, msg(), '/provider switch azure')
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(agent.getActive()).toBe('azure')
     expect(s.getAgentSessionID()).toBe('')
-    expect(s.getHistory(0).length).toBe(0)
     expect(saved).toEqual(['azure'])
     expect(p.getSent()).toEqual([e.i18n.tf('provider_switched', 'azure')])
     dispose()
@@ -147,14 +145,12 @@ describe('/provider switch', () => {
     const { e, p, dispose } = newEngine(agent)
     const s = e.sessions.getOrCreateActive('test:user1')
     s.setAgentSessionID('agent-sid-1', 'dsh')
-    s.addHistory('user', 'hello')
 
     e.dispatchCommand(p, msg(), '/provider azure --resume')
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(agent.getActive()).toBe('azure')
     expect(s.getAgentSessionID()).toBe('agent-sid-1')
-    expect(s.getHistory(0).length).toBe(1)
     expect(p.getSent()).toEqual([e.i18n.tf('provider_hot_switched', 'azure')])
     dispose()
   })
@@ -197,14 +193,12 @@ describe('/provider current / clear / list', () => {
     e.setProviderSaveFunc((name) => { saved.push(name) })
     const s = e.sessions.getOrCreateActive('test:user1')
     s.setAgentSessionID('agent-sid-1', 'dsh')
-    s.addHistory('user', 'hello')
 
     e.dispatchCommand(p, msg(), '/provider clear')
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(agent.getActive()).toBe('')
     expect(s.getAgentSessionID()).toBe('')
-    expect(s.getHistory(0).length).toBe(0)
     expect(saved).toEqual([''])
     expect(p.getSent()).toEqual([e.i18n.t('provider_cleared')])
     dispose()
@@ -234,16 +228,13 @@ describe('provider shortcuts', () => {
     e.setProviderShortcuts({ strong: 'glm', weak: 'mimo' })
     const old = e.sessions.getOrCreateActive('test:user1')
     old.setAgentSessionID('agent-sid-1', 'dsh')
-    old.addHistory('user', 'hello')
 
     e.dispatchCommand(p, msg(), '/weak')
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(agent.getActive()).toBe('mimo')
     expect(saved).toEqual(['mimo'])
-    // The old session was rotated off: its history is cleared and the
-    // active session for the key is a fresh one.
-    expect(old.getHistory(0).length).toBe(0)
+    // The old session was rotated off: the active session for the key is a fresh one.
     expect(e.sessions.getOrCreateActive('test:user1')).not.toBe(old)
     expect(p.getSent()).toEqual([e.i18n.tf('provider_shortcut_new', 'mimo')])
     disposeProvider()

@@ -1126,6 +1126,9 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
 export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
   const p = e.spawnCapablePlatform()
   if (p === undefined) return 0
+  // Native continuable descendants chain through the project state, not the
+  // session tree (de-baggage B4) — drain them alongside the role groups.
+  void e.drainNativeDescendants([hubKey, ...e.collectSubtree(hubKey)])
   let removed = 0
   for (const childKey of e.collectSubtree(hubKey)) {
     const sess = e.sessions.getOrCreateActive(childKey)

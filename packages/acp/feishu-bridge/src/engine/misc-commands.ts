@@ -3,10 +3,10 @@
  * handleCommand's "ps" case). The /help command list is generated from the
  * engine's registered command handlers with their i18n one-liners — Go's
  * hand-maintained message_help blob drifted into advertising commands that
- * do not exist here, so the blob (message_help and the help_*_section
- * entries) was deleted instead of ported. Go's button-driven help-card
- * family (renderHelpGroupCard + nav: help navigation) is not ported: /help
- * renders one markdown card / text reply.
+ * do not exist here, so the blob was deleted instead of ported. On card
+ * platforms /help renders the button-driven help group card (Go
+ * renderHelpGroupCard: four group tabs + one row per command); plain-text
+ * platforms keep the single markdown reply.
  *
  * /ps appends text to a running task: mid-turn it steers the agent's
  * next-step inbox (agent-loop steer), so the text reaches the model inside
@@ -23,8 +23,9 @@
  */
 
 import { Msg, type MsgKey } from '../i18n/index.js'
+import { newCard, type Card, type CardButton } from '../card.js'
 import type { Message, Platform } from '../core/types.js'
-import { asReactionAdder } from '../core/types.js'
+import { asReactionAdder, supportsCards } from '../core/types.js'
 import type { Engine } from './engine.js'
 
 /** One-line description lookup key per canonical command id. */
@@ -32,6 +33,108 @@ const oneLinerKey = (cmdID: string): MsgKey => cmdID as MsgKey
 
 /** Detailed usage lookup key per canonical command id (Go cmdID + "_usage"). */
 const usageKey = (cmdID: string): MsgKey => `${cmdID}_usage` as MsgKey
+
+/** The four help-card groups (Go helpCardGroups keys). */
+const helpGroups = ['session', 'agent', 'tools', 'system'] as const
+type HelpGroup = (typeof helpGroups)[number]
+
+const groupTitleKey: Record<HelpGroup, MsgKey> = {
+  session: Msg.HelpSessionSection,
+  agent: Msg.HelpAgentSection,
+  tools: Msg.HelpToolsSection,
+  system: Msg.HelpSystemSection,
+}
+
+/**
+ * Command id → help-card group (Go helpCardGroups' hand-maintained items,
+ * reduced to the group assignment so the rows generate from the registered
+ * command table). Unlisted commands fall into the session group.
+ */
+const helpGroupOf = new Map<string, HelpGroup>([
+  ['new', 'session'],
+  ['list', 'session'],
+  ['switch', 'session'],
+  ['status', 'session'],
+  ['stop', 'session'],
+  ['rename', 'session'],
+  ['spawn', 'session'],
+  ['fork', 'session'],
+  ['done', 'session'],
+  ['notify', 'session'],
+  ['board', 'session'],
+  ['tag', 'session'],
+  ['untag', 'session'],
+  ['undone', 'session'],
+  ['chatroom', 'session'],
+  ['provider', 'agent'],
+  ['compress', 'agent'],
+  ['btw', 'agent'],
+  ['hint', 'agent'],
+  ['shell', 'tools'],
+  ['cron', 'tools'],
+  ['monitor', 'tools'],
+  ['ps', 'tools'],
+  ['reload', 'tools'],
+  ['help', 'system'],
+  ['bind', 'system'],
+  ['dir', 'system'],
+])
+
+/**
+ * The card action a help-card row dispatches: card-backed commands refresh
+ * their card in place (nav:), everything else runs as a plain command
+ * dispatch (cmd:, routed by the platform).
+ */
+const rowAction = new Map<string, string>([
+  ['list', 'nav:/list 1'],
+  ['switch', 'nav:/list 1'],
+  ['status', 'nav:/status'],
+  ['dir', 'nav:/dir 1'],
+  ['help', 'nav:/help'],
+])
+
+/**
+ * The tabbed help group card (Go renderHelpGroupCard): four group tab
+ * buttons (two per row), one row per registered command in the current
+ * group, and the prefix-matching tip.
+ * @param e - The engine whose registered commands are listed.
+ * @param groupKey - Requested group ('' or unknown falls back to the first).
+ * @returns The assembled help card.
+ */
+export function renderHelpGroupCard(e: Engine, groupKey: string): Card {
+  const current: HelpGroup = helpGroups.find(g => g === groupKey.trim().toLowerCase()) ?? helpGroups[0]
+
+  const items = new Map<HelpGroup, string[]>(helpGroups.map(g => [g, [] as string[]]))
+  for (const cmdID of e.commandHandlers?.keys() ?? []) {
+    items.get(helpGroupOf.get(cmdID) ?? 'session')?.push(cmdID)
+  }
+  // Provider shortcuts ride the agent group (Go injects them there).
+  for (const shortcut of Object.keys(e.providerShortcuts).sort()) {
+    items.get('agent')?.push(shortcut)
+  }
+
+  const cb = newCard().title(e.i18n.tf(Msg.HelpTitle, e.name), 'blue')
+  const tabs: CardButton[] = helpGroups.map(g => ({
+    text: sectionTitle(e, g),
+    type: g === current ? 'primary' : 'default',
+    value: `nav:/help ${g}`,
+  }))
+  for (let i = 0; i < tabs.length; i += 2) {
+    cb.buttonsEqual(...tabs.slice(i, i + 2))
+  }
+  for (const cmdID of items.get(current) ?? []) {
+    const desc = e.i18n.t(oneLinerKey(cmdID))
+    const line = desc === cmdID ? `**/${cmdID}**` : `**/${cmdID}**  ${desc}`
+    cb.listItem(line, '▶', rowAction.get(cmdID) ?? `cmd:/${cmdID}`)
+  }
+  cb.note(e.i18n.t(Msg.HelpTip))
+  return cb.build()
+}
+
+/** Tab label: the group title without its markdown bolding. */
+function sectionTitle(e: Engine, group: HelpGroup): string {
+  return e.i18n.t(groupTitleKey[group]).replaceAll('*', '').trim()
+}
 
 /**
  * Register /help and /ps on an engine. Returns the disposer.
@@ -83,7 +186,8 @@ function helpText(e: Engine): string {
 
 /**
  * /help [command]: show the full command list, or one command's detailed
- * usage (Go cmdHelp; the list is generated from registered handlers).
+ * usage (Go cmdHelp; the list is generated from registered handlers). Card
+ * platforms render the tabbed group card; the per-command usage stays text.
  */
 async function cmdHelp(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   if (args.length > 0) {
@@ -101,6 +205,10 @@ async function cmdHelp(e: Engine, p: Platform, msg: Message, args: string[]): Pr
     }
     // Unknown / ambiguous: hint, then fall through to the full help.
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.HelpUnknownCmd, args[0] ?? ''))
+  }
+  if (supportsCards(p)) {
+    await e.replyWithCard(p, msg.replyCtx, renderHelpGroupCard(e, ''))
+    return
   }
   await e.sendAsCard(p, msg.replyCtx, helpText(e), { title: e.i18n.t(Msg.HelpListTitle), color: 'blue' })
 }

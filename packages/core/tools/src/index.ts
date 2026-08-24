@@ -1886,7 +1886,7 @@ const MAX_TOOL_INPUT_PREVIEW = 2000
 function toolInputPreview(args: unknown): string {
   if (typeof args === 'string') return args.slice(0, MAX_TOOL_INPUT_PREVIEW)
   try {
-    return JSON.stringify(args)?.slice(0, MAX_TOOL_INPUT_PREVIEW) ?? ''
+    return JSON.stringify(args).slice(0, MAX_TOOL_INPUT_PREVIEW)
   } catch {
     // ToolExecution documents JSON-serializable arguments; a cyclic value
     // would rather fail visibly at its own serialization boundary.

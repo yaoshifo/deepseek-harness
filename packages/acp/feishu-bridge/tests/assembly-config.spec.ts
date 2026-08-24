@@ -163,16 +163,18 @@ describe('buildProjectAssembly config wiring', () => {
   })
 
   it('wires feishu_workspace onto the engine (#18)', () => {
-    expect(assemble(baseConfig()).engine.feishuWorkspaceEnv()).toEqual([])
+    const plain = assemble(baseConfig()).engine
+    expect(plain.buildSessionStartOptions('k', plain.sessions.getOrCreateActive('k')).feishuWorkspace).toBeUndefined()
     const { engine } = assemble(baseConfig(), {
       ...project(),
       feishuWorkspace: { wikiSpaceId: '7000', folderToken: 'fldcn1', wikiNodeToken: '', description: 'Team docs' },
     })
-    expect(engine.feishuWorkspaceEnv()).toEqual([
-      'CC_FEISHU_WIKI_SPACE_ID=7000',
-      'CC_FEISHU_FOLDER_TOKEN=fldcn1',
-      'CC_FEISHU_WORKSPACE_DESC=Team docs',
-    ])
+    expect(engine.buildSessionStartOptions('k', engine.sessions.getOrCreateActive('k')).feishuWorkspace).toEqual({
+      wikiSpaceId: '7000',
+      folderToken: 'fldcn1',
+      wikiNodeToken: '',
+      description: 'Team docs',
+    })
   })
 
   it('wires idle_timeout_mins and display.stall_timeout_secs onto the event idle timeout', () => {

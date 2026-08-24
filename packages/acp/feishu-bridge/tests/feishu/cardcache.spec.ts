@@ -44,11 +44,11 @@ describe('per-card preview caches', () => {
     const p = newPlatform(api)
 
     // Session A: create card, then PATCH it green.
-    const hA = await p.sendPreviewStart(rc, '__cc_state__:thinking\n__cc_ts__:15:47:00\nCARD_A_BODY')
-    await p.updateMessage(hA, '__cc_state__:completed\n__cc_ts__:15:47:00\nCARD_A_BODY')
+    const hA = await p.sendPreviewStart(rc, { kind: 'text', text: 'CARD_A_BODY', status: { state: 'thinking', ts: '15:47:00', toolCallSeq: 0 } })
+    await p.updateMessage(hA, { kind: 'text', text: 'CARD_A_BODY', status: { state: 'completed', ts: '15:47:00', toolCallSeq: 0 } })
 
     // Session B starts concurrently: a new yellow card in the same chat.
-    await p.sendPreviewStart(rc, '__cc_state__:thinking\n__cc_ts__:15:47:09\nCARD_B_BODY')
+    await p.sendPreviewStart(rc, { kind: 'text', text: 'CARD_B_BODY', status: { state: 'thinking', ts: '15:47:09', toolCallSeq: 0 } })
 
     // Render-status PATCH lands on A's completed card — must rebuild from
     // A's own cached green JSON, not B's yellow one.
@@ -64,13 +64,13 @@ describe('per-card preview caches', () => {
     const api = cardCacheClient()
     const p = newPlatform(api)
 
-    const hA = await p.sendPreviewStart(rc, '__cc_state__:thinking\n__cc_ts__:15:47:00\nCARD_A_BODY')
-    await p.updateMessage(hA, '__cc_state__:completed\n__cc_ts__:15:47:00\nCARD_A_BODY')
+    const hA = await p.sendPreviewStart(rc, { kind: 'text', text: 'CARD_A_BODY', status: { state: 'thinking', ts: '15:47:00', toolCallSeq: 0 } })
+    await p.updateMessage(hA, { kind: 'text', text: 'CARD_A_BODY', status: { state: 'completed', ts: '15:47:00', toolCallSeq: 0 } })
     await p.updateRenderStatus(rc, hA.messageID, '🖼 渲染中')
 
     // Card B in the same chat must not carry A's render status.
-    const hB = await p.sendPreviewStart(rc, '__cc_state__:thinking\n__cc_ts__:15:47:09\nCARD_B_BODY')
-    await p.updateMessage(hB, '__cc_state__:completed\n__cc_ts__:15:47:09\nCARD_B_BODY')
+    const hB = await p.sendPreviewStart(rc, { kind: 'text', text: 'CARD_B_BODY', status: { state: 'thinking', ts: '15:47:09', toolCallSeq: 0 } })
+    await p.updateMessage(hB, { kind: 'text', text: 'CARD_B_BODY', status: { state: 'completed', ts: '15:47:09', toolCallSeq: 0 } })
 
     const gotA = api.patches.get(hA.messageID) ?? ''
     const gotB = api.patches.get(hB.messageID) ?? ''
@@ -84,7 +84,7 @@ describe('per-card preview caches', () => {
     const p = newPlatform(api)
     const runningRC = { ...rc, sessionKey: 'sk_running' }
 
-    const h = await p.sendPreviewStart(runningRC, '__cc_state__:thinking\n__cc_ts__:15:47:00\nRUNNING_BODY')
+    const h = await p.sendPreviewStart(runningRC, { kind: 'text', text: 'RUNNING_BODY', status: { state: 'thinking', ts: '15:47:00', toolCallSeq: 0 } })
 
     // Pass the real handle so the type check exercises the production path.
     await p.renderStoppedCard(runningRC, h)
@@ -105,7 +105,7 @@ describe('per-card preview caches', () => {
     const p = newPlatform(api)
     const runningRC = { ...rc, sessionKey: 'sk_running' }
 
-    const h = await p.sendPreviewStart(runningRC, '__cc_state__:thinking\n__cc_ts__:15:47:00\nRUNNING_BODY')
+    const h = await p.sendPreviewStart(runningRC, { kind: 'text', text: 'RUNNING_BODY', status: { state: 'thinking', ts: '15:47:00', toolCallSeq: 0 } })
     await p.updateRenderStatus(runningRC, h.messageID, '🖼 渲染中…')
 
     const patched = api.patches.get(h.messageID) ?? ''
