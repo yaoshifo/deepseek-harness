@@ -69,9 +69,9 @@ describe('ask_user_question tool', () => {
     expect(parameters.properties.questions.items.properties.options.items.properties).toMatchObject({
       label: { type: 'string' },
       description: { type: 'string' },
+      recommended: { type: 'boolean' },
     })
     expect(parameters.properties.questions.items.properties.options.items.properties).not.toHaveProperty('value')
-    expect(parameters.properties.questions.items.properties.options.items.properties).not.toHaveProperty('recommended')
     expect(parameters.properties.questions.items.properties.options.items.properties).not.toHaveProperty('preview')
   })
 
@@ -139,6 +139,39 @@ describe('ask_user_question tool', () => {
 
     expect(seen[0]?.questions[0]?.options).toEqual([
       { label: 'pnpm (Recommended)' },
+      { label: 'npm' },
+    ])
+  })
+
+  it('passes the structured recommended flag through to the provider', async () => {
+    const ctx = await setup()
+    const seen: AskUserQuestionRequest[] = []
+    ctx.userQuestions.registerProvider({
+      async ask(request) {
+        seen.push(request)
+        return { answers: [{ id: 'pkg', selected: ['pnpm'] }] }
+      },
+    })
+
+    await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: CallId('ask-recommended-flag'),
+      name: 'ask_user_question',
+      arguments: {
+        questions: [{
+          id: 'pkg',
+          question: 'Which package manager should I use?',
+          multi_select: true,
+          options: [
+            { label: 'pnpm', recommended: true },
+            { label: 'npm' },
+          ],
+        }],
+      },
+    })
+
+    expect(seen[0]?.questions[0]?.options).toEqual([
+      { label: 'pnpm', recommended: true },
       { label: 'npm' },
     ])
   })

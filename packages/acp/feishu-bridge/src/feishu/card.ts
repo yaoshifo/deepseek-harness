@@ -223,6 +223,7 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
           tag: 'checker',
           name: `askq_opt_${i + 1}`,
           text: { tag: 'lark_md', content: checkContent },
+          ...opt.checked === true ? { checked: true } : {},
         })
       })
       const valMap: Record<string, string> = { action: elem.action ?? '' }

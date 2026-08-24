@@ -109,6 +109,8 @@ export interface CardCheckOption {
   description?: string
   /** Submitted value, typically the option index (e.g. "1", "2"). */
   value?: string
+  /** Initial checked state; capable checkers render the box pre-ticked. */
+  checked?: boolean
 }
 
 /** Renders checkboxes for multi-select questions (Feishu checker inside a form). */

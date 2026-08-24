@@ -80,6 +80,8 @@ export interface UserQuestionOption {
   description: string
   /** Optional preview text shown below the option (Go Preview). */
   preview?: string
+  /** Presentation flag: multi-select cards render this option pre-checked. */
+  recommended?: boolean
 }
 
 /** A structured question from AskUserQuestion (Go UserQuestion). */

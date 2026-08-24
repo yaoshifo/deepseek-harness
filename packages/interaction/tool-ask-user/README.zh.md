@@ -12,7 +12,7 @@
 - `id`：每个问题必填的稳定 id，会原样包含在回答中。
 - `question`：每个问题必填的问题文本。
 - `header`：可选的简短标题。
-- `options`：可选选项，包含 `label` 和 `description`。如需推荐某个选项，请将其置于首位，并在该标签末尾追加 `(Recommended)`。
+- `options`：可选选项，包含 `label`、`description` 与仅影响呈现的 `recommended` 标记。选项按推荐程度排序（最推荐的在前）；标注 `recommended: true` 的选项在支持的多选 UI 中会默认勾选。
 - `multi_select`：该问题是否可以返回多个选中的选项。
 
 工具调用 `ctx.userQuestions.ask()`，并返回规范的 `{ answers: [{ id, selected, custom? }] }`。`selected` 包含选项标签；`custom` 携带自由填写的回答，对于多选题会补充 `selected`，对于单选题则会覆盖它。Native 渲染器会保留紧凑的 JSON 文本形式 `{ "answers": [{ "id": "...", "selected": ["..."], "custom": "..." }] }`。

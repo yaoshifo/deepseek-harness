@@ -120,6 +120,24 @@ describe('renderCardMap', () => {
     })
   })
 
+  it('checkOptions carries the initial checked state on the checker', () => {
+    const card = newCard()
+      .checkOptions('Which fixes?', [
+        { label: 'Fix leak', description: 'src/a.ts:12', checked: true },
+        { label: 'Add test', description: 'tests/a.spec.ts' },
+      ], 'askq_multi:0', { askq_question: 'Which fixes?' })
+      .build()
+
+    const got = decodeRenderedCard(card)
+    const form = getBodyElements(got).map(jObj).find(e => jStr(e.tag) === 'form')
+    expect(form).toBeDefined()
+    const checkers = jArr(jObj(form).elements).map(jObj).filter(e => jStr(e.tag) === 'checker')
+    expect(checkers.map(c => [jStr(c.name), c.checked])).toEqual([
+      ['askq_opt_1', true],
+      ['askq_opt_2', undefined],
+    ])
+  })
+
   it('delete-mode uses checker form', () => {
     const card = newCard()
       .title('删除会话', 'carmine')

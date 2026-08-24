@@ -11,6 +11,11 @@ export interface AskUserQuestionOption {
   label: string
   /** Optional extra context rendered by capable UIs. */
   description?: string
+  /**
+   * Presentation-only flag marking a recommended option. Capable multi-select
+   * UIs pre-check recommended options; it never changes the answer encoding.
+   */
+  recommended?: boolean
 }
 
 /**

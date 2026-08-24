@@ -240,6 +240,7 @@ function questionElements(q: UserQuestion, qIdx: number, multiple: boolean, sele
         label: opt.label,
         description: opt.description,
         value: String(i + 1),
+        ...opt.recommended === true ? { checked: true } : {},
       })),
       action: `askq_multi:${qIdx}`,
       extra: { askq_question: q.question },

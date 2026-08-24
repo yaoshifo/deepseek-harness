@@ -37,13 +37,14 @@ export function apply(ctx: Context): void {
             },
             options: {
               type: 'array',
-              description: 'Optional choices to show the user. If you recommend one, put it first and append "(Recommended)" to that label.',
+              description: 'Optional choices to show the user. Order options by recommendation, most recommended first, and set recommended: true on the options you recommend.',
               items: {
                 type: 'object',
                 additionalProperties: true,
                 properties: {
                   label: { type: 'string', required: true, description: 'Short user-facing option label.' },
                   description: { type: 'string', description: 'One sentence explaining the tradeoff or impact.' },
+                  recommended: { type: 'boolean', description: 'Marks a recommended option; capable multi-select UIs pre-check it.' },
                 },
               },
             },

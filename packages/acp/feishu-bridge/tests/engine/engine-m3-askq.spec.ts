@@ -18,7 +18,7 @@ import {
   testMultiQuestions,
   testQuestions,
 } from '../stubs/engine-stubs.js'
-import type { Message } from '../../src/core/types.js'
+import type { Message, UserQuestion } from '../../src/core/types.js'
 
 function newTestEngine(): Engine {
   return new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')
@@ -142,6 +142,36 @@ describe('sendAskQuestionsCard', () => {
       expect(row.btnText).toBe(String(i + 1))
       expect(row.btnValue).toBe(`askq:0:${i + 1}`)
     }
+  })
+
+  it('multi-select pre-checks recommended options in the checker form', async () => {
+    const e = newTestEngine()
+    const p = createStubCardPlatform('feishu')
+    const questions: UserQuestion[] = [{
+      question: 'Which fixes?',
+      header: 'Follow-up',
+      multiSelect: true,
+      options: [
+        { label: 'Fix leak', description: 'src/a.ts:12 — guards the retry loop', recommended: true },
+        { label: 'Add test', description: 'tests/a.spec.ts — pins the retry contract' },
+        { label: 'Skip for now', description: '' },
+      ],
+    }]
+
+    await e.sendAskQuestionsCard(p, 'ctx', questions, 'test:askq')
+
+    const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
+    // The one-card layout leads with the question heading; the checker follows.
+    const check = card.elements.find(el => el['kind'] === 'checkOptions') as {
+      kind: string
+      options: Array<{ label: string; checked?: boolean }>
+    }
+    expect(check.kind).toBe('checkOptions')
+    expect(check.options.map(o => [o.label, o.checked === true])).toEqual([
+      ['Fix leak', true],
+      ['Add test', false],
+      ['Skip for now', false],
+    ])
   })
 })
 
