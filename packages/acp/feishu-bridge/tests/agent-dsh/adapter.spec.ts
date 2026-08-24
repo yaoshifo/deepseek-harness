@@ -170,9 +170,8 @@ describe('DshAgentAdapter', () => {
   it('creates a fresh native session keyed by the engine session key', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_1:ou_9', 'CC_PROJECT=test'])
 
-    const session = await a.startSession('')
+    const session = await a.startSession('', { sessionKey: 'feishu:oc_1:ou_9' })
 
     expect(h.creates).toHaveLength(1)
     // A new engine session must NOT reuse the engine key as the native
@@ -185,13 +184,12 @@ describe('DshAgentAdapter', () => {
   it('WorkDirSwitcher: setWorkDir changes the create cwd without touching the config', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_10:ou_9'])
     expect(a.getWorkDir()).toBe('/workspace/project')
 
     // The engine switches the dir around StartSession (per-chat --dir
     // override, Go applyWorkDirOverride) and restores it afterwards.
     a.setWorkDir('/tmp/child-dir')
-    await a.startSession('')
+    await a.startSession('', { sessionKey: 'feishu:oc_10:ou_9' })
     a.setWorkDir('/workspace/project')
 
     expect(h.creates[0]!.meta).toEqual({ cwd: '/tmp/child-dir' })
@@ -200,9 +198,8 @@ describe('DshAgentAdapter', () => {
   it('resumes a persisted session with the same id', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_2:ou_9'])
 
-    const session = await a.startSession('persisted-uuid')
+    const session = await a.startSession('persisted-uuid', { sessionKey: 'feishu:oc_2:ou_9' })
 
     expect(h.resumes).toHaveLength(1)
     expect(String(h.resumes[0]!.resumeSessionId)).toBe('persisted-uuid')
@@ -213,9 +210,8 @@ describe('DshAgentAdapter', () => {
   it('ContinueSession sentinel creates a fresh session', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_3:ou_9'])
 
-    await a.startSession(ContinueSession)
+    await a.startSession(ContinueSession, { sessionKey: 'feishu:oc_3:ou_9' })
 
     expect(h.creates).toHaveLength(1)
     expect(h.resumes).toHaveLength(0)
@@ -224,9 +220,8 @@ describe('DshAgentAdapter', () => {
   it('engineKeyForAgentID maps a live native agent id back to its engine key', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_4:ou_9'])
 
-    const session = await a.startSession('')
+    const session = await a.startSession('', { sessionKey: 'feishu:oc_4:ou_9' })
 
     expect(a.engineKeyForAgentID(session.currentSessionID())).toBe('feishu:oc_4:ou_9')
     expect(a.engineKeyForAgentID('agent-unknown')).toBeUndefined()
@@ -255,10 +250,8 @@ describe('DshAgentAdapter', () => {
   it('reuses the live session for the same key', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setSessionEnv(['CC_SESSION_KEY=k1'])
-    const s1 = await a.startSession('')
-    a.setSessionEnv(['CC_SESSION_KEY=k1'])
-    const s2 = await a.startSession('')
+    const s1 = await a.startSession('', { sessionKey: 'k1' })
+    const s2 = await a.startSession('', { sessionKey: 'k1' })
     expect(s2).toBe(s1)
     expect(h.creates).toHaveLength(1)
   })
@@ -266,8 +259,7 @@ describe('DshAgentAdapter', () => {
   it('provider switch disposes the old agent and resumes the same session id', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setSessionEnv(['CC_SESSION_KEY=k2'])
-    const s1 = await a.startSession('')
+    const s1 = await a.startSession('', { sessionKey: 'k2' })
     const oldID = s1.currentSessionID()
     expect(s1.alive()).toBe(true)
 
@@ -275,8 +267,7 @@ describe('DshAgentAdapter', () => {
     expect(h.agents[0]!.disposed).toBe(true)
     expect(s1.alive()).toBe(false)
 
-    a.setSessionEnv(['CC_SESSION_KEY=k2'])
-    const s2 = await a.startSession(oldID)
+    const s2 = await a.startSession(oldID, { sessionKey: 'k2' })
     expect(h.resumes).toHaveLength(1)
     expect(String(h.resumes[0]!.resumeSessionId)).toBe(oldID)
     expect(s2.currentSessionID()).toBe(oldID)
@@ -513,8 +504,7 @@ describe('DshAgentAdapter', () => {
     const h = createHarness()
     const a = newAdapter(h)
     const s1 = await a.startSession('')
-    a.setSessionEnv(['CC_SESSION_KEY=other'])
-    const s2 = await a.startSession('')
+    const s2 = await a.startSession('', { sessionKey: 'other' })
 
     h.emit(s2.currentSessionID(), { type: 'turn/start', turn: 1 })
     h.emit(s2.currentSessionID(), {
@@ -539,10 +529,8 @@ describe('DshAgentAdapter', () => {
   it('stop disposes every live agent', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setSessionEnv(['CC_SESSION_KEY=kA'])
-    await a.startSession('')
-    a.setSessionEnv(['CC_SESSION_KEY=kB'])
-    await a.startSession('')
+    await a.startSession('', { sessionKey: 'kA' })
+    await a.startSession('', { sessionKey: 'kB' })
 
     await a.stop()
 
@@ -951,8 +939,10 @@ describe('DshAgentAdapter approval answerer', () => {
     const h = createHarness()
     const adapter = newAdapter(h)
     adapter.setAskDelegate(delegate)
-    adapter.setSessionEnv(['CC_SESSION_KEY=feishu:oc_b:ou_1', 'CC_CHATROOM_ROLE=1'])
-    const session = (await adapter.startSession('')) as DshAgentSession
+    const session = (await adapter.startSession('', {
+      sessionKey: 'feishu:oc_b:ou_1',
+      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' },
+    })) as DshAgentSession
     const listener = h.listeners.get('approval/request')?.[0] as unknown as (req: Record<string, unknown>) => Promise<unknown>
 
     const outcome = listener({
@@ -994,8 +984,7 @@ it('tool/result with tool-result blocks projects the inner text as toolResult', 
   // progress card rendered blank result sections).
   const h = createHarness()
   const a = newAdapter(h)
-  a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_tr:ou_9'])
-  const sess = await a.startSession('')
+  const sess = await a.startSession('', { sessionKey: 'feishu:oc_tr:ou_9' })
   const channel = sess.events()
   const agentID = sess.currentSessionID()
 
@@ -1038,8 +1027,7 @@ it('tool/result projects the durable callId as toolID so the engine can close to
   // explodes (observed live: a 60 t/s turn rendered as 225 t/s).
   const h = createHarness()
   const a = newAdapter(h)
-  a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_tr:ou_9'])
-  const sess = await a.startSession('')
+  const sess = await a.startSession('', { sessionKey: 'feishu:oc_tr:ou_9' })
   const channel = sess.events()
   const agentID = sess.currentSessionID()
 
@@ -1083,8 +1071,7 @@ it('result carries the turn-wide usage sum and step count (Go accumulateUsage)',
   // turns and numTurns never projected (ctx "N api" read 0).
   const h = createHarness()
   const a = newAdapter(h)
-  a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_tr:ou_9'])
-  const sess = await a.startSession('')
+  const sess = await a.startSession('', { sessionKey: 'feishu:oc_tr:ou_9' })
   const channel = sess.events()
   const agentID = sess.currentSessionID()
 
@@ -1137,17 +1124,14 @@ it('defaultMode plan activates plan mode on every startSession (Go agent options
   // Distinct engine keys: a live session with the same key short-circuits
   // startSession before the mode application.
   for (const key of ['feishu:oc_m1:ou_9', 'feishu:oc_m2:ou_9']) {
-    a.setSessionEnv([`CC_SESSION_KEY=${key}`])
-    await a.startSession('')
+    await a.startSession('', { sessionKey: key })
   }
   expect(planSets).toEqual([true, true])
 
   // An explicit one-shot override wins once, then the default resumes.
   a.setSessionMode('default')
-  a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_m3:ou_9'])
-  await a.startSession('')
-  a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_m4:ou_9'])
-  await a.startSession('')
+  await a.startSession('', { sessionKey: 'feishu:oc_m3:ou_9' })
+  await a.startSession('', { sessionKey: 'feishu:oc_m4:ou_9' })
   expect(planSets).toEqual([true, true, false, true])
 })
 
@@ -1157,8 +1141,10 @@ it('a chatroom moderator never enters plan mode (an inherited plan default is do
   h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
   const a = newAdapter(h)
   a.setDefaultMode('plan')
-  a.setSessionEnv(['CC_SESSION_KEY=feishu:hub:ou_9', 'CC_CHATROOM_MODERATOR=1'])
-  await a.startSession('')
+  await a.startSession('', {
+    sessionKey: 'feishu:hub:ou_9',
+    chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false, researchAssistantChild: '' },
+  })
   expect(planSets).toEqual([false])
 })
 
@@ -1168,20 +1154,22 @@ it('a chatroom moderator downgrades an explicit plan override too (one rule: mod
   h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
   const a = newAdapter(h)
   a.setSessionMode('plan')
-  a.setSessionEnv(['CC_SESSION_KEY=feishu:hub:ou_9', 'CC_CHATROOM_MODERATOR=1'])
-  await a.startSession('')
+  await a.startSession('', {
+    sessionKey: 'feishu:hub:ou_9',
+    chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false, researchAssistantChild: '' },
+  })
   expect(planSets).toEqual([false])
 })
 
 describe('sessionBypassesPermissions (Go effectiveMode → bypassPermissions)', () => {
   it('elevates unattended subtasks and chatroom roles, not attended ones or moderators', () => {
-    expect(sessionBypassesPermissions(['CC_SUBTASK=1'])).toBe(true)
-    expect(sessionBypassesPermissions(['CC_SUBTASK=1', 'CC_SUBTASK_ATTENDED=1'])).toBe(false)
-    expect(sessionBypassesPermissions(['CC_CHATROOM_ROLE=1'])).toBe(true)
-    expect(sessionBypassesPermissions(['CC_CHATROOM_DIRECT_ROLE=1'])).toBe(true)
-    expect(sessionBypassesPermissions(['CC_CHATROOM_MODERATOR=1'])).toBe(false)
-    expect(sessionBypassesPermissions(['CC_SESSION_KEY=feishu:oc_1:ou_9'])).toBe(false)
-    expect(sessionBypassesPermissions([])).toBe(false)
+    expect(sessionBypassesPermissions({ sessionKey: 'k', subtask: { attended: false, noReport: false, researchAssistant: false } })).toBe(true)
+    expect(sessionBypassesPermissions({ sessionKey: 'k', subtask: { attended: true, noReport: false, researchAssistant: false } })).toBe(false)
+    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' } })).toBe(true)
+    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: false, directRole: true, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' } })).toBe(true)
+    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false, researchAssistantChild: '' } })).toBe(false)
+    expect(sessionBypassesPermissions({ sessionKey: 'feishu:oc_1:ou_9' })).toBe(false)
+    expect(sessionBypassesPermissions(undefined)).toBe(false)
   })
 })
 
@@ -1189,8 +1177,10 @@ describe('effectiveMode bypass wiring', () => {
   it('an unattended subtask session auto-approves tool permissions without a card', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:child:ou_9', 'CC_SUBTASK=1', 'CC_SUBTASK_DEPTH=1'])
-    const session = await a.startSession('')
+    const session = await a.startSession('', {
+      sessionKey: 'feishu:child:ou_9',
+      subtask: { attended: false, noReport: false, researchAssistant: false },
+    })
     const listener = h.listeners.get('approval/request')?.[0]
     if (listener === undefined) throw new Error('approval/request listener was not registered')
 
@@ -1208,8 +1198,10 @@ describe('effectiveMode bypass wiring', () => {
   it('a chatroom role session auto-approves too', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:role:ou_9', 'CC_CHATROOM_ROLE=1'])
-    const session = await a.startSession('')
+    const session = await a.startSession('', {
+      sessionKey: 'feishu:role:ou_9',
+      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' },
+    })
     const listener = h.listeners.get('approval/request')?.[0]
     if (listener === undefined) throw new Error('approval/request listener was not registered')
     const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
@@ -1225,8 +1217,10 @@ describe('effectiveMode bypass wiring', () => {
     const h = createHarness()
     const a = newAdapter(h)
     a.setAskDelegate(delegate)
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:child:ou_9', 'CC_SUBTASK=1', 'CC_SUBTASK_ATTENDED=1'])
-    const session = await a.startSession('')
+    const session = await a.startSession('', {
+      sessionKey: 'feishu:child:ou_9',
+      subtask: { attended: true, noReport: false, researchAssistant: false },
+    })
     const listener = h.listeners.get('approval/request')?.[0]
     if (listener === undefined) throw new Error('approval/request listener was not registered')
     const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
@@ -1247,8 +1241,10 @@ describe('effectiveMode bypass wiring', () => {
     h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
     const a = newAdapter(h)
     a.setDefaultMode('plan')
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:child:ou_9', 'CC_SUBTASK=1'])
-    await a.startSession('')
+    await a.startSession('', {
+      sessionKey: 'feishu:child:ou_9',
+      subtask: { attended: false, noReport: false, researchAssistant: false },
+    })
     expect(planSets).toEqual([false])
   })
 })

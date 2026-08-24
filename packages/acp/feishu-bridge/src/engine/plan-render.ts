@@ -825,7 +825,6 @@ async function renderSkillBody(e: Engine): Promise<string> {
  * @param prompt - User-message prompt carrying html_path and the content.
  * @param systemPrompt - System prompt for the render-session fork.
  * @param htmlPath - Absolute path the fork must write the body fragment to.
- * @param sessionEnv - Extra environment for the forked session.
  * @param signal - Optional abort signal cancelling the fork.
  * @returns Whether the fork produced an assembled HTML file.
  */
@@ -837,7 +836,6 @@ export async function renderContentToHTML(
   prompt: string,
   systemPrompt: string,
   htmlPath: string,
-  sessionEnv: string[],
   signal?: AbortSignal,
 ): Promise<boolean> {
   const rq = asRenderQuerier(e.agent)
@@ -861,7 +859,7 @@ export async function renderContentToHTML(
 
   let out = ''
   try {
-    out = await rq.renderQuery(prompt, providerName, systemPrompt, sessionEnv, signal)
+    out = await rq.renderQuery(prompt, providerName, systemPrompt, signal)
   } catch (error) {
     if (error === errRenderStalled) {
       // LLM stall (no stream output): the caller retries — distinct from a
@@ -899,7 +897,6 @@ export async function renderContentToHTML(
  * @param planMarkdown - The raw plan markdown to render.
  * @param planFilePath - Plan .md path for the sibling artifact; may be empty.
  * @param revision - ExitPlanMode revision for the -vN suffix.
- * @param sessionEnv - Extra environment for the forked session.
  * @param signal - Optional abort signal cancelling the fork.
  * @returns The temp write path, whether or not the render succeeded.
  */
@@ -909,7 +906,6 @@ export async function renderPlanToHTML(
   planMarkdown: string,
   planFilePath: string,
   revision: number,
-  sessionEnv: string[],
   signal?: AbortSignal,
 ): Promise<string> {
   const systemPrompt = renderSessionPrompt(await renderSkillBody(e))
@@ -919,7 +915,7 @@ export async function renderPlanToHTML(
   })()
   const writePath = deriveHtmlPath('', sessionKey, '', revision)
   const prompt = `按你的 system-prompt 指令把以下内容渲染成 HTML。\n\n<html_path>${writePath}</html_path>\n\n<plan-markdown>\n${planMarkdown}\n</plan-markdown>`
-  const ok = await renderContentToHTML(e, 'plan-render', 'plan', sessionKey, prompt, systemPrompt, writePath, sessionEnv, signal)
+  const ok = await renderContentToHTML(e, 'plan-render', 'plan', sessionKey, prompt, systemPrompt, writePath, signal)
   if (ok) {
     const artifactPath = deriveHtmlPath(planFilePath, sessionKey, nameHint, revision)
     if (artifactPath !== '' && artifactPath !== writePath) copyFileBestEffort(writePath, artifactPath)
@@ -936,7 +932,6 @@ export async function renderPlanToHTML(
  * @param e - Engine used to fork the render session.
  * @param sessionKey - Session key for temp-path derivation and logging.
  * @param replyContent - The completed reply text to render.
- * @param sessionEnv - Extra environment for the forked session.
  * @param signal - Optional abort signal cancelling the fork.
  * @returns The html path; the file may not exist on failure.
  */
@@ -944,14 +939,13 @@ export async function renderReplyToHTML(
   e: Engine,
   sessionKey: string,
   replyContent: string,
-  sessionEnv: string[],
   signal?: AbortSignal,
 ): Promise<string> {
   const systemPrompt = renderReplySummaryPrompt(await renderSkillBody(e))
   const htmlPath = deriveHtmlPath('', sessionKey, '', 0)
   const contentHTML = markdownToSimpleHTML(replyContent)
   const prompt = `按你的 system-prompt 指令把以下内容渲染成 HTML。\n\n<html_path>${htmlPath}</html_path>\n\n<plan-rendered-html>\n${contentHTML}\n</plan-rendered-html>`
-  const ok = await renderContentToHTML(e, 'reply-html', 'reply', sessionKey, prompt, systemPrompt, htmlPath, sessionEnv, signal)
+  const ok = await renderContentToHTML(e, 'reply-html', 'reply', sessionKey, prompt, systemPrompt, htmlPath, signal)
   if (!ok) await removeRenderedTemp(htmlPath)
   return htmlPath
 }
@@ -1165,7 +1159,6 @@ export function renderAndDeliverReply(
   if (state.preRenderRunning) return
   state.preRenderRunning = true
   state.preRenderingKey = exportKey
-  const sessionEnv = [...state.sessionEnv]
 
   const parentCtl = new AbortController()
   const handle = registerRenderCancel(state, () => { parentCtl.abort() })
@@ -1212,7 +1205,7 @@ export function renderAndDeliverReply(
         parentCtl.signal.addEventListener('abort', onParentAbort, { once: true })
         const timer = setTimeout(() => { attemptCtl.abort() }, timeout)
         try {
-          hp = await renderReplyToHTML(e, sessionKey, replyContent, sessionEnv, attemptCtl.signal)
+          hp = await renderReplyToHTML(e, sessionKey, replyContent, attemptCtl.signal)
         } finally {
           clearTimeout(timer)
           parentCtl.signal.removeEventListener('abort', onParentAbort)
@@ -1285,7 +1278,6 @@ export function launchPlanRender(
   revision: number,
   exportKey: string,
 ): void {
-  const renderEnv = [...state.sessionEnv]
   let timeout = e.planRenderTimeoutMs
   if (timeout <= 0) timeout = defaultPlanRenderTimeoutMs
 
@@ -1315,7 +1307,7 @@ export function launchPlanRender(
         parentCtl.signal.addEventListener('abort', onParentAbort, { once: true })
         const timer = setTimeout(() => { attemptCtl.abort() }, timeout)
         try {
-          htmlPath = await renderPlanToHTML(e, sessionKey, sentPlanContent, planFilePath, revision, renderEnv, attemptCtl.signal)
+          htmlPath = await renderPlanToHTML(e, sessionKey, sentPlanContent, planFilePath, revision, attemptCtl.signal)
         } finally {
           clearTimeout(timer)
           parentCtl.signal.removeEventListener('abort', onParentAbort)

@@ -48,8 +48,9 @@ export interface FileAttachment {
 
 /**
  * The default Feishu Wiki/Drive location this project's bot operates in
- * (Go FeishuWorkspaceInfo, #18). Non-empty fields surface as CC_FEISHU_* env
- * entries on session start, scoping doc search/creation to this location.
+ * (Go FeishuWorkspaceInfo, #18). Non-empty fields surface as the CC_FEISHU_*
+ * lines of the session's workspace routing section, scoping doc
+ * search/creation to this location.
  */
 export interface FeishuWorkspaceInfo {
   wikiSpaceId: string
@@ -376,10 +377,59 @@ export interface AgentSession {
   close(): Promise<void>
 }
 
+/**
+ * Typed per-session start metadata the engine hands to
+ * {@link Agent.startSession} (the replacement for the Go-era CC_* env-note
+ * array): persona flags, the engine session key, Feishu workspace routing,
+ * and the shared research venv. Absent groups mean the plain-session path.
+ */
+export interface SessionStartOptions {
+  /**
+   * Engine session key the live agent session is bound by. Distinct from the
+   * interactive-state slot key on cron new-per-run sessions, whose slot key
+   * carries a `#cron:` suffix the session key must not. '' falls back to the
+   * startSession sessionID.
+   */
+  sessionKey: string
+  /** Agent-delegated subtask child persona; absent = not a subtask. */
+  subtask?: {
+    /** A human has spoken in the child group (keeps the normal approval path). */
+    attended: boolean
+    /** The child never reports back (no-report preamble). */
+    noReport: boolean
+    /** The child is a research assistant: the research contract rides on top of the report preamble. */
+    researchAssistant: boolean
+  }
+  /** Chatroom persona; absent = plain session. */
+  chatroom?: {
+    /** Multi-role chatroom role session (bound to a hub). */
+    role: boolean
+    /** 1:1 direct role chat (no hub, no relay). */
+    directRole: boolean
+    /** Hub session driving the chatroom (bare persona, never plan mode). */
+    moderator: boolean
+    /** Shared chatroom ledger directory; '' when no moderator dir is configured. */
+    ledgerDir: string
+    /** The hub flagged this chatroom as research-driven. */
+    research: boolean
+    /** Session key of a research role's pre-spawned idle assistant; '' when none. */
+    researchAssistantChild: string
+  }
+  /** Default Feishu workspace routing (#18); absent = no routing section. */
+  feishuWorkspace?: FeishuWorkspaceInfo
+  /** Shared research venv; absent = none. */
+  venv?: {
+    /** venv root directory (Go VIRTUAL_ENV). */
+    virtualEnv: string
+    /** venv bin directory the Go subprocess PATH prepended. */
+    pathBin: string
+  }
+}
+
 /** An AI coding assistant backend (Go Agent). */
 export interface Agent {
   name(): string
-  startSession(sessionID: string): Promise<AgentSession>
+  startSession(sessionID: string, options?: SessionStartOptions): Promise<AgentSession>
   listSessions(): Promise<AgentSessionInfo[]>
   stop(): Promise<void>
 }
@@ -403,25 +453,9 @@ export interface SessionDeleter {
   deleteSession(sessionID: string): Promise<void>
 }
 
-/** Optional: agent accepts per-session env vars (CC_PROJECT, …). */
-export interface SessionEnvInjector {
-  setSessionEnv(env: string[]): void
-}
-
 /** Optional: agent accepts a one-shot mode override consumed by the next startSession. */
 export interface SessionModeInjector {
   setSessionMode(mode: string): void
-}
-
-/**
- * Structural checks replacing Go's interface type assertions.
- *
- * @param a - the agent to inspect.
- * @returns the capability view, or undefined when not implemented.
- */
-export function asSessionEnvInjector(a: Agent): SessionEnvInjector | undefined {
-  const candidate = a as Partial<SessionEnvInjector>
-  return typeof candidate.setSessionEnv === 'function' ? (candidate as SessionEnvInjector) : undefined
 }
 
 /**
@@ -1384,18 +1418,17 @@ export function asMonitorChatConfigurable(p: Platform): MonitorChatConfigurable 
 
 /**
  * Agent that can spawn an isolated, non-plan-mode "render session" (Go
- * RenderQuerier): a standalone one-shot agent with tool access, a
- * complete-replacement system prompt, and an explicit sessionEnv so
- * concurrent render sessions don't crosstalk via a shared env slot.
+ * RenderQuerier): a standalone one-shot agent with tool access and a
+ * complete-replacement system prompt. The one-shot spawns in-process with a
+ * fresh session, so concurrent renders cannot crosstalk.
  */
 export interface RenderQuerier {
   /**
    * Run a standalone query with an injected system prompt. `providerName`
-   * selects the provider route; `sessionEnv` is passed through verbatim and
-   * must not be sourced from a shared slot. Returns the session's trimmed
-   * stdout (expected one-line confirmation).
+   * selects the provider route. Returns the session's trimmed stdout
+   * (expected one-line confirmation).
    */
-  renderQuery(prompt: string, providerName: string, systemPrompt: string, sessionEnv: string[], signal?: AbortSignal): Promise<string>
+  renderQuery(prompt: string, providerName: string, systemPrompt: string, signal?: AbortSignal): Promise<string>
 }
 
 /** Agent whose render-session effort can be overridden per project (Go RenderEffortSetter). */

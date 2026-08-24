@@ -43,26 +43,20 @@ import {
   tempDir,
 } from './plan-render-helpers.js'
 
-function renderEnvHas(env: string[], kv: string): boolean {
-  return env.includes(kv)
-}
-
 describe('RenderPlanToHTML', () => {
-  it('NoCrosstalk: each fork receives exactly the sessionEnv passed in', async () => {
+  it('NoCrosstalk: each fork receives exactly its own prompt', async () => {
     const a = createRenderAgent()
     const e = newRenderEngine(a, createStubMediaPlatform())
     e.planRenderProvider = 'p'
 
-    const envA = ['CC_PROJECT=test', 'CC_SESSION_KEY=keyA']
-    const envB = ['CC_PROJECT=test', 'CC_SESSION_KEY=keyB']
-    await renderPlanToHTML(e, 'sessA', '# plan A', '/tmp/a.md', 1, envA)
-    await renderPlanToHTML(e, 'sessB', '# plan B', '/tmp/b.md', 1, envB)
+    await renderPlanToHTML(e, 'sessA', '# plan A', '/tmp/a.md', 1)
+    await renderPlanToHTML(e, 'sessB', '# plan B', '/tmp/b.md', 1)
 
     const calls = a.getCalls()
     expect(calls).toHaveLength(2)
-    expect(renderEnvHas(calls[0]!.sessionEnv, 'CC_SESSION_KEY=keyA')).toBe(true)
-    expect(renderEnvHas(calls[1]!.sessionEnv, 'CC_SESSION_KEY=keyB')).toBe(true)
-    expect(renderEnvHas(calls[0]!.sessionEnv, 'CC_SESSION_KEY=keyB')).toBe(false)
+    expect(calls[0]!.prompt).toContain('plan A')
+    expect(calls[1]!.prompt).toContain('plan B')
+    expect(calls[0]!.prompt).not.toContain('plan B')
     // Prompt carries the RAW plan markdown + html_path tag — never the reply
     // sub-type's SimpleHTML fragment wrapper.
     expect(calls[0]!.prompt).toContain('<plan-markdown>')
@@ -75,7 +69,7 @@ describe('RenderPlanToHTML', () => {
   it('FailureSwallowed: a failing fork never propagates', async () => {
     const a = createRenderAgent({ err: new Error('boom') })
     const e = newRenderEngine(a, createStubMediaPlatform())
-    await renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1, ['CC_SESSION_KEY=k'])
+    await renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1)
     expect(a.getCalls()).toHaveLength(1)
   })
 
@@ -85,7 +79,7 @@ describe('RenderPlanToHTML', () => {
     const ctl = new AbortController()
     setTimeout(() => { ctl.abort() }, 50)
     const start = Date.now()
-    await renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1, ['CC_SESSION_KEY=k'], ctl.signal)
+    await renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1, ctl.signal)
     expect(Date.now() - start).toBeLessThan(250)
   })
 
@@ -94,7 +88,7 @@ describe('RenderPlanToHTML', () => {
     const e = newRenderEngine(a, createStubMediaPlatform())
     const title = '提高 distill_add job 优先级，触发蒸馏重跑'
     const planFilePath = join(tempDir('plan-ascii-'), 'foo.md')
-    await renderPlanToHTML(e, 'feishu_oc_abc123', `# ${title}`, planFilePath, 1, ['CC_SESSION_KEY=k'])
+    await renderPlanToHTML(e, 'feishu_oc_abc123', `# ${title}`, planFilePath, 1)
 
     const calls = a.getCalls()
     expect(calls).toHaveLength(1)
@@ -110,7 +104,7 @@ describe('RenderPlanToHTML', () => {
     const planDir = tempDir('plan-sibling-')
     const planFilePath = join(planDir, 'foo.md')
     const title = '修复告警'
-    await renderPlanToHTML(e, 'feishu_oc_abc', `# ${title}`, planFilePath, 1, ['CC_SESSION_KEY=k'])
+    await renderPlanToHTML(e, 'feishu_oc_abc', `# ${title}`, planFilePath, 1)
 
     const sibling = join(planDir, `${slugifyTitle(title, '')}.html`)
     expect(existsSync(sibling)).toBe(true)
@@ -121,14 +115,14 @@ describe('RenderPlanToHTML', () => {
     const e = new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')
     e.planRenderProvider = 'p'
     e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
-    await renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1, [])
+    await renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1)
   })
 
   it('NoProviderSkips: an unresolved provider skips the fork entirely', async () => {
     const a = createRenderAgent()
     const e = new Engine('test', a, [createStubMediaPlatform()], '', 'en') // no provider configured
     e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
-    await renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1, [])
+    await renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1)
     expect(a.getCalls()).toHaveLength(0)
   })
 })
@@ -139,8 +133,8 @@ describe('RenderForks_RequireRegisteredSkill', () => {
     const e = new Engine('test', a, [createStubMediaPlatform()], '', 'en')
     e.planRenderProvider = 'p'
 
-    await expect(renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1, [])).rejects.toThrow(/feishu-bridge-render/)
-    await expect(renderReplyToHTML(e, 'sess', 'reply body', [])).rejects.toThrow(/feishu-bridge-render/)
+    await expect(renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1)).rejects.toThrow(/feishu-bridge-render/)
+    await expect(renderReplyToHTML(e, 'sess', 'reply body')).rejects.toThrow(/feishu-bridge-render/)
     expect(a.getCalls()).toHaveLength(0)
   })
 
@@ -153,7 +147,7 @@ describe('RenderForks_RequireRegisteredSkill', () => {
       return Promise.resolve(renderSkillBodyFixture())
     }
 
-    await renderReplyToHTML(e, 'sess', 'reply body', [])
+    await renderReplyToHTML(e, 'sess', 'reply body')
 
     expect(resolves).toBe(1)
     expect(a.getCalls()[0]!.systemPrompt).toContain(renderSkillBodyFixture())
@@ -161,11 +155,11 @@ describe('RenderForks_RequireRegisteredSkill', () => {
 })
 
 describe('RenderReplyToHTML', () => {
-  it('UsesReplyPrompt: reply prompt, provider, SimpleHTML fragment, env passthrough', async () => {
+  it('UsesReplyPrompt: reply prompt, provider, SimpleHTML fragment', async () => {
     const a = createRenderAgent()
     const e = newRenderEngine(a, createStubMediaPlatform())
 
-    await renderReplyToHTML(e, 'sess', 'the agent reply body', ['CC_SESSION_KEY=k'])
+    await renderReplyToHTML(e, 'sess', 'the agent reply body')
 
     const calls = a.getCalls()
     expect(calls).toHaveLength(1)
@@ -175,13 +169,12 @@ describe('RenderReplyToHTML', () => {
     expect(calls[0]!.prompt).toContain('<html_path>')
     expect(calls[0]!.prompt).toContain('<plan-rendered-html>')
     expect(calls[0]!.prompt).not.toContain('<plan-markdown>')
-    expect(renderEnvHas(calls[0]!.sessionEnv, 'CC_SESSION_KEY=k')).toBe(true)
   })
 
   it('ReturnsPath: the returned path is a non-empty .html path', async () => {
     const a = createRenderAgent()
     const e = newRenderEngine(a, createStubMediaPlatform())
-    const hp = await renderReplyToHTML(e, 'sess', 'some reply', ['CC_SESSION_KEY=k'])
+    const hp = await renderReplyToHTML(e, 'sess', 'some reply')
     expect(hp.endsWith('.html')).toBe(true)
     expect(hp).not.toBe('')
   })
@@ -189,12 +182,12 @@ describe('RenderReplyToHTML', () => {
   it('FailureCleansTempDir: a failed fork removes its temp dir; success preserves it', async () => {
     const fail = createRenderAgent({ err: new Error('fork failed') })
     const eFail = newRenderEngine(fail, createStubMediaPlatform())
-    const hpFail = await renderReplyToHTML(eFail, 'sess', 'some reply', ['CC_SESSION_KEY=k'])
+    const hpFail = await renderReplyToHTML(eFail, 'sess', 'some reply')
     expect(existsSync(hpFail.split('/').slice(0, -1).join('/'))).toBe(false)
 
     const ok = createRenderAgent()
     const eOk = newRenderEngine(ok, createStubMediaPlatform())
-    const hpOk = await renderReplyToHTML(eOk, 'sess', 'some reply', ['CC_SESSION_KEY=k'])
+    const hpOk = await renderReplyToHTML(eOk, 'sess', 'some reply')
     expect(existsSync(hpOk.split('/').slice(0, -1).join('/'))).toBe(true)
   })
 })

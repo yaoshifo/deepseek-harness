@@ -44,6 +44,7 @@ import type {
   FileAttachment,
   ImageAttachment,
   ProviderConfig,
+  SessionStartOptions,
 } from '../core/types.js'
 
 /** Minimal structural member of a dsh Agent the adapter drives. */
@@ -217,18 +218,8 @@ function trimCompletedTurnPrefix(events: readonly SessionEvent[]): SessionEvent[
   return events.slice(0, lastEnd.seq + 1)
 }
 
-/** Read an env-flag value ("1") from the injected env list. */
-function envHasFlag(env: string[], name: string): boolean {
-  return env.includes(`${name}=1`)
-}
-
-/** Read a plain env value ('' when absent). */
-function envValue(env: string[], name: string): string {
-  return env.find(e => e.startsWith(`${name}=`))?.slice(name.length + 1) ?? ''
-}
-
 /**
- * Whether the session env flags mark it unattended, the sessions Go's
+ * Whether the session-start options mark it unattended, the sessions Go's
  * effectiveMode elevates to bypassPermissions: agent-delegated subtask
  * children without a human in the group, and chatroom role / direct-role
  * personas — approval prompts there stall on nobody who can answer. An
@@ -236,28 +227,28 @@ function envValue(env: string[], name: string): string {
  * keep the normal approval path; a moderator additionally never enters
  * plan mode (downgraded at session start, whatever the mode source).
  *
- * @param env - The session env built by the engine's buildSessionEnv.
+ * @param options - The session-start options built by the engine's buildSessionStartOptions.
  * @returns True when tool-permission requests auto-approve for this session.
  */
-export function sessionBypassesPermissions(env: string[]): boolean {
-  const unattendedSubtask = envHasFlag(env, 'CC_SUBTASK') && !envHasFlag(env, 'CC_SUBTASK_ATTENDED')
-  return unattendedSubtask || envHasFlag(env, 'CC_CHATROOM_ROLE') || envHasFlag(env, 'CC_CHATROOM_DIRECT_ROLE')
+export function sessionBypassesPermissions(options: SessionStartOptions | undefined): boolean {
+  const unattendedSubtask = options?.subtask !== undefined && !options.subtask.attended
+  return unattendedSubtask || options?.chatroom?.role === true || options?.chatroom?.directRole === true
 }
 
 /**
- * The #18 workspace routing section: CC_FEISHU_* env entries the engine
- * attached to the session become a system-prompt section naming the bot's
- * default Feishu workspace (the D3 setup-hook replacement for Go's
- * subprocess env the feishu-search/lark-guide skills read).
+ * The #18 workspace routing section: the engine's workspace fields become a
+ * system-prompt section naming the bot's default Feishu workspace (the D3
+ * setup-hook replacement for Go's subprocess env the feishu-search/lark-guide
+ * skills read; the CC_FEISHU_* line names are the model-visible contract).
  *
- * @param env - The session env built by the engine's buildSessionEnv.
+ * @param options - The session-start options built by the engine's buildSessionStartOptions.
  * @returns The prompt section text; '' when no workspace is configured.
  */
-export function feishuWorkspaceSection(env: string[]): string {
-  const wikiSpaceId = envValue(env, 'CC_FEISHU_WIKI_SPACE_ID')
-  const folderToken = envValue(env, 'CC_FEISHU_FOLDER_TOKEN')
-  const wikiNodeToken = envValue(env, 'CC_FEISHU_WIKI_NODE_TOKEN')
-  const description = envValue(env, 'CC_FEISHU_WORKSPACE_DESC')
+export function feishuWorkspaceSection(options: SessionStartOptions | undefined): string {
+  const wikiSpaceId = options?.feishuWorkspace?.wikiSpaceId ?? ''
+  const folderToken = options?.feishuWorkspace?.folderToken ?? ''
+  const wikiNodeToken = options?.feishuWorkspace?.wikiNodeToken ?? ''
+  const description = options?.feishuWorkspace?.description ?? ''
   if (wikiSpaceId === '' && folderToken === '' && wikiNodeToken === '' && description === '') return ''
   const lines: string[] = ['\n### 默认飞书工作空间（本 bot 的文档路由）']
   if (description !== '') lines.push(description)
@@ -270,7 +261,7 @@ export function feishuWorkspaceSection(env: string[]): string {
 }
 
 /**
- * Build the agents.create/resume setup hook for the env-flagged persona
+ * Build the agents.create/resume setup hook for the typed persona options
  * (Go isChatroomBareSession + buildChatroomSystemPrompt): chatroom role /
  * direct-role / moderator sessions replace the whole system prompt. A
  * subtask child (Go buildAppendSystemPrompt's CC_SUBTASK branch) appends the
@@ -279,15 +270,13 @@ export function feishuWorkspaceSection(env: string[]): string {
  * section (order 10) and, when a Feishu workspace is configured, the #18
  * routing section on top.
  */
-function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
-  const isRole = envHasFlag(env, 'CC_CHATROOM_ROLE')
-  const isDirect = envHasFlag(env, 'CC_CHATROOM_DIRECT_ROLE')
-  const isModerator = envHasFlag(env, 'CC_CHATROOM_MODERATOR')
-  const isSubtask = envHasFlag(env, 'CC_SUBTASK')
-  const isResearchAssistant = envHasFlag(env, 'CC_RESEARCH_ASSISTANT')
-  const isNoReport = envHasFlag(env, 'CC_SUBTASK_NO_REPORT')
-  const workspaceText = feishuWorkspaceSection(env)
-  if (!isRole && !isDirect && !isModerator) {
+function buildSessionSetup(options: SessionStartOptions | undefined, workDir: string): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
+  const chatroom = options?.chatroom
+  const isSubtask = options?.subtask !== undefined
+  const isResearchAssistant = options?.subtask?.researchAssistant === true
+  const isNoReport = options?.subtask?.noReport === true
+  const workspaceText = feishuWorkspaceSection(options)
+  if (chatroom === undefined || (!chatroom.role && !chatroom.directRole && !chatroom.moderator)) {
     if (!isSubtask) {
       return (agentCtx) => {
         const promptSvc = agentCtx.get('systemPrompt') as
@@ -321,12 +310,12 @@ function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai
     if (promptSvc === undefined) return
     const text = buildChatroomSystemPrompt({
       workDir,
-      isRole,
-      isDirect,
-      isModerator,
-      research: envHasFlag(env, 'CC_CHATROOM_RESEARCH'),
-      researchAssistantChild: envValue(env, 'CC_RESEARCH_ASSISTANT_CHILD'),
-      ledgerDir: envValue(env, 'CC_CHATROOM_LEDGER'),
+      isRole: chatroom.role,
+      isDirect: chatroom.directRole,
+      isModerator: chatroom.moderator,
+      research: chatroom.research,
+      researchAssistantChild: chatroom.researchAssistantChild,
+      ledgerDir: chatroom.ledgerDir,
       platformPrompt: '',
     })
     if (text !== '') {
@@ -399,7 +388,6 @@ export class DshAgentAdapter {
   private readonly liveSessions = new Map<string, DshAgentSession>()
   /** Staged fork-at seeds keyed by the sentinel id, consumed by startSession. */
   private readonly forkAtSeeds = new Map<string, { seed: SessionEvent[]; parentID: string; childWorkDir: string }>()
-  private env: string[] = []
   private modeOverride = ''
   /** Project-level default session mode ('' = no default; 'plan' starts every session in plan mode). */
   private defaultMode = ''
@@ -676,15 +664,6 @@ export class DshAgentAdapter {
   }
 
   /**
-   * SessionEnvInjector: per-session env captured for the next startSession.
-   *
-   * @param env - the KEY=value entries captured for the next startSession.
-   */
-  setSessionEnv(env: string[]): void {
-    this.env = [...env]
-  }
-
-  /**
    * WorkDirSwitcher: the dir used for the next agents.create (Go SetWorkDir).
    *
    * @param dir - the working directory for the next agents.create.
@@ -895,15 +874,14 @@ export class DshAgentAdapter {
   /**
    * RenderQuerier (Go dsh RenderQuery): an isolated render session — fresh
    * session (no resume), whole-prompt replacement via the setup hook, full
-   * tools, explicit sessionEnv so concurrent renders don't crosstalk. The
-   * render one-shot does not need deep reasoning, so an unset effort
-   * defaults to 'low' (an unset effort once made renders burn ~21k thinking
-   * chars for an 84-char artifact). The 15m budget mirrors the Go fork.
+   * tools. The render one-shot does not need deep reasoning, so an unset
+   * effort defaults to 'low' (an unset effort once made renders burn ~21k
+   * thinking chars for an 84-char artifact). The 15m budget mirrors the Go
+   * fork.
    *
    * @param prompt - the render task prompt.
    * @param providerName - the named provider route to run on.
    * @param systemPrompt - the complete-replacement system prompt for the render session.
-   * @param sessionEnv - accepted for Go parity; dsh one-shots spawn in-process, so it is unused.
    * @param signal - caller abort; rejects the wait and still disposes the session.
    * @returns the session's trimmed stdout.
    */
@@ -911,10 +889,8 @@ export class DshAgentAdapter {
     prompt: string,
     providerName: string,
     systemPrompt: string,
-    sessionEnv: string[],
     signal?: AbortSignal,
   ): Promise<string> {
-    void sessionEnv // dsh one-shots spawn in-process (no subprocess env; Go env is claudecode-specific)
     return this.oneShotQuery({
       prompt,
       providerName,
@@ -1083,8 +1059,8 @@ export class DshAgentAdapter {
    * create.
    *
    * Chatroom bare sessions (role / direct-role / moderator, flagged through
-   * the injected env) carry a setup hook that replaces the whole system
-   * prompt with the flattened persona (Go isChatroomBareSession +
+   * the session-start options) carry a setup hook that replaces the whole
+   * system prompt with the flattened persona (Go isChatroomBareSession +
    * buildChatroomSystemPrompt via DSH_CC_SYSTEM_PROMPT_COMPLETE; here the
    * D3 `complete: true` prompt section). Research assistants get their
    * preamble appended as a normal section instead.
@@ -1093,15 +1069,17 @@ export class DshAgentAdapter {
    * sentinel creates fresh, a concrete id resumes, `__fork__<origID>`
    * seeds from the parent, and `__forkat__<newID>` consumes the staged
    * rollback prefix.
+   * @param options - typed per-session start metadata; a non-empty
+   * sessionKey overrides the sessionID as the engine session key the live
+   * session is bound by.
    * @returns the live session bound to the engine session key.
    */
-  async startSession(sessionID: string): Promise<AgentSession> {
-    const envKey = this.env.find(e => e.startsWith('CC_SESSION_KEY='))?.slice('CC_SESSION_KEY='.length) ?? ''
-    const key = envKey !== '' ? envKey : sessionID
+  async startSession(sessionID: string, options?: SessionStartOptions): Promise<AgentSession> {
+    const key = options !== undefined && options.sessionKey !== '' ? options.sessionKey : sessionID
     const isFork = sessionID.startsWith(ForkSessionPrefix)
     const isForkAt = sessionID.startsWith(ForkAtSessionPrefix)
     const isResume = !isFork && !isForkAt && sessionID !== '' && sessionID !== ContinueSession
-    const setup = buildSessionSetup(this.env, this.workDir)
+    const setup = buildSessionSetup(options, this.workDir)
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing
@@ -1177,7 +1155,7 @@ export class DshAgentAdapter {
         ...(setup !== undefined ? { setup } : {}),
       })
     }
-    const bypass = sessionBypassesPermissions(this.env)
+    const bypass = sessionBypassesPermissions(options)
     const session = new DshAgentSession(key, handle, this.workDir, this.ctx, bypass)
 
     // Lazily register the userQuestions provider now that the plugin tree
@@ -1194,7 +1172,7 @@ export class DshAgentAdapter {
     // ExitPlanMode approval nobody needs to give. Roles and direct roles are
     // covered by bypass above; the moderator keeps the normal tool-approval
     // path (deliberate deviation from Go effectiveMode, plan mode only).
-    if (mode === 'plan' && envHasFlag(this.env, 'CC_CHATROOM_MODERATOR')) mode = 'default'
+    if (mode === 'plan' && options?.chatroom?.moderator === true) mode = 'default'
     if (mode !== '') {
       // Apply the mode onto the native plan-mode controller (Go /mode +
       // config mode=plan): plan → active, others off. The one-shot override

@@ -160,8 +160,10 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# Mod\n', 'utf8')
     const sections: RecordedSection[] = []
     const a = newAdapter(createHarness({ sections }), dir)
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_1:ou_9', 'CC_CHATROOM_MODERATOR=1'])
-    await a.startSession('')
+    await a.startSession('', {
+      sessionKey: 'feishu:oc_1:ou_9',
+      chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false, researchAssistantChild: '' },
+    })
     expect(sections).toHaveLength(1)
     expect(sections[0]?.complete).toBe(true)
     expect(sections[0]?.text).toContain('# Mod')
@@ -170,8 +172,10 @@ describe('DshAgentAdapter bare persona setup hook', () => {
   it('registers the research-assistant preamble as a non-complete section', async () => {
     const sections: RecordedSection[] = []
     const a = newAdapter(createHarness({ sections }), '/ws')
-    a.setSessionEnv(['CC_SESSION_KEY=test:assistant-1', 'CC_SUBTASK=1', 'CC_RESEARCH_ASSISTANT=1'])
-    await a.startSession('')
+    await a.startSession('', {
+      sessionKey: 'test:assistant-1',
+      subtask: { attended: false, noReport: false, researchAssistant: true },
+    })
     expect(sections).toHaveLength(1)
     expect(sections[0]?.complete).toBeUndefined()
     expect(sections[0]?.text).toContain('被派发子任务的子 agent')
@@ -181,8 +185,10 @@ describe('DshAgentAdapter bare persona setup hook', () => {
   it('registers the report-back preamble for a plain subtask child', async () => {
     const sections: RecordedSection[] = []
     const a = newAdapter(createHarness({ sections }), '/ws')
-    a.setSessionEnv(['CC_SESSION_KEY=test:child-1', 'CC_SUBTASK=1', 'CC_SUBTASK_DEPTH=1'])
-    await a.startSession('')
+    await a.startSession('', {
+      sessionKey: 'test:child-1',
+      subtask: { attended: false, noReport: false, researchAssistant: false },
+    })
     expect(sections).toHaveLength(1)
     expect(sections[0]?.complete).toBeUndefined()
     expect(sections[0]?.text).toContain('被派发子任务的子 agent')
@@ -192,8 +198,10 @@ describe('DshAgentAdapter bare persona setup hook', () => {
   it('registers the no-report preamble for a no-report subtask child', async () => {
     const sections: RecordedSection[] = []
     const a = newAdapter(createHarness({ sections }), '/ws')
-    a.setSessionEnv(['CC_SESSION_KEY=test:child-2', 'CC_SUBTASK=1', 'CC_SUBTASK_NO_REPORT=1'])
-    await a.startSession('')
+    await a.startSession('', {
+      sessionKey: 'test:child-2',
+      subtask: { attended: false, noReport: true, researchAssistant: false },
+    })
     expect(sections).toHaveLength(1)
     expect(sections[0]?.complete).toBeUndefined()
     expect(sections[0]?.text).toContain('被派发执行单一任务的子 agent')
@@ -204,8 +212,7 @@ describe('DshAgentAdapter bare persona setup hook', () => {
   it('registers the agent conventions section for plain sessions', async () => {
     const sections: RecordedSection[] = []
     const a = newAdapter(createHarness({ sections }), '/ws')
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_1:ou_9'])
-    await a.startSession('')
+    await a.startSession('', { sessionKey: 'feishu:oc_1:ou_9' })
     expect(sections).toHaveLength(1)
     expect(sections[0]?.name).toBe('feishu-bridge-agent-conventions')
     expect(sections[0]?.order).toBe(10)
@@ -234,8 +241,10 @@ describe('DshAgentAdapter bare persona setup hook', () => {
   it('registers the conventions section before the workspace section', async () => {
     const sections: RecordedSection[] = []
     const a = newAdapter(createHarness({ sections }), '/ws')
-    a.setSessionEnv(['CC_SESSION_KEY=feishu:oc_2:ou_9', 'CC_FEISHU_WIKI_SPACE_ID=7415'])
-    await a.startSession('')
+    await a.startSession('', {
+      sessionKey: 'feishu:oc_2:ou_9',
+      feishuWorkspace: { wikiSpaceId: '7415', folderToken: '', wikiNodeToken: '', description: '' },
+    })
     expect(sections).toHaveLength(2)
     expect(sections[0]?.name).toBe('feishu-bridge-agent-conventions')
     expect(sections[0]?.order).toBe(10)

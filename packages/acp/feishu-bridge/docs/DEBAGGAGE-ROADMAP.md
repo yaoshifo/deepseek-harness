@@ -10,6 +10,7 @@
 | B1 | 原生审批补齐：`allowed-always` 常驻授权、`ApprovalAnswer` 附言、`toolInput` 预览 | commit e704d3b8bb；seam note `feature/2026-07-06-approval-seam` 就地更新 |
 | B2 | 提问卡合并：`Engine.askUser` 直接类型化委托（`AskDelegate`）替代合成事件通路；多题一卡（已答冻结/未答可点/自由文本答第一未答题）；`perm:allow_all` → 原生 `allowed-always`、deny 附言进 `ApprovalAnswer.note`、卡片预览用 `toolInput`；`selected`/`custom` 分离；research-manual 整卡超时；删 `permission_request` EventKind、`PendingPermission`、`approveAll`、adapter 双等待表与词表主通路（净 −277 行，permission.ts 178→63）。遗留真机冒烟点：chatroom pick 窗口工具审批出卡、research 整卡超时端到端时序、ask 停留期间并发子会话事件落面 | Agent Note `simplification/2026-08-24-feishu-bridge-ask-delegate` |
 | B3 | `SubagentStartRequest.cwd`（能力门控 `cwdOverride`；worktree 编排刻意留调用方） | commit 4c6312829f；Agent Note `architecture/2026-08-23-subagent-cwd-override` |
+| B6 | env 纸条换正式表单：`Agent.startSession(sessionID, options?)` 收 typed `SessionStartOptions`（persona/sessionKey/workspace/venv），删 `setSessionEnv` 槽位、`CC_*` env 数组与逐行解析、`renderQuery` 的 `void sessionEnv` 形参、lark 的 `CC_PROJECT` 防御丢弃；无读者变量（`CC_PROJECT`/`CC_SESSION`/`CC_SUBTASK_DEPTH`/`CC_RESEARCH_ASSISTANT_KEY`）直接删除 | Agent Note `simplification/2026-08-24-feishu-bridge-session-start-options` |
 
 ## B4 无人值守子任务走原生（含 B3 桥侧消费）
 
@@ -34,10 +35,6 @@
 - #63 unsolicited 三超时（spillover/tool-in-flight/background grace，Go `runUnsolicitedReader`）+ `setBackgroundHint` 接线 + `bg_task_*` i18n 死键复活；后台任务提示不再只增不减。
 
 **验收**：命令族测试 + 卡片 JSON 断言；真机抽查按钮回调。
-
-## B6 env 纸条换正式表单（纯内部）
-
-`buildSessionEnv` 的 `CC_*` 字符串数组（engine.ts ~2246–2309）与 adapter 的 envHasFlag/envValue 逐行解析（adapter.ts ~216–330）改为 `startSession` 收 typed options（persona flags、session key、bypass、feishuWorkspace 等）；`renderQuery` 的 `void sessionEnv` 形参删除。CLI env 契约已退役，唯一读者是 adapter 自身。机械但面广；注意 `adapter.ts` 从 env 偷渡 `CC_SESSION_KEY` 区分 cron slot 的点（原调查 B 报告问题③）要显式化。
 
 ## B7 会话账本换原生（纯内部）
 

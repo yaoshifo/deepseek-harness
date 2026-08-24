@@ -986,8 +986,8 @@ describe('markUserInterjectedOnHumanTurn', () => {
   })
 })
 
-describe('buildSessionEnv', () => {
-  it('injects the research assistant key + scrub-safe alias', () => {
+describe('buildSessionStartOptions', () => {
+  it('injects the research assistant child key for research-driven roles', () => {
     const p = createStubCardPlatformFull('test')
     const e = newSubtaskTestEngine(p)
 
@@ -1000,36 +1000,35 @@ describe('buildSessionEnv', () => {
     role.setChatroomHubKey(hubKey)
     role.setResearchAssistantKey('test:assistant-chat')
 
-    const env = e.buildSessionEnv(roleKey, role)
-    // The CHILD alias is what role prompts reference: dsh's credential-shaped
-    // env scrub strips any *KEY* name from Bash-tool children.
-    expect(env).toContain('CC_RESEARCH_ASSISTANT_KEY=test:assistant-chat')
-    expect(env).toContain('CC_RESEARCH_ASSISTANT_CHILD=test:assistant-chat')
+    const options = e.buildSessionStartOptions(roleKey, role)
+    // The child key is what role prompts reference: the persona prompt
+    // hands the pre-spawned assistant's session key to the role.
+    expect(options.chatroom?.researchAssistantChild).toBe('test:assistant-chat')
   })
 
-  it('injects CC_RESEARCH_ASSISTANT only for research assistants', () => {
+  it('injects the research assistant contract only for research assistants', () => {
     const p = createStubCardPlatformFull('test')
     const e = newSubtaskTestEngine(p)
 
     const key = 'test:assistant-chat'
     const sess = e.sessions.getOrCreateActive(key)
+    sess.setSubtaskDepth(1)
     sess.setResearchAssistant(true)
 
-    expect(e.buildSessionEnv(key, sess)).toContain('CC_RESEARCH_ASSISTANT=1')
+    expect(e.buildSessionStartOptions(key, sess).subtask?.researchAssistant).toBe(true)
 
     sess.setResearchAssistant(false)
-    expect(e.buildSessionEnv(key, sess)).not.toContain('CC_RESEARCH_ASSISTANT=1')
+    expect(e.buildSessionStartOptions(key, sess).subtask?.researchAssistant).toBe(false)
   })
 
-  it('injects the CC_SESSION alias alongside CC_SESSION_KEY', () => {
+  it('binds the session key into the start options', () => {
     const p = createStubCardPlatformFull('test')
     const e = newSubtaskTestEngine(p)
 
     const key = 'feishu:oc_alias-chat'
     e.sessions.getOrCreateActive(key)
 
-    const env = e.buildSessionEnv(key, e.sessions.getOrCreateActive(key))
-    expect(env).toContain(`CC_SESSION_KEY=${key}`)
-    expect(env).toContain(`CC_SESSION=${key}`)
+    const options = e.buildSessionStartOptions(key, e.sessions.getOrCreateActive(key))
+    expect(options.sessionKey).toBe(key)
   })
 })

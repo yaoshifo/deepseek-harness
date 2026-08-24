@@ -1436,47 +1436,47 @@ describe('resume fallback', () => {
   })
 })
 
-describe('startAgentLocked env/mode injection', () => {
-  it('no env crosstalk across concurrent starts', async () => {
+describe('startAgentLocked options/mode injection', () => {
+  it('no crosstalk across concurrent starts: each startSession sees its own options', async () => {
     const { e } = newEngine()
-    const captured: Array<{ id: string; env: string[] }> = []
-    let lastEnv: string[] = []
-    const agent: Agent & { setSessionEnv(env: string[]): void } = {
-      name: () => 'env-snapshot',
-      startSession: async (sessionID: string) => {
+    const captured: Array<{ id: string; key: string }> = []
+    const agent: Agent = {
+      name: () => 'options-snapshot',
+      startSession: async (sessionID: string, options) => {
         const snap: ControllableAgentSession = newControllableSession(sessionID)
-        captured.push({ id: sessionID, env: [...lastEnv] })
+        captured.push({ id: sessionID, key: options?.sessionKey ?? '' })
         return snap
       },
       listSessions: async () => [],
       stop: async () => {},
-      setSessionEnv(env: string[]) { lastEnv = [...env] },
     }
 
     const n = 24
     await Promise.all(Array.from({ length: n }, (_, i) => {
       const key = `feishu:oc_${i}`
-      return e.startAgentLocked(agent, key, ['CC_PROJECT=test', `CC_SESSION_KEY=${key}`], '')
+      return e.startAgentLocked(agent, key, { sessionKey: key }, '')
     }))
+    expect(captured).toHaveLength(n)
     for (const snap of captured) {
-      const gotKey = snap.env.find(x => x.startsWith('CC_SESSION_KEY='))
-      expect(gotKey).toBe(`CC_SESSION_KEY=${snap.id}`)
+      expect(snap.key).toBe(snap.id)
     }
   })
 
-  it('nil env leaves the slot untouched', async () => {
+  it('undefined options start a plain session', async () => {
     const { e } = newEngine()
-    let env: string[] = ['CC_SESSION_KEY=preset']
-    const agent: Agent & { setSessionEnv(env: string[]): void } = {
-      name: () => 'env-snapshot',
-      startSession: async (sessionID: string) => newControllableSession(sessionID),
+    let seen = 'unset'
+    const agent: Agent = {
+      name: () => 'options-snapshot',
+      startSession: async (sessionID: string, options) => {
+        seen = options === undefined ? 'plain' : 'typed'
+        return newControllableSession(sessionID)
+      },
       listSessions: async () => [],
       stop: async () => {},
-      setSessionEnv(next: string[]) { if (next.length > 0) env = [...next] },
     }
 
-    await e.startAgentLocked(agent, 'resume-1', [], '')
-    expect(env.find(x => x === 'CC_SESSION_KEY=preset')).toBeDefined()
+    await e.startAgentLocked(agent, 'resume-1', undefined, '')
+    expect(seen).toBe('plain')
   })
 
   it('injects a non-empty mode override', async () => {
@@ -1495,7 +1495,7 @@ describe('startAgentLocked env/mode injection', () => {
       },
     }
 
-    await e.startAgentLocked(agent, 's1', [], 'default')
+    await e.startAgentLocked(agent, 's1', undefined, 'default')
     expect(called).toBe(true)
     expect(modeSet).toBe('default')
   })
@@ -1512,7 +1512,7 @@ describe('startAgentLocked env/mode injection', () => {
       setSessionMode() { called = true },
     }
 
-    await e.startAgentLocked(agent, 's1', [], '')
+    await e.startAgentLocked(agent, 's1', undefined, '')
     expect(called).toBe(false)
   })
 })

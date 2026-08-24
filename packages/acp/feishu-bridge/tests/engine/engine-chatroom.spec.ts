@@ -1067,17 +1067,17 @@ describe('chatroom ledger engine wiring', () => {
 })
 
 describe('afterChatroomStarted recycles the hub agent process', () => {
-  it('closes the stale agent, respawns with CC_CHATROOM_MODERATOR=1, keeps the session id', async () => {
+  it('closes the stale agent, respawns with the moderator persona, keeps the session id', async () => {
     const p = createStubChatroomSpawner()
-    // An agent that records setSessionEnv and serves controllable sessions.
-    const env: string[] = []
+    // An agent that records startSession options and serves controllable sessions.
+    const moderatorStarts: boolean[] = []
     let startCalls = 0
     const session: { next: ControllableAgentSession | undefined } = { next: undefined }
     const agent = {
       ...createStubAgent(),
-      setSessionEnv: (vars: string[]) => { env.splice(0, env.length, ...vars) },
-      startSession: async () => {
+      startSession: async (_sessionID: string, options?: import('../../src/core/types.js').SessionStartOptions) => {
         startCalls++
+        moderatorStarts.push(options?.chatroom?.moderator === true)
         return session.next ?? createStubAgentSession()
       },
     }
@@ -1110,9 +1110,9 @@ describe('afterChatroomStarted recycles the hub agent process', () => {
 
     // 1. The stale hub agent process is recycled (its close ran).
     await waitFor(() => oldSess.closed, 'old agent closed')
-    // 2. The wake turn respawned the agent with the moderator env.
+    // 2. The wake turn respawned the agent with the moderator persona.
     await waitFor(() => startCalls > 0, 'fresh agent spawned')
-    expect(env).toContain('CC_CHATROOM_MODERATOR=1')
+    expect(moderatorStarts[0]).toBe(true)
     // 3. Same session id: the wake turn resumes the topic-pick history.
     expect(e.sessions.getOrCreateActive(hub).id).toBe(oldID)
     expect(e.sessions.getOrCreateActive(hub).getChatroomModerator()).toBe(true)
