@@ -21,7 +21,6 @@ interface RenderAgentCall {
   prompt: string
   provider: string
   systemPrompt: string
-  sessionEnv: string[]
 }
 
 export interface RenderAgent extends Agent, RenderQuerier {
@@ -50,9 +49,9 @@ export function createRenderAgent(opts: {
     name: () => 'render',
     getCalls: () => [...calls],
     cancelledCount: () => cancelled,
-    async renderQuery(prompt: string, provider: string, systemPrompt: string, sessionEnv: string[], signal?: AbortSignal): Promise<string> {
+    async renderQuery(prompt: string, provider: string, systemPrompt: string, signal?: AbortSignal): Promise<string> {
       const callIdx = calls.length
-      calls.push({ prompt, provider, systemPrompt, sessionEnv: [...sessionEnv] })
+      calls.push({ prompt, provider, systemPrompt })
       const block = (opts.blockCount ?? 0) > 0 && callIdx < (opts.blockCount ?? 0)
       const stall = (opts.stallCount ?? 0) > 0 && callIdx < (opts.stallCount ?? 0)
       if (stall) {

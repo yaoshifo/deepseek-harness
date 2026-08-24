@@ -948,7 +948,7 @@ export function buildProjectAssembly(
   adapter.setAskDelegate(engine)
 
 
-  // #18: the bot's default Feishu workspace → CC_FEISHU_* session env,
+  // #18: the bot's default Feishu workspace → the typed start options,
   // surfaced to the agent through the adapter's setup hook.
   if (project.feishuWorkspace !== undefined) {
     engine.setFeishuWorkspace({

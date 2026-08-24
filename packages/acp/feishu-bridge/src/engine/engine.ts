@@ -32,6 +32,7 @@ import type {
   Message,
   PendingAsk,
   Platform,
+  SessionStartOptions,
   UserQuestion,
 } from '../core/types.js'
 import {
@@ -52,7 +53,6 @@ import {
   asProviderSwitcher,
   asReactionAdder,
   asReplyContextReconstructor,
-  asSessionEnvInjector,
   asSessionModeInjector,
   asSpawnedChatActiveChecker,
   asSpawnedChatLister,
@@ -267,8 +267,8 @@ export class InteractiveState {
   replyCtx: unknown
   /** The agent this state's session was started against. */
   agent: Agent | undefined
-  /** Env entries injected at agent-session start (Go state.env). */
-  sessionEnv: string[] = []
+  /** Session-start options the agent session was started with; undefined on placeholder states (Go state.env). */
+  sessionStartOptions: SessionStartOptions | undefined
   /** Resolves once a concurrent cleanup finished closing the agent session. */
   closing: Promise<void> | undefined
   /** Whether markStopped fired (engine stop or session teardown). */
@@ -761,7 +761,7 @@ type ReconstructingPlatform = Platform & {
  * project (Go Engine, M1 subset).
  */
 export class Engine {
-  /** Project name this engine serves (also the CC_PROJECT env value). */
+  /** Project name this engine serves. */
   readonly name: string
   /** The agent every interactive session starts from. */
   readonly agent: Agent
@@ -1207,27 +1207,12 @@ export class Engine {
 
   /**
    * Record the bot's default Feishu workspace location (Go SetFeishuWorkspace,
-   * #18). Non-empty fields surface as CC_FEISHU_* entries when a session
-   * starts; nil or all-empty disables the feature.
+   * #18). Non-empty fields surface as the workspace routing section when a
+   * session starts; nil or all-empty disables the feature.
    * @param info - Workspace fields; undefined or all-empty disables the feature.
    */
   setFeishuWorkspace(info: FeishuWorkspaceInfo | undefined): void {
     this.feishuWorkspace = feishuWorkspaceIsEmpty(info) ? undefined : info
-  }
-
-  /**
-   * The CC_FEISHU_* env entries for the configured workspace (Go feishuWorkspaceEnv).
-   * @returns KEY=VALUE env entries; empty when no workspace is configured.
-   */
-  feishuWorkspaceEnv(): string[] {
-    const w = this.feishuWorkspace
-    if (w === undefined) return []
-    const env: string[] = []
-    if (w.wikiSpaceId !== '') env.push(`CC_FEISHU_WIKI_SPACE_ID=${w.wikiSpaceId}`)
-    if (w.folderToken !== '') env.push(`CC_FEISHU_FOLDER_TOKEN=${w.folderToken}`)
-    if (w.wikiNodeToken !== '') env.push(`CC_FEISHU_WIKI_NODE_TOKEN=${w.wikiNodeToken}`)
-    if (w.description !== '') env.push(`CC_FEISHU_WORKSPACE_DESC=${w.description}`)
-    return env
   }
 
   /**
@@ -1991,8 +1976,9 @@ export class Engine {
 
       this.handleSpawnedGroupFirstMessage(p, msg, session)
 
-      // Go separates the interactive-state slot key from the CC_SESSION_KEY
-      // env key: cron new-per-run slots carry a #cron suffix the env must not.
+      // Go separates the interactive-state slot key from the session-key
+      // start option: cron new-per-run slots carry a #cron suffix the option
+      // must not.
       const state = await this.getOrCreateInteractiveStateWith(interactiveKey, p, msg.replyCtx, session, msg.modeOverride ?? '', msg.sessionKey)
       try {
         state.turnSeq++
@@ -2146,7 +2132,7 @@ export class Engine {
    * @param replyCtx - Platform reply context for error replies.
    * @param session - Session whose agent-session ID arbitrates recycling.
    * @param modeOverride - Mode injected at session start; '' = none.
-   * @param envKey - CC_SESSION_KEY env value; may differ from sessionKey (cron slots).
+   * @param envKey - sessionKey option handed to startSession; may differ from sessionKey (cron slots).
    * @returns The live state, with a turn already begun.
    */
   async getOrCreateInteractiveStateWith(
@@ -2181,7 +2167,7 @@ export class Engine {
     }
 
     const agent = this.agent
-    const sessionEnv = this.buildSessionEnv(envKey, session)
+    const startOptions = this.buildSessionStartOptions(envKey, session)
 
     const startSessionID = session.getAgentSessionID()
 
@@ -2192,20 +2178,20 @@ export class Engine {
     let degradedToFresh = false
     try {
       try {
-        agentSession = await this.startAgentLocked(agent, startSessionID, sessionEnv, modeOverride)
+        agentSession = await this.startAgentLocked(agent, startSessionID, startOptions, modeOverride)
       } catch (error) {
         // A live-guard rejection means the persisted session is still being
         // torn down (e.g. the user stopped it moments ago): the disposal is
         // in flight, not gone, so poll within the budget before degrading.
         if (startSessionID !== '' && isSessionLiveError(error)) {
           console.warn(`session resume blocked by in-flight teardown, retrying (${sessionKey}): ${String(error)}`)
-          agentSession = await this.retryResumePastLiveGuard(agent, startSessionID, sessionEnv, modeOverride)
+          agentSession = await this.retryResumePastLiveGuard(agent, startSessionID, startOptions, modeOverride)
         }
         if (agentSession === undefined) {
           if (startSessionID !== '') {
             console.error(`session resume failed, falling back to fresh session (${sessionKey}): ${String(error)}`)
             try {
-              agentSession = await this.startAgentLocked(agent, '', sessionEnv, modeOverride)
+              agentSession = await this.startAgentLocked(agent, '', startOptions, modeOverride)
               degradedToFresh = true
               // A rollback fork whose truncated transcript cannot be resumed gets
               // the fork-degrade wording (Go's __forkat__ guard replies
@@ -2264,7 +2250,7 @@ export class Engine {
     newState.platform = p
     newState.replyCtx = replyCtx
     newState.agent = agent
-    newState.sessionEnv = sessionEnv
+    newState.sessionStartOptions = startOptions
     newState.eventsNeedResync = true
     newState.effectiveIdleTimeout = this.eventIdleTimeout
     this.adoptPendingFromPlaceholder(this.interactiveStates.get(sessionKey), newState)
@@ -2297,92 +2283,76 @@ export class Engine {
   }
 
   /**
-   * Per-session env (Go buildSessionEnv). CC_SESSION rides alongside
-   * CC_SESSION_KEY because dsh scrubs credential-shaped env names (any
-   * *KEY*) from Bash-tool children, which would silently drop CC_SESSION_KEY.
-   * @param ccKey - Value used for CC_SESSION_KEY / CC_SESSION.
-   * @param session - Session whose subtask/chatroom flags expand the env.
-   * @returns KEY=VALUE env entries for the agent session.
+   * Typed per-session start options (Go buildSessionEnv): the engine session
+   * key plus the persona/workspace/venv metadata the adapter consumes at
+   * startSession. The hub lookup only runs for a session actually bound to a
+   * chatroom hub — getOrCreateActive materializes a session otherwise.
+   * @param ccKey - Value used as the options' sessionKey.
+   * @param session - Session whose subtask/chatroom flags expand the options.
+   * @returns The typed start options for the agent session.
    */
-  buildSessionEnv(ccKey: string, session: Session): string[] {
-    const envVars = [
-      `CC_PROJECT=${this.name}`,
-      `CC_SESSION_KEY=${ccKey}`,
-      `CC_SESSION=${ccKey}`,
-    ]
-    // Feishu workspace routing (#18): the adapter's setup hook surfaces
-    // these to the agent (the D3 replacement for Go's subprocess env).
-    envVars.push(...this.feishuWorkspaceEnv())
-    if (session.getResearchAssistant()) {
-      envVars.push('CC_RESEARCH_ASSISTANT=1')
-    }
-    if (session.getSubtaskDepth() > 0) {
-      envVars.push('CC_SUBTASK=1', `CC_SUBTASK_DEPTH=${session.getSubtaskDepth()}`)
-      if (session.getSubtaskAttended()) {
-        envVars.push('CC_SUBTASK_ATTENDED=1')
-      }
-      if (session.getSubtaskNoReport()) {
-        envVars.push('CC_SUBTASK_NO_REPORT=1')
-      }
-    }
-    if (session.getChatroomHubKey() !== '') {
-      envVars.push('CC_CHATROOM_ROLE=1')
+  buildSessionStartOptions(ccKey: string, session: Session): SessionStartOptions {
+    const hubKey = session.getChatroomHubKey()
+    const hub = hubKey !== '' ? this.sessions.getOrCreateActive(hubKey) : undefined
+    let chatroom: SessionStartOptions['chatroom'] | undefined
+    if (hubKey !== '') {
       const ledger = this.chatroomModeratorDir()
-      if (ledger.ok) {
-        envVars.push(`CC_CHATROOM_LEDGER=${chatroomLedgerDirPath(ledger.dir, session.getChatroomHubKey())}`)
+      chatroom = {
+        role: true,
+        directRole: false,
+        moderator: session.getChatroomModerator(),
+        ledgerDir: ledger.ok ? chatroomLedgerDirPath(ledger.dir, hubKey) : '',
+        // Research mode: the hub flagged this chatroom as research-driven.
+        // Tell the role so its contract knows to drive a full-CC assistant
+        // subgroup instead of answering from memory.
+        research: hub?.getChatroomResearch() === true,
+        researchAssistantChild: hub?.getChatroomResearch() === true ? session.getResearchAssistantKey() : '',
       }
-      // Research mode: the hub flagged this chatroom as research-driven.
-      // Tell the role so its contract knows to drive a full-CC assistant
-      // subgroup instead of answering from memory.
-      const hub = this.sessions.getOrCreateActive(session.getChatroomHubKey())
-      if (hub.getChatroomResearch()) {
-        envVars.push('CC_CHATROOM_RESEARCH=1')
-        // Hand the role the session key of its pre-spawned idle assistant.
-        // CHILD is the scrub-safe alias role prompts reference (dsh strips
-        // *KEY* names from Bash-tool children); KEY stays for compatibility.
-        const key = session.getResearchAssistantKey()
-        if (key !== '') {
-          envVars.push(`CC_RESEARCH_ASSISTANT_KEY=${key}`)
-          envVars.push(`CC_RESEARCH_ASSISTANT_CHILD=${key}`)
-        }
-      }
-    } else if (session.getChatroomDirectRole()) {
+    } else if (session.getChatroomDirectRole() || session.getChatroomModerator()) {
       // 1:1 direct role chat (no hub, no relay): the lightweight direct-role
       // contract instead of the multi-role one.
-      envVars.push('CC_CHATROOM_DIRECT_ROLE=1')
+      chatroom = {
+        role: false,
+        directRole: session.getChatroomDirectRole(),
+        moderator: session.getChatroomModerator(),
+        ledgerDir: '',
+        research: false,
+        researchAssistantChild: '',
+      }
     }
-    // Mark the hub session driving a chatroom as the moderator so its agent
-    // session swaps to the bare persona (D3 setup hook).
-    if (session.getChatroomModerator()) {
-      envVars.push('CC_CHATROOM_MODERATOR=1')
-    }
-    // Shared research venv: rewrite the single PATH entry to prepend
-    // <venv>/bin and add VIRTUAL_ENV (Go buildSessionEnv research path).
+    // Shared research venv (Go buildSessionEnv research path: VIRTUAL_ENV
+    // plus <venv>/bin prepended to the child PATH).
     const venv = session.getResearchVenv()
-    if (venv !== '') {
-      envVars.push(`VIRTUAL_ENV=${venv}`)
-      const pathIdx = envVars.findIndex(v => v.startsWith('PATH='))
-      const withBin = `${venv}/bin${pathIdx >= 0 ? `:${envVars[pathIdx]?.slice('PATH='.length)}` : `:${process.env.PATH ?? ''}`}`
-      if (pathIdx >= 0) envVars[pathIdx] = `PATH=${withBin}`
-      else envVars.push(`PATH=${withBin}`)
+    return {
+      sessionKey: ccKey,
+      ...(session.getSubtaskDepth() > 0
+        ? {
+          subtask: {
+            attended: session.getSubtaskAttended(),
+            noReport: session.getSubtaskNoReport(),
+            researchAssistant: session.getResearchAssistant(),
+          },
+        }
+        : {}),
+      ...(chatroom !== undefined ? { chatroom } : {}),
+      ...(this.feishuWorkspace !== undefined ? { feishuWorkspace: this.feishuWorkspace } : {}),
+      ...(venv !== '' ? { venv: { virtualEnv: venv, pathBin: `${venv}/bin` } } : {}),
     }
-    return envVars
   }
 
   /**
-   * SetSessionEnv + StartSession, serialized per engine (Go startAgentLocked). Public for the ported env-injection tests.
+   * StartSession with a one-shot mode override, serialized per engine (Go
+   * startAgentLocked). Public for the ported start-injection tests.
    * @param agent - Agent to start the session on.
    * @param sessionID - Session to resume; '' starts a fresh session.
-   * @param env - Env entries injected before the start.
+   * @param options - Typed start options handed through to the agent; undefined = plain session.
    * @param modeOverride - Mode injected before the start; '' = none.
    * @returns The started agent session.
    */
-  startAgentLocked(agent: Agent, sessionID: string, env: string[], modeOverride: string): Promise<AgentSession> {
-    const inj = asSessionEnvInjector(agent)
-    if (inj !== undefined && env.length > 0) inj.setSessionEnv(env)
+  startAgentLocked(agent: Agent, sessionID: string, options: SessionStartOptions | undefined, modeOverride: string): Promise<AgentSession> {
     const modeInj = asSessionModeInjector(agent)
     if (modeInj !== undefined && modeOverride !== '') modeInj.setSessionMode(modeOverride)
-    return agent.startSession(sessionID)
+    return agent.startSession(sessionID, options)
   }
 
   /**
@@ -2391,18 +2361,18 @@ export class Engine {
    * (the caller degrades); success returns the resumed session.
    * @param agent - Agent to start the session on.
    * @param sessionID - Session to resume.
-   * @param env - Env entries injected before each attempt.
+   * @param options - Typed start options handed to each attempt.
    * @param modeOverride - Mode injected at session start; '' = none.
    * @returns The resumed agent session, or undefined when the budget ends.
    */
   private async retryResumePastLiveGuard(
-    agent: Agent, sessionID: string, env: string[], modeOverride: string,
+    agent: Agent, sessionID: string, options: SessionStartOptions, modeOverride: string,
   ): Promise<AgentSession | undefined> {
     const deadline = Date.now() + this.liveGuardRetryBudgetMs
     for (;;) {
       await cancellableSleep(this.liveGuardRetryIntervalMs).promise
       try {
-        return await this.startAgentLocked(agent, sessionID, env, modeOverride)
+        return await this.startAgentLocked(agent, sessionID, options, modeOverride)
       } catch (error) {
         if (!isSessionLiveError(error)) {
           console.error(`session resume retry failed with a permanent error: ${String(error)}`)
@@ -3381,13 +3351,13 @@ export class Engine {
     }
     oldEvents.drain()
 
-    const retryEnv = state.sessionEnv
+    const retryOptions = state.sessionStartOptions
     const retryMode = state.effectiveMode
     // Restore per-chat workDir override so --resume finds the session under
     // the correct directory (Go stall-retry applyWorkDirOverride).
     const restoreWorkDir = this.applyWorkDirOverride(replyAgent, sessionKey)
     try {
-      const newSess = await this.startAgentLocked(replyAgent, resumeID, retryEnv, retryMode)
+      const newSess = await this.startAgentLocked(replyAgent, resumeID, retryOptions, retryMode)
       state.agentSession = newSess
       state.eventsNeedResync = false
       return newSess
@@ -3979,11 +3949,11 @@ export class Engine {
     const relaySessionKey = `relay:${fromProject}:${chatID}`
     const session = this.sessions.getOrCreateActive(relaySessionKey)
 
-    const relayEnv = this.buildSessionEnv(relaySessionKey, session)
+    const relayOptions = this.buildSessionStartOptions(relaySessionKey, session)
 
     let agentSession: AgentSession
     try {
-      agentSession = await this.startAgentLocked(this.agent, session.getAgentSessionID(), relayEnv, '')
+      agentSession = await this.startAgentLocked(this.agent, session.getAgentSessionID(), relayOptions, '')
     } catch (error) {
       if (session.getAgentSessionID() !== '') {
         // Resume failed — fall back to a fresh session so the relay is not
@@ -3992,7 +3962,7 @@ export class Engine {
         session.setAgentSessionID('', this.agent.name())
         this.sessions.save()
         try {
-          agentSession = await this.startAgentLocked(this.agent, '', relayEnv, '')
+          agentSession = await this.startAgentLocked(this.agent, '', relayOptions, '')
         } catch (freshError) {
           throw new Error(`start relay session: ${errorMessage(freshError)}`)
         }

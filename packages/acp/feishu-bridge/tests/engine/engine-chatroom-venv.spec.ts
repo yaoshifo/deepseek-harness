@@ -1,8 +1,8 @@
 /**
  * Research venv provisioning tests ported 1:1 from cc-connect
  * core/engine_chatroom_venv_test.go (uv hooks stubbed so the suite never
- * depends on a host uv install), plus the buildSessionEnv research-venv
- * surface.
+ * depends on a host uv install), plus the buildSessionStartOptions
+ * research-venv surface.
  *
  * @module dsh-feishu-bridge/tests-engine-chatroom-venv
  */
@@ -138,34 +138,20 @@ describe('cmdChatroom research uv gate', () => {
   })
 })
 
-describe('buildSessionEnv research venv', () => {
-  it('rewrites the PATH entry (single) and adds VIRTUAL_ENV', () => {
+describe('buildSessionStartOptions research venv', () => {
+  it('carries the venv root and bin dir', () => {
     const e = newEngine()
     const s = e.sessions.getOrCreateActive('test:assistant-1')
     s.setResearchVenv('/tmp/research/.venv')
-    const env = e.buildSessionEnv('k', s)
-    let pathVal = ''
-    let pathCount = 0
-    let venvVal = ''
-    for (const kv of env) {
-      if (kv.startsWith('PATH=')) {
-        pathVal = kv
-        pathCount++
-      } else if (kv.startsWith('VIRTUAL_ENV=')) {
-        venvVal = kv
-      }
-    }
-    expect(venvVal).toBe('VIRTUAL_ENV=/tmp/research/.venv')
-    expect(pathCount).toBe(1)
-    expect(pathVal).toContain('/tmp/research/.venv/bin')
+    const options = e.buildSessionStartOptions('k', s)
+    expect(options.venv?.virtualEnv).toBe('/tmp/research/.venv')
+    expect(options.venv?.pathBin).toBe('/tmp/research/.venv/bin')
   })
 
-  it('sets no VIRTUAL_ENV without a research venv', () => {
+  it('sets no venv without a research venv', () => {
     const e = newEngine()
     const s = e.sessions.getOrCreateActive('test:plain-chat')
-    for (const kv of e.buildSessionEnv('k', s)) {
-      expect(kv.startsWith('VIRTUAL_ENV=')).toBe(false)
-    }
+    expect(e.buildSessionStartOptions('k', s).venv).toBeUndefined()
   })
 
   it('emits the chatroom role/ledger/moderator/direct flags', () => {
@@ -178,12 +164,12 @@ describe('buildSessionEnv research venv', () => {
     const direct = e.sessions.getOrCreateActive('test:direct:user-1')
     direct.setChatroomDirectRole(true)
 
-    const modEnv = e.buildSessionEnv('test:hub:user-1', hub)
-    expect(modEnv).toContain('CC_CHATROOM_MODERATOR=1')
-    const roleEnv = e.buildSessionEnv('test:role-1', role)
-    expect(roleEnv).toContain('CC_CHATROOM_ROLE=1')
-    expect(roleEnv.some(kv => kv.startsWith('CC_CHATROOM_LEDGER=/data/chatroom/ledgers/'))).toBe(true)
-    const directEnv = e.buildSessionEnv('test:direct:user-1', direct)
-    expect(directEnv).toContain('CC_CHATROOM_DIRECT_ROLE=1')
+    const modOptions = e.buildSessionStartOptions('test:hub:user-1', hub)
+    expect(modOptions.chatroom?.moderator).toBe(true)
+    const roleOptions = e.buildSessionStartOptions('test:role-1', role)
+    expect(roleOptions.chatroom?.role).toBe(true)
+    expect(roleOptions.chatroom?.ledgerDir.startsWith('/data/chatroom/ledgers/')).toBe(true)
+    const directOptions = e.buildSessionStartOptions('test:direct:user-1', direct)
+    expect(directOptions.chatroom?.directRole).toBe(true)
   })
 })

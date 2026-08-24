@@ -501,15 +501,12 @@ export async function runLarkInvocation(
 
 /**
  * Build the child's base env: drop inherited LARKSUITE_CLI_* entries so
- * injected values fully own them, and drop CC_PROJECT (Go
- * envWithoutCCProject — it exists only to route shell wrappers; the daemon
- * never sets it, this is defense in depth). The notifier suppressions are
- * ours and always re-applied.
+ * injected values fully own them. The notifier suppressions are ours and
+ * always re-applied.
  */
 function sanitizedChildEnv(env: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(env)) {
-    if (k === 'CC_PROJECT') continue
     if (k.startsWith('LARKSUITE_CLI_') && !(k in notifierSuppressionEnv)) continue
     out[k] = v
   }

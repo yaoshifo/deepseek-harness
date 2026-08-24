@@ -244,7 +244,7 @@ function fakeDeps(overrides: Partial<{ spawn: LarkRunnerDeps['spawn']; fetch: La
   const spawns: Array<{ bin: string; argv: string[]; env: Record<string, string> }> = []
   const fetches: Array<{ url: string; init: RequestInit | undefined }> = []
   const deps: LarkRunnerDeps = {
-    baseEnv: { PATH: '/usr/bin', HOME: '/home/u', CC_PROJECT: 'other' },
+    baseEnv: { PATH: '/usr/bin', HOME: '/home/u' },
     async spawn(bin, argv, opts) {
       spawns.push({ bin, argv, env: opts.env })
       if (overrides.spawn !== undefined) return overrides.spawn(bin, argv, opts)
@@ -284,8 +284,6 @@ describe('runLarkInvocation', () => {
     expect(env.LARKSUITE_CLI_BRAND).toBe('feishu')
     expect(env.LARKSUITE_CLI_NO_UPDATE_NOTIFIER).toBe('1')
     expect(env.PATH).toBe('/usr/bin')
-    // The daemon's routing env never leaks into the child.
-    expect(env.CC_PROJECT).toBeUndefined()
   })
 
   it('user mode prepends --profile and strips LARKSUITE_CLI_*', async () => {

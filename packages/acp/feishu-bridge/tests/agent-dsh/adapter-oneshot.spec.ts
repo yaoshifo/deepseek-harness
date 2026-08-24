@@ -260,7 +260,7 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
     a.setRenderEffort('max')
     h.script.push({ text: '片段已写入：/tmp/x.html' })
 
-    const answer = await a.renderQuery('render prompt', 'turbo', 'render system prompt', ['CC_SESSION_KEY=k'])
+    const answer = await a.renderQuery('render prompt', 'turbo', 'render system prompt')
 
     expect(answer).toBe('片段已写入：/tmp/x.html')
     expect(h.creates).toHaveLength(1)
@@ -284,7 +284,7 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
     const a = newAdapter(h)
     h.script.push({ text: 'ok' })
 
-    await a.renderQuery('p', 'glm', 'sp', [])
+    await a.renderQuery('p', 'glm', 'sp')
 
     expect(h.creates[0]!.agentOptions).toEqual({ provider: 'glm-route', model: 'glm-5.3', reasoningEffort: 'low' })
   })
