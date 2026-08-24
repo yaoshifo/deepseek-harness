@@ -12,7 +12,8 @@ import { Engine } from '../../src/engine/engine.js'
 import { buildSummaryContext, toPlainTextForFallback } from '../../src/engine/send-helpers.js'
 import { newStreamPreview } from '../../src/streaming.js'
 import { createStubAgent } from '../stubs/engine-stubs.js'
-import type { HistoryEntry } from '../../src/core/types.js'
+import type { HistoryEntry, ProgressContent } from '../../src/core/types.js'
+import { previewText } from '../stubs/preview-content.js'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -22,13 +23,13 @@ function createBumpPlatform() {
     messages: [] as string[],
     deleted: [] as unknown[],
     nextID: 0,
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
       base.nextID++
-      base.messages.push(`start:${content}`)
+      base.messages.push(`start:${previewText(content)}`)
       return `handle-${base.nextID}`
     },
-    async updateMessage(_rc: unknown, content: string): Promise<void> {
-      base.messages.push(`update:${content}`)
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+      base.messages.push(`update:${previewText(content)}`)
     },
     async deletePreviewMessage(handle: unknown): Promise<void> {
       base.deleted.push(handle)

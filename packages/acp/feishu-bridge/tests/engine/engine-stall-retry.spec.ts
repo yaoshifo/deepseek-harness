@@ -23,6 +23,8 @@ import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type Strea
 import { DshAgentAdapter } from '../../src/agent-dsh/adapter.js'
 import { Engine } from '../../src/engine/engine.js'
 import { createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
+import type { ProgressContent } from '../../src/core/types.js'
+import { previewText } from '../stubs/preview-content.js'
 
 /** One scripted model-call behavior. */
 type ScriptEntry =
@@ -108,12 +110,12 @@ async function bootRuntime(script: ScriptEntry[]): Promise<Runtime> {
   const messages: string[] = []
   const platform = Object.assign(createStubPlatform(), {
     messages,
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
-      messages.push(`start:${content}`)
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+      messages.push(`start:${previewText(content)}`)
       return 'preview-handle'
     },
-    async updateMessage(_handle: unknown, content: string): Promise<void> {
-      messages.push(`update:${content}`)
+    async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+      messages.push(`update:${previewText(content)}`)
     },
     async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
       messages.push(`stopped:${String(id)}`)

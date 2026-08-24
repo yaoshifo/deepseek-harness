@@ -22,7 +22,8 @@ import {
   type StreamPreviewCfg,
 } from '../src/streaming.js'
 import { newAsyncSender } from '../src/async-sender.js'
-import type { FileAttachment, Platform } from '../src/core/types.js'
+import type { FileAttachment, Platform, ProgressContent } from '../src/core/types.js'
+import { previewText } from './stubs/preview-content.js'
 import { createStubPlatform, type StubPlatform } from './stubs/engine-stubs.js'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
@@ -30,20 +31,20 @@ const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(r
 /** Go mockUpdaterPlatform: Platform + MessageUpdater + PreviewStarter, records messages. */
 interface RecorderPlatform extends StubPlatform {
   messages: string[]
-  sendPreviewStart(rc: unknown, content: string): Promise<unknown>
-  updateMessage(rc: unknown, content: string): Promise<void>
+  sendPreviewStart(rc: unknown, content: ProgressContent): Promise<unknown>
+  updateMessage(rc: unknown, content: ProgressContent): Promise<void>
 }
 
 function createMockUpdaterPlatform(): RecorderPlatform {
   const messages: string[] = []
   return Object.assign(createStubPlatform(), {
     messages,
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
-      messages.push(`start:${content}`)
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+      messages.push(`start:${previewText(content)}`)
       return 'preview-handle'
     },
-    async updateMessage(_rc: unknown, content: string): Promise<void> {
-      messages.push(`update:${content}`)
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+      messages.push(`update:${previewText(content)}`)
     },
   })
 }
@@ -52,8 +53,10 @@ function createMockUpdaterPlatform(): RecorderPlatform {
 function createRaceUpdater(): ReturnType<typeof createMockUpdaterPlatform> {
   const p = createMockUpdaterPlatform()
   const inner = p.updateMessage.bind(p)
-  p.updateMessage = async (rc: unknown, content: string) => {
-    if (!content.includes('__cc_state__:completed')) await sleep(80)
+  p.updateMessage = async (rc: unknown, content: ProgressContent) => {
+    const completed = content.kind === 'text'
+      && (content.text.includes('__cc_state__:completed') || content.status?.state === 'completed')
+    if (!completed) await sleep(80)
     await inner(rc, content)
   }
   return p
@@ -95,8 +98,8 @@ function createMockStopRendererPlatform(): ReturnType<typeof createMockUpdaterPl
 function createRaceStopRenderer(): ReturnType<typeof createMockStopRendererPlatform> {
   const p = createMockStopRendererPlatform()
   const inner = p.updateMessage.bind(p)
-  p.updateMessage = async (rc: unknown, content: string) => {
-    if (!content.includes('__cc_state__:stopped')) await sleep(80)
+  p.updateMessage = async (rc: unknown, content: ProgressContent) => {
+    if (!previewText(content).includes('__cc_state__:stopped')) await sleep(80)
     await inner(rc, content)
   }
   const renderInner = p.renderStoppedCard.bind(p)
@@ -161,8 +164,8 @@ interface FallbackCapablePlatform extends StubPlatform {
   fileSendErr?: Error
   files: FileAttachment[]
   deleted: unknown[]
-  sendPreviewStart(rc: unknown, content: string): Promise<unknown>
-  updateMessage(rc: unknown, content: string): Promise<void>
+  sendPreviewStart(rc: unknown, content: ProgressContent): Promise<unknown>
+  updateMessage(rc: unknown, content: ProgressContent): Promise<void>
   sendFile(rc: unknown, file: FileAttachment): Promise<void>
   deletePreviewMessage(handle: unknown): Promise<void>
 }
@@ -172,10 +175,10 @@ function createFallbackCapablePlatform(opts: { updateErr?: Error; fileSendErr?: 
   const files: FileAttachment[] = []
   const deleted: unknown[] = []
   const p = Object.assign(createStubPlatform(), {
-    async sendPreviewStart(_rc: unknown, _content: string) {
+    async sendPreviewStart(_rc: unknown, _content: ProgressContent) {
       return 'preview-handle'
     },
-    async updateMessage(_rc: unknown, _content: string) {
+    async updateMessage(_rc: unknown, _content: ProgressContent) {
       updateCalls++
       if (opts.updateErr !== undefined) throw opts.updateErr
     },
@@ -213,9 +216,9 @@ function createMockBumpPlatform(): ReturnType<typeof createMockCleanerPlatform> 
   const p = createMockCleanerPlatform()
   let nextID = 0
   Object.assign(p, {
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
       nextID++
-      p.messages.push(`start:${content}`)
+      p.messages.push(`start:${previewText(content)}`)
       return `handle-${nextID}`
     },
   })
@@ -228,10 +231,10 @@ function createMockBumpFailSendPlatform(failOn: number): ReturnType<typeof creat
   const p = createMockCleanerPlatform()
   let nextID = 0
   Object.assign(p, {
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
       nextID++
       if (nextID === failOn) throw new Error('simulated send failure')
-      p.messages.push(`start:${content}`)
+      p.messages.push(`start:${previewText(content)}`)
       return `handle-${nextID}`
     },
   })

@@ -190,8 +190,8 @@ describe('API wrappers retry on transient errors', () => {
   it('patch message retries on transient error', async () => {
     const api = scheduledClient({ patch: [err('feishu: patch message code=230020 msg=too frequent'), undefined] })
     const p = newPlatform(api)
-    const handle = await p.sendPreviewStart(rc, '__cc_ts__:12:00:00\nbody')
-    await p.updateMessage(handle, '__cc_state__:completed\n__cc_ts__:12:00:01\nbody')
+    const handle = await p.sendPreviewStart(rc, { kind: 'text', text: '__cc_ts__:12:00:00\nbody' })
+    await p.updateMessage(handle, { kind: 'text', text: '__cc_state__:completed\n__cc_ts__:12:00:01\nbody' })
     expect(api.counts.patch).toBe(2)
   })
 

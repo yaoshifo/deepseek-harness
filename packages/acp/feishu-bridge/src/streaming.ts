@@ -660,7 +660,7 @@ export class StreamPreview {
       if (starter !== undefined) {
         let handle: unknown
         try {
-          handle = await starter.sendPreviewStart(this.replyCtx, text)
+          handle = await starter.sendPreviewStart(this.replyCtx, { kind: 'text', text })
         } catch (error) {
           console.warn(`stream preview: start failed, degrading: ${String(error)}`)
           this.degraded = true
@@ -695,7 +695,7 @@ export class StreamPreview {
       this.lastSentAt = Date.now()
       this.async.enqueueCoalescable(async () => {
         try {
-          await updater.updateMessage(handle, content)
+          await updater.updateMessage(handle, { kind: 'text', text: content })
         } catch (error) {
           void this.locked(() => {
             // Transient PATCH errors (e.g. feishu 230020 "update too
@@ -723,7 +723,7 @@ export class StreamPreview {
       return
     }
     try {
-      await updater.updateMessage(this.previewMsgID, text)
+      await updater.updateMessage(this.previewMsgID, { kind: 'text', text })
     } catch (error) {
       const checker = asTransientPatchErrorChecker(this.platform)
       if (checker !== undefined && checker.isTransientPatchError(error)) {
@@ -756,7 +756,7 @@ export class StreamPreview {
           const text = this.buildFreezeTextLocked()
           if (text !== '') {
             try {
-              await updater.updateMessage(this.previewMsgID, text)
+              await updater.updateMessage(this.previewMsgID, { kind: 'text', text })
             } catch (error) {
               console.debug(`streaming update skipped: ${String(error)}`)
             }
@@ -805,7 +805,7 @@ export class StreamPreview {
       const updater = asMessageUpdater(this.platform)
       if (updater !== undefined) {
         try {
-          await updater.updateMessage(state.handle, state.display)
+          await updater.updateMessage(state.handle, { kind: 'text', text: state.display })
         } catch (error) {
           console.debug(`streaming update skipped: ${String(error)}`)
         }
@@ -930,7 +930,7 @@ export class StreamPreview {
       // text; emit the completion marker so the platform greens the header.
       const displayText = `__cc_state__:completed\n__cc_ts__:${hms()}\n${finalText}`
       try {
-        await updater.updateMessage(this.previewMsgID, displayText)
+        await updater.updateMessage(this.previewMsgID, { kind: 'text', text: displayText })
       } catch (error) {
         console.debug(`stream preview finish: final update FAILED, cleaning up preview: ${String(error)}`)
         // Update failed (e.g. too long for the edit API): delete the stale
@@ -970,7 +970,7 @@ export class StreamPreview {
     if (starter === undefined) return
     let newHandle: unknown
     try {
-      newHandle = await starter.sendPreviewStart(this.replyCtx, display)
+      newHandle = await starter.sendPreviewStart(this.replyCtx, { kind: 'text', text: display })
     } catch (error) {
       console.warn(`stream preview: bump SendPreviewStart failed: ${String(error)}`)
       return
@@ -1263,7 +1263,7 @@ export class StreamPreview {
       const updater = asMessageUpdater(this.platform)
       if (updater === undefined) return
       try {
-        await updater.updateMessage(this.previewMsgID, display)
+        await updater.updateMessage(this.previewMsgID, { kind: 'text', text: display })
       } catch (error) {
         console.debug(`streaming update skipped: ${String(error)}`)
       }
@@ -1438,7 +1438,7 @@ export class StreamPreview {
         this.degraded = false
         this.async.enqueue(async () => {
           try {
-            await updater.updateMessage(handle, display)
+            await updater.updateMessage(handle, { kind: 'text', text: display })
           } catch (error) {
             console.warn(`stream preview: async markCompleted PATCH failed, sending fallback: ${String(error)}`)
             await this.fallbackSend(handle, answerText)
@@ -1449,7 +1449,7 @@ export class StreamPreview {
         return
       }
       try {
-        await updater.updateMessage(this.previewMsgID, display)
+        await updater.updateMessage(this.previewMsgID, { kind: 'text', text: display })
       } catch (error) {
         console.warn(`stream preview: markCompleted PATCH failed, sending fallback: ${String(error)}`)
         await this.fallbackSend(this.previewMsgID, answerText)
@@ -1486,7 +1486,7 @@ export class StreamPreview {
       this.degraded = false
       this.async.enqueue(async () => {
         try {
-          await updater.updateMessage(handle, display)
+          await updater.updateMessage(handle, { kind: 'text', text: display })
         } catch (error) {
           console.warn(`stream preview: async markFailed PATCH failed, sending fallback: ${String(error)}`)
           await this.fallbackSend(handle, answerText)
@@ -1495,7 +1495,7 @@ export class StreamPreview {
       return
     }
     try {
-      await updater.updateMessage(this.previewMsgID, display)
+      await updater.updateMessage(this.previewMsgID, { kind: 'text', text: display })
     } catch (error) {
       console.warn(`stream preview: markFailed PATCH failed, sending fallback: ${String(error)}`)
       await this.fallbackSend(this.previewMsgID, answerText)

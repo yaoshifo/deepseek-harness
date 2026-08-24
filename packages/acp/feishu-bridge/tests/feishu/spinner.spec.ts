@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildProgressCardPayloadV2, type ProgressCardEntry } from '../../src/progress.js'
-import { buildPreviewCardJSON, markCardStopped } from '../../src/feishu/progress.js'
+import { buildProgressCardPayload, type ProgressCardEntry } from '../../src/progress.js'
+import { buildPreviewCardJSON, buildProgressCardJSONFromPayload, markCardStopped } from '../../src/feishu/progress.js'
 import { noSpinner, resolveSpinnerAsset, type SpinnerCfg } from '../../src/feishu/spinner.js'
 import { jObj, jParse, jStr, type JsonObj } from '../stubs/json.js'
 
@@ -70,8 +70,9 @@ describe('progress card spinner icon (payload path)', () => {
 
   for (const [name, entries, state, wantIcon] of cases) {
     it(name, () => {
-      const payload = buildProgressCardPayloadV2(entries, false, 'Claude', 'zh', state, [], '')
-      const cardJSON = buildPreviewCardJSON(payload, spin)
+      const payload = buildProgressCardPayload(entries, false, 'Claude', 'zh', state, [], '')
+      expect(payload).toBeDefined()
+      const cardJSON = buildProgressCardJSONFromPayload(payload!, spin)
       const icon = headerIcon(cardJSON)
       if (wantIcon === '') {
         expect(icon).toBeUndefined()
@@ -83,8 +84,8 @@ describe('progress card spinner icon (payload path)', () => {
   }
 
   it('disabled spinnerCfg produces no icon', () => {
-    const payload = buildProgressCardPayloadV2([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
-    expect(hasHeaderIcon(buildPreviewCardJSON(payload, noSpinner))).toBe(false)
+    const payload = buildProgressCardPayload([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
+    expect(hasHeaderIcon(buildProgressCardJSONFromPayload(payload!, noSpinner))).toBe(false)
   })
 })
 
@@ -114,8 +115,8 @@ describe('progress card spinner icon (text path)', () => {
 describe('markCardStopped strips spinner icon', () => {
   it('running card icon removed on stop', () => {
     const spin: SpinnerCfg = { enabled: true, thinkingKey: 'img_think', executingKey: 'img_exec' }
-    const payload = buildProgressCardPayloadV2([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
-    const cardJSON = buildPreviewCardJSON(payload, spin)
+    const payload = buildProgressCardPayload([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
+    const cardJSON = buildProgressCardJSONFromPayload(payload!, spin)
     expect(hasHeaderIcon(cardJSON)).toBe(true)
     const stopped = markCardStopped(cardJSON, 'sess-key')
     expect(hasHeaderIcon(stopped)).toBe(false)

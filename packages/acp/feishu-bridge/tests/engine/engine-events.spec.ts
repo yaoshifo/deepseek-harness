@@ -20,7 +20,8 @@ import {
   type ControllableAgentSession,
   type StubPlatform,
 } from '../stubs/engine-stubs.js'
-import type { Agent, Platform } from '../../src/core/types.js'
+import type { Agent, Platform, ProgressContent } from '../../src/core/types.js'
+import { previewText } from '../stubs/preview-content.js'
 
 // Ported from cc-connect core/engine_test.go — M1 scope: core event handling
 // (result/text/thinking basics), message queueing (#13), side-channel dedup,
@@ -369,12 +370,12 @@ function createPreviewRecorderPlatform(): StubPlatform & { messages: string[] } 
   const messages: string[] = []
   return Object.assign(createStubPlatform(), {
     messages,
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
-      messages.push(`start:${content}`)
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+      messages.push(`start:${previewText(content)}`)
       return 'preview-handle'
     },
-    async updateMessage(_rc: unknown, content: string): Promise<void> {
-      messages.push(`update:${content}`)
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+      messages.push(`update:${previewText(content)}`)
     },
   })
 }
@@ -594,13 +595,13 @@ describe('processInteractiveEvents user stop mid-handler', () => {
     const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
     const p = Object.assign(createStubPlatform(), {
       messages,
-      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
         await startGate
-        messages.push(`start:${content}`)
+        messages.push(`start:${previewText(content)}`)
         return 'preview-handle'
       },
-      async updateMessage(_handle: unknown, content: string): Promise<void> {
-        messages.push(`update:${content}`)
+      async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+        messages.push(`update:${previewText(content)}`)
       },
       async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
         messages.push(`stopped:${String(id)}`)
@@ -649,13 +650,13 @@ describe('processInteractiveEvents engine stop mid-handler', () => {
     const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
     const p = Object.assign(createStubPlatform(), {
       messages,
-      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
         await startGate
-        messages.push(`start:${content}`)
+        messages.push(`start:${previewText(content)}`)
         return 'preview-handle'
       },
-      async updateMessage(_handle: unknown, content: string): Promise<void> {
-        messages.push(`update:${content}`)
+      async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+        messages.push(`update:${previewText(content)}`)
       },
       async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
         messages.push(`stopped:${String(id)}`)
@@ -698,12 +699,12 @@ function createAbnormalExitRecorderPlatform(): StubPlatform & { messages: string
   const messages: string[] = []
   return Object.assign(createStubPlatform(), {
     messages,
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
-      messages.push(`start:${content}`)
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+      messages.push(`start:${previewText(content)}`)
       return 'preview-handle'
     },
-    async updateMessage(_handle: unknown, content: string): Promise<void> {
-      messages.push(`update:${content}`)
+    async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+      messages.push(`update:${previewText(content)}`)
     },
     async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
       messages.push(`stopped:${String(id)}`)
@@ -744,13 +745,13 @@ describe('processInteractiveEvents abnormal-exit preview finalization', () => {
     const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
     const p = Object.assign(createStubPlatform(), {
       messages,
-      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
         await startGate
-        messages.push(`start:${content}`)
+        messages.push(`start:${previewText(content)}`)
         return 'preview-handle'
       },
-      async updateMessage(_handle: unknown, content: string): Promise<void> {
-        messages.push(`update:${content}`)
+      async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+        messages.push(`update:${previewText(content)}`)
       },
       async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
         messages.push(`stopped:${String(id)}`)
@@ -792,13 +793,13 @@ describe('processInteractiveEvents abnormal-exit preview finalization', () => {
     const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
     const p = Object.assign(createStubPlatform(), {
       messages,
-      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
         await startGate
-        messages.push(`start:${content}`)
+        messages.push(`start:${previewText(content)}`)
         return 'preview-handle'
       },
-      async updateMessage(_handle: unknown, content: string): Promise<void> {
-        messages.push(`update:${content}`)
+      async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+        messages.push(`update:${previewText(content)}`)
       },
       async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
         messages.push(`stopped:${String(id)}`)
@@ -1582,15 +1583,15 @@ function newPreviewCaptureEngine(): { e: Engine; updates: string[]; starts: stri
   const updates: string[] = []
   const starts: string[] = []
   const preview = p as typeof p & {
-    sendPreviewStart(rc: unknown, content: string): Promise<unknown>
-    updateMessage(handle: unknown, content: string): Promise<void>
+    sendPreviewStart(rc: unknown, content: ProgressContent): Promise<unknown>
+    updateMessage(handle: unknown, content: ProgressContent): Promise<void>
   }
   preview.sendPreviewStart = async (_rc, content) => {
-    starts.push(content)
+    starts.push(previewText(content))
     return `handle-${starts.length}`
   }
   preview.updateMessage = async (_handle, content) => {
-    updates.push(content)
+    updates.push(previewText(content))
   }
   const e = new Engine('test', createStubAgent(), [p], '', 'en')
   e.setDisplayConfig({ toolProgress: true })

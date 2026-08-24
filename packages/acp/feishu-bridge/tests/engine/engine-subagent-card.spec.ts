@@ -10,12 +10,13 @@
 import { describe, expect, it } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { createStubAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.js'
-import type { Platform } from '../../src/core/types.js'
+import type { Platform, ProgressContent } from '../../src/core/types.js'
+import { previewText } from '../stubs/preview-content.js'
 
 /** Platform with in-place preview support (PreviewStarter + MessageUpdater). */
 interface PreviewPlatform extends Platform {
   messages: string[]
-  sendPreviewStart(rc: unknown, content: string): Promise<unknown>
+  sendPreviewStart(rc: unknown, content: ProgressContent): Promise<unknown>
   updateMessage(rc: unknown, content: string): Promise<void>
 }
 
@@ -28,12 +29,12 @@ function createPreviewPlatform(): PreviewPlatform {
     reply: async (_rc: unknown, content: string) => { p.messages.push(`reply:${content}`) },
     send: async (_rc: unknown, content: string) => { p.messages.push(`send:${content}`) },
     stop: async () => {},
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
-      p.messages.push(`start:${content}`)
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+      p.messages.push(`start:${previewText(content)}`)
       return 'preview-handle'
     },
-    async updateMessage(_rc: unknown, content: string): Promise<void> {
-      p.messages.push(`update:${content}`)
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+      p.messages.push(`update:${previewText(content)}`)
     },
   }
   return p

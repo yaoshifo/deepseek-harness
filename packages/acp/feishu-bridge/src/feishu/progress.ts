@@ -572,17 +572,6 @@ export function extractProgressState(content: string): { state: string; ts: stri
 }
 
 /**
- * Extract just the timestamp prefix.
- *
- * @param content - Raw progress text with optional prefix lines.
- * @returns Timestamp prefix and remaining content.
- */
-export function extractProgressTimestamp(content: string): { ts: string; clean: string } {
-  const { ts, clean } = extractProgressState(content)
-  return { ts, clean }
-}
-
-/**
  * Card header title and color template for a state string (+ts, +tool count).
  *
  * @param state - State string from the header protocol.

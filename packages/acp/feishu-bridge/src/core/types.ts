@@ -13,7 +13,7 @@
  * @module dsh-feishu-bridge/core-types
  */
 
-import type { TodoItem } from '../progress.js'
+import type { ProgressCardPayload, TodoItem } from '../progress.js'
 
 /** Sentinel AgentSessionID telling the agent to resume the most recent session. */
 export const ContinueSession = '__continue__'
@@ -439,9 +439,31 @@ export function asAgentInterrupter(s: AgentSession): AgentInterrupter | undefine
   return typeof candidate.cancelTurn === 'function' ? (candidate as AgentInterrupter) : undefined
 }
 
+/**
+ * Structured preview-card status carried beside display text, replacing the
+ * `__cc_state__:`/`__cc_ts__:`/`__cc_tc__:` text header lines the engine-side
+ * preview used to prepend.
+ */
+export interface ProgressStatus {
+  /** Card lifecycle state; "running" matches the former headerless prefix. */
+  state: 'running' | 'completed' | 'failed' | 'thinking'
+  /** Timestamp (HH:MM:SS) appended to the card title; empty string omits it. */
+  ts: string
+  /** Tool-call count appended to the title when positive. */
+  toolCallSeq: number
+}
+
+/**
+ * Content a preview-capable platform renders in place: a structured
+ * progress-card payload, or text with an optional structured status.
+ */
+export type ProgressContent =
+  | { kind: 'card'; payload: ProgressCardPayload }
+  | { kind: 'text'; text: string; status?: ProgressStatus }
+
 /** Optional: platform can update a previously sent message in place (PATCH). */
 export interface MessageUpdater {
-  updateMessage(replyCtx: unknown, content: string): Promise<void>
+  updateMessage(replyCtx: unknown, content: ProgressContent): Promise<void>
 }
 
 /**
@@ -449,7 +471,7 @@ export interface MessageUpdater {
  * handle for subsequent in-place edits.
  */
 export interface PreviewStarter {
-  sendPreviewStart(replyCtx: unknown, content: string): Promise<unknown>
+  sendPreviewStart(replyCtx: unknown, content: ProgressContent): Promise<unknown>
 }
 
 /** Optional: platform can delete a preview message when the final reply is sent separately. */
