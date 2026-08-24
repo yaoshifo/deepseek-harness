@@ -7,7 +7,7 @@ import type { Scope } from '@deepseek-ai/dsh-scope'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ApprovalService, { ApprovalOutcome, ApprovalRequest, setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
+import ApprovalService, { ApprovalAnswer, ApprovalOutcome, ApprovalRequest, setApprovalPolicy } from '@deepseek-ai/dsh-user-approval'
 
 /**
  * A minimal Agent stand-in — the service only reaches `agent.session.append`
@@ -31,6 +31,18 @@ function fakeAgent(seed: Array<{ type: string }> = [{ type: 'turn/start' }, { ty
     },
   } as unknown as Agent
   return { agent, appended }
+}
+
+
+/**
+ * An agent stand-in over a REAL Session — gate and context fold real events;
+ * the opened turn satisfies request()'s enclosure precondition.
+ */
+function sessionAgent(id: string): { agent: Agent; session: Session } {
+  const session = Session.create(SessionId(id))
+  session.append('turn/start', { turn: 1 })
+  const agent = { id, session } as unknown as Agent
+  return { agent, session }
 }
 
 async function mounted(): Promise<Context> {
@@ -64,9 +76,9 @@ describe('ApprovalService.request', () => {
     const ctx = await mounted()
     const { agent, appended } = fakeAgent()
 
-    const outcome = await ctx.approval.request(requestOf(agent, { callId: ToolCallId('call-1'), reason: 'hook says ask' }))
+    const result = await ctx.approval.request(requestOf(agent, { callId: ToolCallId('call-1'), reason: 'hook says ask' }))
 
-    expect(outcome).toBe('unavailable')
+    expect(result.outcome).toBe('unavailable')
     expect(appended.map(e => e.type)).toEqual(['approval/asked', 'approval/decided'])
     const [asked, decided] = appended
     expect(asked?.data).toMatchObject({ toolName: 'echo', callId: 'call-1', reason: 'hook says ask' })
@@ -103,7 +115,7 @@ describe('ApprovalService.request', () => {
       reason: 'scoped reason',
     })
 
-    await expect(ctx.approval.request(request)).resolves.toBe('allowed-once')
+    await expect(ctx.approval.request(request)).resolves.toMatchObject({ outcome: 'allowed-once' })
     expect(carrier).toBe(agent)
     expect(received).toBe(request)
     expect(appended).toHaveLength(2)
@@ -130,7 +142,7 @@ describe('ApprovalService.request', () => {
     })
     ctx.on('approval/request', () => Promise.resolve<ApprovalOutcome>('allowed-once'))
 
-    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('allowed-once')
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toMatchObject({ outcome: 'allowed-once' })
 
     const audit = session.snapshotEvents().filter(event => event.type.startsWith('approval/'))
     const asked = session.snapshotEvents().find((event): event is SessionEvent<'approval/asked'> => event.type === 'approval/asked')
@@ -153,7 +165,7 @@ describe('ApprovalService.request', () => {
     })
     ctx.on('approval/request', () => Promise.resolve<ApprovalOutcome>('rejected'))
 
-    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('rejected')
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toMatchObject({ outcome: 'rejected' })
 
     const audit = session.snapshotEvents().filter(event => event.type.startsWith('approval/'))
     const asked = session.snapshotEvents().find((event): event is SessionEvent<'approval/asked'> => event.type === 'approval/asked')
@@ -187,7 +199,7 @@ describe('ApprovalService.request', () => {
       return Promise.resolve<ApprovalOutcome>('rejected')
     })
 
-    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('allowed-once')
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toMatchObject({ outcome: 'allowed-once' })
     expect(secondRan).toBe(false)
   })
 
@@ -196,7 +208,7 @@ describe('ApprovalService.request', () => {
     const { agent } = fakeAgent()
     ctx.on('approval/request', (_req, next) => next())
 
-    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('unavailable')
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toMatchObject({ outcome: 'unavailable' })
   })
 
   it('dispatches to global and matching agent-scoped listeners, never a foreign scope', async () => {
@@ -223,8 +235,8 @@ describe('ApprovalService.request', () => {
       return next()
     })
 
-    await expect(ctx.approval.request(requestOf(agentA))).resolves.toBe('unavailable')
-    await expect(ctx.approval.request(requestOf(agentB))).resolves.toBe('unavailable')
+    await expect(ctx.approval.request(requestOf(agentA))).resolves.toMatchObject({ outcome: 'unavailable' })
+    await expect(ctx.approval.request(requestOf(agentB))).resolves.toMatchObject({ outcome: 'unavailable' })
 
     expect(heard).toEqual(['global:A', 'scoped:A', 'global:B', 'scoped:B'])
     await scopesFiber.dispose()
@@ -244,7 +256,7 @@ describe('ApprovalService.request', () => {
       return next()
     })
 
-    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('unavailable')
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toMatchObject({ outcome: 'unavailable' })
 
     expect(seenKey).toBe(agent)
     await scopeFiber.dispose()
@@ -255,7 +267,7 @@ describe('ApprovalService.request', () => {
     const { agent, appended } = fakeAgent()
     ctx.on('approval/request', () => Promise.reject(new Error('transport died')))
 
-    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('unavailable')
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toMatchObject({ outcome: 'unavailable' })
     expect(appended[1]?.data).toMatchObject({ outcome: 'unavailable' })
   })
 
@@ -266,7 +278,7 @@ describe('ApprovalService.request', () => {
     // callers' closed-union switches.
     ctx.on('approval/request', () => Promise.resolve('yolo' as ApprovalOutcome))
 
-    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('unavailable')
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toMatchObject({ outcome: 'unavailable' })
   })
 
   it('settles cancelled immediately on an already-aborted signal without asking anyone', async () => {
@@ -278,9 +290,9 @@ describe('ApprovalService.request', () => {
       return Promise.resolve<ApprovalOutcome>('allowed-once')
     })
 
-    const outcome = await ctx.approval.request(requestOf(agent, { signal: AbortSignal.abort() }))
+    const result = await ctx.approval.request(requestOf(agent, { signal: AbortSignal.abort() }))
 
-    expect(outcome).toBe('cancelled')
+    expect(result.outcome).toBe('cancelled')
     expect(asked).toBe(false)
     expect(appended.map(e => e.type)).toEqual(['approval/asked', 'approval/decided'])
     expect(appended[1]?.data).toMatchObject({ outcome: 'cancelled' })
@@ -295,7 +307,7 @@ describe('ApprovalService.request', () => {
 
     const pending = ctx.approval.request(requestOf(agent, { signal: controller.signal }))
     controller.abort()
-    await expect(pending).resolves.toBe('cancelled')
+    await expect(pending).resolves.toMatchObject({ outcome: 'cancelled' })
 
     // The answerer settles after the fact: no second decided event appears.
     settleLate?.('allowed-once')
@@ -313,7 +325,7 @@ describe('ApprovalService.request', () => {
 
     const pending = ctx.approval.request(requestOf(agent, { signal: controller.signal }))
     controller.abort()
-    await expect(pending).resolves.toBe('cancelled')
+    await expect(pending).resolves.toMatchObject({ outcome: 'cancelled' })
 
     rejectLate?.(new Error('answered too late'))
     // Drain microtasks: the contained rejection must not escape the seam.
@@ -326,7 +338,7 @@ describe('ApprovalService.request', () => {
     ctx.on('approval/request', () => Promise.resolve<ApprovalOutcome>('rejected'))
     const controller = new AbortController()
 
-    await expect(ctx.approval.request(requestOf(agent, { signal: controller.signal }))).resolves.toBe('rejected')
+    await expect(ctx.approval.request(requestOf(agent, { signal: controller.signal }))).resolves.toMatchObject({ outcome: 'rejected' })
   })
 
   it('issues a fresh id per request', async () => {
@@ -347,10 +359,10 @@ describe('ApprovalService.request', () => {
     const fiber = await ctx.plugin((inner: Context) => {
       inner.on('approval/request', () => Promise.resolve<ApprovalOutcome>('allowed-once'))
     })
-    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('allowed-once')
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toMatchObject({ outcome: 'allowed-once' })
 
     await fiber.dispose()
-    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('unavailable')
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toMatchObject({ outcome: 'unavailable' })
   })
 })
 
@@ -362,13 +374,6 @@ describe('approval policy (the approval/policy fold)', () => {
    * An agent stand-in over a REAL Session — gate and context fold real events;
    * the opened turn satisfies request()'s enclosure precondition.
    */
-  function sessionAgent(id: string): { agent: Agent; session: Session } {
-    const session = Session.create(SessionId(id))
-    session.append('turn/start', { turn: 1 })
-    const agent = { id, session } as unknown as Agent
-    return { agent, session }
-  }
-
   it('folds to the last event, or undefined without one', () => {
     const service = new ApprovalService(new Context(), {})
     const { session } = sessionAgent('sess-fold')
@@ -395,7 +400,7 @@ describe('approval policy (the approval/policy fold)', () => {
     const service = new ApprovalService(ctx, {})
     const { agent } = sessionAgent('sess-bare-config')
     ctx.on('approval/request', () => Promise.resolve<ApprovalOutcome>('allowed-once'))
-    await expect(service.request({ agent, toolName: 'echo' })).resolves.toBe('allowed-once')
+    await expect(service.request({ agent, toolName: 'echo' })).resolves.toMatchObject({ outcome: 'allowed-once' })
   })
 
   it('contains an answerer that throws SYNCHRONOUSLY as unavailable', async () => {
@@ -403,7 +408,7 @@ describe('approval policy (the approval/policy fold)', () => {
     await ctx.plugin(ApprovalService)
     const { agent } = sessionAgent('sess-syncthrow')
     ctx.on('approval/request', () => { throw new Error('sync bug') })
-    await expect(ctx.approval.request({ agent, toolName: 'echo' })).resolves.toBe('unavailable')
+    await expect(ctx.approval.request({ agent, toolName: 'echo' })).resolves.toMatchObject({ outcome: 'unavailable' })
   })
 
   it('a never config rejects deterministically without consulting any answerer', async () => {
@@ -412,7 +417,7 @@ describe('approval policy (the approval/policy fold)', () => {
     const consulted = vi.fn()
     ctx.on('approval/request', (_req, next) => { consulted(); return next() })
     const { agent, session } = sessionAgent('sess-gate-1')
-    await expect(ctx.approval.request({ agent, toolName: 'bash' })).resolves.toBe('rejected')
+    await expect(ctx.approval.request({ agent, toolName: 'bash' })).resolves.toMatchObject({ outcome: 'rejected' })
     expect(consulted).not.toHaveBeenCalled()
     // The audit pair still lands on the session log.
     expect(session.snapshotEvents().filter(e => e.type === 'approval/asked')).toHaveLength(1)
@@ -424,7 +429,7 @@ describe('approval policy (the approval/policy fold)', () => {
     ctx.on('approval/request', () => Promise.resolve<ApprovalOutcome>('allowed-once'))
     await ctx.plugin(ApprovalService, { policy: 'never' })
     const { agent } = sessionAgent('sess-gate-2')
-    await expect(ctx.approval.request({ agent, toolName: 'bash' })).resolves.toBe('rejected')
+    await expect(ctx.approval.request({ agent, toolName: 'bash' })).resolves.toMatchObject({ outcome: 'rejected' })
   })
 
   it('never is unbypassable even by an answerer PREPENDED after the service mounts', async () => {
@@ -436,7 +441,7 @@ describe('approval policy (the approval/policy fold)', () => {
     const consulted = vi.fn()
     ctx.on('approval/request', () => { consulted(); return Promise.resolve<ApprovalOutcome>('allowed-once') }, { prepend: true })
     const { agent, appended } = fakeAgent()
-    await expect(ctx.approval.request(requestOf(agent))).resolves.toBe('rejected')
+    await expect(ctx.approval.request(requestOf(agent))).resolves.toMatchObject({ outcome: 'rejected' })
     expect(consulted).not.toHaveBeenCalled()
     expect(appended.map(e => e.type)).toEqual(['approval/asked', 'approval/decided'])
   })
@@ -449,9 +454,9 @@ describe('approval policy (the approval/policy fold)', () => {
     expect(ctx.approval.overrideOf(session)).toBeUndefined()
     setApprovalPolicy(session, 'ask')
     expect(ctx.approval.overrideOf(session)).toBe('ask')
-    await expect(ctx.approval.request({ agent, toolName: 'bash' })).resolves.toBe('allowed-once')
+    await expect(ctx.approval.request({ agent, toolName: 'bash' })).resolves.toMatchObject({ outcome: 'allowed-once' })
     setApprovalPolicy(session, 'never')
-    await expect(ctx.approval.request({ agent, toolName: 'bash' })).resolves.toBe('rejected')
+    await expect(ctx.approval.request({ agent, toolName: 'bash' })).resolves.toMatchObject({ outcome: 'rejected' })
   })
 
   it('queues a live policy switch for the next model step', async () => {
@@ -516,5 +521,66 @@ describe('approval policy (the approval/policy fold)', () => {
     expect(await contextFor()).toBeDefined()
     await fiber.dispose()
     expect(await contextFor()).toBeUndefined()
+  })
+})
+
+describe('allowed-always and the note channel', () => {
+  /** An agent stand-in over a real Session with an open turn; the service's
+   * memo is WeakMap-keyed, so one agent object must serve every ask in a test. */
+  function memoAgent(id: string): { agent: Agent; session: Session } {
+    const session = Session.create(SessionId(id))
+    session.append('turn/start', { turn: 2 })
+    const agent = { id, session } as unknown as Agent
+    return { agent, session }
+  }
+
+  it('carries an answerer note into approval/decided and the returned result', async () => {
+    const ctx = await mounted()
+    const { agent, session } = memoAgent('sess-note')
+    ctx.on('approval/request', () =>
+      Promise.resolve({ outcome: 'rejected', note: 'use the staging bucket instead' } satisfies ApprovalAnswer))
+
+    const result = await ctx.approval.request(requestOf(agent, { toolName: 'bash' }))
+    expect(result.outcome).toBe('rejected')
+    expect(result.note).toBe('use the staging bucket instead')
+    const decided = session.snapshotEvents().find((event): event is SessionEvent<'approval/decided'> => event.type === 'approval/decided')
+    expect(decided?.data.note).toBe('use the staging bucket instead')
+  })
+
+  it('bounds and trims a note before it reaches the durable log', async () => {
+    const ctx = await mounted()
+    const { agent, session } = memoAgent('sess-note-bound')
+    ctx.on('approval/request', () => Promise.resolve({ outcome: 'rejected', note: `  ${'x'.repeat(900)}  ` }))
+
+    const result = await ctx.approval.request(requestOf(agent))
+    expect(result.note?.length).toBe(500)
+    expect(result.note).toBe('x'.repeat(500))
+    const decided = session.snapshotEvents().find((event): event is SessionEvent<'approval/decided'> => event.type === 'approval/decided')
+    expect(decided?.data.note?.length).toBe(500)
+  })
+
+  it('normalizes a rogue object answer to the fail-closed result', async () => {
+    const ctx = await mounted()
+    const { agent } = memoAgent('sess-rogue')
+    ctx.on('approval/request', () => Promise.resolve({ outcome: 'yolo' } as unknown as ApprovalOutcome))
+
+    const result = await ctx.approval.request(requestOf(agent))
+    expect(result.outcome).toBe('unavailable')
+    expect(result.note).toBeUndefined()
+  })
+
+  it('accepts a toolInput preview without auditing it', async () => {
+    const ctx = await mounted()
+    const { agent, session } = memoAgent('sess-toolinput')
+    let received: ApprovalRequest | undefined
+    ctx.on('approval/request', (req: ApprovalRequest) => {
+      received = req
+      return Promise.resolve<ApprovalOutcome>('allowed-once')
+    })
+
+    await ctx.approval.request(requestOf(agent, { toolInput: '{"command":"ls"}' }))
+    expect(received?.toolInput).toBe('{"command":"ls"}')
+    const asked = session.snapshotEvents().find((event): event is SessionEvent<'approval/asked'> => event.type === 'approval/asked')
+    expect(asked && 'toolInput' in asked.data).toBe(false)
   })
 })

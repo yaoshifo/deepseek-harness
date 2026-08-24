@@ -1647,7 +1647,7 @@
       "kind": "event",
       "event": "approval/decided",
       "surface": false,
-      "digest": "bb1ab3d08f49a9f3b265f844cd78d5c49813062a7b34b54904b426f85d0ff6e3",
+      "digest": "4db73c3773efc58ce6edca84e689cb5d1b8b05da6956e12944cce3131c5c0979",
       "schema": {
         "root": 0,
         "nodes": [
@@ -1689,6 +1689,11 @@
                 "name": "id",
                 "type": 2,
                 "optional": false
+              },
+              {
+                "name": "note",
+                "type": 2,
+                "optional": true
               },
               {
                 "name": "outcome",
@@ -13894,7 +13899,7 @@
         "packages/interaction/user-approval/src/index.ts#ApprovalPolicy"
       ],
       "sources": [
-        "packages/interaction/user-approval/src/index.ts:60"
+        "packages/interaction/user-approval/src/index.ts:64"
       ]
     },
     {
@@ -17547,7 +17552,7 @@
         "event:approval/policy.data"
       ],
       "sources": [
-        "packages/interaction/user-approval/src/index.ts:33"
+        "packages/interaction/user-approval/src/index.ts:34"
       ]
     },
     {
@@ -29764,7 +29769,7 @@
         "event:approval/asked.data"
       ],
       "sources": [
-        "packages/interaction/user-approval/src/types.ts:44"
+        "packages/interaction/user-approval/src/types.ts:65"
       ]
     },
     {
@@ -32139,6 +32144,111 @@
       ]
     },
     {
+      "digest": "4db73c3773efc58ce6edca84e689cb5d1b8b05da6956e12944cce3131c5c0979",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "data",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "ignorable",
+                "type": 8,
+                "optional": true
+              },
+              {
+                "name": "seq",
+                "type": 9,
+                "optional": false
+              },
+              {
+                "name": "time",
+                "type": 9,
+                "optional": false
+              },
+              {
+                "name": "type",
+                "type": 10,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "id",
+                "type": 2,
+                "optional": false
+              },
+              {
+                "name": "note",
+                "type": 2,
+                "optional": true
+              },
+              {
+                "name": "outcome",
+                "type": 3,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "union",
+            "types": [
+              4,
+              5,
+              6,
+              7
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "allowed-once"
+          },
+          {
+            "kind": "literal",
+            "value": "cancelled"
+          },
+          {
+            "kind": "literal",
+            "value": "rejected"
+          },
+          {
+            "kind": "literal",
+            "value": "unavailable"
+          },
+          {
+            "kind": "literal",
+            "value": true
+          },
+          {
+            "kind": "primitive",
+            "type": "number"
+          },
+          {
+            "kind": "literal",
+            "value": "approval/decided"
+          }
+        ]
+      },
+      "names": [
+        "event:approval/decided"
+      ],
+      "sources": []
+    },
+    {
       "digest": "4de5e7644130ed715ef6b5a4d86a87b30dca4096d1a6683c66acf6f7809379c7",
       "schema": {
         "root": 0,
@@ -34142,6 +34252,70 @@
       ],
       "sources": [
         "packages/core/session/src/types.ts:261"
+      ]
+    },
+    {
+      "digest": "557c883792ef23e3776a6910e81058e73ac794ba5f43617f2ea9be5ce307d279",
+      "schema": {
+        "root": 0,
+        "nodes": [
+          {
+            "kind": "object",
+            "properties": [
+              {
+                "name": "id",
+                "type": 1,
+                "optional": false
+              },
+              {
+                "name": "note",
+                "type": 1,
+                "optional": true
+              },
+              {
+                "name": "outcome",
+                "type": 2,
+                "optional": false
+              }
+            ],
+            "indices": []
+          },
+          {
+            "kind": "primitive",
+            "type": "string"
+          },
+          {
+            "kind": "union",
+            "types": [
+              3,
+              4,
+              5,
+              6
+            ]
+          },
+          {
+            "kind": "literal",
+            "value": "allowed-once"
+          },
+          {
+            "kind": "literal",
+            "value": "cancelled"
+          },
+          {
+            "kind": "literal",
+            "value": "rejected"
+          },
+          {
+            "kind": "literal",
+            "value": "unavailable"
+          }
+        ]
+      },
+      "names": [
+        "event:approval/decided.data"
+      ],
+      "sources": [
+        "packages/interaction/user-approval/src/types.ts:77"
       ]
     },
     {
@@ -44233,65 +44407,6 @@
       "sources": []
     },
     {
-      "digest": "93cbbc5a7fd0b1aa1ff1b9a6bb5ec52b073f48e5a5200365c45c0cd54059e1b9",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "id",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "outcome",
-                "type": 2,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "union",
-            "types": [
-              3,
-              4,
-              5,
-              6
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "allowed-once"
-          },
-          {
-            "kind": "literal",
-            "value": "cancelled"
-          },
-          {
-            "kind": "literal",
-            "value": "rejected"
-          },
-          {
-            "kind": "literal",
-            "value": "unavailable"
-          }
-        ]
-      },
-      "names": [
-        "event:approval/decided.data"
-      ],
-      "sources": [
-        "packages/interaction/user-approval/src/types.ts:55"
-      ]
-    },
-    {
       "digest": "93d38436347f67c9022aacbc4472e283d722bcab8eb73fc376aaf7b6a6b9fb35",
       "schema": {
         "root": 0,
@@ -51723,106 +51838,6 @@
       },
       "names": [
         "event:tool-workflow/agent-end"
-      ],
-      "sources": []
-    },
-    {
-      "digest": "bb1ab3d08f49a9f3b265f844cd78d5c49813062a7b34b54904b426f85d0ff6e3",
-      "schema": {
-        "root": 0,
-        "nodes": [
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "data",
-                "type": 1,
-                "optional": false
-              },
-              {
-                "name": "ignorable",
-                "type": 8,
-                "optional": true
-              },
-              {
-                "name": "seq",
-                "type": 9,
-                "optional": false
-              },
-              {
-                "name": "time",
-                "type": 9,
-                "optional": false
-              },
-              {
-                "name": "type",
-                "type": 10,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "object",
-            "properties": [
-              {
-                "name": "id",
-                "type": 2,
-                "optional": false
-              },
-              {
-                "name": "outcome",
-                "type": 3,
-                "optional": false
-              }
-            ],
-            "indices": []
-          },
-          {
-            "kind": "primitive",
-            "type": "string"
-          },
-          {
-            "kind": "union",
-            "types": [
-              4,
-              5,
-              6,
-              7
-            ]
-          },
-          {
-            "kind": "literal",
-            "value": "allowed-once"
-          },
-          {
-            "kind": "literal",
-            "value": "cancelled"
-          },
-          {
-            "kind": "literal",
-            "value": "rejected"
-          },
-          {
-            "kind": "literal",
-            "value": "unavailable"
-          },
-          {
-            "kind": "literal",
-            "value": true
-          },
-          {
-            "kind": "primitive",
-            "type": "number"
-          },
-          {
-            "kind": "literal",
-            "value": "approval/decided"
-          }
-        ]
-      },
-      "names": [
-        "event:approval/decided"
       ],
       "sources": []
     },

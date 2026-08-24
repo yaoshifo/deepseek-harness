@@ -31,6 +31,27 @@ export function ApprovalRequestId(id: string): ApprovalRequestId {
  */
 export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
 
+/**
+ * A rich answerer return: an outcome plus an optional human note collected
+ * alongside the decision. Answerers may return a bare
+ * {@link ApprovalOutcome} instead; the service normalizes both shapes.
+ */
+export interface ApprovalAnswer {
+  readonly outcome: ApprovalOutcome
+  /** Human commentary riding the decision; bounded and trimmed by the service. */
+  readonly note?: string
+}
+
+/**
+ * The settled decision returned by {@link ApprovalService.request}: the closed
+ * outcome plus the answerer's note when one was given.
+ */
+export interface ApprovalResult {
+  readonly outcome: ApprovalOutcome
+  /** The answerer's note, already bounded and trimmed; absent when none was given. */
+  readonly note?: string
+}
+
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
     /**
@@ -50,11 +71,13 @@ declare module '@deepseek-ai/dsh-session/types' {
     /**
      * The outcome of a prior `approval/asked` (same `id`) — log-only audit.
      * Exactly one per ask, appended when the outcome is known: a decision, a
-     * cancellation, or the fail-closed `'unavailable'`.
+     * cancellation, or the fail-closed `'unavailable'`. `note` carries the
+     * answerer's bounded human commentary when one was given.
      */
     'approval/decided': {
       id: ApprovalRequestId
       outcome: ApprovalOutcome
+      note?: string
     }
   }
 }
@@ -76,8 +99,9 @@ export interface ApprovalRequestEvent {
 declare module '@deepseek-ai/cordis' {
   interface Events {
     /**
-     * Ask composed answerers for one decision. Return an outcome to claim the
-     * request or call `next()` to delegate. Scope-filtered dispatch
+     * Ask composed answerers for one decision. Return an outcome (or an
+     * {@link ApprovalAnswer} carrying a note) to claim the request or call
+     * `next()` to delegate. Scope-filtered dispatch
      * (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
      * @param req - pending approval request.
      * @mode waterfall
@@ -86,6 +110,6 @@ declare module '@deepseek-ai/cordis' {
       this: Scoped<Agent>,
       req: ApprovalRequestEvent,
       next: () => Promise<ApprovalOutcome>,
-    ): Promise<ApprovalOutcome>
+    ): Promise<ApprovalOutcome | ApprovalAnswer>
   }
 }

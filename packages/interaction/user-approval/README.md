@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use this package to require a one-shot decision before a sensitive tool action proceeds. The `ask` policy sends each request to the deployment's human or machine answerers; `never` rejects it without prompting. Missing or failed answerers return `unavailable`, so the action fails closed, and an approval applies only to that request. Every request and outcome is recorded in the requesting session's audit log. The model sees the resulting tool outcome and current policy, but not the human permission UI or audit events.
+`dsh-user-approval` lets a sensitive tool action pause for an allow/reject decision: `ctx.approval.request(req)` asks the composed answerers whether one specific action may proceed and returns an `ApprovalResult` — an `allowed-once`, `rejected`, `cancelled`, or `unavailable` outcome plus an optional bounded answerer note. Missing, non-owning, or throwing answerers fail closed to `unavailable`, and a grant applies only to the requested action. A per-session policy — `ask` (the default) or `never` — decides what happens before any answerer runs: `ask` delegates to the composed answerers, `never` rejects every request deterministically without prompting anyone. Each request is recorded in the requesting session's audit log, and the model sees only the asking consumer's tool outcome plus the current policy in the runtime-context snapshot. UI channels provide human answerers; the ACP automation bridge answers for its own agents.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ Compose this service when sensitive tool actions should pause for a human or mac
 
 ### Composing answerers
 
-Answerers are `approval/request` waterfall listeners: return an outcome to answer for an owned agent, or call `next()` to delegate. Agent-scoped listeners receive only that agent's requests, and a deployment composes one terminal answerer — sibling listener order is not a policy-priority mechanism. Without a terminal answerer, requests resolve `unavailable` and fail closed; the service itself never prompts a human.
+Answerers are `approval/request` waterfall listeners: return an outcome (or an `ApprovalAnswer` carrying a note) to answer for an owned agent, or call `next()` to delegate. Agent-scoped listeners receive only that agent's requests, and a deployment composes one terminal answerer — sibling listener order is not a policy-priority mechanism. Without a terminal answerer, requests resolve `unavailable` and fail closed; the service itself never prompts a human.
 
 ### Setting the policy
 
@@ -94,7 +94,7 @@ The system-prompt contribution `approval:policy` states the complete current mea
 
 Read these pages when the package-level contract is not enough. They move from the approval vocabulary to the consumers and the design rationale.
 
-- [Approval subsystem reference](../../../docs/subsystems/approval.md) — the shared request/outcome vocabulary and the `ctx.approval` Cordis surface.
+- [Approval subsystem reference](../../../docs/subsystems/approval.md) — the shared request/outcome vocabulary and the `ctx.approval` cordis surface.
 - [Approval seam Agent Note](../../../.agents/notes/implemented/feature/2026-07-06-approval-seam.md) — design rationale for the seam.
 - [Sandbox Agent Note](../../../.agents/notes/implemented/feature/2026-07-06-sandbox.md) — how the sandboxed bash tool consumes approvals for escalated retries.
 - [Interaction group map](../README.md) — adjacent permission preset and question packages.
@@ -134,7 +134,7 @@ Append-only after retained history. An `ask`/`never` switch preserves the stable
 
 #### What the model sees
 
-`approval/asked` and `approval/decided` are log-only. The model sees only the asking consumer's eventual allowed, rejected, cancelled, or unavailable tool outcome; the human permission UI is not context.
+`approval/asked` and `approval/decided` are log-only. The model sees only the asking consumer's eventual allowed, rejected, cancelled, or unavailable tool outcome; the human permission UI is not context. An answerer note rides the asking consumer's denial text (for the tools pipeline: `the user rejected tool "<name>": <note>`); grant notes are not model-visible.
 
 #### Token effect
 
@@ -152,8 +152,9 @@ Append-only; newly visible content follows the reusable request prefix and does 
 These limits define when the seam is a poor fit or needs special composition care. They are current package constraints, not a general permission comparison.
 
 - **Requests are valid only inside an open turn** — an idle or between-turn caller throws before auditing; a durable out-of-turn approval workflow is deferred.
-- **Only one-shot grants exist** — the outcome vocabulary has `allowed-once` but no `allow-always`, remembered rule, revocation, or grant store; session policy is only `ask` / `never`.
-- **The request carries no tool arguments** — an answerer sees the tool name, reason, and optional call id; the ACP machine channel requires a call id and delegates requests without one.
+- **Grants are one-shot** — `allowed-once` covers exactly the asked-about action and the service stores nothing between requests; there is no durable grant store, and session policy remains only `ask` / `never`.
+- **The tool-input preview is asker-bounded, not service-bounded** — `ApprovalRequest.toolInput` is UI-only (never audited; the raw arguments live in the paired `tool/call`), and answerers must apply their own display bounds; the ACP machine channel still requires a call id and delegates requests without one.
+- **The note channel stops at in-process answerers** — the api-proxy wire relay forwards outcomes only, so a remote client's commentary cannot ride `ApprovalAnswer.note`; extending the wire is deferred until a remote answerer needs it.
 - **No built-in answerer** — headless or incompletely composed deployments resolve `unavailable` and fail closed; the service itself never prompts a human.
 
 <a id="dev-note"></a>

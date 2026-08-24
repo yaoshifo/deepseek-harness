@@ -28,6 +28,33 @@ type ApprovalRequestId = Branded<'ApprovalRequestId'>
 type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
 ```
 
+Answerers may return a bare outcome or an `ApprovalAnswer` carrying a bounded human note; the service normalizes both and settles every ask into one `ApprovalResult`.
+
+```ts type-equiv
+/**
+ * A rich answerer return: an outcome plus an optional human note collected
+ * alongside the decision. Answerers may return a bare
+ * {@link ApprovalOutcome} instead; the service normalizes both shapes.
+ */
+interface ApprovalAnswer {
+  readonly outcome: ApprovalOutcome
+  /** Human commentary riding the decision; bounded and trimmed by the service. */
+  readonly note?: string
+}
+```
+
+```ts type-equiv
+/**
+ * The settled decision returned by {@link ApprovalService.request}: the closed
+ * outcome plus the answerer's note when one was given.
+ */
+interface ApprovalResult {
+  readonly outcome: ApprovalOutcome
+  /** The answerer's note, already bounded and trimmed; absent when none was given. */
+  readonly note?: string
+}
+```
+
 ## Per-session policy
 
 `ApprovalPolicy` determines what happens before interactive answerers run. `ask` delegates to the composed answerer chain, whose no-answer default is `unavailable`; `never` deterministically returns `rejected` without dispatching any answerer. The effective value is the last `approval/policy` event in the session log, falling back to the service config. Consumers read it with `ctx.approval.effectivePolicy(session)`; `setApprovalPolicy(session, policy)` is the single write path, so replay reconstructs the override.
@@ -50,7 +77,7 @@ Both policies contribute their complete current meaning to the cache-safe runtim
 
 ## Approval request
 
-`ApprovalRequest` identifies the agent and tool action closely enough to route and audit the question. It deliberately omits tool arguments: an answerer attaches the prompt to the already-streamed tool call through `callId` instead of rendering a second copy that could drift.
+`ApprovalRequest` identifies the agent and tool action closely enough to route and audit the question. It deliberately omits tool arguments from the audit: an answerer attaches the prompt to the already-streamed tool call through `callId`, and `toolInput` carries only a bounded UI preview (the raw arguments already live in the paired `tool/call`).
 
 ```ts type-equiv
 /**
@@ -73,6 +100,13 @@ interface ApprovalRequest extends ApprovalRequestEvent {
   readonly callId?: ToolCallId
   /** The asker's human-readable explanation of WHY it is asking. */
   readonly reason?: string
+  /**
+   * The asker's preview of WHAT is being decided — the tool's arguments
+   * rendered for a UI card, already bounded by the asker. UI-only: it never
+   * enters the `approval/asked` audit event (the raw arguments already live
+   * in the paired `tool/call`).
+   */
+  readonly toolInput?: string
   /**
    * Aborting withdraws the question: the request settles `'cancelled'`
    * immediately and a late answer from a still-pending answerer is discarded.
@@ -116,20 +150,22 @@ setPolicy(agent: Agent, policy: ApprovalPolicy): void
  * The service borrows the request, agent, session, and live signal directly.
  * The request requires an open turn because the audit pair must be enclosed
  * by the durable log's commit/replay boundary; an idle ask rejects before
- * appending anything. The answerer phase always produces an outcome: an
+ * appending anything. The answerer phase always produces a result: an
  * aborted signal yields `'cancelled'`, a missing or throwing answerer yields
  * `'unavailable'` (fail closed), and a rogue non-vocabulary return value is
- * normalized to `'unavailable'`. A failure that prevents either audit append
- * from committing still rejects because returning an unlogged decision would
- * violate the pair. Session contains post-commit observer failures, so an
- * authoritative append cannot reject the request or suppress its matching
- * audit event.
+ * normalized to `'unavailable'`. A deterministic decision still lands the
+ * audit pair, like every other resolution. A
+ * failure that prevents either audit append from committing still rejects
+ * because returning an unlogged decision would violate the pair. Session
+ * contains post-commit observer failures, so an authoritative append cannot
+ * reject the request or suppress its matching audit event.
  * @param req - the pending decision (agent, tool identity, reason, signal).
- * @returns the closed outcome; `'allowed-once'` is the only grant.
+ * @returns the closed outcome plus the answerer's bounded note when given;
+ *   `'allowed-once'` is the only grant.
  * @throws when no turn is open or either audit event fails before the session
  *   append commit point.
  */
-async request(req: ApprovalRequest): Promise<ApprovalOutcome>
+async request(req: ApprovalRequest): Promise<ApprovalResult>
 
 /**
  * Read the session override without applying the configured default.
@@ -151,17 +187,18 @@ Source: [`packages/interaction/user-approval/src/index.ts`](../../packages/inter
 
 #### `approval/request` — waterfall
 
-Ask composed answerers for one decision. Return an outcome to claim the request or call `next()` to delegate. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
+Ask composed answerers for one decision. Return an outcome (or an ApprovalAnswer carrying a note) to claim the request or call `next()` to delegate. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
 
 ```ts cordis-catalog
 /**
- * Ask composed answerers for one decision. Return an outcome to claim the
- * request or call `next()` to delegate. Scope-filtered dispatch
+ * Ask composed answerers for one decision. Return an outcome (or an
+ * {@link ApprovalAnswer} carrying a note) to claim the request or call
+ * `next()` to delegate. Scope-filtered dispatch
  * (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
  * @param req - pending approval request.
  * @mode waterfall
  */
-'approval/request'( this: Scoped<Agent>, req: ApprovalRequestEvent, next: () => Promise<ApprovalOutcome>, ): Promise<ApprovalOutcome>
+'approval/request'( this: Scoped<Agent>, req: ApprovalRequestEvent, next: () => Promise<ApprovalOutcome>, ): Promise<ApprovalOutcome | ApprovalAnswer>
 ```
 
 Types: [Agent](core.md) · [Scoped](scope.md)
