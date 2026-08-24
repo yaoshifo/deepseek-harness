@@ -345,4 +345,33 @@ describe('AskQuestionCardShape_GoReplica', () => {
       expect(row.btnValue).toBe(`askq:0:${i + 1}`)
     }
   })
+
+  it('multi-select pre-checks recommended options in the checker form', async () => {
+    const e = newTestEngine()
+    const p = createStubCardPlatform('feishu')
+    const questions: UserQuestion[] = [{
+      question: 'Which fixes?',
+      header: 'Follow-up',
+      multiSelect: true,
+      options: [
+        { label: 'Fix leak', description: 'src/a.ts:12 — guards the retry loop', recommended: true },
+        { label: 'Add test', description: 'tests/a.spec.ts — pins the retry contract' },
+        { label: 'Skip for now', description: '' },
+      ],
+    }]
+
+    await e.sendAskQuestionPrompt(p, 'ctx', questions, 0, 'test:askq')
+
+    const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
+    const check = card.elements[0] as {
+      kind: string
+      options: Array<{ label: string; checked?: boolean }>
+    }
+    expect(check.kind).toBe('checkOptions')
+    expect(check.options.map(o => [o.label, o.checked === true])).toEqual([
+      ['Fix leak', true],
+      ['Add test', false],
+      ['Skip for now', false],
+    ])
+  })
 })

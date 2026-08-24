@@ -29,6 +29,7 @@ import {
 } from '../core/types.js'
 import { locateForkCut } from './fork-at.js'
 import {
+  agentConventionsPrompt,
   buildChatroomSystemPrompt,
   subtaskAgentSystemPrompt,
   subtaskNoReportAgentSystemPrompt,
@@ -70,7 +71,7 @@ interface RawAskQuestionItem {
   question: string
   header?: string
   detail?: string
-  options?: Array<{ label: string; description?: string }>
+  options?: Array<{ label: string; description?: string; recommended?: boolean }>
   multiSelect?: boolean
   intent?: { kind?: string; approve?: string }
 }
@@ -271,8 +272,9 @@ export function feishuWorkspaceSection(env: string[]): string {
  * direct-role / moderator sessions replace the whole system prompt. A
  * subtask child (Go buildAppendSystemPrompt's CC_SUBTASK branch) appends the
  * report / no-report preamble as a normal section — research assistants add
- * their contract on top. Plain sessions with a configured Feishu workspace
- * get only the #18 routing section.
+ * their contract on top. Plain sessions always get the agent conventions
+ * section (order 10) and, when a Feishu workspace is configured, the #18
+ * routing section on top.
  */
 function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
   const isRole = envHasFlag(env, 'CC_CHATROOM_ROLE')
@@ -284,13 +286,14 @@ function buildSessionSetup(env: string[], workDir: string): import('@deepseek-ai
   const workspaceText = feishuWorkspaceSection(env)
   if (!isRole && !isDirect && !isModerator) {
     if (!isSubtask) {
-      // No persona and no workspace: no setup hook at all.
-      if (workspaceText === '') return undefined
       return (agentCtx) => {
         const promptSvc = agentCtx.get('systemPrompt') as
           | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
           | undefined
-        promptSvc?.section({ name: 'feishu-bridge-workspace', order: 110, text: workspaceText })
+        promptSvc?.section({ name: 'feishu-bridge-agent-conventions', order: 10, text: agentConventionsPrompt() })
+        if (workspaceText !== '') {
+          promptSvc?.section({ name: 'feishu-bridge-workspace', order: 110, text: workspaceText })
+        }
       }
     }
     const preamble = isNoReport
@@ -518,6 +521,7 @@ export class DshAgentAdapter {
       header: q.header ?? '',
       options: (q.options ?? []).map(o => ({
         label: o.label, description: o.description ?? '',
+        ...o.recommended !== undefined ? { recommended: o.recommended } : {},
       })),
       multiSelect: q.multiSelect ?? false,
     }))

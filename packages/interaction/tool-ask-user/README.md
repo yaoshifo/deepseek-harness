@@ -12,7 +12,7 @@ Model-facing `ask_user_question` tool over `ctx.userQuestions`. It lets the mode
 - `id` — required stable id on each question, echoed in the answer.
 - `question` — required question text for each question.
 - `header` — optional short heading.
-- `options` — optional choices with `label` and `description`. If recommending a choice, put it first and append `(Recommended)` to that label.
+- `options` — optional choices with `label`, `description`, and a presentation-only `recommended` flag. Order options by recommendation (most recommended first); capable multi-select UIs pre-check options marked `recommended: true`.
 - `multi_select` — whether that question may return more than one selected option.
 
 The tool calls `ctx.userQuestions.ask()` and returns canonical `{ answers: [{ id, selected, custom? }] }`. `selected` contains option labels; `custom` carries a free-form answer, supplementing `selected` for a multi-select question and overriding it for a single-select question. The Native renderer preserves the compact JSON text shape `{ "answers": [{ "id": "...", "selected": ["..."], "custom": "..." }] }`.

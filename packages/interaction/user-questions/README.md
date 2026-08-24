@@ -14,7 +14,7 @@ User-interaction Service Definition. It owns `ctx.userQuestions`, the service a 
 ### Key Types
 
 - `AskUserQuestionRequest` — `{ questions: [{ id, question, detail?, header?, options?, multiSelect?, intent? }], agent?, signal? }`; `detail` supplies supporting text that providers render with the question without turning it into an option label. When present, `agent` must be the registry's exact live runtime root.
-- `AskUserQuestionOption` — `{ label, description? }`.
+- `AskUserQuestionOption` — `{ label, description?, recommended? }`; `recommended` is presentation-only — capable multi-select UIs pre-check the option, and the answer encoding never changes.
 - `AskUserQuestionIntent` — `{ kind: 'plan-review', approve }`; the tagged presentation intent below.
 - `AskUserQuestionAnswer` — `{ answers: [{ id, selected, custom? }] }`.
 - `UserQuestionProvider` — UI implementation with `ask(request)`.

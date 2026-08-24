@@ -259,6 +259,13 @@ export function subtaskNoReportAgentSystemPrompt(): string {
 `
 }
 
+/** The plain-session agent conventions prompt (curiosity reporting + closing card).
+ *
+ * Registers for direct project-chat agents only: subtask children report
+ * through their parent session, and chatroom roles carry their own persona.
+ *
+ * @returns the conventions section text for plain sessions.
+ */
 /** The research-assistant preamble (Go SubtaskResearchAssistantPrompt).
  *
  * @returns the research-execution preamble for assistant children.
@@ -272,5 +279,23 @@ export function subtaskResearchAssistantPrompt(): string {
 - **默认不出图**——你和你的角色都是文本模型、看不懂图片。结论用数值/表格给出；仅当角色明确要求可视化时才出图，并用 feishu_bridge_send 发出。
 - **report 前把关键数据/指标写进 report 文本**——父角色只能看到 report 的内容，图表和文件它看不到。每个关键数字标注**来源**（akshare 接口名 / web 搜索关键词）和**抓取日期**，让结论可追溯、可复现。
 - 你只做研究执行：查什么、怎么解读、结论是什么由角色判断，不要替它做综合判断。完成全部任务后再调 feishu_bridge_subtask 的 action: report（report 一次，不要中间进度调）。
+`
+}
+
+/** The plain-session agent conventions prompt (curiosity reporting + closing card).
+ *
+ * Registers for direct project-chat agents only: subtask children report
+ * through their parent session, and chatroom roles carry their own persona.
+ *
+ * @returns the conventions section text for plain sessions.
+ */
+export function agentConventionsPrompt(): string {
+  return `
+### 保持好奇心，主动上报
+发现疑似 bug、数据不一致、可疑配置、与注释/文档不符、明显低效或脆弱设计时主动提出，不视而不见，也不擅自修。先验证、宁缺毋滥：上报前自行核实（读上下文和调用方、跑能跑的检查），只报有实际影响的，不报验证不成立的或风格偏好、微小重复、理论低效，没有发现是正常结果。密钥泄露等损害正在扩大的发现立即提，不等收尾。
+方式：收尾回复单列一节「发现的问题 / 可优化点」，每条一行——短标题加一句验证依据；\`path:line\` 与建议动作只放进追问卡片的选项描述，不在正文重复。
+
+### 收尾追问卡片
+「发现的问题 / 可优化点」一节非空时，发出收尾文本后紧接着调用 ask_user_question 发一个多选问题：单个问题、multi_select 为 true、header 为「后续处理」；每个发现对应一个选项（label 为短标题，description 为 \`path:line\` 与建议动作一句话），并附一个「暂不处理」选项。选项按你推荐的处理优先级排序，推荐要处理的选项置前并设 recommended: true（卡片会默认勾选）。该节为空或缺失时不发卡片。用户提交的勾选视为授权，直接开始处理；「暂不处理」或与选项无关的自由文本答复则不处理任何条目，自由文本按新任务理解并执行。
 `
 }

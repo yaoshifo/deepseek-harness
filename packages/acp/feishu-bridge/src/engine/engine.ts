@@ -4617,6 +4617,7 @@ export class Engine {
           label: opt.label,
           description: opt.description,
           value: String(i + 1),
+          ...opt.recommended === true ? { checked: true } : {},
         }))
         cb.checkOptions(q.question, opts, `askq_multi:${qIdx}`, { askq_question: q.question })
       } else {
