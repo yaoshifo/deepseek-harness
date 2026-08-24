@@ -1295,29 +1295,6 @@ export class StreamPreview {
   }
 
   /**
-   * One final PATCH with the complete response text replacing the streamed text.
-   *
-   * @param finalText - Complete response text for the final card body.
-   */
-  async finalProgressDisplay(finalText: string): Promise<void> {
-    await this.locked(async () => {
-      if (this.degraded || this.previewMsgID === undefined) return
-      this.fullText = finalText
-      const display = this.buildProgressDisplayLocked()
-      const content = this.progressContentLocked(display)
-      const updater = asMessageUpdater(this.platform)
-      if (updater === undefined) return
-      try {
-        await updater.updateMessage(this.previewMsgID, content)
-      } catch (error) {
-        console.debug(`streaming update skipped: ${String(error)}`)
-      }
-      this.lastSentText = display
-      this.lastSentViaUpdate = true
-    })
-  }
-
-  /**
    * Update the 实时播报 section with the latest EventText chunk (replaced).
    *
    * @param chunk - Latest EventText chunk; replaces the previous one.
