@@ -10,7 +10,6 @@ import { createStubPlatform } from './stubs/engine-stubs.js'
 import {
   ProgressCardPayloadPrefix,
   buildProgressCardPayload,
-  buildProgressCardPayloadV2,
   isTodoToolName,
   parseProgressCardPayload,
   parseTodoItems,
@@ -21,24 +20,24 @@ import {
   newCompactProgressWriter,
   suppressStandaloneToolResultEvent,
 } from '../src/progress-compact.js'
-import type { Platform } from '../src/core/types.js'
+import type { Platform, ProgressContent } from '../src/core/types.js'
 
 function platformWithStyle(style: string): Platform & { progressStyle: () => string } {
   return Object.assign(createStubPlatform('test'), { progressStyle: () => style })
 }
 
 /** Go previewCapturePlatform: records preview starts and updates. */
-function createPreviewCapturePlatform(): Platform & { started: string[]; updated: string[] } {
-  const started: string[] = []
-  const updated: string[] = []
+function createPreviewCapturePlatform(): Platform & { started: ProgressContent[]; updated: ProgressContent[] } {
+  const started: ProgressContent[] = []
+  const updated: ProgressContent[] = []
   return Object.assign(createStubPlatform('bridge'), {
     started,
     updated,
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
       started.push(content)
       return 'preview-1'
     },
-    async updateMessage(_rc: unknown, content: string): Promise<void> {
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
       updated.push(content)
     },
   })
@@ -46,21 +45,21 @@ function createPreviewCapturePlatform(): Platform & { started: string[]; updated
 
 /** Go stubCompactProgressPlatform: styled platform recording preview traffic. */
 function createStubCompactProgressPlatform(style: string, supportPayload: boolean): Platform & {
-  getPreviewStarts(): string[]
-  getPreviewEdits(): string[]
-  sendPreviewStart(rc: unknown, content: string): Promise<unknown>
-  updateMessage(rc: unknown, content: string): Promise<void>
+  getPreviewStarts(): ProgressContent[]
+  getPreviewEdits(): ProgressContent[]
+  sendPreviewStart(rc: unknown, content: ProgressContent): Promise<unknown>
+  updateMessage(rc: unknown, content: ProgressContent): Promise<void>
 } {
-  const previewStarts: string[] = []
-  const previewEdits: string[] = []
+  const previewStarts: ProgressContent[] = []
+  const previewEdits: ProgressContent[] = []
   return Object.assign(createStubPlatform('feishu'), {
     progressStyle: () => (style === '' ? 'compact' : style),
     supportsProgressCardPayload: () => supportPayload,
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
       previewStarts.push(content)
       return 'preview-handle'
     },
-    async updateMessage(_rc: unknown, content: string): Promise<void> {
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
       previewEdits.push(content)
     },
     getPreviewStarts: () => [...previewStarts],
@@ -78,21 +77,8 @@ describe('suppressStandaloneToolResultEvent', () => {
 })
 
 describe('progress card payload', () => {
-  it('builds and parses the legacy payload', () => {
-    const payload = buildProgressCardPayload([' step1 ', '', 'step2'], true)
-    expect(payload).not.toBe('')
-    expect(payload.startsWith(ProgressCardPayloadPrefix)).toBe(true)
-    const parsed = parseProgressCardPayload(payload)
-    expect(parsed).toBeDefined()
-    expect(parsed?.entries).toEqual(['step1', 'step2'])
-    expect(parsed?.truncated).toBe(true)
-    expect(parsed?.items?.length).toBe(2)
-    expect(parsed?.items?.[0]?.kind).toBe('info')
-    expect(parsed?.items?.[0]?.text).toBe('step1')
-  })
-
-  it('builds and parses the V2 payload', () => {
-    const payload = buildProgressCardPayloadV2(
+  it('builds the payload object with cleaned entries', () => {
+    const payload = buildProgressCardPayload(
       [
         { kind: 'thinking', text: ' plan ' },
         { kind: 'tool_use', tool: 'Bash', text: 'pwd' },
@@ -104,21 +90,37 @@ describe('progress card payload', () => {
       [],
       '',
     )
-    expect(payload).not.toBe('')
-    const parsed = parseProgressCardPayload(payload)
-    expect(parsed?.version).toBe(2)
-    expect(parsed?.agent).toBe('Codex')
-    expect(parsed?.lang).toBe('zh')
-    expect(parsed?.state).toBe('running')
-    expect(parsed?.items?.length).toBe(2)
-    expect(parsed?.items?.[1]?.kind).toBe('tool_use')
-    expect(parsed?.items?.[1]?.tool).toBe('Bash')
+    expect(payload).toBeDefined()
+    expect(payload?.version).toBe(2)
+    expect(payload?.agent).toBe('Codex')
+    expect(payload?.lang).toBe('zh')
+    expect(payload?.state).toBe('running')
+    expect(payload?.items?.length).toBe(2)
+    expect(payload?.items?.[0]?.kind).toBe('thinking')
+    expect(payload?.items?.[0]?.text).toBe('plan')
+    expect(payload?.items?.[1]?.kind).toBe('tool_use')
+    expect(payload?.items?.[1]?.tool).toBe('Bash')
   })
 
-  it('carries lastTS', () => {
-    const payload = buildProgressCardPayloadV2([{ kind: 'tool_use', tool: 'Bash', text: 'pwd' }], false, 'Codex', 'zh', 'running', [], '14:05:34')
-    const parsed = parseProgressCardPayload(payload)
-    expect(parsed?.lastTS).toBe('14:05:34')
+  it('drops empty-text items', () => {
+    const payload = buildProgressCardPayload([{ kind: 'thinking', text: '  ' }], false, 'Codex', 'zh', 'running', [], '')
+    expect(payload).toBeUndefined()
+  })
+
+  it('carries lastTS and todos', () => {
+    const todos = [{ content: 'step one', status: 'in_progress' }]
+    const payload = buildProgressCardPayload([{ kind: 'tool_use', tool: 'Bash', text: 'pwd' }], true, 'Codex', 'zh', 'failed', todos, '14:05:34')
+    expect(payload?.lastTS).toBe('14:05:34')
+    expect(payload?.truncated).toBe(true)
+    expect(payload?.state).toBe('failed')
+    expect(payload?.todos).toEqual(todos)
+  })
+
+  it('decodes a serialized payload through the platform-seam codec', () => {
+    const payload = buildProgressCardPayload([{ kind: 'tool_use', tool: 'Bash', text: 'pwd' }], false, 'Codex', 'zh', 'running', [], '')
+    const parsed = parseProgressCardPayload(`${ProgressCardPayloadPrefix}${JSON.stringify(payload)}`)
+    expect(parsed?.version).toBe(2)
+    expect(parsed?.items?.[0]?.tool).toBe('Bash')
   })
 
   it('rejects invalid payloads', () => {
@@ -175,12 +177,14 @@ describe('CompactProgressWriter', () => {
 
     expect(await w.appendEvent('thinking', 'planning bridge progress', '', 'planning bridge progress')).toBe(true)
     expect(p.started.length).toBe(1)
-    expect(p.started[0]?.startsWith(ProgressCardPayloadPrefix)).toBe(true)
+    const started = p.started[0]
+    expect(started?.kind).toBe('card')
 
     expect(await w.finalize('completed')).toBe(true)
     expect(p.updated.length).toBe(1)
-    const parsed = parseProgressCardPayload(p.updated[0] ?? '')
-    expect(parsed?.state).toBe('completed')
+    const updated = p.updated[0]
+    expect(updated?.kind).toBe('card')
+    expect(updated?.kind === 'card' && updated.payload.state).toBe('completed')
   })
 
   it('applies the transform to card payload entries', async () => {
@@ -193,9 +197,10 @@ describe('CompactProgressWriter', () => {
     )).toBe(true)
     const starts = p.getPreviewStarts()
     expect(starts.length).toBe(1)
-    const payload = parseProgressCardPayload(starts[0] ?? '')
-    expect(payload?.items?.length).toBe(1)
-    expect(payload?.items?.[0]?.text).toBe('Inspect 📄 `src/app.ts:42`')
+    const started = starts[0]
+    expect(started?.kind).toBe('card')
+    expect(started?.kind === 'card' && started.payload.items?.length).toBe(1)
+    expect(started?.kind === 'card' && started.payload.items?.[0]?.text).toBe('Inspect 📄 `src/app.ts:42`')
   })
 
   it('does not transform tool results', async () => {
@@ -205,8 +210,9 @@ describe('CompactProgressWriter', () => {
     const raw = '/root/code/demo/src/app.ts:42'
     expect(await w.appendStructured({ kind: 'tool_result', text: raw }, raw)).toBe(true)
     const starts = p.getPreviewStarts()
-    const payload = parseProgressCardPayload(starts[0] ?? '')
-    expect(payload?.items?.[0]?.text).toBe(raw)
+    const started = starts[0]
+    expect(started?.kind).toBe('card')
+    expect(started?.kind === 'card' && started.payload.items?.[0]?.text).toBe(raw)
   })
 
   it('is disabled for platforms without an updater', () => {
@@ -222,8 +228,8 @@ describe('CompactProgressWriter', () => {
     expect(await w.append('step one')).toBe(true)
     expect(await w.append('step two')).toBe(true)
     const starts = p.getPreviewStarts()
-    expect(starts[0]).toBe('step one')
+    expect(starts[0]).toEqual({ kind: 'text', text: 'step one' })
     const edits = p.getPreviewEdits()
-    expect(edits[0]).toBe('step one\n\nstep two')
+    expect(edits[0]).toEqual({ kind: 'text', text: 'step one\n\nstep two' })
   })
 })

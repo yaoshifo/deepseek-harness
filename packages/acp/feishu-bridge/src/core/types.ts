@@ -13,7 +13,7 @@
  * @module dsh-feishu-bridge/core-types
  */
 
-import type { TodoItem } from '../progress.js'
+import type { ProgressCardPayload, TodoItem } from '../progress.js'
 
 /** Sentinel AgentSessionID telling the agent to resume the most recent session. */
 export const ContinueSession = '__continue__'
@@ -239,10 +239,20 @@ export interface Event {
   done: boolean
   error?: Error
   errorText?: string
+  /**
+   * Token usage for this event: on `text`/`thinking` events it is the
+   * per-request usage of the assistant message that carried it; on `result`
+   * events it is the turn sum. Undefined means unreported.
+   */
   inputTokens?: number
+  /** Input tokens including cache reads/writes; same split as {@link inputTokens}. */
   totalInputTokens?: number
+  /** Output tokens; same split as {@link inputTokens}. */
   outputTokens?: number
+  /** API calls made this turn (result events). */
   numTurns?: number
+  /** Tool-private presentation payload from the native tool/result `meta` (e.g. fs contextual diffs). */
+  toolResultMeta?: unknown
   arrivedAt?: number
   /** Whole-list todo snapshot carried by a `todo_update` event. */
   todos?: TodoItem[]
@@ -516,9 +526,42 @@ export function asRecentTurnsReader(a: Agent): RecentTurnsReader | undefined {
   return typeof candidate.recentTurns === 'function' ? (candidate as RecentTurnsReader) : undefined
 }
 
+/**
+ * Structured preview-card status carried beside display text, replacing the
+ * `__cc_state__:`/`__cc_ts__:`/`__cc_tc__:` text header lines the engine-side
+ * preview used to prepend.
+ */
+export interface ProgressStatus {
+  /** Card lifecycle state; "running" matches the former headerless prefix. */
+  state: 'running' | 'completed' | 'failed' | 'thinking'
+  /** Timestamp (HH:MM:SS) appended to the card title; empty string omits it. */
+  ts: string
+  /** Tool-call count appended to the title when positive. */
+  toolCallSeq: number
+}
+
+/** Text-path preview content: a display body with an optional structured status. */
+export interface TextPreviewContent {
+  kind: 'text'
+  text: string
+  status?: ProgressStatus
+}
+
+/** Card-path preview content: a structured progress-card payload. */
+export interface CardPreviewContent {
+  kind: 'card'
+  payload: ProgressCardPayload
+}
+
+/**
+ * Content a preview-capable platform renders in place: a structured
+ * progress-card payload, or text with an optional structured status.
+ */
+export type ProgressContent = TextPreviewContent | CardPreviewContent
+
 /** Optional: platform can update a previously sent message in place (PATCH). */
 export interface MessageUpdater {
-  updateMessage(replyCtx: unknown, content: string): Promise<void>
+  updateMessage(replyCtx: unknown, content: ProgressContent): Promise<void>
 }
 
 /**
@@ -526,7 +569,7 @@ export interface MessageUpdater {
  * handle for subsequent in-place edits.
  */
 export interface PreviewStarter {
-  sendPreviewStart(replyCtx: unknown, content: string): Promise<unknown>
+  sendPreviewStart(replyCtx: unknown, content: ProgressContent): Promise<unknown>
 }
 
 /** Optional: platform can delete a preview message when the final reply is sent separately. */

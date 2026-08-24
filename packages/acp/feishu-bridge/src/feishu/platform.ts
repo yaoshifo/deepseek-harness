@@ -43,10 +43,10 @@ import {
 } from './progress.js'
 import { previewOverflow as previewOverflowFn } from './markdown.js'
 import { noSpinner, resolveSpinnerAsset, type SpinnerCfg } from './spinner.js'
-import { parseProgressCardPayload, parseProgressStyle } from '../progress.js'
+import { parseProgressStyle } from '../progress.js'
 import { TokenBucketRateLimiter, isTenantAccessTokenInvalid, withTransientRetry } from './retry.js'
 import { errorMessage } from './retry.js'
-import { ErrNotSupported, type ImageAttachment, type FileAttachment, type Message, type MessageHandler, type Platform } from '../core/types.js'
+import { ErrNotSupported, type ImageAttachment, type FileAttachment, type Message, type MessageHandler, type Platform, type ProgressContent } from '../core/types.js'
 import { SpawnedChatStore, extractFeishuChatID, projectBaseForTag, type GroupSpawnOptions, type SpawnedChatInfo, type SpawnedChatMeta } from './spawn.js'
 import { TagManager, buildDirWordFreq, pickDirTagName, type CreateTagResult, type FeishuCodeReply, type TagApi, type TagRelationTag } from './tag.js'
 import { groupAvatarColor, grayscaleAvatar, iconGrayBG, renderIconPNG } from './avatar.js'
@@ -1763,16 +1763,16 @@ export class FeishuPlatform implements Platform {
    * edits. The pre-button card JSON is cached per messageID so stop-card
    * rebuilds never append a second button row.
    * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
-   * @param content - Initial preview content.
+   * @param content - Initial preview content: structured payload or text.
    * @returns Handle for subsequent in-place edits.
    */
-  async sendPreviewStart(replyCtx: unknown, content: string): Promise<FeishuPreviewHandle> {
+  async sendPreviewStart(replyCtx: unknown, content: ProgressContent): Promise<FeishuPreviewHandle> {
     if (!this.useInteractiveCard) throw new ErrNotSupported('feishu: preview start without interactive cards')
     const rc = this.requireReplyCtx(replyCtx)
     if (rc.chatID === '') throw new Error('feishu: chatID is empty')
 
     const spin = await this.spinnerCfg()
-    const preButtonJSON = buildPreviewCardJSON(content, spin)
+    const preButtonJSON = this.renderPreviewCard(content, spin)
     const cardJSON = injectStopButton(preButtonJSON, rc.sessionKey)
 
     const msgID = await this.withRetry('send preview', () => this.request('send preview', async (client) => {
@@ -1802,23 +1802,26 @@ export class FeishuPlatform implements Platform {
    * pre-button; the stop button and (on green) the export/reply buttons are
    * injected per PATCH, deferring to the latest render-status text.
    * @param previewHandle - Preview handle from sendPreviewStart.
-   * @param content - Updated content, or a serialized progress payload.
+   * @param content - Updated content: structured payload or text.
    */
-  async updateMessage(previewHandle: unknown, content: string): Promise<void> {
+  async updateMessage(previewHandle: unknown, content: ProgressContent): Promise<void> {
     if (!this.useInteractiveCard) throw new ErrNotSupported('feishu: update message without interactive cards')
     const h = requirePreviewHandle(previewHandle)
 
     const spin = await this.spinnerCfg()
-    const payload = parseProgressCardPayload(content)
-    const cardJSON = payload !== undefined
-      ? buildProgressCardJSONFromPayload(payload, spin)
-      : buildPreviewCardJSON(content, spin)
+    const cardJSON = this.renderPreviewCard(content, spin)
     this.lastProgressCard.set(h.messageID, cardJSON)
     let json = injectStopButton(cardJSON, h.sessionKey)
     const statusText = this.renderStatusText.get(h.messageID) ?? ''
     json = injectReplyButtons(json, h.sessionKey, h.messageID, statusText)
     await this.patchRateWait()
     await this.withRetry('patch message', () => this.patchMessage(h.messageID, json))
+  }
+
+  /** Render preview content into a card JSON string (payload or text path). */
+  private renderPreviewCard(content: ProgressContent, spin: SpinnerCfg): string {
+    if (content.kind === 'card') return buildProgressCardJSONFromPayload(content.payload, spin)
+    return buildPreviewCardJSON(content.text, spin, content.status)
   }
 
   /**

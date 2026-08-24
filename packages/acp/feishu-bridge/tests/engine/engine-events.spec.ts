@@ -20,7 +20,8 @@ import {
   type ControllableAgentSession,
   type StubPlatform,
 } from '../stubs/engine-stubs.js'
-import type { Agent, Platform } from '../../src/core/types.js'
+import type { Agent, Platform, ProgressContent } from '../../src/core/types.js'
+import { previewText, statusOf } from '../stubs/preview-content.js'
 
 // Ported from cc-connect core/engine_test.go — M1 scope: core event handling
 // (result/text/thinking basics), message queueing (#13), side-channel dedup,
@@ -365,16 +366,20 @@ describe('processInteractiveEvents side-channel dedup', () => {
 })
 
 /** Stub platform with the M2 preview capabilities, recording card PATCHes. */
-function createPreviewRecorderPlatform(): StubPlatform & { messages: string[] } {
+function createPreviewRecorderPlatform(): StubPlatform & { messages: string[]; states: Array<string | undefined> } {
   const messages: string[] = []
+  const states: Array<string | undefined> = []
   return Object.assign(createStubPlatform(), {
     messages,
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
-      messages.push(`start:${content}`)
+    states,
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+      messages.push(`start:${previewText(content)}`)
+      states.push(statusOf(content)?.state)
       return 'preview-handle'
     },
-    async updateMessage(_rc: unknown, content: string): Promise<void> {
-      messages.push(`update:${content}`)
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+      messages.push(`update:${previewText(content)}`)
+      states.push(statusOf(content)?.state)
     },
   })
 }
@@ -400,12 +405,12 @@ describe('processInteractiveEvents error-reasoned turn', () => {
     agentSession.channel.push({ type: 'result', content: narration, errorText: '1301 sensitive content rejected', done: true })
     await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
 
-    const finalCard = [...p.messages].reverse().find(m => m.includes('__cc_state__'))
-    expect(finalCard, `cards=${JSON.stringify(p.messages)}`).toContain('__cc_state__:failed')
-    expect(finalCard).toContain('1301 sensitive content rejected')
-    expect(finalCard).not.toContain('__cc_state__:completed')
+    expect(p.states.includes('failed'), `cards=${JSON.stringify(p.messages)} states=${JSON.stringify(p.states)}`).toBe(true)
+    const finalCard = [...p.messages].reverse().find(m => m.includes('1301 sensitive content rejected'))
+    expect(finalCard).toBeDefined()
+    expect(p.states.at(-1)).toBe('failed')
     // An errored turn never records a clean lastResult the narration could leak through.
-    expect(session.getLastResult()).not.toContain(narration)
+    expect(await e.lastResultOrReply(sessionKey, session)).not.toContain(narration)
   })
 
   it('delivers the error as a plain message without a preview card', async () => {
@@ -591,17 +596,21 @@ describe('processInteractiveEvents user stop mid-handler', () => {
    */
   it('finalizes the preview card on stopInteractiveSession when the loop is mid-handler', async () => {
     const messages: string[] = []
+    const states: Array<string | undefined> = []
     let releaseStart: (() => void) | undefined
     const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
     const p = Object.assign(createStubPlatform(), {
       messages,
-      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      states,
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
         await startGate
-        messages.push(`start:${content}`)
+        messages.push(`start:${previewText(content)}`)
+        states.push(statusOf(content)?.state)
         return 'preview-handle'
       },
-      async updateMessage(_handle: unknown, content: string): Promise<void> {
-        messages.push(`update:${content}`)
+      async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+        messages.push(`update:${previewText(content)}`)
+        states.push(statusOf(content)?.state)
       },
       async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
         messages.push(`stopped:${String(id)}`)
@@ -646,17 +655,21 @@ describe('processInteractiveEvents engine stop mid-handler', () => {
    */
   it('finalizes the preview card on Engine.stop when the loop is mid-handler', async () => {
     const messages: string[] = []
+    const states: Array<string | undefined> = []
     let releaseStart: (() => void) | undefined
     const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
     const p = Object.assign(createStubPlatform(), {
       messages,
-      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      states,
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
         await startGate
-        messages.push(`start:${content}`)
+        messages.push(`start:${previewText(content)}`)
+        states.push(statusOf(content)?.state)
         return 'preview-handle'
       },
-      async updateMessage(_handle: unknown, content: string): Promise<void> {
-        messages.push(`update:${content}`)
+      async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+        messages.push(`update:${previewText(content)}`)
+        states.push(statusOf(content)?.state)
       },
       async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
         messages.push(`stopped:${String(id)}`)
@@ -695,16 +708,20 @@ describe('processInteractiveEvents engine stop mid-handler', () => {
 })
 
 /** Preview-recorder platform for the abnormal-exit finalize specs. */
-function createAbnormalExitRecorderPlatform(): StubPlatform & { messages: string[] } {
+function createAbnormalExitRecorderPlatform(): StubPlatform & { messages: string[]; states: Array<string | undefined> } {
   const messages: string[] = []
+  const states: Array<string | undefined> = []
   return Object.assign(createStubPlatform(), {
     messages,
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
-      messages.push(`start:${content}`)
+    states,
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+      messages.push(`start:${previewText(content)}`)
+      states.push(statusOf(content)?.state)
       return 'preview-handle'
     },
-    async updateMessage(_handle: unknown, content: string): Promise<void> {
-      messages.push(`update:${content}`)
+    async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+      messages.push(`update:${previewText(content)}`)
+      states.push(statusOf(content)?.state)
     },
     async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
       messages.push(`stopped:${String(id)}`)
@@ -734,24 +751,28 @@ describe('processInteractiveEvents abnormal-exit preview finalization', () => {
     await new Promise(r => setTimeout(r, 20))
 
     expect(
-      p.messages.some(m => m.includes('__cc_state__:failed')),
-      `messages=${JSON.stringify(p.messages)}`,
+      p.states.includes('failed'),
+      `messages=${JSON.stringify(p.messages)} states=${JSON.stringify(p.states)}`,
     ).toBe(true)
   })
 
   it('renders the failed card on a post-stop event arrival for non-user stops', async () => {
     const messages: string[] = []
+    const states: Array<string | undefined> = []
     let releaseStart: (() => void) | undefined
     const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
     const p = Object.assign(createStubPlatform(), {
       messages,
-      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      states,
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
         await startGate
-        messages.push(`start:${content}`)
+        messages.push(`start:${previewText(content)}`)
+        states.push(statusOf(content)?.state)
         return 'preview-handle'
       },
-      async updateMessage(_handle: unknown, content: string): Promise<void> {
-        messages.push(`update:${content}`)
+      async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+        messages.push(`update:${previewText(content)}`)
+        states.push(statusOf(content)?.state)
       },
       async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
         messages.push(`stopped:${String(id)}`)
@@ -782,24 +803,28 @@ describe('processInteractiveEvents abnormal-exit preview finalization', () => {
     await new Promise(r => setTimeout(r, 20))
 
     expect(
-      messages.some(m => m.includes('__cc_state__:failed')),
-      `messages=${JSON.stringify(messages)}`,
+      states.includes('failed'),
+      `messages=${JSON.stringify(messages)} states=${JSON.stringify(states)}`,
     ).toBe(true)
   })
 
   it('renders the stopped card once on a post-stop event arrival for user stops', async () => {
     const messages: string[] = []
+    const states: Array<string | undefined> = []
     let releaseStart: (() => void) | undefined
     const startGate = new Promise<void>((resolve) => { releaseStart = () => { resolve() } })
     const p = Object.assign(createStubPlatform(), {
       messages,
-      async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
+      states,
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
         await startGate
-        messages.push(`start:${content}`)
+        messages.push(`start:${previewText(content)}`)
+        states.push(statusOf(content)?.state)
         return 'preview-handle'
       },
-      async updateMessage(_handle: unknown, content: string): Promise<void> {
-        messages.push(`update:${content}`)
+      async updateMessage(_handle: unknown, content: ProgressContent): Promise<void> {
+        messages.push(`update:${previewText(content)}`)
+        states.push(statusOf(content)?.state)
       },
       async renderStoppedCard(_rc: unknown, id: unknown): Promise<void> {
         messages.push(`stopped:${String(id)}`)
@@ -1575,24 +1600,26 @@ describe('idle reaper', () => {
 })
 
 /** Stub platform with preview start/update capture (permission-spec pattern). */
-function newPreviewCaptureEngine(): { e: Engine; updates: string[]; starts: string[] } {
+function newPreviewCaptureEngine(): { e: Engine; updates: string[]; updateStates: Array<string | undefined>; starts: string[] } {
   const p = createStubPlatform()
   const updates: string[] = []
+  const updateStates: Array<string | undefined> = []
   const starts: string[] = []
   const preview = p as typeof p & {
-    sendPreviewStart(rc: unknown, content: string): Promise<unknown>
-    updateMessage(handle: unknown, content: string): Promise<void>
+    sendPreviewStart(rc: unknown, content: ProgressContent): Promise<unknown>
+    updateMessage(handle: unknown, content: ProgressContent): Promise<void>
   }
   preview.sendPreviewStart = async (_rc, content) => {
-    starts.push(content)
+    starts.push(previewText(content))
     return `handle-${starts.length}`
   }
   preview.updateMessage = async (_handle, content) => {
-    updates.push(content)
+    updates.push(previewText(content))
+    updateStates.push(statusOf(content)?.state)
   }
   const e = new Engine('test', createStubAgent(), [p], '', 'en')
   e.setDisplayConfig({ toolProgress: true })
-  return { e, updates, starts }
+  return { e, updates, updateStates, starts }
 }
 
 describe('todo_write progress section', () => {
@@ -1696,10 +1723,10 @@ describe('quiet-mode thinking preview (cc-connect parity)', () => {
    * suppresses thinking *messages* but still streams the 💭 section and the
    * 思考中 card-header state.
    */
-  function newQuietCaptureEngine(): { e: Engine; updates: string[] } {
-    const { e, updates } = newPreviewCaptureEngine()
+  function newQuietCaptureEngine(): { e: Engine; updates: string[]; updateStates: Array<string | undefined> } {
+    const { e, updates, updateStates } = newPreviewCaptureEngine()
     e.setDisplayConfig({ thinkingMessages: false })
-    return { e, updates }
+    return { e, updates, updateStates }
   }
 
   /**
@@ -1726,8 +1753,8 @@ describe('quiet-mode thinking preview (cc-connect parity)', () => {
     await loop
   }
 
-  it('thinking deltas set the 思考中 header state in quiet mode', async () => {
-    const { e, updates } = newQuietCaptureEngine()
+  it('thinking deltas set the 思考中 status in quiet mode', async () => {
+    const { e, updates, updateStates } = newQuietCaptureEngine()
     await runQuietTurn(e, [
       [
         { type: 'tool_use', toolName: 'Bash', toolID: 't1', toolInput: 'ls', content: '', done: false },
@@ -1735,11 +1762,11 @@ describe('quiet-mode thinking preview (cc-connect parity)', () => {
       ],
       [{ type: 'thinking_delta', content: 'pondering the next step', done: false }],
     ])
-    expect(updates.some(u => u.startsWith('__cc_state__:thinking')), `updates=${JSON.stringify(updates)}`).toBe(true)
+    expect(updateStates.includes('thinking'), `updates=${JSON.stringify(updates)} states=${JSON.stringify(updateStates)}`).toBe(true)
   })
 
-  it('the full thinking block clears the 思考中 header in quiet mode', async () => {
-    const { e, updates } = newQuietCaptureEngine()
+  it('the full thinking block clears the 思考中 status in quiet mode', async () => {
+    const { e, updates, updateStates } = newQuietCaptureEngine()
     await runQuietTurn(e, [
       [
         { type: 'tool_use', toolName: 'Bash', toolID: 't1', toolInput: 'ls', content: '', done: false },
@@ -1748,17 +1775,18 @@ describe('quiet-mode thinking preview (cc-connect parity)', () => {
       [{ type: 'thinking_delta', content: 'pondering', done: false }],
       [{ type: 'thinking', content: 'pondering the whole plan out loud', done: false }],
     ])
-    // The delta set the header; the completed block must drop it again —
+    // The delta set the status; the completed block must drop it again —
     // no lingering 思考中 after thinking ends, and no thinking *message*
     // is sent in quiet mode.
-    expect(updates.some(u => u.startsWith('__cc_state__:thinking')), `updates=${JSON.stringify(updates)}`).toBe(true)
-    const lastPreComplete = updates.filter(u => !u.startsWith('__cc_state__:completed')).at(-1) ?? ''
+    expect(updateStates.includes('thinking'), `updates=${JSON.stringify(updates)} states=${JSON.stringify(updateStates)}`).toBe(true)
+    const lastPreCompleteIdx = updateStates.map(st => st !== 'completed').lastIndexOf(true)
+    const lastPreComplete = updates[lastPreCompleteIdx] ?? ''
     expect(lastPreComplete, `updates=${JSON.stringify(updates)}`).not.toContain('💭')
-    expect(lastPreComplete.startsWith('__cc_state__:thinking')).toBe(false)
+    expect(updateStates[lastPreCompleteIdx]).not.toBe('thinking')
   })
 
-  it('a new tool call clears the 思考中 header (safety net)', async () => {
-    const { e, updates } = newQuietCaptureEngine()
+  it('a new tool call clears the 思考中 status (safety net)', async () => {
+    const { e, updates, updateStates } = newQuietCaptureEngine()
     await runQuietTurn(e, [
       [
         { type: 'tool_use', toolName: 'Bash', toolID: 't1', toolInput: 'ls', content: '', done: false },
@@ -1767,10 +1795,11 @@ describe('quiet-mode thinking preview (cc-connect parity)', () => {
       [{ type: 'thinking_delta', content: 'pondering', done: false }],
       [{ type: 'tool_use', toolName: 'Read', toolID: 't2', toolInput: 'a.ts', content: '', done: false }],
     ])
-    expect(updates.some(u => u.startsWith('__cc_state__:thinking')), `updates=${JSON.stringify(updates)}`).toBe(true)
-    const lastPreComplete = updates.filter(u => !u.startsWith('__cc_state__:completed')).at(-1) ?? ''
+    expect(updateStates.includes('thinking'), `updates=${JSON.stringify(updates)} states=${JSON.stringify(updateStates)}`).toBe(true)
+    const lastPreCompleteIdx = updateStates.map(st => st !== 'completed').lastIndexOf(true)
+    const lastPreComplete = updates[lastPreCompleteIdx] ?? ''
     expect(lastPreComplete, `updates=${JSON.stringify(updates)}`).not.toContain('💭')
-    expect(lastPreComplete.startsWith('__cc_state__:thinking')).toBe(false)
+    expect(updateStates[lastPreCompleteIdx]).not.toBe('thinking')
   })
 })
 

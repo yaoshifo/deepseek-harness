@@ -19,7 +19,8 @@ import {
   newPendingAsk,
   type StubPlatform,
 } from '../stubs/engine-stubs.js'
-import type { Agent, Platform } from '../../src/core/types.js'
+import { previewText } from '../stubs/preview-content.js'
+import type { Agent, Platform, ProgressContent } from '../../src/core/types.js'
 
 const KEY = 'test:u1'
 
@@ -237,12 +238,12 @@ function createPreviewRecorderPlatform(): StubPlatform & { messages: string[] } 
   const messages: string[] = []
   return Object.assign(createStubPlatform(), {
     messages,
-    async sendPreviewStart(_rc: unknown, content: string): Promise<unknown> {
-      messages.push(`start:${content}`)
+    async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+      messages.push(`start:${previewText(content)}`)
       return 'preview-handle'
     },
-    async updateMessage(_rc: unknown, content: string): Promise<void> {
-      messages.push(`update:${content}`)
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+      messages.push(`update:${previewText(content)}`)
     },
   })
 }

@@ -15,15 +15,17 @@ import {
   type Platform,
   type PreviewStarter,
   type MessageUpdater,
+  type ProgressContent,
 } from './core/types.js'
 import type { AsyncSender } from './async-sender.js'
 import {
-  buildProgressCardPayloadV2,
+  buildProgressCardPayload,
   progressStyleCard,
   progressStyleCompact,
   progressStyleLegacy,
   type ProgressCardEntry,
   type ProgressCardEntryKind,
+  type ProgressCardPayload,
   type ProgressCardState,
   type TodoItem,
 } from './progress.js'
@@ -191,6 +193,7 @@ export class CompactProgressWriter {
   private content = ''
   private entries: string[] = []
   private items: ProgressCardEntry[] = []
+  private payload: ProgressCardPayload | undefined
   private state: ProgressCardState
   private readonly agentName: string
   private readonly lang: string
@@ -299,28 +302,30 @@ export class CompactProgressWriter {
         truncated = true
       }
       this.truncated = truncated
+      // The markdown fallback doubles as the plain-text form for the
+      // no-preview-starter degenerate path (a structured payload has none).
+      this.content = renderCardProgressMarkdownFallback(this.entries, truncated)
       if (this.usePayload) {
-        this.content = buildProgressCardPayloadV2(
+        this.payload = buildProgressCardPayload(
           this.items, this.truncated, this.agentName, this.lang, this.state, this.todos, this.lastTS)
-        if (this.content === '') {
+        if (this.payload === undefined) {
           console.warn(`progress writer: failed to build structured payload (${this.platform.name()})`)
           this.failed = true
           return false
         }
-      } else {
-        this.content = renderCardProgressMarkdownFallback(this.entries, truncated)
       }
     } else {
       this.content = this.content === '' ? fallback : `${this.content}\n\n${fallback}`
     }
 
-    if (this.content === this.lastSent) return true
+    const signature = this.currentSignature()
+    if (signature === this.lastSent) return true
 
     if (this.handle === undefined) {
       if (this.starter !== undefined) {
         let handle: unknown
         try {
-          handle = await withAPITimeout(this.starter.sendPreviewStart(this.replyCtx, this.content))
+          handle = await withAPITimeout(this.starter.sendPreviewStart(this.replyCtx, this.currentContent()))
         } catch (error) {
           console.warn(`progress writer: SendPreviewStart failed (${this.platform.name()}): ${String(error)}`)
           this.failed = true
@@ -332,7 +337,7 @@ export class CompactProgressWriter {
           return false
         }
         this.handle = handle
-        this.lastSent = this.content
+        this.lastSent = signature
         return true
       }
       try {
@@ -343,14 +348,14 @@ export class CompactProgressWriter {
         return false
       }
       this.handle = this.replyCtx
-      this.lastSent = this.content
+      this.lastSent = signature
       return true
     }
 
     const handle = this.handle
-    const content = this.content
+    const content = this.currentContent()
     if (this.async !== undefined) {
-      this.lastSent = content
+      this.lastSent = signature
       this.async.enqueue(async () => {
         try {
           await withAPITimeout(this.updater?.updateMessage(handle, content) ?? Promise.resolve())
@@ -369,8 +374,26 @@ export class CompactProgressWriter {
       this.failed = true
       return false
     }
-    this.lastSent = content
+    this.lastSent = signature
     return true
+  }
+
+  /**
+   * Content to send for the current state: the structured payload in
+   * card-payload mode, text otherwise. Must not be called before the first
+   * successful append in payload mode (payload is then still undefined).
+   */
+  private currentContent(): ProgressContent {
+    if (this.usePayload && this.payload !== undefined) return { kind: 'card', payload: this.payload }
+    return { kind: 'text', text: this.content }
+  }
+
+  /**
+   * Dedup signature of the current content. JSON key order is fixed by the
+   * payload builder, so equal payloads stringify identically.
+   */
+  private currentSignature(): string {
+    return this.usePayload && this.payload !== undefined ? JSON.stringify(this.payload) : this.content
   }
 
   /**
@@ -386,16 +409,17 @@ export class CompactProgressWriter {
     const next = state === '' ? 'completed' : state
     if (this.state === next) return true
     this.state = next
-    this.content = buildProgressCardPayloadV2(this.items, this.truncated, this.agentName, this.lang, this.state, this.todos, this.lastTS)
-    if (this.content === '' || this.content === this.lastSent) return this.content !== ''
+    this.payload = buildProgressCardPayload(this.items, this.truncated, this.agentName, this.lang, this.state, this.todos, this.lastTS)
+    const signature = this.payload !== undefined ? JSON.stringify(this.payload) : ''
+    if (this.payload === undefined || signature === this.lastSent) return this.payload !== undefined
     try {
-      await withAPITimeout(this.updater?.updateMessage(this.handle, this.content) ?? Promise.resolve())
+      await withAPITimeout(this.updater?.updateMessage(this.handle, { kind: 'card', payload: this.payload }) ?? Promise.resolve())
     } catch (error) {
       console.warn(`progress writer: Finalize UpdateMessage failed (${this.platform.name()}): ${String(error)}`)
       this.failed = true
       return false
     }
-    this.lastSent = this.content
+    this.lastSent = signature
     return true
   }
 }
