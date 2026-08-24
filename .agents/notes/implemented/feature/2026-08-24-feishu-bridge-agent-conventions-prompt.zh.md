@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-约定随包发布：`agentConventionsPrompt()`（`engine/chatroom-persona.ts`）返回两段——好奇心上报约定逐字沿用退役的全局指令条目，加上收尾卡片约定（发现一节非空 → 调一次 `ask_user_question`，`multi_select: true`，每个发现一个选项外加「暂不处理」）。收尾文本的发现一节每条只留短标题与一句验证依据；`path:line` 与建议动作只放在卡片选项描述里，正文与卡片互不重复。选项按推荐程度排序，推荐要处理的选项标 `recommended: true`，提交的勾选即授权立即处理；与选项无关的自由文本按新任务执行，覆盖 `handlePendingPermission` 把挂起问题期间自由文本消费为答案的行为。`buildSessionSetup`（`agent-dsh/adapter.ts`）仅对普通会话把它注册为 `feishu-bridge-agent-conventions`（order 10，persona 之后、tool guidance 之前）；原先无 persona 无 workspace 的早退取消。subtask 子会话与 chatroom 人设不含此段——它们的发现分别经父会话与各自人设呈现。好奇心条目已从 `~/.claude/CLAUDE.md` 删除并改写两处交叉引用；部署级行为现在随 `git pull` + 构建走，不依赖机器本地配置。
+约定随包发布：`agentConventionsPrompt()`（`engine/chatroom-persona.ts`）返回三个部分——异步自主工作方式（可逆动作直接做、探索性问题只交评估、工具调用不可见所以简要播报并把本轮交付物完整落在最后一条消息、回合结束不留悬空承诺；逐字迁自退役的全局指令节并并入两条聊天渲染规则）、好奇心上报约定（逐字沿用退役的全局指令条目）、收尾卡片约定（发现一节非空 → 调一次 `ask_user_question`，`multi_select: true`，每个发现一个选项外加「暂不处理」）。收尾文本的发现一节每条只留短标题与一句验证依据；`path:line` 与建议动作只放在卡片选项描述里，正文与卡片互不重复。选项按推荐程度排序，推荐要处理的选项标 `recommended: true`，提交的勾选即授权立即处理；与选项无关的自由文本按新任务执行，覆盖 `handlePendingPermission` 把挂起问题期间自由文本消费为答案的行为。`buildSessionSetup`（`agent-dsh/adapter.ts`）仅对普通会话把它注册为 `feishu-bridge-agent-conventions`（order 10，persona 之后、tool guidance 之前）；原先无 persona 无 workspace 的早退取消。subtask 子会话与 chatroom 人设不含此段——它们的发现分别经父会话与各自人设呈现。迁出的各节已从 `~/.claude/CLAUDE.md` 删除（该文件只留运行时无关的工作风格）；部署级行为随 `git pull` + 构建走，不依赖机器本地配置。
 
 `recommended` 标记走一条仅影响呈现的 seam 变更：`AskUserQuestionOption.recommended`（`interaction/user-questions`）→ `ask_user_question` 工具 schema（`interaction/tool-ask-user`）→ `UserQuestionOption.recommended`（`core/types.ts`）→ `CardCheckOption.checked`（`card.ts`）→ 飞书 `checker` 元素的初始 `checked` 态（`feishu/card.ts`），推荐的多选项默认勾选、一次「提交选择」即确认推荐集合。回答编码不变——表单两种情况下都提交勾选的 `askq_opt_N` 键。
 
@@ -24,7 +24,7 @@ Status: implemented
 
 ## Consequences
 
-代价：每个普通会话多付约 400 个中文字符的固定系统提示前缀；收尾卡片被忽略的会话会挂到 turn 超时（下一条用户消息仍会作为答案流入，由自由文本条款兜底）。subtask 子会话不再经用户全局指令继承好奇心文本——刻意的作用域收窄，其发现经父会话聚合上报。换来：一份钉在仓库里的自包含行为约定，所有部署 bridge 的机器行为一致，机器本地零配置。
+代价：每个普通会话多付约 1100 个中文字符的固定系统提示前缀；收尾卡片被忽略的会话会挂到 turn 超时（下一条用户消息仍会作为答案流入，由自由文本条款兜底）。subtask 子会话不再经用户全局指令继承好奇心文本——刻意的作用域收窄，其发现经父会话聚合上报。换来：一份钉在仓库里的自包含行为约定，所有部署 bridge 的机器行为一致，机器本地零配置。
 
 ## Testing
 
