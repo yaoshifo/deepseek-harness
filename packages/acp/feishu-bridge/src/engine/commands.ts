@@ -23,9 +23,10 @@ import {
   createWorktree,
   resolveWorktreeUse,
   slugify,
-  worktreeDirty,
+  worktreeDirtyDetail,
   worktreeGone,
   worktreeRepoRoot,
+  type WorktreeDirtyDetail,
 } from './worktree.js'
 import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName } from './groupname.js'
 import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.js'
@@ -1276,11 +1277,11 @@ export async function cleanupOneChat(
   }
   e.markSpawnedChatDone(p, sessionKey)
 
-  const [path, , base] = sess.getWorktreeInfo()
+  const [path, branch, base, root] = sess.getWorktreeInfo()
   if (path === '') return { name, dirty: false }
-  let dirty: boolean
+  let detail: WorktreeDirtyDetail
   try {
-    dirty = await worktreeDirty(path, base)
+    detail = await worktreeDirtyDetail(path, base)
   } catch (derr) {
     const errMsg = String(derr instanceof Error ? derr.message : derr)
     if (worktreeGone(errMsg)) {
@@ -1293,7 +1294,13 @@ export async function cleanupOneChat(
     console.warn(`done: worktree dirty check failed; preserving (${sessionKey}): ${errMsg}`)
     return { name, dirty: true }
   }
-  if (dirty) {
+  if (detail.uncommitted || detail.ahead) {
+    // Commits ahead of base auto-remove when their content already landed in
+    // the configured integration branch; uncommitted changes never do.
+    if (!detail.uncommitted && await e.worktreeMergedLossless(root, branch, detail.ahead)) {
+      await e.finishWorktreeRemoval(p, ctx, sessionKey, false, e.spawnIntegrate())
+      return { name, dirty: false }
+    }
     if (asChild) return { name, dirty: true } // skip; caller summarizes
     await e.replyWithCard(p, ctx, e.renderWorktreeCard(sessionKey))
     return { name, dirty: true }

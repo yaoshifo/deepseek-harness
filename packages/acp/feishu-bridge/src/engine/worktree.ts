@@ -137,23 +137,58 @@ export async function createWorktree(repoRoot: string, slug: string): Promise<Wo
   return { path, branch, baseSHA }
 }
 
+/** The two independent reasons a worktree counts as dirty (Go worktreeDirty). */
+export interface WorktreeDirtyDetail {
+  /** Uncommitted changes exist — removal loses them regardless of merge state. */
+  uncommitted: boolean
+  /** Commits exist ahead of the branch base — removable when already merged elsewhere. */
+  ahead: boolean
+}
+
 /**
- * Whether the worktree has uncommitted changes or commits ahead of its base —
- * work that would be lost on removal (Go worktreeDirty).
+ * Split the worktree-dirty verdict into its causes (Go worktreeDirty plus the
+ * merge-state distinction the /done auto-removal needs).
  *
  * @param path - Worktree directory to check.
  * @param baseSHA - Commit the worktree branched from; '' skips the ahead check.
- * @returns Whether uncommitted changes or commits ahead of baseSHA exist.
+ * @returns Whether uncommitted changes and/or commits ahead of baseSHA exist.
  */
-export async function worktreeDirty(path: string, baseSHA: string): Promise<boolean> {
+export async function worktreeDirtyDetail(path: string, baseSHA: string): Promise<WorktreeDirtyDetail> {
   const status = await runGit(path, ['status', '--porcelain'])
-  if (status.trim() !== '') return true
+  const uncommitted = status.trim() !== ''
+  let ahead = false
   if (baseSHA !== '') {
-    const ahead = await runGit(path, ['rev-list', '--count', `${baseSHA}..HEAD`])
-    const n = Number.parseInt(ahead.trim(), 10)
-    if (Number.isFinite(n) && n > 0) return true
+    const aheadOut = await runGit(path, ['rev-list', '--count', `${baseSHA}..HEAD`])
+    const n = Number.parseInt(aheadOut.trim(), 10)
+    ahead = Number.isFinite(n) && n > 0
   }
-  return false
+  return { uncommitted, ahead }
+}
+
+/**
+ * Whether branch's commits are fully contained in integrateBranch — as
+ * ancestors, or as patch-equivalent commits after a rebase or cherry-pick (a
+ * branch whose only unique commit is a merge falls under patch equivalence).
+ * Any git failure reads as not merged so callers keep the worktree.
+ *
+ * @param repoRoot - Repository root that owns the branch.
+ * @param branch - Branch the worktree committed to.
+ * @param integrateBranch - Branch those commits are expected to have landed in.
+ * @returns Whether removing branch loses no committed work.
+ */
+export async function worktreeMergedInto(repoRoot: string, branch: string, integrateBranch: string): Promise<boolean> {
+  try {
+    await runGit(repoRoot, ['merge-base', '--is-ancestor', branch, integrateBranch])
+    return true
+  } catch {
+    // Not an ancestor (or the probe failed) — fall through to patch equivalence.
+  }
+  try {
+    const out = await runGit(repoRoot, ['cherry', integrateBranch, branch])
+    return !out.split('\n').some(line => line.startsWith('+'))
+  } catch {
+    return false
+  }
 }
 
 /**

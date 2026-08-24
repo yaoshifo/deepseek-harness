@@ -163,6 +163,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   worktree_not_git: { en: '--worktree requires a git repository, but %s is not inside one', zh: '--worktree 需要 git 仓库，但 %s 不在任何 git 仓库内' },
   worktree_create_error: { en: 'Worktree operation failed: %v', zh: 'worktree 操作失败：%v' },
   worktree_removed: { en: '🧹 Worktree clean — removed it and branch %s', zh: '🧹 worktree 干净，已删除目录与分支 %s' },
+  worktree_removed_merged: { en: '🧹 Commits already landed in %s — removed the worktree and branch %s', zh: '🧹 提交已合入 %s，自动删除 worktree 与分支 %s' },
   worktree_removed_short: { en: '🧹 Worktree and branch removed', zh: '🧹 已删除 worktree 与分支' },
   worktree_kept: { en: '📌 Worktree kept on disk', zh: '📌 worktree 已保留在磁盘' },
   worktree_dirty_prompt: { en: 'Branch `%s` at `%s` has uncommitted changes or new commits. Keep the worktree or remove it?', zh: '分支 `%s`（位于 `%s`）有未提交改动或新 commit。保留还是删除 worktree？' },

@@ -109,7 +109,8 @@ import {
   removeWorktree,
   slugify,
   WorktreeMode,
-  worktreeDirty,
+  worktreeDirtyDetail,
+  worktreeMergedInto,
   worktreeRepoRoot,
   type WorktreeCreateInfo,
 } from './worktree.js'
@@ -892,6 +893,8 @@ export class Engine {
   subtaskMaxDepth = 0
   /** Default worktree isolation for /spawn //fork (Go spawnWorktree). */
   spawnWorktree: WorktreeMode = WorktreeMode.ForceOff
+  /** Branch child-worktree commits are expected to land in; '' keeps dirty children on /done (setSpawnIntegrateBranch). */
+  private spawnIntegrateBranch = ''
   /** /spawn //fork RAM guard thresholds in percent; 0 disables a tier (Go spawnMemWarnPct/BlockPct). */
   spawnMemWarnPct = 0
   /** RAM percentage at which /spawn //fork rejects the spawn outright (Go spawnMemBlockPct). */
@@ -5323,6 +5326,25 @@ export class Engine {
   }
 
   /**
+   * Set the integration branch that lets /done auto-remove child worktrees:
+   * a child whose only dirty cause is commits already contained in this
+   * branch is removed without the Keep/Remove card. '' (the default)
+   * preserves every dirty child.
+   * @param s - Branch name, e.g. 'dev'; '' disables the auto-removal.
+   */
+  setSpawnIntegrateBranch(s: string): void {
+    this.spawnIntegrateBranch = s.trim()
+  }
+
+  /**
+   * The configured integration branch for dirty-child auto-removal ('' = none).
+   * @returns The branch name, or '' when auto-removal is disabled.
+   */
+  spawnIntegrate(): string {
+    return this.spawnIntegrateBranch
+  }
+
+  /**
    * Configure the /spawn //fork RAM guard; 0 disables a tier (Go SetSpawnMemoryGuard).
    * @param warnPct - RAM percentage that triggers a warning; 0 disables.
    * @param blockPct - RAM percentage that rejects the spawn; 0 disables.
@@ -5994,7 +6016,8 @@ export class Engine {
   private async removeNativeWorktreeQuiet(path: string, branch: string, root: string, base: string): Promise<void> {
     if (path === '') return
     try {
-      if (await worktreeDirty(path, base)) {
+      const dirty = await worktreeDirtyDetail(path, base)
+      if (dirty.uncommitted || !(await this.worktreeMergedLossless(root, branch, dirty.ahead))) {
         console.warn(`subtask: native child worktree is dirty; kept (${path})`)
         return
       }
@@ -6002,6 +6025,19 @@ export class Engine {
     } catch (error) {
       console.warn(`subtask: native child worktree removal failed; kept (${path}): ${String(error instanceof Error ? error.message : error)}`)
     }
+  }
+
+  /**
+   * Whether a dirty worktree's commits already landed in the configured
+   * integration branch, making removal lossless.
+   * @param root - Repository root that owns the worktree's branch.
+   * @param branch - The worktree's branch.
+   * @param ahead - Whether the worktree has commits ahead of its base.
+   * @returns True only when ahead and fully contained in the integrate branch.
+   */
+  async worktreeMergedLossless(root: string, branch: string, ahead: boolean): Promise<boolean> {
+    if (!ahead || this.spawnIntegrateBranch === '') return false
+    return worktreeMergedInto(root, branch, this.spawnIntegrateBranch)
   }
 
   /**
@@ -7487,8 +7523,10 @@ export class Engine {
    * @param replyCtx - Platform reply context addressing the chat.
    * @param sessionKey - Session owning the worktree.
    * @param force - Whether the removal ignores uncommitted changes.
+   * @param mergedInto - Integration branch the commits already landed in; ''
+   * reports the plain removal message instead of the merged variant.
    */
-  async finishWorktreeRemoval(p: Platform, replyCtx: unknown, sessionKey: string, force: boolean): Promise<void> {
+  async finishWorktreeRemoval(p: Platform, replyCtx: unknown, sessionKey: string, force: boolean, mergedInto = ''): Promise<void> {
     const sess = this.sessions.getOrCreateActive(sessionKey)
     const [path, branch, , root] = sess.getWorktreeInfo()
     if (path === '') return
@@ -7510,7 +7548,9 @@ export class Engine {
       await this.reply(p, replyCtx, msg)
       return
     }
-    let msg = this.i18n.tf(Msg.WorktreeRemoved, branch)
+    let msg = mergedInto !== ''
+      ? this.i18n.tf(Msg.WorktreeRemovedMerged, mergedInto, branch)
+      : this.i18n.tf(Msg.WorktreeRemoved, branch)
     const cleaned = removeOrphanMemory(memDir === '' ? '' : memDir)
     if (cleaned !== '') msg += `\n${this.i18n.tf(Msg.WorktreeOrphanCleaned, cleaned)}`
     await this.reply(p, replyCtx, msg)

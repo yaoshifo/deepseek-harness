@@ -325,6 +325,8 @@ export interface SubtaskConfig {
 export interface SpawnConfig {
   /** Default worktree isolation: 'auto' | 'on' | 'off'. */
   worktree?: 'auto' | 'on' | 'off'
+  /** Branch child-worktree commits land in (e.g. 'dev'); /done auto-removes children contained in it. Unset keeps dirty children. */
+  integrateBranch?: string
   /** RAM% above which a warning card is sent; 0 disables the tier (default 80). */
   memoryWarnPct?: number
   /** RAM% above which spawn is declined; 0 disables the tier (default 90). */
@@ -656,6 +658,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   }).description('Subtask delegation caps'),
   spawn: Schema.object({
     worktree: Schema.union(['auto', 'on', 'off']).description('Default worktree isolation'),
+    integrateBranch: Schema.string().description("Branch child-worktree commits land in (e.g. 'dev'); /done auto-removes merged children; unset keeps dirty children"),
     memoryWarnPct: Schema.natural().description('RAM% warning threshold; 0 disables'),
     memoryBlockPct: Schema.natural().description('RAM% block threshold; 0 disables'),
   }).description('/spawn //fork isolation defaults'),
@@ -1122,6 +1125,9 @@ export function buildProjectAssembly(
   }
   if (config.spawn?.worktree !== undefined) {
     engine.setSpawnWorktreeMode(config.spawn.worktree)
+  }
+  if (config.spawn?.integrateBranch !== undefined) {
+    engine.setSpawnIntegrateBranch(config.spawn.integrateBranch)
   }
   // RAM guard always wired with the 80/90 defaults so configs without the
   // keys still get protection (Go EffectiveSpawnMemoryGuard).
