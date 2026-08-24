@@ -236,6 +236,14 @@ describe('buildProjectAssembly config wiring', () => {
     expect(assemble(baseConfig()).platform.progressStyle).toBe('legacy')
   })
 
+  it('forwards feishu.tag onto the platform name (Go tag)', () => {
+    const proj = project()
+    proj.feishu = { ...proj.feishu, tag: 'ops' }
+    expect(assemble(baseConfig(), proj).platform.name()).toBe('ops')
+    // Without tag every platform is named 'feishu' — the multi-bot ambiguity.
+    expect(assemble(baseConfig()).platform.name()).toBe('feishu')
+  })
+
   it('forwards display.patch_rate_interval_ms to the platform PATCH limiter', async () => {
     const { platform } = assemble({ ...baseConfig(), display: { patchRateIntervalMs: 5 } })
     for (let i = 0; i < 3; i++) await platform.patchRateWait()

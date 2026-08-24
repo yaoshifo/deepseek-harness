@@ -30,7 +30,8 @@
     "lib/index.js",
     "lib/invariant.js",
     "cordis.patch.yml",
-    "lib/types/**/*.d.ts"
+    "lib/types/**/*.d.ts",
+    "skills"
   ],
   "dependencies": {
     "@deepseek-ai/dsh-agent": "workspace:^",
@@ -39,6 +40,7 @@
     "@deepseek-ai/dsh-subagent": "workspace:^",
     "@deepseek-ai/dsh-subagent-spawn-in-process": "workspace:^",
     "@deepseek-ai/dsh-skill": "workspace:^",
+    "@deepseek-ai/dsh-skill-filesystem": "workspace:^",
     "@deepseek-ai/dsh-tools": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^",
     "@larksuiteoapi/node-sdk": "^1.53.0",
