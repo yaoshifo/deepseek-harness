@@ -12,7 +12,7 @@ English | [中文](2026-08-24-feishu-bridge-subagent-mount-duplicate-provider.zh
 
 The bridge no longer mounts the subagent stack; `dsh-base` owns the runtime and both providers. The bridge's `cordis.patch.yml` overlays the base entry with `- id: subagent` + `settlementNotice: external`, because the engine drives parent turns itself and the runtime's own inbox wake would spend a model request the engine never scheduled. A type-only `SubagentRunEndInfo` import restores the `'subagent/end'` event-map declaration merging that the removed value import used to carry, and replaces the hand-rolled structural listener type. `requireSubagents` now names `dsh-base` as the mounting party.
 
-## Alternatives
+## Alternatives considered
 
 **Guard the self-mount** (mount only when `ctx.get('subagents')` is absent). Rejected: conditional composition hides the profile contract and produces different topologies per profile; a missing referent should fail loud, not silently self-heal.
 

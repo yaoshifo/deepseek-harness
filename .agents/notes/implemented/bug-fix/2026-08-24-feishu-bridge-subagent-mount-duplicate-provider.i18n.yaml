@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-24-feishu-bridge-subagent-mount-duplicate-provider.md
-2026-08-24-feishu-bridge-subagent-mount-duplicate-provider.md: ddab54dc52f6a3aa48900e99fecc5ebdd676f82f
+2026-08-24-feishu-bridge-subagent-mount-duplicate-provider.md: ad479d0f4f2da99cfa7ce357596d91e2bc33b76f
 2026-08-24-feishu-bridge-subagent-mount-duplicate-provider.zh.md: 3132da08a71daecfaec38520246ad096e50c510e
