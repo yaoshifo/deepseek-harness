@@ -325,6 +325,15 @@ describe('buildPreviewCardJSON', () => {
     expect(md).toContain('**改动明细：**\n\n- item one\n\n- item two')
   })
 
+  it('pads bold delimiters glued to the following text so Feishu renders them', () => {
+    // Feishu card markdown renders **bold** only when the delimiters keep a
+    // space on both sides; a closing ** glued to the next word shows raw **.
+    const reply = '**运行在你安装 mico 的本地终端（你的电脑）上，不在 mico 服务器上。**mico 服务器只负责签发凭证和协调。'
+    const card = jParse(buildPreviewCardJSON(reply, noSpinner, { state: 'completed' }))
+    const md = jStr(jObj(jArr(jObj(card.body).elements)[0]).content)
+    expect(md).toContain('**运行在你安装 mico 的本地终端（你的电脑）上，不在 mico 服务器上。** mico 服务器只负责签发凭证和协调。')
+  })
+
   it('renders the header title and color from the structured status', () => {
     const card = jParse(buildPreviewCardJSON('body', noSpinner, { state: 'completed', ts: '10:00:05', toolCallSeq: 3 }))
     expect(jStr(jObj(card.header).template)).toBe('green')

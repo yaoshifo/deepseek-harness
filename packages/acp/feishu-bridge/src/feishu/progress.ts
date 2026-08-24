@@ -21,6 +21,7 @@ import {
   msgTypeInteractive,
   msgTypePost,
   msgTypeText,
+  padBoldDelimiters,
   preprocessFeishuMarkdown,
   sanitizeMarkdownURLs,
   isTableRow,
@@ -617,7 +618,7 @@ export function buildPreviewCardJSON(content: string, spin: SpinnerCfg, status?:
   if (payload !== undefined) return buildProgressCardJSONFromPayload(payload, spin)
   const state = status?.state ?? ''
   let processed = content
-  if (containsMarkdown(content)) processed = preprocessFeishuMarkdown(content)
+  if (containsMarkdown(content)) processed = preprocessFeishuMarkdown(padBoldDelimiters(content))
   processed = collapseExcessCardTables(processed)
   processed = collapseStructuralBlankLines(processed)
   const { title, color } = progressTitleAndColor(state, true, status?.ts ?? '', status?.toolCallSeq ?? 0)

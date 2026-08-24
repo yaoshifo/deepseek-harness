@@ -10,8 +10,10 @@ import {
   collapseExcessCardTables,
   containsMarkdown,
   countMarkdownTables,
+  finalizeFeishuCardMarkdown,
   hasComplexMarkdown,
   maxCardTables,
+  padBoldDelimiters,
   parseInlineMarkdown,
   preprocessFeishuMarkdown,
   previewOverflow,
@@ -91,6 +93,43 @@ describe('preprocessFeishuMarkdown', () => {
     expect(out).toContain('## Title')
     expect(out).toContain('| A | B |')
     expect(out).toContain('> quote')
+  })
+})
+
+describe('padBoldDelimiters', () => {
+  const cases: Array<[name: string, input: string, want: string]> = [
+    ['closing glued to latin letter', '**bold**mico runs locally', '**bold** mico runs locally'],
+    ['closing glued to CJK', '**本地终端**上的进程', '**本地终端** 上的进程'],
+    ['closing glued to fullwidth punctuation', '**三件事**：验证身份', '**三件事** ：验证身份'],
+    ['opening glued to CJK', '拓扑是**执行面**与控制面', '拓扑是 **执行面** 与控制面'],
+    ['both sides glued', '中文**加粗**中文', '中文 **加粗** 中文'],
+    ['already spaced stays unchanged', 'a **b** c', 'a **b** c'],
+    ['line boundaries need no padding', '**b**', '**b**'],
+    ['code fence content untouched', '```\n**a**b\n```', '```\n**a**b\n```'],
+    ['inline code content untouched', 'run `**a**b` now', 'run `**a**b` now'],
+    ['three-star runs untouched', '***x***y', '***x***y'],
+    ['four-star runs untouched', '****x****y', '****x****y'],
+    ['underscore bold padded symmetrically', '__bold__tail', '__bold__ tail'],
+    ['unpaired delimiters untouched', '2 ** 3 = 8 and a** alone', '2 ** 3 = 8 and a** alone'],
+  ]
+  for (const [name, input, want] of cases) {
+    it(name, () => {
+      expect(padBoldDelimiters(input)).toBe(want)
+    })
+  }
+
+  it('real-world reply: closing ** glued to the next word (bug repro)', () => {
+    const reply = '**运行在你安装 mico 的本地终端（你的电脑）上，不在 mico 服务器上。**mico 服务器只负责签发凭证和协调。'
+    expect(padBoldDelimiters(reply)).toBe(
+      '**运行在你安装 mico 的本地终端（你的电脑）上，不在 mico 服务器上。** mico 服务器只负责签发凭证和协调。',
+    )
+  })
+})
+
+describe('finalizeFeishuCardMarkdown', () => {
+  it('pads glued bold delimiters before rendering', () => {
+    const out = finalizeFeishuCardMarkdown('前置文字**加粗段**后置文字')
+    expect(out).toContain('前置文字 **加粗段** 后置文字')
   })
 })
 
