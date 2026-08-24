@@ -116,9 +116,9 @@ export async function renderListCardSafe(e: Engine, sessionKey: string, page: nu
  * @param userID - User ID the status is rendered for ('' omits the line).
  * @returns The assembled status card.
  */
-export function renderStatusCard(e: Engine, sessionKey: string, userID: string): Card {
+export async function renderStatusCard(e: Engine, sessionKey: string, userID: string): Promise<Card> {
   const msg = statusCardMessage(sessionKey, userID)
-  const [title, body] = splitCardTitleBody(statusText(e, msg))
+  const [title, body] = splitCardTitleBody(await statusText(e, msg))
   const cb = newCard().title(title, 'green')
   if (body !== '') cb.markdown(body)
   cb.buttons(defaultBtn(e.i18n.t(Msg.CardBack), 'nav:/help'))

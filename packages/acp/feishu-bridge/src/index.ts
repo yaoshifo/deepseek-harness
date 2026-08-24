@@ -236,8 +236,6 @@ export interface ProjectConfig {
   providerShortcuts?: Record<string, string>
   /** Rotate the chat to a fresh session after N idle minutes (Go reset_on_idle_mins). */
   resetOnIdleMins?: number
-  /** /list etc. only show engine-tracked sessions (Go filter_external_sessions). */
-  filterExternalSessions?: boolean
   /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
   unsolicited?: UnsolicitedConfig
   /** Multi-role chatroom tuning (Go [chatroom]). */
@@ -561,7 +559,6 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     }).description('Automatic context compression (Go [projects.auto_compress])'),
     providerShortcuts: Schema.dict(Schema.string()).description('Quick provider commands: /strong → provider name (Go provider_shortcuts)'),
     resetOnIdleMins: Schema.natural().description('Rotate the chat to a fresh session after N idle minutes; 0 disables'),
-    filterExternalSessions: Schema.boolean().description('/list etc. only show engine-tracked sessions'),
     unsolicited: Schema.object({
       idleSec: Schema.natural().description('Quiet seconds before the unsolicited reader disarms (default 60; 0 = never)'),
       toolInFlightSec: Schema.natural().description('Quiet seconds a background turn\'s in-flight tool keeps the reader alive (default 1800)'),
@@ -1203,7 +1200,7 @@ function wireTurnSummary(engine: Engine, project: ProjectConfig): void {
 
 /**
  * Configure the session misc domain (Go wire.go): reset_on_idle rotation,
- * auto_compress thresholds, and the external-session filter.
+ * auto_compress thresholds, and the unsolicited-reader budgets.
  */
 function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
   if (project.resetOnIdleMins !== undefined) {
@@ -1213,7 +1210,6 @@ function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
   if (a?.enabled === true) {
     engine.setAutoCompressConfig(true, a.maxTokens ?? 0, (a.minGapMins ?? 0) * 60_000)
   }
-  engine.setFilterExternalSessions(project.filterExternalSessions === true)
   // Spillover grace defaults ON at the assembly layer like Go's wire.go (the
   // engine-level default is 0 so unit tests construct it disabled).
   const u = project.unsolicited

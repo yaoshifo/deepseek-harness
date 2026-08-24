@@ -108,11 +108,6 @@ describe('session misc wiring', () => {
     expect(engine.autoCompressMaxTokens).toBe(80_000)
     expect(engine.autoCompressMinGap).toBe(60 * 60_000)
   })
-
-  it('filter_external_sessions forwards to the engine flag', () => {
-    expect(assemble(baseConfig(), { ...project(), filterExternalSessions: true }).engine.filterExternalSessions).toBe(true)
-    expect(assemble(baseConfig()).engine.filterExternalSessions).toBe(false)
-  })
 })
 
 describe('provider wiring', () => {

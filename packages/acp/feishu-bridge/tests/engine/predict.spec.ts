@@ -18,7 +18,7 @@ import {
   registerPredictCommands,
   sendInsightCard,
 } from '../../src/engine/predict.js'
-import type { Agent, ForkQuerierWithProvider, Message } from '../../src/core/types.js'
+import type { Agent, ForkQuerierWithProvider, Message, RecentTurnsReader } from '../../src/core/types.js'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -363,7 +363,13 @@ describe('sendInsightCard', () => {
 describe('insight trigger on turn completion', () => {
   it('forks a prediction after a completed turn and sends the insight card', async () => {
     const p = createStubCardPlatform('feishu')
-    const agent = forkAgent('下一句预测')
+    // The turn context rides the agent's recent-turn window for the live session.
+    const agent: Agent & RecentTurnsReader = {
+      ...forkAgent('下一句预测'),
+      recentTurns: async (id: string) => id === 's1'
+        ? [{ role: 'user', content: '帮我修个 bug', timestamp: '2026-01-01T00:00:00Z' }]
+        : [],
+    }
     const { e, dispose } = newEngine(agent, p)
     e.setPredictNextConfig(true, 'mimo', '', 500, '', 'lightweight')
     const sessionKey = 'feishu:oc_1'
@@ -374,7 +380,6 @@ describe('insight trigger on turn completion', () => {
     state.platform = p
     state.replyCtx = 'ctx'
     e.interactiveStates.set(sessionKey, state)
-    session.addHistory('user', '帮我修个 bug')
 
     agentSession.channel.push({ type: 'result', content: '修好了，改了三个文件，测试全绿。这个回复足够长以触发摘要跳过条件检查。', done: true })
     await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)

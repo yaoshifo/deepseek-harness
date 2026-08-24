@@ -142,9 +142,9 @@ describe('renderListCardSafe', () => {
 })
 
 describe('renderStatusCard', () => {
-  it('splits the status text into a green title, markdown body, and back button', () => {
+  it('splits the status text into a green title, markdown body, and back button', async () => {
     const e = newCardEngine(listAgent(twoSessions), createStubCardPlatform('test'))
-    const card = renderStatusCard(e, SK, 'u1')
+    const card = await renderStatusCard(e, SK, 'u1')
     expect(card.header?.color).toBe('green')
     expect(card.header?.title).toContain('Status')
     const mds = card.elements.filter(el => el.kind === 'markdown') as Array<{ content: string }>
@@ -174,13 +174,11 @@ describe('handleCardAction routes', () => {
     const e = newCardEngine(listAgent(twoSessions), p)
     const active = e.sessions.getOrCreateActive(SK)
     active.setAgentSessionID('agent-sess-a', 'stub')
-    active.addHistory('user', 'hello')
 
     await e.handleCardAction(p, cardActionMsg(SK, ''), 'act:/switch agent-sess-b')
     await vi.waitFor(() => { expect(p.refreshed.length).toBeGreaterThanOrEqual(1) })
 
     expect(e.sessions.getOrCreateActive(SK).getAgentSessionID()).toBe('agent-sess-b')
-    expect(e.sessions.getOrCreateActive(SK).getHistory(0)).toHaveLength(0)
     const card = p.refreshed[p.refreshed.length - 1]?.card as Card
     expect(card.header?.color).toBe('turquoise')
     expect(card.renderText()).toContain('Second chat')

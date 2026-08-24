@@ -17,6 +17,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
+import { stat } from 'node:fs/promises'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
@@ -27,6 +28,7 @@ import {
   ForkAtSessionPrefix,
   ForkSessionPrefix,
 } from '../core/types.js'
+import type { HistoryEntry } from '../core/types.js'
 import { locateForkCut } from './fork-at.js'
 import {
   agentConventionsPrompt,
@@ -141,6 +143,8 @@ export interface DshPersistenceLike {
   append(id: unknown, events: readonly SessionEvent[]): Promise<void>
   /** Lightweight listing from metadata, without a full-log parse. */
   list(signal?: AbortSignal): Promise<SessionHeader[]>
+  /** Absolute log-file path for a header without touching the filesystem (jsonl backend `locate`); absent on backends without files. */
+  locate?(meta: SessionHeader): { path: string }
 }
 
 /** One named provider route (plan D2: one llm route per provider). */
@@ -216,6 +220,55 @@ function trimCompletedTurnPrefix(events: readonly SessionEvent[]): SessionEvent[
   const lastEnd = events.findLast(e => e.type === 'turn/end')
   if (lastEnd === undefined) return []
   return events.slice(0, lastEnd.seq + 1)
+}
+
+/**
+ * Cap on the per-session recent-turn window the adapter keeps — the read
+ * window size of the retired 100-entry bridge-side history copy.
+ */
+const recentTurnsWindowCap = 100
+
+/** Whether a text is only an ellipsis placeholder the engine never counts as reply text. */
+function isEllipsisOnly(text: string): boolean {
+  const t = text.trim()
+  return t === '...' || t === '…'
+}
+
+/**
+ * Fold a session event log into the bridge's conversation window: one user
+ * entry per human `user/message` (synthetic plugin injections stay out) and
+ * one assistant entry per turn, joining that turn's assistant message texts —
+ * the shape the retired bridge-side history copy kept. Valid for live
+ * registry views and persisted logs alike.
+ *
+ * @param events - the source session's event log.
+ * @param cap - trailing-entry bound on the folded window.
+ * @returns the trailing window entries, oldest first.
+ */
+export function foldRecentTurns(events: readonly SessionEvent[], cap = recentTurnsWindowCap): HistoryEntry[] {
+  const out: HistoryEntry[] = []
+  let turnParts: string[] = []
+  for (const event of events) {
+    if (event.type === 'user/message') {
+      if (event.data.source.kind !== 'user') continue
+      const content = textOfBlocks(event.data.content)
+      if (content !== '') out.push({ role: 'user', content, timestamp: new Date(event.time).toISOString() })
+    } else if (event.type === 'assistant/message') {
+      const text = textOfBlocks(event.data.message.content)
+      if (text !== '' && !isEllipsisOnly(text)) turnParts.push(text)
+    } else if (event.type === 'turn/end') {
+      const content = turnParts.join('')
+      turnParts = []
+      if (content !== '') out.push({ role: 'assistant', content, timestamp: new Date(event.time).toISOString() })
+    }
+  }
+  return cap > 0 && out.length > cap ? out.slice(out.length - cap) : out
+}
+
+/** Trailing slice of a window; limit <= 0 returns all (Go Session.getHistory). */
+function windowSlice(entries: readonly HistoryEntry[], limit: number): HistoryEntry[] {
+  if (limit <= 0 || limit >= entries.length) return [...entries]
+  return entries.slice(entries.length - limit)
 }
 
 /**
@@ -386,6 +439,8 @@ export class DshAgentAdapter {
   private readonly cfg: DshAdapterConfig
   private readonly sessionsByEngineKey = new Map<string, DshAgentSession>()
   private readonly liveSessions = new Map<string, DshAgentSession>()
+  /** Folded recent-turn windows of cold (not-live) sessions, keyed by native id. */
+  private readonly recentTurnsCache = new Map<string, HistoryEntry[]>()
   /** Staged fork-at seeds keyed by the sentinel id, consumed by startSession. */
   private readonly forkAtSeeds = new Map<string, { seed: SessionEvent[]; parentID: string; childWorkDir: string }>()
   private modeOverride = ''
@@ -1157,6 +1212,11 @@ export class DshAgentAdapter {
     }
     const bypass = sessionBypassesPermissions(options)
     const session = new DshAgentSession(key, handle, this.workDir, this.ctx, bypass)
+    // Seed the recent-turn window from the log the agent carries (empty for a
+    // fresh session, the resumed/forked history otherwise) and drop any cold
+    // fold of this id — the live window is authoritative from here on.
+    session.seedRecentTurns(handle.agent.session.events)
+    this.recentTurnsCache.delete(session.currentSessionID())
 
     // Lazily register the userQuestions provider now that the plugin tree
     // is fully loaded (at constructor time it may not be available yet).
@@ -1219,12 +1279,53 @@ export class DshAgentAdapter {
   }
 
   /**
+   * RecentTurnsReader: a session's trailing conversation window. Live
+   * sessions read the incrementally maintained in-memory window (seeded from
+   * the resumed/forked log at startSession); cold sessions fold the persisted
+   * log once and cache the result in-process. Unknown ids and a missing
+   * persistence service yield [] — window readers are advisory surfaces
+   * (estimates, summaries), never turn-taking logic.
+   *
+   * @param agentSessionID - the native session id to read; '' returns [].
+   * @param limit - trailing-entry bound; <= 0 returns the whole window.
+   * @returns the trailing window entries, oldest first.
+   */
+  async recentTurns(agentSessionID: string, limit: number): Promise<HistoryEntry[]> {
+    if (agentSessionID === '') return []
+    const live = this.liveSessions.get(agentSessionID)
+    if (live !== undefined) return live.recentTurns(limit)
+    const cached = this.recentTurnsCache.get(agentSessionID)
+    if (cached !== undefined) return windowSlice(cached, limit)
+    const persistence = this.ctx.get('sessionPersistence') as DshPersistenceLike | undefined
+    if (persistence === undefined) return []
+    let events: readonly SessionEvent[]
+    try {
+      events = (await persistence.inspect(SessionId(agentSessionID))).events
+    } catch {
+      // The backend rejects unknown ids; that rejection is the only error
+      // path here and means "no window".
+      return []
+    }
+    const folded = foldRecentTurns(events)
+    // Cold sessions never change; bound the cache so a long-lived daemon's
+    // /list enrichment cannot grow it without end.
+    if (this.recentTurnsCache.size >= 512) {
+      const oldest = this.recentTurnsCache.keys().next().value
+      if (oldest !== undefined) this.recentTurnsCache.delete(oldest)
+    }
+    this.recentTurnsCache.set(agentSessionID, folded)
+    return windowSlice(folded, limit)
+  }
+
+  /**
    * Live sessions plus persisted ones from the session store (exclusive to
    * this daemon): top-level sessions under this project's directory tree,
    * newest first. Summaries/message counts arrive engine-side from the
-   * SessionManager's persisted history (`enrichSessionSummaries`); sessions
-   * from per-chat `/dir` overrides outside the tree stay unlisted, matching
-   * the Go per-cwd store semantics.
+   * adapter's recent-turn window (`enrichSessionSummaries`); sessions from
+   * per-chat `/dir` overrides outside the tree stay unlisted, matching the
+   * Go per-cwd store semantics. Persisted recency is the JSONL log file's
+   * mtime (SessionHeader has no updatedAt); a backend without `locate` falls
+   * back to createdAt.
    *
    * @returns the known sessions with native ids and timestamps.
    */
@@ -1240,12 +1341,30 @@ export class DshAgentAdapter {
     const liveIDs = new Set(live.map(s => s.id))
     const base = this.cfg.cwd
     const headers = await persistence.list()
-    const persisted = headers
-      .filter(h => !liveIDs.has(String(h.id)))
-      .filter(h => h.parentSession === undefined)
-      .filter(h => h.cwd !== undefined && (h.cwd === base || h.cwd.startsWith(`${base}/`)))
-      .map(h => ({ id: String(h.id), summary: '', messageCount: 0, modifiedAt: h.createdAt }))
+    const persisted: AgentSessionInfo[] = []
+    for (const h of headers) {
+      if (liveIDs.has(String(h.id))) continue
+      if (h.parentSession !== undefined) continue
+      if (h.cwd === undefined || !(h.cwd === base || h.cwd.startsWith(`${base}/`))) continue
+      persisted.push({ id: String(h.id), summary: '', messageCount: 0, modifiedAt: await this.logMtimeMs(persistence, h) })
+    }
     return [...persisted, ...live].sort((a, b) => b.modifiedAt - a.modifiedAt)
+  }
+
+  /**
+   * Recency of a persisted session: the mtime of its log file when the
+   * backend can locate it, else the header's createdAt.
+   */
+  private async logMtimeMs(persistence: DshPersistenceLike, h: SessionHeader): Promise<number> {
+    const located = persistence.locate?.(h)
+    if (located !== undefined) {
+      try {
+        return (await stat(located.path)).mtimeMs
+      } catch {
+        // Materialization is lazy; a listed-but-unwritten log falls back.
+      }
+    }
+    return h.createdAt
   }
 
   /** Dispose every live agent (engine shutdown). */
@@ -1345,6 +1464,10 @@ export class DshAgentSession implements AgentSession {
   readonly bypassPermissions: boolean
   /** Child sessions that ever ran a turn (cumulative subagent count on the card). */
   private readonly seenChildren = new Set<string>()
+  /** Recent conversation window, bounded to recentTurnsWindowCap (the retired bridge history copy). */
+  private recentTurnsWindow: HistoryEntry[] = []
+  /** Assistant texts of the in-flight turn, joined into one window entry at turn/end. */
+  private turnWindowParts: string[] = []
 
   constructor(key: string, handle: DshAgentHandleLike, workDir = '', ctx?: DshContextLike, bypassPermissions = false) {
     this.key = key
@@ -1395,6 +1518,35 @@ export class DshAgentSession implements AgentSession {
    */
   lastAssistantText(): string {
     return this.lastText
+  }
+
+  /**
+   * Seed the recent-turn window from the agent's current event log (resumed
+   * or forked history); called once at startSession before any live event
+   * arrives, so window readers see pre-start turns immediately.
+   *
+   * @param events - the agent's session log at startSession time.
+   */
+  seedRecentTurns(events: readonly SessionEvent[]): void {
+    this.recentTurnsWindow = foldRecentTurns(events)
+  }
+
+  /**
+   * The session's trailing conversation window (RecentTurnsReader delegate).
+   *
+   * @param limit - trailing-entry bound; <= 0 returns the whole window.
+   * @returns the trailing window entries, oldest first.
+   */
+  recentTurns(limit: number): HistoryEntry[] {
+    return windowSlice(this.recentTurnsWindow, limit)
+  }
+
+  /** Append one window entry, bounding the window to recentTurnsWindowCap. */
+  private pushRecentTurn(entry: HistoryEntry): void {
+    this.recentTurnsWindow.push(entry)
+    if (this.recentTurnsWindow.length > recentTurnsWindowCap) {
+      this.recentTurnsWindow = this.recentTurnsWindow.slice(this.recentTurnsWindow.length - recentTurnsWindowCap)
+    }
   }
 
   /**
@@ -1478,6 +1630,21 @@ export class DshAgentSession implements AgentSession {
         this.turnText = ''
         this.turnUsage = { inputTokens: 0, cachedTokens: 0, outputTokens: 0 }
         this.turnSteps = 0
+        this.turnWindowParts = []
+        break
+      }
+      case 'user/message': {
+        // Human prompts enter the recent-turn window; synthetic injections
+        // (plugin context, notices) stay out, matching the retired
+        // bridge-side history's contents.
+        const source = data.source as { kind?: string } | undefined
+        if (source?.kind === 'user') {
+          const content = textOfBlocks(data.content as ContentBlock[] | undefined)
+          if (content !== '') {
+            const time = typeof event.time === 'number' ? event.time : Date.now()
+            this.pushRecentTurn({ role: 'user', content, timestamp: new Date(time).toISOString() })
+          }
+        }
         break
       }
       case 'assistant/chunk': {
@@ -1497,6 +1664,7 @@ export class DshAgentSession implements AgentSession {
           this.turnText = text
           this.channel.push({ type: 'text', content: text, done: false })
         }
+        if (text !== '' && !isEllipsisOnly(text)) this.turnWindowParts.push(text)
         if (thinking !== '') {
           this.channel.push({ type: 'thinking', content: thinking, done: false })
         }
@@ -1566,6 +1734,12 @@ export class DshAgentSession implements AgentSession {
         const errorText = reason !== undefined && reason.kind === 'error' && reason.error?.message !== undefined
           ? toStr(reason.error.message)
           : undefined
+        const turnContent = this.turnWindowParts.join('')
+        this.turnWindowParts = []
+        if (turnContent !== '') {
+          const time = typeof event.time === 'number' ? event.time : Date.now()
+          this.pushRecentTurn({ role: 'assistant', content: turnContent, timestamp: new Date(time).toISOString() })
+        }
         this.channel.push({
           type: 'result',
           content: this.turnText,

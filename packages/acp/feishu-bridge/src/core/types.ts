@@ -489,6 +489,33 @@ export function asAgentInterrupter(s: AgentSession): AgentInterrupter | undefine
   return typeof candidate.cancelTurn === 'function' ? (candidate as AgentInterrupter) : undefined
 }
 
+/**
+ * Optional: agent projects a session's recent conversation window (user and
+ * assistant turns) from the native session log — live sessions from the
+ * adapter's incrementally maintained window, cold ones from the persisted
+ * log.
+ */
+export interface RecentTurnsReader {
+  /**
+   * Read a session's trailing conversation turns.
+   * @param agentSessionID - the native session id to read; '' returns [].
+   * @param limit - the number of trailing entries to return; <= 0 returns all.
+   * @returns the trailing window entries, oldest first.
+   */
+  recentTurns(agentSessionID: string, limit: number): Promise<HistoryEntry[]>
+}
+
+/**
+ * Structural check for the {@link RecentTurnsReader} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asRecentTurnsReader(a: Agent): RecentTurnsReader | undefined {
+  const candidate = a as Partial<RecentTurnsReader>
+  return typeof candidate.recentTurns === 'function' ? (candidate as RecentTurnsReader) : undefined
+}
+
 /** Optional: platform can update a previously sent message in place (PATCH). */
 export interface MessageUpdater {
   updateMessage(replyCtx: unknown, content: string): Promise<void>

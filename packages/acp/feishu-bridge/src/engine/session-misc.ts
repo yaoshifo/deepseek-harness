@@ -40,8 +40,8 @@ export function estimateTokensWithPendingAssistant(entries: HistoryEntry[], pend
 
 /**
  * Rotate a chat to a fresh session when the active one went stale (Go
- * maybeAutoResetSessionOnIdle). A session with neither a backend id nor
- * history is never rotated; the old session keeps its history and agent id
+ * maybeAutoResetSessionOnIdle). A session with neither a backend id nor a
+ * conversation window is never rotated; the old session keeps its agent id
  * for /switch back; its updatedAt is left untouched.
  *
  * @param e - Engine carrying the resetOnIdle threshold.
@@ -50,15 +50,15 @@ export function estimateTokensWithPendingAssistant(entries: HistoryEntry[], pend
  * @param session - The locked active session for the chat.
  * @returns the new locked session, or undefined to keep the current one.
  */
-export function maybeAutoResetSessionOnIdle(
+export async function maybeAutoResetSessionOnIdle(
   e: Engine,
   p: Platform,
   msg: Message,
   session: Session,
-): Session | undefined {
+): Promise<Session | undefined> {
   if (e.resetOnIdle <= 0) return undefined
   const hasBackend = session.getAgentSessionID() !== ''
-  const hasHistory = session.getHistory(1).length > 0
+  const hasHistory = (await e.recentTurnsOf(msg.sessionKey, session, 1)).length > 0
   if (!hasBackend && !hasHistory) return undefined
 
   const last = Date.parse(session.getUpdatedAt())

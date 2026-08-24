@@ -150,14 +150,14 @@ describe('cmdShell', () => {
 describe('"!" prefix shortcut', () => {
   it('runs the shell command like /shell', async () => {
     const { e, p } = newEngine()
-    e.handleMessage(p, shellMsg('!echo bang'))
+    void e.handleMessage(p, shellMsg('!echo bang'))
     await vi.waitFor(() => { expect(lastSent(p)).toContain('bang') })
     expect(lastSent(p)).toContain('$ echo bang')
   })
 
   it('requires admin', async () => {
     const { e, p } = newEngine()
-    e.handleMessage(p, shellMsg('!echo nope', 'stranger'))
+    void e.handleMessage(p, shellMsg('!echo nope', 'stranger'))
     await vi.waitFor(() => { expect(lastSent(p)).toContain(e.i18n.tf(Msg.AdminRequired, '!').split('`')[0] ?? '🔒') })
   })
 
@@ -171,7 +171,7 @@ describe('"!" prefix shortcut', () => {
     })
     e.interactiveStates.set('test:ch1', state)
 
-    e.handleMessage(p, shellMsg('!yes'))
+    void e.handleMessage(p, shellMsg('!yes'))
 
     // "!yes" is free text for the first unanswered question; with a single
     // question the ask settles (collected answer observable on the map).
@@ -187,7 +187,7 @@ describe('"!" prefix shortcut', () => {
     // "!" alone must not be consumed by the shell branch: dispatch falls
     // through to the session path (stub agent replies nothing here, so we
     // only assert no shell output was sent).
-    e.handleMessage(p, shellMsg('!'))
+    void e.handleMessage(p, shellMsg('!'))
     expect(p.getSent().join('\n')).not.toContain('$')
   })
 })

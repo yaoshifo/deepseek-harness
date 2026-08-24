@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -7,11 +7,9 @@ import {
   ForkSessionPrefix,
 } from '../../src/core/types.js'
 import {
-  filterOwnedSessions,
   Session,
   SessionManager,
 } from '../../src/engine/session.js'
-import type { AgentSessionInfo } from '../../src/core/types.js'
 
 // Ported from cc-connect core/session_test.go (51 Go cases incl. subtests).
 
@@ -258,38 +256,6 @@ describe('Session', () => {
     expect(s.tryLock(), 'TryLock after Unlock should succeed').toBe(true)
   })
 
-  it('History', () => {
-    const s = new Session()
-    s.addHistory('user', 'hello')
-    s.addHistory('assistant', 'hi there')
-    s.addHistory('user', 'bye')
-
-    expect(s.getHistory(0)).toHaveLength(3)
-
-    const last2 = s.getHistory(2)
-    expect(last2).toHaveLength(2)
-    expect(last2[0]!.content).toBe('hi there')
-
-    s.clearHistory()
-    expect(s.getHistory(0)).toHaveLength(0)
-  })
-
-  it('HistoryCapped', () => {
-    const s = new Session()
-    const max = 100
-    for (let i = 0; i < max + 50; i++) s.addHistory('user', `msg-${i}`)
-    const all = s.getHistory(0)
-    expect(all).toHaveLength(max)
-    expect(all[all.length - 1]!.content).toBe(`msg-${max + 49}`)
-    expect(all[0]!.content).toBe('msg-50')
-  })
-
-  it('ConcurrentHistory', async () => {
-    const s = new Session()
-    await Promise.all(Array.from({ length: 50 }, () => new Promise<void>((resolve) => { s.addHistory('user', 'msg'); resolve() })))
-    expect(s.getHistory(0)).toHaveLength(50)
-  })
-
   it('GetAgentSessionID', () => {
     const s = new Session()
     expect(s.getAgentSessionID()).toBe('')
@@ -479,64 +445,9 @@ describe('SessionManager agent invalidation', () => {
     expect(new SessionManager('/var/data/sessions').storePath()).toBe('/var/data/sessions')
     expect(new SessionManager('').storePath()).toBe('')
   })
-
-  it('KnownAgentSessionIDs', () => {
-    const sm = new SessionManager('')
-    const s1 = sm.newSession('user1', 'a')
-    s1.setAgentSessionID('uuid-aaa', 'claude')
-    const s2 = sm.newSession('user1', 'b')
-    s2.setAgentSessionID('uuid-bbb', 'claude')
-    sm.newSession('user1', 'c')
-
-    const known = sm.knownAgentSessionIDs()
-    expect(known).not.toBeNull()
-    expect(Object.keys(known ?? {})).toHaveLength(2)
-    expect('uuid-aaa' in (known ?? {})).toBe(true)
-    expect('uuid-bbb' in (known ?? {})).toBe(true)
-  })
-})
-
-describe('filterOwnedSessions', () => {
-  it('ReturnsOwnedOnly', () => {
-    const all: AgentSessionInfo[] = [
-      { id: 'owned-1', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'external-1', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'owned-2', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'external-2', summary: '', messageCount: 0, modifiedAt: 0 },
-    ]
-    const known: Record<string, true> = { 'owned-1': true, 'owned-2': true }
-    const filtered = filterOwnedSessions(all, known)
-    expect(filtered).toHaveLength(2)
-    for (const s of filtered) expect(s.id in known).toBe(true)
-  })
-
-  it('EmptyKnownReturnsAll', () => {
-    const all: AgentSessionInfo[] = [
-      { id: 'session-1', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'session-2', summary: '', messageCount: 0, modifiedAt: 0 },
-    ]
-    expect(filterOwnedSessions(all, {})).toHaveLength(2)
-  })
 })
 
 describe('SwitchToAgentSession', () => {
-  it('PreservesOldSession', () => {
-    const sm = new SessionManager('')
-    const userKey = 'user:alice'
-
-    const s1 = sm.getOrCreateActive(userKey)
-    s1.setAgentInfo('agent-A', 'claude', 'session A')
-
-    expect('agent-A' in (sm.knownAgentSessionIDs() ?? {})).toBe(true)
-
-    const s2 = sm.switchToAgentSession(userKey, 'agent-B', 'claude', 'session B')
-    expect(s2.getAgentSessionID()).toBe('agent-B')
-
-    const known = sm.knownAgentSessionIDs() ?? {}
-    expect('agent-A' in known).toBe(true)
-    expect('agent-B' in known).toBe(true)
-  })
-
   it('ReusesExisting', () => {
     const sm = new SessionManager('')
     const userKey = 'user:bob'
@@ -592,69 +503,6 @@ describe('PastAgentSessionIDs', () => {
     expect(s.pastAgentSessionIDs).toEqual(['thread-1'])
   })
 
-  it('KnownAgentSessionIDsIncludesPast', () => {
-    const sm = new SessionManager('')
-    const s1 = sm.newSession('user1', 'a')
-    s1.setAgentSessionID('thread-aaa', 'codex')
-    s1.setAgentSessionID('', '')
-
-    const s2 = sm.newSession('user1', 'b')
-    s2.setAgentSessionID('thread-bbb', 'codex')
-
-    const known = sm.knownAgentSessionIDs() ?? {}
-    expect('thread-aaa' in known).toBe(true)
-    expect('thread-bbb' in known).toBe(true)
-  })
-
-  it('ReproducesNewCommandBug', () => {
-    const sm = new SessionManager('')
-    const userKey = 'user:test'
-    const agentSessions: AgentSessionInfo[] = [
-      { id: 'codex-thread-1', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'codex-thread-2', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'codex-thread-3', summary: '', messageCount: 0, modifiedAt: 0 },
-    ]
-
-    const s1 = sm.getOrCreateActive(userKey)
-    s1.setAgentSessionID('codex-thread-1', 'codex')
-
-    s1.setAgentSessionID('', '')
-    const s2 = sm.newSession(userKey, 'session 2')
-    s2.setAgentSessionID('codex-thread-2', 'codex')
-
-    s2.setAgentSessionID('', '')
-    const s3 = sm.newSession(userKey, 'session 3')
-    s3.setAgentSessionID('codex-thread-3', 'codex')
-
-    const known = sm.knownAgentSessionIDs()
-    expect(known).not.toBeNull()
-    expect(filterOwnedSessions(agentSessions, known ?? {})).toHaveLength(3)
-  })
-
-  it('ResetAllSessionsBug', () => {
-    const sm = new SessionManager('')
-    const userKey = 'user:test'
-
-    const s1 = sm.newSession(userKey, 'a')
-    s1.setAgentSessionID('thread-1', 'codex')
-    const s2 = sm.newSession(userKey, 'b')
-    s2.setAgentSessionID('thread-2', 'codex')
-    const s3 = sm.newSession(userKey, 'c')
-    s3.setAgentSessionID('thread-3', 'codex')
-
-    for (const s of sm.allSessions()) s.setAgentSessionID('', '')
-
-    const known = sm.knownAgentSessionIDs() ?? {}
-    for (const id of ['thread-1', 'thread-2', 'thread-3']) expect(id in known).toBe(true)
-
-    const agentSessions: AgentSessionInfo[] = [
-      { id: 'thread-1', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'thread-2', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'thread-3', summary: '', messageCount: 0, modifiedAt: 0 },
-    ]
-    expect(filterOwnedSessions(agentSessions, known)).toHaveLength(3)
-  })
-
   it('Persistence', async () => {
     const path = await tempSessionsPath()
 
@@ -665,119 +513,112 @@ describe('PastAgentSessionIDs', () => {
     sm1.save()
 
     const sm2 = new SessionManager(path)
-    const known = sm2.knownAgentSessionIDs() ?? {}
-    expect('thread-old' in known).toBe(true)
-    expect('thread-new' in known).toBe(true)
+    // The replaced mapping stays resolvable after a reload.
+    expect(sm2.findByAgentSessionID('thread-old')).toBeDefined()
+    expect(sm2.findByAgentSessionID('thread-new')).toBeDefined()
   })
 })
 
-describe('LegacyData', () => {
-  it('DisablesFilter', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'fb-legacy-'))
-    const path = join(dir, 'sessions.json')
-    const legacyJSON = `{
-\t\t"sessions": {
-\t\t\t"s1": {"id":"s1","name":"old","agent_session_id":"","history":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"},
-\t\t\t"s2": {"id":"s2","name":"","agent_session_id":"","history":null,"created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"},
-\t\t\t"s3": {"id":"s3","name":"active","agent_session_id":"thread-3","agent_type":"codex","history":null,"created_at":"2026-01-03T00:00:00Z","updated_at":"2026-01-03T00:00:00Z"}
-\t\t},
-\t\t"active_session": {"user1":"s3"},
-\t\t"user_sessions": {"user1":["s1","s2","s3"]},
-\t\t"counter": 3
-\t}`
-    await mkdir(dir, { recursive: true })
-    await writeFile(path, legacyJSON, 'utf8')
-
-    const sm = new SessionManager(path)
-    const known = sm.knownAgentSessionIDs()
-    expect(known, 'legacy data should return null to disable filter').toBeNull()
-
-    const agentSessions: AgentSessionInfo[] = [
-      { id: 'thread-1', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'thread-2', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'thread-3', summary: '', messageCount: 0, modifiedAt: 0 },
-    ]
-    expect(filterOwnedSessions(agentSessions, known)).toHaveLength(3)
-  })
-
-  it('NewDataEnablesFilter', async () => {
+describe('Snapshot v2', () => {
+  it('writes the camelCase v2 schema', async () => {
     const path = await tempSessionsPath()
 
     const sm1 = new SessionManager(path)
-    const s1 = sm1.newSession('user1', 'a')
-    s1.setAgentSessionID('thread-1', 'codex')
-    sm1.newSession('user1', 'b')
+    const s = sm1.getOrCreateActive('feishu:child')
+    s.setAgentSessionID('thread-1', 'codex')
+    s.setParentSessionKey('feishu:parent:ou_user')
+    s.setSubtaskDepth(2)
+    s.setLastResult('done')
     sm1.save()
 
+    const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+    expect(raw.version).toBe(2)
+    expect(raw.activeSession).toEqual({ 'feishu:child': s.id })
+    expect(raw.userSessions).toEqual({ 'feishu:child': [s.id] })
+    const serialized = (raw.sessions as Record<string, Record<string, unknown>>)[s.id] ?? {}
+    expect(serialized.agentSessionID).toBe('thread-1')
+    expect(serialized.agentType).toBe('codex')
+    expect(serialized.parentSessionKey).toBe('feishu:parent:ou_user')
+    expect(serialized.subtaskDepth).toBe(2)
+    expect(serialized.lastResult).toBe('done')
+    // The retired Go field names and the history copy stay gone.
+    expect(serialized.agent_session_id).toBeUndefined()
+    expect(serialized.history).toBeUndefined()
+    expect(raw.active_session).toBeUndefined()
+    expect(raw.legacy_data).toBeUndefined()
+
     const sm2 = new SessionManager(path)
-    const known = sm2.knownAgentSessionIDs()
-    expect(known).not.toBeNull()
-    expect('thread-1' in (known ?? {})).toBe(true)
-
-    const agentSessions: AgentSessionInfo[] = [
-      { id: 'thread-1', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'external-1', summary: '', messageCount: 0, modifiedAt: 0 },
-    ]
-    const filtered = filterOwnedSessions(agentSessions, known)
-    expect(filtered).toHaveLength(1)
-    expect(filtered[0]!.id).toBe('thread-1')
+    const got = sm2.getOrCreateActive('feishu:child')
+    expect(got.getAgentSessionID()).toBe('thread-1')
+    expect(got.getParentSessionKey()).toBe('feishu:parent:ou_user')
+    expect(got.getSubtaskDepth()).toBe(2)
+    expect(got.getLastResult()).toBe('done')
   })
 
-  it('PartiallyMigratedData', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'fb-partial-'))
+  it('migrates a v1 (Go field names) file in memory and rewrites it as v2 on save', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-v1-'))
     const path = join(dir, 'sessions.json')
-    const partialJSON = `{
-\t\t"sessions": {
-\t\t\t"s1": {"id":"s1","name":"default","agent_session_id":"","history":null,"created_at":"2026-03-26T22:25:56Z","updated_at":"2026-03-26T22:25:56Z"},
-\t\t\t"s2": {"id":"s2","name":"","agent_session_id":"","history":null,"created_at":"2026-04-18T09:02:57Z","updated_at":"2026-04-18T09:02:57Z"},
-\t\t\t"s3": {"id":"s3","name":"active","agent_session_id":"thread-active","agent_type":"codex","past_agent_session_ids":["thread-old"],"history":null,"created_at":"2026-04-20T21:50:14Z","updated_at":"2026-04-20T21:50:14Z"}
-\t\t},
-\t\t"active_session": {"user1":"s3"},
-\t\t"user_sessions":  {"user1":["s1","s2","s3"]},
-\t\t"counter": 3,
-\t\t"past_id_tracking": true
-\t}`
-    await writeFile(path, partialJSON, 'utf8')
+    const v1JSON = `{
+  "sessions": {
+    "s1": {"id":"s1","name":"old","agent_session_id":"","history":[{"role":"user","content":"hi","timestamp":"2026-01-01T00:00:00Z"}],"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"},
+    "s2": {"id":"s2","name":"child","agent_session_id":"thread-2","agent_type":"codex","parent_session_key":"feishu:parent","subtask_depth":2,"subtask_reported":true,"worktree_path":"/wt","worktree_branch":"cc/b","worktree_base":"sha","worktree_repo_root":"/repo","past_agent_session_ids":["thread-old"],"last_result":"done","history":null,"created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}
+  },
+  "active_session": {"user1":"s2"},
+  "user_sessions": {"user1":["s1","s2"]},
+  "counter": 2,
+  "session_names": {"thread-2":"named"},
+  "user_meta": {"user1":{"userName":"Zhang San","chatName":"Group"}},
+  "past_id_tracking": true,
+  "version": 1
+}`
+    await mkdir(dir, { recursive: true })
+    await writeFile(path, v1JSON, 'utf8')
 
     const sm = new SessionManager(path)
-    const known = sm.knownAgentSessionIDs()
-    expect(known, 'partially migrated data should disable filter').toBeNull()
+    const s2 = sm.getOrCreateActive('user1')
+    expect(s2.id).toBe('s2')
+    expect(s2.getAgentSessionID()).toBe('thread-2')
+    expect(s2.agentType).toBe('codex')
+    expect(s2.getParentSessionKey()).toBe('feishu:parent')
+    expect(s2.getSubtaskDepth()).toBe(2)
+    expect(s2.getSubtaskReported()).toBe(true)
+    expect(s2.getWorktreeInfo()).toEqual(['/wt', 'cc/b', 'sha', '/repo'])
+    expect(s2.pastAgentSessionIDs).toEqual(['thread-old'])
+    expect(s2.getLastResult()).toBe('done')
+    expect(sm.getSessionName('thread-2')).toBe('named')
+    expect(sm.getUserMeta('user1')?.userName).toBe('Zhang San')
+    expect(sm.findByAgentSessionID('thread-old')).toBeDefined()
 
-    const agentSessions: AgentSessionInfo[] = [
-      { id: 'thread-active', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'thread-old', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'other-1', summary: '', messageCount: 0, modifiedAt: 0 },
-      { id: 'other-2', summary: '', messageCount: 0, modifiedAt: 0 },
-    ]
-    expect(filterOwnedSessions(agentSessions, known)).toHaveLength(4)
-  })
-
-  it('ClearsAfterFirstNewCommand', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'fb-clear-'))
-    const path = join(dir, 'sessions.json')
-    const legacyJSON = `{
-\t\t"sessions": {
-\t\t\t"s1": {"id":"s1","name":"","agent_session_id":"thread-old","agent_type":"codex","history":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}
-\t\t},
-\t\t"active_session": {"user1":"s1"},
-\t\t"user_sessions": {"user1":["s1"]},
-\t\t"counter": 1
-\t}`
-    await writeFile(path, legacyJSON, 'utf8')
-
-    const sm = new SessionManager(path)
-    // Go: legacy mode tolerantly logs when the filter is disabled here.
-
-    const s1 = sm.getOrCreateActive('user1')
-    s1.setAgentSessionID('', '')
-    const s2 = sm.newSession('user1', 'new')
-    s2.setAgentSessionID('thread-new', 'codex')
     sm.save()
+    const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+    expect(raw.version).toBe(2)
+    expect(raw.active_session).toBeUndefined()
+    const serialized = (raw.sessions as Record<string, Record<string, unknown>>).s2 ?? {}
+    expect(serialized.agentSessionID).toBe('thread-2')
+    expect(serialized.subtaskDepth).toBe(2)
+    expect(serialized.worktreePath).toBe('/wt')
+    expect(serialized.pastAgentSessionIDs).toEqual(['thread-old'])
+    expect(serialized.history).toBeUndefined()
 
     const sm2 = new SessionManager(path)
-    const known2 = sm2.knownAgentSessionIDs()
-    expect(known2).not.toBeNull()
-    expect('thread-old' in (known2 ?? {})).toBe(true)
-    expect('thread-new' in (known2 ?? {})).toBe(true)
+    expect(sm2.getOrCreateActive('user1').getAgentSessionID()).toBe('thread-2')
+  })
+
+  it('migrates a versionless Go-era file (history dropped, sessions intact)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-v0-'))
+    const path = join(dir, 'sessions.json')
+    await mkdir(dir, { recursive: true })
+    await writeFile(path, `{
+  "sessions": {"s1": {"id":"s1","name":"old","agent_session_id":"thread-1","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}},
+  "active_session": {"user1":"s1"},
+  "user_sessions": {"user1":["s1"]},
+  "counter": 1
+}`, 'utf8')
+
+    const sm = new SessionManager(path)
+    expect(sm.getOrCreateActive('user1').getAgentSessionID()).toBe('thread-1')
+    sm.save()
+    const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+    expect(raw.version).toBe(2)
   })
 })

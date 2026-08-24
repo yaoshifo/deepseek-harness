@@ -1,8 +1,11 @@
 /**
  * Session bookkeeping ported from cc-connect core/session.go: one Session per
  * conversation plus the SessionManager that owns named sessions per user key
- * with active-session tracking and JSON persistence. The on-disk snapshot
- * keeps the Go field names so an existing sessions.json reloads unchanged.
+ * with active-session tracking and JSON persistence. The on-disk snapshot is
+ * the bridge's own camelCase schema (version 2); a version-1 file (the Go
+ * field names) migrates in memory on load and the first save rewrites it as
+ * v2. Conversation history is no longer persisted here — recent-turn readers
+ * project the native session log through the adapter's RecentTurnsReader.
  *
  * Concurrency mapping (plan D7): Go's per-Session sync.Mutex collapses into
  * plain fields — JS runs the synchronous mutators on one thread, and the
@@ -19,14 +22,10 @@ import {
   ForkAtSessionPrefix,
   ForkSessionPrefix,
 } from '../core/types.js'
-import type { AgentSessionInfo, HistoryEntry } from '../core/types.js'
 import { atomicWriteFileSync } from '../atomicwrite.js'
 
-/** Bounds the in-memory Session.history slice (recent-window consumers only). */
-const maxHistoryEntries = 100
-
-/** Snapshot schema version for migration detection (Go snapshotVersion). */
-const snapshotVersion = 1
+/** Snapshot schema version: 2 is the bridge-native camelCase format (1 = Go field names, migrated on load). */
+const snapshotVersion = 2
 
 function nowISO(): string {
   return new Date().toISOString()
@@ -134,8 +133,6 @@ export class Session {
   inheritedMode = ''
   /** Armed subtask gather barrier on a parent session; in-memory only (Go PendingSubtaskGather). */
   pendingSubtaskGather: import('./subtask.js').SubtaskGather | undefined
-  /** Recent conversation entries, bounded to maxHistoryEntries in memory. */
-  history: HistoryEntry[] = []
   /** ISO timestamp recorded at session creation. */
   createdAt = nowISO()
   /** ISO timestamp of the latest mutation. */
@@ -176,19 +173,6 @@ export class Session {
   private unlockInternal(update: boolean): void {
     this.busy = false
     if (update) this.updatedAt = nowISO()
-  }
-
-  /**
-   * Append one history entry, bounding the in-memory slice.
-   *
-   * @param role - the entry's conversation role.
-   * @param content - the entry's message text.
-   */
-  addHistory(role: HistoryEntry['role'], content: string): void {
-    this.history.push({ role, content, timestamp: nowISO() })
-    if (this.history.length > maxHistoryEntries) {
-      this.history = this.history.slice(this.history.length - maxHistoryEntries)
-    }
   }
 
   /** Save the current agentSessionID to pastAgentSessionIDs (no duplicates). */
@@ -881,19 +865,6 @@ export class Session {
   }
 
   /**
-   * Most recent assistant turn's text, or '' when none.
-   *
-   * @returns the last assistant entry's content, '' when none exists.
-   */
-  lastAssistantReply(): string {
-    for (let i = this.history.length - 1; i >= 0; i--) {
-      const entry = this.history[i]
-      if (entry?.role === 'assistant') return entry.content
-    }
-    return ''
-  }
-
-  /**
    * Store the clean final SDK result of the last turn.
    *
    * @param v - the result text, '' to clear.
@@ -903,13 +874,14 @@ export class Session {
   }
 
   /**
-   * Clean SDK final result when available, else the last assistant entry.
+   * Clean final SDK result of the last turn ('' when none). The
+   * last-assistant-reply fallback now lives engine-side, reading the
+   * adapter's recent-turn window.
    *
-   * @returns lastResult when non-blank, else the last assistant entry.
+   * @returns the stored lastResult.
    */
-  lastResultOrReply(): string {
-    if (this.lastResult.trim() !== '') return this.lastResult
-    return this.lastAssistantReply()
+  getLastResult(): string {
+    return this.lastResult
   }
 
   /**
@@ -980,23 +952,6 @@ export class Session {
   }
 
   /**
-   * Drop all in-memory history entries.
-   */
-  clearHistory(): void {
-    this.history = []
-  }
-
-  /**
-   * True when the session has exactly one user entry (the first message).
-   *
-   * @returns whether history holds exactly one user entry.
-   */
-  isFirstMessage(): boolean {
-    const first = this.history[0]
-    return this.history.length === 1 && first?.role === 'user'
-  }
-
-  /**
    * Remember the chat's pinned top-notice banner message.
    *
    * @param messageID - the banner message ID, '' to clear.
@@ -1013,18 +968,6 @@ export class Session {
   getTopNoticeMessageID(): string {
     return this.topNoticeMessageID
   }
-
-  /**
-   * Last n entries; n <= 0 returns all.
-   *
-   * @param n - the number of trailing entries to return; n <= 0 returns all.
-   * @returns the trailing history entries.
-   */
-  getHistory(n: number): HistoryEntry[] {
-    const total = this.history.length
-    if (n <= 0 || n > total) n = total
-    return this.history.slice(total - n)
-  }
 }
 
 /** Human-readable display info for a session key. */
@@ -1033,21 +976,168 @@ export interface UserMeta {
   chatName: string
 }
 
-/** JSON-serializable SessionManager state (Go sessionSnapshot, same field names). */
+/** JSON-serializable SessionManager state (version 2, bridge-native camelCase). */
 interface SessionSnapshot {
-  sessions?: Record<string, SerializedSession>
+  version: number
+  sessions: Record<string, SerializedSession>
+  activeSession: Record<string, string>
+  userSessions: Record<string, string[]>
+  counter: number
+  sessionNames: Record<string, string>
+  userMeta: Record<string, UserMeta>
+}
+
+/** Serialized Session (version 2, camelCase; default-valued fields omitted). */
+interface SerializedSession {
+  id: string
+  name: string
+  agentSessionID: string
+  agentType?: string
+  parentSessionKey?: string
+  parentChatName?: string
+  subtaskDepth?: number
+  subtaskAttended?: boolean
+  spawnUserID?: string
+  subtaskReported?: boolean
+  subtaskAutoReportSuppressed?: boolean
+  subtaskNoReport?: boolean
+  userInterjected?: boolean
+  monitorGroup?: boolean
+  monitorChild?: boolean
+  lastResult?: string
+  worktreePath?: string
+  worktreeBranch?: string
+  worktreeBase?: string
+  worktreeRepoRoot?: string
+  pastAgentSessionIDs?: string[]
+  topNoticeMessageID?: string
+  chatroomHubKey?: string
+  chatroomRoleName?: string
+  chatroomAsked?: boolean
+  chatroomResearch?: boolean
+  chatroomDirectRole?: boolean
+  researchAssistantKey?: string
+  researchAssistant?: boolean
+  researchAwaitingAssistant?: boolean
+  chatroomModerator?: boolean
+  chatroomResearchMode?: string
+  chatroomResearchRound?: number
+  chatroomResearchMaxRounds?: number
+  chatroomGatherSeq?: number
+  researchVenv?: string
+  pendingHumanQuestionRole?: string
+  createdAt: string
+  updatedAt: string
+}
+
+function serializeSession(s: Session): SerializedSession {
+  const agentSessionID = s.agentSessionID === ContinueSession ? '' : s.agentSessionID
+  return {
+    id: s.id,
+    name: s.name,
+    agentSessionID,
+    ...(s.agentType !== '' ? { agentType: s.agentType } : {}),
+    ...(s.parentSessionKey !== '' ? { parentSessionKey: s.parentSessionKey } : {}),
+    ...(s.parentChatName !== '' ? { parentChatName: s.parentChatName } : {}),
+    ...(s.subtaskDepth !== 0 ? { subtaskDepth: s.subtaskDepth } : {}),
+    ...(s.subtaskAttended ? { subtaskAttended: true } : {}),
+    ...(s.spawnUserID !== '' ? { spawnUserID: s.spawnUserID } : {}),
+    ...(s.subtaskReported ? { subtaskReported: true } : {}),
+    ...(s.subtaskAutoReportSuppressed ? { subtaskAutoReportSuppressed: true } : {}),
+    ...(s.subtaskNoReport ? { subtaskNoReport: true } : {}),
+    ...(s.userInterjected ? { userInterjected: true } : {}),
+    ...(s.monitorGroup ? { monitorGroup: true } : {}),
+    ...(s.monitorChild ? { monitorChild: true } : {}),
+    ...(s.lastResult !== '' ? { lastResult: s.lastResult } : {}),
+    ...(s.worktreePath !== '' ? { worktreePath: s.worktreePath } : {}),
+    ...(s.worktreeBranch !== '' ? { worktreeBranch: s.worktreeBranch } : {}),
+    ...(s.worktreeBase !== '' ? { worktreeBase: s.worktreeBase } : {}),
+    ...(s.worktreeRepoRoot !== '' ? { worktreeRepoRoot: s.worktreeRepoRoot } : {}),
+    ...(s.pastAgentSessionIDs.length > 0 ? { pastAgentSessionIDs: [...s.pastAgentSessionIDs] } : {}),
+    ...(s.topNoticeMessageID !== '' ? { topNoticeMessageID: s.topNoticeMessageID } : {}),
+    ...(s.chatroomHubKey !== '' ? { chatroomHubKey: s.chatroomHubKey } : {}),
+    ...(s.chatroomRoleName !== '' ? { chatroomRoleName: s.chatroomRoleName } : {}),
+    ...(s.chatroomAsked ? { chatroomAsked: true } : {}),
+    ...(s.chatroomResearch ? { chatroomResearch: true } : {}),
+    ...(s.chatroomDirectRole ? { chatroomDirectRole: true } : {}),
+    ...(s.researchAssistantKey !== '' ? { researchAssistantKey: s.researchAssistantKey } : {}),
+    ...(s.researchAssistant ? { researchAssistant: true } : {}),
+    ...(s.researchAwaitingAssistant ? { researchAwaitingAssistant: true } : {}),
+    ...(s.chatroomModerator ? { chatroomModerator: true } : {}),
+    ...(s.chatroomResearchMode !== '' ? { chatroomResearchMode: s.chatroomResearchMode } : {}),
+    ...(s.chatroomResearchRound !== 0 ? { chatroomResearchRound: s.chatroomResearchRound } : {}),
+    ...(s.chatroomResearchMaxRounds !== 0 ? { chatroomResearchMaxRounds: s.chatroomResearchMaxRounds } : {}),
+    ...(s.chatroomGatherSeq !== 0 ? { chatroomGatherSeq: s.chatroomGatherSeq } : {}),
+    ...(s.researchVenv !== '' ? { researchVenv: s.researchVenv } : {}),
+    ...(s.pendingHumanQuestionRole !== '' ? { pendingHumanQuestionRole: s.pendingHumanQuestionRole } : {}),
+    createdAt: s.createdAt,
+    updatedAt: s.updatedAt,
+  }
+}
+
+function deserializeSession(raw: SerializedSession): Session {
+  const s = new Session()
+  s.id = raw.id
+  s.name = raw.name
+  s.agentSessionID = raw.agentSessionID
+  s.agentType = raw.agentType ?? ''
+  s.parentSessionKey = raw.parentSessionKey ?? ''
+  s.parentChatName = raw.parentChatName ?? ''
+  s.subtaskDepth = raw.subtaskDepth ?? 0
+  s.subtaskAttended = raw.subtaskAttended ?? false
+  s.spawnUserID = raw.spawnUserID ?? ''
+  s.monitorGroup = raw.monitorGroup ?? false
+  s.monitorOriginMessageID = ''
+  s.monitorChild = raw.monitorChild ?? false
+  s.subtaskReported = raw.subtaskReported ?? false
+  s.subtaskAutoReportSuppressed = raw.subtaskAutoReportSuppressed ?? false
+  s.subtaskNoReport = raw.subtaskNoReport ?? false
+  s.userInterjected = raw.userInterjected ?? false
+  s.lastResult = raw.lastResult ?? ''
+  s.worktreePath = raw.worktreePath ?? ''
+  s.worktreeBranch = raw.worktreeBranch ?? ''
+  s.worktreeBase = raw.worktreeBase ?? ''
+  s.worktreeRepoRoot = raw.worktreeRepoRoot ?? ''
+  s.pastAgentSessionIDs = raw.pastAgentSessionIDs ?? []
+  s.topNoticeMessageID = raw.topNoticeMessageID ?? ''
+  s.chatroomHubKey = raw.chatroomHubKey ?? ''
+  s.chatroomRoleName = raw.chatroomRoleName ?? ''
+  s.chatroomAsked = raw.chatroomAsked ?? false
+  s.chatroomResearch = raw.chatroomResearch ?? false
+  s.chatroomDirectRole = raw.chatroomDirectRole ?? false
+  s.researchAssistantKey = raw.researchAssistantKey ?? ''
+  s.researchAssistant = raw.researchAssistant ?? false
+  s.researchAwaitingAssistant = raw.researchAwaitingAssistant ?? false
+  s.chatroomModerator = raw.chatroomModerator ?? false
+  s.chatroomResearchMode = raw.chatroomResearchMode ?? ''
+  s.chatroomResearchRound = raw.chatroomResearchRound ?? 0
+  s.chatroomResearchMaxRounds = raw.chatroomResearchMaxRounds ?? 0
+  s.chatroomGatherSeq = raw.chatroomGatherSeq ?? 0
+  s.researchVenv = raw.researchVenv ?? ''
+  s.pendingHumanQuestionRole = raw.pendingHumanQuestionRole ?? ''
+  s.createdAt = raw.createdAt
+  s.updatedAt = raw.updatedAt
+  return s
+}
+
+/** A parsed sessions.json of either version (all fields optional; session entries in either field naming). */
+type ParsedSnapshot = Partial<Omit<SessionSnapshot, 'sessions'>> & Partial<LegacySnapshotV1> & {
+  sessions?: Record<string, SerializedSession | LegacySessionV1>
+}
+
+/** Version-1 snapshot on disk (Go sessionSnapshot: snake_case session fields). */
+interface LegacySnapshotV1 {
+  sessions?: Record<string, LegacySessionV1>
   active_session?: Record<string, string>
   user_sessions?: Record<string, string[]>
   counter?: number
   session_names?: Record<string, string>
   user_meta?: Record<string, UserMeta>
-  past_id_tracking?: boolean
-  legacy_data?: boolean
   version?: number
 }
 
-/** Serialized Session (Go field names, snake_case). */
-interface SerializedSession {
+/** Serialized Session (version 1, Go field names; `history` is dropped — the native log owns it now). */
+interface LegacySessionV1 {
   id: string
   name: string
   agent_session_id: string
@@ -1085,101 +1175,53 @@ interface SerializedSession {
   chatroom_gather_seq?: number
   research_venv?: string
   pending_human_question_role?: string
-  history?: HistoryEntry[]
   created_at: string
   updated_at: string
 }
 
-function serializeSession(s: Session): SerializedSession {
-  const agentSessionID = s.agentSessionID === ContinueSession ? '' : s.agentSessionID
-  return {
-    id: s.id,
-    name: s.name,
-    agent_session_id: agentSessionID,
-    ...(s.agentType !== '' ? { agent_type: s.agentType } : {}),
-    ...(s.parentSessionKey !== '' ? { parent_session_key: s.parentSessionKey } : {}),
-    ...(s.parentChatName !== '' ? { parent_chat_name: s.parentChatName } : {}),
-    ...(s.subtaskDepth !== 0 ? { subtask_depth: s.subtaskDepth } : {}),
-    ...(s.subtaskAttended ? { subtask_attended: true } : {}),
-    ...(s.spawnUserID !== '' ? { spawn_user_id: s.spawnUserID } : {}),
-    ...(s.subtaskReported ? { subtask_reported: true } : {}),
-    ...(s.subtaskAutoReportSuppressed ? { subtask_auto_report_suppressed: true } : {}),
-    ...(s.subtaskNoReport ? { subtask_no_report: true } : {}),
-    ...(s.userInterjected ? { user_interjected: true } : {}),
-    ...(s.monitorGroup ? { monitor_group: true } : {}),
-    ...(s.monitorChild ? { monitor_child: true } : {}),
-    ...(s.lastResult !== '' ? { last_result: s.lastResult } : {}),
-    ...(s.worktreePath !== '' ? { worktree_path: s.worktreePath } : {}),
-    ...(s.worktreeBranch !== '' ? { worktree_branch: s.worktreeBranch } : {}),
-    ...(s.worktreeBase !== '' ? { worktree_base: s.worktreeBase } : {}),
-    ...(s.worktreeRepoRoot !== '' ? { worktree_repo_root: s.worktreeRepoRoot } : {}),
-    ...(s.pastAgentSessionIDs.length > 0 ? { past_agent_session_ids: [...s.pastAgentSessionIDs] } : {}),
-    ...(s.topNoticeMessageID !== '' ? { topnotice_message_id: s.topNoticeMessageID } : {}),
-    ...(s.chatroomHubKey !== '' ? { chatroom_hub_key: s.chatroomHubKey } : {}),
-    ...(s.chatroomRoleName !== '' ? { chatroom_role_name: s.chatroomRoleName } : {}),
-    ...(s.chatroomAsked ? { chatroom_asked: true } : {}),
-    ...(s.chatroomResearch ? { chatroom_research: true } : {}),
-    ...(s.chatroomDirectRole ? { chatroom_direct_role: true } : {}),
-    ...(s.researchAssistantKey !== '' ? { research_assistant_key: s.researchAssistantKey } : {}),
-    ...(s.researchAssistant ? { research_assistant: true } : {}),
-    ...(s.researchAwaitingAssistant ? { research_awaiting_assistant: true } : {}),
-    ...(s.chatroomModerator ? { chatroom_moderator: true } : {}),
-    ...(s.chatroomResearchMode !== '' ? { chatroom_research_mode: s.chatroomResearchMode } : {}),
-    ...(s.chatroomResearchRound !== 0 ? { chatroom_research_round: s.chatroomResearchRound } : {}),
-    ...(s.chatroomResearchMaxRounds !== 0 ? { chatroom_research_max_rounds: s.chatroomResearchMaxRounds } : {}),
-    ...(s.chatroomGatherSeq !== 0 ? { chatroom_gather_seq: s.chatroomGatherSeq } : {}),
-    ...(s.researchVenv !== '' ? { research_venv: s.researchVenv } : {}),
-    ...(s.pendingHumanQuestionRole !== '' ? { pending_human_question_role: s.pendingHumanQuestionRole } : {}),
-    history: [...s.history],
-    created_at: s.createdAt,
-    updated_at: s.updatedAt,
-  }
-}
-
-function deserializeSession(raw: SerializedSession): Session {
-  const s = new Session()
-  s.id = raw.id
-  s.name = raw.name
-  s.agentSessionID = raw.agent_session_id
-  s.agentType = raw.agent_type ?? ''
-  s.parentSessionKey = raw.parent_session_key ?? ''
-  s.parentChatName = raw.parent_chat_name ?? ''
-  s.subtaskDepth = raw.subtask_depth ?? 0
-  s.subtaskAttended = raw.subtask_attended ?? false
-  s.spawnUserID = raw.spawn_user_id ?? ''
-  s.monitorGroup = raw.monitor_group ?? false
-  s.monitorOriginMessageID = ''
-  s.monitorChild = raw.monitor_child ?? false
-  s.subtaskReported = raw.subtask_reported ?? false
-  s.subtaskAutoReportSuppressed = raw.subtask_auto_report_suppressed ?? false
-  s.subtaskNoReport = raw.subtask_no_report ?? false
-  s.userInterjected = raw.user_interjected ?? false
-  s.lastResult = raw.last_result ?? ''
-  s.worktreePath = raw.worktree_path ?? ''
-  s.worktreeBranch = raw.worktree_branch ?? ''
-  s.worktreeBase = raw.worktree_base ?? ''
-  s.worktreeRepoRoot = raw.worktree_repo_root ?? ''
-  s.pastAgentSessionIDs = raw.past_agent_session_ids ?? []
-  s.topNoticeMessageID = raw.topnotice_message_id ?? ''
-  s.chatroomHubKey = raw.chatroom_hub_key ?? ''
-  s.chatroomRoleName = raw.chatroom_role_name ?? ''
-  s.chatroomAsked = raw.chatroom_asked ?? false
-  s.chatroomResearch = raw.chatroom_research ?? false
-  s.chatroomDirectRole = raw.chatroom_direct_role ?? false
-  s.researchAssistantKey = raw.research_assistant_key ?? ''
-  s.researchAssistant = raw.research_assistant ?? false
-  s.researchAwaitingAssistant = raw.research_awaiting_assistant ?? false
-  s.chatroomModerator = raw.chatroom_moderator ?? false
-  s.chatroomResearchMode = raw.chatroom_research_mode ?? ''
-  s.chatroomResearchRound = raw.chatroom_research_round ?? 0
-  s.chatroomResearchMaxRounds = raw.chatroom_research_max_rounds ?? 0
-  s.chatroomGatherSeq = raw.chatroom_gather_seq ?? 0
-  s.researchVenv = raw.research_venv ?? ''
-  s.pendingHumanQuestionRole = raw.pending_human_question_role ?? ''
-  s.history = raw.history ?? []
-  s.createdAt = raw.created_at
-  s.updatedAt = raw.updated_at
-  return s
+/** One-time v1 → v2 in-memory migration (Go field names → camelCase). */
+function deserializeSessionV1(raw: LegacySessionV1): Session {
+  return deserializeSession({
+    id: raw.id,
+    name: raw.name,
+    agentSessionID: raw.agent_session_id,
+    ...(raw.agent_type !== undefined ? { agentType: raw.agent_type } : {}),
+    ...(raw.parent_session_key !== undefined ? { parentSessionKey: raw.parent_session_key } : {}),
+    ...(raw.parent_chat_name !== undefined ? { parentChatName: raw.parent_chat_name } : {}),
+    ...(raw.subtask_depth !== undefined ? { subtaskDepth: raw.subtask_depth } : {}),
+    ...(raw.subtask_attended !== undefined ? { subtaskAttended: raw.subtask_attended } : {}),
+    ...(raw.spawn_user_id !== undefined ? { spawnUserID: raw.spawn_user_id } : {}),
+    ...(raw.subtask_reported !== undefined ? { subtaskReported: raw.subtask_reported } : {}),
+    ...(raw.subtask_auto_report_suppressed !== undefined ? { subtaskAutoReportSuppressed: raw.subtask_auto_report_suppressed } : {}),
+    ...(raw.subtask_no_report !== undefined ? { subtaskNoReport: raw.subtask_no_report } : {}),
+    ...(raw.user_interjected !== undefined ? { userInterjected: raw.user_interjected } : {}),
+    ...(raw.monitor_group !== undefined ? { monitorGroup: raw.monitor_group } : {}),
+    ...(raw.monitor_child !== undefined ? { monitorChild: raw.monitor_child } : {}),
+    ...(raw.last_result !== undefined ? { lastResult: raw.last_result } : {}),
+    ...(raw.worktree_path !== undefined ? { worktreePath: raw.worktree_path } : {}),
+    ...(raw.worktree_branch !== undefined ? { worktreeBranch: raw.worktree_branch } : {}),
+    ...(raw.worktree_base !== undefined ? { worktreeBase: raw.worktree_base } : {}),
+    ...(raw.worktree_repo_root !== undefined ? { worktreeRepoRoot: raw.worktree_repo_root } : {}),
+    ...(raw.past_agent_session_ids !== undefined ? { pastAgentSessionIDs: raw.past_agent_session_ids } : {}),
+    ...(raw.topnotice_message_id !== undefined ? { topNoticeMessageID: raw.topnotice_message_id } : {}),
+    ...(raw.chatroom_hub_key !== undefined ? { chatroomHubKey: raw.chatroom_hub_key } : {}),
+    ...(raw.chatroom_role_name !== undefined ? { chatroomRoleName: raw.chatroom_role_name } : {}),
+    ...(raw.chatroom_asked !== undefined ? { chatroomAsked: raw.chatroom_asked } : {}),
+    ...(raw.chatroom_research !== undefined ? { chatroomResearch: raw.chatroom_research } : {}),
+    ...(raw.chatroom_direct_role !== undefined ? { chatroomDirectRole: raw.chatroom_direct_role } : {}),
+    ...(raw.research_assistant_key !== undefined ? { researchAssistantKey: raw.research_assistant_key } : {}),
+    ...(raw.research_assistant !== undefined ? { researchAssistant: raw.research_assistant } : {}),
+    ...(raw.research_awaiting_assistant !== undefined ? { researchAwaitingAssistant: raw.research_awaiting_assistant } : {}),
+    ...(raw.chatroom_moderator !== undefined ? { chatroomModerator: raw.chatroom_moderator } : {}),
+    ...(raw.chatroom_research_mode !== undefined ? { chatroomResearchMode: raw.chatroom_research_mode } : {}),
+    ...(raw.chatroom_research_round !== undefined ? { chatroomResearchRound: raw.chatroom_research_round } : {}),
+    ...(raw.chatroom_research_max_rounds !== undefined ? { chatroomResearchMaxRounds: raw.chatroom_research_max_rounds } : {}),
+    ...(raw.chatroom_gather_seq !== undefined ? { chatroomGatherSeq: raw.chatroom_gather_seq } : {}),
+    ...(raw.research_venv !== undefined ? { researchVenv: raw.research_venv } : {}),
+    ...(raw.pending_human_question_role !== undefined ? { pendingHumanQuestionRole: raw.pending_human_question_role } : {}),
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+  })
 }
 
 /**
@@ -1194,12 +1236,6 @@ export class SessionManager {
   private userMeta = new Map<string, UserMeta>()
   private counter = 0
   private readonly storePathValue: string
-  /**
-   * True while loaded data predates pastAgentSessionIDs tracking;
-   * knownAgentSessionIDs returns null to disable owned-session filtering
-   * until every session carries at least one tracked ID.
-   */
-  private legacyData = false
 
   constructor(storePath: string) {
     this.storePathValue = storePath
@@ -1320,7 +1356,7 @@ export class SessionManager {
   /**
    * Find (or create) the internal session mapped to an agent session ID; an
    * existing mapping becomes active, otherwise a fresh session preserves the
-   * previous one's ID in knownAgentSessionIDs.
+   * previous one's ID in pastAgentSessionIDs.
    *
    * @param userKey - the chat's session key.
    * @param agentSID - the agent session ID to map.
@@ -1457,22 +1493,6 @@ export class SessionManager {
   }
 
   /**
-   * Agent session IDs cc-connect tracks (current and past), used to filter
-   * agent.listSessions() output. Null while legacyData disables filtering.
-   *
-   * @returns the tracked ID set, or null while legacy data disables filtering.
-   */
-  knownAgentSessionIDs(): Record<string, true> | null {
-    if (this.legacyData) return null
-    const ids: Record<string, true> = {}
-    for (const s of this.sessions.values()) {
-      if (s.agentSessionID !== '') ids[s.agentSessionID] = true
-      for (const past of s.pastAgentSessionIDs) ids[past] = true
-    }
-    return ids
-  }
-
-  /**
    * Session ID → user key, plus the active session IDs per user key.
    *
    * @returns the session ID → user key map plus the per-user active session IDs.
@@ -1552,18 +1572,6 @@ export class SessionManager {
       snapSessions[id] = serializeSession(s)
     }
 
-    // Auto-clear legacyData once every session has at least one tracked ID.
-    if (this.legacyData) {
-      let allTracked = true
-      for (const s of Object.values(snapSessions)) {
-        if (s.agent_session_id === '' && (s.past_agent_session_ids ?? []).length === 0) {
-          allTracked = false
-          break
-        }
-      }
-      if (allTracked) this.legacyData = false
-    }
-
     const activeSession: Record<string, string> = {}
     for (const [k, v] of this.activeSession) activeSession[k] = v
     const userSessions: Record<string, string[]> = {}
@@ -1574,15 +1582,13 @@ export class SessionManager {
     for (const [k, v] of this.userMeta) userMeta[k] = { ...v }
 
     const snap: SessionSnapshot = {
-      sessions: snapSessions,
-      active_session: activeSession,
-      user_sessions: userSessions,
-      counter: this.counter,
-      session_names: sessionNames,
-      user_meta: userMeta,
-      past_id_tracking: true,
-      legacy_data: this.legacyData,
       version: snapshotVersion,
+      sessions: snapSessions,
+      activeSession,
+      userSessions,
+      counter: this.counter,
+      sessionNames,
+      userMeta,
     }
     const data = JSON.stringify(snap, null, 2) + '\n'
     try {
@@ -1602,35 +1608,29 @@ export class SessionManager {
     } catch {
       return
     }
-    let snap: SessionSnapshot
+    // Every field is optional at the parse boundary: a version-1 file (Go
+    // field names) carries none of the v2 keys, and its session entries use
+    // the legacy field names.
+    let snap: ParsedSnapshot
     try {
-      snap = JSON.parse(data) as SessionSnapshot
+      snap = JSON.parse(data) as ParsedSnapshot
     } catch (error) {
       console.error('session: failed to unmarshal', this.storePathValue, String(error))
       return
     }
+    // Version 1 (Go field names) migrates in memory; the first save rewrites
+    // the file as v2.
+    const v1 = (snap.version ?? 0) < snapshotVersion
     for (const [id, raw] of Object.entries(snap.sessions ?? {})) {
-      this.sessions.set(id, deserializeSession(raw))
+      this.sessions.set(id, v1 ? deserializeSessionV1(raw) : deserializeSession(raw as SerializedSession))
     }
-    for (const [k, v] of Object.entries(snap.active_session ?? {})) this.activeSession.set(k, v)
-    for (const [k, v] of Object.entries(snap.user_sessions ?? {})) this.userSessions.set(k, [...v])
-    for (const [k, v] of Object.entries(snap.session_names ?? {})) this.sessionNames.set(k, v)
-    for (const [k, v] of Object.entries(snap.user_meta ?? {})) this.userMeta.set(k, { userName: v.userName, chatName: v.chatName })
+    for (const [k, v] of Object.entries(snap.activeSession ?? snap.active_session ?? {})) this.activeSession.set(k, v)
+    for (const [k, v] of Object.entries(snap.userSessions ?? snap.user_sessions ?? {})) this.userSessions.set(k, [...v])
+    for (const [k, v] of Object.entries(snap.sessionNames ?? snap.session_names ?? {})) this.sessionNames.set(k, v)
+    for (const [k, v] of Object.entries(snap.userMeta ?? snap.user_meta ?? {})) {
+      this.userMeta.set(k, { userName: v.userName, chatName: v.chatName })
+    }
     this.counter = snap.counter ?? 0
-
-    if ((snap.version ?? 0) >= snapshotVersion) {
-      this.legacyData = snap.legacy_data ?? false
-    } else {
-      this.legacyData = !(snap.past_id_tracking ?? false)
-      if (!this.legacyData) {
-        for (const s of this.sessions.values()) {
-          if (s.agentSessionID === '' && s.pastAgentSessionIDs.length === 0) {
-            this.legacyData = true
-            break
-          }
-        }
-      }
-    }
 
     for (const s of this.sessions.values()) s.stripContinueSessionSentinel()
   }
@@ -1653,20 +1653,4 @@ export class SessionManager {
     }
     if (invalidated > 0) this.saveLocked()
   }
-}
-
-/**
- * Keep only agent sessions tracked by cc-connect, hiding external CLI
- * sessions in the same work_dir. An empty known set returns everything.
- *
- * @param sessions - the agent.listSessions() output to filter.
- * @param known - the tracked agent session ID set, or null to disable filtering.
- * @returns the sessions whose ID is tracked; all of them when known is null or empty.
- */
-export function filterOwnedSessions(
-  sessions: AgentSessionInfo[],
-  known: Record<string, true> | null,
-): AgentSessionInfo[] {
-  if (known === null || Object.keys(known).length === 0) return sessions
-  return sessions.filter(s => s.id in known)
 }
