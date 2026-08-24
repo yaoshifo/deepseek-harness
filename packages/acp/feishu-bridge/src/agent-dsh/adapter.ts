@@ -926,7 +926,7 @@ export class DshAgentAdapter {
   private requireSubagents(): DshSubagentsLike {
     const subagents = this.ctx.get('subagents') as DshSubagentsLike | undefined
     if (subagents === undefined) {
-      throw new Error('dsh adapter: continuable subtasks require the subagents service (the bridge mounts SubagentRuntime)')
+      throw new Error('dsh adapter: continuable subtasks require the subagents service (mounted by dsh-base)')
     }
     return subagents
   }

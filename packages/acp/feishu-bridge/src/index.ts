@@ -12,10 +12,11 @@ import { mkdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SkillRegistry } from '@deepseek-ai/dsh-skill'
+// Type-only: pulls the 'subagent/end' event-map declaration merging the
+// settlement listener types against (the runtime itself is mounted by
+// dsh-base, not here).
+import type { SubagentRunEndInfo } from '@deepseek-ai/dsh-subagent'
 import Schema from '@deepseek-ai/schemastery'
-import SubagentRuntime from '@deepseek-ai/dsh-subagent'
-import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
-import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.js'
 import { FeishuPlatform } from './feishu/platform.js'
@@ -707,15 +708,6 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
  */
 export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   const dataRoot = config.dataDir ?? join(homedir(), '.dsh', 'feishu-bridge')
-  // Native continuable subtasks (de-baggage B4): the bridge mounts the
-  // subagent runtime itself with external settlement delivery — the engine
-  // drives parent turns, so the runtime's own wake would spend a model
-  // request it never scheduled. Self-mounting keeps every profile working
-  // without subagent entries; a profile that ALSO loads dsh-subagent would
-  // collide on the 'subagents' service name (documented in the README).
-  ctx.plugin(SubagentRuntime, { settlementNotice: 'external' })
-  ctx.plugin(SubagentSpawn)
-  ctx.plugin(SubagentFork)
   // One dir history for every project (Go main shares NewDirHistory(cfg.DataDir)
   // across engines so /dir MRU entries land in a single store file).
   const dirHistory = new DirHistory(dataRoot)
@@ -838,7 +830,7 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
  * @returns The event disposer.
  */
 export function registerNativeSettlementListener(ctx: Context, live: ReadonlyArray<{ engine: Engine }>): () => void {
-  return ctx.on('subagent/end', (info: { id: string; lastAssistantMessage?: Array<{ type: string; text?: string }> }) => {
+  return ctx.on('subagent/end', (info: SubagentRunEndInfo) => {
     const output = (info.lastAssistantMessage ?? [])
       .map(block => block.type === 'text' ? (block.text ?? '') : '')
       .join('')
