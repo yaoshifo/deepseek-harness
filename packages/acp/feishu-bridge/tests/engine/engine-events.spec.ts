@@ -20,7 +20,7 @@ import {
   type ControllableAgentSession,
   type StubPlatform,
 } from '../stubs/engine-stubs.js'
-import type { Agent, Platform } from '../../src/core/types.js'
+import type { Agent, Event, Platform } from '../../src/core/types.js'
 
 // Ported from cc-connect core/engine_test.go — M1 scope: core event handling
 // (result/text/thinking basics), message queueing (#13), side-channel dedup,
@@ -427,7 +427,13 @@ describe('processInteractiveEvents error-reasoned turn', () => {
 })
 
 describe('processInteractiveEvents turn token rate', () => {
-  it('closes a tool interval on its matching tool_result so the rate spans post-tool generation', async () => {
+  /** Numeric t/s value of a rendered rate line ('' yields undefined). */
+  const rateOf = (msg: string): number | undefined => {
+    const m = /^(\d+(?:\.\d+)?) t\/s$/.exec(msg)
+    return m === null ? undefined : Number(m[1])
+  }
+
+  async function rateTurn(steps: Array<(push: (e: Event) => void) => void | Promise<void>>): Promise<string> {
     const p = createStubMediaPlatform()
     const { e } = newEngine(createStubAgent(), p)
     const sessionKey = 'test:user1'
@@ -440,17 +446,60 @@ describe('processInteractiveEvents turn token rate', () => {
     e.interactiveStates.set(sessionKey, state)
 
     const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
-    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
-    agentSession.channel.push({ type: 'tool_result', toolResult: 'out', toolID: 'call-1', content: '', done: false })
-    // Generation after the tool: if the interval closed at the tool_result,
-    // this span stays in the thinking time and the rate line renders; if it
-    // stayed open until the result, the thinking time collapses under the
-    // 200ms floor and tokenRateMsg is ''.
-    await new Promise(r => setTimeout(r, 300))
-    agentSession.channel.push({ type: 'result', content: 'answer', outputTokens: 300, inputTokens: 500, done: true })
+    for (const step of steps) await step((ev) => { agentSession.channel.push(ev) })
     await done
+    return e.usage.tokenRateMsg
+  }
 
-    expect(e.usage.tokenRateMsg).not.toBe('')
+  it('derives the rate from streamed generation spans, not turn wall time', async () => {
+    // 600ms of pre-first-delta wait (first-token latency) must not dilute the
+    // rate: the span is only the 300ms delta window. Wall-clock math would
+    // cap the rate at 30/0.9 ≈ 33; span math stays ≥ 60 even with 0.5s of
+    // event-loop lag stretching the span.
+    const msg = await rateTurn([
+      async () => { await new Promise(r => setTimeout(r, 600)) },
+      (push) => { push({ type: 'text_delta', content: 'answering', done: false }) },
+      async () => { await new Promise(r => setTimeout(r, 300)) },
+      (push) => { push({ type: 'result', content: 'answer', outputTokens: 30, inputTokens: 500, done: true }) },
+    ])
+    expect(rateOf(msg) ?? 0).toBeGreaterThanOrEqual(60)
+  })
+
+  it('closes the span at the parent tool call so post-tool quiet time is excluded', async () => {
+    // Span = delta→tool_use (300ms); the 600ms after the tool_result belongs
+    // to no generation span. Wall math would cap the rate at 30/0.9 ≈ 33.
+    const msg = await rateTurn([
+      (push) => { push({ type: 'text_delta', content: 'checking', done: false }) },
+      async () => { await new Promise(r => setTimeout(r, 300)) },
+      (push) => { push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false }) },
+      (push) => { push({ type: 'tool_result', toolResult: 'out', toolID: 'call-1', content: '', done: false }) },
+      async () => { await new Promise(r => setTimeout(r, 600)) },
+      (push) => { push({ type: 'result', content: 'answer', outputTokens: 30, inputTokens: 500, done: true }) },
+    ])
+    expect(rateOf(msg) ?? 0).toBeGreaterThanOrEqual(60)
+  })
+
+  it('does not close the parent span on a delegated subagent child tool call', async () => {
+    // A child tool call interleaves while the parent still generates; closing
+    // the span at it would collapse the span under the 200ms floor and the
+    // rate line would vanish.
+    const msg = await rateTurn([
+      (push) => { push({ type: 'text_delta', content: 'answering', done: false }) },
+      async () => { await new Promise(r => setTimeout(r, 300)) },
+      (push) => { push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'child:call-1', content: '', done: false, fromSubagent: true }) },
+      (push) => { push({ type: 'result', content: 'answer', outputTokens: 300, inputTokens: 500, done: true }) },
+    ])
+    expect(rateOf(msg) ?? 0).toBeGreaterThanOrEqual(60)
+  })
+
+  it('omits the rate line when the provider streamed no deltas', async () => {
+    // No text_delta/thinking_delta: no generation span exists, and turn wall
+    // time must not stand in for it (wall math would render ~1000 t/s).
+    const msg = await rateTurn([
+      async () => { await new Promise(r => setTimeout(r, 300)) },
+      (push) => { push({ type: 'result', content: 'answer', outputTokens: 300, inputTokens: 500, done: true }) },
+    ])
+    expect(msg).toBe('')
   })
 })
 

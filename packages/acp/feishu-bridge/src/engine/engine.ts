@@ -353,8 +353,8 @@ export class InteractiveState {
   toolCount = 0
   /** Whether the current text segment may still turn out silent. */
   silentHold = false
-  /** Completion-footer timing; ask waits push non-model intervals into it. */
-  timing: TurnTiming = { turnStart: 0, agentStart: 0, intervals: [] }
+  /** Completion-footer timing; generation spans feed the token rate. */
+  timing: TurnTiming = { turnStart: 0, agentStart: 0, generationSpans: [] }
   /** Plan .md path written by the agent (promoted on tool success). */
   planFilePath = ''
   /** Plan .md path candidate until its Write succeeds. */
@@ -471,15 +471,21 @@ export class InteractiveState {
 }
 
 /**
- * Per-turn wall-clock anchors feeding the completion footer (Go turnStart /
- * agentStartTime / nonModelIntervals): the token rate's thinking time is the
- * agent span minus tool-execution and permission waits, with parallel tool
- * windows merged once (Go unionDuration).
+ * Per-turn timing anchors feeding the completion footer (Go turnStart /
+ * agentStartTime): the token rate's thinking time is the union of the turn's
+ * streamed generation spans — each opens at the first text/reasoning delta of
+ * a model step and closes at the next parent tool call or the result. Spans
+ * measured off deltas deliberately exclude first-token latency, dispatch
+ * overhead before turn/start, tool execution, and delegated-subagent model
+ * time, which the Go wall-clock-minus-tool-intervals formula charged against
+ * the rate (measured 5-9 t/s displayed vs 90-130 t/s actual decode on
+ * 2026-08-24; see the M7-b divergence note in docs/MIGRATION.md). Providers
+ * that do not stream deltas produce no spans and the rate line is omitted.
  */
 export interface TurnTiming {
   turnStart: number
   agentStart: number
-  intervals: Interval[]
+  generationSpans: Interval[]
 }
 
 /** Whether every workspace field is empty (Go FeishuWorkspaceInfo.IsEmpty). */
@@ -2452,12 +2458,11 @@ export class Engine {
     state.silentHold = false
     let activeToolCalls = 0
     let stallRetries = 0
-    // Completion-footer state.timing (Go turnStart/agentStartTime/nonModelIntervals):
-    // tool executions and permission waits open intervals subtracted from the
-    // agent span when computing the token rate.
-    state.timing = { turnStart: Date.now(), agentStart: Date.now(), intervals: [] }
-    const openToolIntervals = new Map<string, number>()
-    let toolIntervalSeq = 0
+    // Completion-footer state.timing (Go turnStart/agentStartTime): streamed
+    // generation spans accumulate here; the token rate divides the turn's
+    // output tokens by their union (see TurnTiming).
+    state.timing = { turnStart: Date.now(), agentStart: Date.now(), generationSpans: [] }
+    let generationStart: number | undefined
 
     const channel = state.agentSession?.events()
     if (channel === undefined) return
@@ -2743,6 +2748,7 @@ export class Engine {
           case 'text_delta': {
           // Preview-only incremental text; the full block still arrives via
           // EventText and is reconciled at turn end.
+            if (generationStart === undefined) generationStart = Date.now()
             deltaAccum += event.content
             if (couldBeSilentPrefix(deltaAccum)) break
             deltaFlushed = true
@@ -2756,6 +2762,7 @@ export class Engine {
           // EventThinking block clears it and dedups. Not gated on
           // thinkingMessages (Go parity): quiet mode suppresses thinking
           // *messages*, not the streaming 思考中 header.
+            if (generationStart === undefined) generationStart = Date.now()
             thinkingAccum += event.content
             thinkingStreamed = true
             if (sp.canPreview()) await sp.appendThinking(thinkingAccum)
@@ -2781,8 +2788,13 @@ export class Engine {
                 state.pendingPlanFilePath = fp
               }
             }
-            const toolKey = event.toolID !== undefined && event.toolID !== '' ? event.toolID : `#t${++toolIntervalSeq}`
-            openToolIntervals.set(toolKey, Date.now())
+            // The parent's own tool call ends its model step; a delegated
+            // subagent child's call must not close the parent's span — the
+            // parent may keep generating while the child runs.
+            if (event.fromSubagent !== true && generationStart !== undefined) {
+              state.timing.generationSpans.push({ start: generationStart, end: Date.now() })
+              generationStart = undefined
+            }
             // A todo-list tool call replaces the pinned todo section (dsh
             // `todo_write`, Claude-style `TodoWrite`); an unparseable input
             // keeps the last list. A subagent child's todo list stays on the
@@ -2816,12 +2828,6 @@ export class Engine {
               state.pendingPlanFilePath = ''
             }
 
-            const closeKey = event.toolID !== undefined && event.toolID !== '' ? event.toolID : `#t${toolIntervalSeq}`
-            const closedStart = openToolIntervals.get(closeKey)
-            if (closedStart !== undefined) {
-              openToolIntervals.delete(closeKey)
-              state.timing.intervals.push({ start: closedStart, end: Date.now() })
-            }
             if (this.display.toolMessages) {
               const result = (event.toolResult ?? '').trim() || event.content.trim()
               if (result !== '' && p !== undefined) {
@@ -2935,12 +2941,12 @@ export class Engine {
 
 
           case 'result': {
-          // Tool calls still open (no tool_result) close now so their wait
-          // still leaves the thinking-time span (Go closes at result too).
-            for (const start of openToolIntervals.values()) {
-              state.timing.intervals.push({ start, end: Date.now() })
+          // Close the tail generation span so its decode time still counts
+          // (Go closed dangling tool intervals at result).
+            if (generationStart !== undefined) {
+              state.timing.generationSpans.push({ start: generationStart, end: Date.now() })
+              generationStart = undefined
             }
-            openToolIntervals.clear()
             const finished = await this.handleResultEvent(
               state, session, sessions, sessionKey, replyCtx, event,
               pendingSend, sp, cp, barrier)
@@ -3107,10 +3113,11 @@ export class Engine {
       numTurns: event.numTurns ?? 0,
       compactionCount: state.compactionCount,
     })
-    // The rate's thinking time is the agent wall-clock minus tool/permission
-    // waits, with parallel tools merged (Go thinkingTime).
-    const agentDurationMs = Math.max(0, Date.now() - state.timing.agentStart)
-    this.setTokenRate(event.outputTokens ?? 0, Math.max(0, agentDurationMs - unionDuration(state.timing.intervals)))
+    // The rate's thinking time is the union of the turn's streamed generation
+    // spans — a deliberate divergence from Go's wall-clock-minus-tool-intervals
+    // formula, which charged first-token latency and dispatch overhead against
+    // the rate (see TurnTiming).
+    this.setTokenRate(event.outputTokens ?? 0, unionDuration(state.timing.generationSpans))
 
     // Codex-style reply footer rides the delivered reply (Go buildReplyFooter).
     if (!isSilent) {
@@ -3236,7 +3243,7 @@ export class Engine {
     await barrier()
     void cp
     if (sendCompletionNotification && p !== undefined && state.pendingMessages.length === 0) {
-      this.setCompletionDurations(agentDurationMs, Date.now() - state.timing.turnStart)
+      this.setCompletionDurations(Math.max(0, Date.now() - state.timing.agentStart), Date.now() - state.timing.turnStart)
       await this.sendTurnCompletionCard(
         state, p, replyCtx, session, sessionKey,
         this.perChatWorkDir(this.dirOverrideKey(sessionKey)))
@@ -4286,7 +4293,6 @@ export class Engine {
     const decisionP = new Promise<AskDecision>((resolve) => { resolveDecision = resolve })
     const pending: PendingAsk = { request, answers: new Map(), resolve: resolveDecision }
     state.pendingAsk = pending
-    const waitStart = Date.now()
     const settle = (decision: AskDecision): void => {
       if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
       if (state.pendingAsk === pending) state.pendingAsk = undefined
@@ -4351,7 +4357,6 @@ export class Engine {
       abortP.then(() => ({ kind: 'aborted' as const, decision: undefined as AskDecision | undefined })),
     ])
     if (onAbort !== undefined && signal !== undefined) signal.removeEventListener('abort', onAbort)
-    state.timing.intervals.push({ start: waitStart, end: Date.now() })
     const decided: AskDecision = outcome.kind === 'decided' ? outcome.decision : { outcome: 'cancelled' }
     if (outcome.kind !== 'decided') {
       if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)

@@ -129,7 +129,7 @@ export function setCompletionDurations(fields: CompletionUsageFields, agentDurat
 /** Compute and store the per-turn output-token rate (Go setTokenRate).
  * @param fields - Mutable per-turn fields holding the rendered rate line.
  * @param outputTokens - Output tokens produced this turn.
- * @param thinkingTimeMs - Model-generation wall time this turn.
+ * @param thinkingTimeMs - Union of the turn's streamed generation spans; 0 for a provider that streamed no deltas omits the rate line.
  */
 export function setTokenRate(fields: CompletionUsageFields, outputTokens: number, thinkingTimeMs: number): void {
   fields.tokenRateMsg = tokenRateMessage(outputTokens, thinkingTimeMs)
@@ -137,7 +137,7 @@ export function setTokenRate(fields: CompletionUsageFields, outputTokens: number
 
 // ── non-model interval union (Go unionDuration) ────────────────────────────
 
-/** A [start, end] wall-clock window where the model was NOT generating (ms). */
+/** A [start, end] wall-clock window in ms (e.g. one streamed generation span). */
 export interface Interval {
   start: number
   end: number
@@ -219,7 +219,7 @@ const minThinkingForRateMs = 200
 
 /** Formatted output-tokens-per-second string, or '' for a too-small turn (Go tokenRateMessage).
  * @param outputTokens - Output tokens produced this turn; below the minimum sample size the rate is noise.
- * @param thinkingTimeMs - Model-generation wall time this turn.
+ * @param thinkingTimeMs - Union of the turn's streamed generation spans.
  * @returns The formatted rate, or '' when either input is below its minimum.
  */
 export function tokenRateMessage(outputTokens: number, thinkingTimeMs: number): string {
