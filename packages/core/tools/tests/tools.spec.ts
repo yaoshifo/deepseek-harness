@@ -770,7 +770,7 @@ describe('ToolRuntime', () => {
 
     it('folds an answerer note into the rejection reason', async () => {
       const ctx = await approvalSetup()
-      ctx.on('approval/request', () => Promise.resolve({ outcome: 'rejected' as ApprovalOutcome, note: 'use staging' }))
+      ctx.on('approval/request', () => Promise.resolve({ outcome: 'rejected', note: 'use staging' }))
       ctx.on('tools/pre-execute', async (_exec, _next): Promise<PreToolDecision> => ({ kind: 'ask' }))
 
       const result = await ctx.tools.execute({ signal: testToolSignal, callId: CallId('c1'), name: 'echo', arguments: {}, agent: fakeAgent() })
