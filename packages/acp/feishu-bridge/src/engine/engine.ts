@@ -255,6 +255,26 @@ export interface QueuedMessage {
 }
 
 /**
+ * Stop handle for the unsolicited reader parked on an interactive state: the
+ * reader checks `stopped` between wake-ups and `cancelRecv` removes its parked
+ * channel receive so a disarmed reader never steals the next event from the
+ * turn taking the channel over.
+ */
+interface UnsolicitedReaderHandle {
+  stopped: boolean
+  cancelRecv(): void
+}
+
+/**
+ * Read a reader handle's stopped flag through a call: `stopUnsolicitedReader`
+ * flips it from outside this module's control flow (across awaits), which
+ * control-flow narrowing of the property access cannot see.
+ */
+function readerStopped(handle: UnsolicitedReaderHandle): boolean {
+  return handle.stopped
+}
+
+/**
  * A running interactive agent session and its turn state (Go interactiveState,
  * M1 subset). `closing` resolves when cleanup has fully torn the agent down so
  * a new turn for the same key waits instead of concurrently resuming the same
@@ -297,8 +317,6 @@ export class InteractiveState {
   lastActivity = Date.now()
   /** Turns currently in flight on this state. */
   activeTurns = 0
-  /** Whether the orphan-watch receive is armed on the event channel. */
-  orphanWatchArmed = false
   /** Timestamp of the last agent event, for stall confirmation. */
   lastEventAt = 0
   /** Tool calls in flight; a positive count pauses the idle timer. */
@@ -343,6 +361,14 @@ export class InteractiveState {
   progressWriter: CompactProgressWriter | undefined
   /** The delete-mode picker state machine (session-card.ts); undefined when idle. */
   deleteMode: import('./session-card.js').DeleteModeState | undefined
+  /** run_in_background tool calls whose completion turn has not arrived yet. */
+  backgroundTasksPending = 0
+  /** When the unsolicited reader began waiting past idle for pending background tasks. */
+  bgWaitStartedAt = 0
+  /** When the last foreground (user-driven) turn completed; anchors spillover. */
+  lastForegroundCompletionAt = 0
+  /** The unsolicited reader parked on this state; undefined when disarmed. */
+  unsolicitedReader: UnsolicitedReaderHandle | undefined
 
   // ── turn surfaces shared with the ask delegate (B2) ──
   // The event loop owns these per turn, but an askUser running from the
@@ -564,6 +590,30 @@ export function couldBeSilentPrefix(text: string): boolean {
 function isEllipsisOnly(text: string): boolean {
   const t = text.trim()
   return t === '...' || t === '…'
+}
+
+/**
+ * Whether an event represents real turn content the unsolicited reader should
+ * open a turn on, versus stream noise it must drop (Go
+ * isSubstantiveUnsolicitedEvent): a bare empty or silent-marker text frame
+ * (typical stray blip) and preview-only deltas never open one.
+ * @param event - The candidate event.
+ * @returns True for real content: non-silent text, tool calls, results, and errors.
+ */
+function isSubstantiveUnsolicitedEvent(event: Event): boolean {
+  switch (event.type) {
+    case 'text':
+      return event.content !== '' && !isSilentReply(event.content)
+    case 'tool_use':
+    case 'tool_result':
+    case 'result':
+    case 'error':
+      return true
+    default:
+      // Deltas, thinking blocks, compaction, and todo snapshots are handled
+      // by the turn pumps only (Go handles EventCompaction foreground-only).
+      return false
+  }
 }
 
 /**
@@ -952,6 +1002,14 @@ export class Engine {
   adminFrom = ''
   /** /list etc. only show cc-connect-tracked sessions when true. */
   filterExternalSessions = false
+  /** Quiet period after which the unsolicited reader disarms (0 = never). */
+  unsolicitedIdleTimeout = 60_000
+  /** How long a quiet in-flight tool keeps the unsolicited reader alive (0 = unbounded). */
+  unsolicitedToolInFlightTimeout = 30 * 60_000
+  /** How long pending background tasks keep the unsolicited reader alive (0 = no grace). */
+  unsolicitedBackgroundGrace = 30 * 60_000
+  /** Events this soon after a foreground completion relay as plain text (0 = disabled). */
+  unsolicitedSpilloverGrace = 0
   /** Per-session inbound rate limiter; undefined = unlimited (Go e.rateLimiter). */
   private rateLimiter: RateLimiter | undefined
   /** Quick provider commands (/strong → provider name; Go providerShortcuts). */
@@ -1824,6 +1882,25 @@ export class Engine {
   }
 
   /**
+   * Configure the unsolicited reader's four budgets (Go
+   * SetUnsolicitedSpilloverGrace / SetUnsolicitedToolInFlightTimeout /
+   * SetUnsolicitedBackgroundGrace; the idle timeout has no Go setter because
+   * Go hardwires its default). Zero disables a budget.
+   * @param cfg - Timeout fields; each 0 falls back to the engine default.
+   */
+  setUnsolicitedConfig(cfg: {
+    idleTimeoutMs?: number | undefined
+    toolInFlightTimeoutMs?: number | undefined
+    backgroundGraceMs?: number | undefined
+    spilloverGraceMs?: number | undefined
+  }): void {
+    if (cfg.idleTimeoutMs !== undefined) this.unsolicitedIdleTimeout = cfg.idleTimeoutMs
+    if (cfg.toolInFlightTimeoutMs !== undefined) this.unsolicitedToolInFlightTimeout = cfg.toolInFlightTimeoutMs
+    if (cfg.backgroundGraceMs !== undefined) this.unsolicitedBackgroundGrace = cfg.backgroundGraceMs
+    if (cfg.spilloverGraceMs !== undefined) this.unsolicitedSpilloverGrace = cfg.spilloverGraceMs
+  }
+
+  /**
    * Disable predict-next for one session (the 屏蔽 button; Go SetPredictNextDisabled).
    * @param sessionKey - Session to stop predicting for; unknown keys are ignored.
    */
@@ -1995,6 +2072,10 @@ export class Engine {
   async processInteractiveMessageWith(p: Platform, msg: Message, session: Session, interactiveKey = msg.sessionKey): Promise<void> {
     let unlocked = false
     try {
+      // A new user turn takes the event channel back from the unsolicited
+      // reader (Go stopUnsolicitedReader at turn entry): cancel its parked
+      // receive so it cannot steal this turn's first event.
+      this.stopUnsolicitedReader(this.interactiveStates.get(interactiveKey))
       this.i18n.detectAndSet(msg.content)
       const historyContent = msg.originalContent !== '' ? msg.originalContent : msg.content
       session.addHistory('user', historyContent)
@@ -2056,7 +2137,7 @@ export class Engine {
       // A message may have queued between the event loop seeing an empty
       // queue and returning (session still locked) — drain the orphans.
       await this.drainPendingMessages(state, session, this.sessions, interactiveKey)
-      this.armOrphanWatch(session, this.sessions, interactiveKey)
+      this.startUnsolicitedReader(session, this.sessions, interactiveKey)
       unlocked = true
     } catch (error) {
       console.error(`engine: turn processing failed (${msg.sessionKey}): ${String(error)}`)
@@ -2065,69 +2146,234 @@ export class Engine {
     }
   }
 
-  // ── orphan turn pump (engine-woken turns) ────────────────────────────────
+  // ── unsolicited reader (engine-woken turns between user turns) ───────────
 
   /**
-   * Arm the orphan watch after every message-path event pump exited: engine
-   * turns woken without a user message (background job completion, background
+   * Start the unsolicited reader after every event pump exited: engine turns
+   * woken without a user message (background job completion, background
    * subagent report) push events onto a channel nobody reads, so their reply,
    * progress card, and permission bridging were silently dropped and the idle
    * reaper later disposed the parked turn (2026-08-23 oc_9956 incident). The
-   * watch parks one receive on the live channel; the first orphan event takes
-   * the session lock and runs a full pump over it.
+   * reader parks on the live channel for as long as it stays quiet (idle
+   * timeout), keeps itself alive while an ask is parked, a tool call is in
+   * flight, or a background task is pending (each bounded by its grace), and
+   * runs a full pump over the first substantive event it consumes. Idempotent
+   * while a reader is already parked.
    * @param session - Session the orphan turn runs on; tryLock arbitrates
    *   against a message-path pump.
    * @param sessions - Session manager for persistence.
    * @param interactiveKey - Interactive-state slot key.
    */
-  armOrphanWatch(session: Session, sessions: SessionManager, interactiveKey: string): void {
+  startUnsolicitedReader(session: Session, sessions: SessionManager, interactiveKey: string): void {
     const state = this.interactiveStates.get(interactiveKey)
-    if (state === undefined || state.orphanWatchArmed) return
+    if (state === undefined) return
+    if (state.unsolicitedReader !== undefined && !state.unsolicitedReader.stopped) return
     if (state.agentSession === undefined || !state.agentSession.alive()) return
     if (state.isStopped() || state.closing !== undefined) return
-    state.orphanWatchArmed = true
-    const channel = state.agentSession.events()
-    void channel.receive().then((r) => {
-      state.orphanWatchArmed = false
-      if (r.done) return
-      if (!session.tryLock()) {
-        // A message-path turn owns the session; its pump reads this event.
-        channel.push(r.event)
-        return
-      }
-      void this.runOrphanTurnPump(r.event, state, session, sessions, interactiveKey)
-    })
+    const handle: UnsolicitedReaderHandle = { stopped: false, cancelRecv: () => {} }
+    state.unsolicitedReader = handle
+    void this.runUnsolicitedReader(handle, state, session, sessions, interactiveKey)
   }
 
   /**
-   * Run one engine-woken turn's event pump under the session lock taken by the
-   * orphan watch. Mirrors processInteractiveMessageWith's tail: release via
-   * drainPendingMessages, then re-arm the watch for a following orphan turn.
-   * @param firstEvent - Event the watch consumed; the pump starts on it.
-   * @param state - Interactive state the turn runs on.
-   * @param session - Locked session the turn runs under.
-   * @param sessions - Session manager for persistence.
-   * @param interactiveKey - Interactive-state slot key.
+   * Disarm a state's unsolicited reader so the next turn takes sole ownership
+   * of the event channel (Go stopUnsolicitedReader): the parked receive is
+   * cancelled so it cannot steal the new turn's first event.
+   * @param state - State whose reader is disarmed; undefined is a no-op.
    */
-  async runOrphanTurnPump(
-    firstEvent: Event,
+  stopUnsolicitedReader(state: InteractiveState | undefined): void {
+    if (state === undefined) return
+    const handle = state.unsolicitedReader
+    if (handle === undefined) return
+    handle.stopped = true
+    handle.cancelRecv()
+    if (state.unsolicitedReader === handle) state.unsolicitedReader = undefined
+  }
+
+  /**
+   * The unsolicited reader loop (Go runUnsolicitedReader, adapted to the
+   * bridge's pump architecture): consumes agent events between user turns,
+   * relays spillover duplicate frames as plain text, and runs full orphan-turn
+   * pumps for genuine engine-woken turns. Exits on idle (after the keep-alive
+   * graces), channel close, state replacement, or disarm.
+   */
+  private async runUnsolicitedReader(
+    handle: UnsolicitedReaderHandle,
     state: InteractiveState,
     session: Session,
     sessions: SessionManager,
     interactiveKey: string,
   ): Promise<void> {
-    console.info(`engine: orphan turn pump started (${interactiveKey})`)
-    state.beginTurn()
     try {
-      await this.processInteractiveEvents(
-        state, session, sessions, interactiveKey, '', undefined, state.replyCtx, firstEvent)
-      await this.drainPendingMessages(state, session, sessions, interactiveKey)
-    } catch (error) {
-      console.error(`engine: orphan turn failed (${interactiveKey}): ${String(error)}`)
-      session.unlock()
+      for (;;) {
+        if (handle.stopped) return
+        if (this.interactiveStates.get(interactiveKey) !== state) return
+        const agentSession = state.agentSession
+        if (agentSession === undefined || !agentSession.alive()) return
+        const channel = agentSession.events()
+        const arm = channel.receiveArmed()
+        handle.cancelRecv = () => { arm.cancel() }
+        const idleSleep = this.unsolicitedIdleTimeout > 0 ? cancellableSleep(this.unsolicitedIdleTimeout) : undefined
+        type Outcome =
+          | { kind: 'closed' }
+          | { kind: 'idle' }
+          | { kind: 'event'; event: Event }
+          | { kind: 'never' }
+        const outcome: Outcome = await Promise.race([
+          arm.promise.then(r => (r.done ? { kind: 'closed' } as const : { kind: 'event' as const, event: r.event })),
+          idleSleep !== undefined ? idleSleep.promise.then(() => ({ kind: 'idle' } as const)) : neverPromise,
+        ])
+        idleSleep?.cancel()
+        if (readerStopped(handle)) {
+          arm.cancel()
+          return
+        }
+
+        if (outcome.kind === 'closed' || outcome.kind === 'never') return
+
+        if (outcome.kind === 'idle') {
+          arm.cancel()
+          // A parked ask is the user thinking, not silence (Go hasPending).
+          if (state.pendingAsk !== undefined) continue
+          // A tool in flight emits no events while running; keep waiting up to
+          // the tool-in-flight budget so its result is not abandoned, unless
+          // the tool is genuinely hung.
+          if (state.activeToolCalls > 0 && this.unsolicitedToolInFlightTimeout > 0
+            && !this.stallConfirmed(state, Date.now(), this.unsolicitedToolInFlightTimeout)) continue
+          // A pending background task completes as a later engine-woken turn;
+          // keep the reader alive up to the background grace so the completion
+          // is consumed, then give up on a task that never completes.
+          if (state.backgroundTasksPending > 0 && this.unsolicitedBackgroundGrace > 0) {
+            if (state.bgWaitStartedAt === 0) state.bgWaitStartedAt = Date.now()
+            if (Date.now() - state.bgWaitStartedAt < this.unsolicitedBackgroundGrace) continue
+            console.info(`engine: unsolicited reader background-task grace exhausted (${interactiveKey}: ${state.backgroundTasksPending} pending)`)
+            state.backgroundTasksPending = 0
+            state.bgWaitStartedAt = 0
+          }
+          // Exit and mark resync: any event buffered after this point is
+          // drained by the next foreground turn instead of leaking into it.
+          state.eventsNeedResync = true
+          return
+        }
+
+        const event = outcome.event
+        state.lastEventAt = Date.now()
+        if (!isSubstantiveUnsolicitedEvent(event)) continue
+
+        // Spillover: duplicate frames right after a foreground turn's ✅
+        // completion are relayed as plain text — never a second streaming and
+        // completion card (Go unsolicitedSpilloverGrace).
+        const fgAt = state.lastForegroundCompletionAt
+        if (this.unsolicitedSpilloverGrace > 0 && fgAt > 0 && Date.now() - fgAt < this.unsolicitedSpilloverGrace) {
+          if (await this.relaySpilloverTurn(handle, state, session, sessions, event)) return
+          continue
+        }
+
+        if (!session.tryLock()) {
+          // A message-path turn owns the session; its pump reads this event.
+          channel.push(event)
+          handle.stopped = true
+          if (state.unsolicitedReader === handle) state.unsolicitedReader = undefined
+          return
+        }
+        console.info(`engine: orphan turn pump started (${interactiveKey})`)
+        state.beginTurn()
+        try {
+          await this.processInteractiveEvents(
+            state, session, sessions, interactiveKey, '', undefined, state.replyCtx, event, true)
+          await this.drainPendingMessages(state, session, sessions, interactiveKey)
+        } catch (error) {
+          console.error(`engine: orphan turn failed (${interactiveKey}): ${String(error)}`)
+          session.unlock()
+        } finally {
+          state.endTurn()
+        }
+        // Loop: re-arm for the next engine-woken turn.
+      }
     } finally {
-      state.endTurn()
-      this.armOrphanWatch(session, sessions, interactiveKey)
+      if (state.unsolicitedReader === handle) state.unsolicitedReader = undefined
+    }
+  }
+
+  /**
+   * Relay one spillover turn as plain text: consume events until the result,
+   * forwarding the final text without any card (Go's reader spillover
+   * branches). Tool calls are counted only; an error relays its message and
+   * ends the reader.
+   * @returns True when the reader must exit (error or channel close).
+   */
+  private async relaySpilloverTurn(
+    handle: UnsolicitedReaderHandle,
+    state: InteractiveState,
+    session: Session,
+    sessions: SessionManager,
+    firstEvent: Event,
+  ): Promise<boolean> {
+    const channel = state.agentSession?.events()
+    if (channel === undefined) return true
+    const p = state.platform
+    const parts: string[] = []
+    let pending: Event | undefined = firstEvent
+    for (;;) {
+      if (pending === undefined) {
+        const arm = channel.receiveArmed()
+        handle.cancelRecv = () => { arm.cancel() }
+        const idleSleep = this.unsolicitedIdleTimeout > 0 ? cancellableSleep(this.unsolicitedIdleTimeout) : undefined
+        const raced = await Promise.race([
+          arm.promise.then(r => (r.done ? { kind: 'closed' as const } : { kind: 'event' as const, event: r.event })),
+          idleSleep !== undefined ? idleSleep.promise.then(() => ({ kind: 'idle' } as const)) : neverPromise,
+        ])
+        idleSleep?.cancel()
+        if (readerStopped(handle)) {
+          arm.cancel()
+          return true
+        }
+        if (raced.kind === 'idle') {
+          // Quiet mid-relay: abandon the partial turn (Go retires on idle).
+          arm.cancel()
+          return false
+        }
+        if (raced.kind === 'closed' || raced.kind === 'never') return true
+        pending = raced.event
+      }
+      const event = pending
+      pending = undefined
+      state.lastEventAt = Date.now()
+      switch (event.type) {
+        case 'text': {
+          if (event.content !== '' && !isSilentReply(event.content)) parts.push(event.content)
+          break
+        }
+        case 'tool_use': {
+          state.activeToolCalls++
+          break
+        }
+        case 'tool_result': {
+          state.activeToolCalls = Math.max(0, state.activeToolCalls - 1)
+          break
+        }
+        case 'result': {
+          let full = event.content
+          if (parts.length > 0 && (full === '' || isSilentReply(full))) full = parts.join('')
+          if (full !== '' && !isSilentReply(full) && p !== undefined) {
+            for (const chunk of splitMessage(full, MaxPlatformMessageLen)) {
+              await this.send(p, state.replyCtx, chunk)
+            }
+          }
+          session.addHistory('assistant', full)
+          if (event.content.trim() !== '') session.setLastResult(event.content.trim())
+          sessions.save()
+          return false
+        }
+        case 'error': {
+          const text = event.errorText ?? event.error?.message ?? 'agent error'
+          if (p !== undefined) await this.send(p, state.replyCtx, this.i18n.tf(Msg.Error, text))
+          state.eventsNeedResync = true
+          return true
+        }
+        default:
+          break
+      }
     }
   }
 
@@ -2444,8 +2690,11 @@ export class Engine {
    * @param _msgID - Message ID retained for Go parity; unused.
    * @param sendDone - Settled prompt-send promise; an error value fails the turn.
    * @param replyCtx - Platform reply context for outgoing messages.
-   * @param firstEvent - Event the orphan watch already consumed off the
+   * @param firstEvent - Event the unsolicited reader already consumed off the
    *   channel; the loop processes it before arming its own receive.
+   * @param background - True when the reader woke this turn with no user
+   *   message: the placeholder distinguishes background-task completions and
+   *   the result consumes a pending background-task slot.
    */
   async processInteractiveEvents(
     state: InteractiveState,
@@ -2456,6 +2705,7 @@ export class Engine {
     sendDone: Promise<unknown> | undefined,
     replyCtx: unknown,
     firstEvent?: Event,
+    background = false,
   ): Promise<void> {
     // Turn surfaces live on the state (see InteractiveState): the ask
     // delegate running from the adapter's answerer shares them with the
@@ -2466,6 +2716,7 @@ export class Engine {
     state.silentHold = false
     let activeToolCalls = 0
     let stallRetries = 0
+    let turnStartedBg = false
     // Completion-footer state.timing (Go turnStart/agentStartTime/nonModelIntervals):
     // tool executions and permission waits open intervals subtracted from the
     // agent span when computing the token rate.
@@ -2489,9 +2740,15 @@ export class Engine {
     state.progressWriter = cp
     this.bindActivePreview(sp, sessionKey)
     // Placeholder card so the user sees visual feedback (with push) before
-    // the first agent event arrives.
+    // the first agent event arrives. A reader-woken turn with pending
+    // background tasks is likely a completion: distinct header (Go
+    // placeholderText), with the pending count riding the hint line.
     if (this.display.toolProgress && sp.canPreview()) {
-      void sp.showPlaceholder(this.i18n.t(Msg.Processing))
+      void sp.showPlaceholder(this.i18n.t(
+        background && state.backgroundTasksPending > 0 ? Msg.BgTaskProcessing : Msg.Processing))
+      if (background && state.backgroundTasksPending > 0) {
+        void sp.setBackgroundHint(this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending))
+      }
     }
     let thinkingStreamed = false
     let thinkingAccum = ''
@@ -2545,12 +2802,18 @@ export class Engine {
     try {
       for (;;) {
       // Idle timer: re-armed per iteration (Go reset-after-event); not armed
-      // while a tool call is in flight (Go stops it on EventToolUse) or an
-      // ask is parked (the user deciding is not a stall — the old loop parked
-      // on the ask's resolution with the timer cancelled).
-        const idleMs = activeToolCalls === 0 && state.pendingAsk === undefined
-          ? state.idleTimeout(this.eventIdleTimeout)
-          : 0
+      // while an ask is parked (the user deciding is not a stall — the old
+      // loop parked on the ask's resolution with the timer cancelled) or a
+      // tool call is in flight on a user-driven turn (Go stops it on
+      // EventToolUse). A reader-woken background turn arms the tool-in-flight
+      // budget instead of disarming entirely, so a hung background tool
+      // cannot pin the processing card forever (Go
+      // unsolicitedToolInFlightTimeout).
+        const idleMs = state.pendingAsk !== undefined
+          ? 0
+          : activeToolCalls > 0
+            ? (background ? this.unsolicitedToolInFlightTimeout : 0)
+            : state.idleTimeout(this.eventIdleTimeout)
         const idleSleep = idleMs > 0 ? cancellableSleep(idleMs) : undefined
         const recvOutcome: Promise<LoopOutcome> = recvP.then(r =>
           r.done ? { kind: 'closed' } : { kind: 'event', event: r.event })
@@ -2603,8 +2866,10 @@ export class Engine {
 
         if (outcome.kind === 'idle') {
         // Re-verify against the last event arrival: a fire right after an
-        // event resolved is stale — keep waiting (Go stallConfirmed).
-          if (!this.stallConfirmed(state, Date.now(), state.idleTimeout(this.eventIdleTimeout))) continue
+        // event resolved is stale — keep waiting (Go stallConfirmed). The
+        // window is the armed budget (turn idle, or tool-in-flight on a
+        // background turn).
+          if (idleMs <= 0 || !this.stallConfirmed(state, Date.now(), idleMs)) continue
 
           stallRetries++
           if (stallRetries <= this.stallMaxRetries) {
@@ -2780,6 +3045,17 @@ export class Engine {
             state.toolCount++
             activeToolCalls++
             state.activeToolCalls = activeToolCalls
+            if (event.toolBackground === true) {
+              // A run_in_background call returns immediately; its completion
+              // arrives as a later engine-woken turn. Count it so the reader
+              // stays alive for that turn and the card shows the running count
+              // (Go EventToolUse ToolBackground).
+              state.backgroundTasksPending++
+              turnStartedBg = true
+              if (this.display.toolProgress && sp.canPreview()) {
+                await sp.setBackgroundHint(this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending))
+              }
+            }
             // Clear streaming-thinking state when a tool starts — the agent is
             // no longer thinking once it invokes a tool (Go safety net for
             // agents that only emit thinking_delta and never a full block).
@@ -2957,7 +3233,7 @@ export class Engine {
             openToolIntervals.clear()
             const finished = await this.handleResultEvent(
               state, session, sessions, sessionKey, replyCtx, event,
-              pendingSend, sp, cp, barrier)
+              pendingSend, sp, cp, barrier, background, turnStartedBg)
             if (finished.kind === 'queued') {
             // A queued message takes over this loop as a fresh turn (Go
             // in-loop drain): reset per-turn state and continue. The watchdog
@@ -2973,6 +3249,7 @@ export class Engine {
               state.silentHold = false
               activeToolCalls = 0
               state.activeToolCalls = 0
+              turnStartedBg = false
               thinkingStreamed = false
               thinkingAccum = ''
               deltaAccum = ''
@@ -3048,6 +3325,8 @@ export class Engine {
     sp: StreamPreview,
     cp: CompactProgressWriter,
     barrier: () => Promise<void>,
+    background = false,
+    turnStartedBg = false,
   ): Promise<{ kind: 'done' } | { kind: 'queued'; sendDone: Promise<unknown> }> {
     // Persist via the live session id (event.sessionID may be empty).
     if (state.agentSession !== undefined) {
@@ -3059,6 +3338,23 @@ export class Engine {
             sessions.setSessionName(currentID, pendingName)
           }
         }
+      }
+    }
+    // A user-driven turn's completion anchors the spillover window: duplicate
+    // frames the model emits right after it relay as plain text, never as a
+    // second completion card (Go lastForegroundCompletionAt).
+    if (!background) state.lastForegroundCompletionAt = Date.now()
+    // A completed background turn consumes one pending run_in_background slot
+    // — but not the turn that started the task (its completion comes later),
+    // and the count clears the hint when it reaches zero (Go reader
+    // EventResult; the clear is the bridge's fix for the count never dropping).
+    if (background && !turnStartedBg && state.backgroundTasksPending > 0) {
+      state.backgroundTasksPending--
+      state.bgWaitStartedAt = 0
+      if (this.display.toolProgress && sp.canPreview()) {
+        await sp.setBackgroundHint(state.backgroundTasksPending > 0
+          ? this.i18n.tf(Msg.BgTaskRunning, state.backgroundTasksPending)
+          : '')
       }
     }
     state.eventsNeedResync = false
@@ -3430,7 +3726,7 @@ export class Engine {
       const queued = state.pendingMessages.shift()
       if (queued === undefined) {
         session.unlock()
-        this.armOrphanWatch(session, sessions, sessionKey)
+        this.startUnsolicitedReader(session, sessions, sessionKey)
         return true
       }
       state.inflightMessage = queued
@@ -3555,6 +3851,8 @@ export class Engine {
       if (agentSession !== undefined) {
         state.closing = new Promise<void>((resolve) => { closingResolve = resolve })
       }
+      // The reader must not consume off a channel whose agent is closing.
+      this.stopUnsolicitedReader(state)
       // Abort in-flight renders and reap recorded reply-HTML temp dirs (Go
       // cancelRenders + the renderedReplyHTML drain in cleanupInteractiveState).
       cancelRenders(state)
@@ -3615,6 +3913,7 @@ export class Engine {
 
     state.userStopped = true
     state.markStopped()
+    this.stopUnsolicitedReader(state)
     // Finalize the active preview card here, not only in the event loop's
     // stop arm: a loop parked mid-handler when the stop lands exits via
     // channel-close and skips that arm, which froze the card in its Running
@@ -3671,6 +3970,10 @@ export class Engine {
       // Skip sessions waiting for a permission response — the user may take
       // a long time to decide, and reaping would lose the pending prompt.
       if (state.pendingAsk !== undefined) continue
+      // Skip sessions with pending background tasks: the unsolicited reader
+      // is holding the channel open for the completion turn (bounded by the
+      // background grace, which zeroes the count when it exhausts).
+      if (state.backgroundTasksPending > 0) continue
       if (state.lastActivity !== 0 && state.lastActivity < cutoff) targets.push([key, state])
     }
     for (const [key, state] of targets) {

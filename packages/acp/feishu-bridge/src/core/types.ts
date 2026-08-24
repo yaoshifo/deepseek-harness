@@ -247,6 +247,12 @@ export interface Event {
   todos?: TodoItem[]
   /** True when the event projects a delegated subagent child session's activity. */
   fromSubagent?: boolean
+  /**
+   * True for a `tool_use` whose arguments set `run_in_background` (e.g. a
+   * long Bash deploy): the call returns immediately and the task's real
+   * completion arrives as a later engine-woken turn.
+   */
+  toolBackground?: boolean
 }
 
 /**

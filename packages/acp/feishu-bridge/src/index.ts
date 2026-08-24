@@ -183,6 +183,18 @@ export interface AutoCompressConfig {
   minGapMins?: number
 }
 
+/** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
+export interface UnsolicitedConfig {
+  /** Quiet seconds before the reader disarms (default 60; 0 = never). */
+  idleSec?: number
+  /** Quiet seconds an in-flight tool on a background turn keeps the reader alive (default 1800). */
+  toolInFlightSec?: number
+  /** Seconds pending background tasks keep the reader alive (default 1800). */
+  backgroundGraceSec?: number
+  /** Seconds after a foreground completion where duplicate frames relay as plain text (default 30; 0 = disabled). */
+  spilloverSec?: number
+}
+
 /** The bot's default Feishu Wiki/Drive location (Go FeishuWorkspaceConfig, #18). */
 export interface FeishuWorkspaceConfig {
   /** Wiki space id surfaced as CC_FEISHU_WIKI_SPACE_ID. */
@@ -226,6 +238,8 @@ export interface ProjectConfig {
   resetOnIdleMins?: number
   /** /list etc. only show engine-tracked sessions (Go filter_external_sessions). */
   filterExternalSessions?: boolean
+  /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
+  unsolicited?: UnsolicitedConfig
   /** Multi-role chatroom tuning (Go [chatroom]). */
   chatroom?: ChatroomConfig
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
@@ -548,6 +562,12 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     providerShortcuts: Schema.dict(Schema.string()).description('Quick provider commands: /strong → provider name (Go provider_shortcuts)'),
     resetOnIdleMins: Schema.natural().description('Rotate the chat to a fresh session after N idle minutes; 0 disables'),
     filterExternalSessions: Schema.boolean().description('/list etc. only show engine-tracked sessions'),
+    unsolicited: Schema.object({
+      idleSec: Schema.natural().description('Quiet seconds before the unsolicited reader disarms (default 60; 0 = never)'),
+      toolInFlightSec: Schema.natural().description('Quiet seconds a background turn\'s in-flight tool keeps the reader alive (default 1800)'),
+      backgroundGraceSec: Schema.natural().description('Seconds pending background tasks keep the reader alive (default 1800)'),
+      spilloverSec: Schema.natural().description('Seconds after a foreground completion where duplicate frames relay as plain text (default 30; 0 = disabled)'),
+    }).description('Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config)'),
     chatroom: Schema.object({
       rolesDir: Schema.string().description('Root directory holding one persona subdirectory per role'),
       maxRoles: Schema.natural().description('Cap on role agents per chatroom (default 5)'),
@@ -1194,6 +1214,15 @@ function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
     engine.setAutoCompressConfig(true, a.maxTokens ?? 0, (a.minGapMins ?? 0) * 60_000)
   }
   engine.setFilterExternalSessions(project.filterExternalSessions === true)
+  // Spillover grace defaults ON at the assembly layer like Go's wire.go (the
+  // engine-level default is 0 so unit tests construct it disabled).
+  const u = project.unsolicited
+  engine.setUnsolicitedConfig({
+    idleTimeoutMs: u?.idleSec !== undefined ? u.idleSec * 1000 : undefined,
+    toolInFlightTimeoutMs: u?.toolInFlightSec !== undefined ? u.toolInFlightSec * 1000 : undefined,
+    backgroundGraceMs: u?.backgroundGraceSec !== undefined ? u.backgroundGraceSec * 1000 : undefined,
+    spilloverGraceMs: u?.spilloverSec !== undefined ? u.spilloverSec * 1000 : 30_000,
+  })
 }
 
 /** Expand a leading ~ in a config path so the config stays portable across machines (Go expandHome). */
