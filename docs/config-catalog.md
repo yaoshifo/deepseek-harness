@@ -726,8 +726,8 @@ export interface ProjectConfig {
   providerShortcuts?: Record<string, string>
   /** Rotate the chat to a fresh session after N idle minutes (Go reset_on_idle_mins). */
   resetOnIdleMins?: number
-  /** /list etc. only show engine-tracked sessions (Go filter_external_sessions). */
-  filterExternalSessions?: boolean
+  /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
+  unsolicited?: UnsolicitedConfig
   /** Multi-role chatroom tuning (Go [chatroom]). */
   chatroom?: ChatroomConfig
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
@@ -811,6 +811,8 @@ export interface SubtaskConfig {
 export interface SpawnConfig {
   /** Default worktree isolation: 'auto' | 'on' | 'off'. */
   worktree?: 'auto' | 'on' | 'off'
+  /** Override for /done merged auto-removal's containment target (e.g. 'dev'); unset uses each worktree's recorded base branch. */
+  integrateBranch?: string
   /** RAM% above which a warning card is sent; 0 disables the tier (default 80). */
   memoryWarnPct?: number
   /** RAM% above which spawn is declined; 0 disables the tier (default 90). */
@@ -885,6 +887,8 @@ export interface FeishuAppConfig {
   appId: string
   /** Feishu open-platform app secret. */
   appSecret: string
+  /** Session-key prefix and platform name; unique per project in multi-bot deployments (Go tag). */
+  tag?: string
   /** Comma-separated user IDs allowed to talk to this bot; '*' or '' = everyone (Go allow_from). */
   allowFrom?: string
   /** Only answer group chats, drop p2p messages (Go group_only). */
@@ -1007,6 +1011,18 @@ export interface AutoCompressConfig {
   minGapMins?: number
 }
 
+/** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
+export interface UnsolicitedConfig {
+  /** Quiet seconds before the reader disarms (default 60; 0 = never). */
+  idleSec?: number
+  /** Quiet seconds an in-flight tool on a background turn keeps the reader alive (default 1800). */
+  toolInFlightSec?: number
+  /** Seconds pending background tasks keep the reader alive (default 1800). */
+  backgroundGraceSec?: number
+  /** Seconds after a foreground completion where duplicate frames relay as plain text (default 30; 0 = disabled). */
+  spilloverSec?: number
+}
+
 /**
  * Monitor-group mode (#53, Go [projects.monitor]): the bot observes the
  * listed chats, triages each message (rules first, then an LLM side query
@@ -1083,7 +1099,7 @@ export interface MonitorRuleConfig {
 }
 ```
 
-Source: [`packages/acp/feishu-bridge/src/index.ts:429`](../packages/acp/feishu-bridge/src/index.ts)
+Source: [`packages/acp/feishu-bridge/src/index.ts:451`](../packages/acp/feishu-bridge/src/index.ts)
 
 <a id="deepseek-aidsh-file-reference-local"></a>
 
@@ -2615,6 +2631,38 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 
 Source: [`packages/storage/storage-sqlite/src/index.ts:24`](../packages/storage/storage-sqlite/src/index.ts)
 
+<a id="deepseek-aidsh-subagent"></a>
+
+## `@deepseek-ai/dsh-subagent`
+
+```ts config-catalog
+/**
+ * Loader-level configuration for the subagent runtime. Direct
+ * `ctx.plugin(SubagentRuntime, options)` callers may pass the same optional
+ * fields; unresolved fields keep their defaults.
+ */
+export interface SubagentRuntimeConfig {
+  /**
+   * Who delivers continuable settlement notices to the durable parent: the
+   * runtime's own inbox wake (`'inbox'`, default), or the deployment's
+   * `subagent/end` listener (`'external'`).
+   */
+  settlementNotice?: SubagentSettlementDelivery
+}
+
+/**
+ * Who delivers a continuable child's settlement notice to its durable parent.
+ * `'inbox'` (default) keeps the manager's own wake/inject delivery; `'external'`
+ * suppresses it entirely, leaving settlement observable only through the
+ * `subagent/end` event and the child's own Session — for deployments whose
+ * engine owns parent turn scheduling and would otherwise spend a model request
+ * on a wake it drives itself.
+ */
+export type SubagentSettlementDelivery = 'inbox' | 'external'
+```
+
+Source: [`packages/subagent/subagent/src/index.ts:181`](../packages/subagent/subagent/src/index.ts)
+
 <a id="deepseek-aidsh-subagent-acp"></a>
 
 ## `@deepseek-ai/dsh-subagent-acp`
@@ -2666,7 +2714,7 @@ export interface Config {
 export type PermissionPolicy = 'allow' | 'reject'
 ```
 
-Source: [`packages/subagent/subagent-acp/src/index.ts:27`](../packages/subagent/subagent-acp/src/index.ts)
+Source: [`packages/subagent/subagent-acp/src/index.ts:28`](../packages/subagent/subagent-acp/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-claude-code"></a>
 
@@ -3285,6 +3333,13 @@ export interface Config {
    */
   backgroundMode?: 'one-shot' | 'continuable'
   /**
+   * Expose the model-facing `cwd` parameter (default false): an absolute path
+   * overriding the parent's working directory for the child session. Requires
+   * the provider's `cwdOverride` capability; disabled instances reject a
+   * forced cwd at execution time (workspace isolation stays the default).
+   */
+  allowCwdOverride?: boolean
+  /**
    * Agent options applied to every child; omitted fields use child-loop defaults.
    */
   agentOptions?: AgentOptions
@@ -3757,7 +3812,6 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-session-stats` — requires `sessionProjections` ([`packages/session/session-stats/src/index.ts`](../packages/session/session-stats/src/index.ts))
 - `@deepseek-ai/dsh-skill-badge` — requires `skills` ([`packages/skill/skill-badge/src/index.ts`](../packages/skill/skill-badge/src/index.ts))
 - `@deepseek-ai/dsh-storage` ([`packages/storage/storage/src/index.ts`](../packages/storage/storage/src/index.ts))
-- `@deepseek-ai/dsh-subagent` ([`packages/subagent/subagent/src/index.ts`](../packages/subagent/subagent/src/index.ts))
 - `@deepseek-ai/dsh-subprocess-local` ([`packages/subprocess/subprocess-local/src/index.ts`](../packages/subprocess/subprocess-local/src/index.ts))
 - `@deepseek-ai/dsh-terminal` ([`packages/terminal/terminal/src/index.ts`](../packages/terminal/terminal/src/index.ts))
 - `@deepseek-ai/dsh-tool-ask-user` — requires `tools` · `userQuestions` ([`packages/interaction/tool-ask-user/src/index.ts`](../packages/interaction/tool-ask-user/src/index.ts))
