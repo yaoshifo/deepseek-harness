@@ -2502,6 +2502,11 @@ export class Engine {
 
     const agent = this.agent
     const startOptions = this.buildSessionStartOptions(envKey, session)
+    // Cron new-per-run slots key their interactive state as
+    // `<sessionKey>#cron:<side>`; the ask surfaces must render and route
+    // under that slot, not the bare session key (a bare lookup finds no
+    // state and answers unattended).
+    if (envKey !== sessionKey) startOptions.interactiveSlotKey = sessionKey
 
     const startSessionID = session.getAgentSessionID()
 
@@ -4566,6 +4571,10 @@ export class Engine {
   async askUser(sessionKey: string, request: AskRequest, signal?: AbortSignal): Promise<AskDecision> {
     const state = this.interactiveStates.get(sessionKey)
     if (state === undefined) {
+      // Relay and background shells legitimately land here; any other caller
+      // means the ask routed under the wrong key and the asker silently got
+      // an unattended answer (2026-08-26 cron-fbe6d268 incident).
+      console.warn(`engine: ask on session without interactive state (${sessionKey}), answering unattended`)
       return this.unattendedAskDecision(request)
     }
     // Chatroom role-pick: the moderator's plan review is a formality (priming
@@ -4577,6 +4586,7 @@ export class Engine {
     }
     const p = state.platform ?? this.platforms[0]
     if (p === undefined) {
+      console.warn(`engine: ask on session without a platform (${sessionKey}), answering unattended`)
       return this.unattendedAskDecision(request)
     }
     const replyCtx = state.replyCtx

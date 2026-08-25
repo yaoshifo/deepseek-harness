@@ -662,6 +662,32 @@ describe('DshAgentAdapter userQuestions provider', () => {
     expect(providers).toHaveLength(1)
   })
 
+  it('a cron slot key routes questions under the interactive slot while sessionKey stays bare', async () => {
+    const { adapter, providers } = createUserQuestionsHarness()
+    const delegate = recordingDelegate()
+    adapter.setAskDelegate(delegate)
+    const session = (await adapter.startSession('', {
+      sessionKey: 'riskai:oc_1:ou_1',
+      interactiveSlotKey: 'riskai:oc_1:ou_1#cron:s20',
+    })) as DshAgentSession
+
+    expect(session.sessionKey()).toBe('riskai:oc_1:ou_1')
+    expect(session.askSlotKey()).toBe('riskai:oc_1:ou_1#cron:s20')
+
+    const askPromise = providers[0]!.ask({
+      questions: [{ id: 'followup', question: 'Process findings?', options: [{ label: 'Yes' }] }],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+
+    // The card must render and route under the slot key: the bare key has
+    // no interactive state during a cron new-per-run turn, and an ask
+    // routed there silently answers empty (2026-08-26 cron-fbe6d268).
+    expect(delegate.calls[0]?.sessionKey).toBe('riskai:oc_1:ou_1#cron:s20')
+    delegate.settle({ answers: [{ id: 'followup', selected: ['Yes'] }] })
+    await askPromise
+  })
+
   it('plan-review delegates the heading and plan for the plan card', async () => {
     const { session, ask, delegate } = await startedProvider()
 
@@ -975,6 +1001,30 @@ describe('DshAgentAdapter approval answerer', () => {
       toolName: 'Bash',
     })
     await expect(outcome).resolves.toBe('unavailable')
+  })
+
+  it('a cron slot session delegates its permission ask under the slot key', async () => {
+    const delegate = recordingDelegate()
+    const h = createHarness()
+    const adapter = newAdapter(h)
+    adapter.setAskDelegate(delegate)
+    const session = (await adapter.startSession('', {
+      sessionKey: 'riskai:oc_1:ou_1',
+      interactiveSlotKey: 'riskai:oc_1:ou_1#cron:s20',
+    })) as DshAgentSession
+    const listener = h.listeners.get('approval/request')?.[0] as unknown as (req: Record<string, unknown>) => Promise<unknown>
+
+    const outcome = listener({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-slot',
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+
+    expect(delegate.calls[0]?.sessionKey).toBe('riskai:oc_1:ou_1#cron:s20')
+    expect(delegate.calls[0]?.request.kind).toBe('permission')
+    delegate.settle({ outcome: 'allowed-once' })
+    await expect(outcome).resolves.toBe('allowed-once')
   })
 })
 

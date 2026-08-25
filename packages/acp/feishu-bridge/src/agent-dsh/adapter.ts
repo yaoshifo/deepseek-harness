@@ -682,7 +682,7 @@ export class DshAgentAdapter {
       // channel and still surface as cards (#15).
       if (target.bypassPermissions) return 'allowed-once'
       if (this.askDelegate === undefined) return 'unavailable'
-      const decision = await this.askDelegate.askUser(target.sessionKey(), {
+      const decision = await this.askDelegate.askUser(target.askSlotKey(), {
         kind: 'permission',
         toolName: r.toolName ?? '',
         // The asker's bounded UI preview (ApprovalRequest.toolInput) wins;
@@ -729,6 +729,7 @@ export class DshAgentAdapter {
           const result = await adapter.handleUserQuestion(request)
           if (result !== undefined) return result
         }
+        console.warn(`agent-dsh: user question matched no live session (${request.agent?.session?.id ?? ''}), answering empty`)
         return { answers: [] }
       },
     }))
@@ -756,8 +757,11 @@ export class DshAgentAdapter {
     if (review !== undefined) {
       return this.answerPlanReview(target, review, request.signal)
     }
-    if (this.askDelegate === undefined) return { answers: [] }
-    const decision = await this.askDelegate.askUser(target.sessionKey(), {
+    if (this.askDelegate === undefined) {
+      console.warn(`agent-dsh: user question without ask delegate (${sessionID}), answering empty`)
+      return { answers: [] }
+    }
+    const decision = await this.askDelegate.askUser(target.askSlotKey(), {
       kind: 'questions',
       questions: qs.map(q => ({
         id: q.id ?? q.question,
@@ -797,9 +801,10 @@ export class DshAgentAdapter {
     const newline = plan.indexOf('\n')
     if (newline > 0) heading = plan.slice(0, newline).trim()
     if (this.askDelegate === undefined) {
+      console.warn(`agent-dsh: plan review without ask delegate (${target.sessionKey()}), declining`)
       return { answers: [{ id: item.id ?? item.question, selected: [], custom: '' }] }
     }
-    const decision = await this.askDelegate.askUser(target.sessionKey(), {
+    const decision = await this.askDelegate.askUser(target.askSlotKey(), {
       kind: 'plan-review',
       heading,
       plan,
@@ -1493,7 +1498,10 @@ export class DshAgentAdapter {
       })
     }
     const bypass = sessionBypassesPermissions(options)
-    const session = new DshAgentSession(key, handle, this.workDir, this.ctx, bypass)
+    const session = new DshAgentSession(
+      key, handle, this.workDir, this.ctx, bypass,
+      options?.interactiveSlotKey ?? '',
+    )
     // Seed the recent-turn window from the log the agent carries (empty for a
     // fresh session, the resumed/forked history otherwise) and drop any cold
     // fold of this id — the live window is authoritative from here on.
@@ -1766,13 +1774,23 @@ export class DshAgentSession implements AgentSession {
   private recentTurnsWindow: HistoryEntry[] = []
   /** Assistant texts of the in-flight turn, joined into one window entry at turn/end. */
   private turnWindowParts: string[] = []
+  /** Interactive-state slot key when it differs from `key` (cron `#cron:` slots); '' = same as `key`. */
+  private readonly interactiveSlotKey: string
 
-  constructor(key: string, handle: DshAgentHandleLike, workDir = '', ctx?: DshContextLike, bypassPermissions = false) {
+  constructor(
+    key: string,
+    handle: DshAgentHandleLike,
+    workDir = '',
+    ctx?: DshContextLike,
+    bypassPermissions = false,
+    interactiveSlotKey = '',
+  ) {
     this.key = key
     this.handle = handle
     this.workDir = workDir
     this.ctx = ctx
     this.bypassPermissions = bypassPermissions
+    this.interactiveSlotKey = interactiveSlotKey
   }
 
   /**
@@ -1782,6 +1800,18 @@ export class DshAgentSession implements AgentSession {
    */
   sessionKey(): string {
     return this.key
+  }
+
+  /**
+   * The interactive-state slot key ask surfaces render and route under:
+   * cron new-per-run sessions park their state under a `#cron:` slot the
+   * bare session key cannot find (Go separates the two the same way).
+   *
+   * @returns the interactive-state slot key, or the session key when the
+   *   session owns its slot outright.
+   */
+  askSlotKey(): string {
+    return this.interactiveSlotKey !== '' ? this.interactiveSlotKey : this.key
   }
 
   currentSessionID(): string {
