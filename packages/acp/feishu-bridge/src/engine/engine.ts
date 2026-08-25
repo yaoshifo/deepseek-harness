@@ -902,6 +902,8 @@ export class Engine {
   spawnMemBlockPct = 0
   /** Hard timeout for subtask sessions; 0 inherits eventIdleTimeout (Go subtaskTimeout). */
   subtaskTimeout = 0
+  /** Suppress settlement cards for unattended native subtasks (features.subtaskQuiet). */
+  subtaskQuiet = false
   /** Gather barrier fallback timeout; 0 = defaultSubtaskGatherTimeout (Go subtaskGatherTimeout). */
   subtaskGatherTimeout = 0
   /** LLM group-name generation switches (Go groupName* fields). */
@@ -5380,6 +5382,16 @@ export class Engine {
   }
 
   /**
+   * Suppress the settlement card for unattended native subtask reports; the
+   * parent-agent wake is always delivered. Attended group children keep their
+   * cards regardless.
+   * @param v - True to deliver native settlements as wake-only.
+   */
+  setSubtaskQuiet(v: boolean): void {
+    this.subtaskQuiet = v
+  }
+
+  /**
    * Effective recursive delegation cap (Go maxSubtaskDepth).
    * @returns The configured cap, or the default of 3.
    */
@@ -6177,7 +6189,7 @@ export class Engine {
     if (r === undefined) return false
     void r.reconstructReplyCtx(entry.parent_key).then(
       (parentRctx) => {
-        void this.deliverParentReply(p, entry.parent_key, childId, entry.label, parentRctx, content)
+        void this.deliverParentReply(p, entry.parent_key, childId, entry.label, parentRctx, content, this.subtaskQuiet)
       },
       (error: unknown) => {
         console.warn(`replyNativeToParent: reconstruct reply ctx failed (parent=${entry.parent_key}): ${String(error)}`)
@@ -6719,7 +6731,7 @@ export class Engine {
     const childKey = this.sessions.sessionKeyMap().idToKey[sess.id] ?? ''
     void r.reconstructReplyCtx(parentKey).then(
       (parentRctx) => {
-        void this.deliverParentReply(p, parentKey, childKey, childLabel(sess), parentRctx, content)
+        void this.deliverParentReply(p, parentKey, childKey, childLabel(sess), parentRctx, content, false)
       },
       (error: unknown) => {
         console.warn(`replyToParent: reconstruct reply ctx failed (parent=${parentKey}): ${String(error)}`)
@@ -6732,7 +6744,9 @@ export class Engine {
    * Async half of {@link replyToParent} and {@link replyNativeToParent} once
    * the parent reply ctx resolved. The child arrives as its key and label
    * only, so group children and native continuable children share one
-   * delivery machine.
+   * delivery machine. `silentCard` (unattended native settlements under
+   * features.subtaskQuiet) skips the user-visible card; the parent-agent
+   * wake below is always delivered.
    */
   private async deliverParentReply(
     p: Platform,
@@ -6741,11 +6755,14 @@ export class Engine {
     label: string,
     parentRctx: unknown,
     content: string,
+    silentCard: boolean,
   ): Promise<void> {
-    await this.sendAsCard(p, parentRctx, content, {
-      title: this.i18n.tf(Msg.DoneReplyParentHeader, label),
-      color: 'indigo',
-    })
+    if (!silentCard) {
+      await this.sendAsCard(p, parentRctx, content, {
+        title: this.i18n.tf(Msg.DoneReplyParentHeader, label),
+        color: 'indigo',
+      })
+    }
 
     // Monitor-mode parent: the monitored chat has no interactive agent —
     // post the card only, never inject the wake message.

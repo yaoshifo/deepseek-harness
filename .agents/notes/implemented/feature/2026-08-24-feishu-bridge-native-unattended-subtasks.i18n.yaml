@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-24-feishu-bridge-native-unattended-subtasks.md
-2026-08-24-feishu-bridge-native-unattended-subtasks.md: 2f56efbde6fb0348b83df89366bd3690459364d0
-2026-08-24-feishu-bridge-native-unattended-subtasks.zh.md: 499293b196f476d92b931c0e42781589a3eaf2d9
+2026-08-24-feishu-bridge-native-unattended-subtasks.md: c9aaf1247514c72c65c92d841d9ae7e6a95f9fea
+2026-08-24-feishu-bridge-native-unattended-subtasks.zh.md: 68e43b0f554283d1e35a83b96b59299b727489f9

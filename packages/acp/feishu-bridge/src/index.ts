@@ -125,6 +125,8 @@ export interface FeatureSwitches {
   injectSender?: boolean
   /** Append the `[ctx: ~N%]` context indicator to replies. */
   showContextIndicator?: boolean
+  /** Suppress settlement cards for unattended native subtasks; the parent-agent wake is always delivered. */
+  subtaskQuiet?: boolean
 }
 
 /** LLM group-name generation + Lucide icon avatars for one project (Go [projects.group_name], #49/#52). */
@@ -533,6 +535,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       replyFooter: Schema.boolean().description('Append reply footer'),
       injectSender: Schema.boolean().description('Prepend sender identity'),
       showContextIndicator: Schema.boolean().description('Append [ctx: ~N%]'),
+      subtaskQuiet: Schema.boolean().description('Suppress settlement cards for unattended native subtasks (wake-only delivery)'),
     }),
     groupName: Schema.object({
       enabled: Schema.boolean().description('LLM group naming (#49); default true'),
@@ -1187,6 +1190,9 @@ export function buildProjectAssembly(
   engine.applyActiveProviderContextWindow()
   if (project.features?.replyFooter !== undefined) {
     engine.setReplyFooterEnabled(project.features.replyFooter)
+  }
+  if (project.features?.subtaskQuiet === true) {
+    engine.setSubtaskQuiet(true)
   }
   engine.setUsageProviders(buildUsageProviders(config.usageProviders ?? []))
   return { engine, adapter, platform }

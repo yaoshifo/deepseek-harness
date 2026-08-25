@@ -114,4 +114,55 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
       expect(p.getSent().join('\n')).toContain('parent synthesized')
     }, { timeout: 20_000 })
   })
+
+  it('features.subtaskQuiet settles without a card but still wakes the parent', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    const root = await mkdtemp(join(tmpdir(), 'fb-native-assembly-'))
+    roots.push(root)
+    await ctx.plugin(JsonlSessionPersistence, { root })
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentRuntime, { settlementNotice: 'external' })
+    await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
+    const config: FeishuBridgeConfig = {
+      providers: { mock: { route: 'mock', model: 'mock' } },
+      projects: [],
+    }
+    const project: ProjectConfig = {
+      name: 'native-project',
+      workdir: root,
+      feishu: { appId: 'cli_test', appSecret: 'sec' },
+    }
+    const { engine, adapter } = buildProjectAssembly(ctx, config, project, join(root, 'data'))
+    const p = createStubCardPlatformFull('test')
+    engine.platforms.splice(0, engine.platforms.length, p)
+    registerNativeSettlementListener(ctx, [{ engine }])
+    const adapter2 = new MockAdapter([
+      textResponse('quiet child answer'),
+      textResponse('quiet parent synthesized'),
+    ])
+    ctx.llm.registerAdapter(['mock'], adapter2)
+
+    const parentKey = 'test:parent-chat:u1'
+    const agentSession = await adapter.startSession('', { sessionKey: parentKey })
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'parent-rctx'
+    engine.interactiveStates.set(parentKey, state)
+    engine.setSubtaskQuiet(true)
+
+    const { childKey } = await engine.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'render quietly')
+
+    await vi.waitFor(() => {
+      expect(engine.nativeChildEntries()[childKey]?.reported).toBe(true)
+    }, { timeout: 20_000 })
+    // Quiet: no settlement card ever lands in the parent chat…
+    expect(p.sentCards.length).toBe(0)
+    // …but the [子任务完成] wake still opens the parent's real turn.
+    await vi.waitFor(() => {
+      expect(p.getSent().join('\n')).toContain('quiet parent synthesized')
+    }, { timeout: 20_000 })
+  })
 })

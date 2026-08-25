@@ -15,7 +15,7 @@ Status: implemented
 桥自挂 `SubagentRuntime`（`settlementNotice: 'external'`）与 in-process spawn/fork providers，profile 无需任何 subagent 条目。工具的 `spawn` 动作经新的 adapter 结构能力（`asContinuableDelegator`：`startContinuableChild` / `followupChild` / `interruptChild` / `reportChildToNativeParent`）委派；引擎只保留原生 seam 表达不了的东西：
 
 - **父系记录**（project state 的 `native_children` 节，重启存活）：child id → 父会话 key、父 native id、标签、worktree 坐标、reported 标志。worktree 创建留在桥侧（git 约定是部署策略，见 cwd-override 决策）。
-- **结算兜底**：`subagent/end` 监听把每个 epoch 的末条助手输出经群路径同款卡片 + `[子任务完成]` 唤醒机器投递——`deliverParentReply` 重构为收 (parentKey, childKey, label)，群子与 native 子共享一条投递通路。显式回报幂等跳过；追问重新武装。
+- **结算兜底**：`subagent/end` 监听把每个 epoch 的末条助手输出经群路径同款卡片 + `[子任务完成]` 唤醒机器投递——`deliverParentReply` 重构为收 (parentKey, childKey, label)，群子与 native 子共享一条投递通路。显式回报幂等跳过；追问重新武装。自 [静默结算 note](2026-08-25-feishu-bridge-subtask-quiet-settlement.zh.md) 起，`features.subtaskQuiet` 可抑制 native 子的卡片半边，唤醒始终投递。
 - **gather barrier**：`gatherSubtasks` 把未回报的 native 子折入同一内存屏障；其回报经共享投递通路的 accumulate 入账。
 - **send 排队**（`ctx.subagents.followup`）而非 Go 的 busy-reject——刻意偏离，写进工具的模型面措辞。
 - **interrupt**：新工具动作，经父的活跃权威路由到原生 interrupt。

@@ -28,7 +28,9 @@ import {
   createForkPreparerAgent,
   createWorkDirAgent,
   newControllableSession,
+  newQueuingSession,
   newStubMessage,
+  type ControllableAgentSession,
   type RecordedCard,
 } from '../stubs/engine-stubs.js'
 
@@ -1242,6 +1244,93 @@ describe('reportNativeChild', () => {
 
     expect(p.sentCards.length).toBe(1)
     expect(cardBody(p.sentCards[0])).toContain('settled output')
+  })
+})
+
+describe('subtaskQuiet', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  function armedQuietEngine(p: Platform, quiet: boolean): {
+    e: Engine
+    parentSession: ControllableAgentSession
+  } {
+    const { e, agent } = newNativeEngine(p, parentKey)
+    const parentSession = newQueuingSession('parent-native-1')
+    e.interactiveStates.get(parentKey)!.agentSession = parentSession
+    // Message dispatch starts turns through agent.startSession; route the
+    // parent's turns onto the recording session so wake prompts are captured.
+    agent.startSession = async () => parentSession
+    if (quiet) e.setSubtaskQuiet(true)
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'render the summary',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: false,
+    })
+    return { e, parentSession }
+  }
+
+  /** Poll the parent session's send calls until the wake prompt lands (bounded). */
+  async function wakeArrived(s: { sendCalls: string[] }): Promise<boolean> {
+    for (let i = 0; i < 100 && !s.sendCalls.some(c => c.includes('[子任务完成]')); i++) {
+      await settle()
+    }
+    return s.sendCalls.some(c => c.includes('[子任务完成]'))
+  }
+
+  it('suppresses the native settlement card but still wakes the parent', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, parentSession } = armedQuietEngine(p, true)
+
+    await e.reportNativeChild('native-child-1', 'all done')
+
+    const arrived = await wakeArrived(parentSession)
+    expect(arrived).toBe(true)
+    expect(parentSession.sendCalls.some(c => c.includes('all done'))).toBe(true)
+    expect(p.sentCards.length).toBe(0)
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+  })
+
+  it('keeps group-path replyToParent cards intact', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = armedQuietEngine(p, true)
+
+    const child = e.sessions.getOrCreateActive('test:child-chat')
+    child.setName('child task')
+    child.setParentSessionKey(parentKey)
+
+    expect(e.replyToParent(p, child, 'attended result')).toBe(true)
+
+    await settle()
+    expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('attended result')
+  })
+
+  it('gathers silently: no cards, one combined wake', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, parentSession } = armedQuietEngine(p, true)
+    e.projectState?.setNativeChild('native-child-2', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'task two',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: false,
+    })
+
+    e.gatherSubtasks(parentKey)
+    await e.reportNativeChild('native-child-1', 'first result')
+    await e.reportNativeChild('native-child-2', 'second result')
+
+    for (let i = 0; i < 100 && e.sessions.getOrCreateActive(parentKey).getPendingSubtaskGather() !== undefined; i++) {
+      await settle()
+    }
+    expect(e.sessions.getOrCreateActive(parentKey).getPendingSubtaskGather()).toBeUndefined()
+    for (let i = 0; i < 100 && !parentSession.sendCalls.some(c => c.includes('[子任务汇总]')); i++) {
+      await settle()
+    }
+    expect(p.sentCards.length).toBe(0)
+    expect(parentSession.sendCalls.some(c => c.includes('first result') && c.includes('second result'))).toBe(true)
   })
 })
 

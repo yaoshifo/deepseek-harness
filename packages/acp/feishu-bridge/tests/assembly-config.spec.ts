@@ -408,6 +408,12 @@ describe('M7 usage/footer config wiring', () => {
     expect(assemble(baseConfig(), proj).engine.replyFooterEnabled).toBe(true)
   })
 
+  it('wires features.subtaskQuiet (default off; wake-only native settlements)', () => {
+    expect(assemble(baseConfig()).engine.subtaskQuiet).toBe(false)
+    const proj = { ...project(), features: { subtaskQuiet: true } }
+    expect(assemble(baseConfig(), proj).engine.subtaskQuiet).toBe(true)
+  })
+
   it('builds usage_providers and skips invalid entries with a warning (Go buildUsageProviders)', () => {
     const cfg: FeishuBridgeConfig = {
       ...baseConfig(),
