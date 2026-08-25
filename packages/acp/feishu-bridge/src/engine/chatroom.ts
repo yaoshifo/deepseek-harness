@@ -1123,10 +1123,10 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   if (p === undefined) throw new Error('chatroom: no platform available')
   const hub = e.sessions.getOrCreateActive(hubKey)
   if (hub.getPendingGather() !== undefined) {
-    throw new Error('chatroom: gather 进行中，等其完成再 end')
+    throw new Error('chatroom: gather 进行中，等其完成再 end；若回复源已死（助手被停止/角色被回收）永远等不齐，改用 force: true 立即中断（用户也可在任意成员群发 /chatroom stop）')
   }
   if (hub.getPendingEndBarrier() !== undefined) {
-    throw new Error('chatroom: 正在收尾中')
+    throw new Error('chatroom: 正在收尾中；要立即中断改用 force: true')
   }
 
   // Phase A: collect in-flight role names without yet installing the barrier.
@@ -1231,6 +1231,111 @@ export function finalizeChatroomEndAsync(e: Engine, hubKey: string, summary: str
     finalizeChatroomEnd(e, hubKey)
     wakeChatroomModerator(e, hubKey, summary)
   })
+}
+
+// ── interrupt ─────────────────────────────────────────────────────────────
+
+/** Result of {@link interruptChatroom} for the command/tool surfaces. */
+export interface ChatroomInterruptResult {
+  /** Roles (and their assistants) removed by the teardown. */
+  rolesRemoved: number
+  /** Role names whose replies the interrupted barriers were still awaiting. */
+  missing: string[]
+}
+
+/**
+ * Hard-stop a chatroom from ANY protocol state (Go had no counterpart: end
+ * refuses while a gather is armed, and a gather whose reply sources died —
+ * assistants user-stopped, roles reaped — can never complete, deadlocking
+ * the teardown until the timeout wakes a chatroom the user abandoned).
+ * Interrupt consumes both barriers without waking, stops the moderator turn
+ * and every in-flight role/assistant turn instead of draining, then reuses
+ * finalizeChatroomEnd's teardown. The moderator gets no turn: the interrupt
+ * card is the only terminal record.
+ *
+ * @param e - Engine carrying the session registry and platform.
+ * @param hubKey - Session key of the chatroom hub to interrupt.
+ * @returns The teardown count and the interrupted barriers' missing roles.
+ */
+export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptResult {
+  const p = e.spawnCapablePlatform()
+  if (p === undefined) throw new Error('chatroom: no platform available')
+  const hub = e.sessions.getOrCreateActive(hubKey)
+
+  // Stop the brain first: a mid-orchestration moderator turn would otherwise
+  // keep issuing asks into groups the teardown is about to delete.
+  e.stopInteractiveSession(hubKey)
+
+  // Consume both barriers without waking: the interrupt card is the only
+  // terminal record the user asked for.
+  const missing: string[] = []
+  const g = hub.getPendingGather()
+  if (g !== undefined) {
+    g.stopTimer()
+    missing.push(...g.expected)
+    hub.setPendingGather(undefined)
+  }
+  const b = hub.getPendingEndBarrier()
+  if (b !== undefined) {
+    b.clearFallbackTimer()
+    missing.push(...b.expected)
+    hub.setPendingEndBarrier(undefined)
+  }
+  e.sessions.save()
+
+  // Stop every in-flight role/assistant turn instead of draining (end's
+  // semantics): interrupt waits for nothing.
+  for (const childKey of e.collectSubtree(hubKey)) {
+    e.stopInteractiveSession(childKey)
+  }
+  const rolesRemoved = finalizeChatroomEnd(e, hubKey)
+
+  const uniqueMissing = [...new Set(missing)].sort()
+  const cs = asCardSender(p)
+  const r = asReplyContextReconstructor(p)
+  if (cs !== undefined && r !== undefined) {
+    void r.reconstructReplyCtx(hubKey).then(
+      (hubRctx) => {
+        const body = [e.i18n.tf(Msg.ChatroomInterruptBody, rolesRemoved)]
+        if (uniqueMissing.length > 0) body.push(e.i18n.tf(Msg.ChatroomInterruptMissing, uniqueMissing.join('、')))
+        const lp = chatroomLedgerDirFor(e, hubKey)
+        if (lp !== undefined) body.push(e.i18n.tf(Msg.ChatroomInterruptLedger, lp))
+        const card = newCard().title(e.i18n.t(Msg.ChatroomInterruptTitle), 'red').markdown(body.join('\n')).build()
+        void cs.sendCard(hubRctx, card).catch((error: unknown) => {
+          console.warn(`chatroom: interrupt card send failed (hub=${hubKey}): ${String(error)}`)
+        })
+      },
+      (error: unknown) => {
+        console.warn(`chatroom: reconstruct hub ctx for interrupt card failed (hub=${hubKey}): ${String(error)}`)
+      },
+    )
+  }
+  console.info(`chatroom: interrupted (hub=${hubKey} roles_removed=${rolesRemoved} missing=${uniqueMissing.join(',')})`)
+  return { rolesRemoved, missing: uniqueMissing }
+}
+
+/**
+ * Resolve the chatroom hub a chat belongs to: the hub itself (moderator
+ * flag), any role group (chatroomHubKey), or any descendant via the parent
+ * chain (pre-spawned assistants). '' when the chat is no chatroom member.
+ *
+ * @param e - Engine carrying the session registry.
+ * @param fromKey - Session key of the invoking chat.
+ * @returns The owning hub's session key, or ''.
+ */
+export function resolveChatroomHubKey(e: Engine, fromKey: string): string {
+  let key = fromKey
+  for (let hop = 0; hop < 4; hop++) {
+    const s = e.sessions.findActive(key)
+    if (s === undefined) return ''
+    if (s.getChatroomModerator()) return key
+    const hub = s.getChatroomHubKey()
+    if (hub !== '') return hub
+    const parent = s.getParentSessionKey()
+    if (parent === '' || parent === key) return ''
+    key = parent
+  }
+  return ''
 }
 
 /** End-barrier fallback: reconcile once more, then finalize with the partial set. */

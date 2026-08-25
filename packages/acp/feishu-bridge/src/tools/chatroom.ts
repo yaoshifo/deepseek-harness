@@ -23,6 +23,7 @@ import {
   chatroomLedgerDirFor,
   endChatroom,
   gatherRoles,
+  interruptChatroom,
   listChatroomRoles,
   noteChatroom,
   startChatroom,
@@ -92,7 +93,8 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
         enum: ['start', 'ask', 'gather', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note'],
         description: 'start = spawn role groups; ask = question one role; gather = broadcast to all roles; '
           + 'pick-roles = submit role recommendations; pick-topic = submit candidate topics; ask-human = a role '
-          + 'asks the user; end = tear down; list = available roles; note = update the ledger.',
+          + 'asks the user; end = tear down (add force: true to interrupt immediately from any state); '
+          + 'list = available roles; note = update the ledger.',
       },
       message: {
         type: 'string',
@@ -119,6 +121,12 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
       research: {
         type: 'boolean',
         description: 'gather only: mark this round as research (roles drive full assistants, longer timeout).',
+      },
+      force: {
+        type: 'boolean',
+        description: 'end only: interrupt immediately instead of draining — consumes armed gathers/end barriers, '
+          + 'stops every in-flight role and assistant turn, tears down without a closing summary. Use when replies '
+          + 'will never arrive (assistants user-stopped) or the user asked to abort.',
       },
     },
     output: {
@@ -209,6 +217,15 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
           }
         }
         case 'end': {
+          if (args.force === true) {
+            const res = interruptChatroom(engine, sessionKey)
+            return {
+              status: 'ok' as const,
+              message: `Chatroom interrupted; ${res.rolesRemoved} role group(s) cleaned up`
+                + (res.missing.length > 0 ? `; unreceived replies: ${res.missing.join(', ')}` : '')
+                + '. No closing turn — the user aborted. Do not orchestrate further.',
+            }
+          }
           const res = endChatroom(engine, sessionKey)
           if (res.status === 'pending') {
             return {

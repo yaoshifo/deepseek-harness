@@ -22,6 +22,8 @@ import {
   ChatroomRole,
   clearChatroomResearchFlags,
   ensureResearchPythonEnv,
+  interruptChatroom,
+  resolveChatroomHubKey,
   startChatroom,
 } from './chatroom.js'
 import {
@@ -91,6 +93,13 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   // spawn — and must short-circuit before the topic/role parser.
   if (args.length > 0 && (args[0] === 'list' || args[0] === '列表')) {
     await cmdChatroomList(e, p, msg)
+    return
+  }
+  // `/chatroom stop` (or 中断) hard-stops the chatroom this chat belongs to,
+  // from any protocol state — the escape hatch end cannot offer while a
+  // gather is armed.
+  if (args.length > 0 && (args[0] === 'stop' || args[0] === '中断')) {
+    await cmdChatroomStop(e, p, msg)
     return
   }
   if (e.spawnCapablePlatform() === undefined) {
@@ -297,6 +306,26 @@ async function cmdChatroomList(e: Engine, p: Platform, msg: Message): Promise<vo
     }
   }
   await e.reply(p, msg.replyCtx, content)
+}
+
+/**
+ * `/chatroom stop` (or 中断): interrupt the chatroom this chat belongs to.
+ * Valid from the hub, any role group, or any assistant group (the hub is
+ * resolved through the chatroom bindings); the interrupt card lands in the
+ * hub, so the invoking role/assistant group needs no reply — it is about to
+ * be torn down anyway.
+ */
+async function cmdChatroomStop(e: Engine, p: Platform, msg: Message): Promise<void> {
+  const hubKey = resolveChatroomHubKey(e, msg.sessionKey)
+  if (hubKey === '') {
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomStopNotInRoom))
+    return
+  }
+  try {
+    interruptChatroom(e, hubKey)
+  } catch (error) {
+    await e.reply(p, msg.replyCtx, `chatroom: ${String(error instanceof Error ? error.message : error)}`)
+  }
 }
 
 /**
