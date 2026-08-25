@@ -1,8 +1,9 @@
 /**
  * Scoped suppression of workspace-instruction injection: `suppress()` in an
- * agent's scope stops the baseline and every dynamic touch for that agent,
- * disposal restores injection, and a marker registered on an unscoped context
- * suppresses globally.
+ * agent's scope stops the baseline and every dynamic touch for that agent
+ * without touching any other agent, a marker registered by an enclosing scope
+ * also suppresses descendant agents, disposal restores injection, and a marker
+ * registered on an unscoped context suppresses globally.
  *
  * @module dsh-agent-instructions/tests-suppression
  */
@@ -20,7 +21,7 @@ import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
-import { createScope } from '@deepseek-ai/dsh-scope'
+import { bindScopeParent, createScope } from '@deepseek-ai/dsh-scope'
 
 const testToolSignal = new AbortController().signal
 
@@ -101,6 +102,67 @@ describe('agentInstructions.suppress', () => {
 
       dispose()
       await scope.dispose()
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('a scoped suppressor leaves another agent\'s injection intact', async () => {
+    const { root, home } = await seededRepo()
+    const ctx = new Context()
+    try {
+      await ctx.plugin(LocalFileSystem, { cwd: '/' })
+      await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
+      const suppressed = stubAgent(root)
+      const other = stubAgent(root)
+      const scope = createScope(ctx, suppressed)
+      scope.ctx.get('agentInstructions')!.suppress()
+
+      await drivePreStep(ctx, suppressed)
+      expect(suppressed.inbox.nextStep).toEqual([])
+      // A registration that wrongly landed on the global layer would empty
+      // this agent's baseline too — the negative control existing cases lack.
+      await drivePreStep(ctx, other)
+      await waitForPending(other)
+      const text = other.inbox.nextStep
+        .find(message => message.source.kind === 'agent-instructions')
+        ?.content.map(block => block.type === 'text' ? block.text : '').join('\n') ?? ''
+      expect(text).toContain('baseline root rule')
+
+      await scope.dispose()
+      await rm(root, { recursive: true, force: true })
+      await rm(home, { recursive: true, force: true })
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
+
+  it('an enclosing scope\'s marker suppresses a descendant agent', async () => {
+    const { root, home } = await seededRepo()
+    const ctx = new Context()
+    try {
+      await ctx.plugin(LocalFileSystem, { cwd: '/' })
+      await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
+      const parent = stubAgent(root)
+      const child = stubAgent(root)
+      const parentScope = createScope(ctx, parent)
+      const dispose = parentScope.ctx.get('agentInstructions')!.suppress()
+      bindScopeParent(child, parent)
+
+      await drivePreStep(ctx, child)
+      expect(child.inbox.nextStep).toEqual([])
+
+      dispose()
+      await drivePreStep(ctx, child)
+      await waitForPending(child)
+      const text = child.inbox.nextStep
+        .find(message => message.source.kind === 'agent-instructions')
+        ?.content.map(block => block.type === 'text' ? block.text : '').join('\n') ?? ''
+      expect(text).toContain('baseline root rule')
+
+      await parentScope.dispose()
       await rm(root, { recursive: true, force: true })
       await rm(home, { recursive: true, force: true })
     } finally {

@@ -176,3 +176,4 @@ The previously loaded instructions from this file no longer apply.
 - **每目录去重基于内容**：只有在去除首尾空白后字节完全一致时，才折叠同级候选文件。`CLAUDE.md` 若 symlink 到同级 `AGENTS.md`，会解析为相同内容，并像任何重复项一样折叠；从 `AGENTS.md` 漂移的独立实体副本则会与它一起完整加载。
 - **Symlink 指令文件会跨越信任边界跟随**：最终组件是 symlink 的候选文件会被解析并加载其目标，因此克隆仓库可以将树外文件内容呈现为较低优先级的工作区指引（它绝不会覆盖 system、developer 或用户直接下达的指令）。加载不受信任仓库时，请用文件系统策略门禁或 OS 沙箱限制 `ctx.fs`。
 - **指令内容受限但不会被摘要**：超出预算的宽泛文件会被省略，最具体文件可能被截断；该插件绝不请求模型压缩指令文本。
+- **作用域抑制不会在进程内热重载后存活**：标记只存在于已挂载的服务实例中；remount 会丢弃所有活 agent 的标记（其 disposer 变为 no-op），注入在会话中途恢复。重启并重跑 agent setup（关闭配置 HMR，feishu-bridge 的默认值）则自然恢复。
