@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-25-feishu-bridge-go-era-remnant-sweep.md
-2026-08-25-feishu-bridge-go-era-remnant-sweep.md: f30b78dc4b78ef458f9e70a7ed65c4b64a8e9458
-2026-08-25-feishu-bridge-go-era-remnant-sweep.zh.md: 49de6047e520b210279f67c8241ba996ebad773e
+2026-08-25-feishu-bridge-go-era-remnant-sweep.md: 5183a3a2435ef2f5426c3850b54ac04006abce49
+2026-08-25-feishu-bridge-go-era-remnant-sweep.zh.md: 17ded2eacf04ca0b2ea381c8732d1574f5348552

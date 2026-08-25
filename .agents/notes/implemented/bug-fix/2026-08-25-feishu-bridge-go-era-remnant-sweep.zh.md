@@ -33,7 +33,7 @@ Status: implemented
 
 ## Consequences
 
-延期并带明确触发条件、留待单独变更：结构性错配——chatroom 状态存在 per-Session 记录上却经 per-key 的 active 映射解析，hub 或角色聊天里 `/new` 换 active 记录后 moderator/research/barrier 标志被静默遗落（gather 永不完成、人设重置）。修法需要按记录 id 解析。同样延期：未移植的 `/allow`/`/yolo` 命令的死 i18n 键、半接线的 `toolResultMeta` 投影、死的 Event 类型字段（`arrivedAt`、`requestID`、`sessionID`/`error` 死读、`gitBranch`、`UserQuestionOption.preview`）。
+结构性错配——chatroom 状态存在 per-Session 记录上却经 per-key 的 active 映射解析，hub 或角色聊天里 `/new` 或 idle 重置换 active 记录后 moderator/research/barrier 标志被静默遗落（gather 永不完成、人设重置、角色静默退场）——已由 chat 作用域继承修复：`createLocked` 把血缘、chatroom 身份与编排、预配助手、在途屏障状态携带到每个替换记录上（原 spawnUserID 特例的泛化），而会话作用域状态（一次性门、worktree、历史）正确重置。`/switch` 到旧记录仍按该记录自身的标志解析——剩余边角，接受。后续 tidy 提交还删除了未移植 Go 命令（`/allow`/`/yolo`/语音/心跳/ws/…）的 273 个 i18n 键、半接线的 `toolResultMeta` 投影、死的 Event 字段（`arrivedAt`、`requestID`、`sessionID` 死读、`gitBranch`、`UserQuestionOption.preview`）；`error` 事件臂与 `errorText` 保留——result 事件今天就携带 `errorText`。
 
 ## Testing
 

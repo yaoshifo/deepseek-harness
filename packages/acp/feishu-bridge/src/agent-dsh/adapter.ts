@@ -1911,7 +1911,6 @@ export class DshAgentSession implements AgentSession {
           // only forwards success for the 🔴 marker.
           ...(data.error !== undefined ? { toolSuccess: false } : {}),
           ...(callId !== '' ? { toolID: callId } : {}),
-          ...(data.meta !== undefined ? { toolResultMeta: data.meta } : {}),
           content: '',
           done: false,
         })

@@ -72,15 +72,12 @@ export interface AgentSessionInfo {
   summary: string
   messageCount: number
   modifiedAt: number
-  gitBranch?: string
 }
 
 /** One choice in a UserQuestion (Go UserQuestionOption). */
 export interface UserQuestionOption {
   label: string
   description: string
-  /** Optional preview text shown below the option (Go Preview). */
-  preview?: string
   /** Presentation flag: multi-select cards render this option pre-checked. */
   recommended?: boolean
 }
@@ -234,8 +231,6 @@ export interface Event {
   /** Tool result success; absent means success (emitters without failure identity). */
   toolSuccess?: boolean
   toolID?: string
-  sessionID?: string
-  requestID?: string
   done: boolean
   error?: Error
   errorText?: string
@@ -251,9 +246,6 @@ export interface Event {
   outputTokens?: number
   /** API calls made this turn (result events). */
   numTurns?: number
-  /** Tool-private presentation payload from the native tool/result `meta` (e.g. fs contextual diffs). */
-  toolResultMeta?: unknown
-  arrivedAt?: number
   /** Whole-list todo snapshot carried by a `todo_update` event. */
   todos?: TodoItem[]
   /** True when the event projects a delegated subagent child session's activity. */

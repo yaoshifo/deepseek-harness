@@ -3264,16 +3264,6 @@ export class Engine {
                 }
               }
             }
-            const eventSessionID = event.sessionID ?? ''
-            if (eventSessionID !== '') {
-              if (session.compareAndSetAgentSessionID(eventSessionID, this.agent.name())) {
-                const pendingName = session.getName()
-                if (pendingName !== '' && pendingName !== 'session' && pendingName !== 'default') {
-                  sessions.setSessionName(eventSessionID, pendingName)
-                }
-                sessions.save()
-              }
-            }
             break
           }
 
@@ -3382,7 +3372,7 @@ export class Engine {
     background = false,
     turnStartedBg = false,
   ): Promise<{ kind: 'done' } | { kind: 'queued'; sendDone: Promise<unknown> }> {
-    // Persist via the live session id (event.sessionID may be empty).
+    // Persist via the live session id.
     if (state.agentSession !== undefined) {
       const currentID = state.agentSession.currentSessionID()
       if (currentID !== '') {
@@ -4420,7 +4410,6 @@ export class Engine {
       switch (event.type) {
         case 'text':
           if (event.content !== '') textParts.push(event.content)
-          if (event.sessionID !== undefined) rememberSessionID(event.sessionID)
           break
         case 'tool_result': {
           let out = event.content.trim()
@@ -4451,7 +4440,7 @@ export class Engine {
       if (signal?.aborted) {
         // Relay timed out. Let the agent finish its turn in the background
         // so the session state is saved cleanly and stays resumable.
-        void this.drainRelaySession(agentSession, session, relaySessionKey)
+        void this.drainRelaySession(agentSession, relaySessionKey)
         return relayPartialResponseOrError(signal, textParts)
       }
     }
@@ -4473,7 +4462,7 @@ export class Engine {
    * auto-approving permissions — with a 10-minute safety timeout so a hung
    * agent cannot leak the session (Go drainRelaySession).
    */
-  private async drainRelaySession(agentSession: AgentSession, session: Session, relaySessionKey: string): Promise<void> {
+  private async drainRelaySession(agentSession: AgentSession, relaySessionKey: string): Promise<void> {
     let timeoutHit: (() => void) | undefined
     const timeoutP = new Promise<'timeout'>((resolve) => { timeoutHit = () => { resolve('timeout') } })
     const timer = setTimeout(() => { timeoutHit?.() }, 10 * 60_000)
@@ -4495,10 +4484,6 @@ export class Engine {
           return
         }
         const ev = outcome.r.event
-        if (ev.sessionID !== undefined && ev.sessionID !== '') {
-          session.setAgentSessionID(ev.sessionID, this.agent.name())
-          this.sessions.save()
-        }
         if (ev.type === 'result') {
           console.info(`relay: background drain completed (agent finished turn) (${relaySessionKey})`)
           await agentSession.close()

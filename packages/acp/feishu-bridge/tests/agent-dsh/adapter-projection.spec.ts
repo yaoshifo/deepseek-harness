@@ -170,16 +170,6 @@ describe('projectSessionEvent per-request usage and tool-result meta', () => {
     expect(events[0]?.totalInputTokens).toBeUndefined()
   })
 
-  it('projects tool/result meta as toolResultMeta', async () => {
-    const s = newSession()
-    const meta = { diff: '+1 -1' }
-    const events = await project(s, {
-      type: 'tool/result', seq: 1, time: 0,
-      data: { message: { content: [{ type: 'text', text: 'ok' }] }, meta },
-    })
-    expect(events).toHaveLength(1)
-    expect(events[0]?.toolResultMeta).toEqual(meta)
-  })
 })
 
 describe('projectSessionEvent compaction lifecycle', () => {

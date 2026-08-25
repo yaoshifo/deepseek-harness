@@ -150,6 +150,52 @@ export class Session {
   /** ISO timestamp of the latest mutation. */
   updatedAt = nowISO()
 
+  /**
+   * Adopt the chat-scoped state of the record this one replaces. Session
+   * records mix two lifetimes: conversation state (agent session, history,
+   * one-shot gates — a fresh record correctly starts them over) and
+   * chat-scoped state (lineage, chatroom identity and orchestration,
+   * provisioned assistants, armed barriers — properties of the CHAT that a
+   * /new or idle reset must not orphan, or a chatroom role silently drops
+   * out of its room and a moderator loses its persona).
+   *
+   * @param from - The previous active record for the same chat key.
+   */
+  carryChatScopedState(from: Session): void {
+    // Lineage.
+    this.parentSessionKey = from.parentSessionKey
+    this.parentChatName = from.parentChatName
+    this.spawnUserID = from.spawnUserID
+    this.subtaskDepth = from.subtaskDepth
+    this.subtaskAttended = from.subtaskAttended
+    this.subtaskNoReport = from.subtaskNoReport
+    this.inheritedMode = from.inheritedMode
+    // Monitor chat identity (the per-triage origin message id resets).
+    this.monitorGroup = from.monitorGroup
+    this.monitorChild = from.monitorChild
+    // Chatroom identity and orchestration.
+    this.chatroomHubKey = from.chatroomHubKey
+    this.chatroomRoleName = from.chatroomRoleName
+    this.chatroomModerator = from.chatroomModerator
+    this.chatroomDirectRole = from.chatroomDirectRole
+    this.chatroomResearch = from.chatroomResearch
+    this.chatroomResearchMode = from.chatroomResearchMode
+    this.chatroomResearchRound = from.chatroomResearchRound
+    this.chatroomResearchMaxRounds = from.chatroomResearchMaxRounds
+    this.chatroomGatherSeq = from.chatroomGatherSeq
+    // The chat's provisioned research assistant.
+    this.researchAssistantKey = from.researchAssistantKey
+    this.researchAssistant = from.researchAssistant
+    this.researchVenv = from.researchVenv
+    // Chat-scoped scheduling: in-flight barriers and the pending human
+    // question survive a conversation reset, or a running round silently
+    // degrades and a suspended question stops routing.
+    this.pendingGather = from.pendingGather
+    this.pendingEndBarrier = from.pendingEndBarrier
+    this.pendingSubtaskGather = from.pendingSubtaskGather
+    this.pendingHumanQuestionRole = from.pendingHumanQuestionRole
+  }
+
   private busy = false
 
   /**
@@ -1343,11 +1389,13 @@ export class SessionManager {
     s.name = name
     s.createdAt = now
     s.updatedAt = now
-    // Inherit the chat-scoped owner so /new does not drop the spawn user ID.
+    // Inherit the chat-scoped state (owner, lineage, chatroom identity and
+    // orchestration, barriers) so /new and idle resets replace the
+    // conversation without orphaning the chat it belongs to.
     const prevID = this.activeSession.get(userKey)
     if (prevID !== undefined) {
       const prev = this.sessions.get(prevID)
-      if (prev !== undefined) s.spawnUserID = prev.spawnUserID
+      if (prev !== undefined) s.carryChatScopedState(prev)
     }
     this.sessions.set(id, s)
     this.activeSession.set(userKey, id)
