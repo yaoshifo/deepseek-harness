@@ -51,11 +51,16 @@ export const name = 'claude-memory'
 /** The tool registry, prompt registry, and agent event bus this plugin consumes. */
 export const inject = ['tools', 'systemPrompt', 'agents']
 
-/** Index budget for the global scope; `undefined` when the deployment disables global memory. */
+/**
+ * Global-memory tuning. The scope is enabled by default; `enabled: false` is
+ * the opt-out. Both budgets default to the deployment's project budgets.
+ */
 export interface GlobalConfig {
-  /** Required byte budget for the global MEMORY.md index loaded into context. */
-  maxIndexBytes: number
-  /** Line budget for the same read; the earlier limit wins. */
+  /** Whether the global scope is enabled; defaults to `true`. */
+  enabled?: boolean
+  /** Byte budget for the global MEMORY.md index; defaults to the project `maxIndexBytes`. */
+  maxIndexBytes?: number
+  /** Line budget for the global index; defaults to the project `maxIndexLines`. */
   maxIndexLines?: number
 }
 
@@ -72,26 +77,28 @@ export interface Config {
   /** Line budget for the same read; Claude Code loads the first 200 lines. */
   maxIndexLines?: number
   /**
-   * Enables the cross-project global memory directory (`<claudeHome>/memory/`).
-   * Absent, global memory is fully disabled: no global injection, no `scope`
-   * tool parameter, and the prompt section stays byte-identical to the
-   * global-less deployment.
+   * Tuning for the cross-project global memory directory (`<claudeHome>/memory/`),
+   * which is enabled by default: the session start injects its index alongside
+   * the project one and the tools take a `scope` parameter. Set `enabled: false`
+   * to disable the scope; budgets default to the project ones.
    */
   global?: GlobalConfig
 }
 
 /**
  * Schemastery validation for {@link Config}. Two nested-object quirks shape
- * the shape of this schema: an absent `global` key arrives as `{}` rather than
+ * this schema: an absent `global` key arrives as `{}` rather than
  * `undefined`, and nested `required()` fields are enforced even when the outer
- * key is absent. `apply` therefore treats an empty `global` object as disabled
- * and rejects an enabled one without a byte budget, loudly at load.
+ * key is absent. `apply` therefore resolves the default-on semantics from the
+ * (possibly empty) object and rejects a non-positive explicit byte budget
+ * loudly at load.
  */
 export const Config: z<Config> = z.object({
   claudeHome: z.string(),
   maxIndexBytes: z.number().required(),
   maxIndexLines: z.number(),
   global: z.object({
+    enabled: z.boolean(),
     maxIndexBytes: z.number(),
     maxIndexLines: z.number(),
   }),
@@ -180,18 +187,22 @@ function singleLine(field: 'title' | 'hook', value: string | undefined): string 
  * @param config - deployment's explicit memory-budget choices.
  */
 export function apply(ctx: Context, config: Config): void {
-  const globalConfig = config.global !== undefined && Object.keys(config.global).length > 0 ? config.global : undefined
-  if (globalConfig !== undefined && (typeof globalConfig.maxIndexBytes !== 'number' || globalConfig.maxIndexBytes <= 0)) {
-    throw new Error('global.maxIndexBytes must be a positive number when global memory is enabled')
+  const globalConfig = config.global ?? {}
+  if (globalConfig.maxIndexBytes !== undefined
+    && (typeof globalConfig.maxIndexBytes !== 'number' || globalConfig.maxIndexBytes <= 0)) {
+    throw new Error('global.maxIndexBytes must be a positive number')
   }
   const claudeHome = expandHome(config.claudeHome ?? '~/.claude')
   const limits: IndexLimits = {
     maxIndexBytes: config.maxIndexBytes,
     maxIndexLines: config.maxIndexLines ?? 200,
   }
-  const globalLimits: IndexLimits | undefined = globalConfig === undefined
+  const globalLimits: IndexLimits | undefined = globalConfig.enabled === false
     ? undefined
-    : { maxIndexBytes: globalConfig.maxIndexBytes, maxIndexLines: globalConfig.maxIndexLines ?? 200 }
+    : {
+      maxIndexBytes: globalConfig.maxIndexBytes ?? limits.maxIndexBytes,
+      maxIndexLines: globalConfig.maxIndexLines ?? limits.maxIndexLines,
+    }
   const globalDir = resolveGlobalMemoryDir(claudeHome)
 
   ctx.systemPrompt.section({

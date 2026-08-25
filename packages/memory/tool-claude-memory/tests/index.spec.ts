@@ -310,6 +310,27 @@ describe('session-start index injection', () => {
 })
 
 describe('global memory scope', () => {
+  it('is enabled by default with the project budget, and disabled by enabled: false', async () => {
+    const ctx = await setup()
+    context = ctx
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const prompt = renderPrompt(await ctx.systemPrompt.assemble({ agent, scope: agent }))
+    expect(prompt).toContain('## Global memory')
+    expect(prompt).toContain(GLOBAL_MEMORY_PROMPT.replaceAll('{{globalMemoryDirectory}}', join(root, 'memory')))
+
+    const off = await setup({ enabled: false })
+    context = off
+    const offAgent = makeAgent(off, { cwd: CWD })
+    const offPrompt = renderPrompt(await off.systemPrompt.assemble({ agent: offAgent, scope: offAgent }))
+    expect(offPrompt).not.toContain('## Global memory')
+    const globalWrite = await call(off, 'memory_write', {
+      scope: 'global',
+      name: 'machine-pit',
+      content: 'body',
+    }, offAgent)
+    expect(globalWrite.isError).toBe(true)
+  })
+
   it('appends the global strategy with its instantiated directory when enabled', async () => {
     const ctx = await setup({ maxIndexBytes: 8_192 })
     context = ctx
@@ -402,8 +423,8 @@ describe('global memory scope', () => {
     expect((projectWrite.value as { warning?: string }).warning).toBeUndefined()
   })
 
-  it('fails loud when scope=global reaches a global-less deployment', async () => {
-    const ctx = await setup()
+  it('fails loud when scope=global reaches a disabled deployment', async () => {
+    const ctx = await setup({ enabled: false })
     context = ctx
     const agent = makeAgent(ctx, { cwd: CWD })
     const result = await call(ctx, 'memory_write', {

@@ -1,4 +1,4 @@
-# Agent Note: claude-memory 全局 scope —— 以可选的第二个目录承载跨项目记忆
+# Agent Note: claude-memory 全局 scope —— 默认开启的跨项目第二记忆目录
 
 Status: implemented
 
@@ -12,7 +12,7 @@ Claude Code 的记忆机制严格按项目隔离(`~/.claude/projects/<slug>/memo
 
 **第二个记忆目录,而不是新机制。** global scope 复用整套记忆设施——文件格式、frontmatter、MEMORY.md 索引纪律、五个工具、原子写——只是把目标从按项目的 slug 目录换成 `<claudeHome>/memory/`。Claude Code 不读该路径;本部署正在迁离 Claude Code,这一取舍可以接受,而且无论哪种情况 project scope 都与 Claude Code 保持字节级兼容。
 
-**由携带自身预算的配置键启用。** `global: { maxIndexBytes, maxIndexLines? }` 启用该 scope;缺失或为空时,每个模型可见面与未启用全局的部署逐字节一致(无附录、无第二次注入、无 `scope` 工具参数)。预算刻意是独立且更小的数字——全局注入内容的噪声硬顶——并且每个组合必须显式声明,与插件既有的预算纪律一致。Schemastery 的两个怪癖塑造了 schema 形态:缺省的嵌套对象到达时是 `{}`,且嵌套的 `required()` 字段在外层键缺失时仍被强制,因此 `apply` 把空的 `global` 视为禁用,并在启用却缺正数字节预算时于装载期拒绝。
+**默认开启;配置是退出开关。** global scope 随插件默认启用:任何部署无需配置即获得 `## Global memory` 附录、全局索引注入与 `scope` 工具参数。`global: { enabled: false }` 完全关闭(无附录、无第二次注入、无参数,传入 `scope: 'global'` 大声失败)。全局预算继承项目预算,组合显式声明的单一预算同时约束两个 scope;只覆盖全局数字则收紧(或放宽)全局注入内容的噪声上限。该默认值在落地当天由最初的 opt-in 设计翻转而来——部署所有者要求跨项目记忆免配置即用,且每个组合本就显式声明被继承的预算,预算纪律不变量得以保留。Schemastery 的两个怪癖塑造了 schema:缺省的嵌套对象到达时是 `{}`,且嵌套的 `required()` 字段在外层键缺失时仍被强制,因此 `apply` 从(可能为空的)对象解析默认开启语义,并在显式字节预算非正时于装载期拒绝。
 
 **模型在写入时选择 scope;引导放在离决策点最近的三个面上。** `## Global memory` 提示附录携带一个单问判定(*这条记忆拿到一个无关项目的会话里还有用吗?*),并把 `When unsure, choose project` 作为失败安全默认——代价不对称:写窄了只是别处召回不到,写宽了是每个未来会话都注入噪声。`scope` 参数的 description 在模型读到参数的地方复述判定;全局索引帧头在每次召回时标明跨项目语义。
 

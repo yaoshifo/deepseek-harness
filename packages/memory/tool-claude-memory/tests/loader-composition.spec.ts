@@ -169,13 +169,51 @@ describe('claude-memory real Loader composition through cordis.yml', () => {
     await expect(boot(() => [])).rejects.toThrow('$.maxIndexBytes missing required value')
   }, 30_000)
 
-  it('fails loading when global memory is enabled without a byte budget', async () => {
+  it('fails loading when global memory carries a non-positive byte budget', async () => {
     await expect(boot(home => [
       `    claudeHome: ${home}`,
       '    maxIndexBytes: 25600',
       '    global:',
-      '      maxIndexLines: 5',
+      '      maxIndexBytes: 0',
     ])).rejects.toThrow('global.maxIndexBytes must be a positive number')
+  }, 30_000)
+
+  it('enables global memory by default and disables it with enabled: false', async () => {
+    const ctx = await boot(home => [
+      `    claudeHome: ${home}`,
+      '    maxIndexBytes: 25600',
+    ])
+    const agent = makeAgent(ctx)
+    const prompt = renderPrompt(await ctx.systemPrompt.assemble({ agent, scope: agent }))
+    expect(prompt).toContain('## Global memory')
+    expect(prompt).toContain(join(root!, 'claude', 'memory'))
+    const read = await ctx.tools.execute({
+      signal,
+      callId: CallId('default-global-read'),
+      name: 'memory_read',
+      arguments: { scope: 'global', name: 'MEMORY.md' },
+      agent,
+    })
+    expect(read.isError).toBe(true)
+    await ctx.fiber.dispose()
+
+    const off = await boot(home => [
+      `    claudeHome: ${home}`,
+      '    maxIndexBytes: 25600',
+      '    global:',
+      '      enabled: false',
+    ])
+    const offAgent = makeAgent(off)
+    const offPrompt = renderPrompt(await off.systemPrompt.assemble({ agent: offAgent, scope: offAgent }))
+    expect(offPrompt).not.toContain('## Global memory')
+    const offWrite = await off.tools.execute({
+      signal,
+      callId: CallId('disabled-global-write'),
+      name: 'memory_write',
+      arguments: { scope: 'global', name: 'machine-pit.md', content: 'body' },
+      agent: offAgent,
+    })
+    expect(offWrite.isError).toBe(true)
   }, 30_000)
 
   it('boots with global memory enabled and injects both indexes', async () => {
