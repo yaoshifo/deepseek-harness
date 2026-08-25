@@ -473,7 +473,8 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
         }
       }
     }
-    const venvPython = options?.venv !== undefined ? `${options.venv.virtualEnv}/bin/python` : ''
+    // Reaching here requires isSubtask, which implies options is defined.
+    const venvPython = options.venv !== undefined ? `${options.venv.virtualEnv}/bin/python` : ''
     const preamble = isNoReport
       ? subtaskNoReportAgentSystemPrompt()
       : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt(venvPython) : ''}`
