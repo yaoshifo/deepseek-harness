@@ -54,6 +54,10 @@ An unchanged path and SHA-1 content digest is not injected again. A per-session,
 
 The initial baseline event itself is not rewritten. Its typed changes remain authoritative only while that event is in the visible session surface. When compaction shadows the event, the next entering pre-step composes the current baseline and records it in the same request; a successful filesystem touch can instead re-add an unchanged baseline scope or append its replacement or removal. The in-memory scope marker and provider-version cache only select and accelerate probes. At the first pre-step after resume or hot remount, a compatible visible baseline is retained and compared with the files retained by the current complete rendering. Unchanged and budget-omitted files append nothing; offline additions, edits, removals, and files leaving the retained budget set append `set`, `replace`, or `remove` transitions. An incompatible visible baseline is superseded by one complete current baseline, including an explicit empty baseline when no candidate remains. There is no file watcher, so an on-disk change becomes visible at the next successful `read`, `write`, or `edit` touch, when a resumed session reconciles its baseline, or when an entering pre-step restores a shadowed baseline.
 
+## Scoped Suppression
+
+The plugin mounts the `agentInstructions` service, and `ctx.agentInstructions.suppress()` — called from an agent's setup scope — silences the whole channel for that agent: no baseline is composed, filesystem touches inject nothing, and any pending workspace context is dropped from the inbox. This serves compositions that replace the persona wholesale, where cwd-ancestor instruction files must not ride along on user messages. Registrations compose; disposing every returned effect restores injection. A marker registered on an unscoped context suppresses every agent, and one registered by an enclosing scope suppresses its descendant agents.
+
 ## Configuration
 
 ```ts

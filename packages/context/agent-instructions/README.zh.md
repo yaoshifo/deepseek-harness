@@ -56,6 +56,10 @@ These instructions apply to work under `packages/app`. Use them as guidance when
 
 初始基线事件自身不会被改写。其带类型的变更仅在该事件仍位于可见会话表层时才是权威状态。当压缩遮蔽该事件时，下一次进入步骤的 pre-step 会组合当前基线，并在同一请求中记录它；也可以改由一次成功的文件系统 touch 重新添加未变的基线 scope，或追加其替换或移除。内存中的 scope 标记和提供方版本 cache 只负责选择探测对象并加速探测。恢复或插件热重挂后的第一次 pre-step 会保留兼容的可见基线，并将它与当前完整渲染所保留的文件进行比较。未变化和被预算省略的文件不追加任何内容；agent 离线期间新增、编辑、移除或不再属于预算保留集的文件会追加 `set`、`replace` 或 `remove` 转换。不兼容的可见基线会被一条完整的当前基线取代；如果没有候选文件，这条当前基线会是显式空基线。没有文件 watcher，因此磁盘变更会在下一次成功 `read`、`write` 或 `edit` touch 时可见，也会在恢复后的会话对账其基线时，或进入步骤的 pre-step 恢复被遮蔽的基线时可见。
 
+## 作用域抑制
+
+插件挂载 `agentInstructions` 服务；在 agent 的 setup 作用域里调用 `ctx.agentInstructions.suppress()`，会为该 agent 静默整条注入通道：不再组合基线、文件系统 touch 不注入任何内容、inbox 中待处理的工作区上下文也会被移除。它服务于整体替换 persona 的组装场景——这类会话不该让 cwd 祖先目录的指令文件随 user 消息搭车进入。注册可叠加；全部 disposer 执行后恢复注入。在无作用域上下文上注册的标记会抑制所有 agent；由外层作用域注册的标记会抑制其全部后代 agent。
+
 ## 配置
 
 ```ts
