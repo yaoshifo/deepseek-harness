@@ -390,9 +390,10 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
         }
       }
     }
+    const venvPython = options?.venv !== undefined ? `${options.venv.virtualEnv}/bin/python` : ''
     const preamble = isNoReport
       ? subtaskNoReportAgentSystemPrompt()
-      : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt() : ''}`
+      : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt(venvPython) : ''}`
     return (agentCtx) => {
       // Research assistants are coding agents: their workspace lives under the
       // project data dir (chatroomResearchWorkspace), off every chatroom
@@ -1609,6 +1610,22 @@ function toolBackgroundOf(argumentsValue: unknown): { toolBackground?: boolean }
   }
 }
 
+/** Parsed tool arguments as a record, for engine consumers that need typed fields (plan-file path tracking).
+ *
+ * @param argumentsValue - The JSON-stringified tool arguments.
+ * @returns the parsed record, or {} when the input is not a JSON object.
+ */
+function toolInputRawOf(argumentsValue: unknown): { toolInputRaw?: Record<string, unknown> } {
+  if (typeof argumentsValue !== 'string' || argumentsValue === '') return {}
+  try {
+    const parsed: unknown = JSON.parse(argumentsValue)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+    return { toolInputRaw: parsed as Record<string, unknown> }
+  } catch {
+    return {}
+  }
+}
+
 /** Call id of a durable tool-result message, or '' when absent.
  *
  * The durable ToolMessage carries it on `source.callId`; the wire fallback is
@@ -1876,6 +1893,7 @@ export class DshAgentSession implements AgentSession {
           toolName: toStr(data.name),
           toolInput: toStr(data.arguments),
           toolID: toStr(data.callId),
+          ...toolInputRawOf(data.arguments),
           content: '',
           done: false,
           ...toolBackgroundOf(data.arguments),
@@ -1893,7 +1911,6 @@ export class DshAgentSession implements AgentSession {
           // only forwards success for the 🔴 marker.
           ...(data.error !== undefined ? { toolSuccess: false } : {}),
           ...(callId !== '' ? { toolID: callId } : {}),
-          ...(data.meta !== undefined ? { toolResultMeta: data.meta } : {}),
           content: '',
           done: false,
         })

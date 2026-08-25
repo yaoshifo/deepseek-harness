@@ -164,8 +164,8 @@ describe('processInteractiveEvents plan persistence', () => {
     state.replyCtx = 'ctx'
 
     await drivePlanReview(e, state, 'slack:C1:U1', [
-      { type: 'tool_use', content: '', toolName: 'Write', toolInputRaw: { file_path: modelFile, content: '由模型写入' }, requestID: 'w1', done: false },
-      { type: 'tool_result', content: '', toolName: 'Write', requestID: 'w1', done: true },
+      { type: 'tool_use', content: '', toolName: 'write', toolID: 'w1', toolInputRaw: { file_path: modelFile, content: '由模型写入' }, done: false },
+      { type: 'tool_result', content: '', toolID: 'w1', done: false },
     ])
 
     expect(readFileSync(modelFile, 'utf8')).toBe('# model plan\n由模型写入')

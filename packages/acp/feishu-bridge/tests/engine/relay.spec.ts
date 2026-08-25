@@ -64,7 +64,7 @@ describe('HandleRelay_ReturnsPartialOnTimeout', () => {
     const signal = AbortSignal.timeout(20)
     const done = e.handleRelay(signal, 'source', 'chat-1', 'hello')
 
-    session.channel.push({ type: 'text', content: 'partial response', sessionID: 'relay-session', done: false })
+    session.channel.push({ type: 'text', content: 'partial response', done: false })
     await sleep(40)
     // After the timeout, HandleRelay consumes the next event to unblock its
     // loop, then spawns the drain; one more result event lets the drain
@@ -123,7 +123,7 @@ describe('HandleRelay_ResumeFailureFallsBackToFreshSession', () => {
     const done = e.handleRelay(undefined, 'source', 'chat-1', 'hello')
 
     // The fresh session receives the message and responds.
-    freshSession.channel.push({ type: 'result', content: 'recovered', sessionID: 'fresh-session', done: true })
+    freshSession.channel.push({ type: 'result', content: 'recovered', done: true })
 
     await expect(done).resolves.toBe('recovered')
     await vi.waitFor(() => { expect(freshSession.closed).toBe(true) })

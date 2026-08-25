@@ -394,8 +394,10 @@ export class InteractiveState {
   timing: TurnTiming = { turnStart: 0, agentStart: 0, generationSpans: [] }
   /** Plan .md path written by the agent (promoted on tool success). */
   planFilePath = ''
-  /** Plan .md path candidate until its Write succeeds. */
+  /** Plan .md path candidate until its write tool call settles. */
   pendingPlanFilePath = ''
+  /** Tool call id of the pending plan write; the result event carries no tool name, so the match rides the id. */
+  pendingPlanToolID = ''
   /** Plan content last sent as the plan card (dedup across asks). */
   sentPlanContent = ''
   /** Plan revision counter for export keys and (vN) card headers. */
@@ -2625,7 +2627,10 @@ export class Engine {
    */
   buildSessionStartOptions(ccKey: string, session: Session): SessionStartOptions {
     const hubKey = session.getChatroomHubKey()
-    const hub = hubKey !== '' ? this.sessions.getOrCreateActive(hubKey) : undefined
+    // Non-creating lookup (same as isResearchSession): a dangling hub key
+    // must not mint a phantom hub whose empty flags silently strip the
+    // research contract from this role.
+    const hub = hubKey !== '' ? this.sessions.findActive(hubKey) : undefined
     let chatroom: SessionStartOptions['chatroom'] | undefined
     if (hubKey !== '') {
       const ledger = this.chatroomModeratorDir()
@@ -2668,7 +2673,7 @@ export class Engine {
         : {}),
       ...(chatroom !== undefined ? { chatroom } : {}),
       ...(this.feishuWorkspace !== undefined ? { feishuWorkspace: this.feishuWorkspace } : {}),
-      ...(venv !== '' ? { venv: { virtualEnv: venv, pathBin: `${venv}/bin` } } : {}),
+      ...(venv !== '' ? { venv: { virtualEnv: venv } } : {}),
     }
   }
 
@@ -2801,6 +2806,7 @@ export class Engine {
     // counter for export keys / render artifacts.
     state.planFilePath = ''
     state.pendingPlanFilePath = ''
+    state.pendingPlanToolID = ''
     state.sentPlanContent = ''
     state.planRevisionCount = 0
 
@@ -3105,13 +3111,15 @@ export class Engine {
             if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
             if (thinkingStreamed) thinkingAccum = ''
             // Track plan file path for plan-mode support (Go): raw
-            // ToolInputRaw.file_path, not the summarized ToolInput. A subagent
-            // child's Write never promotes on the parent — the child runs its
-            // own plan lifecycle.
-            if (event.toolName === 'Write' && event.fromSubagent !== true) {
+            // toolInputRaw.file_path, not the summarized toolInput. A subagent
+            // child's write never promotes on the parent — the child runs its
+            // own plan lifecycle. The tool name is dsh's lowercase 'write';
+            // the Go-era capitalized 'Write' branch never matched.
+            if (event.toolName === 'write' && event.fromSubagent !== true) {
               const fp = event.toolInputRaw?.file_path
               if (typeof fp === 'string' && fp.includes('.claude/plans/')) {
                 state.pendingPlanFilePath = fp
+                state.pendingPlanToolID = event.toolID ?? ''
               }
             }
             // The parent's own tool call ends its model step; a delegated
@@ -3147,11 +3155,15 @@ export class Engine {
           }
 
           case 'tool_result': {
-          // Promote the plan file path once its Write succeeded (Go): on
-          // denial the agent must still be able to revise the same file.
-            if (state.pendingPlanFilePath !== '' && event.toolName === 'Write' && event.done) {
+          // Promote the plan file path once its write call settles (Go): on
+          // denial the agent must still be able to revise the same file. The
+          // result event carries no tool name, so the match rides the call
+          // id captured on the pending write.
+            if (state.pendingPlanFilePath !== '' && event.toolID !== undefined
+              && event.toolID !== '' && event.toolID === state.pendingPlanToolID) {
               state.planFilePath = state.pendingPlanFilePath
               state.pendingPlanFilePath = ''
+              state.pendingPlanToolID = ''
             }
 
             if (this.display.toolMessages) {
@@ -3250,16 +3262,6 @@ export class Engine {
                 } else if (sp.canPreview()) {
                   await sp.appendText(text)
                 }
-              }
-            }
-            const eventSessionID = event.sessionID ?? ''
-            if (eventSessionID !== '') {
-              if (session.compareAndSetAgentSessionID(eventSessionID, this.agent.name())) {
-                const pendingName = session.getName()
-                if (pendingName !== '' && pendingName !== 'session' && pendingName !== 'default') {
-                  sessions.setSessionName(eventSessionID, pendingName)
-                }
-                sessions.save()
               }
             }
             break
@@ -3370,7 +3372,7 @@ export class Engine {
     background = false,
     turnStartedBg = false,
   ): Promise<{ kind: 'done' } | { kind: 'queued'; sendDone: Promise<unknown> }> {
-    // Persist via the live session id (event.sessionID may be empty).
+    // Persist via the live session id.
     if (state.agentSession !== undefined) {
       const currentID = state.agentSession.currentSessionID()
       if (currentID !== '') {
@@ -4408,7 +4410,6 @@ export class Engine {
       switch (event.type) {
         case 'text':
           if (event.content !== '') textParts.push(event.content)
-          if (event.sessionID !== undefined) rememberSessionID(event.sessionID)
           break
         case 'tool_result': {
           let out = event.content.trim()
@@ -4439,7 +4440,7 @@ export class Engine {
       if (signal?.aborted) {
         // Relay timed out. Let the agent finish its turn in the background
         // so the session state is saved cleanly and stays resumable.
-        void this.drainRelaySession(agentSession, session, relaySessionKey)
+        void this.drainRelaySession(agentSession, relaySessionKey)
         return relayPartialResponseOrError(signal, textParts)
       }
     }
@@ -4461,7 +4462,7 @@ export class Engine {
    * auto-approving permissions — with a 10-minute safety timeout so a hung
    * agent cannot leak the session (Go drainRelaySession).
    */
-  private async drainRelaySession(agentSession: AgentSession, session: Session, relaySessionKey: string): Promise<void> {
+  private async drainRelaySession(agentSession: AgentSession, relaySessionKey: string): Promise<void> {
     let timeoutHit: (() => void) | undefined
     const timeoutP = new Promise<'timeout'>((resolve) => { timeoutHit = () => { resolve('timeout') } })
     const timer = setTimeout(() => { timeoutHit?.() }, 10 * 60_000)
@@ -4483,10 +4484,6 @@ export class Engine {
           return
         }
         const ev = outcome.r.event
-        if (ev.sessionID !== undefined && ev.sessionID !== '') {
-          session.setAgentSessionID(ev.sessionID, this.agent.name())
-          this.sessions.save()
-        }
         if (ev.type === 'result') {
           console.info(`relay: background drain completed (agent finished turn) (${relaySessionKey})`)
           await agentSession.close()
@@ -6339,7 +6336,12 @@ export class Engine {
       throw new Error('subtask: no platform available to deliver report')
     }
 
-    const sess = this.sessions.getOrCreateActive(childSessionKey)
+    // Non-creating lookup, symmetric with sendToSubtask: an unknown key
+    // fails loudly instead of minting a parentless phantom.
+    const sess = this.sessions.findActive(childSessionKey)
+    if (sess === undefined) {
+      throw new Error(`subtask: no subtask session ${childSessionKey} — the key may be mistyped`)
+    }
     if (sess.getSubtaskReported()) {
       // Already delivered: skip idempotently so a model re-calling report
       // cannot flood the parent. Nil (not an error) so the agent does not retry.
@@ -6784,8 +6786,15 @@ export class Engine {
     }
 
     // Monitor-mode parent: the monitored chat has no interactive agent —
-    // post the card only, never inject the wake message.
-    const parentSess = this.sessions.getOrCreateActive(parentKey)
+    // post the card only, never inject the wake message. Non-creating
+    // lookup: a dangling parent key must not mint a phantom session (whose
+    // empty flags would then route this settlement into a spurious
+    // no-context agent turn in a dead registry entry).
+    const parentSess = this.sessions.findActive(parentKey)
+    if (parentSess === undefined) {
+      console.warn(`subtask: parent session missing, card delivered without wake (parent=${parentKey} child=${childKey})`)
+      return
+    }
     if (parentSess.getMonitorGroup()) {
       const msgID = parentSess.getMonitorOriginMessageID()
       if (msgID !== '') {
@@ -6815,10 +6824,10 @@ export class Engine {
 
     // The card body stays clean; the synthetic message the parent agent sees
     // carries a hint with the child's session key so it can follow up via
-    // `subtask send --child <key>` even after context compaction.
+    // the subtask tool even after context compaction.
     let agentContent = `[子任务完成] ${label}:\n\n${content}`
     if (childKey !== '') {
-      agentContent += `\n\n(如需追问该子任务: cc-connect subtask send --child ${childKey} "...")`
+      agentContent += `\n\n(如需追问该子任务: feishu_bridge_subtask 工具 action: send, child: ${childKey})`
     }
     this.receiveMessageSafe(p, {
       ...emptyMessage(),

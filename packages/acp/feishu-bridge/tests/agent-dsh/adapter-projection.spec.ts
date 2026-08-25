@@ -51,6 +51,32 @@ describe('projectSessionEvent tool/result failure identity', () => {
   })
 })
 
+describe('projectSessionEvent toolInputRaw projection', () => {
+  it('carries the parsed arguments record for typed-field consumers', async () => {
+    const s = newSession()
+    const events = await project(s, {
+      type: 'tool/call', seq: 1, time: 0,
+      data: { callId: 'c1', name: 'write', arguments: '{"file_path":"/x/.claude/plans/p.md","content":"# p"}' },
+    })
+    expect(events[0]?.toolInputRaw).toEqual({ file_path: '/x/.claude/plans/p.md', content: '# p' })
+  })
+
+  it('leaves the field absent for non-object and unparseable arguments', async () => {
+    const s = newSession()
+    const arr = await project(s, {
+      type: 'tool/call', seq: 1, time: 0,
+      data: { callId: 'c1', name: 'bash', arguments: '[1,2]' },
+    })
+    expect(arr[0]?.toolInputRaw).toBeUndefined()
+
+    const bad = await project(s, {
+      type: 'tool/call', seq: 2, time: 0,
+      data: { callId: 'c2', name: 'bash', arguments: 'not-json' },
+    })
+    expect(bad[0]?.toolInputRaw).toBeUndefined()
+  })
+})
+
 describe('projectSessionEvent run_in_background detection', () => {
   it('marks a tool call whose arguments set run_in_background', async () => {
     const s = newSession()
@@ -160,16 +186,6 @@ describe('projectSessionEvent per-request usage and tool-result meta', () => {
     expect(events[0]?.totalInputTokens).toBeUndefined()
   })
 
-  it('projects tool/result meta as toolResultMeta', async () => {
-    const s = newSession()
-    const meta = { diff: '+1 -1' }
-    const events = await project(s, {
-      type: 'tool/result', seq: 1, time: 0,
-      data: { message: { content: [{ type: 'text', text: 'ok' }] }, meta },
-    })
-    expect(events).toHaveLength(1)
-    expect(events[0]?.toolResultMeta).toEqual(meta)
-  })
 })
 
 describe('projectSessionEvent compaction lifecycle', () => {

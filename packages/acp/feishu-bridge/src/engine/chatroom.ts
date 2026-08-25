@@ -213,7 +213,7 @@ export class ChatroomGather {
       const r = this.collected.get(n) ?? ''
       lines.push(`【${n}】${r === '' ? '（NO_REPLY / 无追问）' : r}\n`)
     }
-    lines.push('\n请基于以上回复，按你当前所处阶段推进：若在澄清阶段，去重合并后用原生 AskUserQuestion(MultiSelect) 向用户发飞书多选卡提问（若全部「无需追问」则进入阶段 2；否则 note 用户回答后再次 gather，最多 3 轮）；若在拆解阶段，去重合并成子问题列表后用 note（section: subproblems）写入。')
+    lines.push('\n请基于以上回复，按你当前所处阶段推进：若在澄清阶段，去重合并后用原生 ask_user_question(multi_select: true) 向用户发飞书多选卡提问（若全部「无需追问」则进入阶段 2；否则 note 用户回答后再次 gather，最多 3 轮）；若在拆解阶段，去重合并成子问题列表后用 note（section: subproblems）写入。')
     return lines.join('')
   }
 }
@@ -434,7 +434,28 @@ export function resolveChatroomRole(e: Engine, hubKey: string, ref: string): str
   throw new Error(e.i18n.tf(Msg.ChatroomRoleNotFound, trimmed))
 }
 
+/**
+ * The hub session behind a chatroom key, without creating one. The chatroom
+ * protocol reads moderator state (barriers, research flags, pending human
+ * questions) through this: a dangling hub key means the registry lost the
+ * moderator record, and readers treat that as "no chatroom state" (entry
+ * points fail loud) instead of minting a phantom hub whose empty flags
+ * silently degrade gathers into serial relays.
+ *
+ * @param e - Engine carrying the session registry.
+ * @param hubKey - Session key of the chatroom hub.
+ * @returns the hub session, or undefined when no active session holds the key.
+ */
+export function chatroomHubOf(e: Engine, hubKey: string): Session | undefined {
+  const hub = e.sessions.findActive(hubKey)
+  if (hub === undefined) {
+    console.warn(`chatroom: hub session missing, treating as no chatroom state (hub=${hubKey})`)
+  }
+  return hub
+}
+
 // ── spawning ──────────────────────────────────────────────────────────────
+
 
 /** Structural alias over the platform's spawner surface (Ex preferred). */
 function groupSpawnerOf(
@@ -563,7 +584,7 @@ export async function startChatroom(
 export async function askRole(e: Engine, callerHubKey: string, roleRef: string, question: string): Promise<void> {
   const q = question.trim()
   if (q === '') throw new Error('chatroom: question is required')
-  if (e.sessions.getOrCreateActive(callerHubKey).getPendingEndBarrier() !== undefined) {
+  if (chatroomHubOf(e, callerHubKey)?.getPendingEndBarrier() !== undefined) {
     throw new Error('chatroom: 正在收尾中，无法 ask')
   }
   const p = e.spawnCapablePlatform()
@@ -613,7 +634,7 @@ async function askRoleInternal(
   role.setChatroomInFlight(true)
   // Research mode: new round — clear the previous round's sticky dispatch
   // flag. ResearchAwaitingAssistant arms at turn start.
-  if (e.sessions.getOrCreateActive(hubKey).getChatroomResearch()) {
+  if (chatroomHubOf(e, hubKey)?.getChatroomResearch() === true) {
     role.setResearchDispatched(false)
   }
   e.sessions.save()
@@ -655,7 +676,9 @@ async function askRoleInternal(
 export function gatherRoles(e: Engine, hubKey: string, question: string, research: boolean): void {
   const q = question.trim()
   if (q === '') throw new Error('chatroom: question is required')
-  if (e.sessions.getOrCreateActive(hubKey).getPendingEndBarrier() !== undefined) {
+  const hub = chatroomHubOf(e, hubKey)
+  if (hub === undefined) throw new Error(`chatroom: hub session missing (hub=${hubKey})`)
+  if (hub.getPendingEndBarrier() !== undefined) {
     throw new Error('chatroom: 正在收尾中，无法 gather')
   }
   const p = e.spawnCapablePlatform()
@@ -665,7 +688,6 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
 
   // Set up the fan-in barrier BEFORE broadcasting so the first role reply
   // can't race ahead and find no pendingGather.
-  const hub = e.sessions.getOrCreateActive(hubKey)
   const seq = hub.getChatroomGatherSeq() + 1
   hub.setChatroomGatherSeq(seq)
   const g = new ChatroomGather(q, seq)
@@ -716,7 +738,8 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
 
 /** Timer callback: wake the moderator with whatever arrived (Go fireGatherTimeout). */
 function fireGatherTimeout(e: Engine, hubKey: string): void {
-  const hub = e.sessions.getOrCreateActive(hubKey)
+  const hub = chatroomHubOf(e, hubKey)
+  if (hub === undefined) return
   const g = hub.getPendingGather()
   if (g === undefined) return
   const { done, wake, missing } = g.timeoutFire()
@@ -876,7 +899,7 @@ export async function askHuman(e: Engine, roleSessionKey: string, question: stri
   if (roleName === '') roleName = 'role'
   // Reject ask-human while a gather is in flight: the moderator collects
   // role questions centrally and asks the user once via a multi-select card.
-  if (e.sessions.getOrCreateActive(hubKey).getPendingGather() !== undefined) {
+  if (chatroomHubOf(e, hubKey)?.getPendingGather() !== undefined) {
     throw new Error(e.i18n.t(Msg.ChatroomGatherAskHumanBlocked))
   }
   const r = asReplyContextReconstructor(p)
@@ -886,7 +909,8 @@ export async function askHuman(e: Engine, roleSessionKey: string, question: stri
   const hubRctx = await r.reconstructReplyCtx(hubKey)
 
   // Mark the hub pending — single slot (hub-and-spoke asks one role at a time).
-  const hub = e.sessions.getOrCreateActive(hubKey)
+  const hub = chatroomHubOf(e, hubKey)
+  if (hub === undefined) throw new Error(`chatroom: hub session missing (hub=${hubKey})`)
   hub.setPendingHumanQuestionRole(roleName)
   e.sessions.save()
 
@@ -911,12 +935,13 @@ export async function askHuman(e: Engine, roleSessionKey: string, question: stri
  * @returns True when the reply was routed to the pending role; false when no question is pending or the message is a slash command.
  */
 export function routePendingHumanReply(e: Engine, _p: Platform, hubKey: string, content: string): boolean {
-  const roleName = e.sessions.getOrCreateActive(hubKey).getPendingHumanQuestionRole().trim()
+  const hub = chatroomHubOf(e, hubKey)
+  const roleName = hub?.getPendingHumanQuestionRole().trim() ?? ''
   if (roleName === '') return false
   if (content.trim().startsWith('/')) return false
   // Clear first so a concurrent reply doesn't double-route; askRole re-arms
   // the role's relay gate.
-  e.sessions.getOrCreateActive(hubKey).setPendingHumanQuestionRole('')
+  hub?.setPendingHumanQuestionRole('')
   e.sessions.save()
   const askContent = `人类回答：${content.trim()}\n请基于此继续。`
   void askRole(e, hubKey, roleName, askContent).catch((error: unknown) => {
@@ -956,7 +981,7 @@ export function maybeAutoRelayRole(
   // its start. Judged BEFORE the awaiting defer so a stale turn can neither
   // consume nor re-defer the current round's ResearchAwaitingAssistant.
   let stale = false
-  const b = e.sessions.getOrCreateActive(session.getChatroomHubKey()).getPendingGather()
+  const b = chatroomHubOf(e, session.getChatroomHubKey())?.getPendingGather()
   if (b !== undefined && session.getChatroomAskSeq() !== 0 && session.getChatroomAskSeq() !== b.seq) {
     stale = true
   }
@@ -1029,7 +1054,7 @@ export function maybeAutoRelayRole(
   e.sessions.save()
 
   // --- End barrier path (draining in-flight replies before teardown) ---
-  const barrier = e.sessions.getOrCreateActive(hubKey).getPendingEndBarrier()
+  const barrier = chatroomHubOf(e, hubKey)?.getPendingEndBarrier()
   if (barrier !== undefined) {
     void r.reconstructReplyCtx(hubKey).then(
       (hubRctx) => { relayRoleReply(hubRctx) },
@@ -1049,7 +1074,8 @@ export function maybeAutoRelayRole(
   }
 
   // --- Gather fan-in path (two-phase flow) ---
-  const g = e.sessions.getOrCreateActive(hubKey).getPendingGather()
+  const hub = chatroomHubOf(e, hubKey)
+  const g = hub?.getPendingGather()
   if (g !== undefined) {
     void r.reconstructReplyCtx(hubKey).then(
       (hubRctx) => { relayRoleReply(hubRctx) },
@@ -1067,7 +1093,7 @@ export function maybeAutoRelayRole(
     // Last reply in: flip the progress card to its terminal state, clear the
     // barrier and wake the moderator once.
     updateResearchProgressCard(e, p, g, 'done')
-    e.sessions.getOrCreateActive(hubKey).setPendingGather(undefined)
+    hub?.setPendingGather(undefined)
     e.sessions.save()
     wakeChatroomModerator(e, hubKey, wakeContent)
     console.info(`chatroom: gather complete; woke moderator with all replies (hub=${hubKey})`)
@@ -1121,7 +1147,8 @@ export function maybeAutoRelayRole(
 export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   const p = e.spawnCapablePlatform()
   if (p === undefined) throw new Error('chatroom: no platform available')
-  const hub = e.sessions.getOrCreateActive(hubKey)
+  const hub = chatroomHubOf(e, hubKey)
+  if (hub === undefined) throw new Error(`chatroom: hub session missing (hub=${hubKey})`)
   if (hub.getPendingGather() !== undefined) {
     throw new Error('chatroom: gather 进行中，等其完成再 end；若回复源已死（助手被停止/角色被回收）永远等不齐，改用 force: true 立即中断（用户也可在任意成员群发 /chatroom stop）')
   }
@@ -1207,14 +1234,16 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
     sess.setResearchAssistant(false)
     removed++
   }
-  const hub = e.sessions.getOrCreateActive(hubKey)
-  hub.setPendingEndBarrier(undefined)
-  // Hub returns to a normal session — drop the moderator flag so subsequent
-  // turns use the default harness path.
-  hub.setChatroomModerator(false)
-  // Research flags live on the hub; without this a second research chatroom
-  // in the same group inherits the previous round count.
-  clearChatroomResearchFlags(hub)
+  const hub = chatroomHubOf(e, hubKey)
+  if (hub !== undefined) {
+    hub.setPendingEndBarrier(undefined)
+    // Hub returns to a normal session — drop the moderator flag so subsequent
+    // turns use the default harness path.
+    hub.setChatroomModerator(false)
+    // Research flags live on the hub; without this a second research chatroom
+    // in the same group inherits the previous round count.
+    clearChatroomResearchFlags(hub)
+  }
   e.sessions.save()
   console.info(`chatroom: ended (hub=${hubKey} roles_removed=${removed})`)
   return removed
@@ -1340,7 +1369,8 @@ export function resolveChatroomHubKey(e: Engine, fromKey: string): string {
 
 /** End-barrier fallback: reconcile once more, then finalize with the partial set. */
 function fireEndTimeout(e: Engine, hubKey: string): void {
-  const hub = e.sessions.getOrCreateActive(hubKey)
+  const hub = chatroomHubOf(e, hubKey)
+  if (hub === undefined) return
   const b = hub.getPendingEndBarrier()
   if (b === undefined) return
   for (const name of b.expectedSnapshot()) {
@@ -1427,7 +1457,7 @@ export function recoverChatroomBarriers(e: Engine): void {
         const missing = [...g.expected].sort()
         const { wake } = g.timeoutFire()
         const note = e.i18n.tf(Msg.ChatroomRestarted, missing.length, missing.join('、'))
-        if (p !== undefined && e.sessions.getOrCreateActive(key).getChatroomResearch()) {
+        if (p !== undefined && chatroomHubOf(e, key)?.getChatroomResearch() === true) {
           sendRestartedProgressCard(e, p, key, g)
         }
         wakeChatroomModerator(e, key, `${note}\n\n${wake}`)

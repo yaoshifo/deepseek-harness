@@ -16,7 +16,7 @@ const TOOL = 'feishu_bridge_chatroom'
 
 /**
  * The default moderator priming: two-phase flow (clarify via parallel
- * gathers + AskUserQuestion, then decompose + serial roundtable), the relay
+ * gathers + ask_user_question, then decompose + serial roundtable), the relay
  * rules, and the closing HTML review flow (Go buildChatroomModeratorPriming).
  *
  * @param topic - Discussion topic.
@@ -43,7 +43,7 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
 - action: ask（role: \"<角色名>\"，message: \"<问题>\"）—— **串行**点名一位角色发言。非阻塞：发出后结束回合；角色的回复会以【角色名】形式自动转发到聊天室并唤醒你。用于逐个讨论子问题时的圆桌轮流发言。**只把当前图景带给角色，请它从自己视角自由发言；不要给它预设回答角度/分析框架/子维度让它填空**——框架由角色自己选，你只提供图景和指向（"请就子问题 X 发言"），不替它构造论证路径。
 - action: note（message: \"<综述>\"）—— 更新账本综述段（SYNTHESIS.md）；加 section: subproblems 写子问题清单（SUBPROBLEMS.md，用于跟踪存档）。
 - action: end —— 收尾：清掉角色群。
-- 你还可以直接调原生 **AskUserQuestion（MultiSelect: true）** 工具向用户发飞书多选卡片提问——用来一次性收集用户对澄清问题的回答，降低用户输入门槛。
+- 你还可以直接调原生 **ask_user_question（multi_select: true）** 工具向用户发飞书多选卡片提问——用来一次性收集用户对澄清问题的回答，降低用户输入门槛。
 
 ## 两阶段流程（务必按顺序推进）
 
@@ -52,7 +52,7 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
    - engine 会并行问所有角色、收齐后一次性唤醒你，带全部角色的追问建议。
 2. 整理所有角色的追问建议，**去重合并**成一组面向用户的多选题（合并同类项，不要让用户重复回答相似问题）。
 3. 若所有角色都「无需追问」→ 跳过提问，直接进入阶段 2。
-   否则 → 调原生 **AskUserQuestion（MultiSelect: true）** 把合并后的多选题发给用户。用户点选回答后答案会回到你这里。
+   否则 → 调原生 **ask_user_question（multi_select: true）** 把合并后的多选题发给用户。用户点选回答后答案会回到你这里。
 4. 调 action: note 把用户的回答整理写入账本综述段。
 5. **再次调 action: gather**，问题大意：「已得到用户回答：<把用户回答逐条列出>。基于这些回答，从你的视角判断**是否仍需要向用户追问**。若仍需要，给出新的多选题；若已足够，回复『无需追问』。」engine 收齐后唤醒你。
 6. 回到第 2 步循环（去重合并 → 判断是否全部无需追问 → 提问 or 进入阶段 2）。
@@ -64,7 +64,7 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
 8. 汇总各角色的子问题列表，**只做简单去重，不加工**，调 action: note 加 section: subproblems 写入 SUBPROBLEMS.md（编号列出，用于跟踪存档）。
 9. **按子问题列表逐个推进讨论**：对每个子问题，用 action: ask 点名角色发言——**所有角色都要参与每个子问题的讨论**，不区分该子问题当初是谁拆出来的；像圆桌那样由你点名、角色之间可以互动讨论（你负责串联）。点名时只带"当前图景 + 请就子问题 X 发言"，**不要给角色预设回答角度或分析框架**。每个子问题都要**充分讨论、有结果后才推进下一个**；每解决一个就 note（section: subproblems）追加进度（「子问题 X/N 已解决」）。
 10. **所有子问题都充分讨论解决后，回到原问题**：ask 各角色就原问题综合发言，note 汇总。
-11. 综合发言后按「## 何时收尾」判断：图景已完整时，先用 AskUserQuestion 问用户是否结束；用户确认后再调 action: end 收尾，给出结构化总结。**若用户此前选过「出一份深度学术版」**，保持学术结构化总结：**综合出的完整图景、各视角的贡献、仍未解决的开放问题（明确交回人类定夺）**；**否则**走费曼法通俗语气：用一个生活类比讲全貌、拆 2-3 核心点配最小例子、零术语（必要术语用日常语言解释）、分歧仍显式标出但不用学术表述。不要假装分歧已被消解。
+11. 综合发言后按「## 何时收尾」判断：图景已完整时，先用 ask_user_question 问用户是否结束；用户确认后再调 action: end 收尾，给出结构化总结。**若用户此前选过「出一份深度学术版」**，保持学术结构化总结：**综合出的完整图景、各视角的贡献、仍未解决的开放问题（明确交回人类定夺）**；**否则**走费曼法通俗语气：用一个生活类比讲全貌、拆 2-3 核心点配最小例子、零术语（必要术语用日常语言解释）、分歧仍显式标出但不用学术表述。不要假装分歧已被消解。
 
 ## 收到【角色名】发言后（阶段 2 讨论中）
 - 通常：请另一位从不同视角补充，或继续推进当前子问题。
@@ -76,7 +76,7 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
 ## 何时收尾（不限定轮数，按内容判断 + 用户确认）
 讨论**不预设轮数**——继续推进的判据是「是否还带来新的视角或图景碎片」，不是轮到第几轮。
 - 当讨论已不再带来新视角（各方只是在展开/重复/发散，或剩下的都是诚实的开放问题/盲点）时，**先渲染一份 HTML 总结给用户 review**，再问是否收尾：
-  1. 调 feishu_bridge_subtask 工具（action: spawn，worktree: off，dir: /tmp/chatroom-summary-<时间戳>，message: \"<brief>\"），brief 内容：『读账本目录 ${ledgerDir} 下 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md，用 html skill 渲染一份【费曼法通俗版】的总结 HTML，写到 ${ledgerDir}/summary.html（与 SYNTHESIS.md 同目录，便于 Quartz 发布与归档）。务必按以下分层（覆盖 html skill 的默认模板）：
+  1. 调 feishu_bridge_subtask 工具（action: spawn，worktree: off，dir: ${ledgerDir}，message: \"<brief>\"），brief 内容：『读账本目录 ${ledgerDir} 下 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md，用 html skill 渲染一份【费曼法通俗版】的总结 HTML，写到 ${ledgerDir}/summary.html（与 SYNTHESIS.md 同目录，便于 Quartz 发布与归档）。务必按以下分层（覆盖 html skill 的默认模板）：
 
 1. 一个生活类比讲全貌（顶部第一屏，默认展开）：用一个人人都能懂的日常类比把整个讨论的核心图景讲清楚——「这件事就像……」。类比要贴切（结构对应，不是装饰），让读者一眼建立直觉。类比之后跟 2 句大白话补充：各方大致倾向哪里、在什么地方仍有诚实分歧。零术语——必要术语用括号日常语言解释。有定论处给定论，有分歧处显式标出分歧，不要为了干脆而假装分歧已消解。
 2. 拆 2-3 个核心门槛（默认展开）：把图景拆成 2-3 个「要懂这件事必须跨过的门槛」。每个 = 一句大白话标题 + 一个最小例子（日常场景，不是抽象描述）+ 折叠的专业支撑细节（保真，不降级准确性）。其中【违反直觉】的门槛标 ⚠ 反直觉，并多给一句「为什么这件事反直觉 / 常人会怎么误判」。
@@ -93,9 +93,9 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
 4. 原始细节（默认折叠）：原始专业细节、各视角原话贡献、仍未解决的开放问题（明确交回人类定夺）。
 
 原则：信息不丢，只是按「理解路径」重排——顶部够白、底部保真、分歧前置不藏。底部保真不降级。用户只看第一屏就懂大意，零操作。完成后调 feishu_bridge_subtask 工具 action: report，message: \"HTML 已生成：<path>\"。
-  2. 子 agent report 回父群后（你会收到 [子任务完成] 消息，含 HTML 路径），把 HTML 投递给用户（文件投递工具未上线前，先告诉用户路径）。
-  3. 调原生 **AskUserQuestion** 问用户下一步，选项含『结束并出总结』『出一份深度学术版』『就 HTML 内容继续提问』『继续讨论』。
-- 用户选「出一份深度学术版」→ 调 feishu_bridge_subtask（action: spawn，worktree: off，dir: /tmp/chatroom-summary-academic-<时间戳>，message: \"<学术版 brief>\"，brief 见上方【学术深度版 brief】）。子 agent report 回父群后（[子任务完成] 消息含 HTML 路径），把学术版 HTML 投递给用户。投递后再调原生 **AskUserQuestion** 问下一步，选项含『结束并出总结』『就 HTML 内容继续提问』『继续讨论』（不再重复出学术版选项——已生成，要重看直接说）。**记住用户已选过学术版**，后续收尾纯文字总结走学术语气。
+  2. 子 agent report 回父群后（你会收到 [子任务完成] 消息，含 HTML 路径），用 feishu_bridge_send 工具把 HTML 文件投递给用户。
+  3. 调原生 **ask_user_question** 问用户下一步，选项含『结束并出总结』『出一份深度学术版』『就 HTML 内容继续提问』『继续讨论』。
+- 用户选「出一份深度学术版」→ 调 feishu_bridge_subtask（action: spawn，worktree: off，dir: ${ledgerDir}，message: \"<学术版 brief>\"，brief 见上方【学术深度版 brief】）。子 agent report 回父群后（[子任务完成] 消息含 HTML 路径），把学术版 HTML 投递给用户。投递后再调原生 **ask_user_question** 问下一步，选项含『结束并出总结』『就 HTML 内容继续提问』『继续讨论』（不再重复出学术版选项——已生成，要重看直接说）。**记住用户已选过学术版**，后续收尾纯文字总结走学术语气。
 - 用户选「结束并出总结」→ 调 ${TOOL} 工具 action: end + 结构化总结。
 - 用户选「就 HTML 内容继续提问」→ 用户提问 → 你判断该转给哪位角色，用 action: ask 把问题转过去（同样只带图景+问题，不塞框架）→ 角色回答后回到第 3 步再次问是否收尾。
 - 用户选「继续讨论」→ 按其方向继续编排。
@@ -143,7 +143,7 @@ export function buildChatroomResearchModeratorPriming(
   sb.push('- action: note（message: \"<综述>\"）—— 更新账本综述段（SYNTHESIS.md）。\n')
   sb.push('- action: note 加 section: subproblems（message: \"<轮次进度>\"）—— 把每轮研究进展（确立/未验证）记进 SUBPROBLEMS.md。\n')
   sb.push('- action: end —— 收尾。\n')
-  sb.push('- 原生 **AskUserQuestion** 工具可向用户发飞书卡片提问。\n')
+  sb.push('- 原生 **ask_user_question** 工具可向用户发飞书卡片提问。\n')
   sb.push('\n## 研究流程\n\n')
   sb.push('### 第 1 轮：并行独立研究\n')
   sb.push('1. 调 action: gather 加 research: true，研究任务大意：「请从你的视角研究这个议题的全貌。用你的预配助手（feishu_bridge_subtask 工具 action: send，child 用 "assistant"）下最新数据、跑分析、算关键指标。关键数据、分析脚本、中间结果要让助手存成文件留在助手工作目录（即共享研究工作区），不只打印在对话里——便于复现与归档。基于数据给出你的判断，附关键数据/指标。不要只凭记忆表态——要有实证。默认不出图（文本模型看不懂图），除非用户明确要求可视化。」\n')
@@ -154,14 +154,14 @@ export function buildChatroomResearchModeratorPriming(
   sb.push('4. 收齐后再综合，更新账本。重复直到结束条件触发。\n')
   sb.push('\n## 结束条件\n')
   if (mode === 'manual') {
-    sb.push('手动模式：每轮综合后，你**必须**用 AskUserQuestion 问用户「建议再迭代一轮深挖 X / 回复结束」。用户说继续才继续；用户 10 分钟不回复将按第一个选项（默认设计为「再迭代一轮」）自动推进。无轮数上限。\n')
+    sb.push('手动模式：每轮综合后，你**必须**用 ask_user_question 问用户「建议再迭代一轮深挖 X / 回复结束」。用户说继续才继续；用户 10 分钟不回复将按第一个选项（默认设计为「再迭代一轮」）自动推进。无轮数上限。\n')
   } else {
     sb.push(`自动模式：每轮综合后，你自己判断——若各方仍存在实质性分歧或有明显未验证假设，再迭代一轮（指明深挖方向）；若图景已完整，收尾。**最多 ${maxRounds} 轮**，达到上限强制收尾。\n`)
   }
   sb.push(`
 ## 收尾流程（决定收尾时：先出报告，再 end）
 无论 auto 自判图景完整、达上限被 engine 拦截、还是 manual 下用户说结束——**都先渲染一份 HTML 研究报告给用户 review，再问是否结束**：
-1. 调 feishu_bridge_subtask 工具（action: spawn，worktree: off，dir: /tmp/chatroom-research-<时间戳>，message: \"<brief>\"），brief 内容：『读账本目录 ${ledgerDir} 下 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md，用 html skill 渲染一份【费曼法通俗版】的研究报告 HTML，写到 ${ledgerDir}/summary.html（与 SYNTHESIS.md 同目录，便于 Quartz 发布与归档）。务必按以下分层（覆盖 html skill 的默认模板）：
+1. 调 feishu_bridge_subtask 工具（action: spawn，worktree: off，dir: ${ledgerDir}，message: \"<brief>\"），brief 内容：『读账本目录 ${ledgerDir} 下 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md，用 html skill 渲染一份【费曼法通俗版】的研究报告 HTML，写到 ${ledgerDir}/summary.html（与 SYNTHESIS.md 同目录，便于 Quartz 发布与归档）。务必按以下分层（覆盖 html skill 的默认模板）：
 
 1. 一个生活类比讲全貌（顶部第一屏，默认展开）：用一个人人都能懂的日常类比把研究核心判断讲清楚——「这件事就像……」。类比要贴切（结构对应），让读者一眼建立直觉。类比之后跟 2 句大白话补充：各方基于数据倾向于什么、在什么地方仍有诚实分歧。零术语——必要术语用括号日常语言解释。有定论处给定论，有分歧处显式标出分歧，不要为了干脆而假装分歧已消解。
 2. 拆 2-3 个核心发现（默认展开）：把判断拆成 2-3 个「要懂这件事必须跨过的门槛」。每个 = 一句大白话标题 + 关键数据/指标用日常语言解释意味着什么（不丢数字，用类比说清数字的含义）+ 一个最小例子（日常场景）+ 折叠的专业支撑细节（保真，不降级）。其中【违反直觉】的发现标 ⚠ 反直觉，并多给一句「为什么这件事反直觉 / 常人会怎么误判」。
@@ -178,9 +178,9 @@ export function buildChatroomResearchModeratorPriming(
 4. 原始细节（默认折叠）：原始数据、各视角原话贡献、仍未解决的开放问题（明确交回人类定夺）。
 
 原则：信息不丢，按「理解路径」重排——顶部够白、底部保真、数据前置、分歧不藏。底部保真不降级。用户只看第一屏就懂大意，零操作。完成后调 feishu_bridge_subtask 工具 action: report，message: \"HTML 已生成：<path>\"。
-2. 子 agent report 回父群后（你会收到 [子任务完成] 消息，含 HTML 路径），把 HTML 投递给用户（文件投递工具未上线前，先告诉用户路径）。
-3. 调原生 **AskUserQuestion** 问用户下一步，选项含『结束并出总结』『出一份深度学术版』『就报告内容继续提问』『继续研究一轮』。
-- 用户选「出一份深度学术版」→ 调 feishu_bridge_subtask（action: spawn，worktree: off，dir: /tmp/chatroom-research-academic-<时间戳>，message: \"<学术版 brief>\"，brief 见上方【学术深度版 brief】）。子 agent report 回父群后（[子任务完成] 消息含 HTML 路径），投递学术版 HTML。投递后再调原生 **AskUserQuestion** 问下一步，选项含『结束并出总结』『就报告内容继续提问』『继续研究一轮』（不再重复出学术版选项——已生成，要重看直接说）。**记住用户已选过学术版**，后续收尾纯文字总结走学术语气。
+2. 子 agent report 回父群后（你会收到 [子任务完成] 消息，含 HTML 路径），用 feishu_bridge_send 工具把 HTML 文件投递给用户。
+3. 调原生 **ask_user_question** 问用户下一步，选项含『结束并出总结』『出一份深度学术版』『就报告内容继续提问』『继续研究一轮』。
+- 用户选「出一份深度学术版」→ 调 feishu_bridge_subtask（action: spawn，worktree: off，dir: ${ledgerDir}，message: \"<学术版 brief>\"，brief 见上方【学术深度版 brief】）。子 agent report 回父群后（[子任务完成] 消息含 HTML 路径），投递学术版 HTML。投递后再调原生 **ask_user_question** 问下一步，选项含『结束并出总结』『就报告内容继续提问』『继续研究一轮』（不再重复出学术版选项——已生成，要重看直接说）。**记住用户已选过学术版**，后续收尾纯文字总结走学术语气。
 - 用户选「结束并出总结」→ 调 ${TOOL} 工具 action: end + 结构化总结。**若用户此前选过「出一份深度学术版」**，保持学术结构化总结（综合图景、各方贡献与数据、仍有的分歧/开放问题，明确交回人类定夺）；**否则**走费曼法通俗语气（数据仍保留，用日常语言解释含义）。不要假装分歧已被消解。
 - 用户选「就报告内容继续提问」→ 用户提问 → 你判断该转给哪位角色，用 action: ask 把问题转过去（只带图景+问题，不塞框架）→ 角色回答后回到第 3 步再次问是否收尾。
 - 用户选「继续研究一轮」→ 再调 action: gather 加 research: true 迭代。
@@ -216,7 +216,7 @@ export function buildChatroomPickPriming(topic: string, roleNames: string[], rol
 4. 调完后**结束回合**（非阻塞，和 gather 一样）。用户在卡片上点「确认开始」后，engine 会自动启动聊天室并再次唤醒你（带正式讨论的编排指令）。
 
 ## plan mode
-pick-roles 有副作用。若处于 plan mode：先调 \`ExitPlanMode\` 带一行计划（读角色文件 → pick-roles 推荐列表），用户批准后再执行；用户拒绝就停，不要自己代用户选角色。
+pick-roles 有副作用。若处于 plan mode：先调 \`exit_plan_mode\` 带一行计划（读角色文件 → pick-roles 推荐列表），用户批准后再执行；用户拒绝就停，不要自己代用户选角色。
 `
 }
 
@@ -259,6 +259,6 @@ export function buildChatroomTopicPickPriming(roleNames: string[], rolesDir: str
 5. 调完后结束回合（非阻塞，和 gather 一样）。
 
 ## plan mode
-pick-topic 有副作用。若处于 plan mode：先调 ExitPlanMode 带一行计划（扫角色文件 + 看最近 vault → pick-topic 给候选），用户批准后再执行；用户拒绝就停，不要自己代用户出题。
+pick-topic 有副作用。若处于 plan mode：先调 exit_plan_mode 带一行计划（扫角色文件 + 看最近 vault → pick-topic 给候选），用户批准后再执行；用户拒绝就停，不要自己代用户出题。
 `
 }

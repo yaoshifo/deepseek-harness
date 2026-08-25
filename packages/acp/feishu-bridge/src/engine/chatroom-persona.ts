@@ -144,7 +144,7 @@ export function chatroomResearchRolePrompt(): string {
   child: "assistant"
   message: "<把研究任务交给助手：要下什么数据、跑什么分析、算什么指标；要数值和结论，不要出图>"
 
-child 固定写 "assistant"——它指向你的预配助手，服务端解析；不要自己抄写 session key（长 key 容易抄错）。若 send 报「预配助手不存在」——预配失败——退回 feishu_bridge_subtask（action: spawn，worktree: off，message: \"<任务>\") 新建一个；spawn 结果会给 session key，后续追问把那个 key 原样复制进 send 的 child。
+child 固定写 "assistant"——它指向你的预配助手，服务端解析；不要自己抄写 session key（长 key 容易抄错）。若 send 报 "no pre-provisioned assistant"——预配失败——退回 feishu_bridge_subtask（action: spawn，worktree: off，message: \"<任务>\") 新建一个；spawn 结果会给 session key，后续追问把那个 key 原样复制进 send 的 child。
 
 **助手已预配共享 Python 环境**（uv venv）：所有角色的助手共用同一个 venv，pip install 装的包彼此共享、装一次即可。派装包任务时直接让助手执行 pip install 即可，不必让助手各自新建 venv——环境已就绪。
 
@@ -267,14 +267,18 @@ export function subtaskNoReportAgentSystemPrompt(): string {
  */
 /** The research-assistant preamble (Go SubtaskResearchAssistantPrompt).
  *
+ * @param venvPython - The shared venv's python binary path; '' when unprovisioned (no Go-era $VIRTUAL_ENV injection exists here).
  * @returns the research-execution preamble for assistant children.
  */
-export function subtaskResearchAssistantPrompt(): string {
+export function subtaskResearchAssistantPrompt(venvPython: string): string {
+  const pythonLine = venvPython !== ''
+    ? `跑脚本用 \`${venvPython} script.py\`（已装 akshare/pandas/numpy/requests）；若缺你要的包，\`${venvPython} -m pip install <pkg>\` 装到同一 venv，别退回系统 python。`
+    : '未预配共享 venv——用系统 python3 跑脚本，缺包用 pip3 install --user 安装。'
   return `
 ### 你是一个并行研究作战室的研究助手
 你在为一个聊天室角色做研究执行：下数据、跑脚本、做分析。遵守：
 
-- **在当前工作目录工作**——你的 cwd 是共享研究工作区，已配好 Python 虚拟环境。所有脚本和数据写到**当前目录**，不要写 /tmp——便于用户事后审计你的计算来源。跑脚本用 \`$VIRTUAL_ENV/bin/python script.py\`（已装 akshare/pandas/numpy/requests）；若缺你要的包，\`$VIRTUAL_ENV/bin/python -m pip install <pkg>\` 装到同一 venv，别退回系统 python。
+- **在当前工作目录工作**——你的 cwd 是共享研究工作区。所有脚本和数据写到**当前目录**，不要写 /tmp——便于用户事后审计你的计算来源。${pythonLine}
 - **默认不出图**——你和你的角色都是文本模型、看不懂图片。结论用数值/表格给出；仅当角色明确要求可视化时才出图，并用 feishu_bridge_send 发出。
 - **report 前把关键数据/指标写进 report 文本**——父角色只能看到 report 的内容，图表和文件它看不到。每个关键数字标注**来源**（akshare 接口名 / web 搜索关键词）和**抓取日期**，让结论可追溯、可复现。
 - 你只做研究执行：查什么、怎么解读、结论是什么由角色判断，不要替它做综合判断。完成全部任务后再调 feishu_bridge_subtask 的 action: report（report 一次，不要中间进度调）。

@@ -65,7 +65,7 @@ describe('processInteractiveEvents subagent projection', () => {
     ch.push({ type: 'tool_use', toolName: 'read', toolInput: '/tmp/report.md', toolID: 'child-1:c1', content: '', done: false, fromSubagent: true })
     // A child Write to a plan path exercises the no-promotion guard.
     ch.push({
-      type: 'tool_use', toolName: 'Write', toolInput: '.claude/plans/x.md', toolInputRaw: { file_path: '.claude/plans/x.md' },
+      type: 'tool_use', toolName: 'write', toolInput: '.claude/plans/x.md', toolInputRaw: { file_path: '.claude/plans/x.md' },
       toolID: 'child-1:c2', content: '', done: false, fromSubagent: true,
     })
     // Garbage counts are ignored, not rendered.

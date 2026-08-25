@@ -145,7 +145,6 @@ describe('buildSessionStartOptions research venv', () => {
     s.setResearchVenv('/tmp/research/.venv')
     const options = e.buildSessionStartOptions('k', s)
     expect(options.venv?.virtualEnv).toBe('/tmp/research/.venv')
-    expect(options.venv?.pathBin).toBe('/tmp/research/.venv/bin')
   })
 
   it('sets no venv without a research venv', () => {

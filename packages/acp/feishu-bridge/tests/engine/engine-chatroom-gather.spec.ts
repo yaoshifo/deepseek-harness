@@ -159,6 +159,31 @@ describe('summary phase-neutrality', () => {
 })
 
 describe('GatherRoles', () => {
+  it('fails loud on a dangling hub key and mints no phantom hub', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    const ghost = 'test:ghost-hub:user-1'
+    const before = e.sessions.allSessions().length
+
+    // A registry that lost the moderator record must not gain one back as
+    // an empty phantom whose flags silently degrade the protocol.
+    expect(() => { gatherRoles(e, ghost, '问题', false) }).toThrow('hub session missing')
+    expect(e.sessions.allSessions().length).toBe(before)
+  })
+
+  it('buildSessionStartOptions reads a dangling hub as no chatroom state, minting nothing', () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const role = e.sessions.getOrCreateActive('test:role-9:user-1')
+    role.setChatroomHubKey('test:ghost-hub:user-1')
+    const before = e.sessions.allSessions().length
+
+    const options = e.buildSessionStartOptions('test:role-9:user-1', role)
+    expect(options.chatroom?.research).toBe(false)
+    expect(e.sessions.allSessions().length).toBe(before)
+  })
+
   it('sets the barrier, arms the timer, broadcasts to every role', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
