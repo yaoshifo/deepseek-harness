@@ -328,7 +328,6 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   compress: { en: 'Compress conversation context', zh: '压缩会话上下文', 'zh-TW': '壓縮會話上下文', ja: '会話コンテキストを圧縮', es: 'Comprimir contexto de conversación' },
   stop: { en: 'Stop current execution', zh: '停止当前执行', 'zh-TW': '停止當前執行', ja: '現在の実行を停止', es: 'Detener ejecución actual' },
   cron: { en: 'Manage scheduled tasks, arg: [add|list|del|enable|disable]', zh: '管理定时任务，参数: [add|list|del|enable|disable]', 'zh-TW': '管理定時任務，參數: [add|list|del|enable|disable]', ja: 'スケジュールタスク管理、引数: [add|list|del|enable|disable]', es: 'Gestionar tareas programadas, arg: [add|list|del|enable|disable]' },
-  skills: { en: 'List agent skills (from SKILL.md)', zh: '列出 Agent Skills（来自 SKILL.md）', 'zh-TW': '列出 Agent Skills（來自 SKILL.md）', ja: 'エージェントスキル一覧（SKILL.md から）', es: 'Listar skills del agente (desde SKILL.md)' },
   config: { en: 'View/update runtime configuration, arg: [get|set|reload] [key] [value]', zh: '查看/修改运行时配置，参数: [get|set|reload] [键] [值]', 'zh-TW': '查看/修改執行階段配置，參數: [get|set|reload] [鍵] [值]', ja: 'ランタイム設定の表示/変更、引数: [get|set|reload] [キー] [値]', es: 'Ver/actualizar configuración en tiempo de ejecución, arg: [get|set|reload] [clave] [valor]' },
   status: { en: 'Show system status', zh: '查看系统状态', 'zh-TW': '查看系統狀態', ja: 'システム状態を表示', es: 'Mostrar estado del sistema' },
   usage: { en: 'Show account/model quota usage', zh: '查看账号/模型限额使用情况', 'zh-TW': '查看帳號/模型限額使用情況', ja: 'アカウント/モデル使用量を表示', es: 'Mostrar uso de cuota de cuenta/modelo' },
