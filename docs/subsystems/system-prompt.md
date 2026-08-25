@@ -92,6 +92,27 @@ interface PromptContext {
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
+<a id="ctxagentinstructions--agentinstructions"></a>
+
+### `ctx.agentInstructions` — `AgentInstructions`
+
+Service owning workspace-instruction injection. Registering the listeners on a service (rather than directly on the plugin body) is what exposes the scoped suppress seam: consumers composing a wholesale-replacement persona call it in their agent setup so the instruction channel stays silent for that agent.
+
+```ts cordis-catalog
+/**
+ * Suppress every workspace-instruction contribution for the calling context's
+ * scope: no baseline is composed and filesystem touches inject no dynamic
+ * updates, and any pending workspace context is dropped from the inbox.
+ * Registrations compose; disposing every returned effect restores injection.
+ * The check walks the agent's scope chain, so a marker registered by an
+ * enclosing scope also suppresses its descendant agents.
+ * @returns the exact Cordis effect disposer.
+ */
+suppress(): () => void
+```
+
+Source: [`packages/context/agent-instructions/src/index.ts`](../../packages/context/agent-instructions/src/index.ts)
+
 <a id="ctxsystemprompt--systemprompt"></a>
 
 ### `ctx.systemPrompt` — `SystemPrompt`
