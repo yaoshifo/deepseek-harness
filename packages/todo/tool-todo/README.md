@@ -6,9 +6,9 @@ The model-facing `todo_write` tool: the agent's whole task list, replaced wholes
 
 ## What it does
 
-Registers one tool, `todo_write(todos: [{ content, status }])`, on `ctx.tools`. The model sends the ENTIRE list every call — there are no partial updates or per-item edits. Each call appends a `todo/write` event (the full list snapshot) to the calling agent's session log via `agent.session.append('todo/write', { todos })`; the current list is the most recent such event (last-write-wins on replay).
+Registers one tool, `todo_write(todos: [{ content, status, activeForm? }])`, on `ctx.tools`. The model sends the ENTIRE list every call — there are no partial updates or per-item edits. Each call appends a `todo/write` event (the full list snapshot) to the calling agent's session log via `agent.session.append('todo/write', { todos })`; the current list is the most recent such event (last-write-wins on replay).
 
-`status` is one of `pending`, `in_progress`, or `completed`.
+`status` is one of `pending`, `in_progress`, or `completed`. `activeForm` is an optional present-progressive label (Claude Code's TodoWrite convention; models trained on it send the field unprompted) that UIs may show while the task runs — trimmed on acceptance, dropped when empty, absent from the snapshot when omitted.
 
 ## Single owner
 
@@ -22,7 +22,7 @@ The flag moves the model-facing instruction and the accepted input together — 
 
 ## Validation
 
-Beyond the schema's type/required/enum checks, `execute` rejects an empty or duplicate `content`, and any item key beyond `content`/`status` — an extended item shape (ids, nesting) fails loud instead of silently flattening, keeping the logged snapshot equal to what the model believes it wrote. How many tasks may be `in_progress` at once is the deployment's call (§ Configuration): a composition that chooses `true` permits parallel work (concurrent subagents, background commands) to mark several tasks simultaneously. Ordering and the discipline of keeping the list current are left to the model via the tool description.
+Beyond the schema's type/required/enum checks, `execute` rejects an empty or duplicate `content`, and any item key beyond `content`/`status`/`activeForm` — an extended item shape (ids, nesting) fails loud instead of silently flattening, keeping the logged snapshot equal to what the model believes it wrote. `activeForm` is trimmed and dropped when empty, so the snapshot carries it only as a meaningful label. How many tasks may be `in_progress` at once is the deployment's call (§ Configuration): a composition that chooses `true` permits parallel work (concurrent subagents, background commands) to mark several tasks simultaneously. Ordering and the discipline of keeping the list current are left to the model via the tool description.
 
 ## Rendering
 
@@ -69,5 +69,5 @@ Append-only; newly visible content follows the reusable request prefix and does 
 ## Known Limitations and Deferred Work
 
 - **Single-owner scope only** — the list belongs to the one calling agent session; subagent/shared/swarm scopes are a deliberate cut (see § Single owner), and a non-agent caller is rejected.
-- **The item shape is deliberately minimal** — `content` plus three-state `status`; whole-list replacement needs no stable id, priority, or active-form fields.
+- **The item shape is deliberately minimal** — `content`, three-state `status`, and optional `activeForm`; whole-list replacement needs no stable id or priority fields.
 - **Whole-list replacement is the only operation** — no partial updates, no read-back tool; the model must resend the entire list each call.

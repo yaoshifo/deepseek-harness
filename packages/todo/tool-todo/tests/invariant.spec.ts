@@ -52,6 +52,24 @@ describe('todo snapshot invariants', () => {
     expect(() => { ctx.emit('session/event', {} as Session, event(todos)) }).toThrow(message)
   })
 
+  it('accepts a snapshot carrying trimmed activeForm labels', async () => {
+    const ctx = await setup()
+    const todos = [
+      { content: 'Apply fix', status: 'in_progress', activeForm: 'Applying fix' },
+      { content: 'Run checks', status: 'pending' },
+    ]
+    expect(() => { ctx.emit('session/event', {} as Session, event(todos)) }).not.toThrow()
+  })
+
+  it.each([
+    [[{ content: 'task', status: 'pending', activeForm: 42 }], /activeForm must be a string/],
+    [[{ content: 'task', status: 'pending', activeForm: ' padded ' }], /activeForm must be non-empty and already trimmed/],
+    [[{ content: 'task', status: 'pending', activeForm: '' }], /activeForm must be non-empty/],
+  ])('rejects an incoherent activeForm', async (todos, message) => {
+    const ctx = await setup()
+    expect(() => { ctx.emit('session/event', {} as Session, event(todos)) }).toThrow(message)
+  })
+
   it('ignores unrelated dispatches and session events', async () => {
     const ctx = await setup()
     expect(() => {

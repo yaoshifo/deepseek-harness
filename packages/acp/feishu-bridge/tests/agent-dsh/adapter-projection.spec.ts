@@ -94,6 +94,22 @@ describe('projectSessionEvent todo/write snapshot', () => {
     ])
   })
 
+  it('carries activeForm through and drops an empty one', async () => {
+    const s = newSession()
+    const events = await project(s, {
+      type: 'todo/write', seq: 1, time: 0,
+      data: { todos: [
+        { content: 'first', status: 'in_progress', activeForm: 'Doing first' },
+        { content: 'second', status: 'pending', activeForm: '' },
+      ] },
+    })
+    expect(events).toHaveLength(1)
+    expect(events[0]?.todos).toEqual([
+      { content: 'first', status: 'in_progress', activeForm: 'Doing first' },
+      { content: 'second', status: 'pending' },
+    ])
+  })
+
   it('drops a snapshot without todos', async () => {
     const s = newSession()
     const events = await project(s, { type: 'todo/write', seq: 1, time: 0, data: {} })

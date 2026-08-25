@@ -51,7 +51,7 @@ function text(result: { content: { type: string; text?: string }[] }): string {
 }
 
 describe('dsh-tool-todo', () => {
-  it('registers a `todo_write` tool whose schema is an array of {content,status}', async () => {
+  it('registers a `todo_write` tool whose schema is an array of {content,status,activeForm?}', async () => {
     const ctx = await setup(true)
     const schema = ctx.tools.schemas().find(s => s.name === 'todo_write')
     expect(schema).toBeDefined()
@@ -60,7 +60,7 @@ describe('dsh-tool-todo', () => {
     const todos = props.todos as { type: string; items?: { properties?: Record<string, { type: string; enum?: string[] }> } }
     expect(todos.type).toBe('array')
     const itemProps = todos.items?.properties ?? {}
-    expect(Object.keys(itemProps).sort()).toEqual(['content', 'status'])
+    expect(Object.keys(itemProps).sort()).toEqual(['activeForm', 'content', 'status'])
     expect(itemProps.status?.enum).toEqual(['pending', 'in_progress', 'completed'])
   })
 
@@ -92,6 +92,27 @@ describe('dsh-tool-todo', () => {
 
     const event = agent.session.events.findLast(e => e.type === 'todo/write')!
     expect(event.data.todos).toEqual([{ content: 'plan the work', status: 'pending' }])
+  })
+
+  it('accepts an optional activeForm and logs it with the snapshot (Claude Code-style calls succeed)', async () => {
+    const ctx = await setup(true)
+    const agent = agentWithSession('active-form')
+    const result = await callTodo(ctx, { todos: [
+      { content: 'plan', status: 'in_progress', activeForm: '  planning the work  ' },
+      { content: 'build', status: 'pending', activeForm: '' },
+    ] }, { agent })
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected todo_write success')
+
+    const logged = agent.session.events.findLast(e => e.type === 'todo/write')!.data.todos
+    expect(logged).toEqual([
+      { content: 'plan', status: 'in_progress', activeForm: 'planning the work' },
+      { content: 'build', status: 'pending' },
+    ])
+    expect(result.value).toEqual({
+      todos: logged,
+      counts: { pending: 1, inProgress: 1, completed: 0 },
+    })
   })
 
   it('replaces the list on a second call (last-write-wins on the log)', async () => {

@@ -35,6 +35,13 @@ function validateTodos(value: unknown, fail: InvariantFailure): void {
     if (typeof status !== 'string' || !TODO_STATUSES.has(status)) {
       fail(`todo/write carries unknown status ${JSON.stringify(status)}`)
     }
+    const { activeForm } = item as Record<string, unknown>
+    if (activeForm !== undefined) {
+      if (typeof activeForm !== 'string') fail('todo/write activeForm must be a string when present')
+      else if (activeForm.length === 0 || activeForm.trim() !== activeForm) {
+        fail('todo/write activeForm must be non-empty and already trimmed')
+      }
+    }
   }
 }
 
