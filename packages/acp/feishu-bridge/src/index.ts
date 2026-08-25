@@ -257,6 +257,17 @@ export interface ProjectConfig {
 
   /** Parent dirs whose subdirs are auto-listed in /dir (Go dir_scan_paths, #3). */
   dirScanPaths?: string[]
+  /**
+   * MCP server-name allowlist for this project's sessions. Present = sessions
+   * (chats, resumes, forks, chatroom personas, subtask children, one-shot
+   * queries) only see `mcp__<server>__*` tools of the listed servers; every
+   * other MCP server's tools are masked out of the model request. Absent =
+   * unrestricted. A listed server with no live tools (not mounted, or down at
+   * boot) is silently invisible — a typo and an outage are indistinguishable
+   * here, and fail-loud would let one dead server break other projects'
+   * sessions.
+   */
+  mcpServers?: string[]
   /** The bot's default Feishu Wiki/Drive location (Go feishu_workspace, #18). */
   feishuWorkspace?: FeishuWorkspaceConfig
   /** Comma-separated user IDs allowed to run privileged commands; '*' = all (Go admin_from). */
@@ -621,6 +632,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     contextWindow: Schema.natural().description('Model context window in tokens; 0 = 200k default (Go context_window)'),
     adminFrom: Schema.string().description('Comma-separated admin user IDs; * = all'),
     dirScanPaths: Schema.array(Schema.string()).description('Parent dirs whose subdirs are auto-listed in /dir (Go dir_scan_paths, #3)'),
+    mcpServers: Schema.array(Schema.string()).description('MCP server-name allowlist: present = this project\'s sessions only see these servers\' mcp__ tools; absent = unrestricted'),
     feishuWorkspace: Schema.object({
       wikiSpaceId: Schema.string().description('Default wiki space id (CC_FEISHU_WIKI_SPACE_ID)'),
       folderToken: Schema.string().description('Default Drive folder token (CC_FEISHU_FOLDER_TOKEN)'),
@@ -1000,6 +1012,7 @@ export function buildProjectAssembly(
     cwd: project.workdir,
     providers: routes,
     activeProvider,
+    ...(project.mcpServers !== undefined && project.mcpServers.length > 0 ? { mcpServers: project.mcpServers } : {}),
     ...(sharedQuestionRouting !== undefined ? { questionRouting: sharedQuestionRouting } : {}),
   })
 
