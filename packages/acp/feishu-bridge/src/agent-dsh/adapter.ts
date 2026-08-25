@@ -1792,6 +1792,11 @@ export class DshAgentSession implements AgentSession {
     return !this.disposed
   }
 
+  /** AgentSession.lastStreamActivity: newest projected-event timestamp. */
+  lastStreamActivity(): number {
+    return this.lastActivityAt
+  }
+
   /**
    * SessionCompressor (Go ContextCompressor "/compact"): trigger dsh's
    * native manual compaction on this session's agent. Throws when the

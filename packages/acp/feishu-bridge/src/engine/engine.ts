@@ -1451,6 +1451,10 @@ export class Engine {
       if (state.activeTurns === 0 || state.stopNoticeSent) continue
       state.stopNoticeSent = true
       state.engineStopped = true
+      // Fire the stop signal too: a pump or parked ask awaiting it must
+      // settle promptly instead of relying on the channel-close drain —
+      // the close itself can only complete once the parked ask returns.
+      state.markStopped()
       const platform = state.platform
       if (platform !== undefined) {
         await this.send(platform, state.replyCtx, this.i18n.t(Msg.PluginReloaded))
@@ -2882,9 +2886,9 @@ export class Engine {
 
         if (outcome.kind === 'stop') {
           await barrier()
-          if (state.isUserStopped()) {
-          // User stop: stopped terminal card, skipping cp.Finalize(Failed)
-          // which would clobber the ⏹ 已停止 card.
+          if (state.isUserStopped() || state.engineStopped) {
+          // User stop or engine teardown: stopped terminal card, skipping
+          // cp.Finalize(Failed) which would clobber the ⏹ 已停止 card.
             await sp.markStopped()
           } else {
             await sp.markFailed()
@@ -3343,6 +3347,12 @@ export class Engine {
 
   /**
    * Whether the idle fire reflects a genuine stall (Go stallConfirmed).
+   * The agent session's own stream activity arbitrates: events it projected
+   * after the pump's last receive mean the pump — not the agent — went
+   * silent (a degraded/reload handoff left it holding a dead channel), and a
+   * healthy stream must never be killed by a blind watchdog (2026-08-25
+   * oc_29bb incident: three 200s-cadence kills of a turn that was streaming
+   * the whole window). A blind pump still terminates via the hard turn cap.
    * @param state - State whose last event timestamp is checked.
    * @param now - Current timestamp in ms.
    * @param idle - Effective idle timeout in ms.
@@ -3351,6 +3361,13 @@ export class Engine {
   stallConfirmed(state: InteractiveState, now: number, idle: number): boolean {
     const last = state.lastEventAt
     if (last === 0) return true
+    const streamLast = state.agentSession?.lastStreamActivity?.() ?? 0
+    if (streamLast > last) {
+      const pumpIdleSec = Math.round((now - last) / 1000)
+      const streamIdleSec = Math.round((now - streamLast) / 1000)
+      console.warn(`stall check overridden: agent is streaming but the pump saw no event (last pump event ${pumpIdleSec}s ago, last stream event ${streamIdleSec}s ago) — blind pump, not a stall`)
+      return false
+    }
     return now - last >= idle
   }
 
@@ -4581,6 +4598,26 @@ export class Engine {
     }
     const replyCtx = state.replyCtx
 
+    // Arm the stop/abort races before any delivery await — pre-card flush,
+    // park, and card sends alike: an engine stop or turn abort landing while
+    // the ask is still being delivered must settle the ask immediately, not
+    // after the platform sends resolve. The parked tool call otherwise never
+    // returns, the agent's dispose waits on it forever, and the session leaks
+    // live in the persistence coordinator — every later resume of the chat
+    // then degrades to a fresh session (2026-08-25 oc_29bb incident: a
+    // plugin reload stopped the platform mid plan-card send and the ask
+    // never settled).
+    const stopP = state.stopSignal().then(() => 'stopped' as const)
+    let onAbort: (() => void) | undefined
+    const abortP = signal?.aborted === true
+      ? Promise.resolve('aborted' as const)
+      : signal !== undefined
+        ? new Promise<'aborted'>((resolve) => {
+          onAbort = () => { resolve('aborted') }
+          signal.addEventListener('abort', onAbort, { once: true })
+        })
+        : neverPromise
+
     // Plan review: the ask carries the plan markdown; a plan file the agent
     // wrote this round wins when it is readable (fresher than the submitted
     // copy, Go engine_events.go plan extraction).
@@ -4598,61 +4635,11 @@ export class Engine {
       }
     }
 
-    // Pre-card flush + detach (Go engine_events.go ~4192-4225): with the
-    // preview degraded the accumulated text segment goes out as plain
-    // messages now — the live card cannot carry it — and segmentStart
-    // advances either way. The live card is completed and detached BEFORE
-    // the ask card reaches the user.
-    if (planContent !== '') {
-      // The plan card owns the exact plan text: strip it from the final
-      // reply source so it is not delivered twice.
-      for (let i = state.segmentStart; i < state.textParts.length; i++) {
-        const part = state.textParts[i]
-        if (part !== undefined && part.includes(planContent)) {
-          state.textParts[i] = part.replace(planContent, '').trim()
-          break
-        }
-      }
-    }
-    const sp = state.preview
-    if (sp !== undefined) {
-      if (planContent !== '') await sp.removeText(planContent)
-      if (state.textParts.length > state.segmentStart) {
-        if (!sp.canPreview()) {
-          const segment = state.textParts.slice(state.segmentStart).join('')
-          if (segment !== '') {
-            for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-              await this.send(p, replyCtx, chunk)
-            }
-          }
-        }
-        state.segmentStart = state.textParts.length
-        state.silentHold = false
-      }
-      // Pre-detach speculative reply render (Go captureReplyForExport +
-      // renderAndDeliverReply at a permission/AskUserQuestion): the
-      // pre-interaction segment over the threshold renders now — the
-      // turn-end render would otherwise drop it. A plan review is excluded:
-      // the plan render covers this turn's product.
-      const session = this.sessions.findActive(sessionKey)
-      const captured = captureReplyForExport(sp, state)
-      const triggered = this.planRenderEnabled && request.kind !== 'plan-review'
-        && captured.text !== '' && Array.from(captured.text).length >= defaultReplyPreRenderLen
-        && !(session?.shouldSuppressAutoRender() ?? false)
-      // Drain async preview updates so a stale running PATCH cannot overwrite
-      // the completed card (Go barrier before detach).
-      await state.sender?.barrier()
-      await sp.completeAndDetach()
-      if (triggered) {
-        renderAndDeliverReply(this, state, sessionKey, captured.text, captured.exportKey)
-      }
-    }
-
-    // Park the ask and render the card(s).
+    // Park bookkeeping lives outside the delivery closure so the decision
+    // race below can settle it after the cards land.
     let resolveDecision!: (decision: AskDecision) => void
     const decisionP = new Promise<AskDecision>((resolve) => { resolveDecision = resolve })
     const pending: PendingAsk = { request, answers: new Map(), resolve: resolveDecision }
-    state.pendingAsk = pending
     const settle = (decision: AskDecision): void => {
       if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
       if (state.pendingAsk === pending) state.pendingAsk = undefined
@@ -4661,56 +4648,117 @@ export class Engine {
     }
     pending.resolve = settle
 
-    if (request.kind === 'plan-review' && planContent !== '') {
-      // Plan card + HTML render (Go engine_events.go ExitPlanMode branch,
-      // #47): the markdown card (with export button) is the always-on
-      // fallback; the render fork runs in addition and delivers an image.
-      const exportKey = `plan:${String(state.planRevisionCount)}`
-      storePlanExport(state, exportKey, planContent)
-      if (planContent !== state.sentPlanContent) state.sentPlanContent = planContent
-      let activePlanFilePath = state.planFilePath
-      if (activePlanFilePath !== '' && !existsSync(activePlanFilePath)) activePlanFilePath = ''
-      if (activePlanFilePath === '') {
-        activePlanFilePath = this.persistPlanFile(planContent)
+    const deliverCards = async (): Promise<void> => {
+      // Pre-card flush + detach (Go engine_events.go ~4192-4225): with the
+      // preview degraded the accumulated text segment goes out as plain
+      // messages now — the live card cannot carry it — and segmentStart
+      // advances either way. The live card is completed and detached BEFORE
+      // the ask card reaches the user.
+      if (planContent !== '') {
+        // The plan card owns the exact plan text: strip it from the final
+        // reply source so it is not delivered twice.
+        for (let i = state.segmentStart; i < state.textParts.length; i++) {
+          const part = state.textParts[i]
+          if (part !== undefined && part.includes(planContent)) {
+            state.textParts[i] = part.replace(planContent, '').trim()
+            break
+          }
+        }
       }
-      if (activePlanFilePath !== '') {
-        await this.sendPlanContent(p, replyCtx, state, activePlanFilePath, state.planRevisionCount, exportKey)
+      const sp = state.preview
+      if (sp !== undefined) {
+        if (planContent !== '') await sp.removeText(planContent)
+        if (state.textParts.length > state.segmentStart) {
+          if (!sp.canPreview()) {
+            const segment = state.textParts.slice(state.segmentStart).join('')
+            if (segment !== '') {
+              for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
+                await this.send(p, replyCtx, chunk)
+              }
+            }
+          }
+          state.segmentStart = state.textParts.length
+          state.silentHold = false
+        }
+        // Pre-detach speculative reply render (Go captureReplyForExport +
+        // renderAndDeliverReply at a permission/AskUserQuestion): the
+        // pre-interaction segment over the threshold renders now — the
+        // turn-end render would otherwise drop it. A plan review is excluded:
+        // the plan render covers this turn's product.
+        const session = this.sessions.findActive(sessionKey)
+        const captured = captureReplyForExport(sp, state)
+        const triggered = this.planRenderEnabled && request.kind !== 'plan-review'
+          && captured.text !== '' && Array.from(captured.text).length >= defaultReplyPreRenderLen
+          && !(session?.shouldSuppressAutoRender() ?? false)
+        // Drain async preview updates so a stale running PATCH cannot overwrite
+        // the completed card (Go barrier before detach).
+        await state.sender?.barrier()
+        await sp.completeAndDetach()
+        if (triggered) {
+          renderAndDeliverReply(this, state, sessionKey, captured.text, captured.exportKey)
+        }
+      }
+
+      // Park the ask, then render the card(s).
+      state.pendingAsk = pending
+      if (request.kind === 'plan-review' && planContent !== '') {
+        // Plan card + HTML render (Go engine_events.go ExitPlanMode branch,
+        // #47): the markdown card (with export button) is the always-on
+        // fallback; the render fork runs in addition and delivers an image.
+        const exportKey = `plan:${String(state.planRevisionCount)}`
+        storePlanExport(state, exportKey, planContent)
+        if (planContent !== state.sentPlanContent) state.sentPlanContent = planContent
+        let activePlanFilePath = state.planFilePath
+        if (activePlanFilePath !== '' && !existsSync(activePlanFilePath)) activePlanFilePath = ''
+        if (activePlanFilePath === '') {
+          activePlanFilePath = this.persistPlanFile(planContent)
+        }
+        if (activePlanFilePath !== '') {
+          await this.sendPlanContent(p, replyCtx, state, activePlanFilePath, state.planRevisionCount, exportKey)
+        } else {
+          await this.sendInlinePlanContent(p, replyCtx, state, planContent, state.planRevisionCount, exportKey)
+        }
+        if (this.planRenderEnabled && shouldRenderPlan(state, planContent, state.planRevisionCount)) {
+          launchPlanRender(this, state, sessionKey, planContent, activePlanFilePath, state.planRevisionCount, exportKey)
+        }
+      }
+
+      if (request.kind === 'questions') {
+        // Research-manual hub: arm the whole-ask timeout so the card cannot
+        // hang forever when the user never replies (feature #57).
+        armResearchManualAskTimeout(this, p, sessionKey, replyCtx, pending)
+        await this.sendAskQuestionsCard(p, replyCtx, request.questions, sessionKey)
       } else {
-        await this.sendInlinePlanContent(p, replyCtx, state, planContent, state.planRevisionCount, exportKey)
-      }
-      if (this.planRenderEnabled && shouldRenderPlan(state, planContent, state.planRevisionCount)) {
-        launchPlanRender(this, state, sessionKey, planContent, activePlanFilePath, state.planRevisionCount, exportKey)
+        const toolName = request.kind === 'plan-review' ? 'ExitPlanMode' : request.toolName
+        const preview = request.kind === 'plan-review'
+          ? (request.heading !== '' ? request.heading : planContent)
+          : request.preview
+        const permLimit = this.display.toolMaxLen
+        const toolInput = permLimit > 0 ? truncateIf(preview, Math.floor(permLimit * 8 / 5)) : preview
+        const prompt = this.i18n.tf(Msg.PermissionPrompt, toolName, toolInput)
+        await this.sendPermissionPrompt(p, replyCtx, prompt, toolName, toolInput)
       }
     }
 
-    if (request.kind === 'questions') {
-      // Research-manual hub: arm the whole-ask timeout so the card cannot
-      // hang forever when the user never replies (feature #57).
-      armResearchManualAskTimeout(this, p, sessionKey, replyCtx, pending)
-      await this.sendAskQuestionsCard(p, replyCtx, request.questions, sessionKey)
-    } else {
-      const toolName = request.kind === 'plan-review' ? 'ExitPlanMode' : request.toolName
-      const preview = request.kind === 'plan-review'
-        ? (request.heading !== '' ? request.heading : planContent)
-        : request.preview
-      const permLimit = this.display.toolMaxLen
-      const toolInput = permLimit > 0 ? truncateIf(preview, Math.floor(permLimit * 8 / 5)) : preview
-      const prompt = this.i18n.tf(Msg.PermissionPrompt, toolName, toolInput)
-      await this.sendPermissionPrompt(p, replyCtx, prompt, toolName, toolInput)
+    // Late sends from an interrupted delivery still land harmlessly (the
+    // ask is already unsettled and stray answers route nowhere); only the
+    // parked wait below must not outlive the interruption.
+    const interrupted = await Promise.race([
+      deliverCards().then(() => false as const),
+      Promise.race([stopP, abortP]).then(() => true as const),
+    ])
+    if (interrupted) {
+      // The abort listener dies with this ask; the stop signal is
+      // state-scoped and needs no removal.
+      if (onAbort !== undefined && signal !== undefined) signal.removeEventListener('abort', onAbort)
+      if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
+      if (state.pendingAsk === pending) state.pendingAsk = undefined
+      resolveDecision({ outcome: 'cancelled' })
+      return { outcome: 'cancelled' }
     }
 
     // Wait for the user's decision, a session stop, or an abort (Go select
     // on pending.Resolved / stopCh).
-    const stopP = state.stopSignal().then(() => 'stopped' as const)
-    let onAbort: (() => void) | undefined
-    const abortP = signal?.aborted === true
-      ? Promise.resolve('aborted' as const)
-      : signal !== undefined
-        ? new Promise<'aborted'>((resolve) => {
-          onAbort = () => { resolve('aborted') }
-          signal.addEventListener('abort', onAbort, { once: true })
-        })
-        : neverPromise
     const outcome = await Promise.race([
       decisionP.then(decision => ({ kind: 'decided' as const, decision })),
       stopP.then(() => ({ kind: 'stopped' as const, decision: undefined as AskDecision | undefined })),
