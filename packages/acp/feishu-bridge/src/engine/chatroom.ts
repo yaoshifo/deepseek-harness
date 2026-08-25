@@ -213,7 +213,7 @@ export class ChatroomGather {
       const r = this.collected.get(n) ?? ''
       lines.push(`【${n}】${r === '' ? '（NO_REPLY / 无追问）' : r}\n`)
     }
-    lines.push('\n请基于以上回复，按你当前所处阶段推进：若在澄清阶段，去重合并后用原生 AskUserQuestion(MultiSelect) 向用户发飞书多选卡提问（若全部「无需追问」则进入阶段 2；否则 note 用户回答后再次 gather，最多 3 轮）；若在拆解阶段，去重合并成子问题列表后用 note（section: subproblems）写入。')
+    lines.push('\n请基于以上回复，按你当前所处阶段推进：若在澄清阶段，去重合并后用原生 ask_user_question(multi_select: true) 向用户发飞书多选卡提问（若全部「无需追问」则进入阶段 2；否则 note 用户回答后再次 gather，最多 3 轮）；若在拆解阶段，去重合并成子问题列表后用 note（section: subproblems）写入。')
     return lines.join('')
   }
 }

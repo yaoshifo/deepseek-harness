@@ -2668,7 +2668,7 @@ export class Engine {
         : {}),
       ...(chatroom !== undefined ? { chatroom } : {}),
       ...(this.feishuWorkspace !== undefined ? { feishuWorkspace: this.feishuWorkspace } : {}),
-      ...(venv !== '' ? { venv: { virtualEnv: venv, pathBin: `${venv}/bin` } } : {}),
+      ...(venv !== '' ? { venv: { virtualEnv: venv } } : {}),
     }
   }
 

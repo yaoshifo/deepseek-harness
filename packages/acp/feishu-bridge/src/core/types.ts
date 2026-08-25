@@ -425,12 +425,10 @@ export interface SessionStartOptions {
   }
   /** Default Feishu workspace routing (#18); absent = no routing section. */
   feishuWorkspace?: FeishuWorkspaceInfo
-  /** Shared research venv; absent = none. */
+  /** Shared research venv root; absent = none. Inlined into the assistant preamble (no Go-era env injection exists here). */
   venv?: {
-    /** venv root directory (Go VIRTUAL_ENV). */
+    /** venv root directory. */
     virtualEnv: string
-    /** venv bin directory the Go subprocess PATH prepended. */
-    pathBin: string
   }
 }
 

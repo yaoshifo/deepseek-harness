@@ -390,9 +390,10 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
         }
       }
     }
+    const venvPython = options?.venv !== undefined ? `${options.venv.virtualEnv}/bin/python` : ''
     const preamble = isNoReport
       ? subtaskNoReportAgentSystemPrompt()
-      : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt() : ''}`
+      : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt(venvPython) : ''}`
     return (agentCtx) => {
       // Research assistants are coding agents: their workspace lives under the
       // project data dir (chatroomResearchWorkspace), off every chatroom
