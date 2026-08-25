@@ -93,6 +93,18 @@ describe('buildProjectAssembly config wiring', () => {
     expect(engine.baseWorkDir).toBe('/workspace/project')
   })
 
+  it('threads the project MCP allowlist onto the adapter (per-project MCP visibility)', () => {
+    const { adapter } = assemble(baseConfig(), { ...project(), mcpServers: ['srvA'] })
+    // The allowlist is behaviorally consumed in the adapter's setup hooks and
+    // child toolFilter (adapter-mcp-mask.spec); this pins the assembly wiring.
+    expect((adapter as unknown as { cfg: { mcpServers?: readonly string[] } }).cfg.mcpServers).toEqual(['srvA'])
+  })
+
+  it('omits the adapter MCP allowlist when the project configures none', () => {
+    const { adapter } = assemble(baseConfig(), project())
+    expect((adapter as unknown as { cfg: { mcpServers?: readonly string[] } }).cfg.mcpServers).toBeUndefined()
+  })
+
   it('wires the dir history and seeds it with the initial workdir (Go SetDirHistory)', async () => {
     const root = await mkdtemp(join(tmpdir(), 'fb-assembly-'))
     const workdir = join(root, 'actual-workdir')

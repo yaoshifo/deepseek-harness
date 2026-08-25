@@ -164,6 +164,8 @@ export interface DshSubagentsLike {
       maxDepth?: number
       persona?: string
       cwd?: string
+      /** Child tool mask (fork/spawn both declare the toolFilter capability). */
+      toolFilter?: { allow?: readonly string[]; deny?: readonly string[] }
     }
     signal: AbortSignal
   }): Promise<{ childId: unknown }>
@@ -201,6 +203,21 @@ export interface QuestionRouting {
   registered: boolean
 }
 
+/**
+ * Structural slice of the `tools` service the adapter consumes: the live
+ * schema view (`schemas`), presence lookup, and the agent-scoped visibility
+ * mask. `restrict` requires the calling context to be the agent's scoped
+ * context (a plain-context restriction would mask every agent).
+ */
+export interface DshToolsLike {
+  /** Tool schemas the calling scope currently sees (name/description/fields). */
+  schemas(): Array<{ name: string }>
+  /** Look up one visible tool as the calling scope sees it. */
+  get(name: string): unknown
+  /** Mask global tools for the calling agent scope; returns the lift disposer. */
+  restrict(filter: { allow?: readonly string[]; deny?: readonly string[] }): () => void
+}
+
 /** Per-project constructor options for the DSH agent adapter. */
 export interface DshAdapterConfig {
   agentName: string
@@ -208,6 +225,12 @@ export interface DshAdapterConfig {
   /** Named routes; the active one supplies create/resume agentOptions. */
   providers: ProviderRoute[]
   activeProvider: string
+  /**
+   * MCP server-name allowlist for this project (ProjectConfig.mcpServers).
+   * Present = every session and subtask child this adapter creates denies the
+   * `mcp__*` tools of servers outside the list; absent = unrestricted.
+   */
+  mcpServers?: readonly string[]
   /** Shared routing for multi-project daemons; absent = single-adapter fallback. */
   questionRouting?: QuestionRouting
 }
@@ -363,6 +386,66 @@ export function unattendedSubtaskPersona(workspaceText: string): string {
 }
 
 /**
+ * Deny list masking the MCP tools of servers outside a project's allowlist:
+ * every live `mcp__`-prefixed name that belongs to no allowed server.
+ * Ownership follows the mcp-client naming contract — public name
+ * `mcp__<serverName>__<rawName>`, with an identity suffix appended when
+ * normalization collides — and the prefix match tolerates that suffix.
+ * Ceiling: two live servers whose names collide on a `mcp__<a>__<b>__` prefix
+ * (the serverName charset allows `_`) mis-attribute each other's tools; only
+ * those tools are mis-masked. This is visibility composition, not an
+ * authority boundary (the dsh tools README states the scope security
+ * non-goal).
+ *
+ * @param names - live tool names from the tools schema view.
+ * @param allow - the project's allowed MCP server names.
+ * @returns the names to deny; empty when nothing qualifies.
+ */
+export function mcpDenyList(names: readonly string[], allow: readonly string[]): string[] {
+  if (allow.length === 0) return []
+  return names.filter(name =>
+    name.startsWith('mcp__') && !allow.some(server => name.startsWith(`mcp__${server}__`)))
+}
+
+/**
+ * Wrap a creation-time setup hook with the project's MCP visibility mask
+ * (per-project MCP tool visibility): after the wrapped setup composes its
+ * prompt sections, deny the tools of every MCP server outside the project's
+ * allowlist. The deny list is computed inside the hook from the agent scope's
+ * own schema view — at setup time no restriction is registered yet, so the
+ * view holds every global tool, and `restrict` validates the names against
+ * that same view. An empty deny list (no mcp-client mounted, every server
+ * down, or all tools already allowed) skips the call; an empty filter throws
+ * by design. Ceiling: a server that revives after this session started adds
+ * its tools unnamed in the deny set, and deny masks admit later unnamed
+ * globals — the revived tools stay visible until the next session start or
+ * resume recomputes the mask. Upgrade path: pattern-based restriction in core
+ * tools.
+ *
+ * @param setup - the wrapped setup hook, or undefined.
+ * @param allow - the project's allowed MCP server names; undefined/empty = no mask.
+ * @returns the wrapped setup hook, or the original when no mask applies.
+ */
+function withMcpMask(
+  setup: import('@deepseek-ai/dsh-agent').AgentSetup | undefined,
+  allow: readonly string[] | undefined,
+): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
+  if (allow === undefined || allow.length === 0) return setup
+  return async (agentCtx) => {
+    // Propagate the wrapped setup's publication commit: the registry invokes
+    // it immediately before publication, and swallowing it here would drop
+    // the inner setup's validation.
+    const commit = await setup?.(agentCtx)
+    const toolsSvc = agentCtx.get('tools') as DshToolsLike | undefined
+    if (toolsSvc !== undefined) {
+      const deny = mcpDenyList(toolsSvc.schemas().map(schema => schema.name), allow)
+      if (deny.length > 0) toolsSvc.restrict({ deny })
+    }
+    return commit
+  }
+}
+
+/**
  * Build the agents.create/resume setup hook for the typed persona options
  * (Go isChatroomBareSession + buildChatroomSystemPrompt): chatroom role /
  * direct-role / moderator sessions replace the whole system prompt. A
@@ -423,9 +506,7 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
     // its loader: denying the global `skill` tool is dsh's designed lever —
     // tool-skill skips the `<available_skills>` publication with it. Ceiling:
     // a future role shipping its own skill would need this revisited.
-    const toolsSvc = agentCtx.get('tools') as
-      | { get(name: string): unknown; restrict(filter: { deny: readonly string[] }): () => void }
-      | undefined
+    const toolsSvc = agentCtx.get('tools') as DshToolsLike | undefined
     if (toolsSvc?.get('skill') !== undefined) {
       toolsSvc.restrict({ deny: ['skill'] })
     }
@@ -954,7 +1035,11 @@ export class DshAgentAdapter {
    * live parent agent (de-baggage B4). The runtime validates and gates the
    * request (cwd absolute, provider capabilities) and persists the child's
    * lineage; settlement stays external — the engine learns of the child's
-   * epochs through `subagent/end`.
+   * epochs through `subagent/end`. Children do not inherit the parent's
+   * restrictions (the dsh agent-scope design), so a project MCP allowlist is
+   * forwarded as the child's `toolFilter`; the runtime applies it in the
+   * child's creation window and persists it in the child's descriptor, so a
+   * resumed child keeps the same mask.
    *
    * @param request - provider, brief, cwd, persona, depth cap, and the live parent id.
    * @returns the durable native child session id.
@@ -966,6 +1051,10 @@ export class DshAgentAdapter {
       throw new Error('subtask: the parent agent session is not live; start it before delegating')
     }
     const label = labelOfBrief(request.prompt)
+    const toolsSvc = this.ctx.get('tools') as DshToolsLike | undefined
+    const mcpDeny = toolsSvc === undefined || this.cfg.mcpServers === undefined
+      ? []
+      : mcpDenyList(toolsSvc.schemas().map(schema => schema.name), this.cfg.mcpServers)
     const started = await subagents.startContinuable({
       provider: request.provider,
       label,
@@ -979,6 +1068,7 @@ export class DshAgentAdapter {
         // '' means "no override" — the runtime rejects a non-absolute cwd, and
         // the child then inherits the parent's working directory.
         ...(request.cwd !== '' ? { cwd: request.cwd } : {}),
+        ...(mcpDeny.length > 0 ? { toolFilter: { deny: mcpDeny } } : {}),
       },
       signal: AbortSignal.timeout(startContinuableTimeoutMs),
     })
@@ -1232,9 +1322,10 @@ export class DshAgentAdapter {
     // A complete-replacement system prompt rides the creation-time setup hook
     // (plan D3, same mechanism as the chatroom bare persona): the render
     // session's prompt replaces the whole system prompt, not a section.
-    const setup = opts.systemPromptComplete !== undefined
-      ? buildCompletePromptSetup(opts.systemPromptComplete)
-      : undefined
+    const setup = withMcpMask(
+      opts.systemPromptComplete !== undefined ? buildCompletePromptSetup(opts.systemPromptComplete) : undefined,
+      this.cfg.mcpServers,
+    )
     const handle = await this.ctx.agents.create({
       sessionId: SessionId(freshNativeSessionId()),
       meta: { cwd: opts.workDir !== undefined && opts.workDir !== '' ? opts.workDir : this.cfg.cwd },
@@ -1316,7 +1407,7 @@ export class DshAgentAdapter {
     const isFork = sessionID.startsWith(ForkSessionPrefix)
     const isForkAt = sessionID.startsWith(ForkAtSessionPrefix)
     const isResume = !isFork && !isForkAt && sessionID !== '' && sessionID !== ContinueSession
-    const setup = buildSessionSetup(options, this.workDir)
+    const setup = withMcpMask(buildSessionSetup(options, this.workDir), this.cfg.mcpServers)
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing
