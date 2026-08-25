@@ -254,7 +254,7 @@ describe('ProviderSwitcher (naming fallback source)', () => {
 })
 
 describe('renderQuery (Go dsh RenderQuery)', () => {
-  it('runs a fresh session on the named route at the mapped effort with a complete-replacement system prompt', async () => {
+  it('runs a fresh session on the named route at the mapped effort with a complete-replacement system prompt and no workspace instructions', async () => {
     const h = createHarness()
     const a = newAdapter(h)
     a.setRenderEffort('max')
@@ -266,15 +266,35 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
     expect(h.creates).toHaveLength(1)
     expect(h.creates[0]!.agentOptions).toEqual({ provider: 'turbo-route', model: 'turbo-5', reasoningEffort: 'high' })
     // The complete system prompt rides the setup hook as a complete:true
-    // section (the D3 bare-persona mechanism).
+    // section (the D3 bare-persona mechanism), and workspace-instruction
+    // injection is suppressed alongside it — the render fork's facts travel
+    // only in its prompt, so AGENTS.md/CLAUDE.md reminders stay out.
     const setup = h.creates[0]!.setup as ((agentCtx: unknown) => void) | undefined
     expect(setup).toBeTypeOf('function')
     const sections: Array<{ name: string; order: number; text: string; complete?: boolean }> = []
+    let suppressions = 0
+    let toolRestricts = 0
     setup?.({
-      get: () => ({
-        section: (sec: { name: string; order: number; text: string; complete?: boolean }) => { sections.push(sec) },
-      }),
+      get: (name: string): unknown => {
+        if (name === 'agentInstructions') {
+          return { suppress: (): (() => void) => { suppressions += 1; return () => {} } }
+        }
+        if (name === 'tools') {
+          return {
+            get: () => undefined,
+            restrict: (): (() => void) => { toolRestricts += 1; return () => {} },
+          }
+        }
+        if (name !== 'systemPrompt') return undefined
+        return {
+          section: (sec: { name: string; order: number; text: string; complete?: boolean }) => { sections.push(sec) },
+        }
+      },
     })
+    expect(suppressions).toBe(1)
+    // The render session keeps its full tools (it writes the fragment) — no
+    // chatroom-style skill deny rides along.
+    expect(toolRestricts).toBe(0)
     expect(sections).toEqual([{ name: 'feishu-bridge-render-session', order: 0, text: 'render system prompt', complete: true }])
     expect(h.agents[0]!.disposed).toBe(true)
   })
