@@ -68,7 +68,7 @@ async function tick(): Promise<void> {
 describe('askUser permission kind', () => {
   it('renders one perm card and resolves allow as allowed-once', async () => {
     const p = createStubCardPlatform('feishu')
-    const { e } = armedState(p)
+    const { e, state } = armedState(p)
 
     const decision = e.askUser('test:chat:user1', { kind: 'permission', toolName: 'write', preview: '/tmp/x' })
     await tick()
@@ -77,6 +77,9 @@ describe('askUser permission kind', () => {
     const handled = e.routeAskResponse(p, msg({ content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
     expect(handled).toBe(true)
     await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+    // The decided path restarts ask surfaces so post-decision execution
+    // lands on a fresh preview.
+    expect(state.preview).toBeDefined()
   })
 
   it('perm:allow_all resolves allowed-always (the native standing grant)', async () => {
@@ -143,18 +146,21 @@ describe('askUser permission kind', () => {
       .resolves.toEqual({ outcome: 'allowed-once' })
   })
 
-  it('an aborted ask settles cancelled', async () => {
+  it('an aborted ask settles cancelled without restarting ask surfaces', async () => {
     const p = createStubPlatform('test')
-    const { e } = armedState(p)
+    const { e, state } = armedState(p)
     const ac = new AbortController()
     const decision = e.askUser('test:chat:user1', { kind: 'permission', toolName: 'Bash', preview: '' }, ac.signal)
     await tick()
 
     ac.abort()
     await expect(decision).resolves.toEqual({ outcome: 'cancelled' })
+    // No fresh preview for a turn that is being aborted: restartAskSurfaces
+    // would leave a running placeholder card nobody finalizes.
+    expect(state.preview).toBeUndefined()
   })
 
-  it('a stopped session settles the ask cancelled', async () => {
+  it('a stopped session settles the ask cancelled without restarting ask surfaces', async () => {
     const p = createStubPlatform('test')
     const { e, state } = armedState(p)
     const decision = e.askUser('test:chat:user1', { kind: 'permission', toolName: 'Bash', preview: '' })
@@ -162,6 +168,9 @@ describe('askUser permission kind', () => {
 
     state.markStopped()
     await expect(decision).resolves.toEqual({ outcome: 'cancelled' })
+    // /done-style teardown must not mint a new preview for the dying state
+    // (2026-08-25 oc_d22d incident: stray 执行中 card after /done).
+    expect(state.preview).toBeUndefined()
   })
 })
 

@@ -1253,6 +1253,15 @@ describe('bump to end', () => {
         sp.degraded = true
         return { mp, sp }
       }, 1],
+      ['stopped', async () => {
+        const mp = createMockBumpPlatform()
+        const sp = await newSyncStreamPreviewForFallback(mp)
+        sp.stoppedCardRendered = true
+        // markStopped leaves degraded=false — the guard list alone cannot
+        // catch a stopped card, so bump must check the flag itself.
+        sp.degraded = false
+        return { mp, sp }
+      }, 1],
     ]
     for (const [name, setup, baseStarts] of cases) {
       const { mp, sp } = await setup()

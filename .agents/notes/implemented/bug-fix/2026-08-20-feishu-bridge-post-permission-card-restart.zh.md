@@ -10,7 +10,7 @@ Go 的交互事件循环把 pending permission 视为两步的阶段边界。权
 
 ## Decision
 
-保形移植 Go 权限处理的两个半边。**权限卡发出时**（Go engine_events.go ~4192-4225）：剥离活卡上的 plan 流式文本（`sp.removeText`）、预览降级时才以纯消息 flush 累积文本段（`segmentStart` 无论如何都推进）、`barrier()` + `sp.completeAndDetach()`——活卡在用户回答之前就被终结，投机性 reply 渲染在 detach 前捕获快照（触发条件补上 `!session.shouldSuppressAutoRender()`）。**解决后**（`pending.Resolved` 之后的块）：flush 剩余文本段、仍处启动态的预览则 detach、重赋 `sp`/`cp`（均改为 `let`）、重绑 active preview、同步 `state.preview`，`display.toolProgress` 开启时展示新占位卡；`toolCount` 一并重置。解决后的 detach 在正常流程里是兜底——权限卡时的 detach 已经找到并终结了活卡；该块覆盖此路径上的所有权限解决——plan 审批、普通工具审批与 AskUserQuestion 回答一视同仁，与 Go 一致。
+保形移植 Go 权限处理的两个半边。**权限卡发出时**（Go engine_events.go ~4192-4225）：剥离活卡上的 plan 流式文本（`sp.removeText`）、预览降级时才以纯消息 flush 累积文本段（`segmentStart` 无论如何都推进）、`barrier()` + `sp.completeAndDetach()`——活卡在用户回答之前就被终结，投机性 reply 渲染在 detach 前捕获快照（触发条件补上 `!session.shouldSuppressAutoRender()`）。**解决后**（`pending.Resolved` 之后的块）：flush 剩余文本段、仍处启动态的预览则 detach、重赋 `sp`/`cp`（均改为 `let`）、重绑 active preview、同步 `state.preview`，`display.toolProgress` 开启时展示新占位卡；`toolCount` 一并重置。解决后的 detach 在正常流程里是兜底——权限卡时的 detach 已经找到并终结了活卡；该块覆盖此路径上的所有权限解决——plan 审批、普通工具审批与 AskUserQuestion 回答一视同仁，与 Go 一致。自 2026-08-25 起，重启仅在提问以用户决定收场时执行：stopped/aborted 结局（会话拆除或回收）跳过重启，否则占位卡会滞留一张永远无人收尾的运行卡（[stray-card note](2026-08-25-feishu-bridge-done-during-parked-ask-stray-card.zh.md)）。
 
 ## Alternatives considered
 

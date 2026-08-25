@@ -3947,6 +3947,13 @@ export class Engine {
 
     state.userStopped = true
     state.markStopped()
+    // Drop the engine-level bump binding for this session: post-teardown
+    // rename/avatar notices must not reissue the dying preview as a fresh
+    // running card (2026-08-25 oc_d22d incident).
+    if (this.activePreviewSession === sessionKey) {
+      this.activePreview = undefined
+      this.activePreviewSession = ''
+    }
     this.stopUnsolicitedReader(state)
     // Finalize the active preview card here, not only in the event loop's
     // stop arm: a loop parked mid-handler when the stop lands exits via
@@ -4719,8 +4726,13 @@ export class Engine {
     // segment, complete + detach the interaction card, then create new
     // surfaces so post-decision execution lands on a new card instead of
     // appending to the pre-interaction one. The event loop picks these up at
-    // its next event boundary.
-    await this.restartAskSurfaces(state, sessionKey, p, replyCtx)
+    // its next event boundary. Stopped/aborted skips the restart: every
+    // stopSignal trigger (stopInteractiveSession teardown, interactive-state
+    // recycling, cleanup) discards or replaces this state, so fresh surfaces
+    // could only send a running placeholder card nobody will ever finalize
+    // (2026-08-25 oc_d22d incident: /done during a parked ask left a stray
+    // 执行中 card).
+    if (outcome.kind === 'decided') await this.restartAskSurfaces(state, sessionKey, p, replyCtx)
     return decided
   }
 

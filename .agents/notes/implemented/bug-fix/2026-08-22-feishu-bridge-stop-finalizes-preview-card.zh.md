@@ -16,7 +16,7 @@ Status: implemented
 
 `Engine.stop()` 在平台停止前为进行中的 turn 渲染同样的 ⏹ 终结（2026-08-22 oc_610e reload 事故：循环在进程退出前不再运行，别处无人能渲染），由并行的 reload 修复以 `e7a3233fc6` 交付，该提交还让 `flushLocked` 以 `stoppedCardRendered` 闭锁，节流 flush 无法覆盖 ⏹ 卡。直到 2026-08-23，这套终结在 SIGTERM 路径上从未运行：per-engine 的 effect disposer 写作 `void engine.stop()`，而 `profile-boot.ts` 在 `fiber.dispose()` 链排空后即退出——无人等待 stop，它在途的停止通知与 ⏹ PATCH 随进程一起消亡。当时一个无关的 env-fix 定时器在 chatroom 进行中执行了 `systemctl restart`，运行中的卡片冻结在「思考中 · 09:39:26 · 19」。disposer 现在返回 `engine.stop()` 的 promise；Cordis unload 会 await 异步 disposer，并以 profile-boot 的 5 秒关停超时为上界。
 
-`StreamPreview` 增加 `stoppedCardRendered` 守卫（在 preview 锁下置位）：事件循环的 stop 分支与同步终结竞相渲染终态卡，输方直接返回、不再 PATCH。`resumeFromFreeze` 与 `degraded` 一同复位该守卫，维持「卡重新存活」这一单一不变量。
+`StreamPreview` 增加 `stoppedCardRendered` 守卫（在 preview 锁下置位）：事件循环的 stop 分支与同步终结竞相渲染终态卡，输方直接返回、不再 PATCH。`resumeFromFreeze` 与 `degraded` 一同复位该守卫，维持「卡重新存活」这一单一不变量。自 2026-08-25 起该守卫同样约束 `bumpToEnd`（改名/头像通知的 bump 曾把停止卡重发为新运行卡），且 `stopInteractiveSession` 会同步解绑引擎级 activePreview 的 bump 绑定（[stray-card note](2026-08-25-feishu-bridge-done-during-parked-ask-stray-card.zh.md)）。
 
 ## Alternatives considered
 

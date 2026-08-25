@@ -1003,10 +1003,13 @@ export class StreamPreview {
    * Reissue the preview card (create new, delete old) so it becomes the
    * latest message again after system notices push it off the chat tail.
    * Not throttled: rename/avatar notices must not eat the last bump.
+   * A stopped card is terminal — a bump must not resurrect it as a running
+   * card (markStopped leaves degraded=false, so the guard list alone cannot
+   * catch it; 2026-08-25 oc_d22d incident).
    * Must hold the lock.
    */
   private async bumpToEndLocked(): Promise<void> {
-    if (this.previewMsgID === undefined || this.degraded || this.completed || this.failed) return
+    if (this.previewMsgID === undefined || this.degraded || this.completed || this.failed || this.stoppedCardRendered) return
     // An empty body still bumps: the running-status header renders alone.
     const content = this.progressContentLocked(this.buildProgressDisplayLocked())
     const starter = asPreviewStarter(this.platform)

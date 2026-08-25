@@ -7,9 +7,10 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
 import type { Platform } from '../../src/core/types.js'
+import { StreamPreview } from '../../src/streaming.js'
 
 /** A stub platform capturing the engine's chat-updated handler registrations. */
 interface NotifierPlatform extends StubPlatform {
@@ -92,5 +93,38 @@ describe('engine.start chat-updated wiring', () => {
     expect(child.getParentChatName()).toBe('新名')
     // The changed path landed in the debounced preview bump (no active
     // preview → no-op); not throwing is the wiring assertion.
+  })
+})
+
+describe('stopInteractiveSession drops the bump binding', () => {
+  it('a stopped session no longer bumps its bound preview', () => {
+    const p = createStubPlatform('test')
+    const e = newEngine(p)
+    const key = 'test:chat'
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    const sp = new StreamPreview(
+      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500 }, p, 'ctx', undefined, undefined, key,
+    )
+    const bump = vi.spyOn(sp, 'bumpToEnd')
+    e.bindActivePreview(sp, key)
+
+    e.stopInteractiveSession(key)
+    e.bumpActivePreviewForSession(key)
+
+    // Post-teardown rename/avatar notices must not reissue the dying
+    // preview as a fresh running card (2026-08-25 oc_d22d incident).
+    expect(bump).not.toHaveBeenCalled()
+
+    // Another session's binding survives an unrelated stop.
+    const sp2 = new StreamPreview(
+      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500 }, p, 'ctx', undefined, undefined, 'test:other',
+    )
+    const bump2 = vi.spyOn(sp2, 'bumpToEnd')
+    e.bindActivePreview(sp2, 'test:other')
+    e.bumpActivePreviewForSession('test:other')
+    expect(bump2).toHaveBeenCalledTimes(1)
   })
 })
