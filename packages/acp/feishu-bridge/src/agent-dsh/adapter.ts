@@ -502,9 +502,16 @@ export function renderReasoningLevel(effort: string): string {
 /**
  * Creation-time setup hook registering a complete-replacement system prompt
  * (the same `complete: true` section mechanism as the chatroom bare persona).
+ * Workspace-instruction injection is suppressed alongside it — the render
+ * session is a fresh fork whose task facts arrive only in its prompt, so
+ * AGENTS.md/CLAUDE.md reminders carry no task information. A future
+ * complete-prompt caller that does want instructions should move the
+ * suppression into the render-specific call site.
  */
 function buildCompletePromptSetup(systemPrompt: string): import('@deepseek-ai/dsh-agent').AgentSetup {
   return (agentCtx) => {
+    const instructionSvc = agentCtx.get('agentInstructions') as { suppress(): () => void } | undefined
+    instructionSvc?.suppress()
     const promptSvc = agentCtx.get('systemPrompt') as
       | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
       | undefined
@@ -1111,8 +1118,10 @@ export class DshAgentAdapter {
   /**
    * RenderQuerier (Go dsh RenderQuery): an isolated render session — fresh
    * session (no resume), whole-prompt replacement via the setup hook, full
-   * tools. The render one-shot does not need deep reasoning, so an unset
-   * effort defaults to 'low' (an unset effort once made renders burn ~21k
+   * tools, and no workspace-instruction injection (suppressed with the prompt
+   * replacement; the render facts travel only in the prompt). The render
+   * one-shot does not need deep reasoning, so an unset effort defaults to
+   * 'low' (an unset effort once made renders burn ~21k
    * thinking chars for an 84-char artifact). The 15m budget mirrors the Go
    * fork.
    *
