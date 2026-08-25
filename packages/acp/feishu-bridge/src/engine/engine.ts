@@ -394,8 +394,10 @@ export class InteractiveState {
   timing: TurnTiming = { turnStart: 0, agentStart: 0, generationSpans: [] }
   /** Plan .md path written by the agent (promoted on tool success). */
   planFilePath = ''
-  /** Plan .md path candidate until its Write succeeds. */
+  /** Plan .md path candidate until its write tool call settles. */
   pendingPlanFilePath = ''
+  /** Tool call id of the pending plan write; the result event carries no tool name, so the match rides the id. */
+  pendingPlanToolID = ''
   /** Plan content last sent as the plan card (dedup across asks). */
   sentPlanContent = ''
   /** Plan revision counter for export keys and (vN) card headers. */
@@ -2801,6 +2803,7 @@ export class Engine {
     // counter for export keys / render artifacts.
     state.planFilePath = ''
     state.pendingPlanFilePath = ''
+    state.pendingPlanToolID = ''
     state.sentPlanContent = ''
     state.planRevisionCount = 0
 
@@ -3105,13 +3108,15 @@ export class Engine {
             if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
             if (thinkingStreamed) thinkingAccum = ''
             // Track plan file path for plan-mode support (Go): raw
-            // ToolInputRaw.file_path, not the summarized ToolInput. A subagent
-            // child's Write never promotes on the parent — the child runs its
-            // own plan lifecycle.
-            if (event.toolName === 'Write' && event.fromSubagent !== true) {
+            // toolInputRaw.file_path, not the summarized toolInput. A subagent
+            // child's write never promotes on the parent — the child runs its
+            // own plan lifecycle. The tool name is dsh's lowercase 'write';
+            // the Go-era capitalized 'Write' branch never matched.
+            if (event.toolName === 'write' && event.fromSubagent !== true) {
               const fp = event.toolInputRaw?.file_path
               if (typeof fp === 'string' && fp.includes('.claude/plans/')) {
                 state.pendingPlanFilePath = fp
+                state.pendingPlanToolID = event.toolID ?? ''
               }
             }
             // The parent's own tool call ends its model step; a delegated
@@ -3147,11 +3152,15 @@ export class Engine {
           }
 
           case 'tool_result': {
-          // Promote the plan file path once its Write succeeded (Go): on
-          // denial the agent must still be able to revise the same file.
-            if (state.pendingPlanFilePath !== '' && event.toolName === 'Write' && event.done) {
+          // Promote the plan file path once its write call settles (Go): on
+          // denial the agent must still be able to revise the same file. The
+          // result event carries no tool name, so the match rides the call
+          // id captured on the pending write.
+            if (state.pendingPlanFilePath !== '' && event.toolID !== undefined
+              && event.toolID !== '' && event.toolID === state.pendingPlanToolID) {
               state.planFilePath = state.pendingPlanFilePath
               state.pendingPlanFilePath = ''
+              state.pendingPlanToolID = ''
             }
 
             if (this.display.toolMessages) {
