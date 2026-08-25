@@ -161,6 +161,7 @@ import {
   minChatroomResearchTimeout,
   minChatroomResearchRounds,
   maybeAutoRelayRole,
+  recoverChatroomBarriers,
   routePendingHumanReply,
 } from './chatroom.js'
 import { defaultChatroomRolesDir } from './chatroom-roles.js'
@@ -1399,6 +1400,9 @@ export class Engine {
     if (startErrs.length === this.platforms.length && this.platforms.length > 0) {
       throw startErrs[0]
     }
+    // Chatroom barriers restored from disk close here, once platforms can
+    // deliver the wakes: every reply they awaited died with the old process.
+    recoverChatroomBarriers(this)
   }
 
   /**

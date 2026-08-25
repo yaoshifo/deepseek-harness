@@ -94,12 +94,33 @@ function stopFallbackTimer(
   }
 }
 
+/** Durable snapshot of an armed gather barrier (sessions.json; timer, woken flag, and card handle stay in memory). */
+export interface GatherBarrierSnapshot {
+  /** The broadcast question. */
+  question: string
+  /** The gather-round stamp. */
+  seq: number
+  /** Role names whose replies were still awaited at the last save. */
+  expected: string[]
+  /** Role name → reply text collected so far. */
+  collected: Record<string, string>
+}
+
+/** Durable snapshot of an armed end barrier (sessions.json; timer and woken flag stay in memory). */
+export interface EndBarrierSnapshot {
+  /** Role names whose final replies were still awaited at the last save. */
+  expected: string[]
+  /** Role name → final reply text collected so far. */
+  collected: Record<string, string>
+}
+
 /**
  * The in-memory fan-in barrier for a parallel gather (Go chatroomGather):
  * the moderator broadcasts one question to every role and the engine
  * accumulates replies, waking the moderator EXACTLY ONCE (all roles replied
- * or the timeout fired). Held on the hub Session as pendingGather; never
- * persisted.
+ * or the timeout fired). Held on the hub Session as pendingGather; persisted
+ * through {@link GatherBarrierSnapshot} so a restart can close the round
+ * instead of losing the wake.
  */
 export class ChatroomGather {
   /** The question the moderator broadcast to every role in this gather. */
@@ -119,6 +140,22 @@ export class ChatroomGather {
   constructor(question: string, seq: number) {
     this.question = question
     this.seq = seq
+  }
+
+  /**
+   * Durable snapshot for sessions.json; undefined once woken — a woken
+   * barrier is cleared before the next save except inside the async
+   * finalize window, and a restart there must not resurrect it.
+   * @returns the JSON-safe snapshot, or undefined for a woken barrier.
+   */
+  snapshot(): GatherBarrierSnapshot | undefined {
+    if (this.woken) return undefined
+    return {
+      question: this.question,
+      seq: this.seq,
+      expected: [...this.expected],
+      collected: Object.fromEntries(this.collected),
+    }
   }
 
   /**
@@ -185,6 +222,8 @@ export class ChatroomGather {
  * The soft end barrier (Go chatroomEndBarrier): when the moderator ends the
  * chatroom while roles are in-flight, accumulates their final replies before
  * teardown so none are silently dropped. Same one-shot-wake discipline.
+ * Persisted through {@link EndBarrierSnapshot} so a restart can finalize the
+ * teardown instead of stalling it.
  */
 export class ChatroomEndBarrier {
   /** Role names whose final replies are still awaited. */
@@ -194,6 +233,19 @@ export class ChatroomEndBarrier {
   /** Fallback drain timer; stopped when the last reply completes the barrier. */
   timer: ReturnType<typeof setTimeout> | undefined
   private woken = false
+
+  /**
+   * Durable snapshot for sessions.json; undefined once woken (same window
+   * discipline as {@link ChatroomGather.snapshot}).
+   * @returns the JSON-safe snapshot, or undefined for a woken barrier.
+   */
+  snapshot(): EndBarrierSnapshot | undefined {
+    if (this.woken) return undefined
+    return {
+      expected: [...this.expected],
+      collected: Object.fromEntries(this.collected),
+    }
+  }
 
   /**
    * Record a role's final reply; done=true means this was the last expected
@@ -694,6 +746,9 @@ export function buildResearchProgressCard(e: Engine, done: number, total: number
   } else if (terminal === 'timedout') {
     title = e.i18n.t(Msg.ChatroomResearchProgressTimedOutTitle)
     body = e.i18n.tf(Msg.ChatroomResearchProgressTimedOut, done, total)
+  } else if (terminal === 'restarted') {
+    title = e.i18n.t(Msg.ChatroomResearchProgressRestartedTitle)
+    body = e.i18n.tf(Msg.ChatroomResearchProgressRestarted, done, total)
   }
   return newCard().title(title, 'indigo').markdown(body).build()
 }
@@ -1194,6 +1249,116 @@ function fireEndTimeout(e: Engine, hubKey: string): void {
   if (!done) return // already finalized by the last reply
   finalizeChatroomEndAsync(e, hubKey, summary)
   console.info(`chatroom: end barrier timed out; finalizing with partial replies (hub=${hubKey})`)
+}
+
+// ── restart recovery ──────────────────────────────────────────────────────
+
+/** Rebuild a gather barrier from its on-disk snapshot; malformed data yields undefined. */
+function restoreGatherBarrier(raw: unknown): ChatroomGather | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const s = raw as Record<string, unknown>
+  if (typeof s.question !== 'string' || typeof s.seq !== 'number'
+    || !Array.isArray(s.expected) || !s.expected.every(n => typeof n === 'string')
+    || typeof s.collected !== 'object' || s.collected === null
+    || !Object.values(s.collected).every(v => typeof v === 'string')) return undefined
+  const g = new ChatroomGather(s.question, s.seq)
+  for (const n of s.expected) g.expected.add(n)
+  for (const [k, v] of Object.entries(s.collected)) g.collected.set(k, v)
+  return g
+}
+
+/** Rebuild an end barrier from its on-disk snapshot; malformed data yields undefined. */
+function restoreEndBarrier(raw: unknown): ChatroomEndBarrier | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const s = raw as Record<string, unknown>
+  if (!Array.isArray(s.expected) || !s.expected.every(n => typeof n === 'string')
+    || typeof s.collected !== 'object' || s.collected === null
+    || !Object.values(s.collected).every(v => typeof v === 'string')) return undefined
+  const b = new ChatroomEndBarrier()
+  for (const n of s.expected) b.expected.add(n)
+  for (const [k, v] of Object.entries(s.collected)) b.collected.set(k, v)
+  return b
+}
+
+/**
+ * Consume the chatroom barriers restored from disk after a process restart.
+ * Every reply a barrier was still waiting on belonged to a role turn that
+ * died with the old process, so no expected reply can ever arrive: each
+ * restored gather closes immediately with the replies collected so far plus
+ * a restart annotation, and each restored end barrier finalizes without its
+ * missing final replies. A stale research-awaiting-assistant marker on a
+ * role session dies here too — no turn survives a restart.
+ *
+ * @param e - Engine whose platforms have started (the wakes need them).
+ */
+export function recoverChatroomBarriers(e: Engine): void {
+  const { idToKey } = e.sessions.sessionKeyMap()
+  const restored: Array<{ key: string; gather: unknown; end: unknown }> = []
+  for (const s of e.sessions.allSessions()) {
+    if (s.pendingGatherData === undefined && s.pendingEndBarrierData === undefined) continue
+    const key = idToKey[s.id] ?? ''
+    if (key === '') continue
+    restored.push({ key, gather: s.pendingGatherData, end: s.pendingEndBarrierData })
+    s.pendingGatherData = undefined
+    s.pendingEndBarrierData = undefined
+  }
+  if (restored.length === 0) return
+  const p = e.spawnCapablePlatform()
+  // No role turn survives a restart: a persisted researchAwaitingAssistant
+  // marker now describes an assistant that died with the process, and a
+  // later re-ask must not treat its first turn as the deferred conclusion.
+  for (const s of e.sessions.allSessions()) {
+    if (s.getChatroomHubKey() === '') continue
+    if (s.getResearchAwaitingAssistant()) s.setResearchAwaitingAssistant(false)
+  }
+  for (const { key, gather, end } of restored) {
+    if (gather !== undefined) {
+      const g = restoreGatherBarrier(gather)
+      if (g === undefined) {
+        console.warn(`chatroom: dropping corrupt restored gather barrier (hub=${key})`)
+      } else {
+        const missing = [...g.expected].sort()
+        const { wake } = g.timeoutFire()
+        const note = e.i18n.tf(Msg.ChatroomRestarted, missing.length, missing.join('、'))
+        if (p !== undefined && e.sessions.getOrCreateActive(key).getChatroomResearch()) {
+          sendRestartedProgressCard(e, p, key, g)
+        }
+        wakeChatroomModerator(e, key, `${note}\n\n${wake}`)
+        console.info(`chatroom: closed restored gather after restart (hub=${key} lost=${missing.join(',')})`)
+      }
+    }
+    if (end !== undefined) {
+      const b = restoreEndBarrier(end)
+      if (b === undefined) {
+        console.warn(`chatroom: dropping corrupt restored end barrier (hub=${key})`)
+      } else {
+        const missing = [...b.expected].sort()
+        const { summary } = b.timeoutFire()
+        const note = e.i18n.tf(Msg.ChatroomRestarted, missing.length, missing.join('、'))
+        finalizeChatroomEndAsync(e, key, `${note}\n\n${summary}`)
+        console.info(`chatroom: finalized restored end barrier after restart (hub=${key} lost=${missing.join(',')})`)
+      }
+    }
+  }
+  e.sessions.save()
+}
+
+/** Send a fresh terminal research progress card for a restart-closed round (the old handle died with the process). */
+function sendRestartedProgressCard(e: Engine, p: Platform, hubKey: string, g: ChatroomGather): void {
+  const cu = asCardSender(p)
+  const r = asReplyContextReconstructor(p)
+  if (cu === undefined || r === undefined) return
+  void r.reconstructReplyCtx(hubKey).then(
+    (hubRctx) => {
+      const card = buildResearchProgressCard(e, g.collected.size, g.collected.size + g.expected.size, 'restarted')
+      void cu.sendCard(hubRctx, card).catch((error: unknown) => {
+        console.warn(`chatroom: restart progress card send failed: ${String(error)}`)
+      })
+    },
+    (error: unknown) => {
+      console.warn(`chatroom: reconstruct hub ctx for restart card failed (hub=${hubKey}): ${String(error)}`)
+    },
+  )
 }
 
 /** The session key of the chatroom role with the given name under hubKey, or ''.

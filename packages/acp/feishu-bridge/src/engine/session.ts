@@ -126,6 +126,16 @@ export class Session {
   /** Armed chatroom end barrier on a hub session; in-memory only (Go PendingEndBarrier). */
   pendingEndBarrier: import('./chatroom.js').ChatroomEndBarrier | undefined
   /**
+   * Durable snapshot of pendingGather from the last on-disk load; recovery
+   * (chatroom recoverChatroomBarriers) consumes it at engine start.
+   */
+  pendingGatherData: import('./chatroom.js').GatherBarrierSnapshot | undefined
+  /**
+   * Durable snapshot of pendingEndBarrier from the last on-disk load;
+   * recovery (chatroom recoverChatroomBarriers) consumes it at engine start.
+   */
+  pendingEndBarrierData: import('./chatroom.js').EndBarrierSnapshot | undefined
+  /**
    * Pending monitor dir-clarification on this chat (Go
    * PendingMonitorClarification); in-memory only — a restart mid-clarify
    * loses it and an orphan card click falls through to normal triage.
@@ -1031,12 +1041,16 @@ interface SerializedSession {
   chatroomGatherSeq?: number
   researchVenv?: string
   pendingHumanQuestionRole?: string
+  pendingGatherData?: import('./chatroom.js').GatherBarrierSnapshot
+  pendingEndBarrierData?: import('./chatroom.js').EndBarrierSnapshot
   createdAt: string
   updatedAt: string
 }
 
 function serializeSession(s: Session): SerializedSession {
   const agentSessionID = s.agentSessionID === ContinueSession ? '' : s.agentSessionID
+  const pendingGatherData = s.pendingGather?.snapshot()
+  const pendingEndBarrierData = s.pendingEndBarrier?.snapshot()
   return {
     id: s.id,
     name: s.name,
@@ -1076,6 +1090,8 @@ function serializeSession(s: Session): SerializedSession {
     ...(s.chatroomGatherSeq !== 0 ? { chatroomGatherSeq: s.chatroomGatherSeq } : {}),
     ...(s.researchVenv !== '' ? { researchVenv: s.researchVenv } : {}),
     ...(s.pendingHumanQuestionRole !== '' ? { pendingHumanQuestionRole: s.pendingHumanQuestionRole } : {}),
+    ...(pendingGatherData !== undefined ? { pendingGatherData } : {}),
+    ...(pendingEndBarrierData !== undefined ? { pendingEndBarrierData } : {}),
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
   }
@@ -1122,6 +1138,8 @@ function deserializeSession(raw: SerializedSession): Session {
   s.chatroomGatherSeq = raw.chatroomGatherSeq ?? 0
   s.researchVenv = raw.researchVenv ?? ''
   s.pendingHumanQuestionRole = raw.pendingHumanQuestionRole ?? ''
+  s.pendingGatherData = raw.pendingGatherData
+  s.pendingEndBarrierData = raw.pendingEndBarrierData
   s.createdAt = raw.createdAt
   s.updatedAt = raw.updatedAt
   return s
