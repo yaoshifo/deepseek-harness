@@ -409,7 +409,11 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
     const promptSvc = agentCtx.get('systemPrompt') as
       | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
       | undefined
-    if (promptSvc === undefined) return
+    // Go --bare parity: a bare-persona session replaces the assembled system
+    // prompt AND forgoes workspace-instruction injection (AGENTS.md/CLAUDE.md
+    // reminders), so cwd ancestors cannot smuggle foreign contracts in.
+    const instructionSvc = agentCtx.get('agentInstructions') as { suppress(): () => void } | undefined
+    instructionSvc?.suppress()
     const text = buildChatroomSystemPrompt({
       workDir,
       isRole: chatroom.role,
@@ -421,7 +425,7 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
       platformPrompt: '',
     })
     if (text !== '') {
-      promptSvc.section({ name: 'feishu-bridge-chatroom-persona', order: 0, text, complete: true })
+      promptSvc?.section({ name: 'feishu-bridge-chatroom-persona', order: 0, text, complete: true })
     }
   }
 }

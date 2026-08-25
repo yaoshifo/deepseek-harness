@@ -103,8 +103,9 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     complete?: boolean
   }
 
-  function createHarness(opts: { sections: RecordedSection[] }): DshContextLike {
+  function createHarness(opts: { sections: RecordedSection[]; suppressions?: { count: number } }): DshContextLike {
     const agents: Array<DshAgentLike & { id: string; disposed: boolean }> = []
+    const suppressions = opts.suppressions ?? { count: 0 }
     const ctx: DshContextLike = {
       agents: {
         create: async (options: DshCreateOptionsLike) => {
@@ -121,6 +122,14 @@ describe('DshAgentAdapter bare persona setup hook', () => {
           if (options.setup !== undefined) {
             void options.setup({
               get: (name: string): unknown => {
+                if (name === 'agentInstructions') {
+                  return {
+                    suppress: (): (() => void) => {
+                      suppressions.count += 1
+                      return () => {}
+                    },
+                  }
+                }
                 if (name !== 'systemPrompt') return undefined
                 return {
                   section: (section: RecordedSection): (() => void) => {
@@ -159,7 +168,8 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     const dir = await mkdtemp(join(tmpdir(), 'fb-adapter-mod-'))
     await writeFile(join(dir, 'CLAUDE.md'), '# Mod\n', 'utf8')
     const sections: RecordedSection[] = []
-    const a = newAdapter(createHarness({ sections }), dir)
+    const suppressions = { count: 0 }
+    const a = newAdapter(createHarness({ sections, suppressions }), dir)
     await a.startSession('', {
       sessionKey: 'feishu:oc_1:ou_9',
       chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false, researchAssistantChild: '' },
@@ -167,6 +177,36 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     expect(sections).toHaveLength(1)
     expect(sections[0]?.complete).toBe(true)
     expect(sections[0]?.text).toContain('# Mod')
+    // Go --bare parity: a bare-persona session also forgoes workspace
+    // instruction injection.
+    expect(suppressions.count).toBe(1)
+  })
+
+  it('suppresses workspace instructions for a role session too', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-adapter-role-'))
+    await writeFile(join(dir, 'CLAUDE.md'), '# Role\n', 'utf8')
+    const sections: RecordedSection[] = []
+    const suppressions = { count: 0 }
+    const a = newAdapter(createHarness({ sections, suppressions }), dir)
+    await a.startSession('', {
+      sessionKey: 'feishu:oc_1:role',
+      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' },
+    })
+    expect(sections).toHaveLength(1)
+    expect(sections[0]?.complete).toBe(true)
+    expect(suppressions.count).toBe(1)
+  })
+
+  it('does not suppress workspace instructions for plain or subtask sessions', async () => {
+    const sections: RecordedSection[] = []
+    const suppressions = { count: 0 }
+    const a = newAdapter(createHarness({ sections, suppressions }), '/ws')
+    await a.startSession('', { sessionKey: 'feishu:oc_1:ou_9' })
+    await a.startSession('', {
+      sessionKey: 'test:assistant-2',
+      subtask: { attended: false, noReport: false, researchAssistant: true },
+    })
+    expect(suppressions.count).toBe(0)
   })
 
   it('registers the research-assistant preamble as a non-complete section', async () => {
