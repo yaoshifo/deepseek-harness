@@ -683,10 +683,12 @@ describe('buildChatroomResearchModeratorPriming', () => {
     expect(priming).toContain('section: subproblems')
   })
 
-  it('references the scrub-safe assistant child var, never the KEY var', () => {
+  it('addresses the assistant by the "assistant" sentinel, never a key the model must transcribe', () => {
     const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)
-    expect(priming).toContain('CC_RESEARCH_ASSISTANT_CHILD')
-    expect(priming).not.toContain('CC_RESEARCH_ASSISTANT_KEY')
+    expect(priming).toContain('child 用 "assistant"')
+    // The Go-era env var no longer exists in the dsh backend; mentioning it
+    // sent models hunting for a value they cannot see (2026-08-25 oc_ac5db).
+    expect(priming).not.toContain('CC_RESEARCH_ASSISTANT_CHILD')
   })
 
   it('instructs persisting artifacts into the shared workspace', () => {

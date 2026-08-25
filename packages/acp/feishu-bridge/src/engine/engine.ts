@@ -2636,9 +2636,10 @@ export class Engine {
         ledgerDir: ledger.ok ? chatroomLedgerDirPath(ledger.dir, hubKey) : '',
         // Research mode: the hub flagged this chatroom as research-driven.
         // Tell the role so its contract knows to drive a full-CC assistant
-        // subgroup instead of answering from memory.
+        // subgroup instead of answering from memory. The assistant is
+        // addressed with the "assistant" sentinel (sendToSubtask resolves
+        // it from this session's researchAssistantKey).
         research: hub?.getChatroomResearch() === true,
-        researchAssistantChild: hub?.getChatroomResearch() === true ? session.getResearchAssistantKey() : '',
       }
     } else if (session.getChatroomDirectRole() || session.getChatroomModerator()) {
       // 1:1 direct role chat (no hub, no relay): the lightweight direct-role
@@ -2649,7 +2650,6 @@ export class Engine {
         moderator: session.getChatroomModerator(),
         ledgerDir: '',
         research: false,
-        researchAssistantChild: '',
       }
     }
     // Shared research venv (Go buildSessionEnv research path: VIRTUAL_ENV
@@ -6379,11 +6379,24 @@ export class Engine {
     if (msg === '') throw new Error('subtask: message is required')
     if (childSessionKey.trim() === '') throw new Error('subtask: child session key is required')
 
+    // "assistant" addresses the caller's pre-provisioned research assistant
+    // server-side: a model transcribing a 40+ char hex key into tool args
+    // drops characters (2026-08-25 oc_ac5db incident), and the sentinel
+    // removes the transcription entirely.
+    let childKey = childSessionKey.trim()
+    if (childKey === 'assistant') {
+      const provisioned = this.sessions.getOrCreateActive(callerSessionKey).getResearchAssistantKey()
+      if (provisioned === '') {
+        throw new Error('subtask: no pre-provisioned assistant on this session — spawn one first (action: spawn)')
+      }
+      childKey = provisioned
+    }
+
     // Native continuable child: the runtime inbox queues the follow-up
     // behind the child's current turn — the deliberate deviation from Go's
     // busy-reject (a queued follow-up's answer re-arms the settlement
     // fallback, so it still folds back).
-    const nativeEntry = this.nativeChildEntries()[childSessionKey]
+    const nativeEntry = this.nativeChildEntries()[childKey]
     if (nativeEntry !== undefined) {
       if (nativeEntry.parent_key !== callerSessionKey) {
         throw new Error(this.i18n.t(Msg.SubtaskSendNotChild))
@@ -6396,20 +6409,26 @@ export class Engine {
       if (liveParent === '' && !this.nativeChildEntries()[callerSessionKey]) {
         throw new Error('subtask: the parent conversation has no live agent session')
       }
-      this.updateNativeChild(childSessionKey, { reported: false })
+      this.updateNativeChild(childKey, { reported: false })
       await delegator.followupChild(
         liveParent !== '' ? liveParent : nativeEntry.parent_agent_session_id,
-        childSessionKey,
+        childKey,
         msg,
       )
-      console.info(`subtask: parent sent follow-up to native child (parent=${callerSessionKey} child=${childSessionKey})`)
+      console.info(`subtask: parent sent follow-up to native child (parent=${callerSessionKey} child=${childKey})`)
       return
     }
 
     const p = this.reportCapablePlatform()
     if (p === undefined) throw new Error('subtask: no platform available to deliver follow-up')
 
-    const child = this.sessions.getOrCreateActive(childSessionKey)
+    // Non-creating lookup: a bogus child key must fail loudly here, not mint
+    // a phantom session whose empty parent link then misreports as "not your
+    // child" (the oc_ac5db incident's confusing surface).
+    const child = this.sessions.findActive(childKey)
+    if (child === undefined) {
+      throw new Error(`subtask: no subtask session ${childKey} — the key may be mistyped; copy it verbatim, or use "assistant" for the pre-provisioned research assistant`)
+    }
     if (child.getParentSessionKey() !== callerSessionKey) {
       throw new Error(this.i18n.t(Msg.SubtaskSendNotChild))
     }
@@ -6425,7 +6444,7 @@ export class Engine {
     }
     let childRctx: unknown
     try {
-      childRctx = await r.reconstructReplyCtx(childSessionKey)
+      childRctx = await r.reconstructReplyCtx(childKey)
     } catch (error) {
       throw new Error(`subtask: reconstruct child reply ctx: ${String(error instanceof Error ? error.message : error)}`)
     }
@@ -6441,7 +6460,7 @@ export class Engine {
 
     const childMsg: Message = {
       ...emptyMessage(),
-      sessionKey: childSessionKey,
+      sessionKey: childKey,
       platform: p.name(),
       userName: '[父任务追问]',
       content: `[父任务追问] ${msg}`,
@@ -6449,7 +6468,7 @@ export class Engine {
     }
     this.receiveMessageSafe(p, childMsg)
 
-    console.info(`subtask: parent sent follow-up to child (parent=${callerSessionKey} child=${childSessionKey})`)
+    console.info(`subtask: parent sent follow-up to child (parent=${callerSessionKey} child=${childKey})`)
     this.markResearchDispatch(this.sessions.getOrCreateActive(callerSessionKey))
   }
 

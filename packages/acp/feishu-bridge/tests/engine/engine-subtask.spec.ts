@@ -683,6 +683,41 @@ describe('SendToSubtask', () => {
     await expect(e.sendToSubtask(parentKey, 'test:someone-elses-chat', 'hi')).rejects.toThrow()
   })
 
+  it('rejects an unknown child key loudly and mints no phantom session', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+    const before = e.sessions.allSessions().length
+
+    // A model-transcribed key that dropped characters must fail with the
+    // mistyped-key error (2026-08-25 oc_ac5db incident), not create a
+    // parentless session whose empty link then misreports as "not your child".
+    await expect(e.sendToSubtask(parentKey, 'test:child-cht', 'hi'))
+      .rejects.toThrow('no subtask session test:child-cht')
+    expect(e.sessions.allSessions().length).toBe(before)
+  })
+
+  it('resolves the "assistant" sentinel to the caller\'s pre-provisioned research assistant', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+    const child = e.sessions.getOrCreateActive(childKey)
+    child.setParentSessionKey(parentKey)
+    child.setSubtaskDepth(1)
+    e.sessions.getOrCreateActive(parentKey).setResearchAssistantKey(childKey)
+
+    await expect(e.sendToSubtask(parentKey, 'assistant', 'research task')).resolves.toBeUndefined()
+    await settle()
+    expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('research task')
+  })
+
+  it('tells an unprovisioned caller to spawn an assistant first', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+
+    await expect(e.sendToSubtask(parentKey, 'assistant', 'task'))
+      .rejects.toThrow('no pre-provisioned assistant')
+  })
+
   it('requires a non-empty message', async () => {
     const p = createStubCardPlatformFull('test')
     const e = newSubtaskTestEngine(p)
@@ -1003,25 +1038,6 @@ describe('markUserInterjectedOnHumanTurn', () => {
 })
 
 describe('buildSessionStartOptions', () => {
-  it('injects the research assistant child key for research-driven roles', () => {
-    const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
-
-    const hubKey = 'test:hub-chat:user-1'
-    const roleKey = 'test:role-chat:user-1'
-    const hub = e.sessions.getOrCreateActive(hubKey)
-    hub.setChatroomResearch(true)
-
-    const role = e.sessions.getOrCreateActive(roleKey)
-    role.setChatroomHubKey(hubKey)
-    role.setResearchAssistantKey('test:assistant-chat')
-
-    const options = e.buildSessionStartOptions(roleKey, role)
-    // The child key is what role prompts reference: the persona prompt
-    // hands the pre-spawned assistant's session key to the role.
-    expect(options.chatroom?.researchAssistantChild).toBe('test:assistant-chat')
-  })
-
   it('injects the research assistant contract only for research assistants', () => {
     const p = createStubCardPlatformFull('test')
     const e = newSubtaskTestEngine(p)

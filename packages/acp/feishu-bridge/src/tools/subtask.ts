@@ -108,7 +108,9 @@ export function registerSubtaskTool(
       },
       child: {
         type: 'string',
-        description: 'send/interrupt: the target subtask\'s session key, from the spawn result.',
+        description: 'send/interrupt: the target subtask\'s session key, from the spawn result. '
+          + 'The literal "assistant" addresses your pre-provisioned research assistant, when one exists — '
+          + 'prefer it over copying a long key by hand.',
       },
     },
     output: {

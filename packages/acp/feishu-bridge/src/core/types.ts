@@ -422,8 +422,6 @@ export interface SessionStartOptions {
     ledgerDir: string
     /** The hub flagged this chatroom as research-driven. */
     research: boolean
-    /** Session key of a research role's pre-spawned idle assistant; '' when none. */
-    researchAssistantChild: string
   }
   /** Default Feishu workspace routing (#18); absent = no routing section. */
   feishuWorkspace?: FeishuWorkspaceInfo

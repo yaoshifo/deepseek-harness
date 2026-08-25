@@ -434,7 +434,6 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
       isDirect: chatroom.directRole,
       isModerator: chatroom.moderator,
       research: chatroom.research,
-      researchAssistantChild: chatroom.researchAssistantChild,
       ledgerDir: chatroom.ledgerDir,
       platformPrompt: '',
     })

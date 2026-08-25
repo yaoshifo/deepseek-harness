@@ -46,7 +46,6 @@ describe('buildChatroomSystemPrompt', () => {
       isDirect: false,
       isModerator: false,
       research: false,
-      researchAssistantChild: '',
       ledgerDir: '/data/ledgers/abc',
       platformPrompt: '',
     })
@@ -59,7 +58,7 @@ describe('buildChatroomSystemPrompt', () => {
     expect(text).toContain('# Munger')
   })
 
-  it('adds the research contract only in research mode with the child key', async () => {
+  it('adds the research contract in research mode, addressing the assistant by sentinel', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fb-persona-research-'))
     await writeFile(join(dir, 'CLAUDE.md'), '# R\n', 'utf8')
     const text = buildChatroomSystemPrompt({
@@ -68,12 +67,14 @@ describe('buildChatroomSystemPrompt', () => {
       isDirect: false,
       isModerator: false,
       research: true,
-      researchAssistantChild: 'test:assistant-9',
       ledgerDir: '',
       platformPrompt: '',
     })
     expect(text).toContain('研究任务：用预配的助手子群干活')
-    expect(text).toContain('test:assistant-9')
+    // The role never transcribes a long session key: the "assistant"
+    // sentinel resolves server-side (a model copying hex keys drops
+    // characters — 2026-08-25 oc_ac5db incident).
+    expect(text).toContain('child: "assistant"')
   })
 
   it('uses the direct contract for 1:1 sessions and no ledger section', async () => {
@@ -85,7 +86,6 @@ describe('buildChatroomSystemPrompt', () => {
       isDirect: true,
       isModerator: false,
       research: false,
-      researchAssistantChild: '',
       ledgerDir: '/data/ledgers/abc',
       platformPrompt: '',
     })
@@ -187,7 +187,7 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     const a = newAdapter(createHarness({ sections, suppressions, skillDenies }), dir)
     await a.startSession('', {
       sessionKey: 'feishu:oc_1:ou_9',
-      chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false, researchAssistantChild: '' },
+      chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false },
     })
     expect(sections).toHaveLength(1)
     expect(sections[0]?.complete).toBe(true)
@@ -207,7 +207,7 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     const a = newAdapter(createHarness({ sections, suppressions, skillDenies }), dir)
     await a.startSession('', {
       sessionKey: 'feishu:oc_1:role',
-      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' },
+      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false },
     })
     expect(sections).toHaveLength(1)
     expect(sections[0]?.complete).toBe(true)

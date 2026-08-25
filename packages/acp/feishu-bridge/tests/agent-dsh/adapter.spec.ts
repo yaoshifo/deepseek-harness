@@ -941,7 +941,7 @@ describe('DshAgentAdapter approval answerer', () => {
     adapter.setAskDelegate(delegate)
     const session = (await adapter.startSession('', {
       sessionKey: 'feishu:oc_b:ou_1',
-      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' },
+      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false },
     })) as DshAgentSession
     const listener = h.listeners.get('approval/request')?.[0] as unknown as (req: Record<string, unknown>) => Promise<unknown>
 
@@ -1143,7 +1143,7 @@ it('a chatroom moderator never enters plan mode (an inherited plan default is do
   a.setDefaultMode('plan')
   await a.startSession('', {
     sessionKey: 'feishu:hub:ou_9',
-    chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false, researchAssistantChild: '' },
+    chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false },
   })
   expect(planSets).toEqual([false])
 })
@@ -1156,7 +1156,7 @@ it('a chatroom moderator downgrades an explicit plan override too (one rule: mod
   a.setSessionMode('plan')
   await a.startSession('', {
     sessionKey: 'feishu:hub:ou_9',
-    chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false, researchAssistantChild: '' },
+    chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false },
   })
   expect(planSets).toEqual([false])
 })
@@ -1165,9 +1165,9 @@ describe('sessionBypassesPermissions (Go effectiveMode → bypassPermissions)', 
   it('elevates unattended subtasks and chatroom roles, not attended ones or moderators', () => {
     expect(sessionBypassesPermissions({ sessionKey: 'k', subtask: { attended: false, noReport: false, researchAssistant: false } })).toBe(true)
     expect(sessionBypassesPermissions({ sessionKey: 'k', subtask: { attended: true, noReport: false, researchAssistant: false } })).toBe(false)
-    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' } })).toBe(true)
-    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: false, directRole: true, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' } })).toBe(true)
-    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false, researchAssistantChild: '' } })).toBe(false)
+    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false } })).toBe(true)
+    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: false, directRole: true, moderator: false, ledgerDir: '', research: false } })).toBe(true)
+    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false } })).toBe(false)
     expect(sessionBypassesPermissions({ sessionKey: 'feishu:oc_1:ou_9' })).toBe(false)
     expect(sessionBypassesPermissions(undefined)).toBe(false)
   })
@@ -1200,7 +1200,7 @@ describe('effectiveMode bypass wiring', () => {
     const a = newAdapter(h)
     const session = await a.startSession('', {
       sessionKey: 'feishu:role:ou_9',
-      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' },
+      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false },
     })
     const listener = h.listeners.get('approval/request')?.[0]
     if (listener === undefined) throw new Error('approval/request listener was not registered')

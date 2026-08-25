@@ -77,7 +77,6 @@ export function buildChatroomSystemPrompt(opts: {
   isDirect: boolean
   isModerator: boolean
   research: boolean
-  researchAssistantChild: string
   ledgerDir: string
   platformPrompt: string
 }): string {
@@ -87,7 +86,7 @@ export function buildChatroomSystemPrompt(opts: {
   if (opts.isRole) {
     b.push(chatroomRoleContractPrompt())
     if (opts.research) {
-      b.push(chatroomResearchRolePrompt(opts.researchAssistantChild))
+      b.push(chatroomResearchRolePrompt())
     }
   } else if (opts.isDirect) {
     b.push(chatroomDirectRoleContractPrompt())
@@ -137,15 +136,15 @@ export function chatroomRoleBaseSystemPrompt(): string {
  * @param assistantChild - Session key of the pre-provisioned research assistant; '' when provisioning failed.
  * @returns the research-role assistant contract prompt.
  */
-export function chatroomResearchRolePrompt(assistantChild: string): string {
+export function chatroomResearchRolePrompt(): string {
   return `## 研究任务：用预配的助手子群干活
 当你收到研究任务（需要下数据、跑脚本、访问网络、做分析），执行交给助手，不要自己下场——你负责思考、拆解任务、判断结果。你已有一个**预配的完整助手子群**（全套工具 Bash/WebFetch/skills，直接执行无需审批），用 feishu_bridge_subtask 工具给它派任务：
 
   action: send
-  child: "${assistantChild}"
+  child: "assistant"
   message: "<把研究任务交给助手：要下什么数据、跑什么分析、算什么指标；要数值和结论，不要出图>"
 
-child 是预配助手的 session key${assistantChild !== '' ? `（本会话注入为 ${assistantChild}）` : ''}。若它为空——预配失败——退回 feishu_bridge_subtask（action: spawn，worktree: off，message: \"<任务>\") 新建一个；spawn 结果会给 session key，后续追问用 send 继续派。
+child 固定写 "assistant"——它指向你的预配助手，服务端解析；不要自己抄写 session key（长 key 容易抄错）。若 send 报「预配助手不存在」——预配失败——退回 feishu_bridge_subtask（action: spawn，worktree: off，message: \"<任务>\") 新建一个；spawn 结果会给 session key，后续追问把那个 key 原样复制进 send 的 child。
 
 **助手已预配共享 Python 环境**（uv venv）：所有角色的助手共用同一个 venv，pip install 装的包彼此共享、装一次即可。派装包任务时直接让助手执行 pip install 即可，不必让助手各自新建 venv——环境已就绪。
 
