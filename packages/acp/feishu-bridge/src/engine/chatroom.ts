@@ -1263,7 +1263,8 @@ function restoreGatherBarrier(raw: unknown): ChatroomGather | undefined {
     || !Object.values(s.collected).every(v => typeof v === 'string')) return undefined
   const g = new ChatroomGather(s.question, s.seq)
   for (const n of s.expected) g.expected.add(n)
-  for (const [k, v] of Object.entries(s.collected)) g.collected.set(k, v)
+  // The guard above proved every collected value is a string; the cast only carries that into the entries type.
+  for (const [k, v] of Object.entries(s.collected) as [string, string][]) g.collected.set(k, v)
   return g
 }
 
@@ -1276,7 +1277,8 @@ function restoreEndBarrier(raw: unknown): ChatroomEndBarrier | undefined {
     || !Object.values(s.collected).every(v => typeof v === 'string')) return undefined
   const b = new ChatroomEndBarrier()
   for (const n of s.expected) b.expected.add(n)
-  for (const [k, v] of Object.entries(s.collected)) b.collected.set(k, v)
+  // Same guard-proven string values as restoreGatherBarrier.
+  for (const [k, v] of Object.entries(s.collected) as [string, string][]) b.collected.set(k, v)
   return b
 }
 
