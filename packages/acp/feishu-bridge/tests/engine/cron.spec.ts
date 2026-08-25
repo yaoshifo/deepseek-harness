@@ -83,6 +83,43 @@ describe('CronStore_MutePersistence', () => {
   })
 })
 
+describe('CronStore_Update', () => {
+  it('maps snake_case edit fields onto the camelCase job properties and persists them', () => {
+    const dir = tempDir()
+    const store = new CronStore(dir)
+    store.add(newJob({
+      id: 'upd1', project: 'proj', sessionKey: 'test:ch1',
+      cronExpr: '0 6 * * *', prompt: 'hello', enabled: true,
+    }))
+
+    expect(store.update('upd1', 'session_key', 'test:ch2:u1')).toBe(true)
+    expect(store.update('upd1', 'cron_expr', '30 7 * * *')).toBe(true)
+    expect(store.update('upd1', 'work_dir', '/tmp/w')).toBe(true)
+    expect(store.update('upd1', 'session_mode', 'new_per_run')).toBe(true)
+    expect(store.update('upd1', 'description', 'desc')).toBe(true)
+    expect(store.update('upd1', 'mode', 'bypassPermissions')).toBe(true)
+    expect(store.update('upd1', 'enabled', false)).toBe(true)
+    expect(store.update('upd1', 'timeout_mins', 15)).toBe(true)
+    expect(store.update('upd1', 'id', 'other')).toBe(false)
+
+    const j = store.get('upd1')
+    expect(j?.sessionKey).toBe('test:ch2:u1')
+    expect(j?.cronExpr).toBe('30 7 * * *')
+    expect(j?.workDir).toBe('/tmp/w')
+    expect(j?.sessionMode).toBe('new_per_run')
+    expect(j?.description).toBe('desc')
+    expect(j?.mode).toBe('bypassPermissions')
+    expect(j?.enabled).toBe(false)
+    expect(j?.timeoutMins).toBe(15)
+
+    const store2 = new CronStore(dir)
+    const persisted = store2.get('upd1')
+    expect(persisted?.sessionKey).toBe('test:ch2:u1')
+    expect(persisted?.sessionMode).toBe('new_per_run')
+    expect(persisted?.workDir).toBe('/tmp/w')
+  })
+})
+
 describe('MutePlatform_DiscardMessages', () => {
   it('discards Reply/Send but delegates Name()', async () => {
     const inner = createStubPlatform('test')

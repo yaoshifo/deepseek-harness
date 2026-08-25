@@ -383,16 +383,34 @@ export class CronStore {
   }
 }
 
+/**
+ * Editable snake_case field names mapped to their {@link CronJob} properties.
+ * Unlike Go's reflection-based updateJobField, the property names differ from
+ * the on-disk keys for the camelCase fields.
+ */
+const editableStringFields: Readonly<Record<string, string>> = {
+  project: 'project',
+  session_key: 'sessionKey',
+  cron_expr: 'cronExpr',
+  prompt: 'prompt',
+  exec: 'exec',
+  work_dir: 'workDir',
+  description: 'description',
+  session_mode: 'sessionMode',
+  mode: 'mode',
+}
+
 /** Set one field by its snake_case name (Go updateJobField, sans reflection). */
 function updateJobField(job: CronJob, field: string, value: unknown): boolean {
+  const prop = editableStringFields[field]
+  if (prop !== undefined) {
+    if (typeof value === 'string') {
+      ;(job as unknown as Record<string, string>)[prop] = value
+      return true
+    }
+    return false
+  }
   switch (field) {
-    case 'project': case 'session_key': case 'cron_expr': case 'prompt':
-    case 'exec': case 'work_dir': case 'description': case 'session_mode': case 'mode':
-      if (typeof value === 'string') {
-        ;(job as unknown as Record<string, string>)[field] = value
-        return true
-      }
-      return false
     case 'enabled':
       if (typeof value === 'boolean') {
         job.enabled = value
