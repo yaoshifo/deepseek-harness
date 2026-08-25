@@ -134,7 +134,9 @@ describe('cmdFork quoted-message rollback', () => {
     }
   })
 
-  it('skips the rollback when --worktree is requested', async () => {
+  // Real git init + worktree add takes ~2s serial; the 5s default times out
+  // under full-suite parallel load.
+  it('skips the rollback when --worktree is requested', { timeout: 20_000 }, async () => {
     const agent = forkAtAgent('cc-truncated')
     // A real git repo so the -w worktree creation succeeds and the flow
     // reaches the sentinel plant.
