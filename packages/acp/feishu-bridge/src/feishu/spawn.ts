@@ -68,13 +68,18 @@ export function projectBaseForTag(dir: string): string {
  */
 export class SpawnedChatStore {
   private readonly file: string
+  private readonly legacyFiles: string[]
   private readonly chats = new Map<string, SpawnedChatMeta>()
 
   /**
    * @param file - Persistence path; empty disables on-disk persistence.
+   * @param legacyFiles - Older registry paths merged into {@link file} at load
+   * (entries the primary file already has win); the merged result persists
+   * under the primary path.
    */
-  constructor(file = '') {
+  constructor(file = '', legacyFiles: string[] = []) {
     this.file = file
+    this.legacyFiles = legacyFiles
   }
 
   /** Persistence path ('' when persistence is disabled). */
@@ -83,35 +88,56 @@ export class SpawnedChatStore {
   }
 
   /**
-   * Load the persisted registry (new `{"chats":{...}}` format, then the legacy
-   * `{"chat_ids":[...]}` shape). Missing file is a clean start.
+   * Load the persisted registry, merging legacy registry files underneath it
+   * (primary entries win); the merged result persists under the primary path.
+   * Missing files are a clean start.
    */
   async load(): Promise<void> {
     if (this.file === '') return
+    const entries = await this.readChats(this.file)
+    let migrated = false
+    for (const legacy of this.legacyFiles) {
+      if (legacy === this.file) continue
+      for (const [id, meta] of await this.readChats(legacy)) {
+        if (entries.has(id)) continue
+        entries.set(id, meta)
+        migrated = true
+      }
+    }
+    for (const [id, meta] of entries) {
+      this.chats.set(id, meta)
+    }
+    if (migrated) await this.save()
+  }
+
+  /** Read one registry file into a fresh map; missing or corrupt files read empty. */
+  private async readChats(file: string): Promise<Map<string, SpawnedChatMeta>> {
+    const m = new Map<string, SpawnedChatMeta>()
     let data: string
     try {
-      data = await readFile(this.file, 'utf8')
+      data = await readFile(file, 'utf8')
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         console.warn(`feishu: load spawned chats failed: ${String(err)}`)
       }
-      return
+      return m
     }
     try {
       const newFmt = JSON.parse(data) as { chats?: Record<string, SpawnedChatMeta> }
       if (newFmt.chats !== undefined && Object.keys(newFmt.chats).length > 0) {
         for (const [id, meta] of Object.entries(newFmt.chats)) {
-          this.chats.set(id, meta)
+          m.set(id, meta)
         }
-        return
+        return m
       }
       const legacy = JSON.parse(data) as { chat_ids?: string[] }
       for (const id of legacy.chat_ids ?? []) {
-        this.chats.set(id, {})
+        m.set(id, {})
       }
     } catch (err) {
       console.warn(`feishu: parse spawned chats failed: ${String(err)}`)
     }
+    return m
   }
 
   /**
