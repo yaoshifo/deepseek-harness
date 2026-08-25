@@ -103,9 +103,14 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     complete?: boolean
   }
 
-  function createHarness(opts: { sections: RecordedSection[]; suppressions?: { count: number } }): DshContextLike {
+  function createHarness(opts: {
+    sections: RecordedSection[]
+    suppressions?: { count: number }
+    skillDenies?: { count: number }
+  }): DshContextLike {
     const agents: Array<DshAgentLike & { id: string; disposed: boolean }> = []
     const suppressions = opts.suppressions ?? { count: 0 }
+    const skillDenies = opts.skillDenies ?? { count: 0 }
     const ctx: DshContextLike = {
       agents: {
         create: async (options: DshCreateOptionsLike) => {
@@ -126,6 +131,15 @@ describe('DshAgentAdapter bare persona setup hook', () => {
                   return {
                     suppress: (): (() => void) => {
                       suppressions.count += 1
+                      return () => {}
+                    },
+                  }
+                }
+                if (name === 'tools') {
+                  return {
+                    get: (toolName: string): unknown => toolName === 'skill' ? { name: 'skill' } : undefined,
+                    restrict: (filter: { deny: readonly string[] }): (() => void) => {
+                      if (filter.deny.includes('skill')) skillDenies.count += 1
                       return () => {}
                     },
                   }
@@ -169,7 +183,8 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     await writeFile(join(dir, 'CLAUDE.md'), '# Mod\n', 'utf8')
     const sections: RecordedSection[] = []
     const suppressions = { count: 0 }
-    const a = newAdapter(createHarness({ sections, suppressions }), dir)
+    const skillDenies = { count: 0 }
+    const a = newAdapter(createHarness({ sections, suppressions, skillDenies }), dir)
     await a.startSession('', {
       sessionKey: 'feishu:oc_1:ou_9',
       chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false, researchAssistantChild: '' },
@@ -178,16 +193,18 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     expect(sections[0]?.complete).toBe(true)
     expect(sections[0]?.text).toContain('# Mod')
     // Go --bare parity: a bare-persona session also forgoes workspace
-    // instruction injection.
+    // instruction injection and the skill catalog (via the skill-tool deny).
     expect(suppressions.count).toBe(1)
+    expect(skillDenies.count).toBe(1)
   })
 
-  it('suppresses workspace instructions for a role session too', async () => {
+  it('suppresses workspace instructions and skills for a role session too', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fb-adapter-role-'))
     await writeFile(join(dir, 'CLAUDE.md'), '# Role\n', 'utf8')
     const sections: RecordedSection[] = []
     const suppressions = { count: 0 }
-    const a = newAdapter(createHarness({ sections, suppressions }), dir)
+    const skillDenies = { count: 0 }
+    const a = newAdapter(createHarness({ sections, suppressions, skillDenies }), dir)
     await a.startSession('', {
       sessionKey: 'feishu:oc_1:role',
       chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false, researchAssistantChild: '' },
@@ -195,18 +212,28 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     expect(sections).toHaveLength(1)
     expect(sections[0]?.complete).toBe(true)
     expect(suppressions.count).toBe(1)
+    expect(skillDenies.count).toBe(1)
   })
 
-  it('does not suppress workspace instructions for plain or subtask sessions', async () => {
+  it('suppresses workspace instructions only for research assistants among subtask children', async () => {
     const sections: RecordedSection[] = []
     const suppressions = { count: 0 }
-    const a = newAdapter(createHarness({ sections, suppressions }), '/ws')
+    const skillDenies = { count: 0 }
+    const a = newAdapter(createHarness({ sections, suppressions, skillDenies }), '/ws')
     await a.startSession('', { sessionKey: 'feishu:oc_1:ou_9' })
     await a.startSession('', {
       sessionKey: 'test:assistant-2',
       subtask: { attended: false, noReport: false, researchAssistant: true },
     })
-    expect(suppressions.count).toBe(0)
+    await a.startSession('', {
+      sessionKey: 'test:child-3',
+      subtask: { attended: false, noReport: false, researchAssistant: false },
+    })
+    // Plain session and plain subtask child keep cwd discovery; only the
+    // research assistant (whose workspace nests under the moderator home)
+    // suppresses. No subtask child ever loses the skill tool.
+    expect(suppressions.count).toBe(1)
+    expect(skillDenies.count).toBe(0)
   })
 
   it('registers the research-assistant preamble as a non-complete section', async () => {

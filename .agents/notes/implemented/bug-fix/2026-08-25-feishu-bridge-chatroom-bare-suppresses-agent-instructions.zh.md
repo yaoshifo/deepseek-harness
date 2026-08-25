@@ -10,7 +10,7 @@ Go 的 chatroom 会话以 `--bare` 运行 claude 后端，`--bare` 禁用 CLAUDE
 
 ## Decision
 
-`dsh-agent-instructions` 改为挂载 `AgentInstructions` 服务的函数插件（`ui-input-trigger` 模式：命名空间 `apply` 保留，监听器落在服务上）。服务暴露 `suppress()`——仿 `systemPrompt.suppressRuntimeContext()` 的 scoped `ScopedLayers` effect：经调用方上下文注册（agent 的 setup 作用域经 traceable receiver 绑到该 agent），使 `compose()` 对全局层或其 scope 链上任一标记覆盖的 agent 返回 `undefined`，同时把 inbox 中待处理的工作区上下文移除。bridge 的 `buildSessionSetup` chatroom 分支（role / direct-role / moderator）在注册 persona 段的同时调 `agentCtx.get('agentInstructions')?.suppress()`——指令通道上的 Go `--bare` 保形。subtask 子会话（含研究助手）保留 cwd 发现，与 Go 一致。
+`dsh-agent-instructions` 改为挂载 `AgentInstructions` 服务的函数插件（`ui-input-trigger` 模式：命名空间 `apply` 保留，监听器落在服务上）。服务暴露 `suppress()`——仿 `systemPrompt.suppressRuntimeContext()` 的 scoped `ScopedLayers` effect：经调用方上下文注册（agent 的 setup 作用域经 traceable receiver 绑到该 agent），使 `compose()` 对全局层或其 scope 链上任一标记覆盖的 agent 返回 `undefined`，同时把 inbox 中待处理的工作区上下文移除。bridge 的 `buildSessionSetup` chatroom 分支（role / direct-role / moderator）在注册 persona 段的同时调 `agentCtx.get('agentInstructions')?.suppress()`——指令通道上的 Go `--bare` 保形。同一分支再以 scoped `tools.restrict({ deny: ['skill'] })` 拒掉全局 `skill` 工具——tool-skill 文档明说的杠杆，同时移除 `<available_skills>` 目录与加载器——因为非 coding agent 的人设不该看到 `tdd` 这类目录条目（今天没有任何 thinker 角色自带 skill；未来角色自带 skill 时需重新审视）。research assistant 子会话也抑制工作区指令：共享工作区嵌在 moderator home 下，cwd 发现会把主持人契约（「绝不 pip install」）塞给助手、与其前导矛盾——而抑制也是唯一能把用户全局 `~/.dsh/AGENTS.md` 挡在外面的办法，挪工作区做不到。plain 与 attended 子会话的 cwd 发现原样保留（派发编码任务时仓库约定是关键上下文），任何 subtask 子会话都不会失去 skill 工具（主持人的 HTML 总结 brief 明写用 `html` skill）。
 
 ## Alternatives considered
 
@@ -22,8 +22,8 @@ Go 的 chatroom 会话以 `--bare` 运行 claude 后端，`--bare` 禁用 CLAUDE
 
 ## Consequences
 
-chatroom 角色/直聊/主持人会话不再收到任何工作区指令 reminder：没有祖先仓库指令、没有重复的人设 CLAUDE.md、无论预算如何都没有用户全局 coding 指令。persona 生效前记录的首轮历史（选题/挑角阶段仍按 Go 旗标时序以普通会话运行）保留普通会话当时注入的内容——抑制随 chatroom persona 一起开始。未来部署若以 complete 段组装其他 persona，只有显式调 `suppress()` 才获得同样的静默；缝隙是显式的，不靠推断。研究助手仍从研究工作区继承祖先 CLAUDE.md（Go 保形）；若这层跨契约噪声要紧，把研究工作区挪出 moderator home 是产品决策——记录在此，本次不动。
+chatroom 角色/直聊/主持人会话不再收到任何工作区指令 reminder，也不再收到技能目录：没有祖先仓库指令、没有重复的人设 CLAUDE.md、无论预算如何都没有用户全局 coding 指令，也没有 `<available_skills>` 块与 `skill` 工具（工具数 44→43）。persona 生效前记录的首轮历史（选题/挑角阶段仍按 Go 旗标时序以普通会话运行）保留普通会话当时注入的内容——抑制随 chatroom persona 一起开始。未来部署若以 complete 段组装其他 persona，只有显式调 `suppress()` 才获得同样的静默；缝隙是显式的，不靠推断。研究助手同样不再继承主持人契约与用户全局 coding 指令；共享研究工作区本身仍嵌在 moderator home 下（磁盘布局不变）。
 
 ## Testing
 
-`packages/context/agent-instructions/tests/suppression.spec.ts`：scoped 抑制器挡住基线；dispose 恢复；抑制期文件系统 touch 零注入、dispose 后 touch 组合出基线加嵌套 scope；无作用域注册抑制所有 agent。`packages/acp/feishu-bridge/tests/engine/chatroom-persona.spec.ts`：moderator 与 role 的 setup 恰好调一次 `suppress()`；plain 与 subtask 的 setup 从不调。`dsh-agent-instructions` 全量套件（162 测试）、feishu-bridge adapter 与 persona spec、两个 example bundle、仓库 typecheck 全绿。真机验证待 reload 后下一次 `/chatroom --research`：角色与主持人会话日志中不应再出现 `Instructions from:` reminder。
+`packages/context/agent-instructions/tests/suppression.spec.ts`：scoped 抑制器挡住基线；dispose 恢复；抑制期文件系统 touch 零注入、dispose 后 touch 组合出基线加嵌套 scope；无作用域注册抑制所有 agent。`packages/acp/feishu-bridge/tests/engine/chatroom-persona.spec.ts`：moderator 与 role 的 setup 各恰好调一次 `suppress()` 并拒一次 skill 工具；subtask 子会话中只有 research assistant 抑制、且都不失去 skill 工具。`dsh-agent-instructions` 全量套件（162 测试）、feishu-bridge adapter/persona/markdown/settlement spec、两个 example bundle、仓库 typecheck、仓库 lint（0 错误）全绿。真机验证待 reload 后下一次 `/chatroom --research`：角色与主持人会话日志中不应再出现 `Instructions from:` reminder 与 `<available_skills>` 块。

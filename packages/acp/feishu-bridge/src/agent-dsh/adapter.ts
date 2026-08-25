@@ -394,6 +394,13 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
       ? subtaskNoReportAgentSystemPrompt()
       : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt() : ''}`
     return (agentCtx) => {
+      if (isResearchAssistant) {
+        // The shared research workspace nests under the moderator home, so
+        // cwd discovery would hand the assistant the moderator contract
+        // ("never pip install") that contradicts its own preamble.
+        const instructionSvc = agentCtx.get('agentInstructions') as { suppress(): () => void } | undefined
+        instructionSvc?.suppress()
+      }
       const promptSvc = agentCtx.get('systemPrompt') as
         | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
         | undefined
@@ -414,6 +421,16 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
     // reminders), so cwd ancestors cannot smuggle foreign contracts in.
     const instructionSvc = agentCtx.get('agentInstructions') as { suppress(): () => void } | undefined
     instructionSvc?.suppress()
+    // A persona that is not a coding agent also loses the skill catalog and
+    // its loader: denying the global `skill` tool is dsh's designed lever —
+    // tool-skill skips the `<available_skills>` publication with it. Ceiling:
+    // a future role shipping its own skill would need this revisited.
+    const toolsSvc = agentCtx.get('tools') as
+      | { get(name: string): unknown; restrict(filter: { deny: readonly string[] }): () => void }
+      | undefined
+    if (toolsSvc?.get('skill') !== undefined) {
+      toolsSvc.restrict({ deny: ['skill'] })
+    }
     const text = buildChatroomSystemPrompt({
       workDir,
       isRole: chatroom.role,

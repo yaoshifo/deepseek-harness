@@ -272,7 +272,7 @@ export function padBoldDelimiters(md: string): string {
     let out = ''
     let last = 0
     for (const m of masked.matchAll(boldPairRe)) {
-      const s = m.index ?? 0
+      const s = m.index
       const e = s + m[0].length
       out += masked.slice(last, s)
       let seg = m[0]

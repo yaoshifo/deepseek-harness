@@ -863,7 +863,7 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
 export function registerNativeSettlementListener(ctx: Context, live: ReadonlyArray<{ engine: Engine }>): () => void {
   return ctx.on('subagent/end', (info: SubagentRunEndInfo) => {
     const output = (info.lastAssistantMessage ?? [])
-      .map(block => block.type === 'text' ? (block.text ?? '') : '')
+      .map(block => block.type === 'text' ? block.text : '')
       .join('')
     for (const { engine } of live) {
       if (engine.ownsNativeChild(info.id)) {
