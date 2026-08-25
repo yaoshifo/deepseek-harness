@@ -97,6 +97,8 @@ export function resolveChildAgentOptions(
  * @param parent - the delegating parent agent.
  * @param childDepth - the resolved delegation depth to persist.
  * @param lineageSeedLength - how many leading events came from the parent's log.
+ * @param cwdOverride - the workspace the child records instead of the parent
+ * header's; absent keeps the parent's.
  * @returns the `meta` for `ctx.agents.create()`.
  */
 export function childSessionMeta(

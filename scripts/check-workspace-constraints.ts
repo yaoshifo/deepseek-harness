@@ -151,6 +151,9 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   '@deepseek-ai/dsh-client-ui-theme': ['lib/styles'],
   // The CPython side ships as source .py files, published as-is rather than built.
   '@deepseek-ai/dsh-code-runtime-python': ['py/**/*.py'],
+  // The bridge bundle auto-mounts these bundled skills at runtime, so the
+  // tarball must carry them (fork: bundled-skill auto-mount).
+  '@deepseek-ai/dsh-feishu-bridge': ['skills'],
   // The Python runtime uses a distinct closed-resolution bin; the public CLI
   // keeps config-owned bare-package resolution through lib/bin.js.
   '@deepseek-ai/dsh-sdk-jsonrpc-demo': ['lib/packaged-bin.js'],

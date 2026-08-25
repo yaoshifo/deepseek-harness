@@ -133,7 +133,6 @@ export function chatroomRoleBaseSystemPrompt(): string {
  * The research-role pre-configured-assistant contract (Go
  * ChatroomResearchRolePrompt), with the assistant child key inlined.
  *
- * @param assistantChild - Session key of the pre-provisioned research assistant; '' when provisioning failed.
  * @returns the research-role assistant contract prompt.
  */
 export function chatroomResearchRolePrompt(): string {
