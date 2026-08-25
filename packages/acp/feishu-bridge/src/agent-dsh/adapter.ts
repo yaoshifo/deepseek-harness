@@ -394,13 +394,10 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
       ? subtaskNoReportAgentSystemPrompt()
       : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt() : ''}`
     return (agentCtx) => {
-      if (isResearchAssistant) {
-        // The shared research workspace nests under the moderator home, so
-        // cwd discovery would hand the assistant the moderator contract
-        // ("never pip install") that contradicts its own preamble.
-        const instructionSvc = agentCtx.get('agentInstructions') as { suppress(): () => void } | undefined
-        instructionSvc?.suppress()
-      }
+      // Research assistants are coding agents: their workspace lives under the
+      // project data dir (chatroomResearchWorkspace), off every chatroom
+      // persona's ancestor chain, so they keep cwd instruction discovery like
+      // any other subtask child.
       const promptSvc = agentCtx.get('systemPrompt') as
         | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
         | undefined

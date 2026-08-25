@@ -22,8 +22,8 @@ Go 的 chatroom 会话以 `--bare` 运行 claude 后端，`--bare` 禁用 CLAUDE
 
 ## Consequences
 
-chatroom 角色/直聊/主持人会话不再收到任何工作区指令 reminder，也不再收到技能目录：没有祖先仓库指令、没有重复的人设 CLAUDE.md、无论预算如何都没有用户全局 coding 指令，也没有 `<available_skills>` 块与 `skill` 工具（工具数 44→43）。persona 生效前记录的首轮历史（选题/挑角阶段仍按 Go 旗标时序以普通会话运行）保留普通会话当时注入的内容——抑制随 chatroom persona 一起开始。未来部署若以 complete 段组装其他 persona，只有显式调 `suppress()` 才获得同样的静默；缝隙是显式的，不靠推断。研究助手同样不再继承主持人契约与用户全局 coding 指令；共享研究工作区本身仍嵌在 moderator home 下（磁盘布局不变）。
+chatroom 角色/直聊/主持人会话不再收到任何工作区指令 reminder，也不再收到技能目录：没有祖先仓库指令、没有重复的人设 CLAUDE.md、无论预算如何都没有用户全局 coding 指令，也没有 `<available_skills>` 块与 `skill` 工具（工具数 44→43）。persona 生效前记录的首轮历史（选题/挑角阶段仍按 Go 旗标时序以普通会话运行）保留普通会话当时注入的内容——抑制随 chatroom persona 一起开始。未来部署若以 complete 段组装其他 persona，只有显式调 `suppress()` 才获得同样的静默；缝隙是显式的，不靠推断。研究助手起初也在此抑制，但该半场当天即被反转：助手本质是 coding agent，共享工作区搬离人设祖先链替代了抑制，助手保留 cwd 指令发现（见[工作区搬迁 note](2026-08-25-feishu-bridge-research-assistant-workspace-relocation.zh.md)）。
 
 ## Testing
 
-`packages/context/agent-instructions/tests/suppression.spec.ts`：scoped 抑制器挡住基线；dispose 恢复；抑制期文件系统 touch 零注入、dispose 后 touch 组合出基线加嵌套 scope；无作用域注册抑制所有 agent。`packages/acp/feishu-bridge/tests/engine/chatroom-persona.spec.ts`：moderator 与 role 的 setup 各恰好调一次 `suppress()` 并拒一次 skill 工具；subtask 子会话中只有 research assistant 抑制、且都不失去 skill 工具。`dsh-agent-instructions` 全量套件（162 测试）、feishu-bridge adapter/persona/markdown/settlement spec、两个 example bundle、仓库 typecheck、仓库 lint（0 错误）全绿。真机验证待 reload 后下一次 `/chatroom --research`：角色与主持人会话日志中不应再出现 `Instructions from:` reminder 与 `<available_skills>` 块。
+`packages/context/agent-instructions/tests/suppression.spec.ts`：scoped 抑制器挡住基线；dispose 恢复；抑制期文件系统 touch 零注入、dispose 后 touch 组合出基线加嵌套 scope；无作用域注册抑制所有 agent。`packages/acp/feishu-bridge/tests/engine/chatroom-persona.spec.ts`：moderator 与 role 的 setup 各恰好调一次 `suppress()` 并拒一次 skill 工具；subtask 子会话（自工作区搬迁起含 research assistant）从不抑制、也从不失去 skill 工具。`dsh-agent-instructions` 全量套件（162 测试）、feishu-bridge adapter/persona/markdown/settlement spec、两个 example bundle、仓库 typecheck、仓库 lint（0 错误）全绿。真机验证待 reload 后下一次 `/chatroom --research`：角色与主持人会话日志中不应再出现 `Instructions from:` reminder 与 `<available_skills>` 块。

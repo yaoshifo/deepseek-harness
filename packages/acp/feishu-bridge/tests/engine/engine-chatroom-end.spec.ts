@@ -7,7 +7,7 @@
 
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
@@ -318,20 +318,26 @@ describe('stashChatroomResearchFlags', () => {
 })
 
 describe('research workspace fallback', () => {
-  it('falls back to moderatorDir/research, honors config, empty when neither', () => {
+  it('falls back to the project data dir beside the session store, honors config, empty when neither', async () => {
+    const store = join(await mkdtemp(join(tmpdir(), 'fb-ws-')), 'sessions.json')
     const p = createStubChatroomSpawner()
-    const e = newChatroomTestEngine(p)
+    const e = new Engine('test', createStubAgent(), [p], store, 'zh')
 
+    // The default keeps the workspace off every chatroom persona's
+    // cwd-ancestor chain (the old <moderatorDir>/research put the moderator
+    // contract on that chain).
     e.setChatroomModeratorDir('/data/chatroom')
     e.setChatroomResearchWorkspace('')
-    expect(chatroomResearchWorkspace(e)).toBe(join('/data/chatroom', 'research'))
+    expect(chatroomResearchWorkspace(e)).toBe(join(dirname(store), 'chatroom-research'))
 
     e.setChatroomResearchWorkspace('/shared/research-env')
     expect(chatroomResearchWorkspace(e)).toBe('/shared/research-env')
 
-    e.setChatroomModeratorDir('')
-    e.setChatroomResearchWorkspace('')
-    expect(chatroomResearchWorkspace(e)).toBe('')
+    // A storeless engine (tests) has no project data dir to derive.
+    const bare = newChatroomTestEngine(p)
+    bare.setChatroomModeratorDir('/data/chatroom')
+    bare.setChatroomResearchWorkspace('')
+    expect(chatroomResearchWorkspace(bare)).toBe('')
   })
 })
 

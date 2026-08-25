@@ -14,7 +14,7 @@
 
 import { execFile } from 'node:child_process'
 import { mkdirSync, rmSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Engine, InteractiveState } from './engine.js'
 import type { Session } from './session.js'
@@ -1425,16 +1425,21 @@ export function clearChatroomResearchFlags(hub: Session): void {
 
 /**
  * The shared workdir for research-mode assistant subgroups: the configured
- * workspace, else <moderatorDir>/research, else '' (Go chatroomResearchWorkspace).
+ * workspace, else <projectDataDir>/chatroom-research (derived from the
+ * sessions store path), else ''. The old <moderatorDir>/research default is
+ * gone on purpose: a workspace under the moderator home put the moderator
+ * persona on every assistant's cwd-ancestor instruction-discovery chain —
+ * the "never pip install" contract contradicted the assistants' own job —
+ * and suppression was the blunt fix for what was a placement bug.
  *
- * @param e - Engine carrying the workspace and moderator-dir configuration.
+ * @param e - Engine carrying the workspace configuration and session store.
  * @returns The shared research workdir, or '' when nothing is configured.
  */
 export function chatroomResearchWorkspace(e: Engine): string {
   const ws = e.chatroomResearchWorkspaceCfg.trim()
   if (ws !== '') return ws
-  const dir = e.chatroomModeratorDir().dir
-  if (dir !== '') return join(dir, 'research')
+  const store = e.sessions.storePath()
+  if (store !== '') return join(dirname(store), 'chatroom-research')
   return ''
 }
 

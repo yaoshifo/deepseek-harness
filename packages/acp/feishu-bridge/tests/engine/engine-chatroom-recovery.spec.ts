@@ -131,6 +131,9 @@ describe('chatroom restart recovery', () => {
     expect(wake?.content).toContain('检测到进程重启')
     expect(wake?.content).toContain('1 个角色的回复已丢失（taleb）')
     expect(wake?.content).toContain('部分回复')
+    // The wake rides the per-round reminder; no chatroom protocol text may
+    // point the moderator back at the global coding instructions.
+    expect(wake?.content).not.toContain('~/.claude')
 
     // The stale research-awaiting marker died with the old process.
     expect(e2.sessions.getOrCreateActive('test:role-1:user-1').getResearchAwaitingAssistant()).toBe(false)

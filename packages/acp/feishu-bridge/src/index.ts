@@ -588,7 +588,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       researchTimeoutSec: Schema.natural().description('Research gather round timeout in seconds, clamped to [60, 86400]'),
       maxResearchRounds: Schema.natural().description('Auto-mode research iteration cap, clamped to [1, 20]'),
       defaultResearchMode: Schema.union(['auto', 'manual']).description('Default research driver when --mode is omitted'),
-      researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <moderatorDir>/research)'),
+      researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <projectDataDir>/chatroom-research)'),
       researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
     }).description('Multi-role chatroom tuning (Go [chatroom])'),
     monitor: Schema.object({
@@ -686,7 +686,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     researchTimeoutSec: Schema.natural().description('Research gather round timeout in seconds, clamped to [60, 86400]'),
     maxResearchRounds: Schema.natural().description('Auto-mode research iteration cap, clamped to [1, 20]'),
     defaultResearchMode: Schema.union(['auto', 'manual']).description('Default research driver when --mode is omitted'),
-    researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <moderatorDir>/research)'),
+    researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <projectDataDir>/chatroom-research)'),
     researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
   }).description('Multi-role chatroom tuning (Go [chatroom]; per-project sections override)'),
   streamPreview: Schema.object({

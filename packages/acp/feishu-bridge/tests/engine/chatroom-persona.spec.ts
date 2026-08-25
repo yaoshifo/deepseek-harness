@@ -215,7 +215,7 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     expect(skillDenies.count).toBe(1)
   })
 
-  it('suppresses workspace instructions only for research assistants among subtask children', async () => {
+  it('keeps cwd discovery for every subtask child, research assistants included', async () => {
     const sections: RecordedSection[] = []
     const suppressions = { count: 0 }
     const skillDenies = { count: 0 }
@@ -229,10 +229,11 @@ describe('DshAgentAdapter bare persona setup hook', () => {
       sessionKey: 'test:child-3',
       subtask: { attended: false, noReport: false, researchAssistant: false },
     })
-    // Plain session and plain subtask child keep cwd discovery; only the
-    // research assistant (whose workspace nests under the moderator home)
-    // suppresses. No subtask child ever loses the skill tool.
-    expect(suppressions.count).toBe(1)
+    // Research assistants are coding agents: their workspace lives under the
+    // project data dir, off every chatroom persona's ancestor chain, so they
+    // keep cwd instruction discovery exactly like plain subtask children.
+    // No subtask child ever loses the skill tool.
+    expect(suppressions.count).toBe(0)
     expect(skillDenies.count).toBe(0)
   })
 

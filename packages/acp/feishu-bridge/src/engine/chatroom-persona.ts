@@ -139,7 +139,7 @@ export function chatroomRoleBaseSystemPrompt(): string {
  */
 export function chatroomResearchRolePrompt(assistantChild: string): string {
   return `## 研究任务：用预配的助手子群干活
-当你收到研究任务（需要下数据、跑脚本、访问网络、做分析），不要自己硬扛——你是个只会说话的人设角色，没有 coding 工具。你已有一个**预配的完整助手子群**（全套工具 Bash/WebFetch/skills，直接执行无需审批），用 feishu_bridge_subtask 工具给它派任务：
+当你收到研究任务（需要下数据、跑脚本、访问网络、做分析），执行交给助手，不要自己下场——你负责思考、拆解任务、判断结果。你已有一个**预配的完整助手子群**（全套工具 Bash/WebFetch/skills，直接执行无需审批），用 feishu_bridge_subtask 工具给它派任务：
 
   action: send
   child: "${assistantChild}"
