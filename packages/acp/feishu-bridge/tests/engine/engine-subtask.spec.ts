@@ -1107,6 +1107,9 @@ function newNativeEngine(p: Platform, parentKey: string): {
   const agent = createDelegatorAgent()
   const e = newSubtaskTestEngine(p, agent)
   e.setProjectStateStore(new ProjectStateStore(''))
+  // A parent chat that spawned a native child always holds a session
+  // record — deliverParentReply's non-creating lookup relies on it.
+  e.sessions.getOrCreateActive(parentKey)
   const state = new InteractiveState()
   state.agentSession = newControllableSession('parent-native-1')
   state.platform = p
@@ -1204,6 +1207,31 @@ describe('reportNativeChild', () => {
     await settle()
     expect(p.sentCards.length).toBe(1)
     expect(cardBody(p.sentCards[0])).toContain('all done')
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+  })
+
+  it('delivers the card without a wake and mints no phantom when the parent record is gone', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+    e.setProjectStateStore(new ProjectStateStore(''))
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: 'test:ghost-parent:u1',
+      parent_agent_session_id: '',
+      label: 'orphaned work',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: false,
+    })
+    const before = e.sessions.allSessions().length
+
+    await e.reportNativeChild('native-child-1', 'orphan result')
+
+    await settle()
+    // The user-visible card still lands; the parent agent is never woken
+    // and no phantom parent session is minted for the dangling key.
+    expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('orphan result')
+    expect(e.sessions.allSessions().length).toBe(before)
+    expect(e.interactiveStates.get('test:ghost-parent:u1')).toBeUndefined()
     expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
   })
 

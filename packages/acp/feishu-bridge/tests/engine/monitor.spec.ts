@@ -486,6 +486,9 @@ describe('replyToParent monitor-group semantics', () => {
 
     const child = e.sessions.getOrCreateActive('feishu:oc_child')
     child.setParentSessionKey('feishu:oc_parent')
+    // A parent chat that spawned this child holds a session record —
+    // deliverParentReply's non-creating lookup relies on it.
+    e.sessions.getOrCreateActive('feishu:oc_parent')
 
     e.replyToParent(p, child, '服务A 内存泄漏在 handler.go:88')
     await waitFor(() => parentSession.sendCalls.length > 0)

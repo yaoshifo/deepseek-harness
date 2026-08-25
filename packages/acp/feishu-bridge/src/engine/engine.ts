@@ -2627,7 +2627,10 @@ export class Engine {
    */
   buildSessionStartOptions(ccKey: string, session: Session): SessionStartOptions {
     const hubKey = session.getChatroomHubKey()
-    const hub = hubKey !== '' ? this.sessions.getOrCreateActive(hubKey) : undefined
+    // Non-creating lookup (same as isResearchSession): a dangling hub key
+    // must not mint a phantom hub whose empty flags silently strip the
+    // research contract from this role.
+    const hub = hubKey !== '' ? this.sessions.findActive(hubKey) : undefined
     let chatroom: SessionStartOptions['chatroom'] | undefined
     if (hubKey !== '') {
       const ledger = this.chatroomModeratorDir()
@@ -6348,7 +6351,12 @@ export class Engine {
       throw new Error('subtask: no platform available to deliver report')
     }
 
-    const sess = this.sessions.getOrCreateActive(childSessionKey)
+    // Non-creating lookup, symmetric with sendToSubtask: an unknown key
+    // fails loudly instead of minting a parentless phantom.
+    const sess = this.sessions.findActive(childSessionKey)
+    if (sess === undefined) {
+      throw new Error(`subtask: no subtask session ${childSessionKey} — the key may be mistyped`)
+    }
     if (sess.getSubtaskReported()) {
       // Already delivered: skip idempotently so a model re-calling report
       // cannot flood the parent. Nil (not an error) so the agent does not retry.
@@ -6793,8 +6801,15 @@ export class Engine {
     }
 
     // Monitor-mode parent: the monitored chat has no interactive agent —
-    // post the card only, never inject the wake message.
-    const parentSess = this.sessions.getOrCreateActive(parentKey)
+    // post the card only, never inject the wake message. Non-creating
+    // lookup: a dangling parent key must not mint a phantom session (whose
+    // empty flags would then route this settlement into a spurious
+    // no-context agent turn in a dead registry entry).
+    const parentSess = this.sessions.findActive(parentKey)
+    if (parentSess === undefined) {
+      console.warn(`subtask: parent session missing, card delivered without wake (parent=${parentKey} child=${childKey})`)
+      return
+    }
     if (parentSess.getMonitorGroup()) {
       const msgID = parentSess.getMonitorOriginMessageID()
       if (msgID !== '') {
@@ -6824,10 +6839,10 @@ export class Engine {
 
     // The card body stays clean; the synthetic message the parent agent sees
     // carries a hint with the child's session key so it can follow up via
-    // `subtask send --child <key>` even after context compaction.
+    // the subtask tool even after context compaction.
     let agentContent = `[子任务完成] ${label}:\n\n${content}`
     if (childKey !== '') {
-      agentContent += `\n\n(如需追问该子任务: cc-connect subtask send --child ${childKey} "...")`
+      agentContent += `\n\n(如需追问该子任务: feishu_bridge_subtask 工具 action: send, child: ${childKey})`
     }
     this.receiveMessageSafe(p, {
       ...emptyMessage(),
