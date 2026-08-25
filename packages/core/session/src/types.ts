@@ -181,16 +181,20 @@ export type TurnEndReason = TurnEndReasonMap[keyof TurnEndReasonMap]
  * {@link SessionEventMap} event's whole-list snapshot.
  *
  * Deliberately minimal: a human-readable `content` line and a three-state
- * `status`. No id, priority, or `activeForm` — the list is replaced wholesale
- * on every write (last-write-wins), so entries need no stable identity. The
- * three statuses describe the complete portable lifecycle needed by model and
- * UI consumers.
+ * `status`, plus an optional `activeForm` — a present-progressive label
+ * (Claude Code's TodoWrite convention) UIs may show while the task runs,
+ * absent when the writer omitted it. No id or priority — the list is
+ * replaced wholesale on every write (last-write-wins), so entries need no
+ * stable identity. The three statuses describe the complete portable
+ * lifecycle needed by model and UI consumers.
  */
 export interface TodoItem {
   /** What this task is — a short imperative line shown in the UI. */
   content: string
   /** Lifecycle state. `in_progress` marks a task being worked now; parallel work may mark several. */
   status: 'pending' | 'in_progress' | 'completed'
+  /** Present-progressive label for UIs (e.g. "Planning the work"); absent when not supplied. */
+  activeForm?: string
 }
 
 /**

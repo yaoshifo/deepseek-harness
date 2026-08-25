@@ -402,6 +402,10 @@
                     "in_progress",
                     "completed"
                   ]
+                },
+                "activeForm": {
+                  "type": "string",
+                  "description": "Optional present-progressive label shown while the task runs (e.g. \"Planning the work\")."
                 }
               },
               "required": [

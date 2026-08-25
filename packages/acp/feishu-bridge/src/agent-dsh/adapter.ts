@@ -1902,10 +1902,17 @@ export class DshAgentSession implements AgentSession {
       case 'todo/write': {
         // Whole-list snapshot from any todo producer; the engine treats it
         // like a todo_write tool call (both may arrive — last write wins).
-        const todos = data.todos as Array<{ content?: unknown; status?: unknown }> | undefined
+        const todos = data.todos as Array<{ content?: unknown; status?: unknown; activeForm?: unknown }> | undefined
         if (Array.isArray(todos)) {
           const items = todos
-            .map(t => ({ content: toStr(t.content), status: toStr(t.status) }))
+            .map((t) => {
+              const activeForm = toStr(t.activeForm)
+              return {
+                content: toStr(t.content),
+                status: toStr(t.status),
+                ...(activeForm !== '' ? { activeForm } : {}),
+              }
+            })
             .filter(t => t.content !== '')
           this.channel.push({ type: 'todo_update', todos: items, content: '', done: false })
         }

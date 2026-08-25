@@ -79,16 +79,17 @@ function describe(allowParallel: boolean): string {
 
 /**
  * Validate the value constraints the ParameterSchemaSpec can't express and build the canonical {@link
- * TodoItem}[]: trimmed non-empty unique content, and at most one `in_progress` item unless the
- * deployment allows parallel work. The registry has already enforced the status enum and rejected
- * unknown item keys (`additionalProperties: false` — the logged snapshot must equal what the model
- * believes it wrote, so a nested/extended item shape fails loud at the schema boundary instead of
- * silently flattening); the cast below records that guarantee.
+ * TodoItem}[]: trimmed non-empty unique content, trimmed non-empty optional `activeForm`, and at
+ * most one `in_progress` item unless the deployment allows parallel work. The registry has already
+ * enforced the status enum and rejected unknown item keys (`additionalProperties: false` — the
+ * logged snapshot must equal what the model believes it wrote, so a nested/extended item shape
+ * fails loud at the schema boundary instead of silently flattening); the cast below records that
+ * guarantee.
  * @param raw - the model-supplied list, already schema-checked.
  * @param allowParallel - whether several items may be `in_progress` at once.
  * @returns the canonical list.
  */
-function toTodoList(raw: { content: string; status: string }[], allowParallel: boolean): TodoItem[] {
+function toTodoList(raw: { content: string; status: string; activeForm?: unknown }[], allowParallel: boolean): TodoItem[] {
   const todos: TodoItem[] = []
   const seen = new Set<string>()
   let active = 0
@@ -102,7 +103,11 @@ function toTodoList(raw: { content: string; status: string }[], allowParallel: b
     }
     seen.add(content)
     if (item.status === 'in_progress') active++
-    todos.push({ content, status: item.status as TodoItem['status'] })
+    const todo: TodoItem = { content, status: item.status as TodoItem['status'] }
+    if (typeof item.activeForm === 'string' && item.activeForm.trim() !== '') {
+      todo.activeForm = item.activeForm.trim()
+    }
+    todos.push(todo)
   }
   if (!allowParallel && active > 1) {
     throw new Error(`invalid todos: at most one task may be in_progress (got ${active})`)
@@ -115,7 +120,12 @@ const todosProjectionSchema: ZodType<TodoItem[] | null> = zod.union([
   zod.array(zod.object({
     content: zod.string(),
     status: zod.union([zod.literal('pending'), zod.literal('in_progress'), zod.literal('completed')]),
-  })),
+    activeForm: zod.string().optional(),
+  }).transform(({ content, status, activeForm }) => ({
+    content,
+    status,
+    ...activeForm === undefined ? {} : { activeForm },
+  }))),
   zod.null(),
 ])
 
@@ -165,6 +175,7 @@ export function apply(ctx: Context, config: Config): void {
               enum: [...STATUSES],
               description: 'pending (not started) | in_progress (now) | completed (done).',
             },
+            activeForm: { type: 'string', description: 'Optional present-progressive label shown while the task runs (e.g. "Planning the work").' },
           },
         },
       },
@@ -183,6 +194,7 @@ export function apply(ctx: Context, config: Config): void {
               properties: {
                 content: { type: 'string', required: true },
                 status: { type: 'string', required: true, enum: [...STATUSES] },
+                activeForm: { type: 'string' },
               },
             },
           },
@@ -213,7 +225,7 @@ export function apply(ctx: Context, config: Config): void {
       exec.agent.session.append('todo/write', { todos })
       const count = (status: TodoItem['status']): number => todos.filter(t => t.status === status).length
       return Promise.resolve({
-        todos: todos.map(todo => ({ content: todo.content, status: todo.status })),
+        todos: todos.map(todo => ({ ...todo })),
         counts: {
           pending: count('pending'),
           inProgress: count('in_progress'),
