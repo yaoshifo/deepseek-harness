@@ -100,6 +100,12 @@ async function seedIndex(claudeHome: string, content: string): Promise<void> {
   await writeFile(join(dir, 'MEMORY.md'), content)
 }
 
+async function seedGlobalIndex(claudeHome: string, content: string): Promise<void> {
+  const dir = join(claudeHome, 'memory')
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, 'MEMORY.md'), content)
+}
+
 function toolNames(ctx: Context): string[] {
   return ctx.tools.schemas().map(schema => schema.name)
 }
@@ -161,6 +167,69 @@ describe('claude-memory real Loader composition through cordis.yml', () => {
 
   it('fails loading when maxIndexBytes is omitted', async () => {
     await expect(boot(() => [])).rejects.toThrow('$.maxIndexBytes missing required value')
+  }, 30_000)
+
+  it('fails loading when global memory is enabled without a byte budget', async () => {
+    await expect(boot(home => [
+      `    claudeHome: ${home}`,
+      '    maxIndexBytes: 25600',
+      '    global:',
+      '      maxIndexLines: 5',
+    ])).rejects.toThrow('global.maxIndexBytes must be a positive number')
+  }, 30_000)
+
+  it('boots with global memory enabled and injects both indexes', async () => {
+    const ctx = await boot(home => [
+      `    claudeHome: ${home}`,
+      '    maxIndexBytes: 25600',
+      '    global:',
+      '      maxIndexBytes: 8192',
+    ])
+    await seedIndex(join(root!, 'claude'), '# Memory Index\n- [A](a.md) — hook')
+    await seedGlobalIndex(join(root!, 'claude'), '# Memory Index\n- [G](g.md) — holds everywhere')
+
+    const agent = makeAgent(ctx)
+    const prompt = renderPrompt(await ctx.systemPrompt.assemble({ agent, scope: agent }))
+    expect(prompt).toContain('## Global memory')
+    expect(prompt).toContain(join(root!, 'claude', 'memory'))
+
+    const proposed = createUserMessage({
+      content: [{ type: 'text', text: 'go' }],
+      source: { kind: 'plugin', plugin: 'test' },
+    })
+    const decision = await agentEvents(ctx, agent).waterfall(
+      'agent/pre-step',
+      { messages: [proposed], turn: 1, step: 1, signal },
+      () => Promise.resolve({ kind: 'enter' as const, messages: [proposed] }),
+    )
+    if (decision.kind !== 'enter') throw new Error('expected enter')
+    expect(decision.messages).toHaveLength(3)
+    expect(decision.messages.at(1)?.source).toMatchObject({ kind: 'claude-memory', scope: 'global' })
+    expect(JSON.stringify(decision.messages.at(1)?.content)).toContain('holds everywhere')
+    expect(decision.messages.at(2)?.source).toMatchObject({ kind: 'claude-memory', scope: 'project' })
+
+    const write = await ctx.tools.execute({
+      signal,
+      callId: CallId('loader-global-write'),
+      name: 'memory_write',
+      arguments: {
+        scope: 'global',
+        name: 'machine-pit-loader.md',
+        content: '---\nname: machine-pit-loader\nmetadata:\n  type: feedback\n---\nbody',
+      },
+      agent,
+    })
+    expect(write.isError).toBe(false)
+    const read = await ctx.tools.execute({
+      signal,
+      callId: CallId('loader-global-read'),
+      name: 'memory_read',
+      arguments: { scope: 'global', name: 'machine-pit-loader.md' },
+      agent,
+    })
+    expect(read.isError).toBe(false)
+    if (read.isError) throw new Error('expected success')
+    expect((read.value as { content: string }).content).toContain('machine-pit-loader')
   }, 30_000)
 
   it('disposes cleanly: disposing the plugin fiber removes section, tools, and listener', async () => {

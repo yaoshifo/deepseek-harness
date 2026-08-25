@@ -1,10 +1,12 @@
 /**
  * Local backing store for one Claude Code memory directory.
  *
- * All IO targets `~/.claude/projects/<slug>/memory/` directly through `node:fs`
- * on the host machine, never through the swappable `ctx.fs` provider: the
- * memory directory must stay machine-local so Claude Code and dsh read and
- * write the same files regardless of deployment shape.
+ * All IO targets a resolved memory directory directly through `node:fs` on the
+ * host machine, never through the swappable `ctx.fs` provider: the memory
+ * directories stay machine-local so Claude Code and dsh read and write the
+ * same files regardless of deployment shape. Callers resolve the directory
+ * per scope: `resolveMemoryDir` for a project's `~/.claude/projects/<slug>/
+ * memory/`, `resolveGlobalMemoryDir` for the cross-project `~/.claude/memory/`.
  *
  * @module @deepseek-ai/dsh-tool-claude-memory
  */
@@ -84,6 +86,16 @@ export interface IndexLimits {
  */
 export function resolveMemoryDir(claudeHome: string, cwd: string): string {
   return join(claudeHome, 'projects', claudeProjectSlug(cwd), 'memory')
+}
+
+/**
+ * The cross-project global memory directory, shared by every session this
+ * harness runs. Claude Code does not read or write it.
+ * @param claudeHome - root holding `projects/`.
+ * @returns the global memory directory path.
+ */
+export function resolveGlobalMemoryDir(claudeHome: string): string {
+  return join(claudeHome, 'memory')
 }
 
 /**
@@ -183,12 +195,10 @@ function indexWarning(content: string, limits: IndexLimits): string | undefined 
 /**
  * List every file in the memory directory, sorted by name.
  *
- * @param claudeHome - root holding `projects/`.
- * @param cwd - absolute POSIX session working directory.
+ * @param dir - the resolved memory directory.
  * @returns the entries, or `undefined` when the directory does not exist yet.
  */
-export async function listMemory(claudeHome: string, cwd: string): Promise<MemoryEntry[] | undefined> {
-  const dir = resolveMemoryDir(claudeHome, cwd)
+export async function listMemory(dir: string): Promise<MemoryEntry[] | undefined> {
   let dirents
   try {
     dirents = await readdir(dir, { withFileTypes: true })
@@ -209,15 +219,13 @@ export async function listMemory(claudeHome: string, cwd: string): Promise<Memor
  * Read one memory file verbatim. A miss is retried once with the `.md` suffix
  * added or removed, healing extension-less legacy files and normalized names.
  *
- * @param claudeHome - root holding `projects/`.
- * @param cwd - absolute POSIX session working directory.
+ * @param dir - the resolved memory directory.
  * @param name - single-segment file name inside the memory directory.
  * @param signal - cancellation for the read.
  * @returns the file content, or `undefined` when neither spelling exists.
  */
-export async function readMemory(claudeHome: string, cwd: string, name: string, signal?: AbortSignal): Promise<string | undefined> {
+export async function readMemory(dir: string, name: string, signal?: AbortSignal): Promise<string | undefined> {
   assertMemoryName(name)
-  const dir = resolveMemoryDir(claudeHome, cwd)
   const exact = await readFileOrNull(join(dir, name), signal)
   if (exact !== undefined) return exact
   const alternate = alternateMemoryName(name)
@@ -230,8 +238,7 @@ export async function readMemory(claudeHome: string, cwd: string, name: string, 
  * MEMORY.md is checked against the index budget after the write; provenance
  * fields are backfilled into any frontmatter `metadata:` block elsewhere.
  *
- * @param claudeHome - root holding `projects/`.
- * @param cwd - absolute POSIX session working directory.
+ * @param dir - the resolved memory directory.
  * @param name - single-segment file name inside the memory directory.
  * @param content - the complete new file content.
  * @param sessionId - the writing dsh session id, recorded as provenance.
@@ -240,8 +247,7 @@ export async function readMemory(claudeHome: string, cwd: string, name: string, 
  * @returns the stored name, size, line count, provenance annotation, and any index warning.
  */
 export async function writeMemory(
-  claudeHome: string,
-  cwd: string,
+  dir: string,
   name: string,
   content: string,
   sessionId: string,
@@ -250,7 +256,6 @@ export async function writeMemory(
 ): Promise<MemoryWriteResult> {
   assertMemoryName(name)
   const fileName = resolveMemoryFileName(name)
-  const dir = resolveMemoryDir(claudeHome, cwd)
   await mkdir(dir, { recursive: true })
   let stored = content
   const annotations: ('provenance')[] = []
@@ -276,14 +281,12 @@ export async function writeMemory(
  * Delete one memory file. A miss is retried once with the `.md` suffix added
  * or removed, mirroring {@link readMemory}.
  *
- * @param claudeHome - root holding `projects/`.
- * @param cwd - absolute POSIX session working directory.
+ * @param dir - the resolved memory directory.
  * @param name - single-segment file name inside the memory directory.
  * @returns whether a file was removed.
  */
-export async function deleteMemory(claudeHome: string, cwd: string, name: string): Promise<boolean> {
+export async function deleteMemory(dir: string, name: string): Promise<boolean> {
   assertMemoryName(name)
-  const dir = resolveMemoryDir(claudeHome, cwd)
   const alternate = alternateMemoryName(name)
   return await removeOnce(join(dir, name))
     || (alternate !== undefined && await removeOnce(join(dir, alternate)))
@@ -309,16 +312,14 @@ async function removeOnce(path: string): Promise<boolean> {
  * temp-and-rename as {@link writeMemory}, with the same last-write-wins
  * semantics against a concurrent full-index `memory_write`.
  *
- * @param claudeHome - root holding `projects/`.
- * @param cwd - absolute POSIX session working directory.
+ * @param dir - the resolved memory directory.
  * @param change - the pointer-line upsert or remove.
  * @param limits - index budget applied to the resulting MEMORY.md.
  * @param signal - cancellation for the directory creation and the write.
  * @returns the normalized name, whether content changed, and the resulting index stats.
  */
 export async function updateMemoryIndex(
-  claudeHome: string,
-  cwd: string,
+  dir: string,
   change: MemoryIndexChange,
   limits: IndexLimits,
   signal?: AbortSignal,
@@ -329,7 +330,6 @@ export async function updateMemoryIndex(
   }
   const fileName = resolveMemoryFileName(change.name)
   const alternate = alternateMemoryName(fileName)
-  const dir = resolveMemoryDir(claudeHome, cwd)
   const current = await readFileOrNull(join(dir, 'MEMORY.md'), signal)
   if (current === undefined && change.action === 'remove') {
     return { name: fileName, action: 'remove', changed: false, lines: 0, bytes: 0 }

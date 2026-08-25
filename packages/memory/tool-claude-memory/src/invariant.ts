@@ -12,12 +12,18 @@ export const name = 'claude-memory-invariant'
 /** Service required before the companion can reserve package ownership. */
 export const inject = ['invariants']
 
+/** The scope one recorded claude-memory source belongs to; pre-scope (version 1) injections are project ones. */
+function sourceScope(source: { scope?: unknown }): 'project' | 'global' {
+  return source.scope === 'global' ? 'global' : 'project'
+}
+
 /**
  * Validate one durable claude-memory index injection: exactly one text block
- * framed by the plugin-owned system-reminder, a complete four-field source
- * (versioned slug project plus SHA-1 digest), and at most one injection per
- * session. The directory path itself is config-derived and is not recomputed
- * here; the framing and the recall caveat are the structural anchors.
+ * framed by the plugin-owned system-reminder, a complete source (versioned
+ * scope plus SHA-1 digest, with the project slug present only for project
+ * scope), and at most one injection per scope per session. The directory path
+ * itself is config-derived and is not recomputed here; the framing and the
+ * recall caveat are the structural anchors.
  */
 function validateInjection(history: readonly SessionEvent[], event: SessionEvent<'user/message'>, fail: InvariantFailure): void {
   const block: unknown = event.data.content[0]
@@ -38,21 +44,27 @@ function validateInjection(history: readonly SessionEvent[], event: SessionEvent
   }
   const source = event.data.source
   if (source.kind !== 'claude-memory') fail('claude-memory source must retain package ownership')
-  if (Object.keys(source).length !== 4
-    // The widened read keeps runtime validation honest: the narrowed type
-    // calls this comparison literal-identical, but the durable data can differ.
-    || (source as { version: number | undefined }).version !== 1
-    || typeof source.project !== 'string'
-    || source.project.length === 0
-    || !source.project.startsWith('-')
-    || typeof source.digest !== 'string'
-    || !DIGEST.test(source.digest)) {
-    fail('claude-memory source must carry version 1, a project slug, and a SHA-1 digest')
+  const scope = sourceScope(source)
+  if ((source as { version: number | undefined }).version !== 2) {
+    fail('claude-memory source must carry version 2')
+  }
+  if (scope === 'project') {
+    if (typeof source.project !== 'string'
+      || source.project.length === 0
+      || !source.project.startsWith('-')) {
+      fail('claude-memory project-scope source must carry a project slug')
+    }
+  } else if (source.project !== undefined) {
+    fail('claude-memory global-scope source must not carry a project slug')
+  }
+  if (typeof source.digest !== 'string' || !DIGEST.test(source.digest)) {
+    fail('claude-memory source must carry a SHA-1 digest')
   }
   const earlier = history.filter(prior =>
-    prior.type === 'user/message' && prior.data.source.kind === 'claude-memory')
+    prior.type === 'user/message' && prior.data.source.kind === 'claude-memory'
+    && sourceScope(prior.data.source) === scope)
   if (earlier.length > 0) {
-    fail('claude-memory injects its index at most once per session')
+    fail(`claude-memory injects its ${scope} index at most once per session`)
   }
 }
 

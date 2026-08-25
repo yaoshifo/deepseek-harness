@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MEMORY_PROMPT } from '../src/prompt.ts'
+import { GLOBAL_MEMORY_PROMPT, MEMORY_PROMPT } from '../src/prompt.ts'
 
 describe('MEMORY_PROMPT', () => {
   it('references the directory through the prompt variable', () => {
@@ -31,5 +31,32 @@ describe('MEMORY_PROMPT', () => {
     'generic file tools (Edit, Write) are denied there by the file sandbox, so do not attempt them',
   ])('pins the sentence: %s', (sentence) => {
     expect(MEMORY_PROMPT).toContain(sentence)
+  })
+})
+
+describe('GLOBAL_MEMORY_PROMPT', () => {
+  it('references the directory through the prompt variable', () => {
+    expect(GLOBAL_MEMORY_PROMPT).toContain('{{globalMemoryDirectory}}')
+  })
+
+  // Anchor tests pin the scope decision rule, its fail-safe default, the lazy
+  // promotion rule, and the Claude Code fence. Editing any of these lines is a
+  // model-behavior change and must update the README and package snapshots in
+  // the same commit.
+  it.each([
+    'would this memory still be useful in a session for an unrelated project?',
+    'pass scope: \'global\' to read or write it',
+    'pitfalls of this machine or the harness itself (sandbox quirks, credential locations, tool misbehaviors)',
+    'Anything tied to this repository — its code, conventions, history, ops — stays in project scope',
+    'When unsure, choose project: a memory filed too narrowly only misses recall elsewhere, but a memory filed too broadly injects noise into every session you will ever run',
+    'An explicit user instruction always overrides this rule',
+    're-file it: write it to global scope, upsert its pointer in the global index, then delete the project file and remove its project pointer',
+    'Claude Code does not see it',
+  ])('pins the sentence: %s', (sentence) => {
+    expect(GLOBAL_MEMORY_PROMPT).toContain(sentence)
+  })
+
+  it('stays out of the base prompt so global-less deployments keep the verbatim section', () => {
+    expect(MEMORY_PROMPT).not.toContain('global')
   })
 })

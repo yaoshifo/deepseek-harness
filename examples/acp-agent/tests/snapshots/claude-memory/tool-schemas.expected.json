@@ -202,10 +202,18 @@
     },
     {
       "name": "memory_delete",
-      "description": "These tools operate only inside your persistent memory directory shared with Claude Code. Delete one memory file that turned out to be wrong, then remove its line from MEMORY.md with memory_index.",
+      "description": "These tools operate only inside your persistent memory directory shared with Claude Code. Pass scope: 'global' to operate on the cross-project global memory directory instead; the Memory section of your instructions states which facts belong there. Delete one memory file that turned out to be wrong, then remove its line from MEMORY.md with memory_index.",
       "parameters": {
         "type": "object",
         "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+            "enum": [
+              "project",
+              "global"
+            ]
+          },
           "name": {
             "type": "string",
             "description": "File name inside the memory directory, e.g. feedback-foo.md. On a miss, the .md suffix is retried added or removed."
@@ -218,10 +226,18 @@
     },
     {
       "name": "memory_index",
-      "description": "These tools operate only inside your persistent memory directory shared with Claude Code. Upsert or remove one pointer line in the MEMORY.md index, keyed by the memory file's name. Prefer this over rewriting the whole index with memory_write.",
+      "description": "These tools operate only inside your persistent memory directory shared with Claude Code. Pass scope: 'global' to operate on the cross-project global memory directory instead; the Memory section of your instructions states which facts belong there. Upsert or remove one pointer line in the MEMORY.md index, keyed by the memory file's name. Prefer this over rewriting the whole index with memory_write.",
       "parameters": {
         "type": "object",
         "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+            "enum": [
+              "project",
+              "global"
+            ]
+          },
           "action": {
             "type": "string",
             "description": "upsert inserts or updates the pointer line; remove deletes it.",
@@ -251,18 +267,35 @@
     },
     {
       "name": "memory_list",
-      "description": "These tools operate only inside your persistent memory directory shared with Claude Code. List every file in the memory directory with byte sizes and modification times. MEMORY.md is the index; every other file is one remembered fact.",
+      "description": "These tools operate only inside your persistent memory directory shared with Claude Code. Pass scope: 'global' to operate on the cross-project global memory directory instead; the Memory section of your instructions states which facts belong there. List every file in the memory directory with byte sizes and modification times. MEMORY.md is the index; every other file is one remembered fact.",
       "parameters": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+            "enum": [
+              "project",
+              "global"
+            ]
+          }
+        }
       }
     },
     {
       "name": "memory_read",
-      "description": "These tools operate only inside your persistent memory directory shared with Claude Code. Read one file verbatim, for example MEMORY.md or a topic memory file.",
+      "description": "These tools operate only inside your persistent memory directory shared with Claude Code. Pass scope: 'global' to operate on the cross-project global memory directory instead; the Memory section of your instructions states which facts belong there. Read one file verbatim, for example MEMORY.md or a topic memory file.",
       "parameters": {
         "type": "object",
         "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+            "enum": [
+              "project",
+              "global"
+            ]
+          },
           "name": {
             "type": "string",
             "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md. On a miss, the .md suffix is retried added or removed."
@@ -275,10 +308,18 @@
     },
     {
       "name": "memory_write",
-      "description": "These tools operate only inside your persistent memory directory shared with Claude Code. Write one memory file with the COMPLETE content (full replacement, no partial edits). The directory is created on demand; no mkdir is needed. Frontmatter provenance (node_type, originSessionId) is backfilled automatically. After writing a memory file, add or update its one-line pointer in MEMORY.md with memory_index.",
+      "description": "These tools operate only inside your persistent memory directory shared with Claude Code. Pass scope: 'global' to operate on the cross-project global memory directory instead; the Memory section of your instructions states which facts belong there. Write one memory file with the COMPLETE content (full replacement, no partial edits). The directory is created on demand; no mkdir is needed. Frontmatter provenance (node_type, originSessionId) is backfilled automatically. After writing a memory file, add or update its one-line pointer in MEMORY.md with memory_index.",
       "parameters": {
         "type": "object",
         "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+            "enum": [
+              "project",
+              "global"
+            ]
+          },
           "name": {
             "type": "string",
             "description": "File name inside the memory directory; a missing .md suffix is appended automatically. MEMORY.md is the index."

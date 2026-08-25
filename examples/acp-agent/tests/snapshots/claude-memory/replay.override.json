@@ -32,6 +32,26 @@
   {
     "kind": "chunks",
     "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      { "type": "tool-call-delta", "index": 0, "id": "call_global_memory_save", "name": "memory_write", "argumentsDelta": "{\"scope\":\"global\",\"name\":\"feedback-daemon-keychain.md\",\"content\":\"---\\nname: feedback-daemon-keychain\\ndescription: daemon git push reporting gh token invalid is a sandbox false alarm\\nmetadata:\\n  type: feedback\\n---\\ndaemon git push reporting gh token invalid is a sandbox false alarm.\\n\\n**Why:** The daemon sandbox blocks keychain access, so the credential lookup fails.\\n\\n**How to apply:** Retry with escalated sandbox access before diagnosing credentials.\"}" },
+      { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_global_memory_save", "name": "memory_write", "arguments": "{\"scope\":\"global\",\"name\":\"feedback-daemon-keychain.md\",\"content\":\"---\\nname: feedback-daemon-keychain\\ndescription: daemon git push reporting gh token invalid is a sandbox false alarm\\nmetadata:\\n  type: feedback\\n---\\ndaemon git push reporting gh token invalid is a sandbox false alarm.\\n\\n**Why:** The daemon sandbox blocks keychain access, so the credential lookup fails.\\n\\n**How to apply:** Retry with escalated sandbox access before diagnosing credentials.\"}" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      { "type": "tool-call-delta", "index": 0, "id": "call_global_memory_pointer", "name": "memory_index", "argumentsDelta": "{\"scope\":\"global\",\"action\":\"upsert\",\"name\":\"feedback-daemon-keychain\",\"title\":\"daemon git push token invalid is sandbox noise\",\"hook\":\"escalate the sandbox before diagnosing credentials\"}" },
+      { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_global_memory_pointer", "name": "memory_index", "arguments": "{\"scope\":\"global\",\"action\":\"upsert\",\"name\":\"feedback-daemon-keychain\",\"title\":\"daemon git push token invalid is sandbox noise\",\"hook\":\"escalate the sandbox before diagnosing credentials\"}" } },
+      { "type": "usage", "usage": { "inputTokens": 10, "outputTokens": 5 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
       { "type": "block-start", "index": 0, "blockType": "text" },
       { "type": "text-delta", "index": 0, "text": "DONE" },
       { "type": "block-end", "index": 0, "block": { "type": "text", "text": "DONE" } },

@@ -92,10 +92,14 @@ const PACKED_CHUNKS_SOURCE = 'hook-cc-pretool-deny'
 
 // Claude Code memory scenario: pre-seed the shared memory directory for this
 // run's dynamic temp cwd (slug derived at runtime), so the session-start
-// injection recalls real files and tool writes land inside the workspace.
+// injection recalls real files and tool writes land inside the workspace. The
+// global scope seeds <cwd>/.claude/memory so its index is recalled first and
+// scope=global tool writes land there.
 async function prepareClaudeMemoryWorkspace(cwd: string): Promise<void> {
   const memoryDir = join(cwd, '.claude', 'projects', claudeProjectSlug(cwd), 'memory')
+  const globalDir = join(cwd, '.claude', 'memory')
   await mkdir(memoryDir, { recursive: true })
+  await mkdir(globalDir, { recursive: true })
   await Promise.all([
     writeFile(
       join(memoryDir, 'MEMORY.md'),
@@ -104,6 +108,14 @@ async function prepareClaudeMemoryWorkspace(cwd: string): Promise<void> {
     writeFile(
       join(memoryDir, 'reference-deploy-tool.md'),
       '---\nname: reference-deploy-tool\ndescription: Deployment tooling pointers for this project\nmetadata:\n  type: reference\n---\nDeploy entry: `scripts/deploy.sh`.\n',
+    ),
+    writeFile(
+      join(globalDir, 'MEMORY.md'),
+      '# Memory Index\n\n- [Keychain sandbox pit](feedback-keychain-sandbox.md) — daemon git push token-invalid is a sandbox false alarm\n',
+    ),
+    writeFile(
+      join(globalDir, 'feedback-keychain-sandbox.md'),
+      '---\nname: feedback-keychain-sandbox\ndescription: daemon git push reporting token invalid is usually the sandbox blocking the keychain\nmetadata:\n  type: feedback\n---\nRetry with escalated sandbox access before diagnosing credentials.\n',
     ),
   ])
 }

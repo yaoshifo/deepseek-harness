@@ -4,13 +4,19 @@
  * @module @deepseek-ai/dsh-tool-claude-memory
  */
 
-/** Durable source marker carried by the injected memory-index message. */
+/**
+ * Durable source marker carried by the injected memory-index message. The
+ * marker is scope-aware since version 2: a project injection names its slug,
+ * a global injection omits the slug and flags the cross-project scope.
+ */
 export interface ClaudeMemorySource {
   kind: 'claude-memory'
   /** Source-marker version; structural changes to this shape bump it. */
-  version: 1
-  /** The Claude Code project slug the injected index belongs to. */
-  project: string
+  version: 2
+  /** Which memory directory the injected index was read from. */
+  scope: 'project' | 'global'
+  /** The Claude Code project slug the injected index belongs to; present only for project scope. */
+  project?: string
   /** SHA-1 over the injected index text, before framing or escaping. */
   digest: string
 }

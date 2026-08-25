@@ -14,7 +14,7 @@ import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as plugin from '../src/index.ts'
-import { MEMORY_PROMPT } from '../src/prompt.ts'
+import { GLOBAL_MEMORY_PROMPT, MEMORY_PROMPT } from '../src/prompt.ts'
 
 const CWD = '/home/hm/workspace/ainvest'
 const signal = new AbortController().signal
@@ -31,12 +31,16 @@ afterAll(async () => {
   if (root !== undefined) await rm(root, { recursive: true, force: true })
 })
 
-async function setup(): Promise<Context> {
+async function setup(globalConfig?: plugin.GlobalConfig): Promise<Context> {
   const ctx = new Context()
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)
-  await ctx.plugin(plugin, { claudeHome: root, maxIndexBytes: 25_600 })
+  await ctx.plugin(plugin, {
+    claudeHome: root,
+    maxIndexBytes: 25_600,
+    ...(globalConfig === undefined ? {} : { global: globalConfig }),
+  })
   return ctx
 }
 
@@ -86,6 +90,12 @@ function call(ctx: Context, name: string, args: unknown, agent: Agent) {
 
 async function seedIndex(content: string): Promise<void> {
   const dir = join(root, 'projects', '-home-hm-workspace-ainvest', 'memory')
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, 'MEMORY.md'), content)
+}
+
+async function seedGlobalIndex(content: string): Promise<void> {
+  const dir = join(root, 'memory')
   await mkdir(dir, { recursive: true })
   await writeFile(join(dir, 'MEMORY.md'), content)
 }
@@ -226,24 +236,25 @@ function enterCount(decision: PreStepDecision): number {
   return decision.kind === 'enter' ? decision.messages.length : -1
 }
 
-describe('session-start index injection', () => {
-  async function emitPreStep(ctx: Context, agent: Agent, over: {
-    step?: number
-    decision?: PreStepDecision
-    messages?: unknown[]
-  } = {}): Promise<PreStepDecision> {
-    const prompt = createUserMessage({
-      content: [{ type: 'text', text: 'do work' }],
-      source: { kind: 'plugin', plugin: 'test' },
-    })
-    const messages = over.messages === undefined ? [prompt] : over.messages as never[]
-    return await agentEvents(ctx, agent).waterfall(
-      'agent/pre-step',
-      { messages, turn: 1, step: over.step ?? 1, signal },
-      () => Promise.resolve(over.decision ?? { kind: 'enter' as const, messages }),
-    )
-  }
+/** Drive one agent/pre-step waterfall with the given claimed prompt messages. */
+async function emitPreStep(ctx: Context, agent: Agent, over: {
+  step?: number
+  decision?: PreStepDecision
+  messages?: unknown[]
+} = {}): Promise<PreStepDecision> {
+  const prompt = createUserMessage({
+    content: [{ type: 'text', text: 'do work' }],
+    source: { kind: 'plugin', plugin: 'test' },
+  })
+  const messages = over.messages === undefined ? [prompt] : over.messages as never[]
+  return await agentEvents(ctx, agent).waterfall(
+    'agent/pre-step',
+    { messages, turn: 1, step: over.step ?? 1, signal },
+    () => Promise.resolve(over.decision ?? { kind: 'enter' as const, messages }),
+  )
+}
 
+describe('session-start index injection', () => {
   it('folds the index message right after the claimed prompt on step 1', async () => {
     const ctx = await setup()
     context = ctx
@@ -295,5 +306,123 @@ describe('session-start index injection', () => {
     const reject: PreStepDecision = { kind: 'reject' }
     const decision = await emitPreStep(ctx, agent, { decision: reject })
     expect(decision.kind).toBe('reject')
+  })
+})
+
+describe('global memory scope', () => {
+  it('appends the global strategy with its instantiated directory when enabled', async () => {
+    const ctx = await setup({ maxIndexBytes: 8_192 })
+    context = ctx
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const prompt = renderPrompt(await ctx.systemPrompt.assemble({ agent, scope: agent }))
+    expect(prompt).toContain(GLOBAL_MEMORY_PROMPT.replaceAll('{{globalMemoryDirectory}}', join(root, 'memory')))
+    expect(prompt).toContain(MEMORY_PROMPT.replaceAll(
+      '{{memoryDirectory}}',
+      join(root, 'projects', '-home-hm-workspace-ainvest', 'memory'),
+    ))
+  })
+
+  it('injects the global index first, then the project index, each once', async () => {
+    const ctx = await setup({ maxIndexBytes: 8_192 })
+    context = ctx
+    await seedGlobalIndex('# Memory Index\n\n- [Machine pit](machine-pit.md) — holds everywhere')
+    await seedIndex('# Memory Index\n\n- [A](a.md) — hook about ainvest')
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const first = await emitPreStep(ctx, agent)
+    if (first.kind !== 'enter') throw new Error('expected enter')
+    expect(first.messages).toHaveLength(3)
+    expect(first.messages.at(1)?.source).toMatchObject({ kind: 'claude-memory', scope: 'global', version: 2 })
+    expect(first.messages.at(1)?.source).not.toHaveProperty('project')
+    expect(JSON.stringify(first.messages.at(1)?.content)).toContain('Global memory index')
+    expect(JSON.stringify(first.messages.at(1)?.content)).toContain('holds everywhere')
+    expect(first.messages.at(2)?.source).toMatchObject({ kind: 'claude-memory', scope: 'project', project: '-home-hm-workspace-ainvest' })
+    expect(JSON.stringify(first.messages.at(2)?.content)).toContain('hook about ainvest')
+    for (const message of first.messages) {
+      if (message.source.kind === 'claude-memory') {
+        agent.session.append('user/message', message, { surfaceOp: 'append' })
+      }
+    }
+    const second = await emitPreStep(ctx, agent)
+    expect(enterCount(second)).toBe(1)
+  })
+
+  it('skips the global injection without a global MEMORY.md or for a subagent', async () => {
+    const ctx = await setup({ maxIndexBytes: 8_192 })
+    context = ctx
+    await rm(join(root, 'memory'), { recursive: true, force: true })
+    await seedIndex('# Memory Index\n- [A](a.md)')
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const onlyProject = await emitPreStep(ctx, agent)
+    if (onlyProject.kind !== 'enter') throw new Error('expected enter')
+    expect(onlyProject.messages).toHaveLength(2)
+    expect(onlyProject.messages.at(1)?.source).toMatchObject({ scope: 'project' })
+    const sub = makeAgent(ctx, { cwd: CWD, origin: 'subagent' })
+    expect(enterCount(await emitPreStep(ctx, sub))).toBe(1)
+  })
+
+  it('routes scope=global tools to the global directory and keeps project the default', async () => {
+    const ctx = await setup({ maxIndexBytes: 8_192 })
+    context = ctx
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const write = await call(ctx, 'memory_write', {
+      scope: 'global',
+      name: 'machine-pit',
+      content: '---\nname: machine-pit\nmetadata:\n  type: feedback\n---\nbody',
+    }, agent)
+    expect(write.isError).toBe(false)
+    if (write.isError) throw new Error('expected success')
+    const read = await call(ctx, 'memory_read', { scope: 'global', name: 'machine-pit.md' }, agent)
+    expect(read.isError).toBe(false)
+    if (read.isError) throw new Error('expected success')
+    expect((read.value as { content: string }).content).toContain('originSessionId: ' + String(agent.session.id))
+    const list = await call(ctx, 'memory_list', { scope: 'global' }, agent)
+    expect(list.isError).toBe(false)
+    if (list.isError) throw new Error('expected success')
+    expect((list.value as { exists: boolean; entries: { name: string }[] }).entries.map(entry => entry.name))
+      .toContain('machine-pit.md')
+    // Default scope stays project: the same name does not exist there.
+    const projectRead = await call(ctx, 'memory_read', { name: 'machine-pit.md' }, agent)
+    expect(projectRead.isError).toBe(true)
+    const remove = await call(ctx, 'memory_delete', { scope: 'global', name: 'machine-pit.md' }, agent)
+    expect(remove.isError).toBe(false)
+  })
+
+  it('keeps the global index budget separate from the project one', async () => {
+    const ctx = await setup({ maxIndexBytes: 8_192, maxIndexLines: 5 })
+    context = ctx
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const overLines = Array.from({ length: 6 }, (_, i) => `- item ${i}`).join('\n')
+    const globalWrite = await call(ctx, 'memory_write', { scope: 'global', name: 'MEMORY.md', content: overLines }, agent)
+    expect(globalWrite.isError).toBe(false)
+    if (globalWrite.isError) throw new Error('expected success')
+    expect((globalWrite.value as { warning?: string }).warning).toMatch(/5 lines/)
+    const projectWrite = await call(ctx, 'memory_write', { name: 'MEMORY.md', content: overLines }, agent)
+    expect(projectWrite.isError).toBe(false)
+    if (projectWrite.isError) throw new Error('expected success')
+    expect((projectWrite.value as { warning?: string }).warning).toBeUndefined()
+  })
+
+  it('fails loud when scope=global reaches a global-less deployment', async () => {
+    const ctx = await setup()
+    context = ctx
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const result = await call(ctx, 'memory_write', {
+      scope: 'global',
+      name: 'machine-pit',
+      content: 'body',
+    }, agent)
+    expect(result.isError).toBe(true)
+  })
+
+  it('rejects an agentless global-scope caller', async () => {
+    const ctx = await setup({ maxIndexBytes: 8_192 })
+    context = ctx
+    const result = await ctx.tools.execute({
+      signal,
+      callId: CallId('call-agentless-global'),
+      name: 'memory_list',
+      arguments: { scope: 'global' },
+    })
+    expect(result.isError).toBe(true)
   })
 })

@@ -6,6 +6,7 @@ import {
   deleteMemory,
   listMemory,
   readMemory,
+  resolveGlobalMemoryDir,
   resolveMemoryDir,
   updateMemoryIndex,
   writeMemory,
@@ -43,15 +44,37 @@ describe('resolveMemoryDir', () => {
   })
 })
 
+describe('resolveGlobalMemoryDir', () => {
+  it('places the global memory directory directly under the Claude home', () => {
+    expect(resolveGlobalMemoryDir('/home/hm/.claude')).toBe('/home/hm/.claude/memory')
+  })
+
+  it('supports the same store operations as a project directory', async () => {
+    const globalDir = resolveGlobalMemoryDir(root)
+    await rm(globalDir, { recursive: true, force: true })
+    const result = await writeMemory(globalDir, 'machine-wide-pit', 'body', 's1', LIMITS)
+    expect(result.name).toBe('machine-wide-pit.md')
+    expect(await readMemory(globalDir, 'machine-wide-pit.md')).toBe('body')
+    const indexed = await updateMemoryIndex(globalDir, {
+      action: 'upsert',
+      name: 'machine-wide-pit',
+      title: 'Machine-wide pit',
+      hook: 'applies everywhere',
+    }, LIMITS)
+    expect(indexed.changed).toBe(true)
+    expect(await deleteMemory(globalDir, 'machine-wide-pit.md')).toBe(true)
+  })
+})
+
 describe('name validation', () => {
   it.each(['../evil.md', 'a/b.md', 'a\\b.md', '.', '..', '', '   ', 'MEMORY.md/'])('rejects %s', async (name) => {
-    await expect(writeMemory(root, CWD, name, 'x', 's1', LIMITS)).rejects.toThrow(/memory name/)
-    await expect(readMemory(root, CWD, name)).rejects.toThrow(/memory name/)
-    await expect(deleteMemory(root, CWD, name)).rejects.toThrow(/memory name/)
+    await expect(writeMemory(dir(), name, 'x', 's1', LIMITS)).rejects.toThrow(/memory name/)
+    await expect(readMemory(dir(), name)).rejects.toThrow(/memory name/)
+    await expect(deleteMemory(dir(), name)).rejects.toThrow(/memory name/)
   })
 
   it('keeps MEMORY.md exact and reports its stored name', async () => {
-    const result = await writeMemory(root, CWD, 'MEMORY.md', '# Memory Index\n', 's1', LIMITS)
+    const result = await writeMemory(dir(), 'MEMORY.md', '# Memory Index\n', 's1', LIMITS)
     expect(result.name).toBe('MEMORY.md')
     expect(result.annotations).toEqual([])
   })
@@ -65,60 +88,60 @@ describe('listMemory', () => {
       'b-feedback.md': '---\nname: b\n---\nbody',
       'a-project.md': 'body',
     })
-    const entries = await listMemory(root, CWD)
+    const entries = await listMemory(dir())
     expect(entries?.map(entry => entry.name)).toEqual(['MEMORY.md', 'a-project.md', 'b-feedback.md'])
     expect(entries?.at(1)?.bytes).toBe(4)
     expect(typeof entries?.at(1)?.modified).toBe('string')
   })
 
   it('returns undefined for a missing directory', async () => {
-    expect(await listMemory(root, '/home/hm/workspace/nowhere')).toBeUndefined()
+    expect(await listMemory(resolveMemoryDir(root, '/home/hm/workspace/nowhere'))).toBeUndefined()
   })
 })
 
 describe('readMemory', () => {
   it('reads existing content', async () => {
-    expect(await readMemory(root, CWD, 'a-project.md')).toBe('body')
+    expect(await readMemory(dir(), 'a-project.md')).toBe('body')
   })
 
   it('returns undefined for a missing file', async () => {
-    expect(await readMemory(root, CWD, 'missing.md')).toBeUndefined()
+    expect(await readMemory(dir(), 'missing.md')).toBeUndefined()
   })
 
   it('reads an extension-less orphan through its .md spelling', async () => {
     await seed({ orphan: 'legacy body' })
-    expect(await readMemory(root, CWD, 'orphan.md')).toBe('legacy body')
+    expect(await readMemory(dir(), 'orphan.md')).toBe('legacy body')
   })
 
   it('reads a .md file through its extension-less spelling', async () => {
     await seed({ 'spelled.md': 'body' })
-    expect(await readMemory(root, CWD, 'spelled')).toBe('body')
+    expect(await readMemory(dir(), 'spelled')).toBe('body')
   })
 
   it('rethrows real IO errors and gives a bare .md name no alternate', async () => {
     await mkdir(join(dir(), 'a-directory'), { recursive: true })
-    await expect(readMemory(root, CWD, 'a-directory.md')).rejects.toThrow()
-    await expect(deleteMemory(root, CWD, 'a-directory.md')).rejects.toThrow()
-    expect(await readMemory(root, CWD, '.md')).toBeUndefined()
-    expect(await deleteMemory(root, CWD, '.md')).toBe(false)
+    await expect(readMemory(dir(), 'a-directory.md')).rejects.toThrow()
+    await expect(deleteMemory(dir(), 'a-directory.md')).rejects.toThrow()
+    expect(await readMemory(dir(), '.md')).toBeUndefined()
+    expect(await deleteMemory(dir(), '.md')).toBe(false)
   })
 })
 
 describe('writeMemory', () => {
   it('appends .md to an extension-less name and reports the stored name', async () => {
     await rm(dir(), { recursive: true, force: true })
-    const result = await writeMemory(root, CWD, 'slug-only', 'body', 's1', LIMITS)
+    const result = await writeMemory(dir(), 'slug-only', 'body', 's1', LIMITS)
     expect(result.name).toBe('slug-only.md')
-    expect(await readMemory(root, CWD, 'slug-only.md')).toBe('body')
+    expect(await readMemory(dir(), 'slug-only.md')).toBe('body')
   })
 
   it('creates the directory lazily and reports size', async () => {
     await rm(dir(), { recursive: true, force: true })
-    const result = await writeMemory(root, CWD, 'fresh.md', 'one\ntwo\n', 's1', LIMITS)
+    const result = await writeMemory(dir(), 'fresh.md', 'one\ntwo\n', 's1', LIMITS)
     expect(result.lines).toBe(3)
     expect(result.bytes).toBe(8)
     expect(result.annotations).toEqual([])
-    expect(await readMemory(root, CWD, 'fresh.md')).toBe('one\ntwo\n')
+    expect(await readMemory(dir(), 'fresh.md')).toBe('one\ntwo\n')
   })
 
   it('leaves no temp residue in the memory directory', async () => {
@@ -136,9 +159,9 @@ describe('writeMemory', () => {
       '---',
       'body',
     ].join('\n')
-    const result = await writeMemory(root, CWD, 'with-meta.md', content, 'sess-42', LIMITS)
+    const result = await writeMemory(dir(), 'with-meta.md', content, 'sess-42', LIMITS)
     expect(result.annotations).toEqual(['provenance'])
-    const written = await readMemory(root, CWD, 'with-meta.md')
+    const written = await readMemory(dir(), 'with-meta.md')
     expect(written).toBe([
       '---',
       'name: x',
@@ -162,22 +185,22 @@ describe('writeMemory', () => {
       '---',
       'body',
     ].join('\n')
-    const result = await writeMemory(root, CWD, 'has-prov.md', content, 'sess-42', LIMITS)
+    const result = await writeMemory(dir(), 'has-prov.md', content, 'sess-42', LIMITS)
     expect(result.annotations).toEqual([])
-    expect(await readMemory(root, CWD, 'has-prov.md')).toBe(content)
+    expect(await readMemory(dir(), 'has-prov.md')).toBe(content)
   })
 
   it('leaves frontmatter without a metadata block untouched', async () => {
     const content = '---\nname: x\ndescription: d\n---\nbody'
-    const result = await writeMemory(root, CWD, 'no-meta.md', content, 'sess-42', LIMITS)
+    const result = await writeMemory(dir(), 'no-meta.md', content, 'sess-42', LIMITS)
     expect(result.annotations).toEqual([])
-    expect(await readMemory(root, CWD, 'no-meta.md')).toBe(content)
+    expect(await readMemory(dir(), 'no-meta.md')).toBe(content)
   })
 
   it('leaves plain non-frontmatter content untouched', async () => {
-    const result = await writeMemory(root, CWD, 'plain.md', 'just a body', 'sess-42', LIMITS)
+    const result = await writeMemory(dir(), 'plain.md', 'just a body', 'sess-42', LIMITS)
     expect(result.annotations).toEqual([])
-    expect(await readMemory(root, CWD, 'plain.md')).toBe('just a body')
+    expect(await readMemory(dir(), 'plain.md')).toBe('just a body')
   })
 })
 
@@ -185,21 +208,21 @@ describe('MEMORY.md index limits', () => {
   it('warns when the index exceeds the line limit but still writes', async () => {
     await rm(dir(), { recursive: true, force: true })
     const index = Array.from({ length: LIMITS.maxIndexLines + 1 }, (_, i) => `- item ${i}`).join('\n')
-    const result = await writeMemory(root, CWD, 'MEMORY.md', index, 's1', LIMITS)
+    const result = await writeMemory(dir(), 'MEMORY.md', index, 's1', LIMITS)
     expect(result.warning).toMatch(/200 lines/)
-    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(index)
+    expect(await readMemory(dir(), 'MEMORY.md')).toBe(index)
   })
 
   it('warns when the index exceeds the byte limit', async () => {
     await rm(dir(), { recursive: true, force: true })
     const index = `# Memory Index\n\n- ${'x'.repeat(LIMITS.maxIndexBytes)}`
-    const result = await writeMemory(root, CWD, 'MEMORY.md', index, 's1', LIMITS)
+    const result = await writeMemory(dir(), 'MEMORY.md', index, 's1', LIMITS)
     expect(result.warning).toMatch(/25600 bytes|bytes/)
   })
 
   it('does not warn for a normal topic file of any size', async () => {
     const big = 'x'.repeat(60_000)
-    const result = await writeMemory(root, CWD, 'big-topic.md', big, 's1', LIMITS)
+    const result = await writeMemory(dir(), 'big-topic.md', big, 's1', LIMITS)
     expect(result.warning).toBeUndefined()
   })
 })
@@ -207,28 +230,28 @@ describe('MEMORY.md index limits', () => {
 describe('deleteMemory', () => {
   it('deletes an existing file and reports true', async () => {
     await seed({ 'doomed.md': 'x' })
-    expect(await deleteMemory(root, CWD, 'doomed.md')).toBe(true)
-    expect(await readMemory(root, CWD, 'doomed.md')).toBeUndefined()
+    expect(await deleteMemory(dir(), 'doomed.md')).toBe(true)
+    expect(await readMemory(dir(), 'doomed.md')).toBeUndefined()
   })
 
   it('deletes through the alternate .md spelling when the exact name misses', async () => {
     await seed({ 'gone-legacy': 'x', 'stays.md': 'x' })
-    expect(await deleteMemory(root, CWD, 'gone-legacy.md')).toBe(true)
-    expect(await readMemory(root, CWD, 'gone-legacy')).toBeUndefined()
-    expect(await deleteMemory(root, CWD, 'stays')).toBe(true)
-    expect(await readMemory(root, CWD, 'stays.md')).toBeUndefined()
+    expect(await deleteMemory(dir(), 'gone-legacy.md')).toBe(true)
+    expect(await readMemory(dir(), 'gone-legacy')).toBeUndefined()
+    expect(await deleteMemory(dir(), 'stays')).toBe(true)
+    expect(await readMemory(dir(), 'stays.md')).toBeUndefined()
   })
 
   it('returns false for a missing file or directory', async () => {
-    expect(await deleteMemory(root, CWD, 'missing.md')).toBe(false)
-    expect(await deleteMemory(root, '/home/hm/workspace/nowhere', 'missing.md')).toBe(false)
+    expect(await deleteMemory(dir(), 'missing.md')).toBe(false)
+    expect(await deleteMemory(resolveMemoryDir(root, '/home/hm/workspace/nowhere'), 'missing.md')).toBe(false)
   })
 })
 
 describe('updateMemoryIndex', () => {
   it('creates MEMORY.md with the header and one pointer line when missing', async () => {
     await rm(dir(), { recursive: true, force: true })
-    const result = await updateMemoryIndex(root, CWD, {
+    const result = await updateMemoryIndex(dir(), {
       action: 'upsert',
       name: 'a-project',
       title: 'A project',
@@ -236,7 +259,7 @@ describe('updateMemoryIndex', () => {
     }, LIMITS)
     expect(result).toMatchObject({ name: 'a-project.md', action: 'upsert', changed: true })
     expect(result.warning).toBeUndefined()
-    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(
+    expect(await readMemory(dir(), 'MEMORY.md')).toBe(
       '# Memory Index\n\n- [A project](a-project.md) — hook a\n',
     )
   })
@@ -246,14 +269,14 @@ describe('updateMemoryIndex', () => {
     await seed({
       'MEMORY.md': '# Memory Index\n\n- [A project](a-project.md) — old hook\n- [B](b.md) — hook b\n',
     })
-    const result = await updateMemoryIndex(root, CWD, {
+    const result = await updateMemoryIndex(dir(), {
       action: 'upsert',
       name: 'a-project.md',
       title: 'A project',
       hook: 'new hook',
     }, LIMITS)
     expect(result.changed).toBe(true)
-    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(
+    expect(await readMemory(dir(), 'MEMORY.md')).toBe(
       '# Memory Index\n\n- [A project](a-project.md) — new hook\n- [B](b.md) — hook b\n',
     )
   })
@@ -261,13 +284,13 @@ describe('updateMemoryIndex', () => {
   it('appends after the last non-empty line when no pointer exists', async () => {
     await rm(dir(), { recursive: true, force: true })
     await seed({ 'MEMORY.md': '# Memory Index\n\n- [B](b.md) — hook b\n' })
-    await updateMemoryIndex(root, CWD, {
+    await updateMemoryIndex(dir(), {
       action: 'upsert',
       name: 'c-topic',
       title: 'C topic',
       hook: 'hook c',
     }, LIMITS)
-    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(
+    expect(await readMemory(dir(), 'MEMORY.md')).toBe(
       '# Memory Index\n\n- [B](b.md) — hook b\n- [C topic](c-topic.md) — hook c\n',
     )
   })
@@ -277,13 +300,13 @@ describe('updateMemoryIndex', () => {
     await seed({
       'MEMORY.md': '# Memory Index\n\n- [Old](legacy-name) — one\n- [Dup](legacy-name) — two\n- [B](b.md) — hook b\n',
     })
-    await updateMemoryIndex(root, CWD, {
+    await updateMemoryIndex(dir(), {
       action: 'upsert',
       name: 'legacy-name.md',
       title: 'New',
       hook: 'merged',
     }, LIMITS)
-    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(
+    expect(await readMemory(dir(), 'MEMORY.md')).toBe(
       '# Memory Index\n\n- [New](legacy-name.md) — merged\n- [B](b.md) — hook b\n',
     )
   })
@@ -291,41 +314,41 @@ describe('updateMemoryIndex', () => {
   it('removes the pointer line and reports the resulting index', async () => {
     await rm(dir(), { recursive: true, force: true })
     await seed({ 'MEMORY.md': '# Memory Index\n\n- [A](a-project.md) — hook a\n- [B](b.md) — hook b\n' })
-    const result = await updateMemoryIndex(root, CWD, { action: 'remove', name: 'a-project' }, LIMITS)
+    const result = await updateMemoryIndex(dir(), { action: 'remove', name: 'a-project' }, LIMITS)
     expect(result).toMatchObject({ name: 'a-project.md', action: 'remove', changed: true })
-    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe('# Memory Index\n\n- [B](b.md) — hook b\n')
+    expect(await readMemory(dir(), 'MEMORY.md')).toBe('# Memory Index\n\n- [B](b.md) — hook b\n')
   })
 
   it('remove matches the extension-less link spelling too', async () => {
     await rm(dir(), { recursive: true, force: true })
     await seed({ 'MEMORY.md': '# Memory Index\n\n- [A](legacy-name) — hook\n' })
-    const result = await updateMemoryIndex(root, CWD, { action: 'remove', name: 'legacy-name.md' }, LIMITS)
+    const result = await updateMemoryIndex(dir(), { action: 'remove', name: 'legacy-name.md' }, LIMITS)
     expect(result.changed).toBe(true)
-    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe('# Memory Index\n\n')
+    expect(await readMemory(dir(), 'MEMORY.md')).toBe('# Memory Index\n\n')
   })
 
   it('remove is a no-op that leaves the index untouched when the pointer is missing', async () => {
     await rm(dir(), { recursive: true, force: true })
     const content = '# Memory Index\n\n- [B](b.md) — hook b\n'
     await seed({ 'MEMORY.md': content })
-    const result = await updateMemoryIndex(root, CWD, { action: 'remove', name: 'missing.md' }, LIMITS)
+    const result = await updateMemoryIndex(dir(), { action: 'remove', name: 'missing.md' }, LIMITS)
     expect(result.changed).toBe(false)
     expect(result.lines).toBe(content.split('\n').length)
-    expect(await readMemory(root, CWD, 'MEMORY.md')).toBe(content)
+    expect(await readMemory(dir(), 'MEMORY.md')).toBe(content)
   })
 
   it('remove on a missing MEMORY.md reports changed=false without creating it', async () => {
     await rm(dir(), { recursive: true, force: true })
-    const result = await updateMemoryIndex(root, CWD, { action: 'remove', name: 'anything.md' }, LIMITS)
+    const result = await updateMemoryIndex(dir(), { action: 'remove', name: 'anything.md' }, LIMITS)
     expect(result).toMatchObject({ changed: false, lines: 0, bytes: 0 })
-    expect(await readMemory(root, CWD, 'MEMORY.md')).toBeUndefined()
+    expect(await readMemory(dir(), 'MEMORY.md')).toBeUndefined()
   })
 
   it('rejects MEMORY.md and invalid names as the index key', async () => {
-    await expect(updateMemoryIndex(root, CWD, {
+    await expect(updateMemoryIndex(dir(), {
       action: 'upsert', name: 'MEMORY.md', title: 'T', hook: 'h',
     }, LIMITS)).rejects.toThrow(/memory name/)
-    await expect(updateMemoryIndex(root, CWD, {
+    await expect(updateMemoryIndex(dir(), {
       action: 'remove', name: '../evil.md',
     }, LIMITS)).rejects.toThrow(/memory name/)
   })
@@ -334,7 +357,7 @@ describe('updateMemoryIndex', () => {
     await rm(dir(), { recursive: true, force: true })
     const lines = Array.from({ length: LIMITS.maxIndexLines }, (_, i) => `- [T${i}](t${i}.md) — h`)
     await seed({ 'MEMORY.md': `# Memory Index\n\n${lines.join('\n')}\n` })
-    const result = await updateMemoryIndex(root, CWD, {
+    const result = await updateMemoryIndex(dir(), {
       action: 'upsert',
       name: 'overflow',
       title: 'O',

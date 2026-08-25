@@ -2,6 +2,6 @@
   "steps": [
     { "op": "initialize" },
     { "op": "newSession" },
-    { "op": "prompt", "text": "Read your memory index with memory_read, then save one new memory noting that this project deploys with pnpm (type feedback, with Why and How to apply), upsert its pointer line with memory_index, then reply DONE." }
+    { "op": "prompt", "text": "Read your memory index with memory_read, then save one new project memory noting that this project deploys with pnpm (type feedback, with Why and How to apply), upsert its pointer line with memory_index, then save one new global memory noting that daemon git push reporting gh token invalid is a sandbox false alarm (type feedback, with Why and How to apply) and upsert its global pointer line, then reply DONE." }
   ]
 }

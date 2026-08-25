@@ -15,5 +15,7 @@
             config:
               claudeHome: !!js process.cwd() + '/.claude'
               maxIndexBytes: 25600
+              global:
+                maxIndexBytes: 8192
           - id: llm-replay
             name: '@deepseek-ai/dsh-llm-replay'
