@@ -45,25 +45,7 @@ export function createStubAgentSession(): AgentSession {
   }
 }
 
-/** A session recording steer calls (ask decisions no longer route through the session). */
-export function createRecordingAgentSession(): RecordingAgentSession {
-  const s: RecordingAgentSession = {
-    ...createStubAgentSession(),
-    steerCalls: [] as string[],
-  }
-  s.steer = (prompt: string) => {
-    s.steerCalls.push(prompt)
-  }
-  return s
-}
-
-/** Recording session shape: steer calls only (B2). */
-export interface RecordingAgentSession extends AgentSession {
-  steerCalls: string[]
-}
-
-/**
- * Go controllableAgentSession: tests push events onto `.channel` and call
+/** Go controllableAgentSession: tests push events onto `.channel` and call
  * `close()` manually. close() is idempotent (channel-closed cleanup may close
  * an already-exited test session).
  */

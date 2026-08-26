@@ -4,6 +4,8 @@
  * fallbacks, the active (heart) tag claim protocol, and the verify-after-bind
  * self-healing for dangling tag ids (Feishu accepts a bind with a dead id,
  * returns code=0, and creates nothing — a successful API call is not proof).
+ * Ids that fail verification are blacklisted in-process so resolution stops
+ * returning them.
  *
  * @module dsh-feishu-bridge/feishu-tag
  */
@@ -151,6 +153,12 @@ export interface TagManagerOptions {
   /** Persistence path for the tag-id cache; empty disables persistence. */
   tagCacheFile?: string
   /**
+   * Older cache paths merged into {@link tagCacheFile} at load (entries the
+   * primary file already has win); the merged result persists under the
+   * primary path. Migration from shapes beyond these paths is not attempted.
+   */
+  legacyTagCacheFiles?: string[]
+  /**
    * Project-default tag name derived from the work dir. The platform may
    * derive it asynchronously and assign {@link TagManager.dirTagName} after
    * construction (mirroring the Go source's post-construction assignment).
@@ -175,6 +183,14 @@ export class TagManager {
   private readonly tagIDCache = new Map<string, string>()
   private activeTagNameField: string
 
+  /**
+   * Tag names → ids whose bind did not verify in this process: dangling ids,
+   * or ids of tags owned by another app (a bind then returns code=0 while
+   * creating nothing). In-memory only — a restart retries a persisted foreign
+   * id once, then re-blacklists it.
+   */
+  private readonly unbindableTagIDs = new Map<string, Set<string>>()
+
   /** Project-default tag name; mutable for post-construction derivation. */
   dirTagName: string
 
@@ -185,11 +201,31 @@ export class TagManager {
   }
 
   /**
-   * Load the persisted tag-id cache. Missing file is a clean start.
+   * Load the persisted tag-id cache, merging legacy cache files underneath it
+   * (primary entries win). Missing files are a clean start.
    */
   async load(): Promise<void> {
     const file = this.o.tagCacheFile ?? ''
     if (file === '') return
+    const entries = await this.readCacheMap(file)
+    let migrated = false
+    for (const legacy of this.o.legacyTagCacheFiles ?? []) {
+      if (legacy === file) continue
+      for (const [k, v] of await this.readCacheMap(legacy)) {
+        if (entries.has(k)) continue
+        entries.set(k, v)
+        migrated = true
+      }
+    }
+    for (const [k, v] of entries) {
+      this.tagIDCache.set(k, v)
+    }
+    if (migrated) await this.save()
+  }
+
+  /** Read one cache file into a fresh map; missing or corrupt files read empty. */
+  private async readCacheMap(file: string): Promise<Map<string, string>> {
+    const m = new Map<string, string>()
     let data: string
     try {
       data = await readFile(file, 'utf8')
@@ -197,16 +233,33 @@ export class TagManager {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         console.warn(`feishu: read tag cache failed: ${String(err)}`)
       }
-      return
+      return m
     }
     try {
-      const m = JSON.parse(data) as Record<string, string>
-      for (const [k, v] of Object.entries(m)) {
-        this.tagIDCache.set(k, v)
+      for (const [k, v] of Object.entries(JSON.parse(data) as Record<string, string>)) {
+        m.set(k, v)
       }
     } catch (err) {
       console.warn(`feishu: parse tag cache failed: ${String(err)}`)
     }
+    return m
+  }
+
+  /**
+   * Record a tag id whose bind did not verify, so {@link ensureTagCached}
+   * stops resolving the name to it.
+   * @param tagName - Tag name the id was resolved for.
+   * @param id - The id that failed bind verification.
+   */
+  markTagUnbindable(tagName: string, id: string): void {
+    if (id === '') return
+    const set = this.unbindableTagIDs.get(tagName) ?? new Set<string>()
+    set.add(id)
+    this.unbindableTagIDs.set(tagName, set)
+  }
+
+  private tagUnbindable(tagName: string, id: string): boolean {
+    return this.unbindableTagIDs.get(tagName)?.has(id) === true
   }
 
   /**
@@ -281,13 +334,15 @@ export class TagManager {
   /**
    * Resolve a tag id by name, creating the tag when missing. On create
    * failure, fall back to discovering the id from this bot's chats or a
-   * sibling bot's cache file. Results are cached.
+   * sibling bot's cache file. Ids known to have failed bind verification are
+   * skipped in every source; when nothing usable remains the original failure
+   * (or an only-unbindable-ids error) propagates. Results are cached.
    * @param tagName - Tag name.
    * @returns The tag id.
    */
   private async ensureTagCached(tagName: string): Promise<string> {
     const cached = this.tagIDCache.get(tagName)
-    if (cached !== undefined && cached !== '') return cached
+    if (cached !== undefined && cached !== '' && !this.tagUnbindable(tagName, cached)) return cached
 
     let id = ''
     let createErr: Error | undefined
@@ -296,18 +351,20 @@ export class TagManager {
     } catch (err) {
       createErr = err instanceof Error ? err : new Error(String(err))
     }
-    if (id === '') {
+    if (id === '' || this.tagUnbindable(tagName, id)) {
       const discovered = await this.discoverTagFromSpawnedChats(tagName)
-      if (discovered !== '') {
+      if (discovered !== '' && !this.tagUnbindable(tagName, discovered)) {
         id = discovered
       } else {
         const sibling = this.lookupSiblingTagCaches(tagName)
-        if (sibling !== '') {
+        if (sibling !== '' && !this.tagUnbindable(tagName, sibling)) {
           id = sibling
         } else if (createErr !== undefined) {
           throw createErr
-        } else {
+        } else if (id === '') {
           throw new Error(`feishu: tag "${tagName}" not found via create, discover or sibling caches`)
+        } else {
+          throw new Error(`feishu: tag "${tagName}" resolves only to ids that failed bind verification`)
         }
       }
     }
@@ -345,6 +402,7 @@ export class TagManager {
         await this.save()
         return true
       }
+      this.markTagUnbindable(name, id)
       console.info(`feishu: active tag id did not stick, trying next candidate (id ${id}, chat_id ${chatID})`)
       return false
     }
@@ -447,7 +505,7 @@ export class TagManager {
     const dir = dirname(file)
     let matches: string[]
     try {
-      matches = readdirSync(dir).filter(n => n.endsWith('_feishu_tag_cache.json'))
+      matches = readdirSync(dir).filter(n => n.endsWith('_tag_cache.json'))
     } catch {
       return ''
     }
@@ -543,8 +601,9 @@ export class TagManager {
 
   /**
    * Resolve the dir tag for a freshly spawned chat, bind it, and self-heal
-   * from a cached-but-dead id: verify the bind by reading the relation back;
-   * on miss evict the cache entry and re-resolve once.
+   * from an id that does not verify: mark it unbindable, evict the cache
+   * entry, and re-resolve once (the unbindable set stops the re-resolve from
+   * landing on the same id via create-duplicate or a sibling cache).
    * @param chatID - Spawned chat.
    * @param tagName - Tag name to apply (may differ from the project default
    * for /sp --dir spawns).
@@ -568,16 +627,15 @@ export class TagManager {
     await this.tagChat(chatID, [id])
     if (await this.chatHasTagID(chatID, id)) return
     console.warn(`feishu: spawn tag bind did not take effect, evicting cached id and re-resolving (chat_id ${chatID}, tag ${tagName}, tag_id ${id})`)
+    this.markTagUnbindable(tagName, id)
     await this.evictTagCacheEntry(tagName)
     const fresh = await resolve()
     if (fresh === '') return
-    if (fresh === id) {
-      console.warn(`feishu: spawn tag re-resolved the same id; giving up (chat_id ${chatID}, tag ${tagName}, tag_id ${id})`)
-      return
-    }
     await this.tagChat(chatID, [fresh])
     if (!await this.chatHasTagID(chatID, fresh)) {
       console.warn(`feishu: spawn tag bind still not effective after retry (chat_id ${chatID}, tag ${tagName}, tag_id ${fresh})`)
+      this.markTagUnbindable(tagName, fresh)
+      await this.evictTagCacheEntry(tagName)
     }
   }
 

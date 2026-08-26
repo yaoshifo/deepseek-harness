@@ -236,8 +236,8 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
 
 /**
  * Page count for a session listing at the /list page size.
- * @param total - Total number of listed sessions.
- * @returns The 1-based page count (never below 1).
+ * @param total - Session count to paginate.
+ * @returns The page count, at least 1.
  */
 export function totalPages(total: number): number {
   return Math.max(1, Math.ceil(total / listPageSize))
@@ -245,7 +245,7 @@ export function totalPages(total: number): number {
 
 /**
  * Parse a 1-based page argument ('' and invalid values fall back to 1).
- * @param args - Command argument words; the first is the page number.
+ * @param args - Command arguments; the first is the page number.
  * @returns The requested page, or 1 when absent or invalid.
  */
 export function pageArg(args: string[]): number {
@@ -255,8 +255,8 @@ export function pageArg(args: string[]): number {
 
 /**
  * Agent session IDs with a live process (for /list markers).
- * @param e - The engine owning the interactive states.
- * @returns A lookup map of every live agent session ID.
+ * @param e - The engine owning the interactive session states.
+ * @returns A set-like map of live session IDs.
  */
 export function liveAgentSessionIDs(e: Engine): Record<string, true> {
   const live: Record<string, true> = {}
@@ -315,9 +315,9 @@ async function enrichSessionSummaries(e: Engine, agentSessions: AgentSessionInfo
 }
 
 /**
- * Format a modification timestamp for the /list surface.
- * @param ts - Modification time in milliseconds since epoch.
- * @returns The local-time `MM-DD HH:mm` rendering.
+ * Render a modification timestamp the way the session listing shows it.
+ * @param ts - Epoch milliseconds.
+ * @returns Local time as "MM-DD HH:mm"; the year is omitted.
  */
 export function formatModified(ts: number): string {
   const d = new Date(ts)

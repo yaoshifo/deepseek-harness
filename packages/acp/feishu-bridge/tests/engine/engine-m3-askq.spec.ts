@@ -271,3 +271,44 @@ describe('routeAskResponse question variants', () => {
     })
   })
 })
+
+describe('interactive slot keys (cron new-per-run)', () => {
+  it('parks, renders, and settles an ask under a #cron: slot key', async () => {
+    const e = newTestEngine()
+    const p = createStubCardPlatform('feishu')
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    // The slot the run's interactive state actually lives under; a click
+    // arrives addressed by the same key (the render stamps it into the
+    // card's callback values).
+    const slot = 'feishu:oc_1:ou_1#cron:s20'
+    e.interactiveStates.set(slot, state)
+    const decision = e.askUser(slot, { kind: 'questions', questions: testQuestions() })
+    await new Promise((r) => { setTimeout(r, 10) })
+
+    expect(p.sentCards).toHaveLength(1)
+    const handled = e.routeAskResponse(p, msg({ sessionKey: slot, content: '1' }), '1')
+    expect(handled).toBe(true)
+    await expect(decision).resolves.toEqual({
+      answers: [{ id: 'Which database?', selected: ['PostgreSQL'] }],
+    })
+  })
+
+  it('a bare-key ask whose state sits under a #cron: slot answers unattended', async () => {
+    const e = newTestEngine()
+    const p = createStubCardPlatform('feishu')
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set('feishu:oc_1:ou_1#cron:s20', state)
+
+    // The documented 2026-08-26 cron-fbe6d268 failure shape: the asker
+    // routed under the bare session key while the run's state was parked
+    // under the suffixed slot — nobody could answer, so every question
+    // settled empty with no card sent.
+    await expect(e.askUser('feishu:oc_1:ou_1', { kind: 'questions', questions: testQuestions() }))
+      .resolves.toEqual({ answers: [{ id: 'Which database?', selected: [] }] })
+    expect(p.sentCards).toHaveLength(0)
+  })
+})

@@ -107,10 +107,14 @@ describe('ExecuteCronJob_NewSessionPerRun', () => {
     const platform = createStubCronReplyTargetPlatform('discord')
     const agentSession = newResultAgentSession('fresh run done')
     const recordedKeys: string[] = []
+    const recordedSlots: string[] = []
     const agent: Agent = {
       name: () => 'stub',
       startSession: async (_sessionID: string, options) => {
-        if (options !== undefined) recordedKeys.push(options.sessionKey)
+        if (options !== undefined) {
+          recordedKeys.push(options.sessionKey)
+          if (options.interactiveSlotKey !== undefined) recordedSlots.push(options.interactiveSlotKey)
+        }
         return agentSession
       },
       listSessions: async () => [],
@@ -133,6 +137,12 @@ describe('ExecuteCronJob_NewSessionPerRun', () => {
     // slot suffix.
     expect(recordedKeys).toContain('discord:thread-fresh')
     expect(recordedKeys.join('\n')).not.toContain('#cron:')
+    // The run's interactive state parks under a `#cron:` slot the bare key
+    // cannot find: the start options must also carry that slot so ask
+    // surfaces (permission/ask cards) route to it instead of answering
+    // unattended (2026-08-26 cron-fbe6d268 incident).
+    expect(recordedSlots).toHaveLength(1)
+    expect(recordedSlots[0]).toMatch(/^discord:thread-fresh#cron:/)
     // The run used a dedicated side session under the resolved key and its
     // interactive slot was cleaned up as soon as the turn finished.
     expect(e.sessions.listSessions('discord:thread-fresh')).toHaveLength(1)

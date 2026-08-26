@@ -591,10 +591,21 @@ export class FeishuPlatform implements Platform {
     this.botAvatarKeyGray = options.botAvatarKeyGray ?? ''
     this.displayName = options.botDisplayName ?? ''
     const projectName = options.projectName !== undefined && options.projectName !== '' ? options.projectName : this.name()
-    const base = `${projectName}_${this.name()}`
+    // State files are keyed by project name only. Folding the platform tag
+    // into these filenames made every feishu.tag rename start the tag-id
+    // cache and spawn registry from an empty file, silently losing every
+    // bindable tag id this app had resolved. Legacy bases cover the two
+    // historical shapes (current platform tag, pre-tag 'feishu'); renames
+    // beyond those are not migrated.
+    const base = projectName
+    const legacyBases = [...new Set([`${projectName}_${this.name()}`, `${projectName}_feishu`])]
+      .filter(b => b !== base)
     const dataDir = options.dataDir ?? ''
     const sessionsDir = dataDir === '' ? '' : join(dataDir, 'sessions')
-    this.spawnStore = new SpawnedChatStore(sessionsDir === '' ? '' : join(sessionsDir, `${base}_spawned.json`))
+    this.spawnStore = new SpawnedChatStore(
+      sessionsDir === '' ? '' : join(sessionsDir, `${base}_spawned.json`),
+      sessionsDir === '' ? [] : legacyBases.map(b => join(sessionsDir, `${b}_spawned.json`)),
+    )
     // The tag cache is tenant-shared state (sibling lookup reuses ids created
     // by other bots), unlike the spawned registry which is this bot's private
     // state — hence the separate directory.
@@ -602,6 +613,7 @@ export class FeishuPlatform implements Platform {
     this.tagManager = new TagManager({
       api: this.tagApi(),
       tagCacheFile: tagCacheDir === '' ? '' : join(tagCacheDir, `${base}_tag_cache.json`),
+      legacyTagCacheFiles: tagCacheDir === '' ? [] : legacyBases.map(b => join(tagCacheDir, `${b}_tag_cache.json`)),
       projectName,
       ...(options.activeTagOverride !== undefined ? { activeTagOverride: options.activeTagOverride } : {}),
       spawnedChatIDs: () => this.spawnStore.chatIDs(),

@@ -227,11 +227,22 @@ describe('adapter MCP mask', () => {
     expect(harness.restricts).toEqual([])
   })
 
-  it('a one-shot query session carries the same mask', async () => {
+  it('a bare lightweight query masks every tool; a render one-shot pairs the skill deny with the mask', async () => {
     const harness = createHarness('ok')
     const adapter = newAdapter(harness, ['srvA'])
     await adapter.lightweightQuery('hi', 'glm')
-    expect(harness.restricts).toEqual([{ deny: ['mcp__srvB__echo', 'mcp__shared__lookup'] }])
+    // The bare query's empty allow list masks every tool — MCP servers
+    // included — so no separate MCP restriction rides along.
+    expect(harness.restricts).toEqual([{ allow: [] }])
+
+    harness.restricts.length = 0
+    await adapter.renderQuery('render', 'glm', 'render system prompt')
+    // The render one-shot keeps its working tools: the skill deny and the
+    // project MCP deny coexist as two independent restrictions.
+    expect(harness.restricts).toEqual([
+      { deny: ['skill'] },
+      { deny: ['mcp__srvB__echo', 'mcp__shared__lookup'] },
+    ])
   })
 
   it('a continuable subtask child forwards the deny list as its toolFilter', async () => {

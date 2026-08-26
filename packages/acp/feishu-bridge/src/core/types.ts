@@ -404,6 +404,12 @@ export interface SessionStartOptions {
    * startSession sessionID.
    */
   sessionKey: string
+  /**
+   * Interactive-state slot key the ask surfaces (permission cards, ask cards)
+   * render and route under. Set only when it differs from `sessionKey`
+   * (cron new-per-run `#cron:` slots); absent = same key as `sessionKey`.
+   */
+  interactiveSlotKey?: string
   /** Agent-delegated subtask child persona; absent = not a subtask. */
   subtask?: {
     /** A human has spoken in the child group (keeps the normal approval path). */
@@ -537,6 +543,8 @@ export interface ProgressStatus {
   ts: string
   /** Tool-call count appended to the title when positive. */
   toolCallSeq: number
+  /** Unreported native subtasks; positive appends a running-subtasks suffix to terminal titles. */
+  pendingSubtasks?: number
 }
 
 /** Text-path preview content: a display body with an optional structured status. */

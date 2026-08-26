@@ -51,7 +51,7 @@ describe('buildProjectAssembly', () => {
   it('points the platform spawn store at the project data dir', async () => {
     const root = await mkdtemp(join(tmpdir(), 'fb-assembly-'))
     const { platform } = buildProjectAssembly(stubContext(), config(), project(), root)
-    expect(platform.spawnStore.filePath).toBe(join(root, 'smoke-project', 'sessions', 'smoke-project_feishu_spawned.json'))
+    expect(platform.spawnStore.filePath).toBe(join(root, 'smoke-project', 'sessions', 'smoke-project_spawned.json'))
   })
 
   it('forwards the feishu platform options (notify_on_complete & co.)', async () => {

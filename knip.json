@@ -6,6 +6,7 @@
   "ignoreBinaries": [
     "bwrap",
     "icacls",
+    "memory_pressure",
     "musl-gcc",
     "python3",
     "sandbox-exec",

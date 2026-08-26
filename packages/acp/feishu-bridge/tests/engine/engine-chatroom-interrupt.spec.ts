@@ -89,8 +89,8 @@ describe('interruptChatroom', () => {
 
     // The interrupt card lands in the hub with the missing roles.
     await waitFor(() => p.sentCards.length > 0, 'interrupt card')
-    expect(cardText(p.sentCards[0]!)).toContain('聊天室已中断')
-    expect(cardText(p.sentCards[0]!)).toContain('munger')
+    expect(cardText(p.sentCards[0])).toContain('聊天室已中断')
+    expect(cardText(p.sentCards[0])).toContain('munger')
   })
 
   it('closes a pending end barrier the same way', async () => {

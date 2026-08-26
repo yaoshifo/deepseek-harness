@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -129,6 +129,55 @@ describe('applySpawnDirTag', () => {
 
     expect(api.createCalls).toHaveLength(0)
     expect(p.cachedTagID(tagName)).toBe(liveID)
+  })
+
+  it('does not re-borrow a sibling id that failed bind verification', async () => {
+    const tagName = 'riskai'
+    const foreignID = '7649209605100195013' // another app's tag: binds with code=0, never sticks
+    const dir = await tempDir()
+    // A sibling cache file under a renamed platform shape — the sibling scan
+    // must see any `*_tag_cache.json`, not just the old `_feishu_` one.
+    await writeFile(join(dir, 'other_riskai_tag_cache.json'), JSON.stringify({ riskai: foreignID }))
+    const api = fakeTagApi({
+      tagName,
+      liveIDs: [],
+      create: () => ({ code: 402, msg: 'duplicate name in tenant' }),
+    })
+    const p = newManager(api, {
+      dirTagName: tagName,
+      tagCacheFile: join(dir, 'mine_tag_cache.json'),
+    })
+    await p.load()
+    p.seedTagCache(tagName, foreignID)
+
+    await p.applySpawnDirTag('oc_spawned', tagName)
+
+    expect(await p.chatHasTagID('oc_spawned', foreignID)).toBe(false)
+    // Evicted and not re-cached from the sibling file; the 402 create ran
+    // once during the re-resolve and its error left the chat untagged.
+    expect(p.cachedTagID(tagName)).toBeUndefined()
+    expect(api.createCalls).toEqual([tagName])
+    // The empty cache never persists (save skips empty maps).
+    await expect(readFile(join(dir, 'mine_tag_cache.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+})
+
+describe('legacy tag cache migration', () => {
+  it('merges legacy cache files under the primary file, primary entries winning', async () => {
+    const dir = await tempDir()
+    const primary = join(dir, 'bot_tag_cache.json')
+    const legacyCurrent = join(dir, 'bot_riskai_tag_cache.json')
+    const legacyFeishu = join(dir, 'bot_feishu_tag_cache.json')
+    await writeFile(legacyCurrent, JSON.stringify({ riskai: 'id_current' }))
+    await writeFile(legacyFeishu, JSON.stringify({ riskai: 'id_old', money: 'id_money' }))
+    const api = fakeTagApi({ tagName: 'riskai' })
+    const p = new TagManager({ api, tagCacheFile: primary, legacyTagCacheFiles: [legacyCurrent, legacyFeishu] })
+
+    await p.load()
+
+    expect(p.cachedTagID('riskai')).toBe('id_current')
+    expect(p.cachedTagID('money')).toBe('id_money')
+    expect(JSON.parse(await readFile(primary, 'utf8'))).toEqual({ riskai: 'id_current', money: 'id_money' })
   })
 })
 

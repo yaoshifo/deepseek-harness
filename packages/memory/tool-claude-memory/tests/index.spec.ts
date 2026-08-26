@@ -46,7 +46,7 @@ async function setup(globalConfig?: plugin.GlobalConfig): Promise<Context> {
 
 let agentCounter = 0
 
-function makeAgent(ctx: Context, over: { cwd?: string; origin?: 'subagent' } = {}): Agent {
+function makeAgent(ctx: Context, over: { cwd?: string; origin?: 'subagent' | 'oneshot' } = {}): Agent {
   const scope = ctx.plugin(() => {})
   const id = SessionId(`mem-agent-${++agentCounter}`)
   const header = {
@@ -286,7 +286,7 @@ describe('session-start index injection', () => {
     expect(enterCount(second)).toBe(1)
   })
 
-  it('skips injection without MEMORY.md, for subagents, and after step 1', async () => {
+  it('skips injection without MEMORY.md, for subagents and oneshot side queries, and after step 1', async () => {
     const ctx = await setup()
     context = ctx
     const bare = makeAgent(ctx, { cwd: '/home/hm/workspace/bare' })
@@ -294,6 +294,10 @@ describe('session-start index injection', () => {
     await seedIndex('# Memory Index\n- [A](a.md)')
     const sub = makeAgent(ctx, { cwd: CWD, origin: 'subagent' })
     expect(enterCount(await emitPreStep(ctx, sub))).toBe(1)
+    // A oneshot side query (group naming, rendering) carries its context in
+    // the prompt; a cwd-derived index would be noise that can skew its output.
+    const oneshot = makeAgent(ctx, { cwd: CWD, origin: 'oneshot' })
+    expect(enterCount(await emitPreStep(ctx, oneshot))).toBe(1)
     const later = makeAgent(ctx, { cwd: CWD })
     expect(enterCount(await emitPreStep(ctx, later, { step: 2 }))).toBe(1)
   })

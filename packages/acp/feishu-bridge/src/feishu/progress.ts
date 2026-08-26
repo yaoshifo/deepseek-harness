@@ -526,15 +526,23 @@ export function buildProgressCardJSONFromPayload(payload: ProgressCardPayload, s
 }
 
 /**
- * Card header title and color template for a state string (+ts, +tool count).
+ * Card header title and color template for a state string (+ts, +tool count,
+ * +pending native subtasks).
  *
  * @param state - State string from the header protocol.
  * @param zh - Localize the title to Chinese.
  * @param ts - Timestamp appended to the title; empty string omits it.
  * @param tc - Tool count appended when positive.
+ * @param pending - Unreported native subtasks appended to terminal titles when positive.
  * @returns Card header title and color template.
  */
-export function progressTitleAndColor(state: string, zh: boolean, ts: string, tc: number): { title: string; color: string } {
+export function progressTitleAndColor(
+  state: string,
+  zh: boolean,
+  ts: string,
+  tc: number,
+  pending = 0,
+): { title: string; color: string } {
   let title: string
   let color: string
   switch (state) {
@@ -557,6 +565,9 @@ export function progressTitleAndColor(state: string, zh: boolean, ts: string, tc
   }
   if (ts !== '') title = `${title} · ${ts}`
   if (tc > 0) title += ` · ${tc}`
+  if (pending > 0 && (state === 'completed' || state === 'failed')) {
+    title += ` · ${zh ? `${pending} 个子任务运行中` : `${pending} subtask(s) running`}`
+  }
   return { title, color }
 }
 
@@ -621,7 +632,8 @@ export function buildPreviewCardJSON(content: string, spin: SpinnerCfg, status?:
   if (containsMarkdown(content)) processed = preprocessFeishuMarkdown(padBoldDelimiters(content))
   processed = collapseExcessCardTables(processed)
   processed = collapseStructuralBlankLines(processed)
-  const { title, color } = progressTitleAndColor(state, true, status?.ts ?? '', status?.toolCallSeq ?? 0)
+  const { title, color } = progressTitleAndColor(
+    state, true, status?.ts ?? '', status?.toolCallSeq ?? 0, status?.pendingSubtasks ?? 0)
   // Text-path card (placeholder / streaming preview): align the header icon
   // with the state — thinking → pulse ring, running/执行中 → Material spinner.
   return buildCardJSONWithHeader(sanitizeMarkdownURLs(processed), title, color, spinnerKeyForState(spin, state))

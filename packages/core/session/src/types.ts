@@ -56,6 +56,13 @@ export function SessionId(id: string): SessionId {
 export const SESSION_FORMAT_VERSION = 0
 
 /**
+ * Coarse product classification for a session's creation, persisted so
+ * context-injection policy (instructions, memory, titles) routes the same way
+ * after resume or replay as it did at creation.
+ */
+export type SessionOrigin = 'subagent' | 'oneshot'
+
+/**
  * Immutable validated storage metadata, kept outside the conversation event log.
  */
 export interface SessionHeader {
@@ -79,10 +86,13 @@ export interface SessionHeader {
    */
   readonly seedLength?: number
   /**
-   * Coarse product classification for a session created as a subagent child.
-   * This is presentation metadata, not proof that the child is continuable.
+   * Coarse product classification for a session's creation. `subagent` marks
+   * a delegated child; `oneshot` marks a short-lived self-contained query
+   * session (side queries like group naming or rendering) whose context
+   * arrives only in its prompt. This is presentation metadata, not proof
+   * that the session is continuable.
    */
-  readonly origin?: 'subagent'
+  readonly origin?: SessionOrigin
   /**
    * Delegation depth: absent (zero) for a top-level session, parent depth + 1
    * for a subagent child. Persisted so a recursion budget survives restart and
@@ -115,7 +125,7 @@ export interface CreateSessionOptions {
     readonly parentSession?: SessionId
     readonly createdAt?: number
     readonly seedLength?: number
-    readonly origin?: 'subagent'
+    readonly origin?: SessionOrigin
     readonly delegationDepth?: number
     readonly agentPreset?: string
   }

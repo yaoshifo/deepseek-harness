@@ -101,6 +101,19 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'agentInstructions',
+    summary: 'Service owning workspace-instruction injection.',
+    description: 'Service owning workspace-instruction injection. Registering the listeners on a service (rather than directly on the plugin body) is what exposes the scoped suppress seam: consumers composing a wholesale-replacement persona call it in their agent setup so the instruction channel stays silent for that agent.',
+    methods: [
+      {
+        signature: 'suppress(): () => void',
+        description: 'Suppress every workspace-instruction contribution for the calling context\'s scope: no baseline is composed and filesystem touches inject no dynamic updates, and any pending workspace context is dropped from the inbox. Registrations compose; disposing every returned effect restores injection. The check walks the agent\'s scope chain, so a marker registered by an enclosing scope also suppresses its descendant agents.',
+        parameters: [],
+        returns: 'the exact Cordis effect disposer.',
+      },
+    ],
+  },
+  {
     key: 'agentLoop',
     summary: 'Concrete agent factory and driver service.',
     description: 'Concrete agent factory and driver service.',

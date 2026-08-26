@@ -26,7 +26,8 @@ import { MockAdapter, textResponse } from '../../../../core/agent-loop/tests/moc
 import { buildProjectAssembly, registerNativeSettlementListener, type FeishuBridgeConfig, type ProjectConfig } from '../../src/index.js'
 import { InteractiveState } from '../../src/engine/engine.js'
 import { WorktreeMode } from '../../src/engine/worktree.js'
-import { createStubCardPlatformFull, type RecordedCard } from '../stubs/engine-stubs.js'
+import { createStubCardPlatformFull, newStubMessage, type RecordedCard } from '../stubs/engine-stubs.js'
+import type { ProgressContent, TextPreviewContent } from '../../src/core/types.js'
 
 const contexts: Context[] = []
 const roots: string[] = []
@@ -164,5 +165,79 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
     await vi.waitFor(() => {
       expect(p.getSent().join('\n')).toContain('quiet parent synthesized')
     }, { timeout: 20_000 })
+  })
+
+  it('a parent turn settling mid-child carries the running-children count on the card', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    const root = await mkdtemp(join(tmpdir(), 'fb-native-assembly-'))
+    roots.push(root)
+    await ctx.plugin(JsonlSessionPersistence, { root })
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentRuntime, { settlementNotice: 'external' })
+    await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
+    const config: FeishuBridgeConfig = {
+      providers: { mock: { route: 'mock', model: 'mock' } },
+      projects: [],
+    }
+    const project: ProjectConfig = {
+      name: 'native-project',
+      workdir: root,
+      feishu: { appId: 'cli_test', appSecret: 'sec' },
+    }
+    const { engine, adapter } = buildProjectAssembly(ctx, config, project, join(root, 'data'))
+    // Preview-recording platform: the only stub, same as the sibling cases.
+    const base = createStubCardPlatformFull('test')
+    const contents: ProgressContent[] = []
+    const p = Object.assign(base, {
+      contents,
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+        contents.push(content)
+        return 'preview-handle'
+      },
+      async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+        contents.push(content)
+      },
+    })
+    engine.platforms.splice(0, engine.platforms.length, p)
+    registerNativeSettlementListener(ctx, [{ engine }])
+    engine.setDisplayConfig({ toolProgress: true })
+    // Script: #1 is the spawned child's turn — it hangs mid-stream, so the
+    // child stays unreported; #2 settles the parent's foreground turn while
+    // the child runs (the sibling cases pin the same child-first ordering).
+    const adapter2 = new MockAdapter(['hang', textResponse('parent interim note')])
+    ctx.llm.registerAdapter(['mock'], adapter2)
+
+    const parentKey = 'test:parent-chat:u1'
+    const agentSession = await adapter.startSession('', { sessionKey: parentKey })
+    // Record the live agent session on the session entry so the message path
+    // reuses this state instead of recycling into a fresh start.
+    engine.sessions.getOrCreateActive(parentKey).setAgentSessionID(agentSession.currentSessionID(), 'test')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'parent-rctx'
+    engine.interactiveStates.set(parentKey, state)
+
+    await engine.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'slow review')
+    engine.receiveMessage(p, {
+      ...newStubMessage(),
+      sessionKey: parentKey,
+      platform: p.name(),
+      userID: 'u1',
+      content: '看下进展',
+      replyCtx: 'parent-rctx',
+    })
+
+    // The message pump is fire-and-forget; wait for the settled card.
+    await vi.waitFor(() => {
+      expect(contents.some(c => c.kind === 'text' && c.status?.state === 'completed')).toBe(true)
+    }, { timeout: 20_000 })
+    const terminal = [...contents].reverse()
+      .find(c => c.kind === 'text' && c.status?.state === 'completed') as TextPreviewContent | undefined
+    expect(terminal?.status?.pendingSubtasks).toBe(1)
+    // buildProjectAssembly engines run zh; the unit cases pin the en wording.
+    expect(terminal?.text).toContain('1 个子任务后台运行中')
   })
 })

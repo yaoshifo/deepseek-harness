@@ -394,7 +394,11 @@ export function apply(ctx: Context, config: Config): void {
   ): Promise<PreStepDecision> => {
     const decision = await next()
     const cwd = memoryCwd(agent)
-    if (cwd === undefined || agent.session.header.origin === 'subagent') return decision
+    // Index injection targets plain interactive sessions only: any origin
+    // value marks a non-plain session (subagent child; oneshot side queries
+    // like group naming and rendering carry their whole context in the
+    // prompt, where a cwd-derived index is noise that can skew output).
+    if (cwd === undefined || agent.session.header.origin !== undefined) return decision
     if (step !== 1 || decision.kind !== 'enter' || decision.messages.length === 0) return decision
     const injections = await collectInjections(agent, cwd, signal)
     if (injections.length === 0) return decision

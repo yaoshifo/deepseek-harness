@@ -163,6 +163,54 @@ describe('lightweightQuery', () => {
     expect(a.engineKeyForAgentID('agent-1')).toBeUndefined()
   })
 
+  it('runs bare: oneshot origin, complete minimal system prompt, no instructions, and no tools', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    h.script.push({ text: '名' })
+
+    await a.lightweightQuery('起个群名', 'glm')
+
+    // Self-contained side query: the session is classified so memory-index
+    // injection and LLM title generation stay off (routed on origin).
+    expect(h.creates[0]!.meta?.origin).toBe('oneshot')
+    const setup = h.creates[0]!.setup as ((agentCtx: unknown) => void) | undefined
+    expect(setup).toBeTypeOf('function')
+    const sections: Array<{ name: string; order: number; text: string; complete?: boolean }> = []
+    let suppressions = 0
+    const restricts: Array<{ allow?: readonly string[]; deny?: readonly string[] }> = []
+    setup?.({
+      get: (name: string): unknown => {
+        if (name === 'agentInstructions') {
+          return { suppress: (): (() => void) => { suppressions += 1; return () => {} } }
+        }
+        if (name === 'tools') {
+          return {
+            get: () => undefined,
+            restrict: (filter: { allow?: readonly string[]; deny?: readonly string[] }): (() => void) => {
+              restricts.push(filter)
+              return () => {}
+            },
+          }
+        }
+        if (name !== 'systemPrompt') return undefined
+        return {
+          section: (sec: { name: string; order: number; text: string; complete?: boolean }) => { sections.push(sec) },
+        }
+      },
+    })
+    expect(suppressions).toBe(1)
+    // allow: [] masks every tool — a naming query calls nothing, and the
+    // skill catalog disappears with the tools.
+    expect(restricts).toEqual([{ allow: [] }])
+    // Pinned verbatim: the bare line replaces the whole assembled baseline.
+    expect(sections).toEqual([{
+      name: 'feishu-bridge-lightweight-query',
+      order: 0,
+      complete: true,
+      text: '你是严格按照用户消息本身完成任务的助手：只依据消息内给出的规则与内容作答，只输出该消息要求的内容。',
+    }])
+  })
+
   it('falls back to the active route for an unknown provider name', async () => {
     const h = createHarness()
     const a = newAdapter(h)
@@ -254,7 +302,7 @@ describe('ProviderSwitcher (naming fallback source)', () => {
 })
 
 describe('renderQuery (Go dsh RenderQuery)', () => {
-  it('runs a fresh session on the named route at the mapped effort with a complete-replacement system prompt and no workspace instructions', async () => {
+  it('runs a fresh session on the named route at the mapped effort with a complete-replacement system prompt, no workspace instructions, and no skill catalog', async () => {
     const h = createHarness()
     const a = newAdapter(h)
     a.setRenderEffort('max')
@@ -265,6 +313,8 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
     expect(answer).toBe('片段已写入：/tmp/x.html')
     expect(h.creates).toHaveLength(1)
     expect(h.creates[0]!.agentOptions).toEqual({ provider: 'turbo-route', model: 'turbo-5', reasoningEffort: 'high' })
+    // Self-contained render session: memory injection and LLM title stay off.
+    expect(h.creates[0]!.meta?.origin).toBe('oneshot')
     // The complete system prompt rides the setup hook as a complete:true
     // section (the D3 bare-persona mechanism), and workspace-instruction
     // injection is suppressed alongside it — the render fork's facts travel
@@ -273,7 +323,7 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
     expect(setup).toBeTypeOf('function')
     const sections: Array<{ name: string; order: number; text: string; complete?: boolean }> = []
     let suppressions = 0
-    let toolRestricts = 0
+    const restricts: Array<{ allow?: readonly string[]; deny?: readonly string[] }> = []
     setup?.({
       get: (name: string): unknown => {
         if (name === 'agentInstructions') {
@@ -281,8 +331,11 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
         }
         if (name === 'tools') {
           return {
-            get: () => undefined,
-            restrict: (): (() => void) => { toolRestricts += 1; return () => {} },
+            get: (tool: string) => (tool === 'skill' ? {} : undefined),
+            restrict: (filter: { allow?: readonly string[]; deny?: readonly string[] }): (() => void) => {
+              restricts.push(filter)
+              return () => {}
+            },
           }
         }
         if (name !== 'systemPrompt') return undefined
@@ -292,11 +345,38 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
       },
     })
     expect(suppressions).toBe(1)
-    // The render session keeps its full tools (it writes the fragment) — no
-    // chatroom-style skill deny rides along.
-    expect(toolRestricts).toBe(0)
+    // The render session keeps its working tools (it writes the fragment)
+    // and only drops the global skill tool — with it the <available_skills>
+    // catalog and its loader disappear (the render skill body is baked into
+    // the system prompt).
+    expect(restricts).toEqual([{ deny: ['skill'] }])
     expect(sections).toEqual([{ name: 'feishu-bridge-render-session', order: 0, text: 'render system prompt', complete: true }])
     expect(h.agents[0]!.disposed).toBe(true)
+  })
+
+  it('skips the skill deny when the skill tool is not composed', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    h.script.push({ text: 'ok' })
+
+    await a.renderQuery('p', 'glm', 'sp')
+
+    const setup = h.creates[0]!.setup as ((agentCtx: unknown) => void) | undefined
+    let restricts = 0
+    setup?.({
+      get: (name: string): unknown => {
+        if (name === 'tools') {
+          return {
+            get: () => undefined,
+            restrict: (): (() => void) => { restricts += 1; return () => {} },
+          }
+        }
+        return undefined
+      },
+    })
+    // restrict() throws on unknown names; an absent skill registration drops
+    // the deny entry instead of failing session creation.
+    expect(restricts).toBe(0)
   })
 
   it('defaults to low effort when no render effort is configured', async () => {
