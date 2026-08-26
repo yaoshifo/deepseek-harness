@@ -1421,6 +1421,20 @@ describe('tail guard', () => {
     await sleep(80)
     expect(mp.nextID).toBeGreaterThanOrEqual(2)
   })
+
+  it('markRecalled stops the guard — a user-deleted card never resurrects', async () => {
+    const mp = createTailGuardPlatform()
+    const sp = newStreamPreview(tailCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendText('starting')
+    // The real handle carries a message id (Feishu); simulate one so the
+    // recall path can match it.
+    sp.previewMsgID = { messageID: 'om_card' }
+    await sp.markRecalled()
+    mp.setLatest(false)
+    await sleep(80)
+    expect(mp.nextID).toBe(1)
+    expect(sp.cardMessageID()).toBe('om_card')
+  })
 })
 
 /** Last recorded content's text-path view, when it is text content. */

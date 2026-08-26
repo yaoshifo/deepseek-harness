@@ -146,7 +146,7 @@ import { executeDeleteModeAction, renderDeleteModeCard, renderListCardSafe, rend
 import { runBangShell } from './shell-commands.js'
 import { renderDirCardSafe } from './dir-card.js'
 import { executeCardAction } from './cron-commands.js'
-import { cancelQueuedByMessageID } from './recall.js'
+import { cancelQueuedByMessageID, markRecalledPreview } from './recall.js'
 import { triggerInsights } from './predict.js'
 import { defaultAutoCompressMinGapMs, estimateTokensWithPendingAssistant, maybeAutoResetSessionOnIdle, runCompress } from './session-misc.js'
 import type { RelayManager } from './relay.js'
@@ -1408,10 +1408,15 @@ export class Engine {
       }
 
       // Recall wiring (#30, Go engine.go platform startup): a recalled
-      // message is cancelled from whichever session's queue holds it.
+      // message is cancelled from whichever session's queue holds it, and a
+      // recalled preview card stops updating and tail-guarding — the guard
+      // must not resurrect a card the user deleted.
       const recall = asRecallNotifier(p)
       if (recall !== undefined) {
-        recall.setRecallHandler((messageID) => { cancelQueuedByMessageID(this, messageID) })
+        recall.setRecallHandler((messageID) => {
+          cancelQueuedByMessageID(this, messageID)
+          markRecalledPreview(this, messageID)
+        })
       }
     }
     if (startErrs.length === this.platforms.length && this.platforms.length > 0) {
@@ -2808,7 +2813,6 @@ export class Engine {
     let cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
       this.i18n.currentLang(), undefined, sender)
     state.progressWriter = cp
-    this.bindActivePreview(sp, sessionKey)
     // Placeholder card so the user sees visual feedback (with push) before
     // the first agent event arrives. A reader-woken turn with pending
     // background tasks is likely a completion: distinct header (Go
@@ -2963,7 +2967,6 @@ export class Engine {
               sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
               cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
                 this.i18n.currentLang(), undefined, sender)
-              this.bindActivePreview(sp, sessionKey)
               state.preview = sp
               state.progressWriter = cp
               if (this.display.toolProgress && sp.canPreview()) {
@@ -3339,7 +3342,6 @@ export class Engine {
               sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
               cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
                 this.i18n.currentLang(), undefined, sender)
-              this.bindActivePreview(sp, sessionKey)
               state.preview = sp
               if (this.display.toolProgress && sp.canPreview()) {
                 void sp.showPlaceholder(this.i18n.t(Msg.Processing))
@@ -4045,13 +4047,10 @@ export class Engine {
 
     state.userStopped = true
     state.markStopped()
-    // Drop the engine-level bump binding for this session: post-teardown
-    // rename/avatar notices must not reissue the dying preview as a fresh
-    // running card (2026-08-25 oc_d22d incident).
-    if (this.activePreviewSession === sessionKey) {
-      this.activePreview = undefined
-      this.activePreviewSession = ''
-    }
+    // Post-teardown rename/avatar notices must not reissue the dying preview
+    // as a fresh running card (2026-08-25 oc_d22d incident): bump routing
+    // reads state.preview, and markStoppedSync below degrades/stops it, so
+    // the bump guard rejects the reissue without any unbinding step.
     this.stopUnsolicitedReader(state)
     // Finalize the active preview card here, not only in the event loop's
     // stop arm: a loop parked mid-handler when the stop lands exits via
@@ -4198,12 +4197,15 @@ export class Engine {
 
   // ---------------------------------------------------------------------
   // Active-preview bump routing (chat rename/avatar system notices push the
-  // preview card off the tail; bump reissues it as the latest message)
+  // preview card off the tail; bump reissues it as the latest message).
+  // Per-session: each interactive state's own preview is the bump target, so
+  // concurrent streams (chatroom hub + roles + research assistants) route
+  // correctly — a single global binding would let the latest-started turn
+  // steal every other session's bump.
   // ---------------------------------------------------------------------
 
-  private activePreview: StreamPreview | undefined
-  private activePreviewSession = ''
-  private bumpTimer: ReturnType<typeof setTimeout> | undefined
+  /** Pending per-session bump debounce timers (coalesce rename+avatar bursts). */
+  private bumpTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   // ── cron execution (Go engine.go ExecuteCronJob / executeCronShell) ─────
 
@@ -4591,35 +4593,33 @@ export class Engine {
   }
 
   /**
-   * Bind the session's active preview for bump routing (Go bindActivePreview).
-   * @param sp - The preview to reissue on bumps.
-   * @param sessionKey - Session the preview belongs to.
-   */
-  bindActivePreview(sp: StreamPreview, sessionKey: string): void {
-    this.activePreview = sp
-    this.activePreviewSession = sessionKey
-  }
-
-  /**
-   * Reissue the bound preview when it belongs to the given session.
-   * @param sessionKey - Session whose bound preview is bumped.
+   * Reissue the session's active preview when its state still owns one
+   * (Go bindActivePreview + bumpActivePreviewForSession, made per-session:
+   * state.preview is the binding). Terminal previews (finished/stopped/
+   * degraded) are rejected inside bumpToEnd, so a lookup racing teardown is
+   * a safe no-op.
+   * @param sessionKey - Session whose preview is bumped.
    */
   bumpActivePreviewForSession(sessionKey: string): void {
-    if (this.activePreview === undefined || this.activePreviewSession !== sessionKey) return
-    void this.activePreview.bumpToEnd()
+    const sp = this.interactiveStates.get(sessionKey)?.preview
+    if (sp !== undefined) void sp.bumpToEnd()
   }
 
   /**
-   * Coalesce rapid im.chat.updated events (rename + avatar ~1.4s apart) into
-   * one bump after the quiet window; only the last notice matters.
+   * Coalesce rapid chat-change events for one session (rename + avatar
+   * ~1.4s apart) into one bump after the quiet window; only the last notice
+   * matters. Timers are per-session: concurrent chats' notices never eat
+   * each other.
    * @param sessionKey - Session whose chat changed.
    */
   onChatChanged(sessionKey: string): void {
-    if (this.bumpTimer !== undefined) clearTimeout(this.bumpTimer)
-    this.bumpTimer = setTimeout(() => {
-      this.bumpTimer = undefined
+    const prev = this.bumpTimers.get(sessionKey)
+    if (prev !== undefined) clearTimeout(prev)
+    const id = setTimeout(() => {
+      this.bumpTimers.delete(sessionKey)
       this.bumpActivePreviewForSession(sessionKey)
     }, this.bumpDebounceInterval)
+    this.bumpTimers.set(sessionKey, id)
   }
 
   // ──────────────────────────────────────────────────────────────
@@ -4921,7 +4921,6 @@ export class Engine {
     const sp = newStreamPreview(this.streamPreview, p, replyCtx, undefined, state.sender, sessionKey)
     const cp = newCompactProgressWriter(p, replyCtx, this.agent.name(),
       this.i18n.currentLang(), undefined, state.sender)
-    this.bindActivePreview(sp, sessionKey)
     state.preview = sp
     state.progressWriter = cp
     if (this.display.toolProgress && sp.canPreview()) {

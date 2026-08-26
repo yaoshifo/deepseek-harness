@@ -96,9 +96,28 @@ describe('engine.start chat-updated wiring', () => {
   })
 })
 
-describe('stopInteractiveSession drops the bump binding', () => {
-  it('a stopped session no longer bumps its bound preview', () => {
+describe('stopInteractiveSession leaves nothing bumpable', () => {
+  /** Minting platform recording preview starts and deletes. */
+  function bumpPlatform(): Platform & { starts: number; deleted: unknown[] } {
+    const rec = { starts: 0, deleted: [] as unknown[] }
     const p = createStubPlatform('test')
+    Object.assign(p, {
+      async sendPreviewStart(): Promise<unknown> {
+        rec.starts++
+        return `handle-${rec.starts}`
+      },
+      async updateMessage(): Promise<void> {},
+      async deletePreviewMessage(handle: unknown): Promise<void> {
+        rec.deleted.push(handle)
+      },
+    })
+    Object.defineProperty(p, 'starts', { get: () => rec.starts })
+    Object.defineProperty(p, 'deleted', { get: () => rec.deleted })
+    return p as unknown as Platform & { starts: number; deleted: unknown[] }
+  }
+
+  it('a stopped session no longer reissues its preview', async () => {
+    const p = bumpPlatform()
     const e = newEngine(p)
     const key = 'test:chat'
     const state = new InteractiveState()
@@ -108,23 +127,33 @@ describe('stopInteractiveSession drops the bump binding', () => {
     const sp = new StreamPreview(
       { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500 }, p, 'ctx', undefined, undefined, key,
     )
-    const bump = vi.spyOn(sp, 'bumpToEnd')
-    e.bindActivePreview(sp, key)
+    state.preview = sp
+    await sp.appendText('working')
+    expect(p.starts).toBe(1)
 
     e.stopInteractiveSession(key)
+    await new Promise(resolve => setTimeout(resolve, 20)) // markStoppedSync settles on the preview lock
     e.bumpActivePreviewForSession(key)
+    await new Promise(resolve => setTimeout(resolve, 20))
 
     // Post-teardown rename/avatar notices must not reissue the dying
     // preview as a fresh running card (2026-08-25 oc_d22d incident).
-    expect(bump).not.toHaveBeenCalled()
+    expect(p.starts).toBe(1)
+    expect(p.deleted).toEqual([])
 
-    // Another session's binding survives an unrelated stop.
+    // Another session's preview still bumps after an unrelated stop.
+    const p2 = bumpPlatform()
+    const state2 = new InteractiveState()
+    state2.platform = p2
+    state2.replyCtx = 'ctx'
+    e.interactiveStates.set('test:other', state2)
     const sp2 = new StreamPreview(
-      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500 }, p, 'ctx', undefined, undefined, 'test:other',
+      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500 }, p2, 'ctx', undefined, undefined, 'test:other',
     )
-    const bump2 = vi.spyOn(sp2, 'bumpToEnd')
-    e.bindActivePreview(sp2, 'test:other')
+    state2.preview = sp2
+    await sp2.appendText('working')
     e.bumpActivePreviewForSession('test:other')
-    expect(bump2).toHaveBeenCalledTimes(1)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(p2.starts).toBe(2)
   })
 })

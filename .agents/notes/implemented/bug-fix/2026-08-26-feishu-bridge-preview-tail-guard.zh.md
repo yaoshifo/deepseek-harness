@@ -12,9 +12,11 @@ Status: implemented
 
 翻转模型：活跃 preview 自己周期性自证尾部（拉取），不再枚举发送方。`StreamPreviewCfg.tailCheckMs`（默认 5000，0 关闭）；卡片创建（`flushLocked` 首发成功）时武装独立 `tailTimer`；tick 先查终态（与 `bumpToEndLocked` 同一张守卫表，外加 `finished`），终态即停表不再排下一拍；否则在锁外调平台能力 `PreviewTailProber.previewIsLatest(handle)`（飞书实现 = `message.list(ByCreateTimeDesc, 1)` 按 message_id 比较；thread 句柄跳过——话题内的卡片对主群尾部无意义），非最新则以既有 `bumpToEnd` 删旧发新回到尾部，并在锁内复查终态后排下一拍。`finish()` 入口闩上 `finished` 并停表：它的删除路径不清 `previewMsgID`、不设终态标志，在飞的 tick 会复活已删除的卡。`resumeFromFreeze()` 重新武装（冻结期读作终态，自然停表）。改名/头像系统通知的 2s 推送 bump 保留为快路径。
 
+守卫之上补齐三个原推送方案的洞：① chatroom ask 卡与角色回灌卡改为 await 后再注入回合/唤醒（`askRoleInternal`、serial/gather 完成路径），消除最高发场景的竞态窗口，让占位卡确定后落；② engine bump 路由 per-session 化——`bumpActivePreviewForSession` 直接查 `interactiveStates.get(key).preview`，全局单槽 `activePreview` 绑定删除（并发流式下最新回合不再偷走其他会话的 bump），`onChatChanged` 去抖定时器改为按 session 的 Map；③ `recalled_v1` 命中活跃卡时调 `markRecalled()` 置 degraded 并停守卫——用户手动撤回的卡不再被周期性复活。
+
 ## Alternatives considered
 
-**逐点推送修补（发卡 await 后补 bump + engine per-session 路由）。** 否决：触发集是「引擎发送点」的枚举，本次事故正是枚举漏项；无事件的系统消息与外部发送永远覆盖不了；且改动散落在 engine/chatroom/commands 多个文件，竞态重排风险更高。拉取的触发集是「群尾部状态」，与消息来源解耦，未来新功能的卡片自动被覆盖。
+**逐点推送修补（发卡 await 后补 bump + engine per-session 路由）。** 否决为兜底主力：触发集是「引擎发送点」的枚举，本次事故正是枚举漏项；无事件的系统消息与外部发送永远覆盖不了。拉取的触发集是「群尾部状态」，与消息来源解耦，未来新功能的卡片自动被覆盖。但推送侧最便宜的两块（chatroom 卡片 await 定序、per-session 路由）后来作为快路径补齐——它们消除最高发场景的竞态窗口与并发错位，拉取守卫兜住其余一切。
 
 **事件即时性。** 代价如实接受：拉取是周期收敛（最长一个检查周期的错误展示窗口）而非事件保证；每个活跃群每周期一次 `message.list(pageSize=1)`（默认 5s 约 0.2 QPS/群，research 作战室约 7 群并发约 1.4 QPS），probe 失败仅减慢治愈、不破坏行为。
 
@@ -22,8 +24,8 @@ Status: implemented
 
 ## Consequences
 
-活跃卡无论被什么消息压住，都在一个检查周期内回到本群最新位置；终态卡永不复活（沿用 [挂起提问事故的守卫语义](2026-08-25-feishu-bridge-done-during-parked-ask-stray-card.zh.md)，`finished` 补上 finish 删除路径的缺口）。已知边界：用户手动撤回的活跃卡会被周期性复活直至回合结束（升级路径：`recalled_v1` 钩子把对应 preview 标记 degraded）；线程隔离部署跳过守卫；同一群两个流式 bot 会互相压尾重发（现网单 bot 拓扑不存在）。engine.ts / chatroom.ts / commands.ts 零改动，agent 执行路径完全解耦。
+活跃卡无论被什么消息压住，都在一个检查周期内回到本群最新位置；chatroom ask/回灌的自身竞态窗口与并发流式下的 bump 路由错位已由 await 定序与 per-session 路由消除（守卫不再为这两类场景买单）；用户手动撤回的活跃卡经 `recalled_v1` 停用，不再复活。终态卡永不复活（沿用[挂起提问事故的守卫语义](2026-08-25-feishu-bridge-done-during-parked-ask-stray-card.zh.md)，`finished` 补上 finish 删除路径的缺口）。剩余边界：线程隔离部署跳过守卫；同一群两个流式 bot 会互相压尾重发（现网单 bot 拓扑不存在）。agent 执行路径与引擎回合编排不受影响。
 
 ## Testing
 
-`tests/streaming.spec.ts`「tail guard」：被压自愈且静止期不再重发、仍最新周期零重发、finish 闩住不复活已删卡、discard 停表、probe 失败跳过本周期但继续守卫、平台无能力或周期为 0 永不武装、freeze 停表且 `resumeFromFreeze` 重启。`tests/feishu/preview-tail.spec.ts`：按最新优先单条查询并比较 message_id、空群为真、thread 句柄不发查询、非句柄参数拒绝。包内 2403 项测试全绿。
+`tests/streaming.spec.ts`「tail guard」：被压自愈且静止期不再重发、仍最新周期零重发、finish 闩住不复活已删卡、discard 停表、probe 失败跳过本周期但继续守卫、平台无能力或周期为 0 永不武装、freeze 停表且 `resumeFromFreeze` 重启、`markRecalled` 停守卫不复活。`tests/feishu/preview-tail.spec.ts`：按最新优先单条查询并比较 message_id、空群为真、thread 句柄不发查询、非句柄参数拒绝。`tests/engine/recall.spec.ts`：`markRecalledPreview` 命中活跃卡置 degraded、无匹配不动作。`tests/engine/engine-m2.spec.ts` 与 `engine-chat-renamed.spec.ts`：per-session bump 路由（并发互不干扰、无关会话不 bump）、按 session 的去抖定时器互不吞掉、停止后的会话不再重发。包内全量测试绿。

@@ -639,7 +639,10 @@ async function askRoleInternal(
   }
   e.sessions.save()
 
-  void e.sendAsCard(p, roleRctx, question, { title: headerTitle, color: 'blue' })
+  // Awaited: the card must land before the injected turn's placeholder card
+  // below, or the two sends race and whichever loses buries the other at the
+  // chat tail for the whole turn.
+  await e.sendAsCard(p, roleRctx, question, { title: headerTitle, color: 'blue' })
 
   let roleContent = `[主持] ${question}`
   const lp = chatroomLedgerDirFor(e, hubKey)
@@ -1013,12 +1016,14 @@ export function maybeAutoRelayRole(
    * relay path (end barrier, gather fan-in, serial, stale). The in-flight
    * flag clears with the relay; the ledger write is serialized inside the
    * ledger module, so the flag ordering vs durability is weaker than Go's
-   * synchronous append by one microtask.
+   * synchronous append by one microtask. Resolves once the card send has
+   * settled — callers that wake the moderator next must await it so the
+   * placeholder card cannot overtake the relay card.
    */
-  const relayRoleReply = (hubRctx: unknown): void => {
+  const relayRoleReply = async (hubRctx: unknown): Promise<void> => {
     if (reply === '' || isSilent) return
     const content = `【${roleName}】${reply}`
-    void e.sendAsCard(p, hubRctx, content, { title: e.i18n.tf(Msg.ChatroomRoleReplyHeader, roleName), color: 'green' })
+    await e.sendAsCard(p, hubRctx, content, { title: e.i18n.tf(Msg.ChatroomRoleReplyHeader, roleName), color: 'green' })
       .catch((error: unknown) => {
         console.warn(`chatroom: relay card failed (role=${roleName}): ${String(error)}`)
       })
@@ -1033,7 +1038,7 @@ export function maybeAutoRelayRole(
   if (stale) {
     void r.reconstructReplyCtx(hubKey).then(
       (hubRctx) => {
-        relayRoleReply(hubRctx)
+        void relayRoleReply(hubRctx)
       },
       (error: unknown) => {
         console.warn(`chatroom: reconstruct hub ctx failed (hub=${hubKey}): ${String(error)}`)
@@ -1057,7 +1062,7 @@ export function maybeAutoRelayRole(
   const barrier = chatroomHubOf(e, hubKey)?.getPendingEndBarrier()
   if (barrier !== undefined) {
     void r.reconstructReplyCtx(hubKey).then(
-      (hubRctx) => { relayRoleReply(hubRctx) },
+      (hubRctx) => { void relayRoleReply(hubRctx) },
       (error: unknown) => {
         console.warn(`chatroom: reconstruct hub ctx failed (hub=${hubKey}): ${String(error)}`)
       },
@@ -1077,8 +1082,8 @@ export function maybeAutoRelayRole(
   const hub = chatroomHubOf(e, hubKey)
   const g = hub?.getPendingGather()
   if (g !== undefined) {
-    void r.reconstructReplyCtx(hubKey).then(
-      (hubRctx) => { relayRoleReply(hubRctx) },
+    const relayP = r.reconstructReplyCtx(hubKey).then(
+      (hubRctx) => { return relayRoleReply(hubRctx) },
       (error: unknown) => {
         console.warn(`chatroom: reconstruct hub ctx failed (hub=${hubKey}): ${String(error)}`)
       },
@@ -1091,11 +1096,12 @@ export function maybeAutoRelayRole(
       return
     }
     // Last reply in: flip the progress card to its terminal state, clear the
-    // barrier and wake the moderator once.
+    // barrier and wake the moderator once — after the relay card settles, so
+    // the moderator's placeholder card lands below it.
     updateResearchProgressCard(e, p, g, 'done')
     hub?.setPendingGather(undefined)
     e.sessions.save()
-    wakeChatroomModerator(e, hubKey, wakeContent)
+    void relayP.then(() => { wakeChatroomModerator(e, hubKey, wakeContent) })
     console.info(`chatroom: gather complete; woke moderator with all replies (hub=${hubKey})`)
     return
   }
@@ -1112,8 +1118,10 @@ export function maybeAutoRelayRole(
   }
   session.setChatroomInFlight(false)
   void r.reconstructReplyCtx(hubKey).then(
-    (hubRctx) => {
-      relayRoleReply(hubRctx)
+    async (hubRctx) => {
+      // The relay card must land before the wake's placeholder card, or the
+      // two sends race at the chat tail for the whole moderator turn.
+      await relayRoleReply(hubRctx)
       try {
         e.receiveMessage(p, {
           ...emptyMessage(),

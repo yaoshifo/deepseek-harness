@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { Engine } from '../../src/engine/engine.js'
 import { buildSummaryContext, toPlainTextForFallback } from '../../src/engine/send-helpers.js'
 import { newStreamPreview } from '../../src/streaming.js'
-import { createStubAgent } from '../stubs/engine-stubs.js'
+import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.js'
 import type { HistoryEntry, ProgressContent } from '../../src/core/types.js'
 import { previewText } from '../stubs/preview-content.js'
 
@@ -53,11 +53,17 @@ async function newSyncPreviewForFallback(mp: ReturnType<typeof createBumpPlatfor
 }
 
 describe('Engine bump routing', () => {
-  it('bumps only the bound session\'s preview', async () => {
+  /** Attach sp as the session's active preview (state.preview is the binding). */
+  function bindPreview(e: Engine, key: string, sp: ReturnType<typeof newStreamPreview>): void {
+    e.ensureInteractiveStateForQueueing(key, createStubPlatform('feishu'), 'ctx')
+    e.interactiveStates.get(key)!.preview = sp
+  }
+
+  it('bumps only the owning session\'s preview', async () => {
     const mp = createBumpPlatform()
     const sp = await newSyncPreviewForFallback(mp)
     const e = newEngine()
-    e.bindActivePreview(sp, 'feishu:oc_test')
+    bindPreview(e, 'feishu:oc_test', sp)
 
     e.bumpActivePreviewForSession('feishu:oc_test')
     await sleep(50)
@@ -70,12 +76,31 @@ describe('Engine bump routing', () => {
     expect(mp.nextID).toBe(before)
   })
 
+  it('concurrent sessions each bump their own preview (per-session routing)', async () => {
+    const mpA = createBumpPlatform()
+    const mpB = createBumpPlatform()
+    const spA = await newSyncPreviewForFallback(mpA)
+    const spB = await newSyncPreviewForFallback(mpB)
+    const e = newEngine()
+    bindPreview(e, 'feishu:oc_a', spA)
+    bindPreview(e, 'feishu:oc_b', spB)
+
+    e.bumpActivePreviewForSession('feishu:oc_a')
+    await sleep(50)
+    expect(mpA.nextID).toBeGreaterThanOrEqual(2)
+    expect(mpB.nextID).toBe(1) // B's stream did not lose its bump to A
+
+    e.bumpActivePreviewForSession('feishu:oc_b')
+    await sleep(50)
+    expect(mpB.nextID).toBeGreaterThanOrEqual(2)
+  })
+
   it('onChatChanged debounces rename + avatar into one bump', async () => {
     const e = newEngine()
     e.bumpDebounceInterval = 30
     const mp = createBumpPlatform()
     const sp = await newSyncPreviewForFallback(mp)
-    e.bindActivePreview(sp, 'feishu:oc_test')
+    bindPreview(e, 'feishu:oc_test', sp)
 
     e.onChatChanged('feishu:oc_test')
     e.onChatChanged('feishu:oc_test')
@@ -84,6 +109,24 @@ describe('Engine bump routing', () => {
     // One debounced bump: nextID 1→2 (not 3), exactly one delete.
     expect(mp.nextID).toBe(2)
     expect(mp.deleted.length).toBe(1)
+  })
+
+  it('onChatChanged debounce timers are per-session — neither chat eats the other', async () => {
+    const e = newEngine()
+    e.bumpDebounceInterval = 30
+    const mpA = createBumpPlatform()
+    const mpB = createBumpPlatform()
+    const spA = await newSyncPreviewForFallback(mpA)
+    const spB = await newSyncPreviewForFallback(mpB)
+    bindPreview(e, 'feishu:oc_a', spA)
+    bindPreview(e, 'feishu:oc_b', spB)
+
+    e.onChatChanged('feishu:oc_a')
+    e.onChatChanged('feishu:oc_b')
+    await sleep(150)
+
+    expect(mpA.nextID).toBe(2)
+    expect(mpB.nextID).toBe(2)
   })
 })
 

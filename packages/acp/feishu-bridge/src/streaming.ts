@@ -1154,6 +1154,28 @@ export class StreamPreview {
   }
 
   /**
+   * The card's platform message id when the handle carries one (Feishu
+   * handles do), else ''. Lets the engine match a recall event to this card
+   * without knowing the handle type.
+   */
+  cardMessageID(): string {
+    const h = this.previewMsgID as { messageID?: unknown } | undefined
+    return typeof h?.messageID === 'string' ? h.messageID : ''
+  }
+
+  /**
+   * The user recalled the card: stop updating and tail-guarding it. The card
+   * is already gone platform-side, so unlike discard() there is no cleanup
+   * send — and the guard must not resurrect what the user deleted.
+   */
+  async markRecalled(): Promise<void> {
+    await this.locked(() => {
+      this.degraded = true
+      this.clearTailGuardLocked()
+    })
+  }
+
+  /**
    * Whether the preview was delivered via in-place UpdateMessage at least
    * once — the user then only got the initial push, so a done reaction is
    * worth sending.

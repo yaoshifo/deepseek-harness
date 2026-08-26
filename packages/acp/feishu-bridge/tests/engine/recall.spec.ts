@@ -9,11 +9,12 @@
  * @module dsh-feishu-bridge/tests-recall
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState, type QueuedMessage } from '../../src/engine/engine.js'
-import { cancelQueuedByMessageID } from '../../src/engine/recall.js'
+import { cancelQueuedByMessageID, markRecalledPreview } from '../../src/engine/recall.js'
 import type { Platform } from '../../src/core/types.js'
 import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
+import { newStreamPreview } from '../../src/streaming.js'
 
 function newEngine(): { e: Engine; p: StubPlatform } {
   const p = createStubPlatform('test')
@@ -104,5 +105,50 @@ describe('cancelQueuedByMessageID', () => {
     expect(cancelQueuedByMessageID(e, 'om_target')).toBe('cancelled')
     expect(other.pendingMessages.length).toBe(1)
     expect(target.pendingMessages.length).toBe(0)
+  })
+})
+
+describe('markRecalledPreview', () => {
+  /** A started preview whose handle carries a Feishu-style message id. */
+  function startedPreview(p: Platform): ReturnType<typeof newStreamPreview> {
+    const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500, tailCheckMs: 0 }
+    const starter = Object.assign(p, {
+      async sendPreviewStart(): Promise<unknown> {
+        return { messageID: 'om_card' }
+      },
+      async updateMessage(): Promise<void> {},
+      async deletePreviewMessage(): Promise<void> {},
+    })
+    const sp = newStreamPreview(cfg, starter, 'ctx', undefined, undefined, 'test:chat-1:user-1')
+    return sp
+  }
+
+  it('marks the matching preview recalled (degraded, guard stopped)', async () => {
+    const { e, p } = newEngine()
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    const sp = startedPreview(p)
+    await sp.appendText('working')
+    state.preview = sp
+    e.interactiveStates.set('test:chat-1:user-1', state)
+    const recalled = vi.spyOn(sp, 'markRecalled')
+
+    markRecalledPreview(e, 'om_card')
+    await recalled.mock.results[0]?.value
+
+    expect(recalled).toHaveBeenCalledTimes(1)
+    expect(sp.degraded).toBe(true)
+    expect(sp.tailTimer).toBeUndefined()
+  })
+
+  it('is a no-op for ids no active preview holds', () => {
+    const { e, p } = newEngine()
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set('test:chat-1:user-1', state)
+
+    expect(() => { markRecalledPreview(e, 'om_none') }).not.toThrow()
   })
 })

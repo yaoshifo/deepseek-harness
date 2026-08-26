@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-26-feishu-bridge-preview-tail-guard.md
-2026-08-26-feishu-bridge-preview-tail-guard.md: bb0b5edc7948c64d2befcd8e0f63a0ec05ebd525
-2026-08-26-feishu-bridge-preview-tail-guard.zh.md: 969d75c8ece89c92c14ae87ed93baf167ad5e1e3
+2026-08-26-feishu-bridge-preview-tail-guard.md: e2769a7a2ba248f45e1bc6d7b76efee98b5b1e70
+2026-08-26-feishu-bridge-preview-tail-guard.zh.md: ee6c787626f8a84a4a38af9e9c5c26bdbd46538b
