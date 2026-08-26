@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-27-feishu-bridge-blocking-gather-and-failure-settlement.md
-2026-08-27-feishu-bridge-blocking-gather-and-failure-settlement.md: 973951443c5050cb1b14a8c2aa5145d4e1f5a97f
-2026-08-27-feishu-bridge-blocking-gather-and-failure-settlement.zh.md: c4b0f797628e4d0437e334f070c055c460bdf0be
+2026-08-27-feishu-bridge-blocking-gather-and-failure-settlement.md: 6dd5d6e642c9267fce46b9d1d94c92a38b5cd0c5
+2026-08-27-feishu-bridge-blocking-gather-and-failure-settlement.zh.md: 17667f133cff240cb0f17c9d1ad20b682d2c2e22

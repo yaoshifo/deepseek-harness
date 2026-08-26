@@ -23,6 +23,7 @@ B4 之后，`feishu_bridge_subtask` 的 spawn 非阻塞且没有飞书群：父�
 - 典型派发流（spawn N → gather → 综合）在一个模型请求内完成：结果作为工具结果到达，无唤醒往返，失败信息包含在内。
 - 等待中的父回合被占用至 gather 超时（默认 20 分钟，远低于 60 分钟硬回合上限）；逃生口是不调 gather——保持逐条唤醒的增量模式。
 - 阻塞等待是内存态：等待中途重启丢失 waiter，后续汇报回落逐条唤醒。
+- 上游跟踪靠接缝、不靠工具：`packages/subagent` 的 runtime 级升级随 `dsh-sync-upstream` 合并后，经 `asContinuableDelegator` / `subagent/end` / session 事件投影作用于桥，零桥侧改动；接口重构会在 sync PR 的 typecheck 大声失败，顺手修复。每次 sync 的唯一手动习惯：diff 触及 `packages/subagent/tool-*` 时，review 是否有工具层改进值得移植进 `feishu_bridge_subtask` 的契约。通用接缝改进（如 diagnostic 字段）是推回上游的候选——推一个，分叉面小一块。
 - 失败词汇由 `subtask_settlement_*` i18n 键持有；`buildProjectAssembly` 引擎自动检测语言，引擎级测试钉 en 文案，一个 REAL 用例钉组合链路。
 
 由 `tests/engine/engine-subtask.spec.ts`（阻塞 gather 三态、结算词汇、群路径失败前缀、超时通知守卫）、`tests/tools/subtask-tool.spec.ts`（路由）与 `tests/engine/native-subtask-assembly.spec.ts` 的两个 REAL 组合用例（无唤醒轮的回合内 resolve；max-tokens 失败语义端到端）钉住。
