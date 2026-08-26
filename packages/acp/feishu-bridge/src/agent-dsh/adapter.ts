@@ -103,7 +103,7 @@ export interface DshAgentHandleLike {
 export interface DshCreateOptionsLike {
   sessionId?: unknown
   resumeSessionId?: unknown
-  meta?: { cwd?: string; parentSession?: unknown; seedLength?: number }
+  meta?: { cwd?: string; parentSession?: unknown; seedLength?: number; origin?: 'subagent' | 'oneshot' }
   /** Fork seed: the parent's completed-turn prefix (see startSession). */
   seed?: readonly SessionEvent[]
   agentOptions?: { provider?: string; model?: string; reasoningEffort?: string }
@@ -548,6 +548,14 @@ const subagentLineageMaxDepth = 8
 /** Lightweight-query budget (Go LightweightQuery: 90s). */
 export const lightweightQueryTimeoutMs = 90_000
 
+/**
+ * Complete-replacement system prompt for bare lightweight queries (group
+ * naming, predict-next, turn summary, monitor triage): the query's whole
+ * contract lives in its prompt, so the assembled baseline (tool-usage
+ * discipline, memory strategy) is replaced by this single line.
+ */
+const bareQuerySystemPrompt = '你是严格按照用户消息本身完成任务的助手：只依据消息内给出的规则与内容作答，只输出该消息要求的内容。'
+
 /** Render-session fork budget (Go dsh RenderQuery: 15 minutes). */
 export const renderQueryTimeoutMs = 15 * 60_000
 
@@ -583,21 +591,40 @@ export function renderReasoningLevel(effort: string): string {
 /**
  * Creation-time setup hook registering a complete-replacement system prompt
  * (the same `complete: true` section mechanism as the chatroom bare persona).
- * Workspace-instruction injection is suppressed alongside it — the render
- * session is a fresh fork whose task facts arrive only in its prompt, so
- * AGENTS.md/CLAUDE.md reminders carry no task information. A future
+ * Workspace-instruction injection is suppressed alongside it — a complete-
+ * prompt session is a fresh fork whose task facts arrive only in its prompt,
+ * so AGENTS.md/CLAUDE.md reminders carry no task information. A future
  * complete-prompt caller that does want instructions should move the
- * suppression into the render-specific call site.
+ * suppression into its own call site. An optional tool filter masks the
+ * session's global tools: `deny: ['skill']` drops the skill catalog and its
+ * loader with it, `allow: []` masks every tool for text-only queries.
  */
-function buildCompletePromptSetup(systemPrompt: string): import('@deepseek-ai/dsh-agent').AgentSetup {
+function buildCompletePromptSetup(
+  systemPrompt: string,
+  opts: { name?: string; toolFilter?: { allow?: readonly string[]; deny?: readonly string[] } } = {},
+): import('@deepseek-ai/dsh-agent').AgentSetup {
   return (agentCtx) => {
     const instructionSvc = agentCtx.get('agentInstructions') as { suppress(): () => void } | undefined
     instructionSvc?.suppress()
+    const toolsSvc = agentCtx.get('tools') as DshToolsLike | undefined
+    const filter = opts.toolFilter
+    if (toolsSvc !== undefined && filter !== undefined) {
+      // restrict() throws on names unknown to this scope, so absent deny
+      // entries (e.g. `skill` without the skill plugin composed) drop out
+      // instead of failing session creation.
+      const deny = filter.deny?.filter(name => toolsSvc.get(name) !== undefined) ?? []
+      if (filter.allow !== undefined || deny.length > 0) {
+        toolsSvc.restrict({
+          ...(filter.allow !== undefined ? { allow: filter.allow } : {}),
+          ...(deny.length > 0 ? { deny } : {}),
+        })
+      }
+    }
     const promptSvc = agentCtx.get('systemPrompt') as
       | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
       | undefined
     if (promptSvc === undefined) return
-    promptSvc.section({ name: 'feishu-bridge-render-session', order: 0, text: systemPrompt, complete: true })
+    promptSvc.section({ name: opts.name ?? 'feishu-bridge-render-session', order: 0, text: systemPrompt, complete: true })
   }
 }
 
@@ -1147,9 +1174,14 @@ export class DshAgentAdapter {
   /**
    * ForkQuerierWithProvider: a standalone one-shot turn without resuming
    * anything (Go LightweightQuery — group naming, predict-next): the context
-   * lives in the prompt itself. Light text output needs no deep reasoning
-   * (and thinking would eat most of the 90s budget), so the query runs at
-   * reasoningEffort 'low'.
+   * lives in the prompt itself. The query runs bare — session origin
+   * `oneshot` keeps memory-index injection and LLM title generation off, the
+   * complete-prompt replacement drops the assembled system prompt and
+   * workspace instructions, and `allow: []` masks every tool (no tool is
+   * needed, and the skill catalog goes with them) — so cwd-derived context
+   * cannot leak into or skew the answer. Light text output needs no deep
+   * reasoning (and thinking would eat most of the 90s budget), so the query
+   * runs at reasoningEffort 'low'.
    *
    * @param prompt - the standalone question; all context lives in the prompt itself.
    * @param providerName - the named provider route to run on.
@@ -1161,6 +1193,10 @@ export class DshAgentAdapter {
       prompt,
       providerName,
       reasoning: 'low',
+      origin: 'oneshot',
+      systemPromptComplete: bareQuerySystemPrompt,
+      systemPromptName: 'feishu-bridge-lightweight-query',
+      toolFilter: { allow: [] },
       ...(signal !== undefined ? { signal } : {}),
       timeoutMs: lightweightQueryTimeoutMs,
     })
@@ -1213,12 +1249,15 @@ export class DshAgentAdapter {
   /**
    * RenderQuerier (Go dsh RenderQuery): an isolated render session — fresh
    * session (no resume), whole-prompt replacement via the setup hook, full
-   * tools, and no workspace-instruction injection (suppressed with the prompt
-   * replacement; the render facts travel only in the prompt). The render
-   * one-shot does not need deep reasoning, so an unset effort defaults to
-   * 'low' (an unset effort once made renders burn ~21k
-   * thinking chars for an 84-char artifact). The 15m budget mirrors the Go
-   * fork.
+   * tools except the global `skill` tool (the render skill body is baked into
+   * the system prompt, so the `<available_skills>` catalog and its loader are
+   * dropped instead), and no workspace-instruction injection (suppressed with
+   * the prompt replacement; the render facts travel only in the prompt).
+   * Session origin `oneshot` also keeps memory-index injection and LLM title
+   * generation off. The render one-shot does not need deep reasoning, so an
+   * unset effort defaults to 'low' (an unset effort once made renders burn
+   * ~21k thinking chars for an 84-char artifact). The 15m budget mirrors the
+   * Go fork.
    *
    * @param prompt - the render task prompt.
    * @param providerName - the named provider route to run on.
@@ -1236,6 +1275,8 @@ export class DshAgentAdapter {
       prompt,
       providerName,
       systemPromptComplete: systemPrompt,
+      origin: 'oneshot',
+      toolFilter: { deny: ['skill'] },
       reasoning: renderReasoningLevel(this.renderEffort),
       ...(signal !== undefined ? { signal } : {}),
       timeoutMs: renderQueryTimeoutMs,
@@ -1326,6 +1367,12 @@ export class DshAgentAdapter {
     signal?: AbortSignal
     timeoutMs?: number
     systemPromptComplete?: string
+    /** Section name for the complete-replacement prompt (default: render). */
+    systemPromptName?: string
+    /** Tool filter applied by the setup hook alongside the prompt replacement. */
+    toolFilter?: { allow?: readonly string[]; deny?: readonly string[] }
+    /** Marks the session as a self-contained side query: no ambient context injection, no LLM title. */
+    origin?: 'oneshot'
   }): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? oneShotDefaultTimeoutMs
     const ctl = new AbortController()
@@ -1334,15 +1381,26 @@ export class DshAgentAdapter {
     const timer = setTimeout(() => { ctl.abort() }, timeoutMs)
 
     // A complete-replacement system prompt rides the creation-time setup hook
-    // (plan D3, same mechanism as the chatroom bare persona): the render
-    // session's prompt replaces the whole system prompt, not a section.
-    const setup = withMcpMask(
-      opts.systemPromptComplete !== undefined ? buildCompletePromptSetup(opts.systemPromptComplete) : undefined,
-      this.cfg.mcpServers,
-    )
+    // (plan D3, same mechanism as the chatroom bare persona): the session's
+    // prompt replaces the whole system prompt, not a section, and the hook
+    // carries the caller's tool filter with it.
+    const innerSetup = opts.systemPromptComplete !== undefined
+      ? buildCompletePromptSetup(opts.systemPromptComplete, {
+        ...(opts.systemPromptName !== undefined ? { name: opts.systemPromptName } : {}),
+        ...(opts.toolFilter !== undefined ? { toolFilter: opts.toolFilter } : {}),
+      })
+      : undefined
+    // A tool filter with an empty allow list already masks every tool (MCP
+    // servers included), so the MCP mask wrap would add a redundant second
+    // restriction on the same scope.
+    const denyAll = opts.toolFilter?.allow !== undefined && opts.toolFilter.allow.length === 0
+    const setup = denyAll ? innerSetup : withMcpMask(innerSetup, this.cfg.mcpServers)
     const handle = await this.ctx.agents.create({
       sessionId: SessionId(freshNativeSessionId()),
-      meta: { cwd: opts.workDir !== undefined && opts.workDir !== '' ? opts.workDir : this.cfg.cwd },
+      meta: {
+        cwd: opts.workDir !== undefined && opts.workDir !== '' ? opts.workDir : this.cfg.cwd,
+        ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+      },
       ...(opts.seed !== undefined && opts.seed.length > 0 ? { seed: opts.seed } : {}),
       ...(setup !== undefined ? { setup } : {}),
       agentOptions: this.agentOptionsForQuery(opts.providerName ?? '', opts.reasoning ?? ''),

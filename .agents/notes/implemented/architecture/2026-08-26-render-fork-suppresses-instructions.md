@@ -12,7 +12,7 @@ The injected files are static workspace rules (coding conventions, git policy, c
 
 ## Decision
 
-`buildCompletePromptSetup` (the setup hook shared by every `complete: true` registration, currently render-only) calls `agentInstructions.suppress()` alongside registering the section, mirroring the chatroom bare persona in the same file. The render session keeps its full tools — it needs `write` to place the body fragment, so the chatroom's `skill` deny does not ride along. Suppression registers an effect on the render agent's own scope and unwinds when the session is disposed; baseline injection and fs-touch-driven dynamic updates both stay silent.
+`buildCompletePromptSetup` (the setup hook shared by every `complete: true` registration) calls `agentInstructions.suppress()` alongside registering the section, mirroring the chatroom bare persona in the same file. The render session keeps its working tools — it needs `write` to place the body fragment; its only tool restriction is the global `skill` deny that drops the `<available_skills>` catalog (the render skill body is baked into the system prompt; see [oneshot bare side queries](2026-08-26-oneshot-origin-bare-side-queries.md)). Suppression registers an effect on the render agent's own scope and unwinds when the session is disposed; baseline injection and fs-touch-driven dynamic updates both stay silent.
 
 ## Alternatives considered
 
@@ -24,4 +24,4 @@ The injected files are static workspace rules (coding conventions, git policy, c
 
 - Render requests shrink by the workspace-instruction baseline (~49 KB / ~12k tokens on the live profile: 8 KB global AGENTS.md + 41 KB project CLAUDE.md), with no content loss — the render output is a pure function of the render system prompt and the task prompt.
 - Render sessions no longer see project coding conventions at all; if a future render skill wants project domain knowledge, it must be passed explicitly in the prompt rather than discovered from cwd.
-- The render fork's cwd still defaults to the adapter's configured project workdir (`oneShotQuery` uses `cfg.cwd`), which now only affects tool execution and temp-path layout, not instruction discovery.
+- The render fork's cwd still defaults to the adapter's configured project workdir (`oneShotQuery` uses `cfg.cwd`), which now only affects tool execution and temp-path layout, not instruction or memory discovery (`origin: 'oneshot'` keeps the memory index off too).

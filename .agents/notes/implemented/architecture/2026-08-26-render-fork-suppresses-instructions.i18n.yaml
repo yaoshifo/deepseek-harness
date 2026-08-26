@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-26-render-fork-suppresses-instructions.md
-2026-08-26-render-fork-suppresses-instructions.md: 26ef03155caeee0cdadaceee38e9c5eba1fd43f1
-2026-08-26-render-fork-suppresses-instructions.zh.md: fec61fd61cddbbf11cf4531ef91846c347c48a9d
+2026-08-26-render-fork-suppresses-instructions.md: fa412286aab823226a880807c4c557a74f41bc4e
+2026-08-26-render-fork-suppresses-instructions.zh.md: a3d43b60ac6027fa9055cd93c05de91c9b659ccf

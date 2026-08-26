@@ -12,7 +12,7 @@ plan/reply 渲染 fork（`renderQuery` → `oneShotQuery`）通过 `complete: tr
 
 ## Decision
 
-`buildCompletePromptSetup`（当前所有 `complete: true` 注册共享的 setup hook，目前仅渲染使用）在注册 section 之外调用 `agentInstructions.suppress()`，与同文件中 chatroom bare persona 的做法对齐。渲染会话保留完整工具——它需要 `write` 写 body 片段，所以 chatroom 的 `skill` 封禁不随行。suppression 在渲染 agent 自己的 scope 上注册 effect，随会话 dispose 自动撤销；baseline 注入与 fs 触摸驱动的动态更新都保持静默。
+`buildCompletePromptSetup`（所有 `complete: true` 注册共享的 setup hook）在注册 section 之外调用 `agentInstructions.suppress()`，与同文件中 chatroom bare persona 的做法对齐。渲染会话保留其工作工具——它需要 `write` 写 body 片段；唯一的工具限制是 deny 全局 `skill` 工具、随之去掉 `<available_skills>` 清单（渲染 skill 正文已烤进 system prompt；见 [oneshot bare 旁路查询](2026-08-26-oneshot-origin-bare-side-queries.zh.md)）。suppression 在渲染 agent 自己的 scope 上注册 effect，随会话 dispose 自动撤销；baseline 注入与 fs 触摸驱动的动态更新都保持静默。
 
 ## Alternatives considered
 
@@ -24,4 +24,4 @@ plan/reply 渲染 fork（`renderQuery` → `oneShotQuery`）通过 `complete: tr
 
 - 渲染请求缩小 workspace 指令 baseline（live profile 上约 49 KB / 1.2 万 token：8 KB 全局 AGENTS.md + 41 KB 项目 CLAUDE.md），零内容损失——渲染输出是渲染 system prompt 与任务 prompt 的纯函数。
 - 渲染会话完全看不到项目编码约定；若未来渲染 skill 需要项目领域知识，必须在 prompt 里显式传入，而不是从 cwd 发现。
-- 渲染 fork 的 cwd 仍默认 adapter 配置的项目 workdir（`oneShotQuery` 用 `cfg.cwd`），现在只影响工具执行与临时路径布局，不再影响指令发现。
+- 渲染 fork 的 cwd 仍默认 adapter 配置的项目 workdir（`oneShotQuery` 用 `cfg.cwd`），现在只影响工具执行与临时路径布局，不再影响指令或记忆发现（`origin: 'oneshot'` 同样挡掉了记忆索引）。
