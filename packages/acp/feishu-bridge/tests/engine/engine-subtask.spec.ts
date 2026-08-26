@@ -1462,6 +1462,52 @@ describe('gather with native children', () => {
   })
 })
 
+describe('gather expected-set membership', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  it('waits only on subtask children; chatroom role groups never join (2026-08-26 oc_b46da incident)', () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+    e.sessions.getOrCreateActive(parentKey)
+
+    // Live chatroom role group: parent = hub, no subtask depth; its replies
+    // settle through the chatroom relay, never the subtask report path.
+    const liveRole = e.sessions.getOrCreateActive('test:role-live')
+    liveRole.setParentSessionKey(parentKey)
+    liveRole.setChatroomHubKey(parentKey)
+    liveRole.setChatroomRoleName('hamming')
+    // Ended role group: chatroom teardown strips the role fields; the record
+    // keeps only parent = hub.
+    const endedRole = e.sessions.getOrCreateActive('test:role-ended')
+    endedRole.setParentSessionKey(parentKey)
+    // Group-path subtask children take depth parent+1 at spawn.
+    const child = e.sessions.getOrCreateActive('test:child-chat')
+    child.setParentSessionKey(parentKey)
+    child.setSubtaskDepth(1)
+    const doneChild = e.sessions.getOrCreateActive('test:child-done')
+    doneChild.setParentSessionKey(parentKey)
+    doneChild.setSubtaskDepth(1)
+    doneChild.setSubtaskReported(true)
+
+    e.gatherSubtasks(parentKey)
+    const g = e.sessions.getOrCreateActive(parentKey).getPendingSubtaskGather()
+    expect(g?.expected.size).toBe(1)
+    expect(g?.expected.has('test:child-chat')).toBe(true)
+  })
+
+  it('fails fast when only role groups hang off the parent', () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+    e.sessions.getOrCreateActive(parentKey)
+    const role = e.sessions.getOrCreateActive('test:role-live')
+    role.setParentSessionKey(parentKey)
+    role.setChatroomHubKey(parentKey)
+
+    expect(() => { e.gatherSubtasks(parentKey) }).toThrow()
+    expect(e.sessions.getOrCreateActive(parentKey).getPendingSubtaskGather()).toBeUndefined()
+  })
+})
+
 describe('pending native children visibility', () => {
   const parentKey = 'test:parent-chat:u1'
 

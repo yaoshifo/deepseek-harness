@@ -6833,6 +6833,13 @@ export class Engine {
    * Install a fan-in barrier on the parent session so reports from its
    * in-flight children accumulate and the parent is woken EXACTLY ONCE with
    * the full set (or partial on timeout) (Go GatherSubtasks).
+   *
+   * The expected set holds only children that can settle the barrier: every
+   * subtask report path requires subtask depth, and chatroom role groups
+   * hang off their hub with parent set but no depth — their replies settle
+   * through the chatroom relay, so counting them could only end at the
+   * gather timeout (2026-08-26 oc_b46da incident).
+   *
    * @param parentSessionKey - Session key of the gathering parent.
    */
   gatherSubtasks(parentSessionKey: string): void {
@@ -6846,6 +6853,7 @@ export class Engine {
     const g = new SubtaskGather()
     for (const s of this.sessions.allSessions()) {
       if (s.getParentSessionKey() !== parentSessionKey) continue
+      if (s.getSubtaskDepth() <= 0) continue
       if (s.getSubtaskReported()) continue
       const ck = idToKey[s.id] ?? ''
       if (ck === '') continue
