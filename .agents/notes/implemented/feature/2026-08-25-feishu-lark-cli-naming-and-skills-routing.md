@@ -26,7 +26,7 @@ The tool description now embeds the official progressive-disclosure workflow: be
 
 Every `lark-cli docs +fetch` mention in official skill text now maps to a tool call by name. Cost: the per-tool "grant all" permission memory is keyed by `(agent, tool)`, so users re-approve the renamed tool once; historical session logs replay unchanged (they record the name that was actually used). The rename is a documented convention exception — if dsh ever gains a tool-name format check, `lark-cli` needs an explicit allowance.
 
-Known limitation: skill guides express local-file arguments as `@./xxx` relative to the lark-cli subprocess CWD, while the tool spawns lark-cli from the daemon's CWD; operations that pass local file paths must resolve them absolutely first. lark-cli's per-run skills notifier stays suppressed (`LARKSUITE_CLI_NO_SKILLS_NOTIFIER`) because the description now owns the routing hint.
+The child runs in the session's work dir (`Engine.sessionWorkDir`, the same base the send tool uses for relative attachment paths), so skill guides' `@./xxx` local-file arguments resolve against the agent's working directory. lark-cli's per-run skills notifier stays suppressed (`LARKSUITE_CLI_NO_SKILLS_NOTIFIER`) because the description now owns the routing hint.
 
 ## Testing
 

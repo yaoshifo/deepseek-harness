@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-25-feishu-lark-cli-naming-and-skills-routing.md
-2026-08-25-feishu-lark-cli-naming-and-skills-routing.md: 1a6d24d8f5b977fe324715e1364a7fd9247d5d0c
-2026-08-25-feishu-lark-cli-naming-and-skills-routing.zh.md: b213019bc414f0bf74a7f3329e5a9c000d97b169
+2026-08-25-feishu-lark-cli-naming-and-skills-routing.md: 291fce63e622f017f6313247973ce3b619a0961a
+2026-08-25-feishu-lark-cli-naming-and-skills-routing.zh.md: 215c51aaaad166ddafb319cfd39576d71ce83c27

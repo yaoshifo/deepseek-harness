@@ -238,15 +238,15 @@ describe('extractResourceToken / extractResourceType', () => {
 /** Recording spawn + fetch double; version cache IO intentionally absent (check skipped). */
 function fakeDeps(overrides: Partial<{ spawn: LarkRunnerDeps['spawn']; fetch: LarkRunnerDeps['fetch'] }> = {}): {
   deps: LarkRunnerDeps
-  spawns: Array<{ bin: string; argv: string[]; env: Record<string, string> }>
+  spawns: Array<{ bin: string; argv: string[]; env: Record<string, string>; cwd?: string }>
   fetches: Array<{ url: string; init: RequestInit | undefined }>
 } {
-  const spawns: Array<{ bin: string; argv: string[]; env: Record<string, string> }> = []
+  const spawns: Array<{ bin: string; argv: string[]; env: Record<string, string>; cwd?: string }> = []
   const fetches: Array<{ url: string; init: RequestInit | undefined }> = []
   const deps: LarkRunnerDeps = {
     baseEnv: { PATH: '/usr/bin', HOME: '/home/u' },
     async spawn(bin, argv, opts) {
-      spawns.push({ bin, argv, env: opts.env })
+      spawns.push({ bin, argv, env: opts.env, ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}) })
       if (overrides.spawn !== undefined) return overrides.spawn(bin, argv, opts)
       const r: LarkChildResult = { stdout: 'ok', stderr: '', code: 0 }
       return r
@@ -294,6 +294,20 @@ describe('runLarkInvocation', () => {
     expect(env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN).toBeUndefined()
     expect(env.LARKSUITE_CLI_APP_ID).toBeUndefined()
     expect(env.PATH).toBe('/usr/bin')
+  })
+
+  it('passes cwd through to the child in bot and user mode; omitting it leaves no cwd', async () => {
+    const bot = fakeDeps()
+    await runLarkInvocation(creds, ['docs', '+search'], { deps: bot.deps, cwd: '/tmp/wd' })
+    expect(bot.spawns[0]?.cwd).toBe('/tmp/wd')
+
+    const user = fakeDeps()
+    await runLarkInvocation(creds, ['docs', '+search', '--as', 'user'], { deps: user.deps, cwd: '/tmp/wd' })
+    expect(user.spawns[0]?.cwd).toBe('/tmp/wd')
+
+    const none = fakeDeps()
+    await runLarkInvocation(creds, ['docs', '+search'], { deps: none.deps })
+    expect(none.spawns[0]?.cwd).toBeUndefined()
   })
 
   it('auth subcommands route through the user path without a TAT fetch', async () => {
@@ -451,6 +465,33 @@ describe('lark-cli registration', () => {
     expect(result.isError).toBe(false)
     expect(spawns).toHaveLength(1)
     expect(spawns[0]?.env?.LARKSUITE_CLI_APP_ID).toBe('cli_app')
+  })
+
+  it('runs the child in the session work dir so `@./xxx` skill-guide paths resolve', async () => {
+    // The Engine's agent carries the base work dir (agentWorkDir()); a session
+    // without a /dir override resolves to it.
+    const engine = new Engine(
+      'test',
+      Object.assign(createStubAgent(), { getWorkDir: () => '/tmp/lark-wd' }),
+      [createStubPlatform()],
+      '',
+      'en',
+    )
+    const { deps, spawns } = fakeDeps()
+    const test = await harness(() => ({ engine, sessionKey: 'test:chat', creds }), deps)
+    const result = await execute(test, { args: ['docs', '+create', '--doc-format', 'markdown'] })
+    expect(result.isError).toBe(false)
+    expect(spawns).toHaveLength(1)
+    expect(spawns[0]?.cwd).toBe('/tmp/lark-wd')
+  })
+
+  it('omits cwd when the session has no work dir', async () => {
+    const engine = new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')
+    const { deps, spawns } = fakeDeps()
+    const test = await harness(() => ({ engine, sessionKey: 'test:chat', creds }), deps)
+    await execute(test, { args: ['docs', '+search'] })
+    expect(spawns).toHaveLength(1)
+    expect(spawns[0]?.cwd).toBeUndefined()
   })
 
   it('version gate reads the mtime-keyed cache and probes on miss', async () => {

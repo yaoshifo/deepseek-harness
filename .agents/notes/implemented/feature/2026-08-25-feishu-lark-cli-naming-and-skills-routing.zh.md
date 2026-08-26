@@ -26,7 +26,7 @@ Status: implemented
 
 官方 skill 文本里每处 `lark-cli docs +fetch` 现在都按名字直接映射到工具调用。代价：「全准」的按工具权限记忆以 `(agent, tool)` 为键，用户需对改名后的工具重新批准一次；历史会话日志重放不受影响（记录的是当时实际使用的名字）。改名是有记录的惯例例外——若 dsh 日后引入工具名格式校验，`lark-cli` 需要显式豁免。
 
-已知限制：skill 指引以 `@./xxx` 表达本地文件参数、以 lark-cli 子进程 CWD 为基准，而工具从守护进程 CWD spawn lark-cli；传本地文件路径的操作必须先解析为绝对路径。lark-cli 的每次运行 skills 提示器保持抑制（`LARKSUITE_CLI_NO_SKILLS_NOTIFIER`），因为路由提示已由 description 承担。
+子进程运行在会话工作目录中（`Engine.sessionWorkDir`，与 send 工具解析相对附件路径同基准），skill 指引的 `@./xxx` 本地文件参数因此按 agent 工作目录解析。lark-cli 的每次运行 skills 提示器保持抑制（`LARKSUITE_CLI_NO_SKILLS_NOTIFIER`），因为路由提示已由 description 承担。
 
 ## Testing
 

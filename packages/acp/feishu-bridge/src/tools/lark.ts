@@ -51,7 +51,7 @@ export interface LarkChildResult {
 
 /** Injectable process/IO surface so tests never spawn a real lark-cli. */
 export interface LarkRunnerDeps {
-  spawn(bin: string, argv: string[], opts: { env: Record<string, string> }): Promise<LarkChildResult>
+  spawn(bin: string, argv: string[], opts: { env: Record<string, string>; cwd?: string }): Promise<LarkChildResult>
   fetch(url: string, init?: RequestInit): Promise<Response>
   stat?(path: string): Promise<{ mtimeMs: number } | undefined>
   readFile?(path: string): Promise<string | undefined>
@@ -428,13 +428,15 @@ function isCreateCommand(args: string[]): boolean {
  *
  * @param creds - The project's bot credentials.
  * @param args - The lark-cli argument tokens the model passed in.
- * @param opts - Injectable runner deps plus the optional dataDir backing the version cache.
+ * @param opts - Injectable runner deps, the optional dataDir backing the version cache, and the optional
+ *  session work dir the child runs in (lark-cli skill guides express local-file arguments as `@./xxx`
+ *  relative to the child's CWD).
  * @returns The combined child output (stdout, plus stderr when non-empty) as the model-facing message.
  */
 export async function runLarkInvocation(
   creds: LarkCreds,
   args: string[],
-  opts: { dataDir?: string; deps: LarkRunnerDeps },
+  opts: { dataDir?: string; deps: LarkRunnerDeps; cwd?: string },
 ): Promise<string> {
   if (args.length === 0) throw new Error('lark-cli: args must be a non-empty lark-cli subcommand')
 
@@ -444,6 +446,8 @@ export async function runLarkInvocation(
     if (v !== undefined) baseEnv[k] = v
   }
   Object.assign(baseEnv, notifierSuppressionEnv)
+  const childOpts = (env: Record<string, string>): { env: Record<string, string>; cwd?: string } =>
+    opts.cwd === undefined ? { env } : { env, cwd: opts.cwd }
 
   await checkLarkCLIVersion(opts.dataDir, deps, baseEnv)
 
@@ -471,7 +475,7 @@ export async function runLarkInvocation(
     } else {
       childArgs = ['--profile', creds.appId, ...args]
     }
-    const child = await deps.spawn('lark-cli', childArgs, { env: sanitizedChildEnv(baseEnv) })
+    const child = await deps.spawn('lark-cli', childArgs, childOpts(sanitizedChildEnv(baseEnv)))
     return childOutput(child)
   }
 
@@ -486,7 +490,7 @@ export async function runLarkInvocation(
   }
 
   if (isCreateCommand(args)) {
-    const child = await deps.spawn('lark-cli', args, { env })
+    const child = await deps.spawn('lark-cli', args, childOpts(env))
     const output = childOutput(child)
     if (child.code === 0) {
       // Auto-grant org visibility after creation; a missing drive scope is
@@ -500,7 +504,7 @@ export async function runLarkInvocation(
     return output
   }
 
-  const child = await deps.spawn('lark-cli', args, { env })
+  const child = await deps.spawn('lark-cli', args, childOpts(env))
   return childOutput(child)
 }
 
@@ -679,9 +683,14 @@ export function registerLarkTool(ctx: Context, route: LarkAgentRouter, deps?: La
       if (target === undefined) {
         throw new Error('lark-cli: the calling session is not owned by a feishu-bridge project')
       }
+      // lark-cli skill guides express local-file arguments as `@./xxx` relative
+      // to the child's CWD — run the child in the session's work dir, the same
+      // resolution base the send tool uses for relative attachment paths.
+      const cwd = target.engine.sessionWorkDir(target.sessionKey)
       const message = await runLarkInvocation(target.creds, args.args, {
         deps: runnerDeps,
         ...(dataDir !== undefined ? { dataDir } : {}),
+        ...(cwd !== '' ? { cwd } : {}),
       })
       return { status: 'ok' as const, message }
     },
@@ -700,6 +709,7 @@ export function defaultLarkDeps(): LarkRunnerDeps {
       try {
         const r = (await execFileAsync(bin, argv, {
           env: opts.env,
+          ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
           encoding: 'utf8',
           maxBuffer: 16 * 1024 * 1024,
           windowsHide: true,
