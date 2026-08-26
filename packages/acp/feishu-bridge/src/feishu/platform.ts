@@ -375,11 +375,14 @@ export class FeishuPreviewHandle {
   readonly chatID: string
   /** Session the preview card belongs to. */
   readonly sessionKey: string
+  /** True when the card was posted as a thread reply; the root-chat tail is meaningless for it. */
+  readonly thread: boolean
 
-  constructor(messageID: string, chatID: string, sessionKey: string) {
+  constructor(messageID: string, chatID: string, sessionKey: string, thread = false) {
     this.messageID = messageID
     this.chatID = chatID
     this.sessionKey = sessionKey
+    this.thread = thread
   }
 
   /**
@@ -1806,7 +1809,7 @@ export class FeishuPlatform implements Platform {
     if (msgID === '') throw new Error('feishu: send preview: no message ID returned')
 
     this.lastProgressCard.set(msgID, preButtonJSON)
-    return new FeishuPreviewHandle(msgID, rc.chatID, rc.sessionKey)
+    return new FeishuPreviewHandle(msgID, rc.chatID, rc.sessionKey, this.shouldReplyInThread(rc))
   }
 
   /**
@@ -1905,6 +1908,23 @@ export class FeishuPlatform implements Platform {
     const boundDelete = client.delete?.bind(client)
     if (boundDelete === undefined) throw new ErrNotSupported('feishu client without delete support')
     await this.withRetry('delete preview message', () => boundDelete({ messageId: h.messageID }))
+  }
+
+  /**
+   * Verify the preview card is still its chat's newest message (PreviewTailProber
+   * probe): any message that pushes it off the tail — engine cards, human
+   * messages, system notices, other bots — is detected here regardless of how
+   * it was sent. Thread-isolated cards live inside a topic, where the root
+   * chat's tail is meaningless, so they always report latest.
+   * @param previewHandle - Preview handle from sendPreviewStart.
+   * @returns True when the card is the chat's newest message (or thread-isolated).
+   */
+  async previewIsLatest(previewHandle: unknown): Promise<boolean> {
+    const h = requirePreviewHandle(previewHandle)
+    if (h.thread) return true
+    const items = await this.listMessages(h.chatID, 0, 'ByCreateTimeDesc', 1)
+    const newest = items[0]
+    return newest === undefined || newest.messageId === h.messageID
   }
 
   /**

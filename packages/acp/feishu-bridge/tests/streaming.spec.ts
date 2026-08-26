@@ -1306,6 +1306,123 @@ describe('bump to end', () => {
   })
 })
 
+describe('tail guard', () => {
+  /** PreviewTailProber whose verdict is steered per test. */
+  function createTailGuardPlatform(): ReturnType<typeof createMockBumpPlatform> & {
+    probeCalls: number
+    setLatest: (v: boolean) => void
+    setFailProbe: (v: boolean) => void
+  } {
+    const p = createMockBumpPlatform()
+    const state = { latest: true, failProbe: false }
+    let probeCalls = 0
+    Object.assign(p, {
+      async previewIsLatest(_handle: unknown): Promise<boolean> {
+        probeCalls++
+        if (state.failProbe) throw new Error('probe failed')
+        return state.latest
+      },
+    })
+    Object.defineProperty(p, 'probeCalls', { get: () => probeCalls })
+    Object.defineProperty(p, 'setLatest', { get: () => (v: boolean) => { state.latest = v } })
+    Object.defineProperty(p, 'setFailProbe', { get: () => (v: boolean) => { state.failProbe = v } })
+    return p as ReturnType<typeof createTailGuardPlatform>
+  }
+
+  const tailCfg = (): StreamPreviewCfg => cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000, tailCheckMs: 25 })
+
+  it('reissues the card above a displacer, then idles while it stays latest', async () => {
+    const mp = createTailGuardPlatform()
+    const sp = newStreamPreview(tailCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendText('starting')
+    const oldHandle = sp.previewMsgID
+    mp.setLatest(false)
+    await sleep(80) // ≥2 ticks: one reissue suffices
+    expect(mp.nextID).toBeGreaterThanOrEqual(2)
+    expect(mp.deleted).toContain(oldHandle)
+    expect(sp.previewMsgID).not.toBe(oldHandle)
+    // Healed: back to latest, no further churn.
+    const startsAfterHeal = mp.nextID
+    mp.setLatest(true)
+    await sleep(80)
+    expect(mp.nextID).toBe(startsAfterHeal)
+  })
+
+  it('still-latest cycles probe without any reissue', async () => {
+    const mp = createTailGuardPlatform()
+    const sp = newStreamPreview(tailCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendText('starting')
+    await sleep(80)
+    expect(mp.probeCalls).toBeGreaterThanOrEqual(2)
+    expect(mp.nextID).toBe(1)
+    expect(mp.deleted).toEqual([])
+  })
+
+  it('finish latches: the deleted card is never resurrected', async () => {
+    const mp = createTailGuardPlatform()
+    const sp = newStreamPreview(tailCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendText('starting')
+    // keepPreview absent → finish deletes the card without a terminal flag.
+    await sp.finish('done')
+    mp.setLatest(false)
+    await sleep(80)
+    expect(mp.nextID).toBe(1)
+  })
+
+  it('discard disarms the guard', async () => {
+    const mp = createTailGuardPlatform()
+    const sp = newStreamPreview(tailCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendText('starting')
+    await sp.discard()
+    mp.setLatest(false)
+    await sleep(80)
+    expect(mp.nextID).toBe(1)
+  })
+
+  it('a probe failure skips the cycle; the guard keeps watching', async () => {
+    const mp = createTailGuardPlatform()
+    const sp = newStreamPreview(tailCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendText('starting')
+    mp.setFailProbe(true)
+    await sleep(80)
+    expect(mp.nextID).toBe(1) // errors swallowed, no reissue
+    mp.setFailProbe(false)
+    mp.setLatest(false)
+    await sleep(80)
+    expect(mp.nextID).toBeGreaterThanOrEqual(2)
+  })
+
+  it('never arms without the tail-prober capability or a positive period', async () => {
+    const bare = createMockBumpPlatform()
+    const spBare = newStreamPreview(tailCfg(), bare, 'ctx', undefined, undefined)
+    await spBare.appendText('starting')
+    await sleep(80)
+    expect(bare.nextID).toBe(1)
+
+    const mp = createTailGuardPlatform()
+    const spOff = newStreamPreview(cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000, tailCheckMs: 0 }), mp, 'ctx', undefined, undefined)
+    await spOff.appendText('starting')
+    await sleep(80)
+    expect(mp.probeCalls).toBe(0)
+  })
+
+  it('freeze disarms; resumeFromFreeze re-arms the guard', async () => {
+    const mp = createTailGuardPlatform()
+    const sp = newStreamPreview(tailCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendText('starting')
+    sp.degraded = true // frozen for an interaction card
+    await sleep(80)
+    const probesAtFreeze = mp.probeCalls
+    await sleep(60)
+    expect(mp.probeCalls).toBe(probesAtFreeze) // disarmed by the terminal sighting
+    sp.degraded = false
+    await sp.resumeFromFreeze()
+    mp.setLatest(false)
+    await sleep(80)
+    expect(mp.nextID).toBeGreaterThanOrEqual(2)
+  })
+})
+
 /** Last recorded content's text-path view, when it is text content. */
 function lastTextContent(mp: RecorderPlatform): TextPreviewContent | undefined {
   const c = mp.contents[mp.contents.length - 1]

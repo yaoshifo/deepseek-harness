@@ -586,6 +586,21 @@ export interface PreviewCleaner {
   deletePreviewMessage(previewHandle: unknown): Promise<void>
 }
 
+/**
+ * Optional: platform can verify its preview card is still the chat's newest
+ * message. The preview tail guard polls this so ANY message that pushes the
+ * card off the chat tail — engine cards, human messages, system notices,
+ * other bots — is detected and healed regardless of its source.
+ */
+export interface PreviewTailProber {
+  /**
+   * @param previewHandle - Handle returned by {@link PreviewStarter.sendPreviewStart}.
+   * @returns True when the preview card is still the newest message in its
+   * chat (or verification is meaningless there, e.g. thread isolation).
+   */
+  previewIsLatest(previewHandle: unknown): Promise<boolean>
+}
+
 /** Optional: platform wants the preview kept as the final delivered message. */
 export interface PreviewFinishPreference {
   keepPreviewOnFinish(): boolean
@@ -688,6 +703,16 @@ export function asPreviewStarter(p: Platform): PreviewStarter | undefined {
  */
 export function asPreviewCleaner(p: Platform): PreviewCleaner | undefined {
   return withMethod<PreviewCleaner>(p, 'deletePreviewMessage')
+}
+
+/**
+ * Structural check for the {@link PreviewTailProber} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asPreviewTailProber(p: Platform): PreviewTailProber | undefined {
+  return withMethod<PreviewTailProber>(p, 'previewIsLatest')
 }
 
 /**
