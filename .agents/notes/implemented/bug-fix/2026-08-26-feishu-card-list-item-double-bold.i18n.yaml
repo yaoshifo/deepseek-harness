@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-26-feishu-card-list-item-double-bold.md
+2026-08-26-feishu-card-list-item-double-bold.md: 2d2727207e9939cd086b9576d899db66a9c78577
+2026-08-26-feishu-card-list-item-double-bold.zh.md: d9b6b5c174682c827ceaca090b71b0a44ed8fa8a

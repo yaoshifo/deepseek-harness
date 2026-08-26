@@ -77,6 +77,7 @@ export interface CardNote {
 /** Renders description text on the left and a button on the right (Feishu div+extra). */
 export interface CardListItem {
   kind: 'listItem'
+  /** Row text; markdown content the caller owns — unstyled text renders as the bold row label on Feishu. */
   text: string
   description?: string
   btnText: string

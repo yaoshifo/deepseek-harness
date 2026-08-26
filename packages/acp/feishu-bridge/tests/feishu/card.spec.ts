@@ -261,6 +261,42 @@ describe('renderElement sanitize', () => {
     expect(content).toContain('with html')
   })
 
+  it('list item passes caller-styled markdown through without re-bolding', () => {
+    // /dir row shape: caller-owned bold + inline code. Re-wrapping would nest
+    // bold pairs, which the markdown pipeline mangles into raw asterisks.
+    const got = renderElement(
+      {
+        kind: 'listItem',
+        text: '◻ **16.** `/Users/hm/workspace/ask-pref-analysis`',
+        btnText: '#16',
+        btnType: 'default',
+        btnValue: 'act:/dir select 16',
+      },
+      '',
+    )
+    expect(got).toBeDefined()
+    const leftCol = jObj(jArr(jObj(got).columns)[0])
+    const content = jStr(jObj(jArr(leftCol.elements)[0]).content)
+    expect(content).toBe('◻ **16.** `/Users/hm/workspace/ask-pref-analysis`')
+  })
+
+  it('list item bolds plain-text rows by default', () => {
+    const got = renderElement(
+      {
+        kind: 'listItem',
+        text: '选项 A',
+        btnText: '1',
+        btnType: 'default',
+        btnValue: 'askq:0:1',
+      },
+      '',
+    )
+    expect(got).toBeDefined()
+    const leftCol = jObj(jArr(jObj(got).columns)[0])
+    const content = jStr(jObj(jArr(leftCol.elements)[0]).content)
+    expect(content).toBe('**选项 A**')
+  })
+
   it('card image fit_horizontal full-bleed', () => {
     const got = renderElement({ kind: 'image', imageKey: 'k', alt: 't', scaleType: 'fit_horizontal' }, '')
     expect(jStr(got?.scale_type)).toBe('fit_horizontal')

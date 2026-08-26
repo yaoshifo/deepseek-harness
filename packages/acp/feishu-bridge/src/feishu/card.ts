@@ -134,7 +134,11 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
     }
     case 'listItem': {
       const btnType = elem.btnType === '' ? 'default' : elem.btnType
-      let leftContent = `**${elem.text}**`
+      // Callers own the row's markdown: text already carrying '**' is passed
+      // through verbatim (wrapping it again would nest bold pairs, which the
+      // markdown pipeline then mangles into raw asterisks); plain text gets
+      // the default bold row label.
+      let leftContent = elem.text.includes('**') ? elem.text : `**${elem.text}**`
       if ((elem.description ?? '') !== '') leftContent += `\n${elem.description ?? ''}`
       leftContent = finalizeFeishuCardMarkdown(leftContent)
 
