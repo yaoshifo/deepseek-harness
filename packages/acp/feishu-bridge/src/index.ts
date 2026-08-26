@@ -248,6 +248,8 @@ export interface ProjectConfig {
   providerShortcuts?: Record<string, string>
   /** Rotate the chat to a fresh session after N idle minutes (Go reset_on_idle_mins). */
   resetOnIdleMins?: number
+  /** Bounded seconds to wait for an agent session to close during cleanup and stall retry (Go agentCloseTimeout; default 130). */
+  agentCloseSec?: number
   /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
   unsolicited?: UnsolicitedConfig
   /** Multi-role chatroom tuning (Go [chatroom]). */
@@ -604,6 +606,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     }).description('Automatic context compression (Go [projects.auto_compress])'),
     providerShortcuts: Schema.dict(Schema.string()).description('Quick provider commands: /strong → provider name (Go provider_shortcuts)'),
     resetOnIdleMins: Schema.natural().description('Rotate the chat to a fresh session after N idle minutes; 0 disables'),
+    agentCloseSec: Schema.natural().description('Bounded seconds to wait for an agent session to close during cleanup and stall retry (default 130)'),
     unsolicited: Schema.object({
       idleSec: Schema.natural().description('Quiet seconds before the unsolicited reader disarms (default 60; 0 = never)'),
       toolInFlightSec: Schema.natural().description('Quiet seconds a background turn\'s in-flight tool keeps the reader alive (default 1800)'),
@@ -1050,6 +1053,7 @@ export function buildProjectAssembly(
     cwd: project.workdir,
     providers: routes,
     activeProvider,
+    ...(project.agentCloseSec !== undefined ? { closeTimeoutMs: project.agentCloseSec * 1000 } : {}),
     ...(project.mcpServers !== undefined && project.mcpServers.length > 0 ? { mcpServers: project.mcpServers } : {}),
     ...(sharedQuestionRouting !== undefined ? { questionRouting: sharedQuestionRouting } : {}),
   })
@@ -1339,6 +1343,9 @@ function wireTurnSummary(engine: Engine, project: ProjectConfig): void {
 function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
   if (project.resetOnIdleMins !== undefined) {
     engine.setResetOnIdle(project.resetOnIdleMins * 60_000)
+  }
+  if (project.agentCloseSec !== undefined) {
+    engine.setAgentCloseTimeout(project.agentCloseSec * 1000)
   }
   const a = project.autoCompress
   if (a?.enabled === true) {

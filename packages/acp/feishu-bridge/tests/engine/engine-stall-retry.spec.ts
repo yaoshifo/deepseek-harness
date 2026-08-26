@@ -23,7 +23,7 @@ import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type Strea
 import { DshAgentAdapter } from '../../src/agent-dsh/adapter.js'
 import { Engine } from '../../src/engine/engine.js'
 import { createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
-import type { ProgressContent } from '../../src/core/types.js'
+import type { ProgressContent, SessionStartOptions } from '../../src/core/types.js'
 import { previewText, statusOf } from '../stubs/preview-content.js'
 
 /** One scripted model-call behavior. */
@@ -106,6 +106,7 @@ async function bootRuntime(script: ScriptEntry[]): Promise<Runtime> {
     cwd: persistenceRoot,
     providers: [{ name: 'mify', provider: 'mock', model: 'mock-model' }],
     activeProvider: 'mify',
+    closeTimeoutMs: 200,
   })
   const messages: string[] = []
   const states: Array<string | undefined> = []
@@ -236,5 +237,54 @@ describe('stall retry over the real dsh runtime', () => {
     await vi.waitFor(() => {
       expect(rt.platform.states.includes('failed')).toBe(true)
     }, { timeout: 2_000 })
+  })
+
+  it('a hung close does not wedge the stall retry: the bounded wait expires and the loop keeps running', { timeout: 15_000 }, async () => {
+    const rt = await bootRuntime([
+      'hang',
+      { text: 'recovered', firstChunkDelayMs: 0 },
+    ])
+    rt.engine.setAgentCloseTimeout(200)
+
+    const warns: string[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warns.push(args.map(String).join(' '))
+    })
+
+    // The worst-case dispose: the stalled session's close never settles. An
+    // unbounded wait parked the event pump inside the stall retry forever —
+    // the idle timer was already spent, so nothing else could fire.
+    const originalStart = rt.adapter.startSession.bind(rt.adapter)
+    let firstSession = true
+    rt.adapter.startSession = async (sessionID: string, options?: SessionStartOptions) => {
+      const session = await originalStart(sessionID, options)
+      if (firstSession) {
+        firstSession = false
+        session.close = (): Promise<void> => new Promise<void>(() => {})
+      }
+      return session
+    }
+
+    receive(rt.engine, rt.platform, 'task')
+    // The bounded wait expires instead of parking on the hung close...
+    await vi.waitFor(() => {
+      expect(warns.some(w => w.includes('close timed out')), `warns=${JSON.stringify(warns)}`).toBe(true)
+    }, { timeout: 5_000 })
+    // ...the restart proceeds (the adapter reattaches to the still-live
+    // session) and notifies the user — before the fix nothing after the
+    // hung close ever ran.
+    await vi.waitFor(() => {
+      expect(rt.platform.sent.some(s => s.includes('Agent stalled') || s.includes('无响应超时')),
+        `sent=${JSON.stringify(rt.platform.sent)}`).toBe(true)
+    }, { timeout: 5_000 })
+    // The pump is still cycling: the reattached session outruns the pump's
+    // last receive, so the next idle fire logs the blind-pump override.
+    await vi.waitFor(() => {
+      expect(warns.some(w => w.includes('blind pump')), `warns=${JSON.stringify(warns)}`).toBe(true)
+    }, { timeout: 5_000 })
+    warnSpy.mockRestore()
+
+    // A stop settles the still-looping pump instead of hanging on it.
+    await rt.engine.stop()
   })
 })
