@@ -1282,7 +1282,15 @@ export async function cleanupOneChat(
     }
   }
 
-  e.stopInteractiveSession(sessionKey)
+  // Commit the terminal state before stopping: the stop below releases
+  // parked asks and turn-end baselines whose late repaints must observe the
+  // done mark and no-op (applyChatPhase freeze), or the gray paint below
+  // would be overwritten back to the baseline color.
+  try {
+    await e.markSpawnedChatDone(p, sessionKey)
+  } catch (error) {
+    console.warn(`done: mark spawned chat failed (${sessionKey}): ${String(error)}`)
+  }
 
   // /done grays the avatar (phase 'done') and marks the chat inactive; the
   // heart tag is untouched — tagging is the independent /tag-/untag axis.
@@ -1294,7 +1302,7 @@ export async function cleanupOneChat(
       console.warn(`done: dim avatar failed (${sessionKey}): ${String(error)}`)
     }
   }
-  e.markSpawnedChatDone(p, sessionKey)
+  e.stopInteractiveSession(sessionKey)
 
   const [path, branch, base, root, baseBranch] = sess.getWorktreeInfo()
   if (path === '') return { name, dirty: false }

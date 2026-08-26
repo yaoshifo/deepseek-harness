@@ -359,7 +359,7 @@ export interface StubChatroomSpawnerEx extends StubChatroomSpawner {
   doneKeys: string[]
   renamedAny: StubRenameCall[]
   spawnGroupWithOptions(msg: Message, groupName: string, firstMsg: string, opts: { workDir: string }): Promise<Message>
-  markSpawnedChatDone(sessionKey: string): void
+  markSpawnedChatDone(sessionKey: string): Promise<void>
   setChatPhase(sessionKey: string, phase: import('../../src/core/types.js').ChatPhase): Promise<void>
   renameGroup(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
   renameGroupAny(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
@@ -381,7 +381,7 @@ export function createStubChatroomSpawnerEx(n = 'test'): StubChatroomSpawnerEx {
     p.exFirst.push(firstMsg)
     return p.spawnGroup(msg, groupName, firstMsg)
   }
-  p.markSpawnedChatDone = (sessionKey: string) => {
+  p.markSpawnedChatDone = async (sessionKey: string) => {
     p.doneKeys.push(sessionKey)
   }
   // Satisfies ChatPhasePainter so /done's cleanup (and EndChatroom, which

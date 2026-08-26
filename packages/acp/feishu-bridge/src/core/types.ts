@@ -1138,17 +1138,23 @@ export interface SpawnedChatLister {
 
 /** Platform that marks a spawned chat as active or inactive (Go SpawnedChatStateUpdater). */
 export interface SpawnedChatStateUpdater {
-  markSpawnedChatDone(sessionKey: string): void
+  markSpawnedChatDone(sessionKey: string): Promise<void>
 }
 
 /** Platform that marks a spawned chat as active again, the /undone path (Go SpawnedChatActivator). */
 export interface SpawnedChatActivator {
-  markSpawnedChatActive(sessionKey: string): void
+  markSpawnedChatActive(sessionKey: string): Promise<void>
 }
 
 /** Platform reporting whether a spawned chat is in the active (color-avatar) state (Go SpawnedChatActiveChecker). */
 export interface SpawnedChatActiveChecker {
   isSpawnedChatActive(sessionKey: string): boolean
+  /**
+   * Whether a /done terminal mark is outstanding (marked done, not yet
+   * undone) — the signal that freezes the avatar axis against late engine
+   * repaints.
+   */
+  isSpawnedChatDone(sessionKey: string): boolean
 }
 
 /** Platform that can report the bot's own display name (Go BotIdentityProvider). */

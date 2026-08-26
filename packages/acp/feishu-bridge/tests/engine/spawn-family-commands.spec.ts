@@ -29,6 +29,7 @@ interface FamilyStubPlatform extends StubCardPlatform {
   phaseCalls: Array<{ sessionKey: string; phase: string }>
   basePhase: string
   activeKeys: Set<string>
+  doneKeys: Set<string>
   reactions: string[]
   spawnedChats: SpawnedChatInfo[]
   activeTagName(): string
@@ -36,9 +37,10 @@ interface FamilyStubPlatform extends StubCardPlatform {
   removeTagFromChat(sessionKey: string, tagName: string): Promise<void>
   setChatPhase(sessionKey: string, phase: import('../../src/core/types.js').ChatPhase): Promise<void>
   chatBasePhase(sessionKey: string): import('../../src/core/types.js').ChatBasePhase
-  markSpawnedChatActive(sessionKey: string): void
-  markSpawnedChatDone(sessionKey: string): void
+  markSpawnedChatActive(sessionKey: string): Promise<void>
+  markSpawnedChatDone(sessionKey: string): Promise<void>
   isSpawnedChatActive(sessionKey: string): boolean
+  isSpawnedChatDone(sessionKey: string): boolean
   addReaction(replyCtx: unknown, emoji: string): void
   listActiveSpawnedChats(): Promise<SpawnedChatInfo[]>
 }
@@ -50,6 +52,7 @@ function newFamilyPlatform(): FamilyStubPlatform {
   p.phaseCalls = []
   p.basePhase = 'discussing'
   p.activeKeys = new Set<string>()
+  p.doneKeys = new Set<string>()
   p.reactions = []
   p.spawnedChats = []
   p.activeTagName = () => '❤️'
@@ -57,9 +60,10 @@ function newFamilyPlatform(): FamilyStubPlatform {
   p.removeTagFromChat = async (sessionKey: string, tagName: string) => { p.removedTags.push({ sessionKey, tagName }) }
   p.setChatPhase = async (sessionKey: string, phase: import('../../src/core/types.js').ChatPhase) => { p.phaseCalls.push({ sessionKey, phase }) }
   p.chatBasePhase = (_sessionKey: string) => p.basePhase as import('../../src/core/types.js').ChatBasePhase
-  p.markSpawnedChatActive = (sessionKey: string) => { p.activeKeys.add(sessionKey) }
-  p.markSpawnedChatDone = (sessionKey: string) => { p.activeKeys.delete(sessionKey) }
+  p.markSpawnedChatActive = async (sessionKey: string) => { p.activeKeys.add(sessionKey); p.doneKeys.delete(sessionKey) }
+  p.markSpawnedChatDone = async (sessionKey: string) => { p.activeKeys.delete(sessionKey); p.doneKeys.add(sessionKey) }
   p.isSpawnedChatActive = (sessionKey: string) => p.activeKeys.has(sessionKey)
+  p.isSpawnedChatDone = (sessionKey: string) => p.doneKeys.has(sessionKey)
   p.listActiveSpawnedChats = async () => p.spawnedChats
   p.addReaction = (_replyCtx: unknown, emoji: string) => { p.reactions.push(emoji) }
   return p

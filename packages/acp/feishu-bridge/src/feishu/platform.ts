@@ -2923,6 +2923,16 @@ export class FeishuPlatform implements Platform {
   }
 
   /**
+   * Whether a /done terminal mark is outstanding (marked done, not yet
+   * undone) — freezes the avatar axis against late engine repaints.
+   * @param sessionKey - Session key identifying the spawned group.
+   * @returns Whether the chat carries an un-undone doneAt mark.
+   */
+  isSpawnedChatDone(sessionKey: string): boolean {
+    return this.spawnStore.get(extractFeishuChatID(sessionKey))?.doneAt !== undefined
+  }
+
+  /**
    * Resolve a chat's display name through the TTL cache (Go resolveChatName).
    * Lookup failures cache and return the chat id.
    */

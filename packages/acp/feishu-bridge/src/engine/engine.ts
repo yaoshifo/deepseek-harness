@@ -7934,7 +7934,11 @@ export class Engine {
   /**
    * Apply a lifecycle phase to the chat's avatar (ChatPhasePainter).
    * Best-effort: platforms without the capability, non-spawned chats, and
-   * same-key transitions all no-op; failures degrade to a warn.
+   * same-key transitions all no-op; failures degrade to a warn. A chat with
+   * an outstanding /done mark ignores every engine-driven repaint (ask
+   * settlement, turn-end baselines, stall) — the gray terminal phase is the
+   * user's explicit verdict and survives until /undone or message-driven
+   * reactivation, which paint through the platform directly.
    * @param p - Platform owning the chat's avatar.
    * @param sessionKey - Session key of the chat.
    * @param phase - Lifecycle phase to paint.
@@ -7942,6 +7946,8 @@ export class Engine {
   async applyChatPhase(p: Platform, sessionKey: string, phase: ChatPhase): Promise<void> {
     const painter = asChatPhasePainter(p)
     if (painter === undefined) return
+    const checker = asSpawnedChatActiveChecker(p)
+    if (phase !== 'done' && checker !== undefined && checker.isSpawnedChatDone(sessionKey)) return
     try {
       await painter.setChatPhase(sessionKey, phase)
     } catch (error) {
@@ -7962,11 +7968,13 @@ export class Engine {
 
   /**
    * Mark a spawned chat done on the platform side (avatar axis owner).
+   * Awaits the platform so the terminal mark is observable before callers
+   * release stop-triggered late settlements.
    * @param p - Platform owning the spawned chat's state.
    * @param sessionKey - Session key of the spawned chat.
    */
-  markSpawnedChatDone(p: Platform, sessionKey: string): void {
-    asSpawnedChatStateUpdater(p)?.markSpawnedChatDone(sessionKey)
+  async markSpawnedChatDone(p: Platform, sessionKey: string): Promise<void> {
+    await asSpawnedChatStateUpdater(p)?.markSpawnedChatDone(sessionKey)
   }
 
   /**

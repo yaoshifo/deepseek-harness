@@ -1,8 +1,9 @@
 /**
  * Engine-side lifecycle-phase avatar transitions: the askUser entry/settle
  * matrix (plan-review → blue/approved|discussing, other asks → attention →
- * baseline), turn-end error/success, and the best-effort applyChatPhase
- * semantics.
+ * baseline), turn-end error/success, the best-effort applyChatPhase
+ * semantics, and the /done freeze that keeps late engine repaints (stop-
+ * settled asks, turn-end baselines) off the gray terminal phase.
  *
  * @module dsh-feishu-bridge/tests-engine-avatar-phase
  */
@@ -28,8 +29,11 @@ interface PhasePlatform extends StubPlatform {
   phaseCalls: PhaseCall[]
   basePhase: ChatBasePhase
   failPhase: boolean
+  doneKeys: Set<string>
   setChatPhase(sessionKey: string, phase: ChatPhase): Promise<void>
   chatBasePhase(sessionKey: string): ChatBasePhase
+  isSpawnedChatActive(sessionKey: string): boolean
+  isSpawnedChatDone(sessionKey: string): boolean
 }
 
 function newPhasePlatform(): PhasePlatform {
@@ -37,11 +41,14 @@ function newPhasePlatform(): PhasePlatform {
   p.phaseCalls = []
   p.basePhase = 'discussing'
   p.failPhase = false
+  p.doneKeys = new Set<string>()
   p.setChatPhase = async (sessionKey: string, phase: ChatPhase) => {
     if (p.failPhase) throw new Error('phase failed')
     p.phaseCalls.push({ sessionKey, phase })
   }
   p.chatBasePhase = (_sessionKey: string) => p.basePhase
+  p.isSpawnedChatActive = (_sessionKey: string) => true
+  p.isSpawnedChatDone = (sessionKey: string) => p.doneKeys.has(sessionKey)
   return p
 }
 
@@ -219,6 +226,68 @@ describe('turn-end phase transitions', () => {
     await e.processInteractiveEvents(state, e.sessions.getOrCreateActive('test:chat:user1'), e.sessions, 'test:chat:user1', 'm1', undefined, state.replyCtx)
 
     expect(p.phaseCalls).toEqual([{ sessionKey: 'test:chat:user1', phase: 'approved' }])
+  })
+
+  it('a turn ending under an outstanding done mark does not repaint the baseline', async () => {
+    const p = newPhasePlatform()
+    p.basePhase = 'approved'
+    const e = newEngine(p)
+    const state = armedTurn(p, e)
+    p.doneKeys.add('test:chat:user1')
+
+    ;(state.agentSession as ReturnType<typeof newControllableSession>).channel
+      .push({ type: 'result', content: '任务完成', done: true })
+    await e.processInteractiveEvents(state, e.sessions.getOrCreateActive('test:chat:user1'), e.sessions, 'test:chat:user1', 'm1', undefined, state.replyCtx)
+
+    expect(p.phaseCalls).toEqual([])
+  })
+})
+
+describe('done-freeze avatar semantics', () => {
+  it('an outstanding done mark swallows engine repaints except done itself', async () => {
+    const p = newPhasePlatform()
+    p.doneKeys.add('test:chat:user1')
+    const e = newEngine(p)
+
+    await e.applyChatPhase(p, 'test:chat:user1', 'attention')
+    await e.applyChatPhase(p, 'test:chat:user1', 'discussing')
+    await e.applyChatPhase(p, 'test:chat:user1', 'approved')
+    expect(p.phaseCalls).toEqual([])
+
+    await e.applyChatPhase(p, 'test:chat:user1', 'done')
+    expect(p.phaseCalls).toEqual([{ sessionKey: 'test:chat:user1', phase: 'done' }])
+  })
+
+  it('a stop-settled ask (the /done sequence) does not repaint the baseline', async () => {
+    const p = newPhasePlatform()
+    const e = newEngine(p)
+    const state = armedState(e, p)
+
+    const decision = e.askUser('test:chat:user1', { kind: 'questions', questions: testQuestions() })
+    await tick()
+    expect(p.phaseCalls).toEqual([{ sessionKey: 'test:chat:user1', phase: 'attention' }])
+
+    // The reordered cleanupOneChat commits the done mark before the stop
+    // releases the parked ask's cancelled settlement.
+    p.doneKeys.add('test:chat:user1')
+    state.markStopped()
+    await expect(decision).resolves.toEqual({ outcome: 'cancelled' })
+    expect(p.phaseCalls).toEqual([{ sessionKey: 'test:chat:user1', phase: 'attention' }])
+  })
+
+  it('a user decision landing on a done-marked chat no longer repaints', async () => {
+    const p = newPhasePlatform()
+    const e = newEngine(p)
+    armedState(e, p)
+
+    const decision = e.askUser('test:chat:user1', { kind: 'plan-review', heading: '# P', plan: '# P' })
+    await tick()
+    expect(p.phaseCalls).toEqual([{ sessionKey: 'test:chat:user1', phase: 'plan-review' }])
+
+    p.doneKeys.add('test:chat:user1')
+    expect(e.routeAskResponse(p, msg({ content: 'perm:allow', isPermissionAction: true }), 'perm:allow')).toBe(true)
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+    expect(p.phaseCalls).toEqual([{ sessionKey: 'test:chat:user1', phase: 'plan-review' }])
   })
 })
 

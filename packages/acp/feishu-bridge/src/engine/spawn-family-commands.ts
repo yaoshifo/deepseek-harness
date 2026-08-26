@@ -114,7 +114,9 @@ async function cmdUndone(e: Engine, p: Platform, msg: Message): Promise<void> {
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.UndoneError, errorMessage(error)))
     return
   }
-  asSpawnedChatActivator(p)?.markSpawnedChatActive(msg.sessionKey)
+  // Fire-and-forget like the Go path: the avatar is already restored; a
+  // failed dashboard-state persist only degrades the board.
+  void asSpawnedChatActivator(p)?.markSpawnedChatActive(msg.sessionKey)
   asReactionAdder(p)?.addReaction(msg.replyCtx, 'Undone')
 }
 
