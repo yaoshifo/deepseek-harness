@@ -1,6 +1,7 @@
 /**
- * The model-facing `feishu_bridge_lark` tool: cc-connect's `cc-connect lark`
- * wrapper (cmd/cc-connect/lark_cmd.go) ported to a dsh tool (plan D4). The
+ * The model-facing `lark-cli` tool (named verbatim after the official CLI so
+ * every command reference in lark-cli's embedded skills maps literally to a
+ * tool call): cc-connect's `cc-connect lark` wrapper (cmd/cc-connect/lark_cmd.go) ported to a dsh tool (plan D4). The
  * tool spawns lark-cli as a child process and injects the caller's project
  * bot credentials — bot mode mints a tenant access token and sets
  * LARKSUITE_CLI_* env, `--as user` / auth subcommands instead prepend
@@ -65,11 +66,15 @@ export interface LarkToolArgs {
 }
 
 const DESCRIPTION =
-  'Run a lark-cli subcommand against THIS project\'s Feishu bot (credential routing is automatic). '
-  + 'Identity defaults to the bot; add "--as user" for user-authorized operations (docs search, wiki members, '
-  + 'Base) and "auth login/logout/status" for lark-cli authorization. Everything lark-cli supports is passed '
-  + 'through verbatim, e.g. ["docs","+search","--query","迁移"] or ["wiki","+node-create","--space-id","..."]. '
-  + 'Output (stdout, plus stderr when non-empty) comes back as the tool result.'
+  'Verbatim pass-through of the official lark-cli against THIS project\'s Feishu bot (credential routing is '
+  + 'automatic). Identity defaults to the bot; add "--as user" for user-authorized operations (docs search, '
+  + 'wiki members, Base) and "auth login/logout/status" for lark-cli authorization. Everything lark-cli supports '
+  + 'is passed through verbatim, e.g. ["docs","+search","--query","迁移"] or ["wiki","+node-create","--space-id","..."]. '
+  + 'Output (stdout, plus stderr when non-empty) comes back as the tool result. Before any Feishu domain task '
+  + '(docs, sheets, Base, calendar, mail, wiki, IM, tasks, approval, OKR, ...), first discover the domain with '
+  + '["skills","list"], then read its guide with ["skills","read","<skill>"] — deeper step-by-step references via '
+  + '["skills","read","<skill>/references/<file>.md"], reading only the one the current step needs, never the '
+  + 'whole set upfront.'
 
 /** Minimum lark-cli version the credential injection relies on (Go minLarkCLIVersion). */
 export const minLarkCLIVersion = '1.0.69'
@@ -431,7 +436,7 @@ export async function runLarkInvocation(
   args: string[],
   opts: { dataDir?: string; deps: LarkRunnerDeps },
 ): Promise<string> {
-  if (args.length === 0) throw new Error('feishu_bridge_lark: args must be a non-empty lark-cli subcommand')
+  if (args.length === 0) throw new Error('lark-cli: args must be a non-empty lark-cli subcommand')
 
   const deps = opts.deps
   const baseEnv: Record<string, string> = {}
@@ -459,7 +464,7 @@ export async function runLarkInvocation(
       if (supplied !== creds.appId) {
         throw new Error(
           `--profile "${supplied}" does not match the current project (app_id ${creds.appId}).\n`
-          + 'feishu_bridge_lark does not allow --as user operations to cross project boundaries.\n'
+          + 'lark-cli does not allow --as user operations to cross project boundaries.\n'
           + 'If the current project is missing an authorized profile, run: lark auth login',
         )
       }
@@ -637,7 +642,7 @@ async function runChatMessagesListNative(args: string[], creds: LarkCreds, deps:
 // ── tool registration ─────────────────────────────────────────────────────
 
 /**
- * Register the `feishu_bridge_lark` tool on `ctx.tools`.
+ * Register the `lark-cli` tool on `ctx.tools`.
  *
  * @param ctx - registrant context carrying the tool registry.
  * @param route - resolves the calling agent to its engine + credentials.
@@ -648,7 +653,7 @@ async function runChatMessagesListNative(args: string[], creds: LarkCreds, deps:
 export function registerLarkTool(ctx: Context, route: LarkAgentRouter, deps?: LarkRunnerDeps, dataDir?: string): () => void {
   const runnerDeps: LarkRunnerDeps = deps ?? defaultLarkDeps()
   return ctx.tools.register(defineTool({
-    name: 'feishu_bridge_lark',
+    name: 'lark-cli',
     description: DESCRIPTION,
     parameters: {
       args: {
@@ -672,7 +677,7 @@ export function registerLarkTool(ctx: Context, route: LarkAgentRouter, deps?: La
     async execute(args, exec) {
       const target = route(exec.agent)
       if (target === undefined) {
-        throw new Error('feishu_bridge_lark: the calling session is not owned by a feishu-bridge project')
+        throw new Error('lark-cli: the calling session is not owned by a feishu-bridge project')
       }
       const message = await runLarkInvocation(target.creds, args.args, {
         deps: runnerDeps,

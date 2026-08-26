@@ -16,7 +16,7 @@ Status: implemented
 
 ## Alternatives considered
 
-**教 agent 经 `feishu_bridge_lark`（im +send）投递。** 否决：这会让 model 自己拼一个没有可靠来源的 chat_id，绕过 `attachmentSend` 配置门控与 sideText 去重路径，还丢失引擎路径保留的 reply-context 引用关系。
+**教 agent 经 lark 工具（im +send；注册名 `lark-cli`，见 [lark-cli 命名与 skills 路由 note](2026-08-25-feishu-lark-cli-naming-and-skills-routing.zh.md)）投递。** 否决：这会让 model 自己拼一个没有可靠来源的 chat_id，绕过 `attachmentSend` 配置门控与 sideText 去重路径，还丢失引擎路径保留的 reply-context 引用关系。
 
 **给普通会话注入镜像 Go `AgentSystemPrompt()` 的能力 prompt 段。** 否决作为第一步：既有工具族（cron/relay/subtask/chatroom）全部只靠 description 被发现且真机可用；为一个可能不存在的问题给每个会话改模型可见输入不划算。若真机冒烟发现 model 用路径回答而非调工具，它是点名的 fallback。
 

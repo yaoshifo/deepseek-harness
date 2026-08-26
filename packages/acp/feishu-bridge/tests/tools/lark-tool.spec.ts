@@ -1,6 +1,6 @@
 /**
  * Ported from cc-connect cmd/cc-connect/lark_cmd_test.go (the pure-function
- * tables) plus runner and registration behavior tests: the `feishu_bridge_lark`
+ * tables) plus runner and registration behavior tests: the `lark-cli` tool
  * tool routes by caller agent, injects the project's bot credentials (bot
  * mode mints a TAT; --as user / auth prepend --profile <app_id> and strip
  * LARKSUITE_CLI_*), rejects cross-project --profile escapes, auto-grants
@@ -417,7 +417,7 @@ async function execute(test: { ctx: Context; agent: Agent }, args: unknown): Pro
   return test.ctx.agents.withInitiator(test.agent, () => test.ctx.tools.execute({
     signal,
     callId: CallId(`call-${Math.random()}`),
-    name: 'feishu_bridge_lark',
+    name: 'lark-cli',
     arguments: args,
     agent: test.agent,
   }))
@@ -427,14 +427,14 @@ afterEach(async () => {
   await Promise.allSettled(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
 })
 
-describe('feishu_bridge_lark registration', () => {
+describe('lark-cli registration', () => {
   it('registers on ctx.tools and disposes cleanly (HMR safety)', async () => {
     const engine = new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')
     const test = await harness(() => ({ engine, sessionKey: 'test:chat', creds }))
-    expect(test.ctx.tools.get('feishu_bridge_lark')?.name).toBe('feishu_bridge_lark')
+    expect(test.ctx.tools.get('lark-cli')?.name).toBe('lark-cli')
     test.dispose()
     test.dispose() // idempotent
-    expect(test.ctx.tools.get('feishu_bridge_lark')).toBeUndefined()
+    expect(test.ctx.tools.get('lark-cli')).toBeUndefined()
   })
 
   it('a foreign caller fails loud', async () => {

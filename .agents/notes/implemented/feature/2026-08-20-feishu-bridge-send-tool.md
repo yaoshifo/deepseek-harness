@@ -16,7 +16,7 @@ Two deliberate cuts. Go's http(s) URL fetch branch is not ported: agent artifact
 
 ## Alternatives considered
 
-**Teach agents to deliver through `feishu_bridge_lark` (im +send).** Rejected: it would make the model compose a chat_id it has no reliable source for, bypass the `attachmentSend` config gate and the sideText duplicate-suppression path, and skip the reply-context quoting the engine path preserves.
+**Teach agents to deliver through the lark tool (im +send; registered as `lark-cli`, see the [lark-cli naming note](2026-08-25-feishu-lark-cli-naming-and-skills-routing.md)).** Rejected: it would make the model compose a chat_id it has no reliable source for, bypass the `attachmentSend` config gate and the sideText duplicate-suppression path, and skip the reply-context quoting the engine path preserves.
 
 **Inject a plain-session capability prompt section mirroring Go `AgentSystemPrompt()`.** Rejected as the first move: every existing tool family (cron/relay/subtask/chatroom) is discovered through its description alone and works on the real device; adding a prompt section changes model-visible input for every session to fix a problem that may not exist. It remains the named fallback if the smoke run shows models answering with a path instead of calling the tool.
 
