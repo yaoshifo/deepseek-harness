@@ -371,4 +371,36 @@ describe('SessionTitleService Provider lifecycle', () => {
     await expect(ctx.sessionTitle.refresh(session)).rejects.toThrow('title backend failed')
     warn.mockRestore()
   })
+
+  it('skips automatic generation for oneshot side-query sessions, keeping the local fallback', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionTitleService, CONFIG)
+    const generate = vi.fn(async (request: SessionTitleProviderRequest): Promise<SessionTitleProviderResult> => ({
+      title: 'Should not run',
+      messageSeqs: request.messages.map(message => message.seq),
+    }))
+    ctx.sessionTitle.register({
+      id: SessionTitleProviderId('oneshot-skip'),
+      automatic: 'all-prompts',
+      generate,
+    })
+    const session = ctx.sessions.create(SessionId('oneshot-query'), { meta: { origin: 'oneshot' } })
+    session.append('turn/start', {
+      turn: 1,
+    })
+    const message = appendHumanPrompt(session, 'Group naming prompt')
+    await settle()
+    appendRoute(session)
+    await settle()
+
+    // oneshot sessions are disposed with their answer within seconds; the
+    // model request would be pure waste. The fallback title is local only.
+    expect(generate).not.toHaveBeenCalled()
+    expect(ctx.sessionTitle.get(session)).toMatchObject({
+      title: 'Group naming prompt',
+      messageSeqs: [message.seq],
+      source: { kind: 'fallback' },
+    })
+  })
 })

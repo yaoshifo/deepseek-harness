@@ -1292,6 +1292,13 @@ describe('SessionStore', () => {
     })
   })
 
+  it('attaches oneshot origin from meta to the header', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const session = ctx.sessions.create(SessionId('side-query'), { meta: { origin: 'oneshot' } })
+    expect(session.header).toMatchObject({ id: 'side-query', origin: 'oneshot' })
+  })
+
   it('rejects non-JSON and invalid scalar session metadata', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
@@ -1306,7 +1313,7 @@ describe('SessionStore', () => {
       { meta: { seedLength: '1' }, error: /seedLength must be a non-negative safe integer/ },
       { meta: { seedLength: 0.5 }, error: /seedLength must be a non-negative safe integer/ },
       { meta: { seedLength: -1 }, error: /seedLength must be a non-negative safe integer/ },
-      { meta: { origin: 'fork' }, error: /origin must be "subagent"/ },
+      { meta: { origin: 'fork' }, error: /origin must be "subagent" or "oneshot"/ },
       { meta: { delegationDepth: '1' }, error: /delegationDepth must be a non-negative safe integer/ },
       { meta: { delegationDepth: 0.5 }, error: /delegationDepth must be a non-negative safe integer/ },
       { meta: { delegationDepth: -1 }, error: /delegationDepth must be a non-negative safe integer/ },

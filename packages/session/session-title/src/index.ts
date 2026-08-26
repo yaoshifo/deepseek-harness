@@ -465,8 +465,12 @@ export class SessionTitleService extends Service {
     if (event.data.source.kind !== 'user' || collectSessionTitleMessages([event]).length === 0) return
     // A user rename pins the title: no automatic revision may override it.
     if (this.get(session)?.source.kind === 'user') return
+    // oneshot side-query sessions are disposed with their answer within
+    // seconds; scheduling an LLM title for them is pure waste. The local
+    // fallback below still runs (no model request).
+    const oneshot = session.header.origin === 'oneshot'
     const registration = this.registration
-    if (registration !== undefined && !registration.closing) {
+    if (!oneshot && registration !== undefined && !registration.closing) {
       const messages = collectSessionTitleMessages(session.events, event.seq)
       const shouldSchedule = registration.provider.automatic === 'all-prompts'
         || (session.header.parentSession === undefined && messages.length === 1 && this.get(session) === undefined)

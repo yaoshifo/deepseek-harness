@@ -10,7 +10,7 @@
 
 import { join } from 'node:path'
 import { decodeStorageRecord, packChunkRuns, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
-import type { SessionEvent, SessionHeader, SessionId, StorageRecord } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader, SessionId, SessionOrigin, StorageRecord } from '@deepseek-ai/dsh-session'
 import { SessionFormatUnsupportedError, sessionFormatVersionRefusal } from '@deepseek-ai/dsh-session-persistence'
 
 /** Physical encoding selected for JSONL session artifacts. */
@@ -38,7 +38,7 @@ export interface HeaderLine {
   cwd?: string
   parentSession?: SessionId
   seedLength?: number
-  origin?: 'subagent'
+  origin?: SessionOrigin
   delegationDepth: number
   agentPreset?: string
 }
