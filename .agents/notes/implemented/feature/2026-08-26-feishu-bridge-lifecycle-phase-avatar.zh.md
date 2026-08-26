@@ -24,7 +24,7 @@ phase 模型分两层：持久化的 `basePhase`（`discussing`/`approved`）是
 
 `/done` 的标记（`doneAt`）未撤销期间冻结整条头像轴：`applyChatPhase` 丢弃一切引擎侧回绘——停止结算的 ask、回合终局回基线、stall——因为 `/done` 发出的 stop 恰好会释放这些结算，而未被拦住的结算会把基线色重涂到灰色终局之上（生产已观察到：一次被打断的 `/done` 让群停在黄色、done 标记被覆盖抹掉）。因此 `cleanupOneChat` 先落 done 标记、画灰，再发出 stop。`/undone` 解除冻结（`markActive` 删除 `doneAt`）；下一条消息的复活经平台直涂基线、绕过 `applyChatPhase`，但覆盖色在 `/undone` 之前保持冻结。
 
-布尔轴 `ChatAvatarStateSwitcher`（Go `setChatAvatarActive`）被 `ChatPhasePainter`（`setChatPhase` + `chatBasePhase`）替换；布尔轴的 `/done` 灰化职责就是 `done` phase。平台侧每次转移的 key 解析顺序：缓存的 per-phase key → 用存下的 `iconName` 懒渲染 → legacy `colorAvatarKey`/`grayAvatarKey` 对 → bot 头像对；全都解析不到 → warn 后跳过。`setGroupIconAvatar` 只急切上传初始对（黄 + 灰，与之前同样是两次上传），并在 spawned-chat meta 上记录 `iconName`、`phase`、`basePhase`、`lastAvatarKey` 和 `avatarKeys`；蓝/绿/红在首次进入该状态时才渲染上传，到不了这些状态的群分文不付。转移先走 chat-update 应用头像、成功后才持久化 phase；两者之间崩溃由下一次转移自愈。同 key 的转移（经 `lastAvatarKey` 去重）完全跳过 API 调用——每条飞书「更新了群头像」系统消息都标记一次真实状态变化，完整 happy-path 生命周期至多 3–4 条。
+布尔轴 `ChatAvatarStateSwitcher`（Go `setChatAvatarActive`）被 `ChatPhasePainter`（`setChatPhase` + `chatBasePhase`）替换；布尔轴的 `/done` 灰化职责就是 `done` phase。平台侧每次转移的 key 解析顺序：缓存的 per-phase key → 用存下的 `iconName` 懒渲染 → legacy `colorAvatarKey`/`grayAvatarKey` 对 → bot 头像对；全都解析不到 → warn 后跳过。`setGroupIconAvatar` 只急切上传初始对（黄 + 灰，与之前同样是两次上传），并在 spawned-chat meta 上记录 `iconName`、`phase`、`basePhase`、`lastAvatarKey` 和 `avatarKeys`；蓝/绿/红在首次进入该状态时才渲染上传，到不了这些状态的群分文不付。转移先走 chat-update 应用头像、成功后才持久化 phase；两者之间崩溃由下一次转移自愈。同 key 的转移（经 `lastAvatarKey` 去重）完全跳过 API 调用——每条飞书「更新了群头像」系统消息都标记一次真实状态变化，完整 happy-path 生命周期至多 3–4 条。同一群的涂改经 promise 链按群串行：与在途涂改并发的重涂读到的是前者已提交的 meta，而非陈旧快照（无串行时较慢一方写回会把较快一方提交的 phase、key 或 done 标记整体覆盖掉）。
 
 非 phase 群保留哈希色、不参与状态色语言：chatroom 家族（`setChatroomFamilyAvatar` 盖章时不记 `iconName`，故所有非 done phase 都解析到既有彩色 key——家族品牌保留，end-chatroom 灰化经灰 key 保留）和 brand 的监控枢纽群（没有 spawned meta，`setChatPhase` 直接 no-op）。这同时让家族群与状态色任务群在视觉上可区分。非 spawn 群里的 `/done` 不再动它的头像（旧轴会给它灰化 bot 头像对）——可接受：`/done` 本就只对 spawn 群有意义。
 
@@ -48,4 +48,4 @@ phase 模型分两层：持久化的 `basePhase`（`discussing`/`approved`）是
 - phase 色板是固定常量（`src/feishu/avatar.ts` 的 `phaseAvatarBG`）；`groupAvatarColor` 只为非 phase 群（家族、brand 枢纽）保留。
 - 上游漂移：Go 的 `ChatAvatarStateSwitcher` 不再一一对应；将来 `dsh-sync-upstream` 触到它时以本 note 为分歧记录。
 
-Pinned by `tests/feishu/avatar-state.spec.ts`（解析顺序、去重、懒渲染 + 缓存、legacy/bot 回退、先应用后持久化、基线规则）、`tests/feishu/avatar-icon.spec.ts`（设头像时的初始对 + phase 簿记）、`tests/engine/avatar-phase.spec.ts`（askUser 入口/结算矩阵、回合终局错误/成功、best-effort 语义、`/done` 冻结）、`tests/feishu/spawn-evict.spec.ts`（phase 字段持久化 round-trip）、`tests/engine/spawn-family-commands.spec.ts`（`/undone` 恢复基线）。
+Pinned by `tests/feishu/avatar-state.spec.ts`（解析顺序、去重、懒渲染 + 缓存、per-chat 涂改串行化、legacy/bot 回退、先应用后持久化、基线规则）、`tests/feishu/avatar-icon.spec.ts`（设头像时的初始对 + phase 簿记）、`tests/engine/avatar-phase.spec.ts`（askUser 入口/结算矩阵、回合终局错误/成功、best-effort 语义、`/done` 冻结）、`tests/feishu/spawn-evict.spec.ts`（phase 字段持久化 round-trip）、`tests/engine/spawn-family-commands.spec.ts`（`/undone` 恢复基线）。

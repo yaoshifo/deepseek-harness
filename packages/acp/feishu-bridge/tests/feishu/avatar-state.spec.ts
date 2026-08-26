@@ -13,6 +13,8 @@ interface AvatarSwitch {
   calls: number
   uploadCount: number
   failUpdate: boolean
+  /** Per-call updateChat delays in call order (ms); exhausted → 0. Lets a test force which concurrent paint finishes last. */
+  delays: number[]
 }
 
 function newPhasePlatform(
@@ -20,7 +22,7 @@ function newPhasePlatform(
   botGrayKey: string,
   meta?: SpawnedChatMeta,
 ): { p: FeishuPlatform; sw: AvatarSwitch } {
-  const sw: AvatarSwitch = { captured: '', calls: 0, uploadCount: 0, failUpdate: false }
+  const sw: AvatarSwitch = { captured: '', calls: 0, uploadCount: 0, failUpdate: false, delays: [] }
   const api: FeishuApiClient = {
     async reply() {
       return { messageId: 'om' }
@@ -34,6 +36,8 @@ function newPhasePlatform(
     },
     async updateChat({ avatar }) {
       if (sw.failUpdate) throw new Error('update failed')
+      const delay = sw.delays.shift() ?? 0
+      if (delay > 0) await new Promise((r) => { setTimeout(r, delay) })
       sw.calls += 1
       if (avatar !== undefined) sw.captured = avatar
       return { code: 0 }
@@ -98,6 +102,24 @@ describe('setChatPhase', () => {
     await p.setChatPhase('feishu:oc_x', 'approved')
     expect(sw.uploadCount).toBe(1)
     expect(sw.calls).toBe(3)
+  })
+
+  it('serializes concurrent paints: the queued one commits onto the finished meta', async () => {
+    const { p, sw } = newPhasePlatform('bot_color', 'bot_gray', phaseMeta())
+    // The approved paint lazily renders; the discussing paint's update is
+    // slower, so without serialization it would finish last from a pre-render
+    // snapshot and drop the approved cache entry from the registry.
+    sw.delays = [20, 0]
+    const paints = [
+      p.setChatPhase('feishu:oc_x', 'approved'),
+      p.setChatPhase('feishu:oc_x', 'discussing'),
+    ]
+    await Promise.all(paints)
+    expect(sw.calls).toBe(2)
+    expect(sw.captured).toBe('k-discuss')
+    const meta = p.spawnStore.get('oc_x')
+    expect(meta?.phase).toBe('discussing')
+    expect(meta?.avatarKeys?.approved).toBe('img-rendered-1')
   })
 
   it('keeps the baseline untouched for overlay phases', async () => {

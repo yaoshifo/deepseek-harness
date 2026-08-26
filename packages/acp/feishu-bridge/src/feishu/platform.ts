@@ -558,6 +558,12 @@ export class FeishuPlatform implements Platform {
 
   /** Spawned-chat registry (loaded from dataDir when set). */
   readonly spawnStore: SpawnedChatStore
+  /**
+   * Per-chat tail of the serialized phase-paint chain: a queued repaint
+   * reads the meta the previous paint committed, never a stale snapshot
+   * taken while that paint was still applying.
+   */
+  private readonly chatPhasePaints = new Map<string, Promise<void>>()
   /** Tag manager bound to this platform's API client. */
   private readonly tagManager: TagManager
   /** Chat-name TTL cache (Go chatNameCache). */
@@ -2231,7 +2237,11 @@ export class FeishuPlatform implements Platform {
    * Paint a spawned group's avatar to its lifecycle phase (ChatPhasePainter).
    * Same-key transitions skip the update call so chat system messages are not
    * spammed; key resolution order: cached per-phase key → lazy render from the
-   * stored icon name → legacy custom pair → bot avatar pair.
+   * stored icon name → legacy custom pair → bot avatar pair. Paints per chat
+   * are serialized through a promise chain: two engine repaints racing on one
+   * group each write back the meta they read, and the slower one would
+   * otherwise clobber whatever the faster one committed (phase, keys, and the
+   * done mark alike).
    * @param sessionKey - Session key identifying the spawned group.
    * @param phase - Lifecycle phase to show. The two baseline phases
    * (`discussing`/`approved`) also move the persisted baseline the chat
@@ -2242,11 +2252,29 @@ export class FeishuPlatform implements Platform {
     if (chatID === '') {
       throw new Error(`${this.tag()}: set chat phase: no chat ID in session key`)
     }
+    const prev = this.chatPhasePaints.get(chatID) ?? Promise.resolve()
+    const run = prev.then(() => this.paintChatPhase(chatID, phase))
+    // The stored tail swallows rejections so a failed paint cannot break the
+    // chain; the original error still propagates to the actual caller.
+    const tail = run.catch(() => {})
+    this.chatPhasePaints.set(chatID, tail)
+    void tail.then(() => {
+      if (this.chatPhasePaints.get(chatID) === tail) this.chatPhasePaints.delete(chatID)
+    })
+    await run
+  }
+
+  /**
+   * The serialized body of {@link setChatPhase}.
+   * @param chatID - Chat the meta belongs to.
+   * @param phase - Target lifecycle phase.
+   */
+  private async paintChatPhase(chatID: string, phase: ChatPhase): Promise<void> {
     const meta = this.spawnStore.get(chatID)
     if (meta === undefined) return // non-spawned chats (branded hubs, main chats) keep their avatar
     const { key, meta: resolved } = await this.phaseAvatarKey(chatID, meta, phase)
     if (key === '') {
-      console.warn(`${this.tag()}: no avatar key for phase ${phase}, skipping (${sessionKey})`)
+      console.warn(`${this.tag()}: no avatar key for phase ${phase}, skipping (${chatID})`)
       return
     }
     if (key !== resolved.lastAvatarKey) {
