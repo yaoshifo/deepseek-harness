@@ -58,7 +58,7 @@ function newIconAvatarPlatform(): { p: FeishuPlatform; captured: Captured } {
 }
 
 describe('setGroupIconAvatar', () => {
-  it('uploads color + gray, sets the color avatar, and persists both keys', async () => {
+  it('uploads the discussing + done pair, sets yellow, and seeds phase bookkeeping', async () => {
     const { p, captured } = newIconAvatarPlatform()
 
     await expect(p.setGroupIconAvatar('feishu:oc_spawn1', 'bug', '登录500修复')).resolves.toBeUndefined()
@@ -68,8 +68,11 @@ describe('setGroupIconAvatar', () => {
 
     const meta = p.spawnStore.get('oc_spawn1')
     expect(meta).toBeDefined()
-    expect(meta?.colorAvatarKey).toBe('img-key-1')
-    expect(meta?.grayAvatarKey).toBe('img-key-2')
+    expect(meta?.iconName).toBe('bug')
+    expect(meta?.phase).toBe('discussing')
+    expect(meta?.basePhase).toBe('discussing')
+    expect(meta?.lastAvatarKey).toBe('img-key-1')
+    expect(meta?.avatarKeys).toEqual({ discussing: 'img-key-1', done: 'img-key-2' })
   })
 
   it('falls back to a pooled icon when the name is not in the sprite', async () => {

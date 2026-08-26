@@ -12,7 +12,7 @@
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
 import { atomicWriteFile } from '../atomicwrite.js'
-import type { GroupSpawnOptions, SpawnedChatInfo } from '../core/types.js'
+import type { ChatBasePhase, ChatPhase, GroupSpawnOptions, SpawnedChatInfo } from '../core/types.js'
 
 export type { GroupSpawnOptions, SpawnedChatInfo }
 
@@ -31,6 +31,16 @@ export interface SpawnedChatMeta {
   grayAvatarKey?: string
   /** ISO timestamp of the /done that marked the chat inactive. */
   doneAt?: string
+  /** Lucide icon name the avatar was rendered from; seeds lazy phase re-renders. */
+  iconName?: string
+  /** Lifecycle phase the avatar currently shows; absent on legacy entries. */
+  phase?: ChatPhase
+  /** Baseline phase the chat returns to when an overlay (attention/plan-review/done) clears. */
+  basePhase?: ChatBasePhase
+  /** Uploaded avatar image_key per phase; entries materialize lazily on first entry. */
+  avatarKeys?: Partial<Record<ChatPhase, string>>
+  /** Image key currently applied to the chat avatar; same-key transitions are skipped. */
+  lastAvatarKey?: string
 }
 
 /** How long a /done'd entry lingers before eviction (Go spawnedChatRetention). */

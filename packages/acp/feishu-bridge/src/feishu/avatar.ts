@@ -12,6 +12,7 @@
 
 import sharp from 'sharp'
 import { fnv1a32 } from '../lucide/icon.js'
+import type { ChatPhase } from '../core/types.js'
 
 /** 8-bit RGBA color. */
 export interface RGBA {
@@ -29,39 +30,24 @@ export interface RGBA {
 export const iconGrayBG: RGBA = { r: 0x6b, g: 0x72, b: 0x80 }
 
 /**
- * Rasterize a standalone SVG string into a size×size PNG: solid `bgColor`
- * background with the icon drawn in the central 60% (20% padding, never
- * touching an edge). The stroke color is the SVG's own (white from
- * `lucideIconSVG`).
- * @param svg - Standalone SVG document.
- * @param size - Output canvas width/height in pixels.
- * @param bgColor - Opaque background fill.
- * @returns PNG bytes.
+ * Fixed avatar background per lifecycle phase (replaces the old name-hashed
+ * random hue). Yellow/blue/green share S=0.65 L=0.50 so a white icon keeps
+ * high contrast on every phase; red sits darker so red-green colorblind users
+ * can still separate `attention` from `approved` by lightness.
  */
-export async function renderIconPNG(svg: string, size: number, bgColor: RGBA): Promise<Uint8Array> {
-  const iconSize = Math.round(size * 0.6)
-  const pad = Math.round(size * 0.2)
-  // Density scales librsvg's render resolution: the sprite is a 24×24 viewBox,
-  // so 72·iconSize/24 DPI lands the icon at exactly iconSize pixels.
-  const inner = await sharp(Buffer.from(svg), { density: (72 * iconSize) / 24 })
-    .resize(iconSize, iconSize)
-    .png()
-    .toBuffer()
-  const out = await sharp({
-    // sharp's background wants {r,g,b,alpha}; the a field is dropped.
-    create: { width: size, height: size, channels: 4, background: { r: bgColor.r, g: bgColor.g, b: bgColor.b, alpha: 1 } },
-  })
-    .composite([{ input: inner, left: pad, top: pad }])
-    .png()
-    .toBuffer()
-  return new Uint8Array(out)
+export const phaseAvatarBG: Record<ChatPhase, RGBA> = {
+  discussing: { r: 0xd9, g: 0x99, b: 0x06 },
+  'plan-review': { r: 0x2e, g: 0x7c, b: 0xd9 },
+  approved: { r: 0x22, g: 0xa8, b: 0x67 },
+  attention: { r: 0xb5, g: 0x25, b: 0x1e },
+  done: iconGrayBG,
 }
 
 /**
- * Pick a group avatar background by hashing the seed (group name) to a hue
- * with fixed saturation/lightness: same name → same color, different names →
- * (almost surely) different colors. L=0.50 keeps a white icon high-contrast on
- * any hue.
+ * Pick a non-phase avatar background by hashing the seed (group name) to a hue
+ * with fixed saturation/lightness: same name → same color. Used only by chats
+ * outside the lifecycle-phase language (chatroom families, branded hubs), so
+ * they stay visually distinct from phase-painted task groups.
  * @param seed - Group name.
  * @returns Opaque background color.
  */
@@ -93,6 +79,35 @@ export function hslToRGB(h: number, s: number, l: number): RGBA {
   const m = l - c / 2
   const to8 = (v: number): number => Math.round(v * 255 + 0.5) & 0xff
   return { r: to8(r1 + m), g: to8(g1 + m), b: to8(b1 + m), a: 255 }
+}
+
+/**
+ * Rasterize a standalone SVG string into a size×size PNG: solid `bgColor`
+ * background with the icon drawn in the central 60% (20% padding, never
+ * touching an edge). The stroke color is the SVG's own (white from
+ * `lucideIconSVG`).
+ * @param svg - Standalone SVG document.
+ * @param size - Output canvas width/height in pixels.
+ * @param bgColor - Opaque background fill.
+ * @returns PNG bytes.
+ */
+export async function renderIconPNG(svg: string, size: number, bgColor: RGBA): Promise<Uint8Array> {
+  const iconSize = Math.round(size * 0.6)
+  const pad = Math.round(size * 0.2)
+  // Density scales librsvg's render resolution: the sprite is a 24×24 viewBox,
+  // so 72·iconSize/24 DPI lands the icon at exactly iconSize pixels.
+  const inner = await sharp(Buffer.from(svg), { density: (72 * iconSize) / 24 })
+    .resize(iconSize, iconSize)
+    .png()
+    .toBuffer()
+  const out = await sharp({
+    // sharp's background wants {r,g,b,alpha}; the a field is dropped.
+    create: { width: size, height: size, channels: 4, background: { r: bgColor.r, g: bgColor.g, b: bgColor.b, alpha: 1 } },
+  })
+    .composite([{ input: inner, left: pad, top: pad }])
+    .png()
+    .toBuffer()
+  return new Uint8Array(out)
 }
 
 /**

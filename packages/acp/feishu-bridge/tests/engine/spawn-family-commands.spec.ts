@@ -26,14 +26,16 @@ import type { Message, Platform, SpawnedChatInfo } from '../../src/core/types.js
 interface FamilyStubPlatform extends StubCardPlatform {
   taggedKeys: string[]
   removedTags: Array<{ sessionKey: string; tagName: string }>
-  avatarCalls: Array<{ sessionKey: string; active: boolean }>
+  phaseCalls: Array<{ sessionKey: string; phase: string }>
+  basePhase: string
   activeKeys: Set<string>
   reactions: string[]
   spawnedChats: SpawnedChatInfo[]
   activeTagName(): string
   applyActiveTag(sessionKey: string): Promise<void>
   removeTagFromChat(sessionKey: string, tagName: string): Promise<void>
-  setChatAvatarActive(sessionKey: string, active: boolean): Promise<void>
+  setChatPhase(sessionKey: string, phase: import('../../src/core/types.js').ChatPhase): Promise<void>
+  chatBasePhase(sessionKey: string): import('../../src/core/types.js').ChatBasePhase
   markSpawnedChatActive(sessionKey: string): void
   markSpawnedChatDone(sessionKey: string): void
   isSpawnedChatActive(sessionKey: string): boolean
@@ -45,14 +47,16 @@ function newFamilyPlatform(): FamilyStubPlatform {
   const p = createStubCardPlatformFull('test') as unknown as FamilyStubPlatform
   p.taggedKeys = []
   p.removedTags = []
-  p.avatarCalls = []
+  p.phaseCalls = []
+  p.basePhase = 'discussing'
   p.activeKeys = new Set<string>()
   p.reactions = []
   p.spawnedChats = []
   p.activeTagName = () => '❤️'
   p.applyActiveTag = async (sessionKey: string) => { p.taggedKeys.push(sessionKey) }
   p.removeTagFromChat = async (sessionKey: string, tagName: string) => { p.removedTags.push({ sessionKey, tagName }) }
-  p.setChatAvatarActive = async (sessionKey: string, active: boolean) => { p.avatarCalls.push({ sessionKey, active }) }
+  p.setChatPhase = async (sessionKey: string, phase: import('../../src/core/types.js').ChatPhase) => { p.phaseCalls.push({ sessionKey, phase }) }
+  p.chatBasePhase = (_sessionKey: string) => p.basePhase as import('../../src/core/types.js').ChatBasePhase
   p.markSpawnedChatActive = (sessionKey: string) => { p.activeKeys.add(sessionKey) }
   p.markSpawnedChatDone = (sessionKey: string) => { p.activeKeys.delete(sessionKey) }
   p.isSpawnedChatActive = (sessionKey: string) => p.activeKeys.has(sessionKey)
@@ -159,12 +163,13 @@ describe('/untag', () => {
 })
 
 describe('/undone', () => {
-  it('restores the avatar, marks the chat active, and reacts', async () => {
+  it('restores the baseline phase, marks the chat active, and reacts', async () => {
     const { e, p, disposeFamily, disposeSession } = newEngine()
+    p.basePhase = 'approved'
     try {
       expect(e.dispatchCommand(p, famMsg('/undone'), '/undone')).toBe(true)
       await vi.waitFor(() => {
-        expect(p.avatarCalls).toEqual([{ sessionKey: 'test:ch1:u1', active: true }])
+        expect(p.phaseCalls).toEqual([{ sessionKey: 'test:ch1:u1', phase: 'approved' }])
       })
       expect(p.activeKeys.has('test:ch1:u1')).toBe(true)
       expect(p.reactions).toContain('Undone')
@@ -173,9 +178,9 @@ describe('/undone', () => {
     }
   })
 
-  it('replies the error when the avatar switch fails', async () => {
+  it('replies the error when the phase paint fails', async () => {
     const { e, p, disposeFamily, disposeSession } = newEngine()
-    p.setChatAvatarActive = async () => { throw new Error('nope') }
+    p.setChatPhase = async () => { throw new Error('nope') }
     try {
       expect(e.dispatchCommand(p, famMsg('/undone'), '/undone')).toBe(true)
       await vi.waitFor(() => { expect(p.getSent()[0]).toContain('nope') })

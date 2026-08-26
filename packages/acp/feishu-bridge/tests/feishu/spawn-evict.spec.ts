@@ -52,6 +52,28 @@ describe('saveSpawnedChats eviction sweep', () => {
   })
 })
 
+describe('phase-field persistence round-trip', () => {
+  it('keeps phase, basePhase, iconName, avatarKeys, and lastAvatarKey across reload', async () => {
+    const tmp = await tempDir()
+    const file = join(tmp, 'spawned.json')
+    const store = new SpawnedChatStore(file)
+    const meta = {
+      active: true,
+      iconName: 'bug',
+      phase: 'approved',
+      basePhase: 'approved',
+      lastAvatarKey: 'k2',
+      avatarKeys: { discussing: 'k1', approved: 'k2', done: 'k3' },
+    } as const
+    store.set('oc_task', { ...meta })
+    await store.save()
+
+    const reloaded = new SpawnedChatStore(file)
+    await reloaded.load()
+    expect(reloaded.get('oc_task')).toEqual(meta)
+  })
+})
+
 describe('extractFeishuChatID', () => {
   it('takes the second colon-separated field', () => {
     expect(extractFeishuChatID('feishu:oc_x:ou_user')).toBe('oc_x')

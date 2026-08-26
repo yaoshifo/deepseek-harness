@@ -14,7 +14,7 @@ import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Msg } from '../i18n/index.js'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.js'
-import { asCardSender, asChatAvatarStateSwitcher, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.js'
+import { asCardSender, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.js'
 import { newCard } from '../card.js'
 import type { Engine } from './engine.js'
 import type { SessionManager } from './session.js'
@@ -1206,7 +1206,7 @@ export async function cmdDone(e: Engine, p: Platform, msg: Message, args: string
     return
   }
 
-  if (asChatAvatarStateSwitcher(p) === undefined) {
+  if (asChatPhasePainter(p) === undefined) {
     void e.reply(p, msg.replyCtx, e.i18n.t(Msg.DoneNotSupported))
     return
   }
@@ -1284,12 +1284,12 @@ export async function cleanupOneChat(
 
   e.stopInteractiveSession(sessionKey)
 
-  // /done dims the avatar and marks the chat inactive; the heart tag is
-  // untouched — tagging is the independent /tag-/untag axis.
-  const switcher = asChatAvatarStateSwitcher(p)
-  if (switcher !== undefined) {
+  // /done grays the avatar (phase 'done') and marks the chat inactive; the
+  // heart tag is untouched — tagging is the independent /tag-/untag axis.
+  const painter = asChatPhasePainter(p)
+  if (painter !== undefined) {
     try {
-      await switcher.setChatAvatarActive(sessionKey, false)
+      await painter.setChatPhase(sessionKey, 'done')
     } catch (error) {
       console.warn(`done: dim avatar failed (${sessionKey}): ${String(error)}`)
     }

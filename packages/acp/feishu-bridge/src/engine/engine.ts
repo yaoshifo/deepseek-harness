@@ -138,7 +138,7 @@ import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
-import { asCompletionNotifier, asChatAvatarStateSwitcher, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter } from '../core/types.js'
+import { asCompletionNotifier, asChatPhasePainter, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
 import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.js'
 import { renderHelpGroupCard } from './misc-commands.js'
@@ -2931,6 +2931,7 @@ export class Engine {
             const p = state.platform
             if (p !== undefined) {
               await this.send(p, replyCtx, this.i18n.tf(Msg.Error, errorMessage(outcome.error)))
+              await this.applyChatPhase(p, sessionKey, 'attention')
             }
             return
           }
@@ -2989,6 +2990,7 @@ export class Engine {
           if (p !== undefined) {
             await this.send(p, replyCtx,
               this.i18n.tf(Msg.StallTimeout, Math.round(state.idleTimeout(this.eventIdleTimeout) / 1000), this.stallMaxRetries))
+            await this.applyChatPhase(p, sessionKey, 'attention')
           }
           // Go parity: fail the card before the kill so it cannot freeze in
           // its Running state next to the stall-timeout notice.
@@ -3356,6 +3358,7 @@ export class Engine {
             await sp.markFailed()
             if (event.error !== undefined && p !== undefined) {
               await this.send(p, replyCtx, this.i18n.tf(Msg.Error, event.error.message))
+              await this.applyChatPhase(p, sessionKey, 'attention')
             }
             if (state.agentSession === undefined || !state.agentSession.alive()) {
               this.notifyDroppedQueuedMessages(state, event.error ?? new Error('agent error'))
@@ -3476,6 +3479,13 @@ export class Engine {
       fullResponse = this.i18n.tf(Msg.Error, event.errorText)
     } else if (fullResponse === '') {
       fullResponse = this.i18n.t(Msg.SilentReply)
+    }
+
+    // Phase avatar: an errored turn needs the user's eyes (red); a completed
+    // turn clears any attention overlay back to the baseline.
+    const phasePlatform = state.platform ?? this.platforms[0]
+    if (phasePlatform !== undefined) {
+      await this.applyChatPhase(phasePlatform, sessionKey, errored ? 'attention' : this.chatBasePhase(phasePlatform, sessionKey))
     }
 
     // Context usage indicator: prefer SDK tokens, fall back to the agent's
@@ -4763,6 +4773,10 @@ export class Engine {
         }
       }
 
+      // Phase avatar: the parked card is the signal — blue for a plan awaiting
+      // approval, red for anything else awaiting the user.
+      await this.applyChatPhase(p, sessionKey, request.kind === 'plan-review' ? 'plan-review' : 'attention')
+
       // Park the ask, then render the card(s).
       state.pendingAsk = pending
       if (request.kind === 'plan-review' && planContent !== '') {
@@ -4834,6 +4848,16 @@ export class Engine {
       if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
       if (state.pendingAsk === pending) state.pendingAsk = undefined
       resolveDecision(decided)
+    }
+
+    // Phase avatar: plan approval moves the baseline to green, rejection (or a
+    // withdrawal) back to yellow; every other ask returns to the chat's
+    // baseline once answered.
+    if (request.kind === 'plan-review') {
+      const approved = decided.outcome === 'allowed-once' || decided.outcome === 'allowed-always'
+      await this.applyChatPhase(p, sessionKey, approved ? 'approved' : 'discussing')
+    } else {
+      await this.applyChatPhase(p, sessionKey, this.chatBasePhase(p, sessionKey))
     }
 
     // After the interaction, finalize the old card and start fresh (Go
@@ -7869,23 +7893,52 @@ export class Engine {
   }
 
   /**
-   * Restore a /done'd spawned group's color avatar on the next message when
-   * the platform reports it inactive (Go reactivateSpawnedChatAvatar). The
-   * active-check guard keeps idempotent resumes from spamming avatar-update
-   * system messages.
+   * Restore a /done'd spawned group's baseline-phase avatar on the next
+   * message when the platform reports it inactive (Go
+   * reactivateSpawnedChatAvatar). The active-check guard keeps idempotent
+   * resumes from spamming avatar-update system messages.
    * @param p - Platform owning the spawned chat's avatar.
    * @param sessionKey - Session key of the spawned chat.
    */
   async reactivateSpawnedChatAvatar(p: Platform, sessionKey: string): Promise<void> {
     const checker = asSpawnedChatActiveChecker(p)
-    const switcher = asChatAvatarStateSwitcher(p)
-    if (checker === undefined || switcher === undefined) return
+    const painter = asChatPhasePainter(p)
+    if (checker === undefined || painter === undefined) return
     if (checker.isSpawnedChatActive(sessionKey)) return
     try {
-      await switcher.setChatAvatarActive(sessionKey, true)
+      await painter.setChatPhase(sessionKey, painter.chatBasePhase(sessionKey))
     } catch (error) {
       console.warn(`reactivate avatar failed (${sessionKey}): ${String(error)}`)
     }
+  }
+
+  /**
+   * Apply a lifecycle phase to the chat's avatar (ChatPhasePainter).
+   * Best-effort: platforms without the capability, non-spawned chats, and
+   * same-key transitions all no-op; failures degrade to a warn.
+   * @param p - Platform owning the chat's avatar.
+   * @param sessionKey - Session key of the chat.
+   * @param phase - Lifecycle phase to paint.
+   */
+  async applyChatPhase(p: Platform, sessionKey: string, phase: ChatPhase): Promise<void> {
+    const painter = asChatPhasePainter(p)
+    if (painter === undefined) return
+    try {
+      await painter.setChatPhase(sessionKey, phase)
+    } catch (error) {
+      console.warn(`set chat phase failed (${sessionKey}, ${phase}): ${String(error)}`)
+    }
+  }
+
+  /**
+   * The chat's baseline phase — the target overlays return to. Defaults to
+   * `discussing` when the platform cannot report it (legacy/unregistered).
+   * @param p - Platform owning the chat's avatar.
+   * @param sessionKey - Session key of the chat.
+   * @returns The baseline phase.
+   */
+  chatBasePhase(p: Platform, sessionKey: string): ChatBasePhase {
+    return asChatPhasePainter(p)?.chatBasePhase(sessionKey) ?? 'discussing'
   }
 
   /**

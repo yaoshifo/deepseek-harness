@@ -46,10 +46,10 @@ import { noSpinner, resolveSpinnerAsset, type SpinnerCfg } from './spinner.js'
 import { parseProgressStyle } from '../progress.js'
 import { TokenBucketRateLimiter, isTenantAccessTokenInvalid, withTransientRetry } from './retry.js'
 import { errorMessage } from './retry.js'
-import { ErrNotSupported, type ImageAttachment, type FileAttachment, type Message, type MessageHandler, type Platform, type ProgressContent } from '../core/types.js'
+import { ErrNotSupported, type ChatBasePhase, type ChatPhase, type ImageAttachment, type FileAttachment, type Message, type MessageHandler, type Platform, type ProgressContent } from '../core/types.js'
 import { SpawnedChatStore, extractFeishuChatID, projectBaseForTag, type GroupSpawnOptions, type SpawnedChatInfo, type SpawnedChatMeta } from './spawn.js'
 import { TagManager, buildDirWordFreq, pickDirTagName, type CreateTagResult, type FeishuCodeReply, type TagApi, type TagRelationTag } from './tag.js'
-import { groupAvatarColor, grayscaleAvatar, iconGrayBG, renderIconPNG } from './avatar.js'
+import { grayscaleAvatar, groupAvatarColor, phaseAvatarBG, renderIconPNG } from './avatar.js'
 import { ChatNameCache } from './chatname.js'
 import { chatMembersAddBatch, dedupMemberIDs } from './members.js'
 import { detectFeishuFileType, detectMimeType, maxFeishuDownloadBytes, type FeishuFileType } from './media.js'
@@ -2208,41 +2208,81 @@ export class FeishuPlatform implements Platform {
   }
 
   /**
-   * Switch a spawned group's avatar state: active=true restores the color
-   * avatar, false grays it. Per-group custom keys (#52) win over the global
-   * bot avatar; a missing gray key skips dimming rather than failing /done.
+   * Paint a spawned group's avatar to its lifecycle phase (ChatPhasePainter).
+   * Same-key transitions skip the update call so chat system messages are not
+   * spammed; key resolution order: cached per-phase key → lazy render from the
+   * stored icon name → legacy custom pair → bot avatar pair.
    * @param sessionKey - Session key identifying the spawned group.
-   * @param active - true restores the color avatar, false grays it.
+   * @param phase - Lifecycle phase to show. The two baseline phases
+   * (`discussing`/`approved`) also move the persisted baseline the chat
+   * returns to when an overlay clears; overlay phases leave it untouched.
    */
-  async setChatAvatarActive(sessionKey: string, active: boolean): Promise<void> {
+  async setChatPhase(sessionKey: string, phase: ChatPhase): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
     if (chatID === '') {
-      throw new Error(`${this.tag()}: set chat avatar: no chat ID in session key`)
+      throw new Error(`${this.tag()}: set chat phase: no chat ID in session key`)
     }
     const meta = this.spawnStore.get(chatID)
-    if (meta?.colorAvatarKey !== undefined && meta.colorAvatarKey !== '') {
-      let key = meta.colorAvatarKey
-      if (!active) {
-        if (meta.grayAvatarKey === undefined || meta.grayAvatarKey === '') {
-          console.warn(`${this.tag()}: custom avatar gray key unavailable, skipping avatar dimming`)
-          return
-        }
-        key = meta.grayAvatarKey
-      }
-      await this.updateChatAvatar(chatID, key)
+    if (meta === undefined) return // non-spawned chats (branded hubs, main chats) keep their avatar
+    const { key, meta: resolved } = await this.phaseAvatarKey(chatID, meta, phase)
+    if (key === '') {
+      console.warn(`${this.tag()}: no avatar key for phase ${phase}, skipping (${sessionKey})`)
       return
     }
-    // No custom avatar → the global bot avatar pair.
-    let key = this.botAvatarKey
-    if (!active) {
-      if (this.botAvatarKeyGray === '') {
-        console.warn(`${this.tag()}: gray avatar key unavailable, skipping avatar dimming`)
-        return
-      }
-      key = this.botAvatarKeyGray
+    if (key !== resolved.lastAvatarKey) {
+      await this.updateChatAvatar(chatID, key)
     }
-    if (key === '') return // no avatar key at all (startup upload failed)
-    await this.updateChatAvatar(chatID, key)
+    // Publish the phase only after the avatar apply committed.
+    const basePhase: ChatBasePhase = phase === 'approved' || phase === 'discussing' ? phase : (resolved.basePhase ?? 'discussing')
+    this.spawnStore.set(chatID, { ...resolved, phase, basePhase, lastAvatarKey: key })
+    await this.spawnStore.save()
+  }
+
+  /**
+   * The chat's baseline phase — what an overlay (`attention`/`plan-review`/
+   * `done`) returns to when it clears. Defaults to `discussing` for legacy and
+   * unregistered chats.
+   * @param sessionKey - Session key identifying the spawned group.
+   * @returns The persisted baseline phase.
+   */
+  chatBasePhase(sessionKey: string): ChatBasePhase {
+    return this.spawnStore.get(extractFeishuChatID(sessionKey))?.basePhase ?? 'discussing'
+  }
+
+  /**
+   * Resolve the avatar image_key for a phase, lazily rendering and caching
+   * variants beyond the eager initial pair. Mutations of the cached key
+   * persist immediately; a failed lazy upload falls through to the legacy
+   * pair rather than failing the transition.
+   * @param chatID - Chat the meta belongs to.
+   * @param meta - Current spawned-chat meta.
+   * @param phase - Target lifecycle phase.
+   * @returns The key ('' when nothing resolves) and the possibly-updated meta.
+   */
+  private async phaseAvatarKey(chatID: string, meta: SpawnedChatMeta, phase: ChatPhase): Promise<{ key: string; meta: SpawnedChatMeta }> {
+    const cached = meta.avatarKeys?.[phase]
+    if (cached !== undefined && cached !== '') return { key: cached, meta }
+    if (meta.iconName !== undefined && meta.iconName !== '') {
+      const svg = lucideIconSVG(meta.iconName, '#ffffff')
+      if (svg !== undefined) {
+        try {
+          const key = await this.uploadAvatarImage(await renderIconPNG(svg, 256, phaseAvatarBG[phase]))
+          const next: SpawnedChatMeta = { ...meta, avatarKeys: { ...meta.avatarKeys, [phase]: key } }
+          this.spawnStore.set(chatID, next)
+          await this.spawnStore.save()
+          return { key, meta: next }
+        } catch (err) {
+          console.warn(`${this.tag()}: upload ${phase} icon avatar failed: ${String(err)}`)
+        }
+      }
+    }
+    // Legacy and chatroom-family entries: the pre-phase custom pair, then the
+    // global bot avatar pair. Family avatars stay on their hashed color for
+    // every non-done phase — they do not speak the phase language.
+    if (phase === 'done') {
+      return { key: meta.grayAvatarKey || this.botAvatarKeyGray, meta }
+    }
+    return { key: meta.colorAvatarKey || this.botAvatarKey, meta }
   }
 
   /**
@@ -2259,62 +2299,88 @@ export class FeishuPlatform implements Platform {
   }
 
   /**
-   * Render and upload the color icon avatar: resolve the Lucide icon name
-   * (with fuzzy fallback, then a group-name-hashed pool fallback), rasterize
-   * onto the group's hashed background, and upload. An empty svg means the
-   * icon is not in the sprite and no fallback hit — the caller skips the
-   * avatar.
+   * Resolve the icon SVG for a group avatar: the Lucide icon name, then the
+   * group-name-hashed fallback pool. Returns the SVG plus the icon name that
+   * resolved ('' when neither is in the sprite — the caller skips the avatar).
    */
-  private async uploadIconAvatarColor(iconName: string, groupName: string): Promise<{ svg: string; key: string }> {
+  private resolveIconSVG(iconName: string, groupName: string): { svg: string; iconName: string } {
     let svg = lucideIconSVG(iconName, '#ffffff')
-    if (svg === undefined) {
-      console.warn(`${this.tag()}: group icon not in sprite, falling back (icon ${iconName}, group ${groupName})`)
-      svg = lucideIconSVG(fallbackGroupIcon(groupName), '#ffffff')
-    }
-    if (svg === undefined) return { svg: '', key: '' }
-    const colorPNG = await renderIconPNG(svg, 256, groupAvatarColor(groupName))
-    const key = await this.uploadAvatarImage(colorPNG)
-    return { svg, key }
+    if (svg !== undefined) return { svg, iconName }
+    console.warn(`${this.tag()}: group icon not in sprite, falling back (icon ${iconName}, group ${groupName})`)
+    const fallback = fallbackGroupIcon(groupName)
+    svg = lucideIconSVG(fallback, '#ffffff')
+    return svg !== undefined ? { svg, iconName: fallback } : { svg: '', iconName: '' }
   }
 
   /**
-   * Set a group's avatar from a Lucide icon name (Go SetGroupIconAvatar, #52):
-   * upload color + gray versions, set the color one as the chat avatar, and
-   * persist both keys on the spawned-chat meta so /done dimming restores the
-   * custom avatar instead of the global bot avatar.
+   * Render and upload the color icon avatar for a non-phase chat (chatroom
+   * families, branded hubs): resolve the Lucide icon name (with fuzzy
+   * fallback, then a group-name-hashed pool fallback), rasterize onto the
+   * group's hashed background, and upload.
+   */
+  private async uploadIconAvatarColor(iconName: string, groupName: string): Promise<{ svg: string; key: string }> {
+    const resolved = this.resolveIconSVG(iconName, groupName)
+    if (resolved.svg === '') return { svg: '', key: '' }
+    const colorPNG = await renderIconPNG(resolved.svg, 256, groupAvatarColor(groupName))
+    const key = await this.uploadAvatarImage(colorPNG)
+    return { svg: resolved.svg, key }
+  }
+
+  /**
+   * Render the icon SVG onto a phase background and upload it, returning the
+   * image key.
+   */
+  private async uploadIconAvatarVariant(svg: string, phase: ChatPhase): Promise<string> {
+    return this.uploadAvatarImage(await renderIconPNG(svg, 256, phaseAvatarBG[phase]))
+  }
+
+  /**
+   * Set a spawned group's avatar from a Lucide icon name (Go SetGroupIconAvatar,
+   * #52): render the initial phase pair (yellow `discussing` + gray `done`),
+   * apply the yellow one, and seed the meta so later phase transitions swap
+   * keys without re-rendering (blue/green/red materialize lazily on first
+   * entry via the stored icon name).
    * @param sessionKey - Session key identifying the group.
    * @param iconName - Lucide icon name; fuzzy and hashed-pool fallbacks apply.
-   * @param groupName - Group name, seeding the background color and fallbacks.
+   * @param groupName - Group name, seeding the icon fallbacks.
    */
   async setGroupIconAvatar(sessionKey: string, iconName: string, groupName: string): Promise<void> {
     const chatID = extractFeishuChatID(sessionKey)
     if (chatID === '') {
       throw new Error(`${this.tag()}: set group icon avatar: no chat ID in session key`)
     }
-    let rendered: { svg: string; key: string }
+    const resolved = this.resolveIconSVG(iconName, groupName)
+    if (resolved.svg === '') return
+    let discussKey: string
     try {
-      rendered = await this.uploadIconAvatarColor(iconName, groupName)
+      discussKey = await this.uploadIconAvatarVariant(resolved.svg, 'discussing')
     } catch (err) {
       throw new Error(`${this.tag()}: render color icon: ${String(err)}`)
     }
-    if (rendered.svg === '') return
     // Gray upload failure is non-fatal: /done then skips the dimming.
-    let grayKey = ''
+    let doneKey = ''
     try {
-      grayKey = await this.uploadAvatarImage(await renderIconPNG(rendered.svg, 256, iconGrayBG))
+      doneKey = await this.uploadIconAvatarVariant(resolved.svg, 'done')
     } catch (err) {
       console.warn(`${this.tag()}: upload gray icon avatar failed: ${String(err)}`)
     }
     try {
-      await this.updateChatAvatar(chatID, rendered.key)
+      await this.updateChatAvatar(chatID, discussKey)
     } catch (err) {
       throw new Error(`${this.tag()}: set chat avatar to icon: ${String(err)}`)
     }
     const meta = this.spawnStore.get(chatID) ?? {}
-    this.spawnStore.set(chatID, { ...meta, colorAvatarKey: rendered.key, grayAvatarKey: grayKey })
+    this.spawnStore.set(chatID, {
+      ...meta,
+      iconName: resolved.iconName,
+      phase: 'discussing',
+      basePhase: 'discussing',
+      lastAvatarKey: discussKey,
+      avatarKeys: { ...meta.avatarKeys, discussing: discussKey, ...(doneKey !== '' ? { done: doneKey } : {}) },
+    })
     await this.spawnStore.save()
     console.info(
-      `${this.tag()}: group icon avatar set (session_key ${sessionKey}, icon ${iconName}, color_key ${rendered.key}, gray_key ${grayKey})`,
+      `${this.tag()}: group icon avatar set (session_key ${sessionKey}, icon ${resolved.iconName}, discussing_key ${discussKey}, done_key ${doneKey})`,
     )
   }
 
@@ -2491,8 +2557,10 @@ export class FeishuPlatform implements Platform {
    * SetChatroomFamilyAvatar): hub plus role/assistant child groups. One
    * render + upload per variant, the same color image on every group. The hub
    * is never tracked as spawned; children get per-group color/gray keys so
-   * chatroom-end /done dims via the gray icon. Without children the gray
-   * upload is skipped.
+   * chatroom-end /done dims via the gray icon. Family chats deliberately stay
+   * outside the phase language: no icon name is recorded, so phase
+   * transitions resolve to this same color/gray pair (key-deduped, no
+   * repaint). Without children the gray upload is skipped.
    * @param hubKey - Session key of the hub group.
    * @param childKeys - Session keys of the role/assistant child groups.
    * @param iconName - Lucide icon rendered onto every group.
@@ -2509,7 +2577,7 @@ export class FeishuPlatform implements Platform {
     let grayKey = ''
     if (childKeys.length > 0) {
       try {
-        grayKey = await this.uploadAvatarImage(await renderIconPNG(rendered.svg, 256, iconGrayBG))
+        grayKey = await this.uploadAvatarImage(await renderIconPNG(rendered.svg, 256, phaseAvatarBG.done))
       } catch (err) {
         console.warn(`${this.tag()}: chatroom family avatar: upload gray failed: ${String(err)}`)
       }
@@ -2532,7 +2600,7 @@ export class FeishuPlatform implements Platform {
         continue
       }
       const meta = this.spawnStore.get(chatID) ?? { active: true }
-      this.spawnStore.set(chatID, { ...meta, colorAvatarKey: rendered.key, grayAvatarKey: grayKey })
+      this.spawnStore.set(chatID, { ...meta, colorAvatarKey: rendered.key, grayAvatarKey: grayKey, lastAvatarKey: rendered.key })
       await this.spawnStore.save()
     }
     console.info(

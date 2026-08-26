@@ -1018,11 +1018,35 @@ export interface ChatroomFamilyAvatarSetter {
 }
 
 /**
- * Platform that signals a spawned group's active state via the group avatar
- * (#done dimming, Go ChatAvatarStateSwitcher).
+ * Lifecycle phase shown as the spawned group's avatar background color
+ * (diverges from Go's random-hue + gray pair):
+ * - `discussing` (yellow): no approved plan yet — also covers sessions that
+ *   never plan (unattended runs, direct work).
+ * - `plan-review` (blue): an ExitPlanMode card is parked awaiting approval.
+ * - `approved` (green): a plan was approved; the baseline healthy state.
+ * - `attention` (red): the user must step in — a pending question/permission
+ *   card, an errored turn, or a stall timeout.
+ * - `done` (gray): /done, same as the previous dimming design.
  */
-export interface ChatAvatarStateSwitcher {
-  setChatAvatarActive(sessionKey: string, active: boolean): Promise<void>
+export type ChatPhase = 'discussing' | 'plan-review' | 'approved' | 'attention' | 'done'
+
+/** The subset of phases a chat returns to when an overlay clears. */
+export type ChatBasePhase = 'discussing' | 'approved'
+
+/**
+ * Platform that paints a spawned group's avatar to its lifecycle phase
+ * (replaces Go's boolean ChatAvatarStateSwitcher; the implementation dedups
+ * same-phase calls so avatar updates never spam chat system messages).
+ */
+export interface ChatPhasePainter {
+  setChatPhase(sessionKey: string, phase: ChatPhase): Promise<void>
+  /**
+   * The chat's baseline phase — what an overlay (`attention`/`plan-review`/
+   * `done`) returns to when it clears.
+   * @param sessionKey - Session key identifying the spawned group.
+   * @returns The persisted baseline, defaulting to `discussing`.
+   */
+  chatBasePhase(sessionKey: string): ChatBasePhase
 }
 
 /** Platform that can list chat members and add members (Go ChatMemberManager). */
@@ -1369,13 +1393,13 @@ export function asChatroomFamilyAvatarSetter(p: Platform): ChatroomFamilyAvatarS
 }
 
 /**
- * Structural check for the {@link ChatAvatarStateSwitcher} capability.
+ * Structural check for the {@link ChatPhasePainter} capability.
  *
  * @param p - the platform to inspect.
  * @returns the capability view, or undefined when not implemented.
  */
-export function asChatAvatarStateSwitcher(p: Platform): ChatAvatarStateSwitcher | undefined {
-  return withMethod<ChatAvatarStateSwitcher>(p, 'setChatAvatarActive')
+export function asChatPhasePainter(p: Platform): ChatPhasePainter | undefined {
+  return withMethod<ChatPhasePainter>(p, 'setChatPhase')
 }
 
 /**

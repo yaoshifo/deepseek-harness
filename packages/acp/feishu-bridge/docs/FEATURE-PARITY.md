@@ -68,7 +68,7 @@
 | 49 | 子群 LLM 自动命名（engine 侧 fork） | ✅ | M4 | 全链路完成并真机验证（2026-08-19：占位名「开发虾 副本」→ LLM 改名「登录页CSS对齐修复」）；config schema + setGroupNameConfig + adapter lightweightQuery 已随 D 群补缺合并 |
 | 50 | 防 MCP 工具自动后台化（env 注入） | ✂️ | — | 同 #44（CLAUDE_CODE_* spawn 契约族） |
 | 51 | Lucide 图标库增强 HTML 渲染 | ✅ | M7 | lucide/sprite.ts 抽取 + plan-render-templates.ts 模板注入（M0 纯逻辑随迁） |
-| 52 | /spawn 子群按群名自动设 Lucide 图标头像 | ✅ | M4 | 真机验证：align-center-vertical 彩色+灰度双 key 上传（2026-08-19） |
+| 52 | /spawn 子群按群名自动设 Lucide 图标头像 | ✅ | M4 | 真机验证：align-center-vertical 彩色+灰度双 key 上传（2026-08-19）。**有意分歧（2026-08-26）**：头像背景色改为五色生命周期信号（黄=无已批计划、蓝=计划待批、绿=已批准、红=需用户介入、灰=/done），图标仍由 LLM 语义选择；chatroom 家族与 brand 群保留哈希色——见 Agent Note `implemented/feature/2026-08-26-feishu-bridge-lifecycle-phase-avatar` |
 | 53 | Monitor 群监控 → 自主拉群排查 / 中枢分发 | ✅ | M6 | 规则快路 + LLM 分诊 + dispatch/monitor 双模式 + coalesce + no_report + 轮询兜底 + /monitor；真机告警全链路（拉群排查 → /done --reply 回报） |
 | 54 | 进度卡 header 思考/执行 GIF | ✅ | M2 | M4-C 修资源解析路径，真机确认 |
 | 55 | /fork 回滚（引用历史消息 fork 到某个 turn） | ✅ | M8 | 经 sessionPersistence inspect 定位（10 分钟时间窗 + 文本前缀匹配，Go locateForkCut 保形）+ 截断前缀经 `agents.create({seed})` 一次建会话（`__forkat__` 哨兵消费内存暂存前缀，2026-08-23 弃持久化双写——Go 写截断日志文件是外部 `--resume` 进程时代的形状）；父会话无需 live（优于 #36 的 live-only 天花板，仅此路径）。引用计划卡 `/spawn` 回滚（Go spawnFromQuotedPlan）不迁移（用户裁定 2026-08-21）：与 #55 路径功能重叠（引用计划卡 + `/fork` 已覆盖「带调研上下文回滚到计划 turn」），`feishu_bridge_subtask` 的 fork 已覆盖派发场景 |

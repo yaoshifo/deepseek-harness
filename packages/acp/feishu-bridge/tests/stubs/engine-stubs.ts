@@ -360,7 +360,7 @@ export interface StubChatroomSpawnerEx extends StubChatroomSpawner {
   renamedAny: StubRenameCall[]
   spawnGroupWithOptions(msg: Message, groupName: string, firstMsg: string, opts: { workDir: string }): Promise<Message>
   markSpawnedChatDone(sessionKey: string): void
-  setChatAvatarActive(sessionKey: string, active: boolean): Promise<void>
+  setChatPhase(sessionKey: string, phase: import('../../src/core/types.js').ChatPhase): Promise<void>
   renameGroup(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
   renameGroupAny(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
   renamedAnyCalls(): StubRenameCall[]
@@ -384,10 +384,10 @@ export function createStubChatroomSpawnerEx(n = 'test'): StubChatroomSpawnerEx {
   p.markSpawnedChatDone = (sessionKey: string) => {
     p.doneKeys.push(sessionKey)
   }
-  // Satisfies ChatAvatarStateSwitcher so /done's cleanup (and EndChatroom,
-  // which drives it) proceeds past the avatar step. "Which roles were
-  // cleaned" is observed via doneKeys.
-  p.setChatAvatarActive = async () => {}
+  // Satisfies ChatPhasePainter so /done's cleanup (and EndChatroom, which
+  // drives it) proceeds past the avatar step. "Which roles were cleaned" is
+  // observed via doneKeys.
+  p.setChatPhase = async () => {}
   p.renameGroup = async () => {}
   p.renameGroupAny = async (key, name) => {
     p.renamedAny.push({ key, name })

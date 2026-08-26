@@ -3,7 +3,7 @@
  * /tag (cmdTag), /untag (cmdUntag), /undone (cmdUndone), /notify (cmdNotify),
  * and /board (cmdDashboard + familyChats + renderDashboardTree). The tag and
  * avatar axes are independent: /tag-/untag own the heart tag, /done-/undone
- * own the colored avatar and dashboard-active state. Go's dashboard
+ * own the phase avatar and dashboard-active state. Go's dashboard
  * done-button snapshot/refresh machinery is not ported — the tree renders
  * links only, so no refresh path exists.
  *
@@ -20,7 +20,7 @@ import { Msg } from '../i18n/index.js'
 import type { Message, Platform, SpawnedChatInfo } from '../core/types.js'
 import {
   asChatActiveTagger,
-  asChatAvatarStateSwitcher,
+  asChatPhasePainter,
   asChatTagRemover,
   asReactionAdder,
   asSpawnedChatActivator,
@@ -101,15 +101,15 @@ async function cmdUntag(e: Engine, p: Platform, msg: Message): Promise<void> {
   asReactionAdder(p)?.addReaction(msg.replyCtx, 'Untag')
 }
 
-/** /undone: restore the colored avatar and dashboard-active state (Go cmdUndone). */
+/** /undone: restore the baseline-phase avatar and dashboard-active state (Go cmdUndone). */
 async function cmdUndone(e: Engine, p: Platform, msg: Message): Promise<void> {
-  const switcher = asChatAvatarStateSwitcher(p)
-  if (switcher === undefined) {
+  const painter = asChatPhasePainter(p)
+  if (painter === undefined) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.UndoneNotSupported))
     return
   }
   try {
-    await switcher.setChatAvatarActive(msg.sessionKey, true)
+    await painter.setChatPhase(msg.sessionKey, painter.chatBasePhase(msg.sessionKey))
   } catch (error) {
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.UndoneError, errorMessage(error)))
     return
