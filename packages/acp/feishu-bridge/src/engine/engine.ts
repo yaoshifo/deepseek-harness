@@ -3406,6 +3406,20 @@ export class Engine {
           : '')
       }
     }
+    // Unreported native subtasks stay visible on the settled card: the body
+    // hint plus the title suffix count children still running in the
+    // background (the turn itself is done — the header stays terminal).
+    // Subtasks take the hint over a run_in_background count; both pending is
+    // rare and the suffix already carries the subtask half.
+    const pendingChildren = this.pendingNativeChildrenOf(sessionKey)
+    if (this.display.toolProgress && sp.canPreview()) {
+      if (pendingChildren > 0) {
+        await sp.setBackgroundHint(this.i18n.tf(Msg.SubtasksRunningHint, pendingChildren))
+      } else if (state.backgroundTasksPending === 0) {
+        await sp.setBackgroundHint('')
+      }
+      await sp.setPendingSubtasks(pendingChildren)
+    }
     state.eventsNeedResync = false
     let fullResponse = event.content
     // An error-reasoned turn reports its failure; interim narration it
@@ -5665,6 +5679,14 @@ export class Engine {
         footerElements = appendIntoLastCollapsible(footerElements, { kind: 'markdown', content: jumpMD.content })
       }
       footerElements = [...footerElements, ...(await this.subtaskDiffElements(session, workspaceDir)).map(d => ({ kind: 'markdown' as const, content: d.content }))]
+      // The ✅ push is the strongest done signal; carry the same unreported
+      // count as the progress card so a phone-glance user knows background
+      // subtasks outlive this turn.
+      const pendingChildren = this.pendingNativeChildrenOf(sessionKey)
+      if (pendingChildren > 0) {
+        footerElements = [...footerElements,
+          { kind: 'markdown' as const, content: this.i18n.tf(Msg.SubtasksRunningHint, pendingChildren) }]
+      }
       if (footerElements.length > 0 || headerSuffix !== '') {
         const card = newCard().title(headerSuffix, 'purple')
         for (const el of footerElements) card.raw(el)
@@ -6034,6 +6056,15 @@ export class Engine {
       }
     }
 
+    // Surface the still-running count on the spawning turn's live card right
+    // away (the stop-button row hint); the turn-end recount carries it onto
+    // the settled card. Fire-and-forget — a hint PATCH must not fail the spawn.
+    const sp = this.interactiveStates.get(parentSessionKey)?.preview
+    if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
+      const pending = this.pendingNativeChildrenOf(parentSessionKey)
+      if (pending > 0) void sp.setBackgroundHint(this.i18n.tf(Msg.SubtasksRunningHint, pending))
+    }
+
     console.info(`subtask: spawned native (parent=${parentSessionKey} child=${childId} fork=${forkContext} worktree=${wtPath !== ''} dir=${workDir})`)
     return { childName: label, childKey: childId }
   }
@@ -6100,6 +6131,21 @@ export class Engine {
    */
   ownsNativeChild(childId: string): boolean {
     return this.nativeChildEntries()[childId] !== undefined
+  }
+
+  /**
+   * Count a session's persisted native children that have not reported —
+   * the still-running-subtasks count shown on progress cards. Recomputed
+   * from the durable records at each render point; no shadow counter.
+   * @param sessionKey - Parent engine session key.
+   * @returns Unreported native children spawned by this session.
+   */
+  private pendingNativeChildrenOf(sessionKey: string): number {
+    let pending = 0
+    for (const rec of Object.values(this.nativeChildEntries())) {
+      if (rec.parent_key === sessionKey && !rec.reported) pending++
+    }
+    return pending
   }
 
   /**
@@ -6223,6 +6269,9 @@ export class Engine {
     // its id, and the runtime authorizes against the exact live ancestor.
     const liveParent = this.liveNativeSessionID(entry.parent_key)
     delegator.interruptChild(liveParent !== '' ? liveParent : entry.parent_agent_session_id, childId)
+    // An interrupted child never reports; settle the record so the
+    // still-running count on progress cards does not overstate forever.
+    this.updateNativeChild(childId, { reported: true })
     console.info(`subtask: interrupt requested for native child (child=${childId})`)
   }
 
