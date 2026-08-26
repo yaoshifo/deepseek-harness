@@ -70,6 +70,12 @@ export interface SubagentRunEndInfo {
    * the child produced none.
    */
   readonly lastAssistantMessage?: ContentBlock[]
+  /**
+   * Provider-authored, non-assistant failure detail for a non-`completed`
+   * outcome, carried from {@link SubagentResult.diagnostic}. Continuable
+   * epochs have no provider-authored detail and omit the field.
+   */
+  readonly diagnostic?: string
 }
 
 /**

@@ -22,7 +22,7 @@ Header 保持终态——它报告的是父 turn 的生命周期，而那个 tur
 
 - **子任务运行期间把定稿 Header 改回 执行中。** 否决：Header 驱动 turn 生命周期的视觉语义（spinner、停止按钮、且 ✅ 推送已发出），父 turn 确实已空闲；并发的新 turn 会渲染第二张诚实的 执行中 卡，与谎报的那张无法区分。机械上它还需要 `completeAndDetach` 之后的再 PATCH 通道——为误导性信号引入新生命周期机制。
 - **把计数并入 `backgroundTasksPending`。** 否决：那个计数器的递减假设一个被计任务对应一次唤醒（`handleTurnEnd` 每个后台 turn 消耗一格），而 gather 会把 N 个回报合并成一次唤醒——计数会漂移并误导 unsolicited reader 的宽限和 idle reaper。本计数纯展示。
-- **每个子任务事件实时 PATCH 的面板。** 缓议：需要上面的冻结后再 PATCH 通道。每个子任务驱动的唤醒都会自然刷新计数（每次 native 回报或 gather 超时都会开启新的父 turn，其卡片重算），stale 窗口止于首个子任务回报。
+- **每个子任务事件实时 PATCH 的面板。** 缓议：需要上面的冻结后再 PATCH 通道。每个子任务驱动的唤醒都会自然刷新计数（每次 native 回报或 gather 超时都会开启新的父 turn，其卡片重算），stale 窗口止于首个子任务回报。（后续：[2026-08-27](2026-08-27-feishu-bridge-blocking-gather-and-failure-settlement.zh.md) 改用阻塞式 gather 恢复实时可观测性——面板继续缓议。）
 
 ## 后果
 

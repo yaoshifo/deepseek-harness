@@ -145,6 +145,14 @@ export class Session {
   inheritedMode = ''
   /** Armed subtask gather barrier on a parent session; in-memory only (Go PendingSubtaskGather). */
   pendingSubtaskGather: import('./subtask.js').SubtaskGather | undefined
+  /**
+   * Resolver of a blocking gather wait; in-memory only. Armed by the engine's
+   * gatherSubtasksBlocking, resolved with the barrier summary so it lands as
+   * the gather tool call's result inside the still-open parent turn.
+   * Deliberately NOT carried by carryChatScopedState: the wait belongs to one
+   * turn, and a replaced record must fall back to the async wake path.
+   */
+  private gatherWaiter: ((summary: string) => void) | undefined
   /** ISO timestamp recorded at session creation. */
   createdAt = nowISO()
   /** ISO timestamp of the latest mutation. */
@@ -774,6 +782,24 @@ export class Session {
    */
   setPendingSubtaskGather(g: import('./subtask.js').SubtaskGather | undefined): void {
     this.pendingSubtaskGather = g
+  }
+
+  /**
+   * The resolver of a blocking gather wait armed on this parent session.
+   *
+   * @returns the pending resolver, undefined when no blocking wait is armed.
+   */
+  getGatherWaiter(): ((summary: string) => void) | undefined {
+    return this.gatherWaiter
+  }
+
+  /**
+   * Arm or clear the blocking gather wait resolver on this parent session.
+   *
+   * @param w - the resolver, or undefined to clear.
+   */
+  setGatherWaiter(w: ((summary: string) => void) | undefined): void {
+    this.gatherWaiter = w
   }
 
   /**

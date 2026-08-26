@@ -22,7 +22,7 @@ Keep the header terminal — it reports the parent turn's lifecycle, and that tu
 
 - **Flip the settled header back to 执行中 while children run.** Rejected: the header drives turn-lifecycle affordances (spinner, stop button, ✅ push already fired), the parent turn is genuinely idle, and a concurrent new turn would render a second honest 执行中 card the lie cannot be told apart from. Mechanically it also needs a post-`completeAndDetach` PATCH channel — new lifecycle machinery for a misleading signal.
 - **Feed the count into `backgroundTasksPending`.** Rejected: that counter's decrement assumes one wake per counted task (`handleTurnEnd` consumes one slot per background turn), while gather banks N reports into one wake — the count would drift and mislead the unsolicited reader's grace and the idle reaper. This count is display-only.
-- **A live per-child panel PATCHed on every child event.** Deferred: needs the post-freeze PATCH channel above. The count self-corrects on every child-driven wake (each native report or gather timeout opens a new parent turn whose card recomputes), so the stale window ends at the first child report.
+- **A live per-child panel PATCHed on every child event.** Deferred: needs the post-freeze PATCH channel above. The count self-corrects on every child-driven wake (each native report or gather timeout opens a new parent turn whose card recomputes), so the stale window ends at the first child report. (Successor: [2026-08-27](2026-08-27-feishu-bridge-blocking-gather-and-failure-settlement.md) restores the live observability through a blocking gather instead — the panel stays deferred.)
 
 ## Consequences
 

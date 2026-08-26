@@ -22,7 +22,7 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import { MockAdapter, textResponse } from '../../../../core/agent-loop/tests/mock-adapter.ts'
+import { MockAdapter, maxTokensResponse, textResponse } from '../../../../core/agent-loop/tests/mock-adapter.ts'
 import { buildProjectAssembly, registerNativeSettlementListener, type FeishuBridgeConfig, type ProjectConfig } from '../../src/index.js'
 import { InteractiveState } from '../../src/engine/engine.js'
 import { WorktreeMode } from '../../src/engine/worktree.js'
@@ -239,5 +239,103 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
     expect(terminal?.status?.pendingSubtasks).toBe(1)
     // buildProjectAssembly engines run zh; the unit cases pin the en wording.
     expect(terminal?.text).toContain('1 个子任务后台运行中')
+  })
+
+  it('a blocking gather resolves in-turn with the combined summary, no card, no wake turn', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    const root = await mkdtemp(join(tmpdir(), 'fb-native-assembly-'))
+    roots.push(root)
+    await ctx.plugin(JsonlSessionPersistence, { root })
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentRuntime, { settlementNotice: 'external' })
+    await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
+    const config: FeishuBridgeConfig = {
+      providers: { mock: { route: 'mock', model: 'mock' } },
+      projects: [],
+    }
+    const project: ProjectConfig = {
+      name: 'native-project',
+      workdir: root,
+      feishu: { appId: 'cli_test', appSecret: 'sec' },
+    }
+    const { engine, adapter } = buildProjectAssembly(ctx, config, project, join(root, 'data'))
+    const p = createStubCardPlatformFull('test')
+    engine.platforms.splice(0, engine.platforms.length, p)
+    registerNativeSettlementListener(ctx, [{ engine }])
+    // One script entry: the child's turn. A wake turn would consume a second
+    // entry; its absence proves the summary landed as the tool result instead.
+    const adapter2 = new MockAdapter([textResponse('gather child answer')])
+    ctx.llm.registerAdapter(['mock'], adapter2)
+
+    const parentKey = 'test:parent-chat:u1'
+    const agentSession = await adapter.startSession('', { sessionKey: parentKey })
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'parent-rctx'
+    engine.interactiveStates.set(parentKey, state)
+
+    const { childKey } = await engine.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'gather task')
+    // Arm immediately after spawn returns (before the child's turn can
+    // settle) so the barrier sees the child as expected.
+    const gathered = engine.gatherSubtasksBlocking(parentKey)
+    expect(engine.sessions.getOrCreateActive(parentKey).getPendingSubtaskGather()?.expected.size).toBe(1)
+
+    const summary = await gathered
+    expect(summary).toContain('gather child answer')
+    expect(engine.nativeChildEntries()[childKey]?.reported).toBe(true)
+    // The waiter held the turn open: no per-child settlement card posted…
+    expect(p.sentCards.length).toBe(0)
+    // …and exactly one LLM request ran (the child's) — no wake turn opened.
+    expect(adapter2.requests).toHaveLength(1)
+    expect(engine.sessions.getOrCreateActive(parentKey).getGatherWaiter()).toBeUndefined()
+  })
+
+  it('a max-tokens child settles through the blocking gather with failure semantics', async () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    const root = await mkdtemp(join(tmpdir(), 'fb-native-assembly-'))
+    roots.push(root)
+    await ctx.plugin(JsonlSessionPersistence, { root })
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentRuntime, { settlementNotice: 'external' })
+    await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
+    const config: FeishuBridgeConfig = {
+      providers: { mock: { route: 'mock', model: 'mock' } },
+      projects: [],
+    }
+    const project: ProjectConfig = {
+      name: 'native-project',
+      workdir: root,
+      feishu: { appId: 'cli_test', appSecret: 'sec' },
+    }
+    const { engine, adapter } = buildProjectAssembly(ctx, config, project, join(root, 'data'))
+    const p = createStubCardPlatformFull('test')
+    engine.platforms.splice(0, engine.platforms.length, p)
+    registerNativeSettlementListener(ctx, [{ engine }])
+    const adapter2 = new MockAdapter([maxTokensResponse('truncated work')])
+    ctx.llm.registerAdapter(['mock'], adapter2)
+
+    const parentKey = 'test:parent-chat:u1'
+    const agentSession = await adapter.startSession('', { sessionKey: parentKey })
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'parent-rctx'
+    engine.interactiveStates.set(parentKey, state)
+
+    const { childKey } = await engine.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'ceiling task')
+    const gathered = engine.gatherSubtasksBlocking(parentKey)
+
+    const summary = await gathered
+    // The failure prefix marks the child as unfinished while keeping its
+    // partial output (this engine runs en; the unit cases pin the vocabulary).
+    expect(summary).toContain('ran out of output room')
+    expect(summary).toContain('truncated work')
+    expect(engine.nativeChildEntries()[childKey]?.reported).toBe(true)
+    expect(p.sentCards.length).toBe(0)
   })
 })

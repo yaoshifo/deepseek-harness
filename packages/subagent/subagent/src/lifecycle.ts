@@ -151,6 +151,7 @@ export function observeRun(
         stopReason: result.stopReason,
         // Omit the field when no output exists, matching continuable epochs.
         ...result.output.length === 0 ? {} : { lastAssistantMessage: result.output },
+        ...result.diagnostic === undefined ? {} : { diagnostic: result.diagnostic },
       }, parent)
     },
     () => {

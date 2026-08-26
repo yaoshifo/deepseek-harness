@@ -54,10 +54,12 @@ const DESCRIPTION =
   + 'to the parent conversation that dispatched you — call exactly once when your work is '
   + 'complete; omit message to use your last reply. send: ask one of your running subtasks a '
   + 'follow-up question (non-blocking; it is queued until the child\'s current turn finishes, '
-  + 'and its answer wakes you). gather: after spawning all the children you want to batch, arm '
-  + 'a barrier so you are woken EXACTLY ONCE with a combined summary instead of once per child '
-  + '(a timeout wakes you with partial results). interrupt: stop one of your running '
-  + 'subtasks\' current turn (the child session survives and can be asked again later).'
+  + 'and its answer wakes you). gather: after spawning all the children you want to batch, BLOCK '
+  + 'until every in-flight subtask has reported (or the timeout, ~20 minutes, returns partial '
+  + 'results) — the combined summary arrives as THIS tool call\'s result, so call it when your '
+  + 'next step depends on the results and synthesize in the same reply; skip it to keep working '
+  + 'and be woken once per child. interrupt: stop one of your running subtasks\' current turn '
+  + '(the child session survives and can be asked again later).'
 
 /**
  * Register the `feishu_bridge_subtask` tool on `ctx.tools`.
@@ -81,7 +83,8 @@ export function registerSubtaskTool(
         required: true,
         enum: ['spawn', 'report', 'send', 'gather', 'interrupt'],
         description: 'spawn = dispatch a new subtask; report = deliver this subtask\'s result to its parent; '
-          + 'send = follow up on a running subtask; gather = wake me once after all in-flight subtasks report; '
+          + 'send = follow up on a running subtask; gather = block until all in-flight subtasks report, then '
+          + 'receive their combined summary as this call\'s result (a timeout returns partial results); '
           + 'interrupt = stop one subtask\'s current turn.',
       },
       message: {
@@ -175,11 +178,14 @@ export function registerSubtaskTool(
                 + 'individually (native inbox semantics). Spawn-level batching applies to top-level conversations.',
             }
           }
-          engine.gatherSubtasks(sessionKey)
+          // Blocks until every in-flight child reports (or the gather
+          // timeout returns partial results); the summary lands as this
+          // call's result in the same turn. Abort (user stop) falls back to
+          // the async wake path inside the engine.
+          const summary = await engine.gatherSubtasksBlocking(sessionKey, exec.signal)
           return {
             status: 'ok' as const,
-            message: 'Gather armed: waiting for all in-flight subtasks to report, '
-              + 'then you will be woken once with a summary.',
+            message: summary,
           }
         }
         case 'interrupt': {

@@ -565,6 +565,23 @@ describe('reportSubtaskTimeout', () => {
     expect(p.sentCards.length).toBe(1)
     expect(child.getSubtaskReported()).toBe(true)
   })
+
+  it('skips a child the user took over (stopped turn)', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+
+    const child = e.sessions.getOrCreateActive('test:child-chat')
+    child.setParentSessionKey('test:oc_parent:user-1')
+    child.setSubtaskDepth(1)
+    child.setSubtaskReported(false)
+    e.suppressSubtaskAutoReport('test:child-chat')
+
+    e.reportSubtaskTimeout('test:child-chat')
+    await settle()
+
+    expect(p.sentCards.length).toBe(0)
+    expect(child.getSubtaskReported()).toBe(false)
+  })
 })
 
 describe('maybeAutoReportSubtask', () => {
@@ -1611,5 +1628,272 @@ describe('SubtaskGather (direct)', () => {
     const done = g.accumulate('a', 'A', '')
     expect(done.done).toBe(true)
     expect(done.summary).toContain('（无内容 / NO_REPLY）')
+  })
+})
+
+describe('gatherSubtasksBlocking', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  /** Engine with two unreported native children and a queuing parent session. */
+  function twoChildEngine(p: Platform): {
+    e: Engine
+    parentSession: ControllableAgentSession
+  } {
+    const { e, agent } = newNativeEngine(p, parentKey)
+    const parentSession = newQueuingSession('parent-native-1')
+    e.interactiveStates.get(parentKey)!.agentSession = parentSession
+    agent.startSession = async () => parentSession
+    for (const [id, label] of [['native-child-1', 'task one'], ['native-child-2', 'task two']] as const) {
+      e.projectState?.setNativeChild(id, {
+        parent_key: parentKey,
+        parent_agent_session_id: 'parent-native-1',
+        label,
+        worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+        reported: false,
+      })
+    }
+    return { e, parentSession }
+  }
+
+  it('resolves in-turn with the combined summary and skips per-child cards', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, parentSession } = twoChildEngine(p)
+
+    const gathered = e.gatherSubtasksBlocking(parentKey)
+    // The first report banks silently: the waiter holds the turn open with
+    // the child activity already streaming, so no settlement card may post.
+    await e.reportNativeChild('native-child-1', 'first result')
+    await settle()
+    expect(e.sessions.getOrCreateActive(parentKey).getGatherWaiter()).toBeDefined()
+    await e.reportNativeChild('native-child-2', 'second result')
+
+    const summary = await gathered
+    expect(summary).toContain('first result')
+    expect(summary).toContain('second result')
+    // No wake injection: the summary landed as the tool result, in-turn.
+    expect(parentSession.sendCalls.some(c => c.includes('[子任务汇总]'))).toBe(false)
+    expect(p.sentCards.length).toBe(0)
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+    expect(e.nativeChildEntries()['native-child-2']?.reported).toBe(true)
+    expect(e.sessions.getOrCreateActive(parentKey).getGatherWaiter()).toBeUndefined()
+  })
+
+  it('resolves with the partial summary and missing-child preamble on timeout', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = twoChildEngine(p)
+    e.setSubtaskGatherTimeout(30)
+
+    const gathered = e.gatherSubtasksBlocking(parentKey)
+    await e.reportNativeChild('native-child-1', 'first result')
+    const summary = await gathered
+    expect(summary).toContain('first result')
+    expect(summary).toContain('1 个子任务超时未回报')
+    expect(summary).toContain('task two')
+  })
+
+  it('falls back to the async combined wake when the wait is aborted', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, parentSession } = twoChildEngine(p)
+    const ac = new AbortController()
+
+    const gathered = e.gatherSubtasksBlocking(parentKey, ac.signal)
+    ac.abort()
+    expect(e.sessions.getOrCreateActive(parentKey).getGatherWaiter()).toBeUndefined()
+
+    await e.reportNativeChild('native-child-1', 'first result')
+    await e.reportNativeChild('native-child-2', 'second result')
+
+    // The barrier still completes on the async path: one combined wake.
+    for (let i = 0; i < 100 && !parentSession.sendCalls.some(c => c.includes('[子任务汇总]')); i++) {
+      await settle()
+    }
+    expect(parentSession.sendCalls.some(c => c.includes('first result') && c.includes('second result'))).toBe(true)
+    // The aborted wait never resolves.
+    let resolved = false
+    void gathered.then(() => { resolved = true })
+    await settle()
+    expect(resolved).toBe(false)
+  })
+})
+
+describe('settleNativeChild failure semantics', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  it('prefixes an error settlement with the reason, diagnostic, and no-output notice', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'render the summary',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: false,
+    })
+
+    e.settleNativeChild('native-child-1', '', 'error', 'No API key for provider')
+    await settle()
+
+    expect(p.sentCards.length).toBe(1)
+    const body = cardBody(p.sentCards[0])
+    expect(body).toContain('failed')
+    expect(body).toContain('No API key for provider')
+    expect(body).toContain('no closing output')
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+  })
+
+  it('marks a max-tokens settlement as unfinished but keeps its partial output', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'render the summary',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: false,
+    })
+
+    e.settleNativeChild('native-child-1', 'halfway through', 'max-tokens')
+    await settle()
+
+    const body = cardBody(p.sentCards[0])
+    expect(body).toContain('out of output room')
+    expect(body).toContain('halfway through')
+  })
+
+  it('keeps a completed settlement clean and settles an output-less completion with a notice', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'render the summary',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: false,
+    })
+
+    e.settleNativeChild('native-child-1', 'clean result', 'completed')
+    await settle()
+    expect(cardBody(p.sentCards[0])).toBe('clean result')
+
+    // A completed child with no output anywhere settles with the no-output
+    // notice instead of the swallowed 'no result to report'.
+    e.projectState?.setNativeChild('native-child-2', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'silent task',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: false,
+    })
+    e.settleNativeChild('native-child-2', '', 'completed')
+    await settle()
+    expect(cardBody(p.sentCards[1])).toContain('no closing output')
+    expect(e.nativeChildEntries()['native-child-2']?.reported).toBe(true)
+  })
+
+  it('settlementDeliveryText keeps completed output unprefixed and covers the vocabulary', () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+
+    expect(e.settlementDeliveryText('completed', 'done text', '')).toBe('done text')
+    expect(e.settlementDeliveryText('error', 'partial', '')).toContain('failed')
+    expect(e.settlementDeliveryText('refusal', '', '')).toContain('declined')
+    expect(e.settlementDeliveryText('aborted', '', '')).toContain('stopped')
+    expect(e.settlementDeliveryText('weird-future-reason', 'partial', '')).toContain('weird-future-reason')
+    expect(e.settlementDeliveryText('error', 'partial', 'boom detail')).toContain('boom detail')
+  })
+})
+
+describe('group-path failure auto-report', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  /** Engine whose parent wake turns land on a recording queuing session. */
+  function childEngine(p: Platform): {
+    e: Engine
+    parentSession: ControllableAgentSession
+    child: Session
+    childKey: string
+  } {
+    const { e, agent } = newNativeEngine(p, parentKey)
+    const parentSession = newQueuingSession('parent-native-1')
+    agent.startSession = async () => parentSession
+    const childKey = 'test:child-chat:u1'
+    const child = e.sessions.getOrCreateActive(childKey)
+    child.setParentSessionKey(parentKey)
+    child.setSubtaskDepth(1)
+    return { e, parentSession, child, childKey }
+  }
+
+  /** Await the parent's [子任务完成] wake prompt (bounded polling). */
+  async function wakeOf(s: { sendCalls: string[] }): Promise<string | undefined> {
+    for (let i = 0; i < 100 && !s.sendCalls.some(c => c.includes('[子任务完成]')); i++) {
+      await settle()
+    }
+    return s.sendCalls.find(c => c.includes('[子任务完成]'))
+  }
+
+  it('an error-reasoned turn reports the failure with this turn\'s partial text, never a stale reply', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, parentSession, child, childKey } = childEngine(p)
+    // A stale earlier result must not be misreported as this turn's output.
+    child.setLastResult('previous turn result')
+
+    const childSession = newControllableSession('child-1')
+    const state = new InteractiveState()
+    state.agentSession = childSession
+    state.platform = p
+    state.replyCtx = 'child-rctx'
+    e.interactiveStates.set(childKey, state)
+
+    childSession.channel.push({ type: 'text', content: 'partial narration', done: false })
+    childSession.channel.push({ type: 'result', content: '', errorText: 'No API key for provider', done: true })
+    await e.processInteractiveEvents(state, child, e.sessions, childKey, 'm1', undefined, state.replyCtx)
+
+    const wake = await wakeOf(parentSession)
+    expect(wake).toBeDefined()
+    expect(wake).toContain('No API key for provider')
+    expect(wake).toContain('partial narration')
+    expect(wake).not.toContain('previous turn result')
+  })
+
+  it('a mid-turn process exit reports the partial output with the interruption prefix', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, parentSession, child, childKey } = childEngine(p)
+
+    const childSession = newControllableSession('child-1')
+    const state = new InteractiveState()
+    state.agentSession = childSession
+    state.platform = p
+    state.replyCtx = 'child-rctx'
+    e.interactiveStates.set(childKey, state)
+
+    childSession.channel.push({ type: 'text', content: 'work in progress', done: false })
+    await childSession.close()
+    await e.processInteractiveEvents(state, child, e.sessions, childKey, 'm1', undefined, state.replyCtx)
+
+    const wake = await wakeOf(parentSession)
+    expect(wake).toBeDefined()
+    expect(wake).toContain('process exited mid-turn')
+    expect(wake).toContain('work in progress')
+  })
+
+  it('a crash with no streamed text still settles the parent via the timeout notice', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, parentSession, child, childKey } = childEngine(p)
+
+    const childSession = newControllableSession('child-1')
+    const state = new InteractiveState()
+    state.agentSession = childSession
+    state.platform = p
+    state.replyCtx = 'child-rctx'
+    e.interactiveStates.set(childKey, state)
+
+    await childSession.close()
+    await e.processInteractiveEvents(state, child, e.sessions, childKey, 'm1', undefined, state.replyCtx)
+
+    for (let i = 0; i < 100 && !parentSession.sendCalls.some(c => c.includes('timed out')); i++) {
+      await settle()
+    }
+    expect(parentSession.sendCalls.some(c => c.includes('timed out'))).toBe(true)
+    expect(child.getSubtaskReported()).toBe(true)
   })
 })

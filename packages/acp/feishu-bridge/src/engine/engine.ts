@@ -2910,6 +2910,8 @@ export class Engine {
             this.notifyDroppedQueuedMessages(state, new Error(errText))
             if (state.agentSession === undefined || !state.agentSession.alive()) {
               await this.cleanupInteractiveState(sessionKey, state)
+              // The dead child owes its parent a settlement it can no longer deliver.
+              this.reportSubtaskTimeout(sessionKey)
             }
             const p = state.platform
             if (p !== undefined) {
@@ -2977,6 +2979,9 @@ export class Engine {
           // its Running state next to the stall-timeout notice.
           await sp.markFailed()
           await this.cleanupInteractiveState(sessionKey, state)
+          // A stalled-out child never reports; the parent gets the synthetic
+          // timeout notice instead of waiting forever.
+          this.reportSubtaskTimeout(sessionKey)
           return
         }
 
@@ -3000,6 +3005,8 @@ export class Engine {
             await this.send(p, replyCtx, this.i18n.t(Msg.WatchdogReset))
           }
           await this.cleanupInteractiveState(sessionKey, state)
+          // The capped child owes its parent a settlement it can no longer deliver.
+          this.reportSubtaskTimeout(sessionKey)
           return
         }
 
@@ -3517,9 +3524,17 @@ export class Engine {
 
     // First-turn fallback: if this is a delegated subtask session and the
     // agent finished without explicitly reporting, push the result to the
-    // parent so it is never lost. One-shot (Go maybeAutoReportSubtask).
+    // parent so it is never lost. One-shot (Go maybeAutoReportSubtask). An
+    // error-reasoned turn reports its failure explicitly — with this turn's
+    // own partial streamed text, never a stale earlier reply.
     const resultOrReply = await this.lastResultOrReply(sessionKey, session)
-    this.maybeAutoReportSubtask(state, session, resultOrReply, isSilent)
+    if (errored) {
+      const partial = joined.trim()
+      const failed = this.i18n.tf(Msg.SubtaskTurnFailed, event.errorText)
+      this.maybeAutoReportSubtask(state, session, partial !== '' ? `${failed}\n\n${partial}` : failed, false)
+    } else {
+      this.maybeAutoReportSubtask(state, session, resultOrReply, isSilent)
+    }
     // Chatroom role turn-end: deterministically relay the role's reply to the
     // hub and wake the moderator. Disjoint from the subtask hook above
     // (chatroom roles keep depth=0).
@@ -3715,15 +3730,26 @@ export class Engine {
         : this.i18n.t(Msg.AgentProcessExited))
     }
 
-    if (state.textParts.length > 0) {
+    if (state.textParts.length === 0) {
+      // Crash before any streamed text: nothing to auto-report, but the
+      // parent still gets the synthetic settlement notice.
+      this.reportSubtaskTimeout(sessionKey)
+      return
+    }
+
+    {
       let fullResponse = state.textParts.join('')
 
       // Mirror the EventResult turn-end hook: without an EventResult (the
       // process exited mid-turn) the subtask result would never report to
       // the parent, deadlocking a gather (Go engine_events.go channel-closed
-      // path).
-      this.maybeAutoReportSubtask(state, session, fullResponse, isSilentReply(fullResponse))
+      // path). The interruption prefix marks partial output as partial, so a
+      // crash with no streamed text still settles as a notice.
+      const prefixed = `${this.i18n.t(Msg.SubtaskTurnInterrupted)}\n\n${fullResponse}`
+      this.maybeAutoReportSubtask(state, session, prefixed, isSilentReply(prefixed))
       maybeAutoRelayRole(this, state, session, fullResponse, isSilentReply(fullResponse))
+      // No-op when the auto-report delivered; covers the silent-reply skip.
+      this.reportSubtaskTimeout(sessionKey)
 
       if (isSilentReply(fullResponse)) return
       const [stripped, ok] = stripTrailingSilent(fullResponse)
@@ -6217,8 +6243,11 @@ export class Engine {
    * Idempotent per child until a follow-up re-arms it.
    * @param childId - The durable native child session id.
    * @param result - The child's result text; '' uses the child's last reply.
+   * @param opts - settleEmpty: an empty result after the window re-read settles
+   *   with a no-output notice instead of throwing (the settlement path has no
+   *   live model to teach).
    */
-  async reportNativeChild(childId: string, result: string): Promise<void> {
+  async reportNativeChild(childId: string, result: string, opts: { settleEmpty?: boolean } = {}): Promise<void> {
     const entry = this.nativeChildEntries()[childId]
     if (entry === undefined) {
       throw new Error('subtask: not a native child of this project')
@@ -6233,7 +6262,11 @@ export class Engine {
       result = lastAssistant
     }
     if (result.trim() === '') {
-      throw new Error('subtask: no result to report')
+      if (opts.settleEmpty === true) {
+        result = this.i18n.t(Msg.SubtaskSettlementNoOutput)
+      } else {
+        throw new Error('subtask: no result to report')
+      }
     }
 
     const nativeParent = this.nativeChildEntries()[entry.parent_key] !== undefined
@@ -6262,17 +6295,50 @@ export class Engine {
   /**
    * Settlement fallback (Go maybeAutoReportSubtask's native counterpart): the
    * `subagent/end` listener calls this with the epoch's final assistant
-   * output, so a child that never explicitly reported still delivers — and a
-   * follow-up's answer re-arms the same delivery.
+   * output and terminal outcome, so a child that never explicitly reported
+   * still delivers — and a follow-up's answer re-arms the same delivery.
    * @param childId - The durable native child session id.
    * @param finalOutput - The epoch's final assistant text ('' re-reads the window).
+   * @param stopReason - The terminal stop reason from `subagent/end`; a non-completed reason prefixes failure semantics.
+   * @param diagnostic - Provider-authored failure detail ('' when none).
    */
-  settleNativeChild(childId: string, finalOutput: string): void {
+  settleNativeChild(childId: string, finalOutput: string, stopReason: string = 'completed', diagnostic: string = ''): void {
     const entry = this.nativeChildEntries()[childId]
     if (entry === undefined || entry.reported) return
-    void this.reportNativeChild(childId, finalOutput).catch((error: unknown) => {
-      console.warn(`subtask: native settlement delivery failed (child=${childId}): ${String(error)}`)
-    })
+    const delivery = this.settlementDeliveryText(stopReason, finalOutput, diagnostic)
+    void this.reportNativeChild(childId, delivery, { settleEmpty: true })
+      .catch((error: unknown) => {
+        console.warn(`subtask: native settlement delivery failed (child=${childId}): ${String(error)}`)
+      })
+  }
+
+  /**
+   * Compose a native child's settlement delivery text from its terminal
+   * outcome: a non-completed stop reason carries an explicit failure prefix
+   * (plus the provider diagnostic and a no-closing-output notice when
+   * present), so the parent can tell finished work from failed work — the
+   * bridge counterpart of the runtime's one-shot run-settlement vocabulary.
+   * @param stopReason - The terminal stop reason from `subagent/end`.
+   * @param output - The epoch's final assistant text ('' when none).
+   * @param diagnostic - Provider-authored failure detail ('' when none).
+   * @returns The delivery text; never empty for a non-completed reason.
+   */
+  settlementDeliveryText(stopReason: string, output: string, diagnostic: string): string {
+    let prefix = ''
+    switch (stopReason) {
+      case 'completed': break
+      case 'max-tokens': prefix = this.i18n.t(Msg.SubtaskSettlementMaxTokens); break
+      case 'refusal': prefix = this.i18n.t(Msg.SubtaskSettlementRefusal); break
+      case 'aborted': prefix = this.i18n.t(Msg.SubtaskSettlementAborted); break
+      case 'error': prefix = this.i18n.t(Msg.SubtaskSettlementFailed); break
+      // Merge-extensible stop reasons report as unfinished, never as success.
+      default: prefix = this.i18n.tf(Msg.SubtaskSettlementAbnormal, stopReason); break
+    }
+    if (prefix === '') return output.trim()
+    const parts = [prefix]
+    if (diagnostic !== '') parts.push(this.i18n.tf(Msg.SubtaskSettlementDiagnostic, diagnostic))
+    parts.push(output.trim() === '' ? this.i18n.t(Msg.SubtaskSettlementNoOutput) : output.trim())
+    return parts.join('\n\n')
   }
 
   /**
@@ -6681,12 +6747,16 @@ export class Engine {
   /**
    * A subtask session's interactive state was cleaned up without the subtask
    * reporting — send a synthetic failure notification so the parent does not
-   * wait forever (Go reportSubtaskTimeout).
+   * wait forever (Go reportSubtaskTimeout, wired on the stall-kill,
+   * hard-cap, send-failure, and channel-closed paths). A user takeover
+   * (stopped turn) suppresses it: the human drives that chat now and a later
+   * human turn re-arms the report.
    * @param sessionKey - Session key of the timed-out child.
    */
   reportSubtaskTimeout(sessionKey: string): void {
     const sess = this.sessions.getOrCreateActive(sessionKey)
-    if (sess.getSubtaskDepth() <= 0 || sess.getSubtaskReported() || sess.getParentSessionKey() === '') return
+    if (sess.getSubtaskDepth() <= 0 || sess.getSubtaskReported() || sess.getSubtaskAutoReportSuppressed()
+      || sess.getParentSessionKey() === '') return
 
     const p = this.reportCapablePlatform()
     if (p === undefined) {
@@ -6759,6 +6829,52 @@ export class Engine {
     console.info(`subtask: gather armed on parent (parent=${parentSessionKey} expected=${g.expected.size} timeoutS=${timeoutS})`)
   }
 
+  /**
+   * Blocking variant of {@link gatherSubtasks} — the tool's synchronous
+   * delivery contract: arm the barrier, then hold the calling tool call open
+   * until every expected child has reported or the timeout fires, resolving
+   * with the combined summary so it lands as the gather tool result inside
+   * the still-open parent turn. While the call is in flight the turn stays
+   * open — child activity streams on the live card (fromSubagent events) and
+   * the in-flight tool call keeps the idle timer disarmed. Aborting the
+   * signal (user stop, teardown) drops the waiter and leaves the barrier
+   * armed for the async wake path, so collected results are not lost.
+   * @param parentSessionKey - Session key of the gathering parent.
+   * @param signal - Abort signal of the calling tool call; aborting falls back to the async wake path.
+   * @returns The combined summary (timeout appends the missing-children preamble).
+   */
+  async gatherSubtasksBlocking(parentSessionKey: string, signal?: AbortSignal): Promise<string> {
+    this.gatherSubtasks(parentSessionKey)
+    const parent = this.sessions.getOrCreateActive(parentSessionKey)
+    return await new Promise<string>((resolve) => {
+      parent.setGatherWaiter(resolve)
+      signal?.addEventListener('abort', () => {
+        // The tool call is gone; later reports must fall back to the async
+        // wake instead of resolving a promise nobody awaits.
+        if (parent.getGatherWaiter() === resolve) parent.setGatherWaiter(undefined)
+      }, { once: true })
+    })
+  }
+
+  /**
+   * Complete an armed gather: resolve the blocking waiter (the summary lands
+   * as the gather tool result in the still-open turn) or, without one, inject
+   * the synthetic [子任务汇总] wake message (Go wakeParentWithGather).
+   * @param parentSess - The gathering parent session carrying the waiter.
+   * @param parentKey - Session key of the parent, for the wake path.
+   * @param summary - The combined summary text.
+   */
+  private resolveOrWakeGather(parentSess: Session, parentKey: string, summary: string): void {
+    const waiter = parentSess.getGatherWaiter()
+    if (waiter !== undefined) {
+      parentSess.setGatherWaiter(undefined)
+      waiter(summary)
+      console.info(`subtask: blocking gather resolved in-turn (parent=${parentKey})`)
+      return
+    }
+    this.wakeParentWithGather(parentKey, summary)
+  }
+
   /** Inject a synthetic [子任务汇总] message into the parent (Go wakeParentWithGather). */
   private wakeParentWithGather(parentKey: string, summary: string): void {
     const p = this.reportCapablePlatform()
@@ -6794,7 +6910,7 @@ export class Engine {
     if (!done) return // already woken by the last report
     parent.setPendingSubtaskGather(undefined)
     this.sessions.save()
-    this.wakeParentWithGather(parentKey, summary)
+    this.resolveOrWakeGather(parent, parentKey, summary)
     console.info(`subtask: gather timed out; woke parent with partial results (parent=${parentKey})`)
   }
 
@@ -6885,7 +7001,13 @@ export class Engine {
     content: string,
     silentCard: boolean,
   ): Promise<void> {
-    if (!silentCard) {
+    // A blocking gather holds the parent turn open with the child activity
+    // already streaming on its live card; per-child settlement cards would
+    // only duplicate that stream. Non-creating lookup stays: a dangling
+    // parent key must not mint a phantom session.
+    const parentSess = this.sessions.findActive(parentKey)
+    const waiterArmed = parentSess?.getGatherWaiter() !== undefined
+    if (!silentCard && !waiterArmed) {
       await this.sendAsCard(p, parentRctx, content, {
         title: this.i18n.tf(Msg.DoneReplyParentHeader, label),
         color: 'indigo',
@@ -6893,11 +7015,7 @@ export class Engine {
     }
 
     // Monitor-mode parent: the monitored chat has no interactive agent —
-    // post the card only, never inject the wake message. Non-creating
-    // lookup: a dangling parent key must not mint a phantom session (whose
-    // empty flags would then route this settlement into a spurious
-    // no-context agent turn in a dead registry entry).
-    const parentSess = this.sessions.findActive(parentKey)
+    // post the card only, never inject the wake message.
     if (parentSess === undefined) {
       console.warn(`subtask: parent session missing, card delivered without wake (parent=${parentKey} child=${childKey})`)
       return
@@ -6921,7 +7039,7 @@ export class Engine {
       if (done) {
         parentSess.setPendingSubtaskGather(undefined)
         this.sessions.save()
-        this.wakeParentWithGather(parentKey, summary)
+        this.resolveOrWakeGather(parentSess, parentKey, summary)
         return
       }
       if (!alreadyWoken) return // banked; parent woken once when all report

@@ -902,9 +902,10 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
 /**
  * Wire the native settlement fallback (de-baggage B4): each continuable
  * epoch that ends without an explicit report delivers its final assistant
- * output through the owning engine — Go maybeAutoReportSubtask's native
- * counterpart. `live` is captured by reference so entries added after
- * registration (none today; apply() builds all projects first) still route.
+ * output and terminal outcome through the owning engine — Go
+ * maybeAutoReportSubtask's native counterpart. `live` is captured by
+ * reference so entries added after registration (none today; apply() builds
+ * all projects first) still route.
  *
  * @param ctx - Plugin context carrying the event bus.
  * @param live - Live project entries whose engines may own native children.
@@ -917,7 +918,9 @@ export function registerNativeSettlementListener(ctx: Context, live: ReadonlyArr
       .join('')
     for (const { engine } of live) {
       if (engine.ownsNativeChild(info.id)) {
-        engine.settleNativeChild(info.id, output)
+        // The terminal outcome rides along so the settlement composes
+        // failure semantics instead of reporting failed work as a result.
+        engine.settleNativeChild(info.id, output, info.stopReason, info.diagnostic ?? '')
         return
       }
     }

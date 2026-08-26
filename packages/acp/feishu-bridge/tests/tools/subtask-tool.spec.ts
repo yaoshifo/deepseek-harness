@@ -33,6 +33,7 @@ interface RoutedEngine {
   readonly reportNative: ReturnType<typeof vi.fn>
   readonly send: ReturnType<typeof vi.fn>
   readonly gather: ReturnType<typeof vi.fn>
+  readonly gatherBlocking: ReturnType<typeof vi.fn>
   readonly interrupt: ReturnType<typeof vi.fn>
 }
 
@@ -44,8 +45,10 @@ function newRoutedEngine(name: string): RoutedEngine {
   const reportNative = vi.spyOn(engine, 'reportNativeChild').mockResolvedValue(undefined)
   const send = vi.spyOn(engine, 'sendToSubtask').mockResolvedValue(undefined)
   const gather = vi.spyOn(engine, 'gatherSubtasks').mockReturnValue(undefined)
+  const gatherBlocking = vi.spyOn(engine, 'gatherSubtasksBlocking')
+    .mockResolvedValue('[子任务汇总] combined summary')
   const interrupt = vi.spyOn(engine, 'interruptNativeChild').mockReturnValue(undefined)
-  return { engine, spawn, report, reportNative, send, gather, interrupt }
+  return { engine, spawn, report, reportNative, send, gather, gatherBlocking, interrupt }
 }
 
 function stubAgent(ctx: Context, id: string): Agent {
@@ -248,12 +251,12 @@ describe('feishu_bridge_subtask action routing', () => {
     expect(r.send).not.toHaveBeenCalled()
   })
 
-  it('gather routes to GatherSubtasks on the caller session', async () => {
+  it('gather routes to the blocking gather and returns the summary as the tool result', async () => {
     const r = newRoutedEngine('test')
     const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:parent-chat' }))
     const v = value(await execute(test, { action: 'gather' })) as { message: string }
-    expect(r.gather).toHaveBeenCalledWith('test:parent-chat')
-    expect(v.message).toContain('Gather armed')
+    expect(r.gatherBlocking).toHaveBeenCalledWith('test:parent-chat', signal)
+    expect(v.message).toContain('combined summary')
   })
 })
 
@@ -274,8 +277,8 @@ describe('feishu_bridge_subtask caller routing', () => {
     await execute(test, { action: 'gather' }, agentA)
     await execute(test, { action: 'gather' }, agentB)
 
-    expect(r1.gather).toHaveBeenCalledWith('a:chat')
-    expect(r2.gather).toHaveBeenCalledWith('b:chat')
+    expect(r1.gatherBlocking).toHaveBeenCalledWith('a:chat', signal)
+    expect(r2.gatherBlocking).toHaveBeenCalledWith('b:chat', signal)
   })
 
   it('fails loud for a caller the bridge does not own', async () => {
@@ -289,12 +292,12 @@ describe('feishu_bridge_subtask caller routing', () => {
     const result = await execute(test, { action: 'gather' }, foreign)
     expect(result.isError).toBe(true)
     expect(errorText(result)).toContain('not owned')
-    expect(r.gather).not.toHaveBeenCalled()
+    expect(r.gatherBlocking).not.toHaveBeenCalled()
   })
 
   it('surfaces engine failures to the model', async () => {
     const r = newRoutedEngine('test')
-    r.gather.mockImplementation(() => { throw new Error('subtask: a gather is already in progress on this session') })
+    r.gatherBlocking.mockRejectedValue(new Error('subtask: a gather is already in progress on this session'))
     const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:p' }))
     const result = await execute(test, { action: 'gather' })
     expect(result.isError).toBe(true)
