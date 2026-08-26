@@ -4086,9 +4086,11 @@ export class Engine {
     // Unlike Go's either-or — where Interrupt kills the subprocess outright —
     // the dsh cancel keeps the handle alive, so close() still owns teardown.
     asAgentInterrupter(agentSession)?.cancelTurn()
-    state.closing = agentSession.close().catch((error: unknown) => {
-      console.error(`engine: stop close failed (${sessionKey}): ${String(error)}`)
-    }).finally(() => {
+    // Bounded like every other close site: a dispose parked on a turn that
+    // cannot quiesce must surface a warn and be abandoned, not hang silently
+    // and leak the session live in the runtime registry (2026-08-26 oc_b46da
+    // incident — the resume then degraded to a fresh session for nothing).
+    state.closing = this.closeAgentSessionWithTimeout(sessionKey, agentSession).finally(() => {
       // A newer state may already have claimed the slot after the concurrent
       // teardown wait; only the exact entry removes itself.
       if (this.interactiveStates.get(sessionKey) === state) this.interactiveStates.delete(sessionKey)
@@ -6886,10 +6888,12 @@ export class Engine {
    * the still-open parent turn. While the call is in flight the turn stays
    * open — child activity streams on the live card (fromSubagent events) and
    * the in-flight tool call keeps the idle timer disarmed. Aborting the
-   * signal (user stop, teardown) drops the waiter and leaves the barrier
-   * armed for the async wake path, so collected results are not lost.
+   * signal (user stop, teardown) settles with an abort notice — an unsettled
+   * tool promise parks the runtime turn forever — and drops the waiter so
+   * later reports fall back to the async wake path: collected results are
+   * not lost.
    * @param parentSessionKey - Session key of the gathering parent.
-   * @param signal - Abort signal of the calling tool call; aborting falls back to the async wake path.
+   * @param signal - Abort signal of the calling tool call; aborting settles with an abort notice and falls back to the async wake path.
    * @returns The combined summary (timeout appends the missing-children preamble).
    */
   async gatherSubtasksBlocking(parentSessionKey: string, signal?: AbortSignal): Promise<string> {
@@ -6899,8 +6903,12 @@ export class Engine {
       parent.setGatherWaiter(resolve)
       signal?.addEventListener('abort', () => {
         // The tool call is gone; later reports must fall back to the async
-        // wake instead of resolving a promise nobody awaits.
+        // wake instead of a waiter nobody awaits — but the promise still
+        // settles, or the parked runtime turn can never end, quiescence is
+        // unreachable, and the session leaks live in the runtime registry
+        // (2026-08-26 oc_b46da incident).
         if (parent.getGatherWaiter() === resolve) parent.setGatherWaiter(undefined)
+        resolve(this.i18n.t(Msg.SubtaskGatherAborted))
       }, { once: true })
     })
   }

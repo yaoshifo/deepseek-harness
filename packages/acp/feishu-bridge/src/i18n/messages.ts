@@ -129,6 +129,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   subtask_diff_summary: { en: '🔍 Changes this turn', zh: '🔍 本次改动', 'zh-TW': '🔍 本次改動' },
   subtask_timeout: { en: '⏱ Subtask timed out and was terminated. The child agent stopped responding.', zh: '⏱ 子任务超时已被终止。子 Agent 无响应。' },
   subtask_gather_no_pending: { en: 'No in-flight subtasks to gather — spawn children first, then call gather.', zh: '没有在途子任务可收集 —— 请先 spawn 子任务，再调用 gather。' },
+  subtask_gather_aborted: { en: 'Gather wait aborted by a stop; reports already banked still arrive via the timeout wake.', zh: 'gather 等待被停止中止；已收集的回报仍会经超时唤醒送达。' },
   subtask_settlement_failed: { en: '⚠️ The subtask failed (error) before it finished.', zh: '⚠️ 子任务失败（error），未完成。' },
   subtask_settlement_max_tokens: { en: '⚠️ The subtask ran out of output room before it finished.', zh: '⚠️ 子任务达到输出上限，未完成。' },
   subtask_settlement_refusal: { en: '⚠️ The subtask declined the task.', zh: '⚠️ 子任务拒绝了该任务。' },

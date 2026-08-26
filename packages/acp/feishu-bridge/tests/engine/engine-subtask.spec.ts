@@ -1508,6 +1508,37 @@ describe('gather expected-set membership', () => {
   })
 })
 
+describe('gatherSubtasksBlocking abort', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  it('settles the tool wait on abort and leaves the barrier armed for the timeout wake', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'task one',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: false,
+    })
+
+    const ctrl = new AbortController()
+    const wait = e.gatherSubtasksBlocking(parentKey, ctrl.signal)
+    ctrl.abort()
+    const settled = await Promise.race([
+      wait,
+      new Promise<string>((resolve) => { setTimeout(() => { resolve('__unsettled__') }, 300) }),
+    ])
+
+    // The parked runtime turn must get its tool result: the wait settles
+    // with an abort notice instead of hanging the turn forever.
+    expect(settled).not.toBe('__unsettled__')
+    expect(settled.toLowerCase()).toContain('abort')
+    // The barrier stays armed: later reports still arrive via the timeout wake.
+    expect(e.sessions.getOrCreateActive(parentKey).getPendingSubtaskGather()).toBeDefined()
+  })
+})
+
 describe('pending native children visibility', () => {
   const parentKey = 'test:parent-chat:u1'
 
@@ -1754,11 +1785,10 @@ describe('gatherSubtasksBlocking', () => {
       await settle()
     }
     expect(parentSession.sendCalls.some(c => c.includes('first result') && c.includes('second result'))).toBe(true)
-    // The aborted wait never resolves.
-    let resolved = false
-    void gathered.then(() => { resolved = true })
-    await settle()
-    expect(resolved).toBe(false)
+    // The aborted wait settles with the abort notice: the parked runtime
+    // turn must get its tool result instead of hanging forever.
+    const settled = await gathered
+    expect(settled.toLowerCase()).toContain('abort')
   })
 })
 

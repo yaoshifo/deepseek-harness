@@ -8,7 +8,7 @@
  * the degraded fallback rebinding the session record.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Engine } from '../../src/engine/engine.js'
 import type { Agent, AgentSession, Message } from '../../src/core/types.js'
 import { createStubAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.js'
@@ -157,5 +157,33 @@ describe('live-guard resume failure retries before degrading', () => {
     // The poisoned id must not stay pinned: the record follows the fresh
     // session so the chat's next message resumes the fresh id.
     expect(record.getAgentSessionID()).toBe('sess-fresh')
+  })
+})
+
+describe('stop-path close is bounded', () => {
+  it('warns and abandons a hung close after the timeout instead of leaking silently', async () => {
+    const p = createStubPlatform('test')
+    const base = newControllableSession('sess-1')
+    base.sessionID = 'sess-1'
+    base.send = async () => {
+      base.channel.push({ type: 'result', content: 'first reply', done: true })
+    }
+    base.close = (): Promise<void> => new Promise(() => {})
+    const agent: Agent = { ...createStubAgent(), startSession: async () => base }
+    const e = new Engine('test', agent, [p], '', 'en')
+    e.setAgentCloseTimeout(100)
+    const key = 'test:ch:user1'
+
+    e.receiveMessage(p, msg({ content: 'task' }))
+    await waitFor(() => p.sent.some(s => s.includes('first reply')))
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      expect(e.stopInteractiveSession(key)).toBe(true)
+      await waitFor(() => warnSpy.mock.calls.some(c => String(c[0]).includes('close timed out')))
+      expect(warnSpy.mock.calls.some(c => String(c[0]).includes('close timed out'))).toBe(true)
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })
