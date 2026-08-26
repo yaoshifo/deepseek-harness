@@ -38,6 +38,7 @@ import { registerRelayCommands } from './engine/relay-commands.js'
 import { MonitorExampleStore, type MonitorDirEntry, type MonitorRuleEntry } from './engine/monitor.js'
 import { registerMonitorCommands } from './engine/monitor-commands.js'
 import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from './tools/subtask.js'
+import { registerMcpHealthContext } from './core/mcp-health.js'
 import { createUsageProvider, type UsageProvider } from './engine/usage.js'
 import { registerCronTool } from './tools/cron.js'
 import { registerRelayTool } from './tools/relay.js'
@@ -59,7 +60,8 @@ export const name = 'feishu-bridge'
 // Without this declaration Cordis refuses ctx.agents access with "cannot get
 // property without inject" — observed live on the M1 记账驴 cut-over.
 // ctx.tools carries the feishu_bridge_subtask tool family (plan D4).
-export const inject = ['agents', 'tools']
+// ctx.systemPrompt carries the opt-in mcpHealth runtime context.
+export const inject = ['agents', 'tools', 'systemPrompt']
 
 /** Feishu app credentials for one bot. Each app gets its own WS client (MIGRATION.md D5). */
 export interface FeishuAppConfig {
@@ -460,6 +462,22 @@ export interface ChatroomConfig {
   researchPythonEnv?: boolean
 }
 
+/** One watched MCP server for the `mcpHealth` runtime context. */
+export interface McpHealthServerConfig {
+  /** mcp-client row's serverName; its tools register as `mcp__<serverName>__<rawName>`. */
+  serverName: string
+  /** Fix hint appended to that server's degradation line (e.g. the token-renewal command). */
+  fixHint?: string
+}
+
+/** Opt-in MCP degradation runtime-context config; absent = no context registered. */
+export interface McpHealthConfig {
+  /** Watched servers; an empty list registers nothing. */
+  servers: McpHealthServerConfig[]
+  /** Grace seconds after plugin start before a missing server is reported; default 180. */
+  startupGraceSecs?: number
+}
+
 /** Deployment config for the feishu-bridge plugin. */
 export interface FeishuBridgeConfig {
   /** Projects bound to Feishu apps. */
@@ -500,6 +518,8 @@ export interface FeishuBridgeConfig {
   hints_with_param?: string[]
   /** Always-visible hint commands (Go hints_common). */
   hints_common?: string[]
+  /** MCP degradation runtime context; absent = disabled (zero behavior change). */
+  mcpHealth?: McpHealthConfig
 }
 
 /** One provider quota display entry (Go UsageProviderConfig). */
@@ -715,6 +735,13 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   hints: Schema.array(Schema.string()).description('Compact hint commands shown on status footers and /hint (Go hints)'),
   hints_with_param: Schema.array(Schema.string()).description('Hints that append their input field value (Go hints_with_param)'),
   hints_common: Schema.array(Schema.string()).description('Always-visible hint commands (Go hints_common)'),
+  mcpHealth: Schema.object({
+    servers: Schema.array(Schema.object({
+      serverName: Schema.string().required().description('mcp-client serverName to watch (its tools register as mcp__<serverName>__*)'),
+      fixHint: Schema.string().description('Fix hint appended to this server\'s degradation line (e.g. the token-renewal command)'),
+    })).default([]).description('Watched MCP servers; empty = no health context registered'),
+    startupGraceSecs: Schema.natural().default(180).description('Grace seconds after plugin start before a missing server is reported (guards the connection race at boot)'),
+  }).description('MCP degradation runtime context (opt-in): state missing servers into each prompt assembly'),
 })
 
 /**
@@ -771,6 +798,14 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   }
   if (config.relay?.timeoutSecs !== undefined) {
     relayManager.setTimeoutMs(config.relay.timeoutSecs > 0 ? config.relay.timeoutSecs * 1000 : 0)
+  }
+  // Opt-in MCP degradation context: every configured server still missing
+  // from the tool registry after the startup grace surfaces as a
+  // runtime-context line in each prompt assembly (core/mcp-health.ts).
+  // Schemastery materializes an empty mcpHealth default, so the servers list
+  // is the on/off switch.
+  if (config.mcpHealth !== undefined && config.mcpHealth.servers.length > 0) {
+    registerMcpHealthContext(ctx, config.mcpHealth)
   }
   /** One live project: its engine plus the adapter that owns its agents. */
   const live: Array<{ engine: Engine; adapter: DshAgentAdapter }> = []

@@ -17,7 +17,10 @@ export const inject = ['invariants']
 /**
  * No runtime invariant: the bridge owns no durable package-local event stream —
  * it projects engine messages onto its in-memory EventChannel and the caller's
- * dsh session already owns the durable log it appends to.
+ * dsh session already owns the durable log it appends to. The opt-in
+ * `mcpHealth` runtime context derives its text from the live tool registry at
+ * each assembly (a view, not owned state), so it has no event relation to
+ * check either.
  */
 const install: InvariantInstaller = () => {}
 
