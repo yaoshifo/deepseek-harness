@@ -226,6 +226,13 @@ export interface DshAdapterConfig {
   providers: ProviderRoute[]
   activeProvider: string
   /**
+   * Bounded wait in ms for one agent session's close during engine shutdown
+   * (Go agentCloseTimeout; default 130000). A close exceeding it is
+   * abandoned: shutdown completes and the agent fiber is left to process
+   * exit.
+   */
+  closeTimeoutMs?: number
+  /**
    * MCP server-name allowlist for this project (ProjectConfig.mcpServers).
    * Present = every session and subtask child this adapter creates denies the
    * `mcp__*` tools of servers outside the list; absent = unrestricted.
@@ -528,6 +535,9 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
 
 /** Default one-shot budget (Go oneShotQuery default timeout). */
 const oneShotDefaultTimeoutMs = 10 * 60_000
+
+/** Default bounded wait for one agent session's close during shutdown (Go agentCloseTimeout). */
+const defaultAgentCloseTimeoutMs = 130_000
 
 /** Continuable start/report admission budget: covers validation and inbox acceptance, not the turn. */
 const startContinuableTimeoutMs = 30_000
@@ -1721,7 +1731,22 @@ export class DshAgentAdapter {
     const all = [...this.liveSessions.values()]
     this.liveSessions.clear()
     this.sessionsByEngineKey.clear()
-    await Promise.all(all.map(s => s.close()))
+    if (all.length === 0) return
+    const bound = this.cfg.closeTimeoutMs ?? defaultAgentCloseTimeoutMs
+    // Boxed so the timer callback's assignment escapes literal-type narrowing.
+    const timeout = { hit: false }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(() => { timeout.hit = true; resolve() }, bound)
+    })
+    try {
+      await Promise.race([Promise.all(all.map(s => s.close())), deadline])
+    } finally {
+      clearTimeout(timer)
+    }
+    if (timeout.hit) {
+      console.warn(`agent-dsh: agent session close timed out after ${String(bound)}ms, abandoning ${String(all.length)} session(s) to process exit`)
+    }
   }
 
   /** Tear down event subscriptions. */

@@ -205,8 +205,8 @@ export const defaultEventIdleTimeout = 10 * 60 * 1000
 /** Stall retries before the idle kill (Go defaultStallMaxRetries). */
 const defaultStallMaxRetries = 1
 
-/** Bounded wait for an agent session to close during cleanup (Go agentCloseTimeout). */
-const agentCloseTimeout = 130_000
+/** Default bounded wait for an agent session to close during cleanup (Go agentCloseTimeout). */
+const defaultAgentCloseTimeout = 130_000
 
 /**
  * Whether a resume error is dsh's live guard: the persisted session is still
@@ -888,7 +888,7 @@ export class Engine {
   /** Idle-reaper threshold reclaiming quiet interactive states; 0 disables. */
   interactiveIdleTimeout = 0
   /** Live-guard resume retry budget in ms; a resume racing an in-flight agent teardown polls within it. */
-  private liveGuardRetryBudgetMs = agentCloseTimeout
+  private liveGuardRetryBudgetMs = defaultAgentCloseTimeout
   /** Live-guard resume retry poll interval in ms. */
   private liveGuardRetryIntervalMs = 500
 
@@ -1027,6 +1027,8 @@ export class Engine {
   unsolicitedBackgroundGrace = 30 * 60_000
   /** Events this soon after a foreground completion relay as plain text (0 = disabled). */
   unsolicitedSpilloverGrace = 0
+  /** Bounded wait for an agent session to close during cleanup and stall retry (Go agentCloseTimeout). */
+  agentCloseTimeout = defaultAgentCloseTimeout
   /** Per-session inbound rate limiter; undefined = unlimited (Go e.rateLimiter). */
   private rateLimiter: RateLimiter | undefined
   /** Quick provider commands (/strong → provider name; Go providerShortcuts). */
@@ -1191,6 +1193,17 @@ export class Engine {
    */
   setStallMaxRetries(n: number): void {
     this.stallMaxRetries = n
+  }
+
+  /**
+   * Bounded wait for an agent session to close during cleanup and stall
+   * retry (Go agentCloseTimeout). A close exceeding it is abandoned: the
+   * session may stay live in the registry and force the next resume
+   * through the live-guard retry/degrade chain.
+   * @param ms - Timeout in milliseconds.
+   */
+  setAgentCloseTimeout(ms: number): void {
+    this.agentCloseTimeout = ms
   }
 
   /**
@@ -1473,13 +1486,15 @@ export class Engine {
       }
     }
     for (const p of this.platforms) await p.stop()
-    const states = [...this.interactiveStates.values()]
+    const states = [...this.interactiveStates.entries()]
     this.interactiveStates.clear()
-    for (const state of states) {
+    for (const [key, state] of states) {
       // Distinguish the deliberate teardown from an agent crash so the turn's
       // channel-closed path reports the reload, not a process exit.
       state.engineStopped = true
-      if (state.agentSession !== undefined) await state.agentSession.close()
+      if (state.agentSession !== undefined) {
+        await this.closeAgentSessionWithTimeout(key, state.agentSession)
+      }
     }
     if (this.reaperTimer !== undefined) clearInterval(this.reaperTimer)
     this.rateLimiter?.stop()
@@ -2486,7 +2501,7 @@ export class Engine {
     for (;;) {
       const state = this.interactiveStates.get(sessionKey)
       if (state === undefined || state.closing === undefined) break
-      await Promise.race([state.closing, cancellableSleep(agentCloseTimeout + 10_000).promise])
+      await Promise.race([state.closing, cancellableSleep(this.agentCloseTimeout + 10_000).promise])
     }
 
     const existing = this.interactiveStates.get(sessionKey)
@@ -3789,10 +3804,9 @@ export class Engine {
     const resumeID = state.agentSession?.currentSessionID() ?? ''
     console.info(`stall retry: restarting with re-injected env resume=${resumeID}`)
 
-    try {
-      await state.agentSession?.close()
-    } catch (error) {
-      console.warn(`stall retry: close failed: ${String(error)}`)
+    const oldSession = state.agentSession
+    if (oldSession !== undefined) {
+      await this.closeAgentSessionWithTimeout(sessionKey, oldSession)
     }
     oldEvents.drain()
 
@@ -3989,14 +4003,14 @@ export class Engine {
       agentSession.close().catch((error: unknown) => {
         console.error(`engine: agent session close failed (${sessionKey}): ${String(error)}`)
       }),
-      cancellableSleep(agentCloseTimeout).promise.then(() => {
+      cancellableSleep(this.agentCloseTimeout).promise.then(() => {
         timeout.hit = true
       }),
     ])
     if (timeout.hit) {
       // Abandoned mid-close: the agent session may stay live in the agent's
       // registry and block later resumes of the same id.
-      console.warn(`engine: agent session close timed out after ${String(agentCloseTimeout)}ms (${sessionKey})`)
+      console.warn(`engine: agent session close timed out after ${String(this.agentCloseTimeout)}ms (${sessionKey})`)
     }
   }
 
