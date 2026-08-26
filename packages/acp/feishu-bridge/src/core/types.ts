@@ -532,6 +532,8 @@ export interface ProgressStatus {
   ts: string
   /** Tool-call count appended to the title when positive. */
   toolCallSeq: number
+  /** Unreported native subtasks; positive appends a running-subtasks suffix to terminal titles. */
+  pendingSubtasks?: number
 }
 
 /** Text-path preview content: a display body with an optional structured status. */

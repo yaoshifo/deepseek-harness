@@ -1211,6 +1211,20 @@ describe('subagent progress entries', () => {
     await sp.setSubagentCount(0)
     expect(mp.messages.length).toBe(before)
   })
+
+  it('setPendingSubtasks rides the terminal status; zero omits the field', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(cfg({ maxChars: 5000 }), mp, 'ctx', undefined, undefined)
+    await sp.appendProgress(newToolProgressEntry('Bash', 'ls', 't1'))
+    await sp.setPendingSubtasks(4)
+    await sp.markCompleted()
+    const final = mp.contents[mp.contents.length - 1] as TextPreviewContent
+    expect(final.status?.pendingSubtasks).toBe(4)
+    // Unchanged counts skip the flush.
+    const before = mp.messages.length
+    await sp.setPendingSubtasks(4)
+    expect(mp.messages.length).toBe(before)
+  })
 })
 
 describe('bump to end', () => {

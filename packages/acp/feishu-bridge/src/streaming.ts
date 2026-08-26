@@ -498,6 +498,7 @@ export class StreamPreview {
   private todoItems: TodoItem[] = []
   private bgTaskHint = ''
   private subagentCount = 0
+  private pendingSubtasksCount = 0
 
   /**
    * Pending delayed-flush timer handle, if armed.
@@ -653,7 +654,12 @@ export class StreamPreview {
         : this.thinkingText !== ''
           ? 'thinking'
           : 'running'
-    return { state, ts: hms(), toolCallSeq: this.toolCallSeq }
+    return {
+      state,
+      ts: hms(),
+      toolCallSeq: this.toolCallSeq,
+      ...(this.pendingSubtasksCount > 0 ? { pendingSubtasks: this.pendingSubtasksCount } : {}),
+    }
   }
 
   /** Progress display text wrapped with its structured status. Must hold the lock. */
@@ -831,7 +837,7 @@ export class StreamPreview {
         } else {
           let text = this.fullText
           if (this.transform !== undefined) text = this.transform(text)
-          content = { kind: 'text', text, status: { state: 'completed', ts: hms(), toolCallSeq: 0 } }
+          content = { kind: 'text', text, status: this.progressStatusLocked() }
         }
       }
       this.previewMsgID = undefined
@@ -966,11 +972,13 @@ export class StreamPreview {
       }
 
       // In progressMode the final message only contains the AI response
-      // text; the structured completion status greens the header.
+      // text; the structured completion status greens the header (carrying
+      // the pending-subtasks count for text-only turns too).
+      this.completed = true
       const content: ProgressContent = {
         kind: 'text',
         text: finalText,
-        status: { state: 'completed', ts: hms(), toolCallSeq: 0 },
+        status: this.progressStatusLocked(),
       }
       try {
         await updater.updateMessage(this.previewMsgID, content)
@@ -1194,6 +1202,24 @@ export class StreamPreview {
     await this.locked(async () => {
       if (this.degraded || this.subagentCount === count) return
       this.subagentCount = count
+      if (this.progressMode) {
+        const display = this.buildProgressDisplayLocked()
+        await this.flushProgressLocked(display)
+      }
+    })
+  }
+
+  /**
+   * Update the unreported native-subtask count carried on the structured
+   * status; terminal card titles append it as a running-subtasks suffix.
+   * Unchanged counts skip the flush.
+   *
+   * @param count - Unreported native subtasks of the session; 0 omits the field.
+   */
+  async setPendingSubtasks(count: number): Promise<void> {
+    await this.locked(async () => {
+      if (this.degraded || this.pendingSubtasksCount === count) return
+      this.pendingSubtasksCount = count
       if (this.progressMode) {
         const display = this.buildProgressDisplayLocked()
         await this.flushProgressLocked(display)

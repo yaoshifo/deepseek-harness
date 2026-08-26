@@ -17,7 +17,7 @@ import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { Session } from '../../src/engine/session.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { WorktreeMode } from '../../src/engine/worktree.js'
-import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, RecentTurnsReader } from '../../src/core/types.js'
+import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, RecentTurnsReader, TextPreviewContent } from '../../src/core/types.js'
 import { SubtaskGather } from '../../src/engine/subtask.js'
 import {
   createNoOverwriteAgent,
@@ -1442,6 +1442,91 @@ describe('gather with native children', () => {
     const bodies = p.sentCards.map(cardBody).join('\n')
     expect(bodies).toContain('first result')
     expect(bodies).toContain('second result')
+  })
+})
+
+describe('pending native children visibility', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  /** Card platform recording every preview content send/PATCH. */
+  function createPreviewRecorderPlatform() {
+    const base = createStubCardPlatformFull('test')
+    const contents: ProgressContent[] = []
+    return Object.assign(base, {
+      contents,
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
+        contents.push(content)
+        return 'preview-handle'
+      },
+      async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+        contents.push(content)
+      },
+    })
+  }
+
+  /** Seed one native child record per reported flag under the parent chat. */
+  function armNativeChildren(e: Engine, reported: boolean[]): void {
+    reported.forEach((rep, i) => {
+      e.projectState?.setNativeChild(`native-child-${i + 1}`, {
+        parent_key: parentKey,
+        parent_agent_session_id: 'parent-native-1',
+        label: `task ${i + 1}`,
+        worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+        reported: rep,
+      })
+    })
+  }
+
+  /** Drive one tool-bearing turn to completion through the event pump. */
+  async function runTurn(e: Engine, state: InteractiveState, session: Session): Promise<void> {
+    const agentSession = state.agentSession as ControllableAgentSession
+    agentSession.channel.push({ type: 'tool_use', toolName: 'feishu_bridge_subtask', toolInput: 'spawn', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'tool_result', toolResult: 'spawned', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'result', content: 'dispatched', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, parentKey, 'm1', undefined, state.replyCtx)
+  }
+
+  it('settles the card with the pending count in the status and the hint in the body', async () => {
+    const p = createPreviewRecorderPlatform()
+    const { e } = newNativeEngine(p, parentKey)
+    e.setDisplayConfig({ toolProgress: true })
+    armNativeChildren(e, [false, false, true])
+
+    const session = e.sessions.getOrCreateActive(parentKey)
+    const state = e.interactiveStates.get(parentKey) as InteractiveState
+    await runTurn(e, state, session)
+
+    const terminal = [...p.contents].reverse()
+      .find(c => c.kind === 'text' && c.status?.state === 'completed') as TextPreviewContent | undefined
+    expect(terminal?.status?.pendingSubtasks).toBe(2)
+    expect(terminal?.text).toContain('🤖 2 subtask(s) running')
+  })
+
+  it('settles without the pending signal when every child reported', async () => {
+    const p = createPreviewRecorderPlatform()
+    const { e } = newNativeEngine(p, parentKey)
+    e.setDisplayConfig({ toolProgress: true })
+    armNativeChildren(e, [true, true])
+
+    const session = e.sessions.getOrCreateActive(parentKey)
+    const state = e.interactiveStates.get(parentKey) as InteractiveState
+    await runTurn(e, state, session)
+
+    const terminal = [...p.contents].reverse()
+      .find(c => c.kind === 'text' && c.status?.state === 'completed') as TextPreviewContent | undefined
+    expect(terminal?.status?.pendingSubtasks).toBeUndefined()
+    expect(terminal?.text).not.toContain('subtask(s) running')
+  })
+
+  it('interruptNativeChild settles the record so the pending count drops', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
+
+    e.interruptNativeChild('native-child-1')
+
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
   })
 })
 

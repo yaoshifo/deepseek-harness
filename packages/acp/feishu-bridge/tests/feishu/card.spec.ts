@@ -340,6 +340,16 @@ describe('buildPreviewCardJSON', () => {
     expect(jStr(jObj(jObj(card.header).title).content)).toBe('执行完成 · 10:00:05 · 3')
   })
 
+  it('appends the pending-subtasks suffix to terminal titles only', () => {
+    const settled = jParse(buildPreviewCardJSON('body', noSpinner,
+      { state: 'completed', ts: '10:00:05', toolCallSeq: 2, pendingSubtasks: 4 }))
+    expect(jStr(jObj(jObj(settled.header).title).content)).toBe('执行完成 · 10:00:05 · 2 · 4 个子任务运行中')
+    // Running cards carry the count on the stop-button row instead.
+    const running = jParse(buildPreviewCardJSON('body', noSpinner,
+      { state: 'running', ts: '', toolCallSeq: 0, pendingSubtasks: 4 }))
+    expect(jStr(jObj(jObj(running.header).title).content)).toBe('执行中')
+  })
+
   it('renders the running default without status', () => {
     const card = jParse(buildPreviewCardJSON('body', noSpinner))
     expect(jStr(jObj(card.header).template)).toBe('yellow')
