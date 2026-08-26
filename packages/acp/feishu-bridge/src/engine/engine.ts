@@ -2356,7 +2356,7 @@ export class Engine {
           if (state.unsolicitedReader === handle) state.unsolicitedReader = undefined
           return
         }
-        console.info(`engine: orphan turn pump started (${interactiveKey})`)
+        console.info(`engine: orphan turn pump started (${interactiveKey}, first event ${event.type}${event.toolName !== undefined ? ` ${event.toolName}` : ''})`)
         state.beginTurn()
         try {
           await this.processInteractiveEvents(
@@ -3377,22 +3377,26 @@ export class Engine {
 
   /**
    * Whether the idle fire reflects a genuine stall (Go stallConfirmed).
-   * The agent session's own stream activity arbitrates: events it projected
-   * after the pump's last receive mean the pump — not the agent — went
-   * silent (a degraded/reload handoff left it holding a dead channel), and a
-   * healthy stream must never be killed by a blind watchdog (2026-08-25
-   * oc_29bb incident: three 200s-cadence kills of a turn that was streaming
-   * the whole window). A blind pump still terminates via the hard turn cap.
+   * The agent session's own stream activity arbitrates, but only while it is
+   * fresh: events it projected after the pump's last receive mean the pump —
+   * not the agent — went silent (a degraded/reload handoff left it holding a
+   * dead channel), and a healthy stream must never be killed by a blind
+   * watchdog (2026-08-25 oc_29bb incident: three 200s-cadence kills of a turn
+   * that was streaming the whole window). A stream that itself went quiet for
+   * the whole idle window is a frozen clock pair, not streaming — it must not
+   * shield the pump forever (2026-08-26 oc_b46da incident: one late projection
+   * froze `streamLast` 8s newer than the pump's last receive and pinned the
+   * session lock behind a pump turn no watchdog would kill).
    * @param state - State whose last event timestamp is checked.
    * @param now - Current timestamp in ms.
    * @param idle - Effective idle timeout in ms.
-   * @returns True when no event arrived within the idle window.
+   * @returns True when no live stream nor pump event arrived within the idle window.
    */
   stallConfirmed(state: InteractiveState, now: number, idle: number): boolean {
     const last = state.lastEventAt
     if (last === 0) return true
     const streamLast = state.agentSession?.lastStreamActivity?.() ?? 0
-    if (streamLast > last) {
+    if (streamLast > last && now - streamLast < idle) {
       const pumpIdleSec = Math.round((now - last) / 1000)
       const streamIdleSec = Math.round((now - streamLast) / 1000)
       console.warn(`stall check overridden: agent is streaming but the pump saw no event (last pump event ${pumpIdleSec}s ago, last stream event ${streamIdleSec}s ago) — blind pump, not a stall`)

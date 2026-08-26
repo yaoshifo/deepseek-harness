@@ -129,4 +129,27 @@ describe('stallConfirmed blind-pump guard', () => {
 
     expect(e.stallConfirmed(state, Date.now(), 200_000)).toBe(true)
   })
+
+  it('confirms the stall when the stream is newer than the pump but both are long stale (2026-08-26 oc_b46 frozen clocks)', () => {
+    const e = newEngine([createStubPlatform()])
+    const state = new InteractiveState()
+    // The runtime projected one frame the pump never consumed: the stream
+    // clock froze 8s newer than the pump's last receive, then both stopped.
+    const agentSession = Object.assign(newControllableSession('cc-1'), {
+      lastStreamActivity: (): number => Date.now() - 352_000,
+    })
+    state.lastEventAt = Date.now() - 360_000
+    state.agentSession = agentSession
+    e.interactiveStates.set(sessionKey, state)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      // 352s of silence against a 200s budget: the frozen pair must not
+      // shield the pump forever.
+      expect(e.stallConfirmed(state, Date.now(), 200_000)).toBe(true)
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

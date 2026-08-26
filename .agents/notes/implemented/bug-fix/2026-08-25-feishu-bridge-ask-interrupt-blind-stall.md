@@ -18,7 +18,7 @@ The 2026-08-25 oc_29bb incident (chat "mem0 MCP迁移到DSH") surfaced a three-l
 
 - **`Engine.askUser` arms its stop/abort race before any delivery await.** The pre-card flush, the park, and the card sends run inside one `deliverCards` closure raced against `Promise.race([stopP, abortP])`; an interruption settles the ask as `{ outcome: 'cancelled' }` immediately, clears the park if it landed, and returns. Late card sends from an interrupted delivery land harmlessly (the ask is already unsettled; stray answers route nowhere). The abort listener is removed only on the two exit paths — removing it after the delivery race alone would disarm the subsequent decision wait (caught by the existing aborted-ask spec).
 - **`Engine.stop()` fires `state.markStopped()`** for states with active turns, so pumps and parked asks settle deterministically instead of depending on the channel-close drain; the pump's stop arm renders the ⏹ stopped card for engine stops (it already distinguished user stops).
-- **`stallConfirmed` cross-checks the agent session's own stream.** `AgentSession.lastStreamActivity()` (new optional capability, implemented by the dsh adapter as its projected-event timestamp) arbitrates: when the agent projected events more recently than the pump's last receive, the idle fire logs a `blind pump` warning and refuses the kill. A genuinely blind pump still terminates via the hard turn cap — bounded, diagnosable, and no longer destroying healthy work.
+- **`stallConfirmed` cross-checks the agent session's own stream.** `AgentSession.lastStreamActivity()` (new optional capability, implemented by the dsh adapter as its projected-event timestamp) arbitrates: when the agent projected events more recently than the pump's last receive, the idle fire logs a `blind pump` warning and refuses the kill. The shield is freshness-bounded — a stream silent for the whole idle window lets the stall confirm — because the originally claimed hard-turn-cap backstop is arrival-gated and cannot fire on a turn receiving no events ([2026-08-26 oc_b46da incident](2026-08-26-feishu-bridge-frozen-stream-clock-stall.md)).
 
 ## Alternatives considered
 
@@ -32,7 +32,7 @@ The 2026-08-25 oc_29bb incident (chat "mem0 MCP迁移到DSH") surfaced a three-l
 
 - An ask interrupted mid delivery settles cancelled; the agent sees the cancelled review and continues per its own handling (plan-mode treats a cancelled review as keep-planning).
 - The 2026-08-21 stall-retry leak trigger is covered too: `restartAgentForStallRetry`'s close cancels the turn, the abort signal now reaches the ask through the whole delivery phase, and dispose completes.
-- The blind-pump guard trades an unbounded hung card for a bounded one (hard turn cap); the `blind pump` warning is the diagnosis hook for the still-open question of *which* consumer steals the channel under the reload+degrade sequence.
+- The blind-pump guard trades a healthy-stream kill for a bounded wait: the shield expires once the stream has been silent a full idle window, and the `blind pump` warning is the diagnosis hook for the still-open question of *which* consumer steals the channel under the reload+degrade sequence.
 
 ## Testing
 

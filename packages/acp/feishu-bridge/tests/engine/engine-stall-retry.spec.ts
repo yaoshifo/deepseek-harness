@@ -277,14 +277,18 @@ describe('stall retry over the real dsh runtime', () => {
       expect(rt.platform.sent.some(s => s.includes('Agent stalled') || s.includes('无响应超时')),
         `sent=${JSON.stringify(rt.platform.sent)}`).toBe(true)
     }, { timeout: 5_000 })
-    // The pump is still cycling: the reattached session outruns the pump's
-    // last receive, so the next idle fire logs the blind-pump override.
+    // The pump no longer cycles forever after the recovered turn: the
+    // reattached session went quiet, and a stream clock frozen newer than the
+    // pump's last receive shields nothing once it has been silent past the
+    // idle budget (2026-08-26 oc_b46da incident) — the stall watchdog
+    // confirms and the interactive state terminates.
     await vi.waitFor(() => {
-      expect(warns.some(w => w.includes('blind pump')), `warns=${JSON.stringify(warns)}`).toBe(true)
+      expect(rt.engine.interactiveStates.has('test:ch:user1'),
+        `sent=${JSON.stringify(rt.platform.sent)}`).toBe(false)
     }, { timeout: 5_000 })
     warnSpy.mockRestore()
 
-    // A stop settles the still-looping pump instead of hanging on it.
+    // A stop settles the already-terminated engine without hanging.
     await rt.engine.stop()
   })
 })

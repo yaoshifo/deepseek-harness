@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-26-feishu-bridge-frozen-stream-clock-stall.md
+2026-08-26-feishu-bridge-frozen-stream-clock-stall.md: c0dedd33128722ace018a3a6080831af4f77c48e
+2026-08-26-feishu-bridge-frozen-stream-clock-stall.zh.md: aba5f919e9e3f98bf04c91b3b37259af8f1b4544

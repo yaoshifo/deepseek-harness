@@ -301,3 +301,49 @@ describe('background task hint closed loop', () => {
     expect(p.messages[p.messages.length - 1]).not.toContain('background task')
   })
 })
+
+describe('orphan pump with frozen stream clocks (2026-08-26 oc_b46da incident)', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('a stray frame whose stream clock froze newer than the pump cannot pin the session lock forever', async () => {
+    const { e, agentSession } = armed()
+    let streamActivityAt = 0
+    Object.assign(agentSession, { lastStreamActivity: () => streamActivityAt })
+    e.setStallMaxRetries(0)
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      e.startUnsolicitedReader(e.sessions.getOrCreateActive(KEY), e.sessions, KEY)
+
+      // A stray text frame with no turn behind it (spillover relay disabled by
+      // default) opens a background pump turn that then waits for events.
+      agentSession.channel.push({ type: 'text', content: 'partial frame', done: false })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(infoSpy.mock.calls.some(c => String(c[0]).includes('orphan turn pump started'))).toBe(true)
+      expect(errSpy.mock.calls.some(c => String(c[0]).includes('orphan turn failed'))).toBe(false)
+
+      // The runtime projects one later frame the pump never consumes: the
+      // stream clock freezes 8s newer than the pump's last receive.
+      streamActivityAt = Date.now() + 8_000
+      const session = e.sessions.getOrCreateActive(KEY)
+
+      // The first idle fire (10min) is still shielded: the stream went quiet
+      // only 592s ago against the 600s budget.
+      await vi.advanceTimersByTimeAsync(9 * 60_000)
+      expect(session.tryLock()).toBe(false)
+
+      // The second fire (20min): the stream has been silent past the budget —
+      // the frozen pair no longer shields, the pump turn is killed, and the
+      // lock returns for the next message-path turn.
+      await vi.advanceTimersByTimeAsync(12 * 60_000)
+      expect(errSpy.mock.calls.some(c => String(c[0]).includes('agent session idle timeout'))).toBe(true)
+      expect(session.tryLock()).toBe(true)
+      session.unlock()
+      expect(e.interactiveStates.get(KEY)).toBeUndefined()
+    } finally {
+      infoSpy.mockRestore()
+      errSpy.mockRestore()
+    }
+  })
+})

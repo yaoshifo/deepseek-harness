@@ -18,7 +18,7 @@ Status: implemented
 
 - **`Engine.askUser` 在任何投递 await 之前武装 stop/abort race。** pre-card flush、停车、卡片发送全部收进一个 `deliverCards` 闭包，与 `Promise.race([stopP, abortP])` 竞速；中断立即把 ask 结算为 `{ outcome: 'cancelled' }`、清理已落地的停车并返回。被中断投递的迟到卡片落地无害（ask 已不在，杂散回答无处路由）。abort 监听只在两条退出路径移除——若在交付 race 之后立刻移除，会解除后续 decision 等待的武装（被既有 aborted-ask spec 抓到）。
 - **`Engine.stop()` 对有活跃 turn 的 state 触发 `markStopped()`**，泵与停车 ask 确定性地结算，不再依赖 channel-close drain；泵的 stop 臂对引擎停渲染 ⏹ 已停止卡（它本就区分用户停）。
-- **`stallConfirmed` 交叉核对 agent 会话自身的事件流。** `AgentSession.lastStreamActivity()`（新增可选能力，dsh adapter 实现为其投影事件时间戳）仲裁：agent 投影事件比泵最后一次接收更新时，idle 触发记一条 `blind pump` 警告并拒绝击杀。真正失明的泵仍经硬性 turn 上限收尾——有界、可诊断，且不再摧毁健康工作。
+- **`stallConfirmed` 交叉核对 agent 会话自身的事件流。** `AgentSession.lastStreamActivity()`（新增可选能力，dsh adapter 实现为其投影事件时间戳）仲裁：agent 投影事件比泵最后一次接收更新时，idle 触发记一条 `blind pump` 警告并拒绝击杀。该豁免以新鲜度为界——事件流自身静默满一个空闲窗口后 stall 照常确认——因为原先声称的硬性 turn 上限兜底是到达触发的，对收不到事件的 turn 无法生效（[2026-08-26 oc_b46da 事故](2026-08-26-feishu-bridge-frozen-stream-clock-stall.zh.md)）。
 
 ## Alternatives considered
 
@@ -32,7 +32,7 @@ Status: implemented
 
 - 投递中被中断的 ask 结算为 cancelled；agent 看到取消的评审并按自身处理继续（plan 模式把取消评审读作继续规划）。
 - 2026-08-21 的 stall-retry 泄漏触发路径同样被覆盖：`restartAgentForStallRetry` 的 close 取消 turn，abort 信号现在贯穿整个投递阶段到达 ask，dispose 得以完成。
-- 盲泵防护把无界挂卡换成有界挂卡（硬性 turn 上限）；`blind pump` 警告是「reload+降级序列下*哪个*消费者抢走通道」这一未解问题的诊断钩子。
+- 盲泵防护把「击杀健康流」换成有界等待：事件流静默满一个空闲窗口后豁免到期；`blind pump` 警告是「reload+降级序列下*哪个*消费者抢走通道」这一未解问题的诊断钩子。
 
 ## Testing
 
