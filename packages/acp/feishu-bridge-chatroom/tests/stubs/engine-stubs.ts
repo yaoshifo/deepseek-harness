@@ -9,15 +9,9 @@
 import type {
   Agent,
   AgentSession,
-  ButtonOption,
-  Event,
   EventChannel,
-  ForkQuerierWithProvider,
   Message,
-  PendingAsk,
   Platform,
-  ProviderSwitcher,
-  UserQuestion,
 } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { EventChannel as EventChannelImpl } from '@deepseek-ai/dsh-feishu-bridge/exports'
 
@@ -90,51 +84,15 @@ export function newControllableSession(id: string): ControllableAgentSession {
   return s
 }
 
-/** Go controllableAgent: controls which session StartSession returns. */
-export type ControllableAgent = Agent & { nextSession?: AgentSession | undefined }
-
-export function createControllableAgent(nextSession?: AgentSession): ControllableAgent {
-  return {
-    name: () => 'controllable',
-    ...(nextSession !== undefined ? { nextSession } : {}),
-    startSession: async () => nextSession ?? newControllableSession('default'),
-    listSessions: async () => [],
-    stop: async () => {},
-  }
-}
-
-/** Go queuingAgentSession: records Send prompts (sendCalls). */
-export function newQueuingSession(id: string): ControllableAgentSession {
-  const s = newControllableSession(id)
-  s.send = async (prompt: string) => {
-    s.sendCalls.push(prompt)
-  }
-  return s
-}
-
-/** Go resultAgentSession: the first Send emits one EventResult. */
-export function newResultAgentSession(result: string): ControllableAgentSession {
-  const s = newControllableSession('result-session')
-  let sentOnce = false
-  s.send = async (prompt: string) => {
-    s.sendCalls.push(prompt)
-    if (!sentOnce) {
-      sentOnce = true
-      s.channel.push({ type: 'result', content: result, done: true })
-    }
-  }
-  return s
-}
-
 /** Go stubPlatformEngine: records Reply/Send texts. */
-export interface StubPlatform extends Platform {
+interface StubPlatform extends Platform {
   n: string
   sent: string[]
   getSent(): string[]
   clearSent(): void
 }
 
-export function createStubPlatform(n = 'test'): StubPlatform {
+function createStubPlatform(n = 'test'): StubPlatform {
   const p: StubPlatform = {
     n,
     sent: [],
@@ -153,35 +111,6 @@ export function createStubPlatform(n = 'test'): StubPlatform {
     },
   }
   return p
-}
-
-/** Go stubMediaPlatform: also records image/file sends. */
-export interface StubMediaPlatform extends StubPlatform {
-  images: Message['images']
-  files: Message['files']
-  sendImage(replyCtx: unknown, img: Message['images'][number]): Promise<void>
-  sendFile(replyCtx: unknown, file: Message['files'][number]): Promise<void>
-}
-
-export function createStubMediaPlatform(n = 'test'): StubMediaPlatform {
-  const base = createStubPlatform(n)
-  const media: StubMediaPlatform = {
-    ...base,
-    images: [],
-    files: [],
-    sendImage: async (_rc, img) => {
-      media.images.push(img)
-    },
-    sendFile: async (_rc, file) => {
-      media.files.push(file)
-    },
-  }
-  return media
-}
-
-/** Event factory matching the Go struct-literal shape used across tests. */
-export function ev(partial: Partial<Event> & { type: Event['type'] }): Event {
-  return { content: '', done: false, ...partial }
 }
 
 // ── M3 stubs ─────────────────────────────────────────────────────────────
@@ -218,80 +147,6 @@ export function createStubCardPlatform(n = 'feishu'): StubCardPlatform {
  */
 export function clearCards(stub: { sentCards: unknown[] }): void {
   stub.sentCards = []
-}
-
-/**
- * Go stubInlineButtonPlatform: records button content and rows.
- * Mirrors cc-connect core/engine_test.go stubInlineButtonPlatform.
- */
-export interface StubInlineButtonPlatform extends StubPlatform {
-  buttonContent: string
-  buttonRows: ButtonOption[][]
-  sendWithButtons(replyCtx: unknown, content: string, rows: ButtonOption[][]): Promise<void>
-}
-
-export function createStubInlineButtonPlatform(n = 'telegram'): StubInlineButtonPlatform {
-  const base = createStubPlatform(n)
-  const p: StubInlineButtonPlatform = {
-    ...base,
-    buttonContent: '',
-    buttonRows: [],
-    sendWithButtons: async (_rc, content, rows) => {
-      p.buttonContent = content
-      p.buttonRows = rows
-    },
-  }
-  return p
-}
-
-/**
- * Create a parked PendingAsk whose decision a test settles by calling
- * `resolve` (B2 replacement for the Go PendingPermission literals).
- */
-export function newPendingAsk(overrides: Partial<PendingAsk> & { request: PendingAsk['request'] }): PendingAsk {
-  return {
-    answers: new Map(),
-    resolve: () => {},
-    ...overrides,
-  }
-}
-
-/** Go testQuestions(): single-question fixture for AskUserQuestion tests. */
-export function testQuestions(): UserQuestion[] {
-  return [{
-    question: 'Which database?',
-    header: 'Setup',
-    options: [
-      { label: 'PostgreSQL', description: 'Recommended for production' },
-      { label: 'SQLite', description: 'Lightweight, file-based' },
-      { label: 'MySQL', description: 'Popular open-source' },
-    ],
-    multiSelect: false,
-  }]
-}
-
-/** Go testMultiQuestions(): two-question fixture for sequential AskUserQuestion. */
-export function testMultiQuestions(): UserQuestion[] {
-  return [
-    {
-      question: 'Which database?',
-      header: 'Database',
-      options: [
-        { label: 'PostgreSQL', description: '' },
-        { label: 'SQLite', description: '' },
-      ],
-      multiSelect: false,
-    },
-    {
-      question: 'Which framework?',
-      header: 'Framework',
-      options: [
-        { label: 'Gin', description: '' },
-        { label: 'Echo', description: '' },
-      ],
-      multiSelect: false,
-    },
-  ]
 }
 
 // ── M5 stubs ──────────────────────────────────────────────────────────────
@@ -514,237 +369,4 @@ export function createStubSpawnerPlatform(n = 'test'): StubSpawnerPlatform {
     },
   }
   return p
-}
-
-/**
- * Go stubSpawnerPinPlatform: a spawner that captures the returned synthetic
- * message (by reference, so mutations are visible) and records pin-panel
- * calls.
- */
-export interface StubSpawnerPinPlatform extends StubCardPlatform {
-  returnedMsg: Message | undefined
-  pins: string[]
-  spawnGroup(msg: Message, groupName: string, firstMsg: string): Promise<Message>
-  addMessagePin(chatID: string, messageID: string): Promise<void>
-}
-
-export function createStubSpawnerPinPlatform(n = 'test'): StubSpawnerPinPlatform {
-  const base = createStubCardPlatformFull(n)
-  const p: StubSpawnerPinPlatform = {
-    ...base,
-    returnedMsg: undefined,
-    pins: [],
-    spawnGroup: async (msg, groupName, firstMsg) => {
-      const m: Message = {
-        ...newStubMessage(),
-        sessionKey: 'test:child-chat',
-        platform: p.n,
-        userID: msg.userID,
-        chatName: groupName,
-        replyCtx: 'child-ctx',
-        content: firstMsg,
-        messageID: 'child-msg-1',
-      }
-      p.returnedMsg = m
-      return m
-    },
-    addMessagePin: async (_chatID, messageID) => {
-      p.pins.push(messageID)
-    },
-  }
-  return p
-}
-
-/**
- * Go stubTitleRenamePlatform: records RenameGroup / SetGroupIconAvatar /
- * SetChatroomFamilyAvatar calls. RenameGroup rejects an already-aborted
- * signal so tests can reproduce the "rename reused the LLM's expired ctx"
- * regression.
- */
-export interface StubTitleRenamePlatform extends StubPlatform {
-  renamedKeys: string[]
-  renamedNames: string[]
-  avatarKeys: string[]
-  avatarIcons: string[]
-  avatarGroups: string[]
-  avatarErr?: Error
-  familyHub: string
-  familyChildren: string[]
-  familyIcon: string
-  familyName: string
-  familyCalls: number
-  renameGroup(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
-  renameGroupAny(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
-  setGroupIconAvatar(sessionKey: string, iconName: string, groupName: string): Promise<void>
-  setGroupFamilyAvatar(hubKey: string, childKeys: string[], iconName: string, familyName: string): Promise<void>
-}
-
-export function createStubTitleRenamePlatform(n = 'test'): StubTitleRenamePlatform {
-  const base = createStubPlatform(n)
-  const p: StubTitleRenamePlatform = {
-    ...base,
-    renamedKeys: [],
-    renamedNames: [],
-    avatarKeys: [],
-    avatarIcons: [],
-    avatarGroups: [],
-    familyHub: '',
-    familyChildren: [],
-    familyIcon: '',
-    familyName: '',
-    familyCalls: 0,
-    renameGroup: async (key, name, signal) => {
-      // Mirror the real renameChat→withTransientRetry: an aborted signal
-      // fails even though the HTTP request would have gone through.
-      if (signal?.aborted) throw new Error('context canceled')
-      p.renamedKeys.push(key)
-      p.renamedNames.push(name)
-    },
-    renameGroupAny: async (key, name, signal) => p.renameGroup(key, name, signal),
-    setGroupIconAvatar: async (key, iconName, groupName) => {
-      p.avatarKeys.push(key)
-      p.avatarIcons.push(iconName)
-      p.avatarGroups.push(groupName)
-      if (p.avatarErr !== undefined) throw p.avatarErr
-    },
-    setGroupFamilyAvatar: async (hubKey, childKeys, iconName, familyName) => {
-      p.familyHub = hubKey
-      p.familyChildren = [...childKeys]
-      p.familyIcon = iconName
-      p.familyName = familyName
-      p.familyCalls++
-    },
-  }
-  return p
-}
-
-/** Go noOverwriteStubAgent: the session reports an empty CurrentSessionID. */
-export function createNoOverwriteAgent(): Agent {
-  return {
-    ...createStubAgent(),
-    startSession: async () => ({
-      ...createStubAgentSession(),
-      currentSessionID: () => '',
-    }),
-  }
-}
-
-/** Agent with a settable work dir (Go stubWorkDirAgent). */
-export function createWorkDirAgent(workDir: string): Agent & { getWorkDir(): string; setWorkDir(d: string): void } {
-  let dir = workDir
-  return {
-    ...createStubAgent(),
-    getWorkDir: () => dir,
-    setWorkDir: (d: string) => { dir = d },
-  }
-}
-
-/**
- * Go forkPreparerAgent: a work-dir agent whose PrepareForkSession records
- * its arguments and returns the configured error.
- */
-export function createForkPreparerAgent(workDir: string, forkErr: Error | undefined): Agent & {
-  prepared: boolean
-  gotOrigID: string
-  gotParentWorkDir: string
-  gotChildWorkDir: string
-  prepareForkSession(origID: string, parentWorkDir: string, childWorkDir: string): Promise<void>
-} {
-  const base = createWorkDirAgent(workDir)
-  const a = {
-    ...base,
-    prepared: false,
-    gotOrigID: '',
-    gotParentWorkDir: '',
-    gotChildWorkDir: '',
-    prepareForkSession: async (origID: string, parentWorkDir: string, childWorkDir: string): Promise<void> => {
-      a.prepared = true
-      a.gotOrigID = origID
-      a.gotParentWorkDir = parentWorkDir
-      a.gotChildWorkDir = childWorkDir
-      if (forkErr !== undefined) throw forkErr
-    },
-  }
-  return a
-}
-
-/**
- * Recorded state of a stub group-name agent (Go stubGroupNameAgent's mutexed
- * fields). Kept in a shared object so spreading the agent (to override
- * startSession) preserves the recorded state — a spread copy of inline
- * fields would never see the closure's writes.
- */
-export interface GroupNameAgentState {
-  gotPrompt: string
-  gotProvider: string
-  callCount: number
-}
-
-/**
- * Go stubGroupNameAgent: satisfies ForkQuerierWithProvider, recording
- * LightweightQuery calls and returning a canned response/error. When
- * blockUntilSignal is set, the query only returns once the caller's signal
- * aborts — reproducing "the LLM used exactly the full ctx timeout".
- */
-export function createGroupNameAgent(opts: {
-  resp?: string
-  err?: Error
-  blockUntilSignal?: boolean
-}): Agent & { state: GroupNameAgentState } & ForkQuerierWithProvider {
-  const state: GroupNameAgentState = { gotPrompt: '', gotProvider: '', callCount: 0 }
-  return {
-    ...createStubAgent(),
-    state,
-    forkQuery: async () => '',
-    forkSessionWithProvider: async () => '',
-    lightweightQuery: async (prompt: string, provider: string, signal?: AbortSignal) => {
-      state.gotPrompt = prompt
-      state.gotProvider = provider
-      state.callCount++
-      if (opts.blockUntilSignal === true && signal !== undefined) {
-        if (signal.aborted) return opts.resp ?? ''
-        await new Promise<void>((resolve) => {
-          signal.addEventListener('abort', () => { resolve() }, { once: true })
-        })
-      }
-      if (opts.err !== undefined) throw opts.err
-      return opts.resp ?? ''
-    },
-  }
-}
-
-/** Go stubGroupNameAgentSwitcher: adds ProviderSwitcher with an active provider. */
-export function createGroupNameSwitcherAgent(
-  activeName: string, opts: { resp?: string; err?: Error },
-): Agent & { state: GroupNameAgentState } & ForkQuerierWithProvider & ProviderSwitcher {
-  const base = createGroupNameAgent(opts)
-  return {
-    ...base,
-    setProviders: () => {},
-    setActiveProvider: () => false,
-    getActiveProvider: () => ({ name: activeName }),
-    listProviders: () => [],
-  }
-}
-
-/**
- * Go blockingSendAgentSession: Send signals sendStarted then blocks until
- * unblock resolves; the test pushes the turn's result event itself.
- */
-export interface BlockingSendAgentSession extends ControllableAgentSession {
-  sendStarted: Promise<void>
-  unblock: () => void
-}
-
-export function newBlockingSendSession(id: string): BlockingSendAgentSession {
-  const s = newControllableSession(id)
-  let signalSend!: () => void
-  const sendStarted = new Promise<void>((resolve) => { signalSend = resolve })
-  let unblock!: () => void
-  const unblockP = new Promise<void>((resolve) => { unblock = resolve })
-  s.send = async () => {
-    signalSend()
-    await unblockP
-  }
-  return { ...s, sendStarted, unblock }
 }

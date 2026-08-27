@@ -212,15 +212,6 @@ export function createStubCardPlatform(n = 'feishu'): StubCardPlatform {
 }
 
 /**
- * Clear a card stub's recorded cards. The sendCard closure reads the
- * factory-local object's property, so reassigning `stub.sentCards = []` on
- * a spread copy is invisible to it — always clear through this helper.
- */
-export function clearCards(stub: { sentCards: unknown[] }): void {
-  stub.sentCards = []
-}
-
-/**
  * Go stubInlineButtonPlatform: records button content and rows.
  * Mirrors cc-connect core/engine_test.go stubInlineButtonPlatform.
  */
