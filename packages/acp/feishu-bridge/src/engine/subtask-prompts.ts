@@ -7,8 +7,8 @@
  * agents.create/resume setup hook (M8 pre-2 wiring).
  *
  * These are bridge-owned generic prompts, deliberately kept out of the
- * chatroom persona module so the adapter never depends on chatroom-only
- * code for plain subtask sessions.
+ * chatroom plugin's persona module so the adapter never depends on the
+ * plugin for plain subtask sessions.
  *
  * @module dsh-feishu-bridge/subtask-prompts
  */

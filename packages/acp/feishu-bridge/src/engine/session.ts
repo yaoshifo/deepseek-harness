@@ -130,8 +130,9 @@ export class Session {
    * Adopt the chat-scoped state of the record this one replaces. Session
    * records mix two lifetimes: conversation state (agent session, history,
    * one-shot gates — a fresh record correctly starts them over) and
-   * chat-scoped state (lineage, chatroom identity and orchestration,
-   * provisioned assistants, armed barriers — properties of the CHAT that a
+   * chat-scoped state (lineage, plus feature sections whose codecs carry
+   * them — identity, orchestration, provisioned assistants, armed barriers
+   * — properties of the CHAT that a
    * /new or idle reset must not orphan, or a chatroom role silently drops
    * out of its room and a moderator loses its persona).
    *
@@ -435,7 +436,7 @@ export class Session {
 
   /**
    * Whether #47/#48 auto-render should be skipped: subtask children report
-   * to their parent and feature sessions (chatroom roles relaying to the
+   * to their parent and feature sessions (feature roles relaying to their
    * hub, via the `feishuBridge/auto-render-policy` waterfall) render their
    * output elsewhere, so a local HTML overview is redundant. Monitor-hub
    * children and user-interjected sessions are exempt.
@@ -1039,8 +1040,8 @@ export class SessionManager {
     s.name = name
     s.createdAt = now
     s.updatedAt = now
-    // Inherit the chat-scoped state (owner, lineage, chatroom identity and
-    // orchestration, barriers) so /new and idle resets replace the
+    // Inherit the chat-scoped state (owner, lineage, feature sections,
+    // barriers) so /new and idle resets replace the
     // conversation without orphaning the chat it belongs to.
     const prevID = this.activeSession.get(userKey)
     if (prevID !== undefined) {

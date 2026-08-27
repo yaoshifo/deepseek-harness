@@ -197,8 +197,8 @@ export interface Message {
   /**
    * Opaque per-message metadata extensions, carried through the queue to
    * the drained turn and consumed at `feishuBridge/turn-start`: the feature
-   * that injects a synthetic message sets its own keys (the chatroom gather
-   * round stamp and the research dispatch-defer arm are the current users).
+   * that injects a synthetic message sets its own keys (the gather-round
+   * stamp and the research dispatch-defer arm are the current users).
    * Never surfaced to the agent.
    */
   metadata?: Record<string, unknown>

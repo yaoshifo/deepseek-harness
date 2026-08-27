@@ -3,8 +3,8 @@
  * card), registered by the dsh adapter as the low-order
  * `feishu-bridge-agent-conventions` system-prompt section for direct
  * project-chat agents. This is a bridge-owned generic prompt, deliberately
- * kept out of the chatroom persona module: subtask children report through
- * their parent session, and chatroom roles carry their own persona.
+ * kept out of the chatroom plugin's persona module: subtask children report
+ * through their parent session, and chatroom roles carry their own persona.
  *
  * @module dsh-feishu-bridge/agent-conventions
  */

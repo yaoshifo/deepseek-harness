@@ -239,8 +239,8 @@ export function registerMessages(subtable: Partial<Record<Language, Record<strin
 
 /**
  * Look up a message for an explicit language, for consumers that hold the
- * resolved language instead of the {@link I18n} instance (e.g. the extracted
- * chatroom package). Same fallback chain as `I18n.t`; Go-style format verbs
+ * resolved language instead of the {@link I18n} instance (e.g. the chatroom
+ * plugin). Same fallback chain as `I18n.t`; Go-style format verbs
  * are substituted when `args` are given, matching `I18n.tf`.
  *
  * @param lang - Language to look up; unknown codes fall back to English.
