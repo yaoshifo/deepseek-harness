@@ -14,7 +14,7 @@ Status: implemented
 
 显示源选路由配置而非 llm 运行时的生效默认值：路由行才是运营者声明「agent 跑在哪一档」的地方，与 `getModel()` 读的是同一个显式声明面，因此标签不需要给 bridge 引入新的核心服务依赖。要保持真实需人工维护一条一致性规则：`agent.reasoningEffort` 必须等于同一网关 pi-ai provider 层 `reasoning:` 默认值（现网配置两处均为 max）。
 
-Config：类型与 Schema union 的 `agent.reasoningEffort` 增补 `'max'`；其余拼写错误仍在加载期 fail-loud。
+Config：`agent.reasoningEffort` 的 union 现为 `'off' | 'low' | 'medium' | 'high' | 'max'`——增补 glm 各网关此前无法表达的 `'max'`，移除从未被任何 adapter 声明过的 `'minimal'`；其余拼写错误仍在加载期 fail-loud。
 
 ## 备选方案
 

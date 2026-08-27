@@ -14,7 +14,7 @@ Both footer builders render the 🤖 line through one shared `formatModelLine`: 
 
 The display source is the route configuration, deliberately not the llm runtime's effective default: the route row is where an operator declares what their agents run at, the same explicit surface `getModel()` reads, so the label needs no new core-service dependency in the bridge. Keeping them truthful requires maintaining one consistency rule by hand: `agent.reasoningEffort` must equal the pi-ai provider-level `reasoning:` default for the same gateway (both are `max` in the shipped profile).
 
-Config: `agent.reasoningEffort` accepts `'max'` in the type and the Schema union; other misspellings still fail loud at load.
+Config: the `agent.reasoningEffort` union now lists `'off' | 'low' | 'medium' | 'high' | 'max'` — it gains `'max'`, which no glm gateway accepted before, and drops `'minimal'`, a level no adapter has ever advertised; anything else still fails loud at load.
 
 ## Alternatives considered
 
