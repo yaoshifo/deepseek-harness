@@ -1,0 +1,6 @@
+# The feishu-bridge-chatroom bundle patch: mounts the chatroom plugin row on
+# top of whatever the profile's earlier bundles (feishu-bridge) already
+# installed.
+- insert:
+    - id: feishu-bridge-chatroom
+      name: '@deepseek-ai/dsh-feishu-bridge-chatroom'
