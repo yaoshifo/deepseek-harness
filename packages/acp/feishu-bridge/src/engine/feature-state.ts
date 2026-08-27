@@ -4,10 +4,9 @@
  * the version-3 sessions.json snapshot: it projects its section on save and
  * declares which parts of it survive a conversation reset (`/new`, idle
  * reset) by carrying them itself. The registry is module-level (not a cordis
- * service) because Session and SessionManager are non-cordis classes, the
- * same shape as the chatroom package's other process-level registrations;
- * its apply wires the codec per
- * process and reverses it through ctx.effect.
+ * service) because Session and SessionManager are non-cordis classes; the
+ * registering plugin's apply wires its codec per process and reverses the
+ * registration through ctx.effect.
  *
  * @module dsh-feishu-bridge/feature-state
  */

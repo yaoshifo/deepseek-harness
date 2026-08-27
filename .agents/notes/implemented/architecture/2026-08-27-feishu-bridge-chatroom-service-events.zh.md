@@ -34,4 +34,4 @@ chatroom 功能（角色群、主持编排、`/chatroom` 命令族）内联在 f
 - `apply()` 是 async；调用方（与测试）必须 await——fire-and-forget 的 apply 与 fiber dispose 竞态会以服务挂载失败浮出，现在 fail loud。
 - 生产路径上未经服务面构造的引擎或 adapter 会静默地没有 `feishuBridge/*` 监听（每个事件走内建基线）。`BridgeDispatch` 的 JSDoc 写明了这一点；装配层是唯一受认可的构造路径。
 - 测试中的 chatroom 策略行为现在取决于监听器注册而非引擎本身：裸引擎测试此前靠构造即得 chatroom 策略，现在断言 subtask/普通基线；chatroom spec 接 policy 监听面（`tests/stubs/bridge-policy.ts`）。
-- C2 从这里继续：把 chatroom 模块经 `./exports` 面搬进新包，并把 sessions.json 快照迁移到 v3 不透明 `featureState` 分节——其 survive-reset 声明集必须包含 `researchAssistantKey`/`researchAssistant`/`researchVenv`，`carryChatScopedState` 今天就在携带它们（session.ts），计划文档决策 3 的表述写反了。
+- C2 从这里继续并已落地：[抽取 Agent Note](2026-08-29-feishu-bridge-chatroom-extraction.zh.md) 记录了搬移边界、快照 v3 `featureState` 迁移（其 survive-reset 搬运是 codec 钩子而非 key 集——armed barrier 是活实例）与配置迁移。

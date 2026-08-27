@@ -1469,7 +1469,7 @@ export class Engine {
     if (startErrs.length === this.platforms.length && this.platforms.length > 0) {
       throw startErrs[0]
     }
-    // Chatroom barriers restored from disk close here, once platforms can
+    // Feature barriers restored from disk close here, once platforms can
     // deliver the wakes: every reply they awaited died with the old process.
     this.recoverInterruptedNativeChildren()
     this.platformsStartedValue = true
@@ -1490,7 +1490,7 @@ export class Engine {
 
   /**
    * Restart recovery for native subtasks — the subtask counterpart of the
-   * chatroom barrier recovery below. A child epoch runs in this process, so
+   * feature barrier recovery riding platforms-ready. A child epoch runs in this process, so
    * a daemon restart kills it silently: `subagent/end` never fires, the
    * parentage record keeps `reported: false` forever, the live card counts
    * phantom children, and a gather armed on them blocks to its timeout
@@ -1717,7 +1717,7 @@ export class Engine {
     }
 
     // Rate limit check (Go engine.go: after content merge, before permission
-    // and chatroom-reply routing).
+    // and pending-human-reply routing).
     if (!this.checkRateLimit(msg)) {
       console.info(`engine: message rate limited (session=${msg.sessionKey} user=${msg.userID})`)
       void this.reply(p, msg.replyCtx, this.i18n.t(Msg.RateLimited))
@@ -1745,7 +1745,7 @@ export class Engine {
       this.sessions.save()
     }
 
-    // Pending-human replies to feature questions (chatroom ask-human) outrank
+    // Pending-human replies to feature questions outrank
     // both command dispatch and permission handling (Go orders
     // routePendingHumanReply before handleCommand). Slash commands pass
     // through untouched (the listener halves decide).
@@ -2301,8 +2301,8 @@ export class Engine {
       this.stopUnsolicitedReader(this.interactiveStates.get(interactiveKey))
       this.i18n.detectAndSet(msg.content)
 
-      // Chatroom ask metadata is consumed at turn START: a queued ask behind
-      // a busy turn must not stamp until the turn actually begins.
+      // Feature ask metadata is consumed at turn START: a queued ask behind
+      // a busy turn must not take effect until the turn actually begins.
       await this.bridge.serial('feishuBridge/turn-start', { engine: this, session, metadata: msg.metadata })
 
       await this.handleSpawnedGroupFirstMessage(p, msg, session)
@@ -2786,11 +2786,11 @@ export class Engine {
    * Typed per-session start options (Go buildSessionEnv): the engine session
    * key plus the persona/workspace/venv metadata the adapter consumes at
    * startSession. The engine fills the subtask (attended/no-report) and
-   * workspace sections; feature sections (research-assistant flag, chatroom
-   * persona block, shared research venv) are decorated by
+   * workspace sections; feature sections (research-assistant flag, persona
+   * block, shared research venv) are decorated by
    * `feishuBridge/session-start-options` listeners.
    * @param ccKey - Value used as the options' sessionKey.
-   * @param session - Session whose subtask/chatroom flags expand the options.
+   * @param session - Session whose subtask flags expand the options.
    * @returns The typed start options for the agent session.
    */
   buildSessionStartOptions(ccKey: string, session: Session): SessionStartOptions {
@@ -3674,9 +3674,9 @@ export class Engine {
     } else {
       this.maybeAutoReportSubtask(state, session, resultOrReply, isSilent)
     }
-    // Chatroom role turn-end: deterministically relay the role's reply to the
-    // hub and wake the moderator. Disjoint from the subtask hook above
-    // (chatroom roles keep depth=0).
+    // Feature role turn-end: the listener relays the role's reply to its hub
+    // and wakes the moderator. Disjoint from the subtask hook above
+    // (feature roles keep depth=0).
     this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: resultOrReply, isSilent }, () => undefined)
 
     // Export-button + speculative reply-HTML auto-deliver (Go engine_events.go
@@ -3827,7 +3827,7 @@ export class Engine {
       const queuedPrompt = this.buildSenderPrompt(queued.content, queued.userID, queued.userName, queued.msgPlatform, queued.msgSessionKey)
       const { imagePaths: qImgs, filePaths: qFiles } = state.drainStagedAttachmentPaths()
       const splicedPrompt = spliceStagedAttachments(queuedPrompt, qImgs, qFiles)
-      // Chatroom ask metadata is consumed at drain time — the queued ask's
+      // Feature ask metadata is consumed at drain time — the queued ask's
       // turn is starting now.
       await this.bridge.serial('feishuBridge/turn-start', { engine: this, session, metadata: queued.metadata })
       state.inflightMessage = queued
@@ -3999,7 +3999,7 @@ export class Engine {
       }
 
       state.agentSession.events().drain()
-      // Chatroom ask metadata is consumed at drain time — the queued ask's
+      // Feature ask metadata is consumed at drain time — the queued ask's
       // turn is starting now.
       await this.bridge.serial('feishuBridge/turn-start', { engine: this, session, metadata: queued.metadata })
 
@@ -4309,9 +4309,9 @@ export class Engine {
   // Active-preview bump routing (chat rename/avatar system notices push the
   // preview card off the tail; bump reissues it as the latest message).
   // Per-session: each interactive state's own preview is the bump target, so
-  // concurrent streams (chatroom hub + roles + research assistants) route
-  // correctly — a single global binding would let the latest-started turn
-  // steal every other session's bump.
+  // concurrent streams (a feature hub and its roles, plus research
+  // assistants) route correctly — a single global binding would let the
+  // latest-started turn steal every other session's bump.
   // ---------------------------------------------------------------------
 
   /** Pending per-session bump debounce timers (coalesce rename+avatar bursts). */
@@ -4772,10 +4772,11 @@ export class Engine {
       console.warn(`engine: ask on session without interactive state (${sessionKey}), answering unattended`)
       return this.unattendedAskDecision(request)
     }
-    // Chatroom role-pick: the moderator's plan review is a formality (priming
-    // pre-bakes a trivial plan). Auto-approve so the user isn't prompted just
-    // to green-light reading role files + pick-roles. Only in the pick window
-    // (the listener short-circuits; no listener falls through to the ask).
+    // Feature role-pick: the moderator's plan review is a formality (priming
+    // pre-bakes a trivial plan). A listener auto-approves so the user isn't
+    // prompted just to green-light reading role files + pick-roles. Only in
+    // the pick window (the listener short-circuits; no listener falls
+    // through to the ask).
     if (request.kind === 'plan-review') {
       const override = await this.bridge.waterfall(
         'feishuBridge/ask-approval',
@@ -4921,8 +4922,8 @@ export class Engine {
       }
 
       if (request.kind === 'questions') {
-        // Feature guards on the whole ask ride the ask-parked emit (the
-        // chatroom research-manual hub arms the auto-default timer).
+        // Feature guards on the whole ask ride the ask-parked emit (a
+        // research-manual hub arms the auto-default timer).
         this.bridge.emit('feishuBridge/ask-parked', { engine: this, platform: p, sessionKey, replyCtx, pending })
         await this.sendAskQuestionsCard(p, replyCtx, request.questions, sessionKey)
       } else {
@@ -5818,8 +5819,9 @@ export class Engine {
 
     const firstMsg = message.trim()
     // Idle spawn (empty message): create the group + session record but do
-    // NOT fire a first agent turn. Used by chatroom --research to pre-spawn
-    // an assistant that idles until the role sends it a real task.
+    // NOT fire a first agent turn. Used by the chatroom plugin's --research
+    // mode to pre-spawn an assistant that idles until the role sends it a
+    // real task.
     const idle = firstMsg === ''
     if (idle && wtPref !== WorktreeMode.ForceOff) {
       throw new Error('subtask: idle spawn (empty message) requires --no-worktree')
@@ -6952,9 +6954,9 @@ export class Engine {
    * the full set (or partial on timeout) (Go GatherSubtasks).
    *
    * The expected set holds only children that can settle the barrier: every
-   * subtask report path requires subtask depth, and chatroom role groups
+   * subtask report path requires subtask depth, and feature role groups
    * hang off their hub with parent set but no depth — their replies settle
-   * through the chatroom relay, so counting them could only end at the
+   * through the feature's role relay, so counting them could only end at the
    * gather timeout (2026-08-26 oc_b46da incident).
    *
    * @param parentSessionKey - Session key of the gathering parent.
@@ -7900,8 +7902,8 @@ export class Engine {
     }
 
     // Registered card actions: run the feature's state machine and re-render
-    // the pressed card in place (Go handleCardNav's feature routes; the
-    // chatroom pickers register through registerCardAction).
+    // the pressed card in place (Go handleCardNav's feature routes; feature
+    // card pickers register through registerCardAction).
     const cardAction = this.cardActionHandlers.get(cmd)
     if (cardAction !== undefined) {
       const card = cardAction(msg.sessionKey, cmd, args)

@@ -2,8 +2,8 @@
  * The feishu-bridge service face: the live project registry, caller routing,
  * and the `feishuBridge/*` dispatch seam sibling plugins extend bridge
  * behavior through. Engines and adapters dispatch policy decisions through
- * {@link BridgeDispatch} so features like chatroom can live in a sibling
- * plugin instead of inline engine branches.
+ * {@link BridgeDispatch} so a feature plugin can live beside the bridge
+ * instead of inline engine branches.
  *
  * @module dsh-feishu-bridge
  */
@@ -61,8 +61,8 @@ export function bareBridgeDispatch(): BridgeDispatch {
 
 /**
  * A dispatch face bound to a plain Cordis context, without mounting the
- * service: listeners registered on the context (e.g.
- * `registerChatroomPolicyListeners`) answer the dispatches. Partial
+ * service: listeners registered on the context (a feature plugin's policy
+ * listeners) answer the dispatches. Partial
  * assemblies and unit tests that exercise the event path wire engines with
  * this; production engines receive the mounted {@link FeishuBridgeService}
  * itself.
@@ -206,7 +206,7 @@ declare module '@deepseek-ai/cordis' {
     /**
      * Adjust the effective mode for a session start (a moderator drives a
      * running discussion, never an implementation: an inherited plan default
-     * would stall the chatroom on an ExitPlanMode approval nobody needs to
+     * would stall the discussion on an ExitPlanMode approval nobody needs to
      * give). The built-in base returns the adapter-computed mode unchanged.
      * @param payload.options - The session-start options the adapter built.
      * @param payload.mode - The mode the adapter computed (bypass /
@@ -218,8 +218,7 @@ declare module '@deepseek-ai/cordis' {
      * Decide whether a session's group keeps a fixed name that
      * first-message spawn renaming must not clobber. The built-in base
      * exempts nothing; a listener short-circuits with `true` for
-     * feature-owned group names (chatroom role, research, and direct-role
-     * groups).
+     * feature-owned group names (role, research, and direct-role groups).
      * @param payload.session - The spawned chat's session.
      * @mode waterfall
      */
@@ -228,7 +227,7 @@ declare module '@deepseek-ai/cordis' {
      * Decide whether auto-render is suppressed for a session: features
      * whose sessions relay their output elsewhere skip the local HTML
      * overview. The built-in base covers subtask children; a listener adds
-     * feature sessions (chatroom roles relay to the hub). The caller
+     * feature sessions (feature roles relay to their hub). The caller
      * applies the monitor-child exemption and the user-interjection
      * re-enable around this decision.
      * @param payload.session - The session being considered.
@@ -240,15 +239,14 @@ declare module '@deepseek-ai/cordis' {
      * whose events keep trickling in would otherwise reset the idle timer
      * forever). The built-in base exempts nothing; a listener short-circuits
      * with `true` for sessions whose long turns are the product (research
-     * assistants and research-hub chatroom roles).
+     * assistants and research-hub roles).
      * @param payload.engine - The engine owning the session registry (hub lookup).
      * @param payload.session - The session the turn runs under.
      * @mode waterfall
      */
     'feishuBridge/hard-cap-exemption'(payload: { engine: Engine; session: Session }, next: () => boolean): boolean
     /**
-     * Route the human's reply to a feature's pending question (chatroom
-     * ask-human): a listener that consumes the message short-circuits with
+     * Route the human's reply to a feature's pending question: a listener that consumes the message short-circuits with
      * `true` and the inbound flow stops there — this decision outranks
      * command dispatch and permission handling. The built-in base returns
      * false (no feature holds a pending question).
@@ -262,7 +260,7 @@ declare module '@deepseek-ai/cordis' {
     /**
      * An ask card was parked and rendered (any kind; the questions kind is
      * the only current dispatcher). Listeners arm their own whole-ask
-     * guards on the pending object (chatroom research-manual hubs arm the
+     * guards on the pending object (a research-manual hub arms the
      * auto-default timer whose fire settles unanswered questions).
      * @param payload.engine - The engine that parked the ask.
      * @param payload.platform - Platform the ask card was posted on.
@@ -275,7 +273,7 @@ declare module '@deepseek-ai/cordis' {
     /**
      * A subtask was dispatched from a parent session (group spawn or a
      * follow-up send). Listeners record feature bookkeeping on the parent
-     * (chatroom research roles mark the assistant dispatch of this turn).
+     * (research roles mark the assistant dispatch of this turn).
      * @param payload.engine - The engine owning the parent session.
      * @param payload.parentSessionKey - Session key of the dispatching parent.
      * @mode emit
@@ -297,15 +295,15 @@ declare module '@deepseek-ai/cordis' {
     /**
      * Decide whether a session is a background session a human can take
      * over (re-enabling auto-render from that point). The built-in base
-     * covers subtask children; a listener adds feature sessions (chatroom
-     * roles relay to the hub).
+     * covers subtask children; a listener adds feature sessions (feature
+     * roles relay to their hub).
      * @param payload.session - The session being considered.
      * @mode waterfall
      */
     'feishuBridge/background-session-policy'(payload: { session: Session }, next: () => boolean): boolean
     /**
      * A turn is starting for a session: the one moment queued per-message
-     * metadata is consumed. Listeners run in order (a chatroom listener
+     * metadata is consumed. Listeners run in order (a feature listener
      * stamps gather-round metadata onto the role session and persists it).
      * @param payload.engine - The engine owning the turn.
      * @param payload.session - The session the turn runs under.
@@ -316,7 +314,7 @@ declare module '@deepseek-ai/cordis' {
     'feishuBridge/turn-start'(payload: { engine: Engine; session: Session; metadata: Record<string, unknown> | undefined }): void
     /**
      * A turn just produced its final response: listeners may relay the
-     * reply elsewhere (chatroom roles relay to the hub and wake the
+     * reply elsewhere (feature roles relay to their hub and wake the
      * moderator). The built-in base does nothing; call `next()` to let the
      * rest of the chain observe the turn end.
      * @param payload.engine - The engine owning the turn.
@@ -330,8 +328,8 @@ declare module '@deepseek-ai/cordis' {
     /**
      * Allow an ask to be answered without the user. The built-in base
      * returns undefined (fall through to the normal ask flow); a listener
-     * returns the decision instead (chatroom auto-approves the moderator's
-     * role-pick plan review as a formality).
+     * returns the decision instead (a listener auto-approves the
+     * moderator's role-pick plan review as a formality).
      * @param payload.engine - The engine rendering the ask.
      * @param payload.sessionKey - Interactive-state slot the ask renders on.
      * @param payload.request - The ask request (kind discriminates the surface).
@@ -341,7 +339,7 @@ declare module '@deepseek-ai/cordis' {
     'feishuBridge/ask-approval'(payload: { engine: Engine; sessionKey: string; request: AskRequest; signal: AbortSignal | undefined }, next: () => Promise<AskDecision | undefined>): Promise<AskDecision | undefined>
     /**
      * Every platform of an engine finished starting. Listeners recover
-     * cross-restart state that needs live platforms (chatroom closes armed
+     * cross-restart state that needs live platforms (a listener closes armed
      * gather/end barriers from the persisted snapshot).
      * @param payload.engine - The engine whose platforms are live.
      * @mode emit
@@ -349,7 +347,7 @@ declare module '@deepseek-ai/cordis' {
     'feishuBridge/platforms-ready'(payload: { engine: Engine }): void
     /**
      * Decorate the shared session-start options object before the agent
-     * session starts: listeners set feature sections (chatroom fills the
+     * session starts: listeners set feature sections (a listener fills the
      * persona block and the shared research venv) and call `next()`. The
      * built-in base fills the subtask and workspace sections only.
      * @param payload.engine - The engine starting the session.
