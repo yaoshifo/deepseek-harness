@@ -59,8 +59,11 @@ function mcpClientConfig(command: string, args: string[]): McpClientConfig {
   }
 }
 
-function applyBridge(ctx: CordisContext): void {
-  void entry.apply(ctx, {
+// entry.apply's first statement awaits its service install and the
+// mcp-health context registration runs after that boundary; awaiting the
+// full apply keeps assemble from racing the registration.
+async function applyBridge(ctx: CordisContext): Promise<void> {
+  await entry.apply(ctx, {
     projects: [],
     providers: {},
     dataDir: mkdtempSync(join(tmpdir(), 'fb-mcp-health-mcp-')),
@@ -79,7 +82,7 @@ describe('mcpHealth against a real mcp-client instance', () => {
     await applyMcpClient(ctx, mcpClientConfig(process.execPath, [fixtureServerPath]))
     expect(ctx.tools.get('mcp__devx-mcp__add')).toBeDefined()
 
-    applyBridge(ctx)
+    await applyBridge(ctx)
     expect(await healthText(ctx)).toBe('')
   }, 30_000)
 
@@ -90,7 +93,7 @@ describe('mcpHealth against a real mcp-client instance', () => {
     await applyMcpClient(ctx, mcpClientConfig('/usr/bin/false', []))
     expect(ctx.tools.get('mcp__devx-mcp__add')).toBeUndefined()
 
-    applyBridge(ctx)
+    await applyBridge(ctx)
     const text = await healthText(ctx)
     expect(text).toContain('"devx-mcp"')
     expect(text).toContain('python3 ~/.dsh/tools/agentichub-mcp-renew.py')
