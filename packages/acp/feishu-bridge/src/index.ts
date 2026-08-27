@@ -1006,6 +1006,7 @@ function applyProjectStateOverride(adapter: DshAgentAdapter, configured: string,
  * @param shared - Process-wide cron scheduler and relay manager the engine registers into.
  * @param sharedHintUsage - Hint click counts shared across projects (Go shares one store).
  * @param sharedQuestionRouting - userQuestions routing shared across projects (one provider per application).
+ * @param bridge - The feishuBridge dispatch face the engine and adapter dispatch through (undefined = bare, listener-less).
  * @returns The engine and the adapter owning its agents.
  */
 export function buildProjectAssembly(

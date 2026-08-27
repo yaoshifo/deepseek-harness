@@ -1180,6 +1180,7 @@ export class StreamPreview {
    * The card's platform message id when the handle carries one (Feishu
    * handles do), else ''. Lets the engine match a recall event to this card
    * without knowing the handle type.
+   * @returns The card's message id, or '' when the handle carries none.
    */
   cardMessageID(): string {
     const h = this.previewMsgID as { messageID?: unknown } | undefined
