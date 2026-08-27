@@ -10,7 +10,9 @@ import { Context } from '@deepseek-ai/cordis'
 import { FeishuBridgeService, bareBridgeDispatch, ctxBridgeDispatch } from '../src/bridge-service.js'
 import { registerChatroomPolicyListeners } from '../src/engine/chatroom-policy.js'
 import type { DshAgentAdapter } from '../src/agent-dsh/adapter.js'
-import type { Engine } from '../src/engine/engine.js'
+import { Engine } from '../src/engine/engine.js'
+import { createStubAgent } from './stubs/engine-stubs.js'
+import type { PendingAsk } from '../src/core/types.js'
 import { unattendedSubtaskBypassesPermissions } from '../src/agent-dsh/adapter.js'
 
 const contexts: Context[] = []
@@ -116,5 +118,66 @@ describe('dispatch faces', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+describe('chatroom seam events', () => {
+  /** A parked questions ask stub the auto-default timer arms on. */
+  function parkedAsk(): PendingAsk {
+    return { request: { kind: 'questions', questions: [] }, answers: new Map(), resolve: () => {} }
+  }
+
+  it('ask-parked arms the research-manual timer only on a manual research moderator hub', () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    registerChatroomPolicyListeners(ctx)
+    const face = ctxBridgeDispatch(ctx)
+    const e = new Engine('test', createStubAgent(), [], '', 'en')
+
+    const hub = e.sessions.getOrCreateActive('test:hub:user-1')
+    hub.setChatroomModerator(true)
+    hub.setChatroomResearch(true)
+    hub.setChatroomResearchMode('manual')
+    const armed = parkedAsk()
+    face.emit('feishuBridge/ask-parked', { engine: e, platform: undefined as never, sessionKey: 'test:hub:user-1', replyCtx: 'ctx', pending: armed })
+    expect(armed.autoTimer).toBeDefined()
+    clearTimeout(armed.autoTimer)
+
+    // Not a research-manual hub: nothing arms.
+    const plain = parkedAsk()
+    face.emit('feishuBridge/ask-parked', { engine: e, platform: undefined as never, sessionKey: 'test:plain:user-1', replyCtx: 'ctx', pending: plain })
+    expect(plain.autoTimer).toBeUndefined()
+
+    // Bare base: the emit drops.
+    const bare = parkedAsk()
+    bareBridgeDispatch().emit('feishuBridge/ask-parked', { engine: e, platform: undefined as never, sessionKey: 'test:hub:user-1', replyCtx: 'ctx', pending: bare })
+    expect(bare.autoTimer).toBeUndefined()
+  })
+
+  it('subtask-dispatched marks an awaiting research role, and only that', () => {
+    const ctx = new Context()
+    contexts.push(ctx)
+    registerChatroomPolicyListeners(ctx)
+    const face = ctxBridgeDispatch(ctx)
+    const e = new Engine('test', createStubAgent(), [], '', 'en')
+
+    const role = e.sessions.getOrCreateActive('test:role:user-1')
+    role.setChatroomHubKey('test:hub:user-1')
+    role.setResearchAwaitingAssistant(true)
+    face.emit('feishuBridge/subtask-dispatched', { engine: e, parentSessionKey: 'test:role:user-1' })
+    expect(role.getResearchDispatched()).toBe(true)
+
+    // No awaiting assistant: the dispatch is not recorded.
+    const idle = e.sessions.getOrCreateActive('test:idle:user-1')
+    idle.setChatroomHubKey('test:hub:user-1')
+    face.emit('feishuBridge/subtask-dispatched', { engine: e, parentSessionKey: 'test:idle:user-1' })
+    expect(idle.getResearchDispatched()).toBe(false)
+
+    // Bare base: the emit drops and nothing is marked.
+    const bareRole = e.sessions.getOrCreateActive('test:bare:user-1')
+    bareRole.setChatroomHubKey('test:hub:user-1')
+    bareRole.setResearchAwaitingAssistant(true)
+    bareBridgeDispatch().emit('feishuBridge/subtask-dispatched', { engine: e, parentSessionKey: 'test:bare:user-1' })
+    expect(bareRole.getResearchDispatched()).toBe(false)
   })
 })

@@ -150,7 +150,6 @@ import { triggerInsights } from './predict.js'
 import { defaultAutoCompressMinGapMs, estimateTokensWithPendingAssistant, maybeAutoResetSessionOnIdle, runCompress } from './session-misc.js'
 import type { RelayManager } from './relay.js'
 import {
-  armResearchManualAskTimeout,
   defaultChatroomGatherTimeout,
   defaultChatroomResearchTimeout,
   defaultMaxChatroomResearchRounds,
@@ -4895,9 +4894,9 @@ export class Engine {
       }
 
       if (request.kind === 'questions') {
-        // Research-manual hub: arm the whole-ask timeout so the card cannot
-        // hang forever when the user never replies (feature #57).
-        armResearchManualAskTimeout(this, p, sessionKey, replyCtx, pending)
+        // Feature guards on the whole ask ride the ask-parked emit (the
+        // chatroom research-manual hub arms the auto-default timer).
+        this.bridge.emit('feishuBridge/ask-parked', { engine: this, platform: p, sessionKey, replyCtx, pending })
         await this.sendAskQuestionsCard(p, replyCtx, request.questions, sessionKey)
       } else {
         const toolName = request.kind === 'plan-review' ? 'ExitPlanMode' : request.toolName
@@ -6098,7 +6097,7 @@ export class Engine {
     }
 
     console.info(`subtask: spawned (parent=${parentSessionKey} child=${syntheticMsg.sessionKey} depth=${depth} worktree=${wtPath !== ''} dir=${workDir})`)
-    this.markResearchDispatch(parent)
+    this.bridge.emit('feishuBridge/subtask-dispatched', { engine: this, parentSessionKey })
     return { childName: groupName, childKey: syntheticMsg.sessionKey }
   }
 
@@ -6652,16 +6651,6 @@ export class Engine {
   }
 
   /**
-   * Flag a research-mode role that dispatched its assistant this turn (Go markResearchDispatch).
-   * @param parent - Role session whose assistant dispatch is recorded.
-   */
-  markResearchDispatch(parent: Session): void {
-    if (parent.getChatroomHubKey() === '' || !parent.getResearchAwaitingAssistant()) return
-    parent.setResearchDispatched(true)
-    this.sessions.save()
-  }
-
-  /**
    * Human label for the parent chat on jump buttons (Go subtaskParentLabel).
    * @param parent - Parent session whose name is used.
    * @returns The parent's display name, or the engine name as fallback.
@@ -6731,18 +6720,14 @@ export class Engine {
     if (msg === '') throw new Error('subtask: message is required')
     if (childSessionKey.trim() === '') throw new Error('subtask: child session key is required')
 
-    // "assistant" addresses the caller's pre-provisioned research assistant
-    // server-side: a model transcribing a 40+ char hex key into tool args
-    // drops characters (2026-08-25 oc_ac5db incident), and the sentinel
-    // removes the transcription entirely.
+    // Short child aliases: features may provision one for keys a model would
+    // mistype in tool args (a 40+ char hex key drops characters in
+    // transcription, 2026-08-25 oc_ac5db incident); the alias removes the
+    // transcription entirely. '' from the waterfall = unknown alias, normal
+    // key parsing continues.
     let childKey = childSessionKey.trim()
-    if (childKey === 'assistant') {
-      const provisioned = this.sessions.getOrCreateActive(callerSessionKey).getResearchAssistantKey()
-      if (provisioned === '') {
-        throw new Error('subtask: no pre-provisioned assistant on this session — spawn one first (action: spawn)')
-      }
-      childKey = provisioned
-    }
+    const aliasResolved = this.bridge.waterfall('feishuBridge/resolve-child-alias', { engine: this, callerSessionKey, alias: childKey }, () => '')
+    if (aliasResolved !== '') childKey = aliasResolved
 
     // Native continuable child: the runtime inbox queues the follow-up
     // behind the child's current turn — the deliberate deviation from Go's
@@ -6779,7 +6764,7 @@ export class Engine {
     // child" (the oc_ac5db incident's confusing surface).
     const child = this.sessions.findActive(childKey)
     if (child === undefined) {
-      throw new Error(`subtask: no subtask session ${childKey} — the key may be mistyped; copy it verbatim, or use "assistant" for the pre-provisioned research assistant`)
+      throw new Error(`subtask: no subtask session ${childKey} — the key may be mistyped; copy it verbatim`)
     }
     if (child.getParentSessionKey() !== callerSessionKey) {
       throw new Error(this.i18n.t(Msg.SubtaskSendNotChild))
@@ -6823,7 +6808,7 @@ export class Engine {
     this.deliverMachineMessage(p, childMsg)
 
     console.info(`subtask: parent sent follow-up to child (parent=${callerSessionKey} child=${childKey})`)
-    this.markResearchDispatch(this.sessions.getOrCreateActive(callerSessionKey))
+    this.bridge.emit('feishuBridge/subtask-dispatched', { engine: this, parentSessionKey: callerSessionKey })
   }
 
   /**

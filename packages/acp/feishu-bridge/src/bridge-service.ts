@@ -13,7 +13,7 @@ import type { Promisify } from '@deepseek-ai/cosmokit'
 import type { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { Engine, InteractiveState } from './engine/engine.js'
 import type { Session } from './engine/session.js'
-import type { AskDecision, AskRequest, Platform, SessionStartOptions } from './core/types.js'
+import type { AskDecision, AskRequest, PendingAsk, Platform, SessionStartOptions } from './core/types.js'
 import { agentIDOf, type SubtaskRoute } from './tools/subtask.js'
 
 /** One live project: its engine plus the adapter that owns its agents. */
@@ -231,6 +231,41 @@ declare module '@deepseek-ai/cordis' {
      * @mode waterfall
      */
     'feishuBridge/route-human-reply'(payload: { engine: Engine; platform: Platform; sessionKey: string; content: string }, next: () => boolean): boolean
+    /**
+     * An ask card was parked and rendered (any kind; the questions kind is
+     * the only current dispatcher). Listeners arm their own whole-ask
+     * guards on the pending object (chatroom research-manual hubs arm the
+     * auto-default timer whose fire settles unanswered questions).
+     * @param payload.engine - The engine that parked the ask.
+     * @param payload.platform - Platform the ask card was posted on.
+     * @param payload.sessionKey - Session key the ask renders under.
+     * @param payload.replyCtx - Reply context for follow-up notices.
+     * @param payload.pending - The parked ask (settles the promise; carries the timer slot).
+     * @mode emit
+     */
+    'feishuBridge/ask-parked'(payload: { engine: Engine; platform: Platform; sessionKey: string; replyCtx: unknown; pending: PendingAsk }): void
+    /**
+     * A subtask was dispatched from a parent session (group spawn or a
+     * follow-up send). Listeners record feature bookkeeping on the parent
+     * (chatroom research roles mark the assistant dispatch of this turn).
+     * @param payload.engine - The engine owning the parent session.
+     * @param payload.parentSessionKey - Session key of the dispatching parent.
+     * @mode emit
+     */
+    'feishuBridge/subtask-dispatched'(payload: { engine: Engine; parentSessionKey: string }): void
+    /**
+     * Resolve a short child alias a model can type reliably into the real
+     * child session key (a 40+ char hex key gets characters dropped in
+     * transcription). The built-in base returns '' (unknown alias, normal
+     * parsing continues); a listener returns the resolved key, or throws to
+     * fail the resolution loudly (an alias whose referent was never
+     * provisioned must not degrade into a mistyped-key error).
+     * @param payload.engine - The engine owning the caller's session registry.
+     * @param payload.callerSessionKey - Session key of the parent issuing the send.
+     * @param payload.alias - The alias as typed into the tool call.
+     * @mode waterfall
+     */
+    'feishuBridge/resolve-child-alias'(payload: { engine: Engine; callerSessionKey: string; alias: string }, next: () => string): string
     /**
      * A turn is starting for a session: the one moment queued per-message
      * metadata is consumed. Listeners run in order (a chatroom listener

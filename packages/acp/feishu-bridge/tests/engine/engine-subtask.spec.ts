@@ -33,6 +33,8 @@ import {
   type ControllableAgentSession,
   type RecordedCard,
 } from '../stubs/engine-stubs.js'
+import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
+import type { BridgeDispatch } from '../../src/bridge-service.js'
 
 const execFileP = promisify(execFile)
 
@@ -41,8 +43,8 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => { setTimeout(resolve, 0) })
 }
 
-function newSubtaskTestEngine(p: Platform, agent: Agent = createStubAgent()): Engine {
-  return new Engine('test', agent, [p], '', 'en')
+function newSubtaskTestEngine(p: Platform, agent: Agent = createStubAgent(), bridge?: BridgeDispatch): Engine {
+  return new Engine('test', agent, [p], '', 'en', bridge)
 }
 
 /** Engine whose agent's recent-turn window serves one assistant entry for 'child-agent'. */
@@ -518,7 +520,7 @@ describe('SpawnSubtask', () => {
     const hubKey = 'test:hub-chat:user-1'
     const parentKey = 'test:role-chat:user-1'
     const p = createStubSpawnerPlatform()
-    const e = newSubtaskTestEngine(p)
+    const e = newSubtaskTestEngine(p, createStubAgent(), chatroomPolicyFace())
 
     const parent = e.sessions.getOrCreateActive(parentKey)
     parent.setChatroomHubKey(hubKey)
@@ -715,7 +717,7 @@ describe('SendToSubtask', () => {
 
   it('resolves the "assistant" sentinel to the caller\'s pre-provisioned research assistant', async () => {
     const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
+    const e = newSubtaskTestEngine(p, createStubAgent(), chatroomPolicyFace())
     const child = e.sessions.getOrCreateActive(childKey)
     child.setParentSessionKey(parentKey)
     child.setSubtaskDepth(1)
@@ -729,7 +731,7 @@ describe('SendToSubtask', () => {
 
   it('tells an unprovisioned caller to spawn an assistant first', async () => {
     const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
+    const e = newSubtaskTestEngine(p, createStubAgent(), chatroomPolicyFace())
 
     await expect(e.sendToSubtask(parentKey, 'assistant', 'task'))
       .rejects.toThrow('no pre-provisioned assistant')
@@ -747,7 +749,7 @@ describe('SendToSubtask', () => {
   it('marks research dispatched on a successful send', async () => {
     const hubKey = 'test:hub-chat:user-1'
     const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
+    const e = newSubtaskTestEngine(p, createStubAgent(), chatroomPolicyFace())
 
     const parent = e.sessions.getOrCreateActive(parentKey)
     parent.setChatroomHubKey(hubKey)

@@ -12,7 +12,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Engine } from './engine.js'
 import type { Session } from './session.js'
-import { maybeAutoRelayRole, recoverChatroomBarriers, routePendingHumanReply } from './chatroom.js'
+import { armResearchManualAskTimeout, maybeAutoRelayRole, recoverChatroomBarriers, routePendingHumanReply } from './chatroom.js'
 import { chatroomPickActive } from './chatroom-pick.js'
 import { chatroomLedgerDir } from './chatroom-ledger.js'
 import type { SessionStartOptions } from '../core/types.js'
@@ -29,6 +29,9 @@ import type { SessionStartOptions } from '../core/types.js'
  *   product),
  * - the pending ask-human reply routing (consumed replies outrank command
  *   dispatch and permission handling),
+ * - the research-manual whole-ask auto-default timer on parked asks,
+ * - the assistant-dispatch marking on subtask dispatches,
+ * - the "assistant" child-alias resolution,
  * - the gather-round metadata stamp at turn start,
  * - the role-reply relay at turn end,
  * - the moderator role-pick plan-review auto-approval,
@@ -52,6 +55,30 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
       next() || isResearchExemptSession(payload.engine, payload.session)),
     ctx.on('feishuBridge/route-human-reply', (payload, next) =>
       next() || routePendingHumanReply(payload.engine, payload.platform, payload.sessionKey, payload.content)),
+    ctx.on('feishuBridge/ask-parked', (payload) => {
+      // Research-manual hub only: arm the whole-ask auto-default so the
+      // card cannot hang forever when the user never replies (feature #57).
+      armResearchManualAskTimeout(payload.engine, payload.platform, payload.sessionKey, payload.replyCtx, payload.pending)
+    }),
+    ctx.on('feishuBridge/subtask-dispatched', (payload) => {
+      // Research-mode role that dispatched its assistant this turn (Go
+      // markResearchDispatch): one-shot flag, persisted with the registry.
+      const parent = payload.engine.sessions.getOrCreateActive(payload.parentSessionKey)
+      if (parent.getChatroomHubKey() === '' || !parent.getResearchAwaitingAssistant()) return
+      parent.setResearchDispatched(true)
+      payload.engine.sessions.save()
+    }),
+    ctx.on('feishuBridge/resolve-child-alias', (payload, next) => {
+      // The "assistant" sentinel addresses the caller's pre-provisioned
+      // research assistant; an unprovisioned one fails loudly here so it
+      // cannot degrade into a mistyped-key error.
+      if (payload.alias !== 'assistant') return next()
+      const provisioned = payload.engine.sessions.getOrCreateActive(payload.callerSessionKey).getResearchAssistantKey()
+      if (provisioned === '') {
+        throw new Error('subtask: no pre-provisioned assistant on this session — spawn one first (action: spawn)')
+      }
+      return provisioned
+    }),
     ctx.on('feishuBridge/turn-start', (payload) => {
       // Go stampChatroomAskOnTurnStart: consume the gather-round metadata at
       // the moment the turn actually starts. The stamp persists whenever the
