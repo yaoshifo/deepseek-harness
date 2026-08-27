@@ -1117,10 +1117,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the normalized, closed-union result.',
       },
       {
-        signature: 'symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<readonly LspSymbolResult[]>',
-        description: 'Fan out one name-based symbol lookup to every registered provider and merge their groups in registration order — a symbol query has no file extension to route on. A provider whose server lacks the `workspaceSymbolProvider` capability contributes nothing; if every provider lacks it, throws `LspError` `LSP_UNSUPPORTED_OPERATION`. No provider registered throws `LSP_UNAVAILABLE`.',
-        parameters: [{ name: 'request', description: 'the name-based symbol lookup request.' }, { name: 'signal', description: 'optional cancellation forwarded to every provider.' }],
-        returns: 'each supporting provider\'s symbols and canonical workspace URI, in registration order.',
+        signature: 'symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<LspSymbolsMerged>',
+        description: 'Run one name-based symbol lookup. A seeded request (`seedFilePath`) routes to the one provider covering the seed\'s extension — the seed declares the symbol\'s language — and a seed whose extension no provider covers returns an empty merged result with `uncoveredSeedExtension` set instead of querying. A seedless request fans out to every registered provider in registration order (a symbol name alone carries no language), folds providers whose server lacks `workspaceSymbolProvider` away, and retains other failures alongside the successful groups.',
+        parameters: [{ name: 'request', description: 'the name-based symbol lookup request.' }, { name: 'signal', description: 'optional cancellation forwarded to the routed or every provider.' }],
+        returns: 'the merged groups with retained failures, or the uncovered-extension signal.',
+        throws: ['LspError `LSP_UNAVAILABLE` when no provider is registered; `LSP_UNSUPPORTED_OPERATION` when a seedless fan-out found no supporting provider at all; the single error or an `AggregateError` when every fanned-out provider failed.'],
       },
     ],
   },
@@ -4058,12 +4059,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface LspSymbol {\n    readonly name: string;\n    readonly kind: string;\n    readonly containerName?: string;\n    readonly location: LspLocation | null;\n}',
   },
   {
+    name: 'LspSymbolProviderFailure',
+    declaration: 'export interface LspSymbolProviderFailure {\n    readonly provider: string;\n    readonly message: string;\n}',
+  },
+  {
     name: 'LspSymbolRequest',
     declaration: 'export interface LspSymbolRequest {\n    readonly query: string;\n    readonly workspaceRoot: string;\n    readonly seedFilePath?: string;\n}',
   },
   {
     name: 'LspSymbolResult',
     declaration: 'export interface LspSymbolResult {\n    readonly symbols: readonly LspSymbol[];\n    readonly resolvedWorkspaceUri: string;\n}',
+  },
+  {
+    name: 'LspSymbolsMerged',
+    declaration: 'export interface LspSymbolsMerged {\n    readonly groups: readonly LspSymbolResult[];\n    readonly failures?: readonly LspSymbolProviderFailure[];\n    readonly uncoveredSeedExtension?: string;\n}',
   },
   {
     name: 'ManualCompactAgentContext',

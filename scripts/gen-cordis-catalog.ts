@@ -650,6 +650,7 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   SubtaskRoute: 'caller routing record is owned by packages/acp/feishu-bridge/src/tools/subtask.ts',
   LspSymbolRequest: 'symbol lookup request is owned by packages/lsp/lsp/src/types.ts',
   LspSymbolResult: 'symbol lookup result is owned by packages/lsp/lsp/src/types.ts',
+  LspSymbolsMerged: 'merged symbol groups are owned by packages/lsp/lsp/src/types.ts',
 }
 
 /** Repository data policy consumed by the Cordis catalog projector. */

@@ -198,15 +198,21 @@ registerProvider(provider: LspProvider): () => void
 query(request: LspQueryRequest, signal?: AbortSignal): Promise<LspQueryResult>
 
 /**
- * Fan out one name-based symbol lookup to every registered provider and merge their groups in
- * registration order — a symbol query has no file extension to route on. A provider whose server
- * lacks the `workspaceSymbolProvider` capability contributes nothing; if every provider lacks it,
- * throws `LspError` `LSP_UNSUPPORTED_OPERATION`. No provider registered throws `LSP_UNAVAILABLE`.
+ * Run one name-based symbol lookup. A seeded request (`seedFilePath`) routes to the one
+ * provider covering the seed's extension — the seed declares the symbol's language — and a
+ * seed whose extension no provider covers returns an empty merged result with
+ * `uncoveredSeedExtension` set instead of querying. A seedless request fans out to every
+ * registered provider in registration order (a symbol name alone carries no language), folds
+ * providers whose server lacks `workspaceSymbolProvider` away, and retains other failures
+ * alongside the successful groups.
  * @param request - the name-based symbol lookup request.
- * @param signal - optional cancellation forwarded to every provider.
- * @returns each supporting provider's symbols and canonical workspace URI, in registration order.
+ * @param signal - optional cancellation forwarded to the routed or every provider.
+ * @returns the merged groups with retained failures, or the uncovered-extension signal.
+ * @throws LspError `LSP_UNAVAILABLE` when no provider is registered; `LSP_UNSUPPORTED_OPERATION`
+ *   when a seedless fan-out found no supporting provider at all; the single error or an
+ *   `AggregateError` when every fanned-out provider failed.
  */
-symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<readonly LspSymbolResult[]>
+symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<LspSymbolsMerged>
 ```
 
 Source: [`packages/lsp/lsp/src/types.ts`](../../packages/lsp/lsp/src/types.ts)
