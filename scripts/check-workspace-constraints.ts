@@ -154,6 +154,9 @@ const packageFileExtras: Readonly<Record<string, readonly string[]>> = {
   // The bridge bundle auto-mounts these bundled skills at runtime, so the
   // tarball must carry them (fork: bundled-skill auto-mount).
   '@deepseek-ai/dsh-feishu-bridge': ['skills'],
+  // The chatroom bundle mounts its bundled moderator skill the same way
+  // (fork: bundled-skill auto-mount).
+  '@deepseek-ai/dsh-feishu-bridge-chatroom': ['skills'],
   // The Python runtime uses a distinct closed-resolution bin; the public CLI
   // keeps config-owned bare-package resolution through lib/bin.js.
   '@deepseek-ai/dsh-sdk-jsonrpc-demo': ['lib/packaged-bin.js'],
