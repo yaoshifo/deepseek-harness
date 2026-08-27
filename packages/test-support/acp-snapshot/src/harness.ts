@@ -216,6 +216,22 @@ export function snapshotSpillRoot(
 }
 
 /**
+ * Strip Node's own diagnostic warning lines from a child runtime's stderr.
+ * The runtime's stderr contract for snapshots is "the application printed
+ * nothing", but the Node runtime itself can interject version-dependent
+ * lines — currently the `node:sqlite` ExperimentalWarning on Node 24+ plus
+ * its trace-warnings hint. Only those two line shapes are removed; any
+ * other byte reaches the assertions unchanged.
+ * @param stderr - the raw captured stderr of the agent child process.
+ * @returns the stderr with Node runtime warning lines removed.
+ */
+function stripNodeWarningLines(stderr: string): string {
+  return stderr
+    .replace(/^\(node:\d+\) ExperimentalWarning:.*(?:\n|$)/gm, '')
+    .replace(/^\(Use `node --trace-warnings[^\n]*(?:\n|$)/gm, '')
+}
+
+/**
  * Run a scenario end-to-end against a freshly-spawned subprocess. Owns the
  * child and its generated dirs; always tears them down. Returns the captured stdout
  * and (record mode) the harvested session-log path.
@@ -327,7 +343,7 @@ export async function runScenario(input: InputScript, opts: RunOptions): Promise
     sessionLogs = await harvestSessionLogs(sessionsRoot)
     return {
       rawStdout: launched.rawStdout(),
-      stderr: launched.stderr(),
+      stderr: stripNodeWarningLines(launched.stderr()),
       cwd,
       cwdAliases,
       ...sessionId !== undefined ? { sessionId } : {},
