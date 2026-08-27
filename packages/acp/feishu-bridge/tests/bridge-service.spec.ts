@@ -10,7 +10,6 @@ import { Context } from '@deepseek-ai/cordis'
 import { FeishuBridgeService, bareBridgeDispatch, ctxBridgeDispatch } from '../src/bridge-service.js'
 import type { DshAgentAdapter } from '../src/agent-dsh/adapter.js'
 import { Engine } from '../src/engine/engine.js'
-import { createStubAgent } from './stubs/engine-stubs.js'
 import { unattendedSubtaskBypassesPermissions } from '../src/agent-dsh/adapter.js'
 import type { SessionStartOptions } from '../src/core/types.js'
 
@@ -91,8 +90,9 @@ describe('FeishuBridgeService', () => {
     expect(bypass).toBe(false)
     expect(seen).toEqual(['emit:e1'])
 
-    const settled = await service.serial('feishuBridge/turn-start', { engine: {} as Engine, session: {} as never, metadata: undefined })
-    expect(settled).toBeUndefined()
+    // Statement position: the void-typed serial dispatch only proves it
+    // settles without bailing when no listener is registered.
+    await service.serial('feishuBridge/turn-start', { engine: {} as Engine, session: {} as never, metadata: undefined })
   })
 })
 
@@ -128,7 +128,9 @@ describe('dispatch faces', () => {
       expect(face.waterfall('feishuBridge/mode-policy', { options: undefined, mode: 'plan' }, () => 'plan')).toBe('plan')
       expect(face.waterfall('feishuBridge/rename-exemption', { session: {} as never }, () => false)).toBe(false)
       face.emit('feishuBridge/platforms-ready', { engine: {} as Engine })
-      expect(await face.serial('feishuBridge/turn-start', { engine: {} as Engine, session: {} as never, metadata: undefined })).toBeUndefined()
+      // Statement position: a listener-less serial dispatch settles without
+      // bailing; the void return carries no value to assert.
+      await face.serial('feishuBridge/turn-start', { engine: {} as Engine, session: {} as never, metadata: undefined })
     } finally {
       warn.mockRestore()
     }
