@@ -174,7 +174,7 @@ export interface DshSubagentsLike {
     parent: unknown,
     childId: unknown,
     content: Array<Record<string, unknown>>,
-    options: { source: Record<string, unknown> },
+    options: { source: Record<string, unknown>; signal: AbortSignal },
   ): Promise<unknown>
   interrupt(targetSessionId: unknown, authority: Record<string, unknown>): void
   reportFrom(child: unknown, content: Array<Record<string, unknown>>, options: { delivery: string; signal: AbortSignal }): Promise<unknown>
@@ -1155,8 +1155,14 @@ export class DshAgentAdapter {
     if (parent === undefined) {
       throw new Error('subtask: the parent agent session is not live; cannot deliver the follow-up')
     }
+    // The signal is mandatory: the cold-resume arm of the runtime's followup
+    // (a child that already settled to storage) dereferences it — omitting it
+    // crashed every follow-up to a settled child (2026-08-27 oc_56801302: two
+    // environment-hint sends failed with "Cannot read properties of undefined
+    // (reading 'throwIfAborted')" and the hints were never delivered).
     await subagents.followup(parent, SessionId(childId), [{ type: 'text', text: message }], {
       source: { kind: 'coordinator', form: 'relay', senderSessionId: SessionId(parentAgentSessionID) },
+      signal: AbortSignal.timeout(startContinuableTimeoutMs),
     })
   }
 
@@ -1195,6 +1201,17 @@ export class DshAgentAdapter {
       delivery: 'next-step',
       signal: AbortSignal.timeout(startContinuableTimeoutMs),
     })
+  }
+
+  /**
+   * ContinuableDelegator: whether one native child has a live agent. Restart
+   * recovery relies on this to leave a still-running child (an HMR rebuild
+   * that kept the runtime alive) out of its interrupted set.
+   *
+   * @param childId - the durable native child session id.
+   */
+  childLive(childId: string): boolean {
+    return this.ctx.agents.get(SessionId(childId)) !== undefined
   }
 
   /**

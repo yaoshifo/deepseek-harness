@@ -380,11 +380,7 @@ export async function startChatroomDirectRole(
     content: topic,
     replyCtx: msg.replyCtx,
   }
-  try {
-    e.receiveMessage(p, wake)
-  } catch (error) {
-    console.error(`engine: receive-message failed (${msg.sessionKey}): ${String(error)}`)
-  }
+  e.deliverMachineMessage(p, wake)
 }
 
 /**
@@ -534,9 +530,5 @@ export async function afterChatroomStarted(
     content: priming,
     replyCtx: rctx,
   }
-  try {
-    e.receiveMessage(p, wake)
-  } catch (error) {
-    console.error(`engine: receive-message failed (${sessionKey}): ${String(error)}`)
-  }
+  e.deliverMachineMessage(p, wake)
 }

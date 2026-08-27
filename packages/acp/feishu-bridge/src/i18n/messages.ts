@@ -139,6 +139,8 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   subtask_settlement_no_output: { en: '(The subtask left no closing output.)', zh: '（子任务未留下收尾输出。）' },
   subtask_turn_failed: { en: '⚠️ The subtask turn failed: %s', zh: '⚠️ 子任务回合失败：%s' },
   subtask_turn_interrupted: { en: '⚠️ The subtask agent process exited mid-turn; the following is its partial output.', zh: '⚠️ 子任务进程中断，以下为部分输出。' },
+  subtask_restart_card_title: { en: '⚠️ Subtasks interrupted by a restart', zh: '⚠️ 子任务因重启中断' },
+  subtask_restart_notice: { en: 'A daemon restart interrupted the subtasks below before they reported; their epochs died with the old process and no report will ever arrive. Each child session remains in storage (resumable with feishu_bridge_subtask action=send) — follow up on the ones whose work matters, and ignore the rest:\n\n%s', zh: 'daemon 重启打断了以下子任务，它们未及汇报——epoch 已随旧进程消亡，汇报不会再到达。各子任务会话仍在存储中（可用 feishu_bridge_subtask 的 action=send 复活追问）；对还有价值的继续追问，其余可忽略：\n\n%s' },
   done_recursive_summary: { en: '🧹 Cleaned up %d sub-task group(s)', zh: '🧹 已递归清理 %d 个子任务群' },
   done_dirty_children: { en: '⚠️ These sub-task groups have unmerged work (committed to their worktree branch, not yet merged/pushed) and were left as-is — open one and run /done to keep or remove:\n%s', zh: '⚠️ 以下子任务群有未合并的改动（已提交到分支、尚未合并/推送），已跳过未清理。点开进群发 /done 决定保留或删除：\n%s' },
   worktree_not_git: { en: '--worktree requires a git repository, but %s is not inside one', zh: '--worktree 需要 git 仓库，但 %s 不在任何 git 仓库内' },
