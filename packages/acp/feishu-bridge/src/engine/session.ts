@@ -17,6 +17,7 @@
 
 import { mkdirSync, readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import type { BridgeDispatch } from '../bridge-service.js'
 import {
   ContinueSession,
   ForkAtSessionPrefix,
@@ -839,16 +840,21 @@ export class Session {
   }
 
   /**
-   * Whether #47/#48 auto-render should be skipped: chatroom roles relay to
-   * the hub and subtask children report to their parent, so a local HTML
-   * overview is redundant. Monitor-hub children and user-interjected sessions
-   * are exempt.
+   * Whether #47/#48 auto-render should be skipped: subtask children report
+   * to their parent and feature sessions (chatroom roles relaying to the
+   * hub, via the `feishuBridge/auto-render-policy` waterfall) render their
+   * output elsewhere, so a local HTML overview is redundant. Monitor-hub
+   * children and user-interjected sessions are exempt.
    *
+   * @param bridge - The bridge dispatch face; omitted dispatches with no
+   *   listener (the built-in subtask base only).
    * @returns whether to skip the local HTML overview.
    */
-  shouldSuppressAutoRender(): boolean {
+  shouldSuppressAutoRender(bridge?: BridgeDispatch): boolean {
     if (this.monitorChild) return false
-    return (this.chatroomHubKey !== '' || this.subtaskDepth > 0) && !this.userInterjected
+    const featureSuppress = bridge?.waterfall('feishuBridge/auto-render-policy', { session: this }, () => this.subtaskDepth > 0)
+      ?? this.subtaskDepth > 0
+    return featureSuppress && !this.userInterjected
   }
 
   /**

@@ -7,8 +7,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import { Engine } from '../../src/engine/engine.js'
 import { Session } from '../../src/engine/session.js'
+import { ctxBridgeDispatch } from '../../src/bridge-service.js'
+import { registerChatroomPolicyListeners } from '../../src/engine/chatroom.js'
 import { cmdNew } from '../../src/engine/commands.js'
 import { lucideIconSVG } from '../../src/lucide/icon.js'
 import {
@@ -21,7 +24,6 @@ import {
   parseGroupIcon,
   sampleAcrossCategories,
   sanitizeGroupName,
-  sessionExemptFromSpawnRename,
   shortenGroupPathTokens,
   truncateGroupName,
   iconCategoryMisc,
@@ -592,21 +594,27 @@ describe('renameHubToTopic', () => {
   })
 })
 
-describe('sessionExemptFromSpawnRename', () => {
+describe('rename-exemption policy (feishuBridge/rename-exemption)', () => {
   it('exempts chatroom roles, research assistants, and direct roles only', () => {
+    const ctx = new Context()
+    registerChatroomPolicyListeners(ctx)
+    const exempt = (session: Session): boolean =>
+      ctxBridgeDispatch(ctx).waterfall('feishuBridge/rename-exemption', { session }, () => false)
+
     const role = new Session()
     role.setChatroomHubKey('test:hub-1')
-    expect(sessionExemptFromSpawnRename(role)).toBe(true)
+    expect(exempt(role)).toBe(true)
 
     const assistant = new Session()
     assistant.setResearchAssistant(true)
-    expect(sessionExemptFromSpawnRename(assistant)).toBe(true)
+    expect(exempt(assistant)).toBe(true)
 
     const direct = new Session()
     direct.setChatroomDirectRole(true)
-    expect(sessionExemptFromSpawnRename(direct)).toBe(true)
+    expect(exempt(direct)).toBe(true)
 
-    expect(sessionExemptFromSpawnRename(new Session())).toBe(false)
+    expect(exempt(new Session())).toBe(false)
+    void Promise.allSettled([ctx.fiber.dispose()])
   })
 })
 
@@ -623,7 +631,11 @@ describe('spawn rename skips chatroom sessions', () => {
     const base = createGroupNameAgent({ resp: 'LLM 群名' })
     const sess = newBlockingSendSession('flow-turn')
     const flowAgent: Agent & { state: GroupNameAgentState } = { ...base, startSession: async () => sess }
-    const e = new Engine('test', flowAgent, [p], '', 'en')
+    // The exemption rides the rename-exemption policy listener (the
+    // production composition) — a bare engine has no chatroom listener.
+    const policyCtx = new Context()
+    registerChatroomPolicyListeners(policyCtx)
+    const e = new Engine('test', flowAgent, [p], '', 'en', ctxBridgeDispatch(policyCtx))
     e.setGroupNameConfig(groupNameEnabled, 'p', 1000, '')
 
     const sessionKey = 'test:chat-1'
@@ -644,6 +656,7 @@ describe('spawn rename skips chatroom sessions', () => {
     sess.unblock()
     sess.channel.push(ev({ type: 'result', content: 'ok', done: true }))
     await done
+    void Promise.allSettled([policyCtx.fiber.dispose()])
     return { a: flowAgent, p }
   }
 

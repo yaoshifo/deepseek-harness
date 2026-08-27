@@ -17,6 +17,7 @@
 
 import { Msg, I18n, langEnglish } from '../i18n/index.js'
 import type { Language } from '../i18n/index.js'
+import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
 import { AllowList } from '../feishu/allowlist.js'
 import type {
   Agent,
@@ -124,7 +125,6 @@ import {
   parseGroupIcon,
   sampleAcrossCategories,
   sanitizeGroupName,
-  sessionExemptFromSpawnRename,
   truncateGroupName,
 } from './groupname.js'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.js'
@@ -852,6 +852,12 @@ export class Engine {
   readonly i18n: I18n
   /** Engine creation timestamp. */
   readonly startedAt = Date.now()
+  /**
+   * The `feishuBridge/*` dispatch face: the mounted {@link FeishuBridgeService}
+   * in production, or the bare listener-less face when constructed outside a
+   * Cordis tree (unit tests) — with no listener the built-in base runs.
+   */
+  readonly bridge: BridgeDispatch
 
   /** Intermediate-message display settings (Go e.display). */
   display: DisplayCfg = {
@@ -1068,10 +1074,18 @@ export class Engine {
 
   private reaperTimer: ReturnType<typeof setInterval> | undefined
 
-  constructor(name: string, agent: Agent, platforms: Platform[], sessionStorePath: string, lang: Language = langEnglish) {
+  constructor(
+    name: string,
+    agent: Agent,
+    platforms: Platform[],
+    sessionStorePath: string,
+    lang: Language = langEnglish,
+    bridge?: BridgeDispatch,
+  ) {
     this.name = name
     this.agent = agent
     this.platforms = platforms
+    this.bridge = bridge ?? bareBridgeDispatch()
     this.sessions = new SessionManager(sessionStorePath)
     this.i18n = new I18n(lang)
     this.sessions.invalidateForAgent(agent.name())
@@ -4769,7 +4783,7 @@ export class Engine {
         const captured = captureReplyForExport(sp, state)
         const triggered = this.planRenderEnabled && request.kind !== 'plan-review'
           && captured.text !== '' && Array.from(captured.text).length >= defaultReplyPreRenderLen
-          && !(session?.shouldSuppressAutoRender() ?? false)
+          && !(session?.shouldSuppressAutoRender(this.bridge) ?? false)
         // Drain async preview updates so a stale running PATCH cannot overwrite
         // the completed card (Go barrier before detach).
         await state.sender?.barrier()
@@ -7400,7 +7414,7 @@ export class Engine {
     // First message = the chat's session has no conversation window yet. The
     // agent session for this message does not exist before the interactive
     // state is created, so an absent/empty live window is exactly "first".
-    if (sessionExemptFromSpawnRename(session)) return
+    if (this.bridge.waterfall('feishuBridge/rename-exemption', { session }, () => false)) return
     if ((await this.recentTurnsOf(msg.sessionKey, session, 1)).length > 0) return
     const raw = msg.originalContent !== '' ? msg.originalContent : msg.content
     if (!this.groupNameEnabled) {

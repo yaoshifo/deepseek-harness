@@ -49,7 +49,7 @@ describe('apply() engine shutdown wiring', () => {
       await ctx.plugin(SystemPrompt, {})
       await ctx.plugin(ToolRuntime)
 
-      apply(ctx, config())
+      await apply(ctx, config())
 
       let disposed = false
       const disposing = ctx.fiber.dispose().then(() => { disposed = true })

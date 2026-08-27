@@ -16,6 +16,7 @@ import { execFile } from 'node:child_process'
 import { mkdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import type { Context } from '@deepseek-ai/cordis'
 import type { Engine, InteractiveState } from './engine.js'
 import type { Session } from './session.js'
 import { emptyMessage, jumpButtonsMarkdown, parentJumpButtons } from './engine.js'
@@ -1706,4 +1707,29 @@ export function armResearchManualAskTimeout(
   }, chatroomResearchManualAskTimeout.ms)
   pending.autoTimer = timer
   timer.unref()
+}
+
+/**
+ * Register the chatroom halves of the `feishuBridge/*` policy waterfalls: the
+ * role/direct-role permission bypass (approval prompts there stall on nobody
+ * who can answer), the moderator plan downgrade, the fixed group-name
+ * exemption (chatroom role, research, and direct-role groups), and the hub
+ * auto-render suppression (roles relay to the hub, so a local HTML overview
+ * is redundant). One process-wide registration — apply wires it once.
+ *
+ * @param ctx - Plugin context carrying the event bus.
+ * @returns Disposer removing all four policy listeners.
+ */
+export function registerChatroomPolicyListeners(ctx: Context): () => void {
+  const disposers = [
+    ctx.on('feishuBridge/permission-policy', (payload, next) =>
+      next() || payload.options?.chatroom?.role === true || payload.options?.chatroom?.directRole === true),
+    ctx.on('feishuBridge/mode-policy', (payload, next) =>
+      payload.mode === 'plan' && payload.options?.chatroom?.moderator === true ? 'default' : next()),
+    ctx.on('feishuBridge/rename-exemption', (payload, next) =>
+      next() || payload.session.getChatroomHubKey() !== '' || payload.session.getChatroomDirectRole() || payload.session.getResearchAssistant()),
+    ctx.on('feishuBridge/auto-render-policy', (payload, next) =>
+      next() || payload.session.getChatroomHubKey() !== ''),
+  ]
+  return () => { for (const dispose of disposers) dispose() }
 }

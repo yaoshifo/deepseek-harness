@@ -1,13 +1,31 @@
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import { ContinueSession, type AskDecision, type AskDelegate, type AskRequest, type Event } from '../../src/core/types.js'
-import { DshAgentAdapter, DshAgentSession, sessionBypassesPermissions, stripModelAlias, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
+import { ctxBridgeDispatch, type BridgeDispatch } from '../../src/bridge-service.js'
+import { registerChatroomPolicyListeners } from '../../src/engine/chatroom.js'
+import { DshAgentAdapter, DshAgentSession, unattendedSubtaskBypassesPermissions, stripModelAlias, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
 
 // DshAgentAdapter unit tests: ctx.agents create/resume, followup/cancel call
 // sequences, provider routing, [1m] stripping, dispose+resume provider
 // switching, and session-event projection into the engine Event stream.
+
+// Chatroom policy tests dispatch through a real Cordis context carrying the
+// production listeners; the contexts are disposed after each test.
+const policyContexts: Context[] = []
+afterEach(async () => {
+  await Promise.allSettled(policyContexts.splice(0).map(ctx => ctx.fiber.dispose()))
+})
+
+/** Adapter dispatch face wired with the chatroom policy listeners (the production composition). */
+function chatroomPolicyFace(): BridgeDispatch {
+  const ctx = new Context()
+  policyContexts.push(ctx)
+  registerChatroomPolicyListeners(ctx)
+  return ctxBridgeDispatch(ctx)
+}
 
 interface RecordedAgent extends DshAgentLike {
   id: string
@@ -964,6 +982,7 @@ describe('DshAgentAdapter approval answerer', () => {
     const delegate = recordingDelegate()
     const h = createHarness()
     const adapter = newAdapter(h)
+    adapter.setBridgeEvents(chatroomPolicyFace())
     adapter.setAskDelegate(delegate)
     const session = (await adapter.startSession('', {
       sessionKey: 'feishu:oc_b:ou_1',
@@ -1190,6 +1209,7 @@ it('a chatroom moderator never enters plan mode (an inherited plan default is do
   const planSets: boolean[] = []
   h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
   const a = newAdapter(h)
+  a.setBridgeEvents(chatroomPolicyFace())
   a.setDefaultMode('plan')
   await a.startSession('', {
     sessionKey: 'feishu:hub:ou_9',
@@ -1203,6 +1223,7 @@ it('a chatroom moderator downgrades an explicit plan override too (one rule: mod
   const planSets: boolean[] = []
   h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
   const a = newAdapter(h)
+  a.setBridgeEvents(chatroomPolicyFace())
   a.setSessionMode('plan')
   await a.startSession('', {
     sessionKey: 'feishu:hub:ou_9',
@@ -1211,15 +1232,13 @@ it('a chatroom moderator downgrades an explicit plan override too (one rule: mod
   expect(planSets).toEqual([false])
 })
 
-describe('sessionBypassesPermissions (Go effectiveMode → bypassPermissions)', () => {
-  it('elevates unattended subtasks and chatroom roles, not attended ones or moderators', () => {
-    expect(sessionBypassesPermissions({ sessionKey: 'k', subtask: { attended: false, noReport: false, researchAssistant: false } })).toBe(true)
-    expect(sessionBypassesPermissions({ sessionKey: 'k', subtask: { attended: true, noReport: false, researchAssistant: false } })).toBe(false)
-    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false } })).toBe(true)
-    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: false, directRole: true, moderator: false, ledgerDir: '', research: false } })).toBe(true)
-    expect(sessionBypassesPermissions({ sessionKey: 'k', chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false } })).toBe(false)
-    expect(sessionBypassesPermissions({ sessionKey: 'feishu:oc_1:ou_9' })).toBe(false)
-    expect(sessionBypassesPermissions(undefined)).toBe(false)
+describe('unattendedSubtaskBypassesPermissions (the permission-policy built-in base)', () => {
+  it('elevates unattended subtasks only; chatroom personas join via the policy listener', () => {
+    expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', subtask: { attended: false, noReport: false, researchAssistant: false } })).toBe(true)
+    expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', subtask: { attended: true, noReport: false, researchAssistant: false } })).toBe(false)
+    expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false } })).toBe(false)
+    expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'feishu:oc_1:ou_9' })).toBe(false)
+    expect(unattendedSubtaskBypassesPermissions(undefined)).toBe(false)
   })
 })
 
@@ -1248,6 +1267,7 @@ describe('effectiveMode bypass wiring', () => {
   it('a chatroom role session auto-approves too', async () => {
     const h = createHarness()
     const a = newAdapter(h)
+    a.setBridgeEvents(chatroomPolicyFace())
     const session = await a.startSession('', {
       sessionKey: 'feishu:role:ou_9',
       chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false },

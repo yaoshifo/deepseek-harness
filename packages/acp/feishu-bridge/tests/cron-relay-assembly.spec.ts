@@ -98,7 +98,7 @@ describe('apply() process-wide wiring', () => {
       await ctx.plugin(SystemPrompt, {})
       await ctx.plugin(ToolRuntime)
 
-      apply(ctx, {
+      await apply(ctx, {
         ...baseConfig(),
         dataDir: tempDir(),
         cron: { silent: true, sessionMode: 'new_per_run' },
@@ -136,7 +136,7 @@ describe('apply() process-wide wiring', () => {
       await ctx.plugin(SystemPrompt, {})
       await ctx.plugin(ToolRuntime)
 
-      apply(ctx, { ...baseConfig(), dataDir: tempDir() })
+      await apply(ctx, { ...baseConfig(), dataDir: tempDir() })
       expect(silentSpy).not.toHaveBeenCalled()
       expect(modeSpy).not.toHaveBeenCalled()
       expect(timeoutSpy).not.toHaveBeenCalled()

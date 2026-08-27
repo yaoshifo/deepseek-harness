@@ -30,6 +30,7 @@ import {
 } from '../core/types.js'
 import type { HistoryEntry } from '../core/types.js'
 import { locateForkCut } from './fork-at.js'
+import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
 import {
   agentConventionsPrompt,
   buildChatroomSystemPrompt,
@@ -332,20 +333,18 @@ function windowSlice(entries: readonly HistoryEntry[], limit: number): HistoryEn
 }
 
 /**
- * Whether the session-start options mark it unattended, the sessions Go's
- * effectiveMode elevates to bypassPermissions: agent-delegated subtask
- * children without a human in the group, and chatroom role / direct-role
- * personas — approval prompts there stall on nobody who can answer. An
- * attended subtask (a human has spoken in the child group) and a moderator
- * keep the normal approval path; a moderator additionally never enters
- * plan mode (downgraded at session start, whatever the mode source).
+ * Whether the session-start options mark an unattended subtask child — the
+ * built-in base of the `feishuBridge/permission-policy` waterfall
+ * (Go effectiveMode elevates these to bypassPermissions: approval prompts
+ * there stall on nobody who can answer). Persona sessions join via the
+ * waterfall's listeners; an attended subtask (a human has spoken in the
+ * child group) keeps the normal approval path.
  *
  * @param options - The session-start options built by the engine's buildSessionStartOptions.
- * @returns True when tool-permission requests auto-approve for this session.
+ * @returns True when the unattended subtask base auto-approves tool permissions.
  */
-export function sessionBypassesPermissions(options: SessionStartOptions | undefined): boolean {
-  const unattendedSubtask = options?.subtask !== undefined && !options.subtask.attended
-  return unattendedSubtask || options?.chatroom?.role === true || options?.chatroom?.directRole === true
+export function unattendedSubtaskBypassesPermissions(options: SessionStartOptions | undefined): boolean {
+  return options?.subtask !== undefined && !options.subtask.attended
 }
 
 /**
@@ -661,6 +660,11 @@ export class DshAgentAdapter {
   private uqRegistered = false
   /** Engine-side ask delegate (B2): renders ask cards and awaits decisions. */
   private askDelegate: AskDelegate | undefined
+  /**
+   * The `feishuBridge/*` dispatch face: the mounted service in production,
+   * or the bare listener-less face when wired outside a Cordis tree.
+   */
+  private bridgeEvents: BridgeDispatch = bareBridgeDispatch()
 
   /**
    * Inject the engine-side ask delegate the native approval answerer and
@@ -670,6 +674,17 @@ export class DshAgentAdapter {
    */
   setAskDelegate(d: AskDelegate): void {
     this.askDelegate = d
+  }
+
+  /**
+   * Inject the bridge event face the session-start policy decisions
+   * (`feishuBridge/permission-policy`, `feishuBridge/mode-policy`) dispatch
+   * through. Assembly wires the mounted service; without it the built-in
+   * bases run with no listener.
+   * @param bridge - The bridge dispatch face.
+   */
+  setBridgeEvents(bridge: BridgeDispatch): void {
+    this.bridgeEvents = bridge
   }
 
   constructor(ctx: DshContextLike, cfg: DshAdapterConfig) {
@@ -1566,7 +1581,7 @@ export class DshAgentAdapter {
         ...(setup !== undefined ? { setup } : {}),
       })
     }
-    const bypass = sessionBypassesPermissions(options)
+    const bypass = this.bridgeEvents.waterfall('feishuBridge/permission-policy', { options }, () => unattendedSubtaskBypassesPermissions(options))
     const session = new DshAgentSession(
       key, handle, this.workDir, this.ctx, bypass,
       options?.interactiveSlotKey ?? '',
@@ -1585,13 +1600,12 @@ export class DshAgentAdapter {
     // stays off (a delegated child nobody can approve must not stall on an
     // ExitPlanMode card).
     let mode = bypass ? 'bypassPermissions' : (this.modeOverride !== '' ? this.modeOverride : this.defaultMode)
-    // A chatroom moderator drives a running discussion, never an
-    // implementation: an inherited plan default (project agent.mode) would
-    // re-arm plan mode on every recycled start and stall the chatroom on an
-    // ExitPlanMode approval nobody needs to give. Roles and direct roles are
-    // covered by bypass above; the moderator keeps the normal tool-approval
-    // path (deliberate deviation from Go effectiveMode, plan mode only).
-    if (mode === 'plan' && options?.chatroom?.moderator === true) mode = 'default'
+    // A moderator drives a running discussion, never an implementation: an
+    // inherited plan default (project agent.mode) would re-arm plan mode on
+    // every recycled start and stall the discussion on an ExitPlanMode
+    // approval nobody needs to give (listener side of the mode-policy
+    // waterfall; the built-in base returns the adapter-computed mode).
+    mode = this.bridgeEvents.waterfall('feishuBridge/mode-policy', { options, mode }, () => mode)
     if (mode !== '') {
       // Apply the mode onto the native plan-mode controller (Go /mode +
       // config mode=plan): plan → active, others off. The one-shot override

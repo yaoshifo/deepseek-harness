@@ -2,6 +2,9 @@ import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import { ctxBridgeDispatch } from '../../src/bridge-service.js'
+import { registerChatroomPolicyListeners } from '../../src/engine/chatroom.js'
 import {
   ContinueSession,
   ForkSessionPrefix,
@@ -215,7 +218,12 @@ describe('SessionManager', () => {
       const sm = new SessionManager('')
       const s = sm.getOrCreateActive('feishu:x')
       setup(s)
-      expect(s.shouldSuppressAutoRender()).toBe(want)
+      // The chatroom rows ride the auto-render-policy listener (the
+      // production composition); the subtask rows are the built-in base.
+      const ctx = new Context()
+      registerChatroomPolicyListeners(ctx)
+      expect(s.shouldSuppressAutoRender(ctxBridgeDispatch(ctx))).toBe(want)
+      void Promise.allSettled([ctx.fiber.dispose()])
     })
   })
 

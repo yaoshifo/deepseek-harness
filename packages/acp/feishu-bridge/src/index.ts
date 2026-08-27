@@ -21,6 +21,8 @@ import type { SubagentRunEndInfo } from '@deepseek-ai/dsh-subagent'
 import Schema from '@deepseek-ai/schemastery'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.js'
+import { FeishuBridgeService, type BridgeDispatch } from './bridge-service.js'
+import { registerChatroomPolicyListeners } from './engine/chatroom.js'
 import { FeishuPlatform } from './feishu/platform.js'
 import { Engine } from './engine/engine.js'
 import { ProjectStateStore } from './engine/project-state.js'
@@ -37,7 +39,7 @@ import { RelayManager } from './engine/relay.js'
 import { registerRelayCommands } from './engine/relay-commands.js'
 import { MonitorExampleStore, type MonitorDirEntry, type MonitorRuleEntry } from './engine/monitor.js'
 import { registerMonitorCommands } from './engine/monitor-commands.js'
-import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from './tools/subtask.js'
+import { registerSubtaskTool, type SubtaskRoute } from './tools/subtask.js'
 import { registerMcpHealthContext } from './core/mcp-health.js'
 import { createUsageProvider, type UsageProvider } from './engine/usage.js'
 import { registerCronTool } from './tools/cron.js'
@@ -771,8 +773,10 @@ export function mountBundledSkills(ctx: Context): Fiber {
 }
 
 /**
- * Start the bridge: one Engine + one Feishu WS platform per configured
- * project (MIGRATION.md §1), plus the process-wide feishu_bridge_subtask /
+ * Start the bridge: the {@link FeishuBridgeService} (live projects, caller
+ * routing, the `feishuBridge/*` dispatch face) plus the chatroom policy
+ * listeners, then one Engine + one Feishu WS platform per configured project
+ * (MIGRATION.md §1), plus the process-wide feishu_bridge_subtask /
  * feishu_bridge_cron / feishu_bridge_relay tools routed by caller agent
  * (plan D4) and the shared cron scheduler + relay manager (Go main wiring:
  * one CronStore at `<dataDir>/crons/jobs.json`, one RelayManager at
@@ -782,8 +786,19 @@ export function mountBundledSkills(ctx: Context): Fiber {
  * @param ctx - Plugin context (provides ctx.agents, ctx.tools, and event dispatch).
  * @param config - Validated plugin config.
  */
-export function apply(ctx: Context, config: FeishuBridgeConfig): void {
+export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<void> {
   mountBundledSkills(ctx)
+  // The service owns the live project registry and the feishuBridge/*
+  // dispatch; mounting it before any engine is built lets engines dispatch
+  // through it from their first decision point.
+  await ctx.plugin(FeishuBridgeService)
+  const service = ctx.get('feishuBridge')
+  if (service === undefined) {
+    throw new Error('feishu-bridge: the feishuBridge service failed to mount')
+  }
+  // Chatroom policy halves: one process-wide registration — the listeners
+  // are payload functions, so per-project wiring would double-fire them.
+  registerChatroomPolicyListeners(ctx)
   const dataRoot = config.dataDir ?? join(homedir(), '.dsh', 'feishu-bridge')
   // One dir history for every project (Go main shares NewDirHistory(cfg.DataDir)
   // across engines so /dir MRU entries land in a single store file).
@@ -811,8 +826,6 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   if (config.mcpHealth !== undefined && config.mcpHealth.servers.length > 0) {
     registerMcpHealthContext(ctx, config.mcpHealth)
   }
-  /** One live project: its engine plus the adapter that owns its agents. */
-  const live: Array<{ engine: Engine; adapter: DshAgentAdapter }> = []
   // Engine starts are collected and awaited together after the loop, so the
   // /reload completion notice runs exactly once per daemon start, after
   // every platform is live (reload-commands.ts).
@@ -822,8 +835,10 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   // does not collide (questions dispatch to the adapter owning the session).
   const questionRouting: QuestionRouting = { adapters: [], registered: false }
   for (const project of config.projects) {
-    const { engine, adapter } = buildProjectAssembly(ctx, config, project, dataRoot, dirHistory, shared, hintUsage, questionRouting)
-    live.push({ engine, adapter })
+    const { engine, adapter } = buildProjectAssembly(
+      ctx, config, project, dataRoot, dirHistory, shared, hintUsage, questionRouting, service,
+    )
+    service.registerProject({ engine, adapter })
     if (project.features?.injectSender === true) engine.setInjectSender(true)
     if (project.features?.quiet === true) {
       engine.setDisplayConfig({ thinkingMessages: false, toolMessages: false })
@@ -852,7 +867,7 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
 
   // The daemon is up: settle a /reload that restarted this process (each
   // start already carries its own catch, so this always runs).
-  void Promise.all(starts).then(() => { void completePendingReload(live.map(({ engine }) => engine)) })
+  void Promise.all(starts).then(() => { void completePendingReload(service.projects.map(({ engine }) => engine)) })
 
   // Start the cron scheduler after every engine registered (Go main).
   cronScheduler.start()
@@ -863,33 +878,18 @@ export function apply(ctx: Context, config: FeishuBridgeConfig): void {
   // Plan D4: one process-wide tool family per domain, each routed by its
   // CALLER agent back to the engine + engine session that agent belongs to
   // — the Go CLI's CC_PROJECT/CC_SESSION_KEY env contract, without env.
-  const route = (caller: unknown): SubtaskRoute | undefined => {
-    const id = agentIDOf(caller)
-    if (id === '') return undefined
-    for (const { engine, adapter } of live) {
-      const sessionKey = adapter.engineKeyForAgentID(id)
-      if (sessionKey !== undefined) return { engine, sessionKey }
-    }
-    return undefined
-  }
+  const route = (caller: unknown): SubtaskRoute | undefined => service.route(caller)
   // Native continuable children (de-baggage B4) own no engine session: their
   // tool calls route to the engine that spawned them, keyed by the native
   // child id. Only the subtask family consumes this — a native child calling
   // cron/relay/chatroom/send has no engine chat to act on.
-  const nativeRoute = (caller: unknown): SubtaskRoute | undefined => {
-    const id = agentIDOf(caller)
-    if (id === '') return undefined
-    for (const { engine } of live) {
-      if (engine.ownsNativeChild(id)) return { engine, sessionKey: id, nativeChildId: id }
-    }
-    return undefined
-  }
+  const nativeRoute = (caller: unknown): SubtaskRoute | undefined => service.nativeRoute(caller)
   registerSubtaskTool(ctx, route, nativeRoute)
   registerCronTool(ctx, route)
   registerRelayTool(ctx, route)
   registerChatroomTool(ctx, route)
   registerSendTool(ctx, route)
-  registerNativeSettlementListener(ctx, live)
+  registerNativeSettlementListener(ctx, service.projects)
   // The lark passthrough routes to the caller's project BOT credentials
   // (plan D4): bot mode mints a TAT in-process, --as user prepends the
   // project's --profile (Go `cc-connect lark` wrapper semantics).
@@ -1017,6 +1017,7 @@ export function buildProjectAssembly(
   shared?: SharedProcessServices,
   sharedHintUsage?: HintUsage,
   sharedQuestionRouting?: QuestionRouting,
+  bridge?: BridgeDispatch,
 ): { engine: Engine; adapter: DshAgentAdapter; platform: FeishuPlatform } {
   const routeNames = Object.keys(config.providers)
   const projectDataDir = join(dataRoot, project.name)
@@ -1091,11 +1092,13 @@ export function buildProjectAssembly(
     dataDir: projectDataDir,
   })
 
-  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language))
+  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language), bridge)
 
   // B2: native approval asks and userQuestions asks delegate card rendering
   // and decision waiting to the engine's askUser.
   adapter.setAskDelegate(engine)
+  // The session-start policy waterfalls dispatch through the same face.
+  if (bridge !== undefined) adapter.setBridgeEvents(bridge)
 
 
   // #18: the bot's default Feishu workspace → the typed start options,
