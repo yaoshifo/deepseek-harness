@@ -13,7 +13,7 @@ import type { Promisify } from '@deepseek-ai/cosmokit'
 import type { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { Engine, InteractiveState } from './engine/engine.js'
 import type { Session } from './engine/session.js'
-import type { AskDecision, AskRequest, SessionStartOptions } from './core/types.js'
+import type { AskDecision, AskRequest, PendingAsk, Platform, SessionStartOptions } from './core/types.js'
 import { agentIDOf, type SubtaskRoute } from './tools/subtask.js'
 
 /** One live project: its engine plus the adapter that owns its agents. */
@@ -87,6 +87,8 @@ export function ctxBridgeDispatch(ctx: Context): BridgeDispatch {
  */
 export class FeishuBridgeService extends Service implements BridgeDispatch {
   private readonly live: LiveProject[] = []
+  private ready = false
+  private readyWaiters: Array<() => void> = []
 
   constructor(ctx: Context) {
     super(ctx, 'feishuBridge')
@@ -95,6 +97,32 @@ export class FeishuBridgeService extends Service implements BridgeDispatch {
   /** The live projects, in mount order. */
   get projects(): ReadonlyArray<LiveProject> {
     return this.live
+  }
+
+  /**
+   * Resolve once every live project is registered. The bridge's apply calls
+   * {@link FeishuBridgeService.markReady} after its project-assembly loop, so
+   * a sibling plugin awaiting this deterministically sees the full project
+   * list (its per-project wiring then targets every engine). Idempotent:
+   * callers after readiness resolve immediately.
+   *
+   * @returns A promise resolving when the service is ready.
+   */
+  whenReady(): Promise<void> {
+    if (this.ready) return Promise.resolve()
+    return new Promise((resolve) => { this.readyWaiters.push(resolve) })
+  }
+
+  /**
+   * Mark the service ready, resolving every {@link FeishuBridgeService.whenReady}
+   * waiter. Calling again is a no-op.
+   */
+  markReady(): void {
+    if (this.ready) return
+    this.ready = true
+    const waiters = this.readyWaiters
+    this.readyWaiters = []
+    for (const resolve of waiters) resolve()
   }
 
   /**
@@ -207,6 +235,74 @@ declare module '@deepseek-ai/cordis' {
      * @mode waterfall
      */
     'feishuBridge/auto-render-policy'(payload: { session: Session }, next: () => boolean): boolean
+    /**
+     * Decide whether a session is exempt from the per-turn hard cap (a turn
+     * whose events keep trickling in would otherwise reset the idle timer
+     * forever). The built-in base exempts nothing; a listener short-circuits
+     * with `true` for sessions whose long turns are the product (research
+     * assistants and research-hub chatroom roles).
+     * @param payload.engine - The engine owning the session registry (hub lookup).
+     * @param payload.session - The session the turn runs under.
+     * @mode waterfall
+     */
+    'feishuBridge/hard-cap-exemption'(payload: { engine: Engine; session: Session }, next: () => boolean): boolean
+    /**
+     * Route the human's reply to a feature's pending question (chatroom
+     * ask-human): a listener that consumes the message short-circuits with
+     * `true` and the inbound flow stops there — this decision outranks
+     * command dispatch and permission handling. The built-in base returns
+     * false (no feature holds a pending question).
+     * @param payload.engine - The engine receiving the inbound message.
+     * @param payload.platform - Platform that delivered the message.
+     * @param payload.sessionKey - Session key the message arrived under.
+     * @param payload.content - The human's reply text.
+     * @mode waterfall
+     */
+    'feishuBridge/route-human-reply'(payload: { engine: Engine; platform: Platform; sessionKey: string; content: string }, next: () => boolean): boolean
+    /**
+     * An ask card was parked and rendered (any kind; the questions kind is
+     * the only current dispatcher). Listeners arm their own whole-ask
+     * guards on the pending object (chatroom research-manual hubs arm the
+     * auto-default timer whose fire settles unanswered questions).
+     * @param payload.engine - The engine that parked the ask.
+     * @param payload.platform - Platform the ask card was posted on.
+     * @param payload.sessionKey - Session key the ask renders under.
+     * @param payload.replyCtx - Reply context for follow-up notices.
+     * @param payload.pending - The parked ask (settles the promise; carries the timer slot).
+     * @mode emit
+     */
+    'feishuBridge/ask-parked'(payload: { engine: Engine; platform: Platform; sessionKey: string; replyCtx: unknown; pending: PendingAsk }): void
+    /**
+     * A subtask was dispatched from a parent session (group spawn or a
+     * follow-up send). Listeners record feature bookkeeping on the parent
+     * (chatroom research roles mark the assistant dispatch of this turn).
+     * @param payload.engine - The engine owning the parent session.
+     * @param payload.parentSessionKey - Session key of the dispatching parent.
+     * @mode emit
+     */
+    'feishuBridge/subtask-dispatched'(payload: { engine: Engine; parentSessionKey: string }): void
+    /**
+     * Resolve a short child alias a model can type reliably into the real
+     * child session key (a 40+ char hex key gets characters dropped in
+     * transcription). The built-in base returns '' (unknown alias, normal
+     * parsing continues); a listener returns the resolved key, or throws to
+     * fail the resolution loudly (an alias whose referent was never
+     * provisioned must not degrade into a mistyped-key error).
+     * @param payload.engine - The engine owning the caller's session registry.
+     * @param payload.callerSessionKey - Session key of the parent issuing the send.
+     * @param payload.alias - The alias as typed into the tool call.
+     * @mode waterfall
+     */
+    'feishuBridge/resolve-child-alias'(payload: { engine: Engine; callerSessionKey: string; alias: string }, next: () => string): string
+    /**
+     * Decide whether a session is a background session a human can take
+     * over (re-enabling auto-render from that point). The built-in base
+     * covers subtask children; a listener adds feature sessions (chatroom
+     * roles relay to the hub).
+     * @param payload.session - The session being considered.
+     * @mode waterfall
+     */
+    'feishuBridge/background-session-policy'(payload: { session: Session }, next: () => boolean): boolean
     /**
      * A turn is starting for a session: the one moment queued per-message
      * metadata is consumed. Listeners run in order (a chatroom listener

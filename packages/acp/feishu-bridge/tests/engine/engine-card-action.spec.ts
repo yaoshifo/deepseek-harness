@@ -18,6 +18,7 @@ import { DirHistory } from '../../src/engine/dir-history.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { createWorktree } from '../../src/engine/worktree.js'
 import { createStubAgent, createStubCardPlatform, newStubMessage, type RecordedCard, type StubCardPlatform } from '../stubs/engine-stubs.js'
+import { newCard } from '../../src/card.js'
 import type { Message, Platform } from '../../src/core/types.js'
 
 const execFileP = promisify(execFile)
@@ -145,6 +146,57 @@ describe('handleCardAction act:/wt', () => {
     e.receiveMessage(p, cardActionMsg('test:child-chat', 'act:/model 3'))
     await new Promise((resolve) => { setTimeout(resolve, 50) })
 
+    expect(p.refreshed).toEqual([])
+    expect(p.sentCards).toEqual([])
+    expect(p.getSent()).toEqual([])
+  })
+})
+
+describe('handleCardAction registered card actions (registerCardAction)', () => {
+  it('runs the registered handler and PATCHes the returned card in place', async () => {
+    const p = newRefreshingPlatform()
+    const e = newEngine(p)
+    const seen: Array<[string, string, string]> = []
+    const dispose = e.registerCardAction(['/feature-pick'], (sessionKey, cmd, args) => {
+      seen.push([sessionKey, cmd, args])
+      return newCard().title('picker', 'purple').markdown(`done ${args}`).build()
+    })
+
+    e.receiveMessage(p, cardActionMsg('test:hub:u1', 'act:/feature-pick toggle one'))
+    await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+    expect(seen).toEqual([['test:hub:u1', '/feature-pick', 'toggle one']])
+    expect(p.refreshed[0]!.body).toContain('done toggle one')
+    // A card action never starts an agent turn nor sends a new card.
+    expect(p.getSent()).toEqual([])
+    expect(p.sentCards).toEqual([])
+    dispose()
+  })
+
+  it('an undefined handler result leaves the pressed card; the action is still consumed', async () => {
+    const p = newRefreshingPlatform()
+    const e = newEngine(p)
+    const dispose = e.registerCardAction(['/feature-pick'], () => undefined)
+
+    e.receiveMessage(p, cardActionMsg('test:hub:u1', 'act:/feature-pick toggle one'))
+    await new Promise((resolve) => { setTimeout(resolve, 50) })
+
+    expect(p.refreshed).toEqual([])
+    expect(p.sentCards).toEqual([])
+    expect(p.getSent()).toEqual([])
+    dispose()
+  })
+
+  it('the disposer removes the registration and the command falls through again', async () => {
+    const p = newRefreshingPlatform()
+    const e = newEngine(p)
+    const dispose = e.registerCardAction(['/feature-pick'], () => newCard().title('picker', 'purple').markdown('x').build())
+    dispose()
+
+    e.receiveMessage(p, cardActionMsg('test:hub:u1', 'act:/feature-pick confirm'))
+    await new Promise((resolve) => { setTimeout(resolve, 50) })
+
+    // Unregistered again: unknown-card handling consumes the press quietly.
     expect(p.refreshed).toEqual([])
     expect(p.sentCards).toEqual([])
     expect(p.getSent()).toEqual([])

@@ -11,10 +11,10 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
+import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
+import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.js'
 import {
   ChatroomGather,
@@ -36,8 +36,11 @@ import {
   createStubChatroomSpawner,
   createStubProgressCardPlatform,
 } from '../stubs/engine-stubs.js'
-import type { AskDecision, PendingAsk, Platform, UserQuestion } from '../../src/core/types.js'
+import type { AskDecision, PendingAsk, Platform, UserQuestion } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { RecordedCard } from '../stubs/engine-stubs.js'
+import { chatroomState } from '../../src/chatroom-state.js'
+import { chatroomConfig } from '../../src/chatroom-config.js'
+import '../stubs/messages.js'
 
 async function settle(): Promise<void> {
   await new Promise((resolve) => { setTimeout(resolve, 0) })
@@ -87,9 +90,9 @@ function cardBody(card: unknown): string {
 describe('chatroom gather timeout duration', () => {
   it('defaults to 20m and is overridable', () => {
     const e = new Engine('test', createStubAgent(), [], '', 'zh')
-    expect(e.chatroomGatherTimeoutDuration()).toBe(20 * 60 * 1000)
-    e.setChatroomGatherTimeout(90_000)
-    expect(e.chatroomGatherTimeoutDuration()).toBe(90_000)
+    expect(chatroomConfig(e).gatherTimeoutDuration()).toBe(20 * 60 * 1000)
+    chatroomConfig(e).applySection({ gatherTimeoutSec: Math.round(90_000 / 1000) })
+    expect(chatroomConfig(e).gatherTimeoutDuration()).toBe(90_000)
   })
 })
 
@@ -165,7 +168,7 @@ describe('GatherRoles', () => {
   it('fails loud on a dangling hub key and mints no phantom hub', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const ghost = 'test:ghost-hub:user-1'
     const before = e.sessions.allSessions().length
 
@@ -179,18 +182,21 @@ describe('GatherRoles', () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
     const role = e.sessions.getOrCreateActive('test:role-9:user-1')
-    role.setChatroomHubKey('test:ghost-hub:user-1')
+    chatroomState(role).chatroomHubKey = 'test:ghost-hub:user-1'
     const before = e.sessions.allSessions().length
 
     const options = e.buildSessionStartOptions('test:role-9:user-1', role)
-    expect(options.chatroom?.research).toBe(false)
+    // Non-creating hub lookup: the role still gets its persona, with the
+    // research contract absent (the phantom hub's empty flags strip it).
+    expect(options.persona?.bypassPermissions).toBe(true)
+    expect(options.persona?.prompt).not.toContain('用预配的助手子群干活')
     expect(e.sessions.allSessions().length).toBe(before)
   })
 
   it('sets the barrier, arms the timer, broadcasts to every role', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const { startChatroom } = await import('../../src/engine/chatroom.js')
     const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
@@ -202,7 +208,7 @@ describe('GatherRoles', () => {
     await settle()
     await settle()
 
-    const g = e.sessions.getOrCreateActive(hub).getPendingGather()
+    const g = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
     expect(g).toBeDefined()
     expect(g!.expected.size).toBe(2)
     expect(g!.expected.has('taleb')).toBe(true)
@@ -214,15 +220,15 @@ describe('GatherRoles', () => {
     expect(p.sentCards.length).toBeGreaterThanOrEqual(2)
     // Each role's relay gate is armed.
     for (const r of roles) {
-      expect(e.sessions.getOrCreateActive(r.sessionKey).getChatroomAsked()).toBe(false)
+      expect(chatroomState(e.sessions.getOrCreateActive(r.sessionKey)).chatroomAsked).toBe(false)
     }
   })
 
   it('research mode uses the research prefix and longer timeout', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
-    e.setChatroomResearchTimeout(90 * 60 * 1000)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    chatroomConfig(e).applySection({ researchTimeoutSec: Math.round(90 * 60 * 1000 / 1000) })
     const hub = 'test:hub:user-1'
     const { startChatroom } = await import('../../src/engine/chatroom.js')
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
@@ -244,34 +250,34 @@ describe('GatherRoles', () => {
       expect(cardBody(c)).toContain('数据可靠性要求：让助手只用权威一手源')
     }
     expect(collectCards.length).toBe(0)
-    const g = e.sessions.getOrCreateActive(hub).getPendingGather()
+    const g = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
     g?.stopTimer()
   })
 
   it('hard-caps auto-mode research rounds; manual is uncapped', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
-    e.setMaxChatroomResearchRounds(2)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    chatroomConfig(e).applySection({ maxResearchRounds: 2 })
     const hub = 'test:hub:user-1'
     const { startChatroom } = await import('../../src/engine/chatroom.js')
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     const hubSess = e.sessions.getOrCreateActive(hub)
-    hubSess.setChatroomResearch(true)
-    hubSess.setChatroomResearchMode('auto')
+    chatroomState(hubSess).chatroomResearch = true
+    chatroomState(hubSess).chatroomResearchMode = 'auto'
 
     gatherRoles(e, hub, 'r1', true)
-    hubSess.getPendingGather()?.stopTimer()
+    chatroomState(hubSess).pendingGather?.stopTimer()
     gatherRoles(e, hub, 'r2', true)
-    hubSess.getPendingGather()?.stopTimer()
+    chatroomState(hubSess).pendingGather?.stopTimer()
 
     // Round 3 must be rejected (cap = 2).
     expect(() => { gatherRoles(e, hub, 'r3', true) }).toThrow()
 
     // Manual mode is uncapped.
-    hubSess.setChatroomResearchMode('manual')
+    chatroomState(hubSess).chatroomResearchMode = 'manual'
     expect(() => { gatherRoles(e, hub, 'r3 manual', true) }).not.toThrow()
-    hubSess.getPendingGather()?.stopTimer()
+    chatroomState(hubSess).pendingGather?.stopTimer()
   })
 
   it('errors when the hub has no roles', () => {
@@ -283,20 +289,20 @@ describe('GatherRoles', () => {
   it('stamps a monotonic per-hub seq on the barrier', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const { startChatroom } = await import('../../src/engine/chatroom.js')
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
 
     gatherRoles(e, hub, '第一轮问题', false)
     const h = e.sessions.getOrCreateActive(hub)
-    const g1 = h.getPendingGather()
+    const g1 = chatroomState(h).pendingGather
     expect(g1?.seq).toBe(1)
     g1?.stopTimer()
-    h.setPendingGather(undefined)
+    chatroomState(h).pendingGather = undefined
 
     gatherRoles(e, hub, '第二轮问题', false)
-    const g2 = h.getPendingGather()
+    const g2 = chatroomState(h).pendingGather
     expect(g2?.seq).toBe(2)
     g2?.stopTimer()
   })
@@ -306,16 +312,16 @@ describe('gather fan-in via maybeAutoRelayRole', () => {
   it('N-1 replies keep the barrier; the Nth clears it', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const { startChatroom } = await import('../../src/engine/chatroom.js')
     const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     const g = newGather('需要追问吗？', ['taleb', 'munger'])
-    e.sessions.getOrCreateActive(hub).setPendingGather(g)
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = g
 
     const relay = (roleKey: string, reply: string): void => {
       const role = e.sessions.getOrCreateActive(roleKey)
-      role.setChatroomAsked(false)
+      chatroomState(role).chatroomAsked = false
       const st = new InteractiveState()
       st.platform = p
       maybeAutoRelayRole(e, st, role, reply, false)
@@ -325,12 +331,12 @@ describe('gather fan-in via maybeAutoRelayRole', () => {
     clearCards(p)
     relay(roles[0]!.sessionKey, '需要问预算范围')
     await settle()
-    expect(e.sessions.getOrCreateActive(hub).getPendingGather()).toBeDefined()
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeDefined()
     expect(p.sentCards).toHaveLength(1)
 
     // Second reply: completes the barrier — pendingGather cleared.
     relay(roles[1]!.sessionKey, '无需追问')
-    expect(e.sessions.getOrCreateActive(hub).getPendingGather()).toBeUndefined()
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
   })
 
   it('a stale turn falls through as a free reply without consuming gates', async () => {
@@ -342,25 +348,25 @@ describe('gather fan-in via maybeAutoRelayRole', () => {
     const hubSess = e.sessions.getOrCreateActive(hub)
     const g = new ChatroomGather('q', 2)
     g.expected.add('Taleb')
-    hubSess.setPendingGather(g)
+    chatroomState(hubSess).pendingGather = g
 
     const role = e.sessions.getOrCreateActive('test:role-chat')
-    role.setChatroomHubKey(hub)
-    role.setChatroomRoleName('Taleb')
-    role.setChatroomAsked(false)
-    role.setChatroomAskSeq(1)
-    role.setChatroomInFlight(true)
-    role.setResearchAwaitingAssistant(true) // must NOT be consumed by the stale turn
+    chatroomState(role).chatroomHubKey = hub
+    chatroomState(role).chatroomRoleName = 'Taleb'
+    chatroomState(role).chatroomAsked = false
+    chatroomState(role).chatroomAskSeq = 1
+    chatroomState(role).chatroomInFlight = true
+    chatroomState(role).researchAwaitingAssistant = true // must NOT be consumed by the stale turn
 
     const st = new InteractiveState()
     st.platform = p
     maybeAutoRelayRole(e, st, role, '上轮迟到的结论', false)
     await settle()
 
-    expect(role.getChatroomAsked()).toBe(false)
-    expect(role.getResearchAwaitingAssistant()).toBe(true)
-    expect(hubSess.getPendingGather()?.collected.size).toBe(0)
-    expect(role.getChatroomInFlight()).toBe(false)
+    expect(chatroomState(role).chatroomAsked).toBe(false)
+    expect(chatroomState(role).researchAwaitingAssistant).toBe(true)
+    expect(chatroomState(hubSess).pendingGather?.collected.size).toBe(0)
+    expect(chatroomState(role).chatroomInFlight).toBe(false)
     // The reply still has value: relayed as a free-reply card.
     expect(p.sentCards).toHaveLength(1)
   })
@@ -373,21 +379,21 @@ describe('gather fan-in via maybeAutoRelayRole', () => {
     const g = new ChatroomGather('q', 2)
     g.expected.add('Taleb')
     g.expected.add('Munger')
-    hubSess.setPendingGather(g)
+    chatroomState(hubSess).pendingGather = g
 
     const role = e.sessions.getOrCreateActive('test:role-chat')
-    role.setChatroomHubKey(hub)
-    role.setChatroomRoleName('Taleb')
-    role.setChatroomAsked(false)
-    role.setChatroomAskSeq(2) // current round
-    role.setChatroomInFlight(true)
+    chatroomState(role).chatroomHubKey = hub
+    chatroomState(role).chatroomRoleName = 'Taleb'
+    chatroomState(role).chatroomAsked = false
+    chatroomState(role).chatroomAskSeq = 2 // current round
+    chatroomState(role).chatroomInFlight = true
 
     const st = new InteractiveState()
     st.platform = p
     maybeAutoRelayRole(e, st, role, '本轮结论', false)
 
-    expect(hubSess.getPendingGather()?.collected.get('Taleb')).toBe('本轮结论')
-    expect(role.getChatroomAsked()).toBe(true)
+    expect(chatroomState(hubSess).pendingGather?.collected.get('Taleb')).toBe('本轮结论')
+    expect(chatroomState(role).chatroomAsked).toBe(true)
   })
 })
 
@@ -397,26 +403,26 @@ describe('turn-start ask metadata stamp (feishuBridge/turn-start)', () => {
     const e = newChatroomTestEngine(p)
     const hub = 'test:hub-chat:user-1'
     const role = e.sessions.getOrCreateActive('test:role-chat')
-    role.setChatroomHubKey(hub)
+    chatroomState(role).chatroomHubKey = hub
 
     // Ask turn: stamps round + arms awaiting.
     await e.bridge.serial('feishuBridge/turn-start', {
       engine: e, session: role, metadata: { chatroomAskSeq: 3, chatroomAwaitAssistant: true },
     })
-    expect(role.getChatroomAskSeq()).toBe(3)
-    expect(role.getResearchAwaitingAssistant()).toBe(true)
+    expect(chatroomState(role).chatroomAskSeq).toBe(3)
+    expect(chatroomState(role).researchAwaitingAssistant).toBe(true)
 
     // Conclusion wake (report injection): zero metadata keeps the round.
     await e.bridge.serial('feishuBridge/turn-start', { engine: e, session: role, metadata: undefined })
-    expect(role.getChatroomAskSeq()).toBe(3)
-    expect(role.getResearchAwaitingAssistant()).toBe(true)
+    expect(chatroomState(role).chatroomAskSeq).toBe(3)
+    expect(chatroomState(role).researchAwaitingAssistant).toBe(true)
 
     // Non-role session: no-op.
     const plain = e.sessions.getOrCreateActive('test:plain-chat')
     await e.bridge.serial('feishuBridge/turn-start', {
       engine: e, session: plain, metadata: { chatroomAskSeq: 5, chatroomAwaitAssistant: true },
     })
-    expect(plain.getChatroomAskSeq()).toBe(0)
+    expect(chatroomState(plain).chatroomAskSeq).toBe(0)
   })
 })
 
@@ -424,18 +430,18 @@ describe('AskHuman vs gather', () => {
   it('is rejected while a gather is in flight', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const { startChatroom } = await import('../../src/engine/chatroom.js')
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
-    e.sessions.getOrCreateActive(hub).setPendingGather(newGather('q', ['taleb']))
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = newGather('q', ['taleb'])
     await expect(askHuman(e, roles[0]!.sessionKey, '预算多少？')).rejects.toThrow()
   })
 
   it('is allowed outside a gather', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const { startChatroom } = await import('../../src/engine/chatroom.js')
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
@@ -452,17 +458,17 @@ describe('buildGatherTimeoutWake', () => {
     // Three roles: taleb replied (not missing); munger dispatched its
     // assistant; ghost never started.
     const taleb = e.sessions.getOrCreateActive('test:role-taleb')
-    taleb.setChatroomHubKey(hub)
-    taleb.setChatroomRoleName('taleb')
+    chatroomState(taleb).chatroomHubKey = hub
+    chatroomState(taleb).chatroomRoleName = 'taleb'
     taleb.setParentSessionKey(hub)
     const munger = e.sessions.getOrCreateActive('test:role-munger')
-    munger.setChatroomHubKey(hub)
-    munger.setChatroomRoleName('munger')
+    chatroomState(munger).chatroomHubKey = hub
+    chatroomState(munger).chatroomRoleName = 'munger'
     munger.setParentSessionKey(hub)
-    munger.setResearchDispatched(true)
+    chatroomState(munger).researchDispatched = true
     const ghost = e.sessions.getOrCreateActive('test:role-ghost')
-    ghost.setChatroomHubKey(hub)
-    ghost.setChatroomRoleName('ghost')
+    chatroomState(ghost).chatroomHubKey = hub
+    chatroomState(ghost).chatroomRoleName = 'ghost'
     ghost.setParentSessionKey(hub)
 
     const wake = buildGatherTimeoutWake(e, hub, ['ghost', 'munger'], '已收到的回复…')
@@ -476,25 +482,25 @@ describe('research progress card', () => {
   it('is sent for research gathers only, and PATCHed to done on completion', async () => {
     const p = createStubProgressCardPlatform()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const { startChatroom } = await import('../../src/engine/chatroom.js')
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
-    e.sessions.getOrCreateActive(hub).setChatroomResearch(true)
+    chatroomState(e.sessions.getOrCreateActive(hub)).chatroomResearch = true
     clearCards(p)
     await settle()
     clearCards(p)
 
     gatherRoles(e, hub, '研究中国股市', true)
-    const g = e.sessions.getOrCreateActive(hub).getPendingGather()
+    const g = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
     expect(g).toBeDefined()
     g!.stopTimer()
     await waitFor(() => g!.progressHandle !== undefined, 'progress card handle stored')
 
     // Plain gather: no progress card.
-    e.sessions.getOrCreateActive(hub).setPendingGather(undefined)
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = undefined
     gatherRoles(e, hub, '普通收集', false)
-    const g2 = e.sessions.getOrCreateActive(hub).getPendingGather()
+    const g2 = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
     g2!.stopTimer()
     expect(g2!.progressHandle).toBeUndefined()
   })
@@ -509,15 +515,15 @@ describe('research progress card', () => {
     g.expected.add('Taleb')
     g.expected.add('Munger')
     g.progressHandle = 'progress-handle'
-    hubSess.setPendingGather(g)
+    chatroomState(hubSess).pendingGather = g
 
     for (const name of ['Taleb', 'Munger']) {
       const role = e.sessions.getOrCreateActive(`test:role-${name}`)
-      role.setChatroomHubKey(hub)
-      role.setChatroomRoleName(name)
-      role.setChatroomAsked(false)
-      role.setChatroomAskSeq(1)
-      role.setChatroomInFlight(true)
+      chatroomState(role).chatroomHubKey = hub
+      chatroomState(role).chatroomRoleName = name
+      chatroomState(role).chatroomAsked = false
+      chatroomState(role).chatroomAskSeq = 1
+      chatroomState(role).chatroomInFlight = true
       const st = new InteractiveState()
       st.platform = p
       maybeAutoRelayRole(e, st, role, `结论${name}`, false)
@@ -533,12 +539,12 @@ describe('research progress card', () => {
 describe('research config range clamping', () => {
   it('clamps the timeout to [1m, 24h] and rounds to [1, 20]', () => {
     const e = new Engine('test', createStubAgent(), [], '', 'zh')
-    e.setChatroomResearchTimeout(1_000)
-    expect(e.chatroomResearchTimeoutDuration()).toBe(60_000)
-    e.setChatroomResearchTimeout(48 * 60 * 60 * 1000)
-    expect(e.chatroomResearchTimeoutDuration()).toBe(24 * 60 * 60 * 1000)
-    e.setMaxChatroomResearchRounds(99)
-    expect(e.maxChatroomResearchRoundsValue()).toBe(20)
+    chatroomConfig(e).applySection({ researchTimeoutSec: Math.round(1_000 / 1000) })
+    expect(chatroomConfig(e).researchTimeoutDuration()).toBe(60_000)
+    chatroomConfig(e).applySection({ researchTimeoutSec: Math.round(48 * 60 * 60 * 1000 / 1000) })
+    expect(chatroomConfig(e).researchTimeoutDuration()).toBe(24 * 60 * 60 * 1000)
+    chatroomConfig(e).applySection({ maxResearchRounds: 99 })
+    expect(chatroomConfig(e).maxResearchRounds()).toBe(20)
   })
 })
 
@@ -560,9 +566,9 @@ describe('armResearchManualAskTimeout', () => {
   function manualHub(e: Engine, mode: 'manual' | 'auto' = 'manual'): string {
     const hub = 'test:hub-chat:user-1'
     const sess = e.sessions.getOrCreateActive(hub)
-    sess.setChatroomModerator(true)
-    sess.setChatroomResearch(true)
-    sess.setChatroomResearchMode(mode)
+    chatroomState(sess).chatroomModerator = true
+    chatroomState(sess).chatroomResearch = true
+    chatroomState(sess).chatroomResearchMode = mode
     return hub
   }
 

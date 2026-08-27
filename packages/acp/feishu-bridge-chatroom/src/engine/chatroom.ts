@@ -16,15 +16,17 @@ import { execFile } from 'node:child_process'
 import { mkdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
-import type { Engine, InteractiveState } from './engine.js'
-import type { Session } from './session.js'
-import { emptyMessage, jumpButtonsMarkdown, parentJumpButtons } from './engine.js'
-import { chatroomHubGroupName, maxGroupNameRunes } from './groupname.js'
-import type { Message, PendingAsk, Platform } from '../core/types.js'
-import { asCardSender, asCardSenderWithUpdate, asReplyContextReconstructor } from '../core/types.js'
-import { newCard } from '../card.js'
-import type { Card } from '../card.js'
-import { Msg } from '../i18n/keys.js'
+import type { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import type { Session } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { emptyMessage, jumpButtonsMarkdown, parentJumpButtons } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { maxGroupNameRunes } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import type { Message, PendingAsk, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { asCardSender, asCardSenderWithUpdate, asReplyContextReconstructor } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { newCard } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import type { Card } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { Msg } from '../i18n.js'
+import { chatroomState } from '../chatroom-state.js'
+import { chatroomConfig } from '../chatroom-config.js'
 import {
   appendChatroomLedger,
   chatroomLedgerDir,
@@ -33,7 +35,7 @@ import {
   updateChatroomSubproblems,
 } from './chatroom-ledger.js'
 import { listRoleNames, roleDir, roleExists } from './chatroom-roles.js'
-import { cleanupOneChat } from './commands.js'
+import { cleanupOneChat } from '@deepseek-ai/dsh-feishu-bridge/exports'
 
 const execFileP = promisify(execFile)
 
@@ -355,8 +357,20 @@ export function chatroomGroupName(role: string): string {
   return name
 }
 
-/** Re-exported for the command module (Go chatroomHubGroupName). */
-export { chatroomHubGroupName }
+/**
+ * Hub group name derived from the chatroom topic: the topic truncated to the
+ * 60-rune ceiling, no prefix (Go chatroomHubGroupName; moved with the
+ * chatroom from the bridge's groupname module).
+ *
+ * @param topic - The chatroom topic.
+ * @returns the hub group display name.
+ */
+export function chatroomHubGroupName(topic: string): string {
+  if (Array.from(topic).length > maxGroupNameRunes) {
+    return `${Array.from(topic).slice(0, maxGroupNameRunes - 3).join('')}...`
+  }
+  return topic
+}
 
 /** Research assistant subgroup display name: 「聊天室·助手·<role>」.
  *
@@ -382,7 +396,7 @@ export function chatroomAssistantGroupName(roleName: string): string {
  * @returns The hub's ledger directory, or undefined when no moderator dir is configured.
  */
 export function chatroomLedgerDirFor(e: Engine, hubKey: string): string | undefined {
-  const dir = e.chatroomModeratorDir().dir
+  const dir = chatroomConfig(e).moderatorDir().dir
   if (dir === '') return undefined
   return chatroomLedgerDir(dir, hubKey)
 }
@@ -397,11 +411,11 @@ export function listChatroomRoles(e: Engine, hubKey: string): ChatroomRole[] {
   const { idToKey } = e.sessions.sessionKeyMap()
   const out: ChatroomRole[] = []
   for (const s of e.sessions.allSessions()) {
-    if (s.getChatroomHubKey() !== hubKey) continue
+    if (chatroomState(s).chatroomHubKey !== hubKey) continue
     const k = idToKey[s.id] ?? ''
     if (k === '') continue
     out.push({
-      name: s.getChatroomRoleName(),
+      name: chatroomState(s).chatroomRoleName,
       sessionKey: k,
       dir: e.perChatWorkDir(e.dirOverrideKey(k)),
     })
@@ -424,10 +438,10 @@ export function resolveChatroomRole(e: Engine, hubKey: string, ref: string): str
   if (trimmed === '') throw new Error('chatroom: role reference is required')
   const { idToKey } = e.sessions.sessionKeyMap()
   for (const s of e.sessions.allSessions()) {
-    if (s.getChatroomHubKey() !== hubKey) continue
+    if (chatroomState(s).chatroomHubKey !== hubKey) continue
     const k = idToKey[s.id] ?? ''
     if (k === '') continue
-    if (k === trimmed || (s.getChatroomRoleName() !== '' && s.getChatroomRoleName() === trimmed)) {
+    if (k === trimmed || (chatroomState(s).chatroomRoleName !== '' && chatroomState(s).chatroomRoleName === trimmed)) {
       return k
     }
   }
@@ -492,23 +506,23 @@ export async function startChatroom(
   }
   topic = topic.trim()
   if (topic === '') throw new Error('chatroom: topic is required')
-  const rolesDir = e.chatroomRolesDir()
+  const rolesDir = chatroomConfig(e).rolesDir()
   let names = roleNames ?? []
   if (names.length === 0) {
     // No roles specified → default to every role under the roles dir
     // (single source of truth shared by the command and the tool surface).
     names = [...listRoleNames(rolesDir)].sort()
     if (names.length === 0) {
-      throw new Error(e.i18n.tf('chatroom_no_roles_configured', rolesDir))
+      throw new Error(e.i18n.tf(Msg.ChatroomNoRolesConfigured, rolesDir))
     }
   }
-  if (names.length > e.maxChatroomRoles()) {
-    throw new Error(`chatroom: too many roles (${names.length} > max ${e.maxChatroomRoles()})`)
+  if (names.length > chatroomConfig(e).maxRoles()) {
+    throw new Error(`chatroom: too many roles (${names.length} > max ${chatroomConfig(e).maxRoles()})`)
   }
   // Validate all roles up front (fail fast → no partial spawn with orphans).
   for (const name of names) {
     if (!roleExists(rolesDir, name)) {
-      throw new Error(e.i18n.tf('chatroom_unknown_role', name, name))
+      throw new Error(e.i18n.tf(Msg.ChatroomUnknownRole, name, name))
     }
   }
 
@@ -537,8 +551,8 @@ export async function startChatroom(
     e.projectState?.save()
     const ns = e.sessions.getOrCreateActive(syntheticMsg.sessionKey)
     ns.setParentSessionKey(hubSessionKey)
-    ns.setChatroomHubKey(hubSessionKey)
-    ns.setChatroomRoleName(name)
+    chatroomState(ns).chatroomHubKey = hubSessionKey
+    chatroomState(ns).chatroomRoleName = name
     ns.setName(groupName)
     ns.setParentChatName(hubLabel)
     if (userID !== '') ns.setSpawnUserID(userID)
@@ -548,10 +562,10 @@ export async function startChatroom(
     // order, like Go's in-loop SendCard).
     const cs = asCardSender(p)
     if (cs !== undefined) {
-      const note = `${name} · ${dir}\n${e.i18n.t('chatroom_topic_label')} ${topic}`
+      const note = `${name} · ${dir}\n${e.i18n.t(Msg.ChatroomTopicLabel)} ${topic}`
       const jumpMD = jumpButtonsMarkdown(parentJumpButtons(hubSessionKey, hubLabel, p))
       try {
-        const card = await e.buildSpawnNotifyCard(dir, e.i18n.t('chatroom_ready'), note, jumpMD, syntheticMsg.sessionKey)
+        const card = await e.buildSpawnNotifyCard(dir, e.i18n.t(Msg.ChatroomReady), note, jumpMD, syntheticMsg.sessionKey)
         await cs.sendCard(syntheticMsg.replyCtx, card)
       } catch (error) {
         console.warn(`chatroom: ready card send failed (role=${name}): ${String(error)}`)
@@ -584,17 +598,18 @@ export async function startChatroom(
 export async function askRole(e: Engine, callerHubKey: string, roleRef: string, question: string): Promise<void> {
   const q = question.trim()
   if (q === '') throw new Error('chatroom: question is required')
-  if (chatroomHubOf(e, callerHubKey)?.getPendingEndBarrier() !== undefined) {
+  const askHub = chatroomHubOf(e, callerHubKey)
+  if (askHub !== undefined && chatroomState(askHub).pendingEndBarrier !== undefined) {
     throw new Error('chatroom: 正在收尾中，无法 ask')
   }
   const p = e.spawnCapablePlatform()
   if (p === undefined) throw new Error('chatroom: no platform available')
   const roleKey = resolveChatroomRole(e, callerHubKey, roleRef)
   const role = e.sessions.getOrCreateActive(roleKey)
-  if (role.getChatroomHubKey() !== callerHubKey) {
+  if (chatroomState(role).chatroomHubKey !== callerHubKey) {
     throw new Error(e.i18n.t(Msg.ChatroomAskNotInRoom))
   }
-  const roleName = role.getChatroomRoleName()
+  const roleName = chatroomState(role).chatroomRoleName
   await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(Msg.ChatroomAskHeader, roleName), 0, false)
   console.info(`chatroom: moderator asked role (hub=${callerHubKey} role=${roleKey})`)
 }
@@ -630,12 +645,13 @@ async function askRoleInternal(
   // Re-arm the one-shot relay so this role's next reply forwards to the
   // hub. Mark in-flight so endChatroom can detect a generating role.
   const role = e.sessions.getOrCreateActive(roleKey)
-  role.setChatroomAsked(false)
-  role.setChatroomInFlight(true)
+  chatroomState(role).chatroomAsked = false
+  chatroomState(role).chatroomInFlight = true
   // Research mode: new round — clear the previous round's sticky dispatch
   // flag. ResearchAwaitingAssistant arms at turn start.
-  if (chatroomHubOf(e, hubKey)?.getChatroomResearch() === true) {
-    role.setResearchDispatched(false)
+  const researchHub = chatroomHubOf(e, hubKey)
+  if (researchHub !== undefined && chatroomState(researchHub).chatroomResearch) {
+    chatroomState(role).researchDispatched = false
   }
   e.sessions.save()
 
@@ -680,7 +696,7 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   if (q === '') throw new Error('chatroom: question is required')
   const hub = chatroomHubOf(e, hubKey)
   if (hub === undefined) throw new Error(`chatroom: hub session missing (hub=${hubKey})`)
-  if (hub.getPendingEndBarrier() !== undefined) {
+  if (chatroomState(hub).pendingEndBarrier !== undefined) {
     throw new Error('chatroom: 正在收尾中，无法 gather')
   }
   const p = e.spawnCapablePlatform()
@@ -690,23 +706,23 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
 
   // Set up the fan-in barrier BEFORE broadcasting so the first role reply
   // can't race ahead and find no pendingGather.
-  const seq = hub.getChatroomGatherSeq() + 1
-  hub.setChatroomGatherSeq(seq)
+  const seq = chatroomState(hub).chatroomGatherSeq + 1
+  chatroomState(hub).chatroomGatherSeq = seq
   const g = new ChatroomGather(q, seq)
   for (const r of roles) g.expected.add(r.name)
-  hub.setPendingGather(g)
+  chatroomState(hub).pendingGather = g
   e.sessions.save()
 
   // Research round tracking: increment the counter and enforce the auto-mode
   // hard cap. Manual mode is uncapped (the user decides).
   if (research) {
-    const round = hub.getChatroomResearchRound() + 1
-    hub.setChatroomResearchRound(round)
+    const round = chatroomState(hub).chatroomResearchRound + 1
+    chatroomState(hub).chatroomResearchRound = round
     e.sessions.save()
-    const mode = hub.getChatroomResearchMode()
+    const mode = chatroomState(hub).chatroomResearchMode
     if (mode === 'auto' || mode === '') {
-      let cap = e.maxChatroomResearchRoundsValue()
-      const override = hub.getChatroomResearchMaxRounds()
+      let cap = chatroomConfig(e).maxResearchRounds()
+      const override = chatroomState(hub).chatroomResearchMaxRounds
       if (override > 0) cap = override
       if (round > cap) {
         throw new Error(`chatroom: research 已达自动模式上限 ${cap} 轮，请用 note 写最终综合后 end 收尾（或切 --mode manual 手动继续）`)
@@ -716,8 +732,8 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
 
   // Fallback timer: wake the moderator with partial results if a role stalls.
   const gatherTimeout = research
-    ? e.chatroomResearchTimeoutDuration()
-    : e.chatroomGatherTimeoutDuration()
+    ? chatroomConfig(e).researchTimeoutDuration()
+    : chatroomConfig(e).gatherTimeoutDuration()
   g.timer = setTimeout(() => { fireGatherTimeout(e, hubKey) }, gatherTimeout)
   g.timer.unref()
 
@@ -742,11 +758,11 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
 function fireGatherTimeout(e: Engine, hubKey: string): void {
   const hub = chatroomHubOf(e, hubKey)
   if (hub === undefined) return
-  const g = hub.getPendingGather()
+  const g = chatroomState(hub).pendingGather
   if (g === undefined) return
   const { done, wake, missing } = g.timeoutFire()
   if (!done) return // already woken by the last reply
-  hub.setPendingGather(undefined)
+  chatroomState(hub).pendingGather = undefined
   e.sessions.save()
   const p = e.spawnCapablePlatform()
   if (p !== undefined) updateResearchProgressCard(e, p, g, 'timedout')
@@ -830,9 +846,9 @@ export function buildGatherTimeoutWake(e: Engine, hubKey: string, missing: strin
     let role: Session | undefined
     const rk = findRoleKeyByName(e, hubKey, name)
     if (rk !== '') role = e.sessions.getOrCreateActive(rk)
-    if (role !== undefined && role.getResearchDispatched()) {
+    if (role !== undefined && chatroomState(role).researchDispatched) {
       sts.push(e.i18n.tf(Msg.ChatroomGatherTimedOutDispatched, name))
-    } else if (role !== undefined && role.getChatroomInFlight()) {
+    } else if (role !== undefined && chatroomState(role).chatroomInFlight) {
       sts.push(e.i18n.tf(Msg.ChatroomGatherTimedOutInFlight, name))
     } else {
       sts.push(e.i18n.tf(Msg.ChatroomGatherTimedOutIdle, name))
@@ -889,15 +905,16 @@ export async function askHuman(e: Engine, roleSessionKey: string, question: stri
   const p = e.spawnCapablePlatform()
   if (p === undefined) throw new Error('chatroom: no platform available')
   const role = e.sessions.getOrCreateActive(roleSessionKey)
-  const hubKey = role.getChatroomHubKey()
+  const hubKey = chatroomState(role).chatroomHubKey
   if (hubKey === '') {
     throw new Error(`chatroom: "${roleSessionKey}" is not a chatroom role session`)
   }
-  let roleName = role.getChatroomRoleName()
+  let roleName = chatroomState(role).chatroomRoleName
   if (roleName === '') roleName = 'role'
   // Reject ask-human while a gather is in flight: the moderator collects
   // role questions centrally and asks the user once via a multi-select card.
-  if (chatroomHubOf(e, hubKey)?.getPendingGather() !== undefined) {
+  const gatherHub = chatroomHubOf(e, hubKey)
+  if (gatherHub !== undefined && chatroomState(gatherHub).pendingGather !== undefined) {
     throw new Error(e.i18n.t(Msg.ChatroomGatherAskHumanBlocked))
   }
   const r = asReplyContextReconstructor(p)
@@ -909,7 +926,7 @@ export async function askHuman(e: Engine, roleSessionKey: string, question: stri
   // Mark the hub pending — single slot (hub-and-spoke asks one role at a time).
   const hub = chatroomHubOf(e, hubKey)
   if (hub === undefined) throw new Error(`chatroom: hub session missing (hub=${hubKey})`)
-  hub.setPendingHumanQuestionRole(roleName)
+  chatroomState(hub).pendingHumanQuestionRole = roleName
   e.sessions.save()
 
   const body = e.i18n.tf(Msg.ChatroomPendingBody, roleName, q, roleName)
@@ -934,12 +951,12 @@ export async function askHuman(e: Engine, roleSessionKey: string, question: stri
  */
 export function routePendingHumanReply(e: Engine, _p: Platform, hubKey: string, content: string): boolean {
   const hub = chatroomHubOf(e, hubKey)
-  const roleName = hub?.getPendingHumanQuestionRole().trim() ?? ''
+  const roleName = hub !== undefined ? chatroomState(hub).pendingHumanQuestionRole.trim() : ''
   if (roleName === '') return false
   if (content.trim().startsWith('/')) return false
   // Clear first so a concurrent reply doesn't double-route; askRole re-arms
   // the role's relay gate.
-  hub?.setPendingHumanQuestionRole('')
+  if (hub !== undefined) chatroomState(hub).pendingHumanQuestionRole = ''
   e.sessions.save()
   const askContent = `人类回答：${content.trim()}\n请基于此继续。`
   void askRole(e, hubKey, roleName, askContent).catch((error: unknown) => {
@@ -974,36 +991,37 @@ export function maybeAutoRelayRole(
   baseResponse: string,
   isSilent: boolean,
 ): void {
-  if (session.getChatroomHubKey() === '' || session.getChatroomAsked()) return
+  if (chatroomState(session).chatroomHubKey === '' || chatroomState(session).chatroomAsked) return
   // Stale-turn guard: this turn was stamped with a PREVIOUS gather round at
   // its start. Judged BEFORE the awaiting defer so a stale turn can neither
   // consume nor re-defer the current round's ResearchAwaitingAssistant.
   let stale = false
-  const b = chatroomHubOf(e, session.getChatroomHubKey())?.getPendingGather()
-  if (b !== undefined && session.getChatroomAskSeq() !== 0 && session.getChatroomAskSeq() !== b.seq) {
+  const staleHub = chatroomHubOf(e, chatroomState(session).chatroomHubKey)
+  const b = staleHub !== undefined ? chatroomState(staleHub).pendingGather : undefined
+  if (b !== undefined && chatroomState(session).chatroomAskSeq !== 0 && chatroomState(session).chatroomAskSeq !== b.seq) {
     stale = true
   }
   // Research mode: the role's first turn after a gather dispatches its
   // assistant and ends without a conclusion. Defer the relay only if the
   // turn ACTUALLY dispatched (researchDispatched); the dispatched flag stays
   // set — the gather timeout report reads it.
-  if (!stale && session.getResearchAwaitingAssistant()) {
-    if (session.getResearchDispatched()) {
-      session.setResearchAwaitingAssistant(false)
+  if (!stale && chatroomState(session).researchAwaitingAssistant) {
+    if (chatroomState(session).researchDispatched) {
+      chatroomState(session).researchAwaitingAssistant = false
       e.sessions.save()
-      console.info(`chatroom: research role dispatched assistant; deferring relay to conclusion turn (role=${session.getChatroomRoleName()})`)
+      console.info(`chatroom: research role dispatched assistant; deferring relay to conclusion turn (role=${chatroomState(session).chatroomRoleName})`)
       return
     }
     // No dispatch happened this turn — this IS the conclusion.
-    session.setResearchAwaitingAssistant(false)
+    chatroomState(session).researchAwaitingAssistant = false
     e.sessions.save()
   }
   if (state === undefined || state.platform === undefined) return
   const p = state.platform
-  const hubKey = session.getChatroomHubKey()
+  const hubKey = chatroomState(session).chatroomHubKey
   const r = asReplyContextReconstructor(p)
   if (r === undefined) return
-  const roleName = session.getChatroomRoleName()
+  const roleName = chatroomState(session).chatroomRoleName
   const reply = baseResponse.trim()
 
   /**
@@ -1039,9 +1057,9 @@ export function maybeAutoRelayRole(
         console.warn(`chatroom: reconstruct hub ctx failed (hub=${hubKey}): ${String(error)}`)
       },
     )
-    session.setChatroomInFlight(false)
+    chatroomState(session).chatroomInFlight = false
     e.sessions.save()
-    console.info(`chatroom: stale turn from previous gather round; relayed as free reply (role=${roleName} askSeq=${session.getChatroomAskSeq()} barrierSeq=${b?.seq ?? 0})`)
+    console.info(`chatroom: stale turn from previous gather round; relayed as free reply (role=${roleName} askSeq=${chatroomState(session).chatroomAskSeq} barrierSeq=${b?.seq ?? 0})`)
     return
   }
 
@@ -1050,11 +1068,12 @@ export function maybeAutoRelayRole(
   // moderator even on a silent/empty reply (NO_REPLY): without that, a role
   // that passes would leave the moderator idle forever and stall the
   // discussion.
-  session.setChatroomAsked(true)
+  chatroomState(session).chatroomAsked = true
   e.sessions.save()
 
   // --- End barrier path (draining in-flight replies before teardown) ---
-  const barrier = chatroomHubOf(e, hubKey)?.getPendingEndBarrier()
+  const barrierHub = chatroomHubOf(e, hubKey)
+  const barrier = barrierHub !== undefined ? chatroomState(barrierHub).pendingEndBarrier : undefined
   if (barrier !== undefined) {
     void r.reconstructReplyCtx(hubKey).then(
       (hubRctx) => { void relayRoleReply(hubRctx) },
@@ -1062,7 +1081,7 @@ export function maybeAutoRelayRole(
         console.warn(`chatroom: reconstruct hub ctx failed (hub=${hubKey}): ${String(error)}`)
       },
     )
-    session.setChatroomInFlight(false)
+    chatroomState(session).chatroomInFlight = false
     const { done, summary } = barrier.accumulate(roleName, reply)
     if (done) {
       finalizeChatroomEndAsync(e, hubKey, summary)
@@ -1075,7 +1094,7 @@ export function maybeAutoRelayRole(
 
   // --- Gather fan-in path (two-phase flow) ---
   const hub = chatroomHubOf(e, hubKey)
-  const g = hub?.getPendingGather()
+  const g = hub !== undefined ? chatroomState(hub).pendingGather : undefined
   if (g !== undefined) {
     const relayP = r.reconstructReplyCtx(hubKey).then(
       (hubRctx) => { return relayRoleReply(hubRctx) },
@@ -1083,7 +1102,7 @@ export function maybeAutoRelayRole(
         console.warn(`chatroom: reconstruct hub ctx failed (hub=${hubKey}): ${String(error)}`)
       },
     )
-    session.setChatroomInFlight(false)
+    chatroomState(session).chatroomInFlight = false
     const { done, wakeContent } = g.accumulate(roleName, reply)
     if (!done) {
       updateResearchProgressCard(e, p, g, '')
@@ -1094,7 +1113,7 @@ export function maybeAutoRelayRole(
     // barrier and wake the moderator once — after the relay card settles, so
     // the moderator's placeholder card lands below it.
     updateResearchProgressCard(e, p, g, 'done')
-    hub?.setPendingGather(undefined)
+    if (hub !== undefined) chatroomState(hub).pendingGather = undefined
     e.sessions.save()
     void relayP.then(() => { wakeChatroomModerator(e, hubKey, wakeContent) })
     console.info(`chatroom: gather complete; woke moderator with all replies (hub=${hubKey})`)
@@ -1111,7 +1130,7 @@ export function maybeAutoRelayRole(
     wake = `[聊天室·${roleName} 本轮未发言（NO_REPLY）]\n\n${reminder}`
     console.info(`chatroom: role passed silently; woke moderator to continue (role=${roleName})`)
   }
-  session.setChatroomInFlight(false)
+  chatroomState(session).chatroomInFlight = false
   void r.reconstructReplyCtx(hubKey).then(
     async (hubRctx) => {
       // The relay card must land before the wake's placeholder card, or the
@@ -1148,10 +1167,10 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   if (p === undefined) throw new Error('chatroom: no platform available')
   const hub = chatroomHubOf(e, hubKey)
   if (hub === undefined) throw new Error(`chatroom: hub session missing (hub=${hubKey})`)
-  if (hub.getPendingGather() !== undefined) {
+  if (chatroomState(hub).pendingGather !== undefined) {
     throw new Error('chatroom: gather 进行中，等其完成再 end；若回复源已死（助手被停止/角色被回收）永远等不齐，改用 force: true 立即中断（用户也可在任意成员群发 /chatroom stop）')
   }
-  if (hub.getPendingEndBarrier() !== undefined) {
+  if (chatroomState(hub).pendingEndBarrier !== undefined) {
     throw new Error('chatroom: 正在收尾中；要立即中断改用 force: true')
   }
 
@@ -1159,8 +1178,8 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   const inFlightNames = new Set<string>()
   for (const childKey of e.collectSubtree(hubKey)) {
     const sess = e.sessions.getOrCreateActive(childKey)
-    if (sess.getChatroomHubKey() === '') continue
-    if (sess.getChatroomInFlight()) inFlightNames.add(sess.getChatroomRoleName())
+    if (chatroomState(sess).chatroomHubKey === '') continue
+    if (chatroomState(sess).chatroomInFlight) inFlightNames.add(chatroomState(sess).chatroomRoleName)
   }
 
   if (inFlightNames.size === 0) {
@@ -1171,14 +1190,14 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   // Phase B: atomically install the barrier with Expected already filled.
   const b = new ChatroomEndBarrier()
   for (const n of inFlightNames) b.expected.add(n)
-  hub.setPendingEndBarrier(b)
+  chatroomState(hub).pendingEndBarrier = b
 
   // Phase C: drop roles that already relayed via the normal path during the
   // Phase A→B window.
   for (const name of b.expectedSnapshot()) {
     const roleKey = findRoleKeyByName(e, hubKey, name)
     if (roleKey === '') continue
-    if (!e.sessions.getOrCreateActive(roleKey).getChatroomInFlight()) {
+    if (!chatroomState(e.sessions.getOrCreateActive(roleKey)).chatroomInFlight) {
       b.forgetExpected(name)
     }
   }
@@ -1188,7 +1207,7 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
     return { status: 'ended', inFlight: [], timeoutSecs: 0, rolesRemoved: removed }
   }
 
-  const timeout = e.chatroomEndTimeoutDuration()
+  const timeout = chatroomConfig(e).endTimeoutDuration()
   b.timer = setTimeout(() => { fireEndTimeout(e, hubKey) }, timeout)
   b.timer.unref()
   console.info(`chatroom: end pending; draining in-flight role replies (hub=${hubKey} inflight=${remaining.join(',')} timeoutMs=${timeout})`)
@@ -1213,7 +1232,7 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
   let removed = 0
   for (const childKey of e.collectSubtree(hubKey)) {
     const sess = e.sessions.getOrCreateActive(childKey)
-    if (sess.getChatroomHubKey() === '') {
+    if (chatroomState(sess).chatroomHubKey === '') {
       // Not a chatroom role. It may still be a research-mode role's
       // pre-spawned assistant (child of a role). Clean it up iff its parent
       // is a role in THIS chatroom; leave the hub's direct /spawn children
@@ -1221,24 +1240,24 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
       // has not been cleared yet.
       const pk = sess.getParentSessionKey()
       if (pk === '') continue
-      if (e.sessions.getOrCreateActive(pk).getChatroomHubKey() !== hubKey) continue
+      if (chatroomState(e.sessions.getOrCreateActive(pk)).chatroomHubKey !== hubKey) continue
     }
     void cleanupOneChat(e, p, childKey, undefined, true)
-    sess.setChatroomHubKey('')
-    sess.setChatroomRoleName('')
-    sess.setChatroomAsked(false)
-    sess.setChatroomInFlight(false)
-    sess.setResearchAssistantKey('')
-    sess.setResearchAwaitingAssistant(false)
-    sess.setResearchAssistant(false)
+    chatroomState(sess).chatroomHubKey = ''
+    chatroomState(sess).chatroomRoleName = ''
+    chatroomState(sess).chatroomAsked = false
+    chatroomState(sess).chatroomInFlight = false
+    chatroomState(sess).researchAssistantKey = ''
+    chatroomState(sess).researchAwaitingAssistant = false
+    chatroomState(sess).researchAssistant = false
     removed++
   }
   const hub = chatroomHubOf(e, hubKey)
   if (hub !== undefined) {
-    hub.setPendingEndBarrier(undefined)
+    chatroomState(hub).pendingEndBarrier = undefined
     // Hub returns to a normal session — drop the moderator flag so subsequent
     // turns use the default harness path.
-    hub.setChatroomModerator(false)
+    chatroomState(hub).chatroomModerator = false
     // Research flags live on the hub; without this a second research chatroom
     // in the same group inherits the previous round count.
     clearChatroomResearchFlags(hub)
@@ -1297,17 +1316,17 @@ export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptR
   // Consume both barriers without waking: the interrupt card is the only
   // terminal record the user asked for.
   const missing: string[] = []
-  const g = hub.getPendingGather()
+  const g = chatroomState(hub).pendingGather
   if (g !== undefined) {
     g.stopTimer()
     missing.push(...g.expected)
-    hub.setPendingGather(undefined)
+    chatroomState(hub).pendingGather = undefined
   }
-  const b = hub.getPendingEndBarrier()
+  const b = chatroomState(hub).pendingEndBarrier
   if (b !== undefined) {
     b.clearFallbackTimer()
     missing.push(...b.expected)
-    hub.setPendingEndBarrier(undefined)
+    chatroomState(hub).pendingEndBarrier = undefined
   }
   e.sessions.save()
 
@@ -1356,8 +1375,8 @@ export function resolveChatroomHubKey(e: Engine, fromKey: string): string {
   for (let hop = 0; hop < 4; hop++) {
     const s = e.sessions.findActive(key)
     if (s === undefined) return ''
-    if (s.getChatroomModerator()) return key
-    const hub = s.getChatroomHubKey()
+    if (chatroomState(s).chatroomModerator) return key
+    const hub = chatroomState(s).chatroomHubKey
     if (hub !== '') return hub
     const parent = s.getParentSessionKey()
     if (parent === '' || parent === key) return ''
@@ -1370,12 +1389,12 @@ export function resolveChatroomHubKey(e: Engine, fromKey: string): string {
 function fireEndTimeout(e: Engine, hubKey: string): void {
   const hub = chatroomHubOf(e, hubKey)
   if (hub === undefined) return
-  const b = hub.getPendingEndBarrier()
+  const b = chatroomState(hub).pendingEndBarrier
   if (b === undefined) return
   for (const name of b.expectedSnapshot()) {
     const roleKey = findRoleKeyByName(e, hubKey, name)
     if (roleKey === '') continue
-    if (!e.sessions.getOrCreateActive(roleKey).getChatroomInFlight()) {
+    if (!chatroomState(e.sessions.getOrCreateActive(roleKey)).chatroomInFlight) {
       b.forgetExpected(name)
     }
   }
@@ -1431,12 +1450,12 @@ export function recoverChatroomBarriers(e: Engine): void {
   const { idToKey } = e.sessions.sessionKeyMap()
   const restored: Array<{ key: string; gather: unknown; end: unknown }> = []
   for (const s of e.sessions.allSessions()) {
-    if (s.pendingGatherData === undefined && s.pendingEndBarrierData === undefined) continue
+    if (chatroomState(s).pendingGatherData === undefined && chatroomState(s).pendingEndBarrierData === undefined) continue
     const key = idToKey[s.id] ?? ''
     if (key === '') continue
-    restored.push({ key, gather: s.pendingGatherData, end: s.pendingEndBarrierData })
-    s.pendingGatherData = undefined
-    s.pendingEndBarrierData = undefined
+    restored.push({ key, gather: chatroomState(s).pendingGatherData, end: chatroomState(s).pendingEndBarrierData })
+    chatroomState(s).pendingGatherData = undefined
+    chatroomState(s).pendingEndBarrierData = undefined
   }
   if (restored.length === 0) return
   const p = e.spawnCapablePlatform()
@@ -1444,8 +1463,8 @@ export function recoverChatroomBarriers(e: Engine): void {
   // marker now describes an assistant that died with the process, and a
   // later re-ask must not treat its first turn as the deferred conclusion.
   for (const s of e.sessions.allSessions()) {
-    if (s.getChatroomHubKey() === '') continue
-    if (s.getResearchAwaitingAssistant()) s.setResearchAwaitingAssistant(false)
+    if (chatroomState(s).chatroomHubKey === '') continue
+    if (chatroomState(s).researchAwaitingAssistant) chatroomState(s).researchAwaitingAssistant = false
   }
   for (const { key, gather, end } of restored) {
     if (gather !== undefined) {
@@ -1456,7 +1475,8 @@ export function recoverChatroomBarriers(e: Engine): void {
         const missing = [...g.expected].sort()
         const { wake } = g.timeoutFire()
         const note = e.i18n.tf(Msg.ChatroomRestarted, missing.length, missing.join('、'))
-        if (p !== undefined && chatroomHubOf(e, key)?.getChatroomResearch() === true) {
+        const restartHub = chatroomHubOf(e, key)
+        if (p !== undefined && restartHub !== undefined && chatroomState(restartHub).chatroomResearch) {
           sendRestartedProgressCard(e, p, key, g)
         }
         wakeChatroomModerator(e, key, `${note}\n\n${wake}`)
@@ -1507,7 +1527,7 @@ function sendRestartedProgressCard(e: Engine, p: Platform, hubKey: string, g: Ch
 export function findRoleKeyByName(e: Engine, hubKey: string, roleName: string): string {
   for (const childKey of e.collectSubtree(hubKey)) {
     const sess = e.sessions.getOrCreateActive(childKey)
-    if (sess.getChatroomHubKey() !== '' && sess.getChatroomRoleName() === roleName) {
+    if (chatroomState(sess).chatroomHubKey !== '' && chatroomState(sess).chatroomRoleName === roleName) {
       return childKey
     }
   }
@@ -1551,10 +1571,10 @@ export async function noteChatroom(e: Engine, hubKey: string, section: string, t
  * @param hub - The hub session whose research flags are reset.
  */
 export function clearChatroomResearchFlags(hub: Session): void {
-  hub.setChatroomResearch(false)
-  hub.setChatroomResearchMode('')
-  hub.setChatroomResearchRound(0)
-  hub.setChatroomResearchMaxRounds(0)
+  chatroomState(hub).chatroomResearch = false
+  chatroomState(hub).chatroomResearchMode = ''
+  chatroomState(hub).chatroomResearchRound = 0
+  chatroomState(hub).chatroomResearchMaxRounds = 0
 }
 
 /**
@@ -1570,7 +1590,7 @@ export function clearChatroomResearchFlags(hub: Session): void {
  * @returns The shared research workdir, or '' when nothing is configured.
  */
 export function chatroomResearchWorkspace(e: Engine): string {
-  const ws = e.chatroomResearchWorkspaceCfg.trim()
+  const ws = chatroomConfig(e).researchWorkspaceCfg.trim()
   if (ws !== '') return ws
   const store = e.sessions.storePath()
   if (store !== '') return join(dirname(store), 'chatroom-research')
@@ -1608,7 +1628,7 @@ let researchVenvChain: Promise<unknown> = Promise.resolve()
  * @returns The venv's absolute path, undefined when the switch is off; rejects when creation fails.
  */
 export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string | undefined> {
-  if (!e.chatroomResearchPythonEnv) return Promise.resolve(undefined)
+  if (!chatroomConfig(e).researchPythonEnv) return Promise.resolve(undefined)
   const workspace = ws.trim()
   if (workspace === '') {
     return Promise.reject(new Error('chatroom: research workspace not configured'))
@@ -1681,8 +1701,8 @@ export function armResearchManualAskTimeout(
   pending: PendingAsk,
 ): void {
   const sess = e.sessions.findActive(sessionKey)
-  if (sess === undefined || !sess.getChatroomModerator() || !sess.getChatroomResearch()
-    || sess.getChatroomResearchMode() !== 'manual') {
+  if (sess === undefined || !chatroomState(sess).chatroomModerator || !chatroomState(sess).chatroomResearch
+    || chatroomState(sess).chatroomResearchMode !== 'manual') {
     return
   }
   if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
@@ -1692,7 +1712,7 @@ export function armResearchManualAskTimeout(
     // double-settle — the notice only rides an actual default settlement.
     if (e.settlePendingAskDefaults(sessionKey)) {
       console.info(`chatroom: research manual ask timed out; applying default answers (session=${sessionKey})`)
-      void e.reply(p, replyCtx, e.i18n.t('chatroom_research_ask_timeout'))
+      void e.reply(p, replyCtx, e.i18n.t(Msg.ChatroomResearchAskTimeout))
     }
   }, chatroomResearchManualAskTimeout.ms)
   pending.autoTimer = timer

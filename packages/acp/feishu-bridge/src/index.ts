@@ -22,7 +22,6 @@ import Schema from '@deepseek-ai/schemastery'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.js'
 import { FeishuBridgeService, type BridgeDispatch } from './bridge-service.js'
-import { registerChatroomPolicyListeners } from './engine/chatroom-policy.js'
 import { FeishuPlatform } from './feishu/platform.js'
 import { Engine } from './engine/engine.js'
 import { ProjectStateStore } from './engine/project-state.js'
@@ -44,10 +43,8 @@ import { registerMcpHealthContext } from './core/mcp-health.js'
 import { createUsageProvider, type UsageProvider } from './engine/usage.js'
 import { registerCronTool } from './tools/cron.js'
 import { registerRelayTool } from './tools/relay.js'
-import { registerChatroomTool } from './tools/chatroom.js'
 import { registerSendTool } from './tools/send.js'
 import { registerLarkTool, type LarkRoute } from './tools/lark.js'
-import { registerChatroomCommands } from './engine/chatroom-cmd.js'
 import { registerProviderCommands } from './engine/provider-commands.js'
 import { registerPredictCommands } from './engine/predict.js'
 import { registerSessionMiscCommands } from './engine/session-misc.js'
@@ -260,8 +257,13 @@ export interface ProjectConfig {
   agentCloseSec?: number
   /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
   unsolicited?: UnsolicitedConfig
-  /** Multi-role chatroom tuning (Go [chatroom]). */
-  chatroom?: ChatroomConfig
+  /**
+   * Residue guard: chatroom tuning moved to the chatroom plugin's own
+   * config (packages/acp/feishu-bridge-chatroom). The key stays in the
+   * schema only so apply can fail loud on a cordis.patch.yml whose chatroom
+   * section was not migrated (schemastery strips unknown keys silently).
+   */
+  chatroom?: unknown
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
   monitor?: MonitorConfig
   /** Model context window in tokens; 0 = the 200k default (Go context_window). */
@@ -448,30 +450,6 @@ export interface SharedProcessServices {
   relayManager?: RelayManager
 }
 
-/** Multi-role chatroom tuning (Go [chatroom], applied per project). */
-export interface ChatroomConfig {
-  /** Root directory holding one persona subdirectory per role; ~ expanded. */
-  rolesDir?: string
-  /** Cap on role agents per chatroom; 0 = default 5 (Go max_roles). */
-  maxRoles?: number
-  /** Moderator data dir holding per-chatroom ledgers; '' disables the ledger (Go moderator_dir). */
-  moderatorDir?: string
-  /** Gather barrier fallback timeout in seconds (Go gather_timeout_sec). */
-  gatherTimeoutSec?: number
-  /** End barrier drain timeout in seconds (Go end_timeout_sec). */
-  endTimeoutSec?: number
-  /** Research-mode gather round timeout in seconds, clamped to [60, 86400] (Go research_timeout_sec). */
-  researchTimeoutSec?: number
-  /** Auto-mode research iteration cap, clamped to [1, 20] (Go max_research_rounds). */
-  maxResearchRounds?: number
-  /** Default research iteration driver when --mode is omitted (Go default_research_mode). */
-  defaultResearchMode?: 'auto' | 'manual'
-  /** Shared research-assistant workdir; empty falls back to <moderatorDir>/research (Go research_workspace). */
-  researchWorkspace?: string
-  /** Pre-provision the shared uv venv for research assistants; default true (Go research_python_env). */
-  researchPythonEnv?: boolean
-}
-
 /** One watched MCP server for the `mcpHealth` runtime context. */
 export interface McpHealthServerConfig {
   /** mcp-client row's serverName; its tools register as `mcp__<serverName>__<rawName>`. */
@@ -516,8 +494,11 @@ export interface FeishuBridgeConfig {
   cron?: CronConfig
   /** Bot-to-bot relay behavior (Go [relay]). */
   relay?: RelayConfig
-  /** Multi-role chatroom tuning shared as the per-project default (Go [chatroom]). */
-  chatroom?: ChatroomConfig
+  /**
+   * Residue guard: chatroom tuning moved to the chatroom plugin's own
+   * config (packages/acp/feishu-bridge-chatroom); apply fails loud when set.
+   */
+  chatroom?: unknown
   /** Streaming preview tuning merged over the defaults (Go [stream_preview]). */
   streamPreview?: Partial<StreamPreviewCfg>
   /** Provider quota displays appended to the completion footer (Go usage_providers). */
@@ -624,18 +605,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       backgroundGraceSec: Schema.natural().description('Seconds pending background tasks keep the reader alive (default 1800)'),
       spilloverSec: Schema.natural().description('Seconds after a foreground completion where duplicate frames relay as plain text (default 30; 0 = disabled)'),
     }).description('Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config)'),
-    chatroom: Schema.object({
-      rolesDir: Schema.string().description('Root directory holding one persona subdirectory per role'),
-      maxRoles: Schema.natural().description('Cap on role agents per chatroom (default 5)'),
-      moderatorDir: Schema.string().description('Moderator data dir holding per-chatroom ledgers'),
-      gatherTimeoutSec: Schema.natural().description('Gather barrier fallback timeout in seconds (default 1200)'),
-      endTimeoutSec: Schema.natural().description('End barrier drain timeout in seconds (default 600)'),
-      researchTimeoutSec: Schema.natural().description('Research gather round timeout in seconds, clamped to [60, 86400]'),
-      maxResearchRounds: Schema.natural().description('Auto-mode research iteration cap, clamped to [1, 20]'),
-      defaultResearchMode: Schema.union(['auto', 'manual']).description('Default research driver when --mode is omitted'),
-      researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <projectDataDir>/chatroom-research)'),
-      researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
-    }).description('Multi-role chatroom tuning (Go [chatroom])'),
+    chatroom: Schema.any().description('Residue guard: chatroom config moved to the chatroom plugin (@deepseek-ai/dsh-feishu-bridge-chatroom); setting it fails at startup'),
     monitor: Schema.object({
       enabled: Schema.boolean().description('Monitor-group mode master switch (#53)'),
       chats: Schema.string().description('Comma-separated monitored chat IDs, or * for all groups'),
@@ -723,18 +693,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   relay: Schema.object({
     timeoutSecs: Schema.natural().description('Max seconds to wait for a relay response; 0 disables (default 120)'),
   }).description('Bot-to-bot relay (Go [relay])'),
-  chatroom: Schema.object({
-    rolesDir: Schema.string().description('Root directory holding one persona subdirectory per role'),
-    maxRoles: Schema.natural().description('Cap on role agents per chatroom (default 5)'),
-    moderatorDir: Schema.string().description('Moderator data dir holding per-chatroom ledgers'),
-    gatherTimeoutSec: Schema.natural().description('Gather barrier fallback timeout in seconds (default 1200)'),
-    endTimeoutSec: Schema.natural().description('End barrier drain timeout in seconds (default 600)'),
-    researchTimeoutSec: Schema.natural().description('Research gather round timeout in seconds, clamped to [60, 86400]'),
-    maxResearchRounds: Schema.natural().description('Auto-mode research iteration cap, clamped to [1, 20]'),
-    defaultResearchMode: Schema.union(['auto', 'manual']).description('Default research driver when --mode is omitted'),
-    researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <projectDataDir>/chatroom-research)'),
-    researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
-  }).description('Multi-role chatroom tuning (Go [chatroom]; per-project sections override)'),
+  chatroom: Schema.any().description('Residue guard: chatroom config moved to the chatroom plugin (@deepseek-ai/dsh-feishu-bridge-chatroom); setting it fails at startup'),
   streamPreview: Schema.object({
     enabled: Schema.boolean().description('Enable streaming preview'),
     intervalMs: Schema.natural().description('Minimum ms between updates'),
@@ -783,8 +742,8 @@ export function mountBundledSkills(ctx: Context): Fiber {
 
 /**
  * Start the bridge: the {@link FeishuBridgeService} (live projects, caller
- * routing, the `feishuBridge/*` dispatch face) plus the chatroom policy
- * listeners, then one Engine + one Feishu WS platform per configured project
+ * routing, the `feishuBridge/*` dispatch face), then one Engine + one Feishu
+ * WS platform per configured project
  * (MIGRATION.md §1), plus the process-wide feishu_bridge_subtask /
  * feishu_bridge_cron / feishu_bridge_relay tools routed by caller agent
  * (plan D4) and the shared cron scheduler + relay manager (Go main wiring:
@@ -805,9 +764,18 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
   if (service === undefined) {
     throw new Error('feishu-bridge: the feishuBridge service failed to mount')
   }
-  // Chatroom policy halves: one process-wide registration — the listeners
-  // are payload functions, so per-project wiring would double-fire them.
-  registerChatroomPolicyListeners(ctx)
+  // The chatroom config moved to its own plugin (feishu-bridge-chatroom);
+  // a leftover section here means the deployment's cordis.patch.yml was not
+  // migrated — fail loud instead of silently dropping the tuning (the schema
+  // keeps the key only because schemastery strips unknown keys).
+  if (config.chatroom !== undefined) {
+    throw new Error('feishu-bridge: chatroom config moved to the chatroom plugin — move the [chatroom] section to the feishu-bridge-chatroom plugin config (packages/acp/feishu-bridge-chatroom)')
+  }
+  for (const project of config.projects) {
+    if (project.chatroom !== undefined) {
+      throw new Error(`feishu-bridge: project '${project.name}' still carries a chatroom section — move it to the feishu-bridge-chatroom plugin config (packages/acp/feishu-bridge-chatroom)`)
+    }
+  }
   const dataRoot = config.dataDir ?? join(homedir(), '.dsh', 'feishu-bridge')
   // One dir history for every project (Go main shares NewDirHistory(cfg.DataDir)
   // across engines so /dir MRU entries land in a single store file).
@@ -874,6 +842,10 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
     })
   }
 
+  // Every live project is registered: sibling plugins awaiting readiness
+  // (the chatroom package) can now sweep the full project list.
+  service.markReady()
+
   // The daemon is up: settle a /reload that restarted this process (each
   // start already carries its own catch, so this always runs).
   void Promise.all(starts).then(() => { void completePendingReload(service.projects.map(({ engine }) => engine)) })
@@ -896,7 +868,6 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
   registerSubtaskTool(ctx, route, nativeRoute)
   registerCronTool(ctx, route)
   registerRelayTool(ctx, route)
-  registerChatroomTool(ctx, route)
   registerSendTool(ctx, route)
   registerNativeSettlementListener(ctx, service.projects)
   // The lark passthrough routes to the caller's project BOT credentials
@@ -1143,7 +1114,6 @@ export function buildProjectAssembly(
     dirHistory.add(project.name, effectiveWorkDir)
   }
   registerSessionCommands(engine)
-  registerChatroomCommands(engine)
   // M8 前: /shell + "!" prefix shortcut (Go cmdShell).
   registerShellCommands(engine)
   // M8 前: /reload — detached-spawn reload.sh (TS 原生，无 Go 对应)。
@@ -1174,7 +1144,6 @@ export function buildProjectAssembly(
   wirePredictNext(engine, project, config.providers)
   wireTurnSummary(engine, project)
   wireSessionMisc(engine, project)
-  wireChatroom(engine, config.chatroom, project.chatroom, dataRoot)
   // M6b: monitor domain (#53) — config block → engine MonitorCore + the
   // /monitor command family + runtime persistence via the project state.
   wireMonitor(engine, project, projectDataDir, projectState)
@@ -1390,51 +1359,6 @@ function expandHome(path: string): string {
   if (trimmed === '~') return home
   if (trimmed.startsWith('~/')) return join(home, trimmed.slice(2))
   return trimmed
-}
-
-/**
- * Configure the chatroom domain (Go wire.go's [chatroom] wiring): the
- * project section overrides the shared top-level default per field. An
- * empty moderatorDir stays EMPTY — unlike Go's configHome fallback, the
- * ledger is opt-in here so default assemblies stay clean; explicit values
- * (~ expanded) enable it.
- */
-function wireChatroom(
-  engine: Engine,
-  shared: ChatroomConfig | undefined,
-  project: ChatroomConfig | undefined,
-  _dataRoot: string,
-): void {
-  const cfg: ChatroomConfig = { ...shared, ...project }
-  if (cfg.rolesDir !== undefined && cfg.rolesDir.trim() !== '') {
-    engine.setChatroomRolesDir(expandHome(cfg.rolesDir))
-  }
-  if (cfg.maxRoles !== undefined && cfg.maxRoles > 0) {
-    engine.setMaxChatroomRoles(cfg.maxRoles)
-  }
-  if (cfg.moderatorDir !== undefined) {
-    engine.setChatroomModeratorDir(expandHome(cfg.moderatorDir))
-  }
-  if (cfg.gatherTimeoutSec !== undefined && cfg.gatherTimeoutSec > 0) {
-    engine.setChatroomGatherTimeout(cfg.gatherTimeoutSec * 1000)
-  }
-  if (cfg.endTimeoutSec !== undefined && cfg.endTimeoutSec > 0) {
-    engine.setChatroomEndTimeout(cfg.endTimeoutSec * 1000)
-  }
-  if (cfg.researchTimeoutSec !== undefined && cfg.researchTimeoutSec > 0) {
-    engine.setChatroomResearchTimeout(cfg.researchTimeoutSec * 1000)
-  }
-  if (cfg.maxResearchRounds !== undefined && cfg.maxResearchRounds > 0) {
-    engine.setMaxChatroomResearchRounds(cfg.maxResearchRounds)
-  }
-  if (cfg.defaultResearchMode !== undefined) {
-    engine.setDefaultChatroomResearchMode(cfg.defaultResearchMode)
-  }
-  if (cfg.researchWorkspace !== undefined && cfg.researchWorkspace.trim() !== '') {
-    engine.setChatroomResearchWorkspace(expandHome(cfg.researchWorkspace))
-  }
-  // Research venv provisioning defaults ON (Go wire.go: nil → enabled).
-  engine.setChatroomResearchPythonEnv(cfg.researchPythonEnv !== false)
 }
 
 /**

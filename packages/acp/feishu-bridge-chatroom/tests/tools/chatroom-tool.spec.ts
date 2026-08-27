@@ -17,10 +17,11 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { Engine } from '../../src/engine/engine.js'
+import { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomTool } from '../../src/tools/chatroom.js'
-import type { SubtaskRoute } from '../../src/tools/subtask.js'
+import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { createStubAgent, createStubSpawnerPlatform } from '../stubs/engine-stubs.js'
+import '../stubs/messages.js'
 
 const signal = new AbortController().signal
 const contexts: Context[] = []

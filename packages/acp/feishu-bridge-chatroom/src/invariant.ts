@@ -15,10 +15,14 @@ export const name = 'feishu-bridge-chatroom-invariant'
 export const inject = ['invariants']
 
 /**
- * No runtime invariant: the skeleton owns no event stream or mutable data —
- * the chatroom state (role groups, armed pickers) stays owned by the
- * feishu-bridge engine until the migration moves it here, and this companion
- * is re-evaluated when that ownership actually transfers.
+ * No runtime invariant: the chatroom's mutable state (the featureState
+ * section, armed barriers, pickers) lives inside the feishu-bridge engine's
+ * session registry and is asserted where it is exercised — the codec
+ * projection/carry specs and the gather/end/recovery suites pin it on every
+ * save and reset path. The package observes no event stream of its own at
+ * runtime (its `feishuBridge/*` listeners are payload functions whose
+ * effects are the specs' subjects), so there is no authoritative stream this
+ * companion could cross-check at boot.
  */
 const install: InvariantInstaller = () => {}
 

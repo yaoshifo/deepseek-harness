@@ -12,9 +12,9 @@ import { mkdir, mkdtemp, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
+import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.js'
 import {
   askHuman,
@@ -35,8 +35,8 @@ import {
   renderChatroomPickCardAndPush,
   renderChatroomTopicPickCardAndPush,
 } from '../../src/engine/chatroom-pick.js'
-import { Msg, type MsgKey } from '../../src/i18n/keys.js'
-import type { Message, Platform } from '../../src/core/types.js'
+import { Msg, type ChatroomMsgKey } from '../../src/i18n.js'
+import type { Message, Platform, SessionStartOptions } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import {
   clearCards,
   createStubAgent,
@@ -50,6 +50,9 @@ import {
 } from '../stubs/engine-stubs.js'
 import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
 import type { ChatroomPickState } from '../../src/engine/chatroom-pick.js'
+import { chatroomState } from '../../src/chatroom-state.js'
+import { chatroomConfig } from '../../src/chatroom-config.js'
+import '../stubs/messages.js'
 
 /** One macrotask tick: flushes the microtask chain behind fire-and-forget sends. */
 async function settle(): Promise<void> {
@@ -111,7 +114,7 @@ describe('StartChatroom', () => {
   it('spawns idle roles and wires hub/role/parent links', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
 
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb', 'munger'], '程序员还要学算法吗')
@@ -122,8 +125,8 @@ describe('StartChatroom', () => {
     const wantNames = ['taleb', 'munger']
     for (let i = 0; i < roles.length; i++) {
       const s = e.sessions.getOrCreateActive(roles[i]!.sessionKey)
-      expect(s.getChatroomHubKey()).toBe(hub)
-      expect(s.getChatroomRoleName()).toBe(wantNames[i])
+      expect(chatroomState(s).chatroomHubKey).toBe(hub)
+      expect(chatroomState(s).chatroomRoleName).toBe(wantNames[i])
       expect(s.getParentSessionKey()).toBe(hub)
       expect(s.getSubtaskDepth()).toBe(0)
     }
@@ -134,7 +137,7 @@ describe('StartChatroom', () => {
   it('fails fast on an unknown role without spawning', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     await expect(startChatroom(e, 'test:hub:user-1', ['taleb', 'ghost'], 'topic')).rejects.toThrow()
     expect(p.count).toBe(0)
   })
@@ -142,15 +145,15 @@ describe('StartChatroom', () => {
   it('enforces the per-chatroom role cap', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
-    e.setMaxChatroomRoles(1)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    chatroomConfig(e).applySection({ maxRoles: 1 })
     await expect(startChatroom(e, 'test:hub:user-1', ['taleb', 'munger'], 'topic')).rejects.toThrow()
   })
 
   it('defaults to every role under the roles dir, sorted', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const roles = await startChatroom(e, 'test:hub:user-1', undefined, 'topic')
     expect(p.count).toBe(2)
     expect(roles.map(r => r.name)).toEqual(['munger', 'taleb'])
@@ -159,7 +162,7 @@ describe('StartChatroom', () => {
   it('errors when no roles are configured', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await mkdtemp(join(tmpdir(), 'fb-empty-roles-')))
+    chatroomConfig(e).applySection({ rolesDir: await mkdtemp(join(tmpdir(), 'fb-empty-roles-')) })
     await expect(startChatroom(e, 'test:hub:user-1', undefined, 'topic')).rejects.toThrow()
     expect(p.count).toBe(0)
   })
@@ -168,7 +171,7 @@ describe('StartChatroom', () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
     const rolesDir = await scaffoldTwoRoles()
-    e.setChatroomRolesDir(rolesDir)
+    chatroomConfig(e).applySection({ rolesDir: rolesDir })
 
     const roles = await startChatroom(e, 'test:hub:user-1', ['taleb', 'munger'], 'topic')
     expect(p.exOpts).toHaveLength(2)
@@ -184,23 +187,23 @@ describe('AskRole', () => {
   it('re-arms the relay and posts the question as a card', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     const roleKey = roles[0]!.sessionKey
-    e.sessions.getOrCreateActive(roleKey).setChatroomAsked(true)
+    chatroomState(e.sessions.getOrCreateActive(roleKey)).chatroomAsked = true
     clearCards(p)
 
     await askRole(e, hub, 'taleb', '你怎么看厚尾风险？')
     await settle()
-    expect(e.sessions.getOrCreateActive(roleKey).getChatroomAsked()).toBe(false)
+    expect(chatroomState(e.sessions.getOrCreateActive(roleKey)).chatroomAsked).toBe(false)
     expect(p.sentCards).toHaveLength(1)
   })
 
   it('resolves by session key and by name; unknown ref errors', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     await expect(askRole(e, hub, roles[0]!.sessionKey, 'q')).resolves.toBeUndefined()
@@ -211,7 +214,7 @@ describe('AskRole', () => {
   it('rejects a role belonging to another chatroom', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const roles = await startChatroom(e, 'test:hub-A:user-1', ['taleb'], 'topic')
     await expect(askRole(e, 'test:hub-B:user-2', roles[0]!.sessionKey, 'q')).rejects.toThrow()
   })
@@ -222,9 +225,9 @@ describe('maybeAutoRelayRole', () => {
 
   function newRole(e: Engine, asked: boolean): { key: string; role: ReturnType<Engine['sessions']['getOrCreateActive']> } {
     const role = e.sessions.getOrCreateActive('test:role-chat')
-    role.setChatroomHubKey(hub)
-    role.setChatroomRoleName('Taleb')
-    role.setChatroomAsked(asked)
+    chatroomState(role).chatroomHubKey = hub
+    chatroomState(role).chatroomRoleName = 'Taleb'
+    chatroomState(role).chatroomAsked = asked
     role.setParentSessionKey(hub)
     return { key: 'test:role-chat', role }
   }
@@ -237,7 +240,7 @@ describe('maybeAutoRelayRole', () => {
     st.platform = p
     maybeAutoRelayRole(e, st, role, '厚尾下平均会骗人，别用点预测', false)
     await waitFor(() => p.sentCards.length === 1, 'relay card')
-    expect(role.getChatroomAsked()).toBe(true)
+    expect(chatroomState(role).chatroomAsked).toBe(true)
     const body = cardBody(p.sentCards[0])
     expect(body).toContain('【Taleb】')
     expect(body).toContain('厚尾下平均会骗人')
@@ -266,7 +269,7 @@ describe('maybeAutoRelayRole', () => {
     // No card posted for an empty reply, but the gate is consumed so the
     // moderator is woken (no stall on NO_REPLY).
     expect(p.sentCards).toHaveLength(0)
-    expect(role.getChatroomAsked()).toBe(true)
+    expect(chatroomState(role).chatroomAsked).toBe(true)
     // A second turn-end on the same role is gated out (no double wake/card).
     maybeAutoRelayRole(e, st, role, 'shh', true)
     await settle()
@@ -288,11 +291,11 @@ describe('maybeAutoRelayRole', () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
     const role = e.sessions.getOrCreateActive('test:role-chat')
-    role.setChatroomHubKey(hub)
-    role.setChatroomRoleName('Taleb')
-    role.setChatroomAsked(false)
-    role.setResearchAwaitingAssistant(true)
-    role.setResearchDispatched(true)
+    chatroomState(role).chatroomHubKey = hub
+    chatroomState(role).chatroomRoleName = 'Taleb'
+    chatroomState(role).chatroomAsked = false
+    chatroomState(role).researchAwaitingAssistant = true
+    chatroomState(role).researchDispatched = true
     const st = new InteractiveState()
     st.platform = p
 
@@ -300,32 +303,32 @@ describe('maybeAutoRelayRole', () => {
     // comes on the next turn after the assistant reports back.
     maybeAutoRelayRole(e, st, role, '已派助手去拉数据', false)
     await settle()
-    expect(role.getResearchAwaitingAssistant()).toBe(false)
-    expect(role.getChatroomAsked()).toBe(false)
+    expect(chatroomState(role).researchAwaitingAssistant).toBe(false)
+    expect(chatroomState(role).chatroomAsked).toBe(false)
     expect(p.sentCards).toHaveLength(0)
-    expect(role.getResearchDispatched()).toBe(true)
+    expect(chatroomState(role).researchDispatched).toBe(true)
 
     // Turn 2 (assistant reported → role produces conclusion): relay normally.
     maybeAutoRelayRole(e, st, role, '沪深300未过热，可定投', false)
     await waitFor(() => p.sentCards.length === 1, 'turn-2 relay')
-    expect(role.getChatroomAsked()).toBe(true)
+    expect(chatroomState(role).chatroomAsked).toBe(true)
   })
 
   it('relays an undispatched turn immediately (direct answer)', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
     const role = e.sessions.getOrCreateActive('test:role-chat')
-    role.setChatroomHubKey(hub)
-    role.setChatroomRoleName('Taleb')
-    role.setChatroomAsked(false)
-    role.setResearchAwaitingAssistant(true)
+    chatroomState(role).chatroomHubKey = hub
+    chatroomState(role).chatroomRoleName = 'Taleb'
+    chatroomState(role).chatroomAsked = false
+    chatroomState(role).researchAwaitingAssistant = true
     const st = new InteractiveState()
     st.platform = p
 
     maybeAutoRelayRole(e, st, role, '问题简单，直接答：结论是……', false)
     await waitFor(() => p.sentCards.length === 1, 'direct answer relay')
-    expect(role.getResearchAwaitingAssistant()).toBe(false)
-    expect(role.getChatroomAsked()).toBe(true)
+    expect(chatroomState(role).researchAwaitingAssistant).toBe(false)
+    expect(chatroomState(role).chatroomAsked).toBe(true)
   })
 })
 
@@ -333,21 +336,21 @@ describe('AskHuman', () => {
   it('marks the hub pending and posts the ⏸ card', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     clearCards(p)
 
     await askHuman(e, roles[0]!.sessionKey, '小孩入学落户截止日是哪天？')
     await settle()
-    expect(e.sessions.getOrCreateActive(hub).getPendingHumanQuestionRole()).toBe('taleb')
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingHumanQuestionRole).toBe('taleb')
     expect(p.sentCards).toHaveLength(1)
   })
 
   it('rejects non-role sessions', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     await startChatroom(e, 'test:hub:user-1', ['taleb'], 'topic')
     e.sessions.getOrCreateActive('test:plain:user-1')
     await expect(askHuman(e, 'test:plain:user-1', 'hi?')).rejects.toThrow()
@@ -358,7 +361,7 @@ describe('pending human reply routing', () => {
   it('routes the human reply to the pending role and clears the flag', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     await askHuman(e, roles[0]!.sessionKey, '落户截止日是哪天？')
@@ -367,20 +370,57 @@ describe('pending human reply routing', () => {
     const routed = routePendingHumanReply(e, p, hub, '2029-07-01')
     expect(routed).toBe(true)
     await waitFor(() => p.sentCards.length === 1, 'routed reply card')
-    expect(e.sessions.getOrCreateActive(hub).getPendingHumanQuestionRole()).toBe('')
-    expect(e.sessions.getOrCreateActive(roles[0]!.sessionKey).getChatroomAsked()).toBe(false)
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingHumanQuestionRole).toBe('')
+    expect(chatroomState(e.sessions.getOrCreateActive(roles[0]!.sessionKey)).chatroomAsked).toBe(false)
   })
 
   it('skips slash commands (they must not be consumed as a reply)', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     await askHuman(e, roles[0]!.sessionKey, '落户截止日？')
 
     expect(routePendingHumanReply(e, p, hub, '/list')).toBe(false)
-    expect(e.sessions.getOrCreateActive(hub).getPendingHumanQuestionRole()).toBe('taleb')
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingHumanQuestionRole).toBe('taleb')
+  })
+
+  it('consumes the reply through the inbound pipeline before command dispatch', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    await askHuman(e, roles[0]!.sessionKey, '落户截止日？')
+    clearCards(p)
+
+    // A plain-text human reply routes to the pending role through the
+    // route-human-reply seam inside receiveMessage — outranking command
+    // dispatch and permission handling.
+    e.receiveMessage(p, hubMsg(hub, { content: '2029-07-01' }))
+    await waitFor(() => p.sentCards.length === 1, 'routed reply card')
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingHumanQuestionRole).toBe('')
+  })
+
+  it('routes through the bridge seam: the listener half short-circuits, the base falls through', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    await askHuman(e, roles[0]!.sessionKey, '落户截止日？')
+    clearCards(p)
+
+    // Listener half: a pending question consumes the reply (true before the
+    // base); a slash command falls through to the base's false.
+    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: '/list' }, () => false)).toBe(false)
+    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: '2029-07-01' }, () => false)).toBe(true)
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingHumanQuestionRole).toBe('')
+    await waitFor(() => p.sentCards.length === 1, 'routed reply card')
+
+    // Base: no question pending anymore, the dispatch returns false.
+    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: 'another' }, () => false)).toBe(false)
   })
 })
 
@@ -388,7 +428,7 @@ describe('ListChatroomRoles', () => {
   it('lists the wired roles with session keys', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     await startChatroom(e, 'test:hub:user-1', ['taleb', 'munger'], 'topic')
     const got = listChatroomRoles(e, 'test:hub:user-1')
     expect(got).toHaveLength(2)
@@ -403,7 +443,7 @@ describe('EndChatroom teardown of non-role children', () => {
   it('marks roles done and leaves non-role children alone', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const started = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     const roleKeys = new Set(started.map(r => r.sessionKey))
@@ -426,7 +466,7 @@ describe('cmdChatroom', () => {
   it('spawns roles and posts a summary card with the topic', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     expect(handler).toBeDefined()
@@ -439,7 +479,7 @@ describe('cmdChatroom', () => {
   it('missing topic prints usage and spawns nothing', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg('test:hub:user-1'), ['taleb,munger'])
     await settle()
@@ -450,7 +490,7 @@ describe('cmdChatroom', () => {
   it('unknown role spawns nothing (fail-fast)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg('test:hub:user-1'), ['taleb,ghost', 'topic'])
     await settle()
@@ -460,7 +500,7 @@ describe('cmdChatroom', () => {
   it('--roles with two roles overrides the default and spawns', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg('test:hub:user-1'), ['--roles', 'taleb,munger', '议题'])
     await waitFor(() => p.count === 2, '2 roles via --roles')
@@ -470,7 +510,7 @@ describe('cmdChatroom', () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
     const rolesDir = await scaffoldTwoRoles()
-    e.setChatroomRolesDir(rolesDir)
+    chatroomConfig(e).applySection({ rolesDir: rolesDir })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['taleb', '厚尾下的预测失效'])
@@ -478,9 +518,9 @@ describe('cmdChatroom', () => {
     expect(p.count).toBe(0)
     expect(listChatroomRoles(e, hub)).toHaveLength(0)
     const s = e.sessions.getOrCreateActive(hub)
-    expect(s.getChatroomDirectRole()).toBe(true)
-    expect(s.getChatroomHubKey()).toBe('')
-    expect(s.getChatroomRoleName()).toBe('taleb')
+    expect(chatroomState(s).chatroomDirectRole).toBe(true)
+    expect(chatroomState(s).chatroomHubKey).toBe('')
+    expect(chatroomState(s).chatroomRoleName).toBe('taleb')
     // Workdir override points at the role persona dir.
     expect(e.perChatWorkDir(e.dirOverrideKey(hub))).toBe(roleDir(rolesDir, 'taleb'))
   })
@@ -488,7 +528,7 @@ describe('cmdChatroom', () => {
   it('direct-role wake carries the bare topic with no plan-mode hint', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const wakes: Message[] = []
     const orig = e.receiveMessage.bind(e)
     e.receiveMessage = (plat, m) => { wakes.push(m); orig(plat, m) }
@@ -502,39 +542,39 @@ describe('cmdChatroom', () => {
   it('multi-role after a direct-role session clears the direct flag', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['taleb', '议题一'])
     await settle()
-    expect(e.sessions.getOrCreateActive(hub).getChatroomDirectRole()).toBe(true)
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).chatroomDirectRole).toBe(true)
 
     handler?.(p, hubMsg(hub), ['taleb,munger', '议题二'])
     await waitFor(() => p.count === 2, 'roles spawned')
     // The ready cards now carry the status footer (async git probe), so the
     // after-start flag clear trails the last spawn by a beat.
-    await waitFor(() => !e.sessions.getOrCreateActive(hub).getChatroomDirectRole(), 'direct flag cleared')
+    await waitFor(() => !chatroomState(e.sessions.getOrCreateActive(hub)).chatroomDirectRole, 'direct flag cleared')
   })
 
   it('stashes --research/--mode/--max-rounds on the picker path', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['--research', '--mode', 'manual', '--max-rounds', '5', '研究中国股市是否过热'])
     await settle()
     const s = e.sessions.getOrCreateActive(hub)
-    expect(s.getChatroomResearch()).toBe(true)
-    expect(s.getChatroomResearchMode()).toBe('manual')
-    expect(s.getChatroomResearchMaxRounds()).toBe(5)
+    expect(chatroomState(s).chatroomResearch).toBe(true)
+    expect(chatroomState(s).chatroomResearchMode).toBe('manual')
+    expect(chatroomState(s).chatroomResearchMaxRounds).toBe(5)
     expect(p.count).toBe(0)
   })
 
   it('stashes --research on the explicit multi-role path and pre-spawns assistants', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['--research', 'taleb,munger', '研究中国股市是否过热'])
@@ -544,27 +584,27 @@ describe('cmdChatroom', () => {
     await waitFor(() => p.count === 4, '2 roles + 2 assistants')
     await waitFor(() => e.collectSubtree(hub)
       .map(k => e.sessions.getOrCreateActive(k))
-      .filter(sess => sess.getResearchAssistant()).length === 2, 'assistant sessions registered')
+      .filter(sess => chatroomState(sess).researchAssistant).length === 2, 'assistant sessions registered')
     const s = e.sessions.getOrCreateActive(hub)
-    expect(s.getChatroomResearch()).toBe(true)
-    expect(s.getChatroomResearchMode()).toBe('auto')
+    expect(chatroomState(s).chatroomResearch).toBe(true)
+    expect(chatroomState(s).chatroomResearchMode).toBe('auto')
     const assistants = e.collectSubtree(hub)
       .map(k => e.sessions.getOrCreateActive(k))
-      .filter(sess => sess.getResearchAssistant())
+      .filter(sess => chatroomState(sess).researchAssistant)
     expect(assistants).toHaveLength(2)
   })
 
   it('rejects --research with a single role (no moderator orchestration)', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['--research', 'taleb', '议题'])
     await settle()
     const sess = e.sessions.getOrCreateActive(hub)
-    expect(sess.getChatroomDirectRole()).toBe(false)
-    expect(sess.getChatroomResearch()).toBe(false)
+    expect(chatroomState(sess).chatroomDirectRole).toBe(false)
+    expect(chatroomState(sess).chatroomResearch).toBe(false)
     expect(p.sentCards).toHaveLength(0)
     expect(p.getSent().some(c => c.includes('research'))).toBe(true)
   })
@@ -572,7 +612,7 @@ describe('cmdChatroom', () => {
   it('rejects out-of-range --max-rounds before any spawn', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg('test:hub:user-1'), ['--research', '--max-rounds', '99', 'taleb,munger', '议题'])
     await settle()
@@ -583,7 +623,7 @@ describe('cmdChatroom', () => {
   it('topic-only begins the #43 role picker (no spawn)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['大模型时代程序员还要学算法吗'])
@@ -600,7 +640,7 @@ describe('cmdChatroom', () => {
   it('empty topic begins the #59 topic picker', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), [])
@@ -614,7 +654,7 @@ describe('cmdChatroom', () => {
   it('pick wakes carry modeOverride default so the pick turn never runs in plan mode', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const wakes: Message[] = []
     const orig = e.receiveMessage.bind(e)
     e.receiveMessage = (plat, m) => { wakes.push(m); orig(plat, m) }
@@ -630,7 +670,7 @@ describe('cmdChatroom', () => {
   it('roles without topic falls back to usage (no picker armed)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['--roles', 'taleb,munger'])
@@ -643,12 +683,12 @@ describe('cmdChatroom', () => {
   it('--research with no topic stashes the flag (topic-pick path)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['--research'])
     await settle()
-    expect(e.sessions.getOrCreateActive(hub).getChatroomResearch()).toBe(true)
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).chatroomResearch).toBe(true)
   })
 
   it('list renders a card with role essences and spawns nothing', async () => {
@@ -661,7 +701,7 @@ describe('cmdChatroom', () => {
     await writeFile(join(gDir, 'ESSENCE.md'), '## 核心框架\n\n根心智模型 = **margin of safety（安全边际）**：缓冲垫\n', 'utf8')
     await mkdir(join(root, 'munger'), { recursive: true })
     await writeFile(join(root, 'munger', 'CLAUDE.md'), '# munger\n', 'utf8')
-    e.setChatroomRolesDir(root)
+    chatroomConfig(e).applySection({ rolesDir: root })
 
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
@@ -676,7 +716,7 @@ describe('cmdChatroom', () => {
   it('list on an empty roles dir sends no card (text fallback)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await mkdtemp(join(tmpdir(), 'fb-empty-list-')))
+    chatroomConfig(e).applySection({ rolesDir: await mkdtemp(join(tmpdir(), 'fb-empty-list-')) })
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg('test:hub:user-1'), ['列表'])
     await settle()
@@ -689,7 +729,7 @@ describe('hub rename on /chatroom', () => {
   it('renames the hub group to the topic via renameGroupAny', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub, { chatType: 'group' }), ['taleb,munger', '换房计划'])
@@ -703,7 +743,7 @@ describe('hub rename on /chatroom', () => {
   it('single-role direct path also renames the hub', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub, { chatType: 'group' }), ['taleb', '厚尾下的预测失效'])
@@ -717,7 +757,7 @@ describe('hub rename on /chatroom', () => {
   it('skips p2p chats (no group name to set)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg('test:hub:user-1', { chatType: 'p2p' }), ['taleb,munger', 'topic'])
     await settle()
@@ -728,7 +768,7 @@ describe('hub rename on /chatroom', () => {
   it('truncates a long topic to the 60-rune ceiling with ... suffix', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     const longTopic = '字'.repeat(80)
@@ -745,7 +785,7 @@ describe('hub rename on /chatroom', () => {
     // stubChatroomSpawner implements spawnGroup but NOT renameGroupAny.
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg('test:hub:user-1', { chatType: 'group' }), ['taleb,munger', 'topic'])
     await waitFor(() => p.count === 2, '2 roles spawned without renamer')
@@ -756,7 +796,7 @@ describe('RenderChatroomPickCard', () => {
   it('drops hallucinated roles and preselects recommended', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['议题'])
@@ -775,7 +815,7 @@ describe('RenderChatroomPickCard', () => {
   it('overrides the watchdog fallback (late curated recommendations win)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['议题'])
@@ -800,7 +840,7 @@ describe('RenderChatroomPickCard', () => {
   it('preserves user selections after a toggle (late pick-roles ignored)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['议题'])
@@ -829,7 +869,7 @@ describe('chatroomPickActive', () => {
     const { chatroomPickActive } = await import('../../src/engine/chatroom-pick.js')
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     expect(chatroomPickActive(e, hub)).toBe(false)
@@ -851,7 +891,7 @@ describe('chatroomPickActive', () => {
     const { chatroomPickActive } = await import('../../src/engine/chatroom-pick.js')
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), ['议题'])
@@ -882,7 +922,7 @@ describe('ExecuteChatroomPickAction', () => {
   it('confirm with two selected spawns the multi-role chatroom', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     await armedPicker(e, p, hub)
     executeChatroomPickAction(e, hub, 'confirm')
@@ -893,23 +933,23 @@ describe('ExecuteChatroomPickAction', () => {
   it('toggle down to one then confirm enters direct mode', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     await armedPicker(e, p, hub)
     // Deselect munger → only taleb selected → direct mode.
     executeChatroomPickAction(e, hub, 'toggle munger')
     executeChatroomPickAction(e, hub, 'confirm')
-    await waitFor(() => e.sessions.getOrCreateActive(hub).getChatroomDirectRole(), 'direct mode entered')
+    await waitFor(() => chatroomState(e.sessions.getOrCreateActive(hub)).chatroomDirectRole, 'direct mode entered')
     expect(p.count).toBe(0)
     const s = e.sessions.getOrCreateActive(hub)
-    expect(s.getChatroomRoleName()).toBe('taleb')
-    expect(s.getChatroomHubKey()).toBe('')
+    expect(chatroomState(s).chatroomRoleName).toBe('taleb')
+    expect(chatroomState(s).chatroomHubKey).toBe('')
   })
 
   it('empty confirm is blocked and keeps the picker alive', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const ps = await armedPicker(e, p, hub)
     executeChatroomPickAction(e, hub, 'toggle taleb')
@@ -924,8 +964,8 @@ describe('ExecuteChatroomPickAction', () => {
   it('over-max confirm is blocked and keeps the picker alive', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
-    e.setMaxChatroomRoles(1)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    chatroomConfig(e).applySection({ maxRoles: 1 })
     const hub = 'test:hub:user-1'
     const ps = await armedPicker(e, p, hub)
     // Force both roles selected (2 > max 1).
@@ -945,7 +985,7 @@ describe('orphaned picker cards (state lost to a daemon restart)', () => {
     const e = newChatroomTestEngine(p)
     const hub = 'test:hub:user-1'
     const expired = e.i18n.t(Msg.ChatroomPickExpired)
-    const cases: Array<[cmd: string, args: string, title: MsgKey]> = [
+    const cases: Array<[cmd: string, args: string, title: ChatroomMsgKey]> = [
       ['/chatroom-pick', 'confirm', Msg.ChatroomPickTitle],
       ['/chatroom-pick', 'toggle taleb', Msg.ChatroomPickTitle],
       ['/chatroom-pick', 'cancel', Msg.ChatroomPickTitle],
@@ -960,13 +1000,38 @@ describe('orphaned picker cards (state lost to a daemon restart)', () => {
     }
     expect(p.count).toBe(0)
   })
+
+  it('the registered card actions run through the engine dispatch and dispose cleanly', async () => {
+    // registerChatroomCommands also claims the picker card paths: a pressed
+    // orphaned card routes through the engine's card-action registry.
+    const base = createStubChatroomSpawnerEx()
+    const refreshed: unknown[] = []
+    const p = { ...base, refreshCard: async (_k: string, card: unknown): Promise<void> => { refreshed.push(card) } }
+    const e = new Engine('test', createStubAgent(), [p], '', 'zh', chatroomPolicyFace())
+    e.setProjectStateStore(new ProjectStateStore(''))
+    registerSessionCommands(e)
+    const dispose = registerChatroomCommands(e)
+    const hub = 'test:hub:user-1'
+
+    e.receiveMessage(p, { ...hubMsg(hub), isCardAction: true, content: 'act:/chatroom-pick confirm' })
+    await waitFor(() => refreshed.length === 1, 'expired card refresh')
+    expect((refreshed[0] as { header?: { title?: string } }).header?.title).toBe(e.i18n.t(Msg.ChatroomPickTitle))
+
+    // The disposer removes both the command and the card-action claim: a
+    // pressed card falls through to the engine's unknown-card handling.
+    dispose()
+    expect(e.commandHandlers?.has('chatroom')).toBe(false)
+    e.receiveMessage(p, { ...hubMsg(hub), isCardAction: true, content: 'act:/chatroom-pick confirm' })
+    await settle()
+    expect(refreshed).toHaveLength(1)
+  })
 })
 
 describe('topic picker (#59)', () => {
   it('drops empty titles and preselects the first recommended', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), [])
@@ -991,7 +1056,7 @@ describe('topic picker (#59)', () => {
   it('radio confirm hands off to the role picker; empty confirm and cancel behave', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub), [])
@@ -1030,9 +1095,9 @@ describe('chatroom ledger engine wiring', () => {
   it('startChatroom creates the ledger; relay appends; note updates sections', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const modDir = await mkdtemp(join(tmpdir(), 'fb-chatroom-mod-'))
-    e.setChatroomModeratorDir(modDir)
+    chatroomConfig(e).applySection({ moderatorDir: modDir })
     const hub = 'test:hub:user-1'
 
     const roles = await startChatroom(e, hub, ['taleb'], '该不该 all-in')
@@ -1078,9 +1143,9 @@ describe('afterChatroomStarted recycles the hub agent process', () => {
     const session: { next: ControllableAgentSession | undefined } = { next: undefined }
     const agent = {
       ...createStubAgent(),
-      startSession: async (_sessionID: string, options?: import('../../src/core/types.js').SessionStartOptions) => {
+      startSession: async (_sessionID: string, options?: SessionStartOptions) => {
         startCalls++
-        moderatorStarts.push(options?.chatroom?.moderator === true)
+        moderatorStarts.push(options?.persona?.forceMode === 'default')
         return session.next ?? createStubAgentSession()
       },
     }
@@ -1088,7 +1153,7 @@ describe('afterChatroomStarted recycles the hub agent process', () => {
     e.setProjectStateStore(new ProjectStateStore(''))
     registerSessionCommands(e)
     registerChatroomCommands(e)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
 
@@ -1118,7 +1183,7 @@ describe('afterChatroomStarted recycles the hub agent process', () => {
     expect(moderatorStarts[0]).toBe(true)
     // 3. Same session id: the wake turn resumes the topic-pick history.
     expect(e.sessions.getOrCreateActive(hub).id).toBe(oldID)
-    expect(e.sessions.getOrCreateActive(hub).getChatroomModerator()).toBe(true)
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).chatroomModerator).toBe(true)
   })
 })
 

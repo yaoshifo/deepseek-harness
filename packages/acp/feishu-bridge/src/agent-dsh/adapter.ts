@@ -31,7 +31,6 @@ import {
 import type { HistoryEntry } from '../core/types.js'
 import { locateForkCut } from './fork-at.js'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
-import { buildChatroomSystemPrompt } from '../engine/chatroom-persona.js'
 import { agentConventionsPrompt } from '../engine/agent-conventions.js'
 import {
   subtaskAgentSystemPrompt,
@@ -109,8 +108,8 @@ export interface DshCreateOptionsLike {
   seed?: readonly SessionEvent[]
   agentOptions?: { provider?: string; model?: string; reasoningEffort?: string }
   /**
-   * Creation-time composition hook (plan D3): registers the chatroom bare
-   * persona as a `complete: true` system-prompt section on the agent's
+   * Creation-time composition hook (plan D3): registers a bare persona as
+   * a `complete: true` system-prompt section on the agent's
    * scoped context (the Go --bare DSH_CC_SYSTEM_PROMPT_COMPLETE equivalent).
    * Typed as the real dsh AgentSetup so a production Context typechecks.
    */
@@ -452,22 +451,22 @@ function withMcpMask(
 }
 
 /**
- * Build the agents.create/resume setup hook for the typed persona options
- * (Go isChatroomBareSession + buildChatroomSystemPrompt): chatroom role /
- * direct-role / moderator sessions replace the whole system prompt. A
- * subtask child (Go buildAppendSystemPrompt's CC_SUBTASK branch) appends the
- * report / no-report preamble as a normal section — research assistants add
- * their contract on top. Plain sessions always get the agent conventions
- * section (order 10) and, when a Feishu workspace is configured, the #18
- * routing section on top.
+ * Build the agents.create/resume setup hook for the typed start options:
+ * a session carrying a `persona` (Go isChatroomBareSession) replaces the
+ * whole system prompt with the precomputed persona text. A subtask child
+ * (Go buildAppendSystemPrompt's CC_SUBTASK branch) appends the report /
+ * no-report preamble as a normal section — research assistants add their
+ * contract on top. Plain sessions always get the agent conventions section
+ * (order 10) and, when a Feishu workspace is configured, the #18 routing
+ * section on top.
  */
-function buildSessionSetup(options: SessionStartOptions | undefined, workDir: string): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
-  const chatroom = options?.chatroom
+function buildSessionSetup(options: SessionStartOptions | undefined): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
+  const persona = options?.persona
   const isSubtask = options?.subtask !== undefined
   const isResearchAssistant = options?.subtask?.researchAssistant === true
   const isNoReport = options?.subtask?.noReport === true
   const workspaceText = feishuWorkspaceSection(options)
-  if (chatroom === undefined || (!chatroom.role && !chatroom.directRole && !chatroom.moderator)) {
+  if (persona === undefined) {
     if (!isSubtask) {
       return (agentCtx) => {
         const promptSvc = agentCtx.get('systemPrompt') as
@@ -485,10 +484,9 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
       ? subtaskNoReportAgentSystemPrompt()
       : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt(venvPython) : ''}`
     return (agentCtx) => {
-      // Research assistants are coding agents: their workspace lives under the
-      // project data dir (chatroomResearchWorkspace), off every chatroom
-      // persona's ancestor chain, so they keep cwd instruction discovery like
-      // any other subtask child.
+      // Research assistants are coding agents: their workspace lives under
+      // the project data dir, off every persona's ancestor chain, so they
+      // keep cwd instruction discovery like any other subtask child.
       const promptSvc = agentCtx.get('systemPrompt') as
         | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
         | undefined
@@ -517,17 +515,8 @@ function buildSessionSetup(options: SessionStartOptions | undefined, workDir: st
     if (toolsSvc?.get('skill') !== undefined) {
       toolsSvc.restrict({ deny: ['skill'] })
     }
-    const text = buildChatroomSystemPrompt({
-      workDir,
-      isRole: chatroom.role,
-      isDirect: chatroom.directRole,
-      isModerator: chatroom.moderator,
-      research: chatroom.research,
-      ledgerDir: chatroom.ledgerDir,
-      platformPrompt: '',
-    })
-    if (text !== '') {
-      promptSvc?.section({ name: 'feishu-bridge-chatroom-persona', order: 0, text, complete: true })
+    if (persona.prompt !== '') {
+      promptSvc?.section({ name: 'feishu-bridge-persona', order: 0, text: persona.prompt, complete: true })
     }
   }
 }
@@ -600,7 +589,7 @@ export function renderReasoningLevel(effort: string): string {
 
 /**
  * Creation-time setup hook registering a complete-replacement system prompt
- * (the same `complete: true` section mechanism as the chatroom bare persona).
+ * (the same `complete: true` section mechanism as the bare persona).
  * Workspace-instruction injection is suppressed alongside it — a complete-
  * prompt session is a fresh fork whose task facts arrive only in its prompt,
  * so AGENTS.md/CLAUDE.md reminders carry no task information. A future
@@ -1435,7 +1424,7 @@ export class DshAgentAdapter {
     const timer = setTimeout(() => { ctl.abort() }, timeoutMs)
 
     // A complete-replacement system prompt rides the creation-time setup hook
-    // (plan D3, same mechanism as the chatroom bare persona): the session's
+    // (plan D3, same mechanism as the bare persona): the session's
     // prompt replaces the whole system prompt, not a section, and the hook
     // carries the caller's tool filter with it.
     const innerSetup = opts.systemPromptComplete !== undefined
@@ -1512,11 +1501,10 @@ export class DshAgentAdapter {
    * rollback fork prepared (Go /fork on a quoted message) as one seeded
    * create.
    *
-   * Chatroom bare sessions (role / direct-role / moderator, flagged through
-   * the session-start options) carry a setup hook that replaces the whole
-   * system prompt with the flattened persona (Go isChatroomBareSession +
-   * buildChatroomSystemPrompt via DSH_CC_SYSTEM_PROMPT_COMPLETE; here the
-   * D3 `complete: true` prompt section). Research assistants get their
+   * Persona sessions (flagged through the session-start options) carry a
+   * setup hook that replaces the whole system prompt with the feature's
+   * precomputed persona text (Go isChatroomBareSession; the D3
+   * `complete: true` prompt section). Research assistants get their
    * preamble appended as a normal section instead.
    *
    * @param sessionID - the engine-provided id: '' or the ContinueSession
@@ -1533,7 +1521,7 @@ export class DshAgentAdapter {
     const isFork = sessionID.startsWith(ForkSessionPrefix)
     const isForkAt = sessionID.startsWith(ForkAtSessionPrefix)
     const isResume = !isFork && !isForkAt && sessionID !== '' && sessionID !== ContinueSession
-    const setup = withMcpMask(buildSessionSetup(options, this.workDir), this.cfg.mcpServers)
+    const setup = withMcpMask(buildSessionSetup(options), this.cfg.mcpServers)
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing

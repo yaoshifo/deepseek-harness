@@ -5,25 +5,34 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { ContinueSession, type AskDecision, type AskDelegate, type AskRequest, type Event } from '../../src/core/types.js'
 import { ctxBridgeDispatch, type BridgeDispatch } from '../../src/bridge-service.js'
-import { registerChatroomPolicyListeners } from '../../src/engine/chatroom-policy.js'
+import type { SessionStartOptions } from '../../src/core/types.js'
 import { DshAgentAdapter, DshAgentSession, unattendedSubtaskBypassesPermissions, stripModelAlias, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
 
 // DshAgentAdapter unit tests: ctx.agents create/resume, followup/cancel call
 // sequences, provider routing, [1m] stripping, dispose+resume provider
 // switching, and session-event projection into the engine Event stream.
 
-// Chatroom policy tests dispatch through a real Cordis context carrying the
-// production listeners; the contexts are disposed after each test.
+// Persona policy tests dispatch through a real Cordis context carrying the
+// persona listener halves (the chatroom package's production listeners have
+// the same shape and are covered in their own package); the contexts are
+// disposed after each test.
 const policyContexts: Context[] = []
 afterEach(async () => {
   await Promise.allSettled(policyContexts.splice(0).map(ctx => ctx.fiber.dispose()))
 })
 
-/** Adapter dispatch face wired with the chatroom policy listeners (the production composition). */
-function chatroomPolicyFace(): BridgeDispatch {
+/** Adapter dispatch face wired with the persona permission/mode policy listeners. */
+function personaPolicyFace(): BridgeDispatch {
   const ctx = new Context()
   policyContexts.push(ctx)
-  registerChatroomPolicyListeners(ctx)
+  ctx.on('feishuBridge/permission-policy', (payload: { options: SessionStartOptions | undefined }, next: () => boolean) =>
+    next() || payload.options?.persona?.bypassPermissions === true)
+  ctx.on('feishuBridge/mode-policy', (payload: { options: SessionStartOptions | undefined; mode: string }, next: () => string) => {
+    // A persona that never implements must not stall on a plan approval
+    // nobody needs to give: its forced mode overrides an inherited plan.
+    const forced = payload.options?.persona?.forceMode
+    return forced !== undefined && payload.mode === 'plan' ? forced : next()
+  })
   return ctxBridgeDispatch(ctx)
 }
 
@@ -982,11 +991,11 @@ describe('DshAgentAdapter approval answerer', () => {
     const delegate = recordingDelegate()
     const h = createHarness()
     const adapter = newAdapter(h)
-    adapter.setBridgeEvents(chatroomPolicyFace())
+    adapter.setBridgeEvents(personaPolicyFace())
     adapter.setAskDelegate(delegate)
     const session = (await adapter.startSession('', {
       sessionKey: 'feishu:oc_b:ou_1',
-      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false },
+      persona: { prompt: 'bare persona prompt', bypassPermissions: true, forceMode: undefined },
     })) as DshAgentSession
     const listener = h.listeners.get('approval/request')?.[0] as unknown as (req: Record<string, unknown>) => Promise<unknown>
 
@@ -1209,11 +1218,11 @@ it('a chatroom moderator never enters plan mode (an inherited plan default is do
   const planSets: boolean[] = []
   h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
   const a = newAdapter(h)
-  a.setBridgeEvents(chatroomPolicyFace())
+  a.setBridgeEvents(personaPolicyFace())
   a.setDefaultMode('plan')
   await a.startSession('', {
     sessionKey: 'feishu:hub:ou_9',
-    chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false },
+    persona: { prompt: 'moderator persona prompt', bypassPermissions: false, forceMode: 'default' },
   })
   expect(planSets).toEqual([false])
 })
@@ -1223,11 +1232,11 @@ it('a chatroom moderator downgrades an explicit plan override too (one rule: mod
   const planSets: boolean[] = []
   h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
   const a = newAdapter(h)
-  a.setBridgeEvents(chatroomPolicyFace())
+  a.setBridgeEvents(personaPolicyFace())
   a.setSessionMode('plan')
   await a.startSession('', {
     sessionKey: 'feishu:hub:ou_9',
-    chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false },
+    persona: { prompt: 'moderator persona prompt', bypassPermissions: false, forceMode: 'default' },
   })
   expect(planSets).toEqual([false])
 })
@@ -1236,7 +1245,7 @@ describe('unattendedSubtaskBypassesPermissions (the permission-policy built-in b
   it('elevates unattended subtasks only; chatroom personas join via the policy listener', () => {
     expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', subtask: { attended: false, noReport: false, researchAssistant: false } })).toBe(true)
     expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', subtask: { attended: true, noReport: false, researchAssistant: false } })).toBe(false)
-    expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false } })).toBe(false)
+    expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', persona: { prompt: 'p', bypassPermissions: true, forceMode: undefined } })).toBe(false)
     expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'feishu:oc_1:ou_9' })).toBe(false)
     expect(unattendedSubtaskBypassesPermissions(undefined)).toBe(false)
   })
@@ -1267,10 +1276,10 @@ describe('effectiveMode bypass wiring', () => {
   it('a chatroom role session auto-approves too', async () => {
     const h = createHarness()
     const a = newAdapter(h)
-    a.setBridgeEvents(chatroomPolicyFace())
+    a.setBridgeEvents(personaPolicyFace())
     const session = await a.startSession('', {
       sessionKey: 'feishu:role:ou_9',
-      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false },
+      persona: { prompt: 'bare persona prompt', bypassPermissions: true, forceMode: undefined },
     })
     const listener = h.listeners.get('approval/request')?.[0]
     if (listener === undefined) throw new Error('approval/request listener was not registered')

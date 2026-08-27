@@ -8,10 +8,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { FeishuBridgeService, bareBridgeDispatch, ctxBridgeDispatch } from '../src/bridge-service.js'
-import { registerChatroomPolicyListeners } from '../src/engine/chatroom-policy.js'
 import type { DshAgentAdapter } from '../src/agent-dsh/adapter.js'
-import type { Engine } from '../src/engine/engine.js'
+import { Engine } from '../src/engine/engine.js'
 import { unattendedSubtaskBypassesPermissions } from '../src/agent-dsh/adapter.js'
+import type { SessionStartOptions } from '../src/core/types.js'
 
 const contexts: Context[] = []
 afterEach(async () => {
@@ -66,6 +66,20 @@ describe('FeishuBridgeService', () => {
     expect(service.nativeRoute({ id: '' })).toBeUndefined()
   })
 
+  it('whenReady resolves waiters at markReady and immediately afterwards', async () => {
+    const { service } = await mountedService()
+    let resolved = false
+    void service.whenReady().then(() => { resolved = true })
+    await Promise.resolve()
+    expect(resolved, 'waiter registered before readiness pends').toBe(false)
+    service.markReady()
+    await Promise.resolve()
+    expect(resolved).toBe(true)
+    // Idempotent: later waiters (and repeat calls) resolve immediately.
+    await expect(service.whenReady()).resolves.toBeUndefined()
+    service.markReady()
+  })
+
   it('delegates emit/waterfall/serial to the Cordis event bus', async () => {
     const { ctx, service } = await mountedService()
     const seen: string[] = []
@@ -76,8 +90,9 @@ describe('FeishuBridgeService', () => {
     expect(bypass).toBe(false)
     expect(seen).toEqual(['emit:e1'])
 
-    const settled = await service.serial('feishuBridge/turn-start', { engine: {} as Engine, session: {} as never, metadata: undefined })
-    expect(settled).toBeUndefined()
+    // Statement position: the void-typed serial dispatch only proves it
+    // settles without bailing when no listener is registered.
+    await service.serial('feishuBridge/turn-start', { engine: {} as Engine, session: {} as never, metadata: undefined })
   })
 })
 
@@ -85,18 +100,19 @@ describe('dispatch faces', () => {
   it('ctxBridgeDispatch reaches listeners registered on the context', () => {
     const ctx = new Context()
     contexts.push(ctx)
-    registerChatroomPolicyListeners(ctx)
+    // A persona listener joins the built-in subtask base on the waterfall
+    // (the chatroom package's production listener has the same shape).
+    ctx.on('feishuBridge/permission-policy', (payload: { options: SessionStartOptions | undefined }, next: () => boolean) =>
+      next() || payload.options?.persona?.bypassPermissions === true)
     const face = ctxBridgeDispatch(ctx)
-    // The chatroom listener joins the built-in subtask base on the waterfall.
     expect(face.waterfall(
       'feishuBridge/permission-policy',
-      { options: { sessionKey: 'k', chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false } } },
+      { options: { sessionKey: 'k', persona: { prompt: 'p', bypassPermissions: true, forceMode: undefined } } },
       () => false,
     )).toBe(true)
     expect(face.waterfall('feishuBridge/permission-policy', { options: undefined }, () => false)).toBe(false)
 
-    // Emit reaches a plain listener (platforms-ready carries a chatroom
-    // recovery listener that needs a real engine; assert with a stub one).
+    // Emit reaches a plain listener.
     const plain = new Context()
     contexts.push(plain)
     const seen: string[] = []
@@ -112,7 +128,9 @@ describe('dispatch faces', () => {
       expect(face.waterfall('feishuBridge/mode-policy', { options: undefined, mode: 'plan' }, () => 'plan')).toBe('plan')
       expect(face.waterfall('feishuBridge/rename-exemption', { session: {} as never }, () => false)).toBe(false)
       face.emit('feishuBridge/platforms-ready', { engine: {} as Engine })
-      expect(await face.serial('feishuBridge/turn-start', { engine: {} as Engine, session: {} as never, metadata: undefined })).toBeUndefined()
+      // Statement position: a listener-less serial dispatch settles without
+      // bailing; the void return carries no value to assert.
+      await face.serial('feishuBridge/turn-start', { engine: {} as Engine, session: {} as never, metadata: undefined })
     } finally {
       warn.mockRestore()
     }

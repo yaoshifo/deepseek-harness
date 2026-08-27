@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-feishu-bridge-chatroom",
-  "description": "Chatroom plugin for the DeepSeek Harness Feishu bridge: multi-role chatroom orchestration extracted from the feishu-bridge engine into its own package (skeleton; the implementation lands with the follow-up migration)",
+  "description": "Chatroom plugin for the DeepSeek Harness Feishu bridge: multi-role chatroom orchestration (role groups, the moderator, the /chatroom command family) as its own package mounted beside @deepseek-ai/dsh-feishu-bridge",
   "version": "0.1.1-rc.2",
   "license": "MIT",
   "publishConfig": {
@@ -30,9 +30,13 @@
     "lib/index.js",
     "lib/invariant.js",
     "cordis.patch.yml",
+    "skills",
     "lib/types/**/*.d.ts"
   ],
   "dependencies": {
+    "@deepseek-ai/dsh-feishu-bridge": "workspace:^",
+    "@deepseek-ai/dsh-skill-filesystem": "workspace:^",
+    "@deepseek-ai/dsh-tools": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^"
   },
   "dsh": {
@@ -46,6 +50,10 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
-    "@deepseek-ai/dsh-invariants": "workspace:^"
+    "@deepseek-ai/dsh-agent": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^",
+    "@deepseek-ai/dsh-llm": "workspace:^",
+    "@deepseek-ai/dsh-session": "workspace:^",
+    "@deepseek-ai/dsh-system-prompt": "workspace:^"
   }
 }

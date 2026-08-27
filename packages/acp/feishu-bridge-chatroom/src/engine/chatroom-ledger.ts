@@ -14,7 +14,7 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync, appendFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { atomicWriteFileSync } from '../atomicwrite.js'
+import { atomicWriteFileSync } from '@deepseek-ai/dsh-feishu-bridge/exports'
 
 /** Serializes every ledger write (Go ledgerMu). */
 let writeChain: Promise<unknown> = Promise.resolve()

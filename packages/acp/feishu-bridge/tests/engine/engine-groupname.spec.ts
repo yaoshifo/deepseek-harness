@@ -6,16 +6,20 @@
  * @module dsh-feishu-bridge/tests-engine-groupname
  */
 
+/** A local namer with chatroomHubGroupName's semantics (topic, 60-rune cap). */
+const hubNamer = (topic: string): string => {
+  const runes = Array.from(topic)
+  return runes.length > 60 ? `${runes.slice(0, 57).join('')}...` : topic
+}
+
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { Engine } from '../../src/engine/engine.js'
 import { Session } from '../../src/engine/session.js'
 import { ctxBridgeDispatch } from '../../src/bridge-service.js'
-import { registerChatroomPolicyListeners } from '../../src/engine/chatroom-policy.js'
 import { cmdNew } from '../../src/engine/commands.js'
 import { lucideIconSVG } from '../../src/lucide/icon.js'
 import {
-  chatroomHubGroupName,
   classifyIcon,
   fallbackGroupIcon,
   groupIconRecentMax,
@@ -57,6 +61,16 @@ function newGroupNameEngine(agent: Agent): { e: Engine; p: StubTitleRenamePlatfo
   const p = createStubTitleRenamePlatform('test')
   const e = new Engine('test', agent, [p], '', 'en')
   return { e, p }
+}
+
+/** The raw chatroom section of a session (opaque bag; written directly here). */
+function chatroomSection(session: Session): Record<string, unknown> {
+  let section = session.featureState.chatroom
+  if (typeof section !== 'object' || section === null) {
+    section = {}
+    session.featureState.chatroom = section
+  }
+  return section as Record<string, unknown>
 }
 
 describe('generateGroupName', () => {
@@ -530,7 +544,7 @@ describe('renameHubToTopic', () => {
     e.setGroupNameConfig(true, 'p', 1000, '')
 
     const topic = '我想做下资产配置 地理分散投资 本来想同时投美股和A股'
-    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [], chatroomHubGroupName)
+    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [], hubNamer)
 
     // The LLM overwrite is async and always lands after the topic fallback.
     const wantLLM = '资产配置讨论'
@@ -543,7 +557,7 @@ describe('renameHubToTopic', () => {
     expect(a.state.callCount).toBe(1)
     expect(a.state.gotPrompt).toContain(topic)
 
-    const wantFallback = chatroomHubGroupName(topic)
+    const wantFallback = hubNamer(topic)
     expect(p.renamedNames.includes(wantFallback)).toBe(true)
   })
 
@@ -553,12 +567,12 @@ describe('renameHubToTopic', () => {
     e.setGroupNameConfig(false, '', 0, '')
 
     const topic = '某议题文本'
-    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [], chatroomHubGroupName)
+    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [], hubNamer)
 
     await waitFor(() => p.renamedNames.length === 1, 'topic fallback rename did not happen')
 
     expect(a.state.callCount).toBe(0)
-    expect(p.renamedNames).toEqual([chatroomHubGroupName(topic)])
+    expect(p.renamedNames).toEqual([hubNamer(topic)])
   })
 
   it('degrades to the fallback when the LLM fork fails', async () => {
@@ -567,12 +581,12 @@ describe('renameHubToTopic', () => {
     e.setGroupNameConfig(true, 'p', 1000, '')
 
     const topic = '某议题文本'
-    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [], chatroomHubGroupName)
+    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [], hubNamer)
 
     // Wait for the failing LLM query to run.
     await waitFor(() => a.state.callCount === 1, 'LightweightQuery was not invoked')
 
-    expect(p.renamedNames).toEqual([chatroomHubGroupName(topic)])
+    expect(p.renamedNames).toEqual([hubNamer(topic)])
   })
 
   it('stamps one family avatar across hub + children', async () => {
@@ -583,7 +597,7 @@ describe('renameHubToTopic', () => {
 
     const topic = '资产配置 地理分散投资'
     const childKeys = ['test:role-1', 'test:role-2']
-    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, childKeys, chatroomHubGroupName)
+    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, childKeys, hubNamer)
 
     await waitFor(() => p.familyCalls === 1, 'SetChatroomFamilyAvatar was not invoked', 3000)
 
@@ -591,30 +605,6 @@ describe('renameHubToTopic', () => {
     expect(p.familyChildren).toEqual(['test:role-1', 'test:role-2'])
     expect(p.familyIcon).toBe('chart-pie')
     expect(p.familyName).toBe('资产配置')
-  })
-})
-
-describe('rename-exemption policy (feishuBridge/rename-exemption)', () => {
-  it('exempts chatroom roles, research assistants, and direct roles only', () => {
-    const ctx = new Context()
-    registerChatroomPolicyListeners(ctx)
-    const exempt = (session: Session): boolean =>
-      ctxBridgeDispatch(ctx).waterfall('feishuBridge/rename-exemption', { session }, () => false)
-
-    const role = new Session()
-    role.setChatroomHubKey('test:hub-1')
-    expect(exempt(role)).toBe(true)
-
-    const assistant = new Session()
-    assistant.setResearchAssistant(true)
-    expect(exempt(assistant)).toBe(true)
-
-    const direct = new Session()
-    direct.setChatroomDirectRole(true)
-    expect(exempt(direct)).toBe(true)
-
-    expect(exempt(new Session())).toBe(false)
-    void Promise.allSettled([ctx.fiber.dispose()])
   })
 })
 
@@ -631,10 +621,14 @@ describe('spawn rename skips chatroom sessions', () => {
     const base = createGroupNameAgent({ resp: 'LLM 群名' })
     const sess = newBlockingSendSession('flow-turn')
     const flowAgent: Agent & { state: GroupNameAgentState } = { ...base, startSession: async () => sess }
-    // The exemption rides the rename-exemption policy listener (the
-    // production composition) — a bare engine has no chatroom listener.
+    // The exemption rides the rename-exemption policy listener — the
+    // chatroom package's production listener (same shape) is covered in its
+    // own package; a bare engine has no listener.
     const policyCtx = new Context()
-    registerChatroomPolicyListeners(policyCtx)
+    policyCtx.on('feishuBridge/rename-exemption', (payload: { session: Session }, next: () => boolean) =>
+      next() || chatroomSection(payload.session).chatroomHubKey !== undefined && chatroomSection(payload.session).chatroomHubKey !== ''
+        || chatroomSection(payload.session).researchAssistant === true
+        || chatroomSection(payload.session).chatroomDirectRole === true)
     const e = new Engine('test', flowAgent, [p], '', 'en', ctxBridgeDispatch(policyCtx))
     e.setGroupNameConfig(groupNameEnabled, 'p', 1000, '')
 
@@ -661,10 +655,10 @@ describe('spawn rename skips chatroom sessions', () => {
   }
 
   it.each([
-    { name: 'chatroom role group, LLM enabled', enabled: true, decorate: (s: Session) => { s.setChatroomHubKey('test:hub-1') } },
-    { name: 'research assistant group, LLM enabled', enabled: true, decorate: (s: Session) => { s.setResearchAssistant(true) } },
-    { name: 'direct-role group, LLM enabled', enabled: true, decorate: (s: Session) => { s.setChatroomDirectRole(true) } },
-    { name: 'chatroom role group, LLM disabled fallback path', enabled: false, decorate: (s: Session) => { s.setChatroomHubKey('test:hub-1') } },
+    { name: 'chatroom role group, LLM enabled', enabled: true, decorate: (s: Session) => { chatroomSection(s).chatroomHubKey = 'test:hub-1' } },
+    { name: 'research assistant group, LLM enabled', enabled: true, decorate: (s: Session) => { chatroomSection(s).researchAssistant = true } },
+    { name: 'direct-role group, LLM enabled', enabled: true, decorate: (s: Session) => { chatroomSection(s).chatroomDirectRole = true } },
+    { name: 'chatroom role group, LLM disabled fallback path', enabled: false, decorate: (s: Session) => { chatroomSection(s).chatroomHubKey = 'test:hub-1' } },
   ])('$name stays unnamed', async ({ enabled, decorate }) => {
     const { a, p } = await runSpawnRenameFlow(enabled, decorate)
     // Wait out the (1s-timeout) query window so a late rename cannot slip

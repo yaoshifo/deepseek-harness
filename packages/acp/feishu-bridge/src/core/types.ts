@@ -158,7 +158,7 @@ export interface PendingAsk {
   answers: Map<number, PendingAskAnswer>
   /** Settles the askUser promise; the router calls it exactly once. */
   resolve(decision: AskDecision): void
-  /** Research-manual whole-ask timeout (cleared on settle). */
+  /** Feature whole-ask timeout armed on the parked ask (cleared on settle). */
   autoTimer?: ReturnType<typeof setTimeout>
 }
 
@@ -197,9 +197,9 @@ export interface Message {
   /**
    * Opaque per-message metadata extensions, carried through the queue to
    * the drained turn and consumed at `feishuBridge/turn-start`: the feature
-   * that injects a synthetic message sets its own keys (chatroom sets the
-   * gather round stamp and the research dispatch-defer arm). Never surfaced
-   * to the agent.
+   * that injects a synthetic message sets its own keys (the chatroom gather
+   * round stamp and the research dispatch-defer arm are the current users).
+   * Never surfaced to the agent.
    */
   metadata?: Record<string, unknown>
   /** Message creation time in seconds (Go CreateTime); 0/undefined when unknown. */
@@ -393,8 +393,9 @@ export interface AgentSession {
 /**
  * Typed per-session start metadata the engine hands to
  * {@link Agent.startSession} (the replacement for the Go-era CC_* env-note
- * array): persona flags, the engine session key, Feishu workspace routing,
- * and the shared research venv. Absent groups mean the plain-session path.
+ * array): subtask child flags, a feature persona, the engine session key,
+ * Feishu workspace routing, and the shared research venv. Absent groups
+ * mean the plain-session path.
  */
 export interface SessionStartOptions {
   /**
@@ -416,21 +417,25 @@ export interface SessionStartOptions {
     attended: boolean
     /** The child never reports back (no-report preamble). */
     noReport: boolean
-    /** The child is a research assistant: the research contract rides on top of the report preamble. */
-    researchAssistant: boolean
+    /**
+     * The child is a research assistant: the research contract rides on top
+     * of the report preamble. Decorated by the owning feature's
+     * session-start-options listener; absent = not a research assistant.
+     */
+    researchAssistant?: boolean
   }
-  /** Chatroom persona; absent = plain session. */
-  chatroom?: {
-    /** Multi-role chatroom role session (bound to a hub). */
-    role: boolean
-    /** 1:1 direct role chat (no hub, no relay). */
-    directRole: boolean
-    /** Hub session driving the chatroom (bare persona, never plan mode). */
-    moderator: boolean
-    /** Shared chatroom ledger directory; '' when no moderator dir is configured. */
-    ledgerDir: string
-    /** The hub flagged this chatroom as research-driven. */
-    research: boolean
+  /**
+   * Whole-prompt persona for the session; absent = plain session. The
+   * owning feature's session-start-options listener precomputes the prompt
+   * and policy flags; the adapter only consumes them.
+   */
+  persona?: {
+    /** Complete replacement system prompt (Go --bare persona semantics). */
+    prompt: string
+    /** Tool permissions auto-approve for this persona (nobody can answer the prompts). */
+    bypassPermissions: boolean
+    /** Mode forced over an inherited plan default; undefined keeps the adapter-computed mode. */
+    forceMode: string | undefined
   }
   /** Default Feishu workspace routing (#18); absent = no routing section. */
   feishuWorkspace?: FeishuWorkspaceInfo

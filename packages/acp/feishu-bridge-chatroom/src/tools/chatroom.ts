@@ -16,8 +16,9 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { SubtaskAgentRouter } from './subtask.js'
-import { declareToolFamily } from '../streaming.js'
+import type { SubtaskAgentRouter } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { declareToolFamily } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { chatroomConfig } from '../chatroom-config.js'
 import {
   askHuman,
   askRole,
@@ -251,7 +252,7 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
               message: `Roles in this chatroom:\n${inRoom.map(r => `  • ${r.name} (session ${r.sessionKey})`).join('\n')}`,
             }
           }
-          const rolesDir = engine.chatroomRolesDir()
+          const rolesDir = chatroomConfig(engine).rolesDir()
           const names = [...listRoleNames(rolesDir)].sort()
           if (names.length === 0) return { status: 'ok' as const, message: '(no roles configured)' }
           const lines = names.map((n) => {

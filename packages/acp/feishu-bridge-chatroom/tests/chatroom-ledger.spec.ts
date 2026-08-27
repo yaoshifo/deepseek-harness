@@ -15,7 +15,7 @@ import {
   initChatroomLedger,
   updateChatroomSubproblems,
   updateChatroomLedgerSynthesis,
-} from '../../src/engine/chatroom-ledger.js'
+} from '../src/engine/chatroom-ledger.js'
 
 const read = async (p: string): Promise<string> => readFile(p, 'utf8')
 

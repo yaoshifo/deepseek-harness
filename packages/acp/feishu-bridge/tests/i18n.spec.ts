@@ -3,7 +3,6 @@ import {
   Msg,
   ALL_MSG_KEYS,
   type Language,
-  type MsgKey,
   detectLanguage,
   I18n,
   isChinese,
@@ -13,6 +12,7 @@ import {
   langTraditionalChinese,
   lookupMessage,
   messages,
+  registerMessages,
 } from '../src/i18n/index.js'
 
 // Ported from cc-connect core/i18n/i18n_test.go (11 Go tests).
@@ -45,7 +45,7 @@ describe('I18n', () => {
     const i = new I18n(langEnglish)
     // Go's T returns the raw key for missing entries; the Go test only
     // logged (never failed) on other outcomes.
-    expect(i.t('totally_missing_key' as MsgKey)).toBe('totally_missing_key')
+    expect(i.t('totally_missing_key')).toBe('totally_missing_key')
   })
 
   it('Tf', () => {
@@ -76,19 +76,19 @@ describe('I18n', () => {
 
 describe('lookupMessage', () => {
   it('hits per language like I18n.t', () => {
-    expect(lookupMessage(langEnglish, Msg.ChatroomReady)).toBe('Chatroom role ready')
-    expect(lookupMessage(langChinese, Msg.ChatroomReady)).toBe('聊天室角色就绪')
+    expect(lookupMessage(langEnglish, Msg.Thinking)).toBe('💭 %s')
+    expect(lookupMessage(langChinese, Msg.NameSet, 'myname', 'abc123')).toBe('✅ 会话已命名：**myname** (abc123)')
   })
 
   it('substitutes Go-style format verbs like I18n.tf', () => {
-    expect(lookupMessage(langChinese, Msg.ChatroomListTitle, 3)).toBe('可用的 thinkers（3 个）')
-    expect(lookupMessage(langEnglish, Msg.ChatroomRoleNotFound, 'taleb')).toBe('Role taleb not found in this chatroom.')
+    expect(lookupMessage(langChinese, Msg.QueueFull, 3)).toBe('📬 消息队列已满（3 条待处理）。请等待当前任务完成。')
+    expect(lookupMessage(langEnglish, Msg.HelpUnknownCmd, '/x')).toBe('Unknown command: /x\n')
     // No args: template passes through unchanged, matching tf with zero args.
-    expect(lookupMessage(langEnglish, Msg.ChatroomListTitle)).toBe('Available thinkers (%d)')
+    expect(lookupMessage(langEnglish, Msg.QueueFull)).toBe('📬 Message queue is full (%d pending). Please wait for current tasks to complete.')
   })
 
   it('returns the raw key for a missing entry', () => {
-    expect(lookupMessage(langEnglish, 'totally_missing_key' as MsgKey)).toBe('totally_missing_key')
+    expect(lookupMessage(langEnglish, 'totally_missing_key')).toBe('totally_missing_key')
   })
 
   it('matches I18n.t across the fallback chain', () => {
@@ -97,6 +97,48 @@ describe('lookupMessage', () => {
       for (const key of ALL_MSG_KEYS) {
         expect(lookupMessage(lang, key), `${lang} ${key}`).toBe(i.t(key))
       }
+    }
+  })
+})
+
+describe('registerMessages', () => {
+  /** A disposable subtable the tests clean up after themselves. */
+  const subtableA = { en: { spec_sub_a: 'A' }, zh: { spec_sub_a: 'A·zh' } }
+
+  it('serves subtable keys through I18n.t and lookupMessage with the same fallback chain', () => {
+    const dispose = registerMessages(subtableA)
+    try {
+      expect(new I18n(langEnglish).t('spec_sub_a')).toBe('A')
+      expect(new I18n(langChinese).t('spec_sub_a')).toBe('A·zh')
+      // Traditional Chinese falls back to Simplified; an unknown language to English.
+      expect(new I18n(langTraditionalChinese).t('spec_sub_a')).toBe('A·zh')
+      expect(new I18n('nonexistent').t('spec_sub_a')).toBe('A')
+      expect(lookupMessage(langEnglish, 'spec_sub_a')).toBe('A')
+      // The main table still wins over subtables.
+      expect(new I18n(langEnglish).t(Msg.Starting)).not.toBe('')
+    } finally {
+      dispose()
+    }
+    expect(new I18n(langEnglish).t('spec_sub_a')).toBe('spec_sub_a')
+  })
+
+  it('reference-counts re-registrations of the same object and tolerates double dispose', () => {
+    const disposeOne = registerMessages(subtableA)
+    const disposeTwo = registerMessages(subtableA)
+    disposeOne()
+    expect(new I18n(langEnglish).t('spec_sub_a')).toBe('A')
+    disposeTwo()
+    disposeTwo()
+    expect(new I18n(langEnglish).t('spec_sub_a')).toBe('spec_sub_a')
+  })
+
+  it('rejects keys colliding with the main table and with another subtable', () => {
+    expect(() => registerMessages({ en: { starting: 'dup' } })).toThrow(/collides with the main message table/)
+    const disposeOther = registerMessages({ en: { spec_sub_b: 'B' } })
+    try {
+      expect(() => registerMessages({ en: { spec_sub_b: 'conflict' } })).toThrow(/already registered by another subtable/)
+    } finally {
+      disposeOther()
     }
   })
 })

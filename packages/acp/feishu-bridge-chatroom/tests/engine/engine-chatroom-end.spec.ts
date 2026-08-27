@@ -9,9 +9,9 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
+import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.js'
 import {
   ChatroomEndBarrier,
@@ -29,7 +29,10 @@ import {
 import { stashChatroomResearchFlags } from '../../src/engine/chatroom-cmd.js'
 import { createStubChatroomSpawner } from '../stubs/engine-stubs.js'
 import { createStubAgent } from '../stubs/engine-stubs.js'
-import type { Platform } from '../../src/core/types.js'
+import type { Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { chatroomState } from '../../src/chatroom-state.js'
+import { chatroomConfig } from '../../src/chatroom-config.js'
+import '../stubs/messages.js'
 
 async function settle(): Promise<void> {
   await new Promise((resolve) => { setTimeout(resolve, 0) })
@@ -125,9 +128,9 @@ describe('ChatroomEndBarrier timeoutFire', () => {
 describe('chatroom end timeout duration', () => {
   it('defaults to half the gather timeout (10m); overridable', () => {
     const e = new Engine('test', createStubAgent(), [], '', 'zh')
-    expect(e.chatroomEndTimeoutDuration()).toBe(10 * 60 * 1000)
-    e.setChatroomEndTimeout(90_000)
-    expect(e.chatroomEndTimeoutDuration()).toBe(90_000)
+    expect(chatroomConfig(e).endTimeoutDuration()).toBe(10 * 60 * 1000)
+    chatroomConfig(e).applySection({ endTimeoutSec: Math.round(90_000 / 1000) })
+    expect(chatroomConfig(e).endTimeoutDuration()).toBe(90_000)
   })
 })
 
@@ -135,30 +138,30 @@ describe('EndChatroom', () => {
   it('tears down immediately when idle (no pointless barrier)', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     const res = endChatroom(e, hub)
     expect(res.status).toBe('ended')
     expect(res.rolesRemoved).toBe(2)
-    expect(e.sessions.getOrCreateActive(hub).getPendingEndBarrier()).toBeUndefined()
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier).toBeUndefined()
     expect(listChatroomRoles(e, hub)).toHaveLength(0)
   })
 
   it('returns pending with a barrier when a role is in-flight', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     // Simulate "asked taleb, its turn is generating"; munger idle.
     const taleb = e.sessions.getOrCreateActive(roles[0]!.sessionKey)
-    taleb.setChatroomInFlight(true)
+    chatroomState(taleb).chatroomInFlight = true
 
     const res = endChatroom(e, hub)
     expect(res.status).toBe('pending')
     expect(res.inFlight).toEqual(['taleb'])
-    const b = e.sessions.getOrCreateActive(hub).getPendingEndBarrier()
+    const b = chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier
     expect(b).toBeDefined()
     expect(b!.expected.has('taleb')).toBe(true)
     expect(listChatroomRoles(e, hub)).toHaveLength(2) // not yet cleaned up
@@ -168,48 +171,48 @@ describe('EndChatroom', () => {
   it('completes when the in-flight role relays (no silent drop)', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     const taleb = e.sessions.getOrCreateActive(roles[0]!.sessionKey)
-    taleb.setChatroomInFlight(true)
+    chatroomState(taleb).chatroomInFlight = true
 
     const res = endChatroom(e, hub)
     expect(res.status).toBe('pending')
     // taleb's turn ends → relay hits the end barrier → accumulate completes.
     const st = new InteractiveState()
     st.platform = p
-    taleb.setChatroomAsked(false) // arm relay
+    chatroomState(taleb).chatroomAsked = false // arm relay
     maybeAutoRelayRole(e, st, taleb, '我的末轮观点', false)
 
     await waitFor(() => listChatroomRoles(e, hub).length === 0, 'roles cleared')
-    expect(e.sessions.getOrCreateActive(hub).getPendingEndBarrier()).toBeUndefined()
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier).toBeUndefined()
   })
 
   it('finalizes on drain timeout when a role never relays', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     const taleb = e.sessions.getOrCreateActive(roles[0]!.sessionKey)
-    taleb.setChatroomInFlight(true)
-    e.setChatroomEndTimeout(50)
+    chatroomState(taleb).chatroomInFlight = true
+    chatroomConfig(e).applySection({ endTimeoutSec: 50 / 1000 })
 
     const res = endChatroom(e, hub)
     expect(res.status).toBe('pending')
     await waitFor(() => listChatroomRoles(e, hub).length === 0, 'roles cleared on timeout')
-    expect(e.sessions.getOrCreateActive(hub).getPendingEndBarrier()).toBeUndefined()
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier).toBeUndefined()
   })
 
   it('rejects ask/gather while ending', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     // Manually arm an end barrier (simulates end pending).
-    e.sessions.getOrCreateActive(hub).setPendingEndBarrier(newEndBarrier())
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier = newEndBarrier()
     await expect(askRole(e, hub, roles[0]!.sessionKey, '问题')).rejects.toThrow()
     expect(() => { gatherRoles(e, hub, '问题', false) }).toThrow()
   })
@@ -217,12 +220,12 @@ describe('EndChatroom', () => {
   it('rejects end while a gather is in flight', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     await startChatroom(e, hub, ['taleb'], 'topic')
     const g = new ChatroomGather('q', 1)
     g.expected.add('taleb')
-    e.sessions.getOrCreateActive(hub).setPendingGather(g)
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = g
     expect(() => endChatroom(e, hub)).toThrow()
     g.stopTimer()
   })
@@ -230,18 +233,18 @@ describe('EndChatroom', () => {
   it('clears the in-flight flag at turn end (relay then flag)', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
-    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     const taleb = e.sessions.getOrCreateActive(roles[0]!.sessionKey)
-    taleb.setChatroomInFlight(true)
-    taleb.setChatroomAsked(false) // arm relay (serial path)
+    chatroomState(taleb).chatroomInFlight = true
+    chatroomState(taleb).chatroomAsked = false // arm relay (serial path)
 
     const st = new InteractiveState()
     st.platform = p
     maybeAutoRelayRole(e, st, taleb, '回复', false)
     await settle()
-    expect(taleb.getChatroomInFlight()).toBe(false)
+    expect(chatroomState(taleb).chatroomInFlight).toBe(false)
   })
 })
 
@@ -255,12 +258,12 @@ describe('finalizeChatroomEnd', () => {
     const hubChildKey = 'test:hub-child:user-1' // hub's direct /spawn child (HTML render)
 
     // Hub (moderator).
-    e.sessions.getOrCreateActive(hub).setChatroomModerator(true)
+    chatroomState(e.sessions.getOrCreateActive(hub)).chatroomModerator = true
     // Role (child of hub).
     const role = e.sessions.getOrCreateActive(roleKey)
-    role.setChatroomHubKey(hub)
+    chatroomState(role).chatroomHubKey = hub
     role.setParentSessionKey(hub)
-    role.setResearchAssistantKey(assistantKey)
+    chatroomState(role).researchAssistantKey = assistantKey
     // Pre-spawned research assistant (child of role; NOT a chatroom role).
     const assistant = e.sessions.getOrCreateActive(assistantKey)
     assistant.setParentSessionKey(roleKey)
@@ -274,7 +277,7 @@ describe('finalizeChatroomEnd', () => {
 
     // Role + research assistant cleaned (2); hub-direct child preserved.
     expect(removed).toBe(2)
-    expect(role.getResearchAssistantKey()).toBe('')
+    expect(chatroomState(role).researchAssistantKey).toBe('')
   })
 
   it('clears dirty hub research flags', async () => {
@@ -282,18 +285,18 @@ describe('finalizeChatroomEnd', () => {
     const e = newChatroomTestEngine(p)
     const hub = 'test:hub:user-1'
     const h = e.sessions.getOrCreateActive(hub)
-    h.setChatroomModerator(true)
-    h.setChatroomResearch(true)
-    h.setChatroomResearchMode('manual')
-    h.setChatroomResearchRound(3)
-    h.setChatroomResearchMaxRounds(3)
+    chatroomState(h).chatroomModerator = true
+    chatroomState(h).chatroomResearch = true
+    chatroomState(h).chatroomResearchMode = 'manual'
+    chatroomState(h).chatroomResearchRound = 3
+    chatroomState(h).chatroomResearchMaxRounds = 3
 
     finalizeChatroomEnd(e, hub)
 
-    expect(h.getChatroomResearch()).toBe(false)
-    expect(h.getChatroomResearchMode()).toBe('')
-    expect(h.getChatroomResearchRound()).toBe(0)
-    expect(h.getChatroomResearchMaxRounds()).toBe(0)
+    expect(chatroomState(h).chatroomResearch).toBe(false)
+    expect(chatroomState(h).chatroomResearchMode).toBe('')
+    expect(chatroomState(h).chatroomResearchRound).toBe(0)
+    expect(chatroomState(h).chatroomResearchMaxRounds).toBe(0)
   })
 })
 
@@ -303,17 +306,17 @@ describe('stashChatroomResearchFlags', () => {
     const e = newChatroomTestEngine(p)
     const hub = 'test:hub:user-1'
     const h = e.sessions.getOrCreateActive(hub)
-    h.setChatroomResearch(true)
-    h.setChatroomResearchMode('auto')
-    h.setChatroomResearchRound(2)
-    h.setChatroomResearchMaxRounds(5)
+    chatroomState(h).chatroomResearch = true
+    chatroomState(h).chatroomResearchMode = 'auto'
+    chatroomState(h).chatroomResearchRound = 2
+    chatroomState(h).chatroomResearchMaxRounds = 5
 
     stashChatroomResearchFlags(e, hub, false, '', 0)
 
-    expect(h.getChatroomResearch()).toBe(false)
-    expect(h.getChatroomResearchMode()).toBe('')
-    expect(h.getChatroomResearchRound()).toBe(0)
-    expect(h.getChatroomResearchMaxRounds()).toBe(0)
+    expect(chatroomState(h).chatroomResearch).toBe(false)
+    expect(chatroomState(h).chatroomResearchMode).toBe('')
+    expect(chatroomState(h).chatroomResearchRound).toBe(0)
+    expect(chatroomState(h).chatroomResearchMaxRounds).toBe(0)
   })
 })
 
@@ -326,17 +329,17 @@ describe('research workspace fallback', () => {
     // The default keeps the workspace off every chatroom persona's
     // cwd-ancestor chain (the old <moderatorDir>/research put the moderator
     // contract on that chain).
-    e.setChatroomModeratorDir('/data/chatroom')
-    e.setChatroomResearchWorkspace('')
+    chatroomConfig(e).applySection({ moderatorDir: '/data/chatroom' })
+    chatroomConfig(e).applySection({ researchWorkspace: '' })
     expect(chatroomResearchWorkspace(e)).toBe(join(dirname(store), 'chatroom-research'))
 
-    e.setChatroomResearchWorkspace('/shared/research-env')
+    chatroomConfig(e).applySection({ researchWorkspace: '/shared/research-env' })
     expect(chatroomResearchWorkspace(e)).toBe('/shared/research-env')
 
     // A storeless engine (tests) has no project data dir to derive.
     const bare = newChatroomTestEngine(p)
-    bare.setChatroomModeratorDir('/data/chatroom')
-    bare.setChatroomResearchWorkspace('')
+    chatroomConfig(bare).applySection({ moderatorDir: '/data/chatroom' })
+    chatroomConfig(bare).applySection({ researchWorkspace: '' })
     expect(chatroomResearchWorkspace(bare)).toBe('')
   })
 })

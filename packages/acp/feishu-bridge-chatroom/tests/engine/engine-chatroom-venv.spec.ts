@@ -13,14 +13,17 @@ import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
+import { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.js'
 import { ensureResearchPythonEnv, uvHooks } from '../../src/engine/chatroom.js'
 import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
 import { createStubAgent, newStubMessage } from '../stubs/engine-stubs.js'
 import { createStubChatroomSpawner } from '../stubs/engine-stubs.js'
+import { chatroomState } from '../../src/chatroom-state.js'
+import { chatroomConfig } from '../../src/chatroom-config.js'
+import '../stubs/messages.js'
 
 const savedLookup = uvHooks.lookupPath
 const savedCreate = uvHooks.createVenv
@@ -47,13 +50,13 @@ describe('ensureResearchPythonEnv', () => {
 
   it('errors on an empty workspace', async () => {
     const e = newEngine()
-    e.setChatroomResearchPythonEnv(true)
+    chatroomConfig(e).applySection({ researchPythonEnv: true })
     await expect(ensureResearchPythonEnv(e, '   ')).rejects.toThrow()
   })
 
   it('is idempotent when uv is present', async () => {
     const e = newEngine()
-    e.setChatroomResearchPythonEnv(true)
+    chatroomConfig(e).applySection({ researchPythonEnv: true })
     uvHooks.pipInstall = async () => undefined
     uvHooks.createVenv = async (_uv, venv) => {
       await mkdir(join(venv, 'bin'), { recursive: true })
@@ -71,14 +74,14 @@ describe('ensureResearchPythonEnv', () => {
   it('blocks when uv is absent', async () => {
     uvHooks.lookupPath = async () => { throw new Error('uv not found') }
     const e = newEngine()
-    e.setChatroomResearchPythonEnv(true)
+    chatroomConfig(e).applySection({ researchPythonEnv: true })
     const v = await ensureResearchPythonEnv(e, await mkdtemp(join(tmpdir(), 'fb-venv-'))).catch(() => undefined)
     expect(v).toBeUndefined()
   })
 
   it('installs base deps once at venv creation and skips on reuse', async () => {
     const e = newEngine()
-    e.setChatroomResearchPythonEnv(true)
+    chatroomConfig(e).applySection({ researchPythonEnv: true })
     let calls = 0
     let gotVenv = ''
     uvHooks.pipInstall = async (_uv, venv) => {
@@ -101,7 +104,7 @@ describe('ensureResearchPythonEnv', () => {
 
   it('removes the half-created venv when the deps install fails', async () => {
     const e = newEngine()
-    e.setChatroomResearchPythonEnv(true)
+    chatroomConfig(e).applySection({ researchPythonEnv: true })
     uvHooks.pipInstall = async () => { throw new Error('install failed') }
     uvHooks.createVenv = async (_uv, venv) => {
       await mkdir(join(venv, 'bin'), { recursive: true })
@@ -127,9 +130,9 @@ describe('cmdChatroom research uv gate', () => {
       await mkdir(join(root, n), { recursive: true })
       await writeFile(join(root, n, 'CLAUDE.md'), '# x\n', 'utf8')
     }
-    e.setChatroomRolesDir(root)
-    e.setChatroomResearchPythonEnv(true)
-    e.setChatroomResearchWorkspace(await mkdtemp(join(tmpdir(), 'fb-venv-ws-')))
+    chatroomConfig(e).applySection({ rolesDir: root })
+    chatroomConfig(e).applySection({ researchPythonEnv: true })
+    chatroomConfig(e).applySection({ researchWorkspace: await mkdtemp(join(tmpdir(), 'fb-venv-ws-')) })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     expect(handler).toBeDefined()
@@ -137,7 +140,7 @@ describe('cmdChatroom research uv gate', () => {
       ['--research', 'taleb,munger', '研究中国股市是否过热'])
     await new Promise((resolve) => { setTimeout(resolve, 50) })
     expect(p.count).toBe(0)
-    expect(e.sessions.getOrCreateActive(hub).getChatroomResearch()).toBe(false)
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).chatroomResearch).toBe(false)
   })
 })
 
@@ -145,7 +148,7 @@ describe('buildSessionStartOptions research venv', () => {
   it('carries the venv root and bin dir', () => {
     const e = newEngine()
     const s = e.sessions.getOrCreateActive('test:assistant-1')
-    s.setResearchVenv('/tmp/research/.venv')
+    chatroomState(s).researchVenv = '/tmp/research/.venv'
     const options = e.buildSessionStartOptions('k', s)
     expect(options.venv?.virtualEnv).toBe('/tmp/research/.venv')
   })
@@ -156,22 +159,34 @@ describe('buildSessionStartOptions research venv', () => {
     expect(e.buildSessionStartOptions('k', s).venv).toBeUndefined()
   })
 
-  it('emits the chatroom role/ledger/moderator/direct flags', () => {
+  it('emits the chatroom persona block for roles, moderators, and direct roles', () => {
     const e = newEngine()
-    e.setChatroomModeratorDir('/data/chatroom')
+    chatroomConfig(e).applySection({ moderatorDir: '/data/chatroom' })
     const hub = e.sessions.getOrCreateActive('test:hub:user-1')
-    hub.setChatroomModerator(true)
+    chatroomState(hub).chatroomModerator = true
     const role = e.sessions.getOrCreateActive('test:role-1')
-    role.setChatroomHubKey('test:hub:user-1')
+    chatroomState(role).chatroomHubKey = 'test:hub:user-1'
     const direct = e.sessions.getOrCreateActive('test:direct:user-1')
-    direct.setChatroomDirectRole(true)
+    chatroomState(direct).chatroomDirectRole = true
 
+    // Persona flags: moderators force the default mode (never plan), roles
+    // and direct roles bypass permissions, and the prompt folds the ledger
+    // dir / role contract in.
     const modOptions = e.buildSessionStartOptions('test:hub:user-1', hub)
-    expect(modOptions.chatroom?.moderator).toBe(true)
+    expect(modOptions.persona?.forceMode).toBe('default')
+    expect(modOptions.persona?.bypassPermissions).toBe(false)
+    // A hub-keyed moderator (the production hub shape: bound to its own
+    // chatroom) takes the role branch with the same forced mode.
+    chatroomState(hub).chatroomHubKey = 'test:hub:user-1'
+    const hubOptions = e.buildSessionStartOptions('test:hub:user-1', hub)
+    expect(hubOptions.persona?.forceMode).toBe('default')
+    expect(hubOptions.persona?.bypassPermissions).toBe(true)
+    chatroomState(hub).chatroomHubKey = ''
     const roleOptions = e.buildSessionStartOptions('test:role-1', role)
-    expect(roleOptions.chatroom?.role).toBe(true)
-    expect(roleOptions.chatroom?.ledgerDir.startsWith('/data/chatroom/ledgers/')).toBe(true)
+    expect(roleOptions.persona?.bypassPermissions).toBe(true)
+    expect(roleOptions.persona?.prompt).toContain('/data/chatroom/ledgers/')
     const directOptions = e.buildSessionStartOptions('test:direct:user-1', direct)
-    expect(directOptions.chatroom?.directRole).toBe(true)
+    expect(directOptions.persona?.bypassPermissions).toBe(true)
+    expect(directOptions.persona?.prompt).toContain('1:1')
   })
 })

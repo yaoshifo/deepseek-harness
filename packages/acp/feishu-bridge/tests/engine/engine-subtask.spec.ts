@@ -33,16 +33,27 @@ import {
   type ControllableAgentSession,
   type RecordedCard,
 } from '../stubs/engine-stubs.js'
+import type { BridgeDispatch } from '../../src/bridge-service.js'
 
 const execFileP = promisify(execFile)
 
 /** One macrotask tick: flushes the microtask chain behind fire-and-forget sends. */
+/** The raw chatroom section of a session (opaque bag; written directly here). */
+function chatroomSection(session: Session): Record<string, unknown> {
+  let section = session.featureState.chatroom
+  if (typeof section !== 'object' || section === null) {
+    section = {}
+    session.featureState.chatroom = section
+  }
+  return section as Record<string, unknown>
+}
+
 async function settle(): Promise<void> {
   await new Promise((resolve) => { setTimeout(resolve, 0) })
 }
 
-function newSubtaskTestEngine(p: Platform, agent: Agent = createStubAgent()): Engine {
-  return new Engine('test', agent, [p], '', 'en')
+function newSubtaskTestEngine(p: Platform, agent: Agent = createStubAgent(), bridge?: BridgeDispatch): Engine {
+  return new Engine('test', agent, [p], '', 'en', bridge)
 }
 
 /** Engine whose agent's recent-turn window serves one assistant entry for 'child-agent'. */
@@ -511,24 +522,6 @@ describe('SpawnSubtask', () => {
     ).rejects.toThrow()
   })
 
-  it('does not mark research dispatch during pre-spawn', async () => {
-    // afterChatroomStarted pre-spawns assistants BEFORE any gather arms
-    // ResearchAwaitingAssistant — the awaiting gate must keep that spawn from
-    // tripping the flag.
-    const hubKey = 'test:hub-chat:user-1'
-    const parentKey = 'test:role-chat:user-1'
-    const p = createStubSpawnerPlatform()
-    const e = newSubtaskTestEngine(p)
-
-    const parent = e.sessions.getOrCreateActive(parentKey)
-    parent.setChatroomHubKey(hubKey)
-    // awaiting stays false (pre-spawn happens before the first gather)
-
-    await expect(
-      e.spawnSubtask(parentKey, await mkdtemp(join(tmpdir(), 'fb-prespawn-')), WorktreeMode.ForceOff, false, '', [], false),
-    ).resolves.toBeDefined()
-    expect(parent.getResearchDispatched()).toBe(false)
-  })
 })
 
 describe('reportSubtaskTimeout', () => {
@@ -713,27 +706,7 @@ describe('SendToSubtask', () => {
     expect(e.sessions.allSessions().length).toBe(before)
   })
 
-  it('resolves the "assistant" sentinel to the caller\'s pre-provisioned research assistant', async () => {
-    const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
-    const child = e.sessions.getOrCreateActive(childKey)
-    child.setParentSessionKey(parentKey)
-    child.setSubtaskDepth(1)
-    e.sessions.getOrCreateActive(parentKey).setResearchAssistantKey(childKey)
 
-    await expect(e.sendToSubtask(parentKey, 'assistant', 'research task')).resolves.toBeUndefined()
-    await settle()
-    expect(p.sentCards.length).toBe(1)
-    expect(cardBody(p.sentCards[0])).toContain('research task')
-  })
-
-  it('tells an unprovisioned caller to spawn an assistant first', async () => {
-    const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
-
-    await expect(e.sendToSubtask(parentKey, 'assistant', 'task'))
-      .rejects.toThrow('no pre-provisioned assistant')
-  })
 
   it('requires a non-empty message', async () => {
     const p = createStubCardPlatformFull('test')
@@ -744,33 +717,6 @@ describe('SendToSubtask', () => {
     await expect(e.sendToSubtask(parentKey, childKey, '   ')).rejects.toThrow()
   })
 
-  it('marks research dispatched on a successful send', async () => {
-    const hubKey = 'test:hub-chat:user-1'
-    const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
-
-    const parent = e.sessions.getOrCreateActive(parentKey)
-    parent.setChatroomHubKey(hubKey)
-    parent.setResearchAwaitingAssistant(true)
-    const child = e.sessions.getOrCreateActive(childKey)
-    child.setParentSessionKey(parentKey)
-    child.setSubtaskDepth(1)
-
-    // Dispatch turn: a successful send marks the role as dispatched.
-    await expect(e.sendToSubtask(parentKey, childKey, 'fetch the data')).resolves.toBeUndefined()
-    expect(parent.getResearchDispatched()).toBe(true)
-
-    // Outside the dispatch turn (awaiting cleared): no marking. Use a fresh
-    // child — the first send's injected message started the old child's
-    // turn (busy).
-    parent.setResearchDispatched(false)
-    parent.setResearchAwaitingAssistant(false)
-    const child2 = e.sessions.getOrCreateActive('test:child-chat-2')
-    child2.setParentSessionKey(parentKey)
-    child2.setSubtaskDepth(1)
-    await expect(e.sendToSubtask(parentKey, 'test:child-chat-2', 'one more dataset')).resolves.toBeUndefined()
-    expect(parent.getResearchDispatched()).toBe(false)
-  })
 
   it('rejects a busy child', async () => {
     const p = createStubCardPlatformFull('test')
@@ -983,7 +929,6 @@ describe('rearmSubtaskReportOnDrain', () => {
 })
 
 describe('markUserInterjectedOnHumanTurn', () => {
-  const roleKey = 'test:role-chat'
   const childKey = 'test:child-chat'
 
   it('flips on a human message into a subtask group', () => {
@@ -997,16 +942,6 @@ describe('markUserInterjectedOnHumanTurn', () => {
     expect(child.getUserInterjected()).toBe(true)
   })
 
-  it('flips on a human message into a chatroom role', () => {
-    const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
-    const role = e.sessions.getOrCreateActive(roleKey)
-    role.setChatroomHubKey('test:hub:user-1')
-
-    e.markUserInterjectedOnHumanTurn(msg({ sessionKey: roleKey, userID: 'u1', userName: 'human' }), role, e.sessions)
-
-    expect(role.getUserInterjected()).toBe(true)
-  })
 
   it('skips synthetic injections (empty userID)', () => {
     const p = createStubCardPlatformFull('test')
@@ -1055,20 +990,6 @@ describe('markUserInterjectedOnHumanTurn', () => {
 })
 
 describe('buildSessionStartOptions', () => {
-  it('injects the research assistant contract only for research assistants', () => {
-    const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
-
-    const key = 'test:assistant-chat'
-    const sess = e.sessions.getOrCreateActive(key)
-    sess.setSubtaskDepth(1)
-    sess.setResearchAssistant(true)
-
-    expect(e.buildSessionStartOptions(key, sess).subtask?.researchAssistant).toBe(true)
-
-    sess.setResearchAssistant(false)
-    expect(e.buildSessionStartOptions(key, sess).subtask?.researchAssistant).toBe(false)
-  })
 
   it('binds the session key into the start options', () => {
     const p = createStubCardPlatformFull('test')
@@ -1474,8 +1395,8 @@ describe('gather expected-set membership', () => {
     // settle through the chatroom relay, never the subtask report path.
     const liveRole = e.sessions.getOrCreateActive('test:role-live')
     liveRole.setParentSessionKey(parentKey)
-    liveRole.setChatroomHubKey(parentKey)
-    liveRole.setChatroomRoleName('hamming')
+    chatroomSection(liveRole).chatroomHubKey = parentKey
+    chatroomSection(liveRole).chatroomRoleName = 'hamming'
     // Ended role group: chatroom teardown strips the role fields; the record
     // keeps only parent = hub.
     const endedRole = e.sessions.getOrCreateActive('test:role-ended')
@@ -1501,7 +1422,7 @@ describe('gather expected-set membership', () => {
     e.sessions.getOrCreateActive(parentKey)
     const role = e.sessions.getOrCreateActive('test:role-live')
     role.setParentSessionKey(parentKey)
-    role.setChatroomHubKey(parentKey)
+    chatroomSection(role).chatroomHubKey = parentKey
 
     expect(() => { e.gatherSubtasks(parentKey) }).toThrow()
     expect(e.sessions.getOrCreateActive(parentKey).getPendingSubtaskGather()).toBeUndefined()
