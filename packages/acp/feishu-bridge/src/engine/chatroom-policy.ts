@@ -25,6 +25,8 @@ import type { SessionStartOptions } from '../core/types.js'
  *   direct-role groups),
  * - the hub auto-render suppression (roles relay to the hub, so a local
  *   HTML overview is redundant),
+ * - the hard-cap exemption for research sessions (their long turns are the
+ *   product),
  * - the gather-round metadata stamp at turn start,
  * - the role-reply relay at turn end,
  * - the moderator role-pick plan-review auto-approval,
@@ -44,6 +46,8 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
       next() || payload.session.getChatroomHubKey() !== '' || payload.session.getChatroomDirectRole() || payload.session.getResearchAssistant()),
     ctx.on('feishuBridge/auto-render-policy', (payload, next) =>
       next() || payload.session.getChatroomHubKey() !== ''),
+    ctx.on('feishuBridge/hard-cap-exemption', (payload, next) =>
+      next() || isResearchExemptSession(payload.engine, payload.session)),
     ctx.on('feishuBridge/turn-start', (payload) => {
       // Go stampChatroomAskOnTurnStart: consume the gather-round metadata at
       // the moment the turn actually starts. The stamp persists whenever the
@@ -81,6 +85,24 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
     }),
   ]
   return () => { for (const dispose of disposers) dispose() }
+}
+
+/**
+ * Whether a session's long turns are the product and lift the per-turn hard
+ * cap (Go isResearchSession): research assistants and roles bound to a
+ * research-driven chatroom hub.
+ * @param engine - The engine owning the session registry (hub lookup).
+ * @param session - The session the turn runs under.
+ * @returns True when the session is exempt from the hard cap.
+ */
+function isResearchExemptSession(engine: Engine, session: Session): boolean {
+  if (session.getResearchAssistant()) return true
+  const hubKey = session.getChatroomHubKey()
+  if (hubKey !== '') {
+    const hub = engine.sessions.findActive(hubKey)
+    if (hub !== undefined && hub.getChatroomResearch()) return true
+  }
+  return false
 }
 
 /**

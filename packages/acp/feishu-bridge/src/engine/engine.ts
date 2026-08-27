@@ -1297,22 +1297,6 @@ export class Engine {
   }
 
   /**
-   * Whether the session is research-critical (#57) and exempt from the hard
-   * cap (Go isResearchSession).
-   * @param sess - The session, when found.
-   * @returns True for research assistants and research-hub chatroom roles.
-   */
-  isResearchSession(sess: Session | undefined): boolean {
-    if (sess === undefined) return false
-    if (sess.researchAssistant) return true
-    if (sess.chatroomHubKey !== '') {
-      const hub = this.sessions.findActive(sess.chatroomHubKey)
-      if (hub !== undefined && hub.chatroomResearch) return true
-    }
-    return false
-  }
-
-  /**
    * Merge streaming-preview tuning over the current config (Go SetStreamPreviewCfg).
    * @param cfg - Preview fields to merge over the current config.
    */
@@ -2950,7 +2934,7 @@ export class Engine {
     // exhausted budget and is killed within minutes.
     let turnStart = Date.now()
     const softCap = this.absoluteTurnMax(state.idleTimeout(this.eventIdleTimeout))
-    const hardCapMs = softCap > 0 && !this.isResearchSession(session) ? softCap * 3 : 0
+    const hardCapMs = softCap > 0 && !this.bridge.waterfall('feishuBridge/hard-cap-exemption', { engine: this, session }, () => false) ? softCap * 3 : 0
     // The live session's event channel; swapped when a stall retry restarts
     // the agent — re-arming recvP on the pre-retry channel would read its
     // close as an agent exit on the very next event.

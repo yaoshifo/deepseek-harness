@@ -208,6 +208,17 @@ declare module '@deepseek-ai/cordis' {
      */
     'feishuBridge/auto-render-policy'(payload: { session: Session }, next: () => boolean): boolean
     /**
+     * Decide whether a session is exempt from the per-turn hard cap (a turn
+     * whose events keep trickling in would otherwise reset the idle timer
+     * forever). The built-in base exempts nothing; a listener short-circuits
+     * with `true` for sessions whose long turns are the product (research
+     * assistants and research-hub chatroom roles).
+     * @param payload.engine - The engine owning the session registry (hub lookup).
+     * @param payload.session - The session the turn runs under.
+     * @mode waterfall
+     */
+    'feishuBridge/hard-cap-exemption'(payload: { engine: Engine; session: Session }, next: () => boolean): boolean
+    /**
      * A turn is starting for a session: the one moment queued per-message
      * metadata is consumed. Listeners run in order (a chatroom listener
      * stamps gather-round metadata onto the role session and persists it).
