@@ -435,6 +435,31 @@ describe('AssembleHTML', () => {
       }
     }
   })
+
+  it('topology-routing parts (flow-v/hub/stages/stages-v/timeline/lanes/tree/cycle/kanban) are present in the shared stylesheet', () => {
+    const body = '<div class="wrap"><div class="diagram"><div class="flow-v"><span>A</span><b></b><span class="core">B</span></div></div></div>'
+    for (const subtype of ['plan', 'reply']) {
+      const out = assembleHTML(subtype, body, '')
+      // one selector per part: flow-v arrows, hub stem/bus/ticks, stages pairwise
+      // connectors, stages-v rail, timeline dots, lanes/tree/cycle/kanban shells
+      for (const want of [
+        '.flow-v>b::before',
+        '.hub>.stem',
+        '.hub>.sats>span::before',
+        '.stages>.st:not(:last-child)::after',
+        '.stages-v>div::before',
+        '.timeline>div::before',
+        '.lanes>.lane>.lt',
+        '.tree>span.t1',
+        '.cycle>.back::before',
+        '.kanban>.col>.ct',
+        // conditional flow labels ride the source span's data-if attribute
+        '.flow>span:not(:last-child)::before{content:attr(data-if)',
+      ]) {
+        expect(out).toContain(want)
+      }
+    }
+  })
 })
 
 describe('ExtractUsedIcons', () => {
@@ -543,6 +568,10 @@ describe('RenderTemplatesDefineFlowDoneTokens', () => {
     expect(diagramCSS).toContain('g.flow>path')
     expect(diagramCSS).toContain('--c-flow')
     expect(diagramCSS).toContain('--c-done')
+    // new parts keep the semantic-class vocabulary and structural connectors
+    expect(diagramCSS).toContain('.flow-v>span.core')
+    expect(diagramCSS).toContain('.hub>.center')
+    expect(diagramCSS).toContain('.stages>.st.done>i')
   })
 })
 

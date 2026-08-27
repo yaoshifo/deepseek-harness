@@ -57,7 +57,7 @@ plan 的正文是给**执行**用的技术内容（文件路径、命令、术�
 |---|---|
 | `<header>` | 题目（取 plan 首 `#` 标题）+ 一句话讲清目标或结论。先用易懂表达，仅保留决策相关的 specifics（见上「术语边界」）。**必放**。 |
 | `.summary-band`（3–4 格，**可省**） | 仅当能帮助执行者快速判断影响范围、风险或约束、验证状态时才放。无真实数字用定性标签（小改 / 中改 / 重构，低 / 中 / 高），**不编造**精确指标；尚未执行的测试标为验证计划，不写成通过。无统计价值时整段砍掉。**计入 300 字预算，预算紧时优先砍**。 |
-| 图解（**按需，最多 1 张**） | 只有存在真实的调用链、数据流、模块关系、状态变化、前后结构或方案对比时才画；纯机械修改、单一测试结果、简单结论不要画。图只表达关系，文字只表达结论，`.key-point` 只表达决策、风险或待办；三者不得重复同一事实。流 / 分层 / 前后对比优先 CSS 部件，复杂拓扑才用 SVG。 |
+| 图解（**按需，最多 1 张**） | 只有存在真实的调用链、数据流、模块关系、状态变化、前后结构或方案对比时才画；纯机械修改、单一测试结果、简单结论不要画。图只表达关系，文字只表达结论，`.key-point` 只表达决策、风险或待办；三者不得重复同一事实。按「拓扑路由表」选 CSS 部件，路由表覆盖不到才手画 SVG。 |
 | `.key-point`（**≤2，可省**） | 挑**决策、风险或约束相关**的 1-2 条，标成四周粗框块。**首子节点写 `<div class="label"><svg class="icon"><use href="#icon-…"/></svg></div>`**（语义图标，见下「图标」），标签文字与配色由 CSS 按修饰类自动注入、不写文字：`decision`→关键决策、`risk`→主要风险（红）、`constraint`→核心约束（靛蓝）、不修饰→重点。**硬上限 2 条**——满屏重点=没重点。先说结果/影响，仅保留决策相关的 specifics（见「术语边界」）；纯机械改动无重点时整段省略。 |
 | `table.compare`（**可省**） | 仅当有**真实的二维对比**（方案 A vs B / 新旧做法 / 配置矩阵 / 多维属性对照）才放，≤4 列 × ≤5 行——**不要**用 SVG `<rect>` 手画表格，用真表格。无对比维度不放。 |
 
@@ -78,7 +78,7 @@ plan 的正文是给**执行**用的技术内容（文件路径、命令、术�
 
   <!-- 有真实结构关系时才画：图只表达关系，.explain 只表达结果/影响 -->
   <div class="diagram">
-    {内联 SVG 或 draw skill 产出的 SVG}
+    {内联 SVG}
     <div class="explain">{≤2 句结果或影响，仅保留决策相关的 specifics（见「术语边界」）}</div>
   </div>
 
@@ -103,7 +103,7 @@ plan 的正文是给**执行**用的技术内容（文件路径、命令、术�
 
 - 先在内部把素材分为**已完成、关键结果、未完成/风险、后续**，页面只选其中有内容且最重要的 2–3 类。主体是 **key-point 清单**，每条**一行**：动作 + 产物/影响。**不要**把任何一条展开成多段教学。
 - 查看、尝试、分析、推测只是过程，不能写成已完成；只有代码已修改、命令已执行并成功、产物已生成，或纯调查任务已得到有证据的结论，才算完成。**没有证据**不得写成“已修复”“已验证”“已生成”。
-- **不要**每节配可视化、**不要**强制举例、**不要**为每个流程画图。
+- **不要**强制举例；图有真实拓扑就画、一图一关系，没有拓扑不硬画。
 - 完整回复已在对话里——HTML 概览区只放"结论 + 关键条目"，不重复完整原文。
 - 组件清单是**封闭集合**，但**按内容需要选用**：每个组件下方写明触发条件，不满足就**不放**，不要硬凑。宁可少一段，不要凑一段。
 
@@ -149,7 +149,7 @@ plan 的正文是给**执行**用的技术内容（文件路径、命令、术�
 
   <!-- 有真实结构关系时才画：图只表达关系，.explain 只表达结果/影响 -->
   <div class="diagram">
-    {内联 SVG 或 draw skill 产出的 SVG}
+    {内联 SVG}
     <div class="explain">{≤2 句结果或影响，仅保留决策相关的 specifics（见「术语边界」）}</div>
   </div>
 
@@ -184,19 +184,75 @@ plan 的正文是给**执行**用的技术内容（文件路径、命令、术�
 
 ---
 
-# 原生画图参考（三种常见形态优先 CSS 部件，其余手画 SVG，免网络）
+# 原生画图参考（拓扑路由表选 CSS 部件，其余手画 SVG，免网络）
 
-三种最常见形态**优先用 CSS 部件**（`.flow` / `.layers` / `.diff`，见下）——你只填语义文本、不写任何 SVG 坐标或字号，CSS 自动排版与画箭头，**杜绝字号溢出 / 节点重叠**。状态变迁等其它拓扑手画原生 SVG（免 kroki.io 网络往返、最快）。真正复杂的图（多角色时序、ER、数据图、字节布局）才调 `draw` skill。
+常见拓扑**优先用 CSS 部件**——你只填语义文本、不写任何 SVG 坐标或字号，CSS 自动排版与画箭头，**杜绝字号溢出 / 节点重叠**。**先查路由表再动笔**；路由表覆盖不到的拓扑手画原生 SVG（免网络往返、最快）。
+
+## 拓扑路由表
+
+| 拓扑 | 部件 | 上限 |
+|---|---|---|
+| 线性流程（有条件触发时节点加 `data-if`） | `.flow` | ≤5 节点 |
+| 分支 / 双路径 / 旁路 | `.flow-v`（主干 + `.fan` 扇出） | 主干 ≤4 步，fan ≤4 分支 |
+| 一核心多依赖 | `.hub`（中心 + 卫星） | 中心 1 + 卫星 3–6 |
+| 阶段 / 里程碑（纯序号标签） | `.stages` | 3–5 阶段 |
+| 阶段推进 + 每阶段一行说明 | `.stages-v` | 3–5 阶段 |
+| 时序 / 事故链 / 验证链 | `.timeline` | 3–5 事件 |
+| 并行分工 / 分域 | `.lanes` | 2–3 道 × 每道 ≤4 块 |
+| 包结构 / 模块组织 / 目录重组 | `.tree` | ≤3 层 × 每层 ≤4 项 |
+| 主循环（近似：主链 + 回边说明） | `.cycle` | 主链 ≤4 节点 |
+| 状态分布（多线并行 + 有受阻项） | `.kanban` | 2–3 列 × 每列 ≤3 卡 |
+| 分层 | `.layers` | — |
+| 前后对比 | `.diff` | — |
+| 真网状 / 多角色时序 / ER / 数据图 / 字节布局 | 手画 SVG（见下文） | — |
+
+节点数按忠实表达关系为准（图标签有独立预算，不挤占正文 300 字）；上限是排版保真边界，超了就砍次要节点或换相邻形态，**不要**为凑版面反向压缩掉关键实体。
 
 ## CSS 部件（首选，只填文字）
 
-外层仍用 `<div class="diagram">` 包裹，图下紧跟 `.explain`。节点可用 `class="core"`（靛蓝粗边）/ `class="risk"`（红）语义上色，与 SVG 节点同义。
+外层仍用 `<div class="diagram">` 包裹，图下紧跟 `.explain`。节点可用 `class="core"`（靛蓝粗边）/ `class="risk"`（红）/ `class="done"`（绿）/ `class="external"`（灰虚线）语义上色，所有部件同义。**结构化连线元素必须按示例写**（`.flow-v` 的 `<b></b>` 箭头、`.hub` 的 `<i class="stem"></i>`）——漏写时节点照常渲染但连线消失。
 
-- **流 / 管线**（`.flow`）：横向几个 `<span>`，块间箭头自动画。
+- **线性流**（`.flow`）：横向几个 `<span>`，块间箭头自动画；节点带 `data-if="条件"` 时条件标签自动渲染在箭头下方。
   ```html
-  <div class="flow"><span>输入</span><span class="core">引擎</span><span>输出</span></div>
+  <div class="flow"><span data-if="失败×2">渲染请求</span><span class="core">重试退避</span><span class="risk">降级发 HTML</span></div>
   ```
-- **分层架构**（`.layers`）：上下叠的带，每带一个 `<div>`。
+- **竖向分支流**（`.flow-v`）：主干节点 + `<b></b>` 箭头（必写，"↓" 由 CSS 注入）+ `.fan` 分支行；分支/双路径/旁路用这个，别压成线性。
+  ```html
+  <div class="flow-v"><span>子任务汇报</span><b></b><span class="core">判父忙</span><b></b><div class="fan"><span class="core">忙 → 排队</span><span class="done">闲 → 直投</span></div><b></b><span class="done">收尾 drain</span></div>
+  ```
+- **中心辐射**（`.hub`）：三段结构必写——中心 + `<i class="stem"></i>`（真实竖线）+ `.sats` 卫星行（容器顶边即总线，自动连线到每个卫星）。
+  ```html
+  <div class="hub"><span class="center">engine</span><i class="stem"></i><div class="sats"><span>平台适配</span><span class="done">渲染会话</span><span class="external">lark-cli</span></div></div>
+  ```
+- **横向阶段条**（`.stages`）：编号圆点 + 相邻连线自动画；`done`=已完成绿、`core`=当前阶段蓝。
+  ```html
+  <div class="stages"><div class="st done"><i>1</i><span>调研</span></div><div class="st core"><i>2</i><span>实施</span></div><div class="st"><i>3</i><span>收尾</span></div></div>
+  ```
+- **竖向阶段 + 说明**（`.stages-v`）：左数字轨 + 每阶段一行说明（`<b>标题</b><span>说明</span>`）。
+  ```html
+  <div class="stages-v"><div class="done"><i>1</i><div><b>S1 事件缝</b><span>7 个事件已合入 dev</span></div></div><div class="core"><i>2</i><div><b>S2 codec</b><span>进行中</span></div></div></div>
+  ```
+- **时间线**（`.timeline`）：圆点压线，`done` 绿实心 / `risk` 红 / 默认描边。
+  ```html
+  <div class="timeline"><div class="done"><b>10:02 检测</b> — stall 触发</div><div><b>10:04 撞锁</b> — resume 失败</div><div class="risk"><b>10:06 重启</b> — 已恢复</div></div>
+  ```
+- **并行泳道**（`.lanes`）：每道一列（`.lt` 道名 + 块）。
+  ```html
+  <div class="lanes"><div class="lane"><div class="lt">渲染域</div><div class="done">plan 卡</div></div><div class="lane"><div class="lt">usage 域</div><div class="core">页脚</div></div></div>
+  ```
+- **层级树**（`.tree`）：`t1`/`t2`/`t3` 定层级缩进，第一项是根。
+  ```html
+  <div class="tree"><span class="core">packages/</span><span class="t1">chatroom/（新包）</span><span class="t2 done">事件缝 ×7</span><span class="t1">feishu-bridge/</span><span class="t2 risk">import 改造 12 处</span></div>
+  ```
+- **主循环**（`.cycle`）：`.ring` 主链 + `.back` 回边说明（虚线自动画）。
+  ```html
+  <div class="cycle"><div class="ring"><span>消息入队</span><span class="core">agent 轮次</span><span>事件流</span></div><div class="back">下一消息到达，回到队首 ↺</div></div>
+  ```
+- **状态卡片墙**（`.kanban`）：列头 `<b>` 是计数徽章。
+  ```html
+  <div class="kanban"><div class="col"><div class="ct">已完成 <b>2</b></div><div class="done">事件缝</div></div><div class="col"><div class="ct">受阻 <b>1</b></div><div class="risk">迁移待拍板</div></div></div>
+  ```
+- **分层**（`.layers`）：上下叠的带，每带一个 `<div>`。
   ```html
   <div class="layers"><div>前端</div><div class="core">服务</div><div>存储</div></div>
   ```
@@ -214,7 +270,7 @@ plan 的正文是给**执行**用的技术内容（文件路径、命令、术�
   </div>
   ```
 
-## 手画 SVG（部件覆盖不到的拓扑才用）
+## 手画 SVG（路由表覆盖不到的拓扑才用）
 
 **模板已预置的 SVG 固定部分（你不再写，写了白费输出 token）**：
 - **不写 `xmlns`**——inline SVG 在 HTML 里不需要。
@@ -225,8 +281,7 @@ plan 的正文是给**执行**用的技术内容（文件路径、命令、术�
 
 - **状态 / 决策**：菱形 `<polygon>` 或圆 `<circle>` + 箭头连线。
 - **状态机**：`<rect rx="8">` 节点按进度着色（`class="done"` 已通过 / 默认 进行中 / `class="risk"` 失败终态）+ `<g class="flow">` 迁移连线（`marker-end="url(#cc-arrow-flow)"`）；分支用多条 `<line>` 从同一节点出发。横向排 `viewBox="0 0 360 80"`、节点宽 90、间距 45 是个稳妥起点，按实际节点数缩放。
-- **hub-spoke（中心辐射）**：中心 `<g class="core">` 大节点居中，周围 ≤6 个 `<rect>` 小节点 + 辐射 `<line>`（`marker-end`）。`viewBox` 四边留足 60px 边距防连线/箭头出界；周围节点 >6 个时改用 `.flow` 横排或拆图，避免辐射线交叉成一团。
-- **其它非线性的拓扑**（环形、网状依赖等）：用 `<rect rx="8">` + `<text>` + 带箭头 `<line>`/`<path>`（`marker-end="url(#cc-arrow)"`）。
+- **环形 / 网状依赖**：`<rect rx="8">` + `<text>` + 带箭头 `<line>`/`<path>`（`marker-end="url(#cc-arrow)"`）；中心辐射拓扑**不要手画**——用 CSS 部件 `.hub`（连线由 CSS 保证连续）。
 
 ### 节点语义标记（克制，CSS 自动上色）
 
