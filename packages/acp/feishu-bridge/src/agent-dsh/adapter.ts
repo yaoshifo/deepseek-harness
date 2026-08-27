@@ -31,13 +31,13 @@ import {
 import type { HistoryEntry } from '../core/types.js'
 import { locateForkCut } from './fork-at.js'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
+import { buildChatroomSystemPrompt } from '../engine/chatroom-persona.js'
+import { agentConventionsPrompt } from '../engine/agent-conventions.js'
 import {
-  agentConventionsPrompt,
-  buildChatroomSystemPrompt,
   subtaskAgentSystemPrompt,
   subtaskNoReportAgentSystemPrompt,
   subtaskResearchAssistantPrompt,
-} from '../engine/chatroom-persona.js'
+} from '../engine/subtask-prompts.js'
 import { appendFileRefs, saveFilesToDisk, saveImagesToDisk } from '../engine/attachments.js'
 import type {
   AgentSession,
