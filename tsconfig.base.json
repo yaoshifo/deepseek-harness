@@ -1,7 +1,9 @@
 {
-  // Doubles as the resolution facade for vite-tsconfig-paths (vitest configs
-  // point here). NEVER add include/files to this file: it would leak into
-  // every extending package project and narrow the facade's match-all scope.
+  // Doubles as the resolution map for Vite's native tsconfig-paths support
+  // (the vitest configs enable resolve.tsconfigPaths) and for `extends`
+  // consumers such as tsx running examples/ and scripts/. NEVER add
+  // include/files to this file: it would leak into every extending package
+  // project and narrow the map's repo-wide scope.
   "compilerOptions": {
     "target": "es2024",
     "module": "esnext",

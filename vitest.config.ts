@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import tsconfigPaths from 'vite-tsconfig-paths'
 import { resolvePwshPath } from './packages/shell/pwsh-local/src/resolve.ts'
 import { defineConfig } from 'vitest/config'
 import { standardDecoratorPlugin, vitestExecArgv } from './vitest.shared.ts'
@@ -12,12 +11,6 @@ import { COVERAGE_PARTITION_MODE_ENV } from './scripts/coverage-partitions.ts'
 // threshold ERRORs name only the file. Absolute path because istanbul-reports
 // require()s custom reporters (which is also why the reporter is CJS).
 const uncoveredLocationsReporter = fileURLToPath(new URL('./scripts/coverage-uncovered-locations.cjs', import.meta.url))
-
-// Resolution facade shared by every plugin instance below: tsconfig.base.json
-// has no include, which vite-tsconfig-paths treats as match-all, so its paths
-// map applies to every test file. paths must win over package exports so built
-// lib/ never loads a second module-singleton copy.
-const pathsPlugin = (): ReturnType<typeof tsconfigPaths> => tsconfigPaths({ projects: ['./tsconfig.base.json'] })
 
 const windowsUnsupportedPackages = process.platform === 'win32'
   ? [
@@ -126,7 +119,19 @@ const processBoundTests = [
 ]
 
 export default defineConfig({
-  plugins: [pathsPlugin(), standardDecoratorPlugin()],
+  plugins: [standardDecoratorPlugin()],
+  // Bare workspace imports resolve through the tsconfig.base.json paths map
+  // ([layout](docs/development.md#typescript-project-layout)). Vite's native
+  // discovery walks up from each importer and follows `extends`, covering
+  // every lane directory in this repo. Paths must win over package exports so
+  // built lib/ never loads a second module-singleton copy.
+  //
+  // `resolve` is repeated inside every project below: Vitest project configs
+  // do not inherit Vite's resolve from this top level, and a suite whose
+  // setup files import workspace names fails resolution without it.
+  resolve: {
+    tsconfigPaths: true,
+  },
   test: {
     setupFiles: ['./scripts/test-invariants.ts'],
     // .tsx: client component specs (jsdom via per-file @vitest-environment pragma).
@@ -136,7 +141,10 @@ export default defineConfig({
     // Node stability; process-bound suites stay separate for inventory control.
     projects: [
       {
-        plugins: [pathsPlugin(), standardDecoratorPlugin()],
+        plugins: [standardDecoratorPlugin()],
+        resolve: {
+          tsconfigPaths: true,
+        },
         test: {
           name: 'thread-safe',
           execArgv: vitestExecArgv,
@@ -154,7 +162,10 @@ export default defineConfig({
         },
       },
       {
-        plugins: [pathsPlugin(), standardDecoratorPlugin()],
+        plugins: [standardDecoratorPlugin()],
+        resolve: {
+          tsconfigPaths: true,
+        },
         test: {
           name: 'process-bound',
           execArgv: vitestExecArgv,

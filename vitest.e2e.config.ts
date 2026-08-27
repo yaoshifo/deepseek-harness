@@ -1,4 +1,3 @@
-import tsconfigPaths from 'vite-tsconfig-paths'
 import { defineConfig } from 'vitest/config'
 import { standardDecoratorPlugin, vitestExecArgv } from './vitest.shared.ts'
 
@@ -29,14 +28,16 @@ function positiveIntFromEnv(name: string, fallback: number): number {
 const e2eMaxWorkers = positiveIntFromEnv('DSH_E2E_MAX_WORKERS', DEFAULT_E2E_MAX_WORKERS)
 
 export default defineConfig({
-  // Same resolution note as vitest.config.ts: bare workspace names resolve
-  // through the tsconfig.base.json paths facade (no include = match-all, so
-  // client-package sources get mapping too — dropping /client subpath imports
-  // onto package exports would load browser dist bundles into node).
+  // Same resolution contract as vitest.config.ts: bare workspace names resolve
+  // through the tsconfig.base.json paths map — dropping /client subpath
+  // imports onto package exports would load browser dist bundles into node.
   // Built-artifact e2e suites are unaffected: their built-ness lives in
   // subprocesses and createRequire lookups, which bypass vite resolution
   // entirely.
-  plugins: [tsconfigPaths({ projects: ['./tsconfig.base.json'] }), standardDecoratorPlugin()],
+  plugins: [standardDecoratorPlugin()],
+  resolve: {
+    tsconfigPaths: true,
+  },
   test: {
     execArgv: vitestExecArgv,
     setupFiles: ['./scripts/test-invariants.ts'],

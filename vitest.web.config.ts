@@ -1,4 +1,3 @@
-import tsconfigPaths from 'vite-tsconfig-paths'
 import { defineConfig } from 'vitest/config'
 import { standardDecoratorPlugin, vitestExecArgv } from './vitest.shared.ts'
 
@@ -14,13 +13,12 @@ try {
 }
 
 export default defineConfig({
-  // Same resolution note as vitest.config.ts: the tsconfig.base.json paths
-  // facade has no include (match-all), so apps/web/tests resolves bare
-  // workspace imports to source like every other lane.
-  plugins: [
-    tsconfigPaths({ projects: ['./tsconfig.base.json'] }),
-    standardDecoratorPlugin(),
-  ],
+  // Same resolution contract as vitest.config.ts: bare workspace imports
+  // resolve to source through the tsconfig.base.json paths map.
+  plugins: [standardDecoratorPlugin()],
+  resolve: {
+    tsconfigPaths: true,
+  },
   test: {
     execArgv: vitestExecArgv,
     include: [

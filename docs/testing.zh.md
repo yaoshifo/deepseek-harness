@@ -36,7 +36,7 @@ e2e 断言应重新运行命令或从外部重新读取文件；对 agent 自身
 
 ## 测试解析：仅限源码
 
-- 每个 vitest 配置都将 vite-tsconfig-paths 指向 `tsconfig.base.json`；工作区包的裸导入解析到 `src`（[布局](development.zh.md#typescript-project-layout)），绝不会经由包的 `exports` 解析到构建后的 `lib/`，因为其中的陈旧产物会加载第二份模块单例。构建产物只在显式指定时使用：以 `lib` 模式运行的子进程，以及下文的构建产物冒烟测试。
+- 每个 vitest 配置都启用 Vite 原生的 `resolve.tsconfigPaths`，其「就近查找 + `extends`」发现机制把共享的 `tsconfig.base.json` paths 映射应用到每条测试车道；工作区包的裸导入解析到 `src`（[布局](development.zh.md#typescript-project-layout)），绝不会经由包的 `exports` 解析到构建后的 `lib/`，因为其中的陈旧产物会加载第二份模块单例。构建产物只在显式指定时使用：以 `lib` 模式运行的子进程，以及下文的构建产物冒烟测试。
 
 ## 测试子进程启动模式
 
