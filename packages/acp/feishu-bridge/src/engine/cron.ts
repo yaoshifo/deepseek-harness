@@ -36,39 +36,39 @@ export const defaultCronJobTimeoutMs = 30 * 60_000
 /** A persisted scheduled task (Go CronJob). On-disk keys stay snake_case. */
 export class CronJob {
   /** Unique job id (8 hex chars from {@link generateCronID}). */
-  id = ''
+  id: string = ''
   /** Project (engine) name the job executes on. */
-  project = ''
+  project: string = ''
   /** Key of the chat session the job was created in. */
-  sessionKey = ''
+  sessionKey: string = ''
   /** Standard 5-field cron expression. */
-  cronExpr = ''
+  cronExpr: string = ''
   /** Prompt injected on each run; empty for exec jobs. */
-  prompt = ''
+  prompt: string = ''
   /** Shell command; mutually exclusive with prompt. */
-  exec = ''
+  exec: string = ''
   /** Working directory for exec; empty = agent work_dir. */
-  workDir = ''
+  workDir: string = ''
   /** Optional user label shown in listings; '' falls back to prompt/exec. */
-  description = ''
+  description: string = ''
   /** Whether the scheduler fires this job. */
-  enabled = false
+  enabled: boolean = false
   /** Suppress the start notification; undefined = use the global default. */
   silent: boolean | undefined
   /** Suppress ALL messages (start + result); the job runs silently. */
-  mute = false
+  mute: boolean = false
   /** '' or 'reuse' = share the active session; 'new_per_run' = fresh session each run. */
-  sessionMode = ''
+  sessionMode: string = ''
   /** Permission mode override for this job; '' = project default. */
-  mode = ''
+  mode: string = ''
   /** undefined = default 30m wait; 0 = no limit; >0 = minutes. */
   timeoutMins: number | undefined
   /** Creation time (ISO string; '' = never). */
-  createdAt = ''
+  createdAt: string = ''
   /** Last run time (ISO string; '' = never). */
-  lastRun = ''
+  lastRun: string = ''
   /** Error message of the last run; '' when it succeeded. */
-  lastError = ''
+  lastError: string = ''
 
   /**
    * True when the job runs a shell command directly.

@@ -169,13 +169,13 @@ export class CompactProgressWriter {
    *
    * @internal White-box: ported same-package tests read these.
    */
-  enabled = false
+  enabled: boolean = false
   /**
    * Whether a platform API call failed; later appends are skipped.
    *
    * @internal White-box: ported same-package tests read these.
    */
-  failed = false
+  failed: boolean = false
   /**
    * Normalized progress style for the target platform/reply context.
    *
@@ -187,7 +187,7 @@ export class CompactProgressWriter {
    *
    * @internal White-box: ported same-package tests read these.
    */
-  usePayload = false
+  usePayload: boolean = false
   private readonly async: AsyncSender | undefined
 
   private content = ''

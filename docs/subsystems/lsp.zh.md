@@ -176,7 +176,7 @@ Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnp
 
 ### `ctx.lsp` — `LspService`
 
-The LSP capability seam (`ctx.lsp`). Owns provider registration/selection and normalized query execution; exposes exactly the four operations and no protocol escape hatch.
+The LSP capability seam (`ctx.lsp`). Owns provider registration/selection and normalized query execution; exposes exactly the four position operations plus the name-based workspace symbol lookup, and no protocol escape hatch.
 
 ```ts cordis-catalog
 /**
@@ -196,6 +196,17 @@ registerProvider(provider: LspProvider): () => void
  * @returns the normalized, closed-union result.
  */
 query(request: LspQueryRequest, signal?: AbortSignal): Promise<LspQueryResult>
+
+/**
+ * Fan out one name-based symbol lookup to every registered provider and merge their groups in
+ * registration order — a symbol query has no file extension to route on. A provider whose server
+ * lacks the `workspaceSymbolProvider` capability contributes nothing; if every provider lacks it,
+ * throws `LspError` `LSP_UNSUPPORTED_OPERATION`. No provider registered throws `LSP_UNAVAILABLE`.
+ * @param request - the name-based symbol lookup request.
+ * @param signal - optional cancellation forwarded to every provider.
+ * @returns each supporting provider's symbols and canonical workspace URI, in registration order.
+ */
+symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<readonly LspSymbolResult[]>
 ```
 
 Source: [`packages/lsp/lsp/src/types.ts`](../../packages/lsp/lsp/src/types.ts)

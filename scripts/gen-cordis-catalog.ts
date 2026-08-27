@@ -74,6 +74,7 @@ export const SERVICE_PAGE: Record<string, string> = {
   directoryPicker: 'workspace.md',
   dynamicCordisRunner: 'extensions.md',
   e2b: 'subprocess.md',
+  feishuBridge: 'feishu-bridge.md',
   fileReferences: 'session-reference.md',
   fs: 'filesystem.md',
   goals: 'goal.md',
@@ -181,6 +182,7 @@ export const EVENT_SCOPE_PAGE: Record<string, string> = {
   'authorization': 'credentials.md',
   'credentials': 'credentials.md',
   'domain': 'storage.md',
+  'feishuBridge': 'feishu-bridge.md',
   'fs': 'filesystem.md',
   'goal': 'goal.md',
   'llm': 'llm-streaming.md',
@@ -541,15 +543,19 @@ export const FOUNDATION_TYPE_NAMES: ReadonlySet<string> = new Set([
   'AsyncIterable',
   'Context',
   'Error',
+  'Events',
   'Exclude',
   'Map',
   'NonNullable',
   'Omit',
+  'Parameters',
   'Partial',
   'Pick',
   'Promise',
+  'Promisify',
   'Record',
   'Readonly',
+  'ReturnType',
   'Uint8Array',
 ])
 
@@ -628,6 +634,22 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   WorkflowAgentEndInfo: 'event-local snapshot is owned by packages/workflow/workflow/src/index.ts',
   WorkflowAgentInfo: 'event-local snapshot is owned by packages/workflow/workflow/src/index.ts',
   WorkflowResultInfo: 'event-local snapshot is owned by packages/workflow/workflow/src/index.ts',
+  // The feishuBridge/* dispatch events are the bridge's sibling-plugin seam:
+  // their payload types are bridge-internal engine contracts, documented in
+  // the feishu-bridge package (Agent Note 2026-08-27/29) rather than the
+  // subsystems catalog.
+  AskDecision: 'ask outcome contract is owned by packages/acp/feishu-bridge/src/core/types.ts',
+  AskRequest: 'ask request contract is owned by packages/acp/feishu-bridge/src/core/types.ts',
+  Engine: 'engine class is owned by packages/acp/feishu-bridge/src/engine/engine.ts',
+  InteractiveState: 'turn state record is owned by packages/acp/feishu-bridge/src/engine/engine.ts',
+  PendingAsk: 'parked ask record is owned by packages/acp/feishu-bridge/src/core/types.ts',
+  Platform: 'platform interface is owned by packages/acp/feishu-bridge/src/core/types.ts',
+  SessionStartOptions: 'session start options are owned by packages/acp/feishu-bridge/src/core/types.ts',
+  FeishuBridgeEventName: 'dispatch event key union is owned by packages/acp/feishu-bridge/src/bridge-service.ts',
+  LiveProject: 'live project record is owned by packages/acp/feishu-bridge/src/bridge-service.ts',
+  SubtaskRoute: 'caller routing record is owned by packages/acp/feishu-bridge/src/tools/subtask.ts',
+  LspSymbolRequest: 'symbol lookup request is owned by packages/lsp/lsp/src/types.ts',
+  LspSymbolResult: 'symbol lookup result is owned by packages/lsp/lsp/src/types.ts',
 }
 
 /** Repository data policy consumed by the Cordis catalog projector. */

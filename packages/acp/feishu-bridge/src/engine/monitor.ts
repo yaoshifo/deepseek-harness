@@ -553,39 +553,39 @@ export class MonitorCore {
   // while triage readers run — plain fields are safe in the single-threaded
   // event loop).
   /** Whether monitor mode is enabled. */
-  enabled = false
+  enabled: boolean = false
   /** Raw monitored-chats config value: comma-separated chat IDs, "" (none), or "*". */
-  chats = ''
+  chats: string = ''
   /** Triage mode: "" / "monitor" (alert triage) or "dispatch" (hub routing). */
-  mode = ''
+  mode: string = ''
   /** Rolling context messages fed to LLM triage; 0 disables the context block. */
-  contextWindow = 0
+  contextWindow: number = 0
   /** Whether a card is posted when a subgroup is spawned. */
-  spawnNotice = true
+  spawnNotice: boolean = true
   /** Max concurrent subgroups per monitored chat; 0 = unlimited. */
-  maxConcurrent = 0
+  maxConcurrent: number = 0
   /** Provider name for the LLM triage side query; "" = the active provider. */
-  triageProvider = ''
+  triageProvider: string = ''
   /** Base triage prompt; "" = the mode's default prompt. */
-  triagePrompt = ''
+  triagePrompt: string = ''
   /** Directory menu offered to LLM triage and clarification cards. */
   dirs: MonitorDirEntry[] = []
   /** Deterministic triage rules tried before the LLM. */
   rules: MonitorRuleEntry[] = []
   /** Whether /learn few-shot teaching is active. */
-  learnEnabled = false
+  learnEnabled: boolean = false
   /** Max learned examples fed into the triage prompt. */
-  learnMax = 0
+  learnMax: number = 0
   /** Emoji reacted on message pickup; "" = none. */
-  reactEmoji = ''
+  reactEmoji: string = ''
   /** Polling fallback interval in ms; 0 = off. */
-  pollIntervalMs = 0
+  pollIntervalMs: number = 0
   /** The /learn example store, when learning is configured. */
   examples: MonitorExampleStore | undefined
   /** Whether same-dir alerts coalesce into the active subgroup. */
-  coalesceEnabled = false
+  coalesceEnabled: boolean = false
   /** How recent (ms) a subgroup spawn stays coalescible. */
-  coalesceWindowMs = 0
+  coalesceWindowMs: number = 0
 
   /** Injected config persistence (Go monitorSaveChats/monitorSaveMode; undefined = skip persist). */
   saveChats: ((chats: string) => void) | undefined

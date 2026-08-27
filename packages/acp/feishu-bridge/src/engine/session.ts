@@ -47,53 +47,53 @@ function nowISO(): string {
  */
 export class Session {
   /** Internal session ID (Go ID), e.g. 's1'. */
-  id = ''
+  id: string = ''
   /** Display name of the session. */
-  name = ''
+  name: string = ''
   /** Agent-side session ID currently mapped to this session ('' when none). */
-  agentSessionID = ''
+  agentSessionID: string = ''
   /** Agent type that produced the current agentSessionID ('' when none). */
-  agentType = ''
+  agentType: string = ''
   /** Session key of the parent that spawned this subtask child ('' at top level). */
-  parentSessionKey = ''
+  parentSessionKey: string = ''
   /** Display label of the parent conversation used on subtask reply cards. */
-  parentChatName = ''
+  parentChatName: string = ''
   /** Nesting depth of this session in the subtask tree (0 = top level). */
-  subtaskDepth = 0
+  subtaskDepth: number = 0
   /** Whether a human is present in this subtask (attended subtask). */
-  subtaskAttended = false
+  subtaskAttended: boolean = false
   /** User ID owning the chat this session was spawned from; inherited by /new. */
-  spawnUserID = ''
+  spawnUserID: string = ''
   /** Marks the monitored-chat session: parent replies post a card only and never wake an agent. */
-  monitorGroup = false
+  monitorGroup: boolean = false
   /** Message ID of the alert that spawned the monitor child, for the later Done reaction; in-memory only. */
-  monitorOriginMessageID = ''
+  monitorOriginMessageID: string = ''
   /** Whether this session is a child spawned for a monitored chat. */
-  monitorChild = false
+  monitorChild: boolean = false
   /** Whether this subtask child already reported its result to the parent. */
-  subtaskReported = false
+  subtaskReported: boolean = false
   /** Whether the one-shot auto-report at turn end is suppressed for this child. */
-  subtaskAutoReportSuppressed = false
+  subtaskAutoReportSuppressed: boolean = false
   /** Whether this monitor-spawned subgroup must skip reporting its per-turn output. */
-  subtaskNoReport = false
+  subtaskNoReport: boolean = false
   /** Whether the user interjected mid-turn; exempts the session from auto-render suppression. */
-  userInterjected = false
+  userInterjected: boolean = false
   /** Clean final SDK result of the last completed turn ('' when none). */
-  lastResult = ''
+  lastResult: string = ''
   /** Absolute path of the session's git worktree ('' when none). */
-  worktreePath = ''
+  worktreePath: string = ''
   /** Branch checked out in the session's worktree. */
-  worktreeBranch = ''
+  worktreeBranch: string = ''
   /** Base ref the worktree branch forked from. */
-  worktreeBase = ''
+  worktreeBase: string = ''
   /** Branch HEAD was on when the worktree was created; the default /done containment target ('' when unknown). */
-  worktreeBaseBranch = ''
+  worktreeBaseBranch: string = ''
   /** Repository root the worktree was created under. */
-  worktreeRepoRoot = ''
+  worktreeRepoRoot: string = ''
   /** Agent session IDs previously held by this session, so owned-session filtering keeps recognizing them. */
   pastAgentSessionIDs: string[] = []
   /** Message ID of the chat's pinned top-notice banner, cleared when replaced. */
-  topNoticeMessageID = ''
+  topNoticeMessageID: string = ''
   /**
     * Opaque per-plugin feature state, persisted as the `featureState` object
     * of the version-3 snapshot. The bridge stores and carries sections
@@ -110,7 +110,7 @@ export class Session {
    */
   private pendingMonitorClarification: import('./monitor.js').MonitorClarification | undefined
   /** Permission mode pinned for a /spawn //fork child; in-memory only (Go InheritedMode). */
-  inheritedMode = ''
+  inheritedMode: string = ''
   /** Armed subtask gather barrier on a parent session; in-memory only (Go PendingSubtaskGather). */
   pendingSubtaskGather: import('./subtask.js').SubtaskGather | undefined
   /**
@@ -122,9 +122,9 @@ export class Session {
    */
   private gatherWaiter: ((summary: string) => void) | undefined
   /** ISO timestamp recorded at session creation. */
-  createdAt = nowISO()
+  createdAt: string = nowISO()
   /** ISO timestamp of the latest mutation. */
-  updatedAt = nowISO()
+  updatedAt: string = nowISO()
 
   /**
    * Adopt the chat-scoped state of the record this one replaces. Session

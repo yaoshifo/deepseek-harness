@@ -31,17 +31,17 @@ const execFileP = promisify(execFile)
 /** Mutable per-turn display fields consumed by the status footer (Go engine fields). */
 export class CompletionUsageFields {
   /** ctx token usage line (📊). */
-  ctxMsg = ''
+  ctxMsg: string = ''
   /** cache hit usage line (🍵). */
-  hitMsg = ''
+  hitMsg: string = ''
   /** provider quota summary with the 💰 prefix (⌛ line shows it stripped). */
-  providerMsg = ''
+  providerMsg: string = ''
   /** RAM/disk usage line (💾, Go completionUsageMsg). */
-  memMsg = ''
+  memMsg: string = ''
   /** agent processing time (header suffix, Go completionAgentDurationMsg). */
-  agentDurationMsg = ''
+  agentDurationMsg: string = ''
   /** token rate, e.g. "142 t/s" (header suffix, Go completionTokenRateMsg). */
-  tokenRateMsg = ''
+  tokenRateMsg: string = ''
 }
 
 /** Turn-token accounting passed to {@link buildCompletionUsage}. */

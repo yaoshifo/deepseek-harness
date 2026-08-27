@@ -41,11 +41,11 @@ export interface GatherTimeoutResult {
  */
 export class SubtaskGather {
   /** Child session keys still expected to report. */
-  readonly expected = new Map<string, boolean>()
+  readonly expected: Map<string, boolean> = new Map<string, boolean>()
   /** Child key → trimmed result. */
-  readonly collected = new Map<string, string>()
+  readonly collected: Map<string, string> = new Map<string, string>()
   /** Child key → display label (for the summary). */
-  readonly labels = new Map<string, string>()
+  readonly labels: Map<string, string> = new Map<string, string>()
   /** Fallback wake; stopped on early completion (Go timer). */
   timer: ReturnType<typeof setTimeout> | undefined
   /** One-shot: at most one wake. */

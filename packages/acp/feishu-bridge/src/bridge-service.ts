@@ -174,14 +174,33 @@ export class FeishuBridgeService extends Service implements BridgeDispatch {
     return undefined
   }
 
+  /**
+   * Dispatch a `feishuBridge/*` event to every listener on the context bus.
+   * @param name - The event key.
+   * @param args - The listener arguments (the built-in base is the last one).
+   */
   emit<K extends FeishuBridgeEventName>(name: K, ...args: Parameters<Events[K]>): void {
     this.ctx.emit(name, ...args)
   }
 
+  /**
+   * Dispatch a `feishuBridge/*` waterfall: listeners run in order until one
+   * bails with a decision.
+   * @param name - The event key.
+   * @param args - The listener arguments (the built-in base is the last one).
+   * @returns The first bail value, or the base behavior's result.
+   */
   waterfall<K extends FeishuBridgeEventName>(name: K, ...args: Parameters<Events[K]>): ReturnType<Events[K]> {
     return this.ctx.waterfall(name, ...args)
   }
 
+  /**
+   * Dispatch a `feishuBridge/*` event serially, awaiting every listener in
+   * order.
+   * @param name - The event key.
+   * @param args - The listener arguments (the built-in base is the last one).
+   * @returns The first bail value, or the base behavior's result.
+   */
   serial<K extends FeishuBridgeEventName>(name: K, ...args: Parameters<Events[K]>): Promisify<ReturnType<Events[K]>> {
     return this.ctx.serial(name, ...args)
   }

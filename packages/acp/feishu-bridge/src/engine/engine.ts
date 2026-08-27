@@ -284,65 +284,65 @@ export class InteractiveState {
   /** Resolves once a concurrent cleanup finished closing the agent session. */
   closing: Promise<void> | undefined
   /** Whether markStopped fired (engine stop or session teardown). */
-  stopped = false
+  stopped: boolean = false
   /** Whether the user requested the stop (/stop, /new, /switch). */
-  userStopped = false
+  userStopped: boolean = false
   /** Whether engine.stop() is closing this turn (plugin reload or shutdown), not an agent crash. */
-  engineStopped = false
+  engineStopped: boolean = false
   /** Whether the engine-stop reload notice already went out for this state. */
-  stopNoticeSent = false
+  stopNoticeSent: boolean = false
   /** Messages queued while a turn was running. */
   pendingMessages: QueuedMessage[] = []
   /** The queued message currently driving a drained turn, if any. */
   inflightMessage: QueuedMessage | undefined
   /** Last proactive side-channel text, for result-path duplicate suppression. */
-  sideText = ''
+  sideText: string = ''
   /** Whether the event channel must be drained before the next turn. */
-  eventsNeedResync = true
+  eventsNeedResync: boolean = true
   /** Mode override injected at session start; '' = none. */
-  effectiveMode = ''
+  effectiveMode: string = ''
   /** Per-state idle-timeout override; 0 falls back to the engine default. */
-  effectiveIdleTimeout = 0
+  effectiveIdleTimeout: number = 0
   /** Timestamp of the last activity, feeding the idle reaper. */
-  lastActivity = Date.now()
+  lastActivity: number = Date.now()
   /** Turns currently in flight on this state. */
-  activeTurns = 0
+  activeTurns: number = 0
   /** Timestamp of the last agent event, for stall confirmation. */
-  lastEventAt = 0
+  lastEventAt: number = 0
   /** Tool calls in flight; a positive count pauses the idle timer. */
-  activeToolCalls = 0
+  activeToolCalls: number = 0
   /** Monotonic per-state turn counter. */
-  turnSeq = 0
+  turnSeq: number = 0
   /** Whether the current turn's message arrived via voice. */
-  fromVoice = false
+  fromVoice: boolean = false
   /** The current turn's fully built prompt. */
-  lastPrompt = ''
+  lastPrompt: string = ''
   /** The parked ask awaiting the user's card or text response (B2). */
   pendingAsk: PendingAsk | undefined
   /** Number of auto-compaction events this session (Go state.compactionCount). M3. */
-  compactionCount = 0
+  compactionCount: number = 0
   /** Cumulative non-cached input tokens across turns (Go state.cumulativeInputTokens). M7. */
-  cumulativeInputTokens = 0
+  cumulativeInputTokens: number = 0
   /** Cumulative cache-hit input tokens across turns (Go state.cumulativeCacheInputTokens). M7. */
-  cumulativeCacheInputTokens = 0
+  cumulativeCacheInputTokens: number = 0
   /** Handle of the last ✅ completion notification card (Go state.notificationHandle). M7. */
   notificationHandle: unknown
   /** Footer text of the last completion notification (Go state.notificationFooterMsg). M7. */
-  notificationFooterMsg = ''
+  notificationFooterMsg: string = ''
   /** Footer elements of the last completion notification (Go state.notificationFooterElements). M7. */
   notificationFooterElements: CardElement[] = []
   /** Header suffix of the last completion notification (Go state.notificationHeaderSuffix). M7. */
-  notificationHeaderSuffix = ''
+  notificationHeaderSuffix: string = ''
   /** True while a predict-next fork is in-flight for this session (Go state). */
-  predictNextRunning = false
+  predictNextRunning: boolean = false
   /** True once the user clicked 屏蔽; reset on /new (Go state.predictNextDisabled). */
-  predictNextDisabled = false
+  predictNextDisabled: boolean = false
   /** True while a turn-summary fork is in-flight for this session (Go state). */
-  turnSummaryRunning = false
+  turnSummaryRunning: boolean = false
   /** Timestamp of the last auto compression (Go state.lastAutoCompressAt). */
-  lastAutoCompressAt = 0
+  lastAutoCompressAt: number = 0
   /** Token estimate recorded when the last auto compression armed. */
-  lastAutoCompressTokens = 0
+  lastAutoCompressTokens: number = 0
   /** Per-state async sender serializing platform PATCHes (Go state.sender). */
   sender: AsyncSender | undefined
   /** The turn's active streaming preview (bound for bump routing). */
@@ -352,11 +352,11 @@ export class InteractiveState {
   /** The delete-mode picker state machine (session-card.ts); undefined when idle. */
   deleteMode: import('./session-card.js').DeleteModeState | undefined
   /** run_in_background tool calls whose completion turn has not arrived yet. */
-  backgroundTasksPending = 0
+  backgroundTasksPending: number = 0
   /** When the unsolicited reader began waiting past idle for pending background tasks. */
-  bgWaitStartedAt = 0
+  bgWaitStartedAt: number = 0
   /** When the last foreground (user-driven) turn completed; anchors spillover. */
-  lastForegroundCompletionAt = 0
+  lastForegroundCompletionAt: number = 0
   /** The unsolicited reader parked on this state; undefined when disarmed. */
   unsolicitedReader: UnsolicitedReaderHandle | undefined
 
@@ -368,39 +368,39 @@ export class InteractiveState {
   /** Text segments accumulated this turn (the final-reply source). */
   textParts: string[] = []
   /** Index of the first unflushed text segment. */
-  segmentStart = 0
+  segmentStart: number = 0
   /** Tool calls seen this turn. */
-  toolCount = 0
+  toolCount: number = 0
   /** Whether the current text segment may still turn out silent. */
-  silentHold = false
+  silentHold: boolean = false
   /** Completion-footer timing; generation spans feed the token rate. */
   timing: TurnTiming = { turnStart: 0, agentStart: 0, generationSpans: [] }
   /** Plan .md path written by the agent (promoted on tool success). */
-  planFilePath = ''
+  planFilePath: string = ''
   /** Plan .md path candidate until its write tool call settles. */
-  pendingPlanFilePath = ''
+  pendingPlanFilePath: string = ''
   /** Tool call id of the pending plan write; the result event carries no tool name, so the match rides the id. */
-  pendingPlanToolID = ''
+  pendingPlanToolID: string = ''
   /** Plan content last sent as the plan card (dedup across asks). */
-  sentPlanContent = ''
+  sentPlanContent: string = ''
   /** Plan revision counter for export keys and (vN) card headers. */
-  planRevisionCount = 0
+  planRevisionCount: number = 0
   /** Staging dir for pure-attachment messages awaiting the next text (#8). */
-  pendingDir = ''
+  pendingDir: string = ''
   /** Staged attachments to splice into the next prompt (Go pendingAttachments). */
   pendingAttachments: StagedAttachment[] = []
 
   // ── M7 plan/reply HTML render state (Go interactiveState plan-render fields) ──
   /** A plan render fork is running for this session (Go planRenderRunning). */
-  planRenderRunning = false
+  planRenderRunning: boolean = false
   /** sha256 of the last rendered plan content (Go lastRenderedPlanHash). */
-  lastRenderedPlanHash = ''
+  lastRenderedPlanHash: string = ''
   /** Timestamp of the last plan render (Go lastRenderedPlanAt). */
-  lastRenderedPlanAt = 0
+  lastRenderedPlanAt: number = 0
   /** A speculative reply pre-render is running (Go preRenderRunning). */
-  preRenderRunning = false
+  preRenderRunning: boolean = false
   /** exportKey of the running reply pre-render (Go preRenderingKey). */
-  preRenderingKey = ''
+  preRenderingKey: string = ''
   /** In-flight render fork cancels, drained by cancelRenders (Go renderCancels). */
   renderCancels: RenderCancelHandle[] = []
   /** exportKey → rendered reply HTML temp path; teardown reaps them (Go renderedReplyHTML). */
@@ -412,7 +412,7 @@ export class InteractiveState {
   /** Full reply/plan content per export key for the export buttons (Go exportContent). */
   exportContent: Map<string, string> | undefined
   /** Clean reply text fallback for the export buttons (Go lastBaseResponse). */
-  lastBaseResponse = ''
+  lastBaseResponse: string = ''
 
   private stopWaiters: Array<() => void> = []
 
@@ -840,6 +840,13 @@ export interface CommandRegistration {
  */
 export type CardActionHandler = (sessionKey: string, cmd: string, args: string) => Card | undefined
 
+/** Live state of one background-subtask panel (card handle, refresh timer, post time). */
+interface SubtaskPanelState {
+  handle: unknown
+  timer: ReturnType<typeof setInterval>
+  startedAt: number
+}
+
 /**
  * Engine routes messages between platforms and the agent for a single
  * project (Go Engine, M1 subset).
@@ -856,7 +863,7 @@ export class Engine {
   /** Message catalog for user-facing strings. */
   readonly i18n: I18n
   /** Engine creation timestamp. */
-  readonly startedAt = Date.now()
+  readonly startedAt: number = Date.now()
   /**
    * The `feishuBridge/*` dispatch face: the mounted {@link FeishuBridgeService}
    * in production, or the bare listener-less face when constructed outside a
@@ -877,64 +884,64 @@ export class Engine {
   /** Streaming preview switches (Go e.streamPreview). */
   streamPreview: StreamPreviewCfg = defaultStreamPreviewCfg()
   /** Quiet window after the last im.chat.updated event before a preview bump (Go var). */
-  bumpDebounceInterval = 2000
+  bumpDebounceInterval: number = 2000
   /** Whether prompts get a sender-identity header prepended (Go injectSender). */
-  injectSender = false
+  injectSender: boolean = false
   /** Whether proactive attachment sends are allowed (Go attachmentSendEnabled). */
-  attachmentSendEnabled = true
+  attachmentSendEnabled: boolean = true
   /** Bot's default Feishu workspace routing (#18); undefined = feature off. */
   feishuWorkspace: FeishuWorkspaceInfo | undefined
   /** Idle timeout before a silent turn is killed; 0 disables. */
-  eventIdleTimeout = defaultEventIdleTimeout
+  eventIdleTimeout: number = defaultEventIdleTimeout
   /** Stall retries before the idle kill. */
-  stallMaxRetries = defaultStallMaxRetries
+  stallMaxRetries: number = defaultStallMaxRetries
   /** Explicit per-turn wall-clock cap in ms; used only when set (Go absoluteTurnTimeout). */
   private absoluteTurnTimeout = 0
   /** Whether absoluteTurnTimeout was set explicitly (false = 2× idle fallback). */
   private absoluteTurnTimeoutSet = false
   /** Per-session queued-message cap. */
-  maxQueuedMessages = defaultMaxQueuedMessages
+  maxQueuedMessages: number = defaultMaxQueuedMessages
   /** Rapid-fire queued-message merge window in ms; 0 disables. */
-  debounceInterval = defaultDebounceInterval
+  debounceInterval: number = defaultDebounceInterval
   /** Idle-reaper threshold reclaiming quiet interactive states; 0 disables. */
-  interactiveIdleTimeout = 0
+  interactiveIdleTimeout: number = 0
   /** Live-guard resume retry budget in ms; a resume racing an in-flight agent teardown polls within it. */
   private liveGuardRetryBudgetMs = defaultAgentCloseTimeout
   /** Live-guard resume retry poll interval in ms. */
   private liveGuardRetryIntervalMs = 500
 
   /** Recursive subtask delegation cap override; 0 = defaultSubtaskMaxDepth (Go subtaskMaxDepth). */
-  subtaskMaxDepth = 0
+  subtaskMaxDepth: number = 0
   /** Default worktree isolation for /spawn //fork (Go spawnWorktree). */
   spawnWorktree: WorktreeMode = WorktreeMode.ForceOff
   /** Integrate-branch override for /done merged auto-removal; '' uses each worktree's recorded base branch. */
   private spawnIntegrateBranch = ''
   /** /spawn //fork RAM guard thresholds in percent; 0 disables a tier (Go spawnMemWarnPct/BlockPct). */
-  spawnMemWarnPct = 0
+  spawnMemWarnPct: number = 0
   /** RAM percentage at which /spawn //fork rejects the spawn outright (Go spawnMemBlockPct). */
-  spawnMemBlockPct = 0
+  spawnMemBlockPct: number = 0
   /** Hard timeout for subtask sessions; 0 inherits eventIdleTimeout (Go subtaskTimeout). */
-  subtaskTimeout = 0
+  subtaskTimeout: number = 0
   /** Suppress settlement cards for unattended native subtasks (features.subtaskQuiet). */
-  subtaskQuiet = false
+  subtaskQuiet: boolean = false
   /** Background-subtask live panel: enabled flag (features.subtaskLivePanel). */
-  subtaskPanelEnabled = true
+  subtaskPanelEnabled: boolean = true
   /** Background-subtask live panel refresh interval ms (features.subtaskLivePanelIntervalMs; 0 disables). */
-  subtaskPanelIntervalMs = 15_000
+  subtaskPanelIntervalMs: number = 15_000
   /** Silence window after which a panel row flags a child as stalled. */
-  subtaskPanelStallMs = 120_000
+  subtaskPanelStallMs: number = 120_000
   /** Gather barrier fallback timeout; 0 = defaultSubtaskGatherTimeout (Go subtaskGatherTimeout). */
-  subtaskGatherTimeout = 0
+  subtaskGatherTimeout: number = 0
   /** LLM group-name generation switches (Go groupName* fields). */
-  groupNameEnabled = false
+  groupNameEnabled: boolean = false
   /** Provider route for group-name queries; '' = the active provider. */
-  groupNameProvider = ''
+  groupNameProvider: string = ''
   /** Group-name LLM query deadline in ms; 0 = 30s default. */
-  groupNameTimeout = 0
+  groupNameTimeout: number = 0
   /** Custom group-name prompt template; '' = the default template. */
-  groupNamePrompt = ''
+  groupNamePrompt: string = ''
   /** Whether the LLM's icon is stamped as the group avatar after rename. */
-  groupNameSetAvatar = false
+  groupNameSetAvatar: boolean = false
   /** The monitor domain state machine (Go engine_monitor.go; reached as engine.monitor). */
   readonly monitor: MonitorCore
   /** Cron scheduler shared across engines (Go cronScheduler; null = cron off). */
@@ -944,13 +951,13 @@ export class Engine {
 
   // ── M7 plan/reply HTML render config (Go planRender* fields) ────────────
   /** plan_render enabled (Go planRenderEnabled; opt-in, default off). */
-  planRenderEnabled = false
+  planRenderEnabled: boolean = false
   /** Provider route override for render sessions; '' = active provider (Go planRenderProvider). */
-  planRenderProvider = ''
+  planRenderProvider: string = ''
   /** Render-session fork timeout; 0 = 600s default (Go planRenderTimeout). */
-  planRenderTimeoutMs = 0
+  planRenderTimeoutMs: number = 0
   /** HTML→PNG rasterizer script path; '' = fall back to the .html file (Go planRenderPngScript). */
-  planRenderPngScript = ''
+  planRenderPngScript: string = ''
   /**
    * Resolves the feishu-bridge-render skill body from the dsh skill registry
    * (the single source the render-session prompts inline); undefined = not
@@ -959,22 +966,22 @@ export class Engine {
   planRenderSkillSource: (() => Promise<string | undefined>) | undefined
   // ── plan-file persistence (Claude-Code-aligned plan .md records) ────────
   /** Directory presented plans are written to; '' disables writing. */
-  planDir = joinPath(homedir(), '.claude', 'plans')
+  planDir: string = joinPath(homedir(), '.claude', 'plans')
   // ── usage + status footer (Go engine usage* fields, M7) ─────────────────
   /** Generic fallback context window for heuristic ctx estimates (Go modelContextWindow). */
-  readonly modelContextWindow = 200_000
+  readonly modelContextWindow = 200_000 as const
   /** Whether the ctx/cache lines are shown on the completion footer (Go showContextIndicator). */
-  showContextIndicator = true
+  showContextIndicator: boolean = true
   /** Effective context window in tokens (Go contextWindow). */
-  contextWindow = this.modelContextWindow
+  contextWindow: 200000 = this.modelContextWindow
   /** Project-level fallback window (Go projectContextWindow). */
-  projectContextWindow = this.modelContextWindow
+  projectContextWindow: 200000 = this.modelContextWindow
   /** Provider quota summaries appended to the completion footer (Go usageProviders). */
   usageProviders: UsageProvider[] = []
   /** Per-turn completion footer fields (Go completionUsage* fields). */
-  readonly usage = new CompletionUsageFields()
+  readonly usage: CompletionUsageFields = new CompletionUsageFields()
   /** Whether the Codex-style reply footer is appended to replies (Go replyFooterEnabled). */
-  replyFooterEnabled = false
+  replyFooterEnabled: boolean = false
   /** Agent-level usage fetch cache for the reply footer (Go replyFooterUsageCache). */
   private readonly replyFooterUsageCache = { text: '', fetchedAt: 0 }
 
@@ -984,7 +991,7 @@ export class Engine {
   private recentIcons: string[] = []
 
   /** key = sessionKey (interactiveKey; workspace prefixes arrive in a later M). */
-  readonly interactiveStates = new Map<string, InteractiveState>()
+  readonly interactiveStates: Map<string, InteractiveState> = new Map<string, InteractiveState>()
 
   /**
    * Live background-subtask panels: parent session key → card handle, timer,
@@ -992,10 +999,10 @@ export class Engine {
    * unreported native children (the no-gather escape path); it PATCHes in
    * place and dies when the set settles, the chat drains, or the engine stops.
    */
-  readonly subtaskPanels = new Map<string, { handle: unknown; timer: ReturnType<typeof setInterval>; startedAt: number }>()
+  readonly subtaskPanels: Map<string, SubtaskPanelState> = new Map<string, SubtaskPanelState>()
 
   /** Command names → alias targets (trigger → command). */
-  readonly aliases = new Map<string, string>()
+  readonly aliases: Map<string, string> = new Map<string, string>()
 
   /** Command table injected by registerSessionCommands (engine/commands.ts). */
   commandHandlers: Map<string, (p: Platform, msg: Message, args: string[]) => boolean> | undefined
@@ -1004,7 +1011,7 @@ export class Engine {
   /** Privileged/disabled command gate; true when it replied and handled the line. */
   commandGate: ((cmdID: string, p: Platform, msg: Message) => boolean) | undefined
   /** Help-card group per command registered through registerCommand; the static misc-commands table covers the rest. */
-  readonly commandGroups = new Map<string, CommandHelpGroup>()
+  readonly commandGroups: Map<string, CommandHelpGroup> = new Map<string, CommandHelpGroup>()
   /** Card-button action handlers by command path (registerCardAction registry). */
   private readonly cardActionHandlers = new Map<string, CardActionHandler>()
 
@@ -1071,19 +1078,19 @@ export class Engine {
   /** Click counts ordering the hint buttons; undefined keeps config order (Go e.hintUsage). */
   hintUsage: import('./hint-usage.js').HintUsage | undefined
   /** Base working directory for /dir reset. */
-  baseWorkDir = ''
+  baseWorkDir: string = ''
   /** Comma-separated admin user IDs ('*' = all allowed users; '' = deny). */
-  adminFrom = ''
+  adminFrom: string = ''
   /** Quiet period after which the unsolicited reader disarms (0 = never). */
-  unsolicitedIdleTimeout = 60_000
+  unsolicitedIdleTimeout: number = 60_000
   /** How long a quiet in-flight tool keeps the unsolicited reader alive (0 = unbounded). */
-  unsolicitedToolInFlightTimeout = 30 * 60_000
+  unsolicitedToolInFlightTimeout: number = 30 * 60_000
   /** How long pending background tasks keep the unsolicited reader alive (0 = no grace). */
-  unsolicitedBackgroundGrace = 30 * 60_000
+  unsolicitedBackgroundGrace: number = 30 * 60_000
   /** Events this soon after a foreground completion relay as plain text (0 = disabled). */
-  unsolicitedSpilloverGrace = 0
+  unsolicitedSpilloverGrace: number = 0
   /** Bounded wait for an agent session to close during cleanup and stall retry (Go agentCloseTimeout). */
-  agentCloseTimeout = defaultAgentCloseTimeout
+  agentCloseTimeout: number = defaultAgentCloseTimeout
   /** Per-session inbound rate limiter; undefined = unlimited (Go e.rateLimiter). */
   private rateLimiter: RateLimiter | undefined
   /** Quick provider commands (/strong → provider name; Go providerShortcuts). */
@@ -1093,33 +1100,33 @@ export class Engine {
   /** Persists the active provider name across restarts (Go providerSaveFunc). */
   providerSaveFunc: ((name: string) => void) | undefined
   /** Predict-next config (#33, Go SetPredictNextConfig). */
-  predictNextEnabled = false
+  predictNextEnabled: boolean = false
   /** Provider route for predict-next forks; '' = the active provider. */
-  predictNextProvider = ''
+  predictNextProvider: string = ''
   /** Model override for predict-next forks; '' = the provider default. */
-  predictNextModel = ''
+  predictNextModel: string = ''
   /** Predict-next fork deadline in ms; 0 = the default timeout. */
-  predictNextTimeout = 0
+  predictNextTimeout: number = 0
   /** Prompt template for predict-next forks. */
-  predictNextPrompt = ''
+  predictNextPrompt: string = ''
   /** true = fork the live transcript (resume); false = one-shot compact query. */
-  predictNextResume = false
+  predictNextResume: boolean = false
   /** Turn-summary config (Go SetTurnSummaryConfig). */
-  turnSummaryEnabled = false
+  turnSummaryEnabled: boolean = false
   /** Provider route for turn-summary forks; '' = the active provider. */
-  turnSummaryProvider = ''
+  turnSummaryProvider: string = ''
   /** Turn-summary fork deadline in ms; 0 = the default timeout. */
-  turnSummaryTimeout = 0
+  turnSummaryTimeout: number = 0
   /** Prompt template for turn-summary forks. */
-  turnSummaryPrompt = ''
+  turnSummaryPrompt: string = ''
   /** Auto session rotation after idle (Go SetResetOnIdle); 0 disables. */
-  resetOnIdle = 0
+  resetOnIdle: number = 0
   /** Auto context compression (Go SetAutoCompressConfig). */
-  autoCompressEnabled = false
+  autoCompressEnabled: boolean = false
   /** Token estimate that triggers auto compression; 0 = off. */
-  autoCompressMaxTokens = 0
+  autoCompressMaxTokens: number = 0
   /** Minimum gap between auto compressions in ms. */
-  autoCompressMinGap = 0
+  autoCompressMinGap: number = 0
 
   private reaperTimer: ReturnType<typeof setInterval> | undefined
 
@@ -2068,7 +2075,7 @@ export class Engine {
    * @param limit - trailing-entry bound; <= 0 returns the whole window.
    * @returns the trailing window entries, oldest first.
    */
-  async recentTurns(agentSessionID: string, limit = 0): Promise<HistoryEntry[]> {
+  async recentTurns(agentSessionID: string, limit: number = 0): Promise<HistoryEntry[]> {
     if (agentSessionID === '') return []
     const reader = asRecentTurnsReader(this.agent)
     if (reader === undefined) return []
@@ -2084,7 +2091,7 @@ export class Engine {
    * @param limit - trailing-entry bound; <= 0 returns the whole window.
    * @returns the trailing window entries, oldest first.
    */
-  async recentTurnsOf(sessionKey: string, session: Session, limit = 0): Promise<HistoryEntry[]> {
+  async recentTurnsOf(sessionKey: string, session: Session, limit: number = 0): Promise<HistoryEntry[]> {
     return this.recentTurns(this.activeAgentSessionID(sessionKey, session), limit)
   }
 
@@ -2292,7 +2299,7 @@ export class Engine {
    * @param session - Locked session the turn runs under.
    * @param interactiveKey - Interactive-state slot key; defaults to msg.sessionKey.
    */
-  async processInteractiveMessageWith(p: Platform, msg: Message, session: Session, interactiveKey = msg.sessionKey): Promise<void> {
+  async processInteractiveMessageWith(p: Platform, msg: Message, session: Session, interactiveKey: string = msg.sessionKey): Promise<void> {
     let unlocked = false
     try {
       // A new user turn takes the event channel back from the unsolicited
@@ -2635,8 +2642,8 @@ export class Engine {
     p: Platform,
     replyCtx: unknown,
     session: Session,
-    modeOverride = '',
-    envKey = sessionKey,
+    modeOverride: string = '',
+    envKey: string = sessionKey,
   ): Promise<InteractiveState> {
     // Wait out a concurrent teardown so two agents never resume the same
     // session id concurrently.
@@ -2885,7 +2892,7 @@ export class Engine {
     sendDone: Promise<unknown> | undefined,
     replyCtx: unknown,
     firstEvent?: Event,
-    background = false,
+    background: boolean = false,
   ): Promise<void> {
     // Turn surfaces live on the state (see InteractiveState): the ask
     // delegate running from the adapter's answerer shares them with the
@@ -7632,7 +7639,7 @@ export class Engine {
     fallbackTitle: string,
     extraNote: string,
     jumpMD: CardMarkdownLike,
-    sessionKey = '',
+    sessionKey: string = '',
   ): Promise<Card> {
     const { headerSuffix, elements } = await this.buildStatusFooterElements(this.agent, workDir, '', sessionKey)
     const title = headerSuffix !== '' ? headerSuffix : fallbackTitle
@@ -8029,7 +8036,7 @@ export class Engine {
    * @param mergedInto - Integration branch the commits already landed in; ''
    * reports the plain removal message instead of the merged variant.
    */
-  async finishWorktreeRemoval(p: Platform, replyCtx: unknown, sessionKey: string, force: boolean, mergedInto = ''): Promise<void> {
+  async finishWorktreeRemoval(p: Platform, replyCtx: unknown, sessionKey: string, force: boolean, mergedInto: string = ''): Promise<void> {
     const sess = this.sessions.getOrCreateActive(sessionKey)
     const [path, branch, , root] = sess.getWorktreeInfo()
     if (path === '') return

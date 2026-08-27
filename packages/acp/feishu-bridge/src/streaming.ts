@@ -109,35 +109,35 @@ const runeCount = (s: string): number => Array.from(s).length
  */
 export class ProgressEntry {
   /** Fully rendered text for non-tool entries (thinking). */
-  text = ''
+  text: string = ''
   /** Tool entry: "**HH:MM:SS**" header (timestamp only, tag at render time). */
-  header = ''
+  header: string = ''
   /** Tool entry: code block content (without backticks). */
-  body = ''
+  body: string = ''
   /** Tool entry: code block language ("bash" or ""). */
-  lang = ''
+  lang: string = ''
   /** tool_use id for matching call to result. */
-  toolID = ''
+  toolID: string = ''
   /** Tool entry: result text (appended with --- separator). */
-  result = ''
+  result: string = ''
   /** Tool entry: whether the recorded result succeeded (rendered 🟢 vs 🔴). */
-  success = false
+  success: boolean = false
   /** Tool entry: whether a result has been recorded. */
-  hasResult = false
+  hasResult: boolean = false
   /** True for tool call entries (can receive result update). */
-  isTool = false
+  isTool: boolean = false
   /** True for thinking entries (rendered as plain text, 5 lines). */
-  isThinking = false
+  isThinking: boolean = false
   /** True for compaction entries (counted in summary line). */
-  isCompact = false
+  isCompact: boolean = false
   /** Tool call sequence number within this turn (0 = not assigned). */
-  seq = 0
+  seq: number = 0
   /** Full tool name when header name was truncated. */
-  fullName = ''
+  fullName: string = ''
   /** Raw tool name for dynamic truncation at render time. */
-  toolName = ''
+  toolName: string = ''
   /** Skill 工具条目：调用的 skill 名；空则走通用 toolTagForProgress。 */
-  skillName = ''
+  skillName: string = ''
 
   constructor(init: Partial<ProgressEntry> = {}) {
     Object.assign(this, init)
@@ -461,7 +461,7 @@ export class StreamPreview {
    * Full text accumulated from EventText events.
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  fullText = ''
+  fullText: string = ''
   private lastSentText = ''
   private lastSentAt = 0
   private lastSentViaUpdate = false
@@ -474,12 +474,12 @@ export class StreamPreview {
    * True once the preview stopped sending updates (patch failures, freeze, or terminal state).
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  degraded = false
+  degraded: boolean = false
   /**
    * Consecutive UpdateMessage failures; reaching maxConsecutivePatchFailures degrades the preview.
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  failedPatchStreak = 0
+  failedPatchStreak: number = 0
 
   private progressMode = false
   /**
@@ -502,30 +502,30 @@ export class StreamPreview {
    * Latest EventText chunk shown in the 实时播报 section.
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  analysisText = ''
+  analysisText: string = ''
   /**
    * True when the card shows a truncated 实时播报 and the full answer is delivered out-of-band.
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  analysisTruncated = false
+  analysisTruncated: boolean = false
   private thinkingText = ''
   /**
    * True once the completed terminal card was rendered.
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  completed = false
+  completed: boolean = false
   /**
    * True once the failed terminal card was rendered.
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  failed = false
+  failed: boolean = false
   /**
    * True once a stopped (⏹) terminal card render was initiated. Both the
    * event loop's stop arm and stopInteractiveSession's synchronous finalize
    * race to render it; the loser must not PATCH the card again.
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  stoppedCardRendered = false
+  stoppedCardRendered: boolean = false
   private todoItems: TodoItem[] = []
   private bgTaskHint = ''
   private subagentCount = 0
@@ -553,7 +553,7 @@ export class StreamPreview {
    * Timestamp of the last progress-card PATCH (throttle reference).
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  lastProgressFlush = 0
+  lastProgressFlush: number = 0
 
   /** Session this preview belongs to (bump routing). */
   readonly sessionKey: string
