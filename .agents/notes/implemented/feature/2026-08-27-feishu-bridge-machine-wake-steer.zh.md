@@ -17,6 +17,7 @@ Status: implemented
 - **footer 实时化**：`refreshSubtaskFooter` 在子任务 `reported` 置位时（汇报、结算、interrupt）重算 `pendingNativeChildrenOf` 并 PATCH live 卡提示，对齐 turn 结束重算的 background-task 交互规则。
 - **`followupChild` 补 signal**：传 `AbortSignal.timeout(startContinuableTimeoutMs)`，与 `reportChildToNativeParent` 一致；runtime 冷复活臂必需它。
 - **`list_agents` 图例**：每个非空渲染追加一行状态图例，杜绝裸 `[ready]` 被误读为「排队执行中」。
+- **重启恢复**（`recoverInterruptedNativeChildren`，挂在 platforms-ready）：子级 epoch 跑在 daemon 进程里，重启即静默死亡——`subagent/end` 永不发出，记录永远 `reported: false`，footer 数幻影，对着死子任务 arm 的 gather 会空等到超时。恢复是聊天室屏障恢复的子任务对等物：所有未汇报且无活 agent 的子级（经新增的可选 `ContinuableDelegator.childLive` 探测——HMR 重建但 runtime 存活时运行中的子级不受影响）被结算，其父群收到红色警示卡 + 经机器唤醒缝的通知——父 agent 得知这些子级可复活（`send` 会重新置 `reported: false`）或可忽略。无会话记录的父群静默结算，`/done` 仍能 drain 其记录。
 
 ## 已考虑的替代方案
 
@@ -29,4 +30,5 @@ Status: implemented
 - 机器唤醒到达忙碌回合改为 mid-turn（快于排队后 drain）、在 step 边界成批消费、是持久 session 事件（steer 的 splice 落 log），从此不可能撞队列上限、不可能因 daemon 重启丢失。队列的 📬 提示、5 条上限、内存存储只约束人消息（README Known Limitations 记录了重启丢失边界与 cron 例外）。
 - 并发子任务数量处处无上限（runtime、gather 期望集、steer 批量）；事故里的「5」是人消息队列泄漏到机器流量，不是子任务上限。`maxDepth`（默认 3）只管嵌套深度。
 - 改动前已持久化的子任务的 descriptor 里可能仍带原生 `report` 工具；存量子任务若调用它会像从前一样双投递，直到被 drain。新子任务看不到该工具。
-- 测试：`engine-subtask.spec.ts` 的 `deliverMachineMessage` 三态 + footer 刷新；`tests/agent-dsh/adapter-followup-signal.spec.ts` 的 followup-signal 回归；tool-subagent-control 的 list-agents 图例。阻塞 gather 三态、结算词汇、REAL-composition 用例原样通过——它们是「本改动补全而非反转 2026-08-27 设计」的回归证明。
+- 带在途子任务的重启现在会结算其记录并唤醒各父群一次；本改动之前这些记录永远停留在 `reported: false`（footer 幻影计数、gather 对永不可能汇报的子任务空等超时）。
+- 测试：`engine-subtask.spec.ts` 的 `deliverMachineMessage` 三态 + footer 刷新 + 重启恢复用例；`tests/agent-dsh/adapter-followup-signal.spec.ts` 的 followup-signal 回归；tool-subagent-control 的 list-agents 图例。阻塞 gather 三态、结算词汇、REAL-composition 用例原样通过——它们是「本改动补全而非反转 2026-08-27 设计」的回归证明。

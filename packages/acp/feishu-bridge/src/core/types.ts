@@ -936,6 +936,16 @@ export interface ContinuableDelegator {
    * @param content - the report text.
    */
   reportChildToNativeParent(childId: string, content: string): Promise<void>
+  /**
+   * Whether one native child has a live agent in the runtime registry —
+   * false when the child is settled to storage (interrupted, finished, or
+   * never started). Restart recovery uses it to distinguish a child still
+   * running (for example after an HMR rebuild left the runtime alive) from
+   * one whose epoch died with the old process. Optional: a delegator
+   * without the probe reports nothing live.
+   * @param childId - the durable native child session id.
+   */
+  childLive?(childId: string): boolean
 }
 
 /**

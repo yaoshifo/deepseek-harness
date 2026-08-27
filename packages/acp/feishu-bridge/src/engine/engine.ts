@@ -1434,7 +1434,81 @@ export class Engine {
     }
     // Chatroom barriers restored from disk close here, once platforms can
     // deliver the wakes: every reply they awaited died with the old process.
+    this.recoverInterruptedNativeChildren()
     this.bridge.emit('feishuBridge/platforms-ready', { engine: this })
+  }
+
+  /**
+   * Restart recovery for native subtasks — the subtask counterpart of the
+   * chatroom barrier recovery below. A child epoch runs in this process, so
+   * a daemon restart kills it silently: `subagent/end` never fires, the
+   * parentage record keeps `reported: false` forever, the live card counts
+   * phantom children, and a gather armed on them blocks to its timeout
+   * naming children that can never report. At platforms-ready (once cards
+   * and wakes can be delivered) every unreported child that has no live
+   * agent is accounted for: its record is settled, and the parent chat
+   * receives a warning card plus a machine-message notice through
+   * {@link deliverMachineMessage} so the parent agent knows the children
+   * can be resumed (`send`) or abandoned. A child that IS live — an HMR
+   * rebuild that kept the subagent runtime alive — is left untouched.
+   */
+  private recoverInterruptedNativeChildren(): void {
+    const entries = this.nativeChildEntries()
+    const delegator = asContinuableDelegator(this.agent)
+    const interrupted = new Map<string, Array<{ childId: string; label: string; worktree: string }>>()
+    for (const [childId, rec] of Object.entries(entries)) {
+      if (rec.reported) continue
+      if (delegator?.childLive?.(childId) === true) continue
+      // Settle the record first. A later `send` re-arms `reported: false` on
+      // its own, so a child resumed after this recovery still reports its
+      // new epoch; but a settlement racing this loop must not fire after the
+      // notice already declared the child interrupted.
+      this.updateNativeChild(childId, { reported: true })
+      const bucket = interrupted.get(rec.parent_key) ?? []
+      bucket.push({ childId, label: rec.label, worktree: rec.worktree_path })
+      interrupted.set(rec.parent_key, bucket)
+    }
+    if (interrupted.size === 0) return
+    this.projectState?.save()
+    const p = this.reportCapablePlatform()
+    if (p === undefined) {
+      console.warn('subtask: restart recovery has no platform to deliver notices')
+      return
+    }
+    const r = asReplyContextReconstructor(p)
+    for (const [parentKey, children] of interrupted) {
+      // Non-creating lookup: a parent chat with no session record cannot be
+      // woken; its children stay settled and /done still drains the records.
+      if (this.sessions.findActive(parentKey) === undefined) {
+        console.warn(`subtask: restart recovery skipped a parent with no session (${parentKey}: ${children.length} child/children)`)
+        continue
+      }
+      const listing = children
+        .map(c => `- ${c.label} (session ${c.childId}${c.worktree !== '' ? `, worktree ${c.worktree}` : ''})`)
+        .join('\n')
+      void r?.reconstructReplyCtx(parentKey).then(
+        (parentRctx) => {
+          void this.sendAsCard(p, parentRctx, this.i18n.tf(Msg.SubtaskRestartNotice, listing), {
+            title: this.i18n.t(Msg.SubtaskRestartCardTitle),
+            color: 'red',
+          }).catch((error: unknown) => {
+            console.warn(`subtask: restart recovery card failed (${parentKey}): ${String(error)}`)
+          })
+          this.deliverMachineMessage(p, {
+            ...emptyMessage(),
+            sessionKey: parentKey,
+            platform: p.name(),
+            userName: '[子任务]',
+            content: this.i18n.tf(Msg.SubtaskRestartNotice, listing),
+            replyCtx: parentRctx,
+          })
+        },
+        (error: unknown) => {
+          console.warn(`subtask: restart recovery reconstruct ctx failed (${parentKey}): ${String(error)}`)
+        },
+      )
+    }
+    console.info(`subtask: restart recovery settled ${interrupted.size} parent chat(s) with interrupted children`)
   }
 
   /**

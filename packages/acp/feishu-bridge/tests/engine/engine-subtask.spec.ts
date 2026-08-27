@@ -2077,3 +2077,88 @@ describe('deliverMachineMessage (machine wake seam, 2026-08-27 oc_56801302)', ()
     expect(hints).toEqual([''])
   })
 })
+
+describe('recoverInterruptedNativeChildren (restart recovery)', () => {
+  const parentKey = 'test:restart-parent:u1'
+
+  function recoveryEngine(p: Platform, liveChildren: string[] = []): {
+    e: Engine
+    agentSession: ControllableAgentSession
+  } {
+    const agent = createDelegatorAgent()
+    agent.childLive = (childId: string) => liveChildren.includes(childId)
+    const e = newSubtaskTestEngine(p, agent)
+    e.setProjectStateStore(new ProjectStateStore(''))
+    e.sessions.getOrCreateActive(parentKey)
+    const agentSession = newControllableSession('parent-live-1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'parent-rctx'
+    e.interactiveStates.set(parentKey, state)
+    return { e, agentSession }
+  }
+
+  function seedChild(e: Engine, childId: string, parent: string, reported: boolean): void {
+    e.projectState?.setNativeChild(childId, {
+      parent_key: parent,
+      parent_agent_session_id: 'parent-native-1',
+      label: `task ${childId}`,
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported,
+    })
+  }
+
+  it('settles interrupted children, posts the warning card, and wakes the parent', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agentSession } = recoveryEngine(p)
+    seedChild(e, 'child-a', parentKey, false)
+    seedChild(e, 'child-b', parentKey, false)
+    seedChild(e, 'child-reported', parentKey, true)
+
+    void e.start()
+
+    await settle()
+    await settle()
+    expect(e.nativeChildEntries()['child-a']?.reported).toBe(true)
+    expect(e.nativeChildEntries()['child-b']?.reported).toBe(true)
+    // Already-reported children are untouched — no double accounting.
+    expect(e.nativeChildEntries()['child-reported']?.reported).toBe(true)
+    // The idle parent is woken through the machine-message pipeline, so the
+    // agent turn machinery — not steer — delivers the notice.
+    expect(agentSession.steerCalls.length).toBe(0)
+    expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('child-a')
+    expect(cardBody(p.sentCards[0])).toContain('child-b')
+  })
+
+  it('leaves a live child alone (an HMR rebuild that kept the runtime alive)', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = recoveryEngine(p, ['child-live'])
+    seedChild(e, 'child-live', parentKey, false)
+    seedChild(e, 'child-dead', parentKey, false)
+
+    void e.start()
+
+    await settle()
+    await settle()
+    expect(e.nativeChildEntries()['child-live']?.reported).toBe(false)
+    expect(e.nativeChildEntries()['child-dead']?.reported).toBe(true)
+    expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('child-dead')
+    expect(cardBody(p.sentCards[0])).not.toContain('child-live')
+  })
+
+  it('settles records whose parent chat has no session without delivering', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = recoveryEngine(p)
+    seedChild(e, 'child-ghost', 'test:no-such-parent:u1', false)
+
+    void e.start()
+
+    await settle()
+    await settle()
+    expect(e.nativeChildEntries()['child-ghost']?.reported).toBe(true)
+    expect(p.sentCards.length).toBe(0)
+  })
+})

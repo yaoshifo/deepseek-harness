@@ -1204,6 +1204,17 @@ export class DshAgentAdapter {
   }
 
   /**
+   * ContinuableDelegator: whether one native child has a live agent. Restart
+   * recovery relies on this to leave a still-running child (an HMR rebuild
+   * that kept the runtime alive) out of its interrupted set.
+   *
+   * @param childId - the durable native child session id.
+   */
+  childLive(childId: string): boolean {
+    return this.ctx.agents.get(SessionId(childId)) !== undefined
+  }
+
+  /**
    * ForkQuerierWithProvider: a standalone one-shot turn without resuming
    * anything (Go LightweightQuery — group naming, predict-next): the context
    * lives in the prompt itself. The query runs bare — session origin
