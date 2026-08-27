@@ -24,11 +24,16 @@
     "./invariant": {
       "types": "./lib/types/invariant.d.ts",
       "default": "./lib/invariant.js"
+    },
+    "./exports": {
+      "types": "./lib/types/exports.d.ts",
+      "default": "./lib/exports.js"
     }
   },
   "files": [
     "lib/index.js",
     "lib/invariant.js",
+    "lib/exports.js",
     "cordis.patch.yml",
     "skills",
     "lib/types/**/*.d.ts"

@@ -156,6 +156,9 @@
       // group prefix with a dedicated wildcard per group instead.
       "@deepseek-ai/dsh-host-*/invariant": ["./packages/host/*/src/invariant.ts"],
       "@deepseek-ai/dsh-client-*/invariant": ["./packages/client/*/src/invariant.ts"],
+      // Plugin-extension faces (the sibling-plugin import surface; see
+      // feishu-bridge's src/exports.ts) resolve the same way as invariants.
+      "@deepseek-ai/dsh-*/exports": ["./packages/core/*/src/exports.ts", "./packages/acp/*/src/exports.ts"],
       "@deepseek-ai/dsh-headless/startup": ["./packages/bundle/headless/src/startup.ts"],
       "@deepseek-ai/dsh-web-app/startup": ["./packages/bundle/web-app/src/startup.ts"],
       "@deepseek-ai/dsh-client-*/client": ["./packages/client/*/src/client"],
