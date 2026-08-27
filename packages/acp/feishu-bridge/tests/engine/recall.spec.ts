@@ -36,8 +36,7 @@ function queued(p: Platform, messageID: string, content: string): QueuedMessage 
     userName: '',
     msgPlatform: 'test',
     msgSessionKey: 'test:chat-1:user-1',
-    chatroomAskSeq: 0,
-    chatroomAwaitAssistant: false,
+    metadata: undefined,
   }
 }
 

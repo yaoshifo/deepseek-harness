@@ -60,7 +60,7 @@ function mcpClientConfig(command: string, args: string[]): McpClientConfig {
 }
 
 function applyBridge(ctx: CordisContext): void {
-  entry.apply(ctx, {
+  void entry.apply(ctx, {
     projects: [],
     providers: {},
     dataDir: mkdtempSync(join(tmpdir(), 'fb-mcp-health-mcp-')),

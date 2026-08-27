@@ -42,12 +42,10 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
-    "@deepseek-ai/dsh-feishu-bridge": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
-    "@deepseek-ai/dsh-feishu-bridge": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^"
   }
 }
