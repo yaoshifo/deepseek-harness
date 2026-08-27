@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import Lsp, { LspProviderId, type LspProvider, type LspProviderQuery, type LspQueryResult } from '@deepseek-ai/dsh-lsp'
+import Lsp, { LspError, LspProviderId, type LspProvider, type LspProviderQuery, type LspQueryResult, type LspSymbolRequest, type LspSymbolResult } from '@deepseek-ai/dsh-lsp'
 import * as ToolLsp from '@deepseek-ai/dsh-tool-lsp'
 import { DEFAULT_LSP_TOOL_TIMEOUT_MS, LSP_PROMPT_TEXT } from '@deepseek-ai/dsh-tool-lsp'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
@@ -13,15 +13,22 @@ import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 function stubProvider(
   respond: (request: LspProviderQuery) => LspQueryResult,
   extensionToLanguage: Record<string, string> = { '.ts': 'typescript' },
-): LspProvider & { seen: LspProviderQuery[] } {
+  respondSymbol: (request: LspSymbolRequest) => LspSymbolResult = () => okSymbols,
+): LspProvider & { seen: LspProviderQuery[]; seenSymbol: LspSymbolRequest[] } {
   const seen: LspProviderQuery[] = []
+  const seenSymbol: LspSymbolRequest[] = []
   return {
     id: LspProviderId('stub'),
     extensionToLanguage,
     seen,
+    seenSymbol,
     query(request) {
       seen.push(request)
       return Promise.resolve(respond(request))
+    },
+    symbol(request) {
+      seenSymbol.push(request)
+      return Promise.resolve(respondSymbol(request))
     },
   }
 }
@@ -63,6 +70,16 @@ const okLocations: LspQueryResult = {
   resolvedWorkspaceUri: pathToFileURL(workspaceRoot).href,
 }
 
+const okSymbols: LspSymbolResult = {
+  symbols: [{
+    name: 'answer',
+    kind: 'function',
+    containerName: 'Math',
+    location: { uri: pathToFileURL(join(workspaceRoot, 'a.ts')).href, range: { start: { line: 2, character: 6 }, end: { line: 2, character: 12 } } },
+  }],
+  resolvedWorkspaceUri: pathToFileURL(workspaceRoot).href,
+}
+
 describe('tool-lsp registration', () => {
   it('registers the lsp tool and its prompt section', async () => {
     const { ctx } = await mount(stubProvider(() => okLocations))
@@ -82,10 +99,10 @@ describe('tool-lsp registration', () => {
     expect(ctx.tools.get('lsp')?.timeoutMs).toBe(5000)
   })
 
-  it('exposes exactly the four operations in the schema enum', async () => {
+  it('exposes workspaceSymbol first, then the four position operations, in the schema enum', async () => {
     const { ctx } = await mount(stubProvider(() => okLocations))
     const schema = ctx.tools.get('lsp')?.parameters as { properties: { operation: { enum: string[] } } }
-    expect(schema.properties.operation.enum).toEqual(['goToDefinition', 'findReferences', 'goToImplementation', 'hover'])
+    expect(schema.properties.operation.enum).toEqual(['workspaceSymbol', 'goToDefinition', 'findReferences', 'goToImplementation', 'hover'])
   })
 
   it('has no default export (namespace plugin shape)', () => {
@@ -217,6 +234,7 @@ describe('tool-lsp execution', () => {
         seen.push(signal)
         return Promise.resolve(okLocations)
       },
+      symbol: () => Promise.resolve(okSymbols),
     }
     const { ctx } = await mount(provider)
     await call(ctx, { operation: 'goToDefinition', file_path: 'a.ts', line: 1, character: 1 }, workspaceRoot)
@@ -233,6 +251,130 @@ describe('tool-lsp execution', () => {
       kind: 'search',
       title: 'LSP hover a.ts:2:3',
       locations: [{ path: 'a.ts', line: 2 }],
+    })
+  })
+})
+
+describe('tool-lsp workspaceSymbol execution', () => {
+  it('passes the query and session cwd to the seam symbol fan-out', async () => {
+    const provider = stubProvider(() => okLocations)
+    const { ctx } = await mount(provider)
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: 'answer' }, workspaceRoot)
+    expect(result.isError).toBe(false)
+    expect(provider.seenSymbol[0]).toEqual({ query: 'answer', workspaceRoot })
+  })
+
+  it('passes an optional file_path through as the seed document', async () => {
+    const provider = stubProvider(() => okLocations)
+    const { ctx } = await mount(provider)
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: 'answer', file_path: 'a.ts' }, workspaceRoot)
+    expect(result.isError).toBe(false)
+    expect(provider.seenSymbol[0]).toEqual({ query: 'answer', workspaceRoot, seedFilePath: 'a.ts' })
+  })
+
+  it('renders symbols with one-based coordinates in the canonical value and text', async () => {
+    const { ctx } = await mount(stubProvider(() => okLocations))
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: 'answer' }, workspaceRoot)
+    expect(result.content[0]).toEqual({ type: 'text', text: 'answer (function) in Math — a.ts:3:7' })
+    expect(result).toMatchObject({
+      isError: false,
+      value: {
+        kind: 'symbols',
+        groups: [{
+          resolvedWorkspaceUri: pathToFileURL(workspaceRoot).href,
+          symbols: [{
+            name: 'answer',
+            kind: 'function',
+            containerName: 'Math',
+            location: { uri: pathToFileURL(join(workspaceRoot, 'a.ts')).href, range: { start: { line: 2, character: 6 }, end: { line: 2, character: 12 } } },
+          }],
+        }],
+      },
+    })
+  })
+
+  it('renders a no-location symbol without a position suffix', async () => {
+    const provider = stubProvider(() => okLocations, { '.ts': 'typescript' }, () => ({
+      symbols: [{ name: 'answer', kind: 'function', location: null }],
+      resolvedWorkspaceUri: pathToFileURL(workspaceRoot).href,
+    }))
+    const { ctx } = await mount(provider)
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: 'answer' }, workspaceRoot)
+    expect(result.content[0]).toEqual({ type: 'text', text: 'answer (function) — no location' })
+  })
+
+  it('renders an explicit no-result line when every group is empty', async () => {
+    const provider = stubProvider(() => okLocations, { '.ts': 'typescript' }, () => ({
+      symbols: [],
+      resolvedWorkspaceUri: pathToFileURL(workspaceRoot).href,
+    }))
+    const { ctx } = await mount(provider)
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: 'nothing' }, workspaceRoot)
+    expect(result.content[0]).toEqual({ type: 'text', text: 'No symbols found.' })
+  })
+
+  it('caps rendered symbols while keeping every group in the canonical value', async () => {
+    const provider = stubProvider(() => okLocations, { '.ts': 'typescript' }, () => ({
+      symbols: [
+        { name: 'a', kind: 'function', location: { uri: pathToFileURL(join(workspaceRoot, 'a.ts')).href, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } } },
+        { name: 'b', kind: 'function', location: { uri: pathToFileURL(join(workspaceRoot, 'b.ts')).href, range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } } } },
+      ],
+      resolvedWorkspaceUri: pathToFileURL(workspaceRoot).href,
+    }))
+    const { ctx } = await mount(provider, { maxLocations: 1 })
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: 'answer' }, workspaceRoot)
+    expect(result.content[0]).toEqual({
+      type: 'text',
+      text: 'a (function) — a.ts:1:1\n… 1 more symbol omitted (limit 1).',
+    })
+    expect(result).toMatchObject({ isError: false, value: { kind: 'symbols', groups: [{ symbols: [{ name: 'a' }, { name: 'b' }] }] } })
+  })
+
+  it('rejects a workspaceSymbol call without a query', async () => {
+    const { ctx } = await mount(stubProvider(() => okLocations))
+    const result = await call(ctx, { operation: 'workspaceSymbol' }, workspaceRoot)
+    expect(result.isError).toBe(true)
+    expect(result.error?.message).toMatch(/query must be a non-empty string/)
+  })
+
+  it('rejects a workspaceSymbol call with a blank query', async () => {
+    const { ctx } = await mount(stubProvider(() => okLocations))
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: '   ' }, workspaceRoot)
+    expect(result.isError).toBe(true)
+    expect(result.error?.message).toMatch(/query must be a non-empty string/)
+  })
+
+  it('rejects a position operation without coordinates', async () => {
+    const { ctx } = await mount(stubProvider(() => okLocations))
+    const result = await call(ctx, { operation: 'goToDefinition', file_path: 'a.ts' }, workspaceRoot)
+    expect(result.isError).toBe(true)
+    expect(result.error?.message).toMatch(/line must be a positive integer/)
+  })
+
+  it('fails LSP_WORKSPACE_REQUIRED without a session cwd', async () => {
+    const { ctx } = await mount(stubProvider(() => okLocations))
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: 'answer' }, null)
+    expect(result.isError).toBe(true)
+    expect(result.error?.info?.code).toBe('LSP_WORKSPACE_REQUIRED')
+  })
+
+  it('surfaces a structured LSP_UNSUPPORTED_OPERATION when no provider supports symbols', async () => {
+    const provider = stubProvider(() => okLocations, { '.ts': 'typescript' }, () => {
+      throw new LspError('nope', 'LSP_UNSUPPORTED_OPERATION')
+    })
+    const { ctx } = await mount(provider)
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: 'answer' }, workspaceRoot)
+    expect(result.isError).toBe(true)
+    expect(result.error?.info?.code).toBe('LSP_UNSUPPORTED_OPERATION')
+  })
+
+  it('presentCall renders the pending card from a workspaceSymbol call', async () => {
+    const { ctx } = await mount(stubProvider(() => okLocations))
+    const view = ctx.tools.get('lsp')?.presentCall?.({ operation: 'workspaceSymbol', query: 'answer' })
+    expect(view).toEqual({
+      card: 'generic',
+      kind: 'search',
+      title: 'LSP workspaceSymbol "answer"',
     })
   })
 })

@@ -64,6 +64,25 @@ export interface WireTextDocumentSyncOptions {
 /** A `ServerCapabilities.provider` slot: a boolean or an options object (both mean "supported"). */
 export type WireProviderCapability = boolean | Record<string, unknown> | undefined
 
+/** A `SymbolInformation`: a full location plus the symbol's name and numeric kind. */
+export interface WireSymbolInformation {
+  readonly name: string
+  readonly kind: number
+  readonly location: WireLocation
+  readonly containerName?: string
+}
+
+/** The `WorkspaceSymbol` location: a full `Location`, or the unresolved marker `{ uri: '' }`. */
+export type WireWorkspaceSymbolLocation = WireLocation | { readonly uri: '' }
+
+/** A `WorkspaceSymbol`: like `SymbolInformation`, but the location may be the unresolved marker. */
+export interface WireWorkspaceSymbol {
+  readonly name: string
+  readonly kind: number
+  readonly containerName?: string
+  readonly location: WireWorkspaceSymbolLocation
+}
+
 /** The `ServerCapabilities` fields this host inspects. */
 export interface WireServerCapabilities {
   readonly positionEncoding?: string
@@ -72,6 +91,7 @@ export interface WireServerCapabilities {
   readonly referencesProvider?: WireProviderCapability
   readonly implementationProvider?: WireProviderCapability
   readonly hoverProvider?: WireProviderCapability
+  readonly workspaceSymbolProvider?: WireProviderCapability
 }
 
 /** The `initialize` result envelope. */

@@ -1,7 +1,8 @@
 /**
  * Pure protocol translation for the local host: what the server's capabilities allow, and how its
- * `Location`/`LocationLink`/`Hover` payloads normalize into the seam's closed result unions. No I/O
- * or process state — every function here is a pure transform, which the fake-stdio tests pin exactly.
+ * `Location`/`LocationLink`/`Hover`/`workspace/symbol` payloads normalize into the seam's result
+ * types. No I/O or process state — every function here is a pure transform, which the fake-stdio
+ * tests pin exactly.
  * @module @deepseek-ai/dsh-lsp-stdio/translate
  */
 
@@ -10,6 +11,7 @@ import type {
   LspLocation,
   LspOperation,
   LspRange,
+  LspSymbol,
 } from '@deepseek-ai/dsh-lsp'
 import { LspError } from '@deepseek-ai/dsh-lsp'
 import { assertNever } from '@deepseek-ai/dsh-llm'
@@ -67,6 +69,15 @@ function supportsCapability(value: WireProviderCapability): boolean {
  */
 export function supportsOperation(capabilities: WireServerCapabilities, operation: LspOperation): boolean {
   return supportsCapability(capabilityValue(capabilities, operation))
+}
+
+/**
+ * Whether the server advertises `workspace/symbol`.
+ * @param capabilities - the server's `initialize` capabilities.
+ * @returns true when the `workspaceSymbolProvider` capability is present.
+ */
+export function supportsWorkspaceSymbol(capabilities: WireServerCapabilities): boolean {
+  return supportsCapability(capabilities.workspaceSymbolProvider)
 }
 
 /**
@@ -170,6 +181,77 @@ export function normalizeLocations(payload: unknown): LspLocation[] {
 function renderMarkedString(value: WireMarkedString): string {
   if (typeof value === 'string') return value
   return `\`\`\`${value.language}\n${value.value}\n\`\`\``
+}
+
+/**
+ * The `SymbolKind` names for the protocol's numeric values 1–26, indexed by `kind - 1`.
+ */
+const SYMBOL_KIND_NAMES: readonly string[] = [
+  'file', 'module', 'namespace', 'package', 'class', 'method', 'property', 'field', 'constructor',
+  'enum', 'interface', 'function', 'variable', 'constant', 'string', 'number', 'boolean', 'array',
+  'object', 'key', 'null', 'enumMember', 'struct', 'event', 'operator', 'typeParameter',
+]
+
+/**
+ * Name one numeric `SymbolKind`. Values outside the current protocol range render as
+ * `symbol kind N` so a newer server's kinds stay visible instead of failing the whole result.
+ * @param kind - the wire `SymbolKind` number.
+ * @returns the kind name.
+ */
+export function symbolKindName(kind: number): string {
+  return SYMBOL_KIND_NAMES[kind - 1] ?? `symbol kind ${kind}`
+}
+
+/**
+ * Normalize a `workspace/symbol` result (`SymbolInformation[]`/`WorkspaceSymbol[]`, or `null`) to
+ * the seam's symbols. An unresolved `WorkspaceSymbol` (its `location` is the empty-uri marker)
+ * keeps the entry with `location: null`.
+ * @param payload - the raw `workspace/symbol` result.
+ * @returns the normalized symbols (empty for `null`/`[]`).
+ * @throws Error when the payload is not an array or an entry lacks a name, a numeric kind, or a
+ *   structurally valid location.
+ */
+export function normalizeSymbols(payload: unknown): LspSymbol[] {
+  if (payload === null) return []
+  if (payload === undefined) throw malformedResponse('LSP symbol result was missing')
+  if (!Array.isArray(payload)) throw malformedResponse('LSP symbol result was not an array')
+  const symbols: LspSymbol[] = []
+  for (const element of payload) {
+    if (element === null || typeof element !== 'object') {
+      throw malformedResponse('LSP symbol result contained a non-object entry')
+    }
+    const record = element as Record<string, unknown>
+    if (typeof record.name !== 'string' || typeof record.kind !== 'number') {
+      throw malformedResponse('LSP symbol result contained an entry without a name or kind')
+    }
+    symbols.push({
+      name: record.name,
+      kind: symbolKindName(record.kind),
+      location: normalizeSymbolLocation(record.location),
+      ...typeof record.containerName === 'string' ? { containerName: record.containerName } : {},
+    })
+  }
+  return symbols
+}
+
+/**
+ * Normalize one symbol entry's location: a full `Location` maps its range, the unresolved marker
+ * `{ uri: '' }` (or an absent location) becomes `null`, and anything else is malformed.
+ * @param location - the untrusted wire location.
+ * @returns the normalized location, or `null` for the unresolved marker.
+ */
+function normalizeSymbolLocation(location: unknown): LspSymbol['location'] {
+  if (location === undefined) return null
+  if (location === null || typeof location !== 'object') {
+    throw malformedResponse('LSP symbol entry contained a malformed location')
+  }
+  const record = location as Record<string, unknown>
+  if (record.uri === '') return null
+  if (!isLocation(record)) {
+    throw malformedResponse('LSP symbol entry contained a malformed location')
+  }
+  const resolved = record as unknown as WireLocation
+  return { uri: resolved.uri, range: toRange(resolved.range) }
 }
 
 /**

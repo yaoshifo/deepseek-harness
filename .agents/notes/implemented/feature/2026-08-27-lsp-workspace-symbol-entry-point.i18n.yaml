@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-27-lsp-workspace-symbol-entry-point.md
+2026-08-27-lsp-workspace-symbol-entry-point.md: 8fecd225d9bc3a2fd2c36d5f66ae327596897fc6
+2026-08-27-lsp-workspace-symbol-entry-point.zh.md: a46c59698eb5b2979f9b79e4c2040ed27178271f

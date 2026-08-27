@@ -8,6 +8,7 @@
  * - LSP_FAKE_SYNC: textDocumentSync value as JSON (default 1/Full).
  * - LSP_FAKE_CAPS: JSON of extra capability flags merged into the defaults.
  * - LSP_FAKE_DEF / LSP_FAKE_REFS / LSP_FAKE_IMPL / LSP_FAKE_HOVER: JSON result per request.
+ * - LSP_FAKE_SYMBOLS: JSON result for workspace/symbol requests (default null).
  * - LSP_FAKE_HANG: "1" makes textDocument/* requests never respond (for abort/timeout tests).
  * - LSP_FAKE_CRASH_ON_OPEN: "1" exits the process when a didOpen arrives (crash test).
  * - LSP_FAKE_EXIT_AFTER_REPLY: "1" exits the process right after answering a textDocument/* request,
@@ -151,6 +152,20 @@ function handle(message: { id?: number; method?: string; params?: unknown; resul
     return
   }
   if (method === 'textDocument/didClose') return
+  if (method === 'workspace/symbol') {
+    // Mirrors the textDocument/* reply path (hang, errorReply, delay) but no document is involved.
+    if (hang) return
+    const reply = (): void => {
+      if (errorReply) {
+        send({ id, error: { code: -32000, message: 'server refused the request' } })
+      } else {
+        send({ id, result: envJson('LSP_FAKE_SYMBOLS', null) })
+      }
+    }
+    if (replyDelayMs > 0) setTimeout(reply, replyDelayMs)
+    else reply()
+    return
+  }
   if (method?.startsWith('textDocument/')) {
     if (hang) return
     const reply = (): void => {

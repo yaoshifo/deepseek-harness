@@ -1,9 +1,10 @@
 /**
  * One language-server instance: a connection plus the initialize handshake, the serialized abortable
- * query queue, the transient `didOpen`→request→`didClose` lifecycle, and bounded teardown. One
- * instance owns one `(provider id, canonical workspace)` process. Queries serialize through a single
- * queue so a cancellation that fails to stop the server can terminate it without killing unrelated
- * work; distinct instances run in parallel.
+ * query queue, the transient `didOpen`→request→`didClose` lifecycle, the document-free
+ * `workspace/symbol` path, and bounded teardown. One instance owns one `(provider id, canonical
+ * workspace)` process. Queries serialize through a single queue so a cancellation that fails to
+ * stop the server can terminate it without killing unrelated work; distinct instances run in
+ * parallel.
  * @module @deepseek-ai/dsh-lsp-stdio/instance
  */
 
@@ -12,6 +13,8 @@ import type {
   LspOperation,
   LspProviderQuery,
   LspQueryResult,
+  LspSymbol,
+  LspSymbolRequest,
 } from '@deepseek-ai/dsh-lsp'
 import { deadline } from '@deepseek-ai/dsh-timeout'
 import { abortable, abortError } from './abort.ts'
@@ -23,9 +26,11 @@ import {
   negotiatePositionEncoding,
   normalizeHover,
   normalizeLocations,
+  normalizeSymbols,
   requestMethod,
   supportsOperation,
   supportsTransientOpen,
+  supportsWorkspaceSymbol,
 } from './translate.ts'
 
 /** Everything an instance needs beyond the connection spec. */
@@ -36,6 +41,16 @@ export interface InstanceSpec extends ConnectionSpec {
   readonly initializationOptions: unknown
   /** Graceful `shutdown`/`exit` budget before escalation (ms). */
   readonly shutdownTimeoutMs: number
+}
+
+/** A document opened transiently around a symbol request for project-loading servers. */
+export interface SymbolSeedDocument {
+  /** The document URI. */
+  readonly uri: string
+  /** The LSP language id synchronizing the document. */
+  readonly languageId: string
+  /** The document text. */
+  readonly text: string
 }
 
 /**
@@ -54,6 +69,12 @@ export class LspInstance {
   private processClosed = false
   /** Populated once `initialize` succeeds; a failed handshake rejects every query. */
   private readonly ready: Promise<void>
+  /**
+   * The most recent document this instance opened, kept so a symbol query can re-open it for
+   * servers (tsserver) that answer `workspace/symbol` only while a project file is open. Stale
+   * text is acceptable: the symbol index spans the project, not this document's contents.
+   */
+  private lastDocument: { uri: string; languageId: string; text: string } | undefined
 
   /**
    * @param spec - the launch, initialize, and teardown parameters.
@@ -107,6 +128,26 @@ export class LspInstance {
     return run
   }
 
+  /**
+   * Run one workspace-wide symbol lookup through the serialized queue. A caller-supplied seed
+   * document (or the last document this instance opened) is opened around the request for servers
+   * that index symbols only per loaded project; without either, the request runs bare.
+   * @param request - the name-based symbol lookup request.
+   * @param seed - the pre-validated seed document with its language id, or `undefined`.
+   * @param signal - optional cancellation for this query's full lifecycle.
+   * @returns the normalized symbols.
+   */
+  symbolQuery(request: LspSymbolRequest, seed: SymbolSeedDocument | undefined, signal?: AbortSignal): Promise<LspSymbol[]> {
+    const run = abortable(this.queue, signal)
+      .then(() => this.runSymbolQuery(request, seed, signal))
+      .catch(async (error: unknown) => {
+        if (this.isTransportFailure(error)) await this.startTeardown()
+        throw error
+      })
+    this.queue = this.queue.then(() => run).then(() => undefined, () => undefined)
+    return run
+  }
+
   private async initialize(): Promise<void> {
     const initializeResult = await this.connection.request('initialize', {
       // A subprocess provider may run in another PID namespace or machine;
@@ -124,9 +165,15 @@ export class LspInstance {
     await this.connection.notify('initialized', {})
   }
 
-  private async runQuery(request: LspProviderQuery, source: HostSource, signal?: AbortSignal): Promise<LspQueryResult> {
+  /**
+   * Await the initialize handshake and return the negotiated capabilities, tearing down a poisoned
+   * instance so a permanently-rejecting or pending `ready` cannot fail every later query.
+   * @param signal - optional cancellation observed during the handshake wait.
+   * @returns the server's `initialize` capabilities.
+   */
+  private async readyCapabilities(signal: AbortSignal | undefined): Promise<WireServerCapabilities> {
     if (this.disposed) throw new LspError('LSP instance was disposed', 'LSP_DISPOSED')
-    /* v8 ignore next -- the abortable queue wait rejects a pre-aborted signal before runQuery; this is a belt-and-suspenders guard. */
+    /* v8 ignore next -- the abortable queue wait rejects a pre-aborted signal before this helper; this is a belt-and-suspenders guard. */
     if (signal?.aborted) throw abortError(signal)
     // Observe abort during the handshake wait, and never pool a poisoned instance: if the wait ends
     // in failure — an abort on a still-pending handshake, OR `initialize` rejecting (utf-8
@@ -143,6 +190,11 @@ export class LspInstance {
     const capabilities = this.capabilities
     /* v8 ignore next -- `ready` resolves only after capabilities are set, else it rejects above; defensive. */
     if (capabilities === undefined) throw new Error('LSP instance is not initialized')
+    return capabilities
+  }
+
+  private async runQuery(request: LspProviderQuery, source: HostSource, signal?: AbortSignal): Promise<LspQueryResult> {
+    const capabilities = await this.readyCapabilities(signal)
     if (!supportsOperation(capabilities, request.operation)) {
       throw new LspError(`server does not support ${request.operation}`, 'LSP_UNSUPPORTED_OPERATION')
     }
@@ -166,6 +218,7 @@ export class LspInstance {
         throw error
       }
       opened = true
+      this.lastDocument = { uri, languageId: request.languageId, text: source.text }
       const payload = await this.sendRequest(request.operation, uri, request.position, signal)
       return this.normalize(request.operation, payload)
     } finally {
@@ -178,6 +231,60 @@ export class LspInstance {
         } catch {
           // A close-write failure does not replace the settled result/error, but the instance can no
           // longer be trusted: invalidate it and await bounded process termination.
+          try {
+            await this.startTeardown()
+          } catch {
+            /* v8 ignore next -- teardown owns all expected process races; this only preserves the
+               already-settled query outcome if an unexpected cleanup primitive itself rejects. */
+          }
+        }
+      }
+    }
+  }
+
+  private async runSymbolQuery(
+    request: LspSymbolRequest,
+    seed: SymbolSeedDocument | undefined,
+    signal?: AbortSignal,
+  ): Promise<LspSymbol[]> {
+    const capabilities = await this.readyCapabilities(signal)
+    if (!supportsWorkspaceSymbol(capabilities)) {
+      throw new LspError('server does not support workspaceSymbol', 'LSP_UNSUPPORTED_OPERATION')
+    }
+    // An explicit seed wins; otherwise re-open the last document so tsserver-style servers keep a
+    // loaded project. A server that indexes cold needs neither.
+    const document = seed ?? this.lastDocument
+    const seedUri = document?.uri
+    let opened = false
+    try {
+      if (document !== undefined) {
+        if (!supportsTransientOpen(capabilities.textDocumentSync)) {
+          throw new LspError('server does not support the transient textDocument/didOpen this host requires', 'LSP_UNSUPPORTED_OPERATION')
+        }
+        /* v8 ignore next -- guards an abort landing between the ready wait and didOpen; not deterministically reproducible. */
+        if (signal?.aborted) throw abortError(signal)
+        try {
+          await abortable(this.connection.notify('textDocument/didOpen', {
+            textDocument: { uri: document.uri, languageId: document.languageId, version: 1, text: document.text },
+          }), signal)
+        } catch (error) {
+          // Same stream-poisoning contract as a position query's didOpen: the instance is unusable.
+          await this.startTeardown()
+          throw error
+        }
+        opened = true
+      }
+      const requestId = this.connection.peekNextId()
+      const send = this.connection.request('workspace/symbol', { query: request.query })
+      const payload = signal === undefined ? await send : await this.raceAbort(send, requestId, signal)
+      return normalizeSymbols(payload)
+    } finally {
+      // The seed document closes exactly like a position query's document; a dead instance is
+      // already tearing down and must not race a didClose against that teardown.
+      if (opened && !this.dead && seedUri !== undefined) {
+        try {
+          await this.connection.notify('textDocument/didClose', { textDocument: { uri: seedUri } })
+        } catch {
           try {
             await this.startTeardown()
           } catch {

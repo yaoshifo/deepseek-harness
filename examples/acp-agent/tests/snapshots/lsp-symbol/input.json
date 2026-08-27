@@ -1,0 +1,7 @@
+{
+  "steps": [
+    { "op": "initialize" },
+    { "op": "newSession" },
+    { "op": "prompt", "text": "Use the lsp tool exactly once to find symbols named \"answer\" with the workspaceSymbol operation, then reply with exactly DONE." }
+  ]
+}

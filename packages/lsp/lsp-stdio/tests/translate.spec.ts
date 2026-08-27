@@ -3,9 +3,12 @@ import {
   negotiatePositionEncoding,
   normalizeHover,
   normalizeLocations,
+  normalizeSymbols,
   requestMethod,
   supportsOperation,
   supportsTransientOpen,
+  supportsWorkspaceSymbol,
+  symbolKindName,
 } from '@deepseek-ai/dsh-lsp-stdio'
 import type { WireServerCapabilities } from '@deepseek-ai/dsh-lsp-stdio/src/protocol.ts'
 
@@ -168,6 +171,76 @@ describe('normalizeHover', () => {
 
   it('rejects a malformed range instead of silently dropping it', () => {
     expect(() => normalizeHover({ contents: 'x', range: { start: { line: 1 } } }))
+      .toThrow(expect.objectContaining({ code: 'LSP_MALFORMED_RESPONSE' }))
+  })
+})
+
+describe('supportsWorkspaceSymbol', () => {
+  it('reads the workspaceSymbolProvider slot (boolean and options forms)', () => {
+    expect(supportsWorkspaceSymbol({})).toBe(false)
+    expect(supportsWorkspaceSymbol({ workspaceSymbolProvider: false })).toBe(false)
+    expect(supportsWorkspaceSymbol({ workspaceSymbolProvider: true })).toBe(true)
+    expect(supportsWorkspaceSymbol({ workspaceSymbolProvider: { workDoneProgress: true } })).toBe(true)
+  })
+})
+
+describe('symbolKindName', () => {
+  it('names every protocol SymbolKind 1–26', () => {
+    expect(symbolKindName(1)).toBe('file')
+    expect(symbolKindName(6)).toBe('method')
+    expect(symbolKindName(12)).toBe('function')
+    expect(symbolKindName(23)).toBe('struct')
+    expect(symbolKindName(26)).toBe('typeParameter')
+  })
+
+  it('renders an out-of-range kind without failing the result', () => {
+    expect(symbolKindName(0)).toBe('symbol kind 0')
+    expect(symbolKindName(99)).toBe('symbol kind 99')
+  })
+})
+
+describe('normalizeSymbols', () => {
+  it('returns empty only for the protocol no-result value null', () => {
+    expect(normalizeSymbols(null)).toEqual([])
+    expect(normalizeSymbols([])).toEqual([])
+  })
+
+  it('maps a SymbolInformation with containerName', () => {
+    expect(normalizeSymbols([{ name: 'answer', kind: 12, location: { uri: 'file:///ws/a.ts', range: RANGE }, containerName: 'Math' }]))
+      .toEqual([{ name: 'answer', kind: 'function', containerName: 'Math', location: { uri: 'file:///ws/a.ts', range: RANGE } }])
+  })
+
+  it('maps an unresolved WorkspaceSymbol to location null', () => {
+    expect(normalizeSymbols([{ name: 'answer', kind: 12, location: { uri: '' } }]))
+      .toEqual([{ name: 'answer', kind: 'function', location: null }])
+  })
+
+  it('omits containerName when the server did not report one', () => {
+    expect(normalizeSymbols([{ name: 'answer', kind: 12, location: { uri: 'file:///ws/a.ts', range: RANGE } }]))
+      .toEqual([{ name: 'answer', kind: 'function', location: { uri: 'file:///ws/a.ts', range: RANGE } }])
+  })
+
+  it('rejects a missing payload', () => {
+    expect(() => normalizeSymbols(undefined)).toThrow(expect.objectContaining({ code: 'LSP_MALFORMED_RESPONSE' }))
+  })
+
+  it('rejects a non-array payload', () => {
+    expect(() => normalizeSymbols({ name: 'answer' })).toThrow(/was not an array/)
+  })
+
+  it('rejects a non-object entry', () => {
+    expect(() => normalizeSymbols([null])).toThrow(expect.objectContaining({ code: 'LSP_MALFORMED_RESPONSE' }))
+  })
+
+  it('rejects an entry without a name or kind', () => {
+    expect(() => normalizeSymbols([{ name: 'answer' }])).toThrow(/without a name or kind/)
+    expect(() => normalizeSymbols([{ kind: 12 }])).toThrow(/without a name or kind/)
+  })
+
+  it('rejects a malformed location', () => {
+    expect(() => normalizeSymbols([{ name: 'answer', kind: 12, location: { uri: 'file:///ws/a.ts', range: { start: { line: 1 } } } }]))
+      .toThrow(expect.objectContaining({ code: 'LSP_MALFORMED_RESPONSE' }))
+    expect(() => normalizeSymbols([{ name: 'answer', kind: 12, location: 42 }]))
       .toThrow(expect.objectContaining({ code: 'LSP_MALFORMED_RESPONSE' }))
   })
 })

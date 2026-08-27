@@ -270,6 +270,97 @@ describe('LspInstance query and abort', () => {
   })
 })
 
+describe('LspInstance symbolQuery', () => {
+  const symbolsJson = () => JSON.stringify([{
+    name: 'answer',
+    kind: 12,
+    location: { uri: pathToFileURL(join(ws, 'a.ts')).href, range: { start: { line: 0, character: 6 }, end: { line: 0, character: 12 } } },
+  }])
+
+  it('resolves symbols with no document lifecycle when neither a seed nor a remembered document exists', async () => {
+    const instance = makeInstance({
+      LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+      LSP_FAKE_SYMBOLS: symbolsJson(),
+    })
+    await expect(instance.symbolQuery({ query: 'ans', workspaceRoot: ws }, undefined)).resolves.toEqual([{
+      name: 'answer',
+      kind: 'function',
+      location: { uri: pathToFileURL(join(ws, 'a.ts')).href, range: { start: { line: 0, character: 6 }, end: { line: 0, character: 12 } } },
+    }])
+  })
+
+  it('opens an explicit seed document around the symbol request', async () => {
+    const marker = join(root, 'symbol-open.log')
+    const instance = makeInstance({
+      LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+      LSP_FAKE_SYMBOLS: symbolsJson(),
+      LSP_FAKE_OPEN_MARKER: marker,
+    })
+    const seed = {
+      uri: pathToFileURL(join(ws, 'a.ts')).href,
+      languageId: 'typescript',
+      text: 'const x = 1\n',
+    }
+    await instance.symbolQuery({ query: 'ans', workspaceRoot: ws }, seed)
+    // The seed document was opened (its text recorded) for the symbol request.
+    expect((await readFile(marker, 'utf8')).trim()).toBe(JSON.stringify('const x = 1\n'))
+  })
+
+  it('re-opens the last document from a prior position query when no seed is given', async () => {
+    const marker = join(root, 'symbol-lastdoc-open.log')
+    const instance = makeInstance({
+      LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+      LSP_FAKE_DEF: 'null',
+      LSP_FAKE_SYMBOLS: symbolsJson(),
+      LSP_FAKE_OPEN_MARKER: marker,
+    })
+    // A position query opens (and closes) a.ts, leaving it as the remembered document.
+    await run(instance, 'goToDefinition')
+    expect((await readFile(marker, 'utf8')).split('\n').filter(Boolean)).toHaveLength(1)
+    await instance.symbolQuery({ query: 'ans', workspaceRoot: ws }, undefined)
+    // The symbol query re-opened the remembered document around the bare request.
+    expect((await readFile(marker, 'utf8')).split('\n').filter(Boolean)).toHaveLength(2)
+  })
+
+  it('rejects when the server lacks the workspaceSymbolProvider capability', async () => {
+    const instance = makeInstance({ LSP_FAKE_SYMBOLS: '[]' })
+    await expect(instance.symbolQuery({ query: 'ans', workspaceRoot: ws }, undefined))
+      .rejects.toThrow(expect.objectContaining({ code: 'LSP_UNSUPPORTED_OPERATION' }))
+  })
+
+  it('rejects a symbol query aborted before it starts', async () => {
+    const instance = makeInstance({
+      LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+      LSP_FAKE_SYMBOLS: 'null',
+    })
+    const controller = new AbortController()
+    controller.abort(new Error('pre-abort'))
+    await expect(instance.symbolQuery({ query: 'ans', workspaceRoot: ws }, undefined, controller.signal)).rejects.toThrow(/pre-abort/)
+  })
+
+  it('cancels an in-flight symbol request on abort', async () => {
+    const instance = makeInstance({
+      LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+      LSP_FAKE_HANG: '1',
+    }, { killGraceMs: 100 })
+    const controller = new AbortController()
+    const pending = instance.symbolQuery({ query: 'ans', workspaceRoot: ws }, undefined, controller.signal)
+    await new Promise<void>(resolve => setTimeout(resolve, 300))
+    controller.abort(new Error('mid-flight'))
+    await expect(pending).rejects.toThrow(/mid-flight/)
+    // The hang server never honors $/cancelRequest, so the bounded grace must terminate it.
+    expect(instance.dead).toBe(true)
+  })
+
+  it('propagates a server error response', async () => {
+    const instance = makeInstance({
+      LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+      LSP_FAKE_ERROR: '1',
+    })
+    await expect(instance.symbolQuery({ query: 'ans', workspaceRoot: ws }, undefined)).rejects.toThrow(/server refused/)
+  })
+})
+
 describe('LspInstance disposal', () => {
   it('lets a server finish protocol exit before signal escalation', async () => {
     const marker = join(root, 'graceful-exit.log')

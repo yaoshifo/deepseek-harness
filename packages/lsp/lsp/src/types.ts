@@ -3,7 +3,8 @@
  * {@link LspError} taxonomy and the {@link LspProviderId} brand factory are runtime and live in
  * `index.ts`. Positions and ranges are zero-based UTF-16, matching the protocol; the model-facing
  * tool owns the one-based cursor convention. The seam exposes no protocol types, process or document
- * controls, or generic JSON-RPC escape hatch — only the four semantic operations.
+ * controls, or generic JSON-RPC escape hatch — only the four semantic operations and the name-based
+ * workspace symbol lookup.
  * @module @deepseek-ai/dsh-lsp/types
  */
 
@@ -87,6 +88,52 @@ export type LspQueryResult =
   | { readonly kind: 'hover'; readonly hover: LspHover | null }
 
 /**
+ * A workspace-wide symbol lookup by name. No file or cursor: the provider's server matches `query`
+ * against the symbols it indexes for the workspace, so this is the seam's name-based entry point
+ * alongside the four position operations.
+ */
+export interface LspSymbolRequest {
+  /** The partial symbol name to match; matching semantics belong to the server. */
+  readonly query: string
+  /** The workspace root the provider resolves against and indexes; required, never defaulted. */
+  readonly workspaceRoot: string
+  /**
+   * A workspace file to open transiently for servers that index symbols only per loaded project
+   * (tsserver's navto answers `No Project` without an open document). Omitted when the caller has
+   * no file; the provider may also seed from the last document it opened.
+   */
+  readonly seedFilePath?: string
+}
+
+/**
+ * One resolved workspace symbol. `kind` is the symbol kind name (e.g. `'function'`, `'class'`);
+ * providers map the protocol's numeric kinds. `location` is `null` when the server returned an
+ * unresolved `WorkspaceSymbol` (its `location` carries only the empty-uri marker).
+ */
+export interface LspSymbol {
+  /** The symbol's declared name. */
+  readonly name: string
+  /** The symbol kind name (e.g. `'function'`, `'class'`, `'variable'`). */
+  readonly kind: string
+  /** The enclosing symbol's name, when the server reported one. */
+  readonly containerName?: string
+  /** The declaration location, or `null` for an unresolved `WorkspaceSymbol`. */
+  readonly location: LspLocation | null
+}
+
+/**
+ * One provider's contribution to a workspace symbol lookup, in the provider's own relevance
+ * order. Carries `resolvedWorkspaceUri` with the same rendering obligation as the `locations`
+ * variant of {@link LspQueryResult}.
+ */
+export interface LspSymbolResult {
+  /** The matched symbols, in the server's relevance order. */
+  readonly symbols: readonly LspSymbol[]
+  /** The provider's canonical `file:` URI for the request's workspace root. */
+  readonly resolvedWorkspaceUri: string
+}
+
+/**
  * A language-server backend registered on `ctx.lsp`. Each provider owns a stable {@link
  * LspProviderId} and an extension-to-language-id map (lowercase, leading-dot keys).
  * `findReferences` always includes declarations — the provider enforces this internally; callers
@@ -104,11 +151,20 @@ export interface LspProvider {
    * @returns the normalized, closed-union result.
    */
   query(request: LspProviderQuery, signal?: AbortSignal): Promise<LspQueryResult>
+  /**
+   * Run one workspace-wide symbol lookup. Unlike `query` no document is synchronized, so the
+   * request carries no file or position.
+   * @param request - the name-based symbol lookup request.
+   * @param signal - optional cancellation; the provider stops its own work when it aborts.
+   * @returns this provider's matched symbols with its canonical workspace URI.
+   */
+  symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<LspSymbolResult>
 }
 
 /**
  * The LSP capability seam (`ctx.lsp`). Owns provider registration/selection and normalized query
- * execution; exposes exactly the four operations and no protocol escape hatch.
+ * execution; exposes exactly the four position operations plus the name-based workspace symbol
+ * lookup, and no protocol escape hatch.
  */
 export interface LspService {
   /**
@@ -127,4 +183,14 @@ export interface LspService {
    * @returns the normalized, closed-union result.
    */
   query(request: LspQueryRequest, signal?: AbortSignal): Promise<LspQueryResult>
+  /**
+   * Fan out one name-based symbol lookup to every registered provider and merge their groups in
+   * registration order — a symbol query has no file extension to route on. A provider whose server
+   * lacks the `workspaceSymbolProvider` capability contributes nothing; if every provider lacks it,
+   * throws `LspError` `LSP_UNSUPPORTED_OPERATION`. No provider registered throws `LSP_UNAVAILABLE`.
+   * @param request - the name-based symbol lookup request.
+   * @param signal - optional cancellation forwarded to every provider.
+   * @returns each supporting provider's symbols and canonical workspace URI, in registration order.
+   */
+  symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<readonly LspSymbolResult[]>
 }
