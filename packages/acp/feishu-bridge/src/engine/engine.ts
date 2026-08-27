@@ -966,8 +966,6 @@ export class Engine {
   chatroomResearchWorkspaceCfg = ''
   /** Pre-provision the shared uv venv for research assistants (Go chatroomResearchPythonEnv). */
   chatroomResearchPythonEnv = false
-  /** Whether role sessions run as isolated subagents; dsh uses bare personas (Go chatroomIsolateRoleContext). */
-  chatroomIsolateRoleContext = ''
 
   // ── M7 plan/reply HTML render config (Go planRender* fields) ────────────
   /** plan_render enabled (Go planRenderEnabled; opt-in, default off). */
@@ -5575,14 +5573,6 @@ export class Engine {
    */
   setChatroomResearchPythonEnv(enabled: boolean): void {
     this.chatroomResearchPythonEnv = enabled
-  }
-
-  /**
-   * Role-session isolation switch (dsh uses bare personas; config parity only).
-   * @param v - Isolation value carried for config parity with Go.
-   */
-  setChatroomIsolateRoleContext(v: string): void {
-    this.chatroomIsolateRoleContext = v
   }
 
   /**

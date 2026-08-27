@@ -10,7 +10,6 @@
  */
 
 import { lucideIconIDs } from '../lucide/icon.js'
-import type { Session } from './session.js'
 import type { HistoryEntry } from '../core/types.js'
 
 /** Cap on generated/manual group names shared by every truncation helper (Go maxGroupNameRunes). */
@@ -346,19 +345,6 @@ export function chatroomHubGroupName(topic: string): string {
     return `${Array.from(topic).slice(0, maxGroupNameRunes - 3).join('')}...`
   }
   return topic
-}
-
-/**
- * Whether a session's group keeps a fixed name that first-message spawn
- * renaming must not clobber: chatroom role groups, research-assistant
- * groups, and direct-role groups (Go sessionExemptFromSpawnRename).
- * @param session - The spawned chat's session.
- * @returns Whether the session's group name is fixed and spawn renaming must skip it.
- */
-export function sessionExemptFromSpawnRename(session: Session): boolean {
-  return session.getChatroomHubKey() !== ''
-    || session.getChatroomDirectRole()
-    || session.getResearchAssistant()
 }
 
 /** Per-user-message truncation cap for the compact context (Go maxPredictUserMsgLen). */
