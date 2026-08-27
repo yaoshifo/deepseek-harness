@@ -422,6 +422,67 @@ export function ensureSVGViewBox(body: string): string {
   })
 }
 
+// ── hand-drawn SVG label font-size floor ───────────────────────────────────
+
+/** Character width coefficients of the render-skill label formula: CJK/fullwidth 1.0,
+ * uppercase/digit 0.65, lowercase 0.55, punctuation/space 0.3. */
+function labelCharCoefficient(ch: string): number {
+  const c = ch.codePointAt(0) ?? 0
+  if ((c >= 0x2e80 && c <= 0x9fff) || (c >= 0xf900 && c <= 0xfaff) || (c >= 0xff00 && c <= 0xffef)) return 1.0
+  if ((c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a)) return 0.65
+  if (c >= 0x61 && c <= 0x7a) return 0.55
+  return 0.3
+}
+
+/**
+ * Deterministic font-size floor for hand-drawn SVG node labels: for every
+ * `<g>` group carrying both a `<rect>` and `<text>` labels, re-run the
+ * render skill's width estimate (`textWidth ≈ Σ char coefficient × size`,
+ * must fit `rect width − 16`) and shrink overflowing labels to the largest
+ * fitting size, floor 10 — the skill teaches the LLM the same formula, but
+ * low-effort coordinate math is exactly the 2026-07 overflow failure mode,
+ * so the engine owns the guarantee. Labels outside a rect group (edge
+ * labels) have no box and are skipped; fitting labels are left untouched.
+ *
+ * @param body - HTML body fragment containing inline SVG.
+ * @returns The fragment with overflowing node labels clamped to a fitting font-size.
+ */
+export function fitSVGTextSizes(body: string): string {
+  return body.replace(/<g\b[^>]*>(?:(?!<\/?g\b).)*?<\/g>/gs, (group) => {
+    const rectTag = /<rect\b[^>]*>/.exec(group)
+    if (rectTag === null) return group
+    const rw = /\bwidth="([\d.]+)"/.exec(rectTag[0])
+    if (rw === null) return group
+    const avail = parseFloat(rw[1]) - 16
+    if (avail <= 0) return group
+    const gSize = /font-size="([\d.]+)"/.exec(group.slice(0, group.indexOf('>')))
+    return group.replace(/<text\b([^>]*)>([\s\S]*?)<\/text>/g, (text, attrs: string, inner: string) => {
+      const tSize = /font-size="([\d.]+)"/.exec(attrs)
+      const size = tSize !== null ? parseFloat(tSize[1]) : (gSize !== null ? parseFloat(gSize[1]) : 18)
+      // tspan rows are separate visual lines; the widest one governs the fit
+      const lines = inner
+        .replace(/<tspan\b[^>]*>/g, '\n')
+        .replace(/<\/tspan>/g, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+        .split('\n')
+      let maxCoeff = 0
+      for (const line of lines) {
+        let coeff = 0
+        for (const ch of line) coeff += labelCharCoefficient(ch)
+        if (coeff > maxCoeff) maxCoeff = coeff
+      }
+      if (maxCoeff <= 0 || maxCoeff * size <= avail) return text
+      const fitted = Math.max(10, Math.floor(avail / maxCoeff))
+      if (fitted >= size) return text
+      return tSize !== null
+        ? text.replace(/font-size="[\d.]+"/, `font-size="${String(fitted)}"`)
+        : text.replace('<text', `<text font-size="${String(fitted)}"`)
+    })
+  })
+}
+
 /**
  * Wrap a render-session body fragment in the fixed light-theme template for
  * the sub-type ('plan' | 'reply'; unknown falls back to plan), filling
@@ -446,6 +507,7 @@ export function assembleHTML(subtype: string, bodyFragment: string, titlePrefix:
   if (title !== '' && titlePrefix !== '') title = titlePrefix + title
   body = sanitizeSVGVars(body, tmpl)
   body = ensureSVGViewBox(body)
+  body = fitSVGTextSizes(body)
   let out = tmpl.replaceAll('{{BODY}}', body)
   out = out.replaceAll('{{DIAGRAM_CSS}}', diagramCSS)
   out = out.replaceAll('{{DIAGRAM_DEFS}}', diagramDefs)

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-27-feishu-bridge-render-topology-parts.md
-2026-08-27-feishu-bridge-render-topology-parts.md: 181f724f59ffbca0ad297c1511efe8b325450670
-2026-08-27-feishu-bridge-render-topology-parts.zh.md: 9a181abc2d6345f03587c7c90ab11de842b80f9a
+2026-08-27-feishu-bridge-render-topology-parts.md: 6c77056f391667d800db65ed00d3df3e87c73864
+2026-08-27-feishu-bridge-render-topology-parts.zh.md: f73d6df0c16759cdef434f5e5e5bd153d11fc560

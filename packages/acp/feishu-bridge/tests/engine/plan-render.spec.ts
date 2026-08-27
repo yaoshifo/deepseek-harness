@@ -26,6 +26,7 @@ import {
   extractHTMLTitle,
   extractMarkdownTitle,
   extractUsedIcons,
+  fitSVGTextSizes,
   getRenderStatus,
   recordRenderedReply,
   registerRenderCancel,
@@ -553,6 +554,57 @@ describe('EnsureSVGViewBox', () => {
   it('skips percentage dimensions and dimensionless svgs', () => {
     expect(ensureSVGViewBox('<svg width="100%" height="auto"><rect/></svg>')).not.toContain('viewBox=')
     expect(ensureSVGViewBox('<svg><rect/></svg>')).not.toContain('viewBox=')
+  })
+})
+
+describe('FitSVGTextSizes', () => {
+  const node = (rectW: string, text: string) =>
+    `<svg viewBox="0 0 400 80"><g class="core"><rect x="0" y="0" width="${rectW}" height="40" rx="8"/>${text}</g></svg>`
+
+  it('shrinks a default-size CJK label overflowing its rect (8 CJK chars, width 120 → floor(104/8)=13)', () => {
+    const out = fitSVGTextSizes(node('120', '<text x="60" y="25">渲染会话超长标签</text>'))
+    expect(out).toContain('font-size="13"')
+  })
+
+  it('leaves a fitting label untouched (no font-size attribute added)', () => {
+    const out = fitSVGTextSizes(node('200', '<text x="100" y="25">短标签</text>'))
+    expect(out).not.toContain('font-size')
+  })
+
+  it('keeps an explicit font-size that already fits', () => {
+    const out = fitSVGTextSizes(node('200', '<text x="100" y="25" font-size="14">短标签</text>'))
+    expect(out).toContain('font-size="14"')
+  })
+
+  it('shrinks an explicit font-size that overflows', () => {
+    const out = fitSVGTextSizes(node('120', '<text x="60" y="25" font-size="18">渲染会话超长标签</text>'))
+    expect(out).toContain('font-size="13"')
+    expect(out).not.toContain('font-size="18"')
+  })
+
+  it('floors at 10 when even the minimum still overflows', () => {
+    const out = fitSVGTextSizes(node('60', '<text x="30" y="25">超长标签超出框很多</text>'))
+    expect(out).toContain('font-size="10"')
+  })
+
+  it('uses the widest tspan row to govern the fit', () => {
+    const out = fitSVGTextSizes(node('120', '<text x="60" y="25"><tspan x="60">短</tspan><tspan x="60" dy="20">渲染会话超长标签</tspan></text>'))
+    expect(out).toContain('font-size="13"')
+  })
+
+  it('skips labels outside a rect group (edge labels have no box)', () => {
+    const edge = '<svg viewBox="0 0 400 80"><g class="flow"><line x1="0" y1="20" x2="80" y2="20"/></g><text x="40" y="12">条件说明长标签</text></svg>'
+    expect(fitSVGTextSizes(edge)).toBe(edge)
+  })
+
+  it('inherits the group font-size when the text omits it', () => {
+    const out = fitSVGTextSizes('<svg viewBox="0 0 400 80"><g font-size="20"><rect x="0" y="0" width="120" height="40" rx="8"/><text x="60" y="25">超长标签溢出检测</text></g></svg>')
+    expect(out).toContain('font-size="13"')
+  })
+
+  it('is wired into assembleHTML next to the other SVG fixes', () => {
+    const body = `<div class="wrap"><div class="diagram">${node('120', '<text x="60" y="25">渲染会话超长标签</text>')}</div></div>`
+    expect(assembleHTML('plan', body, '')).toContain('font-size="13"')
   })
 })
 
