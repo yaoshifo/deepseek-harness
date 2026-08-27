@@ -172,6 +172,13 @@ describe('buildSessionStartOptions research venv', () => {
     const modOptions = e.buildSessionStartOptions('test:hub:user-1', hub)
     expect(modOptions.persona?.forceMode).toBe('default')
     expect(modOptions.persona?.bypassPermissions).toBe(false)
+    // A hub-keyed moderator (the production hub shape: bound to its own
+    // chatroom) takes the role branch with the same forced mode.
+    hub.setChatroomHubKey('test:hub:user-1')
+    const hubOptions = e.buildSessionStartOptions('test:hub:user-1', hub)
+    expect(hubOptions.persona?.forceMode).toBe('default')
+    expect(hubOptions.persona?.bypassPermissions).toBe(true)
+    hub.setChatroomHubKey('')
     const roleOptions = e.buildSessionStartOptions('test:role-1', role)
     expect(roleOptions.persona?.bypassPermissions).toBe(true)
     expect(roleOptions.persona?.prompt).toContain('/data/chatroom/ledgers/')

@@ -383,6 +383,23 @@ describe('pending human reply routing', () => {
     expect(e.sessions.getOrCreateActive(hub).getPendingHumanQuestionRole()).toBe('taleb')
   })
 
+  it('consumes the reply through the inbound pipeline before command dispatch', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    await askHuman(e, roles[0]!.sessionKey, '落户截止日？')
+    clearCards(p)
+
+    // A plain-text human reply routes to the pending role through the
+    // route-human-reply seam inside receiveMessage — outranking command
+    // dispatch and permission handling.
+    e.receiveMessage(p, hubMsg(hub, { content: '2029-07-01' }))
+    await waitFor(() => p.sentCards.length === 1, 'routed reply card')
+    expect(e.sessions.getOrCreateActive(hub).getPendingHumanQuestionRole()).toBe('')
+  })
+
   it('routes through the bridge seam: the listener half short-circuits, the base falls through', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
@@ -979,6 +996,31 @@ describe('orphaned picker cards (state lost to a daemon restart)', () => {
       expect(card!.renderText()).toContain(expired)
     }
     expect(p.count).toBe(0)
+  })
+
+  it('the registered card actions run through the engine dispatch and dispose cleanly', async () => {
+    // registerChatroomCommands also claims the picker card paths: a pressed
+    // orphaned card routes through the engine's card-action registry.
+    const base = createStubChatroomSpawnerEx()
+    const refreshed: unknown[] = []
+    const p = { ...base, refreshCard: async (_k: string, card: unknown): Promise<void> => { refreshed.push(card) } }
+    const e = new Engine('test', createStubAgent(), [p], '', 'zh', chatroomPolicyFace())
+    e.setProjectStateStore(new ProjectStateStore(''))
+    registerSessionCommands(e)
+    const dispose = registerChatroomCommands(e)
+    const hub = 'test:hub:user-1'
+
+    e.receiveMessage(p, { ...hubMsg(hub), isCardAction: true, content: 'act:/chatroom-pick confirm' })
+    await waitFor(() => refreshed.length === 1, 'expired card refresh')
+    expect((refreshed[0] as { header?: { title?: string } }).header?.title).toBe(e.i18n.t(Msg.ChatroomPickTitle))
+
+    // The disposer removes both the command and the card-action claim: a
+    // pressed card falls through to the engine's unknown-card handling.
+    dispose()
+    expect(e.commandHandlers?.has('chatroom')).toBe(false)
+    e.receiveMessage(p, { ...hubMsg(hub), isCardAction: true, content: 'act:/chatroom-pick confirm' })
+    await settle()
+    expect(refreshed).toHaveLength(1)
   })
 })
 
