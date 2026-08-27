@@ -14,7 +14,7 @@ chatroom 功能（角色群、主持编排、`/chatroom` 命令族）内联在 f
 
 - `FeishuBridgeService`（`super(ctx, 'feishuBridge')`）持有 live 项目注册表与调用方路由（`route`/`nativeRoute`，plan D4），并且*就是*分发面：它实现 `BridgeDispatch`——收窄到 `feishuBridge/*` 键的 Cordis 事件总线。`apply()` 在构建任何引擎之前挂载它（apply 改为 async），并传给每个引擎构造器与 adapter。
 - 九个 typed events 承载耦合点：`permission-policy`、`mode-policy`、`rename-exemption`、`auto-render-policy`（会话启动决策的 waterfall），`turn-start`（serial；消费队列 metadata），`turn-end`（waterfall；角色回复 relay），`ask-approval`（返回决策或 `undefined` 落回默认流程的 waterfall），`platforms-ready`（emit；barrier 恢复），`session-start-options`（改共享 options 对象的 waterfall）。waterfall 分发方把内建基线作为最内层 `next` 传入——无监听时分发结果与既有引擎行为一致。
-- chatroom 监听半边放在 `engine/chatroom-policy.ts`，由 `apply()` 进程级注册一次——独立成模块是因为 `chatroom-pick.ts` 已经从 `chatroom.ts` import 运行时符号，注册函数放回 chatroom.ts 会闭合 import 环。
+- chatroom 监听半边现住 chatroom 包的 `src/engine/chatroom-policy.ts`（C2 迁出桥），由 chatroom 插件的 `apply()` 进程级注册一次——独立成模块是因为 `chatroom-pick.ts` 已经从 `chatroom.ts` import 运行时符号，注册函数放回 chatroom.ts 会闭合 import 环。
 - 在 Cordis 树之外构造的引擎与 adapter（单元测试）默认拿到 `bareBridgeDispatch()`：无监听、内建基线照跑、emit 丢弃。验证 chatroom 行为的测试用 `ctxBridgeDispatch(new Context())` 加注册的 policy 监听器（生产组合形态）接线。
 - `Message`/`QueuedMessage` 的 chatroom 协议字段合并为一个不透明 `metadata` 袋，由写入键的功能自持。
 - 通用缝去 chatroom 化：`GroupFamilyAvatarSetter`（原 `ChatroomFamilyAvatarSetter`）、`renameHubToTopic` 接受可注入的 topic 命名器、工具标签颜色改为注册时声明（`declareToolFamily`）而非硬编码工具名、`Engine.registerCommand` 以可逆 effect 统一持有命令注册（handler + resolver 匹配器 + help 分组）。

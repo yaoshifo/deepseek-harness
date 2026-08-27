@@ -28,4 +28,4 @@ agent 现在可以把任意本地产物作为真正的文件/图片消息投递�
 
 ## Testing
 
-`tests/tools/send-tool.spec.ts` 经真实 Cordis Context + ToolRuntime 跑工具：caller 路由进 `sendToSessionWithAttachments`（session key、message、图片/文件拆分）、纯文件与相对路径（project-state workdir override）投递、缺文件与空列表报错、50MB 上限在读取前拒绝、attachmentSend 关闭报错上浮、外来 caller 拒绝、HMR 注销。`tests/engine/chatroom-persona.spec.ts` 钉住恢复的投递段。真机冒烟（测试群里收到文件消息 + 图片消息）按 MIGRATION.md 流程执行。
+`tests/tools/send-tool.spec.ts` 经真实 Cordis Context + ToolRuntime 跑工具：caller 路由进 `sendToSessionWithAttachments`（session key、message、图片/文件拆分）、纯文件与相对路径（project-state workdir override）投递、缺文件与空列表报错、50MB 上限在读取前拒绝、attachmentSend 关闭报错上浮、外来 caller 拒绝、HMR 注销。`packages/acp/feishu-bridge-chatroom/tests/chatroom-persona.spec.ts` 钉住恢复的投递段。真机冒烟（测试群里收到文件消息 + 图片消息）按 MIGRATION.md 流程执行。
