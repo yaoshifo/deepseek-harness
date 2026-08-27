@@ -10,6 +10,8 @@ import {
   isJapanese,
   langChinese,
   langEnglish,
+  langTraditionalChinese,
+  lookupMessage,
   messages,
 } from '../src/i18n/index.js'
 
@@ -68,6 +70,33 @@ describe('I18n', () => {
     // ALL_MSG_KEYS list is the same inventory.
     for (const key of ALL_MSG_KEYS) {
       expect(messages[key], `MsgKey constant ${key} has no translation entry`).toBeDefined()
+    }
+  })
+})
+
+describe('lookupMessage', () => {
+  it('hits per language like I18n.t', () => {
+    expect(lookupMessage(langEnglish, Msg.ChatroomReady)).toBe('Chatroom role ready')
+    expect(lookupMessage(langChinese, Msg.ChatroomReady)).toBe('聊天室角色就绪')
+  })
+
+  it('substitutes Go-style format verbs like I18n.tf', () => {
+    expect(lookupMessage(langChinese, Msg.ChatroomListTitle, 3)).toBe('可用的 thinkers（3 个）')
+    expect(lookupMessage(langEnglish, Msg.ChatroomRoleNotFound, 'taleb')).toBe('Role taleb not found in this chatroom.')
+    // No args: template passes through unchanged, matching tf with zero args.
+    expect(lookupMessage(langEnglish, Msg.ChatroomListTitle)).toBe('Available thinkers (%d)')
+  })
+
+  it('returns the raw key for a missing entry', () => {
+    expect(lookupMessage(langEnglish, 'totally_missing_key' as MsgKey)).toBe('totally_missing_key')
+  })
+
+  it('matches I18n.t across the fallback chain', () => {
+    for (const lang of [langEnglish, langChinese, langTraditionalChinese, 'ja', 'es', 'nonexistent'] as Language[]) {
+      const i = new I18n(lang)
+      for (const key of ALL_MSG_KEYS) {
+        expect(lookupMessage(lang, key), `${lang} ${key}`).toBe(i.t(key))
+      }
     }
   })
 })
