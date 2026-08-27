@@ -1593,7 +1593,7 @@ describe('pending native children visibility', () => {
     const terminal = [...p.contents].reverse()
       .find(c => c.kind === 'text' && c.status?.state === 'completed') as TextPreviewContent | undefined
     expect(terminal?.status?.pendingSubtasks).toBe(2)
-    expect(terminal?.text).toContain('🤖 2 subtask(s) running')
+    expect(terminal?.text).toContain('⏳ 2 subtask(s) in flight')
   })
 
   it('settles without the pending signal when every child reported', async () => {
@@ -1609,7 +1609,7 @@ describe('pending native children visibility', () => {
     const terminal = [...p.contents].reverse()
       .find(c => c.kind === 'text' && c.status?.state === 'completed') as TextPreviewContent | undefined
     expect(terminal?.status?.pendingSubtasks).toBeUndefined()
-    expect(terminal?.text).not.toContain('subtask(s) running')
+    expect(terminal?.text).not.toContain('subtask(s) in flight')
   })
 
   it('interruptNativeChild settles the record so the pending count drops', async () => {

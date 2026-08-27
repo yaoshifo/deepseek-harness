@@ -566,7 +566,7 @@ export function progressTitleAndColor(
   if (ts !== '') title = `${title} · ${ts}`
   if (tc > 0) title += ` · ${tc}`
   if (pending > 0 && (state === 'completed' || state === 'failed')) {
-    title += ` · ${zh ? `${pending} 个子任务运行中` : `${pending} subtask(s) running`}`
+    title += ` · ${zh ? `${pending} 个子任务在途` : `${pending} subtask(s) in flight`}`
   }
   return { title, color }
 }

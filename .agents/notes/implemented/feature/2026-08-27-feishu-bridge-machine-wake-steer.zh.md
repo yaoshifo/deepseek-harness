@@ -31,4 +31,5 @@ Status: implemented
 - 并发子任务数量处处无上限（runtime、gather 期望集、steer 批量）；事故里的「5」是人消息队列泄漏到机器流量，不是子任务上限。`maxDepth`（默认 3）只管嵌套深度。
 - 改动前已持久化的子任务的 descriptor 里可能仍带原生 `report` 工具；存量子任务若调用它会像从前一样双投递，直到被 drain。新子任务看不到该工具。
 - 带在途子任务的重启现在会结算其记录并唤醒各父群一次；本改动之前这些记录永远停留在 `reported: false`（footer 幻影计数、gather 对永不可能汇报的子任务空等超时）。
+- 卡片上两个子任务计数器改为自解释标签——统计行 `🤖 累计派发：N`（累计）、footer 提示 `⏳ N 个子任务在途`（在途，键 `subtasks_running_hint`）及同词汇的结算卡标题后缀——「累计 vs 在途」的区分不再依赖位置，裸 `Sub Agent：N` 不再诱发误读。
 - 测试：`engine-subtask.spec.ts` 的 `deliverMachineMessage` 三态 + footer 刷新 + 重启恢复用例；`tests/agent-dsh/adapter-followup-signal.spec.ts` 的 followup-signal 回归；tool-subagent-control 的 list-agents 图例。阻塞 gather 三态、结算词汇、REAL-composition 用例原样通过——它们是「本改动补全而非反转 2026-08-27 设计」的回归证明。

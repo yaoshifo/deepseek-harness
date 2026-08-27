@@ -1813,7 +1813,7 @@ export class StreamPreview {
       if (this.failureCount > 0) b += `🔴调用失败：${this.failureCount}/${this.progressTotalCount}\n`
       if (this.compactCount > 0) b += `🗜上下文压缩：${this.compactCount}次\n`
       if (this.skillNames.length > 0) b += `📚 技能：${this.skillNames.join('、')}\n`
-      if (this.subagentCount > 0) b += `🤖 Sub Agent：${this.subagentCount}\n`
+      if (this.subagentCount > 0) b += `🤖 累计派发：${this.subagentCount}\n`
       for (const item of this.todoItems) {
         let icon: string
         switch (item.status.trim().toLowerCase()) {

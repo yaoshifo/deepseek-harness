@@ -238,7 +238,7 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
       .find(c => c.kind === 'text' && c.status?.state === 'completed') as TextPreviewContent | undefined
     expect(terminal?.status?.pendingSubtasks).toBe(1)
     // buildProjectAssembly engines run zh; the unit cases pin the en wording.
-    expect(terminal?.text).toContain('1 个子任务后台运行中')
+    expect(terminal?.text).toContain('1 个子任务在途')
   })
 
   it('a blocking gather resolves in-turn with the combined summary, no card, no wake turn', async () => {

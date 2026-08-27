@@ -1203,11 +1203,11 @@ describe('subagent progress entries', () => {
     // Before any progress entry the count parks without a card flush.
     await sp.setSubagentCount(3)
     await sp.appendProgress(newToolProgressEntry('Bash', 'ls', 't1'))
-    expect(sp.buildProgressDisplayLocked()).toContain('🤖 Sub Agent：3')
+    expect(sp.buildProgressDisplayLocked()).toContain('🤖 累计派发：3')
     await sp.setSubagentCount(2)
-    expect(sp.buildProgressDisplayLocked()).toContain('🤖 Sub Agent：2')
+    expect(sp.buildProgressDisplayLocked()).toContain('🤖 累计派发：2')
     await sp.setSubagentCount(0)
-    expect(sp.buildProgressDisplayLocked()).not.toContain('Sub Agent')
+    expect(sp.buildProgressDisplayLocked()).not.toContain('累计派发')
     // Unchanged counts skip the flush (no new message beyond the count change).
     const before = mp.messages.length
     await sp.setSubagentCount(0)
