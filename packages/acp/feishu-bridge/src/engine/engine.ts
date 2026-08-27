@@ -973,9 +973,9 @@ export class Engine {
   /** Whether the ctx/cache lines are shown on the completion footer (Go showContextIndicator). */
   showContextIndicator: boolean = true
   /** Effective context window in tokens (Go contextWindow). */
-  contextWindow: 200000 = this.modelContextWindow
+  contextWindow: number = this.modelContextWindow
   /** Project-level fallback window (Go projectContextWindow). */
-  projectContextWindow: 200000 = this.modelContextWindow
+  projectContextWindow: number = this.modelContextWindow
   /** Provider quota summaries appended to the completion footer (Go usageProviders). */
   usageProviders: UsageProvider[] = []
   /** Per-turn completion footer fields (Go completionUsage* fields). */
