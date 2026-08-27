@@ -116,7 +116,6 @@ import {
   type WorktreeCreateInfo,
 } from './worktree.js'
 import {
-  chatroomHubGroupName,
   defaultGroupNamePrompt,
   fallbackGroupIcon,
   groupIconRecentMax,
@@ -138,7 +137,7 @@ import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
-import { asCompletionNotifier, asChatPhasePainter, asChatroomFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.js'
+import { asCompletionNotifier, asChatPhasePainter, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
 import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.js'
 import { renderHelpGroupCard } from './misc-commands.js'
@@ -7387,21 +7386,30 @@ export class Engine {
   }
 
   /**
-   * Rename the user's own hub group to the chatroom topic (sync fallback),
+   * Rename the user's own hub group to the given topic (sync fallback),
    * then overwrite with a concise LLM name a few seconds later (Go
    * renameHubToTopic). With set_avatar on, the LLM's icon is stamped across
-   * the whole family via setChatroomFamilyAvatar.
+   * the whole family via setGroupFamilyAvatar.
    * @param p - Platform the hub group lives on.
    * @param sessionKey - Session key of the hub group.
    * @param chatType - Chat type; 'p2p' chats are skipped.
-   * @param topic - Chatroom topic used as the naming seed.
-   * @param childKeys - Session keys of the hub's role chats for family avatars.
+   * @param topic - Topic used as the naming seed.
+   * @param childKeys - Session keys of the hub's child chats for family avatars.
+   * @param namer - Derives the sync-fallback hub name from the topic
+   *   (the feature owning the hub supplies its own naming rule).
    */
-  renameHubToTopic(p: Platform, sessionKey: string, chatType: string, topic: string, childKeys: string[]): void {
+  renameHubToTopic(
+    p: Platform,
+    sessionKey: string,
+    chatType: string,
+    topic: string,
+    childKeys: string[],
+    namer: (topic: string) => string,
+  ): void {
     if (chatType === 'p2p') return
     const renamer = asGroupRenamer(p)
     if (renamer === undefined) return
-    const name = chatroomHubGroupName(topic)
+    const name = namer(topic)
     // Synchronous fallback: rename the hub to the topic text immediately.
     void renamer.renameGroupAny(sessionKey, name).catch((error: unknown) => {
       console.warn(`chatroom: failed to rename hub group to topic (${sessionKey}): ${String(error)}`)
@@ -7423,10 +7431,10 @@ export class Engine {
           queryCtl.signal, false,
         )
         if (hubName === '' || icon === '' || !this.groupNameSetAvatar) return
-        const setter = asChatroomFamilyAvatarSetter(p)
+        const setter = asGroupFamilyAvatarSetter(p)
         if (setter === undefined) return
         try {
-          await setter.setChatroomFamilyAvatar(sessionKey, capturedChildren, icon, hubName)
+          await setter.setGroupFamilyAvatar(sessionKey, capturedChildren, icon, hubName)
           this.recordGroupIcon(icon)
         } catch (error) {
           console.warn(`chatroom: set family avatar failed (hub=${sessionKey}): ${String(error)}`)

@@ -1037,9 +1037,9 @@ export interface GroupIconAvatarSetter {
   setGroupIconAvatar(sessionKey: string, iconName: string, groupName: string): Promise<void>
 }
 
-/** Platform that stamps one shared icon avatar across a chatroom family (Go ChatroomFamilyAvatarSetter). */
-export interface ChatroomFamilyAvatarSetter {
-  setChatroomFamilyAvatar(hubKey: string, childKeys: string[], iconName: string, familyName: string): Promise<void>
+/** Platform that stamps one shared icon avatar across a group family (hub plus child groups; Go ChatroomFamilyAvatarSetter). */
+export interface GroupFamilyAvatarSetter {
+  setGroupFamilyAvatar(hubKey: string, childKeys: string[], iconName: string, familyName: string): Promise<void>
 }
 
 /**
@@ -1414,13 +1414,13 @@ export function asGroupIconAvatarSetter(p: Platform): GroupIconAvatarSetter | un
 }
 
 /**
- * Structural check for the {@link ChatroomFamilyAvatarSetter} capability.
+ * Structural check for the {@link GroupFamilyAvatarSetter} capability.
  *
  * @param p - the platform to inspect.
  * @returns the capability view, or undefined when not implemented.
  */
-export function asChatroomFamilyAvatarSetter(p: Platform): ChatroomFamilyAvatarSetter | undefined {
-  return withMethod<ChatroomFamilyAvatarSetter>(p, 'setChatroomFamilyAvatar')
+export function asGroupFamilyAvatarSetter(p: Platform): GroupFamilyAvatarSetter | undefined {
+  return withMethod<GroupFamilyAvatarSetter>(p, 'setGroupFamilyAvatar')
 }
 
 /**

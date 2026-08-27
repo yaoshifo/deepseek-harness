@@ -13,6 +13,7 @@ import type { Engine } from './engine.js'
 import { emptyMessage } from './engine.js'
 import type { Message, Platform } from '../core/types.js'
 import { asCardSender, asGroupRenamer } from '../core/types.js'
+import { chatroomHubGroupName } from './groupname.js'
 import { newCard } from '../card.js'
 import { Msg } from '../i18n/keys.js'
 import {
@@ -354,7 +355,7 @@ export async function startChatroomDirectRole(
   const dir = roleDir(rolesDir, role)
   // Rename the hub group to the topic, mirroring the multi-role path. No
   // child groups in the direct-role path (the role IS the hub).
-  e.renameHubToTopic(p, msg.sessionKey, msg.chatType, topic, [])
+  e.renameHubToTopic(p, msg.sessionKey, msg.chatType, topic, [], chatroomHubGroupName)
   // Override the chat workdir to the role persona dir (persists across restarts).
   e.projectState?.setWorkspaceDirOverride(e.dirOverrideKey(msg.sessionKey), dir)
   e.projectState?.save()
@@ -520,7 +521,7 @@ export async function afterChatroomStarted(
 
   // Hub rename + family avatar: fire after role/assistant children exist so
   // the shared icon avatar can cover the whole family at once.
-  e.renameHubToTopic(p, sessionKey, chatType, topic, chatroomChildKeys)
+  e.renameHubToTopic(p, sessionKey, chatType, topic, chatroomChildKeys, chatroomHubGroupName)
 
   // Wake the hub agent as the moderator with the orchestration contract.
   let priming = buildChatroomModeratorPriming(topic, started, ledgerDir ?? '')

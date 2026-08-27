@@ -17,6 +17,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { SubtaskAgentRouter } from './subtask.js'
+import { declareToolFamily } from '../streaming.js'
 import {
   askHuman,
   askRole,
@@ -83,7 +84,10 @@ function parsePicks<T>(raw: string, kind: 'roles' | 'topics'): T[] {
  * @returns the exact disposer that unregisters the tool.
  */
 export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): () => void {
-  return ctx.tools.register(defineTool({
+  // The tag color for this tool's progress entries is declared here, not
+  // hardcoded in streaming.ts — the tool's owner states its family.
+  const undeclare = declareToolFamily('feishu_bridge_chatroom', 'agent')
+  const disposeTool = ctx.tools.register(defineTool({
     name: 'feishu_bridge_chatroom',
     description: DESCRIPTION,
     parameters: {
@@ -272,4 +276,8 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
       }
     },
   }))
+  return () => {
+    disposeTool()
+    undeclare()
+  }
 }

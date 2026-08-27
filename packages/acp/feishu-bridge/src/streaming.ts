@@ -251,8 +251,30 @@ function padLineWidth(s: string, minW: number): string {
 // Tool families for the tag color. Claude Code names (Read/Write/…) stay for
 // ported-test parity; the lowercase entries are the dsh-native tool names.
 const editTools = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'MultiEdit', 'NotebookEdit', 'read', 'write', 'edit', 'glob', 'grep', 'lsp', 'session_search', 'session_event_read', 'session_event_search', 'session_event_trace', 'memory_read', 'memory_list', 'memory_index', 'memory_write', 'memory_delete'])
-const agentTools = new Set(['Agent', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'EnterPlanMode', 'ExitPlanMode', 'subagent_fork', 'send_message', 'interrupt_agent', 'list_agents', 'report', 'workflow', 'ralph', 'create_goal', 'get_goal', 'job_list', 'job_output', 'job_kill', 'feishu_bridge_subtask', 'feishu_bridge_chatroom', 'feishu_bridge_relay', 'feishu_bridge_send'])
+const agentTools = new Set(['Agent', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'EnterPlanMode', 'ExitPlanMode', 'subagent_fork', 'send_message', 'interrupt_agent', 'list_agents', 'report', 'workflow', 'ralph', 'create_goal', 'get_goal', 'job_list', 'job_output', 'job_kill', 'feishu_bridge_subtask', 'feishu_bridge_relay', 'feishu_bridge_send'])
 const webTools = new Set(['WebSearch', 'WebFetch', 'web_search', 'web_fetch', 'lark-cli', 'feishu_bridge_cron'])
+
+/** Tag-color families a tool can be declared into at registration time. */
+export type ToolTagFamily = 'agent' | 'web'
+
+/** Registration-time tag-color declarations for tools this module must not hardcode (sibling-plugin tools). */
+const declaredToolFamilies = new Map<string, ToolTagFamily>()
+
+/**
+ * Declare a tool's progress-card tag family at registration time — for tools
+ * owned by sibling plugins, whose names this module must not hardcode. The
+ * static sets above stay for bridge-owned and ported-parity names.
+ *
+ * @param name - The tool name as it appears in progress events.
+ * @param family - The tag-color family.
+ * @returns Disposer dropping the declaration when it still stands.
+ */
+export function declareToolFamily(name: string, family: ToolTagFamily): () => void {
+  declaredToolFamilies.set(name, family)
+  return () => {
+    if (declaredToolFamilies.get(name) === family) declaredToolFamilies.delete(name)
+  }
+}
 
 /**
  * The colored text_tag label for a tool in the progress card (icon + color
@@ -326,13 +348,14 @@ export function toolTagForProgress(name: string, maxLen: number): string {
   }
 
   let color = 'blue'
+  const declared = declaredToolFamilies.get(name)
   if (name === 'Bash') {
     color = 'blue'
   } else if (editTools.has(name)) {
     color = 'turquoise'
-  } else if (agentTools.has(name)) {
+  } else if (agentTools.has(name) || declared === 'agent') {
     color = 'purple'
-  } else if (webTools.has(name)) {
+  } else if (webTools.has(name) || declared === 'web') {
     color = 'orange'
   }
 

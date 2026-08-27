@@ -13,12 +13,14 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   ProgressEntry,
   StreamPreview,
+  declareToolFamily,
   defaultStreamPreviewCfg,
   maxAnalysisDisplayChars,
   maxConsecutivePatchFailures,
   newStreamPreview,
   newToolProgressEntry,
   parseSkillToolUse,
+  toolTagForProgress,
   type StreamPreviewCfg,
 } from '../src/streaming.js'
 import { newAsyncSender } from '../src/async-sender.js'
@@ -1460,3 +1462,20 @@ function parseHMS(ts: string): Date {
   d.setHours(h ?? 0, m ?? 0, s ?? 0, 0)
   return d
 }
+
+describe('declareToolFamily (registration-time tag family)', () => {
+  it('colors a declared sibling tool and the disposer drops the declaration', () => {
+    const undeclare = declareToolFamily('sibling_agent_tool', 'agent')
+    expect(toolTagForProgress('sibling_agent_tool', 20)).toContain("color='purple'")
+    // An undeclared sibling tool keeps the default blue tag.
+    expect(toolTagForProgress('sibling_web_tool', 20)).toContain("color='blue'")
+
+    const undeclareWeb = declareToolFamily('sibling_web_tool', 'web')
+    expect(toolTagForProgress('sibling_web_tool', 20)).toContain("color='orange'")
+    undeclareWeb()
+    expect(toolTagForProgress('sibling_web_tool', 20)).toContain("color='blue'")
+
+    undeclare()
+    expect(toolTagForProgress('sibling_agent_tool', 20)).toContain("color='blue'")
+  })
+})

@@ -566,7 +566,7 @@ export interface StubTitleRenamePlatform extends StubPlatform {
   renameGroup(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
   renameGroupAny(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
   setGroupIconAvatar(sessionKey: string, iconName: string, groupName: string): Promise<void>
-  setChatroomFamilyAvatar(hubKey: string, childKeys: string[], iconName: string, familyName: string): Promise<void>
+  setGroupFamilyAvatar(hubKey: string, childKeys: string[], iconName: string, familyName: string): Promise<void>
 }
 
 export function createStubTitleRenamePlatform(n = 'test'): StubTitleRenamePlatform {
@@ -597,7 +597,7 @@ export function createStubTitleRenamePlatform(n = 'test'): StubTitleRenamePlatfo
       p.avatarGroups.push(groupName)
       if (p.avatarErr !== undefined) throw p.avatarErr
     },
-    setChatroomFamilyAvatar: async (hubKey, childKeys, iconName, familyName) => {
+    setGroupFamilyAvatar: async (hubKey, childKeys, iconName, familyName) => {
       p.familyHub = hubKey
       p.familyChildren = [...childKeys]
       p.familyIcon = iconName

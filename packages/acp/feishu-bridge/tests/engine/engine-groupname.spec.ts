@@ -530,7 +530,7 @@ describe('renameHubToTopic', () => {
     e.setGroupNameConfig(true, 'p', 1000, '')
 
     const topic = '我想做下资产配置 地理分散投资 本来想同时投美股和A股'
-    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [])
+    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [], chatroomHubGroupName)
 
     // The LLM overwrite is async and always lands after the topic fallback.
     const wantLLM = '资产配置讨论'
@@ -553,7 +553,7 @@ describe('renameHubToTopic', () => {
     e.setGroupNameConfig(false, '', 0, '')
 
     const topic = '某议题文本'
-    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [])
+    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [], chatroomHubGroupName)
 
     await waitFor(() => p.renamedNames.length === 1, 'topic fallback rename did not happen')
 
@@ -567,7 +567,7 @@ describe('renameHubToTopic', () => {
     e.setGroupNameConfig(true, 'p', 1000, '')
 
     const topic = '某议题文本'
-    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [])
+    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, [], chatroomHubGroupName)
 
     // Wait for the failing LLM query to run.
     await waitFor(() => a.state.callCount === 1, 'LightweightQuery was not invoked')
@@ -583,7 +583,7 @@ describe('renameHubToTopic', () => {
 
     const topic = '资产配置 地理分散投资'
     const childKeys = ['test:role-1', 'test:role-2']
-    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, childKeys)
+    e.renameHubToTopic(p, 'test:hub-1', 'group', topic, childKeys, chatroomHubGroupName)
 
     await waitFor(() => p.familyCalls === 1, 'SetChatroomFamilyAvatar was not invoked', 3000)
 

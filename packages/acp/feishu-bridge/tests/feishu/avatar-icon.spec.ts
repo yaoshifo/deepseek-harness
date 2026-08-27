@@ -110,14 +110,14 @@ describe('brandChat', () => {
   })
 })
 
-describe('setChatroomFamilyAvatar', () => {
+describe('setGroupFamilyAvatar', () => {
   it('shares one color + one gray upload across the family and persists child keys', async () => {
     const { p, captured } = newIconAvatarPlatform()
     p.spawnStore.set('oc_role1', { active: true, backfilled: true })
     p.spawnStore.set('oc_role2', { active: true })
 
     await expect(
-      p.setChatroomFamilyAvatar('feishu:oc_hub', ['feishu:oc_role1', 'feishu:oc_role2'], 'bug', '登录500修复'),
+      p.setGroupFamilyAvatar('feishu:oc_hub', ['feishu:oc_role1', 'feishu:oc_role2'], 'bug', '登录500修复'),
     ).resolves.toBeUndefined()
 
     expect(captured.uploadCount).toBe(2)
@@ -138,7 +138,7 @@ describe('setChatroomFamilyAvatar', () => {
   it('skips the gray upload when there are no children', async () => {
     const { p, captured } = newIconAvatarPlatform()
 
-    await expect(p.setChatroomFamilyAvatar('feishu:oc_hub', [], 'bug', '主题')).resolves.toBeUndefined()
+    await expect(p.setGroupFamilyAvatar('feishu:oc_hub', [], 'bug', '主题')).resolves.toBeUndefined()
 
     expect(captured.uploadCount).toBe(1)
     expect(captured.avatarByChat.get('oc_hub')).toBe('img-key-1')

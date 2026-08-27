@@ -2601,8 +2601,8 @@ export class FeishuPlatform implements Platform {
   }
 
   /**
-   * Stamp one shared Lucide icon avatar across a chatroom family (Go
-   * SetChatroomFamilyAvatar): hub plus role/assistant child groups. One
+   * Stamp one shared Lucide icon avatar across a group family (Go
+   * SetChatroomFamilyAvatar): the hub plus its child groups. One
    * render + upload per variant, the same color image on every group. The hub
    * is never tracked as spawned; children get per-group color/gray keys so
    * chatroom-end /done dims via the gray icon. Family chats deliberately stay
@@ -2610,11 +2610,11 @@ export class FeishuPlatform implements Platform {
    * transitions resolve to this same color/gray pair (key-deduped, no
    * repaint). Without children the gray upload is skipped.
    * @param hubKey - Session key of the hub group.
-   * @param childKeys - Session keys of the role/assistant child groups.
+   * @param childKeys - Session keys of the child groups.
    * @param iconName - Lucide icon rendered onto every group.
    * @param familyName - Family name seeding the color and fallbacks.
    */
-  async setChatroomFamilyAvatar(hubKey: string, childKeys: string[], iconName: string, familyName: string): Promise<void> {
+  async setGroupFamilyAvatar(hubKey: string, childKeys: string[], iconName: string, familyName: string): Promise<void> {
     let rendered: { svg: string; key: string }
     try {
       rendered = await this.uploadIconAvatarColor(iconName, familyName)
