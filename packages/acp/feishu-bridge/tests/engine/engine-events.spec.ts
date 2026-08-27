@@ -1086,7 +1086,7 @@ describe('message queueing', () => {
       platform: p, replyCtx: 'ctx-turn2', messageID: '', content: 'queued-msg',
       images: [], files: [], fromVoice: false, isSpawnedGroup: false,
       userID: '', userName: '', msgPlatform: 'test', msgSessionKey: key,
-      chatroomAskSeq: 0, chatroomAwaitAssistant: false,
+      metadata: undefined,
     }]
     e.interactiveStates.set(key, state)
 
@@ -1226,12 +1226,12 @@ describe('cleanup CAS', () => {
       platform: p, replyCtx: 'ctx', messageID: 'm1', content: 'queued-1',
       images: [], files: [], fromVoice: false, isSpawnedGroup: false,
       userID: '', userName: '', msgPlatform: 'test', msgSessionKey: key,
-      chatroomAskSeq: 0, chatroomAwaitAssistant: false,
+      metadata: undefined,
     }, {
       platform: p, replyCtx: 'ctx', messageID: 'm2', content: 'queued-2',
       images: [], files: [], fromVoice: false, isSpawnedGroup: false,
       userID: '', userName: '', msgPlatform: 'test', msgSessionKey: key,
-      chatroomAskSeq: 0, chatroomAwaitAssistant: false,
+      metadata: undefined,
     }]
     e.interactiveStates.set(key, state)
 
@@ -1958,7 +1958,7 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
       platform: p, replyCtx: 'ctx-turn2', messageID: '', content: 'queued-msg',
       images: [], files: [], fromVoice: false, isSpawnedGroup: false,
       userID: '', userName: '', msgPlatform: 'test', msgSessionKey: key,
-      chatroomAskSeq: 0, chatroomAwaitAssistant: false,
+      metadata: undefined,
     }]
     e.interactiveStates.set(key, state)
     const session = e.sessions.getOrCreateActive(key)

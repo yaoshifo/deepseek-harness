@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
+import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
 import { registerSessionCommands } from '../../src/engine/commands.js'
 import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.js'
 import {
@@ -52,7 +53,9 @@ async function waitFor(cond: () => boolean, what: string, timeoutMs = 2000): Pro
 }
 
 function newChatroomTestEngine(p: Platform): Engine {
-  const e = new Engine('test', createStubAgent(), [p], '', 'zh')
+  // The chatroom policy face (the production composition): start-options
+  // decoration, turn-start stamping, and relay ride the event listeners.
+  const e = new Engine('test', createStubAgent(), [p], '', 'zh', chatroomPolicyFace())
   e.setProjectStateStore(new ProjectStateStore(''))
   registerSessionCommands(e)
   registerChatroomCommands(e)
@@ -388,8 +391,8 @@ describe('gather fan-in via maybeAutoRelayRole', () => {
   })
 })
 
-describe('stampChatroomAskOnTurnStart', () => {
-  it('stamps round + awaiting on ask turns; zero metadata is a no-op; non-roles untouched', () => {
+describe('turn-start ask metadata stamp (feishuBridge/turn-start)', () => {
+  it('stamps round + awaiting on ask turns; zero metadata is a no-op; non-roles untouched', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
     const hub = 'test:hub-chat:user-1'
@@ -397,18 +400,22 @@ describe('stampChatroomAskOnTurnStart', () => {
     role.setChatroomHubKey(hub)
 
     // Ask turn: stamps round + arms awaiting.
-    e.stampChatroomAskOnTurnStart(role, 3, true)
+    await e.bridge.serial('feishuBridge/turn-start', {
+      engine: e, session: role, metadata: { chatroomAskSeq: 3, chatroomAwaitAssistant: true },
+    })
     expect(role.getChatroomAskSeq()).toBe(3)
     expect(role.getResearchAwaitingAssistant()).toBe(true)
 
     // Conclusion wake (report injection): zero metadata keeps the round.
-    e.stampChatroomAskOnTurnStart(role, 0, false)
+    await e.bridge.serial('feishuBridge/turn-start', { engine: e, session: role, metadata: undefined })
     expect(role.getChatroomAskSeq()).toBe(3)
     expect(role.getResearchAwaitingAssistant()).toBe(true)
 
     // Non-role session: no-op.
     const plain = e.sessions.getOrCreateActive('test:plain-chat')
-    e.stampChatroomAskOnTurnStart(plain, 5, true)
+    await e.bridge.serial('feishuBridge/turn-start', {
+      engine: e, session: plain, metadata: { chatroomAskSeq: 5, chatroomAwaitAssistant: true },
+    })
     expect(plain.getChatroomAskSeq()).toBe(0)
   })
 })

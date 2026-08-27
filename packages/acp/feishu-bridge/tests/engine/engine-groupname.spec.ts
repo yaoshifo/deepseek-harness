@@ -11,7 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { Engine } from '../../src/engine/engine.js'
 import { Session } from '../../src/engine/session.js'
 import { ctxBridgeDispatch } from '../../src/bridge-service.js'
-import { registerChatroomPolicyListeners } from '../../src/engine/chatroom.js'
+import { registerChatroomPolicyListeners } from '../../src/engine/chatroom-policy.js'
 import { cmdNew } from '../../src/engine/commands.js'
 import { lucideIconSVG } from '../../src/lucide/icon.js'
 import {

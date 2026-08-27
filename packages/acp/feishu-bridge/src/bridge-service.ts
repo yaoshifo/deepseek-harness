@@ -11,9 +11,9 @@
 import { Service, type Context, type Events } from '@deepseek-ai/cordis'
 import type { Promisify } from '@deepseek-ai/cosmokit'
 import type { DshAgentAdapter } from './agent-dsh/adapter.js'
-import type { Engine } from './engine/engine.js'
+import type { Engine, InteractiveState } from './engine/engine.js'
 import type { Session } from './engine/session.js'
-import type { SessionStartOptions } from './core/types.js'
+import type { AskDecision, AskRequest, SessionStartOptions } from './core/types.js'
 import { agentIDOf, type SubtaskRoute } from './tools/subtask.js'
 
 /** One live project: its engine plus the adapter that owns its agents. */
@@ -207,5 +207,60 @@ declare module '@deepseek-ai/cordis' {
      * @mode waterfall
      */
     'feishuBridge/auto-render-policy'(payload: { session: Session }, next: () => boolean): boolean
+    /**
+     * A turn is starting for a session: the one moment queued per-message
+     * metadata is consumed. Listeners run in order (a chatroom listener
+     * stamps gather-round metadata onto the role session and persists it).
+     * @param payload.engine - The engine owning the turn.
+     * @param payload.session - The session the turn runs under.
+     * @param payload.metadata - Opaque per-message metadata carried through
+     *   the queue; owned by the feature that set its keys.
+     * @mode serial
+     */
+    'feishuBridge/turn-start'(payload: { engine: Engine; session: Session; metadata: Record<string, unknown> | undefined }): void
+    /**
+     * A turn just produced its final response: listeners may relay the
+     * reply elsewhere (chatroom roles relay to the hub and wake the
+     * moderator). The built-in base does nothing; call `next()` to let the
+     * rest of the chain observe the turn end.
+     * @param payload.engine - The engine owning the turn.
+     * @param payload.state - The turn's interactive state (carries the platform).
+     * @param payload.session - The session the turn ran under.
+     * @param payload.response - The turn's clean final response text.
+     * @param payload.isSilent - Whether the reply was silent (relay may skip).
+     * @mode waterfall
+     */
+    'feishuBridge/turn-end'(payload: { engine: Engine; state: InteractiveState | undefined; session: Session; response: string; isSilent: boolean }, next: () => void): void
+    /**
+     * Allow an ask to be answered without the user. The built-in base
+     * returns undefined (fall through to the normal ask flow); a listener
+     * returns the decision instead (chatroom auto-approves the moderator's
+     * role-pick plan review as a formality).
+     * @param payload.engine - The engine rendering the ask.
+     * @param payload.sessionKey - Interactive-state slot the ask renders on.
+     * @param payload.request - The ask request (kind discriminates the surface).
+     * @param payload.signal - Abort signal of the asking tool call, if any.
+     * @mode waterfall
+     */
+    'feishuBridge/ask-approval'(payload: { engine: Engine; sessionKey: string; request: AskRequest; signal: AbortSignal | undefined }, next: () => Promise<AskDecision | undefined>): Promise<AskDecision | undefined>
+    /**
+     * Every platform of an engine finished starting. Listeners recover
+     * cross-restart state that needs live platforms (chatroom closes armed
+     * gather/end barriers from the persisted snapshot).
+     * @param payload.engine - The engine whose platforms are live.
+     * @mode emit
+     */
+    'feishuBridge/platforms-ready'(payload: { engine: Engine }): void
+    /**
+     * Decorate the shared session-start options object before the agent
+     * session starts: listeners set feature sections (chatroom fills the
+     * persona block and the shared research venv) and call `next()`. The
+     * built-in base fills the subtask and workspace sections only.
+     * @param payload.engine - The engine starting the session.
+     * @param payload.session - The session being started.
+     * @param payload.options - The options object to mutate in place.
+     * @mode waterfall
+     */
+    'feishuBridge/session-start-options'(payload: { engine: Engine; session: Session; options: SessionStartOptions }, next: () => void): void
   }
 }

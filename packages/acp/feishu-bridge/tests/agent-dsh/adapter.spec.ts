@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { ContinueSession, type AskDecision, type AskDelegate, type AskRequest, type Event } from '../../src/core/types.js'
 import { ctxBridgeDispatch, type BridgeDispatch } from '../../src/bridge-service.js'
-import { registerChatroomPolicyListeners } from '../../src/engine/chatroom.js'
+import { registerChatroomPolicyListeners } from '../../src/engine/chatroom-policy.js'
 import { DshAgentAdapter, DshAgentSession, unattendedSubtaskBypassesPermissions, stripModelAlias, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
 
 // DshAgentAdapter unit tests: ctx.agents create/resume, followup/cancel call

@@ -195,13 +195,13 @@ export interface Message {
   /** Permission mode override for this message ('' = project default; Go ModeOverride). */
   modeOverride?: string
   /**
-   * Internal chatroom metadata on synthetic ask messages injected into role
-   * sessions: the gather round stamp and the research dispatch-defer arm.
-   * Consumed at turn start (stampChatroomAskOnTurnStart) and never surfaced
-   * to the agent. 0/false for ordinary messages (Go ChatroomAskSeq etc.).
+   * Opaque per-message metadata extensions, carried through the queue to
+   * the drained turn and consumed at `feishuBridge/turn-start`: the feature
+   * that injects a synthetic message sets its own keys (chatroom sets the
+   * gather round stamp and the research dispatch-defer arm). Never surfaced
+   * to the agent.
    */
-  chatroomAskSeq?: number
-  chatroomAwaitAssistant?: boolean
+  metadata?: Record<string, unknown>
   /** Message creation time in seconds (Go CreateTime); 0/undefined when unknown. */
   createTime?: number
 }

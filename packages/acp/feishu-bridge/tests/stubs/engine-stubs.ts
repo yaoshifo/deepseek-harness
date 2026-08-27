@@ -444,8 +444,6 @@ export function newStubMessage(): Message {
     isCardAction: false,
     parentMessageID: '',
     quotedText: '',
-    chatroomAskSeq: 0,
-    chatroomAwaitAssistant: false,
   }
 }
 

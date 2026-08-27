@@ -160,13 +160,10 @@ import {
   maxChatroomResearchRounds,
   minChatroomResearchTimeout,
   minChatroomResearchRounds,
-  maybeAutoRelayRole,
-  recoverChatroomBarriers,
   routePendingHumanReply,
 } from './chatroom.js'
 import { defaultChatroomRolesDir } from './chatroom-roles.js'
-import { chatroomLedgerDir as chatroomLedgerDirPath } from './chatroom-ledger.js'
-import { chatroomPickActive, executeChatroomCardAction } from './chatroom-pick.js'
+import { executeChatroomCardAction } from './chatroom-pick.js'
 import { MonitorCore, isMonitorCommand } from './monitor.js'
 import {
   cancelRenders,
@@ -256,9 +253,8 @@ export interface QueuedMessage {
   userName: string
   msgPlatform: string
   msgSessionKey: string
-  /** Chatroom ask metadata carried through the queue to the drained turn (M5). */
-  chatroomAskSeq: number
-  chatroomAwaitAssistant: boolean
+  /** Opaque per-message metadata carried through the queue to the drained turn (consumed at feishuBridge/turn-start). */
+  metadata: Record<string, unknown> | undefined
 }
 
 /**
@@ -1438,7 +1434,7 @@ export class Engine {
     }
     // Chatroom barriers restored from disk close here, once platforms can
     // deliver the wakes: every reply they awaited died with the old process.
-    recoverChatroomBarriers(this)
+    this.bridge.emit('feishuBridge/platforms-ready', { engine: this })
   }
 
   /**
@@ -2047,8 +2043,7 @@ export class Engine {
       userName: msg.userName,
       msgPlatform: msg.platform,
       msgSessionKey: msg.sessionKey,
-      chatroomAskSeq: msg.chatroomAskSeq ?? 0,
-      chatroomAwaitAssistant: msg.chatroomAwaitAssistant ?? false,
+      metadata: msg.metadata,
     })
     void this.reply(p, msg.replyCtx, this.i18n.t(Msg.MessageQueued))
     return true
@@ -2180,7 +2175,7 @@ export class Engine {
 
       // Chatroom ask metadata is consumed at turn START: a queued ask behind
       // a busy turn must not stamp until the turn actually begins.
-      this.stampChatroomAskOnTurnStart(session, msg.chatroomAskSeq ?? 0, msg.chatroomAwaitAssistant ?? false)
+      await this.bridge.serial('feishuBridge/turn-start', { engine: this, session, metadata: msg.metadata })
 
       await this.handleSpawnedGroupFirstMessage(p, msg, session)
 
@@ -2662,48 +2657,15 @@ export class Engine {
   /**
    * Typed per-session start options (Go buildSessionEnv): the engine session
    * key plus the persona/workspace/venv metadata the adapter consumes at
-   * startSession. The hub lookup only runs for a session actually bound to a
-   * chatroom hub — getOrCreateActive materializes a session otherwise.
+   * startSession. The engine fills the subtask and workspace sections;
+   * feature sections (chatroom persona block, shared research venv) are
+   * decorated by `feishuBridge/session-start-options` listeners.
    * @param ccKey - Value used as the options' sessionKey.
    * @param session - Session whose subtask/chatroom flags expand the options.
    * @returns The typed start options for the agent session.
    */
   buildSessionStartOptions(ccKey: string, session: Session): SessionStartOptions {
-    const hubKey = session.getChatroomHubKey()
-    // Non-creating lookup (same as isResearchSession): a dangling hub key
-    // must not mint a phantom hub whose empty flags silently strip the
-    // research contract from this role.
-    const hub = hubKey !== '' ? this.sessions.findActive(hubKey) : undefined
-    let chatroom: SessionStartOptions['chatroom'] | undefined
-    if (hubKey !== '') {
-      const ledger = this.chatroomModeratorDir()
-      chatroom = {
-        role: true,
-        directRole: false,
-        moderator: session.getChatroomModerator(),
-        ledgerDir: ledger.ok ? chatroomLedgerDirPath(ledger.dir, hubKey) : '',
-        // Research mode: the hub flagged this chatroom as research-driven.
-        // Tell the role so its contract knows to drive a full-CC assistant
-        // subgroup instead of answering from memory. The assistant is
-        // addressed with the "assistant" sentinel (sendToSubtask resolves
-        // it from this session's researchAssistantKey).
-        research: hub?.getChatroomResearch() === true,
-      }
-    } else if (session.getChatroomDirectRole() || session.getChatroomModerator()) {
-      // 1:1 direct role chat (no hub, no relay): the lightweight direct-role
-      // contract instead of the multi-role one.
-      chatroom = {
-        role: false,
-        directRole: session.getChatroomDirectRole(),
-        moderator: session.getChatroomModerator(),
-        ledgerDir: '',
-        research: false,
-      }
-    }
-    // Shared research venv (Go buildSessionEnv research path: VIRTUAL_ENV
-    // plus <venv>/bin prepended to the child PATH).
-    const venv = session.getResearchVenv()
-    return {
+    const options: SessionStartOptions = {
       sessionKey: ccKey,
       ...(session.getSubtaskDepth() > 0
         ? {
@@ -2714,10 +2676,10 @@ export class Engine {
           },
         }
         : {}),
-      ...(chatroom !== undefined ? { chatroom } : {}),
       ...(this.feishuWorkspace !== undefined ? { feishuWorkspace: this.feishuWorkspace } : {}),
-      ...(venv !== '' ? { venv: { virtualEnv: venv } } : {}),
     }
+    this.bridge.waterfall('feishuBridge/session-start-options', { engine: this, session, options }, () => undefined)
+    return options
   }
 
   /**
@@ -3583,7 +3545,7 @@ export class Engine {
     // Chatroom role turn-end: deterministically relay the role's reply to the
     // hub and wake the moderator. Disjoint from the subtask hook above
     // (chatroom roles keep depth=0).
-    maybeAutoRelayRole(this, state, session, resultOrReply, isSilent)
+    this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: resultOrReply, isSilent }, () => undefined)
 
     // Export-button + speculative reply-HTML auto-deliver (Go engine_events.go
     // EventResult export block, #48): cache the full reply under the green
@@ -3735,7 +3697,7 @@ export class Engine {
       const splicedPrompt = spliceStagedAttachments(queuedPrompt, qImgs, qFiles)
       // Chatroom ask metadata is consumed at drain time — the queued ask's
       // turn is starting now.
-      this.stampChatroomAskOnTurnStart(session, queued.chatroomAskSeq, queued.chatroomAwaitAssistant)
+      await this.bridge.serial('feishuBridge/turn-start', { engine: this, session, metadata: queued.metadata })
       state.inflightMessage = queued
       this.i18n.detectAndSet(queued.content)
       const sendDone = state.agentSession.send(splicedPrompt, queued.images, queued.files)
@@ -3792,7 +3754,7 @@ export class Engine {
       // crash with no streamed text still settles as a notice.
       const prefixed = `${this.i18n.t(Msg.SubtaskTurnInterrupted)}\n\n${fullResponse}`
       this.maybeAutoReportSubtask(state, session, prefixed, isSilentReply(prefixed))
-      maybeAutoRelayRole(this, state, session, fullResponse, isSilentReply(fullResponse))
+      this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: fullResponse, isSilent: isSilentReply(fullResponse) }, () => undefined)
       // No-op when the auto-report delivered; covers the silent-reply skip.
       this.reportSubtaskTimeout(sessionKey)
 
@@ -3907,7 +3869,7 @@ export class Engine {
       state.agentSession.events().drain()
       // Chatroom ask metadata is consumed at drain time — the queued ask's
       // turn is starting now.
-      this.stampChatroomAskOnTurnStart(session, queued.chatroomAskSeq, queued.chatroomAwaitAssistant)
+      await this.bridge.serial('feishuBridge/turn-start', { engine: this, session, metadata: queued.metadata })
 
       const sendDone = state.agentSession.send(prompt, queued.images, queued.files)
         .then((): undefined => undefined, (error: unknown): unknown => error)
@@ -4680,10 +4642,15 @@ export class Engine {
     }
     // Chatroom role-pick: the moderator's plan review is a formality (priming
     // pre-bakes a trivial plan). Auto-approve so the user isn't prompted just
-    // to green-light reading role files + pick-roles. Only in the pick window.
-    if (request.kind === 'plan-review' && chatroomPickActive(this, sessionKey)) {
-      console.info(`auto-approving plan review (chatroom role-pick) (${sessionKey})`)
-      return { outcome: 'allowed-once' }
+    // to green-light reading role files + pick-roles. Only in the pick window
+    // (the listener short-circuits; no listener falls through to the ask).
+    if (request.kind === 'plan-review') {
+      const override = await this.bridge.waterfall(
+        'feishuBridge/ask-approval',
+        { engine: this, sessionKey, request, signal },
+        () => Promise.resolve(undefined),
+      )
+      if (override !== undefined) return override
     }
     const p = state.platform ?? this.platforms[0]
     if (p === undefined) {
@@ -6767,21 +6734,6 @@ export class Engine {
     session.setSubtaskReported(false)
     sessions.save()
     console.info(`subtask: re-armed report on drained queued message (child=${session.id})`)
-  }
-
-  /**
-   * Consume chatroom ask metadata at the moment a role's turn actually
-   * starts (Go stampChatroomAskOnTurnStart). The chatroom gather flow that
-   * arms these lands with M5; kept for the turn-start contract.
-   * @param session - Role session the metadata is stamped on.
-   * @param askSeq - Chatroom ask sequence number; 0 keeps the current value.
-   * @param awaitAssistant - Whether the role awaits its research assistant.
-   */
-  stampChatroomAskOnTurnStart(session: Session, askSeq: number, awaitAssistant: boolean): void {
-    if (session.getChatroomHubKey() === '') return
-    if (askSeq !== 0) session.setChatroomAskSeq(askSeq)
-    if (awaitAssistant) session.setResearchAwaitingAssistant(true)
-    this.sessions.save()
   }
 
   /**

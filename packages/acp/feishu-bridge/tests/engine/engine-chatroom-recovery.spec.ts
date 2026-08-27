@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Engine } from '../../src/engine/engine.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
+import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
 import { ChatroomEndBarrier, ChatroomGather } from '../../src/engine/chatroom.js'
 import type { Platform } from '../../src/core/types.js'
 import { createStubAgent, createStubChatroomSpawner } from '../stubs/engine-stubs.js'
@@ -33,7 +34,9 @@ async function waitFor(cond: () => boolean, what: string, timeoutMs = 2000): Pro
 }
 
 function newRecoveryEngine(p: Platform, storePath: string): Engine {
-  const e = new Engine('test', createStubAgent(), [p], storePath, 'zh')
+  // Barrier recovery rides the platforms-ready listener (the production
+  // composition).
+  const e = new Engine('test', createStubAgent(), [p], storePath, 'zh', chatroomPolicyFace())
   e.setProjectStateStore(new ProjectStateStore(''))
   return e
 }

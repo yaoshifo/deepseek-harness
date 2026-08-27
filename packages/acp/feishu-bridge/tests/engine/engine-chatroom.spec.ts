@@ -48,6 +48,7 @@ import {
   type ControllableAgentSession,
   type RecordedCard,
 } from '../stubs/engine-stubs.js'
+import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
 import type { ChatroomPickState } from '../../src/engine/chatroom-pick.js'
 
 /** One macrotask tick: flushes the microtask chain behind fire-and-forget sends. */
@@ -66,7 +67,9 @@ async function waitFor(cond: () => boolean | Promise<boolean>, what: string, tim
 
 /** Go newChatroomTestEngine: engine + in-memory project state + commands. */
 function newChatroomTestEngine(p: Platform): Engine {
-  const e = new Engine('test', createStubAgent(), [p], '', 'zh')
+  // The chatroom policy face (the production composition): persona start
+  // options, ask auto-approval, and the policy waterfalls ride the listeners.
+  const e = new Engine('test', createStubAgent(), [p], '', 'zh', chatroomPolicyFace())
   e.setProjectStateStore(new ProjectStateStore(''))
   registerSessionCommands(e)
   registerChatroomCommands(e)
@@ -1081,7 +1084,7 @@ describe('afterChatroomStarted recycles the hub agent process', () => {
         return session.next ?? createStubAgentSession()
       },
     }
-    const e = new Engine('test', agent, [p], '', 'zh')
+    const e = new Engine('test', agent, [p], '', 'zh', chatroomPolicyFace())
     e.setProjectStateStore(new ProjectStateStore(''))
     registerSessionCommands(e)
     registerChatroomCommands(e)

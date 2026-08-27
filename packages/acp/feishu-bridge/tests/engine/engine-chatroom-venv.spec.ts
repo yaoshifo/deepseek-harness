@@ -18,6 +18,7 @@ import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { registerSessionCommands } from '../../src/engine/commands.js'
 import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.js'
 import { ensureResearchPythonEnv, uvHooks } from '../../src/engine/chatroom.js'
+import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
 import { createStubAgent, newStubMessage } from '../stubs/engine-stubs.js'
 import { createStubChatroomSpawner } from '../stubs/engine-stubs.js'
 
@@ -32,7 +33,9 @@ afterEach(() => {
 })
 
 function newEngine(): Engine {
-  return new Engine('test', createStubAgent(), [], '', 'zh')
+  // The persona block and venv ride the session-start-options listener (the
+  // production composition).
+  return new Engine('test', createStubAgent(), [], '', 'zh', chatroomPolicyFace())
 }
 
 describe('ensureResearchPythonEnv', () => {

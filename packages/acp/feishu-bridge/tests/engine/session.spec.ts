@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { ctxBridgeDispatch } from '../../src/bridge-service.js'
-import { registerChatroomPolicyListeners } from '../../src/engine/chatroom.js'
+import { registerChatroomPolicyListeners } from '../../src/engine/chatroom-policy.js'
 import {
   ContinueSession,
   ForkSessionPrefix,
