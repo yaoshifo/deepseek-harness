@@ -21,3 +21,14 @@
 - id: subagent
   config:
     settlementNotice: external
+
+# Bridge-spawned children report through feishu_bridge_subtask action=report
+# (the child persona states it is the only way back). The runtime's own
+# `report` tool delivers into the runtime parent inbox — a channel the engine
+# cannot observe — so a child using it double-delivers (runtime splice plus
+# engine settlement card and wake, 2026-08-27 oc_56801302). A toolFilter deny
+# cannot name it: the tool registers per child, not globally, so composition
+# is the enforcement point. The subagents service's reportFrom path stays
+# available for native-parent delivery (reportChildToNativeParent).
+- id: tool-subagent-report
+  disabled: true

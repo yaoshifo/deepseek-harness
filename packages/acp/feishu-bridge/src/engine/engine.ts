@@ -6157,14 +6157,29 @@ export class Engine {
     // Surface the still-running count on the spawning turn's live card right
     // away (the stop-button row hint); the turn-end recount carries it onto
     // the settled card. Fire-and-forget — a hint PATCH must not fail the spawn.
-    const sp = this.interactiveStates.get(parentSessionKey)?.preview
-    if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
-      const pending = this.pendingNativeChildrenOf(parentSessionKey)
-      if (pending > 0) void sp.setBackgroundHint(this.i18n.tf(Msg.SubtasksRunningHint, pending))
-    }
+    this.refreshSubtaskFooter(parentSessionKey)
 
     console.info(`subtask: spawned native (parent=${parentSessionKey} child=${childId} fork=${forkContext} worktree=${wtPath !== ''} dir=${workDir})`)
     return { childName: label, childKey: childId }
+  }
+
+  /**
+   * Refresh the still-running-subtasks hint on a parent's live card. Called at
+   * spawn and whenever a child's `reported` flag flips, so a long parent turn
+   * (2026-08-27 oc_56801302: 40 minutes) no longer shows a stale count until
+   * turn end. Zero pending clears the hint. Fire-and-forget — a hint PATCH
+   * must not fail the operation that changed the count.
+   * @param parentKey - Parent session key whose live card carries the hint.
+   */
+  private refreshSubtaskFooter(parentKey: string): void {
+    const state = this.interactiveStates.get(parentKey)
+    const sp = state?.preview
+    if (!this.display.toolProgress || sp === undefined || !sp.canPreview()) return
+    const pending = this.pendingNativeChildrenOf(parentKey)
+    // Mirror the turn-end recount: zero subtasks only clears the hint when no
+    // background task is pending either (its count owns the hint in that case).
+    if (pending > 0) void sp.setBackgroundHint(this.i18n.tf(Msg.SubtasksRunningHint, pending))
+    else if ((state?.backgroundTasksPending ?? 0) === 0) void sp.setBackgroundHint('')
   }
 
   /** Live native session id of an engine session's running agent ('' = none). */
@@ -6301,6 +6316,7 @@ export class Engine {
       }
       await delegator.reportChildToNativeParent(childId, result.trim())
       this.updateNativeChild(childId, { reported: true })
+      this.refreshSubtaskFooter(entry.parent_key)
       console.info(`subtask: native child reported to native parent (child=${childId})`)
       return
     }
@@ -6313,6 +6329,7 @@ export class Engine {
       throw new Error('subtask: this chat has no parent session to report back to')
     }
     this.updateNativeChild(childId, { reported: true })
+    this.refreshSubtaskFooter(entry.parent_key)
     console.info(`subtask: native child reported to parent (child=${childId})`)
   }
 
@@ -6410,6 +6427,7 @@ export class Engine {
     // An interrupted child never reports; settle the record so the
     // still-running count on progress cards does not overstate forever.
     this.updateNativeChild(childId, { reported: true })
+    this.refreshSubtaskFooter(entry.parent_key)
     console.info(`subtask: interrupt requested for native child (child=${childId})`)
   }
 
@@ -6457,6 +6475,35 @@ export class Engine {
     } catch (error) {
       console.error(`engine: receive-message failed (${msg.sessionKey}): ${String(error)}`)
     }
+  }
+
+  /**
+   * Deliver one machine message (subtask report wake, gather-summary wake,
+   * chatroom moderator wake, follow-up injection) to a session's agent. A
+   * busy session receives it mid-turn through the agent-session steer
+   * primitive — claimed at the next step boundary, so several machine
+   * messages batch into one step — instead of entering the platform message
+   * pipeline, whose queue semantics (queued-notice reply, in-memory storage,
+   * length cap) belong to human conversations and must not apply to machine
+   * coordination (2026-08-27 oc_56801302: six child reports queued behind a
+   * 40-minute turn, the sixth silently dropped at the queue cap). An idle
+   * session keeps the synthetic-message pipeline so the wake runs with the
+   * bridge's full turn machinery. The startup window (no agent session yet,
+   * issue #565) and a busy-but-dead agent session fall back to the pipeline's
+   * existing queueing/failure semantics. A steer that lands just before the
+   * running turn ends stays in the inbox for the next turn — durable session
+   * events, never lost.
+   * @param p - Platform the message would have been delivered on.
+   * @param msg - The synthetic machine message; only content is steered.
+   */
+  deliverMachineMessage(p: Platform, msg: Message): void {
+    const state = this.interactiveStates.get(msg.sessionKey)
+    const busy = this.sessions.findActive(msg.sessionKey)?.isBusy() ?? false
+    if (busy && state?.agentSession !== undefined && state.agentSession.alive()) {
+      state.agentSession.steer(msg.content)
+      return
+    }
+    this.receiveMessageSafe(p, msg)
   }
 
   /**
@@ -6665,7 +6712,9 @@ export class Engine {
       content: `[父任务追问] ${msg}`,
       replyCtx: childRctx,
     }
-    this.receiveMessageSafe(p, childMsg)
+    // The busy-reject above makes the idle path the norm; deliverMachineMessage
+    // only steers when the child locked a turn in the check-to-inject race.
+    this.deliverMachineMessage(p, childMsg)
 
     console.info(`subtask: parent sent follow-up to child (parent=${callerSessionKey} child=${childKey})`)
     this.markResearchDispatch(this.sessions.getOrCreateActive(callerSessionKey))
@@ -6909,7 +6958,7 @@ export class Engine {
     if (r === undefined) return
     void r.reconstructReplyCtx(parentKey).then(
       (parentRctx) => {
-        this.receiveMessageSafe(p, {
+        this.deliverMachineMessage(p, {
           ...emptyMessage(),
           sessionKey: parentKey,
           platform: p.name(),
@@ -7013,7 +7062,9 @@ export class Engine {
    * only, so group children and native continuable children share one
    * delivery machine. `silentCard` (unattended native settlements under
    * features.subtaskQuiet) skips the user-visible card; the parent-agent
-   * wake below is always delivered.
+   * wake below is always delivered — through {@link deliverMachineMessage},
+   * so a busy parent turn receives it mid-turn instead of queueing it behind
+   * itself.
    */
   private async deliverParentReply(
     p: Platform,
@@ -7077,7 +7128,7 @@ export class Engine {
     if (childKey !== '') {
       agentContent += `\n\n(如需追问该子任务: feishu_bridge_subtask 工具 action: send, child: ${childKey})`
     }
-    this.receiveMessageSafe(p, {
+    this.deliverMachineMessage(p, {
       ...emptyMessage(),
       sessionKey: parentKey,
       platform: p.name(),

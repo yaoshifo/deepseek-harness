@@ -1973,3 +1973,107 @@ describe('group-path failure auto-report', () => {
     expect(child.getSubtaskReported()).toBe(true)
   })
 })
+
+describe('deliverMachineMessage (machine wake seam, 2026-08-27 oc_56801302)', () => {
+  const parentKey = 'test:busy-parent:u1'
+
+  function busyEngine(p: Platform, alive: boolean): {
+    e: Engine
+    parentSession: Session
+    agentSession: ControllableAgentSession
+  } {
+    const e = newSubtaskTestEngine(p)
+    const parentSession = e.sessions.getOrCreateActive(parentKey)
+    parentSession.tryLock()
+    const agentSession = newControllableSession('parent-live-1')
+    if (!alive) agentSession.aliveFlag = false
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'parent-rctx'
+    e.interactiveStates.set(parentKey, state)
+    return { e, parentSession, agentSession }
+  }
+
+  it('steers into a busy parent turn instead of queueing behind it', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agentSession } = busyEngine(p, true)
+
+    const child = e.sessions.getOrCreateActive('test:child-chat')
+    child.setParentSessionKey(parentKey)
+    expect(e.replyToParent(p, child, 'report body')).toBe(true)
+
+    await settle()
+    // The wake reached the running turn mid-turn; the queue notice for
+    // human messages never fired.
+    expect(agentSession.steerCalls.length).toBe(1)
+    expect(agentSession.steerCalls[0]).toContain('[子任务完成]')
+    expect(agentSession.steerCalls[0]).toContain('report body')
+    expect(p.sent.some(s => s.includes('📬'))).toBe(false)
+    // The user-visible card is independent of the wake path.
+    expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('report body')
+  })
+
+  it('keeps the synthetic-message path for an idle parent', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+    const parentSession = e.sessions.getOrCreateActive(parentKey)
+    expect(parentSession.isBusy()).toBe(false)
+    const agentSession = newControllableSession('parent-idle-1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'parent-rctx'
+    e.interactiveStates.set(parentKey, state)
+
+    const child = e.sessions.getOrCreateActive('test:child-chat')
+    child.setParentSessionKey(parentKey)
+    e.replyToParent(p, child, 'idle wake')
+
+    await settle()
+    expect(agentSession.steerCalls.length).toBe(0)
+    expect(p.sentCards.length).toBe(1)
+  })
+
+  it('falls back to the pipeline when the busy parent has a dead agent session', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agentSession } = busyEngine(p, false)
+
+    const child = e.sessions.getOrCreateActive('test:child-chat')
+    child.setParentSessionKey(parentKey)
+    e.replyToParent(p, child, 'dead session wake')
+
+    await settle()
+    // No steer; the pipeline's dead-session fallback answers instead of
+    // queueing behind a turn that will never drain.
+    expect(agentSession.steerCalls.length).toBe(0)
+    expect(p.sent.some(s => s.includes('Previous request still processing'))).toBe(true)
+    expect(p.sentCards.length).toBe(1)
+  })
+
+  it('refreshes the running-subtasks footer when a native child reports', async () => {
+    const p = createStubCardPlatformFull('test')
+    const r = newNativeEngine(p, parentKey)
+    r.e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'footer task',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: false,
+    })
+    // The live preview the footer hint PATCHes.
+    r.e.setDisplayConfig({ toolProgress: true })
+    const hints: string[] = []
+    const preview = {
+      canPreview: () => true,
+      setBackgroundHint: (hint: string) => { hints.push(hint) },
+    }
+    r.e.interactiveStates.get(parentKey)!.preview = preview as never
+
+    await r.e.reportNativeChild('native-child-1', 'done')
+
+    await settle()
+    expect(hints).toEqual([''])
+  })
+})

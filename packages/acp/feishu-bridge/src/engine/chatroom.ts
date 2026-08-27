@@ -857,18 +857,14 @@ export function wakeChatroomModerator(e: Engine, hubKey: string, content: string
   void r.reconstructReplyCtx(hubKey).then(
     (hubRctx) => {
       const wake = `${content}\n\n${e.i18n.t(Msg.ChatroomReminder)}`
-      try {
-        e.receiveMessage(p, {
-          ...emptyMessage(),
-          sessionKey: hubKey,
-          platform: p.name(),
-          userName: '[聊天室]',
-          content: wake,
-          replyCtx: hubRctx,
-        })
-      } catch (error) {
-        console.error(`engine: receive-message failed (${hubKey}): ${String(error)}`)
-      }
+      e.deliverMachineMessage(p, {
+        ...emptyMessage(),
+        sessionKey: hubKey,
+        platform: p.name(),
+        userName: '[聊天室]',
+        content: wake,
+        replyCtx: hubRctx,
+      })
     },
     (error: unknown) => {
       console.warn(`chatroom: reconstruct hub ctx for wake failed (hub=${hubKey}): ${String(error)}`)
@@ -1121,18 +1117,14 @@ export function maybeAutoRelayRole(
       // The relay card must land before the wake's placeholder card, or the
       // two sends race at the chat tail for the whole moderator turn.
       await relayRoleReply(hubRctx)
-      try {
-        e.receiveMessage(p, {
-          ...emptyMessage(),
-          sessionKey: hubKey,
-          platform: p.name(),
-          userName: '[聊天室]',
-          content: wake,
-          replyCtx: hubRctx,
-        })
-      } catch (error) {
-        console.error(`engine: receive-message failed (${hubKey}): ${String(error)}`)
-      }
+      e.deliverMachineMessage(p, {
+        ...emptyMessage(),
+        sessionKey: hubKey,
+        platform: p.name(),
+        userName: '[聊天室]',
+        content: wake,
+        replyCtx: hubRctx,
+      })
     },
     (error: unknown) => {
       console.warn(`chatroom: reconstruct hub ctx failed (hub=${hubKey}): ${String(error)}`)

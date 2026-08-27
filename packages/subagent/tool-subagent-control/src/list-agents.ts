@@ -143,21 +143,25 @@ export function apply(ctx: Context): void {
       },
       render: (args, entries) => {
         const request = resolveListAgentsRequest(args)
+        if (entries.length === 0) return [{ type: 'text', text: '(no subagents)' }]
+        const rows = entries.map((entry) => {
+          // A descendants row always carries its position; children rows
+          // never render it. String() spans the schema-optional shape
+          // without a dead fallback branch.
+          const at = request.scope === 'descendants'
+            ? ` parent=${String(entry.parent)} depth=${String(entry.depth)}`
+            : ''
+          return entry.kind === 'child'
+            ? `${entry.id} [${entry.status}]${at} — ${entry.label}`
+            : `${entry.id} [diagnostic: ${entry.reason}]${at}`
+        }).join('\n')
+        // The inline legend exists because the bare tags mislead without the
+        // tool description at hand: a parent model read `[ready]` as "queued
+        // and still executing" and delayed on it (2026-08-27 oc_56801302).
         return [{
           type: 'text',
-          text: entries.length === 0
-            ? '(no subagents)'
-            : entries.map((entry) => {
-              // A descendants row always carries its position; children rows
-              // never render it. String() spans the schema-optional shape
-              // without a dead fallback branch.
-              const at = request.scope === 'descendants'
-                ? ` parent=${String(entry.parent)} depth=${String(entry.depth)}`
-                : ''
-              return entry.kind === 'child'
-                ? `${entry.id} [${entry.status}]${at} — ${entry.label}`
-                : `${entry.id} [diagnostic: ${entry.reason}]${at}`
-            }).join('\n'),
+          text: `${rows}\nstatus: running = working now · idle = resident between turns · `
+            + 'ready = finished, archived in storage, resumable — not running, not pending',
         }]
       },
     },
