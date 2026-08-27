@@ -25,7 +25,9 @@ export type { ToolTagFamily } from './streaming.js'
 export type {
   Agent,
   AgentSession,
+  AskDecision,
   ButtonOption,
+  ChatPhase,
   Event,
   ForkQuerierWithProvider,
   Message,
