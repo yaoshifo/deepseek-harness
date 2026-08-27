@@ -1,8 +1,8 @@
 /**
  * Keyless real-server e2e: drives the real `typescript-language-server` through the full
- * `ctx.lsp` → `dsh-lsp-stdio` stack over the base protocol, exercising all four operations. No API
- * key needed — the server is a local dev dependency. This establishes one compatibility floor
- * (TypeScript), not a cross-language claim.
+ * `ctx.lsp` → `dsh-lsp-stdio` stack over the base protocol, exercising all four operations plus
+ * the name-based workspace symbol lookup. No API key needed — the server is a local dev dependency.
+ * This establishes one compatibility floor (TypeScript), not a cross-language claim.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
-import Lsp, { type LspQueryRequest, type LspQueryResult } from '@deepseek-ai/dsh-lsp'
+import Lsp, { type LspQueryRequest, type LspQueryResult, type LspSymbolResult } from '@deepseek-ai/dsh-lsp'
 import * as LspLocal from '@deepseek-ai/dsh-lsp-stdio'
 
 // The server binary is a dev dependency of this package; resolve its pnpm-hoisted .bin path.
@@ -83,6 +83,12 @@ function locations(result: LspQueryResult): readonly { uri: string }[] {
 }
 
 describe('real typescript-language-server', () => {
+  it('rejects a cold symbol query without a seed document (tsserver loads projects on didOpen)', async () => {
+    // Runs first so no document has ever been opened: tsserver's navto answers "No Project" until
+    // a document opens, and the transient-open host closes documents after each query.
+    await expect(ctx.lsp.symbol({ query: 'describe', workspaceRoot: ws })).rejects.toThrow(/No Project/)
+  }, 60_000)
+
   it('resolves the definition of a call site to its declaration', async () => {
     // `export const text = describe(c)` (line 15): `describe` begins at column 21.
     const result = await ctx.lsp.query(at('goToDefinition', 15, 22))
@@ -114,5 +120,23 @@ describe('real typescript-language-server', () => {
       expect(result.hover).not.toBeNull()
       expect(result.hover?.contents).toContain('Circle')
     }
+  }, 60_000)
+
+  it('finds workspace symbols by name with a seed document', async () => {
+    const groups: readonly LspSymbolResult[] = await ctx.lsp.symbol({ query: 'describe', workspaceRoot: ws, seedFilePath: 'shapes.ts' })
+    expect(groups).toHaveLength(1)
+    const symbols = groups[0]?.symbols ?? []
+    const describe = symbols.find(symbol => symbol.name === 'describe')
+    expect(describe).toBeDefined()
+    expect(describe?.location).not.toBeNull()
+    expect(describe?.location?.uri.endsWith('shapes.ts')).toBe(true)
+  }, 60_000)
+
+  it('finds workspace symbols after a position query without a seed document', async () => {
+    // The hover opens shapes.ts transiently; the instance remembers it and re-opens it around a
+    // bare symbol query.
+    await ctx.lsp.query(at('hover', 14, 15))
+    const groups: readonly LspSymbolResult[] = await ctx.lsp.symbol({ query: 'describe', workspaceRoot: ws })
+    expect(groups[0]?.symbols.some(symbol => symbol.name === 'describe')).toBe(true)
   }, 60_000)
 })

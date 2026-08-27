@@ -380,6 +380,11 @@ const SCENARIOS: Scenario[] = [
     prepareWorkspace: prepareEditingCordisSkillWorkspace,
   },
   { name: 'lsp-definition', hasModelTurn: true, recorded: false, pinsHeader: true, headerClass: 'lsp', configPath: LSP_CONFIG },
+  // The name-based workspaceSymbol entry point end to end: the workspace fixture server answers
+  // workspace/symbol, the real lsp-stdio provider runs the query through the real seam, and the
+  // tool result pins the rendered symbol line plus the maxLocations omission marker. Shares the
+  // lsp-definition header class without pinning it.
+  { name: 'lsp-symbol', hasModelTurn: true, recorded: false, headerClass: 'lsp', configPath: LSP_CONFIG },
   // web_fetch markdown rendering end to end: the overlay's loopback fixture
   // server supplies deterministic HTML (entities, a GFM table, nesting), the
   // REAL local fetch provider retrieves it, and the tool result pins the

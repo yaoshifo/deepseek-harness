@@ -13,11 +13,13 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { LspError, LspProviderId } from '@deepseek-ai/dsh-lsp'
+import { finalExtension, LspError, LspProviderId } from '@deepseek-ai/dsh-lsp'
 import type {
   LspProvider,
   LspProviderQuery,
   LspQueryResult,
+  LspSymbolRequest,
+  LspSymbolResult,
 } from '@deepseek-ai/dsh-lsp'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { abortable, abortError } from './abort.ts'
@@ -25,7 +27,7 @@ import { canonicalizeWorkspace, readHostSource } from './host.ts'
 import type { HostWorkspace } from './host.ts'
 import { LspInstance } from './instance.ts'
 import type { ConnectionSpawner } from './connection.ts'
-import type { InstanceSpec } from './instance.ts'
+import type { InstanceSpec, SymbolSeedDocument } from './instance.ts'
 
 export { canonicalizeWorkspace, readHostSource } from './host.ts'
 export { encodeMessage, MessageDecoder } from './framing.ts'
@@ -33,11 +35,15 @@ export {
   negotiatePositionEncoding,
   normalizeHover,
   normalizeLocations,
+  normalizeSymbols,
   requestMethod,
   supportsOperation,
   supportsTransientOpen,
+  supportsWorkspaceSymbol,
+  symbolKindName,
 } from './translate.ts'
 export { LspInstance } from './instance.ts'
+export type { SymbolSeedDocument } from './instance.ts'
 export { LspConnection } from './connection.ts'
 
 /** Cordis plugin name for loader diagnostics. */
@@ -261,15 +267,7 @@ class LocalLspProvider implements LspProvider {
     // Honor an already-aborted signal before provider I/O so a canceled request never starts a server.
     this.assertActive(signal)
     const querySignal = this.querySignal(signal)
-    const workspaceResult = canonicalizeWorkspace(this.fs, request.workspaceRoot, querySignal)
-    const workspaceLookup = workspaceResult.then(() => undefined, () => undefined)
-    this.workspaceLookups.add(workspaceLookup)
-    let workspace: HostWorkspace
-    try {
-      workspace = await workspaceResult
-    } finally {
-      this.workspaceLookups.delete(workspaceLookup)
-    }
+    const workspace = await this.resolveWorkspace(request.workspaceRoot, querySignal)
     this.assertActive(querySignal)
     const workspaceKey = workspace.target.targetKey
     return this.enqueue(workspaceKey, querySignal, async () => {
@@ -277,29 +275,106 @@ class LocalLspProvider implements LspProvider {
       // Read inside the workspace queue but before spawning: a queued query sees current bytes when
       // its turn starts, while an invalid source still cannot leave an idle process pooled.
       const source = await readHostSource(this.fs, request.filePath, workspace, this.config.maxDocumentBytes, querySignal)
-      // Disposal may have snapshotted the instance map while host I/O was pending. Re-check before a
-      // synchronous get-or-create so every spawned process remains owned by teardown.
-      this.assertActive(querySignal)
-      let instance = this.instanceFor(workspaceKey, workspace)
-      try {
-        return await instance.query(request, source, querySignal)
-      } catch (error) {
-        // A selected child can have died while idle or fail during the next write. Queries are
-        // read-only, so replace that transport once and retry transparently.
-        if (!instance.isTransportFailure(error)) throw error
+      return this.runOnInstance(workspaceKey, workspace, querySignal, instance => instance.query(request, source, querySignal))
+    })
+  }
+
+  async symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<LspSymbolResult> {
+    this.assertActive(signal)
+    const querySignal = this.querySignal(signal)
+    const workspace = await this.resolveWorkspace(request.workspaceRoot, querySignal)
+    this.assertActive(querySignal)
+    const workspaceKey = workspace.target.targetKey
+    const symbols = await this.enqueue(workspaceKey, querySignal, async () => {
+      // Read the seed inside the workspace queue (same freshness and containment contract as a
+      // position query's source) and derive its language id from this provider's own mapping; a
+      // seed whose extension this provider does not handle seeds nothing here. Without a seed the
+      // query runs bare or from the instance's remembered document.
+      const seed = await this.readSeedDocument(request.seedFilePath, workspace, querySignal)
+      return this.runOnInstance(workspaceKey, workspace, querySignal, instance => instance.symbolQuery(request, seed, querySignal))
+    })
+    return { symbols, resolvedWorkspaceUri: workspace.fileUrl }
+  }
+
+  /**
+   * Read the caller's seed document and derive its language id from this provider's mapping.
+   * @param seedFilePath - the seed path from the request, possibly `undefined`.
+   * @param workspace - the canonical workspace identity.
+   * @param signal - cancellation fused with provider disposal.
+   * @returns the seed document, or `undefined` when no seed was given or this provider's mapping
+   *   does not cover the file's extension.
+   */
+  private async readSeedDocument(
+    seedFilePath: string | undefined,
+    workspace: HostWorkspace,
+    signal: AbortSignal,
+  ): Promise<SymbolSeedDocument | undefined> {
+    if (seedFilePath === undefined) return undefined
+    const languageId = this.languageIdFor(seedFilePath)
+    if (languageId === undefined) return undefined
+    const source = await readHostSource(this.fs, seedFilePath, workspace, this.config.maxDocumentBytes, signal)
+    return { uri: source.fileUrl, languageId, text: source.text }
+  }
+
+  /** Look up a file's language id in this provider's mapping (normalized extension key). */
+  private languageIdFor(filePath: string): string | undefined {
+    const ext = finalExtension(filePath)
+    return this.extensionToLanguage[ext] ?? this.extensionToLanguage[ext.toUpperCase()]
+  }
+
+  /**
+   * Canonicalize the workspace, tracking the lookup so disposal can await it.
+   * @param workspaceRoot - the caller-supplied workspace root.
+   * @param signal - cancellation fused with provider disposal.
+   * @returns the canonical workspace identity.
+   */
+  private async resolveWorkspace(workspaceRoot: string, signal: AbortSignal): Promise<HostWorkspace> {
+    const workspaceResult = canonicalizeWorkspace(this.fs, workspaceRoot, signal)
+    const workspaceLookup = workspaceResult.then(() => undefined, () => undefined)
+    this.workspaceLookups.add(workspaceLookup)
+    try {
+      return await workspaceResult
+    } finally {
+      this.workspaceLookups.delete(workspaceLookup)
+    }
+  }
+
+  /**
+   * Run one instance-bound operation with the pool's transport-replacement policy: a selected child
+   * that died while idle or fails during the next write is replaced once and retried transparently
+   * (queries are read-only).
+   * @param workspaceKey - the canonical workspace key.
+   * @param workspace - the canonical workspace identity.
+   * @param signal - cancellation fused with provider disposal.
+   * @param run - the operation to run against the pooled instance.
+   * @returns the operation's result.
+   */
+  private async runOnInstance<T>(
+    workspaceKey: WorkspaceKey,
+    workspace: HostWorkspace,
+    signal: AbortSignal,
+    run: (instance: LspInstance) => Promise<T>,
+  ): Promise<T> {
+    // Disposal may have snapshotted the instance map while host I/O was pending. Re-check before a
+    // synchronous get-or-create so every spawned process remains owned by teardown.
+    this.assertActive(signal)
+    let instance = this.instanceFor(workspaceKey, workspace)
+    try {
+      return await run(instance)
+    } catch (error) {
+      if (!instance.isTransportFailure(error)) throw error
+      await instance.dispose()
+      this.evictIfCurrent(workspaceKey, instance)
+      this.assertActive(signal)
+      instance = this.instanceFor(workspaceKey, workspace)
+      return await run(instance)
+    } finally {
+      // Reach quiescence before dropping a dead slot; a replacement must survive this ownership check.
+      if (instance.dead) {
         await instance.dispose()
         this.evictIfCurrent(workspaceKey, instance)
-        this.assertActive(querySignal)
-        instance = this.instanceFor(workspaceKey, workspace)
-        return await instance.query(request, source, querySignal)
-      } finally {
-        // Reach quiescence before dropping a dead slot; a replacement must survive this ownership check.
-        if (instance.dead) {
-          await instance.dispose()
-          this.evictIfCurrent(workspaceKey, instance)
-        }
       }
-    })
+    }
   }
 
   /** Serialize one complete query lifecycle for a canonical workspace. */

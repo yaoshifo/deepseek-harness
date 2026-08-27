@@ -1,13 +1,14 @@
 /**
  * Service Definition for the LSP capability seam (`ctx.lsp`): a language-server provider registry and per-query,
  * order-independent selection over normalized goToDefinition/findReferences/goToImplementation/
- * hover queries.
+ * hover queries, plus a name-based workspace symbol lookup fanned out to every provider.
  *
  * A provider reserves a branded id and an exclusive set of file extensions atomically:
  * {@link Lsp.registerProvider} validates and conflict-checks everything before mutating, so an
  * invalid or conflicting registration publishes nothing, and its disposer releases every
  * reservation together. Selection routes a query by the file's final extension; it never depends on
- * registration order. The seam exposes exactly the four operations and no JSON-RPC escape hatch.
+ * registration order. The seam exposes exactly the four operations, the workspace symbol lookup,
+ * and no JSON-RPC escape hatch.
  * @module @deepseek-ai/dsh-lsp
  */
 
@@ -19,6 +20,8 @@ import type {
   LspQueryRequest,
   LspQueryResult,
   LspService,
+  LspSymbolRequest,
+  LspSymbolResult,
 } from './types.ts'
 
 export { LspProviderId } from './brand.ts'
@@ -33,6 +36,9 @@ export type {
   LspQueryResult,
   LspRange,
   LspService,
+  LspSymbol,
+  LspSymbolRequest,
+  LspSymbolResult,
 } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -76,12 +82,15 @@ interface Route {
 }
 
 /**
- * `ctx.lsp`. Holds the id reservations and the extension→route table; both are populated and cleared
- * together per provider so a route always has a live provider.
+ * `ctx.lsp`. Holds the id reservations, the extension→route table, and the registration-ordered
+ * provider list; all are populated and cleared together per provider so a route always has a live
+ * provider.
  */
 export class Lsp extends Service implements LspService {
   private readonly providerIds = new Set<LspProviderId>()
   private readonly routes = new Map<string, Route>()
+  /** Providers in registration order; `symbol()` fans out over this list. */
+  private readonly providers: LspProvider[] = []
 
   constructor(ctx: Context) {
     super(ctx, 'lsp')
@@ -129,9 +138,11 @@ export class Lsp extends Service implements LspService {
     // releases them together.
     const dispose = this.ctx.effect(function* (this: Lsp) {
       this.providerIds.add(id)
+      this.providers.push(provider)
       for (const [ext, route] of pending) this.routes.set(ext, route)
       yield () => {
         this.providerIds.delete(id)
+        this.providers.splice(this.providers.indexOf(provider), 1)
         for (const ext of pending.keys()) this.routes.delete(ext)
       }
     }.bind(this), 'lsp.registerProvider()')
@@ -146,6 +157,28 @@ export class Lsp extends Service implements LspService {
       throw new LspError(`no LSP provider handles "${request.filePath}"`, 'LSP_UNAVAILABLE')
     }
     return route.provider.query({ ...request, languageId: route.languageId }, signal)
+  }
+
+  async symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<readonly LspSymbolResult[]> {
+    const providers = [...this.providers]
+    if (providers.length === 0) {
+      throw new LspError('no LSP provider is registered', 'LSP_UNAVAILABLE')
+    }
+    const attempts = await Promise.all(providers.map(async (provider) => {
+      try {
+        return await provider.symbol(request, signal)
+      } catch (error) {
+        // A server without the workspaceSymbolProvider capability is an expected mixed-language
+        // gap, not a failure: it contributes nothing. Every other error propagates.
+        if (error instanceof LspError && error.code === 'LSP_UNSUPPORTED_OPERATION') return null
+        throw error
+      }
+    }))
+    const groups = attempts.filter(group => group !== null)
+    if (groups.length === 0) {
+      throw new LspError('no LSP provider supports workspace symbol lookup', 'LSP_UNSUPPORTED_OPERATION')
+    }
+    return groups
   }
 }
 

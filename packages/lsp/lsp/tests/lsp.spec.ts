@@ -7,25 +7,51 @@ import Lsp, {
   type LspProvider,
   type LspProviderQuery,
   type LspQueryResult,
+  type LspSymbol,
+  type LspSymbolRequest,
+  type LspSymbolResult,
 } from '@deepseek-ai/dsh-lsp'
+
+/** One scripted symbol used by the default symbol behavior. */
+const symbol: LspSymbol = {
+  name: 'answer',
+  kind: 'function',
+  location: { uri: 'file:///ws/a.ts', range: { start: { line: 0, character: 0 }, end: { line: 0, character: 6 } } },
+}
 
 /** A scripted provider that records the queries it receives. */
 function makeProvider(
   id: string,
   extensionToLanguage: Record<string, string>,
   result: LspQueryResult = { kind: 'locations', locations: [], resolvedWorkspaceUri: 'file:///ws' },
-): LspProvider & { seen: LspProviderQuery[]; seenSignals: (AbortSignal | undefined)[] } {
+  symbolBehavior?: (request: LspSymbolRequest, signal: AbortSignal | undefined) => Promise<LspSymbolResult>,
+): LspProvider & {
+  seen: LspProviderQuery[]
+  seenSignals: (AbortSignal | undefined)[]
+  seenSymbolRequests: LspSymbolRequest[]
+  seenSymbolSignals: (AbortSignal | undefined)[]
+} {
   const seen: LspProviderQuery[] = []
   const seenSignals: (AbortSignal | undefined)[] = []
+  const seenSymbolRequests: LspSymbolRequest[] = []
+  const seenSymbolSignals: (AbortSignal | undefined)[] = []
   return {
     id: LspProviderId(id),
     extensionToLanguage,
     seen,
     seenSignals,
+    seenSymbolRequests,
+    seenSymbolSignals,
     query(request, signal) {
       seen.push(request)
       seenSignals.push(signal)
       return Promise.resolve(result)
+    },
+    symbol(request, signal) {
+      seenSymbolRequests.push(request)
+      seenSymbolSignals.push(signal)
+      if (symbolBehavior !== undefined) return symbolBehavior(request, signal)
+      return Promise.resolve({ symbols: [symbol], resolvedWorkspaceUri: 'file:///ws' })
     },
   }
 }
@@ -183,5 +209,74 @@ describe('Lsp registration', () => {
 
   it('brands a provider id without altering the string', () => {
     expect(LspProviderId('ts')).toBe('ts')
+  })
+})
+
+describe('Lsp symbol lookup', () => {
+  it('fans out to every provider in registration order and merges their groups', async () => {
+    const { lsp } = await mountLsp()
+    const first = makeProvider('ts', { '.ts': 'typescript' })
+    const second = makeProvider('py', { '.py': 'python' })
+    lsp.registerProvider(first)
+    lsp.registerProvider(second)
+
+    const groups = await lsp.symbol({ query: 'answer', workspaceRoot: '/ws' })
+    expect(groups).toHaveLength(2)
+    expect(groups[0]?.symbols[0]?.name).toBe('answer')
+    expect(first.seenSymbolRequests[0]).toMatchObject({ query: 'answer', workspaceRoot: '/ws' })
+    expect(second.seenSymbolRequests[0]).toMatchObject({ query: 'answer', workspaceRoot: '/ws' })
+  })
+
+  it('contributes nothing from a provider whose server lacks the capability', async () => {
+    const { lsp } = await mountLsp()
+    lsp.registerProvider(makeProvider('ts', { '.ts': 'typescript' }))
+    const unsupported = makeProvider('py', { '.py': 'python' }, undefined, () =>
+      Promise.reject(new LspError('server does not support workspaceSymbol', 'LSP_UNSUPPORTED_OPERATION')))
+    lsp.registerProvider(unsupported)
+
+    const groups = await lsp.symbol({ query: 'answer', workspaceRoot: '/ws' })
+    expect(groups).toHaveLength(1)
+  })
+
+  it('fails LSP_UNSUPPORTED_OPERATION when every provider lacks the capability', async () => {
+    const { lsp } = await mountLsp()
+    lsp.registerProvider(makeProvider('ts', { '.ts': 'typescript' }, undefined, () =>
+      Promise.reject(new LspError('server does not support workspaceSymbol', 'LSP_UNSUPPORTED_OPERATION'))))
+    await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws' }))
+      .rejects.toThrow(expect.objectContaining({ code: 'LSP_UNSUPPORTED_OPERATION' }))
+  })
+
+  it('fails LSP_UNAVAILABLE when no provider is registered', async () => {
+    const { lsp } = await mountLsp()
+    await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws' }))
+      .rejects.toThrow(expect.objectContaining({ code: 'LSP_UNAVAILABLE' }))
+  })
+
+  it('propagates a provider failure other than unsupported', async () => {
+    const { lsp } = await mountLsp()
+    lsp.registerProvider(makeProvider('ts', { '.ts': 'typescript' }, undefined, () =>
+      Promise.reject(new LspError('boom', 'LSP_DISPOSED'))))
+    await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws' }))
+      .rejects.toThrow(expect.objectContaining({ code: 'LSP_DISPOSED' }))
+  })
+
+  it('forwards the abort signal verbatim to every provider', async () => {
+    const { lsp } = await mountLsp()
+    const provider = makeProvider('ts', { '.ts': 'typescript' })
+    lsp.registerProvider(provider)
+    const controller = new AbortController()
+    await lsp.symbol({ query: 'answer', workspaceRoot: '/ws' }, controller.signal)
+    expect(provider.seenSymbolSignals[0]).toBe(controller.signal)
+  })
+
+  it('stops fanning out to a disposed provider (HMR safety)', async () => {
+    const { ctx, lsp } = await mountLsp()
+    const fiber = await ctx.plugin(Object.assign((inner: Context) => {
+      inner.lsp.registerProvider(makeProvider('ts', { '.ts': 'typescript' }))
+    }, { inject: ['lsp'] }))
+    await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws' })).resolves.toHaveLength(1)
+    await fiber.dispose()
+    await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws' }))
+      .rejects.toThrow(expect.objectContaining({ code: 'LSP_UNAVAILABLE' }))
   })
 })

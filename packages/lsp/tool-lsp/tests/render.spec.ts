@@ -6,12 +6,13 @@ import {
   DEFAULT_MAX_RESULT_CHARS,
   formatHover,
   formatLocations,
+  formatSymbols,
   LSP_OPERATIONS,
   parseLspArgs,
   presentLspCall,
   renderUri,
 } from '@deepseek-ai/dsh-tool-lsp'
-import type { LspLocation } from '@deepseek-ai/dsh-lsp'
+import type { LspLocation, LspSymbol } from '@deepseek-ai/dsh-lsp'
 
 const WS = resolve('/home/u/proj')
 const WS_URI = pathToFileURL(WS).href
@@ -20,13 +21,36 @@ function loc(uri: string, line: number, character = 0): LspLocation {
   return { uri, range: { start: { line, character }, end: { line, character: character + 1 } } }
 }
 
+function sym(name: string, kind: string, location: LspLocation | null, containerName?: string): LspSymbol {
+  return { name, kind, location, ...containerName === undefined ? {} : { containerName } }
+}
+
 describe('parseLspArgs', () => {
-  it('accepts the four operations and converts one-based to zero-based', () => {
+  it('accepts the four position operations and converts one-based to zero-based', () => {
     for (const operation of LSP_OPERATIONS) {
       const input = parseLspArgs({ operation, file_path: 'a.ts', line: 3, character: 5 })
       expect(input.operation).toBe(operation)
-      expect(input.position).toEqual({ line: 2, character: 4 })
+      if (input.operation !== 'workspaceSymbol') {
+        expect(input.position).toEqual({ line: 2, character: 4 })
+      }
     }
+  })
+
+  it('accepts workspaceSymbol with a query and no coordinates', () => {
+    expect(parseLspArgs({ operation: 'workspaceSymbol', query: 'answer' }))
+      .toEqual({ operation: 'workspaceSymbol', query: 'answer' })
+  })
+
+  it('accepts an optional seed file_path for workspaceSymbol and drops a blank one', () => {
+    expect(parseLspArgs({ operation: 'workspaceSymbol', query: 'answer', file_path: 'a.ts' }))
+      .toEqual({ operation: 'workspaceSymbol', query: 'answer', seedFilePath: 'a.ts' })
+    expect(parseLspArgs({ operation: 'workspaceSymbol', query: 'answer', file_path: '  ' }))
+      .toEqual({ operation: 'workspaceSymbol', query: 'answer' })
+  })
+
+  it('rejects workspaceSymbol without a query or with a blank one', () => {
+    expect(() => parseLspArgs({ operation: 'workspaceSymbol' })).toThrow(/query/)
+    expect(() => parseLspArgs({ operation: 'workspaceSymbol', query: '  ' })).toThrow(/query/)
   })
 
   it('rejects an unknown operation', () => {
@@ -37,6 +61,11 @@ describe('parseLspArgs', () => {
   it('rejects a blank file_path', () => {
     expect(() => parseLspArgs({ operation: 'hover', file_path: '   ', line: 1, character: 1 }))
       .toThrow(/file_path/)
+  })
+
+  it('rejects a position operation with missing coordinates', () => {
+    expect(() => parseLspArgs({ operation: 'hover', file_path: 'a.ts' })).toThrow(/line/)
+    expect(() => parseLspArgs({ operation: 'hover', file_path: 'a.ts', line: 1 })).toThrow(/character/)
   })
 
   it('rejects non-positive or non-integer coordinates', () => {
@@ -160,6 +189,42 @@ describe('formatHover', () => {
   })
 })
 
+describe('formatSymbols', () => {
+  it('renders a no-result line when every group is empty', () => {
+    expect(formatSymbols([{ symbols: [], resolvedWorkspaceUri: WS_URI }], DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS))
+      .toBe('No symbols found.')
+    expect(formatSymbols([], DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)).toBe('No symbols found.')
+  })
+
+  it('renders name, kind, container, and one-based location', () => {
+    const a = pathToFileURL(join(WS, 'a.ts')).href
+    const text = formatSymbols([{ symbols: [sym('answer', 'function', loc(a, 2, 6), 'Math'), sym('x', 'variable', loc(a, 0))], resolvedWorkspaceUri: WS_URI }], DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)
+    expect(text).toBe('answer (function) in Math — a.ts:3:7\nx (variable) — a.ts:1:1')
+  })
+
+  it('renders a no-location symbol without a position suffix', () => {
+    const text = formatSymbols([{ symbols: [sym('answer', 'function', null)], resolvedWorkspaceUri: WS_URI }], DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)
+    expect(text).toBe('answer (function) — no location')
+  })
+
+  it('caps across groups in provider order and marks the omission', () => {
+    const a = pathToFileURL(join(WS, 'a.ts')).href
+    const b = pathToFileURL(join(WS, 'b.ts')).href
+    const text = formatSymbols([
+      { symbols: [sym('a', 'function', loc(a, 0))], resolvedWorkspaceUri: WS_URI },
+      { symbols: [sym('b', 'function', loc(b, 1)), sym('c', 'function', loc(b, 2))], resolvedWorkspaceUri: WS_URI },
+    ], 2, DEFAULT_MAX_RESULT_CHARS)
+    expect(text).toBe('a (function) — a.ts:1:1\nb (function) — b.ts:2:1\n… 1 more symbol omitted (limit 2).')
+  })
+
+  it('caps the complete symbol text even when one name is enormous', () => {
+    const a = pathToFileURL(join(WS, 'a.ts')).href
+    const text = formatSymbols([{ symbols: [sym('n'.repeat(1_000_000), 'function', loc(a, 0))], resolvedWorkspaceUri: WS_URI }], 1, 80)
+    expect(text).toHaveLength(80)
+    expect(text).toContain('symbols truncated')
+  })
+})
+
 describe('presentLspCall', () => {
   it('is a generic search card with an operation/cursor title and a line location', () => {
     expect(presentLspCall({ operation: 'findReferences', file_path: 'a.ts', line: 3, character: 7 })).toEqual({
@@ -167,6 +232,14 @@ describe('presentLspCall', () => {
       kind: 'search',
       title: 'LSP findReferences a.ts:3:7',
       locations: [{ path: 'a.ts', line: 3 }],
+    })
+  })
+
+  it('is a generic search card with a quoted-query title for workspaceSymbol', () => {
+    expect(presentLspCall({ operation: 'workspaceSymbol', query: 'answer' })).toEqual({
+      card: 'generic',
+      kind: 'search',
+      title: 'LSP workspaceSymbol "answer"',
     })
   })
 })
