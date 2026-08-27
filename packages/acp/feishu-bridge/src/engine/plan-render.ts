@@ -453,12 +453,12 @@ export function fitSVGTextSizes(body: string): string {
     if (rectTag === null) return group
     const rw = /\bwidth="([\d.]+)"/.exec(rectTag[0])
     if (rw === null) return group
-    const avail = parseFloat(rw[1]) - 16
+    const avail = parseFloat(rw[1] ?? '') - 16
     if (avail <= 0) return group
     const gSize = /font-size="([\d.]+)"/.exec(group.slice(0, group.indexOf('>')))
     return group.replace(/<text\b([^>]*)>([\s\S]*?)<\/text>/g, (text, attrs: string, inner: string) => {
       const tSize = /font-size="([\d.]+)"/.exec(attrs)
-      const size = tSize !== null ? parseFloat(tSize[1]) : (gSize !== null ? parseFloat(gSize[1]) : 18)
+      const size = tSize !== null ? parseFloat(tSize[1] ?? '') : (gSize !== null ? parseFloat(gSize[1] ?? '') : 18)
       // tspan rows are separate visual lines; the widest one governs the fit
       const lines = inner
         .replace(/<tspan\b[^>]*>/g, '\n')
