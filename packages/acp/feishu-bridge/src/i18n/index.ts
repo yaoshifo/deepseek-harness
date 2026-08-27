@@ -178,8 +178,16 @@ interface MessageSubtableRegistration {
 /**
  * Live subtable registrations (see {@link registerMessages}); the same
  * subtable object may appear several times (reference-counted reloads).
+ *
+ * Process-global on purpose: the package ships as two self-contained
+ * bundles (lib/index.js and the ./exports face, lib/exports.js), each with
+ * its own copy of this module — a module-level array would split into two
+ * registries, and a sibling plugin registering through ./exports would be
+ * invisible to the engine's own lookup.
  */
-const subtableRegistrations: MessageSubtableRegistration[] = []
+const subtableRegistrations: MessageSubtableRegistration[] =
+  ((globalThis as { __DSH_FEISHU_I18N_SUBTABLES__?: MessageSubtableRegistration[] })
+    .__DSH_FEISHU_I18N_SUBTABLES__ ??= [])
 
 /** The registered subtables, one entry per distinct source object, in registration order. */
 function messageSubtables(): MessageSubtableRegistration[] {

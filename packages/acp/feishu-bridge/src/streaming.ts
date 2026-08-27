@@ -257,8 +257,19 @@ const webTools = new Set(['WebSearch', 'WebFetch', 'web_search', 'web_fetch', 'l
 /** Tag-color families a tool can be declared into at registration time. */
 export type ToolTagFamily = 'agent' | 'web'
 
-/** Registration-time tag-color declarations for tools this module must not hardcode (sibling-plugin tools). */
-const declaredToolFamilies = new Map<string, ToolTagFamily>()
+/**
+ * Registration-time tag-color declarations for tools this module must not
+ * hardcode (sibling-plugin tools).
+ *
+ * Process-global on purpose: the package ships as two self-contained
+ * bundles (lib/index.js and the ./exports face, lib/exports.js), each with
+ * its own copy of this module — a module-level map would split in two, and
+ * a sibling plugin declaring through ./exports would leave the engine's
+ * progress rendering without the family color.
+ */
+const declaredToolFamilies: Map<string, ToolTagFamily> =
+  ((globalThis as { __DSH_FEISHU_TOOL_FAMILIES__?: Map<string, ToolTagFamily> })
+    .__DSH_FEISHU_TOOL_FAMILIES__ ??= new Map())
 
 /**
  * Declare a tool's progress-card tag family at registration time — for tools

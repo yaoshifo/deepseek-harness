@@ -43,8 +43,15 @@ export interface FeatureStateCodec {
  * several contexts at once: both re-register the SAME codec object, so the
  * codec stays registered until every registration is disposed (a different
  * codec object under the same key stays an error).
+ *
+ * Process-global on purpose: the package ships as two self-contained
+ * bundles (lib/index.js and the ./exports face, lib/exports.js), each with
+ * its own copy of this module — a module-level array would split into two
+ * registries, and a sibling plugin registering through ./exports would be
+ * invisible to the engine's snapshot/carry consultations.
  */
-const registrations: FeatureStateCodec[] = []
+const registrations: FeatureStateCodec[] =
+  ((globalThis as { __DSH_FEISHU_CODECS__?: FeatureStateCodec[] }).__DSH_FEISHU_CODECS__ ??= [])
 
 /**
  * Register a feature-state codec; the bridge consults the registry on every
