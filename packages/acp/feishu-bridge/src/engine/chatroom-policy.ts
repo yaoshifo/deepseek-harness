@@ -12,7 +12,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Engine } from './engine.js'
 import type { Session } from './session.js'
-import { maybeAutoRelayRole, recoverChatroomBarriers } from './chatroom.js'
+import { maybeAutoRelayRole, recoverChatroomBarriers, routePendingHumanReply } from './chatroom.js'
 import { chatroomPickActive } from './chatroom-pick.js'
 import { chatroomLedgerDir } from './chatroom-ledger.js'
 import type { SessionStartOptions } from '../core/types.js'
@@ -27,6 +27,8 @@ import type { SessionStartOptions } from '../core/types.js'
  *   HTML overview is redundant),
  * - the hard-cap exemption for research sessions (their long turns are the
  *   product),
+ * - the pending ask-human reply routing (consumed replies outrank command
+ *   dispatch and permission handling),
  * - the gather-round metadata stamp at turn start,
  * - the role-reply relay at turn end,
  * - the moderator role-pick plan-review auto-approval,
@@ -48,6 +50,8 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
       next() || payload.session.getChatroomHubKey() !== ''),
     ctx.on('feishuBridge/hard-cap-exemption', (payload, next) =>
       next() || isResearchExemptSession(payload.engine, payload.session)),
+    ctx.on('feishuBridge/route-human-reply', (payload, next) =>
+      next() || routePendingHumanReply(payload.engine, payload.platform, payload.sessionKey, payload.content)),
     ctx.on('feishuBridge/turn-start', (payload) => {
       // Go stampChatroomAskOnTurnStart: consume the gather-round metadata at
       // the moment the turn actually starts. The stamp persists whenever the

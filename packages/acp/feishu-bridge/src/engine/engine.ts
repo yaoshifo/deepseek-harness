@@ -159,7 +159,6 @@ import {
   maxChatroomResearchRounds,
   minChatroomResearchTimeout,
   minChatroomResearchRounds,
-  routePendingHumanReply,
 } from './chatroom.js'
 import { defaultChatroomRolesDir } from './chatroom-roles.js'
 import { executeChatroomCardAction } from './chatroom-pick.js'
@@ -1724,10 +1723,11 @@ export class Engine {
       this.sessions.save()
     }
 
-    // Chatroom pending-human replies outrank both command dispatch and
-    // permission handling (Go orders routePendingHumanReply before
-    // handleCommand). Slash commands pass through untouched.
-    if (routePendingHumanReply(this, p, msg.sessionKey, content)) return
+    // Pending-human replies to feature questions (chatroom ask-human) outrank
+    // both command dispatch and permission handling (Go orders
+    // routePendingHumanReply before handleCommand). Slash commands pass
+    // through untouched (the listener halves decide).
+    if (this.bridge.waterfall('feishuBridge/route-human-reply', { engine: this, platform: p, sessionKey: msg.sessionKey, content }, () => false)) return
 
     // Slash commands dispatch BEFORE permission handling (Go engine.go fix
     // 60e20ef6): a registered command like /done must run while a permission

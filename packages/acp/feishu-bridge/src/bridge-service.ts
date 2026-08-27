@@ -13,7 +13,7 @@ import type { Promisify } from '@deepseek-ai/cosmokit'
 import type { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { Engine, InteractiveState } from './engine/engine.js'
 import type { Session } from './engine/session.js'
-import type { AskDecision, AskRequest, SessionStartOptions } from './core/types.js'
+import type { AskDecision, AskRequest, Platform, SessionStartOptions } from './core/types.js'
 import { agentIDOf, type SubtaskRoute } from './tools/subtask.js'
 
 /** One live project: its engine plus the adapter that owns its agents. */
@@ -218,6 +218,19 @@ declare module '@deepseek-ai/cordis' {
      * @mode waterfall
      */
     'feishuBridge/hard-cap-exemption'(payload: { engine: Engine; session: Session }, next: () => boolean): boolean
+    /**
+     * Route the human's reply to a feature's pending question (chatroom
+     * ask-human): a listener that consumes the message short-circuits with
+     * `true` and the inbound flow stops there — this decision outranks
+     * command dispatch and permission handling. The built-in base returns
+     * false (no feature holds a pending question).
+     * @param payload.engine - The engine receiving the inbound message.
+     * @param payload.platform - Platform that delivered the message.
+     * @param payload.sessionKey - Session key the message arrived under.
+     * @param payload.content - The human's reply text.
+     * @mode waterfall
+     */
+    'feishuBridge/route-human-reply'(payload: { engine: Engine; platform: Platform; sessionKey: string; content: string }, next: () => boolean): boolean
     /**
      * A turn is starting for a session: the one moment queued per-message
      * metadata is consumed. Listeners run in order (a chatroom listener

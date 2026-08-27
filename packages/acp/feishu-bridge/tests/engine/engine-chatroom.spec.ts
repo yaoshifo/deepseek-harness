@@ -382,6 +382,26 @@ describe('pending human reply routing', () => {
     expect(routePendingHumanReply(e, p, hub, '/list')).toBe(false)
     expect(e.sessions.getOrCreateActive(hub).getPendingHumanQuestionRole()).toBe('taleb')
   })
+
+  it('routes through the bridge seam: the listener half short-circuits, the base falls through', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    e.setChatroomRolesDir(await scaffoldTwoRoles())
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    await askHuman(e, roles[0]!.sessionKey, '落户截止日？')
+    clearCards(p)
+
+    // Listener half: a pending question consumes the reply (true before the
+    // base); a slash command falls through to the base's false.
+    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: '/list' }, () => false)).toBe(false)
+    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: '2029-07-01' }, () => false)).toBe(true)
+    expect(e.sessions.getOrCreateActive(hub).getPendingHumanQuestionRole()).toBe('')
+    await waitFor(() => p.sentCards.length === 1, 'routed reply card')
+
+    // Base: no question pending anymore, the dispatch returns false.
+    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: 'another' }, () => false)).toBe(false)
+  })
 })
 
 describe('ListChatroomRoles', () => {
