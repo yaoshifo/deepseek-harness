@@ -65,7 +65,8 @@ const helpGroupOf = new Map<string, HelpGroup>([
   ['tag', 'session'],
   ['untag', 'session'],
   ['undone', 'session'],
-  ['chatroom', 'session'],
+  // 'chatroom' declares its group at registration (Engine.registerCommand),
+  // so it moves with its owning plugin instead of this static table.
   ['provider', 'agent'],
   ['compress', 'agent'],
   ['btw', 'agent'],
@@ -106,7 +107,7 @@ export function renderHelpGroupCard(e: Engine, groupKey: string): Card {
 
   const items = new Map<HelpGroup, string[]>(helpGroups.map(g => [g, [] as string[]]))
   for (const cmdID of e.commandHandlers?.keys() ?? []) {
-    items.get(helpGroupOf.get(cmdID) ?? 'session')?.push(cmdID)
+    items.get(e.commandGroups.get(cmdID) ?? helpGroupOf.get(cmdID) ?? 'session')?.push(cmdID)
   }
   // Provider shortcuts ride the agent group (Go injects them there).
   for (const shortcut of Object.keys(e.providerShortcuts).sort()) {

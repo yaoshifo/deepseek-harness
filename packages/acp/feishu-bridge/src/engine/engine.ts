@@ -830,6 +830,21 @@ type ReconstructingPlatform = Platform & {
   reconstructReplyCtx?: (sessionKey: string) => Promise<unknown>
 }
 
+/** Help-card group a registered command lists under (misc-commands' four tabs). */
+export type CommandHelpGroup = 'session' | 'agent' | 'tools' | 'system'
+
+/** One slash-command registration handed to {@link Engine.registerCommand}. */
+export interface CommandRegistration {
+  /** Canonical command id, without the leading slash. */
+  id: string
+  /** Handler invoked with the delivering platform, message, and raw args. */
+  handler: (p: Platform, msg: Message, args: string[]) => boolean
+  /** Extra resolver step mapping a typed command token to the id ('' = no match). */
+  match?: (cmd: string) => string
+  /** Help-card group; 'session' applies when omitted. */
+  group?: CommandHelpGroup
+}
+
 /**
  * Engine routes messages between platforms and the agent for a single
  * project (Go Engine, M1 subset).
@@ -1003,6 +1018,40 @@ export class Engine {
   commandResolver: ((cmd: string) => string) | undefined
   /** Privileged/disabled command gate; true when it replied and handled the line. */
   commandGate: ((cmdID: string, p: Platform, msg: Message) => boolean) | undefined
+  /** Help-card group per command registered through registerCommand; the static misc-commands table covers the rest. */
+  readonly commandGroups = new Map<string, CommandHelpGroup>()
+
+  /**
+   * Register one slash command on this engine: the handler map gains the
+   * entry, the resolver chain gains the registration's prefix matcher, and
+   * the help card lists the command under the declared group. Requires the
+   * session command table (registerSessionCommands) to be installed first.
+   *
+   * @param reg - The command registration (id, handler, matcher, group).
+   * @returns Disposer removing the registration and restoring the resolver.
+   */
+  registerCommand(reg: CommandRegistration): () => void {
+    const handlers = this.commandHandlers
+    if (handlers === undefined) {
+      throw new Error(`engine: registerCommand(${reg.id}) requires the session command table (registerSessionCommands) to be installed first`)
+    }
+    handlers.set(reg.id, reg.handler)
+    if (reg.group !== undefined) this.commandGroups.set(reg.id, reg.group)
+    const prevResolver = this.commandResolver
+    if (reg.match !== undefined) {
+      const match = reg.match
+      this.commandResolver = (cmd: string): string => {
+        const id = prevResolver?.(cmd) ?? ''
+        if (id !== '') return id
+        return match(cmd)
+      }
+    }
+    return () => {
+      handlers.delete(reg.id)
+      this.commandGroups.delete(reg.id)
+      this.commandResolver = prevResolver
+    }
+  }
 
   /** Persisted per-project state (/dir overrides). */
   projectState: import('./project-state.js').ProjectStateStore | undefined

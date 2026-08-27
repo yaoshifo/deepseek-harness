@@ -52,31 +52,23 @@ function matchChatroomPrefix(cmd: string): string {
 
 /**
  * Register the /chatroom (alias /cr) command on an engine that already has
- * its session commands registered — the handler map gains one entry and the
- * resolver is wrapped (the shared commands.ts table stays untouched).
+ * its session commands registered — through the engine's registerCommand
+ * seam (handler map + resolver chain + help-card group in one reversible
+ * registration).
  *
- * @param e - Engine whose command handler map and resolver gain the entry.
+ * @param e - Engine whose command table gains the entry.
  * @returns the disposer removing the registration.
  */
 export function registerChatroomCommands(e: Engine): () => void {
-  const handlers = e.commandHandlers
-  if (handlers === undefined) {
-    throw new Error('chatroom: registerSessionCommands must run before registerChatroomCommands')
-  }
-  handlers.set('chatroom', (p, msg, args) => {
-    void cmdChatroom(e, p, msg, args)
-    return true
+  return e.registerCommand({
+    id: 'chatroom',
+    handler: (p, msg, args) => {
+      void cmdChatroom(e, p, msg, args)
+      return true
+    },
+    match: matchChatroomPrefix,
+    group: 'session',
   })
-  const prevResolver = e.commandResolver
-  e.commandResolver = (cmd: string): string => {
-    const id = prevResolver?.(cmd) ?? ''
-    if (id !== '') return id
-    return matchChatroomPrefix(cmd)
-  }
-  return () => {
-    handlers.delete('chatroom')
-    e.commandResolver = prevResolver
-  }
 }
 
 /**
