@@ -92,7 +92,7 @@ describe('dispatch faces', () => {
     // The chatroom listener joins the built-in subtask base on the waterfall.
     expect(face.waterfall(
       'feishuBridge/permission-policy',
-      { options: { sessionKey: 'k', chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false } } },
+      { options: { sessionKey: 'k', persona: { prompt: 'p', bypassPermissions: true, forceMode: undefined } } },
       () => false,
     )).toBe(true)
     expect(face.waterfall('feishuBridge/permission-policy', { options: undefined }, () => false)).toBe(false)

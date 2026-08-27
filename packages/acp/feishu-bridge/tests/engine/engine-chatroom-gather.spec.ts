@@ -183,7 +183,10 @@ describe('GatherRoles', () => {
     const before = e.sessions.allSessions().length
 
     const options = e.buildSessionStartOptions('test:role-9:user-1', role)
-    expect(options.chatroom?.research).toBe(false)
+    // Non-creating hub lookup: the role still gets its persona, with the
+    // research contract absent (the phantom hub's empty flags strip it).
+    expect(options.persona?.bypassPermissions).toBe(true)
+    expect(options.persona?.prompt).not.toContain('用预配的助手子群干活')
     expect(e.sessions.allSessions().length).toBe(before)
   })
 

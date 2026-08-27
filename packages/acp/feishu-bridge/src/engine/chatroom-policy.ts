@@ -15,6 +15,7 @@ import type { Session } from './session.js'
 import { armResearchManualAskTimeout, maybeAutoRelayRole, recoverChatroomBarriers, routePendingHumanReply } from './chatroom.js'
 import { chatroomPickActive } from './chatroom-pick.js'
 import { chatroomLedgerDir } from './chatroom-ledger.js'
+import { buildChatroomSystemPrompt } from './chatroom-persona.js'
 import type { SessionStartOptions } from '../core/types.js'
 
 /**
@@ -37,7 +38,8 @@ import type { SessionStartOptions } from '../core/types.js'
  * - the role-reply relay at turn end,
  * - the moderator role-pick plan-review auto-approval,
  * - barrier recovery once platforms are live,
- * - the research-assistant flag, persona block, and shared research venv on
+ * - the research-assistant flag, the persona block (precomputed prompt,
+ *   permission bypass, plan downgrade), and the shared research venv on
  *   session-start options.
  *
  * @param ctx - Plugin context carrying the event bus.
@@ -46,9 +48,13 @@ import type { SessionStartOptions } from '../core/types.js'
 export function registerChatroomPolicyListeners(ctx: Context): () => void {
   const disposers = [
     ctx.on('feishuBridge/permission-policy', (payload, next) =>
-      next() || payload.options?.chatroom?.role === true || payload.options?.chatroom?.directRole === true),
-    ctx.on('feishuBridge/mode-policy', (payload, next) =>
-      payload.mode === 'plan' && payload.options?.chatroom?.moderator === true ? 'default' : next()),
+      next() || payload.options?.persona?.bypassPermissions === true),
+    ctx.on('feishuBridge/mode-policy', (payload, next) => {
+      // A persona that never implements must not stall on a plan approval
+      // nobody needs to give: its forced mode overrides an inherited plan.
+      const forced = payload.options?.persona?.forceMode
+      return forced !== undefined && payload.mode === 'plan' ? forced : next()
+    }),
     ctx.on('feishuBridge/rename-exemption', (payload, next) =>
       next() || payload.session.getChatroomHubKey() !== '' || payload.session.getChatroomDirectRole() || payload.session.getResearchAssistant()),
     ctx.on('feishuBridge/auto-render-policy', (payload, next) =>
@@ -143,9 +149,12 @@ function isResearchExemptSession(engine: Engine, session: Session): boolean {
 /**
  * Fill the research-assistant flag, the chatroom persona block, and the
  * shared research venv on session start options (moved from the engine's
- * buildSessionStartOptions; Go buildSessionEnv). The hub lookup is
- * non-creating: a dangling hub key must not mint a phantom hub whose empty
- * flags silently strip the research contract from this role.
+ * buildSessionStartOptions; Go buildSessionEnv). The persona prompt is
+ * precomputed here — flattened from the session's effective workdir (the
+ * per-chat /dir override, else the agent base dir), the same directory the
+ * adapter would start the session in. The hub lookup is non-creating: a
+ * dangling hub key must not mint a phantom hub whose empty flags silently
+ * strip the research contract from this role.
  * @param engine - The engine owning the session registry.
  * @param session - Session whose chatroom flags expand the options.
  * @param options - The options object to mutate in place.
@@ -158,27 +167,43 @@ function decorateSessionStartOptions(engine: Engine, session: Session, options: 
   const hubKey = session.getChatroomHubKey()
   if (hubKey !== '') {
     const ledger = engine.chatroomModeratorDir()
-    options.chatroom = {
-      role: true,
-      directRole: false,
-      moderator: session.getChatroomModerator(),
-      ledgerDir: ledger.ok ? chatroomLedgerDir(ledger.dir, hubKey) : '',
-      // Research mode: the hub flagged this chatroom as research-driven.
-      // Tell the role so its contract knows to drive a full-CC assistant
-      // subgroup instead of answering from memory. The assistant is
-      // addressed with the "assistant" sentinel (sendToSubtask resolves it
-      // from this session's researchAssistantKey).
-      research: engine.sessions.findActive(hubKey)?.getChatroomResearch() === true,
+    const moderator = session.getChatroomModerator()
+    // Research mode: the hub flagged this chatroom as research-driven.
+    // Tell the role so its contract knows to drive a full-CC assistant
+    // subgroup instead of answering from memory. The assistant is
+    // addressed with the "assistant" sentinel (the resolve-child-alias
+    // listener resolves it from this session's researchAssistantKey).
+    const research = engine.sessions.findActive(hubKey)?.getChatroomResearch() === true
+    options.persona = {
+      prompt: buildChatroomSystemPrompt({
+        workDir: engine.sessionWorkDir(session.id),
+        isRole: true,
+        isDirect: false,
+        isModerator: moderator,
+        research,
+        ledgerDir: ledger.ok ? chatroomLedgerDir(ledger.dir, hubKey) : '',
+        platformPrompt: '',
+      }),
+      bypassPermissions: true,
+      forceMode: moderator ? 'default' : undefined,
     }
   } else if (session.getChatroomDirectRole() || session.getChatroomModerator()) {
     // 1:1 direct role chat (no hub, no relay): the lightweight direct-role
     // contract instead of the multi-role one.
-    options.chatroom = {
-      role: false,
-      directRole: session.getChatroomDirectRole(),
-      moderator: session.getChatroomModerator(),
-      ledgerDir: '',
-      research: false,
+    const directRole = session.getChatroomDirectRole()
+    const moderator = session.getChatroomModerator()
+    options.persona = {
+      prompt: buildChatroomSystemPrompt({
+        workDir: engine.sessionWorkDir(session.id),
+        isRole: false,
+        isDirect: directRole,
+        isModerator: moderator,
+        research: false,
+        ledgerDir: '',
+        platformPrompt: '',
+      }),
+      bypassPermissions: directRole,
+      forceMode: moderator ? 'default' : undefined,
     }
   }
   // Shared research venv (Go buildSessionEnv research path: VIRTUAL_ENV

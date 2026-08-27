@@ -986,7 +986,7 @@ describe('DshAgentAdapter approval answerer', () => {
     adapter.setAskDelegate(delegate)
     const session = (await adapter.startSession('', {
       sessionKey: 'feishu:oc_b:ou_1',
-      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false },
+      persona: { prompt: 'bare persona prompt', bypassPermissions: true, forceMode: undefined },
     })) as DshAgentSession
     const listener = h.listeners.get('approval/request')?.[0] as unknown as (req: Record<string, unknown>) => Promise<unknown>
 
@@ -1213,7 +1213,7 @@ it('a chatroom moderator never enters plan mode (an inherited plan default is do
   a.setDefaultMode('plan')
   await a.startSession('', {
     sessionKey: 'feishu:hub:ou_9',
-    chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false },
+    persona: { prompt: 'moderator persona prompt', bypassPermissions: false, forceMode: 'default' },
   })
   expect(planSets).toEqual([false])
 })
@@ -1227,7 +1227,7 @@ it('a chatroom moderator downgrades an explicit plan override too (one rule: mod
   a.setSessionMode('plan')
   await a.startSession('', {
     sessionKey: 'feishu:hub:ou_9',
-    chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false },
+    persona: { prompt: 'moderator persona prompt', bypassPermissions: false, forceMode: 'default' },
   })
   expect(planSets).toEqual([false])
 })
@@ -1236,7 +1236,7 @@ describe('unattendedSubtaskBypassesPermissions (the permission-policy built-in b
   it('elevates unattended subtasks only; chatroom personas join via the policy listener', () => {
     expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', subtask: { attended: false, noReport: false, researchAssistant: false } })).toBe(true)
     expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', subtask: { attended: true, noReport: false, researchAssistant: false } })).toBe(false)
-    expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false } })).toBe(false)
+    expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', persona: { prompt: 'p', bypassPermissions: true, forceMode: undefined } })).toBe(false)
     expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'feishu:oc_1:ou_9' })).toBe(false)
     expect(unattendedSubtaskBypassesPermissions(undefined)).toBe(false)
   })
@@ -1270,7 +1270,7 @@ describe('effectiveMode bypass wiring', () => {
     a.setBridgeEvents(chatroomPolicyFace())
     const session = await a.startSession('', {
       sessionKey: 'feishu:role:ou_9',
-      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false },
+      persona: { prompt: 'bare persona prompt', bypassPermissions: true, forceMode: undefined },
     })
     const listener = h.listeners.get('approval/request')?.[0]
     if (listener === undefined) throw new Error('approval/request listener was not registered')

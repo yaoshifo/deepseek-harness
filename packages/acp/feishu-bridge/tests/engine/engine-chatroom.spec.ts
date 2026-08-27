@@ -1100,7 +1100,7 @@ describe('afterChatroomStarted recycles the hub agent process', () => {
       ...createStubAgent(),
       startSession: async (_sessionID: string, options?: import('../../src/core/types.js').SessionStartOptions) => {
         startCalls++
-        moderatorStarts.push(options?.chatroom?.moderator === true)
+        moderatorStarts.push(options?.persona?.forceMode === 'default')
         return session.next ?? createStubAgentSession()
       },
     }

@@ -178,18 +178,31 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     })
   }
 
-  it('registers a complete section for a moderator session', async () => {
+  it('registers the persona prompt as a complete section (moderator persona)', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fb-adapter-mod-'))
     await writeFile(join(dir, 'CLAUDE.md'), '# Mod\n', 'utf8')
     const sections: RecordedSection[] = []
     const suppressions = { count: 0 }
     const skillDenies = { count: 0 }
     const a = newAdapter(createHarness({ sections, suppressions, skillDenies }), dir)
+    // The persona prompt is precomputed feature-side (the chatroom policy
+    // half flattens the session's workdir CLAUDE.md); the adapter only
+    // consumes it.
+    const prompt = buildChatroomSystemPrompt({
+      workDir: dir,
+      isRole: false,
+      isDirect: false,
+      isModerator: true,
+      research: false,
+      ledgerDir: '',
+      platformPrompt: '',
+    })
     await a.startSession('', {
       sessionKey: 'feishu:oc_1:ou_9',
-      chatroom: { role: false, directRole: false, moderator: true, ledgerDir: '', research: false },
+      persona: { prompt, bypassPermissions: false, forceMode: 'default' },
     })
     expect(sections).toHaveLength(1)
+    expect(sections[0]?.name).toBe('feishu-bridge-persona')
     expect(sections[0]?.complete).toBe(true)
     expect(sections[0]?.text).toContain('# Mod')
     // Go --bare parity: a bare-persona session also forgoes workspace
@@ -198,16 +211,14 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     expect(skillDenies.count).toBe(1)
   })
 
-  it('suppresses workspace instructions and skills for a role session too', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'fb-adapter-role-'))
-    await writeFile(join(dir, 'CLAUDE.md'), '# Role\n', 'utf8')
+  it('suppresses workspace instructions and skills for a role persona too', async () => {
     const sections: RecordedSection[] = []
     const suppressions = { count: 0 }
     const skillDenies = { count: 0 }
-    const a = newAdapter(createHarness({ sections, suppressions, skillDenies }), dir)
+    const a = newAdapter(createHarness({ sections, suppressions, skillDenies }), '/ws')
     await a.startSession('', {
       sessionKey: 'feishu:oc_1:role',
-      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false },
+      persona: { prompt: 'role persona prompt', bypassPermissions: true, forceMode: undefined },
     })
     expect(sections).toHaveLength(1)
     expect(sections[0]?.complete).toBe(true)

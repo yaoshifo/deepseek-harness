@@ -156,7 +156,7 @@ describe('buildSessionStartOptions research venv', () => {
     expect(e.buildSessionStartOptions('k', s).venv).toBeUndefined()
   })
 
-  it('emits the chatroom role/ledger/moderator/direct flags', () => {
+  it('emits the chatroom persona block for roles, moderators, and direct roles', () => {
     const e = newEngine()
     e.setChatroomModeratorDir('/data/chatroom')
     const hub = e.sessions.getOrCreateActive('test:hub:user-1')
@@ -166,12 +166,17 @@ describe('buildSessionStartOptions research venv', () => {
     const direct = e.sessions.getOrCreateActive('test:direct:user-1')
     direct.setChatroomDirectRole(true)
 
+    // Persona flags: moderators force the default mode (never plan), roles
+    // and direct roles bypass permissions, and the prompt folds the ledger
+    // dir / role contract in.
     const modOptions = e.buildSessionStartOptions('test:hub:user-1', hub)
-    expect(modOptions.chatroom?.moderator).toBe(true)
+    expect(modOptions.persona?.forceMode).toBe('default')
+    expect(modOptions.persona?.bypassPermissions).toBe(false)
     const roleOptions = e.buildSessionStartOptions('test:role-1', role)
-    expect(roleOptions.chatroom?.role).toBe(true)
-    expect(roleOptions.chatroom?.ledgerDir.startsWith('/data/chatroom/ledgers/')).toBe(true)
+    expect(roleOptions.persona?.bypassPermissions).toBe(true)
+    expect(roleOptions.persona?.prompt).toContain('/data/chatroom/ledgers/')
     const directOptions = e.buildSessionStartOptions('test:direct:user-1', direct)
-    expect(directOptions.chatroom?.directRole).toBe(true)
+    expect(directOptions.persona?.bypassPermissions).toBe(true)
+    expect(directOptions.persona?.prompt).toContain('1:1')
   })
 })

@@ -210,7 +210,7 @@ describe('adapter MCP mask', () => {
     const adapter = newAdapter(harness, ['shared'])
     await adapter.startSession('', {
       sessionKey: 'feishu:oc_1:ou_9',
-      chatroom: { role: true, directRole: false, moderator: false, ledgerDir: '', research: false },
+      persona: { prompt: 'bare persona prompt', bypassPermissions: true, forceMode: undefined },
     })
     // Two independent restrictions on one scope intersect: the persona's
     // skill deny and the project's MCP deny coexist.
