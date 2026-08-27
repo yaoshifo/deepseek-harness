@@ -28,7 +28,7 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 
 #### token 开销
 
-条件注入：普通会话恒定携带固定的 agent 约定段（每会话常量前缀，约 1100 个中文字符）；chatroom 人设整体替换系统提示、subtask 子会话不含此段，对它们而言无附件/无引用/无 workspace 配置时均为零直接 token 开销；渲染 fork 额外去掉 workspace 指令（AGENTS.md/CLAUDE.md baseline）、记忆索引与 skill 目录，其输入只剩渲染系统提示与任务 prompt；bare 轻量旁路查询进一步收缩为一行 bare 系统提示加查询 prompt（无工具、无目录、无注入——线上实测一次群名查询 ~16.4k input token，其中 95% 以上是 bare 查询去掉的注入）；引用链上限 5 条消息；附件注记只含路径不含字节。配置了 `mcpServers` 的项目把非允许 MCP server 的工具 schema 从其每一步模型请求中移除（schema 是随每次请求发送的模型输入，节省在每步复现）；MCP 连接仍是进程级全局——掩码只管可见性。`mcpHealth` context 在全部被监视 server 健康时贡献零 token；每个降级 server 每次组装增加一行。
+条件注入：普通会话恒定携带固定的 agent 约定段（每会话常量前缀，约 1130 个中文字符）；chatroom 人设整体替换系统提示、subtask 子会话不含此段，对它们而言无附件/无引用/无 workspace 配置时均为零直接 token 开销；渲染 fork 额外去掉 workspace 指令（AGENTS.md/CLAUDE.md baseline）、记忆索引与 skill 目录，其输入只剩渲染系统提示与任务 prompt；bare 轻量旁路查询进一步收缩为一行 bare 系统提示加查询 prompt（无工具、无目录、无注入——线上实测一次群名查询 ~16.4k input token，其中 95% 以上是 bare 查询去掉的注入）；引用链上限 5 条消息；附件注记只含路径不含字节。配置了 `mcpServers` 的项目把非允许 MCP server 的工具 schema 从其每一步模型请求中移除（schema 是随每次请求发送的模型输入，节省在每步复现）；MCP 连接仍是进程级全局——掩码只管可见性。`mcpHealth` context 在全部被监视 server 健康时贡献零 token；每个降级 server 每次组装增加一行。
 
 #### KV Cache 影响
 
