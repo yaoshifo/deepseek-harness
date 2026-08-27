@@ -8,7 +8,7 @@ Namespace 插件（`name`／`inject`／`Config`／`apply`，无默认导出）�
 
 ## 工具
 
-`lsp` 接受 `operation`（`workspaceSymbol` | `goToDefinition` | `findReferences` | `goToImplementation` | `hover`）。`workspaceSymbol` 接受 `query`（非空符号名；模型不需要坐标）与可选的 `file_path` 种子文档——部分服务器（tsserver）只在有项目文件打开期间索引符号，任意项目文件都能让冷查询成功。其余四种操作接受 `file_path`、`line` 和 `character`，其中 `line` 与 `character` 是正的、从 1 开始的 UTF-16 光标坐标；工具将其转换为 seam 从零开始的位置，并把渲染位置转换回来。`findReferences` 包含声明，因此影响分析不会遗漏定义位置。提供方、language id、工作区根目录、限制、超时、初始化和可执行文件均不进入模型输入。
+`lsp` 接受 `operation`（`workspaceSymbol` | `goToDefinition` | `findReferences` | `goToImplementation` | `hover`）。`workspaceSymbol` 接受 `query`（非空符号名；模型不需要坐标）与推荐的 `file_path` 种子文档——部分服务器（tsserver）只在有项目文件打开期间索引符号，任意项目文件都能让冷查询立即成功。其余四种操作接受 `file_path`、`line` 和 `character`，其中 `line` 与 `character` 是正的、从 1 开始的 UTF-16 光标坐标；工具将其转换为 seam 从零开始的位置，并把渲染位置转换回来。`findReferences` 包含声明，因此影响分析不会遗漏定义位置。提供方、language id、工作区根目录、限制、超时、初始化和可执行文件均不进入模型输入。
 
 该工具要求从会话 `header.cwd` 取得工作区根目录，没有回退值：缺失时会在查询前以 `LSP_WORKSPACE_REQUIRED` 失败。其规范结果是完整的已规范化 Service Definition 联合类型：`{ kind: "locations", locations, resolvedWorkspaceUri }`、`{ kind: "hover", hover }` 或 `{ kind: "symbols", groups }`（每个参与的提供方一组，各自携带规范工作区 URI）；Code Mode 可以直接检查每个已取得的位置和从零开始的范围。原生渲染以提供方的规范工作区 URI 为基准，投影按文件稳定分组的 `path:line:character` 条目，而不对会话 cwd 应用宿主平台路径规则。`file:` URI 落在该工作区 URI 内时成为工作区相对路径，位于其外时成为从 URI 派生的绝对路径；格式错误的 URI 与非 `file:` URI 保持原样。空位置、`null` hover 与空符号组都是成功的无结果响应；格式错误的提供方载荷仍是结构化错误。
 
@@ -31,7 +31,7 @@ Namespace 插件（`name`／`inject`／`Config`／`apply`，无默认导出）�
 ##### 逐字指引
 
 ```markdown
-Use lsp workspaceSymbol to find functions, classes, types, and other symbols by name — it needs no coordinates (a file_path helps some servers load the project) and returns path:line:character you can pass to goToDefinition/findReferences/goToImplementation/hover. Use those four position operations when textual search matches are ambiguous or before a change requires precise definitions, implementations, or references; their line and character are one-based UTF-16 coordinates at the symbol, and an off-symbol position may return no results. findReferences always includes the declaration. Fall back to grep when no language server handles the workspace.
+Use lsp workspaceSymbol to find functions, classes, types, and other symbols by name — include a file_path (any file in the project) so per-project servers answer immediately; it needs no coordinates and returns path:line:character you can pass to goToDefinition/findReferences/goToImplementation/hover. Use those four position operations when textual search matches are ambiguous or before a change requires precise definitions, implementations, or references; their line and character are one-based UTF-16 coordinates at the symbol, and an off-symbol position may return no results. findReferences always includes the declaration. Fall back to grep when no language server handles the workspace.
 ```
 
 #### Token 影响

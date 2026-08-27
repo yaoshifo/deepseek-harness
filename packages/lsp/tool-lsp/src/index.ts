@@ -57,7 +57,7 @@ export const DEFAULT_LSP_TOOL_TIMEOUT_MS = 60_000
 
 /** The stable system-prompt guidance positioning workspaceSymbol as the entry point. */
 export const LSP_PROMPT_TEXT =
-  'Use lsp workspaceSymbol to find functions, classes, types, and other symbols by name — it needs no coordinates (a file_path helps some servers load the project) and returns path:line:character you can pass to goToDefinition/findReferences/goToImplementation/hover. Use those four position operations when textual search matches are ambiguous or before a change requires precise definitions, implementations, or references; their line and character are one-based UTF-16 coordinates at the symbol, and an off-symbol position may return no results. findReferences always includes the declaration. Fall back to grep when no language server handles the workspace.'
+  'Use lsp workspaceSymbol to find functions, classes, types, and other symbols by name — include a file_path (any file in the project) so per-project servers answer immediately; it needs no coordinates and returns path:line:character you can pass to goToDefinition/findReferences/goToImplementation/hover. Use those four position operations when textual search matches are ambiguous or before a change requires precise definitions, implementations, or references; their line and character are one-based UTF-16 coordinates at the symbol, and an off-symbol position may return no results. findReferences always includes the declaration. Fall back to grep when no language server handles the workspace.'
 
 /** Plugin configuration: result caps and the timeout budget. */
 export interface Config {
@@ -120,7 +120,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.tools.register(defineTool({
     name: 'lsp',
     description:
-      'Query a language server for precise code navigation. workspaceSymbol finds symbols by name across the workspace — no coordinates needed; pass file_path (any file in the project) when a cold query errors, because some servers index symbols only while a project file is open. It returns path:line:character you can pass directly to goToDefinition, findReferences, goToImplementation, or hover, which take one-based UTF-16 line and character on the symbol. findReferences includes the declaration.',
+      'Query a language server for precise code navigation. workspaceSymbol finds symbols by name across the workspace — no coordinates needed; include file_path (any file in the project) so servers that index per loaded project answer immediately instead of erroring cold. It returns path:line:character you can pass directly to goToDefinition, findReferences, goToImplementation, or hover, which take one-based UTF-16 line and character on the symbol. findReferences includes the declaration.',
     parameters: {
       operation: {
         type: 'string',
@@ -129,7 +129,7 @@ export function apply(ctx: Context, config: Config): void {
         description: 'workspaceSymbol (by name), or goToDefinition/findReferences/goToImplementation/hover (at a position).',
       },
       query: { type: 'string', description: 'The symbol name to search for. Required for workspaceSymbol; ignored otherwise.' },
-      file_path: { type: 'string', description: 'The source file to query, relative to the workspace or absolute. Required for the position operations; optional for workspaceSymbol, where any project file seeds servers that need one open.' },
+      file_path: { type: 'string', description: 'The source file to query, relative to the workspace or absolute. Required for the position operations; recommended for workspaceSymbol, where any project file seeds servers that index per loaded project.' },
       line: { type: 'number', description: 'One-based line of the cursor. Required unless operation is workspaceSymbol.' },
       character: { type: 'number', description: 'One-based UTF-16 column of the cursor. Required unless operation is workspaceSymbol.' },
     },
