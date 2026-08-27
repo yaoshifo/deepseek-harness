@@ -235,6 +235,11 @@ describe('GatherRoles', () => {
     const researchCards = p.sentCards.filter(c => cardBody(c).includes('[并行研究]'))
     const collectCards = p.sentCards.filter(c => cardBody(c).includes('[并行收集]'))
     expect(researchCards.length).toBeGreaterThan(0)
+    // The research prefix relays data-reliability requirements so roles
+    // demand authoritative sources from their assistants.
+    for (const c of researchCards) {
+      expect(cardBody(c)).toContain('数据可靠性要求：让助手只用权威一手源')
+    }
     expect(collectCards.length).toBe(0)
     const g = e.sessions.getOrCreateActive(hub).getPendingGather()
     g?.stopTimer()
@@ -720,5 +725,12 @@ describe('buildChatroomResearchModeratorPriming', () => {
     const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)
     expect(priming).toContain('存成文件')
     expect(priming).toContain('工作区')
+  })
+
+  it('relays data-reliability requirements to assistants in the round-1 task template', () => {
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)
+    for (const want of ['数据必须可靠', '权威一手源', '两个独立源交叉验证或加总闭合', '不编造']) {
+      expect(priming).toContain(want)
+    }
   })
 })

@@ -248,6 +248,13 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     expect(sections[0]?.complete).toBeUndefined()
     expect(sections[0]?.text).toContain('被派发子任务的子 agent')
     expect(sections[0]?.text).toContain('并行研究作战室的研究助手')
+    // Data-reliability hard constraints, distilled from the production
+    // commodity-research practice: the assistant is the only participant
+    // that actually fetches online data, and it never sees the role-side
+    // safety floor.
+    for (const want of ['只用权威一手数据', '两个相互独立源', '加总闭合', '不悄悄二选一', '不编造', '置信度']) {
+      expect(sections[0]?.text).toContain(want)
+    }
   })
 
   it('registers the report-back preamble for a plain subtask child', async () => {

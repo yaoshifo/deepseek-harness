@@ -725,7 +725,7 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   // Broadcast the question to every role in parallel. The prefix is generic;
   // research mode uses a different prefix that encourages tool/assistant use.
   const roleQ = research
-    ? `[并行研究] 本轮并行研究，各自独立、互不可见。用你的助手（feishu_bridge_subtask 工具 action: send）下数据、跑脚本、算关键指标，基于实证作答（默认不出图，用数值说话）。不要用 ask-human。研究任务如下：\n\n${q}`
+    ? `[并行研究] 本轮并行研究，各自独立、互不可见。用你的助手（feishu_bridge_subtask 工具 action: send）下数据、跑脚本、算关键指标，基于实证作答（默认不出图，用数值说话）。数据可靠性要求：让助手只用权威一手源，关键数字两个独立源交叉验证或加总闭合，分歧与缺数如实标注、不编造。不要用 ask-human。研究任务如下：\n\n${q}`
     : `[并行收集] 本轮并行收集各角色独立判断，不要用 ask-human，按下面的问题作答。\n\n${q}`
   for (const r of roles) {
     void askRoleInternal(e, p, hubKey, r.sessionKey, r.name, roleQ, e.i18n.tf(Msg.ChatroomGatherHeader, r.name), g.seq, research)
