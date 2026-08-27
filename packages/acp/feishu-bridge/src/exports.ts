@@ -20,7 +20,7 @@ export { registerSessionCommands, cleanupOneChat } from './engine/commands.js'
 export { Session, SessionManager } from './engine/session.js'
 export { lookupMessage, registerMessages } from './i18n/index.js'
 export type { Language } from './i18n/index.js'
-export { declareToolFamily } from './streaming.js'
+export { declareToolFamily, toolTagForProgress } from './streaming.js'
 export type { ToolTagFamily } from './streaming.js'
 export type {
   Agent,

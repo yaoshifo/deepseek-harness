@@ -26,10 +26,8 @@ import {
   featureStateCodecs,
   registerMessages,
   lookupMessage,
+  toolTagForProgress,
 } from '@deepseek-ai/dsh-feishu-bridge/exports'
-// Test-only deep import: the tool-family declaration has no accessor on the
-// frozen ./exports face, and the tag color is its only observable effect.
-import { toolTagForProgress } from '@deepseek-ai/dsh-feishu-bridge/src/streaming.js'
 import { Config, apply, inject, name } from '../src/index.js'
 import { chatroomConfig } from '../src/chatroom-config.js'
 import { chatroomFeatureStateCodec } from '../src/chatroom-state.js'
