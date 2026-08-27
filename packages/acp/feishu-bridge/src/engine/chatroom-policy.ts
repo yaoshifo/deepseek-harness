@@ -24,7 +24,8 @@ import type { SessionStartOptions } from '../core/types.js'
  * - the fixed group-name exemption (chatroom role, research, and
  *   direct-role groups),
  * - the hub auto-render suppression (roles relay to the hub, so a local
- *   HTML overview is redundant),
+ *   HTML overview is redundant) and the hub background-session marking for
+ *   the human-takeover auto-render re-enable,
  * - the hard-cap exemption for research sessions (their long turns are the
  *   product),
  * - the pending ask-human reply routing (consumed replies outrank command
@@ -36,7 +37,8 @@ import type { SessionStartOptions } from '../core/types.js'
  * - the role-reply relay at turn end,
  * - the moderator role-pick plan-review auto-approval,
  * - barrier recovery once platforms are live,
- * - the persona block and shared research venv on session-start options.
+ * - the research-assistant flag, persona block, and shared research venv on
+ *   session-start options.
  *
  * @param ctx - Plugin context carrying the event bus.
  * @returns Disposer removing all listeners.
@@ -50,6 +52,8 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
     ctx.on('feishuBridge/rename-exemption', (payload, next) =>
       next() || payload.session.getChatroomHubKey() !== '' || payload.session.getChatroomDirectRole() || payload.session.getResearchAssistant()),
     ctx.on('feishuBridge/auto-render-policy', (payload, next) =>
+      next() || payload.session.getChatroomHubKey() !== ''),
+    ctx.on('feishuBridge/background-session-policy', (payload, next) =>
       next() || payload.session.getChatroomHubKey() !== ''),
     ctx.on('feishuBridge/hard-cap-exemption', (payload, next) =>
       next() || isResearchExemptSession(payload.engine, payload.session)),
@@ -137,16 +141,20 @@ function isResearchExemptSession(engine: Engine, session: Session): boolean {
 }
 
 /**
- * Fill the chatroom persona block and the shared research venv on session
- * start options (moved from the engine's buildSessionStartOptions; Go
- * buildSessionEnv). The hub lookup is non-creating: a dangling hub key must
- * not mint a phantom hub whose empty flags silently strip the research
- * contract from this role.
+ * Fill the research-assistant flag, the chatroom persona block, and the
+ * shared research venv on session start options (moved from the engine's
+ * buildSessionStartOptions; Go buildSessionEnv). The hub lookup is
+ * non-creating: a dangling hub key must not mint a phantom hub whose empty
+ * flags silently strip the research contract from this role.
  * @param engine - The engine owning the session registry.
  * @param session - Session whose chatroom flags expand the options.
  * @param options - The options object to mutate in place.
  */
 function decorateSessionStartOptions(engine: Engine, session: Session, options: SessionStartOptions): void {
+  // Research assistants are subtask children: their flag rides the subtask
+  // section (the engine fills attended/no-report only; the flag appears
+  // only when the session is a research assistant).
+  if (options.subtask !== undefined && session.getResearchAssistant()) options.subtask.researchAssistant = true
   const hubKey = session.getChatroomHubKey()
   if (hubKey !== '') {
     const ledger = engine.chatroomModeratorDir()

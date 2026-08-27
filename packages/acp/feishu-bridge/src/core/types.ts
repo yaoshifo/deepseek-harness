@@ -416,8 +416,12 @@ export interface SessionStartOptions {
     attended: boolean
     /** The child never reports back (no-report preamble). */
     noReport: boolean
-    /** The child is a research assistant: the research contract rides on top of the report preamble. */
-    researchAssistant: boolean
+    /**
+     * The child is a research assistant: the research contract rides on top
+     * of the report preamble. Decorated by the owning feature's
+     * session-start-options listener; absent = not a research assistant.
+     */
+    researchAssistant?: boolean
   }
   /** Chatroom persona; absent = plain session. */
   chatroom?: {

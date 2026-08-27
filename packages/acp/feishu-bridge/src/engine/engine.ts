@@ -160,7 +160,6 @@ import {
   minChatroomResearchRounds,
 } from './chatroom.js'
 import { defaultChatroomRolesDir } from './chatroom-roles.js'
-import { executeChatroomCardAction } from './chatroom-pick.js'
 import { MonitorCore, isMonitorCommand } from './monitor.js'
 import {
   cancelRenders,
@@ -844,6 +843,13 @@ export interface CommandRegistration {
 }
 
 /**
+ * One card-button action handler handed to {@link Engine.registerCardAction}:
+ * run the feature's state machine for a pressed card and return the card to
+ * swap in for the pressed one (undefined = leave the pressed card alone).
+ */
+export type CardActionHandler = (sessionKey: string, cmd: string, args: string) => Card | undefined
+
+/**
  * Engine routes messages between platforms and the agent for a single
  * project (Go Engine, M1 subset).
  */
@@ -1018,6 +1024,8 @@ export class Engine {
   commandGate: ((cmdID: string, p: Platform, msg: Message) => boolean) | undefined
   /** Help-card group per command registered through registerCommand; the static misc-commands table covers the rest. */
   readonly commandGroups = new Map<string, CommandHelpGroup>()
+  /** Card-button action handlers by command path (registerCardAction registry). */
+  private readonly cardActionHandlers = new Map<string, CardActionHandler>()
 
   /**
    * Register one slash command on this engine: the handler map gains the
@@ -1048,6 +1056,24 @@ export class Engine {
       handlers.delete(reg.id)
       this.commandGroups.delete(reg.id)
       this.commandResolver = prevResolver
+    }
+  }
+
+  /**
+   * Register one card-button action family on this engine: a button whose
+   * action path equals one of `names` runs `handler` instead of falling
+   * through to the engine's own card routes. The handler returns the card to
+   * swap in for the pressed one (undefined leaves it); either way the action
+   * is consumed. Registering a name again replaces its handler.
+   *
+   * @param names - Full command paths the handler claims ('/chatroom-pick').
+   * @param handler - Runs the feature's state machine for the pressed card.
+   * @returns Disposer removing the registration.
+   */
+  registerCardAction(names: readonly string[], handler: CardActionHandler): () => void {
+    for (const name of names) this.cardActionHandlers.set(name, handler)
+    return () => {
+      for (const name of names) this.cardActionHandlers.delete(name)
     }
   }
 
@@ -1782,8 +1808,8 @@ export class Engine {
     // sessions. Runs after the lock is acquired so it only fires on a
     // genuinely new turn (Go rearmSubtaskReportOnHumanTurn).
     this.rearmSubtaskReportOnHumanTurn(msg, activeSession, this.sessions)
-    // A real human message into a background session (subtask group /
-    // chatroom role) re-enables auto-render for it from this point on.
+    // A real human message into a background session (subtask child or
+    // feature session) re-enables auto-render for it from this point on.
     this.markUserInterjectedOnHumanTurn(msg, activeSession, this.sessions)
 
     this.ensureInteractiveStateForQueueing(msg.sessionKey, p, msg.replyCtx)
@@ -2762,9 +2788,10 @@ export class Engine {
   /**
    * Typed per-session start options (Go buildSessionEnv): the engine session
    * key plus the persona/workspace/venv metadata the adapter consumes at
-   * startSession. The engine fills the subtask and workspace sections;
-   * feature sections (chatroom persona block, shared research venv) are
-   * decorated by `feishuBridge/session-start-options` listeners.
+   * startSession. The engine fills the subtask (attended/no-report) and
+   * workspace sections; feature sections (research-assistant flag, chatroom
+   * persona block, shared research venv) are decorated by
+   * `feishuBridge/session-start-options` listeners.
    * @param ccKey - Value used as the options' sessionKey.
    * @param session - Session whose subtask/chatroom flags expand the options.
    * @returns The typed start options for the agent session.
@@ -2777,7 +2804,6 @@ export class Engine {
           subtask: {
             attended: session.getSubtaskAttended(),
             noReport: session.getSubtaskNoReport(),
-            researchAssistant: session.getResearchAssistant(),
           },
         }
         : {}),
@@ -6878,7 +6904,8 @@ export class Engine {
 
   /**
    * Flip userInterjected when a real human sends a message into an otherwise
-   * background session (subtask group or chatroom role), re-enabling
+   * background session (subtask child or feature session, decided by the
+   * `feishuBridge/background-session-policy` waterfall), re-enabling
    * auto-render from that point (Go markUserInterjectedOnHumanTurn).
    * @param msg - The inbound human message.
    * @param session - Background session being taken over.
@@ -6886,7 +6913,7 @@ export class Engine {
    */
   markUserInterjectedOnHumanTurn(msg: Message, session: Session, sessions: SessionManager): void {
     if (msg.userID === '' || msg.isSpawnedGroup) return
-    if (session.getSubtaskDepth() <= 0 && session.getChatroomHubKey() === '') return
+    if (!this.bridge.waterfall('feishuBridge/background-session-policy', { session }, () => session.getSubtaskDepth() > 0)) return
     if (session.getUserInterjected()) return
     session.setUserInterjected(true)
     sessions.save()
@@ -7889,10 +7916,12 @@ export class Engine {
       return
     }
 
-    // Chatroom pickers (#43 / #59): run the state machine and re-render the
-    // pressed card in place (Go handleCardNav's chatroom-pick routes).
-    if (cmd === '/chatroom-pick' || cmd === '/chatroom-topic-pick') {
-      const card = executeChatroomCardAction(this, msg.sessionKey, cmd, args)
+    // Registered card actions: run the feature's state machine and re-render
+    // the pressed card in place (Go handleCardNav's feature routes; the
+    // chatroom pickers register through registerCardAction).
+    const cardAction = this.cardActionHandlers.get(cmd)
+    if (cardAction !== undefined) {
+      const card = cardAction(msg.sessionKey, cmd, args)
       if (card !== undefined) {
         const refresher = asCardRefresher(p)
         if (refresher !== undefined) {

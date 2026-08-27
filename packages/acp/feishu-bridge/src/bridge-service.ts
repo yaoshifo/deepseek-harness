@@ -267,6 +267,15 @@ declare module '@deepseek-ai/cordis' {
      */
     'feishuBridge/resolve-child-alias'(payload: { engine: Engine; callerSessionKey: string; alias: string }, next: () => string): string
     /**
+     * Decide whether a session is a background session a human can take
+     * over (re-enabling auto-render from that point). The built-in base
+     * covers subtask children; a listener adds feature sessions (chatroom
+     * roles relay to the hub).
+     * @param payload.session - The session being considered.
+     * @mode waterfall
+     */
+    'feishuBridge/background-session-policy'(payload: { session: Session }, next: () => boolean): boolean
+    /**
      * A turn is starting for a session: the one moment queued per-message
      * metadata is consumed. Listeners run in order (a chatroom listener
      * stamps gather-round metadata onto the role session and persists it).

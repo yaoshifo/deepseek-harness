@@ -32,7 +32,7 @@ import {
   minChatroomResearchRounds,
 } from './chatroom.js'
 import { listRoleNames, roleDir, roleExists, roleEssence } from './chatroom-roles.js'
-import { beginChatroomPick, beginChatroomTopicPick } from './chatroom-pick.js'
+import { beginChatroomPick, beginChatroomTopicPick, executeChatroomCardAction } from './chatroom-pick.js'
 import {
   buildChatroomModeratorPriming,
   buildChatroomResearchModeratorPriming,
@@ -51,16 +51,17 @@ function matchChatroomPrefix(cmd: string): string {
 }
 
 /**
- * Register the /chatroom (alias /cr) command on an engine that already has
- * its session commands registered — through the engine's registerCommand
- * seam (handler map + resolver chain + help-card group in one reversible
- * registration).
+ * Register the /chatroom (alias /cr) command and the picker card actions on
+ * an engine that already has its session commands registered — through the
+ * engine's registerCommand and registerCardAction seams (handler map +
+ * resolver chain + help-card group, and the card-action registry, each in
+ * one reversible registration).
  *
  * @param e - Engine whose command table gains the entry.
  * @returns the disposer removing the registration.
  */
 export function registerChatroomCommands(e: Engine): () => void {
-  return e.registerCommand({
+  const disposeCommand = e.registerCommand({
     id: 'chatroom',
     handler: (p, msg, args) => {
       void cmdChatroom(e, p, msg, args)
@@ -69,6 +70,14 @@ export function registerChatroomCommands(e: Engine): () => void {
     match: matchChatroomPrefix,
     group: 'session',
   })
+  const disposeCardAction = e.registerCardAction(
+    ['/chatroom-pick', '/chatroom-topic-pick'],
+    (sessionKey, cmd, args) => executeChatroomCardAction(e, sessionKey, cmd, args),
+  )
+  return () => {
+    disposeCardAction()
+    disposeCommand()
+  }
 }
 
 /**

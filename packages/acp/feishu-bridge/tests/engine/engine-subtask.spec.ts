@@ -1001,7 +1001,7 @@ describe('markUserInterjectedOnHumanTurn', () => {
 
   it('flips on a human message into a chatroom role', () => {
     const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
+    const e = newSubtaskTestEngine(p, createStubAgent(), chatroomPolicyFace())
     const role = e.sessions.getOrCreateActive(roleKey)
     role.setChatroomHubKey('test:hub:user-1')
 
@@ -1059,7 +1059,7 @@ describe('markUserInterjectedOnHumanTurn', () => {
 describe('buildSessionStartOptions', () => {
   it('injects the research assistant contract only for research assistants', () => {
     const p = createStubCardPlatformFull('test')
-    const e = newSubtaskTestEngine(p)
+    const e = newSubtaskTestEngine(p, createStubAgent(), chatroomPolicyFace())
 
     const key = 'test:assistant-chat'
     const sess = e.sessions.getOrCreateActive(key)
@@ -1069,7 +1069,7 @@ describe('buildSessionStartOptions', () => {
     expect(e.buildSessionStartOptions(key, sess).subtask?.researchAssistant).toBe(true)
 
     sess.setResearchAssistant(false)
-    expect(e.buildSessionStartOptions(key, sess).subtask?.researchAssistant).toBe(false)
+    expect(e.buildSessionStartOptions(key, sess).subtask?.researchAssistant).toBeUndefined()
   })
 
   it('binds the session key into the start options', () => {
