@@ -220,11 +220,36 @@ describe('Lsp symbol lookup', () => {
     lsp.registerProvider(first)
     lsp.registerProvider(second)
 
-    const groups = await lsp.symbol({ query: 'answer', workspaceRoot: '/ws' })
-    expect(groups).toHaveLength(2)
-    expect(groups[0]?.symbols[0]?.name).toBe('answer')
+    const merged = await lsp.symbol({ query: 'answer', workspaceRoot: '/ws' })
+    expect(merged.groups).toHaveLength(2)
+    expect(merged.groups[0]?.symbols[0]?.name).toBe('answer')
+    expect(merged.failures).toBeUndefined()
     expect(first.seenSymbolRequests[0]).toMatchObject({ query: 'answer', workspaceRoot: '/ws' })
     expect(second.seenSymbolRequests[0]).toMatchObject({ query: 'answer', workspaceRoot: '/ws' })
+  })
+
+  it('routes a seeded query to the one provider covering the seed extension', async () => {
+    const { lsp } = await mountLsp()
+    const ts = makeProvider('ts', { '.ts': 'typescript' })
+    const py = makeProvider('py', { '.py': 'python' })
+    lsp.registerProvider(ts)
+    lsp.registerProvider(py)
+
+    const merged = await lsp.symbol({ query: 'answer', workspaceRoot: '/ws', seedFilePath: 'src/a.ts' })
+    expect(merged.groups).toHaveLength(1)
+    expect(ts.seenSymbolRequests).toHaveLength(1)
+    expect(ts.seenSymbolRequests[0]).toMatchObject({ query: 'answer', seedFilePath: 'src/a.ts' })
+    expect(py.seenSymbolRequests).toHaveLength(0)
+  })
+
+  it('reports an uncovered seed extension without querying any provider', async () => {
+    const { lsp } = await mountLsp()
+    const ts = makeProvider('ts', { '.ts': 'typescript' })
+    lsp.registerProvider(ts)
+
+    const merged = await lsp.symbol({ query: 'answer', workspaceRoot: '/ws', seedFilePath: 'src/a.ml' })
+    expect(merged).toEqual({ groups: [], uncoveredSeedExtension: '.ml' })
+    expect(ts.seenSymbolRequests).toHaveLength(0)
   })
 
   it('contributes nothing from a provider whose server lacks the capability', async () => {
@@ -234,8 +259,21 @@ describe('Lsp symbol lookup', () => {
       Promise.reject(new LspError('server does not support workspaceSymbol', 'LSP_UNSUPPORTED_OPERATION')))
     lsp.registerProvider(unsupported)
 
-    const groups = await lsp.symbol({ query: 'answer', workspaceRoot: '/ws' })
-    expect(groups).toHaveLength(1)
+    const merged = await lsp.symbol({ query: 'answer', workspaceRoot: '/ws' })
+    expect(merged.groups).toHaveLength(1)
+    expect(merged.failures).toBeUndefined()
+  })
+
+  it('retains one provider failure alongside another provider\'s groups', async () => {
+    const { lsp } = await mountLsp()
+    lsp.registerProvider(makeProvider('ts', { '.ts': 'typescript' }))
+    const failing = makeProvider('py', { '.py': 'python' }, undefined, () =>
+      Promise.reject(new LspError('No Project', 'LSP_DISPOSED')))
+    lsp.registerProvider(failing)
+
+    const merged = await lsp.symbol({ query: 'answer', workspaceRoot: '/ws' })
+    expect(merged.groups).toHaveLength(1)
+    expect(merged.failures).toEqual([{ provider: 'py', message: 'No Project' }])
   })
 
   it('fails LSP_UNSUPPORTED_OPERATION when every provider lacks the capability', async () => {
@@ -252,11 +290,29 @@ describe('Lsp symbol lookup', () => {
       .rejects.toThrow(expect.objectContaining({ code: 'LSP_UNAVAILABLE' }))
   })
 
-  it('propagates a provider failure other than unsupported', async () => {
+  it('propagates the sole failure when no provider succeeds', async () => {
     const { lsp } = await mountLsp()
     lsp.registerProvider(makeProvider('ts', { '.ts': 'typescript' }, undefined, () =>
       Promise.reject(new LspError('boom', 'LSP_DISPOSED'))))
     await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws' }))
+      .rejects.toThrow(expect.objectContaining({ code: 'LSP_DISPOSED' }))
+  })
+
+  it('throws an AggregateError when every fanned-out provider fails', async () => {
+    const { lsp } = await mountLsp()
+    lsp.registerProvider(makeProvider('ts', { '.ts': 'typescript' }, undefined, () =>
+      Promise.reject(new LspError('No Project', 'LSP_DISPOSED'))))
+    lsp.registerProvider(makeProvider('py', { '.py': 'python' }, undefined, () =>
+      Promise.reject(new Error('pyright crashed'))))
+    await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws' }))
+      .rejects.toThrow(AggregateError)
+  })
+
+  it('propagates the routed provider failure on a seeded query', async () => {
+    const { lsp } = await mountLsp()
+    lsp.registerProvider(makeProvider('ts', { '.ts': 'typescript' }, undefined, () =>
+      Promise.reject(new LspError('boom', 'LSP_DISPOSED'))))
+    await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws', seedFilePath: 'a.ts' }))
       .rejects.toThrow(expect.objectContaining({ code: 'LSP_DISPOSED' }))
   })
 
@@ -274,7 +330,7 @@ describe('Lsp symbol lookup', () => {
     const fiber = await ctx.plugin(Object.assign((inner: Context) => {
       inner.lsp.registerProvider(makeProvider('ts', { '.ts': 'typescript' }))
     }, { inject: ['lsp'] }))
-    await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws' })).resolves.toHaveLength(1)
+    await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws' })).resolves.toMatchObject({ groups: [{ symbols: [{ name: 'answer' }] }] })
     await fiber.dispose()
     await expect(lsp.symbol({ query: 'answer', workspaceRoot: '/ws' }))
       .rejects.toThrow(expect.objectContaining({ code: 'LSP_UNAVAILABLE' }))

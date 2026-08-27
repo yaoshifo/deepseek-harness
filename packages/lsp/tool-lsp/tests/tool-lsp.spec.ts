@@ -14,11 +14,12 @@ function stubProvider(
   respond: (request: LspProviderQuery) => LspQueryResult,
   extensionToLanguage: Record<string, string> = { '.ts': 'typescript' },
   respondSymbol: (request: LspSymbolRequest) => LspSymbolResult = () => okSymbols,
+  id = 'stub',
 ): LspProvider & { seen: LspProviderQuery[]; seenSymbol: LspSymbolRequest[] } {
   const seen: LspProviderQuery[] = []
   const seenSymbol: LspSymbolRequest[] = []
   return {
-    id: LspProviderId('stub'),
+    id: LspProviderId(id),
     extensionToLanguage,
     seen,
     seenSymbol,
@@ -270,6 +271,35 @@ describe('tool-lsp workspaceSymbol execution', () => {
     const result = await call(ctx, { operation: 'workspaceSymbol', query: 'answer', file_path: 'a.ts' }, workspaceRoot)
     expect(result.isError).toBe(false)
     expect(provider.seenSymbol[0]).toEqual({ query: 'answer', workspaceRoot, seedFilePath: 'a.ts' })
+  })
+
+  it('surfaces one provider failure alongside the other provider\'s groups', async () => {
+    const ok = stubProvider(() => okLocations)
+    const failing = stubProvider(() => okLocations, { '.py': 'python' }, () => {
+      throw new LspError('No Project', 'LSP_DISPOSED')
+    }, 'py')
+    const { ctx } = await mount(ok)
+    ;(ctx.lsp as Lsp).registerProvider(failing)
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: 'answer' }, workspaceRoot)
+    expect(result.isError).toBe(false)
+    expect(result.content[0]).toEqual({ type: 'text', text: 'answer (function) in Math — a.ts:3:7\n⚠ py provider failed: No Project' })
+    expect(result).toMatchObject({
+      isError: false,
+      value: { kind: 'symbols', providerFailures: [{ provider: 'py', message: 'No Project' }] },
+    })
+  })
+
+  it('renders the uncovered-language hint when no provider covers the seed extension', async () => {
+    const provider = stubProvider(() => okLocations)
+    const { ctx } = await mount(provider)
+    const result = await call(ctx, { operation: 'workspaceSymbol', query: 'answer', file_path: 'notes.ml' }, workspaceRoot)
+    expect(result.isError).toBe(false)
+    expect(result.content[0]).toEqual({
+      type: 'text',
+      text: '⚠ No language server is configured for .ml files — ask the user to install one and add it to the lsp-stdio servers config so lsp can cover the language.',
+    })
+    expect(result).toMatchObject({ value: { kind: 'symbols', uncoveredSeedExtension: '.ml' } })
+    expect(provider.seenSymbol).toHaveLength(0)
   })
 
   it('renders symbols with one-based coordinates in the canonical value and text', async () => {

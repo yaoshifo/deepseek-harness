@@ -57,7 +57,7 @@ export const DEFAULT_LSP_TOOL_TIMEOUT_MS = 60_000
 
 /** The stable system-prompt guidance positioning workspaceSymbol as the entry point. */
 export const LSP_PROMPT_TEXT =
-  'Use lsp workspaceSymbol to find functions, classes, types, and other symbols by name — include a file_path (any file in the project) so per-project servers answer immediately; it needs no coordinates and returns path:line:character you can pass to goToDefinition/findReferences/goToImplementation/hover. Use those four position operations when textual search matches are ambiguous or before a change requires precise definitions, implementations, or references; their line and character are one-based UTF-16 coordinates at the symbol, and an off-symbol position may return no results. findReferences always includes the declaration. Fall back to grep when no language server handles the workspace.'
+  'Use lsp workspaceSymbol to find functions, classes, types, and other symbols by name — include a file_path (a file in the same language as the symbol) so the query routes to that language\'s server; it needs no coordinates and returns path:line:character you can pass to goToDefinition/findReferences/goToImplementation/hover. Use those four position operations when textual search matches are ambiguous or before a change requires precise definitions, implementations, or references; their line and character are one-based UTF-16 coordinates at the symbol, and an off-symbol position may return no results. findReferences always includes the declaration. Fall back to grep when no language server handles the workspace.'
 
 /** Plugin configuration: result caps and the timeout budget. */
 export interface Config {
@@ -120,7 +120,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.tools.register(defineTool({
     name: 'lsp',
     description:
-      'Query a language server for precise code navigation. workspaceSymbol finds symbols by name across the workspace — no coordinates needed; include file_path (any file in the project) so servers that index per loaded project answer immediately instead of erroring cold. It returns path:line:character you can pass directly to goToDefinition, findReferences, goToImplementation, or hover, which take one-based UTF-16 line and character on the symbol. findReferences includes the declaration.',
+      'Query a language server for precise code navigation. workspaceSymbol finds symbols by name across the workspace — no coordinates needed; include file_path (a file in the same language as the symbol) so the query routes to that language\'s server, which also keeps per-project servers (TypeScript) answering. It returns path:line:character you can pass directly to goToDefinition, findReferences, goToImplementation, or hover, which take one-based UTF-16 line and character on the symbol. findReferences includes the declaration.',
     parameters: {
       operation: {
         type: 'string',
@@ -129,7 +129,7 @@ export function apply(ctx: Context, config: Config): void {
         description: 'workspaceSymbol (by name), or goToDefinition/findReferences/goToImplementation/hover (at a position).',
       },
       query: { type: 'string', description: 'The symbol name to search for. Required for workspaceSymbol; ignored otherwise.' },
-      file_path: { type: 'string', description: 'The source file to query, relative to the workspace or absolute. Required for the position operations; recommended for workspaceSymbol, where any project file seeds servers that index per loaded project.' },
+      file_path: { type: 'string', description: 'The source file to query, relative to the workspace or absolute. Required for the position operations; recommended for workspaceSymbol, where a file in the symbol\'s language routes the query to that language\'s server.' },
       line: { type: 'number', description: 'One-based line of the cursor. Required unless operation is workspaceSymbol.' },
       character: { type: 'number', description: 'One-based UTF-16 column of the cursor. Required unless operation is workspaceSymbol.' },
     },
@@ -213,6 +213,18 @@ export function apply(ctx: Context, config: Config): void {
                   },
                 },
               },
+              providerFailures: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    provider: { type: 'string', required: true },
+                    message: { type: 'string', required: true },
+                  },
+                },
+              },
+              uncoveredSeedExtension: { type: 'string' },
             },
           },
         ],
@@ -224,7 +236,7 @@ export function apply(ctx: Context, config: Config): void {
           case 'hover':
             return [{ type: 'text', text: formatHover(value.hover, resolved.maxResultChars) }]
           case 'symbols':
-            return [{ type: 'text', text: formatSymbols(value.groups, resolved.maxLocations, resolved.maxResultChars) }]
+            return [{ type: 'text', text: formatSymbols(value.groups, value.providerFailures ?? [], value.uncoveredSeedExtension, resolved.maxLocations, resolved.maxResultChars) }]
           /* v8 ignore next -- exhaustive over the output schema's closed union; unreachable. */
           default:
             return assertNever(value, 'tool-lsp output')
@@ -239,14 +251,14 @@ export function apply(ctx: Context, config: Config): void {
         throw new LspError('the lsp tool requires a session workspace cwd', 'LSP_WORKSPACE_REQUIRED')
       }
       if (input.operation === 'workspaceSymbol') {
-        const groups = await ctx.lsp.symbol({
+        const merged = await ctx.lsp.symbol({
           query: input.query,
           workspaceRoot,
           ...input.seedFilePath === undefined ? {} : { seedFilePath: input.seedFilePath },
         }, exec.signal)
         return {
           kind: 'symbols' as const,
-          groups: groups.map(group => ({
+          groups: merged.groups.map(group => ({
             resolvedWorkspaceUri: group.resolvedWorkspaceUri,
             symbols: group.symbols.map(symbol => ({
               name: symbol.name,
@@ -263,6 +275,13 @@ export function apply(ctx: Context, config: Config): void {
                 },
             })),
           })),
+          ...merged.failures === undefined ? {} : {
+            providerFailures: merged.failures.map(failure => ({
+              provider: failure.provider,
+              message: failure.message,
+            })),
+          },
+          ...merged.uncoveredSeedExtension === undefined ? {} : { uncoveredSeedExtension: merged.uncoveredSeedExtension },
         }
       }
       const result = await ctx.lsp.query({

@@ -1,7 +1,8 @@
 /**
  * Service Definition for the LSP capability seam (`ctx.lsp`): a language-server provider registry and per-query,
  * order-independent selection over normalized goToDefinition/findReferences/goToImplementation/
- * hover queries, plus a name-based workspace symbol lookup fanned out to every provider.
+ * hover queries, plus a name-based workspace symbol lookup that routes by a seed file's
+ * extension and falls back to a merged fan-out when the caller has no seed.
  *
  * A provider reserves a branded id and an exclusive set of file extensions atomically:
  * {@link Lsp.registerProvider} validates and conflict-checks everything before mutating, so an
@@ -20,8 +21,10 @@ import type {
   LspQueryRequest,
   LspQueryResult,
   LspService,
+  LspSymbolProviderFailure,
   LspSymbolRequest,
   LspSymbolResult,
+  LspSymbolsMerged,
 } from './types.ts'
 
 export { LspProviderId } from './brand.ts'
@@ -37,8 +40,10 @@ export type {
   LspRange,
   LspService,
   LspSymbol,
+  LspSymbolProviderFailure,
   LspSymbolRequest,
   LspSymbolResult,
+  LspSymbolsMerged,
 } from './types.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -159,27 +164,54 @@ export class Lsp extends Service implements LspService {
     return route.provider.query({ ...request, languageId: route.languageId }, signal)
   }
 
-  async symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<readonly LspSymbolResult[]> {
-    const providers = [...this.providers]
-    if (providers.length === 0) {
+  async symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<LspSymbolsMerged> {
+    if (this.providers.length === 0) {
       throw new LspError('no LSP provider is registered', 'LSP_UNAVAILABLE')
     }
+    if (request.seedFilePath !== undefined) {
+      // Route by the seed's extension, mirroring query(): the seed declares the symbol's language.
+      const route = this.routes.get(finalExtension(request.seedFilePath))
+      if (route === undefined) {
+        return { groups: [], uncoveredSeedExtension: finalExtension(request.seedFilePath) }
+      }
+      return { groups: [await route.provider.symbol(request, signal)] }
+    }
+    // Seedless: a symbol name carries no language, so ask every provider. One failing provider
+    // (e.g. a cold tsserver answering "No Project") must not sink the answers of the others.
+    const providers = [...this.providers]
     const attempts = await Promise.all(providers.map(async (provider) => {
       try {
         return await provider.symbol(request, signal)
       } catch (error) {
         // A server without the workspaceSymbolProvider capability is an expected mixed-language
-        // gap, not a failure: it contributes nothing. Every other error propagates.
-        if (error instanceof LspError && error.code === 'LSP_UNSUPPORTED_OPERATION') return null
-        throw error
+        // gap, not a failure: it contributes nothing.
+        if (error instanceof LspError && error.code === 'LSP_UNSUPPORTED_OPERATION') return { unsupported: true }
+        return { failed: error }
       }
     }))
-    const groups = attempts.filter(group => group !== null)
-    if (groups.length === 0) {
-      throw new LspError('no LSP provider supports workspace symbol lookup', 'LSP_UNSUPPORTED_OPERATION')
+    const groups: LspSymbolResult[] = []
+    const failures: LspSymbolProviderFailure[] = []
+    const errors: unknown[] = []
+    for (const [index, attempt] of attempts.entries()) {
+      if ('failed' in attempt) {
+        failures.push({ provider: String(providers[index]?.id), message: errorMessage(attempt.failed) })
+        errors.push(attempt.failed)
+      } else if (!('unsupported' in attempt)) {
+        groups.push(attempt)
+      }
     }
-    return groups
+    if (groups.length > 0) {
+      return { groups, ...(failures.length > 0 ? { failures } : {}) }
+    }
+    if (errors.length === 1) throw errors[0]
+    if (errors.length > 1) throw new AggregateError(errors, 'every LSP provider failed the workspace symbol lookup')
+    throw new LspError('no LSP provider supports workspace symbol lookup', 'LSP_UNSUPPORTED_OPERATION')
   }
+}
+
+/** Extract a message from an unknown thrown value for a model-visible failure note. */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 /** Lowercase an extension and ensure it carries a leading dot; `EXTENSION_PATTERN` rejects the rest. */

@@ -166,37 +166,79 @@ export interface LspSymbolGroupInput {
   readonly resolvedWorkspaceUri: string
 }
 
+/** One provider failure retained by a seedless fan-out, as the tool output schema shapes it. */
+export interface LspProviderFailureInput {
+  /** The failing provider's id. */
+  readonly provider: string
+  /** The failure's message. */
+  readonly message: string
+}
+
+/** Install suggestions for common uncovered seed extensions; model-facing text only. */
+const LANGUAGE_SERVER_SUGGESTIONS: Readonly<Record<string, string>> = {
+  '.py': 'pyright',
+  '.go': 'gopls',
+  '.rs': 'rust-analyzer',
+  '.java': 'jdtls',
+  '.c': 'clangd',
+  '.cpp': 'clangd',
+  '.cc': 'clangd',
+  '.h': 'clangd',
+  '.hpp': 'clangd',
+  '.rb': 'solargraph',
+  '.php': 'intelephense',
+}
+
 /**
  * Render a merged workspace-symbol result: one `name (kind) in container — path:line:character`
  * line per symbol, in each provider's relevance order. A symbol without a resolved location loses
  * the position suffix instead of the entry. Paths resolve through the group's own workspace URI,
- * exactly like {@link formatLocations}. Applies `maxLocations` across all groups and appends an
+ * exactly like {@link formatLocations}. An uncovered seed extension renders the install suggestion
+ * instead of a no-result line (the answer is "no server", not "no symbols"); retained provider
+ * failures render as one-line notes. Applies `maxLocations` across all groups and appends an
  * omission marker when it truncates by count, then applies the complete result cap.
  * @param groups - the seam's per-provider symbol groups (possibly empty symbols).
+ * @param failures - providers that failed while another answered (seedless fan-out only).
+ * @param uncoveredSeedExtension - the seed's extension when no provider covers its language.
  * @param maxLocations - the cap before truncation.
  * @param maxResultChars - the complete rendered-text cap, including truncation metadata.
  * @returns the rendered text; a distinct no-result line when every group is empty.
  */
 export function formatSymbols(
   groups: readonly LspSymbolGroupInput[],
+  failures: readonly LspProviderFailureInput[],
+  uncoveredSeedExtension: string | undefined,
   maxLocations: number,
   maxResultChars: number,
 ): string {
-  const total = groups.reduce((count, group) => count + group.symbols.length, 0)
-  if (total === 0) return boundResult('No symbols found.', maxResultChars, 'symbols')
-  let shown = 0
   const lines: string[] = []
-  for (const group of groups) {
-    for (const symbol of group.symbols) {
-      if (shown >= maxLocations) break
-      shown++
-      lines.push(renderSymbolLine(symbol, group.resolvedWorkspaceUri))
+  if (uncoveredSeedExtension === undefined) {
+    const total = groups.reduce((count, group) => count + group.symbols.length, 0)
+    if (total === 0) {
+      lines.push('No symbols found.')
+    } else {
+      let shown = 0
+      for (const group of groups) {
+        for (const symbol of group.symbols) {
+          if (shown >= maxLocations) break
+          shown++
+          lines.push(renderSymbolLine(symbol, group.resolvedWorkspaceUri))
+        }
+        if (shown >= maxLocations) break
+      }
+      const omitted = total - shown
+      if (omitted > 0) {
+        lines.push(`… ${omitted} more symbol${omitted === 1 ? '' : 's'} omitted (limit ${maxLocations}).`)
+      }
     }
-    if (shown >= maxLocations) break
+  } else {
+    const suggestion = LANGUAGE_SERVER_SUGGESTIONS[uncoveredSeedExtension]
+    lines.push(suggestion === undefined
+      ? `⚠ No language server is configured for ${uncoveredSeedExtension} files — ask the user to install one and add it to the lsp-stdio servers config so lsp can cover the language.`
+      : `⚠ No language server is configured for ${uncoveredSeedExtension} files — suggest installing ${suggestion} and adding it to the lsp-stdio servers config so lsp can cover the language.`)
   }
-  const omitted = total - shown
-  if (omitted > 0) {
-    lines.push(`… ${omitted} more symbol${omitted === 1 ? '' : 's'} omitted (limit ${maxLocations}).`)
+  for (const failure of failures) {
+    lines.push(`⚠ ${failure.provider} provider failed: ${failure.message.split('\n', 1)[0]}`)
   }
   return boundResult(lines.join('\n'), maxResultChars, 'symbols')
 }

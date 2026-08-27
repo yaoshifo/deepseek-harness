@@ -8,7 +8,7 @@ Namespace 插件（`name`／`inject`／`Config`／`apply`，无默认导出）�
 
 ## 工具
 
-`lsp` 接受 `operation`（`workspaceSymbol` | `goToDefinition` | `findReferences` | `goToImplementation` | `hover`）。`workspaceSymbol` 接受 `query`（非空符号名；模型不需要坐标）与推荐的 `file_path` 种子文档——部分服务器（tsserver）只在有项目文件打开期间索引符号，任意项目文件都能让冷查询立即成功。其余四种操作接受 `file_path`、`line` 和 `character`，其中 `line` 与 `character` 是正的、从 1 开始的 UTF-16 光标坐标；工具将其转换为 seam 从零开始的位置，并把渲染位置转换回来。`findReferences` 包含声明，因此影响分析不会遗漏定义位置。提供方、language id、工作区根目录、限制、超时、初始化和可执行文件均不进入模型输入。
+`lsp` 接受 `operation`（`workspaceSymbol` | `goToDefinition` | `findReferences` | `goToImplementation` | `hover`）。`workspaceSymbol` 接受 `query`（非空符号名；模型不需要坐标）与推荐的、符号同语言的 `file_path` 种子文档——查询路由到该语言的服务器，也让按项目加载的服务器（tsserver）保持应答；种子语言没有任何已配置服务器覆盖时返回安装建议而不是结果。其余四种操作接受 `file_path`、`line` 和 `character`，其中 `line` 与 `character` 是正的、从 1 开始的 UTF-16 光标坐标；工具将其转换为 seam 从零开始的位置，并把渲染位置转换回来。`findReferences` 包含声明，因此影响分析不会遗漏定义位置。提供方、language id、工作区根目录、限制、超时、初始化和可执行文件均不进入模型输入。
 
 该工具要求从会话 `header.cwd` 取得工作区根目录，没有回退值：缺失时会在查询前以 `LSP_WORKSPACE_REQUIRED` 失败。其规范结果是完整的已规范化 Service Definition 联合类型：`{ kind: "locations", locations, resolvedWorkspaceUri }`、`{ kind: "hover", hover }` 或 `{ kind: "symbols", groups }`（每个参与的提供方一组，各自携带规范工作区 URI）；Code Mode 可以直接检查每个已取得的位置和从零开始的范围。原生渲染以提供方的规范工作区 URI 为基准，投影按文件稳定分组的 `path:line:character` 条目，而不对会话 cwd 应用宿主平台路径规则。`file:` URI 落在该工作区 URI 内时成为工作区相对路径，位于其外时成为从 URI 派生的绝对路径；格式错误的 URI 与非 `file:` URI 保持原样。空位置、`null` hover 与空符号组都是成功的无结果响应；格式错误的提供方载荷仍是结构化错误。
 
@@ -31,7 +31,7 @@ Namespace 插件（`name`／`inject`／`Config`／`apply`，无默认导出）�
 ##### 逐字指引
 
 ```markdown
-Use lsp workspaceSymbol to find functions, classes, types, and other symbols by name — include a file_path (any file in the project) so per-project servers answer immediately; it needs no coordinates and returns path:line:character you can pass to goToDefinition/findReferences/goToImplementation/hover. Use those four position operations when textual search matches are ambiguous or before a change requires precise definitions, implementations, or references; their line and character are one-based UTF-16 coordinates at the symbol, and an off-symbol position may return no results. findReferences always includes the declaration. Fall back to grep when no language server handles the workspace.
+Use lsp workspaceSymbol to find functions, classes, types, and other symbols by name — include a file_path (a file in the same language as the symbol) so the query routes to that language's server; it needs no coordinates and returns path:line:character you can pass to goToDefinition/findReferences/goToImplementation/hover. Use those four position operations when textual search matches are ambiguous or before a change requires precise definitions, implementations, or references; their line and character are one-based UTF-16 coordinates at the symbol, and an off-symbol position may return no results. findReferences always includes the declaration. Fall back to grep when no language server handles the workspace.
 ```
 
 #### Token 影响
@@ -60,7 +60,7 @@ Use lsp workspaceSymbol to find functions, classes, types, and other symbols by 
 
 #### 模型看到的内容
 
-按文件分组的 `path:line:character` 位置行、规范化 hover 文本，或按各提供方相关性顺序排列的 `name (kind) in container — path:line:character` 符号行，先由 `maxLocations` 限制，再由 `maxResultChars` 限制；省略与截断标记计入完整字符上限。没有已解析位置的符号只去掉位置后缀，不丢弃条目。这些上限只影响原生／模型呈现，不影响规范值。空结果使用不同的 `No results.`／`No hover information.`／`No symbols found.` 行。
+按文件分组的 `path:line:character` 位置行、规范化 hover 文本，或按各提供方相关性顺序排列的 `name (kind) in container — path:line:character` 符号行，先由 `maxLocations` 限制，再由 `maxResultChars` 限制；省略与截断标记计入完整字符上限。没有已解析位置的符号只去掉位置后缀，不丢弃条目。无种扇出中某个提供方出错时保留其余答案并追加单行 `⚠ <provider> provider failed:` 附注；种子语言未被覆盖时渲染安装建议而不是无结果行。这些上限只影响原生／模型呈现，不影响规范值。空结果使用不同的 `No results.`／`No hover information.`／`No symbols found.` 行。
 
 #### Token 影响
 
@@ -87,7 +87,7 @@ Use lsp workspaceSymbol to find functions, classes, types, and other symbols by 
 ## 已知限制与暂缓事项
 
 - **UTF-16 光标坐标**：列坐标与协议精确一致，但模型难以在非 BMP 字符周围计数；未落在符号上的位置可能返回空结果，因此提示词以免坐标的 `workspaceSymbol` 入口开头，并为位置操作解释该约定（见 [seam Agent Note](../../../.agents/notes/implemented/architecture/2026-07-15-lsp-capability-seam.zh.md)）。
-- **按项目加载的服务器需要种子**：tsserver 在没有文档打开时对冷 `workspace/symbol` 回答 `No Project`；工具的可选 `file_path` 为查询播种，无种子时宿主重开上一个打开过的文档。在这类服务器上的冷无种查询会透出服务器错误，工具描述教了 `file_path` 的恢复方式。
+- **按项目加载的服务器需要种子**：tsserver 在没有文档打开时对冷 `workspace/symbol` 回答 `No Project`；工具的 `file_path` 把查询路由到种子语言并播种该服务器，无种子时宿主重开上一个打开过的文档。无种扇出会把冷的 tsserver 折为 `providerFailures` 附注，同时其他提供方照常应答；该服务器的 navto 在多包工作区上也只搜索种子所属的项目图。
 - **不做 `workspace/symbol/resolve`**：返回未解析 `WorkspaceSymbol` 的服务器会以 `location: null`（渲染时去掉位置后缀）保留条目，而不做 resolve 往返；实践中在用的服务器都返回已解析的位置。
 - **不承诺跨服务器完整性**：受支持的服务器仍可能根据索引就绪情况返回空或部分结果；该工具不承诺跨语言或服务器的完整性。
 - **对上游操作集的 fork 扩展**：`workspaceSymbol` 扩展了上游四操作工具契约；未来上游若出现等价能力需要做语义合并（见采用率 Agent Note）。

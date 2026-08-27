@@ -306,6 +306,24 @@ describe('LspInstance symbolQuery', () => {
     expect((await readFile(marker, 'utf8')).trim()).toBe(JSON.stringify('const x = 1\n'))
   })
 
+  it('remembers a seed document for later seedless symbol queries', async () => {
+    const marker = join(root, 'symbol-seed-persist.log')
+    const instance = makeInstance({
+      LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+      LSP_FAKE_SYMBOLS: symbolsJson(),
+      LSP_FAKE_OPEN_MARKER: marker,
+    })
+    const seed = {
+      uri: pathToFileURL(join(ws, 'a.ts')).href,
+      languageId: 'typescript',
+      text: 'const x = 1\n',
+    }
+    await instance.symbolQuery({ query: 'ans', workspaceRoot: ws }, seed)
+    // Seedless follow-up: the remembered seed re-opens instead of a bare request.
+    await instance.symbolQuery({ query: 'ans', workspaceRoot: ws }, undefined)
+    expect((await readFile(marker, 'utf8')).split('\n').filter(Boolean)).toHaveLength(2)
+  })
+
   it('re-opens the last document from a prior position query when no seed is given', async () => {
     const marker = join(root, 'symbol-lastdoc-open.log')
     const instance = makeInstance({

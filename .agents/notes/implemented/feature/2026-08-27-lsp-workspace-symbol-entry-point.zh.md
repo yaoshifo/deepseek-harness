@@ -18,7 +18,9 @@ Status: implemented
 
 seam 增加独立的 `LspService.symbol()` 方法而非第五个 `LspOperation`：符号查找的请求 schema 不同（无文件、无位置），也没有可路由的扩展名，因此服务端把请求按注册顺序扇出到所有已注册提供方并合并各组结果。server 缺少 `workspaceSymbolProvider` 能力的提供方不做贡献；所有提供方都缺少时调用以 `LSP_UNSUPPORTED_OPERATION` 失败；其余错误正常传播。grep 工具描述的交叉引用现在点名入口（"prefer the lsp tool (workspaceSymbol for a symbol name)"）。
 
-真机 e2e 地板在发布前抓住了一个会阻断部署的怪癖：tsserver 的 `navto` 在文档打开前回答 `No Project`，最后一个文档关闭时卸载项目，因此在瞬态打开宿主下，裸符号查询在那里必然失败。为此请求携带可选的 `seedFilePath`：提供方读取该文件、按自己的映射派生 language id，实例在 `workspace/symbol` 期间临时打开它；没有种子时，实例重开上一次位置查询打开过的文档。工具把种子暴露为 `workspaceSymbol` 的可选 `file_path`，其描述教会恢复方式（"pass file_path when a cold query errors"），因此模型侧的输入摩擦仍然只是坐标，不是文件知识。
+真机 e2e 地板在发布前抓住了一个会阻断部署的怪癖：tsserver 的 `navto` 在文档打开前回答 `No Project`，最后一个文档关闭时卸载项目，因此在瞬态打开宿主下，裸符号查询在那里必然失败。为此请求携带可选的 `seedFilePath`：提供方读取该文件、按自己的映射派生 language id，实例在 `workspace/symbol` 期间临时打开它并记住供后续无种查询复用；没有种子时，实例重开上一次打开过的文档。工具把种子暴露为 `workspaceSymbol` 上被推荐的 `file_path`（冒烟实测显示冷首查会把模型推回 grep，因此描述改为开篇推荐）。
+
+跨语言通用化来自混合部署的现实：无种查询不能让一个提供方的失败（冷的 tsserver）淹没其他提供方的答案，种子语言没有已配置服务器覆盖时必须可感知而不是无声的空。因此 `symbol()` 把带种请求路由到覆盖种子扩展名的唯一提供方（与 `query()` 的扩展名路由同构），对未覆盖的种子扩展名不做查询、直接返回安装建议，并把无种扇出合并、逐提供方附注失败。pyright、gopls、rust-analyzer 等现代服务器启动即索引整个工作区、无需种子——种子机制是与 tsserver 兼容的垫片，对它们无副作用地组合。
 
 采用率是被度量的，不是被假设的：预声明判据是部署一周内 deepseek-harness coding 会话中出现有机 `lsp` 调用的比例 ≥10%，并按操作分布归因是哪个杠杆（schema 人机工学还是提示词引导）起了作用。问题分析中的会话日志扫描方法就是度量工具。
 
@@ -36,4 +38,4 @@ seam 增加独立的 `LspService.symbol()` 方法而非第五个 `LspOperation`�
 
 ## Verification
 
-包测试覆盖 seam 扇出（合并顺序、不支持折空、全不支持与无提供方失败、错误传播、信号透传、HMR 释放）、提供方路径（能力门控、种子读取与 language id 派生、种子与记住文档的打开、取消与换传输重试、符号归一化与 kind 映射）、工具层（schema、经 executor 的逐操作参数校验、种子透传、带截断与无位置条目的渲染、呈现）。真机 `typescript-language-server` e2e 钉住三条符号路径：冷无种的 `No Project` 失败、播种查询、位置查询后记住文档的兜底。keyless 的 `lsp-symbol` ACP 快照经真实 Loader 组合端到端驱动应答 `workspace/symbol` 的 fixture stdio server，钉住渲染的符号行与 `maxLocations` 省略标记；`lsp-definition` 与 `fs-glob-sampling` 的 expected 输出已随新提示词、schema 与 grep 描述刷新。
+包测试覆盖 seam（种子路由到覆盖提供方、未覆盖扩展名免查询返回、扇出合并顺序、不支持折空、失败与成功组并存、全失败聚合、无提供方与全不支持失败、信号透传、HMR 释放）、提供方路径（能力门控、种子读取与 language id 派生、种子与记住文档的打开、种子持久化供后续无种查询、取消与换传输重试、符号归一化与 kind 映射）、工具层（schema、经 executor 的逐操作参数校验、种子透传、失败附注与安装建议渲染、带截断与无位置条目的渲染、呈现）。真机 `typescript-language-server` e2e 钉住三条符号路径：冷无种的 `No Project` 失败、播种查询、位置查询后记住文档的兜底。keyless 的 `lsp-symbol` ACP 快照经真实 Loader 组合端到端驱动 fixture stdio server，钉住路由播种查询、未覆盖扩展名的安装建议与 `maxLocations` 省略标记；`lsp-definition` 与 `fs-glob-sampling` 的 expected 输出已随提示词、schema 与 grep 描述刷新。

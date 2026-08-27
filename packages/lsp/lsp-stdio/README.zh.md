@@ -11,7 +11,7 @@ Namespace 插件（`name`／`inject`／`Config`／`apply`，无默认导出）�
 - 在注册前解析每项服务器局部设置；无效映射或注册冲突会回滚较早配置项，因此加载失败不会留下提供方路由。
 - 每个 `(server id, canonical workspace target)` 惰性 single-flight 一个服务器进程。服务器仍存活时返回的错误不会触发重试；如果选中的池化传输在只读查询之前或期间发生故障，提供方会等待其 dispose（资源释放）完成，并在新进程上重试该查询一次。
 - 每次查询都使用兼容性优先的**临时打开**序列：通过 `ctx.fs` 流式读取源文件，同时解析并限制其字节数；随后执行 `textDocument/didOpen`（版本 1、完整文本）、所请求操作，再执行位于 `finally` 中的 `textDocument/didClose`。写入 `didOpen` 失败或取消时，会在池复用该实例前将其终止。文档在每次调用后关闭，因此第一版不需要 `didChange`、内容 cache 或文档 LRU。
-- **符号查询带可选种子文档**：`symbol()` 请求先规范化 Workspace，再经同一条串行队列与换传输重试策略发送 `workspace/symbol { query }`。请求中可选的 `seedFilePath` 会被读取并按本提供方的映射派生 language id，由实例在请求期间临时打开；没有种子时，实例重开上一次位置查询打开过的文档。tsserver 这类服务器对无种子且从未打开过文档的符号查询回答 `No Project`；缺少 `workspaceSymbolProvider` 能力的服务器使该提供方调用以 `LSP_UNSUPPORTED_OPERATION` 失败，由 seam 折叠为空贡献。
+- **符号查询带可选种子文档**：`symbol()` 请求先规范化 Workspace，再经同一条串行队列与换传输重试策略发送 `workspace/symbol { query }`。请求中可选的 `seedFilePath` 会被读取并按本提供方的映射派生 language id（扩展名不在本提供方映射内的种子在这里不播种），由实例在请求期间临时打开并记住供后续无种查询复用；没有种子时，实例重开上一次打开过的文档。tsserver 这类服务器对无种子且从未打开过文档的符号查询回答 `No Project`；缺少 `workspaceSymbolProvider` 能力的服务器使该提供方调用以 `LSP_UNSUPPORTED_OPERATION` 失败，由 seam 折空。
 - 通过一条逐 Workspace、可中止的队列，串行执行每个源读取／打开／查询／关闭生命周期，因此排队调用只会在轮到自身时读取当前源；不同 Workspace 并行运行。提供方 dispose 会中止文件系统与协议工作，等待尚未进入队列的 Workspace 查找完成，随后排空每条队列与每个服务器。
 - 协议 shutdown 失败后，经由子进程 seam 终止服务器后代树（POSIX 进程组信号；Windows `taskkill /T /F`）。树终止的投递结果与所有进程组信号一样被就地吸收，不向外抛出（投递与服务器退出存在竞态）；服务器是否完全停稳，由句柄的进程树存活等待确认，而非由这次终止自身的结果确认。
 - 通过 `ctx.subprocess` 解析服务器可执行文件、cwd、进程和协议流；`initialize.processId` 为 `null`，因为另一台机器或 PID namespace 不得监视 harness 进程。
@@ -57,7 +57,7 @@ Namespace 插件（`name`／`inject`／`Config`／`apply`，无默认导出）�
 
 - **不提供隔离策略**：本包（package）信任所配置的服务器，不对其进程实施沙箱；受限部署必须提供适当的进程／文件系统提供方，或使用同一执行世界的沙箱包装层。
 - **临时打开兼容性下限**：同步能力省略打开／关闭（或声明 `None`）的服务器不受支持，即使关闭文档查询能够工作；固定的 TypeScript e2e 只建立一项兼容性下限，不代表跨语言承诺。无种子的符号查询跳过文档生命周期，因此只要声明了 `workspaceSymbolProvider`，缺少同步能力的服务器仍可提供该查询。
-- **tsserver 的符号索引依赖已加载项目**：`navto` 在文档打开前回答 `No Project`，最后一个文档关闭时项目卸载，因此冷的无种符号查询会透出该服务器错误；种子机制与记住文档的兜底覆盖了预热与播种路径，固定的 e2e 记录了冷失败。在大型 composite 项目图上，首次打开后配置项目还需要数秒加载：完成之前 tsserver 以单文件推断项目应答（`navto` 与引用范围偏窄）；加载完成后项目在池化实例的生命周期内常驻，只有服务器的最初几次查询是窄的。
+- **tsserver 的符号索引依赖已加载项目**：`navto` 在文档打开前回答 `No Project`，最后一个文档关闭时项目卸载，因此冷的无种符号查询会透出该服务器错误；种子机制与记住文档的兜底覆盖了预热与播种路径，固定的 e2e 记录了冷失败。在大型 composite 项目图上，首次打开后配置项目还需要数秒加载：完成之前 tsserver 以单文件推断项目应答（`navto` 与引用范围偏窄）；加载完成后项目在池化实例的生命周期内常驻，只有服务器的最初几次查询是窄的。混合语言部署的无种扇出会把它折为逐提供方的失败附注而不淹没其他提供方的答案（由 seam 合并）；pyright、gopls、rust-analyzer 等服务器启动即索引整个工作区，无需种子。
 - **不做 `workspace/symbol/resolve`**：未解析的 `WorkspaceSymbol` 条目保持 `location: null`，而不做 resolve 往返；当前在用的服务器都返回已解析的位置。
 - **逐服务器／Workspace 串行化延迟**：共享同一个服务器与 Workspace 的并行 agent（智能体）会在一个进程后排队；长生命周期 Workspace 进程会占用内存直到 dispose。
 - **被强制杀死的 harness 会遗留语言服务器**：`initialize.processId: null` 取消了服务器侧的客户端 PID 监视，因此服务器只能由服务的优雅 dispose 清理；被 SIGKILL 的 harness 会让它们继续运行，直到自行退出。

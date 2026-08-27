@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
-import Lsp, { type LspQueryRequest, type LspQueryResult, type LspSymbolResult } from '@deepseek-ai/dsh-lsp'
+import Lsp, { type LspQueryRequest, type LspQueryResult } from '@deepseek-ai/dsh-lsp'
 import * as LspLocal from '@deepseek-ai/dsh-lsp-stdio'
 
 // The server binary is a dev dependency of this package; resolve its pnpm-hoisted .bin path.
@@ -123,9 +123,9 @@ describe('real typescript-language-server', () => {
   }, 60_000)
 
   it('finds workspace symbols by name with a seed document', async () => {
-    const groups: readonly LspSymbolResult[] = await ctx.lsp.symbol({ query: 'describe', workspaceRoot: ws, seedFilePath: 'shapes.ts' })
-    expect(groups).toHaveLength(1)
-    const symbols = groups[0]?.symbols ?? []
+    const merged = await ctx.lsp.symbol({ query: 'describe', workspaceRoot: ws, seedFilePath: 'shapes.ts' })
+    expect(merged.groups).toHaveLength(1)
+    const symbols = merged.groups[0]?.symbols ?? []
     const describe = symbols.find(symbol => symbol.name === 'describe')
     expect(describe).toBeDefined()
     expect(describe?.location).not.toBeNull()
@@ -136,7 +136,7 @@ describe('real typescript-language-server', () => {
     // The hover opens shapes.ts transiently; the instance remembers it and re-opens it around a
     // bare symbol query.
     await ctx.lsp.query(at('hover', 14, 15))
-    const groups: readonly LspSymbolResult[] = await ctx.lsp.symbol({ query: 'describe', workspaceRoot: ws })
-    expect(groups[0]?.symbols.some(symbol => symbol.name === 'describe')).toBe(true)
+    const merged = await ctx.lsp.symbol({ query: 'describe', workspaceRoot: ws })
+    expect(merged.groups[0]?.symbols.some(symbol => symbol.name === 'describe')).toBe(true)
   }, 60_000)
 })

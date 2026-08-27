@@ -273,6 +273,8 @@ export class LspInstance {
           throw error
         }
         opened = true
+        // The seed becomes the remembered document so later seedless symbol queries re-open it.
+        this.lastDocument = document
       }
       const requestId = this.connection.peekNextId()
       const send = this.connection.request('workspace/symbol', { query: request.query })

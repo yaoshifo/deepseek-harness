@@ -149,10 +149,12 @@ describe('lsp-stdio end to end over a fake server', () => {
       LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
       LSP_FAKE_SYMBOLS: JSON.stringify(symbols),
     })
-    expect(await ctx.lsp.symbol({ query: 'x', workspaceRoot: ws })).toEqual([{
-      symbols: [{ name: 'x', kind: 'variable', location: { uri: pathToFileURL(join(ws, 'a.ts')).href, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } } } }],
-      resolvedWorkspaceUri: pathToFileURL(ws).href,
-    }])
+    expect(await ctx.lsp.symbol({ query: 'x', workspaceRoot: ws })).toEqual({
+      groups: [{
+        symbols: [{ name: 'x', kind: 'variable', location: { uri: pathToFileURL(join(ws, 'a.ts')).href, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } } } }],
+        resolvedWorkspaceUri: pathToFileURL(ws).href,
+      }],
+    })
     await ctx.fiber.dispose()
   })
 
@@ -161,6 +163,72 @@ describe('lsp-stdio end to end over a fake server', () => {
     const ctx = await mount({ LSP_FAKE_SYMBOLS: 'null' })
     await expect(ctx.lsp.symbol({ query: 'x', workspaceRoot: ws }))
       .rejects.toThrow(expect.objectContaining({ code: 'LSP_UNSUPPORTED_OPERATION' }))
+    await ctx.fiber.dispose()
+  })
+
+  it('routes a seeded symbol query to the covering server only', async () => {
+    await writeFile(join(ws, 'a.py'), 'x = 1\n')
+    const ctx = new Context()
+    await ctx.plugin(Lsp)
+    await ctx.plugin(LocalSubprocessRuntime)
+    await ctx.plugin(LocalFileSystem, { cwd: process.cwd() })
+    await ctx.plugin(LspLocal, {
+      servers: {
+        typescript: fakeServer({
+          LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+          LSP_FAKE_SYMBOLS: JSON.stringify([{ name: 'tsOnly', kind: 13, location: locationJson(0) }]),
+        }),
+        python: fakeServer(
+          {
+            LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+            LSP_FAKE_SYMBOLS: JSON.stringify([{ name: 'pyOnly', kind: 13, location: locationJson(0) }]),
+          },
+          { extensionToLanguage: { '.py': 'python' } },
+        ),
+      },
+    })
+    // The .py seed routes to the python server: its symbols answer, the typescript one stays cold.
+    const routed = await ctx.lsp.symbol({ query: 'Only', workspaceRoot: ws, seedFilePath: 'a.py' })
+    expect(routed.groups).toHaveLength(1)
+    expect(routed.groups[0]?.symbols[0]?.name).toBe('pyOnly')
+    await ctx.fiber.dispose()
+  })
+
+  it('reports an uncovered seed extension without starting any server', async () => {
+    const ctx = await mount({
+      LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+      LSP_FAKE_SYMBOLS: JSON.stringify([{ name: 'x', kind: 13, location: locationJson(0) }]),
+    })
+    // No .ml route exists; nothing is queried and the extension comes back for the hint.
+    expect(await ctx.lsp.symbol({ query: 'x', workspaceRoot: ws, seedFilePath: 'notes.ml' }))
+      .toEqual({ groups: [], uncoveredSeedExtension: '.ml' })
+    await ctx.fiber.dispose()
+  })
+
+  it('retains one server failure alongside another server\'s groups in a seedless fan-out', async () => {
+    const ctx = new Context()
+    await ctx.plugin(Lsp)
+    await ctx.plugin(LocalSubprocessRuntime)
+    await ctx.plugin(LocalFileSystem, { cwd: process.cwd() })
+    await ctx.plugin(LspLocal, {
+      servers: {
+        supporting: fakeServer({
+          LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+          LSP_FAKE_SYMBOLS: JSON.stringify([{ name: 'x', kind: 13, location: locationJson(0) }]),
+        }),
+        failing: fakeServer(
+          {
+            LSP_FAKE_CAPS: JSON.stringify({ workspaceSymbolProvider: true }),
+            LSP_FAKE_ERROR: '1',
+          },
+          { extensionToLanguage: { '.py': 'python' } },
+        ),
+      },
+    })
+    const merged = await ctx.lsp.symbol({ query: 'x', workspaceRoot: ws })
+    expect(merged.groups).toHaveLength(1)
+    expect(merged.groups[0]?.symbols[0]?.name).toBe('x')
+    expect(merged.failures).toEqual([{ provider: 'failing', message: expect.stringContaining('server refused') }])
     await ctx.fiber.dispose()
   })
 
@@ -178,9 +246,10 @@ describe('lsp-stdio end to end over a fake server', () => {
         bare: fakeServer({ LSP_FAKE_SYMBOLS: 'null' }, { extensionToLanguage: { '.py': 'python' } }),
       },
     })
-    const groups = await ctx.lsp.symbol({ query: 'x', workspaceRoot: ws })
-    expect(groups).toHaveLength(1)
-    expect(groups[0]?.symbols[0]?.name).toBe('x')
+    const merged = await ctx.lsp.symbol({ query: 'x', workspaceRoot: ws })
+    expect(merged.groups).toHaveLength(1)
+    expect(merged.groups[0]?.symbols[0]?.name).toBe('x')
+    expect(merged.failures).toBeUndefined()
     await ctx.fiber.dispose()
   })
 
@@ -192,7 +261,7 @@ describe('lsp-stdio end to end over a fake server', () => {
       LSP_FAKE_DEF: 'null',
     })
     // A prior position query is unnecessary: the seed document opens around the request.
-    expect(await ctx.lsp.symbol({ query: 'x', workspaceRoot: ws, seedFilePath: 'a.ts' })).toHaveLength(1)
+    expect((await ctx.lsp.symbol({ query: 'x', workspaceRoot: ws, seedFilePath: 'a.ts' })).groups).toHaveLength(1)
     await ctx.fiber.dispose()
   })
 

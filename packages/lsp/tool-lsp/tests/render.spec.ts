@@ -191,19 +191,19 @@ describe('formatHover', () => {
 
 describe('formatSymbols', () => {
   it('renders a no-result line when every group is empty', () => {
-    expect(formatSymbols([{ symbols: [], resolvedWorkspaceUri: WS_URI }], DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS))
+    expect(formatSymbols([{ symbols: [], resolvedWorkspaceUri: WS_URI }], [], undefined, DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS))
       .toBe('No symbols found.')
-    expect(formatSymbols([], DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)).toBe('No symbols found.')
+    expect(formatSymbols([], [], undefined, DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)).toBe('No symbols found.')
   })
 
   it('renders name, kind, container, and one-based location', () => {
     const a = pathToFileURL(join(WS, 'a.ts')).href
-    const text = formatSymbols([{ symbols: [sym('answer', 'function', loc(a, 2, 6), 'Math'), sym('x', 'variable', loc(a, 0))], resolvedWorkspaceUri: WS_URI }], DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)
+    const text = formatSymbols([{ symbols: [sym('answer', 'function', loc(a, 2, 6), 'Math'), sym('x', 'variable', loc(a, 0))], resolvedWorkspaceUri: WS_URI }], [], undefined, DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)
     expect(text).toBe('answer (function) in Math — a.ts:3:7\nx (variable) — a.ts:1:1')
   })
 
   it('renders a no-location symbol without a position suffix', () => {
-    const text = formatSymbols([{ symbols: [sym('answer', 'function', null)], resolvedWorkspaceUri: WS_URI }], DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)
+    const text = formatSymbols([{ symbols: [sym('answer', 'function', null)], resolvedWorkspaceUri: WS_URI }], [], undefined, DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)
     expect(text).toBe('answer (function) — no location')
   })
 
@@ -213,15 +213,39 @@ describe('formatSymbols', () => {
     const text = formatSymbols([
       { symbols: [sym('a', 'function', loc(a, 0))], resolvedWorkspaceUri: WS_URI },
       { symbols: [sym('b', 'function', loc(b, 1)), sym('c', 'function', loc(b, 2))], resolvedWorkspaceUri: WS_URI },
-    ], 2, DEFAULT_MAX_RESULT_CHARS)
+    ], [], undefined, 2, DEFAULT_MAX_RESULT_CHARS)
     expect(text).toBe('a (function) — a.ts:1:1\nb (function) — b.ts:2:1\n… 1 more symbol omitted (limit 2).')
   })
 
   it('caps the complete symbol text even when one name is enormous', () => {
     const a = pathToFileURL(join(WS, 'a.ts')).href
-    const text = formatSymbols([{ symbols: [sym('n'.repeat(1_000_000), 'function', loc(a, 0))], resolvedWorkspaceUri: WS_URI }], 1, 80)
+    const text = formatSymbols([{ symbols: [sym('n'.repeat(1_000_000), 'function', loc(a, 0))], resolvedWorkspaceUri: WS_URI }], [], undefined, 1, 80)
     expect(text).toHaveLength(80)
     expect(text).toContain('symbols truncated')
+  })
+
+  it('renders one-line failure notes after the symbol lines', () => {
+    const a = pathToFileURL(join(WS, 'a.ts')).href
+    const text = formatSymbols(
+      [{ symbols: [sym('x', 'function', loc(a, 0))], resolvedWorkspaceUri: WS_URI }],
+      [{ provider: 'typescript', message: 'Error: No Project.\n    at Object.ThrowNoProject (…)' }],
+      undefined,
+      DEFAULT_MAX_LOCATIONS,
+      DEFAULT_MAX_RESULT_CHARS,
+    )
+    expect(text).toBe('x (function) — a.ts:1:1\n⚠ typescript provider failed: Error: No Project.')
+  })
+
+  it('renders failure notes after the no-result line', () => {
+    const text = formatSymbols([], [{ provider: 'gopls', message: 'crashed' }], undefined, DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)
+    expect(text).toBe('No symbols found.\n⚠ gopls provider failed: crashed')
+  })
+
+  it('renders the install suggestion for an uncovered seed extension instead of a no-result line', () => {
+    const known = formatSymbols([], [], '.py', DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)
+    expect(known).toBe('⚠ No language server is configured for .py files — suggest installing pyright and adding it to the lsp-stdio servers config so lsp can cover the language.')
+    const unknown = formatSymbols([], [], '.ml', DEFAULT_MAX_LOCATIONS, DEFAULT_MAX_RESULT_CHARS)
+    expect(unknown).toBe('⚠ No language server is configured for .ml files — ask the user to install one and add it to the lsp-stdio servers config so lsp can cover the language.')
   })
 })
 

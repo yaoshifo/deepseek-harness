@@ -202,7 +202,7 @@
     },
     {
       "name": "lsp",
-      "description": "Query a language server for precise code navigation. workspaceSymbol finds symbols by name across the workspace — no coordinates needed; include file_path (any file in the project) so servers that index per loaded project answer immediately instead of erroring cold. It returns path:line:character you can pass directly to goToDefinition, findReferences, goToImplementation, or hover, which take one-based UTF-16 line and character on the symbol. findReferences includes the declaration.",
+      "description": "Query a language server for precise code navigation. workspaceSymbol finds symbols by name across the workspace — no coordinates needed; include file_path (a file in the same language as the symbol) so the query routes to that language's server, which also keeps per-project servers (TypeScript) answering. It returns path:line:character you can pass directly to goToDefinition, findReferences, goToImplementation, or hover, which take one-based UTF-16 line and character on the symbol. findReferences includes the declaration.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -223,7 +223,7 @@
           },
           "file_path": {
             "type": "string",
-            "description": "The source file to query, relative to the workspace or absolute. Required for the position operations; recommended for workspaceSymbol, where any project file seeds servers that index per loaded project."
+            "description": "The source file to query, relative to the workspace or absolute. Required for the position operations; recommended for workspaceSymbol, where a file in the symbol's language routes the query to that language's server."
           },
           "line": {
             "type": "number",
