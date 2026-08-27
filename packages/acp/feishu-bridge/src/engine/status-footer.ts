@@ -417,6 +417,23 @@ export function currentModelLabel(agent: Agent | undefined): string {
   return active.model !== undefined && active.model !== '' ? active.model : active.name
 }
 
+/**
+ * The "🤖 model[·effort][ · mode]" line shared by both footer builders. The
+ * reasoning effort label mirrors the dsh adapter's route-configured
+ * `getReasoningEffort` (Go GetReasoningEffort) — the explicit declaration of
+ * the effort agents run at; agents without that probe render as before.
+ */
+function formatModelLine(agent: Agent | undefined): string {
+  const modelLabel = currentModelLabel(agent)
+  if (modelLabel === '') return ''
+  let s = `🤖 ${modelLabel}`
+  const effort = (agent as { getReasoningEffort?: () => string } | undefined)?.getReasoningEffort?.().trim() ?? ''
+  if (effort !== '') s += `·${effort}`
+  const modeLabel = formatModeLabel(agent)
+  if (modeLabel !== '') s += ` · ${modeLabel}`
+  return s
+}
+
 // ── status footer builders ─────────────────────────────────────────────────
 
 /** Inputs the footer builders read (a structural slice of the engine). */
@@ -461,13 +478,8 @@ function footerDir(inputs: StatusFooterInputs): string {
 export async function buildStatusFooter(_prefix: string, inputs: StatusFooterInputs): Promise<string> {
   const lines: string[] = []
 
-  const modelLabel = currentModelLabel(inputs.agent)
-  if (modelLabel !== '') {
-    let s = `🤖 ${modelLabel}`
-    const modeLabel = formatModeLabel(inputs.agent)
-    if (modeLabel !== '') s += ` · ${modeLabel}`
-    lines.push(s)
-  }
+  const modelLine = formatModelLine(inputs.agent)
+  if (modelLine !== '') lines.push(modelLine)
 
   if (inputs.fields.ctxMsg !== '') lines.push(`📊 ${inputs.fields.ctxMsg}`)
   if (inputs.fields.hitMsg !== '') lines.push(`🍵 ${inputs.fields.hitMsg}`)
@@ -535,12 +547,8 @@ export async function buildStatusFooterElements(inputs: StatusFooterInputs): Pro
     ? `⌛ ${inputs.fields.providerMsg.slice('💰 '.length)}`
     : ''
 
-  let modelLine = ''
-  const modelLabel = currentModelLabel(inputs.agent)
-  if (modelLabel !== '') {
-    modelLine = `🤖 ${modelLabel}`
-    const modeLabel = formatModeLabel(inputs.agent)
-    if (modeLabel !== '') modelLine += ` · ${modeLabel}`
+  const modelLine = formatModelLine(inputs.agent)
+  if (modelLine !== '') {
     if (usageCollapsibleTitle !== '') collapsed.push({ kind: 'markdown', content: modelLine })
   }
 

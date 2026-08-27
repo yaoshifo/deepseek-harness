@@ -435,7 +435,7 @@ describe('buildStatusFooter', () => {
       editorUrl: '',
     })
     const lines = got.split('\\n')
-    expect(lines[0]).toBe('🤖 glm-4.7')
+    expect(lines[0]).toBe('🤖 glm-4.7·high')
     expect(lines[1]).toBe('📊 ctx: +1k=10k · 3 api')
     expect(lines[2]).toBe('🍵 hit: +20k=90k · 2 zip')
     expect(lines.some(l => l.startsWith('📂 repo'))).toBe(true)
@@ -443,6 +443,34 @@ describe('buildStatusFooter', () => {
     expect(lines).toContain('💾 RAM: 60% · Disk: 70%')
     expect(lines).toContain('sess-1')
     expect(lines).toContain('oc_chat')
+  })
+
+  it('joins the route-configured reasoning effort tightly onto the model label', async () => {
+    const got = await buildStatusFooter('✅ Done', {
+      fields: new CompletionUsageFields(),
+      agent: footerAgent('zhipuai/glm-5.3-flash', 'max', ''),
+      workspaceDir: '',
+      agentSessionID: '',
+      sessionKey: '',
+      editorUrl: '',
+    })
+    expect(got).toBe('🤖 zhipuai/glm-5.3-flash·max')
+  })
+
+  it('keeps the spaced mode label after the tight effort segment', async () => {
+    const agent = {
+      ...footerAgent('glm-4.7', 'max', ''),
+      getMode: () => 'bypassPermissions',
+    }
+    const got = await buildStatusFooter('✅ Done', {
+      fields: new CompletionUsageFields(),
+      agent,
+      workspaceDir: '',
+      agentSessionID: '',
+      sessionKey: '',
+      editorUrl: '',
+    })
+    expect(got).toBe('🤖 glm-4.7·max · YOLO')
   })
 
   it('appends the editor URL line when configured and a dir exists', async () => {
@@ -499,6 +527,24 @@ describe('buildStatusFooterElements', () => {
     expect(md.map(m => m.content)).toContain('🍵 hit: +20k=90k')
     expect(md.map(m => m.content)).toContain('sess-1')
     expect(md.map(m => m.content)).toContain('oc_chat')
+  })
+
+  it('titles the collapsible with the effort-bearing model line when no usage line exists', async () => {
+    const f = new CompletionUsageFields()
+    f.ctxMsg = 'ctx: +1k=10k'
+    const { elements } = await buildStatusFooterElements({
+      fields: f,
+      agent: footerAgent('zhipuai/glm-5.3-flash', 'max', '/w/repo'),
+      workspaceDir: '',
+      agentSessionID: '',
+      sessionKey: '',
+      editorUrl: '',
+    })
+    const panel = elements.find(e => e.kind === 'collapsiblePanel') as unknown as {
+      title?: string
+      elements: CardElement[]
+    }
+    expect(panel.title).toBe('🤖 zhipuai/glm-5.3-flash·max')
   })
 
   it('keeps 💾 visible when RAM crosses the warning marker', async () => {

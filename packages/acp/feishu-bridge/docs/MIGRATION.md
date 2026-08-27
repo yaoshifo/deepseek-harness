@@ -240,6 +240,7 @@ dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
 - **验证**：记账驴真机一轮（新会话 plan 模式生效、回复正常、0 报错）；cron 10 条载入；8 bot 头像探活。其余 bot 真机冒烟由用户日常使用回归。
 - **赛博婷婷切流（2026-08-22）**：与 7 bot 同流程（state seed：标签缓存 + spawned 注册表；注释 config.toml 段 + 停 cc-connect + profile 加第 9 个 project）。**踩坑**：切流脚本从 `config.toml.bak-tingting` 提取凭据时按「注释段」搜索，而该备份里赛博婷婷的段是未注释状态——知识驴的注释段延伸至文件尾、包含了赛博婷婷的名字，正则错取了知识驴的 appId/workdir，导致 profile 里的「赛博婷婷」实为知识驴的克隆（真正的赛博婷婷 app 从未接入、消息全无反应；表现为「WS 连上了但零事件」，排查时被当作事件投递问题绕了远路——临时 lark-cli 事件监听器收到真 app 的事件才定位）。教训：配置生成脚本必须断言提取到的 appId 等关键字段等于预期值，不能只断言 name。修正后（appId=cli_a96c8817…、workdir=tingting）真机 /spawn + 对话验证通过。
 - **回退**：单 bot = 删 profile project 段（HMR）+ 取消注释 config.toml + 重启 cc-connect（需先取回归档的 `~/.dsh/profiles/cc-connect`）；整体 = 恢复 `config.toml.bak-cutover-20260821` + 停 feishu-bridge。root 已改名，回退后 Go 侧在旧路径空目录重建，预切流历史在新路径可找回。
+- **🤖 页脚行追加 reasoning effort（2026-08-27）**：完成通知卡/`/new`/spawn 卡复用的状态页脚 🤖 行改为 `模型·effort[ · 模式]`（用户示例 `zhipuai/glm-5.3-flash·max`；紧连 `·` 对齐示例，模式标签保持间隔式）。数据源 = dsh adapter 既有 `getReasoningEffort()`（活跃路由配置），Config 的 `agent.reasoningEffort` union 增补 `'max'`（glm 网关 low/high/max 三档，medium 会 400）；两处重复拼装收敛为 `formatModelLine`。决策记录见 implemented/feature note（显示源选路由配置而非探测 llm 运行时生效值：避免 bridge 新增对核心服务面的耦合与异步缓存，维持 Go GetReasoningEffort 对齐路线；代价是路由配置与 pi-ai `reasoning:` 默认值需人工保持一致）。包内测试 +6（status-footer.spec），基线外唯一失败为既有的 mcp-health-mcp-client 环境相关用例（干净 HEAD 同样失败）。
 
 ## 5. E2E 测试策略（可自测的边界）
 

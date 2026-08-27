@@ -110,8 +110,8 @@ export interface AgentOptions {
   model?: string
   /** Default session mode: 'plan' starts every session in plan mode (Go agent options mode). */
   mode?: string
-  /** Reasoning effort passed through to `ctx.agents` agent options. */
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high'
+  /** Reasoning effort passed through to `ctx.agents` agent options; also the status footer's 🤖 line display source. */
+  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'max'
 }
 
 /** Per-project feature switches (subset grown per milestone; MIGRATION.md §4). */
@@ -549,7 +549,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       provider: Schema.string().description('Key into providers'),
       model: Schema.string().description('Model override'),
       mode: Schema.string().description("Default session mode ('plan' = review before execution)"),
-      reasoningEffort: Schema.union(['minimal', 'low', 'medium', 'high']).description('Reasoning effort'),
+      reasoningEffort: Schema.union(['minimal', 'low', 'medium', 'high', 'max']).description('Reasoning effort'),
     }),
     features: Schema.object({
       allowChat: Schema.boolean().description('Answer without @-mention'),

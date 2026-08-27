@@ -42,7 +42,7 @@
 | 23 | Placeholder Card：首条推送通知加速 | ✅ | M2 | showPlaceholder |
 | 24 | Auto-Compaction 检测与通知 | ✅ | M3 | compaction 卡 |
 | 25 | 累计 Token 追踪 + 每轮增量显示 | ✅ | M2 | 完成通知 ctx 行 |
-| 26 | 统一多行状态页脚（model/ctx/workdir/git/RAM） | ✅ | M7-b | 完整页脚落地：🤖 模型·模式 / 📊 ctx / 🍵 缓存命中 / 📂 workdir·git 分支+📝 改动文件 / ⌛ 费用 / 💾 RAM·磁盘 / 会话·chat ID / 🔗 editor_url；紫色通知卡完整形态（headerSuffix+折叠面板+sendCardWithHandle+notificationHandle 状态+spawn 跳转链+subtask diff）；RAM 改用 os.totalmem（Go 读 /proc/meminfo 在 macOS 无 RAM 行，刻意分歧） |
+| 26 | 统一多行状态页脚（model/ctx/workdir/git/RAM） | ✅ | M7-b | 完整页脚落地：🤖 模型·effort·模式 / 📊 ctx / 🍵 缓存命中 / 📂 workdir·git 分支+📝 改动文件 / ⌛ 费用 / 💾 RAM·磁盘 / 会话·chat ID / 🔗 editor_url；紫色通知卡完整形态（headerSuffix+折叠面板+sendCardWithHandle+notificationHandle 状态+spawn 跳转链+subtask diff）；RAM 改用 os.totalmem（Go 读 /proc/meminfo 在 macOS 无 RAM 行，刻意分歧）；effort 取路由配置（TS 增强，超出 Go 对齐面） |
 | 27 | allow_chat 白名单过滤 + 共享 WebSocket | ✅ | M1 | 共享 WS 由 node-sdk 每 app 一个 client 天然承担 |
 | 28 | NO_REPLY 标记静默回复 | ✅ | M2 | isSilentReply/stripTrailingSilent 引擎 reply 路径（M2 移植）；M7-c 补引擎级投递抑制测试 |
 | 29 | plan_max_len 配置 | ✅ | M3 | display.planMaxLen |
