@@ -7,7 +7,8 @@
     "profile": {
       "bundles": [
         "@deepseek-ai/dsh-base",
-        "@deepseek-ai/dsh-feishu-bridge"
+        "@deepseek-ai/dsh-feishu-bridge",
+        "@deepseek-ai/dsh-feishu-bridge-chatroom"
       ]
     }
   },
@@ -25,6 +26,7 @@
     "@deepseek-ai/dsh-agent-loop": "link:@FORK_DIR@/packages/core/agent-loop",
     "@deepseek-ai/dsh-llm-pi-ai": "link:@FORK_DIR@/packages/llm/llm-pi-ai",
     "@deepseek-ai/dsh-tool-claude-memory": "link:@FORK_DIR@/packages/memory/tool-claude-memory",
-    "@deepseek-ai/dsh-tool-ask-user": "link:@FORK_DIR@/packages/interaction/tool-ask-user"
+    "@deepseek-ai/dsh-tool-ask-user": "link:@FORK_DIR@/packages/interaction/tool-ask-user",
+    "@deepseek-ai/dsh-feishu-bridge-chatroom": "link:@FORK_DIR@/packages/acp/feishu-bridge-chatroom"
   }
 }
