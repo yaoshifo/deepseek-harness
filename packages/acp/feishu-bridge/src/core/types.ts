@@ -1296,6 +1296,32 @@ export function asContinuableDelegator(a: Agent): ContinuableDelegator | undefin
 }
 
 /**
+ * Agent that reports delegated child sessions' liveness (last durable-event
+ * time and tool-call count), recorded independently of the ancestor
+ * projection — the background-subtask panel reads it while the parent turn
+ * is detached, where projection drops child events.
+ */
+export interface SubagentActivitySource {
+  /**
+   * @returns the live activity map keyed by child session id; entries exist
+   * only for children that emitted at least one event.
+   */
+  subagentActivitySnapshot(): ReadonlyMap<string, { lastEventAt: number; toolCalls: number }>
+  /** Drop the activity records of settled children. */
+  forgetSubagentActivity(childIds: readonly string[]): void
+}
+
+/**
+ * Structural check for the {@link SubagentActivitySource} capability.
+ *
+ * @param a - the agent to probe.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asSubagentActivitySource(a: Agent): SubagentActivitySource | undefined {
+  return withMethod<SubagentActivitySource>(a, 'subagentActivitySnapshot')
+}
+
+/**
  * Structural check for the {@link ForkAtPreparer} capability.
  *
  * @param a - the agent to probe.

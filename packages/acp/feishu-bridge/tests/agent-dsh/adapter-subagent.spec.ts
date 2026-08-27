@@ -230,3 +230,31 @@ describe('DshAgentAdapter subagent lineage attribution', () => {
     expect(got[0]).toMatchObject({ type: 'subagent_status', content: '1' })
   })
 })
+
+describe('DshAgentAdapter subagent activity recorder', () => {
+  it('records child liveness even when the parent session is detached (no live ancestor)', () => {
+    const h = createHarness()
+    const a = new DshAgentAdapter(h.ctx, { agentName: 'dsh', cwd: '/w', providers: [], activeProvider: '' })
+    // No startSession: the bridge session is detached, so ancestor resolution
+    // finds nothing and projection drops the events — the recorder must not.
+    const childRef: SessionRef = { id: 'child-1', header: { parentSession: 'bridge-1' } }
+
+    h.emitSession(childRef, { type: 'turn/start' })
+    h.emitSession(childRef, { type: 'tool/call', callId: 'c1', name: 'bash', arguments: 'ls' })
+    h.emitSession(childRef, { type: 'tool/call', callId: 'c2', name: 'read', arguments: '{}' })
+
+    const snapshot = a.subagentActivitySnapshot()
+    expect(snapshot.get('child-1')?.toolCalls).toBe(2)
+    expect(snapshot.get('child-1')?.lastEventAt).toBeGreaterThan(0)
+
+    a.forgetSubagentActivity(['child-1'])
+    expect(snapshot.has('child-1')).toBe(false)
+  })
+
+  it('ignores sessions without a parentSession header (ordinary sessions)', () => {
+    const h = createHarness()
+    const a = new DshAgentAdapter(h.ctx, { agentName: 'dsh', cwd: '/w', providers: [], activeProvider: '' })
+    h.emitSession({ id: 'plain-1' }, { type: 'tool/call', callId: 'c1', name: 'bash', arguments: 'ls' })
+    expect(a.subagentActivitySnapshot().has('plain-1')).toBe(false)
+  })
+})

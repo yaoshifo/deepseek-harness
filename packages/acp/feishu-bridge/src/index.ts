@@ -131,6 +131,12 @@ export interface FeatureSwitches {
   showContextIndicator?: boolean
   /** Suppress settlement cards for unattended native subtasks; the parent-agent wake is always delivered. */
   subtaskQuiet?: boolean
+  /** Post a live per-child panel card while a settled parent turn has unreported native subtasks; default true. */
+  subtaskLivePanel?: boolean
+  /** Panel refresh interval in ms (default 15000; 0 disables the panel). */
+  subtaskLivePanelIntervalMs?: number
+  /** Silence window in ms after which a panel row flags a child as stalled (default 120000). */
+  subtaskLivePanelStallMs?: number
 }
 
 /** LLM group-name generation + Lucide icon avatars for one project (Go [projects.group_name], #49/#52). */
@@ -571,6 +577,9 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       injectSender: Schema.boolean().description('Prepend sender identity'),
       showContextIndicator: Schema.boolean().description('Append [ctx: ~N%]'),
       subtaskQuiet: Schema.boolean().description('Suppress settlement cards for unattended native subtasks (wake-only delivery)'),
+      subtaskLivePanel: Schema.boolean().description('Live per-child panel card while a settled parent turn has unreported native subtasks; default true'),
+      subtaskLivePanelIntervalMs: Schema.natural().description('Panel refresh interval in ms (default 15000; 0 disables the panel)'),
+      subtaskLivePanelStallMs: Schema.natural().description('Silence window in ms before a panel row flags a child as stalled (default 120000)'),
     }),
     groupName: Schema.object({
       enabled: Schema.boolean().description('LLM group naming (#49); default true'),
@@ -1254,6 +1263,13 @@ export function buildProjectAssembly(
   if (project.features?.subtaskQuiet === true) {
     engine.setSubtaskQuiet(true)
   }
+  engine.setSubtaskPanelConfig({
+    enabled: project.features?.subtaskLivePanel !== false,
+    intervalMs: project.features?.subtaskLivePanelIntervalMs ?? 15_000,
+    ...(project.features?.subtaskLivePanelStallMs !== undefined
+      ? { stallMs: project.features.subtaskLivePanelStallMs }
+      : {}),
+  })
   engine.setUsageProviders(buildUsageProviders(config.usageProviders ?? []))
   return { engine, adapter, platform }
 }

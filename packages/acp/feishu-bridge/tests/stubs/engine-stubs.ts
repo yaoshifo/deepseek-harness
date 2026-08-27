@@ -402,6 +402,10 @@ export function createStubChatroomSpawnerEx(n = 'test'): StubChatroomSpawnerEx {
  */
 export interface StubProgressCardPlatform extends StubChatroomSpawner {
   updates: string[]
+  /** Full card payloads POSTed through sendCardWithHandle, in order. */
+  postedCards: unknown[]
+  /** Full card payloads PATCHed through updateCardWithHandle, in order. */
+  updateCards: unknown[]
   sendCardWithHandle(replyCtx: unknown, card: unknown): Promise<unknown>
   updateCardWithHandle(handle: unknown, card: unknown): Promise<void>
   patchedTitles(): string[]
@@ -410,9 +414,15 @@ export interface StubProgressCardPlatform extends StubChatroomSpawner {
 export function createStubProgressCardPlatform(n = 'test'): StubProgressCardPlatform {
   const p = createStubChatroomSpawner(n) as StubProgressCardPlatform
   p.updates = []
-  p.sendCardWithHandle = async () => 'progress-handle'
+  p.postedCards = []
+  p.updateCards = []
+  p.sendCardWithHandle = async (_replyCtx, card) => {
+    p.postedCards.push(card)
+    return `handle-${p.postedCards.length}`
+  }
   p.updateCardWithHandle = async (_handle, card) => {
     const c = card as RecordedCard
+    p.updateCards.push(card)
     p.updates.push(c.header?.title ?? '')
   }
   p.patchedTitles = () => [...p.updates]

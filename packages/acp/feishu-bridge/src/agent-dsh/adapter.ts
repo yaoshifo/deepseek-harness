@@ -644,6 +644,13 @@ export class DshAgentAdapter {
   private readonly cfg: DshAdapterConfig
   private readonly sessionsByEngineKey = new Map<string, DshAgentSession>()
   private readonly liveSessions = new Map<string, DshAgentSession>()
+  /**
+   * Liveness of delegated child sessions (last event time, tool-call count),
+   * keyed by child session id. Fed from `session/event` regardless of the
+   * ancestor projection's liveness — the background-subtask panel reads it
+   * while the parent turn is detached, where projection drops the events.
+   */
+  private readonly subagentActivity = new Map<string, { lastEventAt: number; toolCalls: number }>()
   /** Folded recent-turn windows of cold (not-live) sessions, keyed by native id. */
   private readonly recentTurnsCache = new Map<string, HistoryEntry[]>()
   /** Staged fork-at seeds keyed by the sentinel id, consumed by startSession. */
@@ -696,13 +703,17 @@ export class DshAgentAdapter {
     // engine session sharing the agent/session id. Sessions outside
     // liveSessions fall through to subagent-lineage attribution: a
     // delegated child session's events project into its bridge ancestor's
-    // channel so the tool-process card shows the child's activity.
+    // channel so the tool-process card shows the child's activity. The
+    // ancestor lookup dies once the parent turn detaches, so a delegated
+    // child also feeds the activity recorder — the background-subtask panel
+    // reads it and does not depend on projection liveness.
     const onSessionEvent = (session: { id: unknown; header?: { parentSession?: unknown } }, event: Record<string, unknown>): void => {
       const target = this.liveSessions.get(String(session.id))
       if (target !== undefined) {
         target.projectSessionEvent(event)
         return
       }
+      if (session.header?.parentSession !== undefined) this.recordSubagentActivity(String(session.id), event)
       const ancestor = this.resolveSubagentAncestor(session)
       if (ancestor !== undefined) ancestor.projectSubagentEvent(String(session.id), event)
     }
@@ -1666,6 +1677,33 @@ export class DshAgentAdapter {
       parent = next
     }
     return undefined
+  }
+
+  /** Update one delegated child's liveness record from a durable event. */
+  private recordSubagentActivity(childId: string, event: Record<string, unknown>): void {
+    const current = this.subagentActivity.get(childId)
+    const toolCalls = (current?.toolCalls ?? 0) + (event.type === 'tool/call' ? 1 : 0)
+    this.subagentActivity.set(childId, { lastEventAt: Date.now(), toolCalls })
+  }
+
+  /**
+   * SubagentActivitySource: liveness of delegated child sessions, keyed by
+   * child id. Only sessions that emitted at least one event appear; callers
+   * treat a missing entry as "no activity seen".
+   * @returns the live activity map (read-only by convention).
+   */
+  subagentActivitySnapshot(): ReadonlyMap<string, { lastEventAt: number; toolCalls: number }> {
+    return this.subagentActivity
+  }
+
+  /**
+   * SubagentActivitySource: drop the activity records of settled children so
+   * the map does not grow with the daemon's lifetime. The panel calls this
+   * when a parent's background set fully settles.
+   * @param childIds - the child session ids to forget.
+   */
+  forgetSubagentActivity(childIds: readonly string[]): void {
+    for (const id of childIds) this.subagentActivity.delete(id)
   }
 
   /**

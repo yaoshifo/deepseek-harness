@@ -61,6 +61,7 @@ import {
   asSpawnedChatActiveChecker,
   asSpawnedChatLister,
   asSpawnedChatStateUpdater,
+  asSubagentActivitySource,
   asWorkDirSwitcher,
   asWorktreeOrphanResolver,
   ContinueSession,
@@ -146,6 +147,7 @@ import { runBangShell } from './shell-commands.js'
 import { renderDirCardSafe } from './dir-card.js'
 import { executeCardAction } from './cron-commands.js'
 import { cancelQueuedByMessageID, markRecalledPreview } from './recall.js'
+import { renderSubtaskPanelCard } from './subtask-panel.js'
 import { triggerInsights } from './predict.js'
 import { defaultAutoCompressMinGapMs, estimateTokensWithPendingAssistant, maybeAutoResetSessionOnIdle, runCompress } from './session-misc.js'
 import type { RelayManager } from './relay.js'
@@ -922,6 +924,12 @@ export class Engine {
   subtaskTimeout = 0
   /** Suppress settlement cards for unattended native subtasks (features.subtaskQuiet). */
   subtaskQuiet = false
+  /** Background-subtask live panel: enabled flag (features.subtaskLivePanel). */
+  subtaskPanelEnabled = true
+  /** Background-subtask live panel refresh interval ms (features.subtaskLivePanelIntervalMs; 0 disables). */
+  subtaskPanelIntervalMs = 15_000
+  /** Silence window after which a panel row flags a child as stalled. */
+  subtaskPanelStallMs = 120_000
   /** Gather barrier fallback timeout; 0 = defaultSubtaskGatherTimeout (Go subtaskGatherTimeout). */
   subtaskGatherTimeout = 0
   /** LLM group-name generation switches (Go groupName* fields). */
@@ -1008,6 +1016,14 @@ export class Engine {
 
   /** key = sessionKey (interactiveKey; workspace prefixes arrive in a later M). */
   readonly interactiveStates = new Map<string, InteractiveState>()
+
+  /**
+   * Live background-subtask panels: parent session key → card handle, timer,
+   * and post time. A panel exists only while a settled parent turn has
+   * unreported native children (the no-gather escape path); it PATCHes in
+   * place and dies when the set settles, the chat drains, or the engine stops.
+   */
+  readonly subtaskPanels = new Map<string, { handle: unknown; timer: ReturnType<typeof setInterval>; startedAt: number }>()
 
   /** Command names → alias targets (trigger → command). */
   readonly aliases = new Map<string, string>()
@@ -1592,6 +1608,9 @@ export class Engine {
   /** Stop platforms and close all interactive agent sessions (Go Stop). */
   async stop(): Promise<void> {
     this.monitor.stopMonitorPoll()
+    // Panel timers are engine-owned; a dead engine must not keep ticking.
+    for (const panel of this.subtaskPanels.values()) clearInterval(panel.timer)
+    this.subtaskPanels.clear()
     // An in-flight turn's event loop may never resume before process exit
     // (2026-08-22 oc_610e incident: exit_plan_mode interrupted mid-call, the
     // loop never ran, no notice) — notify its chat here, while the platform
@@ -3566,6 +3585,10 @@ export class Engine {
       }
       await sp.setPendingSubtasks(pendingChildren)
     }
+    // The turn settled with children still running: open the background
+    // panel so the chat keeps showing their liveness (a zero pending set
+    // finalizes an existing panel).
+    this.ensureSubtaskPanel(sessionKey)
     state.eventsNeedResync = false
     let fullResponse = event.content
     // An error-reasoned turn reports its failure; interim narration it
@@ -6296,12 +6319,150 @@ export class Engine {
   private refreshSubtaskFooter(parentKey: string): void {
     const state = this.interactiveStates.get(parentKey)
     const sp = state?.preview
-    if (!this.display.toolProgress || sp === undefined || !sp.canPreview()) return
-    const pending = this.pendingNativeChildrenOf(parentKey)
-    // Mirror the turn-end recount: zero subtasks only clears the hint when no
-    // background task is pending either (its count owns the hint in that case).
-    if (pending > 0) void sp.setBackgroundHint(this.i18n.tf(Msg.SubtasksRunningHint, pending))
-    else if ((state?.backgroundTasksPending ?? 0) === 0) void sp.setBackgroundHint('')
+    if (this.display.toolProgress && sp !== undefined && sp.canPreview()) {
+      const pending = this.pendingNativeChildrenOf(parentKey)
+      // Mirror the turn-end recount: zero subtasks only clears the hint when no
+      // background task is pending either (its count owns the hint in that case).
+      if (pending > 0) void sp.setBackgroundHint(this.i18n.tf(Msg.SubtasksRunningHint, pending))
+      else if (state !== undefined && state.backgroundTasksPending === 0) void sp.setBackgroundHint('')
+    }
+    // A running panel tracks the same flips (a reported child leaves the rows);
+    // independent of the live-card hint, which the preview guard above owns.
+    this.refreshSubtaskPanel(parentKey)
+  }
+
+  /**
+   * Post or refresh the background-subtask panel for a parent whose turn
+   * settled with unreported native children. Called at turn end and on every
+   * reported-flag flip; no-ops without pending children (a live panel
+   * finalizes to its done card) and when the feature is disabled or the
+   * platform cannot hold a card handle.
+   * @param parentKey - Parent session key the panel belongs to.
+   */
+  ensureSubtaskPanel(parentKey: string): void {
+    if (!this.subtaskPanelEnabled || this.subtaskPanelIntervalMs <= 0) return
+    const rows = this.subtaskPanelChildren(parentKey)
+    if (rows.length === 0 || this.subtaskPanels.has(parentKey)) {
+      this.refreshSubtaskPanel(parentKey)
+      return
+    }
+    const p = this.reportCapablePlatform()
+    if (p === undefined) return
+    const cu = asCardSenderWithUpdate(p)
+    const r = asReplyContextReconstructor(p)
+    if (cu === undefined || r === undefined) return
+    const startedAt = Date.now()
+    void r.reconstructReplyCtx(parentKey).then(
+      async (parentRctx) => {
+        const card = renderSubtaskPanelCard(
+          this.i18n, { pending: rows, reportedCount: this.reportedNativeChildrenOf(parentKey), startedAt, phase: 'running' },
+          startedAt, this.subtaskPanelStallMs,
+        )
+        try {
+          const handle = await cu.sendCardWithHandle(parentRctx, card)
+          const timer = setInterval(() => { this.refreshSubtaskPanel(parentKey) }, this.subtaskPanelIntervalMs)
+          this.subtaskPanels.set(parentKey, { handle, timer, startedAt })
+          console.info(`subtask: background panel posted (${parentKey}: ${rows.length} child/children)`)
+        } catch (error) {
+          console.warn(`subtask: background panel post failed (${parentKey}): ${String(error)}`)
+        }
+      },
+      (error: unknown) => {
+        console.warn(`subtask: background panel reconstruct ctx failed (${parentKey}): ${String(error)}`)
+      },
+    )
+  }
+
+  /** One panel tick: PATCH the live card, or finalize it once nothing pends. */
+  private refreshSubtaskPanel(parentKey: string): void {
+    const panel = this.subtaskPanels.get(parentKey)
+    if (panel === undefined) return
+    const rows = this.subtaskPanelChildren(parentKey)
+    const activity = asSubagentActivitySource(this.agent)
+    const now = Date.now()
+    const cu = asCardSenderWithUpdate(this.reportCapablePlatform() ?? this.platforms[0] ?? ({} as Platform))
+    const card = renderSubtaskPanelCard(
+      this.i18n,
+      rows.length === 0
+        ? { pending: [], reportedCount: this.reportedNativeChildrenOf(parentKey), startedAt: panel.startedAt, phase: 'done' }
+        : { pending: rows, reportedCount: this.reportedNativeChildrenOf(parentKey), startedAt: panel.startedAt, phase: 'running' },
+      now, this.subtaskPanelStallMs,
+    )
+    void cu?.updateCardWithHandle(panel.handle, card).then(() => {
+      if (rows.length === 0) {
+        clearInterval(panel.timer)
+        this.subtaskPanels.delete(parentKey)
+        activity?.forgetSubagentActivity(this.childIdsOf(parentKey))
+        console.info(`subtask: background panel finalized (${parentKey})`)
+      }
+    }).catch((error: unknown) => {
+      console.warn(`subtask: background panel update failed (${parentKey}): ${String(error)}`)
+      // A dead card (recalled, chat deleted) must not tick forever.
+      if (rows.length === 0) {
+        clearInterval(panel.timer)
+        this.subtaskPanels.delete(parentKey)
+        activity?.forgetSubagentActivity(this.childIdsOf(parentKey))
+      }
+    })
+  }
+
+  /**
+   * Close a parent's panel with its drained card (or silently when the chat
+   * is going away) — the /done teardown path.
+   * @param parentKey - Parent session key whose panel closes.
+   * @param mode - 'drained' PATCHes the drained card; 'silent' stops the timer only.
+   */
+  clearSubtaskPanel(parentKey: string, mode: 'drained' | 'silent'): void {
+    const panel = this.subtaskPanels.get(parentKey)
+    if (panel === undefined) return
+    clearInterval(panel.timer)
+    this.subtaskPanels.delete(parentKey)
+    asSubagentActivitySource(this.agent)?.forgetSubagentActivity(this.childIdsOf(parentKey))
+    if (mode === 'silent') return
+    const cu = asCardSenderWithUpdate(this.reportCapablePlatform() ?? this.platforms[0] ?? ({} as Platform))
+    const card = renderSubtaskPanelCard(this.i18n, { pending: [], reportedCount: 0, startedAt: panel.startedAt, phase: 'drained' }, Date.now(), this.subtaskPanelStallMs)
+    void cu?.updateCardWithHandle(panel.handle, card).catch((error: unknown) => {
+      console.warn(`subtask: background panel drained update failed (${parentKey}): ${String(error)}`)
+    })
+  }
+
+  /** Pending panel rows for a parent, in record order, joined with activity. */
+  private subtaskPanelChildren(parentKey: string): Array<{ childId: string; label: string; toolCalls: number; lastEventAt: number }> {
+    const activity = asSubagentActivitySource(this.agent)
+    const rows: Array<{ childId: string; label: string; toolCalls: number; lastEventAt: number }> = []
+    for (const [childId, rec] of Object.entries(this.nativeChildEntries())) {
+      if (rec.parent_key !== parentKey || rec.reported) continue
+      const act = activity?.subagentActivitySnapshot().get(childId)
+      rows.push({ childId, label: rec.label, toolCalls: act?.toolCalls ?? 0, lastEventAt: act?.lastEventAt ?? 0 })
+    }
+    return rows
+  }
+
+  /** Reported native children count of one parent. */
+  private reportedNativeChildrenOf(parentKey: string): number {
+    let reported = 0
+    for (const rec of Object.values(this.nativeChildEntries())) {
+      if (rec.parent_key === parentKey && rec.reported) reported++
+    }
+    return reported
+  }
+
+  /** All native child ids recorded for one parent, reported or not. */
+  private childIdsOf(parentKey: string): string[] {
+    return Object.entries(this.nativeChildEntries())
+      .filter(([, rec]) => rec.parent_key === parentKey)
+      .map(([childId]) => childId)
+  }
+
+  /**
+   * Configure the background-subtask live panel (features.subtaskLivePanel*).
+   * A zero interval disables the panel entirely.
+   * @param cfg - Enabled flag, refresh interval ms, and stall-flag window ms.
+   */
+  setSubtaskPanelConfig(cfg: { enabled: boolean; intervalMs: number; stallMs?: number }): void {
+    this.subtaskPanelEnabled = cfg.enabled && cfg.intervalMs > 0
+    this.subtaskPanelIntervalMs = cfg.intervalMs
+    if (cfg.stallMs !== undefined && cfg.stallMs > 0) this.subtaskPanelStallMs = cfg.stallMs
   }
 
   /** Live native session id of an engine session's running agent ('' = none). */
@@ -6588,6 +6749,9 @@ export class Engine {
       this.projectState?.clearNativeChild(childId)
     }
     if (toDrain.length > 0) this.projectState?.save()
+    // Panels of drained roots close on their drained card; a root with no
+    // drained native descendant (group children only) keeps no stale panel.
+    for (const key of rootKeys) this.clearSubtaskPanel(key, 'drained')
   }
 
   /** Fire-and-forget inbound delivery (Go SafeGo ReceiveMessage). */
@@ -7938,6 +8102,23 @@ export class Engine {
       }
       return
     }
+    // Background-subtask panel's Stop-all button: interrupt every unreported
+    // native child of this chat. The interrupts flip the reported flags, so
+    // the next panel tick finalizes the card to its done state.
+    if (cmd === '/subtask-panel') {
+      if (prefix === 'act' && args === 'stop') {
+        for (const [childId, rec] of Object.entries(this.nativeChildEntries())) {
+          if (rec.parent_key !== msg.sessionKey || rec.reported) continue
+          try {
+            this.interruptNativeChild(childId)
+          } catch (error) {
+            console.warn(`subtask: panel stop interrupt failed (child=${childId}): ${String(error)}`)
+          }
+        }
+      }
+      return
+    }
+
     // Predict-next 屏蔽 button (#33): stop predicting for this session until
     // /new, then re-render the pressed card as the confirmation.
     if (cmd === '/nopred') {
