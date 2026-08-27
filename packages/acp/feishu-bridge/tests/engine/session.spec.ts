@@ -630,3 +630,156 @@ describe('Snapshot v3', () => {
     expect(raw.version).toBe(3)
   })
 })
+
+describe('Snapshot v2 → v3 migration', () => {
+  const v2JSON = `{
+  "version": 2,
+  "sessions": {
+    "s1": {
+      "id": "s1",
+      "name": "hub",
+      "agentSessionID": "",
+      "chatroomModerator": true,
+      "chatroomResearch": true,
+      "chatroomResearchRound": 2,
+      "pendingGatherData": {"question": "研究问题", "seq": 3, "expected": ["taleb"], "collected": {"munger": "部分回复"}},
+      "createdAt": "2026-01-01T00:00:00Z",
+      "updatedAt": "2026-01-01T00:00:00Z"
+    }
+  },
+  "activeSession": {"user1": "s1"},
+  "userSessions": {"user1": ["s1"]},
+  "counter": 1
+}`
+
+  async function v2Store(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-v2m-'))
+    const path = join(dir, 'sessions.json')
+    await writeFile(path, v2JSON, 'utf8')
+    return path
+  }
+
+  it('lifts the flat v2 chatroom fields raw into featureState.chatroom and rewrites as v3', async () => {
+    const path = await v2Store()
+
+    const sm = new SessionManager(path)
+    const hub = sm.getOrCreateActive('user1')
+    expect(hub.getChatroomModerator()).toBe(true)
+    expect(hub.getChatroomResearch()).toBe(true)
+    expect(hub.getChatroomResearchRound()).toBe(2)
+    expect(hub.pendingGatherData).toEqual({ question: '研究问题', seq: 3, expected: ['taleb'], collected: { munger: '部分回复' } })
+
+    // The one-way rewrite backs the pre-v3 original up once, byte for byte.
+    expect(await readFile(`${path}.v2.bak`, 'utf8')).toBe(v2JSON)
+
+    sm.save()
+    const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+    expect(raw.version).toBe(3)
+    const serialized = (raw.sessions as Record<string, Record<string, unknown>>).s1 ?? {}
+    // The flat v2 names are gone; the values live in the section verbatim.
+    expect(serialized.chatroomModerator).toBeUndefined()
+    expect(serialized.pendingGatherData).toBeUndefined()
+    expect(serialized.featureState).toEqual({
+      chatroom: {
+        chatroomModerator: true,
+        chatroomResearch: true,
+        chatroomResearchRound: 2,
+        pendingGatherData: { question: '研究问题', seq: 3, expected: ['taleb'], collected: { munger: '部分回复' } },
+      },
+    })
+
+    const sm2 = new SessionManager(path)
+    const reloaded = sm2.getOrCreateActive('user1')
+    expect(reloaded.getChatroomModerator()).toBe(true)
+    expect(reloaded.pendingGatherData).toEqual({ question: '研究问题', seq: 3, expected: ['taleb'], collected: { munger: '部分回复' } })
+  })
+
+  it('keeps the earliest backup when one already exists', async () => {
+    const path = await v2Store()
+    const backup = `${path}.v2.bak`
+    // An older backup (say, from a previous migration attempt) must win.
+    await writeFile(backup, '{"version":1,"sessions":{}}', 'utf8')
+
+    new SessionManager(path)
+
+    expect(await readFile(backup, 'utf8')).toBe('{"version":1,"sessions":{}}')
+  })
+
+  it('fails loud on a snapshot newer than the supported version', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-v4-'))
+    const path = join(dir, 'sessions.json')
+    await writeFile(path, JSON.stringify({ version: 4, sessions: {} }), 'utf8')
+    expect(() => new SessionManager(path)).toThrow(/newer than supported/)
+  })
+
+  it('round-trips codec-less featureState keys verbatim', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-v3op-'))
+    const path = join(dir, 'sessions.json')
+    await writeFile(path, JSON.stringify({
+      version: 3,
+      sessions: {
+        s1: {
+          id: 's1', name: 'default', agentSessionID: '',
+          featureState: { other: { payload: [1, 2] } },
+          createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      activeSession: { user1: 's1' }, userSessions: { user1: ['s1'] }, counter: 1,
+    }), 'utf8')
+
+    const sm = new SessionManager(path)
+    sm.save()
+    const raw = JSON.parse(await readFile(path, 'utf8')) as { sessions: Record<string, { featureState?: Record<string, unknown> }> }
+    expect(raw.sessions.s1?.featureState).toEqual({ other: { payload: [1, 2] } })
+
+    const sm2 = new SessionManager(path)
+    expect(sm2.getOrCreateActive('user1').featureState.other).toEqual({ payload: [1, 2] })
+  })
+
+  it('drops a non-object featureState bag from a hand-corrupted file and keeps lifting flat fields', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-v3bad-'))
+    const path = join(dir, 'sessions.json')
+    await writeFile(path, JSON.stringify({
+      version: 3,
+      sessions: {
+        s1: {
+          id: 's1', name: 'hub', agentSessionID: '', featureState: 42, chatroomModerator: true,
+          createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      activeSession: { user1: 's1' }, userSessions: { user1: ['s1'] }, counter: 1,
+    }), 'utf8')
+
+    const sm = new SessionManager(path)
+    const hub = sm.getOrCreateActive('user1')
+    // The corrupt bag is dropped; the flat v2 field still lifted; reads and
+    // writes through the section never throw.
+    expect(hub.getChatroomHubKey()).toBe('')
+    expect(hub.getChatroomModerator()).toBe(true)
+    hub.setChatroomRoleName('munger')
+    expect(hub.getChatroomRoleName()).toBe('munger')
+  })
+
+  it('replaces a non-object chatroom section from a hand-corrupted file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-v3sec-'))
+    const path = join(dir, 'sessions.json')
+    await writeFile(path, JSON.stringify({
+      version: 3,
+      sessions: {
+        s1: {
+          id: 's1', name: 'hub', agentSessionID: '', featureState: { chatroom: 42 },
+          createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
+        },
+      },
+      activeSession: { user1: 's1' }, userSessions: { user1: ['s1'] }, counter: 1,
+    }), 'utf8')
+
+    const sm = new SessionManager(path)
+    const hub = sm.getOrCreateActive('user1')
+    expect(hub.getChatroomHubKey()).toBe('')
+    hub.setChatroomRoleName('munger')
+    expect(hub.getChatroomRoleName()).toBe('munger')
+    sm.save()
+    expect(new SessionManager(path).getOrCreateActive('user1').getChatroomRoleName()).toBe('munger')
+  })
+})
