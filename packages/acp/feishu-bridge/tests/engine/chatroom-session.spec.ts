@@ -9,9 +9,16 @@
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import { SessionManager } from '../../src/engine/session.js'
 import { ChatroomEndBarrier, ChatroomGather } from '../../src/engine/chatroom.js'
+import { chatroomFeatureStateCodec } from '../../src/engine/chatroom-feature-state.js'
+import { registerFeatureStateCodec } from '../../src/engine/feature-state.js'
+
+// The production composition registers the chatroom codec once per process
+// (plugin apply); these specs exercise carry and persistence through it.
+const disposeCodec = registerFeatureStateCodec(chatroomFeatureStateCodec)
+afterAll(() => { disposeCodec() })
 
 describe('chatroom session fields persist', () => {
   it('chatroom hub/role/asked round-trip through save/load', async () => {

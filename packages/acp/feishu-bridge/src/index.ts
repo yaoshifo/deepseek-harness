@@ -23,6 +23,8 @@ import { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.js'
 import { FeishuBridgeService, type BridgeDispatch } from './bridge-service.js'
 import { registerChatroomPolicyListeners } from './engine/chatroom-policy.js'
+import { chatroomFeatureStateCodec } from './engine/chatroom-feature-state.js'
+import { registerFeatureStateCodec } from './engine/feature-state.js'
 import { FeishuPlatform } from './feishu/platform.js'
 import { Engine } from './engine/engine.js'
 import { ProjectStateStore } from './engine/project-state.js'
@@ -799,6 +801,10 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
   // Chatroom policy halves: one process-wide registration — the listeners
   // are payload functions, so per-project wiring would double-fire them.
   registerChatroomPolicyListeners(ctx)
+  // Chatroom feature-state codec: same one-per-process shape; registered
+  // before any engine is built so the first save and reset already project
+  // and carry through it.
+  ctx.effect(() => registerFeatureStateCodec(chatroomFeatureStateCodec))
   const dataRoot = config.dataDir ?? join(homedir(), '.dsh', 'feishu-bridge')
   // One dir history for every project (Go main shares NewDirHistory(cfg.DataDir)
   // across engines so /dir MRU entries land in a single store file).

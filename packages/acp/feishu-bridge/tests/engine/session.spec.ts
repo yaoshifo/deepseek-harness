@@ -527,8 +527,8 @@ describe('PastAgentSessionIDs', () => {
   })
 })
 
-describe('Snapshot v2', () => {
-  it('writes the camelCase v2 schema', async () => {
+describe('Snapshot v3', () => {
+  it('writes the camelCase v3 schema', async () => {
     const path = await tempSessionsPath()
 
     const sm1 = new SessionManager(path)
@@ -540,7 +540,7 @@ describe('Snapshot v2', () => {
     sm1.save()
 
     const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
-    expect(raw.version).toBe(2)
+    expect(raw.version).toBe(3)
     expect(raw.activeSession).toEqual({ 'feishu:child': s.id })
     expect(raw.userSessions).toEqual({ 'feishu:child': [s.id] })
     const serialized = (raw.sessions as Record<string, Record<string, unknown>>)[s.id] ?? {}
@@ -563,7 +563,7 @@ describe('Snapshot v2', () => {
     expect(got.getLastResult()).toBe('done')
   })
 
-  it('migrates a v1 (Go field names) file in memory and rewrites it as v2 on save', async () => {
+  it('migrates a v1 (Go field names) file in memory and rewrites it as v3 on save', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fb-v1-'))
     const path = join(dir, 'sessions.json')
     const v1JSON = `{
@@ -599,7 +599,7 @@ describe('Snapshot v2', () => {
 
     sm.save()
     const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
-    expect(raw.version).toBe(2)
+    expect(raw.version).toBe(3)
     expect(raw.active_session).toBeUndefined()
     const serialized = (raw.sessions as Record<string, Record<string, unknown>>).s2 ?? {}
     expect(serialized.agentSessionID).toBe('thread-2')
@@ -627,6 +627,6 @@ describe('Snapshot v2', () => {
     expect(sm.getOrCreateActive('user1').getAgentSessionID()).toBe('thread-1')
     sm.save()
     const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
-    expect(raw.version).toBe(2)
+    expect(raw.version).toBe(3)
   })
 })
