@@ -222,6 +222,11 @@ describe('session-start-options decoration', () => {
     const options: SessionStartOptions = { sessionKey: 'test:assistant-1', subtask: { attended: false, noReport: false } }
     face.waterfall('feishuBridge/session-start-options', { engine: e, session: assistant, options }, () => {})
     expect(options.subtask?.researchAssistant).toBe(true)
+
+    // A plain session's options pass through untouched.
+    const plainOptions: SessionStartOptions = { sessionKey: 'test:plain', subtask: { attended: false, noReport: false } }
+    face.waterfall('feishuBridge/session-start-options', { engine: e, session: e.sessions.getOrCreateActive('test:plain'), options: plainOptions }, () => {})
+    expect(plainOptions.subtask?.researchAssistant).toBeUndefined()
   })
 })
 

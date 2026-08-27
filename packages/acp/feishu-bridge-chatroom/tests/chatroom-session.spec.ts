@@ -6,7 +6,7 @@
  * @module dsh-feishu-bridge/tests-engine-chatroom-session
  */
 
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -174,5 +174,34 @@ describe('chat-scoped state survives a conversation reset', () => {
     expect(chatroomState(adopted).chatroomHubKey).toBe('test:hub:user-1')
     expect(chatroomState(adopted).chatroomRoleName).toBe('munger')
     expect(chatroomState(adopted).researchAssistantKey).toBe('test:assistant-2')
+  })
+
+  it('getOrCreateActive rebuilds cleanly when the active record vanished (no resurrection)', async () => {
+    // The rebuild path of the carry chain: a snapshot whose activeSession
+    // pointer references a session record that is gone (a pruned or
+    // hand-edited file) must rebuild a default record without throwing and
+    // without resurrecting the dead record's chatroom state — the carry
+    // source itself no longer exists, so nothing survives.
+    const store = join(await mkdtemp(join(tmpdir(), 'fb-chatroom-rebuild-')), 'sessions.json')
+    const sm1 = new SessionManager(store)
+    const role = sm1.getOrCreateActive('test:role-chat')
+    chatroomState(role).chatroomHubKey = 'test:hub:user-1'
+    chatroomState(role).chatroomRoleName = 'munger'
+    sm1.save()
+
+    const snap = JSON.parse(await readFile(store, 'utf8')) as {
+      sessions: Record<string, unknown>
+      activeSession: Record<string, string>
+    }
+    const activeID = snap.activeSession['test:role-chat']
+    const { [activeID!]: _dropped, ...remainingSessions } = snap.sessions
+    snap.sessions = remainingSessions
+    await writeFile(store, `${JSON.stringify(snap, null, 2)}\n`)
+
+    const sm2 = new SessionManager(store)
+    const rebuilt = sm2.getOrCreateActive('test:role-chat')
+    expect(rebuilt.id).not.toBe(activeID)
+    expect(chatroomState(rebuilt).chatroomHubKey).toBe('')
+    expect(chatroomState(rebuilt).chatroomRoleName).toBe('')
   })
 })
