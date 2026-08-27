@@ -24,15 +24,17 @@ import {
   FeishuBridgeService,
   registerSessionCommands,
   featureStateCodecs,
-  registerFeatureStateCodec,
   registerMessages,
-  type DshAgentAdapterLike,
+  lookupMessage,
 } from '@deepseek-ai/dsh-feishu-bridge/exports'
+// Test-only deep import: the tool-family declaration has no accessor on the
+// frozen ./exports face, and the tag color is its only observable effect.
+import { toolTagForProgress } from '@deepseek-ai/dsh-feishu-bridge/src/streaming.js'
 import { Config, apply, inject, name } from '../src/index.js'
 import { chatroomConfig } from '../src/chatroom-config.js'
 import { chatroomFeatureStateCodec } from '../src/chatroom-state.js'
 import { chatroomMessages } from '../src/i18n.js'
-import { createStubAgent } from './stubs/engine-stubs.js'
+import { createStubAgent, createStubCardPlatform, newStubMessage } from './stubs/engine-stubs.js'
 
 const contexts: Context[] = []
 afterEach(async () => {
@@ -60,7 +62,7 @@ function liveProject(projectName: string, started = false): Promise<{ engine: En
   const engine = new Engine(projectName, createStubAgent(), [], '', 'en')
   registerSessionCommands(engine)
   if (started) return engine.start().then(() => ({ engine, adapter: {} as StubAdapter }))
-  return Promise.resolve({ engine, adapter: {} as StubAdapter })
+  return Promise.resolve({ engine, adapter: {} })
 }
 
 describe('chatroom plugin entry', () => {
@@ -185,17 +187,53 @@ describe('chatroom plugin entry', () => {
     service.markReady()
 
     const fiber = await ctx.plugin({ name, inject, apply }, { projects: { alpha: {} } })
+
+    // Every contribution is present before the dispose.
     expect(engine.commandHandlers?.get('chatroom')).toBeDefined()
     expect(featureStateCodecs().some(codec => codec.key === chatroomFeatureStateCodec.key)).toBe(true)
+    expect(lookupMessage('en', 'chatroom_ready')).toBe('Chatroom role ready')
+    expect(ctx.tools.get('feishu_bridge_chatroom')?.name).toBe('feishu_bridge_chatroom')
+    // The tool-family declaration answers the progress-card tag color.
+    expect(toolTagForProgress('feishu_bridge_chatroom', 40)).toContain("color='purple'")
+    expect((await ctx.skills.list()).map(skill => skill.name)).toContain('feishu-bridge-chatroom-moderator')
+    // The policy listeners answer through the production dispatch face (the
+    // persona bypass joins the built-in subtask base on the waterfall).
+    expect(service.waterfall(
+      'feishuBridge/permission-policy',
+      { options: { sessionKey: 'k', persona: { prompt: 'p', bypassPermissions: true, forceMode: undefined } } },
+      () => false,
+    )).toBe(true)
+    // The picker card actions are registered: an orphaned press swaps the
+    // pressed card for the expired notice instead of falling through.
+    const cardPlatform = createStubCardPlatform()
+    const press = { ...newStubMessage(), sessionKey: 'test:hub:user-1' }
+    await engine.handleCardAction(cardPlatform, press, 'act:/chatroom-pick confirm')
+    expect(cardPlatform.sentCards).toHaveLength(1)
 
     await fiber.dispose()
 
+    // Every contribution is gone.
     expect(engine.commandHandlers?.get('chatroom')).toBeUndefined()
     expect(featureStateCodecs().some(codec => codec.key === chatroomFeatureStateCodec.key)).toBe(false)
-    // The message subtable unregistered: re-registering the same object now
-    // succeeds as a fresh registration (the reference count dropped to 0).
+    // The message subtable unregistered: the lookup falls back to the raw
+    // key, and re-registering the same object succeeds as a fresh
+    // registration (the reference count dropped to 0).
+    expect(lookupMessage('en', 'chatroom_ready')).toBe('chatroom_ready')
     const dispose = registerMessages(chatroomMessages)
     expect(typeof dispose).toBe('function')
     dispose()
+    expect(ctx.tools.get('feishu_bridge_chatroom')).toBeUndefined()
+    expect(toolTagForProgress('feishu_bridge_chatroom', 40)).toContain("color='blue'")
+    expect((await ctx.skills.list()).map(skill => skill.name)).not.toContain('feishu-bridge-chatroom-moderator')
+    // The policy listeners no longer answer: the built-in base decides.
+    expect(service.waterfall(
+      'feishuBridge/permission-policy',
+      { options: { sessionKey: 'k', persona: { prompt: 'p', bypassPermissions: true, forceMode: undefined } } },
+      () => false,
+    )).toBe(false)
+    // The card actions fell through again: the press is consumed quietly
+    // with no card.
+    await engine.handleCardAction(cardPlatform, { ...press, sessionKey: 'test:hub:user-2' }, 'act:/chatroom-pick confirm')
+    expect(cardPlatform.sentCards).toHaveLength(1)
   })
 })
