@@ -728,6 +728,59 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'feishuBridge',
+    summary: 'The feishu-bridge service: live projects, caller routing, and the `feishuBridge/*` dispatch face.',
+    description: 'The feishu-bridge service: live projects, caller routing, and the `feishuBridge/*` dispatch face. Mounted by the plugin\'s `apply()` before any engine is built; engines dispatch through the service instance, and sibling plugins reach it as `ctx.feishuBridge` (via `inject: [\'feishuBridge\']`).',
+    methods: [
+      {
+        signature: 'whenReady(): Promise<void>',
+        description: 'Resolve once every live project is registered. The bridge\'s apply calls FeishuBridgeService.markReady after its project-assembly loop, so a sibling plugin awaiting this deterministically sees the full project list (its per-project wiring then targets every engine). Idempotent: callers after readiness resolve immediately.',
+        parameters: [],
+        returns: 'A promise resolving when the service is ready.',
+      },
+      {
+        signature: 'markReady(): void',
+        description: 'Mark the service ready, resolving every FeishuBridgeService.whenReady waiter. Calling again is a no-op.',
+        parameters: [],
+      },
+      {
+        signature: 'registerProject(project: LiveProject): () => void',
+        description: 'Register one live project. The returned disposer removes it again.',
+        parameters: [{ name: 'project', description: 'The engine/adapter pair of one configured project.' }],
+        returns: 'Disposer dropping the project from the registry.',
+      },
+      {
+        signature: 'route(caller: unknown): SubtaskRoute | undefined',
+        description: 'Resolve the calling dsh agent to its engine session (plan D4: one process-wide tool family per domain, routed by CALLER agent).',
+        parameters: [{ name: 'caller', description: 'The value claiming to be a dsh agent.' }],
+        returns: 'The engine and engine session key, or undefined when the caller is not a feishu-bridge-owned agent.',
+      },
+      {
+        signature: 'nativeRoute(caller: unknown): SubtaskRoute | undefined',
+        description: 'Resolve a native continuable child (de-baggage B4) to the engine that spawned it. Only the subtask family consumes this — a native child calling cron/relay/chatroom/send has no engine chat to act on.',
+        parameters: [{ name: 'caller', description: 'The value claiming to be a dsh agent.' }],
+        returns: 'The owning engine keyed by the native child id, or undefined.',
+      },
+      {
+        signature: 'emit<K extends FeishuBridgeEventName>(name: K, ...args: Parameters<Events[K]>): void',
+        description: 'Dispatch a `feishuBridge/*` event to every listener on the context bus.',
+        parameters: [{ name: 'name', description: 'The event key.' }, { name: 'args', description: 'The listener arguments (the built-in base is the last one).' }],
+      },
+      {
+        signature: 'waterfall<K extends FeishuBridgeEventName>(name: K, ...args: Parameters<Events[K]>): ReturnType<Events[K]>',
+        description: 'Dispatch a `feishuBridge/*` waterfall: listeners run in order until one bails with a decision.',
+        parameters: [{ name: 'name', description: 'The event key.' }, { name: 'args', description: 'The listener arguments (the built-in base is the last one).' }],
+        returns: 'The first bail value, or the base behavior\'s result.',
+      },
+      {
+        signature: 'serial<K extends FeishuBridgeEventName>(name: K, ...args: Parameters<Events[K]>): Promisify<ReturnType<Events[K]>>',
+        description: 'Dispatch a `feishuBridge/*` event serially, awaiting every listener in order.',
+        parameters: [{ name: 'name', description: 'The event key.' }, { name: 'args', description: 'The listener arguments (the built-in base is the last one).' }],
+        returns: 'The first bail value, or the base behavior\'s result.',
+      },
+    ],
+  },
+  {
     key: 'fileReferences',
     summary: 'Host capability for cancellable file-reference discovery.',
     description: 'Host capability for cancellable file-reference discovery.',
@@ -1049,7 +1102,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'lsp',
     summary: 'The LSP capability seam (`ctx.lsp`).',
-    description: 'The LSP capability seam (`ctx.lsp`). Owns provider registration/selection and normalized query execution; exposes exactly the four operations and no protocol escape hatch.',
+    description: 'The LSP capability seam (`ctx.lsp`). Owns provider registration/selection and normalized query execution; exposes exactly the four position operations plus the name-based workspace symbol lookup, and no protocol escape hatch.',
     methods: [
       {
         signature: 'registerProvider(provider: LspProvider): () => void',
@@ -1062,6 +1115,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Select a provider by the file\'s extension and run one query. Selection is per-query and order-independent; no match throws `LspError` `LSP_UNAVAILABLE`.',
         parameters: [{ name: 'request', description: 'the normalized query.' }, { name: 'signal', description: 'optional cancellation forwarded to the selected provider.' }],
         returns: 'the normalized, closed-union result.',
+      },
+      {
+        signature: 'symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<readonly LspSymbolResult[]>',
+        description: 'Fan out one name-based symbol lookup to every registered provider and merge their groups in registration order — a symbol query has no file extension to route on. A provider whose server lacks the `workspaceSymbolProvider` capability contributes nothing; if every provider lacks it, throws `LspError` `LSP_UNSUPPORTED_OPERATION`. No provider registered throws `LSP_UNAVAILABLE`.',
+        parameters: [{ name: 'request', description: 'the name-based symbol lookup request.' }, { name: 'signal', description: 'optional cancellation forwarded to every provider.' }],
+        returns: 'each supporting provider\'s symbols and canonical workspace URI, in registration order.',
       },
     ],
   },
@@ -2587,6 +2646,126 @@ export const EVENT_API: readonly EventApiEntry[] = [
     parameters: [{ name: 'change', description: 'domain, table (`\'\'` for global), key (`\'\'` for global), operation discriminant, and on `put` the new snapshot.' }],
   },
   {
+    name: 'feishuBridge/ask-approval',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/ask-approval\'(payload: { engine: Engine; sessionKey: string; request: AskRequest; signal: AbortSignal | undefined }, next: () => Promise<AskDecision | undefined>): Promise<AskDecision | undefined>',
+    summary: 'Allow an ask to be answered without the user.',
+    description: 'Allow an ask to be answered without the user. The built-in base returns undefined (fall through to the normal ask flow); a listener returns the decision instead (a listener auto-approves the moderator\'s role-pick plan review as a formality).',
+    parameters: [{ name: 'payload', description: '.signal - Abort signal of the asking tool call, if any.' }],
+  },
+  {
+    name: 'feishuBridge/ask-parked',
+    mode: 'emit',
+    signature: '\'feishuBridge/ask-parked\'(payload: { engine: Engine; platform: Platform; sessionKey: string; replyCtx: unknown; pending: PendingAsk }): void',
+    summary: 'An ask card was parked and rendered (any kind; the questions kind is the only current dispatcher).',
+    description: 'An ask card was parked and rendered (any kind; the questions kind is the only current dispatcher). Listeners arm their own whole-ask guards on the pending object (a research-manual hub arms the auto-default timer whose fire settles unanswered questions).',
+    parameters: [{ name: 'payload', description: '.pending - The parked ask (settles the promise; carries the timer slot).' }],
+  },
+  {
+    name: 'feishuBridge/auto-render-policy',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/auto-render-policy\'(payload: { session: Session }, next: () => boolean): boolean',
+    summary: 'Decide whether auto-render is suppressed for a session: features whose sessions relay their output elsewhere skip the local HTML overview.',
+    description: 'Decide whether auto-render is suppressed for a session: features whose sessions relay their output elsewhere skip the local HTML overview. The built-in base covers subtask children; a listener adds feature sessions (feature roles relay to their hub). The caller applies the monitor-child exemption and the user-interjection re-enable around this decision.',
+    parameters: [{ name: 'payload', description: '.session - The session being considered.' }],
+  },
+  {
+    name: 'feishuBridge/background-session-policy',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/background-session-policy\'(payload: { session: Session }, next: () => boolean): boolean',
+    summary: 'Decide whether a session is a background session a human can take over (re-enabling auto-render from that point).',
+    description: 'Decide whether a session is a background session a human can take over (re-enabling auto-render from that point). The built-in base covers subtask children; a listener adds feature sessions (feature roles relay to their hub).',
+    parameters: [{ name: 'payload', description: '.session - The session being considered.' }],
+  },
+  {
+    name: 'feishuBridge/hard-cap-exemption',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/hard-cap-exemption\'(payload: { engine: Engine; session: Session }, next: () => boolean): boolean',
+    summary: 'Decide whether a session is exempt from the per-turn hard cap (a turn whose events keep trickling in would otherwise reset the idle timer forever).',
+    description: 'Decide whether a session is exempt from the per-turn hard cap (a turn whose events keep trickling in would otherwise reset the idle timer forever). The built-in base exempts nothing; a listener short-circuits with `true` for sessions whose long turns are the product (research assistants and research-hub roles).',
+    parameters: [{ name: 'payload', description: '.session - The session the turn runs under.' }],
+  },
+  {
+    name: 'feishuBridge/mode-policy',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/mode-policy\'(payload: { options: SessionStartOptions | undefined; mode: string }, next: () => string): string',
+    summary: 'Adjust the effective mode for a session start (a moderator drives a running discussion, never an implementation: an inherited plan default would stall the discussion on an ExitPlanMode approval nobody needs to give).',
+    description: 'Adjust the effective mode for a session start (a moderator drives a running discussion, never an implementation: an inherited plan default would stall the discussion on an ExitPlanMode approval nobody needs to give). The built-in base returns the adapter-computed mode unchanged.',
+    parameters: [{ name: 'payload', description: '.mode - The mode the adapter computed (bypass / override / project default).' }],
+  },
+  {
+    name: 'feishuBridge/permission-policy',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/permission-policy\'(payload: { options: SessionStartOptions | undefined }, next: () => boolean): boolean',
+    summary: 'Decide whether tool-permission requests auto-approve for a session start.',
+    description: 'Decide whether tool-permission requests auto-approve for a session start. The built-in base covers unattended subtask children; a listener short-circuits with `true` for role personas nobody can answer approvals for.',
+    parameters: [{ name: 'payload', description: '.options - The session-start options the adapter built.' }],
+  },
+  {
+    name: 'feishuBridge/platforms-ready',
+    mode: 'emit',
+    signature: '\'feishuBridge/platforms-ready\'(payload: { engine: Engine }): void',
+    summary: 'Every platform of an engine finished starting.',
+    description: 'Every platform of an engine finished starting. Listeners recover cross-restart state that needs live platforms (a listener closes armed gather/end barriers from the persisted snapshot).',
+    parameters: [{ name: 'payload', description: '.engine - The engine whose platforms are live.' }],
+  },
+  {
+    name: 'feishuBridge/rename-exemption',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/rename-exemption\'(payload: { session: Session }, next: () => boolean): boolean',
+    summary: 'Decide whether a session\'s group keeps a fixed name that first-message spawn renaming must not clobber.',
+    description: 'Decide whether a session\'s group keeps a fixed name that first-message spawn renaming must not clobber. The built-in base exempts nothing; a listener short-circuits with `true` for feature-owned group names (role, research, and direct-role groups).',
+    parameters: [{ name: 'payload', description: '.session - The spawned chat\'s session.' }],
+  },
+  {
+    name: 'feishuBridge/resolve-child-alias',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/resolve-child-alias\'(payload: { engine: Engine; callerSessionKey: string; alias: string }, next: () => string): string',
+    summary: 'Resolve a short child alias a model can type reliably into the real child session key (a 40+ char hex key gets characters dropped in transcription).',
+    description: 'Resolve a short child alias a model can type reliably into the real child session key (a 40+ char hex key gets characters dropped in transcription). The built-in base returns \'\' (unknown alias, normal parsing continues); a listener returns the resolved key, or throws to fail the resolution loudly (an alias whose referent was never provisioned must not degrade into a mistyped-key error).',
+    parameters: [{ name: 'payload', description: '.alias - The alias as typed into the tool call.' }],
+  },
+  {
+    name: 'feishuBridge/route-human-reply',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/route-human-reply\'(payload: { engine: Engine; platform: Platform; sessionKey: string; content: string }, next: () => boolean): boolean',
+    summary: 'Route the human\'s reply to a feature\'s pending question: a listener that consumes the message short-circuits with `true` and the inbound flow stops there — this decision outranks command dispatch and permission handling.',
+    description: 'Route the human\'s reply to a feature\'s pending question: a listener that consumes the message short-circuits with `true` and the inbound flow stops there — this decision outranks command dispatch and permission handling. The built-in base returns false (no feature holds a pending question).',
+    parameters: [{ name: 'payload', description: '.content - The human\'s reply text.' }],
+  },
+  {
+    name: 'feishuBridge/session-start-options',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/session-start-options\'(payload: { engine: Engine; session: Session; options: SessionStartOptions }, next: () => void): void',
+    summary: 'Decorate the shared session-start options object before the agent session starts: listeners set feature sections (a listener fills the persona block and the shared research venv) and call `next()`.',
+    description: 'Decorate the shared session-start options object before the agent session starts: listeners set feature sections (a listener fills the persona block and the shared research venv) and call `next()`. The built-in base fills the subtask and workspace sections only.',
+    parameters: [{ name: 'payload', description: '.options - The options object to mutate in place.' }],
+  },
+  {
+    name: 'feishuBridge/subtask-dispatched',
+    mode: 'emit',
+    signature: '\'feishuBridge/subtask-dispatched\'(payload: { engine: Engine; parentSessionKey: string }): void',
+    summary: 'A subtask was dispatched from a parent session (group spawn or a follow-up send).',
+    description: 'A subtask was dispatched from a parent session (group spawn or a follow-up send). Listeners record feature bookkeeping on the parent (research roles mark the assistant dispatch of this turn).',
+    parameters: [{ name: 'payload', description: '.parentSessionKey - Session key of the dispatching parent.' }],
+  },
+  {
+    name: 'feishuBridge/turn-end',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/turn-end\'(payload: { engine: Engine; state: InteractiveState | undefined; session: Session; response: string; isSilent: boolean }, next: () => void): void',
+    summary: 'A turn just produced its final response: listeners may relay the reply elsewhere (feature roles relay to their hub and wake the moderator).',
+    description: 'A turn just produced its final response: listeners may relay the reply elsewhere (feature roles relay to their hub and wake the moderator). The built-in base does nothing; call `next()` to let the rest of the chain observe the turn end.',
+    parameters: [{ name: 'payload', description: '.isSilent - Whether the reply was silent (relay may skip).' }],
+  },
+  {
+    name: 'feishuBridge/turn-start',
+    mode: 'serial',
+    signature: '\'feishuBridge/turn-start\'(payload: { engine: Engine; session: Session; metadata: Record<string, unknown> | undefined }): void',
+    summary: 'A turn is starting for a session: the one moment queued per-message metadata is consumed.',
+    description: 'A turn is starting for a session: the one moment queued per-message metadata is consumed. Listeners run in order (a feature listener stamps gather-round metadata onto the role session and persists it).',
+    parameters: [{ name: 'payload', description: '.metadata - Opaque per-message metadata carried through the queue; owned by the feature that set its keys.' }],
+  },
+  {
     name: 'fs/edit-intent',
     mode: 'waterfall',
     signature: '\'fs/edit-intent\'(target: FsTarget, actor: object | undefined, next: () => { version: FsVersion } | undefined | Promise<{ version: FsVersion } | undefined>): Promise<{ version: FsVersion } | undefined>',
@@ -2875,6 +3054,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AgentPreset {\n    readonly id: string;\n    readonly trust: PresetTrust;\n    readonly path: string;\n    readonly name?: string;\n    readonly description?: string;\n    readonly order?: number;\n    readonly broken?: string;\n}',
   },
   {
+    name: 'AgentSession',
+    declaration: 'export interface AgentSession {\n    send(prompt: string, images: ImageAttachment[], files: FileAttachment[]): Promise<void>;\n    steer(prompt: string): void;\n    events(): EventChannel;\n    currentSessionID(): string;\n    alive(): boolean;\n    close(): Promise<void>;\n    lastStreamActivity?(): number;\n}',
+  },
+  {
     name: 'AgentSetup',
     declaration: 'export type AgentSetup = (agentCtx: Context) => AgentSetupCommit | Promise<AgentSetupCommit | void> | void;',
   },
@@ -2913,6 +3096,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ApprovalService',
     declaration: 'export class ApprovalService extends Service {\n    static Config: z<Config>;\n    constructor(ctx: Context, public config: Config);\n    setPolicy(agent: Agent, policy: ApprovalPolicy): void;\n    async request(req: ApprovalRequest): Promise<ApprovalResult>;\n    overrideOf(session: Session): ApprovalPolicy | undefined;\n}',
+  },
+  {
+    name: 'AskDecision',
+    declaration: 'export interface AskDecision {\n    outcome?: \'allowed-once\' | \'allowed-always\' | \'rejected\' | \'cancelled\';\n    note?: string;\n    answers?: AskDecisionAnswer[];\n}',
+  },
+  {
+    name: 'AskDecisionAnswer',
+    declaration: 'export interface AskDecisionAnswer {\n    id: string;\n    selected: string[];\n    custom?: string;\n}',
+  },
+  {
+    name: 'AskDelegate',
+    declaration: 'export interface AskDelegate {\n    askUser(sessionKey: string, request: AskRequest, signal?: AbortSignal): Promise<AskDecision>;\n}',
+  },
+  {
+    name: 'AskRequest',
+    declaration: 'export type AskRequest = {\n    kind: \'permission\';\n    toolName: string;\n    preview: string;\n} | {\n    kind: \'plan-review\';\n    heading: string;\n    plan: string;\n} | {\n    kind: \'questions\';\n    questions: UserQuestion[];\n};',
   },
   {
     name: 'AskUserQuestionAnswer',
@@ -2957,6 +3156,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AssistantProvenance',
     declaration: 'export interface AssistantProvenance {\n    provider: string;\n    model: string;\n    replayState?: unknown;\n}',
+  },
+  {
+    name: 'AsyncSender',
+    declaration: 'export class AsyncSender {\n    constructor(name: string);\n    enqueue(fn: () => void | Promise<void>): void;\n    enqueueCoalescable(fn: () => void | Promise<void>): void;\n    enqueueOrInline(fn: () => void | Promise<void>): void;\n    barrier(): Promise<void>;\n    close(): void;\n}',
   },
   {
     name: 'AttachmentId',
@@ -3029,6 +3232,66 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'Branded',
     declaration: 'export type Branded<B extends string> = string & {\n    readonly [BRAND]: B;\n};',
+  },
+  {
+    name: 'BridgeDispatch',
+    declaration: 'export interface BridgeDispatch {\n    emit<K extends FeishuBridgeEventName>(name: K, ...args: Parameters<Events[K]>): void;\n    waterfall<K extends FeishuBridgeEventName>(name: K, ...args: Parameters<Events[K]>): ReturnType<Events[K]>;\n    serial<K extends FeishuBridgeEventName>(name: K, ...args: Parameters<Events[K]>): Promisify<ReturnType<Events[K]>>;\n}',
+  },
+  {
+    name: 'CardCheckOption',
+    declaration: 'export interface CardCheckOption {\n    label: string;\n    description?: string;\n    value?: string;\n    checked?: boolean;\n}',
+  },
+  {
+    name: 'CardCheckOptions',
+    declaration: 'export interface CardCheckOptions {\n    kind: \'checkOptions\';\n    question?: string;\n    options: CardCheckOption[];\n    action?: string;\n    extra?: Record<string, string>;\n}',
+  },
+  {
+    name: 'CardCollapsiblePanel',
+    declaration: 'export interface CardCollapsiblePanel {\n    kind: \'collapsiblePanel\';\n    expanded?: boolean;\n    title?: string;\n    titleIsMD?: boolean;\n    border?: string;\n    elements: CardElement[];\n}',
+  },
+  {
+    name: 'CardColumn',
+    declaration: 'export interface CardColumn {\n    width?: \'auto\' | \'weighted\';\n    weight?: number;\n    elements: CardElement[];\n}',
+  },
+  {
+    name: 'CardColumnSet',
+    declaration: 'export interface CardColumnSet {\n    kind: \'columnSet\';\n    columns: CardColumn[];\n}',
+  },
+  {
+    name: 'CardDivider',
+    declaration: 'export interface CardDivider {\n    kind: \'divider\';\n}',
+  },
+  {
+    name: 'CardElement',
+    declaration: 'export type CardElement = CardMarkdown | CardDivider | CardActions | CardNote | CardListItem | CardSelect | CardCheckOptions | CardImage | CardCollapsiblePanel | CardForm | CardInput | CardColumnSet;',
+  },
+  {
+    name: 'CardImage',
+    declaration: 'export interface CardImage {\n    kind: \'image\';\n    imageKey: string;\n    alt?: string;\n    scaleType?: string;\n}',
+  },
+  {
+    name: 'CardInput',
+    declaration: 'export interface CardInput {\n    kind: \'input\';\n    name?: string;\n    placeholder?: string;\n    maxLength?: number;\n}',
+  },
+  {
+    name: 'CardListItem',
+    declaration: 'export interface CardListItem {\n    kind: \'listItem\';\n    text: string;\n    description?: string;\n    btnText: string;\n    btnType: string;\n    btnValue: string;\n    btnUrl?: string;\n    extra?: Record<string, string>;\n    btn2Text?: string;\n    btn2Type?: string;\n    btn2Value?: string;\n    btn2Disabled?: boolean;\n    btn2Tip?: string;\n}',
+  },
+  {
+    name: 'CardMarkdown',
+    declaration: 'export interface CardMarkdown {\n    kind: \'markdown\';\n    content: string;\n}',
+  },
+  {
+    name: 'CardNote',
+    declaration: 'export interface CardNote {\n    kind: \'note\';\n    text: string;\n    tag?: string;\n}',
+  },
+  {
+    name: 'CardSelect',
+    declaration: 'export interface CardSelect {\n    kind: \'select\';\n    placeholder: string;\n    options: CardSelectOption[];\n    initValue?: string;\n}',
+  },
+  {
+    name: 'CardSelectOption',
+    declaration: 'export interface CardSelectOption {\n    text: string;\n    value: string;\n}',
   },
   {
     name: 'ClientResponse',
@@ -3115,6 +3378,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type CompactionTrigger = \'pressure\' | \'context-overflow\';',
   },
   {
+    name: 'CompactProgressWriter',
+    declaration: 'export class CompactProgressWriter {\n    enabled: boolean;\n    failed: boolean;\n    style: string;\n    usePayload: boolean;\n    constructor(p: Platform, replyCtx: unknown, agentName: string, lang: string, transform: ((s: string) => string) | undefined, as: AsyncSender | undefined);\n    setTodos(items: TodoItem[]): void;\n    async append(item: string): Promise<boolean>;\n    async appendEvent(kind: ProgressCardEntryKind, text: string, tool: string, fallback: string): Promise<boolean>;\n    async appendStructured(item: ProgressCardEntry, fallbackIn: string): Promise<boolean>;\n    async finalize(state: ProgressCardState | \'\'): Promise<boolean>;\n}',
+  },
+  {
     name: 'ConfinedArgv',
     declaration: 'export interface ConfinedArgv {\n    argv: string[];\n    enforcement: SandboxEnforcement;\n    denialSignatures: readonly string[];\n    runnerFailureRules: readonly RunnerFailureRule[];\n}',
   },
@@ -3137,6 +3404,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ContextSnapshotSection',
     declaration: 'export interface ContextSnapshotSection {\n    readonly name: string;\n    readonly text: string;\n}',
+  },
+  {
+    name: 'ContinuableChildStart',
+    declaration: 'export interface ContinuableChildStart {\n    provider: \'spawn\' | \'fork\';\n    prompt: string;\n    cwd: string;\n    workspace: FeishuWorkspaceInfo | undefined;\n    maxDepth: number;\n    parentAgentSessionID: string;\n}',
   },
   {
     name: 'ContinuableCreateRequest',
@@ -3192,7 +3463,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CreateAgentOptions',
-    declaration: 'export interface CreateAgentOptions {\n    readonly sessionId: SessionId;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n    readonly seed?: readonly SessionEvent[];\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
+    declaration: 'export interface CreateAgentOptions {\n    readonly sessionId: SessionId;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly seedLength?: number;\n        readonly origin?: SessionOrigin;\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n    readonly seed?: readonly SessionEvent[];\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
   },
   {
     name: 'CreateGoalRequest',
@@ -3204,7 +3475,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CreateSessionOptions',
-    declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly seedLength?: number;\n        readonly origin?: \'subagent\';\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
+    declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly seedLength?: number;\n        readonly origin?: SessionOrigin;\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
   },
   {
     name: 'CreateTeamTaskRequest',
@@ -3235,6 +3506,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type CredentialRef = Branded<\'CredentialRef\'>;',
   },
   {
+    name: 'CronJob',
+    declaration: 'export class CronJob {\n    id: string;\n    project: string;\n    sessionKey: string;\n    cronExpr: string;\n    prompt: string;\n    exec: string;\n    workDir: string;\n    description: string;\n    enabled: boolean;\n    silent: boolean | undefined;\n    mute: boolean;\n    sessionMode: string;\n    mode: string;\n    timeoutMins: number | undefined;\n    createdAt: string;\n    lastRun: string;\n    lastError: string;\n    isShellJob(): boolean;\n    executionTimeoutMs(): number;\n    usesNewSessionPerRun(): boolean;\n    static fromJSON(raw: Record<string, unknown>): CronJob;\n    toJSON(): Record<string, unknown>;\n}',
+  },
+  {
+    name: 'CronScheduler',
+    declaration: 'export class CronScheduler {\n    constructor(store: CronStore);\n    store(): CronStore;\n    registerEngine(name: string, e: Engine): void;\n    setDefaultSilent(silent: boolean): void;\n    setDefaultSessionMode(mode: string): void;\n    isSilent(job: CronJob): boolean;\n    usesNewSession(job: CronJob): boolean;\n    start(): void;\n    stop(): void;\n    addJob(job: CronJob): void;\n    removeJob(id: string): boolean;\n    enableJob(id: string): void;\n    disableJob(id: string): void;\n    updateJob(id: string, field: string, value: unknown): void;\n    nextRun(jobID: string): Date | undefined;\n}',
+  },
+  {
+    name: 'CronStore',
+    declaration: 'export class CronStore {\n    readonly path: string;\n    constructor(dataDir: string);\n    add(job: CronJob): void;\n    remove(id: string): boolean;\n    setEnabled(id: string, enabled: boolean): boolean;\n    setMute(id: string, mute: boolean): boolean;\n    toggleMute(id: string): [\n        newState: boolean,\n        ok: boolean\n    ];\n    markRun(id: string, err?: string): void;\n    list(): CronJob[];\n    listByProject(project: string): CronJob[];\n    listBySessionKey(sessionKey: string): CronJob[];\n    get(id: string): CronJob | undefined;\n    update(id: string, field: string, value: unknown): boolean;\n}',
+  },
+  {
+    name: 'DeleteModeState',
+    declaration: 'export interface DeleteModeState {\n    page: number;\n    phase: \'select\' | \'confirm\' | \'result\' | \'deleting\';\n    hint: string;\n    result: string;\n    selectedIDs: Set<string>;\n}',
+  },
+  {
     name: 'DiffCallView',
     declaration: 'export interface DiffCallView {\n    card: \'diff\';\n    title: string;\n    diffs: FileDiff[];\n    locations?: FileLocation[];\n}',
   },
@@ -3261,6 +3548,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'DirectoryRegistrationHandle',
     declaration: 'export interface DirectoryRegistrationHandle {\n    (): void;\n    replace(entries: readonly LlmConfigurableProvider[]): void;\n}',
+  },
+  {
+    name: 'DisplayCfg',
+    declaration: 'export interface DisplayCfg {\n    thinkingMessages: boolean;\n    thinkingMaxLen: number;\n    toolMessages: boolean;\n    toolProgress: boolean;\n    toolMaxLen: number;\n    planMaxLen: number;\n    editorUrl: string;\n}',
   },
   {
     name: 'Domain',
@@ -3311,6 +3602,34 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DownloadsApi {\n    sessionLog(request: {\n        sessionId: SessionId;\n        includeDescendants?: boolean;\n    }, signal: AbortSignal): Promise<Response>;\n}',
   },
   {
+    name: 'DshAdapterConfig',
+    declaration: 'export interface DshAdapterConfig {\n    agentName: string;\n    cwd: string;\n    providers: ProviderRoute[];\n    activeProvider: string;\n    closeTimeoutMs?: number;\n    mcpServers?: readonly string[];\n    questionRouting?: QuestionRouting;\n}',
+  },
+  {
+    name: 'DshAgentAdapter',
+    declaration: 'export class DshAgentAdapter {\n    setAskDelegate(d: AskDelegate): void;\n    setBridgeEvents(bridge: BridgeDispatch): void;\n    constructor(ctx: DshContextLike, cfg: DshAdapterConfig);\n    async handleUserQuestion(request: UserQuestionsAskRequest): Promise<UserQuestionsAskResult | undefined>;\n    name(): string;\n    activeRoute(): ProviderRoute | undefined;\n    getModel(): string;\n    getReasoningEffort(): string;\n    setWorkDir(dir: string): void;\n    getWorkDir(): string;\n    setSessionMode(mode: string): void;\n    setDefaultMode(mode: string): void;\n    async prepareForkSession(origID: string, _parentWorkDir: string, _childWorkDir: string): Promise<void>;\n    async prepareForkAtSession(origID: string, childWorkDir: string, quotedText: string, quotedSenderType: string, quotedTimeMs: number): Promise<string>;\n    engineKeyForAgentID(nativeID: string): string | undefined;\n    async startContinuableChild(request: ContinuableChildStart): Promise<{\n        childId: string;\n        label: string;\n    }>;\n    async followupChild(parentAgentSessionID: string, childId: string, message: string): Promise<void>;\n    interruptChild(parentAgentSessionID: string, childId: string): void;\n    async reportChildToNativeParent(childId: string, content: string): Promise<void>;\n    childLive(childId: string): boolean;\n    async lightweightQuery(prompt: string, providerName: string, signal?: AbortSignal): Promise<string>;\n    async forkQuery(sessionID: string, question: string, workDir: string):  /* …truncated — full shape in source */',
+  },
+  {
+    name: 'DshAgentHandleLike',
+    declaration: 'export interface DshAgentHandleLike {\n    agent: DshAgentLike;\n    dispose(): Promise<void>;\n}',
+  },
+  {
+    name: 'DshAgentLike',
+    declaration: 'export interface DshAgentLike {\n    readonly id: unknown;\n    readonly status: \'idle\' | \'running\';\n    readonly session: {\n        readonly events: readonly SessionEvent[];\n        readonly header?: {\n            readonly parentSession?: unknown;\n        };\n    };\n    followup(message: unknown): void;\n    steer(message: unknown): void;\n    cancel(cause: {\n        kind: string;\n    }, options?: {\n        keepInbox?: boolean;\n    }): void;\n}',
+  },
+  {
+    name: 'DshAgentsRegistryLike',
+    declaration: 'export interface DshAgentsRegistryLike {\n    create(options: DshCreateOptionsLike): Promise<DshAgentHandleLike>;\n    resume(options: DshCreateOptionsLike): Promise<DshAgentHandleLike>;\n    get(id: unknown): DshAgentLike | undefined;\n}',
+  },
+  {
+    name: 'DshContextLike',
+    declaration: 'export interface DshContextLike {\n    agents: DshAgentsRegistryLike;\n    on(event: string, listener: (...args: never[]) => unknown): () => void;\n    get(name: string): unknown;\n}',
+  },
+  {
+    name: 'DshCreateOptionsLike',
+    declaration: 'export interface DshCreateOptionsLike {\n    sessionId?: unknown;\n    resumeSessionId?: unknown;\n    meta?: {\n        cwd?: string;\n        parentSession?: unknown;\n        seedLength?: number;\n        origin?: \'subagent\' | \'oneshot\';\n    };\n    seed?: readonly SessionEvent[];\n    agentOptions?: {\n        provider?: string;\n        model?: string;\n        reasoningEffort?: string;\n    };\n    setup?: import(\'@deepseek-ai/dsh-agent\').AgentSetup;\n}',
+  },
+  {
     name: 'DshEnvironment',
     declaration: 'export type DshEnvironment = Readonly<Record<DshEnvironmentKey, string>>;',
   },
@@ -3343,8 +3662,36 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface EncodedImageAttachment {\n    mediaType: ImageMediaType;\n    data: string;\n    name?: string;\n}',
   },
   {
+    name: 'Engine',
+    declaration: 'export class Engine {\n    readonly name: string;\n    readonly agent: Agent;\n    readonly platforms: Platform[];\n    readonly sessions: SessionManager;\n    readonly i18n: I18n;\n    readonly startedAt: number;\n    readonly bridge: BridgeDispatch;\n    display: DisplayCfg;\n    streamPreview: StreamPreviewCfg;\n    bumpDebounceInterval: number;\n    injectSender: boolean;\n    attachmentSendEnabled: boolean;\n    feishuWorkspace: FeishuWorkspaceInfo | undefined;\n    eventIdleTimeout: number;\n    stallMaxRetries: number;\n    maxQueuedMessages: number;\n    debounceInterval: number;\n    interactiveIdleTimeout: number;\n    subtaskMaxDepth: number;\n    spawnWorktree: WorktreeMode;\n    spawnMemWarnPct: number;\n    spawnMemBlockPct: number;\n    subtaskTimeout: number;\n    subtaskQuiet: boolean;\n    subtaskPanelEnabled: boolean;\n    subtaskPanelIntervalMs: number;\n    subtaskPanelStallMs: number;\n    subtaskGatherTimeout: number;\n    groupNameEnabled: boolean;\n    groupNameProvider: string;\n    groupNameTimeout: number;\n    groupNamePrompt: string;\n    groupNameSetAvatar: boolean;\n    readonly monitor: MonitorCore;\n    cronScheduler: CronScheduler | undefined;\n    relayManager: RelayManager | undefined;\n    planRenderEnabled: boolean;\n    planRenderProvider: string;\n    planRenderTimeoutMs: number;\n    planRenderPngScript: string;\n    planRenderSkillSource: (() => Promise<string | undefined>) | undefined;\n    planDir: string;\n    readonly modelContextWindow: 200000;\n    showContextIndicator:  /* …truncated — full shape in source */',
+  },
+  {
     name: 'EpochHeader',
     declaration: 'export interface EpochHeader {\n    config: LlmCallConfig;\n    adapterDefaults?: LlmCallConfigAdapterDefaults;\n    system?: string;\n    tools?: ToolSchema[];\n}',
+  },
+  {
+    name: 'Event',
+    declaration: 'export interface Event {\n    type: EventKind;\n    content: string;\n    toolName?: string;\n    toolInput?: string;\n    toolInputRaw?: Record<string, unknown>;\n    toolResult?: string;\n    toolSuccess?: boolean;\n    toolID?: string;\n    done: boolean;\n    error?: Error;\n    errorText?: string;\n    inputTokens?: number;\n    totalInputTokens?: number;\n    outputTokens?: number;\n    numTurns?: number;\n    todos?: TodoItem[];\n    fromSubagent?: boolean;\n    toolBackground?: boolean;\n}',
+  },
+  {
+    name: 'EventChannel',
+    declaration: 'export class EventChannel {\n    push(event: Event): void;\n    close(): void;\n    receive(): Promise<{\n        done: false;\n        event: Event;\n    } | {\n        done: true;\n    }>;\n    receiveArmed(): {\n        promise: Promise<{\n            done: false;\n            event: Event;\n        } | {\n            done: true;\n        }>;\n        cancel(): void;\n    };\n    drain(): void;\n}',
+  },
+  {
+    name: 'EventKind',
+    declaration: 'export type EventKind = \'text\' | \'text_delta\' | \'thinking_delta\' | \'tool_use\' | \'tool_result\' | \'result\' | \'error\' | \'thinking\' | \'subagent_status\' | \'compaction\' | \'todo_update\';',
+  },
+  {
+    name: 'FeishuBridgeEventName',
+    declaration: 'export type FeishuBridgeEventName = Extract<keyof Events, `feishuBridge/${string}`>;',
+  },
+  {
+    name: 'FeishuWorkspaceInfo',
+    declaration: 'export interface FeishuWorkspaceInfo {\n    wikiSpaceId: string;\n    folderToken: string;\n    wikiNodeToken: string;\n    description: string;\n}',
+  },
+  {
+    name: 'FileAttachment',
+    declaration: 'export interface FileAttachment {\n    mimeType: string;\n    data: Uint8Array;\n    fileName: string;\n}',
   },
   {
     name: 'FileDiff',
@@ -3455,6 +3802,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface GrantRecord {\n    readonly kind: \'grant\';\n    readonly payload: unknown;\n}',
   },
   {
+    name: 'I18n',
+    declaration: 'export class I18n {\n    constructor(lang: Language);\n    setSaveFunc(fn: (lang: Language) => void): void;\n    detectAndSet(text: string): void;\n    currentLang(): Language;\n    isZhLike(): boolean;\n    setLang(lang: Language): void;\n    t(key: MsgKey | (string & {})): string;\n    tf(key: MsgKey | (string & {}), ...args: unknown[]): string;\n}',
+  },
+  {
+    name: 'ImageAttachment',
+    declaration: 'export interface ImageAttachment {\n    mimeType: string;\n    data: Uint8Array;\n    fileName?: string;\n}',
+  },
+  {
     name: 'ImageAttachmentLimits',
     declaration: 'export interface ImageAttachmentLimits {\n    maxImageBytes: number;\n    maxImagesPerMessage: number;\n    maxMessageImageBytes: number;\n    maxImagePixels: number;\n    maxImageDimension: number;\n    mediaTypes: readonly ImageMediaType[];\n}',
   },
@@ -3485,6 +3840,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'IndexInjectionPlacement',
     declaration: 'export type IndexInjectionPlacement = \'head\' | \'body\';',
+  },
+  {
+    name: 'InteractiveState',
+    declaration: 'export class InteractiveState {\n    agentSession: AgentSession | undefined;\n    platform: Platform | undefined;\n    replyCtx: unknown;\n    agent: Agent | undefined;\n    sessionStartOptions: SessionStartOptions | undefined;\n    closing: Promise<void> | undefined;\n    stopped: boolean;\n    userStopped: boolean;\n    engineStopped: boolean;\n    stopNoticeSent: boolean;\n    pendingMessages: QueuedMessage[];\n    inflightMessage: QueuedMessage | undefined;\n    sideText: string;\n    eventsNeedResync: boolean;\n    effectiveMode: string;\n    effectiveIdleTimeout: number;\n    lastActivity: number;\n    activeTurns: number;\n    lastEventAt: number;\n    activeToolCalls: number;\n    turnSeq: number;\n    fromVoice: boolean;\n    lastPrompt: string;\n    pendingAsk: PendingAsk | undefined;\n    compactionCount: number;\n    cumulativeInputTokens: number;\n    cumulativeCacheInputTokens: number;\n    notificationHandle: unknown;\n    notificationFooterMsg: string;\n    notificationFooterElements: CardElement[];\n    notificationHeaderSuffix: string;\n    predictNextRunning: boolean;\n    predictNextDisabled: boolean;\n    turnSummaryRunning: boolean;\n    lastAutoCompressAt: number;\n    lastAutoCompressTokens: number;\n    sender: AsyncSender | undefined;\n    preview: StreamPreview | undefined;\n    progressWriter: CompactProgressWriter | undefined;\n    deleteMode: import(\'./session-card.js\').DeleteModeState | undefined;\n    backgroundTasksPending: number;\n    bgWaitStartedAt: number;\n    lastForegroundCompl /* …truncated — full shape in source */',
   },
   {
     name: 'InvariantFailure',
@@ -3591,6 +3950,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface KvUnitDescriptor {\n    readonly name: string;\n    readonly version: number;\n    readonly tables: readonly string[];\n    readonly hasGlobal: boolean;\n}',
   },
   {
+    name: 'Language',
+    declaration: 'export type Language = \'\' | \'en\' | \'zh\' | \'zh-TW\' | \'ja\' | \'es\' | (string & {});',
+  },
+  {
+    name: 'LiveProject',
+    declaration: 'export interface LiveProject {\n    readonly engine: Engine;\n    readonly adapter: DshAgentAdapter;\n}',
+  },
+  {
     name: 'LlmAdapter',
     declaration: 'export abstract class LlmAdapter {\n    providerInfo(provider: string): LlmProviderInfo;\n    providerRetryPolicy(_provider: string): ResolvedRetryPolicy | undefined;\n    listModels(_provider: string): Promise<readonly LlmModelInfo[]>;\n    resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo>;\n    async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall>;\n    abstract stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
   },
@@ -3664,7 +4031,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LspProvider',
-    declaration: 'export interface LspProvider {\n    readonly id: LspProviderId;\n    readonly extensionToLanguage: Readonly<Record<string, string>>;\n    query(request: LspProviderQuery, signal?: AbortSignal): Promise<LspQueryResult>;\n}',
+    declaration: 'export interface LspProvider {\n    readonly id: LspProviderId;\n    readonly extensionToLanguage: Readonly<Record<string, string>>;\n    query(request: LspProviderQuery, signal?: AbortSignal): Promise<LspQueryResult>;\n    symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<LspSymbolResult>;\n}',
   },
   {
     name: 'LspProviderId',
@@ -3685,6 +4052,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'LspRange',
     declaration: 'export interface LspRange {\n    readonly start: LspPosition;\n    readonly end: LspPosition;\n}',
+  },
+  {
+    name: 'LspSymbol',
+    declaration: 'export interface LspSymbol {\n    readonly name: string;\n    readonly kind: string;\n    readonly containerName?: string;\n    readonly location: LspLocation | null;\n}',
+  },
+  {
+    name: 'LspSymbolRequest',
+    declaration: 'export interface LspSymbolRequest {\n    readonly query: string;\n    readonly workspaceRoot: string;\n    readonly seedFilePath?: string;\n}',
+  },
+  {
+    name: 'LspSymbolResult',
+    declaration: 'export interface LspSymbolResult {\n    readonly symbols: readonly LspSymbol[];\n    readonly resolvedWorkspaceUri: string;\n}',
   },
   {
     name: 'ManualCompactAgentContext',
@@ -3767,6 +4146,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface MessageFeedbackVersionConflict {\n    readonly code: \'version-conflict\';\n    readonly current: MessageFeedbackItem | null;\n}',
   },
   {
+    name: 'MessageHandler',
+    declaration: 'export type MessageHandler = (p: Platform, msg: Message) => void;',
+  },
+  {
     name: 'MessageId',
     declaration: 'export type MessageId = Branded<\'MessageId\'>;',
   },
@@ -3791,6 +4174,38 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface ModelModalityMap {\n    text: \'text\';\n    image: \'image\';\n}',
   },
   {
+    name: 'MonitorConfigInput',
+    declaration: 'export interface MonitorConfigInput {\n    enabled: boolean;\n    chats: string;\n    contextWindow: number;\n    spawnNotice: boolean;\n    maxConcurrent: number;\n    triageProvider: string;\n    triagePrompt: string;\n    dirs: MonitorDirEntry[];\n    rules: MonitorRuleEntry[];\n    learnEnabled: boolean;\n    learnMax: number;\n    reactEmoji: string;\n    pollIntervalMs: number;\n    fallbackUser: string;\n    examples: MonitorExampleStore | undefined;\n    mode: string;\n}',
+  },
+  {
+    name: 'MonitorCore',
+    declaration: 'export class MonitorCore {\n    enabled: boolean;\n    chats: string;\n    mode: string;\n    contextWindow: number;\n    spawnNotice: boolean;\n    maxConcurrent: number;\n    triageProvider: string;\n    triagePrompt: string;\n    dirs: MonitorDirEntry[];\n    rules: MonitorRuleEntry[];\n    learnEnabled: boolean;\n    learnMax: number;\n    reactEmoji: string;\n    pollIntervalMs: number;\n    examples: MonitorExampleStore | undefined;\n    coalesceEnabled: boolean;\n    coalesceWindowMs: number;\n    saveChats: ((chats: string) => void) | undefined;\n    saveMode: ((mode: string) => void) | undefined;\n    lastTime: Record<string, number>;\n    seeded: Record<string, boolean>;\n    childMeta: Record<string, MonitorChildMeta>;\n    constructor(e: Engine);\n    setConfig(o: MonitorConfigInput): void;\n    setCoalesce(enabled: boolean, windowMs: number): void;\n    chatsVal(): string;\n    setChats(c: string): void;\n    modeVal(): string;\n    setMode(m: string): void;\n    handleMonitorMessage(p: Platform, msg: Message): void;\n    monitorChatIDs(): string[];\n    startMonitorPoll(): void;\n    stopMonitorPoll(): void;\n    async monitorPollOnce(poller: MonitorPoller): Promise<void>;\n    seenHas(chatID: string, msgID: string): boolean;\n    seenAdd(chatID: string, msgID: string): void;\n    async triageAndSpawn(p: Platform, msg: Message): Promise<void>;\n    async spawnMonitorSubgroup(p: Platform, msg: Message, dir: string, task: string, noReport: boolean, reactionID: string): Promise<void>;\n    rulePass(text /* …truncated — full shape in source */',
+  },
+  {
+    name: 'MonitorDirEntry',
+    declaration: 'export interface MonitorDirEntry {\n    path: string;\n    description: string;\n}',
+  },
+  {
+    name: 'MonitorExample',
+    declaration: 'export interface MonitorExample {\n    id: string;\n    example: string;\n    dir: string;\n    instruction: string;\n    drop: boolean;\n    created_at: number;\n}',
+  },
+  {
+    name: 'MonitorExampleStore',
+    declaration: 'export class MonitorExampleStore {\n    constructor(path: string);\n    add(example: string, dir: string, instruction: string, drop: boolean, createdAt: number): string;\n    delete(id: string): boolean;\n    recentN(n: number): MonitorExample[];\n    all(): MonitorExample[];\n}',
+  },
+  {
+    name: 'MonitorPoller',
+    declaration: 'export interface MonitorPoller {\n    latestMessageTime(chatID: string): Promise<number>;\n    listMonitorMessages(chatID: string, afterSec: number, limit: number): Promise<Message[]>;\n}',
+  },
+  {
+    name: 'MonitorRuleEntry',
+    declaration: 'export interface MonitorRuleEntry {\n    pattern: RegExp;\n    dir: string;\n    task: string;\n    noReport: boolean;\n}',
+  },
+  {
+    name: 'MsgKey',
+    declaration: 'export type MsgKey = (typeof ALL_MSG_KEYS)[number];',
+  },
+  {
     name: 'ObjectJsonSchema',
     declaration: 'export type ObjectJsonSchema = JsonSchemaNode & {\n    type: \'object\';\n};',
   },
@@ -3799,8 +4214,20 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface OneShotSubagentDescriptorData extends SubagentDescriptorBase {\n    readonly mode: \'one-shot\';\n    readonly label?: string;\n}',
   },
   {
+    name: 'PendingAsk',
+    declaration: 'export interface PendingAsk {\n    request: AskRequest;\n    answers: Map<number, PendingAskAnswer>;\n    resolve(decision: AskDecision): void;\n    autoTimer?: ReturnType<typeof setTimeout>;\n}',
+  },
+  {
+    name: 'PendingAskAnswer',
+    declaration: 'export interface PendingAskAnswer {\n    selected: string[];\n    custom?: string;\n}',
+  },
+  {
     name: 'PermissionSelect',
     declaration: 'export interface PermissionSelect {\n    options: PresetOption[];\n    currentValue: string;\n}',
+  },
+  {
+    name: 'Platform',
+    declaration: 'export interface Platform {\n    name(): string;\n    start(handler: MessageHandler): Promise<void>;\n    reply(replyCtx: unknown, content: string): Promise<void>;\n    send(replyCtx: unknown, content: string): Promise<void>;\n    stop(): Promise<void>;\n}',
   },
   {
     name: 'PostToolDecision',
@@ -3841,6 +4268,26 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PreToolDecision',
     declaration: 'export type PreToolDecision = {\n    kind: \'allow\';\n} | {\n    kind: \'deny\';\n    reason: string;\n} | {\n    kind: \'ask\';\n    reason?: string;\n};',
+  },
+  {
+    name: 'ProgressCardEntry',
+    declaration: 'export interface ProgressCardEntry {\n    kind: ProgressCardEntryKind;\n    text: string;\n    tool?: string;\n    status?: string;\n    exitCode?: number;\n    success?: boolean;\n}',
+  },
+  {
+    name: 'ProgressCardEntryKind',
+    declaration: 'export type ProgressCardEntryKind = \'info\' | \'thinking\' | \'tool_use\' | \'tool_result\' | \'error\';',
+  },
+  {
+    name: 'ProgressCardState',
+    declaration: 'export type ProgressCardState = \'running\' | \'completed\' | \'failed\';',
+  },
+  {
+    name: 'ProgressEntry',
+    declaration: 'export class ProgressEntry {\n    text: string;\n    header: string;\n    body: string;\n    lang: string;\n    toolID: string;\n    result: string;\n    success: boolean;\n    hasResult: boolean;\n    isTool: boolean;\n    isThinking: boolean;\n    isCompact: boolean;\n    seq: number;\n    fullName: string;\n    toolName: string;\n    skillName: string;\n    constructor(init: Partial<ProgressEntry> = {});\n    render(isLatest: boolean): string;\n}',
+  },
+  {
+    name: 'ProgressStatus',
+    declaration: 'export interface ProgressStatus {\n    state: \'running\' | \'completed\' | \'failed\' | \'thinking\';\n    ts: string;\n    toolCallSeq: number;\n    pendingSubtasks?: number;\n}',
   },
   {
     name: 'ProjectionChangeListener',
@@ -3887,6 +4334,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface PruneResult {\n    readonly pruned: readonly PrunedEntry[];\n    readonly charsRemoved: number;\n}',
   },
   {
+    name: 'QuestionRouting',
+    declaration: 'export interface QuestionRouting {\n    adapters: DshAgentAdapter[];\n    registered: boolean;\n}',
+  },
+  {
     name: 'ReadFileLine',
     declaration: 'export interface ReadFileLine {\n    number: number;\n    text: string;\n}',
   },
@@ -3905,6 +4356,22 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'RedactedSecret',
     declaration: 'export interface RedactedSecret {\n    path: string[];\n    set: boolean;\n}',
+  },
+  {
+    name: 'RelayBinding',
+    declaration: 'export interface RelayBinding {\n    platform: string;\n    chatID: string;\n    bots: Record<string, string>;\n}',
+  },
+  {
+    name: 'RelayManager',
+    declaration: 'export class RelayManager {\n    constructor(dataDir: string);\n    registerEngine(name: string, e: Engine): void;\n    setTimeoutMs(ms: number): void;\n    relayTimeoutMs(): number;\n    relaySignal(): AbortSignal | undefined;\n    bind(platform: string, chatID: string, bots: Record<string, string>): void;\n    addToBind(platform: string, chatID: string, projectName: string): void;\n    removeFromBind(chatID: string, projectName: string): boolean;\n    getBinding(chatID: string): RelayBinding | undefined;\n    unbind(chatID: string): void;\n    hasEngine(name: string): boolean;\n    listEngineNames(): string[];\n    listBoundBots(chatID: string, selfProject: string): Record<string, string>;\n    async send(req: RelayRequest): Promise<RelayResponse>;\n}',
+  },
+  {
+    name: 'RelayRequest',
+    declaration: 'export interface RelayRequest {\n    from: string;\n    to: string;\n    sessionKey: string;\n    message: string;\n}',
+  },
+  {
+    name: 'RelayResponse',
+    declaration: 'export interface RelayResponse {\n    response: string;\n}',
   },
   {
     name: 'ReplayEnvelope',
@@ -4140,7 +4607,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionHeader',
-    declaration: 'export interface SessionHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly seedLength?: number;\n    readonly origin?: \'subagent\';\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
+    declaration: 'export interface SessionHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly seedLength?: number;\n    readonly origin?: SessionOrigin;\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
   },
   {
     name: 'SessionId',
@@ -4165,6 +4632,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionLogSnapshot',
     declaration: 'export interface SessionLogSnapshot {\n    session: SessionHeader;\n    events: SessionEvent[];\n}',
+  },
+  {
+    name: 'SessionOrigin',
+    declaration: 'export type SessionOrigin = \'subagent\' | \'oneshot\';',
   },
   {
     name: 'SessionPersistenceRevision',
@@ -4237,6 +4708,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionSearchRequest',
     declaration: 'export interface SessionSearchRequest {\n    query: string;\n    sessionFilters?: readonly SessionResultFilter[];\n    eventFilters?: readonly SessionEventMetadataFilter[];\n    limit?: number;\n    cursor?: SessionSearchCursor;\n}',
+  },
+  {
+    name: 'SessionStartOptions',
+    declaration: 'export interface SessionStartOptions {\n    sessionKey: string;\n    interactiveSlotKey?: string;\n    subtask?: {\n        attended: boolean;\n        noReport: boolean;\n        researchAssistant?: boolean;\n    };\n    persona?: {\n        prompt: string;\n        bypassPermissions: boolean;\n        forceMode: string | undefined;\n    };\n    feishuWorkspace?: FeishuWorkspaceInfo;\n    venv?: {\n        virtualEnv: string;\n    };\n}',
   },
   {
     name: 'SessionStartSource',
@@ -4455,6 +4930,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type StreamChunk = {\n    type: \'block-start\';\n    index: number;\n    blockType: ContentBlockType;\n} | {\n    type: \'text-delta\';\n    index: number;\n    text: string;\n} | {\n    type: \'reasoning-delta\';\n    index: number;\n    text: string;\n} | {\n    type: \'tool-call-delta\';\n    index: number;\n    id: CallId;\n    name?: string;\n    argumentsDelta: string;\n} | {\n    type: \'block-end\';\n    index: number;\n    block: ContentBlock;\n} | {\n    type: \'usage\';\n    usage: TokenUsage;\n} | {\n    type: \'finish\';\n    reason: FinishReason;\n    replayState?: ReplayEnvelope;\n};',
   },
   {
+    name: 'StreamPreview',
+    declaration: 'export class StreamPreview {\n    fullText: string;\n    previewMsgID: unknown;\n    degraded: boolean;\n    failedPatchStreak: number;\n    progressEntries: ProgressEntry[];\n    skillNames: string[];\n    analysisText: string;\n    analysisTruncated: boolean;\n    completed: boolean;\n    failed: boolean;\n    stoppedCardRendered: boolean;\n    timer: TimerHandle | undefined;\n    tailTimer: TimerHandle | undefined;\n    lastProgressFlush: number;\n    readonly sessionKey: string;\n    constructor(cfg: StreamPreviewCfg, p: Platform, replyCtx: unknown, transform: ((s: string) => string) | undefined, as: AsyncSender | undefined, sessionKey = \'\');\n    canPreview(): boolean;\n    async showPlaceholder(placeholderText: string): Promise<void>;\n    async appendText(text: string): Promise<void>;\n    progressStatusLocked(): ProgressStatus;\n    async freeze(): Promise<void>;\n    async completeAndDetach(): Promise<void>;\n    async resumeFromFreeze(): Promise<void>;\n    async discard(): Promise<void>;\n    async finish(finalTextIn: string): Promise<boolean>;\n    async detachPreview(): Promise<void>;\n    async bumpToEnd(): Promise<void>;\n    cardMessageID(): string;\n    async markRecalled(): Promise<void>;\n    needsDoneReaction(): boolean;\n    hasStarted(): boolean;\n    inProgressMode(): boolean;\n    async forceStart(text: string): Promise<void>;\n    async updateProgress(text: string): Promise<void>;\n    async appendProgress(entry: ProgressEntry): Promise<void>;\n    async resetProgressEntries(): Promise< /* …truncated — full shape in source */',
+  },
+  {
+    name: 'StreamPreviewCfg',
+    declaration: 'export interface StreamPreviewCfg {\n    enabled: boolean;\n    disabledPlatforms?: string[];\n    intervalMs: number;\n    minDeltaChars: number;\n    maxChars: number;\n    tailCheckMs?: number;\n    partial?: boolean;\n}',
+  },
+  {
     name: 'SubagentCapabilities',
     declaration: 'export interface SubagentCapabilities {\n    readonly outputSchema: boolean;\n    readonly depthLimit: boolean;\n    readonly toolFilter: boolean;\n    readonly persona: boolean;\n    readonly cwdOverride: boolean;\n}',
   },
@@ -4496,7 +4979,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRunEndInfo',
-    declaration: 'export interface SubagentRunEndInfo {\n    readonly runId: SubagentRunId;\n    readonly provider: string;\n    readonly id: SessionId;\n    readonly local: boolean;\n    readonly stopReason: SubagentResult[\'stopReason\'];\n    readonly lastAssistantMessage?: ContentBlock[];\n}',
+    declaration: 'export interface SubagentRunEndInfo {\n    readonly runId: SubagentRunId;\n    readonly provider: string;\n    readonly id: SessionId;\n    readonly local: boolean;\n    readonly stopReason: SubagentResult[\'stopReason\'];\n    readonly lastAssistantMessage?: ContentBlock[];\n    readonly diagnostic?: string;\n}',
   },
   {
     name: 'SubagentRunId',
@@ -4585,6 +5068,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SubprocessTerminalSpawnSpec',
     declaration: 'export interface SubprocessTerminalSpawnSpec {\n    argv: readonly string[];\n    cwd: string;\n    env?: Record<string, string> | undefined;\n    rows: number;\n    cols: number;\n    graceMs: number;\n    signal?: AbortSignal | undefined;\n}',
+  },
+  {
+    name: 'SubtaskRoute',
+    declaration: 'export interface SubtaskRoute {\n    readonly engine: Engine;\n    readonly sessionKey: string;\n    readonly nativeChildId?: string;\n}',
   },
   {
     name: 'SurfaceEvent',
@@ -4929,6 +5416,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'UserMessage',
     declaration: 'export interface UserMessage extends Message {\n    readonly role: \'user\';\n}',
+  },
+  {
+    name: 'UserQuestion',
+    declaration: 'export interface UserQuestion {\n    id?: string;\n    question: string;\n    header: string;\n    options: UserQuestionOption[];\n    multiSelect: boolean;\n}',
+  },
+  {
+    name: 'UserQuestionOption',
+    declaration: 'export interface UserQuestionOption {\n    label: string;\n    description: string;\n    recommended?: boolean;\n}',
   },
   {
     name: 'UserQuestionProvider',

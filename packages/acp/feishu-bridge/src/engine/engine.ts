@@ -969,7 +969,7 @@ export class Engine {
   planDir: string = joinPath(homedir(), '.claude', 'plans')
   // ── usage + status footer (Go engine usage* fields, M7) ─────────────────
   /** Generic fallback context window for heuristic ctx estimates (Go modelContextWindow). */
-  readonly modelContextWindow = 200_000 as const
+  readonly modelContextWindow: 200000 = 200_000 as const
   /** Whether the ctx/cache lines are shown on the completion footer (Go showContextIndicator). */
   showContextIndicator: boolean = true
   /** Effective context window in tokens (Go contextWindow). */
