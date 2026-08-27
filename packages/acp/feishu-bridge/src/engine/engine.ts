@@ -149,17 +149,6 @@ import { cancelQueuedByMessageID, markRecalledPreview } from './recall.js'
 import { triggerInsights } from './predict.js'
 import { defaultAutoCompressMinGapMs, estimateTokensWithPendingAssistant, maybeAutoResetSessionOnIdle, runCompress } from './session-misc.js'
 import type { RelayManager } from './relay.js'
-import {
-  defaultChatroomGatherTimeout,
-  defaultChatroomResearchTimeout,
-  defaultMaxChatroomResearchRounds,
-  defaultMaxChatroomRoles,
-  maxChatroomResearchTimeout,
-  maxChatroomResearchRounds,
-  minChatroomResearchTimeout,
-  minChatroomResearchRounds,
-} from './chatroom.js'
-import { defaultChatroomRolesDir } from './chatroom-roles.js'
 import { MonitorCore, isMonitorCommand } from './monitor.js'
 import {
   cancelRenders,
@@ -944,28 +933,6 @@ export class Engine {
   cronScheduler: CronScheduler | undefined
   /** Relay manager shared across engines (Go relayManager; null = relay off). */
   relayManager: RelayManager | undefined
-
-  // ── chatroom config (Go engine chatroom* fields, M5) ────────────────────
-  /** Gather barrier fallback timeout override; 0 = default 20m (Go chatroomGatherTimeout). */
-  chatroomGatherTimeout = 0
-  /** End barrier drain timeout override; 0 = half the gather default (Go chatroomEndTimeout). */
-  chatroomEndTimeout = 0
-  /** Research gather round timeout override; 0 = default 60m (Go chatroomResearchTimeout). */
-  chatroomResearchTimeout = 0
-  /** Auto-mode research iteration cap override; 0 = default 3 (Go maxChatroomResearchRounds). */
-  maxChatroomResearchRounds = 0
-  /** Default research iteration driver when --mode is omitted (Go defaultChatroomResearchMode). */
-  defaultChatroomResearchMode = ''
-  /** Roles root override; '' = <configHome>/chatroom-roles (Go chatroomRolesDirCfg). */
-  chatroomRolesDirCfg = ''
-  /** Per-chatroom role cap override; 0 = default 5 (Go maxChatroomRolesCfg). */
-  maxChatroomRolesCfg = 0
-  /** Moderator data dir (holds per-chatroom ledgers); '' = ledger disabled (Go chatroomModeratorDirCfg). */
-  chatroomModeratorDirCfg = ''
-  /** Shared research-assistant workdir override (Go chatroomResearchWorkspaceCfg). */
-  chatroomResearchWorkspaceCfg = ''
-  /** Pre-provision the shared uv venv for research assistants (Go chatroomResearchPythonEnv). */
-  chatroomResearchPythonEnv = false
 
   // ── M7 plan/reply HTML render config (Go planRender* fields) ────────────
   /** plan_render enabled (Go planRenderEnabled; opt-in, default off). */
@@ -5437,157 +5404,6 @@ export class Engine {
     if (n > 0) this.subtaskMaxDepth = n
   }
 
-  // ── chatroom configuration setters (Go engine_chatroom.go setters) ──────
-
-  /**
-   * Override the gather barrier fallback timeout; 0/negative keeps the default.
-   * @param ms - Timeout in ms; <= 0 keeps the default.
-   */
-  setChatroomGatherTimeout(ms: number): void {
-    if (ms > 0) this.chatroomGatherTimeout = ms
-  }
-
-  /**
-   * Effective gather barrier timeout.
-   * @returns The configured timeout in ms, or the 20m default.
-   */
-  chatroomGatherTimeoutDuration(): number {
-    return this.chatroomGatherTimeout > 0 ? this.chatroomGatherTimeout : defaultChatroomGatherTimeout
-  }
-
-  /**
-   * Override the end-barrier drain timeout.
-   * @param ms - Timeout in ms; <= 0 keeps the default.
-   */
-  setChatroomEndTimeout(ms: number): void {
-    if (ms > 0) this.chatroomEndTimeout = ms
-  }
-
-  /**
-   * Effective end drain timeout: end waits for replies already generating,
-   * so it defaults to half the gather timeout rather than gather's full
-   * headroom.
-   * @returns The configured timeout in ms, or half the gather default.
-   */
-  chatroomEndTimeoutDuration(): number {
-    return this.chatroomEndTimeout > 0 ? this.chatroomEndTimeout : defaultChatroomGatherTimeout / 2
-  }
-
-  /**
-   * Override the research gather timeout, clamped to [1m, 24h].
-   * @param ms - Timeout in ms; <= 0 keeps the current value.
-   */
-  setChatroomResearchTimeout(ms: number): void {
-    if (ms <= 0) return
-    this.chatroomResearchTimeout = Math.min(maxChatroomResearchTimeout, Math.max(minChatroomResearchTimeout, ms))
-  }
-
-  /**
-   * Effective research gather timeout.
-   * @returns The configured timeout in ms, or the 60m default.
-   */
-  chatroomResearchTimeoutDuration(): number {
-    return this.chatroomResearchTimeout > 0 ? this.chatroomResearchTimeout : defaultChatroomResearchTimeout
-  }
-
-  /**
-   * Override the auto-mode research round cap, clamped to [1, 20].
-   * @param n - Round cap; <= 0 keeps the current value.
-   */
-  setMaxChatroomResearchRounds(n: number): void {
-    if (n <= 0) return
-    this.maxChatroomResearchRounds = Math.min(maxChatroomResearchRounds, Math.max(minChatroomResearchRounds, n))
-  }
-
-  /**
-   * Effective auto-mode research round cap.
-   * @returns The configured cap, or the default of 3.
-   */
-  maxChatroomResearchRoundsValue(): number {
-    return this.maxChatroomResearchRounds > 0 ? this.maxChatroomResearchRounds : defaultMaxChatroomResearchRounds
-  }
-
-  /**
-   * Default research iteration driver when --mode is omitted ('auto'|'manual').
-   * @param mode - Research mode; only 'auto' and 'manual' are accepted.
-   */
-  setDefaultChatroomResearchMode(mode: string): void {
-    if (mode === 'auto' || mode === 'manual') this.defaultChatroomResearchMode = mode
-  }
-
-  /**
-   * Effective default research mode; unknown values behave as 'auto'.
-   * @returns 'manual' when configured so, otherwise 'auto'.
-   */
-  defaultChatroomResearchModeValue(): string {
-    return this.defaultChatroomResearchMode === 'manual' ? 'manual' : 'auto'
-  }
-
-  /**
-   * Override the root directory holding one persona subdirectory per role.
-   * @param dir - Roles root path; blank keeps the current value.
-   */
-  setChatroomRolesDir(dir: string): void {
-    if (dir.trim() !== '') this.chatroomRolesDirCfg = dir
-  }
-
-  /**
-   * Effective roles root.
-   * @returns The configured roles root, or the default under configHome.
-   */
-  chatroomRolesDir(): string {
-    return this.chatroomRolesDirCfg !== '' ? this.chatroomRolesDirCfg : defaultChatroomRolesDir()
-  }
-
-  /**
-   * Override the per-chatroom role cap.
-   * @param n - Role cap; <= 0 keeps the current value.
-   */
-  setMaxChatroomRoles(n: number): void {
-    if (n > 0) this.maxChatroomRolesCfg = n
-  }
-
-  /**
-   * Effective per-chatroom role cap.
-   * @returns The configured cap, or the default of 5.
-   */
-  maxChatroomRoles(): number {
-    return this.maxChatroomRolesCfg > 0 ? this.maxChatroomRolesCfg : defaultMaxChatroomRoles
-  }
-
-  /**
-   * Set the moderator data dir (per-chatroom ledgers); '' disables the ledger.
-   * @param dir - Moderator data dir; '' disables the ledger feature.
-   */
-  setChatroomModeratorDir(dir: string): void {
-    this.chatroomModeratorDirCfg = dir.trim()
-  }
-
-  /**
-   * The moderator dir and whether the ledger feature is enabled.
-   * @returns The configured dir and ok=true when the ledger is enabled.
-   */
-  chatroomModeratorDir(): { dir: string; ok: boolean } {
-    const dir = this.chatroomModeratorDirCfg.trim()
-    return { dir, ok: dir !== '' }
-  }
-
-  /**
-   * Set the shared research-assistant workdir.
-   * @param dir - Workdir shared by research assistants.
-   */
-  setChatroomResearchWorkspace(dir: string): void {
-    this.chatroomResearchWorkspaceCfg = dir
-  }
-
-  /**
-   * Toggle pre-provisioning the shared uv venv for research assistants.
-   * @param enabled - Whether the shared venv is pre-provisioned.
-   */
-  setChatroomResearchPythonEnv(enabled: boolean): void {
-    this.chatroomResearchPythonEnv = enabled
-  }
-
   /**
    * Override default worktree isolation for /spawn //fork (Go SetSpawnWorktreeMode).
    * @param s - Worktree mode word: 'on', 'off', or 'auto'.
@@ -7585,7 +7401,7 @@ export class Engine {
     const name = namer(topic)
     // Synchronous fallback: rename the hub to the topic text immediately.
     void renamer.renameGroupAny(sessionKey, name).catch((error: unknown) => {
-      console.warn(`chatroom: failed to rename hub group to topic (${sessionKey}): ${String(error)}`)
+      console.warn(`engine: failed to rename hub group to topic (${sessionKey}): ${String(error)}`)
     })
 
     // Async LLM overwrite; RenameGroupAny bypasses the spawned-chat guard
@@ -7610,10 +7426,10 @@ export class Engine {
           await setter.setGroupFamilyAvatar(sessionKey, capturedChildren, icon, hubName)
           this.recordGroupIcon(icon)
         } catch (error) {
-          console.warn(`chatroom: set family avatar failed (hub=${sessionKey}): ${String(error)}`)
+          console.warn(`engine: set family avatar failed (hub=${sessionKey}): ${String(error)}`)
         }
       } catch (error) {
-        console.warn(`chatroom: group-name LLM rename failed (${sessionKey}): ${String(error)}`)
+        console.warn(`engine: group-name LLM rename failed (${sessionKey}): ${String(error)}`)
       } finally {
         clearTimeout(timer)
       }

@@ -205,7 +205,7 @@ describe('adapter MCP mask', () => {
     expect(harness.restricts).toEqual([{ deny: ['mcp__srvA__add', 'mcp__srvA__admin_reset_1a2b3c4d5e6f', 'mcp__shared__lookup'] }])
   })
 
-  it('a chatroom bare persona intersects the skill deny with the MCP mask', async () => {
+  it('a bare persona intersects the skill deny with the MCP mask', async () => {
     const harness = createHarness()
     const adapter = newAdapter(harness, ['shared'])
     await adapter.startSession('', {

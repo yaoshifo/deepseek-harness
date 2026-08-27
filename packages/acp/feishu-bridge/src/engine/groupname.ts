@@ -2,8 +2,7 @@
  * Group-name generation helpers ported from cc-connect
  * core/engine_predict.go (icon classification/sampling, name sanitizing,
  * fallback icons, the default prompt), the rename helpers in
- * core/engine_events.go, and chatroomHubGroupName from
- * core/engine_chatroom.go. Pure functions; the Engine methods that drive
+ * core/engine_events.go. Pure functions; the Engine methods that drive
  * them live in engine.ts.
  *
  * @module dsh-feishu-bridge/groupname
@@ -332,19 +331,6 @@ export function truncateGroupName(s: string): string {
     s = `${Array.from(s).slice(0, maxGroupNameRunes - 3).join('')}...`
   }
   return s
-}
-
-/**
- * Hub group name derived from the chatroom topic: the topic truncated to the
- * 60-rune ceiling, no prefix (Go chatroomHubGroupName).
- * @param topic - The chatroom topic.
- * @returns The topic itself when short enough, else its 60-rune truncation with "...".
- */
-export function chatroomHubGroupName(topic: string): string {
-  if (Array.from(topic).length > maxGroupNameRunes) {
-    return `${Array.from(topic).slice(0, maxGroupNameRunes - 3).join('')}...`
-  }
-  return topic
 }
 
 /** Per-user-message truncation cap for the compact context (Go maxPredictUserMsgLen). */

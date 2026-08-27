@@ -4,12 +4,12 @@
  * that exercise the `feishuBridge/*` event path. The backing contexts are
  * disposed after each test.
  *
- * @module dsh-feishu-bridge/tests-stubs
+ * @module dsh-feishu-bridge-chatroom/tests-stubs
  */
 
 import { afterEach } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { ctxBridgeDispatch, type BridgeDispatch } from '../../src/bridge-service.js'
+import { ctxBridgeDispatch, type BridgeDispatch } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomPolicyListeners } from '../../src/engine/chatroom-policy.js'
 
 const contexts: Context[] = []

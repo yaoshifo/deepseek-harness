@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { ctxBridgeDispatch } from '../../src/bridge-service.js'
-import { registerChatroomPolicyListeners } from '../../src/engine/chatroom-policy.js'
 import {
   ContinueSession,
   ForkSessionPrefix,
@@ -15,6 +14,16 @@ import {
 } from '../../src/engine/session.js'
 
 // Ported from cc-connect core/session_test.go (51 Go cases incl. subtests).
+
+/** The raw chatroom section of a session (opaque bag; written directly here). */
+function chatroomSection(session: Session): Record<string, unknown> {
+  let section = session.featureState.chatroom
+  if (typeof section !== 'object' || section === null) {
+    section = {}
+    session.featureState.chatroom = section
+  }
+  return section as Record<string, unknown>
+}
 
 async function tempSessionsPath(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'fb-sessions-'))
@@ -162,14 +171,14 @@ describe('SessionManager', () => {
     it.each([
       { name: 'top-level', setup: (_s: Session) => {}, want: false },
       { name: 'spawn-fork child', setup: (s: Session) => { s.setParentSessionKey('feishu:parent:ou_user') }, want: false },
-      { name: 'chatroom role', setup: (s: Session) => { s.setChatroomHubKey('feishu:hub:ou_user') }, want: true },
+      { name: 'chatroom role', setup: (s: Session) => { chatroomSection(s).chatroomHubKey = 'feishu:hub:ou_user' }, want: true },
       { name: 'subtask depth 1', setup: (s: Session) => { s.setSubtaskDepth(1) }, want: true },
       { name: 'subtask depth 2', setup: (s: Session) => { s.setSubtaskDepth(2) }, want: true },
       {
         name: 'subtask plus chatroom',
         setup: (s: Session) => {
           s.setSubtaskDepth(1)
-          s.setChatroomHubKey('feishu:hub:ou_user')
+          chatroomSection(s).chatroomHubKey = 'feishu:hub:ou_user'
         },
         want: true,
       },
@@ -209,7 +218,7 @@ describe('SessionManager', () => {
       {
         name: 'chatroom + user interjected',
         setup: (s: Session) => {
-          s.setChatroomHubKey('feishu:hub:ou_user')
+          chatroomSection(s).chatroomHubKey = 'feishu:hub:ou_user'
           s.setUserInterjected(true)
         },
         want: false,
@@ -218,10 +227,12 @@ describe('SessionManager', () => {
       const sm = new SessionManager('')
       const s = sm.getOrCreateActive('feishu:x')
       setup(s)
-      // The chatroom rows ride the auto-render-policy listener (the
-      // production composition); the subtask rows are the built-in base.
+      // The chatroom rows ride an auto-render-policy listener shaped like the
+      // chatroom package's production half (covered in its own package); the
+      // subtask rows are the built-in base.
       const ctx = new Context()
-      registerChatroomPolicyListeners(ctx)
+      ctx.on('feishuBridge/auto-render-policy', (payload: { session: Session }, next: () => boolean) =>
+        next() || chatroomSection(payload.session).chatroomHubKey !== undefined && chatroomSection(payload.session).chatroomHubKey !== '')
       expect(s.shouldSuppressAutoRender(ctxBridgeDispatch(ctx))).toBe(want)
       void Promise.allSettled([ctx.fiber.dispose()])
     })
@@ -664,10 +675,11 @@ describe('Snapshot v2 → v3 migration', () => {
 
     const sm = new SessionManager(path)
     const hub = sm.getOrCreateActive('user1')
-    expect(hub.getChatroomModerator()).toBe(true)
-    expect(hub.getChatroomResearch()).toBe(true)
-    expect(hub.getChatroomResearchRound()).toBe(2)
-    expect(hub.pendingGatherData).toEqual({ question: '研究问题', seq: 3, expected: ['taleb'], collected: { munger: '部分回复' } })
+    const section = hub.featureState.chatroom as Record<string, unknown>
+    expect(section.chatroomModerator).toBe(true)
+    expect(section.chatroomResearch).toBe(true)
+    expect(section.chatroomResearchRound).toBe(2)
+    expect(section.pendingGatherData).toEqual({ question: '研究问题', seq: 3, expected: ['taleb'], collected: { munger: '部分回复' } })
 
     // The one-way rewrite backs the pre-v3 original up once, byte for byte.
     expect(await readFile(`${path}.v2.bak`, 'utf8')).toBe(v2JSON)
@@ -689,9 +701,9 @@ describe('Snapshot v2 → v3 migration', () => {
     })
 
     const sm2 = new SessionManager(path)
-    const reloaded = sm2.getOrCreateActive('user1')
-    expect(reloaded.getChatroomModerator()).toBe(true)
-    expect(reloaded.pendingGatherData).toEqual({ question: '研究问题', seq: 3, expected: ['taleb'], collected: { munger: '部分回复' } })
+    const reloadedSection = sm2.getOrCreateActive('user1').featureState.chatroom as Record<string, unknown>
+    expect(reloadedSection.chatroomModerator).toBe(true)
+    expect(reloadedSection.pendingGatherData).toEqual({ question: '研究问题', seq: 3, expected: ['taleb'], collected: { munger: '部分回复' } })
   })
 
   it('keeps the earliest backup when one already exists', async () => {
@@ -752,34 +764,11 @@ describe('Snapshot v2 → v3 migration', () => {
 
     const sm = new SessionManager(path)
     const hub = sm.getOrCreateActive('user1')
-    // The corrupt bag is dropped; the flat v2 field still lifted; reads and
-    // writes through the section never throw.
-    expect(hub.getChatroomHubKey()).toBe('')
-    expect(hub.getChatroomModerator()).toBe(true)
-    hub.setChatroomRoleName('munger')
-    expect(hub.getChatroomRoleName()).toBe('munger')
+    // The corrupt bag is dropped; the flat v2 field still lifted (the section
+    // is opaque to the bridge — raw reads here).
+    const section = hub.featureState.chatroom as Record<string, unknown>
+    expect(section.chatroomHubKey).toBeUndefined()
+    expect(section.chatroomModerator).toBe(true)
   })
 
-  it('replaces a non-object chatroom section from a hand-corrupted file', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'fb-v3sec-'))
-    const path = join(dir, 'sessions.json')
-    await writeFile(path, JSON.stringify({
-      version: 3,
-      sessions: {
-        s1: {
-          id: 's1', name: 'hub', agentSessionID: '', featureState: { chatroom: 42 },
-          createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z',
-        },
-      },
-      activeSession: { user1: 's1' }, userSessions: { user1: ['s1'] }, counter: 1,
-    }), 'utf8')
-
-    const sm = new SessionManager(path)
-    const hub = sm.getOrCreateActive('user1')
-    expect(hub.getChatroomHubKey()).toBe('')
-    hub.setChatroomRoleName('munger')
-    expect(hub.getChatroomRoleName()).toBe('munger')
-    sm.save()
-    expect(new SessionManager(path).getOrCreateActive('user1').getChatroomRoleName()).toBe('munger')
-  })
 })

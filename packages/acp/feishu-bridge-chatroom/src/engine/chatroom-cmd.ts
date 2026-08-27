@@ -9,13 +9,15 @@
  */
 
 import { mkdirSync } from 'node:fs'
-import type { Engine } from './engine.js'
-import { emptyMessage } from './engine.js'
-import type { Message, Platform } from '../core/types.js'
-import { asCardSender, asGroupRenamer } from '../core/types.js'
-import { chatroomHubGroupName } from './groupname.js'
-import { newCard } from '../card.js'
-import { Msg } from '../i18n/keys.js'
+import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { emptyMessage } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import type { Message, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { asCardSender, asGroupRenamer } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { chatroomHubGroupName } from './chatroom.js'
+import { newCard } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { Msg } from '../i18n.js'
+import { chatroomState } from '../chatroom-state.js'
+import { chatroomConfig } from '../chatroom-config.js'
 import {
   chatroomAssistantGroupName,
   chatroomLedgerDirFor,
@@ -37,7 +39,7 @@ import {
   buildChatroomModeratorPriming,
   buildChatroomResearchModeratorPriming,
 } from './chatroom-priming.js'
-import { WorktreeMode } from './worktree.js'
+import { WorktreeMode } from '@deepseek-ai/dsh-feishu-bridge/exports'
 
 /** Canonical command names for /chatroom (Go builtinCommands entry). */
 const chatroomCommandNames = ['chatroom', 'cr']
@@ -111,7 +113,7 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   // Parse: the first positional token is treated as a roles list only if it
   // looks like one (contains a comma or names an existing role); otherwise
   // the whole positional stream is the topic.
-  const rolesDir = e.chatroomRolesDir()
+  const rolesDir = chatroomConfig(e).rolesDir()
   let rolesCSV = ''
   let topic = ''
   let gotRoles = false
@@ -250,14 +252,14 @@ export function stashChatroomResearchFlags(
     e.sessions.save()
     return
   }
-  hub.setChatroomResearch(true)
+  chatroomState(hub).chatroomResearch = true
   if (mode !== 'auto' && mode !== 'manual') {
-    mode = e.defaultChatroomResearchModeValue()
+    mode = chatroomConfig(e).defaultResearchMode()
   }
-  hub.setChatroomResearchMode(mode)
+  chatroomState(hub).chatroomResearchMode = mode
   if (maxRounds > 0) {
     // Per-invocation override of the configured cap (auto mode only).
-    hub.setChatroomResearchMaxRounds(maxRounds)
+    chatroomState(hub).chatroomResearchMaxRounds = maxRounds
   }
   e.sessions.save()
 }
@@ -284,10 +286,10 @@ async function gateResearchUvOrFail(e: Engine, p: Platform, msg: Message, resear
  * essence (Go cmdChatroomList). Does not spawn anything.
  */
 async function cmdChatroomList(e: Engine, p: Platform, msg: Message): Promise<void> {
-  const rolesDir = e.chatroomRolesDir()
+  const rolesDir = chatroomConfig(e).rolesDir()
   const names = [...listRoleNames(rolesDir)].sort()
   if (names.length === 0) {
-    await e.reply(p, msg.replyCtx, e.i18n.t('chatroom_no_roles_configured') + rolesDir)
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomNoRolesConfigured) + rolesDir)
     return
   }
   const b: string[] = []
@@ -297,7 +299,7 @@ async function cmdChatroomList(e: Engine, p: Platform, msg: Message): Promise<vo
     else b.push(`**${n}**\n`)
   }
   const content = b.join('').replace(/\n+$/, '')
-  const card = newCard().title(e.i18n.tf('chatroom_list_title', names.length), 'purple').markdown(content).build()
+  const card = newCard().title(e.i18n.tf(Msg.ChatroomListTitle, names.length), 'purple').markdown(content).build()
   const cs = asCardSender(p)
   if (cs !== undefined) {
     try {
@@ -348,9 +350,9 @@ async function cmdChatroomStop(e: Engine, p: Platform, msg: Message): Promise<vo
 export async function startChatroomDirectRole(
   e: Engine, p: Platform, msg: Message, role: string, topic: string,
 ): Promise<void> {
-  const rolesDir = e.chatroomRolesDir()
+  const rolesDir = chatroomConfig(e).rolesDir()
   if (!roleExists(rolesDir, role)) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf('chatroom_unknown_role', role, role))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ChatroomUnknownRole, role, role))
     return
   }
   const dir = roleDir(rolesDir, role)
@@ -364,9 +366,9 @@ export async function startChatroomDirectRole(
   // Reset the agent session so the role persona loads cleanly from the new
   // workdir, rather than stacking on the prior assistant context.
   s.setAgentSessionID('', '')
-  s.setChatroomRoleName(role)
-  s.setChatroomHubKey('') // critical: the relay stays dormant
-  s.setChatroomDirectRole(true)
+  chatroomState(s).chatroomRoleName = role
+  chatroomState(s).chatroomHubKey = '' // critical: the relay stays dormant
+  chatroomState(s).chatroomDirectRole = true
   e.sessions.save()
 
   // Notice card.
@@ -422,7 +424,7 @@ export async function afterChatroomStarted(
   // here, research-assistant groups in the research branch below.
   const chatroomChildKeys: string[] = started.map(r => r.sessionKey)
   // Bind the chatroom to its home dir so the moderator agent runs there.
-  const home = e.chatroomModeratorDir()
+  const home = chatroomConfig(e).moderatorDir()
   if (home.ok) {
     e.projectState?.setWorkspaceDirOverride(e.dirOverrideKey(sessionKey), home.dir)
     e.projectState?.save()
@@ -431,10 +433,10 @@ export async function afterChatroomStarted(
   // persona (not the direct-role contract) — covers /chatroom <single-role>
   // followed later by /chatroom a,b in the same hub.
   const s = e.sessions.getOrCreateActive(sessionKey)
-  if (s.getChatroomDirectRole()) s.setChatroomDirectRole(false)
+  if (chatroomState(s).chatroomDirectRole) chatroomState(s).chatroomDirectRole = false
   // Mark the hub as the chatroom moderator so its agent session swaps to the
   // bare persona (D3 setup hook replaces Go's --bare fork).
-  s.setChatroomModerator(true)
+  chatroomState(s).chatroomModerator = true
   e.sessions.save()
   // The #59/#43 flows wake the hub BEFORE the moderator flag exists, so a
   // hub agent may already be running with the plain persona. Recycle the
@@ -460,7 +462,7 @@ export async function afterChatroomStarted(
   // Research mode: pre-spawn a full-CC assistant subgroup for each role so
   // the role can drive it to fetch data / run scripts without needing coding
   // tools itself. The assistant stays IDLE until the role sends it a task.
-  const research = s.getChatroomResearch()
+  const research = chatroomState(s).chatroomResearch
   if (research) {
     // All assistants share one workdir (the research workspace) so they
     // reuse a single Python env / data dir. resolveDir requires the dir to
@@ -495,13 +497,13 @@ export async function afterChatroomStarted(
         console.warn(`chatroom: research assistant spawn failed (role=${r.name}): ${String(error)}`)
         continue
       }
-      e.sessions.getOrCreateActive(r.sessionKey).setResearchAssistantKey(childKey)
+      chatroomState(e.sessions.getOrCreateActive(r.sessionKey)).researchAssistantKey = childKey
       chatroomChildKeys.push(childKey)
       // Flag the child session as a research assistant so its bare persona
       // carries the research preamble + venv instructions.
       const child = e.sessions.getOrCreateActive(childKey)
-      child.setResearchAssistant(true)
-      if (researchVenv !== '') child.setResearchVenv(researchVenv)
+      chatroomState(child).researchAssistant = true
+      if (researchVenv !== '') chatroomState(child).researchVenv = researchVenv
       // Rename the assistant group so the user can tell assistants apart in
       // the group list; the idle spawn's neutral placeholder would stick.
       const assistantName = chatroomAssistantGroupName(r.name)
@@ -523,10 +525,10 @@ export async function afterChatroomStarted(
   // Wake the hub agent as the moderator with the orchestration contract.
   let priming = buildChatroomModeratorPriming(topic, started, ledgerDir ?? '')
   if (research) {
-    let mode = s.getChatroomResearchMode()
+    let mode = chatroomState(s).chatroomResearchMode
     if (mode === '') mode = 'auto'
-    let maxRounds = e.maxChatroomResearchRoundsValue()
-    const override = s.getChatroomResearchMaxRounds()
+    let maxRounds = chatroomConfig(e).maxResearchRounds()
+    const override = chatroomState(s).chatroomResearchMaxRounds
     if (override > 0) maxRounds = override
     priming = buildChatroomResearchModeratorPriming(topic, started, ledgerDir ?? '', mode, maxRounds)
   }

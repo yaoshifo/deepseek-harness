@@ -8,13 +8,15 @@
  * @module dsh-feishu-bridge/chatroom-pick
  */
 
-import type { Engine } from './engine.js'
-import { emptyMessage } from './engine.js'
-import type { Message, Platform } from '../core/types.js'
-import { asCardSender, asReplyContextReconstructor } from '../core/types.js'
-import { newCard } from '../card.js'
-import type { Card } from '../card.js'
-import { Msg } from '../i18n/keys.js'
+import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { emptyMessage } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import type { Message, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { asCardSender, asReplyContextReconstructor } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { newCard } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import type { Card } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { Msg } from '../i18n.js'
+import { chatroomState } from '../chatroom-state.js'
+import { chatroomConfig } from '../chatroom-config.js'
 import { listRoleNames } from './chatroom-roles.js'
 import { buildChatroomPickPriming, buildChatroomTopicPickPriming } from './chatroom-priming.js'
 import { clearChatroomResearchFlags, startChatroom } from './chatroom.js'
@@ -171,13 +173,13 @@ function simpleCard(title: string, color: string, content: string): Card {
  * @param topic - Topic the moderator recommends roles for.
  */
 export function beginChatroomPick(e: Engine, p: Platform, msg: Message, topic: string): void {
-  const rolesDir = e.chatroomRolesDir()
+  const rolesDir = chatroomConfig(e).rolesDir()
   const all = listRoleNames(rolesDir)
   if (all.length === 0) {
     throw new Error(e.i18n.t(Msg.ChatroomNoRolesConfigured))
   }
   // Bind the moderator workdir so the moderator agent runs in the chatroom home.
-  const home = e.chatroomModeratorDir()
+  const home = chatroomConfig(e).moderatorDir()
   if (home.ok) {
     e.projectState?.setWorkspaceDirOverride(e.dirOverrideKey(msg.sessionKey), home.dir)
     e.projectState?.save()
@@ -306,7 +308,7 @@ export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: C
   ps.selected = new Map()
   // Cap preselection at the role limit so the user never lands on the picker
   // already over the max; extra recommended roles stay listed and selectable.
-  const max = e.maxChatroomRoles()
+  const max = chatroomConfig(e).maxRoles()
   for (const r of kept) {
     if (r.recommended && ps.selected.size < max) ps.selected.set(r.name, true)
   }
@@ -357,7 +359,7 @@ export function executeChatroomPickAction(e: Engine, sessionKey: string, args: s
         ps.hint = e.i18n.t(Msg.ChatroomPickEmpty)
         return
       }
-      const max = e.maxChatroomRoles()
+      const max = chatroomConfig(e).maxRoles()
       if (ps.selected.size > max) {
         ps.hint = e.i18n.tf(Msg.ChatroomPickTooMany, ps.selected.size, max)
         return
@@ -388,12 +390,12 @@ export function executeChatroomPickAction(e: Engine, sessionKey: string, args: s
  * @param msg - Triggering message; its session key becomes the hub.
  */
 export function beginChatroomTopicPick(e: Engine, p: Platform, msg: Message): void {
-  const rolesDir = e.chatroomRolesDir()
+  const rolesDir = chatroomConfig(e).rolesDir()
   const all = listRoleNames(rolesDir)
   if (all.length === 0) {
     throw new Error(e.i18n.t(Msg.ChatroomNoRolesConfigured))
   }
-  const home = e.chatroomModeratorDir()
+  const home = chatroomConfig(e).moderatorDir()
   if (home.ok) {
     e.projectState?.setWorkspaceDirOverride(e.dirOverrideKey(msg.sessionKey), home.dir)
     e.projectState?.save()
@@ -596,14 +598,14 @@ export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: st
     }
     executeChatroomPickAction(e, sessionKey, args)
     if (args.startsWith('cancel')) {
-      return simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'grey', e.i18n.t('chatroom_pick_cancelled'))
+      return simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'grey', e.i18n.t(Msg.ChatroomPickCancelled))
     }
     if (args.startsWith('confirm')) {
       // executeChatroomPickAction may have refused to confirm (empty or
       // over-max) and left the picker alive; re-render it with its hint.
       const ps = pickers(e).chatroomPick.get(sessionKey)
       if (ps !== undefined && ps.phase === 'select') return renderChatroomPickCard(e, ps)
-      return simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'purple', e.i18n.t('chatroom_pick_starting'))
+      return simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'purple', e.i18n.t(Msg.ChatroomPickStarting))
     }
     // toggle: re-render the picker from current state.
     const ps = pickers(e).chatroomPick.get(sessionKey)
@@ -616,12 +618,12 @@ export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: st
     }
     executeChatroomTopicPickAction(e, sessionKey, args)
     if (args.startsWith('cancel')) {
-      return simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'grey', e.i18n.t('chatroom_topic_pick_cancelled'))
+      return simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'grey', e.i18n.t(Msg.ChatroomTopicPickCancelled))
     }
     if (args.startsWith('confirm')) {
       // The state machine already cleared state + armed the async finalize;
       // show a transitional card in place of the picker.
-      return simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'purple', e.i18n.t('chatroom_topic_pick_starting'))
+      return simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'purple', e.i18n.t(Msg.ChatroomTopicPickStarting))
     }
     const ps = pickers(e).chatroomTopicPick.get(sessionKey)
     if (ps === undefined || ps.phase !== 'select') return undefined
@@ -646,8 +648,8 @@ async function finalizeChatroomPick(
     // A single confirmed role becomes a 1:1 direct chat — reject a stashed
     // --research flag instead of silently dropping it.
     const hub = e.sessions.getOrCreateActive(hubKey)
-    if (hub.getChatroomResearch()) {
-      void e.reply(p, rctx, e.i18n.t('chatroom_research_single_role'))
+    if (chatroomState(hub).chatroomResearch) {
+      void e.reply(p, rctx, e.i18n.t(Msg.ChatroomResearchSingleRole))
       clearChatroomResearchFlags(hub)
       e.sessions.save()
       return
@@ -661,7 +663,7 @@ async function finalizeChatroomPick(
     started = await startChatroom(e, hubKey, names, topic)
   } catch (error) {
     console.warn(`chatroom: pick finalize StartChatroom failed (hub=${hubKey}): ${String(error)}`)
-    void e.sendAsCard(p, rctx, String(error instanceof Error ? error.message : error), { title: e.i18n.t('chatroom_ready'), color: 'red' })
+    void e.sendAsCard(p, rctx, String(error instanceof Error ? error.message : error), { title: e.i18n.t(Msg.ChatroomReady), color: 'red' })
     return
   }
   await afterChatroomStarted(e, p, hubKey, userID, chatType, rctx, started, topic)

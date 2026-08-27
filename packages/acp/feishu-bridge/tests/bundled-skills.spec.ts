@@ -31,7 +31,6 @@ describe('mountBundledSkills', () => {
     mountBundledSkills(ctx)
     const names = await skillNames(ctx)
     expect(names).toContain('feishu-bridge-subtask')
-    expect(names).toContain('feishu-bridge-chatroom-moderator')
     expect(names).toContain('tdd')
     const subtask = (await ctx.skills.list()).find(skill => skill.name === 'feishu-bridge-subtask')
     expect(subtask?.provider).toBe('feishu-bridge-skills')

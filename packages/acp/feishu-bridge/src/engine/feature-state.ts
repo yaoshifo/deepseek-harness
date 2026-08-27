@@ -5,7 +5,8 @@
  * declares which parts of it survive a conversation reset (`/new`, idle
  * reset) by carrying them itself. The registry is module-level (not a cordis
  * service) because Session and SessionManager are non-cordis classes, the
- * same shape as registerChatroomPolicyListeners; apply wires the codec per
+ * same shape as the chatroom package's other process-level registrations;
+ * its apply wires the codec per
  * process and reverses it through ctx.effect.
  *
  * @module dsh-feishu-bridge/feature-state

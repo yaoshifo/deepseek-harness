@@ -28,7 +28,6 @@ import {
 } from '../core/types.js'
 import { atomicWriteFileSync } from '../atomicwrite.js'
 import { featureStateCodecs } from './feature-state.js'
-import { chatroomFeatureState } from './chatroom-feature-state.js'
 
 /**
  * Snapshot schema version: 3 nests plugin feature state under `featureState`
@@ -96,147 +95,14 @@ export class Session {
   /** Message ID of the chat's pinned top-notice banner, cleared when replaced. */
   topNoticeMessageID = ''
   /**
-   * Opaque per-plugin feature state, persisted as the `featureState` object
-   * of the version-3 snapshot. The bridge stores and carries sections
-   * through registered FeatureStateCodec hooks; the durable chatroom fields
-   * below live in the `chatroom` section.
-   */
+    * Opaque per-plugin feature state, persisted as the `featureState` object
+    * of the version-3 snapshot. The bridge stores and carries sections
+    * through registered FeatureStateCodec hooks; section contents are owned
+    * by the registering plugin (the chatroom one owns the `chatroom`
+    * section, whose version-2 flat field names the loader below lifts).
+    */
   featureState: Record<string, unknown> = {}
-  /** Session key of the hub driving this chatroom role session ('' when not a role). */
-  get chatroomHubKey(): string {
-    return chatroomFeatureState(this).chatroomHubKey ?? ''
-  }
-  set chatroomHubKey(value: string) {
-    chatroomFeatureState(this).chatroomHubKey = value
-  }
-  /** Role name this session plays in its chatroom. */
-  get chatroomRoleName(): string {
-    return chatroomFeatureState(this).chatroomRoleName ?? ''
-  }
-  set chatroomRoleName(value: string) {
-    chatroomFeatureState(this).chatroomRoleName = value
-  }
-  /** One-shot ask gate: the hub already asked this role in the current gather round. */
-  get chatroomAsked(): boolean {
-    return chatroomFeatureState(this).chatroomAsked ?? false
-  }
-  set chatroomAsked(value: boolean) {
-    chatroomFeatureState(this).chatroomAsked = value
-  }
-  /** Hub session driving a research-mode chatroom (Go ChatroomResearch). */
-  get chatroomResearch(): boolean {
-    return chatroomFeatureState(this).chatroomResearch ?? false
-  }
-  set chatroomResearch(value: boolean) {
-    chatroomFeatureState(this).chatroomResearch = value
-  }
-  /** Hub session converted into a 1:1 direct chatroom (Go ChatroomDirectRole). */
-  get chatroomDirectRole(): boolean {
-    return chatroomFeatureState(this).chatroomDirectRole ?? false
-  }
-  set chatroomDirectRole(value: boolean) {
-    chatroomFeatureState(this).chatroomDirectRole = value
-  }
-  /** Session key of a research role's pre-spawned assistant subgroup (Go ResearchAssistantKey). */
-  get researchAssistantKey(): string {
-    return chatroomFeatureState(this).researchAssistantKey ?? ''
-  }
-  set researchAssistantKey(value: string) {
-    chatroomFeatureState(this).researchAssistantKey = value
-  }
-  /** Marks a pre-spawned research-assistant subgroup (Go ResearchAssistant). */
-  get researchAssistant(): boolean {
-    return chatroomFeatureState(this).researchAssistant ?? false
-  }
-  set researchAssistant(value: boolean) {
-    chatroomFeatureState(this).researchAssistant = value
-  }
-  /** Research role awaiting its assistant's report before concluding (Go ResearchAwaitingAssistant). */
-  get researchAwaitingAssistant(): boolean {
-    return chatroomFeatureState(this).researchAwaitingAssistant ?? false
-  }
-  set researchAwaitingAssistant(value: boolean) {
-    chatroomFeatureState(this).researchAwaitingAssistant = value
-  }
-  /** Research role dispatched its assistant this round; in-memory only (Go ResearchDispatched). */
-  researchDispatched = false
-  /** Gather-round stamp on a role session; in-memory only (Go ChatroomAskSeq). */
-  chatroomAskSeq = 0
-  /** Hub session driving a chatroom as the moderator (Go ChatroomModerator). */
-  get chatroomModerator(): boolean {
-    return chatroomFeatureState(this).chatroomModerator ?? false
-  }
-  set chatroomModerator(value: boolean) {
-    chatroomFeatureState(this).chatroomModerator = value
-  }
-  /** Research iteration driver: 'auto' | 'manual' (Go ChatroomResearchMode). */
-  get chatroomResearchMode(): string {
-    return chatroomFeatureState(this).chatroomResearchMode ?? ''
-  }
-  set chatroomResearchMode(value: string) {
-    chatroomFeatureState(this).chatroomResearchMode = value
-  }
-  /** Current research iteration round, 1-based (Go ChatroomResearchRound). */
-  get chatroomResearchRound(): number {
-    return chatroomFeatureState(this).chatroomResearchRound ?? 0
-  }
-  set chatroomResearchRound(value: number) {
-    chatroomFeatureState(this).chatroomResearchRound = value
-  }
-  /** Per-invocation override of the auto-mode research round cap (Go ChatroomResearchMaxRounds). */
-  get chatroomResearchMaxRounds(): number {
-    return chatroomFeatureState(this).chatroomResearchMaxRounds ?? 0
-  }
-  set chatroomResearchMaxRounds(value: number) {
-    chatroomFeatureState(this).chatroomResearchMaxRounds = value
-  }
-  /** Monotonic per-hub gather-round counter (Go ChatroomGatherSeq). */
-  get chatroomGatherSeq(): number {
-    return chatroomFeatureState(this).chatroomGatherSeq ?? 0
-  }
-  set chatroomGatherSeq(value: number) {
-    chatroomFeatureState(this).chatroomGatherSeq = value
-  }
-  /** Shared uv venv path for research assistants (Go ResearchVenv). */
-  get researchVenv(): string {
-    return chatroomFeatureState(this).researchVenv ?? ''
-  }
-  set researchVenv(value: string) {
-    chatroomFeatureState(this).researchVenv = value
-  }
-  /** Role has an asked question whose turn is generating; in-memory only (Go ChatroomInFlight). */
-  chatroomInFlight = false
-  /** Hub-side pending role name for a routed human reply (Go PendingHumanQuestionRole). */
-  get pendingHumanQuestionRole(): string {
-    return chatroomFeatureState(this).pendingHumanQuestionRole ?? ''
-  }
-  set pendingHumanQuestionRole(value: string) {
-    chatroomFeatureState(this).pendingHumanQuestionRole = value
-  }
-  /** Armed chatroom gather barrier on a hub session; in-memory only (Go PendingGather). */
-  pendingGather: import('./chatroom.js').ChatroomGather | undefined
-  /** Armed chatroom end barrier on a hub session; in-memory only (Go PendingEndBarrier). */
-  pendingEndBarrier: import('./chatroom.js').ChatroomEndBarrier | undefined
-  /**
-   * Durable snapshot of pendingGather from the last on-disk load; recovery
-   * (chatroom recoverChatroomBarriers) consumes it at engine start.
-   */
-  get pendingGatherData(): import('./chatroom.js').GatherBarrierSnapshot | undefined {
-    return chatroomFeatureState(this).pendingGatherData
-  }
-  set pendingGatherData(value: import('./chatroom.js').GatherBarrierSnapshot | undefined) {
-    chatroomFeatureState(this).pendingGatherData = value
-  }
-  /**
-   * Durable snapshot of pendingEndBarrier from the last on-disk load;
-   * recovery (chatroom recoverChatroomBarriers) consumes it at engine start.
-   */
-  get pendingEndBarrierData(): import('./chatroom.js').EndBarrierSnapshot | undefined {
-    return chatroomFeatureState(this).pendingEndBarrierData
-  }
-  set pendingEndBarrierData(value: import('./chatroom.js').EndBarrierSnapshot | undefined) {
-    chatroomFeatureState(this).pendingEndBarrierData = value
-  }
+
   /**
    * Pending monitor dir-clarification on this chat (Go
    * PendingMonitorClarification); in-memory only — a restart mid-clarify
@@ -475,366 +341,6 @@ export class Session {
    */
   setSubtaskDepth(d: number): void {
     this.subtaskDepth = d
-  }
-
-  /**
-   * Session key of the hub driving this role session.
-   *
-   * @returns the stored chatroomHubKey, '' when not a chatroom role.
-   */
-  getChatroomHubKey(): string {
-    return this.chatroomHubKey
-  }
-
-  /**
-   * Attach this role session to a chatroom hub.
-   *
-   * @param key - the hub's session key.
-   */
-  setChatroomHubKey(key: string): void {
-    this.chatroomHubKey = key
-  }
-
-  /**
-   * Role name this session plays in its chatroom.
-   *
-   * @returns the stored chatroomRoleName, '' when unset.
-   */
-  getChatroomRoleName(): string {
-    return this.chatroomRoleName
-  }
-
-  /**
-   * Set the role name this session plays in its chatroom.
-   *
-   * @param name - the new role name.
-   */
-  setChatroomRoleName(name: string): void {
-    this.chatroomRoleName = name
-  }
-
-  /**
-   * Whether the hub already asked this role in the current gather round.
-   *
-   * @returns the stored chatroomAsked.
-   */
-  getChatroomAsked(): boolean {
-    return this.chatroomAsked
-  }
-
-  /**
-   * Arm or clear the one-shot ask gate for the current gather round.
-   *
-   * @param v - the new flag value.
-   */
-  setChatroomAsked(v: boolean): void {
-    this.chatroomAsked = v
-  }
-
-  /**
-   * Whether this hub session drives a research-mode chatroom.
-   *
-   * @returns the stored chatroomResearch.
-   */
-  getChatroomResearch(): boolean {
-    return this.chatroomResearch
-  }
-
-  /**
-   * Mark this hub session as driving a research-mode chatroom.
-   *
-   * @param v - the new flag value.
-   */
-  setChatroomResearch(v: boolean): void {
-    this.chatroomResearch = v
-  }
-
-  /**
-   * Whether this hub session was converted into a 1:1 direct chatroom.
-   *
-   * @returns the stored chatroomDirectRole.
-   */
-  getChatroomDirectRole(): boolean {
-    return this.chatroomDirectRole
-  }
-
-  /**
-   * Mark this hub session as converted into a 1:1 direct chatroom.
-   *
-   * @param v - the new flag value.
-   */
-  setChatroomDirectRole(v: boolean): void {
-    this.chatroomDirectRole = v
-  }
-
-  /**
-   * Session key of the research role's pre-spawned assistant subgroup.
-   *
-   * @returns the stored researchAssistantKey, '' when none.
-   */
-  getResearchAssistantKey(): string {
-    return this.researchAssistantKey
-  }
-
-  /**
-   * Point this research role at its pre-spawned assistant subgroup.
-   *
-   * @param key - the assistant subgroup's session key.
-   */
-  setResearchAssistantKey(key: string): void {
-    this.researchAssistantKey = key
-  }
-
-  /**
-   * Whether this session is a pre-spawned research-assistant subgroup.
-   *
-   * @returns the stored researchAssistant.
-   */
-  getResearchAssistant(): boolean {
-    return this.researchAssistant
-  }
-
-  /**
-   * Mark this session as a pre-spawned research-assistant subgroup.
-   *
-   * @param v - the new flag value.
-   */
-  setResearchAssistant(v: boolean): void {
-    this.researchAssistant = v
-  }
-
-  /**
-   * Whether this research role awaits its assistant's report before concluding.
-   *
-   * @returns the stored researchAwaitingAssistant.
-   */
-  getResearchAwaitingAssistant(): boolean {
-    return this.researchAwaitingAssistant
-  }
-
-  /**
-   * Arm or clear the awaiting-assistant state for this research role.
-   *
-   * @param v - the new flag value.
-   */
-  setResearchAwaitingAssistant(v: boolean): void {
-    this.researchAwaitingAssistant = v
-  }
-
-  /**
-   * Whether this research role dispatched its assistant this round.
-   *
-   * @returns the stored researchDispatched.
-   */
-  getResearchDispatched(): boolean {
-    return this.researchDispatched
-  }
-
-  /**
-   * Record whether this research role dispatched its assistant this round.
-   *
-   * @param v - the new flag value.
-   */
-  setResearchDispatched(v: boolean): void {
-    this.researchDispatched = v
-  }
-
-  /**
-   * Gather-round stamp of this role's current ask.
-   *
-   * @returns the stored chatroomAskSeq, 0 when unstamped.
-   */
-  getChatroomAskSeq(): number {
-    return this.chatroomAskSeq
-  }
-
-  /**
-   * Stamp this role's turn with the gather round it was asked in.
-   *
-   * @param seq - the gather-round sequence number.
-   */
-  setChatroomAskSeq(seq: number): void {
-    this.chatroomAskSeq = seq
-  }
-
-  /**
-   * Whether this hub session drives the chatroom as the moderator.
-   *
-   * @returns the stored chatroomModerator.
-   */
-  getChatroomModerator(): boolean {
-    return this.chatroomModerator
-  }
-
-  /**
-   * Mark this hub session as the chatroom moderator.
-   *
-   * @param v - the new flag value.
-   */
-  setChatroomModerator(v: boolean): void {
-    this.chatroomModerator = v
-  }
-
-  /**
-   * Research iteration driver.
-   *
-   * @returns the stored chatroomResearchMode: 'auto' or 'manual', '' when unset.
-   */
-  getChatroomResearchMode(): string {
-    return this.chatroomResearchMode
-  }
-
-  /**
-   * Set the research iteration driver.
-   *
-   * @param mode - the driver: 'auto' or 'manual'.
-   */
-  setChatroomResearchMode(mode: string): void {
-    this.chatroomResearchMode = mode
-  }
-
-  /**
-   * Current research iteration round.
-   *
-   * @returns the stored chatroomResearchRound, 1-based and 0 before the first.
-   */
-  getChatroomResearchRound(): number {
-    return this.chatroomResearchRound
-  }
-
-  /**
-   * Set the current research iteration round.
-   *
-   * @param round - the 1-based round number.
-   */
-  setChatroomResearchRound(round: number): void {
-    this.chatroomResearchRound = round
-  }
-
-  /**
-   * Per-invocation auto-mode research round cap.
-   *
-   * @returns the stored chatroomResearchMaxRounds, 0 for the default.
-   */
-  getChatroomResearchMaxRounds(): number {
-    return this.chatroomResearchMaxRounds
-  }
-
-  /**
-   * Override the auto-mode research round cap for this invocation.
-   *
-   * @param n - the round cap, 0 for the default.
-   */
-  setChatroomResearchMaxRounds(n: number): void {
-    this.chatroomResearchMaxRounds = n
-  }
-
-  /**
-   * Monotonic per-hub gather-round counter.
-   *
-   * @returns the stored chatroomGatherSeq.
-   */
-  getChatroomGatherSeq(): number {
-    return this.chatroomGatherSeq
-  }
-
-  /**
-   * Advance the hub's gather-round counter.
-   *
-   * @param seq - the new counter value.
-   */
-  setChatroomGatherSeq(seq: number): void {
-    this.chatroomGatherSeq = seq
-  }
-
-  /**
-   * Shared uv venv path research assistants reuse.
-   *
-   * @returns the stored researchVenv, '' when none.
-   */
-  getResearchVenv(): string {
-    return this.researchVenv
-  }
-
-  /**
-   * Set the shared uv venv path research assistants reuse.
-   *
-   * @param v - the venv path, '' to clear.
-   */
-  setResearchVenv(v: string): void {
-    this.researchVenv = v
-  }
-
-  /**
-   * Whether this role's asked question has a turn generating.
-   *
-   * @returns the stored chatroomInFlight.
-   */
-  getChatroomInFlight(): boolean {
-    return this.chatroomInFlight
-  }
-
-  /**
-   * Mark this role's asked question as generating or finished.
-   *
-   * @param v - the new flag value.
-   */
-  setChatroomInFlight(v: boolean): void {
-    this.chatroomInFlight = v
-  }
-
-  /**
-   * Hub-side role name a routed human reply is pending for.
-   *
-   * @returns the stored pendingHumanQuestionRole, '' when none.
-   */
-  getPendingHumanQuestionRole(): string {
-    return this.pendingHumanQuestionRole
-  }
-
-  /**
-   * Route the next human reply on the hub to this role.
-   *
-   * @param role - the role name, '' to clear the routing.
-   */
-  setPendingHumanQuestionRole(role: string): void {
-    this.pendingHumanQuestionRole = role
-  }
-
-  /**
-   * The armed gather barrier on a hub session.
-   *
-   * @returns the pending ChatroomGather barrier, undefined when none.
-   */
-  getPendingGather(): import('./chatroom.js').ChatroomGather | undefined {
-    return this.pendingGather
-  }
-
-  /**
-   * Arm or clear the chatroom gather barrier on this hub session.
-   *
-   * @param g - the barrier, or undefined to clear.
-   */
-  setPendingGather(g: import('./chatroom.js').ChatroomGather | undefined): void {
-    this.pendingGather = g
-  }
-
-  /**
-   * The armed end barrier on a hub session.
-   *
-   * @returns the pending ChatroomEndBarrier, undefined when none.
-   */
-  getPendingEndBarrier(): import('./chatroom.js').ChatroomEndBarrier | undefined {
-    return this.pendingEndBarrier
-  }
-
-  /**
-   * Arm or clear the chatroom end barrier on this hub session.
-   *
-   * @param b - the barrier, or undefined to clear.
-   */
-  setPendingEndBarrier(b: import('./chatroom.js').ChatroomEndBarrier | undefined): void {
-    this.pendingEndBarrier = b
   }
 
   /**
@@ -1212,12 +718,15 @@ interface SerializedSession {
   chatroomGatherSeq?: number
   researchVenv?: string
   pendingHumanQuestionRole?: string
-  pendingGatherData?: import('./chatroom.js').GatherBarrierSnapshot
-  pendingEndBarrierData?: import('./chatroom.js').EndBarrierSnapshot
+  pendingGatherData?: unknown
+  pendingEndBarrierData?: unknown
   featureState?: Record<string, unknown>
   createdAt: string
   updatedAt: string
 }
+
+/** The featureState key of the chatroom plugin's section (opaque to the bridge beyond this name). */
+const chatroomSectionKey = 'chatroom'
 
 /** The version-2 flat chatroom field names, lifted into featureState.chatroom on load. */
 const legacyChatroomFieldNames = [
@@ -1316,13 +825,15 @@ function deserializeSession(raw: SerializedSession): Session {
   const featureState: unknown = raw.featureState
   if (typeof featureState === 'object' && featureState !== null) s.featureState = featureState as Record<string, unknown>
   // Version 2 kept the chatroom/research fields flat on the session entry;
-  // lift them raw into the chatroom featureState section (no semantic
-  // interpretation — the Session accessors default the missing keys).
+  // lift them raw into the chatroom featureState section. The bridge does
+  // not interpret the section — the chatroom plugin's codec owns it (the
+  // field names below are the version-2 legacy spellings, verbatim).
   let section: Record<string, unknown> | undefined
   for (const key of legacyChatroomFieldNames) {
     const value = raw[key]
     if (value === undefined) continue
-    section ??= chatroomFeatureState(s) as Record<string, unknown>
+    section ??= {}
+    s.featureState[chatroomSectionKey] = section
     section[key] = value
   }
   s.createdAt = raw.createdAt

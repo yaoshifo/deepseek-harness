@@ -2619,7 +2619,7 @@ export class FeishuPlatform implements Platform {
     try {
       rendered = await this.uploadIconAvatarColor(iconName, familyName)
     } catch (err) {
-      throw new Error(`${this.tag()}: chatroom family avatar: render color: ${String(err)}`)
+      throw new Error(`${this.tag()}: group family avatar: render color: ${String(err)}`)
     }
     if (rendered.svg === '') return
     let grayKey = ''
@@ -2627,7 +2627,7 @@ export class FeishuPlatform implements Platform {
       try {
         grayKey = await this.uploadAvatarImage(await renderIconPNG(rendered.svg, 256, phaseAvatarBG.done))
       } catch (err) {
-        console.warn(`${this.tag()}: chatroom family avatar: upload gray failed: ${String(err)}`)
+        console.warn(`${this.tag()}: group family avatar: upload gray failed: ${String(err)}`)
       }
     }
     const hubChatID = extractFeishuChatID(hubKey)
@@ -2635,7 +2635,7 @@ export class FeishuPlatform implements Platform {
       try {
         await this.updateChatAvatar(hubChatID, rendered.key)
       } catch (err) {
-        console.warn(`${this.tag()}: chatroom family avatar: set hub avatar failed: ${String(err)}`)
+        console.warn(`${this.tag()}: group family avatar: set hub avatar failed: ${String(err)}`)
       }
     }
     for (const k of childKeys) {
@@ -2644,7 +2644,7 @@ export class FeishuPlatform implements Platform {
       try {
         await this.updateChatAvatar(chatID, rendered.key)
       } catch (err) {
-        console.warn(`${this.tag()}: chatroom family avatar: set child avatar failed: ${String(err)}`)
+        console.warn(`${this.tag()}: group family avatar: set child avatar failed: ${String(err)}`)
         continue
       }
       const meta = this.spawnStore.get(chatID) ?? { active: true }
@@ -2652,7 +2652,7 @@ export class FeishuPlatform implements Platform {
       await this.spawnStore.save()
     }
     console.info(
-      `${this.tag()}: chatroom family avatar set (hub ${hubKey}, icon ${iconName}, children ${childKeys.length}, color_key ${rendered.key}, gray_key ${grayKey})`,
+      `${this.tag()}: group family avatar set (hub ${hubKey}, icon ${iconName}, children ${childKeys.length}, color_key ${rendered.key}, gray_key ${grayKey})`,
     )
   }
 

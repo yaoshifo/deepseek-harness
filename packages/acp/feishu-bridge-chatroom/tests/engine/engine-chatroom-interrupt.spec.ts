@@ -9,8 +9,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
+import { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import {
   ChatroomEndBarrier,
   ChatroomGather,
@@ -19,7 +19,9 @@ import {
 } from '../../src/engine/chatroom.js'
 import { cmdChatroom } from '../../src/engine/chatroom-cmd.js'
 import { createStubAgent, createStubChatroomSpawner } from '../stubs/engine-stubs.js'
-import type { Platform } from '../../src/core/types.js'
+import type { Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { chatroomState } from '../../src/chatroom-state.js'
+import '../stubs/messages.js'
 
 async function settle(): Promise<void> {
   await new Promise((resolve) => { setTimeout(resolve, 0) })
@@ -45,17 +47,17 @@ const hubKey = 'test:hub:user-1'
 /** A chatroom with two bound roles, one armed gather awaiting both. */
 function armedChatroom(e: Engine): ChatroomGather {
   const hub = e.sessions.getOrCreateActive(hubKey)
-  hub.setChatroomModerator(true)
+  chatroomState(hub).chatroomModerator = true
   const g = new ChatroomGather('研究任务', 1)
   for (const name of ['taleb', 'munger']) {
     const key = `test:role-${name}`
     const s = e.sessions.getOrCreateActive(key)
-    s.setChatroomHubKey(hubKey)
+    chatroomState(s).chatroomHubKey = hubKey
     s.setParentSessionKey(hubKey)
-    s.setChatroomRoleName(name)
+    chatroomState(s).chatroomRoleName = name
     g.expected.add(name)
   }
-  hub.setPendingGather(g)
+  chatroomState(hub).pendingGather = g
   return g
 }
 
@@ -75,15 +77,15 @@ describe('interruptChatroom', () => {
 
     // The gather is consumed, its timer stopped, and no wake fires: the
     // interrupt card is the only terminal record.
-    expect(e.sessions.getOrCreateActive(hubKey).getPendingGather()).toBeUndefined()
+    expect(chatroomState(e.sessions.getOrCreateActive(hubKey)).pendingGather).toBeUndefined()
     expect(recv.mock.calls).toHaveLength(0)
     // The moderator turn and every in-flight member turn are stopped.
     expect(stops).toHaveBeenCalledWith(hubKey)
     expect(stops).toHaveBeenCalledWith('test:role-taleb')
     expect(stops).toHaveBeenCalledWith('test:role-munger')
     // Teardown ran: roles unbound, hub flag down, missing roles reported.
-    expect(e.sessions.getOrCreateActive('test:role-taleb').getChatroomHubKey()).toBe('')
-    expect(e.sessions.getOrCreateActive(hubKey).getChatroomModerator()).toBe(false)
+    expect(chatroomState(e.sessions.getOrCreateActive('test:role-taleb')).chatroomHubKey).toBe('')
+    expect(chatroomState(e.sessions.getOrCreateActive(hubKey)).chatroomModerator).toBe(false)
     expect(res.rolesRemoved).toBe(2)
     expect(res.missing).toEqual(['munger', 'taleb'])
 
@@ -99,13 +101,13 @@ describe('interruptChatroom', () => {
     armedChatroom(e)
     const b = new ChatroomEndBarrier()
     b.expected.add('taleb')
-    e.sessions.getOrCreateActive(hubKey).setPendingGather(undefined)
-    e.sessions.getOrCreateActive(hubKey).setPendingEndBarrier(b)
+    chatroomState(e.sessions.getOrCreateActive(hubKey)).pendingGather = undefined
+    chatroomState(e.sessions.getOrCreateActive(hubKey)).pendingEndBarrier = b
     const recv = vi.spyOn(e, 'receiveMessage').mockImplementation(() => {})
 
     const res = interruptChatroom(e, hubKey)
 
-    expect(e.sessions.getOrCreateActive(hubKey).getPendingEndBarrier()).toBeUndefined()
+    expect(chatroomState(e.sessions.getOrCreateActive(hubKey)).pendingEndBarrier).toBeUndefined()
     expect(recv.mock.calls).toHaveLength(0)
     expect(res.missing).toEqual(['taleb'])
   })
@@ -114,13 +116,13 @@ describe('interruptChatroom', () => {
     const p = createStubChatroomSpawner()
     const e = newEngine(p)
     const hub = e.sessions.getOrCreateActive(hubKey)
-    hub.setChatroomModerator(true)
+    chatroomState(hub).chatroomModerator = true
 
     const res = interruptChatroom(e, hubKey)
 
     expect(res.rolesRemoved).toBe(0)
     expect(res.missing).toEqual([])
-    expect(hub.getChatroomModerator()).toBe(false)
+    expect(chatroomState(hub).chatroomModerator).toBe(false)
   })
 })
 
@@ -149,7 +151,7 @@ describe('/chatroom stop', () => {
 
     await cmdChatroom(e, p, { sessionKey: 'test:role-taleb', replyCtx: 'ctx' } as never, ['stop'])
 
-    expect(e.sessions.getOrCreateActive(hubKey).getPendingGather()).toBeUndefined()
+    expect(chatroomState(e.sessions.getOrCreateActive(hubKey)).pendingGather).toBeUndefined()
     expect(recv.mock.calls).toHaveLength(0)
     await waitFor(() => p.sentCards.length > 0, 'interrupt card')
   })

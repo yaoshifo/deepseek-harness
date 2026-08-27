@@ -22,7 +22,25 @@ import {
 } from '../stubs/engine-stubs.js'
 import type { Agent, Event, Platform, ProgressContent } from '../../src/core/types.js'
 import { previewText, statusOf } from '../stubs/preview-content.js'
-import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
+import { Context } from '@deepseek-ai/cordis'
+import { ctxBridgeDispatch } from '../../src/bridge-service.js'
+
+// Policy-listener contexts are disposed after each test.
+const contextsForDispose: Context[] = []
+import { afterEach } from 'vitest'
+afterEach(async () => {
+  await Promise.allSettled(contextsForDispose.splice(0).map(ctx => ctx.fiber.dispose()))
+})
+
+/** The raw chatroom section of a session (opaque bag; written directly here). */
+function chatroomSection(session: Session): Record<string, unknown> {
+  let section = session.featureState.chatroom
+  if (typeof section !== 'object' || section === null) {
+    section = {}
+    session.featureState.chatroom = section
+  }
+  return section as Record<string, unknown>
+}
 
 // Ported from cc-connect core/engine_test.go — M1 scope: core event handling
 // (result/text/thinking basics), message queueing (#13), side-channel dedup,
@@ -1902,18 +1920,32 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
   })
 
   it('hard-cap exemption answers research assistants and research-hub roles via the bridge seam', () => {
-    // The engine dispatches the exemption through the bridge; the chatroom
-    // policy half restores the Go isResearchSession halves (assistant flag +
-    // research hub), and a bare engine exempts nothing.
-    const { e } = newEngine(undefined, undefined, chatroomPolicyFace())
+    // The engine dispatches the exemption through the bridge; a listener
+    // restores the Go isResearchSession halves (assistant flag + research
+    // hub), and a bare engine exempts nothing. The chatroom package's
+    // production listener (same shape) is covered in its own package.
+    const ctx = new Context()
+    contextsForDispose.push(ctx)
+    ctx.on('feishuBridge/hard-cap-exemption', (payload: { engine: Engine; session: Session }, next: () => boolean) => {
+      const section = payload.session.featureState.chatroom as { chatroomHubKey?: string; chatroomResearch?: boolean; researchAssistant?: boolean } | undefined
+      if (section?.researchAssistant === true) return true
+      const hubKey = section?.chatroomHubKey
+      if (hubKey !== undefined && hubKey !== '') {
+        const hub = payload.engine.sessions.findActive(hubKey)
+        const hubSection = hub?.featureState.chatroom as { chatroomResearch?: boolean } | undefined
+        if (hubSection?.chatroomResearch === true) return true
+      }
+      return next()
+    })
+    const { e } = newEngine(undefined, undefined, ctxBridgeDispatch(ctx))
     const role = e.sessions.getOrCreateActive('test:role')
     expect(e.bridge.waterfall('feishuBridge/hard-cap-exemption', { engine: e, session: role }, () => false)).toBe(false)
     const hub = e.sessions.getOrCreateActive('test:hub')
-    hub.chatroomResearch = true
-    role.chatroomHubKey = 'test:hub'
+    chatroomSection(hub).chatroomResearch = true
+    chatroomSection(role).chatroomHubKey = 'test:hub'
     expect(e.bridge.waterfall('feishuBridge/hard-cap-exemption', { engine: e, session: role }, () => false)).toBe(true)
     const assistant = e.sessions.getOrCreateActive('test:assistant')
-    assistant.researchAssistant = true
+    chatroomSection(assistant).researchAssistant = true
     expect(e.bridge.waterfall('feishuBridge/hard-cap-exemption', { engine: e, session: assistant }, () => false)).toBe(true)
     const bare = newEngine().e
     expect(bare.bridge.waterfall('feishuBridge/hard-cap-exemption', { engine: bare, session: assistant }, () => false)).toBe(false)
@@ -2008,8 +2040,13 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
 
   it('research sessions lift the hard cap (Go researchExempt)', async () => {
     // The exemption rides the hard-cap-exemption waterfall: the engine needs
-    // the chatroom policy face for the research halves to answer.
-    const { e, p } = newEngine(undefined, undefined, chatroomPolicyFace())
+    // a research listener for the research halves to answer (the chatroom
+    // package's production listener, same shape, is covered there).
+    const researchCtx = new Context()
+    contextsForDispose.push(researchCtx)
+    researchCtx.on('feishuBridge/hard-cap-exemption', (payload: { session: Session }, next: () => boolean) =>
+      next() || (payload.session.featureState.chatroom as { researchAssistant?: boolean } | undefined)?.researchAssistant === true)
+    const { e, p } = newEngine(undefined, undefined, ctxBridgeDispatch(researchCtx))
     e.setEventIdleTimeout(400)
     e.setAbsoluteTurnTimeoutSecs(1)
     const key = 'test:hard-cap-research'
@@ -2020,7 +2057,7 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     state.replyCtx = 'ctx'
     e.interactiveStates.set(key, state)
     const session = e.sessions.getOrCreateActive(key)
-    session.researchAssistant = true
+    chatroomSection(session).researchAssistant = true
     session.tryLock()
 
     const done = e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, undefined)

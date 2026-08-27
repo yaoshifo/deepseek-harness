@@ -18,8 +18,8 @@ import type {
   Platform,
   ProviderSwitcher,
   UserQuestion,
-} from '../../src/core/types.js'
-import { EventChannel as EventChannelImpl } from '../../src/core/types.js'
+} from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { EventChannel as EventChannelImpl } from '@deepseek-ai/dsh-feishu-bridge/exports'
 
 /** Go stubAgent: empty agent, StartSession returns a stubAgentSession. */
 export type StubAgent = Agent
@@ -294,6 +294,14 @@ export function testMultiQuestions(): UserQuestion[] {
   ]
 }
 
+// ── M5 stubs ──────────────────────────────────────────────────────────────
+
+/** A recorded RenameGroupAny invocation (Go stubRenameCall). */
+interface StubRenameCall {
+  key: string
+  name: string
+}
+
 /**
  * Go stubChatroomSpawner: a card-capable platform that spawns groups with
  * distinct session keys per call (so multi-role chatrooms don't collide) and
@@ -337,6 +345,77 @@ export function createStubChatroomSpawner(n = 'test'): StubChatroomSpawner {
   p.sentCards = []
   p.sendCard = async (_rc, card) => { p.sentCards.push(card) }
   p.replyCard = async (_rc, card) => { p.sentCards.push(card) }
+  return p
+}
+
+/**
+ * Go stubChatroomSpawnerEx: adds the spawnGroupWithOptions path (which real
+ * Feishu uses), records cleanup (markSpawnedChatDone), and records
+ * RenameGroupAny calls so EndChatroom and the hub rename are observable.
+ */
+export interface StubChatroomSpawnerEx extends StubChatroomSpawner {
+  exOpts: Array<{ workDir: string }>
+  exFirst: string[]
+  doneKeys: string[]
+  renamedAny: StubRenameCall[]
+  spawnGroupWithOptions(msg: Message, groupName: string, firstMsg: string, opts: { workDir: string }): Promise<Message>
+  markSpawnedChatDone(sessionKey: string): Promise<void>
+  setChatPhase(sessionKey: string, phase: import('@deepseek-ai/dsh-feishu-bridge/exports').ChatPhase): Promise<void>
+  renameGroup(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
+  renameGroupAny(sessionKey: string, newName: string, signal?: AbortSignal): Promise<void>
+  renamedAnyCalls(): StubRenameCall[]
+}
+
+export function createStubChatroomSpawnerEx(n = 'test'): StubChatroomSpawnerEx {
+  // Mutate the base object instead of spreading: the base's spawnGroup
+  // closure reads its own `count`/`firstMsgs`/`groupNames` properties, so a
+  // spread copy would carry stale counter values while the closure kept
+  // mutating the original.
+  const p = createStubChatroomSpawner(n) as StubChatroomSpawnerEx
+  p.exOpts = []
+  p.exFirst = []
+  p.doneKeys = []
+  p.renamedAny = []
+  p.spawnGroupWithOptions = async (msg, groupName, firstMsg, opts) => {
+    p.exOpts.push({ workDir: opts.workDir })
+    p.exFirst.push(firstMsg)
+    return p.spawnGroup(msg, groupName, firstMsg)
+  }
+  p.markSpawnedChatDone = async (sessionKey: string) => {
+    p.doneKeys.push(sessionKey)
+  }
+  // Satisfies ChatPhasePainter so /done's cleanup (and EndChatroom, which
+  // drives it) proceeds past the avatar step. "Which roles were cleaned" is
+  // observed via doneKeys.
+  p.setChatPhase = async () => {}
+  p.renameGroup = async () => {}
+  p.renameGroupAny = async (key, name) => {
+    p.renamedAny.push({ key, name })
+  }
+  p.renamedAnyCalls = () => [...p.renamedAny]
+  return p
+}
+
+/**
+ * Go stubProgressCardPlatform: adds CardSenderWithUpdate to the chatroom
+ * stub so research progress-card sends/PATCHes are observable.
+ */
+export interface StubProgressCardPlatform extends StubChatroomSpawner {
+  updates: string[]
+  sendCardWithHandle(replyCtx: unknown, card: unknown): Promise<unknown>
+  updateCardWithHandle(handle: unknown, card: unknown): Promise<void>
+  patchedTitles(): string[]
+}
+
+export function createStubProgressCardPlatform(n = 'test'): StubProgressCardPlatform {
+  const p = createStubChatroomSpawner(n) as StubProgressCardPlatform
+  p.updates = []
+  p.sendCardWithHandle = async () => 'progress-handle'
+  p.updateCardWithHandle = async (_handle, card) => {
+    const c = card as RecordedCard
+    p.updates.push(c.header?.title ?? '')
+  }
+  p.patchedTitles = () => [...p.updates]
   return p
 }
 

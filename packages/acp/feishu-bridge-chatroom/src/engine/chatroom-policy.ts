@@ -10,13 +10,15 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { Engine } from './engine.js'
-import type { Session } from './session.js'
+import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import type { Session } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { armResearchManualAskTimeout, maybeAutoRelayRole, recoverChatroomBarriers, routePendingHumanReply } from './chatroom.js'
 import { chatroomPickActive } from './chatroom-pick.js'
 import { chatroomLedgerDir } from './chatroom-ledger.js'
 import { buildChatroomSystemPrompt } from './chatroom-persona.js'
-import type { SessionStartOptions } from '../core/types.js'
+import type { SessionStartOptions } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { chatroomState } from '../chatroom-state.js'
+import { chatroomConfig } from '../chatroom-config.js'
 
 /**
  * Register the chatroom halves of the `feishuBridge/*` events:
@@ -56,11 +58,11 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
       return forced !== undefined && payload.mode === 'plan' ? forced : next()
     }),
     ctx.on('feishuBridge/rename-exemption', (payload, next) =>
-      next() || payload.session.getChatroomHubKey() !== '' || payload.session.getChatroomDirectRole() || payload.session.getResearchAssistant()),
+      next() || chatroomState(payload.session).chatroomHubKey !== '' || chatroomState(payload.session).chatroomDirectRole || chatroomState(payload.session).researchAssistant),
     ctx.on('feishuBridge/auto-render-policy', (payload, next) =>
-      next() || payload.session.getChatroomHubKey() !== ''),
+      next() || chatroomState(payload.session).chatroomHubKey !== ''),
     ctx.on('feishuBridge/background-session-policy', (payload, next) =>
-      next() || payload.session.getChatroomHubKey() !== ''),
+      next() || chatroomState(payload.session).chatroomHubKey !== ''),
     ctx.on('feishuBridge/hard-cap-exemption', (payload, next) =>
       next() || isResearchExemptSession(payload.engine, payload.session)),
     ctx.on('feishuBridge/route-human-reply', (payload, next) =>
@@ -74,8 +76,8 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
       // Research-mode role that dispatched its assistant this turn (Go
       // markResearchDispatch): one-shot flag, persisted with the registry.
       const parent = payload.engine.sessions.getOrCreateActive(payload.parentSessionKey)
-      if (parent.getChatroomHubKey() === '' || !parent.getResearchAwaitingAssistant()) return
-      parent.setResearchDispatched(true)
+      if (chatroomState(parent).chatroomHubKey === '' || !chatroomState(parent).researchAwaitingAssistant) return
+      chatroomState(parent).researchDispatched = true
       payload.engine.sessions.save()
     }),
     ctx.on('feishuBridge/resolve-child-alias', (payload, next) => {
@@ -83,7 +85,7 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
       // research assistant; an unprovisioned one fails loudly here so it
       // cannot degrade into a mistyped-key error.
       if (payload.alias !== 'assistant') return next()
-      const provisioned = payload.engine.sessions.getOrCreateActive(payload.callerSessionKey).getResearchAssistantKey()
+      const provisioned = chatroomState(payload.engine.sessions.getOrCreateActive(payload.callerSessionKey)).researchAssistantKey
       if (provisioned === '') {
         throw new Error('subtask: no pre-provisioned assistant on this session — spawn one first (action: spawn)')
       }
@@ -94,11 +96,11 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
       // the moment the turn actually starts. The stamp persists whenever the
       // session is chatroom-bound, even when both values are no-ops.
       const { engine, session, metadata } = payload
-      if (session.getChatroomHubKey() === '') return
+      if (chatroomState(session).chatroomHubKey === '') return
       const askSeq = typeof metadata?.chatroomAskSeq === 'number' ? metadata.chatroomAskSeq : 0
       const awaitAssistant = metadata?.chatroomAwaitAssistant === true
-      if (askSeq !== 0) session.setChatroomAskSeq(askSeq)
-      if (awaitAssistant) session.setResearchAwaitingAssistant(true)
+      if (askSeq !== 0) chatroomState(session).chatroomAskSeq = askSeq
+      if (awaitAssistant) chatroomState(session).researchAwaitingAssistant = true
       engine.sessions.save()
     }),
     ctx.on('feishuBridge/turn-end', (payload, next) => {
@@ -137,11 +139,11 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
  * @returns True when the session is exempt from the hard cap.
  */
 function isResearchExemptSession(engine: Engine, session: Session): boolean {
-  if (session.getResearchAssistant()) return true
-  const hubKey = session.getChatroomHubKey()
+  if (chatroomState(session).researchAssistant) return true
+  const hubKey = chatroomState(session).chatroomHubKey
   if (hubKey !== '') {
     const hub = engine.sessions.findActive(hubKey)
-    if (hub !== undefined && hub.getChatroomResearch()) return true
+    if (hub !== undefined && chatroomState(hub).chatroomResearch) return true
   }
   return false
 }
@@ -163,17 +165,18 @@ function decorateSessionStartOptions(engine: Engine, session: Session, options: 
   // Research assistants are subtask children: their flag rides the subtask
   // section (the engine fills attended/no-report only; the flag appears
   // only when the session is a research assistant).
-  if (options.subtask !== undefined && session.getResearchAssistant()) options.subtask.researchAssistant = true
-  const hubKey = session.getChatroomHubKey()
+  if (options.subtask !== undefined && chatroomState(session).researchAssistant) options.subtask.researchAssistant = true
+  const hubKey = chatroomState(session).chatroomHubKey
   if (hubKey !== '') {
-    const ledger = engine.chatroomModeratorDir()
-    const moderator = session.getChatroomModerator()
+    const ledger = chatroomConfig(engine).moderatorDir()
+    const moderator = chatroomState(session).chatroomModerator
     // Research mode: the hub flagged this chatroom as research-driven.
     // Tell the role so its contract knows to drive a full-CC assistant
     // subgroup instead of answering from memory. The assistant is
     // addressed with the "assistant" sentinel (the resolve-child-alias
     // listener resolves it from this session's researchAssistantKey).
-    const research = engine.sessions.findActive(hubKey)?.getChatroomResearch() === true
+    const researchHub = engine.sessions.findActive(hubKey)
+    const research = researchHub !== undefined && chatroomState(researchHub).chatroomResearch
     options.persona = {
       prompt: buildChatroomSystemPrompt({
         workDir: engine.sessionWorkDir(session.id),
@@ -187,11 +190,11 @@ function decorateSessionStartOptions(engine: Engine, session: Session, options: 
       bypassPermissions: true,
       forceMode: moderator ? 'default' : undefined,
     }
-  } else if (session.getChatroomDirectRole() || session.getChatroomModerator()) {
+  } else if (chatroomState(session).chatroomDirectRole || chatroomState(session).chatroomModerator) {
     // 1:1 direct role chat (no hub, no relay): the lightweight direct-role
     // contract instead of the multi-role one.
-    const directRole = session.getChatroomDirectRole()
-    const moderator = session.getChatroomModerator()
+    const directRole = chatroomState(session).chatroomDirectRole
+    const moderator = chatroomState(session).chatroomModerator
     options.persona = {
       prompt: buildChatroomSystemPrompt({
         workDir: engine.sessionWorkDir(session.id),
@@ -208,6 +211,6 @@ function decorateSessionStartOptions(engine: Engine, session: Session, options: 
   }
   // Shared research venv (Go buildSessionEnv research path: VIRTUAL_ENV
   // plus <venv>/bin prepended to the child PATH).
-  const venv = session.getResearchVenv()
+  const venv = chatroomState(session).researchVenv
   if (venv !== '') options.venv = { virtualEnv: venv }
 }

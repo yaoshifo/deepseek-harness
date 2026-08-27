@@ -13,14 +13,16 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
+import { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
 import { ChatroomEndBarrier, ChatroomGather } from '../../src/engine/chatroom.js'
-import { chatroomFeatureStateCodec } from '../../src/engine/chatroom-feature-state.js'
-import { registerFeatureStateCodec } from '../../src/engine/feature-state.js'
-import type { Platform } from '../../src/core/types.js'
+import { chatroomFeatureStateCodec } from '../../src/chatroom-state.js'
+import { registerFeatureStateCodec } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import type { Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { createStubAgent, createStubChatroomSpawner } from '../stubs/engine-stubs.js'
+import { chatroomState } from '../../src/chatroom-state.js'
+import '../stubs/messages.js'
 
 // The production composition registers the chatroom codec once per process
 // (plugin apply); barrier persistence rides its encode hook.
@@ -61,12 +63,12 @@ function armedGather(): ChatroomGather {
 /** The hub and one in-flight role armed on the engine's session registry. */
 function armHubAndRole(e: Engine, hub: string): void {
   const h = e.sessions.getOrCreateActive(hub)
-  h.setChatroomModerator(true)
+  chatroomState(h).chatroomModerator = true
   const role = e.sessions.getOrCreateActive('test:role-1:user-1')
-  role.setChatroomHubKey(hub)
+  chatroomState(role).chatroomHubKey = hub
   role.setParentSessionKey(hub)
-  role.setChatroomRoleName('taleb')
-  role.setResearchAwaitingAssistant(true)
+  chatroomState(role).chatroomRoleName = 'taleb'
+  chatroomState(role).researchAwaitingAssistant = true
 }
 
 function readStore(store: string): { sessions: Record<string, Record<string, unknown>> } {
@@ -85,7 +87,7 @@ describe('chatroom barrier persistence', () => {
     const hub = 'test:hub:user-1'
     armHubAndRole(e, hub)
     const g = armedGather()
-    e.sessions.getOrCreateActive(hub).setPendingGather(g)
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = g
     e.sessions.save()
 
     const stored = Object.values(readStore(store).sessions)
@@ -115,7 +117,7 @@ describe('chatroom barrier persistence', () => {
     const b = new ChatroomEndBarrier()
     b.expected.add('taleb')
     b.collected.set('munger', '末轮回复')
-    e.sessions.getOrCreateActive(hub).setPendingEndBarrier(b)
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier = b
     e.sessions.save()
 
     const hubSnap = Object.values(readStore(store).sessions).map(chatroomSection).find(s => s.pendingEndBarrierData !== undefined)
@@ -133,7 +135,7 @@ describe('chatroom restart recovery', () => {
     {
       const e = newRecoveryEngine(createStubChatroomSpawner(), store)
       armHubAndRole(e, hub)
-      e.sessions.getOrCreateActive(hub).setPendingGather(armedGather())
+      chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = armedGather()
       e.sessions.save()
     }
 
@@ -151,7 +153,7 @@ describe('chatroom restart recovery', () => {
     expect(wake?.content).not.toContain('~/.claude')
 
     // The stale research-awaiting marker died with the old process.
-    expect(e2.sessions.getOrCreateActive('test:role-1:user-1').getResearchAwaitingAssistant()).toBe(false)
+    expect(chatroomState(e2.sessions.getOrCreateActive('test:role-1:user-1')).researchAwaitingAssistant).toBe(false)
 
     // The restored data is consumed: a later save carries no barrier.
     e2.sessions.save()
@@ -193,8 +195,8 @@ describe('chatroom restart recovery', () => {
     expect(wake?.content).toContain('1 个角色的回复已丢失（taleb）')
     expect(wake?.content).toContain('部分回复')
     // The flat v2 identity fields lifted into the featureState section.
-    expect(e2.sessions.getOrCreateActive('test:role-1:user-1').getChatroomHubKey()).toBe(hub)
-    expect(e2.sessions.getOrCreateActive(hub).getChatroomModerator()).toBe(true)
+    expect(chatroomState(e2.sessions.getOrCreateActive('test:role-1:user-1')).chatroomHubKey).toBe(hub)
+    expect(chatroomState(e2.sessions.getOrCreateActive(hub)).chatroomModerator).toBe(true)
     // The one-way rewrite kept the pre-v3 original beside the store.
     expect(readFileSync(`${store}.v2.bak`, 'utf8')).toContain('"version":2')
   })
@@ -208,7 +210,7 @@ describe('chatroom restart recovery', () => {
       const b = new ChatroomEndBarrier()
       b.expected.add('taleb')
       b.collected.set('munger', '末轮回复')
-      e.sessions.getOrCreateActive(hub).setPendingEndBarrier(b)
+      chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier = b
       e.sessions.save()
     }
 
@@ -223,8 +225,8 @@ describe('chatroom restart recovery', () => {
 
     // Teardown ran: the role lost its chatroom marking and the hub its
     // moderator flag, exactly like an end barrier that timed out.
-    await waitFor(() => e2.sessions.getOrCreateActive('test:role-1:user-1').getChatroomHubKey() === '', 'role cleaned')
-    expect(e2.sessions.getOrCreateActive(hub).getChatroomModerator()).toBe(false)
+    await waitFor(() => chatroomState(e2.sessions.getOrCreateActive('test:role-1:user-1')).chatroomHubKey === '', 'role cleaned')
+    expect(chatroomState(e2.sessions.getOrCreateActive(hub)).chatroomModerator).toBe(false)
   })
 
   it('drops malformed restored barriers without crashing or waking', async () => {
@@ -233,7 +235,7 @@ describe('chatroom restart recovery', () => {
     {
       const e = newRecoveryEngine(createStubChatroomSpawner(), store)
       armHubAndRole(e, hub)
-      e.sessions.getOrCreateActive(hub).setPendingGather(armedGather())
+      chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = armedGather()
       e.sessions.save()
     }
     // Corrupt the snapshot after the fact (hand-edited sessions.json).
@@ -263,8 +265,8 @@ describe('chatroom restart recovery', () => {
     {
       const e = newRecoveryEngine(createStubChatroomSpawner(), store)
       armHubAndRole(e, hub)
-      e.sessions.getOrCreateActive(hub).setChatroomResearch(true)
-      e.sessions.getOrCreateActive(hub).setPendingGather(armedGather())
+      chatroomState(e.sessions.getOrCreateActive(hub)).chatroomResearch = true
+      chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = armedGather()
       e.sessions.save()
     }
 
