@@ -87,6 +87,8 @@ export function ctxBridgeDispatch(ctx: Context): BridgeDispatch {
  */
 export class FeishuBridgeService extends Service implements BridgeDispatch {
   private readonly live: LiveProject[] = []
+  private ready = false
+  private readyWaiters: Array<() => void> = []
 
   constructor(ctx: Context) {
     super(ctx, 'feishuBridge')
@@ -95,6 +97,32 @@ export class FeishuBridgeService extends Service implements BridgeDispatch {
   /** The live projects, in mount order. */
   get projects(): ReadonlyArray<LiveProject> {
     return this.live
+  }
+
+  /**
+   * Resolve once every live project is registered. The bridge's apply calls
+   * {@link FeishuBridgeService.markReady} after its project-assembly loop, so
+   * a sibling plugin awaiting this deterministically sees the full project
+   * list (its per-project wiring then targets every engine). Idempotent:
+   * callers after readiness resolve immediately.
+   *
+   * @returns A promise resolving when the service is ready.
+   */
+  whenReady(): Promise<void> {
+    if (this.ready) return Promise.resolve()
+    return new Promise(resolve => { this.readyWaiters.push(resolve) })
+  }
+
+  /**
+   * Mark the service ready, resolving every {@link FeishuBridgeService.whenReady}
+   * waiter. Calling again is a no-op.
+   */
+  markReady(): void {
+    if (this.ready) return
+    this.ready = true
+    const waiters = this.readyWaiters
+    this.readyWaiters = []
+    for (const resolve of waiters) resolve()
   }
 
   /**

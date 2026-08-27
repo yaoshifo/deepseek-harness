@@ -119,35 +119,122 @@ const hasClearEnglishSignal = (text: string): boolean => {
 }
 
 /**
+ * One table's step of the Go fallback chain: current language → Simplified
+ * Chinese for Traditional Chinese → English.
+ * @param table - The per-key language map to read.
+ * @param lang - Language to look up.
+ * @returns The translated message, or undefined when the table misses.
+ */
+function lookupInTable(table: Partial<Record<string, string>> | undefined, lang: Language): string | undefined {
+  if (table === undefined) return undefined
+  const translated = table[lang]
+  if (translated !== undefined) {
+    return translated
+  }
+  if (lang === langTraditionalChinese) {
+    const zh = table[langChinese]
+    if (zh !== undefined) {
+      return zh
+    }
+  }
+  const en = table[langEnglish]
+  if (en !== undefined && en !== '') {
+    return en
+  }
+  return undefined
+}
+
+/**
  * Message-table lookup with the fallback chain ported from Go: current
  * language → Simplified Chinese for Traditional Chinese → English → the raw
- * key. Shared by {@link I18n.t} and {@link lookupMessage}.
+ * key. The main table is consulted first, then every registered subtable
+ * ({@link registerMessages}); shared by {@link I18n.t} and
+ * {@link lookupMessage}.
  *
  * @param lang - Language to look up.
  * @param key - Message key.
  * @returns The translated message, or the raw key when missing.
  */
-function resolveMessage(lang: Language, key: MsgKey): string {
+function resolveMessage(lang: Language, key: MsgKey | (string & {})): string {
   // Open lookup: keys can arrive cast from arbitrary strings (Go's MsgKey
   // was an open string type), so a miss must fall through, not throw.
-  const table = (messages as Record<string, Partial<Record<string, string>> | undefined>)[key]
-  if (table !== undefined) {
-    const translated = table[lang]
-    if (translated !== undefined) {
-      return translated
-    }
-    if (lang === langTraditionalChinese) {
-      const zh = table[langChinese]
-      if (zh !== undefined) {
-        return zh
-      }
-    }
-    const en = table[langEnglish]
-    if (en !== undefined && en !== '') {
-      return en
-    }
+  const main = lookupInTable((messages as Record<string, Partial<Record<string, string>> | undefined>)[key], lang)
+  if (main !== undefined) return main
+  for (const subtable of messageSubtables()) {
+    const translated = lookupInTable(subtable.byKey[key], lang)
+    if (translated !== undefined) return translated
   }
   return key
+}
+
+/** One live subtable registration: the source object plus its transposed per-key view. */
+interface MessageSubtableRegistration {
+  /** The caller's object; identity keys the reference counting. */
+  source: Partial<Record<Language, Record<string, string>>>
+  /** The same messages transposed to the main table's per-key language maps. */
+  byKey: Record<string, Partial<Record<string, string>>>
+}
+
+/**
+ * Live subtable registrations (see {@link registerMessages}); the same
+ * subtable object may appear several times (reference-counted reloads).
+ */
+const subtableRegistrations: MessageSubtableRegistration[] = []
+
+/** The registered subtables, one entry per distinct source object, in registration order. */
+function messageSubtables(): MessageSubtableRegistration[] {
+  const seen = new Set<Partial<Record<Language, Record<string, string>>>>()
+  const unique: MessageSubtableRegistration[] = []
+  for (const registration of subtableRegistrations) {
+    if (seen.has(registration.source)) continue
+    seen.add(registration.source)
+    unique.push(registration)
+  }
+  return unique
+}
+
+/** Transpose a per-language subtable into the main table's per-key shape. */
+function transposeSubtable(subtable: Partial<Record<Language, Record<string, string>>>): Record<string, Partial<Record<string, string>>> {
+  const byKey: Record<string, Partial<Record<string, string>>> = {}
+  for (const [lang, langMessages] of Object.entries(subtable)) {
+    for (const [key, value] of Object.entries(langMessages ?? {})) {
+      (byKey[key] ??= {})[lang] = value
+    }
+  }
+  return byKey
+}
+
+/**
+ * Register a module-level message subtable sibling plugins own (the chatroom
+ * package's keys): `resolveMessage` consults the main table first, then every
+ * registered subtable, same fallback chain. Registration is reference-counted
+ * per object (an HMR reload re-runs apply before the old fiber's disposer
+ * drains), while a DIFFERENT object re-registering an existing key throws —
+ * two owners for one key is a conflict, not a reload.
+ *
+ * @param subtable - Per-language message maps; a key already in the main
+ *   table or another registered subtable throws.
+ * @returns Disposer removing one registration of the subtable.
+ */
+export function registerMessages(subtable: Partial<Record<Language, Record<string, string>>>): () => void {
+  const byKey = transposeSubtable(subtable)
+  for (const key of Object.keys(byKey)) {
+    if (key in (messages as Record<string, unknown>)) {
+      throw new Error(`i18n: subtable key '${key}' collides with the main message table`)
+    }
+    for (const registered of messageSubtables()) {
+      if (registered.source === subtable) continue
+      if (key in registered.byKey) {
+        throw new Error(`i18n: subtable key '${key}' is already registered by another subtable`)
+      }
+    }
+  }
+  subtableRegistrations.push({ source: subtable, byKey })
+  return () => {
+    const index = subtableRegistrations.findIndex(registration => registration.source === subtable)
+    if (index < 0) return
+    subtableRegistrations.splice(index, 1)
+  }
 }
 
 /**
@@ -157,11 +244,12 @@ function resolveMessage(lang: Language, key: MsgKey): string {
  * are substituted when `args` are given, matching `I18n.tf`.
  *
  * @param lang - Language to look up; unknown codes fall back to English.
- * @param key - Message key; a miss returns the raw key.
+ * @param key - Message key; a miss returns the raw key. Open lookup: keys
+ *   beyond {@link MsgKey} (subtable keys) are looked up the same way.
  * @param args - Optional format arguments for Go-style verbs (%s, %d, …).
  * @returns The translated (and formatted) message.
  */
-export function lookupMessage(lang: Language, key: MsgKey, ...args: unknown[]): string {
+export function lookupMessage(lang: Language, key: MsgKey | (string & {}), ...args: unknown[]): string {
   return sprintf(resolveMessage(lang, key), ...args)
 }
 
@@ -254,20 +342,21 @@ export class I18n {
   /**
    * Look up a message. Fallback chain: current language → Simplified Chinese
    * for Traditional Chinese → English → the raw key.
-   * @param key - Message key.
+   * @param key - Message key; open lookup — keys beyond {@link MsgKey}
+   *   (registered subtable keys) resolve the same way.
    * @returns The translated message.
    */
-  t(key: MsgKey): string {
+  t(key: MsgKey | (string & {})): string {
     return resolveMessage(this.currentLang(), key)
   }
 
   /**
    * Look up a message and substitute Go-style format verbs with `args`.
-   * @param key - Message key.
+   * @param key - Message key; open lookup as in {@link I18n.t}.
    * @param args - Format arguments.
    * @returns The formatted message.
    */
-  tf(key: MsgKey, ...args: unknown[]): string {
+  tf(key: MsgKey | (string & {}), ...args: unknown[]): string {
     return sprintf(this.t(key), ...args)
   }
 }

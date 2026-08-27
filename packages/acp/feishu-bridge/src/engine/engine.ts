@@ -1489,7 +1489,20 @@ export class Engine {
     // Chatroom barriers restored from disk close here, once platforms can
     // deliver the wakes: every reply they awaited died with the old process.
     this.recoverInterruptedNativeChildren()
+    this.platformsStartedValue = true
     this.bridge.emit('feishuBridge/platforms-ready', { engine: this })
+  }
+
+  private platformsStartedValue = false
+
+  /**
+   * Whether {@link Engine.start} brought this engine's platforms live (the
+   * `feishuBridge/platforms-ready` emit). Sibling-plugin wiring that missed
+   * the event (registered after start finished) reads this to run its own
+   * recovery exactly once.
+   */
+  get platformsStarted(): boolean {
+    return this.platformsStartedValue
   }
 
   /**

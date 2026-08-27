@@ -68,6 +68,20 @@ describe('FeishuBridgeService', () => {
     expect(service.nativeRoute({ id: '' })).toBeUndefined()
   })
 
+  it('whenReady resolves waiters at markReady and immediately afterwards', async () => {
+    const { service } = await mountedService()
+    let resolved = false
+    void service.whenReady().then(() => { resolved = true })
+    await Promise.resolve()
+    expect(resolved, 'waiter registered before readiness pends').toBe(false)
+    service.markReady()
+    await Promise.resolve()
+    expect(resolved).toBe(true)
+    // Idempotent: later waiters (and repeat calls) resolve immediately.
+    await expect(service.whenReady()).resolves.toBeUndefined()
+    service.markReady()
+  })
+
   it('delegates emit/waterfall/serial to the Cordis event bus', async () => {
     const { ctx, service } = await mountedService()
     const seen: string[] = []
