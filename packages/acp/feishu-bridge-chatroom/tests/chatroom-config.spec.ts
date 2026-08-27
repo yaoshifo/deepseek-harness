@@ -62,6 +62,11 @@ describe('chatroom config wiring', () => {
     expect(chatroomConfig(e).maxRoles()).toBe(4)
   })
 
+  it('expands a bare ~ to the home directory', () => {
+    const e = configure({ rolesDir: '~' })
+    expect(chatroomConfig(e).rolesDir()).toBe(homedir())
+  })
+
   it('expands ~ in rolesDir and moderatorDir', () => {
     const e = configure({ rolesDir: '~/chatroom-roles', moderatorDir: '~/chatroom-moderator' })
     expect(chatroomConfig(e).rolesDir().startsWith('/')).toBe(true)

@@ -11,9 +11,12 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentCancelCause, InboxTarget } from '@deepseek-ai/dsh-agent'
+import { CallId } from '@deepseek-ai/dsh-llm'
+import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
-import SessionStore from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import {
@@ -50,12 +53,14 @@ async function liveContext(): Promise<Context> {
 }
 
 /** One live project: a real engine (commands/config apply to it), stub adapter. */
-function liveProject(ctx: Context, projectName: string, started = false): Promise<{ engine: Engine; adapter: DshAgentAdapterLike }> {
-  void ctx
+/** The adapter half of a live project; routing never consults it in these specs. */
+type StubAdapter = Record<string, never>
+
+function liveProject(projectName: string, started = false): Promise<{ engine: Engine; adapter: StubAdapter }> {
   const engine = new Engine(projectName, createStubAgent(), [], '', 'en')
   registerSessionCommands(engine)
-  if (started) return engine.start().then(() => ({ engine, adapter: {} as DshAgentAdapterLike }))
-  return Promise.resolve({ engine, adapter: {} as DshAgentAdapterLike })
+  if (started) return engine.start().then(() => ({ engine, adapter: {} as StubAdapter }))
+  return Promise.resolve({ engine, adapter: {} as StubAdapter })
 }
 
 describe('chatroom plugin entry', () => {
@@ -79,8 +84,8 @@ describe('chatroom plugin entry', () => {
     const ctx = await liveContext()
     const service = ctx.get('feishuBridge')
     if (service === undefined) throw new Error('feishuBridge failed to mount')
-    const { engine } = await liveProject(ctx, 'alpha')
-    const { engine: startedEngine } = await liveProject(ctx, 'beta', true)
+    const { engine } = await liveProject('alpha')
+    const { engine: startedEngine } = await liveProject('beta', true)
     service.registerProject({ engine, adapter: {} as never })
     service.registerProject({ engine: startedEngine, adapter: {} as never })
     service.markReady()
@@ -95,9 +100,14 @@ describe('chatroom plugin entry', () => {
     expect(chatroomConfig(engine).maxRoles()).toBe(4)
     expect(chatroomConfig(startedEngine).rolesDir().endsWith('chatroom-roles')).toBe(true)
 
-    // The /chatroom command family registered on every engine.
+    // The /chatroom command family registered on every engine, with its
+    // /cr alias resolvable and the session commands still resolvable.
     expect(engine.commandHandlers?.get('chatroom')).toBeDefined()
     expect(startedEngine.commandHandlers?.get('chatroom')).toBeDefined()
+    expect(engine.commandResolver?.('chatroom')).toBe('chatroom')
+    expect(engine.commandResolver?.('cr')).toBe('chatroom')
+    expect(engine.commandResolver?.('new')).toBe('new')
+    expect(engine.commandResolver?.('x')).toBe('')
 
     // Process-level halves registered: codec and message subtable (re-registering
     // the same subtable object is the reference-counted reload path).
@@ -110,11 +120,56 @@ describe('chatroom plugin entry', () => {
     expect(typeof ctx.tools.register).toBe('function')
   })
 
+  it('routes the registered tool through the bridge service (foreign callers fail loud)', async () => {
+    const ctx = await liveContext()
+    const service = ctx.get('feishuBridge')
+    if (service === undefined) throw new Error('feishuBridge failed to mount')
+    service.markReady()
+    await ctx.plugin({ name, inject, apply }, {})
+
+    const session = ctx.sessions.create(SessionId('apply-spec-agent'))
+    const inbox = new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} })
+    const agent: Agent = {
+      id: session.id,
+      options: {},
+      session,
+      inbox,
+      status: 'idle',
+      ctx: new Context(),
+      send(_message: UserMessage, _target: InboxTarget, _wakeup: boolean) {},
+      runMaintenance: task => task(new AbortController().signal),
+      cancel(_cause: AgentCancelCause) {},
+      whenIdle: () => Promise.resolve(),
+      followup(_message: UserMessage) {},
+      steer(_message: UserMessage) {},
+      inject(_message: UserMessage) {},
+    }
+    ctx.agents.register(agent)
+
+    // The caller agent belongs to no feishu-bridge project: the tool's
+    // route (the bridge service's) fails loud instead of acting.
+    const result = await ctx.agents.withInitiator(agent, () => ctx.tools.execute({
+      signal: new AbortController().signal,
+      callId: CallId('call-apply-spec'),
+      name: 'feishu_bridge_chatroom',
+      arguments: { action: 'list' },
+      agent,
+    }))
+    expect(result.isError).toBe(true)
+    expect(JSON.stringify(result)).toContain('not owned by a feishu-bridge project')
+  })
+
+  it('fails loud when the feishuBridge service is unavailable', async () => {
+    const bare = new Context()
+    contexts.push(bare)
+    await expect(apply(bare, {})).rejects.toThrow(/feishuBridge service is unavailable/)
+  })
+
   it('fails loud when a configured project name matches no bridge project', async () => {
     const ctx = await liveContext()
     const service = ctx.get('feishuBridge')
     if (service === undefined) throw new Error('feishuBridge failed to mount')
-    const { engine } = await liveProject(ctx, 'alpha')
+    const { engine } = await liveProject('alpha')
     service.registerProject({ engine, adapter: {} as never })
     service.markReady()
 
@@ -125,7 +180,7 @@ describe('chatroom plugin entry', () => {
     const ctx = await liveContext()
     const service = ctx.get('feishuBridge')
     if (service === undefined) throw new Error('feishuBridge failed to mount')
-    const { engine } = await liveProject(ctx, 'alpha')
+    const { engine } = await liveProject('alpha')
     service.registerProject({ engine, adapter: {} as never })
     service.markReady()
 

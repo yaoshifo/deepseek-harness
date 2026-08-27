@@ -1,23 +1,26 @@
 # dsh-feishu-bridge-chatroom
 
-The chatroom plugin extracted from the Feishu bridge: multi-role chatroom orchestration (role groups, the moderator, the `/chatroom` command family) as its own dsh package mounted beside `@deepseek-ai/dsh-feishu-bridge`. This is the package skeleton — the chatroom implementation still lives in the feishu-bridge engine and moves here in the follow-up migration; `apply()` is empty and the Config schema carries no fields until then.
+The chatroom plugin of the Feishu bridge: multi-role chatroom orchestration — role groups, the moderator, the `/chatroom` command family, the `feishu_bridge_chatroom` tool, and the bundled chatroom-moderator skill — as its own dsh package mounted beside `@deepseek-ai/dsh-feishu-bridge` (dependency direction: this package imports the bridge's export face; the bridge never imports this package). The engine seam halves ride the bridge service's `feishuBridge/*` events; the per-engine configuration and command registration apply in the plugin's startup sweep once the bridge reports readiness.
 
 ## Model Experience
 
-### Request context and condition (skeleton)
+### What the model sees
 
-#### What the model sees
-
-Nothing yet: the skeleton registers no tool, prompt section, or runtime context. The chatroom's model-visible surface (role-group personas, moderator orchestration messages, the chatroom tools) is documented in this section when the migration lands.
+- The `feishu_bridge_chatroom` tool (family tag `feishu_bridge_chatroom`): the moderator orchestrates a chatroom through its actions (`start` / `ask` / `gather` / `pick-roles` / `pick-topic` / `ask-human` / `end` / `list` / `note`); role personas reference it through their whole-prompt replacement.
+- Chatroom personas: role, direct-role, moderator, and research-assistant sessions run with complete system-prompt replacements assembled from the persona directory's flattened CLAUDE.md plus the participation/research contracts (precomputed by the session-start-options listener; the adapter registers them as `complete: true` sections).
+- Moderator primings and wake messages (gather fan-in summaries, end-barrier closings, restart-recovery notes), plus the research-assistant preambles carried on the subtask start options.
+- The bundled `feishu-bridge-chatroom-moderator` skill, mounted as an isolated skill provider.
 
 #### Token effect
 
-Zero direct token effect while the package is a skeleton.
+The tool description and schema reach every dsh agent in projects where the tool registers (the tool is process-wide, routed by caller). Persona prompts replace each chatroom session's system prompt entirely instead of appending; moderator wakes and relay cards are user-visible messages, not model-facing.
 
 #### KV Cache effect
 
-None: the plugin contributes no model-request content, so it can neither extend nor invalidate any reusable prefix.
+Chatroom sessions use whole-prompt persona replacement, so each role/moderator session has its own stable prefix; the tool schema extends the model request for bridge-owned agents, adding to (not invalidating) their reusable prefix.
 
 ## Known Limitations and Deferred Work
 
-- **Skeleton package — the chatroom implementation has not moved in yet**: all chatroom behavior still lives in `packages/acp/feishu-bridge`; this package ships only the plugin row, the invariant companion, and the bundle patch. The code move — the Config schema, `inject: ['feishuBridge']`, the role-group and moderator wiring, tests, and this README's Model Experience entries — is the immediate follow-up, after which this entry is replaced by the real durable gaps.
+- **Pre-readiness window**: messages a platform delivers between the bridge's engine start and this plugin's `whenReady()` sweep are handled with default-valued chatroom configuration (no roles dir override, ledger off) — a window the in-bridge wiring did not have. It is structural to the sibling-plugin mount order; recovery and all later turns see the swept configuration.
+- **Deployment migration is manual**: production profiles carry chatroom sections under the `feishu-bridge` row in their self-evolved `cordis.patch.yml`; the bridge now fails loud on such residue, and the sections must move to this plugin's own config (`defaults` + per-project `projects`, keyed by bridge project name). The migration snippet and profile-template updates land with the C3 deployment batch.
+- **Coverage of the REAL-composition surface**: the apply/HMR specs mount the plugin on real Cordis services (event bus, tool registry, skill registry, bridge service) but not through the Loader with a `cordis.yml`; a boot-through-the-Loader composition test and the production `/reload` smoke checklist land with C3.
