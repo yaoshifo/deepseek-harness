@@ -119,6 +119,53 @@ const hasClearEnglishSignal = (text: string): boolean => {
 }
 
 /**
+ * Message-table lookup with the fallback chain ported from Go: current
+ * language → Simplified Chinese for Traditional Chinese → English → the raw
+ * key. Shared by {@link I18n.t} and {@link lookupMessage}.
+ *
+ * @param lang - Language to look up.
+ * @param key - Message key.
+ * @returns The translated message, or the raw key when missing.
+ */
+function resolveMessage(lang: Language, key: MsgKey): string {
+  // Open lookup: keys can arrive cast from arbitrary strings (Go's MsgKey
+  // was an open string type), so a miss must fall through, not throw.
+  const table = (messages as Record<string, Partial<Record<string, string>> | undefined>)[key]
+  if (table !== undefined) {
+    const translated = table[lang]
+    if (translated !== undefined) {
+      return translated
+    }
+    if (lang === langTraditionalChinese) {
+      const zh = table[langChinese]
+      if (zh !== undefined) {
+        return zh
+      }
+    }
+    const en = table[langEnglish]
+    if (en !== undefined && en !== '') {
+      return en
+    }
+  }
+  return key
+}
+
+/**
+ * Look up a message for an explicit language, for consumers that hold the
+ * resolved language instead of the {@link I18n} instance (e.g. the extracted
+ * chatroom package). Same fallback chain as `I18n.t`; Go-style format verbs
+ * are substituted when `args` are given, matching `I18n.tf`.
+ *
+ * @param lang - Language to look up; unknown codes fall back to English.
+ * @param key - Message key; a miss returns the raw key.
+ * @param args - Optional format arguments for Go-style verbs (%s, %d, …).
+ * @returns The translated (and formatted) message.
+ */
+export function lookupMessage(lang: Language, key: MsgKey, ...args: unknown[]): string {
+  return sprintf(resolveMessage(lang, key), ...args)
+}
+
+/**
  * Internationalized message lookup for one bridge instance.
  */
 export class I18n {
@@ -211,27 +258,7 @@ export class I18n {
    * @returns The translated message.
    */
   t(key: MsgKey): string {
-    const lang = this.currentLang()
-    // Open lookup: keys can arrive cast from arbitrary strings (Go's MsgKey
-    // was an open string type), so a miss must fall through, not throw.
-    const table = (messages as Record<string, Partial<Record<string, string>> | undefined>)[key]
-    if (table !== undefined) {
-      const translated = table[lang]
-      if (translated !== undefined) {
-        return translated
-      }
-      if (lang === langTraditionalChinese) {
-        const zh = table[langChinese]
-        if (zh !== undefined) {
-          return zh
-        }
-      }
-      const en = table[langEnglish]
-      if (en !== undefined && en !== '') {
-        return en
-      }
-    }
-    return key
+    return resolveMessage(this.currentLang(), key)
   }
 
   /**
