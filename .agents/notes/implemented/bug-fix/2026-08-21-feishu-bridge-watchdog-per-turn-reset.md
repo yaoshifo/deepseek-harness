@@ -24,7 +24,7 @@ The user-visible contract already promised per-turn semantics: the config key do
 
 ## Consequences
 
-Every turn now gets a full hard-cap budget, so a follow-up instruction after a long turn survives. In exchange, a run that keeps queueing follow-ups can span many multiples of the cap in aggregate; each individual turn remains bounded, and the trickle-forever protection (the cap's original purpose) is intact because it has always been per turn in effect. A turn that ends exactly at the cap boundary no longer poisons the next one. Research sessions keep the exemption.
+Every turn now gets a full hard-cap budget, so a follow-up instruction after a long turn survives. In exchange, a run that keeps queueing follow-ups can span many multiples of the cap in aggregate; each individual turn remains bounded, and the trickle-forever protection (the cap's original purpose) is intact because it has always been per turn in effect. A turn that ends exactly at the cap boundary no longer poisons the next one. Research sessions keep the exemption. Since 2026-08-28 the clock additionally excludes parked-ask wall time (banked per park) — the user deciding is not runaway activity, and for a parked ask the first arriving event is the answer itself; see [the parked-ask cap-exemption note](2026-08-28-feishu-bridge-parked-ask-cap-exemption-waiting-card.md).
 
 ## Testing
 

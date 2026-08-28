@@ -1815,6 +1815,7 @@ export class FeishuPlatform implements Platform {
     if (msgID === '') throw new Error('feishu: send preview: no message ID returned')
 
     this.lastProgressCard.set(msgID, preButtonJSON)
+    console.debug(`feishu: preview card sent (${msgID}, session ${rc.sessionKey})`)
     return new FeishuPreviewHandle(msgID, rc.chatID, rc.sessionKey, this.shouldReplyInThread(rc))
   }
 
@@ -1913,6 +1914,7 @@ export class FeishuPlatform implements Platform {
     const client = await this.ensureApi()
     const boundDelete = client.delete?.bind(client)
     if (boundDelete === undefined) throw new ErrNotSupported('feishu client without delete support')
+    console.debug(`feishu: preview card deleted (${h.messageID}, session ${h.sessionKey})`)
     await this.withRetry('delete preview message', () => boundDelete({ messageId: h.messageID }))
   }
 

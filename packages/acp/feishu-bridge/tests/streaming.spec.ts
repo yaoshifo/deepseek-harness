@@ -1097,6 +1097,32 @@ describe('terminal finalization of pending tools', () => {
   })
 })
 
+describe('parked-ask detach renders waiting, not completed', () => {
+  // An ask parking the turn must not claim 执行完成: the segment is delivered
+  // but the turn suspends on the user's answer (2026-08-28 oc_9d385 incident).
+  it('completeAndDetach(park) finalizes with the waiting status', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = await newSyncStreamPreviewForFallback(mp)
+    await sp.completeAndDetach(true)
+    expect(sp.waiting).toBe(true)
+    expect(sp.completed).toBe(false)
+    const last = mp.contents[mp.contents.length - 1]
+    if (last === undefined) throw new Error('no terminal content recorded')
+    expect(statusOf(last)?.state).toBe('waiting')
+  })
+
+  it('completeAndDetach without park still renders completed', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = await newSyncStreamPreviewForFallback(mp)
+    await sp.completeAndDetach()
+    expect(sp.completed).toBe(true)
+    expect(sp.waiting).toBe(false)
+    const last = mp.contents[mp.contents.length - 1]
+    if (last === undefined) throw new Error('no terminal content recorded')
+    expect(statusOf(last)?.state).toBe('completed')
+  })
+})
+
 describe('completeAndDetach async ordering', () => {
   it('in-flight running PATCH does not overwrite the completed card', async () => {
     const mp = createRaceUpdater()

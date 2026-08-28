@@ -554,6 +554,10 @@ export function progressTitleAndColor(
       title = zh ? '执行失败' : 'Failed'
       color = 'red'
       break
+    case 'waiting':
+      title = zh ? '等待中' : 'Waiting'
+      color = 'blue'
+      break
     case 'thinking':
       title = zh ? '思考中' : 'Thinking'
       color = 'violet'

@@ -319,6 +319,10 @@ export class InteractiveState {
   lastPrompt: string = ''
   /** The parked ask awaiting the user's card or text response (B2). */
   pendingAsk: PendingAsk | undefined
+  /** Hard-cap time already spent parked on asks this turn (ms); the cap clock only measures active pumping. */
+  capPausedMs: number = 0
+  /** When the current ask parked (epoch ms); 0 while no ask is parked. Pairs with {@link capPausedMs}. */
+  capParkStart: number = 0
   /** Number of auto-compaction events this session (Go state.compactionCount). M3. */
   compactionCount: number = 0
   /** Cumulative non-cached input tokens across turns (Go state.cumulativeInputTokens). M7. */
@@ -1306,6 +1310,22 @@ export class Engine {
   absoluteTurnMax(idle: number): number {
     if (this.absoluteTurnTimeoutSet) return this.absoluteTurnTimeout
     return idle * 2
+  }
+
+  /**
+   * Close the current ask park and bank its duration against the hard-cap
+   * clock. The cap is evaluated on event arrival, and while an ask is parked
+   * the only event that can arrive is the user's answer — so park time must
+   * not count toward the cap, or any ask left open past the cap gets its own
+   * answer destroyed the moment it arrives (2026-08-28 oc_9d385 incident:
+   * "push" answered an overnight ask and tripped the cap check 1s later).
+   * @param state - Session state whose ask unparked.
+   */
+  private resumeCapPark(state: InteractiveState): void {
+    if (state.capParkStart !== 0) {
+      state.capPausedMs += Date.now() - state.capParkStart
+      state.capParkStart = 0
+    }
   }
 
   /**
@@ -2960,8 +2980,12 @@ export class Engine {
     // cap is per turn, not per run: a queued-message takeover resets
     // turnStart below — a deliberate deviation from Go's per-run clock, where
     // a follow-up message after a near-cap long turn inherits a nearly
-    // exhausted budget and is killed within minutes.
+    // exhausted budget and is killed within minutes. Time the turn spends
+    // parked on an ask (resumeCapPark) is excluded: the user deciding is not
+    // the runaway activity the cap exists to kill.
     let turnStart = Date.now()
+    state.capPausedMs = 0
+    state.capParkStart = 0
     const softCap = this.absoluteTurnMax(state.idleTimeout(this.eventIdleTimeout))
     const hardCapMs = softCap > 0 && !this.bridge.waterfall('feishuBridge/hard-cap-exemption', { engine: this, session }, () => false) ? softCap * 3 : 0
     // The live session's event channel; swapped when a stall retry restarts
@@ -3128,13 +3152,21 @@ export class Engine {
         recvArm = events.receiveArmed()
         recvP = recvArm.promise
 
-        if (hardCapMs > 0 && Date.now() - turnStart > hardCapMs) {
+        // Parked-ask time is exempt both banked (capPausedMs) and in-flight
+        // (capParkStart): an event arriving mid-park must not kill the turn
+        // for time the user spent deciding.
+        const capParkedNow = state.capParkStart !== 0 ? Date.now() - state.capParkStart : 0
+        if (hardCapMs > 0 && Date.now() - turnStart - state.capPausedMs - capParkedNow > hardCapMs) {
           console.error(`watchdog: hard turn cap exceeded, force cleanup (${sessionKey})`)
           state.eventsNeedResync = true
           const p = state.platform
           if (p !== undefined) {
             await this.send(p, replyCtx, this.i18n.t(Msg.WatchdogReset))
           }
+          // Go parity with the stall path: fail the running card before the
+          // kill so it cannot freeze in its Running state next to the reset
+          // notice (an already-terminal card no-ops inside markFailed).
+          await sp.markFailed()
           await this.cleanupInteractiveState(sessionKey, state)
           // The capped child owes its parent a settlement it can no longer deliver.
           this.reportSubtaskTimeout(sessionKey)
@@ -3434,6 +3466,8 @@ export class Engine {
             // the same logical turn, and resetting would let an infinitely
             // stalling/retrying session dodge the hard cap forever.
               turnStart = Date.now()
+              state.capPausedMs = 0
+              state.capParkStart = 0
               state.textParts = []
               state.segmentStart = 0
               state.toolCount = 0
@@ -4844,6 +4878,7 @@ export class Engine {
     const settle = (decision: AskDecision): void => {
       if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
       if (state.pendingAsk === pending) state.pendingAsk = undefined
+      this.resumeCapPark(state)
       state.lastEventAt = Date.now()
       resolveDecision(decision)
     }
@@ -4894,7 +4929,10 @@ export class Engine {
         // Drain async preview updates so a stale running PATCH cannot overwrite
         // the completed card (Go barrier before detach).
         await state.sender?.barrier()
-        await sp.completeAndDetach()
+        // Park renders the waiting header: the turn is about to suspend on
+        // this ask, so a green 执行完成 here would claim a completion that
+        // has not happened yet.
+        await sp.completeAndDetach(true)
         if (triggered) {
           renderAndDeliverReply(this, state, sessionKey, captured.text, captured.exportKey)
         }
@@ -4904,8 +4942,10 @@ export class Engine {
       // approval, red for anything else awaiting the user.
       await this.applyChatPhase(p, sessionKey, request.kind === 'plan-review' ? 'plan-review' : 'attention')
 
-      // Park the ask, then render the card(s).
+      // Park the ask, then render the card(s). Parking pauses the hard-cap
+      // clock (resumeCapPark banks the duration on unpark).
       state.pendingAsk = pending
+      state.capParkStart = Date.now()
       if (request.kind === 'plan-review' && planContent !== '') {
         // Plan card + HTML render (Go engine_events.go ExitPlanMode branch,
         // #47): the markdown card (with export button) is the always-on
@@ -4958,6 +4998,7 @@ export class Engine {
       if (onAbort !== undefined && signal !== undefined) signal.removeEventListener('abort', onAbort)
       if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
       if (state.pendingAsk === pending) state.pendingAsk = undefined
+      this.resumeCapPark(state)
       resolveDecision({ outcome: 'cancelled' })
       return { outcome: 'cancelled' }
     }
@@ -4974,6 +5015,7 @@ export class Engine {
     if (outcome.kind !== 'decided') {
       if (pending.autoTimer !== undefined) clearTimeout(pending.autoTimer)
       if (state.pendingAsk === pending) state.pendingAsk = undefined
+      this.resumeCapPark(state)
       resolveDecision(decided)
     }
 

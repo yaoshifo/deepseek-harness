@@ -114,6 +114,21 @@ describe('askUser permission kind', () => {
     await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
   })
 
+  it('parking an ask pauses the hard-cap clock until the decision settles', async () => {
+    const p = createStubPlatform('test')
+    const { e, state } = armedState(p)
+    const decision = e.askUser('test:chat:user1', { kind: 'permission', toolName: 'Bash', preview: 'ls' })
+    await tick()
+    expect(state.pendingAsk).toBeDefined()
+    expect(state.capParkStart).not.toBe(0)
+    expect(state.capPausedMs).toBe(0)
+
+    expect(e.routeAskResponse(p, msg({ content: '允许' }), '允许')).toBe(true)
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+    expect(state.capParkStart).toBe(0)
+    expect(state.capPausedMs).toBeGreaterThan(0)
+  })
+
   it('a plain-text deny sends the denial notice', async () => {
     const p = createStubPlatform('test')
     const { e } = armedState(p)

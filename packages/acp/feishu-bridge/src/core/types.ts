@@ -542,8 +542,8 @@ export function asRecentTurnsReader(a: Agent): RecentTurnsReader | undefined {
  * preview used to prepend.
  */
 export interface ProgressStatus {
-  /** Card lifecycle state; "running" matches the former headerless prefix. */
-  state: 'running' | 'completed' | 'failed' | 'thinking'
+  /** Card lifecycle state; "running" matches the former headerless prefix; "waiting" marks a card parked on a user answer. */
+  state: 'running' | 'completed' | 'failed' | 'thinking' | 'waiting'
   /** Timestamp (HH:MM:SS) appended to the card title; empty string omits it. */
   ts: string
   /** Tool-call count appended to the title when positive. */

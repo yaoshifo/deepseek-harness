@@ -391,4 +391,13 @@ describe('buildPreviewCardJSON', () => {
     expect(jStr(jObj(card.header).template)).toBe('yellow')
     expect(jStr(jObj(jObj(card.header).title).content)).toBe('执行中')
   })
+
+  it('renders the parked-ask waiting header in blue', () => {
+    // An ask suspends the turn on the user's answer; the parked card must not
+    // claim 执行完成 while execution is actually waiting.
+    const card = jParse(buildPreviewCardJSON('body', noSpinner,
+      { state: 'waiting', ts: '10:00:05', toolCallSeq: 2 }))
+    expect(jStr(jObj(card.header).template)).toBe('blue')
+    expect(jStr(jObj(jObj(card.header).title).content)).toBe('等待中 · 10:00:05 · 2')
+  })
 })

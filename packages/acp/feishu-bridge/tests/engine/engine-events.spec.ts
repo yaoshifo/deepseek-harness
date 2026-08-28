@@ -2039,6 +2039,50 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     }
   })
 
+  it('parked-ask wall time is exempt: answering past the hard cap keeps the turn alive', async () => {
+    // 2026-08-28 oc_9d385 incident: an ask parked overnight, the user's
+    // morning answer arrived as the first event after ~10 h, and the
+    // event-arrival cap check destroyed the answer it had just woken up to.
+    const { e, p } = newEngine()
+    e.setEventIdleTimeout(600) // softCap 1.2 s, hardCap 3.6 s
+    const key = 'test:hard-cap-parked'
+    const sess = newControllableSession('hard-cap-parked')
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    const session = e.sessions.getOrCreateActive(key)
+    session.tryLock()
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, undefined)
+    // The in-flight permission tool disarms the idle timer (production shape
+    // while an ask is parked), then the ask parks.
+    sess.channel.push({ type: 'tool_use', done: false } as never)
+    const decision = e.askUser(key, { kind: 'permission', toolName: 'Bash', preview: 'ls' })
+    await new Promise((resolve) => { setTimeout(resolve, 50) })
+    expect(state.pendingAsk).toBeDefined()
+    expect(state.capParkStart).not.toBe(0)
+
+    // Parked well past the whole hard cap (3.6 s).
+    await new Promise((resolve) => { setTimeout(resolve, 3700) })
+    expect(e.routeAskResponse(p, msg({ content: '允许', sessionKey: key }), '允许')).toBe(true)
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+    // The answer's tool result arrives as the next event — the cap check
+    // evaluates exactly here and must exempt the parked wall time.
+    sess.channel.push({ type: 'text', content: 'after-answer', done: false } as never)
+    await new Promise((resolve) => { setTimeout(resolve, 200) })
+    let settled = false
+    void done.then(() => { settled = true })
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+    expect(settled, 'answering a long-parked ask must not trip the hard cap').toBe(false)
+    expect(p.getSent().some(s => s.includes('exceeded the maximum turn duration'))).toBe(false)
+
+    sess.channel.push({ type: 'result', content: 'done', done: true } as never)
+    await done
+    expect(p.getSent().some(s => s.includes('exceeded the maximum turn duration'))).toBe(false)
+  })
+
   it('research sessions lift the hard cap (Go researchExempt)', async () => {
     // The exemption rides the hard-cap-exemption waterfall: the engine needs
     // a research listener for the research halves to answer (the chatroom

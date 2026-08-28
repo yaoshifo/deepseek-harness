@@ -526,6 +526,12 @@ export class StreamPreview {
    */
   completed: boolean = false
   /**
+   * True once the preview was parked on a user answer (permission/ask) and
+   * detached with the waiting header instead of a completed terminal render.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
+  waiting: boolean = false
+  /**
    * True once the failed terminal card was rendered.
    * @internal White-box: ported same-package tests read/write this directly.
    */
@@ -706,9 +712,11 @@ export class StreamPreview {
       ? 'completed'
       : this.failed
         ? 'failed'
-        : this.thinkingText !== ''
-          ? 'thinking'
-          : 'running'
+        : this.waiting
+          ? 'waiting'
+          : this.thinkingText !== ''
+            ? 'thinking'
+            : 'running'
     return {
       state,
       ts: hms(),
@@ -870,10 +878,16 @@ export class StreamPreview {
   }
 
   /**
-   * Mark the streaming card completed (green header) and detach the preview
-   * handle so the card stays visible permanently.
+   * Mark the streaming card terminal and detach the preview handle so the
+   * card stays visible permanently. `park` renders the blue 等待中 header
+   * instead of green 执行完成 — used when an ask/permission parks the turn:
+   * the segment is delivered but the turn itself is not done, and a
+   * completed claim next to a pending approval card misleads (2026-08-28
+   * oc_9d385: 「执行完成 · 07:38:57 · 2」 green card directly followed by the
+   * permission request it was waiting on).
+   * @param park - Render the waiting state instead of completed.
    */
-  async completeAndDetach(): Promise<void> {
+  async completeAndDetach(park = false): Promise<void> {
     const state = await this.locked(() => {
       this.cancelTimerLocked()
       // Set degraded first so timers and appendProgress stop queueing new
@@ -884,7 +898,8 @@ export class StreamPreview {
       let handle: unknown
       let content: ProgressContent | undefined
       if (this.previewMsgID !== undefined) {
-        this.completed = true
+        if (park) this.waiting = true
+        else this.completed = true
         handle = this.previewMsgID
         if (this.progressMode) {
           this.finalizePendingEntriesLocked(true)
@@ -1178,7 +1193,10 @@ export class StreamPreview {
     } catch (error) {
       console.debug(`stream preview: tail check failed: ${String(error)}`)
     }
-    if (!latest) await this.bumpToEnd()
+    if (!latest) {
+      console.debug(`stream preview: tail guard bump — card displaced (${this.sessionKey})`)
+      await this.bumpToEnd()
+    }
     // Re-arm under the lock so a finish() racing between the probe and here
     // is observed (it latches `finished` holding the same lock).
     await this.locked(() => {
