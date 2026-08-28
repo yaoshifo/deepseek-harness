@@ -8,7 +8,7 @@
  * per scope: `resolveMemoryDir` for a project's `~/.claude/projects/<slug>/
  * memory/`, `resolveGlobalMemoryDir` for the cross-project `~/.claude/memory/`.
  *
- * @module @deepseek-ai/dsh-tool-claude-memory
+ * @module @deepseek-ai/dsh-memory
  */
 
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'

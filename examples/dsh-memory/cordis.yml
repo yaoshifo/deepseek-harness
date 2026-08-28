@@ -7,8 +7,8 @@
 # cross-project ~/.claude/memory/ directory across every dsh session and adds
 # the scope parameter to the memory tools; Claude Code does not read it.
 - insert:
-    - id: claude-memory
-      name: '@deepseek-ai/dsh-tool-claude-memory'
+    - id: dsh-memory
+      name: '@deepseek-ai/dsh-memory'
       config:
         maxIndexBytes: 25600
         global:

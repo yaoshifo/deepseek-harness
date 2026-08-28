@@ -1,7 +1,7 @@
 /**
  * Type-only declarations for the Claude Code memory compatibility plugin.
  *
- * @module @deepseek-ai/dsh-tool-claude-memory
+ * @module @deepseek-ai/dsh-memory
  */
 
 /**
@@ -9,8 +9,8 @@
  * marker is scope-aware since version 2: a project injection names its slug,
  * a global injection omits the slug and flags the cross-project scope.
  */
-export interface ClaudeMemorySource {
-  kind: 'claude-memory'
+export interface DshMemorySource {
+  kind: 'dsh-memory'
   /** Source-marker version; structural changes to this shape bump it. */
   version: 2
   /** Which memory directory the injected index was read from. */
@@ -23,6 +23,6 @@ export interface ClaudeMemorySource {
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
-    'claude-memory': ClaudeMemorySource
+    'dsh-memory': DshMemorySource
   }
 }

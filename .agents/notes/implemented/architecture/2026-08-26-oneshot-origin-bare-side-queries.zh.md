@@ -6,12 +6,12 @@ Status: implemented
 
 ## Problem
 
-feishu-bridge 的旁路查询——群名生成（Go LightweightQuery）、predict-next、turn summary、monitor triage，以及 plan/reply 渲染 fork——都是全新的一次性 dsh 会话，全部任务上下文只经 prompt 传递。但会话组装仍会把所有按 cwd 派生的环境块注入进来：workspace 指令 baseline（agent-instructions）、项目记忆索引（claude-memory，按 adapter cwd——即项目主 workdir，绝不是 `/spawn -d` 的覆盖目录——取 slug）、`<available_skills>` 清单、完整的基础 system prompt，甚至给这个用完即弃的会话发一次 LLM 标题请求。线上实测一次群名生成：16445 input token 换 14 个 output token。比浪费更糟的是正确性：一个 `/spawn -d books` 建的群被改名「拉取RiskAI最新代码」——命名 fork 在 riskai 项目主目录组装，注入的 riskai 记忆索引把首条消息里的「这个项目」消解成了 RiskAI，而任务会话本身一直在 books 里正确运行、拉的就是 books 的代码。
+feishu-bridge 的旁路查询——群名生成（Go LightweightQuery）、predict-next、turn summary、monitor triage，以及 plan/reply 渲染 fork——都是全新的一次性 dsh 会话，全部任务上下文只经 prompt 传递。但会话组装仍会把所有按 cwd 派生的环境块注入进来：workspace 指令 baseline（agent-instructions）、项目记忆索引（dsh-memory，按 adapter cwd——即项目主 workdir，绝不是 `/spawn -d` 的覆盖目录——取 slug）、`<available_skills>` 清单、完整的基础 system prompt，甚至给这个用完即弃的会话发一次 LLM 标题请求。线上实测一次群名生成：16445 input token 换 14 个 output token。比浪费更糟的是正确性：一个 `/spawn -d books` 建的群被改名「拉取RiskAI最新代码」——命名 fork 在 riskai 项目主目录组装，注入的 riskai 记忆索引把首条消息里的「这个项目」消解成了 RiskAI，而任务会话本身一直在 books 里正确运行、拉的就是 books 的代码。
 
 ## Decision
 
 - dsh-session 与 dsh-agent 把粗粒度 `SessionHeader.origin` 联合类型扩出 `oneshot`（header 校验接受它；可选字段加值，不做格式版本提升）。该 origin 标记短生命周期、自含上下文的旁路查询会话。
-- 上下文注入策略按 origin 路由：claude-memory 对一切携带 origin 的会话跳过索引注入（此前仅 subagent——索引注入从此只面向普通会话）；session-title 对 oneshot 会话跳过自动 LLM 标题生成（本地 fallback 标题保留——它不发模型请求）。
+- 上下文注入策略按 origin 路由：dsh-memory 对一切携带 origin 的会话跳过索引注入（此前仅 subagent——索引注入从此只面向普通会话）；session-title 对 oneshot 会话跳过自动 LLM 标题生成（本地 fallback 标题保留——它不发模型请求）。
 - feishu-bridge adapter 以 `origin: 'oneshot'` 创建 lightweightQuery 与 renderQuery 会话。lightweightQuery 完全 bare：一行式 complete system prompt 整体替换组装基线（buildCompletePromptSetup 保持渲染 note 所有的「整体替换 prompt ⟺ 指令通道静默」不变量），`tools.restrict({ allow: [] })` 屏蔽全部工具——skill 清单随工具一同消失，按项目的 MCP mask 折叠进这条唯一的 deny-all 限制而不再叠加第二条。renderQuery 只 deny 全局 `skill` 工具（渲染 skill 正文已烤进它的 system prompt；`write` 等工作工具保留），MCP mask 作为独立限制保留。
 
 ## Alternatives considered
@@ -28,7 +28,7 @@ feishu-bridge 的旁路查询——群名生成（Go LightweightQuery）、predi
 
 ## Testing
 
-`tests/agent-dsh/adapter-oneshot.spec.ts` 钉住 bare 轻量查询的组装（origin、逐字的单行 complete section、指令抑制、`allow: []`）与渲染 skill deny 及其未注册回退；`tests/agent-dsh/adapter-mcp-mask.spec.ts` 钉住折叠后的 deny-all mask 与渲染 fork 两条并存的限制；dsh-session、claude-memory、session-title 包测试钉住 origin 校验与两处注入门控。
+`tests/agent-dsh/adapter-oneshot.spec.ts` 钉住 bare 轻量查询的组装（origin、逐字的单行 complete section、指令抑制、`allow: []`）与渲染 skill deny 及其未注册回退；`tests/agent-dsh/adapter-mcp-mask.spec.ts` 钉住折叠后的 deny-all mask 与渲染 fork 两条并存的限制；dsh-session、dsh-memory、session-title 包测试钉住 origin 校验与两处注入门控。
 
 ## Related
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import * as MemoryInvariant from '@deepseek-ai/dsh-tool-claude-memory/invariant'
+import * as MemoryInvariant from '@deepseek-ai/dsh-memory/invariant'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 
 const INJECTION_TEXT = [
@@ -33,7 +33,7 @@ function injectionMessage(over: { source?: object; text?: string } = {}): Return
   return createUserMessage({
     content: [{ type: 'text', text: over.text ?? INJECTION_TEXT }],
     source: (over.source ?? {
-      kind: 'claude-memory',
+      kind: 'dsh-memory',
       version: 2,
       scope: 'project',
       project: '-home-hm-workspace-ainvest',
@@ -46,7 +46,7 @@ function globalInjectionMessage(): ReturnType<typeof createUserMessage> {
   return createUserMessage({
     content: [{ type: 'text', text: GLOBAL_INJECTION_TEXT }],
     source: {
-      kind: 'claude-memory',
+      kind: 'dsh-memory',
       version: 2,
       scope: 'global',
       digest: 'b'.repeat(40),
@@ -68,7 +68,7 @@ function session(ctx: Context) {
   return ctx.sessions.get(id)!
 }
 
-describe('claude-memory invariant', () => {
+describe('dsh-memory invariant', () => {
   it('accepts a well-formed injection appended to a session', async () => {
     const ctx = await setup()
     const log = session(ctx)
@@ -93,7 +93,7 @@ describe('claude-memory invariant', () => {
     const log = session(ctx)
     expect(() => {
       log.append('user/message', injectionMessage({
-        source: { kind: 'claude-memory', version: 1, scope: 'project', project: '-p', digest: 'a'.repeat(40) },
+        source: { kind: 'dsh-memory', version: 1, scope: 'project', project: '-p', digest: 'a'.repeat(40) },
       }), { surfaceOp: 'append' })
     }).toThrow(/version 2/)
     expect(() => {
@@ -101,12 +101,12 @@ describe('claude-memory invariant', () => {
     }).toThrow(/framed/)
     expect(() => {
       log.append('user/message', injectionMessage({
-        source: { kind: 'claude-memory', version: 2, scope: 'global', project: '-p', digest: 'a'.repeat(40) },
+        source: { kind: 'dsh-memory', version: 2, scope: 'global', project: '-p', digest: 'a'.repeat(40) },
       }), { surfaceOp: 'append' })
     }).toThrow(/must not carry a project slug/)
     expect(() => {
       log.append('user/message', injectionMessage({
-        source: { kind: 'claude-memory', version: 2, scope: 'project', digest: 'a'.repeat(40) },
+        source: { kind: 'dsh-memory', version: 2, scope: 'project', digest: 'a'.repeat(40) },
       }), { surfaceOp: 'append' })
     }).toThrow(/project slug/)
     log.append('user/message', injectionMessage(), { surfaceOp: 'append' })

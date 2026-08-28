@@ -9,8 +9,8 @@
     path: ./cordis.yml
     patches:
       - insert:
-          - id: claude-memory
-            name: '@deepseek-ai/dsh-tool-claude-memory'
+          - id: dsh-memory
+            name: '@deepseek-ai/dsh-memory'
             config:
               claudeHome: !!js process.cwd() + '/.claude'
               maxIndexBytes: 25600

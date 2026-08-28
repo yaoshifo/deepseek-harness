@@ -22,7 +22,7 @@ Claude Code 的记忆机制严格按项目隔离(`~/.claude/projects/<slug>/memo
 
 ## 后果
 
-全局注入先于项目注入(稳定身份在前),各自有独立的 `<system-reminder>` 帧与预算。`memory_write`/`memory_index` 对各自 scope 的 MEMORY.md 应用各自预算;两个预算互不影响。global scope 的工具调用只要求一个归属会话——不需要 POSIX cwd、不依赖 slug——因此无 cwd 的会话仍可读写全局记忆;project scope 保留 slug 守卫。到达未启用全局部署的 `scope: 'global'` 实参在 `resolveCall` 中大声失败,而不是静默路由到项目目录(开放式参数根否则会吞掉这个未知键)。全局目录的并发保持 last-write-wins,写者群体扩大为本机上所有 dsh 会话。`examples/acp-agent` 的 claude-memory 快照覆盖双注入与一次 scope=global 的写入/索引往返;包内测试固化提示锚点、按 scope 去重与走真实 Loader 启动加卸载的组合。
+全局注入先于项目注入(稳定身份在前),各自有独立的 `<system-reminder>` 帧与预算。`memory_write`/`memory_index` 对各自 scope 的 MEMORY.md 应用各自预算;两个预算互不影响。global scope 的工具调用只要求一个归属会话——不需要 POSIX cwd、不依赖 slug——因此无 cwd 的会话仍可读写全局记忆;project scope 保留 slug 守卫。到达未启用全局部署的 `scope: 'global'` 实参在 `resolveCall` 中大声失败,而不是静默路由到项目目录(开放式参数根否则会吞掉这个未知键)。全局目录的并发保持 last-write-wins,写者群体扩大为本机上所有 dsh 会话。`examples/acp-agent` 的 dsh-memory 快照覆盖双注入与一次 scope=global 的写入/索引往返;包内测试固化提示锚点、按 scope 去重与走真实 Loader 启动加卸载的组合。
 
 ## 考虑过的替代方案
 

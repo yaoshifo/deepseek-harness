@@ -5,7 +5,7 @@
 这个 overlay 让一个 `dsh web` 进程与本机 Claude Code 共享同一份记忆,而不改变出厂默认的 Web 组合:
 
 ```sh
-dsh web --patch examples/claude-memory/cordis.yml
+dsh web --patch examples/dsh-memory/cordis.yml
 ```
 
 此后 dsh 与 Claude Code 读写同一个按项目隔离的记忆目录 `~/.claude/projects/<slug>/memory/`,`<slug>` 是会话工作目录中每个 `/` 和 `.` 替换为 `-` 后的结果。Claude Code 写下的记忆 dsh 能召回,dsh 写下的记忆会出现在 Claude Code 的下一个会话里。不引入任何自有存储。

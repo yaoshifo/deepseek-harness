@@ -3041,9 +3041,9 @@ export interface Config {
 
 Source: [`packages/shell/tool-bash-persistent/src/index.ts:432`](../packages/shell/tool-bash-persistent/src/index.ts)
 
-<a id="deepseek-aidsh-tool-claude-memory"></a>
+<a id="deepseek-aidsh-memory"></a>
 
-## `@deepseek-ai/dsh-tool-claude-memory`
+## `@deepseek-ai/dsh-memory`
 
 Requires: `tools` · `systemPrompt` · `agents`
 
@@ -3063,7 +3063,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/memory/tool-claude-memory/src/index.ts:57`](../packages/memory/tool-claude-memory/src/index.ts)
+Source: [`packages/memory/memory/src/index.ts:57`](../packages/memory/memory/src/index.ts)
 
 <a id="deepseek-aidsh-tool-fs"></a>
 

@@ -12,7 +12,7 @@
  * Storage goes through `node:fs` directly — never the swappable `ctx.fs`
  * provider — so both directories stay machine-local in every deployment shape.
  *
- * @module @deepseek-ai/dsh-tool-claude-memory
+ * @module @deepseek-ai/dsh-memory
  */
 
 import { homedir } from 'node:os'
@@ -43,10 +43,10 @@ export type { IndexLimits, MemoryEntry, MemoryIndexChange, MemoryIndexResult, Me
 export { hasMemoryInjection, readMemoryIndex, renderIndexInjection } from './inject.ts'
 export type { MemoryIndexContent, MemoryScope } from './inject.ts'
 export { GLOBAL_MEMORY_PROMPT, MEMORY_PROMPT } from './prompt.ts'
-export type { ClaudeMemorySource } from './types.ts'
+export type { DshMemorySource } from './types.ts'
 
 /** Cordis plugin name used by loader diagnostics. */
-export const name = 'claude-memory'
+export const name = 'dsh-memory'
 
 /** The tool registry, prompt registry, and agent event bus this plugin consumes. */
 export const inject = ['tools', 'systemPrompt', 'agents']
@@ -206,7 +206,7 @@ export function apply(ctx: Context, config: Config): void {
   const globalDir = resolveGlobalMemoryDir(claudeHome)
 
   ctx.systemPrompt.section({
-    name: 'claude-memory',
+    name: 'dsh-memory',
     order: 110,
     text: (context) => {
       const cwd = memoryCwd(context.agent)
@@ -443,7 +443,7 @@ export function apply(ctx: Context, config: Config): void {
       injections.push(createUserMessage({
         content: [{ type: 'text', text: renderIndexInjection(index, dir, scope) }],
         source: {
-          kind: 'claude-memory',
+          kind: 'dsh-memory',
           version: 2,
           scope,
           ...(scope === 'project' ? { project: claudeProjectSlug(cwd) } : {}),

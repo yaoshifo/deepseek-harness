@@ -19,7 +19,7 @@ const LIMITS = { maxIndexLines: 200, maxIndexBytes: 25_600 }
 let root: string
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'claude-memory-idx-'))
+  root = await mkdtemp(join(tmpdir(), 'dsh-memory-idx-'))
 })
 
 afterAll(async () => {
@@ -138,14 +138,14 @@ describe('hasMemoryInjection', () => {
   it('detects an earlier injection for its own scope only', () => {
     const events = [
       messageEvent({ kind: 'plugin', plugin: 'other' }),
-      messageEvent({ kind: 'claude-memory', version: 2, scope: 'project', project: 'p', digest: 'd' }),
+      messageEvent({ kind: 'dsh-memory', version: 2, scope: 'project', project: 'p', digest: 'd' }),
     ]
     expect(hasMemoryInjection(events, 'project')).toBe(true)
     expect(hasMemoryInjection(events, 'global')).toBe(false)
   })
 
   it('treats a pre-scope version-1 injection as a project injection', () => {
-    const events = [messageEvent({ kind: 'claude-memory', version: 1, project: 'p', digest: 'd' })]
+    const events = [messageEvent({ kind: 'dsh-memory', version: 1, project: 'p', digest: 'd' })]
     expect(hasMemoryInjection(events, 'project')).toBe(true)
     expect(hasMemoryInjection(events, 'global')).toBe(false)
   })

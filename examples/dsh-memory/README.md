@@ -5,7 +5,7 @@ English | [中文](README.zh.md)
 This overlay opts one `dsh web` process into sharing this machine's Claude Code memory, without changing the shipped default Web composition:
 
 ```sh
-dsh web --patch examples/claude-memory/cordis.yml
+dsh web --patch examples/dsh-memory/cordis.yml
 ```
 
 dsh and Claude Code then read and write the same per-project memory directory, `~/.claude/projects/<slug>/memory/`, where `<slug>` is the session working directory with every `/` and `.` replaced by `-`. Memories written by Claude Code are recalled by dsh, and memories written by dsh appear in Claude Code's next session. No storage of its own is introduced.

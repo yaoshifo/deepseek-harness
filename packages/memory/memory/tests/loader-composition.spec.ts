@@ -16,7 +16,7 @@ import AgentRegistry, { agentEvents, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import * as ClaudeMemory from '@deepseek-ai/dsh-tool-claude-memory'
+import * as DshMemory from '@deepseek-ai/dsh-memory'
 
 const signal = new AbortController().signal
 const CWD = '/home/hm/workspace/ainvest'
@@ -37,14 +37,14 @@ afterEach(async () => {
 })
 
 async function boot(configFor: (home: string) => readonly string[]): Promise<Context> {
-  root = await mkdtemp(join(tmpdir(), 'dsh-claude-memory-loader-'))
+  root = await mkdtemp(join(tmpdir(), 'dsh-memory-loader-'))
   const configLines = configFor(join(root, 'claude'))
   const configPath = join(root, 'cordis.yml')
   await writeFile(configPath, [
     "- name: '@deepseek-ai/dsh-agent'",
     "- name: '@deepseek-ai/dsh-system-prompt'",
     "- name: '@deepseek-ai/dsh-tools'",
-    "- name: '@deepseek-ai/dsh-tool-claude-memory'",
+    "- name: '@deepseek-ai/dsh-memory'",
     ...configLines.length > 0 ? ['  config:', ...configLines] : [],
     '',
   ].join('\n'))
@@ -57,7 +57,7 @@ async function boot(configFor: (home: string) => readonly string[]): Promise<Con
     ['@deepseek-ai/dsh-agent', AgentRegistry],
     ['@deepseek-ai/dsh-system-prompt', SystemPrompt],
     ['@deepseek-ai/dsh-tools', ToolRuntime],
-    ['@deepseek-ai/dsh-tool-claude-memory', ClaudeMemory],
+    ['@deepseek-ai/dsh-memory', DshMemory],
   ])
   ctx.loader.internal = {
     version: 'v2',
@@ -73,7 +73,7 @@ async function boot(configFor: (home: string) => readonly string[]): Promise<Con
 
 function makeAgent(ctx: Context): Agent {
   const scope = ctx.plugin(() => {})
-  const id = SessionId('claude-memory-loader-agent')
+  const id = SessionId('dsh-memory-loader-agent')
   const session = Session.create(id, [], { version: 0, id, createdAt: Date.now(), cwd: CWD })
   const value: Agent = {
     id,
@@ -110,7 +110,7 @@ function toolNames(ctx: Context): string[] {
   return ctx.tools.schemas().map(schema => schema.name)
 }
 
-describe('claude-memory real Loader composition through cordis.yml', () => {
+describe('dsh-memory real Loader composition through cordis.yml', () => {
   it('boots with YAML config and works end to end', async () => {
     const ctx = await boot(home => [
       `    claudeHome: ${home}`,
@@ -140,7 +140,7 @@ describe('claude-memory real Loader composition through cordis.yml', () => {
     expect(decision.kind).toBe('enter')
     if (decision.kind !== 'enter') throw new Error('expected enter')
     expect(decision.messages).toHaveLength(2)
-    expect(decision.messages.at(1)?.source.kind).toBe('claude-memory')
+    expect(decision.messages.at(1)?.source.kind).toBe('dsh-memory')
 
     const write = await ctx.tools.execute({
       signal,
@@ -242,9 +242,9 @@ describe('claude-memory real Loader composition through cordis.yml', () => {
     )
     if (decision.kind !== 'enter') throw new Error('expected enter')
     expect(decision.messages).toHaveLength(3)
-    expect(decision.messages.at(1)?.source).toMatchObject({ kind: 'claude-memory', scope: 'global' })
+    expect(decision.messages.at(1)?.source).toMatchObject({ kind: 'dsh-memory', scope: 'global' })
     expect(JSON.stringify(decision.messages.at(1)?.content)).toContain('holds everywhere')
-    expect(decision.messages.at(2)?.source).toMatchObject({ kind: 'claude-memory', scope: 'project' })
+    expect(decision.messages.at(2)?.source).toMatchObject({ kind: 'dsh-memory', scope: 'project' })
 
     const write = await ctx.tools.execute({
       signal,
@@ -275,13 +275,13 @@ describe('claude-memory real Loader composition through cordis.yml', () => {
     // observe every contribution leave. (The Loader-booted tree keeps its own
     // instance; stacking a second registration of the same plugin would
     // duplicate names, so this scenario mounts on a bare tree.)
-    root = await mkdtemp(join(tmpdir(), 'dsh-claude-memory-dispose-'))
+    root = await mkdtemp(join(tmpdir(), 'dsh-memory-dispose-'))
     const ctx = new Context()
     context = ctx
     await ctx.plugin(SystemPrompt)
     await ctx.plugin(ToolRuntime)
     await ctx.plugin(AgentRegistry)
-    const fiber = await ctx.plugin(ClaudeMemory, {
+    const fiber = await ctx.plugin(DshMemory, {
       claudeHome: join(root, 'claude'),
       maxIndexBytes: 25_600,
     })

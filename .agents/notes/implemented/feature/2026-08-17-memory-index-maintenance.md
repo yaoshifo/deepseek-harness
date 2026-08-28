@@ -30,6 +30,6 @@ The index read-modify-write keeps store-wide last-write-wins semantics: a race w
 
 ## Consequences
 
-- `MEMORY_PROMPT` diverges further from Claude Code verbatim; anchor tests and the claude-memory snapshot pin the divergence, and prompt edits must carry the README verbatim block and snapshots in the same change.
+- `MEMORY_PROMPT` diverges further from Claude Code verbatim; anchor tests and the dsh-memory snapshot pin the divergence, and prompt edits must carry the README verbatim block and snapshots in the same change.
 - Index maintenance is one bounded call instead of a full rewrite; a no-op remove reports current index stats without writing.
-- The acp `claude-memory` snapshot scenario now exercises `memory_read` → `memory_write` → `memory_index` end to end.
+- The acp `dsh-memory` snapshot scenario now exercises `memory_read` → `memory_write` → `memory_index` end to end.

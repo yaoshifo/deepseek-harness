@@ -9,7 +9,7 @@
  * tests pin the load-bearing sentences; changing them is a behavior change
  * that must update snapshots.
  *
- * @module @deepseek-ai/dsh-tool-claude-memory
+ * @module @deepseek-ai/dsh-memory
  */
 
 /** Model-facing memory strategy section text. */

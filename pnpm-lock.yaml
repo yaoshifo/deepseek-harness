@@ -538,6 +538,9 @@ importers:
       '@deepseek-ai/dsh-lsp-stdio':
         specifier: workspace:*
         version: link:../packages/lsp/lsp-stdio
+      '@deepseek-ai/dsh-memory':
+        specifier: workspace:*
+        version: link:../packages/memory/memory
       '@deepseek-ai/dsh-permission-presets':
         specifier: workspace:*
         version: link:../packages/interaction/permission-presets
@@ -670,9 +673,6 @@ importers:
       '@deepseek-ai/dsh-tool-call-timeout-policy':
         specifier: workspace:*
         version: link:../packages/guard/timeout-policy
-      '@deepseek-ai/dsh-tool-claude-memory':
-        specifier: workspace:*
-        version: link:../packages/memory/tool-claude-memory
       '@deepseek-ai/dsh-tool-cordis':
         specifier: workspace:*
         version: link:../packages/extensions/tool-cordis
@@ -5897,7 +5897,7 @@ importers:
         specifier: ^2026.7.4
         version: 2026.7.10(zod@4.4.3)
 
-  packages/memory/tool-claude-memory:
+  packages/memory/memory:
     dependencies:
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery

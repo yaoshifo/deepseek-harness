@@ -6,7 +6,7 @@
  * with a dash, preserving case and all other characters. Verified against
  * on-disk layouts such as `-home-hm--dsh-profiles-cc-connect`.
  *
- * @module @deepseek-ai/dsh-tool-claude-memory
+ * @module @deepseek-ai/dsh-memory
  */
 
 /** Path characters Claude Code folds into one dash each in project slugs. */

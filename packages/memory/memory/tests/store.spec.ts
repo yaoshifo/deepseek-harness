@@ -18,7 +18,7 @@ const LIMITS = { maxIndexLines: 200, maxIndexBytes: 25_600 }
 let root: string
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'claude-memory-'))
+  root = await mkdtemp(join(tmpdir(), 'dsh-memory-'))
 })
 
 afterAll(async () => {

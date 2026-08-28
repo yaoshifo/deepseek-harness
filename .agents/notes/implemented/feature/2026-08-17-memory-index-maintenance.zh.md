@@ -30,6 +30,6 @@ Status: implemented
 
 ## Consequences
 
-- `MEMORY_PROMPT` 与 Claude Code 原文的偏离变大;锚点测试与 claude-memory 快照钉死该偏离,提示词改动必须在同一变更内带上 README 逐字块与快照。
+- `MEMORY_PROMPT` 与 Claude Code 原文的偏离变大;锚点测试与 dsh-memory 快照钉死该偏离,提示词改动必须在同一变更内带上 README 逐字块与快照。
 - 索引维护从全量重写变为一次有界调用;no-op 的 remove 回告当前索引统计而不写入。
-- acp 的 `claude-memory` 快照场景现在端到端覆盖 `memory_read` → `memory_write` → `memory_index`。
+- acp 的 `dsh-memory` 快照场景现在端到端覆盖 `memory_read` → `memory_write` → `memory_index`。

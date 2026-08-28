@@ -2,7 +2,7 @@
  * Session-start memory-index loading and durable injection rendering, per
  * memory scope (project or global).
  *
- * @module @deepseek-ai/dsh-tool-claude-memory
+ * @module @deepseek-ai/dsh-memory
  */
 
 import { createHash } from 'node:crypto'
@@ -104,7 +104,7 @@ export function renderIndexInjection(index: MemoryIndexContent, dir: string, sco
 }
 
 /**
- * The scope one recorded claude-memory source belongs to; sources written
+ * The scope one recorded dsh-memory source belongs to; sources written
  * before scopes existed (version 1, no scope field) are project injections.
  */
 function sourceScope(source: { scope?: unknown }): MemoryScope {
@@ -112,7 +112,7 @@ function sourceScope(source: { scope?: unknown }): MemoryScope {
 }
 
 /**
- * Whether the visible session history already carries a claude-memory index
+ * Whether the visible session history already carries a dsh-memory index
  * injection for one scope; one injection per scope keeps each index a
  * one-time durable event.
  *
@@ -122,7 +122,7 @@ function sourceScope(source: { scope?: unknown }): MemoryScope {
  */
 export function hasMemoryInjection(events: readonly SessionEvent[], scope: MemoryScope): boolean {
   for (const event of events) {
-    if (event.type !== 'user/message' || event.data.source.kind !== 'claude-memory') continue
+    if (event.type !== 'user/message' || event.data.source.kind !== 'dsh-memory') continue
     if (sourceScope(event.data.source) === scope) return true
   }
   return false

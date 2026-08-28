@@ -23,7 +23,7 @@ let root: string
 let context: Context | undefined
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), 'claude-memory-idx-'))
+  root = await mkdtemp(join(tmpdir(), 'dsh-memory-idx-'))
 })
 
 afterAll(async () => {
@@ -265,7 +265,7 @@ describe('session-start index injection', () => {
     expect(decision.messages).toHaveLength(2)
     const injected = decision.messages.at(1)
     if (injected === undefined) throw new Error('expected injected message')
-    expect(injected.source).toMatchObject({ kind: 'claude-memory', project: '-home-hm-workspace-ainvest' })
+    expect(injected.source).toMatchObject({ kind: 'dsh-memory', project: '-home-hm-workspace-ainvest' })
     expect(JSON.stringify(injected.content)).toContain('hook about ainvest')
     expect(JSON.stringify(injected.content)).toContain('<system-reminder>')
   })
@@ -278,7 +278,7 @@ describe('session-start index injection', () => {
     const first = await emitPreStep(ctx, agent)
     if (first.kind !== 'enter') throw new Error('expected enter')
     for (const message of first.messages) {
-      if (message.source.kind === 'claude-memory') {
+      if (message.source.kind === 'dsh-memory') {
         agent.session.append('user/message', message, { surfaceOp: 'append' })
       }
     }
@@ -356,14 +356,14 @@ describe('global memory scope', () => {
     const first = await emitPreStep(ctx, agent)
     if (first.kind !== 'enter') throw new Error('expected enter')
     expect(first.messages).toHaveLength(3)
-    expect(first.messages.at(1)?.source).toMatchObject({ kind: 'claude-memory', scope: 'global', version: 2 })
+    expect(first.messages.at(1)?.source).toMatchObject({ kind: 'dsh-memory', scope: 'global', version: 2 })
     expect(first.messages.at(1)?.source).not.toHaveProperty('project')
     expect(JSON.stringify(first.messages.at(1)?.content)).toContain('Global memory index')
     expect(JSON.stringify(first.messages.at(1)?.content)).toContain('holds everywhere')
-    expect(first.messages.at(2)?.source).toMatchObject({ kind: 'claude-memory', scope: 'project', project: '-home-hm-workspace-ainvest' })
+    expect(first.messages.at(2)?.source).toMatchObject({ kind: 'dsh-memory', scope: 'project', project: '-home-hm-workspace-ainvest' })
     expect(JSON.stringify(first.messages.at(2)?.content)).toContain('hook about ainvest')
     for (const message of first.messages) {
-      if (message.source.kind === 'claude-memory') {
+      if (message.source.kind === 'dsh-memory') {
         agent.session.append('user/message', message, { surfaceOp: 'append' })
       }
     }

@@ -62,8 +62,8 @@
 - insert:
     # Claude Code memory sharing: same ~/.claude/projects/<slug>/memory/
     # directory as Claude Code.
-    - id: claude-memory
-      name: '@deepseek-ai/dsh-tool-claude-memory'
+    - id: dsh-memory
+      name: '@deepseek-ai/dsh-memory'
       config:
         maxIndexBytes: 25600
 
