@@ -171,6 +171,11 @@ describe('feishu_bridge_subtask registration', () => {
     expect(description).not.toContain('unsupported across')
     // send queues only native subtasks; attended group children busy-reject.
     expect(description).toContain('busy rejects it')
+    // interrupt addresses native child ids only; group children stop from
+    // their own chat — the tool description states the limit.
+    expect(description).toContain('native subtasks\' current turn')
+    expect(description).toContain('stopped from their own chat')
+    expect(params.properties?.child?.description).toContain('interrupt accepts native subtask ids only')
     // The "assistant" literal routes through send's alias waterfall; interrupt
     // resolves no alias and addresses native child ids only.
     expect(params.properties?.child?.description).toContain('send also accepts the literal "assistant"')

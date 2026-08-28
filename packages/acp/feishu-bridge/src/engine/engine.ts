@@ -6684,14 +6684,18 @@ export class Engine {
 
   /**
    * Tear down the native continuable descendants of the given root keys
-   * (de-baggage B4): interrupt each child's current turn, recycle a clean
-   * worktree, keep a dirty one, and drop the parentage records. Native
+   * (de-baggage B4): interrupt each live child's current turn, recycle a
+   * clean worktree, keep a dirty one, and drop the parentage records. A
+   * child with no live agent (daemon restart, already settled) has no turn
+   * to stop — interrupting it would only fail on the dead parent authority
+   * and read as a fault in the log, so its teardown is silent. Native
    * grandchildren chain through native records, so a group descendant that
    * spawned native children is covered by including it in the roots.
    * @param rootKeys - Session keys whose native descendants to drain.
    */
   async drainNativeDescendants(rootKeys: string[]): Promise<void> {
     const entries = this.nativeChildEntries()
+    const delegator = asContinuableDelegator(this.agent)
     const roots = new Set(rootKeys)
     const toDrain: Array<[string, NativeChildRecord]> = []
     let grew = true
@@ -6706,10 +6710,12 @@ export class Engine {
       }
     }
     for (const [childId, rec] of toDrain) {
-      try {
-        this.interruptNativeChild(childId)
-      } catch (error) {
-        console.warn(`subtask: native descendant interrupt failed (child=${childId}): ${String(error)}`)
+      if (delegator?.childLive?.(childId) === true) {
+        try {
+          this.interruptNativeChild(childId)
+        } catch (error) {
+          console.warn(`subtask: native descendant interrupt failed (child=${childId}): ${String(error)}`)
+        }
       }
       this.accountBarrierDeath(rec.parent_key, childId, rec.label)
       await this.removeNativeWorktreeQuiet(
