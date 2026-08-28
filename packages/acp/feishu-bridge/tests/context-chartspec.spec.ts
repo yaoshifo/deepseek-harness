@@ -3,10 +3,11 @@ import { BUCKET_COLORS, BUCKET_KEYS, BUCKET_LABELS, compositionBarSpec, trendCha
 import type { SixBuckets, TurnBucket } from '../src/context/types.js'
 
 // Structure assertions over the VChart specs the Feishu card chart
-// component consumes: the pinned chart grammar (type/direction/stack/
-// seriesField/color mapping), the six-bucket fidelity to the dsh-context
-// palette and labels, and the pure-JSON constraint (a spec must round-trip
-// through JSON untouched — no functions or undefined holes).
+// component consumes. Shapes follow the Spike A live-verified forms: the API
+// server validates chart_spec (invalid specs are rejected with 230099), the
+// color field must be a complete ordinal scale object, and the assertion set
+// pins those exact wire forms. Specs must also round-trip through JSON
+// untouched — no functions or undefined holes.
 
 function buckets(over: Partial<SixBuckets> = {}): SixBuckets {
   return { system: 0, tools: 0, user: 0, inject: 0, assistant: 0, tool: 0, ...over }
@@ -15,6 +16,8 @@ function buckets(over: Partial<SixBuckets> = {}): SixBuckets {
 function turn(over: Partial<TurnBucket> = {}): TurnBucket {
   return { turn: 1, system: 0, tools: 0, user: 0, inject: 0, assistant: 0, tool: 0, total: 0, stepCount: 1, ...over }
 }
+
+const colorScale = { type: 'ordinal', domain: [...BUCKET_LABELS], range: [...BUCKET_COLORS] }
 
 describe('bucket constants', () => {
   it('keeps the six colors verbatim from dsh-context CATS', () => {
@@ -34,28 +37,27 @@ describe('bucket constants', () => {
 })
 
 describe('compositionBarSpec', () => {
-  it('builds a horizontal stacked bar over the six buckets', () => {
+  it('builds the live-verified horizontal bar form: one bar per bucket', () => {
     const spec = compositionBarSpec(buckets({ system: 10, tools: 20, user: 30, inject: 40, assistant: 50, tool: 60 }))
     expect(spec.type).toBe('bar')
     expect(spec.direction).toBe('horizontal')
-    expect(spec.stack).toBe(true)
-    expect(spec.seriesField).toBe('bucket')
-    expect(spec.xField).toBe('tokens')
-    expect(spec.yField).toBe('label')
-    expect(spec.color).toEqual([...BUCKET_COLORS])
-    expect(spec.legends).toEqual({ visible: true, orient: 'bottom' })
-    const values = (spec.data as { values: Array<{ label: string; bucket: string; tokens: number }> }).values
+    expect(spec.xField).toBe('value')
+    expect(spec.yField).toBe('name')
+    expect(spec.seriesField).toBe('name')
+    expect(spec.stack).toBeUndefined()
+    expect(spec.color).toEqual(colorScale)
+    const values = (spec.data as { values: Array<{ name: string; value: number }> }).values
     expect(values.length).toBe(6)
-    expect(values.map(v => v.bucket)).toEqual([...BUCKET_LABELS])
-    expect(values.map(v => v.tokens)).toEqual([10, 20, 30, 40, 50, 60])
-    expect(new Set(values.map(v => v.label))).toEqual(new Set(['当前上下文']))
+    expect(values.map(v => v.name)).toEqual([...BUCKET_LABELS])
+    expect(values.map(v => v.value)).toEqual([10, 20, 30, 40, 50, 60])
   })
 
-  it('emits zero-token buckets so the legend stays complete', () => {
+  it('emits zero-token buckets so the axis stays complete', () => {
     const spec = compositionBarSpec(buckets({ user: 30 }))
-    const values = (spec.data as { values: Array<{ tokens: number }> }).values
+    const values = (spec.data as { values: Array<{ name: string; value: number }> }).values
     expect(values.length).toBe(6)
-    expect(values.map(v => v.tokens)).toEqual([0, 0, 30, 0, 0, 0])
+    expect(values.map(v => v.name)).toEqual([...BUCKET_LABELS])
+    expect(values.map(v => v.value)).toEqual([0, 0, 30, 0, 0, 0])
   })
 
   it('round-trips through JSON (pure declarative spec)', () => {
@@ -65,7 +67,7 @@ describe('compositionBarSpec', () => {
 })
 
 describe('trendChartSpec', () => {
-  it('builds one stacked column per turn with six bucket segments', () => {
+  it('builds the live-verified stacked-column form over the six buckets', () => {
     const turns = [
       turn({ turn: 1, system: 10, user: 30, total: 40, stepCount: 2 }),
       turn({ turn: 2, tools: 20, assistant: 50, total: 70, stepCount: 1 }),
@@ -75,9 +77,9 @@ describe('trendChartSpec', () => {
     expect(spec.type).toBe('bar')
     expect(spec.stack).toBe(true)
     expect(spec.seriesField).toBe('bucket')
-    expect(spec.xField).toBe('turn')
+    expect(spec.xField).toEqual(['turn', 'bucket'])
     expect(spec.yField).toBe('tokens')
-    expect(spec.color).toEqual([...BUCKET_COLORS])
+    expect(spec.color).toEqual(colorScale)
     expect(spec.legends).toEqual({ visible: true, orient: 'bottom' })
     expect(spec.direction).toBeUndefined()
     const values = (spec.data as { values: Array<{ turn: number; bucket: string; tokens: number }> }).values
