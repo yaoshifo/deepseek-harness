@@ -660,7 +660,11 @@ function parseMutable(cardJSON: string): MutableCardJSON | undefined {
 
 /**
  * Append the export/reply button row (plus optional render-status line) to a
- * completed (green) card. No-op for cards without a green header.
+ * completed (green) or waiting (blue) card. Blue is safe only because the
+ * progress-card PATCH path maps blue exclusively to the waiting state an
+ * ask/permission park entered after captureReplyForExport registered the
+ * partial reply under the same key; keep new blue progress states out of
+ * this precondition. No-op for any other header.
  *
  * @param cardJSON - Rendered card JSON to mutate.
  * @param sessionKey - Session the buttons act on; empty string is a no-op.
@@ -674,7 +678,7 @@ export function injectReplyButtons(cardJSON: string, sessionKey: string, exportK
   if (card === undefined) return cardJSON
   const hdr = card.header
   if (hdr === undefined) return cardJSON
-  if (hdr.template !== 'green') return cardJSON
+  if (hdr.template !== 'green' && hdr.template !== 'blue') return cardJSON
   const body = card.body
   if (body === undefined) return cardJSON
   const elements = body.elements
