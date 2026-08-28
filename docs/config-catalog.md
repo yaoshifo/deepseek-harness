@@ -652,7 +652,7 @@ Source: [`packages/experimental/tool-agent-team/src/index.ts:17`](../packages/ex
 
 ## `@deepseek-ai/dsh-feishu-bridge`
 
-Requires: `agents` · `tools`
+Requires: `agents` · `tools` · `systemPrompt`
 
 ```ts config-catalog
 /** Deployment config for the feishu-bridge plugin. */
@@ -683,8 +683,11 @@ export interface FeishuBridgeConfig {
   cron?: CronConfig
   /** Bot-to-bot relay behavior (Go [relay]). */
   relay?: RelayConfig
-  /** Multi-role chatroom tuning shared as the per-project default (Go [chatroom]). */
-  chatroom?: ChatroomConfig
+  /**
+   * Residue guard: chatroom tuning moved to the chatroom plugin's own
+   * config (packages/acp/feishu-bridge-chatroom); apply fails loud when set.
+   */
+  chatroom?: unknown
   /** Streaming preview tuning merged over the defaults (Go [stream_preview]). */
   streamPreview?: Partial<StreamPreviewCfg>
   /** Provider quota displays appended to the completion footer (Go usage_providers). */
@@ -695,6 +698,8 @@ export interface FeishuBridgeConfig {
   hints_with_param?: string[]
   /** Always-visible hint commands (Go hints_common). */
   hints_common?: string[]
+  /** MCP degradation runtime context; absent = disabled (zero behavior change). */
+  mcpHealth?: McpHealthConfig
 }
 
 /** One bound project: an agent working dir plus the Feishu bot serving it. */
@@ -726,10 +731,17 @@ export interface ProjectConfig {
   providerShortcuts?: Record<string, string>
   /** Rotate the chat to a fresh session after N idle minutes (Go reset_on_idle_mins). */
   resetOnIdleMins?: number
+  /** Bounded seconds to wait for an agent session to close during cleanup and stall retry (Go agentCloseTimeout; default 130). */
+  agentCloseSec?: number
   /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
   unsolicited?: UnsolicitedConfig
-  /** Multi-role chatroom tuning (Go [chatroom]). */
-  chatroom?: ChatroomConfig
+  /**
+   * Residue guard: chatroom tuning moved to the chatroom plugin's own
+   * config (packages/acp/feishu-bridge-chatroom). The key stays in the
+   * schema only so apply can fail loud on a cordis.patch.yml whose chatroom
+   * section was not migrated (schemastery strips unknown keys silently).
+   */
+  chatroom?: unknown
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
   monitor?: MonitorConfig
   /** Model context window in tokens; 0 = the 200k default (Go context_window). */
@@ -737,6 +749,17 @@ export interface ProjectConfig {
 
   /** Parent dirs whose subdirs are auto-listed in /dir (Go dir_scan_paths, #3). */
   dirScanPaths?: string[]
+  /**
+   * MCP server-name allowlist for this project's sessions. Present = sessions
+   * (chats, resumes, forks, chatroom personas, subtask children, one-shot
+   * queries) only see `mcp__<server>__*` tools of the listed servers; every
+   * other MCP server's tools are masked out of the model request. Absent =
+   * unrestricted. A listed server with no live tools (not mounted, or down at
+   * boot) is silently invisible — a typo and an outage are indistinguishable
+   * here, and fail-loud would let one dead server break other projects'
+   * sessions.
+   */
+  mcpServers?: string[]
   /** The bot's default Feishu Wiki/Drive location (Go feishu_workspace, #18). */
   feishuWorkspace?: FeishuWorkspaceConfig
   /** Comma-separated user IDs allowed to run privileged commands; '*' = all (Go admin_from). */
@@ -801,8 +824,6 @@ export interface RateLimitConfig {
 export interface SubtaskConfig {
   /** Max recursive delegation depth. */
   maxDepth?: number
-  /** Hard timeout for subtask sessions in seconds; 0 inherits the event idle timeout. */
-  timeoutSec?: number
   /** Gather-barrier fallback timeout in seconds. */
   gatherTimeoutSec?: number
 }
@@ -833,30 +854,6 @@ export interface RelayConfig {
   timeoutSecs?: number
 }
 
-/** Multi-role chatroom tuning (Go [chatroom], applied per project). */
-export interface ChatroomConfig {
-  /** Root directory holding one persona subdirectory per role; ~ expanded. */
-  rolesDir?: string
-  /** Cap on role agents per chatroom; 0 = default 5 (Go max_roles). */
-  maxRoles?: number
-  /** Moderator data dir holding per-chatroom ledgers; '' disables the ledger (Go moderator_dir). */
-  moderatorDir?: string
-  /** Gather barrier fallback timeout in seconds (Go gather_timeout_sec). */
-  gatherTimeoutSec?: number
-  /** End barrier drain timeout in seconds (Go end_timeout_sec). */
-  endTimeoutSec?: number
-  /** Research-mode gather round timeout in seconds, clamped to [60, 86400] (Go research_timeout_sec). */
-  researchTimeoutSec?: number
-  /** Auto-mode research iteration cap, clamped to [1, 20] (Go max_research_rounds). */
-  maxResearchRounds?: number
-  /** Default research iteration driver when --mode is omitted (Go default_research_mode). */
-  defaultResearchMode?: 'auto' | 'manual'
-  /** Shared research-assistant workdir; empty falls back to <moderatorDir>/research (Go research_workspace). */
-  researchWorkspace?: string
-  /** Pre-provision the shared uv venv for research assistants; default true (Go research_python_env). */
-  researchPythonEnv?: boolean
-}
-
 /** Streaming preview behavior switches (Go StreamPreviewCfg). */
 export interface StreamPreviewCfg {
   /** Whether streaming preview cards are sent at all. */
@@ -879,6 +876,14 @@ export interface UsageProviderConfig {
   type: string
   /** Provider-specific options (e.g. api_key, region). */
   options?: Record<string, unknown>
+}
+
+/** Opt-in MCP degradation runtime-context config; absent = no context registered. */
+export interface McpHealthConfig {
+  /** Watched servers; an empty list registers nothing. */
+  servers: McpHealthServerConfig[]
+  /** Grace seconds after plugin start before a missing server is reported; default 180. */
+  startupGraceSecs?: number
 }
 
 /** Feishu app credentials for one bot. Each app gets its own WS client (MIGRATION.md D5). */
@@ -929,8 +934,12 @@ export interface AgentOptions {
   model?: string
   /** Default session mode: 'plan' starts every session in plan mode (Go agent options mode). */
   mode?: string
-  /** Reasoning effort passed through to `ctx.agents` agent options. */
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high'
+  /**
+   * Reasoning effort passed through to `ctx.agents` agent options; also the
+   * status footer's 🤖 line display source. Ids must exist in some adapter's
+   * advertised set: no adapter offers 'minimal'.
+   */
+  reasoningEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
 }
 
 /** Per-project feature switches (subset grown per milestone; MIGRATION.md §4). */
@@ -945,6 +954,14 @@ export interface FeatureSwitches {
   injectSender?: boolean
   /** Append the `[ctx: ~N%]` context indicator to replies. */
   showContextIndicator?: boolean
+  /** Suppress settlement cards for unattended native subtasks; the parent-agent wake is always delivered. */
+  subtaskQuiet?: boolean
+  /** Post a live per-child panel card while a settled parent turn has unreported native subtasks; default true. */
+  subtaskLivePanel?: boolean
+  /** Panel refresh interval in ms (default 15000; 0 disables the panel). */
+  subtaskLivePanelIntervalMs?: number
+  /** Silence window in ms after which a panel row flags a child as stalled (default 120000). */
+  subtaskLivePanelStallMs?: number
 }
 
 /** LLM group-name generation + Lucide icon avatars for one project (Go [projects.group_name], #49/#52). */
@@ -1078,6 +1095,14 @@ export interface FeishuWorkspaceConfig {
   description?: string
 }
 
+/** One watched MCP server for the `mcpHealth` runtime context. */
+export interface McpHealthServerConfig {
+  /** mcp-client row's serverName; its tools register as `mcp__<serverName>__<rawName>`. */
+  serverName: string
+  /** Fix hint appended to that server's degradation line (e.g. the token-renewal command). */
+  fixHint?: string
+}
+
 /** One entry in the monitor dir menu (Go MonitorDirCfg). */
 export interface MonitorDirConfig {
   /** Directory path the LLM routes to. */
@@ -1099,7 +1124,49 @@ export interface MonitorRuleConfig {
 }
 ```
 
-Source: [`packages/acp/feishu-bridge/src/index.ts:451`](../packages/acp/feishu-bridge/src/index.ts)
+Source: [`packages/acp/feishu-bridge/src/index.ts:473`](../packages/acp/feishu-bridge/src/index.ts)
+
+<a id="deepseek-aidsh-feishu-bridge-chatroom"></a>
+
+## `@deepseek-ai/dsh-feishu-bridge-chatroom`
+
+Requires: `feishuBridge` · `tools`
+
+```ts config-catalog
+/** Deployment config for the chatroom plugin. */
+export interface ChatroomConfig {
+  /** Chatroom tuning applied to every project (Go [chatroom] defaults). */
+  defaults?: ChatroomProjectConfig
+  /** Per-project chatroom tuning, keyed by the bridge project name. */
+  projects?: Record<string, ChatroomProjectConfig>
+}
+
+/** One chatroom tuning section (Go [chatroom]; same shape the bridge carried). */
+export interface ChatroomProjectConfig {
+  /** Root directory holding one persona subdirectory per role; ~ expanded. */
+  rolesDir?: string
+  /** Cap on role agents per chatroom; 0 = default 5 (Go max_roles). */
+  maxRoles?: number
+  /** Moderator data dir holding per-chatroom ledgers; '' disables the ledger (Go moderator_dir). */
+  moderatorDir?: string
+  /** Gather barrier fallback timeout in seconds (Go gather_timeout_sec). */
+  gatherTimeoutSec?: number
+  /** End barrier drain timeout in seconds (Go end_timeout_sec). */
+  endTimeoutSec?: number
+  /** Research-mode gather round timeout in seconds, clamped to [60, 86400] (Go research_timeout_sec). */
+  researchTimeoutSec?: number
+  /** Auto-mode research iteration cap, clamped to [1, 20] (Go max_research_rounds). */
+  maxResearchRounds?: number
+  /** Default research iteration driver when --mode is omitted (Go default_research_mode). */
+  defaultResearchMode?: 'auto' | 'manual'
+  /** Shared research-assistant workdir; empty falls back to <moderatorDir>/research (Go research_workspace). */
+  researchWorkspace?: string
+  /** Pre-provision the shared uv venv for research assistants; default true (Go research_python_env). */
+  researchPythonEnv?: boolean
+}
+```
+
+Source: [`packages/acp/feishu-bridge-chatroom/src/index.ts:33`](../packages/acp/feishu-bridge-chatroom/src/index.ts)
 
 <a id="deepseek-aidsh-file-reference-local"></a>
 
@@ -1830,7 +1897,7 @@ export interface LspLocalServerConfig {
 }
 ```
 
-Source: [`packages/lsp/lsp-stdio/src/index.ts:82`](../packages/lsp/lsp-stdio/src/index.ts)
+Source: [`packages/lsp/lsp-stdio/src/index.ts:88`](../packages/lsp/lsp-stdio/src/index.ts)
 
 <a id="deepseek-aidsh-mcp-client"></a>
 
@@ -1904,6 +1971,50 @@ export interface ReconnectConfig {
 ```
 
 Source: [`packages/mcp/mcp-client/src/index.ts:98`](../packages/mcp/mcp-client/src/index.ts)
+
+<a id="deepseek-aidsh-memory"></a>
+
+## `@deepseek-ai/dsh-memory`
+
+Requires: `tools` · `systemPrompt` · `agents`
+
+```ts config-catalog
+/** Model-facing memory compatibility configuration. Invalid values fail plugin load. */
+export interface Config {
+  /** Claude Code home directory holding `projects/`. Defaults to `~/.claude`. */
+  claudeHome?: string
+  /**
+   * Required byte budget for the MEMORY.md index loaded into context, matching
+   * Claude Code's 25 KB session-start read. Every composition states its
+   * prompt-budget choice explicitly.
+   */
+  maxIndexBytes: number
+  /** Line budget for the same read; Claude Code loads the first 200 lines. */
+  maxIndexLines?: number
+  /**
+   * Tuning for the cross-project global memory directory (`<claudeHome>/memory/`),
+   * which is enabled by default: the session start injects its index alongside
+   * the project one and the tools take a `scope` parameter. Set `enabled: false`
+   * to disable the scope; budgets default to the project ones.
+   */
+  global?: GlobalConfig
+}
+
+/**
+ * Global-memory tuning. The scope is enabled by default; `enabled: false` is
+ * the opt-out. Both budgets default to the deployment's project budgets.
+ */
+export interface GlobalConfig {
+  /** Whether the global scope is enabled; defaults to `true`. */
+  enabled?: boolean
+  /** Byte budget for the global MEMORY.md index; defaults to the project `maxIndexBytes`. */
+  maxIndexBytes?: number
+  /** Line budget for the global index; defaults to the project `maxIndexLines`. */
+  maxIndexLines?: number
+}
+```
+
+Source: [`packages/memory/memory/src/index.ts:68`](../packages/memory/memory/src/index.ts)
 
 <a id="deepseek-aidsh-message-feedback"></a>
 
@@ -3041,30 +3152,6 @@ export interface Config {
 
 Source: [`packages/shell/tool-bash-persistent/src/index.ts:432`](../packages/shell/tool-bash-persistent/src/index.ts)
 
-<a id="deepseek-aidsh-memory"></a>
-
-## `@deepseek-ai/dsh-memory`
-
-Requires: `tools` · `systemPrompt` · `agents`
-
-```ts config-catalog
-/** Model-facing memory compatibility configuration. Invalid values fail plugin load. */
-export interface Config {
-  /** Claude Code home directory holding `projects/`. Defaults to `~/.claude`. */
-  claudeHome?: string
-  /**
-   * Required byte budget for the MEMORY.md index loaded into context, matching
-   * Claude Code's 25 KB session-start read. Every composition states its
-   * prompt-budget choice explicitly.
-   */
-  maxIndexBytes: number
-  /** Line budget for the same read; Claude Code loads the first 200 lines. */
-  maxIndexLines?: number
-}
-```
-
-Source: [`packages/memory/memory/src/index.ts:57`](../packages/memory/memory/src/index.ts)
-
 <a id="deepseek-aidsh-tool-fs"></a>
 
 ## `@deepseek-ai/dsh-tool-fs`
@@ -3181,7 +3268,7 @@ Requires: `tools` · `lsp` · `systemPrompt`
 ```ts config-catalog
 /** Plugin configuration: result caps and the timeout budget. */
 export interface Config {
-  /** Largest number of rendered locations before an omission marker (default 100). */
+  /** Largest number of rendered locations or symbols before an omission marker (default 100). */
   maxLocations?: number
   /** Largest complete rendered result in characters, including truncation metadata (default 16000). */
   maxResultChars?: number
@@ -3190,7 +3277,7 @@ export interface Config {
 }
 ```
 
-Source: [`packages/lsp/tool-lsp/src/index.ts:58`](../packages/lsp/tool-lsp/src/index.ts)
+Source: [`packages/lsp/tool-lsp/src/index.ts:63`](../packages/lsp/tool-lsp/src/index.ts)
 
 <a id="deepseek-aidsh-tool-pwsh"></a>
 

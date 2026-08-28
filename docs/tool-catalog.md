@@ -778,7 +778,7 @@ Source: [`packages/fs/tool-fs-search/src/index.ts`](../packages/fs/tool-fs-searc
 
 ### `grep`
 
-Search file contents with a ripgrep regular expression. Returns matching lines with line numbers, grouped by file. Returns the first 250 matches inline; a capped result reports where the complete match list was saved. For code symbols — definitions, references, or implementations — prefer the lsp tool: it resolves the symbol semantically instead of matching text. Use read on a matched file for surrounding context.
+Search file contents with a ripgrep regular expression. Returns matching lines with line numbers, grouped by file. Returns the first 250 matches inline; a capped result reports where the complete match list was saved. For code symbols — definitions, references, or implementations — prefer the lsp tool (workspaceSymbol for a symbol name): it resolves the symbol semantically instead of matching text. Use read on a matched file for surrounding context.
 
 ```json
 {
@@ -1169,7 +1169,7 @@ Registered only inside live root Agent scopes created after the opt-in Schedule 
 
 ### `lsp`
 
-Query a language server for precise code navigation. operation is one of goToDefinition, findReferences, goToImplementation, hover. line and character are one-based UTF-16 cursor coordinates. findReferences includes the declaration.
+Query a language server for precise code navigation. workspaceSymbol finds symbols by name across the workspace — no coordinates needed; include file_path (a file in the same language as the symbol) so the query routes to that language's server, which also keeps per-project servers (TypeScript) answering. It returns path:line:character you can pass directly to goToDefinition, findReferences, goToImplementation, or hover, which take one-based UTF-16 line and character on the symbol. findReferences includes the declaration.
 
 ```json
 {
@@ -1177,32 +1177,34 @@ Query a language server for precise code navigation. operation is one of goToDef
   "properties": {
     "operation": {
       "type": "string",
-      "description": "goToDefinition, findReferences, goToImplementation, or hover.",
+      "description": "workspaceSymbol (by name), or goToDefinition/findReferences/goToImplementation/hover (at a position).",
       "enum": [
+        "workspaceSymbol",
         "goToDefinition",
         "findReferences",
         "goToImplementation",
         "hover"
       ]
     },
+    "query": {
+      "type": "string",
+      "description": "The symbol name to search for. Required for workspaceSymbol; ignored otherwise."
+    },
     "file_path": {
       "type": "string",
-      "description": "The source file to query, relative to the workspace or absolute."
+      "description": "The source file to query, relative to the workspace or absolute. Required for the position operations; recommended for workspaceSymbol, where a file in the symbol's language routes the query to that language's server."
     },
     "line": {
       "type": "number",
-      "description": "One-based line of the cursor."
+      "description": "One-based line of the cursor. Required unless operation is workspaceSymbol."
     },
     "character": {
       "type": "number",
-      "description": "One-based UTF-16 column of the cursor."
+      "description": "One-based UTF-16 column of the cursor. Required unless operation is workspaceSymbol."
     }
   },
   "required": [
-    "operation",
-    "file_path",
-    "line",
-    "character"
+    "operation"
   ]
 }
 ```
@@ -2060,6 +2062,10 @@ Record and update a structured task list for the current work. Send the ENTIRE l
               "in_progress",
               "completed"
             ]
+          },
+          "activeForm": {
+            "type": "string",
+            "description": "Optional present-progressive label shown while the task runs (e.g. \"Planning the work\")."
           }
         },
         "required": [
@@ -2085,12 +2091,20 @@ todo_write is session-owned state; UIs render the latest todo/write event as a c
 
 ### `memory_delete`
 
-These tools operate only inside your persistent memory directory shared with Claude Code. Delete one memory file that turned out to be wrong, then remove its line from MEMORY.md with memory_index.
+These tools operate only inside your persistent memory directory shared with Claude Code. Pass scope: 'global' to operate on the cross-project global memory directory instead; the Memory section of your instructions states which facts belong there. Delete one memory file that turned out to be wrong, then remove its line from MEMORY.md with memory_index.
 
 ```json
 {
   "type": "object",
   "properties": {
+    "scope": {
+      "type": "string",
+      "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+      "enum": [
+        "project",
+        "global"
+      ]
+    },
     "name": {
       "type": "string",
       "description": "File name inside the memory directory, e.g. feedback-foo.md. On a miss, the .md suffix is retried added or removed."
@@ -2106,12 +2120,20 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 
 ### `memory_index`
 
-These tools operate only inside your persistent memory directory shared with Claude Code. Upsert or remove one pointer line in the MEMORY.md index, keyed by the memory file's name. Prefer this over rewriting the whole index with memory_write.
+These tools operate only inside your persistent memory directory shared with Claude Code. Pass scope: 'global' to operate on the cross-project global memory directory instead; the Memory section of your instructions states which facts belong there. Upsert or remove one pointer line in the MEMORY.md index, keyed by the memory file's name. Prefer this over rewriting the whole index with memory_write.
 
 ```json
 {
   "type": "object",
   "properties": {
+    "scope": {
+      "type": "string",
+      "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+      "enum": [
+        "project",
+        "global"
+      ]
+    },
     "action": {
       "type": "string",
       "description": "upsert inserts or updates the pointer line; remove deletes it.",
@@ -2144,12 +2166,21 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 
 ### `memory_list`
 
-These tools operate only inside your persistent memory directory shared with Claude Code. List every file in the memory directory with byte sizes and modification times. MEMORY.md is the index; every other file is one remembered fact.
+These tools operate only inside your persistent memory directory shared with Claude Code. Pass scope: 'global' to operate on the cross-project global memory directory instead; the Memory section of your instructions states which facts belong there. List every file in the memory directory with byte sizes and modification times. MEMORY.md is the index; every other file is one remembered fact.
 
 ```json
 {
   "type": "object",
-  "properties": {}
+  "properties": {
+    "scope": {
+      "type": "string",
+      "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+      "enum": [
+        "project",
+        "global"
+      ]
+    }
+  }
 }
 ```
 
@@ -2157,12 +2188,20 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 
 ### `memory_read`
 
-These tools operate only inside your persistent memory directory shared with Claude Code. Read one file verbatim, for example MEMORY.md or a topic memory file.
+These tools operate only inside your persistent memory directory shared with Claude Code. Pass scope: 'global' to operate on the cross-project global memory directory instead; the Memory section of your instructions states which facts belong there. Read one file verbatim, for example MEMORY.md or a topic memory file.
 
 ```json
 {
   "type": "object",
   "properties": {
+    "scope": {
+      "type": "string",
+      "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+      "enum": [
+        "project",
+        "global"
+      ]
+    },
     "name": {
       "type": "string",
       "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md. On a miss, the .md suffix is retried added or removed."
@@ -2178,12 +2217,20 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 
 ### `memory_write`
 
-These tools operate only inside your persistent memory directory shared with Claude Code. Write one memory file with the COMPLETE content (full replacement, no partial edits). The directory is created on demand; no mkdir is needed. Frontmatter provenance (node_type, originSessionId) is backfilled automatically. After writing a memory file, add or update its one-line pointer in MEMORY.md with memory_index.
+These tools operate only inside your persistent memory directory shared with Claude Code. Pass scope: 'global' to operate on the cross-project global memory directory instead; the Memory section of your instructions states which facts belong there. Write one memory file with the COMPLETE content (full replacement, no partial edits). The directory is created on demand; no mkdir is needed. Frontmatter provenance (node_type, originSessionId) is backfilled automatically. After writing a memory file, add or update its one-line pointer in MEMORY.md with memory_index.
 
 ```json
 {
   "type": "object",
   "properties": {
+    "scope": {
+      "type": "string",
+      "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+      "enum": [
+        "project",
+        "global"
+      ]
+    },
     "name": {
       "type": "string",
       "description": "File name inside the memory directory; a missing .md suffix is appended automatically. MEMORY.md is the index."

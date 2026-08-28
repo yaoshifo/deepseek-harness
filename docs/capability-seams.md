@@ -201,9 +201,15 @@ flowchart LR
   pkg_cordis_host_runner["cordis-host-runner"]
   svc_dynamicCordisRunner["ctx.dynamicCordisRunner<br/>Dynamic Cordis package host runner"]
   svc_cordisInspect["ctx.cordisInspect<br/>Dynamic Cordis inspect registry"]
+  pkg_agent_instructions["agent-instructions"]
+  svc_agentInstructions["ctx.agentInstructions<br/>Workspace instruction baselines"]
+  pkg_feishu_bridge["feishu-bridge"]
+  svc_feishuBridge["ctx.feishuBridge<br/>Feishu bridge dispatch face"]
+  pkg_feishu_bridge_chatroom["feishu-bridge-chatroom"]
   pkg_acp --> svc_approval
   pkg_agent --> svc_agents
   pkg_agent_default_model --> svc_agentDefaultModel
+  pkg_agent_instructions --> svc_agentInstructions
   pkg_agent_loop --> svc_agentLoop
   pkg_agent_presets --> svc_agentPresets
   pkg_agent_team --> svc_agentTeams
@@ -229,6 +235,7 @@ flowchart LR
   pkg_directory_picker_browse --> svc_directoryPicker
   pkg_directory_picker_native --> svc_directoryPicker
   pkg_e2b --> svc_e2b
+  pkg_feishu_bridge --> svc_feishuBridge
   pkg_file_reference --> svc_fileReferences
   pkg_file_reference_local --> svc_fileReferences
   pkg_fs --> svc_fs
@@ -308,6 +315,7 @@ flowchart LR
   pkg_workspace --> svc_workspaceRegistry
   svc_agentDefaultModel --> pkg_headless
   svc_agentDefaultModel --> pkg_host_apiproxy
+  svc_agentInstructions --> pkg_feishu_bridge
   svc_agentLoop --> pkg_agent_spine_demo
   svc_agentTeams --> pkg_tool_agent_team
   svc_agents --> pkg_acp
@@ -330,6 +338,7 @@ flowchart LR
   svc_dynamicCordisRunner --> pkg_tool_cordis
   svc_e2b --> pkg_fs_e2b
   svc_e2b --> pkg_subprocess_e2b
+  svc_feishuBridge --> pkg_feishu_bridge_chatroom
   svc_fs --> pkg_tool_fs
   svc_invariants --> pkg_agent
   svc_invariants --> pkg_agent_loop
@@ -484,5 +493,7 @@ flowchart LR
 | `ctx.apiProxy` | `core` | `apiproxy` | - | `connection` | - | The transport-agnostic host gateway face: it dispatches browser API calls, and each open host stream subscribes to the events it forwards rather than being pushed to through a broadcast verb. |
 | `ctx.dynamicCordisRunner` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | Owns the in-memory definition registry, the vm sandbox for host halves, and the request-run round trip; browser pages reach the same service over the wire through its remote namespace. |
 | `ctx.cordisInspect` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | Registers host inspect providers, mirrors the client provider manifest, and routes client queries through the dynamic Cordis transport. |
+| `ctx.agentInstructions` | `core` | [`agent-instructions`](../packages/context/agent-instructions) | - | [`feishu-bridge`](../packages/acp/feishu-bridge) | - | AGENTS.md-compatible baselines enter durable context before the first request and fs tool touches refresh nested, changed, and removed files through the inbox; compositions that replace the persona wholesale suppress the scope so it receives no baseline and no dynamic updates. |
+| `ctx.feishuBridge` | `core` | [`feishu-bridge`](../packages/acp/feishu-bridge) | - | [`feishu-bridge-chatroom`](../packages/acp/feishu-bridge-chatroom) | - | Owns the live project registry and caller routing, and is the feishuBridge/* dispatch seam that sibling bridge plugins (chatroom policy and lifecycle) build on instead of owning engines. |
 
 Maintenance mode: hybrid: services are discovered from Cordis declarations; interface/implementation/consumer roles are classified in `scripts/gen-doc-graphs.ts` with a completeness guard.

@@ -203,9 +203,15 @@ flowchart LR
   pkg_cordis_host_runner["cordis-host-runner"]
   svc_dynamicCordisRunner["ctx.dynamicCordisRunner<br/>Dynamic Cordis package host runner"]
   svc_cordisInspect["ctx.cordisInspect<br/>Dynamic Cordis inspect registry"]
+  pkg_agent_instructions["agent-instructions"]
+  svc_agentInstructions["ctx.agentInstructions<br/>Workspace instruction baselines"]
+  pkg_feishu_bridge["feishu-bridge"]
+  svc_feishuBridge["ctx.feishuBridge<br/>Feishu bridge dispatch face"]
+  pkg_feishu_bridge_chatroom["feishu-bridge-chatroom"]
   pkg_acp --> svc_approval
   pkg_agent --> svc_agents
   pkg_agent_default_model --> svc_agentDefaultModel
+  pkg_agent_instructions --> svc_agentInstructions
   pkg_agent_loop --> svc_agentLoop
   pkg_agent_presets --> svc_agentPresets
   pkg_agent_team --> svc_agentTeams
@@ -231,6 +237,7 @@ flowchart LR
   pkg_directory_picker_browse --> svc_directoryPicker
   pkg_directory_picker_native --> svc_directoryPicker
   pkg_e2b --> svc_e2b
+  pkg_feishu_bridge --> svc_feishuBridge
   pkg_file_reference --> svc_fileReferences
   pkg_file_reference_local --> svc_fileReferences
   pkg_fs --> svc_fs
@@ -310,6 +317,7 @@ flowchart LR
   pkg_workspace --> svc_workspaceRegistry
   svc_agentDefaultModel --> pkg_headless
   svc_agentDefaultModel --> pkg_host_apiproxy
+  svc_agentInstructions --> pkg_feishu_bridge
   svc_agentLoop --> pkg_agent_spine_demo
   svc_agentTeams --> pkg_tool_agent_team
   svc_agents --> pkg_acp
@@ -332,6 +340,7 @@ flowchart LR
   svc_dynamicCordisRunner --> pkg_tool_cordis
   svc_e2b --> pkg_fs_e2b
   svc_e2b --> pkg_subprocess_e2b
+  svc_feishuBridge --> pkg_feishu_bridge_chatroom
   svc_fs --> pkg_tool_fs
   svc_invariants --> pkg_agent
   svc_invariants --> pkg_agent_loop
@@ -486,5 +495,7 @@ flowchart LR
 | `ctx.apiProxy` | `core` | `apiproxy` | - | `connection` | - | 与传输无关的 Host 网关接口：它分派浏览器 API 调用，每条打开的 Host 流自行订阅转发事件，而不是由广播方法向其推送。 |
 | `ctx.dynamicCordisRunner` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | 拥有内存定义注册表、Host 半的 vm 沙箱和 request-run 往返流程；浏览器页面通过其 Remote 命名空间在线访问同一服务。 |
 | `ctx.cordisInspect` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | 注册 Host inspect 提供方、镜像 Client 提供方 manifest，并通过动态 Cordis 传输路由 Client 查询。 |
+| `ctx.agentInstructions` | `core` | [`agent-instructions`](../packages/context/agent-instructions) | - | [`feishu-bridge`](../packages/acp/feishu-bridge) | - | 与 AGENTS.md 兼容的 baseline 在首个请求前进入持久上下文，fs 工具触碰会经 inbox 刷新嵌套、变更与移除的指令文件；整体替换 persona 的组合会抑制该 scope，使其既收不到 baseline 也收不到动态更新。 |
+| `ctx.feishuBridge` | `core` | [`feishu-bridge`](../packages/acp/feishu-bridge) | - | [`feishu-bridge-chatroom`](../packages/acp/feishu-bridge-chatroom) | - | 持有活跃项目注册表与调用方路由，是兄弟桥插件（chatroom 策略与生命周期）赖以构建的 feishuBridge/* 派发缝，它们不各自持有 engine。 |
 
 维护模式：混合模式。服务从 Cordis 声明中发现；接口、实现和消费方角色在 `scripts/gen-doc-graphs.ts` 中分类，并设有完整性守卫。

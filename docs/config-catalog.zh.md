@@ -145,7 +145,7 @@ export interface Config {
 export type CandidateSelection = 'all-existing' | 'first-existing'
 ```
 
-来源：[`packages/context/agent-instructions/src/config.ts:18`](../packages/context/agent-instructions/src/config.ts)
+来源：[`packages/context/agent-instructions/src/config.ts:25`](../packages/context/agent-instructions/src/config.ts)
 
 <a id="deepseek-aidsh-agent-loop"></a>
 
@@ -650,11 +650,11 @@ export interface Config {
 
 来源：[`packages/experimental/tool-agent-team/src/index.ts:17`](../packages/experimental/tool-agent-team/src/index.ts)
 
-<a id="deepseek-aidsh-file-reference-local"></a>
+<a id="deepseek-aidsh-feishu-bridge"></a>
 
 ## `@deepseek-ai/dsh-feishu-bridge`
 
-需要：`agents` · `tools`
+需要：`agents` · `tools` · `systemPrompt`
 
 ```ts config-catalog
 /** Deployment config for the feishu-bridge plugin. */
@@ -685,8 +685,11 @@ export interface FeishuBridgeConfig {
   cron?: CronConfig
   /** Bot-to-bot relay behavior (Go [relay]). */
   relay?: RelayConfig
-  /** Multi-role chatroom tuning shared as the per-project default (Go [chatroom]). */
-  chatroom?: ChatroomConfig
+  /**
+   * Residue guard: chatroom tuning moved to the chatroom plugin's own
+   * config (packages/acp/feishu-bridge-chatroom); apply fails loud when set.
+   */
+  chatroom?: unknown
   /** Streaming preview tuning merged over the defaults (Go [stream_preview]). */
   streamPreview?: Partial<StreamPreviewCfg>
   /** Provider quota displays appended to the completion footer (Go usage_providers). */
@@ -697,6 +700,8 @@ export interface FeishuBridgeConfig {
   hints_with_param?: string[]
   /** Always-visible hint commands (Go hints_common). */
   hints_common?: string[]
+  /** MCP degradation runtime context; absent = disabled (zero behavior change). */
+  mcpHealth?: McpHealthConfig
 }
 
 /** One bound project: an agent working dir plus the Feishu bot serving it. */
@@ -728,10 +733,17 @@ export interface ProjectConfig {
   providerShortcuts?: Record<string, string>
   /** Rotate the chat to a fresh session after N idle minutes (Go reset_on_idle_mins). */
   resetOnIdleMins?: number
-  /** /list etc. only show engine-tracked sessions (Go filter_external_sessions). */
-  filterExternalSessions?: boolean
-  /** Multi-role chatroom tuning (Go [chatroom]). */
-  chatroom?: ChatroomConfig
+  /** Bounded seconds to wait for an agent session to close during cleanup and stall retry (Go agentCloseTimeout; default 130). */
+  agentCloseSec?: number
+  /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
+  unsolicited?: UnsolicitedConfig
+  /**
+   * Residue guard: chatroom tuning moved to the chatroom plugin's own
+   * config (packages/acp/feishu-bridge-chatroom). The key stays in the
+   * schema only so apply can fail loud on a cordis.patch.yml whose chatroom
+   * section was not migrated (schemastery strips unknown keys silently).
+   */
+  chatroom?: unknown
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
   monitor?: MonitorConfig
   /** Model context window in tokens; 0 = the 200k default (Go context_window). */
@@ -739,6 +751,17 @@ export interface ProjectConfig {
 
   /** Parent dirs whose subdirs are auto-listed in /dir (Go dir_scan_paths, #3). */
   dirScanPaths?: string[]
+  /**
+   * MCP server-name allowlist for this project's sessions. Present = sessions
+   * (chats, resumes, forks, chatroom personas, subtask children, one-shot
+   * queries) only see `mcp__<server>__*` tools of the listed servers; every
+   * other MCP server's tools are masked out of the model request. Absent =
+   * unrestricted. A listed server with no live tools (not mounted, or down at
+   * boot) is silently invisible — a typo and an outage are indistinguishable
+   * here, and fail-loud would let one dead server break other projects'
+   * sessions.
+   */
+  mcpServers?: string[]
   /** The bot's default Feishu Wiki/Drive location (Go feishu_workspace, #18). */
   feishuWorkspace?: FeishuWorkspaceConfig
   /** Comma-separated user IDs allowed to run privileged commands; '*' = all (Go admin_from). */
@@ -803,8 +826,6 @@ export interface RateLimitConfig {
 export interface SubtaskConfig {
   /** Max recursive delegation depth. */
   maxDepth?: number
-  /** Hard timeout for subtask sessions in seconds; 0 inherits the event idle timeout. */
-  timeoutSec?: number
   /** Gather-barrier fallback timeout in seconds. */
   gatherTimeoutSec?: number
 }
@@ -813,6 +834,8 @@ export interface SubtaskConfig {
 export interface SpawnConfig {
   /** Default worktree isolation: 'auto' | 'on' | 'off'. */
   worktree?: 'auto' | 'on' | 'off'
+  /** Override for /done merged auto-removal's containment target (e.g. 'dev'); unset uses each worktree's recorded base branch. */
+  integrateBranch?: string
   /** RAM% above which a warning card is sent; 0 disables the tier (default 80). */
   memoryWarnPct?: number
   /** RAM% above which spawn is declined; 0 disables the tier (default 90). */
@@ -831,30 +854,6 @@ export interface CronConfig {
 export interface RelayConfig {
   /** Max seconds to wait for a relay response; 0 disables; default 120 (Go relay.timeout_secs). */
   timeoutSecs?: number
-}
-
-/** Multi-role chatroom tuning (Go [chatroom], applied per project). */
-export interface ChatroomConfig {
-  /** Root directory holding one persona subdirectory per role; ~ expanded. */
-  rolesDir?: string
-  /** Cap on role agents per chatroom; 0 = default 5 (Go max_roles). */
-  maxRoles?: number
-  /** Moderator data dir holding per-chatroom ledgers; '' disables the ledger (Go moderator_dir). */
-  moderatorDir?: string
-  /** Gather barrier fallback timeout in seconds (Go gather_timeout_sec). */
-  gatherTimeoutSec?: number
-  /** End barrier drain timeout in seconds (Go end_timeout_sec). */
-  endTimeoutSec?: number
-  /** Research-mode gather round timeout in seconds, clamped to [60, 86400] (Go research_timeout_sec). */
-  researchTimeoutSec?: number
-  /** Auto-mode research iteration cap, clamped to [1, 20] (Go max_research_rounds). */
-  maxResearchRounds?: number
-  /** Default research iteration driver when --mode is omitted (Go default_research_mode). */
-  defaultResearchMode?: 'auto' | 'manual'
-  /** Shared research-assistant workdir; empty falls back to <moderatorDir>/research (Go research_workspace). */
-  researchWorkspace?: string
-  /** Pre-provision the shared uv venv for research assistants; default true (Go research_python_env). */
-  researchPythonEnv?: boolean
 }
 
 /** Streaming preview behavior switches (Go StreamPreviewCfg). */
@@ -881,12 +880,22 @@ export interface UsageProviderConfig {
   options?: Record<string, unknown>
 }
 
+/** Opt-in MCP degradation runtime-context config; absent = no context registered. */
+export interface McpHealthConfig {
+  /** Watched servers; an empty list registers nothing. */
+  servers: McpHealthServerConfig[]
+  /** Grace seconds after plugin start before a missing server is reported; default 180. */
+  startupGraceSecs?: number
+}
+
 /** Feishu app credentials for one bot. Each app gets its own WS client (MIGRATION.md D5). */
 export interface FeishuAppConfig {
   /** Feishu open-platform app id (`cli_...`). */
   appId: string
   /** Feishu open-platform app secret. */
   appSecret: string
+  /** Session-key prefix and platform name; unique per project in multi-bot deployments (Go tag). */
+  tag?: string
   /** Comma-separated user IDs allowed to talk to this bot; '*' or '' = everyone (Go allow_from). */
   allowFrom?: string
   /** Only answer group chats, drop p2p messages (Go group_only). */
@@ -927,8 +936,12 @@ export interface AgentOptions {
   model?: string
   /** Default session mode: 'plan' starts every session in plan mode (Go agent options mode). */
   mode?: string
-  /** Reasoning effort passed through to `ctx.agents` agent options. */
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high'
+  /**
+   * Reasoning effort passed through to `ctx.agents` agent options; also the
+   * status footer's 🤖 line display source. Ids must exist in some adapter's
+   * advertised set: no adapter offers 'minimal'.
+   */
+  reasoningEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
 }
 
 /** Per-project feature switches (subset grown per milestone; MIGRATION.md §4). */
@@ -943,6 +956,14 @@ export interface FeatureSwitches {
   injectSender?: boolean
   /** Append the `[ctx: ~N%]` context indicator to replies. */
   showContextIndicator?: boolean
+  /** Suppress settlement cards for unattended native subtasks; the parent-agent wake is always delivered. */
+  subtaskQuiet?: boolean
+  /** Post a live per-child panel card while a settled parent turn has unreported native subtasks; default true. */
+  subtaskLivePanel?: boolean
+  /** Panel refresh interval in ms (default 15000; 0 disables the panel). */
+  subtaskLivePanelIntervalMs?: number
+  /** Silence window in ms after which a panel row flags a child as stalled (default 120000). */
+  subtaskLivePanelStallMs?: number
 }
 
 /** LLM group-name generation + Lucide icon avatars for one project (Go [projects.group_name], #49/#52). */
@@ -1009,6 +1030,18 @@ export interface AutoCompressConfig {
   minGapMins?: number
 }
 
+/** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
+export interface UnsolicitedConfig {
+  /** Quiet seconds before the reader disarms (default 60; 0 = never). */
+  idleSec?: number
+  /** Quiet seconds an in-flight tool on a background turn keeps the reader alive (default 1800). */
+  toolInFlightSec?: number
+  /** Seconds pending background tasks keep the reader alive (default 1800). */
+  backgroundGraceSec?: number
+  /** Seconds after a foreground completion where duplicate frames relay as plain text (default 30; 0 = disabled). */
+  spilloverSec?: number
+}
+
 /**
  * Monitor-group mode (#53, Go [projects.monitor]): the bot observes the
  * listed chats, triages each message (rules first, then an LLM side query
@@ -1064,6 +1097,14 @@ export interface FeishuWorkspaceConfig {
   description?: string
 }
 
+/** One watched MCP server for the `mcpHealth` runtime context. */
+export interface McpHealthServerConfig {
+  /** mcp-client row's serverName; its tools register as `mcp__<serverName>__<rawName>`. */
+  serverName: string
+  /** Fix hint appended to that server's degradation line (e.g. the token-renewal command). */
+  fixHint?: string
+}
+
 /** One entry in the monitor dir menu (Go MonitorDirCfg). */
 export interface MonitorDirConfig {
   /** Directory path the LLM routes to. */
@@ -1085,9 +1126,51 @@ export interface MonitorRuleConfig {
 }
 ```
 
-来源：[`packages/acp/feishu-bridge/src/index.ts:429`](../packages/acp/feishu-bridge/src/index.ts)
+来源：[`packages/acp/feishu-bridge/src/index.ts:473`](../packages/acp/feishu-bridge/src/index.ts)
 
-<a id="deepseek-aidsh-fs-local"></a>
+<a id="deepseek-aidsh-feishu-bridge-chatroom"></a>
+
+## `@deepseek-ai/dsh-feishu-bridge-chatroom`
+
+需要：`feishuBridge` · `tools`
+
+```ts config-catalog
+/** Deployment config for the chatroom plugin. */
+export interface ChatroomConfig {
+  /** Chatroom tuning applied to every project (Go [chatroom] defaults). */
+  defaults?: ChatroomProjectConfig
+  /** Per-project chatroom tuning, keyed by the bridge project name. */
+  projects?: Record<string, ChatroomProjectConfig>
+}
+
+/** One chatroom tuning section (Go [chatroom]; same shape the bridge carried). */
+export interface ChatroomProjectConfig {
+  /** Root directory holding one persona subdirectory per role; ~ expanded. */
+  rolesDir?: string
+  /** Cap on role agents per chatroom; 0 = default 5 (Go max_roles). */
+  maxRoles?: number
+  /** Moderator data dir holding per-chatroom ledgers; '' disables the ledger (Go moderator_dir). */
+  moderatorDir?: string
+  /** Gather barrier fallback timeout in seconds (Go gather_timeout_sec). */
+  gatherTimeoutSec?: number
+  /** End barrier drain timeout in seconds (Go end_timeout_sec). */
+  endTimeoutSec?: number
+  /** Research-mode gather round timeout in seconds, clamped to [60, 86400] (Go research_timeout_sec). */
+  researchTimeoutSec?: number
+  /** Auto-mode research iteration cap, clamped to [1, 20] (Go max_research_rounds). */
+  maxResearchRounds?: number
+  /** Default research iteration driver when --mode is omitted (Go default_research_mode). */
+  defaultResearchMode?: 'auto' | 'manual'
+  /** Shared research-assistant workdir; empty falls back to <moderatorDir>/research (Go research_workspace). */
+  researchWorkspace?: string
+  /** Pre-provision the shared uv venv for research assistants; default true (Go research_python_env). */
+  researchPythonEnv?: boolean
+}
+```
+
+来源：[`packages/acp/feishu-bridge-chatroom/src/index.ts:33`](../packages/acp/feishu-bridge-chatroom/src/index.ts)
+
+<a id="deepseek-aidsh-file-reference-local"></a>
 
 ## `@deepseek-ai/dsh-file-reference-local`
 
@@ -1816,7 +1899,7 @@ export interface LspLocalServerConfig {
 }
 ```
 
-来源：[`packages/lsp/lsp-stdio/src/index.ts:82`](../packages/lsp/lsp-stdio/src/index.ts)
+来源：[`packages/lsp/lsp-stdio/src/index.ts:88`](../packages/lsp/lsp-stdio/src/index.ts)
 
 <a id="deepseek-aidsh-mcp-client"></a>
 
@@ -1890,6 +1973,50 @@ export interface ReconnectConfig {
 ```
 
 来源：[`packages/mcp/mcp-client/src/index.ts:98`](../packages/mcp/mcp-client/src/index.ts)
+
+<a id="deepseek-aidsh-memory"></a>
+
+## `@deepseek-ai/dsh-memory`
+
+需要：`tools` · `systemPrompt` · `agents`
+
+```ts config-catalog
+/** Model-facing memory compatibility configuration. Invalid values fail plugin load. */
+export interface Config {
+  /** Claude Code home directory holding `projects/`. Defaults to `~/.claude`. */
+  claudeHome?: string
+  /**
+   * Required byte budget for the MEMORY.md index loaded into context, matching
+   * Claude Code's 25 KB session-start read. Every composition states its
+   * prompt-budget choice explicitly.
+   */
+  maxIndexBytes: number
+  /** Line budget for the same read; Claude Code loads the first 200 lines. */
+  maxIndexLines?: number
+  /**
+   * Tuning for the cross-project global memory directory (`<claudeHome>/memory/`),
+   * which is enabled by default: the session start injects its index alongside
+   * the project one and the tools take a `scope` parameter. Set `enabled: false`
+   * to disable the scope; budgets default to the project ones.
+   */
+  global?: GlobalConfig
+}
+
+/**
+ * Global-memory tuning. The scope is enabled by default; `enabled: false` is
+ * the opt-out. Both budgets default to the deployment's project budgets.
+ */
+export interface GlobalConfig {
+  /** Whether the global scope is enabled; defaults to `true`. */
+  enabled?: boolean
+  /** Byte budget for the global MEMORY.md index; defaults to the project `maxIndexBytes`. */
+  maxIndexBytes?: number
+  /** Line budget for the global index; defaults to the project `maxIndexLines`. */
+  maxIndexLines?: number
+}
+```
+
+Source: [`packages/memory/memory/src/index.ts:56`](../packages/memory/memory/src/index.ts)
 
 <a id="deepseek-aidsh-message-feedback"></a>
 
@@ -2156,7 +2283,7 @@ export interface JsonRpcConfig {
 
 依赖：`Readable`（`node:stream`）· `Writable`（`node:stream`）
 
-来源：[`packages/sdk/server/src/index.ts:29`](../packages/sdk/server/src/index.ts)
+来源：[`packages/sdk/server/src/index.ts:25`](../packages/sdk/server/src/index.ts)
 
 <a id="deepseek-aidsh-session-persistence-jsonl"></a>
 
@@ -2617,6 +2744,38 @@ export type JournalMode = 'wal' | 'delete' | 'truncate' | 'persist'
 
 来源：[`packages/storage/storage-sqlite/src/index.ts:24`](../packages/storage/storage-sqlite/src/index.ts)
 
+<a id="deepseek-aidsh-subagent"></a>
+
+## `@deepseek-ai/dsh-subagent`
+
+```ts config-catalog
+/**
+ * Loader-level configuration for the subagent runtime. Direct
+ * `ctx.plugin(SubagentRuntime, options)` callers may pass the same optional
+ * fields; unresolved fields keep their defaults.
+ */
+export interface SubagentRuntimeConfig {
+  /**
+   * Who delivers continuable settlement notices to the durable parent: the
+   * runtime's own inbox wake (`'inbox'`, default), or the deployment's
+   * `subagent/end` listener (`'external'`).
+   */
+  settlementNotice?: SubagentSettlementDelivery
+}
+
+/**
+ * Who delivers a continuable child's settlement notice to its durable parent.
+ * `'inbox'` (default) keeps the manager's own wake/inject delivery; `'external'`
+ * suppresses it entirely, leaving settlement observable only through the
+ * `subagent/end` event and the child's own Session — for deployments whose
+ * engine owns parent turn scheduling and would otherwise spend a model request
+ * on a wake it drives itself.
+ */
+export type SubagentSettlementDelivery = 'inbox' | 'external'
+```
+
+来源：[`packages/subagent/subagent/src/index.ts:181`](../packages/subagent/subagent/src/index.ts)
+
 <a id="deepseek-aidsh-subagent-acp"></a>
 
 ## `@deepseek-ai/dsh-subagent-acp`
@@ -2668,7 +2827,7 @@ export interface Config {
 export type PermissionPolicy = 'allow' | 'reject'
 ```
 
-来源：[`packages/subagent/subagent-acp/src/index.ts:27`](../packages/subagent/subagent-acp/src/index.ts)
+来源：[`packages/subagent/subagent-acp/src/index.ts:28`](../packages/subagent/subagent-acp/src/index.ts)
 
 <a id="deepseek-aidsh-subagent-claude-code"></a>
 
@@ -2997,30 +3156,6 @@ export interface Config {
 
 <a id="deepseek-aidsh-tool-fs"></a>
 
-## `@deepseek-ai/dsh-memory`
-
-需要：`tools` · `systemPrompt` · `agents`
-
-```ts config-catalog
-/** Model-facing memory compatibility configuration. Invalid values fail plugin load. */
-export interface Config {
-  /** Claude Code home directory holding `projects/`. Defaults to `~/.claude`. */
-  claudeHome?: string
-  /**
-   * Required byte budget for the MEMORY.md index loaded into context, matching
-   * Claude Code's 25 KB session-start read. Every composition states its
-   * prompt-budget choice explicitly.
-   */
-  maxIndexBytes: number
-  /** Line budget for the same read; Claude Code loads the first 200 lines. */
-  maxIndexLines?: number
-}
-```
-
-Source: [`packages/memory/memory/src/index.ts:56`](../packages/memory/memory/src/index.ts)
-
-<a id="deepseek-aidsh-tool-fs"></a>
-
 ## `@deepseek-ai/dsh-tool-fs`
 
 需要：`tools` · `fs` · `systemPrompt`
@@ -3135,7 +3270,7 @@ export type CompletionDelivery = 'quiet' | 'wakeup'
 ```ts config-catalog
 /** Plugin configuration: result caps and the timeout budget. */
 export interface Config {
-  /** Largest number of rendered locations before an omission marker (default 100). */
+  /** Largest number of rendered locations or symbols before an omission marker (default 100). */
   maxLocations?: number
   /** Largest complete rendered result in characters, including truncation metadata (default 16000). */
   maxResultChars?: number
@@ -3144,7 +3279,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/lsp/tool-lsp/src/index.ts:58`](../packages/lsp/tool-lsp/src/index.ts)
+来源：[`packages/lsp/tool-lsp/src/index.ts:63`](../packages/lsp/tool-lsp/src/index.ts)
 
 <a id="deepseek-aidsh-tool-pwsh"></a>
 
@@ -3286,6 +3421,13 @@ export interface Config {
    * Follow-up adapters remain independently optional.
    */
   backgroundMode?: 'one-shot' | 'continuable'
+  /**
+   * Expose the model-facing `cwd` parameter (default false): an absolute path
+   * overriding the parent's working directory for the child session. Requires
+   * the provider's `cwdOverride` capability; disabled instances reject a
+   * forced cwd at execution time (workspace isolation stays the default).
+   */
+  allowCwdOverride?: boolean
   /**
    * Agent options applied to every child; omitted fields use child-loop defaults.
    */
@@ -3512,7 +3654,7 @@ export interface Config {
 export type ApprovalPolicy = 'ask' | 'never'
 ```
 
-来源：[`packages/interaction/user-approval/src/index.ts:177`](../packages/interaction/user-approval/src/index.ts)
+来源：[`packages/interaction/user-approval/src/index.ts:190`](../packages/interaction/user-approval/src/index.ts)
 
 <a id="deepseek-aidsh-web"></a>
 
@@ -3738,7 +3880,7 @@ export interface Config {
 - `@deepseek-ai/dsh-client-ui-user-questions`（[`packages/client/ui-user-questions/src/index.ts`](../packages/client/ui-user-questions/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-workflow-run`（[`packages/client/ui-workflow-run/src/index.ts`](../packages/client/ui-workflow-run/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-workspace`（[`packages/client/ui-workspace/src/index.ts`](../packages/client/ui-workspace/src/index.ts)）
-- `@deepseek-ai/dsh-command-compact` — 需要 `commands` · `compact`（[`packages/compaction/command-compact/src/index.ts`](../packages/compaction/command-compact/src/index.ts)）
+- `@deepseek-ai/dsh-command-compact` — 需要 `commands` · `compaction`（[`packages/compaction/command-compact/src/index.ts`](../packages/compaction/command-compact/src/index.ts)）
 - `@deepseek-ai/dsh-command-feedback` — 需要 `commands`（[`packages/feedback/command-feedback/src/index.ts`](../packages/feedback/command-feedback/src/index.ts)）
 - `@deepseek-ai/dsh-command-goal` — 需要 `commands` · `goals`（[`packages/goal/command-goal/src/index.ts`](../packages/goal/command-goal/src/index.ts)）
 - `@deepseek-ai/dsh-commands`（[`packages/interaction/commands/src/index.ts`](../packages/interaction/commands/src/index.ts)）
@@ -3759,10 +3901,9 @@ export interface Config {
 - `@deepseek-ai/dsh-session-stats` — 需要 `sessionProjections`（[`packages/session/session-stats/src/index.ts`](../packages/session/session-stats/src/index.ts)）
 - `@deepseek-ai/dsh-skill-badge` — 需要 `skills`（[`packages/skill/skill-badge/src/index.ts`](../packages/skill/skill-badge/src/index.ts)）
 - `@deepseek-ai/dsh-storage`（[`packages/storage/storage/src/index.ts`](../packages/storage/storage/src/index.ts)）
-- `@deepseek-ai/dsh-subagent`（[`packages/subagent/subagent/src/index.ts`](../packages/subagent/subagent/src/index.ts)）
 - `@deepseek-ai/dsh-subprocess-local`（[`packages/subprocess/subprocess-local/src/index.ts`](../packages/subprocess/subprocess-local/src/index.ts)）
 - `@deepseek-ai/dsh-terminal`（[`packages/terminal/terminal/src/index.ts`](../packages/terminal/terminal/src/index.ts)）
-- `@deepseek-ai/dsh-tool-ask-user` — 需要 `tools` · `userInteraction`（[`packages/interaction/tool-ask-user/src/index.ts`](../packages/interaction/tool-ask-user/src/index.ts)）
+- `@deepseek-ai/dsh-tool-ask-user` — 需要 `tools` · `userQuestions`（[`packages/interaction/tool-ask-user/src/index.ts`](../packages/interaction/tool-ask-user/src/index.ts)）
 - `@deepseek-ai/dsh-tool-call-timeout-policy` — 需要 `tools`（[`packages/guard/timeout-policy/src/index.ts`](../packages/guard/timeout-policy/src/index.ts)）
 - `@deepseek-ai/dsh-tool-cordis` — 需要 `tools` · `systemPrompt` · `dynamicCordisRunner` · `cordisInspect`（[`packages/extensions/tool-cordis/src/index.ts`](../packages/extensions/tool-cordis/src/index.ts)）
 - `@deepseek-ai/dsh-tool-subagent-control` — 需要 `tools` · `subagents`（[`packages/subagent/tool-subagent-control/src/index.ts`](../packages/subagent/tool-subagent-control/src/index.ts)）

@@ -58,7 +58,7 @@ export interface PackageSource {
   sourceFile: ts.SourceFile
 }
 
-type EventReceiverKind = 'context' | 'agent-dispatch' | 'events-service'
+type EventReceiverKind = 'context' | 'agent-dispatch' | 'events-service' | 'bridge-dispatch'
 
 const GROUP_ORDER = [
   'util',
@@ -589,6 +589,22 @@ const SERVICE_ROLES: ServiceRole[] = [
     consumers: ['tool-cordis'],
     note: 'Registers host inspect providers, mirrors the client provider manifest, and routes client queries through the dynamic Cordis transport.',
   },
+  {
+    key: 'agentInstructions',
+    pkg: 'agent-instructions',
+    title: 'Workspace instruction baselines',
+    mode: 'core',
+    consumers: ['feishu-bridge'],
+    note: 'AGENTS.md-compatible baselines enter durable context before the first request and fs tool touches refresh nested, changed, and removed files through the inbox; compositions that replace the persona wholesale suppress the scope so it receives no baseline and no dynamic updates.',
+  },
+  {
+    key: 'feishuBridge',
+    pkg: 'feishu-bridge',
+    title: 'Feishu bridge dispatch face',
+    mode: 'core',
+    consumers: ['feishu-bridge-chatroom'],
+    note: 'Owns the live project registry and caller routing, and is the feishuBridge/* dispatch seam that sibling bridge plugins (chatroom policy and lifecycle) build on instead of owning engines.',
+  },
 ]
 
 function generatedHeader(title: string): string[] {
@@ -828,6 +844,8 @@ export class EventRelationCollector {
   private readonly contextType: ts.Type
   private readonly agentDispatchType: ts.Type
   private readonly eventsServiceType: ts.Type
+  /** `undefined` = not yet probed; `null` = probed and absent (synthetic test projects need not load the bridge package). */
+  private bridgeDispatchType: ts.Type | null | undefined
   private readonly packageSourceFiles: ReadonlySet<ts.SourceFile>
 
   constructor(
@@ -962,7 +980,7 @@ export class EventRelationCollector {
                 this.addDispatcher(event, source.pkg, 'events.dispatch')
               }
             }
-          } else if (receiverKind === 'context' || receiverKind === 'agent-dispatch') {
+          } else if (receiverKind === 'context' || receiverKind === 'agent-dispatch' || receiverKind === 'bridge-dispatch') {
             const eventNames = this.eventNamesFromCall(node, receiverKind)
             if (method === 'on' || method === 'once') {
               for (const event of eventNames) this.ensure(event).listeners.add(source.pkg)
@@ -993,13 +1011,49 @@ export class EventRelationCollector {
     })
   }
 
+  /**
+   * The bridge dispatch face, resolved lazily so synthetic test projects
+   * without the bridge package still construct the collector. Absence here
+   * degrades safely: the declared-event completeness guard fails loud when
+   * `feishuBridge/*` events lose every dispatcher.
+   */
+  private bridgeDispatch(): ts.Type | undefined {
+    if (this.bridgeDispatchType === null) return undefined
+    if (this.bridgeDispatchType === undefined) {
+      const sourceFile = this.project.program.getSourceFile(resolve(this.project.projectRoot, 'packages/acp/feishu-bridge/src/bridge-service.ts'))
+      if (!sourceFile) {
+        this.bridgeDispatchType = null
+        return undefined
+      }
+      const declaration = sourceFile.statements.find((statement): statement is ts.InterfaceDeclaration =>
+        ts.isInterfaceDeclaration(statement) && statement.name?.text === 'BridgeDispatch')
+      const symbol = declaration?.name && this.project.checker.getSymbolAtLocation(declaration.name)
+      if (!symbol) {
+        this.bridgeDispatchType = null
+        return undefined
+      }
+      this.bridgeDispatchType = this.project.checker.getDeclaredTypeOfSymbol(symbol)
+    }
+    return this.bridgeDispatchType
+  }
+
   /** Classify a receiver using assignability to the repository's actual event API types. */
   private receiverKind(receiver: ts.Expression): EventReceiverKind | undefined {
     const type = this.project.checker.getTypeAtLocation(receiver)
     if (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) return undefined
-    if (this.project.checker.isTypeAssignableTo(type, this.eventsServiceType)) return 'events-service'
-    if (this.project.checker.isTypeAssignableTo(type, this.contextType)) return 'context'
-    if (this.project.checker.isTypeAssignableTo(type, this.agentDispatchType)) return 'agent-dispatch'
+    // An optional-chained receiver (`bridge?.waterfall(...)`) carries `undefined`
+    // in its type; the call site still dispatches whenever the receiver exists.
+    const members = type.isUnion()
+      ? type.types.filter(element => !(element.flags & ts.TypeFlags.Undefined))
+      : [type]
+    if (members.length === 0) return undefined
+    const assignable = (target: ts.Type): boolean =>
+      members.some(member => this.project.checker.isTypeAssignableTo(member, target))
+    if (assignable(this.eventsServiceType)) return 'events-service'
+    if (assignable(this.contextType)) return 'context'
+    if (assignable(this.agentDispatchType)) return 'agent-dispatch'
+    const bridgeType = this.bridgeDispatch()
+    if (bridgeType && assignable(bridgeType)) return 'bridge-dispatch'
     return undefined
   }
 

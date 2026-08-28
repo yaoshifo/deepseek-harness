@@ -80,7 +80,7 @@
           },
           "options": {
             "type": "array",
-            "description": "Optional choices to show the user. If you recommend one, put it first and append \"(Recommended)\" to that label.",
+            "description": "Optional choices to show the user. Order options by recommendation, most recommended first, and set recommended: true on the options you recommend.",
             "items": {
               "type": "object",
               "additionalProperties": true,
@@ -92,6 +92,10 @@
                 "description": {
                   "type": "string",
                   "description": "One sentence explaining the tradeoff or impact."
+                },
+                "recommended": {
+                  "type": "boolean",
+                  "description": "Marks a recommended option; capable multi-select UIs pre-check it."
                 }
               },
               "required": [
@@ -780,7 +784,7 @@ pwsh 工具是 Windows 组合中 bash 执行器 seam 的 PowerShell 方言消费
 
 ### `grep`
 
-使用 ripgrep 正则表达式搜索文件内容。返回带行号的匹配行，并按文件分组。前 250 条匹配会直接返回；结果达到上限时会报告完整匹配列表的保存位置。如需周边上下文，请对匹配的文件使用 read。
+使用 ripgrep 正则表达式搜索文件内容。返回带行号的匹配行，并按文件分组。前 250 条匹配会直接返回；结果达到上限时会报告完整匹配列表的保存位置。对于代码符号——定义、引用或实现——优先使用 lsp 工具（用 workspaceSymbol 按名称查符号）：它按语义解析符号，而不是文本匹配。如需周边上下文，请对匹配的文件使用 read。
 
 ```json
 {
@@ -1171,7 +1175,7 @@ create、edit、pause 和 resume 要求直接来自人类的根权限；complete
 
 ### `lsp`
 
-查询语言服务器，以精确导航代码。operation 可取 goToDefinition、findReferences、goToImplementation 或 hover。line 和 character 是从 1 开始的 UTF-16 光标坐标。findReferences 包含声明。
+查询语言服务器，以精确导航代码。workspaceSymbol 按名称在整个工作区查找符号——无需坐标；传入 file_path（与符号同语言的一个文件）可让查询路由到该语言的服务器，这也让按项目区分的服务器（TypeScript）保持应答。它返回 path:line:character，可直接传给 goToDefinition、findReferences、goToImplementation 或 hover——这些操作按符号上从 1 开始的 UTF-16 行与列取坐标。findReferences 包含声明。
 
 ```json
 {
@@ -1179,32 +1183,34 @@ create、edit、pause 和 resume 要求直接来自人类的根权限；complete
   "properties": {
     "operation": {
       "type": "string",
-      "description": "goToDefinition, findReferences, goToImplementation, or hover.",
+      "description": "workspaceSymbol (by name), or goToDefinition/findReferences/goToImplementation/hover (at a position).",
       "enum": [
+        "workspaceSymbol",
         "goToDefinition",
         "findReferences",
         "goToImplementation",
         "hover"
       ]
     },
+    "query": {
+      "type": "string",
+      "description": "The symbol name to search for. Required for workspaceSymbol; ignored otherwise."
+    },
     "file_path": {
       "type": "string",
-      "description": "The source file to query, relative to the workspace or absolute."
+      "description": "The source file to query, relative to the workspace or absolute. Required for the position operations; recommended for workspaceSymbol, where a file in the symbol's language routes the query to that language's server."
     },
     "line": {
       "type": "number",
-      "description": "One-based line of the cursor."
+      "description": "One-based line of the cursor. Required unless operation is workspaceSymbol."
     },
     "character": {
       "type": "number",
-      "description": "One-based UTF-16 column of the cursor."
+      "description": "One-based UTF-16 column of the cursor. Required unless operation is workspaceSymbol."
     }
   },
   "required": [
-    "operation",
-    "file_path",
-    "line",
-    "character"
+    "operation"
   ]
 }
 ```
@@ -2063,6 +2069,10 @@ lsp 工具将提供方选择和语言服务器子进程置于 ctx.lsp 之后，�
               "in_progress",
               "completed"
             ]
+          },
+          "activeForm": {
+            "type": "string",
+            "description": "Optional present-progressive label shown while the task runs (e.g. \"Planning the work\")."
           }
         },
         "required": [
@@ -2087,12 +2097,20 @@ todo_write 是会话所有的状态；UI 将最新的 todo/write 事件渲染为
 
 ### `memory_delete`
 
-这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。删除一条被证明错误的记忆文件，然后用 memory_index 从 MEMORY.md 中移除对应行。
+这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。传入 scope: 'global' 可改为操作跨项目的全局记忆目录；你的指令中的 Memory 一节说明了哪些事实属于那里。删除一条被证明错误的记忆文件，然后用 memory_index 从 MEMORY.md 中移除对应行。
 
 ```json
 {
   "type": "object",
   "properties": {
+    "scope": {
+      "type": "string",
+      "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+      "enum": [
+        "project",
+        "global"
+      ]
+    },
     "name": {
       "type": "string",
       "description": "File name inside the memory directory, e.g. feedback-foo.md. On a miss, the .md suffix is retried added or removed."
@@ -2108,12 +2126,20 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 
 ### `memory_index`
 
-这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。按记忆文件名在 MEMORY.md 索引中新增/更新或删除一行指针。优先用它，而不是用 memory_write 重写整个索引。
+这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。传入 scope: 'global' 可改为操作跨项目的全局记忆目录；你的指令中的 Memory 一节说明了哪些事实属于那里。按记忆文件名在 MEMORY.md 索引中新增/更新或删除一行指针。优先用它，而不是用 memory_write 重写整个索引。
 
 ```json
 {
   "type": "object",
   "properties": {
+    "scope": {
+      "type": "string",
+      "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+      "enum": [
+        "project",
+        "global"
+      ]
+    },
     "action": {
       "type": "string",
       "description": "upsert inserts or updates the pointer line; remove deletes it.",
@@ -2146,12 +2172,21 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 
 ### `memory_list`
 
-这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。列出记忆目录中的全部文件及其字节大小与修改时间。MEMORY.md 是索引；其余每个文件是一条记住的事实。
+这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。传入 scope: 'global' 可改为操作跨项目的全局记忆目录；你的指令中的 Memory 一节说明了哪些事实属于那里。列出记忆目录中的全部文件及其字节大小与修改时间。MEMORY.md 是索引；其余每个文件是一条记住的事实。
 
 ```json
 {
   "type": "object",
-  "properties": {}
+  "properties": {
+    "scope": {
+      "type": "string",
+      "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+      "enum": [
+        "project",
+        "global"
+      ]
+    }
+  }
 }
 ```
 
@@ -2159,12 +2194,20 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 
 ### `memory_read`
 
-这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。逐字读取一个文件，例如 MEMORY.md 或某个主题记忆文件。
+这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。传入 scope: 'global' 可改为操作跨项目的全局记忆目录；你的指令中的 Memory 一节说明了哪些事实属于那里。逐字读取一个文件，例如 MEMORY.md 或某个主题记忆文件。
 
 ```json
 {
   "type": "object",
   "properties": {
+    "scope": {
+      "type": "string",
+      "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+      "enum": [
+        "project",
+        "global"
+      ]
+    },
     "name": {
       "type": "string",
       "description": "File name inside the memory directory, e.g. feedback-foo.md or MEMORY.md. On a miss, the .md suffix is retried added or removed."
@@ -2180,12 +2223,20 @@ Source: [`packages/memory/memory/src/index.ts`](../packages/memory/memory/src/in
 
 ### `memory_write`
 
-这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。写入完整内容的记忆文件（整文件替换，不做局部编辑）。目录按需创建，无需 mkdir。frontmatter 溯源（node_type、originSessionId）会自动回填。写完记忆文件后，用 memory_index 在 MEMORY.md 中新增或更新其单行指针。
+这些工具只在你的持久记忆目录（与 Claude Code 共享）内操作。传入 scope: 'global' 可改为操作跨项目的全局记忆目录；你的指令中的 Memory 一节说明了哪些事实属于那里。写入完整内容的记忆文件（整文件替换，不做局部编辑）。目录按需创建，无需 mkdir。frontmatter 溯源（node_type、originSessionId）会自动回填。写完记忆文件后，用 memory_index 在 MEMORY.md 中新增或更新其单行指针。
 
 ```json
 {
   "type": "object",
   "properties": {
+    "scope": {
+      "type": "string",
+      "description": "Memory directory to operate on: 'project' (default) or 'global'.",
+      "enum": [
+        "project",
+        "global"
+      ]
+    },
     "name": {
       "type": "string",
       "description": "File name inside the memory directory; a missing .md suffix is appended automatically. MEMORY.md is the index."

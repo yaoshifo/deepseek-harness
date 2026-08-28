@@ -888,7 +888,7 @@ export class StreamPreview {
    * permission request it was waiting on).
    * @param park - Render the waiting state instead of completed.
    */
-  async completeAndDetach(park = false): Promise<void> {
+  async completeAndDetach(park: boolean = false): Promise<void> {
     const state = await this.locked(() => {
       this.cancelTimerLocked()
       // Set degraded first so timers and appendProgress stop queueing new
