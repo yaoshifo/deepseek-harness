@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome.md
-2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome.md: b28d9457e555db94f2d40a2a427f1e321193f9b7
-2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome.zh.md: ab53a0cd11178f7baed573154911bbd6c0eb87ce
+2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome.md: e5523a26b250ceae89cd8f4b91f7a44b4a220dd8
+2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome.zh.md: bb37b937a3be3b47dd324698560a7dd6e4993905

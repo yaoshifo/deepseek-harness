@@ -559,9 +559,9 @@ export function progressTitleAndColor(
       color = 'blue'
       break
     // The four settled states replace a parked card's waiting header once its
-    // ask resolves. None may use green: injectReplyButtons appends export and
-    // reply buttons to every green header, keyed by turn-end export content a
-    // parked card never has.
+    // ask resolves. None may use green: green claims 执行完成, which the
+    // pre-ask segment is not; their export/reply buttons ride state-keyed
+    // injection instead.
     case 'approved':
       title = zh ? '已批准' : 'Approved'
       color = 'turquoise'
@@ -679,26 +679,42 @@ function parseMutable(cardJSON: string): MutableCardJSON | undefined {
 }
 
 /**
+ * Progress states whose card carries registered export content: turn-end
+ * replies (completed) and parked-ask segments — the waiting park and every
+ * settled outcome — registered by captureReplyForExport under the card key.
+ */
+const replyButtonStates: ReadonlySet<string> = new Set([
+  'completed', 'waiting', 'approved', 'rejected', 'answered', 'cancelled',
+])
+
+/**
  * Append the export/reply button row (plus optional render-status line) to a
- * completed (green) or waiting (blue) card. Blue is safe only because the
- * progress-card PATCH path maps blue exclusively to the waiting state an
- * ask/permission park entered after captureReplyForExport registered the
- * partial reply under the same key; keep new blue progress states out of
- * this precondition. No-op for any other header.
+ * card carrying registered export content. With `buttonState` (the PATCH
+ * path's authoritative status) eligibility is state-keyed; without it, the
+ * header template decides — green (completed) or blue, and blue maps
+ * exclusively to the waiting state an ask/permission park entered after
+ * captureReplyForExport registered the partial reply under the same key, so
+ * keep new blue progress states out of that precondition. No-op otherwise.
  *
  * @param cardJSON - Rendered card JSON to mutate.
  * @param sessionKey - Session the buttons act on; empty string is a no-op.
  * @param exportKey - Key identifying the exportable reply.
  * @param statusText - Optional render-status line; empty string omits it.
+ * @param buttonState - Progress status state driving state-keyed eligibility;
+ *   undefined falls back to the header-template check.
  * @returns Card JSON with the button row appended, or the input unchanged on no-op.
  */
-export function injectReplyButtons(cardJSON: string, sessionKey: string, exportKey: string, statusText: string): string {
+export function injectReplyButtons(
+  cardJSON: string, sessionKey: string, exportKey: string, statusText: string, buttonState?: string,
+): string {
   if (sessionKey === '') return cardJSON
   const card = parseMutable(cardJSON)
   if (card === undefined) return cardJSON
   const hdr = card.header
   if (hdr === undefined) return cardJSON
-  if (hdr.template !== 'green' && hdr.template !== 'blue') return cardJSON
+  if (buttonState === undefined) {
+    if (hdr.template !== 'green' && hdr.template !== 'blue') return cardJSON
+  } else if (!replyButtonStates.has(buttonState)) return cardJSON
   const body = card.body
   if (body === undefined) return cardJSON
   const elements = body.elements
@@ -756,9 +772,12 @@ function notationColumn(content: string): FeishuCardMap {
 }
 
 /**
- * Append a ⏹ 停止执行 danger button to a still-running (yellow) card; no-op
- * on terminal (green/red) cards or cards without a header/body. A non-empty
- * hint rides the button row as a grey notation column beside the button.
+ * Append a ⏹ 停止执行 danger button to a still-running (yellow/violet) or
+ * waiting (blue) card; no-op on terminal (green/red) and settled
+ * (turquoise/grey) cards or cards without a header/body. Settled cards carry
+ * the settled ask's export/reply buttons instead — their turn runs on the
+ * post-decision card. A non-empty hint rides the button row as a grey
+ * notation column beside the button.
  *
  * @param cardJSON - Rendered card JSON to mutate.
  * @param sessionKey - Session the stop command targets; empty string is a no-op.
@@ -771,7 +790,7 @@ export function injectStopButton(cardJSON: string, sessionKey: string, hint = ''
   if (card === undefined) return cardJSON
   const hdr = card.header
   if (hdr === undefined) return cardJSON
-  if (hdr.template === 'green' || hdr.template === 'red') return cardJSON
+  if (hdr.template === 'green' || hdr.template === 'red' || hdr.template === 'turquoise' || hdr.template === 'grey') return cardJSON
   const body = card.body
   if (body === undefined) return cardJSON
   const elements = body.elements

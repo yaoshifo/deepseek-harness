@@ -30,8 +30,11 @@ describe('injectStopButton', () => {
   const cases: Array<[name: string, template: string, sessionKey: string, wantButton: boolean]> = [
     ['thinking violet shows stop', 'violet', 'sk1', true],
     ['running yellow shows stop', 'yellow', 'sk1', true],
+    ['waiting blue shows stop', 'blue', 'sk1', true],
     ['completed green hides stop', 'green', 'sk1', false],
     ['failed red hides stop', 'red', 'sk1', false],
+    ['settled approved turquoise hides stop', 'turquoise', 'sk1', false],
+    ['settled cancelled grey hides stop', 'grey', 'sk1', false],
     ['empty sessionKey injects nothing', 'violet', '', false],
   ]
   for (const [name, template, sessionKey, wantButton] of cases) {
@@ -121,6 +124,29 @@ describe('injectReplyButtons', () => {
         expect(out).toContain('"size":"tiny"')
         expect(out).not.toContain('"margin"')
       }
+    })
+  }
+
+  // State-keyed eligibility (the PATCH path passes the status): a parked card
+  // settling keeps the buttons its waiting render carried, while failed red
+  // (same template as settled rejected) stays bare — only the state decides.
+  const stateCases: Array<[name: string, state: string, template: string, wantBoth: boolean]> = [
+    ['settled approved keeps both buttons', 'approved', 'turquoise', true],
+    ['settled rejected keeps both buttons', 'rejected', 'red', true],
+    ['settled answered keeps both buttons', 'answered', 'turquoise', true],
+    ['settled cancelled keeps both buttons', 'cancelled', 'grey', true],
+    ['waiting state keeps both buttons', 'waiting', 'blue', true],
+    ['completed state keeps both buttons', 'completed', 'green', true],
+    ['failed state injects nothing on red', 'failed', 'red', false],
+    ['running state injects nothing', 'running', 'yellow', false],
+    ['empty state injects nothing', '', 'yellow', false],
+  ]
+  for (const [name, state, template, wantBoth] of stateCases) {
+    it(name, () => {
+      const out = injectReplyButtons(mkCard(template), 'feishu:oc_c', 'om_card1', '', state)
+      const hasExport = out.includes('📄 导出文件') && out.includes('export:om_card1')
+      const hasSendReply = out.includes('💬 查看完整回复') && out.includes('sendreply:om_card1')
+      expect(hasExport && hasSendReply).toBe(wantBoth)
     })
   }
 })

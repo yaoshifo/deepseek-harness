@@ -428,8 +428,7 @@ describe('buildPreviewCardJSON', () => {
 
   it.each([
     // A settled parked card keeps its ts and tool count; none may be green —
-    // injectReplyButtons appends export/reply buttons to green headers, keyed
-    // by turn-end export content a parked card never has.
+    // green claims 执行完成, which the pre-ask segment is not.
     ['approved', '已批准', 'turquoise'],
     ['rejected', '已拒绝', 'red'],
     ['answered', '已回答', 'turquoise'],

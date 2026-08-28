@@ -1865,9 +1865,17 @@ export class FeishuPlatform implements Platform {
     this.lastProgressCard.set(h.messageID, cardJSON)
     let json = injectStopButton(cardJSON, h.sessionKey, this.bgHintOf(content))
     const statusText = this.renderStatusText.get(h.messageID) ?? ''
-    json = injectReplyButtons(json, h.sessionKey, h.messageID, statusText)
+    // State-keyed button eligibility: a card PATCHed to a settled parked
+    // state keeps the export/reply buttons its waiting render carried (the
+    // registered pre-ask reply outlives the decision).
+    json = injectReplyButtons(json, h.sessionKey, h.messageID, statusText, this.buttonStateOf(content))
     await this.patchRateWait()
     await this.withRetry('patch message', () => this.patchMessage(h.messageID, json))
+  }
+
+  /** Progress status state of preview content ('' when none), for state-keyed button eligibility. */
+  private buttonStateOf(content: ProgressContent): string {
+    return content.kind === 'card' ? (content.payload.state ?? '') : (content.status?.state ?? '')
   }
 
   /** Render preview content into a card JSON string (payload or text path). */
