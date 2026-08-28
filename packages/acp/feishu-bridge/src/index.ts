@@ -32,6 +32,7 @@ import { registerShellCommands } from './engine/shell-commands.js'
 import { registerReloadCommands, completePendingReload } from './engine/reload-commands.js'
 import { registerSpawnFamilyCommands } from './engine/spawn-family-commands.js'
 import { registerMiscCommands } from './engine/misc-commands.js'
+import { registerSkillsMcpCommands } from './engine/skills-mcp-commands.js'
 import { CronScheduler, CronStore } from './engine/cron.js'
 import { registerCronCommands } from './engine/cron-commands.js'
 import { RelayManager } from './engine/relay.js'
@@ -1141,6 +1142,16 @@ export function buildProjectAssembly(
   // M8 前: /tag /untag /undone /notify /board (Go spawn family) + /help /ps.
   registerSpawnFamilyCommands(engine)
   registerMiscCommands(engine)
+  // TS 原生: /skills + /mcp — 运行时 skill 目录与 MCP 工具注册表查询（无 Go 对应）。
+  {
+    const skills = ctx.get('skills')
+    registerSkillsMcpCommands(engine, {
+      listSkills: skills === undefined ? undefined : cwd => skills.list({ cwd }),
+      toolNames: () => ctx.tools.schemas().map(schema => schema.name),
+      healthServers: config.mcpHealth?.servers,
+      allowlist: project.mcpServers,
+    })
+  }
   // M7-c: /provider family + shortcuts, /btw + insight forks, /compress.
   registerProviderCommands(engine)
   registerPredictCommands(engine)
