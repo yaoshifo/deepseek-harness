@@ -145,6 +145,21 @@ describe('provider wiring', () => {
     expect(JSON.stringify(p.sentCards[0])).toContain('turbo')
   })
 
+  it('a provider-card hot action keeps the agent session id (Go --resume semantics)', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fb-assembly-provider-hot-'))
+    const { engine, adapter } = assemble(baseConfig(), project(), root)
+    const p = createStubCardPlatform('test')
+    const s = engine.sessions.getOrCreateActive('smoke-project:chat1')
+    s.setAgentSessionID('agent-sid-9', 'dsh')
+    await engine.handleCardAction(p, {
+      ...newStubMessage(),
+      sessionKey: 'smoke-project:chat1',
+      replyCtx: 'ctx',
+    }, 'act:/provider turbo -r')
+    expect(adapter.getActiveProvider()?.name).toBe('turbo')
+    expect(s.getAgentSessionID()).toBe('agent-sid-9')
+  })
+
   it('the persisted active provider survives assembly (Go providerSaveFunc → config)', async () => {
     const root = await mkdtemp(join(tmpdir(), 'fb-assembly-provider-'))
     const proj = { ...project(), agent: { provider: 'mify-dsh' } }

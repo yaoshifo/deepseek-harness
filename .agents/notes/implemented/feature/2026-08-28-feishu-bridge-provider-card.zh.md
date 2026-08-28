@@ -10,13 +10,13 @@ Status: implemented
 
 ## Decision
 
-卡片平台（`supportsCards`）上裸 `/provider` 渲染 provider 卡（移植 Go `renderProviderCard`，engine_provider.go）：indigo 标题卡，含当前路由行、每路由一行 `listItemBtn`（`▶`/`◻` + 名称 + 可选 model 反引号标注），行按钮携带 `act:/provider <name>`，一行提示（点击 = 新会话；`-r` 热切换仍走文本命令）与返回按钮。按下的行经 `registerProviderCommands` 注册的 `registerCardAction(['/provider'])` 分发：非空参数即普通切换，走与文本命令相同的 `applyProviderSwitch` 核心（setActiveProvider → context window 重算 → usage 探测器同步 → agent session id 清空 → 持久化），引擎将返回的卡原地 PATCH；查找失败（路由表变化后的陈旧卡）不切换，以 not-found 通知重渲染。帮助卡的 provider 行原地打开本卡（`nav:/provider`，无参 → 仅渲染）。两个前缀共用一个 handler，前提是本卡自持其发出的全部动作值：任何 `nav:/provider <name>` 生产者都必须被刻意添加，而现状不存在。
+卡片平台（`supportsCards`）上裸 `/provider` 渲染 provider 卡（移植 Go `renderProviderCard`，engine_provider.go）：indigo 标题卡，含当前路由行、每路由一行 `listItemBtn`（`▶`/`◻` + 名称 + 可选 model 反引号标注），行按钮携带 `act:/provider <name>`，一行提示与返回按钮。按下的行经 `registerProviderCommands` 注册的 `registerCardAction(['/provider'])` 分发：非空参数即切换，走与文本命令相同的 `applyProviderSwitch` 核心（setActiveProvider → context window 重算 → usage 探测器同步 → agent session id 处理 → 持久化），引擎将返回的卡原地 PATCH；查找失败（路由表变化后的陈旧卡）不切换，以 not-found 通知重渲染。帮助卡的 provider 行原地打开本卡（`nav:/provider`，无参 → 仅渲染）。两个前缀共用一个 handler，前提是本卡自持其发出的全部动作值：任何 `nav:/provider <name>` 生产者都必须被刻意添加，而现状不存在。（同日晚些时候，模式行把热切换搬上了卡——[provider 卡热切换模式](2026-08-28-feishu-bridge-provider-card-hot-mode.zh.md)——取代下方备选方案里的"仅文本"立场。）
 
 ## Alternatives considered
 
 **在 `Engine.handleCardAction` 里加内联 `/provider` 分支，与 `/dir`、`/switch` 并列。** 否决：注册表本就是为特性卡选择器准备的，能让 engine.ts 零改动（M7 的 engine 热点纪律），并让注册表路径获得首个生产消费者；内联分支携带的 act:/nav: 前缀区分在这里并不需要（见 Decision）。
 
-**卡上加热切换（`--resume`）按钮。** 否决：为低频变体让每行翻倍；提示行指明文本命令即可，Go 卡也只提供普通切换。
+**卡上加热切换（`--resume`）按钮。** 否决：为低频变体让每行翻倍；提示行指明文本命令即可，Go 卡也只提供普通切换。同日部分被取代：模式行变体（[provider 卡热切换模式](2026-08-28-feishu-bridge-provider-card-hot-mode.zh.md)）在不翻倍行数的前提下加入了热切换。
 
 **Go 的 NeedNew 提示文案。** 不沿用：TS 切换本就清空 agent session id，下一条消息即在新路由上开新会话、无需 `/new`；卡片提示陈述真实语义（点击 = 新会话）。
 

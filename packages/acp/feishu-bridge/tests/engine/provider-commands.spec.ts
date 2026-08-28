@@ -1,11 +1,12 @@
 /**
  * Ported from cc-connect core/engine_provider.go + the provider sections of
  * engine_test.go (#9 全局 Providers / #12 切换): the /provider command family
- * (list/switch/current/clear), the provider card and its act:/provider card
- * actions (Go renderProviderCard + executeCardAction "/provider"), and the
- * provider_shortcuts quick commands (/strong → provider + new session). The
- * add/remove/preset flows are not ported — a provider is a named llm route
- * in the profile config, which the runtime cannot create.
+ * (list/switch/current/clear), the provider card and its act:/provider
+ * card actions in both switch modes (Go renderProviderCard +
+ * executeCardAction "/provider"), and the provider_shortcuts quick commands
+ * (/strong → provider + new session). The add/remove/preset flows are not
+ * ported — a provider is a named llm route in the profile config, which the
+ * runtime cannot create.
  *
  * @module dsh-feishu-bridge/tests-provider-commands
  */
@@ -314,6 +315,13 @@ function cardRows(card: unknown): CardRow[] {
     .filter(el => el.kind === 'listItem') as unknown as CardRow[]
 }
 
+/** The button rows of a recorded card (kind 'actions' elements). */
+function cardActionRows(card: unknown): Array<Array<{ text: string; type: string; value: string }>> {
+  return (card as { elements: Array<{ kind: string; buttons?: Array<{ text: string; type: string; value: string }> }> }).elements
+    .filter(el => el.kind === 'actions')
+    .map(el => el.buttons ?? [])
+}
+
 async function waitFor(cond: () => boolean, what: string): Promise<void> {
   for (let i = 0; i < 200; i++) {
     if (cond()) return
@@ -341,6 +349,11 @@ describe('provider card (Go renderProviderCard + card actions)', () => {
       expect(rows).toHaveLength(2)
       expect(rows[0]).toMatchObject({ text: '▶ **openai**', btnValue: 'act:/provider openai', btnType: 'primary' })
       expect(rows[1]).toMatchObject({ text: '◻ **azure**  `gpt-5.2`', btnValue: 'act:/provider azure', btnType: 'default' })
+      // Mode row first: plain selected by default.
+      expect(cardActionRows(card)[0]).toEqual([
+        { text: e.i18n.t(Msg.ProviderCardModePlain), type: 'primary', value: 'nav:/provider' },
+        { text: e.i18n.t(Msg.ProviderCardModeHot), type: 'default', value: 'nav:/provider -r' },
+      ])
       // The card replaces the plain-text listing entirely.
       expect(p.getSent()).toEqual([])
     } finally {
@@ -373,6 +386,54 @@ describe('provider card (Go renderProviderCard + card actions)', () => {
       // A card action never starts an agent turn nor sends a new card.
       expect(p.getSent()).toEqual([])
       expect(p.sentCards).toEqual([])
+    } finally {
+      dispose()
+    }
+  })
+
+  it('nav:/provider -r renders the hot-switch mode without switching', async () => {
+    const agent = providerAgent(['openai', 'azure'], 'openai')
+    const p = newRefreshingCardPlatform()
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerProviderCommands(e)
+    try {
+      e.receiveMessage(p, { ...msg(), content: 'nav:/provider -r', isCardAction: true })
+      await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+      expect(agent.getActive()).toBe('openai')
+      const card = p.refreshed[0]!.card
+      const rows = cardRows(card)
+      expect(rows[0]).toMatchObject({ text: '▶ **openai**', btnText: e.i18n.t(Msg.ProviderCardHotBtn), btnValue: 'act:/provider openai -r' })
+      expect(rows[1]).toMatchObject({ text: '◻ **azure**', btnValue: 'act:/provider azure -r' })
+      // Hot mode is the selected one in the mode row.
+      expect(cardActionRows(card)[0]).toEqual([
+        { text: e.i18n.t(Msg.ProviderCardModePlain), type: 'default', value: 'nav:/provider' },
+        { text: e.i18n.t(Msg.ProviderCardModeHot), type: 'primary', value: 'nav:/provider -r' },
+      ])
+    } finally {
+      dispose()
+    }
+  })
+
+  it('a pressed hot row hot-switches keeping the agent session id', async () => {
+    const agent = providerAgent(['openai', 'azure'], 'openai')
+    const p = newRefreshingCardPlatform()
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerProviderCommands(e)
+    try {
+      const s = e.sessions.getOrCreateActive('test:user1')
+      s.setAgentSessionID('agent-sid-1', 'dsh')
+
+      e.receiveMessage(p, { ...msg(), content: 'act:/provider azure -r', isCardAction: true })
+      await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+      expect(agent.getActive()).toBe('azure')
+      // --resume semantics: the transcript survives, the route does not.
+      expect(s.getAgentSessionID()).toBe('agent-sid-1')
+      const card = p.refreshed[0]!.card
+      expect(cardMarkdowns(card).join('\n')).toContain(e.i18n.tf(Msg.ProviderHotSwitched, 'azure'))
+      // The refreshed card stays in hot mode for further hot switches.
+      expect(cardRows(card)[1]).toMatchObject({ btnValue: 'act:/provider azure -r' })
     } finally {
       dispose()
     }

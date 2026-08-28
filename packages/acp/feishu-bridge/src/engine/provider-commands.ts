@@ -8,8 +8,9 @@
  * dispose + resume with new agentOptions). The add/remove/preset flows are
  * not ported: a provider is a named llm route in the profile config, which
  * the runtime cannot create. Card platforms render the bare listing as the
- * provider card (Go renderProviderCard) whose `act:/provider <name>` rows
- * run the plain switch and refresh the pressed card in place.
+ * provider card (Go renderProviderCard): a plain/hot mode row selects
+ * whether the `act:/provider <name>[-r]` rows drop the session or keep the
+ * transcript, and the pressed card refreshes in place.
  *
  * Registration lives here (not in engine/commands.ts) so the provider
  * domain cannot collide with parallel work on that file;
@@ -79,16 +80,18 @@ function providerListText(e: Engine, switcher: ProviderSwitcher): string {
 }
 
 /**
- * The provider card (Go Engine.renderProviderCard): current line, one list
- * row per route with an `act:/provider <name>` switch button, the click
- * hint, and a back button. The add/preset buttons are not ported — the
- * runtime cannot create routes.
+ * The provider card (Go Engine.renderProviderCard): current line, a switch
+ * -mode row (plain / hot), one list row per route with an
+ * `act:/provider <name>[-r]` switch button, the click hint, and a back
+ * button. The add/preset buttons are not ported — the runtime cannot create
+ * routes.
  *
  * @param e - Engine owning the switcher and i18n.
  * @param notice - Extra markdown line under the current line (the outcome of a pressed row).
+ * @param hot - Hot-switch mode: rows carry the `-r` flag (keep context) instead of dropping the session.
  * @returns The assembled card; a red not-supported card when the agent has no switcher.
  */
-function renderProviderCard(e: Engine, notice: string): Card {
+function renderProviderCard(e: Engine, notice: string, hot = false): Card {
   const switcher = asProviderSwitcher(e.agent)
   if (switcher === undefined) {
     return newCard().title(e.i18n.t(Msg.ProviderCardTitle), 'red')
@@ -105,6 +108,10 @@ function renderProviderCard(e: Engine, notice: string): Card {
   if (current !== undefined) cb.markdown(e.i18n.tf(Msg.ProviderCardCurrent, current.name))
   if (notice !== '') cb.markdown(notice)
   if (providers.length > 0) {
+    cb.buttonsEqual(
+      { text: e.i18n.t(Msg.ProviderCardModePlain), type: hot ? 'default' : 'primary', value: 'nav:/provider' },
+      { text: e.i18n.t(Msg.ProviderCardModeHot), type: hot ? 'primary' : 'default', value: 'nav:/provider -r' },
+    )
     cb.divider()
     for (const prov of providers) {
       const isActive = current !== undefined && prov.name === current.name
@@ -112,9 +119,9 @@ function renderProviderCard(e: Engine, notice: string): Card {
       const label = `${isActive ? '▶' : '◻'} **${prov.name}**${model !== '' ? `  \`${model}\`` : ''}`
       cb.listItemBtn(
         label,
-        e.i18n.t(Msg.ProviderCardSwitchBtn),
+        e.i18n.t(hot ? Msg.ProviderCardHotBtn : Msg.ProviderCardSwitchBtn),
         isActive ? 'primary' : 'default',
-        `act:/provider ${prov.name}`,
+        `act:/provider ${prov.name}${hot ? ' -r' : ''}`,
       )
     }
     cb.markdown(`\n${e.i18n.t(Msg.ProviderCardHint)}`)
@@ -143,18 +150,20 @@ export function registerProviderCommands(e: Engine): () => void {
   // Provider shortcuts (/strong → glm): dispatched from the engine's
   // shortcut hook when no builtin command claims the token.
   e.providerShortcutHandler = (p, msg, providerName) => { void cmdProviderShortcut(e, p, msg, providerName) }
-  // Provider-card actions: a pressed row carries `act:/provider <name>`, the
-  // help card's provider entry carries `nav:/provider` with no args. Both
-  // prefixes share the handler because the card owns every action value it
-  // emits: a non-empty arg is always a pressed row.
+  // Provider-card actions: a pressed row carries `act:/provider <name>[-r]`,
+  // the mode row and the help card's provider entry carry `nav:/provider`
+  // [-r] with no route name. Both prefixes share the handler because the
+  // card owns every action value it emits: the -r flag can only arrive on a
+  // value this card produced, and a non-empty route name is always a
+  // pressed row.
   const disposeCardAction = e.registerCardAction(['/provider'], (sessionKey, _cmd, args) => {
-    const name = args.trim()
+    const { name, resume } = parseProviderResumeFlag(args.split(/\s+/).filter(a => a !== ''))
     const switcher = asProviderSwitcher(e.agent)
-    if (name === '' || switcher === undefined) return renderProviderCard(e, '')
-    const notice = applyProviderSwitch(e, sessionKey, switcher, name)
-      ? e.i18n.tf(Msg.ProviderSwitched, name)
+    if (name === '' || switcher === undefined) return renderProviderCard(e, '', resume)
+    const notice = applyProviderSwitch(e, sessionKey, switcher, name, resume)
+      ? e.i18n.tf(resume ? Msg.ProviderHotSwitched : Msg.ProviderSwitched, name)
       : e.i18n.tf(Msg.ProviderNotFound, name)
-    return renderProviderCard(e, notice)
+    return renderProviderCard(e, notice, resume)
   })
   return () => {
     handlers.delete('provider')
@@ -254,25 +263,37 @@ function saveProvider(e: Engine, name: string): void {
 }
 
 /**
- * Run the plain-switch side effects shared by the text command and a
- * pressed provider-card row (Go switchProvider minus the reply): swap the
- * route, re-resolve the context window and usage detectors, drop the agent
- * session id (the next message starts fresh on the new route), and persist
- * the choice.
+ * Run the switch side effects shared by the text commands and a pressed
+ * provider-card row (Go switchProvider/switchProviderResume minus the
+ * reply): swap the route, re-resolve the context window and usage
+ * detectors, handle the agent session id, and persist the choice. A plain
+ * switch drops the id (the next message starts fresh on the new route); a
+ * resume switch captures it before the interactive-session stop and
+ * restores it after, so the next message resumes the same transcript under
+ * the new route's agentOptions (history is NOT cleared).
  *
  * @param e - Engine owning the sessions and the persistence hook.
- * @param sessionKey - Session whose agent session id is dropped.
+ * @param sessionKey - Session whose agent session id is handled.
  * @param switcher - Agent provider switcher.
  * @param name - Route to activate.
+ * @param resume - True keeps the agent session id (Go --resume); false drops it.
  * @returns True when the route exists and the switch ran; false leaves all state untouched.
  */
-function applyProviderSwitch(e: Engine, sessionKey: string, switcher: ProviderSwitcher, name: string): boolean {
+function applyProviderSwitch(e: Engine, sessionKey: string, switcher: ProviderSwitcher, name: string, resume: boolean): boolean {
   if (!switcher.setActiveProvider(name)) return false
   e.applyActiveProviderContextWindow()
   e.syncUsageProvidersActive()
-  e.stopInteractiveSession(sessionKey)
   const s = e.sessions.getOrCreateActive(sessionKey)
-  s.setAgentSessionID('', '')
+  const agentSessionID = s.getAgentSessionID()
+  const agentType = s.agentType
+  e.stopInteractiveSession(sessionKey)
+  if (resume) {
+    if (agentSessionID !== '') {
+      s.setAgentSessionID(agentSessionID, agentType)
+    }
+  } else {
+    s.setAgentSessionID('', '')
+  }
   e.sessions.save()
   saveProvider(e, name)
   return true
@@ -280,7 +301,7 @@ function applyProviderSwitch(e: Engine, sessionKey: string, switcher: ProviderSw
 
 /** /provider switch: rotate to a fresh session on the new route (Go switchProvider). */
 async function switchProvider(e: Engine, p: Platform, msg: Message, switcher: ProviderSwitcher, name: string): Promise<void> {
-  if (!applyProviderSwitch(e, msg.sessionKey, switcher, name)) {
+  if (!applyProviderSwitch(e, msg.sessionKey, switcher, name, false)) {
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, name))
     return
   }
@@ -289,24 +310,10 @@ async function switchProvider(e: Engine, p: Platform, msg: Message, switcher: Pr
 
 /** /provider switch --resume: keep the transcript, swap the route (Go switchProviderResume). */
 async function switchProviderResume(e: Engine, p: Platform, msg: Message, switcher: ProviderSwitcher, name: string): Promise<void> {
-  if (!switcher.setActiveProvider(name)) {
+  if (!applyProviderSwitch(e, msg.sessionKey, switcher, name, true)) {
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, name))
     return
   }
-  e.applyActiveProviderContextWindow()
-  e.syncUsageProvidersActive()
-  const s = e.sessions.getOrCreateActive(msg.sessionKey)
-  const agentSessionID = s.getAgentSessionID()
-  const agentType = s.agentType
-
-  e.stopInteractiveSession(msg.sessionKey)
-  // Restore the id so the next start resumes the same transcript under the
-  // new route's agentOptions; history is NOT cleared.
-  if (agentSessionID !== '') {
-    s.setAgentSessionID(agentSessionID, agentType)
-  }
-  e.sessions.save()
-  saveProvider(e, name)
   await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderHotSwitched, name))
 }
 
