@@ -61,8 +61,6 @@ const transientSubstrings = [
   // backoff retry succeeds; without this the streaming card degrades
   // permanently on a single blip.
   'service unavailable',
-  // Feishu PATCH rate limit ("更新过于频繁"): clears in seconds.
-  'code=230020',
   // Node fetch/undici abort wording for the per-attempt timeout race.
   'this operation was aborted',
   'fetch failed',
@@ -71,13 +69,35 @@ const transientSubstrings = [
   'unexpected eof',
 ]
 
+/** Feishu business code for "update the single messages too frequently" (per-message 5 QPS PATCH limit). */
+export const feishuPatchRateLimitCode = '230020'
+
+/**
+ * Extract Feishu's business error code regardless of error shape.
+ * @larksuiteoapi/node-sdk surfaces API failures as AxiosErrors whose message
+ * is only "Request failed with status code NNN" and whose business code rides
+ * in `response.data.code`; text-shaped errors embed it as `code=NNNNNN`.
+ * @param err - The thrown value.
+ * @returns The business code as text, or undefined when none is present.
+ */
+export function feishuBusinessCode(err: unknown): string | undefined {
+  if (err === undefined || err === null) return undefined
+  const bodyCode = (err as { response?: { data?: { code?: unknown } } }).response?.data?.code
+  if (bodyCode !== undefined && bodyCode !== null && bodyCode !== '') return String(bodyCode)
+  return /\bcode=(\d+)\b/.exec(errorMessage(err))?.[1]
+}
+
 /**
  * Whether the error is transient and should be retried with backoff.
  * @param err - The thrown value.
- * @returns True when the error text matches a transient network symptom.
+ * @returns True when the business code is the PATCH rate limit or the error
+ * text matches a transient network symptom.
  */
 export function isTransientError(err: unknown): boolean {
   if (err === undefined || err === null) return false
+  // Feishu PATCH rate limit clears in seconds; classify it before the
+  // message scan because the AxiosError shape carries it only in the body.
+  if (feishuBusinessCode(err) === feishuPatchRateLimitCode) return true
   const msg = errorMessage(err).toLowerCase()
   return transientSubstrings.some(sub => msg.includes(sub))
 }

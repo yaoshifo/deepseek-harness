@@ -44,7 +44,7 @@ import {
 import { previewOverflow as previewOverflowFn } from './markdown.js'
 import { noSpinner, resolveSpinnerAsset, spinnerKeyForState, type SpinnerCfg } from './spinner.js'
 import { parseProgressStyle } from '../progress.js'
-import { TokenBucketRateLimiter, isTenantAccessTokenInvalid, withTransientRetry } from './retry.js'
+import { TokenBucketRateLimiter, feishuBusinessCode, feishuPatchRateLimitCode, isTenantAccessTokenInvalid, withTransientRetry } from './retry.js'
 import { errorMessage } from './retry.js'
 import { ErrNotSupported, type ChatBasePhase, type ChatPhase, type ImageAttachment, type FileAttachment, type Message, type MessageHandler, type Platform, type ProgressContent } from '../core/types.js'
 import { SpawnedChatStore, extractFeishuChatID, projectBaseForTag, type GroupSpawnOptions, type SpawnedChatInfo, type SpawnedChatMeta } from './spawn.js'
@@ -605,7 +605,9 @@ export class FeishuPlatform implements Platform {
     this.topNoticeEnabled = options.topNoticeFirstMessage === true
     this.pinEnabled = options.pinUserMessages === true
     this.spinnerEnabled = options.progressSpinner !== false
-    this.patchRL = new TokenBucketRateLimiter(options.patchRateIntervalMs ?? 120, 3)
+    // Feishu caps card PATCHes at 5 QPS per message; 200ms keeps a hot card
+    // at the documented limit instead of tripping 230020 rate-limit errors.
+    this.patchRL = new TokenBucketRateLimiter(options.patchRateIntervalMs ?? 200, 3)
     this.botAvatarKey = options.botAvatarKey ?? ''
     this.botAvatarKeyGray = options.botAvatarKeyGray ?? ''
     this.displayName = options.botDisplayName ?? ''
@@ -1781,7 +1783,7 @@ export class FeishuPlatform implements Platform {
    * @returns Whether the error is a transient rate-limit.
    */
   isTransientPatchError(err: unknown): boolean {
-    return err instanceof Error && err.message.includes('code=230020')
+    return feishuBusinessCode(err) === feishuPatchRateLimitCode
   }
 
   /** Upload the spinner GIFs once and cache their image keys. */

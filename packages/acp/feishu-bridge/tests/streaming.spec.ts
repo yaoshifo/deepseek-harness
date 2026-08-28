@@ -27,6 +27,7 @@ import { newAsyncSender } from '../src/async-sender.js'
 import type { FileAttachment, Platform, ProgressContent, TextPreviewContent } from '../src/core/types.js'
 import { previewText, statusOf } from './stubs/preview-content.js'
 import { createStubPlatform, type StubPlatform } from './stubs/engine-stubs.js'
+import { feishuBusinessCode, feishuPatchRateLimitCode } from '../src/feishu/retry.js'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -157,7 +158,7 @@ function createMockTransientFailingUpdaterPlatform(
   const p = createMockFailingUpdaterPlatform(updateErrors)
   Object.assign(p, {
     isTransientPatchError(err: unknown): boolean {
-      return err instanceof Error && err.message.includes('code=230020')
+      return feishuBusinessCode(err) === feishuPatchRateLimitCode
     },
   })
   return p
@@ -249,6 +250,10 @@ function createMockBumpFailSendPlatform(failOn: number): ReturnType<typeof creat
 }
 
 const err = (msg: string): Error => new Error(msg)
+
+/** @larksuiteoapi/node-sdk failure shape: business code rides in response.data.code, not the message. */
+const apiErr = (code: number, msg = 'This operation triggers the frequency limit'): Error =>
+  Object.assign(new Error('Request failed with status code 400'), { response: { data: { code, msg } } })
 
 function cfg(over: Partial<StreamPreviewCfg> = {}): StreamPreviewCfg {
   return { enabled: true, intervalMs: 50, minDeltaChars: 1, maxChars: 500, ...over }
@@ -769,19 +774,27 @@ describe('StreamPreview', () => {
 
   it('transient (230020) PATCH failures never degrade', async () => {
     const errs: Array<Error | undefined> = []
-    for (let i = 0; i < maxConsecutivePatchFailures + 2; i++) {
-      errs.push(err('feishu: patch message code=230020 msg=This operation triggers the frequency limit'))
-    }
+    // Real SDK failure shape: AxiosError with the code only in the response body.
+    for (let i = 0; i < maxConsecutivePatchFailures + 2; i++) errs.push(apiErr(230020))
+    errs.push(undefined)
     const mp = createMockTransientFailingUpdaterPlatform(errs)
     const as = newAsyncSender('test-async-transient')
     try {
       const sp = newStreamPreview(cfg({ intervalMs: 0, minDeltaChars: 0 }), mp, 'ctx', undefined, as)
-      await sp.appendText('a')
+      await sp.appendText('a') // first flush sends the preview card (not an update)
       await as.barrier()
       for (const s of ['b', 'c', 'd', 'e']) {
         await sp.appendText(s)
         await as.barrier()
       }
+      expect(mp.callCount).toBe(maxConsecutivePatchFailures + 1)
+      expect(sp.isDegraded()).toBe(false)
+      await sp.appendText('f') // update #5: still rate-limited, streak 5, still no degrade
+      await as.barrier()
+      expect(sp.isDegraded()).toBe(false)
+      await sp.appendText('g') // update #6: rate-limit window passed → PATCH succeeds
+      await as.barrier()
+      expect(mp.callCount).toBe(maxConsecutivePatchFailures + 3)
       expect(sp.isDegraded()).toBe(false)
     } finally {
       as.close()

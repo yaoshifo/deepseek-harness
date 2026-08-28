@@ -10,9 +10,18 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
-import { isTransientError, retryTiming, withTransientRetry } from '../../src/feishu/retry.js'
+import { feishuBusinessCode, isTransientError, retryTiming, withTransientRetry } from '../../src/feishu/retry.js'
 
 const err = (msg: string): Error => new Error(msg)
+
+/**
+ * @larksuiteoapi/node-sdk failure shape: the SDK rethrows the AxiosError
+ * whose message is only the HTTP status text and whose Feishu business code
+ * rides in `response.data.code`. Production classifiers must read that field.
+ */
+const apiErr = (code: number, msg = 'This operation triggers the frequency limit'): Error =>
+  Object.assign(new Error('Request failed with status code 400'), { response: { data: { code, msg } } })
+
 const rc = { messageID: 'om_root', chatID: 'oc_chat', sessionKey: 'feishu:oc_chat:ou_u' }
 
 const originalTiming = { ...retryTiming }
@@ -40,7 +49,11 @@ describe('isTransientError', () => {
     ['server misbehaving', err('lookup example.com: server misbehaving'), true],
     ['fetch failed (node transport)', err('fetch failed'), true],
     ['rate limited 230001', err('feishu: reply failed code=230001 msg=rate limited'), false],
-    ['patch rate limit 230020', err('feishu: patch message code=230020 msg=The message is updated too frequently'), true],
+    ['rate limited 230001 (AxiosError body shape)', apiErr(230001, 'rate limited'), false],
+    ['patch rate limit 230020 (AxiosError body shape)', apiErr(230020), true],
+    // Legacy text-shaped errors (Go port and test fakes) keep classifying.
+    ['patch rate limit 230020 (text shape)', err('feishu: patch message code=230020 msg=The message is updated too frequently'), true],
+    ['withdrawn message 230011 (AxiosError body shape)', apiErr(230011, 'The message was withdrawn.'), false],
     ['invalid token', err('feishu: reply failed code=99991663'), false],
     ['generic error', err('something went wrong'), false],
     ['context deadline exceeded (per-attempt timeout)', err('context deadline exceeded'), true],
@@ -51,6 +64,22 @@ describe('isTransientError', () => {
       expect(isTransientError(error), name).toBe(want)
     })
   }
+})
+
+describe('feishuBusinessCode', () => {
+  it('reads the AxiosError response body code (number or string)', () => {
+    expect(feishuBusinessCode(apiErr(230020))).toBe('230020')
+    expect(feishuBusinessCode(Object.assign(new Error('x'), { response: { data: { code: '230011' } } }))).toBe('230011')
+  })
+
+  it('falls back to the code= text shape', () => {
+    expect(feishuBusinessCode(err('feishu: patch message code=230020 msg=too frequent'))).toBe('230020')
+  })
+
+  it('returns undefined for plain errors and non-error values', () => {
+    expect(feishuBusinessCode(err('something went wrong'))).toBeUndefined()
+    expect(feishuBusinessCode(null)).toBeUndefined()
+  })
 })
 
 describe('withTransientRetry', () => {
@@ -188,7 +217,7 @@ describe('API wrappers retry on transient errors', () => {
   })
 
   it('patch message retries on transient error', async () => {
-    const api = scheduledClient({ patch: [err('feishu: patch message code=230020 msg=too frequent'), undefined] })
+    const api = scheduledClient({ patch: [apiErr(230020), undefined] })
     const p = newPlatform(api)
     const handle = await p.sendPreviewStart(rc, { kind: 'text', text: 'body' })
     await p.updateMessage(handle, { kind: 'text', text: 'body', status: { state: 'completed', ts: '12:00:01', toolCallSeq: 0 } })
