@@ -7667,10 +7667,10 @@ export class Engine {
           queryCtl.signal, true,
         )
         if (name === '') {
-          await this.fallbackRename(renamer, sessionKey, seed)
+          await this.fallbackRename(p, renamer, sessionKey, seed)
         }
-      } catch {
-        await this.fallbackRename(renamer, sessionKey, seed)
+      } catch (error) {
+        await this.fallbackRename(p, renamer, sessionKey, seed, error)
       } finally {
         clearTimeout(timer)
       }
@@ -7679,18 +7679,47 @@ export class Engine {
     }
   }
 
-  /** LLM failure/empty fallback: name the group after the user's first message (no avatar). */
+  /**
+   * LLM failure/empty fallback: name the group after the user's first message
+   * and stamp a name-hashed icon avatar so the lifecycle phase signal still
+   * applies — the phase painter lazy-renders later phases from the stored
+   * icon name, so skipping it here would pin the chat to the bot avatar for
+   * its whole life.
+   * @param p - Platform owning the group.
+   * @param renamer - The platform's group renamer.
+   * @param sessionKey - Session key of the spawned group.
+   * @param seed - First message the fallback name derives from.
+   * @param cause - The LLM failure, logged for diagnosability; absent when
+   * generation merely returned an empty name.
+   */
   private async fallbackRename(
+    p: Platform,
     renamer: { renameGroup(key: string, name: string, signal?: AbortSignal): Promise<void> },
-    sessionKey: string, seed: string,
+    sessionKey: string, seed: string, cause?: unknown,
   ): Promise<void> {
-    console.warn(`group-name: generate failed, falling back to first message (${sessionKey})`)
+    console.warn(`group-name: generate failed, falling back to first message (${sessionKey})${cause !== undefined ? `: ${String(cause)}` : ''}`)
     const fallback = truncateGroupName(seed)
     if (fallback === '') return
     try {
       await renamer.renameGroup(sessionKey, fallback)
     } catch (error) {
       console.warn(`group-name: fallback rename failed (${sessionKey}): ${String(error)}`)
+      return
+    }
+    // Mirror the LLM path's avatar step; failure only warns. Safe to reset the
+    // phase baseline: the fallback only runs within the spawn window, where
+    // the chat's baseline is still `discussing`.
+    if (this.groupNameSetAvatar) {
+      const setter = asGroupIconAvatarSetter(p)
+      if (setter !== undefined) {
+        const icon = fallbackGroupIcon(fallback)
+        try {
+          await setter.setGroupIconAvatar(sessionKey, icon, fallback)
+          this.recordGroupIcon(icon)
+        } catch (error) {
+          console.warn(`group-name: set icon avatar failed (${icon}): ${String(error)}`)
+        }
+      }
     }
   }
 
