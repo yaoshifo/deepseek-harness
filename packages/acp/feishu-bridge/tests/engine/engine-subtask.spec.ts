@@ -1033,6 +1033,7 @@ function createDelegatorAgent(): Agent & ContinuableDelegator & {
   reports: Array<{ child: string; content: string }>
   nextChildId: string
   cwds: Record<string, string>
+  childLiveIds: Set<string> | undefined
 } {
   const agent = {
     ...createStubAgent(),
@@ -1042,8 +1043,14 @@ function createDelegatorAgent(): Agent & ContinuableDelegator & {
     reports: [] as Array<{ child: string; content: string }>,
     nextChildId: 'native-child-1',
     cwds: {} as Record<string, string>,
+    // undefined = every child is live; narrow to a set to simulate registry
+    // state after a restart or settlement.
+    childLiveIds: undefined as Set<string> | undefined,
     childCwd(childId: string): string {
       return agent.cwds[childId] ?? ''
+    },
+    childLive(childId: string): boolean {
+      return agent.childLiveIds === undefined ? true : agent.childLiveIds.has(childId)
     },
     async startContinuableChild(request: ContinuableChildStart): Promise<{ childId: string; label: string }> {
       agent.started.push(request)
@@ -1738,6 +1745,30 @@ describe('drainNativeDescendants', () => {
     expect(e.nativeChildEntries()['native-child-1']).toBeUndefined()
     expect(e.nativeChildEntries()['native-grandchild-1']).toBeUndefined()
     expect(e.nativeChildEntries()['foreign-child']).toBeDefined()
+  })
+
+  it('interrupts only live children; a dead one clears without an interrupt attempt', async () => {
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:parent-chat:u1'
+    const { e, agent } = newNativeEngine(p, parentKey)
+    // Only the direct child is live: the grandchild's agent died with a
+    // daemon restart, and interrupting through the dead parent authority
+    // would only log a fault (2026-08-28 reload-then-/done noise).
+    agent.childLiveIds = new Set(['native-child-1'])
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey, parent_agent_session_id: 'parent-native-1', label: 'a',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '', reported: false,
+    })
+    e.projectState?.setNativeChild('native-grandchild-1', {
+      parent_key: 'native-child-1', parent_agent_session_id: 'native-child-1', label: 'g',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '', reported: false,
+    })
+
+    await e.drainNativeDescendants([parentKey])
+
+    expect(agent.interrupts).toEqual(['native-child-1'])
+    expect(e.nativeChildEntries()['native-child-1']).toBeUndefined()
+    expect(e.nativeChildEntries()['native-grandchild-1']).toBeUndefined()
   })
 })
 

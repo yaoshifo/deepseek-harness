@@ -60,8 +60,9 @@ const DESCRIPTION =
   + 'until every in-flight subtask has reported (or the timeout, ~20 minutes, returns partial '
   + 'results) — the combined summary arrives as THIS tool call\'s result, so call it when your '
   + 'next step depends on the results and synthesize in the same reply; skip it to keep working '
-  + 'and be woken once per child. interrupt: stop one of your running subtasks\' current turn '
-  + '(the child session survives and can be asked again later).'
+  + 'and be woken once per child. interrupt: stop one of your native subtasks\' current turn '
+  + '(the child session survives and can be asked again later; attended group children are '
+  + 'stopped from their own chat).'
 
 /**
  * Register the `feishu_bridge_subtask` tool on `ctx.tools`.
@@ -115,6 +116,7 @@ export function registerSubtaskTool(
       child: {
         type: 'string',
         description: 'send/interrupt: the target subtask\'s session key, from the spawn result. '
+          + 'interrupt accepts native subtask ids only — attended group children are stopped from their own chat. '
           + 'send also accepts the literal "assistant" for your pre-provisioned research assistant, '
           + 'when one exists — prefer it over copying a long key by hand.',
       },
