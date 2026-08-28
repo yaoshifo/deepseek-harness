@@ -32,7 +32,7 @@ import {
 import type { HistoryEntry } from '../core/types.js'
 import { locateForkCut } from './fork-at.js'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
-import { agentConventionsPrompt } from '../engine/agent-conventions.js'
+import { agentConventionsPrompt, tddDefaultPrompt } from '../engine/agent-conventions.js'
 import type { ContextSnapshotValues } from '../context/types.js'
 import {
   subtaskAgentSystemPrompt,
@@ -477,8 +477,9 @@ function withMcpMask(
  * (Go buildAppendSystemPrompt's CC_SUBTASK branch) appends the report /
  * no-report preamble as a normal section — research assistants add their
  * contract on top. Plain sessions always get the agent conventions section
- * (order 10) and, when a Feishu workspace is configured, the #18 routing
- * section on top.
+ * (order 10); plain sessions and subtask children both get the TDD default
+ * section (order 20); and, when a Feishu workspace is configured, the #18
+ * routing section on top.
  */
 function buildSessionSetup(options: SessionStartOptions | undefined): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
   const persona = options?.persona
@@ -493,6 +494,7 @@ function buildSessionSetup(options: SessionStartOptions | undefined): import('@d
           | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
           | undefined
         promptSvc?.section({ name: 'feishu-bridge-agent-conventions', order: 10, text: agentConventionsPrompt() })
+        promptSvc?.section({ name: 'feishu-bridge-tdd-default', order: 20, text: tddDefaultPrompt() })
         if (workspaceText !== '') {
           promptSvc?.section({ name: 'feishu-bridge-workspace', order: 110, text: workspaceText })
         }
@@ -511,6 +513,7 @@ function buildSessionSetup(options: SessionStartOptions | undefined): import('@d
         | { section(section: { name: string; order: number; text: string; complete?: boolean }): () => void }
         | undefined
       if (promptSvc === undefined) return
+      promptSvc.section({ name: 'feishu-bridge-tdd-default', order: 20, text: tddDefaultPrompt() })
       if (workspaceText !== '') {
         promptSvc.section({ name: 'feishu-bridge-workspace', order: 110, text: workspaceText })
       }

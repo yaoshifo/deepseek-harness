@@ -1,15 +1,19 @@
 /**
- * The plain-session agent conventions prompt (curiosity reporting + closing
- * card), registered by the dsh adapter as the low-order
- * `feishu-bridge-agent-conventions` system-prompt section for direct
- * project-chat agents. This is a bridge-owned generic prompt, deliberately
- * kept out of the chatroom plugin's persona module: subtask children report
- * through their parent session, and chatroom roles carry their own persona.
+ * The bridge-owned generic prompt sections registered by the dsh adapter:
+ * the plain-session agent conventions (async autonomy, curiosity reporting,
+ * closing ask_user_question card, skillify offer) as the low-order
+ * `feishu-bridge-agent-conventions` section for direct project-chat agents,
+ * and the default-TDD prompt as `feishu-bridge-tdd-default` for plain
+ * sessions and subtask children alike — coding turns run in both.
+ * Deliberately kept out of the chatroom plugin's persona module: subtask
+ * children report through their parent session, and chatroom roles carry
+ * their own persona.
  *
  * @module dsh-feishu-bridge/agent-conventions
  */
 
-/** The plain-session agent conventions prompt (curiosity reporting + closing card).
+/** The plain-session agent conventions prompt (async autonomy, curiosity
+ * reporting, closing card, skillify offer).
  *
  * Registers for direct project-chat agents only: subtask children report
  * through their parent session, and chatroom roles carry their own persona.
@@ -35,5 +39,29 @@ export function agentConventionsPrompt(): string {
 
 ### 收尾追问卡片
 「发现的问题 / 可优化点」一节非空时，发出收尾文本后紧接着调用 ask_user_question 发一个多选问题：单个问题、multi_select 为 true、header 为「后续处理」；每个发现对应一个选项（label 为短标题，description 为 \`path:line\` 与建议动作一句话），并附一个「暂不处理」选项。选项按你推荐的处理优先级排序，推荐要处理的选项置前并设 recommended: true（卡片会默认勾选）。该节为空或缺失时不发卡片。用户提交的勾选视为授权，直接开始处理；「暂不处理」或与选项无关的自由文本答复则不处理任何条目，自由文本按新任务理解并执行。
+
+### 主动沉淀可复用流程（skillify）
+完成一个跨多步骤、含明确可复用模式、且你判断后续会再次遇到类似需求的任务后，在回合结束前用一句话向用户提议：
+
+> 这个流程似乎可复用，要不要我用 \`skillify\` skill 把它固化成 skill？
+
+仅当确实可复用时提——一次性的、边界高度特化的流程不要提。用户拒绝就不再追。只提议，不要替用户决定、不要直接开始创建。
+`
+}
+
+/** The default-test-driven-development prompt for plain sessions and subtask
+ * children — both branches run coding turns. The detailed red-green-refactor
+ * loop stays in the `tdd` skill, loaded on demand.
+ *
+ * @returns the TDD default section text.
+ */
+export function tddDefaultPrompt(): string {
+  return `
+### 默认测试驱动
+在实现功能、修改行为或修复 bug 时，默认用 \`tdd\` skill 的 red-green-refactor 循环驱动——不等用户先说"test"或"TDD"，自己驱动全过程，不停下来请求许可，也不等测试清单被批准。开始时用一句话说明你正在测试的接口与行为，仅当公开接口或预期行为确实含糊时才提一个聚焦的问题。
+
+对于 bug 修复：一旦定位到原因，修复就从**一个能复现该 bug 的失败测试**开始——写它、确认它因正确的原因失败、然后再修。之前的调查阶段不受此约束。
+
+仅以下情况可跳过 TDD：纯粹的探索性问题与设计讨论（尚未实现任何东西）、不改动任何产品代码的纯代码阅读/解释/调查、文档与注释、不含逻辑的配置或依赖版本改动、以及不会提交或复用的真正一次性脚本。拿不准时，就写测试。
 `
 }
