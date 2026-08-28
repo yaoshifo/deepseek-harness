@@ -21,6 +21,7 @@ import type { SubagentRunEndInfo, SubagentRunInfo } from '@deepseek-ai/dsh-subag
 import Schema from '@deepseek-ai/schemastery'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.js'
+import { installLogTimestamps } from './log-timestamps.js'
 import { FeishuBridgeService, type BridgeDispatch } from './bridge-service.js'
 import { FeishuPlatform } from './feishu/platform.js'
 import { Engine } from './engine/engine.js'
@@ -756,6 +757,9 @@ export function mountBundledSkills(ctx: Context): Fiber {
  * @param config - Validated plugin config.
  */
 export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<void> {
+  // launchd captures stdout/stderr without timing; every later log line
+  // (ours and the vendored SDK's) carries a wall-clock prefix.
+  installLogTimestamps()
   mountBundledSkills(ctx)
   // The service owns the live project registry and the feishuBridge/*
   // dispatch; mounting it before any engine is built lets engines dispatch
