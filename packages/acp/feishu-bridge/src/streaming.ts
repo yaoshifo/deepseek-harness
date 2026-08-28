@@ -22,6 +22,7 @@ import {
   asPreviewStarter,
   asStoppedCardRenderer,
   asTransientPatchErrorChecker,
+  type ParkOutcome,
   type Platform,
   type ProgressContent,
   type ProgressStatus,
@@ -525,6 +526,12 @@ export class StreamPreview {
    */
   waiting: boolean = false
   /**
+   * Outcome the parked card settled to once its ask resolved; undefined while
+   * it still waits. Drives the settled header state from progressStatusLocked.
+   * @internal White-box: ported same-package tests read this directly.
+   */
+  private parkOutcome: ParkOutcome | undefined
+  /**
    * True once the failed terminal card was rendered.
    * @internal White-box: ported same-package tests read/write this directly.
    */
@@ -706,7 +713,7 @@ export class StreamPreview {
       : this.failed
         ? 'failed'
         : this.waiting
-          ? 'waiting'
+          ? (this.parkOutcome ?? 'waiting')
           : this.thinkingText !== ''
             ? 'thinking'
             : 'running'
@@ -885,10 +892,13 @@ export class StreamPreview {
    * the segment is delivered but the turn itself is not done, and a
    * completed claim next to a pending approval card misleads (2026-08-28
    * oc_9d385: 「执行完成 · 07:38:57 · 2」 green card directly followed by the
-   * permission request it was waiting on).
+   * permission request it was waiting on). A parked card settles its header
+   * through {@link settleParkedCard} once the ask resolves.
    * @param park - Render the waiting state instead of completed.
+   * @returns The detached card's preview handle; undefined when no card
+   *   existed (never started or already detached).
    */
-  async completeAndDetach(park = false): Promise<void> {
+  async completeAndDetach(park = false): Promise<unknown> {
     const state = await this.locked(() => {
       this.cancelTimerLocked()
       // Set degraded first so timers and appendProgress stop queueing new
@@ -929,8 +939,36 @@ export class StreamPreview {
       }
     }
     if (state.deliverText !== '') await this.deliverAnswer(state.deliverText)
+    return state.handle
   }
 
+  /**
+   * Settle a card parked by {@link completeAndDetach}: PATCH its header from
+   * 等待中 to the ask's outcome so a card the user already answered (or a
+   * cancelled ask) stops reading as pending (2026-08-28 oc_b20512: an
+   * approved plan left the pre-plan card blue forever). The park detached the
+   * handle, so the caller passes it back from completeAndDetach's result.
+   * Best-effort: a PATCH failure logs and leaves the waiting header — the
+   * parked card carries history, not live state. No-op when this preview was
+   * never parked or already settled.
+   * @param handle - Parked card's preview handle from completeAndDetach.
+   * @param outcome - Settlement state rendered as the new header.
+   */
+  async settleParkedCard(handle: unknown, outcome: ParkOutcome): Promise<void> {
+    const content = await this.locked(() => {
+      if (!this.waiting || this.parkOutcome !== undefined) return undefined
+      this.parkOutcome = outcome
+      return this.progressContentLocked(this.buildProgressDisplayLocked())
+    })
+    if (content === undefined) return
+    const updater = asMessageUpdater(this.platform)
+    if (updater === undefined) return
+    try {
+      await updater.updateMessage(handle, content)
+    } catch (error) {
+      console.debug(`streaming settle skipped: ${String(error)}`)
+    }
+  }
   /** Content to display when freezing the preview (progress lines or fullText). */
   private buildFreezeContentLocked(): TextPreviewContent {
     if (this.progressMode && this.progressEntries.length > 0) {

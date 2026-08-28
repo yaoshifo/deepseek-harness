@@ -558,6 +558,26 @@ export function progressTitleAndColor(
       title = zh ? '等待中' : 'Waiting'
       color = 'blue'
       break
+    // The four settled states replace a parked card's waiting header once its
+    // ask resolves. None may use green: injectReplyButtons appends export and
+    // reply buttons to every green header, keyed by turn-end export content a
+    // parked card never has.
+    case 'approved':
+      title = zh ? '已批准' : 'Approved'
+      color = 'turquoise'
+      break
+    case 'rejected':
+      title = zh ? '已拒绝' : 'Rejected'
+      color = 'red'
+      break
+    case 'answered':
+      title = zh ? '已回答' : 'Answered'
+      color = 'turquoise'
+      break
+    case 'cancelled':
+      title = zh ? '已取消' : 'Cancelled'
+      color = 'grey'
+      break
     case 'thinking':
       title = zh ? '思考中' : 'Thinking'
       color = 'violet'

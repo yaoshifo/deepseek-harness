@@ -400,4 +400,19 @@ describe('buildPreviewCardJSON', () => {
     expect(jStr(jObj(card.header).template)).toBe('blue')
     expect(jStr(jObj(jObj(card.header).title).content)).toBe('等待中 · 10:00:05 · 2')
   })
+
+  it.each([
+    // A settled parked card keeps its ts and tool count; none may be green —
+    // injectReplyButtons appends export/reply buttons to green headers, keyed
+    // by turn-end export content a parked card never has.
+    ['approved', '已批准', 'turquoise'],
+    ['rejected', '已拒绝', 'red'],
+    ['answered', '已回答', 'turquoise'],
+    ['cancelled', '已取消', 'grey'],
+  ] as const)('renders the settled parked-ask header for %s', (state, label, template) => {
+    const card = jParse(buildPreviewCardJSON('body', noSpinner,
+      { state, ts: '10:00:05', toolCallSeq: 2 }))
+    expect(jStr(jObj(card.header).template)).toBe(template)
+    expect(jStr(jObj(jObj(card.header).title).content)).toBe(`${label} · 10:00:05 · 2`)
+  })
 })

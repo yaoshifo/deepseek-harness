@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-28-feishu-bridge-parked-ask-cap-exemption-waiting-card.md
-2026-08-28-feishu-bridge-parked-ask-cap-exemption-waiting-card.md: e0fbcd457b81f6e1261c311ccd7ff020bb69c195
-2026-08-28-feishu-bridge-parked-ask-cap-exemption-waiting-card.zh.md: d7e7a5de5d34128ef514635b54c3b7688ffce51a
+2026-08-28-feishu-bridge-parked-ask-cap-exemption-waiting-card.md: 7e2f82b4bd6f5b238b1783becd7ec84eb6f99f12
+2026-08-28-feishu-bridge-parked-ask-cap-exemption-waiting-card.zh.md: 6dca66d430992a6a04ac98c492f804dab7f425dd

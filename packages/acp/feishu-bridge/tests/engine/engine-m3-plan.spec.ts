@@ -16,7 +16,9 @@ import {
   createStubPlatform,
   newControllableSession,
 } from '../stubs/engine-stubs.js'
-import type { Message } from '../../src/core/types.js'
+import { statusOf } from '../stubs/preview-content.js'
+import { newStreamPreview, ProgressEntry } from '../../src/streaming.js'
+import type { Message, ProgressContent } from '../../src/core/types.js'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -216,5 +218,95 @@ describe('PlanRenderIntegration', () => {
     e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
     await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
     expect(state.pendingAsk).toBeUndefined()
+  })
+})
+
+describe('PlanReviewParkedCardSettle', () => {
+  // 2026-08-28 oc_b20512: approving the plan left the pre-plan progress card
+  // at 等待中 forever. The ask's settlement must PATCH the parked card's
+  // header to the outcome and still restart execution on a fresh card.
+  interface PreviewRecorderPlatform extends ReturnType<typeof createStubCardPlatform> {
+    /** Every preview call in order: which handle, and what content. */
+    calls: Array<{ handle: string; content: ProgressContent }>
+    sendPreviewStart(rc: unknown, content: ProgressContent): Promise<string>
+    updateMessage(handle: unknown, content: ProgressContent): Promise<void>
+  }
+
+  function createPreviewRecorderPlatform(): PreviewRecorderPlatform {
+    const base = createStubCardPlatform('feishu')
+    const calls: Array<{ handle: string; content: ProgressContent }> = []
+    let next = 0
+    return Object.assign(base, {
+      calls,
+      async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<string> {
+        next++
+        calls.push({ handle: `handle-${next}`, content })
+        return `handle-${next}`
+      },
+      async updateMessage(handle: unknown, content: ProgressContent): Promise<void> {
+        calls.push({ handle: String(handle), content })
+      },
+    })
+  }
+
+  /** Engine + state with a live progress card on the recorder platform. */
+  async function armedPreviewState(e: Engine, p: PreviewRecorderPlatform, key: string): Promise<InteractiveState> {
+    const state = new InteractiveState()
+    state.agentSession = newControllableSession('plan-settle')
+    state.platform = p
+    state.replyCtx = 'ctx'
+    const sp = newStreamPreview(
+      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 5000 }, p, 'ctx', undefined, undefined, key)
+    await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**00:00:01**', body: 'ls', lang: 'bash', toolID: 't1' }))
+    state.preview = sp
+    e.interactiveStates.set(key, state)
+    return state
+  }
+
+  it('approval settles the parked card header and restarts on a fresh card', async () => {
+    const p = createPreviewRecorderPlatform()
+    const e = newTestEngine()
+    e.display.toolProgress = true
+    const key = 'feishu:oc_plan:u5'
+    await armedPreviewState(e, p, key)
+    e.sessions.getOrCreateActive(key)
+
+    const decision = e.askUser(key, { kind: 'plan-review', heading: '# P', plan: '# P\nbody' })
+    await new Promise((r) => { setTimeout(r, 30) })
+    const first = p.calls[0]
+    if (first === undefined) throw new Error('no initial preview recorded')
+    expect(statusOf(first.content)?.state).toBe('running')
+
+    e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+    // The restart's placeholder start is fire-and-forget — let it land.
+    await new Promise((r) => { setTimeout(r, 20) })
+
+    // The parked card (handle-1) was PATCHed from waiting to approved.
+    const states = p.calls.filter(c => c.handle === 'handle-1').map(c => statusOf(c.content)?.state)
+    expect(states).toEqual(['running', 'waiting', 'approved'])
+    // The restart opened a fresh placeholder card after the settle (its
+    // placeholder content carries no status — the card renders the running
+    // default).
+    const restart = p.calls.find(c => c.handle === 'handle-2')
+    expect(restart).toBeDefined()
+    expect(restart?.content.kind).toBe('text')
+  })
+
+  it('rejection settles the parked card header as rejected', async () => {
+    const p = createPreviewRecorderPlatform()
+    const e = newTestEngine()
+    e.display.toolProgress = true
+    const key = 'feishu:oc_plan:u6'
+    await armedPreviewState(e, p, key)
+
+    const decision = e.askUser(key, { kind: 'plan-review', heading: '# P', plan: '# P\nbody' })
+    await new Promise((r) => { setTimeout(r, 30) })
+
+    e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:deny', isPermissionAction: true }), 'perm:deny')
+    await expect(decision).resolves.toEqual({ outcome: 'rejected' })
+
+    const states = p.calls.filter(c => c.handle === 'handle-1').map(c => statusOf(c.content)?.state)
+    expect(states).toEqual(['running', 'waiting', 'rejected'])
   })
 })

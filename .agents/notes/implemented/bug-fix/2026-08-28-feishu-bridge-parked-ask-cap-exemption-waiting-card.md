@@ -26,7 +26,7 @@ Second defect from the same incident: the ask-park `completeAndDetach` renders t
 
 - An ask left open longer than the cap — overnight included — can be answered normally; the answer is delivered and processed.
 - A turn can now span unbounded wall time through repeated asks (every park is exempt); active pumping time stays bounded, so the trickle-forever protection is intact.
-- Parked cards read「等待中 · <last tool ts> · <count>」; the post-permission restart still opens a fresh running card, per [the post-permission card-restart note](2026-08-20-feishu-bridge-post-permission-card-restart.md) (its pre-card finalize now lands blue instead of green).
+- Parked cards read「等待中 · <last tool ts> · <count>」until the ask resolves; [the parked-card settle note](2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome.md) then PATCHes the header to the outcome (已批准/已拒绝/已回答/已取消). The post-permission restart still opens a fresh running card, per [the post-permission card-restart note](2026-08-20-feishu-bridge-post-permission-card-restart.md) (its pre-card finalize now lands blue instead of green).
 - Diagnostic logging (preview-card send/delete, tail-guard bump) landed to chase the separate 2026-08-28 anomaly: 19 recall tombstones at exactly 3.0 s intervals during one plan-mode turn (07:37:59–07:38:53), not reproduced by the parallel group or the previous night's 2-hour turn — mechanism not yet pinned.
 
 ## Testing

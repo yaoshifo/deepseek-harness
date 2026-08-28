@@ -22,7 +22,7 @@ Port both halves of Go's permission handling. **At permission-card time** (Go en
 
 ## Consequences
 
-When a permission card (or AskUserQuestion card) goes out, the live progress card is finalized on the spot (blue 等待中 since 2026-08-28 — the turn still waits on the user, see [the parked-ask cap-exemption note](2026-08-28-feishu-bridge-parked-ask-cap-exemption-waiting-card.md); export buttons live from the captured snapshot); post-approval execution opens a fresh placeholder card. With an active preview the pre-interaction text stays on the completed card — it is re-sent as plain messages only when the preview is degraded, matching Go. Go's plan-file archiving on approval (`pendingPlanArchive`, copy with timestamp suffix on approve) is not ported here — recorded as a separate migration gap.
+When a permission card (or AskUserQuestion card) goes out, the live progress card is finalized on the spot (blue 等待中 since 2026-08-28 — the turn still waits on the user, see [the parked-ask cap-exemption note](2026-08-28-feishu-bridge-parked-ask-cap-exemption-waiting-card.md); the settle then PATCHes that header to the ask outcome, see [the parked-card settle note](2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome.md); export buttons live from the captured snapshot); post-approval execution opens a fresh placeholder card. With an active preview the pre-interaction text stays on the completed card — it is re-sent as plain messages only when the preview is degraded, matching Go. Go's plan-file archiving on approval (`pendingPlanArchive`, copy with timestamp suffix on approve) is not ported here — recorded as a separate migration gap.
 
 ## Testing
 
