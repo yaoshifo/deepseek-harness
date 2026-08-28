@@ -47,10 +47,12 @@ export function resolveSpinnerAsset(name: string, moduleDir = dirname(fileURLToP
 
 /**
  * Header-icon key for a text-path progress card: "thinking" → thinkingKey,
- * "" / "running" → executingKey, terminal states → none. An empty chosen key
- * falls back to the other so one failed upload doesn't suppress the icon.
+ * "" / "running" / "waiting" → executingKey, terminal and settled states →
+ * none. An empty chosen key falls back to the other so one failed upload
+ * doesn't suppress the icon.
  * @param spin - Uploaded spinner keys.
- * @param state - Progress state ('thinking', 'running', '', 'completed', 'failed').
+ * @param state - Progress state ('thinking', 'running', '', 'waiting',
+ *   'completed', 'failed', or one of the four settled parked-ask states).
  * @returns The image key for the header icon, or '' when disabled or terminal.
  */
 export function spinnerKeyForState(spin: SpinnerCfg, state: string): string {
@@ -59,11 +61,20 @@ export function spinnerKeyForState(spin: SpinnerCfg, state: string): string {
   switch (state) {
     case 'completed':
     case 'failed':
+    // Settled parked-ask headers are decision records, not live execution:
+    // the title/color carries the outcome, so the executing spinner beside
+    // 已批准 misreads as still running.
+    case 'approved':
+    case 'rejected':
+    case 'answered':
+    case 'cancelled':
       return ''
     case 'thinking':
       key = spin.thinkingKey
       break
-    default: // "" or "running" → 执行中
+    default:
+      // "" or "running" → 执行中. "waiting" keeps the activity indicator:
+      // the turn is still in flight while parked on the user's answer.
       key = spin.executingKey
       break
   }

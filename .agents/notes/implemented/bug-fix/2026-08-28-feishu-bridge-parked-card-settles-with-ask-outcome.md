@@ -14,6 +14,7 @@ English | [中文](2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome
 - When the ask settles — decided, stopped, and aborted outcomes alike, plus best-effort on the delivery-interruption race — the engine PATCHes the parked card's header to the ask outcome before restarting surfaces: approved「已批准」(turquoise), rejected「已拒绝」(red), answered「已回答」(turquoise), cancelled「已取消」(grey), mapped from the `AskDecision` by `parkedOutcomeOf`. The settle PATCH is best-effort: a failure logs and leaves the waiting header.
 - Settled headers never use green — green claims 执行完成, which the pre-ask segment is not. They keep the export/reply buttons their waiting render carried: `injectReplyButtons` gained state-keyed eligibility (`buttonState` from the PATCH content; completed, waiting, and the settled states all carry registered export content, while running yellow/violet stay bare so a click cannot fall back to the previous turn's reply — state keying also splits settled rejected from failed on the same red template). The ⏹ stop button leaves settled cards: its target is the post-decision turn's fresh card.
 - The post-permission card restart is untouched: post-decision execution still opens a fresh card ([the card-restart note](2026-08-20-feishu-bridge-post-permission-card-restart.md) is load-bearing), and the parked card keeps the pre-ask segment's tool history as the visible record.
+- Settled headers carry no spinner icon: `spinnerKeyForState` treats the four settled states as terminal (like completed/failed), so the settle re-render rebuilds the card without `header.icon` — the executing spinner beside 已批准 misreads as still running. Waiting keeps the executing indicator: the turn is still in flight while parked on the user's answer.
 
 ## Alternatives considered
 
@@ -23,7 +24,7 @@ English | [中文](2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome
 
 ## Consequences
 
-- No card in a chat keeps claiming 等待中 after its ask resolved; scrolling back reads 已批准/已拒绝/已回答/已取消 with the settle timestamp and the pre-ask tool count.
+- No card in a chat keeps claiming 等待中 after its ask resolved; scrolling back reads 已批准/已拒绝/已回答/已取消 with the settle timestamp and the pre-ask tool count, and without the running spinner.
 - A settled card keeps its export/reply buttons (the registered pre-ask reply stays retrievable) and carries no stop button.
 - A stop during a parked ask now leaves a terminal grey 已取消 card instead of an orphaned blue waiting card (the stop render itself still no-ops on the detached handle).
 - The delivery-interruption race (a stop landing while the cards are still being sent) can miss the settle — the handle is captured inside `deliverCards`, which keeps running in the background after the interruption; that rare path keeps the pre-fix waiting header.
@@ -31,4 +32,4 @@ English | [中文](2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome
 
 ## Testing
 
-`tests/engine/engine-m3-plan.spec.ts` `PlanReviewParkedCardSettle` (approve → the parked card PATCHes running→waiting→approved and the restart placeholder still opens; deny → rejected); `tests/streaming.spec.ts` `settleParkedCard` (outcome PATCH keeps the tool-entry body; no-op when never parked; idempotent on double settle) and the `completeAndDetach(park)` handle return; `tests/feishu/card.spec.ts` settled headers render turquoise/red/turquoise/grey and never green; `tests/feishu/progress.spec.ts` state-keyed button eligibility (settled states keep both buttons, failed red stays bare) and settled templates hide the stop button. Package suite green; `tsc -b` on the package graph clean.
+`tests/engine/engine-m3-plan.spec.ts` `PlanReviewParkedCardSettle` (approve → the parked card PATCHes running→waiting→approved and the restart placeholder still opens; deny → rejected); `tests/streaming.spec.ts` `settleParkedCard` (outcome PATCH keeps the tool-entry body; no-op when never parked; idempotent on double settle) and the `completeAndDetach(park)` handle return; `tests/feishu/card.spec.ts` settled headers render turquoise/red/turquoise/grey and never green; `tests/feishu/spinner.spec.ts` the settled states render no header icon while waiting keeps the executing indicator; `tests/feishu/progress.spec.ts` state-keyed button eligibility (settled states keep both buttons, failed red stays bare) and settled templates hide the stop button. Package suite green; `tsc -b` on the package graph clean.

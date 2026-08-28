@@ -14,6 +14,7 @@ Status: implemented
 - ask 结算时——decided、stopped、aborted 三种 outcome 一视同仁，投递中断竞速分支尽力而为——引擎在重启 surfaces 之前把挂起卡头部 PATCH 为 ask 结果：approved「已批准」（turquoise）、rejected「已拒绝」（红）、answered「已回答」（turquoise）、cancelled「已取消」（灰），由 `parkedOutcomeOf` 从 `AskDecision` 映射。结算 PATCH 是尽力而为：失败仅记日志、保留等待头。
 - 结算头刻意不用绿色——绿色宣称「执行完成」，挂起前段落配不上这个宣称。结算卡保留其等待渲染携带的导出/回复按钮：`injectReplyButtons` 增加了按状态判定的资格（`buttonState` 来自 PATCH 内容；completed、waiting 与各结算态都有已注册的导出内容，运行中的黄/紫卡保持无按钮——点击才不会回退到上一 turn 的回复；按状态判定也把同为红模板的结算「已拒绝」与「执行失败」区分开）。⏹ 停止按钮离开结算卡：它的目标已经是决策后 turn 的新卡。
 - 决策后卡片重启不动：决策后执行仍开新卡（[卡片重启笔记](2026-08-20-feishu-bridge-post-permission-card-restart.zh.md) 是承重设计），挂起卡保留挂起前段落的工具历史作为可见记录。
+- 结算头不带 spinner 图标：`spinnerKeyForState` 把四个结算态按终态处理（与 completed/failed 同组），结算重渲染重建的卡没有 `header.icon`——转圈的「执行中」图标配在「已批准」旁会被读成仍在执行。waiting 保留执行指示：turn 挂在用户回答上时仍在途。
 
 ## Alternatives considered
 
@@ -23,7 +24,7 @@ Status: implemented
 
 ## Consequences
 
-- 会话里不再有任何卡在 ask 已结算后仍宣称「等待中」；回翻记录读到的是已批准/已拒绝/已回答/已取消，带结算时间戳与挂起前工具数。
+- 会话里不再有任何卡在 ask 已结算后仍宣称「等待中」；回翻记录读到的是已批准/已拒绝/已回答/已取消，带结算时间戳与挂起前工具数、不带运行中的转圈图标。
 - 结算卡保留导出/回复按钮（已注册的挂起前回复仍可取回），且不带停止按钮。
 - 挂起期间的用户停止现在留下终态灰色「已取消」卡，而不是孤立的蓝色等待卡（停止渲染本身仍因句柄已 detach 而 no-op）。
 - 投递中断竞速（卡片还在发送途中停止落地的情形）可能错过结算——句柄在 `deliverCards` 内捕获，中断后它仍在后台运行；该罕见路径维持修复前的等待头。
@@ -31,4 +32,4 @@ Status: implemented
 
 ## Testing
 
-`tests/engine/engine-m3-plan.spec.ts` `PlanReviewParkedCardSettle`（批准 → 挂起卡 PATCH 链 running→waiting→approved 且重启占位卡照常开出；拒绝 → rejected）；`tests/streaming.spec.ts` `settleParkedCard`（结果 PATCH 保留工具条目正文；未挂起时 no-op；二次结算幂等）与 `completeAndDetach(park)` 的句柄返回；`tests/feishu/card.spec.ts` 结算头渲染 turquoise/red/turquoise/grey 且永不绿色；`tests/feishu/progress.spec.ts` 按状态的按钮资格（结算态保留两个按钮、failed 红保持无按钮）与结算模板隐藏停止按钮。包套件绿；包图 `tsc -b` 干净。
+`tests/engine/engine-m3-plan.spec.ts` `PlanReviewParkedCardSettle`（批准 → 挂起卡 PATCH 链 running→waiting→approved 且重启占位卡照常开出；拒绝 → rejected）；`tests/streaming.spec.ts` `settleParkedCard`（结果 PATCH 保留工具条目正文；未挂起时 no-op；二次结算幂等）与 `completeAndDetach(park)` 的句柄返回；`tests/feishu/card.spec.ts` 结算头渲染 turquoise/red/turquoise/grey 且永不绿色；`tests/feishu/spinner.spec.ts` 四个结算态渲染无头部图标而 waiting 保留执行指示；`tests/feishu/progress.spec.ts` 按状态的按钮资格（结算态保留两个按钮、failed 红保持无按钮）与结算模板隐藏停止按钮。包套件绿；包图 `tsc -b` 干净。

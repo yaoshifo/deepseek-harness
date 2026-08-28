@@ -98,6 +98,15 @@ describe('progress card spinner icon (text path)', () => {
     ['running state (no status)', '**14:05:34** ⚙️ `Bash`\necho hello', undefined, 'img_exec'],
     ['completed state', 'done', { state: 'completed', ts: '14:05:35', toolCallSeq: 0 }, ''],
     ['failed state', 'boom', { state: 'failed', ts: '14:05:36', toolCallSeq: 0 }, ''],
+    // Settled parked-ask headers are decision records, not live execution —
+    // no icon, like the other terminal states.
+    ['approved state', 'done', { state: 'approved', ts: '14:05:37', toolCallSeq: 2 }, ''],
+    ['rejected state', 'denied', { state: 'rejected', ts: '14:05:37', toolCallSeq: 2 }, ''],
+    ['answered state', 'answered', { state: 'answered', ts: '14:05:37', toolCallSeq: 2 }, ''],
+    ['cancelled state', 'cancelled', { state: 'cancelled', ts: '14:05:37', toolCallSeq: 2 }, ''],
+    // waiting keeps the executing indicator: the turn is still in flight
+    // while parked on the user's answer.
+    ['waiting state', 'pending', { state: 'waiting', ts: '14:05:37', toolCallSeq: 2 }, 'img_exec'],
   ]
 
   for (const [name, text, status, wantIcon] of cases) {
