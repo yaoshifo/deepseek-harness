@@ -3640,13 +3640,6 @@ export class Engine {
       fullResponse = this.i18n.t(Msg.SilentReply)
     }
 
-    // Phase avatar: an errored turn needs the user's eyes (red); a completed
-    // turn clears any attention overlay back to the baseline.
-    const phasePlatform = state.platform ?? this.platforms[0]
-    if (phasePlatform !== undefined) {
-      await this.applyChatPhase(phasePlatform, sessionKey, errored ? 'attention' : this.chatBasePhase(phasePlatform, sessionKey))
-    }
-
     // Context usage indicator: prefer SDK tokens, fall back to the agent's
     // self-reported [ctx: ~N%] line — which is stripped from the delivered
     // reply and surfaced on the ✅ notification instead (Go sdkPlausible /
@@ -3830,6 +3823,18 @@ export class Engine {
       await this.sendTurnCompletionCard(
         state, p, replyCtx, session, sessionKey,
         this.perChatWorkDir(this.dirOverrideKey(sessionKey)))
+    }
+
+    // Phase avatar: an errored turn needs the user's eyes (red); a completed
+    // turn clears any attention overlay back to the baseline. Paint only
+    // after the terminal card render above: the repaint's system message
+    // lands at the chat tail, and a still-live card would reissue itself
+    // below it (one recall tombstone per turn — the field-data-dominant
+    // source); a terminal card never reissues, so the paint displaces
+    // nothing.
+    const phasePlatform = state.platform ?? this.platforms[0]
+    if (phasePlatform !== undefined) {
+      await this.applyChatPhase(phasePlatform, sessionKey, errored ? 'attention' : this.chatBasePhase(phasePlatform, sessionKey))
     }
 
     // Insight card (#33 + turn_summary, Go engine_events.go's post-turn

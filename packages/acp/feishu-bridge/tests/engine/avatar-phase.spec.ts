@@ -241,6 +241,50 @@ describe('turn-end phase transitions', () => {
 
     expect(p.phaseCalls).toEqual([])
   })
+
+  it('the baseline repaint fires only after the card renders terminal', async () => {
+    const p = newPhasePlatform()
+    // Preview-capable stub recording the operation order: the repaint must
+    // not precede the card's terminal PATCH.
+    const ops: string[] = []
+    Object.assign(p, {
+      async sendPreviewStart(): Promise<unknown> {
+        ops.push('start')
+        return { messageID: 'om_card' }
+      },
+      async updateMessage(_rc: unknown, content: { status?: { state: string } }): Promise<void> {
+        ops.push(`update:${content.status?.state ?? 'plain'}`)
+      },
+      async deletePreviewMessage(): Promise<void> {},
+    })
+    const e = newEngine(p)
+    e.setDisplayConfig({ toolProgress: true })
+    const state = armedTurn(p, e)
+
+    const inner = p.setChatPhase.bind(p)
+    p.setChatPhase = async (sessionKey: string, phase: ChatPhase) => {
+      ops.push('paint')
+      await inner(sessionKey, phase)
+    }
+
+    ;(state.agentSession as ReturnType<typeof newControllableSession>).channel.push(
+      { type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    ;(state.agentSession as ReturnType<typeof newControllableSession>).channel.push(
+      { type: 'tool_result', toolResult: 'ok', toolID: 'call-1', content: '', done: false })
+    ;(state.agentSession as ReturnType<typeof newControllableSession>).channel
+      .push({ type: 'result', content: '任务完成', done: true })
+    await e.processInteractiveEvents(state, e.sessions.getOrCreateActive('test:chat:user1'), e.sessions, 'test:chat:user1', 'm1', undefined, state.replyCtx)
+
+    expect(p.phaseCalls).toEqual([{ sessionKey: 'test:chat:user1', phase: 'discussing' }])
+    // The terminal PATCH (completed) precedes the repaint, so the repaint's
+    // system message displaces a card that never reissues — no recall
+    // tombstone from the turn-end avatar transition.
+    const paintIdx = ops.indexOf('paint')
+    const terminalIdx = ops.lastIndexOf('update:completed')
+    expect(paintIdx).toBeGreaterThan(-1)
+    expect(terminalIdx).toBeGreaterThan(-1)
+    expect(terminalIdx).toBeLessThan(paintIdx)
+  })
 })
 
 describe('done-freeze avatar semantics', () => {
