@@ -145,14 +145,18 @@ export type VChartSpec = Record<string, unknown>
 
 /**
  * Renders a Feishu-native chart (schema 2.0 "chart" tag, VChart engine);
- * bridge-native, no cc-connect counterpart. Optional Feishu display fields
- * (`aspect_ratio`, `color_theme`, `preview`) stay unmodeled — Feishu applies
- * its defaults (PC 16:9, mobile 1:1, preview on).
+ * bridge-native, no cc-connect counterpart. Feishu applies its defaults for
+ * `color_theme` and `preview` (theme brand, preview on).
  */
 export interface CardChart {
   kind: 'chart'
   /** Opaque VChart spec, passed through to Feishu untouched. */
   spec: VChartSpec
+  /**
+   * Chart width/height ratio; omitted rides the Feishu defaults (PC 16:9,
+   * mobile 1:1). Only the four ratios the chart component documents.
+   */
+  aspectRatio?: '1:1' | '2:1' | '4:3' | '16:9'
 }
 
 /** Renders a collapsible section (Feishu collapsible_panel). */
@@ -677,10 +681,16 @@ export class CardBuilder {
   /**
    * Append a Feishu-native chart element (schema 2.0 "chart" tag, VChart engine).
    * @param spec - Opaque VChart spec, passed through to Feishu verbatim.
+   * @param options - `aspectRatio` overrides the Feishu default (PC 16:9,
+   *   mobile 1:1) when present.
    * @returns This builder, for chaining.
    */
-  chart(spec: VChartSpec): this {
-    this.card.elements.push({ kind: 'chart', spec })
+  chart(spec: VChartSpec, options?: { aspectRatio?: CardChart['aspectRatio'] }): this {
+    // Conditional push, not a spread: exactOptionalPropertyTypes forbids
+    // assigning an explicit `undefined` to the optional field.
+    this.card.elements.push(
+      options?.aspectRatio ? { kind: 'chart', spec, aspectRatio: options.aspectRatio } : { kind: 'chart', spec },
+    )
     return this
   }
 

@@ -272,11 +272,14 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
       }
       return m
     }
-    case 'chart':
+    case 'chart': {
       // Opaque payload: unlike buttons/selects there is no session-key
       // stamping, and no local validation — Feishu rejects invalid specs
       // server-side at send time (code 230099).
-      return { tag: 'chart', chart_spec: elem.spec }
+      const chart: FeishuCardMap = { tag: 'chart', chart_spec: elem.spec }
+      if (elem.aspectRatio) chart.aspect_ratio = elem.aspectRatio
+      return chart
+    }
     case 'columnSet': {
       const columns: FeishuCardMap[] = []
       for (const col of elem.columns) {

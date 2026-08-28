@@ -21,8 +21,11 @@
  * server VALIDATES `chart_spec` and rejects an invalid spec with code
  * 230099 — live-tested constraints: the `color` field must be a COMPLETE
  * scale object (`{ type: 'ordinal', domain, range }`; a range-only object
- * fails with "domain is required / type is required"), and both builders
- * below emit exactly the wire forms a live card delivery verified.
+ * fails with "domain is required / type is required"), and a stacked bar
+ * keeps `xField` the single category field — an array xField renders GROUPED
+ * bars regardless of `stack` (both forms live-verified by Spike A / Spike A
+ * v2 card deliveries). Data labels are off in both builders; values ride the
+ * chart's default hover tooltip.
  *
  * @module dsh-feishu-bridge/context/chartspec
  */
@@ -76,12 +79,14 @@ function bucketColorScale(): { type: 'ordinal'; domain: string[]; range: string[
 }
 
 /**
- * Build the current-composition horizontal bar spec: one bar per bucket
- * (system/tools plus the four surface categories), colored through the bucket
- * scale, with the bucket labels on the category axis.
+ * Build the current-composition spec: ONE stacked horizontal bar whose six
+ * colored segments are the buckets (the dsh-context web composition bar's
+ * form). The single category rides `yField`; bucket segments stack via
+ * `seriesField` + `stack`.
  *
- * Every bucket emits a row — zero-token buckets included — so the axis and
- * colors always cover all six buckets in the fixed {@link BUCKET_KEYS} order.
+ * Every bucket emits a segment — zero-token buckets included — so the bar
+ * and legend always cover all six buckets in the fixed {@link BUCKET_KEYS}
+ * order.
  *
  * @param current - The current six-bucket composition (heuristic counts).
  * @returns A VChart `bar` spec for the Feishu card chart component; the
@@ -89,17 +94,20 @@ function bucketColorScale(): { type: 'ordinal'; domain: string[]; range: string[
  *   `{ "tag": "chart", "chart_spec": <spec>, "aspect_ratio": "2:1" }`.
  */
 export function compositionBarSpec(current: SixBuckets): Record<string, unknown> {
-  const values = BUCKETS.map(({ key, label }) => ({ name: label, value: current[key] }))
+  const values = BUCKETS.map(({ key, label }) => ({ name: '当前构成', bucket: label, tokens: current[key] }))
   return {
     type: 'bar',
     direction: 'horizontal',
     data: { values },
-    // Horizontal bars keep the value on xField and the category on yField;
-    // seriesField rides the category so each bucket's bar takes its scale
-    // color (the live-verified 横向条形 form).
-    xField: 'value',
+    // Stacked form (Spike-v2 live-verified): single-field category on yField,
+    // the value on xField, bucket segments stacked via seriesField + stack.
+    // Data labels stay off — values ride the default hover tooltip.
+    xField: 'tokens',
     yField: 'name',
-    seriesField: 'name',
+    seriesField: 'bucket',
+    stack: true,
+    label: { visible: false },
+    legends: { visible: true, orient: 'bottom' },
     color: bucketColorScale(),
   }
 }
@@ -125,12 +133,16 @@ export function trendChartSpec(turns: TurnBucket[]): Record<string, unknown> {
   return {
     type: 'bar',
     data: { values },
-    // The array xField (category + series) is the live-verified stacked-column
-    // form; stacking rides the bucket series.
-    xField: ['turn', 'bucket'],
+    // Stacked form (Spike-v2 live-verified): the xField must stay the SINGLE
+    // turn field — an array xField (category + series) makes every
+    // (turn, bucket) pair its own axis category and renders GROUPED bars no
+    // matter `stack`. Data labels stay off — values ride the default hover
+    // tooltip.
+    xField: 'turn',
     yField: 'tokens',
     seriesField: 'bucket',
     stack: true,
+    label: { visible: false },
     color: bucketColorScale(),
     legends: { visible: true, orient: 'bottom' },
   }

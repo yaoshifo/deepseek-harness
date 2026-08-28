@@ -166,7 +166,7 @@ function buildFullContextCard(
   const headline = headlineOf(timeline, snapshot.pressure)
   const cb = newCard().title(contextHeaderTitle(args), headline.ratio !== undefined && headline.ratio > 1 ? 'red' : 'blue')
   cb.markdown(headlineMarkdown(headline))
-  cb.chart(compositionBarSpec(timeline.current))
+  cb.chart(compositionBarSpec(timeline.current), { aspectRatio: '2:1' })
   const turns = aggregateByTurn(timeline.requests, TREND_TURN_LIMIT)
   if (withTrend && turns.length > 0) {
     cb.chart(trendChartSpec(turns))

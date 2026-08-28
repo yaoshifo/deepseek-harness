@@ -256,6 +256,18 @@ describe('renderCardMap', () => {
     expect(jStr(chart.tag)).toBe('chart')
     expect(jObj(chart.chart_spec)).toEqual(spec)
   })
+
+  it('chart projects an explicit aspect ratio and omits it otherwise', () => {
+    const spec: VChartSpec = { type: 'bar', data: { values: [] }, xField: 'turn', yField: 'tokens' }
+
+    const withRatio = decodeRenderedCard(newCard().chart(spec, { aspectRatio: '2:1' }).build())
+    const chart = jObj(getBodyElements(withRatio)[0])
+    expect(jStr(chart.aspect_ratio)).toBe('2:1')
+
+    const plain = decodeRenderedCard(newCard().chart(spec).build())
+    const plainChart = jObj(getBodyElements(plain)[0])
+    expect(plainChart.aspect_ratio).toBeUndefined()
+  })
 })
 
 describe('renderElement sanitize', () => {

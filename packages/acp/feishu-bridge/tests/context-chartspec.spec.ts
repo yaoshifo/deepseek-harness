@@ -3,11 +3,12 @@ import { BUCKET_COLORS, BUCKET_KEYS, BUCKET_LABELS, compositionBarSpec, trendCha
 import type { SixBuckets, TurnBucket } from '../src/context/types.js'
 
 // Structure assertions over the VChart specs the Feishu card chart
-// component consumes. Shapes follow the Spike A live-verified forms: the API
-// server validates chart_spec (invalid specs are rejected with 230099), the
-// color field must be a complete ordinal scale object, and the assertion set
-// pins those exact wire forms. Specs must also round-trip through JSON
-// untouched — no functions or undefined holes.
+// component consumes. Shapes follow the Spike A v2 live-verified forms: the
+// API server validates chart_spec (invalid specs are rejected with 230099),
+// the color field must be a complete ordinal scale object, stacked bars keep
+// xField the single category field (the array form renders grouped bars),
+// and data labels stay off (values ride the hover tooltip). Specs must also
+// round-trip through JSON untouched — no functions or undefined holes.
 
 function buckets(over: Partial<SixBuckets> = {}): SixBuckets {
   return { system: 0, tools: 0, user: 0, inject: 0, assistant: 0, tool: 0, ...over }
@@ -37,27 +38,32 @@ describe('bucket constants', () => {
 })
 
 describe('compositionBarSpec', () => {
-  it('builds the live-verified horizontal bar form: one bar per bucket', () => {
+  it('builds the live-verified single stacked horizontal bar over the six buckets', () => {
     const spec = compositionBarSpec(buckets({ system: 10, tools: 20, user: 30, inject: 40, assistant: 50, tool: 60 }))
     expect(spec.type).toBe('bar')
     expect(spec.direction).toBe('horizontal')
-    expect(spec.xField).toBe('value')
+    expect(spec.xField).toBe('tokens')
     expect(spec.yField).toBe('name')
-    expect(spec.seriesField).toBe('name')
-    expect(spec.stack).toBeUndefined()
+    expect(spec.seriesField).toBe('bucket')
+    expect(spec.stack).toBe(true)
+    expect(spec.label).toEqual({ visible: false })
+    expect(spec.legends).toEqual({ visible: true, orient: 'bottom' })
     expect(spec.color).toEqual(colorScale)
-    const values = (spec.data as { values: Array<{ name: string; value: number }> }).values
+    const values = (spec.data as { values: Array<{ name: string; bucket: string; tokens: number }> }).values
     expect(values.length).toBe(6)
-    expect(values.map(v => v.name)).toEqual([...BUCKET_LABELS])
-    expect(values.map(v => v.value)).toEqual([10, 20, 30, 40, 50, 60])
+    // One stacked bar: every row rides the same single category…
+    expect(values.map(v => v.name)).toEqual(Array(6).fill('当前构成'))
+    // …with the bucket segments in the fixed BUCKET_KEYS order.
+    expect(values.map(v => v.bucket)).toEqual([...BUCKET_LABELS])
+    expect(values.map(v => v.tokens)).toEqual([10, 20, 30, 40, 50, 60])
   })
 
-  it('emits zero-token buckets so the axis stays complete', () => {
+  it('emits zero-token buckets so the stacked bar stays complete', () => {
     const spec = compositionBarSpec(buckets({ user: 30 }))
-    const values = (spec.data as { values: Array<{ name: string; value: number }> }).values
+    const values = (spec.data as { values: Array<{ name: string; bucket: string; tokens: number }> }).values
     expect(values.length).toBe(6)
-    expect(values.map(v => v.name)).toEqual([...BUCKET_LABELS])
-    expect(values.map(v => v.value)).toEqual([0, 0, 30, 0, 0, 0])
+    expect(values.map(v => v.bucket)).toEqual([...BUCKET_LABELS])
+    expect(values.map(v => v.tokens)).toEqual([0, 0, 30, 0, 0, 0])
   })
 
   it('round-trips through JSON (pure declarative spec)', () => {
@@ -77,8 +83,11 @@ describe('trendChartSpec', () => {
     expect(spec.type).toBe('bar')
     expect(spec.stack).toBe(true)
     expect(spec.seriesField).toBe('bucket')
-    expect(spec.xField).toEqual(['turn', 'bucket'])
+    // Single category field — the array xField form renders GROUPED bars
+    // regardless of stack (Spike A v2 live-verified both forms).
+    expect(spec.xField).toBe('turn')
     expect(spec.yField).toBe('tokens')
+    expect(spec.label).toEqual({ visible: false })
     expect(spec.color).toEqual(colorScale)
     expect(spec.legends).toEqual({ visible: true, orient: 'bottom' })
     expect(spec.direction).toBeUndefined()

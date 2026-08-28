@@ -119,6 +119,13 @@ describe('card chart', () => {
     expect(chart?.kind === 'chart' && chart.spec === spec).toBe(true)
   })
 
+  it('chart options land on the element and default to Feishu ratios', () => {
+    const withRatio = newCard().chart(spec, { aspectRatio: '2:1' }).build()
+    expect(withRatio.elements).toEqual([{ kind: 'chart', spec, aspectRatio: '2:1' }])
+    const plain = newCard().chart(spec).build()
+    expect(plain.elements).toEqual([{ kind: 'chart', spec }])
+  })
+
   it('chart is not interactive and has no text degradation', () => {
     const card = newCard().chart(spec).build()
     expect(card.hasButtons()).toBe(false)
