@@ -8,7 +8,7 @@
  * @module dsh-feishu-bridge/attachments
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 import type { FileAttachment, ImageAttachment } from '../core/types.js'
@@ -36,7 +36,29 @@ export function imageExtFromMime(mime: string): string {
 }
 
 /**
- * Write image attachments into dir and return their paths (Go saveImagesToDir).
+ * Resolve fname inside dir, suffixing `(n)` before the extension while the
+ * name is taken: a pending dir accumulates uploads from several messages, and
+ * an overwrite would silently swap an earlier message's staged bytes.
+ *
+ * @param dir - Destination directory.
+ * @param fname - Requested file name.
+ * @returns A path inside dir not currently occupied on disk.
+ */
+function uniquePathIn(dir: string, fname: string): string {
+  let fpath = join(dir, fname)
+  if (!existsSync(fpath)) return fpath
+  const dot = fname.lastIndexOf('.')
+  const stem = dot > 0 ? fname.slice(0, dot) : fname
+  const ext = dot > 0 ? fname.slice(dot) : ''
+  for (let n = 1; ; n++) {
+    fpath = join(dir, `${stem}(${n})${ext}`)
+    if (!existsSync(fpath)) return fpath
+  }
+}
+
+/**
+ * Write image attachments into dir and return their paths (Go saveImagesToDir);
+ * a name already present in dir gets a `(n)` suffix instead of overwriting.
  *
  * @param dir - Destination directory, created if missing.
  * @param images - Image attachments to write; empty input skips the directory.
@@ -53,7 +75,7 @@ export function saveImagesToDir(dir: string, images: ImageAttachment[]): string[
   const now = Date.now()
   for (const [i, img] of images.entries()) {
     const fname = img.fileName ?? `img_${now}_${i}${imageExtFromMime(img.mimeType)}`
-    const fpath = join(dir, fname)
+    const fpath = uniquePathIn(dir, fname)
     try {
       writeFileSync(fpath, img.data)
       paths.push(fpath)
@@ -65,7 +87,8 @@ export function saveImagesToDir(dir: string, images: ImageAttachment[]): string[
 }
 
 /**
- * Write file attachments into dir and return their paths (Go saveFilesToDir).
+ * Write file attachments into dir and return their paths (Go saveFilesToDir);
+ * a name already present in dir gets a `(n)` suffix instead of overwriting.
  *
  * @param dir - Destination directory, created if missing.
  * @param files - File attachments to write; empty input skips the directory.
@@ -82,7 +105,7 @@ export function saveFilesToDir(dir: string, files: FileAttachment[]): string[] {
   const now = Date.now()
   for (const [i, f] of files.entries()) {
     const fname = f.fileName !== '' ? f.fileName : `file_${now}_${i}`
-    const fpath = join(dir, fname)
+    const fpath = uniquePathIn(dir, fname)
     try {
       writeFileSync(fpath, f.data)
       paths.push(fpath)

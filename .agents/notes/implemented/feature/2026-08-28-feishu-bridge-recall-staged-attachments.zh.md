@@ -12,7 +12,7 @@ Status: implemented
 
 `cancelStagedAttachmentsByMessageID`（src/engine/recall.ts）是纯附件的撤回分支，在 `Engine.start` 里与队列取消并列接进同一个 `setRecallHandler` 回调。命中时：删除该消息 id 的 `pendingAttachments` 条目、删除对应缓存文件（`rm --force`，fire-and-forget + 警告，形状同 `discardStagedAttachments`）、当不再剩任何暂存条目时移除 pending 目录并清空 `state.pendingDir`，并回复 `attachments_cancelled_by_recall`——列出被撤回的文件名与剩余的图片/文件计数。两个分支天然不相交——纯附件消息走暂存、文本消息走队列——所以回调无条件依次执行两者，顺序无关。
 
-仍被存活暂存条目引用的路径不删除：不同消息上传同名文件会共享一个文件（`saveFilesToDir` 写 `join(dir, fileName)` 且覆盖），撤回即删会毁掉另一条消息的附件。覆盖本身是既有的同名冲突缺陷，不在本次范围。
+仍被存活暂存条目引用的路径不删除——删除侧在这个破坏性边界上保持防御。曾使路径别名成为可能的同名冲突（不同消息上传同名文件在共享 pending 目录里互相覆盖字节）已由 src/engine/attachments.ts 的 `uniquePathIn` 修复：`saveImagesToDir`/`saveFilesToDir` 在名字被占用时于扩展名前加 `(n)` 后缀，每个暂存上传保留自己的字节。
 
 `attachments_staged` 通知尾句改为「发送 /new 可取消，或直接撤回该消息」，让该能力可被发现。
 
@@ -24,8 +24,8 @@ Status: implemented
 
 ## 后果
 
-被撤回的上传不再到达模型：暂存条目与缓存文件一同消失，用户能看到剩余的暂存。若后续文本已开跑（附件已 drain），撤回是静默 no-op——与 inflight 排队消息同样的固有限制。撤回**文本**消息不影响仍在暂存的附件；它们继续等下一条文本。整条 `im.message.recalled_v1` 通路（两个分支）的真机验证本就挂在 MIGRATION.md 的日常验证清单上——lark-cli 无法撤回用户消息，冒烟需要真人撤回。
+被撤回的上传不再到达模型：暂存条目与缓存文件一同消失，用户能看到剩余的暂存。若后续文本已开跑（附件已 drain），撤回是静默 no-op——与 inflight 排队消息同样的固有限制。撤回**文本**消息不影响仍在暂存的附件；它们继续等下一条文本。整条 `im.message.recalled_v1` 通路（两个分支）的真机验证本就挂在 MIGRATION.md 的日常验证清单上——`lark-cli im messages delete --as user`（高危命令，需用户确认）可撤回用户自己的消息，冒烟无需真人在客户端操作。
 
 ## 测试
 
-`tests/engine/recall.spec.ts`：选择性撤回后其他消息 id 的条目与文件保留；撤回最后一条暂存时移除 pending 目录并清空 `state.pendingDir`；共享路径在被其他条目引用时保留；未命中 id 零改动。接线测试经 `Engine.start` 覆盖同一撤回回调后的两个分支：stage → 撤回删文件并回复 `attachments_cancelled_by_recall`，随后撤回排队消息仍回复 `cancel_queued_by_recall`。
+`tests/engine/recall.spec.ts`：选择性撤回后其他消息 id 的条目与文件保留；撤回最后一条暂存时移除 pending 目录并清空 `state.pendingDir`；共享路径在被其他条目引用时保留；未命中 id 零改动。接线测试经 `Engine.start` 覆盖同一撤回回调后的两个分支：stage → 撤回删文件并回复 `attachments_cancelled_by_recall`，随后撤回排队消息仍回复 `cancel_queued_by_recall`。`tests/engine/attachment-staging.spec.ts` 钉住去重：目录中已存在的名字加 `(n)` 后缀（两个 save 助手都覆盖），不同消息上传的同名文件暂存到各自路径且字节互不覆盖。

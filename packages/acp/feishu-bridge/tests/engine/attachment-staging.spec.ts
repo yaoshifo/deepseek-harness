@@ -116,6 +116,31 @@ describe('save helpers and pendingDirFor', () => {
     expect(pendingDirFor('/work', 'key-1')).not.toBe(pendingDirFor('/work', 'key-2'))
     expect(pendingDirFor('/work', 'k').startsWith('/work/.feishu-bridge/pending/')).toBe(true)
   })
+
+  it('suffixes (n) instead of overwriting a name already present in dir', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'att-dup-'))
+    writeFileSync(join(dir, 'report.pdf'), 'FIRST')
+    writeFileSync(join(dir, 'a.png'), 'IMG1')
+
+    const fps = saveFilesToDir(dir, [
+      { mimeType: 'application/pdf', data: new TextEncoder().encode('SECOND'), fileName: 'report.pdf' },
+    ])
+    expect(fps[0]?.endsWith('report(1).pdf')).toBe(true)
+    expect(readFileSync(join(dir, 'report.pdf'), 'utf8')).toBe('FIRST')
+    expect(readFileSync(fps[0] ?? '', 'utf8')).toBe('SECOND')
+
+    const ips = saveImagesToDir(dir, [
+      { mimeType: 'image/png', data: new TextEncoder().encode('IMG2'), fileName: 'a.png' },
+    ])
+    expect(ips[0]?.endsWith('a(1).png')).toBe(true)
+    expect(readFileSync(join(dir, 'a.png'), 'utf8')).toBe('IMG1')
+    expect(readFileSync(ips[0] ?? '', 'utf8')).toBe('IMG2')
+
+    const again = saveFilesToDir(dir, [
+      { mimeType: 'application/pdf', data: new TextEncoder().encode('THIRD'), fileName: 'report.pdf' },
+    ])
+    expect(again[0]?.endsWith('report(2).pdf')).toBe(true)
+  })
 })
 
 describe('stageAttachments', () => {
@@ -140,6 +165,29 @@ describe('stageAttachments', () => {
     expect(att.path.startsWith(pendingDir)).toBe(true)
     expect(readFileSync(att.path, 'utf8')).toBe('PDFDATA')
     expect(p.sent.length).toBeGreaterThan(0)
+  })
+
+  it('gives two same-named uploads from different messages distinct staged paths', () => {
+    const workDir = mkdtempSync(join(tmpdir(), 'stage-dup-'))
+    const agent = workDirAgent(workDir)
+    const p = createStubPlatform()
+    const e = new Engine('test', agent, [p], '', 'en')
+
+    e.stageAttachments(p, msg({
+      messageID: 'om_1',
+      files: [{ mimeType: 'application/pdf', data: new TextEncoder().encode('ONE'), fileName: 'report.pdf' }],
+    }), 'testchat')
+    e.stageAttachments(p, msg({
+      messageID: 'om_2',
+      files: [{ mimeType: 'application/pdf', data: new TextEncoder().encode('TWO'), fileName: 'report.pdf' }],
+    }), 'testchat')
+
+    const st = e.interactiveStates.get('testchat')
+    const paths = st?.pendingAttachments.map(a => a.path) ?? []
+    expect(paths).toHaveLength(2)
+    expect(paths[0]).not.toBe(paths[1])
+    expect(readFileSync(paths[0] ?? '', 'utf8')).toBe('ONE')
+    expect(readFileSync(paths[1] ?? '', 'utf8')).toBe('TWO')
   })
 
   it('stages a received image through handleMessage and splices it into the next turn', async () => {

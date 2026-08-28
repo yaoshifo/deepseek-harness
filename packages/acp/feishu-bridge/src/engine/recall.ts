@@ -53,8 +53,9 @@ export function cancelQueuedByMessageID(e: Engine, messageID: string): RecallRes
  * counterpart of {@link cancelQueuedByMessageID}): drop the matching
  * pendingAttachments entries so the next text prompt no longer splices their
  * paths, delete the cached files, and reply with what remains staged. A path
- * another staged entry still references survives deletion — same-name uploads
- * from different messages share one file (saveFilesToDir overwrites).
+ * another staged entry still references survives deletion — the delete stays
+ * guarded at this destructive boundary even though uniquePathIn keeps staged
+ * paths distinct.
  *
  * @param e - Engine whose interactive states hold the staged attachments.
  * @param messageID - The recalled platform message id.

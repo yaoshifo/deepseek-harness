@@ -159,7 +159,7 @@ describe('cancelStagedAttachmentsByMessageID', () => {
     expect(existsSync(paths.get('om_last') ?? '')).toBe(false)
   })
 
-  it('keeps a file another staged entry still references (same-name collision)', async () => {
+  it('keeps a file another staged entry still references (aliased paths, hand-built)', async () => {
     const { e, p } = newEngine()
     const dir = mkdtempSync(join(tmpdir(), 'recall-shared-'))
     const shared = join(dir, 'report.pdf')
