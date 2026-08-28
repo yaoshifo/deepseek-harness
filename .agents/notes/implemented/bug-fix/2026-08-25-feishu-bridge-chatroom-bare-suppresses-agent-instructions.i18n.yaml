@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-25-feishu-bridge-chatroom-bare-suppresses-agent-instructions.md
-2026-08-25-feishu-bridge-chatroom-bare-suppresses-agent-instructions.md: 34405966bbfa6c7a32c1a637d6d7864cbb6fd088
-2026-08-25-feishu-bridge-chatroom-bare-suppresses-agent-instructions.zh.md: 54ec72f755f52b11bca1ebe1c617965dee942f8e
+2026-08-25-feishu-bridge-chatroom-bare-suppresses-agent-instructions.md: 63a41a4b8d2ea3ee6ea4b681c40f48ce3ffd5e5a
+2026-08-25-feishu-bridge-chatroom-bare-suppresses-agent-instructions.zh.md: 03973b2914a4cc35abb3c442704dff32fedb98e4

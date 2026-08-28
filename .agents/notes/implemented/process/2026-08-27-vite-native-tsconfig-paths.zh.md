@@ -6,7 +6,7 @@ Status: implemented
 
 ## 问题
 
-每次跑 vitest 都会打印 Vite 的迁移警告：`vite-tsconfig-paths` 插件重复了 Vite 8 原生提供的 `resolve.tsconfigPaths` 能力。仓库为此一直付出双份成本——根目录一个 devDependency、每个 vitest 配置挂一次插件、每个 vitest *project* 再挂一次——只为一件事保活：工作区包的裸导入经共享的 `tsconfig.base.json` paths 映射解析到 `src`，绝不经由包 `exports` 落到构建后的 `lib/`——那里的陈旧产物会加载第二份模块单例（[测试解析](../../../docs/testing.zh.md#测试解析仅限源码)）。
+每次跑 vitest 都会打印 Vite 的迁移警告：`vite-tsconfig-paths` 插件重复了 Vite 8 原生提供的 `resolve.tsconfigPaths` 能力。仓库为此一直付出双份成本——根目录一个 devDependency、每个 vitest 配置挂一次插件、每个 vitest *project* 再挂一次——只为一件事保活：工作区包的裸导入经共享的 `tsconfig.base.json` paths 映射解析到 `src`，绝不经由包 `exports` 落到构建后的 `lib/`——那里的陈旧产物会加载第二份模块单例（[测试解析](../../../../docs/testing.zh.md)）。
 
 ## 决策
 
@@ -35,4 +35,4 @@ Vitest 的 project 配置不继承顶层 `resolve`：`vitest.config.ts` 中每�
 
 - 第三方依赖面少一个包；`THIRD_PARTY_NOTICES.md` 相应重新生成。
 - 新增含测试的车道目录需要能到达 `tsconfig.base.json` 的 tsconfig 链；tsx 对 scripts 与 examples 本就有此要求，违规会在 transform 阶段大声失败。
-- 改名 `tsconfig.base.json` 或移动其 `paths` 映射时，需在同一变更里同步更新五个 vitest 配置与[开发布局表](../../../docs/development.zh.md)。
+- 改名 `tsconfig.base.json` 或移动其 `paths` 映射时，需在同一变更里同步更新五个 vitest 配置与[开发布局表](../../../../docs/development.zh.md)。

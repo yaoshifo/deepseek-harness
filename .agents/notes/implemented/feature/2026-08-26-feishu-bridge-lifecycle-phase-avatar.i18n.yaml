@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-26-feishu-bridge-lifecycle-phase-avatar.md
-2026-08-26-feishu-bridge-lifecycle-phase-avatar.md: 639d7ab0448f02a3cebf2acc0853330f6016cc11
-2026-08-26-feishu-bridge-lifecycle-phase-avatar.zh.md: 4a2a8d1753d9aca61ba88e4b1b4b663de725d081
+2026-08-26-feishu-bridge-lifecycle-phase-avatar.md: 2e1316ee2903e8c94647b2cf94d5382eef7727c1
+2026-08-26-feishu-bridge-lifecycle-phase-avatar.zh.md: 106c6dd417263b6156c3c631b720e52349ae18e5

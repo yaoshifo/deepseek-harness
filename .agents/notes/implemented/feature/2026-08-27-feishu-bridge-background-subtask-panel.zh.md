@@ -27,4 +27,4 @@ Status: implemented
 - 模式 B（父挂起、子任务后台跑）从此有连续活性信号；停滞子任务在一个 stall 窗口内可与正常工作者区分。
 - 面板是内存态：daemon 重启或 HMR 重建即丢（重启恢复通知会结算记录；残留面板卡只是停止更新——重启路径由机器唤醒 steer 的 note 覆盖）。
 - 父被汇报唤醒时渲染新回合自己的卡，面板继续 PATCH 剩余子任务——就地 PATCH 永不与 tail guard 冲突（后者只管进度卡的 reissue）。
-- 由 `tests/engine/subtask-panel.spec.ts`（渲染布局、贴卡/刷新/终态、配置关闭、drain、stop-all）与 `tests/agent-dsh/adapter-subagent.spec.ts` 的记录器用例（detach 免疫记录、非子会话忽略）钉住。是 [2026-08-26](2026-08-26-feishu-bridge-pending-subtasks-card-visibility.md) deferred 项的落地；gather 模式的对应物见 [2026-08-27](2026-08-27-feishu-bridge-blocking-gather-and-failure-settlement.zh.md)。
+- 由 `tests/engine/subtask-panel.spec.ts`（渲染布局、贴卡/刷新/终态、配置关闭、drain、stop-all）与 `tests/agent-dsh/adapter-subagent.spec.ts` 的记录器用例（detach 免疫记录、非子会话忽略）钉住。是 [2026-08-26](2026-08-26-feishu-bridge-pending-subtasks-card-visibility.zh.md) deferred 项的落地；gather 模式的对应物见 [2026-08-27](2026-08-27-feishu-bridge-blocking-gather-and-failure-settlement.zh.md)。

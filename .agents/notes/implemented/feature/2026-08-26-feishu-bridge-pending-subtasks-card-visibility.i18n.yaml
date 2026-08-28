@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-26-feishu-bridge-pending-subtasks-card-visibility.md
-2026-08-26-feishu-bridge-pending-subtasks-card-visibility.md: 6050d55a396573da6f6b7bf2e0fd133d42ff30dd
-2026-08-26-feishu-bridge-pending-subtasks-card-visibility.zh.md: de90887f556dad9303143ae6069fee69efafd809
+2026-08-26-feishu-bridge-pending-subtasks-card-visibility.md: 184bf6c9e9cac308271931b7b29a20d40a3f3082
+2026-08-26-feishu-bridge-pending-subtasks-card-visibility.zh.md: 4e910826cf62279b4d9e75f1209cf00727c70450

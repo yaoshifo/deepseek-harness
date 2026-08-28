@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-08-27-vite-native-tsconfig-paths.md
+2026-08-27-vite-native-tsconfig-paths.md: a99bb0e60eeff422cf13237c820ddeea6fd2a8f9
+2026-08-27-vite-native-tsconfig-paths.zh.md: 1456fc59e58bd911618913b4288eaaaafe7c573c

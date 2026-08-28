@@ -6,7 +6,7 @@ English | [中文](2026-08-27-vite-native-tsconfig-paths.zh.md)
 
 ## Problem
 
-Every vitest run printed Vite's migration warning: the `vite-tsconfig-paths` plugin duplicates a capability Vite 8 ships natively as `resolve.tsconfigPaths`. The repository carried that duplicate — a root devDependency, the plugin mounted once per vitest config and once more per vitest *project* — solely to keep one contract alive: bare workspace imports resolve to `src` through the shared `tsconfig.base.json` paths map, never through package `exports` into built `lib/`, where stale artifacts would load a second copy of module singletons ([test resolution](../../../docs/testing.md#test-resolution-source-plane-only)).
+Every vitest run printed Vite's migration warning: the `vite-tsconfig-paths` plugin duplicates a capability Vite 8 ships natively as `resolve.tsconfigPaths`. The repository carried that duplicate — a root devDependency, the plugin mounted once per vitest config and once more per vitest *project* — solely to keep one contract alive: bare workspace imports resolve to `src` through the shared `tsconfig.base.json` paths map, never through package `exports` into built `lib/`, where stale artifacts would load a second copy of module singletons ([test resolution](../../../../docs/testing.md)).
 
 ## Decision
 
@@ -35,4 +35,4 @@ Vitest project configurations do not inherit top-level `resolve`: each named pro
 
 - Third-party surface shrinks by one package; `THIRD_PARTY_NOTICES.md` regenerated accordingly.
 - New lane directories holding tests need a tsconfig chain reaching `tsconfig.base.json`; tsx already imposed this on scripts and examples, and violations fail loudly at transform time.
-- Renaming `tsconfig.base.json` or moving its `paths` map now updates five vitest configs and the [development layout table](../../../docs/development.md) in the same change.
+- Renaming `tsconfig.base.json` or moving its `paths` map now updates five vitest configs and the [development layout table](../../../../docs/development.md) in the same change.

@@ -2,7 +2,7 @@
 
 English | [中文](feishu-bridge.zh.md)
 
-The Feishu bridge runs the bot-facing conversational runtime: one engine per configured project, the platform adapters, and the sibling-plugin seam. The [chatroom extraction Agent Notes](../../.agents/notes/implemented/architecture/2026-08-27-feishu-bridge-chatroom-service-events.md) own the service and event decisions; this page records the Cordis surface of [`packages/acp/feishu-bridge/src/bridge-service.ts`](../../packages/acp/feishu-bridge/src/bridge-service.ts).
+The Feishu bridge runs the bot-facing conversational runtime: one engine per configured project, the platform adapters, and the sibling-plugin seam. The [chatroom extraction Agent Notes](../../.agents/notes/implemented/architecture/2026-08-29-feishu-bridge-chatroom-extraction.md) own the service and event decisions; this page records the Cordis surface of [`packages/acp/feishu-bridge/src/bridge-service.ts`](../../packages/acp/feishu-bridge/src/bridge-service.ts).
 
 The `ctx.feishuBridge` service exposes the live project registry, caller routing, and the `feishuBridge/*` dispatch face. Sibling plugins (the chatroom package, `@deepseek-ai/dsh-feishu-bridge-chatroom`) consume the service through the package's `./exports` entry and extend engine behavior by answering the dispatched events instead of mounting engine hooks.
 
