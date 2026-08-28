@@ -112,6 +112,17 @@ describe('in-process structured output', () => {
     await run.dispose()
   })
 
+  it('normalizes a camelCase key against the declared schema before capture', async () => {
+    const { ctx, parent } = await setup([
+      toolCallResponse('c1', STRUCTURED_OUTPUT_TOOL, { Answer: 42 }),
+    ])
+    const run = await ctx.subagents.start('spawn', structuredRequest(parent))
+    const result = await run.result
+    expect(result.stopReason).toBe('completed')
+    expect(result.structured).toEqual({ answer: 42 })
+    await run.dispose()
+  })
+
   it('stops the turn after a successful capture — no extra model step is spent', async () => {
     const { ctx, parent, adapter } = await setup([
       toolCallResponse('c1', STRUCTURED_OUTPUT_TOOL, { answer: 1 }),

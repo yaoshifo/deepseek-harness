@@ -8,7 +8,8 @@ import type {
 } from '@deepseek-ai/dsh-attachment'
 import { CallId, createMessage, createUserMessage, OFFLOADED_IMAGE_TEXT } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
-import { toPiContext } from '../src/context.ts'
+import type { Context as PiContext } from '@earendil-works/pi-ai'
+import { tagStrictSampling, toPiContext } from '../src/context.ts'
 import { toPiAssistant } from '../src/replay.ts'
 
 const ref: ImageAttachmentRef = {
@@ -411,4 +412,45 @@ describe('pi-ai request context conversion', () => {
     )).toThrow(/assistant image output/)
   })
 
+})
+
+describe('tagStrictSampling', () => {
+  const closedTool = {
+    name: 'ask',
+    description: 'ask',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
+  }
+  const openTool = {
+    name: 'pass',
+    description: 'pass',
+    parameters: { type: 'object', properties: {} },
+  }
+
+  function modelWith(compat: Record<string, unknown> | undefined) {
+    return { compat, api: 'anthropic-messages', id: 'm', provider: 'p' } as never
+  }
+
+  it('tags closed-root tools when the compat profile declares strict support', () => {
+    const context: PiContext = { messages: [], tools: [{ ...closedTool }, { ...openTool }] }
+    tagStrictSampling(context, modelWith({ supportsStrictTools: true }))
+    expect(context.tools?.[0]?.constrainedSampling).toEqual({ type: 'json_schema', strict: 'prefer' })
+    expect(context.tools?.[1]?.constrainedSampling).toBeUndefined()
+  })
+
+  it('accepts the openai strict flag and leaves everything untouched without it', () => {
+    const openaiContext: PiContext = { messages: [], tools: [{ ...closedTool }] }
+    tagStrictSampling(openaiContext, modelWith({ supportsStrictMode: true }))
+    expect(openaiContext.tools?.[0]?.constrainedSampling).toEqual({ type: 'json_schema', strict: 'prefer' })
+    const untouched: PiContext = { messages: [], tools: [{ ...closedTool }] }
+    tagStrictSampling(untouched, modelWith({ forceAdaptiveThinking: true }))
+    expect(untouched.tools?.[0]?.constrainedSampling).toBeUndefined()
+    tagStrictSampling(untouched, modelWith(undefined))
+    expect(untouched.tools?.[0]?.constrainedSampling).toBeUndefined()
+  })
+
+  it('keeps an explicit per-tool constrained-sampling decision', () => {
+    const context: PiContext = { messages: [], tools: [{ ...closedTool, constrainedSampling: false }] }
+    tagStrictSampling(context, modelWith({ supportsStrictTools: true }))
+    expect(context.tools?.[0]?.constrainedSampling).toBe(false)
+  })
 })

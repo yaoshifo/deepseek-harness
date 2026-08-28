@@ -19,6 +19,7 @@
 import { randomBytes } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -1909,18 +1910,27 @@ function thinkingOfBlocks(blocks: readonly ContentBlock[] | undefined): string {
   return out
 }
 
+const BACKGROUND_ARGS_SCHEMA: JsonSchemaNode = {
+  type: 'object',
+  properties: { run_in_background: { type: 'boolean' } },
+}
+
 /**
  * Whether a durable tool/call's arguments request background execution: the
  * JSON `arguments` blob carrying `run_in_background: true` (the Bash-class
- * background parameter). Unparseable arguments are foreground.
+ * background parameter). Unparseable arguments are foreground. Key-style
+ * variants (`runInBackground`) normalize to the declared key so the card label
+ * matches what the tool will actually do. Exported for unit tests.
  * @param argumentsValue - Raw `arguments` payload of a tool/call event.
  * @returns The `toolBackground: true` event spread, or an empty spread.
  */
-function toolBackgroundOf(argumentsValue: unknown): { toolBackground?: boolean } {
+export function toolBackgroundOf(argumentsValue: unknown): { toolBackground?: boolean } {
   if (typeof argumentsValue !== 'string' || argumentsValue === '') return {}
   try {
-    const parsed = JSON.parse(argumentsValue) as { run_in_background?: unknown }
-    return parsed.run_in_background === true ? { toolBackground: true } : {}
+    const canonical = normalizeKeyStyleVariants(BACKGROUND_ARGS_SCHEMA, JSON.parse(argumentsValue))
+    return (canonical as { run_in_background?: unknown }).run_in_background === true
+      ? { toolBackground: true }
+      : {}
   } catch {
     return {}
   }

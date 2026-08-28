@@ -4,6 +4,8 @@ Status: implemented
 
 [English](2026-08-28-undeclared-key-style-variants.md) | 中文
 
+**部分取代（同日晚间）：** did-you-mean 违规的假设被证伪——模型在三次完全相同的 `ask_user_question` 失败中始终没有按提示自纠，最终放弃发卡。模型输入路径的变体键现在改为**在输入边界规范化**；该违规对输出校验与直接调用校验器仍然成立。见[键名风格变体规范化](2026-08-28-key-style-variant-normalization.zh.md)。
+
 ## Problem
 
 一张飞书收尾追问卡渲染成了单选，而 agent 请求的是多选。会话日志显示模型调用 `ask_user_question` 时传了 `"multiSelect": true`——camelCase，而工具 schema 声明的是 `multi_select`。两层机制让这个错误静默通过：question item 的 `additionalProperties: true` 使校验器完全跳过未知键；工具的 `execute` 只挑拣声明键，拼错的值在 bridge 兜底 `multiSelect` 为 false 之前就蒸发了。对该会话 282 次工具调用与全部 34 个暴露 schema 的全量比对发现，撞车的只有这一个键：camelCase 先验是词位特异的（OpenAI 风格 function calling 加上上下文里的 `multiSelect` 类型名），不是对仓库以 snake_case 为主的工具参数风格的误读（34 个 snake 键对 6 个 camel 键，其余键全部写对）。
@@ -24,7 +26,7 @@ Status: implemented
 
 ## Consequences
 
-- 拼错键名的代价现在是模型一次自我修正往返——与事故会话中缺必填属性时已经生效的失败路径相同（模型收到 `INVALID_ARGS` 结果后立刻补上了缺失的 `id`）。
+- ~~拼错键名的代价现在是模型一次自我修正往返——与事故会话中缺必填属性时已经生效的失败路径相同（模型收到 `INVALID_ARGS` 结果后立刻补上了缺失的 `id`）。~~ 当晚即被证伪：三次完全相同的 `ask_user_question` 失败中模型始终未按提示修正并放弃发卡——见上方取代指针。
 - 合法接受任意键的对象不受影响：没有声明属性就没有可碰撞的目标。
 - `tool-workflow` 保留三处开放 schema；`meta`/`phases` 的风格变体现在在工具层以 did-you-mean 失败，取代引擎层的 `META_INVALID`——同样的错误结果路径，更早且更具体。
 - did-you-mean 文本是模型可见面：`subagent-child-question-rejection` 的工具 schema 快照记录了封闭后的 `ask_user_question` schema。

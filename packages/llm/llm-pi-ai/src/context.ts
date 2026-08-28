@@ -13,7 +13,7 @@ import type {
   ImageRequestPolicy,
   RequestImageAttachment,
 } from '@deepseek-ai/dsh-attachment'
-import type { Context as PiContext, ImageContent, Message as PiMessage, TextContent, Tool as PiTool } from '@earendil-works/pi-ai'
+import type { Api, Context as PiContext, ImageContent, Message as PiMessage, Model, TextContent, Tool as PiTool } from '@earendil-works/pi-ai'
 import { toPiAssistant } from './replay.ts'
 import { DEFAULT_REQUEST_IMAGE_MAX_BYTES, DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET } from './config.ts'
 
@@ -121,6 +121,29 @@ function toolsOf(options: GenerateOptions): PiTool[] | undefined {
     // (TypeBox) is structurally JSON Schema, so it assigns directly.
     parameters: tool.parameters,
   }))
+}
+
+/**
+ * Tag tools whose root schema is closed (`additionalProperties: false`) with
+ * JSON-schema constrained sampling when the model's compat profile declares
+ * the endpoint accepts strict tool definitions. `prefer` keeps the request
+ * legal on endpoints that ignore the flag today. Open-root tools stay
+ * untagged on purpose: enforcing engines require closed schemas, so promising
+ * strictness for them would break every call the day an upstream starts
+ * enforcing — extending coverage there is a root-closedness decision, not a
+ * flag flip.
+ * @param context - the freshly assembled pi-ai context for one request.
+ * @param model - the resolved model descriptor carrying the compat profile.
+ */
+export function tagStrictSampling(context: PiContext, model: Model<Api>): void {
+  const compat = model.compat as { supportsStrictTools?: boolean; supportsStrictMode?: boolean } | undefined
+  if (compat?.supportsStrictTools !== true && compat?.supportsStrictMode !== true) return
+  for (const tool of context.tools ?? []) {
+    if (tool.constrainedSampling !== undefined) continue
+    const root = tool.parameters as { additionalProperties?: unknown } | undefined
+    if (root?.additionalProperties !== false) continue
+    tool.constrainedSampling = { type: 'json_schema', strict: 'prefer' }
+  }
 }
 
 /** Assemble the request-level pi-ai context envelope shared by both conversion paths. */

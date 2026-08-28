@@ -100,6 +100,7 @@ function equalStrings(a: string[] | undefined, b: string[] | undefined): boolean
 describe('parseTriageResponse', () => {
   const cases: Array<{ name: string; resp: string; action: boolean; dir: string; task: string; candidates?: string[] }> = [
     { name: 'plain json', resp: '{"actionable": true, "dir": "/pay", "task": "排查 500"}', action: true, dir: '/pay', task: '排查 500' },
+    { name: 'camelCase keys', resp: '{"Actionable": true, "Dir": "/pay", "Task": "排查 500", "Candidates": ["/c"]}', action: true, dir: '/pay', task: '排查 500', candidates: ['/c'] },
     { name: 'json in prose', resp: '好的，判断如下：{"actionable": true, "dir": "/srv/a", "task": "查日志"} 完成', action: true, dir: '/srv/a', task: '查日志' },
     { name: 'not actionable', resp: '{"actionable": false, "dir": "", "task": ""}', action: false, dir: '', task: '' },
     { name: 'garbage', resp: '这不是 JSON', action: false, dir: '', task: '' },

@@ -15,7 +15,7 @@
 - `options`：可选选项，包含 `label`、`description` 与仅影响呈现的 `recommended` 标记。选项按推荐程度排序（最推荐的在前）；标注 `recommended: true` 的选项在支持的多选 UI 中会默认勾选。
 - `multi_select`：该问题是否可以返回多个选中的选项。
 
-问题对象与选项对象是封闭的：未声明字段会被校验拒绝（`multi_select` 的键名风格变体（如 `multiSelect`）会得到指名正确键的提示），而不是被静默丢弃。
+问题对象与选项对象是封闭的：凭空捏造的字段会被校验拒绝而不是被静默丢弃；而 `multiSelect` 这类键名风格变体会在校验前被规范化为声明的 `multi_select`，因此即使模型把键名写成了另一种风格，多选卡也能正常渲染。
 
 工具调用 `ctx.userQuestions.ask()`，并返回规范的 `{ answers: [{ id, selected, custom? }] }`。`selected` 包含选项标签；`custom` 携带自由填写的回答，对于多选题会补充 `selected`，对于单选题则会覆盖它。Native 渲染器会保留紧凑的 JSON 文本形式 `{ "answers": [{ "id": "...", "selected": ["..."], "custom": "..." }] }`。
 

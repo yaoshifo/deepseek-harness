@@ -1,0 +1,20 @@
+[
+  { "kind": "chunks", "chunks": [
+    { "type": "block-start", "index": 0, "blockType": "reasoning" },
+    { "type": "block-start", "index": 1, "blockType": "tool-call" },
+    { "type": "tool-call-delta", "index": 1, "id": "call_variant_1", "name": "ask_user_question", "argumentsDelta": "{\"questions\":[{\"id\":\"followup\",\"header\":\"Follow-up\",\"question\":\"Which follow-up should I do first?\",\"multiSelect\":true,\"options\":[{\"label\":\"Normalize now\",\"recommended\":true},{\"label\":\"Wait for the next release\"}]}]}" },
+    { "type": "block-end", "index": 0, "block": { "type": "reasoning", "text": "The user asked for a multi-select follow-up card. The habit under test is emitting the camelCase multiSelect key; the input boundary must normalize it and still ask the card." } },
+    { "type": "block-end", "index": 1, "block": { "type": "tool-call", "id": "call_variant_1", "name": "ask_user_question", "arguments": "{\"questions\":[{\"id\":\"followup\",\"header\":\"Follow-up\",\"question\":\"Which follow-up should I do first?\",\"multiSelect\":true,\"options\":[{\"label\":\"Normalize now\",\"recommended\":true},{\"label\":\"Wait for the next release\"}]}]}" } },
+    { "type": "usage", "usage": { "inputTokens": 240, "outputTokens": 90, "cacheReadTokens": 0, "reasoningTokens": 12 } },
+    { "type": "finish", "reason": { "kind": "tool-calls" } }
+  ] },
+  { "kind": "chunks", "chunks": [
+    { "type": "block-start", "index": 0, "blockType": "reasoning" },
+    { "type": "block-start", "index": 1, "blockType": "text" },
+    { "type": "text-delta", "index": 1, "text": "DONE" },
+    { "type": "block-end", "index": 0, "block": { "type": "reasoning", "text": "The card was answered with the first option; reply with the single word DONE as instructed." } },
+    { "type": "block-end", "index": 1, "block": { "type": "text", "text": "DONE" } },
+    { "type": "usage", "usage": { "inputTokens": 420, "outputTokens": 30, "cacheReadTokens": 0, "reasoningTokens": 8 } },
+    { "type": "finish", "reason": { "kind": "stop" } }
+  ] }
+]

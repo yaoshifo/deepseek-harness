@@ -4,6 +4,8 @@ Status: implemented
 
 English | [中文](2026-08-28-undeclared-key-style-variants.zh.md)
 
+**Partial supersession (same day, evening):** the did-you-mean violation lost its bet — the model failed to self-correct across three identical `ask_user_question` failures and abandoned the card. Model-input variant keys are now **normalized at the input boundary** instead; the violation remains for output validation and direct validator callers. See [key-style-variant normalization](2026-08-28-key-style-variant-normalization.md).
+
 ## Problem
 
 A Feishu follow-up card rendered single-select where the agent had asked for multi-select. The session log showed the model calling `ask_user_question` with `"multiSelect": true` — camelCase where the tool schema declares `multi_select`. Two layers let that pass silently: the question item's `additionalProperties: true` made the validator skip unknown keys entirely, and the tool's `execute` picks declared keys only, so the misspelled value evaporated before the bridge defaulted `multiSelect` to false. A full sweep of that session's 282 tool calls against all 34 exposed schemas found this one key the only collision: the camelCase prior is word-position-specific (OpenAI-style function calling plus `multiSelect` type names in context), not a misread of the repository's snake_case-dominant tool-argument style (34 snake keys vs 6 camel keys, all other keys written correctly).
@@ -24,7 +26,7 @@ A Feishu follow-up card rendered single-select where the agent had asked for mul
 
 ## Consequences
 
-- A misspelled key now costs the model one self-correction round trip — the same failure path that already worked for missing required properties in the incident session (the model fixed a missing `id` immediately after its `INVALID_ARGS` result).
+- ~~A misspelled key now costs the model one self-correction round trip — the same failure path that already worked for missing required properties in the incident session (the model fixed a missing `id` immediately after its `INVALID_ARGS` result).~~ Falsified the same evening: across three identical `ask_user_question` failures the model never applied the hinted fix and abandoned the card — see the supersession pointer above.
 - Objects that legitimately accept arbitrary keys are unaffected: no declared properties means no collision to report.
 - `tool-workflow` keeps its three open schemas; `meta`/`phases` style variants now fail at the tool layer with a did-you-mean instead of the engine's `META_INVALID` — same error-result path, earlier and more specific.
 - The did-you-mean text is model-visible: the `subagent-child-question-rejection` tool-schema snapshot records the closed `ask_user_question` schema.

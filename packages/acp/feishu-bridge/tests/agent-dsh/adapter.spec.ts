@@ -6,7 +6,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { ContinueSession, type AskDecision, type AskDelegate, type AskRequest, type Event } from '../../src/core/types.js'
 import { ctxBridgeDispatch, type BridgeDispatch } from '../../src/bridge-service.js'
 import type { SessionStartOptions } from '../../src/core/types.js'
-import { DshAgentAdapter, DshAgentSession, unattendedSubtaskBypassesPermissions, stripModelAlias, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
+import { DshAgentAdapter, DshAgentSession, unattendedSubtaskBypassesPermissions, stripModelAlias, toolBackgroundOf, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
 
 // DshAgentAdapter unit tests: ctx.agents create/resume, followup/cancel call
 // sequences, provider routing, [1m] stripping, dispose+resume provider
@@ -174,6 +174,17 @@ describe('stripModelAlias', () => {
   it('strips the [1m] suffix', () => {
     expect(stripModelAlias('glm-5.3[1m]')).toBe('glm-5.3')
     expect(stripModelAlias('glm-5.3')).toBe('glm-5.3')
+  })
+})
+
+describe('toolBackgroundOf', () => {
+  it('reads the declared key, tolerates key-style variants, and stays foreground on garbage', () => {
+    expect(toolBackgroundOf('{"run_in_background": true}')).toEqual({ toolBackground: true })
+    expect(toolBackgroundOf('{"runInBackground": true}')).toEqual({ toolBackground: true })
+    expect(toolBackgroundOf('{"run_in_background": false}')).toEqual({})
+    expect(toolBackgroundOf('not json')).toEqual({})
+    expect(toolBackgroundOf('')).toEqual({})
+    expect(toolBackgroundOf(null)).toEqual({})
   })
 })
 

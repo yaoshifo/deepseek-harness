@@ -19,7 +19,7 @@ import type { CodeRuntime } from '@deepseek-ai/dsh-code-runtime'
 // augmentation. The seam stays optional at runtime — see `serviceAsk`.
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type { ToolCallView, ToolResultView } from './presentation.ts'
-import { assertSupportedJsonSchema, validateJsonSchemaValue } from './json-schema.ts'
+import { assertSupportedJsonSchema, normalizeKeyStyleVariants, validateJsonSchemaValue } from './json-schema.ts'
 import type { JsonSchemaNode } from './json-schema.ts'
 import { createRunCodeTool, RUN_CODE_NAME, SDK_SECTION_ORDER } from './code-mode.ts'
 import type { CodeSdkLanguage } from './code-mode.ts'
@@ -90,6 +90,7 @@ export {
 export {
   assertSupportedJsonSchema,
   assertObjectJsonSchema,
+  normalizeKeyStyleVariants,
   validateJsonSchemaValue,
   JsonSchemaError,
   type JsonSchemaNode,
@@ -1413,7 +1414,18 @@ export class ToolRuntime extends Service {
       if (detached === undefined) {
         throw new TypeError('tool execution arguments must be losslessly JSON-serializable')
       }
-      const execution: MutableToolRunContext = { ...base, arguments: deepFreeze(detached) }
+      // The input boundary normalizes opposite-key-style keys (`multiSelect`
+      // against `multi_select`) to their declared names before freezing, so
+      // every tool kind — defineTool, raw, MCP — sees model-intended keys. The
+      // walker is total and returns the same reference when nothing renamed.
+      // `tool/call` events keep the raw arguments for audit.
+      const canonical = visible !== undefined
+        ? normalizeKeyStyleVariants(visible.parameters as unknown as JsonSchemaNode, detached)
+        : detached
+      if (canonical !== detached) {
+        this.ctx.logger.debug(`tool "${name}" (${callId}): normalized opposite-key-style argument keys to their declared names`)
+      }
+      const execution: MutableToolRunContext = { ...base, arguments: deepFreeze(canonical) }
       this.deferredContexts.set(execution, deferredContexts)
       this.contentFinalizers.set(execution, finalizerFor())
       this.cancellationStates.set(execution, {

@@ -228,13 +228,13 @@ describe('ask_user_question tool', () => {
     }])
   })
 
-  it('rejects a camelCase multiSelect key with a did-you-mean violation instead of dropping it', async () => {
+  it('normalizes a camelCase multiSelect key and asks a multi-select question instead of rejecting the card', async () => {
     const ctx = await setup()
-    let asked = false
+    const seen: AskUserQuestionRequest[] = []
     ctx.userQuestions.registerProvider({
-      async ask() {
-        asked = true
-        return { answers: [] }
+      async ask(request) {
+        seen.push(request)
+        return { answers: [{ id: 'followup', selected: ['fix schema'] }] }
       },
     })
 
@@ -252,11 +252,10 @@ describe('ask_user_question tool', () => {
       },
     })
 
-    expect(result.isError).toBe(true)
-    expect(result.content[0]).toMatchObject({
-      text: 'Error: invalid arguments: "questions[0].multiSelect" is not a declared property (did you mean "multi_select"?)',
-    })
-    expect(asked).toBe(false)
+    expect(result.isError).toBe(false)
+    if (result.isError) throw new Error('expected ask_user_question success')
+    expect(seen[0]?.questions[0]?.multiSelect).toBe(true)
+    expect(result.value).toEqual({ answers: [{ id: 'followup', selected: ['fix schema'] }] })
   })
 
   it('passes the tool abort signal to the user-questions request', async () => {

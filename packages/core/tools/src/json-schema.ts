@@ -441,6 +441,84 @@ function declaredKeyVariant(properties: Record<string, JsonSchemaNode>, key: str
   return undefined
 }
 
+/**
+ * Rewrite undeclared keys that name a declared property in the opposite key
+ * style (`multiSelect` against `multi_select`) to the declared key, recursing
+ * through `properties` and `items`. The declared key wins when both spellings
+ * are present; values, key order, unknown keys, and `oneOf` interiors pass
+ * through untouched. Total for arbitrary inputs: a non-plain value, a
+ * non-node schema, a tuple `items`, or a cyclic container returns the value
+ * unchanged, so callers apply it unconditionally before validation — including
+ * against raw schemas that never passed {@link assertSupportedJsonSchema}.
+ * Union interiors are not normalized because branch matching there is not
+ * keyed by property name alone; variant keys inside a union still reject.
+ * @param schema - the schema the value will be validated against.
+ * @param value - the candidate value, typically freshly parsed model output.
+ * @returns The normalized value; the same reference when nothing was renamed.
+ */
+export function normalizeKeyStyleVariants(schema: JsonSchemaNode, value: unknown): unknown {
+  try {
+    return normalizeVariantValue(schema, value, new Set<object>())
+  } catch {
+    // A hostile getter or exotic container must leave the value untouched for
+    // the validator to judge — normalization never becomes the failure point.
+    return value
+  }
+}
+
+/** Recursive walker behind {@link normalizeKeyStyleVariants}; `active` breaks cycles. */
+function normalizeVariantValue(node: unknown, value: unknown, active: Set<object>): unknown {
+  if (Array.isArray(value)) return normalizeVariantArray(node, value, active)
+  if (!isPlainJsonRecord(value)) return value
+  return normalizeVariantObject(node, value, active)
+}
+
+/** Normalize array entries against the node's single non-tuple `items` schema. */
+function normalizeVariantArray(node: unknown, value: readonly unknown[], active: Set<object>): unknown {
+  if (active.has(value)) return value
+  active.add(value)
+  if (!isPlainJsonRecord(node)) return value
+  const items = Object.hasOwn(node, 'items') ? (node as JsonSchemaNode).items : undefined
+  if (!isPlainJsonRecord(items)) return value
+  let changed = false
+  const out = value.map((entry) => {
+    const next = normalizeVariantValue(items, entry, active)
+    if (next !== entry) changed = true
+    return next
+  })
+  return changed ? out : value
+}
+
+/** Normalize object keys against the node's declared `properties`. */
+function normalizeVariantObject(node: unknown, value: Record<string, unknown>, active: Set<object>): unknown {
+  if (active.has(value)) return value
+  active.add(value)
+  const properties = isPlainJsonRecord(node) && isPlainJsonRecord((node as JsonSchemaNode).properties)
+    ? (node as JsonSchemaNode).properties as Record<string, JsonSchemaNode>
+    : undefined
+  let changed = false
+  const out: Record<string, unknown> = {}
+  for (const [key, child] of Object.entries(value)) {
+    if (properties !== undefined && !Object.hasOwn(properties, key)) {
+      const variant = declaredKeyVariant(properties, key)
+      if (variant !== undefined) {
+        // The declared key wins when both spellings are present; the variant
+        // only fills the declared slot, never overwrites it.
+        if (!Object.hasOwn(value, variant)) {
+          out[variant] = normalizeVariantValue(properties[variant], child, active)
+        }
+        changed = true
+        continue
+      }
+    }
+    const childSchema = properties !== undefined && Object.hasOwn(properties, key) ? properties[key] : undefined
+    const next = childSchema !== undefined ? normalizeVariantValue(childSchema, child, active) : child
+    if (next !== child) changed = true
+    out[key] = next
+  }
+  return changed ? out : value
+}
+
 /** One child evaluation deferred by a container or exact-one union frame. */
 interface ValueChild {
   readonly node: JsonSchemaNode

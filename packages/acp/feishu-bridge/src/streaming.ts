@@ -12,6 +12,7 @@
  * @module dsh-feishu-bridge/streaming
  */
 
+import { normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import {
   asFileSender,
   asMessageUpdater,
@@ -367,6 +368,12 @@ export function toolTagForProgress(name: string, maxLen: number): string {
   return `<text_tag color='${color}'>${icon} ${displayName}</text_tag>`
 }
 
+/** Skill tool input keys the progress relabel reads; key-style variants normalize to these. */
+const SKILL_INPUT_SCHEMA: JsonSchemaNode = {
+  type: 'object',
+  properties: { skill: { type: 'string' }, name: { type: 'string' }, args: { type: 'string' } },
+}
+
 /**
  * Parse a Skill tool call input into (skillName, args); empty for non-skill tools.
  *
@@ -379,7 +386,11 @@ export function parseSkillToolUse(toolName: string, toolInput: string): [string,
   if (toolName.toLowerCase() !== 'skill') return ['', '']
   if (toolInput.startsWith('skill=')) return [toolInput.slice('skill='.length).trim(), '']
   try {
-    const m = JSON.parse(toolInput) as { skill?: unknown; name?: unknown; args?: unknown }
+    const m = normalizeKeyStyleVariants(SKILL_INPUT_SCHEMA, JSON.parse(toolInput)) as {
+      skill?: unknown
+      name?: unknown
+      args?: unknown
+    }
     const skill = typeof m.skill === 'string' ? m.skill : typeof m.name === 'string' ? m.name : ''
     const args = typeof m.args === 'string' ? m.args : ''
     return [skill, args]

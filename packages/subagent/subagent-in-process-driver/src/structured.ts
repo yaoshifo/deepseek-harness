@@ -13,7 +13,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolSchema } from '@deepseek-ai/dsh-llm'
 import type { ToolExecution, ToolRunContext } from '@deepseek-ai/dsh-tools'
-import { ToolArgsError, validateJsonSchemaValue, type ObjectJsonSchema } from '@deepseek-ai/dsh-tools'
+import { ToolArgsError, normalizeKeyStyleVariants, validateJsonSchemaValue, type ObjectJsonSchema } from '@deepseek-ai/dsh-tools'
 
 /** The model-facing tool name a structured child must call to finish. */
 export const STRUCTURED_OUTPUT_TOOL = 'structured_output'
@@ -83,14 +83,17 @@ export function attachStructuredRuntime(childCtx: Context, schema: ObjectJsonSch
       render: () => [{ type: 'text', text: 'Structured output recorded.' }],
     },
     execute(args: unknown, exec: ToolRunContext): Promise<{ recorded: true }> {
-      const violations = validateJsonSchemaValue(schema, args)
+      // Same input policy as registry dispatch: opposite-key-style keys are
+      // normalized before validation, so the captured value carries declared keys.
+      const canonical = normalizeKeyStyleVariants(schema, args)
+      const violations = validateJsonSchemaValue(schema, canonical)
       // ToolArgsError → isError result with INVALID_ARGS: the model retries
       // within the same turn, exactly like a schema-validated defineTool call.
       if (violations.length > 0) throw new ToolArgsError(violations)
       // Two-phase commit, keyed by THIS execution: later transformable
       // waterfalls may still turn the success into an error. ToolRuntime has
       // already frozen model-bound arguments at the actual input boundary.
-      staged.set(exec, { value: args })
+      staged.set(exec, { value: canonical })
       exec.concludeTurn()
       return Promise.resolve({ recorded: true })
     },

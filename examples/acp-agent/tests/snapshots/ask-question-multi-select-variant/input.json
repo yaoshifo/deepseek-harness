@@ -1,0 +1,7 @@
+{
+  "steps": [
+    { "op": "initialize" },
+    { "op": "newSession" },
+    { "op": "prompt", "text": "Use the ask_user_question tool to ask me one multi-select question about which follow-up to do first, then reply with the single word DONE and stop." }
+  ]
+}

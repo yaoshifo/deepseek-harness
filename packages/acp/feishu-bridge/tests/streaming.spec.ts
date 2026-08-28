@@ -1200,6 +1200,7 @@ describe('skill progress entries', () => {
   it('parseSkillToolUse variants', () => {
     const cases: Array<[name: string, toolName: string, input: string, wantSkill: string, wantArgs: string]> = [
       ['claudecode json', 'Skill', '{"skill":"tdd","args":"foo bar"}', 'tdd', 'foo bar'],
+      ['claudecode camelCase keys', 'Skill', '{"Skill":"tdd","Args":"foo bar"}', 'tdd', 'foo bar'],
       ['claudecode no args', 'Skill', '{"skill":"draw"}', 'draw', ''],
       ['opencode skill=', 'skill', 'skill=tdd', 'tdd', ''],
       ['dsh json name', 'skill', '{"name":"tdd"}', 'tdd', ''],

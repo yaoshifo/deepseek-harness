@@ -15,6 +15,7 @@
  */
 
 import { readFileSync } from 'node:fs'
+import { normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import { atomicWriteFileSync } from '../atomicwrite.js'
 import {
   asChatBrander,
@@ -313,17 +314,29 @@ export function removeMonitorChat(raw: string, chatID: string): string {
 /**
  * Extract the JSON triage verdict from the LLM output (Go
  * parseTriageResponse). Candidates are parsed tolerantly (non-string
- * elements skipped). Returns not-actionable on any parse failure.
+ * elements skipped). Key-style variants normalize to the declared keys
+ * instead of silently reading as not-actionable. Returns not-actionable on
+ * any parse failure.
  * @param resp - the raw LLM triage output.
  * @returns the parsed verdict; not-actionable on any parse failure.
  */
+const TRIAGE_VERDICT_SCHEMA: JsonSchemaNode = {
+  type: 'object',
+  properties: {
+    actionable: { type: 'boolean' },
+    dir: { type: 'string' },
+    task: { type: 'string' },
+    candidates: { type: 'array', items: { type: 'string' } },
+  },
+}
+
 export function parseTriageResponse(resp: string): { actionable: boolean; dir: string; task: string; candidates: string[] } {
   const start = resp.indexOf('{')
   const end = resp.lastIndexOf('}')
   if (start < 0 || end <= start) return { actionable: false, dir: '', task: '', candidates: [] }
   let out: { actionable?: boolean; dir?: string; task?: string; candidates?: unknown }
   try {
-    out = JSON.parse(resp.slice(start, end + 1)) as typeof out
+    out = normalizeKeyStyleVariants(TRIAGE_VERDICT_SCHEMA, JSON.parse(resp.slice(start, end + 1))) as typeof out
   } catch {
     return { actionable: false, dir: '', task: '', candidates: [] }
   }

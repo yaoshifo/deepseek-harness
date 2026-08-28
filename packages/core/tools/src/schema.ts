@@ -4,7 +4,7 @@ import { HarnessError } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import type { ToolDefinition, ToolExecution, ToolExecutionResult, ToolRunContext, ToolResult } from './index.ts'
-import { assertSupportedJsonSchema, isJsonSchemaRecord, isPlainJsonArray, JsonSchemaError, validateJsonSchemaValue } from './json-schema.ts'
+import { assertSupportedJsonSchema, isJsonSchemaRecord, isPlainJsonArray, JsonSchemaError, normalizeKeyStyleVariants, validateJsonSchemaValue } from './json-schema.ts'
 import type { JsonSchemaNode, JsonSchemaScalar, ObjectJsonSchema } from './json-schema.ts'
 import type { ToolCallView, ToolResultView } from './presentation.ts'
 
@@ -565,6 +565,10 @@ export function defineTool<const S extends ParameterSchemaSpec, const O extends 
   }
   const parameters = parameterSchemaSpecToJsonSchema(options.parameters)
   const outputSchema = valueSchemaSpecToJsonSchema(options.output.schema)
+  // Model-facing validation runs on key-style-normalized arguments, so a
+  // camelCase slip against snake_case declarations executes instead of erroring
+  // (and direct executions that bypass the registry boundary stay covered).
+  const canonicalize = (args: unknown): unknown => normalizeKeyStyleVariants(parameters, args)
   const validate = (args: unknown): string[] => validateJsonSchemaValue(parameters, args, '')
   const tool: ToolDefinition = {
     name: options.name,
@@ -583,9 +587,10 @@ export function defineTool<const S extends ParameterSchemaSpec, const O extends 
     },
     ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
     async execute(args: unknown, exec: ToolRunContext): Promise<JsonValue> {
-      const violations = validate(args)
+      const canonical = canonicalize(args)
+      const violations = validate(canonical)
       if (violations.length > 0) throw new ToolArgsError(violations)
-      return userExecute(args as InferArgs<S>, exec) as Promise<JsonValue>
+      return userExecute(canonical as InferArgs<S>, exec) as Promise<JsonValue>
     },
   }
   if (userFinalizeContent) {
@@ -597,20 +602,23 @@ export function defineTool<const S extends ParameterSchemaSpec, const O extends 
   // than the hard `ToolArgsError` the execute path raises.
   if (userPresentCall) {
     tool.presentCall = (args: unknown): ToolCallView | undefined => {
-      if (validate(args).length > 0) return undefined
-      return userPresentCall(args as InferArgs<S>)
+      const canonical = canonicalize(args)
+      if (validate(canonical).length > 0) return undefined
+      return userPresentCall(canonical as InferArgs<S>)
     }
   }
   if (userPresentResult) {
     tool.presentResult = (args: unknown, result: ToolResult): ToolResultView | undefined => {
-      if (validate(args).length > 0) return undefined
-      return userPresentResult(args as InferArgs<S>, result)
+      const canonical = canonicalize(args)
+      if (validate(canonical).length > 0) return undefined
+      return userPresentResult(canonical as InferArgs<S>, result)
     }
   }
   if (userIsConcurrencySafe) {
     tool.isConcurrencySafe = (args: unknown): boolean => {
-      if (validate(args).length > 0) return false
-      return userIsConcurrencySafe(args as InferArgs<S>)
+      const canonical = canonicalize(args)
+      if (validate(canonical).length > 0) return false
+      return userIsConcurrencySafe(canonical as InferArgs<S>)
     }
   }
   return tool

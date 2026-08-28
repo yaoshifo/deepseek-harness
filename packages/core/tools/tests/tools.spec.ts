@@ -8,7 +8,8 @@ import ToolRuntime, {
   defineContentToolFixture, defineTool, JsonSchemaError, parameterSchemaSpecToJsonSchema, validateArgs, ToolArgsError, ToolNotFoundError,
   TOOL_ABORTED, TOOL_ABORTED_BEFORE_DISPATCH,
   type InferArgs, type JsonValue, type ParameterSchemaSpec, type PreToolDecision, type PostToolDecision,
-  type JsonSchemaNode, type ToolDefinition, type ToolDispatchExecution, type ToolExecutionResult, type ToolExecutionToken,
+  type JsonSchemaNode, type ToolDefinition, type ToolDispatchExecution, type ToolExecution,
+  type ToolExecutionResult, type ToolExecutionToken,
 } from '@deepseek-ai/dsh-tools'
 
 const testToolSignal = new AbortController().signal
@@ -2821,5 +2822,87 @@ describe('defineTool presentation (presentCall / presentResult)', () => {
     // `unknown`, so malformed shapes pass without a cast.
     expect(tool.presentCall?.({})).toBeUndefined()
     expect(tool.presentResult?.({ wrong: 1 }, { content: [], isError: false })).toBeUndefined()
+  })
+})
+
+describe('input-boundary key-style normalization', () => {
+  it('executes a defineTool call whose arguments name parameters in the opposite key style', async () => {
+    const ctx = await setup()
+    let seen: unknown
+    ctx.tools.register(defineTool({
+      name: 'snaked',
+      description: 'snake_case parameter',
+      parameters: { multi_select: { type: 'boolean' } },
+      output: { schema: { type: 'boolean' }, render: (_args, value) => [{ type: 'text', text: String(value) }] },
+      async execute(args) {
+        seen = args
+        return args.multi_select === true
+      },
+    }))
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: CallId('camel'),
+      name: 'snaked',
+      arguments: { multiSelect: true },
+    })
+    expect(result.isError).toBe(false)
+    expect(result.value).toBe(true)
+    expect(seen).toEqual({ multi_select: true })
+  })
+
+  it('normalizes raw-registered tool arguments too, and policies see the canonical form', async () => {
+    const ctx = await setup()
+    let policyArgs: unknown
+    let bodyArgs: unknown
+    ctx.on('tools/pre-execute', (exec: ToolExecution, next: () => Promise<PreToolDecision>) => {
+      policyArgs = exec.arguments
+      return next()
+    })
+    ctx.tools.register({
+      name: 'raw-snake',
+      description: 'raw tool owning its own validation',
+      parameters: {
+        type: 'object',
+        properties: { multi_select: { type: 'boolean' } },
+        required: ['multi_select'],
+        additionalProperties: false,
+      },
+      output: { schema: { type: 'boolean' }, render: (_args, value) => [{ type: 'text', text: String(value) }] },
+      async execute(args) {
+        bodyArgs = args
+        return (args as { multi_select?: boolean }).multi_select === true
+      },
+    })
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: CallId('raw-camel'),
+      name: 'raw-snake',
+      arguments: { multiSelect: true },
+    })
+    expect(result.isError).toBe(false)
+    expect(result.value).toBe(true)
+    expect(bodyArgs).toEqual({ multi_select: true })
+    expect(policyArgs).toEqual({ multi_select: true })
+  })
+
+  it('leaves undeclared extra keys on open passthrough arguments untouched', async () => {
+    const ctx = await setup()
+    ctx.tools.register(defineTool({
+      name: 'bag',
+      description: 'open bag',
+      parameters: {},
+      output: { schema: { type: 'boolean' }, render: () => [{ type: 'text', text: 'ok' }] },
+      async execute(args) {
+        return (args as Record<string, unknown>).anything !== undefined
+      },
+    }))
+    const result = await ctx.tools.execute({
+      signal: testToolSignal,
+      callId: CallId('bag'),
+      name: 'bag',
+      arguments: { anything: { nested: 1 } },
+    })
+    expect(result.isError).toBe(false)
+    expect(result.value).toBe(true)
   })
 })

@@ -4,6 +4,7 @@ import {
   assertObjectJsonSchema,
   assertSupportedJsonSchema,
   JsonSchemaError,
+  normalizeKeyStyleVariants,
   validateJsonSchemaValue,
   type JsonSchemaNode,
   type ObjectJsonSchema,
@@ -364,6 +365,88 @@ describe('validateJsonSchemaValue', () => {
       .toEqual(['"value.multiSelect" is not a declared property (did you mean "multi_select"?)'])
     expect(validateJsonSchemaValue(closed, { extra: true }))
       .toEqual(['"value.extra" is not a declared property (additionalProperties: false)'])
+  })
+
+  it('normalizes opposite-key-style keys to the declared key, recursively', () => {
+    const schema = asserted({
+      type: 'object',
+      properties: {
+        questions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { multi_select: { type: 'boolean' }, header: { type: 'string' } },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    })
+    const value = { questions: [{ header: 'Pick', multiSelect: true }] }
+    expect(normalizeKeyStyleVariants(schema, value))
+      .toEqual({ questions: [{ header: 'Pick', multi_select: true }] })
+    expect(validateJsonSchemaValue(schema, normalizeKeyStyleVariants(schema, value))).toEqual([])
+  })
+
+  it('lets the declared key win when both spellings are present', () => {
+    const schema = asserted({
+      type: 'object',
+      properties: { multi_select: { type: 'boolean' } },
+      additionalProperties: false,
+    })
+    expect(normalizeKeyStyleVariants(schema, { multiSelect: true, multi_select: false }))
+      .toEqual({ multi_select: false })
+  })
+
+  it('normalizes variant keys on open objects instead of leaving them undeclared', () => {
+    const open = asserted({
+      type: 'object',
+      properties: { multi_select: { type: 'boolean' } },
+    })
+    expect(normalizeKeyStyleVariants(open, { multiSelect: true, extra: [1] }))
+      .toEqual({ multi_select: true, extra: [1] })
+  })
+
+  it('returns the same reference and never rebuilds already-conformant values', () => {
+    const schema = asserted({
+      type: 'object',
+      properties: { multi_select: { type: 'boolean' } },
+      additionalProperties: false,
+    })
+    const value = { multi_select: true }
+    expect(normalizeKeyStyleVariants(schema, value)).toBe(value)
+  })
+
+  it('leaves union interiors, non-plain values, and unrecognized node shapes untouched', () => {
+    const union = asserted({
+      oneOf: [
+        { type: 'object', properties: { multi_select: { type: 'boolean' } }, additionalProperties: false },
+        { type: 'string' },
+      ],
+    })
+    const unionValue = { multiSelect: true }
+    expect(normalizeKeyStyleVariants(union, unionValue)).toBe(unionValue)
+    expect(normalizeKeyStyleVariants(union, 'x')).toBe('x')
+    expect(normalizeKeyStyleVariants(union, new Date(0))).toBeInstanceOf(Date)
+    const garbageSchema = { properties: 'not-a-record' } as unknown as JsonSchemaNode
+    const garbageValue = { multiSelect: true }
+    expect(normalizeKeyStyleVariants(garbageSchema, garbageValue)).toBe(garbageValue)
+  })
+
+  it('returns hostile and cyclic containers unchanged instead of throwing', () => {
+    const schema = asserted({
+      type: 'object',
+      properties: { multi_select: { type: 'boolean' } },
+      additionalProperties: false,
+    })
+    const hostile = Object.defineProperty({}, 'answer', {
+      enumerable: true,
+      get() { throw new Error('getter exploded') },
+    })
+    expect(normalizeKeyStyleVariants(schema, hostile)).toBe(hostile)
+    const cyclic: unknown[] = []
+    cyclic.push(cyclic)
+    expect(normalizeKeyStyleVariants(asserted({ type: 'array', items: { type: 'array' } }), cyclic)).toBe(cyclic)
   })
 
   it('treats present undefined as missing when required, then rejects other lossy objects', () => {

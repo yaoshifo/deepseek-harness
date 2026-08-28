@@ -60,6 +60,7 @@ const IMAGE_TEXT_ROUTE_CONFIG = fileURLToPath(new URL('../image-text-route.cordi
 const PTY_CONFIG = fileURLToPath(new URL('../pty.cordis.yml', import.meta.url))
 const DEPTH_TWO_CONFIG = fileURLToPath(new URL('../depth-two.cordis.yml', import.meta.url))
 const CHILD_QUESTION_CONFIG = fileURLToPath(new URL('../child-question.cordis.yml', import.meta.url))
+const ASK_VARIANT_CONFIG = fileURLToPath(new URL('../ask-variant.cordis.yml', import.meta.url))
 const SESSION_SANDBOX_ROOT_CONFIG = fileURLToPath(new URL('../session-sandbox-root.cordis.yml', import.meta.url))
 const RETRY_CONFIG = fileURLToPath(new URL('../retry.cordis.yml', import.meta.url))
 const SESSION_TITLE_CONFIG = fileURLToPath(new URL('../session-title.cordis.yml', import.meta.url))
@@ -610,6 +611,21 @@ const SCENARIOS: Scenario[] = [
     headerClass: 'child-question',
     systemPromptSource: 'text-turn',
     configPath: CHILD_QUESTION_CONFIG,
+  },
+  // Authored keyless replay: the model emits the camelCase multiSelect key, the
+  // input boundary normalizes it to multi_select, and the deterministic
+  // auto-answer provider settles the card — the variant-key call completes
+  // end to end instead of failing validation.
+  {
+    name: 'ask-question-multi-select-variant',
+    hasModelTurn: true,
+    recorded: false,
+    overridden: true,
+    pinsHeader: true,
+    headerClass: 'ask-variant',
+    systemPromptSource: 'text-turn',
+    toolSchemasSource: 'subagent-child-question-rejection',
+    configPath: ASK_VARIANT_CONFIG,
   },
   // The workflow tool: the model writes a one-child orchestration script; the
   // child runs as a spawn subagent under the worker-thread engine (its session is the

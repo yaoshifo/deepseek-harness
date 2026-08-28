@@ -15,7 +15,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import type { SubtaskAgentRouter } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { declareToolFamily } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { chatroomConfig } from '../chatroom-config.js'
@@ -61,6 +61,18 @@ interface TopicPickJSON {
   blurb: string
 }
 
+/** Per-kind pick item keys; key-style variants normalize to these before the cast. */
+const PICK_ITEM_SCHEMAS: Record<'roles' | 'topics', JsonSchemaNode> = {
+  roles: {
+    type: 'object',
+    properties: { name: { type: 'string' }, recommended: { type: 'boolean' }, blurb: { type: 'string' } },
+  },
+  topics: {
+    type: 'object',
+    properties: { title: { type: 'string' }, recommended: { type: 'boolean' }, blurb: { type: 'string' } },
+  },
+}
+
 /** Parse a JSON array of picks, rejecting malformed payloads loudly. */
 function parsePicks<T>(raw: string, kind: 'roles' | 'topics'): T[] {
   const trimmed = raw.trim()
@@ -74,7 +86,7 @@ function parsePicks<T>(raw: string, kind: 'roles' | 'topics'): T[] {
   if (!Array.isArray(parsed)) {
     throw new Error(`feishu_bridge_chatroom: ${kind} JSON must be an array`)
   }
-  return parsed as T[]
+  return normalizeKeyStyleVariants({ type: 'array', items: PICK_ITEM_SCHEMAS[kind] }, parsed) as T[]
 }
 
 /**

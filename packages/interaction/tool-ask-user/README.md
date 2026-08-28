@@ -15,7 +15,7 @@ Model-facing `ask_user_question` tool over `ctx.userQuestions`. It lets the mode
 - `options` — optional choices with `label`, `description`, and a presentation-only `recommended` flag. Order options by recommendation (most recommended first); capable multi-select UIs pre-check options marked `recommended: true`.
 - `multi_select` — whether that question may return more than one selected option.
 
-Question and option objects are closed: undeclared fields are rejected with a validation violation (a key-style variant such as `multiSelect` names the intended `multi_select`) rather than being silently dropped.
+Question and option objects are closed: invented fields are rejected with a validation violation rather than being silently dropped, while a key-style variant such as `multiSelect` is normalized to the intended `multi_select` before validation, so the multi-select card renders even when the model spells the key in the wrong style.
 
 The tool calls `ctx.userQuestions.ask()` and returns canonical `{ answers: [{ id, selected, custom? }] }`. `selected` contains option labels; `custom` carries a free-form answer, supplementing `selected` for a multi-select question and overriding it for a single-select question. The Native renderer preserves the compact JSON text shape `{ "answers": [{ "id": "...", "selected": ["..."], "custom": "..." }] }`.
 
