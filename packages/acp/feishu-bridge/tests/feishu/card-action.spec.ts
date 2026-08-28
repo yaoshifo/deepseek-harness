@@ -591,7 +591,7 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
 
 describe('onCardAction cmd: dedup (▶ 继续执行 one-shot guard)', () => {
   /** A ▶ 继续执行 click on one stopped card: same messageID across repeats. */
-  function continueEvent(messageID?: string): CardActionTriggerEvent {
+  function continueEvent(messageID: string): CardActionTriggerEvent {
     return cardEvent({ action: 'cmd:继续', messageID, value: { session_key: 'feishu:oc_1:ou_9' } })
   }
 
