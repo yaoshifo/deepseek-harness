@@ -1027,7 +1027,11 @@ export function buildProjectAssembly(
       provider: route.route,
       model: route.model ?? '',
       ...(route.contextWindow !== undefined ? { contextWindow: route.contextWindow } : {}),
-      ...(routeName === activeProvider && project.agent?.reasoningEffort !== undefined
+      // The project-level effort rides every route: a runtime /provider
+      // switch only repoints cfg.activeProvider, so baking it on the
+      // construction-time active route alone lost the effort label (and the
+      // explicit agent-creation effort) after a switch.
+      ...(project.agent?.reasoningEffort !== undefined
         ? { reasoningEffort: project.agent.reasoningEffort }
         : {}),
     }]

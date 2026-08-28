@@ -105,6 +105,35 @@ describe('buildProjectAssembly config wiring', () => {
     expect((adapter as unknown as { cfg: { mcpServers?: readonly string[] } }).cfg.mcpServers).toBeUndefined()
   })
 
+  it('keeps the project reasoning effort on every route across a runtime /provider switch', () => {
+    const cfg = baseConfig()
+    cfg.providers = {
+      'mify-dsh': { route: 'mify-dsh', model: 'zhipuai/glm-5.3' },
+      'mify-flash': { route: 'mify-dsh', model: 'zhipuai/glm-5.3-flash' },
+    }
+    const { adapter } = assemble(cfg, { ...project(), agent: { provider: 'mify-dsh', reasoningEffort: 'max' } })
+    expect(adapter.getModel()).toBe('zhipuai/glm-5.3')
+    expect(adapter.getReasoningEffort()).toBe('max')
+    // The effort once rode only the construction-time active route, so a
+    // runtime /provider switch lost the footer label (and the explicit
+    // agent-creation effort) on the newly active route.
+    expect(adapter.setActiveProvider('mify-flash')).toBe(true)
+    expect(adapter.getModel()).toBe('zhipuai/glm-5.3-flash')
+    expect(adapter.getReasoningEffort()).toBe('max')
+  })
+
+  it('omits the reasoning effort on every route when the project configures none', () => {
+    const cfg = baseConfig()
+    cfg.providers = {
+      'mify-dsh': { route: 'mify-dsh', model: 'zhipuai/glm-5.3' },
+      'mify-flash': { route: 'mify-dsh', model: 'zhipuai/glm-5.3-flash' },
+    }
+    const { adapter } = assemble(cfg)
+    expect(adapter.getReasoningEffort()).toBe('')
+    expect(adapter.setActiveProvider('mify-flash')).toBe(true)
+    expect(adapter.getReasoningEffort()).toBe('')
+  })
+
   it('wires the dir history and seeds it with the initial workdir (Go SetDirHistory)', async () => {
     const root = await mkdtemp(join(tmpdir(), 'fb-assembly-'))
     const workdir = join(root, 'actual-workdir')
