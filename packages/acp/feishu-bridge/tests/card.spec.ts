@@ -8,6 +8,7 @@ import {
   newCard,
   primaryBtn,
   type CardSelectOption,
+  type VChartSpec,
 } from '../src/card.js'
 
 // Ported from cc-connect core/card_test.go (3 Go tests). Go struct literals
@@ -98,5 +99,30 @@ describe('appendIntoLastCollapsible', () => {
     if (secondPanel.kind === 'collapsiblePanel') {
       expect(secondPanel.elements[1]?.kind).toBe('actions')
     }
+  })
+})
+
+describe('card chart', () => {
+  const spec: VChartSpec = {
+    type: 'bar',
+    data: { values: [{ turn: 1, bucket: 'prompt', tokens: 120 }, { turn: 1, bucket: 'completion', tokens: 80 }] },
+    xField: ['turn', 'bucket'],
+    yField: 'tokens',
+    seriesField: 'bucket',
+    stack: true,
+  }
+
+  it('builder appends a chart element carrying the spec by reference', () => {
+    const card = newCard().markdown('Token usage').chart(spec).build()
+    expect(card.elements).toEqual([{ kind: 'markdown', content: 'Token usage' }, { kind: 'chart', spec }])
+    const chart = card.elements[1]
+    expect(chart?.kind === 'chart' && chart.spec === spec).toBe(true)
+  })
+
+  it('chart is not interactive and has no text degradation', () => {
+    const card = newCard().chart(spec).build()
+    expect(card.hasButtons()).toBe(false)
+    expect(card.collectButtons()).toEqual([])
+    expect(card.renderText()).toBe('')
   })
 })

@@ -272,6 +272,10 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
       }
       return m
     }
+    case 'chart':
+      // Opaque payload: unlike buttons/selects there is no session-key
+      // stamping — VChart owns the spec's internals.
+      return { tag: 'chart', chart_spec: elem.spec }
     case 'columnSet': {
       const columns: FeishuCardMap[] = []
       for (const col of elem.columns) {
