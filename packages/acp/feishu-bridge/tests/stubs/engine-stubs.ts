@@ -361,7 +361,7 @@ export function newStubMessage(): Message {
 
 /** A built card as recorded by the card stubs (src/card.ts Card shape). */
 export interface RecordedCard {
-  header?: { title: string; color: string }
+  header?: { title: string; color: string; icon?: string }
   elements: Array<{ kind: string; content?: string }>
 }
 

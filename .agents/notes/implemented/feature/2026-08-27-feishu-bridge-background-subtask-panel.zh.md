@@ -13,7 +13,7 @@ Status: implemented
 独立面板卡——持有自己的 message handle、完全不经过进度卡机器——直接绕开该阻碍：
 
 - **生命周期**：父回合带着未汇报 native 子任务结算时贴卡（turn-end 重算点的 `ensureSubtaskPanel`），按定时器（`features.subtaskLivePanelIntervalMs`，默认 15s）与每次 reported 翻转就地 PATCH，集合清空时终态为 done 卡（PATCH 失败的死卡——被撤回或群被删——静默收尾，绝不空转）。`/done` drain 以 drained 卡关闭；engine `stop()` 清理全部定时器。gather 回合永不贴面板——其 live 卡已在流式子任务活动，且 gather 挂住的回合不会中途结算。
-- **行内容**：每个待汇报子任务——label、工具调用计数、最近活跃时长（「刚刚/42 秒前/3 分钟前」）、超过 `features.subtaskLivePanelStallMs`（默认 120s）静默后的 ⚠️ 停滞标记、首个事件到来前的「尚未产生事件」。「⏹ 停止全部」按钮（`act:/subtask-panel stop`）经 `interruptNativeChild` 逐个中断；中断翻转 reported 后下一次刷新即终态。
+- **行内容**：每个待汇报子任务——label、工具调用计数、上次活跃的绝对时刻与相对时长（「上次活跃 HH:MM:SS（刚刚/N 分钟前）」）、超过 `features.subtaskLivePanelStallMs`（默认 120s）静默后的 ⚠️ 停滞标记、首个事件到来前的「尚未产生事件」。「⏹ 停止全部」按钮（`act:/subtask-panel stop`）经 `interruptNativeChild` 逐个中断；中断翻转 reported 后下一次刷新即终态。header 与行措辞后来重构为工具过程卡的执行中拼装，该决策见[header 重构 note](2026-08-28-feishu-bridge-subtask-panel-header-refresh.zh.md)。
 - **数据源**：adapter 的子任务 activity 记录器——`session/event` 对每个带 `parentSession` 头的会话记录 `childId → {lastEventAt, toolCalls}`，在 ancestor 投影之前且与之无关，因此记录不受父回合 detach 影响。经 `SubagentActivitySource` 结构探测暴露给引擎；面板终态时清掉已结算子任务的条目，Map 不随 daemon 生命周期增长。
 
 ## 已考虑的替代方案

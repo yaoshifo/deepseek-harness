@@ -42,7 +42,7 @@ import {
   markCardStopped,
 } from './progress.js'
 import { previewOverflow as previewOverflowFn } from './markdown.js'
-import { noSpinner, resolveSpinnerAsset, type SpinnerCfg } from './spinner.js'
+import { noSpinner, resolveSpinnerAsset, spinnerKeyForState, type SpinnerCfg } from './spinner.js'
 import { parseProgressStyle } from '../progress.js'
 import { TokenBucketRateLimiter, isTenantAccessTokenInvalid, withTransientRetry } from './retry.js'
 import { errorMessage } from './retry.js'
@@ -1817,6 +1817,15 @@ export class FeishuPlatform implements Platform {
     await this.ensureSpinnerKeys()
     if (this.thinkingImgKey === '' && this.executingImgKey === '') return noSpinner
     return { enabled: true, thinkingKey: this.thinkingImgKey, executingKey: this.executingImgKey }
+  }
+
+  /**
+   * LiveCardIconSource: the header-icon key for live running-state cards
+   * (the executing spinner, with the thinking fallback spinnerKeyForState applies).
+   * @returns Image key, or '' when the platform has no usable spinner.
+   */
+  async liveCardIconKey(): Promise<string> {
+    return spinnerKeyForState(await this.spinnerCfg(), 'running')
   }
 
   /**

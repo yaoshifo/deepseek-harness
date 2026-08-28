@@ -81,16 +81,51 @@ describe('renderSubtaskPanelCard', () => {
     expect(buttons.some(b => b.value === 'act:/subtask-panel stop')).toBe(true)
   })
 
+  it('composes the running header like the tool-progress card: count, live clock, yellow template', () => {
+    const card = renderSubtaskPanelCard(i18n, { pending: [child], reportedCount: 1, startedAt: now - 60_000, phase: 'running' }, now, 120_000)
+    expect(card.header?.title).toMatch(/^Background subtasks · 1 running · \d{2}:\d{2}:\d{2}$/)
+    expect(card.header?.color).toBe('yellow')
+  })
+
+  it('omits the header clock segment when no child has events yet', () => {
+    const waiting = { ...child, toolCalls: 0, lastEventAt: 0 }
+    const card = renderSubtaskPanelCard(i18n, { pending: [waiting], reportedCount: 0, startedAt: now, phase: 'running' }, now, 120_000)
+    expect(card.header?.title).toBe('Background subtasks · 1 running')
+    expect(card.header?.color).toBe('yellow')
+  })
+
+  it('pairs the absolute last-active clock with a relative age on each row', () => {
+    const card = renderSubtaskPanelCard(i18n, { pending: [child], reportedCount: 0, startedAt: now, phase: 'running' }, now, 120_000)
+    expect(cardText(card)).toMatch(/last active \d{2}:\d{2}:\d{2} \(just now\)/)
+  })
+
   it('flags a silent child as stalled past the window', () => {
     const stalled = { ...child, lastEventAt: now - 300_000 }
     const card = renderSubtaskPanelCard(i18n, { pending: [stalled], reportedCount: 0, startedAt: now - 60_000, phase: 'running' }, now, 120_000)
     expect(cardText(card)).toContain('silent for 5 min')
   })
 
+  it('flips the header orange with a stalled suffix and a frozen clock past the stall window', () => {
+    const stalled = { ...child, lastEventAt: now - 300_000 }
+    const card = renderSubtaskPanelCard(i18n, { pending: [stalled], reportedCount: 0, startedAt: now - 60_000, phase: 'running' }, now, 120_000)
+    expect(card.header?.color).toBe('orange')
+    expect(card.header?.title).toMatch(/^Background subtasks · 1 running · \d{2}:\d{2}:\d{2} · ⚠️ 1 stalled$/)
+    expect(cardText(card)).toMatch(/last active \d{2}:\d{2}:\d{2} \(5 min ago\)/)
+  })
+
   it('marks a child without events as waiting', () => {
     const waiting = { ...child, toolCalls: 0, lastEventAt: 0 }
     const card = renderSubtaskPanelCard(i18n, { pending: [waiting], reportedCount: 0, startedAt: now, phase: 'running' }, now, 120_000)
     expect(cardText(card)).toContain('no events yet')
+  })
+
+  it('renders the header spinner icon when supplied; terminal phases ignore it', () => {
+    const running = renderSubtaskPanelCard(i18n, { pending: [child], reportedCount: 0, startedAt: now, phase: 'running' }, now, 120_000, 'img-key-9')
+    expect(running.header?.icon).toBe('img-key-9')
+    const bare = renderSubtaskPanelCard(i18n, { pending: [child], reportedCount: 0, startedAt: now, phase: 'running' }, now, 120_000)
+    expect(bare.header?.icon).toBeUndefined()
+    const done = renderSubtaskPanelCard(i18n, { pending: [], reportedCount: 3, startedAt: now - 60_000, phase: 'done' }, now, 120_000, 'img-key-9')
+    expect(done.header?.icon).toBeUndefined()
   })
 
   it('renders terminal done and drained cards without buttons', () => {
@@ -256,6 +291,36 @@ describe('background panel lifecycle', () => {
     await settle()
     expect(e.subtaskPanels.has(parentKey)).toBe(false)
     expect((p.updateCards[p.updateCards.length - 1] as RecordedCard).header?.title).toContain('drained')
+  })
+
+  it('posts with the platform spinner icon when the platform supplies one', async () => {
+    const p = panelPlatform()
+    ;(p as unknown as { liveCardIconKey(): Promise<string> }).liveCardIconKey = async () => 'img-key-x'
+    const { agent, activity } = activityAgent()
+    const e = panelEngine(p, agent)
+    seedChild(e, 'child-icon', false)
+    activity.set('child-icon', { lastEventAt: Date.now(), toolCalls: 3 })
+
+    e.ensureSubtaskPanel(parentKey)
+    await settle()
+    await settle()
+    expect((p.postedCards[0] as RecordedCard).header?.icon).toBe('img-key-x')
+  })
+
+  it('still posts without an icon when the icon lookup fails', async () => {
+    const p = panelPlatform()
+    ;(p as unknown as { liveCardIconKey(): Promise<string> }).liveCardIconKey = async () => {
+      throw new Error('icon upload failed')
+    }
+    const { agent } = activityAgent()
+    const e = panelEngine(p, agent)
+    seedChild(e, 'child-noicon', false)
+
+    e.ensureSubtaskPanel(parentKey)
+    await settle()
+    await settle()
+    expect(p.postedCards).toHaveLength(1)
+    expect((p.postedCards[0] as RecordedCard).header?.icon).toBeUndefined()
   })
 
   it('stop-all interrupts every pending child and finalizes the panel', async () => {

@@ -6,6 +6,14 @@
  * until the first report (2026-08-27 oc_a7ab0de6: two implementation
  * children ran eight-plus minutes with no signal whether they were alive).
  *
+ * The header mirrors the tool-progress card's 执行中 composition: running
+ * color template, spinner icon, and a wall-clock last-activity timestamp
+ * that advances on every tick. A stalled child freezes that clock at a
+ * glance and flips the template orange past the stall window. Rows pair the
+ * absolute timestamp with a relative age — the absolute half stays readable
+ * on a dead card (PATCH failures) because the reader compares it against
+ * their own clock.
+ *
  * The card holds its own message handle and never touches the progress-card
  * machinery, so the post-detach PATCH channel that deferred the 2026-08-26
  * per-child panel does not apply. Gather turns never settle mid-wait, so
@@ -45,7 +53,25 @@ export interface SubtaskPanelState {
   readonly phase: 'running' | 'done' | 'drained'
 }
 
-/** Last-activity wording for one child row. */
+/** Wall-clock HH:MM:SS of an epoch-ms timestamp (progress-card lastTS format). */
+function wallClock(epochMs: number): string {
+  return new Date(epochMs).toTimeString().slice(0, 8)
+}
+
+/** Relative-age wording for the parenthesized half of a last-active line. */
+function relativeAge(i18n: PanelI18n, ageMs: number): string {
+  const secs = Math.floor(ageMs / 1000)
+  if (secs < 10) return i18n.t(Msg.SubtaskPanelAgoNow)
+  if (secs < 60) return i18n.tf(Msg.SubtaskPanelAgoSecs, secs)
+  return i18n.tf(Msg.SubtaskPanelAgoMins, Math.floor(secs / 60))
+}
+
+/** Whether a child row is past the stall window (0 = no events, never stalled). */
+function isStalled(child: SubtaskPanelChild, now: number, stallMs: number): boolean {
+  return child.lastEventAt !== 0 && now - child.lastEventAt >= stallMs
+}
+
+/** Last-activity wording for one child row: absolute clock plus relative age. */
 function activityLine(
   i18n: PanelI18n,
   child: SubtaskPanelChild,
@@ -54,14 +80,12 @@ function activityLine(
 ): string {
   if (child.lastEventAt === 0) return i18n.t(Msg.SubtaskPanelWaiting)
   const age = now - child.lastEventAt
+  const base = i18n.tf(Msg.SubtaskPanelLastActive, wallClock(child.lastEventAt), relativeAge(i18n, age))
   if (age >= stallMs) {
     const mins = Math.floor(age / 60_000)
-    return i18n.tf(Msg.SubtaskPanelStalled, mins >= 1 ? mins : 1)
+    return `${i18n.tf(Msg.SubtaskPanelStalled, mins >= 1 ? mins : 1)} · ${base}`
   }
-  const secs = Math.floor(age / 1000)
-  if (secs < 10) return i18n.t(Msg.SubtaskPanelAgoNow)
-  if (secs < 60) return i18n.tf(Msg.SubtaskPanelAgoSecs, secs)
-  return i18n.tf(Msg.SubtaskPanelAgoMins, Math.floor(secs / 60))
+  return base
 }
 
 /**
@@ -71,6 +95,7 @@ function activityLine(
  * @param state - Panel rows and phase.
  * @param now - Epoch ms the render happens at.
  * @param stallMs - Silence window after which a child is flagged stalled.
+ * @param iconKey - Header spinner image key ('' renders no icon; terminal phases ignore it).
  * @returns The card for the panel's current state.
  */
 export function renderSubtaskPanelCard(
@@ -78,6 +103,7 @@ export function renderSubtaskPanelCard(
   state: SubtaskPanelState,
   now: number,
   stallMs: number,
+  iconKey: string = '',
 ): Card {
   const elapsedMins = Math.max(0, Math.floor((now - state.startedAt) / 60_000))
   const card = newCard()
@@ -93,8 +119,17 @@ export function renderSubtaskPanelCard(
       .markdown(i18n.t(Msg.SubtaskPanelDrainedNote))
       .build()
   }
+  // Header composes like the tool-progress 执行中 title: base state, live
+  // timestamp, then counts. The timestamp is the newest child activity, so
+  // it keeps advancing while any child works and freezes when all stall.
+  const stalledCount = state.pending.filter(c => isStalled(c, now, stallMs)).length
+  let title = i18n.tf(Msg.SubtaskPanelTitle, state.pending.length)
+  const latest = state.pending.reduce((m, c) => Math.max(m, c.lastEventAt), 0)
+  if (latest > 0) title += ` · ${wallClock(latest)}`
+  if (stalledCount > 0) title += ` · ${i18n.tf(Msg.SubtaskPanelStalledSuffix, stalledCount)}`
   card
-    .title(i18n.tf(Msg.SubtaskPanelTitle, state.pending.length), 'blue')
+    .title(title, stalledCount > 0 ? 'orange' : 'yellow')
+    .icon(iconKey)
     .markdownf('%s · %s', i18n.tf(Msg.SubtaskPanelSummary, state.reportedCount, state.pending.length), i18n.tf(Msg.SubtaskPanelElapsed, elapsedMins))
     .divider()
   for (const child of state.pending) {
@@ -103,7 +138,7 @@ export function renderSubtaskPanelCard(
   }
   card
     .divider()
-    .markdown(i18n.t(Msg.SubtaskPanelFooter))
+    .note(i18n.t(Msg.SubtaskPanelFooter))
     .buttons(dangerBtn(i18n.t(Msg.SubtaskPanelStopAll), 'act:/subtask-panel stop'))
   return card.build()
 }

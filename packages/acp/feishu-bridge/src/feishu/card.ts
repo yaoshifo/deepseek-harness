@@ -374,11 +374,15 @@ export function renderCardMap(card: Card | undefined, sessionKey: string): Feish
 
   if (card.header !== undefined && card.header.title !== '') {
     const color = card.header.color === '' ? 'blue' : card.header.color
-    result.header = {
+    const header: FeishuCardMap = {
       title: plainText(card.header.title),
       template: color,
       padding: cardHeaderPadding,
     }
+    if (card.header.icon !== undefined && card.header.icon !== '') {
+      header.icon = { tag: 'custom_icon', img_key: card.header.icon }
+    }
+    result.header = header
   }
   const transformed = renderDeleteModeCheckerCard(card, result)
   if (transformed !== undefined) return transformed

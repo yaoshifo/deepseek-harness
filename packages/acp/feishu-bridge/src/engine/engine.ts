@@ -52,6 +52,7 @@ import {
   asGroupRenamer,
   asGroupSpawner,
   asGroupSpawnerEx,
+  asLiveCardIconSource,
   asMessagePinAppender,
   asMessageReactionAdder,
   asProviderSwitcher,
@@ -845,11 +846,13 @@ export interface CommandRegistration {
  */
 export type CardActionHandler = (sessionKey: string, cmd: string, args: string) => Card | undefined
 
-/** Live state of one background-subtask panel (card handle, refresh timer, post time). */
+/** Live state of one background-subtask panel (card handle, refresh timer, post time, header icon). */
 interface SubtaskPanelState {
   handle: unknown
   timer: ReturnType<typeof setInterval>
   startedAt: number
+  /** Header spinner image key resolved at post time ('' when the platform has none). */
+  iconKey: string
 }
 
 /**
@@ -6305,15 +6308,26 @@ export class Engine {
     this.subtaskPanelPosting.add(parentKey)
     void r.reconstructReplyCtx(parentKey).then(
       async (parentRctx) => {
+        // Header spinner resolved once per panel; a failure renders no icon
+        // and never blocks the post.
+        let iconKey = ''
+        const iconSource = asLiveCardIconSource(p)
+        if (iconSource !== undefined) {
+          try {
+            iconKey = await iconSource.liveCardIconKey()
+          } catch (error) {
+            console.warn(`subtask: background panel icon lookup failed (${parentKey}): ${String(error)}`)
+          }
+        }
         const card = renderSubtaskPanelCard(
           this.i18n, { pending: rows, reportedCount: this.reportedNativeChildrenOf(parentKey), startedAt, phase: 'running' },
-          startedAt, this.subtaskPanelStallMs,
+          startedAt, this.subtaskPanelStallMs, iconKey,
         )
         try {
           const handle = await cu.sendCardWithHandle(parentRctx, card)
           if (this.subtaskPanels.has(parentKey)) return // a racing post won
           const timer = setInterval(() => { this.refreshSubtaskPanel(parentKey) }, this.subtaskPanelIntervalMs)
-          this.subtaskPanels.set(parentKey, { handle, timer, startedAt })
+          this.subtaskPanels.set(parentKey, { handle, timer, startedAt, iconKey })
           console.info(`subtask: background panel posted (${parentKey}: ${rows.length} child/children)`)
         } catch (error) {
           console.warn(`subtask: background panel post failed (${parentKey}): ${String(error)}`)
@@ -6338,7 +6352,7 @@ export class Engine {
       rows.length === 0
         ? { pending: [], reportedCount: this.reportedNativeChildrenOf(parentKey), startedAt: panel.startedAt, phase: 'done' }
         : { pending: rows, reportedCount: this.reportedNativeChildrenOf(parentKey), startedAt: panel.startedAt, phase: 'running' },
-      now, this.subtaskPanelStallMs,
+      now, this.subtaskPanelStallMs, rows.length === 0 ? '' : panel.iconKey,
     )
     void cu?.updateCardWithHandle(panel.handle, card).then(() => {
       if (rows.length === 0) {

@@ -691,6 +691,14 @@ export interface CardSenderWithUpdate {
 }
 
 /**
+ * Optional: platform supplies the header-icon image key for live running-state
+ * cards (the executing spinner). Returns '' when the platform has none.
+ */
+export interface LiveCardIconSource {
+  liveCardIconKey(): Promise<string>
+}
+
+/**
  * Optional: platform can PATCH the card a card-action callback arrived on, so
  * an act: button press replaces its own prompt card in place (Go returns the
  * new card in the callback response; the async TS dispatch PATCHes the
@@ -839,6 +847,16 @@ export function supportsCards(p: Platform): boolean {
  */
 export function asCardSenderWithUpdate(p: Platform): CardSenderWithUpdate | undefined {
   return withMethod<CardSenderWithUpdate>(p, 'sendCardWithHandle')
+}
+
+/**
+ * Structural check for the {@link LiveCardIconSource} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asLiveCardIconSource(p: Platform): LiveCardIconSource | undefined {
+  return withMethod<LiveCardIconSource>(p, 'liveCardIconKey')
 }
 
 /**

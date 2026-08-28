@@ -18,6 +18,8 @@ import { sprintf } from './sprintf.js'
 export interface CardHeader {
   title: string
   color: string
+  /** Live-state header icon (uploaded image key); empty string or omitted renders none. */
+  icon?: string
 }
 
 /** Clickable inline button (used by platform send-with-buttons APIs). */
@@ -443,6 +445,18 @@ export class CardBuilder {
    */
   title(title: string, color: string): this {
     this.card.header = { title, color }
+    return this
+  }
+
+  /**
+   * Attach a live-state icon to the header (uploaded image key).
+   * @param icon - Image key of the header icon; empty string removes it.
+   * @returns This builder, for chaining.
+   */
+  icon(icon: string): this {
+    if (this.card.header === undefined) return this
+    if (icon === '') delete this.card.header.icon
+    else this.card.header.icon = icon
     return this
   }
 
