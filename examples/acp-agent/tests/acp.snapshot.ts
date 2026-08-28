@@ -14,7 +14,7 @@ import {
   type Scenario,
   type SnapshotSuiteOptions,
 } from '@deepseek-ai/dsh-acp-snapshot'
-import { claudeProjectSlug } from '@deepseek-ai/dsh-tool-claude-memory'
+import { claudeProjectSlug } from '@deepseek-ai/dsh-memory'
 import { resolvePwshPath } from '@deepseek-ai/dsh-pwsh-local'
 import { parseSessionLog } from '@deepseek-ai/dsh-llm-replay'
 import { OFFLOADED_IMAGE_TEXT } from '@deepseek-ai/dsh-llm'
@@ -50,7 +50,7 @@ const CODE_MODE_IMAGE_CONFIG = fileURLToPath(new URL('../code-mode-image.cordis.
 const CODE_MODE_WORKSPACE_CONTEXT_CONFIG = fileURLToPath(new URL('../code-mode-workspace-context.cordis.yml', import.meta.url))
 const BOTH_MODE_CONFIG = fileURLToPath(new URL('../both-mode.cordis.yml', import.meta.url))
 const WORKSPACE_CONTEXT_CONFIG = fileURLToPath(new URL('../agent-instructions.cordis.yml', import.meta.url))
-const CLAUDE_MEMORY_CONFIG = fileURLToPath(new URL('../claude-memory.cordis.yml', import.meta.url))
+const DSH_MEMORY_CONFIG = fileURLToPath(new URL('../dsh-memory.cordis.yml', import.meta.url))
 const ADVANCED_CONFIG = fileURLToPath(new URL('../advanced.cordis.yml', import.meta.url))
 const FS_CONFIG = fileURLToPath(new URL('../fs.cordis.yml', import.meta.url))
 const SESSION_QUERY_CONFIG = fileURLToPath(new URL('../session-query.cordis.yml', import.meta.url))
@@ -95,7 +95,7 @@ const PACKED_CHUNKS_SOURCE = 'hook-cc-pretool-deny'
 // injection recalls real files and tool writes land inside the workspace. The
 // global scope seeds <cwd>/.claude/memory so its index is recalled first and
 // scope=global tool writes land there.
-async function prepareClaudeMemoryWorkspace(cwd: string): Promise<void> {
+async function prepareDshMemoryWorkspace(cwd: string): Promise<void> {
   const memoryDir = join(cwd, '.claude', 'projects', claudeProjectSlug(cwd), 'memory')
   const globalDir = join(cwd, '.claude', 'memory')
   await mkdir(memoryDir, { recursive: true })
@@ -492,14 +492,14 @@ const SCENARIOS: Scenario[] = [
   // memory_read / memory_write round-trip the same directory Claude Code
   // owns, with harness-backfilled provenance frontmatter on the write.
   {
-    name: 'claude-memory',
+    name: 'dsh-memory',
     hasModelTurn: true,
     recorded: false,
     overridden: true,
     pinsHeader: true,
-    headerClass: 'claude-memory',
-    configPath: CLAUDE_MEMORY_CONFIG,
-    prepareWorkspace: prepareClaudeMemoryWorkspace,
+    headerClass: 'dsh-memory',
+    configPath: DSH_MEMORY_CONFIG,
+    prepareWorkspace: prepareDshMemoryWorkspace,
   },
   { name: 'cancel', hasModelTurn: true, recorded: false, overridden: true },
   // Cancelling a live bash call relies on POSIX process-group termination;

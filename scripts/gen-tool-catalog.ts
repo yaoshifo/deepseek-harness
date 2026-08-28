@@ -63,7 +63,7 @@ import * as ToolTasks from '@deepseek-ai/dsh-tool-jobs'
 import type TeamService from '@deepseek-ai/dsh-experimental-agent-team'
 import * as ToolTeam from '@deepseek-ai/dsh-experimental-tool-agent-team'
 import * as ToolTodo from '@deepseek-ai/dsh-tool-todo'
-import * as ToolClaudeMemory from '@deepseek-ai/dsh-tool-claude-memory'
+import * as DshMemory from '@deepseek-ai/dsh-memory'
 import * as ToolSubagent from '@deepseek-ai/dsh-tool-subagent'
 import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
 import VmWorkflowEngine from '@deepseek-ai/dsh-workflow-worker-thread'
@@ -577,14 +577,14 @@ const TOOL_PACKAGES: ToolPackage[] = [
       'todo_write is session-owned state; UIs render the latest todo/write event as a checklist. `allowParallelInProgress` is required with no default, so the catalog states its choice: `true`, whose description invites several `in_progress` items. A deployment choosing `false` receives the same tool with a description asking for exactly one active task.',
   },
   {
-    pkg: '@deepseek-ai/dsh-tool-claude-memory',
-    dir: 'tool-claude-memory',
-    source: 'packages/memory/tool-claude-memory/src/index.ts',
+    pkg: '@deepseek-ai/dsh-memory',
+    dir: 'memory',
+    source: 'packages/memory/memory/src/index.ts',
     requires: ['ctx.tools', 'ctx.systemPrompt', 'ctx.agents', 'host ~/.claude directory'],
-    writes: ['tool/call', 'user/message (sourced claude-memory index injection)', 'tool/result'],
+    writes: ['tool/call', 'user/message (sourced dsh-memory index injection)', 'tool/result'],
     async mount(ctx) {
       await ctx.plugin(AgentRegistry)
-      await ctx.plugin(ToolClaudeMemory, { claudeHome: join(tmpdir(), 'dsh-tool-catalog-claude-memory'), maxIndexBytes: 25_600 })
+      await ctx.plugin(DshMemory, { claudeHome: join(tmpdir(), 'dsh-tool-catalog-dsh-memory'), maxIndexBytes: 25_600 })
     },
     note:
       'The memory tools share Claude Code\'s own per-project memory directory (`~/.claude/projects/<slug>/memory/`) through host `node:fs`, never the swappable `ctx.fs` provider. `maxIndexBytes` is required with no default, so the catalog states its choice: 25,600, Claude Code\'s session-start read budget. The plugin also contributes a memory-strategy system-prompt section and a one-time session-start MEMORY.md index injection; the model-facing strategy text and tool descriptions live in the package README.',

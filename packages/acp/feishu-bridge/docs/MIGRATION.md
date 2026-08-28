@@ -22,7 +22,7 @@
 
 ```
 dsh --profile feishu-bridge（长驻进程，systemd 监督、开机自启）
-├── dsh-base + 现有 profile 行（lsp/claude-memory/ask-user/skill-filesystem…复用不动）
+├── dsh-base + 现有 profile 行（lsp/dsh-memory/ask-user/skill-filesystem…复用不动）
 └── @deepseek-ai/dsh-feishu-bridge（新插件，packages/acp/feishu-bridge/，本计划全部工作）
     ├── engine/     ← Go core/ 保形移植（事件状态机、会话、命令、流式、subtask、chatroom、monitor、cron、i18n、cards、markdown…）
     ├── feishu/     ← Go platform/feishu/ 移植（WS、API、卡片、进度卡、群管理、标签、头像、媒体、轮询）

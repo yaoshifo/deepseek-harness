@@ -124,7 +124,7 @@ seam 正是替换一个提供方就能改变整个产品的原因。文件系统
 | 限制所启动的进程 | 使用 `ctx.sandbox` 后端；消费方在启动进程前包装 argv |
 | 拦截请求、工具或轮次 | 使用相应的 `agent/*` 或 `tools/*` 事件；`agent/turn-stopping` 会停止轮次 |
 | 添加模型可见上下文 | 调用 `agent.inject()`；它会落到下一次获准的请求中 |
-| 共享 Claude Code 的持久记忆 | 挂载 `dsh-tool-claude-memory`；直接复用 `~/.claude/projects/<slug>/memory/` |
+| 共享 Claude Code 的持久记忆 | 挂载 `dsh-memory`；直接复用 `~/.claude/projects/<slug>/memory/` |
 | 添加 UI 或编辑器集成 | 驱动 `ctx.agents` 并从 `session/event` 渲染 |
 | 添加 Web Client Chat 节点 | 注册 `ConversationNodeDefinition` + keyed renderer |
 | 添加持久会话状态 | 扩展 `SessionEventMap`；从日志渲染和回放 |

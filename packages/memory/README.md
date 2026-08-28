@@ -6,4 +6,4 @@ Plugins that share externally owned memory layouts with dsh sessions.
 
 | Package | Role | ctx key |
 |---|---|---|
-| [`tool-claude-memory/`](tool-claude-memory/README.md) | Claude Code `~/.claude/projects/<slug>/memory/` sharing: strategy section, session-start index injection, memory tools | — |
+| [`memory/`](memory/README.md) | Claude Code `~/.claude/projects/<slug>/memory/` sharing: strategy section, session-start index injection, memory tools | — |

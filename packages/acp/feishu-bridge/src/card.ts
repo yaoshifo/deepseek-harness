@@ -133,6 +133,28 @@ export interface CardImage {
   scaleType?: string
 }
 
+/**
+ * Opaque VChart spec of a chart element: rendered verbatim into the Feishu
+ * card's `chart_spec` and never interpreted by the bridge. Field names and
+ * semantics are owned by VChart (`type`, `data`, `xField`, `yField`, …).
+ * Feishu validates the spec server-side at send time (code 230099 rejects
+ * an invalid one), so callers own spec correctness — e.g. `color` needs a
+ * complete `{ type: 'ordinal', domain, range }` scale.
+ */
+export type VChartSpec = Record<string, unknown>
+
+/**
+ * Renders a Feishu-native chart (schema 2.0 "chart" tag, VChart engine);
+ * bridge-native, no cc-connect counterpart. Optional Feishu display fields
+ * (`aspect_ratio`, `color_theme`, `preview`) stay unmodeled — Feishu applies
+ * its defaults (PC 16:9, mobile 1:1, preview on).
+ */
+export interface CardChart {
+  kind: 'chart'
+  /** Opaque VChart spec, passed through to Feishu untouched. */
+  spec: VChartSpec
+}
+
 /** Renders a collapsible section (Feishu collapsible_panel). */
 export interface CardCollapsiblePanel {
   kind: 'collapsiblePanel'
@@ -182,6 +204,7 @@ export type CardElement =
   | CardSelect
   | CardCheckOptions
   | CardImage
+  | CardChart
   | CardCollapsiblePanel
   | CardForm
   | CardInput
@@ -344,7 +367,8 @@ export class Card {
           }
           break
         default:
-          // collapsiblePanel / columnSet have no text degradation (mirrors Go).
+          // collapsiblePanel / columnSet have no text degradation (mirrors
+          // Go); chart likewise — platforms without the component drop it.
           break
       }
     }
@@ -647,6 +671,16 @@ export class CardBuilder {
     if (imageKey !== '') {
       this.card.elements.push({ kind: 'image', imageKey, alt, scaleType: 'fit_horizontal' })
     }
+    return this
+  }
+
+  /**
+   * Append a Feishu-native chart element (schema 2.0 "chart" tag, VChart engine).
+   * @param spec - Opaque VChart spec, passed through to Feishu verbatim.
+   * @returns This builder, for chaining.
+   */
+  chart(spec: VChartSpec): this {
+    this.card.elements.push({ kind: 'chart', spec })
     return this
   }
 

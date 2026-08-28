@@ -14,6 +14,7 @@ import {
   primaryBtn,
   type CardButton,
   type CardColumnSet,
+  type VChartSpec,
 } from '../../src/card.js'
 import {
   deleteModeCheckerName,
@@ -237,6 +238,24 @@ describe('renderCardMap', () => {
     const got = decodeRenderedCard(newCard().title('t', 'blue').markdown('hello').build())
     expect(jStr(jObj(got.body).vertical_spacing)).toBe('0px')
   })
+
+  it('chart projects the opaque VChart spec into the body untouched', () => {
+    const spec: VChartSpec = {
+      type: 'bar',
+      data: { values: [{ turn: 1, bucket: 'prompt', tokens: 120 }, { turn: 1, bucket: 'completion', tokens: 80 }] },
+      xField: ['turn', 'bucket'],
+      yField: 'tokens',
+      seriesField: 'bucket',
+      stack: true,
+    }
+    const got = decodeRenderedCard(newCard().title('Usage', 'blue').chart(spec).build())
+
+    const elements = getBodyElements(got)
+    expect(elements.length).toBe(1)
+    const chart = jObj(elements[0])
+    expect(jStr(chart.tag)).toBe('chart')
+    expect(jObj(chart.chart_spec)).toEqual(spec)
+  })
 })
 
 describe('renderElement sanitize', () => {
@@ -309,6 +328,12 @@ describe('renderElement sanitize', () => {
     expect(jStr(got?.scale_type)).toBe('crop_center')
     expect(jStr(got?.size)).toBe('stretch')
     expect(got).not.toHaveProperty('margin')
+  })
+
+  it('chart passes the VChart spec through as chart_spec regardless of session key', () => {
+    const spec: VChartSpec = { type: 'line', data: { values: [{ t: 0, v: 1 }] }, xField: 't', yField: 'v' }
+    const got = renderElement({ kind: 'chart', spec }, 'sess-1')
+    expect(got).toEqual({ tag: 'chart', chart_spec: spec })
   })
 })
 

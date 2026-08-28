@@ -105,6 +105,8 @@ describe('injectStoppedButtons', () => {
 describe('injectReplyButtons', () => {
   const cases: Array<[name: string, template: string, sessionKey: string, wantBoth: boolean]> = [
     ['completed green injects both buttons', 'green', 'feishu:oc_c', true],
+    ['waiting blue injects both buttons', 'blue', 'feishu:oc_c', true],
+    ['running yellow injects nothing', 'yellow', 'feishu:oc_c', false],
     ['thinking violet injects nothing', 'violet', 'feishu:oc_c', false],
     ['failed red injects nothing', 'red', 'feishu:oc_c', false],
     ['empty sessionKey injects nothing', 'green', '', false],
