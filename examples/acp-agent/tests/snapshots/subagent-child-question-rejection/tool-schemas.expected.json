@@ -11,7 +11,7 @@
             "description": "Questions to ask the user before continuing.",
             "items": {
               "type": "object",
-              "additionalProperties": true,
+              "additionalProperties": false,
               "properties": {
                 "id": {
                   "type": "string",
@@ -30,7 +30,7 @@
                   "description": "Optional choices to show the user. Order options by recommendation, most recommended first, and set recommended: true on the options you recommend.",
                   "items": {
                     "type": "object",
-                    "additionalProperties": true,
+                    "additionalProperties": false,
                     "properties": {
                       "label": {
                         "type": "string",

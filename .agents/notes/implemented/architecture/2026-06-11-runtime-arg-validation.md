@@ -12,7 +12,7 @@ English | [中文](2026-06-11-runtime-arg-validation.zh.md)
 
 `validateArgs(spec, args): string[]` compiles a `ParameterSchemaSpec` and delegates to the shared `validateJsonSchemaValue()` walker, returning human-readable violations for a well-formed declaration. `defineTool` snapshots the compiled parameter schema at definition time and runs that validation before the typed body; violations throw `ToolArgsError` (`INVALID_ARGS`), which the registry returns as an error result the model can correct.
 
-The validator and compiler therefore share exact semantics: the implicit parameter root is an open object; required keys come only from `required: true`; defaults remain annotations; explicit nested objects honor their declared openness; arrays recurse through `items`; scalar literal constraints are type-correct; and `oneOf` accepts exactly one matching branch. Raw-registered tools own their input validation.
+The validator and compiler therefore share exact semantics: the implicit parameter root is an open object; required keys come only from `required: true`; defaults remain annotations; explicit nested objects honor their declared openness, except that an undeclared key naming a declared property in the opposite key style is always a violation with a did-you-mean hint ([style-variant rejection](../bug-fix/2026-08-28-undeclared-key-style-variants.md)); arrays recurse through `items`; scalar literal constraints are type-correct; and `oneOf` accepts exactly one matching branch. Raw-registered tools own their input validation.
 
 ## Consequences
 

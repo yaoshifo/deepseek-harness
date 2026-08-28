@@ -344,6 +344,28 @@ describe('validateJsonSchemaValue', () => {
     expect(validateJsonSchemaValue(open, 'x')).toEqual(['"value" must be an object'])
   })
 
+  it('rejects keys naming declared properties in the opposite style, on open and closed objects', () => {
+    const open = asserted({
+      type: 'object',
+      properties: { multi_select: { type: 'boolean' }, filePath: { type: 'string' } },
+      additionalProperties: true,
+    })
+    expect(validateJsonSchemaValue(open, { multiSelect: true }))
+      .toEqual(['"value.multiSelect" is not a declared property (did you mean "multi_select"?)'])
+    expect(validateJsonSchemaValue(open, { file_path: 'a' }))
+      .toEqual(['"value.file_path" is not a declared property (did you mean "filePath"?)'])
+    expect(validateJsonSchemaValue(open, { multi_select: true, filePath: 'a', extra: [1] })).toEqual([])
+    const closed = asserted({
+      type: 'object',
+      properties: { multi_select: { type: 'boolean' } },
+      additionalProperties: false,
+    })
+    expect(validateJsonSchemaValue(closed, { multiSelect: true }))
+      .toEqual(['"value.multiSelect" is not a declared property (did you mean "multi_select"?)'])
+    expect(validateJsonSchemaValue(closed, { extra: true }))
+      .toEqual(['"value.extra" is not a declared property (additionalProperties: false)'])
+  })
+
   it('treats present undefined as missing when required, then rejects other lossy objects', () => {
     const required = asserted({ type: 'object', properties: { x: {} }, required: ['x'] })
     expect(validateJsonSchemaValue(required, { x: undefined }))
