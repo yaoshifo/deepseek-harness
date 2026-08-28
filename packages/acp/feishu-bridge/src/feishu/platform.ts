@@ -503,6 +503,9 @@ export class FeishuPlatform implements Platform {
   private readonly opts: Required<Pick<FeishuPlatformOptions, 'appID' | 'appSecret'>>
   private readonly o: FeishuPlatformOptions
   private readonly dedup = new MessageDedup()
+  /** One-shot cmd: button (▶ 继续执行) dedup keyed messageID:action; a separate
+   *  instance keeps card-callback ids out of the inbound-message dedup's key space. */
+  private readonly cardActionDedup = new MessageDedup()
   private handler: MessageHandler | undefined
   private api: FeishuApiClient | undefined
   private wsStarted = false
@@ -1115,6 +1118,13 @@ export class FeishuPlatform implements Platform {
           }
         }
       }
+      // ▶ 继续执行 is one-shot: a double-click or a Feishu callback retry
+      // would forward 「继续」 twice — the second queues behind the running
+      // turn and burns a takeover turn. The 60s TTL still lets a deliberate
+      // later re-click through; repeatable cmd: buttons (hints, predictions)
+      // bypass this gate. The action value IS the forwarded text, so the
+      // literal pairs with injectStoppedButtons in progress.ts.
+      if (!hintButton && cmdText === '继续' && this.cardActionDedup.isDuplicate(`${messageID}:${cmdText}`)) return
       if (hintButton) {
         if (hintClick !== undefined && this.hintClickHandler !== undefined) {
           this.hintClickHandler(hintClick.hintText, hintClick.category)

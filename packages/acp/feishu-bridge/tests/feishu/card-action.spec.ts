@@ -9,7 +9,7 @@
  * share_session_in_channel keys on the chat alone.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { FeishuPlatform, type CardActionTriggerEvent, type FeishuApiClient } from '../../src/feishu/platform.js'
 import { newCard } from '../../src/card.js'
 import { hintButtonName } from '../../src/engine/hints-panel.js'
@@ -21,13 +21,14 @@ function cardEvent(overrides: {
   action?: string
   chatID?: string
   userID?: string
+  messageID?: string
   value?: Record<string, string>
 }): CardActionTriggerEvent {
   counter += 1
   return {
     action: { value: { action: overrides.action ?? '', ...(overrides.value ?? {}) } },
     operator: { open_id: overrides.userID ?? 'ou_9' },
-    context: { open_chat_id: overrides.chatID ?? 'oc_1', open_message_id: `om_${counter}` },
+    context: { open_chat_id: overrides.chatID ?? 'oc_1', open_message_id: overrides.messageID ?? `om_${counter}` },
   }
 }
 
@@ -585,5 +586,79 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     expect(p.onCardAction(event)).toBeUndefined()
     await new Promise((resolve) => { setTimeout(resolve, 10) })
     expect(messages).toHaveLength(1)
+  })
+})
+
+describe('onCardAction cmd: dedup (▶ 继续执行 one-shot guard)', () => {
+  /** A ▶ 继续执行 click on one stopped card: same messageID across repeats. */
+  function continueEvent(messageID?: string): CardActionTriggerEvent {
+    return cardEvent({ action: 'cmd:继续', messageID, value: { session_key: 'feishu:oc_1:ou_9' } })
+  }
+
+  it('forwards the first 「继续」 and drops a repeat on the same card', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages: Message[] = []
+    await p.start((_platform, msg) => { messages.push(msg) })
+    const event = continueEvent('om_resume_1')
+    p.onCardAction(event)
+    expect(p.onCardAction(event)).toBeUndefined()
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('继续')
+  })
+
+  it('forwards 「继续」 from a different stopped card', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages: Message[] = []
+    await p.start((_platform, msg) => { messages.push(msg) })
+    p.onCardAction(continueEvent('om_resume_1'))
+    p.onCardAction(continueEvent('om_resume_2'))
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(messages).toHaveLength(2)
+  })
+
+  it('keeps repeatable cmd: buttons outside the dedup', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages: Message[] = []
+    await p.start((_platform, msg) => { messages.push(msg) })
+    const event = cardEvent({ action: 'cmd:/board', messageID: 'om_board' })
+    p.onCardAction(event)
+    p.onCardAction(event)
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(messages).toHaveLength(2)
+  })
+
+  it('lets a hint button named 「继续」 repeat', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages: Message[] = []
+    await p.start((_platform, msg) => { messages.push(msg) })
+    const event: CardActionTriggerEvent = {
+      action: { name: hintButtonName('c', '继续') },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_hint_resume' },
+    }
+    p.onCardAction(event)
+    p.onCardAction(event)
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(messages).toHaveLength(2)
+  })
+
+  it('lets the same card through again after the 60s dedup window', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages: Message[] = []
+    await p.start((_platform, msg) => { messages.push(msg) })
+    vi.useFakeTimers()
+    try {
+      const event = continueEvent('om_resume_1')
+      p.onCardAction(event)
+      await vi.advanceTimersByTimeAsync(10)
+      expect(messages).toHaveLength(1)
+      vi.setSystemTime(Date.now() + 61_000)
+      p.onCardAction(event)
+      await vi.advanceTimersByTimeAsync(10)
+      expect(messages).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
