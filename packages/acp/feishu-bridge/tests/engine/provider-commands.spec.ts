@@ -1,10 +1,11 @@
 /**
  * Ported from cc-connect core/engine_provider.go + the provider sections of
  * engine_test.go (#9 全局 Providers / #12 切换): the /provider command family
- * (list/switch/current/clear) and the provider_shortcuts quick commands
- * (/strong → provider + new session). The add/remove/preset flows are not
- * ported — a provider is a named llm route in the profile config, which the
- * runtime cannot create.
+ * (list/switch/current/clear), the provider card and its act:/provider card
+ * actions (Go renderProviderCard + executeCardAction "/provider"), and the
+ * provider_shortcuts quick commands (/strong → provider + new session). The
+ * add/remove/preset flows are not ported — a provider is a named llm route
+ * in the profile config, which the runtime cannot create.
  *
  * @module dsh-feishu-bridge/tests-provider-commands
  */
@@ -15,10 +16,16 @@ import { registerProviderCommands } from '../../src/engine/provider-commands.js'
 import { registerSessionCommands } from '../../src/engine/commands.js'
 import type { Agent, Message, ProviderSwitcher } from '../../src/core/types.js'
 import type { UsageProvider } from '../../src/engine/usage.js'
-import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
+import { createStubAgent, createStubCardPlatform, createStubPlatform, type RecordedCard, type StubCardPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
+import { Msg } from '../../src/i18n/index.js'
 
 /** Go stubProviderAgent: a ProviderSwitcher over a static route table. */
-function providerAgent(providers: string[], active: string, windows: Record<string, number> = {}): Agent & ProviderSwitcher & {
+function providerAgent(
+  providers: string[],
+  active: string,
+  windows: Record<string, number> = {},
+  models: Record<string, string> = {},
+): Agent & ProviderSwitcher & {
   calls: string[]
   getActive(): string
 } {
@@ -36,7 +43,10 @@ function providerAgent(providers: string[], active: string, windows: Record<stri
       return true
     },
     getActiveProvider: () => (current !== '' ? { name: current, ...(windows[current] !== undefined ? { contextWindow: windows[current] } : {}) } : undefined),
-    listProviders: () => providers.map(name => ({ name })),
+    listProviders: () => providers.map(name => ({
+      name,
+      ...(models[name] !== undefined ? { model: models[name] } : {}),
+    })),
   }
 }
 
@@ -266,6 +276,155 @@ describe('provider shortcuts', () => {
     expect(e.dispatchCommand(p, msg(), '/strongs')).toBe(false)
     expect(p.getSent().length).toBe(0)
     dispose()
+  })
+})
+
+// ── provider card (Go renderProviderCard + executeCardAction "/provider") ─
+
+/** A card-capable stub platform that records in-place card refreshes. */
+interface RefreshingPlatform extends StubCardPlatform {
+  refreshed: Array<{ sessionKey: string; card: unknown }>
+  refreshCard(sessionKey: string, card: unknown): Promise<void>
+}
+
+function newRefreshingCardPlatform(): RefreshingPlatform {
+  const base = createStubCardPlatform('test')
+  const p: RefreshingPlatform = {
+    ...base,
+    refreshed: [],
+    refreshCard: async (sessionKey: string, card: unknown) => {
+      p.refreshed.push({ sessionKey, card })
+    },
+  }
+  return p
+}
+
+/** The markdown element contents of a recorded card, in order. */
+function cardMarkdowns(card: unknown): string[] {
+  return (card as RecordedCard).elements
+    .filter(el => el.kind === 'markdown')
+    .map(el => el.content ?? '')
+}
+
+/** One provider row of a recorded card: left text plus the button fields. */
+interface CardRow { text: string; btnText: string; btnType: string; btnValue: string }
+
+function cardRows(card: unknown): CardRow[] {
+  return (card as { elements: Array<Record<string, string>> }).elements
+    .filter(el => el.kind === 'listItem') as unknown as CardRow[]
+}
+
+async function waitFor(cond: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    if (cond()) return
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+  }
+  throw new Error(`timeout waiting for ${what}`)
+}
+
+describe('provider card (Go renderProviderCard + card actions)', () => {
+  it('bare /provider replies the provider card on card platforms', async () => {
+    const agent = providerAgent(['openai', 'azure'], 'openai', {}, { azure: 'gpt-5.2' })
+    const p = createStubCardPlatform('test')
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerProviderCommands(e)
+    try {
+      e.dispatchCommand(p, msg(), '/provider')
+      await new Promise(resolve => setTimeout(resolve, 0))
+
+      expect(p.sentCards).toHaveLength(1)
+      const card = p.sentCards[0] as RecordedCard
+      expect(card.header?.title).toBe(e.i18n.t(Msg.ProviderCardTitle))
+      expect(card.header?.color).toBe('indigo')
+      expect(cardMarkdowns(card).join('\n')).toContain(e.i18n.tf(Msg.ProviderCardCurrent, 'openai'))
+      const rows = cardRows(card)
+      expect(rows).toHaveLength(2)
+      expect(rows[0]).toMatchObject({ text: '▶ **openai**', btnValue: 'act:/provider openai', btnType: 'primary' })
+      expect(rows[1]).toMatchObject({ text: '◻ **azure**  `gpt-5.2`', btnValue: 'act:/provider azure', btnType: 'default' })
+      // The card replaces the plain-text listing entirely.
+      expect(p.getSent()).toEqual([])
+    } finally {
+      dispose()
+    }
+  })
+
+  it('a pressed row switches the route and refreshes the pressed card in place', async () => {
+    const agent = providerAgent(['openai', 'azure'], 'openai')
+    const p = newRefreshingCardPlatform()
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerProviderCommands(e)
+    try {
+      const saved: string[] = []
+      e.setProviderSaveFunc((name) => { saved.push(name) })
+      const s = e.sessions.getOrCreateActive('test:user1')
+      s.setAgentSessionID('agent-sid-1', 'dsh')
+
+      e.receiveMessage(p, { ...msg(), content: 'act:/provider azure', isCardAction: true })
+      await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+      expect(agent.getActive()).toBe('azure')
+      expect(s.getAgentSessionID()).toBe('')
+      expect(saved).toEqual(['azure'])
+      const card = p.refreshed[0]!.card
+      expect(cardMarkdowns(card).join('\n')).toContain(e.i18n.tf(Msg.ProviderSwitched, 'azure'))
+      const rows = cardRows(card)
+      expect(rows[0]).toMatchObject({ text: '◻ **openai**', btnType: 'default' })
+      expect(rows[1]).toMatchObject({ text: '▶ **azure**', btnType: 'primary' })
+      // A card action never starts an agent turn nor sends a new card.
+      expect(p.getSent()).toEqual([])
+      expect(p.sentCards).toEqual([])
+    } finally {
+      dispose()
+    }
+  })
+
+  it('an unknown route on a stale card shows the not-found notice without switching', async () => {
+    const agent = providerAgent(['openai'], 'openai')
+    const p = newRefreshingCardPlatform()
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerProviderCommands(e)
+    try {
+      e.receiveMessage(p, { ...msg(), content: 'act:/provider gcp', isCardAction: true })
+      await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+      expect(agent.getActive()).toBe('openai')
+      expect(cardMarkdowns(p.refreshed[0]!.card).join('\n')).toContain(e.i18n.tf(Msg.ProviderNotFound, 'gcp'))
+    } finally {
+      dispose()
+    }
+  })
+
+  it('nav:/provider re-renders the card without switching', async () => {
+    const agent = providerAgent(['openai', 'azure'], 'openai')
+    const p = newRefreshingCardPlatform()
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerProviderCommands(e)
+    try {
+      e.receiveMessage(p, { ...msg(), content: 'nav:/provider', isCardAction: true })
+      await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+      expect(agent.getActive()).toBe('openai')
+      // Current line + hint only: no switch notice markdown.
+      expect(cardMarkdowns(p.refreshed[0]!.card)).toHaveLength(2)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('dispose removes the card action; presses fall through without effects', async () => {
+    const agent = providerAgent(['openai', 'azure'], 'openai')
+    const p = newRefreshingCardPlatform()
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerProviderCommands(e)
+    dispose()
+
+    e.receiveMessage(p, { ...msg(), content: 'act:/provider azure', isCardAction: true })
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    expect(agent.getActive()).toBe('openai')
+    expect(p.refreshed).toEqual([])
+    expect(p.sentCards).toEqual([])
+    expect(p.getSent()).toEqual([])
   })
 })
 

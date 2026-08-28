@@ -5,24 +5,26 @@
  * switch drops the session (the next message starts fresh on the new
  * route); `--resume` keeps the agent session id so the next message
  * resumes the same transcript under the new route (MIGRATION.md D1:
- * dispose + resume with new agentOptions). The add/remove/preset flows and
- * the provider card are not ported: a provider is a named llm route in the
- * profile config, which the runtime cannot create, and the card surface
- * arrives with the M7 render domain.
+ * dispose + resume with new agentOptions). The add/remove/preset flows are
+ * not ported: a provider is a named llm route in the profile config, which
+ * the runtime cannot create. Card platforms render the bare listing as the
+ * provider card (Go renderProviderCard) whose `act:/provider <name>` rows
+ * run the plain switch and refresh the pressed card in place.
  *
  * Registration lives here (not in engine/commands.ts) so the provider
  * domain cannot collide with parallel work on that file;
  * {@link registerProviderCommands} merges into whatever command table the
- * engine already carries and also arms the provider_shortcuts quick
- * commands (/strong → provider + new session) through the engine's
- * shortcut dispatch hook.
+ * engine already carries, registers the /provider card action, and also
+ * arms the provider_shortcuts quick commands (/strong → provider + new
+ * session) through the engine's shortcut dispatch hook.
  *
  * @module dsh-feishu-bridge/provider-commands
  */
 
 import type { Message, Platform, ProviderSwitcher } from '../core/types.js'
-import { asProviderSwitcher } from '../core/types.js'
+import { asProviderSwitcher, supportsCards } from '../core/types.js'
 import { Msg } from '../i18n/index.js'
+import { defaultBtn, newCard, type Card } from '../card.js'
 import type { Engine } from './engine.js'
 
 /** Prefix-match a subcommand against candidates (Go matchSubCommand). */
@@ -77,10 +79,55 @@ function providerListText(e: Engine, switcher: ProviderSwitcher): string {
 }
 
 /**
- * Register the /provider command family and the provider-shortcut dispatch
- * hook on an engine. Returns the disposer.
+ * The provider card (Go Engine.renderProviderCard): current line, one list
+ * row per route with an `act:/provider <name>` switch button, the click
+ * hint, and a back button. The add/preset buttons are not ported — the
+ * runtime cannot create routes.
  *
- * @param e - Engine to register the command handler, resolver, and shortcut hook on.
+ * @param e - Engine owning the switcher and i18n.
+ * @param notice - Extra markdown line under the current line (the outcome of a pressed row).
+ * @returns The assembled card; a red not-supported card when the agent has no switcher.
+ */
+function renderProviderCard(e: Engine, notice: string): Card {
+  const switcher = asProviderSwitcher(e.agent)
+  if (switcher === undefined) {
+    return newCard().title(e.i18n.t(Msg.ProviderCardTitle), 'red')
+      .markdown(e.i18n.t(Msg.ProviderNotSupported)).build()
+  }
+  const current = switcher.getActiveProvider()
+  const providers = switcher.listProviders()
+  const cb = newCard().title(e.i18n.t(Msg.ProviderCardTitle), 'indigo')
+  if (current === undefined && providers.length === 0) {
+    return cb.markdown(e.i18n.t(Msg.ProviderNone))
+      .buttons(defaultBtn(e.i18n.t(Msg.CardBack), 'nav:/help'))
+      .build()
+  }
+  if (current !== undefined) cb.markdown(e.i18n.tf(Msg.ProviderCardCurrent, current.name))
+  if (notice !== '') cb.markdown(notice)
+  if (providers.length > 0) {
+    cb.divider()
+    for (const prov of providers) {
+      const isActive = current !== undefined && prov.name === current.name
+      const model = prov.model ?? ''
+      const label = `${isActive ? '▶' : '◻'} **${prov.name}**${model !== '' ? `  \`${model}\`` : ''}`
+      cb.listItemBtn(
+        label,
+        e.i18n.t(Msg.ProviderCardSwitchBtn),
+        isActive ? 'primary' : 'default',
+        `act:/provider ${prov.name}`,
+      )
+    }
+    cb.markdown(`\n${e.i18n.t(Msg.ProviderCardHint)}`)
+  }
+  cb.buttons(defaultBtn(e.i18n.t(Msg.CardBack), 'nav:/help'))
+  return cb.build()
+}
+
+/**
+ * Register the /provider command family, the /provider card action, and
+ * the provider-shortcut dispatch hook on an engine. Returns the disposer.
+ *
+ * @param e - Engine to register the command handler, resolver, card action, and shortcut hook on.
  * @returns Disposer removing the handler and restoring the previous state.
  */
 export function registerProviderCommands(e: Engine): () => void {
@@ -96,11 +143,25 @@ export function registerProviderCommands(e: Engine): () => void {
   // Provider shortcuts (/strong → glm): dispatched from the engine's
   // shortcut hook when no builtin command claims the token.
   e.providerShortcutHandler = (p, msg, providerName) => { void cmdProviderShortcut(e, p, msg, providerName) }
+  // Provider-card actions: a pressed row carries `act:/provider <name>`, the
+  // help card's provider entry carries `nav:/provider` with no args. Both
+  // prefixes share the handler because the card owns every action value it
+  // emits: a non-empty arg is always a pressed row.
+  const disposeCardAction = e.registerCardAction(['/provider'], (sessionKey, _cmd, args) => {
+    const name = args.trim()
+    const switcher = asProviderSwitcher(e.agent)
+    if (name === '' || switcher === undefined) return renderProviderCard(e, '')
+    const notice = applyProviderSwitch(e, sessionKey, switcher, name)
+      ? e.i18n.tf(Msg.ProviderSwitched, name)
+      : e.i18n.tf(Msg.ProviderNotFound, name)
+    return renderProviderCard(e, notice)
+  })
   return () => {
     handlers.delete('provider')
     if (ownedTable && handlers.size === 0) e.commandHandlers = undefined
     e.commandResolver = prevResolver
     e.providerShortcutHandler = undefined
+    disposeCardAction()
   }
 }
 
@@ -113,6 +174,10 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
   }
 
   if (args.length === 0) {
+    if (supportsCards(p)) {
+      await e.replyWithCard(p, msg.replyCtx, renderProviderCard(e, ''))
+      return
+    }
     await e.reply(p, msg.replyCtx, providerListText(e, switcher))
     return
   }
@@ -188,19 +253,37 @@ function saveProvider(e: Engine, name: string): void {
   }
 }
 
-/** /provider switch: rotate to a fresh session on the new route (Go switchProvider). */
-async function switchProvider(e: Engine, p: Platform, msg: Message, switcher: ProviderSwitcher, name: string): Promise<void> {
-  if (!switcher.setActiveProvider(name)) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, name))
-    return
-  }
+/**
+ * Run the plain-switch side effects shared by the text command and a
+ * pressed provider-card row (Go switchProvider minus the reply): swap the
+ * route, re-resolve the context window and usage detectors, drop the agent
+ * session id (the next message starts fresh on the new route), and persist
+ * the choice.
+ *
+ * @param e - Engine owning the sessions and the persistence hook.
+ * @param sessionKey - Session whose agent session id is dropped.
+ * @param switcher - Agent provider switcher.
+ * @param name - Route to activate.
+ * @returns True when the route exists and the switch ran; false leaves all state untouched.
+ */
+function applyProviderSwitch(e: Engine, sessionKey: string, switcher: ProviderSwitcher, name: string): boolean {
+  if (!switcher.setActiveProvider(name)) return false
   e.applyActiveProviderContextWindow()
   e.syncUsageProvidersActive()
-  e.stopInteractiveSession(msg.sessionKey)
-  const s = e.sessions.getOrCreateActive(msg.sessionKey)
+  e.stopInteractiveSession(sessionKey)
+  const s = e.sessions.getOrCreateActive(sessionKey)
   s.setAgentSessionID('', '')
   e.sessions.save()
   saveProvider(e, name)
+  return true
+}
+
+/** /provider switch: rotate to a fresh session on the new route (Go switchProvider). */
+async function switchProvider(e: Engine, p: Platform, msg: Message, switcher: ProviderSwitcher, name: string): Promise<void> {
+  if (!applyProviderSwitch(e, msg.sessionKey, switcher, name)) {
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, name))
+    return
+  }
   await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderSwitched, name))
 }
 

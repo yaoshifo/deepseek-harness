@@ -10,7 +10,7 @@ M7-b usage 域落地了 ctx% 消费方（状态页脚的 SDK token 累积）和�
 
 ## 决策
 
-把 Go `ProviderConfig.ContextWindow` 链路端到端接通。`ProviderRoute`（插件配置）新增 `contextWindow?: number`；`buildProjectAssembly` 转发到 adapter 路由；`DshAgentAdapter.getActiveProvider()` 在有值时带出（`exactOptionalPropertyTypes` 下用条件展开，JSDoc 的 "name-only" 措辞同步更新）。`provider-commands.ts` 的四个切换点——`switchProvider`、`switchProviderResume`、`clear` 子命令、`cmdProviderShortcut`——在 `setActiveProvider` 成功后立即调用 `e.applyActiveProviderContextWindow()`，先于 interactive-session 清理，对齐 Go 顺序。未声明窗口的路由与清除选择回退 `projectContextWindow`（project `contextWindow`，默认 200k），行为不变。
+把 Go `ProviderConfig.ContextWindow` 链路端到端接通。`ProviderRoute`（插件配置）新增 `contextWindow?: number`；`buildProjectAssembly` 转发到 adapter 路由；`DshAgentAdapter.getActiveProvider()` 在有值时带出（`exactOptionalPropertyTypes` 下用条件展开，JSDoc 的 "name-only" 措辞同步更新）。`provider-commands.ts` 的全部切换点——`switchProvider` 与 provider 卡动作（两者经共享核心 `applyProviderSwitch`）、`switchProviderResume`、`clear` 子命令、`cmdProviderShortcut`——在 `setActiveProvider` 成功后立即调用 `e.applyActiveProviderContextWindow()`，先于 interactive-session 清理，对齐 Go 顺序。未声明窗口的路由与清除选择回退 `projectContextWindow`（project `contextWindow`，默认 200k），行为不变。
 
 ## 备选方案
 

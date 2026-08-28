@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
+import { createStubCardPlatform, newStubMessage } from './stubs/engine-stubs.js'
 
 function stubContext(): Context {
   return {
@@ -124,6 +125,24 @@ describe('provider wiring', () => {
     expect(engine.commandResolver?.('provider')).toBe('provider')
     expect(engine.commandResolver?.('btw')).toBe('btw')
     expect(engine.commandResolver?.('compress')).toBe('compress')
+  })
+
+  it('a provider-card action switches the assembled adapter route (Go executeCardAction "/provider")', async () => {
+    // Isolated root: the card action persists the switch into the project
+    // state, which must not leak into the shared-default-root assemblies.
+    const root = await mkdtemp(join(tmpdir(), 'fb-assembly-provider-card-'))
+    const { engine, adapter } = assemble(baseConfig(), project(), root)
+    expect(adapter.getActiveProvider()?.name).toBe('mify-dsh')
+    const p = createStubCardPlatform('test')
+    await engine.handleCardAction(p, {
+      ...newStubMessage(),
+      sessionKey: 'smoke-project:chat1',
+      replyCtx: 'ctx',
+    }, 'act:/provider turbo')
+    expect(adapter.getActiveProvider()?.name).toBe('turbo')
+    // The pressed card is replaced by the re-rendered provider card.
+    expect(p.sentCards).toHaveLength(1)
+    expect(JSON.stringify(p.sentCards[0])).toContain('turbo')
   })
 
   it('the persisted active provider survives assembly (Go providerSaveFunc → config)', async () => {
