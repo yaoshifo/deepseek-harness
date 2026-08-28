@@ -167,7 +167,7 @@ describe('handleGroupNameGenerate (fork → RenameGroup wiring)', () => {
     expect(p.renamedNames).toEqual(['调试 500 错误'])
   })
 
-  it('falls back to the first message on error (no avatar)', async () => {
+  it('falls back to the first message on error, with a deterministic icon avatar', async () => {
     const a = createGroupNameAgent({ err: new Error('boom') })
     const { e, p } = newGroupNameEngine(a)
     e.setGroupNameConfig(true, 'p', 1000, '')
@@ -180,7 +180,54 @@ describe('handleGroupNameGenerate (fork → RenameGroup wiring)', () => {
     await waitFor(() => p.renamedNames.length === 1, 'fallback RenameGroup was not called')
 
     expect(p.renamedNames).toEqual(['帮我修 500 错误'])
-    // The fallback is a degraded path: no avatar.
+    // The fallback still stamps the name-hashed icon so the phase painter can
+    // lazy-render later phase colors from it instead of pinning the chat to
+    // the bot avatar for its whole life.
+    const want = fallbackGroupIcon('帮我修 500 错误')
+    await waitFor(() => p.avatarIcons.length === 1 && p.avatarIcons[0] === want, 'fallback icon avatar was not set')
+    expect(p.avatarGroups).toEqual(['帮我修 500 错误'])
+  })
+
+  it('keeps the fallback rename when the icon avatar setter fails', async () => {
+    const a = createGroupNameAgent({ err: new Error('boom') })
+    const { e, p } = newGroupNameEngine(a)
+    p.avatarErr = new Error('upload down')
+    e.setGroupNameConfig(true, 'p', 1000, '')
+    e.setGroupNameAvatarEnabled(true)
+
+    e.handleGroupNameGenerate(p, 'test:chat-1', '帮我修 500 错误', 'test:chat-1')
+
+    await waitFor(() => p.renamedNames.length === 1, 'fallback RenameGroup was not called')
+    await waitFor(() => p.avatarIcons.length === 1, 'fallback avatar was not attempted')
+    expect(p.renamedNames).toEqual(['帮我修 500 错误'])
+    expect(p.avatarIcons).toEqual([fallbackGroupIcon('帮我修 500 错误')])
+  })
+
+  it('skips the avatar when the fallback rename itself fails', async () => {
+    const a = createGroupNameAgent({ err: new Error('boom') })
+    const { e, p } = newGroupNameEngine(a)
+    p.renameGroup = async () => { throw new Error('rename down') }
+    e.setGroupNameConfig(true, 'p', 1000, '')
+    e.setGroupNameAvatarEnabled(true)
+
+    e.handleGroupNameGenerate(p, 'test:chat-1', '帮我修 500 错误', 'test:chat-1')
+    await sleep(100)
+
+    expect(p.renamedNames).toEqual([])
+    expect(p.avatarIcons).toEqual([])
+  })
+
+  it('skips the fallback avatar on platforms without the setter', async () => {
+    const a = createGroupNameAgent({ err: new Error('boom') })
+    const base = createStubTitleRenamePlatform('test')
+    const p = { ...base, setGroupIconAvatar: undefined } as unknown as StubTitleRenamePlatform
+    const e = new Engine('test', a, [p], '', 'en')
+    e.setGroupNameConfig(true, 'p', 1000, '')
+    e.setGroupNameAvatarEnabled(true)
+
+    e.handleGroupNameGenerate(p, 'test:chat-1', '帮我修 500 错误', 'test:chat-1')
+
+    await waitFor(() => p.renamedNames.length === 1, 'fallback RenameGroup was not called')
     expect(p.avatarIcons).toEqual([])
   })
 
