@@ -1,5 +1,7 @@
 # dsh-feishu-bridge-chatroom
 
+English | [中文](README.zh.md)
+
 The chatroom plugin of the Feishu bridge: multi-role chatroom orchestration — role groups, the moderator, the `/chatroom` command family, the `feishu_bridge_chatroom` tool, and the bundled chatroom-moderator skill — as its own dsh package mounted beside `@deepseek-ai/dsh-feishu-bridge` (dependency direction: this package imports the bridge's export face; the bridge never imports this package). The engine seam halves ride the bridge service's `feishuBridge/*` events; the per-engine configuration and command registration apply in the plugin's startup sweep once the bridge reports readiness.
 
 ## Model Experience
