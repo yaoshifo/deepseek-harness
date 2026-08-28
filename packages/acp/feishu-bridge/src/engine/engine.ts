@@ -5916,20 +5916,24 @@ export class Engine {
 
     // Resolve the child work dir and optional worktree isolation. Shared by
     // the group path and the native continuable path (de-baggage B4).
+    const inheritDir = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey)) || this.agentWorkDir()
     const { workDir, wtPath, wtBranch, wtBase, wtBaseBranch, wtRoot } =
-      await this.resolveSubtaskWorkDir(parentSessionKey, dir, wtPref, firstMsg)
+      await this.resolveSubtaskWorkDir(dir, wtPref, firstMsg, inheritDir)
 
     // Fork-source guard: fail fast BEFORE creating the group so the agent
     // learns to drop -f and retry, leaving no orphan group (Go
     // SpawnSubtask's PrepareForkSession check). In TS this checks existence
     // (live registry or persistence), not directory locality — the seed
     // source resolves globally by id, so cross-directory forks work.
+    // A failed spawn must not leak the worktree it reserved — the native path
+    // enforces the same contract on its delegation failure.
     if (forkOrigID !== '') {
       const prep = asForkSessionPreparer(this.agent)
       if (prep !== undefined) {
         try {
           await prep.prepareForkSession(forkOrigID, '', '')
         } catch (error) {
+          if (wtPath !== '') await this.removeNativeWorktreeQuiet(wtPath, wtBranch, wtRoot, wtBase, wtBaseBranch)
           throw new Error(`subtask: --fork 父会话不可达：${String(error instanceof Error ? error.message : error)}（fork 源会话既不在内存也不在持久化日志中；请确认父会话存在，或去掉 -f 用全新上下文派发）`)
         }
       }
@@ -5950,7 +5954,12 @@ export class Engine {
         ? await spawnerEx.spawnGroupWithOptions(spawnMsg, groupName, firstMsg, spawnOpts)
         : await spawner.spawnGroup(spawnMsg, groupName, firstMsg)
     } catch (error) {
+      if (wtPath !== '') await this.removeNativeWorktreeQuiet(wtPath, wtBranch, wtRoot, wtBase, wtBaseBranch)
       throw new Error(`subtask: spawn group: ${String(error instanceof Error ? error.message : error)}`)
+    }
+    if (syntheticMsg === undefined) {
+      if (wtPath !== '') await this.removeNativeWorktreeQuiet(wtPath, wtBranch, wtRoot, wtBase, wtBaseBranch)
+      throw new Error('subtask: spawn group: no group message returned')
     }
 
     if (workDir !== '' && this.projectState !== undefined) {
@@ -6022,27 +6031,25 @@ export class Engine {
 
   /**
    * Resolve the child work dir and optional worktree isolation shared by the
-   * group and native spawn paths (de-baggage B4): the parent's per-chat
-   * override (or agent base dir), then an explicit --dir; auto-mode
-   * worktree isolation applies only when the child shares the parent's git
-   * repository, and the worktree is created up front so failures leave no
-   * child behind.
-   * @param parentSessionKey - Session key of the delegating parent chat.
-   * @param dir - Explicit child work dir (--dir); '' resolves from the parent.
+   * group and native spawn paths (de-baggage B4): the caller-resolved
+   * inheritance base, then an explicit --dir; auto-mode worktree isolation
+   * applies only when the child shares the parent's git repository, and the
+   * worktree is created up front so failures leave no child behind.
+   * @param dir - Explicit child work dir (--dir); '' inherits from the parent.
    * @param wtPref - Worktree isolation preference for the child.
    * @param brief - The task brief, slugged into the worktree branch name.
+   * @param parentDir - The directory a dir='' child inherits: the parent
+   * chat's per-chat override or the agent base dir, or a native caller's own
+   * working directory; '' leaves the inheritance to the runtime.
    * @returns The child's resolved work dir and worktree coordinates ('' = none).
    */
   private async resolveSubtaskWorkDir(
-    parentSessionKey: string,
     dir: string,
     wtPref: WorktreeMode,
     brief: string,
+    parentDir: string,
   ): Promise<{ workDir: string; wtPath: string; wtBranch: string; wtBase: string; wtBaseBranch: string; wtRoot: string }> {
-    let workDir = ''
-    const override = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
-    if (override !== '') workDir = override
-    else workDir = this.agentWorkDir()
+    let workDir = parentDir
     if (dir !== '') {
       const resolved = this.resolveDirPath(dir)
       if (resolved === undefined) {
@@ -6062,9 +6069,8 @@ export class Engine {
     if (wtPref === WorktreeMode.Auto && workDir !== '') {
       const childRoot = await worktreeRepoRoot(workDir)
       if (childRoot !== undefined) {
-        const parentDir = this.perChatWorkDir(this.dirOverrideKey(parentSessionKey))
-        const parentRoot = parentDir === '' ? await worktreeRepoRoot(this.agentWorkDir()) : await worktreeRepoRoot(parentDir)
-        if (parentRoot === childRoot) useWorktree = true
+        const parentRoot = await worktreeRepoRoot(parentDir)
+        if (parentRoot !== undefined && parentRoot === childRoot) useWorktree = true
       }
     }
     if (useWorktree) {
@@ -6117,24 +6123,44 @@ export class Engine {
       throw new Error('subtask: the agent backend does not support native subtasks')
     }
 
-    const parent = this.sessions.getOrCreateActive(parentSessionKey)
-    // Fork guard mirrors the group path: a fork needs a started parent
-    // conversation to copy context from.
-    if (forkContext) {
-      const forkOrigID = parent.getAgentSessionID()
-      if (forkOrigID === '' || forkOrigID === ContinueSession || forkOrigID.startsWith(ForkSessionPrefix)) {
-        throw new Error('subtask: --fork needs a started parent conversation to copy context from')
+    // A native child spawning its own child (recursion): the caller's engine
+    // key IS a live agent session id, and no engine session exists for it —
+    // getOrCreateActive would mint and persist a phantom session under the
+    // native id before any failure could reject the spawn. The adapter
+    // resolves the parent through the global agent registry and fails loud
+    // when the child agent is not live, so no extra liveness check is needed.
+    const nativeCaller = this.nativeChildEntries()[parentSessionKey] !== undefined
+    let parent: Session | undefined
+    let parentNativeID = ''
+    if (nativeCaller) {
+      parentNativeID = parentSessionKey
+    } else {
+      parent = this.sessions.getOrCreateActive(parentSessionKey)
+      // Fork guard mirrors the group path: a fork needs a started parent
+      // conversation to copy context from.
+      if (forkContext) {
+        const forkOrigID = parent.getAgentSessionID()
+        if (forkOrigID === '' || forkOrigID === ContinueSession || forkOrigID.startsWith(ForkSessionPrefix)) {
+          throw new Error('subtask: --fork needs a started parent conversation to copy context from')
+        }
+      }
+      // The native runtime authorizes follow-ups and reports against the exact
+      // live direct parent, so the parent's agent session must be up.
+      parentNativeID = this.liveNativeSessionID(parentSessionKey)
+      if (parentNativeID === '') {
+        throw new Error('subtask: the parent conversation has no live agent session; send it a message first')
       }
     }
-    // The native runtime authorizes follow-ups and reports against the exact
-    // live direct parent, so the parent's agent session must be up.
-    const parentNativeID = this.liveNativeSessionID(parentSessionKey)
-    if (parentNativeID === '') {
-      throw new Error('subtask: the parent conversation has no live agent session; send it a message first')
-    }
 
+    // A native caller's dir='' child inherits the caller's own working
+    // directory; resolving it here lets worktree auto-mode compare repository
+    // roots. '' (no probe, no recorded cwd) leaves the inheritance to the
+    // runtime, with auto-mode isolation off — the comparison base is unknown.
+    const inheritDir = nativeCaller
+      ? delegator.childCwd?.(parentSessionKey) ?? ''
+      : this.perChatWorkDir(this.dirOverrideKey(parentSessionKey)) || this.agentWorkDir()
     const { workDir, wtPath, wtBranch, wtBase, wtBaseBranch, wtRoot } =
-      await this.resolveSubtaskWorkDir(parentSessionKey, dir, wtPref, briefText)
+      await this.resolveSubtaskWorkDir(dir, wtPref, briefText, inheritDir)
 
     let childId: string
     let label: string
@@ -6170,8 +6196,10 @@ export class Engine {
       this.projectState.save()
     }
 
-    // Fold a late-spawned child into an armed gather barrier (no-op without one).
-    const gg = parent.getPendingSubtaskGather()
+    // Fold a late-spawned child into an armed gather barrier (no-op without
+    // one). A native caller has no engine session: its children settle through
+    // the native inbox, and the tool's gather action already says so.
+    const gg = parent?.getPendingSubtaskGather()
     if (gg !== undefined) {
       if (gg.addExpected(childId, label)) {
         console.info(`subtask: added late-spawned native child to armed gather (parent=${parentSessionKey} child=${childId})`)
@@ -6378,16 +6406,19 @@ export class Engine {
   }
 
   /**
-   * Whether a dirty worktree's commits already landed in the containment
-   * target, making removal lossless.
+   * Whether removing the worktree's branch loses no committed work.
    * @param root - Repository root that owns the worktree's branch.
    * @param branch - The worktree's branch.
    * @param ahead - Whether the worktree has commits ahead of its base.
    * @param integrate - The containment target branch; '' never removes.
-   * @returns True only when ahead and fully contained in the integrate branch.
+   * @returns True when the branch holds no commits beyond its base (nothing
+   * committed to lose) or its commits are fully contained in the integrate
+   * branch; false when integrate is '' (auto-removal off) or commits exist
+   * only on the worktree branch.
    */
   async worktreeMergedLossless(root: string, branch: string, ahead: boolean, integrate: string): Promise<boolean> {
-    if (!ahead || integrate === '') return false
+    if (integrate === '') return false
+    if (!ahead) return true
     return worktreeMergedInto(root, branch, integrate)
   }
 
@@ -6589,8 +6620,33 @@ export class Engine {
     // An interrupted child never reports; settle the record so the
     // still-running count on progress cards does not overstate forever.
     this.updateNativeChild(childId, { reported: true })
+    this.accountBarrierDeath(entry.parent_key, childId, entry.label)
     this.refreshSubtaskFooter(entry.parent_key)
     console.info(`subtask: interrupt requested for native child (child=${childId})`)
+  }
+
+  /**
+   * Account a child that can never report (interrupted, drained) into the
+   * parent's armed gather barrier: without this entry the barrier waits out
+   * its full timeout naming a child that was stopped on purpose, while the
+   * blocking tool call holds the parent turn open (2026-08-28 round-4
+   * review). The interrupted child settles with the aborted semantics of
+   * {@link settlementDeliveryText}; no barrier armed delivers nothing, so
+   * teardown paths (/done) stay silent.
+   * @param parentKey - Parent session key whose barrier holds the child.
+   * @param childKey - The dying child's key.
+   * @param label - The child's display label for the summary.
+   */
+  private accountBarrierDeath(parentKey: string, childKey: string, label: string): void {
+    const parent = this.sessions.findActive(parentKey)
+    const g = parent?.getPendingSubtaskGather()
+    if (parent === undefined || g === undefined) return
+    const { done, summary } = g.accumulate(childKey, label, this.settlementDeliveryText('aborted', '', ''))
+    if (done) {
+      parent.setPendingSubtaskGather(undefined)
+      this.sessions.save()
+      this.resolveOrWakeGather(parent, parentKey, summary)
+    }
   }
 
   /**
@@ -6622,6 +6678,7 @@ export class Engine {
       } catch (error) {
         console.warn(`subtask: native descendant interrupt failed (child=${childId}): ${String(error)}`)
       }
+      this.accountBarrierDeath(rec.parent_key, childId, rec.label)
       await this.removeNativeWorktreeQuiet(
         rec.worktree_path, rec.worktree_branch, rec.worktree_root, rec.worktree_base, rec.worktree_base_branch,
       )
@@ -6806,12 +6863,15 @@ export class Engine {
       if (liveParent === '' && !this.nativeChildEntries()[callerSessionKey]) {
         throw new Error('subtask: the parent conversation has no live agent session')
       }
-      this.updateNativeChild(childKey, { reported: false })
       await delegator.followupChild(
         liveParent !== '' ? liveParent : nativeEntry.parent_agent_session_id,
         childKey,
         msg,
       )
+      // Re-arm only after the follow-up landed: a failed delivery must not
+      // leave an unreported record with no running epoch — the footer and
+      // panel would count a ghost child nothing will ever settle.
+      this.updateNativeChild(childKey, { reported: false })
       console.info(`subtask: parent sent follow-up to native child (parent=${callerSessionKey} child=${childKey})`)
       return
     }

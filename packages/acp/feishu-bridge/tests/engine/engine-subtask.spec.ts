@@ -395,6 +395,24 @@ describe('SpawnSubtask', () => {
     expect(p.spawnCount).toBe(0)
   })
 
+  it('recycles the reserved worktree when the group spawn fails', async () => {
+    const root = await initTestRepo()
+    const p = createStubSpawnerPlatform()
+    const e = newSubtaskTestEngine(p)
+    const parentKey = 'test:parent-chat:user-1'
+    p.spawnGroup = async (): Promise<Message> => { throw new Error('platform down') }
+
+    await expect(
+      e.spawnSubtask(parentKey, root, WorktreeMode.ForceOn, false, 'doomed spawn', [], false),
+    ).rejects.toThrow('platform down')
+
+    // The worktree and its cc/ branch must not survive the failed spawn.
+    const list = await execFileP('git', ['worktree', 'list'], { cwd: root }).then(r => r.stdout)
+    expect(list).not.toContain('.claude/worktrees')
+    const branches = await execFileP('git', ['branch', '--list', 'cc/*'], { cwd: root }).then(r => r.stdout)
+    expect(branches.trim()).toBe('')
+  })
+
   it('uses the stored user ID for a 2-segment key', async () => {
     const p = createStubSpawnerPlatform()
     const e = newSubtaskTestEngine(p)
@@ -1012,6 +1030,7 @@ function createDelegatorAgent(): Agent & ContinuableDelegator & {
   interrupts: string[]
   reports: Array<{ child: string; content: string }>
   nextChildId: string
+  cwds: Record<string, string>
 } {
   const agent = {
     ...createStubAgent(),
@@ -1020,6 +1039,10 @@ function createDelegatorAgent(): Agent & ContinuableDelegator & {
     interrupts: [] as string[],
     reports: [] as Array<{ child: string; content: string }>,
     nextChildId: 'native-child-1',
+    cwds: {} as Record<string, string>,
+    childCwd(childId: string): string {
+      return agent.cwds[childId] ?? ''
+    },
     async startContinuableChild(request: ContinuableChildStart): Promise<{ childId: string; label: string }> {
       agent.started.push(request)
       return { childId: agent.nextChildId, label: request.prompt.split('\n')[0] ?? '' }
@@ -1098,6 +1121,52 @@ describe('spawnSubtaskNative', () => {
     e.interactiveStates.delete(parentKey)
 
     await expect(e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')).rejects.toThrow('no live agent session')
+  })
+
+  it('spawns for a native caller: itself the parent anchor, no engine session minted', async () => {
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:parent-chat:u1'
+    const { e, agent } = newNativeEngine(p, parentKey)
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'first brief')
+    const nativeCaller = 'native-child-1'
+    agent.nextChildId = 'native-grandchild-1'
+
+    const before = e.sessions.allSessions().length
+    const { childKey } = await e.spawnSubtaskNative(nativeCaller, '', WorktreeMode.ForceOff, false, 'grandchild brief')
+
+    // The caller's own id is the parent anchor — the runtime authorizes
+    // lineage against the live native child, not an engine chat session.
+    expect(childKey).toBe('native-grandchild-1')
+    expect(agent.started[1]?.parentAgentSessionID).toBe(nativeCaller)
+    expect(e.nativeChildEntries()['native-grandchild-1']?.parent_key).toBe(nativeCaller)
+    // No phantom bridge session may be minted (or persisted) for the native id.
+    expect(e.sessions.allSessions().length).toBe(before)
+    expect(e.sessions.findActive(nativeCaller)).toBeUndefined()
+  })
+
+  it('inherits a native caller\'s working directory through childCwd', async () => {
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:parent-chat:u1'
+    const { e, agent } = newNativeEngine(p, parentKey)
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'first brief')
+    agent.cwds['native-child-1'] = '/tmp/native-caller-cwd'
+
+    await e.spawnSubtaskNative('native-child-1', '', WorktreeMode.ForceOff, false, 'inherit my dir')
+
+    expect(agent.started[1]?.cwd).toBe('/tmp/native-caller-cwd')
+  })
+
+  it('falls back to runtime inheritance when the native caller exposes no cwd', async () => {
+    const p = createStubCardPlatformFull('test')
+    const parentKey = 'test:parent-chat:u1'
+    const { e, agent } = newNativeEngine(p, parentKey)
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'first brief')
+    delete (agent as Partial<ContinuableDelegator>).childCwd
+
+    await e.spawnSubtaskNative('native-child-1', '', WorktreeMode.ForceOff, false, 'inherit at runtime')
+
+    // '' is the runtime's inherit-from-parent sentinel.
+    expect(agent.started[1]?.cwd).toBe('')
   })
 
   it('isolates the child in a worktree and records its coordinates', async () => {
@@ -1332,6 +1401,21 @@ describe('SendToSubtask native children', () => {
     expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
   })
 
+  it('keeps the record reported when the follow-up delivery fails', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agent } = newNativeEngine(p, parentKey)
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
+    const entry = e.nativeChildEntries()['native-child-1']!
+    e.projectState?.setNativeChild('native-child-1', { ...entry, reported: true })
+    agent.followupChild = async (): Promise<void> => { throw new Error('delivery failed') }
+
+    await expect(e.sendToSubtask(parentKey, 'native-child-1', 'lost follow-up')).rejects.toThrow('delivery failed')
+
+    // A failed delivery must not leave an unreported record with no running
+    // epoch — nothing would ever settle the ghost count.
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+  })
+
   it('rejects a caller that is not the child parent', async () => {
     const p = createStubCardPlatformFull('test')
     const { e } = newNativeEngine(p, parentKey)
@@ -1457,6 +1541,89 @@ describe('gatherSubtasksBlocking abort', () => {
     expect(settled.toLowerCase()).toContain('abort')
     // The barrier stays armed: later reports still arrive via the timeout wake.
     expect(e.sessions.getOrCreateActive(parentKey).getPendingSubtaskGather()).toBeDefined()
+  })
+})
+
+describe('gather barrier death accounting', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  /** Record two unreported native children under the parent chat. */
+  function twoChildren(e: Engine): void {
+    for (const [id, label] of [['native-child-1', 'task one'], ['native-child-2', 'task two']] as const) {
+      e.projectState?.setNativeChild(id, {
+        parent_key: parentKey,
+        parent_agent_session_id: 'parent-native-1',
+        label,
+        worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+        reported: false,
+      })
+    }
+  }
+
+  it('an interrupted child settles the barrier instead of starving it to the timeout', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    twoChildren(e)
+
+    const wait = e.gatherSubtasksBlocking(parentKey)
+    e.interruptNativeChild('native-child-1')
+    // One interrupted child alone does not fire: the other still owes a report.
+    const partial = await Promise.race([
+      wait.then(() => '__resolved__'),
+      new Promise<string>((resolve) => { setTimeout(() => { resolve('__pending__') }, 50) }),
+    ])
+    expect(partial).toBe('__pending__')
+
+    e.interruptNativeChild('native-child-2')
+    const summary = await wait
+
+    // The waiter resolves with the interrupted children accounted as aborted,
+    // not a 20-minute timeout naming them as missing.
+    expect(summary).toContain('task one')
+    expect(summary).toContain('task two')
+    expect(summary).toContain('stopped before it finished')
+    expect(e.sessions.getOrCreateActive(parentKey).getPendingSubtaskGather()).toBeUndefined()
+  })
+
+  it('a mixed set — one report, one interrupt — wakes with both in the summary', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    twoChildren(e)
+
+    const wait = e.gatherSubtasksBlocking(parentKey)
+    e.interruptNativeChild('native-child-2')
+    await e.reportNativeChild('native-child-1', 'first result')
+    const summary = await wait
+
+    expect(summary).toContain('first result')
+    expect(summary).toContain('stopped before it finished')
+  })
+
+  it('interrupting a child without an armed gather delivers nothing', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    twoChildren(e)
+
+    e.interruptNativeChild('native-child-1')
+    await settle()
+
+    // Teardown stays silent: no settlement card, no wake — only the record flips.
+    expect(p.sentCards).toHaveLength(0)
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+  })
+
+  it('drainNativeDescendants settles an armed gather for drained children', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    twoChildren(e)
+
+    const wait = e.gatherSubtasksBlocking(parentKey)
+    await e.drainNativeDescendants([parentKey])
+    const summary = await wait
+
+    expect(summary).toContain('stopped before it finished')
+    expect(e.sessions.getOrCreateActive(parentKey).getPendingSubtaskGather()).toBeUndefined()
+    expect(e.nativeChildEntries()['native-child-1']).toBeUndefined()
   })
 })
 

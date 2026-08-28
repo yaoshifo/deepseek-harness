@@ -103,6 +103,17 @@ describe('createWorktree base branch recording', () => {
   })
 })
 
+describe('worktreeMergedLossless (Engine)', () => {
+  it('a pristine worktree with a containment target is lossless — nothing is committed to lose', async () => {
+    const root = await initTestRepo()
+    const wt = await createWorktree(root, 'pristine') // no commits, no edits
+    const e = newEngine(createStubCardPlatform())
+
+    await expect(e.worktreeMergedLossless(root, wt.branch, false, 'main')).resolves.toBe(true)
+    await expect(e.worktreeMergedLossless(root, wt.branch, false, '')).resolves.toBe(false)
+  })
+})
+
 describe('cleanupOneChat merged auto-removal', () => {
   it('default-on: removes a merged child against its recorded base branch, no config', async () => {
     const root = await initTestRepo()

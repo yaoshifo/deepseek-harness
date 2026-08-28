@@ -55,7 +55,10 @@ export interface DshAgentLike {
   readonly id: unknown
   readonly status: 'idle' | 'running'
   /** The agent's durable session log (fork seeds slice its completed turns). */
-  readonly session: { readonly events: readonly SessionEvent[]; readonly header?: { readonly parentSession?: unknown } }
+  readonly session: {
+    readonly events: readonly SessionEvent[]
+    readonly header?: { readonly parentSession?: unknown; readonly cwd?: unknown }
+  }
   followup(message: unknown): void
   steer(message: unknown): void
   cancel(cause: { kind: string }, options?: { keepInbox?: boolean }): void
@@ -1212,6 +1215,19 @@ export class DshAgentAdapter {
    */
   childLive(childId: string): boolean {
     return this.ctx.agents.get(SessionId(childId)) !== undefined
+  }
+
+  /**
+   * ContinuableDelegator: the recorded working directory of one native child
+   * ('' without a live agent or a recorded cwd). A native child spawning its
+   * own child resolves its inheritance base from this.
+   *
+   * @param childId - the durable native child session id.
+   */
+  childCwd(childId: string): string {
+    const agent = this.ctx.agents.get(SessionId(childId))
+    const cwd = agent?.session.header?.cwd
+    return typeof cwd === 'string' ? cwd : ''
   }
 
   /**

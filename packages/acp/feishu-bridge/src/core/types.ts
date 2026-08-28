@@ -951,6 +951,16 @@ export interface ContinuableDelegator {
    * @param childId - the durable native child session id.
    */
   childLive?(childId: string): boolean
+  /**
+   * The recorded working directory of one native child ('' when the child
+   * has no live agent or no cwd). A native child spawning its own child
+   * uses it as the inheritance base the runtime would otherwise resolve
+   * internally, so worktree auto-mode can compare repository roots.
+   * Optional: a delegator without the probe reports no cwd, and a
+   * dir='' grandchild then inherits at runtime without isolation.
+   * @param childId - the durable native child session id.
+   */
+  childCwd?(childId: string): string
 }
 
 /**
