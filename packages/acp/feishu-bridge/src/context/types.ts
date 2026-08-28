@@ -1,7 +1,9 @@
 /**
  * Narrow wire types for the dsh-context plugin's session projections
  * (`contextTimeline`, `contextHeaders`, `contextPressure`), ported for the
- * Feishu context-insight cards.
+ * Feishu context-insight cards, plus the token-meter projections the
+ * dsh-context-less degraded card reads (`contextBreakdown`, `tokenUsage`)
+ * and the assembled {@link ContextSnapshotValues} the adapter returns.
  *
  * Upstream provenance (re-align by hand when dsh-context changes):
  * - dsh-context `src/shared/types.ts`: `Snapshot`/`ContextTimeline`
@@ -9,6 +11,10 @@
  *   `RequestRecord`, `ContextEventRecord`, `ContextPressure`,
  *   `SessionCostUsage`/`CostFamilyUsage`/`CostBucketTotals`,
  *   `ContextHeaders`/`HeaderRecord`/`HeaderTool`.
+ * - token-meter `src/projection.ts`: `ContextBreakdownProjection`
+ *   (`ContextBreakdownValue`) and `TokenUsageProjection`
+ *   (`TokenUsageValue`); `ContextPressureValue` covers the same
+ *   `contextPressure` key dsh-context reads for its headline.
  *
  * Field optionality mirrors upstream exactly (a projection value from a
  * current dsh-context host feeds these types unchanged); only fields the
@@ -235,4 +241,59 @@ export interface TurnBucket extends SixBuckets {
   total: number
   /** Number of step records folded into the turn. */
   stepCount: number
+}
+
+/**
+ * Narrow `contextBreakdown` projection value (token-meter's
+ * `ContextBreakdownProjection`): the heuristic three-part composition of the
+ * next request. All figures use the meter's fixed density estimate and never
+ * sum to the provider-anchored occupancy — present them as approximations,
+ * never as a total.
+ */
+export interface ContextBreakdownValue {
+  /** Heuristic tokens of the newest request envelope's system prompt; 0 before any request. */
+  systemTokens: number
+  /** Heuristic tokens of the newest request envelope's tool schemas; 0 before any request. */
+  toolsTokens: number
+  /** Heuristic tokens of the current model-visible conversation surface. */
+  messageTokens: number
+}
+
+/**
+ * Narrow `tokenUsage` projection value (token-meter's
+ * `TokenUsageProjection`): cumulative provider-reported usage over the
+ * complete durable log. The four buckets are disjoint (reasoning tokens are
+ * already inside `outputTokens`).
+ */
+export interface TokenUsageValue {
+  /** Billed prompt tokens that missed the provider cache. */
+  uncachedInputTokens: number
+  /** Billed output tokens (reasoning included). */
+  outputTokens: number
+  /** Billed prompt tokens served from the provider cache. */
+  cacheReadTokens: number
+  /** Billed prompt tokens written into the provider cache. */
+  cacheWriteTokens: number
+}
+
+/**
+ * The context-relevant projection values of one live agent session, as one
+ * consistent `sessionProjections.snapshot` cut: dsh-context's
+ * `contextTimeline`/`contextHeaders` plus token-meter's
+ * `contextPressure`/`contextBreakdown`/`tokenUsage`. Every field is
+ * independently optional — each key exists only while its registering plugin
+ * is loaded, and the token-meter fields stay absent until a provider reports
+ * usage.
+ */
+export interface ContextSnapshotValues {
+  /** dsh-context timeline; absent when the plugin is not mounted. */
+  timeline?: ContextTimelineValue
+  /** dsh-context header epochs; absent when the plugin is not mounted. */
+  headers?: ContextHeadersValue
+  /** token-meter pressure of the most recent request. */
+  pressure?: ContextPressureValue
+  /** token-meter heuristic composition of the next request. */
+  breakdown?: ContextBreakdownValue
+  /** token-meter cumulative billed usage. */
+  usage?: TokenUsageValue
 }

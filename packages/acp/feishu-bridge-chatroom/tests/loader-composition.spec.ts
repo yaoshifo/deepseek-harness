@@ -26,6 +26,7 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import SessionStore from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -86,6 +87,11 @@ describe('chatroom real Loader composition', () => {
       "  name: '@deepseek-ai/dsh-tools'",
       '- id: skills',
       "  name: '@deepseek-ai/dsh-skill'",
+      // The bridge declares sessionProjections in its inject (the /context
+      // card reads the registry); dsh-base always mounts it, so the minimal
+      // composition mirrors that row or the bridge fiber stays inactive.
+      '- id: session-projection',
+      "  name: '@deepseek-ai/dsh-session-projection'",
       '- id: feishu-bridge',
       "  name: '@deepseek-ai/dsh-feishu-bridge'",
       '  config:',
@@ -115,6 +121,7 @@ describe('chatroom real Loader composition', () => {
     const modules = new Map<string, unknown>([
       ['@deepseek-ai/dsh-agent', AgentRegistry],
       ['@deepseek-ai/dsh-session', SessionStore],
+      ['@deepseek-ai/dsh-session-projection', SessionProjectionRegistry],
       ['@deepseek-ai/dsh-system-prompt', SystemPrompt],
       ['@deepseek-ai/dsh-tools', ToolRuntime],
       ['@deepseek-ai/dsh-skill', SkillRegistry],

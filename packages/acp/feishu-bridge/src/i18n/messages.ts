@@ -362,4 +362,6 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   mcp_tools: { en: ' · %d tools', zh: ' · %d 个工具' },
   mcp_degraded: { en: ' — configured, degraded', zh: ' — 已配置，降级' },
   mcp_masked: { en: ' — hidden by this project\'s mcpServers allowlist', zh: ' — 被本项目 mcpServers 白名单隐藏' },
+  context: { en: 'Context insight card (occupancy, composition, trend, events)', zh: '上下文洞察卡片（占用、构成、趋势、事件）' },
+  context_usage: { en: 'Usage: `/context`\nRenders the current session\'s context occupancy, six-bucket composition, per-turn trend, recent context events, and the top tool schemas from the session projections (dsh-context + token-meter); without dsh-context it degrades to the token-meter headline. The card\'s refresh button re-reads the snapshot and updates the card in place.', zh: '用法：`/context`\n从会话投影（dsh-context + token-meter）渲染当前会话的上下文占用、六桶构成、逐轮趋势、最近上下文事件与工具 schema 体积；未挂载 dsh-context 时降级为 token-meter 概览。卡片上的刷新按钮原地重读快照并更新卡片。' },
 }

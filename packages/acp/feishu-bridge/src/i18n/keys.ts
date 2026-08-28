@@ -356,6 +356,8 @@ export const ALL_MSG_KEYS = [
   'mcp_tools',
   'mcp_degraded',
   'mcp_masked',
+  'context',
+  'context_usage',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -716,4 +718,6 @@ export const Msg = {
   McpTools: 'mcp_tools',
   McpDegraded: 'mcp_degraded',
   McpMasked: 'mcp_masked',
+  BuiltinCmdContext: 'context',
+  ContextUsage: 'context_usage',
 } as const

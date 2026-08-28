@@ -19,6 +19,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type { Context as CordisContext } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import SessionStore from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import * as entry from '../src/index.js'
@@ -38,6 +39,10 @@ async function mount(): Promise<CordisContext> {
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(SystemPrompt, {})
   await ctx.plugin(ToolRuntime)
+  // The bridge declares sessionProjections in its inject (the /context card
+  // reads the registry); dsh-base always mounts it, and so does this minimal
+  // host or the bridge fiber stays inactive.
+  await ctx.plugin(SessionProjectionRegistry)
   return ctx
 }
 

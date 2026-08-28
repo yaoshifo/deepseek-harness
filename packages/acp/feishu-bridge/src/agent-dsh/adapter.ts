@@ -32,6 +32,7 @@ import type { HistoryEntry } from '../core/types.js'
 import { locateForkCut } from './fork-at.js'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
 import { agentConventionsPrompt } from '../engine/agent-conventions.js'
+import type { ContextSnapshotValues } from '../context/types.js'
 import {
   subtaskAgentSystemPrompt,
   subtaskNoReportAgentSystemPrompt,
@@ -131,6 +132,21 @@ export interface DshContextLike {
   agents: DshAgentsRegistryLike
   on(event: string, listener: (...args: never[]) => unknown): () => void
   get(name: string): unknown
+}
+
+/**
+ * Structural slice of the `sessionProjections` registry the context-insight
+ * card reads: one consistent cut over the client-visible units of a live
+ * session's log. The real registry's `snapshot` also derives `asOfSeq` from
+ * `session.seq`; this slice only forwards the session, so the card never
+ * depends on the watermark.
+ */
+export interface DshSessionProjectionsLike {
+  /**
+   * Values per registered client-visible key (empty when none are
+   * registered); every value already passed its unit's `viewSchema`.
+   */
+  snapshot(session: DshAgentLike['session']): { values: Record<string, unknown> }
 }
 
 /**
@@ -1228,6 +1244,41 @@ export class DshAgentAdapter {
     const agent = this.ctx.agents.get(SessionId(childId))
     const cwd = agent?.session.header?.cwd
     return typeof cwd === 'string' ? cwd : ''
+  }
+
+  /**
+   * ContextSnapshotReader: the context-relevant projection values of one live
+   * native session — dsh-context's `contextTimeline`/`contextHeaders` plus
+   * token-meter's `contextPressure`/`contextBreakdown`/`tokenUsage`, read as
+   * one consistent `sessionProjections.snapshot` cut over the session's log.
+   * The values left the registry already schema-validated (each unit's
+   * `viewSchema` runs inside `snapshot`), so the picks below trust the key
+   * owners' wire types.
+   *
+   * @param agentSessionID - the native session id to read; '' yields undefined.
+   * @returns the projection values present on that session, or undefined
+   *   when the session has no live agent or the projection registry is
+   *   unmounted.
+   */
+  contextSnapshot(agentSessionID: string): ContextSnapshotValues | undefined {
+    if (agentSessionID === '') return undefined
+    const projections = this.ctx.get('sessionProjections') as DshSessionProjectionsLike | undefined
+    if (projections === undefined) return undefined
+    const agent = this.ctx.agents.get(SessionId(agentSessionID))
+    if (agent === undefined) return undefined
+    const values = projections.snapshot(agent.session).values
+    const snapshot: ContextSnapshotValues = {}
+    const timeline = values.contextTimeline as ContextSnapshotValues['timeline'] | undefined
+    if (timeline !== undefined) snapshot.timeline = timeline
+    const headers = values.contextHeaders as ContextSnapshotValues['headers'] | undefined
+    if (headers !== undefined) snapshot.headers = headers
+    const pressure = values.contextPressure as ContextSnapshotValues['pressure'] | undefined
+    if (pressure !== undefined) snapshot.pressure = pressure
+    const breakdown = values.contextBreakdown as ContextSnapshotValues['breakdown'] | undefined
+    if (breakdown !== undefined) snapshot.breakdown = breakdown
+    const usage = values.tokenUsage as ContextSnapshotValues['usage'] | undefined
+    if (usage !== undefined) snapshot.usage = usage
+    return snapshot
   }
 
   /**

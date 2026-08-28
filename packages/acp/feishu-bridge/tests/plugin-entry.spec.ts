@@ -14,6 +14,13 @@ describe('plugin entry declaration', () => {
     expect(entry.inject).toContain('agents')
   })
 
+  it('declares the sessionProjections inject (the /context card reads the registry)', () => {
+    // Without the declaration a composition without the registry still loads
+    // the bridge with a dead /context; with it the bridge only activates
+    // once the registry exists (dsh-base always mounts it).
+    expect(entry.inject).toContain('sessionProjections')
+  })
+
   it('exports the plugin name matching the bundle row id', () => {
     expect(entry.name).toBe('feishu-bridge')
   })

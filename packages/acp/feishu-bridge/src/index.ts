@@ -34,6 +34,7 @@ import { registerReloadCommands, completePendingReload } from './engine/reload-c
 import { registerSpawnFamilyCommands } from './engine/spawn-family-commands.js'
 import { registerMiscCommands } from './engine/misc-commands.js'
 import { registerSkillsMcpCommands } from './engine/skills-mcp-commands.js'
+import { registerContextCommands } from './engine/context-commands.js'
 import { CronScheduler, CronStore } from './engine/cron.js'
 import { registerCronCommands } from './engine/cron-commands.js'
 import { RelayManager } from './engine/relay.js'
@@ -62,7 +63,10 @@ export const name = 'feishu-bridge'
 // property without inject" — observed live on the M1 记账驴 cut-over.
 // ctx.tools carries the feishu_bridge_subtask tool family (plan D4).
 // ctx.systemPrompt carries the opt-in mcpHealth runtime context.
-export const inject = ['agents', 'tools', 'systemPrompt']
+// ctx.sessionProjections backs the /context card's snapshot read (the
+// adapter reaches it through ctx.get); dsh-base mounts the registry, and the
+// declaration orders this plugin after it.
+export const inject = ['agents', 'tools', 'systemPrompt', 'sessionProjections']
 
 /** Feishu app credentials for one bot. Each app gets its own WS client (MIGRATION.md D5). */
 export interface FeishuAppConfig {
@@ -1155,6 +1159,8 @@ export function buildProjectAssembly(
       allowlist: project.mcpServers,
     })
   }
+  // TS 原生: /context — 会话投影的上下文洞察卡（构成/趋势/事件 + 刷新按钮；无 Go 对应）。
+  registerContextCommands(engine)
   // M7-c: /provider family + shortcuts, /btw + insight forks, /compress.
   registerProviderCommands(engine)
   registerPredictCommands(engine)

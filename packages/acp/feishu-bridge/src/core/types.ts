@@ -14,6 +14,7 @@
  */
 
 import type { ProgressCardPayload, TodoItem } from '../progress.js'
+import type { ContextSnapshotValues } from '../context/types.js'
 
 /** Sentinel AgentSessionID telling the agent to resume the most recent session. */
 export const ContinueSession = '__continue__'
@@ -534,6 +535,33 @@ export interface RecentTurnsReader {
 export function asRecentTurnsReader(a: Agent): RecentTurnsReader | undefined {
   const candidate = a as Partial<RecentTurnsReader>
   return typeof candidate.recentTurns === 'function' ? (candidate as RecentTurnsReader) : undefined
+}
+
+/**
+ * Optional: agent reads one native session's context-projection snapshot for
+ * the /context insight card — dsh-context's timeline/headers plus
+ * token-meter's pressure/breakdown/usage, as one consistent cut over the
+ * live session's log.
+ */
+export interface ContextSnapshotReader {
+  /**
+   * Read the context-relevant projection values of one live native session.
+   * @param agentSessionID - the native agent session id to read; '' yields undefined.
+   * @returns the projection values present on that session, or undefined
+   *   when the session has no live agent or the projection registry is
+   *   unmounted.
+   */
+  contextSnapshot(agentSessionID: string): ContextSnapshotValues | undefined
+}
+
+/**
+ * Structural check for the {@link ContextSnapshotReader} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asContextSnapshotReader(a: Agent): ContextSnapshotReader | undefined {
+  return withMethod<ContextSnapshotReader>(a, 'contextSnapshot')
 }
 
 /**
