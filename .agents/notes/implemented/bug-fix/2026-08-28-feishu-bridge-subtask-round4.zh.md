@@ -36,7 +36,7 @@ Status: implemented
 
 - 原生递归派发可用至深度上限；深度由 runtime 强制，桥侧不设计数器。
 - `/done` 对真正脏的 worktree 语义不变；全新 worktree 现在被自动移除——README 的「未提交改动与未合并提交始终保留 worktree」本来就意味着这一点（全新 worktree 两者皆无）。
-- 两个极窄竞态保持开放、未处理：native 父报告的 await 后置位 reported 翻转（中断恰落在报告投递窗口内可能双投递），与 `reconstructReplyCtx` 拒绝消耗一次性 reported 标志（该报告永久丢失）。
+- 两个极窄投递竞态已闭合（后续提交）：在途的 native 父报告持有投递标记，`settleNativeChild` 与重复的 `reportNativeChild` 调用都尊重它（epoch 恰落在报告 await 窗口内结束时不再向 native 收件箱双投递）；`reconstructReplyCtx` 拒绝时一次性 reported 标志回滚——native 与群路径一致——后续 settle 或重启恢复仍可投递，报告不再永久丢失。
 - live 部署 profile 仍带着自己的 tool-subagent 禁用行（现与 bundle patch 冗余）与过时的 silent-loss 注释；下次 reload 时应一并删除。
 
 ## Testing

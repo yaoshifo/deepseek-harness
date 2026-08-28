@@ -1006,6 +1006,9 @@ export class Engine {
   /** Parents with a panel post in flight — the re-entry guard for {@link ensureSubtaskPanel}. */
   private readonly subtaskPanelPosting: Set<string> = new Set<string>()
 
+  /** Native children with a report delivery in flight — the concurrent-settle guard. */
+  private readonly nativeDeliveryInFlight: Set<string> = new Set<string>()
+
   /** Command names → alias targets (trigger → command). */
   readonly aliases: Map<string, string> = new Map<string, string>()
 
@@ -6481,7 +6484,7 @@ export class Engine {
     if (entry === undefined) {
       throw new Error('subtask: not a native child of this project')
     }
-    if (entry.reported) {
+    if (entry.reported || this.nativeDeliveryInFlight.has(childId)) {
       console.info(`subtask: native report already delivered, skipping duplicate (child=${childId})`)
       return
     }
@@ -6504,10 +6507,19 @@ export class Engine {
       if (delegator === undefined) {
         throw new Error('subtask: the agent backend does not support native subtasks')
       }
-      await delegator.reportChildToNativeParent(childId, result.trim())
-      this.updateNativeChild(childId, { reported: true })
-      this.refreshSubtaskFooter(entry.parent_key)
-      console.info(`subtask: native child reported to native parent (child=${childId})`)
+      // Hold the delivery mark across the await: the epoch may end (and the
+      // settlement listener fire) while the report is still in flight — the
+      // in-flight report IS this epoch's delivery, and a concurrent settle
+      // would double-deliver into the native parent inbox.
+      this.nativeDeliveryInFlight.add(childId)
+      try {
+        await delegator.reportChildToNativeParent(childId, result.trim())
+        this.updateNativeChild(childId, { reported: true })
+        this.refreshSubtaskFooter(entry.parent_key)
+        console.info(`subtask: native child reported to native parent (child=${childId})`)
+      } finally {
+        this.nativeDeliveryInFlight.delete(childId)
+      }
       return
     }
 
@@ -6535,7 +6547,9 @@ export class Engine {
    */
   settleNativeChild(childId: string, finalOutput: string, stopReason: string = 'completed', diagnostic: string = ''): void {
     const entry = this.nativeChildEntries()[childId]
-    if (entry === undefined || entry.reported) return
+    // An in-flight explicit report owns this epoch's delivery; settling on
+    // top of it would double-deliver into the parent.
+    if (entry === undefined || entry.reported || this.nativeDeliveryInFlight.has(childId)) return
     const delivery = this.settlementDeliveryText(stopReason, finalOutput, diagnostic)
     void this.reportNativeChild(childId, delivery, { settleEmpty: true })
       .catch((error: unknown) => {
@@ -6608,6 +6622,10 @@ export class Engine {
       },
       (error: unknown) => {
         console.warn(`replyNativeToParent: reconstruct reply ctx failed (parent=${entry.parent_key}): ${String(error)}`)
+        // The initiation already consumed the one-shot reported flag; roll it
+        // back so a later settle (or restart recovery) can still deliver —
+        // otherwise this report is lost forever while reading as delivered.
+        this.updateNativeChild(childId, { reported: false })
       },
     )
     return true
@@ -7277,6 +7295,10 @@ export class Engine {
       },
       (error: unknown) => {
         console.warn(`replyToParent: reconstruct reply ctx failed (parent=${parentKey}): ${String(error)}`)
+        // Same rollback as the native path: the initiation consumed the
+        // one-shot flag, and a lost report must not read as delivered.
+        sess.setSubtaskReported(false)
+        this.sessions.save()
       },
     )
     return true

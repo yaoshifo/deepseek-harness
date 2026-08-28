@@ -2253,6 +2253,75 @@ describe('recoverInterruptedNativeChildren (restart recovery)', () => {
   })
 })
 
+describe('native report delivery races', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  it('a settle racing an in-flight native-parent report does not double-deliver', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agent } = newNativeEngine(p, parentKey)
+    // The child's parent is itself a native child → the native-parent branch.
+    e.projectState?.setNativeChild('native-parent-1', {
+      parent_key: parentKey, parent_agent_session_id: 'parent-native-1', label: 'p',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '', reported: true,
+    })
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: 'native-parent-1', parent_agent_session_id: 'native-parent-1', label: 'c',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '', reported: false,
+    })
+    // Hold the native report delivery open so the epoch's end lands mid-await.
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const base = agent.reportChildToNativeParent.bind(agent)
+    agent.reportChildToNativeParent = async (child: string, content: string) => { await gate; await base(child, content) }
+
+    const reporting = e.reportNativeChild('native-child-1', 'formal report')
+    // The epoch ends while the report is still in flight: the settlement
+    // must not deliver a second copy into the native parent inbox.
+    e.settleNativeChild('native-child-1', 'epoch output', 'aborted')
+    release()
+    await reporting
+    await settle()
+
+    expect(agent.reports).toEqual([{ child: 'native-child-1', content: 'formal report' }])
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+  })
+
+  it('a failed parent-ctx reconstruction rolls the native child\'s reported flag back', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey, parent_agent_session_id: 'parent-native-1', label: 'task one',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '', reported: false,
+    })
+    ;(p as unknown as { reconstructReplyCtx: (key: string) => Promise<unknown> }).reconstructReplyCtx
+      = async () => { throw new Error('parent ctx gone') }
+
+    await e.reportNativeChild('native-child-1', 'the report')
+    await settle()
+
+    // The initiation consumed the one-shot flag, but the delivery never
+    // landed: the flag rolls back so a later settle can still deliver.
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
+    expect(p.sentCards).toHaveLength(0)
+  })
+
+  it('a failed parent-ctx reconstruction rolls the group child\'s reported flag back', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+    const childKey = 'test:child-chat'
+    e.sessions.getOrCreateActive(parentKey)
+    const child = e.sessions.getOrCreateActive(childKey)
+    child.setParentSessionKey(parentKey)
+    ;(p as unknown as { reconstructReplyCtx: (key: string) => Promise<unknown> }).reconstructReplyCtx
+      = async () => { throw new Error('parent ctx gone') }
+
+    await e.reportSubtask(childKey, 'group report')
+    await settle()
+
+    expect(child.getSubtaskReported()).toBe(false)
+  })
+})
+
 /** Emit a scoped subagent-runtime event the way its lifecycle carrier does. */
 function emitRuntimeEvent(ctx: Context, name: string, info: unknown): void {
   ;(ctx.emit as unknown as (thisArg: object, name: string, info: unknown) => void)({}, name, info)

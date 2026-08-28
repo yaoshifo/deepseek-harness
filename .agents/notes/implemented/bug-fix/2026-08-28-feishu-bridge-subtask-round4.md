@@ -36,7 +36,7 @@ Composition gaps: the repo bundle patch never disabled the generic `subagent`/`s
 
 - Recursive native delegation works to the depth cap; the runtime owns depth enforcement, so no bridge-side counter exists.
 - `/done` semantics are unchanged for genuinely dirty worktrees; pristine worktrees are now auto-removed, which the README's "uncommitted changes and unmerged commits always keep the worktree" always implied (a fresh worktree has neither).
-- Two narrow races remain open and untouched: the native-parent report's post-await reported flip (an interrupt landing inside the report's delivery window can double-deliver), and a `reconstructReplyCtx` rejection consuming the one-shot reported flag (that report is permanently lost).
+- The two narrow delivery races are closed (follow-up commit): an in-flight native-parent report now holds a delivery mark that both `settleNativeChild` and duplicate `reportNativeChild` calls respect (an epoch ending inside the report's await window no longer double-delivers into the native inbox), and a `reconstructReplyCtx` rejection rolls the one-shot reported flag back — on the native and the group path alike — so a later settle or restart recovery can still deliver instead of losing the report forever.
 - The live deployment profile still carries its own tool-subagent disable rows (now redundant with the bundle patch) and its stale silent-loss comment; both should be dropped at the next reload.
 
 ## Testing
