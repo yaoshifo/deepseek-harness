@@ -16,10 +16,10 @@ import {
   asFileSender,
   asMessageUpdater,
   asPreviewCleaner,
+  asPreviewDisplacementProber,
   asPreviewFinishPreference,
   asPreviewOverflowReporter,
   asPreviewStarter,
-  asPreviewTailProber,
   asStoppedCardRenderer,
   asTransientPatchErrorChecker,
   type Platform,
@@ -56,25 +56,18 @@ export interface StreamPreviewCfg {
   minDeltaChars: number
   /** Max preview length. */
   maxChars: number
-  /**
-   * Period in ms of the preview tail guard: while the card is active, verify
-   * it is still the chat's newest message and reissue it above any message
-   * that pushed it off the tail, whatever sent that message. 0 disables.
-   */
-  tailCheckMs?: number
   /** Enable partial-message streaming for earlier preview. */
   partial?: boolean
 }
 
 /**
  * Default preview configuration: enabled on all platforms, 800ms update
- * interval, 15-char minimum delta, 2000-char cap, tail guard every 5s,
- * partial streaming off.
+ * interval, 15-char minimum delta, 2000-char cap, partial streaming off.
  *
  * @returns A fresh cfg populated with the defaults above.
  */
 export function defaultStreamPreviewCfg(): StreamPreviewCfg {
-  return { enabled: true, disabledPlatforms: [], intervalMs: 800, minDeltaChars: 15, maxChars: 2000, tailCheckMs: 5000 }
+  return { enabled: true, disabledPlatforms: [], intervalMs: 800, minDeltaChars: 15, maxChars: 2000 }
 }
 
 /** Promise-queue mutex replacing Go's sync.Mutex. */
@@ -554,18 +547,18 @@ export class StreamPreview {
    */
   timer: TimerHandle | undefined
   /**
-   * Pending tail-guard timer handle, if armed. Separate from {@link timer}
-   * (the delayed flush) so flush churn never cancels a pending tail check.
+   * Epoch ms the card was last sent or reissued at. The displacement probe
+   * compares it against the chat's activity ledger to decide whether a
+   * newer message pushed the card off the chat tail.
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  tailTimer: TimerHandle | undefined
+  placedAtMs: number = 0
   /**
    * True once finish() ran — its delete paths clear the card without setting
    * a terminal flag, and an in-flight tail check must neither reissue the
    * deleted card nor re-arm. Distinct from {@link completed} (rendered
    * terminal card) on purpose: finish deletes the card without rendering it.
    */
-  private finished = false
   /**
    * Timestamp of the last progress-card PATCH (throttle reference).
    * @internal White-box: ported same-package tests read/write this directly.
@@ -749,7 +742,7 @@ export class StreamPreview {
     // renders the header state, and progress flushes have their own throttle.
     // Plain text skips unchanged or empty bodies.
     if (contentIn.status === undefined && (text === this.lastSentText || text === '')) return
-    const content: ProgressContent = {
+    const content: TextPreviewContent = {
       kind: 'text',
       text,
       ...(contentIn.status !== undefined ? { status: contentIn.status } : {}),
@@ -776,7 +769,7 @@ export class StreamPreview {
           return
         }
         this.previewMsgID = handle
-        this.armTailGuardLocked()
+        this.placedAtMs = Date.now()
       } else {
         try {
           await this.platform.send(this.replyCtx, text)
@@ -792,6 +785,14 @@ export class StreamPreview {
       this.lastSentAt = Date.now()
       return
     }
+
+    // Displacement heal: the chat's activity ledger shows a newer message
+    // landed after this card, so PATCHing in place would leave the card — and
+    // the newest-message chat summary — stuck above it. Reissue the card at
+    // the tail carrying this flush's content instead; on send failure fall
+    // through to the in-place PATCH (fresh content outranks the tail
+    // position) and retry the reissue on the next flush.
+    if (this.displacedLocked() && await this.reissueLocked(content)) return
 
     // Update existing preview message
     if (this.async !== undefined) {
@@ -958,9 +959,6 @@ export class StreamPreview {
         // Reset the failure streak so the post-resume tolerance window
         // starts fresh.
         this.failedPatchStreak = 0
-        // The freeze disarmed the guard (degraded reads as terminal); the
-        // card is live again, so resume keeping it at the chat tail.
-        this.armTailGuardLocked()
       }
     })
   }
@@ -972,7 +970,6 @@ export class StreamPreview {
   async discard(): Promise<void> {
     await this.locked(async () => {
       this.cancelTimerLocked()
-      this.clearTailGuardLocked()
       if (this.previewMsgID !== undefined) {
         const cleaner = asPreviewCleaner(this.platform)
         if (cleaner !== undefined) {
@@ -1004,11 +1001,6 @@ export class StreamPreview {
   async finish(finalTextIn: string): Promise<boolean> {
     return this.locked(async () => {
       this.cancelTimerLocked()
-      // The delete paths below clear the card without setting a terminal
-      // flag; latch finish and stop the tail guard so an in-flight tail
-      // check cannot reissue the deleted card.
-      this.finished = true
-      this.clearTailGuardLocked()
       let finalText = finalTextIn
       if (this.transform !== undefined) finalText = this.transform(finalText)
       if (this.previewMsgID === undefined || this.degraded) {
@@ -1088,29 +1080,30 @@ export class StreamPreview {
   }
 
   /**
-   * Reissue the preview card (create new, delete old) so it becomes the
-   * latest message again after system notices push it off the chat tail.
-   * Not throttled: rename/avatar notices must not eat the last bump.
-   * A stopped card is terminal — a bump must not resurrect it as a running
-   * card (markStopped leaves degraded=false, so the guard list alone cannot
-   * catch it; 2026-08-25 oc_d22d incident).
+   * Reissue the preview card (create new, delete old) carrying the given
+   * content so it becomes the chat's latest message again. Not throttled:
+   * rename/avatar notices must not eat the last bump. A stopped card is
+   * terminal — a reissue must not resurrect it as a running card
+   * (markStopped leaves degraded=false, so the guard list alone cannot catch
+   * it; 2026-08-25 oc_d22d incident).
    * Must hold the lock.
+   * @param content - Text content the reissued card carries.
+   * @returns True when the new card was sent.
    */
-  private async bumpToEndLocked(): Promise<void> {
-    if (this.previewMsgID === undefined || this.degraded || this.completed || this.failed || this.stoppedCardRendered) return
-    // An empty body still bumps: the running-status header renders alone.
-    const content = this.progressContentLocked(this.buildProgressDisplayLocked())
+  private async reissueLocked(content: TextPreviewContent): Promise<boolean> {
+    if (this.previewMsgID === undefined || this.degraded || this.completed || this.failed || this.stoppedCardRendered) return false
     const starter = asPreviewStarter(this.platform)
-    if (starter === undefined) return
+    if (starter === undefined) return false
     let newHandle: unknown
     try {
       newHandle = await starter.sendPreviewStart(this.replyCtx, content)
     } catch (error) {
       console.warn(`stream preview: bump SendPreviewStart failed: ${String(error)}`)
-      return
+      return false
     }
     const oldHandle = this.previewMsgID
     this.previewMsgID = newHandle
+    this.placedAtMs = Date.now()
     this.lastSentText = content.text
     this.lastSentViaUpdate = false
     const cleaner = asPreviewCleaner(this.platform)
@@ -1121,87 +1114,30 @@ export class StreamPreview {
         console.debug(`stream preview: bump delete old card failed: ${String(error)}`)
       }
     }
+    return true
   }
 
-  /** Reissue the preview card so it becomes the latest message; no-op when inactive. */
+  /**
+   * Whether the chat's activity ledger marks the card as displaced: a
+   * tracked message (inbound messages, non-preview outbound sends) landed
+   * after the card's last send or reissue (PreviewDisplacementProber).
+   * Thread-isolated cards never report displaced. Must hold the lock.
+   */
+  private displacedLocked(): boolean {
+    if (this.previewMsgID === undefined) return false
+    const prober = asPreviewDisplacementProber(this.platform)
+    if (prober === undefined) return false
+    return prober.previewDisplaced(this.previewMsgID, this.placedAtMs)
+  }
+
+  /**
+   * Reissue the preview card with the current progress display so it becomes
+   * the latest message; no-op when inactive.
+   */
   async bumpToEnd(): Promise<void> {
-    await this.locked(() => this.bumpToEndLocked())
-  }
-
-  // ── tail guard: keep the active card the chat's newest message ──────────
-
-  /** Whether the tail guard must stand down: no card, or a terminal/frozen state. */
-  private tailGuardTerminalLocked(): boolean {
-    return this.previewMsgID === undefined || this.degraded || this.completed
-      || this.failed || this.stoppedCardRendered || this.finished
-  }
-
-  /**
-   * Arm the periodic tail guard once the card exists. No-op when disabled,
-   * already armed, or the platform cannot verify the chat tail. Must hold
-   * the lock.
-   */
-  private armTailGuardLocked(): void {
-    if (this.tailTimer !== undefined || this.tailGuardTerminalLocked()) return
-    const interval = this.cfg.tailCheckMs ?? 0
-    if (interval <= 0 || asPreviewTailProber(this.platform) === undefined) return
-    this.scheduleTailCheckLocked()
-  }
-
-  /** Schedule the next tail check; self-rescheduling from the tick body. Must hold the lock. */
-  private scheduleTailCheckLocked(): void {
-    const interval = this.cfg.tailCheckMs ?? 0
-    let fired = false
-    const id = setTimeout(() => {
-      fired = true
-      this.tailTimer = undefined
-      void this.runTailCheck()
-    }, interval)
-    this.tailTimer = {
-      stop: (): boolean => {
-        if (fired) return false
-        clearTimeout(id)
-        return true
-      },
-    }
-  }
-
-  /** Stop the tail guard (turn finished or card discarded). Must hold the lock. */
-  private clearTailGuardLocked(): void {
-    if (this.tailTimer !== undefined) {
-      this.tailTimer.stop()
-      this.tailTimer = undefined
-    }
-  }
-
-  /**
-   * One tail-guard cycle: verify the card is still the chat's newest message
-   * and reissue it above whatever displaced it — engine cards, human
-   * messages, system notices, other bots. The probe runs off the lock; a
-   * displaced verdict re-enters through bumpToEnd, whose own guard re-checks
-   * terminal state against races with finish(). A terminal sighting disarms
-   * instead of probing, so a missed clear at most wastes one tick.
-   */
-  private async runTailCheck(): Promise<void> {
-    if (this.tailGuardTerminalLocked()) return // finish/discard raced us; tick not re-armed
-    const prober = asPreviewTailProber(this.platform)
-    if (prober === undefined || (this.cfg.tailCheckMs ?? 0) <= 0) return
-    const handle = this.previewMsgID
-    let latest = true
-    try {
-      latest = await prober.previewIsLatest(handle)
-    } catch (error) {
-      console.debug(`stream preview: tail check failed: ${String(error)}`)
-    }
-    if (!latest) {
-      console.debug(`stream preview: tail guard bump — card displaced (${this.sessionKey})`)
-      await this.bumpToEnd()
-    }
-    // Re-arm under the lock so a finish() racing between the probe and here
-    // is observed (it latches `finished` holding the same lock).
-    await this.locked(() => {
-      if (this.tailGuardTerminalLocked()) return
-      this.scheduleTailCheckLocked()
+    await this.locked(async () => {
+      // An empty body still bumps: the running-status header renders alone.
+      await this.reissueLocked(this.progressContentLocked(this.buildProgressDisplayLocked()))
     })
   }
 
@@ -1217,14 +1153,13 @@ export class StreamPreview {
   }
 
   /**
-   * The user recalled the card: stop updating and tail-guarding it. The card
-   * is already gone platform-side, so unlike discard() there is no cleanup
-   * send — and the guard must not resurrect what the user deleted.
+   * The user recalled the card: stop updating it. The card is already gone
+   * platform-side, so unlike discard() there is no cleanup send — and the
+   * displacement heal must not resurrect what the user deleted.
    */
   async markRecalled(): Promise<void> {
     await this.locked(() => {
       this.degraded = true
-      this.clearTailGuardLocked()
     })
   }
 

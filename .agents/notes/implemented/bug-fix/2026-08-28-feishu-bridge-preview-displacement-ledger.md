@@ -1,0 +1,33 @@
+# Agent Note: feishu-bridge preview displacement heal — the activity ledger replaces the periodic tail probe
+
+Status: implemented
+
+English | [中文](2026-08-28-feishu-bridge-preview-displacement-ledger.zh.md)
+
+## Problem
+
+The periodic tail guard ([2026-08-26 note](2026-08-26-feishu-bridge-preview-tail-guard.md)) carried two production costs. First, every heal is a recall+resend and Feishu recall (`DELETE /im/v1/messages/:message_id`) is the platform's only reorder primitive, each recall leaving a「已撤回」tombstone — the per-period reissue produced tombstones proportional to displacement count even when the card had no new status to show, and a 2026-08-28 plan-mode turn left 19 tombstones at exactly 3.0s spacing (root cause undetermined; the periodic reissuer was the carrier). Second, each active card cost one `im.message.list` probe per period and healed on a fixed cadence, leaving up to one period of wrong sidebar display. The product requirement is unchanged and rules out completion-time-only checks: during a turn the tool-process card must hold the chat's newest message, because the Feishu sidebar summary tracks only the newest message and updates through the card's in-place PATCHes.
+
+## Decision
+
+The platform keeps a per-chat activity ledger — `Map<chatID, lastActivityMs>`, in-process and volatile: a restart clears it while the next preview card lands at the tail anyway, so an empty ledger is the correct post-restart state. Tracked activity: every `im.message.receive_v1` delivery (touched before the routing drops, because a message the bot ignores still physically displaced the card and holds the summary) and every non-preview outbound send — `sendNewMessageToChat`, `replyMessage`, `replyCard`, `sendCard`, and `sendCardWithHandle` touch the ledger after a successful send; file and image delivery funnels through them. Deliberately not tracked: `im.message.recalled_v1` (a reissue's own delete fires the event, so touching would self-displace forever) and card sends themselves — `sendPreviewStart` never routes through the helpers, so first sends and reissues are exempt and concurrent preview cards cannot bump-loop; the later sender holds the tail and the earlier keeps PATCHing in place.
+
+The async `PreviewTailProber.previewIsLatest` (one `message.list` per period) is replaced by the synchronous `PreviewDisplacementProber.previewDisplaced(handle, sinceMs)`. `StreamPreview` records `placedAtMs` at the first send and at each reissue; on every throttled content flush a card the ledger marks displaced reissues itself at the tail through `reissueLocked(content)` carrying that flush's content instead of PATCHing — every tombstone now also delivers fresh status, and streaming heals within one flush interval (~800ms) instead of one probe period. A failed reissue falls back to the in-place PATCH and retries on the next flush. Rename/avatar system notices keep the immediate chat-changed push bump: the card-header PATCH races the notice's system message, so waiting for the next content flush could leave the sidebar on the notice for a whole silent tool run. `streamPreview.tailCheckMs` and the guard's timer machinery are removed. The diagnostic lines `feishu: preview card sent/deleted` were raised from `console.debug` to `console.info`: the daemon runtime swallows `console.debug` output entirely (the hot-path sent line logged zero hits across a week while sibling info lines appear; the swallowing mechanism was not located — CLI, boot, vendor, profile, plist, and fnm-node were excluded), which had left the churn investigation's instrumentation blind.
+
+## Alternatives considered
+
+**Completion-time-only tail check.** Rejected by the product owner: the sidebar must reflect the live tool-process header during the turn, not only at completion.
+
+**Keep the periodic probe with debouncing or displacer classification.** Rejected: no-content reissue tombstones and the churn pathology only become rarer, not structurally impossible, and the per-period `message.list` polling remains.
+
+**Defer the bridge's own mid-turn messages until turn end.** Rejected: deliverables and subtask reports would arrive late, ask cards cannot be deferred at all, and the send-path queue is a larger change than the ledger.
+
+**Ledger plus an immediate bump for every displacer.** Rejected for user messages: bumping right below a fresh user message re-sends stale status and buries the user's message within a second; healing at the next content tick lets the displacer — itself the newest information — keep the summary until the card has new status to take the tail back with.
+
+## Consequences
+
+The sidebar heals within one flush interval during streaming and at the next tool event during silent runs; `im.message.list` polling is gone; every reissue tombstone carries fresh status; the periodic-reissue churn class — the 19-tombstone incident's carrier — is structurally eliminated, though that incident's root cause stays undetermined. The legitimate tombstone count still equals the displacement count: field data from three active chats shows the dominant displacer is the bridge's own avatar phase repaint (every tombstone in the sample directly follows an「开发虾 更新了群头像」system message), and the sidebar does display such system messages, so those re-takes are required — reducing them means reducing repaint frequency, a product lever deliberately out of scope here. Displacement classes the ledger never sees (system messages beyond rename/avatar) stay unhealed until the next tracked activity. Restart behavior is safe by construction: all heal state is volatile and a fresh card always lands at the tail.
+
+## Testing
+
+`tests/feishu/preview-tail.spec.ts`: ledger touches for inbound messages (including one the router drops), outbound text and card sends; `sendPreviewStart` exemption; recall events never touch; thread handles never report displaced; a non-handle argument rejects. `tests/streaming.spec.ts` "displacement heal": a displaced flush reissues carrying the flushed content, a still-latest flush PATCHes in place, a failed reissue falls back to the in-place PATCH, discard and markRecalled disarm the heal, and a platform without the probe capability never reissues. The package suite passes (2340 tests) and the repo typecheck is green.

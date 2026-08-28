@@ -701,7 +701,6 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     intervalMs: Schema.natural().description('Minimum ms between updates'),
     minDeltaChars: Schema.natural().description('Minimum new chars before an update'),
     maxChars: Schema.natural().description('Max preview length'),
-    tailCheckMs: Schema.natural().description('Preview tail-guard period in ms: while active, reissue the card above any message that pushes it off the chat tail; 0 disables (default 5000)'),
     disabledPlatforms: Schema.array(Schema.string()).description('Platforms without preview'),
   }).description('Streaming preview tuning'),
   usageProviders: Schema.array(Schema.object({

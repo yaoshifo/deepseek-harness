@@ -533,6 +533,13 @@ export class FeishuPlatform implements Platform {
   private readonly lastProgressCard = new Map<string, string>()
   /** messageID → latest render status text (#48 survival). */
   private readonly renderStatusText = new Map<string, string>()
+  /**
+   * chatID → epoch ms of the last tracked chat activity (inbound messages,
+   * non-preview outbound sends). In-process and volatile by design: a
+   * restart clears it while the next preview card lands at the chat tail
+   * anyway, so an empty ledger is the correct post-restart state.
+   */
+  private readonly chatActivity = new Map<string, number>()
   /** sessionKey → permission card body (M3 card-action replacement). */
   readonly permBodyCache = new Map<string, string>()
   /** sessionKey → the ask card's full question set, cached at send time to rebuild the card on callbacks. */
@@ -755,6 +762,11 @@ export class FeishuPlatform implements Platform {
       const ms = Number.parseInt(msg.create_time, 10)
       if (Number.isFinite(ms) && isOldMessage(ms)) return
     }
+
+    // Every delivered message displaces a preview card from the chat tail,
+    // even one the routing below drops (no @mention, outside the allow
+    // list) — it still physically landed and holds the chat summary.
+    this.touchChatActivity(chatID)
 
     const chatType = msg.chat_type ?? ''
     const isSpawned = this.isSpawned(chatID)
@@ -1573,10 +1585,23 @@ export class FeishuPlatform implements Platform {
     return token
   }
 
+  /**
+   * Record tracked chat activity for the displacement ledger: any message
+   * that physically lands in the chat pushes a preview card off the tail
+   * and steals the newest-message chat summary. Called by the outbound
+   * routing helpers after a successful send; sendPreviewStart never routes
+   * through them, so card (re)issues do not displace themselves.
+   * @param chatID - Chat the message landed in; empty ids are ignored.
+   */
+  private touchChatActivity(chatID: string): void {
+    if (chatID !== '') this.chatActivity.set(chatID, Date.now())
+  }
+
   private async sendNewMessageToChat(rc: FeishuReplyContext, msgType: string, content: string): Promise<void> {
     if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send new message')
     await this.withRetry('send', () => this.request('send', client =>
       client.create({ chatId: rc.chatID, msgType, content })))
+    this.touchChatActivity(rc.chatID)
   }
 
   private async replyMessage(rc: FeishuReplyContext, msgType: string, content: string): Promise<void> {
@@ -1595,6 +1620,7 @@ export class FeishuPlatform implements Platform {
         throw error
       }
     }))
+    this.touchChatActivity(rc.chatID)
     if (state.withdrawn) {
       console.info(`feishu: reply target withdrawn — sending as standalone chat message (chat ${rc.chatID})`)
       await this.sendNewMessageToChat(rc, msgType, content)
@@ -1625,11 +1651,13 @@ export class FeishuPlatform implements Platform {
       if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
       await this.withRetry('send card', () => this.request('send card', client =>
         client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })))
+      this.touchChatActivity(rc.chatID)
       return
     }
     const replyInThread = this.shouldReplyInThread(rc)
     await this.withRetry('reply card', () => this.request('reply card', client =>
       client.reply({ messageId: rc.messageID, msgType: 'interactive', content: cardJSON, replyInThread })))
+    this.touchChatActivity(rc.chatID)
   }
 
   /**
@@ -1650,6 +1678,7 @@ export class FeishuPlatform implements Platform {
     const cardJSON = renderCard(card, rc.sessionKey)
     await this.withRetry('send card', () => this.request('send card', client =>
       client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })))
+    this.touchChatActivity(rc.chatID)
   }
 
   /**
@@ -1678,6 +1707,7 @@ export class FeishuPlatform implements Platform {
       const resp = await client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })
       return resp?.messageId ?? ''
     }))
+    this.touchChatActivity(rc.chatID)
     return new FeishuPreviewHandle(msgID, rc.chatID, rc.sessionKey)
   }
 
@@ -1815,7 +1845,7 @@ export class FeishuPlatform implements Platform {
     if (msgID === '') throw new Error('feishu: send preview: no message ID returned')
 
     this.lastProgressCard.set(msgID, preButtonJSON)
-    console.debug(`feishu: preview card sent (${msgID}, session ${rc.sessionKey})`)
+    console.info(`feishu: preview card sent (${msgID}, session ${rc.sessionKey})`)
     return new FeishuPreviewHandle(msgID, rc.chatID, rc.sessionKey, this.shouldReplyInThread(rc))
   }
 
@@ -1914,25 +1944,28 @@ export class FeishuPlatform implements Platform {
     const client = await this.ensureApi()
     const boundDelete = client.delete?.bind(client)
     if (boundDelete === undefined) throw new ErrNotSupported('feishu client without delete support')
-    console.debug(`feishu: preview card deleted (${h.messageID}, session ${h.sessionKey})`)
+    console.info(`feishu: preview card deleted (${h.messageID}, session ${h.sessionKey})`)
     await this.withRetry('delete preview message', () => boundDelete({ messageId: h.messageID }))
   }
 
   /**
-   * Verify the preview card is still its chat's newest message (PreviewTailProber
-   * probe): any message that pushes it off the tail — engine cards, human
-   * messages, system notices, other bots — is detected here regardless of how
-   * it was sent. Thread-isolated cards live inside a topic, where the root
-   * chat's tail is meaningless, so they always report latest.
+   * Whether a tracked message landed in the card's chat after `sinceMs`
+   * (PreviewDisplacementProber). Tracked: inbound messages (receive_v1,
+   * whatever the bot does with them) and non-preview outbound sends — the
+   * routing helpers touch the ledger, sendPreviewStart is exempt so a card
+   * reissue never displaces itself. Avatar/name system messages are NOT
+   * tracked here: they arrive as im.chat.updated_v1, and the engine's
+   * chat-changed bump path covers them immediately. Thread-isolated cards
+   * live inside a topic the root chat's tail does not apply to, so they
+   * never report displaced.
    * @param previewHandle - Preview handle from sendPreviewStart.
-   * @returns True when the card is the chat's newest message (or thread-isolated).
+   * @param sinceMs - Epoch ms the card was last sent or reissued at.
+   * @returns True when the card's chat saw tracked activity after `sinceMs`.
    */
-  async previewIsLatest(previewHandle: unknown): Promise<boolean> {
+  previewDisplaced(previewHandle: unknown, sinceMs: number): boolean {
     const h = requirePreviewHandle(previewHandle)
-    if (h.thread) return true
-    const items = await this.listMessages(h.chatID, 0, 'ByCreateTimeDesc', 1)
-    const newest = items[0]
-    return newest === undefined || newest.messageId === h.messageID
+    if (h.thread) return false
+    return (this.chatActivity.get(h.chatID) ?? 0) > sinceMs
   }
 
   /**

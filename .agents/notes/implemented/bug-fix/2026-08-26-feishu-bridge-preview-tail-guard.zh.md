@@ -14,6 +14,8 @@ Status: implemented
 
 守卫之上补齐三个原推送方案的洞：① chatroom ask 卡与角色回灌卡改为 await 后再注入回合/唤醒（`askRoleInternal`、serial/gather 完成路径），消除最高发场景的竞态窗口，让占位卡确定后落；② engine bump 路由 per-session 化——`bumpActivePreviewForSession` 直接查 `interactiveStates.get(key).preview`，全局单槽 `activePreview` 绑定删除（并发流式下最新回合不再偷走其他会话的 bump），`onChatChanged` 去抖定时器改为按 session 的 Map；③ `recalled_v1` 命中活跃卡时调 `markRecalled()` 置 degraded 并停守卫——用户手动撤回的卡不再被周期性复活。
 
+周期拉取守卫本身已于 2026-08-28 被活动账本位移自愈取代（[displacement-ledger note](2026-08-28-feishu-bridge-preview-displacement-ledger.zh.md)）：`PreviewTailProber.previewIsLatest`、`streamPreview.tailCheckMs` 与守卫定时器均已移除，自愈搭在预览自身的内容刷新节拍上。上述三项推送侧改动仍按原样交付。
+
 ## Alternatives considered
 
 **逐点推送修补（发卡 await 后补 bump + engine per-session 路由）。** 否决为兜底主力：触发集是「引擎发送点」的枚举，本次事故正是枚举漏项；无事件的系统消息与外部发送永远覆盖不了。拉取的触发集是「群尾部状态」，与消息来源解耦，未来新功能的卡片自动被覆盖。但推送侧最便宜的两块（chatroom 卡片 await 定序、per-session 路由）后来作为快路径补齐——它们消除最高发场景的竞态窗口与并发错位，拉取守卫兜住其余一切。

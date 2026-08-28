@@ -110,7 +110,7 @@ describe('cancelQueuedByMessageID', () => {
 describe('markRecalledPreview', () => {
   /** A started preview whose handle carries a Feishu-style message id. */
   function startedPreview(p: Platform): ReturnType<typeof newStreamPreview> {
-    const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500, tailCheckMs: 0 }
+    const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500 }
     const starter = Object.assign(p, {
       async sendPreviewStart(): Promise<unknown> {
         return { messageID: 'om_card' }
@@ -122,7 +122,7 @@ describe('markRecalledPreview', () => {
     return sp
   }
 
-  it('marks the matching preview recalled (degraded, guard stopped)', async () => {
+  it('marks the matching preview recalled (degraded, heal stopped)', async () => {
     const { e, p } = newEngine()
     const state = new InteractiveState()
     state.platform = p
@@ -138,7 +138,6 @@ describe('markRecalledPreview', () => {
 
     expect(recalled).toHaveBeenCalledTimes(1)
     expect(sp.degraded).toBe(true)
-    expect(sp.tailTimer).toBeUndefined()
   })
 
   it('is a no-op for ids no active preview holds', () => {

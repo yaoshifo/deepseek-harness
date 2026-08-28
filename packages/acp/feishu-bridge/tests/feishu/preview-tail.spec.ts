@@ -1,31 +1,27 @@
 /**
- * previewIsLatest (PreviewTailProber) tests: the tail-guard probe maps to a
- * newest-first single-item im.message.list and compares message ids, and
- * thread-isolated handles skip the query (the root-chat tail is meaningless
- * for them).
+ * previewDisplaced (PreviewDisplacementProber) tests: the platform keeps a
+ * per-chat activity ledger touched by inbound messages and non-preview
+ * outbound sends; sendPreviewStart stays exempt so a card reissue never
+ * displaces itself, thread-isolated handles never report displaced, and
+ * recall events never touch (a reissue's own delete would otherwise loop).
  *
  * @module dsh-feishu-bridge/tests-feishu-preview-tail
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, FeishuPreviewHandle, type FeishuApiClient, type FeishuListItem } from '../../src/feishu/platform.js'
+import { FeishuPlatform, FeishuPreviewHandle, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.js'
+import { Card } from '../../src/card.js'
+import type { ProgressContent } from '../../src/core/types.js'
 
-/** Captured im.message.list query args, plus the configurable newest item. */
-function tailApi(newest: FeishuListItem | undefined): { api: FeishuApiClient; queries: Array<Record<string, unknown>> } {
-  const queries: Array<Record<string, unknown>> = []
-  const api: FeishuApiClient = {
+function apiClient(): FeishuApiClient {
+  return {
     async reply() {
       return { messageId: 'om_ok' }
     },
     async create() {
       return { messageId: 'om_ok' }
     },
-    async listMessages(q?: Record<string, unknown>) {
-      if (q !== undefined) queries.push(q)
-      return newest === undefined ? [] : [newest]
-    },
   }
-  return { api, queries }
 }
 
 function newPlatform(api: FeishuApiClient): FeishuPlatform {
@@ -38,52 +34,93 @@ function newPlatform(api: FeishuApiClient): FeishuPlatform {
   })
 }
 
-function otherMessage(messageId: string): FeishuListItem {
+const replyCtx = { messageID: 'om_trigger', chatID: 'oc_chat', sessionKey: 'feishu:oc_chat' }
+
+const textContent: ProgressContent = { kind: 'text', text: 'hello' }
+
+let eventCounter = 0
+
+function receiveEvent(overrides: Partial<FeishuReceiveEvent['message']>): FeishuReceiveEvent {
+  eventCounter += 1
   return {
-    messageId,
-    msgType: 'text',
-    content: '{"text":"displacer"}',
-    createTime: '1690000001000',
-    sender: { id: 'ou_user', idType: 'open_id', senderType: 'user' },
+    message: {
+      message_id: `om_${eventCounter}`,
+      chat_id: 'oc_chat',
+      message_type: 'text',
+      content: JSON.stringify({ text: 'hello' }),
+      chat_type: 'p2p',
+      create_time: String(Date.now()),
+      ...overrides,
+    },
+    sender: { sender_id: { open_id: 'ou_9' } },
   }
 }
 
-describe('previewIsLatest', () => {
-  it('queries newest-first with page size 1 and compares message ids', async () => {
-    const { api, queries } = tailApi(otherMessage('om_other'))
-    const p = newPlatform(api)
+describe('previewDisplaced', () => {
+  it('false with no chat activity after the card', () => {
+    const p = newPlatform(apiClient())
     const handle = new FeishuPreviewHandle('om_mine', 'oc_chat', 'feishu:oc_chat')
-
-    await expect(p.previewIsLatest(handle)).resolves.toBe(false)
-    expect(queries).toHaveLength(1)
-    expect(queries[0]).toMatchObject({ chatId: 'oc_chat', sortType: 'ByCreateTimeDesc', pageSize: 1 })
+    expect(p.previewDisplaced(handle, Date.now() - 1000)).toBe(false)
   })
 
-  it('true when the preview card itself is the newest message', async () => {
-    const { api } = tailApi(otherMessage('om_mine'))
-    const p = newPlatform(api)
+  it('inbound messages touch the ledger', () => {
+    const p = newPlatform(apiClient())
     const handle = new FeishuPreviewHandle('om_mine', 'oc_chat', 'feishu:oc_chat')
-    await expect(p.previewIsLatest(handle)).resolves.toBe(true)
+    const since = Date.now() - 1000
+    p.onMessage(receiveEvent({}))
+    expect(p.previewDisplaced(handle, since)).toBe(true)
+    // A card sent after the activity is not displaced by it.
+    expect(p.previewDisplaced(handle, Date.now())).toBe(false)
   })
 
-  it('true for an empty chat (nothing displaced it)', async () => {
-    const { api } = tailApi(undefined)
-    const p = newPlatform(api)
+  it('a group message the router drops still touches (it physically landed)', () => {
+    const p = newPlatform(apiClient())
     const handle = new FeishuPreviewHandle('om_mine', 'oc_chat', 'feishu:oc_chat')
-    await expect(p.previewIsLatest(handle)).resolves.toBe(true)
+    const since = Date.now() - 1000
+    p.onMessage(receiveEvent({ chat_type: 'group', mentions: [] }))
+    expect(p.previewDisplaced(handle, since)).toBe(true)
   })
 
-  it('thread handles skip the query entirely', async () => {
-    const { api, queries } = tailApi(otherMessage('om_other'))
-    const p = newPlatform(api)
+  it('recall events never touch the ledger', () => {
+    const p = newPlatform(apiClient())
+    const handle = new FeishuPreviewHandle('om_mine', 'oc_chat', 'feishu:oc_chat')
+    const since = Date.now() - 1000
+    p.onMessageRecalled({ message_id: 'om_other', chat_id: 'oc_chat' })
+    expect(p.previewDisplaced(handle, since)).toBe(false)
+  })
+
+  it('outbound text sends touch the ledger', async () => {
+    const p = newPlatform(apiClient())
+    const handle = new FeishuPreviewHandle('om_mine', 'oc_chat', 'feishu:oc_chat')
+    const since = Date.now() - 1000
+    await p.send(replyCtx, 'plain answer')
+    expect(p.previewDisplaced(handle, since)).toBe(true)
+  })
+
+  it('outbound card sends touch the ledger', async () => {
+    const p = newPlatform(apiClient())
+    const handle = new FeishuPreviewHandle('om_mine', 'oc_chat', 'feishu:oc_chat')
+    const since = Date.now() - 1000
+    await p.sendCardWithHandle(replyCtx, new Card())
+    expect(p.previewDisplaced(handle, since)).toBe(true)
+  })
+
+  it('sendPreviewStart stays exempt so reissues never displace themselves', async () => {
+    const p = newPlatform(apiClient())
+    const since = Date.now() - 1000
+    const sent = await p.sendPreviewStart(replyCtx, textContent)
+    expect(p.previewDisplaced(sent, since)).toBe(false)
+  })
+
+  it('thread handles never report displaced', () => {
+    const p = newPlatform(apiClient())
     const handle = new FeishuPreviewHandle('om_mine', 'oc_chat', 'feishu:oc_chat', true)
-    await expect(p.previewIsLatest(handle)).resolves.toBe(true)
-    expect(queries).toHaveLength(0)
+    p.onMessage(receiveEvent({}))
+    expect(p.previewDisplaced(handle, 0)).toBe(false)
   })
 
-  it('rejects a non-handle argument', async () => {
-    const { api } = tailApi(undefined)
-    const p = newPlatform(api)
-    await expect(p.previewIsLatest('om_not_a_handle')).rejects.toThrow()
+  it('rejects a non-handle argument', () => {
+    const p = newPlatform(apiClient())
+    expect(() => p.previewDisplaced('om_not_a_handle', 0)).toThrow()
   })
 })

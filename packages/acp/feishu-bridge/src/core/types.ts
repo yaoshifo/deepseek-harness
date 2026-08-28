@@ -592,18 +592,22 @@ export interface PreviewCleaner {
 }
 
 /**
- * Optional: platform can verify its preview card is still the chat's newest
- * message. The preview tail guard polls this so ANY message that pushes the
- * card off the chat tail — engine cards, human messages, system notices,
- * other bots — is detected and healed regardless of its source.
+ * Optional: platform keeps a per-chat activity ledger so a preview card can
+ * tell — synchronously, without message-list API calls — whether a newer
+ * message landed in its chat. The streaming preview consults this on its
+ * content flushes and reissues the card at the chat tail whenever it was
+ * displaced, so the newest-message chat summary keeps tracking the card.
  */
-export interface PreviewTailProber {
+export interface PreviewDisplacementProber {
   /**
    * @param previewHandle - Handle returned by {@link PreviewStarter.sendPreviewStart}.
-   * @returns True when the preview card is still the newest message in its
-   * chat (or verification is meaningless there, e.g. thread isolation).
+   * @param sinceMs - Epoch ms the card was last sent or reissued at.
+   * @returns True when a tracked message (inbound messages, non-preview
+   * outbound sends) landed in the card's chat after `sinceMs`; false for
+   * thread-isolated cards, whose chat is a topic the root tail does not
+   * apply to.
    */
-  previewIsLatest(previewHandle: unknown): Promise<boolean>
+  previewDisplaced(previewHandle: unknown, sinceMs: number): boolean
 }
 
 /** Optional: platform wants the preview kept as the final delivered message. */
@@ -711,13 +715,13 @@ export function asPreviewCleaner(p: Platform): PreviewCleaner | undefined {
 }
 
 /**
- * Structural check for the {@link PreviewTailProber} capability.
+ * Structural check for the {@link PreviewDisplacementProber} capability.
  *
  * @param p - the platform to inspect.
  * @returns the capability view, or undefined when not implemented.
  */
-export function asPreviewTailProber(p: Platform): PreviewTailProber | undefined {
-  return withMethod<PreviewTailProber>(p, 'previewIsLatest')
+export function asPreviewDisplacementProber(p: Platform): PreviewDisplacementProber | undefined {
+  return withMethod<PreviewDisplacementProber>(p, 'previewDisplaced')
 }
 
 /**
