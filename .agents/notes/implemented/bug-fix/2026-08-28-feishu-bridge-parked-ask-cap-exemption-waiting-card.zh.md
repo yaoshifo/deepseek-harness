@@ -26,7 +26,7 @@ Status: implemented
 
 - 开放超过上限的追问——含隔夜——可正常作答；回答会被送达并处理。
 - turn 现在可以通过反复追问跨越无界自然时间（每次挂起都豁免）；活跃泵送时长仍有界，trickle-forever 保护完好。
-- 挂起卡显示「等待中 · <末次工具时间> · <计数>」；权限后重启仍开新运行卡，见 [post-permission 卡重启笔记](2026-08-20-feishu-bridge-post-permission-card-restart.zh.md)（其卡前 finalize 现在落蓝色而非绿色）。
+- 挂起卡显示「等待中 · <末次工具时间> · <计数>」，直到 ask 结算；[挂起卡结算笔记](2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome.zh.md)随后把头部 PATCH 为结果状态（已批准/已拒绝/已回答/已取消）。权限后重启仍开新运行卡，见 [post-permission 卡重启笔记](2026-08-20-feishu-bridge-post-permission-card-restart.zh.md)（其卡前 finalize 现在落蓝色而非绿色）。
 - 诊断日志（预览卡发送/删除、尾部守护 bump）已落地，用于追查 2026-08-28 的另一异常：一次 plan 模式 turn 内 19 条精确 3.0 秒间隔的撤回墓碑（07:37:59–07:38:53），并行群与前夜 2 小时 turn 均未复现——机制未定案。
 
 ## Testing

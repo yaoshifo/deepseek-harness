@@ -542,8 +542,14 @@ export function asRecentTurnsReader(a: Agent): RecentTurnsReader | undefined {
  * preview used to prepend.
  */
 export interface ProgressStatus {
-  /** Card lifecycle state; "running" matches the former headerless prefix; "waiting" marks a card parked on a user answer. */
+  /**
+   * Card lifecycle state; "running" matches the former headerless prefix;
+   * "waiting" marks a card parked on a user answer; the four settled states
+   * replace that waiting header once the parked ask resolves (the user
+   * answered, or the ask was cancelled).
+   */
   state: 'running' | 'completed' | 'failed' | 'thinking' | 'waiting'
+    | 'approved' | 'rejected' | 'answered' | 'cancelled'
   /** Timestamp (HH:MM:SS) appended to the card title; empty string omits it. */
   ts: string
   /** Tool-call count appended to the title when positive. */
@@ -551,6 +557,9 @@ export interface ProgressStatus {
   /** Unreported native subtasks; positive appends a running-subtasks suffix to terminal titles. */
   pendingSubtasks?: number
 }
+
+/** Header states a card parked on an ask settles its waiting header to when the ask resolves. */
+export type ParkOutcome = 'approved' | 'rejected' | 'answered' | 'cancelled'
 
 /** Text-path preview content: a display body with an optional structured status. */
 export interface TextPreviewContent {

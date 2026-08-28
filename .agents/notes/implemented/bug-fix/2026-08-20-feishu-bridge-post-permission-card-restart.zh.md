@@ -22,7 +22,7 @@ Go 的交互事件循环把 pending permission 视为两步的阶段边界。权
 
 ## Consequences
 
-权限卡（或 AskUserQuestion 卡）发出时，活进度卡当场终结（自 2026-08-28 起转蓝显示「等待中」——turn 仍在等用户，见[挂起追问上限豁免笔记](2026-08-28-feishu-bridge-parked-ask-cap-exemption-waiting-card.zh.md)；导出按钮从捕获快照起即可用）；批准后的执行开新占位卡继续。预览活跃时交互前文本留在完成卡上——只有预览降级才以纯消息重发，与 Go 一致。Go 在批准时归档 plan 文件的机制（`pendingPlanArchive`，批准时带时间戳后缀复制）未随本次移植——记为独立的迁移缺口。
+权限卡（或 AskUserQuestion 卡）发出时，活进度卡当场终结（自 2026-08-28 起转蓝显示「等待中」——turn 仍在等用户，见[挂起追问上限豁免笔记](2026-08-28-feishu-bridge-parked-ask-cap-exemption-waiting-card.zh.md)；结算时该头部再 PATCH 为 ask 结果状态，见[挂起卡结算笔记](2026-08-28-feishu-bridge-parked-card-settles-with-ask-outcome.zh.md)；导出按钮从捕获快照起即可用）；批准后的执行开新占位卡继续。预览活跃时交互前文本留在完成卡上——只有预览降级才以纯消息重发，与 Go 一致。Go 在批准时归档 plan 文件的机制（`pendingPlanArchive`，批准时带时间戳后缀复制）未随本次移植——记为独立的迁移缺口。
 
 ## Testing
 

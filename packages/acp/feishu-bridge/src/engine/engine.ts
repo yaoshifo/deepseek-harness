@@ -32,6 +32,7 @@ import type {
   ImageAttachment,
   InlineButtonSender,
   Message,
+  ParkOutcome,
   PendingAsk,
   Platform,
   SessionStartOptions,
@@ -4799,6 +4800,28 @@ export class Engine {
   }
 
   /**
+   * Header state a parked card settles to for an ask decision: approvals and
+   * permissions settle approved, denials rejected, answered questions
+   * answered, and every stopped/aborted/withdrawn outcome cancelled.
+   * @param decision - The ask's settled decision.
+   * @returns The parked card's settlement header state.
+   */
+  private parkedOutcomeOf(decision: AskDecision): ParkOutcome {
+    switch (decision.outcome) {
+      case 'allowed-once':
+      case 'allowed-always':
+        return 'approved'
+      case 'rejected':
+        return 'rejected'
+      case 'cancelled':
+        return 'cancelled'
+      default:
+        // Questions decisions carry answers and no outcome.
+        return 'answered'
+    }
+  }
+
+  /**
    * The ask delegate the adapter's native listeners call (B2): render ONE
    * card for the ask, park it on the interactive state, and resolve with the
    * user's decision in the native structures — `allowed-always` for
@@ -4893,6 +4916,11 @@ export class Engine {
     }
     pending.resolve = settle
 
+    // The card parked by deliverCards (its preview writer + detached handle),
+    // settled once the decision lands. Lives outside the delivery closure for
+    // the same reason as the park bookkeeping above.
+    let parkedCard: { sp: StreamPreview; handle: unknown } | undefined
+
     const deliverCards = async (): Promise<void> => {
       // Pre-card flush + detach (Go engine_events.go ~4192-4225): with the
       // preview degraded the accumulated text segment goes out as plain
@@ -4941,7 +4969,8 @@ export class Engine {
         // Park renders the waiting header: the turn is about to suspend on
         // this ask, so a green 执行完成 here would claim a completion that
         // has not happened yet.
-        await sp.completeAndDetach(true)
+        const parkedHandle = await sp.completeAndDetach(true)
+        if (parkedHandle !== undefined) parkedCard = { sp, handle: parkedHandle }
         if (triggered) {
           renderAndDeliverReply(this, state, sessionKey, captured.text, captured.exportKey)
         }
@@ -5009,6 +5038,11 @@ export class Engine {
       if (state.pendingAsk === pending) state.pendingAsk = undefined
       this.resumeCapPark(state)
       resolveDecision({ outcome: 'cancelled' })
+      // Best-effort: deliverCards may still be mid-flight and capture the
+      // parked handle only after this read — that card stays waiting.
+      if (parkedCard !== undefined) {
+        await parkedCard.sp.settleParkedCard(parkedCard.handle, 'cancelled')
+      }
       return { outcome: 'cancelled' }
     }
 
@@ -5026,6 +5060,14 @@ export class Engine {
       if (state.pendingAsk === pending) state.pendingAsk = undefined
       this.resumeCapPark(state)
       resolveDecision(decided)
+    }
+
+    // Settle the parked card's waiting header to the decision's outcome
+    // before the restart opens a new one: a card the user already answered
+    // must stop reading 等待中 (2026-08-28 oc_b20512: an approved plan left
+    // the pre-plan card blue forever).
+    if (parkedCard !== undefined) {
+      await parkedCard.sp.settleParkedCard(parkedCard.handle, this.parkedOutcomeOf(decided))
     }
 
     // Phase avatar: plan approval moves the baseline to green, rejection (or a

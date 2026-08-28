@@ -1121,6 +1121,45 @@ describe('parked-ask detach renders waiting, not completed', () => {
     if (last === undefined) throw new Error('no terminal content recorded')
     expect(statusOf(last)?.state).toBe('completed')
   })
+
+  it('completeAndDetach(park) returns the parked card handle for settling', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = await newSyncStreamPreviewForFallback(mp)
+    const handle = await sp.completeAndDetach(true)
+    expect(handle).toBe('preview-handle')
+    // A detach without a live card yields no handle.
+    expect(await sp.completeAndDetach(true)).toBeUndefined()
+  })
+
+  it('settleParkedCard replaces the waiting header with the ask outcome', async () => {
+    // 2026-08-28 oc_b20512: an approved plan left the pre-plan card blue
+    // forever — settling must PATCH the outcome state onto the parked card,
+    // keeping its body (the pre-ask tool entries).
+    const mp = createMockUpdaterPlatform()
+    const sp = await newSyncStreamPreviewForFallback(mp)
+    const handle = await sp.completeAndDetach(true)
+    const parked = mp.contents[mp.contents.length - 1]
+    if (parked === undefined) throw new Error('no park content recorded')
+    expect(statusOf(parked)?.state).toBe('waiting')
+    await sp.settleParkedCard(handle, 'approved')
+    const last = mp.contents[mp.contents.length - 1]
+    if (last === undefined) throw new Error('no settle content recorded')
+    expect(statusOf(last)?.state).toBe('approved')
+    expect(previewText(last)).toContain('ls')
+  })
+
+  it('settleParkedCard is a no-op when never parked or already settled', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = await newSyncStreamPreviewForFallback(mp)
+    const before = mp.contents.length
+    await sp.settleParkedCard('preview-handle', 'approved')
+    expect(mp.contents.length).toBe(before)
+    const handle = await sp.completeAndDetach(true)
+    await sp.settleParkedCard(handle, 'approved')
+    const settled = mp.contents.length
+    await sp.settleParkedCard(handle, 'rejected')
+    expect(mp.contents.length).toBe(settled)
+  })
 })
 
 describe('completeAndDetach async ordering', () => {
