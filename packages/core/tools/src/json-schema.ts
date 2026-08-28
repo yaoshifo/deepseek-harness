@@ -423,6 +423,24 @@ function propertyPath(path: string, key: string): string {
   return path === '' ? key : `${path}.${key}`
 }
 
+/**
+ * The declared property an undeclared key names in the opposite key style,
+ * when one exists: underscore- and case-insensitive comparison matches
+ * `multiSelect` against `multi_select` in either direction. Open objects
+ * reject such keys too — a style variant is the intended declared property
+ * misspelled, and ignoring it silently drops the caller's value.
+ * @param properties - the object node's declared property schemas.
+ * @param key - an undeclared key from the validated value.
+ * @returns the matching declared key, or undefined when none matches.
+ */
+function declaredKeyVariant(properties: Record<string, JsonSchemaNode>, key: string): string | undefined {
+  const normalized = key.replace(/_/g, '').toLowerCase()
+  for (const declared of Object.keys(properties)) {
+    if (declared.replace(/_/g, '').toLowerCase() === normalized) return declared
+  }
+  return undefined
+}
+
 /** One child evaluation deferred by a container or exact-one union frame. */
 interface ValueChild {
   readonly node: JsonSchemaNode
@@ -570,11 +588,13 @@ function checkValue(schema: JsonSchemaNode, value: unknown, path: string): strin
             children.push({ node: child, value: frame.value[key], path: propertyPath(frame.path, key) })
           }
           const tailViolations: string[] = []
-          if (Object.hasOwn(frame.node, 'additionalProperties') && frame.node.additionalProperties === false) {
-            for (const key of Object.keys(frame.value)) {
-              if (!Object.hasOwn(properties, key)) {
-                tailViolations.push(`"${propertyPath(frame.path, key)}" is not a declared property (additionalProperties: false)`)
-              }
+          for (const key of Object.keys(frame.value)) {
+            if (Object.hasOwn(properties, key)) continue
+            const variant = declaredKeyVariant(properties, key)
+            if (variant !== undefined) {
+              tailViolations.push(`"${propertyPath(frame.path, key)}" is not a declared property (did you mean "${variant}"?)`)
+            } else if (Object.hasOwn(frame.node, 'additionalProperties') && frame.node.additionalProperties === false) {
+              tailViolations.push(`"${propertyPath(frame.path, key)}" is not a declared property (additionalProperties: false)`)
             }
           }
           frame.kind = 'object'
@@ -646,6 +666,10 @@ function checkValue(schema: JsonSchemaNode, value: unknown, path: string): strin
 /**
  * Validate a candidate value against an asserted raw schema. The function is
  * total for arbitrary values and returns path-qualified violations.
+ * Undeclared object keys are violations whenever the node is closed
+ * (`additionalProperties: false`) or the key names a declared property in the
+ * opposite key style (`multiSelect` against `multi_select`); open objects
+ * otherwise accept extra keys.
  * @param schema - a schema accepted by {@link assertSupportedJsonSchema}.
  * @param value - the candidate JSON value.
  * @param path - root label used in diagnostics.

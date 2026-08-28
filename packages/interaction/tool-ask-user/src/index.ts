@@ -27,7 +27,7 @@ export function apply(ctx: Context): void {
         description: 'Questions to ask the user before continuing.',
         items: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           properties: {
             id: { type: 'string', required: true, description: 'Stable id for this question; echoed in the answer.' },
             question: { type: 'string', required: true, description: 'The specific question to ask the user.' },
@@ -40,7 +40,7 @@ export function apply(ctx: Context): void {
               description: 'Optional choices to show the user. Order options by recommendation, most recommended first, and set recommended: true on the options you recommend.',
               items: {
                 type: 'object',
-                additionalProperties: true,
+                additionalProperties: false,
                 properties: {
                   label: { type: 'string', required: true, description: 'Short user-facing option label.' },
                   description: { type: 'string', description: 'One sentence explaining the tradeoff or impact.' },
