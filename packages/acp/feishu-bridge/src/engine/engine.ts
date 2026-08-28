@@ -924,8 +924,6 @@ export class Engine {
   spawnMemWarnPct: number = 0
   /** RAM percentage at which /spawn //fork rejects the spawn outright (Go spawnMemBlockPct). */
   spawnMemBlockPct: number = 0
-  /** Hard timeout for subtask sessions; 0 inherits eventIdleTimeout (Go subtaskTimeout). */
-  subtaskTimeout: number = 0
   /** Suppress settlement cards for unattended native subtasks (features.subtaskQuiet). */
   subtaskQuiet: boolean = false
   /** Background-subtask live panel: enabled flag (features.subtaskLivePanel). */
@@ -5508,14 +5506,6 @@ export class Engine {
   }
 
   /**
-   * Override the hard timeout for subtask sessions (Go SetSubtaskTimeout).
-   * @param ms - Timeout in ms; 0 inherits eventIdleTimeout.
-   */
-  setSubtaskTimeout(ms: number): void {
-    this.subtaskTimeout = ms
-  }
-
-  /**
    * Override the gather barrier fallback timeout (Go SetSubtaskGatherTimeout).
    * @param ms - Timeout in ms; <= 0 keeps the default.
    */
@@ -6544,6 +6534,23 @@ export class Engine {
       .catch((error: unknown) => {
         console.warn(`subtask: native settlement delivery failed (child=${childId}): ${String(error)}`)
       })
+  }
+
+  /**
+   * Re-arm a native child's settlement fallback at the start of a new epoch.
+   * The `subagent/start` listener calls this so a follow-up delivered through
+   * a channel the engine cannot observe (the runtime's own send_message tool)
+   * still settles: without the re-arm, `subagent/end` would drop the epoch's
+   * answer on the already-reported guard. A bridge-routed send re-arms the
+   * same flag itself, so the extra flip is a no-op there.
+   * @param childId - The durable native child session id.
+   */
+  rearmNativeChild(childId: string): void {
+    const entry = this.nativeChildEntries()[childId]
+    if (entry === undefined || !entry.reported) return
+    this.updateNativeChild(childId, { reported: false })
+    this.refreshSubtaskFooter(entry.parent_key)
+    console.info(`subtask: native child re-armed for a new epoch (child=${childId})`)
   }
 
   /**

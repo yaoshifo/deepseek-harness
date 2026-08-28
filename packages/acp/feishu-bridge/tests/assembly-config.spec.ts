@@ -313,10 +313,9 @@ describe('buildProjectAssembly config wiring', () => {
     for (let i = 0; i < 25; i++) expect(off.checkRateLimit(m)).toBe(true)
   })
 
-  it('wires the subtask caps (Go SetSubtaskMaxDepth/Timeout/GatherTimeout)', () => {
-    const { engine } = assemble({ ...baseConfig(), subtask: { maxDepth: 6, timeoutSec: 300, gatherTimeoutSec: 60 } })
+  it('wires the subtask caps (Go SetSubtaskMaxDepth/GatherTimeout)', () => {
+    const { engine } = assemble({ ...baseConfig(), subtask: { maxDepth: 6, gatherTimeoutSec: 60 } })
     expect(engine.subtaskMaxDepth).toBe(6)
-    expect(engine.subtaskTimeout).toBe(300_000)
     expect(engine.subtaskGatherTimeout).toBe(60_000)
   })
 

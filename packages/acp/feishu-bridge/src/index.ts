@@ -14,10 +14,10 @@ import { fileURLToPath } from 'node:url'
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import type { SkillRegistry } from '@deepseek-ai/dsh-skill'
 import * as SkillFileSystem from '@deepseek-ai/dsh-skill-filesystem'
-// Type-only: pulls the 'subagent/end' event-map declaration merging the
-// settlement listener types against (the runtime itself is mounted by
-// dsh-base, not here).
-import type { SubagentRunEndInfo } from '@deepseek-ai/dsh-subagent'
+// Type-only: pulls the 'subagent/start' / 'subagent/end' event-map
+// declaration merging the settlement listener types against (the runtime
+// itself is mounted by dsh-base, not here).
+import type { SubagentRunEndInfo, SubagentRunInfo } from '@deepseek-ai/dsh-subagent'
 import Schema from '@deepseek-ai/schemastery'
 import { DshAgentAdapter } from './agent-dsh/adapter.js'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.js'
@@ -350,8 +350,6 @@ export interface RateLimitConfig {
 export interface SubtaskConfig {
   /** Max recursive delegation depth. */
   maxDepth?: number
-  /** Hard timeout for subtask sessions in seconds; 0 inherits the event idle timeout. */
-  timeoutSec?: number
   /** Gather-barrier fallback timeout in seconds. */
   gatherTimeoutSec?: number
 }
@@ -681,7 +679,6 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   }).description('Per-session inbound rate limit'),
   subtask: Schema.object({
     maxDepth: Schema.natural().description('Max recursive delegation depth'),
-    timeoutSec: Schema.natural().description('Subtask hard timeout in seconds'),
     gatherTimeoutSec: Schema.natural().description('Gather barrier fallback timeout in seconds'),
   }).description('Subtask delegation caps'),
   spawn: Schema.object({
@@ -891,7 +888,11 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
  * Wire the native settlement fallback (de-baggage B4): each continuable
  * epoch that ends without an explicit report delivers its final assistant
  * output and terminal outcome through the owning engine — Go
- * maybeAutoReportSubtask's native counterpart. `live` is captured by
+ * maybeAutoReportSubtask's native counterpart. The paired `subagent/start`
+ * listener re-arms every owned child before its epoch runs: a follow-up may
+ * arrive through channels the engine cannot observe (the runtime's own
+ * send_message tool), and without the re-arm that epoch's answer would be
+ * dropped by the settlement listener's reported guard. `live` is captured by
  * reference so entries added after registration (none today; apply() builds
  * all projects first) still route.
  *
@@ -900,19 +901,30 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
  * @returns The event disposer.
  */
 export function registerNativeSettlementListener(ctx: Context, live: ReadonlyArray<{ engine: Engine }>): () => void {
-  return ctx.on('subagent/end', (info: SubagentRunEndInfo) => {
-    const output = (info.lastAssistantMessage ?? [])
-      .map(block => block.type === 'text' ? block.text : '')
-      .join('')
-    for (const { engine } of live) {
-      if (engine.ownsNativeChild(info.id)) {
-        // The terminal outcome rides along so the settlement composes
-        // failure semantics instead of reporting failed work as a result.
-        engine.settleNativeChild(info.id, output, info.stopReason, info.diagnostic ?? '')
-        return
+  const disposers = [
+    ctx.on('subagent/start', (info: SubagentRunInfo) => {
+      for (const { engine } of live) {
+        if (engine.ownsNativeChild(info.id)) {
+          engine.rearmNativeChild(info.id)
+          return
+        }
       }
-    }
-  })
+    }),
+    ctx.on('subagent/end', (info: SubagentRunEndInfo) => {
+      const output = (info.lastAssistantMessage ?? [])
+        .map(block => block.type === 'text' ? block.text : '')
+        .join('')
+      for (const { engine } of live) {
+        if (engine.ownsNativeChild(info.id)) {
+          // The terminal outcome rides along so the settlement composes
+          // failure semantics instead of reporting failed work as a result.
+          engine.settleNativeChild(info.id, output, info.stopReason, info.diagnostic ?? '')
+          return
+        }
+      }
+    }),
+  ]
+  return () => { for (const dispose of disposers) dispose() }
 }
 
 /**
@@ -1194,9 +1206,6 @@ export function buildProjectAssembly(
   }
   if (config.subtask?.maxDepth !== undefined && config.subtask.maxDepth > 0) {
     engine.setSubtaskMaxDepth(config.subtask.maxDepth)
-  }
-  if (config.subtask?.timeoutSec !== undefined && config.subtask.timeoutSec > 0) {
-    engine.setSubtaskTimeout(config.subtask.timeoutSec * 1000)
   }
   if (config.subtask?.gatherTimeoutSec !== undefined && config.subtask.gatherTimeoutSec > 0) {
     engine.setSubtaskGatherTimeout(config.subtask.gatherTimeoutSec * 1000)

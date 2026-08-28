@@ -13,10 +13,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { Session } from '../../src/engine/session.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { WorktreeMode } from '../../src/engine/worktree.js'
+import { registerNativeSettlementListener } from '../../src/index.js'
 import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, RecentTurnsReader, TextPreviewContent } from '../../src/core/types.js'
 import { SubtaskGather } from '../../src/engine/subtask.js'
 import {
@@ -2248,5 +2250,82 @@ describe('recoverInterruptedNativeChildren (restart recovery)', () => {
     await settle()
     expect(e.nativeChildEntries()['child-ghost']?.reported).toBe(true)
     expect(p.sentCards.length).toBe(0)
+  })
+})
+
+/** Emit a scoped subagent-runtime event the way its lifecycle carrier does. */
+function emitRuntimeEvent(ctx: Context, name: string, info: unknown): void {
+  ;(ctx.emit as unknown as (thisArg: object, name: string, info: unknown) => void)({}, name, info)
+}
+
+describe('registerNativeSettlementListener re-arm', () => {
+  const parentKey = 'test:parent-chat:u1'
+
+  function recordedChild(e: Engine, reported: boolean): void {
+    e.projectState?.setNativeChild('native-child-1', {
+      parent_key: parentKey,
+      parent_agent_session_id: 'parent-native-1',
+      label: 'task one',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported,
+    })
+  }
+
+  it('subagent/start re-arms a reported child so the epoch\'s end settles', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    recordedChild(e, true)
+    const ctx = new Context()
+    const dispose = registerNativeSettlementListener(ctx, [{ engine: e }])
+
+    try {
+      // A new epoch begins — as it would after a follow-up delivered through
+      // the native channel (send_message), which the engine cannot observe.
+      emitRuntimeEvent(ctx, 'subagent/start', { runId: 'run-2', provider: 'spawn', id: 'native-child-1', local: true })
+      expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
+
+      emitRuntimeEvent(ctx, 'subagent/end', {
+        runId: 'run-2', provider: 'spawn', id: 'native-child-1', local: true,
+        stopReason: 'completed', lastAssistantMessage: [{ type: 'text', text: 'follow-up answer' }],
+      })
+      await settle()
+
+      // Without the re-arm, the settlement guard would swallow this epoch's
+      // answer on the already-reported flag.
+      expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+      expect(p.sentCards.map(cardBody).join('\n')).toContain('follow-up answer')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('leaves children the engine does not own untouched', () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    recordedChild(e, true)
+    const ctx = new Context()
+    const dispose = registerNativeSettlementListener(ctx, [{ engine: e }])
+
+    try {
+      emitRuntimeEvent(ctx, 'subagent/start', { runId: 'run-x', provider: 'spawn', id: 'foreign-child', local: true })
+      expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('a fresh child\'s first epoch start stays a no-op', () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = newNativeEngine(p, parentKey)
+    recordedChild(e, false)
+    const ctx = new Context()
+    const dispose = registerNativeSettlementListener(ctx, [{ engine: e }])
+
+    try {
+      emitRuntimeEvent(ctx, 'subagent/start', { runId: 'run-1', provider: 'spawn', id: 'native-child-1', local: true })
+      expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
+    } finally {
+      dispose()
+    }
   })
 })

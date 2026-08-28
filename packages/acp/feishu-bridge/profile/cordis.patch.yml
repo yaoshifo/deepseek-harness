@@ -235,7 +235,6 @@
     # queue: { maxDepth: 5 }               # per-session queued-message cap
     # subtask:                             # recursive delegation caps
     #   maxDepth: 3
-    #   timeoutSec: 0                      # 0 inherits idleTimeoutMins
     #   gatherTimeoutSec: 1200
     # spawn:                               # /spawn //fork defaults
     #   worktree: auto                     # auto | on | off

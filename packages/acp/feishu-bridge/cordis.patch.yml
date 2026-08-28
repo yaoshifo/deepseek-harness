@@ -32,3 +32,17 @@
 # available for native-parent delivery (reportChildToNativeParent).
 - id: tool-subagent-report
   disabled: true
+
+# Single delegation entry point: the generic `subagent` / `subagent_fork`
+# tools stay disabled (the live profile has carried this disable since
+# 2026-08-25; this backfills it into the bundle so a repo composition cannot
+# expose them). Their children are invisible to the engine — not in
+# native_children, so no settlement, no gather, no restart recovery — and with
+# the report tool disabled above their results would be silently lost. The
+# control tools (send_message / interrupt_agent / list_agents) stay mounted:
+# they serve the runtime-wide agent surface the bridge itself relies on.
+- id: tool-subagent
+  disabled: true
+
+- id: tool-subagent-fork
+  disabled: true
