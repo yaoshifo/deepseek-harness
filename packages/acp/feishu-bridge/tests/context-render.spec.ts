@@ -134,9 +134,11 @@ describe('renderContextCard — full card', () => {
         headers: { headers: [{ seq: 1, time: 0, tools }] },
       },
     }))
-    const trendRows = charts(card)[1]?.spec.data as { values: Array<{ turn: number }> }
+    // Trend-spec turn ordinals are wire-form strings (the live-verified
+    // category-axis form, chartspec.ts).
+    const trendRows = charts(card)[1]?.spec.data as { values: Array<{ turn: string }> }
     expect(new Set(trendRows.values.map(v => v.turn)).size).toBe(20)
-    expect(trendRows.values.map(v => v.turn)).toContain(40)
+    expect(trendRows.values.map(v => v.turn)).toContain('40')
     const eventLines = markdownOf(card).split('\n').filter(l => l.startsWith('- '))
     expect(eventLines.length).toBe(8)
     const panelLines = (panel(card)?.elements[0] as { content: string } | undefined)?.content.split('\n') ?? []
