@@ -46,7 +46,7 @@
 | 27 | allow_chat 白名单过滤 + 共享 WebSocket | ✅ | M1 | 共享 WS 由 node-sdk 每 app 一个 client 天然承担 |
 | 28 | NO_REPLY 标记静默回复 | ✅ | M2 | isSilentReply/stripTrailingSilent 引擎 reply 路径（M2 移植）；M7-c 补引擎级投递抑制测试 |
 | 29 | plan_max_len 配置 | ✅ | M3 | display.planMaxLen |
-| 30 | 消息撤回取消排队消息 | ✅ | M7-c | cancelQueuedByMessageID + platform im.message.recalled_v1（根层扁平 snake_case）+ engine.start 接线 |
+| 30 | 消息撤回取消排队消息 | ✅ | M7-c | cancelQueuedByMessageID + platform im.message.recalled_v1（根层扁平 snake_case）+ engine.start 接线；补 Go staged-attachment 撤回分支（cancelStagedAttachmentsByMessageID）：撤回纯附件消息同步删暂存条目与缓存文件并回报剩余 |
 | 31 | AskUserQuestion 卡片增强（header + 选项预览） | ✅ | M3 | 问题卡渲染 |
 | 32 | 流式卡片合并（progress + summary 统一卡片） | ✅ | M2 | streaming 域 |
 | 33 | Predict Next：回复后预测用户下一步 | ✅ | M7-c | generatePrediction（lightweight/resume 双模式）+ 洞察卡（发送/屏蔽按钮，turnSeq 防过期）+ turn_summary 合并卡片 + /btw 旁路提问 |

@@ -147,7 +147,7 @@ import { executeDeleteModeAction, renderDeleteModeCard, renderListCardSafe, rend
 import { runBangShell } from './shell-commands.js'
 import { renderDirCardSafe } from './dir-card.js'
 import { executeCardAction } from './cron-commands.js'
-import { cancelQueuedByMessageID, markRecalledPreview } from './recall.js'
+import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from './recall.js'
 import { renderSubtaskPanelCard } from './subtask-panel.js'
 import { triggerInsights } from './predict.js'
 import { defaultAutoCompressMinGapMs, estimateTokensWithPendingAssistant, maybeAutoResetSessionOnIdle, runCompress } from './session-misc.js'
@@ -1487,13 +1487,15 @@ export class Engine {
       }
 
       // Recall wiring (#30, Go engine.go platform startup): a recalled
-      // message is cancelled from whichever session's queue holds it, and a
-      // recalled preview card stops updating and tail-guarding — the guard
-      // must not resurrect a card the user deleted.
+      // message is cancelled from whichever session's queue holds it, a
+      // recalled pure-attachment upload drops its staged entries and cached
+      // files (#8), and a recalled preview card stops updating and
+      // tail-guarding — the guard must not resurrect a card the user deleted.
       const recall = asRecallNotifier(p)
       if (recall !== undefined) {
         recall.setRecallHandler((messageID) => {
           cancelQueuedByMessageID(this, messageID)
+          cancelStagedAttachmentsByMessageID(this, messageID)
           markRecalledPreview(this, messageID)
         })
       }
