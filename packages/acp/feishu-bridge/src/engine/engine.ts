@@ -5944,7 +5944,7 @@ export class Engine {
     const spawnOpts: GroupSpawnOptions = { topicGroup: false, workDir }
 
     const spawnerEx = asGroupSpawnerEx(p)
-    let syntheticMsg: Message | undefined
+    let syntheticMsg: Message
     try {
       syntheticMsg = spawnerEx !== undefined
         ? await spawnerEx.spawnGroupWithOptions(spawnMsg, groupName, firstMsg, spawnOpts)
@@ -5952,10 +5952,6 @@ export class Engine {
     } catch (error) {
       if (wtPath !== '') await this.removeNativeWorktreeQuiet(wtPath, wtBranch, wtRoot, wtBase, wtBaseBranch)
       throw new Error(`subtask: spawn group: ${String(error instanceof Error ? error.message : error)}`)
-    }
-    if (syntheticMsg === undefined) {
-      if (wtPath !== '') await this.removeNativeWorktreeQuiet(wtPath, wtBranch, wtRoot, wtBase, wtBaseBranch)
-      throw new Error('subtask: spawn group: no group message returned')
     }
 
     if (workDir !== '' && this.projectState !== undefined) {

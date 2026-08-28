@@ -228,7 +228,7 @@ describe('lsp-stdio end to end over a fake server', () => {
     const merged = await ctx.lsp.symbol({ query: 'x', workspaceRoot: ws })
     expect(merged.groups).toHaveLength(1)
     expect(merged.groups[0]?.symbols[0]?.name).toBe('x')
-    expect(merged.failures).toEqual([{ provider: 'failing', message: expect.stringContaining('server refused') }])
+    expect(merged.failures).toEqual([{ provider: 'failing', message: expect.stringContaining('server refused') as string }])
     await ctx.fiber.dispose()
   })
 
