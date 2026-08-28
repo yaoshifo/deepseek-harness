@@ -274,7 +274,8 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
     }
     case 'chart':
       // Opaque payload: unlike buttons/selects there is no session-key
-      // stamping — VChart owns the spec's internals.
+      // stamping, and no local validation — Feishu rejects invalid specs
+      // server-side at send time (code 230099).
       return { tag: 'chart', chart_spec: elem.spec }
     case 'columnSet': {
       const columns: FeishuCardMap[] = []

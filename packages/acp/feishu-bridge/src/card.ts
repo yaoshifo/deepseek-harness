@@ -137,6 +137,9 @@ export interface CardImage {
  * Opaque VChart spec of a chart element: rendered verbatim into the Feishu
  * card's `chart_spec` and never interpreted by the bridge. Field names and
  * semantics are owned by VChart (`type`, `data`, `xField`, `yField`, …).
+ * Feishu validates the spec server-side at send time (code 230099 rejects
+ * an invalid one), so callers own spec correctness — e.g. `color` needs a
+ * complete `{ type: 'ordinal', domain, range }` scale.
  */
 export type VChartSpec = Record<string, unknown>
 
