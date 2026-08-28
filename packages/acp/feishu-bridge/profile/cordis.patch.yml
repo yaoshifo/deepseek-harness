@@ -316,6 +316,10 @@
     #   features:
     #     showContextIndicator: true       # 📊 ctx / 🍵 cache lines on the ✅ footer (default true)
     #     replyFooter: true                # Codex-style *model · effort · workdir* reply footer (default false)
+    #     subtaskQuiet: true               # suppress settlement cards for unattended native subtasks (wake-only)
+    #     subtaskLivePanel: true           # live per-child panel card while children run after turn end (default true)
+    #     subtaskLivePanelIntervalMs: 15000  # panel refresh interval; 0 disables the panel
+    #     subtaskLivePanelStallMs: 120000  # silence window before a panel row flags a child stalled
 
     #   resetOnIdleMins: 720               # rotate chat to a fresh session after N idle minutes
     #   providerShortcuts:                 # quick switch + new session (/strong → glm)

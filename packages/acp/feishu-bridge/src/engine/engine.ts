@@ -1003,6 +1003,9 @@ export class Engine {
    */
   readonly subtaskPanels: Map<string, SubtaskPanelState> = new Map<string, SubtaskPanelState>()
 
+  /** Parents with a panel post in flight — the re-entry guard for {@link ensureSubtaskPanel}. */
+  private readonly subtaskPanelPosting: Set<string> = new Set<string>()
+
   /** Command names → alias targets (trigger → command). */
   readonly aliases: Map<string, string> = new Map<string, string>()
 
@@ -6233,13 +6236,15 @@ export class Engine {
    * settled with unreported native children. Called at turn end and on every
    * reported-flag flip; no-ops without pending children (a live panel
    * finalizes to its done card) and when the feature is disabled or the
-   * platform cannot hold a card handle.
+   * platform cannot hold a card handle. An in-flight post guard keeps two
+   * rapid calls inside the asynchronous send window from posting two cards —
+   * the second map entry would orphan the first interval.
    * @param parentKey - Parent session key the panel belongs to.
    */
   ensureSubtaskPanel(parentKey: string): void {
     if (!this.subtaskPanelEnabled || this.subtaskPanelIntervalMs <= 0) return
     const rows = this.subtaskPanelChildren(parentKey)
-    if (rows.length === 0 || this.subtaskPanels.has(parentKey)) {
+    if (rows.length === 0 || this.subtaskPanels.has(parentKey) || this.subtaskPanelPosting.has(parentKey)) {
       this.refreshSubtaskPanel(parentKey)
       return
     }
@@ -6249,6 +6254,7 @@ export class Engine {
     const r = asReplyContextReconstructor(p)
     if (cu === undefined || r === undefined) return
     const startedAt = Date.now()
+    this.subtaskPanelPosting.add(parentKey)
     void r.reconstructReplyCtx(parentKey).then(
       async (parentRctx) => {
         const card = renderSubtaskPanelCard(
@@ -6257,6 +6263,7 @@ export class Engine {
         )
         try {
           const handle = await cu.sendCardWithHandle(parentRctx, card)
+          if (this.subtaskPanels.has(parentKey)) return // a racing post won
           const timer = setInterval(() => { this.refreshSubtaskPanel(parentKey) }, this.subtaskPanelIntervalMs)
           this.subtaskPanels.set(parentKey, { handle, timer, startedAt })
           console.info(`subtask: background panel posted (${parentKey}: ${rows.length} child/children)`)
@@ -6267,7 +6274,7 @@ export class Engine {
       (error: unknown) => {
         console.warn(`subtask: background panel reconstruct ctx failed (${parentKey}): ${String(error)}`)
       },
-    )
+    ).finally(() => { this.subtaskPanelPosting.delete(parentKey) })
   }
 
   /** One panel tick: PATCH the live card, or finalize it once nothing pends. */

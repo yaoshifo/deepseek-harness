@@ -50,11 +50,13 @@ const DESCRIPTION =
   + 'spawn: dispatch one self-contained task brief (the child runs in parallel and wakes you '
   + 'with its result when it reports back); default worktree isolation is "auto" — isolated '
   + 'when the child shares your repository; fork=true copies your conversation context into '
-  + 'the child (unsupported across a different dir). report: push THIS subtask\'s result back '
+  + 'the child (works across directories too, but a short self-contained brief is cheaper). '
+  + 'report: push THIS subtask\'s result back '
   + 'to the parent conversation that dispatched you — call exactly once when your work is '
   + 'complete; omit message to use your last reply. send: ask one of your running subtasks a '
-  + 'follow-up question (non-blocking; it is queued until the child\'s current turn finishes, '
-  + 'and its answer wakes you). gather: after spawning all the children you want to batch, BLOCK '
+  + 'follow-up question — native subtasks queue it until the child\'s current turn finishes '
+  + 'and its answer wakes you; an attended group child that is busy rejects it (wait for its '
+  + 'completion notice, then retry). gather: after spawning all the children you want to batch, BLOCK '
   + 'until every in-flight subtask has reported (or the timeout, ~20 minutes, returns partial '
   + 'results) — the combined summary arrives as THIS tool call\'s result, so call it when your '
   + 'next step depends on the results and synthesize in the same reply; skip it to keep working '
@@ -107,13 +109,14 @@ export function registerSubtaskTool(
       fork: {
         type: 'boolean',
         description: 'spawn only: copy this conversation\'s context into the child instead of starting fresh. '
-          + 'Needs your conversation to have started, and cannot cross working directories.',
+          + 'Needs your conversation to have started; a self-contained brief is usually cheaper than forking '
+          + 'the whole transcript.',
       },
       child: {
         type: 'string',
         description: 'send/interrupt: the target subtask\'s session key, from the spawn result. '
-          + 'The literal "assistant" addresses your pre-provisioned research assistant, when one exists — '
-          + 'prefer it over copying a long key by hand.',
+          + 'send also accepts the literal "assistant" for your pre-provisioned research assistant, '
+          + 'when one exists — prefer it over copying a long key by hand.',
       },
     },
     output: {

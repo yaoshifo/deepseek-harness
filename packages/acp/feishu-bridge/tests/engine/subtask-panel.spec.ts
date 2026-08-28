@@ -221,6 +221,27 @@ describe('background panel lifecycle', () => {
     expect(e.subtaskPanels.has(parentKey)).toBe(false)
   })
 
+  it('a second ensure inside the posting window posts no duplicate card', async () => {
+    const p = panelPlatform()
+    const { agent } = activityAgent()
+    const e = panelEngine(p, agent)
+    seedChild(e, 'child-race', false)
+    // Hold the card send open so the second ensure lands mid-post.
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const base = p.sendCardWithHandle.bind(p)
+    p.sendCardWithHandle = async (rc: unknown, card: unknown) => { await gate; return base(rc, card) }
+
+    e.ensureSubtaskPanel(parentKey)
+    e.ensureSubtaskPanel(parentKey)
+    release()
+    await settle()
+    await settle()
+
+    expect(p.postedCards).toHaveLength(1)
+    expect(e.subtaskPanels.has(parentKey)).toBe(true)
+  })
+
   it('closes on drain with the drained card', async () => {
     const p = panelPlatform()
     const { agent } = activityAgent()

@@ -154,6 +154,27 @@ describe('feishu_bridge_subtask registration', () => {
     expect(dir).toContain('different project')
     expect(dir).toContain('instruction files')
   })
+
+  it('describes fork, send, and the assistant literal as the code behaves', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:parent' }))
+    const description = test.ctx.tools.get('feishu_bridge_subtask')?.description ?? ''
+    const params = test.ctx.tools.get('feishu_bridge_subtask')?.parameters as {
+      properties?: {
+        fork?: { description?: string }
+        child?: { description?: string }
+      }
+    }
+    // Cross-directory forks work (the fork provider carries cwdOverride); the
+    // stale M4-era prohibition is gone.
+    expect(params.properties?.fork?.description).not.toContain('cannot cross')
+    expect(description).not.toContain('unsupported across')
+    // send queues only native subtasks; attended group children busy-reject.
+    expect(description).toContain('busy rejects it')
+    // The "assistant" literal routes through send's alias waterfall; interrupt
+    // resolves no alias and addresses native child ids only.
+    expect(params.properties?.child?.description).toContain('send also accepts the literal "assistant"')
+  })
 })
 
 describe('feishu_bridge_subtask action routing', () => {
