@@ -48,6 +48,7 @@ const toolNames = [
   'bash',
   'read',
   'skill',
+  'feishu_bridge_chatroom',
   'mcp__srvA__add',
   'mcp__srvA__admin_reset_1a2b3c4d5e6f',
   'mcp__srvB__echo',
@@ -276,5 +277,62 @@ describe('adapter MCP mask', () => {
       parentAgentSessionID: parent.currentSessionID(),
     })
     expect(harness.continuableSpecs[0]?.request.toolFilter).toBeUndefined()
+  })
+})
+
+describe('adapter service-denied tool mask', () => {
+  it('denies service-registered names on a project without an MCP allowlist', async () => {
+    const harness = createHarness()
+    const adapter = newAdapter(harness)
+    adapter.setDeniedTools(() => ['feishu_bridge_chatroom'])
+    await adapter.startSession('')
+    expect(harness.restricts).toEqual([{ deny: ['feishu_bridge_chatroom'] }])
+  })
+
+  it('merges the denied names with the MCP deny in one restriction', async () => {
+    const harness = createHarness()
+    const adapter = newAdapter(harness, ['srvA'])
+    adapter.setDeniedTools(() => ['feishu_bridge_chatroom'])
+    await adapter.startSession('')
+    expect(harness.restricts).toEqual([
+      { deny: ['mcp__srvB__echo', 'mcp__shared__lookup', 'feishu_bridge_chatroom'] },
+    ])
+  })
+
+  it('drops denied names absent from the live schema view', async () => {
+    const harness = createHarness()
+    const adapter = newAdapter(harness)
+    // not_a_tool is registered nowhere: restrict() would throw on it, so the
+    // mask silently drops it (the same rule as buildCompletePromptSetup).
+    adapter.setDeniedTools(() => ['feishu_bridge_chatroom', 'not_a_tool'])
+    await adapter.startSession('')
+    expect(harness.restricts).toEqual([{ deny: ['feishu_bridge_chatroom'] }])
+  })
+
+  it('forwards the denied names to continuable children as toolFilter', async () => {
+    const harness = createHarness()
+    const adapter = newAdapter(harness, ['srvA'])
+    adapter.setDeniedTools(() => ['feishu_bridge_chatroom'])
+    const parent = await adapter.startSession('')
+    expect(harness.restricts).toHaveLength(1)
+    harness.restricts.length = 0
+    await adapter.startContinuableChild({
+      provider: 'spawn',
+      prompt: 'do work',
+      cwd: '/workspace/project',
+      workspace: undefined,
+      maxDepth: 2,
+      parentAgentSessionID: parent.currentSessionID(),
+    })
+    expect(harness.continuableSpecs[0]?.request.toolFilter).toEqual(
+      { deny: ['mcp__srvB__echo', 'mcp__shared__lookup', 'feishu_bridge_chatroom'] },
+    )
+  })
+
+  it('a project with no mask source never restricts', async () => {
+    const harness = createHarness()
+    const adapter = newAdapter(harness)
+    await adapter.startSession('')
+    expect(harness.restricts).toEqual([])
   })
 })

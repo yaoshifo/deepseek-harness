@@ -45,6 +45,26 @@ describe('FeishuBridgeService', () => {
     expect(service.projects).toHaveLength(0)
   })
 
+  it('registers per-engine tool masks with disposal (denyTools)', async () => {
+    const { service } = await mountedService()
+    const entry = liveProject('p1', undefined)
+    service.registerProject(entry)
+    expect(service.deniedToolsOf(entry.engine)).toEqual([])
+
+    const dispose = service.denyTools(entry.engine, ['feishu_bridge_chatroom'])
+    expect(service.deniedToolsOf(entry.engine)).toEqual(['feishu_bridge_chatroom'])
+
+    // Masks are per engine: another project stays unrestricted.
+    const other = liveProject('p2', undefined)
+    service.registerProject(other)
+    expect(service.deniedToolsOf(other.engine)).toEqual([])
+
+    dispose()
+    expect(service.deniedToolsOf(entry.engine)).toEqual([])
+    dispose() // idempotent
+    expect(service.deniedToolsOf(entry.engine)).toEqual([])
+  })
+
   it('routes a caller agent to its engine session (plan D4)', async () => {
     const { service } = await mountedService()
     service.registerProject(liveProject('p1', 'feishu:oc_1:ou_9'))

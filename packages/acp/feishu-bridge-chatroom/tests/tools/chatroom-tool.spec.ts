@@ -20,6 +20,7 @@ import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
 import { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomTool } from '../../src/tools/chatroom.js'
 import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { applyChatroomEngineConfig } from '../../src/chatroom-config.js'
 import { createStubAgent, createStubSpawnerPlatform } from '../stubs/engine-stubs.js'
 import '../stubs/messages.js'
 
@@ -165,6 +166,16 @@ describe('feishu_bridge_chatroom action routing', () => {
     const res = await test.execute({ action: 'list' })
     expect(res.isError).toBe(true)
     expect(errorText(res)).toContain('not owned')
+    test.dispose()
+  })
+
+  it('fails loud for a project with chatroom disabled', async () => {
+    const engine = newEngine()
+    applyChatroomEngineConfig(engine, {}, { enabled: false })
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const res = await test.execute({ action: 'list' })
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('disabled for this project')
     test.dispose()
   })
 

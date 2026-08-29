@@ -16,7 +16,7 @@ import type { Context, Fiber } from '@deepseek-ai/cordis'
 import * as SkillFileSystem from '@deepseek-ai/dsh-skill-filesystem'
 import { registerFeatureStateCodec, registerMessages } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { chatroomFeatureStateCodec } from './chatroom-state.js'
-import { applyChatroomEngineConfig, Config, type ChatroomProjectConfig } from './chatroom-config.ts'
+import { applyChatroomEngineConfig, chatroomConfig, Config, type ChatroomProjectConfig } from './chatroom-config.ts'
 import { chatroomMessages } from './i18n.js'
 import { registerChatroomPolicyListeners } from './engine/chatroom-policy.js'
 import { recoverChatroomBarriers } from './engine/chatroom.js'
@@ -97,10 +97,21 @@ export async function apply(ctx: Context, config: ChatroomConfig): Promise<void>
   }
   for (const { engine } of service.projects) {
     applyChatroomEngineConfig(engine, config.defaults ?? {}, config.projects?.[engine.name])
-    ctx.effect(() => registerChatroomCommands(engine))
+    if (chatroomConfig(engine).enabled()) {
+      ctx.effect(() => registerChatroomCommands(engine))
+    } else {
+      // The disabled project gets no /chatroom command family, and the tool
+      // definition is masked out of its sessions' model requests (the
+      // adapter restricts service-denied names at session create). Sessions
+      // from the startup window before this registration see the definition;
+      // the tool's execute gate below refuses them.
+      ctx.effect(() => service.denyTools(engine, ['feishu_bridge_chatroom']))
+    }
     // Engines whose platforms beat the plugin to readiness missed the
     // platforms-ready emit; recover their barriers here (idempotent: the
-    // persisted snapshots are consumed on first recovery).
+    // persisted snapshots are consumed on first recovery). Recovery also
+    // runs for disabled engines — it drains chatrooms armed before the
+    // project was disabled, it is not a new entry point.
     if (engine.platformsStarted) recoverChatroomBarriers(engine)
   }
 }

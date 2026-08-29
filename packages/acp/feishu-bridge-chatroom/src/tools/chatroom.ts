@@ -163,6 +163,12 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
         throw new Error('feishu_bridge_chatroom: the calling session is not owned by a feishu-bridge project')
       }
       const { engine, sessionKey } = target
+      // Disabled projects normally never see this tool (the plugin masks the
+      // definition on the bridge service); this gate covers sessions created
+      // in the startup window before the mask was registered.
+      if (!chatroomConfig(engine).enabled()) {
+        throw new Error('feishu_bridge_chatroom: the chatroom is disabled for this project')
+      }
       switch (args.action) {
         case 'start': {
           const topic = (args.message ?? '').trim()

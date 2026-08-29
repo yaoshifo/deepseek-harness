@@ -433,29 +433,36 @@ export function mcpDenyList(names: readonly string[], allow: readonly string[]):
 }
 
 /**
- * Wrap a creation-time setup hook with the project's MCP visibility mask
- * (per-project MCP tool visibility): after the wrapped setup composes its
- * prompt sections, deny the tools of every MCP server outside the project's
- * allowlist. The deny list is computed inside the hook from the agent scope's
- * own schema view — at setup time no restriction is registered yet, so the
- * view holds every global tool, and `restrict` validates the names against
- * that same view. An empty deny list (no mcp-client mounted, every server
- * down, or all tools already allowed) skips the call; an empty filter throws
- * by design. Ceiling: a server that revives after this session started adds
- * its tools unnamed in the deny set, and deny masks admit later unnamed
- * globals — the revived tools stay visible until the next session start or
- * resume recomputes the mask. Upgrade path: pattern-based restriction in core
- * tools.
+ * Wrap a creation-time setup hook with the project's tool-visibility masks:
+ * the MCP allowlist (per-project MCP tool visibility — deny the tools of
+ * every MCP server outside the project's allowlist) and the service-denied
+ * names (names a sibling plugin registered on the bridge service for this
+ * engine, e.g. the chatroom tool on a chatroom-disabled project). Both deny
+ * lists are computed inside the hook from the agent scope's own schema
+ * view — at setup time no restriction is registered yet, so the view holds
+ * every global tool, and `restrict` validates the names against that same
+ * view; service-denied names absent from the live registry drop out (the
+ * registrant may be unloaded). An empty merged deny list (no mcp-client
+ * mounted, every server down, all tools already allowed, no service
+ * denies) skips the call; an empty filter throws by design. Ceiling: a
+ * server that revives after this session started adds its tools unnamed in
+ * the deny set, and deny masks admit later unnamed globals — the revived
+ * tools stay visible until the next session start or resume recomputes the
+ * mask. Upgrade path: pattern-based restriction in core tools.
  *
  * @param setup - the wrapped setup hook, or undefined.
- * @param allow - the project's allowed MCP server names; undefined/empty = no mask.
+ * @param allow - the project's allowed MCP server names; undefined/empty = no MCP mask.
+ * @param denied - the service-denied tool names for this engine, read live
+ *   at session create (registration happens after adapter construction).
  * @returns the wrapped setup hook, or the original when no mask applies.
  */
-function withMcpMask(
+function withProjectToolMask(
   setup: import('@deepseek-ai/dsh-agent').AgentSetup | undefined,
   allow: readonly string[] | undefined,
+  denied: readonly string[],
 ): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
-  if (allow === undefined || allow.length === 0) return setup
+  const mcpApplies = allow !== undefined && allow.length > 0
+  if (!mcpApplies && denied.length === 0) return setup
   return async (agentCtx) => {
     // Propagate the wrapped setup's publication commit: the registry invokes
     // it immediately before publication, and swallowing it here would drop
@@ -463,7 +470,11 @@ function withMcpMask(
     const commit = await setup?.(agentCtx)
     const toolsSvc = agentCtx.get('tools') as DshToolsLike | undefined
     if (toolsSvc !== undefined) {
-      const deny = mcpDenyList(toolsSvc.schemas().map(schema => schema.name), allow)
+      const names = toolsSvc.schemas().map(schema => schema.name)
+      const deny = [
+        ...(mcpApplies ? mcpDenyList(names, allow) : []),
+        ...denied.filter(name => names.includes(name)),
+      ]
       if (deny.length > 0) toolsSvc.restrict({ deny })
     }
     return commit
@@ -684,6 +695,13 @@ export class DshAgentAdapter {
    * or the bare listener-less face when wired outside a Cordis tree.
    */
   private bridgeEvents: BridgeDispatch = bareBridgeDispatch()
+  /**
+   * Live source of the service-denied tool names for this adapter's engine
+   * (a sibling plugin registered them on the bridge service; assembly wires
+   * the closure when the service is mounted). Read at every session create
+   * and child spawn so a registration after adapter construction applies.
+   */
+  private deniedToolsSource: (() => readonly string[]) | undefined
 
   /**
    * Inject the engine-side ask delegate the native approval answerer and
@@ -704,6 +722,22 @@ export class DshAgentAdapter {
    */
   setBridgeEvents(bridge: BridgeDispatch): void {
     this.bridgeEvents = bridge
+  }
+
+  /**
+   * Inject the source of this engine's service-denied tool names. Assembly
+   * wires it to the bridge service's per-engine mask registry; each read is
+   * live, so a sibling plugin's registration (or its disposal) applies at
+   * the next session create.
+   * @param source - reads the current denied names for this engine.
+   */
+  setDeniedTools(source: () => readonly string[]): void {
+    this.deniedToolsSource = source
+  }
+
+  /** The service-denied tool names for this engine ('' when unwired). */
+  private deniedTools(): readonly string[] {
+    return this.deniedToolsSource?.() ?? []
   }
 
   constructor(ctx: DshContextLike, cfg: DshAdapterConfig) {
@@ -1142,9 +1176,11 @@ export class DshAgentAdapter {
     }
     const label = labelOfBrief(request.prompt)
     const toolsSvc = this.ctx.get('tools') as DshToolsLike | undefined
-    const mcpDeny = toolsSvc === undefined || this.cfg.mcpServers === undefined
-      ? []
-      : mcpDenyList(toolsSvc.schemas().map(schema => schema.name), this.cfg.mcpServers)
+    const names = toolsSvc?.schemas().map(schema => schema.name) ?? []
+    const deny = [
+      ...(this.cfg.mcpServers === undefined ? [] : mcpDenyList(names, this.cfg.mcpServers)),
+      ...this.deniedTools().filter(name => names.includes(name)),
+    ]
     const started = await subagents.startContinuable({
       provider: request.provider,
       label,
@@ -1158,7 +1194,7 @@ export class DshAgentAdapter {
         // '' means "no override" — the runtime rejects a non-absolute cwd, and
         // the child then inherits the parent's working directory.
         ...(request.cwd !== '' ? { cwd: request.cwd } : {}),
-        ...(mcpDeny.length > 0 ? { toolFilter: { deny: mcpDeny } } : {}),
+        ...(deny.length > 0 ? { toolFilter: { deny } } : {}),
       },
       signal: AbortSignal.timeout(startContinuableTimeoutMs),
     })
@@ -1507,10 +1543,10 @@ export class DshAgentAdapter {
       })
       : undefined
     // A tool filter with an empty allow list already masks every tool (MCP
-    // servers included), so the MCP mask wrap would add a redundant second
-    // restriction on the same scope.
+    // servers included), so the project mask wrap would add a redundant
+    // second restriction on the same scope.
     const denyAll = opts.toolFilter?.allow !== undefined && opts.toolFilter.allow.length === 0
-    const setup = denyAll ? innerSetup : withMcpMask(innerSetup, this.cfg.mcpServers)
+    const setup = denyAll ? innerSetup : withProjectToolMask(innerSetup, this.cfg.mcpServers, this.deniedTools())
     const handle = await this.ctx.agents.create({
       sessionId: SessionId(freshNativeSessionId()),
       meta: {
@@ -1594,7 +1630,7 @@ export class DshAgentAdapter {
     const isFork = sessionID.startsWith(ForkSessionPrefix)
     const isForkAt = sessionID.startsWith(ForkAtSessionPrefix)
     const isResume = !isFork && !isForkAt && sessionID !== '' && sessionID !== ContinueSession
-    const setup = withMcpMask(buildSessionSetup(options), this.cfg.mcpServers)
+    const setup = withProjectToolMask(buildSessionSetup(options), this.cfg.mcpServers, this.deniedTools())
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing

@@ -27,6 +27,8 @@ import {
 
 /** One chatroom tuning section (Go [chatroom]; same shape the bridge carried). */
 export interface ChatroomProjectConfig {
+  /** Whether the chatroom mounts for this project; default true (per-project gating). */
+  enabled?: boolean
   /** Root directory holding one persona subdirectory per role; ~ expanded. */
   rolesDir?: string
   /** Cap on role agents per chatroom; 0 = default 5 (Go max_roles). */
@@ -50,6 +52,7 @@ export interface ChatroomProjectConfig {
 }
 
 const chatroomSection = Schema.object({
+  enabled: Schema.boolean().description('Whether the /chatroom command family and chatroom tool are enabled for this project (default true)'),
   rolesDir: Schema.string().description('Root directory holding one persona subdirectory per role'),
   maxRoles: Schema.natural().description('Cap on role agents per chatroom (default 5)'),
   moderatorDir: Schema.string().description('Moderator data dir holding per-chatroom ledgers'),
@@ -87,6 +90,8 @@ function expandHome(path: string): string {
  * startup sweep.
  */
 class ChatroomEngineConfig {
+  /** Whether the chatroom is enabled for this engine; undefined = true. */
+  enabledFlag: boolean | undefined = undefined
   /** Roles root override; '' = the default under the Claude config home. */
   rolesDirOverride = ''
   /** Per-chatroom role cap override; 0 = default 5. */
@@ -115,6 +120,9 @@ class ChatroomEngineConfig {
    * @param cfg - The merged defaults+project section.
    */
   applySection(cfg: ChatroomProjectConfig): void {
+    if (cfg.enabled !== undefined) {
+      this.enabledFlag = cfg.enabled
+    }
     if (cfg.rolesDir !== undefined && cfg.rolesDir.trim() !== '') {
       this.rolesDirOverride = expandHome(cfg.rolesDir)
     }
@@ -148,6 +156,11 @@ class ChatroomEngineConfig {
     if (cfg.researchPythonEnv !== undefined) {
       this.researchPythonEnv = cfg.researchPythonEnv
     }
+  }
+
+  /** Whether the chatroom is enabled for this engine (default true). */
+  enabled(): boolean {
+    return this.enabledFlag !== false
   }
 
   /** Effective roles root (the configured override, or the config-home default). */

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-29-feishu-bridge-chatroom-extraction.md
-2026-08-29-feishu-bridge-chatroom-extraction.md: 78f2ce7af395d8d0eadaffc4589ee24d158f0912
-2026-08-29-feishu-bridge-chatroom-extraction.zh.md: f1d25dff04ee03870507d1f7f62b2f5f2f66f11d
+2026-08-29-feishu-bridge-chatroom-extraction.md: 19ecf89eddfe0bd8be1be3d6470fbc87d718c5e2
+2026-08-29-feishu-bridge-chatroom-extraction.zh.md: 8017ea980209fa17766e3892cb63f401d12ded13

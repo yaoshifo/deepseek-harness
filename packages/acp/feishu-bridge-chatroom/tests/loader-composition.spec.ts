@@ -106,11 +106,20 @@ describe('chatroom real Loader composition', () => {
       // resolves (see the module docblock).
       '          appId: cli_composition',
       '          appSecret: c0mp0sition',
+      // A second project the chatroom config gates off: the same real
+      // composition must mount its engine but skip the chatroom face on it.
+      '      - name: beta',
+      `        workdir: ${JSON.stringify(root)}`,
+      '        feishu:',
+      '          appId: cli_composition2',
+      '          appSecret: c0mp0sition',
       '- id: feishu-bridge-chatroom',
       "  name: '@deepseek-ai/dsh-feishu-bridge-chatroom'",
       '  config:',
       '    projects:',
       '      alpha: {}',
+      '      beta:',
+      '        enabled: false',
       '',
     ].join('\n'))
 
@@ -143,9 +152,11 @@ describe('chatroom real Loader composition', () => {
 
     const service = context.get('feishuBridge')
     if (service === undefined) throw new Error('the Loader composition did not mount the feishuBridge service')
-    expect(service.projects).toHaveLength(1)
+    expect(service.projects).toHaveLength(2)
     const engine = service.projects[0]!.engine
     expect(engine.name).toBe('alpha')
+    const gatedEngine = service.projects[1]!.engine
+    expect(gatedEngine.name).toBe('beta')
 
     // The offline-faked platform still completed the real start path, so the
     // composition proved the full apply chain (adapter, engine, platform).
@@ -169,6 +180,14 @@ describe('chatroom real Loader composition', () => {
     expect(engine.commandHandlers?.has('chatroom')).toBe(true)
     expect(engine.commandResolver?.('chatroom')).toBe('chatroom')
     expect(engine.commandResolver?.('chatr')).toBe('chatroom')
+
+    // Gated project: no /chatroom command family, and the tool name sits on
+    // the service's per-engine deny registry — the adapter's create-time
+    // mask reads that registry (pinned in the bridge's adapter-mcp-mask
+    // spec); the registry itself is what this real composition proves.
+    expect(gatedEngine.commandHandlers?.has('chatroom')).toBe(false)
+    expect(service.deniedToolsOf(gatedEngine)).toEqual(['feishu_bridge_chatroom'])
+    expect(service.deniedToolsOf(engine)).toEqual([])
 
     // Durable: the chatroom feature-state codec (snapshot v3 section owner).
     expect(featureStateCodecs().some(codec => codec.key === 'chatroom')).toBe(true)

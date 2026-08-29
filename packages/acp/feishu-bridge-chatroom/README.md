@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-The chatroom plugin of the Feishu bridge: multi-role chatroom orchestration — role groups, the moderator, the `/chatroom` command family, the `feishu_bridge_chatroom` tool, and the bundled chatroom-moderator skill — as its own dsh package mounted beside `@deepseek-ai/dsh-feishu-bridge` (dependency direction: this package imports the bridge's export face; the bridge never imports this package). The engine seam halves ride the bridge service's `feishuBridge/*` events; the per-engine configuration and command registration apply in the plugin's startup sweep once the bridge reports readiness.
+The chatroom plugin of the Feishu bridge: multi-role chatroom orchestration — role groups, the moderator, the `/chatroom` command family, the `feishu_bridge_chatroom` tool, and the bundled chatroom-moderator skill — as its own dsh package mounted beside `@deepseek-ai/dsh-feishu-bridge` (dependency direction: this package imports the bridge's export face; the bridge never imports this package). The engine seam halves ride the bridge service's `feishuBridge/*` events; the per-engine configuration and command registration apply in the plugin's startup sweep once the bridge reports readiness. A project configured `enabled: false` (in this plugin's `defaults` or its `projects` entry) gets no `/chatroom` commands, its agents' `feishu_bridge_chatroom` calls fail loud, and the tool definition is masked out of its sessions' model requests through the bridge service's per-engine deny registry.
 
 ## Model Experience
 
@@ -15,7 +15,7 @@ The chatroom plugin of the Feishu bridge: multi-role chatroom orchestration — 
 
 #### Token effect
 
-The tool description and schema reach every dsh agent in projects where the tool registers (the tool is process-wide, routed by caller). Persona prompts replace each chatroom session's system prompt entirely instead of appending; moderator wakes and relay cards are user-visible messages, not model-facing.
+The tool description and schema reach every dsh agent in enabled projects (the tool is process-wide, routed by caller); a project configured `enabled: false` masks the definition out of its sessions' requests (the adapter restricts the service-denied name at session create), keeping only the bundled skill's catalog entry. Persona prompts replace each chatroom session's system prompt entirely instead of appending; moderator wakes and relay cards are user-visible messages, not model-facing.
 
 #### KV Cache effect
 
@@ -24,6 +24,8 @@ Chatroom sessions use whole-prompt persona replacement, so each role/moderator s
 ## Known Limitations and Deferred Work
 
 - **Pre-readiness window**: messages a platform delivers between the bridge's engine start and this plugin's `whenReady()` sweep are handled with default-valued chatroom configuration (no roles dir override, ledger off) — a window the in-bridge wiring did not have. It is structural to the sibling-plugin mount order; recovery and all later turns see the swept configuration.
+- **The tool mask has a startup window**: sessions created between the bridge's readiness and this plugin's sweep (which registers the per-engine deny mask) still see the `feishu_bridge_chatroom` definition; their calls fail loud at the tool's execute gate instead. Sessions created after the sweep never see the definition.
+- **The bundled skill stays visible on disabled projects**: the chatroom-moderator skill provider is process-wide (skill-filesystem custom roots have no per-project scope), so a disabled project's agents still see its catalog entry (roughly 200 tokens); the masked tool makes it inert guidance.
 - **Unloading the plugin loses in-memory chatroom state**: armed barrier instances, in-flight flags, and gather-round stamps are process-local; disposing the plugin fiber drops them. The durable `featureState.chatroom` section survives — the per-session accessors write it in place, so a codec-less save persists it verbatim — and restart barrier recovery rides the persisted snapshots, not the instances.
 - **Picker state is in-memory**: a daemon restart drops the armed pickers; the next click on an orphaned pick card swaps it in place for a grey expired card prompting a fresh `/chatroom` (Go left the orphan buttons silent or fake-confirming).
 - **Deployment migration is manual**: production profiles carry chatroom sections under the `feishu-bridge` row in their self-evolved `cordis.patch.yml`; the bridge now fails loud on such residue, and the sections must move to this plugin's own config (`defaults` + per-project `projects`, keyed by bridge project name). The migration snippet and profile-template updates land with the C3 deployment batch.

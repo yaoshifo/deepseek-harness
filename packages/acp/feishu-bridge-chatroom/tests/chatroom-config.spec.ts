@@ -100,4 +100,17 @@ describe('chatroom config wiring', () => {
     // An engine without a store path and without config yields ''.
     expect(chatroomResearchWorkspace(newEngine())).toBe('')
   })
+
+  it('enabled defaults to true; defaults and project sections override per field', () => {
+    // No section at all: enabled.
+    expect(chatroomConfig(configure(undefined)).enabled()).toBe(true)
+    // The defaults section disables every project.
+    expect(chatroomConfig(configure(undefined, { enabled: false })).enabled()).toBe(false)
+    // A project section re-enables its own engine.
+    expect(chatroomConfig(configure({ enabled: true }, { enabled: false })).enabled()).toBe(true)
+    // A project section without the key keeps the defaults value.
+    expect(chatroomConfig(configure({ rolesDir: '/x' }, { enabled: false })).enabled()).toBe(false)
+    // An unswept engine reads the default (the pre-sweep window).
+    expect(chatroomConfig(newEngine()).enabled()).toBe(true)
+  })
 })

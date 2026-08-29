@@ -120,6 +120,33 @@ describe('chatroom plugin entry', () => {
     expect(typeof ctx.tools.register).toBe('function')
   })
 
+  it('a disabled project skips command registration and masks its tool on the service', async () => {
+    const ctx = await liveContext()
+    const service = ctx.get('feishuBridge')
+    if (service === undefined) throw new Error('feishuBridge failed to mount')
+    const { engine } = await liveProject('alpha')
+    const { engine: startedEngine } = await liveProject('beta', true)
+    service.registerProject({ engine, adapter: {} as never })
+    service.registerProject({ engine: startedEngine, adapter: {} as never })
+    service.markReady()
+
+    const fiber = await ctx.plugin({ name, inject, apply }, { projects: { alpha: { enabled: false } } })
+
+    // The disabled project: no /chatroom command family (no alias either),
+    // and the tool name is masked on the service for this engine.
+    expect(engine.commandHandlers?.get('chatroom')).toBeUndefined()
+    expect(engine.commandResolver?.('cr')).toBe('')
+    expect(service.deniedToolsOf(engine)).toEqual(['feishu_bridge_chatroom'])
+
+    // The enabled project is untouched: commands registered, no mask.
+    expect(startedEngine.commandHandlers?.get('chatroom')).toBeDefined()
+    expect(service.deniedToolsOf(startedEngine)).toEqual([])
+
+    // Disposing the fiber releases the mask (HMR safety).
+    await fiber.dispose()
+    expect(service.deniedToolsOf(engine)).toEqual([])
+  })
+
   it('routes the registered tool through the bridge service (foreign callers fail loud)', async () => {
     const ctx = await liveContext()
     const service = ctx.get('feishuBridge')

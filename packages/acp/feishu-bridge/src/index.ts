@@ -825,6 +825,12 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
       ctx, config, project, dataRoot, dirHistory, shared, hintUsage, questionRouting, service,
     )
     service.registerProject({ engine, adapter })
+    // Service-denied tool masks (a sibling plugin disabled on this project,
+    // e.g. chatroom's enabled: false) apply through the adapter's
+    // create-time restrict; the closure reads the live registry so a
+    // registration after assembly — the chatroom sweep runs once the bridge
+    // reports readiness — still masks every later session.
+    adapter.setDeniedTools(() => service.deniedToolsOf(engine))
     if (project.features?.injectSender === true) engine.setInjectSender(true)
     if (project.features?.quiet === true) {
       engine.setDisplayConfig({ thinkingMessages: false, toolMessages: false })

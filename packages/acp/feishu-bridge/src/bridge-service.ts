@@ -89,6 +89,15 @@ export class FeishuBridgeService extends Service implements BridgeDispatch {
   private readonly live: LiveProject[] = []
   private ready = false
   private readyWaiters: Array<() => void> = []
+  /**
+   * Tool names sibling plugins registered as hidden for one engine's
+   * project, keyed per engine. The adapter reads the live set at every
+   * session create and restricts those names on the agent scope, so the
+   * definitions never enter that project's model requests. Visibility
+   * composition, not an authority boundary (the tools README's scope
+   * non-goal).
+   */
+  private readonly deniedToolNames = new WeakMap<Engine, Set<string>>()
 
   constructor(ctx: Context) {
     super(ctx, 'feishuBridge')
@@ -97,6 +106,43 @@ export class FeishuBridgeService extends Service implements BridgeDispatch {
   /** The live projects, in mount order. */
   get projects(): ReadonlyArray<LiveProject> {
     return this.live
+  }
+
+  /**
+   * Register tool names hidden from every session of one engine's project.
+   *
+   * A sibling plugin calls this for a project it is disabled on (the
+   * chatroom plugin hides `feishu_bridge_chatroom` on projects configured
+   * `enabled: false`), so the tool definition stops entering that project's
+   * model requests instead of merely failing at execute.
+   *
+   * @param engine - The engine whose project sessions the mask applies to.
+   * @param names - Tool names to hide; names absent from the live registry
+   *   are dropped by the adapter's mask, not here.
+   * @returns Disposer removing the names again; idempotent.
+   */
+  denyTools(engine: Engine, names: readonly string[]): () => void {
+    let set = this.deniedToolNames.get(engine)
+    if (set === undefined) {
+      set = new Set()
+      this.deniedToolNames.set(engine, set)
+    }
+    for (const name of names) set.add(name)
+    let disposed = false
+    return () => {
+      if (disposed) return
+      disposed = true
+      for (const name of names) set.delete(name)
+    }
+  }
+
+  /**
+   * The tool names currently registered as hidden for one engine's project.
+   * @param engine - The engine whose mask set is addressed.
+   * @returns The hidden names in registration order.
+   */
+  deniedToolsOf(engine: Engine): readonly string[] {
+    return [...this.deniedToolNames.get(engine) ?? []]
   }
 
   /**
