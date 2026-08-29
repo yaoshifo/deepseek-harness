@@ -9,3 +9,5 @@ header:
 replay:
   override: true
 permission: workspace-write
+workspace:
+  final: true

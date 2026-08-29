@@ -153,7 +153,7 @@
     },
     {
       "name": "grep",
-      "description": "Search file contents with a ripgrep regular expression. Returns matching lines with line numbers, grouped by file. Returns the first 250 matches inline; a capped result reports where the complete match list was saved. Use read on a matched file for surrounding context.",
+      "description": "Search file contents with a ripgrep regular expression. Returns matching lines with line numbers, grouped by file. Returns the first 250 matches inline; a capped result reports where the complete match list was saved. For code symbols — definitions, references, or implementations — prefer the lsp tool (workspaceSymbol for a symbol name): it resolves the symbol semantically instead of matching text. Use read on a matched file for surrounding context.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -444,7 +444,7 @@
     },
     {
       "name": "subagent",
-      "description": "Delegate a self-contained task to a subagent (a separate agent that works in its own context) to offload focused, independent work — research, a scoped implementation, an analysis — so it does not consume this conversation's context. The subagent returns its result, not its intermediate steps. Give it a complete, standalone prompt: it does not see this conversation. This call waits for the subagent and returns its result.",
+      "description": "Delegate a self-contained task to a subagent (a separate agent that works in its own context) to offload focused, independent work — research, a scoped implementation, an analysis — so it does not consume this conversation's context. The subagent returns its result, not its intermediate steps. Give it a complete, standalone prompt: it does not see this conversation. The child shares this session's working directory and its instruction files; a delegation cannot redirect it to another directory. This call waits for the subagent and returns its result.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -465,7 +465,7 @@
     },
     {
       "name": "subagent_fork",
-      "description": "Delegate a task to a subagent that inherits this conversation: a child agent seeded with all completed turns so far (it does not see the current in-flight turn). Use this when the subtask builds on this conversation's context — a follow-up analysis, a review, a continuation — without consuming this conversation's context for the work itself. You receive its result, not its intermediate steps. This call waits for the result by default. Set `run_in_background: true` to return a job id; collect with `job_output` and stop with `job_kill`.",
+      "description": "Delegate a task to a subagent that inherits this conversation: a child agent seeded with all completed turns so far (it does not see the current in-flight turn). Use this when the subtask builds on this conversation's context — a follow-up analysis, a review, a continuation — without consuming this conversation's context for the work itself. You receive its result, not its intermediate steps. The child shares this session's working directory and its instruction files; a delegation cannot redirect it to another directory. This call waits for the result by default. Set `run_in_background: true` to return a job id; collect with `job_output` and stop with `job_kill`.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -513,6 +513,10 @@
                     "in_progress",
                     "completed"
                   ]
+                },
+                "activeForm": {
+                  "type": "string",
+                  "description": "Optional present-progressive label shown while the task runs (e.g. \"Planning the work\")."
                 }
               },
               "required": [

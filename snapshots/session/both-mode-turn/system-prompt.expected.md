@@ -101,7 +101,7 @@ interface ToolArgsMap {
     /** Directory to search in. Defaults to the session workspace; a relative path resolves against it. */
     path?: string;
   } & Record<string, JsonValue>;
-  /** Search file contents with a ripgrep regular expression. Returns matching lines with line numbers, grouped by file. Returns the first 250 matches inline; a capped result reports where the complete match list was saved. Use read on a matched file for surrounding context. */
+  /** Search file contents with a ripgrep regular expression. Returns matching lines with line numbers, grouped by file. Returns the first 250 matches inline; a capped result reports where the complete match list was saved. For code symbols — definitions, references, or implementations — prefer the lsp tool (workspaceSymbol for a symbol name): it resolves the symbol semantically instead of matching text. Use read on a matched file for surrounding context. */
   grep: {
     /** Regular expression to search for (ripgrep syntax). */
     pattern: string;
@@ -188,7 +188,7 @@ interface ToolArgsMap {
     /** Optional parameter of `view` command when `path` points to a file. If omitted or null, the full file is shown. If provided, the file will be shown in the indicated line number range, e.g. [11, 12] will show lines 11 and 12. Indexing at 1 to start. Setting `[start_line, -1]` shows all lines from `start_line` to the end of the file. */
     view_range?: number[] | null;
   } & Record<string, JsonValue>;
-  /** Delegate a self-contained task to a subagent (a separate agent that works in its own context) to offload focused, independent work — research, a scoped implementation, an analysis — so it does not consume this conversation's context. The subagent returns its result, not its intermediate steps. Give it a complete, standalone prompt: it does not see this conversation. This tool runs in the background by default, immediately returns a durable subagent id, and keeps the child conversation available for later turns. When that run settles, the runtime sends the parent a notice containing its outcome and any final assistant message; `send_message` starts a later turn in the same child conversation. Set `run_in_background: false` only when your next action depends on receiving the result. */
+  /** Delegate a self-contained task to a subagent (a separate agent that works in its own context) to offload focused, independent work — research, a scoped implementation, an analysis — so it does not consume this conversation's context. The subagent returns its result, not its intermediate steps. Give it a complete, standalone prompt: it does not see this conversation. The child shares this session's working directory and its instruction files; a delegation cannot redirect it to another directory. This tool runs in the background by default, immediately returns a durable subagent id, and keeps the child conversation available for later turns. When that run settles, the runtime sends the parent a notice containing its outcome and any final assistant message; `send_message` starts a later turn in the same child conversation. Set `run_in_background: false` only when your next action depends on receiving the result. */
   subagent: {
     /** A short (3-5 word) description of the delegated task, for display. */
     description: string;
@@ -197,7 +197,7 @@ interface ToolArgsMap {
     /** Whether to run in the background and return a durable subagent id immediately. Defaults to true. Set false to wait for the result when your next action depends on it. */
     run_in_background?: boolean;
   } & Record<string, JsonValue>;
-  /** Delegate a task to a subagent that inherits this conversation: a child agent seeded with all completed turns so far (it does not see the current in-flight turn). Use this when the subtask builds on this conversation's context — a follow-up analysis, a review, a continuation — without consuming this conversation's context for the work itself. You receive its result, not its intermediate steps. This call waits for the subagent and returns its result. */
+  /** Delegate a task to a subagent that inherits this conversation: a child agent seeded with all completed turns so far (it does not see the current in-flight turn). Use this when the subtask builds on this conversation's context — a follow-up analysis, a review, a continuation — without consuming this conversation's context for the work itself. You receive its result, not its intermediate steps. The child shares this session's working directory and its instruction files; a delegation cannot redirect it to another directory. This call waits for the subagent and returns its result. */
   subagent_fork: {
     /** A short (3-5 word) description of the delegated task, for display. */
     description: string;
@@ -212,6 +212,8 @@ interface ToolArgsMap {
       content: string;
       /** pending (not started) | in_progress (now) | completed (done). */
       status: "pending" | "in_progress" | "completed";
+      /** Optional present-progressive label shown while the task runs (e.g. "Planning the work"). */
+      activeForm?: string;
     })[];
   } & Record<string, JsonValue>;
   /** Update the exact current goal revision. edit, pause, and resume require a direct top-level human request. During an automatic continuation of the current goal, complete and blocked are also allowed. blocked is rejected before the configured minimum round count; the model remains responsible for judging that the same condition persisted across those rounds and must explain it in blocked_reason. */
@@ -479,6 +481,7 @@ interface ToolOutputMap {
     todos: ({
       content: string;
       status: "pending" | "in_progress" | "completed";
+      activeForm?: string;
     })[];
     counts: {
       pending: number;

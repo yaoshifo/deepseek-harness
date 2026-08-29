@@ -3,8 +3,6 @@
 # normalization boundary end to end: the model emits `multiSelect`, the card
 # still asks, and the answer settles the turn.
 - insert:
-    - id: user-questions
-      name: '@deepseek-ai/dsh-user-questions'
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
     - id: ask-auto-answer
