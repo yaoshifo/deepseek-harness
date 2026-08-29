@@ -28,9 +28,11 @@ const stubs: string[] = []
  * old-daemon wait loop spinning (abort path); `psDaemon` makes the ppid walk
  * see a daemon-shaped ancestor (fallback guard path); `wsOk=false` makes the
  * restarted daemon never reach 'ws client ready' (probe-failure path) and
- * stubs sleep so the 60-iteration probe exhausts instantly.
+ * stubs sleep so the 60-iteration probe exhausts instantly; `respawn` makes
+ * every `launchctl list` report a fresh PID so the stability re-check sees a
+ * daemon that died inside the settling window (crash-loop path).
  */
-async function stage(pgrepStuck: boolean, psDaemon: boolean, sessionStore = 'feishu-bridge', wsOk = true): Promise<Staging> {
+async function stage(pgrepStuck: boolean, psDaemon: boolean, sessionStore = 'feishu-bridge', wsOk = true, respawn = false): Promise<Staging> {
   const root = await mkdtemp(join(tmpdir(), 'reload-spec-'))
   stubs.push(root)
   const bin = join(root, 'bin')
@@ -49,7 +51,7 @@ async function stage(pgrepStuck: boolean, psDaemon: boolean, sessionStore = 'fei
     `echo "$*" >> ${callsPath}`,
     'case "$1" in',
     '  load) if [ "$FB_SPEC_WS_OK" = 1 ]; then printf "ws client ready\\n" >> "$FB_SPEC_STDOUT"; fi ;;',
-    '  list) printf "12345\\t0\\tcom.dsh.feishu-bridge\\n" ;;',
+    '  list) n=$(cat "$FB_SPEC_LIST_COUNT" 2>/dev/null || echo 0); if [ "$FB_SPEC_RESPAWN" = 1 ]; then echo $((n + 1)) > "$FB_SPEC_LIST_COUNT"; fi; printf "%s\\t0\\t%s\\n" "$((12345 + n))" "$FB_SPEC_LABEL" ;;',
     'esac',
     'exit 0',
   ].join('\n'), { mode: 0o755 })
@@ -83,6 +85,11 @@ async function stage(pgrepStuck: boolean, psDaemon: boolean, sessionStore = 'fei
     LOG_DIR: logDir,
     FB_SPEC_STDOUT: stdoutPath,
     FB_SPEC_WS_OK: wsOk ? '1' : '0',
+    FB_SPEC_RESPAWN: respawn ? '1' : '0',
+    FB_SPEC_LIST_COUNT: join(root, 'list-count'),
+    FB_SPEC_LABEL: label,
+    // Keep the suite fast: the stability re-check runs with a zero window.
+    FB_RELOAD_STABILITY_SECS: '0',
     FB_SPEC_ANCESTOR: psDaemon
       ? 'node /nowhere/apps/cli/lib/bin.js --profile feishu-bridge'
       : '/sbin/launchd',
@@ -186,6 +193,13 @@ describe.skipIf(process.platform !== 'darwin')('reload.sh', () => {
     expect((await s.kinds()).filter(k => k !== 'list')).toEqual(['unload', 'load'])
   }, 10000)
 
+  it('fails when the daemon respawns within the stability window (the 2026-08-29 false success)', async () => {
+    const s = await stage(false, false, 'none', true, true)
+    const result = await runScript(s.env)
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('stability window')
+  }, 10000)
+
   it('FB_RELOAD_FROM_DAEMON=1 bypasses the ppid walk (the /reload detached spawn)', async () => {
     const s = await stage(false, true, 'none')
     const result = await runScript({ ...s.env, FB_RELOAD_FROM_DAEMON: '1' })
@@ -230,12 +244,13 @@ interface LinuxStaging {
  * appends the WS-ready line to the (stubbed) journal; `configOk=false` makes
  * the config preflight (stubbed `node`) fail; `psDaemon` makes the ppid walk
  * see a daemon-shaped ancestor; `sessionStore` names the hosting daemon for
- * the DSH_SESSION_JSONL guard.
+ * the DSH_SESSION_JSONL guard; `respawn` makes every `systemctl show` report
+ * a fresh MainPID so the stability re-check sees a crash-looping daemon.
  */
 async function stageLinux(
-  opts: { unitExists?: boolean; wsOk?: boolean; configOk?: boolean; psDaemon?: boolean; sessionStore?: string } = {},
+  opts: { unitExists?: boolean; wsOk?: boolean; configOk?: boolean; psDaemon?: boolean; sessionStore?: string; respawn?: boolean } = {},
 ): Promise<LinuxStaging> {
-  const { unitExists = true, wsOk = true, configOk = true, psDaemon = false, sessionStore = 'none' } = opts
+  const { unitExists = true, wsOk = true, configOk = true, psDaemon = false, sessionStore = 'none', respawn = false } = opts
   const root = await mkdtemp(join(tmpdir(), 'reload-linux-spec-'))
   stubs.push(root)
   const bin = join(root, 'bin')
@@ -258,6 +273,8 @@ async function stageLinux(
     'case "$2" in',
     `  cat) exit ${unitExists ? 0 : 1} ;;`,
     '  restart) if [ "$FB_SPEC_WS_OK" = 1 ]; then printf "ws client ready\\n" >> "$FB_SPEC_JOURNAL"; fi; exit 0 ;;',
+    '  show) n=$(cat "$FB_SPEC_SHOW_COUNT" 2>/dev/null || echo 0); if [ "$FB_SPEC_RESPAWN" = 1 ]; then echo $((n + 1)) > "$FB_SPEC_SHOW_COUNT"; fi; echo $((4242 + n)) ;;',
+    '  is-active) exit 0 ;;',
     'esac',
     'exit 0',
   ].join('\n'), { mode: 0o755 })
@@ -293,6 +310,10 @@ async function stageLinux(
     LOG_DIR: logDir,
     FB_SPEC_WS_OK: wsOk ? '1' : '0',
     FB_SPEC_JOURNAL: journalPath,
+    FB_SPEC_RESPAWN: respawn ? '1' : '0',
+    FB_SPEC_SHOW_COUNT: join(root, 'show-count'),
+    // Keep the suite fast: the stability re-check runs with a zero window.
+    FB_RELOAD_STABILITY_SECS: '0',
     FB_SPEC_ANCESTOR: psDaemon
       ? 'node /nowhere/apps/cli/lib/bin.js --profile feishu-bridge'
       : '/sbin/launchd',
@@ -317,7 +338,20 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
     const s = await stageLinux()
     const result = await runScript(s.env)
     expect(result.code).toBe(0)
-    expect(await s.calls()).toEqual(['--user cat feishu-bridge', '--user restart feishu-bridge'])
+    expect(await s.calls()).toEqual([
+      '--user cat feishu-bridge',
+      '--user restart feishu-bridge',
+      '--user show feishu-bridge -p MainPID --value',
+      '--user is-active --quiet feishu-bridge',
+      '--user show feishu-bridge -p MainPID --value',
+    ])
+  }, 10000)
+
+  it('fails when the daemon respawns within the stability window (the 2026-08-29 false success)', async () => {
+    const s = await stageLinux({ respawn: true })
+    const result = await runScript(s.env)
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain('stability window')
   }, 10000)
 
   it('refuses inside the daemon via DSH_SESSION_JSONL', async () => {
@@ -386,7 +420,13 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('
     const s = await stageLinux({ psDaemon: true })
     const result = await runScript({ ...s.env, FB_RELOAD_FROM_DAEMON: '1' })
     expect(result.code).toBe(0)
-    expect(await s.calls()).toEqual(['--user cat feishu-bridge', '--user restart feishu-bridge'])
+    expect(await s.calls()).toEqual([
+      '--user cat feishu-bridge',
+      '--user restart feishu-bridge',
+      '--user show feishu-bridge -p MainPID --value',
+      '--user is-active --quiet feishu-bridge',
+      '--user show feishu-bridge -p MainPID --value',
+    ])
   }, 10000)
 
   it('FB_RELOAD_FROM_DAEMON=1 still refuses a daemon-hosted session (DSH_SESSION_JSONL guard stays)', async () => {

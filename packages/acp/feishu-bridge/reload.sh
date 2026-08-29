@@ -206,6 +206,20 @@ if [ "$OS" = Darwin ]; then
     fi
     sleep 0.5
   done
+  # Stability re-check: a boot that dies right after emitting 'ws client
+  # ready' passed the probe above while launchd KeepAlive crash-looped it —
+  # the 2026-08-29 dev reload reported success on a daemon that died the
+  # same second. launchctl list shows the label's current PID ("-" while
+  # between respawns), so a respawn inside the settling window changes it.
+  daemon_pid() { launchctl list | grep "[[:space:]]$LABEL\$" | cut -f1; }
+  pid=$(daemon_pid)
+  sleep "${FB_RELOAD_STABILITY_SECS:-5}"
+  if [ -z "$pid" ] || [ "$pid" = "-" ] || [ "$(daemon_pid)" != "$pid" ]; then
+    echo "error: daemon exited within the stability window after 'ws client ready'; recent stderr:" >&2
+    tail -5 "$LOG_DIR/feishu-bridge-stderr.log" >&2 2>/dev/null || true
+    print_rollback_hint
+    exit 1
+  fi
   echo "==> ok: daemon restarted on latest build, Feishu WS ready (logs rotated to .old-$stamp)"
 else
   echo "==> restarting daemon $UNIT (systemd)"
@@ -227,5 +241,19 @@ else
     fi
     sleep 0.5
   done
+  # Stability re-check (same rationale as the launchd branch): the MainPID
+  # that just connected must still be the active one after a settling
+  # window — systemd rewrites MainPID on every auto-restart, so a
+  # crash-looping boot can never satisfy it.
+  pid=$(systemctl --user show "$UNIT" -p MainPID --value 2>/dev/null)
+  sleep "${FB_RELOAD_STABILITY_SECS:-5}"
+  if [ -z "$pid" ] || [ "$pid" = 0 ] \
+     || ! systemctl --user is-active --quiet "$UNIT" 2>/dev/null \
+     || [ "$(systemctl --user show "$UNIT" -p MainPID --value 2>/dev/null)" != "$pid" ]; then
+    echo "error: daemon exited within the stability window after 'ws client ready'; recent journal:" >&2
+    journalctl --user -u "$UNIT" -n 5 2>/dev/null >&2 || true
+    print_rollback_hint
+    exit 1
+  fi
   echo "==> ok: daemon $UNIT restarted on latest build, Feishu WS ready"
 fi
