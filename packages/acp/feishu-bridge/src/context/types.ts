@@ -15,6 +15,10 @@
  *   (`ContextBreakdownValue`) and `TokenUsageProjection`
  *   (`TokenUsageValue`); `ContextPressureValue` covers the same
  *   `contextPressure` key dsh-context reads for its headline.
+ * - Aligned with dsh-context 0.38.1: every consumed field is unchanged
+ *   since 0.36.0; the wire value gained only an optional `timing` totals
+ *   object the cards do not read (dsh-context stateVersion 11 refolds the
+ *   projection cache after the upgrade).
  *
  * Field optionality mirrors upstream exactly (a projection value from a
  * current dsh-context host feeds these types unchanged); only fields the

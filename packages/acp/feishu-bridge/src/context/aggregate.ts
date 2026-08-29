@@ -14,6 +14,8 @@
  *   (tokens descending) mirrors the overview's Top chips order.
  * - dsh-context `src/host/fold.ts`: requests are seq-ordered oldest-first
  *   and events are kept as the newest tail.
+ * - Aligned with dsh-context 0.38.1: the ported functions are unchanged
+ *   upstream since 0.36.0.
  *
  * @module dsh-feishu-bridge/context/aggregate
  */

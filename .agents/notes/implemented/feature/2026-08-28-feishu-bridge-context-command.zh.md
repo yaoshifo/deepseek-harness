@@ -14,7 +14,7 @@ Status: implemented
 
 **图表元素**（`src/card.ts`、`src/feishu/card.ts`）：卡片模型携带 `{ kind: 'chart', spec }`，`spec` 是桥接层从不解释的 VChart JSON 对象；渲染器原样输出 `{ tag: 'chart', chart_spec: spec }`。飞书在发送时服务端校验 spec（错误码 230099），因此 spec 的正确性归调用方——实测验证的约束是 `color` 必须是完整的 ordinal 比例尺（`{ type, domain, range }`），`src/context/chartspec.ts` 固化了真实投递验证过的两种线格式（横向构成条形图与逐轮堆叠柱状图）。不含纹理、锥形渐变、词云网格、extensionMark 图片平铺、svg mark 背景——这些在移动端均不受支持；平台会追加自己的响应式 media query，因此 spec 永不声明 `media`。
 
-**context 模块**（`src/context/`）：dsh-context 的纯函数与线格式类型移植进桥接层——`headlineOf`（锚定链：官方 `contextPressure` 投影优先，末次请求 prompt 估算次之，启发式构成总量兜底）、`aggregateByTurn`、`topToolSchemas`、`recentEvents`、两个图表 spec 构造器，以及窄化类型（`ContextTimelineValue`、`ContextHeadersValue`、`ContextPressureValue`，加 token-meter 的 `ContextBreakdownValue`/`TokenUsageValue` 与聚合出的 `ContextSnapshotValues`）。不 import dsh-context——当前 dsh-context 宿主的投影值原样喂给这些类型，字段可选性与上游一致，重新对齐是手工 diff 而非重写。
+**context 模块**（`src/context/`）：dsh-context 的纯函数与线格式类型移植进桥接层——`headlineOf`（锚定链：官方 `contextPressure` 投影优先，末次请求 prompt 估算次之，启发式构成总量兜底）、`aggregateByTurn`、`topToolSchemas`、`recentEvents`、两个图表 spec 构造器，以及窄化类型（`ContextTimelineValue`、`ContextHeadersValue`、`ContextPressureValue`，加 token-meter 的 `ContextBreakdownValue`/`TokenUsageValue` 与聚合出的 `ContextSnapshotValues`）。不 import dsh-context——当前 dsh-context 宿主的投影值原样喂给这些类型，字段可选性与上游一致，重新对齐是手工 diff 而非重写。已对齐 dsh-context 0.38.1：自 0.36.0 移植以来，上游线格式仅新增可选的 `timing` 汇总字段，卡片不读取。
 
 **/context 命令**（`src/engine/context-commands.ts` + `src/context/render.ts`）：命令解析会话的活跃 agent 会话（`Engine.activeAgentSessionID`，live interactive 优先），经 adapter 新增的 `ContextSnapshotReader` 能力（`DshAgentAdapter.contextSnapshot(agentSessionID)`——`ctx.agents.get` → `agent.session` → 注册表的 `snapshot`，返回五个键，会话无活跃 agent 时为 undefined）读取一致的 `sessionProjections.snapshot` 切面，再用纯函数从聚合出的 args 渲染卡片。卡片：头部（📊 标记、截断的会话标题、模型名）、概览行（占用对窗口、余量，ratio 超过 1 时红色模板加超窗标注）、构成条形图、逐轮趋势（最近 20 轮）、最近 8 条上下文事件、轮次/步数/事件类别统计（含末次请求的原始 prompt/cacheRead/output 数字）、折叠的 Top-5 工具 schema 面板，以及刷新按钮。按钮携带 `act:/context ctx:<sessionKey>`，经 `Engine.registerCardAction` 注册：被按卡片自己的渲染时会话键优先于按压用户的聊天键，处理器重读快照并原地 PATCH 被按卡片。列表上限（20 轮、8 条事件、5 个工具）与逐字段 rune 截断使卡片天然有界；最终的预算守卫度量渲染后的 JSON（20KB 内控，对飞书 30KB 硬限）与元素数（< 200），超预算时先丢弃趋势图与事件段，再退到仅概览行的兜底卡。
 
@@ -34,7 +34,7 @@ Status: implemented
 
 ## Consequences
 
-`/help` 自动把 `/context` 列入 agent 组。i18n 新增两键（`context`、`context_usage`）。刷新按钮的回调路径无法自动化测试（飞书卡片动作的既有局限）——由 act 值的纯函数表测加卡片动作分发测试覆盖，另有真机冒烟。inject 声明使投影注册表成为桥接层的硬激活依赖：未挂载 `dsh-session-projection` 的组合根本不会加载桥接层（所有真实 profile 都构建于挂载它的 dsh-base 之上）；若日后更倾向降级而非阻断，删掉该条目即可换来一张空 `/context` 卡。不支持读取冷（非活跃）会话的投影——注册表的单元素以活跃 `Session` 对象为键——因此 daemon 重启后、聊天下一轮恢复其 agent 之前，`/context` 渲染空卡。
+`/help` 自动把 `/context` 列入 agent 组。i18n 新增两键（`context`、`context_usage`）。刷新按钮的回调路径无法自动化测试（飞书卡片动作的既有局限）——由 act 值的纯函数表测加卡片动作分发测试覆盖，另有真机冒烟。inject 声明使投影注册表成为桥接层的硬激活依赖：未挂载 `dsh-session-projection` 的组合根本不会加载桥接层（所有真实 profile 都构建于挂载它的 dsh-base 之上）；若日后更倾向降级而非阻断，删掉该条目即可换来一张空 `/context` 卡。不支持读取冷（非活跃）会话的投影——注册表的单元素以活跃 `Session` 对象为键——因此 daemon 重启后、聊天下一轮恢复其 agent 之前，`/context` 渲染空卡。生产 profile 以 registry 依赖挂载 dsh-context，经 `dsh.profile.bundles` 层激活——仅 host 半区，浏览器 client 打包在 daemon 中永不加载。
 
 ## Testing
 
