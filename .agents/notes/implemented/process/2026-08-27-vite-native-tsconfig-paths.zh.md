@@ -10,6 +10,8 @@ Status: implemented
 
 ## 决策
 
+**2026-08-29 被取代**：在吸收上游 1079 个提交期间，上游新增的 face-split 包持有不带 `paths` 的 solution 式根 `tsconfig.json`，下述按 importer 就近发现机制让这些包的 `src` 文件经 package `exports` 落到构建后的 `lib/`，加载出第二份模块单例（`api/session-controller` 中 33 个 `instanceof` 测试失败）。`vite-tsconfig-paths` 门面已恢复；现行决策由 [fork 二次开发原则](2026-08-29-fork-secondary-development-principles.zh.md)持有，其「不 fork 工具链」规则正是本次偏离的产物。
+
 五个 vitest 配置全部启用 `resolve: { tsconfigPaths: true }`；插件 import、npm 依赖及其在第三方清单里的条目一并移除。解析约定本身不变。插件与原生选项之间有两个语义差异是承重事实：
 
 - **发现按 importer 就近进行，而非指向式全量门面。** 插件把所有文件都经一个显式列出的配置解析；Vite 原生支持从每个导入文件向上查找并跟随 `extends`。本仓库每条车道的目录都能以这种方式到达 `tsconfig.base.json`：各 package、`apps/*`、根级 `scripts/`，以及最近层 `tsconfig.json` 自身不带任何 compilerOptions 的三个 solution 式聚合（`packages/api/gateway`、`packages/api/remotes`、`packages/client/connection`）。

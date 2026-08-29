@@ -14,7 +14,7 @@ Status: implemented
 - `tdd` skill 部署正常——迁移后 139/139 个会话的目录都含该条目——两侧模型也未变（均为 glm-5.3）。可见不等于遵从。
 - 迁移前的 reasoning 明确援引该强制约束（"TDD: red-green loop per global instructions"）；迁移后仍在实践的会话则是在决策时刻临场掂量目录行。测试仍在写（仓库测试政策与 pre-push 检查强制），但抽样的会话翻转为先实现后补测试（8 个中 6 个）。
 
-这与 [workspaceSymbol 采用率研究](../feature/2026-08-27-lsp-workspace-symbol-entry-point.md)记录的是同一个决策瞬间召回失败：description 对熟练意图不可靠触发，因为模型不会在动手实现的瞬间重读目录。
+这与 [workspaceSymbol 采用率研究](../feature/2026-08-27-lsp-workspace-symbol-entry-point.zh.md)记录的是同一个决策瞬间召回失败：description 对熟练意图不可靠触发，因为模型不会在动手实现的瞬间重读目录。
 
 ## Decision
 

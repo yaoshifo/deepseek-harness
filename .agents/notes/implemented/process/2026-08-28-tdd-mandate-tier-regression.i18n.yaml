@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-08-28-tdd-mandate-tier-regression.md
+2026-08-28-tdd-mandate-tier-regression.md: 22f95d89a2698d8bc346eb0c4614b771b4f952de
+2026-08-28-tdd-mandate-tier-regression.zh.md: d9bab39c2be81094f01c25a50751c1f42c31545e

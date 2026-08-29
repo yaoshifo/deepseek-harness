@@ -88,5 +88,6 @@ pnpm run gen-client-catalog    # cordis-client-runner 的 slot-catalog（易漏�
 - 症状：refresh（`DSH_SNAPSHOT=refresh`）重写的期望文件在下次 replay 失败 → 做法：refresh 是「先写后比」，会把被测应用的**瞬时**行为烤进 fixture（实例：initialize 竞态让 `promptCapabilities.image` 一次性翻成 false）。refresh 产物一律 diff 审查后才可提交，initialize 期取值的变化未经普通 replay 确认视为可疑；机械噪音（比较器会归一化的裸 UUID）直接回滚即可。详见 Agent Note `implemented/process/2026-08-21-snapshot-refresh-transient-capability.md`。
 - 症状：批量回滚 refresh 噪音文件时把手工修复一起冲掉 → 做法：回滚前先提交已完成的未提交修复，或按显式文件清单回滚，不要按 `git diff --name-only` 全量循环。
 - 症状：刚同步过 dev 却报告「上游攒了 1000+ 提交待合」，用户质疑数字 → 做法：大概率是量法错而非状态错。区间内最老提交日期（长命分支可达 merge-base 前十余天）不是同步窗口；上游 rc 发布冻结期间 master 停在切点数日、合并队列攒单后集中 flush，导致「上次同步只捕获冻结点、这次 fetch 突然看到一周的货」。按第 1 步的 merge-base 量法重报，并核对三处状态后再下结论（实例：2026-08-28，1079 提交=6.5 天正常水位）。
+- 规则：fork 二次开发五原则——同步节奏封顶（上游重构期 2–3 天、平静期至多一周、待合超过 ~800 提交立即同步）、改动优先落 fork 本地包（必须动上游缝时收敛文件数、稳定后提上游）、不编辑上游拥有的双语 README 正文、不偏离上游工具链（构建/测试基础设施逐字一致）、吸收操作纪律（中途 `pnpm add` 后必须全量 `CI=true pnpm install` 复核、不熟悉的失败先开纯净 upstream worktree 归因、每批冲突解完即跑 typecheck）。完整决策与理由见 Agent Note `implemented/process/2026-08-29-fork-secondary-development-principles.md`。
 - 规则：修复一律新提交，不 amend、不混入 merge commit（仓库规约：优先新提交）。
 - 规则：push 是外部可见操作，确认后再推；`origin/master` 每次一并推。

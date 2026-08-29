@@ -10,6 +10,8 @@ Every vitest run printed Vite's migration warning: the `vite-tsconfig-paths` plu
 
 ## Decision
 
+**Superseded 2026-08-29** during the 1079-commit upstream absorption: upstream's new face-split packages keep a solution-only root `tsconfig.json` without `paths`, so the per-importer walk-up below resolves their `src` files through package `exports` into built `lib/` and loads a second module-singleton copy (33 `instanceof` test failures in `api/session-controller`). The `vite-tsconfig-paths` facade is restored; the [fork secondary-development principles](2026-08-29-fork-secondary-development-principles.md) own the standing decision, whose no-toolchain-forks rule is what this deviation produced.
+
 All five vitest configs enable `resolve: { tsconfigPaths: true }`; the plugin import, its npm dependency, and its notices entry are removed. The resolution contract is unchanged. Two semantic differences between the plugin and the native option are load-bearing:
 
 - **Discovery is per-importer, not a pointed match-all facade.** The plugin resolved every file through one explicitly listed config; Vite's native support walks up from each importing file and follows `extends`. Every lane directory reaches `tsconfig.base.json` that way in this repo: packages, `apps/*`, root-level `scripts/`, and the three solution-style aggregates whose nearest `tsconfig.json` carries no compilerOptions of its own (`packages/api/gateway`, `packages/api/remotes`, `packages/client/connection`).
