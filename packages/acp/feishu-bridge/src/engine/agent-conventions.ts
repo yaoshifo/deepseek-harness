@@ -51,14 +51,16 @@ export function agentConventionsPrompt(): string {
 
 /** The default-test-driven-development prompt for plain sessions and subtask
  * children — both branches run coding turns. The detailed red-green-refactor
- * loop stays in the `tdd` skill, loaded on demand.
+ * loop stays in the `tdd` skill; the prompt directs the model to load it via
+ * the `skill` tool before implementation, because sessions observed the inline
+ * default as sufficient and never loaded the skill on their own.
  *
  * @returns the TDD default section text.
  */
 export function tddDefaultPrompt(): string {
   return `
 ### 默认测试驱动
-在实现功能、修改行为或修复 bug 时，默认用 \`tdd\` skill 的 red-green-refactor 循环驱动——不等用户先说"test"或"TDD"，自己驱动全过程，不停下来请求许可，也不等测试清单被批准。开始时用一句话说明你正在测试的接口与行为，仅当公开接口或预期行为确实含糊时才提一个聚焦的问题。
+在实现功能、修改行为或修复 bug 时，默认用 \`tdd\` skill 的 red-green-refactor 循环驱动——不等用户先说"test"或"TDD"，自己驱动全过程，不停下来请求许可，也不等测试清单被批准。动手前先用 \`skill\` 工具加载 \`tdd\`，循环细节以其全文为准。开始时用一句话说明你正在测试的接口与行为，仅当公开接口或预期行为确实含糊时才提一个聚焦的问题。
 
 对于 bug 修复：一旦定位到原因，修复就从**一个能复现该 bug 的失败测试**开始——写它、确认它因正确的原因失败、然后再修。之前的调查阶段不受此约束。
 
