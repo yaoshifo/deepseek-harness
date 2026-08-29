@@ -104,7 +104,7 @@ fi
 # until the tree is rolled back. Executed by a human, never by this script.
 print_rollback_hint() {
   if [ -z "$ROLLBACK_SHA" ]; then
-    echo "error: the restarted daemon never reached 'ws client ready'; the supervisor will keep crash-looping this build. Git state unavailable in $FORK_DIR — manually check out the last running commit, rebuild (CI=true pnpm run build:lib:host), and rerun $PKG_DIR/reload.sh --skip-build" >&2
+    echo "error: the restarted daemon never reached 'ws client ready'; the supervisor will keep crash-looping this build. Git state unavailable in $FORK_DIR — manually check out the last running commit, rebuild (CI=true pnpm run build:lib), and rerun $PKG_DIR/reload.sh --skip-build" >&2
     return 0
   fi
   echo "error: the restarted daemon never reached 'ws client ready'; the supervisor will keep crash-looping this build. Roll back to the pre-reload tree:" >&2
@@ -113,12 +113,12 @@ print_rollback_hint() {
     echo "  git stash push -m 'fb-reload-rollback $(date '+%Y%m%d%H%M')'   # the dirty tree shipped in the broken build" >&2
   fi
   echo "  git checkout $ROLLBACK_SHA" >&2
-  echo "  CI=true pnpm run build:lib:host" >&2
+  echo "  CI=true pnpm run build:lib" >&2
   echo "  $PKG_DIR/reload.sh --skip-build   # restarts and re-probes WS readiness" >&2
 }
 
 if [ "$BUILD" -eq 1 ]; then
-  echo "==> building host-face libs in $FORK_DIR"
+  echo "==> building host+client face libs in $FORK_DIR"
   # CI=true: pnpm's pre-run deps check auto-installs when the lockfile moved
   # (e.g. after a pull); without it the modules-dir purge prompt aborts in
   # this TTY-less script and /reload fails before the daemon restart.
@@ -126,7 +126,11 @@ if [ "$BUILD" -eq 1 ]; then
   # with exit 134 once the workspace graph grows past a big merge (2026-08-24);
   # 6144 is the ceiling proven here (same value the pre-push/typecheck
   # workaround uses). ${NODE_OPTIONS:-…} keeps a manual run's own setting.
-  (cd "$FORK_DIR" && CI=true NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=6144}" pnpm run build:lib:host)
+  # build:lib (both faces), never host-only: face-split packages whose
+  # tsdown config uses clientBundle (dsh-typert-registry, dsh-api-gateway)
+  # emit their runtime JS only in the client face — a host-only build boots
+  # the daemon into a loader-import crash loop (2026-08-29 dev incident).
+  (cd "$FORK_DIR" && CI=true NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=6144}" pnpm run build:lib)
   for f in "$FORK_DIR/apps/cli/lib/bin.js" "$PKG_DIR/lib/index.js"; do
     [ -f "$f" ] && echo "    built: $f ($(date -r "$f" '+%Y-%m-%d %H:%M:%S'))"
   done
