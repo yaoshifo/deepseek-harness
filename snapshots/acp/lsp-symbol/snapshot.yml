@@ -1,0 +1,8 @@
+version: 1
+scenario: lsp-symbol
+profile: acp
+composition: lsp
+recording: authored
+header:
+  class: acp-lsp
+  pin: true

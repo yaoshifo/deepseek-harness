@@ -1,5 +1,5 @@
 /**
- * Enforced JSON Schema subset shared by tool outputs, generated Code Mode
+ * Enforced JSON Schema subset shared by tool outputs, generated PTC mode
  * types, subagents, and workflows. The subset accepts any JSON root, an
  * annotation-only schema for unconstrained JSON, one scalar `type`, object
  * `properties`/`required`/boolean `additionalProperties`, array `items`,
@@ -480,13 +480,8 @@ function normalizeVariantArray(node: unknown, value: readonly unknown[], active:
   if (!isPlainJsonRecord(node)) return value
   const items = Object.hasOwn(node, 'items') ? (node as JsonSchemaNode).items : undefined
   if (!isPlainJsonRecord(items)) return value
-  let changed = false
-  const out = value.map((entry) => {
-    const next = normalizeVariantValue(items, entry, active)
-    if (next !== entry) changed = true
-    return next
-  })
-  return changed ? out : value
+  const out = value.map(entry => normalizeVariantValue(items, entry, active))
+  return out.some((next, index) => next !== value[index]) ? out : value
 }
 
 /** Normalize object keys against the node's declared `properties`. */

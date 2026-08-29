@@ -1,56 +1,126 @@
+---
+description: "面向用户与维护者的 subagent 委派 seam，用于选择提供方后端、组装委派工具或排查子 agent 运行问题。"
+kind: "package-reference"
+---
+
 # @deepseek-ai/dsh-subagent
 
 [English](README.md) | 中文
 
-subagent seam 允许一个 agent（智能体）通过具名提供方把工作委派给子 agent。调用方统一使用 `ctx.subagents` 服务 API；提供方决定子 agent 在当前进程、其他进程，还是通过未来的传输方式运行。
+## 概述
 
-[subagent 家族概述](../README.zh.md)列出了实现和面向模型的消费方。本包负责提供方注册表、共享请求和结果约定、持久描述符以及可继续子级编排。多个具名提供方可以在该约定背后共存。
+`dsh-subagent` 是子 agent 委派背后的服务：agent（智能体）把任务交给具名子 agent，收集完成的结果，并且——对可继续子 agent 而言——跨轮次持续发送后续工作。多个提供方在同一约定下共存，因此单个组合可以并排提供进程内子 agent、进程外 ACP 或 SDK 子 agent，以及真实 Codex 或 Claude Code 子 agent。子 agent 有两种形态：一次性运行以单个结果结算，可继续子 agent 的持久会话则接受后续消息并可被中断。同一服务还回答发现类问题——存在哪些子级、它们的模式、活动状态与血缘——而不加载或恢复它们。把它与至少一个提供方后端和一个委派工具一起挂载；后端与面向模型的工具位于兄弟包中。
 
-## 服务 API
+## 目录
 
-`SubagentRuntime` 具有以下操作：
+- [使用本包](#use-this-package)
+- [理解实现](#understand-the-implementation)
+- [进一步探索](#further-exploration)
+- [模型体验](#model-experience)
+- [已知限制与延期工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
 
-| 成员 | 含义 |
+-----
+
+<a id="use-this-package"></a>
+## 使用本包
+
+本包是每个委派组合都共享的约定。你通过把服务与一个或多个提供方后端以及面向模型的委派工具一起挂载来启用它；此后 agent 即可委派工作，服务会把每个请求路由到具名提供方。
+
+### 启用委派
+
+把服务与一个提供方和委派工具一起挂载。提供方以你配置的名称注册（进程内 spawn 后端默认为 `spawn`）；工具行指名该提供方，让模型看到一个静态工具。一个最小的一次性配置：
+
+```yaml
+- name: '@deepseek-ai/dsh-subagent'
+- name: '@deepseek-ai/dsh-subagent-spawn-in-process'
+- name: '@deepseek-ai/dsh-tool-subagent'
+  config:
+    provider: spawn
+    toolName: subagent
+```
+
+调用该工具的 agent 会把子 agent 的最终答案作为工具结果收到。只挂载服务本身不会改变任何行为：在组合出提供方和工具之前，什么都不能委派。
+
+### 一次性与可继续子级
+
+一次性子 agent 只运行一次，并以单个结果结算，可附带可选的结构化输出与失败时的安全诊断。启动请求可以通过 `agentOptions` 覆盖子 Agent 的提供方、模型、推理等级与输出 token 上限；每个请求的选项都要求提供方声明对应能力。可继续子 agent 保留持久会话并按顺序接受后续消息：调用方收到稳定的子 agent id、发送后续消息，并可中断当前轮次而不销毁子 agent。工具行的 `backgroundMode` 选择形态（默认 `one-shot`，或在支持的提供方上使用 `continuable`）。
+
+### 后续消息、中断与发现
+
+可继续子 agent 把后续消息作为下一个轮次回答，父级随时可以中断运行中的轮次或列举自己的子级。发现覆盖两种形态：服务列举直接子级与完整后代树——模式、活动状态与血缘——直接读取在线会话状态与可选持久化，不加载任何子 agent。
+
+### 失败与恢复
+
+需要所选提供方不具备的能力的请求会在启动时响亮失败，而不会被静默忽略。失败的子 agent 运行会返回停止原因，提供方后端还会附加安全诊断；被取消的请求以 `aborted` 结算。子 agent 相互隔离：崩溃或行为异常的子 agent 无法破坏父级会话。
+
+-----
+
+<a id="understand-the-implementation"></a>
+## 理解实现
+
+<details>
+<summary>实现细节——点击展开</summary>
+
+本节解释服务的构建方式以及可观察行为从何而来；完整约定见[使用本包](#use-this-package)。
+
+### 设计理念
+
+- **一个服务，多个提供方。** 服务是具名提供方注册表；每个后端以唯一名称注册，请求按名称选择一个。
+- **两种子级形态。** 一次性运行在发布时转移所有权；可继续子级保留持久 Session，且同一时刻至多一个进程内 Activation。
+- **兑现即发布。** 提供方的 `start()` 只有在真实子 agent 存在后才兑现，因此调用方要么拥有一段在线运行，要么一无所有。
+- **同进程值可信。** 请求、描述符与结果按不可变约定借用；序列化与不可信输入校验属于进程与协议边界。
+
+### 源码地图
+
+| 文件 | 职责 |
 |---|---|
-| `registerProvider(provider)` | 按名称注册一个可信的同进程实现。注册受 effect 作用域约束；移除注册会阻止新的启动，但不会撤销已返回给调用方的运行。重复名称会明确报错。 |
-| `getProvider(name)` | 返回提供方；不存在时返回 `undefined`。 |
-| `list()` | 按插入顺序返回提供方名称。 |
-| `start(name, request)` | 校验普通调用方请求，解析其已分离的 `one-shot` 描述符，然后等待提供方发布真正的一次性子 agent。兑现时返回由持有方拥有的 `SubagentRun`；如果调用被拒绝，提供方已经清理所有尚未发布的启动资源。发布后的轮次故障或基础设施故障则通过该 run 结算。可继续子 agent 绝不通过此操作进入。 |
-| `startContinuable(spec)` | 建立一个持久化的可继续子 agent，并投递其初始提示词。子 agent 的 inbox 一接受该提示词，调用就会兑现为 `{ childId, messageId }`，无需等待轮次开始，也无需等待消息写入会话日志。在此之前发生的任何失败都会使调用被拒绝，不返回任何 id，并完全回滚该子 agent。如果在线注册表或已配置的持久化已经占用调用方预留的 `childId`，则拒绝该身份。要求 `ctx.agents`、会话持久化以及具备 `prepareContinuable` 能力的提供方。 |
-| `followup(parent, childId, content, { source, signal })` | 将来自确切在线直接父级的一条后续消息作为子 agent 的下一个 FIFO 轮次投递，术语与 `Agent.followup()` 一致，并返回被接受的 `MessageId`。驻留中的子 agent 由其 inbox 直接接受（唤醒处于 waiting 的 Activation）；不驻留的则从其持久化会话冷恢复。要求 `ctx.agents`；冷恢复还要求会话持久化。 |
-| `interrupt(targetSessionId, authority)` | 凭人类出示的持久化父级地址 `{ kind: 'user', parentSessionId }`，或确切在线的祖先 Agent `{ kind: 'ancestor', agent }` 进行授权，中断一个在线可继续子级的当前轮次。准入判定同步完成，但取消异步生效：该操作发出 `Agent.cancel(cause, { keepInbox: true })` 后立即返回，不等待目标观察到信号。尚未领取的待处理 inbox 工作、Activation 和已发布的后代均会保留；已经领取到被中断轮次中的工作不会重新入队。目标不存在时视为已接受的空操作；错误的父级地址，或陈旧、指向自身、并非祖先的调用方，会以 `UNAUTHORIZED` 被拒绝。 |
-| `reportFrom(child, content, { delivery, signal })` | 从确切在线可继续 child 向其确切在线直接 parent 投递一条选中消息，并返回已接受的稳定 `MessageId`。静默投递会注入不唤醒的 next-step 上下文；next-step 投递会 steering 并唤醒 parent。 |
-| `registerContinuableSetup(contribution)` | 把一项可选部署能力组合到每个可继续 child 尚未发布的作用域中，并支持从驻留 child 立即撤销。 |
-| `drainContinuableDescendants(parents)` | 在由 host 拥有的确切在线父级 Agent 之下关闭准入，只停止这些父级可见的可继续后代；等待已在这些根节点下获准的物化过程完成发布或回滚后，再按子级优先顺序释放所选的各棵树。该截止状态会持续到每个确切父级离开注册表；无关的父级树仍在线，管理器全局准入仍保持开放。 |
-| `drainContinuableChildren(parent, childIds)` | 只释放一个确切在线父级的具名驻留可继续直接子级，并递归保持子级优先顺序。它不关闭准入、不影响同级子级，缺失的 id 视为空操作；若驻留子级属于其他父级，则拒绝。这是拆卸操作，因此与 `interrupt()` 不同，它不会保留待处理的 inbox 工作。 |
-| `listChildren(parentSessionId, signal?)` | 按 `createdAt`、再按 id 的顺序列出由会话支撑的直接 subagent，包括其 `one-shot`／`continuable` 模式、`running`／`inactive` 活动状态、根据 origin 分类得出的一层 `hasChildren` 提示，以及每个子级的诊断信息，且不会加载或恢复它们。该操作直接读取在线会话存储和可选的会话持久化（没有持久化时只枚举在线子级），并要求已挂载 `sessionProjections` 注册表；不要求 `ctx.agents`、继续执行管理器或任何查询服务。 |
-| `listDescendants(rootSessionId, signal?)` | 从同一份在线优先语料按稳定 pre-order 展平根的完整会话树，并为每个 subagent 条目附加持久 `parentId` 与相对根的 `depth`。普通会话与一次性 child 仍作为遍历节点，因此其下的可继续后代仍可发现。身份、diagnostic、依赖与取消约定均沿用 `listChildren()`。 |
+| [`src/index.ts`](src/index.ts) | 服务入口：提供方注册表、启动与继续 API、生命周期事件 |
+| [`src/continuation.ts`](src/continuation.ts) | 可继续子级：身份预留、Activation 驻留、后续消息、中断、结算 |
+| [`src/types.ts`](src/types.ts) | 公开的请求、结果与提供方约定 |
+| [`src/descriptor.ts`](src/descriptor.ts) | 版本化的 `subagent/descriptor` 会话事件词汇 |
+| [`src/child-agent.ts`](src/child-agent.ts) | 子级组装、委派策略、深度辅助函数 |
+| [`src/list-children.ts`](src/list-children.ts) | 基于在线会话存储与可选持久化的发现 |
+| [`src/control.ts`](src/control.ts) | 浏览器控制面组装：目录活性采样、浏览器时区校验、失败分码 |
+| [`src/control-types.ts`](src/control-types.ts) | client-safe 的目录行、控制面请求、回执与失败 |
 
-`SubagentStartRequest.label` 是由会话支撑的一次性 child 所使用的可选简短持久化显示标签。面向模型的委派会提供其已有的 `description`；底层调用方无需凭空构造展示元数据。可继续启动始终携带自身的必填标签。`signal` 是必填项，也是一次性 `start` 的规范取消通道。发布前中止会使 `start()` 在回滚后拒绝；发布后中止会取消已返回 run 的剩余轮次工作，但不会隐藏其 id。请求还可以选择模型、要求结构化输出、限制委派深度、约束子 agent 工具或设置子 agent persona。对于可继续启动或后续操作，调用方信号只负责 inbox 接受前的查找、物化和准入；此后，Activation 由管理器独立拥有，因此调用方取消既不会取消已接受的轮次，也不会 dispose（资源释放）子 agent。
+### 一次性流程
 
-后续操作的权限来自子 agent 持久化 header 中记录的确切在线直接父级。冷恢复会在重建前检查该权限，并在最终无 await 的 inbox 准入区间再次检查，因此在物化期间被注销或替换的 parent 无法授权投递。后续操作上的 `source` 记录谁提供了所投递的消息，不授予任何权限。
+请求先对照提供方声明的能力进行校验，随后对持久化描述符做快照，再由提供方构建子 agent。两个进程内提供方都声明 `agentOptions`：创建子级时把请求字段叠加到父级最新已记录请求的提供方、模型与推理等级之上；父级还没有请求时回退到创建选项，并保留配置的 token 上限。更改路由而不显式指定推理等级时，会清除继承的路由自有等级，使所选模型解析自己的默认值。DSH SDK 也声明该能力并公开不可变的 `agentRouteDefaults`，使其实例持有的提供方／模型默认值在确切路由预检前成为基线；`start()` 仍负责直接调用方与输出上限。ACP、Codex 与 Claude Code 会拒绝 agent 路由覆盖，而不是静默忽略。成功时运行被发布、所有权转移给调用方；失败时提供方回滚每个尚未发布的资源。结果携带子 agent 的最终输出、可选的结构化值、停止原因与可选的安全诊断。
 
-同进程请求、描述符、结果和事件 payload 都是可信的类型值，并按不可变约定借用。服务不会克隆或冻结它们；序列化和不可信输入校验属于真实的进程、worker、持久化和模型边界。
+### 可继续流程
 
-## 能力
+管理器预留子 agent 身份、解析持久化描述符、创建（或冷恢复）子 agent、把它安装进 Activation 并提交提示词。后续消息经子 agent 自己的 inbox 成为 FIFO 轮次；没有 Activation 时从持久化会话冷恢复。当驻留 Activation 结算时，管理器会在父级自身的轮次流中告知该子级的直接父级。
 
-启动时功能通过 `provider.capabilities` 声明，因为服务必须在创建子 agent 前拒绝不受支持的一次性请求：
-
+- `agentOptions`：把请求的子 agent 创建选项（provider／model／推理等级／token 上限）合并到父级已记录路由之上。
 - `outputSchema`：强制执行结构化最终结果；
 - `depthLimit`：强制执行 `maxDepth`；
 - `toolFilter`：应用请求的子 agent 工具限制；
 - `persona`：应用每个子 agent 独立的 persona；
 - `cwdOverride`：按请求接受一个绝对 `cwd`，为子 agent 会话覆盖父级的工作目录。纯会话元数据：git worktree 隔离或其他目录准备工作仍归调用方所有，叠加在该覆盖之上。
 
-每个进程内子 agent 都通过一次 `applyChildComposition(childCtx, parent, composition)` 调用完成组装：先加入父级的 agent-preset 组合，再应用子 agent 自己的 persona 和工具限制。加入父级组合正是子 agent 获得能力的途径：所有面向模型的行都位于 agent 平面，完全没有加入任何组合的子 agent 抵达模型时会看到空的工具注册表（见 [`dsh-agent-presets`](../../preset/agent-presets/README.zh.md)）。将父级作为参数是刻意设计：这让“组装子 agent 却不做该加入”在各调用点无法表达，而这正是这一次调用所要杜绝的缺陷。未组装 preset roster 的部署不加入任何组合、也不需要加入；其面向模型的行位于宿主组合中，子 agent 已能通过工具注册表的全局层解析到它们。
+### 所有权与不变式
 
-`childSessionMeta()` 把所加入的 preset id 记在子 agent 的持久化 header 上，理由与顶层会话记录自己的那一个相同：preset 决定了模型所见的工具 schema 与提示段，因此冷读子 agent 的历史时必须重建那份组装，而不是部署默认值。该值从父方**活着的** scope 链读取，而不是从父方 header 读取，因为在空白期切换过 preset 的父方运行在更新的那份组装上，而它的 header 仍写着旧的那个。
+- **发布即边界**——发布前提供方拥有设置并须在失败时回滚；发布后调用方拥有运行并须 dispose（资源释放）它。
+- **注册受 effect 作用域约束**——移除提供方会阻止新启动，但绝不撤销已接受的运行。
+- **继续执行权限基于确切身份**——后续消息要求确切在线直接父级；上报要求确切在线子级。
+- **描述符仅进日志**——它是会话事件，不进入模型历史，并跨压缩（compaction）保留；可继续描述符会显式记录解析后的子级提供方、模型与推理等级，用于冷恢复。
 
-可继续创建对应可选的 `SubagentProvider.prepareContinuable?()` 方法：方法是否存在就是能力检查，因此服务会在没有该方法的提供方上拒绝已配置的可继续启动，而具备该方法的提供方仍可服务普通一次性委派。该方法只返回已分离的 `ContinuableCreateSpec`（`{ seed? }`）。它只是数据，不携带任何能力：不包含 Agent、`AgentHandle`、提示词投递、结果、dispose 或恢复操作。准备完成后，身份预留、组合、Agent 创建、提示词投递、冷恢复、所有权和 dispose 均由继续执行管理器负责。一次性 `SubagentRun` 表示一次可 dispose 的前台委派，只有一个结果，且没有冷恢复操作。服务可以针对不同的同级子 agent 并发调用同一提供方：每次启动或准备都拥有各自的可变状态和取消路径，一项操作的失败、结果或清理不得使另一项操作结算或释放。提供方可以在内部按自身容量排队，但不得改变这项独立性约定。
+</details>
 
-## 持久化描述符
+-----
 
-该 Service Definition 拥有版本化的 `subagent/descriptor` 会话事件词汇（`src/descriptor.ts`）：`snapshotSubagentDescriptor()` 会在提供方工作之前校验并分离记录，`foldSubagentDescriptor()` 则会在从已加载子 agent 日志中恢复描述符之前，校验当前版本的完整 payload。每次由本地会话支撑的启动都会追加一个带有提供方名称与生命周期 `mode` 的描述符。`one-shot` 描述符可以携带调用方拥有的可选持久化显示 `label`；`continuable` 描述符要求其持久化创建标签，并另外记录已解析的子 agent `agentOptions.provider`／`model`，以及用于从持久化存储恢复的可选 `persona`／`toolFilter`。这些是显式字段，绝不是可通过合并扩展的 `AgentOptions` 对象，因此无关的扩展值不会破坏继续执行。描述符省略 `subagentDepth`（持久化 header 的 `delegationDepth` 是单调下界）和 `outputSchema`（单次 Activation 的结果约定）。该事件只进入日志：不含 `surfaceOp`，不进入模型历史，并由仅追加日志跨压缩（compaction）保留。格式错误的当前版本 payload 属于损坏；本运行时无法对不受支持的版本进行分类。
+<a id="further-exploration"></a>
+## 进一步探索
+
+当包级约定不够用时阅读以下页面。它们从共享 seam 逐步进入后端、面向模型的工具与设计决策。
+
+- [Subagent 子系统](../../../docs/subsystems/subagent.zh.md)——服务约定、提供方约定与终态结果语义。
+- [Subagent 能力 seam](../../../.agents/notes/implemented/feature/2026-06-21-subagent-capability-seam.zh.md)——委派能力家族的设计记录。
+- [可续跑后台 subagent](../../../.agents/notes/implemented/feature/2026-07-21-continuable-background-subagents.zh.md)——接受后续轮次的持久子级。
+- [进程内 spawn 后端](../subagent-spawn-in-process/README.zh.md)——最容易组合的提供方。
+- [进程外 ACP 后端](../subagent-acp/README.zh.md)——经 Agent Client Protocol 拥有自有运行时的子级。
+- [合并后的 subagent 控制服务](../../../.agents/notes/implemented/simplification/2026-07-26-merge-subagent-control-service.zh.md)——后续消息、中断与列举面。
 
 ## 委派深度
 
@@ -110,19 +180,20 @@ subagent seam 允许一个 agent（智能体）通过具名提供方把工作委
 
 可继续 Activation 会等待 best-effort 的最终会话 flush，但不会把 listener 参与视为持久性确认。一次性运行保留尽力执行的会话检查点，因此已完成的一次性 child 只有在其会话确实进入持久化存储时，才可在 dispose 后继续被发现；如果该检查点缺失，服务不会根据 Task 历史虚构目录条目。
 
-## 模型体验
+-----
 
-<a id="settlement-notice"></a>
+<a id="model-experience"></a>
+## 模型体验
 
 ### 结算通知
 
-#### 模型看到的内容
+#### 模型看到什么
 
 一条用户角色的父级消息，开头是结果本身——`Background subagent <child-id> finished and will do no further work unless you send it more.`，或子级被停止、耗尽额度、拒绝任务或失败时的对应句子——随后是 `Its closing message:` 与子级的最终 assistant 内容；若子级没有产出内容，则是 `It left no closing message.`。这是本服务面向父级的唯一直接贡献；委派 schema、父级延续与发现以及子级作用域的 `report` 分别归 `dsh-tool-subagent`、`dsh-tool-subagent-control` 和 `dsh-tool-subagent-report` 所有。
 
 #### Token 影响
 
-父级请求中，每个已结算的 Activation 一条通知，长度取决于子级的最终消息。如果子级既上报又结算，父级请求会同时承担上报消息和结算通知两部分 token 开销。
+父级请求中，每个已结算的 Activation 一条通知，长度取决于子级的最终消息。如果子级既上报又结算，父级请求会同时承担两者。
 
 #### KV Cache 影响
 
@@ -130,7 +201,7 @@ subagent seam 允许一个 agent（智能体）通过具名提供方把工作委
 
 ### 子级委派范围声明
 
-#### 模型看到的内容
+#### 模型看到什么
 
 每个进程内子 agent 的运行时上下文快照都携带下方的 `subagent:delegation` 声明，位于沙箱策略与审批策略语句之后。
 
@@ -148,13 +219,32 @@ You are a delegated subagent: your permission scope was fixed when you were star
 
 子级内部前缀稳定：该声明在子 agent 生命周期内绝不变化，因此只写入第一份运行时上下文快照一次。父级侧不会直接使缓存失效；具名工具消费方共同负责请求前缀的任何变化。
 
-## 已知限制与暂缓事项
+## 已知限制与延期工作
 
-- **ACP 子 agent 仍为一次性，且无法通过追踪枚举**：ACP 运行在 parent 会话语料中没有本地 child 会话。ACP 的 `prepareContinuable` 需要在提供方专用描述符数据中持久化远端会话 id，以及逐子 agent 的继续执行能力声明，因为 ACP 的 `loadSession` 支持按子 agent 协商，而不是通过方法是否存在来确定。远程提供方还需要一份独立的 Activation 所有权约定，具备等效的经认证控制和子先于父的完全停稳保证，才能支持可继续子 agent。
-- **无 host-user 继续执行**：`followup()` 要求确切在线直接父级。只有 `interrupt()` 接受持久化 parent 地址形式的用户授权，因为停止一个轮次是幂等的且不投递任何内容；未来 host 适配器需要具体的经认证交互，才能让该 seam 获得用户投递能力。
-- **继续执行消息绝不 steering**：parent 到 child 的继续执行消息会排入后续 child 轮次。child 到 parent 的 report 是独立的 next-step 输入，可能延长 parent 已打开的轮次。
-- **取消收敛期间存在唤醒缺口**：中断信号发出后、活动 driver 进入 idle 前被接受的唤醒型 follow-up 会保持排队，直到另一条唤醒发送到达。Issue #1838 负责 agent-loop 的唤醒锁存；普通会话取消也受此影响。
-- **驻留仅限进程内**：Activation inbox 与所有权图不会在两个 harness 进程之间协调；对单个持久化存储的并发访问仍然需要持久化邮箱和跨进程租约协议。
-- **不回放已接受但未记录的消息**：只有写入子 agent 会话日志的消息才能连同提供该消息的来源一起重建。崩溃可能丢失从未写入日志、已被接受的初始提示词或后续消息；此后一条经授权的消息可以冷恢复该子 agent，但丢失的消息不会自动回放。
-- **没有持久化的上报 mailbox**：上报需要在线直接父级，提供的是接受标识，不保证恰好一次投递，也不提供已读回执。
-- **生命周期事件只供观察**：影响运行的 `subagent/end` 延续或决策接口仍需等待具体消费方。
+<a id="known-limitations-and-deferred-work"></a>
+
+
+这些限制说明该 seam 何时不合适，或何时需要特别的运维注意。它们是当前包约束，不是通用委派对比或任务积压。
+
+- **ACP 子级仍为一次性，且无法通过追踪枚举**——ACP 运行在父级会话语料中没有本地子会话，远程提供方需要 Activation 所有权约定才能支持可继续子级。
+- **无 host-user 继续执行**——`followup()` 要求确切在线直接父级；只有 `interrupt()` 接受持久化的人类父级地址。
+- **继续执行消息绝不 steering（中途引导）**——父到子的后续消息排入后续轮次；它们绝不会重定向子级当前轮次。
+- **取消收敛期间存在唤醒缺口**——中断信号发出后、driver 进入 idle 前被接受的后续消息会保持排队，直到另一条唤醒发送到达。
+- **驻留仅限进程内**——Activation inbox 与所有权图不会在两个 harness 进程之间协调；对单个持久化存储的并发访问需要持久化邮箱与跨进程租约协议。
+- **不回放已接受但未记录的消息**——崩溃可能丢失从未写入子会话日志、已被接受的提示词；丢失的消息不会自动回放。
+- **没有持久化的上报 mailbox**——上报需要在线直接父级，提供的是接受标识，不保证恰好一次投递。
+- **生命周期事件只供观察**——影响运行的 `subagent/end` 延续或决策接口仍需等待具体消费方。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者的工作上下文——点击展开</summary>
+
+本开发备注是维护者的工作上下文：开放问题与尚未决定的探索方向。它明确不具权威性——已交付的行为与限制以上文和包代码为准。
+
+- **跨进程继续执行**——持久化邮箱与租约协议可让两个 harness 进程共享一个持久化存储。
+- **可继续 ACP 子级**——需要持久化远程会话 id 与逐子级的继续执行能力声明。
+- **host-user 投递**——未来的 host 适配器需要具体的经认证交互，该 seam 才能获得用户投递能力。
+
+</details>

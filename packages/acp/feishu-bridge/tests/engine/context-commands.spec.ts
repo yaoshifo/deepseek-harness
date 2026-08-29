@@ -64,7 +64,7 @@ function contextAgent(current: { snapshot: ContextSnapshotValues | undefined }):
     setProviders: () => {},
     setActiveProvider: () => false,
   }
-  return agent as Agent
+  return agent
 }
 
 interface Fixture {

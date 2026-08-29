@@ -83,7 +83,8 @@ export const feishuPatchRateLimitCode = '230020'
 export function feishuBusinessCode(err: unknown): string | undefined {
   if (err === undefined || err === null) return undefined
   const bodyCode = (err as { response?: { data?: { code?: unknown } } }).response?.data?.code
-  if (bodyCode !== undefined && bodyCode !== null && bodyCode !== '') return String(bodyCode)
+  if (typeof bodyCode === 'string' && bodyCode !== '') return bodyCode
+  if (typeof bodyCode === 'number') return String(bodyCode)
   return /\bcode=(\d+)\b/.exec(errorMessage(err))?.[1]
 }
 

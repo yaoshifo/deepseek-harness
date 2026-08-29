@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-07-06-approval-seam.md
-2026-07-06-approval-seam.md: 09252b35c5d9ba419253304920d92f52f7d32824
-2026-07-06-approval-seam.zh.md: 19df83fda76bc00415cbdbd6bb9535b3b4252d38
+2026-07-06-approval-seam.md: a3b3d6edaf365785f87dbacc69da2d0cf90331d7
+2026-07-06-approval-seam.zh.md: 7dd7a171bab1061e5fc4309f95b075c2810eddd8

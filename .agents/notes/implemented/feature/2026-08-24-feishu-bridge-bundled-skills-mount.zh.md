@@ -25,7 +25,7 @@ Status: implemented
 
 **复用 `DSH_BUNDLED_SKILL_DIR`。** 该环境变量是应用级 bundled 根通道（web app 在用）；一个进程只有一个 bundled 根，插件占住它会与宿主应用自己的 bundled skills 冲突，且只对抢到的一方生效。
 
-**像 `dsh-skill-badge` 那样做专用打包 provider。** [badge 决策](2026-08-06-bundled-dsh-badge-skill.zh.md)用一个专门构建的 provider 包注册单一不可变 skill。桥接的 skills 是一目录可编辑的 Markdown 文件，需要 frontmatter 解析、目录资源基址与热监视——正是 skill-filesystem 已有的能力——所以用独立 `providerName` 把它作为隔离实例组合进来，复用既有机制而不是复制一个解析器。
+**像 `dsh-skill-badge` 那样做专用打包 provider。** [badge 决策](2026-08-06-bundled-dsh-badge-skill.md)用一个专门构建的 provider 包注册单一不可变 skill。桥接的 skills 是一目录可编辑的 Markdown 文件，需要 frontmatter 解析、目录资源基址与热监视——正是 skill-filesystem 已有的能力——所以用独立 `providerName` 把它作为隔离实例组合进来，复用既有机制而不是复制一个解析器。
 
 ## Consequences
 

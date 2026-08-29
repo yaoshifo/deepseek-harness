@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentCancelCause, InboxTarget } from '@deepseek-ai/dsh-agent'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -430,7 +430,7 @@ async function harness(route: (agent: unknown) => TestRoute | undefined, deps?: 
 async function execute(test: { ctx: Context; agent: Agent }, args: unknown): Promise<ToolExecutionResult> {
   return test.ctx.agents.withInitiator(test.agent, () => test.ctx.tools.execute({
     signal,
-    callId: CallId(`call-${Math.random()}`),
+    callId: ToolCallId(`call-${Math.random()}`),
     name: 'lark-cli',
     arguments: args,
     agent: test.agent,

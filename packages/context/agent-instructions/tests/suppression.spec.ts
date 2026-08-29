@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import * as workspaceContext from '@deepseek-ai/dsh-agent-instructions'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Inbox, agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
 import { Session, SessionId, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
@@ -213,7 +213,7 @@ describe('agentInstructions.suppress', () => {
 
       const first = await ctx.tools.execute({
         signal: testToolSignal,
-        callId: CallId('read-suppressed'),
+        callId: ToolCallId('read-suppressed'),
         name: 'read',
         arguments: { file_path: join(root, 'pkg/deep/file.txt') },
         agent,
@@ -225,7 +225,7 @@ describe('agentInstructions.suppress', () => {
       dispose()
       const second = await ctx.tools.execute({
         signal: testToolSignal,
-        callId: CallId('read-restored'),
+        callId: ToolCallId('read-restored'),
         name: 'read',
         arguments: { file_path: join(root, 'pkg/deep/file.txt') },
         agent,

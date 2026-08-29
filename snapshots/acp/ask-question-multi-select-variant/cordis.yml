@@ -1,0 +1,11 @@
+# Snapshot-only human-interaction composition. The provider answers every
+# question deterministically, so the key-style-variant replay exercises the
+# normalization boundary end to end: the model emits `multiSelect`, the card
+# still asks, and the answer settles the turn.
+- insert:
+    - id: user-questions
+      name: '@deepseek-ai/dsh-user-questions'
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+    - id: ask-auto-answer
+      name: '../../../packages/test-support/session-snapshot/tests/fixtures/ask-auto-answer.ts'

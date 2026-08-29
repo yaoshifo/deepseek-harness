@@ -1,0 +1,11 @@
+version: 1
+scenario: dsh-memory
+profile: acp
+composition: dsh-memory
+recording: authored
+header:
+  class: dsh-memory
+  pin: true
+replay:
+  override: true
+permission: workspace-write

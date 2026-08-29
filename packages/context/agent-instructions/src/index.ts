@@ -381,7 +381,7 @@ export class AgentInstructions extends Service {
       // precedes it and the driver-appended runtime context follows it.
       const lastClaimedIndex = decision.messages.findLastIndex(message => messages.includes(message))
       const entered = decision.messages.toSpliced(lastClaimedIndex + 1, 0, desired)
-      return { kind: 'enter', messages: entered }
+      return { ...decision, messages: entered }
     })
 
     ctx.on('tools/result', (exec: ToolExecution, result: ToolExecutionResult) => {
@@ -439,5 +439,4 @@ export class AgentInstructions extends Service {
  * @param config - validated plugin config.
  */
 export async function apply(ctx: Context, config: Config): Promise<void> {
-  await ctx.plugin(AgentInstructions, config)
-}
+  await ctx.plugin(AgentInstructions, config)}

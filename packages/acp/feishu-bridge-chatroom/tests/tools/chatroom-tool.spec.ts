@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentCancelCause, InboxTarget } from '@deepseek-ai/dsh-agent'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -70,7 +70,7 @@ async function harness(route: (agent: unknown) => SubtaskRoute | undefined): Pro
   const execute = (args: unknown, caller: Agent = agent): Promise<ToolExecutionResult> =>
     ctx.agents.withInitiator(caller, () => ctx.tools.execute({
       signal,
-      callId: CallId(`call-${Math.random()}`),
+      callId: ToolCallId(`call-${Math.random()}`),
       name: 'feishu_bridge_chatroom',
       arguments: args,
       agent: caller,

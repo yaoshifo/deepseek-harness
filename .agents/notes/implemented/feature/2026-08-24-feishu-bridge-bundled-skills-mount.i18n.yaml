@@ -3,4 +3,4 @@
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-24-feishu-bridge-bundled-skills-mount.md
 2026-08-24-feishu-bridge-bundled-skills-mount.md: a5761deb70468a121e8c375d89dcf75b5d40a783
-2026-08-24-feishu-bridge-bundled-skills-mount.zh.md: 246bc15bfb68f81da6a21a030d4851bf5b22196d
+2026-08-24-feishu-bridge-bundled-skills-mount.zh.md: cda77287f4395d8741d1405d3c02324cfa1e1bed

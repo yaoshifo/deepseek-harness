@@ -1,0 +1,10 @@
+version: 1
+scenario: ask-question-multi-select-variant
+profile: acp
+composition: ask-variant
+recording: authored
+header:
+  class: ask-variant
+  pin: true
+replay:
+  override: true

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
-import { CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import AgentRegistry, { agentEvents, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -144,7 +144,7 @@ describe('dsh-memory real Loader composition through cordis.yml', () => {
 
     const write = await ctx.tools.execute({
       signal,
-      callId: CallId('loader-write'),
+      callId: ToolCallId('loader-write'),
       name: 'memory_write',
       arguments: {
         name: 'feedback-loader.md',
@@ -155,7 +155,7 @@ describe('dsh-memory real Loader composition through cordis.yml', () => {
     expect(write.isError).toBe(false)
     const index = await ctx.tools.execute({
       signal,
-      callId: CallId('loader-index'),
+      callId: ToolCallId('loader-index'),
       name: 'memory_index',
       arguments: { action: 'upsert', name: 'feedback-loader', title: 'Feedback loader', hook: 'loader hook' },
       agent,
@@ -189,7 +189,7 @@ describe('dsh-memory real Loader composition through cordis.yml', () => {
     expect(prompt).toContain(join(root!, 'claude', 'memory'))
     const read = await ctx.tools.execute({
       signal,
-      callId: CallId('default-global-read'),
+      callId: ToolCallId('default-global-read'),
       name: 'memory_read',
       arguments: { scope: 'global', name: 'MEMORY.md' },
       agent,
@@ -208,7 +208,7 @@ describe('dsh-memory real Loader composition through cordis.yml', () => {
     expect(offPrompt).not.toContain('## Global memory')
     const offWrite = await off.tools.execute({
       signal,
-      callId: CallId('disabled-global-write'),
+      callId: ToolCallId('disabled-global-write'),
       name: 'memory_write',
       arguments: { scope: 'global', name: 'machine-pit.md', content: 'body' },
       agent: offAgent,
@@ -248,7 +248,7 @@ describe('dsh-memory real Loader composition through cordis.yml', () => {
 
     const write = await ctx.tools.execute({
       signal,
-      callId: CallId('loader-global-write'),
+      callId: ToolCallId('loader-global-write'),
       name: 'memory_write',
       arguments: {
         scope: 'global',
@@ -260,7 +260,7 @@ describe('dsh-memory real Loader composition through cordis.yml', () => {
     expect(write.isError).toBe(false)
     const read = await ctx.tools.execute({
       signal,
-      callId: CallId('loader-global-read'),
+      callId: ToolCallId('loader-global-read'),
       name: 'memory_read',
       arguments: { scope: 'global', name: 'machine-pit-loader.md' },
       agent,

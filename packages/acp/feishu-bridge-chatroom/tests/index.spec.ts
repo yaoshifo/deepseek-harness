@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentCancelCause, InboxTarget } from '@deepseek-ai/dsh-agent'
-import { CallId } from '@deepseek-ai/dsh-llm'
+import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
@@ -150,7 +150,7 @@ describe('chatroom plugin entry', () => {
     // route (the bridge service's) fails loud instead of acting.
     const result = await ctx.agents.withInitiator(agent, () => ctx.tools.execute({
       signal: new AbortController().signal,
-      callId: CallId('call-apply-spec'),
+      callId: ToolCallId('call-apply-spec'),
       name: 'feishu_bridge_chatroom',
       arguments: { action: 'list' },
       agent,

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { CallId, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import AgentRegistry, { agentEvents, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
@@ -81,7 +81,7 @@ let callCounter = 0
 function call(ctx: Context, name: string, args: unknown, agent: Agent) {
   return ctx.tools.execute({
     signal,
-    callId: CallId(`call-${++callCounter}`),
+    callId: ToolCallId(`call-${++callCounter}`),
     name,
     arguments: args,
     agent,
@@ -180,7 +180,7 @@ describe('memory tools', () => {
     const agent = makeAgent(ctx, { cwd: CWD })
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('call-agentless'),
+      callId: ToolCallId('call-agentless'),
       name: 'memory_list',
       arguments: {},
     })
@@ -444,7 +444,7 @@ describe('global memory scope', () => {
     context = ctx
     const result = await ctx.tools.execute({
       signal,
-      callId: CallId('call-agentless-global'),
+      callId: ToolCallId('call-agentless-global'),
       name: 'memory_list',
       arguments: { scope: 'global' },
     })

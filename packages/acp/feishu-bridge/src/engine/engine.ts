@@ -7711,7 +7711,7 @@ export class Engine {
     renamer: { renameGroup(key: string, name: string, signal?: AbortSignal): Promise<void> },
     sessionKey: string, seed: string, cause?: unknown,
   ): Promise<void> {
-    console.warn(`group-name: generate failed, falling back to first message (${sessionKey})${cause !== undefined ? `: ${String(cause)}` : ''}`)
+    console.warn(`group-name: generate failed, falling back to first message (${sessionKey})${cause !== undefined ? `: ${cause instanceof Error ? cause.message : JSON.stringify(cause)}` : ''}`)
     const fallback = truncateGroupName(seed)
     if (fallback === '') return
     try {
