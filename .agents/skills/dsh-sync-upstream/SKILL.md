@@ -23,7 +23,9 @@ dev 工作区干净、与 origin/dev 同步后 `git fetch upstream`，量三个�
 - `dev..master`：master 上 dev 未吸收的提交——**用户说「master 有更新」通常指这个量，不是上一个**
 - `master..dev`：dev 本地提交数（本次合并要保护的改动面）
 
-**成功标准**：三个量都已知，明确本次要合多少提交。
+同步窗口 = merge-base 提交日期 → upstream/master tip 日期。报规模用三件套：rev-list 总数 + `--first-parent` PR 合并数 + merge-base 日期。上游高velocity（约 18 个 PR 合并/天）且用合并队列/集成分支批量推进 master，隔几天同步出 700~1100 提交是正常水位——先按此校准，再谈异常。报数字前确认三处一致：本地 dev 的 merge-base、`git fetch origin` 后的 origin/dev、`ssh dev` 查 dev 服务器（并行会话/双机可能已同步而本地不知）。
+
+**成功标准**：三个量都已知，明确本次要合多少提交，且同步窗口的起止日期向用户如实报告。
 
 ### 2. 零副作用预演
 
@@ -85,5 +87,6 @@ pnpm run gen-client-catalog    # cordis-client-runner 的 slot-catalog（易漏�
 - 症状：上游新增门禁暴露 fork 既有欠账（如 zh 链接 locale 规则、fixture 守卫）→ 做法：归因确认非合并引入后当独立提交修掉；注意门禁只认固定模式（语言切换行必须是 `[English](…) | 中文` 顺序）。
 - 症状：refresh（`DSH_SNAPSHOT=refresh`）重写的期望文件在下次 replay 失败 → 做法：refresh 是「先写后比」，会把被测应用的**瞬时**行为烤进 fixture（实例：initialize 竞态让 `promptCapabilities.image` 一次性翻成 false）。refresh 产物一律 diff 审查后才可提交，initialize 期取值的变化未经普通 replay 确认视为可疑；机械噪音（比较器会归一化的裸 UUID）直接回滚即可。详见 Agent Note `implemented/process/2026-08-21-snapshot-refresh-transient-capability.md`。
 - 症状：批量回滚 refresh 噪音文件时把手工修复一起冲掉 → 做法：回滚前先提交已完成的未提交修复，或按显式文件清单回滚，不要按 `git diff --name-only` 全量循环。
+- 症状：刚同步过 dev 却报告「上游攒了 1000+ 提交待合」，用户质疑数字 → 做法：大概率是量法错而非状态错。区间内最老提交日期（长命分支可达 merge-base 前十余天）不是同步窗口；上游 rc 发布冻结期间 master 停在切点数日、合并队列攒单后集中 flush，导致「上次同步只捕获冻结点、这次 fetch 突然看到一周的货」。按第 1 步的 merge-base 量法重报，并核对三处状态后再下结论（实例：2026-08-28，1079 提交=6.5 天正常水位）。
 - 规则：修复一律新提交，不 amend、不混入 merge commit（仓库规约：优先新提交）。
 - 规则：push 是外部可见操作，确认后再推；`origin/master` 每次一并推。
