@@ -199,8 +199,9 @@ export type AskCardAnswered = Map<number, number[]>
 /**
  * Build the one card that carries every question of one ask. Unanswered
  * questions render interactively — single-select as list rows with number
- * buttons (`askq:{q}:{n}`), multi-select as a checker form
- * (`askq_multi:{q}`) — while answered questions render frozen with their
+ * buttons (`askq:{q}:{n}`) ending in a free-text-input hint note,
+ * multi-select as a checker form (`askq_multi:{q}`) whose submit row carries
+ * the same hint — while answered questions render frozen with their
  * selection marked, so the callback card replacement keeps the remaining
  * questions clickable.
  *
@@ -257,6 +258,13 @@ function questionElements(q: UserQuestion, qIdx: number, multiple: boolean, sele
       btnValue: `askq:${qIdx}:${i + 1}`,
       extra: { askq_label: opt.label, askq_question: q.question },
     })
+  }
+  // Free text answers this question too (resolveAskAnswer's custom branch),
+  // so the card says so; a question without options needs no hint — free text
+  // is its only answer path. Same label as the Feishu renderer's submit-row
+  // hint beside 提交选择 (both card chrome, no i18n handle on this seam).
+  if (q.options.length > 0) {
+    elements.push({ kind: 'note', text: '也可以直接文字输入' })
   }
   return elements
 }

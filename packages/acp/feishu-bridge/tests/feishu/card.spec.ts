@@ -139,6 +139,37 @@ describe('renderCardMap', () => {
     ])
   })
 
+  it('checkOptions submit row carries the free-text hint beside the button', () => {
+    const card = newCard()
+      .checkOptions('Which fixes?', [
+        { label: 'Fix leak', description: 'src/a.ts:12' },
+        { label: 'Add test', description: 'tests/a.spec.ts' },
+      ], 'askq_multi:0', { askq_question: 'Which fixes?' })
+      .build()
+
+    const got = decodeRenderedCard(card)
+    const form = getBodyElements(got).map(jObj).find(e => jStr(e.tag) === 'form')
+    expect(form).toBeDefined()
+    const formElements = jArr(jObj(form).elements)
+    const submitRow = jObj(formElements[formElements.length - 1])
+    expect(jStr(submitRow.tag)).toBe('column_set')
+    expect(jStr(submitRow.flex_mode)).toBe('none')
+    const columns = jArr(submitRow.columns)
+    expect(columns.length).toBe(2)
+    const btn = jObj(jArr(jObj(columns[0]).elements)[0])
+    expect(jStr(btn.tag)).toBe('button')
+    expect(jStr(jObj(btn.text).content)).toBe('提交选择')
+    expect(jStr(btn.form_action_type)).toBe('submit')
+    expect(jStr(btn.name)).toBe('askq_multi_submit_0')
+    expect(jStr(jObj(btn.value).action)).toBe('askq_multi:0')
+    const note = jObj(jArr(jObj(columns[1]).elements)[0])
+    expect(jStr(note.tag)).toBe('div')
+    const noteText = jObj(note.text)
+    expect(jStr(noteText.content)).toBe('也可以直接文字输入')
+    expect(jStr(noteText.text_size)).toBe('notation')
+    expect(jStr(noteText.text_color)).toBe('grey')
+  })
+
   it('delete-mode uses checker form', () => {
     const card = newCard()
       .title('删除会话', 'carmine')
