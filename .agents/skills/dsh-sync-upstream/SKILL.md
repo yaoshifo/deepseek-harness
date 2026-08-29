@@ -59,11 +59,13 @@ pnpm run gen-client-catalog    # cordis-client-runner 的 slot-catalog（易漏�
 
 **成功标准**：三条命令 exit 0，生成器无一遗漏。
 
-### 5. 聚焦测试
+### 5. 聚焦测试与 fork seam 自查
 
 归纳 dev 改动面包：`git diff --name-only master...dev | awk -F/ '{print $1"/"$2}' | sort | uniq -c | sort -rn`，对改动面包跑 `pnpm vitest run <packages/... 路径>`。上游那批提交的上游 CI 已验证过，风险面只在 fork 改动与上游改动的交叠处。
 
-**成功标准**：全绿；失败走第 6 步分流，不要直接开修。
+fork 本地包（feishu-bridge adapter、feishu-bridge-chatroom 等）用 `*Like` 结构接口和手写假件消费上游服务，typecheck 和单测都可能看不见上游服务 API 面的删除或改名——上游合入后额外做一遍 seam 自查：列出 fork seam 对上游服务的调用面，再到上游包源码逐一确认仍存在；并跑 seam 的真组合测试（组合真实上游服务而非假件的那些用例，如 `pnpm vitest run packages/acp/feishu-bridge/tests/agent-dsh/adapter.spec.ts -t 'real UserQuestionService'`）。典型反例见 2026-08-29 oc_cd00410d 事故：上游删 `userQuestions.registerProvider` 改 waterfall，adapter 仍调旧 API，假件全绿，重建重启后全 daemon 追问卡片 NO_PROVIDER。
+
+**成功标准**：全绿且 seam 调用面逐项在上游源码命中；失败走第 6 步分流，不要直接开修。
 
 ### 6. 失败分流
 
@@ -82,6 +84,7 @@ pnpm run gen-client-catalog    # cordis-client-runner 的 slot-catalog（易漏�
 
 - 症状：`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` → 做法：`CI=true pnpm install`。lockfile 大改后必现，是无 TTY 确认问题，不是故障。
 - 症状：merge-tree 零冲突但测试红 → 做法：merge-tree 只保证文本干净；上游重构内部接口造成的语义冲突靠 typecheck + 聚焦测试抓。
+- 症状：typecheck 绿、单测绿，但重建重启后 seam 调用抛 `TypeError: <service>.<method> is not a function` 或工具毫秒级返回 NO_PROVIDER 类显式错误 → 做法：fork seam 用 `*Like` 结构接口 + 手写假件，静态与单测都看不见上游 API 删改。按第 5 步 seam 自查逐项对上游源码，并给 seam 补真组合测试（实例：2026-08-29 userQuestions registerProvider→waterfall，oc_cd00410d 全 daemon 追问卡片失效）。
 - 症状：产品沙箱测试 `EACCES mkdtemp /home/hm/.dsh-*` → 做法：宿主 landlock 沙箱挡 $HOME 写入。放权原样重跑即绿，别当回归修。
 - 症状：gen-tool-catalog 断言实际比预期多出 fork 工具 → 做法：fork 加工具包要同步三处：`scripts/gen-tool-catalog.ts` 的 TOOL_PACKAGES、重新生成 `docs/tool-catalog.md`、`packages/core/tools/tests/gen-tool-catalog.spec.ts` 的硬编码清单（`node --import tsx/esm scripts/gen-tool-catalog.ts --check` 验证）。
 - 症状：上游新增门禁暴露 fork 既有欠账（如 zh 链接 locale 规则、fixture 守卫）→ 做法：归因确认非合并引入后当独立提交修掉；注意门禁只认固定模式（语言切换行必须是 `[English](…) | 中文` 顺序）。
