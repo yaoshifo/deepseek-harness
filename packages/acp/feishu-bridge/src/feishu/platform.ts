@@ -779,9 +779,13 @@ export class FeishuPlatform implements Platform {
     // /monitor 命令豁免 @-drop，与下方 allow_chat 闸一致：让命令能从未监控新群发起（#53）
     const isMonitorCmd = isMonitorCommand(msg.content ?? '')
     // Group messages require an @bot mention unless group_reply_all is set.
+    // A reply to the bot's own message also addresses the bot: Feishu replies
+    // never auto-mention the parent's sender, so without this exception ask
+    // cards inviting a typed answer silently swallow the reply in gated
+    // groups (2026-08-26 oc_0e48d3).
     if (chatType === 'group' && this.o.groupReplyAll !== true && !isSpawned && !isMonitor && !isMonitorCmd
       && (this.o.botOpenID ?? '') !== '') {
-      if (!isBotMentioned(msg.mentions, this.o.botOpenID ?? '')) {
+      if (!isBotMentioned(msg.mentions, this.o.botOpenID ?? '') && !this.isReplyToBot(msg.parent_id ?? '')) {
         // Feishu @all sends {"text":"@_all"} with zero mentions.
         const content = msg.content ?? ''
         if (this.o.respondToAtEveryoneAndHere === true && content.includes('@_all')) {
@@ -1567,8 +1571,30 @@ export class FeishuPlatform implements Platform {
   }
 
   private async ensureApi(): Promise<FeishuApiClient> {
-    this.api ??= this.o.apiClient ?? (await defaultApiClient(this.opts.appID, this.opts.appSecret))
+    this.api ??= this.recordingApi(this.o.apiClient ?? (await defaultApiClient(this.opts.appID, this.opts.appSecret)))
     return this.api
+  }
+
+  /**
+   * Wrap an API client so every successful send's message id feeds the reply
+   * gate. Send-path callers discard the SDK result, so the only choke point
+   * that sees every `{ messageId }` is the client itself; `withToken`
+   * derivatives re-wrap for the token-refresh retry path.
+   */
+  private recordingApi(client: FeishuApiClient): FeishuApiClient {
+    const record = <T extends { messageId?: string } | undefined>(sent: Promise<T>): Promise<T> =>
+      sent.then((result) => {
+        this.rememberSentMessage(result)
+        return result
+      })
+    return {
+      ...client,
+      reply: params => record(client.reply(params)),
+      create: params => record(client.create(params)),
+      ...(client.withToken !== undefined
+        ? { withToken: (token: string) => this.recordingApi(client.withToken?.(token) as FeishuApiClient) }
+        : {}),
+    }
   }
 
   /** One request over the default client, retrying once with a fresh token. */
@@ -1607,6 +1633,35 @@ export class FeishuPlatform implements Platform {
    */
   private touchChatActivity(chatID: string): void {
     if (chatID !== '') this.chatActivity.set(chatID, Date.now())
+  }
+
+  /** Bot-sent message ids, oldest first; bounded so long-running daemons stay flat. */
+  private readonly sentMessageIds: string[] = []
+  /** Membership view of {@link sentMessageIds} for O(1) reply checks. */
+  private readonly sentMessageIdSet = new Set<string>()
+
+  /**
+   * Record the message id of a successful send so a later reply to it passes
+   * the group @-gate. The recording client wrapper {@link recordingApi} sees
+   * every send, so this covers text, cards, and preview sends alike.
+   * @param result - Send result of unknown shape; non-sends are ignored.
+   */
+  private rememberSentMessage(result: unknown): void {
+    const messageId = (result as { messageId?: unknown } | undefined)?.messageId
+    if (typeof messageId !== 'string' || messageId === '') return
+    this.sentMessageIds.push(messageId)
+    this.sentMessageIdSet.add(messageId)
+    for (const evicted of this.sentMessageIds.splice(0, Math.max(0, this.sentMessageIds.length - 2048))) {
+      this.sentMessageIdSet.delete(evicted)
+    }
+  }
+
+  /**
+   * Whether an inbound message replies to one the bot itself sent.
+   * @param parentID - The inbound message's parent id, empty when not a reply.
+   */
+  private isReplyToBot(parentID: string): boolean {
+    return parentID !== '' && this.sentMessageIdSet.has(parentID)
   }
 
   private async sendNewMessageToChat(rc: FeishuReplyContext, msgType: string, content: string): Promise<void> {

@@ -395,6 +395,42 @@ describe('FeishuPlatform dispatch', () => {
   })
 })
 
+describe('group @-gate reply exception', () => {
+  /** Client whose sends return a fixed bot message id, as the SDK does. */
+  function botSendingClient(): FeishuApiClient {
+    return {
+      async reply() { return { messageId: 'om_bot_1' } },
+      async create() { return { messageId: 'om_bot_1' } },
+    }
+  }
+
+  it('delivers a group reply to the bot message without an @mention', async () => {
+    const p = newPlatform({ apiClient: botSendingClient(), botOpenID: 'ou_bot', allowFrom: '*', allowChat: '*' })
+    // The bot's own reply lands in the chat; its id becomes reply-addressable.
+    await p.reply({ messageID: 'om_9', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, 'question')
+    const messages = await dispatched(p, receiveEvent({
+      chat_type: 'group',
+      parent_id: 'om_bot_1',
+      mentions: [],
+      content: JSON.stringify({ text: 'yes' }),
+    }))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('yes')
+  })
+
+  it('still drops an unrelated group message without an @mention', async () => {
+    const p = newPlatform({ apiClient: botSendingClient(), botOpenID: 'ou_bot', allowFrom: '*', allowChat: '*' })
+    await p.reply({ messageID: 'om_9', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, 'question')
+    const messages = await dispatched(p, receiveEvent({
+      chat_type: 'group',
+      parent_id: 'om_human_message',
+      mentions: [],
+      content: JSON.stringify({ text: 'nope' }),
+    }))
+    expect(messages).toHaveLength(0)
+  })
+})
+
 describe('FeishuPlatform outbound', () => {
   it('reply quotes the trigger message via the reply API', async () => {
     const api = recordingClient()
