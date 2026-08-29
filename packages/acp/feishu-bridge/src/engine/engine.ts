@@ -5649,9 +5649,9 @@ export class Engine {
   }
 
   /**
-   * Compute the per-turn output-token rate (Go setTokenRate).
+   * Compute and store the per-turn output-token rate (Go setTokenRate).
    * @param outputTokens - Output tokens produced this turn.
-   * @param thinkingTimeMs - Agent wall-clock minus tool/permission waits, in ms.
+   * @param thinkingTimeMs - Union of the turn's streamed generation spans, in ms.
    */
   setTokenRate(outputTokens: number, thinkingTimeMs: number): void {
     setTokenRateMsg(this.usage, outputTokens, thinkingTimeMs)
