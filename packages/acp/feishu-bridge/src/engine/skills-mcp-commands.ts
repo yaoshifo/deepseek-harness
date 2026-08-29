@@ -17,6 +17,7 @@
 
 import { Msg } from '../i18n/index.js'
 import type { Message, Platform } from '../core/types.js'
+import { splitMcpToolName } from '../core/mcp-health.js'
 import type { Engine } from './engine.js'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import type { McpHealthServerConfig } from '../index.js'
@@ -26,9 +27,6 @@ const SKILL_DESCRIPTION_MAX_RUNES = 80
 
 /** Tool names listed per /mcp server before the `+N` overflow marker. */
 const MCP_TOOLS_PER_SERVER = 8
-
-/** mcp-client's public tool-name prefix (`mcp__<serverName>__<rawName>`). */
-const MCP_TOOL_PREFIX = 'mcp__'
 
 /** Data sources the two commands read; wired by buildProjectAssembly. */
 export interface SkillsMcpCommandDeps {
@@ -160,25 +158,20 @@ function renderToolNames(tools: string[]): string {
 }
 
 /**
- * Group public tool names by their mcp-client server. `mcp__<server>__<raw>`
- * splits on the first `__` after the prefix, so a serverName containing `_`
- * stays intact (the separator is the double underscore). Ceiling (the
- * adapter's own grouping documents the same one): two live serverNames that
- * collide on a `mcp__<a>__<b>__` prefix mis-attribute each other's tools.
+ * Group public tool names by their mcp-client server (the split's naming
+ * contract and its collision ceiling live on
+ * {@link splitMcpToolName}).
  * @param names - Public tool names from the process-global tool registry.
  * @returns The live servers in name order, each with its tool names.
  */
 function mcpServerGroups(names: readonly string[]): McpServerGroup[] {
   const groups = new Map<string, string[]>()
   for (const name of names) {
-    if (!name.startsWith(MCP_TOOL_PREFIX)) continue
-    const rest = name.slice(MCP_TOOL_PREFIX.length)
-    const sep = rest.indexOf('__')
-    if (sep <= 0) continue
-    const server = rest.slice(0, sep)
-    const bucket = groups.get(server)
-    if (bucket === undefined) groups.set(server, [rest.slice(sep + 2)])
-    else bucket.push(rest.slice(sep + 2))
+    const parsed = splitMcpToolName(name)
+    if (parsed === undefined) continue
+    const bucket = groups.get(parsed.server)
+    if (bucket === undefined) groups.set(parsed.server, [parsed.raw])
+    else bucket.push(parsed.raw)
   }
   return [...groups.entries()]
     .map(([server, tools]) => ({ server, tools }))

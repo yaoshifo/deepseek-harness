@@ -30,6 +30,7 @@ import {
   type TextPreviewContent,
 } from './core/types.js'
 import type { AsyncSender } from './async-sender.js'
+import { splitMcpToolName } from './core/mcp-health.js'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './engine/message-split.js'
 import type { TodoItem } from './progress.js'
 
@@ -292,13 +293,9 @@ export function declareToolFamily(name: string, family: ToolTagFamily): () => vo
  */
 export function toolTagForProgress(name: string, maxLen: number): string {
   let displayName = name
-  // MCP 名规范化：mcp__<server>__<raw> 在前缀后的第一个 __ 处切分（serverName
-  // 允许含 _，与 skills-mcp-commands 的 mcpServerGroups 同规则），显示为 server.raw。
-  if (name.startsWith('mcp__')) {
-    const rest = name.slice('mcp__'.length)
-    const sep = rest.indexOf('__')
-    displayName = sep === -1 ? rest : `${rest.slice(0, sep)}.${rest.slice(sep + 2)}`
-  }
+  // MCP 名规范化：显示为 server.raw（切分原语与 mcpServerGroups/mcp-health 同源）。
+  const mcp = splitMcpToolName(name)
+  if (mcp !== undefined) displayName = `${mcp.server}.${mcp.raw}`
   if (displayName.length > maxLen) displayName = displayName.slice(displayName.length - maxLen)
 
   let icon = '⚙️'
