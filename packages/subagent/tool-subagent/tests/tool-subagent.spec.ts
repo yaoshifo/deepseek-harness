@@ -97,7 +97,7 @@ describe('dsh-tool-subagent', () => {
     const props = (schema!.parameters as { properties?: Record<string, unknown> }).properties ?? {}
     expect(Object.keys(props)).not.toContain('cwd')
 
-    const parent = { id: SessionId('sess-cwd-off'), inject: () => {}, options: {}, session: { header: { version: 0, id: 'sess-cwd-off', createdAt: 0 } } } as unknown as Agent
+    const parent = { id: SessionId('sess-cwd-off'), inject: () => {}, options: {}, session: { requestHeader: () => undefined, header: { version: 0, id: 'sess-cwd-off', createdAt: 0 } } } as unknown as Agent
     const forced = await callSubagent(ctx, { description: 'd', prompt: 'p', cwd: '/tmp/elsewhere' }, { agent: parent })
     expect(forced.isError).toBe(true)
     expect(text(forced)).toContain('cwd is disabled for this tool instance')
@@ -110,7 +110,7 @@ describe('dsh-tool-subagent', () => {
     const props = (schema!.parameters as { properties?: Record<string, unknown> }).properties ?? {}
     expect(Object.keys(props)).toContain('cwd')
 
-    const parent = { id: SessionId('sess-cwd-on'), inject: () => {}, options: {}, session: { header: { version: 0, id: 'sess-cwd-on', createdAt: 0 } } } as unknown as Agent
+    const parent = { id: SessionId('sess-cwd-on'), inject: () => {}, options: {}, session: { requestHeader: () => undefined, header: { version: 0, id: 'sess-cwd-on', createdAt: 0 } } } as unknown as Agent
     const ok = await callSubagent(ctx, { description: 'd', prompt: 'p', cwd: '/tmp/elsewhere' }, { agent: parent })
     expect(ok.isError).toBe(false)
     expect(starts.at(-1)?.cwd).toBe('/tmp/elsewhere')
@@ -254,31 +254,20 @@ describe('dsh-tool-subagent', () => {
   })
 
   it('forwards configured agentOptions into the start request', async () => {
-    // Cover the `config.agentOptions ? … : {}` spread: a provider that captures
-    // the request lets us assert the agentOptions reached it.
-    let seen: { agentOptions?: { model?: string } } | undefined
-    const ctx = new Context()
-    await ctx.plugin(SystemPrompt)
-    await ctx.plugin(ToolRuntime)
-    await ctx.plugin(SubagentRuntime)
-    ctx.subagents.registerProvider({
-      name: 'capture',
-      capabilities: { agentOptions: true, outputSchema: false, depthLimit: false, toolFilter: false, persona: false, cwdOverride: false },
-      inheritsParentContext: false,
-      start: async (request) => {
-        seen = request
-        return {
-          id: SessionId('capture-child'),
-          localAgent: undefined,
-          result: Promise.resolve({ output: [{ type: 'text', text: 'ok' }], stopReason: 'completed' as const }),
-          dispose: async () => {},
-        }
-      },
+    // Cover the `config.agentOptions` pass-through with a non-route option:
+    // route fields (provider/model/effort) would enter the child LLM preflight,
+    // while maxTokens must reach the provider request verbatim.
+    let seen: SubagentStartRequest | undefined
+    const ctx = await setup({
+      provider: 'mock',
+      agentOptions: { maxTokens: 321 },
+      maxDepth: 'provider-managed',
+    }, {
+      onStart: (request) => { seen = request },
     })
-    await ctx.plugin(tool, { provider: 'capture', agentOptions: { model: 'child-model' }, maxDepth: 'provider-managed' })
 
     await callSubagent(ctx, { description: 'd', prompt: 'p' })
-    expect(seen?.agentOptions).toEqual({ model: 'child-model' })
+    expect(seen?.agentOptions).toMatchObject({ maxTokens: 321 })
   })
 
   it('merges model overrides over provider-owned route defaults before preflight', async () => {

@@ -17,15 +17,15 @@
  * @module @deepseek-ai/dsh-session-snapshot/suite
  */
 
-import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { isSurfaceEligibleType } from '@deepseek-ai/dsh-session/surface'
 import { describe, expect, it } from 'vitest'
 import { type AgentUnderTest, type HarvestedLog, type InputScript, runScenario } from './harness.ts'
 import { parseSnapshotManifest } from './manifest.ts'
 import { redactSessionSnapshotIds } from './identity.ts'
-import { captureExpectedWorkspaceSnapshot } from './workspace.ts'
+import { captureExpectedWorkspaceSnapshot, type WorkspaceSnapshotEntry } from './workspace.ts'
 import {
   type CwdPathMode,
   type NormalizeContext,
@@ -1504,8 +1504,37 @@ export function defineAcpSnapshotSuite(options: SnapshotSuiteOptions): void {
         }
 
         if (manifest.workspace?.final === true) {
+          // The committed tree uses the same volatile tokens as the session logs:
+          // the run's cwd slug may appear in relative paths (memory project stores
+          // key by it) and tool-written provenance may embed the session id.
+          const slug = cwdSlugOf(result.cwd)
+          const scrubWorkspaceText = (text: string): string => {
+            let out = text
+            for (const id of ctx.sessionIds) out = out.replaceAll(id, '{{sessionId}}')
+            return slug !== undefined ? out.replaceAll(slug, '{{cwdSlug}}') : out
+          }
+          const scrubWorkspace = (entries: readonly WorkspaceSnapshotEntry[]): WorkspaceSnapshotEntry[] =>
+            entries.map((entry) => {
+              if (entry.kind !== 'text') return entry
+              return {
+                ...entry,
+                path: scrubWorkspaceText(entry.path),
+                content: scrubWorkspaceText(entry.content),
+              }
+            })
+          const finalWorkspace = scrubWorkspace(result.finalWorkspace)
+          if (mode === 'refresh') {
+            await rm(join(dir, 'workspace.expected'), { recursive: true, force: true })
+            await mkdir(join(dir, 'workspace.expected'), { recursive: true })
+            for (const entry of finalWorkspace) {
+              if (entry.kind !== 'text') throw new Error(`${scenario.name}: non-text workspace.expected entry ${entry.path}`)
+              const target = join(dir, 'workspace.expected', entry.path)
+              await mkdir(dirname(target), { recursive: true })
+              await writeFile(target, entry.content, { flag: 'wx' })
+            }
+          }
           const expectedWorkspace = await captureExpectedWorkspaceSnapshot(join(dir, 'workspace.expected'))
-          expect(result.finalWorkspace, `${scenario.name}: complete final workspace`).toEqual(expectedWorkspace)
+          expect(finalWorkspace, `${scenario.name}: complete final workspace`).toEqual(expectedWorkspace)
         } else {
           expect(result.finalWorkspace, `${scenario.name}: a changed workspace requires workspace.final`)
             .toEqual(result.initialWorkspace)
