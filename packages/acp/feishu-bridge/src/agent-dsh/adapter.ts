@@ -799,10 +799,18 @@ export class DshAgentAdapter {
       }
       return next()
     }
-    const dispose = this.ctx.on('user-questions/request', answerer)
-    if (routing !== undefined) routing.registered = true
-    else this.uqRegistered = true
-    this.disposers.push(dispose)
+    if (routing !== undefined) {
+      // The routing object's plugin application owns the shared listener:
+      // every adapter shares one ctx, and disposing one adapter must not
+      // remove the daemon-wide answerer. Cordis drops ctx.on listeners
+      // when that context itself is disposed.
+      void this.ctx.on('user-questions/request', answerer)
+      routing.registered = true
+    } else {
+      const dispose = this.ctx.on('user-questions/request', answerer)
+      this.uqRegistered = true
+      this.disposers.push(dispose)
+    }
   }
 
   /**

@@ -153,7 +153,11 @@ function createHarness(): Harness {
       const list = listeners.get(event) ?? []
       list.push(listener)
       listeners.set(event, list)
-      return () => {}
+      return () => {
+        const current = listeners.get(event) ?? []
+        const index = current.indexOf(listener)
+        if (index >= 0) current.splice(index, 1)
+      }
     },
     get: (name: string) => services[name],
   }
@@ -744,6 +748,37 @@ describe('DshAgentAdapter userQuestions answerer', () => {
     await new Promise((r) => { setTimeout(r, 10) })
     expect(db.calls).toHaveLength(1)
     db.settle({ outcome: 'allowed-once' })
+    await askPromise
+  })
+
+  it('disposing the first sharing adapter keeps the shared answerer for the others', async () => {
+    const h = createHarness()
+    const routing: QuestionRouting = { adapters: [], registered: false }
+    const cfg = (): DshAdapterConfig => ({
+      agentName: 'dsh',
+      cwd: '/workspace/project',
+      providers: [{ name: 'glm', provider: 'glm-route', model: 'glm-5.3' }],
+      activeProvider: 'glm',
+      questionRouting: routing,
+    })
+    const da = recordingDelegate()
+    const db = recordingDelegate()
+    const a = new DshAgentAdapter(h.ctx, cfg())
+    a.setAskDelegate(da)
+    const b = new DshAgentAdapter(h.ctx, cfg())
+    b.setAskDelegate(db)
+    await a.startSession('')
+    const sb = (await b.startSession('')) as DshAgentSession
+    a.dispose()
+    expect(h.listeners.get('user-questions/request')).toHaveLength(1)
+
+    const askPromise = userQuestionsAsk(h)({
+      questions: [{ id: 'followup', question: 'Still there?', options: [{ label: 'Yes' }] }],
+      agent: { session: { id: sb.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    expect(db.calls).toHaveLength(1)
+    db.settle({ answers: [{ id: 'followup', selected: ['Yes'] }] })
     await askPromise
   })
 
