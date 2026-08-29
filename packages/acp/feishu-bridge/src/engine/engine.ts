@@ -3825,7 +3825,17 @@ export class Engine {
     await barrier()
     void cp
     if (sendCompletionNotification && p !== undefined && state.pendingMessages.length === 0) {
-      this.setCompletionDurations(Math.max(0, Date.now() - state.timing.agentStart), Date.now() - state.timing.turnStart)
+      // Parked-ask wall time is the user deciding, not the agent working —
+      // the hard cap above already exempts it (resumeCapPark banks it into
+      // capPausedMs); the completion durations must too, or an overnight
+      // approval renders as agent runtime (2026-08-30 oc_babc5d5f: a 514m
+      // card, 490m of it a plan-review park).
+      const parkedNow = state.capParkStart !== 0 ? Date.now() - state.capParkStart : 0
+      const pausedMs = state.capPausedMs + parkedNow
+      const now = Date.now()
+      this.setCompletionDurations(
+        Math.max(0, now - state.timing.agentStart - pausedMs),
+        Math.max(0, now - state.timing.turnStart - pausedMs))
       await this.sendTurnCompletionCard(
         state, p, replyCtx, session, sessionKey,
         this.perChatWorkDir(this.dirOverrideKey(sessionKey)))
@@ -5631,8 +5641,8 @@ export class Engine {
 
   /**
    * Record agent processing time for the completion header (Go setCompletionDurations).
-   * @param agentDurationMs - Agent span of the turn in ms.
-   * @param turnDurationMs - Full turn span in ms.
+   * @param agentDurationMs - Agent span of the turn in ms, parked-ask wait already excluded by the caller.
+   * @param turnDurationMs - Full turn span in ms, parked-ask wait already excluded by the caller.
    */
   setCompletionDurations(agentDurationMs: number, turnDurationMs: number): void {
     setDurations(this.usage, agentDurationMs, turnDurationMs)

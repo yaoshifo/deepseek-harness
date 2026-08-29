@@ -2083,6 +2083,43 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     expect(p.getSent().some(s => s.includes('exceeded the maximum turn duration'))).toBe(false)
   })
 
+  it('completion-card durations exclude parked-ask wall time', async () => {
+    // The completion header's agent duration is the engine working, not the
+    // user deciding: a turn parked ~1.2 s on an ask must render sub-second
+    // (2026-08-30 oc_babc5d5f: a 514m card, 490m of it an overnight
+    // plan-review park).
+    const { e, p } = newEngine()
+    e.setEventIdleTimeout(600)
+    const key = 'test:completion-park-exempt'
+    const sess = newControllableSession('completion-park-exempt')
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+    const session = e.sessions.getOrCreateActive(key)
+    session.tryLock()
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, undefined)
+    // The in-flight permission tool disarms the idle timer (production shape
+    // while an ask is parked), then the ask parks.
+    sess.channel.push({ type: 'tool_use', done: false } as never)
+    const decision = e.askUser(key, { kind: 'permission', toolName: 'Bash', preview: 'ls' })
+    await new Promise((resolve) => { setTimeout(resolve, 50) })
+    expect(state.capParkStart).not.toBe(0)
+
+    // Parked ~1.2 s: with the wall clock counting it the header would render
+    // "1s"; exempted, the executing remainder stays sub-second.
+    await new Promise((resolve) => { setTimeout(resolve, 1200) })
+    expect(e.routeAskResponse(p, msg({ content: '允许', sessionKey: key }), '允许')).toBe(true)
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+
+    sess.channel.push({ type: 'result', content: 'done', done: true } as never)
+    await done
+    expect(state.capPausedMs).toBeGreaterThanOrEqual(1100)
+    expect(e.usage.agentDurationMsg).toBe('0s')
+  })
+
   it('research sessions lift the hard cap (Go researchExempt)', async () => {
     // The exemption rides the hard-cap-exemption waterfall: the engine needs
     // a research listener for the research halves to answer (the chatroom
