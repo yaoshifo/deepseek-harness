@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
+import UserQuestionService from '@deepseek-ai/dsh-user-questions'
 import { ContinueSession, type AskDecision, type AskDelegate, type AskRequest, type Event } from '../../src/core/types.js'
 import { ctxBridgeDispatch, type BridgeDispatch } from '../../src/bridge-service.js'
 import type { SessionStartOptions } from '../../src/core/types.js'
-import { DshAgentAdapter, DshAgentSession, unattendedSubtaskBypassesPermissions, stripModelAlias, toolBackgroundOf, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
+import { DshAgentAdapter, DshAgentSession, unattendedSubtaskBypassesPermissions, stripModelAlias, toolBackgroundOf, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshAgentsRegistryLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
 
 // DshAgentAdapter unit tests: ctx.agents create/resume, followup/cancel call
 // sequences, provider routing, [1m] stripping, dispose+resume provider
@@ -576,11 +578,22 @@ describe('DshAgentAdapter', () => {
   })
 })
 
-/** Fake userQuestions service capturing the adapter's provider. */
-interface FakeProvider {
-  ask(req: Record<string, unknown>): Promise<unknown>
+/** Drive the adapter-registered user-questions answerer as the real service's waterfall would. */
+function userQuestionsAsk(h: Harness): (req: Record<string, unknown>) => Promise<unknown> {
+  return (req) => {
+    const listeners = h.listeners.get('user-questions/request') ?? []
+    if (listeners.length === 0) throw new Error('user-questions answerer was not registered')
+    // The real service's no-answerer fallback rejects with NO_PROVIDER.
+    const noAnswerer = () => Promise.reject(new Error('no user-questions answerer accepted the request'))
+    return (listeners[0] as unknown as (req: unknown, next: () => Promise<unknown>) => Promise<unknown>)(req, noAnswerer)
+  }
 }
 
+function createUserQuestionsHarness(): { h: Harness; adapter: DshAgentAdapter; ask: (req: Record<string, unknown>) => Promise<unknown> } {
+  const h = createHarness()
+  const adapter = newAdapter(h)
+  return { h, adapter, ask: userQuestionsAsk(h) }
+}
 /** Recording ask delegate: captures delegated asks and settles them by hand (B2). */
 function recordingDelegate(): AskDelegate & {
   calls: Array<{ sessionKey: string; request: AskRequest }>
@@ -599,19 +612,6 @@ function recordingDelegate(): AskDelegate & {
     },
   }
   return d
-}
-
-function createUserQuestionsHarness(): { h: Harness; adapter: DshAgentAdapter; providers: FakeProvider[] } {
-  const h = createHarness()
-  const providers: FakeProvider[] = []
-  h.services.userQuestions = {
-    registerProvider(p: FakeProvider): () => void {
-      providers.push(p)
-      return () => {}
-    },
-  }
-  const adapter = newAdapter(h)
-  return { h, adapter, providers }
 }
 
 /** Structural copy of dsh's plan-review question item (AskUserQuestionItem). */
@@ -638,29 +638,83 @@ async function startedProvider(): Promise<{
   adapter: DshAgentAdapter
   delegate: ReturnType<typeof recordingDelegate>
 }> {
-  const { h, adapter, providers } = createUserQuestionsHarness()
+  const { h, adapter, ask } = createUserQuestionsHarness()
   const delegate = recordingDelegate()
   adapter.setAskDelegate(delegate)
   const session = (await adapter.startSession('')) as DshAgentSession
-  const provider = providers[0]
-  if (provider === undefined) throw new Error('userQuestions provider was not registered')
-  return { session, ask: req => provider.ask(req), agent: h.agents[0]!, adapter, delegate }
+  return { session, ask, agent: h.agents[0]!, adapter, delegate }
 }
 
-describe('DshAgentAdapter userQuestions provider', () => {
+describe('DshAgentAdapter userQuestions answerer', () => {
 
-  it('two adapters sharing question routing register one provider and route asks across adapters', async () => {
-    const h = createHarness()
-    const providers: FakeProvider[] = []
-    let current: FakeProvider | undefined
-    h.services.userQuestions = {
-      registerProvider(p: FakeProvider): () => void {
-        if (current !== undefined) throw new Error('a user-questions provider is already registered')
-        current = p
-        providers.push(p)
-        return () => { current = undefined }
+  it('answers a real UserQuestionService ask through the engine ask delegate', async () => {
+    // 2026-08-29 regression (oc_cd00410d): the adapter still called the
+    // removed registerProvider API, so registration crashed on the first
+    // session and every later ask rejected with NO_PROVIDER — follow-up
+    // cards never rendered. Compose the real service and registry.
+    const ctx = new Context()
+    policyContexts.push(ctx)
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(UserQuestionService)
+    const agents: Array<RecordedAgent & { session: { id: string; events: never[] } }> = []
+    let n = 0
+    const registry: DshAgentsRegistryLike = {
+      create: async () => {
+        n += 1
+        const agent = {
+          id: `agent-${n}`,
+          status: 'idle' as const,
+          session: { id: `agent-${n}`, events: [] as never[] },
+          followups: [] as unknown[],
+          steers: [] as unknown[],
+          cancels: [] as Array<{ cause: { kind: string }; keepInbox?: boolean | undefined }>,
+          disposed: false,
+          followup(message: unknown): void {
+            agent.followups.push(message)
+          },
+          steer(message: unknown): void {
+            agent.steers.push(message)
+          },
+          cancel(cause: { kind: string }): void {
+            agent.cancels.push({ cause })
+          },
+          emit(): void {},
+        }
+        agents.push(agent)
+        return { agent, dispose: async () => { agent.disposed = true } }
       },
+      resume: async () => { throw new Error('resume not used') },
+      get: (id: unknown) => agents.find(a => a.id === String(id) && !a.disposed),
     }
+    const adapterCtx: DshContextLike = {
+      agents: registry,
+      on: (event, listener) => ctx.on(event as never, listener as never),
+      get: name => ctx.get(name) as unknown,
+    }
+    const adapter = new DshAgentAdapter(adapterCtx, {
+      agentName: 'dsh',
+      cwd: '/workspace/project',
+      providers: [{ name: 'glm', provider: 'glm-route', model: 'glm-5.3' }],
+      activeProvider: 'glm',
+    })
+    const delegate = recordingDelegate()
+    adapter.setAskDelegate(delegate)
+    const session = (await adapter.startSession('')) as DshAgentSession
+    ctx.agents.enter(agents[0] as unknown as Agent, undefined)
+
+    const askPromise = ctx.userQuestions.ask({
+      questions: [{ id: 'followup', question: 'Proceed?', options: [{ label: 'Yes' }] }],
+      agent: agents[0] as unknown as Agent,
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+
+    expect(delegate.calls[0]?.sessionKey).toBe(session.sessionKey())
+    delegate.settle({ answers: [{ id: 'followup', selected: ['Yes'] }] })
+    await expect(askPromise).resolves.toEqual({ answers: [{ id: 'followup', selected: ['Yes'] }] })
+  })
+
+  it('two adapters sharing question routing register one listener and route asks across adapters', async () => {
+    const h = createHarness()
     const routing: QuestionRouting = { adapters: [], registered: false }
     const cfg = (base: Partial<DshAdapterConfig> = {}): DshAdapterConfig => ({
       agentName: 'dsh',
@@ -677,13 +731,13 @@ describe('DshAgentAdapter userQuestions provider', () => {
     const b = new DshAgentAdapter(h.ctx, cfg())
     b.setAskDelegate(db)
     await a.startSession('')
-    expect(providers).toHaveLength(1)
-    // The singleton service already holds a's provider: b's first session
-    // must not throw DUPLICATE_PROVIDER (multi-project deployment).
+    expect(h.listeners.get('user-questions/request')).toHaveLength(1)
+    // Shared routing holds a's one listener: b's first session must not
+    // register a second one (multi-project deployment).
     const sb = (await b.startSession('')) as DshAgentSession
-    expect(providers).toHaveLength(1)
-    // b's session questions route through the shared provider to b's delegate.
-    const askPromise = providers[0]!.ask({
+    expect(h.listeners.get('user-questions/request')).toHaveLength(1)
+    // b's session questions route through the shared listener to b's delegate.
+    const askPromise = userQuestionsAsk(h)({
       questions: [planReviewQuestion()],
       agent: { session: { id: sb.currentSessionID() } },
     })
@@ -693,15 +747,15 @@ describe('DshAgentAdapter userQuestions provider', () => {
     await askPromise
   })
 
-  it('registers the provider on first session creation', async () => {
-    const { adapter, providers } = createUserQuestionsHarness()
-    expect(providers).toHaveLength(0)
+  it('registers the answerer listener on first session creation', async () => {
+    const { h, adapter } = createUserQuestionsHarness()
+    expect(h.listeners.get('user-questions/request') ?? []).toHaveLength(0)
     await adapter.startSession('')
-    expect(providers).toHaveLength(1)
+    expect(h.listeners.get('user-questions/request')).toHaveLength(1)
   })
 
   it('a cron slot key routes questions under the interactive slot while sessionKey stays bare', async () => {
-    const { adapter, providers } = createUserQuestionsHarness()
+    const { adapter, ask } = createUserQuestionsHarness()
     const delegate = recordingDelegate()
     adapter.setAskDelegate(delegate)
     const session = (await adapter.startSession('', {
@@ -712,7 +766,7 @@ describe('DshAgentAdapter userQuestions provider', () => {
     expect(session.sessionKey()).toBe('riskai:oc_1:ou_1')
     expect(session.askSlotKey()).toBe('riskai:oc_1:ou_1#cron:s20')
 
-    const askPromise = providers[0]!.ask({
+    const askPromise = ask({
       questions: [{ id: 'followup', question: 'Process findings?', options: [{ label: 'Yes' }] }],
       agent: { session: { id: session.currentSessionID() } },
     })
@@ -890,11 +944,10 @@ describe('DshAgentAdapter userQuestions provider', () => {
   })
 
   it('without a delegate the ask fails safe with empty answers', async () => {
-    const { h, adapter, providers } = createUserQuestionsHarness()
+    const { adapter, ask } = createUserQuestionsHarness()
     // No setAskDelegate call.
     const session = await adapter.startSession('')
-    void h
-    const askPromise = providers[0]!.ask({
+    const askPromise = ask({
       questions: [{ question: 'Which flavor?' }],
       agent: { session: { id: session.currentSessionID() } },
     })

@@ -773,42 +773,36 @@ export class DshAgentAdapter {
   }
 
   /**
-   * Lazily register the userQuestions provider on first agent creation
-   * (M3). At constructor time the user-questions service may not be
-   * composed yet; by the first session creation the plugin tree is fully
-   * loaded and ctx.get('userQuestions') resolves. With shared question
-   * routing the singleton service's one provider slot is taken exactly once
-   * per plugin application and asks dispatch to the owning adapter
-   * (multi-project daemons); without it the adapter registers for itself
-   * alone (single-adapter deployments and tests).
+   * Lazily register the `user-questions/request` answerer on first agent
+   * creation. A waterfall listener claims a request by returning an answer
+   * and delegates by calling `next()`; when no adapter owns the live session
+   * the listener delegates, so an unclaimed ask surfaces as NO_PROVIDER
+   * instead of a silent empty answer. With shared question routing the one
+   * listener is registered exactly once per plugin application and asks
+   * dispatch to the owning adapter (multi-project daemons); without it the
+   * adapter answers for itself alone (single-adapter deployments and tests).
    */
-  private ensureUserQuestionsProvider(): void {
+  private ensureUserQuestionsAnswerer(): void {
     const routing = this.cfg.questionRouting
     if (routing !== undefined) {
       if (routing.registered) return
-      routing.registered = true
-    } else {
-      if (this.uqRegistered) return
-      this.uqRegistered = true
+    } else if (this.uqRegistered) {
+      return
     }
-    type UserQuestionsService = {
-      registerProvider(p: {
-        ask(req: UserQuestionsAskRequest): Promise<UserQuestionsAskResult>
-      }): () => void
+    const answerer = async (
+      request: UserQuestionsAskRequest,
+      next: () => Promise<UserQuestionsAskResult>,
+    ): Promise<UserQuestionsAskResult> => {
+      for (const adapter of routing?.adapters ?? [this]) {
+        const result = await adapter.handleUserQuestion(request)
+        if (result !== undefined) return result
+      }
+      return next()
     }
-    const uq = this.ctx.get('userQuestions') as UserQuestionsService | undefined
-    if (uq === undefined) return
-    this.disposers.push(uq.registerProvider({
-      ask: async (request) => {
-        const adapters = routing?.adapters ?? [this]
-        for (const adapter of adapters) {
-          const result = await adapter.handleUserQuestion(request)
-          if (result !== undefined) return result
-        }
-        console.warn(`agent-dsh: user question matched no live session (${request.agent?.session?.id ?? ''}), answering empty`)
-        return { answers: [] }
-      },
-    }))
+    const dispose = this.ctx.on('user-questions/request', answerer)
+    if (routing !== undefined) routing.registered = true
+    else this.uqRegistered = true
+    this.disposers.push(dispose)
   }
 
   /**
@@ -1679,9 +1673,9 @@ export class DshAgentAdapter {
     session.seedRecentTurns(handle.agent.session.events)
     this.recentTurnsCache.delete(session.currentSessionID())
 
-    // Lazily register the userQuestions provider now that the plugin tree
-    // is fully loaded (at constructor time it may not be available yet).
-    this.ensureUserQuestionsProvider()
+    // Lazily register the user-questions answerer alongside the first
+    // session this adapter creates.
+    this.ensureUserQuestionsAnswerer()
     // Go effectiveMode: an unattended session overrides ANY configured or
     // overridden mode with bypassPermissions — which also means plan mode
     // stays off (a delegated child nobody can approve must not stall on an

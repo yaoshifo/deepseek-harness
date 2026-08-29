@@ -67,6 +67,7 @@
     "@deepseek-ai/dsh-invariants": "workspace:^",
     "@deepseek-ai/dsh-session-persistence-jsonl": "workspace:^",
     "@deepseek-ai/dsh-session-projection": "workspace:^",
-    "@deepseek-ai/dsh-subagent-spawn-in-process": "workspace:^"
+    "@deepseek-ai/dsh-subagent-spawn-in-process": "workspace:^",
+    "@deepseek-ai/dsh-user-questions": "workspace:^"
   }
 }
