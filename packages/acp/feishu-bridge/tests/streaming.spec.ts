@@ -1272,7 +1272,7 @@ describe('subagent progress entries', () => {
     e.fullName = 'read'
     e.seq = 3
     const out = e.render(false)
-    expect(out).toContain("<text_tag color='blue'>⚙️ subagent</text_tag> · 3")
+    expect(out).toContain("<text_tag color='purple'>🤖 subagent</text_tag> · 3")
     expect(out).toContain('read -> ls -la')
   })
 
@@ -1514,5 +1514,45 @@ describe('declareToolFamily (registration-time tag family)', () => {
 
     undeclare()
     expect(toolTagForProgress('sibling_agent_tool', 20)).toContain("color='blue'")
+  })
+})
+
+describe('toolTagForProgress icon families (⚙️ default subdivision)', () => {
+  // 每行: 工具名, maxLen, 期望的完整 text_tag。低频编排类（workflow 等）与
+  // 未知工具保留 ⚙️ 回落；MCP 名规范化为 server.raw（first-__ 切分）。
+  const cases: Array<[name: string, maxLen: number, want: string]> = [
+    ['Bash', 20, "<text_tag color='blue'>💻 Bash</text_tag>"],
+    ['bash', 20, "<text_tag color='blue'>💻 bash</text_tag>"],
+    ['mcp__zread__search_doc', 16, "<text_tag color='blue'>🔌 zread.search_doc</text_tag>"],
+    ['mcp__web-search-prime__web_search_prime', 16, "<text_tag color='blue'>🔌 web_search_prime</text_tag>"],
+    ['mcp__a__b__c', 20, "<text_tag color='blue'>🔌 a.b__c</text_tag>"],
+    ['memory_read', 20, "<text_tag color='turquoise'>🧠 memory_read</text_tag>"],
+    ['memory_write', 20, "<text_tag color='turquoise'>🧠 memory_write</text_tag>"],
+    ['session_event_read', 20, "<text_tag color='turquoise'>🗂️ session_event_read</text_tag>"],
+    ['job_output', 20, "<text_tag color='purple'>⏱️ job_output</text_tag>"],
+    ['subagent', 20, "<text_tag color='purple'>🤖 subagent</text_tag>"],
+    ['interrupt_agent', 20, "<text_tag color='purple'>🤖 interrupt_agent</text_tag>"],
+    ['list_agents', 20, "<text_tag color='purple'>🤖 list_agents</text_tag>"],
+    ['Agent', 20, "<text_tag color='purple'>🤖 Agent</text_tag>"],
+    ['send_message', 20, "<text_tag color='purple'>📨 send_message</text_tag>"],
+    ['feishu_bridge_chatroom', 24, "<text_tag color='purple'>🧵 feishu_bridge_chatroom</text_tag>"],
+    ['feishu_bridge_subtask', 22, "<text_tag color='purple'>🧵 feishu_bridge_subtask</text_tag>"],
+    ['feishu_bridge_relay', 20, "<text_tag color='purple'>🧵 feishu_bridge_relay</text_tag>"],
+    ['feishu_bridge_cron', 20, "<text_tag color='orange'>⏰ feishu_bridge_cron</text_tag>"],
+    ['read_image', 20, "<text_tag color='turquoise'>🖼️ read_image</text_tag>"],
+    ['EnterPlanMode', 20, "<text_tag color='purple'>📋 EnterPlanMode</text_tag>"],
+    ['ExitPlanMode', 20, "<text_tag color='purple'>📋 ExitPlanMode</text_tag>"],
+    ['workflow', 20, "<text_tag color='purple'>⚙️ workflow</text_tag>"],
+    ['totally_new_tool', 20, "<text_tag color='blue'>⚙️ totally_new_tool</text_tag>"],
+  ]
+  for (const [name, maxLen, want] of cases) {
+    it(`renders ${name} as ${want}`, () => {
+      expect(toolTagForProgress(name, maxLen)).toBe(want)
+    })
+  }
+
+  it('newToolProgressEntry tags lowercase bash code blocks as bash', () => {
+    const e = newToolProgressEntry('bash', 'ls -la', 't')
+    expect(e.lang).toBe('bash')
   })
 })

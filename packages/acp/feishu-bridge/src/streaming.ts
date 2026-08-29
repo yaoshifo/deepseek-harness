@@ -245,8 +245,8 @@ function padLineWidth(s: string, minW: number): string {
 
 // Tool families for the tag color. Claude Code names (Read/Write/…) stay for
 // ported-test parity; the lowercase entries are the dsh-native tool names.
-const editTools = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'MultiEdit', 'NotebookEdit', 'read', 'write', 'edit', 'glob', 'grep', 'lsp', 'session_search', 'session_event_read', 'session_event_search', 'session_event_trace', 'memory_read', 'memory_list', 'memory_index', 'memory_write', 'memory_delete'])
-const agentTools = new Set(['Agent', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'EnterPlanMode', 'ExitPlanMode', 'subagent_fork', 'send_message', 'interrupt_agent', 'list_agents', 'report', 'workflow', 'ralph', 'create_goal', 'get_goal', 'job_list', 'job_output', 'job_kill', 'feishu_bridge_subtask', 'feishu_bridge_relay', 'feishu_bridge_send'])
+const editTools = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'MultiEdit', 'NotebookEdit', 'read', 'read_image', 'write', 'edit', 'glob', 'grep', 'lsp', 'session_search', 'session_event_read', 'session_event_search', 'session_event_trace', 'memory_read', 'memory_list', 'memory_index', 'memory_write', 'memory_delete'])
+const agentTools = new Set(['Agent', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'EnterPlanMode', 'ExitPlanMode', 'subagent_fork', 'subagent', 'send_message', 'interrupt_agent', 'list_agents', 'report', 'workflow', 'ralph', 'create_goal', 'get_goal', 'job_list', 'job_output', 'job_kill', 'feishu_bridge_subtask', 'feishu_bridge_chatroom', 'feishu_bridge_relay', 'feishu_bridge_send'])
 const webTools = new Set(['WebSearch', 'WebFetch', 'web_search', 'web_fetch', 'lark-cli', 'feishu_bridge_cron'])
 
 /** Tag-color families a tool can be declared into at registration time. */
@@ -292,6 +292,13 @@ export function declareToolFamily(name: string, family: ToolTagFamily): () => vo
  */
 export function toolTagForProgress(name: string, maxLen: number): string {
   let displayName = name
+  // MCP 名规范化：mcp__<server>__<raw> 在前缀后的第一个 __ 处切分（serverName
+  // 允许含 _，与 skills-mcp-commands 的 mcpServerGroups 同规则），显示为 server.raw。
+  if (name.startsWith('mcp__')) {
+    const rest = name.slice('mcp__'.length)
+    const sep = rest.indexOf('__')
+    displayName = sep === -1 ? rest : `${rest.slice(0, sep)}.${rest.slice(sep + 2)}`
+  }
   if (displayName.length > maxLen) displayName = displayName.slice(displayName.length - maxLen)
 
   let icon = '⚙️'
@@ -322,8 +329,12 @@ export function toolTagForProgress(name: string, maxLen: number): string {
       break
     case 'Agent':
     case 'subagent_fork':
+    case 'subagent':
+    case 'interrupt_agent':
+    case 'list_agents':
       icon = '🤖'
       break
+    case 'EnterPlanMode':
     case 'ExitPlanMode':
       icon = '📋'
       break
@@ -346,10 +357,37 @@ export function toolTagForProgress(name: string, maxLen: number): string {
     case 'feishu_bridge_send':
       icon = '📤'
       break
+    case 'feishu_bridge_chatroom':
+    case 'feishu_bridge_subtask':
+    case 'feishu_bridge_relay':
+      icon = '🧵'
+      break
+    case 'feishu_bridge_cron':
+      icon = '⏰'
+      break
+    case 'job_list':
+    case 'job_output':
+    case 'job_kill':
+      icon = '⏱️'
+      break
+    case 'send_message':
+      icon = '📨'
+      break
+    case 'read_image':
+      icon = '🖼️'
+      break
+    case 'Bash':
+    case 'bash':
+      icon = '💻'
+      break
     case 'Thinking':
       icon = '💭'
       break
     default:
+      // 前缀组细分：MCP / memory / session；其余保持 ⚙️ 回落。
+      if (name.startsWith('mcp__')) icon = '🔌'
+      else if (name.startsWith('memory_')) icon = '🧠'
+      else if (name.startsWith('session_')) icon = '🗂️'
       break
   }
 
@@ -416,7 +454,7 @@ export function newToolProgressEntry(name: string, summary: string, toolID: stri
   let lang = ''
   if (summary !== '') {
     body = summary.replaceAll('```', "'''")
-    if (name === 'Bash') lang = 'bash'
+    if (name === 'Bash' || name === 'bash') lang = 'bash'
   }
   const entry = new ProgressEntry({
     header: `**${ts}**`,
