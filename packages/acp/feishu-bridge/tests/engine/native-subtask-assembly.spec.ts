@@ -64,6 +64,10 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
       name: 'native-project',
       workdir: root,
       feishu: { appId: 'cli_test', appSecret: 'sec' },
+      // Present = the dispatch reads the real ToolRuntime schemas for the
+      // mcp deny list, pinning the adapter's structural tools seam against
+      // the live service face.
+      mcpServers: ['mcp-allow'],
     }
     const { engine, adapter } = buildProjectAssembly(ctx, config, project, join(root, 'data'))
     // Only the external Feishu surface is stubbed: swap the platform list.
@@ -134,6 +138,10 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
       name: 'native-project',
       workdir: root,
       feishu: { appId: 'cli_test', appSecret: 'sec' },
+      // Present = the dispatch reads the real ToolRuntime schemas for the
+      // mcp deny list, pinning the adapter's structural tools seam against
+      // the live service face.
+      mcpServers: ['mcp-allow'],
     }
     const { engine, adapter } = buildProjectAssembly(ctx, config, project, join(root, 'data'))
     const p = createStubCardPlatformFull('test')
@@ -185,6 +193,10 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
       name: 'native-project',
       workdir: root,
       feishu: { appId: 'cli_test', appSecret: 'sec' },
+      // Present = the dispatch reads the real ToolRuntime schemas for the
+      // mcp deny list, pinning the adapter's structural tools seam against
+      // the live service face.
+      mcpServers: ['mcp-allow'],
     }
     const { engine, adapter } = buildProjectAssembly(ctx, config, project, join(root, 'data'))
     // Preview-recording platform: the only stub, same as the sibling cases.
@@ -259,6 +271,10 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
       name: 'native-project',
       workdir: root,
       feishu: { appId: 'cli_test', appSecret: 'sec' },
+      // Present = the dispatch reads the real ToolRuntime schemas for the
+      // mcp deny list, pinning the adapter's structural tools seam against
+      // the live service face.
+      mcpServers: ['mcp-allow'],
     }
     const { engine, adapter } = buildProjectAssembly(ctx, config, project, join(root, 'data'))
     const p = createStubCardPlatformFull('test')
@@ -311,6 +327,10 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
       name: 'native-project',
       workdir: root,
       feishu: { appId: 'cli_test', appSecret: 'sec' },
+      // Present = the dispatch reads the real ToolRuntime schemas for the
+      // mcp deny list, pinning the adapter's structural tools seam against
+      // the live service face.
+      mcpServers: ['mcp-allow'],
     }
     const { engine, adapter } = buildProjectAssembly(ctx, config, project, join(root, 'data'))
     const p = createStubCardPlatformFull('test')

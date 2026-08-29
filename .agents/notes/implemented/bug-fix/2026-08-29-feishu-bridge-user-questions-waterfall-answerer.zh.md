@@ -28,4 +28,4 @@ fork 本地的 feishu-bridge adapter 通过 `userQuestions.registerProvider(...)
 
 ## Testing
 
-`tests/agent-dsh/adapter.spec.ts`：新增真组合测试，在真实 Cordis context 上组合真实的 `UserQuestionService` 与 `AgentRegistry`，把 `userQuestions.ask` 经 adapter 驱动到引擎 ask delegate（同时复现注册 TypeError 与 NO_PROVIDER 两种失败）；手写服务假件替换为一个驱动已注册 waterfall 监听器的驱动器，并带上服务的 no-answerer 兜底；共享路由用例断言两个 adapter 恰好注册一个监听器且跨 adapter 派发；dispose 用例证明共享监听器在首个 adapter dispose 后存活。套件：feishu-bridge 158 个文件 / 2703 个测试通过；仓库 typecheck 干净；所改文件 oxlint 干净。
+`tests/agent-dsh/adapter.spec.ts`：新增真组合测试，在真实 Cordis context 上组合真实的 `UserQuestionService` 与 `AgentRegistry`，把 `userQuestions.ask` 经 adapter 驱动到引擎 ask delegate（同时复现注册 TypeError 与 NO_PROVIDER 两种失败）；手写服务假件替换为一个驱动已注册 waterfall 监听器的驱动器，并带上服务的 no-answerer 兜底；共享路由用例断言两个 adapter 恰好注册一个监听器且跨 adapter 派发；dispose 用例证明共享监听器在首个 adapter dispose 后存活。`tests/agent-dsh/adapter-seams.spec.ts` 把该绊网泛化到 adapter 其余结构类型 seam：plan-mode 提交、session-projections 快照、jsonl persistence 的 list/inspect 全部对着真实上游服务运行（recentTurns 的 catch 会把 inspect API 断裂吞成空窗口，因此非空折叠即钉子），native-subtask 组装测试配置 `mcpServers` 使每次派发都读取真实 ToolRuntime schemas。套件：仓库 typecheck 干净；所改文件 oxlint 干净。
