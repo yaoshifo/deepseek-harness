@@ -1077,8 +1077,9 @@ describe('terminal finalization of pending tools', () => {
     expect(e?.hasResult).toBe(true)
     expect(e?.success).toBe(true)
     const last = mp.messages[mp.messages.length - 1] ?? ''
+    expect(last).toContain("<text_tag color='green'>")
     expect(last).not.toContain('🟡')
-    expect(last).toContain('🟢')
+    expect(last).not.toContain('🟢')
   })
 
   it('completeAndDetach finalizes pending tools', async () => {
@@ -1305,6 +1306,53 @@ describe('subagent progress entries', () => {
     const before = mp.messages.length
     await sp.setPendingSubtasks(4)
     expect(mp.messages.length).toBe(before)
+  })
+})
+
+describe('tool tag status colors', () => {
+  it('render colors a succeeded tool tag green and drops the status emoji', () => {
+    const e = newToolProgressEntry('bash', 'ls', 't1')
+    e.hasResult = true
+    e.success = true
+    const out = e.render(false)
+    expect(out).toContain("<text_tag color='green'>💻 bash</text_tag>")
+    expect(out).not.toContain('🟢')
+    expect(out).not.toContain('🔴')
+    expect(out).not.toContain('🟡')
+  })
+
+  it('render colors a failed tool tag red', () => {
+    const e = newToolProgressEntry('bash', 'ls', 't1')
+    e.hasResult = true
+    e.success = false
+    const out = e.render(false)
+    expect(out).toContain("<text_tag color='red'>💻 bash</text_tag>")
+    expect(out).not.toContain('🟢')
+    expect(out).not.toContain('🔴')
+  })
+
+  it('render keeps the family color while the entry has no result', () => {
+    const e = newToolProgressEntry('read', 'file.ts', 't1')
+    const out = e.render(false)
+    expect(out).toContain("<text_tag color='turquoise'>🔍 read</text_tag>")
+    expect(out).not.toContain('🟡')
+  })
+
+  it('render colors a skill tag with the settled status', () => {
+    const e = newToolProgressEntry('Skill', '{"skill":"tdd","args":"a"}', 't1')
+    e.hasResult = true
+    e.success = true
+    const out = e.render(false)
+    expect(out).toContain("<text_tag color='green'>📚 tdd</text_tag>")
+    expect(out).not.toContain('🟢')
+  })
+
+  it('render drops the fixed status emoji on thinking entries', () => {
+    const e = newToolProgressEntry('Thinking', 'deep thought', 't1')
+    const out = e.render(false)
+    expect(out).toContain("<text_tag color='blue'>💭 Thinking</text_tag>")
+    expect(out).not.toContain('🟢')
+    expect(out).not.toContain('🟡')
   })
 })
 
@@ -1554,5 +1602,12 @@ describe('toolTagForProgress icon families (⚙️ default subdivision)', () => 
   it('newToolProgressEntry tags lowercase bash code blocks as bash', () => {
     const e = newToolProgressEntry('bash', 'ls -la', 't')
     expect(e.lang).toBe('bash')
+  })
+
+  it('status overrides the family color; the default keeps it', () => {
+    expect(toolTagForProgress('read', 20, 'success')).toBe("<text_tag color='green'>🔍 read</text_tag>")
+    expect(toolTagForProgress('read', 20, 'failed')).toBe("<text_tag color='red'>🔍 read</text_tag>")
+    expect(toolTagForProgress('read', 20, 'running')).toBe("<text_tag color='turquoise'>🔍 read</text_tag>")
+    expect(toolTagForProgress('read', 20)).toBe("<text_tag color='turquoise'>🔍 read</text_tag>")
   })
 })

@@ -421,7 +421,7 @@ describe('buildPreviewCardJSON', () => {
     // blank lines separating a bold header from its list must survive the
     // preview-card pipeline.
     const reply = '**改动明细：**\n\n- item one\n\n- item two'
-    const tool = '**10:00:01** <text_tag color=\'blue\'>bash</text_tag> · 1 🟢\n```text\ncmd\n---\nok\n```'
+    const tool = '**10:00:01** <text_tag color=\'green\'>💻 bash</text_tag> · 1\n```text\ncmd\n---\nok\n```'
     const content = `${tool}\n${reply}`
     const status = { state: 'completed' as const, ts: '10:00:05', toolCallSeq: 1 }
     const card = jParse(buildPreviewCardJSON(content, noSpinner, status))
