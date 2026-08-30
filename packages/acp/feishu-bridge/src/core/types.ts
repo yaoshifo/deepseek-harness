@@ -163,9 +163,6 @@ export interface PendingAsk {
   autoTimer?: ReturnType<typeof setTimeout>
 }
 
-/** Card button callback action values for permission and askq flows. */
-export type PermissionAction = 'perm:allow' | 'perm:deny' | 'perm:allow_all'
-
 /** Unified incoming message from any platform (Go core.Message). */
 export interface Message {
   sessionKey: string
@@ -870,16 +867,6 @@ export function asCardRefresher(p: Platform): CardRefresher | undefined {
 }
 
 /**
- * Structural check for the {@link InlineButtonSender} capability.
- *
- * @param p - the platform to inspect.
- * @returns the capability view, or undefined when not implemented.
- */
-export function asInlineButtonSender(p: Platform): InlineButtonSender | undefined {
-  return withMethod<InlineButtonSender>(p, 'sendWithButtons')
-}
-
-/**
  * Structural check for the {@link CompletionNotifier} capability.
  *
  * @param p - the platform to inspect.
@@ -1172,12 +1159,6 @@ export interface ChatJumpURLer {
 /** Platform with a multi-message pin panel (Go MessagePinAppender). */
 export interface MessagePinAppender {
   addMessagePin(chatID: string, messageID: string): Promise<void>
-}
-
-/** Platform with a single top-notice banner (Go TopNoticeSetter). */
-export interface TopNoticeSetter {
-  setTopNotice(chatID: string, messageID: string): Promise<void>
-  clearTopNotice(chatID: string, messageID: string): Promise<void>
 }
 
 /** Platform that can add an emoji reaction to the replied message (Go ReactionAdder). */
@@ -1577,16 +1558,6 @@ export function asMessagePinAppender(p: Platform): MessagePinAppender | undefine
 }
 
 /**
- * Structural check for the {@link TopNoticeSetter} capability.
- *
- * @param p - the platform to inspect.
- * @returns the capability view, or undefined when not implemented.
- */
-export function asTopNoticeSetter(p: Platform): TopNoticeSetter | undefined {
-  return withMethod<TopNoticeSetter>(p, 'setTopNotice')
-}
-
-/**
  * Structural check for the {@link ReactionAdder} capability.
  *
  * @param p - the platform to inspect.
@@ -1742,11 +1713,6 @@ export interface RenderQuerier {
   renderQuery(prompt: string, providerName: string, systemPrompt: string, signal?: AbortSignal): Promise<string>
 }
 
-/** Agent whose render-session effort can be overridden per project (Go RenderEffortSetter). */
-export interface RenderEffortSetter {
-  setRenderEffort(effort: string): void
-}
-
 /** Optional: platform can send standalone image messages (Go ImageSender). */
 export interface ImageSender {
   sendImage(replyCtx: unknown, img: ImageAttachment): Promise<void>
@@ -1770,16 +1736,6 @@ export interface RenderStatusUpdater {
  */
 export function asRenderQuerier(a: Agent): RenderQuerier | undefined {
   return withMethod<RenderQuerier>(a, 'renderQuery')
-}
-
-/**
- * Structural check for the {@link RenderEffortSetter} capability.
- *
- * @param a - the agent to inspect.
- * @returns the capability view, or undefined when not implemented.
- */
-export function asRenderEffortSetter(a: Agent): RenderEffortSetter | undefined {
-  return withMethod<RenderEffortSetter>(a, 'setRenderEffort')
 }
 
 /**

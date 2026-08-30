@@ -147,7 +147,15 @@ export class AsyncSender {
     if (this.closed) return
     if (this.queue.length >= asyncSendBufSize) {
       console.warn('async sender queue full, executing inline')
-      void fn()
+      // Guarded like exec(): an unguarded `void fn()` turns an inline
+      // failure into an unhandled rejection (process-killing on Node 22).
+      void (async () => {
+        try {
+          await fn()
+        } catch (error) {
+          console.error(`async sender ${this.name}: inline fn failed: ${String(error)}`)
+        }
+      })()
       return
     }
     this.queue.push({ fn })

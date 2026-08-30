@@ -6,7 +6,7 @@
  * @module dsh-feishu-bridge/tests-async-sender
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { newAsyncSender } from '../src/async-sender.js'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
@@ -82,6 +82,30 @@ describe('AsyncSender', () => {
       }
       as.enqueueOrInline(() => { ran++ })
       expect(ran).toBe(1)
+      block.resolve()
+      await as.barrier()
+    } finally {
+      as.close()
+    }
+  })
+
+  it('enqueueOrInline guards the inline path against rejections', async () => {
+    // An unguarded `void fn()` turns an inline failure into an unhandled
+    // rejection — a process-killing default on Node 22.
+    const as = newAsyncSender('test')
+    try {
+      const block = deferred()
+      as.enqueue(() => block.promise)
+      await sleep(20)
+      for (let i = 0; i < 256; i++) {
+        as.enqueue(() => {})
+      }
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+      as.enqueueOrInline(async () => { throw new Error('inline boom') })
+      await sleep(20)
+      expect(err).toHaveBeenCalledTimes(1)
+      expect(String(err.mock.calls[0]?.[0])).toContain('inline boom')
+      err.mockRestore()
       block.resolve()
       await as.barrier()
     } finally {

@@ -24,6 +24,13 @@ describe('plugin entry declaration', () => {
   it('exports the plugin name matching the bundle row id', () => {
     expect(entry.name).toBe('feishu-bridge')
   })
+
+  it('ships the invariant companion with a no-runtime-invariant reason', async () => {
+    const invariant = await import('../src/invariant.js')
+    expect(invariant.name).toBe('feishu-bridge-invariant')
+    expect(invariant.inject).toEqual(['invariants'])
+    expect(typeof invariant.apply).toBe('function')
+  })
 })
 
 describe('config schema defaults (loader resolveConfig path)', () => {
