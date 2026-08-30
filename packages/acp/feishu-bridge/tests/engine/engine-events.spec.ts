@@ -2087,9 +2087,12 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     // The completion header's agent duration is the engine working, not the
     // user deciding: a turn parked ~1.2 s on an ask must render sub-second
     // (2026-08-30 oc_babc5d5f: a 514m card, 490m of it an overnight
-    // plan-review park).
+    // plan-review park). The idle timeout stays generous — its watchdog is
+    // not this test's subject, and a load stall tripping it aborts the turn
+    // through a path that never records durations (observed as an empty
+    // agentDurationMsg under full-suite load).
     const { e, p } = newEngine()
-    e.setEventIdleTimeout(600)
+    e.setEventIdleTimeout(3000)
     const key = 'test:completion-park-exempt'
     const sess = newControllableSession('completion-park-exempt')
     const state = new InteractiveState()
@@ -2099,6 +2102,17 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     e.interactiveStates.set(key, state)
     const session = e.sessions.getOrCreateActive(key)
     session.tryLock()
+
+    // Spy the public setter for the raw millisecond values — the rendered
+    // '0s'/'1s' string flips on sub-second overhead and flakes under load,
+    // while agent span + parked ≈ wall holds regardless of stalls.
+    const durations: [number, number][] = []
+    const recordDurations = e.setCompletionDurations.bind(e)
+    e.setCompletionDurations = (agentMs: number, turnMs: number) => {
+      durations.push([agentMs, turnMs])
+      recordDurations(agentMs, turnMs)
+    }
+    const wallStart = Date.now()
 
     const done = e.processInteractiveEvents(state, session, e.sessions, key, '', undefined, undefined)
     // The in-flight permission tool disarms the idle timer (production shape
@@ -2116,8 +2130,14 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
 
     sess.channel.push({ type: 'result', content: 'done', done: true } as never)
     await done
+    const wall = Date.now() - wallStart
     expect(state.capPausedMs).toBeGreaterThanOrEqual(1100)
-    expect(e.usage.agentDurationMsg).toBe('0s')
+    expect(durations).toHaveLength(1)
+    // Counting the parked wait would make agent span + parked exceed the
+    // whole wall; exempting lands it within the turn-end slack.
+    const agentMs = durations[0]![0]!
+    expect(agentMs + state.capPausedMs).toBeLessThanOrEqual(wall + 200)
+    expect(agentMs).toBeLessThan(state.capPausedMs)
   })
 
   it('research sessions lift the hard cap (Go researchExempt)', async () => {
