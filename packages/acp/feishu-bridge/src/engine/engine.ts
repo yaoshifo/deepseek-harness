@@ -4938,6 +4938,11 @@ export class Engine {
     // settled once the decision lands. Lives outside the delivery closure for
     // the same reason as the park bookkeeping above.
     let parkedCard: { sp: StreamPreview; handle: unknown } | undefined
+    // Set by the interrupt branch BEFORE it clears the park: a deliverCards
+    // continuation suspended ahead of the park write must not re-park the
+    // cancelled ask when it resumes (the cleanup guard `pendingAsk ===
+    // pending` is a no-op until the write happens).
+    let askInterrupted = false
 
     const deliverCards = async (): Promise<void> => {
       // Pre-card flush + detach (Go engine_events.go ~4192-4225): with the
@@ -4999,7 +5004,10 @@ export class Engine {
       await this.applyChatPhase(p, sessionKey, request.kind === 'plan-review' ? 'plan-review' : 'attention')
 
       // Park the ask, then render the card(s). Parking pauses the hard-cap
-      // clock (resumeCapPark banks the duration on unpark).
+      // clock (resumeCapPark banks the duration on unpark). An ask the
+      // interrupt branch already cancelled stays unparked — its cards would
+      // render for a dead question and re-open the permission dead end.
+      if (askInterrupted) return
       state.pendingAsk = pending
       state.capParkStart = Date.now()
       if (request.kind === 'plan-review' && planContent !== '') {
@@ -5043,12 +5051,14 @@ export class Engine {
 
     // Late sends from an interrupted delivery still land harmlessly (the
     // ask is already unsettled and stray answers route nowhere); only the
-    // parked wait below must not outlive the interruption.
+    // parked wait below must not outlive the interruption — askInterrupted
+    // keeps a continuation suspended ahead of the park write from re-parking.
     const interrupted = await Promise.race([
       deliverCards().then(() => false as const),
       Promise.race([stopP, abortP]).then(() => true as const),
     ])
     if (interrupted) {
+      askInterrupted = true
       // The abort listener dies with this ask; the stop signal is
       // state-scoped and needs no removal.
       if (onAbort !== undefined && signal !== undefined) signal.removeEventListener('abort', onAbort)

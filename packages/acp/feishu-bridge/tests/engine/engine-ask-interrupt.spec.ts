@@ -29,6 +29,18 @@ function hangingPlatform(name = 'hang'): Platform {
   })
 }
 
+/** A platform whose chat-phase paint blocks until released — delivery
+ * stalled BEFORE the pendingAsk park write (the re-park race window). */
+function phaseGatePlatform(): Platform & { release(): void } {
+  const base = createStubPlatform('gate')
+  let releaseGate!: () => void
+  const gate = new Promise<void>((resolve) => { releaseGate = resolve })
+  return Object.assign(base, {
+    setChatPhase: async (): Promise<void> => { await gate },
+    release: (): void => { releaseGate() },
+  })
+}
+
 function newEngine(platforms: Platform[]): Engine {
   return new Engine('test', createStubAgent(), platforms, '', 'en')
 }
@@ -89,6 +101,32 @@ describe('askUser interrupted mid card delivery', () => {
     await expect(
       Promise.race([decision, new Promise((_, reject) => { setTimeout(() => { reject(new Error('askUser did not settle')) }, 1_000) })]),
     ).resolves.toEqual({ outcome: 'cancelled' })
+  })
+
+  it('a delivery interrupted before the park write never re-parks the cancelled ask', async () => {
+    // The interrupt branch's cleanup guard (`pendingAsk === pending`) is a
+    // no-op when the stop lands BEFORE deliverCards parks the ask — every
+    // await ahead of the park write (phase paint, preview detach) is that
+    // window. The in-flight continuation must not re-park afterwards: a
+    // re-parked dead ask routes every later message into the permission
+    // dead end and freezes the waiting card.
+    const p = phaseGatePlatform()
+    const e = newEngine([p])
+    const state = parkedState(e, 'test:chat:user1', p)
+
+    const decision = e.askUser('test:chat:user1', permRequest)
+    // Delivery reaches the gated phase paint, before the park write.
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    state.markStopped()
+    await expect(
+      Promise.race([decision, new Promise((_, reject) => { setTimeout(() => { reject(new Error('askUser did not settle')) }, 1_000) })]),
+    ).resolves.toEqual({ outcome: 'cancelled' })
+
+    // The interrupted delivery resumes past the gate.
+    p.release()
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+
+    expect(state.pendingAsk, 'the cancelled ask must not be re-parked').toBeUndefined()
   })
 })
 
