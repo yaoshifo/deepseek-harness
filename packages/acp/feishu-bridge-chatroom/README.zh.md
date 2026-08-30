@@ -15,7 +15,7 @@
 
 #### Token 影响
 
-工具描述与 schema 到达启用该项目里每个 dsh agent（工具是进程级、按调用方路由的）；配置了 `enabled: false` 的项目把定义从其会话请求中掩除（adapter 在会话创建时 restrict 服务登记的拒绝名），只剩内置 skill 的目录条目。Persona 提示词整体替换各 chatroom 会话的系统提示词而非追加；moderator 唤醒与 relay 卡是用户可见消息，不进模型请求。
+工具描述与 schema 到达启用该项目里每个 dsh agent（工具是进程级、按调用方路由的）；配置了 `enabled: false` 的项目把定义从其会话请求中掩除（adapter 在会话创建时 restrict 服务登记的拒绝名），内置主持 skill 的目录条目也一并离开（provider 以启用项目 workdir 为 cwd 前缀作用域挂载）。Persona 提示词整体替换各 chatroom 会话的系统提示词而非追加；moderator 唤醒与 relay 卡是用户可见消息，不进模型请求。
 
 #### KV Cache 影响
 
@@ -24,8 +24,8 @@ Chatroom 会话使用整体替换的 persona 提示词，因此每个 role/moder
 ## 已知限制与延后工作
 
 - **就绪前窗口**：桥的引擎启动到本插件 `whenReady()` 扫描之间平台投递的消息，会按默认值的 chatroom 配置处理（无 roles 目录覆盖、ledger 关闭）——这是桥内接线所没有的窗口。它结构性源于兄弟插件的挂载顺序；恢复及之后所有轮次看到的都是扫描后的配置。
-- **工具掩码有启动窗口**：桥就绪到本插件扫描（登记按引擎 deny 掩码）之间创建的会话仍能看到 `feishu_bridge_chatroom` 定义；它们的调用改在工具 execute 检查处 fail loud。扫描之后创建的会话看不到定义。
-- **内置 skill 在禁用项目仍可见**：chatroom-moderator skill provider 是进程级的（skill-filesystem 自定义目录无按项目作用域），禁用项目的 agent 仍能看到其目录条目（约 200 token）；被掩掉的工具使其成为无副作用的指引。
+- **工具掩码有启动窗口**：桥就绪到本插件扫描（登记按引擎 deny 掩码、挂载带 cwd 前缀的 skill provider）之间创建的会话仍能看到 `feishu_bridge_chatroom` 定义与主持 skill 条目；它们的调用改在工具 execute 检查处 fail loud。扫描之后创建的会话两者都看不到。
+- **内置 skill 按 cwd 而非项目身份作用域**：主持 skill 的目录条目——其描述点名 `/chatroom`——本身就是行为入口（看得见它的模型可以加载并照做），因此 provider 以启用引擎的 base workdir 为 `cwdPrefixes` 挂载，禁用项目的会话看不到条目。天花板：cwd 只是代理——会话把工作目录切到启用项目 workdir 之下会重新看到条目（工具仍被掩）、共享同一 workdir 的两个项目无法区分、不带 cwd 的宿主面查询看不到任何作用域根。
 - **卸载插件丢失内存态聊天室状态**：已武装的 barrier 实例、进行中标记与 gather 轮次戳都是进程内的；dispose 插件 fiber 即丢弃。持久化的 `featureState.chatroom` 段保留——各会话访问器就地写入，无 codec 的保存会原样持久化——重启后的 barrier 恢复走持久化快照而非实例。
 - **Picker 状态在内存**：daemon 重启会丢弃已武装的 picker；孤儿 pick 卡的下次点击会原位换成灰色过期卡并提示重新 `/chatroom`（Go 版对孤儿按钮是静默或假确认）。
 - **部署迁移是手动的**：生产 profile 在其自演化的 `cordis.patch.yml` 里把 chatroom 段放在 `feishu-bridge` 行下；桥现在会对这类残留 fail loud，需要把段迁移到本插件自己的配置（`defaults` + 按 `projects`、以桥项目名为键）。迁移片段与 profile 模板更新随 C3 部署批次落地。

@@ -56,11 +56,21 @@ async function liveContext(): Promise<Context> {
 /** The adapter half of a live project; routing never consults it in these specs. */
 type StubAdapter = Record<string, never>
 
-function liveProject(projectName: string, started = false): Promise<{ engine: Engine; adapter: StubAdapter }> {
+function liveProject(
+  projectName: string,
+  started = false,
+  workdir = '',
+): Promise<{ engine: Engine; adapter: StubAdapter }> {
   const engine = new Engine(projectName, createStubAgent(), [], '', 'en')
+  if (workdir !== '') engine.setBaseWorkDir(workdir)
   registerSessionCommands(engine)
   if (started) return engine.start().then(() => ({ engine, adapter: {} as StubAdapter }))
   return Promise.resolve({ engine, adapter: {} })
+}
+
+/** Skill names visible to a session running under one cwd. */
+async function skillNamesAt(ctx: Context, cwd: string): Promise<string[]> {
+  return (await ctx.skills.list({ cwd })).map(skill => skill.name)
 }
 
 describe('chatroom plugin entry', () => {
@@ -84,8 +94,8 @@ describe('chatroom plugin entry', () => {
     const ctx = await liveContext()
     const service = ctx.get('feishuBridge')
     if (service === undefined) throw new Error('feishuBridge failed to mount')
-    const { engine } = await liveProject('alpha')
-    const { engine: startedEngine } = await liveProject('beta', true)
+    const { engine } = await liveProject('alpha', false, '/workspace/alpha')
+    const { engine: startedEngine } = await liveProject('beta', true, '/workspace/beta')
     service.registerProject({ engine, adapter: {} as never })
     service.registerProject({ engine: startedEngine, adapter: {} as never })
     service.markReady()
@@ -118,14 +128,21 @@ describe('chatroom plugin entry', () => {
 
     // The tool registered on ctx.tools.
     expect(typeof ctx.tools.register).toBe('function')
+
+    // The bundled moderator skill is mounted scoped to the enabled
+    // projects' workdirs: a session under one sees it, a session elsewhere
+    // does not.
+    expect(await skillNamesAt(ctx, '/workspace/alpha/src')).toContain('feishu-bridge-chatroom-moderator')
+    expect(await skillNamesAt(ctx, '/workspace/beta')).toContain('feishu-bridge-chatroom-moderator')
+    expect(await skillNamesAt(ctx, '/workspace/elsewhere')).not.toContain('feishu-bridge-chatroom-moderator')
   })
 
   it('a disabled project skips command registration and masks its tool on the service', async () => {
     const ctx = await liveContext()
     const service = ctx.get('feishuBridge')
     if (service === undefined) throw new Error('feishuBridge failed to mount')
-    const { engine } = await liveProject('alpha')
-    const { engine: startedEngine } = await liveProject('beta', true)
+    const { engine } = await liveProject('alpha', false, '/workspace/alpha')
+    const { engine: startedEngine } = await liveProject('beta', true, '/workspace/beta')
     service.registerProject({ engine, adapter: {} as never })
     service.registerProject({ engine: startedEngine, adapter: {} as never })
     service.markReady()
@@ -141,6 +158,11 @@ describe('chatroom plugin entry', () => {
     // The enabled project is untouched: commands registered, no mask.
     expect(startedEngine.commandHandlers?.get('chatroom')).toBeDefined()
     expect(service.deniedToolsOf(startedEngine)).toEqual([])
+
+    // The bundled skill follows the same gate: the disabled project's cwd
+    // sees no moderator skill entry, the enabled project's does.
+    expect(await skillNamesAt(ctx, '/workspace/alpha')).not.toContain('feishu-bridge-chatroom-moderator')
+    expect(await skillNamesAt(ctx, '/workspace/beta')).toContain('feishu-bridge-chatroom-moderator')
 
     // Disposing the fiber releases the mask (HMR safety).
     await fiber.dispose()
@@ -207,7 +229,7 @@ describe('chatroom plugin entry', () => {
     const ctx = await liveContext()
     const service = ctx.get('feishuBridge')
     if (service === undefined) throw new Error('feishuBridge failed to mount')
-    const { engine } = await liveProject('alpha')
+    const { engine } = await liveProject('alpha', false, '/workspace/alpha')
     service.registerProject({ engine, adapter: {} as never })
     service.markReady()
 
@@ -218,7 +240,7 @@ describe('chatroom plugin entry', () => {
     expect(featureStateCodecs().some(codec => codec.key === chatroomFeatureStateCodec.key)).toBe(true)
     expect(lookupMessage('en', 'chatroom_ready')).toBe('Chatroom role ready')
     expect(ctx.tools.get('feishu_bridge_chatroom')?.name).toBe('feishu_bridge_chatroom')
-    expect((await ctx.skills.list()).map(skill => skill.name)).toContain('feishu-bridge-chatroom-moderator')
+    expect(await skillNamesAt(ctx, '/workspace/alpha')).toContain('feishu-bridge-chatroom-moderator')
     // The policy listeners answer through the production dispatch face (the
     // persona bypass joins the built-in subtask base on the waterfall).
     expect(service.waterfall(
@@ -251,7 +273,7 @@ describe('chatroom plugin entry', () => {
     // contribution of this plugin — the declaration's own disposal is
     // covered by the declareToolFamily unit tests in streaming.spec.ts.
     expect(toolTagForProgress('feishu_bridge_chatroom', 40)).toContain("color='purple'")
-    expect((await ctx.skills.list()).map(skill => skill.name)).not.toContain('feishu-bridge-chatroom-moderator')
+    expect(await skillNamesAt(ctx, '/workspace/alpha')).not.toContain('feishu-bridge-chatroom-moderator')
     // The policy listeners no longer answer: the built-in base decides.
     expect(service.waterfall(
       'feishuBridge/permission-policy',

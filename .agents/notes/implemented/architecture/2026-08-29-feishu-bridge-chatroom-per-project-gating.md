@@ -28,8 +28,8 @@ A project opts out with one knob on the chatroom plugin's own config — `enable
 
 ## Consequences
 
-- A disabled project's requests keep the bundled moderator skill's catalog entry (the skill provider is process-wide; skill-filesystem custom roots have no per-project scope) — roughly 200 inert tokens, documented in the package README.
-- The mask has a startup window: sessions created between bridge readiness and the chatroom sweep see the definition and are refused at execute instead.
+- **The bundled moderator skill follows the same gate, scoped by cwd**: the skill's catalog entry is itself a behavior entry point — the first production probe (2026-08-30, a disabled bot receiving the unknown-command text `/chatroom`) had the model load and start following the moderator skill purely from its catalog description, so "inert residual" was wrong. The provider now mounts with `cwdPrefixes` set to the enabled engines' base workdirs (skill-filesystem's `scopedSkillDirs` config, added for this): a disabled project's sessions see no entry at all. Ceiling: cwd is a proxy for project identity — a session switching its working directory under an enabled workdir sees the entry again (tool still masked), and shared workdirs cannot be told apart.
+- The mask has a startup window: sessions created between bridge readiness and the chatroom sweep see the tool definition and the skill entry, and are refused at execute instead.
 - The startup-window and revive ceilings of the deny-mask mechanism apply unchanged (deny masks admit later unnamed globals; names absent from the live registry drop out silently — the registrant may be unloaded).
 - `defaults.enabled: false` with no project override disables every bot, equivalent to the plugin row's `disabled: true`; per-project gating and presets remain composable (a preset-scoped future split of the chatroom's model face would stack on top of the execute gate).
 - Production profiles flip bots off by adding `projects.<bot>: { enabled: false }` under the `feishu-bridge-chatroom` row and running `/reload`; no bridge config changes.

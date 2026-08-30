@@ -14,7 +14,7 @@ chatroom 产品面住进兄弟插件；bridge 只持有它们所乘坐的通用�
 
 - **搬走**：八个引擎模块（`chatroom.ts`、`chatroom-pick.ts`、`chatroom-cmd.ts`、`chatroom-persona.ts`、`chatroom-priming.ts`、`chatroom-ledger.ts`、`chatroom-roles.ts`、`chatroom-policy.ts`）、`feishu_bridge_chatroom` 工具、主持 skill 目录、i18n 子表，以及十二个 chatroom 专项 spec。插件侧新增文件持有引擎原来代管的部分：`chatroom-state.ts`（每会话活态）、`chatroom-config.ts`（引擎配置存储）、`i18n.ts`（子表）与 `apply` 入口。
 - **bridge 保留**：十五个 `feishuBridge/*` 事件声明及其经 `FeishuBridgeService` 的分发（插件的 `chatroom-policy.ts` 为每一个都注册了监听器）；`Engine.registerCommand` / `Engine.registerCardAction` 两个可逆注册缝；不透明的 `Session.featureState` 分节与 codec 注册表；以及 `./exports` 子路径——受支持的窄导入面（服务与分发类型、路由类型、共享引擎符号、平台能力 cast、注册助手），绝不导出整只 `Engine` 类。
-- **插件 `apply`** 先注册进程级半边（feature-state codec 与 i18n 子表必须先于首次保存或查找就位），再注册 policy 监听器、工具与内置 skills；`service.whenReady()` resolve 后，先按 bridge 的 live 项目清单校验自己的项目名，再逐引擎扫过——每个引擎都应用配置与 barrier 恢复（恢复对被门禁的引擎也跑，清的是门禁前已武装的聊天室），命令只注册给启用的引擎（配置 `enabled: false` 的项目被整体门禁——见[按项目门禁笔记](2026-08-29-feishu-bridge-chatroom-per-project-gating.zh.md)）。
+- **插件 `apply`** 先注册进程级半边（feature-state codec 与 i18n 子表必须先于首次保存或查找就位），再注册 policy 监听器与工具；`service.whenReady()` resolve 后，先按 bridge 的 live 项目清单校验自己的项目名，再逐引擎扫过——每个引擎都应用配置与 barrier 恢复（恢复对被门禁的引擎也跑，清的是门禁前已武装的聊天室），命令只注册给启用的引擎（配置 `enabled: false` 的项目被整体门禁——见[按项目门禁笔记](2026-08-29-feishu-bridge-chatroom-per-project-gating.zh.md)）。内置 skills 在扫描之后挂载，以启用项目的 workdir 为 cwd 作用域。
 
 ### 快照 v3 与 featureState codec
 
