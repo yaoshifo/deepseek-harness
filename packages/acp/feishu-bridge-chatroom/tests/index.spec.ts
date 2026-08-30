@@ -191,8 +191,6 @@ describe('chatroom plugin entry', () => {
     expect(featureStateCodecs().some(codec => codec.key === chatroomFeatureStateCodec.key)).toBe(true)
     expect(lookupMessage('en', 'chatroom_ready')).toBe('Chatroom role ready')
     expect(ctx.tools.get('feishu_bridge_chatroom')?.name).toBe('feishu_bridge_chatroom')
-    // The tool-family declaration answers the progress-card tag color.
-    expect(toolTagForProgress('feishu_bridge_chatroom', 40)).toContain("color='purple'")
     expect((await ctx.skills.list()).map(skill => skill.name)).toContain('feishu-bridge-chatroom-moderator')
     // The policy listeners answer through the production dispatch face (the
     // persona bypass joins the built-in subtask base on the waterfall).
@@ -221,7 +219,11 @@ describe('chatroom plugin entry', () => {
     expect(typeof dispose).toBe('function')
     dispose()
     expect(ctx.tools.get('feishu_bridge_chatroom')).toBeUndefined()
-    expect(toolTagForProgress('feishu_bridge_chatroom', 40)).toContain("color='blue'")
+    // The tag color stays purple after dispose: streaming.ts's static
+    // agentTools set carries the name, so the color is not a disposable
+    // contribution of this plugin — the declaration's own disposal is
+    // covered by the declareToolFamily unit tests in streaming.spec.ts.
+    expect(toolTagForProgress('feishu_bridge_chatroom', 40)).toContain("color='purple'")
     expect((await ctx.skills.list()).map(skill => skill.name)).not.toContain('feishu-bridge-chatroom-moderator')
     // The policy listeners no longer answer: the built-in base decides.
     expect(service.waterfall(
