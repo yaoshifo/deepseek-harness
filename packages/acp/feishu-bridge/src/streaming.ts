@@ -625,12 +625,6 @@ export class StreamPreview {
    */
   placedAtMs: number = 0
   /**
-   * True once finish() ran — its delete paths clear the card without setting
-   * a terminal flag, and an in-flight tail check must neither reissue the
-   * deleted card nor re-arm. Distinct from {@link completed} (rendered
-   * terminal card) on purpose: finish deletes the card without rendering it.
-   */
-  /**
    * Timestamp of the last progress-card PATCH (throttle reference).
    * @internal White-box: ported same-package tests read/write this directly.
    */
