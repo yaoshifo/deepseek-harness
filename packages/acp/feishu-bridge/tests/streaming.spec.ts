@@ -414,6 +414,43 @@ describe('StreamPreview', () => {
     }
   })
 
+  it('a queue-dropped flush does not let finish() skip the final PATCH', async () => {
+    // flushLocked records lastSentText optimistically before the queued
+    // PATCH runs; when the queue is full the closure never executes and
+    // nothing rewinds — finish() would then see finalText === lastSentText
+    // and return "delivered" without ever sending the card's final content.
+    const mp = createMockUpdaterPlatform()
+    const as = newAsyncSender('test-flush-drop')
+    let releaseBlock!: () => void
+    const block = new Promise<void>((resolve) => { releaseBlock = resolve })
+    try {
+      const sp = newStreamPreview(cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000 }), mp, 'ctx', undefined, as)
+      await sp.appendText('hello ')
+      await sleep(30)
+      await as.barrier()
+
+      // Park the consumer and fill the queue: the next flush's coalescable
+      // PATCH is dropped while its optimistic lastSentText stays claimed.
+      as.enqueue(() => block)
+      await sleep(20)
+      for (let i = 0; i < 256; i++) as.enqueue(() => {})
+      await sp.appendText('world')
+      await sleep(30)
+      releaseBlock()
+      await as.barrier()
+
+      // finish() receives the FULL accumulated text — identical to the
+      // optimistically-claimed (but never delivered) lastSentText.
+      const delivered = await sp.finish('hello world')
+      await as.barrier()
+      expect(delivered).toBe(true)
+      expect(mp.messages.some(m => m.includes('hello world')),
+        'finish() must send the final PATCH, not trust the dropped flush').toBe(true)
+    } finally {
+      as.close()
+    }
+  })
+
   it('throttles rapid updates', async () => {
     const mp = createMockUpdaterPlatform()
     const sp = newStreamPreview(cfg({ intervalMs: 200, minDeltaChars: 5 }), mp, 'ctx', undefined, undefined)

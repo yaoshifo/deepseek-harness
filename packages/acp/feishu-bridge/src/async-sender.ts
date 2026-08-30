@@ -100,16 +100,21 @@ export class AsyncSender {
    * bounding card lag to ~one RTT instead of the full backlog depth.
    *
    * @param fn - Idempotent full-state snapshot to execute on the consumer.
+   * @returns True when the snapshot was queued; false when the queue was
+   *   full or the sender closed — callers that optimistically record the
+   *   send (StreamPreview.lastSentText) must rewind on false, since the
+   *   closure never runs and no failure path will do it for them.
    */
-  enqueueCoalescable(fn: () => void | Promise<void>): void {
+  enqueueCoalescable(fn: () => void | Promise<void>): boolean {
     this.checkQueueDepth()
-    if (this.closed) return
+    if (this.closed) return false
     if (this.queue.length >= asyncSendBufSize) {
       console.warn(`async sender queue full, dropping send (queue ${asyncSendBufSize})`)
-      return
+      return false
     }
     this.queue.push({ fn, coalescable: true })
     void this.drain()
+    return true
   }
 
   /**

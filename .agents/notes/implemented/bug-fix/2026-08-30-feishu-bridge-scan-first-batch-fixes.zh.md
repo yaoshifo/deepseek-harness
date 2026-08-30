@@ -24,7 +24,7 @@ Status: implemented
 
 **B2——被中断的 ask 被迟到的 deliverCards 续体重新挂起（engine.ts:5000）。** park 写入位于 `deliverCards` 的第一个网络 await 之后；中断分支的清理守卫（`pendingAsk === pending`）在写入发生前是 no-op。stop 落在投递窗口内时，在途续体会把已取消的 ask 重新挂起——后续消息全部被路由进死权限请求并吞掉、idle reaper 跳过该会话、卡片冻结。修法：中断分支在清理前置位 `askInterrupted` 标志；续体在 park 前检查并退出。
 
-**B3——async-sender 队列满丢弃终态 PATCH（async-sender.ts:87）。** `markCompleted`/`markFailed`/`markStopped` 走普通 `enqueue`，其队满行为是静默丢弃：卡片永停运行色、同闭包里的答案投递永不执行（单个黑洞 PATCH 即可钉住队列约 124 秒）。修法：新增 `enqueueTerminal`——队满时告警并越过上限入队而非丢弃；终态每 turn 至多一次，溢出有界。三处终态调用点切换过去；coalescable 快照的丢弃语义不变（过期快照可丢，终态是卡片的最后一句话）。
+**B3——async-sender 队列满丢弃终态 PATCH（async-sender.ts:87）。** `markCompleted`/`markFailed`/`markStopped` 走普通 `enqueue`，其队满行为是静默丢弃：卡片永停运行色、同闭包里的答案投递永不执行（单个黑洞 PATCH 即可钉住队列约 124 秒）。修法：新增 `enqueueTerminal`——队满时告警并越过上限入队而非丢弃；终态每 turn 至多一次，溢出有界。三处终态调用点切换过去。文本路径的伴生缺陷：`flushLocked` 在排队时乐观记录 `lastSentText`，队满丢弃时闭包永不执行、失败回卷永不触发——`finish()` 随即看到 `finalText === lastSentText` 便"已投递"返回、终态内容从未发到卡片。`enqueueCoalescable` 现在返回快照是否入队，`flushLocked` 在丢弃时回卷乐观声明（文本与 via-update 标志）。
 
 **B4——陈旧的 ask-human 标记吞掉用户消息（chatroom.ts:953）。** 只有 `routePendingHumanReply` 清 `pendingHumanQuestionRole`；`finalizeChatroomEnd` 与 `interruptChatroom` 都不清，且该标记 durable、跨 `/new` 存活。聊天室带着未答问题被回收后，hub 的下一条普通消息被路由进只会 warn 的死 `askRole`，消息被引擎吞掉。修法：`finalizeChatroomEnd` 清除标记（interrupt 也落在它这里）；路由器前置校验角色会话仍存活——陈旧标记回落正常 agent 路径（`false`）而不是吃掉消息。
 

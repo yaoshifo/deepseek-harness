@@ -872,10 +872,11 @@ export class StreamPreview {
       // Optimistically update lastSentText so concurrent flushes with the
       // same content don't queue duplicate PATCHes; rewind on failure.
       const prevLastSentText = this.lastSentText
+      const prevLastSentViaUpdate = this.lastSentViaUpdate
       this.lastSentText = text
       this.lastSentViaUpdate = true
       this.lastSentAt = Date.now()
-      this.async.enqueueCoalescable(async () => {
+      const queued = this.async.enqueueCoalescable(async () => {
         try {
           await updater.updateMessage(handle, content)
         } catch (error) {
@@ -902,6 +903,14 @@ export class StreamPreview {
           this.failedPatchStreak = 0
         })
       })
+      if (!queued) {
+        // The snapshot was dropped (queue full or closed): the closure never
+        // runs, so its failure rewind never fires either — rewind the
+        // optimistic claim here or finish() would skip the final PATCH for
+        // content the card never received.
+        if (this.lastSentText === sentText) this.lastSentText = prevLastSentText
+        if (this.lastSentViaUpdate) this.lastSentViaUpdate = prevLastSentViaUpdate
+      }
       return
     }
     try {
