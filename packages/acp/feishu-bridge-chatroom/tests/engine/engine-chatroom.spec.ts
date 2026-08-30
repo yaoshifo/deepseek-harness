@@ -134,6 +134,28 @@ describe('StartChatroom', () => {
     expect(p.sentCards).toHaveLength(2)
   })
 
+  it('the role persona prompt resolves the role directory through the session key', async () => {
+    // The persona prompt must flatten the ROLE directory's CLAUDE.md — the
+    // workdir override startChatroom persists under the role's session key.
+    // Resolving through the internal session id instead misses the override
+    // and silently drops every role's persona (08e1428c75 regression).
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+
+    const roles = listChatroomRoles(e, hub)
+    expect(roles).toHaveLength(2)
+    const role = roles[0]!
+    expect(role.name).toBe('taleb')
+    const roleSession = e.sessions.getOrCreateActive(role.sessionKey)
+
+    const options = e.buildSessionStartOptions(role.sessionKey, roleSession)
+    expect(options.persona, 'a role session gets a persona block').toBeDefined()
+    expect(options.persona?.prompt, 'the persona text comes from the role directory CLAUDE.md').toContain('# taleb')
+  })
+
   it('fails fast on an unknown role without spawning', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)

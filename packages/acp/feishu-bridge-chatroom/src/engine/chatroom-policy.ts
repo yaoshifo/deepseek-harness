@@ -179,7 +179,12 @@ function decorateSessionStartOptions(engine: Engine, session: Session, options: 
     const research = researchHub !== undefined && chatroomState(researchHub).chatroomResearch
     options.persona = {
       prompt: buildChatroomSystemPrompt({
-        workDir: engine.sessionWorkDir(session.id),
+        // Resolve through the SESSION KEY: the per-chat workdir overrides
+        // (startChatroom's role persona dirs) are keyed by interactive keys,
+        // while session.id is the internal `s${n}` registry id and never
+        // matches — a miss here silently strips every role's persona
+        // (08e1428c75 regression).
+        workDir: engine.sessionWorkDir(options.sessionKey),
         isRole: true,
         isDirect: false,
         isModerator: moderator,
@@ -197,7 +202,9 @@ function decorateSessionStartOptions(engine: Engine, session: Session, options: 
     const moderator = chatroomState(session).chatroomModerator
     options.persona = {
       prompt: buildChatroomSystemPrompt({
-        workDir: engine.sessionWorkDir(session.id),
+        // Session key, not the internal registry id — see the role branch
+        // above for the override-key mismatch this avoids.
+        workDir: engine.sessionWorkDir(options.sessionKey),
         isRole: false,
         isDirect: directRole,
         isModerator: moderator,
