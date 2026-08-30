@@ -1,12 +1,13 @@
 /**
  * /fork wiring (Go agent/dsh/fork.go): a session id carrying the __fork__
  * sentinel creates a NEW native session seeded with the parent's balanced
- * completed-turn prefix — the child inherits the conversation context without
- * appending to the parent's log. The seed source resolves live-first, then
- * the persisted log (Go reads disk): a merely-persisted parent still forks.
- * A missing/unreadable source degrades to a fresh session, while
- * PrepareForkSession fails fast so the engine's guard fires before the group
- * is created.
+ * seedable prefix — completed turns plus the flying turn cut at its last
+ * balanced point and closed synthetically — so the child inherits the
+ * conversation context without appending to the parent's log. The seed source
+ * resolves live-first, then the persisted log (Go reads disk): a
+ * merely-persisted parent still forks. A missing/unreadable source degrades
+ * to a fresh session, while PrepareForkSession fails fast so the engine's
+ * guard fires before the group is created.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -116,9 +117,47 @@ describe('fork session seed', () => {
     expect(String(opts.sessionId)).not.toBe('cc-parent-1')
     expect(opts.meta?.cwd).toBe('/workspace/project')
     expect(String(opts.meta?.parentSession)).toBe('cc-parent-1')
-    expect(opts.meta?.seedLength).toBe(8) // both complete turns, open turn excluded
-    expect((opts.seed ?? []).map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+    // both complete turns plus the open turn's user message, closed with a
+    // synthetic turn/end (seq 10) — the flying input is no longer dropped
+    expect(opts.meta?.seedLength).toBe(11)
+    expect((opts.seed ?? []).map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    const closer = opts.seed!.at(-1)! as SessionEvent<'turn/end'>
+    expect(closer.type).toBe('turn/end')
+    expect(closer.data).toEqual({ turn: 0, reason: { kind: 'interrupted' } })
     expect(session.currentSessionID()).not.toBe('cc-parent-1')
+  })
+
+  it('settles a dangling ask_user_question in the open step of a live parent', async () => {
+    // the ask-blocked incident shape: the flying turn's open step carries an
+    // assistant message and a tool call with no result
+    const events = [
+      ...turn(0),
+      ev('turn/start', 4), ev('user/message', 5), ev('step/start', 6), ev('assistant/message', 7),
+      { type: 'tool/call', seq: 8, time: 8, data: { callId: 'call-ask', name: 'ask_user_question' } } as SessionEvent,
+      ev('agent/inbox/spliced', 9),
+    ]
+    const h = createHarness([parentAgent('cc-parent-ask', events)])
+    const adapter = newAdapter(h.ctx)
+
+    await adapter.startSession(`${ForkSessionPrefix}cc-parent-ask`)
+
+    const opts = h.creates[0]!
+    const seed = opts.seed ?? []
+    // the dangling call is settled (seq 9), the step closed (10), the turn closed (11);
+    // the trailing splice stays out — the child gets its own first message
+    expect(seed.map(e => e.type)).toEqual([
+      'turn/start', 'user/message', 'assistant/message', 'turn/end',
+      'turn/start', 'user/message', 'step/start', 'assistant/message', 'tool/call',
+      'tool/result', 'step/end', 'turn/end',
+    ])
+    const settled = seed[9]! as SessionEvent<'tool/result'>
+    expect(settled.data.message).toMatchObject({
+      source: { kind: 'tool', callId: 'call-ask' },
+      role: 'user',
+    })
+    expect(settled.data.message.content[0]).toMatchObject({ type: 'tool-result', isError: true })
+    expect((seed[11]! as SessionEvent<'turn/end'>).data.reason).toEqual({ kind: 'interrupted' })
+    expect(opts.meta?.seedLength).toBe(12)
   })
 
   it('creates without a seed when the parent has no completed turn', async () => {
@@ -155,9 +194,11 @@ describe('fork session seed', () => {
     await adapter.startSession(`${ForkSessionPrefix}cc-cold`)
 
     const opts = h.creates[0]!
-    expect((opts.seed ?? []).map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+    // the persisted view cuts and closes the flying turn the same way
+    expect((opts.seed ?? []).map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect((opts.seed!.at(-1)! as SessionEvent<'turn/end'>).data).toEqual({ turn: 0, reason: { kind: 'interrupted' } })
     expect(String(opts.meta?.parentSession)).toBe('cc-cold')
-    expect(opts.meta?.seedLength).toBe(8)
+    expect(opts.meta?.seedLength).toBe(11)
   })
 
   it('prefers the live parent over the stale persisted log', async () => {

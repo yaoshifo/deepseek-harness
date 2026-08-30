@@ -31,6 +31,7 @@ import {
 } from '../core/types.js'
 import type { HistoryEntry } from '../core/types.js'
 import { locateForkCut } from './fork-at.js'
+import { seedablePrefix } from './fork-seed.js'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
 import { agentConventionsPrompt, tddDefaultPrompt } from '../engine/agent-conventions.js'
 import type { ContextSnapshotValues } from '../context/types.js'
@@ -56,7 +57,7 @@ import type {
 export interface DshAgentLike {
   readonly id: unknown
   readonly status: 'idle' | 'running'
-  /** The agent's durable session log (fork seeds slice its completed turns). */
+  /** The agent's durable session log (fork seeds slice its seedable prefix). */
   readonly session: {
     readonly events: readonly SessionEvent[]
     readonly header?: { readonly parentSession?: unknown; readonly cwd?: unknown }
@@ -109,7 +110,7 @@ export interface DshCreateOptionsLike {
   sessionId?: unknown
   resumeSessionId?: unknown
   meta?: { cwd?: string; parentSession?: unknown; seedLength?: number; origin?: 'subagent' | 'oneshot' }
-  /** Fork seed: the parent's completed-turn prefix (see startSession). */
+  /** Fork seed: the parent's seedable prefix (see startSession). */
   seed?: readonly SessionEvent[]
   agentOptions?: { provider?: string; model?: string; reasoningEffort?: string }
   /**
@@ -276,30 +277,15 @@ export function stripModelAlias(model: string): string {
 }
 
 /**
- * The balanced completed-turn prefix of a live parent agent's session log:
- * every event up to and including the last `turn/end` (the in-flight turn is
- * unbalanced and cannot replay as a child session). The /fork child is seeded
- * with exactly this prefix, mirroring Go's copyForkSession on-disk copy.
- * Because live sequence numbers equal array indexes, the slice stays a valid
- * seed contiguous from seq 0.
+ * The balanced seedable prefix of a live parent agent's session log: the
+ * completed-turn prefix, plus the in-flight turn cut at its last balanced
+ * point and closed with synthetic events (agent-dsh/fork-seed). The /fork
+ * child is seeded with exactly this prefix, mirroring Go's copyForkSession
+ * on-disk copy extended to flying turns. Because live sequence numbers equal
+ * array indexes, the slice stays a valid seed contiguous from seq 0.
  */
 function completedTurnPrefix(parent: DshAgentLike): SessionEvent[] {
-  return trimCompletedTurnPrefix(parent.session.events)
-}
-
-/**
- * Every event up to and including the last `turn/end` of an event log (the
- * in-flight turn is unbalanced and cannot replay as a child session). Valid
- * for both live registry views and persisted logs — sequence numbers equal
- * array indexes in both, so the slice stays a seed contiguous from seq 0.
- *
- * @param events - the source session's event log.
- * @returns the balanced completed-turn prefix; empty when no turn ended yet.
- */
-function trimCompletedTurnPrefix(events: readonly SessionEvent[]): SessionEvent[] {
-  const lastEnd = events.findLast(e => e.type === 'turn/end')
-  if (lastEnd === undefined) return []
-  return events.slice(0, lastEnd.seq + 1)
+  return seedablePrefix(parent.session.events)
 }
 
 /**
@@ -1067,13 +1053,14 @@ export class DshAgentAdapter {
   }
 
   /**
-   * The completed-turn prefix of a session that lives only in persistence
-   * (daemon restart, idle-reaped parent) — the /fork seed fallback Go gets
-   * for free by reading the on-disk transcript.
+   * The seedable prefix of a session that lives only in persistence (daemon
+   * restart, idle-reaped parent) — the /fork seed fallback Go gets for free
+   * by reading the on-disk transcript. Flying turns are cut and closed the
+   * same way as for a live parent (agent-dsh/fork-seed).
    *
    * @param origID - the native id of the fork source session.
-   * @returns the persisted seed (possibly empty when the source has no
-   * completed turn), or undefined when the service is absent or the session
+   * @returns the persisted seed (possibly empty when the source has nothing
+   * seedable), or undefined when the service is absent or the session
    * is not in persistence.
    */
   private async persistedForkSeed(origID: string): Promise<SessionEvent[] | undefined> {
@@ -1088,7 +1075,7 @@ export class DshAgentAdapter {
       // persisted seed".
       return undefined
     }
-    return trimCompletedTurnPrefix(events)
+    return seedablePrefix(events)
   }
 
   /**
@@ -1131,8 +1118,17 @@ export class DshAgentAdapter {
       senderType: quotedSenderType,
       quotedTimeMs,
     })
+    // The locator keeps everything through the turn holding the quote; when
+    // that turn is still open (quote of a message from the in-flight turn),
+    // the raw slice would carry dangling events. Balance it with the same
+    // synthetic closure the plain fork seed uses — a balanced slice passes
+    // through unchanged.
     const newID = freshNativeSessionId()
-    this.forkAtSeeds.set(newID, { seed: [...inspection.events.slice(0, keep)], parentID: origID, childWorkDir })
+    this.forkAtSeeds.set(newID, {
+      seed: seedablePrefix(inspection.events.slice(0, keep)),
+      parentID: origID,
+      childWorkDir,
+    })
     return newID
   }
 
@@ -1364,7 +1360,7 @@ export class DshAgentAdapter {
   /**
    * ForkQuerier: a side question against the full context of an existing
    * session without affecting the main conversation (Go ForkQuery — the
-   * persisted-log copy becomes a completed-turn seed from the live parent).
+   * persisted-log copy becomes a seedable seed from the live parent).
    *
    * @param sessionID - the native id of the live parent session to seed from.
    * @param question - the side question asked against the parent's context.
@@ -1501,7 +1497,7 @@ export class DshAgentAdapter {
   }
 
   /**
-   * The completed-turn seed for a one-shot side query against a live parent
+   * The seedable seed for a one-shot side query against a live parent
    * (Go copies the persisted log; the registry requires a balanced prefix,
    * so an in-flight parent turn is excluded).
    */
@@ -1612,7 +1608,8 @@ export class DshAgentAdapter {
    * (or the ContinueSession sentinel) creates a fresh native session keyed
    * by the engine session key; a concrete id resumes that persisted session;
    * a `__fork__<origID>` sentinel creates a new session seeded with the
-   * parent's completed-turn prefix (Go /fork semantics); a
+   * parent's seedable prefix — completed turns plus the flying turn cut
+    * and closed at its last balanced point (extended Go /fork semantics); a
    * `__forkat__<newID>` sentinel consumes the staged truncated prefix a
    * rollback fork prepared (Go /fork on a quoted message) as one seeded
    * create.
@@ -1666,7 +1663,7 @@ export class DshAgentAdapter {
         ...(setup !== undefined ? { setup } : {}),
       })
     } else if (isFork) {
-      // Fork: copy the parent's completed turns into a fresh native session
+      // Fork: copy the parent's seedable prefix into a fresh native session
       // (seed), so the child inherits the conversation without appending to
       // the parent's log. The seed source resolves live-first — the registry's
       // in-memory log is fresher than the write-behind persisted one — then
