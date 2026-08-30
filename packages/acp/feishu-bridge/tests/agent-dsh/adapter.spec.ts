@@ -195,6 +195,33 @@ describe('toolBackgroundOf', () => {
 })
 
 describe('DshAgentAdapter', () => {
+  it('a closed session removes itself from the live maps (no zombie /list rows)', async () => {
+    // /new rotation, provider switch, idle reaping, and user stop all close
+    // single sessions; a closed session left in liveSessions leaks (with its
+    // 100-turn recent window) and lists as an active row shadowing the
+    // persisted one.
+    const h = createHarness()
+    const a = newAdapter(h)
+    const session = (await a.startSession('', { sessionKey: 'feishu:oc_z:ou_z' })) as DshAgentSession
+    const id = session.currentSessionID()
+    expect((await a.listSessions()).some(s => s.id === id)).toBe(true)
+
+    await session.close()
+
+    expect((await a.listSessions()).some(s => s.id === id), 'closed session must not list as live').toBe(false)
+  })
+
+  it('an agent/disposed session removes itself from the live maps too', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    const session = (await a.startSession('', { sessionKey: 'feishu:oc_z2:ou_z' })) as DshAgentSession
+    const id = session.currentSessionID()
+
+    h.disposeAgent(h.agents.find(ag => String(ag.id) === id)!)
+
+    expect((await a.listSessions()).some(s => s.id === id), 'vanished agent must not list as live').toBe(false)
+  })
+
   it('getActiveProvider exposes the route context window (Go ProviderConfig.ContextWindow)', () => {
     const h = createHarness()
     const a = new DshAgentAdapter(h.ctx, {

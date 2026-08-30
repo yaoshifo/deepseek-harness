@@ -1752,6 +1752,15 @@ export class DshAgentAdapter {
     }
     this.sessionsByEngineKey.set(key, session)
     this.liveSessions.set(session.currentSessionID(), session)
+    // A closed/vanished session unregisters itself: without this, /new
+    // rotations and idle reaping leak the dead session (with its recent
+    // window) forever and /list shows it as an active row shadowing the
+    // persisted one.
+    const nativeID = session.currentSessionID()
+    session.registerDisposeHook(() => {
+      this.liveSessions.delete(nativeID)
+      if (this.sessionsByEngineKey.get(key) === session) this.sessionsByEngineKey.delete(key)
+    })
     return session
   }
 
@@ -2191,6 +2200,7 @@ export class DshAgentSession implements AgentSession {
   async close(): Promise<void> {
     if (this.disposed) return
     this.disposed = true
+    this.fireDisposeHook()
     this.channel.close()
     try {
       await this.handle.dispose()
@@ -2203,7 +2213,26 @@ export class DshAgentSession implements AgentSession {
   markDisposed(): void {
     if (this.disposed) return
     this.disposed = true
+    this.fireDisposeHook()
     this.channel.close()
+  }
+
+  /** Adapter cleanup: unregister from the live maps exactly once on death. */
+  private disposeHook: (() => void) | undefined
+
+  /**
+   * Register the adapter's map-cleanup hook (idempotent; the last
+   * registration wins — the adapter re-keys a session only on replace).
+   * @param hook - Invoked exactly once when the session dies.
+   */
+  registerDisposeHook(hook: () => void): void {
+    this.disposeHook = hook
+  }
+
+  private fireDisposeHook(): void {
+    const hook = this.disposeHook
+    this.disposeHook = undefined
+    hook?.()
   }
 
   /** Cancel the in-flight turn (user stop; Go Interrupt semantics). */
