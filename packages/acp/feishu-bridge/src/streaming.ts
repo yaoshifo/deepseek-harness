@@ -1705,7 +1705,7 @@ export class StreamPreview {
         this.lastSentText = display
         this.lastSentViaUpdate = true
         this.degraded = false
-        this.async.enqueue(async () => {
+        this.async.enqueueTerminal(async () => {
           try {
             await updater.updateMessage(handle, content)
           } catch (error) {
@@ -1754,7 +1754,7 @@ export class StreamPreview {
       this.lastSentText = display
       this.lastSentViaUpdate = true
       this.degraded = false
-      this.async.enqueue(async () => {
+      this.async.enqueueTerminal(async () => {
         try {
           await updater.updateMessage(handle, content)
         } catch (error) {
@@ -1790,7 +1790,7 @@ export class StreamPreview {
         const handle = this.previewMsgID
         const rc = this.replyCtx
         if (this.async !== undefined) {
-          this.async.enqueue(async () => {
+          this.async.enqueueTerminal(async () => {
             try {
               await r.renderStoppedCard(rc, handle)
             } catch (error) {

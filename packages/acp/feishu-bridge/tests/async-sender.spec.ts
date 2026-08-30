@@ -89,6 +89,25 @@ describe('AsyncSender', () => {
     }
   })
 
+  it('enqueueTerminal never drops: the terminal runs once the backlog drains', async () => {
+    const as = newAsyncSender('test')
+    try {
+      let terminalRan = false
+      const block = deferred()
+      as.enqueue(() => block.promise)
+      await sleep(20) // consumer picks up the first item
+      for (let i = 0; i < 256; i++) {
+        as.enqueue(() => {})
+      }
+      as.enqueueTerminal(() => { terminalRan = true })
+      block.resolve()
+      await as.barrier()
+      expect(terminalRan).toBe(true)
+    } finally {
+      as.close()
+    }
+  })
+
   it('concurrent enqueues all run', async () => {
     const as = newAsyncSender('test')
     try {

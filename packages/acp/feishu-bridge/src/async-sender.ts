@@ -113,6 +113,26 @@ export class AsyncSender {
   }
 
   /**
+   * Schedule a terminal operation (markCompleted/markFailed/markStopped
+   * PATCHes): unlike {@link enqueue} a full queue does NOT drop it — a
+   * terminal is the last word on a card; dropping it freezes the card in its
+   * running color and skips the answer delivery riding the same closure.
+   * Overflowing the cap is accepted: terminals are at most one per turn, so
+   * growth is bounded by the backlog drain rate.
+   *
+   * @param fn - Terminal operation to execute on the consumer.
+   */
+  enqueueTerminal(fn: () => void | Promise<void>): void {
+    this.checkQueueDepth()
+    if (this.closed) return
+    if (this.queue.length >= asyncSendBufSize) {
+      console.warn(`async sender queue full, enqueuing terminal beyond cap (queue ${this.queue.length})`)
+    }
+    this.queue.push({ fn })
+    void this.drain()
+  }
+
+  /**
    * Like {@link enqueue} but executes fn inline when the queue is full.
    *
    * @param fn - Operation to execute; runs inline when the queue is full.

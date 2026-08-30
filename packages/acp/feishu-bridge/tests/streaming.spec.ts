@@ -383,6 +383,37 @@ describe('StreamPreview', () => {
     }
   })
 
+  it('markCompleted still delivers the terminal PATCH when the queue is full', async () => {
+    // A full queue must not swallow a terminal PATCH: the card would freeze
+    // in its running color and the answer delivery inside the same closure
+    // would never run (the queue-full drop is fine for coalescable
+    // snapshots — a terminal is the last word on the card and must land).
+    const mp = createMockUpdaterPlatform()
+    const as = newAsyncSender('test-terminal-full')
+    let releaseBlock!: () => void
+    const block = new Promise<void>((resolve) => { releaseBlock = resolve })
+    try {
+      const sp = newStreamPreview(cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000 }), mp, 'ctx', undefined, as)
+      await sp.appendText('partial answer')
+      await sleep(30)
+      await as.barrier()
+      expect(mp.messages.length).toBeGreaterThan(0)
+
+      // Park the consumer and fill the queue to its cap.
+      as.enqueue(() => block)
+      await sleep(20)
+      for (let i = 0; i < 256; i++) as.enqueue(() => {})
+
+      await sp.markCompleted()
+      releaseBlock()
+      await as.barrier()
+
+      expect(lastTextContent(mp)?.status?.state, 'the terminal PATCH must land once the backlog drains').toBe('completed')
+    } finally {
+      as.close()
+    }
+  })
+
   it('throttles rapid updates', async () => {
     const mp = createMockUpdaterPlatform()
     const sp = newStreamPreview(cfg({ intervalMs: 200, minDeltaChars: 5 }), mp, 'ctx', undefined, undefined)
