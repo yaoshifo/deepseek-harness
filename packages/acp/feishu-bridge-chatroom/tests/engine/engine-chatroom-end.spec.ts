@@ -24,6 +24,7 @@ import {
   listChatroomRoles,
   maybeAutoRelayRole,
   askRole,
+  routePendingHumanReply,
   startChatroom,
 } from '../../src/engine/chatroom.js'
 import { stashChatroomResearchFlags } from '../../src/engine/chatroom-cmd.js'
@@ -351,5 +352,38 @@ describe('chatroomAssistantGroupName', () => {
     const got = chatroomAssistantGroupName(long)
     expect(Array.from(got).length).toBeLessThanOrEqual(60)
     expect(got.startsWith('聊天室·助手·')).toBe(true)
+  })
+})
+
+describe('AskHuman pending-flag lifecycle', () => {
+  it('finalizeChatroomEnd clears a stale pending ask-human flag', async () => {
+    // A role asked the human, the user never replied, and the chatroom
+    // ends: the durable flag must not survive the teardown — a surviving
+    // flag routes the hub's next normal message into a dead askRole.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    await startChatroom(e, hub, ['taleb'], 'topic')
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    chatroomState(hubSess).pendingHumanQuestionRole = 'taleb'
+
+    finalizeChatroomEnd(e, hub)
+
+    expect(chatroomState(hubSess).pendingHumanQuestionRole).toBe('')
+  })
+
+  it('a stale ask-human flag falls through instead of swallowing the message', async () => {
+    // Old state on disk (flag set, role session already gone): the router
+    // must hand the message back to the normal agent path (false), not
+    // consume it into an askRole that can only warn and drop it.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const hub = 'test:hub:user-1'
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    chatroomState(hubSess).pendingHumanQuestionRole = 'ghost'
+
+    expect(routePendingHumanReply(e, p, hub, '我的意思是……')).toBe(false)
+    expect(chatroomState(hubSess).pendingHumanQuestionRole).toBe('')
   })
 })

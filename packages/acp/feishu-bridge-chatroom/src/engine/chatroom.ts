@@ -955,6 +955,15 @@ export function routePendingHumanReply(e: Engine, _p: Platform, hubKey: string, 
   const roleName = hub !== undefined ? chatroomState(hub).pendingHumanQuestionRole.trim() : ''
   if (roleName === '') return false
   if (content.trim().startsWith('/')) return false
+  // A stale flag (the chatroom ended or was interrupted before the user
+  // replied) must not swallow the message into a dead askRole — hand it
+  // back to the normal agent path instead.
+  const roleLive = listChatroomRoles(e, hubKey).some(r => r.name === roleName)
+  if (!roleLive) {
+    if (hub !== undefined) chatroomState(hub).pendingHumanQuestionRole = ''
+    e.sessions.save()
+    return false
+  }
   // Clear first so a concurrent reply doesn't double-route; askRole re-arms
   // the role's relay gate.
   if (hub !== undefined) chatroomState(hub).pendingHumanQuestionRole = ''
@@ -1259,6 +1268,10 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
     // Hub returns to a normal session — drop the moderator flag so subsequent
     // turns use the default harness path.
     chatroomState(hub).chatroomModerator = false
+    // A pending ask-human the user never answered dies with the room: a
+    // surviving durable flag routes the hub's next normal message into a
+    // dead askRole (interruptChatroom lands here too).
+    chatroomState(hub).pendingHumanQuestionRole = ''
     // Research flags live on the hub; without this a second research chatroom
     // in the same group inherits the previous round count.
     clearChatroomResearchFlags(hub)
