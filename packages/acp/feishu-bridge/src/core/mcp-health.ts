@@ -23,6 +23,9 @@ import type { McpHealthConfig, McpHealthServerConfig } from '../index.js'
 /** Registered context name: `feishu-bridge:mcp-health`. */
 export const MCP_HEALTH_CONTEXT_NAME = 'feishu-bridge:mcp-health'
 
+/** mcp-client's public tool-name prefix (`mcp__<serverName>__<rawName>`). */
+export const MCP_TOOL_PREFIX = 'mcp__'
+
 /**
  * Prompt order 130: after `sandbox:policy` (110), `approval:policy` (115),
  * and `subagent:delegation` (120) — a late, degraded-state line, not policy.
@@ -41,6 +44,26 @@ export const MCP_HEALTH_DEFAULT_STARTUP_GRACE_SECS = 180
  */
 function toolPrefixOf(serverName: string): string {
   return `mcp__${serverName}__`
+}
+
+/**
+ * Split an mcp-client public tool name into its server and raw parts, the
+ * inverse of {@link toolPrefixOf}. `mcp__<serverName>__<rawName>` splits on
+ * the first `__` after the prefix, so a serverName containing `_` stays
+ * intact. Ceiling (the adapter's own grouping documents the same one): two
+ * live serverNames that collide on a `mcp__<a>__<b>__` prefix
+ * mis-attribute each other's tools.
+ *
+ * @param name - Public tool name from the process-global tool registry.
+ * @returns The serverName and raw tool name, or undefined when the name is
+ * not an mcp tool name or the server part is empty.
+ */
+export function splitMcpToolName(name: string): { server: string; raw: string } | undefined {
+  if (!name.startsWith(MCP_TOOL_PREFIX)) return undefined
+  const rest = name.slice(MCP_TOOL_PREFIX.length)
+  const sep = rest.indexOf('__')
+  if (sep <= 0) return undefined
+  return { server: rest.slice(0, sep), raw: rest.slice(sep + 2) }
 }
 
 /**

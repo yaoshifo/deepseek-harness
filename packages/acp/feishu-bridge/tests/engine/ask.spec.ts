@@ -187,10 +187,11 @@ describe('buildAskQuestionsCard', () => {
       },
     ], new Map())
 
-    // Question 2 heading is numbered; its buttons address qIdx 1.
-    const heading = card.elements[4] as { kind: string; content: string }
+    // Question 2 heading is numbered; its buttons address qIdx 1. Question 1's
+    // block ends with the free-text hint note, so the second heading sits at 5.
+    const heading = card.elements[5] as { kind: string; content: string }
     expect(heading.content).toBe('**2. Which framework?**')
-    const row = card.elements[5] as { btnValue: string }
+    const row = card.elements[6] as { btnValue: string }
     expect(row.btnValue).toBe('askq:1:1')
   })
 
@@ -238,5 +239,13 @@ describe('buildAskQuestionsCard', () => {
     const q: UserQuestion = { ...singleQuestion(), options: [] }
     const card = buildAskQuestionsCard('t', [q], new Map())
     expect(card.elements).toHaveLength(1)
+  })
+
+  it('an interactive single-select question ends with the free-text hint note', () => {
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map())
+
+    const note = card.elements[card.elements.length - 1] as { kind: string; text: string }
+    expect(note.kind).toBe('note')
+    expect(note.text).toBe('也可以直接文字输入')
   })
 })

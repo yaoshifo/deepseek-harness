@@ -78,10 +78,12 @@ describe('processInteractiveEvents subagent projection', () => {
     const preview = state.preview
     expect(preview).toBeDefined()
     const display = preview!.buildProgressDisplayLocked()
-    expect(display).toContain("<text_tag color='blue'>⚙️ subagent</text_tag>")
+    // Both entries settled (the child by its result, the parent by the
+    // terminal success finalization), so both tags take the success color.
+    expect(display).toContain("<text_tag color='green'>🤖 subagent</text_tag>")
     expect(display).toContain('read -> /tmp/report.md')
     expect(display).toContain('🤖 累计派发：2')
-    expect(display).toContain("<text_tag color='blue'>⚙️ Bash</text_tag>")
+    expect(display).toContain("<text_tag color='green'>💻 Bash</text_tag>")
     // The child result rides the card only — no standalone chat message.
     expect(p.messages.some(m => (m.startsWith('send:') || m.startsWith('reply:')) && m.includes('report body'))).toBe(false)
   })

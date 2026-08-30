@@ -97,8 +97,9 @@ function parsePicks<T>(raw: string, kind: 'roles' | 'topics'): T[] {
  * @returns the exact disposer that unregisters the tool.
  */
 export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): () => void {
-  // The tag color for this tool's progress entries is declared here, not
-  // hardcoded in streaming.ts — the tool's owner states its family.
+  // The tag family is declared at registration (the tool's owner states
+  // it); streaming.ts's static agentTools set also names this tool, so the
+  // declaration is redundant for the color today.
   const undeclare = declareToolFamily('feishu_bridge_chatroom', 'agent')
   const disposeTool = ctx.tools.register(defineTool({
     name: 'feishu_bridge_chatroom',

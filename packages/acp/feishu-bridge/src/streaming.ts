@@ -30,6 +30,7 @@ import {
   type TextPreviewContent,
 } from './core/types.js'
 import type { AsyncSender } from './async-sender.js'
+import { splitMcpToolName } from './core/mcp-health.js'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './engine/message-split.js'
 import type { TodoItem } from './progress.js'
 
@@ -115,7 +116,7 @@ export class ProgressEntry {
   toolID: string = ''
   /** Tool entry: result text (appended with --- separator). */
   result: string = ''
-  /** Tool entry: whether the recorded result succeeded (rendered 🟢 vs 🔴). */
+  /** Tool entry: whether the recorded result succeeded (tag color green vs red). */
   success: boolean = false
   /** Tool entry: whether a result has been recorded. */
   hasResult: boolean = false
@@ -149,21 +150,23 @@ export class ProgressEntry {
     // Dynamic name truncation based on seq digit count.
     let maxNameLen = 16
     if (this.seq >= 100) maxNameLen -= String(this.seq).length - 2
+    // 状态色：结果落地后绿/红接管标签；运行中保持家族色。
+    const status: ToolCallStatus = this.hasResult ? (this.success ? 'success' : 'failed') : 'running'
     let tag: string
     if (this.skillName !== '') {
       let dn = this.skillName
       if (dn.length > maxNameLen) dn = dn.slice(dn.length - maxNameLen)
-      tag = `<text_tag color='blue'>📚 ${dn}</text_tag>`
+      tag = `<text_tag color='${tagColorForStatus(status, 'blue')}'>📚 ${dn}</text_tag>`
     } else {
-      tag = toolTagForProgress(this.toolName, maxNameLen)
+      tag = toolTagForProgress(this.toolName, maxNameLen, status)
     }
-    // Thinking entries: code block with 5-line body, fixed 🟢 status.
+    // Thinking entries: code block with 5-line body, no status (they settle
+    // outside the tool-result flow).
     if (this.isThinking) {
       let b = this.header
       b += ' '
       b += tag
       if (this.seq > 0) b += ` · ${this.seq}`
-      b += ' 🟢'
       if (isLatest) b += ' 🚨'
       b += '\n```\n'
       const padded = padToFixedLines(this.body, 5)
@@ -176,11 +179,6 @@ export class ProgressEntry {
     b += ' '
     b += tag
     if (this.seq > 0) b += ` · ${this.seq}`
-    if (this.hasResult) {
-      b += this.success ? ' 🟢' : ' 🔴'
-    } else {
-      b += ' 🟡'
-    }
     if (isLatest) b += ' 🚨'
     let body = padToFixedLines(this.body, 1)
     let resultText: string
@@ -245,9 +243,26 @@ function padLineWidth(s: string, minW: number): string {
 
 // Tool families for the tag color. Claude Code names (Read/Write/…) stay for
 // ported-test parity; the lowercase entries are the dsh-native tool names.
-const editTools = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'MultiEdit', 'NotebookEdit', 'read', 'write', 'edit', 'glob', 'grep', 'lsp', 'session_search', 'session_event_read', 'session_event_search', 'session_event_trace', 'memory_read', 'memory_list', 'memory_index', 'memory_write', 'memory_delete'])
-const agentTools = new Set(['Agent', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'EnterPlanMode', 'ExitPlanMode', 'subagent_fork', 'send_message', 'interrupt_agent', 'list_agents', 'report', 'workflow', 'ralph', 'create_goal', 'get_goal', 'job_list', 'job_output', 'job_kill', 'feishu_bridge_subtask', 'feishu_bridge_relay', 'feishu_bridge_send'])
+const editTools = new Set(['Read', 'Write', 'Edit', 'Glob', 'Grep', 'MultiEdit', 'NotebookEdit', 'read', 'read_image', 'write', 'edit', 'glob', 'grep', 'lsp', 'session_search', 'session_event_read', 'session_event_search', 'session_event_trace', 'memory_read', 'memory_list', 'memory_index', 'memory_write', 'memory_delete'])
+const agentTools = new Set(['Agent', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet', 'EnterPlanMode', 'ExitPlanMode', 'subagent_fork', 'subagent', 'send_message', 'interrupt_agent', 'list_agents', 'report', 'workflow', 'ralph', 'create_goal', 'get_goal', 'job_list', 'job_output', 'job_kill', 'feishu_bridge_subtask', 'feishu_bridge_chatroom', 'feishu_bridge_relay', 'feishu_bridge_send'])
 const webTools = new Set(['WebSearch', 'WebFetch', 'web_search', 'web_fetch', 'lark-cli', 'feishu_bridge_cron'])
+
+/** Execution status reflected in a tool entry's tag color. */
+export type ToolCallStatus = 'running' | 'success' | 'failed'
+
+/**
+ * Tag color for one tool entry: a settled result takes green (success) or
+ * red (failure); a running entry keeps its family color.
+ *
+ * @param status - Execution status of the entry.
+ * @param familyColor - Color used while the entry is still running.
+ * @returns The text_tag color for the entry.
+ */
+function tagColorForStatus(status: ToolCallStatus, familyColor: string): string {
+  if (status === 'success') return 'green'
+  if (status === 'failed') return 'red'
+  return familyColor
+}
 
 /** Tag-color families a tool can be declared into at registration time. */
 export type ToolTagFamily = 'agent' | 'web'
@@ -283,15 +298,21 @@ export function declareToolFamily(name: string, family: ToolTagFamily): () => vo
 }
 
 /**
- * The colored text_tag label for a tool in the progress card (icon + color
- * by tool family, name tail-truncated to maxLen).
+ * The colored text_tag label for a tool in the progress card (icon + color,
+ * name tail-truncated to maxLen). The color reflects the execution status
+ * once a result has settled — green for success, red for failure — while a
+ * running entry keeps its family color.
  *
  * @param name - Full tool name; only its tail is kept when truncated.
  * @param maxLen - Maximum displayed name length.
+ * @param status - Execution status of the entry; defaults to running.
  * @returns The text_tag markdown label.
  */
-export function toolTagForProgress(name: string, maxLen: number): string {
+export function toolTagForProgress(name: string, maxLen: number, status: ToolCallStatus = 'running'): string {
   let displayName = name
+  // MCP 名规范化：显示为 server.raw（切分原语与 mcpServerGroups/mcp-health 同源）。
+  const mcp = splitMcpToolName(name)
+  if (mcp !== undefined) displayName = `${mcp.server}.${mcp.raw}`
   if (displayName.length > maxLen) displayName = displayName.slice(displayName.length - maxLen)
 
   let icon = '⚙️'
@@ -322,8 +343,12 @@ export function toolTagForProgress(name: string, maxLen: number): string {
       break
     case 'Agent':
     case 'subagent_fork':
+    case 'subagent':
+    case 'interrupt_agent':
+    case 'list_agents':
       icon = '🤖'
       break
+    case 'EnterPlanMode':
     case 'ExitPlanMode':
       icon = '📋'
       break
@@ -346,10 +371,37 @@ export function toolTagForProgress(name: string, maxLen: number): string {
     case 'feishu_bridge_send':
       icon = '📤'
       break
+    case 'feishu_bridge_chatroom':
+    case 'feishu_bridge_subtask':
+    case 'feishu_bridge_relay':
+      icon = '🧵'
+      break
+    case 'feishu_bridge_cron':
+      icon = '⏰'
+      break
+    case 'job_list':
+    case 'job_output':
+    case 'job_kill':
+      icon = '⏱️'
+      break
+    case 'send_message':
+      icon = '📨'
+      break
+    case 'read_image':
+      icon = '🖼️'
+      break
+    case 'Bash':
+    case 'bash':
+      icon = '💻'
+      break
     case 'Thinking':
       icon = '💭'
       break
     default:
+      // 前缀组细分：MCP / memory / session；其余保持 ⚙️ 回落。
+      if (name.startsWith('mcp__')) icon = '🔌'
+      else if (name.startsWith('memory_')) icon = '🧠'
+      else if (name.startsWith('session_')) icon = '🗂️'
       break
   }
 
@@ -364,6 +416,7 @@ export function toolTagForProgress(name: string, maxLen: number): string {
   } else if (webTools.has(name) || declared === 'web') {
     color = 'orange'
   }
+  color = tagColorForStatus(status, color)
 
   return `<text_tag color='${color}'>${icon} ${displayName}</text_tag>`
 }
@@ -416,7 +469,7 @@ export function newToolProgressEntry(name: string, summary: string, toolID: stri
   let lang = ''
   if (summary !== '') {
     body = summary.replaceAll('```', "'''")
-    if (name === 'Bash') lang = 'bash'
+    if (name === 'Bash' || name === 'bash') lang = 'bash'
   }
   const entry = new ProgressEntry({
     header: `**${ts}**`,
@@ -1397,7 +1450,7 @@ export class StreamPreview {
    *
    * @param toolID - tool_use id of the call to update; empty matches the first pending entry.
    * @param result - Result text shown below the call body.
-   * @param success - Whether the tool call succeeded (rendered 🟢 vs 🔴).
+   * @param success - Whether the tool call succeeded (tag color green vs red).
    */
   async updateToolResult(toolID: string, result: string, success: boolean): Promise<void> {
     await this.locked(async () => {

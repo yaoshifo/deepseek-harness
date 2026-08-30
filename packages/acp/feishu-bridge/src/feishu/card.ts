@@ -233,7 +233,7 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
       const valMap: Record<string, string> = { action: elem.action ?? '' }
       if (sessionKey !== '') valMap.session_key = sessionKey
       for (const [k, v] of Object.entries(elem.extra ?? {})) valMap[k] = v
-      formElements.push({
+      const submitBtn: FeishuCardMap = {
         size: 'tiny',
         tag: 'button',
         text: plainText('提交选择'),
@@ -241,6 +241,37 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
         form_action_type: 'submit',
         name: `askq_multi_submit_${(elem.action ?? '').replace(/^askq_multi:/, '')}`,
         value: valMap,
+      }
+      // Submit row: button left, free-text-input hint right. The hint label is
+      // card chrome paired with the hardcoded 提交选择 label — the renderer has
+      // no i18n handle (same upgrade path as replyDownloadError), so both stay
+      // hardcoded Chinese until the platform gains one.
+      formElements.push({
+        tag: 'column_set',
+        flex_mode: 'none',
+        horizontal_align: 'left',
+        columns: [
+          {
+            tag: 'column',
+            width: 'auto',
+            vertical_align: 'center',
+            elements: [submitBtn],
+          },
+          {
+            tag: 'column',
+            width: 'auto',
+            vertical_align: 'center',
+            elements: [{
+              tag: 'div',
+              text: {
+                tag: 'plain_text',
+                content: '也可以直接文字输入',
+                text_size: 'notation',
+                text_color: 'grey',
+              },
+            }],
+          },
+        ],
       })
       return {
         tag: 'form',

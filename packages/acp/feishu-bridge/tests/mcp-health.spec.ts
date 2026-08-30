@@ -23,7 +23,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import * as entry from '../src/index.js'
-import { MCP_HEALTH_CONTEXT_NAME, registerMcpHealthContext } from '../src/core/mcp-health.js'
+import { MCP_HEALTH_CONTEXT_NAME, registerMcpHealthContext, splitMcpToolName } from '../src/core/mcp-health.js'
 import type { McpHealthConfig, FeishuBridgeConfig } from '../src/index.js'
 
 const contexts: CordisContext[] = []
@@ -244,4 +244,24 @@ describe('registry enumeration failure containment', () => {
     expect(text({})).toContain('"devx-mcp"')
     expect(text({})).not.toContain('Fix:')
   })
+})
+
+describe('splitMcpToolName (mcp-client naming contract)', () => {
+  const cases: Array<[name: string, want: { server: string; raw: string } | undefined]> = [
+    ['mcp__zread__search_doc', { server: 'zread', raw: 'search_doc' }],
+    // serverName 允许含 _：分隔符是双下划线，单下划线不切散。
+    ['mcp__web_search__query', { server: 'web_search', raw: 'query' }],
+    // 首 __ 切分：raw 内剩余 __ 保持原样。
+    ['mcp__a__b__c', { server: 'a', raw: 'b__c' }],
+    // 残缺形态（无分隔 / 空 server）与非 MCP 名都不是 mcp-client 契约名。
+    ['mcp__foo', undefined],
+    ['mcp___foo', undefined],
+    ['mcp__', undefined],
+    ['read', undefined],
+  ]
+  for (const [name, want] of cases) {
+    it(`splits ${name}`, () => {
+      expect(splitMcpToolName(name)).toEqual(want)
+    })
+  }
 })
