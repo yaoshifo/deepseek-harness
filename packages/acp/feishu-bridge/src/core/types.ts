@@ -184,6 +184,12 @@ export interface Message {
   isAskqCardAction: boolean
   /** A card.action.trigger button press with an act:/nav: value (M4). */
   isCardAction: boolean
+  /**
+   * Synthetic machine message (deliverMachineMessage: chatroom moderator
+   * wake, subtask report wake). Never a human reply — the route-human-reply
+   * waterfall must not claim it.
+   */
+  machine?: boolean
   parentMessageID: string
   quotedText: string
   /** Sender type of the quoted message ('user' | 'app'); set with quotedText. */
@@ -1253,8 +1259,23 @@ export interface ChatBrander {
 export interface MonitorPoller {
   /** Create time (seconds) of the chat's newest message; 0 for an empty chat. */
   latestMessageTime(chatID: string): Promise<number>
-  /** Messages created after afterSec (exclusive of newer-than), oldest-first. */
-  listMonitorMessages(chatID: string, afterSec: number, limit: number): Promise<Message[]>
+  /**
+   * Messages created after afterSec, oldest-first, plus the newest create
+   * time among ALL fetched raw items (seconds). Unprocessable items (the
+   * bot's own, sender-less without a fallback owner, no extractable text)
+   * are excluded from `messages` but still count in `latestTimeSec` — the
+   * watermark must advance past them or an unprocessable page refetches
+   * forever and buries every later alert.
+   */
+  listMonitorMessages(chatID: string, afterSec: number, limit: number): Promise<MonitorPollPage>
+}
+
+/** One poll page from {@link MonitorPoller.listMonitorMessages}. */
+export interface MonitorPollPage {
+  /** Triageable messages, oldest-first. */
+  messages: Message[]
+  /** Newest create time among all fetched raw items, in seconds (0 when none). */
+  latestTimeSec: number
 }
 
 /**

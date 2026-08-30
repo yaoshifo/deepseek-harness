@@ -11,6 +11,8 @@
  * @module dsh-feishu-bridge/feishu-chatname
  */
 
+import { isTransientError } from './retry.js'
+
 /** Successful cache entry. */
 export interface ChatNameEntry {
   name: string
@@ -96,7 +98,9 @@ export class ChatNameCache {
       return name
     } catch (err) {
       console.warn(`feishu: resolve chat name failed (chat_id ${chatID}): ${String(err)}`)
-      this.cache.set(chatID, { failAt: Date.now() })
+      // A transient network blip must not pin the chat to its raw id for the
+      // full fail TTL — only deterministic failures cache the miss.
+      if (!isTransientError(err)) this.cache.set(chatID, { failAt: Date.now() })
       return chatID
     }
   }

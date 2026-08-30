@@ -136,6 +136,10 @@ describe('parseListMessagesArgs', () => {
     expect(parseListMessagesArgs(['--chat-id', 'oc_x', '--page-size', '200']).opts.pageSize).toBe(50)
     expect(parseListMessagesArgs(['--chat-id', 'oc_x', '--page-size', '0']).opts.pageSize).toBe(1)
   })
+
+  it('clamps page-limit: a model cannot walk thousands of pages in one call', () => {
+    expect(parseListMessagesArgs(['--chat-id', 'oc_x', '--page-all', '--page-limit', '10000']).opts.pageLimit).toBe(200)
+  })
 })
 
 describe('buildListMessagesURL', () => {

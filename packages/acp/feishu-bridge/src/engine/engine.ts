@@ -1786,7 +1786,7 @@ export class Engine {
     // both command dispatch and permission handling (Go orders
     // routePendingHumanReply before handleCommand). Slash commands pass
     // through untouched (the listener halves decide).
-    if (this.bridge.waterfall('feishuBridge/route-human-reply', { engine: this, platform: p, sessionKey: msg.sessionKey, content }, () => false)) return
+    if (this.bridge.waterfall('feishuBridge/route-human-reply', { engine: this, platform: p, sessionKey: msg.sessionKey, content, machine: msg.machine === true }, () => false)) return
 
     // Slash commands dispatch BEFORE permission handling (Go engine.go fix
     // 60e20ef6): a registered command like /done must run while a permission
@@ -2758,6 +2758,9 @@ export class Engine {
       newState.eventsNeedResync = true
       this.adoptPendingFromPlaceholder(this.interactiveStates.get(sessionKey), newState)
       this.interactiveStates.set(sessionKey, newState)
+      // Pair with the caller's finally endTurn like the success path does;
+      // a bare return drives activeTurns negative and misleads engine.stop.
+      newState.beginTurn()
       return newState
     }
 
@@ -5500,9 +5503,25 @@ export class Engine {
       ? payload.qIdx
       : questions.findIndex((_q, i) => !pending.answers.has(i))
     const q = questions[qIdx]
-    if (q === undefined || qIdx < 0) return false
+    if (q === undefined || qIdx < 0) {
+      // A stale card (the ask re-armed with fewer questions) names a qIdx
+      // that no longer exists — consume it with a hint instead of queueing
+      // the raw `askq:N:M` payload as the model's next prompt.
+      if (payload !== undefined) {
+        void this.reply(p, msg.replyCtx, this.i18n.t(Msg.AskqStaleQuestion))
+        return true
+      }
+      return false
+    }
     const answer = resolveAskAnswer(q, content)
     pending.answers.set(qIdx, answer)
+    // A free-text answer may ride with attachments (text + image in one
+    // message); the text resolves the question, the attachments must not
+    // silently vanish — stage them for the next turn like pure-attachment
+    // messages.
+    if (msg.images.length > 0 || msg.files.length > 0) {
+      this.stageAttachments(p, msg, msg.sessionKey)
+    }
     if (!msg.isAskqCardAction) {
       void this.reply(p, msg.replyCtx, `✅ ${q.question}: **${askAnswerDisplay(answer)}**`)
     }
@@ -6845,7 +6864,7 @@ export class Engine {
       state.agentSession.steer(msg.content)
       return
     }
-    this.receiveMessageSafe(p, msg)
+    this.receiveMessageSafe(p, { ...msg, machine: true })
   }
 
   /**
@@ -8125,6 +8144,9 @@ export class Engine {
     }
 
     if (cmd === '/dir') {
+      // Same admin_from gate as the text path: the /help card links /dir,
+      // so card buttons must not bypass the privileged-command check.
+      if (this.commandGate?.('dir', p, msg) === true) return
       // act:/dir switches first (select N / reset / prev, Go executeCardAction
       // mapping); nav:/dir only turns the page.
       let notice = ''

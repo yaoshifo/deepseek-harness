@@ -38,12 +38,14 @@ export function errorMessage(err: unknown): string {
 /**
  * Whether an error indicates the cached tenant access token went stale.
  * @param err - The thrown value.
- * @returns True when the error text carries the invalid-token code or wording.
+ * @returns True when the business code is the invalid-token code (SDK verbs
+ *   carry it in the AxiosError body, text errors as `code=NNNNNN`) or the
+ *   error text carries the invalid-token wording.
  */
 export function isTenantAccessTokenInvalid(err: unknown): boolean {
   if (err === undefined || err === null) return false
-  const msg = errorMessage(err).toLowerCase()
-  return msg.includes(tenantTokenInvalidCode) || msg.includes('invalid access token')
+  if (feishuBusinessCode(err) === tenantTokenInvalidCode) return true
+  return errorMessage(err).toLowerCase().includes('invalid access token')
 }
 
 /** Transient network symptoms that warrant a retry. */

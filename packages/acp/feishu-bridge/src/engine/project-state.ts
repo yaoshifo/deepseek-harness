@@ -212,7 +212,14 @@ export class ProjectStateStore {
       return
     }
     try {
-      this.state = JSON.parse(data) as ProjectStateData
+      const parsed: unknown = JSON.parse(data)
+      // Legal-but-wrong JSON (null, an array, a primitive) must not poison
+      // every accessor — fall back to empty state like a missing file.
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        console.error(`project_state: ${this.storePath} is not a state object; starting empty`)
+        return
+      }
+      this.state = parsed as ProjectStateData
     } catch (error) {
       console.error(`project_state: failed to unmarshal ${this.storePath}: ${String(error)}`)
     }

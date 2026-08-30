@@ -31,6 +31,7 @@ import {
   type ImageAttachment,
   type Message,
   type MonitorPoller,
+  type MonitorPollPage,
   type Platform,
   type UserQuestion,
 } from '../core/types.js'
@@ -815,15 +816,14 @@ export class MonitorCore {
         continue
       }
       const after = this.lastTime[chatID] ?? 0
-      let msgs: Message[]
+      let page: MonitorPollPage
       try {
-        msgs = await poller.listMonitorMessages(chatID, after, 20)
+        page = await poller.listMonitorMessages(chatID, after, 20)
       } catch (error) {
         console.debug(`monitor: poll list failed (${chatID}): ${String(error)}`)
         continue
       }
-      let maxTime = 0
-      for (const msg of msgs) {
+      for (const msg of page.messages) {
         // The list StartTime is inclusive of `after`, so the boundary
         // second's messages come back on every fetch. The seen-set dedups
         // them in steady state but is empty right after a restart — skip by
@@ -831,9 +831,11 @@ export class MonitorCore {
         // message but after it is skipped too.
         if (after > 0 && (msg.createTime ?? 0) > 0 && (msg.createTime ?? 0) <= after) continue
         this.handleMonitorMessage(p, msg)
-        if ((msg.createTime ?? 0) > maxTime) maxTime = msg.createTime ?? 0
       }
-      if (maxTime > after) this.lastTime[chatID] = maxTime
+      // Advance past every fetched raw item — including the ones the
+      // platform filtered out of `messages` — or an unprocessable page
+      // (webhook-card alert storm) pins the watermark and buries later alerts.
+      if (page.latestTimeSec > after) this.lastTime[chatID] = page.latestTimeSec
     }
   }
 

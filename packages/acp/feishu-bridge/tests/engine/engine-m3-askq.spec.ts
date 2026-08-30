@@ -8,6 +8,9 @@
  * @module dsh-feishu-bridge/tests-engine-m3-askq
  */
 
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import {
@@ -175,6 +178,22 @@ describe('sendAskQuestionsCard', () => {
   })
 })
 
+describe('failed-start placeholder turn pairing', () => {
+  it('the placeholder state begins a turn so the caller finally endTurn stays paired', async () => {
+    // startSession throws → getOrCreateInteractiveStateWith returns a
+    // placeholder without an agentSession; the caller still runs its
+    // finally endTurn. Without a paired beginTurn the counter goes negative
+    // and engine.stop's === 0 check misjudges in-flight turns.
+    const p = createStubPlatform()
+    const agent = { ...createStubAgent(), startSession: async () => { throw new Error('boom') } }
+    const e = new Engine('test', agent, [p], '', 'en')
+    const session = e.sessions.getOrCreateActive('test:chat:user1')
+    const state = await e.getOrCreateInteractiveStateWith('test:chat:user1', p, 'ctx', session, '', 'test:chat:user1')
+    expect(state.agentSession).toBeUndefined()
+    expect(state.activeTurns, 'placeholder began a turn for the caller\'s finally to end').toBe(1)
+  })
+})
+
 describe('routeAskResponse question variants', () => {
   it('SingleQuestion: "2" resolves with the option label', async () => {
     const { e, p, decision } = await armedAsk()
@@ -212,6 +231,30 @@ describe('routeAskResponse question variants', () => {
     await expect(decision).resolves.toEqual({
       answers: [{ id: 'Which database?', selected: [], custom: 'allow' }],
     })
+  })
+
+  it('an out-of-range askq payload is consumed with a hint, never fed to the agent', async () => {
+    // A stale card (the ask re-armed with fewer questions) names a qIdx that
+    // no longer exists; returning false would queue the raw `askq:5:1` text
+    // as the model's next prompt.
+    const { e, p } = await armedAsk()
+    const sent = p.getSent().length
+
+    const handled = e.routeAskResponse(p, msg({ content: 'askq:5:1', isAskqCardAction: true }), 'askq:5:1')
+
+    expect(handled).toBe(true)
+    expect(p.getSent().length, 'a stale-card hint was sent').toBeGreaterThan(sent)
+  })
+
+  it('a free-text answer carrying attachments stages them instead of dropping', async () => {
+    const { e, p } = await armedAsk()
+    e.setBaseWorkDir(mkdtempSync(join(tmpdir(), 'fb-askq-wd-')))
+    const state = e.interactiveStates.get('test:chat:user1')!
+
+    const handled = e.routeAskResponse(p, msg({ content: '选这张图', images: [{ mimeType: 'image/png', data: new Uint8Array([137, 80, 78, 71]) }] }), '选这张图')
+
+    expect(handled).toBe(true)
+    expect(state.pendingAttachments.length, 'the image landed in the staged attachments').toBe(1)
   })
 
   it('CardButtonSkipsReply_SingleQuestion: no standalone reply', async () => {

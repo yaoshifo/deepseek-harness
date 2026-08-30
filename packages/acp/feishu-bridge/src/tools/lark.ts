@@ -51,7 +51,7 @@ export interface LarkChildResult {
 
 /** Injectable process/IO surface so tests never spawn a real lark-cli. */
 export interface LarkRunnerDeps {
-  spawn(bin: string, argv: string[], opts: { env: Record<string, string>; cwd?: string }): Promise<LarkChildResult>
+  spawn(bin: string, argv: string[], opts: { env: Record<string, string>; cwd?: string; signal?: AbortSignal }): Promise<LarkChildResult>
   fetch(url: string, init?: RequestInit): Promise<Response>
   stat?(path: string): Promise<{ mtimeMs: number } | undefined>
   readFile?(path: string): Promise<string | undefined>
@@ -86,6 +86,10 @@ const notifierSuppressionEnv: Record<string, string> = {
 }
 
 const feishuOpenBaseURL = 'https://open.feishu.cn'
+/** Upper bound for --page-limit: 200 pages × 50 messages keeps one tool call bounded. */
+export const maxListPages = 200
+/** Cooperative tool-call budget (ms) declared for the timeout policy to enforce. */
+export const larkToolTimeoutMs = 300_000
 
 // ── pure argument classification (ported 1:1 from lark_cmd.go) ────────────
 
@@ -198,6 +202,9 @@ export function parseListMessagesArgs(args: string[]): { opts: ListMsgOpts; erro
   if (opts.pageSize < 1) opts.pageSize = 1
   else if (opts.pageSize > 50) opts.pageSize = 50
   if (opts.pageLimit < 1) opts.pageLimit = 10
+  // Cap the walk: a model-supplied --page-limit would otherwise drive
+  // thousands of sequential OpenAPI calls with an unbounded result.
+  else if (opts.pageLimit > maxListPages) opts.pageLimit = maxListPages
   return { opts }
 }
 
@@ -359,11 +366,12 @@ const tatCache = new Map<string, { token: string; expiresAt: number }>()
  * @param deps - The injectable fetch surface used for the OpenAPI call.
  * @returns The tenant access token, valid until it expires server-side.
  */
-export async function fetchTenantAccessToken(creds: LarkCreds, deps: LarkRunnerDeps): Promise<string> {
+export async function fetchTenantAccessToken(creds: LarkCreds, deps: LarkRunnerDeps, signal?: AbortSignal): Promise<string> {
   const cached = tatCache.get(creds.appId)
   if (cached !== undefined && Date.now() < cached.expiresAt) return cached.token
   const resp = await deps.fetch(`${feishuOpenBaseURL}/open-apis/auth/v3/tenant_access_token/internal`, {
     method: 'POST',
+    ...(signal === undefined ? {} : { signal }),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ app_id: creds.appId, app_secret: creds.appSecret }),
   })
@@ -453,7 +461,7 @@ function isCreateCommand(args: string[]): boolean {
 export async function runLarkInvocation(
   creds: LarkCreds,
   args: string[],
-  opts: { dataDir?: string; deps: LarkRunnerDeps; cwd?: string },
+  opts: { dataDir?: string; deps: LarkRunnerDeps; cwd?: string; signal?: AbortSignal },
 ): Promise<string> {
   if (args.length === 0) throw new Error('lark-cli: args must be a non-empty lark-cli subcommand')
 
@@ -463,14 +471,14 @@ export async function runLarkInvocation(
     if (v !== undefined) baseEnv[k] = v
   }
   Object.assign(baseEnv, notifierSuppressionEnv)
-  const childOpts = (env: Record<string, string>): { env: Record<string, string>; cwd?: string } =>
-    opts.cwd === undefined ? { env } : { env, cwd: opts.cwd }
+  const childOpts = (env: Record<string, string>): { env: Record<string, string>; cwd?: string; signal?: AbortSignal } =>
+    ({ env, ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }), ...(opts.signal === undefined ? {} : { signal: opts.signal }) })
 
   await checkLarkCLIVersion(opts.dataDir, deps, baseEnv)
 
   // Native chat-message listing: bypass lark-cli entirely.
   if (isChatMessagesList(args)) {
-    return runChatMessagesListNative(args, creds, deps)
+    return runChatMessagesListNative(args, creds, deps, opts.signal)
   }
 
   if (isAsUser(args) || isAuthSubcommand(args)) {
@@ -497,7 +505,7 @@ export async function runLarkInvocation(
   }
 
   // Bot mode: mint a tenant access token and inject it.
-  const tat = await fetchTenantAccessToken(creds, deps)
+  const tat = await fetchTenantAccessToken(creds, deps, opts.signal)
   const env: Record<string, string> = {
     ...sanitizedChildEnv(baseEnv),
     LARKSUITE_CLI_APP_ID: creds.appId,
@@ -622,10 +630,10 @@ export function lookPath(bin: string): string {
 }
 
 /** Native chat-message listing through the Feishu OpenAPI (Go runChatMessagesListNative). */
-async function runChatMessagesListNative(args: string[], creds: LarkCreds, deps: LarkRunnerDeps): Promise<string> {
+async function runChatMessagesListNative(args: string[], creds: LarkCreds, deps: LarkRunnerDeps, signal?: AbortSignal): Promise<string> {
   const { opts, error } = parseListMessagesArgs(args)
   if (error !== undefined) throw new Error(error)
-  const tat = await fetchTenantAccessToken(creds, deps)
+  const tat = await fetchTenantAccessToken(creds, deps, signal)
 
   const allItems: Array<Record<string, unknown>> = []
   let pageToken = opts.pageToken
@@ -635,6 +643,7 @@ async function runChatMessagesListNative(args: string[], creds: LarkCreds, deps:
   for (;;) {
     const resp = await deps.fetch(buildListMessagesURL(feishuOpenBaseURL, opts, pageToken), {
       headers: { Authorization: `Bearer ${tat}` },
+      ...(signal === undefined ? {} : { signal }),
     })
     const payload = await resp.json() as {
       code?: number
@@ -695,6 +704,7 @@ export function registerLarkTool(ctx: Context, route: LarkAgentRouter, deps?: La
       },
       render: (_args, value) => [{ type: 'text', text: value.message }],
     },
+    timeoutMs: larkToolTimeoutMs,
     async execute(args, exec) {
       const target = route(exec.agent)
       if (target === undefined) {
@@ -708,6 +718,7 @@ export function registerLarkTool(ctx: Context, route: LarkAgentRouter, deps?: La
         deps: runnerDeps,
         ...(dataDir !== undefined ? { dataDir } : {}),
         ...(cwd !== '' ? { cwd } : {}),
+        signal: exec.signal,
       })
       return { status: 'ok' as const, message }
     },
@@ -727,6 +738,7 @@ export function defaultLarkDeps(): LarkRunnerDeps {
         const r = (await execFileAsync(bin, argv, {
           env: opts.env,
           ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+          ...(opts.signal === undefined ? {} : { signal: opts.signal }),
           encoding: 'utf8',
           maxBuffer: 16 * 1024 * 1024,
           windowsHide: true,

@@ -43,4 +43,19 @@ describe('newCachedTenantTokenMinter', () => {
     const mint = newCachedTenantTokenMinter('cli_z', 's', fetchFn as typeof fetch)
     await expect(mint()).resolves.toBe('')
   })
+
+  it('invalidate drops the cache so the next call re-mints', async () => {
+    let mints = 0
+    const fetchFn = async (): Promise<Response> => {
+      mints++
+      return jsonResponse({ tenant_access_token: `tat-${mints}`, expire: 7200 })
+    }
+    const mint = newCachedTenantTokenMinter('cli_x', 's', fetchFn as typeof fetch)
+    await expect(mint()).resolves.toBe('tat-1')
+    await expect(mint()).resolves.toBe('tat-1')
+    expect(mints).toBe(1)
+    ;(mint as { invalidate: () => void }).invalidate()
+    await expect(mint()).resolves.toBe('tat-2')
+    expect(mints).toBe(2)
+  })
 })

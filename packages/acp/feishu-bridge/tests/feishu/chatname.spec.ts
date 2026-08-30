@@ -18,6 +18,21 @@ describe('resolveChatName TTL cache', () => {
     expect(calls).toBe(0)
   })
 
+  it('a transient network failure is not cached as a 1h miss', async () => {
+    // Only deterministic failures (the API says the chat is gone) may cache
+    // the miss; a connection blip must retry on the next resolve.
+    const cache = new ChatNameCache()
+    let calls = 0
+    const transient = async (): Promise<{ name: string }> => {
+      calls++
+      if (calls === 1) throw new Error('write tcp: connection reset by peer')
+      return { name: 'recovered' }
+    }
+    expect(await cache.resolve('oc_net', transient)).toBe('oc_net')
+    expect(await cache.resolve('oc_net', transient)).toBe('recovered')
+    expect(calls).toBe(2)
+  })
+
   it('short-circuits on an empty chat id', async () => {
     const cache = new ChatNameCache()
     let calls = 0

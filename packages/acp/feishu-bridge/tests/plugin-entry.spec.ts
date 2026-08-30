@@ -113,4 +113,21 @@ describe('chatroom config residue guard (moved to the chatroom plugin)', () => {
       await ctx.fiber.dispose()
     }
   })
+
+  it('apply fails loud on duplicate project names', async () => {
+    // Duplicate names would silently share state.json/sessions.json under
+    // join(dataRoot, name) and cross-wire lark-cli credentials.
+    const ctx = await liveContext()
+    try {
+      await expect(apply(ctx, {
+        projects: [
+          { name: 'dup', workdir: '/tmp/a', feishu: { appId: 'app1', appSecret: 's1' } },
+          { name: 'dup', workdir: '/tmp/b', feishu: { appId: 'app2', appSecret: 's2' } },
+        ],
+        providers: {},
+      })).rejects.toThrow(/duplicate project name/)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  })
 })

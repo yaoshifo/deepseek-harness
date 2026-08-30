@@ -785,6 +785,16 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
       throw new Error(`feishu-bridge: project '${project.name}' still carries a chatroom section — move it to the feishu-bridge-chatroom plugin config (packages/acp/feishu-bridge-chatroom)`)
     }
   }
+  // Duplicate names would silently share state/sessions files under
+  // join(dataRoot, name) and cross-wire lark-cli credentials (the router
+  // picks the first name match) — fail loud at load.
+  const seen = new Set<string>()
+  for (const project of config.projects) {
+    if (seen.has(project.name)) {
+      throw new Error(`feishu-bridge: duplicate project name '${project.name}' — project names must be unique (they key the per-project data dir and lark-cli credential routing)`)
+    }
+    seen.add(project.name)
+  }
   const dataRoot = config.dataDir ?? join(homedir(), '.dsh', 'feishu-bridge')
   // One dir history for every project (Go main shares NewDirHistory(cfg.DataDir)
   // across engines so /dir MRU entries land in a single store file).

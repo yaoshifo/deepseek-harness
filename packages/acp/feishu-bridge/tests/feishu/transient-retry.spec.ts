@@ -216,6 +216,13 @@ describe('API wrappers retry on transient errors', () => {
     expect(api.counts.reply).toBe(1)
   })
 
+  it('a withdrawn reply target falls back to a standalone chat message (SDK body-code shape)', async () => {
+    const api = scheduledClient({ reply: [apiErr(230011, 'The message was withdrawn.')] })
+    await newPlatform(api).reply(rc, 'hello')
+    expect(api.counts.reply).toBe(1)
+    expect(api.counts.create).toBe(1)
+  })
+
   it('patch message retries on transient error', async () => {
     const api = scheduledClient({ patch: [apiErr(230020), undefined] })
     const p = newPlatform(api)

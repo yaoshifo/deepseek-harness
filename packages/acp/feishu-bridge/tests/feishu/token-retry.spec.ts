@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
+import { FeishuPlatform, newCachedTenantTokenMinter, type FeishuApiClient } from '../../src/feishu/platform.js'
 import { isTenantAccessTokenInvalid } from '../../src/feishu/retry.js'
 
 function newPlatform(api: FeishuApiClient): FeishuPlatform {
@@ -26,6 +26,12 @@ describe('isTenantAccessTokenInvalid', () => {
     ['invalid access token text', new Error('Invalid access token for authorization'), true],
     ['other api error', new Error('feishu: reply failed code=230001 msg=rate limited'), false],
     ['plain error', new Error('something went wrong'), false],
+    // SDK verbs surface business codes as AxiosErrors whose message is only
+    // "Request failed with status code NNN"; the code rides in response.data.
+    ['sdk axios body code 99991663', { message: 'Request failed with status code 400', response: { data: { code: 99991663 } } }, true],
+    ['sdk axios body code 99991663 as text', { message: 'Request failed with status code 401', response: { data: { code: '99991663' } } }, true],
+    ['sdk axios other body code', { message: 'Request failed with status code 400', response: { data: { code: 230001 } } }, false],
+    ['sdk axios no body code', { message: 'Request failed with status code 500' }, false],
   ]
   for (const [name, err, want] of cases) {
     it(name, () => {
@@ -122,5 +128,40 @@ describe('tenant token refresh', () => {
       create: async () => undefined,
     }
     await expect(newPlatform(api).reply(rc, 'hello')).rejects.toThrow('cannot refresh')
+  })
+
+  it('stale-token retry re-mints past the minter cache (SDK body-code shape)', async () => {
+    // The minter's cached token was just rejected by the server (Feishu can
+    // revoke early); the refresh must mint a fresh one, not reuse the cache.
+    let mints = 0
+    const fetchFn = (async (): Promise<Response> => {
+      mints++
+      return new Response(JSON.stringify({ tenant_access_token: `tat-${mints}`, expire: 7200 }))
+    }) as typeof fetch
+    const mint = newCachedTenantTokenMinter('cli_x', 's', fetchFn)
+    // Warm the cache: the daemon minted tat-1 earlier and it is still within
+    // the server-declared lifetime — but the server revoked it early.
+    await expect(mint()).resolves.toBe('tat-1')
+    const staleAxios = () => Object.assign(new Error('Request failed with status code 400'), { response: { data: { code: 99991663 } } })
+    let replyCalls = 0
+    const api: FeishuApiClient = {
+      async reply() {
+        replyCalls++
+        throw staleAxios()
+      },
+      create: async () => undefined,
+      fetchTenantAccessToken: mint,
+      withToken: (token: string): FeishuApiClient => ({
+        reply: async () => {
+          if (token !== 'tat-2') throw staleAxios()
+          replyCalls++
+          return undefined
+        },
+        create: async () => undefined,
+      }),
+    }
+    await newPlatform(api).reply(rc, 'hello')
+    expect(mints, 'refresh re-minted instead of reusing the cached stale token').toBe(2)
+    expect(replyCalls).toBe(2)
   })
 })

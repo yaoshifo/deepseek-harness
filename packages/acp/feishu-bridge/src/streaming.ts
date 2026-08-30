@@ -729,6 +729,10 @@ export class StreamPreview {
     if (this.timer !== undefined) return // already scheduled
     this.timer = this.armTimer(delay, async () => {
       if (this.degraded) return
+      // The text path only owns the card before any progress/thinking event;
+      // afterwards the progress display carries the accumulated text and a
+      // status-less text PATCH would downgrade the card.
+      if (this.progressMode) return
       let displayText = this.fullText
       const maxChars = this.cfg.maxChars
       if (maxChars > 0 && runeCount(displayText) > maxChars) {
@@ -1339,6 +1343,9 @@ export class StreamPreview {
     await this.locked(async () => {
       if (this.degraded || (entry.text === '' && !entry.isTool)) return
       this.progressMode = true
+      // A throttled text flush armed before progressMode would PATCH a
+      // status-less text card that replaces the progress card — drop it.
+      this.cancelTimerLocked()
       this.progressTotalCount++
       if (entry.isTool) {
         this.toolCallSeq++
@@ -1574,6 +1581,8 @@ export class StreamPreview {
       if (this.degraded) return
       this.thinkingText = chunk
       this.progressMode = true
+      // Same residual-text-timer hazard as appendProgress.
+      this.cancelTimerLocked()
       const display = this.buildProgressDisplayLocked()
       await this.flushProgressLocked(display)
     })
@@ -1914,12 +1923,18 @@ export class StreamPreview {
       b += '```\n'
     }
 
-    // Section 2: 工具调用 (oldest → newest, max maxProgressLines)
+    // Section 2: 工具调用 (oldest → newest, max maxProgressLines). The
+    // buffer is circular once full: progressWriteIdx holds the oldest slot,
+    // so iterate from it rather than by array index (physical order diverges
+    // from time order after the first wraparound).
     if (hasToolEntries) {
-      this.progressEntries.forEach((e, i) => {
+      const n = this.progressEntries.length
+      for (let k = 0; k < n; k++) {
+        const i = (this.progressWriteIdx + k) % n
+        const e = this.progressEntries[i] as ProgressEntry
         b += e.render(i === this.progressLatestIdx)
         b += '\n'
-      })
+      }
     }
 
     // Section 3: 实时播报 (latest EventText)

@@ -314,14 +314,17 @@ declare module '@deepseek-ai/cordis' {
      * Route the human's reply to a feature's pending question: a listener that consumes the message short-circuits with
      * `true` and the inbound flow stops there — this decision outranks
      * command dispatch and permission handling. The built-in base returns
-     * false (no feature holds a pending question).
+     * false (no feature holds a pending question). Machine messages
+     * (deliverMachineMessage wakes) are never human replies — listeners
+     * must skip them.
      * @param payload.engine - The engine receiving the inbound message.
      * @param payload.platform - Platform that delivered the message.
      * @param payload.sessionKey - Session key the message arrived under.
      * @param payload.content - The human's reply text.
+     * @param payload.machine - True when a synthetic machine message, never a human reply.
      * @mode waterfall
      */
-    'feishuBridge/route-human-reply'(payload: { engine: Engine; platform: Platform; sessionKey: string; content: string }, next: () => boolean): boolean
+    'feishuBridge/route-human-reply'(payload: { engine: Engine; platform: Platform; sessionKey: string; content: string; machine: boolean }, next: () => boolean): boolean
     /**
      * An ask card was parked and rendered (any kind; the questions kind is
      * the only current dispatcher). Listeners arm their own whole-ask

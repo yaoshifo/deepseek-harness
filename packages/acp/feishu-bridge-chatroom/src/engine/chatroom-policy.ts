@@ -66,7 +66,11 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
     ctx.on('feishuBridge/hard-cap-exemption', (payload, next) =>
       next() || isResearchExemptSession(payload.engine, payload.session)),
     ctx.on('feishuBridge/route-human-reply', (payload, next) =>
-      next() || routePendingHumanReply(payload.engine, payload.platform, payload.sessionKey, payload.content)),
+      // A machine wake (moderator wake, subtask report) is never the human's
+      // answer: claiming it would clear the pending flag and feed the role a
+      // bogus self-answer while the hub never sees the wake. Fall through
+      // (false) so the message continues on the normal agent path.
+      payload.machine ? false : next() || routePendingHumanReply(payload.engine, payload.platform, payload.sessionKey, payload.content)),
     ctx.on('feishuBridge/ask-parked', (payload) => {
       // Research-manual hub only: arm the whole-ask auto-default so the
       // card cannot hang forever when the user never replies (feature #57).

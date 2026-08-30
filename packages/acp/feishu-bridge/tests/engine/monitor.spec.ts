@@ -201,13 +201,14 @@ describe('handleMonitorMessage', () => {
 })
 
 /** In-memory MonitorPoller for poll-path tests (Go fakeMonitorPoller). */
-function fakePoller(opts: { latest?: number; latestErr?: Error; msgs: Message[] }) {
+function fakePoller(opts: { latest?: number; latestErr?: Error; msgs: Message[]; latestTimeSec?: number }) {
   return {
     latestCalls: 0,
     listCalls: 0,
-    async listMonitorMessages(): Promise<Message[]> {
+    async listMonitorMessages(): Promise<{ messages: Message[]; latestTimeSec: number }> {
       this.listCalls++
-      return opts.msgs
+      const maxMsg = opts.msgs.reduce((acc, m) => Math.max(acc, m.createTime ?? 0), 0)
+      return { messages: opts.msgs, latestTimeSec: opts.latestTimeSec ?? maxMsg }
     },
     async latestMessageTime(): Promise<number> {
       this.latestCalls++
@@ -267,6 +268,20 @@ describe('monitorPollOnce', () => {
     await e.monitor.monitorPollOnce(poller)
 
     expect(e.monitor.seenHas('oc_m', 'om_first')).toBe(true)
+  })
+
+  it('advances the watermark past a page of unprocessable messages', async () => {
+    // An alert storm of webhook cards the platform filters out (bot's own /
+    // sender-less without fallback_user / no extractable text) must still
+    // advance the high-water mark — otherwise the same page refetches
+    // forever and every later alert stays buried behind it.
+    const { e } = newMonitorPollEngine()
+    e.monitor.lastTime = { oc_m: 100 }
+
+    const poller = fakePoller({ latest: 100, msgs: [], latestTimeSec: 105 })
+    await e.monitor.monitorPollOnce(poller)
+
+    expect(e.monitor.lastTime['oc_m']).toBe(105)
   })
 })
 

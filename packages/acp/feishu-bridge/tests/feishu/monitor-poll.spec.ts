@@ -110,14 +110,14 @@ describe('pollItemToMessage (via listMonitorMessages)', () => {
   it('drops an image-only card (no text to triage, nothing downloaded)', async () => {
     const downloads = { n: 0 }
     const p = newPollPlatform(pollApi({ downloads, items: [cardItem('{"elements":[{"tag":"img","img_key":"img_v3_alert"}]}', 'om_alert')] }))
-    expect(await p.listMonitorMessages('oc_chat', 0, 20)).toHaveLength(0)
+    expect((await p.listMonitorMessages('oc_chat', 0, 20)).messages).toHaveLength(0)
     expect(downloads.n).toBe(0)
   })
 
   it('drops a card with no text and no image keys', async () => {
     const downloads = { n: 0 }
     const p = newPollPlatform(pollApi({ downloads, items: [cardItem('{"elements":[{"tag":"div","text":""}]}', 'om_alert2')] }))
-    expect(await p.listMonitorMessages('oc_chat', 0, 20)).toHaveLength(0)
+    expect((await p.listMonitorMessages('oc_chat', 0, 20)).messages).toHaveLength(0)
     expect(downloads.n).toBe(0)
   })
 
@@ -125,7 +125,7 @@ describe('pollItemToMessage (via listMonitorMessages)', () => {
     const downloads = { n: 0 }
     const inner = '{"header":{"title":{"content":"告警"}},"elements":[{"tag":"img","img_key":"img_v3_decor"},{"tag":"text","text":"支付 500"}]}'
     const p = newPollPlatform(pollApi({ downloads, items: [cardItem(inner, 'om_text')] }))
-    const out = await p.listMonitorMessages('oc_chat', 0, 20)
+    const out = (await p.listMonitorMessages('oc_chat', 0, 20)).messages
     expect(out).toHaveLength(1)
     expect(downloads.n).toBe(1)
     expect(out[0]?.images).toHaveLength(1)
@@ -136,7 +136,7 @@ describe('pollItemToMessage (via listMonitorMessages)', () => {
     const downloads = { n: 0 }
     const inner = '{"header":{"title":{"content":"支付告警"}},"elements":[{"tag":"img","img_key":"img_v3_shot"}]}'
     const p = newPollPlatform(pollApi({ downloads, items: [cardItem(inner, 'om_title')] }))
-    const out = await p.listMonitorMessages('oc_chat', 0, 20)
+    const out = (await p.listMonitorMessages('oc_chat', 0, 20)).messages
     expect(out).toHaveLength(1)
     expect(downloads.n).toBe(1)
     expect(out[0]?.content).toContain('支付告警')
@@ -154,7 +154,7 @@ describe('pollItemToMessage (via listMonitorMessages)', () => {
         sender: { id: 'ou_u', idType: 'open_id', senderType: 'user' },
       }],
     }))
-    const out = await p.listMonitorMessages('oc_chat', 0, 20)
+    const out = (await p.listMonitorMessages('oc_chat', 0, 20)).messages
     expect(out).toHaveLength(1)
     expect(downloads.n).toBe(1)
     expect(out[0]?.images).toHaveLength(1)
@@ -177,7 +177,7 @@ describe('pollItemToMessage (via listMonitorMessages)', () => {
       apiClient: mk({ id: 'cli_app', senderType: 'app' }), wsStart: async () => {},
     })
     p1.setMonitorFallbackUser('ou_fallback')
-    expect(await p1.listMonitorMessages('oc_c', 0, 20)).toHaveLength(0)
+    expect((await p1.listMonitorMessages('oc_c', 0, 20)).messages).toHaveLength(0)
 
     // Bot open_id sender.
     const p2 = new FeishuPlatform({
@@ -185,14 +185,17 @@ describe('pollItemToMessage (via listMonitorMessages)', () => {
       apiClient: mk({ id: 'ou_bot', senderType: 'user' }), wsStart: async () => {},
     })
     p2.setMonitorFallbackUser('ou_fallback')
-    expect(await p2.listMonitorMessages('oc_c', 0, 20)).toHaveLength(0)
+    const page2 = await p2.listMonitorMessages('oc_c', 0, 20)
+    expect(page2.messages).toHaveLength(0)
+    // The filtered-out message still advances the caller's watermark.
+    expect(page2.latestTimeSec).toBe(1690000000)
   })
 
   it('skips a webhook card with no fallback_user before downloading', async () => {
     const downloads = { n: 0 }
     // No fallback configured (default '').
     const p = newPollPlatform(pollApi({ downloads, items: [cardItem('{"elements":[{"tag":"img","img_key":"img_v3_x"}]}', 'om_nofback')] }), '')
-    expect(await p.listMonitorMessages('oc_chat', 0, 20)).toHaveLength(0)
+    expect((await p.listMonitorMessages('oc_chat', 0, 20)).messages).toHaveLength(0)
     expect(downloads.n).toBe(0)
   })
 })

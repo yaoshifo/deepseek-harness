@@ -49,17 +49,41 @@ export function hasComplexMarkdown(s: string): boolean {
 }
 
 /**
+ * Length-aware code-fence tracker shared by the table heuristics: a fence
+ * opens on a leading backtick run (``` or longer, info string allowed) and
+ * closes on a pure-backtick line at least as long as the opener. Inside a
+ * fence, pipe lines are code text, not table rows.
+ */
+class FenceTracker {
+  private openLen = 0
+
+  /** Update the tracker with one line's trimmed text; returns whether the line sits inside a fence. */
+  update(trimmed: string): boolean {
+    if (this.openLen === 0) {
+      const open = /^(`{3,})/.exec(trimmed)
+      if (open !== null) this.openLen = open[0].length
+    } else if (/^`{3,}\s*$/.test(trimmed) && trimmed.length >= this.openLen) {
+      this.openLen = 0
+    }
+    return this.openLen > 0
+  }
+}
+
+/**
  * Count the distinct markdown tables in s: a table is a group of consecutive
- * lines where each line starts and ends with '|'.
+ * lines where each line starts and ends with '|'. Pipe lines inside code
+ * fences are code text and never count.
  * @param s - Markdown text to scan.
  * @returns The number of distinct table groups.
  */
 export function countMarkdownTables(s: string): number {
   let count = 0
   let inTable = false
+  const fence = new FenceTracker()
   for (const line of s.split('\n')) {
     const trimmed = line.trim()
-    const isTableLine = trimmed.length > 1 && trimmed[0] === '|' && trimmed[trimmed.length - 1] === '|'
+    const inFence = fence.update(trimmed)
+    const isTableLine = !inFence && trimmed.length > 1 && trimmed[0] === '|' && trimmed[trimmed.length - 1] === '|'
     if (isTableLine && !inTable) {
       count++
       inTable = true
@@ -75,7 +99,8 @@ export function countMarkdownTables(s: string): number {
  * further table with a single marker line; prose is preserved verbatim. The
  * preview-card PATCH path cannot fall back to a non-card format mid-stream,
  * so excess tables are collapsed and the engine delivers the full answer
- * out-of-band (PreviewOverflowReporter / analysisTruncated).
+ * out-of-band (PreviewOverflowReporter / analysisTruncated). Pipe lines
+ * inside code fences are code text and are never collapsed.
  * @param s - Markdown text to deliver.
  * @returns The text with tables beyond maxCardTables replaced by a single marker line.
  */
@@ -86,9 +111,11 @@ export function collapseExcessCardTables(s: string): string {
   let tableCount = 0
   let inTable = false
   let markerWritten = false
+  const fence = new FenceTracker()
   for (const line of s.split('\n')) {
     const trimmed = line.trim()
-    const isTableLine = trimmed.length > 1 && trimmed[0] === '|' && trimmed[trimmed.length - 1] === '|'
+    const inFence = fence.update(trimmed)
+    const isTableLine = !inFence && trimmed.length > 1 && trimmed[0] === '|' && trimmed[trimmed.length - 1] === '|'
     if (isTableLine) {
       if (!inTable) {
         tableCount++
@@ -139,26 +166,43 @@ export function isTableRow(line: string): boolean {
  * @returns The markdown with Feishu-renderable line breaks.
  */
 export function preprocessFeishuMarkdown(md: string): string {
-  // Pass 1: ensure code fences start on their own line.
+  // Pass 1: ensure code fences start on their own line. Walk whole
+  // backtick runs so a four-backtick fence gets one break before the run —
+  // splitting at the second backtick would break the fence in half.
   let normalized = ''
-  for (let i = 0; i < md.length; i++) {
-    if (i > 0 && md[i] === '`' && i + 2 < md.length && md[i + 1] === '`' && md[i + 2] === '`' && md[i - 1] !== '\n') {
-      normalized += '\n'
+  for (let i = 0; i < md.length;) {
+    if (md[i] === '`') {
+      let j = i
+      while (j < md.length && md[j] === '`') j++
+      if (j - i >= 3 && i > 0 && md[i - 1] !== '\n') normalized += '\n'
+      normalized += md.slice(i, j)
+      i = j
+      continue
     }
     normalized += md.charAt(i)
+    i++
   }
 
   // Pass 2: convert \n between non-empty lines to \n\n outside code blocks
   // and between non-table rows, so Feishu card markdown renders line breaks.
+  // Fence tracking is length-aware: a fence closes only on a pure-backtick
+  // line at least as long as the opener, so a ``` inside a ```` block is
+  // content, not a toggle.
   const lines = normalized.split('\n')
-  let inCodeBlock = false
+  let openFenceLen = 0
   let b = ''
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] as string
     const next = i + 1 < lines.length ? lines[i + 1] as string : undefined
     const trimmed = line.trim()
-    if (trimmed.startsWith('```')) inCodeBlock = !inCodeBlock
+    if (openFenceLen === 0) {
+      const open = /^(`{3,})/.exec(trimmed)
+      if (open !== null) openFenceLen = open[0].length
+    } else if (/^`{3,}\s*$/.test(trimmed) && trimmed.length >= openFenceLen) {
+      openFenceLen = 0
+    }
+    const inCodeBlock = openFenceLen > 0
 
     b += line
 

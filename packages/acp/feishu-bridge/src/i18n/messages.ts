@@ -127,6 +127,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   hints_empty: { en: 'No hints configured', zh: '未配置快捷提示' },
   hint: { en: 'Show configured hint buttons', zh: '显示快捷提示按钮' },
   failed_to_start_agent_session: { en: '❌ Error: failed to start agent session', zh: '❌ 错误: 启动 Agent 会话失败', 'zh-TW': '❌ 錯誤: 啟動 Agent 會話失敗', ja: '❌ エラー: Agentセッションの起動に失敗しました', es: '❌ Error: error al iniciar la sesión del agente' },
+  askq_stale_question: { en: '⚠️ This question card is no longer current — the ask has changed. Reply in text to answer the current question.', zh: '⚠️ 这张问题卡片已过期——问题列表已变化。请用文字回答当前问题。' },
   plan_content_header: { en: 'Plan', zh: '计划', 'zh-TW': '計畫', ja: 'プラン', es: 'Plan' },
   plan_content_header_revision: { en: 'Plan (v%d)', zh: '计划 (v%d)', 'zh-TW': '計畫 (v%d)', ja: 'プラン (v%d)', es: 'Plan (v%d)' },
   permission_prompt: { en: '⚠️ **Permission Request**\n\nAgent wants to use **%s**:\n\n```\n%s\n```\n\nReply **allow** / **deny** / **allow all** (skip all future prompts this session).', zh: '⚠️ **权限请求**\n\nAgent 想要使用 **%s**:\n\n```\n%s\n```\n\n回复 **允许** / **拒绝** / **允许所有**（本次会话不再提醒）。', 'zh-TW': '⚠️ **權限請求**\n\nAgent 想要使用 **%s**:\n\n```\n%s\n```\n\n回覆 **允許** / **拒絕** / **允許所有**（本次會話不再提醒）。', ja: '⚠️ **権限リクエスト**\n\nエージェントが **%s** を使用しようとしています:\n\n```\n%s\n```\n\n**allow** / **deny** / **allow all**（このセッション中は全て自動許可）で返信してください。', es: '⚠️ **Solicitud de permiso**\n\nEl agente quiere usar **%s**:\n\n```\n%s\n```\n\nResponda **allow** / **deny** / **allow all** (omitir futuras solicitudes en esta sesión).' },

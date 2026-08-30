@@ -429,6 +429,17 @@ describe('buildPreviewCardJSON', () => {
     expect(md).toContain('**改动明细：**\n\n- item one\n\n- item two')
   })
 
+  it('strips non-whitelisted HTML from the preview text path like the final reply path', () => {
+    // A bare <div>/<details> in the streamed body otherwise PATCHes straight
+    // through, Feishu rejects it with 11311, and the preview degrades after
+    // three failures — the final reply already strips via
+    // finalizeFeishuCardMarkdown; the preview must match.
+    const out = buildPreviewCardJSON('预览 <div>block</div> 与 <details>fold</details> 正文', noSpinner)
+    expect(out).toContain('预览')
+    expect(out).not.toContain('<div>')
+    expect(out).not.toContain('<details>')
+  })
+
   it('pads bold delimiters glued to the following text so Feishu renders them', () => {
     // Feishu card markdown renders **bold** only when the delimiters keep a
     // space on both sides; a closing ** glued to the next word shows raw **.

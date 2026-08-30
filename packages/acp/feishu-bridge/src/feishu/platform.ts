@@ -26,7 +26,7 @@ import { AllowList } from './allowlist.js'
 import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.js'
 import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostImageKeys, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.js'
 import { isMonitorCommand } from '../core/types.js'
-import type { UserQuestion } from '../core/types.js'
+import type { UserQuestion, MonitorPollPage } from '../core/types.js'
 import { buildAskQuestionsCard, parseAskqSelection } from '../engine/ask.js'
 import { hintCategoryOfCode, parseHintButtonName } from '../engine/hints-panel.js'
 import type { FeishuMention } from './extract.js'
@@ -44,7 +44,7 @@ import {
 import { previewOverflow as previewOverflowFn } from './markdown.js'
 import { noSpinner, resolveSpinnerAsset, spinnerKeyForState, type SpinnerCfg } from './spinner.js'
 import { parseProgressStyle } from '../progress.js'
-import { TokenBucketRateLimiter, feishuBusinessCode, feishuPatchRateLimitCode, isTenantAccessTokenInvalid, withTransientRetry } from './retry.js'
+import { TokenBucketRateLimiter, feishuBusinessCode, feishuPatchRateLimitCode, isTenantAccessTokenInvalid, retryTiming, withTransientRetry } from './retry.js'
 import { errorMessage } from './retry.js'
 import { ErrNotSupported, type ChatBasePhase, type ChatPhase, type ImageAttachment, type FileAttachment, type Message, type MessageHandler, type Platform, type ProgressContent } from '../core/types.js'
 import { SpawnedChatStore, extractFeishuChatID, projectBaseForTag, type GroupSpawnOptions, type SpawnedChatInfo, type SpawnedChatMeta } from './spawn.js'
@@ -162,6 +162,13 @@ function emptyMessageShape(): Message {
 export interface FeishuReplyParams { messageId: string; msgType: string; content: string; replyInThread?: boolean }
 
 /**
+ * A tenant-access-token minting closure. `invalidate`, when present, drops
+ * any cached token so the next call re-mints — the stale-token refresh path
+ * uses it after the server rejected the cached token (early revocation).
+ */
+export type TenantTokenMinter = (() => Promise<string>) & { invalidate?(): void }
+
+/**
  * Outbound message API surface the platform needs (node-sdk subset). M1's
  * reply/create are required; the M2 verbs are optional so minimal test
  * fakes keep working — card paths fail loud when a verb is missing.
@@ -171,7 +178,7 @@ export interface FeishuApiClient {
   create(params: { chatId: string; msgType: string; content: string }): Promise<{ messageId?: string } | undefined>
   patch?(params: { messageId: string; content: string }): Promise<void>
   delete?(params: { messageId: string }): Promise<void>
-  fetchTenantAccessToken?(): Promise<string>
+  fetchTenantAccessToken?: TenantTokenMinter
   /** A client bound to an explicit token, bypassing the cached one. */
   withToken?(token: string): FeishuApiClient
   putTopNotice?(params: { chatId: string; messageId: string }): Promise<void>
@@ -1620,6 +1627,9 @@ export class FeishuPlatform implements Platform {
     if (client.fetchTenantAccessToken === undefined) {
       throw new Error(`feishu: ${operation} failed: token went stale and the client cannot refresh it (original error: ${String(original)})`)
     }
+    // The server just rejected the minter's cached token (early revocation);
+    // drop the cache so the refresh mints a genuinely fresh one.
+    client.fetchTenantAccessToken.invalidate?.()
     const token = (await client.fetchTenantAccessToken()).trim()
     if (token === '') {
       throw new Error(`feishu: fetch tenant access token returned empty token (original error: ${String(original)})`)
@@ -1684,7 +1694,7 @@ export class FeishuPlatform implements Platform {
       try {
         await client.reply({ messageId: rc.messageID, msgType, content, ...(replyInThread ? { replyInThread } : {}) })
       } catch (error) {
-        if (errorMessage(error).includes(`code=${feishuCodeMessageWithdrawn}`)) {
+        if (feishuBusinessCode(error) === String(feishuCodeMessageWithdrawn)) {
           state.withdrawn = true
           return
         }
@@ -2601,21 +2611,25 @@ export class FeishuPlatform implements Platform {
    * Messages created after afterSec (exclusive), oldest-first, as fully-built
    * Messages with extracted text (Go ListMonitorMessages). Skips the bot's
    * own messages. Catches webhook-bot / other-app card messages that never
-   * arrive as events.
+   * arrive as events. `latestTimeSec` covers every fetched raw item so the
+   * caller's watermark advances past filtered-out messages too.
    * @param chatID - Chat to poll.
    * @param afterSec - High-water mark; messages created after it (exclusive).
    * @param limit - Max messages to return; non-positive means 20.
-   * @returns Fully-built Messages, oldest first, bot's own excluded.
+   * @returns The triageable Messages plus the newest raw create time in seconds.
    */
-  async listMonitorMessages(chatID: string, afterSec: number, limit: number): Promise<Message[]> {
+  async listMonitorMessages(chatID: string, afterSec: number, limit: number): Promise<MonitorPollPage> {
     const pageSize = limit <= 0 ? 20 : limit
     const items = await this.listMessages(chatID, afterSec, 'ByCreateTimeAsc', pageSize)
     const out: Message[] = []
+    let latestSec = 0
     for (const m of items) {
+      const t = msgTimeSec(m.createTime ?? '')
+      if (t > latestSec) latestSec = t
       const msg = await this.pollItemToMessage(m, chatID)
       if (msg !== undefined) out.push(msg)
     }
-    return out
+    return { messages: out, latestTimeSec: latestSec }
   }
 
   /**
@@ -3256,7 +3270,8 @@ const tenantTokenRefreshSkewSec = 60
  * A tenant-access-token minting closure with expiry-gated caching: tokens
  * are reused until shortly before the server-declared `expire` elapses; a
  * response without `expire` declares no reusable lifetime and is never
- * cached. One minter per app (the closure holds the cache).
+ * cached. One minter per app (the closure holds the cache). `invalidate`
+ * drops the cache for the stale-token refresh path.
  *
  * @param appID - The app's client id.
  * @param appSecret - The app's client secret.
@@ -3268,9 +3283,9 @@ export function newCachedTenantTokenMinter(
   appID: string,
   appSecret: string,
   fetchFn: typeof globalThis.fetch,
-): () => Promise<string> {
+): TenantTokenMinter {
   let cached: { token: string; expiresAt: number } | undefined
-  return async () => {
+  const mint = async (): Promise<string> => {
     if (cached !== undefined && Date.now() < cached.expiresAt) return cached.token
     const resp = await fetchFn('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
       method: 'POST',
@@ -3284,69 +3299,82 @@ export function newCachedTenantTokenMinter(
     }
     return token
   }
+  return Object.assign(mint, {
+    invalidate(): void { cached = undefined },
+  })
 }
 
 async function defaultApiClient(appID: string, appSecret: string): Promise<FeishuApiClient> {
   const sdk = await import('@larksuiteoapi/node-sdk')
+  // The SDK's formatPayload overwrites headers.Authorization with its own
+  // cached token whenever the token cache is enabled, silently discarding
+  // the fresh token the stale-token retry passes via withTenantToken. With
+  // the cache disabled, the platform minter below is the single token
+  // authority and every verb carries its token explicitly.
   const client = new sdk.Client({
     appId: appID,
     appSecret,
     appType: sdk.AppType.SelfBuild,
     domain: sdk.Domain.Feishu,
+    disableTokenCache: true,
   })
   const fetchTenantToken = newCachedTenantTokenMinter(appID, appSecret, globalThis.fetch.bind(globalThis))
+  type VerbOpts = Parameters<typeof client.im.message.reply>[1]
+  /** Merge the minter's current token into the request opts; an explicit Authorization (withToken) wins. */
+  const tokened = async (opts?: VerbOpts): Promise<VerbOpts> =>
+    ({ ...opts, headers: { Authorization: `Bearer ${(await fetchTenantToken()).trim()}`, ...opts?.headers } })
   const verbSet = (opts?: Parameters<typeof client.im.message.reply>[1]): FeishuApiClient => ({
     async reply({ messageId, msgType, content, replyInThread }) {
       const resp = await client.im.message.reply({
         path: { message_id: messageId },
         data: { content, msg_type: msgType, ...(replyInThread === true ? { reply_in_thread: true } : {}) },
-      }, opts)
+      }, await tokened(opts))
       return resp.data?.message_id !== undefined ? { messageId: resp.data.message_id } : undefined
     },
     async create({ chatId, msgType, content }) {
       const resp = await client.im.message.create({
         params: { receive_id_type: 'chat_id' },
         data: { receive_id: chatId, content, msg_type: msgType },
-      }, opts)
+      }, await tokened(opts))
       return resp.data?.message_id !== undefined ? { messageId: resp.data.message_id } : undefined
     },
     async patch({ messageId, content }) {
-      await client.im.message.patch({ path: { message_id: messageId }, data: { content } }, opts)
+      await client.im.message.patch({ path: { message_id: messageId }, data: { content } }, await tokened(opts))
     },
     async delete({ messageId }) {
-      await client.im.message.delete({ path: { message_id: messageId } }, opts)
+      await client.im.message.delete({ path: { message_id: messageId } }, await tokened(opts))
     },
     fetchTenantAccessToken: fetchTenantToken,
     async putTopNotice({ chatId, messageId }) {
       await client.im.chatTopNotice.putTopNotice({
         path: { chat_id: chatId },
         data: { chat_top_notice: [{ action_type: '1', message_id: messageId }] },
-      }, opts)
+      }, await tokened(opts))
     },
     async deleteTopNotice({ chatId }) {
-      await client.im.chatTopNotice.deleteTopNotice({ path: { chat_id: chatId } }, opts)
+      await client.im.chatTopNotice.deleteTopNotice({ path: { chat_id: chatId } }, await tokened(opts))
     },
     async createPin({ messageId }) {
-      await client.im.pin.create({ data: { message_id: messageId } }, opts)
+      await client.im.pin.create({ data: { message_id: messageId } }, await tokened(opts))
     },
     async createReaction({ messageId, emojiType }) {
       const resp = await client.im.messageReaction.create({
         path: { message_id: messageId },
         data: { reaction_type: { emoji_type: emojiType } },
-      }, opts)
+      }, await tokened(opts))
       return resp.data?.reaction_id !== undefined ? { reactionId: resp.data.reaction_id } : undefined
     },
     async deleteReaction({ messageId, reactionId }) {
       await client.im.messageReaction.delete({
         path: { message_id: messageId, reaction_id: reactionId },
-      }, opts)
+      }, await tokened(opts))
     },
     async uploadImage({ data }) {
       // node-sdk takes the raw multipart fields (Buffer); the file name and
       // MIME type ride along in the multipart metadata it builds.
       const resp = await client.im.image.create({
         data: { image_type: 'message', image: Buffer.from(data) },
-      }, opts)
+      }, await tokened(opts))
       return resp?.image_key ?? ''
     },
     async createChat({ name, userIdList, groupMessageType, avatar }) {
@@ -3358,7 +3386,7 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
           ...(groupMessageType !== undefined ? { group_message_type: groupMessageType } : {}),
           ...(avatar !== undefined ? { avatar } : {}),
         },
-      }, opts)
+      }, await tokened(opts))
       return { chatId: resp.data?.chat_id, code: resp.code, msg: resp.msg }
     },
     async updateChat({ chatId, name, avatar }) {
@@ -3368,11 +3396,11 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
           ...(name !== undefined ? { name } : {}),
           ...(avatar !== undefined ? { avatar } : {}),
         },
-      }, opts)
+      }, await tokened(opts))
       return { code: resp.code, msg: resp.msg }
     },
     async getChat({ chatId }) {
-      const resp = await client.im.chat.get({ path: { chat_id: chatId } }, opts)
+      const resp = await client.im.chat.get({ path: { chat_id: chatId } }, await tokened(opts))
       return { name: resp.data?.name, code: resp.code, msg: resp.msg }
     },
     async listChatMembersPage({ chatId, pageToken }) {
@@ -3383,7 +3411,7 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
           page_size: 100,
           ...(pageToken !== undefined ? { page_token: pageToken } : {}),
         },
-      }, opts)
+      }, await tokened(opts))
       return {
         memberIDs: (resp.data?.items ?? []).map(item => item.member_id ?? ''),
         pageToken: resp.data?.has_more === true ? resp.data.page_token : undefined,
@@ -3396,13 +3424,13 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
         path: { chat_id: chatId },
         params: { member_id_type: 'open_id' },
         data: { id_list: idList },
-      }, opts)
+      }, await tokened(opts))
       return { code: resp.code, msg: resp.msg }
     },
     async createTag({ name }) {
       const resp = await client.im.v2.tag.create({
         data: { create_tag: { tag_type: 'tenant', name } },
-      }, opts)
+      }, await tokened(opts))
       return {
         code: resp.code,
         msg: resp.msg,
@@ -3413,7 +3441,7 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
     async getTagRelation({ chatId }) {
       const resp = await client.im.v2.bizEntityTagRelation.get({
         params: { tag_biz_type: 'chat', biz_entity_id: chatId },
-      }, opts)
+      }, await tokened(opts))
       return {
         code: resp.code,
         msg: resp.msg,
@@ -3426,32 +3454,32 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
     async createTagRelation({ chatId, tagIds }) {
       const resp = await client.im.v2.bizEntityTagRelation.create({
         data: { tag_biz_type: 'chat', biz_entity_id: chatId, tag_ids: tagIds },
-      }, opts)
+      }, await tokened(opts))
       return { code: resp.code, msg: resp.msg }
     },
     async updateTagRelation({ chatId, tagIds }) {
       const resp = await client.im.v2.bizEntityTagRelation.update({
         data: { tag_biz_type: 'chat', biz_entity_id: chatId, tag_ids: tagIds },
-      }, opts)
+      }, await tokened(opts))
       return { code: resp.code, msg: resp.msg }
     },
     async uploadAvatar({ data }) {
       const resp = await client.im.image.create({
         data: { image_type: 'avatar', image: Buffer.from(data) },
-      }, opts)
+      }, await tokened(opts))
       return resp?.image_key ?? ''
     },
     async uploadFile({ data, fileName, fileType }) {
       const resp = await client.im.file.create({
         data: { file_type: fileType, file_name: fileName, file: Buffer.from(data) },
-      }, opts)
+      }, await tokened(opts))
       return resp?.file_key ?? ''
     },
     async downloadMessageResource({ messageId, fileKey, type }) {
       const resp = await client.im.messageResource.get({
         path: { message_id: messageId, file_key: fileKey },
         params: { type },
-      }, opts)
+      }, await tokened(opts))
       const chunks: Buffer[] = []
       for await (const chunk of resp.getReadableStream()) {
         chunks.push(chunk as Buffer)
@@ -3471,7 +3499,7 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
           card_msg_content_type: 'raw_card_content',
           ...(startTimeSec !== undefined ? { start_time: String(startTimeSec) } : {}),
         },
-      }, opts)
+      }, await tokened(opts))
       return (resp.data?.items ?? []).map(item => ({
         messageId: item.message_id ?? '',
         msgType: item.msg_type ?? '',
@@ -3490,6 +3518,9 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
       const token = (await fetchTenantToken()).trim()
       const resp = await fetch('https://open.feishu.cn/open-apis/bot/v3/info', {
         headers: { Authorization: `Bearer ${token}` },
+        // Bare fetches skip withRetry's per-attempt deadline; bound them here
+        // so a black-hole connection cannot pin the WS startup.
+        signal: AbortSignal.timeout(retryTiming.requestTimeout),
       })
       const data = await resp.json() as { code?: number; bot?: { open_id?: string; avatar_url?: string; app_name?: string } }
       if (data.code !== undefined && data.code !== 0) {
@@ -3507,6 +3538,7 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
       const token = (await fetchTenantToken()).trim()
       const resp = await fetch(`https://open.feishu.cn/open-apis/im/v1/messages/${messageId}?card_msg_content_type=raw_card_content`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(retryTiming.requestTimeout),
       })
       const payload = await resp.json() as {
         code?: number

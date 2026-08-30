@@ -328,6 +328,42 @@ describe('StreamPreview', () => {
     expect(mp.messages.slice(sentAtStop), `messages=${JSON.stringify(mp.messages)}`).toEqual([])
   })
 
+  it('a text timer armed before progressMode cannot downgrade the progress card', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(cfg({ intervalMs: 100, minDeltaChars: 5 }), mp, 'ctx', undefined, undefined)
+    await sp.appendText('Hello ') // first flush: lastSentAt was 0
+    await sp.appendText('ab') // below minDeltaChars — arms the throttled text timer
+    await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**00:00:01**', body: 'ls', lang: 'bash', toolID: 't1' }))
+    const sentAtProgress = mp.messages.length
+    await sleep(200) // the stale text timer fires here
+    // The residual timer must not PATCH a status-less text card that
+    // replaces the progress card (tool section, todos, live header).
+    expect(mp.messages.slice(sentAtProgress), `messages=${JSON.stringify(mp.messages)}`).toEqual([])
+  })
+
+  it('renders ring-buffer entries oldest-to-newest after wraparound', async () => {
+    // maxProgressLines=3: the 4th tool overwrites the oldest slot. Rendering
+    // must iterate from the oldest slot (progressWriteIdx), so timestamps
+    // read monotonically and the 🚨 latest marker stays on the last line.
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(cfg({ intervalMs: 0, minDeltaChars: 0 }), mp, 'ctx', undefined, undefined)
+    sp.lastProgressFlush = 0
+    await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**00:00:01**', body: 'one', lang: 'bash', toolID: 't1' }))
+    sp.lastProgressFlush = 0
+    await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**00:00:02**', body: 'two', lang: 'bash', toolID: 't2' }))
+    sp.lastProgressFlush = 0
+    await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**00:00:03**', body: 'three', lang: 'bash', toolID: 't3' }))
+    sp.lastProgressFlush = 0
+    await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**00:00:04**', body: 'four', lang: 'bash', toolID: 't4' }))
+
+    const last = mp.contents[mp.contents.length - 1]
+    const text = previewText(last!)
+    const toolLines = text.split('\n').filter(l => l.includes('00:00:0'))
+    expect(toolLines.map(l => (/\*?\*(\d\d:\d\d:\d\d)/.exec(l) ?? [])[1]), text).toEqual(['00:00:02', '00:00:03', '00:00:04'])
+    expect(toolLines[toolLines.length - 1], text).toContain('🚨')
+    expect(toolLines[0], text).not.toContain('🚨')
+  })
+
   it('markStoppedSync drains in-flight running PATCH before the stopped card', async () => {
     const mp = createRaceStopRenderer()
     const as = newAsyncSender('test-stop-race')

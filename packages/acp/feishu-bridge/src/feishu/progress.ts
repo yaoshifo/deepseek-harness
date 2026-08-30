@@ -23,6 +23,7 @@ import {
   msgTypeText,
   padBoldDelimiters,
   preprocessFeishuMarkdown,
+  sanitizeFeishuMarkdownHTML,
   sanitizeMarkdownURLs,
   isTableRow,
 } from './markdown.js'
@@ -652,8 +653,12 @@ export function buildPreviewCardJSON(content: string, spin: SpinnerCfg, status?:
   const payload = parseProgressCardPayload(content)
   if (payload !== undefined) return buildProgressCardJSONFromPayload(payload, spin)
   const state = status?.state ?? ''
-  let processed = content
-  if (containsMarkdown(content)) processed = preprocessFeishuMarkdown(padBoldDelimiters(content))
+  // Strip non-whitelisted HTML exactly like the final reply path
+  // (finalizeFeishuCardMarkdown): a bare tag PATCHes into an 11311 card
+  // rejection and degrades the preview after three failures. Unconditional —
+  // containsMarkdown does not count bare HTML tags as markdown indicators.
+  let processed = sanitizeFeishuMarkdownHTML(content)
+  if (containsMarkdown(processed)) processed = preprocessFeishuMarkdown(padBoldDelimiters(processed))
   processed = collapseExcessCardTables(processed)
   processed = collapseStructuralBlankLines(processed)
   const { title, color } = progressTitleAndColor(

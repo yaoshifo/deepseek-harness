@@ -94,6 +94,23 @@ describe('preprocessFeishuMarkdown', () => {
     expect(out).toContain('| A | B |')
     expect(out).toContain('> quote')
   })
+
+  it('does not split a four-backtick fence mid-run', () => {
+    // A nested code example (the standard way to show a fenced block inside
+    // a block) — pass 1 must insert the break before the run, never inside.
+    const out = preprocessFeishuMarkdown('example````markdown\ninner\n````done')
+    expect(out).toContain('example\n\n````markdown')
+    expect(out).toContain('````markdown\ninner\n````done')
+  })
+
+  it('a fenced block containing a shorter fence keeps its interior intact', () => {
+    // The inner ``` is content of the four-backtick block, not a closing
+    // fence; blank-line padding must not be injected between its lines.
+    const md = '````markdown\nbefore\n```\ncode\n```\nafter\n````'
+    const out = preprocessFeishuMarkdown(md)
+    expect(out).toContain('```\ncode\n```')
+    expect(out).not.toContain('```\n\ncode')
+  })
 })
 
 describe('padBoldDelimiters', () => {
@@ -152,7 +169,7 @@ describe('countMarkdownTables', () => {
       '| A |\n|---|\n\nx\n\n| B |\n|---|\n\nx\n\n| C |\n|---|\n\nx\n\n| D |\n|---|\n\nx\n\n| E |\n|---|\n\nx\n\n| F |\n|---|',
       6,
     ],
-    ['table inside code block is still counted', '```\n| A |\n```\n\n| B |\n|---|', 2],
+    ['pipe lines inside a code fence are code, not a table', '```\n| A |\n```\n\n| B |\n|---|', 1],
   ]
   for (const [name, input, want] of cases) {
     it(name, () => {
@@ -167,6 +184,16 @@ describe('collapseExcessCardTables', () => {
   it('no tables unchanged', () => {
     const input = 'just prose\nno tables here'
     expect(collapseExcessCardTables(input)).toBe(input)
+  })
+
+  it('pipe lines inside a code fence are never collapsed', () => {
+    // Tool output often embeds markdown files / CLI tables in code fences;
+    // those render as code text (no table component, no 11310 risk) —
+    // collapsing them deletes real content and mislabels the code block.
+    const inner = ['| a |', '| b |', '| c |', '| d |', '| e |', '| f |'].join('\n\n')
+    const input = `\`\`\`markdown\n${inner}\n\`\`\``
+    const got = collapseExcessCardTables(input)
+    expect(got).toBe(input)
   })
 
   it('five tables unchanged (fast path)', () => {

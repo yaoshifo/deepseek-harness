@@ -18,6 +18,7 @@ import { DirHistory } from '../../src/engine/dir-history.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { createWorktree } from '../../src/engine/worktree.js'
 import { createStubAgent, createStubCardPlatform, newStubMessage, type RecordedCard, type StubCardPlatform } from '../stubs/engine-stubs.js'
+import { registerSessionCommands } from '../../src/engine/commands.js'
 import { newCard } from '../../src/card.js'
 import type { Message, Platform } from '../../src/core/types.js'
 
@@ -298,6 +299,36 @@ describe('handleCardAction /dir', () => {
 
     expect(e.projectState?.workspaceDirOverride(e.dirOverrideKey(SK))).toBe(dirs[0] ?? '')
     expect(markdowns(p.refreshed[0]!.card)).not.toContain('Session ended. Next conversation will start a new Agent session.')
+  })
+
+  it('a non-admin operator cannot switch dirs through the card buttons', async () => {
+    // The text path gates /dir behind admin_from; the card-action path must
+    // not bypass it (the /help card links /dir from its system page).
+    const dirs = makeDirs(3)
+    const p = newRefreshingPlatform()
+    const e = newDirEngine(p, dirs, dirs[0] ?? '')
+    registerSessionCommands(e)
+    e.setAdminFrom('ou_admin')
+
+    e.receiveMessage(p, cardActionMsg(SK, 'act:/dir select 2'))
+    await waitFor(() => p.getSent().length > 0, 'admin-required reply')
+
+    expect(e.projectState?.workspaceDirOverride(e.dirOverrideKey(SK))).toBe(dirs[0] ?? '')
+    expect(p.getSent().some(m => m.includes('/dir'))).toBe(true)
+  })
+
+  it('an admin operator still switches dirs through the card buttons', async () => {
+    const dirs = makeDirs(3)
+    const p = newRefreshingPlatform()
+    const e = newDirEngine(p, dirs, dirs[0] ?? '')
+    registerSessionCommands(e)
+    e.setAdminFrom('*')
+    const target = e.dirHistory?.get('test', 2) ?? ''
+
+    e.receiveMessage(p, cardActionMsg(SK, 'act:/dir select 2'))
+    await waitFor(() => p.refreshed.length === 1, 'refreshCard')
+
+    expect(e.projectState?.workspaceDirOverride(e.dirOverrideKey(SK))).toBe(target)
   })
 
   it('falls back to a new card when the platform cannot PATCH', async () => {

@@ -387,6 +387,7 @@ export const ALL_MSG_KEYS = [
   'nopred_body',
   'thread_note',
   'context_tools_panel',
+  'askq_stale_question',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -412,6 +413,7 @@ export const Msg = {
   AgentProcessExited: 'agent_process_exited',
   PluginReloaded: 'plugin_reloaded',
   FailedToStartAgentSession: 'failed_to_start_agent_session',
+  AskqStaleQuestion: 'askq_stale_question',
   PermissionPrompt: 'permission_prompt',
   PlanContentHeader: 'plan_content_header',
   PlanContentHeaderRevision: 'plan_content_header_revision',
