@@ -12,7 +12,7 @@ Status: implemented
 
 ## Decision
 
-- `SessionStartOptions.interactiveSlotKey`（[session start options](../simplification/2026-08-24-feishu-bridge-session-start-options.zh.md)）在交互槽位键与 `sessionKey` 不同时（cron new-per-run 的 `#cron:` 槽位）携带前者。`getOrCreateInteractiveStateWith` 负责填入；`DshAgentSession.askSlotKey()` 暴露它，缺省回落到会话键。权限应答器、questions 处理器与 plan-review 应答器统一把 `askSlotKey()` 传给 [ask delegate](../simplification/2026-08-24-feishu-bridge-ask-delegate.zh.md)，卡片因此渲染在运行自己的 state 上，飞书回调的 `value.session_key` 盖章又把点击原路路由回同一槽位。
+- `SessionStartOptions.interactiveSlotKey`（[session start options](../simplification/2026-08-24-feishu-bridge-session-start-options.zh.md)）在交互槽位键与 `sessionKey` 不同时（cron new-per-run 的 `#cron:` 槽位）携带前者。`getOrCreateInteractiveStateWith` 负责填入；`DshAgentSession.askSlotKey()` 暴露它，缺省回落到会话键。权限应答器、questions 处理器与 plan-review 应答器统一把 `askSlotKey()` 传给 [ask delegate](../simplification/2026-08-24-feishu-bridge-ask-delegate.zh.md)，卡片因此渲染在运行自己的 state 上。点击并不经卡片原路返回：回调值盖的是 reply context 的裸键，由 `routeAskResponse` 把裸键点击桥接回槽位（见 [2026-08-31 后续](2026-08-31-feishu-bridge-cron-ask-slot-click-routing.zh.md)）。
 - 无人值守兜底现在会打日志。`Engine.askUser` 在按无人值守作答前（无 state 与无 platform 两个分支）打 warn，adapter 在活会话未命中或缺 delegate 而捏造空答案时打 warn。静默空答案正是这次事故在生产日志里不可见的根源。
 
 ## Alternatives considered
@@ -23,6 +23,6 @@ Status: implemented
 
 ## Consequences
 
-- cron new-per-run 运行现在会在任务绑定的聊天里真实呈现 ask 卡（questions 与 permission 两类）并阻塞等待。用户永不作答则 turn 无限期停放——空闲 reaper 跳过停等的 `pendingAsk`，与普通聊天会话一致；cron 运行专用的整卡超时（research-manual 模式已有的形态）尚未构建。
+- cron new-per-run 运行现在会在任务绑定的聊天里真实呈现 ask 卡（questions 与 permission 两类）并阻塞等待。用户永不作答时，turn 停泊到作业调度器超时以 cancelled 结算——空闲 reaper 跳过停等的 `pendingAsk`，与普通聊天会话一致；abort 路径结算与裸键点击路由见 [2026-08-31 后续](2026-08-31-feishu-bridge-cron-ask-slot-click-routing.zh.md)。
 - `DshAgentSession.sessionKey()` 仍返回裸键；`sessionsByEngineKey` 的身份校验依赖它。只有 ask 路由读取槽位键。
 - 覆盖于 `tests/engine/cron-execute.spec.ts`（启动选项携带槽位键）、`tests/engine/engine-m3-askq.spec.ts`（槽位键下的停放/结算往返；裸键未命中按无人值守作答）、`tests/agent-dsh/adapter.spec.ts`（questions 与权限在槽位键下委托）。

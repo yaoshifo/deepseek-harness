@@ -12,7 +12,7 @@ The discriminating signature for future triage: a question ask returning in sing
 
 ## Decision
 
-- `SessionStartOptions.interactiveSlotKey` ([session start options](../simplification/2026-08-24-feishu-bridge-session-start-options.md)) carries the interactive-state slot key whenever it differs from `sessionKey` — cron new-per-run `#cron:` slots. `getOrCreateInteractiveStateWith` sets it; `DshAgentSession.askSlotKey()` exposes it, falling back to the session key. The approval answerer, the questions handler, and the plan-review answerer all pass `askSlotKey()` to the [ask delegate](../simplification/2026-08-24-feishu-bridge-ask-delegate.md), so the card renders on the run's own state and the Feishu callback's `value.session_key` stamp routes the click back to the same slot.
+- `SessionStartOptions.interactiveSlotKey` ([session start options](../simplification/2026-08-24-feishu-bridge-session-start-options.md)) carries the interactive-state slot key whenever it differs from `sessionKey` — cron new-per-run `#cron:` slots. `getOrCreateInteractiveStateWith` sets it; `DshAgentSession.askSlotKey()` exposes it, falling back to the session key. The approval answerer, the questions handler, and the plan-review answerer all pass `askSlotKey()` to the [ask delegate](../simplification/2026-08-24-feishu-bridge-ask-delegate.md), so the card renders on the run's own state. The click does not route back through the card: callback values stamp the reply context's bare key, and `routeAskResponse` bridges that bare-key click to the slot ([2026-08-31 follow-up](2026-08-31-feishu-bridge-cron-ask-slot-click-routing.md)).
 - Unattended fallbacks now log. `Engine.askUser` warns before answering unattended (both the no-state and the no-platform branch), and the adapter warns when a live-session miss or a missing delegate fabricates an empty answer. Silent empty answers were exactly what made the incident invisible in production logs.
 
 ## Alternatives considered
@@ -23,6 +23,6 @@ The discriminating signature for future triage: a question ask returning in sing
 
 ## Consequences
 
-- Cron new-per-run runs now surface real ask cards (questions and permissions) in the job's bound chat and block on them. A user who never answers parks the turn indefinitely — the idle reaper skips a parked `pendingAsk`, matching ordinary chat sessions; a whole-ask timeout for cron runs (the shape the research-manual mode already has) remains unbuilt.
+- Cron new-per-run runs now surface real ask cards (questions and permissions) in the job's bound chat and block on them. A user who never answers parks the turn until the job's scheduler timeout settles it cancelled — the idle reaper skips a parked `pendingAsk`, matching ordinary chat sessions; the abort-path settlement landed in the [2026-08-31 follow-up](2026-08-31-feishu-bridge-cron-ask-slot-click-routing.md), which also routes bare-key card clicks back to the slot.
 - `DshAgentSession.sessionKey()` still returns the bare key; `sessionsByEngineKey` identity checks rely on it. Only ask routing reads the slot key.
 - Covered by `tests/engine/cron-execute.spec.ts` (start options carry the slot), `tests/engine/engine-m3-askq.spec.ts` (slot-keyed park/settle round-trip; bare-key miss answers unattended), and `tests/agent-dsh/adapter.spec.ts` (questions and permission delegation under the slot key).

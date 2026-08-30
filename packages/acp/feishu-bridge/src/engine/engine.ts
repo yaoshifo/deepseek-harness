@@ -4543,6 +4543,12 @@ export class Engine {
     const onAbort = (): void => {
       const st = this.interactiveStates.get(currentRunKey)
       if (st?.agentSession !== undefined) asAgentInterrupter(st.agentSession)?.cancelTurn()
+      // cancelTurn does not settle a turn parked on an ask promise (the
+      // runtime abort never reaches the engine-side wait): wake the state's
+      // stop signal so the parked ask settles cancelled and the turn — and
+      // with it the whole run — can finish (2026-08-31 cron-fbe6d268 leak:
+      // the 30-minute timeout fired, the turn still hung forever).
+      st?.markStopped()
     }
     signal?.addEventListener('abort', onAbort, { once: true })
     try {
@@ -5466,7 +5472,7 @@ export class Engine {
    * @returns True when the message was consumed as an ask response.
    */
   routeAskResponse(p: Platform, msg: Message, content: string): boolean {
-    const state = this.interactiveStates.get(msg.sessionKey)
+    const state = this.interactiveStates.get(msg.sessionKey) ?? this.cronSlotAskState(msg)
     if (state === undefined) {
       if (msg.isPermissionAction && parsePermissionVerdict(content) !== undefined) {
         void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PermissionExpired))
@@ -5492,6 +5498,31 @@ export class Engine {
       return this.routeQuestionResponse(p, msg, content, pending)
     }
     return this.routePermissionResponse(p, msg, content, pending)
+  }
+
+  /**
+   * A cron new-per-run slot parked under `<sessionKey>#cron:<side>` claims
+   * card actions addressed to the bare session key: ask and permission cards
+   * stamp the reply context's bare key into their callback values, so the
+   * click dispatch reconstructs the bare key while the ask parks under the
+   * slot. Without the fallback the click falls through as plain text and
+   * queues behind the very turn it was meant to settle (2026-08-31
+   * cron-fbe6d268 deadlock). Free-text replies stay on the exact key — an
+   * ordinary chat message must not answer a parked cron ask. The newest
+   * matching slot wins (map insertion order): concurrent cron runs in one
+   * chat answer their own cards in run order.
+   * @param msg - The card-action message addressed by the bare session key.
+   * @returns The slot state with a parked ask, or undefined to keep the
+   *   exact-key behavior.
+   */
+  private cronSlotAskState(msg: Message): InteractiveState | undefined {
+    if (!msg.isAskqCardAction && !msg.isPermissionAction) return undefined
+    const prefix = `${msg.sessionKey}#cron:`
+    let found: InteractiveState | undefined
+    for (const [key, state] of this.interactiveStates) {
+      if (key.startsWith(prefix) && state.pendingAsk !== undefined) found = state
+    }
+    return found
   }
 
   /**

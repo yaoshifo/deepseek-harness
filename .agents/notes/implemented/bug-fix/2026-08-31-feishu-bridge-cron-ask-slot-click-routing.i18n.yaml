@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-08-31-feishu-bridge-cron-ask-slot-click-routing.md
+2026-08-31-feishu-bridge-cron-ask-slot-click-routing.md: 9349a5866c7d64560452bac0e3bd3f01d5ceef07
+2026-08-31-feishu-bridge-cron-ask-slot-click-routing.zh.md: 87c2d09c2de2446306309ba0b2c84c6952ea04ca

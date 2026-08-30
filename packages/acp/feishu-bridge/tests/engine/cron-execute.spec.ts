@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.js'
 import { Engine } from '../../src/engine/engine.js'
-import { createStubPlatform, newResultAgentSession } from '../stubs/engine-stubs.js'
+import { createStubPlatform, newResultAgentSession, testQuestions } from '../stubs/engine-stubs.js'
 import type { Agent, Platform } from '../../src/core/types.js'
 
 function tempDir(): string {
@@ -85,6 +85,51 @@ describe('ExecuteCronJob_TimeoutCancellation', () => {
 
     expect(cancelCalls, 'the hung turn was interrupted through the signal').toEqual(['cancel'])
     await running
+  })
+})
+
+describe('ExecuteCronJob_AbortSettlesParkedAsk', () => {
+  it('an aborted new-per-run run settles a slot-parked ask instead of hanging the turn forever', async () => {
+    // The 2026-08-31 cron-fbe6d268 production shape: the run's turn parks on
+    // an ask_user_question promise under a `#cron:` slot; the scheduler's
+    // timeout abort fired cancelTurn but nothing settled the parked ask, so
+    // the turn (and the whole run) hung forever and the agent session leaked
+    // live.
+    const store = new CronStore(tempDir())
+    const scheduler = new CronScheduler(store)
+    scheduler.setDefaultSessionMode('new_per_run')
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const agentSession = newResultAgentSession('never delivered')
+    let settleSend!: () => void
+    agentSession.send = () => new Promise<void>((resolve) => { settleSend = resolve })
+    agentSession.cancelTurn = () => {}
+    const e = new Engine('test', resultAgent(agentSession), [platform], '', 'en')
+    e.cronScheduler = scheduler
+    const job = newJob({ id: 'job-ask', project: 'test', sessionKey: 'discord:channel-1:user-1', prompt: 'p' })
+    store.add(job)
+
+    const controller = new AbortController()
+    const running = e.executeCronJob(job, controller.signal)
+    await new Promise((r) => { setTimeout(r, 30) })
+
+    // The run parked its state under a #cron: slot; arm the ask on it the
+    // way the adapter's ask_user_question tool call would.
+    const slot = [...e.interactiveStates.keys()].find(k => k.includes('#cron:'))
+    expect(slot, 'the run parked a #cron: slot state').toBeDefined()
+    const decision = e.askUser(slot!, { kind: 'questions', questions: testQuestions() })
+    await new Promise((r) => { setTimeout(r, 10) })
+    // The turn resolves only once the ask settles (the adapter's tool call
+    // awaits the ask decision).
+    void decision.then(() => { settleSend() })
+
+    controller.abort()
+    const outcome = await Promise.race([
+      Promise.all([decision, running]).then(() => 'settled'),
+      new Promise((r) => { setTimeout(() => r('hung'), 500) }),
+    ])
+
+    expect(outcome, 'the abort settled the parked ask and finished the run').toBe('settled')
+    await expect(decision).resolves.toEqual({ outcome: 'cancelled' })
   })
 })
 

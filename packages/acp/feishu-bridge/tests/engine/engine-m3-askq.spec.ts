@@ -338,6 +338,72 @@ describe('interactive slot keys (cron new-per-run)', () => {
     })
   })
 
+  it('a bare-key askq card click routes to the #cron: slot parked ask (2026-08-31 deadlock)', async () => {
+    const e = newTestEngine()
+    const p = createStubCardPlatform('feishu')
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    const slot = 'feishu:oc_1:ou_1#cron:s20'
+    e.interactiveStates.set(slot, state)
+    const decision = e.askUser(slot, { kind: 'questions', questions: testQuestions() })
+    await new Promise((r) => { setTimeout(r, 10) })
+
+    expect(p.sentCards).toHaveLength(1)
+    // The card's callback values carry the reply context's bare session
+    // key, so the click dispatch arrives addressed by it — not the slot
+    // the ask parked under.
+    const bare = 'feishu:oc_1:ou_1'
+    const handled = e.routeAskResponse(p, msg({ sessionKey: bare, content: 'askq:0:2', isAskqCardAction: true }), 'askq:0:2')
+
+    expect(handled, 'the click reached the slot-parked ask').toBe(true)
+    await expect(decision).resolves.toEqual({
+      answers: [{ id: 'Which database?', selected: ['SQLite'] }],
+    })
+  })
+
+  it('a bare-key free-text reply is not consumed by a #cron: slot parked ask', async () => {
+    const e = newTestEngine()
+    const p = createStubCardPlatform('feishu')
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    const slot = 'feishu:oc_1:ou_1#cron:s20'
+    e.interactiveStates.set(slot, state)
+    const decision = e.askUser(slot, { kind: 'questions', questions: testQuestions() })
+    await new Promise((r) => { setTimeout(r, 10) })
+
+    // Ordinary chat traffic in the group must keep flowing to the agent;
+    // only card actions claim the slot.
+    const handled = e.routeAskResponse(p, msg({ sessionKey: 'feishu:oc_1:ou_1', content: '2' }), '2')
+
+    expect(handled).toBe(false)
+    const settled = await Promise.race([
+      decision.then(() => 'settled'),
+      new Promise((r) => { setTimeout(() => r('pending'), 50) }),
+    ])
+    expect(settled, 'the parked ask must not settle from a bare-key free-text reply').toBe('pending')
+  })
+
+  it('a bare-key permission card click routes to the #cron: slot parked permission', async () => {
+    const e = newTestEngine()
+    const p = createStubCardPlatform('feishu')
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    const slot = 'feishu:oc_1:ou_1#cron:s21'
+    e.interactiveStates.set(slot, state)
+    const decision = e.askUser(slot, { kind: 'permission', toolName: 'bash', preview: 'rm -rf /tmp/x' })
+    await new Promise((r) => { setTimeout(r, 10) })
+
+    const handled = e.routeAskResponse(
+      p, msg({ sessionKey: 'feishu:oc_1:ou_1', content: 'perm:allow', isPermissionAction: true }), 'perm:allow',
+    )
+
+    expect(handled, 'the perm click reached the slot-parked permission').toBe(true)
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+  })
+
   it('a bare-key ask whose state sits under a #cron: slot answers unattended', async () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
