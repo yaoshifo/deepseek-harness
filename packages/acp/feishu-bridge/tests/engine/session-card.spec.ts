@@ -39,6 +39,9 @@ function failingListAgent(): Agent {
 function newCardEngine(agent: Agent, p: Platform): Engine {
   const e = new Engine('test', agent, [p], '', 'en')
   registerSessionCommands(e)
+  // The delete-mode card family runs as admin (the card path gates on
+  // admin_from like the text commands; unconfigured admin lists deny all).
+  e.setAdminFrom('*')
   return e
 }
 

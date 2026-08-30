@@ -342,20 +342,20 @@ describe('SpawnSubtask', () => {
     expect(e.sessions.getOrCreateActive(autoKey).getSubtaskAttended()).toBe(false)
   })
 
-  it('starts the child session in the --dir override (workdir switcher)', async () => {
+  it('starts the child session in the --dir override (start-options workDir)', async () => {
     const p = createStubSpawnerPlatform()
-    // A WorkDirSwitcher agent records the dir it was switched to when the
-    // spawn-driven session start fires (Go applyWorkDirOverride semantics).
+    // The child dir rides the session-start options to the adapter's create
+    // (Go applyWorkDirOverride semantics without its global switch).
     const agent = createWorkDirAgent('/base/dir')
-    const startedDirs: string[] = []
+    const startedDirs: Array<string | undefined> = []
     const baseStart = agent.startSession.bind(agent)
-    agent.startSession = async (id: string) => {
-      startedDirs.push(agent.getWorkDir())
+    agent.startSession = async (id: string, options?: { workDir?: string }) => {
+      startedDirs.push(options?.workDir)
       return baseStart(id)
     }
     const e = newSubtaskTestEngine(p, agent)
     // The dir override lives in the project state store; without it the
-    // engine has nothing to switch to.
+    // engine has nothing to start the child in.
     const store = new ProjectStateStore(join(tmpdir(), `fb-spawn-state-${Date.now()}.json`))
     e.setProjectStateStore(store)
 
@@ -365,7 +365,7 @@ describe('SpawnSubtask', () => {
     await settle()
 
     expect(startedDirs).toContain(dir)
-    // The override is temporary: the shared agent returns to its base dir.
+    // The shared agent's global dir is never touched.
     expect(agent.getWorkDir()).toBe('/base/dir')
   })
 

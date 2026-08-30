@@ -750,7 +750,22 @@ export class MonitorCore {
       void this.handleLearnExample(p, msg)
       return
     }
-    void this.triageAndSpawn(p, msg)
+    this.enqueueTriage(p, msg)
+  }
+
+  /** Per-chat triage chains: a poll batch's concurrent triages would all
+   * pass the capacity check before the first spawn registers (TOCTOU),
+   * systematically bypassing maxConcurrent. */
+  private readonly triageChains = new Map<string, Promise<void>>()
+
+  private enqueueTriage(p: Platform, msg: Message): void {
+    const chatID = chatIDFromSessionKey(msg.sessionKey, msg.platform)
+    const prev = this.triageChains.get(chatID) ?? Promise.resolve()
+    const next = prev.then(() => this.triageAndSpawn(p, msg)).catch((error: unknown) => {
+      console.error(`monitor: triage failed (chat=${chatID}): ${String(error)}`)
+    })
+    this.triageChains.set(chatID, next)
+    void next
   }
 
   // ── polling fallback (webhook-bot / other-app cards) ────────────────────

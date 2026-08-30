@@ -24,6 +24,28 @@ Status: implemented
 
 **批 B（机械项）。** 流式预览文本路径并入 `sanitizeFeishuMarkdownHTML`（无条件——containsMarkdown 不认裸 HTML 标签，纯 HTML 文本原本整段逃逸，触发 11311 三连败降级）；工具进度环形缓冲渲染改为从 `progressWriteIdx`（最旧槽）迭代，回绕后时间戳不再乱序、🚨 恒在末行；bare-HTTP 动词（getBotInfo/getMessage）的裸 fetch 加 `AbortSignal.timeout(retryTiming.requestTimeout)`（黑洞连接不再钉死 WS 启动 ~25 分钟）；lark-cli 工具声明 `timeoutMs: 300_000` 并把 `exec.signal` 透传到子进程与 TAT mint fetch（execFile signal 选项），`--page-limit` 帽 200 页；装配层 project 重名 fail-loud（重名静默共享 state/sessions 文件、lark-cli 注错 appId）；`ProjectStateStore.load` 形状校验（null/数组/原始值 JSON 回落空状态，不再让首个访问器炸掉插件启动）；ask 停靠期间文字+附件答复把附件 `stageAttachments`（不再无声丢失）；越界 askq 载荷（旧卡指向已不存在的问题）消费并回复过期提示，不再把 `askq:5:1` 原文排进模型提示词；agent 启动失败的占位 state 补 `beginTurn()`（与调用方 finally endTurn 配对，activeTurns 不再 -1）；`ChatNameCache` 瞬时网络失败不缓存（`isTransientError` 判别，确定性失败才吃 1h fail TTL）。
 
+## Decision（追加：策略项批次，同日拍板后实施）
+
+**P1——会话记录 TTL 清理（Go session_cleanup_days 语义回归）。** `SessionManager.setCleanupDays`（装配默认 30，0=禁用）：`saveLocked` 的全量重写顺带剔除「超过 idle 窗口且非任何 chat 活跃会话」的记录——cron new-per-run 的累积不再无界（`session_cleanup_days` 配置项接入 per-project）。
+
+**P2——排水回合配对。** `drainPendingMessages` 的每个排水回合 `beginTurn`/`finally endTurn` 配对（此前 endTurn 先跑、排水期间 activeTurns=0 且无心跳，idle reaper 可中途收割 >2h 回合并丢弃剩余队列）。`drainOrphanedQueue` 复用同一路径自动受益。
+
+**P3——cron 超时取消 + 叠加护栏。** `executeCronJob(job, signal?)`：abort 时对当前 run 的 interactiveState 调 `asAgentInterrupter(agentSession).cancelTurn()`——超时停止的是底层 turn 而非仅 await；`CronScheduler.executeJob` 拆出 `executeJobLocked`，`runningJobs` 集合让上一发仍在跑的 job 跳过本次 fire（不再叠加）。
+
+**P4——cron workDir 不再全局切换。** `SessionStartOptions.workDir` 新增：adapter 的 `agents.create` 用 `options?.workDir ?? this.workDir`；engine 的 per-chat override 与 cron job.workDir 都写入 startOptions（`getOrCreateInteractiveStateWith` 新增 `startWorkDir` 参数，`processInteractiveMessageWith` 透传）；stall-retry 复用 `state.sessionStartOptions` 里的 workDir。Go 时代的 `applyWorkDirOverride` 全局切换（含 restore）删除——job 运行期间并发会话不再落进 cron 目录。
+
+**P5——modeOverride live 复用可见性。** live 会话复用分支丢弃 modeOverride 时 console.warn（mode 固定于会话创建，live 无法切换——非静默丢弃）。
+
+**P6——platform.ts per-message 缓存 LRU 化。** `BoundedMap`（插入序逐出，`platformCacheCapacity=4096`）替换八个 per-message Map（lastProgressCard、renderStatusText、permBodyCache、askqMetaCache、askqAnswered、cardActionMsgIDs、chatPhasePaints、pendingTypingRemovals）；chatActivity 保留（按 chatID 键控、随部署群数天然有界）。取舍已拍板：旧卡导出按钮在容量滚动后失效。
+
+**P7——TAT mint 的 bare fetch 补 deadline。** platform minter 与 lark-cli 的 TAT mint 加 `AbortSignal.timeout`（30s；lark 侧 caller signal 优先）。**SDK 阻断部分如实上报**：`withTransientRetry` 30s deadline 竞态不取消在途请求的完整修复需要 node-sdk 的 verb opts 支持 abort signal（当前仅 OAuth 登录路径有）；非幂等动词（create/reply/createChat）的超时双发风险仍在，升级路径是等 SDK 支持或改走原生 fetch。
+
+**P8——monitor triage per-chat 串行化。** `enqueueTriage`：同 chat 的 triageAndSpawn 以 promise 链串行——同批告警不再并发通过容量检查（TOCTOU 绕过 maxConcurrent）。
+
+**P9——send/lark 全权文件读写：维持现状（裁定）。** Go 对齐的有意设计（会话沙箱对这两个外传通道无效），部署方若依赖会话级沙箱防外传需自行知晓。
+
+**P10——/delete-mode 卡片补 admin 闸。** `privilegedCommands` 加 'delete-mode'，`/delete-mode` 卡片分支走同一 `commandGate`——list 卡的删除按钮不再绕过 admin_from（未配置 admin_from 的部署 fail-closed，与文本命令一致）。
+
 ## Alternatives considered
 
 **H1 只传 disableTokenCache 不逐 verb 带 token。** 拒绝：缓存禁用后 SDK 不再注入任何 Authorization，普通请求裸奔 401。minter 逐 verb 显式携带（缓存命中时零网络开销）才能同时满足「普通请求有 token」与「刷新 token 真正生效」。

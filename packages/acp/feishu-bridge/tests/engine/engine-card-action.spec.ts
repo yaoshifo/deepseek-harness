@@ -301,6 +301,21 @@ describe('handleCardAction /dir', () => {
     expect(markdowns(p.refreshed[0]!.card)).not.toContain('Session ended. Next conversation will start a new Agent session.')
   })
 
+  it('a non-admin operator cannot enter delete mode from the list card', async () => {
+    // act:/delete-mode submit deletes whole sessions; the list card's
+    // danger button must not bypass admin_from.
+    const p = newRefreshingPlatform()
+    const e = newDirEngine(p, makeDirs(1), makeDirs(1)[0] ?? '')
+    registerSessionCommands(e)
+    e.setAdminFrom('ou_admin')
+
+    e.receiveMessage(p, cardActionMsg(SK, 'act:/delete-mode enter'))
+    await waitFor(() => p.getSent().length > 0, 'admin-required reply')
+
+    expect(e.interactiveStates.get(SK)?.deleteMode, 'delete mode never armed').toBeUndefined()
+    expect(p.getSent().some(m => m.includes('/delete-mode'))).toBe(true)
+  })
+
   it('a non-admin operator cannot switch dirs through the card buttons', async () => {
     // The text path gates /dir behind admin_from; the card-action path must
     // not bypass it (the /help card links /dir from its system page).

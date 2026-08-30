@@ -24,6 +24,28 @@ The 2026-08-30 second-round six-way parallel read-only scan (dispatch/spawn subs
 
 **Batch B (mechanical).** The streaming-preview text path gained `sanitizeFeishuMarkdownHTML` unconditionally (containsMarkdown does not count bare HTML tags, so pure-HTML text escaped entirely into 11311 triple-failure degradation); the tool-progress ring buffer renders from `progressWriteIdx` (oldest slot) so wraparound keeps timestamps ordered and 🚨 on the last line; the bare-HTTP verbs (getBotInfo/getMessage) pass `AbortSignal.timeout(retryTiming.requestTimeout)` (a black-hole connection no longer pins WS startup for ~25 minutes); the lark-cli tool declares `timeoutMs: 300_000`, threads `exec.signal` into the child and the TAT mint fetch, and caps `--page-limit` at 200 pages; the assembly fails loud on duplicate project names (they silently shared state/sessions files and cross-wired lark-cli credentials); `ProjectStateStore.load` validates shape (null/array/primitive JSON falls back to empty state instead of crashing the first accessor at plugin load); a free-text answer carrying attachments stages them (no longer silently dropped); an out-of-range askq payload (a stale card naming a question that no longer exists) is consumed with a stale hint instead of queueing the raw `askq:5:1` into the model prompt; the failed-start placeholder state calls `beginTurn()` (pairs with the caller's finally endTurn; activeTurns no longer goes negative); `ChatNameCache` does not cache transient network failures (`isTransientError` gate; only deterministic misses eat the 1h fail TTL).
 
+## Decision (appended: the policy batch, decided and implemented the same day)
+
+**P1 — session-record TTL cleanup (Go session_cleanup_days semantics).** `SessionManager.setCleanupDays` (assembly default 30, 0=off): the full rewrite in `saveLocked` also drops records idle past the window that are not any chat's active session — cron new-per-run accumulation is bounded again (`session_cleanup_days` per-project config).
+
+**P2 — drain turns pair their counters.** Every drained turn in `drainPendingMessages` pairs `beginTurn`/`finally endTurn` (previously endTurn ran first and the drain sat at activeTurns=0 with no heartbeat, letting the idle reaper close >2h turns mid-drain and drop the rest of the queue). `drainOrphanedQueue` shares the path and benefits.
+
+**P3 — cron timeout cancels + overlap guard.** `executeCronJob(job, signal?)`: abort calls `asAgentInterrupter(agentSession).cancelTurn()` on the current run's state — the timeout stops the underlying turn, not just the await. `CronScheduler.executeJob` splits out `executeJobLocked`; a `runningJobs` set makes a still-running fire skip the next tick (no stacking).
+
+**P4 — cron workDir no longer switches the global.** New `SessionStartOptions.workDir`: the adapter's `agents.create` uses `options?.workDir ?? this.workDir`; the engine writes both the per-chat override and the cron job dir into the start options (`getOrCreateInteractiveStateWith` gains a `startWorkDir` parameter, `processInteractiveMessageWith` threads it); stall-retry reuses the workDir already in `state.sessionStartOptions`. The Go-era `applyWorkDirOverride` global switch (with restore) is deleted — concurrent sessions no longer start in the cron dir while a job runs.
+
+**P5 — modeOverride on live reuse is visible.** The live-session reuse branch logs a warn when it drops a mode override (mode is fixed at session create; no longer silently dropped).
+
+**P6 — the platform's per-message caches become bounded.** A `BoundedMap` (insertion-order eviction, `platformCacheCapacity=4096`) replaces the eight per-message Maps (lastProgressCard, renderStatusText, permBodyCache, askqMetaCache, askqAnswered, cardActionMsgIDs, chatPhasePaints, pendingTypingRemovals); chatActivity stays a Map (keyed by chatID, naturally bounded by the deployment's chat count). Decided trade-off: old cards' export buttons stop working once the capacity rolls past them.
+
+**P7 — the TAT mint's bare fetches gain deadlines.** The platform minter and the lark-cli TAT mint pass `AbortSignal.timeout` (30s; the lark side prefers the caller's signal). **The SDK-blocked part is reported as a limitation**: fully cancelling in-flight requests on the 30s deadline race needs node-sdk verb opts to support abort signals (only the OAuth login path has them today); the non-idempotent double-send risk on create/reply/createChat remains, with the upgrade path being SDK support or a native-fetch rewrite.
+
+**P8 — monitor triage serializes per chat.** `enqueueTriage`: same-chat `triageAndSpawn` runs as a promise chain — a poll batch no longer passes the capacity check concurrently (the maxConcurrent TOCTOU bypass).
+
+**P9 — send/lark full file-system access: kept as-is (decision).** Go-aligned intentional design (session sandboxes do not cover these exfiltration channels); deployments relying on session-level sandboxing need to know.
+
+**P10 — the /delete-mode card gains an admin gate.** `privilegedCommands` gains 'delete-mode' and the `/delete-mode` card branch runs the same `commandGate` — the list card's delete button no longer bypasses admin_from (deployments without an admin list fail closed, matching the text commands).
+
 ## Alternatives considered
 
 **H1: pass disableTokenCache only, without per-verb tokens.** Rejected: with the cache disabled the SDK injects no Authorization at all — normal requests would go out bare and 401. Explicit per-verb tokens from the minter (cache hit costs no network) satisfy both "normal requests carry a token" and "refreshed tokens actually take effect".

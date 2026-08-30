@@ -1685,7 +1685,7 @@ export class DshAgentAdapter {
       handle = await this.ctx.agents.create({
         sessionId: SessionId(freshNativeSessionId()),
         meta: {
-          cwd: this.workDir,
+          cwd: options?.workDir ?? this.workDir,
           ...(seeded !== undefined ? { parentSession: SessionId(origID), seedLength: seed.length } : {}),
         },
         ...(seed.length > 0 ? { seed } : {}),
@@ -1705,7 +1705,7 @@ export class DshAgentAdapter {
       // chat — the live "id collision" failure observed right after /new.
       handle = await this.ctx.agents.create({
         sessionId: SessionId(freshNativeSessionId()),
-        meta: { cwd: this.workDir },
+        meta: { cwd: options?.workDir ?? this.workDir },
         agentOptions: this.routeAgentOptions(),
         ...(setup !== undefined ? { setup } : {}),
       })

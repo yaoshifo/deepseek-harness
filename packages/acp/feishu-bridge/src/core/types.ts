@@ -441,6 +441,13 @@ export interface SessionStartOptions {
     /** Mode forced over an inherited plan default; undefined keeps the adapter-computed mode. */
     forceMode: string | undefined
   }
+  /**
+   * Working directory for this session's native create (meta.cwd); absent
+   * uses the adapter's configured global. Replaces the Go-era global
+   * workDir switch around StartSession, which leaked into concurrent
+   * sessions.
+   */
+  workDir?: string
   /** Default Feishu workspace routing (#18); absent = no routing section. */
   feishuWorkspace?: FeishuWorkspaceInfo
   /** Shared research venv root; absent = none. Inlined into the assistant preamble (no Go-era env injection exists here). */

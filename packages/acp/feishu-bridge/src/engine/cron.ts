@@ -816,11 +816,29 @@ export class CronScheduler {
     }
   }
 
+  /** Jobs whose previous fire is still running; the tick skips these. */
+  private readonly runningJobs = new Set<string>()
+
   /** Run one job with its execution timeout and record the outcome (Go executeJob). */
   private async executeJob(jobID: string): Promise<void> {
     const job = this.storeValue.get(jobID)
     if (job === undefined || !job.enabled) return
 
+    // Overlap guard: a slow (or timed-out-but-still-running) job must not
+    // stack a second concurrent run on the same schedule slot.
+    if (this.runningJobs.has(jobID)) {
+      console.warn(`cron: job still running from its previous fire, skipping (${jobID})`)
+      return
+    }
+    this.runningJobs.add(jobID)
+    try {
+      await this.executeJobLocked(jobID, job)
+    } finally {
+      this.runningJobs.delete(jobID)
+    }
+  }
+
+  private async executeJobLocked(jobID: string, job: CronJob): Promise<void> {
     const engine = this.engines.get(job.project)
     if (engine === undefined) {
       console.error(`cron: project not found (job ${jobID}, project ${job.project})`)
@@ -832,11 +850,14 @@ export class CronScheduler {
 
     const timeout = job.executionTimeoutMs()
     let err: unknown
-    const run = engine.executeCronJob(job).then(() => undefined, (e: unknown) => e)
+    // The controller cancels the running turn when the timeout fires —
+    // racing the await alone leaves the underlying turn burning.
+    const cancel = new AbortController()
+    const run = engine.executeCronJob(job, cancel.signal).then(() => undefined, (e: unknown) => e)
     if (timeout > 0) {
       err = await Promise.race([
         run,
-        new Promise<unknown>((resolve) => { setTimeout(() => { resolve(new Error(`job timed out after ${timeout}ms`)) }, timeout).unref() }),
+        new Promise<unknown>((resolve) => { setTimeout(() => { cancel.abort(); resolve(new Error(`job timed out after ${timeout}ms`)) }, timeout).unref() }),
       ])
     } else {
       err = await run

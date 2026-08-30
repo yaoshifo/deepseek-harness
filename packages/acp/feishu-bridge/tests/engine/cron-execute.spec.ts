@@ -59,6 +59,99 @@ function resultAgent(session: ReturnType<typeof newResultAgentSession>): Agent {
   }
 }
 
+describe('ExecuteCronJob_TimeoutCancellation', () => {
+  it('an aborted signal cancels the running turn', async () => {
+    const store = new CronStore(tempDir())
+    const scheduler = new CronScheduler(store)
+    const platform = createStubCronReplyTargetPlatform('discord')
+    // A session whose send hangs until the interruption rejects it — the
+    // real adapter settles send with an error when cancelTurn lands.
+    const agentSession = newResultAgentSession('never delivered')
+    let rejectSend!: (e: unknown) => void
+    agentSession.send = () => new Promise<void>((_resolve, reject) => { rejectSend = reject })
+    const cancelCalls: string[] = []
+    agentSession.cancelTurn = () => { cancelCalls.push('cancel'); rejectSend(new Error('turn cancelled')) }
+    const agent = resultAgent(agentSession)
+    const e = new Engine('test', agent, [platform], '', 'en')
+    e.cronScheduler = scheduler
+    const job = newJob({ id: 'job-t', project: 'test', sessionKey: 'discord:channel-1:user-1', prompt: 'p' })
+    store.add(job)
+
+    const controller = new AbortController()
+    const running = e.executeCronJob(job, controller.signal)
+    await new Promise((r) => { setTimeout(r, 30) })
+    controller.abort()
+    await new Promise((r) => { setTimeout(r, 30) })
+
+    expect(cancelCalls, 'the hung turn was interrupted through the signal').toEqual(['cancel'])
+    await running
+  })
+})
+
+describe('CronScheduler_OverlapGuard', () => {
+  it('a job still running from its previous fire is not fired again', async () => {
+    const store = new CronStore(tempDir())
+    const scheduler = new CronScheduler(store)
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const agentSession = newResultAgentSession('slow')
+    agentSession.send = () => new Promise<void>(() => {})
+    // Keep the hung first fire from failing the suite at teardown.
+    const settleFirst = () => { agentSession.cancelTurn?.() }
+    agentSession.cancelTurn = () => { agentSession.channel.close() }
+    const e = new Engine('test', resultAgent(agentSession), [platform], '', 'en')
+    e.cronScheduler = scheduler
+    let execCalls = 0
+    const origExec = e.executeCronJob.bind(e)
+    e.executeCronJob = async (job: CronJob) => { execCalls++; return origExec(job) }
+    scheduler.registerEngine('test', e)
+    const job = newJob({ id: 'job-o', project: 'test', sessionKey: 'discord:channel-1:user-1', prompt: 'p', cronExpr: '* * * * *', enabled: true })
+    store.add(job)
+    scheduler.start()
+
+    const fire = (id: string): Promise<void> => (scheduler as unknown as { executeJob(jobID: string): Promise<void> }).executeJob(id)
+    void fire('job-o')
+    await new Promise((r) => { setTimeout(r, 20) })
+    // The previous fire is still hung on send — the second fire must skip.
+    await fire('job-o')
+    expect(execCalls, 'the overlapping fire skipped the still-running job').toBe(1)
+    settleFirst()
+    scheduler.stop()
+  })
+})
+
+describe('ExecuteCronJob_WorkDir_NoGlobalSwitch', () => {
+  it('a job work_dir does not touch the shared agent workDir', async () => {
+    // The Go-era global switch leaked the cron dir into every concurrent
+    // session started while the job ran (up to 30 minutes). The job dir
+    // rides the session-start options instead.
+    const store = new CronStore(tempDir())
+    const scheduler = new CronScheduler(store)
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const agentSession = newResultAgentSession('done')
+    let dir = '/workspace/project'
+    const seenWorkDirs: Array<string | undefined> = []
+    let switched = false
+    const agent = {
+      ...resultAgent(agentSession),
+      getWorkDir: () => dir,
+      setWorkDir: (d: string) => { switched = true; dir = d },
+      startSession: async (_id: string, options?: { workDir?: string }) => {
+        seenWorkDirs.push(options?.workDir)
+        return agentSession
+      },
+    }
+    const e = new Engine('test', agent, [platform], '', 'en')
+    e.cronScheduler = scheduler
+    const job = newJob({ id: 'job-w', project: 'test', sessionKey: 'discord:channel-1:user-1', prompt: 'p', workDir: '/tmp/cron-dir' })
+    store.add(job)
+
+    await e.executeCronJob(job)
+
+    expect(seenWorkDirs, "the job dir rides the session's start options").toEqual(['/tmp/cron-dir'])
+    expect(switched, 'the shared workDir was never switched').toBe(false)
+  })
+})
+
 describe('ExecuteCronJob_ResolvesCronReplyTarget', () => {
   it('runs the prompt in the base session with the resolved reply context', async () => {
     const store = new CronStore(tempDir())

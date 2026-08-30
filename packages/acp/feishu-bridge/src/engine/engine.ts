@@ -2329,7 +2329,7 @@ export class Engine {
    * @param session - Locked session the turn runs under.
    * @param interactiveKey - Interactive-state slot key; defaults to msg.sessionKey.
    */
-  async processInteractiveMessageWith(p: Platform, msg: Message, session: Session, interactiveKey: string = msg.sessionKey): Promise<void> {
+  async processInteractiveMessageWith(p: Platform, msg: Message, session: Session, interactiveKey: string = msg.sessionKey, startWorkDir: string = ''): Promise<void> {
     let unlocked = false
     try {
       // A new user turn takes the event channel back from the unsolicited
@@ -2347,7 +2347,7 @@ export class Engine {
       // Go separates the interactive-state slot key from the session-key
       // start option: cron new-per-run slots carry a #cron suffix the option
       // must not.
-      const state = await this.getOrCreateInteractiveStateWith(interactiveKey, p, msg.replyCtx, session, msg.modeOverride ?? '', msg.sessionKey)
+      const state = await this.getOrCreateInteractiveStateWith(interactiveKey, p, msg.replyCtx, session, msg.modeOverride ?? '', msg.sessionKey, startWorkDir)
       try {
         state.turnSeq++
         state.platform = p
@@ -2674,6 +2674,7 @@ export class Engine {
     session: Session,
     modeOverride: string = '',
     envKey: string = sessionKey,
+    startWorkDir: string = '',
   ): Promise<InteractiveState> {
     // Wait out a concurrent teardown so two agents never resume the same
     // session id concurrently.
@@ -2689,6 +2690,11 @@ export class Engine {
       const currentID = existing.agentSession.currentSessionID()
       const needRecycle = currentID !== '' && (wantID === '' || wantID !== currentID)
       if (!needRecycle) {
+        // A mode override cannot reach a live session (mode is fixed at the
+        // session's create); say so instead of dropping it silently.
+        if (modeOverride !== '') {
+          console.warn(`engine: mode override "${modeOverride}" ignored — session "${sessionKey}" is live; restart the session to apply it`)
+        }
         existing.beginTurn()
         return existing
       }
@@ -2708,9 +2714,11 @@ export class Engine {
 
     const startSessionID = session.getAgentSessionID()
 
-    // Resolve per-chat workDir override so the agent session starts in the
-    // correct directory even in single-workspace mode (Go applyWorkDirOverride).
-    const restoreWorkDir = this.applyWorkDirOverride(agent, sessionKey)
+    // Per-session workDir (cron job dir or the chat's --dir override) rides
+    // the start options to the adapter's native create — the Go-era global
+    // switch around StartSession leaked into concurrent sessions.
+    const dirOverride = startWorkDir !== '' ? startWorkDir : this.perChatWorkDir(this.dirOverrideKey(sessionKey))
+    if (dirOverride !== '') startOptions.workDir = dirOverride
     let agentSession: AgentSession | undefined
     let degradedToFresh = false
     try {
@@ -2747,7 +2755,8 @@ export class Engine {
         }
       }
     } finally {
-      restoreWorkDir()
+      // No workDir restore: the override rode the start options, never the
+      // shared agent global.
     }
 
     if (agentSession === undefined) {
@@ -4005,9 +4014,9 @@ export class Engine {
 
     const retryOptions = state.sessionStartOptions
     const retryMode = state.effectiveMode
-    // Restore per-chat workDir override so --resume finds the session under
-    // the correct directory (Go stall-retry applyWorkDirOverride).
-    const restoreWorkDir = this.applyWorkDirOverride(replyAgent, sessionKey)
+    // The retry options carry the session's workDir (startOptions.workDir),
+    // so --resume finds the session under the correct directory without any
+    // global switch (Go stall-retry applyWorkDirOverride).
     try {
       const newSess = await this.startAgentLocked(replyAgent, resumeID, retryOptions, retryMode)
       state.agentSession = newSess
@@ -4016,8 +4025,6 @@ export class Engine {
     } catch (error) {
       console.error(`stall retry: failed to create new session: ${String(error)}`)
       return undefined
-    } finally {
-      restoreWorkDir()
     }
   }
 
@@ -4072,12 +4079,18 @@ export class Engine {
       // turn is starting now.
       await this.bridge.serial('feishuBridge/turn-start', { engine: this, session, metadata: queued.metadata })
 
+      // The drained turn is a real turn: begin/endTurn pair with the main
+      // path's counters so the idle reaper's activeTurns>0 skip covers the
+      // drain too (endTurn already ran for the turn that queued these).
+      state.beginTurn()
       const sendDone = state.agentSession.send(prompt, queued.images, queued.files)
         .then((): undefined => undefined, (error: unknown): unknown => error)
       try {
         await this.processInteractiveEvents(state, session, sessions, sessionKey, '', sendDone, queued.replyCtx)
       } catch (error) {
         console.error(`engine: queued turn failed (${sessionKey}): ${String(error)}`)
+      } finally {
+        state.endTurn()
       }
       state.inflightMessage = undefined
     }
@@ -4403,7 +4416,12 @@ export class Engine {
    * work dir for the run instead.
    * @param job - The cron job to execute.
    */
-  async executeCronJob(job: CronJob): Promise<void> {
+  /**
+   * @param job - The job to run.
+   * @param signal - Abort signal from the scheduler's execution timeout;
+   *   aborting cancels the running turn (not just the scheduler's await).
+   */
+  async executeCronJob(job: CronJob, signal?: AbortSignal): Promise<void> {
     let sessionKey = job.sessionKey
     let platformName = ''
     const idx = sessionKey.indexOf(':')
@@ -4511,25 +4529,22 @@ export class Engine {
       modeOverride: job.mode !== '' ? job.mode : 'default',
     }
 
-    // An explicit job workDir switches the agent's working directory for
-    // this run (Go getOrCreateWorkspaceAgent; single-workspace ceiling — a
-    // per-workspace agent instance arrives with the workspace milestone).
-    let restoreWorkDir: (() => void) | undefined
-    if (job.workDir !== '') {
-      const wd = asWorkDirSwitcher(this.agent)
-      if (wd !== undefined) {
-        const prev = wd.getWorkDir()
-        wd.setWorkDir(job.workDir)
-        restoreWorkDir = () => { wd.setWorkDir(prev) }
-      } else {
-        console.warn(`cron: agent cannot switch work dir, using global (${job.workDir} / ${sessionKey})`)
-      }
-    }
+    // An explicit job workDir rides the session-start options to the
+    // adapter's native create (Go getOrCreateWorkspaceAgent's intent without
+    // its global switch, which leaked into concurrent sessions).
 
     const useNewSession = this.cronScheduler !== undefined
       ? this.cronScheduler.usesNewSession(job)
       : job.usesNewSessionPerRun()
 
+    // The scheduler's execution timeout aborts this signal; cancel the
+    // running turn so the timeout stops the work, not just the await.
+    let currentRunKey = ''
+    const onAbort = (): void => {
+      const st = this.interactiveStates.get(currentRunKey)
+      if (st?.agentSession !== undefined) asAgentInterrupter(st.agentSession)?.cancelTurn()
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
     try {
       if (useNewSession) {
         msg.sessionKey = runSessionKey
@@ -4538,7 +4553,8 @@ export class Engine {
           throw new Error(`session "${runSessionKey}" is busy`)
         }
         const iKey = `${runSessionKey}#cron:${session.id}`
-        await this.processInteractiveMessageWith(effectivePlatform, msg, session, iKey)
+        currentRunKey = iKey
+        await this.processInteractiveMessageWith(effectivePlatform, msg, session, iKey, job.workDir)
         await this.cleanupInteractiveState(iKey)
         return
       }
@@ -4547,9 +4563,10 @@ export class Engine {
       if (!session.tryLock()) {
         throw new Error(`session "${sessionKey}" is busy`)
       }
-      await this.processInteractiveMessageWith(effectivePlatform, msg, session)
+      currentRunKey = sessionKey
+      await this.processInteractiveMessageWith(effectivePlatform, msg, session, sessionKey, job.workDir)
     } finally {
-      restoreWorkDir?.()
+      signal?.removeEventListener('abort', onAbort)
     }
   }
 
@@ -6877,21 +6894,6 @@ export class Engine {
     return (this.agent as { getWorkDir?: () => string }).getWorkDir?.().trim() ?? ''
   }
 
-  /**
-   * Temporarily switch the shared agent's workDir to this chat's override
-   * (Go applyWorkDirOverride). Returns the restore closure; callers invoke
-   * it after StartSession. Agents without WorkDirSwitcher are a no-op.
-   */
-  private applyWorkDirOverride(agent: Agent, sessionKey: string): () => void {
-    const override = this.perChatWorkDir(this.dirOverrideKey(sessionKey))
-    if (override === '') return () => {}
-    const switcher = asWorkDirSwitcher(agent)
-    if (switcher === undefined) return () => {}
-    const saved = switcher.getWorkDir()
-    switcher.setWorkDir(override)
-    return () => { switcher.setWorkDir(saved) }
-  }
-
   /** Resolve a user-supplied dir argument (Go Engine.resolveDir, engine-side copy). */
   private resolveDirPath(arg: string): string | undefined {
     let newDir = arg.trim()
@@ -8130,6 +8132,9 @@ export class Engine {
     }
 
     if (cmd === '/delete-mode') {
+      // Same admin_from gate as the text commands: submit deletes whole
+      // sessions from the list card's danger button.
+      if (this.commandGate?.('delete-mode', p, msg) === true) return
       // Every action runs the state machine first, then re-renders the
       // phase's card; cancel clears the picker, so the missing card falls
       // back to the session list (Go handleCardNav's "/delete-mode" routes).

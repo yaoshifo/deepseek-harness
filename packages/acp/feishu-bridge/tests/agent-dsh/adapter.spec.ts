@@ -252,6 +252,16 @@ describe('DshAgentAdapter', () => {
     expect(session.currentSessionID()).toBe('agent-1')
   })
 
+  it('a per-session workDir option reaches create without touching the global', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+
+    await a.startSession('', { sessionKey: 'feishu:oc_w:ou_9', workDir: '/tmp/cron-job-dir' })
+
+    expect(h.creates[0]!.meta).toEqual({ cwd: '/tmp/cron-job-dir' })
+    expect(a.getWorkDir(), 'the global stays for concurrent sessions').toBe('/workspace/project')
+  })
+
   it('WorkDirSwitcher: setWorkDir changes the create cwd without touching the config', async () => {
     const h = createHarness()
     const a = newAdapter(h)

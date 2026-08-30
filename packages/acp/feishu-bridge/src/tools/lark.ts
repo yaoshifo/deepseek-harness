@@ -90,6 +90,8 @@ const feishuOpenBaseURL = 'https://open.feishu.cn'
 export const maxListPages = 200
 /** Cooperative tool-call budget (ms) declared for the timeout policy to enforce. */
 export const larkToolTimeoutMs = 300_000
+/** Per-attempt deadline for the bare TAT mint fetch (ms). */
+export const larkTatTimeoutMs = 30_000
 
 // ── pure argument classification (ported 1:1 from lark_cmd.go) ────────────
 
@@ -371,7 +373,9 @@ export async function fetchTenantAccessToken(creds: LarkCreds, deps: LarkRunnerD
   if (cached !== undefined && Date.now() < cached.expiresAt) return cached.token
   const resp = await deps.fetch(`${feishuOpenBaseURL}/open-apis/auth/v3/tenant_access_token/internal`, {
     method: 'POST',
-    ...(signal === undefined ? {} : { signal }),
+    // Caller signal when present; otherwise bound the bare mint like the
+    // other bare fetches.
+    ...(signal === undefined ? { signal: AbortSignal.timeout(larkTatTimeoutMs) } : { signal }),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ app_id: creds.appId, app_secret: creds.appSecret }),
   })

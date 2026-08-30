@@ -37,7 +37,7 @@ import { extractChannelID } from './engine.js'
 const listPageSize = 5
 
 /** Command IDs gated behind admin_from (Go privilegedCommands, M1 subset + monitor + shell + reload). */
-const privilegedCommands = new Set(['dir', 'monitor', 'shell', 'reload'])
+const privilegedCommands = new Set(['dir', 'monitor', 'shell', 'reload', 'delete-mode'])
 
 /** Canonical command names and their aliases (Go builtinCommands subset). */
 export const builtinCommands: Array<{ names: string[]; id: string }> = [

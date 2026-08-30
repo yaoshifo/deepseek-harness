@@ -66,6 +66,37 @@ describe('SessionManager', () => {
     expect(list).toHaveLength(2)
   })
 
+  it('SessionCleanup prunes expired sessions on save; active and fresh ones survive', async () => {
+    // Go session_cleanup_days: cron new-per-run side sessions accumulate
+    // forever otherwise — every full rewrite drops records idle beyond the
+    // configured window while the chat's active session always survives.
+    const sm = new SessionManager(await tempSessionsPath())
+    sm.setCleanupDays(30)
+    const main = sm.getOrCreateActive('user1')
+    const side = sm.newSideSession('user1', 'cron-job')
+    side.updatedAt = new Date(Date.now() - 40 * 24 * 3_600_000).toISOString()
+    const other = sm.getOrCreateActive('user2')
+    other.updatedAt = new Date(Date.now() - 3 * 24 * 3_600_000).toISOString()
+
+    sm.save()
+
+    expect(sm.listSessions('user1'), 'expired side session pruned, active survives').toHaveLength(1)
+    expect(sm.listSessions('user2'), 'within the window survives').toHaveLength(1)
+    expect(sm.activeSessionID('user1')).toBe(main.id)
+  })
+
+  it('SessionCleanup is off by default (0 days keeps everything)', async () => {
+    const sm = new SessionManager(await tempSessionsPath())
+    const main = sm.getOrCreateActive('user1')
+    const side = sm.newSideSession('user1', 'cron-job')
+    side.updatedAt = new Date(Date.now() - 400 * 24 * 3_600_000).toISOString()
+
+    sm.save()
+
+    expect(sm.listSessions('user1')).toHaveLength(2)
+    expect(main).toBeDefined()
+  })
+
   it('SwitchSession', () => {
     const sm = new SessionManager('')
     const s1 = sm.newSession('user1', 'first')

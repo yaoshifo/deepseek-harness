@@ -975,6 +975,19 @@ export class SessionManager {
     return this.storePathValue
   }
 
+  /** Days a session may stay idle before the next full save prunes it (Go
+   * session_cleanup_days; 0 = keep everything — side sessions from cron
+   * new-per-run would otherwise accumulate forever). */
+  private cleanupDays = 0
+
+  /**
+   * Configure the idle-window cleanup.
+   * @param days - Days of tolerated idleness; 0 disables pruning.
+   */
+  setCleanupDays(days: number): void {
+    this.cleanupDays = Math.max(0, Math.trunc(days))
+  }
+
   private nextID(): string {
     this.counter++
     return `s${this.counter}`
@@ -1293,7 +1306,15 @@ export class SessionManager {
     if (this.storePathValue === '') return
 
     const snapSessions: Record<string, SerializedSession> = {}
+    const cutoff = this.cleanupDays > 0 ? Date.now() - this.cleanupDays * 24 * 3_600_000 : Number.POSITIVE_INFINITY
+    const activeIDs = new Set(this.activeSession.values())
     for (const [id, s] of this.sessions) {
+      if (this.cleanupDays > 0 && !activeIDs.has(id) && Date.parse(s.updatedAt) < cutoff) {
+        // Idle past the window and not any chat's active session — the lazy
+        // counterpart of Go's session cleanup, folded into the full rewrite.
+        this.deleteByIDLocked(id)
+        continue
+      }
       if (s.agentSessionID === ContinueSession) s.agentSessionID = ''
       snapSessions[id] = serializeSession(s)
     }

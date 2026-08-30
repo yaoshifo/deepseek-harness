@@ -263,6 +263,8 @@ export interface ProjectConfig {
   providerShortcuts?: Record<string, string>
   /** Rotate the chat to a fresh session after N idle minutes (Go reset_on_idle_mins). */
   resetOnIdleMins?: number
+  /** Prune sessions idle beyond N days on the next full save (Go session_cleanup_days; 0 keeps everything). */
+  sessionCleanupDays?: number
   /** Bounded seconds to wait for an agent session to close during cleanup and stall retry (Go agentCloseTimeout; default 130). */
   agentCloseSec?: number
   /** Unsolicited-reader budgets for engine-woken turns (Go unsolicited_* config). */
@@ -606,6 +608,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     }).description('Automatic context compression (Go [projects.auto_compress])'),
     providerShortcuts: Schema.dict(Schema.string()).description('Quick provider commands: /strong → provider name (Go provider_shortcuts)'),
     resetOnIdleMins: Schema.natural().description('Rotate the chat to a fresh session after N idle minutes; 0 disables'),
+    sessionCleanupDays: Schema.natural().description('Prune sessions idle beyond N days (cron new-per-run records accumulate otherwise); 0 keeps everything'),
     agentCloseSec: Schema.natural().description('Bounded seconds to wait for an agent session to close during cleanup and stall retry (default 130)'),
     unsolicited: Schema.object({
       idleSec: Schema.natural().description('Quiet seconds before the unsolicited reader disarms (default 60; 0 = never)'),
@@ -1387,6 +1390,7 @@ function wireSessionMisc(engine: Engine, project: ProjectConfig): void {
   if (project.resetOnIdleMins !== undefined) {
     engine.setResetOnIdle(project.resetOnIdleMins * 60_000)
   }
+  engine.sessions.setCleanupDays(project.sessionCleanupDays ?? 30)
   if (project.agentCloseSec !== undefined) {
     engine.setAgentCloseTimeout(project.agentCloseSec * 1000)
   }

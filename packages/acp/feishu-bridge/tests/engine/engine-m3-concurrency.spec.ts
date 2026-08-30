@@ -85,6 +85,54 @@ describe('ReapIdle_SkipsAskWait', () => {
   })
 })
 
+describe('ReapIdle_SkipsDrainTurn', () => {
+  it('a queued-message drain turn is in flight (activeTurns) and the idle reaper skips it', async () => {
+    // endTurn runs before drainPendingMessages, so a drained turn used to
+    // sit at activeTurns=0 with a stale lastActivity — the reaper closed it
+    // mid-drain and the remaining queue died with "agent session ended".
+    const { e } = newEngine()
+    e.setInteractiveIdleTimeout(50)
+    e.setDebounceInterval(0)
+    const p = createStubPlatform()
+    const sess = newControllableSession('drain-turn')
+    const key = 'test:user1'
+    const session = e.sessions.getOrCreateActive(key)
+    session.tryLock()
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = p
+    state.replyCtx = 'ctx'
+    state.lastActivity = Date.now() - 10_000
+    e.interactiveStates.set(key, state)
+    state.pendingMessages.push({
+      ...({} as Message),
+      content: 'queued prompt',
+      images: [],
+      files: [],
+      platform: 'test',
+      platformName: 'test',
+      msgSessionKey: key,
+      replyCtx: 'ctx',
+    } as never)
+
+    // Park the drained turn: send never settles until the channel closes.
+    let unblock!: () => void
+    sess.send = () => new Promise<void>((resolve) => { unblock = () => { resolve() } })
+    const draining = e.drainPendingMessages(state, session, e.sessions, key)
+    await new Promise((r) => { setTimeout(r, 30) })
+
+    expect(state.activeTurns, 'the drained turn counts as in flight').toBe(1)
+    e.reapIdleInteractiveStates()
+    expect(e.interactiveStates.has(key), 'the reaper skipped the draining state').toBe(true)
+    expect(sess.aliveFlag).toBe(true)
+
+    sess.channel.close()
+    unblock()
+    await draining
+    expect(state.activeTurns, 'the drain released its turn').toBe(0)
+  })
+})
+
 describe('Ps_BlockedOnAsk_RoutesToQueue', () => {
   it('message queues (not stdin) while an ask is pending', () => {
     const { e } = newEngine()

@@ -540,9 +540,9 @@ export class FeishuPlatform implements Platform {
   private readonly patchRL: TokenBucketRateLimiter
 
   /** messageID → pre-button card JSON (stop-card rebuild + render-status rebuild). */
-  private readonly lastProgressCard = new Map<string, string>()
+  private readonly lastProgressCard = new BoundedMap<string, string>()
   /** messageID → latest render status text (#48 survival). */
-  private readonly renderStatusText = new Map<string, string>()
+  private readonly renderStatusText = new BoundedMap<string, string>()
   /**
    * chatID → epoch ms of the last tracked chat activity (inbound messages,
    * non-preview outbound sends). In-process and volatile by design: a
@@ -551,13 +551,13 @@ export class FeishuPlatform implements Platform {
    */
   private readonly chatActivity = new Map<string, number>()
   /** sessionKey → permission card body (M3 card-action replacement). */
-  readonly permBodyCache = new Map<string, string>()
+  readonly permBodyCache = new BoundedMap<string, string>()
   /** sessionKey → the ask card's full question set, cached at send time to rebuild the card on callbacks. */
-  readonly askqMetaCache = new Map<string, AskCardMeta>()
+  readonly askqMetaCache = new BoundedMap<string, AskCardMeta>()
   /** messageID → answered question indices with selections; dedups repeated callbacks per question. */
-  readonly askqAnswered = new Map<string, Map<number, number[]>>()
+  readonly askqAnswered = new BoundedMap<string, Map<number, number[]>>()
   /** sessionKey → messageID tracked from card-action callbacks (M3 writes it). */
-  readonly cardActionMsgIDs = new Map<string, string>()
+  readonly cardActionMsgIDs = new BoundedMap<string, string>()
   /** Engine callback for group renames (im.chat.updated_v1, Go chatRenamedHandler). */
   private chatRenamedHandler: ((sessionKey: string, newName: string) => void) | undefined
   /** Engine callback for group name/avatar changes (Go chatChangedHandler). */
@@ -580,7 +580,7 @@ export class FeishuPlatform implements Platform {
    * reads the meta the previous paint committed, never a stale snapshot
    * taken while that paint was still applying.
    */
-  private readonly chatPhasePaints = new Map<string, Promise<void>>()
+  private readonly chatPhasePaints = new BoundedMap<string, Promise<void>>()
   /** Tag manager bound to this platform's API client. */
   private readonly tagManager: TagManager
   /** Chat-name TTL cache (Go chatNameCache). */
@@ -2172,7 +2172,7 @@ export class FeishuPlatform implements Platform {
     await this.removeReactionByID(messageID, reactionID)
   }
 
-  private readonly pendingTypingRemovals = new Map<string, string>()
+  private readonly pendingTypingRemovals = new BoundedMap<string, string>()
 
   /**
    * Add the typing emoji and return a stop function removing it.
@@ -3251,6 +3251,33 @@ export class FeishuPlatform implements Platform {
   }
 }
 
+/**
+ * Insertion-ordered map bounded to {@link platformCacheCapacity}: set
+ * refreshes recency and evicts the oldest entry past the capacity. The
+ * platform's per-message caches (one entry per message id) would otherwise
+ * grow without limit on a long-running daemon.
+ */
+class BoundedMap<K, V> {
+  private readonly items = new Map<K, V>()
+
+  get(key: K): V | undefined { return this.items.get(key) }
+
+  has(key: K): boolean { return this.items.has(key) }
+
+  set(key: K, value: V): void {
+    this.items.delete(key)
+    this.items.set(key, value)
+    if (this.items.size > platformCacheCapacity) {
+      const oldest = this.items.keys().next().value
+      if (oldest !== undefined) this.items.delete(oldest)
+    }
+  }
+
+  delete(key: K): void { this.items.delete(key) }
+
+  get size(): number { return this.items.size }
+}
+
 function requirePreviewHandle(handle: unknown): FeishuPreviewHandle {
   if (handle instanceof FeishuPreviewHandle) return handle
   throw new Error(`feishu: invalid preview handle type ${String(handle)}`)
@@ -3263,6 +3290,9 @@ function requirePreviewHandle(handle: unknown): FeishuPreviewHandle {
  * verb set is built by one factory so withToken wraps every verb, not just
  * the first few.
  */
+/** Per-message cache capacity: bounded so a long-running daemon stays flat. */
+export const platformCacheCapacity = 4096
+
 /** Refresh this many seconds before the server-declared expiry. */
 const tenantTokenRefreshSkewSec = 60
 
@@ -3291,6 +3321,8 @@ export function newCachedTenantTokenMinter(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ app_id: appID, app_secret: appSecret }),
+      // Bare fetch, no withRetry wrapper: bound it like the other bare calls.
+      signal: AbortSignal.timeout(retryTiming.requestTimeout),
     })
     const data = await resp.json() as { tenant_access_token?: string; expire?: number }
     const token = data.tenant_access_token ?? ''

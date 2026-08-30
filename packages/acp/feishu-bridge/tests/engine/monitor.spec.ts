@@ -14,6 +14,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import type { Platform } from '../../src/core/types.js'
 import { Engine } from '../../src/engine/engine.js'
 import { DirHistory } from '../../src/engine/dir-history.js'
 import {
@@ -282,6 +283,29 @@ describe('monitorPollOnce', () => {
     await e.monitor.monitorPollOnce(poller)
 
     expect(e.monitor.lastTime['oc_m']).toBe(105)
+  })
+})
+
+describe('triage serialization', () => {
+  it('a same-chat triage batch runs serially (capacity check TOCTOU guard)', async () => {
+    const { e, p } = newMonitorPollEngine()
+    const running: number[] = []
+    let peak = 0
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    e.monitor.triageAndSpawn = async (_p: Platform, msg: Message) => {
+      running.push(1)
+      peak = Math.max(peak, running.length)
+      if (msg.content === 'first') await gate
+      running.pop()
+    }
+    const mk = (content: string): Message => msg({ sessionKey: 'feishu:oc_m:u1', userID: 'u1', messageID: `om_${content}`, content })
+    e.monitor.handleMonitorMessage(p, mk('first'))
+    e.monitor.handleMonitorMessage(p, mk('second'))
+    await new Promise((r) => { setTimeout(r, 20) })
+    expect(peak, 'the second triage waited for the first').toBe(1)
+    release()
+    await new Promise((r) => { setTimeout(r, 10) })
   })
 })
 
