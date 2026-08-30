@@ -205,6 +205,34 @@ describe('FileSystemSkillProvider', () => {
     expect((await ctx.skills.list({ cwd: noGit })).map(skill => skill.name)).toContain('fallback-root')
   })
 
+  it('scopes an object-form custom root to lookups under its cwd prefixes', async () => {
+    const home = await tempDir('skill-scope-home')
+    const custom = await tempDir('skill-scope-custom')
+    const projectA = await tempDir('skill-scope-a')
+    const projectB = await tempDir('skill-scope-b')
+    await writeSkill(custom, 'scoped-only', 'scoped skill')
+    const ctx = await setupLocal(home, {
+      // The scoped form mounts the root only for sessions whose cwd falls
+      // under a prefix (a sibling plugin gating its bundled skills to the
+      // projects it is enabled on).
+      scopedSkillDirs: [{ path: custom, cwdPrefixes: [projectA] }],
+    })
+
+    // At the prefix and nested under it: visible.
+    await mkdir(join(projectA, 'src'), { recursive: true })
+    expect((await ctx.skills.list({ cwd: projectA })).map(skill => skill.name)).toContain('scoped-only')
+    expect((await ctx.skills.list({ cwd: join(projectA, 'src') })).map(skill => skill.name)).toContain('scoped-only')
+    // A prefix-sibling path must not prefix-match (the separator guards it):
+    // <projectA>-tail starts with projectA's characters but is not under it.
+    const sibling = `${projectA}-tail`
+    await mkdir(sibling, { recursive: true })
+    expect((await ctx.skills.list({ cwd: sibling })).map(skill => skill.name)).not.toContain('scoped-only')
+    // Outside the prefixes: absent.
+    expect((await ctx.skills.list({ cwd: projectB })).map(skill => skill.name)).not.toContain('scoped-only')
+    // A cwd-less lookup (host-plane reads) sees no scoped root.
+    expect((await ctx.skills.list({})).map(skill => skill.name)).not.toContain('scoped-only')
+  })
+
   it('lets project skills override runtime while runtime overrides custom and user skills', async () => {
     const home = await tempDir('skill-runtime-priority')
     const project = await tempDir('skill-runtime-project')

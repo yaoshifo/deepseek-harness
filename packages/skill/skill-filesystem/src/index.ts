@@ -45,6 +45,19 @@ const DEFAULT_WATCH_MAX_PROJECTS = 128
 export const name = 'skill-filesystem'
 export const inject = ['skills']
 
+/**
+ * One custom skill root in scoped form: the root joins a lookup only when
+ * its `cwd` falls under one of the prefixes (a sibling plugin gating its
+ * bundled skills to the projects it is enabled on). A plain string root is
+ * the unscoped form, visible to every lookup.
+ */
+export interface ScopedSkillDir {
+  /** Skill root directory; ~ is expanded. */
+  path: string
+  /** Session-cwd prefixes the root is visible under (prefix itself included). */
+  cwdPrefixes: string[]
+}
+
 /** Local filesystem skill provider configuration. */
 export interface Config {
   /** Unique provider name. Defaults to `filesystem`. */
@@ -57,6 +70,8 @@ export interface Config {
   agentsHome?: string
   /** Additional skill roots scanned after project roots and before user roots. */
   customSkillDirs?: string[]
+  /** Custom skill roots scoped to lookups whose cwd falls under one of the entry's prefixes. */
+  scopedSkillDirs?: ScopedSkillDir[]
   /** Whether host-local skill roots are watched for catalog changes. */
   watch?: boolean
   /** Whether Chokidar uses polling instead of native filesystem events. */
@@ -79,6 +94,10 @@ export const Config: Schema<Config> = z.object({
   dshHome: z.string(),
   agentsHome: z.string(),
   customSkillDirs: z.array(z.string()).default([]),
+  scopedSkillDirs: z.array(z.object({
+    path: z.string(),
+    cwdPrefixes: z.array(z.string()),
+  })).default([]),
   watch: z.boolean().default(true),
   watchUsePolling: z.boolean().default(false),
   watchStabilityThresholdMs: z.number().default(DEFAULT_WATCH_STABILITY_THRESHOLD_MS),
@@ -148,7 +167,10 @@ export class FileSystemSkillProvider implements SkillProvider {
   private readonly includeDefaultRoots: boolean
   private readonly dshHome: string
   private readonly agentsHome: string
+  /** Resolved unscoped custom roots, always visible. */
   private readonly customSkillDirs: string[]
+  /** Resolved scoped custom roots with their cwd prefixes, visible only under them. */
+  private readonly scopedSkillDirs: Array<{ path: string; cwdPrefixes: string[] }>
   private readonly watchManager: SkillWatchManager
   private readonly bundledSkillDir: string | undefined
   private disposal: Promise<void> | undefined
@@ -162,7 +184,14 @@ export class FileSystemSkillProvider implements SkillProvider {
     this.includeDefaultRoots = config.includeDefaultRoots ?? true
     this.dshHome = resolveDshHome(config.dshHome)
     this.agentsHome = resolve(config.agentsHome ?? process.env.DSH_AGENTS_HOME ?? join(homedir(), '.agents'))
-    this.customSkillDirs = (config.customSkillDirs ?? []).map(root => resolve(root))
+    this.customSkillDirs = []
+    this.scopedSkillDirs = []
+    for (const root of config.customSkillDirs ?? []) {
+      this.customSkillDirs.push(resolve(root))
+    }
+    for (const entry of config.scopedSkillDirs ?? []) {
+      this.scopedSkillDirs.push({ path: resolve(entry.path), cwdPrefixes: entry.cwdPrefixes.map(prefix => resolve(prefix)) })
+    }
     this.watchManager = new SkillWatchManager(ctx, control.invalidate, resolveWatchConfig(config))
     control.signal.addEventListener('abort', () => { void this.dispose() }, { once: true })
     // The environment bundled root is a default root: an isolated provider
@@ -248,6 +277,11 @@ export class FileSystemSkillProvider implements SkillProvider {
       )
     }
     roots.push(...this.customSkillDirs.map(path => ({ path, source: 'custom' as const, rank: CUSTOM_RANK })))
+    if (cwd !== undefined) {
+      roots.push(...this.scopedSkillDirs
+        .filter(({ cwdPrefixes }) => cwdPrefixes.some(prefix => cwdIsUnder(cwd, prefix)))
+        .map(({ path }) => ({ path, source: 'custom' as const, rank: CUSTOM_RANK })))
+    }
     if (this.includeDefaultRoots) {
       roots.push(
         { path: join(this.dshHome, 'skills'), source: 'user-dsh', rank: USER_DSH_RANK, skipSystem: true },
@@ -262,6 +296,15 @@ export class FileSystemSkillProvider implements SkillProvider {
 }
 
 type SkillWatchEvent = 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir'
+
+/**
+ * Whether a lookup cwd is a scoped root's prefix itself or falls under it.
+ * The separator guard keeps a path that merely starts with the prefix's
+ * characters (`/a` vs `/a-tail`) from matching.
+ */
+function cwdIsUnder(cwd: string, prefix: string): boolean {
+  return cwd === prefix || cwd.startsWith(prefix + sep)
+}
 
 type RootWatchMode =
   | { kind: 'root'; anchor: string }

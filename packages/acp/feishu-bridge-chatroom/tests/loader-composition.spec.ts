@@ -76,6 +76,8 @@ describe('chatroom real Loader composition', () => {
     }))
 
     const configPath = join(root, 'cordis.yml')
+    const alphaDir = join(root, 'alpha')
+    const betaDir = join(root, 'beta')
     await writeFile(configPath, [
       '- id: agents',
       "  name: '@deepseek-ai/dsh-agent'",
@@ -99,7 +101,7 @@ describe('chatroom real Loader composition', () => {
       '    providers: {}',
       '    projects:',
       '      - name: alpha',
-      `        workdir: ${JSON.stringify(root)}`,
+      `        workdir: ${JSON.stringify(alphaDir)}`,
       '        feishu:',
       // Deliberately malformed app id: the Lark SDK rejects it locally, so
       // the WS transport never leaves the machine while start() still
@@ -107,9 +109,11 @@ describe('chatroom real Loader composition', () => {
       '          appId: cli_composition',
       '          appSecret: c0mp0sition',
       // A second project the chatroom config gates off: the same real
-      // composition must mount its engine but skip the chatroom face on it.
+      // composition must mount its engine but skip the chatroom face on it
+      // (its own workdir, so the cwd-scoped skill assertions can tell the
+      // two projects apart).
       '      - name: beta',
-      `        workdir: ${JSON.stringify(root)}`,
+      `        workdir: ${JSON.stringify(betaDir)}`,
       '        feishu:',
       '          appId: cli_composition2',
       '          appSecret: c0mp0sition',
@@ -197,9 +201,12 @@ describe('chatroom real Loader composition', () => {
     expect(lookupMessage('zh', 'chatroom')).toBe('开启多角色圆桌讨论')
 
     // Model-visible: the bundled chatroom-moderator skill through the skills
-    // provider the plugin mounts from its package directory.
-    const skills = await context.skills.list()
-    const moderator = skills.find(skill => skill.name === 'feishu-bridge-chatroom-moderator')
+    // provider the plugin mounts from its package directory — cwd-scoped to
+    // the enabled project's workdir (the gated project's cwd sees nothing).
+    const alphaSkills = await context.skills.list({ cwd: alphaDir })
+    const moderator = alphaSkills.find(skill => skill.name === 'feishu-bridge-chatroom-moderator')
     expect(moderator?.provider).toBe('feishu-bridge-chatroom-skills')
+    expect((await context.skills.list({ cwd: betaDir }))
+      .some(skill => skill.name === 'feishu-bridge-chatroom-moderator')).toBe(false)
   })
 })

@@ -39,21 +39,25 @@ export interface ChatroomConfig {
 
 /**
  * Mount the package-bundled `skills/` directory as an isolated skill
- * provider, so deployments get the chatroom-moderator skill without
- * hand-wiring `customSkillDirs` (same shape as the bridge's own bundled
- * skills mount).
+ * provider, scoped to the enabled projects' workdirs: the moderator skill's
+ * catalog entry — whose description names `/chatroom` — is itself a behavior
+ * entry point, so a chatroom-disabled project's sessions must not see it at
+ * all (cwd-scoped custom roots; sessions under an enabled workdir do).
  * @param ctx - Plugin context; the `skills` service is provided by the host
  *   composition (dsh-base), not mounted here.
- * @returns The mounted plugin fiber; disposing it unregisters the provider.
+ * @param cwdPrefixes - The enabled engines' base workdirs; empty skips the
+ *   mount (nothing is enabled, the entry would be invisible everywhere).
+ * @returns The mounted plugin fiber, or undefined when nothing is enabled.
  */
-function mountBundledSkills(ctx: Context): Fiber {
+function mountBundledSkills(ctx: Context, cwdPrefixes: readonly string[]): Fiber | undefined {
+  if (cwdPrefixes.length === 0) return undefined
   // Package-relative on purpose: both source runs (src/) and the bundled
   // lib/index.js sit one level below the package root.
   const skillsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills')
   return ctx.plugin(SkillFileSystem, {
     providerName: 'feishu-bridge-chatroom-skills',
     includeDefaultRoots: false,
-    customSkillDirs: [skillsDir],
+    scopedSkillDirs: [{ path: skillsDir, cwdPrefixes: [...cwdPrefixes] }],
   })
 }
 
@@ -83,7 +87,6 @@ export async function apply(ctx: Context, config: ChatroomConfig): Promise<void>
   // functions, so per-project wiring would double-fire them.
   ctx.effect(() => registerChatroomPolicyListeners(ctx))
   ctx.effect(() => registerChatroomTool(ctx, caller => service.route(caller)))
-  mountBundledSkills(ctx)
   // Deterministic project list: the bridge registers every project before
   // its apply resolves readiness.
   await service.whenReady()
@@ -95,10 +98,14 @@ export async function apply(ctx: Context, config: ChatroomConfig): Promise<void>
       )
     }
   }
+  // The enabled projects' base workdirs scope the bundled moderator skill
+  // (mounted once, after the sweep knows them).
+  const enabledWorkdirs = new Set<string>()
   for (const { engine } of service.projects) {
     applyChatroomEngineConfig(engine, config.defaults ?? {}, config.projects?.[engine.name])
     if (chatroomConfig(engine).enabled()) {
       ctx.effect(() => registerChatroomCommands(engine))
+      if (engine.baseWorkDir !== '') enabledWorkdirs.add(engine.baseWorkDir)
     } else {
       // The disabled project gets no /chatroom command family, and the tool
       // definition is masked out of its sessions' model requests (the
@@ -114,6 +121,7 @@ export async function apply(ctx: Context, config: ChatroomConfig): Promise<void>
     // project was disabled, it is not a new entry point.
     if (engine.platformsStarted) recoverChatroomBarriers(engine)
   }
+  mountBundledSkills(ctx, [...enabledWorkdirs])
 }
 
 export { Config }
