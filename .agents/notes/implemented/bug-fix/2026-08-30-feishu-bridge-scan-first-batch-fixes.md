@@ -40,7 +40,9 @@ Each fix was driven test-first; every failing test reproduced the bug for the ri
 
 Multi-project approvals, card-button authorization, and chatroom personas work as documented. Every queued-message drain yields to the event loop (no more 600ms process-wide freezes). Interrupted asks can no longer blackhole a session's messages. Terminal PATCHes survive queue saturation. Rejected research rounds and torn-down chatrooms leave no trap state behind.
 
-Not fixed in this batch (scan backlog, no action yet): per-messageID cache growth in platform.ts, exportKey map growth in InteractiveState, tenant-token minting per call, cron turn non-cancellation on timeout, modeOverride silent drop on live-state reuse, HTTP 5xx non-retry, parsePicks schema validation, hard-coded zh card copy in /context and engine, the `@deepseek-ai/cosmokit` ghost type dependency, and the invariant.ts test gap.
+A second batch closed the side-effect-free backlog items: tenant-access-token caching at both minting sites (expiry-gated by the server-declared `expire`), parsePicks schema validation at the model-JSON trust boundary, the adapter's dead-session unregistering (dispose hook fired from close/markDisposed — the leak behind /list zombie rows), locale-owned copy for the /context card plus the stray engine/chatroom strings (29+3 new en+zh keys; the six-bucket chart labels stay verbatim from dsh-context's zh-only i18n by documented alignment), the enqueueOrInline rejection guard, the invariant companion spec, four dead exports with their orphaned interfaces, and the cosmokit/dsh-system-prompt dependency-section corrections.
+
+Still open (policy or semantics decisions, deliberately not taken unilaterally): per-messageID cache growth in platform.ts and exportKey map growth in InteractiveState (bounded retention trades away old cards' export buttons), cron turn non-cancellation on timeout and the same-job overlap guard, modeOverride silent drop on live-state reuse, HTTP 5xx non-retry plus the per-project token bucket, and the EventKind switch exhaustiveness sweep.
 
 ## Testing
 

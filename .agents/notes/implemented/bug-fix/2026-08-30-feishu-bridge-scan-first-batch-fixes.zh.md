@@ -40,7 +40,9 @@ Status: implemented
 
 多项目审批、卡片按钮鉴权、chatroom 角色人设恢复文档声明的工作方式。每次排队消息 drain 都让出事件循环（不再有 600ms 的全进程冻结）。被中断的 ask 不再黑洞化会话消息。终态 PATCH 在队列饱和下存活。被拒的研究轮次与被拆掉的聊天室不再留下陷阱状态。
 
-本批未修（扫描 backlog，尚未行动）：platform.ts 的 per-messageID 缓存增长、InteractiveState 的 exportKey map 增长、每次调用新铸 tenant token、cron 超时不取消底层 turn、modeOverride 在 live 复用路径静默丢弃、HTTP 5xx 不重试、parsePicks 无 schema 校验、/context 与 engine 的硬编码中文卡面、`@deepseek-ai/cosmokit` 幽灵类型依赖、invariant.ts 测试缺口。
+第二批关闭了其中无副作用的条目：两处 tenant token 铸造点加缓存（以服务端声明的 `expire` 为界）、parsePicks 在模型 JSON 信任边界补 schema 校验、adapter 的死亡会话注销（close/markDisposed 触发 dispose hook——/list 僵尸行背后的泄漏）、/context 卡与 engine/chatroom 零散字符串的 locale-owned 化（新增 29+3 个 en+zh 键；六桶图表标签按文档化对齐保留 dsh-context 的 zh-only 词表）、enqueueOrInline 拒绝围堵、invariant companion 补测试、4 个死导出连同孤儿接口删除、cosmokit/dsh-system-prompt 依赖段修正。
+
+仍开放（策略或语义决策，刻意不单方面拍板）：platform.ts 的 per-messageID 缓存增长与 InteractiveState 的 exportKey map 增长（有界保留要以旧卡导出按钮失效为代价）、cron 超时不取消底层 turn 与同 job 叠加护栏、modeOverride 在 live 复用路径静默丢弃、HTTP 5xx 不重试与按 project 分裂的令牌桶、EventKind switch 穷尽性收尾。
 
 ## Testing
 
