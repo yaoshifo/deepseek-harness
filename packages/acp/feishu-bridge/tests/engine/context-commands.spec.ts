@@ -78,7 +78,7 @@ interface Fixture {
 /** Engine + live interactive session + the /context registration. */
 function newFixture(live: { snapshot: ContextSnapshotValues | undefined }, platform?: StubCardPlatform): Fixture {
   const p = platform ?? createStubCardPlatform('test')
-  const e = new Engine('test', contextAgent(live), [p], '', 'en')
+  const e = new Engine('test', contextAgent(live), [p], '', 'zh')
   const disposeSession = registerSessionCommands(e)
   const disposeCommands = registerContextCommands(e)
   // The chat's live agent session: activeAgentSessionID resolves to it over
@@ -141,7 +141,7 @@ describe('registerContextCommands', () => {
 
   it('/context replies the text degradation on non-card platforms', async () => {
     const text = createStubPlatform('plain')
-    const e = new Engine('test', contextAgent({ snapshot: snapshot() }), [text], '', 'en')
+    const e = new Engine('test', contextAgent({ snapshot: snapshot() }), [text], '', 'zh')
     const disposeSession = registerSessionCommands(e)
     const disposeCommands = registerContextCommands(e)
     const state = new InteractiveState()

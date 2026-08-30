@@ -8204,7 +8204,7 @@ export class Engine {
     // /new, then re-render the pressed card as the confirmation.
     if (cmd === '/nopred') {
       this.setPredictNextDisabled(msg.sessionKey)
-      const card = newCard().title('🚫 已屏蔽猜你想问', 'red').markdown('本会话不再显示预测卡片。`/new` 后恢复。').build()
+      const card = newCard().title(this.i18n.t(Msg.NopredTitle), 'red').markdown(this.i18n.t(Msg.NopredBody)).build()
       const refresher = asCardRefresher(p)
       if (refresher !== undefined) {
         try {

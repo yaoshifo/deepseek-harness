@@ -454,9 +454,9 @@ export async function afterChatroomStarted(
     sb.push(`• ${r.name}\n`)
   }
   if (ledgerOK) {
-    sb.push(`\n账本目录：${ledgerDir}\n（含 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md；角色回答前会读；主持用 feishu_bridge_chatroom 工具 action: note 更新综述，加 section: subproblems 更新子问题清单）\n`)
+    sb.push(e.i18n.tf(Msg.ChatroomLedgerDirNote, ledgerDir))
   }
-  sb.push('\n主持人正在开场…')
+  sb.push(`\n${e.i18n.t(Msg.ChatroomModeratorOpening)}`)
   void e.sendAsCard(p, rctx, sb.join(''), { title: e.i18n.t(Msg.ChatroomReady), color: 'purple' })
 
   // Research mode: pre-spawn a full-CC assistant subgroup for each role so

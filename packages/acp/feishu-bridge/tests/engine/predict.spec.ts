@@ -305,8 +305,8 @@ describe('sendInsightCard', () => {
     const md = JSON.stringify(combined.elements)
     expect(md).toContain('总结一行')
     expect(md).toContain('预测一行')
-    expect(md).toContain('发送')
-    expect(md).toContain('屏蔽')
+    expect(md).toContain('Send')
+    expect(md).toContain('Block')
     dispose()
   })
 
@@ -459,7 +459,7 @@ describe('setPredictNextDisabled', () => {
     await e.handleCardAction(p, msg({ sessionKey: 'test:chat-1', isCardAction: true }), 'act:/nopred')
 
     expect(state.predictNextDisabled).toBe(true)
-    expect(JSON.stringify(p.sentCards[0])).toContain('已屏蔽')
+    expect(JSON.stringify(p.sentCards[0])).toContain('Predictions blocked')
     dispose()
   })
 })

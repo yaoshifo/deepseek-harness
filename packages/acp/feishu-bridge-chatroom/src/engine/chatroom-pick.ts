@@ -231,7 +231,7 @@ function armChatroomPickWatchdog(e: Engine, p: Platform, hubKey: string): void {
     ps.recs = ps.allNames.map(n => ({ name: n, recommended: false, blurb: '' }))
     ps.selected = new Map()
     ps.phase = 'select'
-    ps.hint = '主持人未及时推荐，已列出全部角色供你自选。'
+    ps.hint = e.i18n.t(Msg.ChatroomRolePickWatchdogHint)
     const card = renderChatroomPickCard(e, ps)
     const cs = asCardSender(p)
     if (cs !== undefined) {

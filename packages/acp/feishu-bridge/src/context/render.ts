@@ -18,6 +18,7 @@
  */
 
 import { newCard } from '../card.js'
+import { I18n, Msg } from '../i18n/index.js'
 import type { Card, CardElement } from '../card.js'
 import { renderCardMap } from '../feishu/card.js'
 import { aggregateByTurn, headlineOf, recentEvents, topToolSchemas } from './aggregate.js'
@@ -74,6 +75,9 @@ export const CONTEXT_REFRESH_ARG_PREFIX = 'ctx:'
 
 /** Rendering arguments: everything the card shows, resolved by the caller. */
 export interface ContextCardArgs {
+  /** Locale-owned copy source: every user-visible string on the card routes
+   * through it (Client UI copy is locale-owned). */
+  i18n: I18n
   /** Interactive session key; the refresh button's callback targets it. */
   sessionKey: string
   /** Session display name ('' omits the header segment). */
@@ -165,19 +169,19 @@ function buildFullContextCard(
 ): Card {
   const headline = headlineOf(timeline, snapshot.pressure)
   const cb = newCard().title(contextHeaderTitle(args), headline.ratio !== undefined && headline.ratio > 1 ? 'red' : 'blue')
-  cb.markdown(headlineMarkdown(headline))
+  cb.markdown(headlineMarkdown(args.i18n, headline))
   cb.chart(compositionBarSpec(timeline.current), { aspectRatio: '2:1' })
   const turns = aggregateByTurn(timeline.requests, TREND_TURN_LIMIT)
   if (withTrend && turns.length > 0) {
     cb.chart(trendChartSpec(turns))
   }
   if (withEvents) {
-    cb.markdown(recentEventsMarkdown(timeline.events))
+    cb.markdown(recentEventsMarkdown(args.i18n, timeline.events))
   }
-  cb.markdown(sessionStatsMarkdown(timeline, snapshot))
+  cb.markdown(sessionStatsMarkdown(args.i18n, timeline, snapshot))
   const tools = topToolSchemas(snapshot.headers, TOOL_SCHEMA_LIMIT)
   if (tools.length > 0) {
-    cb.collapsiblePanel(`🧰 工具 schema Top ${tools.length}`, false, {
+    cb.collapsiblePanel(args.i18n.tf(Msg.ContextToolsPanel, tools.length), false, {
       kind: 'markdown',
       content: tools.map(t =>
         `- \`${capRunes(t.name, TOOL_NAME_MAX_RUNES)}\` · ${formatTokens(t.tokens)}`
@@ -188,31 +192,31 @@ function buildFullContextCard(
 }
 
 /** The headline line: occupancy versus the window, headroom, and an overrun flag. */
-function headlineMarkdown(headline: Headline): string {
+function headlineMarkdown(t: I18n, headline: Headline): string {
   const occupied = formatTokens(headline.occupiedTokens)
   if (headline.contextWindow === undefined || headline.ratio === undefined) {
-    return `**上下文占用** ~${occupied}（窗口未知）`
+    return t.tf(Msg.ContextOccupancyUnknown, occupied)
   }
   const pct = `${(headline.ratio * 100).toFixed(1)}%`
   const window = formatTokens(headline.contextWindow)
   if (headline.ratio > 1) {
     const over = formatTokens(headline.occupiedTokens - headline.contextWindow)
-    return `⚠️ **超出上下文窗口**：占用 ${occupied} / ${window}（${pct}）· 超出 ${over}`
+    return t.tf(Msg.ContextOverrun, occupied, window, pct, over)
   }
-  return `**上下文占用** ${occupied} / ${window}（${pct}）· 余量 ${formatTokens(headline.contextWindow - headline.occupiedTokens)}`
+  return t.tf(Msg.ContextOccupancy, occupied, window, pct, formatTokens(headline.contextWindow - headline.occupiedTokens))
 }
 
 /** The recent-events markdown, newest first, capped at the line limit. */
-function recentEventsMarkdown(events: readonly TimelineEvent[]): string {
+function recentEventsMarkdown(t: I18n, events: readonly TimelineEvent[]): string {
   const shown = recentEvents([...events], EVENT_LINE_LIMIT).reverse()
   if (shown.length === 0) return ''
-  const lines = shown.map(e => `- ${eventLine(e)}`)
-  return `**最近事件**\n${lines.join('\n')}`
+  const lines = shown.map(e => `- ${eventLine(t, e)}`)
+  return `${t.t(Msg.ContextRecentEvents)}\n${lines.join('\n')}`
 }
 
 /** One event line: kind label, token figure, turn/step, and the producer's name. */
-function eventLine(e: TimelineEvent): string {
-  const parts: string[] = [eventKindLabel(e.kind)]
+function eventLine(t: I18n, e: TimelineEvent): string {
+  const parts: string[] = [eventKindLabel(t, e.kind)]
   if (e.tokens !== undefined) {
     const sign = e.kind === 'inject' ? '+' : '-'
     parts.push(`${sign}${formatTokens(Math.abs(e.tokens))}`)
@@ -229,8 +233,8 @@ function eventLine(e: TimelineEvent): string {
 }
 
 /** The five event kinds' display labels (emoji + name). */
-function eventKindLabel(kind: TimelineEvent['kind']): string {
-  return `${eventKindEmoji(kind)} ${eventKindName(kind)}`
+function eventKindLabel(t: I18n, kind: TimelineEvent['kind']): string {
+  return `${eventKindEmoji(kind)} ${eventKindName(t, kind)}`
 }
 
 /** The five event kinds' emoji markers. */
@@ -245,18 +249,19 @@ function eventKindEmoji(kind: TimelineEvent['kind']): string {
 }
 
 /** The five event kinds' plain names (statistic counters reuse them). */
-function eventKindName(kind: TimelineEvent['kind']): string {
+function eventKindName(t: I18n, kind: TimelineEvent['kind']): string {
   switch (kind) {
-    case 'compaction': return '压缩'
-    case 'prune': return '剪枝'
-    case 'inject': return '注入'
-    case 'model': return '模型切换'
-    case 'mode': return '模式切换'
+    case 'compaction': return t.t(Msg.ContextKindCompaction)
+    case 'prune': return t.t(Msg.ContextKindPrune)
+    case 'inject': return t.t(Msg.ContextKindInject)
+    case 'model': return t.t(Msg.ContextKindModel)
+    case 'mode': return t.t(Msg.ContextKindMode)
   }
 }
 
 /** The statistics markdown: turn/step and event counts plus raw token usage. */
 function sessionStatsMarkdown(
+  t: I18n,
   timeline: ContextTimelineValue,
   snapshot: ContextSnapshotValues,
 ): string {
@@ -265,15 +270,15 @@ function sessionStatsMarkdown(
   const counts = new Map<TimelineEvent['kind'], number>()
   for (const e of timeline.events) counts.set(e.kind, (counts.get(e.kind) ?? 0) + 1)
   const countOf = (kind: TimelineEvent['kind']): string =>
-    counts.get(kind) === undefined ? '' : ` · ${eventKindName(kind)} ${counts.get(kind)}`
-  lines.push(`**统计**：${turns} 轮 · ${timeline.requests.length} 步`
-    + `${countOf('inject')}${countOf('compaction')}${countOf('prune')}`)
+    counts.get(kind) === undefined ? '' : ` · ${eventKindName(t, kind)} ${counts.get(kind)}`
+  lines.push(t.tf(Msg.ContextStats, turns, timeline.requests.length,
+    countOf('inject'), countOf('compaction'), countOf('prune')))
   const usage = lastRequestUsage(timeline.requests)
   if (usage !== undefined) {
-    lines.push(`**token 用量**（末次请求，原始）：输入 ${formatTokens(usage.prompt)}`
-      + ` · 缓存读 ${formatTokens(usage.cacheRead)} · 输出 ${formatTokens(usage.output)}`)
+    lines.push(t.tf(Msg.ContextUsageLast, formatTokens(usage.prompt),
+      formatTokens(usage.cacheRead), formatTokens(usage.output)))
   } else if (snapshot.pressure?.pressureTokens !== undefined) {
-    lines.push(`**token 用量**（最近请求，原始）：输入 ${formatTokens(snapshot.pressure.pressureTokens)}`)
+    lines.push(t.tf(Msg.ContextUsagePressure, formatTokens(snapshot.pressure.pressureTokens)))
   }
   return lines.join('\n')
 }
@@ -299,33 +304,32 @@ function buildDegradedContextCard(args: ContextCardArgs, snapshot: ContextSnapsh
   const pressure = snapshot.pressure
   const occupied = pressure?.projectedTokens ?? pressure?.pressureTokens
   if (occupied !== undefined && pressure?.contextWindow !== undefined && pressure.contextWindow > 0) {
-    cb.markdown(headlineMarkdown({
+    cb.markdown(headlineMarkdown(args.i18n, {
       occupiedTokens: occupied,
       contextWindow: pressure.contextWindow,
       ratio: Math.round((occupied / pressure.contextWindow) * 10_000) / 10_000,
       source: 'pressure',
     }))
   } else if (occupied !== undefined) {
-    cb.markdown(`**上下文占用** ~${formatTokens(occupied)}（窗口未知）`)
+    cb.markdown(args.i18n.tf(Msg.ContextOccupancyUnknown, formatTokens(occupied)))
   }
-  if (snapshot.breakdown !== undefined) cb.markdown(breakdownMarkdown(snapshot.breakdown))
-  if (snapshot.usage !== undefined) cb.markdown(usageMarkdown(snapshot.usage))
-  cb.markdown('💡 挂载 dsh-context 插件可见完整面板（六桶构成、逐轮趋势、上下文事件）。')
+  if (snapshot.breakdown !== undefined) cb.markdown(breakdownMarkdown(args.i18n, snapshot.breakdown))
+  if (snapshot.usage !== undefined) cb.markdown(usageMarkdown(args.i18n, snapshot.usage))
+  cb.markdown(args.i18n.t(Msg.ContextPluginHint))
   return appendRefresh(cb, args).build()
 }
 
 /** The heuristic three-part composition line (never a total — see the meter's contract). */
-function breakdownMarkdown(breakdown: ContextBreakdownValue): string {
-  return `**构成估算**：系统提示词 ~${formatTokens(breakdown.systemTokens)}`
-    + ` · 工具定义 ~${formatTokens(breakdown.toolsTokens)}`
-    + ` · 对话消息 ~${formatTokens(breakdown.messageTokens)}`
+function breakdownMarkdown(t: I18n, breakdown: ContextBreakdownValue): string {
+  return t.tf(Msg.ContextBreakdown, formatTokens(breakdown.systemTokens),
+    formatTokens(breakdown.toolsTokens), formatTokens(breakdown.messageTokens))
 }
 
 /** The cumulative raw billed-usage line. */
-function usageMarkdown(usage: TokenUsageValue): string {
-  return `**token 用量**（累计，原始）：输入 ${formatTokens(usage.uncachedInputTokens)}`
-    + ` · 缓存读 ${formatTokens(usage.cacheReadTokens)} · 缓存写 ${formatTokens(usage.cacheWriteTokens)}`
-    + ` · 输出 ${formatTokens(usage.outputTokens)}`
+function usageMarkdown(t: I18n, usage: TokenUsageValue): string {
+  return t.tf(Msg.ContextUsageTotal, formatTokens(usage.uncachedInputTokens),
+    formatTokens(usage.cacheReadTokens), formatTokens(usage.cacheWriteTokens),
+    formatTokens(usage.outputTokens))
 }
 
 // ── empty card / shared pieces ─────────────────────────────────────────────
@@ -333,7 +337,7 @@ function usageMarkdown(usage: TokenUsageValue): string {
 /** The friendly empty-state card (no live agent session to read). */
 function buildEmptyContextCard(args: ContextCardArgs): Card {
   const cb = newCard().title(contextHeaderTitle(args), 'blue')
-  cb.markdown('当前会话还没有可读取的上下文数据——先对话一轮，再点刷新。')
+  cb.markdown(args.i18n.t(Msg.ContextEmpty))
   return appendRefresh(cb, args).build()
 }
 
@@ -342,14 +346,14 @@ function buildCompactContextCard(args: ContextCardArgs): Card {
   const cb = newCard().title(contextHeaderTitle(args), 'blue')
   const snapshot = args.snapshot
   if (snapshot === undefined) {
-    cb.markdown('当前会话还没有可读取的上下文数据——先对话一轮，再点刷新。')
+    cb.markdown(args.i18n.t(Msg.ContextEmpty))
   } else if (snapshot.timeline !== undefined) {
-    cb.markdown(headlineMarkdown(headlineOf(snapshot.timeline, snapshot.pressure)))
+    cb.markdown(headlineMarkdown(args.i18n, headlineOf(snapshot.timeline, snapshot.pressure)))
   } else {
     const occupied = snapshot.pressure?.projectedTokens ?? snapshot.pressure?.pressureTokens
     cb.markdown(occupied === undefined
-      ? '💡 挂载 dsh-context 插件可见完整面板。'
-      : `**上下文占用** ~${formatTokens(occupied)}`)
+      ? args.i18n.t(Msg.ContextPluginHintShort)
+      : args.i18n.tf(Msg.ContextOccupancyShort, formatTokens(occupied)))
   }
   return appendRefresh(cb, args).build()
 }
@@ -358,13 +362,13 @@ function buildCompactContextCard(args: ContextCardArgs): Card {
 function contextHeaderTitle(args: ContextCardArgs): string {
   const segments = [capRunes(args.sessionTitle, TITLE_MAX_RUNES), capRunes(args.model, MODEL_MAX_RUNES)]
     .filter(s => s !== '')
-  return segments.length === 0 ? '📊 上下文' : `📊 上下文 · ${segments.join(' · ')}`
+  return segments.length === 0 ? args.i18n.t(Msg.ContextTitle) : `${args.i18n.t(Msg.ContextTitle)} · ${segments.join(' · ')}`
 }
 
 /** Append the divider plus the refresh button row targeting the session key. */
 function appendRefresh(cb: ReturnType<typeof newCard>, args: ContextCardArgs): ReturnType<typeof newCard> {
   return cb.divider().buttons({
-    text: '🔄 刷新',
+    text: args.i18n.t(Msg.ContextRefresh),
     type: 'default',
     value: `${REFRESH_ACTION} ${CONTEXT_REFRESH_ARG_PREFIX}${args.sessionKey}`,
   })

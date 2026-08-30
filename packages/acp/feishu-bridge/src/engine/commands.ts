@@ -1133,7 +1133,8 @@ async function spawnGroupCommon(
       numTurns: 0, compactionCount: 0,
     })
     try {
-      const card = await e.buildSpawnNotifyCard(spawnOpts.workDir, readyTitle, threadNote(opts.threadFlag), jumpMD, syntheticMsg.sessionKey)
+      const note = threadNote(e, opts.threadFlag)
+      const card = await e.buildSpawnNotifyCard(spawnOpts.workDir, readyTitle, note, jumpMD, syntheticMsg.sessionKey)
       await e.replyWithCard(p, syntheticMsg.replyCtx, card)
     } catch (error) {
       console.warn(`spawn: card send failed (${p.name()}): ${String(error)}`)
@@ -1150,9 +1151,9 @@ async function spawnGroupCommon(
 }
 
 /** Extra note for topic groups (Go spawnGroupCommon threadFlag branch). */
-function threadNote(threadFlag: boolean): string {
+function threadNote(e: Engine, threadFlag: boolean): string {
   if (!threadFlag) return ''
-  return '在此群中每个话题自动拥有独立的会话，直接发消息即可开始。'
+  return e.i18n.t(Msg.ThreadNote)
 }
 
 /** The parent chat's display name for jump buttons (Go effectiveParentLabel). */

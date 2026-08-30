@@ -195,7 +195,7 @@ export async function sendInsightCard(
     const cs = asCardSender(p)
     if (cs === undefined) return
     const cb = newCard().title(
-      summary !== '' && prediction !== '' ? `✨ ${label}` : summary !== '' ? `📝 ${label}` : `💡 猜你想问（${label}）`,
+      summary !== '' && prediction !== '' ? `✨ ${label}` : summary !== '' ? `📝 ${label}` : e.i18n.tf(Msg.PredictInsightTitle, label),
       'purple',
     )
     if (summary !== '') cb.markdown(`📝 ${summary}`)
@@ -203,8 +203,8 @@ export async function sendInsightCard(
     if (prediction !== '') {
       cb.markdown(`💡 ${prediction}`)
       cb.buttons(
-        primaryBtn('发送', `cmd:${prediction}`),
-        dangerBtn('屏蔽', 'act:/nopred'),
+        primaryBtn(e.i18n.t(Msg.PredictSend), `cmd:${prediction}`),
+        dangerBtn(e.i18n.t(Msg.PredictBlock), 'act:/nopred'),
       )
     }
     try {

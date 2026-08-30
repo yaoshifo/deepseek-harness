@@ -75,6 +75,9 @@ const en: Record<string, string> = {
   chatroom_topic_pick_empty: 'Pick one topic first.',
   chatroom_topic_pick_starting: 'Moving on to role selection…',
   chatroom_topic_pick_watchdog_hint: 'The moderator hasn\'t proposed topics in time. Cancel and run `/chatroom <your topic>` to start directly, or retry `/chatroom`.',
+  chatroom_role_pick_watchdog_hint: 'The moderator hasn\'t recommended roles in time. All configured roles are listed for you to pick directly.',
+  chatroom_ledger_dir_note: 'Ledger directory: %s\n(Contains SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md; roles read it before answering; the moderator updates the synthesis with the feishu_bridge_chatroom tool action: note, and the subproblem list with section: subproblems)\n',
+  chatroom_moderator_opening: 'The moderator is opening the discussion…',
   chatroom_gather_ask_human_blocked: 'A parallel gather is in progress — do not use ask-human. Give the question you want to ask the user as your reply text; the moderator will collect and ask the user once.',
 }
 
@@ -143,6 +146,9 @@ const zh: Record<string, string> = {
   chatroom_topic_pick_empty: '请先选一个题目。',
   chatroom_topic_pick_starting: '正在进入角色挑选…',
   chatroom_topic_pick_watchdog_hint: '主持人迟迟未生成候选。可点取消后用 `/chatroom <你的题目>` 直接开始，或重试 `/chatroom`。',
+  chatroom_role_pick_watchdog_hint: '主持人未及时推荐，已列出全部角色供你自选。',
+  chatroom_ledger_dir_note: '账本目录：%s\n（含 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md；角色回答前会读；主持用 feishu_bridge_chatroom 工具 action: note 更新综述，加 section: subproblems 更新子问题清单）\n',
+  chatroom_moderator_opening: '主持人正在开场…',
   chatroom_gather_ask_human_blocked: '并行收集进行中——不要用 ask-human。把你想问用户的问题作为回复文本给我，主持人会统一收集后向用户提问。',
 }
 
@@ -220,6 +226,9 @@ export const Msg = {
   ChatroomTopicPickEmpty: 'chatroom_topic_pick_empty',
   ChatroomTopicPickStarting: 'chatroom_topic_pick_starting',
   ChatroomTopicPickWatchdogHint: 'chatroom_topic_pick_watchdog_hint',
+  ChatroomRolePickWatchdogHint: 'chatroom_role_pick_watchdog_hint',
+  ChatroomLedgerDirNote: 'chatroom_ledger_dir_note',
+  ChatroomModeratorOpening: 'chatroom_moderator_opening',
   ChatroomGatherAskHumanBlocked: 'chatroom_gather_ask_human_blocked',
   SpawnNotSupported: 'spawn_not_supported',
 } as const

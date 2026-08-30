@@ -18,8 +18,9 @@ import {
   renderContextCard,
 } from '../src/context/render.js'
 import type { ContextCardArgs } from '../src/context/render.js'
+import { I18n } from '../src/i18n/index.js'
 import { newCard } from '../src/card.js'
-import type { Card, CardChart, CardCollapsiblePanel } from '../src/card.js'
+import type { Card, CardChart, CardCollapsiblePanel, CardElement } from '../src/card.js'
 import type {
   ContextTimelineValue,
   RequestRecord,
@@ -49,6 +50,7 @@ function event(over: Partial<TimelineEvent> = {}): TimelineEvent {
 
 function args(over: Partial<ContextCardArgs> = {}): ContextCardArgs {
   return {
+    i18n: new I18n('zh'),
     sessionKey: 'feishu:oc_1:ou_1',
     sessionTitle: '记账驴',
     model: 'deepseek-v4-flash',
@@ -99,6 +101,18 @@ describe('renderContextCard — full card', () => {
     expect(markdownOf(card)).toContain('**统计**：1 轮 · 1 步')
     expect(markdownOf(card)).toContain('**token 用量**（末次请求，原始）：输入 96.0k · 缓存读 20.0k · 输出 3.5k')
     expect(refreshValue(card)).toBe(`act:/context ${CONTEXT_REFRESH_ARG_PREFIX}feishu:oc_1:ou_1`)
+  })
+
+  it('renders the card copy in the configured locale (en)', () => {
+    // Client UI copy is locale-owned: the card copy must follow the caller's
+    // i18n instance instead of hard-coding one language.
+    const card = renderContextCard(args({ i18n: new I18n('en') }))
+    expect(card.header?.title).toBe('📊 Context · 记账驴 · deepseek-v4-flash')
+    expect(markdownOf(card)).toContain('**Context occupancy** 116k / 128k (90.6%) · headroom 12.0k')
+    expect(markdownOf(card)).toContain('**Stats**: 1 turns · 1 steps')
+    expect(markdownOf(card)).toContain('**Token usage** (last request, raw): input 96.0k · cache read 20.0k · output 3.5k')
+    const btn = card.elements.find((e): e is CardElement => e.kind === 'actions') as { buttons?: Array<{ text?: string }> } | undefined
+    expect(btn?.buttons?.[0]?.text).toBe('🔄 Refresh')
   })
 
   it('flags an over-window headline with the red template and the overrun line', () => {

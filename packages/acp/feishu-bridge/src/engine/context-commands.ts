@@ -93,6 +93,7 @@ function contextCard(e: Engine, sessionKey: string): Card {
   let title = e.sessions.getSessionName(session.getAgentSessionID())
   if (title === '') title = session.getName()
   return renderContextCard({
+    i18n: e.i18n,
     sessionKey,
     sessionTitle: title,
     model: displayModel(asProviderSwitcher(e.agent)?.getActiveProvider()?.model ?? ''),
