@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-`__fork__` 分支分两步解析 seed：先查 live 注册表（内存日志比 write-behind 的持久化新），miss 则走 `persistedForkSeed`——`sessionPersistence.inspect(id)` 加同样的「截至已完成 turn」裁剪。裁剪逻辑在 `trimCompletedTurnPrefix`，与 live 路径（原先的 `completedTurnPrefix`）共用；两种日志视图的 seq 都等于数组下标，按 `turn/end` 切出的前缀不变地满足 seed「从 seq 0 连续」的契约。lineage 元数据（`parentSession` + `seedLength`）现在两条路径都记录，不再只有 live 路径；源两边都找不到时行为不变（warn + 全新会话，无群消息）。
+`__fork__` 分支分两步解析 seed：先查 live 注册表（内存日志比 write-behind 的持久化新），miss 则走 `persistedForkSeed`——`sessionPersistence.inspect(id)` 加同样的种子裁剪。裁剪逻辑当时在 `trimCompletedTurnPrefix`（现为 `seedablePrefix`，额外切割并收尾飞行中的 turn——见[飞行 turn fork 种子 note](../feature/2026-08-30-feishu-bridge-flying-turn-fork-seed.zh.md)）；两种日志视图的 seq 都等于数组下标，按平衡切点切出的前缀不变地满足 seed「从 seq 0 连续」的契约。lineage 元数据（`parentSession` + `seedLength`）现在两条路径都记录，不再只有 live 路径；源两边都找不到时行为不变（warn + 全新会话，无群消息）。
 
 `prepareForkSession`（subtask 建群前守卫）随之跟进：可达 = 「live 或持久化 inspect 命中」，于是 `feishu_bridge_subtask` 的 `fork: true` 对死父会话也生效，而真正缺失的源仍会在建群前 fail-fast。engine 调用点不再传 workDir 参数——旧文案指责目录不匹配，但守卫从未比对过目录（持久化服务全局解析 id，没有 Claude Code 的 per-cwd projects-dir 局限），跨目录 fork 在 TS 本就可用，[subtask skill](../../../../packages/acp/feishu-bridge/skills/feishu-bridge-subtask/SKILL.md) 也不再禁止它。
 

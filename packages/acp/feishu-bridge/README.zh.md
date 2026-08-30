@@ -49,7 +49,7 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 - **agent 失败以原始报错呈现（已裁定不迁）**：Go 的 failure_classify.go（七类失败分类驱动用户文案）与 redact/（展示前脱敏）按同一裁定不移植；用户看到原始错误文本。
 - **卡片按钮回调无法自动化测试**：`card.action.trigger` 只能真机点击验证（飞书平台无回调模拟 API）；按钮路径靠纯函数表测 + 真机冒烟覆盖。
 - **多工作空间（multi-workspace）未迁移**：channel→workspace 绑定（Go workspace_binding.go）与 per-workspace agent 池未接线；单工作空间 + `/dir` per-chat override 承担现网需求，E 群清查记为 C 类。
-- **fork 源彻底消失时静默降级**：seed 先取 live 注册表、再取 sessionPersistence 持久化日志（daemon 重启或 idle 回收后的仅持久化父会话也能 fork，与 Go 读盘一致）；只有源两边都找不到时才退化为全新会话，仅留日志 warn、不回复群消息。
+- **fork 源彻底消失时静默降级**：seed 先取 live 注册表、再取 sessionPersistence 持久化日志（daemon 重启或 idle 回收后的仅持久化父会话也能 fork，与 Go 读盘一致）；带飞行中 turn 的父会话同样可种子——飞行 turn 在其最后一个平衡点被切割（悬空 tool call 以运行时 AbortError result 形状结算），并以合成 `step/end` + `turn/end(interrupted)` 收尾（`agent-dsh/fork-seed.ts`，扩展 Go 仅复制完成 turn 的语义）；只有源两边都找不到、或毫无可种子内容时才退化为全新会话，仅留日志 warn、不回复群消息。
 - **`nav:/help` 按钮无效**：cron 卡片的返回按钮指向 Go 的 help 卡体系（`renderHelpGroupCard` + `nav:` 帮助导航），该体系未移植；点击会进 engine 打 "no handler" 日志而非静默消失。根治是移植 help 卡族；`/dir` 选择卡同样因此不带返回按钮。
 - **位移自愈随内容节拍收敛，边界已知**：自愈搭在预览自身的节流刷新节拍上，被压住的卡在下一次状态变化落地时夺回尾部——静默工具执行期间侧栏继续显示压住它的消息（那本身就是最新信息）；不产生账本所记事件的位移类别（改名/头像之外的系统消息）在下一次被记活动前不治愈；合法重发的墓碑数等于被压次数——飞书除撤回重发外没有重排原语，turn 结束的头像重绘已不再贡献墓碑（挪到终态卡渲染之后），余下的复尾源只剩罕见的 attention 重绘（stall、子任务子会话死亡）与 turn 中途消息；同一群两个流式 bot 仍会互相压尾重发（现网单 bot 拓扑不存在该形态）。
 - **`/list`、`/status`、`/switch` 仍是纯文本**：Go 侧渲染 `renderListCardSafe`/`renderStatusCard` 卡片并带 `act:/list switch|delete N` 动作；TS 命令保持文本输出，待该渲染域移植。
