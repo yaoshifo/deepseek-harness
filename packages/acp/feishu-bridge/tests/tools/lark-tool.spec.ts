@@ -286,6 +286,35 @@ describe('runLarkInvocation', () => {
     expect(env.PATH).toBe('/usr/bin')
   })
 
+  it('bot mode reuses the TAT within the server-declared expiry', async () => {
+    // A tenant token lives ~2h server-side; minting one per invocation adds
+    // a full HTTPS round trip to every bot-mode call. Cache against the
+    // server-declared expire, keyed by app id.
+    const cacheCreds = { appId: 'cli_cache_app', appSecret: 'sec' }
+    const { deps, spawns, fetches } = fakeDeps({
+      fetch: jsonFetchHandler((url): unknown => url.includes('tenant_access_token')
+        ? { code: 0, tenant_access_token: 'tat-cache', expire: 7200 }
+        : { code: 0 }),
+    })
+    await runLarkInvocation(cacheCreds, ['docs', '+search', '--query', 'x'], { deps })
+    await runLarkInvocation(cacheCreds, ['docs', '+search', '--query', 'y'], { deps })
+    expect(fetches.filter(f => f.url.includes('tenant_access_token'))).toHaveLength(1)
+    expect(spawns.map(s => s.env?.LARKSUITE_CLI_TENANT_ACCESS_TOKEN)).toEqual(['tat-cache', 'tat-cache'])
+  })
+
+  it('bot mode re-mints when the response declares no expiry', async () => {
+    // No server-declared expire → the lifetime is unknown → never reuse.
+    const nocacheCreds = { appId: 'cli_nocache_app', appSecret: 'sec' }
+    const { deps, fetches } = fakeDeps({
+      fetch: jsonFetchHandler((url): unknown => url.includes('tenant_access_token')
+        ? { code: 0, tenant_access_token: 'tat-nocache' }
+        : { code: 0 }),
+    })
+    await runLarkInvocation(nocacheCreds, ['docs', '+search', '--query', 'x'], { deps })
+    await runLarkInvocation(nocacheCreds, ['docs', '+search', '--query', 'y'], { deps })
+    expect(fetches.filter(f => f.url.includes('tenant_access_token'))).toHaveLength(2)
+  })
+
   it('user mode prepends --profile and strips LARKSUITE_CLI_*', async () => {
     const { deps, spawns } = fakeDeps()
     await runLarkInvocation(creds, ['docs', '+search', '--as', 'user'], { deps })

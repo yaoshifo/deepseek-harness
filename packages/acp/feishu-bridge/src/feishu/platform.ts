@@ -3249,6 +3249,43 @@ function requirePreviewHandle(handle: unknown): FeishuPreviewHandle {
  * verb set is built by one factory so withToken wraps every verb, not just
  * the first few.
  */
+/** Refresh this many seconds before the server-declared expiry. */
+const tenantTokenRefreshSkewSec = 60
+
+/**
+ * A tenant-access-token minting closure with expiry-gated caching: tokens
+ * are reused until shortly before the server-declared `expire` elapses; a
+ * response without `expire` declares no reusable lifetime and is never
+ * cached. One minter per app (the closure holds the cache).
+ *
+ * @param appID - The app's client id.
+ * @param appSecret - The app's client secret.
+ * @param fetchFn - The fetch surface for the OpenAPI call.
+ * @returns A minting function returning the token ('' when the response
+ *   carries none).
+ */
+export function newCachedTenantTokenMinter(
+  appID: string,
+  appSecret: string,
+  fetchFn: typeof globalThis.fetch,
+): () => Promise<string> {
+  let cached: { token: string; expiresAt: number } | undefined
+  return async () => {
+    if (cached !== undefined && Date.now() < cached.expiresAt) return cached.token
+    const resp = await fetchFn('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_id: appID, app_secret: appSecret }),
+    })
+    const data = await resp.json() as { tenant_access_token?: string; expire?: number }
+    const token = data.tenant_access_token ?? ''
+    if (token !== '' && typeof data.expire === 'number' && data.expire > tenantTokenRefreshSkewSec) {
+      cached = { token, expiresAt: Date.now() + (data.expire - tenantTokenRefreshSkewSec) * 1000 }
+    }
+    return token
+  }
+}
+
 async function defaultApiClient(appID: string, appSecret: string): Promise<FeishuApiClient> {
   const sdk = await import('@larksuiteoapi/node-sdk')
   const client = new sdk.Client({
@@ -3257,15 +3294,7 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
     appType: sdk.AppType.SelfBuild,
     domain: sdk.Domain.Feishu,
   })
-  const fetchTenantToken = async (): Promise<string> => {
-    const resp = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ app_id: appID, app_secret: appSecret }),
-    })
-    const data = await resp.json() as { tenant_access_token?: string }
-    return data.tenant_access_token ?? ''
-  }
+  const fetchTenantToken = newCachedTenantTokenMinter(appID, appSecret, globalThis.fetch.bind(globalThis))
   const verbSet = (opts?: Parameters<typeof client.im.message.reply>[1]): FeishuApiClient => ({
     async reply({ messageId, msgType, content, replyInThread }) {
       const resp = await client.im.message.reply({

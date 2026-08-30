@@ -343,23 +343,40 @@ export function checkLarkCLIVersionAgainstMin(installed: string): Error | undefi
 
 // ── runner ────────────────────────────────────────────────────────────────
 
+/** Refresh this many seconds before the server-declared expiry. */
+const tatRefreshSkewSec = 60
+
+/** Per-app cached tenant access token (server tokens live ~2h). */
+const tatCache = new Map<string, { token: string; expiresAt: number }>()
+
 /**
- * Mint a tenant access token with the project's bot credentials.
+ * Mint (or reuse) a tenant access token with the project's bot credentials.
+ * Tokens are cached per app id against the server-declared `expire`; a
+ * response without `expire` declares no reusable lifetime and is never
+ * cached.
  *
  * @param creds - The project's bot app id and secret.
  * @param deps - The injectable fetch surface used for the OpenAPI call.
  * @returns The tenant access token, valid until it expires server-side.
  */
 export async function fetchTenantAccessToken(creds: LarkCreds, deps: LarkRunnerDeps): Promise<string> {
+  const cached = tatCache.get(creds.appId)
+  if (cached !== undefined && Date.now() < cached.expiresAt) return cached.token
   const resp = await deps.fetch(`${feishuOpenBaseURL}/open-apis/auth/v3/tenant_access_token/internal`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ app_id: creds.appId, app_secret: creds.appSecret }),
   })
-  const result = await resp.json() as { code?: number; msg?: string; tenant_access_token?: string }
+  const result = await resp.json() as { code?: number; msg?: string; tenant_access_token?: string; expire?: number }
   if (result.code !== 0) throw new Error(`API error ${result.code}: ${result.msg ?? ''}`)
   if (result.tenant_access_token === undefined || result.tenant_access_token === '') {
     throw new Error('empty tenant_access_token in response')
+  }
+  if (typeof result.expire === 'number' && result.expire > tatRefreshSkewSec) {
+    tatCache.set(creds.appId, {
+      token: result.tenant_access_token,
+      expiresAt: Date.now() + (result.expire - tatRefreshSkewSec) * 1000,
+    })
   }
   return result.tenant_access_token
 }
