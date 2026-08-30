@@ -8,6 +8,9 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest'
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentCancelCause, InboxTarget } from '@deepseek-ai/dsh-agent'
@@ -21,7 +24,8 @@ import { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomTool } from '../../src/tools/chatroom.js'
 import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { applyChatroomEngineConfig } from '../../src/chatroom-config.js'
-import { createStubAgent, createStubSpawnerPlatform } from '../stubs/engine-stubs.js'
+import { beginChatroomTopicPick } from '../../src/engine/chatroom-pick.js'
+import { createStubAgent, createStubSpawnerPlatform, newStubMessage } from '../stubs/engine-stubs.js'
 import '../stubs/messages.js'
 
 const signal = new AbortController().signal
@@ -158,6 +162,38 @@ describe('feishu_bridge_chatroom action routing', () => {
     const res = await test.execute({ action: 'pick-roles', picks: 'not json' })
     expect(res.isError).toBe(true)
     expect(errorText(res)).toContain('malformed')
+    test.dispose()
+  })
+
+  it('rejects malformed pick items with a schema error, not a TypeError', async () => {
+    // Model-produced JSON is a trust boundary: a wrong-typed or missing
+    // title/name must fail with a clear schema message instead of a raw
+    // "t.title.trim is not a function" from the renderer.
+    const p = createStubSpawnerPlatform()
+    const engine = new Engine('chatroom-test', createStubAgent(), [p], '', 'zh')
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-picks-roles-'))
+    await mkdir(join(rolesDir, 'taleb'), { recursive: true })
+    await writeFile(join(rolesDir, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    applyChatroomEngineConfig(engine, { rolesDir }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    // Arm the topic picker so the render path is live.
+    beginChatroomTopicPick(engine, p, {
+      ...newStubMessage(),
+      sessionKey: 'feishu:oc_hub:ou_1',
+      platform: p.name(),
+      userID: 'ou_1',
+    })
+
+    const wrongType = await test.execute({ action: 'pick-topic', picks: '[{"title":123,"recommended":true,"blurb":"x"}]' })
+    expect(wrongType.isError).toBe(true)
+    expect(errorText(wrongType)).toMatch(/title|schema|invalid/i)
+    expect(errorText(wrongType)).not.toContain('not a function')
+
+    const missingField = await test.execute({ action: 'pick-topic', picks: '[{"recommended":true,"blurb":"x"}]' })
+    expect(missingField.isError).toBe(true)
+    expect(errorText(missingField)).toMatch(/title|schema|invalid/i)
+    expect(errorText(missingField)).not.toContain('Cannot read propert')
+
     test.dispose()
   })
 

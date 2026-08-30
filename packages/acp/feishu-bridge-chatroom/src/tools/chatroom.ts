@@ -15,7 +15,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool, normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
+import { defineTool, normalizeKeyStyleVariants, validateJsonSchemaValue, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import type { SubtaskAgentRouter } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { declareToolFamily } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { chatroomConfig } from '../chatroom-config.js'
@@ -66,10 +66,12 @@ const PICK_ITEM_SCHEMAS: Record<'roles' | 'topics', JsonSchemaNode> = {
   roles: {
     type: 'object',
     properties: { name: { type: 'string' }, recommended: { type: 'boolean' }, blurb: { type: 'string' } },
+    required: ['name'],
   },
   topics: {
     type: 'object',
     properties: { title: { type: 'string' }, recommended: { type: 'boolean' }, blurb: { type: 'string' } },
+    required: ['title'],
   },
 }
 
@@ -86,7 +88,16 @@ function parsePicks<T>(raw: string, kind: 'roles' | 'topics'): T[] {
   if (!Array.isArray(parsed)) {
     throw new Error(`feishu_bridge_chatroom: ${kind} JSON must be an array`)
   }
-  return normalizeKeyStyleVariants({ type: 'array', items: PICK_ITEM_SCHEMAS[kind] }, parsed) as T[]
+  const schema: JsonSchemaNode = { type: 'array', items: PICK_ITEM_SCHEMAS[kind] }
+  const normalized = normalizeKeyStyleVariants(schema, parsed)
+  // Model-produced JSON is a trust boundary: validate item shapes here so a
+  // wrong-typed or missing name/title fails with a schema message instead of
+  // a raw TypeError from the card renderer.
+  const violations = validateJsonSchemaValue(schema, normalized)
+  if (violations.length > 0) {
+    throw new Error(`feishu_bridge_chatroom: ${kind} JSON items invalid: ${violations.join('; ')}`)
+  }
+  return normalized as T[]
 }
 
 /**
