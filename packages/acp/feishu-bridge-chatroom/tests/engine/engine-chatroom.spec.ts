@@ -436,13 +436,13 @@ describe('pending human reply routing', () => {
 
     // Listener half: a pending question consumes the reply (true before the
     // base); a slash command falls through to the base's false.
-    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: '/list' }, () => false)).toBe(false)
-    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: '2029-07-01' }, () => false)).toBe(true)
+    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: '/list', machine: false }, () => false)).toBe(false)
+    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: '2029-07-01', machine: false }, () => false)).toBe(true)
     expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingHumanQuestionRole).toBe('')
     await waitFor(() => p.sentCards.length === 1, 'routed reply card')
 
     // Base: no question pending anymore, the dispatch returns false.
-    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: 'another' }, () => false)).toBe(false)
+    expect(e.bridge.waterfall('feishuBridge/route-human-reply', { engine: e, platform: p, sessionKey: hub, content: 'another', machine: false }, () => false)).toBe(false)
   })
 })
 
