@@ -642,17 +642,18 @@ export interface PreviewCleaner {
  * Optional: platform keeps a per-chat activity ledger so a preview card can
  * tell — synchronously, without message-list API calls — whether a newer
  * message landed in its chat. The streaming preview consults this on its
- * content flushes and reissues the card at the chat tail whenever it was
- * displaced, so the newest-message chat summary keeps tracking the card.
+ * content flushes and the chat-changed bump consults it before reissuing, so
+ * the newest-message chat summary keeps tracking the card while a card that
+ * already owns the tail is never pointlessly recalled and resent.
  */
 export interface PreviewDisplacementProber {
   /**
    * @param previewHandle - Handle returned by {@link PreviewStarter.sendPreviewStart}.
    * @param sinceMs - Epoch ms the card was last sent or reissued at.
    * @returns True when a tracked message (inbound messages, non-preview
-   * outbound sends) landed in the card's chat after `sinceMs`; false for
-   * thread-isolated cards, whose chat is a topic the root tail does not
-   * apply to.
+   * outbound sends, chat name/avatar-change notices) landed in the card's
+   * chat after `sinceMs`; false for thread-isolated cards, whose chat is a
+   * topic the root tail does not apply to.
    */
   previewDisplaced(previewHandle: unknown, sinceMs: number): boolean
 }
@@ -1102,7 +1103,9 @@ export interface ChatRenamedNotifier {
 /**
  * Platform that notifies the engine on chat name/avatar change (Go
  * ChatChangedNotifier): the engine bumps the active preview card back to the
- * chat tail after the change's system notice pushes it off.
+ * chat tail after the change's system notice pushes it off — gated on the
+ * platform's displacement ledger, so a card that already owns the tail (or
+ * lives in an isolated thread) is left alone.
  */
 export interface ChatChangedNotifier {
   setChatChangedHandler(handler: (sessionKey: string) => void): void

@@ -1233,8 +1233,10 @@ export class FeishuPlatform implements Platform {
    * refreshes the chat-name cache and notifies the engine so jump-button
    * labels stay current; a name OR avatar change additionally notifies the
    * chat-changed handler so the engine can bump the active preview card back
-   * to the chat tail (Feishu inserts a system notice that pushes it off).
-   * Other changes (permissions, etc.) insert no notices and are skipped.
+   * to the chat tail (Feishu inserts a system notice that pushes it off), and
+   * touches the activity ledger — the notice physically lands at the chat
+   * tail, so the displacement probe sees it the same as any message. Other
+   * changes (permissions, etc.) insert no notices and are skipped.
    * @param event - Raw im.chat.updated_v1 payload.
    */
   onChatUpdated(event: FeishuChatUpdatedEvent): void {
@@ -1254,8 +1256,11 @@ export class FeishuPlatform implements Platform {
       }
     }
 
-    if ((ac.name !== undefined || ac.avatar !== undefined) && this.chatChangedHandler !== undefined) {
-      this.chatChangedHandler(sessionKey)
+    if (ac.name !== undefined || ac.avatar !== undefined) {
+      this.touchChatActivity(chatID)
+      if (this.chatChangedHandler !== undefined) {
+        this.chatChangedHandler(sessionKey)
+      }
     }
   }
 
@@ -1641,8 +1646,10 @@ export class FeishuPlatform implements Platform {
    * Record tracked chat activity for the displacement ledger: any message
    * that physically lands in the chat pushes a preview card off the tail
    * and steals the newest-message chat summary. Called by the outbound
-   * routing helpers after a successful send; sendPreviewStart never routes
-   * through them, so card (re)issues do not displace themselves.
+   * routing helpers after a successful send and by onChatUpdated for
+   * name/avatar changes (their system notices land at the tail alike);
+   * sendPreviewStart never routes through them, so card (re)issues do not
+   * displace themselves.
    * @param chatID - Chat the message landed in; empty ids are ignored.
    */
   private touchChatActivity(chatID: string): void {
@@ -2047,15 +2054,14 @@ export class FeishuPlatform implements Platform {
   }
 
   /**
-   * Whether a tracked message landed in the card's chat after `sinceMs`
+   * Whether a tracked event landed in the card's chat after `sinceMs`
    * (PreviewDisplacementProber). Tracked: inbound messages (receive_v1,
-   * whatever the bot does with them) and non-preview outbound sends — the
+   * whatever the bot does with them), non-preview outbound sends — the
    * routing helpers touch the ledger, sendPreviewStart is exempt so a card
-   * reissue never displaces itself. Avatar/name system messages are NOT
-   * tracked here: they arrive as im.chat.updated_v1, and the engine's
-   * chat-changed bump path covers them immediately. Thread-isolated cards
-   * live inside a topic the root chat's tail does not apply to, so they
-   * never report displaced.
+   * reissue never displaces itself — and chat name/avatar changes, whose
+   * system notices arrive as im.chat.updated_v1 and land at the chat tail.
+   * Thread-isolated cards live inside a topic the root chat's tail does not
+   * apply to, so they never report displaced.
    * @param previewHandle - Preview handle from sendPreviewStart.
    * @param sinceMs - Epoch ms the card was last sent or reissued at.
    * @returns True when the card's chat saw tracked activity after `sinceMs`.

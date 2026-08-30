@@ -867,7 +867,7 @@ export class StreamPreview {
     // the tail carrying this flush's content instead; on send failure fall
     // through to the in-place PATCH (fresh content outranks the tail
     // position) and retry the reissue on the next flush.
-    if (this.displacedLocked() && await this.reissueLocked(content)) return
+    if (this.displacedLocked() === true && await this.reissueLocked(content)) return
 
     // Update existing preview message
     if (this.async !== undefined) {
@@ -1234,23 +1234,28 @@ export class StreamPreview {
 
   /**
    * Whether the chat's activity ledger marks the card as displaced: a
-   * tracked message (inbound messages, non-preview outbound sends) landed
-   * after the card's last send or reissue (PreviewDisplacementProber).
-   * Thread-isolated cards never report displaced. Must hold the lock.
+   * tracked message or chat-change system notice landed after the card's
+   * last send or reissue (PreviewDisplacementProber). Thread-isolated cards
+   * never report displaced. `undefined` when the platform has no prober —
+   * callers decide their own fallback. Must hold the lock.
    */
-  private displacedLocked(): boolean {
+  private displacedLocked(): boolean | undefined {
     if (this.previewMsgID === undefined) return false
     const prober = asPreviewDisplacementProber(this.platform)
-    if (prober === undefined) return false
+    if (prober === undefined) return undefined
     return prober.previewDisplaced(this.previewMsgID, this.placedAtMs)
   }
 
   /**
    * Reissue the preview card with the current progress display so it becomes
-   * the latest message; no-op when inactive.
+   * the latest message; no-op when inactive or the activity ledger shows the
+   * card already owns the tail (a chat-change notice that landed below it —
+   * the card was reissued past the notice, or lives in an isolated thread).
+   * Platforms without a displacement prober keep the unconditional bump.
    */
   async bumpToEnd(): Promise<void> {
     await this.locked(async () => {
+      if (this.displacedLocked() === false) return
       // An empty body still bumps: the running-status header renders alone.
       await this.reissueLocked(this.progressContentLocked(this.buildProgressDisplayLocked()))
     })

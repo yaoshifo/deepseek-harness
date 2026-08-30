@@ -4392,11 +4392,13 @@ export class Engine {
 
   // ---------------------------------------------------------------------
   // Active-preview bump routing (chat rename/avatar system notices push the
-  // preview card off the tail; bump reissues it as the latest message).
-  // Per-session: each interactive state's own preview is the bump target, so
-  // concurrent streams (a feature hub and its roles, plus research
-  // assistants) route correctly — a single global binding would let the
-  // latest-started turn steal every other session's bump.
+  // preview card off the tail; bump reissues it as the latest message —
+  // gated on the platform's displacement ledger inside bumpToEnd, so a card
+  // already owning the tail is left alone). Per-session: each interactive
+  // state's own preview is the bump target, so concurrent streams (a feature
+  // hub and its roles, plus research assistants) route correctly — a single
+  // global binding would let the latest-started turn steal every other
+  // session's bump.
   // ---------------------------------------------------------------------
 
   /** Pending per-session bump debounce timers (coalesce rename+avatar bursts). */
@@ -4801,8 +4803,8 @@ export class Engine {
    * Reissue the session's active preview when its state still owns one
    * (Go bindActivePreview + bumpActivePreviewForSession, made per-session:
    * state.preview is the binding). Terminal previews (finished/stopped/
-   * degraded) are rejected inside bumpToEnd, so a lookup racing teardown is
-   * a safe no-op.
+   * degraded) and cards the platform's ledger still shows at the tail are
+   * rejected inside bumpToEnd, so a lookup racing teardown is a safe no-op.
    * @param sessionKey - Session whose preview is bumped.
    */
   bumpActivePreviewForSession(sessionKey: string): void {

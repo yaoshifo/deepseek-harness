@@ -249,6 +249,21 @@ function createMockBumpFailSendPlatform(failOn: number): ReturnType<typeof creat
   return p as ReturnType<typeof createMockBumpFailSendPlatform>
 }
 
+/** MockBumpPlatform + PreviewDisplacementProber whose verdict is steered per test. */
+function createDisplacedPlatform(): ReturnType<typeof createMockBumpPlatform> & {
+  setDisplaced: (v: boolean) => void
+} {
+  const p = createMockBumpPlatform()
+  const state = { displaced: false }
+  Object.assign(p, {
+    previewDisplaced(_handle: unknown, _sinceMs: number): boolean {
+      return state.displaced
+    },
+  })
+  Object.defineProperty(p, 'setDisplaced', { get: () => (v: boolean) => { state.displaced = v } })
+  return p as ReturnType<typeof createDisplacedPlatform>
+}
+
 const err = (msg: string): Error => new Error(msg)
 
 /** @larksuiteoapi/node-sdk failure shape: business code rides in response.data.code, not the message. */
@@ -1472,6 +1487,26 @@ describe('bump to end', () => {
     expect(sp.previewMsgID).not.toBe(oldHandle)
   })
 
+  it('skips the reissue when the activity ledger shows the card still owns the tail', async () => {
+    const mp = createDisplacedPlatform()
+    const sp = await newSyncStreamPreviewForFallback(mp)
+    mp.setDisplaced(false)
+    await sp.bumpToEnd()
+    expect(mp.nextID).toBe(1)
+    expect(mp.deleted).toEqual([])
+  })
+
+  it('reissues when the ledger reports the card displaced', async () => {
+    const mp = createDisplacedPlatform()
+    const sp = await newSyncStreamPreviewForFallback(mp)
+    const oldHandle = sp.previewMsgID
+    mp.setDisplaced(true)
+    await sp.bumpToEnd()
+    expect(mp.nextID).toBe(2)
+    expect(mp.deleted).toEqual([oldHandle])
+    expect(sp.previewMsgID).not.toBe(oldHandle)
+  })
+
   it('is a no-op when inactive (nil/completed/failed/degraded)', async () => {
     const mk = (): { mp: ReturnType<typeof createMockBumpPlatform>; sp: StreamPreview } => {
       const mp = createMockBumpPlatform()
@@ -1540,21 +1575,6 @@ describe('bump to end', () => {
 })
 
 describe('displacement heal', () => {
-  /** MockBumpPlatform + PreviewDisplacementProber whose verdict is steered per test. */
-  function createDisplacedPlatform(): ReturnType<typeof createMockBumpPlatform> & {
-    setDisplaced: (v: boolean) => void
-  } {
-    const p = createMockBumpPlatform()
-    const state = { displaced: false }
-    Object.assign(p, {
-      previewDisplaced(_handle: unknown, _sinceMs: number): boolean {
-        return state.displaced
-      },
-    })
-    Object.defineProperty(p, 'setDisplaced', { get: () => (v: boolean) => { state.displaced = v } })
-    return p as ReturnType<typeof createDisplacedPlatform>
-  }
-
   const healCfg = (): StreamPreviewCfg => cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000 })
 
   it('reissues the card at the tail carrying the flushed content', async () => {

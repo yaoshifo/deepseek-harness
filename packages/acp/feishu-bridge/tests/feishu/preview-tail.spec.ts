@@ -81,6 +81,24 @@ describe('previewDisplaced', () => {
     expect(p.previewDisplaced(handle, since)).toBe(true)
   })
 
+  it('avatar/name chat changes touch the ledger (their system notice lands at the tail)', () => {
+    const p = newPlatform(apiClient())
+    const handle = new FeishuPreviewHandle('om_mine', 'oc_chat', 'feishu:oc_chat')
+    const since = Date.now() - 1000
+    p.onChatUpdated({ chat_id: 'oc_chat', after_change: { avatar: 'img_v2_new' } })
+    expect(p.previewDisplaced(handle, since)).toBe(true)
+    // A card sent after the change's notice is not displaced by it.
+    expect(p.previewDisplaced(handle, Date.now())).toBe(false)
+  })
+
+  it('chat changes without name/avatar do not touch the ledger (no notice lands)', () => {
+    const p = newPlatform(apiClient())
+    const handle = new FeishuPreviewHandle('om_mine', 'oc_chat', 'feishu:oc_chat')
+    const since = Date.now() - 1000
+    p.onChatUpdated({ chat_id: 'oc_chat', after_change: {} })
+    expect(p.previewDisplaced(handle, since)).toBe(false)
+  })
+
   it('recall events never touch the ledger', () => {
     const p = newPlatform(apiClient())
     const handle = new FeishuPreviewHandle('om_mine', 'oc_chat', 'feishu:oc_chat')
