@@ -213,6 +213,46 @@ describe('prepareForkAtSession', () => {
     await expect(adapter.prepareForkAtSession('cc-parent', '/w', 'text', 'app', 1000))
       .rejects.toThrow('sessionPersistence')
   })
+
+  it('balances the staged seed when the quoted message sits in the open turn', async () => {
+    // quoting the ask message of a turn still blocked on its card: the raw
+    // cut keeps every event through the dangling call, which violates the
+    // seed contract (no open turn/step, no dangling tool call)
+    const openTurnLog = [
+      ev('turn/start', 0),
+      msgEv('user/message', 1, 1000, 'fix the login bug'),
+      ev('turn/end', 2),
+      ev('turn/start', 3),
+      msgEv('user/message', 4, 8000, 'now the logout'),
+      ev('step/start', 5),
+      msgEv('assistant/message', 6, 9000, 'logout asks a question'),
+      { type: 'tool/call', seq: 7, time: 7, data: { callId: 'call-ask', name: 'ask_user_question' } } as SessionEvent,
+    ]
+    const persistence = fakePersistence(new Map([
+      ['cc-parent', { meta: parentHeader('/workspace/project'), events: openTurnLog }],
+    ]))
+    const { ctx, creates } = createHarness(persistence)
+    const adapter = newAdapter(ctx)
+
+    const newID = await adapter.prepareForkAtSession(
+      'cc-parent', '/workspace/child', 'logout asks a question', 'app', 9000,
+    )
+    await adapter.startSession(`${ForkAtSessionPrefix}${newID}`)
+
+    const seed = (creates[0]?.seed ?? []) as SessionEvent[]
+    // the quoted assistant message and its dangling call stay; the call is
+    // settled and the step and turn are closed synthetically
+    expect(seed.map(e => e.type)).toEqual([
+      'turn/start', 'user/message', 'turn/end',
+      'turn/start', 'user/message', 'step/start', 'assistant/message', 'tool/call',
+      'tool/result', 'step/end', 'turn/end',
+    ])
+    const settled = seed[8] as SessionEvent<'tool/result'>
+    expect(settled.data.message.source).toEqual({ kind: 'tool', callId: 'call-ask' })
+    expect((seed[10] as SessionEvent<'turn/end'>).data.reason).toEqual({ kind: 'interrupted' })
+    expect(seed.map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+    expect(creates[0]?.meta?.seedLength).toBe(11)
+  })
 })
 
 describe('startSession __forkat__ sentinel', () => {

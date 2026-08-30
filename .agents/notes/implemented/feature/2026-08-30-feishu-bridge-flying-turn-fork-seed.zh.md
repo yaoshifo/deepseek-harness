@@ -22,7 +22,7 @@ Status: implemented
 
 ## Consequences
 
-飞行中 `/fk` 现在继承与"先停再 fork"相同的内容：飞行 turn 的用户输入、已完成 step、以及以 aborted 结算呈现的待答问题（子会话可以重新问）。任何悬空调用——ask、长 bash、gather——统一且如实地结算。只要存在可种子内容，就绪卡的"已复制上下文"即为真话；残余角落（毫无用户可见内容的会话）保留仅 warn 的全新降级。已知后续、刻意不在本改动内：rollback fork 的 `cutAfterTurn` 在引用消息落在仍开放 turn 时返回 `events.length`，产出违反同一契约的非平衡种子——修它需要按引用消息细化 step 语义，不是这个前缀函数。
+飞行中 `/fk` 现在继承与"先停再 fork"相同的内容：飞行 turn 的用户输入、已完成 step、以及以 aborted 结算呈现的待答问题（子会话可以重新问）。任何悬空调用——ask、长 bash、gather——统一且如实地结算。只要存在可种子内容，就绪卡的"已复制上下文"即为真话；残余角落（毫无用户可见内容的会话）保留仅 warn 的全新降级。回滚 fork 同改动跟进：`prepareForkAtSession` 把引用 turn 的切片过一遍 `seedablePrefix`，引用仍开放 turn 中的消息（原先经 `events.length` 产出非平衡种子）因此与普通 fork 完全同构地结算收尾——平衡切片原样通过。
 
 ## Testing
 

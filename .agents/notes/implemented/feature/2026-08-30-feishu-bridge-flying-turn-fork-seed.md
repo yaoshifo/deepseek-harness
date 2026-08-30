@@ -22,7 +22,7 @@ The 2026-08-30 incident (group `oc_5fd5cd` → forked group `oc_2b8c`): the pare
 
 ## Consequences
 
-`/fk` mid-flight now inherits what "stop then fork" would: the flying turn's user input, completed steps, and the pending question settled as aborted (the child can re-ask it). Dangling calls of any kind — ask, long bash, gather — settle uniformly and honestly. The readiness card's "context copied" text is true whenever anything is seedable; the residual corner (a session with nothing user-visible) keeps the warn-only fresh degrade. Known follow-up, deliberately out of scope: rollback fork's `cutAfterTurn` returns `events.length` when the quoted message sits in the still-open turn, emitting an unbalanced seed that violates the same contract — fixing it needs quote-aware step semantics, not this prefix.
+`/fk` mid-flight now inherits what "stop then fork" would: the flying turn's user input, completed steps, and the pending question settled as aborted (the child can re-ask it). Dangling calls of any kind — ask, long bash, gather — settle uniformly and honestly. The readiness card's "context copied" text is true whenever anything is seedable; the residual corner (a session with nothing user-visible) keeps the warn-only fresh degrade. The rollback fork follows in the same change: `prepareForkAtSession` wraps its quoted-turn slice with `seedablePrefix`, so quoting a message from the still-open turn (previously an unbalanced seed through `events.length`) settles and closes exactly like the plain fork — a balanced slice passes through unchanged.
 
 ## Testing
 

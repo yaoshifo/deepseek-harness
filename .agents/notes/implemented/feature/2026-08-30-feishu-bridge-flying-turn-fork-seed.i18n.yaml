@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-30-feishu-bridge-flying-turn-fork-seed.md
-2026-08-30-feishu-bridge-flying-turn-fork-seed.md: f481517b700437df84cffa44e7a37eca47f7fe88
-2026-08-30-feishu-bridge-flying-turn-fork-seed.zh.md: 7f1e40ce2a8220c894570e8ba185be897bf1b6ca
+2026-08-30-feishu-bridge-flying-turn-fork-seed.md: 0e80bb15ad7ec9098d24d70472e6bb53f385c3a0
+2026-08-30-feishu-bridge-flying-turn-fork-seed.zh.md: bdc38647f4a4a9ae527dcdf97f8f9653bb86b868

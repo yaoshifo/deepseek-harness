@@ -1118,8 +1118,17 @@ export class DshAgentAdapter {
       senderType: quotedSenderType,
       quotedTimeMs,
     })
+    // The locator keeps everything through the turn holding the quote; when
+    // that turn is still open (quote of a message from the in-flight turn),
+    // the raw slice would carry dangling events. Balance it with the same
+    // synthetic closure the plain fork seed uses — a balanced slice passes
+    // through unchanged.
     const newID = freshNativeSessionId()
-    this.forkAtSeeds.set(newID, { seed: [...inspection.events.slice(0, keep)], parentID: origID, childWorkDir })
+    this.forkAtSeeds.set(newID, {
+      seed: seedablePrefix(inspection.events.slice(0, keep)),
+      parentID: origID,
+      childWorkDir,
+    })
     return newID
   }
 
