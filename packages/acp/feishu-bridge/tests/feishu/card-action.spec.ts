@@ -63,6 +63,21 @@ describe('onCardAction act: dispatch', () => {
     expect(p.cardActionMsgIDs.get('feishu:oc_1:ou_9')).toBe(messages[0]!.messageID)
   })
 
+  it('an operator excluded by allow_from cannot trigger card buttons in an allowed chat', async () => {
+    // The message path gates on both allowChat and allowFrom; the card
+    // callback must not let an excluded user press buttons (perm:allow,
+    // stop, export) in a chat the allowlist permits.
+    const p = newPlatform({ allowChat: '*', allowFrom: 'ou_friend' })
+    const messages = await dispatched(p, cardEvent({ action: 'act:/wt keep', userID: 'ou_stranger' }))
+    expect(messages).toHaveLength(0)
+  })
+
+  it('an allow_from-listed operator triggers card buttons normally', async () => {
+    const p = newPlatform({ allowChat: '*', allowFrom: 'ou_friend' })
+    const messages = await dispatched(p, cardEvent({ action: 'act:/wt keep', userID: 'ou_friend' }))
+    expect(messages).toHaveLength(1)
+  })
+
   it('routes nav:/dir page turns through the same card-action path', async () => {
     const p = newPlatform({ allowChat: '*' })
     const messages = await dispatched(p, cardEvent({ action: 'nav:/dir 2' }))

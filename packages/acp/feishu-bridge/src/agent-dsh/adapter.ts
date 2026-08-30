@@ -775,7 +775,7 @@ export class DshAgentAdapter {
     // return the decision as the native ApprovalAnswer — the note rides the
     // approval/decided audit pair and the tools layer folds it into the
     // rejection text.
-    this.disposers.push(ctx.on('approval/request', async (req: never, _next: never): Promise<string | AskDecision> => {
+    this.disposers.push(ctx.on('approval/request', async (req: never, next: never): Promise<string | AskDecision> => {
       const r = req as {
         agent?: { session?: { id?: string } }
         toolName?: string
@@ -786,7 +786,14 @@ export class DshAgentAdapter {
       }
       const sessionID = r.agent?.session?.id ?? ''
       const target = this.liveSessions.get(sessionID)
-      if (target === undefined) return 'unavailable'
+      if (target === undefined) {
+        // Another project's adapter may own this session (multi-project
+        // deployments share one plugin ctx): hand the request down the
+        // waterfall instead of vetoing it. The chain's base listener still
+        // fails closed with 'unavailable' — as does a bare call without a
+        // next (2026-08-22 userQuestions collision class).
+        return (next as undefined | (() => Promise<string | AskDecision>))?.() ?? 'unavailable'
+      }
       // Go autoApprove: an unattended session approves directly — questions
       // (AskUserQuestion / ExitPlanMode) ride the separate userQuestions
       // channel and still surface as cards (#15).

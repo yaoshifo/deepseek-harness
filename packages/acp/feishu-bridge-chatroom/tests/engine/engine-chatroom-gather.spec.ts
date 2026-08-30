@@ -280,6 +280,38 @@ describe('GatherRoles', () => {
     chatroomState(hubSess).pendingGather?.stopTimer()
   })
 
+  it('a cap-rejected research round leaves no orphan barrier and consumes no state', async () => {
+    // The cap check must run BEFORE any state is installed: a barrier
+    // persisted without a timer or broadcast never completes, and `end`
+    // refuses to run while pendingGather is set — the moderator is stuck
+    // until force/stop.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    chatroomConfig(e).applySection({ maxResearchRounds: 2 })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    chatroomState(hubSess).chatroomResearch = true
+    chatroomState(hubSess).chatroomResearchMode = 'auto'
+
+    gatherRoles(e, hub, 'r1', true)
+    chatroomState(hubSess).pendingGather?.stopTimer()
+    gatherRoles(e, hub, 'r2', true)
+    chatroomState(hubSess).pendingGather?.stopTimer()
+
+    const barrierBefore = chatroomState(hubSess).pendingGather
+    const seqBefore = chatroomState(hubSess).chatroomGatherSeq
+
+    expect(() => { gatherRoles(e, hub, 'r3', true) }).toThrow()
+
+    const st = chatroomState(hubSess)
+    expect(st.pendingGather, 'rejected round must not install an orphan barrier').toBe(barrierBefore)
+    expect(st.chatroomGatherSeq, 'rejected round must not consume the seq').toBe(seqBefore)
+    expect(st.chatroomResearchRound, 'rejected round must not consume the counter').toBe(2)
+  })
+
   it('errors when the hub has no roles', () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)

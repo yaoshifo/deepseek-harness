@@ -1120,6 +1120,45 @@ describe('DshAgentAdapter approval answerer', () => {
     })).resolves.toBe('unavailable')
   })
 
+  it('a session owned by a later adapter is delegated down the waterfall, not vetoed', async () => {
+    // Multi-project deployment: two adapters share one plugin ctx, so their
+    // approval listeners stack in registration order. A request for the
+    // second adapter's session must reach the second listener instead of the
+    // first one failing the whole chain closed (2026-08-22 userQuestions
+    // collision class).
+    const h = createHarness()
+    const adapterA = newAdapter(h)
+    const delegateA = recordingDelegate()
+    adapterA.setAskDelegate(delegateA)
+    const adapterB = newAdapter(h)
+    const delegateB = recordingDelegate()
+    adapterB.setAskDelegate(delegateB)
+    const sessionB = (await adapterB.startSession('')) as DshAgentSession
+    const [listenerA, listenerB] = h.listeners.get('approval/request') ?? []
+    if (listenerA === undefined || listenerB === undefined) throw new Error('approval/request listeners were not registered')
+
+    // The production waterfall shape: adapterA's next chains to adapterB
+    // (cordis binds the original event args into next, so the manual chain
+    // closes over the same request), whose next ends at the base listener
+    // ('unavailable', fail-closed).
+    type WaterfallListener = (req: Record<string, unknown>, next: () => Promise<string>) => Promise<string>
+    const request = {
+      agent: { session: { id: sessionB.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-chain',
+    }
+    const base = async (): Promise<string> => 'unavailable'
+    const callB = (): Promise<string> =>
+      (listenerB as unknown as WaterfallListener)(request, base)
+    const outcome = (listenerA as unknown as WaterfallListener)(request, callB)
+    await new Promise((r) => { setTimeout(r, 10) })
+
+    expect(delegateA.calls, 'adapterA must not answer another project\'s session').toHaveLength(0)
+    expect(delegateB.calls[0]?.request).toEqual({ kind: 'permission', toolName: 'Bash', preview: '' })
+    delegateB.settle({ outcome: 'allowed-once' })
+    await expect(outcome).resolves.toBe('allowed-once')
+  })
+
   it('without a delegate the answerer fails closed as unavailable', async () => {
     const { listener, session } = await startedAnswerer()
 

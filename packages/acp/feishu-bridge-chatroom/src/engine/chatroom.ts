@@ -704,6 +704,23 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   const roles = listChatroomRoles(e, hubKey)
   if (roles.length === 0) throw new Error(e.i18n.t(Msg.ChatroomNoRoles))
 
+  // Research round cap FIRST — before any state is installed: a barrier
+  // persisted without a timer or broadcast never completes, and `end`
+  // refuses to run while pendingGather is set. Manual mode is uncapped
+  // (the user decides). The counter is consumed only by a round that
+  // actually proceeds.
+  if (research) {
+    const mode = chatroomState(hub).chatroomResearchMode
+    if (mode === 'auto' || mode === '') {
+      let cap = chatroomConfig(e).maxResearchRounds()
+      const override = chatroomState(hub).chatroomResearchMaxRounds
+      if (override > 0) cap = override
+      if (chatroomState(hub).chatroomResearchRound + 1 > cap) {
+        throw new Error(`chatroom: research 已达自动模式上限 ${cap} 轮，请用 note 写最终综合后 end 收尾（或切 --mode manual 手动继续）`)
+      }
+    }
+  }
+
   // Set up the fan-in barrier BEFORE broadcasting so the first role reply
   // can't race ahead and find no pendingGather.
   const seq = chatroomState(hub).chatroomGatherSeq + 1
@@ -711,24 +728,8 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   const g = new ChatroomGather(q, seq)
   for (const r of roles) g.expected.add(r.name)
   chatroomState(hub).pendingGather = g
+  if (research) chatroomState(hub).chatroomResearchRound += 1
   e.sessions.save()
-
-  // Research round tracking: increment the counter and enforce the auto-mode
-  // hard cap. Manual mode is uncapped (the user decides).
-  if (research) {
-    const round = chatroomState(hub).chatroomResearchRound + 1
-    chatroomState(hub).chatroomResearchRound = round
-    e.sessions.save()
-    const mode = chatroomState(hub).chatroomResearchMode
-    if (mode === 'auto' || mode === '') {
-      let cap = chatroomConfig(e).maxResearchRounds()
-      const override = chatroomState(hub).chatroomResearchMaxRounds
-      if (override > 0) cap = override
-      if (round > cap) {
-        throw new Error(`chatroom: research 已达自动模式上限 ${cap} 轮，请用 note 写最终综合后 end 收尾（或切 --mode manual 手动继续）`)
-      }
-    }
-  }
 
   // Fallback timer: wake the moderator with partial results if a role stalls.
   const gatherTimeout = research

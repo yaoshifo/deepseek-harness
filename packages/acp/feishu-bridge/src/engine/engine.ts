@@ -4114,7 +4114,10 @@ export class Engine {
     for (;;) {
       const remaining = deadline - Date.now()
       if (remaining <= 0) return
-      await Promise.race([plainSleep(Math.min(remaining, 10)), Promise.resolve()])
+      // Poll-sleep, not a microtask race: Promise.resolve() always settles
+      // first, and a microtask-only loop starves every timer and I/O callback
+      // in the process for the whole window.
+      await plainSleep(Math.min(remaining, 10))
       const next = state.pendingMessages.shift()
       if (next === undefined) continue
       lead.content += `\n\n---\n\n${next.content}`

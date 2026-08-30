@@ -973,6 +973,10 @@ export class FeishuPlatform implements Platform {
 
     // Allow-chat filter
     if (chatID !== '' && !AllowList(this.o.allowChat ?? '', chatID)) return
+    // Operator filter — same gate as the message path (onMessage): a user
+    // excluded by allow_from must not reach perm:allow/stop/export buttons
+    // in a chat the allowlist permits.
+    if (userID !== '' && !AllowList(this.o.allowFrom ?? '', userID)) return
 
     // Resolve action value from value map, option, or button name
     let actionVal = action.value?.action ?? ''
