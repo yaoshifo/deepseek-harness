@@ -422,6 +422,66 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     }
   }
 
+  /** apiClient whose patch calls are recorded for syncAskCard assertions. */
+  function patchRecordingClient(): { client: FeishuApiClient; patches: Array<{ messageId: string; content: string }> } {
+    const patches: Array<{ messageId: string; content: string }> = []
+    return {
+      patches,
+      client: {
+        ...apiClient(),
+        async patch(params: { messageId: string; content: string }) {
+          patches.push(params)
+        },
+      },
+    }
+  }
+
+  function twoQuestionCard() {
+    const cb = newCard().title('‼️ Ask', 'blue')
+    for (const [i, label] of ['Option A', 'Option B'].entries()) {
+      cb.listItemBtnExtra(label, '', String(i + 1), 'default', `askq:0:${i + 1}`,
+        { askq_label: label, askq_question: 'Pick one' })
+    }
+    cb.listItemBtnExtra('Next A', '', '1', 'default', 'askq:1:1',
+      { askq_label: 'Next A', askq_question: 'Pick next' })
+    return cb.build()
+  }
+
+  it('syncAskCard patches the recorded card with text-answer state a later click keeps', async () => {
+    const { client, patches } = patchRecordingClient()
+    const p = newPlatform({ allowChat: '*', apiClient: client })
+    await p.start(() => {})
+    await p.sendCard({ messageID: 'om_t', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, twoQuestionCard())
+
+    // A chat-text answer arrives: the engine pushes the state, the platform
+    // PATCHes the recorded ask card with the live-form render.
+    await p.syncAskCard('feishu:oc_1:ou_9', new Map([[0, { indices: [], custom: 'neither, use Redis' }]]))
+    expect(patches).toHaveLength(1)
+    expect(patches[0]!.messageId).toBe('om_askq_1')
+    expect(patches[0]!.content).toContain('neither, use Redis')
+    expect(patches[0]!.content).toContain('Pick next')
+
+    // The merged state survives a later click's card replacement: question 1
+    // keeps its synced current answer while question 2 turns interactive.
+    const resp = p.onCardAction(cardEvent({
+      action: 'askq:1:1',
+      messageID: 'om_askq_1',
+      value: { action: 'askq:1:1', askq_label: 'Next A', askq_question: 'Pick next' },
+    })) as { card: { data: Record<string, unknown> } } | undefined
+    expect(resp).toBeDefined()
+    const replaced = cardBody(resp!)
+    expect(replaced.markdown).toContain('neither, use Redis')
+    expect(replaced.title).toContain('已全部作答')
+  })
+
+  it('syncAskCard without a recorded ask card or meta is a no-op', async () => {
+    const { client, patches } = patchRecordingClient()
+    const p = newPlatform({ allowChat: '*', apiClient: client })
+    await p.start(() => {})
+    await p.syncAskCard('feishu:oc_1:ou_9', new Map([[0, { indices: [1] }]]))
+    expect(patches).toHaveLength(0)
+  })
+
   function cardBody(resp: { card: { data: Record<string, unknown> } }): { title: string; template: string; markdown: string } {
     const header = (resp.card.data as { header?: { title: { content: string }; template: string } }).header
     const elements = (resp.card.data as { body: { elements: Array<{ tag: string; content?: string }> } }).body.elements

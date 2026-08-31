@@ -77,11 +77,13 @@ import { shouldSurfaceUnsolicitedPermission as shouldSurfaceHelper } from './per
 import {
   askAnswerDisplay,
   buildAskQuestionsCard,
+  cardAnsweredFrom,
   finalAskAnswers,
   parseAskqSelection,
   parsePermissionVerdict,
   parseQuestionAddress,
   resolveAskAnswer,
+  type AskCardAnswered,
 } from './ask.js'
 import { CardButton, newCard, appendIntoLastCollapsible, type Card, type CardElement, type CardHeader } from '../card.js'
 import {
@@ -5606,6 +5608,13 @@ export class Engine {
       this.stageAttachments(p, msg, msg.sessionKey)
     }
     if (!msg.isAskqCardAction) {
+      // Chat-text answers have no card callback of their own — push the
+      // state so the card shows the current answer (card-capable platforms
+      // only; the callback path replaces the card in its own response).
+      const sp = p as Platform & { syncAskCard?: (sessionKey: string, answered: AskCardAnswered) => void }
+      if (typeof sp.syncAskCard === 'function') {
+        sp.syncAskCard(msg.sessionKey, cardAnsweredFrom(questions, pending.answers))
+      }
       const answeredCount = questions.filter((_qc, i) => pending.answers.has(i)).length
       const progress = questions.length > 1 ? `（${answeredCount}/${questions.length}）` : ''
       // Unprefixed free text landing on the first open question is ambiguous

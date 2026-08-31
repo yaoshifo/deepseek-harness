@@ -27,7 +27,7 @@ import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.js'
 import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostImageKeys, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.js'
 import { isMonitorCommand } from '../core/types.js'
 import type { UserQuestion, MonitorPollPage } from '../core/types.js'
-import { buildAskQuestionsCard, parseAskqSelection, type AskCardAnswer } from '../engine/ask.js'
+import { buildAskQuestionsCard, parseAskqSelection, type AskCardAnswer, type AskCardAnswered } from '../engine/ask.js'
 import { hintCategoryOfCode, parseHintButtonName } from '../engine/hints-panel.js'
 import type { FeishuMention } from './extract.js'
 import type { Card } from '../card.js'
@@ -568,6 +568,8 @@ export class FeishuPlatform implements Platform {
   readonly askqMetaCache = new BoundedMap<string, AskCardMeta>()
   /** messageID → current answer per answered question; exact-repeat callbacks are deduped, revisions pass. */
   readonly askqAnswered = new BoundedMap<string, Map<number, AskCardAnswer>>()
+  /** sessionKey → ask card message id, recorded at send so text answers can PATCH the card. */
+  readonly askqCardMsgIDs = new BoundedMap<string, string>()
   /** sessionKey → messageID tracked from card-action callbacks (M3 writes it). */
   readonly cardActionMsgIDs = new BoundedMap<string, string>()
   /** Engine callback for group renames (im.chat.updated_v1, Go chatRenamedHandler). */
@@ -1268,7 +1270,7 @@ export class FeishuPlatform implements Platform {
    * @param text - The hint sentence naming what is missing.
    */
   private replyAskqEmptySubmit(chatID: string, sessionKey: string, text: string): void {
-    void this.reply({ chatID, sessionKey } as FeishuReplyContext, `⚠️ ${text}`).catch((error: unknown) => {
+    void this.reply({ chatID, sessionKey }, `⚠️ ${text}`).catch((error: unknown) => {
       console.warn(`${this.tag()}: empty-submit hint failed: ${String(error)}`)
     })
   }
@@ -1795,18 +1797,25 @@ export class FeishuPlatform implements Platform {
     const rc = this.requireReplyCtx(replyCtx)
     const permBody = card.permBody ?? ''
     if (permBody !== '') this.permBodyCache.set(rc.sessionKey, permBody)
-    this.cacheAskqMeta(rc.sessionKey, card)
+    const isAskCard = this.cacheAskqMeta(rc.sessionKey, card)
+    const recordAskMsg = (messageId: string | undefined): void => {
+      if (isAskCard && messageId !== undefined && messageId !== '') {
+        this.askqCardMsgIDs.set(rc.sessionKey, messageId)
+      }
+    }
     const cardJSON = renderCard(card, rc.sessionKey)
     if (!this.shouldUseThreadOrReplyAPI(rc)) {
       if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
-      await this.withRetry('send card', () => this.request('send card', client =>
+      const resp = await this.withRetry('send card', () => this.request('send card', client =>
         client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })))
+      recordAskMsg(resp?.messageId)
       this.touchChatActivity(rc.chatID)
       return
     }
     const replyInThread = this.shouldReplyInThread(rc)
-    await this.withRetry('reply card', () => this.request('reply card', client =>
+    const resp = await this.withRetry('reply card', () => this.request('reply card', client =>
       client.reply({ messageId: rc.messageID, msgType: 'interactive', content: cardJSON, replyInThread })))
+    recordAskMsg(resp?.messageId)
     this.touchChatActivity(rc.chatID)
   }
 
@@ -1820,14 +1829,17 @@ export class FeishuPlatform implements Platform {
     if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
     const permBody = card.permBody ?? ''
     if (permBody !== '') this.permBodyCache.set(rc.sessionKey, permBody)
-    this.cacheAskqMeta(rc.sessionKey, card)
+    const isAskCard = this.cacheAskqMeta(rc.sessionKey, card)
     if (this.o.noReplyToTrigger !== true && this.shouldReplyInThread(rc)) {
       await this.replyCard(replyCtx, card)
       return
     }
     const cardJSON = renderCard(card, rc.sessionKey)
-    await this.withRetry('send card', () => this.request('send card', client =>
+    const resp = await this.withRetry('send card', () => this.request('send card', client =>
       client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })))
+    if (isAskCard && resp?.messageId !== undefined && resp.messageId !== '') {
+      this.askqCardMsgIDs.set(rc.sessionKey, resp.messageId)
+    }
     this.touchChatActivity(rc.chatID)
   }
 
@@ -1838,9 +1850,45 @@ export class FeishuPlatform implements Platform {
    * @param sessionKey - Session the card was sent to.
    * @param card - The card being sent.
    */
-  private cacheAskqMeta(sessionKey: string, card: Card): void {
+  private cacheAskqMeta(sessionKey: string, card: Card): boolean {
     const meta = askCardMeta(card)
-    if (meta !== undefined) this.askqMetaCache.set(sessionKey, meta)
+    if (meta === undefined) return false
+    this.askqMetaCache.set(sessionKey, meta)
+    return true
+  }
+
+  /**
+   * PATCH the session's ask card with engine-side answer state — the sync
+   * path for chat-text answers, which have no card callback of their own.
+   * The state merges into {@link askqAnswered} first so a later click's
+   * callback replacement keeps the text-answered questions; a fully answered
+   * ask renders the read-only terminal card and consumes the meta cache.
+   * No-op (not an error) without a recorded card or cached meta; PATCH
+   * failures are logged, never thrown — the card staying stale must not
+   * break answer routing.
+   * @param sessionKey - Session whose ask card should update.
+   * @param answered - Current per-question answer state from the engine.
+   */
+  async syncAskCard(sessionKey: string, answered: AskCardAnswered): Promise<void> {
+    try {
+      const msgID = this.askqCardMsgIDs.get(sessionKey) ?? ''
+      const meta = this.askqMetaCache.get(sessionKey)
+      if (msgID === '' || meta === undefined) return
+      const merged = new Map(this.askqAnswered.get(msgID) ?? [])
+      for (const [qIdx, answer] of answered) merged.set(qIdx, answer)
+      this.askqAnswered.set(msgID, merged)
+      if (meta.questions.every((_q, i) => merged.has(i))) this.askqMetaCache.delete(sessionKey)
+      const cardJSON = renderCard(buildAskQuestionsCard(
+        meta.questions.every((_q, i) => merged.has(i))
+          ? `${meta.title} · 已全部作答`
+          : meta.title,
+        meta.questions, merged,
+      ), sessionKey)
+      await this.patchRateWait()
+      await this.withRetry('sync ask card', () => this.patchMessage(msgID, cardJSON))
+    } catch (error) {
+      console.warn(`${this.tag()}: ask card sync failed: ${String(error)}`)
+    }
   }
 
   /**

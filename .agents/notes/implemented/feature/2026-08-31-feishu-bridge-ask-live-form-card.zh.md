@@ -35,6 +35,7 @@ Status: implemented
 ## Consequences
 
 - 卡片形状可观察地变化：每道交互题带文字输入表单，已答未结算题显示当前答案而非冻结，结算卡只读并带 `· 已全部作答`。
+- 聊天文字答案会同步回卡面：引擎把已收集状态推给有卡平台（`syncAskCard`，与 `sendCard` 同样的鸭子类型探测），平台将其并入回调侧 `askqAnswered` map 并 PATCH 发送时记录的 ask 卡——无回调也能保持活表单/终态渲染的真实性，后续点击的换卡保留已同步状态。卡片动作跳过同步（其回调响应本就换卡）；记录或缓存缺失、PATCH 失败都是记日志的 no-op，绝不破坏答案路由。
 - 飞书按每次回调响应重建卡片，因此按下卡上任意按钮都会丢弃其他题输入框里的草稿。输入框按题隔离，影响面是一题的草稿；已接受的答案在卡面自身回显。
 - 接受的残余歧义：无前缀聊天答案恰好以 `N:` 开头（半角冒号加空白，或全角冒号）时会绑定第 N 题；纯数字答案仍表示选项序号。结算后的修正走普通下一轮消息——ask 工具已经返回。
 - `AskCardAnswered` 值从 `number[]` 加宽为 `{ indices, custom? }`；chatroom 消费方只读引擎侧 answers map，不受影响。
@@ -42,4 +43,4 @@ Status: implemented
 
 ## Testing
 
-`tests/engine/ask.spec.ts`：NUL 切分解析（`askq_text:`、随带文字、文本含冒号）、custom 与 selected 并存的解析、活表单卡形状（输入表单、可改答的已答题、终态卡、卡级教学 note）。`tests/engine/engine-ask.spec.ts`：前缀选题与改答、越界回退、钟点时间不误判、带进度与教学回显、卡内文字提交结算、旧卡点击消费。`tests/engine/engine-m3-askq.spec.ts`：带文字表单的卡片元素形状。`tests/feishu/card-action.spec.ts`：文字提交派发与终态换卡、多选提交随带输入、空提交无操作、精确重复去重与改答放行。`tests/feishu/card.spec.ts`：checker 表单内渲染输入框并去掉聊天输入提示。
+`tests/engine/ask.spec.ts`：NUL 切分解析（`askq_text:`、随带文字、文本含冒号）、custom 与 selected 并存的解析、活表单卡形状（输入表单、可改答的已答题、终态卡、卡级教学 note）。`tests/engine/engine-ask.spec.ts`：前缀选题与改答、越界回退、钟点时间不误判、带进度与教学回显、卡内文字提交结算、旧卡点击消费、文字答案的卡面同步（及卡片动作跳过）。`tests/engine/engine-m3-askq.spec.ts`：带文字表单的卡片元素形状。`tests/feishu/card-action.spec.ts`：文字提交派发与终态换卡、多选提交随带输入、带提示的空提交拒绝、精确重复去重与改答放行、`syncAskCard` PATCH 记录卡且后续点击保留同步状态。`tests/feishu/card.spec.ts`：checker 表单内渲染输入框并去掉聊天输入提示。

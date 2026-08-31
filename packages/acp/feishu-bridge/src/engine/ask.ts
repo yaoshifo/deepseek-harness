@@ -256,6 +256,33 @@ export interface AskCardAnswer {
 export type AskCardAnswered = Map<number, AskCardAnswer>
 
 /**
+ * Project the engine's collected answers onto the card's answered state:
+ * `selected` labels resolve back to 1-based option indices (a duplicated
+ * label marks every row carrying it) and custom text rides along. Powers the
+ * engine→platform card sync after chat-text answers.
+ *
+ * @param questions - The ask's questions, in order.
+ * @param collected - Collected answers keyed by question index.
+ * @returns The per-question on-card answer state.
+ */
+export function cardAnsweredFrom(questions: UserQuestion[], collected: Map<number, PendingAskAnswer>): AskCardAnswered {
+  const out: AskCardAnswered = new Map()
+  for (const [i, answer] of collected) {
+    const q = questions[i]
+    if (q === undefined) continue
+    const indices: number[] = []
+    for (const [optIdx, opt] of q.options.entries()) {
+      if (answer.selected.includes(opt.label)) indices.push(optIdx + 1)
+    }
+    out.set(i, {
+      indices,
+      ...(answer.custom !== undefined && answer.custom !== '' ? { custom: answer.custom } : {}),
+    })
+  }
+  return out
+}
+
+/**
  * Build the one card that carries every question of one ask as a live form:
  * every not-yet-settled question stays interactive — single-select list rows
  * (`askq:{q}:{n}`), multi-select checker forms (`askq_multi:{q}`), and one
