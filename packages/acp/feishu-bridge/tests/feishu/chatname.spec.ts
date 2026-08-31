@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ChatNameCache } from '../../src/feishu/chatname.js'
+import { ChatNameCache } from '../../src/feishu/chatname.ts'
 
 // Ported from cc-connect platform/feishu/chatname_cache_test.go. A cache miss
 // would call the fetcher; the tests assert the cache short-circuits instead.

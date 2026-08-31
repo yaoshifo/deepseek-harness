@@ -9,8 +9,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
-import { feishuBusinessCode, isTransientError, retryTiming, withTransientRetry } from '../../src/feishu/retry.js'
+import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
+import { feishuBusinessCode, isTransientError, retryTiming, withTransientRetry } from '../../src/feishu/retry.ts'
 
 const err = (msg: string): Error => new Error(msg)
 

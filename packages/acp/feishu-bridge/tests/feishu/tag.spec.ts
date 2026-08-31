@@ -9,9 +9,9 @@ import {
   pickDirTagName,
   sanitizeTagName,
   splitTagWords,
-} from '../../src/feishu/tag.js'
-import { projectBaseForTag } from '../../src/feishu/spawn.js'
-import { activeTagName as defaultActiveTag } from '../../src/feishu/tag.js'
+} from '../../src/feishu/tag.ts'
+import { projectBaseForTag } from '../../src/feishu/spawn.ts'
+import { activeTagName as defaultActiveTag } from '../../src/feishu/tag.ts'
 
 // Ported from cc-connect platform/feishu/feishu_tag_test.go. The Go tests
 // stood up httptest servers around the SDK client; here the same wire behavior

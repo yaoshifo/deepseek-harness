@@ -9,7 +9,7 @@
  * @module dsh-feishu-bridge/chatroom-priming
  */
 
-import type { ChatroomRole } from './chatroom.js'
+import type { ChatroomRole } from './chatroom.ts'
 
 /** The tool-call phrasing shared by every priming (replaces the Bash CLI). */
 const TOOL = 'feishu_bridge_chatroom'

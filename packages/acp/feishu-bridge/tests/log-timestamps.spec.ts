@@ -6,7 +6,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { installLogTimestamps } from '../src/log-timestamps.js'
+import { installLogTimestamps } from '../src/log-timestamps.ts'
 
 describe('installLogTimestamps', () => {
   // Spy first, then install: the wrapper binds the spied function as its

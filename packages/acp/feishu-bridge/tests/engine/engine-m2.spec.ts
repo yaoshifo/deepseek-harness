@@ -8,11 +8,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { newStreamPreview } from '../../src/streaming.js'
-import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.js'
-import type { ProgressContent } from '../../src/core/types.js'
-import { previewText } from '../stubs/preview-content.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { newStreamPreview } from '../../src/streaming.ts'
+import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.ts'
+import type { ProgressContent } from '../../src/core/types.ts'
+import { previewText } from '../stubs/preview-content.ts'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -46,7 +46,7 @@ async function newSyncPreviewForFallback(mp: ReturnType<typeof createBumpPlatfor
   const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 5000 }
   const sp = newStreamPreview(cfg, mp as never, 'ctx', undefined, undefined)
   await sp.appendText('starting')
-  const { ProgressEntry } = await import('../../src/streaming.js')
+  const { ProgressEntry } = await import('../../src/streaming.ts')
   await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**00:00:01**', body: 'ls', lang: 'bash', toolID: 't1' }))
   return sp
 }

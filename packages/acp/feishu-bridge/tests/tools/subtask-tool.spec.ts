@@ -17,10 +17,10 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { Engine } from '../../src/engine/engine.js'
-import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from '../../src/tools/subtask.js'
-import { createStubAgent, createStubSpawnerPlatform } from '../stubs/engine-stubs.js'
-import { WorktreeMode } from '../../src/engine/worktree.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { agentIDOf, registerSubtaskTool, type SubtaskRoute } from '../../src/tools/subtask.ts'
+import { createStubAgent, createStubSpawnerPlatform } from '../stubs/engine-stubs.ts'
+import { WorktreeMode } from '../../src/engine/worktree.ts'
 
 const signal = new AbortController().signal
 const contexts: Context[] = []

@@ -15,17 +15,17 @@ import {
   type CardButton,
   type CardColumnSet,
   type VChartSpec,
-} from '../../src/card.js'
+} from '../../src/card.ts'
 import {
   deleteModeCheckerName,
   renderCard,
   renderCardMap,
   renderElement,
-} from '../../src/feishu/card.js'
-import { buildReplyContent, buildPreviewCardJSON } from '../../src/feishu/progress.js'
-import { noSpinner } from '../../src/feishu/spinner.js'
-import { msgTypeInteractive } from '../../src/feishu/markdown.js'
-import { jArr, jObj, jParse, jStr, type Json, type JsonObj } from '../stubs/json.js'
+} from '../../src/feishu/card.ts'
+import { buildReplyContent, buildPreviewCardJSON } from '../../src/feishu/progress.ts'
+import { noSpinner } from '../../src/feishu/spinner.ts'
+import { msgTypeInteractive } from '../../src/feishu/markdown.ts'
+import { jArr, jObj, jParse, jStr, type Json, type JsonObj } from '../stubs/json.ts'
 
 function decodeRenderedCard(card: Card | undefined): JsonObj {
   return jParse(renderCard(card, ''))

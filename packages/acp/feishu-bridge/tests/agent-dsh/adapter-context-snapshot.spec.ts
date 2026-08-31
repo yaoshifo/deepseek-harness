@@ -9,9 +9,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { DshAgentAdapter } from '../../src/agent-dsh/adapter.js'
-import type { DshAgentLike, DshAgentHandleLike } from '../../src/agent-dsh/adapter.js'
-import type { ContextSnapshotValues } from '../../src/context/types.js'
+import { DshAgentAdapter } from '../../src/agent-dsh/adapter.ts'
+import type { DshAgentLike, DshAgentHandleLike } from '../../src/agent-dsh/adapter.ts'
+import type { ContextSnapshotValues } from '../../src/context/types.ts'
 
 /**
  * A fake live agent whose session object carries the registry-cut values it

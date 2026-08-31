@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { seedablePrefix } from '../../src/agent-dsh/fork-seed.js'
+import { seedablePrefix } from '../../src/agent-dsh/fork-seed.ts'
 
 /** Build a bare event with minimal data fields for the type at hand. */
 function ev(type: string, seq: number, data: Record<string, unknown> = {}): SessionEvent {

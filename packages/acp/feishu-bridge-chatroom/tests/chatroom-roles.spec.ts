@@ -15,7 +15,7 @@ import {
   roleEssence,
   roleExists,
   validRoleName,
-} from '../src/engine/chatroom-roles.js'
+} from '../src/engine/chatroom-roles.ts'
 
 /** Write a minimal role persona directory (CLAUDE.md only). */
 async function writeRole(root: string, name: string): Promise<void> {

@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
+import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
 
 /** Client recording which outbound verb each send used, and card contents. */
 function recordingClient(): FeishuApiClient & { replies: number; creates: number; replyInThread: boolean[]; cardContents: string[] } {

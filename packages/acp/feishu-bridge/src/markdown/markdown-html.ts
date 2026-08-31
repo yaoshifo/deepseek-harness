@@ -7,7 +7,7 @@
  * @module dsh-feishu-bridge/markdown-html
  */
 
-import { FenceTracker } from '../feishu/markdown.js'
+import { FenceTracker } from '../feishu/markdown.ts'
 
 const encoder = new TextEncoder()
 

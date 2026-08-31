@@ -9,8 +9,8 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { mkdirSync } from 'node:fs'
 import { basename, join, dirname } from 'node:path'
-import { atomicWriteFileSync } from '../atomicwrite.js'
-import { absLen, fuzzyThreshold, levenshtein } from '../lucide/fuzzy.js'
+import { atomicWriteFileSync } from '../atomicwrite.ts'
+import { absLen, fuzzyThreshold, levenshtein } from '../lucide/fuzzy.ts'
 
 /** Default MRU history length (Go DefaultDirHistorySize). */
 export const DefaultDirHistorySize = 10

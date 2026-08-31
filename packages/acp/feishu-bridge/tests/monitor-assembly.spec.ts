@@ -15,9 +15,9 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
-import { ProjectStateStore } from '../src/engine/project-state.js'
-import { newStubMessage, type StubPlatform, createStubPlatform } from './stubs/engine-stubs.js'
+import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.ts'
+import { ProjectStateStore } from '../src/engine/project-state.ts'
+import { newStubMessage, type StubPlatform, createStubPlatform } from './stubs/engine-stubs.ts'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'fb-monasm-'))

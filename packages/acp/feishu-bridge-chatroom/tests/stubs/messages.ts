@@ -9,7 +9,7 @@
 
 import { afterAll } from 'vitest'
 import { registerMessages } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { chatroomMessages } from '../../src/i18n.js'
+import { chatroomMessages } from '../../src/i18n.ts'
 
 const dispose = registerMessages(chatroomMessages)
 afterAll(() => { dispose() })

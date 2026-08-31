@@ -10,12 +10,12 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { cmdMonitor, registerMonitorCommands } from '../../src/engine/monitor-commands.js'
-import { addMonitorChat, containsMonitorChat, isMonitorCommand, removeMonitorChat, splitMonitorChats } from '../../src/engine/monitor.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
-import type { Message } from '../../src/core/types.js'
-import { createStubAgent, createStubPlatform, newStubMessage, type StubPlatform } from '../stubs/engine-stubs.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { cmdMonitor, registerMonitorCommands } from '../../src/engine/monitor-commands.ts'
+import { addMonitorChat, containsMonitorChat, isMonitorCommand, removeMonitorChat, splitMonitorChats } from '../../src/engine/monitor.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
+import type { Message } from '../../src/core/types.ts'
+import { createStubAgent, createStubPlatform, newStubMessage, type StubPlatform } from '../stubs/engine-stubs.ts'
 
 /** One macrotask tick: flushes the microtask chain behind fire-and-forget sends. */
 async function settle(): Promise<void> {

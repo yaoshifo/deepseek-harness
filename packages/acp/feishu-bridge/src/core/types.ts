@@ -13,9 +13,9 @@
  * @module dsh-feishu-bridge/core-types
  */
 
-import type { ProgressCardPayload, TodoItem } from '../progress.js'
-import type { ContextSnapshotValues } from '../context/types.js'
-import type { I18n } from '../i18n/index.js'
+import type { ProgressCardPayload, TodoItem } from '../progress.ts'
+import type { ContextSnapshotValues } from '../context/types.ts'
+import type { I18n } from '../i18n/index.ts'
 
 /** Sentinel AgentSessionID telling the agent to resume the most recent session. */
 export const ContinueSession = '__continue__'

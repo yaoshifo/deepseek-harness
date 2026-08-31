@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
+import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
 
 // Ported from cc-connect platform/feishu/feishu_avatar_icon_test.go. The Go
 // suite captured uploads and PUT /im/v1/chats bodies; here the same assertions

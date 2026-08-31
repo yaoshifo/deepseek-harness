@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
-import type { SpawnedChatMeta } from '../../src/feishu/spawn.js'
+import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
+import type { SpawnedChatMeta } from '../../src/feishu/spawn.ts'
 
 // Ported from cc-connect platform/feishu/feishu_avatar_state_test.go and
 // reworked for the phase axis: which key setChatPhase applies (cached phase

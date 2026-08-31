@@ -28,7 +28,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { SubtaskRoute } from './subtask.js'
+import type { SubtaskRoute } from './subtask.ts'
 
 /** Bot credentials for one project, taken from the plugin config. */
 export interface LarkCreds {

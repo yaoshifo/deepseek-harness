@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { atomicWriteFileSync } from '../atomicwrite.js'
+import { atomicWriteFileSync } from '../atomicwrite.ts'
 
 const hintUsageFileName = 'hint_usage.json'
 

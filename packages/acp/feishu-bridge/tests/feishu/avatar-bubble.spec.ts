@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import sharp from 'sharp'
-import { lucideIconSVG } from '../../src/lucide/icon.js'
-import { renderIconPNG } from '../../src/feishu/avatar.js'
+import { lucideIconSVG } from '../../src/lucide/icon.ts'
+import { renderIconPNG } from '../../src/feishu/avatar.ts'
 
 // Ported from cc-connect platform/feishu/feishu_avatar_icon_bubble_test.go: the
 // bubble's large arc (second parameter group of a single `a` command) must

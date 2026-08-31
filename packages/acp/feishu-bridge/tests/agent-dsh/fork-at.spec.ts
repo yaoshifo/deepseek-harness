@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { locateForkCut } from '../../src/agent-dsh/fork-at.js'
+import { locateForkCut } from '../../src/agent-dsh/fork-at.ts'
 
 interface EvSpec {
   type: string

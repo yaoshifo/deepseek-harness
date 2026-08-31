@@ -17,13 +17,13 @@
  * @module dsh-feishu-bridge/context/render
  */
 
-import { newCard } from '../card.js'
-import { I18n, Msg } from '../i18n/index.js'
-import type { Card, CardElement } from '../card.js'
-import { renderCardMap } from '../feishu/card.js'
-import { aggregateByTurn, headlineOf, recentEvents, topToolSchemas } from './aggregate.js'
-import type { Headline } from './aggregate.js'
-import { compositionBarSpec, trendChartSpec } from './chartspec.js'
+import { newCard } from '../card.ts'
+import { I18n, Msg } from '../i18n/index.ts'
+import type { Card, CardElement } from '../card.ts'
+import { renderCardMap } from '../feishu/card.ts'
+import { aggregateByTurn, headlineOf, recentEvents, topToolSchemas } from './aggregate.ts'
+import type { Headline } from './aggregate.ts'
+import { compositionBarSpec, trendChartSpec } from './chartspec.ts'
 import type {
   ContextBreakdownValue,
   ContextSnapshotValues,
@@ -31,7 +31,7 @@ import type {
   RequestRecord,
   TimelineEvent,
   TokenUsageValue,
-} from './types.js'
+} from './types.ts'
 
 /** Per-turn trend columns kept in the full card. */
 const TREND_TURN_LIMIT = 20

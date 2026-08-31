@@ -6,8 +6,8 @@
  * @module dsh-feishu-bridge/lucide-icon
  */
 
-import { absLen, fuzzyThreshold, levenshtein, wrapIconSVG } from './fuzzy.js'
-import { iconsSpriteFull } from './sprite.js'
+import { absLen, fuzzyThreshold, levenshtein, wrapIconSVG } from './fuzzy.ts'
+import { iconsSpriteFull } from './sprite.ts'
 
 // (?s) in the Go symbolRe becomes [\s\S] here; ids are [\w-].
 const symbolRe = /<symbol\s+id="([\w-]+)"([^>]*)>([\s\S]*?)<\/symbol>/g

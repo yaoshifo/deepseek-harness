@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { levenshtein } from '../src/lucide/fuzzy.js'
-import { lucideIconSVG, normalizeArcFlags, splitRepeatedArcs } from '../src/lucide/icon.js'
+import { levenshtein } from '../src/lucide/fuzzy.ts'
+import { lucideIconSVG, normalizeArcFlags, splitRepeatedArcs } from '../src/lucide/icon.ts'
 
 // Ported from cc-connect core/lucide_icon_test.go. it() names are
 // `GoTestName/subtestName`.

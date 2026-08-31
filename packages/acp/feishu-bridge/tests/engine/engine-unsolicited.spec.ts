@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import {
   createControllableAgent,
   createStubPlatform,
@@ -18,9 +18,9 @@ import {
   newControllableSession,
   newPendingAsk,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
-import { previewText } from '../stubs/preview-content.js'
-import type { Agent, Platform, ProgressContent } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import { previewText } from '../stubs/preview-content.ts'
+import type { Agent, Platform, ProgressContent } from '../../src/core/types.ts'
 
 const KEY = 'test:u1'
 

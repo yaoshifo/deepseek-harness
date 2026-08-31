@@ -24,8 +24,8 @@ import type { Config as McpClientConfig } from '@deepseek-ai/dsh-mcp-client'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import * as entry from '../src/index.js'
-import { MCP_HEALTH_CONTEXT_NAME } from '../src/core/mcp-health.js'
+import * as entry from '../src/index.ts'
+import { MCP_HEALTH_CONTEXT_NAME } from '../src/core/mcp-health.ts'
 
 // dsh-mcp-client's own stdio fixture server (registers add/greet/fail/image).
 const fixtureServerPath = fileURLToPath(new URL('../../../../packages/mcp/mcp-client/tests/fixture-server.ts', import.meta.url))

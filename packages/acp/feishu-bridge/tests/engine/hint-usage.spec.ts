@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { HintUsage } from '../../src/engine/hint-usage.js'
+import { HintUsage } from '../../src/engine/hint-usage.ts'
 
 describe('HintUsage', () => {
   it('counts increments per category and ignores unknown ones', () => {

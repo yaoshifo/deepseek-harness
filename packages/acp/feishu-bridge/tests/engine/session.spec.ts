@@ -3,15 +3,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { ctxBridgeDispatch } from '../../src/bridge-service.js'
+import { ctxBridgeDispatch } from '../../src/bridge-service.ts'
 import {
   ContinueSession,
   ForkSessionPrefix,
-} from '../../src/core/types.js'
+} from '../../src/core/types.ts'
 import {
   Session,
   SessionManager,
-} from '../../src/engine/session.js'
+} from '../../src/engine/session.ts'
 
 // Ported from cc-connect core/session_test.go (51 Go cases incl. subtests).
 

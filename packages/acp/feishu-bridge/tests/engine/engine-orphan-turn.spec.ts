@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
+import { Engine } from '../../src/engine/engine.ts'
 import {
   createControllableAgent,
   createStubPlatform,
@@ -7,8 +7,8 @@ import {
   newControllableSession,
   type ControllableAgentSession,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
-import type { Agent, Platform } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import type { Agent, Platform } from '../../src/core/types.ts'
 
 // Engine-woken turns (background job completion, background subagent report)
 // start with no user message in flight, so no message-path event pump is

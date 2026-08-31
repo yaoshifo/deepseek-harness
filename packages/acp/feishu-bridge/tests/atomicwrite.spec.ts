@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { atomicWriteFile } from '../src/atomicwrite.js'
+import { atomicWriteFile } from '../src/atomicwrite.ts'
 
 // Ported from cc-connect core/atomicwrite_test.go (4 Go tests). t.TempDir()
 // becomes mkdtemp(os.tmpdir()).

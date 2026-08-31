@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { extractPostImageKeys, extractPostPlainText, hasHumanMention, isBotMentioned, stripMentions } from '../../src/feishu/extract.js'
-import { AllowList } from '../../src/feishu/allowlist.js'
-import { FeishuPlatform, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.js'
-import type { Message } from '../../src/core/types.js'
+import { extractPostImageKeys, extractPostPlainText, hasHumanMention, isBotMentioned, stripMentions } from '../../src/feishu/extract.ts'
+import { AllowList } from '../../src/feishu/allowlist.ts'
+import { FeishuPlatform, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.ts'
+import type { Message } from '../../src/core/types.ts'
 
 // Ported from cc-connect platform/feishu/feishu_test.go (text-path subset)
 // plus dispatch-level checks against a fake API client.

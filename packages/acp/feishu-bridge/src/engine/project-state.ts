@@ -7,7 +7,7 @@
  */
 
 import { readFileSync } from 'node:fs'
-import { atomicWriteFileSync } from '../atomicwrite.js'
+import { atomicWriteFileSync } from '../atomicwrite.ts'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 

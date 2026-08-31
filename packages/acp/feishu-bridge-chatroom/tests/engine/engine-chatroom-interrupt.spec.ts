@@ -16,11 +16,11 @@ import {
   ChatroomGather,
   interruptChatroom,
   resolveChatroomHubKey,
-} from '../../src/engine/chatroom.js'
-import { cmdChatroom } from '../../src/engine/chatroom-cmd.js'
-import { createStubAgent, createStubChatroomSpawner } from '../stubs/engine-stubs.js'
+} from '../../src/engine/chatroom.ts'
+import { cmdChatroom } from '../../src/engine/chatroom-cmd.ts'
+import { createStubAgent, createStubChatroomSpawner } from '../stubs/engine-stubs.ts'
 import type { Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { chatroomState } from '../../src/chatroom-state.js'
+import { chatroomState } from '../../src/chatroom-state.ts'
 import '../stubs/messages.js'
 
 async function settle(): Promise<void> {

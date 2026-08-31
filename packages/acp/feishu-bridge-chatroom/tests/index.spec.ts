@@ -28,11 +28,11 @@ import {
   lookupMessage,
   toolTagForProgress,
 } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { Config, apply, inject, name } from '../src/index.js'
-import { chatroomConfig } from '../src/chatroom-config.js'
-import { chatroomFeatureStateCodec } from '../src/chatroom-state.js'
-import { chatroomMessages } from '../src/i18n.js'
-import { createStubAgent, createStubCardPlatform, newStubMessage } from './stubs/engine-stubs.js'
+import { Config, apply, inject, name } from '../src/index.ts'
+import { chatroomConfig } from '../src/chatroom-config.ts'
+import { chatroomFeatureStateCodec } from '../src/chatroom-state.ts'
+import { chatroomMessages } from '../src/i18n.ts'
+import { createStubAgent, createStubCardPlatform, newStubMessage } from './stubs/engine-stubs.ts'
 
 const contexts: Context[] = []
 afterEach(async () => {

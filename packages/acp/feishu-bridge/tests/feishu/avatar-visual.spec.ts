@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import sharp from 'sharp'
-import { lucideIconSVG } from '../../src/lucide/icon.js'
-import { groupAvatarColor, iconGrayBG, renderIconPNG } from '../../src/feishu/avatar.js'
+import { lucideIconSVG } from '../../src/lucide/icon.ts'
+import { groupAvatarColor, iconGrayBG, renderIconPNG } from '../../src/feishu/avatar.ts'
 
 // Ported from cc-connect platform/feishu/feishu_avatar_icon_visual_test.go.
 

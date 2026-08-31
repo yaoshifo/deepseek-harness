@@ -15,9 +15,9 @@
  * @module dsh-feishu-bridge/spawn-family-commands
  */
 
-import { newCard, type CardElement } from '../card.js'
-import { Msg } from '../i18n/index.js'
-import type { Message, Platform, SpawnedChatInfo } from '../core/types.js'
+import { newCard, type CardElement } from '../card.ts'
+import { Msg } from '../i18n/index.ts'
+import type { Message, Platform, SpawnedChatInfo } from '../core/types.ts'
 import {
   asChatActiveTagger,
   asChatPhasePainter,
@@ -26,8 +26,8 @@ import {
   asSpawnedChatActivator,
   asSpawnedChatLister,
   activeTagNameFor,
-} from '../core/types.js'
-import type { Engine } from './engine.js'
+} from '../core/types.ts'
+import type { Engine } from './engine.ts'
 
 /** The family commands with their canonical names (Go builtinCommands entries). */
 const familyCommands: Array<{ id: string; names: string[]; run: (e: Engine, p: Platform, msg: Message, args: string[]) => void }> = [

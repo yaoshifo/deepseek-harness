@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { newCachedTenantTokenMinter } from '../../src/feishu/platform.js'
+import { newCachedTenantTokenMinter } from '../../src/feishu/platform.ts'
 
 const jsonResponse = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })

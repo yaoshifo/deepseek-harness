@@ -12,13 +12,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Session } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { armResearchManualAskTimeout, maybeAutoRelayRole, recoverChatroomBarriers, routePendingHumanReply } from './chatroom.js'
-import { chatroomPickActive } from './chatroom-pick.js'
-import { chatroomLedgerDir } from './chatroom-ledger.js'
-import { buildChatroomSystemPrompt } from './chatroom-persona.js'
+import { armResearchManualAskTimeout, maybeAutoRelayRole, recoverChatroomBarriers, routePendingHumanReply } from './chatroom.ts'
+import { chatroomPickActive } from './chatroom-pick.ts'
+import { chatroomLedgerDir } from './chatroom-ledger.ts'
+import { buildChatroomSystemPrompt } from './chatroom-persona.ts'
 import type { SessionStartOptions } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { chatroomState } from '../chatroom-state.js'
-import { chatroomConfig } from '../chatroom-config.js'
+import { chatroomState } from '../chatroom-state.ts'
+import { chatroomConfig } from '../chatroom-config.ts'
 
 /**
  * Register the chatroom halves of the `feishuBridge/*` events:

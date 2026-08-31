@@ -13,11 +13,11 @@ import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { emptyMessage } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Message, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { asCardSender, asGroupRenamer } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { chatroomHubGroupName } from './chatroom.js'
+import { chatroomHubGroupName } from './chatroom.ts'
 import { newCard } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { Msg } from '../i18n.js'
-import { chatroomState } from '../chatroom-state.js'
-import { chatroomConfig } from '../chatroom-config.js'
+import { Msg } from '../i18n.ts'
+import { chatroomState } from '../chatroom-state.ts'
+import { chatroomConfig } from '../chatroom-config.ts'
 import {
   chatroomAssistantGroupName,
   chatroomLedgerDirFor,
@@ -29,17 +29,17 @@ import {
   listChatroomRoles,
   resolveChatroomHubKey,
   startChatroom,
-} from './chatroom.js'
+} from './chatroom.ts'
 import {
   maxChatroomResearchRounds,
   minChatroomResearchRounds,
-} from './chatroom.js'
-import { listRoleNames, roleDir, roleExists, roleEssence } from './chatroom-roles.js'
-import { beginChatroomPick, beginChatroomTopicPick, executeChatroomCardAction } from './chatroom-pick.js'
+} from './chatroom.ts'
+import { listRoleNames, roleDir, roleExists, roleEssence } from './chatroom-roles.ts'
+import { beginChatroomPick, beginChatroomTopicPick, executeChatroomCardAction } from './chatroom-pick.ts'
 import {
   buildChatroomModeratorPriming,
   buildChatroomResearchModeratorPriming,
-} from './chatroom-priming.js'
+} from './chatroom-priming.ts'
 import { WorktreeMode } from '@deepseek-ai/dsh-feishu-bridge/exports'
 
 /** Canonical command names for /chatroom (Go builtinCommands entry). */

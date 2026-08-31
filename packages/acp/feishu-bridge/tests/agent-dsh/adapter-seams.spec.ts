@@ -12,7 +12,7 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentsRegistryLike, type DshContextLike } from '../../src/agent-dsh/adapter.js'
+import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentsRegistryLike, type DshContextLike } from '../../src/agent-dsh/adapter.ts'
 
 // REAL-composition tripwires for the adapter's structurally-typed service
 // seams (`ctx.get(...) as Dsh…Like`): the local interfaces and the unit-test

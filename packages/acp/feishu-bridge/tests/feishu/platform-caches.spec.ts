@@ -8,8 +8,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform } from '../../src/feishu/platform.js'
-import { platformCacheCapacity } from '../../src/feishu/platform.js'
+import { FeishuPlatform } from '../../src/feishu/platform.ts'
+import { platformCacheCapacity } from '../../src/feishu/platform.ts'
 
 function newPlatform(): FeishuPlatform {
   return new FeishuPlatform({ appID: 'cli_x', appSecret: 's', apiClient: {

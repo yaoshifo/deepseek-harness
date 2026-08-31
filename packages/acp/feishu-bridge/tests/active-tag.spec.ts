@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ACTIVE_TAG_NAME, activeTagNameFor } from '../src/active-tag.js'
+import { ACTIVE_TAG_NAME, activeTagNameFor } from '../src/active-tag.ts'
 
 // Ported from cc-connect core/active_tag_test.go (1 Go test).
 // Go's stubPlatform / stubActiveTagPlatform map to plain objects; the Go

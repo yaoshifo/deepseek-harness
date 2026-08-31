@@ -11,7 +11,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
+import { ProjectStateStore } from '../../src/engine/project-state.ts'
 
 describe('ProjectStateStore corrupt-shape fallback', () => {
   it.each(['null', '[]', '"text"', '123'])('a %s file loads as empty state', (raw) => {

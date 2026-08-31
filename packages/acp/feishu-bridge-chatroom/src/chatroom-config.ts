@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
 import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { defaultChatroomRolesDir } from './engine/chatroom-roles.js'
+import { defaultChatroomRolesDir } from './engine/chatroom-roles.ts'
 import {
   defaultChatroomGatherTimeout,
   defaultChatroomResearchTimeout,
@@ -23,7 +23,7 @@ import {
   maxChatroomResearchRounds,
   minChatroomResearchTimeout,
   minChatroomResearchRounds,
-} from './engine/chatroom.js'
+} from './engine/chatroom.ts'
 
 /** One chatroom tuning section (Go [chatroom]; same shape the bridge carried). */
 export interface ChatroomProjectConfig {

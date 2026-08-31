@@ -10,8 +10,8 @@
 
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { atomicWriteFileSync } from '../atomicwrite.js'
-import { extractMarkdownTitle, slugifyTitle } from './plan-render.js'
+import { atomicWriteFileSync } from '../atomicwrite.ts'
+import { extractMarkdownTitle, slugifyTitle } from './plan-render.ts'
 
 /** Plan-file permission, matching the plan .md files Claude Code writes. */
 const PLAN_FILE_MODE = 0o644

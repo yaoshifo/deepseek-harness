@@ -7,10 +7,10 @@
  * @module dsh-feishu-bridge/relay-commands
  */
 
-import { Msg } from '../i18n/index.js'
-import type { Message, Platform } from '../core/types.js'
-import type { Engine } from './engine.js'
-import { parseSessionKeyParts } from './relay.js'
+import { Msg } from '../i18n/index.ts'
+import type { Message, Platform } from '../core/types.ts'
+import type { Engine } from './engine.ts'
+import { parseSessionKeyParts } from './relay.ts'
 
 /**
  * Register the `/bind` command family on an engine through the

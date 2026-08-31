@@ -9,13 +9,13 @@
  * @module dsh-feishu-bridge/session-card
  */
 
-import { Msg } from '../i18n/index.js'
-import { dangerBtn, defaultBtn, newCard, type Card, type CardButton } from '../card.js'
-import type { AgentSessionInfo, Message, Platform } from '../core/types.js'
-import { asCardRefresher, asSessionDeleter } from '../core/types.js'
-import { InteractiveState } from './engine.js'
-import type { Engine } from './engine.js'
-import { collectAgentSessions, formatModified, liveAgentSessionIDs, statusText, totalPages } from './commands.js'
+import { Msg } from '../i18n/index.ts'
+import { dangerBtn, defaultBtn, newCard, type Card, type CardButton } from '../card.ts'
+import type { AgentSessionInfo, Message, Platform } from '../core/types.ts'
+import { asCardRefresher, asSessionDeleter } from '../core/types.ts'
+import { InteractiveState } from './engine.ts'
+import type { Engine } from './engine.ts'
+import { collectAgentSessions, formatModified, liveAgentSessionIDs, statusText, totalPages } from './commands.ts'
 
 /**
  * Split a composed status text into its card title (first paragraph) and the

@@ -29,9 +29,9 @@ import { spawn } from 'node:child_process'
 import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Msg } from '../i18n/index.js'
-import type { Message, Platform } from '../core/types.js'
-import type { Engine } from './engine.js'
+import { Msg } from '../i18n/index.ts'
+import type { Message, Platform } from '../core/types.ts'
+import type { Engine } from './engine.ts'
 
 /**
  * Register the /reload command on an engine through the

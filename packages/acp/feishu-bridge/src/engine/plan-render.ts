@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, extname, join } from 'node:path'
 import { promisify } from 'node:util'
 
-import { newCard, Card, type CardButton, type CardHeader } from '../card.js'
+import { newCard, Card, type CardButton, type CardHeader } from '../card.ts'
 import {
   asCardSender,
   asCardSenderWithUpdate,
@@ -36,14 +36,14 @@ import {
   asReplyContextReconstructor,
   type ImageAttachment,
   type Platform,
-} from '../core/types.js'
-import { markdownToSimpleHTML } from '../markdown/markdown-html.js'
-import { iconsSpriteFull } from '../lucide/sprite.js'
-import { Msg } from '../i18n/keys.js'
-import { stripTrailingSilent } from './message-split.js'
-import { diagramCSS, diagramDefs, renderTemplatePlan, renderTemplateReply } from './plan-render-templates.js'
-import type { Engine, InteractiveState } from './engine.js'
-import type { StreamPreview } from '../streaming.js'
+} from '../core/types.ts'
+import { markdownToSimpleHTML } from '../markdown/markdown-html.ts'
+import { iconsSpriteFull } from '../lucide/sprite.ts'
+import { Msg } from '../i18n/keys.ts'
+import { stripTrailingSilent } from './message-split.ts'
+import { diagramCSS, diagramDefs, renderTemplatePlan, renderTemplateReply } from './plan-render-templates.ts'
+import type { Engine, InteractiveState } from './engine.ts'
+import type { StreamPreview } from '../streaming.ts'
 
 const execFileAsync = promisify(execFile)
 

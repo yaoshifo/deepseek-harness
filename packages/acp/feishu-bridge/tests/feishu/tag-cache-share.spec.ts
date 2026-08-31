@@ -13,8 +13,8 @@ import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
-import type { CreateTagResult, TagRelationTag } from '../../src/feishu/tag.js'
+import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
+import type { CreateTagResult, TagRelationTag } from '../../src/feishu/tag.ts'
 
 const tempDirs: string[] = []
 afterAll(async () => {

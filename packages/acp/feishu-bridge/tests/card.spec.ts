@@ -9,7 +9,7 @@ import {
   primaryBtn,
   type CardSelectOption,
   type VChartSpec,
-} from '../src/card.js'
+} from '../src/card.ts'
 
 // Ported from cc-connect core/card_test.go (3 Go tests). Go struct literals
 // become object literals with kind discriminant tags.

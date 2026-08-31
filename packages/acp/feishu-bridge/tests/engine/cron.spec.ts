@@ -23,11 +23,11 @@ import {
   cronExprToHuman,
   defaultCronJobTimeoutMs,
   mutePlatform,
-} from '../../src/engine/cron.js'
-import { cmdCronMute, executeCardAction, renderCronCard } from '../../src/engine/cron-commands.js'
-import { Engine } from '../../src/engine/engine.js'
-import { createStubAgent, createStubPlatform, newStubMessage } from '../stubs/engine-stubs.js'
-import { langChinese, langEnglish, langJapanese } from '../../src/i18n/index.js'
+} from '../../src/engine/cron.ts'
+import { cmdCronMute, executeCardAction, renderCronCard } from '../../src/engine/cron-commands.ts'
+import { Engine } from '../../src/engine/engine.ts'
+import { createStubAgent, createStubPlatform, newStubMessage } from '../stubs/engine-stubs.ts'
+import { langChinese, langEnglish, langJapanese } from '../../src/i18n/index.ts'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'fb-cron-'))

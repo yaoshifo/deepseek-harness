@@ -14,11 +14,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
-import type { QuestionRouting } from '../src/agent-dsh/adapter.js'
-import type { Engine } from '../src/engine/engine.js'
-import { HintUsage } from '../src/engine/hint-usage.js'
-import { WorktreeMode } from '../src/engine/worktree.js'
+import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.ts'
+import type { QuestionRouting } from '../src/agent-dsh/adapter.ts'
+import type { Engine } from '../src/engine/engine.ts'
+import { HintUsage } from '../src/engine/hint-usage.ts'
+import { WorktreeMode } from '../src/engine/worktree.ts'
 
 /** Structural Cordis slice the adapter consumes; nothing else boots. */
 function stubContext(): Context {
@@ -261,7 +261,7 @@ describe('buildProjectAssembly config wiring', () => {
     const { platform } = assemble(baseConfig(), proj)
     // Options without public observable fields are asserted through the
     // construction options object; enforcement lives in platform.spec.
-    const o = (platform as unknown as { o: import('../src/feishu/platform.js').FeishuPlatformOptions }).o
+    const o = (platform as unknown as { o: import('../src/feishu/platform.ts').FeishuPlatformOptions }).o
     expect(o.allowFrom).toBe('ou_owner')
     expect(o.groupOnly).toBe(true)
     expect(o.shareSessionInChannel).toBe(true)
@@ -272,7 +272,7 @@ describe('buildProjectAssembly config wiring', () => {
     expect(platform.useInteractiveCard).toBe(false)
     expect(platform.progressStyle).toBe('compact')
     // Unset keys stay undefined so platform defaults apply (Go zero values).
-    const bare = (assemble(baseConfig()).platform as unknown as { o: import('../src/feishu/platform.js').FeishuPlatformOptions }).o
+    const bare = (assemble(baseConfig()).platform as unknown as { o: import('../src/feishu/platform.ts').FeishuPlatformOptions }).o
     expect(bare.allowFrom).toBeUndefined()
     expect(bare.threadIsolation).toBeUndefined()
     expect(assemble(baseConfig()).platform.useInteractiveCard).toBe(true)

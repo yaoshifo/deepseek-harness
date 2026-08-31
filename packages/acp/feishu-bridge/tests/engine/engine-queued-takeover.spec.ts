@@ -9,10 +9,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import type { QueuedMessage } from '../../src/engine/engine.js'
-import { createStubAgent, createStubPlatform, newControllableSession, type ControllableAgentSession } from '../stubs/engine-stubs.js'
-import type { Platform, ProgressContent } from '../../src/core/types.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import type { QueuedMessage } from '../../src/engine/engine.ts'
+import { createStubAgent, createStubPlatform, newControllableSession, type ControllableAgentSession } from '../stubs/engine-stubs.ts'
+import type { Platform, ProgressContent } from '../../src/core/types.ts'
 
 /** Card-style platform recording preview starts and PATCHes in order. */
 function createCardRecorderPlatform(): Platform & {

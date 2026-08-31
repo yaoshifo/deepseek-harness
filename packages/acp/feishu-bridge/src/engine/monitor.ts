@@ -16,7 +16,7 @@
 
 import { readFileSync } from 'node:fs'
 import { normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
-import { atomicWriteFileSync } from '../atomicwrite.js'
+import { atomicWriteFileSync } from '../atomicwrite.ts'
 import {
   asChatBrander,
   asChatMemberManager,
@@ -34,13 +34,13 @@ import {
   type MonitorPollPage,
   type Platform,
   type UserQuestion,
-} from '../core/types.js'
-import { Msg } from '../i18n/index.js'
-import type { CardButton, CardHeader } from '../card.js'
-import type { Engine } from './engine.js'
-import type { Session, SessionManager } from './session.js'
-import { WorktreeMode } from './worktree.js'
-import { chatIDFromSessionKey } from './engine.js'
+} from '../core/types.ts'
+import { Msg } from '../i18n/index.ts'
+import type { CardButton, CardHeader } from '../card.ts'
+import type { Engine } from './engine.ts'
+import type { Session, SessionManager } from './session.ts'
+import { WorktreeMode } from './worktree.ts'
+import { chatIDFromSessionKey } from './engine.ts'
 
 /** LLM triage LightweightQuery timeout (Go monitorTriageTimeout). */
 export const monitorTriageTimeoutMs = 60_000
@@ -255,8 +255,8 @@ export interface MonitorClarification {
 }
 
 /** Whether content is a /monitor command — exact word, not /monitoring (Go IsMonitorCommand). */
-export { isMonitorCommand } from '../core/types.js'
-import { isMonitorCommand } from '../core/types.js'
+export { isMonitorCommand } from '../core/types.ts'
+import { isMonitorCommand } from '../core/types.ts'
 
 /**
  * Parse the raw comma-separated monitor chats string into a trimmed, de-duplicated list.

@@ -16,8 +16,8 @@ import {
   type PreviewStarter,
   type MessageUpdater,
   type ProgressContent,
-} from './core/types.js'
-import type { AsyncSender } from './async-sender.js'
+} from './core/types.ts'
+import type { AsyncSender } from './async-sender.ts'
 import {
   buildProgressCardPayload,
   progressStyleCard,
@@ -28,7 +28,7 @@ import {
   type ProgressCardPayload,
   type ProgressCardState,
   type TodoItem,
-} from './progress.js'
+} from './progress.ts'
 
 /** Bound each platform progress-card API call (Go compactProgressAPITimeout). */
 const compactProgressAPITimeout = 15_000

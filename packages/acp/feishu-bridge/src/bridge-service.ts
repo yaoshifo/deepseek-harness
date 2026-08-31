@@ -10,11 +10,11 @@
 
 import { Service, type Context, type Events } from '@deepseek-ai/cordis'
 import type { Promisify } from '@deepseek-ai/cosmokit'
-import type { DshAgentAdapter } from './agent-dsh/adapter.js'
-import type { Engine, InteractiveState } from './engine/engine.js'
-import type { Session } from './engine/session.js'
-import type { AskDecision, AskRequest, PendingAsk, Platform, SessionStartOptions } from './core/types.js'
-import { agentIDOf, type SubtaskRoute } from './tools/subtask.js'
+import type { DshAgentAdapter } from './agent-dsh/adapter.ts'
+import type { Engine, InteractiveState } from './engine/engine.ts'
+import type { Session } from './engine/session.ts'
+import type { AskDecision, AskRequest, PendingAsk, Platform, SessionStartOptions } from './core/types.ts'
+import { agentIDOf, type SubtaskRoute } from './tools/subtask.ts'
 
 /** One live project: its engine plus the adapter that owns its agents. */
 export interface LiveProject {

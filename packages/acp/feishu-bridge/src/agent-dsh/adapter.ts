@@ -28,19 +28,19 @@ import {
   EventChannel,
   ForkAtSessionPrefix,
   ForkSessionPrefix,
-} from '../core/types.js'
-import type { HistoryEntry } from '../core/types.js'
-import { locateForkCut } from './fork-at.js'
-import { seedablePrefix } from './fork-seed.js'
-import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
-import { agentConventionsPrompt, tddDefaultPrompt } from '../engine/agent-conventions.js'
-import type { ContextSnapshotValues } from '../context/types.js'
+} from '../core/types.ts'
+import type { HistoryEntry } from '../core/types.ts'
+import { locateForkCut } from './fork-at.ts'
+import { seedablePrefix } from './fork-seed.ts'
+import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.ts'
+import { agentConventionsPrompt, tddDefaultPrompt } from '../engine/agent-conventions.ts'
+import type { ContextSnapshotValues } from '../context/types.ts'
 import {
   subtaskAgentSystemPrompt,
   subtaskNoReportAgentSystemPrompt,
   subtaskResearchAssistantPrompt,
-} from '../engine/subtask-prompts.js'
-import { appendFileRefs, saveFilesToDisk, saveImagesToDisk } from '../engine/attachments.js'
+} from '../engine/subtask-prompts.ts'
+import { appendFileRefs, saveFilesToDisk, saveImagesToDisk } from '../engine/attachments.ts'
 import type {
   AgentSession,
   AgentSessionInfo,
@@ -51,7 +51,7 @@ import type {
   ImageAttachment,
   ProviderConfig,
   SessionStartOptions,
-} from '../core/types.js'
+} from '../core/types.ts'
 
 /** Minimal structural member of a dsh Agent the adapter drives. */
 export interface DshAgentLike {

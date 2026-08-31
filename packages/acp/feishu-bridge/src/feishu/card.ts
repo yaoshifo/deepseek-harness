@@ -7,8 +7,8 @@
  * @module dsh-feishu-bridge/feishu-card
  */
 
-import type { Card, CardElement } from '../card.js'
-import { finalizeFeishuCardMarkdown } from './markdown.js'
+import type { Card, CardElement } from '../card.ts'
+import { finalizeFeishuCardMarkdown } from './markdown.ts'
 
 /** Rendered Feishu card element/card structure (Go map[string]any). */
 export type FeishuCardMap = Record<string, unknown>

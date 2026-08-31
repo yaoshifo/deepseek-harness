@@ -9,12 +9,12 @@
  * @module dsh-feishu-bridge/cron-commands
  */
 
-import { Msg } from '../i18n/index.js'
-import { defaultBtn, dangerBtn, newCard, primaryBtn, type Card, type CardButton } from '../card.js'
-import { supportsCards, type Message, type Platform } from '../core/types.js'
-import type { Engine } from './engine.js'
-import { isAdmin } from './commands.js'
-import { CronJob, cronExprToHuman, generateCronID, truncateStr } from './cron.js'
+import { Msg } from '../i18n/index.ts'
+import { defaultBtn, dangerBtn, newCard, primaryBtn, type Card, type CardButton } from '../card.ts'
+import { supportsCards, type Message, type Platform } from '../core/types.ts'
+import type { Engine } from './engine.ts'
+import { isAdmin } from './commands.ts'
+import { CronJob, cronExprToHuman, generateCronID, truncateStr } from './cron.ts'
 
 /** Prefix-match a subcommand against candidates (Go matchSubCommand). */
 function matchSubCommand(input: string, candidates: string[]): string {

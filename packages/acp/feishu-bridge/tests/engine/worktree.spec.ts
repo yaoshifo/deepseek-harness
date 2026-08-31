@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import process from 'node:process'
 import { describe, expect, it } from 'vitest'
-import { removeOrphanMemory } from '../../src/engine/worktree.js'
+import { removeOrphanMemory } from '../../src/engine/worktree.ts'
 
 describe('removeOrphanMemory', () => {
   it("'' is a no-op even when the process CWD holds a populated memory/ directory", async () => {

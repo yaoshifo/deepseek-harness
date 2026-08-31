@@ -28,11 +28,11 @@ import {
   type ProgressContent,
   type ProgressStatus,
   type TextPreviewContent,
-} from './core/types.js'
-import type { AsyncSender } from './async-sender.js'
-import { splitMcpToolName } from './core/mcp-health.js'
-import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './engine/message-split.js'
-import type { TodoItem } from './progress.js'
+} from './core/types.ts'
+import type { AsyncSender } from './async-sender.ts'
+import { splitMcpToolName } from './core/mcp-health.ts'
+import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './engine/message-split.ts'
+import type { TodoItem } from './progress.ts'
 
 /**
  * Bound on consecutive UpdateMessage failures before the preview degrades

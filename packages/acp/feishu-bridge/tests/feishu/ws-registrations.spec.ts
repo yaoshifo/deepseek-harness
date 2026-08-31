@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { wsEventRegistrations } from '../../src/feishu/platform.js'
+import { wsEventRegistrations } from '../../src/feishu/platform.ts'
 
 describe('wsEventRegistrations', () => {
   it('routes the four handled event types to the raw-event callback', () => {

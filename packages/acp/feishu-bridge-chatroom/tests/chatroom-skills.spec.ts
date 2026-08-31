@@ -16,8 +16,8 @@ import SessionStore from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { Engine, FeishuBridgeService, registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { apply, inject, name } from '../src/index.js'
-import { createStubAgent } from './stubs/engine-stubs.js'
+import { apply, inject, name } from '../src/index.ts'
+import { createStubAgent } from './stubs/engine-stubs.ts'
 
 const contexts: Context[] = []
 afterEach(async () => {

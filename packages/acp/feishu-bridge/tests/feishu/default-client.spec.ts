@@ -10,7 +10,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { retryTiming } from '../../src/feishu/retry.js'
+import { retryTiming } from '../../src/feishu/retry.ts'
 
 const h = vi.hoisted(() => {
   const clientParams: Record<string, unknown>[] = []
@@ -35,7 +35,7 @@ vi.mock('@larksuiteoapi/node-sdk', () => ({
   withTenantToken: (token: string) => ({ headers: { Authorization: `Bearer ${token}` } }),
 }))
 
-import { FeishuPlatform } from '../../src/feishu/platform.js'
+import { FeishuPlatform } from '../../src/feishu/platform.ts'
 
 const rc = { messageID: 'om_root', chatID: 'oc_chat', sessionKey: 'feishu:oc_chat:ou_u' }
 

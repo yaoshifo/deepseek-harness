@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform } from '../../src/feishu/platform.js'
+import { FeishuPlatform } from '../../src/feishu/platform.ts'
 
 function newPlatform(options: Partial<ConstructorParameters<typeof FeishuPlatform>[0]> = {}): FeishuPlatform {
   return new FeishuPlatform({

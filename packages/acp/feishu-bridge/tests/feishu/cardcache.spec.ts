@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, FeishuPreviewHandle, type FeishuApiClient } from '../../src/feishu/platform.js'
+import { FeishuPlatform, FeishuPreviewHandle, type FeishuApiClient } from '../../src/feishu/platform.ts'
 
 /** Client that mints om_card_N ids on create/reply and records patches. */
 function cardCacheClient(): FeishuApiClient & { patches: Map<string, string> } {

@@ -11,9 +11,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { ForkSessionPrefix } from '../../src/core/types.js'
-import { DshAgentAdapter, type DshAgentLike, type DshPersistenceLike } from '../../src/agent-dsh/adapter.js'
-import type { DshCreateOptionsLike, DshContextLike } from '../../src/agent-dsh/adapter.js'
+import { ForkSessionPrefix } from '../../src/core/types.ts'
+import { DshAgentAdapter, type DshAgentLike, type DshPersistenceLike } from '../../src/agent-dsh/adapter.ts'
+import type { DshCreateOptionsLike, DshContextLike } from '../../src/agent-dsh/adapter.ts'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 
 interface FakeSession {

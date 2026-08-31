@@ -18,9 +18,9 @@ import {
   type PendingAsk,
   type SessionStartOptions,
 } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { chatroomState } from '../src/chatroom-state.js'
-import { registerChatroomPolicyListeners } from '../src/engine/chatroom-policy.js'
-import { createStubAgent } from './stubs/engine-stubs.js'
+import { chatroomState } from '../src/chatroom-state.ts'
+import { registerChatroomPolicyListeners } from '../src/engine/chatroom-policy.ts'
+import { createStubAgent } from './stubs/engine-stubs.ts'
 
 const contexts: Context[] = []
 afterEach(async () => {

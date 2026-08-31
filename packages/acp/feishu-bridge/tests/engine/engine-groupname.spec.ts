@@ -14,11 +14,11 @@ const hubNamer = (topic: string): string => {
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { Engine } from '../../src/engine/engine.js'
-import { Session } from '../../src/engine/session.js'
-import { ctxBridgeDispatch } from '../../src/bridge-service.js'
-import { cmdNew } from '../../src/engine/commands.js'
-import { lucideIconSVG } from '../../src/lucide/icon.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { Session } from '../../src/engine/session.ts'
+import { ctxBridgeDispatch } from '../../src/bridge-service.ts'
+import { cmdNew } from '../../src/engine/commands.ts'
+import { lucideIconSVG } from '../../src/lucide/icon.ts'
 import {
   classifyIcon,
   fallbackGroupIcon,
@@ -31,8 +31,8 @@ import {
   shortenGroupPathTokens,
   truncateGroupName,
   iconCategoryMisc,
-} from '../../src/engine/groupname.js'
-import type { Agent, Message } from '../../src/core/types.js'
+} from '../../src/engine/groupname.ts'
+import type { Agent, Message } from '../../src/core/types.ts'
 import {
   createGroupNameAgent,
   createGroupNameSwitcherAgent,
@@ -42,8 +42,8 @@ import {
   newStubMessage,
   type GroupNameAgentState,
   type StubTitleRenamePlatform,
-} from '../stubs/engine-stubs.js'
-import { ev } from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
+import { ev } from '../stubs/engine-stubs.ts'
 
 /** Poll cond until it holds or the deadline passes (Go waitFor). */
 async function waitFor(cond: () => boolean, msg: string, timeoutMs = 2000): Promise<void> {

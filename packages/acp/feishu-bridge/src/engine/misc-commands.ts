@@ -22,11 +22,11 @@
  * @module dsh-feishu-bridge/misc-commands
  */
 
-import { Msg, type MsgKey } from '../i18n/index.js'
-import { newCard, type Card, type CardButton } from '../card.js'
-import type { Message, Platform } from '../core/types.js'
-import { asReactionAdder, supportsCards } from '../core/types.js'
-import type { Engine } from './engine.js'
+import { Msg, type MsgKey } from '../i18n/index.ts'
+import { newCard, type Card, type CardButton } from '../card.ts'
+import type { Message, Platform } from '../core/types.ts'
+import { asReactionAdder, supportsCards } from '../core/types.ts'
+import type { Engine } from './engine.ts'
 
 /** One-line description lookup key per canonical command id. */
 const oneLinerKey = (cmdID: string): MsgKey => cmdID as MsgKey

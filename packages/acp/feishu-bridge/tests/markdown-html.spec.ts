@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { markdownToSimpleHTML, splitMessageCodeFenceAware } from '../src/markdown/markdown-html.js'
+import { markdownToSimpleHTML, splitMessageCodeFenceAware } from '../src/markdown/markdown-html.ts'
 
 /**
  * Ported from cc-connect core/markdown/markdown_html_test.go. it() names are

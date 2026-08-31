@@ -19,16 +19,16 @@ import { readFileSync } from 'node:fs'
 import { mkdirSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { join } from 'node:path'
-import { atomicWriteFileSync } from '../atomicwrite.js'
-import type { Platform } from '../core/types.js'
-import type { Engine } from './engine.js'
+import { atomicWriteFileSync } from '../atomicwrite.ts'
+import type { Platform } from '../core/types.ts'
+import type { Engine } from './engine.ts'
 import {
   langChinese,
   langJapanese,
   langSpanish,
   langTraditionalChinese,
   type Language,
-} from '../i18n/index.js'
+} from '../i18n/index.ts'
 
 /** How long the scheduler waits for a job run by default (Go defaultCronJobTimeout). */
 export const defaultCronJobTimeoutMs = 30 * 60_000

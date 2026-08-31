@@ -13,7 +13,7 @@ import {
   lookupMessage,
   messages,
   registerMessages,
-} from '../src/i18n/index.js'
+} from '../src/i18n/index.ts'
 
 // Ported from cc-connect core/i18n/i18n_test.go (11 Go tests).
 //

@@ -14,11 +14,11 @@ import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { Engine, InteractiveState, type QueuedMessage } from '../../src/engine/engine.js'
-import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from '../../src/engine/recall.js'
-import type { Agent, Message, Platform } from '../../src/core/types.js'
-import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
-import { newStreamPreview } from '../../src/streaming.js'
+import { Engine, InteractiveState, type QueuedMessage } from '../../src/engine/engine.ts'
+import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from '../../src/engine/recall.ts'
+import type { Agent, Message, Platform } from '../../src/core/types.ts'
+import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.ts'
+import { newStreamPreview } from '../../src/streaming.ts'
 
 function newEngine(): { e: Engine; p: StubPlatform } {
   const p = createStubPlatform('test')

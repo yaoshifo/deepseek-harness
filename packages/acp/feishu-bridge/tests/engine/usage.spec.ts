@@ -14,7 +14,7 @@ import {
   formatMinimaxRemains,
   type GlmLimitEntry,
   type UsageProvider,
-} from '../../src/engine/usage.js'
+} from '../../src/engine/usage.ts'
 
 /** Go limitEntry literal for a TOKENS_LIMIT session window (unit 3 = hours). */
 function sessionLimit(pct: number): GlmLimitEntry {

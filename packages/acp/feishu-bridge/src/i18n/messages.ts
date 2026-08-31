@@ -9,7 +9,7 @@
  * @module dsh-feishu-bridge/i18n-messages
  */
 
-import type { MsgKey } from './keys.js'
+import type { MsgKey } from './keys.ts'
 
 /** Closed set of locales the tables carry (subset of Language). */
 export type LocaleCode = 'en' | 'zh' | 'zh-TW' | 'ja' | 'es'

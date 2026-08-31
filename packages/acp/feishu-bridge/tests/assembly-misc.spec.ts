@@ -12,8 +12,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
-import { createStubCardPlatform, newStubMessage } from './stubs/engine-stubs.js'
+import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.ts'
+import { createStubCardPlatform, newStubMessage } from './stubs/engine-stubs.ts'
 
 function stubContext(): Context {
   return {

@@ -11,12 +11,12 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
-import { registerShellCommands } from '../../src/engine/shell-commands.js'
-import { registerMiscCommands, renderHelpGroupCard } from '../../src/engine/misc-commands.js'
-import { Msg } from '../../src/i18n/index.js'
-import type { Card } from '../../src/card.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
+import { registerShellCommands } from '../../src/engine/shell-commands.ts'
+import { registerMiscCommands, renderHelpGroupCard } from '../../src/engine/misc-commands.ts'
+import { Msg } from '../../src/i18n/index.ts'
+import type { Card } from '../../src/card.ts'
 import {
   createStubAgent,
   createStubCardPlatformFull,
@@ -24,8 +24,8 @@ import {
   newPendingAsk,
   newStubMessage,
   type StubCardPlatform,
-} from '../stubs/engine-stubs.js'
-import type { AgentSession, Message } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import type { AgentSession, Message } from '../../src/core/types.ts'
 
 function newEngine(p?: StubCardPlatform): {
   e: Engine

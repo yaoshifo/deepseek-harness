@@ -16,16 +16,16 @@ import {
   cardJsonBytes,
   countElements,
   renderContextCard,
-} from '../src/context/render.js'
-import type { ContextCardArgs } from '../src/context/render.js'
-import { I18n } from '../src/i18n/index.js'
-import { newCard } from '../src/card.js'
-import type { Card, CardChart, CardCollapsiblePanel, CardElement } from '../src/card.js'
+} from '../src/context/render.ts'
+import type { ContextCardArgs } from '../src/context/render.ts'
+import { I18n } from '../src/i18n/index.ts'
+import { newCard } from '../src/card.ts'
+import type { Card, CardChart, CardCollapsiblePanel, CardElement } from '../src/card.ts'
 import type {
   ContextTimelineValue,
   RequestRecord,
   TimelineEvent,
-} from '../src/context/types.js'
+} from '../src/context/types.ts'
 
 // Fixture shapes mirror tests/context-aggregate.spec.ts: a seq-ordered
 // timeline, per-step request records, and the fold's event output.

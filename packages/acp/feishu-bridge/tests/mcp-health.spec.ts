@@ -22,9 +22,9 @@ import SessionStore from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
-import * as entry from '../src/index.js'
-import { MCP_HEALTH_CONTEXT_NAME, registerMcpHealthContext, splitMcpToolName } from '../src/core/mcp-health.js'
-import type { McpHealthConfig, FeishuBridgeConfig } from '../src/index.js'
+import * as entry from '../src/index.ts'
+import { MCP_HEALTH_CONTEXT_NAME, registerMcpHealthContext, splitMcpToolName } from '../src/core/mcp-health.ts'
+import type { McpHealthConfig, FeishuBridgeConfig } from '../src/index.ts'
 
 const contexts: CordisContext[] = []
 

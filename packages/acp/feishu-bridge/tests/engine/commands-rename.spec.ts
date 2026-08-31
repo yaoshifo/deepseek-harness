@@ -7,16 +7,16 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { cmdRename } from '../../src/engine/commands.js'
-import { Engine } from '../../src/engine/engine.js'
-import { buildCompactContext } from '../../src/engine/groupname.js'
+import { cmdRename } from '../../src/engine/commands.ts'
+import { Engine } from '../../src/engine/engine.ts'
+import { buildCompactContext } from '../../src/engine/groupname.ts'
 import {
   createGroupNameAgent,
   createStubTitleRenamePlatform,
   newStubMessage,
   type StubTitleRenamePlatform,
-} from '../stubs/engine-stubs.js'
-import type { Message } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import type { Message } from '../../src/core/types.ts'
 
 function msg(overrides: Partial<Message> = {}): Message {
   return { ...newStubMessage(), sessionKey: 'test:chat', platform: 'test', userID: 'u1', replyCtx: 'ctx', ...overrides }

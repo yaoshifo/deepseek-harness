@@ -4,8 +4,8 @@ import AgentRegistry from '@deepseek-ai/dsh-agent'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import * as entry from '../src/index.js'
-import { apply } from '../src/index.js'
+import * as entry from '../src/index.ts'
+import { apply } from '../src/index.ts'
 
 describe('plugin entry declaration', () => {
   it('declares the agents service inject (ctx.agents access requires it)', () => {
@@ -26,7 +26,7 @@ describe('plugin entry declaration', () => {
   })
 
   it('ships the invariant companion with a no-runtime-invariant reason', async () => {
-    const invariant = await import('../src/invariant.js')
+    const invariant = await import('../src/invariant.ts')
     expect(invariant.name).toBe('feishu-bridge-invariant')
     expect(invariant.inject).toEqual(['invariants'])
     expect(typeof invariant.apply).toBe('function')

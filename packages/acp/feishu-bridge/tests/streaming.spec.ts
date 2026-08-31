@@ -22,12 +22,12 @@ import {
   parseSkillToolUse,
   toolTagForProgress,
   type StreamPreviewCfg,
-} from '../src/streaming.js'
-import { newAsyncSender } from '../src/async-sender.js'
-import type { FileAttachment, Platform, ProgressContent, TextPreviewContent } from '../src/core/types.js'
-import { previewText, statusOf } from './stubs/preview-content.js'
-import { createStubPlatform, type StubPlatform } from './stubs/engine-stubs.js'
-import { feishuBusinessCode, feishuPatchRateLimitCode } from '../src/feishu/retry.js'
+} from '../src/streaming.ts'
+import { newAsyncSender } from '../src/async-sender.ts'
+import type { FileAttachment, Platform, ProgressContent, TextPreviewContent } from '../src/core/types.ts'
+import { previewText, statusOf } from './stubs/preview-content.ts'
+import { createStubPlatform, type StubPlatform } from './stubs/engine-stubs.ts'
+import { feishuBusinessCode, feishuPatchRateLimitCode } from '../src/feishu/retry.ts'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 

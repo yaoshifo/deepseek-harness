@@ -13,10 +13,10 @@ import { realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
-import { registerShellCommands } from '../../src/engine/shell-commands.js'
-import { Msg } from '../../src/i18n/index.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
+import { registerShellCommands } from '../../src/engine/shell-commands.ts'
+import { Msg } from '../../src/i18n/index.ts'
 import {
   createStubAgent,
   createStubPlatform,
@@ -24,8 +24,8 @@ import {
   newStubMessage,
   testQuestions,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
-import type { Agent, Message } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import type { Agent, Message } from '../../src/core/types.ts'
 
 function shellMsg(content: string, userID = 'admin'): Message {
   return { ...newStubMessage(), sessionKey: 'test:ch1', userID, replyCtx: 'ctx', content }

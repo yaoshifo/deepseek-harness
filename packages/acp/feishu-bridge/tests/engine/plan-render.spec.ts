@@ -13,8 +13,8 @@ import { mkdtempSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { newCard } from '../../src/card.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { newCard } from '../../src/card.ts'
 import {
   assembleHTML,
   cancelRenders,
@@ -41,13 +41,13 @@ import {
   shouldRenderPlan,
   storePlanExport,
   updatePlanCardStatus,
-} from '../../src/engine/plan-render.js'
-import { diagramCSS, diagramDefs, renderTemplatePlan, renderTemplateReply } from '../../src/engine/plan-render-templates.js'
-import type { StreamPreview } from '../../src/streaming.js'
-import { Msg } from '../../src/i18n/keys.js'
-import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.js'
-import type { Platform } from '../../src/core/types.js'
-import { createCardUpdatePlatform, renderSkillBodyFixture } from './plan-render-helpers.js'
+} from '../../src/engine/plan-render.ts'
+import { diagramCSS, diagramDefs, renderTemplatePlan, renderTemplateReply } from '../../src/engine/plan-render-templates.ts'
+import type { StreamPreview } from '../../src/streaming.ts'
+import { Msg } from '../../src/i18n/keys.ts'
+import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.ts'
+import type { Platform } from '../../src/core/types.ts'
+import { createCardUpdatePlatform, renderSkillBodyFixture } from './plan-render-helpers.ts'
 
 function newTestEngine(): Engine {
   return new Engine('test', createStubAgent(), [createCardUpdatePlatform()], '', 'en')

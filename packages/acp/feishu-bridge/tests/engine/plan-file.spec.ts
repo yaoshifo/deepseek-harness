@@ -14,15 +14,15 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { Card } from '../../src/card.js'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { savePlanFile } from '../../src/engine/plan-file.js'
+import type { Card } from '../../src/card.ts'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { savePlanFile } from '../../src/engine/plan-file.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
   createStubPlatform,
   newControllableSession,
-} from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
 
 function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix))

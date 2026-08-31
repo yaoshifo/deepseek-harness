@@ -11,8 +11,8 @@
  */
 
 import sharp from 'sharp'
-import { fnv1a32 } from '../lucide/icon.js'
-import type { ChatPhase } from '../core/types.js'
+import { fnv1a32 } from '../lucide/icon.ts'
+import type { ChatPhase } from '../core/types.ts'
 
 /** 8-bit RGBA color. */
 export interface RGBA {

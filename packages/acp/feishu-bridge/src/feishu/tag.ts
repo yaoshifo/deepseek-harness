@@ -14,7 +14,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { readdir } from 'node:fs/promises'
-import { atomicWriteFile } from '../atomicwrite.js'
+import { atomicWriteFile } from '../atomicwrite.ts'
 
 /** Default active-tag name applied to spawned groups (Go core.ActiveTagName). */
 export const activeTagName = '❤️'

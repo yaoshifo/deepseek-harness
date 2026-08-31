@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import {
   createStubAgent,
   createStubPlatform,
@@ -18,8 +18,8 @@ import {
   newQueuingSession,
   newPendingAsk,
   testQuestions,
-} from '../stubs/engine-stubs.js'
-import type { Agent, Message, Platform } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import type { Agent, Message, Platform } from '../../src/core/types.ts'
 
 function newEngine(agent?: Agent, p?: Platform): { e: Engine } {
   const platform = p ?? createStubPlatform()

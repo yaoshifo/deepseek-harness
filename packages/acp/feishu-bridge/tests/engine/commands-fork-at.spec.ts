@@ -12,14 +12,14 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { cmdFork, registerSessionCommands } from '../../src/engine/commands.js'
-import type { Agent, Message } from '../../src/core/types.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { cmdFork, registerSessionCommands } from '../../src/engine/commands.ts'
+import type { Agent, Message } from '../../src/core/types.ts'
 import {
   createStubAgent,
   createStubChatroomSpawner,
   type StubChatroomSpawner,
-} from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
 
 interface ForkAtCall {
   origID: string

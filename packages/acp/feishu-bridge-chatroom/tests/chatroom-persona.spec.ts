@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildChatroomSystemPrompt,
   loadFlattenedPersona,
-} from '../src/engine/chatroom-persona.js'
+} from '../src/engine/chatroom-persona.ts'
 
 describe('loadFlattenedPersona', () => {
   it('reads CLAUDE.md and inlines @imports recursively', async () => {

@@ -10,8 +10,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -19,9 +19,9 @@ import {
   createStubPlatform,
   newPendingAsk,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
-import type { AskRequest, Message, ProgressContent } from '../../src/core/types.js'
-import { previewText } from '../stubs/preview-content.js'
+} from '../stubs/engine-stubs.ts'
+import type { AskRequest, Message, ProgressContent } from '../../src/core/types.ts'
+import { previewText } from '../stubs/preview-content.ts'
 
 function newTestEngine(): Engine {
   return new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')

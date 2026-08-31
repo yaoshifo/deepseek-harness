@@ -12,13 +12,13 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { registerProviderCommands } from '../../src/engine/provider-commands.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
-import type { Agent, Message, ProviderSwitcher } from '../../src/core/types.js'
-import type { UsageProvider } from '../../src/engine/usage.js'
-import { createStubAgent, createStubCardPlatform, createStubPlatform, type RecordedCard, type StubCardPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
-import { Msg } from '../../src/i18n/index.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { registerProviderCommands } from '../../src/engine/provider-commands.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
+import type { Agent, Message, ProviderSwitcher } from '../../src/core/types.ts'
+import type { UsageProvider } from '../../src/engine/usage.ts'
+import { createStubAgent, createStubCardPlatform, createStubPlatform, type RecordedCard, type StubCardPlatform, type StubPlatform } from '../stubs/engine-stubs.ts'
+import { Msg } from '../../src/i18n/index.ts'
 
 /** Go stubProviderAgent: a ProviderSwitcher over a static route table. */
 function providerAgent(

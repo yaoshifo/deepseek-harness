@@ -11,7 +11,7 @@
  * @module dsh-feishu-bridge/feature-state
  */
 
-import type { Session } from './session.js'
+import type { Session } from './session.ts'
 
 /**
  * Owner of one `featureState` key: how the section persists and which part

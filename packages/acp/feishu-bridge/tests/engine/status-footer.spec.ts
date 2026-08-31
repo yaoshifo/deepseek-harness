@@ -15,7 +15,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import {
   appendReplyFooter,
   buildCompletionUsage,
@@ -41,18 +41,18 @@ import {
   tokenRateMessage,
   unionDuration,
   type UsageReport,
-} from '../../src/engine/status-footer.js'
-import { platformCacheCapacity } from '../../src/feishu/platform.js'
-import type { Interval } from '../../src/engine/status-footer.js'
-import type { Agent, AgentSession, Platform } from '../../src/core/types.js'
-import type { Card, CardElement } from '../../src/card.js'
-import type { UsageProvider } from '../../src/engine/usage.js'
-import { Session } from '../../src/engine/session.js'
+} from '../../src/engine/status-footer.ts'
+import { platformCacheCapacity } from '../../src/feishu/platform.ts'
+import type { Interval } from '../../src/engine/status-footer.ts'
+import type { Agent, AgentSession, Platform } from '../../src/core/types.ts'
+import type { Card, CardElement } from '../../src/card.ts'
+import type { UsageProvider } from '../../src/engine/usage.ts'
+import { Session } from '../../src/engine/session.ts'
 import {
   createStubAgent,
   createStubPlatform,
   newControllableSession,
-} from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
 
 // ── unionDuration (Go TestUnionDuration) ───────────────────────────────────
 

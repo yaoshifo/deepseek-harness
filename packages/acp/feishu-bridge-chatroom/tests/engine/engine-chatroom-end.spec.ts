@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.js'
+import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.ts'
 import {
   ChatroomEndBarrier,
   ChatroomGather,
@@ -26,13 +26,13 @@ import {
   askRole,
   routePendingHumanReply,
   startChatroom,
-} from '../../src/engine/chatroom.js'
-import { stashChatroomResearchFlags } from '../../src/engine/chatroom-cmd.js'
-import { createStubChatroomSpawner } from '../stubs/engine-stubs.js'
-import { createStubAgent } from '../stubs/engine-stubs.js'
+} from '../../src/engine/chatroom.ts'
+import { stashChatroomResearchFlags } from '../../src/engine/chatroom-cmd.ts'
+import { createStubChatroomSpawner } from '../stubs/engine-stubs.ts'
+import { createStubAgent } from '../stubs/engine-stubs.ts'
 import type { Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { chatroomState } from '../../src/chatroom-state.js'
-import { chatroomConfig } from '../../src/chatroom-config.js'
+import { chatroomState } from '../../src/chatroom-state.ts'
+import { chatroomConfig } from '../../src/chatroom-config.ts'
 import '../stubs/messages.js'
 
 async function settle(): Promise<void> {

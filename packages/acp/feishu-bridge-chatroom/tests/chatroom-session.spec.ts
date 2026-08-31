@@ -11,10 +11,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { SessionManager } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { ChatroomEndBarrier, ChatroomGather } from '../src/engine/chatroom.js'
-import { chatroomFeatureStateCodec } from '../src/chatroom-state.js'
+import { ChatroomEndBarrier, ChatroomGather } from '../src/engine/chatroom.ts'
+import { chatroomFeatureStateCodec } from '../src/chatroom-state.ts'
 import { registerFeatureStateCodec } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { chatroomState } from '../src/chatroom-state.js'
+import { chatroomState } from '../src/chatroom-state.ts'
 import './stubs/messages.js'
 
 // The production composition registers the chatroom codec once per process

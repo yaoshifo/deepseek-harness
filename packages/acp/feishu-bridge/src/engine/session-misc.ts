@@ -11,12 +11,12 @@
  * @module dsh-feishu-bridge/session-misc
  */
 
-import type { Message, Platform } from '../core/types.js'
-import { asSessionCompressor } from '../core/types.js'
-import { Msg } from '../i18n/index.js'
-import type { Engine, InteractiveState } from './engine.js'
-import type { HistoryEntry } from '../core/types.js'
-import type { Session } from './session.js'
+import type { Message, Platform } from '../core/types.ts'
+import { asSessionCompressor } from '../core/types.ts'
+import { Msg } from '../i18n/index.ts'
+import type { Engine, InteractiveState } from './engine.ts'
+import type { HistoryEntry } from '../core/types.ts'
+import type { Session } from './session.ts'
 
 /** Default minimum gap between auto compressions (Go 30min). */
 export const defaultAutoCompressMinGapMs = 30 * 60_000

@@ -11,7 +11,7 @@
  * @module dsh-feishu-bridge/subtask
  */
 
-import type { Session } from './session.js'
+import type { Session } from './session.ts'
 
 /** Result of recording one child report into the barrier (Go accumulate's three returns). */
 export interface GatherAccumulateResult {

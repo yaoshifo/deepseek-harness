@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform } from '../../src/feishu/platform.js'
-import { asBotIdentityProvider } from '../../src/core/types.js'
+import { FeishuPlatform } from '../../src/feishu/platform.ts'
+import { asBotIdentityProvider } from '../../src/core/types.ts'
 
 function newPlatform(options: Partial<ConstructorParameters<typeof FeishuPlatform>[0]> = {}): FeishuPlatform {
   return new FeishuPlatform({

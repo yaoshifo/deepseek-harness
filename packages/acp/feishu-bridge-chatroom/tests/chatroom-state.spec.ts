@@ -9,8 +9,8 @@
 
 import { describe, expect, it } from 'vitest'
 import { Session } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { ChatroomEndBarrier, ChatroomGather } from '../src/engine/chatroom.js'
-import { chatroomFeatureStateCodec, chatroomState } from '../src/chatroom-state.js'
+import { ChatroomEndBarrier, ChatroomGather } from '../src/engine/chatroom.ts'
+import { chatroomFeatureStateCodec, chatroomState } from '../src/chatroom-state.ts'
 
 describe('chatroom feature-state codec', () => {
   it('writes the section through the live state and replaces a non-object one', () => {

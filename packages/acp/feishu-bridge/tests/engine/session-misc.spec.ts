@@ -9,15 +9,15 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
 import {
   estimateTokensWithPendingAssistant,
   maybeAutoResetSessionOnIdle,
   registerSessionMiscCommands,
   runCompress,
-} from '../../src/engine/session-misc.js'
-import type { Agent, HistoryEntry, Message, RecentTurnsReader } from '../../src/core/types.js'
+} from '../../src/engine/session-misc.ts'
+import type { Agent, HistoryEntry, Message, RecentTurnsReader } from '../../src/core/types.ts'
 import {
   createStubAgent,
   createStubPlatform,
@@ -25,7 +25,7 @@ import {
   newResultAgentSession,
   type ControllableAgentSession,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
 
 function msg(overrides: Partial<Message> = {}): Message {
   return {

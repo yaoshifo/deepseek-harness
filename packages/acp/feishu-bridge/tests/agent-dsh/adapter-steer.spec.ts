@@ -13,7 +13,7 @@ import {
   type DshAgentLike,
   type DshCreateOptionsLike,
   type DshContextLike,
-} from '../../src/agent-dsh/adapter.js'
+} from '../../src/agent-dsh/adapter.ts'
 
 /** A fake agent recording steer and followup calls. */
 interface RecordingAgent extends DshAgentLike {

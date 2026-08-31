@@ -22,11 +22,11 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { Engine } from '../../src/engine/engine.js'
-import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.js'
-import { registerCronTool } from '../../src/tools/cron.js'
-import type { SubtaskRoute } from '../../src/tools/subtask.js'
-import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.ts'
+import { registerCronTool } from '../../src/tools/cron.ts'
+import type { SubtaskRoute } from '../../src/tools/subtask.ts'
+import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.ts'
 
 const signal = new AbortController().signal
 const contexts: Context[] = []

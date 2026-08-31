@@ -8,8 +8,8 @@ import {
   isSilentReply,
   splitMessage,
   stripTrailingSilent,
-} from '../../src/engine/engine.js'
-import { Session } from '../../src/engine/session.js'
+} from '../../src/engine/engine.ts'
+import { Session } from '../../src/engine/session.ts'
 import {
   createControllableAgent,
   createStubAgent,
@@ -19,11 +19,11 @@ import {
   newQueuingSession,
   type ControllableAgentSession,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
-import type { Agent, Event, Platform, ProgressContent } from '../../src/core/types.js'
-import { previewText, statusOf } from '../stubs/preview-content.js'
+} from '../stubs/engine-stubs.ts'
+import type { Agent, Event, Platform, ProgressContent } from '../../src/core/types.ts'
+import { previewText, statusOf } from '../stubs/preview-content.ts'
 import { Context } from '@deepseek-ai/cordis'
-import { ctxBridgeDispatch } from '../../src/bridge-service.js'
+import { ctxBridgeDispatch } from '../../src/bridge-service.ts'
 
 // Policy-listener contexts are disposed after each test.
 const contextsForDispose: Context[] = []
@@ -46,7 +46,7 @@ function chatroomSection(session: Session): Record<string, unknown> {
 // (result/text/thinking basics), message queueing (#13), side-channel dedup,
 // basic reply paths, idle/stall, cleanup CAS, and session writeback.
 
-function newEngine(agent?: Agent, p?: Platform, bridge?: import('../../src/bridge-service.js').BridgeDispatch): { e: Engine; p: StubPlatform } {
+function newEngine(agent?: Agent, p?: Platform, bridge?: import('../../src/bridge-service.ts').BridgeDispatch): { e: Engine; p: StubPlatform } {
   const platform = p ?? createStubPlatform()
   const engine = new Engine('test', agent ?? createStubAgent(), [platform], '', 'en', bridge)
   return { e: engine, p: platform as StubPlatform }
@@ -972,7 +972,7 @@ describe('stopInteractiveSession Interrupt preference', () => {
 it('processInteractiveEvents persists the agent session ID', async () => {
   const { e, p } = newEngine()
   const path = `${process.env.VITEST_TMPDIR ?? '/tmp'}/fb-persist-${Date.now()}/sessions.json`
-  const { SessionManager } = await import('../../src/engine/session.js')
+  const { SessionManager } = await import('../../src/engine/session.ts')
   const sessions = new SessionManager(path)
   const sessionKey = 'test:user-persist'
   const session = sessions.getOrCreateActive(sessionKey)

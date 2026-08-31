@@ -3,9 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { SpawnedChatStore, extractFeishuChatID } from '../../src/feishu/spawn.js'
-import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
-import type { Message } from '../../src/core/types.js'
+import { SpawnedChatStore, extractFeishuChatID } from '../../src/feishu/spawn.ts'
+import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
+import type { Message } from '../../src/core/types.ts'
 
 // Ported from cc-connect platform/feishu/feishu_spawn_evict_test.go, plus
 // dispatch-level checks of SpawnGroup/SpawnGroupWithOptions against a fake

@@ -20,14 +20,14 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { BridgeDispatch } from '../bridge-service.js'
+import type { BridgeDispatch } from '../bridge-service.ts'
 import {
   ContinueSession,
   ForkAtSessionPrefix,
   ForkSessionPrefix,
-} from '../core/types.js'
-import { atomicWriteFileSync } from '../atomicwrite.js'
-import { featureStateCodecs } from './feature-state.js'
+} from '../core/types.ts'
+import { atomicWriteFileSync } from '../atomicwrite.ts'
+import { featureStateCodecs } from './feature-state.ts'
 
 /**
  * Snapshot schema version: 3 nests plugin feature state under `featureState`
@@ -108,11 +108,11 @@ export class Session {
    * PendingMonitorClarification); in-memory only — a restart mid-clarify
    * loses it and an orphan card click falls through to normal triage.
    */
-  private pendingMonitorClarification: import('./monitor.js').MonitorClarification | undefined
+  private pendingMonitorClarification: import('./monitor.ts').MonitorClarification | undefined
   /** Permission mode pinned for a /spawn //fork child; in-memory only (Go InheritedMode). */
   inheritedMode: string = ''
   /** Armed subtask gather barrier on a parent session; in-memory only (Go PendingSubtaskGather). */
-  pendingSubtaskGather: import('./subtask.js').SubtaskGather | undefined
+  pendingSubtaskGather: import('./subtask.ts').SubtaskGather | undefined
   /**
    * Resolver of a blocking gather wait; in-memory only. Armed by the engine's
    * gatherSubtasksBlocking, resolved with the barrier summary so it lands as
@@ -367,7 +367,7 @@ export class Session {
    *
    * @returns the pending SubtaskGather barrier, undefined when none.
    */
-  getPendingSubtaskGather(): import('./subtask.js').SubtaskGather | undefined {
+  getPendingSubtaskGather(): import('./subtask.ts').SubtaskGather | undefined {
     return this.pendingSubtaskGather
   }
 
@@ -376,7 +376,7 @@ export class Session {
    *
    * @param g - the barrier, or undefined to clear.
    */
-  setPendingSubtaskGather(g: import('./subtask.js').SubtaskGather | undefined): void {
+  setPendingSubtaskGather(g: import('./subtask.ts').SubtaskGather | undefined): void {
     this.pendingSubtaskGather = g
   }
 
@@ -538,7 +538,7 @@ export class Session {
    *
    * @returns the pending MonitorClarification, undefined when none.
    */
-  getPendingMonitorClarification(): import('./monitor.js').MonitorClarification | undefined {
+  getPendingMonitorClarification(): import('./monitor.ts').MonitorClarification | undefined {
     return this.pendingMonitorClarification
   }
 
@@ -547,7 +547,7 @@ export class Session {
    *
    * @param pc - the clarification, or undefined to clear.
    */
-  setPendingMonitorClarification(pc: import('./monitor.js').MonitorClarification | undefined): void {
+  setPendingMonitorClarification(pc: import('./monitor.ts').MonitorClarification | undefined): void {
     this.pendingMonitorClarification = pc
   }
 

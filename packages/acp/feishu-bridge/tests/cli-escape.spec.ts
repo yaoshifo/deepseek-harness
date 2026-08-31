@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { unescapeCLIText } from '../src/cli-escape.js'
+import { unescapeCLIText } from '../src/cli-escape.ts'
 
 // Ported from cc-connect core/cli_escape_test.go (1 Go test, table-driven).
 describe('unescapeCLIText', () => {

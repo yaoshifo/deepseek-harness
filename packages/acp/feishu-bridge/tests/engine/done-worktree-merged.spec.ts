@@ -16,11 +16,11 @@ import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { cleanupOneChat } from '../../src/engine/commands.js'
-import { createWorktree, worktreeMergedInto, type WorktreeCreateInfo } from '../../src/engine/worktree.js'
-import { createStubAgent, createStubCardPlatform, newStubMessage } from '../stubs/engine-stubs.js'
-import type { Platform } from '../../src/core/types.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { cleanupOneChat } from '../../src/engine/commands.ts'
+import { createWorktree, worktreeMergedInto, type WorktreeCreateInfo } from '../../src/engine/worktree.ts'
+import { createStubAgent, createStubCardPlatform, newStubMessage } from '../stubs/engine-stubs.ts'
+import type { Platform } from '../../src/core/types.ts'
 
 const execFileP = promisify(execFile)
 

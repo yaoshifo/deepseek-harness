@@ -13,11 +13,11 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { isAdmin } from '../engine/commands.js'
-import type { Engine } from '../engine/engine.js'
-import { cronJobActionAllowed } from '../engine/cron-commands.js'
-import { CronJob, generateCronID, normalizeCronSessionMode, truncateStr } from '../engine/cron.js'
-import type { SubtaskRoute } from './subtask.js'
+import { isAdmin } from '../engine/commands.ts'
+import type { Engine } from '../engine/engine.ts'
+import { cronJobActionAllowed } from '../engine/cron-commands.ts'
+import { CronJob, generateCronID, normalizeCronSessionMode, truncateStr } from '../engine/cron.ts'
+import type { SubtaskRoute } from './subtask.ts'
 
 /** Resolves the calling dsh agent to its engine session (shared with the subtask tool). */
 export type CronAgentRouter = (agent: unknown) => SubtaskRoute | undefined

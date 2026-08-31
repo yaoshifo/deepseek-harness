@@ -7,9 +7,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { jArr, jObj, jParse, jStr, type JsonObj } from '../stubs/json.js'
-import { buildProgressCardPayload } from '../../src/progress.js'
-import { noSpinner } from '../../src/feishu/spinner.js'
+import { jArr, jObj, jParse, jStr, type JsonObj } from '../stubs/json.ts'
+import { buildProgressCardPayload } from '../../src/progress.ts'
+import { noSpinner } from '../../src/feishu/spinner.ts'
 import {
   collapseStructuralBlankLines,
   buildProgressCardJSONFromPayload,
@@ -17,7 +17,7 @@ import {
   injectReplyButtons,
   injectStopButton,
   injectStoppedButtons,
-} from '../../src/feishu/progress.js'
+} from '../../src/feishu/progress.ts'
 
 function mkCard(template: string): string {
   return JSON.stringify({

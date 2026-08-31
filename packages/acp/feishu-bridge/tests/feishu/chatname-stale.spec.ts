@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ChatNameCache } from '../../src/feishu/chatname.js'
+import { ChatNameCache } from '../../src/feishu/chatname.ts'
 
 // Ported from cc-connect platform/feishu/chatname_stale_test.go: an entry past
 // its TTL must be ignored and the name re-fetched (then cached fresh), or a

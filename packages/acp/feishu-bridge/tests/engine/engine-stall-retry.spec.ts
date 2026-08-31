@@ -21,11 +21,11 @@ import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-test
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { DshAgentAdapter } from '../../src/agent-dsh/adapter.js'
-import { Engine } from '../../src/engine/engine.js'
-import { createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
-import type { ProgressContent, SessionStartOptions } from '../../src/core/types.js'
-import { previewText, statusOf } from '../stubs/preview-content.js'
+import { DshAgentAdapter } from '../../src/agent-dsh/adapter.ts'
+import { Engine } from '../../src/engine/engine.ts'
+import { createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.ts'
+import type { ProgressContent, SessionStartOptions } from '../../src/core/types.ts'
+import { previewText, statusOf } from '../stubs/preview-content.ts'
 
 /** One scripted model-call behavior. */
 type ScriptEntry =

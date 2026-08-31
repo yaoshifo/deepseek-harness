@@ -10,7 +10,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
-import { mountBundledSkills } from '../src/index.js'
+import { mountBundledSkills } from '../src/index.ts'
 
 const contexts: Context[] = []
 

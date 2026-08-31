@@ -10,16 +10,16 @@
  * @module dsh-feishu-bridge/monitor-commands
  */
 
-import { Msg } from '../i18n/index.js'
-import type { Message, Platform } from '../core/types.js'
-import type { Engine } from './engine.js'
-import { chatIDFromSessionKey } from './engine.js'
+import { Msg } from '../i18n/index.ts'
+import type { Message, Platform } from '../core/types.ts'
+import type { Engine } from './engine.ts'
+import { chatIDFromSessionKey } from './engine.ts'
 import {
   addMonitorChat,
   containsMonitorChat,
   removeMonitorChat,
   splitMonitorChats,
-} from './monitor.js'
+} from './monitor.ts'
 
 /**
  * Register the `/monitor` command family on an engine through the

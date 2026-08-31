@@ -11,9 +11,9 @@
 import { readFileSync } from 'node:fs'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { atomicWriteFileSync } from '../atomicwrite.js'
-import { asReplyContextReconstructor } from '../core/types.js'
-import type { Engine } from './engine.js'
+import { atomicWriteFileSync } from '../atomicwrite.ts'
+import { asReplyContextReconstructor } from '../core/types.ts'
+import type { Engine } from './engine.ts'
 
 /** Default max wait for a relay response (Go relayTimeout). */
 export const defaultRelayTimeoutMs = 120 * 1000

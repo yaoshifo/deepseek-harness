@@ -9,11 +9,11 @@
  * @module dsh-feishu-bridge/engine-ask
  */
 
-import type { Card, CardElement } from '../card.js'
-import { newCard } from '../card.js'
-import { I18n, langChinese, Msg, type MsgKey } from '../i18n/index.js'
-import type { PendingAskAnswer, UserQuestion } from '../core/types.js'
-import { isAllowResponse, isApproveAllResponse, isDenyResponse } from './permission.js'
+import type { Card, CardElement } from '../card.ts'
+import { newCard } from '../card.ts'
+import { I18n, langChinese, Msg, type MsgKey } from '../i18n/index.ts'
+import type { PendingAskAnswer, UserQuestion } from '../core/types.ts'
+import { isAllowResponse, isApproveAllResponse, isDenyResponse } from './permission.ts'
 
 /**
  * Minimal i18n face for ask-card copy: the engine's `I18n` instance and the

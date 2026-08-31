@@ -35,7 +35,7 @@ import {
   featureStateCodecs,
   lookupMessage,
 } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import * as chatroomEntry from '../src/index.js'
+import * as chatroomEntry from '../src/index.ts'
 
 let root: string | undefined
 let context: Context | undefined

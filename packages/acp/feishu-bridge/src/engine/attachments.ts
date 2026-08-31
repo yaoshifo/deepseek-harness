@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
-import type { FileAttachment, ImageAttachment } from '../core/types.js'
+import type { FileAttachment, ImageAttachment } from '../core/types.ts'
 
 /** One staged attachment waiting for the next text message (Go stagedAttachment). */
 export interface StagedAttachment {

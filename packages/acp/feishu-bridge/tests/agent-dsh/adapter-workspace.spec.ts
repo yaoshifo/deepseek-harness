@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { feishuWorkspaceSection } from '../../src/agent-dsh/adapter.js'
-import type { SessionStartOptions } from '../../src/core/types.js'
+import { feishuWorkspaceSection } from '../../src/agent-dsh/adapter.ts'
+import type { SessionStartOptions } from '../../src/core/types.ts'
 
 function withWorkspace(fields: Partial<SessionStartOptions['feishuWorkspace']>): SessionStartOptions {
   return {

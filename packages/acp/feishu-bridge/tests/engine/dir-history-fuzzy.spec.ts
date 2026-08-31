@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { DirHistory } from '../../src/engine/dir-history.js'
+import { DirHistory } from '../../src/engine/dir-history.ts'
 
 describe('DirHistory.resolveScanPathFuzzy', () => {
   it('prefix, substring, case-insensitive, and edit-distance matches', () => {

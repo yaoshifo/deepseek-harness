@@ -11,7 +11,7 @@
  * @module dsh-feishu-bridge/feishu-chatname
  */
 
-import { isTransientError } from './retry.js'
+import { isTransientError } from './retry.ts'
 
 /** Successful cache entry. */
 export interface ChatNameEntry {

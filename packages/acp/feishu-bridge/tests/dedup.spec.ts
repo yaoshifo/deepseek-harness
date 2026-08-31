@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isOldMessage, MessageDedup, StartTime } from '../src/dedup.js'
+import { isOldMessage, MessageDedup, StartTime } from '../src/dedup.ts'
 
 // Ported from cc-connect core/dedup_test.go (4 Go tests).
 describe('MessageDedup', () => {

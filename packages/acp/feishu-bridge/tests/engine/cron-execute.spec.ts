@@ -13,10 +13,10 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.js'
-import { Engine } from '../../src/engine/engine.js'
-import { createStubPlatform, newResultAgentSession, testQuestions } from '../stubs/engine-stubs.js'
-import type { Agent, Platform } from '../../src/core/types.js'
+import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.ts'
+import { Engine } from '../../src/engine/engine.ts'
+import { createStubPlatform, newResultAgentSession, testQuestions } from '../stubs/engine-stubs.ts'
+import type { Agent, Platform } from '../../src/core/types.ts'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'fb-cronexec-'))

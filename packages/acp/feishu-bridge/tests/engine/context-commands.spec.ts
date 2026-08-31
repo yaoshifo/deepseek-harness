@@ -11,11 +11,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
-import { registerContextCommands } from '../../src/engine/context-commands.js'
-import { CONTEXT_REFRESH_ARG_PREFIX } from '../../src/context/render.js'
-import type { ContextSnapshotValues } from '../../src/context/types.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
+import { registerContextCommands } from '../../src/engine/context-commands.ts'
+import { CONTEXT_REFRESH_ARG_PREFIX } from '../../src/context/render.ts'
+import type { ContextSnapshotValues } from '../../src/context/types.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -23,9 +23,9 @@ import {
   newControllableSession,
   newStubMessage,
   type StubCardPlatform,
-} from '../stubs/engine-stubs.js'
-import type { Agent, Message } from '../../src/core/types.js'
-import type { Card } from '../../src/card.js'
+} from '../stubs/engine-stubs.ts'
+import type { Agent, Message } from '../../src/core/types.ts'
+import type { Card } from '../../src/card.ts'
 
 /** Drain the voided async command replies before probing sent output. */
 const flush = async (): Promise<void> => {

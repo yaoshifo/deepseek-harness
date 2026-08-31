@@ -19,8 +19,8 @@ import AgentRegistry from '@deepseek-ai/dsh-agent'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { apply, type FeishuBridgeConfig } from '../src/index.js'
-import { Engine } from '../src/engine/engine.js'
+import { apply, type FeishuBridgeConfig } from '../src/index.ts'
+import { Engine } from '../src/engine/engine.ts'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'fb-shutdown-'))

@@ -24,17 +24,17 @@ import type { Message, PendingAsk, Platform } from '@deepseek-ai/dsh-feishu-brid
 import { asCardSender, asCardSenderWithUpdate, asReplyContextReconstructor } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { newCard } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Card } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { Msg } from '../i18n.js'
-import { chatroomState } from '../chatroom-state.js'
-import { chatroomConfig } from '../chatroom-config.js'
+import { Msg } from '../i18n.ts'
+import { chatroomState } from '../chatroom-state.ts'
+import { chatroomConfig } from '../chatroom-config.ts'
 import {
   appendChatroomLedger,
   chatroomLedgerDir,
   initChatroomLedger,
   updateChatroomLedgerSynthesis,
   updateChatroomSubproblems,
-} from './chatroom-ledger.js'
-import { listRoleNames, roleDir, roleExists } from './chatroom-roles.js'
+} from './chatroom-ledger.ts'
+import { listRoleNames, roleDir, roleExists } from './chatroom-roles.ts'
 import { cleanupOneChat } from '@deepseek-ai/dsh-feishu-bridge/exports'
 
 const execFileP = promisify(execFile)

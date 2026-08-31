@@ -8,10 +8,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { feishuWorkspaceSection } from '../../src/agent-dsh/adapter.js'
-import { createStubPlatform, newControllableSession } from '../stubs/engine-stubs.js'
-import type { Agent, AgentSession, FeishuWorkspaceInfo, SessionStartOptions } from '../../src/core/types.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { feishuWorkspaceSection } from '../../src/agent-dsh/adapter.ts'
+import { createStubPlatform, newControllableSession } from '../stubs/engine-stubs.ts'
+import type { Agent, AgentSession, FeishuWorkspaceInfo, SessionStartOptions } from '../../src/core/types.ts'
 
 function optionsOf(info: FeishuWorkspaceInfo | undefined): SessionStartOptions {
   const e = new Engine('test', envAgent(), [createStubPlatform()], '', 'en')

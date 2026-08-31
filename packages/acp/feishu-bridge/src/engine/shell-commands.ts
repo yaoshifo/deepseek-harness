@@ -14,10 +14,10 @@
  */
 
 import { spawn } from 'node:child_process'
-import type { Message, Platform } from '../core/types.js'
-import { Msg } from '../i18n/index.js'
-import { gatePrivilegedCommand } from './commands.js'
-import type { Engine } from './engine.js'
+import type { Message, Platform } from '../core/types.ts'
+import { Msg } from '../i18n/index.ts'
+import { gatePrivilegedCommand } from './commands.ts'
+import type { Engine } from './engine.ts'
 
 /** Go default: 60 * time.Second. */
 const defaultShellTimeoutMs = 60_000

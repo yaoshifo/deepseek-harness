@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { stripMarkdown } from '../src/markdown/markdown.js'
+import { stripMarkdown } from '../src/markdown/markdown.ts'
 
 // Ported from cc-connect core/markdown/markdown_test.go (TestStripMarkdown).
 describe('stripMarkdown', () => {

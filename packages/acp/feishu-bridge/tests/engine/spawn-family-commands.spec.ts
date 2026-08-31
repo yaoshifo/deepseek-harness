@@ -9,18 +9,18 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
-import { registerSpawnFamilyCommands } from '../../src/engine/spawn-family-commands.js'
-import { Msg } from '../../src/i18n/index.js'
-import type { Card } from '../../src/card.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
+import { registerSpawnFamilyCommands } from '../../src/engine/spawn-family-commands.ts'
+import { Msg } from '../../src/i18n/index.ts'
+import type { Card } from '../../src/card.ts'
 import {
   createStubAgent,
   createStubCardPlatformFull,
   newStubMessage,
   type StubCardPlatform,
-} from '../stubs/engine-stubs.js'
-import type { Message, Platform, SpawnedChatInfo } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import type { Message, Platform, SpawnedChatInfo } from '../../src/core/types.ts'
 
 /** Card platform with the tag/avatar/spawned-registry capabilities recorded. */
 interface FamilyStubPlatform extends StubCardPlatform {
@@ -35,8 +35,8 @@ interface FamilyStubPlatform extends StubCardPlatform {
   activeTagName(): string
   applyActiveTag(sessionKey: string): Promise<void>
   removeTagFromChat(sessionKey: string, tagName: string): Promise<void>
-  setChatPhase(sessionKey: string, phase: import('../../src/core/types.js').ChatPhase): Promise<void>
-  chatBasePhase(sessionKey: string): import('../../src/core/types.js').ChatBasePhase
+  setChatPhase(sessionKey: string, phase: import('../../src/core/types.ts').ChatPhase): Promise<void>
+  chatBasePhase(sessionKey: string): import('../../src/core/types.ts').ChatBasePhase
   markSpawnedChatActive(sessionKey: string): Promise<void>
   markSpawnedChatDone(sessionKey: string): Promise<void>
   isSpawnedChatActive(sessionKey: string): boolean
@@ -58,8 +58,8 @@ function newFamilyPlatform(): FamilyStubPlatform {
   p.activeTagName = () => '❤️'
   p.applyActiveTag = async (sessionKey: string) => { p.taggedKeys.push(sessionKey) }
   p.removeTagFromChat = async (sessionKey: string, tagName: string) => { p.removedTags.push({ sessionKey, tagName }) }
-  p.setChatPhase = async (sessionKey: string, phase: import('../../src/core/types.js').ChatPhase) => { p.phaseCalls.push({ sessionKey, phase }) }
-  p.chatBasePhase = (_sessionKey: string) => p.basePhase as import('../../src/core/types.js').ChatBasePhase
+  p.setChatPhase = async (sessionKey: string, phase: import('../../src/core/types.ts').ChatPhase) => { p.phaseCalls.push({ sessionKey, phase }) }
+  p.chatBasePhase = (_sessionKey: string) => p.basePhase as import('../../src/core/types.ts').ChatBasePhase
   p.markSpawnedChatActive = async (sessionKey: string) => { p.activeKeys.add(sessionKey); p.doneKeys.delete(sessionKey) }
   p.markSpawnedChatDone = async (sessionKey: string) => { p.activeKeys.delete(sessionKey); p.doneKeys.add(sessionKey) }
   p.isSpawnedChatActive = (sessionKey: string) => p.activeKeys.has(sessionKey)

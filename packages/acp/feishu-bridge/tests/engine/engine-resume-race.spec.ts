@@ -9,9 +9,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import type { Agent, AgentSession, Message } from '../../src/core/types.js'
-import { createStubAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.js'
+import { Engine } from '../../src/engine/engine.ts'
+import type { Agent, AgentSession, Message } from '../../src/core/types.ts'
+import { createStubAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.ts'
 
 function msg(overrides: Partial<Message> = {}): Message {
   return {

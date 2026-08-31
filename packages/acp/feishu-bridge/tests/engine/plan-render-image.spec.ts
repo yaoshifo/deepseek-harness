@@ -11,10 +11,10 @@ import { describe, expect, it } from 'vitest'
 import { writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { Engine } from '../../src/engine/engine.js'
-import { deliverRenderedImage, renderHTMLToPNG } from '../../src/engine/plan-render.js'
-import { createStubAgent, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.js'
-import { createCardMediaPlatform, tempDir, writeRenderTestScript } from './plan-render-helpers.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { deliverRenderedImage, renderHTMLToPNG } from '../../src/engine/plan-render.ts'
+import { createStubAgent, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.ts'
+import { createCardMediaPlatform, tempDir, writeRenderTestScript } from './plan-render-helpers.ts'
 
 function pngEngine(script: string): Engine {
   const e = new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')

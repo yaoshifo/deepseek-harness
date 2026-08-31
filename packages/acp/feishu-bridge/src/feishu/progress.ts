@@ -27,17 +27,17 @@ import {
   sanitizeMarkdownURLs,
   isTableRow,
   FenceTracker,
-} from './markdown.js'
-import { cardHeaderPadding, compactCardBody, type FeishuCardMap } from './card.js'
-import { noSpinner, spinnerKeyForItems, spinnerKeyForState, type SpinnerCfg } from './spinner.js'
+} from './markdown.ts'
+import { cardHeaderPadding, compactCardBody, type FeishuCardMap } from './card.ts'
+import { noSpinner, spinnerKeyForItems, spinnerKeyForState, type SpinnerCfg } from './spinner.ts'
 import {
   isTodoToolName,
   parseProgressCardPayload,
   parseTodoItems,
   type ProgressCardEntry,
   type ProgressCardPayload,
-} from '../progress.js'
-import type { ProgressStatus } from '../core/types.js'
+} from '../progress.ts'
+import type { ProgressStatus } from '../core/types.ts'
 
 /**
  * One-line markdown card body.

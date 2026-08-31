@@ -7,11 +7,11 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { FeishuBridgeService, bareBridgeDispatch, ctxBridgeDispatch } from '../src/bridge-service.js'
-import type { DshAgentAdapter } from '../src/agent-dsh/adapter.js'
-import { Engine } from '../src/engine/engine.js'
-import { unattendedSubtaskBypassesPermissions } from '../src/agent-dsh/adapter.js'
-import type { SessionStartOptions } from '../src/core/types.js'
+import { FeishuBridgeService, bareBridgeDispatch, ctxBridgeDispatch } from '../src/bridge-service.ts'
+import type { DshAgentAdapter } from '../src/agent-dsh/adapter.ts'
+import { Engine } from '../src/engine/engine.ts'
+import { unattendedSubtaskBypassesPermissions } from '../src/agent-dsh/adapter.ts'
+import type { SessionStartOptions } from '../src/core/types.ts'
 
 const contexts: Context[] = []
 afterEach(async () => {

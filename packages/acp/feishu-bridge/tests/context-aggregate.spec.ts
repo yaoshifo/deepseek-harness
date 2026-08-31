@@ -4,7 +4,7 @@ import {
   headlineOf,
   recentEvents,
   topToolSchemas,
-} from '../src/context/aggregate.js'
+} from '../src/context/aggregate.ts'
 import type {
   ContextHeadersValue,
   ContextPressureValue,
@@ -12,7 +12,7 @@ import type {
   HeaderRecordValue,
   RequestRecord,
   TimelineEvent,
-} from '../src/context/types.js'
+} from '../src/context/types.ts'
 
 // Ported from dsh-context tests/client/headline.spec.ts fixture shapes
 // (timeline()/req()), narrowed to this module's wire types; event and header

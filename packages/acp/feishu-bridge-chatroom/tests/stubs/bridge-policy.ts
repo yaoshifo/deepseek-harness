@@ -10,7 +10,7 @@
 import { afterEach } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { ctxBridgeDispatch, type BridgeDispatch } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { registerChatroomPolicyListeners } from '../../src/engine/chatroom-policy.js'
+import { registerChatroomPolicyListeners } from '../../src/engine/chatroom-policy.ts'
 
 const contexts: Context[] = []
 afterEach(async () => {

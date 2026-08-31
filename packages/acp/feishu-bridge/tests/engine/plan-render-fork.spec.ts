@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest'
 import { existsSync, writeFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import {
   deliverReplyHTML,
   getRenderStatus,
@@ -25,13 +25,13 @@ import {
   renderSessionPrompt,
   slugifyTitle,
   shouldRenderPlan,
-} from '../../src/engine/plan-render.js'
+} from '../../src/engine/plan-render.ts'
 import {
   createStubAgent,
   createStubMediaPlatform,
   createStubPlatform,
   newControllableSession,
-} from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
 import {
   createReconstructFilePlatform,
   createRenderAgent,
@@ -41,7 +41,7 @@ import {
   pollUntil,
   renderSkillBodyFixture,
   tempDir,
-} from './plan-render-helpers.js'
+} from './plan-render-helpers.ts'
 
 describe('RenderPlanToHTML', () => {
   it('NoCrosstalk: each fork receives exactly its own prompt', async () => {

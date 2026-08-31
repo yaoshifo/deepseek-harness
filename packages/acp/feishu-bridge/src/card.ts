@@ -9,7 +9,7 @@
  * @module dsh-feishu-bridge/card
  */
 
-import { sprintf } from './sprintf.js'
+import { sprintf } from './sprintf.ts'
 
 /**
  * Optional colored title bar of a card. Color: blue, green, red, orange,

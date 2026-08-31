@@ -7,11 +7,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { renderSubtaskPanelCard, type PanelI18n } from '../../src/engine/subtask-panel.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
-import type { Message, Platform } from '../../src/core/types.js'
-import { messages } from '../../src/i18n/messages.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { renderSubtaskPanelCard, type PanelI18n } from '../../src/engine/subtask-panel.ts'
+import { ProjectStateStore } from '../../src/engine/project-state.ts'
+import type { Message, Platform } from '../../src/core/types.ts'
+import { messages } from '../../src/i18n/messages.ts'
 import {
   createStubAgent,
   createStubCardPlatformFull,
@@ -19,7 +19,7 @@ import {
   newStubMessage,
   type RecordedCard,
   type StubCardPlatform,
-} from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
 
 /** Card platform that can also post and PATCH cards by handle. */
 interface PanelPlatform extends StubCardPlatform {

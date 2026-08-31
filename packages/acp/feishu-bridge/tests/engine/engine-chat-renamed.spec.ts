@@ -7,10 +7,10 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
-import type { Platform } from '../../src/core/types.js'
-import { StreamPreview } from '../../src/streaming.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.ts'
+import type { Platform } from '../../src/core/types.ts'
+import { StreamPreview } from '../../src/streaming.ts'
 
 /** A stub platform capturing the engine's chat-updated handler registrations. */
 interface NotifierPlatform extends StubPlatform {

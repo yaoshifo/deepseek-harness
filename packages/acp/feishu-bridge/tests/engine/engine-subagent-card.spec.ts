@@ -8,10 +8,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { createStubAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.js'
-import type { Platform, ProgressContent } from '../../src/core/types.js'
-import { previewText } from '../stubs/preview-content.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { createStubAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.ts'
+import type { Platform, ProgressContent } from '../../src/core/types.ts'
+import { previewText } from '../stubs/preview-content.ts'
 
 /** Platform with in-place preview support (PreviewStarter + MessageUpdater). */
 interface PreviewPlatform extends Platform {

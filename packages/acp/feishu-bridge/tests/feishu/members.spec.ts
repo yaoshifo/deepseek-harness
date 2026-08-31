@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { chatIDFromSessionKey, dedupMemberIDs } from '../../src/feishu/members.js'
-import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
-import { retryTiming } from '../../src/feishu/retry.js'
+import { chatIDFromSessionKey, dedupMemberIDs } from '../../src/feishu/members.ts'
+import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
+import { retryTiming } from '../../src/feishu/retry.ts'
 
 // Ported from cc-connect platform/feishu/feishu_members_test.go. The Go tests
 // drove an httptest server; here the page verb is a fake that reproduces the

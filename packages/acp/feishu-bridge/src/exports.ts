@@ -9,19 +9,19 @@
  * @module dsh-feishu-bridge/exports
  */
 
-export { FeishuBridgeService, bareBridgeDispatch, ctxBridgeDispatch } from './bridge-service.js'
-export type { BridgeDispatch, FeishuBridgeEventName, LiveProject } from './bridge-service.js'
-export type { SubtaskAgentRouter, SubtaskRoute } from './tools/subtask.js'
-export { Engine, InteractiveState } from './engine/engine.js'
-export type { CommandRegistration, CommandHelpGroup } from './engine/engine.js'
-export { emptyMessage, jumpButtonsMarkdown, parentJumpButtons } from './engine/engine.js'
-export { ProjectStateStore } from './engine/project-state.js'
-export { registerSessionCommands, cleanupOneChat } from './engine/commands.js'
-export { Session, SessionManager } from './engine/session.js'
-export { lookupMessage, registerMessages } from './i18n/index.js'
-export type { Language } from './i18n/index.js'
-export { declareToolFamily, toolTagForProgress } from './streaming.js'
-export type { ToolTagFamily } from './streaming.js'
+export { FeishuBridgeService, bareBridgeDispatch, ctxBridgeDispatch } from './bridge-service.ts'
+export type { BridgeDispatch, FeishuBridgeEventName, LiveProject } from './bridge-service.ts'
+export type { SubtaskAgentRouter, SubtaskRoute } from './tools/subtask.ts'
+export { Engine, InteractiveState } from './engine/engine.ts'
+export type { CommandRegistration, CommandHelpGroup } from './engine/engine.ts'
+export { emptyMessage, jumpButtonsMarkdown, parentJumpButtons } from './engine/engine.ts'
+export { ProjectStateStore } from './engine/project-state.ts'
+export { registerSessionCommands, cleanupOneChat } from './engine/commands.ts'
+export { Session, SessionManager } from './engine/session.ts'
+export { lookupMessage, registerMessages } from './i18n/index.ts'
+export type { Language } from './i18n/index.ts'
+export { declareToolFamily, toolTagForProgress } from './streaming.ts'
+export type { ToolTagFamily } from './streaming.ts'
 export type {
   Agent,
   AgentSession,
@@ -36,18 +36,18 @@ export type {
   ProviderSwitcher,
   SessionStartOptions,
   UserQuestion,
-} from './core/types.js'
+} from './core/types.ts'
 export {
   EventChannel,
   asCardSender,
   asCardSenderWithUpdate,
   asGroupRenamer,
   asReplyContextReconstructor,
-} from './core/types.js'
-export { newCard } from './card.js'
-export type { Card, CardHeader, CardButton } from './card.js'
-export { maxGroupNameRunes } from './engine/groupname.js'
-export { WorktreeMode } from './engine/worktree.js'
-export { atomicWriteFileSync } from './atomicwrite.js'
-export { featureStateCodecs, registerFeatureStateCodec } from './engine/feature-state.js'
-export type { FeatureStateCodec } from './engine/feature-state.js'
+} from './core/types.ts'
+export { newCard } from './card.ts'
+export type { Card, CardHeader, CardButton } from './card.ts'
+export { maxGroupNameRunes } from './engine/groupname.ts'
+export { WorktreeMode } from './engine/worktree.ts'
+export { atomicWriteFileSync } from './atomicwrite.ts'
+export { featureStateCodecs, registerFeatureStateCodec } from './engine/feature-state.ts'
+export type { FeatureStateCodec } from './engine/feature-state.ts'

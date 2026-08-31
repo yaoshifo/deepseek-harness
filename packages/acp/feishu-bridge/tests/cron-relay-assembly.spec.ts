@@ -18,9 +18,9 @@ import AgentRegistry from '@deepseek-ai/dsh-agent'
 import SessionStore from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import { apply, buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig, type SharedProcessServices } from '../src/index.js'
-import { CronJob, CronScheduler, CronStore, generateCronID } from '../src/engine/cron.js'
-import { RelayManager } from '../src/engine/relay.js'
+import { apply, buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig, type SharedProcessServices } from '../src/index.ts'
+import { CronJob, CronScheduler, CronStore, generateCronID } from '../src/engine/cron.ts'
+import { RelayManager } from '../src/engine/relay.ts'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'fb-cronasm-'))

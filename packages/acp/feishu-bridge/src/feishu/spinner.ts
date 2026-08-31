@@ -11,7 +11,7 @@
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { ProgressCardEntry } from '../progress.js'
+import type { ProgressCardEntry } from '../progress.ts'
 
 /** Uploaded spinner image keys; enabled is false when both uploads failed. */
 export interface SpinnerCfg {

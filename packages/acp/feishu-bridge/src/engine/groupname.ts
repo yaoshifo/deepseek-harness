@@ -8,8 +8,8 @@
  * @module dsh-feishu-bridge/groupname
  */
 
-import { lucideIconIDs } from '../lucide/icon.js'
-import type { HistoryEntry } from '../core/types.js'
+import { lucideIconIDs } from '../lucide/icon.ts'
+import type { HistoryEntry } from '../core/types.ts'
 
 /** Cap on generated/manual group names shared by every truncation helper (Go maxGroupNameRunes). */
 export const maxGroupNameRunes = 60

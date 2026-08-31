@@ -12,8 +12,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import { buildProjectAssembly, Config, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
-import { ProjectStateStore } from '../src/engine/project-state.js'
+import { buildProjectAssembly, Config, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.ts'
+import { ProjectStateStore } from '../src/engine/project-state.ts'
 
 /** Structural Cordis slice the adapter consumes; nothing else boots. */
 function stubContext(): Context {

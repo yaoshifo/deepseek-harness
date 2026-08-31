@@ -11,10 +11,10 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import type { Agent, AgentSession, Platform, RenderQuerier } from '../../src/core/types.js'
-import { errRenderStalled } from '../../src/engine/plan-render.js'
-import { createStubAgent, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import type { Agent, AgentSession, Platform, RenderQuerier } from '../../src/core/types.ts'
+import { errRenderStalled } from '../../src/engine/plan-render.ts'
+import { createStubAgent, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.ts'
 
 /** One recorded renderQuery invocation (Go renderAgentCall). */
 interface RenderAgentCall {

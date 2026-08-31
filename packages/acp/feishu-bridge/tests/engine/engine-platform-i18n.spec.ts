@@ -9,9 +9,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.js'
-import type { I18n } from '../../src/i18n/index.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { createStubAgent, createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.ts'
+import type { I18n } from '../../src/i18n/index.ts'
 
 /** A stub platform capturing the handle the engine hands over at mount. */
 interface HandlePlatform extends StubPlatform {

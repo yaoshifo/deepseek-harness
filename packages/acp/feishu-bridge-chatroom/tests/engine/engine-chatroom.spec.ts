@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.js'
+import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.ts'
 import {
   askHuman,
   askRole,
@@ -26,8 +26,8 @@ import {
   resolveChatroomHubKey,
   routePendingHumanReply,
   startChatroom,
-} from '../../src/engine/chatroom.js'
-import { roleDir } from '../../src/engine/chatroom-roles.js'
+} from '../../src/engine/chatroom.ts'
+import { roleDir } from '../../src/engine/chatroom-roles.ts'
 import {
   clearChatroomPickState,
   executeChatroomCardAction,
@@ -37,8 +37,8 @@ import {
   getChatroomTopicPickState,
   renderChatroomPickCardAndPush,
   renderChatroomTopicPickCardAndPush,
-} from '../../src/engine/chatroom-pick.js'
-import { Msg, type ChatroomMsgKey } from '../../src/i18n.js'
+} from '../../src/engine/chatroom-pick.ts'
+import { Msg, type ChatroomMsgKey } from '../../src/i18n.ts'
 import type { Message, Platform, SessionStartOptions } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import {
   clearCards,
@@ -50,11 +50,11 @@ import {
   newStubMessage,
   type ControllableAgentSession,
   type RecordedCard,
-} from '../stubs/engine-stubs.js'
-import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
-import type { ChatroomPickState } from '../../src/engine/chatroom-pick.js'
-import { chatroomState } from '../../src/chatroom-state.js'
-import { chatroomConfig } from '../../src/chatroom-config.js'
+} from '../stubs/engine-stubs.ts'
+import { chatroomPolicyFace } from '../stubs/bridge-policy.ts'
+import type { ChatroomPickState } from '../../src/engine/chatroom-pick.ts'
+import { chatroomState } from '../../src/chatroom-state.ts'
+import { chatroomConfig } from '../../src/chatroom-config.ts'
 import '../stubs/messages.js'
 
 /** One macrotask tick: flushes the microtask chain behind fire-and-forget sends. */
@@ -525,7 +525,7 @@ describe('EndChatroom teardown of non-role children', () => {
     const plain = e.sessions.getOrCreateActive('test:plain-child')
     plain.setParentSessionKey(hub)
 
-    const { endChatroom } = await import('../../src/engine/chatroom.js')
+    const { endChatroom } = await import('../../src/engine/chatroom.ts')
     const res = endChatroom(e, hub)
     expect(res.status).toBe('ended')
     await waitFor(() => p.doneKeys.length === 2, '2 roles cleaned')
@@ -960,7 +960,7 @@ describe('RenderChatroomPickCard', () => {
 
 describe('chatroomPickActive', () => {
   it('is true only during the picking phase', async () => {
-    const { chatroomPickActive } = await import('../../src/engine/chatroom-pick.js')
+    const { chatroomPickActive } = await import('../../src/engine/chatroom-pick.ts')
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
@@ -982,7 +982,7 @@ describe('chatroomPickActive', () => {
   })
 
   it('a plan-review ask inside the pick window auto-approves without a card', async () => {
-    const { chatroomPickActive } = await import('../../src/engine/chatroom-pick.js')
+    const { chatroomPickActive } = await import('../../src/engine/chatroom-pick.ts')
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
@@ -1195,7 +1195,7 @@ describe('chatroom ledger engine wiring', () => {
     const hub = 'test:hub:user-1'
 
     const roles = await startChatroom(e, hub, ['taleb'], '该不该 all-in')
-    const { chatroomLedgerDirFor, noteChatroom } = await import('../../src/engine/chatroom.js')
+    const { chatroomLedgerDirFor, noteChatroom } = await import('../../src/engine/chatroom.ts')
     const dir = chatroomLedgerDirFor(e, hub)
     expect(dir).toBeDefined()
     await waitFor(async () => false, 'noop', 1).catch(() => undefined)
@@ -1267,7 +1267,7 @@ describe('afterChatroomStarted recycles the hub agent process', () => {
     session.next = newControllableSession('moderator-wake')
     session.next.channel.push({ type: 'result', content: 'ok', done: true })
 
-    const { afterChatroomStarted } = await import('../../src/engine/chatroom-cmd.js')
+    const { afterChatroomStarted } = await import('../../src/engine/chatroom-cmd.ts')
     await afterChatroomStarted(e, p, hub, 'user-1', 'group', 'ctx', roles, 'topic')
 
     // 1. The stale hub agent process is recycled (its close ran).
@@ -1283,7 +1283,7 @@ describe('afterChatroomStarted recycles the hub agent process', () => {
 
 describe('topic-pick priming ledger history', () => {
   it('surfaces the ledger dir when a moderator dir is configured', async () => {
-    const { buildChatroomTopicPickPriming } = await import('../../src/engine/chatroom-priming.js')
+    const { buildChatroomTopicPickPriming } = await import('../../src/engine/chatroom-priming.ts')
     const s = buildChatroomTopicPickPriming(['taleb', 'munger'], '/roles', '/chatroom-home')
     expect(s).toContain('/chatroom-home/ledgers')
     expect(s).toContain('避免')
@@ -1291,7 +1291,7 @@ describe('topic-pick priming ledger history', () => {
   })
 
   it('omits the ledger hint when no moderator dir is configured', async () => {
-    const { buildChatroomTopicPickPriming } = await import('../../src/engine/chatroom-priming.js')
+    const { buildChatroomTopicPickPriming } = await import('../../src/engine/chatroom-priming.ts')
     const s = buildChatroomTopicPickPriming(['taleb'], '/roles', '')
     expect(s).not.toContain('ledgers')
   })

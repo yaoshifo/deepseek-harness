@@ -15,12 +15,12 @@
  * @module dsh-feishu-bridge/skills-mcp-commands
  */
 
-import { Msg } from '../i18n/index.js'
-import type { Message, Platform } from '../core/types.js'
-import { splitMcpToolName } from '../core/mcp-health.js'
-import type { Engine } from './engine.js'
+import { Msg } from '../i18n/index.ts'
+import type { Message, Platform } from '../core/types.ts'
+import { splitMcpToolName } from '../core/mcp-health.ts'
+import type { Engine } from './engine.ts'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
-import type { McpHealthServerConfig } from '../index.js'
+import type { McpHealthServerConfig } from '../index.ts'
 
 /** Maximum rendered description length per /skills entry (runes). */
 const SKILL_DESCRIPTION_MAX_RUNES = 80

@@ -12,7 +12,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import {
   appendFileRefs,
   appendImageRefs,
@@ -21,10 +21,10 @@ import {
   saveImagesToDir,
   spliceStagedAttachments,
   type StagedAttachment,
-} from '../../src/engine/attachments.js'
-import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.js'
-import { EventChannel } from '../../src/core/types.js'
-import type { Agent, AgentSession, Message } from '../../src/core/types.js'
+} from '../../src/engine/attachments.ts'
+import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.ts'
+import { EventChannel } from '../../src/core/types.ts'
+import type { Agent, AgentSession, Message } from '../../src/core/types.ts'
 
 function workDirAgent(workDir: string): Agent & { getWorkDir(): string; setWorkDir(d: string): void } {
   let dir = workDir

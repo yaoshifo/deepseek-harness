@@ -6,8 +6,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform } from '../../src/feishu/platform.js'
-import { TokenBucketRateLimiter } from '../../src/feishu/retry.js'
+import { FeishuPlatform } from '../../src/feishu/platform.ts'
+import { TokenBucketRateLimiter } from '../../src/feishu/retry.ts'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 

@@ -9,10 +9,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import type { QueuedMessage } from '../../src/engine/engine.js'
-import { createStubAgent, createStubPlatform, newQueuingSession } from '../stubs/engine-stubs.js'
-import type { Platform } from '../../src/core/types.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import type { QueuedMessage } from '../../src/engine/engine.ts'
+import { createStubAgent, createStubPlatform, newQueuingSession } from '../stubs/engine-stubs.ts'
+import type { Platform } from '../../src/core/types.ts'
 
 /** Queuing session whose every Send immediately emits a result event, so each
  * drained turn terminates instead of parking on the idle watchdog. */

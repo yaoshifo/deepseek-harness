@@ -23,15 +23,15 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import {
   detectAttachmentMimeType,
   maxAttachmentSize,
   registerSendTool,
-} from '../../src/tools/send.js'
-import type { SubtaskRoute } from '../../src/tools/subtask.js'
-import { createStubAgent, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.js'
+} from '../../src/tools/send.ts'
+import type { SubtaskRoute } from '../../src/tools/subtask.ts'
+import { createStubAgent, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.ts'
 
 const signal = new AbortController().signal
 const contexts: Context[] = []

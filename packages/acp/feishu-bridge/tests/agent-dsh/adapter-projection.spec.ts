@@ -7,8 +7,8 @@
  * @module dsh-feishu-bridge/tests-agent-dsh-adapter-projection
  */
 import { describe, expect, it } from 'vitest'
-import { DshAgentSession } from '../../src/agent-dsh/adapter.js'
-import type { Event } from '../../src/core/types.js'
+import { DshAgentSession } from '../../src/agent-dsh/adapter.ts'
+import type { Event } from '../../src/core/types.ts'
 
 function newSession(): DshAgentSession {
   return new DshAgentSession('test:u1', { agent: { id: 'a1' } } as never)

@@ -23,7 +23,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { McpHealthConfig, McpHealthServerConfig } from '../index.js'
+import type { McpHealthConfig, McpHealthServerConfig } from '../index.ts'
 
 /** Registered context name: `feishu-bridge:mcp-health`. */
 export const MCP_HEALTH_CONTEXT_NAME = 'feishu-bridge:mcp-health'

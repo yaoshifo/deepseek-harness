@@ -13,11 +13,11 @@
  * @module dsh-feishu-bridge/context-commands
  */
 
-import { asContextSnapshotReader, asProviderSwitcher, supportsCards } from '../core/types.js'
-import { renderContextCard, CONTEXT_REFRESH_ARG_PREFIX, type ContextCardArgs } from '../context/render.js'
-import type { Card } from '../card.js'
-import type { Message, Platform } from '../core/types.js'
-import type { Engine } from './engine.js'
+import { asContextSnapshotReader, asProviderSwitcher, supportsCards } from '../core/types.ts'
+import { renderContextCard, CONTEXT_REFRESH_ARG_PREFIX, type ContextCardArgs } from '../context/render.ts'
+import type { Card } from '../card.ts'
+import type { Message, Platform } from '../core/types.ts'
+import type { Engine } from './engine.ts'
 
 /**
  * Register /context and its card-refresh action on an engine through the

@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { DshAgentAdapter, type DshAgentLike, type DshContextLike } from '../../src/agent-dsh/adapter.js'
+import { DshAgentAdapter, type DshAgentLike, type DshContextLike } from '../../src/agent-dsh/adapter.ts'
 
 /** One recorded followup call against the fake subagents service. */
 interface RecordedFollowup {

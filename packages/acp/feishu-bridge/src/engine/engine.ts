@@ -15,11 +15,11 @@
  * @module dsh-feishu-bridge/engine
  */
 
-import { Msg, I18n, langEnglish } from '../i18n/index.js'
-import type { Language } from '../i18n/index.js'
+import { Msg, I18n, langEnglish } from '../i18n/index.ts'
+import type { Language } from '../i18n/index.ts'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
-import { AllowList } from '../feishu/allowlist.js'
+import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.ts'
+import { AllowList } from '../feishu/allowlist.ts'
 import type {
   Agent,
   AgentSession,
@@ -38,7 +38,7 @@ import type {
   Platform,
   SessionStartOptions,
   UserQuestion,
-} from '../core/types.js'
+} from '../core/types.ts'
 import {
   asAgentInterrupter,
   asCardSender,
@@ -72,9 +72,9 @@ import {
   ForkAtSessionPrefix,
   ForkSessionPrefix,
   type GroupSpawnOptions,
-} from '../core/types.js'
-import type { NativeChildRecord } from './project-state.js'
-import { shouldSurfaceUnsolicitedPermission as shouldSurfaceHelper } from './permission.js'
+} from '../core/types.ts'
+import type { NativeChildRecord } from './project-state.ts'
+import { shouldSurfaceUnsolicitedPermission as shouldSurfaceHelper } from './permission.ts'
 import {
   askAnswerDisplay,
   buildAskQuestionsCard,
@@ -85,8 +85,8 @@ import {
   parseQuestionAddress,
   resolveAskAnswer,
   type AskCardAnswered,
-} from './ask.js'
-import { CardButton, newCard, appendIntoLastCollapsible, type Card, type CardElement, type CardHeader } from '../card.js'
+} from './ask.ts'
+import { CardButton, newCard, appendIntoLastCollapsible, type Card, type CardElement, type CardHeader } from '../card.ts'
 import {
   appendReplyFooter,
   buildCompletionUsage as buildCompletionUsageFields,
@@ -103,11 +103,11 @@ import {
   type BuildCompletionUsageArgs,
   type ContextUsage,
   type Interval,
-} from './status-footer.js'
-import type { UsageProvider } from './usage.js'
-import { Session, SessionManager } from './session.js'
-import { pendingDirFor, saveFilesToDir, saveImagesToDir, spliceStagedAttachments, type StagedAttachment } from './attachments.js'
-import { childLabel, SubtaskGather } from './subtask.js'
+} from './status-footer.ts'
+import type { UsageProvider } from './usage.ts'
+import { Session, SessionManager } from './session.ts'
+import { pendingDirFor, saveFilesToDir, saveImagesToDir, spliceStagedAttachments, type StagedAttachment } from './attachments.ts'
+import { childLabel, SubtaskGather } from './subtask.ts'
 import {
   createWorktree,
   gitDiffShortstat,
@@ -121,7 +121,7 @@ import {
   worktreeMergedInto,
   worktreeRepoRoot,
   type WorktreeCreateInfo,
-} from './worktree.js'
+} from './worktree.ts'
 import {
   defaultGroupNamePrompt,
   fallbackGroupIcon,
@@ -132,32 +132,32 @@ import {
   sampleAcrossCategories,
   sanitizeGroupName,
   truncateGroupName,
-} from './groupname.js'
-import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.js'
-import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, ProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.js'
-import { isTodoToolName, parseTodoItems } from '../progress.js'
-import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.js'
-import { newAsyncSender, type AsyncSender } from '../async-sender.js'
-import { RateLimiter } from '../ratelimit.js'
+} from './groupname.ts'
+import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.ts'
+import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, ProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.ts'
+import { isTodoToolName, parseTodoItems } from '../progress.ts'
+import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.ts'
+import { newAsyncSender, type AsyncSender } from '../async-sender.ts'
+import { RateLimiter } from '../ratelimit.ts'
 import { readFileSync, statSync, existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
-import { asCompletionNotifier, asChatPhasePainter, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.js'
-import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
-import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.js'
-import { renderHelpGroupCard } from './misc-commands.js'
-import { executeDeleteModeAction, renderDeleteModeCard, renderListCardSafe, renderStatusCard } from './session-card.js'
-import { runBangShell } from './shell-commands.js'
-import { renderDirCardSafe } from './dir-card.js'
-import { executeCardAction } from './cron-commands.js'
-import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from './recall.js'
-import { renderSubtaskPanelCard } from './subtask-panel.js'
-import { triggerInsights } from './predict.js'
-import { defaultAutoCompressMinGapMs, estimateTokensWithPendingAssistant, maybeAutoResetSessionOnIdle, runCompress } from './session-misc.js'
-import type { RelayManager } from './relay.js'
-import { MonitorCore, isMonitorCommand } from './monitor.js'
+import { asCompletionNotifier, asChatPhasePainter, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
+import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.ts'
+import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.ts'
+import { renderHelpGroupCard } from './misc-commands.ts'
+import { executeDeleteModeAction, renderDeleteModeCard, renderListCardSafe, renderStatusCard } from './session-card.ts'
+import { runBangShell } from './shell-commands.ts'
+import { renderDirCardSafe } from './dir-card.ts'
+import { executeCardAction } from './cron-commands.ts'
+import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from './recall.ts'
+import { renderSubtaskPanelCard } from './subtask-panel.ts'
+import { triggerInsights } from './predict.ts'
+import { defaultAutoCompressMinGapMs, estimateTokensWithPendingAssistant, maybeAutoResetSessionOnIdle, runCompress } from './session-misc.ts'
+import type { RelayManager } from './relay.ts'
+import { MonitorCore, isMonitorCommand } from './monitor.ts'
 import {
   cancelRenders,
   captureReplyForExport,
@@ -174,8 +174,8 @@ import {
   type PlanCardHandle,
   type RenderCancelHandle,
   type RenderStatusEntry,
-} from './plan-render.js'
-import { savePlanFile } from './plan-file.js'
+} from './plan-render.ts'
+import { savePlanFile } from './plan-file.ts'
 
 export { MaxPlatformMessageLen, splitMessage, stripTrailingSilent }
 
@@ -409,7 +409,7 @@ export class InteractiveState {
   /** The turn's compact progress writer; an ask resolution swaps it with the preview. */
   progressWriter: CompactProgressWriter | undefined
   /** The delete-mode picker state machine (session-card.ts); undefined when idle. */
-  deleteMode: import('./session-card.js').DeleteModeState | undefined
+  deleteMode: import('./session-card.ts').DeleteModeState | undefined
   /** run_in_background tool calls whose completion turn has not arrived yet. */
   backgroundTasksPending: number = 0
   /** When the unsolicited reader began waiting past idle for pending background tasks. */
@@ -1164,9 +1164,9 @@ export class Engine {
   }
 
   /** Persisted per-project state (/dir overrides). */
-  projectState: import('./project-state.js').ProjectStateStore | undefined
+  projectState: import('./project-state.ts').ProjectStateStore | undefined
   /** Directory switch history (/dir). */
-  dirHistory: import('./dir-history.js').DirHistory | undefined
+  dirHistory: import('./dir-history.ts').DirHistory | undefined
   /** Compact hint commands shown on status footers and /hint (Go e.hints). */
   hints: string[] = []
   /** Hints whose input field value appends to the command (Go e.hintsWithParam). */
@@ -1174,7 +1174,7 @@ export class Engine {
   /** Always-visible hint commands (Go e.hintsCommon). */
   hintsCommon: string[] = []
   /** Click counts ordering the hint buttons; undefined keeps config order (Go e.hintUsage). */
-  hintUsage: import('./hint-usage.js').HintUsage | undefined
+  hintUsage: import('./hint-usage.ts').HintUsage | undefined
   /** Base working directory for /dir reset. */
   baseWorkDir: string = ''
   /** Comma-separated admin user IDs ('*' = all allowed users; '' = deny). */
@@ -2041,7 +2041,7 @@ export class Engine {
    * Register the persisted project-state store (/dir overrides).
    * @param store - Store that persists per-project state.
    */
-  setProjectStateStore(store: import('./project-state.js').ProjectStateStore): void {
+  setProjectStateStore(store: import('./project-state.ts').ProjectStateStore): void {
     this.projectState = store
   }
 
@@ -2049,7 +2049,7 @@ export class Engine {
    * Register the directory history used by /dir.
    * @param history - History that records directory switches.
    */
-  setDirHistory(history: import('./dir-history.js').DirHistory): void {
+  setDirHistory(history: import('./dir-history.ts').DirHistory): void {
     this.dirHistory = history
   }
 
@@ -2081,7 +2081,7 @@ export class Engine {
    * Register the shared hint click counts (Go SetHintUsage).
    * @param usage - Count store shared across engines.
    */
-  setHintUsage(usage: import('./hint-usage.js').HintUsage): void {
+  setHintUsage(usage: import('./hint-usage.ts').HintUsage): void {
     this.hintUsage = usage
   }
 

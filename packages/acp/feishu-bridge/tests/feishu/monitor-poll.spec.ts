@@ -11,12 +11,12 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, type FeishuApiClient, type FeishuListItem } from '../../src/feishu/platform.js'
+import { FeishuPlatform, type FeishuApiClient, type FeishuListItem } from '../../src/feishu/platform.ts'
 import {
   extractCardImageKeys,
   extractPollText,
   unwrapCardContent,
-} from '../../src/feishu/extract.js'
+} from '../../src/feishu/extract.ts'
 
 /** Escape s as a JSON string body (for nesting raw_card_content). */
 function jsonEscape(s: string): string {

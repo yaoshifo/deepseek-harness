@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -17,8 +17,8 @@ import {
   testMultiQuestions,
   testQuestions,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
-import type { Message } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import type { Message } from '../../src/core/types.ts'
 
 function newTestEngine(): Engine {
   return new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')

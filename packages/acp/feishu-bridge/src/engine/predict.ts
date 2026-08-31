@@ -8,12 +8,12 @@
  * @module dsh-feishu-bridge/predict
  */
 
-import { asCardSender, asForkQuerierWithProvider, type HistoryEntry, type Message, type Platform } from '../core/types.js'
-import { dangerBtn, newCard, primaryBtn } from '../card.js'
-import { Msg } from '../i18n/index.js'
-import type { Engine, InteractiveState } from './engine.js'
-import type { Session } from './session.js'
-import { buildCompactContext } from './groupname.js'
+import { asCardSender, asForkQuerierWithProvider, type HistoryEntry, type Message, type Platform } from '../core/types.ts'
+import { dangerBtn, newCard, primaryBtn } from '../card.ts'
+import { Msg } from '../i18n/index.ts'
+import type { Engine, InteractiveState } from './engine.ts'
+import type { Session } from './session.ts'
+import { buildCompactContext } from './groupname.ts'
 
 /** Default predict-next prompt (Go defaultPredictPrompt) used unless the config overrides it. */
 export const defaultPredictPrompt = `你在预测人类用户接下来会输入什么

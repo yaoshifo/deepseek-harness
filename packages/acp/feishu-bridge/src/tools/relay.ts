@@ -12,8 +12,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { parseSessionKeyParts } from '../engine/relay.js'
-import type { SubtaskRoute } from './subtask.js'
+import { parseSessionKeyParts } from '../engine/relay.ts'
+import type { SubtaskRoute } from './subtask.ts'
 
 /** Resolves the calling dsh agent to its engine session (shared with the subtask tool). */
 export type RelayAgentRouter = (agent: unknown) => SubtaskRoute | undefined

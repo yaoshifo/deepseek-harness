@@ -1,4 +1,4 @@
-import type { ProgressContent, ProgressStatus } from '../../src/core/types.js'
+import type { ProgressContent, ProgressStatus } from '../../src/core/types.ts'
 
 /**
  * Render recorded preview content to a string so assertions stay text-based:

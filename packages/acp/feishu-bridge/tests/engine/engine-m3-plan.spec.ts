@@ -9,16 +9,16 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
   createStubPlatform,
   newControllableSession,
-} from '../stubs/engine-stubs.js'
-import { statusOf } from '../stubs/preview-content.js'
-import { newStreamPreview, ProgressEntry } from '../../src/streaming.js'
-import type { Message, ProgressContent } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import { statusOf } from '../stubs/preview-content.ts'
+import { newStreamPreview, ProgressEntry } from '../../src/streaming.ts'
+import type { Message, ProgressContent } from '../../src/core/types.ts'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

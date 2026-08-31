@@ -9,15 +9,15 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import {
   createStubAgent,
   createStubPlatform,
   newControllableSession,
   testQuestions,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
-import type { ChatBasePhase, ChatPhase, Message } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import type { ChatBasePhase, ChatPhase, Message } from '../../src/core/types.ts'
 
 interface PhaseCall {
   sessionKey: string

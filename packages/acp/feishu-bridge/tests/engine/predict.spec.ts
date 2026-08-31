@@ -7,8 +7,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import {
   buildSummaryContext,
   defaultPredictPrompt,
@@ -17,14 +17,14 @@ import {
   generateTurnSummary,
   registerPredictCommands,
   sendInsightCard,
-} from '../../src/engine/predict.js'
-import type { Agent, ForkQuerierWithProvider, Message, RecentTurnsReader } from '../../src/core/types.js'
+} from '../../src/engine/predict.ts'
+import type { Agent, ForkQuerierWithProvider, Message, RecentTurnsReader } from '../../src/core/types.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
   newControllableSession,
   type StubCardPlatform,
-} from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
 
 function msg(overrides: Partial<Message> = {}): Message {
   return {

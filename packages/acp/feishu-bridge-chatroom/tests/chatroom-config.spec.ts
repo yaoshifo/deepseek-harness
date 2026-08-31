@@ -11,9 +11,9 @@
 import { homedir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { applyChatroomEngineConfig, chatroomConfig, type ChatroomProjectConfig } from '../src/chatroom-config.js'
-import { chatroomResearchWorkspace } from '../src/engine/chatroom.js'
-import { createStubAgent } from './stubs/engine-stubs.js'
+import { applyChatroomEngineConfig, chatroomConfig, type ChatroomProjectConfig } from '../src/chatroom-config.ts'
+import { chatroomResearchWorkspace } from '../src/engine/chatroom.ts'
+import { createStubAgent } from './stubs/engine-stubs.ts'
 
 function newEngine(): Engine {
   return new Engine('config-test', createStubAgent(), [], '', 'en')

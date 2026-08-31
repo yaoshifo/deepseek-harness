@@ -8,8 +8,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.js'
-import type { Event } from '../../src/core/types.js'
+import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.ts'
+import type { Event } from '../../src/core/types.ts'
 
 /** A session reference emitted through `session/event`, header included. */
 interface SessionRef {

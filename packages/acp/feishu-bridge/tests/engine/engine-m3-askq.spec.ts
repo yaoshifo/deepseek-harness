@@ -12,7 +12,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -20,8 +20,8 @@ import {
   createStubPlatform,
   testMultiQuestions,
   testQuestions,
-} from '../stubs/engine-stubs.js'
-import type { Message, UserQuestion } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import type { Message, UserQuestion } from '../../src/core/types.ts'
 
 function newTestEngine(): Engine {
   return new Engine('test', createStubAgent(), [createStubPlatform()], '', 'en')

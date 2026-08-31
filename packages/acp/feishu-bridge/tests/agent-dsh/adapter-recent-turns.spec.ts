@@ -9,8 +9,8 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { foldRecentTurns } from '../../src/agent-dsh/adapter.js'
-import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentLike } from '../../src/agent-dsh/adapter.js'
+import { foldRecentTurns } from '../../src/agent-dsh/adapter.ts'
+import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentLike } from '../../src/agent-dsh/adapter.ts'
 
 
 let messageSeq = 0

@@ -13,9 +13,9 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
+import { chatroomPolicyFace } from '../stubs/bridge-policy.ts'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.js'
+import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.ts'
 import {
   ChatroomGather,
   askHuman,
@@ -23,24 +23,24 @@ import {
   maybeAutoRelayRole,
   buildGatherTimeoutWake,
   routePendingHumanReply,
-} from '../../src/engine/chatroom.js'
-import { chatroomResearchManualAskTimeout, uvHooks } from '../../src/engine/chatroom.js'
+} from '../../src/engine/chatroom.ts'
+import { chatroomResearchManualAskTimeout, uvHooks } from '../../src/engine/chatroom.ts'
 import {
   buildChatroomModeratorPriming,
   buildChatroomResearchModeratorPriming,
-} from '../../src/engine/chatroom-priming.js'
-import type { ChatroomRole } from '../../src/engine/chatroom.js'
+} from '../../src/engine/chatroom-priming.ts'
+import type { ChatroomRole } from '../../src/engine/chatroom.ts'
 import {
   clearCards,
   createStubAgent,
   createStubCardPlatformFull,
   createStubChatroomSpawner,
   createStubProgressCardPlatform,
-} from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
 import type { AskDecision, PendingAsk, Platform, UserQuestion } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import type { RecordedCard } from '../stubs/engine-stubs.js'
-import { chatroomState } from '../../src/chatroom-state.js'
-import { chatroomConfig } from '../../src/chatroom-config.js'
+import type { RecordedCard } from '../stubs/engine-stubs.ts'
+import { chatroomState } from '../../src/chatroom-state.ts'
+import { chatroomConfig } from '../../src/chatroom-config.ts'
 import '../stubs/messages.js'
 
 async function settle(): Promise<void> {
@@ -211,7 +211,7 @@ describe('GatherRoles', () => {
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     clearCards(p)
     await settle()
@@ -243,7 +243,7 @@ describe('GatherRoles', () => {
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     chatroomConfig(e).applySection({ researchTimeoutSec: Math.round(90 * 60 * 1000 / 1000) })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     clearCards(p)
     await settle()
@@ -273,7 +273,7 @@ describe('GatherRoles', () => {
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     chatroomConfig(e).applySection({ maxResearchRounds: 2 })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     const hubSess = e.sessions.getOrCreateActive(hub)
     chatroomState(hubSess).chatroomResearch = true
@@ -303,7 +303,7 @@ describe('GatherRoles', () => {
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     chatroomConfig(e).applySection({ maxResearchRounds: 2 })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     const hubSess = e.sessions.getOrCreateActive(hub)
     chatroomState(hubSess).chatroomResearch = true
@@ -336,7 +336,7 @@ describe('GatherRoles', () => {
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
 
     gatherRoles(e, hub, '第一轮问题', false)
@@ -359,7 +359,7 @@ describe('gather fan-in via maybeAutoRelayRole', () => {
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     const g = newGather('需要追问吗？', ['taleb', 'munger'])
     chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = g
@@ -477,7 +477,7 @@ describe('AskHuman vs gather', () => {
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = newGather('q', ['taleb'])
     await expect(askHuman(e, roles[0]!.sessionKey, '预算多少？')).rejects.toThrow()
@@ -488,7 +488,7 @@ describe('AskHuman vs gather', () => {
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     await expect(askHuman(e, roles[0]!.sessionKey, '预算多少？')).resolves.toBeUndefined()
   })
@@ -500,7 +500,7 @@ describe('GatherRoles vs pending human question', () => {
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     const hubSess = e.sessions.getOrCreateActive(hub)
     chatroomState(hubSess).pendingHumanQuestionRole = 'taleb'
@@ -522,7 +522,7 @@ describe('GatherRoles vs pending human question', () => {
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     await startChatroom(e, hub, ['taleb'], 'topic')
     const hubSess = e.sessions.getOrCreateActive(hub)
     chatroomState(hubSess).pendingHumanQuestionRole = 'taleb'
@@ -561,7 +561,7 @@ describe('gather broadcast failure', () => {
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     const wake = vi.spyOn(e, 'deliverMachineMessage')
 
@@ -591,7 +591,7 @@ describe('gather broadcast failure', () => {
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     // Both spawned roles hit the failing ctx path (role-1 via the shared
     // stub counter collides only after two spawns, so fail both explicitly).
     const orig = p.reconstructReplyCtx.bind(p)
@@ -645,7 +645,7 @@ describe('research progress card', () => {
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
     chatroomState(e.sessions.getOrCreateActive(hub)).chatroomResearch = true
     clearCards(p)
@@ -762,7 +762,7 @@ describe('armResearchManualAskTimeout', () => {
       multiSelect: false,
     }])
 
-    const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.js')
+    const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.ts')
     armResearchManualAskTimeout(e, p, hub, 'ctx', pending)
 
     await waitFor(() => settled.length > 0, 'auto-answer fired')
@@ -784,7 +784,7 @@ describe('armResearchManualAskTimeout', () => {
     ])
     pending.answers.set(0, { selected: ['SQLite'] })
 
-    const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.js')
+    const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.ts')
     armResearchManualAskTimeout(e, p, hub, 'ctx', pending)
 
     await waitFor(() => settled.length > 0, 'auto-answer fired')
@@ -805,7 +805,7 @@ describe('armResearchManualAskTimeout', () => {
     const { pending, settled } = parkedAsk(e, p, hub, [{
       id: 'q', question: '继续吗', header: '', options: [{ label: '继续', description: '' }], multiSelect: false,
     }])
-    const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.js')
+    const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.ts')
     armResearchManualAskTimeout(e, p, hub, 'ctx', pending)
     await new Promise((resolve) => { setTimeout(resolve, 150) })
     expect(settled).toHaveLength(0)
@@ -821,7 +821,7 @@ describe('armResearchManualAskTimeout', () => {
       id: 'q', question: '继续吗', header: '', options: [{ label: '继续', description: '' }], multiSelect: false,
     }])
 
-    const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.js')
+    const { armResearchManualAskTimeout } = await import('../../src/engine/chatroom.ts')
     armResearchManualAskTimeout(e, p, hub, 'ctx', pending)
     // User answered before the timer fired: mirror the engine's settle, which
     // clears the parked ask and the timer.

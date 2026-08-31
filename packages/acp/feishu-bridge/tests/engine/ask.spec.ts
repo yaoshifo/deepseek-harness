@@ -14,9 +14,9 @@ import {
   parseAskqSelection,
   parsePermissionVerdict,
   resolveAskAnswer,
-} from '../../src/engine/ask.js'
-import type { AskCardI18n } from '../../src/engine/ask.js'
-import type { UserQuestion } from '../../src/core/types.js'
+} from '../../src/engine/ask.ts'
+import type { AskCardI18n } from '../../src/engine/ask.ts'
+import type { UserQuestion } from '../../src/core/types.ts'
 
 /** Deterministic en-face stub: the message key itself is the asserted copy. */
 function enAskCardI18n(): AskCardI18n {

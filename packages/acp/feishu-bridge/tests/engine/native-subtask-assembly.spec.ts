@@ -24,11 +24,11 @@ import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { MockAdapter, maxTokensResponse, textResponse } from '../../../../core/agent-loop/tests/mock-adapter.ts'
-import { buildProjectAssembly, registerNativeSettlementListener, type FeishuBridgeConfig, type ProjectConfig } from '../../src/index.js'
-import { InteractiveState } from '../../src/engine/engine.js'
-import { WorktreeMode } from '../../src/engine/worktree.js'
-import { createStubCardPlatformFull, newStubMessage, type RecordedCard } from '../stubs/engine-stubs.js'
-import type { ProgressContent, TextPreviewContent } from '../../src/core/types.js'
+import { buildProjectAssembly, registerNativeSettlementListener, type FeishuBridgeConfig, type ProjectConfig } from '../../src/index.ts'
+import { InteractiveState } from '../../src/engine/engine.ts'
+import { WorktreeMode } from '../../src/engine/worktree.ts'
+import { createStubCardPlatformFull, newStubMessage, type RecordedCard } from '../stubs/engine-stubs.ts'
+import type { ProgressContent, TextPreviewContent } from '../../src/core/types.ts'
 
 const contexts: Context[] = []
 const roots: string[] = []

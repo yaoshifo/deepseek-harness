@@ -16,8 +16,8 @@ import { readFile, stat } from 'node:fs/promises'
 import { basename, extname, isAbsolute, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { FileAttachment, ImageAttachment } from '../core/types.js'
-import type { SubtaskRoute } from './subtask.js'
+import type { FileAttachment, ImageAttachment } from '../core/types.ts'
+import type { SubtaskRoute } from './subtask.ts'
 
 /** Resolves the calling dsh agent to its engine session (shared with the subtask tool). */
 export type SendAgentRouter = (agent: unknown) => SubtaskRoute | undefined

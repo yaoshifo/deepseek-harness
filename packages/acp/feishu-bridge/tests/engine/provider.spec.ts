@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { getProviderModel } from '../../src/engine/provider.js'
+import { getProviderModel } from '../../src/engine/provider.ts'
 
 describe('getProviderModel', () => {
   const providers = [

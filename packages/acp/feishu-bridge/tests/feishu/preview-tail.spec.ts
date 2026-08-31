@@ -9,9 +9,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, FeishuPreviewHandle, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.js'
-import { Card } from '../../src/card.js'
-import type { ProgressContent } from '../../src/core/types.js'
+import { FeishuPlatform, FeishuPreviewHandle, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.ts'
+import { Card } from '../../src/card.ts'
+import type { ProgressContent } from '../../src/core/types.ts'
 
 function apiClient(): FeishuApiClient {
   return {

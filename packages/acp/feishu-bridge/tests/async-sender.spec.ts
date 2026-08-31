@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { newAsyncSender } from '../src/async-sender.js'
+import { newAsyncSender } from '../src/async-sender.ts'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 

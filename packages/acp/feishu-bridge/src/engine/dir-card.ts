@@ -6,9 +6,9 @@
  * @module dsh-feishu-bridge/dir-card
  */
 
-import { Msg } from '../i18n/index.js'
-import { defaultBtn, newCard, type Card, type CardButton } from '../card.js'
-import type { Engine } from './engine.js'
+import { Msg } from '../i18n/index.ts'
+import { defaultBtn, newCard, type Card, type CardButton } from '../card.ts'
+import type { Engine } from './engine.ts'
 
 /** Max directory history rows per card page (Go dirCardPageSize). */
 const dirCardPageSize = 5

@@ -9,9 +9,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, type FeishuApiClient, type FeishuQuotedMessage, type FeishuReceiveEvent } from '../../src/feishu/platform.js'
-import { formatReplyChain, type ChainMessage } from '../../src/feishu/platform.js'
-import type { Message } from '../../src/core/types.js'
+import { FeishuPlatform, type FeishuApiClient, type FeishuQuotedMessage, type FeishuReceiveEvent } from '../../src/feishu/platform.ts'
+import { formatReplyChain, type ChainMessage } from '../../src/feishu/platform.ts'
+import type { Message } from '../../src/core/types.ts'
 
 function quoted(overrides: Partial<FeishuQuotedMessage> & { messageID?: string }): FeishuQuotedMessage {
   return {

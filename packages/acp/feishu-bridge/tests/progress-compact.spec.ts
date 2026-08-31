@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { createStubPlatform } from './stubs/engine-stubs.js'
+import { createStubPlatform } from './stubs/engine-stubs.ts'
 import {
   ProgressCardPayloadPrefix,
   buildProgressCardPayload,
@@ -15,12 +15,12 @@ import {
   parseTodoItems,
   progressStyleCard,
   progressStyleCompact,
-} from '../src/progress.js'
+} from '../src/progress.ts'
 import {
   newCompactProgressWriter,
   suppressStandaloneToolResultEvent,
-} from '../src/progress-compact.js'
-import type { Platform, ProgressContent } from '../src/core/types.js'
+} from '../src/progress-compact.ts'
+import type { Platform, ProgressContent } from '../src/core/types.ts'
 
 function platformWithStyle(style: string): Platform & { progressStyle: () => string } {
   return Object.assign(createStubPlatform('test'), { progressStyle: () => style })

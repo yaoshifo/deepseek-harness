@@ -16,17 +16,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
-import { completePendingReload, reloadSpawnArgv, registerReloadCommands, resolveReloadScript } from '../../src/engine/reload-commands.js'
-import { Msg } from '../../src/i18n/index.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
+import { completePendingReload, reloadSpawnArgv, registerReloadCommands, resolveReloadScript } from '../../src/engine/reload-commands.ts'
+import { Msg } from '../../src/i18n/index.ts'
 import {
   createStubAgent,
   createStubPlatform,
   newStubMessage,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
-import type { Agent, Message } from '../../src/core/types.js'
+} from '../stubs/engine-stubs.ts'
+import type { Agent, Message } from '../../src/core/types.ts'
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>()

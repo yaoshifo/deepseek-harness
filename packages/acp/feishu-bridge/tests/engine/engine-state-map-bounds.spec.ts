@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { InteractiveState } from '../../src/engine/engine.js'
+import { InteractiveState } from '../../src/engine/engine.ts'
 
 const capacity = 128
 

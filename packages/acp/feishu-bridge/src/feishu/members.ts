@@ -8,7 +8,7 @@
  * @module dsh-feishu-bridge/feishu-members
  */
 
-import { extractFeishuChatID } from './spawn.js'
+import { extractFeishuChatID } from './spawn.ts'
 
 export { extractFeishuChatID as chatIDFromSessionKey }
 

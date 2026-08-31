@@ -10,8 +10,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
 import {
   executeDeleteModeAction,
   getOrCreateDeleteModeState,
@@ -19,12 +19,12 @@ import {
   renderListCard,
   renderListCardSafe,
   renderStatusCard,
-} from '../../src/engine/session-card.js'
-import { renderHelpGroupCard } from '../../src/engine/misc-commands.js'
-import { createStubAgent, createStubCardPlatform, newStubMessage, type StubCardPlatform } from '../stubs/engine-stubs.js'
-import { Msg } from '../../src/i18n/index.js'
-import type { Agent, AgentSessionInfo, Message, Platform } from '../../src/core/types.js'
-import type { Card, CardListItem, CardActions } from '../../src/card.js'
+} from '../../src/engine/session-card.ts'
+import { renderHelpGroupCard } from '../../src/engine/misc-commands.ts'
+import { createStubAgent, createStubCardPlatform, newStubMessage, type StubCardPlatform } from '../stubs/engine-stubs.ts'
+import { Msg } from '../../src/i18n/index.ts'
+import type { Agent, AgentSessionInfo, Message, Platform } from '../../src/core/types.ts'
+import type { Card, CardListItem, CardActions } from '../../src/card.ts'
 
 const SK = 'test:ch1:u1'
 

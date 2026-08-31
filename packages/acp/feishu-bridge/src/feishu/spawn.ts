@@ -11,8 +11,8 @@
 
 import { readFile } from 'node:fs/promises'
 import { basename } from 'node:path'
-import { atomicWriteFile } from '../atomicwrite.js'
-import type { ChatBasePhase, ChatPhase, GroupSpawnOptions, SpawnedChatInfo } from '../core/types.js'
+import { atomicWriteFile } from '../atomicwrite.ts'
+import type { ChatBasePhase, ChatPhase, GroupSpawnOptions, SpawnedChatInfo } from '../core/types.ts'
 
 export type { GroupSpawnOptions, SpawnedChatInfo }
 

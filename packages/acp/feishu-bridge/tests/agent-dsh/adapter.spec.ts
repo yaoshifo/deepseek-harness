@@ -5,10 +5,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
-import { ContinueSession, type AskDecision, type AskDelegate, type AskRequest, type Event } from '../../src/core/types.js'
-import { ctxBridgeDispatch, type BridgeDispatch } from '../../src/bridge-service.js'
-import type { SessionStartOptions } from '../../src/core/types.js'
-import { DshAgentAdapter, DshAgentSession, unattendedSubtaskBypassesPermissions, stripModelAlias, toolBackgroundOf, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshAgentsRegistryLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.js'
+import { ContinueSession, type AskDecision, type AskDelegate, type AskRequest, type Event } from '../../src/core/types.ts'
+import { ctxBridgeDispatch, type BridgeDispatch } from '../../src/bridge-service.ts'
+import type { SessionStartOptions } from '../../src/core/types.ts'
+import { DshAgentAdapter, DshAgentSession, unattendedSubtaskBypassesPermissions, stripModelAlias, toolBackgroundOf, type DshAdapterConfig, type DshAgentHandleLike, type DshAgentLike, type DshAgentsRegistryLike, type DshCreateOptionsLike, type DshContextLike, type QuestionRouting } from '../../src/agent-dsh/adapter.ts'
 
 // DshAgentAdapter unit tests: ctx.agents create/resume, followup/cancel call
 // sequences, provider routing, [1m] stripping, dispose+resume provider

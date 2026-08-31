@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, collectDownloadStream, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.js'
-import { detectFeishuFileType, detectMimeType, maxFeishuDownloadBytes } from '../../src/feishu/media.js'
-import { I18n, langEnglish } from '../../src/i18n/index.js'
-import type { Message } from '../../src/core/types.js'
+import { FeishuPlatform, collectDownloadStream, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.ts'
+import { detectFeishuFileType, detectMimeType, maxFeishuDownloadBytes } from '../../src/feishu/media.ts'
+import { I18n, langEnglish } from '../../src/i18n/index.ts'
+import type { Message } from '../../src/core/types.ts'
 
 // Ported from cc-connect platform/feishu/feishu_media_test.go: a failed
 // attachment download must notify the user via a direct reply (never through

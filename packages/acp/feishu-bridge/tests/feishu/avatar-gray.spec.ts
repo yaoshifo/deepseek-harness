@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import sharp from 'sharp'
-import { grayscaleAvatar } from '../../src/feishu/avatar.js'
-import { detectMimeType } from '../../src/feishu/media.js'
+import { grayscaleAvatar } from '../../src/feishu/avatar.ts'
+import { detectMimeType } from '../../src/feishu/media.ts'
 
 // Ported from cc-connect platform/feishu/feishu_avatar_gray_test.go. Go asserted
 // integer sRGB luma values (76/150/29); sharp applies gamma-corrected luma

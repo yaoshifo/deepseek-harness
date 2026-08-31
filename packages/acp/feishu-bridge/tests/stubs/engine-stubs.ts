@@ -18,8 +18,8 @@ import type {
   Platform,
   ProviderSwitcher,
   UserQuestion,
-} from '../../src/core/types.js'
-import { EventChannel as EventChannelImpl } from '../../src/core/types.js'
+} from '../../src/core/types.ts'
+import { EventChannel as EventChannelImpl } from '../../src/core/types.ts'
 
 /** Go stubAgent: empty agent, StartSession returns a stubAgentSession. */
 export type StubAgent = Agent

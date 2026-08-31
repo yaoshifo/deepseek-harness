@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { RateLimiter } from '../src/ratelimit.js'
+import { RateLimiter } from '../src/ratelimit.ts'
 
 // Ported from cc-connect core/ratelimit_test.go (8 Go tests).
 //

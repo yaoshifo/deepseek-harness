@@ -23,8 +23,8 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { Engine } from '../../src/engine/engine.js'
-import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.ts'
 import {
   buildListMessagesURL,
   checkLarkCLIVersionAgainstMin,
@@ -43,7 +43,7 @@ import {
   runLarkInvocation,
   type LarkChildResult,
   type LarkRunnerDeps,
-} from '../../src/tools/lark.js'
+} from '../../src/tools/lark.ts'
 
 const creds = { appId: 'cli_app', appSecret: 'sec' }
 

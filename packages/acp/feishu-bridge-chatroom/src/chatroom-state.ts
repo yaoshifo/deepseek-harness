@@ -10,7 +10,7 @@
  */
 
 import type { FeatureStateCodec, Session } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { ChatroomEndBarrier, ChatroomGather, type EndBarrierSnapshot, type GatherBarrierSnapshot } from './engine/chatroom.js'
+import { ChatroomEndBarrier, ChatroomGather, type EndBarrierSnapshot, type GatherBarrierSnapshot } from './engine/chatroom.ts'
 
 /** The featureState key of the chatroom section. */
 export const chatroomFeatureStateKey = 'chatroom'

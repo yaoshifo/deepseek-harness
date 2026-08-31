@@ -10,13 +10,13 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { FeishuPlatform, type CardActionTriggerEvent, type FeishuApiClient } from '../../src/feishu/platform.js'
-import { asI18nHandleReceiver, type Platform } from '../../src/core/types.js'
-import { I18n, langEnglish } from '../../src/i18n/index.js'
-import { newCard } from '../../src/card.js'
-import { hintButtonName } from '../../src/engine/hints-panel.js'
-import { buildAskQuestionsCard } from '../../src/engine/ask.js'
-import type { Message, UserQuestion } from '../../src/core/types.js'
+import { FeishuPlatform, type CardActionTriggerEvent, type FeishuApiClient } from '../../src/feishu/platform.ts'
+import { asI18nHandleReceiver, type Platform } from '../../src/core/types.ts'
+import { I18n, langEnglish } from '../../src/i18n/index.ts'
+import { newCard } from '../../src/card.ts'
+import { hintButtonName } from '../../src/engine/hints-panel.ts'
+import { buildAskQuestionsCard } from '../../src/engine/ask.ts'
+import type { Message, UserQuestion } from '../../src/core/types.ts'
 
 let counter = 0
 

@@ -6,8 +6,8 @@ import {
   TREND_LEGEND_LABELS,
   compositionBarSpec,
   trendChartSpec,
-} from '../src/context/chartspec.js'
-import type { SixBuckets, TurnBucket } from '../src/context/types.js'
+} from '../src/context/chartspec.ts'
+import type { SixBuckets, TurnBucket } from '../src/context/types.ts'
 
 // Structure assertions over the VChart specs the Feishu card chart
 // component consumes. Shapes follow the live-verified forms: the API server

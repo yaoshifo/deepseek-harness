@@ -12,13 +12,13 @@
 import { readFileSync } from 'node:fs'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
-import { Msg } from '../i18n/index.js'
-import type { AgentSessionInfo, Message, Platform } from '../core/types.js'
-import { asCardSender, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, asStagedForkSeedForgetter, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.js'
-import { newCard } from '../card.js'
-import type { Engine } from './engine.js'
-import type { SessionManager } from './session.js'
-import { childLabel } from './subtask.js'
+import { Msg } from '../i18n/index.ts'
+import type { AgentSessionInfo, Message, Platform } from '../core/types.ts'
+import { asCardSender, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, asStagedForkSeedForgetter, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.ts'
+import { newCard } from '../card.ts'
+import type { Engine } from './engine.ts'
+import type { SessionManager } from './session.ts'
+import { childLabel } from './subtask.ts'
 import {
   createWorktree,
   resolveWorktreeUse,
@@ -27,12 +27,12 @@ import {
   worktreeGone,
   worktreeRepoRoot,
   type WorktreeDirtyDetail,
-} from './worktree.js'
-import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName } from './groupname.js'
-import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.js'
-import { renderDirCardSafe } from './dir-card.js'
-import { renderListCardSafe, renderStatusCard } from './session-card.js'
-import { extractChannelID } from './engine.js'
+} from './worktree.ts'
+import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName } from './groupname.ts'
+import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.ts'
+import { renderDirCardSafe } from './dir-card.ts'
+import { renderListCardSafe, renderStatusCard } from './session-card.ts'
+import { extractChannelID } from './engine.ts'
 
 const listPageSize = 5
 

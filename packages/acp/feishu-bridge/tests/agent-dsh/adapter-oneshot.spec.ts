@@ -9,8 +9,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { asForkQuerierWithProvider, asProviderSwitcher } from '../../src/core/types.js'
-import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.js'
+import { asForkQuerierWithProvider, asProviderSwitcher } from '../../src/core/types.ts'
+import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.ts'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
 /** One scripted turn reply. */
@@ -392,7 +392,7 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
 
 describe('renderReasoningLevel', () => {
   it('maps claudecode-style effort aliases onto dsh reasoning levels', async () => {
-    const { renderReasoningLevel } = await import('../../src/agent-dsh/adapter.js')
+    const { renderReasoningLevel } = await import('../../src/agent-dsh/adapter.ts')
     expect(renderReasoningLevel('')).toBe('low')
     expect(renderReasoningLevel('low')).toBe('low')
     expect(renderReasoningLevel('minimal')).toBe('low')

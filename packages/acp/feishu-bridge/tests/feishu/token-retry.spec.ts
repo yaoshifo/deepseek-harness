@@ -10,8 +10,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, newCachedTenantTokenMinter, type FeishuApiClient } from '../../src/feishu/platform.js'
-import { isTenantAccessTokenInvalid } from '../../src/feishu/retry.js'
+import { FeishuPlatform, newCachedTenantTokenMinter, type FeishuApiClient } from '../../src/feishu/platform.ts'
+import { isTenantAccessTokenInvalid } from '../../src/feishu/retry.ts'
 
 function newPlatform(api: FeishuApiClient): FeishuPlatform {
   return new FeishuPlatform({ appID: 'cli_x', appSecret: 's', apiClient: api })

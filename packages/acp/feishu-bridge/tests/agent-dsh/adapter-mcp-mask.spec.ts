@@ -18,7 +18,7 @@ import {
   type DshCreateOptionsLike,
   type DshContextLike,
   type DshToolsLike,
-} from '../../src/agent-dsh/adapter.js'
+} from '../../src/agent-dsh/adapter.ts'
 
 /** A fake agent enough of a handle for startSession/oneShotQuery paths. */
 interface FakeAgent extends DshAgentLike {

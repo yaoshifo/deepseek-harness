@@ -14,8 +14,8 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { Engine } from '../engine/engine.js'
-import { parseWorktreeMode } from '../engine/worktree.js'
+import type { Engine } from '../engine/engine.ts'
+import { parseWorktreeMode } from '../engine/worktree.ts'
 
 /** The engine and engine session key a tool call is routed to. */
 export interface SubtaskRoute {

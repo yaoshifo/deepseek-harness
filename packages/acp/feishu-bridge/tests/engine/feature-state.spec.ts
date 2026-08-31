@@ -12,7 +12,7 @@ import {
   featureStateCodecs,
   registerFeatureStateCodec,
   type FeatureStateCodec,
-} from '../../src/engine/feature-state.js'
+} from '../../src/engine/feature-state.ts'
 
 const noopCodec = (key: string): FeatureStateCodec => ({
   key,

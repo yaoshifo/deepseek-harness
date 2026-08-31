@@ -13,8 +13,8 @@
 
 import { rm } from 'node:fs/promises'
 import { basename } from 'node:path'
-import type { Engine } from './engine.js'
-import { Msg } from '../i18n/index.js'
+import type { Engine } from './engine.ts'
+import { Msg } from '../i18n/index.ts'
 
 /** Outcome of a recall cancellation (Go recallResult). */
 export type RecallResult = 'cancelled' | 'inflight' | 'not_found'

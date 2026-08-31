@@ -28,7 +28,7 @@ import type {
   RequestRecord,
   TimelineEvent,
   TurnBucket,
-} from './types.js'
+} from './types.ts'
 
 /** The headline anchor's winning source. */
 export type HeadlineSource = 'pressure' | 'estimate'

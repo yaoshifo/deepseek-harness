@@ -18,7 +18,7 @@ import {
   preprocessFeishuMarkdown,
   previewOverflow,
   sanitizeFeishuMarkdownHTML,
-} from '../../src/feishu/markdown.js'
+} from '../../src/feishu/markdown.ts'
 
 describe('sanitizeFeishuMarkdownHTML', () => {
   const cases: Array<[name: string, input: string, want: string]> = [

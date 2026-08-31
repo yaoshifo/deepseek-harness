@@ -16,9 +16,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { createStubAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.js'
-import type { AskRequest, Platform } from '../../src/core/types.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { createStubAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.ts'
+import type { AskRequest, Platform } from '../../src/core/types.ts'
 
 /** A platform whose sends never settle — a platform mid teardown. */
 function hangingPlatform(name = 'hang'): Platform {

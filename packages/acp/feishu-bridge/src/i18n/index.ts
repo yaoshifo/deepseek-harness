@@ -7,14 +7,14 @@
  * @module dsh-feishu-bridge/i18n
  */
 
-import { sprintf } from '../sprintf.js'
-import type { MsgKey } from './keys.js'
-import { messages } from './messages.js'
+import { sprintf } from '../sprintf.ts'
+import type { MsgKey } from './keys.ts'
+import { messages } from './messages.ts'
 
-export { ALL_MSG_KEYS } from './keys.js'
-export * from './keys.js'
-export { messages } from './messages.js'
-export type { LocaleCode } from './messages.js'
+export { ALL_MSG_KEYS } from './keys.ts'
+export * from './keys.ts'
+export { messages } from './messages.ts'
+export type { LocaleCode } from './messages.ts'
 
 /**
  * Supported language. Open like the Go `type Language string`: config and

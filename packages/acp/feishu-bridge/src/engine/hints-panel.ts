@@ -9,8 +9,8 @@
  * @module dsh-feishu-bridge/hints-panel
  */
 
-import type { CardButton, CardElement } from '../card.js'
-import type { HintUsage } from './hint-usage.js'
+import type { CardButton, CardElement } from '../card.ts'
+import type { HintUsage } from './hint-usage.ts'
 
 /** Button-name category codes: compact, with_param, common (Go c/wp/co). */
 type HintCategoryCode = 'c' | 'wp' | 'co'

@@ -22,11 +22,11 @@
  * @module dsh-feishu-bridge/provider-commands
  */
 
-import type { Message, Platform, ProviderSwitcher } from '../core/types.js'
-import { asProviderSwitcher, supportsCards } from '../core/types.js'
-import { Msg } from '../i18n/index.js'
-import { defaultBtn, newCard, type Card } from '../card.js'
-import type { Engine } from './engine.js'
+import type { Message, Platform, ProviderSwitcher } from '../core/types.ts'
+import { asProviderSwitcher, supportsCards } from '../core/types.ts'
+import { Msg } from '../i18n/index.ts'
+import { defaultBtn, newCard, type Card } from '../card.ts'
+import type { Engine } from './engine.ts'
 
 /** Prefix-match a subcommand against candidates (Go matchSubCommand). */
 function matchSubCommand(input: string, candidates: string[]): string {

@@ -9,9 +9,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { ForkAtSessionPrefix } from '../../src/core/types.js'
-import { DshAgentAdapter, type DshAgentLike } from '../../src/agent-dsh/adapter.js'
-import type { DshContextLike, DshCreateOptionsLike } from '../../src/agent-dsh/adapter.js'
+import { ForkAtSessionPrefix } from '../../src/core/types.ts'
+import { DshAgentAdapter, type DshAgentLike } from '../../src/agent-dsh/adapter.ts'
+import type { DshContextLike, DshCreateOptionsLike } from '../../src/agent-dsh/adapter.ts'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 
 /** Structural slice of the sessionPersistence service the adapter consumes. */

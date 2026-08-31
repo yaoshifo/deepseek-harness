@@ -18,10 +18,10 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { RelayManager, defaultRelayTimeoutMs, parseSessionKeyParts } from '../../src/engine/relay.js'
-import { Engine } from '../../src/engine/engine.js'
-import { createControllableAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.js'
-import type { Agent, AgentSession } from '../../src/core/types.js'
+import { RelayManager, defaultRelayTimeoutMs, parseSessionKeyParts } from '../../src/engine/relay.ts'
+import { Engine } from '../../src/engine/engine.ts'
+import { createControllableAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.ts'
+import type { Agent, AgentSession } from '../../src/core/types.ts'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'fb-relay-'))

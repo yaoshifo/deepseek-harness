@@ -9,13 +9,13 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { Engine } from '../../src/engine/engine.js'
-import { registerSessionCommands } from '../../src/engine/commands.js'
-import { registerSkillsMcpCommands } from '../../src/engine/skills-mcp-commands.js'
-import type { SkillsMcpCommandDeps } from '../../src/engine/skills-mcp-commands.js'
-import { createStubAgent, createStubCardPlatform, createStubPlatform, newStubMessage } from '../stubs/engine-stubs.js'
-import type { StubPlatform } from '../stubs/engine-stubs.js'
-import { Msg } from '../../src/i18n/index.js'
+import { Engine } from '../../src/engine/engine.ts'
+import { registerSessionCommands } from '../../src/engine/commands.ts'
+import { registerSkillsMcpCommands } from '../../src/engine/skills-mcp-commands.ts'
+import type { SkillsMcpCommandDeps } from '../../src/engine/skills-mcp-commands.ts'
+import { createStubAgent, createStubCardPlatform, createStubPlatform, newStubMessage } from '../stubs/engine-stubs.ts'
+import type { StubPlatform } from '../stubs/engine-stubs.ts'
+import { Msg } from '../../src/i18n/index.ts'
 import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 
 /** One fake skill summary for the injected listSkills source. */

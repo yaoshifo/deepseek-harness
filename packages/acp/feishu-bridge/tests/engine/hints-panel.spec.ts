@@ -10,14 +10,14 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CardElement } from '../../src/card.js'
-import { HintUsage } from '../../src/engine/hint-usage.js'
+import type { CardElement } from '../../src/card.ts'
+import { HintUsage } from '../../src/engine/hint-usage.ts'
 import {
   buildHintsCommonElements,
   buildHintsPanelElements,
   hintButtonName,
   parseHintButtonName,
-} from '../../src/engine/hints-panel.js'
+} from '../../src/engine/hints-panel.ts'
 
 function textsOf(el: CardElement): string[] {
   if (el.kind === 'actions') return el.buttons.map(b => b.text)

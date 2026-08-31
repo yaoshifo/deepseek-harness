@@ -22,8 +22,8 @@
  * @module dsh-feishu-bridge/subtask-panel
  */
 
-import { newCard, dangerBtn, type Card } from '../card.js'
-import { Msg, type MsgKey } from '../i18n/keys.js'
+import { newCard, dangerBtn, type Card } from '../card.ts'
+import { Msg, type MsgKey } from '../i18n/keys.ts'
 
 /** Minimal i18n surface the renderer needs (Engine.i18n satisfies it). */
 export interface PanelI18n {

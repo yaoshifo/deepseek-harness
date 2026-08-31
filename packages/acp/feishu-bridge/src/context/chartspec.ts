@@ -36,7 +36,7 @@
  * @module dsh-feishu-bridge/context/chartspec
  */
 
-import type { SixBuckets, TurnBucket } from './types.js'
+import type { SixBuckets, TurnBucket } from './types.ts'
 
 /**
  * The six buckets as presentation quadruples — the single source of the

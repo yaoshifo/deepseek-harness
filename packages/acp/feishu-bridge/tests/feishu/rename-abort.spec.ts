@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
+import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
 
 interface RecordingClient extends FeishuApiClient {
   renames: Array<{ chatId: string; name?: string }>

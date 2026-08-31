@@ -18,8 +18,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, normalizeKeyStyleVariants, validateJsonSchemaValue, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import type { SubtaskAgentRouter } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { declareToolFamily } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { chatroomConfig } from '../chatroom-config.js'
-import { Msg } from '../i18n.js'
+import { chatroomConfig } from '../chatroom-config.ts'
+import { Msg } from '../i18n.ts'
 import {
   askHuman,
   askRole,
@@ -31,12 +31,12 @@ import {
   noteChatroom,
   resolveChatroomHubKey,
   startChatroom,
-} from '../engine/chatroom.js'
+} from '../engine/chatroom.ts'
 import {
   renderChatroomPickCardAndPush,
   renderChatroomTopicPickCardAndPush,
-} from '../engine/chatroom-pick.js'
-import { listRoleNames, roleEssence } from '../engine/chatroom-roles.js'
+} from '../engine/chatroom-pick.ts'
+import { listRoleNames, roleEssence } from '../engine/chatroom-roles.ts'
 
 const DESCRIPTION =
   'Run a multi-role chatroom discussion: several independent role agents (each with its own persona '

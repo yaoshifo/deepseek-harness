@@ -14,9 +14,9 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import type { Platform } from '../../src/core/types.js'
-import { Engine } from '../../src/engine/engine.js'
-import { DirHistory } from '../../src/engine/dir-history.js'
+import type { Platform } from '../../src/core/types.ts'
+import { Engine } from '../../src/engine/engine.ts'
+import { DirHistory } from '../../src/engine/dir-history.ts'
 import {
   MonitorExampleStore,
   extractQuotedText,
@@ -30,10 +30,10 @@ import {
   type MonitorClarifyOption,
   type MonitorDirEntry,
   type MonitorRuleEntry,
-} from '../../src/engine/monitor.js'
-import type { Agent, Message } from '../../src/core/types.js'
-import { Msg } from '../../src/i18n/index.js'
-import type { SpawnedChatInfo } from '../../src/core/types.js'
+} from '../../src/engine/monitor.ts'
+import type { Agent, Message } from '../../src/core/types.ts'
+import { Msg } from '../../src/i18n/index.ts'
+import type { SpawnedChatInfo } from '../../src/core/types.ts'
 import {
   createControllableAgent,
   createStubAgent,
@@ -47,7 +47,7 @@ import {
   type RecordedCard,
   type StubCardPlatform,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'fb-monitor-'))

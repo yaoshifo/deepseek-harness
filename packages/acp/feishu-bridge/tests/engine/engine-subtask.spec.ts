@@ -14,14 +14,14 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { Engine, InteractiveState } from '../../src/engine/engine.js'
-import { Session } from '../../src/engine/session.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
-import { WorktreeMode } from '../../src/engine/worktree.js'
-import { Msg } from '../../src/i18n/index.js'
-import { registerNativeSettlementListener } from '../../src/index.js'
-import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, RecentTurnsReader, TextPreviewContent } from '../../src/core/types.js'
-import { SubtaskGather } from '../../src/engine/subtask.js'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { Session } from '../../src/engine/session.ts'
+import { ProjectStateStore } from '../../src/engine/project-state.ts'
+import { WorktreeMode } from '../../src/engine/worktree.ts'
+import { Msg } from '../../src/i18n/index.ts'
+import { registerNativeSettlementListener } from '../../src/index.ts'
+import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, RecentTurnsReader, TextPreviewContent } from '../../src/core/types.ts'
+import { SubtaskGather } from '../../src/engine/subtask.ts'
 import {
   createNoOverwriteAgent,
   createStubAgent,
@@ -35,8 +35,8 @@ import {
   newStubMessage,
   type ControllableAgentSession,
   type RecordedCard,
-} from '../stubs/engine-stubs.js'
-import type { BridgeDispatch } from '../../src/bridge-service.js'
+} from '../stubs/engine-stubs.ts'
+import type { BridgeDispatch } from '../../src/bridge-service.ts'
 
 const execFileP = promisify(execFile)
 

@@ -3,14 +3,14 @@ import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { Engine, InteractiveState, stripUserID } from '../../src/engine/engine.js'
-import type { Card } from '../../src/card.js'
-import { DirHistory } from '../../src/engine/dir-history.js'
-import { ProjectStateStore } from '../../src/engine/project-state.js'
-import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.js'
-import { cmdDir, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.js'
-import type { Agent, AgentSessionInfo, Message } from '../../src/core/types.js'
-import { Msg } from '../../src/i18n/index.js'
+import { Engine, InteractiveState, stripUserID } from '../../src/engine/engine.ts'
+import type { Card } from '../../src/card.ts'
+import { DirHistory } from '../../src/engine/dir-history.ts'
+import { ProjectStateStore } from '../../src/engine/project-state.ts'
+import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.ts'
+import { cmdDir, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.ts'
+import type { Agent, AgentSessionInfo, Message } from '../../src/core/types.ts'
+import { Msg } from '../../src/i18n/index.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -19,7 +19,7 @@ import {
   createWorkDirAgent,
   newControllableSession,
   type StubPlatform,
-} from '../stubs/engine-stubs.js'
+} from '../stubs/engine-stubs.ts'
 
 // Ported from cc-connect core/engine_test.go — /new /stop /sessions /switch
 // (/resume) /dir (/cd) /status plain-text surfaces.
