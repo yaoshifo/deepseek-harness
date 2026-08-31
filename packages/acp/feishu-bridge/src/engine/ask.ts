@@ -368,7 +368,7 @@ function questionElements(
   }
   if (cur !== undefined) {
     const current = cur.indices.length > 0
-      ? `${i18n.t(Msg.AskqCurrentPrefix)}${cur.indices.map(i => `**${q.options[i - 1]?.label ?? String(i)}**`).join('、')}`
+      ? `${i18n.t(Msg.AskqCurrentPrefix)}${cur.indices.map(i => `**${q.options[i - 1]?.label ?? String(i)}**`).join(i18n.t(Msg.AskqListSeparator))}`
       : ''
     const custom = (cur.custom ?? '') !== '' ? `✍️ ${cur.custom ?? ''}` : ''
     const line = [current, custom].filter(s => s !== '').join(' · ')

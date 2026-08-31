@@ -347,6 +347,15 @@ describe('buildAskQuestionsCard', () => {
     expect(card.elements.some(e => e.kind === 'markdown' && e.content.includes('en:askq_current_prefix**PostgreSQL**'))).toBe(true)
   })
 
+  it('the current-answer line joins multiple labels with the localized separator', () => {
+    const card = buildAskQuestionsCard('t', [
+      singleQuestion(),
+      { question: 'Which framework?', header: '', options: [{ label: 'Gin', description: '' }], multiSelect: false },
+    ], new Map([[0, { indices: [1, 3] }]]), enAskCardI18n())
+
+    expect(card.elements.some(e => e.kind === 'markdown' && e.content.includes('**PostgreSQL**en:askq_list_separator**MySQL**'))).toBe(true)
+  })
+
   it('a question without options renders its heading plus the text-input form', () => {
     const q: UserQuestion = { ...singleQuestion(), options: [] }
     const card = buildAskQuestionsCard('t', [q], new Map())
