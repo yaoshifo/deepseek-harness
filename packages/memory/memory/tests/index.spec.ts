@@ -188,6 +188,20 @@ describe('memory tools', () => {
     void agent
   })
 
+  it('rejects a subagent session on both scopes', async () => {
+    const ctx = await setup()
+    context = ctx
+    const sub = makeAgent(ctx, { cwd: CWD, origin: 'subagent' })
+    const project = await call(ctx, 'memory_list', {}, sub)
+    expect(project.isError).toBe(true)
+    if (!project.isError) throw new Error('expected failure')
+    expect(project.error.message).toContain('subagent')
+    const global = await call(ctx, 'memory_list', { scope: 'global' }, sub)
+    expect(global.isError).toBe(true)
+    if (!global.isError) throw new Error('expected failure')
+    expect(global.error.message).toContain('subagent')
+  })
+
   it('upserts and removes a pointer line through memory_index', async () => {
     const ctx = await setup()
     context = ctx

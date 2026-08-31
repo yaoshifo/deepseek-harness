@@ -231,6 +231,12 @@ export function apply(ctx: Context, config: Config): void {
     limits: IndexLimits
     sessionId: string
   } {
+    // The memory surfaces belong to top-level sessions only (the same gate as
+    // the system-prompt section): a subagent child inherits the tools but gets
+    // no memory strategy, and its own worktree cwd would write an orphan slug.
+    if (agent !== undefined && agent.session.header.origin === 'subagent') {
+      throw new Error('memory tools are unavailable for subagent sessions')
+    }
     if (callScope(args) === 'global') {
       if (globalLimits === undefined) {
         throw new Error('global memory scope is not enabled in this deployment')
