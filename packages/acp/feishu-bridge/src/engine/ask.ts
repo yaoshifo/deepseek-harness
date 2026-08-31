@@ -302,6 +302,9 @@ export function buildAskQuestionsCard(title: string, questions: UserQuestion[], 
   const multiple = questions.length > 1
   const settled = questions.every((_q, i) => answered.has(i))
   for (const [i, q] of questions.entries()) {
+    // A divider between question blocks visually groups each question's
+    // controls (its 提交第 N 题 button belongs to it, not the whole card).
+    if (multiple && i > 0) cb.raw({ kind: 'divider' })
     cb.raw(...questionElements(q, i, multiple, settled, answered.get(i)))
   }
   // Card-level teaching (both card chrome, no i18n handle on this seam):
@@ -364,6 +367,7 @@ function questionElements(
       action: `askq_multi:${qIdx}`,
       extra: { askq_question: q.question },
       textInput: { name: `askq_text_${qIdx}`, placeholder: '补充说明或自定义答案（可选）' },
+      submitLabel: multiple ? `提交第 ${qIdx + 1} 题` : '提交本题',
     })
     return elements
   }

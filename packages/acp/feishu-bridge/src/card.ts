@@ -130,6 +130,11 @@ export interface CardCheckOptions {
    * channel (e.g. delete-mode pickers).
    */
   textInput?: { name: string; placeholder: string }
+  /**
+   * Submit-button label overriding the generic 提交选择 — ask cards scope it
+   * to its question (提交第 N 题) so it cannot read as a whole-card submit.
+   */
+  submitLabel?: string
 }
 
 /** Renders an image by platform-specific image key (e.g. a Feishu image_key). */

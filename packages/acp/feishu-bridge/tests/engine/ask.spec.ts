@@ -216,12 +216,41 @@ describe('buildAskQuestionsCard', () => {
       },
     ], new Map())
 
-    // Question 2 heading is numbered; its buttons address qIdx 1. Question 1's
-    // block ends with the free-text hint note, so the second heading sits at 5.
-    const heading = card.elements[5] as { kind: string; content: string }
+    // Question 2 heading is numbered; its buttons address qIdx 1. A divider
+    // separates the question blocks; find the heading instead of pinning
+    // indexes.
+    const heading = card.elements.find(e => e.kind === 'markdown' && e.content === '**2. Which framework?**') as { content: string }
     expect(heading.content).toBe('**2. Which framework?**')
-    const row = card.elements[6] as { btnValue: string }
-    expect(row.btnValue).toBe('askq:1:1')
+    expect(card.elements.some(e => e.kind === 'listItem' && (e as { btnValue: string }).btnValue === 'askq:1:1')).toBe(true)
+  })
+
+  it('multi-question cards separate question blocks with dividers; single-question cards do not', () => {
+    const two = buildAskQuestionsCard('t', [
+      singleQuestion(),
+      { question: 'Which framework?', header: '', options: [{ label: 'Gin', description: '' }], multiSelect: false },
+    ], new Map())
+    expect(two.elements.filter(e => e.kind === 'divider')).toHaveLength(1)
+    const firstIdx = two.elements.findIndex(e => e.kind === 'markdown')
+    const secondHeadingIdx = two.elements.findIndex(e => e.kind === 'markdown' && (e as { content: string }).content.includes('framework'))
+    const dividerIdx = two.elements.findIndex(e => e.kind === 'divider')
+    expect(dividerIdx).toBeGreaterThan(firstIdx)
+    expect(dividerIdx).toBeLessThan(secondHeadingIdx)
+
+    const one = buildAskQuestionsCard('t', [singleQuestion()], new Map())
+    expect(one.elements.some(e => e.kind === 'divider')).toBe(false)
+  })
+
+  it('a multi-select submit label scopes to its question (提交第 N 题 / 提交本题)', () => {
+    const single = buildAskQuestionsCard('t', [{ ...singleQuestion(), multiSelect: true }], new Map())
+    const singleCheck = single.elements.find(e => e.kind === 'checkOptions') as { submitLabel?: string }
+    expect(singleCheck.submitLabel).toBe('提交本题')
+
+    const multi = buildAskQuestionsCard('t', [
+      singleQuestion(),
+      { question: 'Which fixes?', header: '', options: [{ label: 'A', description: '' }], multiSelect: true },
+    ], new Map())
+    const multiCheck = multi.elements.find(e => e.kind === 'checkOptions') as { submitLabel?: string }
+    expect(multiCheck.submitLabel).toBe('提交第 2 题')
   })
 
   it('a multi-select question renders a checker form addressed by askq_multi:{q}', () => {

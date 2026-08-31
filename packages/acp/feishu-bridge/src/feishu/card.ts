@@ -236,7 +236,7 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
       const submitBtn: FeishuCardMap = {
         size: 'tiny',
         tag: 'button',
-        text: plainText('提交选择'),
+        text: plainText(elem.submitLabel ?? '提交选择'),
         type: 'primary',
         form_action_type: 'submit',
         name: `askq_multi_submit_${(elem.action ?? '').replace(/^askq_multi:/, '')}`,

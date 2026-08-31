@@ -199,6 +199,29 @@ describe('renderCardMap', () => {
     expect(JSON.stringify(formElements)).not.toContain('也可以直接文字输入')
   })
 
+  it('checkOptions submitLabel scopes the button text; without it the generic label stays', () => {
+    const card = newCard()
+      .checkOptions('Which fixes?', [
+        { label: 'Fix leak', description: '' },
+      ], 'askq_multi:1', { askq_question: 'Which fixes?' })
+      .build()
+    const raw = card.elements.find(e => e['kind'] === 'checkOptions') as
+      | { kind: 'checkOptions'; textInput?: { name: string; placeholder: string }; submitLabel?: string }
+      | undefined
+    raw!.textInput = { name: 'askq_text_1', placeholder: '补充' }
+    raw!.submitLabel = '提交第 2 题'
+
+    const scoped = decodeRenderedCard(card)
+    const scopedBtn = JSON.stringify(scoped).match(/"content":"提交第 2 题"/)
+    expect(scopedBtn).not.toBeNull()
+
+    // Delete-mode checkers carry no submitLabel — the generic 提交选择 stays.
+    delete raw!.submitLabel
+    const generic = decodeRenderedCard(card)
+    expect(JSON.stringify(generic)).toContain('提交选择')
+    expect(JSON.stringify(generic)).not.toContain('提交第 2 题')
+  })
+
   it('delete-mode uses checker form', () => {
     const card = newCard()
       .title('删除会话', 'carmine')
