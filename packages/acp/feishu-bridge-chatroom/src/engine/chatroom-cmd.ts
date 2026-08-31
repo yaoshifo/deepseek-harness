@@ -26,6 +26,7 @@ import {
   clearChatroomResearchFlags,
   ensureResearchPythonEnv,
   interruptChatroom,
+  listChatroomRoles,
   resolveChatroomHubKey,
   startChatroom,
 } from './chatroom.js'
@@ -104,6 +105,14 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   // gather is armed.
   if (args.length > 0 && (args[0] === 'stop' || args[0] === '中断')) {
     await cmdChatroomStop(e, p, msg)
+    return
+  }
+  // Re-entry guard: live role groups under this hub mean a chatroom is
+  // already running. A second open (direct→multi-role, repeated open, or a
+  // fresh picker) would spawn a new generation of role groups while the old
+  // ones live on, mixing persona markers under one hub.
+  if (listChatroomRoles(e, msg.sessionKey).length > 0) {
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomAlreadyRunning))
     return
   }
   if (e.spawnCapablePlatform() === undefined) {
@@ -377,7 +386,9 @@ export async function startChatroomDirectRole(
     void cs.sendCard(msg.replyCtx, newCard()
       .title(e.i18n.t(Msg.ChatroomPickTitle), 'green')
       .markdown(`${e.i18n.tf(Msg.ChatroomDirectStarted, role)}\n\n${e.i18n.t(Msg.ChatroomTopicLabel)}: ${topic}`)
-      .build()).catch(() => {})
+      .build()).catch(() => {
+      // Best-effort direct-mode notice; the topic turn below is the real start signal.
+    })
   }
 
   // Feed the topic as a normal user turn (no moderator priming). The session

@@ -10,7 +10,7 @@
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { chatroomPolicyFace } from '../stubs/bridge-policy.js'
@@ -22,6 +22,7 @@ import {
   gatherRoles,
   maybeAutoRelayRole,
   buildGatherTimeoutWake,
+  routePendingHumanReply,
 } from '../../src/engine/chatroom.js'
 import { chatroomResearchManualAskTimeout, uvHooks } from '../../src/engine/chatroom.js'
 import {
@@ -128,6 +129,18 @@ describe('ChatroomGather accumulate', () => {
       Array.from({ length: 8 }, (_, idx) => Promise.resolve(g.accumulate(`r${idx}`, 'reply'))),
     )
     expect(results.filter(r => r.done)).toHaveLength(1)
+  })
+
+  it('trims an overlong reply to 200 runes with an ellipsis annotation', () => {
+    // Same per-reply ceiling as the end barrier's closing summary: a 60m
+    // research round × N roles must not grow the wake text without bound
+    // into the moderator's context.
+    const g = newGather('q', ['a', 'b'])
+    g.accumulate('a', '字'.repeat(250))
+    const { wakeContent } = g.accumulate('b', '短回复')
+    expect(wakeContent).toContain(`【a】${'字'.repeat(200)}…`)
+    expect(wakeContent).not.toContain('字'.repeat(201))
+    expect(wakeContent).toContain('【b】短回复')
   })
 })
 
@@ -478,6 +491,122 @@ describe('AskHuman vs gather', () => {
     const { startChatroom } = await import('../../src/engine/chatroom.js')
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
     await expect(askHuman(e, roles[0]!.sessionKey, '预算多少？')).resolves.toBeUndefined()
+  })
+})
+
+describe('GatherRoles vs pending human question', () => {
+  it('is rejected while an ask-human question is pending, consuming no state', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    chatroomState(hubSess).pendingHumanQuestionRole = 'taleb'
+
+    expect(() => { gatherRoles(e, hub, '并行问题', false) }).toThrow('已暂停')
+
+    // A rejected gather must not install an orphan barrier or consume the seq.
+    expect(chatroomState(hubSess).pendingGather).toBeUndefined()
+    expect(chatroomState(hubSess).chatroomGatherSeq).toBe(0)
+    expect(chatroomState(e.sessions.getOrCreateActive(roles[0]!.sessionKey)).chatroomAsked).toBe(false)
+  })
+
+  it('a human reply during an armed gather falls through to the hub, not a second ask', async () => {
+    // Backstop for interleavings armed before the gather guard existed
+    // (pending flag + live gather): routing the reply now would inject a
+    // SECOND in-flight ask into the gathering role — its first turn-end
+    // consumes the one-shot relay gate and the second turn-end is dropped.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    await startChatroom(e, hub, ['taleb'], 'topic')
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    chatroomState(hubSess).pendingHumanQuestionRole = 'taleb'
+    const g = newGather('并行问题', ['taleb'])
+    chatroomState(hubSess).pendingGather = g
+    const recv = vi.spyOn(e, 'receiveMessage').mockImplementation(() => {})
+
+    const consumed = routePendingHumanReply(e, p, hub, '人类的回答')
+    await settle()
+
+    // The reply hands back to the hub's normal agent path (the moderator
+    // relays it after the round); the flag retires with the answer.
+    expect(consumed).toBe(false)
+    expect(chatroomState(hubSess).pendingHumanQuestionRole).toBe('')
+    expect(recv.mock.calls).toHaveLength(0)
+    // The armed gather round is untouched.
+    expect(chatroomState(hubSess).pendingGather).toBe(g)
+    expect(g.expected.has('taleb')).toBe(true)
+  })
+})
+
+describe('gather broadcast failure', () => {
+  /** A spawner whose ctx reconstruction fails for the second spawned role. */
+  function spawnerFailingSecondRole() {
+    const p = createStubChatroomSpawner()
+    const orig = p.reconstructReplyCtx.bind(p)
+    p.reconstructReplyCtx = async (sessionKey: string) => {
+      if (sessionKey.includes('role-2')) throw new Error('ctx boom')
+      return orig(sessionKey)
+    }
+    return p
+  }
+
+  it('a failed broadcast drops the role from expected; the last reply still wakes', async () => {
+    const p = spawnerFailingSecondRole()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+    const wake = vi.spyOn(e, 'deliverMachineMessage')
+
+    gatherRoles(e, hub, '并行问题', false)
+    await settle()
+    await settle()
+    // munger's broadcast failed before the role ever saw the question — it
+    // must leave the expected set instead of stranding the barrier.
+    const g = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
+    expect(g?.expected.has('munger')).toBe(false)
+
+    // taleb's reply completes the round: no idle wait for a reply that can
+    // never arrive.
+    const taleb = e.sessions.getOrCreateActive(roles[0]!.sessionKey)
+    chatroomState(taleb).chatroomAsked = false
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, taleb, '我的回复', false)
+
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
+    await waitFor(() => wake.mock.calls.length > 0, 'moderator woken')
+    expect(String(wake.mock.calls[0]?.[1]?.content)).toContain('我的回复')
+  })
+
+  it('every broadcast failing closes the round immediately instead of idling to the timeout', async () => {
+    const p = spawnerFailingSecondRole()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.js')
+    // Both spawned roles hit the failing ctx path (role-1 via the shared
+    // stub counter collides only after two spawns, so fail both explicitly).
+    const orig = p.reconstructReplyCtx.bind(p)
+    p.reconstructReplyCtx = async (sessionKey: string) => {
+      if (sessionKey.includes('role-')) throw new Error('ctx boom')
+      return orig(sessionKey)
+    }
+    await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+    const wake = vi.spyOn(e, 'deliverMachineMessage')
+
+    gatherRoles(e, hub, '并行问题', false)
+
+    await waitFor(() => chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather === undefined, 'gather closed')
+    await waitFor(() => wake.mock.calls.length > 0, 'moderator woken')
+    expect(String(wake.mock.calls[0]?.[1]?.content)).toContain('并行收集完成')
   })
 })
 

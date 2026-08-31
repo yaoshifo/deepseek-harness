@@ -19,6 +19,7 @@ import { defineTool, normalizeKeyStyleVariants, validateJsonSchemaValue, type Js
 import type { SubtaskAgentRouter } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { declareToolFamily } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { chatroomConfig } from '../chatroom-config.js'
+import { Msg } from '../i18n.js'
 import {
   askHuman,
   askRole,
@@ -28,6 +29,7 @@ import {
   interruptChatroom,
   listChatroomRoles,
   noteChatroom,
+  resolveChatroomHubKey,
   startChatroom,
 } from '../engine/chatroom.js'
 import {
@@ -252,8 +254,16 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
           }
         }
         case 'end': {
+          // Only the moderator hub may end: a role passing its own key would
+          // pass endChatroom's barrier checks (barriers live on the hub) and
+          // tear down only its own subtree — force even stops its own turn —
+          // while the real hub's armed barriers drain to their timeouts.
+          const hubKey = resolveChatroomHubKey(engine, sessionKey)
+          if (hubKey !== sessionKey) {
+            throw new Error(engine.i18n.t(Msg.ChatroomEndModeratorOnly))
+          }
           if (args.force === true) {
-            const res = interruptChatroom(engine, sessionKey)
+            const res = interruptChatroom(engine, hubKey)
             return {
               status: 'ok' as const,
               message: `Chatroom interrupted; ${res.rolesRemoved} role group(s) cleaned up`
@@ -261,7 +271,7 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
                 + '. No closing turn — the user aborted. Do not orchestrate further.',
             }
           }
-          const res = endChatroom(engine, sessionKey)
+          const res = endChatroom(engine, hubKey)
           if (res.status === 'pending') {
             return {
               status: 'ok' as const,

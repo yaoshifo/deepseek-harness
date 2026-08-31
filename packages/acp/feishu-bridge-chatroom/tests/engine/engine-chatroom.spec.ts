@@ -11,7 +11,7 @@
 import { mkdir, mkdtemp, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -19,8 +19,11 @@ import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.js'
 import {
   askHuman,
   askRole,
+  endChatroom,
+  interruptChatroom,
   listChatroomRoles,
   maybeAutoRelayRole,
+  resolveChatroomHubKey,
   routePendingHumanReply,
   startChatroom,
 } from '../../src/engine/chatroom.js'
@@ -203,9 +206,57 @@ describe('StartChatroom', () => {
     }
     expect(roles).toHaveLength(2)
   })
+
+  it('a mid-spawn failure leaves the hub stoppable: /chatroom stop reaps the orphan role groups', async () => {
+    // Role 2's spawn fails after role 1's group already exists. The hub has
+    // no chatroomModerator flag until afterChatroomStarted — which never
+    // runs on the error path — so resolveChatroomHubKey could not resolve
+    // the hub from the hub group itself and /chatroom stop there answered
+    // not-in-room while the orphan groups live on.
+    const p = createStubChatroomSpawnerEx()
+    const ex = p.spawnGroupWithOptions.bind(p)
+    let spawnCalls = 0
+    p.spawnGroupWithOptions = async (msg, groupName, firstMsg, opts) => {
+      spawnCalls++
+      if (spawnCalls === 2) throw new Error('spawn boom')
+      return ex(msg, groupName, firstMsg, opts)
+    }
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+
+    await expect(startChatroom(e, hub, ['taleb', 'munger'], 'topic')).rejects.toThrow('spawn boom')
+    expect(listChatroomRoles(e, hub)).toHaveLength(1) // taleb is an orphan now
+
+    // The hub group must resolve to its own chatroom so stop works from there.
+    expect(resolveChatroomHubKey(e, hub)).toBe(hub)
+
+    // And the interrupt reaps the orphan groups.
+    const res = interruptChatroom(e, hub)
+    expect(res.rolesRemoved).toBe(1)
+    expect(listChatroomRoles(e, hub)).toHaveLength(0)
+    expect(chatroomState(e.sessions.getOrCreateActive(hub)).chatroomModerator).toBe(false)
+  })
 })
 
 describe('AskRole', () => {
+  it('clears the in-flight flag when the ask card send fails, so end does not drain a phantom', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const roleKey = roles[0]!.sessionKey
+    vi.spyOn(e, 'sendAsCard').mockRejectedValueOnce(new Error('card send boom'))
+
+    await expect(askRole(e, hub, 'taleb', '问题')).rejects.toThrow('card send boom')
+
+    // No phantom in-flight flag: endChatroom must tear down immediately
+    // instead of arming a drain barrier for a turn that never started.
+    expect(chatroomState(e.sessions.getOrCreateActive(roleKey)).chatroomInFlight).toBe(false)
+    expect(endChatroom(e, hub).status).toBe('ended')
+  })
+
   it('re-arms the relay and posts the question as a card', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
@@ -517,6 +568,27 @@ describe('cmdChatroom', () => {
     handler?.(p, hubMsg('test:hub:user-1'), ['taleb,ghost', 'topic'])
     await settle()
     expect(p.count).toBe(0)
+  })
+
+  it('rejects a second open while live role groups exist (stop first)', async () => {
+    // No re-entry guard existed for direct→multi-role or repeated opens: a
+    // second /chatroom would spawn a NEW generation of role groups under the
+    // same hub while the old ones live on.
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    await startChatroom(e, hub, ['taleb'], '第一场')
+    const handler = e.commandHandlers?.get('chatroom')
+
+    handler?.(p, hubMsg(hub), ['taleb,munger', '第二场'])
+    await settle()
+    await settle()
+
+    expect(p.getSent().some(s => s.includes('已有聊天室在进行中'))).toBe(true)
+    // No second generation of role groups.
+    expect(p.count).toBe(1)
+    expect(listChatroomRoles(e, hub)).toHaveLength(1)
   })
 
   it('--roles with two roles overrides the default and spawns', async () => {

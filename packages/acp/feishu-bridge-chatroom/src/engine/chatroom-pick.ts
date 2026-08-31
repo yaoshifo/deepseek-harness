@@ -199,7 +199,9 @@ export function beginChatroomPick(e: Engine, p: Platform, msg: Message, topic: s
 
   const cs = asCardSender(p)
   if (cs !== undefined) {
-    void cs.sendCard(msg.replyCtx, simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'purple', e.i18n.t(Msg.ChatroomPickPicking))).catch(() => {})
+    void cs.sendCard(msg.replyCtx, simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'purple', e.i18n.t(Msg.ChatroomPickPicking))).catch(() => {
+      // Best-effort picking notice; the moderator wake right below carries the real signal.
+    })
   }
 
   armChatroomPickWatchdog(e, p, msg.sessionKey)
@@ -236,7 +238,9 @@ function armChatroomPickWatchdog(e: Engine, p: Platform, hubKey: string): void {
     const cs = asCardSender(p)
     if (cs !== undefined) {
       void reconstructReplyCtx(e, p, hubKey).then((rctx) => {
-        void cs.sendCard(rctx, card).catch(() => {})
+        void cs.sendCard(rctx, card).catch(() => {
+          // Best-effort watchdog fallback card; the hint is advisory — the user can re-run /chatroom.
+        })
       })
     }
   }, chatroomPickWatchdogTimeout)
@@ -321,7 +325,10 @@ export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: C
     const cs = asCardSender(p)
     if (cs !== undefined) {
       void reconstructReplyCtx(e, p, hubKey).then((rctx) => {
-        void cs.sendCard(rctx, card).catch(() => {})
+        void cs.sendCard(rctx, card).catch(() => {
+          // Best-effort pick-card push; the moderator turn already ended, so a
+          // failed card leaves the user to re-run /chatroom.
+        })
       })
     }
   }
@@ -414,7 +421,9 @@ export function beginChatroomTopicPick(e: Engine, p: Platform, msg: Message): vo
 
   const cs = asCardSender(p)
   if (cs !== undefined) {
-    void cs.sendCard(msg.replyCtx, simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'purple', e.i18n.t(Msg.ChatroomTopicPickPicking))).catch(() => {})
+    void cs.sendCard(msg.replyCtx, simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'purple', e.i18n.t(Msg.ChatroomTopicPickPicking))).catch(() => {
+      // Best-effort picking notice; the moderator wake right below carries the real signal.
+    })
   }
 
   armChatroomTopicPickWatchdog(e, p, msg.sessionKey)
@@ -448,7 +457,9 @@ function armChatroomTopicPickWatchdog(e: Engine, p: Platform, hubKey: string): v
     const cs = asCardSender(p)
     if (cs !== undefined) {
       void reconstructReplyCtx(e, p, hubKey).then((rctx) => {
-        void cs.sendCard(rctx, card).catch(() => {})
+        void cs.sendCard(rctx, card).catch(() => {
+          // Best-effort watchdog hint card; the hint is advisory — the user can re-run /chatroom.
+        })
       })
     }
   }, chatroomPickWatchdogTimeout)
@@ -525,7 +536,10 @@ export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, to
     const cs = asCardSender(p)
     if (cs !== undefined) {
       void reconstructReplyCtx(e, p, hubKey).then((rctx) => {
-        void cs.sendCard(rctx, card).catch(() => {})
+        void cs.sendCard(rctx, card).catch(() => {
+          // Best-effort topic-card push; the moderator turn already ended, so a
+          // failed card leaves the user to re-run /chatroom.
+        })
       })
     }
   }

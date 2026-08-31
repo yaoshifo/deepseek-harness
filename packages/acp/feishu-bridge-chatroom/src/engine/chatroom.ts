@@ -96,6 +96,16 @@ function stopFallbackTimer(
   }
 }
 
+/** Per-reply rune ceiling in barrier summaries (gather wake and end closing). */
+const summaryReplyRunes = 200
+
+/** Clip text to max runes with an ellipsis tail (shared by both barrier summaries). */
+function clipRunes(text: string, max: number): string {
+  const runes = Array.from(text)
+  if (runes.length <= max) return text
+  return `${runes.slice(0, max).join('')}…`
+}
+
 /** Durable snapshot of an armed gather barrier (sessions.json; timer, woken flag, and card handle stay in memory). */
 export interface GatherBarrierSnapshot {
   /** The broadcast question. */
@@ -196,12 +206,34 @@ export class ChatroomGather {
     return { done: true, wake, missing }
   }
 
+  /**
+   * Drop a role whose broadcast failed before it ever saw the question — no
+   * reply can arrive for it, so an empty expected set must complete the
+   * barrier here instead of idling to the fallback timeout.
+   *
+   * @param roleName - The role whose broadcast failed.
+   * @returns done=true when this emptied the barrier (caller owns the wake
+   * with wakeContent); otherwise done=false.
+   */
+  forgetFailed(roleName: string): { done: boolean; wakeContent: string } {
+    if (this.woken) return { done: false, wakeContent: '' }
+    this.expected.delete(roleName)
+    if (this.expected.size > 0) return { done: false, wakeContent: '' }
+    this.woken = true
+    this.stopTimer()
+    return { done: true, wakeContent: this.summary() }
+  }
+
   /** Stop the fallback timer once the barrier completes (early or timed out). */
   stopTimer(): void {
     stopFallbackTimer(this.timer, (t: ReturnType<typeof setTimeout> | undefined) => { this.timer = t })
   }
 
   /** The wake message: broadcast question + each role's reply, role-tagged.
+   * Each reply is clipped to {@link summaryReplyRunes} runes — a 60m
+   * research round × N roles must not grow the wake text without bound into
+   * the moderator's context (the full replies live in the ledger and the
+   * relay cards).
    *
    * @returns The full wake text delivered to the moderator.
    */
@@ -213,7 +245,7 @@ export class ChatroomGather {
     lines.push('\n\n各角色回复：\n')
     for (const n of [...this.collected.keys()].sort()) {
       const r = this.collected.get(n) ?? ''
-      lines.push(`【${n}】${r === '' ? '（NO_REPLY / 无追问）' : r}\n`)
+      lines.push(`【${n}】${r === '' ? '（NO_REPLY / 无追问）' : clipRunes(r, summaryReplyRunes)}\n`)
     }
     lines.push('\n请基于以上回复，按你当前所处阶段推进：若在澄清阶段，去重合并后用原生 ask_user_question(multi_select: true) 向用户发飞书多选卡提问（若全部「无需追问」则进入阶段 2；否则 note 用户回答后再次 gather，最多 3 轮）；若在拆解阶段，去重合并成子问题列表后用 note（section: subproblems）写入。')
     return lines.join('')
@@ -305,13 +337,8 @@ export class ChatroomEndBarrier {
     lines.push('[聊天室收尾完成]\n')
     lines.push('各角色末轮回复：\n')
     for (const n of [...this.collected.keys()].sort()) {
-      let r = this.collected.get(n) ?? ''
-      if (r === '') r = '（NO_REPLY / 无发言）'
-      else {
-        const runes = Array.from(r)
-        if (runes.length > 200) r = `${runes.slice(0, 200).join('')}…`
-      }
-      lines.push(`【${n}】${r}\n`)
+      const r = this.collected.get(n) ?? ''
+      lines.push(`【${n}】${r === '' ? '（NO_REPLY / 无发言）' : clipRunes(r, summaryReplyRunes)}\n`)
     }
     lines.push('\n请基于以上末轮回复 + 账本（RECORD.md）给出收尾总结。')
     return lines.join('')
@@ -527,6 +554,13 @@ export async function startChatroom(
   }
 
   const parent = e.sessions.getOrCreateActive(hubSessionKey)
+  // Mark the hub as the moderator BEFORE spawning: a mid-loop spawn failure
+  // skips afterChatroomStarted (which sets this flag on the success path),
+  // and without it resolveChatroomHubKey cannot resolve the HUB group
+  // itself — /chatroom stop there answered not-in-room while the orphan
+  // role groups lived on.
+  chatroomState(parent).chatroomModerator = true
+  e.sessions.save()
   let userID = parent.getSpawnUserID()
   if (userID === '') {
     const parts = hubSessionKey.split(':', 3)
@@ -657,8 +691,16 @@ async function askRoleInternal(
 
   // Awaited: the card must land before the injected turn's placeholder card
   // below, or the two sends race and whichever loses buries the other at the
-  // chat tail for the whole turn.
-  await e.sendAsCard(p, roleRctx, question, { title: headerTitle, color: 'blue' })
+  // chat tail for the whole turn. A failed send must also clear the
+  // in-flight flag: a phantom flag makes endChatroom arm its drain barrier
+  // for a turn that never started and idle out the whole drain timeout.
+  try {
+    await e.sendAsCard(p, roleRctx, question, { title: headerTitle, color: 'blue' })
+  } catch (error) {
+    chatroomState(role).chatroomInFlight = false
+    e.sessions.save()
+    throw error
+  }
 
   let roleContent = `[主持] ${question}`
   const lp = chatroomLedgerDirFor(e, hubKey)
@@ -698,6 +740,13 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   if (hub === undefined) throw new Error(`chatroom: hub session missing (hub=${hubKey})`)
   if (chatroomState(hub).pendingEndBarrier !== undefined) {
     throw new Error('chatroom: 正在收尾中，无法 gather')
+  }
+  // Mirror of askHuman's pendingGather guard (guards must be two-way): a
+  // gather while a human question is pending would inject a second in-flight
+  // ask into the asking role — its first turn-end consumes the one-shot relay
+  // gate and the reply to the human's answer is then dropped wholesale.
+  if (chatroomState(hub).pendingHumanQuestionRole !== '') {
+    throw new Error(e.i18n.t(Msg.ChatroomGatherPendingHumanBlocked))
   }
   const p = e.spawnCapablePlatform()
   if (p === undefined) throw new Error('chatroom: no platform available')
@@ -747,6 +796,16 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
     void askRoleInternal(e, p, hubKey, r.sessionKey, r.name, roleQ, e.i18n.tf(Msg.ChatroomGatherHeader, r.name), g.seq, research)
       .catch((error: unknown) => {
         console.warn(`chatroom: gather broadcast to role failed (role=${r.name}): ${String(error)}`)
+        // The role never received the question; drop it from expected so the
+        // barrier cannot idle to its full timeout waiting on a reply that
+        // can never arrive. Emptying expected here completes the round.
+        const { done, wakeContent } = g.forgetFailed(r.name)
+        if (!done) return
+        updateResearchProgressCard(e, p, g, 'done')
+        if (hub !== undefined) chatroomState(hub).pendingGather = undefined
+        e.sessions.save()
+        wakeChatroomModerator(e, hubKey, wakeContent)
+        console.info(`chatroom: gather closed after broadcast failure (hub=${hubKey} role=${r.name})`)
       })
   }
   // Research rounds run up to 60m: post a progress card so the user has a
@@ -964,6 +1023,18 @@ export function routePendingHumanReply(e: Engine, _p: Platform, hubKey: string, 
     e.sessions.save()
     return false
   }
+  // Backstop for interleavings armed before the gather-side guard existed
+  // (a pending flag plus a live gather): routing now would inject a second
+  // in-flight ask into the gathering role, whose first turn-end consumes the
+  // one-shot relay gate and drops the reply to the human's answer. The
+  // answer goes to the hub's normal path instead — the moderator relays it
+  // after the round — and the flag retires: the user did answer.
+  if (hub !== undefined && chatroomState(hub).pendingGather !== undefined) {
+    chatroomState(hub).pendingHumanQuestionRole = ''
+    e.sessions.save()
+    console.info(`chatroom: human reply during armed gather routed to hub (hub=${hubKey} role=${roleName})`)
+    return false
+  }
   // Clear first so a concurrent reply doesn't double-route; askRole re-arms
   // the role's relay gate.
   if (hub !== undefined) chatroomState(hub).pendingHumanQuestionRole = ''
@@ -1085,8 +1156,8 @@ export function maybeAutoRelayRole(
   const barrierHub = chatroomHubOf(e, hubKey)
   const barrier = barrierHub !== undefined ? chatroomState(barrierHub).pendingEndBarrier : undefined
   if (barrier !== undefined) {
-    void r.reconstructReplyCtx(hubKey).then(
-      (hubRctx) => { void relayRoleReply(hubRctx) },
+    const relayP = r.reconstructReplyCtx(hubKey).then(
+      (hubRctx) => { return relayRoleReply(hubRctx) },
       (error: unknown) => {
         console.warn(`chatroom: reconstruct hub ctx failed (hub=${hubKey}): ${String(error)}`)
       },
@@ -1094,7 +1165,11 @@ export function maybeAutoRelayRole(
     chatroomState(session).chatroomInFlight = false
     const { done, summary } = barrier.accumulate(roleName, reply)
     if (done) {
-      finalizeChatroomEndAsync(e, hubKey, summary)
+      // The relay card must land before the closing summary's wake card
+      // (same contract as the gather path): finalize only after the relay
+      // settles — finalizeChatroomEndAsync still defers itself off the
+      // turn-end stack inside.
+      void relayP.then(() => { finalizeChatroomEndAsync(e, hubKey, summary) })
       console.info(`chatroom: end barrier complete; finalizing (role=${roleName} hub=${hubKey})`)
     } else {
       console.info(`chatroom: gathered end reply (waiting for more) (role=${roleName} hub=${hubKey})`)

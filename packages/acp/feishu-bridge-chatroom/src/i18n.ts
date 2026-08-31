@@ -1,5 +1,5 @@
 /**
- * The chatroom package's message subtable: the 64 chatroom keys (63
+ * The chatroom package's message subtable: the 70 chatroom keys (69
  * `chatroom_*` plus the bare `chatroom` command-description key) moved
  * verbatim from the feishu-bridge main table. Registered once per process in
  * the plugin apply through the bridge's `registerMessages`, so every engine
@@ -79,6 +79,9 @@ const en: Record<string, string> = {
   chatroom_ledger_dir_note: 'Ledger directory: %s\n(Contains SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md; roles read it before answering; the moderator updates the synthesis with the feishu_bridge_chatroom tool action: note, and the subproblem list with section: subproblems)\n',
   chatroom_moderator_opening: 'The moderator is opening the discussion…',
   chatroom_gather_ask_human_blocked: 'A parallel gather is in progress — do not use ask-human. Give the question you want to ask the user as your reply text; the moderator will collect and ask the user once.',
+  chatroom_gather_pending_human_blocked: 'An ask-human question is still pending — the discussion is suspended until the user replies. Gather again after their reply.',
+  chatroom_already_running: 'A chatroom is already running in this chat. Send /chatroom stop before starting a new one.',
+  chatroom_end_moderator_only: 'Only the chatroom moderator may end the chatroom; the calling session is a role or assistant group. Ask the user to send /chatroom stop to interrupt.',
 }
 
 /** The Simplified-Chinese messages of the chatroom subtable. */
@@ -150,6 +153,9 @@ const zh: Record<string, string> = {
   chatroom_ledger_dir_note: '账本目录：%s\n（含 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md；角色回答前会读；主持用 feishu_bridge_chatroom 工具 action: note 更新综述，加 section: subproblems 更新子问题清单）\n',
   chatroom_moderator_opening: '主持人正在开场…',
   chatroom_gather_ask_human_blocked: '并行收集进行中——不要用 ask-human。把你想问用户的问题作为回复文本给我，主持人会统一收集后向用户提问。',
+  chatroom_gather_pending_human_blocked: '有待回复的角色提问（ask-human）——讨论已暂停，等用户回复后再发起 gather。',
+  chatroom_already_running: '这个群已有聊天室在进行中；请先发 /chatroom stop 中断后再开新聊天室。',
+  chatroom_end_moderator_only: '只有聊天室主持人可以收尾；当前会话是角色/助手群。需要中断请让用户发送 /chatroom stop。',
 }
 
 /** The chatroom message subtable handed to the bridge's registerMessages. */
@@ -230,6 +236,9 @@ export const Msg = {
   ChatroomLedgerDirNote: 'chatroom_ledger_dir_note',
   ChatroomModeratorOpening: 'chatroom_moderator_opening',
   ChatroomGatherAskHumanBlocked: 'chatroom_gather_ask_human_blocked',
+  ChatroomGatherPendingHumanBlocked: 'chatroom_gather_pending_human_blocked',
+  ChatroomAlreadyRunning: 'chatroom_already_running',
+  ChatroomEndModeratorOnly: 'chatroom_end_moderator_only',
   SpawnNotSupported: 'spawn_not_supported',
 } as const
 

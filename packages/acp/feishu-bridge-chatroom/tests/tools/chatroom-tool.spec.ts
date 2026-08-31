@@ -7,7 +7,7 @@
  * dispose cleanly (HMR safety).
  */
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -20,12 +20,13 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { Engine, ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomTool } from '../../src/tools/chatroom.js'
 import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { applyChatroomEngineConfig } from '../../src/chatroom-config.js'
 import { beginChatroomTopicPick } from '../../src/engine/chatroom-pick.js'
-import { createStubAgent, createStubSpawnerPlatform, newStubMessage } from '../stubs/engine-stubs.js'
+import { createStubAgent, createStubChatroomSpawner, createStubSpawnerPlatform, newStubMessage } from '../stubs/engine-stubs.js'
+import { chatroomState } from '../../src/chatroom-state.js'
 import '../stubs/messages.js'
 
 const signal = new AbortController().signal
@@ -230,6 +231,60 @@ describe('feishu_bridge_chatroom action routing', () => {
     const res = await test.execute({ action: 'pick-roles', picks: '[{"name":"taleb","recommended":true,"blurb":"why"}]' })
     expect(res.isError).toBe(true)
     expect(errorText(res)).toContain('picker')
+    test.dispose()
+  })
+})
+
+describe('feishu_bridge_chatroom end moderator guard', () => {
+  /** A chatroom with one live role bound under a moderator hub. */
+  function armedRoom(engine: Engine): { hubKey: string; roleKey: string } {
+    const hubKey = 'feishu:oc_hub:ou_1'
+    const roleKey = 'feishu:oc_role-1:ou_1'
+    chatroomState(engine.sessions.getOrCreateActive(hubKey)).chatroomModerator = true
+    const role = engine.sessions.getOrCreateActive(roleKey)
+    role.setParentSessionKey(hubKey)
+    chatroomState(role).chatroomHubKey = hubKey
+    chatroomState(role).chatroomRoleName = 'taleb'
+    return { hubKey, roleKey }
+  }
+
+  function newChatroomEngine(): Engine {
+    const e = new Engine('chatroom-test', createStubAgent(), [createStubChatroomSpawner()], '', 'zh')
+    e.setProjectStateStore(new ProjectStateStore(''))
+    return e
+  }
+
+  it('rejects end and force from a role session and tears nothing down', async () => {
+    const engine = newChatroomEngine()
+    const { hubKey, roleKey } = armedRoom(engine)
+    const stops = vi.spyOn(engine, 'stopInteractiveSession')
+    const test = await harness(() => ({ engine, sessionKey: roleKey }))
+
+    const endRes = await test.execute({ action: 'end' })
+    expect(endRes.isError).toBe(true)
+    expect(errorText(endRes)).toContain('主持人')
+
+    const forceRes = await test.execute({ action: 'end', force: true })
+    expect(forceRes.isError).toBe(true)
+    expect(errorText(forceRes)).toContain('主持人')
+
+    // A rejected end must leave the chatroom fully intact: the role stays
+    // bound and its own turn was never stopped.
+    expect(chatroomState(engine.sessions.getOrCreateActive(roleKey)).chatroomHubKey).toBe(hubKey)
+    expect(stops.mock.calls).toHaveLength(0)
+    test.dispose()
+  })
+
+  it('lets the moderator hub end the chatroom', async () => {
+    const engine = newChatroomEngine()
+    const { hubKey, roleKey } = armedRoom(engine)
+    const test = await harness(() => ({ engine, sessionKey: hubKey }))
+
+    const v = value(await test.execute({ action: 'end' }))
+
+    expect(v.status).toBe('ok')
+    expect(v.message).toContain('Chatroom ended')
+    expect(chatroomState(engine.sessions.getOrCreateActive(roleKey)).chatroomHubKey).toBe('')
     test.dispose()
   })
 })

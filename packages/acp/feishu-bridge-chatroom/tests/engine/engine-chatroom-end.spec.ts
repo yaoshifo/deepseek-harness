@@ -8,7 +8,7 @@
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -188,6 +188,38 @@ describe('EndChatroom', () => {
 
     await waitFor(() => listChatroomRoles(e, hub).length === 0, 'roles cleared')
     expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier).toBeUndefined()
+  })
+
+  it('the closing wake lands only after the final relay card', async () => {
+    // Same ordering contract as the gather path: the role's last relay card
+    // must be visible in the hub below the closing summary's placeholder —
+    // a fire-and-forget relay lets the wake card bury it at the chat tail.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const taleb = e.sessions.getOrCreateActive(roles[0]!.sessionKey)
+    chatroomState(taleb).chatroomInFlight = true
+
+    const order: string[] = []
+    vi.spyOn(e, 'sendAsCard').mockImplementation(async () => {
+      // A slow relay-card send: a wake that does not await it provably lands first.
+      await new Promise((resolve) => { setTimeout(resolve, 30) })
+      order.push('relay-card')
+    })
+    vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => { order.push('wake') })
+
+    const res = endChatroom(e, hub)
+    expect(res.status).toBe('pending')
+    const st = new InteractiveState()
+    st.platform = p
+    chatroomState(taleb).chatroomAsked = false
+    maybeAutoRelayRole(e, st, taleb, '我的末轮观点', false)
+
+    await waitFor(() => order.includes('wake') && order.includes('relay-card'), 'relay card and wake both landed')
+    expect(order.lastIndexOf('relay-card'), 'relay card landed before the wake').toBeLessThan(order.lastIndexOf('wake'))
+    await waitFor(() => listChatroomRoles(e, hub).length === 0, 'roles cleared')
   })
 
   it('finalizes on drain timeout when a role never relays', async () => {
