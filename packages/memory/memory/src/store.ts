@@ -193,7 +193,8 @@ function indexWarning(content: string, limits: IndexLimits): string | undefined 
 }
 
 /**
- * List every file in the memory directory, sorted by name.
+ * List every file in the memory directory, sorted by name. A file deleted
+ * between the directory read and its per-file stat is skipped.
  *
  * @param dir - the resolved memory directory.
  * @returns the entries, or `undefined` when the directory does not exist yet.
@@ -209,7 +210,15 @@ export async function listMemory(dir: string): Promise<MemoryEntry[] | undefined
   const files = dirents.filter(dirent => dirent.isFile()).map(dirent => dirent.name).sort()
   const entries: MemoryEntry[] = []
   for (const name of files) {
-    const info = await stat(join(dir, name))
+    let info
+    try {
+      info = await stat(join(dir, name))
+    } catch (error) {
+      // Only the readdir/stat race reaching this loop can produce ENOENT here:
+      // a concurrent session deleted the file after readdir listed it.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      throw error
+    }
     entries.push({ name, bytes: info.size, modified: info.mtime.toISOString() })
   }
   return entries

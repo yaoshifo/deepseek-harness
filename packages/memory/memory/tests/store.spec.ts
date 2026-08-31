@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   deleteMemory,
   listMemory,
@@ -11,6 +11,26 @@ import {
   updateMemoryIndex,
   writeMemory,
 } from '../src/store.ts'
+
+const fsControl = vi.hoisted(() => ({
+  /** Paths whose stat throws ENOENT, arming the readdir/stat race for one test. */
+  statEnoent: [] as string[],
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    async stat(...args: Parameters<typeof actual.stat>): ReturnType<typeof actual.stat> {
+      if (fsControl.statEnoent.includes(String(args[0]))) {
+        const error = new Error(`ENOENT: no such file or directory, stat '${String(args[0])}'`) as NodeJS.ErrnoException
+        error.code = 'ENOENT'
+        throw error
+      }
+      return actual.stat(...args)
+    },
+  }
+})
 
 const CWD = '/home/hm/workspace/ainvest'
 const LIMITS = { maxIndexLines: 200, maxIndexBytes: 25_600 }
@@ -96,6 +116,18 @@ describe('listMemory', () => {
 
   it('returns undefined for a missing directory', async () => {
     expect(await listMemory(resolveMemoryDir(root, '/home/hm/workspace/nowhere'))).toBeUndefined()
+  })
+
+  it('skips a file deleted between readdir and stat', async () => {
+    const raceDir = resolveMemoryDir(root, '/home/hm/workspace/race')
+    await rm(raceDir, { recursive: true, force: true })
+    await mkdir(raceDir, { recursive: true })
+    await writeFile(join(raceDir, 'MEMORY.md'), '# Memory Index\n')
+    await writeFile(join(raceDir, 'gone.md'), 'vanishes before stat')
+    await writeFile(join(raceDir, 'stays.md'), 'body')
+    fsControl.statEnoent.push(join(raceDir, 'gone.md'))
+    const entries = await listMemory(raceDir)
+    expect(entries?.map(entry => entry.name)).toEqual(['MEMORY.md', 'stays.md'])
   })
 })
 

@@ -37,7 +37,7 @@ The global budgets inherit the project ones, so a composition's single explicit 
 
 ## Concurrency and failure behavior
 
-Concurrent sessions (dsh or Claude Code) writing one memory file resolve last-write-wins, identical to two concurrent Claude Code sessions — this also holds for the global directory, whose writer population is every dsh session on the machine. Writes are atomic (temp file plus rename) and create the directory lazily. A transient read failure at session start skips that injection; the memory tools still fail loud with the real error when called. A missing `claudeHome` leaves the plugin inert: no section text, no injection, and tools reporting the missing path.
+Concurrent sessions (dsh or Claude Code) writing one memory file resolve last-write-wins, identical to two concurrent Claude Code sessions — this also holds for the global directory, whose writer population is every dsh session on the machine. Writes are atomic (temp file plus rename) and create the directory lazily. A file deleted between `memory_list`'s directory read and its per-file stat is skipped from the listing. A transient read failure at session start skips that injection; the memory tools still fail loud with the real error when called. A missing `claudeHome` leaves the plugin inert: no section text, no injection, and tools reporting the missing path.
 
 ## Model Experience
 

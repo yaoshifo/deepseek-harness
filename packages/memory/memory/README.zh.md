@@ -37,7 +37,7 @@ Claude Code 记忆兼容加默认开启的 dsh 专属全局 scope:dsh 会话直�
 
 ## 并发与失败行为
 
-并发会话(dsh 或 Claude Code)写同一记忆文件按 last-write-wins 收敛,与两个并发 Claude Code 会话完全一致——全局目录同样如此,其写者群体是本机上所有 dsh 会话。写入原子(临时文件加 rename)且惰性建目录。会话开始时的瞬时读失败跳过该次注入;被调用时记忆工具仍以真实错误明确失败。`claudeHome` 缺失时插件保持惰性:无 section 文本、无注入、工具报告缺失路径。
+并发会话(dsh 或 Claude Code)写同一记忆文件按 last-write-wins 收敛,与两个并发 Claude Code 会话完全一致——全局目录同样如此,其写者群体是本机上所有 dsh 会话。写入原子(临时文件加 rename)且惰性建目录。文件在 `memory_list` 的目录读取与其后逐文件 stat 之间被删除时,该条目从列表中跳过。会话开始时的瞬时读失败跳过该次注入;被调用时记忆工具仍以真实错误明确失败。`claudeHome` 缺失时插件保持惰性:无 section 文本、无注入、工具报告缺失路径。
 
 ## Model Experience
 
