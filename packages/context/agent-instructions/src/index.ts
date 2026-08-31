@@ -17,6 +17,7 @@ import { isDeepStrictEqual } from 'node:util'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import type { ToolExecution, ToolExecutionResult, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { AnonymousEntries, ScopedLayers } from '@deepseek-ai/dsh-scope'
 import type { ScopeLayer } from '@deepseek-ai/dsh-scope'
@@ -34,6 +35,8 @@ import {
 import type { AgentInstructionChange } from './render.ts'
 
 export { Config, name }
+/** Services required by workspace instruction projection. */
+export const inject = ['sessionProjections']
 export {
   discoverBaselineInstructionFiles,
   loadBaselineInstructions,
@@ -134,7 +137,6 @@ export class AgentInstructions extends Service {
     const projectionTails = new WeakMap<Agent, Promise<void>>()
     // Execution ancestry and the enclosing durable step are the two commit
     // boundaries before an asynchronous projection may mutate the agent inbox.
-    const openSteps = new WeakMap<Session, boolean>()
     const stepTouches = new WeakMap<Session, ProjectionTouch[]>()
 
     const compose = async (
@@ -317,15 +319,13 @@ export class AgentInstructions extends Service {
     }
 
     const stepIsOpen = (session: Session): boolean => {
-      const known = openSteps.get(session)
-      if (known !== undefined) return known
-      let open = false
-      for (const event of session.events) {
-        if (event.type === 'step/start') open = true
-        else if (event.type === 'step/end' || event.type === 'turn/end') open = false
+      const boundary = ctx.sessionProjections.stateOf(session, 'turnBoundary')
+      if (boundary === undefined) {
+        throw new Error('agent-instructions requires the turnBoundary session projection')
       }
-      openSteps.set(session, open)
-      return open
+      return boundary.openTurnStartSeq !== null
+        && boundary.lastStepBoundary?.kind === 'start'
+        && boundary.lastStepBoundary.seq > boundary.openTurnStartSeq
     }
 
     const projectTouch = (touch: ProjectionTouch): void => {
@@ -340,16 +340,7 @@ export class AgentInstructions extends Service {
     }
 
     ctx.on('session/event', (session, event) => {
-      if (event.type === 'step/start') {
-        openSteps.set(session, true)
-        return
-      }
-      if (event.type === 'turn/end') {
-        openSteps.set(session, false)
-        return
-      }
       if (event.type !== 'step/end') return
-      openSteps.set(session, false)
       const pending = stepTouches.get(session)
       if (pending === undefined) return
       stepTouches.delete(session)

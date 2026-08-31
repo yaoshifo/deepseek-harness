@@ -22,6 +22,28 @@ The feishu-bridge service: live projects, caller routing, and the `feishuBridge/
 
 ```ts cordis-catalog
 /**
+ * Register tool names hidden from every session of one engine's project.
+ *
+ * A sibling plugin calls this for a project it is disabled on (the
+ * chatroom plugin hides `feishu_bridge_chatroom` on projects configured
+ * `enabled: false`), so the tool definition stops entering that project's
+ * model requests instead of merely failing at execute.
+ *
+ * @param engine - The engine whose project sessions the mask applies to.
+ * @param names - Tool names to hide; names absent from the live registry
+ *   are dropped by the adapter's mask, not here.
+ * @returns Disposer removing the names again; idempotent.
+ */
+denyTools(engine: Engine, names: readonly string[]): () => void
+
+/**
+ * The tool names currently registered as hidden for one engine's project.
+ * @param engine - The engine whose mask set is addressed.
+ * @returns The hidden names in registration order.
+ */
+deniedToolsOf(engine: Engine): readonly string[]
+
+/**
  * Resolve once every live project is registered. The bridge's apply calls
  * {@link FeishuBridgeService.markReady} after its project-assembly loop, so
  * a sibling plugin awaiting this deterministically sees the full project
@@ -326,21 +348,24 @@ Source: [`packages/acp/feishu-bridge/src/bridge-service.ts`](../../packages/acp/
 
 #### `feishuBridge/route-human-reply` — waterfall
 
-Route the human's reply to a feature's pending question: a listener that consumes the message short-circuits with `true` and the inbound flow stops there — this decision outranks command dispatch and permission handling. The built-in base returns false (no feature holds a pending question).
+Route the human's reply to a feature's pending question: a listener that consumes the message short-circuits with `true` and the inbound flow stops there — this decision outranks command dispatch and permission handling. The built-in base returns false (no feature holds a pending question). Machine messages (deliverMachineMessage wakes) are never human replies — listeners must skip them.
 
 ```ts cordis-catalog
 /**
  * Route the human's reply to a feature's pending question: a listener that consumes the message short-circuits with
  * `true` and the inbound flow stops there — this decision outranks
  * command dispatch and permission handling. The built-in base returns
- * false (no feature holds a pending question).
+ * false (no feature holds a pending question). Machine messages
+ * (deliverMachineMessage wakes) are never human replies — listeners
+ * must skip them.
  * @param payload.engine - The engine receiving the inbound message.
  * @param payload.platform - Platform that delivered the message.
  * @param payload.sessionKey - Session key the message arrived under.
  * @param payload.content - The human's reply text.
+ * @param payload.machine - True when a synthetic machine message, never a human reply.
  * @mode waterfall
  */
-'feishuBridge/route-human-reply'(payload: { engine: Engine; platform: Platform; sessionKey: string; content: string }, next: () => boolean): boolean
+'feishuBridge/route-human-reply'(payload: { engine: Engine; platform: Platform; sessionKey: string; content: string; machine: boolean }, next: () => boolean): boolean
 ```
 
 Source: [`packages/acp/feishu-bridge/src/bridge-service.ts`](../../packages/acp/feishu-bridge/src/bridge-service.ts)
