@@ -28,7 +28,7 @@ import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.js'
 import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostImageKeys, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.js'
 import { isMonitorCommand } from '../core/types.js'
 import type { UserQuestion, MonitorPollPage } from '../core/types.js'
-import { buildAskQuestionsCard, parseAskqSelection, type AskCardAnswer, type AskCardAnswered } from '../engine/ask.js'
+import { buildAskQuestionsCard, parseAskqSelection, zhAskCardI18n, type AskCardAnswer, type AskCardAnswered } from '../engine/ask.js'
 import { hintCategoryOfCode, parseHintButtonName } from '../engine/hints-panel.js'
 import type { FeishuMention } from './extract.js'
 import type { Card } from '../card.js'
@@ -295,8 +295,6 @@ interface AskCardMeta {
   title: string
   /** All questions in ask order. */
   questions: UserQuestion[]
-  /** The locale-owned free-text hint note as sent; the rebuild reuses it verbatim. */
-  freeTextHint: string
 }
 
 /**
@@ -309,12 +307,7 @@ interface AskCardMeta {
 function askCardMeta(card: Card): AskCardMeta | undefined {
   const title = card.header?.title ?? ''
   const questions = new Map<number, UserQuestion>()
-  let freeTextHint = ''
   for (const elem of card.elements) {
-    // First note wins: per-question hint notes precede the card-level
-    // teaching note that multi-question cards append last, and the meta must
-    // keep the locale-owned hint for rebuilds.
-    if (elem.kind === 'note' && freeTextHint === '') freeTextHint = elem.text
     if (elem.kind === 'listItem' && elem.btnValue.startsWith('askq:')) {
       const sel = parseAskqSelection(elem.btnValue)
       if (sel === undefined) continue
@@ -354,29 +347,7 @@ function askCardMeta(card: Card): AskCardMeta | undefined {
   for (const [i, q] of [...questions.entries()].sort((a, b) => a[0] - b[0])) {
     ordered[i] = q
   }
-  return { title, questions: ordered, freeTextHint }
-}
-
-/**
- * Build the callback card replacement after one answer on a multi-question
- * ask card: while questions remain open the card stays a live form with each
- * answered question's current answer shown (revisable); once every question
- * is answered the replacement is the read-only terminal card, its title
- * stamped 已全部作答.
- * @param sessionKey - Session key stamped into the rendered card.
- * @param meta - The cached question set of the ask card.
- * @param answered - Current answer per answered question index.
- * @returns The callback response replacing the pressed card.
- */
-function buildAskCardResponse(
-  sessionKey: string,
-  meta: AskCardMeta,
-  answered: Map<number, AskCardAnswer>,
-): CardActionCallbackResponse {
-  const settled = meta.questions.every((_q, i) => answered.has(i))
-  const title = settled ? `${meta.title} · 已全部作答` : meta.title
-  const card = buildAskQuestionsCard(title, meta.questions, answered, meta.freeTextHint)
-  return { card: { type: 'raw', data: renderCardMap(card, sessionKey) } }
+  return { title, questions: ordered }
 }
 
 /**
@@ -1149,7 +1120,7 @@ export class FeishuPlatform implements Platform {
         // freezing the question with a blank custom answer.
         if (!Number.isInteger(qIdx) || qIdx < 0) return undefined
         if (text === '') {
-          this.replyAskqEmptySubmit(chatID, sessionKey, '请先在输入框填写文字，再点「文字作答」')
+          this.replyAskqEmptySubmit(chatID, sessionKey, this.t(Msg.AskqEmptySubmitText, '请先在输入框填写文字，再点「文字作答」'))
           return undefined
         }
         actionVal = `askq_text:${qIdx}\x00${text}`
@@ -1160,7 +1131,7 @@ export class FeishuPlatform implements Platform {
         // A bare submit with no checks and no text used to freeze the
         // question as a permanent empty answer — reject it with a hint.
         if (indices.length === 0 && text === '') {
-          this.replyAskqEmptySubmit(chatID, sessionKey, '请至少勾选一项，或在输入框填写文字后再提交')
+          this.replyAskqEmptySubmit(chatID, sessionKey, this.t(Msg.AskqEmptySubmitMulti, '请至少勾选一项，或在输入框填写文字后再提交'))
           return undefined
         }
         actionVal += `:${indices.join(',')}`
@@ -1200,7 +1171,7 @@ export class FeishuPlatform implements Platform {
       const meta = this.askqMetaCache.get(sessionKey)
       if (meta === undefined) return undefined
       if (meta.questions.every((_q, i) => answered.has(i))) this.askqMetaCache.delete(sessionKey)
-      return buildAskCardResponse(sessionKey, meta, answered)
+      return this.buildAskCardResponse(sessionKey, meta, answered)
     }
 
     // cmd: → command shortcut from a card button; forward as a message
@@ -1301,7 +1272,7 @@ export class FeishuPlatform implements Platform {
 
   /**
    * Fire-and-forget chat hint for a rejected empty ask submit (same channel
-   * as the hint-button echo; hardcoded Chinese card chrome like the perm
+   * as the hint-button echo; platform-owned copy like the perm
    * card's resolved labels).
    * @param chatID - Chat the submit fired in.
    * @param sessionKey - Session key of the card's ask.
@@ -1919,6 +1890,28 @@ export class FeishuPlatform implements Platform {
   }
 
   /**
+   * Build the callback card replacement after one answer on a multi-question
+   * ask card: while questions remain open the card stays a live form with each
+   * answered question's current answer shown (revisable); once every question
+   * is answered the replacement is the read-only terminal card, its title
+   * stamped with the localized settled suffix.
+   * @param sessionKey - Session key stamped into the rendered card.
+   * @param meta - The cached question set of the ask card.
+   * @param answered - Current answer per answered question index.
+   * @returns The callback response replacing the pressed card.
+   */
+  private buildAskCardResponse(
+    sessionKey: string,
+    meta: AskCardMeta,
+    answered: Map<number, AskCardAnswer>,
+  ): CardActionCallbackResponse {
+    const settled = meta.questions.every((_q, i) => answered.has(i))
+    const title = settled ? `${meta.title}${this.t(Msg.AskCardSettledSuffix, ' · 已全部作答')}` : meta.title
+    const card = buildAskQuestionsCard(title, meta.questions, answered, this.i18nHandle ?? zhAskCardI18n)
+    return { card: { type: 'raw', data: renderCardMap(card, sessionKey) } }
+  }
+
+  /**
    * PATCH the session's ask card with engine-side answer state — the sync
    * path for chat-text answers, which have no card callback of their own.
    * The state merges into {@link askqAnswered} first so a later click's
@@ -1941,9 +1934,9 @@ export class FeishuPlatform implements Platform {
       if (meta.questions.every((_q, i) => merged.has(i))) this.askqMetaCache.delete(sessionKey)
       const cardJSON = renderCard(buildAskQuestionsCard(
         meta.questions.every((_q, i) => merged.has(i))
-          ? `${meta.title} · 已全部作答`
+          ? `${meta.title}${this.t(Msg.AskCardSettledSuffix, ' · 已全部作答')}`
           : meta.title,
-        meta.questions, merged, meta.freeTextHint,
+        meta.questions, merged, this.i18nHandle ?? zhAskCardI18n,
       ), sessionKey)
       await this.patchRateWait()
       await this.withRetry('sync ask card', () => this.patchMessage(msgID, cardJSON))

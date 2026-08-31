@@ -297,6 +297,24 @@ describe('onCardAction i18n handle (platform-owned copy localizes)', () => {
     expect(header.template).toBe('red')
   })
 
+  it('stamps the settled ask-card title through the handle', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setI18nHandle(enHandle())
+    await p.start(() => {})
+    p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      title: '‼️ Ask',
+      questions: [{ question: 'Pick one', header: '', options: [{ label: 'A', description: '' }], multiSelect: false }],
+    })
+    const resp = p.onCardAction(cardEvent({
+      action: 'askq:0:1',
+      messageID: 'om_i18n_ask1',
+      value: { action: 'askq:0:1', askq_label: 'A', askq_question: 'Pick one' },
+    })) as { card: { data: Record<string, unknown> } } | undefined
+    expect(resp).toBeDefined()
+    const header = (resp!.card.data as { header: { title: { content: string } } }).header
+    expect(header.title.content).toContain('All answered')
+  })
+
   it('rebuilds the allow_all card with the localized label through the handle', async () => {
     const p = newPlatform({ allowChat: '*' })
     p.setI18nHandle(enHandle())
@@ -603,7 +621,7 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
       { question: 'Say something', header: '', options: [], multiSelect: false },
     ]
     await p.sendCard({ messageID: 'om_t', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' },
-      buildAskQuestionsCard('‼️ Ask', questions, new Map(), 'free-text hint'))
+      buildAskQuestionsCard('‼️ Ask', questions, new Map()))
     const meta = p.askqMetaCache.get('feishu:oc_1:ou_9')
     expect(meta?.questions).toHaveLength(2)
     expect(meta?.questions[1]).toMatchObject({ question: 'Say something', options: [], multiSelect: false })
@@ -710,7 +728,6 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     const p = newPlatform({ allowChat: '*' })
     await p.start(() => {})
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      freeTextHint: '',
       title: '',
       questions: [{
         question: 'Pick tools',
@@ -737,7 +754,6 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     const p = newPlatform({ allowChat: '*' })
     await p.start(() => {})
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      freeTextHint: '',
       title: '‼️ Ask',
       questions: [
         {
@@ -794,7 +810,6 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     const messages: Message[] = []
     await p.start((_platform, msg) => { messages.push(msg) })
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      freeTextHint: '',
       title: '',
       questions: [{
         question: 'Pick one',
@@ -820,7 +835,6 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     const messages: Message[] = []
     void p.start((_platform, msg) => { messages.push(msg) })
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      freeTextHint: '',
       title: '‼️ Ask',
       questions: [{
         question: 'Pick one',
@@ -851,7 +865,6 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     const messages: Message[] = []
     void p.start((_platform, msg) => { messages.push(msg) })
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      freeTextHint: '',
       title: '',
       questions: [{
         question: 'Pick tools',
@@ -877,7 +890,6 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     const messages: Message[] = []
     void p.start((_platform, msg) => { messages.push(msg) })
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      freeTextHint: '',
       title: '',
       questions: [{
         question: 'Pick one',
@@ -905,7 +917,6 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     const messages: Message[] = []
     void p.start((_platform, msg) => { messages.push(msg) })
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      freeTextHint: '',
       title: '',
       questions: [{
         question: 'Pick tools',
@@ -930,13 +941,35 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     replySpy.mockRestore()
   })
 
+  it('empty-submit hints localize through the handle', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setI18nHandle(enHandle())
+    await p.start(() => {})
+    p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      title: '',
+      questions: [{ question: 'Pick tools', header: '', options: [{ label: 'Bash', description: '' }], multiSelect: true }],
+    })
+    const replySpy = vi.spyOn(p, 'reply').mockResolvedValue(undefined)
+    const makeEvent = (name: string, form_value: Record<string, unknown>): CardActionTriggerEvent => ({
+      action: { name, form_value },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_empty_i18n' },
+    })
+    expect(p.onCardAction(makeEvent('askq_text_submit_0', { askq_text_0: '   ' }))).toBeUndefined()
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(replySpy).toHaveBeenCalledWith(expect.objectContaining({ chatID: 'oc_1' }), expect.stringContaining('Type your answer in the input first'))
+    expect(p.onCardAction(makeEvent('askq_multi_submit_0', {}))).toBeUndefined()
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(replySpy).toHaveBeenCalledWith(expect.objectContaining({ chatID: 'oc_1' }), expect.stringContaining('Check at least one option'))
+    replySpy.mockRestore()
+  })
+
   it('a changed answer on an answered question passes the dedup and updates the card', async () => {
     const p = newPlatform({ allowChat: '*' })
     await p.start(() => {})
     const messages: Message[] = []
     void p.start((_platform, msg) => { messages.push(msg) })
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
-      freeTextHint: '',
       title: '',
       questions: [
         {

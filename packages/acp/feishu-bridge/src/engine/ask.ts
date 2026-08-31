@@ -11,8 +11,25 @@
 
 import type { Card, CardElement } from '../card.js'
 import { newCard } from '../card.js'
+import { I18n, langChinese, Msg, type MsgKey } from '../i18n/index.js'
 import type { PendingAskAnswer, UserQuestion } from '../core/types.js'
 import { isAllowResponse, isApproveAllResponse, isDenyResponse } from './permission.js'
+
+/**
+ * Minimal i18n face for ask-card copy: the engine's `I18n` instance and the
+ * platform's `PlatformI18nHandle` both satisfy it structurally. Ask-card copy
+ * lives in the message table (config.language drives it engine-side); callers
+ * without a wired handle fall back to {@link zhAskCardI18n}.
+ */
+export interface AskCardI18n {
+  /** Plain message lookup (no formatting args). */
+  t(key: MsgKey): string
+  /** Printf-style formatted lookup (%s / %d in the message table). */
+  tf(key: MsgKey, ...args: unknown[]): string
+}
+
+/** zh lookup for callers without a wired handle (direct calls, tests). */
+export const zhAskCardI18n: AskCardI18n = new I18n(langChinese)
 
 /** Prefix of every ask card button payload. */
 const askqPrefix = 'askq:'
@@ -295,11 +312,12 @@ export function cardAnsweredFrom(questions: UserQuestion[], collected: Map<numbe
  * @param title - Card title, computed by the caller.
  * @param questions - All questions of the ask, in order.
  * @param answered - Current answer per answered question index.
- * @param freeTextHint - Locale-owned hint that free text answers the
- *   question too (Msg.AskFreeTextHint); the caller owns the language.
+ * @param i18n - Ask-card copy face (engine I18n or platform handle); defaults to zh.
  * @returns The assembled card.
  */
-export function buildAskQuestionsCard(title: string, questions: UserQuestion[], answered: AskCardAnswered, freeTextHint: string): Card {
+export function buildAskQuestionsCard(
+  title: string, questions: UserQuestion[], answered: AskCardAnswered, i18n: AskCardI18n = zhAskCardI18n,
+): Card {
   const cb = newCard().title(title, 'blue')
   const multiple = questions.length > 1
   const settled = questions.every((_q, i) => answered.has(i))
@@ -307,16 +325,15 @@ export function buildAskQuestionsCard(title: string, questions: UserQuestion[], 
     // A divider between question blocks visually groups each question's
     // controls (its 提交第 N 题 button belongs to it, not the whole card).
     if (multiple && i > 0) cb.raw({ kind: 'divider' })
-    cb.raw(...questionElements(q, i, multiple, settled, answered.get(i), freeTextHint))
+    cb.raw(...questionElements(q, i, multiple, settled, answered.get(i), i18n))
   }
-  // Card-level teaching (no i18n handle on this seam), multi-question cards
-  // only: revision and auto-submit guidance. Single-question cards end with
-  // the per-question locale-owned hint note instead — a card-level variant
-  // would duplicate it verbatim (and clobber askCardMeta's hint extraction).
-  // Skipped when settled (no controls to explain) and when no question has
-  // options to re-pick.
+  // Card-level teaching, multi-question cards only: revision and auto-submit
+  // guidance. Single-question cards end with the per-question hint note
+  // instead — a card-level variant would duplicate it verbatim. Skipped when
+  // settled (no controls to explain) and when no question has options to
+  // re-pick.
   if (!settled && multiple && questions.some(q => q.options.length > 0)) {
-    cb.note('可点选或输入作答/修改任何一题；答完全部自动提交')
+    cb.note(i18n.t(Msg.AskqCardTeachingMulti))
   }
   return cb.build()
 }
@@ -330,7 +347,7 @@ export function buildAskQuestionsCard(title: string, questions: UserQuestion[], 
  * option-bearing questions.
  */
 function questionElements(
-  q: UserQuestion, qIdx: number, multiple: boolean, settled: boolean, cur: AskCardAnswer | undefined, freeTextHint: string,
+  q: UserQuestion, qIdx: number, multiple: boolean, settled: boolean, cur: AskCardAnswer | undefined, i18n: AskCardI18n,
 ): CardElement[] {
   const prefix = multiple ? `${qIdx + 1}. ` : ''
   const elements: CardElement[] = [
@@ -351,7 +368,7 @@ function questionElements(
   }
   if (cur !== undefined) {
     const current = cur.indices.length > 0
-      ? `当前：${cur.indices.map(i => `**${q.options[i - 1]?.label ?? String(i)}**`).join('、')}`
+      ? `${i18n.t(Msg.AskqCurrentPrefix)}${cur.indices.map(i => `**${q.options[i - 1]?.label ?? String(i)}**`).join('、')}`
       : ''
     const custom = (cur.custom ?? '') !== '' ? `✍️ ${cur.custom ?? ''}` : ''
     const line = [current, custom].filter(s => s !== '').join(' · ')
@@ -371,8 +388,8 @@ function questionElements(
       })),
       action: `askq_multi:${qIdx}`,
       extra: { askq_question: q.question },
-      textInput: { name: `askq_text_${qIdx}`, placeholder: '补充说明或自定义答案（可选）' },
-      submitLabel: multiple ? `提交第 ${qIdx + 1} 题` : '提交本题',
+      textInput: { name: `askq_text_${qIdx}`, placeholder: i18n.t(Msg.AskqMultiTextPlaceholder) },
+      submitLabel: multiple ? i18n.tf(Msg.AskqSubmitQuestionN, qIdx + 1) : i18n.t(Msg.AskqSubmitThisQuestion),
     })
     return elements
   }
@@ -391,11 +408,11 @@ function questionElements(
     kind: 'form',
     name: `askq_text_form_${qIdx}`,
     elements: [
-      { kind: 'input', name: `askq_text_${qIdx}`, placeholder: q.options.length > 0 ? '以上都不合适？输入你的答案' : '输入你的答案', maxLength: 1000 },
+      { kind: 'input', name: `askq_text_${qIdx}`, placeholder: i18n.t(q.options.length > 0 ? Msg.AskqTextPlaceholderOptions : Msg.AskqTextPlaceholder), maxLength: 1000 },
       {
         kind: 'actions',
         buttons: [{
-          text: '✍️ 文字作答',
+          text: i18n.t(Msg.AskqTextSubmit),
           type: 'default',
           value: `askq_text:${qIdx}`,
           name: `askq_text_submit_${qIdx}`,
@@ -410,11 +427,10 @@ function questionElements(
     ],
   })
   // Free text also lands in resolveAskAnswer's custom branch, so the block
-  // closes with the locale-owned hint (the caller passes the translated
-  // Msg.AskFreeTextHint). A question without options skips it — the form's
+  // closes with the hint. A question without options skips it — the form's
   // input above is its only answer path and already says so.
   if (q.options.length > 0) {
-    elements.push({ kind: 'note', text: freeTextHint })
+    elements.push({ kind: 'note', text: i18n.t(Msg.AskFreeTextHint) })
   }
   return elements
 }

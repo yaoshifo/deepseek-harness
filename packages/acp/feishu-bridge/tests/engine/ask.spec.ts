@@ -15,7 +15,16 @@ import {
   parsePermissionVerdict,
   resolveAskAnswer,
 } from '../../src/engine/ask.js'
+import type { AskCardI18n } from '../../src/engine/ask.js'
 import type { UserQuestion } from '../../src/core/types.js'
+
+/** Deterministic en-face stub: the message key itself is the asserted copy. */
+function enAskCardI18n(): AskCardI18n {
+  return {
+    t: key => `en:${key}`,
+    tf: (key, ...args) => `en:${key}:${args.join('+')}`,
+  }
+}
 
 function singleQuestion(): UserQuestion {
   return {
@@ -181,7 +190,7 @@ describe('defaultAskAnswer', () => {
 
 describe('buildAskQuestionsCard', () => {
   it('single-select renders the question plus list rows with askq:{q}:{n} buttons', () => {
-    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map(), 'free-text hint')
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map())
 
     expect(card.header?.title).toBe('‼️ Setup')
     expect(card.header?.color).toBe('blue')
@@ -214,7 +223,7 @@ describe('buildAskQuestionsCard', () => {
         options: [{ label: 'Gin', description: '' }, { label: 'Echo', description: '' }],
         multiSelect: false,
       },
-    ], new Map(), 'free-text hint')
+    ], new Map())
 
     // Question 2 heading is numbered; its buttons address qIdx 1. A divider
     // separates the question blocks; find the heading instead of pinning
@@ -228,7 +237,7 @@ describe('buildAskQuestionsCard', () => {
     const two = buildAskQuestionsCard('t', [
       singleQuestion(),
       { question: 'Which framework?', header: '', options: [{ label: 'Gin', description: '' }], multiSelect: false },
-    ], new Map(), 'free-text hint')
+    ], new Map())
     expect(two.elements.filter(e => e.kind === 'divider')).toHaveLength(1)
     const firstIdx = two.elements.findIndex(e => e.kind === 'markdown')
     const secondHeadingIdx = two.elements.findIndex(e => e.kind === 'markdown' && (e as { content: string }).content.includes('framework'))
@@ -236,26 +245,51 @@ describe('buildAskQuestionsCard', () => {
     expect(dividerIdx).toBeGreaterThan(firstIdx)
     expect(dividerIdx).toBeLessThan(secondHeadingIdx)
 
-    const one = buildAskQuestionsCard('t', [singleQuestion()], new Map(), 'free-text hint')
+    const one = buildAskQuestionsCard('t', [singleQuestion()], new Map())
     expect(one.elements.some(e => e.kind === 'divider')).toBe(false)
   })
 
   it('a multi-select submit label scopes to its question (提交第 N 题 / 提交本题)', () => {
-    const single = buildAskQuestionsCard('t', [{ ...singleQuestion(), multiSelect: true }], new Map(), 'free-text hint')
+    const single = buildAskQuestionsCard('t', [{ ...singleQuestion(), multiSelect: true }], new Map())
     const singleCheck = single.elements.find(e => e.kind === 'checkOptions') as { submitLabel?: string }
     expect(singleCheck.submitLabel).toBe('提交本题')
 
     const multi = buildAskQuestionsCard('t', [
       singleQuestion(),
       { question: 'Which fixes?', header: '', options: [{ label: 'A', description: '' }], multiSelect: true },
-    ], new Map(), 'free-text hint')
+    ], new Map())
     const multiCheck = multi.elements.find(e => e.kind === 'checkOptions') as { submitLabel?: string }
     expect(multiCheck.submitLabel).toBe('提交第 2 题')
   })
 
+  it('a multi-select question localizes its checker placeholder and submit label', () => {
+    const q: UserQuestion = { ...singleQuestion(), multiSelect: true }
+    const card = buildAskQuestionsCard('‼️ Setup', [q], new Map(), enAskCardI18n())
+
+    const form = card.elements[1] as {
+      textInput?: { placeholder?: string }
+      submitLabel?: string
+    }
+    expect(form.textInput?.placeholder).toBe('en:askq_multi_text_placeholder')
+    expect(form.submitLabel).toBe('en:askq_submit_this_question')
+  })
+
+  it('a multi-question card localizes the numbered submit label and the teaching note', () => {
+    const card = buildAskQuestionsCard('t', [
+      singleQuestion(),
+      { question: 'Which fixes?', header: '', options: [{ label: 'A', description: '' }], multiSelect: true },
+    ], new Map(), enAskCardI18n())
+
+    const check = card.elements.find(e => e.kind === 'checkOptions') as { submitLabel?: string }
+    expect(check.submitLabel).toBe('en:askq_submit_question_n:2')
+    const note = card.elements[card.elements.length - 1] as { kind: string; text: string }
+    expect(note.kind).toBe('note')
+    expect(note.text).toBe('en:askq_card_teaching_multi')
+  })
+
   it('a multi-select question renders a checker form addressed by askq_multi:{q}', () => {
     const q: UserQuestion = { ...singleQuestion(), multiSelect: true }
-    const card = buildAskQuestionsCard('‼️ Setup', [q], new Map(), 'free-text hint')
+    const card = buildAskQuestionsCard('‼️ Setup', [q], new Map())
 
     const form = card.elements[1] as {
       kind: string
@@ -268,7 +302,7 @@ describe('buildAskQuestionsCard', () => {
   })
 
   it('a settled card (every question answered) renders frozen marks and no controls', () => {
-    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map([[0, { indices: [2] }]]), 'free-text hint')
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map([[0, { indices: [2] }]]))
 
     expect(card.elements).toHaveLength(2)
     const frozen = card.elements[1] as { kind: string; content: string }
@@ -280,7 +314,7 @@ describe('buildAskQuestionsCard', () => {
   })
 
   it('a settled card shows the card-input custom text under its question', () => {
-    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map([[0, { indices: [], custom: 'Redis' }]]), 'free-text hint')
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map([[0, { indices: [], custom: 'Redis' }]]))
 
     const custom = card.elements.find(e => e.kind === 'markdown' && e.content.startsWith('✍️')) as { content: string }
     expect(custom.content).toBe('✍️ Redis')
@@ -296,7 +330,7 @@ describe('buildAskQuestionsCard', () => {
         options: [{ label: 'Gin', description: '' }],
         multiSelect: false,
       },
-    ], new Map([[0, { indices: [1] }]]), 'free-text hint')
+    ], new Map([[0, { indices: [1] }]]))
 
     expect(card.elements.some(e => e.kind === 'markdown' && e.content.includes('当前：**PostgreSQL**'))).toBe(true)
     expect(card.elements.some(e => e.kind === 'listItem' && e.btnValue === 'askq:0:1')).toBe(true)
@@ -304,23 +338,47 @@ describe('buildAskQuestionsCard', () => {
     expect(card.elements.filter(e => e.kind === 'form')).toHaveLength(2)
   })
 
+  it('the current-answer line localizes its prefix through the i18n face', () => {
+    const card = buildAskQuestionsCard('t', [
+      singleQuestion(),
+      { question: 'Which framework?', header: '', options: [{ label: 'Gin', description: '' }], multiSelect: false },
+    ], new Map([[0, { indices: [1] }]]), enAskCardI18n())
+
+    expect(card.elements.some(e => e.kind === 'markdown' && e.content.includes('en:askq_current_prefix**PostgreSQL**'))).toBe(true)
+  })
+
   it('a question without options renders its heading plus the text-input form', () => {
     const q: UserQuestion = { ...singleQuestion(), options: [] }
-    const card = buildAskQuestionsCard('t', [q], new Map(), 'free-text hint')
+    const card = buildAskQuestionsCard('t', [q], new Map())
     expect(card.elements).toHaveLength(2)
     expect(card.elements[1]?.kind).toBe('form')
   })
 
+  it('an interactive single-select question localizes its copy through the i18n face', () => {
+    const en = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map(), enAskCardI18n())
+
+    const form = en.elements.find(e => e.kind === 'form') as {
+      elements: Array<{ placeholder?: string; buttons?: Array<{ text?: string }> }>
+    }
+    const input = form.elements[0] as { placeholder?: string }
+    expect(input.placeholder).toBe('en:askq_text_placeholder_options')
+    const submit = form.elements[1] as { buttons?: Array<{ text?: string }> }
+    expect(submit.buttons?.[0]?.text).toBe('en:askq_text_submit')
+    const note = en.elements[en.elements.length - 1] as { kind: string; text: string }
+    expect(note.kind).toBe('note')
+    expect(note.text).toBe('en:ask_free_text_hint')
+  })
+
   it('an interactive single-select question ends with the free-text hint note', () => {
-    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map(), 'free-text hint')
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map())
 
     const note = card.elements[card.elements.length - 1] as { kind: string; text: string }
     expect(note.kind).toBe('note')
-    expect(note.text).toBe('free-text hint')
+    expect(note.text).toBe('也可以直接文字输入')
   })
 
   it('an interactive single-select question carries a text-input form addressed by askq_text:{q}', () => {
-    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map(), 'free-text hint')
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map())
 
     const form = card.elements.find(e => e.kind === 'form')
     expect(form?.name).toBe('askq_text_form_0')
