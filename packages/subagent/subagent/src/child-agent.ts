@@ -9,6 +9,8 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+// Type-only: resolves `ctx.get('mcpWorkspace')` to the service augmentation.
+import type {} from '@deepseek-ai/dsh-mcp-workspace'
 import type { Agent, AgentOptions, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -219,6 +221,21 @@ export function applyChildComposition(
     })
   }
   if (composition.toolFilter !== undefined) childCtx.tools.restrict(composition.toolFilter)
+}
+
+/**
+ * Mount the child's cwd-scoped `.mcp.json` servers (directory MCP discovery)
+ * at the end of the child's creation window, outside every tool mask the
+ * child composition installed — the same exemption semantics the bridge
+ * adapter's outer wrapper gives top-level sessions. An absent service means
+ * the deployment did not include the feature: skip silently, because the
+ * entry composition points (bridge adapter, session controller) already warn
+ * once per process.
+ * @param childCtx - the unpublished child agent's scoped creation context.
+ */
+export async function mountDirectoryMcp(childCtx: Context): Promise<void> {
+  const service = childCtx.get('mcpWorkspace')
+  if (service !== undefined) await service.mount(childCtx)
 }
 
 /** Policy seeded onto a child session's log at the delegation boundary. */

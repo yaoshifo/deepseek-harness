@@ -38,6 +38,8 @@ export interface SkillsMcpCommandDeps {
   readonly healthServers?: readonly McpHealthServerConfig[] | undefined
   /** Project `mcpServers` allowlist; present = sessions only see these servers' tools. */
   readonly allowlist?: readonly string[] | undefined
+  /** Servers a directory `.mcp.json` would mount for a cwd; absent = the mcp-workspace service is not composed. */
+  readonly listWorkspaceServers?: ((cwd: string) => Promise<readonly { readonly name: string; readonly transport: string }[]>) | undefined
 }
 
 /** One live MCP server and its parsed tool names. */
@@ -122,7 +124,13 @@ async function cmdMcp(e: Engine, p: Platform, msg: Message, deps: SkillsMcpComma
   const degraded = (deps.healthServers ?? [])
     .map(server => server.serverName)
     .filter(name => !groups.some(group => group.server === name))
-  if (groups.length === 0 && degraded.length === 0) {
+  // Directory mounts are per-session (agent scope), never in the
+  // process-global view, so the section reads the discovery service by the
+  // chat's work dir instead of the tool registry.
+  const workspace = deps.listWorkspaceServers === undefined
+    ? []
+    : await deps.listWorkspaceServers(e.commandWorkDir(msg))
+  if (groups.length === 0 && degraded.length === 0 && workspace.length === 0) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.McpEmpty))
     return
   }
@@ -138,8 +146,14 @@ async function cmdMcp(e: Engine, p: Platform, msg: Message, deps: SkillsMcpComma
   for (const server of degraded) {
     lines.push(`**${server}**${e.i18n.t(Msg.McpDegraded)}`)
   }
+  if (workspace.length > 0) {
+    lines.push('', `${e.i18n.tf(Msg.McpWorkspaceSection, workspace.length)}${e.i18n.t(Msg.McpWorkspaceNote)}`)
+    for (const server of workspace) {
+      lines.push(`**${server.name}** (${server.transport})`)
+    }
+  }
   await e.sendAsCard(p, msg.replyCtx, lines.join('\n'), {
-    title: e.i18n.tf(Msg.McpTitle, groups.length + degraded.length),
+    title: e.i18n.tf(Msg.McpTitle, groups.length + degraded.length + workspace.length),
     color: 'blue',
   })
 }

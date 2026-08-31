@@ -21,6 +21,7 @@ import { createUserMessage, type ContentBlock } from '@deepseek-ai/dsh-llm'
 import {
   appendDelegatedPolicyOverrides,
   applyChildComposition,
+  mountDirectoryMcp,
   assertSubagentMaxDepth,
   captureDelegatedPolicyOverrides,
   childSessionMeta,
@@ -118,7 +119,7 @@ export async function startInProcessRun(
   const inherited = captureDelegatedPolicyOverrides(parent)
 
   let structured: StructuredAttachment | undefined
-  const setup = (childCtx: Context): void => {
+  const setup = async (childCtx: Context): Promise<void> => {
     appendDelegatedPolicyOverrides((childCtx.agent as Agent).session, inherited)
     applyChildComposition(childCtx, parent, {
       persona: request.persona,
@@ -128,6 +129,7 @@ export async function startInProcessRun(
       structured = attachStructuredRuntime(childCtx, request.outputSchema)
     }
     attachDescriptorAppend(childCtx, request.descriptor)
+    await mountDirectoryMcp(childCtx)
   }
 
   const handle = await parent.ctx.agents.create({

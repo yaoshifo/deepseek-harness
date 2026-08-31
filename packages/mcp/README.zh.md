@@ -9,7 +9,7 @@ kind: "package-group"
 
 ## 概述
 
-`mcp/` 组把 harness 连接到 Model Context Protocol（MCP）工具服务器生态。本组的唯一一个包挂载外部服务器——文件系统、GitHub、数据库或记忆服务器——让模型把它的工具当作原生工具、以稳定的服务器限定名称使用。每台服务器是一条配置项；默认不启用任何服务器，因此按需逐台开启。只桥接 Tools 能力：MCP resources 与 prompts 不受支持。本页映射该组；逐包约定由包 README 负责。
+`mcp/` 组把 harness 连接到 Model Context Protocol（MCP）工具服务器生态。客户端包挂载外部服务器——文件系统、GitHub、数据库或记忆服务器——让模型把它的工具当作原生工具、以稳定的服务器限定名称使用；workspace 包把会话目录下 Claude Code 兼容的 `.mcp.json` 挂载进该会话自己的 scope。每台服务器是一条配置项（或受信根目录内的一份 `.mcp.json`）；默认不启用任何服务器，因此按需逐台开启。只桥接 Tools 能力：MCP resources 与 prompts 不受支持。本页映射该组；逐包约定由包 README 负责。
 
 ## 目录
 
@@ -22,11 +22,12 @@ kind: "package-group"
 <a id="packages"></a>
 ## 包
 
-本组只包含一个包；包 README 与下方链接拥有细节。
+本组包含两个包；包 README 与下方链接拥有细节。
 
 | 包 | 提供的能力 |
 |---|---|
 | [`mcp-client/`](mcp-client/README.zh.md) | 挂载一台外部 MCP 服务器，让模型可以把它的工具当作原生工具调用 |
+| [`mcp-workspace/`](mcp-workspace/README.zh.md) | 把会话目录下 Claude Code 兼容的 `.mcp.json` 服务器挂载进该会话自己的 agent scope |
 
 -----
 
@@ -36,6 +37,7 @@ kind: "package-group"
 先用可运行的示例配置体验插件，再阅读 Agent Note 了解其背后的行为决策。
 
 - [MCP 客户端插件 Agent Note](../../.agents/notes/implemented/feature/2026-07-07-mcp-client-plugin.zh.md)——桥接的设计：服务器限定命名、发现、执行与环境清洗。
+- [workspace MCP 发现 Agent Note](../../.agents/notes/implemented/feature/2026-08-31-workspace-mcp-discovery.zh.md)——目录级隔离：scope 取舍、信任模型与 Claude Code 格式对齐。
 - [MCP 客户端自动重连 Agent Note](../../.agents/notes/implemented/feature/2026-08-06-mcp-client-auto-reconnect.zh.md)——重连策略、单次中断的尝试预算与退出开关。
 - [第三方记忆 MCP 示例 Agent Note](../../.agents/notes/implemented/feature/2026-07-31-third-party-memory-mcp-examples.zh.md)——作为参考配置交付的三个默认关闭的记忆服务器 overlay。
 - [第三方记忆 MCP 指南](../../docs/user/guide/mcp-memory.zh.md)——可运行的 overlay 配置行与设置说明。

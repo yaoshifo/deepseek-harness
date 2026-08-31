@@ -126,6 +126,30 @@ describe('mcp-client plugin module exports', () => {
     expect(resolved.serverName).toBe('github-prod_1')
   })
 
+  it('Config schema accepts an omitted or bounded startupTimeoutMs and rejects zero', () => {
+    const omitted = ConfigSchema({
+      transport: 'stdio',
+      serverName: 'srv',
+      command: 'echo',
+    } as never)
+    expect(omitted.startupTimeoutMs).toBeUndefined()
+
+    const bounded = ConfigSchema({
+      transport: 'stdio',
+      serverName: 'srv',
+      command: 'echo',
+      startupTimeoutMs: 10_000,
+    } as never)
+    expect(bounded.startupTimeoutMs).toBe(10_000)
+
+    expect(() => ConfigSchema({
+      transport: 'stdio',
+      serverName: 'srv',
+      command: 'echo',
+      startupTimeoutMs: 0,
+    } as never)).toThrow()
+  })
+
   it('Config schema materializes reconnect defaults and merges partial overrides', () => {
     const omitted = ConfigSchema({
       transport: 'stdio',
@@ -199,6 +223,40 @@ describe('apply (plugin lifecycle)', () => {
     await activation
     expect(ctx.tools.get('mcp__srv__remote')).toBeDefined()
     await fiber.dispose()
+  })
+
+  it('resolves within startupTimeoutMs while the connection is still pending; tools arrive late', async () => {
+    const connection: PromiseWithResolvers<void> = Promise.withResolvers()
+    mockConnect.mockImplementation(async () => {
+      await connection.promise
+    })
+
+    const startedAt = Date.now()
+    await apply(ctx, { ...stdioConfig, startupTimeoutMs: 25 })
+
+    // apply did not wait for the pending connection: bounded startup.
+    expect(Date.now() - startedAt).toBeLessThan(1000)
+    expect(ctx.tools.get('mcp__srv__remote')).toBeUndefined()
+
+    connection.resolve()
+    await vi.waitFor(() => {
+      expect(ctx.tools.get('mcp__srv__remote')).toBeDefined()
+    })
+    await ctx.fiber.dispose()
+  })
+
+  it('still rejects a fast startup failure under failOnStartupError despite a startupTimeoutMs bound', async () => {
+    const cause = new Error('connection refused')
+    mockConnect.mockRejectedValue(cause)
+    await expect(apply(ctx, {
+      ...stdioConfig,
+      startupTimeoutMs: 10_000,
+      failOnStartupError: true,
+    })).rejects.toMatchObject({
+      message: 'mcp-client(srv): initial connection or tool synchronization failed',
+      cause,
+    })
+    await ctx.fiber.dispose()
   })
 
   it('rejects a duplicate serverName at load and leaves the first instance intact', async () => {

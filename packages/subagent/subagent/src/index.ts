@@ -118,6 +118,7 @@ export { assertSubagentMaxDepth, delegationDepthOf } from './depth.ts'
 export {
   appendDelegatedPolicyOverrides,
   applyChildComposition,
+  mountDirectoryMcp,
   captureDelegatedPolicyOverrides,
   childSessionMeta,
   parentAgentOptionsForDelegation,
