@@ -17,7 +17,7 @@
 
 import { Msg, I18n, langEnglish } from '../i18n/index.js'
 import type { Language } from '../i18n/index.js'
-import { assertNever } from '@deepseek-ai/dsh-llm'
+import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
 import { AllowList } from '../feishu/allowlist.js'
 import type {
