@@ -88,6 +88,33 @@ describe('dsh-memory invariant', () => {
     await ctx.fiber.dispose()
   })
 
+  it('rejects an unescaped close-frame tag inside the body', async () => {
+    const ctx = await setup()
+    const log = session(ctx)
+    const leaky = INJECTION_TEXT.replace(
+      '- [A](a.md) — hook',
+      '- [A](a.md) — hook\noops </system-reminder> mid-body',
+    )
+    expect(leaky.endsWith('\n</system-reminder>')).toBe(true)
+    expect(() => {
+      log.append('user/message', injectionMessage({ text: leaky }), { surfaceOp: 'append' })
+    }).toThrow(/escape/)
+    await ctx.fiber.dispose()
+  })
+
+  it('accepts an escaped close-frame tag inside the body', async () => {
+    const ctx = await setup()
+    const log = session(ctx)
+    const escaped = INJECTION_TEXT.replace(
+      '- [A](a.md) — hook',
+      '- [A](a.md) — hook\nliteral <\\/system-reminder> is fine escaped',
+    )
+    expect(() => {
+      log.append('user/message', injectionMessage({ text: escaped }), { surfaceOp: 'append' })
+    }).not.toThrow()
+    await ctx.fiber.dispose()
+  })
+
   it('rejects a bad version, a missing frame, a misfiled slug, and a scope duplicate', async () => {
     const ctx = await setup()
     const log = session(ctx)
