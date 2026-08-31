@@ -40,9 +40,9 @@ describe('GLOBAL_MEMORY_PROMPT', () => {
   })
 
   // Anchor tests pin the scope decision rule, its fail-safe default, the lazy
-  // promotion rule, and the Claude Code fence. Editing any of these lines is a
-  // model-behavior change and must update the README and package snapshots in
-  // the same commit.
+  // promotion rule, the cross-scope dedup rule, and the Claude Code fence.
+  // Editing any of these lines is a model-behavior change and must update the
+  // README and package snapshots in the same commit.
   it.each([
     'would this memory still be useful in a session for an unrelated project?',
     'pass scope: \'global\' to read or write it',
@@ -51,6 +51,8 @@ describe('GLOBAL_MEMORY_PROMPT', () => {
     'When unsure, choose project: a memory filed too narrowly only misses recall elsewhere, but a memory filed too broadly injects noise into every session you will ever run',
     'An explicit user instruction always overrides this rule',
     're-file it: write it to global scope, upsert its pointer in the global index, then delete the project file and remove its project pointer',
+    'If the same fact exists in both scopes, delete the misplaced copy and its index pointer',
+    'keep the global one when it passes the scope test above, the project one when it fails it',
     'Claude Code does not see it',
   ])('pins the sentence: %s', (sentence) => {
     expect(GLOBAL_MEMORY_PROMPT).toContain(sentence)

@@ -16,7 +16,7 @@ Claude Code 记忆兼容加默认开启的 dsh 专属全局 scope:dsh 会话直�
 
 ## scope 判定:project 还是 global
 
-写哪个 scope 由模型在写入时选择。引导放在离决策点最近的三个面上:默认开启的 `## Global memory` 提示规则(一个单问判定——*这条记忆拿到一个无关项目的会话里还有用吗?*——并把 `When unsure, choose project` 作为失败安全默认,因为写窄了只是别处召回不到,写宽了是每个会话都注入噪声)、`scope` 工具参数的 description、以及全局索引帧头——每次召回都标明跨项目语义。规则还规定了惰性晋升:发现某条 project 记忆实际跨项目时当场重归档(写 global、upsert 全局指针、删除项目文件与指针)。刻意不做定时晋升——写时与惰性路径掌握的上下文更多,且无人看守地写入全局注入内容会绕过人工把关,这一点更小的全局预算只能部分补偿。
+写哪个 scope 由模型在写入时选择。引导放在离决策点最近的三个面上:默认开启的 `## Global memory` 提示规则(一个单问判定——*这条记忆拿到一个无关项目的会话里还有用吗?*——并把 `When unsure, choose project` 作为失败安全默认,因为写窄了只是别处召回不到,写宽了是每个会话都注入噪声)、`scope` 工具参数的 description、以及全局索引帧头——每次召回都标明跨项目语义。规则还规定了惰性晋升:发现某条 project 记忆实际跨项目时当场重归档(写 global、upsert 全局指针、删除项目文件与指针)。同一事实出现在两个 scope 时只留归档正确的那份——通过单问判定的留 global,不通过的留 project——放错的那份连同其索引指针一并删除;这同时就是错归入 global 的记忆的降级路径。刻意不做定时晋升——写时与惰性路径掌握的上下文更多,且无人看守地写入全局注入内容会绕过人工把关,这一点更小的全局预算只能部分补偿。
 
 ## slug 编码
 
@@ -81,7 +81,7 @@ You also have a cross-project global memory at {{globalMemoryDirectory}}, shared
 
 Choose the scope with one test: would this memory still be useful in a session for an unrelated project? If yes, write it with scope: 'global'; if no, keep it in project scope. Global is for facts that hold everywhere this harness runs — who the user is and how they like to work, feedback about how you work, and pitfalls of this machine or the harness itself (sandbox quirks, credential locations, tool misbehaviors). Anything tied to this repository — its code, conventions, history, ops — stays in project scope. When unsure, choose project: a memory filed too narrowly only misses recall elsewhere, but a memory filed too broadly injects noise into every session you will ever run. An explicit user instruction always overrides this rule.
 
-When you find a project memory that is actually cross-project — an unrelated project hits the pit it records, or its fact holds everywhere — re-file it: write it to global scope, upsert its pointer in the global index, then delete the project file and remove its project pointer.
+When you find a project memory that is actually cross-project — an unrelated project hits the pit it records, or its fact holds everywhere — re-file it: write it to global scope, upsert its pointer in the global index, then delete the project file and remove its project pointer. If the same fact exists in both scopes, delete the misplaced copy and its index pointer: keep the global one when it passes the scope test above, the project one when it fails it.
 ```
 
 #### Token 开销
@@ -126,5 +126,5 @@ When you find a project memory that is actually cross-project — an unrelated p
 - **不支持 Windows cwd** —— Claude Code 的 slug 规则只有 POSIX 磁盘布局的实证;盘符 cwd 得不到 section、注入,工具明确报错而不是猜测 slug。先补实证规则再放宽守卫。
 - **会话中途不重载索引** —— resume 与 compaction 不重注入;模型用 `memory_read` 读当前状态。只有当会话内索引漂移被证明代价高昂时,才需要 `dsh-agent-instructions` 式的 baseline-identity 重组。
 - **并发写者 last-write-wins** —— 无文件锁;与两个并发 Claude Code 会话一致。全局目录把写者群体扩大到本机上所有 dsh 会话。
-- **无定时 project→global 晋升** —— 刻意取舍:写时规则与惰性重归档掌握的上下文多于周期扫描,且无人看守地写入全局注入内容会绕过人工把关。若错归档被证明常见,升级路径是按需审查 skill。
+- **无定时 project→global 晋升** —— 刻意取舍:写时规则与惰性重归档掌握的上下文多于周期扫描,且无人看守地写入全局注入内容会绕过人工把关。跨 scope 重复只由已教的去重规则机会性清理。若错归档被证明常见,升级路径是按需审查 skill。
 - **无 frontmatter schema 校验** —— 与 Claude Code 的刻意对齐(它同样不强制);插件只在已有 `metadata:` 块内增量补写溯源字段。
