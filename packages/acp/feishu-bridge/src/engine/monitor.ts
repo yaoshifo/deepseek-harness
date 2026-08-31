@@ -1228,7 +1228,7 @@ export class MonitorCore {
       usedLabel.add(label)
       options.push({ label, dir: d })
     }
-    options.push({ label: '❎ 跳过（误判）', dir: '' })
+    options.push({ label: this.e.i18n.t(Msg.MonitorClarifySkip), dir: '' })
 
     // 3. Stash pending state BEFORE sending the card, so an instant button
     //    callback finds the state.
@@ -1247,18 +1247,18 @@ export class MonitorCore {
     this.e.sessions.save()
 
     // 4. Send a single-select card (option label becomes the callback content).
-    let header = '选择排查目录'
-    let question = `需要排查但目录不确定，请选择目标目录：\n\n> ${truncateMonitor(msg.content.trim(), 200)}`
+    let header = this.e.i18n.t(Msg.MonitorClarifyHeader)
+    let question = `${this.e.i18n.t(Msg.MonitorClarifyQuestion)}\n\n> ${truncateMonitor(msg.content.trim(), 200)}`
     if (!hadCandidates) {
-      header = '请选择项目'
-      question = `🤔 没看出这条该交给哪个项目，请选择目标目录或跳过：\n\n> ${truncateMonitor(msg.content.trim(), 200)}`
+      header = this.e.i18n.t(Msg.MonitorClarifyHeaderNone)
+      question = `${this.e.i18n.t(Msg.MonitorClarifyQuestionNone)}\n\n> ${truncateMonitor(msg.content.trim(), 200)}`
     }
     const userQ: UserQuestion = {
       header,
       question,
       options: options.map(o => ({
         label: o.label,
-        description: o.dir === '' ? '忽略这条消息，不拉群' : o.dir,
+        description: o.dir === '' ? this.e.i18n.t(Msg.MonitorClarifySkipDesc) : o.dir,
       })),
       multiSelect: false,
     }
@@ -1550,7 +1550,7 @@ export class MonitorCore {
 
   /** Heads-up that the alert was forwarded into an existing subgroup (Go sendMonitorCoalesceNotice). */
   private async sendMonitorCoalesceNotice(p: Platform, replyCtx: unknown, childChat: string, origText: string): Promise<void> {
-    const headerTitle = '📌 补充告警已并入排查群'
+    const headerTitle = this.e.i18n.t(Msg.MonitorCoalesceTitle)
     const buttons: CardButton[] = [{ text: this.e.i18n.t(Msg.MonitorJumpBtn), type: 'primary', value: '', url: this.e.chatJumpURL(p, childChat) }]
     const body = `> ${truncateMonitor(origText, 200)}`
     const header: CardHeader = { title: headerTitle, color: 'indigo' }
@@ -1560,7 +1560,7 @@ export class MonitorCore {
   /** Card listing the active subgroups when capacity is reached (Go sendMonitorCapNotice). */
   private async sendMonitorCapNotice(p: Platform, msg: Message, parentKey: string): Promise<void> {
     const children = await this.monitorActiveChildren(p, parentKey)
-    const body = `已有 ${children.length} 个活跃排查群（上限 ${this.maxConcurrent}），这条消息暂未拉群。\n\n在子群里 /done 释放名额后可重发，或点击按钮进入：`
+    const body = this.e.i18n.tf(Msg.MonitorCapBody, children.length, this.maxConcurrent)
     if (children.length === 0) {
       await this.e.send(p, msg.replyCtx, `⏳ ${body}`)
       return
@@ -1570,7 +1570,7 @@ export class MonitorCore {
       const name = sessionDisplayName(c.session, this.e.sessions, c.sessionKey)
       return { text: `🔍 ${truncateMonitor(name, 30)}`, type: 'primary', value: '', url: this.e.chatJumpURL(p, ccid) }
     })
-    const header: CardHeader = { title: '⏳ 达到并发上限', color: 'yellow' }
+    const header: CardHeader = { title: this.e.i18n.t(Msg.MonitorCapTitle), color: 'yellow' }
     await this.e.sendAsCardWithButtons(p, msg.replyCtx, body, header, buttons)
   }
 
@@ -1579,7 +1579,7 @@ export class MonitorCore {
   /** Process `/learn` in a monitored chat: store a few-shot example, or list/delete (Go handleLearnExample). */
   private async handleLearnExample(p: Platform, msg: Message): Promise<void> {
     if (this.examples === undefined) {
-      await this.e.send(p, msg.replyCtx, '⚠️ 学习功能未就绪')
+      await this.e.send(p, msg.replyCtx, this.e.i18n.t(Msg.MonitorLearnUnavailable))
       return
     }
     const body = msg.content.replace('/learn', '').trim()
@@ -1590,9 +1590,9 @@ export class MonitorCore {
     if (body.startsWith('del ') || body.startsWith('delete ')) {
       const id = body.replace(/^del /, '').replace(/^delete /, '').trim()
       if (this.examples.delete(id)) {
-        await this.e.send(p, msg.replyCtx, `✅ 已删除示例 ${id}`)
+        await this.e.send(p, msg.replyCtx, this.e.i18n.tf(Msg.MonitorLearnDeleted, id))
       } else {
-        await this.e.send(p, msg.replyCtx, `⚠️ 找不到示例 ${id}`)
+        await this.e.send(p, msg.replyCtx, this.e.i18n.tf(Msg.MonitorLearnNotFound, id))
       }
       return
     }
@@ -1600,20 +1600,20 @@ export class MonitorCore {
     // Add: the example is the quoted message; the instruction is body.
     const example = extractQuotedText(msg.extraContent)
     if (example === '') {
-      await this.e.send(p, msg.replyCtx, '⚠️ 请引用一条消息再发 /learn <处理要求>，例如：\n/learn 这种归支付服务，拉群后先 @值班\n/learn --ignore（教我这类消息不用响应）')
+      await this.e.send(p, msg.replyCtx, this.e.i18n.t(Msg.MonitorLearnUsage))
       return
     }
     const { dir, instruction, drop } = parseLearnDir(body, this.dirs)
     this.examples.add(example, dir, instruction, drop, Math.floor(Date.now() / 1000))
     if (drop) {
-      let ack = `✅ 学到了（无需响应）：\n示例：「${truncateMonitor(example, 200)}」`
-      if (instruction !== '') ack += `\n原因：${instruction}`
+      let ack = this.e.i18n.tf(Msg.MonitorLearnAckDrop, truncateMonitor(example, 200))
+      if (instruction !== '') ack += this.e.i18n.tf(Msg.MonitorLearnReason, instruction)
       await this.e.send(p, msg.replyCtx, ack)
       return
     }
     const withDir = dir !== ''
-      ? `✅ 学到了：\n示例：「${truncateMonitor(example, 200)}」\n目录：${dir}\n处理：${instruction}`
-      : `✅ 学到了：\n示例：「${truncateMonitor(example, 200)}」\n处理：${instruction}`
+      ? this.e.i18n.tf(Msg.MonitorLearnAckDir, truncateMonitor(example, 200), dir, instruction)
+      : this.e.i18n.tf(Msg.MonitorLearnAck, truncateMonitor(example, 200), instruction)
     await this.e.send(p, msg.replyCtx, withDir)
   }
 
@@ -1621,12 +1621,12 @@ export class MonitorCore {
   private async sendLearnList(p: Platform, msg: Message): Promise<void> {
     const examples = this.examples?.all() ?? []
     if (examples.length === 0) {
-      const body = '暂无学习示例。\n\n引用一条消息发 `/learn <处理要求>` 来教我；带 `--dir <目录>` 可钉死目录。\n引用消息发 `/learn --ignore` 教我这类消息不用响应。'
-      await this.e.sendAsCardWithButtons(p, msg.replyCtx, body, { title: '📚 学习示例', color: 'grey' }, [])
+      const body = this.e.i18n.t(Msg.MonitorLearnListEmpty)
+      await this.e.sendAsCardWithButtons(p, msg.replyCtx, body, { title: this.e.i18n.t(Msg.MonitorLearnListTitle), color: 'grey' }, [])
       return
     }
     const lines: string[] = []
-    lines.push(`**已学 ${examples.length} 条示例**（点对应按钮删除；引用消息发 \`/learn <处理要求>\` 新增，\`/learn --ignore\` 标记无需响应）\n\n`)
+    lines.push(this.e.i18n.tf(Msg.MonitorLearnListCount, examples.length))
     for (const ex of examples) {
       if (ex.drop) {
         lines.push(`**[${ex.id}]** 🚫「${truncateMonitor(ex.example, 80)}」\n`)
@@ -1641,7 +1641,7 @@ export class MonitorCore {
       text: `🗑 ${ex.id}`, type: 'danger', value: `cmd:/learn del ${ex.id}`,
     }))
     const body = lines.join('').replace(/\n+$/, '')
-    await this.e.sendAsCardWithButtons(p, msg.replyCtx, body, { title: `📚 已学 ${examples.length} 条示例`, color: 'indigo' }, buttons)
+    await this.e.sendAsCardWithButtons(p, msg.replyCtx, body, { title: this.e.i18n.tf(Msg.MonitorLearnListCountTitle, examples.length), color: 'indigo' }, buttons)
   }
 
   // ── runtime persistence (Go engine_monitor_cmd.go) ──────────────────────

@@ -29,25 +29,18 @@ const shellOutputMaxRunes = 4000
 const shellAliases = ['shell', 'sh', 'exec', 'run']
 
 /**
- * Register the /shell command on an engine. Returns the disposer.
+ * Register the /shell command on an engine through the
+ * {@link Engine.registerCommand} seam. Requires the session command table
+ * (registerSessionCommands) to be installed first.
  * @param e - The engine whose command table and resolver to install on.
  * @returns The disposer removing the handler and restoring the resolver.
  */
 export function registerShellCommands(e: Engine): () => void {
-  const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()
-  const ownedTable = e.commandHandlers === undefined
-  handlers.set('shell', (p, msg) => { void cmdShell(e, p, msg); return true })
-  e.commandHandlers = handlers
-  const prevResolver = e.commandResolver
-  e.commandResolver = (cmd: string): string => {
-    if (shellAliases.some(n => n === cmd || (n.startsWith(cmd) && cmd.length >= 2))) return 'shell'
-    return prevResolver?.(cmd) ?? ''
-  }
-  return () => {
-    handlers.delete('shell')
-    if (ownedTable && handlers.size === 0) e.commandHandlers = undefined
-    e.commandResolver = prevResolver
-  }
+  return e.registerCommand({
+    id: 'shell',
+    handler: (p, msg) => { void cmdShell(e, p, msg); return true },
+    match: cmd => (shellAliases.some(n => n === cmd || (n.startsWith(cmd) && cmd.length >= 2))) ? 'shell' : '',
+  })
 }
 
 /**

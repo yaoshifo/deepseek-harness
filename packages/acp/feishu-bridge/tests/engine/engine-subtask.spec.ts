@@ -18,6 +18,7 @@ import { Engine, InteractiveState } from '../../src/engine/engine.js'
 import { Session } from '../../src/engine/session.js'
 import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { WorktreeMode } from '../../src/engine/worktree.js'
+import { Msg } from '../../src/i18n/index.js'
 import { registerNativeSettlementListener } from '../../src/index.js'
 import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, RecentTurnsReader, TextPreviewContent } from '../../src/core/types.js'
 import { SubtaskGather } from '../../src/engine/subtask.js'
@@ -1447,7 +1448,9 @@ describe('SendToSubtask native children', () => {
     const { e, agent } = newNativeEngine(p, parentKey)
     await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
 
-    expect(() => e.interruptNativeChild('native-child-1', 'test:other-chat:u1')).toThrow()
+    // The interrupt context has its own wording — not the follow-up message.
+    expect(() => e.interruptNativeChild('native-child-1', 'test:other-chat:u1'))
+      .toThrow(e.i18n.t(Msg.SubtaskInterruptNotChild))
     expect(agent.interrupts, 'a rejected interrupt must not reach the delegator').toEqual([])
   })
 })

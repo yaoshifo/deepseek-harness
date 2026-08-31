@@ -548,6 +548,26 @@ export function asRecentTurnsReader(a: Agent): RecentTurnsReader | undefined {
 }
 
 /**
+ * Optional: agent drops one staged rollback-fork seed (the parent event
+ * array the adapter keeps resident until the fork session plants its
+ * sentinel); other agents have nothing staged and skip.
+ */
+export interface StagedForkSeedForgetter {
+  forgetForkAtSeed(forkID: string): void
+}
+
+/**
+ * Structural check for the {@link StagedForkSeedForgetter} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asStagedForkSeedForgetter(a: Agent): StagedForkSeedForgetter | undefined {
+  const candidate = a as Partial<StagedForkSeedForgetter>
+  return typeof candidate.forgetForkAtSeed === 'function' ? (candidate as StagedForkSeedForgetter) : undefined
+}
+
+/**
  * Optional: agent reads one native session's context-projection snapshot for
  * the /context insight card — dsh-context's timeline/headers plus
  * token-meter's pressure/breakdown/usage, as one consistent cut over the

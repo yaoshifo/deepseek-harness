@@ -281,6 +281,8 @@ interface AskCardMeta {
   title: string
   /** All questions in ask order. */
   questions: UserQuestion[]
+  /** The locale-owned free-text hint note as sent; the rebuild reuses it verbatim. */
+  freeTextHint: string
 }
 
 /**
@@ -293,7 +295,9 @@ interface AskCardMeta {
 function askCardMeta(card: Card): AskCardMeta | undefined {
   const title = card.header?.title ?? ''
   const questions = new Map<number, UserQuestion>()
+  let freeTextHint = ''
   for (const elem of card.elements) {
+    if (elem.kind === 'note') freeTextHint = elem.text
     if (elem.kind === 'listItem' && elem.btnValue.startsWith('askq:')) {
       const sel = parseAskqSelection(elem.btnValue)
       if (sel === undefined) continue
@@ -318,7 +322,7 @@ function askCardMeta(card: Card): AskCardMeta | undefined {
   for (const [i, q] of [...questions.entries()].sort((a, b) => a[0] - b[0])) {
     ordered[i] = q
   }
-  return { title, questions: ordered }
+  return { title, questions: ordered, freeTextHint }
 }
 
 /**
@@ -337,7 +341,7 @@ function buildAskCardResponse(
   meta: AskCardMeta,
   answered: Map<number, number[]>,
 ): CardActionCallbackResponse {
-  const card = buildAskQuestionsCard(meta.title, meta.questions, answered)
+  const card = buildAskQuestionsCard(meta.title, meta.questions, answered, meta.freeTextHint)
   return { card: { type: 'raw', data: renderCardMap(card, sessionKey) } }
 }
 

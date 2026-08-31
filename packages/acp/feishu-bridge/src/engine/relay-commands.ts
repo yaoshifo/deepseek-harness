@@ -13,28 +13,20 @@ import type { Engine } from './engine.js'
 import { parseSessionKeyParts } from './relay.js'
 
 /**
- * Register the `/bind` command family on an engine. Merges into an existing
- * command table instead of replacing it, and chains the prefix resolver the
- * way registerCronCommands does. Returns the disposer.
+ * Register the `/bind` command family on an engine through the
+ * {@link Engine.registerCommand} seam (handler entry + chained prefix
+ * resolver), the way registerCronCommands does. Requires the session command
+ * table (registerSessionCommands) to be installed first.
  *
  * @param e - Engine whose command table and resolver receive the `/bind` family.
  * @returns Disposer that unregisters the commands and restores the previous resolver.
  */
 export function registerRelayCommands(e: Engine): () => void {
-  const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()
-  const ownedTable = e.commandHandlers === undefined
-  handlers.set('bind', (p, msg, args) => { void cmdBind(e, p, msg, args); return true })
-  e.commandHandlers = handlers
-  const prevResolver = e.commandResolver
-  e.commandResolver = (cmd: string): string => {
-    if (cmd === 'bind' || (cmd.length >= 2 && 'bind'.startsWith(cmd))) return 'bind'
-    return prevResolver?.(cmd) ?? ''
-  }
-  return () => {
-    handlers.delete('bind')
-    if (ownedTable && handlers.size === 0) e.commandHandlers = undefined
-    e.commandResolver = prevResolver
-  }
+  return e.registerCommand({
+    id: 'bind',
+    handler: (p, msg, args) => { void cmdBind(e, p, msg, args); return true },
+    match: cmd => (cmd === 'bind' || ('bind'.startsWith(cmd) && cmd.length >= 2)) ? 'bind' : '',
+  })
 }
 
 /**

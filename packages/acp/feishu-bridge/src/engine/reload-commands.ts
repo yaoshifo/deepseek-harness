@@ -34,27 +34,20 @@ import type { Message, Platform } from '../core/types.js'
 import type { Engine } from './engine.js'
 
 /**
- * Register the /reload command on an engine. Returns the disposer.
+ * Register the /reload command on an engine through the
+ * {@link Engine.registerCommand} seam. Requires the session command table
+ * (registerSessionCommands) to be installed first.
  * @param e - The engine whose command table and resolver to install on.
  * @returns The disposer removing the handler and restoring the resolver.
  */
 export function registerReloadCommands(e: Engine): () => void {
-  const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()
-  const ownedTable = e.commandHandlers === undefined
-  handlers.set('reload', (p, msg, args) => { void cmdReload(e, p, msg, args); return true })
-  e.commandHandlers = handlers
-  const prevResolver = e.commandResolver
-  // Exact match only: '/re' and '/rel' collide with /rename and /relay in
-  // the chained resolver, so prefix resolution would shadow them.
-  e.commandResolver = (cmd: string): string => {
-    if (cmd === 'reload') return 'reload'
-    return prevResolver?.(cmd) ?? ''
-  }
-  return () => {
-    handlers.delete('reload')
-    if (ownedTable && handlers.size === 0) e.commandHandlers = undefined
-    e.commandResolver = prevResolver
-  }
+  return e.registerCommand({
+    id: 'reload',
+    handler: (p, msg, args) => { void cmdReload(e, p, msg, args); return true },
+    // Exact match only: '/re' and '/rel' collide with /rename and /relay in
+    // the chained resolver, so prefix resolution would shadow them.
+    match: cmd => cmd === 'reload' ? 'reload' : '',
+  })
 }
 
 /** reload.sh candidate locations across build layouts: '../../reload.sh' for

@@ -10,6 +10,7 @@ import { ProjectStateStore } from '../../src/engine/project-state.js'
 import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.js'
 import { cmdDir, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.js'
 import type { Agent, AgentSessionInfo, Message } from '../../src/core/types.js'
+import { Msg } from '../../src/i18n/index.js'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -259,11 +260,11 @@ describe('/list', () => {
 })
 
 describe('/switch', () => {
-  it('no args shows usage', () => {
+  it('no args shows usage from the i18n catalog', () => {
     const { e, p, dispose } = newEngine()
     try {
       e.receiveMessage(p, msg({ content: '/switch' }))
-      expect(p.sent.some(s => s.includes('Usage') || s.includes('/switch'))).toBe(true)
+      expect(p.sent.some(s => s.includes(e.i18n.t(Msg.SwitchUsage)))).toBe(true)
     } finally {
       dispose()
     }

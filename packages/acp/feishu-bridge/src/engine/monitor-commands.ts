@@ -22,29 +22,19 @@ import {
 } from './monitor.js'
 
 /**
- * Register the `/monitor` command family on an engine. Merges into an
- * existing command table (registerSessionCommands) instead of replacing it,
- * and chains the prefix resolver so `/monitor` and its ≥2-char prefixes
- * resolve while every other command keeps its current resolution. Returns
- * the disposer.
+ * Register the `/monitor` command family on an engine through the
+ * {@link Engine.registerCommand} seam (handler entry + chained prefix
+ * resolver). Requires the session command table
+ * (registerSessionCommands) to be installed first.
  * @param e - the engine whose command table the family merges into.
  * @returns the disposer removing the commands and restoring the resolver.
  */
 export function registerMonitorCommands(e: Engine): () => void {
-  const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()
-  const ownedTable = e.commandHandlers === undefined
-  handlers.set('monitor', (p, msg, args) => { void cmdMonitor(e, p, msg, args); return true })
-  e.commandHandlers = handlers
-  const prevResolver = e.commandResolver
-  e.commandResolver = (cmd: string): string => {
-    if (cmd === 'monitor' || (cmd.length >= 2 && 'monitor'.startsWith(cmd))) return 'monitor'
-    return prevResolver?.(cmd) ?? ''
-  }
-  return () => {
-    handlers.delete('monitor')
-    if (ownedTable && handlers.size === 0) e.commandHandlers = undefined
-    e.commandResolver = prevResolver
-  }
+  return e.registerCommand({
+    id: 'monitor',
+    handler: (p, msg, args) => { void cmdMonitor(e, p, msg, args); return true },
+    match: cmd => (cmd === 'monitor' || ('monitor'.startsWith(cmd) && cmd.length >= 2)) ? 'monitor' : '',
+  })
 }
 
 /** `/monitor mode [dispatch|monitor]` (Go cmdMonitorMode). */

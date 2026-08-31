@@ -29,7 +29,9 @@ function stubContext(): Parameters<typeof buildProjectAssembly>[0] {
     on: () => () => {},
     get: () => undefined,
     logger: { error: () => {} },
-    effect: () => () => {},
+    // Cordis runs the effect body immediately; mirror that so command
+    // registrations mounted through ctx.effect actually mount.
+    effect: (fn: () => unknown) => { void fn(); return () => {} },
   } as unknown as Parameters<typeof buildProjectAssembly>[0]
 }
 

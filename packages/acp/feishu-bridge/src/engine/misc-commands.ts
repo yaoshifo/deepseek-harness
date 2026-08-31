@@ -139,27 +139,26 @@ function sectionTitle(e: Engine, group: HelpGroup): string {
 }
 
 /**
- * Register /help and /ps on an engine. Returns the disposer.
+ * Register /help and /ps on an engine through the
+ * {@link Engine.registerCommand} seam. Requires the session command table
+ * (registerSessionCommands) to be installed first.
  * @param e - The engine whose command table and resolver to install on.
  * @returns The disposer removing the handlers and restoring the resolver.
  */
 export function registerMiscCommands(e: Engine): () => void {
-  const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()
-  const ownedTable = e.commandHandlers === undefined
-  handlers.set('help', (p, msg, args) => { void cmdHelp(e, p, msg, args); return true })
-  handlers.set('ps', (p, msg, args) => cmdPs(e, p, msg, args))
-  e.commandHandlers = handlers
-  const prevResolver = e.commandResolver
-  e.commandResolver = (cmd: string): string => {
-    if (cmd === 'help' || (cmd.length >= 2 && 'help'.startsWith(cmd))) return 'help'
-    if (cmd === 'ps') return 'ps'
-    return prevResolver?.(cmd) ?? ''
-  }
+  const disposeHelp = e.registerCommand({
+    id: 'help',
+    handler: (p, msg, args) => { void cmdHelp(e, p, msg, args); return true },
+    match: cmd => (cmd === 'help' || ('help'.startsWith(cmd) && cmd.length >= 2)) ? 'help' : '',
+  })
+  const disposePs = e.registerCommand({
+    id: 'ps',
+    handler: (p, msg, args) => cmdPs(e, p, msg, args),
+    match: cmd => cmd === 'ps' ? 'ps' : '',
+  })
   return () => {
-    handlers.delete('help')
-    handlers.delete('ps')
-    if (ownedTable && handlers.size === 0) e.commandHandlers = undefined
-    e.commandResolver = prevResolver
+    disposePs()
+    disposeHelp()
   }
 }
 

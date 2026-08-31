@@ -3332,7 +3332,7 @@ export class Engine {
               }
               await sp.completeAndDetach()
               const preview = truncateIf(event.content, this.display.thinkingMaxLen)
-              const thinkingMsg = this.i18n.tf('thinking', preview)
+              const thinkingMsg = this.i18n.tf(Msg.Thinking, preview)
               if (!await cp.appendEvent('thinking', preview, '', thinkingMsg)) {
                 await this.send(p, replyCtx, thinkingMsg)
               }
@@ -5561,7 +5561,7 @@ export class Engine {
     const cs = p as Platform & CardSender
     if (typeof cs.sendCard === 'function') {
       const cardTitle = questions.map(q => q.header).find(h => h !== '') ?? this.i18n.t(Msg.AskQuestionTitle)
-      const card = buildAskQuestionsCard(`‼️ ${cardTitle}${titleSuffix}`, questions, new Map())
+      const card = buildAskQuestionsCard(`‼️ ${cardTitle}${titleSuffix}`, questions, new Map(), this.i18n.t(Msg.AskFreeTextHint))
       try {
         await cs.sendCard(replyCtx, card)
         console.log(`engine: ask card sent (${sessionKey}, ${total} question${total > 1 ? 's' : ''})`)
@@ -6930,7 +6930,7 @@ export class Engine {
       throw new Error('subtask: not a native child of this project')
     }
     if (entry.parent_key !== callerSessionKey) {
-      throw new Error(this.i18n.t(Msg.SubtaskSendNotChild))
+      throw new Error(this.i18n.t(Msg.SubtaskInterruptNotChild))
     }
     const delegator = asContinuableDelegator(this.agent)
     if (delegator === undefined) {

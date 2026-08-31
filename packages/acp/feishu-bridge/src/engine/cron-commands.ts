@@ -71,30 +71,20 @@ function cronTimeFormat(t: Date, now: Date): string {
 }
 
 /**
- * Register the `/cron` command family on an engine. Merges into an existing
- * command table (registerSessionCommands) instead of replacing it, and
- * chains the prefix resolver so `/cron` and its ≥2-char prefixes resolve
- * while every other command keeps its current resolution. Returns the
- * disposer.
+ * Register the `/cron` command family on an engine through the
+ * {@link Engine.registerCommand} seam (handler entry + chained prefix
+ * resolver). Requires the session command table
+ * (registerSessionCommands) to be installed first.
  *
  * @param e - The engine to register the commands on.
  * @returns Disposer that removes the handler and restores the resolver.
  */
 export function registerCronCommands(e: Engine): () => void {
-  const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()
-  const ownedTable = e.commandHandlers === undefined
-  handlers.set('cron', (p, msg, args) => { void cmdCron(e, p, msg, args); return true })
-  e.commandHandlers = handlers
-  const prevResolver = e.commandResolver
-  e.commandResolver = (cmd: string): string => {
-    if (cmd === 'cron' || (cmd.length >= 2 && 'cron'.startsWith(cmd))) return 'cron'
-    return prevResolver?.(cmd) ?? ''
-  }
-  return () => {
-    handlers.delete('cron')
-    if (ownedTable && handlers.size === 0) e.commandHandlers = undefined
-    e.commandResolver = prevResolver
-  }
+  return e.registerCommand({
+    id: 'cron',
+    handler: (p, msg, args) => { void cmdCron(e, p, msg, args); return true },
+    match: cmd => (cmd === 'cron' || ('cron'.startsWith(cmd) && cmd.length >= 2)) ? 'cron' : '',
+  })
 }
 
 /**

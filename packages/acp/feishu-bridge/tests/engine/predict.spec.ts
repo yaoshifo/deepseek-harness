@@ -280,6 +280,15 @@ describe('buildSummaryContext', () => {
     expect(ctx.length).toBeLessThan(long.length)
     expect(ctx).toContain('...')
   })
+
+  it('returns an empty block for empty history', () => {
+    expect(buildSummaryContext([])).toBe('')
+  })
+
+  it('keeps a user-only block without the assistant line', () => {
+    const ctx = buildSummaryContext([{ role: 'user' as const, content: 'just a question', timestamp: '1' }])
+    expect(ctx).toBe('User asked: just a question\n')
+  })
 })
 
 // ── insight card ─────────────────────────────────────────────────────────

@@ -1169,30 +1169,32 @@ export function buildProjectAssembly(
   if (effectiveWorkDir !== '' && !dirHistory.contains(project.name, effectiveWorkDir)) {
     dirHistory.add(project.name, effectiveWorkDir)
   }
-  registerSessionCommands(engine)
+  // Registrations are effects: every command family unregisters with the
+  // fiber (HMR/plugin reload), not only with process exit.
+  ctx.effect(() => registerSessionCommands(engine))
   // M8 前: /shell + "!" prefix shortcut (Go cmdShell).
-  registerShellCommands(engine)
+  ctx.effect(() => registerShellCommands(engine))
   // M8 前: /reload — detached-spawn reload.sh (TS 原生，无 Go 对应)。
-  registerReloadCommands(engine)
+  ctx.effect(() => registerReloadCommands(engine))
   // M8 前: /tag /untag /undone /notify /board (Go spawn family) + /help /ps.
-  registerSpawnFamilyCommands(engine)
-  registerMiscCommands(engine)
+  ctx.effect(() => registerSpawnFamilyCommands(engine))
+  ctx.effect(() => registerMiscCommands(engine))
   // TS 原生: /skills + /mcp — 运行时 skill 目录与 MCP 工具注册表查询（无 Go 对应）。
   {
     const skills = ctx.get('skills')
-    registerSkillsMcpCommands(engine, {
+    ctx.effect(() => registerSkillsMcpCommands(engine, {
       listSkills: skills === undefined ? undefined : cwd => skills.list({ cwd }),
       toolNames: () => ctx.tools.schemas().map(schema => schema.name),
       healthServers: config.mcpHealth?.servers,
       allowlist: project.mcpServers,
-    })
+    }))
   }
   // TS 原生: /context — 会话投影的上下文洞察卡（构成/趋势/事件 + 刷新按钮；无 Go 对应）。
-  registerContextCommands(engine)
+  ctx.effect(() => registerContextCommands(engine))
   // M7-c: /provider family + shortcuts, /btw + insight forks, /compress.
-  registerProviderCommands(engine)
-  registerPredictCommands(engine)
-  registerSessionMiscCommands(engine)
+  ctx.effect(() => registerProviderCommands(engine))
+  ctx.effect(() => registerPredictCommands(engine))
+  ctx.effect(() => registerSessionMiscCommands(engine))
   engine.setProviderSaveFunc((name) => {
     projectState.setActiveProvider(name)
     projectState.save()
@@ -1214,19 +1216,19 @@ export function buildProjectAssembly(
   wireSessionMisc(engine, project)
   // M6b: monitor domain (#53) — config block → engine MonitorCore + the
   // /monitor command family + runtime persistence via the project state.
-  wireMonitor(engine, project, projectDataDir, projectState)
+  wireMonitor(ctx, engine, project, projectDataDir, projectState)
 
   // M6: process-wide cron + relay services (Go main registers every engine
   // into the shared CronScheduler / RelayManager and attaches both).
   if (shared?.cronScheduler !== undefined) {
     shared.cronScheduler.registerEngine(project.name, engine)
     engine.setCronScheduler(shared.cronScheduler)
-    registerCronCommands(engine)
+    ctx.effect(() => registerCronCommands(engine))
   }
   if (shared?.relayManager !== undefined) {
     shared.relayManager.registerEngine(project.name, engine)
     engine.setRelayManager(shared.relayManager)
-    registerRelayCommands(engine)
+    ctx.effect(() => registerRelayCommands(engine))
   }
 
   // Stall detection (Go [display] stall_*): wired first, then
@@ -1434,13 +1436,14 @@ function expandHome(path: string): string {
  * the project state store (Go rewrote config.toml; the profile's cordis.yml
  * is read-only at runtime here, so state.json carries the override), and
  * register the /monitor command family.
+ * @param ctx - Plugin context owning the registration's lifetime.
  * @param engine - The project's engine.
  * @param project - The project row carrying the optional monitor section.
  * @param projectDataDir - The project's data directory (examples store).
  * @param projectState - The persisted per-project state store.
  */
-function wireMonitor(engine: Engine, project: ProjectConfig, projectDataDir: string, projectState: ProjectStateStore): void {
-  registerMonitorCommands(engine)
+function wireMonitor(ctx: Context, engine: Engine, project: ProjectConfig, projectDataDir: string, projectState: ProjectStateStore): void {
+  ctx.effect(() => registerMonitorCommands(engine))
   const m = project.monitor
   if (m === undefined || m.enabled !== true) {
     engine.monitor.setConfig({

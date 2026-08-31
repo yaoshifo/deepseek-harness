@@ -152,7 +152,7 @@ describe('defaultAskAnswer', () => {
 
 describe('buildAskQuestionsCard', () => {
   it('single-select renders the question plus list rows with askq:{q}:{n} buttons', () => {
-    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map())
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map(), 'free-text hint')
 
     expect(card.header?.title).toBe('‼️ Setup')
     expect(card.header?.color).toBe('blue')
@@ -185,7 +185,7 @@ describe('buildAskQuestionsCard', () => {
         options: [{ label: 'Gin', description: '' }, { label: 'Echo', description: '' }],
         multiSelect: false,
       },
-    ], new Map())
+    ], new Map(), 'free-text hint')
 
     // Question 2 heading is numbered; its buttons address qIdx 1. Question 1's
     // block ends with the free-text hint note, so the second heading sits at 5.
@@ -197,7 +197,7 @@ describe('buildAskQuestionsCard', () => {
 
   it('a multi-select question renders a checker form addressed by askq_multi:{q}', () => {
     const q: UserQuestion = { ...singleQuestion(), multiSelect: true }
-    const card = buildAskQuestionsCard('‼️ Setup', [q], new Map())
+    const card = buildAskQuestionsCard('‼️ Setup', [q], new Map(), 'free-text hint')
 
     const form = card.elements[1] as {
       kind: string
@@ -210,7 +210,7 @@ describe('buildAskQuestionsCard', () => {
   })
 
   it('an answered question renders frozen marks and no interactive buttons', () => {
-    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map([[0, [2]]]))
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map([[0, [2]]]), 'free-text hint')
 
     expect(card.elements).toHaveLength(2)
     const frozen = card.elements[1] as { kind: string; content: string }
@@ -229,7 +229,7 @@ describe('buildAskQuestionsCard', () => {
         options: [{ label: 'Gin', description: '' }],
         multiSelect: false,
       },
-    ], new Map([[0, [1]]]))
+    ], new Map([[0, [1]]]), 'free-text hint')
 
     expect(card.elements.some(e => e.kind === 'markdown' && e.content.includes('✅ **PostgreSQL**'))).toBe(true)
     expect(card.elements.some(e => e.kind === 'listItem' && e.btnValue === 'askq:1:1')).toBe(true)
@@ -237,15 +237,15 @@ describe('buildAskQuestionsCard', () => {
 
   it('a question without options renders just its heading', () => {
     const q: UserQuestion = { ...singleQuestion(), options: [] }
-    const card = buildAskQuestionsCard('t', [q], new Map())
+    const card = buildAskQuestionsCard('t', [q], new Map(), 'free-text hint')
     expect(card.elements).toHaveLength(1)
   })
 
   it('an interactive single-select question ends with the free-text hint note', () => {
-    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map())
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map(), 'free-text hint')
 
     const note = card.elements[card.elements.length - 1] as { kind: string; text: string }
     expect(note.kind).toBe('note')
-    expect(note.text).toBe('也可以直接文字输入')
+    expect(note.text).toBe('free-text hint')
   })
 })

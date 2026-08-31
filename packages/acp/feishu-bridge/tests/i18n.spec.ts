@@ -24,21 +24,21 @@ import {
 describe('I18n', () => {
   it('DefaultLanguage', () => {
     const i = new I18n(langEnglish)
-    expect(i.t(Msg.Starting)).not.toBe('')
+    expect(i.t(Msg.Processing)).not.toBe('')
   })
 
   it('Chinese', () => {
     const i = new I18n(langChinese)
-    const got = i.t(Msg.Starting)
+    const got = i.t(Msg.Processing)
     expect(got).not.toBe('')
     // Should contain Chinese characters, not English
-    expect(got).not.toBe('⏳ Processing...')
+    expect(got).not.toBe('Request sent to the model, waiting for response...')
   })
 
   it('FallbackToEnglish', () => {
     // Language is an open union (Go's `type Language string`), so no cast needed.
     const i = new I18n('nonexistent')
-    expect(i.t(Msg.Starting)).not.toBe('')
+    expect(i.t(Msg.Processing)).not.toBe('')
   })
 
   it('MissingKey', () => {
@@ -50,7 +50,7 @@ describe('I18n', () => {
 
   it('Tf', () => {
     const i = new I18n(langEnglish)
-    expect(i.tf(Msg.NameSet, 'myname', 'abc123')).not.toBe('')
+    expect(i.tf(Msg.RenameDone, 'myname')).not.toBe('')
   })
 
   it('AllKeysHaveEnglish', () => {
@@ -77,7 +77,7 @@ describe('I18n', () => {
 describe('lookupMessage', () => {
   it('hits per language like I18n.t', () => {
     expect(lookupMessage(langEnglish, Msg.Thinking)).toBe('💭 %s')
-    expect(lookupMessage(langChinese, Msg.NameSet, 'myname', 'abc123')).toBe('✅ 会话已命名：**myname** (abc123)')
+    expect(lookupMessage(langChinese, Msg.RenameDone, '新名字')).toBe('✅ 已重命名为：新名字')
   })
 
   it('substitutes Go-style format verbs like I18n.tf', () => {
@@ -115,7 +115,7 @@ describe('registerMessages', () => {
       expect(new I18n('nonexistent').t('spec_sub_a')).toBe('A')
       expect(lookupMessage(langEnglish, 'spec_sub_a')).toBe('A')
       // The main table still wins over subtables.
-      expect(new I18n(langEnglish).t(Msg.Starting)).not.toBe('')
+      expect(new I18n(langEnglish).t(Msg.Processing)).not.toBe('')
     } finally {
       dispose()
     }
@@ -133,7 +133,7 @@ describe('registerMessages', () => {
   })
 
   it('rejects keys colliding with the main table and with another subtable', () => {
-    expect(() => registerMessages({ en: { starting: 'dup' } })).toThrow(/collides with the main message table/)
+    expect(() => registerMessages({ en: { thinking: 'dup' } })).toThrow(/collides with the main message table/)
     const disposeOther = registerMessages({ en: { spec_sub_b: 'B' } })
     try {
       expect(() => registerMessages({ en: { spec_sub_b: 'conflict' } })).toThrow(/already registered by another subtable/)

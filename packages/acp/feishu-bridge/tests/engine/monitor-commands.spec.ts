@@ -426,10 +426,12 @@ describe('registerMonitorCommands', () => {
 
   it('disposes cleanly', () => {
     const { e } = newCmdMonitorEngine('oc_a')
+    const disposeSession = registerSessionCommands(e)
     const dispose = registerMonitorCommands(e)
     dispose()
     expect(e.commandHandlers?.get('monitor')).toBeUndefined()
     expect(e.commandResolver?.('monitor') ?? '').toBe('')
+    disposeSession()
   })
 })
 

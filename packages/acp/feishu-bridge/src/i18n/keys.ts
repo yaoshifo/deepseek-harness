@@ -1,15 +1,16 @@
 /**
  * Message keys ported 1:1 from cc-connect core/i18n/i18n.go (generated
  * by the M0 port script; regenerate against that file when it changes).
+ * Fork divergence: keys with no lookup point in this tree (starting, tool,
+ * name_set) were deleted, and TS-native keys are appended after the Go set —
+ * a regeneration must re-apply both edits.
  *
  * @module dsh-feishu-bridge/i18n-keys
  */
 
 /** Every message key value, in Go declaration order. */
 export const ALL_MSG_KEYS = [
-  'starting',
   'thinking',
-  'tool',
   'tool_result',
   'no_execution',
   'previous_processing',
@@ -42,7 +43,6 @@ export const ALL_MSG_KEYS = [
   'list_page_hint',
   'list_switch_hint',
   'list_error',
-  'name_set',
   'provider_not_supported',
   'provider_none',
   'provider_current',
@@ -388,6 +388,35 @@ export const ALL_MSG_KEYS = [
   'thread_note',
   'context_tools_panel',
   'askq_stale_question',
+  'switch_usage',
+  'provider_switch_usage',
+  'board_title',
+  'board_empty',
+  'board_not_in_tree',
+  'board_tree_count',
+  'ask_free_text_hint',
+  'monitor_clarify_skip',
+  'monitor_clarify_skip_desc',
+  'monitor_clarify_header',
+  'monitor_clarify_question',
+  'monitor_clarify_header_none',
+  'monitor_clarify_question_none',
+  'monitor_coalesce_title',
+  'monitor_cap_title',
+  'monitor_cap_body',
+  'monitor_learn_unavailable',
+  'monitor_learn_deleted',
+  'monitor_learn_not_found',
+  'monitor_learn_usage',
+  'monitor_learn_ack_drop',
+  'monitor_learn_reason',
+  'monitor_learn_ack_dir',
+  'monitor_learn_ack',
+  'monitor_learn_list_empty',
+  'monitor_learn_list_title',
+  'monitor_learn_list_count',
+  'monitor_learn_list_count_title',
+  'subtask_interrupt_not_child',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -399,9 +428,7 @@ export type MsgKey = (typeof ALL_MSG_KEYS)[number]
  * exported API, and per-constant one-liners would be pure noise).
  */
 export const Msg = {
-  Starting: 'starting',
   Thinking: 'thinking',
-  Tool: 'tool',
   ToolResult: 'tool_result',
   NoExecution: 'no_execution',
   PreviousProcessing: 'previous_processing',
@@ -435,7 +462,6 @@ export const Msg = {
   ListPageHint: 'list_page_hint',
   ListSwitchHint: 'list_switch_hint',
   ListError: 'list_error',
-  NameSet: 'name_set',
   ProviderNotSupported: 'provider_not_supported',
   ProviderNone: 'provider_none',
   ProviderCurrent: 'provider_current',
@@ -780,4 +806,33 @@ export const Msg = {
   NopredBody: 'nopred_body',
   ThreadNote: 'thread_note',
   ContextToolsPanel: 'context_tools_panel',
+  SwitchUsage: 'switch_usage',
+  ProviderSwitchUsage: 'provider_switch_usage',
+  BoardTitle: 'board_title',
+  BoardEmpty: 'board_empty',
+  BoardNotInTree: 'board_not_in_tree',
+  BoardTreeCount: 'board_tree_count',
+  AskFreeTextHint: 'ask_free_text_hint',
+  MonitorClarifySkip: 'monitor_clarify_skip',
+  MonitorClarifySkipDesc: 'monitor_clarify_skip_desc',
+  MonitorClarifyHeader: 'monitor_clarify_header',
+  MonitorClarifyQuestion: 'monitor_clarify_question',
+  MonitorClarifyHeaderNone: 'monitor_clarify_header_none',
+  MonitorClarifyQuestionNone: 'monitor_clarify_question_none',
+  MonitorCoalesceTitle: 'monitor_coalesce_title',
+  MonitorCapTitle: 'monitor_cap_title',
+  MonitorCapBody: 'monitor_cap_body',
+  MonitorLearnUnavailable: 'monitor_learn_unavailable',
+  MonitorLearnDeleted: 'monitor_learn_deleted',
+  MonitorLearnNotFound: 'monitor_learn_not_found',
+  MonitorLearnUsage: 'monitor_learn_usage',
+  MonitorLearnAckDrop: 'monitor_learn_ack_drop',
+  MonitorLearnReason: 'monitor_learn_reason',
+  MonitorLearnAckDir: 'monitor_learn_ack_dir',
+  MonitorLearnAck: 'monitor_learn_ack',
+  MonitorLearnListEmpty: 'monitor_learn_list_empty',
+  MonitorLearnListTitle: 'monitor_learn_list_title',
+  MonitorLearnListCount: 'monitor_learn_list_count',
+  MonitorLearnListCountTitle: 'monitor_learn_list_count_title',
+  SubtaskInterruptNotChild: 'subtask_interrupt_not_child',
 } as const

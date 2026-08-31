@@ -29,41 +29,30 @@ import {
 } from '../core/types.js'
 import type { Engine } from './engine.js'
 
-/** Canonical names for the family commands (Go builtinCommands entries). */
-const familyAliases: Record<string, string[]> = {
-  tag: ['tag'],
-  untag: ['untag'],
-  undone: ['undone'],
-  notify: ['notify'],
-  board: ['board', 'db'],
-}
+/** The family commands with their canonical names (Go builtinCommands entries). */
+const familyCommands: Array<{ id: string; names: string[]; run: (e: Engine, p: Platform, msg: Message, args: string[]) => void }> = [
+  { id: 'tag', names: ['tag'], run: (e, p, msg) => { void cmdTag(e, p, msg) } },
+  { id: 'untag', names: ['untag'], run: (e, p, msg) => { void cmdUntag(e, p, msg) } },
+  { id: 'undone', names: ['undone'], run: (e, p, msg) => { void cmdUndone(e, p, msg) } },
+  { id: 'notify', names: ['notify'], run: (e, p, msg, args) => { void cmdNotify(e, p, msg, args) } },
+  { id: 'board', names: ['board', 'db'], run: (e, p, msg) => { void cmdBoard(e, p, msg) } },
+]
 
 /**
- * Register /tag /untag /undone /notify /board on an engine. Returns the
- * disposer.
+ * Register /tag /untag /undone /notify /board on an engine through the
+ * {@link Engine.registerCommand} seam. Requires the session command table
+ * (registerSessionCommands) to be installed first.
  * @param e - The engine whose command table and resolver to install on.
  * @returns The disposer removing the handlers and restoring the resolver.
  */
 export function registerSpawnFamilyCommands(e: Engine): () => void {
-  const handlers = e.commandHandlers ?? new Map<string, (p: Platform, msg: Message, args: string[]) => boolean>()
-  const ownedTable = e.commandHandlers === undefined
-  handlers.set('tag', (p, msg) => { void cmdTag(e, p, msg); return true })
-  handlers.set('untag', (p, msg) => { void cmdUntag(e, p, msg); return true })
-  handlers.set('undone', (p, msg) => { void cmdUndone(e, p, msg); return true })
-  handlers.set('notify', (p, msg, args) => { void cmdNotify(e, p, msg, args); return true })
-  handlers.set('board', (p, msg) => { void cmdBoard(e, p, msg); return true })
-  e.commandHandlers = handlers
-  const prevResolver = e.commandResolver
-  e.commandResolver = (cmd: string): string => {
-    for (const [id, names] of Object.entries(familyAliases)) {
-      if (names.some(n => n === cmd || (n.startsWith(cmd) && cmd.length >= 2))) return id
-    }
-    return prevResolver?.(cmd) ?? ''
-  }
+  const disposers = familyCommands.map(entry => e.registerCommand({
+    id: entry.id,
+    handler: (p, msg, args) => { entry.run(e, p, msg, args); return true },
+    match: cmd => (entry.names.some(n => n === cmd || (n.startsWith(cmd) && cmd.length >= 2))) ? entry.id : '',
+  }))
   return () => {
-    for (const id of Object.keys(familyAliases)) handlers.delete(id)
-    if (ownedTable && handlers.size === 0) e.commandHandlers = undefined
-    e.commandResolver = prevResolver
+    for (const dispose of disposers.reverse()) dispose()
   }
 }
 
@@ -177,20 +166,20 @@ async function cmdBoard(e: Engine, p: Platform, msg: Message): Promise<void> {
   }
 
   const currentChatID = rawChatID(msg.sessionKey)
-  const builder = newCard().title('Dashboard', 'purple')
+  const builder = newCard().title(e.i18n.t(Msg.BoardTitle), 'purple')
   if (allChats.length === 0) {
-    builder.markdown('_暂无活跃任务群_')
+    builder.markdown(`_${e.i18n.t(Msg.BoardEmpty)}_`)
     await e.replyWithCard(p, msg.replyCtx, builder.build())
     return
   }
   const family = familyChats(allChats, parentOf, currentChatID)
   if (family.length === 0) {
-    builder.markdown('_当前群不在任何任务树中_')
+    builder.markdown(`_${e.i18n.t(Msg.BoardNotInTree)}_`)
     await e.replyWithCard(p, msg.replyCtx, builder.build())
     return
   }
   renderDashboardTree(e, builder, family, parentOf, currentChatID, p)
-  builder.note(`当前任务树 ${family.length} 个群`)
+  builder.note(e.i18n.tf(Msg.BoardTreeCount, family.length))
   await e.replyWithCard(p, msg.replyCtx, builder.build())
 }
 

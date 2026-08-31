@@ -504,6 +504,7 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     const p = newPlatform({ allowChat: '*' })
     await p.start(() => {})
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      freeTextHint: '',
       title: '',
       questions: [{
         question: 'Pick tools',
@@ -530,6 +531,7 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     const p = newPlatform({ allowChat: '*' })
     await p.start(() => {})
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      freeTextHint: '',
       title: '‼️ Ask',
       questions: [
         {
@@ -584,6 +586,7 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     const messages: Message[] = []
     await p.start((_platform, msg) => { messages.push(msg) })
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      freeTextHint: '',
       title: '',
       questions: [{
         question: 'Pick one',

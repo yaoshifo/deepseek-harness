@@ -112,6 +112,17 @@ describe('/provider (bare)', () => {
 })
 
 describe('/provider switch', () => {
+  it('without a name replies the usage line from the i18n catalog', async () => {
+    const { e, p, dispose } = newEngine(providerAgent(['openai'], 'openai'))
+    try {
+      e.dispatchCommand(p, msg({ content: '/provider switch' }), '/provider switch')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(p.sent[p.sent.length - 1]).toBe(e.i18n.t(Msg.ProviderSwitchUsage))
+    } finally {
+      dispose()
+    }
+  })
+
   it('switches the active provider and resets the session', async () => {
     const agent = providerAgent(['openai', 'azure'], 'openai')
     const { e, p, dispose } = newEngine(agent)

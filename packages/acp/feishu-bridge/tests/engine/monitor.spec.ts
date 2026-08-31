@@ -32,10 +32,13 @@ import {
   type MonitorRuleEntry,
 } from '../../src/engine/monitor.js'
 import type { Agent, Message } from '../../src/core/types.js'
+import { Msg } from '../../src/i18n/index.js'
+import type { SpawnedChatInfo } from '../../src/core/types.js'
 import {
   createControllableAgent,
   createStubAgent,
   createStubCardPlatform,
+  createStubCardPlatformFull,
   createStubPlatform,
   createGroupNameSwitcherAgent,
   createStubSpawnerPlatform,
@@ -399,20 +402,19 @@ describe('handleLearnExample', () => {
     await settleN(2)
     const sent = p.getSent()
     expect(sent).toHaveLength(1)
-    expect(sent[0]).toContain('学到了')
-    expect(sent[0]).toContain('/pay')
+    expect(sent[0]).toContain(e.i18n.tf(Msg.MonitorLearnAckDir, '支付服务 502 了', '/pay', '拉群后先 @值班'))
     expect(e.monitor.examples?.all()).toHaveLength(1)
 
     p.clearSent()
     e.monitor.handleMonitorMessage(p, msg({ sessionKey: 'feishu:oc_m:u1', userID: 'u1', content: '/learn list' }))
     await settleN(2)
-    expect(p.getSent()[0]).toContain('1 条示例')
+    expect(p.getSent()[0]).toContain(e.i18n.tf(Msg.MonitorLearnListCount, 1))
 
     const id = e.monitor.examples?.all()[0]?.id ?? ''
     p.clearSent()
     e.monitor.handleMonitorMessage(p, msg({ sessionKey: 'feishu:oc_m:u1', userID: 'u1', content: `/learn del ${id}` }))
     await settleN(2)
-    expect(p.getSent()[0]).toContain('已删除')
+    expect(p.getSent()[0]).toContain(e.i18n.tf(Msg.MonitorLearnDeleted, id))
     expect(e.monitor.examples?.all()).toHaveLength(0)
   })
 
@@ -428,8 +430,8 @@ describe('handleLearnExample', () => {
     await settleN(2)
     const sent = p.getSent()
     expect(sent).toHaveLength(1)
-    expect(sent[0]).toContain('无需响应')
-    expect(sent[0]).toContain('早上好')
+    expect(sent[0]).toContain(e.i18n.tf(Msg.MonitorLearnAckDrop, '早上好'))
+    expect(sent[0]).toContain(e.i18n.tf(Msg.MonitorLearnReason, '只是日常问候'))
     const all = e.monitor.examples?.all() ?? []
     expect(all).toHaveLength(1)
     expect(all[0]?.drop).toBe(true)
@@ -454,7 +456,7 @@ describe('handleLearnExample', () => {
     const { e, p } = learnEngine([])
     e.monitor.handleMonitorMessage(p, msg({ sessionKey: 'feishu:oc_m:u1', userID: 'u1', content: '/learn 处理一下' }))
     await settleN(2)
-    expect(p.getSent()[0]).toContain('引用')
+    expect(p.getSent()[0]).toContain(e.i18n.t(Msg.MonitorLearnUsage))
   })
 })
 
@@ -644,6 +646,7 @@ describe('askMonitorClarification', () => {
     expect(pc?.options).toHaveLength(3)
     expect(pc?.options[0]).toEqual({ label: '支付', dir: '/pay' })
     expect(pc?.options[2]?.dir).toBe('')
+    expect(pc?.options[2]?.label).toBe(e.i18n.t(Msg.MonitorClarifySkip))
     expect(pc?.origText).toBe('登录失败')
     expect(pc?.origTask).toBe('查日志')
     expect(pc?.origReactionID).toBe('react1')
@@ -664,20 +667,20 @@ describe('askMonitorClarification', () => {
 
   it('wording reflects hadCandidates', async () => {
     const dirs = [{ path: '/pay', description: '支付' }]
-    // No candidates (triageDrop path): "请选择项目" / "没看出该交给哪个项目".
+    // No candidates (triageDrop path): the pick-a-project card.
     const { e, p } = newEng(dirs)
     e.monitor.askMonitorClarification(p, msgFor('早上好'), 'r', '', undefined)
     await settleN(2)
     const sent = p.getSent().join('\n')
-    expect(sent).toContain('请选择项目')
-    expect(sent).toContain('没看出这条该交给哪个项目')
-    // With candidates (triageClarify path): "选择排查目录" / "目录不确定".
+    expect(sent).toContain(e.i18n.t(Msg.MonitorClarifyHeaderNone))
+    expect(sent).toContain(e.i18n.t(Msg.MonitorClarifyQuestionNone))
+    // With candidates (triageClarify path): the pick-a-triage-dir card.
     const { e: e2, p: p2 } = newEng(dirs)
     e2.monitor.askMonitorClarification(p2, msgFor('登录失败'), 'r', '查日志', ['/pay'])
     await settleN(2)
     const sent2 = p2.getSent().join('\n')
-    expect(sent2).toContain('选择排查目录')
-    expect(sent2).toContain('目录不确定')
+    expect(sent2).toContain(e.i18n.t(Msg.MonitorClarifyHeader))
+    expect(sent2).toContain(e.i18n.t(Msg.MonitorClarifyQuestion))
   })
 
   it('caps options at the max plus skip', () => {
@@ -870,13 +873,13 @@ describe('buildTriagePrompt', () => {
 })
 
 describe('triageAndSpawn mode semantics', () => {
-  it('dispatch miss sends a notice containing 没看出', async () => {
+  it('dispatch miss sends the pick-a-project clarify card', async () => {
     const { e, p } = newMonitorEngine()
     setConfig(e, { dirs: [{ path: '/p/riskai', description: 'riskai 风控' }], mode: 'dispatch' })
     await e.monitor.triageAndSpawn(p, msg({ content: '一条模糊消息', sessionKey: 'feishu:c:u', replyCtx: 'rc' }))
     await settleN(3)
     const sent = p.getSent()
-    expect(sent[sent.length - 1]).toContain('没看出')
+    expect(sent[sent.length - 1]).toContain(e.i18n.t(Msg.MonitorClarifyQuestionNone))
   })
 
   it('monitor miss stays silent', async () => {
@@ -919,6 +922,48 @@ describe('sendMonitorSpawnNotice', () => {
     for (const s of p.getSent()) {
       expect(s).not.toContain('applink.feishu.cn')
     }
+  })
+})
+
+describe('cap and coalesce notices (i18n)', () => {
+  /** The private notice senders, reached structurally for the spec. */
+  function notices(e: Engine): {
+    sendMonitorCapNotice(p: Platform, msg: Message, parentKey: string): Promise<void>
+    sendMonitorCoalesceNotice(p: Platform, replyCtx: unknown, childChat: string, origText: string): Promise<void>
+  } {
+    return e.monitor as unknown as ReturnType<typeof notices>
+  }
+
+  it('renders the cap card title and body from the catalog', async () => {
+    const p = createStubCardPlatformFull('feishu') as unknown as StubCardPlatform & {
+      spawnedChats: SpawnedChatInfo[]
+      listActiveSpawnedChats(): Promise<SpawnedChatInfo[]>
+    }
+    p.spawnedChats = [{ chatID: 'oc_c1', chatName: 'child', botName: 'feishu' }]
+    p.listActiveSpawnedChats = async () => p.spawnedChats
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    setConfig(e, { maxConcurrent: 2 })
+    const child = e.sessions.getOrCreateActive('feishu:oc_c1')
+    child.setParentSessionKey('feishu:oc_x:u1')
+
+    await notices(e).sendMonitorCapNotice(p, msg({ sessionKey: 'feishu:oc_x:u1', replyCtx: 'rc', content: 'x' }), 'feishu:oc_x:u1')
+
+    expect(p.sentCards.length).toBeGreaterThan(0)
+    const card = p.sentCards[p.sentCards.length - 1] as RecordedCard
+    expect(card.header?.title).toContain(e.i18n.t(Msg.MonitorCapTitle))
+    const body = card.elements[0]?.kind === 'markdown' ? (card.elements[0].content ?? '') : ''
+    expect(body).toContain(e.i18n.tf(Msg.MonitorCapBody, 1, 2))
+  })
+
+  it('renders the coalesce card title from the catalog', async () => {
+    const p = createStubCardPlatformFull('feishu')
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+
+    await notices(e).sendMonitorCoalesceNotice(p, 'rc', 'oc_child9', '补充告警内容')
+
+    expect(p.sentCards.length).toBeGreaterThan(0)
+    const card = p.sentCards[p.sentCards.length - 1] as RecordedCard
+    expect(card.header?.title).toContain(e.i18n.t(Msg.MonitorCoalesceTitle))
   })
 })
 

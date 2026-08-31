@@ -208,19 +208,23 @@ export type AskCardAnswered = Map<number, number[]>
  * @param title - Card title, computed by the caller.
  * @param questions - All questions of the ask, in order.
  * @param answered - Selected option indices per answered question index.
+ * @param freeTextHint - Locale-owned hint that free text answers the
+ *   question too (Msg.AskFreeTextHint); the caller owns the language.
  * @returns The assembled card.
  */
-export function buildAskQuestionsCard(title: string, questions: UserQuestion[], answered: AskCardAnswered): Card {
+export function buildAskQuestionsCard(title: string, questions: UserQuestion[], answered: AskCardAnswered, freeTextHint: string): Card {
   const cb = newCard().title(title, 'blue')
   const multiple = questions.length > 1
   for (const [i, q] of questions.entries()) {
-    cb.raw(...questionElements(q, i, multiple, answered.get(i)))
+    cb.raw(...questionElements(q, i, multiple, answered.get(i), freeTextHint))
   }
   return cb.build()
 }
 
 /** Render one question's elements: heading plus frozen marks or interactive options. */
-function questionElements(q: UserQuestion, qIdx: number, multiple: boolean, selected: number[] | undefined): CardElement[] {
+function questionElements(
+  q: UserQuestion, qIdx: number, multiple: boolean, selected: number[] | undefined, freeTextHint: string,
+): CardElement[] {
   const prefix = multiple ? `${qIdx + 1}. ` : ''
   const elements: CardElement[] = [
     { kind: 'markdown', content: `**${prefix}${q.question}**` },
@@ -261,10 +265,11 @@ function questionElements(q: UserQuestion, qIdx: number, multiple: boolean, sele
   }
   // Free text answers this question too (resolveAskAnswer's custom branch),
   // so the card says so; a question without options needs no hint — free text
-  // is its only answer path. Same label as the Feishu renderer's submit-row
-  // hint beside 提交选择 (both card chrome, no i18n handle on this seam).
+  // is its only answer path. The label is locale-owned (the caller passes the
+  // translated Msg.AskFreeTextHint); the Feishu renderer's submit-row chrome
+  // (提交选择 beside the same hint) stays renderer-owned.
   if (q.options.length > 0) {
-    elements.push({ kind: 'note', text: '也可以直接文字输入' })
+    elements.push({ kind: 'note', text: freeTextHint })
   }
   return elements
 }

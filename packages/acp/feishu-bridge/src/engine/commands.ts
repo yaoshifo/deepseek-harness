@@ -14,7 +14,7 @@ import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Msg } from '../i18n/index.js'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.js'
-import { asCardSender, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.js'
+import { asCardSender, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, asStagedForkSeedForgetter, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.js'
 import { newCard } from '../card.js'
 import type { Engine } from './engine.js'
 import type { SessionManager } from './session.js'
@@ -341,7 +341,7 @@ export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: stri
       await e.replyWithCard(p, msg.replyCtx, await renderListCardSafe(e, msg.sessionKey, 1))
       return
     }
-    await e.reply(p, msg.replyCtx, 'Usage: /switch <number | id_prefix | name>')
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.SwitchUsage))
     return
   }
   const query = args.join(' ').trim()
@@ -350,7 +350,7 @@ export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: stri
   try {
     agentSessions = await agent.listSessions()
   } catch (error) {
-    await e.reply(p, msg.replyCtx, e.i18n.tf('error', String(error)))
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.Error, String(error)))
     return
   }
 
@@ -490,12 +490,12 @@ export async function statusText(e: Engine, msg: Message): Promise<string> {
   const modeSwitcher = agent as { getMode?: () => string }
   if (typeof modeSwitcher.getMode === 'function') {
     const mode = modeSwitcher.getMode()
-    if (mode !== '') modeStr += e.i18n.tf('status_mode', mode)
+    if (mode !== '') modeStr += e.i18n.tf(Msg.StatusMode, mode)
   }
   const thinkingStr = e.display.thinkingMessages ? e.i18n.t(Msg.EnabledShort) : e.i18n.t(Msg.DisabledShort)
   const toolStr = e.display.toolMessages ? e.i18n.t(Msg.EnabledShort) : e.i18n.t(Msg.DisabledShort)
-  modeStr += e.i18n.tf('status_thinking_messages', thinkingStr)
-  modeStr += e.i18n.tf('status_tool_messages', toolStr)
+  modeStr += e.i18n.tf(Msg.StatusThinkingMessages, thinkingStr)
+  modeStr += e.i18n.tf(Msg.StatusToolMessages, toolStr)
 
   const s = sessions.getOrCreateActive(msg.sessionKey)
   let sessionDisplayName = sessions.getSessionName(s.getAgentSessionID())
@@ -1032,13 +1032,12 @@ interface SpawnCommonOpts {
  * for failed. Every spawnGroupCommon failure exit below runs before the
  * child session plants its `__forkat__` sentinel, so without this the
  * parent's whole event array stays resident in the adapter until a daemon
- * restart. Probes structurally (the dsh adapter owns the seed map); other
- * agents have nothing staged and skip.
+ * restart. Probes structurally (asStagedForkSeedForgetter — the dsh adapter
+ * owns the seed map); other agents have nothing staged and skip.
  */
 function forgetStagedForkSeed(e: Engine, sentinelID: string): void {
   if (!sentinelID.startsWith(ForkAtSessionPrefix)) return
-  const cleaner = e.agent as { forgetForkAtSeed?: (forkID: string) => void }
-  cleaner.forgetForkAtSeed?.(sentinelID.slice(ForkAtSessionPrefix.length))
+  asStagedForkSeedForgetter(e.agent)?.forgetForkAtSeed(sentinelID.slice(ForkAtSessionPrefix.length))
 }
 
 /**

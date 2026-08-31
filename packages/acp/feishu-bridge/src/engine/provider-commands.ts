@@ -204,7 +204,7 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
     }
     case 'switch': {
       if (args.length < 2) {
-        await e.reply(p, msg.replyCtx, 'Usage: /provider switch <name> [--resume]')
+        await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ProviderSwitchUsage))
         return
       }
       const bad = unknownFlag(args.slice(1), { '-r': true, '--resume': true })

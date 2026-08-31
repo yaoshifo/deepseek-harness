@@ -257,14 +257,14 @@ describe('/board', () => {
       expect(e.dispatchCommand(p, famMsg('/board', 'test:c1:u1'), '/board')).toBe(true)
       await vi.waitFor(() => { expect(p.sentCards.length).toBeGreaterThanOrEqual(1) })
       const card = p.sentCards[p.sentCards.length - 1] as Card
-      expect(card.header?.title).toBe('Dashboard')
+      expect(card.header?.title).toBe(e.i18n.t(Msg.BoardTitle))
       // The tree renders collapsible panels (no text degradation) — assert
       // on the element tree instead of renderText.
       const tree = JSON.stringify(card.elements)
       expect(tree).toContain('任务A')
       expect(tree).toContain('子任务B')
       expect(tree).toContain('←')
-      expect(card.renderText()).toContain('当前任务树 2 个群')
+      expect(card.renderText()).toContain(e.i18n.tf(Msg.BoardTreeCount, 2))
     } finally {
       disposeFamily(); disposeSession()
     }
@@ -276,7 +276,7 @@ describe('/board', () => {
       expect(e.dispatchCommand(p, famMsg('/board'), '/board')).toBe(true)
       await vi.waitFor(() => { expect(p.sentCards.length).toBeGreaterThanOrEqual(1) })
       const card = p.sentCards[p.sentCards.length - 1] as Card
-      expect(card.renderText()).toContain('暂无活跃任务群')
+      expect(card.renderText()).toContain(e.i18n.t(Msg.BoardEmpty))
     } finally {
       disposeFamily(); disposeSession()
     }
@@ -289,7 +289,7 @@ describe('/board', () => {
       expect(e.dispatchCommand(p, famMsg('/board', 'test:other:u1'), '/board')).toBe(true)
       await vi.waitFor(() => { expect(p.sentCards.length).toBeGreaterThanOrEqual(1) })
       const card = p.sentCards[p.sentCards.length - 1] as Card
-      expect(card.renderText()).toContain('当前群不在任何任务树中')
+      expect(card.renderText()).toContain(e.i18n.t(Msg.BoardNotInTree))
     } finally {
       disposeFamily(); disposeSession()
     }
