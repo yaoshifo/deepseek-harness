@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
+import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import PlanModeController from '@deepseek-ai/dsh-plan-mode'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SessionStore, { type Session } from '@deepseek-ai/dsh-session'
@@ -74,6 +75,7 @@ async function seamHarness(): Promise<{
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(PlanModeController, { section: 'guidance' })
   await ctx.plugin(SessionProjectionRegistry)
+  ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
   const cwd = '/workspace/project'
   const agents: RealSessionAgent[] = []
   const registry: DshAgentsRegistryLike = {

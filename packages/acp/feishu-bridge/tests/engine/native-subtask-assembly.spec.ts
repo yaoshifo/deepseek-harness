@@ -21,6 +21,7 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { MockAdapter, maxTokensResponse, textResponse } from '../../../../core/agent-loop/tests/mock-adapter.ts'
 import { buildProjectAssembly, registerNativeSettlementListener, type FeishuBridgeConfig, type ProjectConfig } from '../../src/index.js'
@@ -49,6 +50,7 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
     const ctx = new Context()
     contexts.push(ctx)
     await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(SessionProjectionRegistry)
     const root = await mkdtemp(join(tmpdir(), 'fb-native-assembly-'))
     roots.push(root)
     await ctx.plugin(JsonlSessionPersistence, { root })
@@ -124,6 +126,7 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
     const ctx = new Context()
     contexts.push(ctx)
     await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(SessionProjectionRegistry)
     const root = await mkdtemp(join(tmpdir(), 'fb-native-assembly-'))
     roots.push(root)
     await ctx.plugin(JsonlSessionPersistence, { root })
@@ -179,6 +182,7 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
     const ctx = new Context()
     contexts.push(ctx)
     await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(SessionProjectionRegistry)
     const root = await mkdtemp(join(tmpdir(), 'fb-native-assembly-'))
     roots.push(root)
     await ctx.plugin(JsonlSessionPersistence, { root })
@@ -257,6 +261,7 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
     const ctx = new Context()
     contexts.push(ctx)
     await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(SessionProjectionRegistry)
     const root = await mkdtemp(join(tmpdir(), 'fb-native-assembly-'))
     roots.push(root)
     await ctx.plugin(JsonlSessionPersistence, { root })
@@ -313,6 +318,7 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
     const ctx = new Context()
     contexts.push(ctx)
     await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(SessionProjectionRegistry)
     const root = await mkdtemp(join(tmpdir(), 'fb-native-assembly-'))
     roots.push(root)
     await ctx.plugin(JsonlSessionPersistence, { root })
