@@ -9,6 +9,7 @@
  * @module @deepseek-ai/dsh-bash-local
  */
 
+import { readFileSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { SHELL_SETTINGS_NAMESPACE, ShellExecutor } from '@deepseek-ai/dsh-shell'
@@ -34,13 +35,47 @@ export const ENV_OVERRIDES = {
 /** Default SIGTERM→SIGKILL grace period (the `graceMs` config; matches OpenCode's 3s). */
 const DEFAULT_GRACE_MS = 3_000
 
-/** Default per-stream spill cap (the `maxSpillBytes` config). */
+/** Per-stream spill cap (the `maxSpillBytes` config). */
 const DEFAULT_MAX_SPILL_BYTES = 64 * 1024 * 1024
+
+/**
+ * Parse one `KEY=VALUE` document into an environment map. The first `=`
+ * separates key from value, so a value may itself contain `=`; blank lines and
+ * `#`-prefixed comments are skipped. A line without `=`, an empty key, or an
+ * empty value throws naming the 1-based line, so a malformed or half-written
+ * secrets file fails at load instead of silently exporting blanks.
+ * @param text - the file's full text.
+ * @param source - the path to name in diagnostics.
+ * @returns the parsed entries, in file order.
+ */
+export function parseEnvFile(text: string, source: string): Record<string, string> {
+  const entries: Record<string, string> = {}
+  const lines = text.split('\n')
+  for (let index = 0; index < lines.length; index++) {
+    const line = (lines[index] ?? '').replace(/\r$/, '')
+    if (line.trim() === '' || line.trimStart().startsWith('#')) continue
+    const separator = line.indexOf('=')
+    const key = separator > 0 ? line.slice(0, separator) : ''
+    const value = separator > 0 ? line.slice(separator + 1) : undefined
+    if (key === '' || value === undefined || value === '') {
+      throw new Error(`bash-local: envFile ${source} line ${index + 1}: expected KEY=VALUE with a non-empty value`)
+    }
+    entries[key] = value
+  }
+  return entries
+}
 
 /** Plugin config (all optional — `static Config` supplies the defaults). */
 export interface Config {
   /** Default working directory for commands (default: process.cwd()). */
   cwd?: string
+  /**
+   * `KEY=VALUE` document whose entries merge into every command's environment
+   * under their original names, re-read at each spawn. Read at load (missing
+   * or malformed files fail plugin load) and again per command, so edits and
+   * appended keys apply to the next command without a restart.
+   */
+  envFile?: string
   /** Default foreground timeout in milliseconds. */
   timeoutMs?: number
   /** Upper bound for per-call timeout overrides. */
@@ -53,8 +88,8 @@ export interface Config {
   graceMs?: number
 }
 
-/** The shape after schemastery applied the defaults (cwd has none). */
-type ResolvedConfig = Required<Omit<Config, 'cwd'>> & Pick<Config, 'cwd'>
+/** The shape after schemastery applied the defaults (cwd/envFile have none). */
+type ResolvedConfig = Required<Omit<Config, 'cwd' | 'envFile'>> & Pick<Config, 'cwd' | 'envFile'>
 
 /** Project a settled collect-mode reader into the final CollectedOutput shape. */
 function finalOutput(reader: SubprocessOutputReader): CollectedOutput {
@@ -104,6 +139,7 @@ export class LocalBashExecutor extends ShellExecutor {
 
   static Config: z<Config> = z.object({
     cwd: z.string(),
+    envFile: z.string(),
     timeoutMs: z.number().default(120_000),
     maxTimeoutMs: z.number().default(600_000),
     maxOutputBytes: z.number().default(64_000),
@@ -124,6 +160,11 @@ export class LocalBashExecutor extends ShellExecutor {
     // Schemastery fills these fields before construction; the type does not encode that step.
     const entry = config as ResolvedConfig
     assertServiceableBashConfig(entry)
+    // Load-time gate: a configured envFile must exist and parse, so a missing
+    // or malformed secrets document fails plugin load instead of every command.
+    if (entry.envFile !== undefined) {
+      parseEnvFile(readFileSync(entry.envFile, 'utf8'), entry.envFile)
+    }
     this.source = () => entry
     ctx.inject(['settings'], (settingsCtx) => {
       settingsCtx.settings.installSection(ctx, SHELL_SETTINGS_NAMESPACE, LocalBashExecutor.Config, entry, {
@@ -193,9 +234,27 @@ export class LocalBashExecutor extends ShellExecutor {
       graceMs: this.config.graceMs,
       signal,
       // One explicit env map for the seam, layered so the trusted dshEnv
-      // snapshot beats both the caller's env and the terminal overrides; the
-      // subprocess service merges the whole map after its ambient scrub.
-      env: { ...ENV_OVERRIDES, ...spec.env, ...spec.dshEnv },
+      // snapshot beats the caller's env, the envFile deployment entries, and
+      // the terminal overrides; the subprocess service merges the whole map
+      // after its ambient scrub. envFile is re-read at each spawn, so edits
+      // apply to the next command.
+      env: { ...ENV_OVERRIDES, ...this.envFileEntries(), ...spec.env, ...spec.dshEnv },
+    }
+  }
+
+  /**
+   * Current envFile entries, or an empty map when none is configured. Read
+   * fresh at each spawn; an unreadable file fails that command loudly with the
+   * path rather than silently dropping the deployment's secrets.
+   */
+  private envFileEntries(): Record<string, string> {
+    const path = this.config.envFile
+    if (path === undefined) return {}
+    try {
+      return parseEnvFile(readFileSync(path, 'utf8'), path)
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.startsWith('bash-local: envFile')) throw error
+      throw new Error(`bash-local: envFile ${path} unreadable: ${String(error)}`)
     }
   }
 

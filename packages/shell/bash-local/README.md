@@ -42,6 +42,7 @@ Load the executor with the budgets you want; every field has a default, so the s
 | Field | Default | Meaning |
 |---|---|---|
 | `cwd` | `process.cwd()` | Default working directory for commands |
+| `envFile` | none | `KEY=VALUE` document whose entries merge into every command's environment under their original names |
 | `timeoutMs` | `120,000` | Default foreground timeout, in milliseconds |
 | `maxTimeoutMs` | `600,000` | Cap for per-call timeout overrides |
 | `maxOutputBytes` | `64,000` | Per-stream in-memory output cap; overflow spills to a temp file |
@@ -49,6 +50,10 @@ Load the executor with the budgets you want; every field has a default, so the s
 | `graceMs` | `3,000` | Grace period for kill escalation and post-exit pipe draining |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-bash-local) is the exhaustive source for every accepted field and its JSDoc.
+
+### Injecting deployment environment entries
+
+Ambient credential-shaped names (`*KEY*`, `*PASSWORD*`, `*SECRET*`, `*TOKEN*`) are scrubbed before they can reach a command — a deliberate seam rule, so harness-side secrets never leak implicitly. `envFile` is the deployment's explicit opt-in around that rule: point it at an operator-maintained `KEY=VALUE` document (typically `chmod 600`) and every command — foreground and background — runs with those entries under their original names, layered under an explicit caller entry and the trusted `DSH_*` facts, above the terminal overrides. The file is re-read at each spawn: an edited value, an appended key, or a removed line applies to the very next command, with no restart. A configured file that is missing or malformed fails plugin load naming the line; a file that disappears while the executor runs fails that one command loudly instead of silently dropping the entries. Entries are visible to the command and therefore to the model — treat the file as the reviewed whitelist of what model-run commands may hold, not as a hiding place.
 
 ### Running commands
 

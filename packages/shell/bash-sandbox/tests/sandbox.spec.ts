@@ -164,6 +164,17 @@ describe('the provider hand-off', () => {
     expect(calls).toHaveLength(2)
   })
 
+  // Config inheritance: the sandbox executor reuses LocalBashExecutor's Config
+  // wholesale, so the envFile deployment entries reach confined commands too.
+  it('merges envFile entries into confined commands through the inherited config', async () => {
+    const envFile = join(spillDir, `sandbox-env-${Math.random().toString(36).slice(2)}`)
+    writeFileSync(envFile, 'TEST_SANDBOX_ENVFILE=sandbox-value\n')
+    const { bash, calls } = await setup({ envFile })
+    const result = await bash.run(bash.resolve({ command: 'printf %s "$TEST_SANDBOX_ENVFILE"' }))
+    expect(result.stdout.text).toBe('sandbox-value')
+    expect(calls).toHaveLength(1)
+  })
+
 })
 
 describe('fail closed', () => {
