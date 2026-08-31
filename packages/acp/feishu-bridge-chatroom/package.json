@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-feishu-bridge-chatroom",
   "description": "Chatroom plugin for the DeepSeek Harness Feishu bridge: multi-role chatroom orchestration (role groups, the moderator, the /chatroom command family) as its own package mounted beside @deepseek-ai/dsh-feishu-bridge",
-  "version": "0.1.1-rc.2",
+  "version": "0.1.2-alpha.2",
   "license": "MIT",
   "publishConfig": {
     "access": "public"

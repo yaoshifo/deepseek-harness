@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * One-off generator: parses cc-connect core/i18n/i18n.go (read-only source)
  * and emits src/i18n/keys.ts + src/i18n/messages.ts for dsh-feishu-bridge.
