@@ -127,7 +127,7 @@ describe('sendAskQuestionsCard', () => {
     await e.sendAskQuestionsCard(p, 'ctx', testQuestions(), 'test:askq')
 
     const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
-    expect(card.elements.length).toBe(5) // 1 markdown question + 3 list rows + 1 free-text note
+    expect(card.elements.length).toBe(6) // 1 markdown question + 3 list rows + 1 text-input form + 1 chat-text note
     const q = card.elements[0] as { kind: string; content: string }
     expect(q.kind).toBe('markdown')
     expect(q.content).toBe('**Which database?**')

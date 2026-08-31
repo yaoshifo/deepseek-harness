@@ -261,6 +261,109 @@ describe('askUser questions kind', () => {
     })
   })
 
+  it('a card text submit answers its named question with the custom text', async () => {
+    const p = createStubPlatform('test')
+    const { e } = armedState(p)
+    const decision = e.askUser('test:chat:user1', { kind: 'questions', questions: testQuestions() })
+    await tick()
+
+    const content = 'askq_text:0\x00Redis'
+    expect(e.routeAskResponse(p, msg({ content, isAskqCardAction: true }), content)).toBe(true)
+    await expect(decision).resolves.toEqual({
+      answers: [{ id: 'Which database?', selected: [], custom: 'Redis' }],
+    })
+  })
+
+  it('a riding card note accompanies the selection in the settled answer', async () => {
+    const p = createStubPlatform('test')
+    const { e } = armedState(p)
+    const questions = [{ ...testQuestions()[0]!, multiSelect: true }]
+    const decision = e.askUser('test:chat:user1', { kind: 'questions', questions })
+    await tick()
+
+    const content = 'askq:0:1,3\x00also Redis in staging'
+    expect(e.routeAskResponse(p, msg({ content, isAskqCardAction: true }), content)).toBe(true)
+    await expect(decision).resolves.toEqual({
+      answers: [{ id: 'Which database?', selected: ['PostgreSQL', 'MySQL'], custom: 'also Redis in staging' }],
+    })
+  })
+
+  it('a numbered text prefix revises its named question, not the first open one', async () => {
+    const p = createStubPlatform('test')
+    const { e } = armedState(p)
+    const decision = e.askUser('test:chat:user1', {
+      kind: 'questions',
+      questions: testMultiQuestions().map((q, i) => ({ ...q, id: `q${i}` })),
+    })
+    await tick()
+
+    expect(e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')).toBe(true)
+    // Half-width colon with a space, and full-width colon without one, both
+    // name their question: question 1 gets revised, question 2 stays open.
+    expect(e.routeAskResponse(p, msg({ content: '1: 复用现有的' }), '1: 复用现有的')).toBe(true)
+    expect(e.routeAskResponse(p, msg({ content: 'askq:1:1', isAskqCardAction: true }), 'askq:1:1')).toBe(true)
+
+    await expect(decision).resolves.toEqual({
+      answers: [
+        { id: 'q0', selected: [], custom: '复用现有的' },
+        { id: 'q1', selected: ['Gin'] },
+      ],
+    })
+  })
+
+  it('an out-of-range prefix stays plain free text for the first open question', async () => {
+    const p = createStubPlatform('test')
+    const { e } = armedState(p)
+    const decision = e.askUser('test:chat:user1', {
+      kind: 'questions',
+      questions: testMultiQuestions().map((q, i) => ({ ...q, id: `q${i}` })),
+    })
+    await tick()
+
+    expect(e.routeAskResponse(p, msg({ content: '9: whatever' }), '9: whatever')).toBe(true)
+    expect(e.routeAskResponse(p, msg({ content: 'askq:1:1', isAskqCardAction: true }), 'askq:1:1')).toBe(true)
+    await expect(decision).resolves.toEqual({
+      answers: [
+        { id: 'q0', selected: [], custom: '9: whatever' },
+        { id: 'q1', selected: ['Gin'] },
+      ],
+    })
+  })
+
+  it('a clock-time answer is not mistaken for a question prefix', async () => {
+    const p = createStubPlatform('test')
+    const { e } = armedState(p)
+    const decision = e.askUser('test:chat:user1', {
+      kind: 'questions',
+      questions: testMultiQuestions().map((q, i) => ({ ...q, id: `q${i}` })),
+    })
+    await tick()
+
+    // "2:30" is a plain answer for the first open question — the half-width
+    // colon without a following space is not an address prefix, even though
+    // question 2 exists on this ask.
+    expect(e.routeAskResponse(p, msg({ content: '2:30' }), '2:30')).toBe(true)
+    expect(e.routeAskResponse(p, msg({ content: 'askq:1:1', isAskqCardAction: true }), 'askq:1:1')).toBe(true)
+    await expect(decision).resolves.toEqual({
+      answers: [
+        { id: 'q0', selected: [], custom: '2:30' },
+        { id: 'q1', selected: ['Gin'] },
+      ],
+    })
+  })
+
+  it('a multi-question free-text echo carries progress and the addressing hint', async () => {
+    const p = createStubPlatform('test')
+    const { e } = armedState(p)
+    void e.askUser('test:chat:user1', { kind: 'questions', questions: testMultiQuestions() })
+    await tick()
+
+    expect(e.routeAskResponse(p, msg({ content: 'Redis' }), 'Redis')).toBe(true)
+    const sent = p.getSent().join('\n')
+    expect(sent).toContain('✅ Which database?: **Redis**（1/2）')
+    expect(sent).toContain('type “N: answer”')
+  })
+
   it('settlePendingAskDefaults applies the first-option default to unanswered questions', async () => {
     const p = createStubPlatform('test')
     const { e } = armedState(p)
@@ -341,12 +444,12 @@ describe('routeAskResponse stale handling', () => {
     expect(e.routeAskResponse(p, msg({ content: 'deny', isPermissionAction: true }), 'deny')).toBe(true)
   })
 
-  it('a stale askq card click passes through untouched', () => {
+  it('a stale askq card click is consumed with the stale hint, not forwarded raw', () => {
     const e = newTestEngine()
     const p = createStubPlatform('test')
 
-    expect(e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')).toBe(false)
-    expect(p.getSent()).toEqual([])
+    expect(e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')).toBe(true)
+    expect(p.getSent().join('\n')).toContain('no longer current')
   })
 
   it('plain text without a pending ask passes through', () => {

@@ -80,6 +80,7 @@ import {
   finalAskAnswers,
   parseAskqSelection,
   parsePermissionVerdict,
+  parseQuestionAddress,
   resolveAskAnswer,
 } from './ask.js'
 import { CardButton, newCard, appendIntoLastCollapsible, type Card, type CardElement, type CardHeader } from '../card.js'
@@ -5480,6 +5481,7 @@ export class Engine {
         void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PermissionExpired))
         return true
       }
+      if (this.staleAskqCardAction(p, msg)) return true
       return false
     }
 
@@ -5493,6 +5495,7 @@ export class Engine {
         void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PermissionExpired))
         return true
       }
+      if (this.staleAskqCardAction(p, msg)) return true
       return false
     }
 
@@ -5500,6 +5503,20 @@ export class Engine {
       return this.routeQuestionResponse(p, msg, content, pending)
     }
     return this.routePermissionResponse(p, msg, content, pending)
+  }
+
+  /**
+   * Consume a card-button askq action whose ask is gone: without the guard
+   * the raw `askq:N:M` payload would fall through as a plain message and
+   * become the model's next prompt.
+   * @param p - Platform the action arrived on.
+   * @param msg - The card-action message.
+   * @returns True when the action was consumed with the stale hint.
+   */
+  private staleAskqCardAction(p: Platform, msg: Message): boolean {
+    if (!msg.isAskqCardAction || parseAskqSelection(msg.content) === undefined) return false
+    void this.reply(p, msg.replyCtx, this.i18n.t(Msg.AskqStaleQuestion))
+    return true
   }
 
   /**
@@ -5529,9 +5546,11 @@ export class Engine {
 
   /**
    * Route one response onto a parked questions ask: a card payload answers
-   * its own question; free text answers the first unanswered question.
-   * Echoes the answer for free-text replies; settles when every question is
-   * answered.
+   * its own question; a question-number prefix (「2: …」) addresses or
+   * revises that question; other free text answers the first unanswered
+   * question. Echoes the answer for free-text replies with progress and,
+   * while other questions are also open, the addressing hint; settles when
+   * every question is answered.
    * @param p - Platform the response arrived on.
    * @param msg - The inbound response message.
    * @param content - Response text (askq payload, index(es), or free text).
@@ -5547,11 +5566,24 @@ export class Engine {
       return false
     }
     const payload = parseAskqSelection(content)
-    // A card payload names its own question; free text answers the first
-    // unanswered one.
-    const qIdx = payload !== undefined
-      ? payload.qIdx
-      : questions.findIndex((_q, i) => !pending.answers.has(i))
+    // A card payload names its question; chat text may prefix a question
+    // number (「2: …」, parseQuestionAddress) to address or revise that
+    // question explicitly; anything else answers the first unanswered one.
+    let answerInput = content
+    let prefixed = false
+    let qIdx: number
+    if (payload !== undefined) {
+      qIdx = payload.qIdx
+    } else {
+      const address = parseQuestionAddress(content, questions.length)
+      if (address !== undefined) {
+        qIdx = address.qIdx
+        answerInput = address.rest
+        prefixed = true
+      } else {
+        qIdx = questions.findIndex((_q, i) => !pending.answers.has(i))
+      }
+    }
     const q = questions[qIdx]
     if (q === undefined || qIdx < 0) {
       // A stale card (the ask re-armed with fewer questions) names a qIdx
@@ -5563,7 +5595,8 @@ export class Engine {
       }
       return false
     }
-    const answer = resolveAskAnswer(q, content)
+    const openBefore = questions.filter((_qc, i) => !pending.answers.has(i)).length
+    const answer = resolveAskAnswer(q, answerInput)
     pending.answers.set(qIdx, answer)
     // A free-text answer may ride with attachments (text + image in one
     // message); the text resolves the question, the attachments must not
@@ -5573,7 +5606,14 @@ export class Engine {
       this.stageAttachments(p, msg, msg.sessionKey)
     }
     if (!msg.isAskqCardAction) {
-      void this.reply(p, msg.replyCtx, `✅ ${q.question}: **${askAnswerDisplay(answer)}**`)
+      const answeredCount = questions.filter((_qc, i) => pending.answers.has(i)).length
+      const progress = questions.length > 1 ? `（${answeredCount}/${questions.length}）` : ''
+      // Unprefixed free text landing on the first open question is ambiguous
+      // while other questions are also open — teach the address syntax.
+      const hint = questions.length > 1 && !prefixed && openBefore > 1
+        ? this.i18n.t(Msg.AskqTextAddressHint)
+        : ''
+      void this.reply(p, msg.replyCtx, `✅ ${q.question}: **${askAnswerDisplay(answer)}**${progress}${hint}`)
     }
     // Every question answered — settle the whole ask.
     if (questions.every((_q, i) => pending.answers.has(i))) {

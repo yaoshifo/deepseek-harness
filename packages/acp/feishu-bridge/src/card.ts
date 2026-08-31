@@ -124,6 +124,12 @@ export interface CardCheckOptions {
   /** Form submit action, e.g. "askq_multi:0". */
   action?: string
   extra?: Record<string, string>
+  /**
+   * Free-text input rendered inside the checker form; its value rides the
+   * same submit as the checked options. Absent on checkers without a text
+   * channel (e.g. delete-mode pickers).
+   */
+  textInput?: { name: string; placeholder: string }
 }
 
 /** Renders an image by platform-specific image key (e.g. a Feishu image_key). */
@@ -350,6 +356,9 @@ export class Card {
               sb += ` — ${elem.options[i]?.description ?? ''}`
             }
             sb += '\n'
+          }
+          if (elem.textInput !== undefined) {
+            sb += `[${elem.textInput.placeholder}]\n`
           }
           sb += '\n'
           break

@@ -526,7 +526,7 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     expect(replaced.markdown).toContain('✅ **Read**')
   })
 
-  it('a single-select click freezes its question and keeps later questions interactive', async () => {
+  it('a single-select click keeps its question revisable with the current answer shown', async () => {
     const p = newPlatform({ allowChat: '*' })
     await p.start(() => {})
     p.askqMetaCache.set('feishu:oc_1:ou_9', {
@@ -556,10 +556,12 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     expect(resp).toBeDefined()
     const replaced = cardBody(resp!)
     expect(replaced.title).toBe('‼️ Ask')
-    expect(replaced.markdown).toContain('◻️ **Option A**')
-    expect(replaced.markdown).toContain('✅ **Option B**')
-    // The second question stays clickable: its row button survives.
+    expect(replaced.markdown).toContain('当前：')
+    expect(replaced.markdown).toContain('**Option B**')
     const raw = JSON.stringify(resp!.card.data)
+    // Both questions stay clickable: the answered question's own rows survive
+    // for revision, and the second question's buttons are untouched.
+    expect(raw).toContain('askq:0:1')
     expect(raw).toContain('askq:1:1')
     // One question of two answered: the cache survives for the next callback.
     expect(p.askqMetaCache.has('feishu:oc_1:ou_9')).toBe(true)
@@ -601,6 +603,130 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     expect(p.onCardAction(event)).toBeUndefined()
     await new Promise((resolve) => { setTimeout(resolve, 10) })
     expect(messages).toHaveLength(1)
+  })
+
+  it('a text-submit click rides the input value and settles the card read-only', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    const messages: Message[] = []
+    void p.start((_platform, msg) => { messages.push(msg) })
+    p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      title: '‼️ Ask',
+      questions: [{
+        question: 'Pick one',
+        header: '',
+        options: [{ label: 'Option A', description: '' }, { label: 'Option B', description: '' }],
+        multiSelect: false,
+      }],
+    })
+    const event: CardActionTriggerEvent = {
+      action: { name: 'askq_text_submit_0', form_value: { askq_text_0: ' neither, use Redis ' } },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_text_1' },
+    }
+    const resp = p.onCardAction(event) as { card: { data: Record<string, unknown> } } | undefined
+    expect(resp).toBeDefined()
+    const replaced = cardBody(resp!)
+    expect(replaced.title).toContain('已全部作答')
+    expect(replaced.markdown).toContain('✍️ neither, use Redis')
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('askq_text:0\x00neither, use Redis')
+    expect(messages[0]!.isAskqCardAction).toBe(true)
+  })
+
+  it('a multi submit rides its text input alongside the checked options', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    const messages: Message[] = []
+    void p.start((_platform, msg) => { messages.push(msg) })
+    p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      title: '',
+      questions: [{
+        question: 'Pick tools',
+        header: '',
+        options: [{ label: 'Bash', description: '' }, { label: 'Read', description: '' }],
+        multiSelect: true,
+      }],
+    })
+    const event: CardActionTriggerEvent = {
+      action: { name: 'askq_multi_submit_0', form_value: { askq_opt_1: true, askq_text_0: 'plus web search' } },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_text_2' },
+    }
+    expect(p.onCardAction(event)).toBeDefined()
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('askq:0:1\x00plus web search')
+  })
+
+  it('an empty text submit is a no-op (no dispatch, no card churn)', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    const messages: Message[] = []
+    void p.start((_platform, msg) => { messages.push(msg) })
+    p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      title: '',
+      questions: [{
+        question: 'Pick one',
+        header: '',
+        options: [{ label: 'Option A', description: '' }],
+        multiSelect: false,
+      }],
+    })
+    const event: CardActionTriggerEvent = {
+      action: { name: 'askq_text_submit_0', form_value: { askq_text_0: '   ' } },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_text_3' },
+    }
+    expect(p.onCardAction(event)).toBeUndefined()
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(messages).toHaveLength(0)
+  })
+
+  it('a changed answer on an answered question passes the dedup and updates the card', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    const messages: Message[] = []
+    void p.start((_platform, msg) => { messages.push(msg) })
+    p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      title: '',
+      questions: [
+        {
+          question: 'Pick one',
+          header: '',
+          options: [{ label: 'Option A', description: '' }, { label: 'Option B', description: '' }],
+          multiSelect: false,
+        },
+        {
+          question: 'Pick next',
+          header: '',
+          options: [{ label: 'Next A', description: '' }],
+          multiSelect: false,
+        },
+      ],
+    })
+    const first = cardEvent({
+      action: 'askq:0:1',
+      messageID: 'om_rev',
+      value: { action: 'askq:0:1', askq_label: 'Option A', askq_question: 'Pick one' },
+    })
+    expect(p.onCardAction(first)).toBeDefined()
+    // Revising question 0 to Option B must not be swallowed as a duplicate.
+    const revise = cardEvent({
+      action: 'askq:0:2',
+      messageID: 'om_rev',
+      value: { action: 'askq:0:2', askq_label: 'Option B', askq_question: 'Pick one' },
+    })
+    const resp = p.onCardAction(revise) as { card: { data: Record<string, unknown> } } | undefined
+    expect(resp).toBeDefined()
+    expect(cardBody(resp!).markdown).toContain('当前：')
+    expect(cardBody(resp!).markdown).toContain('**Option B**')
+    // An exact repeat of the current answer (double-click / callback retry
+    // of the revise event) is still swallowed.
+    expect(p.onCardAction(revise)).toBeUndefined()
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(messages).toHaveLength(2)
   })
 })
 

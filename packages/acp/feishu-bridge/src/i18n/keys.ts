@@ -388,6 +388,7 @@ export const ALL_MSG_KEYS = [
   'thread_note',
   'context_tools_panel',
   'askq_stale_question',
+  'askq_text_address_hint',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -414,6 +415,7 @@ export const Msg = {
   PluginReloaded: 'plugin_reloaded',
   FailedToStartAgentSession: 'failed_to_start_agent_session',
   AskqStaleQuestion: 'askq_stale_question',
+  AskqTextAddressHint: 'askq_text_address_hint',
   PermissionPrompt: 'permission_prompt',
   PlanContentHeader: 'plan_content_header',
   PlanContentHeaderRevision: 'plan_content_header_revision',

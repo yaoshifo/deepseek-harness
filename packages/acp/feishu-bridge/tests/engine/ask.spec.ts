@@ -32,23 +32,23 @@ function singleQuestion(): UserQuestion {
 
 describe('parseAskqSelection', () => {
   it('single-select button value "askq:0:1" parses to question 0, option 1', () => {
-    expect(parseAskqSelection('askq:0:1')).toEqual({ qIdx: 0, indices: [1] })
+    expect(parseAskqSelection('askq:0:1')).toEqual({ qIdx: 0, indices: [1], custom: '' })
   })
 
   it('multi-select value "askq:2:1,3" parses to question 2, options 1 and 3', () => {
-    expect(parseAskqSelection('askq:2:1,3')).toEqual({ qIdx: 2, indices: [1, 3] })
+    expect(parseAskqSelection('askq:2:1,3')).toEqual({ qIdx: 2, indices: [1, 3], custom: '' })
   })
 
   it('multi-select form prefix "askq_multi:1:2,4" normalizes to the askq form', () => {
-    expect(parseAskqSelection('askq_multi:1:2,4')).toEqual({ qIdx: 1, indices: [2, 4] })
+    expect(parseAskqSelection('askq_multi:1:2,4')).toEqual({ qIdx: 1, indices: [2, 4], custom: '' })
   })
 
   it('indices below 1 are filtered (empty multi submit selects nothing)', () => {
-    expect(parseAskqSelection('askq:0:0')).toEqual({ qIdx: 0, indices: [] })
+    expect(parseAskqSelection('askq:0:0')).toEqual({ qIdx: 0, indices: [], custom: '' })
   })
 
   it('non-numeric segments drop out of the index list', () => {
-    expect(parseAskqSelection('askq:0:1,x,3')).toEqual({ qIdx: 0, indices: [1, 3] })
+    expect(parseAskqSelection('askq:0:1,x,3')).toEqual({ qIdx: 0, indices: [1, 3], custom: '' })
   })
 
   it('legacy two-segment payload is rejected (ambiguous with multi-question cards)', () => {
@@ -59,6 +59,22 @@ describe('parseAskqSelection', () => {
     expect(parseAskqSelection('PostgreSQL')).toBeUndefined()
     expect(parseAskqSelection('askq:a:1')).toBeUndefined()
     expect(parseAskqSelection('')).toBeUndefined()
+  })
+
+  it('a card text submit "askq_text:1\\x00Redis" parses to question 1 with the custom text', () => {
+    expect(parseAskqSelection('askq_text:1\x00Redis')).toEqual({ qIdx: 1, indices: [], custom: 'Redis' })
+  })
+
+  it('free text rides a selection payload after the NUL separator', () => {
+    expect(parseAskqSelection('askq:0:1,3\x00also Redis in staging'))
+      .toEqual({ qIdx: 0, indices: [1, 3], custom: 'also Redis in staging' })
+    expect(parseAskqSelection('askq_multi:2:4\x00note'))
+      .toEqual({ qIdx: 2, indices: [4], custom: 'note' })
+  })
+
+  it('text containing colons cannot break index parsing (NUL split runs first)', () => {
+    expect(parseAskqSelection('askq_text:0\x002: 30 every morning'))
+      .toEqual({ qIdx: 0, indices: [], custom: '2: 30 every morning' })
   })
 })
 
@@ -137,6 +153,19 @@ describe('resolveAskAnswer', () => {
     const q: UserQuestion = { ...singleQuestion(), options: [] }
     expect(resolveAskAnswer(q, 'anything')).toEqual({ selected: [], custom: 'anything' })
   })
+
+  it('a card text submit resolves to custom with an empty selection', () => {
+    expect(resolveAskAnswer(singleQuestion(), 'askq_text:0\x00Redis'))
+      .toEqual({ selected: [], custom: 'Redis' })
+  })
+
+  it('riding text lands in custom alongside the selection (never replaces it)', () => {
+    const q: UserQuestion = { ...singleQuestion(), multiSelect: true }
+    expect(resolveAskAnswer(q, 'askq:0:1,3\x00also Redis in staging'))
+      .toEqual({ selected: ['PostgreSQL', 'MySQL'], custom: 'also Redis in staging' })
+    expect(resolveAskAnswer(singleQuestion(), 'askq:0:2\x00unless you object'))
+      .toEqual({ selected: ['SQLite'], custom: 'unless you object' })
+  })
 })
 
 describe('defaultAskAnswer', () => {
@@ -209,8 +238,8 @@ describe('buildAskQuestionsCard', () => {
     expect(form.options.map(o => o.value)).toEqual(['1', '2', '3'])
   })
 
-  it('an answered question renders frozen marks and no interactive buttons', () => {
-    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map([[0, [2]]]))
+  it('a settled card (every question answered) renders frozen marks and no controls', () => {
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map([[0, { indices: [2] }]]))
 
     expect(card.elements).toHaveLength(2)
     const frozen = card.elements[1] as { kind: string; content: string }
@@ -218,9 +247,18 @@ describe('buildAskQuestionsCard', () => {
     expect(frozen.content).toContain('✅ **SQLite**')
     expect(frozen.content).toContain('◻️ **PostgreSQL**')
     expect(card.elements.some(e => e.kind === 'listItem')).toBe(false)
+    expect(card.elements.some(e => e.kind === 'form')).toBe(false)
   })
 
-  it('a mixed card keeps unanswered questions interactive beside a frozen one', () => {
+  it('a settled card shows the card-input custom text under its question', () => {
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map([[0, { indices: [], custom: 'Redis' }]]))
+
+    const custom = card.elements.find(e => e.kind === 'markdown' && e.content.startsWith('✍️')) as { content: string }
+    expect(custom.content).toBe('✍️ Redis')
+    expect(card.elements.some(e => e.kind === 'form')).toBe(false)
+  })
+
+  it('an answered question on an unsettled card stays revisable with its current answer shown', () => {
     const card = buildAskQuestionsCard('t', [
       singleQuestion(),
       {
@@ -229,16 +267,19 @@ describe('buildAskQuestionsCard', () => {
         options: [{ label: 'Gin', description: '' }],
         multiSelect: false,
       },
-    ], new Map([[0, [1]]]))
+    ], new Map([[0, { indices: [1] }]]))
 
-    expect(card.elements.some(e => e.kind === 'markdown' && e.content.includes('✅ **PostgreSQL**'))).toBe(true)
+    expect(card.elements.some(e => e.kind === 'markdown' && e.content.includes('当前：**PostgreSQL**'))).toBe(true)
+    expect(card.elements.some(e => e.kind === 'listItem' && e.btnValue === 'askq:0:1')).toBe(true)
     expect(card.elements.some(e => e.kind === 'listItem' && e.btnValue === 'askq:1:1')).toBe(true)
+    expect(card.elements.filter(e => e.kind === 'form')).toHaveLength(2)
   })
 
-  it('a question without options renders just its heading', () => {
+  it('a question without options renders its heading plus the text-input form', () => {
     const q: UserQuestion = { ...singleQuestion(), options: [] }
     const card = buildAskQuestionsCard('t', [q], new Map())
-    expect(card.elements).toHaveLength(1)
+    expect(card.elements).toHaveLength(2)
+    expect(card.elements[1]?.kind).toBe('form')
   })
 
   it('an interactive single-select question ends with the free-text hint note', () => {
@@ -247,5 +288,21 @@ describe('buildAskQuestionsCard', () => {
     const note = card.elements[card.elements.length - 1] as { kind: string; text: string }
     expect(note.kind).toBe('note')
     expect(note.text).toBe('也可以直接文字输入')
+  })
+
+  it('an interactive single-select question carries a text-input form addressed by askq_text:{q}', () => {
+    const card = buildAskQuestionsCard('‼️ Setup', [singleQuestion()], new Map())
+
+    const form = card.elements.find(e => e.kind === 'form')
+    expect(form?.name).toBe('askq_text_form_0')
+    const input = form?.elements[0] as { kind: string; name?: string; placeholder?: string } | undefined
+    expect(input?.kind).toBe('input')
+    expect(input?.name).toBe('askq_text_0')
+    expect(input?.placeholder).toContain('输入你的答案')
+    const actions = form?.elements[1] as { buttons?: Array<{ value: string; name?: string; actionType?: string }> } | undefined
+    const submit = actions?.buttons?.[0]
+    expect(submit?.value).toBe('askq_text:0')
+    expect(submit?.name).toBe('askq_text_submit_0')
+    expect(submit?.actionType).toBe('form_submit')
   })
 })
