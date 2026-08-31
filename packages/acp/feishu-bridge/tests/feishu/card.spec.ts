@@ -170,6 +170,58 @@ describe('renderCardMap', () => {
     expect(jStr(noteText.text_color)).toBe('grey')
   })
 
+  it('checkOptions with a textInput renders the input in the form and drops the chat-text hint', () => {
+    const card = newCard()
+      .checkOptions('Which fixes?', [
+        { label: 'Fix leak', description: 'src/a.ts:12' },
+        { label: 'Add test', description: 'tests/a.spec.ts' },
+      ], 'askq_multi:0', { askq_question: 'Which fixes?' })
+      .build()
+    // The ask builder's live-form layout (engine/ask.ts) is the caller that
+    // carries a textInput; simulate it via the raw element shape.
+    const raw = card.elements.find(e => e['kind'] === 'checkOptions') as
+      | { kind: 'checkOptions'; textInput?: { name: string; placeholder: string } }
+      | undefined
+    raw!.textInput = { name: 'askq_text_0', placeholder: '补充说明或自定义答案（可选）' }
+
+    const got = decodeRenderedCard(card)
+    const form = getBodyElements(got).map(jObj).find(e => jStr(e.tag) === 'form')
+    expect(form).toBeDefined()
+    const formElements = jArr(jObj(form).elements)
+    const input = formElements.map(jObj).find(e => jStr(e.tag) === 'input')
+    expect(input).toBeDefined()
+    expect(jStr(jObj(input).name)).toBe('askq_text_0')
+    expect(jStr(jObj(jObj(input).placeholder).content)).toBe('补充说明或自定义答案（可选）')
+    // Submit button follows the input directly; no hint column_set remains.
+    const submitRow = jObj(formElements[formElements.length - 1])
+    expect(jStr(submitRow.tag)).toBe('button')
+    expect(jStr(submitRow.form_action_type)).toBe('submit')
+    expect(JSON.stringify(formElements)).not.toContain('也可以直接文字输入')
+  })
+
+  it('checkOptions submitLabel scopes the button text; without it the generic label stays', () => {
+    const card = newCard()
+      .checkOptions('Which fixes?', [
+        { label: 'Fix leak', description: '' },
+      ], 'askq_multi:1', { askq_question: 'Which fixes?' })
+      .build()
+    const raw = card.elements.find(e => e['kind'] === 'checkOptions') as
+      | { kind: 'checkOptions'; textInput?: { name: string; placeholder: string }; submitLabel?: string }
+      | undefined
+    raw!.textInput = { name: 'askq_text_1', placeholder: '补充' }
+    raw!.submitLabel = '提交第 2 题'
+
+    const scoped = decodeRenderedCard(card)
+    const scopedBtn = JSON.stringify(scoped).match(/"content":"提交第 2 题"/)
+    expect(scopedBtn).not.toBeNull()
+
+    // Delete-mode checkers carry no submitLabel — the generic 提交选择 stays.
+    delete raw!.submitLabel
+    const generic = decodeRenderedCard(card)
+    expect(JSON.stringify(generic)).toContain('提交选择')
+    expect(JSON.stringify(generic)).not.toContain('提交第 2 题')
+  })
+
   it('delete-mode uses checker form', () => {
     const card = newCard()
       .title('删除会话', 'carmine')

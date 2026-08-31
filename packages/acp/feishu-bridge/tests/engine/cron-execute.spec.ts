@@ -125,7 +125,7 @@ describe('ExecuteCronJob_AbortSettlesParkedAsk', () => {
     controller.abort()
     const outcome = await Promise.race([
       Promise.all([decision, running]).then(() => 'settled'),
-      new Promise((r) => { setTimeout(() => r('hung'), 500) }),
+      new Promise((r) => { setTimeout(() => { r('hung') }, 500) }),
     ])
 
     expect(outcome, 'the abort settled the parked ask and finished the run').toBe('settled')

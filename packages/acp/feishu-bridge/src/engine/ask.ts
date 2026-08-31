@@ -20,44 +20,92 @@ const askqPrefix = 'askq:'
 /** Multi-select form submit prefix, normalized onto {@link askqPrefix}. */
 const askqMultiPrefix = 'askq_multi:'
 
+/** Card text-input submit prefix: `askq_text:{q}` names its question. */
+const askqTextPrefix = 'askq_text:'
+
+/** One chat-text question address: the named question plus the remainder. */
+export interface QuestionAddress {
+  /** Zero-based index of the addressed question. */
+  qIdx: number
+  /** The answer text with the address prefix stripped. */
+  rest: string
+}
+
+/**
+ * Parse a chat-text question address on a multi-question ask: `2: because…`
+ * names (and revises) question 2 explicitly. A full-width colon needs no
+ * following space; a half-width one requires whitespace so clock times like
+ * `2:30` stay plain answers. Single-question asks and out-of-range numbers
+ * are not addresses — the text stays whole.
+ *
+ * @param content - Raw chat text.
+ * @param total - Number of questions on the ask.
+ * @returns The address, or undefined when the text does not name a question.
+ */
+export function parseQuestionAddress(content: string, total: number): QuestionAddress | undefined {
+  if (total <= 1) return undefined
+  const match = content.trim().match(/^(\d{1,2})(?:\s*：\s*|\s*:\s+)([\s\S]+)$/)
+  if (match === null) return undefined
+  const n = Number.parseInt(match[1] ?? '', 10)
+  if (!Number.isInteger(n) || n < 1 || n > total) return undefined
+  return { qIdx: n - 1, rest: (match[2] ?? '').trim() }
+}
+
 /** One parsed card-button answer payload. */
 export interface AskqSelection {
   /** Zero-based index of the question the payload answers. */
   qIdx: number
   /** Sorted 1-based option indices; empty when nothing was selected. */
   indices: number[]
+  /** Card-input text riding the payload after the NUL separator ('' when none). */
+  custom: string
 }
 
 /**
  * Parse an ask card button payload into its question and selected option
  * indices. This is the single parser for the wire format — the platform's
  * card callbacks and the engine's response routing both go through it.
- * Accepted forms: `askq:{q}:{idx}` and `askq:{q}:{i1},{i2},...`, with the
- * `askq_multi:{...}` form normalized onto them. Indices below 1 are filtered
- * so an empty-selection submit (`askq:0:0`) selects nothing instead of option
- * 0. The legacy two-segment `askq:{n}` form is rejected: with all questions
- * on one card it cannot name its question.
+ * Accepted forms: `askq:{q}:{idx}` and `askq:{q}:{i1},{i2},...`, the
+ * `askq_multi:{...}` form normalized onto them, and the card text submit
+ * `askq_text:{q}` — every form may carry free text after a NUL separator
+ * (the same convention as `perm:` verdict notes). The NUL split runs first
+ * so option text containing colons cannot break index parsing. Indices
+ * below 1 are filtered so an empty-selection submit (`askq:0:0`) selects
+ * nothing instead of option 0. The legacy two-segment `askq:{n}` form is
+ * rejected: with all questions on one card it cannot name its question.
  *
  * @param content - Raw callback payload or message text.
  * @returns The parsed selection, or undefined when the text is not a payload.
  */
 export function parseAskqSelection(content: string): AskqSelection | undefined {
   const trimmed = content.trim()
-  const prefix = trimmed.startsWith(askqMultiPrefix) ? askqMultiPrefix
-    : trimmed.startsWith(askqPrefix) ? askqPrefix
-      : ''
+  let body = trimmed
+  let custom = ''
+  const nulIdx = trimmed.indexOf('\x00')
+  if (nulIdx >= 0) {
+    custom = trimmed.slice(nulIdx + 1).trim()
+    body = trimmed.slice(0, nulIdx).trim()
+  }
+  const isTextSubmit = body.startsWith(askqTextPrefix)
+  const prefix = isTextSubmit ? askqTextPrefix
+    : body.startsWith(askqMultiPrefix) ? askqMultiPrefix
+      : body.startsWith(askqPrefix) ? askqPrefix
+        : ''
   if (prefix === '') return undefined
-  const segments = trimmed.slice(prefix.length).split(':')
-  if (segments.length !== 2) return undefined
+  const segments = body.slice(prefix.length).split(':')
+  if (!isTextSubmit && segments.length !== 2) return undefined
+  if (isTextSubmit && segments.length !== 1) return undefined
   const qIdx = Number.parseInt(segments[0] ?? '', 10)
   if (!Number.isInteger(qIdx) || qIdx < 0) return undefined
   const indices: number[] = []
-  for (const part of (segments[1] ?? '').split(',')) {
-    const n = Number.parseInt(part.trim(), 10)
-    if (Number.isInteger(n) && n >= 1) indices.push(n)
+  if (!isTextSubmit) {
+    for (const part of (segments[1] ?? '').split(',')) {
+      const n = Number.parseInt(part.trim(), 10)
+      if (Number.isInteger(n) && n >= 1) indices.push(n)
+    }
+    indices.sort((a, b) => a - b)
   }
-  indices.sort((a, b) => a - b)
-  return { qIdx, indices }
+  return { qIdx, indices, custom }
 }
 
 /** One parsed permission verdict: the decision plus the card-input note. */
@@ -104,7 +152,9 @@ export interface AskAnswer {
 /**
  * Resolve one question's answer from raw user input (card payload, numeric
  * index(es), or free text). Option selections land in `selected` as labels;
- * free text lands in `custom` with an empty `selected` — the two never mix.
+ * free text lands in `custom`. Card-input text riding a payload (after the
+ * NUL separator) accompanies its selection — the upstream answer type allows
+ * the pair for exactly this case; plain chat text never produces both.
  *
  * @param q - The question whose options resolve index inputs.
  * @param input - Raw user input.
@@ -114,7 +164,8 @@ export function resolveAskAnswer(q: UserQuestion, input: string): AskAnswer {
   const trimmed = input.trim()
   const payload = parseAskqSelection(trimmed)
   if (payload !== undefined) {
-    return { selected: labelsForIndices(q, payload.indices) }
+    const selected = labelsForIndices(q, payload.indices)
+    return payload.custom !== '' ? { selected, custom: payload.custom } : { selected }
   }
   if (q.multiSelect) {
     const parts = trimmed.split(/[,，\s]+/).filter(p => p !== '')
@@ -193,21 +244,57 @@ function isOptionIndex(q: UserQuestion, text: string): boolean {
   return idx >= 1 && idx <= q.options.length
 }
 
-/** Selection marks for one rendered question (1-based option indices). */
-export type AskCardAnswered = Map<number, number[]>
+/** One question's on-card answer state: chosen option indices plus card-input text. */
+export interface AskCardAnswer {
+  /** Sorted 1-based option indices of the current selection. */
+  indices: number[]
+  /** Card-input text riding the current answer ('' when none). */
+  custom?: string
+}
+
+/** Answered-state marks for one rendered question, keyed by question index. */
+export type AskCardAnswered = Map<number, AskCardAnswer>
 
 /**
- * Build the one card that carries every question of one ask. Unanswered
- * questions render interactively — single-select as list rows with number
- * buttons (`askq:{q}:{n}`) ending in a free-text-input hint note,
- * multi-select as a checker form (`askq_multi:{q}`) whose submit row carries
- * the same hint — while answered questions render frozen with their
- * selection marked, so the callback card replacement keeps the remaining
- * questions clickable.
+ * Project the engine's collected answers onto the card's answered state:
+ * `selected` labels resolve back to 1-based option indices (a duplicated
+ * label marks every row carrying it) and custom text rides along. Powers the
+ * engine→platform card sync after chat-text answers.
+ *
+ * @param questions - The ask's questions, in order.
+ * @param collected - Collected answers keyed by question index.
+ * @returns The per-question on-card answer state.
+ */
+export function cardAnsweredFrom(questions: UserQuestion[], collected: Map<number, PendingAskAnswer>): AskCardAnswered {
+  const out: AskCardAnswered = new Map()
+  for (const [i, answer] of collected) {
+    const q = questions[i]
+    if (q === undefined) continue
+    const indices: number[] = []
+    for (const [optIdx, opt] of q.options.entries()) {
+      if (answer.selected.includes(opt.label)) indices.push(optIdx + 1)
+    }
+    out.set(i, {
+      indices,
+      ...(answer.custom !== undefined && answer.custom !== '' ? { custom: answer.custom } : {}),
+    })
+  }
+  return out
+}
+
+/**
+ * Build the one card that carries every question of one ask as a live form:
+ * every not-yet-settled question stays interactive — single-select list rows
+ * (`askq:{q}:{n}`), multi-select checker forms (`askq_multi:{q}`), and one
+ * text-input form per question (`askq_text:{q}`) so free text names its
+ * question — with answered questions showing their current answer (a
+ * 当前 line / checker ticks) so any question can be revised until the ask
+ * settles. Once every question is answered the card renders its read-only
+ * terminal state: frozen selection marks and custom text, no controls.
  *
  * @param title - Card title, computed by the caller.
  * @param questions - All questions of the ask, in order.
- * @param answered - Selected option indices per answered question index.
+ * @param answered - Current answer per answered question index.
  * @param freeTextHint - Locale-owned hint that free text answers the
  *   question too (Msg.AskFreeTextHint); the caller owns the language.
  * @returns The assembled card.
@@ -215,27 +302,62 @@ export type AskCardAnswered = Map<number, number[]>
 export function buildAskQuestionsCard(title: string, questions: UserQuestion[], answered: AskCardAnswered, freeTextHint: string): Card {
   const cb = newCard().title(title, 'blue')
   const multiple = questions.length > 1
+  const settled = questions.every((_q, i) => answered.has(i))
   for (const [i, q] of questions.entries()) {
-    cb.raw(...questionElements(q, i, multiple, answered.get(i), freeTextHint))
+    // A divider between question blocks visually groups each question's
+    // controls (its 提交第 N 题 button belongs to it, not the whole card).
+    if (multiple && i > 0) cb.raw({ kind: 'divider' })
+    cb.raw(...questionElements(q, i, multiple, settled, answered.get(i), freeTextHint))
+  }
+  // Card-level teaching (no i18n handle on this seam), multi-question cards
+  // only: revision and auto-submit guidance. Single-question cards end with
+  // the per-question locale-owned hint note instead — a card-level variant
+  // would duplicate it verbatim (and clobber askCardMeta's hint extraction).
+  // Skipped when settled (no controls to explain) and when no question has
+  // options to re-pick.
+  if (!settled && multiple && questions.some(q => q.options.length > 0)) {
+    cb.note('可点选或输入作答/修改任何一题；答完全部自动提交')
   }
   return cb.build()
 }
 
-/** Render one question's elements: heading plus frozen marks or interactive options. */
+/**
+ * Render one question's elements. Settled cards freeze marks and custom text
+ * (read-only terminal state); otherwise the question stays a live form:
+ * current-answer line for answered ones, interactive options, the per-question
+ * text-input form — including for option-less questions, where the input is
+ * the only on-card answer path — and the locale-owned free-text hint note on
+ * option-bearing questions.
+ */
 function questionElements(
-  q: UserQuestion, qIdx: number, multiple: boolean, selected: number[] | undefined, freeTextHint: string,
+  q: UserQuestion, qIdx: number, multiple: boolean, settled: boolean, cur: AskCardAnswer | undefined, freeTextHint: string,
 ): CardElement[] {
   const prefix = multiple ? `${qIdx + 1}. ` : ''
   const elements: CardElement[] = [
     { kind: 'markdown', content: `**${prefix}${q.question}**` },
   ]
-  if (selected !== undefined) {
-    const marks = q.options.map((opt, i) =>
-      `${selected.includes(i + 1) ? '✅' : '◻️'} **${opt.label}**${opt.description !== '' ? `\n${opt.description}` : ''}`)
-    if (marks.length > 0) {
-      elements.push({ kind: 'markdown', content: marks.join('\n') })
+  if (settled) {
+    if (cur !== undefined) {
+      const marks = q.options.map((opt, i) =>
+        `${cur.indices.includes(i + 1) ? '✅' : '◻️'} **${opt.label}**${opt.description !== '' ? `\n${opt.description}` : ''}`)
+      if (marks.length > 0) {
+        elements.push({ kind: 'markdown', content: marks.join('\n') })
+      }
+      if ((cur.custom ?? '') !== '') {
+        elements.push({ kind: 'markdown', content: `✍️ ${cur.custom ?? ''}` })
+      }
     }
     return elements
+  }
+  if (cur !== undefined) {
+    const current = cur.indices.length > 0
+      ? `当前：${cur.indices.map(i => `**${q.options[i - 1]?.label ?? String(i)}**`).join('、')}`
+      : ''
+    const custom = (cur.custom ?? '') !== '' ? `✍️ ${cur.custom ?? ''}` : ''
+    const line = [current, custom].filter(s => s !== '').join(' · ')
+    if (line !== '') {
+      elements.push({ kind: 'markdown', content: `> ${line}` })
+    }
   }
   if (q.multiSelect) {
     elements.push({
@@ -245,10 +367,12 @@ function questionElements(
         label: opt.label,
         description: opt.description,
         value: String(i + 1),
-        ...opt.recommended === true ? { checked: true } : {},
+        ...((opt.recommended === true || cur?.indices.includes(i + 1)) ? { checked: true } : {}),
       })),
       action: `askq_multi:${qIdx}`,
       extra: { askq_question: q.question },
+      textInput: { name: `askq_text_${qIdx}`, placeholder: '补充说明或自定义答案（可选）' },
+      submitLabel: multiple ? `提交第 ${qIdx + 1} 题` : '提交本题',
     })
     return elements
   }
@@ -263,11 +387,32 @@ function questionElements(
       extra: { askq_label: opt.label, askq_question: q.question },
     })
   }
-  // Free text answers this question too (resolveAskAnswer's custom branch),
-  // so the card says so; a question without options needs no hint — free text
-  // is its only answer path. The label is locale-owned (the caller passes the
-  // translated Msg.AskFreeTextHint); the Feishu renderer's submit-row chrome
-  // (提交选择 beside the same hint) stays renderer-owned.
+  elements.push({
+    kind: 'form',
+    name: `askq_text_form_${qIdx}`,
+    elements: [
+      { kind: 'input', name: `askq_text_${qIdx}`, placeholder: q.options.length > 0 ? '以上都不合适？输入你的答案' : '输入你的答案', maxLength: 1000 },
+      {
+        kind: 'actions',
+        buttons: [{
+          text: '✍️ 文字作答',
+          type: 'default',
+          value: `askq_text:${qIdx}`,
+          name: `askq_text_submit_${qIdx}`,
+          actionType: 'form_submit',
+          // Self-describes the form's question for askCardMeta — an
+          // optionless question has no listItems, so its text form is the
+          // only element naming it.
+          extra: { askq_question: q.question },
+        }],
+        layout: 'row',
+      },
+    ],
+  })
+  // Free text also lands in resolveAskAnswer's custom branch, so the block
+  // closes with the locale-owned hint (the caller passes the translated
+  // Msg.AskFreeTextHint). A question without options skips it — the form's
+  // input above is its only answer path and already says so.
   if (q.options.length > 0) {
     elements.push({ kind: 'note', text: freeTextHint })
   }

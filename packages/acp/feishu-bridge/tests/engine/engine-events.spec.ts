@@ -2135,7 +2135,7 @@ describe('absolute turn timeout (Go watchdog hard cap)', () => {
     expect(durations).toHaveLength(1)
     // Counting the parked wait would make agent span + parked exceed the
     // whole wall; exempting lands it within the turn-end slack.
-    const agentMs = durations[0]![0]!
+    const agentMs = durations[0]![0]
     expect(agentMs + state.capPausedMs).toBeLessThanOrEqual(wall + 200)
     expect(agentMs).toBeLessThan(state.capPausedMs)
   })

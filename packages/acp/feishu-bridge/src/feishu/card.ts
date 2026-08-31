@@ -236,43 +236,57 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
       const submitBtn: FeishuCardMap = {
         size: 'tiny',
         tag: 'button',
-        text: plainText('提交选择'),
+        text: plainText(elem.submitLabel ?? '提交选择'),
         type: 'primary',
         form_action_type: 'submit',
         name: `askq_multi_submit_${(elem.action ?? '').replace(/^askq_multi:/, '')}`,
         value: valMap,
       }
-      // Submit row: button left, free-text-input hint right. The hint label is
-      // card chrome paired with the hardcoded 提交选择 label — the renderer has
-      // no i18n handle (same upgrade path as replyDownloadError), so both stay
-      // hardcoded Chinese until the platform gains one.
-      formElements.push({
-        tag: 'column_set',
-        flex_mode: 'none',
-        horizontal_align: 'left',
-        columns: [
-          {
-            tag: 'column',
-            width: 'auto',
-            vertical_align: 'center',
-            elements: [submitBtn],
-          },
-          {
-            tag: 'column',
-            width: 'auto',
-            vertical_align: 'center',
-            elements: [{
-              tag: 'div',
-              text: {
-                tag: 'plain_text',
-                content: '也可以直接文字输入',
-                text_size: 'notation',
-                text_color: 'grey',
-              },
-            }],
-          },
-        ],
-      })
+      // With the in-form text input the submit row is the button alone; the
+      // legacy chat-text hint column only remains for checkers without a
+      // text channel (hardcoded Chinese card chrome, no i18n handle here).
+      const ti = elem.textInput
+      if (ti !== undefined) {
+        formElements.push({
+          tag: 'input',
+          name: ti.name,
+          placeholder: { tag: 'plain_text', content: ti.placeholder },
+          max_length: 1000,
+        })
+        formElements.push(submitBtn)
+      } else {
+        // Submit row: button left, free-text-input hint right. The hint label is
+        // card chrome paired with the hardcoded 提交选择 label — the renderer has
+        // no i18n handle (same upgrade path as replyDownloadError), so both stay
+        // hardcoded Chinese until the platform gains one.
+        formElements.push({
+          tag: 'column_set',
+          flex_mode: 'none',
+          horizontal_align: 'left',
+          columns: [
+            {
+              tag: 'column',
+              width: 'auto',
+              vertical_align: 'center',
+              elements: [submitBtn],
+            },
+            {
+              tag: 'column',
+              width: 'auto',
+              vertical_align: 'center',
+              elements: [{
+                tag: 'div',
+                text: {
+                  tag: 'plain_text',
+                  content: '也可以直接文字输入',
+                  text_size: 'notation',
+                  text_color: 'grey',
+                },
+              }],
+            },
+          ],
+        })
+      }
       return {
         tag: 'form',
         name: `askq_multi_form_${(elem.action ?? '').replaceAll(':', '_')}`,

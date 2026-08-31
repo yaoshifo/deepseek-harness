@@ -127,7 +127,7 @@ describe('sendAskQuestionsCard', () => {
     await e.sendAskQuestionsCard(p, 'ctx', testQuestions(), 'test:askq')
 
     const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
-    expect(card.elements.length).toBe(5) // 1 markdown question + 3 list rows + 1 free-text note
+    expect(card.elements.length).toBe(6) // 1 markdown question + 3 list rows + 1 text-input form + 1 chat-text note
     const q = card.elements[0] as { kind: string; content: string }
     expect(q.kind).toBe('markdown')
     expect(q.content).toBe('**Which database?**')
@@ -380,7 +380,7 @@ describe('interactive slot keys (cron new-per-run)', () => {
     expect(handled).toBe(false)
     const settled = await Promise.race([
       decision.then(() => 'settled'),
-      new Promise((r) => { setTimeout(() => r('pending'), 50) }),
+      new Promise((r) => { setTimeout(() => { r('pending') }, 50) }),
     ])
     expect(settled, 'the parked ask must not settle from a bare-key free-text reply').toBe('pending')
   })
