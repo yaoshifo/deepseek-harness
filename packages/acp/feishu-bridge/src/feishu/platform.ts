@@ -1105,15 +1105,25 @@ export class FeishuPlatform implements Platform {
       if (actionVal.startsWith('askq_text:')) {
         qIdx = Number.parseInt(actionVal.slice('askq_text:'.length), 10)
         const text = askqFormText(action.form_value, qIdx)
-        // An empty submit answers nothing — swallow it instead of freezing
-        // the question with a blank custom answer.
-        if (!Number.isInteger(qIdx) || qIdx < 0 || text === '') return undefined
+        // An empty submit answers nothing — tell the user instead of
+        // freezing the question with a blank custom answer.
+        if (!Number.isInteger(qIdx) || qIdx < 0) return undefined
+        if (text === '') {
+          this.replyAskqEmptySubmit(chatID, sessionKey, '请先在输入框填写文字，再点「文字作答」')
+          return undefined
+        }
         actionVal = `askq_text:${qIdx}\x00${text}`
       } else if (actionVal.startsWith('askq_multi:') && !actionVal.slice('askq_multi:'.length).includes(':')) {
         qIdx = Number.parseInt(actionVal.slice('askq_multi:'.length), 10)
         const indices = collectAskqMultiSelected(action.form_value)
-        actionVal += `:${indices.join(',')}`
         const text = askqFormText(action.form_value, qIdx)
+        // A bare submit with no checks and no text used to freeze the
+        // question as a permanent empty answer — reject it with a hint.
+        if (indices.length === 0 && text === '') {
+          this.replyAskqEmptySubmit(chatID, sessionKey, '请至少勾选一项，或在输入框填写文字后再提交')
+          return undefined
+        }
+        actionVal += `:${indices.join(',')}`
         if (text !== '') actionVal += `\x00${text}`
       }
       const sel = parseAskqSelection(actionVal)
@@ -1247,6 +1257,20 @@ export class FeishuPlatform implements Platform {
       })()
       return
     }
+  }
+
+  /**
+   * Fire-and-forget chat hint for a rejected empty ask submit (same channel
+   * as the hint-button echo; hardcoded Chinese card chrome like the perm
+   * card's resolved labels).
+   * @param chatID - Chat the submit fired in.
+   * @param sessionKey - Session key of the card's ask.
+   * @param text - The hint sentence naming what is missing.
+   */
+  private replyAskqEmptySubmit(chatID: string, sessionKey: string, text: string): void {
+    void this.reply({ chatID, sessionKey } as FeishuReplyContext, `⚠️ ${text}`).catch((error: unknown) => {
+      console.warn(`${this.tag()}: empty-submit hint failed: ${String(error)}`)
+    })
   }
 
   /**

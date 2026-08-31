@@ -38,7 +38,7 @@ The card is a live form until it settles.
 - Feishu rebuilds the card from every callback response, so a draft typed into one question's input is discarded when any button on the card is pressed. Inputs are per-question, so the blast radius is one question's draft; accepted answers are echoed on the card itself.
 - Residual ambiguity, accepted: an unprefixed chat answer that happens to start with `N:` (half-width colon plus space, or a full-width colon) binds question N; a plain numeric answer still means an option index. Corrections after settle are ordinary next-turn messages — the ask tool has already returned.
 - `AskCardAnswered` values widen from `number[]` to `{ indices, custom? }`; the chatroom consumer reads only the engine's answers map and is unaffected.
-- An empty text submit (`askq_text_submit_{q}` with a blank input) is a no-op — it neither dispatches nor churns the card.
+- An empty submit — `askq_text_submit_{q}` with a blank input, or a multi submit with no checks and no text — is rejected with a fire-and-forget chat hint (「请先在输入框填写文字…」/「请至少勾选一项…」); it neither dispatches nor churns the card.
 
 ## Testing
 

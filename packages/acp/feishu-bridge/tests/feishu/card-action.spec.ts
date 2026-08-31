@@ -679,9 +679,42 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
       operator: { open_id: 'ou_9' },
       context: { open_chat_id: 'oc_1', open_message_id: 'om_text_3' },
     }
+    const replySpy = vi.spyOn(p, 'reply').mockResolvedValue(undefined)
     expect(p.onCardAction(event)).toBeUndefined()
     await new Promise((resolve) => { setTimeout(resolve, 10) })
     expect(messages).toHaveLength(0)
+    expect(replySpy).toHaveBeenCalledWith(expect.objectContaining({ chatID: 'oc_1' }), expect.stringContaining('填写文字'))
+    replySpy.mockRestore()
+  })
+
+  it('a multi submit with no checks and no text is rejected with a hint, not an empty answer', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    const messages: Message[] = []
+    void p.start((_platform, msg) => { messages.push(msg) })
+    p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      title: '',
+      questions: [{
+        question: 'Pick tools',
+        header: '',
+        options: [{ label: 'Bash', description: '' }],
+        multiSelect: true,
+      }],
+    })
+    const event: CardActionTriggerEvent = {
+      action: { name: 'askq_multi_submit_0', form_value: {} },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_empty_multi' },
+    }
+    const replySpy = vi.spyOn(p, 'reply').mockResolvedValue(undefined)
+    expect(p.onCardAction(event)).toBeUndefined()
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    // No answer dispatched, no state recorded, and the user sees why.
+    expect(messages.filter(m => m.isAskqCardAction)).toHaveLength(0)
+    expect(p.askqAnswered.get('om_empty_multi')).toBeUndefined()
+    expect(p.askqMetaCache.has('feishu:oc_1:ou_9')).toBe(true)
+    expect(replySpy).toHaveBeenCalledWith(expect.objectContaining({ chatID: 'oc_1' }), expect.stringContaining('至少'))
+    replySpy.mockRestore()
   })
 
   it('a changed answer on an answered question passes the dedup and updates the card', async () => {
