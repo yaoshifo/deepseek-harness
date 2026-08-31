@@ -10,7 +10,7 @@ feishu-bridge 会话日志（344 个会话，2026-08-19 至 08-31）显示并行
 
 三个原因，均在日志中核实：
 
-1. plan-mode 段落（注入每个会话——工具目录与 system prompt 为 request-cache 稳定性跨模式一致）把委派写成条件句："Exploration also parallelizes: when the investigation spans independent areas, …"。抽象请求（「全面扫描」「多角度验证」）是否*具有*独立区域，留给模型现场裁量，而裁量会摇摆。
+1. plan-mode 段落（仅注入 plan 模式会话——该部署这些会话的默认模式；工具目录为 request-cache 稳定性跨模式一致）把委派写成条件句："Exploration also parallelizes: when the investigation spans independent areas, …"。抽象请求（「全面扫描」「多角度验证」）是否*具有*独立区域，留给模型现场裁量，而裁量会摇摆。
 2. skill 文本与它矛盾："同一个项目内的只读调研 / 勘察不开子任务"（2026-08-21 措辞）禁止同项目只读委派，而 plan-mode 文本授权的恰是这件事。失败案例在调研中途加载了 skill 便停止委派；同日的孪生案例（相同引导、相同任务形状）spawn 了三个并行子任务。
 3. 实施阶段并行完全没有引导。2026-08-21 的决策把它推迟到判据「计划已按子系统分组、模型仍串行执行分组」之后——后续会话满足了判据（计划带有独立的 W1–W3 / A1–A5 组），而每次实施 fan-out 仍需用户说「充分利用并行」。
 
@@ -24,7 +24,7 @@ feishu-bridge 会话日志（344 个会话，2026-08-19 至 08-31）显示并行
 
 - **保留条件句措辞。** 保留被观测到的不稳定：相同引导与任务形状，行为分化。
 - **只在 skill 或只在 prompt 引导。** 两者的矛盾本身就是抑制因素——失败案例加载 skill 后停止委派。两个表面必须陈述同一边界。
-- **在 AGENTS.md 全局指令加并行倾向。** 覆盖面不必要地过宽：plan-mode 段落已因 request-cache 稳定性到达每个会话；一个 owner 足够。
+- **在 AGENTS.md 全局指令加并行倾向。** plan-mode 段落已覆盖该部署的默认（plan）模式——全部失败案例都发生在该模式下；非 plan 直接执行会话是剩余未覆盖面，量小、接受此缺口。
 - **无条件并行。** 每个 spawn 是完整 agent 会话；token 成本与每角度浅读是真实的。单焦点例外与 2–5 路上限防止默认过度触发。
 
 ## Consequences

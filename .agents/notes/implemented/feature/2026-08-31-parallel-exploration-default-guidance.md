@@ -10,7 +10,7 @@ Feishu-bridge session logs (344 sessions, 2026-08-19 through 08-31) show paralle
 
 Three causes, each verified in logs:
 
-1. The plan-mode section (injected into every session — the tool catalog and system prompt stay mode-stable for request-cache stability) phrased delegation conditionally: "Exploration also parallelizes: when the investigation spans independent areas, …". Whether an abstract request ("scan comprehensively", "verify from multiple angles") *has* independent areas was left to on-the-spot model judgment, which wavers.
+1. The plan-mode section (injected only into plan-mode sessions — the deployment's default mode for these chats; the tool catalog stays the same across modes for request-cache stability) phrased delegation conditionally: "Exploration also parallelizes: when the investigation spans independent areas, …". Whether an abstract request ("scan comprehensively", "verify from multiple angles") *has* independent areas was left to on-the-spot model judgment, which wavers.
 2. The skill text contradicted it: "同一个项目内的只读调研 / 勘察不开子任务" (2026-08-21 wording) forbade same-project read-only delegation while the plan-mode text authorized exactly that. The failed case loaded the skill mid-exploration and stopped delegating; its same-day twin (same guidance, same task shape) spawned three parallel children.
 3. Implementation-phase parallelism had no guidance. The 2026-08-21 decision deferred it behind the criterion "plans already grouped by subsystem, model still executes groups serially" — later sessions met that criterion (plans carried independent W1–W3 / A1–A5 groups) and every implementation fan-out still required the user to say 「充分利用并行」.
 
@@ -24,7 +24,7 @@ Three causes, each verified in logs:
 
 - **Keep the conditional wording.** Retains the observed instability: identical guidance and task shape, divergent behavior.
 - **Guidance in only one of skill or prompt.** The contradiction between the two was itself a suppression — the failing case loaded the skill and stopped. Both surfaces must state one boundary.
-- **A parallelism nudge in AGENTS.md global instructions.** Unnecessary breadth: the plan-mode section already reaches every session for request-cache stability; one owner suffices.
+- **A parallelism nudge in AGENTS.md global instructions.** The plan-mode section already covers the deployment's default (plan) mode, where all the failing cases ran; non-plan direct-execution chats are the remaining uncovered surface, accepted as small.
 - **Unconditional parallelism.** Every spawn is a full agent session; token cost and shallow per-angle reads are real. The single-focus exception and the 2–5 band keep the default from over-firing.
 
 ## Consequences
