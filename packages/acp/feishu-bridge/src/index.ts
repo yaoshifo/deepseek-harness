@@ -13,6 +13,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context, Fiber } from '@deepseek-ai/cordis'
 import type { SkillRegistry } from '@deepseek-ai/dsh-skill'
+import type {} from '@deepseek-ai/dsh-mcp-workspace'
 import * as SkillFileSystem from '@deepseek-ai/dsh-skill-filesystem'
 // Type-only: pulls the 'subagent/start' / 'subagent/end' event-map
 // declaration merging the settlement listener types against (the runtime
@@ -1220,11 +1221,13 @@ export function buildProjectAssembly(
   // TS 原生: /skills + /mcp — 运行时 skill 目录与 MCP 工具注册表查询（无 Go 对应）。
   {
     const skills = ctx.get('skills')
+    const mcpWorkspace = ctx.get('mcpWorkspace')
     ctx.effect(() => registerSkillsMcpCommands(engine, {
       listSkills: skills === undefined ? undefined : cwd => skills.list({ cwd }),
       toolNames: () => ctx.tools.schemas().map(schema => schema.name),
       healthServers: config.mcpHealth?.servers,
       allowlist: project.mcpServers,
+      listWorkspaceServers: mcpWorkspace === undefined ? undefined : cwd => mcpWorkspace.mountedFor(cwd),
     }))
   }
   // TS 原生: /context — 会话投影的上下文洞察卡（构成/趋势/事件 + 刷新按钮；无 Go 对应）。

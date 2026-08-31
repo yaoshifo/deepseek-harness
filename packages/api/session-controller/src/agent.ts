@@ -7,6 +7,8 @@ import type {
   Agent, AgentOptions, AgentSetup, ModelSelection as AgentModelSelection, ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+// Type-only: resolves `ctx.get('mcpWorkspace')` to the service augmentation.
+import type {} from '@deepseek-ai/dsh-mcp-workspace'
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
@@ -137,6 +139,8 @@ export async function inspectApiSession(
 /** Owns every operation that may create, resume, or configure a Web Agent. */
 export class ApiSessionAgentController {
   private readonly resumes = new Map<SessionId, Promise<Agent>>()
+  /** Latch so the absent mcp-workspace warning fires once per controller. */
+  private workspaceMcpWarned = false
   private readonly creations = new Map<SessionId, Promise<Agent>>()
   private readonly selections = new WeakMap<Agent, InstalledSelection>()
   private readonly imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
@@ -380,14 +384,31 @@ export class ApiSessionAgentController {
     readonly setup: AgentSetup
   }> {
     const presets = this.ctx.get('agentPresets')
-    if (presets === undefined) return { setup: (agentCtx) => { this.installSelection(agentCtx) } }
+    const wrapWorkspace = (setup: AgentSetup): AgentSetup => {
+      // The directory MCP mount resolves the session cwd from the session
+      // header inside the setup, so create and resume both mount by the
+      // session's own cwd. An absent service means the profile did not deploy
+      // the feature: warn once per process and keep the inner setup.
+      const service = this.ctx.get('mcpWorkspace')
+      if (service === undefined) {
+        if (!this.workspaceMcpWarned) {
+          this.workspaceMcpWarned = true
+          this.ctx.logger.warn('session-controller: the mcp-workspace service is not mounted; directory .mcp.json discovery is inactive (add the mcp-workspace plugin row to enable it)')
+        }
+        return setup
+      }
+      return service.wrap(setup)
+    }
+    if (presets === undefined) {
+      return { setup: wrapWorkspace((agentCtx) => { this.installSelection(agentCtx) }) }
+    }
     const resolvedId = (await presets.resolve(presetId)).id
     return {
       agentPreset: resolvedId,
-      setup: async (agentCtx) => {
+      setup: wrapWorkspace(async (agentCtx) => {
         this.installSelection(agentCtx)
         await presets.mount(agentCtx, resolvedId)
-      },
+      }),
     }
   }
 

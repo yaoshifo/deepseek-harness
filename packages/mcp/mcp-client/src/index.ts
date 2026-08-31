@@ -18,7 +18,7 @@ import z from '@deepseek-ai/schemastery'
 import { scopeOf } from '@deepseek-ai/dsh-scope'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { RECONNECT_DEFAULTS, resolveReconnectPolicy, startConnection } from './connection.ts'
-import type { ReconnectConfig } from './connection.ts'
+import type { ConnectionOutcome, ReconnectConfig } from './connection.ts'
 // Side-effect type import: declaration-merges `ctx.tools` onto Context.
 import type {} from '@deepseek-ai/dsh-tools'
 
@@ -68,6 +68,12 @@ export interface StdioConfig {
   toolCallTimeoutMs: number
   /** Fail plugin activation when the initial connection or tool synchronization fails. */
   failOnStartupError: boolean
+  /**
+   * Bound the activation wait on the initial connection + tool discovery (ms).
+   * On timeout activation proceeds and the supervisor registers tools when
+   * discovery later completes; omission waits for the first attempt to settle.
+   */
+  startupTimeoutMs?: number
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
 }
@@ -90,6 +96,12 @@ export interface StreamableHttpConfig {
   toolCallTimeoutMs: number
   /** Fail plugin activation when the initial connection or tool synchronization fails. */
   failOnStartupError: boolean
+  /**
+   * Bound the activation wait on the initial connection + tool discovery (ms).
+   * On timeout activation proceeds and the supervisor registers tools when
+   * discovery later completes; omission waits for the first attempt to settle.
+   */
+  startupTimeoutMs?: number
   /** Automatic reconnect policy after a lost connection; omission uses the defaults. */
   reconnect?: ReconnectConfig
 }
@@ -120,6 +132,7 @@ export const Config = z.union([
     cwd: z.string().default(''),
     toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
     failOnStartupError: z.boolean().default(false),
+    startupTimeoutMs: z.number().min(1).max(MAX_TIMER_DELAY_MS),
     reconnect: Reconnect,
   }),
   z.object({
@@ -129,11 +142,43 @@ export const Config = z.union([
     headers: z.dict(String).default({}),
     toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
     failOnStartupError: z.boolean().default(false),
+    startupTimeoutMs: z.number().min(1).max(MAX_TIMER_DELAY_MS),
     reconnect: Reconnect,
   }),
 ]) as unknown as z<ConfigInput, Config>
 
 // ---- Plugin apply ----
+
+/**
+ * Await the initial connection outcome, bounded by `startupTimeoutMs` when set.
+ * A timeout is not a startup error: activation proceeds without the initial
+ * tool generation and the supervisor registers tools when discovery completes.
+ * @param ctx - plugin context used to log the timeout.
+ * @param ready - the supervisor's first-attempt outcome promise.
+ * @param config - resolved plugin config naming the server and the bound.
+ * @returns the first-attempt outcome, or an error-free outcome on timeout.
+ */
+function awaitStartupReady(
+  ctx: Context,
+  ready: Promise<ConnectionOutcome>,
+  config: Config,
+): Promise<ConnectionOutcome> {
+  const { startupTimeoutMs } = config
+  if (startupTimeoutMs === undefined) return ready
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      ctx.logger.warn(
+        `mcp-client(${config.serverName}): initial connection or tool sync not ready within ${String(startupTimeoutMs)}ms — activation continues; tools register when discovery completes`,
+      )
+      resolve({})
+    }, startupTimeoutMs)
+    timer.unref()
+    void ready.then((outcome) => {
+      clearTimeout(timer)
+      resolve(outcome)
+    })
+  })
+}
 
 /**
  * Connect one MCP server and publish its initial tool generation before activation.
@@ -181,7 +226,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // When failOnStartupError is true, a failed initial attempt rejects the
   // fiber (Cordis rolls it back); otherwise the error is logged and the
   // supervisor enters its reconnect loop.
-  const outcome = await connection.ready
+  const outcome = await awaitStartupReady(ctx, connection.ready, config)
   if (outcome.error !== undefined && config.failOnStartupError) {
     throw new Error(`mcp-client(${config.serverName}): initial connection or tool synchronization failed`, { cause: outcome.error })
   }

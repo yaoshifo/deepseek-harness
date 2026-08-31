@@ -137,6 +137,15 @@ export interface DshContextLike {
 }
 
 /**
+ * Structural slice of the `mcpWorkspace` service: directory-scoped MCP
+ * discovery. Only `wrap` is consumed here — the service itself resolves the
+ * session cwd from the session header inside the returned setup.
+ */
+export interface McpWorkspaceLike {
+  wrap(setup: import('@deepseek-ai/dsh-agent').AgentSetup | undefined): import('@deepseek-ai/dsh-agent').AgentSetup
+}
+
+/**
  * Structural slice of the `sessionProjections` registry the context-insight
  * card reads: one consistent cut over the client-visible units of a live
  * session's log. The real registry's `snapshot` also derives `asOfSeq` from
@@ -417,6 +426,9 @@ export function mcpDenyList(names: readonly string[], allow: readonly string[]):
   return names.filter(name =>
     name.startsWith('mcp__') && !allow.some(server => name.startsWith(`mcp__${server}__`)))
 }
+
+/** Process-level latch: the absent-service warning fires once, not per session. */
+let workspaceMcpAbsentWarned = false
 
 /**
  * Wrap a creation-time setup hook with the project's tool-visibility masks:
@@ -1664,12 +1676,38 @@ export class DshAgentAdapter {
    * session is bound by.
    * @returns the live session bound to the engine session key.
    */
+  /**
+   * Compose the directory MCP mount (`ctx.mcpWorkspace`) onto a session
+   * setup. The service resolves the session cwd from the session header at
+   * setup time, so fresh, fork, and resume paths all mount by the session's
+   * own cwd. An absent service means the profile did not deploy the feature:
+   * warn once per process and keep the inner setup unchanged — a missing
+   * optional service row is a deployment choice, not a misconfiguration.
+   */
+  private withWorkspaceMcp(
+    setup: import('@deepseek-ai/dsh-agent').AgentSetup | undefined,
+  ): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
+    const service = this.ctx.get('mcpWorkspace') as McpWorkspaceLike | undefined | null
+    if (service == null) {
+      if (!workspaceMcpAbsentWarned) {
+        workspaceMcpAbsentWarned = true
+        console.warn('agent-dsh: the mcp-workspace service is not mounted; directory .mcp.json discovery is inactive (add the mcp-workspace plugin row to enable it)')
+      }
+      return setup
+    }
+    return service.wrap(setup)
+  }
+
   async startSession(sessionID: string, options?: SessionStartOptions): Promise<AgentSession> {
     const key = options !== undefined && options.sessionKey !== '' ? options.sessionKey : sessionID
     const isFork = sessionID.startsWith(ForkSessionPrefix)
     const isForkAt = sessionID.startsWith(ForkAtSessionPrefix)
     const isResume = !isFork && !isForkAt && sessionID !== '' && sessionID !== ContinueSession
-    const setup = withProjectToolMask(buildSessionSetup(options), this.cfg.mcpServers, this.deniedTools())
+    // The workspace mount wraps OUTSIDE the project mask: the mask computes
+    // its deny list from the global tool view (directory tools not yet
+    // mounted), so directory-mounted servers stay exempt from the per-project
+    // mcpServers allowlist — the two visibility axes are independent.
+    const setup = this.withWorkspaceMcp(withProjectToolMask(buildSessionSetup(options), this.cfg.mcpServers, this.deniedTools()))
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing

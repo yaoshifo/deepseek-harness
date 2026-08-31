@@ -9,19 +9,13 @@
   ],
   "references": [
     {
-      "path": "../../../vendor/cosmokit"
-    },
-    {
       "path": "../../../vendor/cordis"
     },
     {
+      "path": "../../../vendor/cosmokit"
+    },
+    {
       "path": "../../core/agent"
-    },
-    {
-      "path": "../../llm/llm"
-    },
-    {
-      "path": "../../core/tools"
     },
     {
       "path": "../../core/scope"
@@ -30,16 +24,34 @@
       "path": "../../core/system-prompt"
     },
     {
+      "path": "../../core/tools"
+    },
+    {
       "path": "../../interaction/user-approval"
     },
     {
+      "path": "../../jobs/jobs"
+    },
+    {
+      "path": "../../llm/llm"
+    },
+    {
+      "path": "../../mcp/mcp-workspace"
+    },
+    {
       "path": "../../preset/agent-presets"
+    },
+    {
+      "path": "../../runtime-diagnostics/invariants"
     },
     {
       "path": "../../sandbox/sandbox"
     },
     {
       "path": "../../sandbox/sandbox-policy"
+    },
+    {
+      "path": "../../session-query/session-query"
     },
     {
       "path": "../../session/session-persistence"
@@ -51,16 +63,7 @@
       "path": "../../session/session-projection-cache"
     },
     {
-      "path": "../../session-query/session-query"
-    },
-    {
-      "path": "../../jobs/jobs"
-    },
-    {
       "path": "../../typert/protocol"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
     }
   ]
 }

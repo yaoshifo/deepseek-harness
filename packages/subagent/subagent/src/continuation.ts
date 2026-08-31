@@ -43,6 +43,7 @@ import type { SubagentDescriptorData } from './descriptor.ts'
 import {
   appendDelegatedPolicyOverrides,
   applyChildComposition,
+  mountDirectoryMcp,
   captureDelegatedPolicyOverrides,
   childSessionMeta,
   resolveChildAgentOptions,
@@ -1098,7 +1099,7 @@ export class SubagentContinuationManager {
     // `AgentRegistry.enter()` is the authoritative collision boundary for an id
     // some other owner holds — a duplicate would reject there with rollback.
     inputs.signal.throwIfAborted()
-    const setup = (childCtx: Context): AgentSetupCommit => {
+    const setup = async (childCtx: Context): Promise<AgentSetupCommit> => {
       // Only fresh creation seeds the delegation policy onto the child's own
       // log (after any fork seed, so fresh policy wins stale seed state); a
       // cold resume replays those persisted events instead.
@@ -1106,7 +1107,9 @@ export class SubagentContinuationManager {
         appendDelegatedPolicyOverrides((childCtx.agent as Agent).session, create.delegatedPolicies)
       }
       applyChildComposition(childCtx, parent, inputs.composition)
-      return this.setupRegistry.apply(childCtx)
+      const commit = this.setupRegistry.apply(childCtx)
+      await mountDirectoryMcp(childCtx)
+      return commit
     }
     const observer = this.host.observeActivation(provider, childId, parent)
     // Agent creation owns rollback before handle transfer. A rejection leaves
