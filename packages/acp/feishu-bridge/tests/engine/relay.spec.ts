@@ -66,9 +66,8 @@ describe('HandleRelay_ReturnsPartialOnTimeout', () => {
 
     session.channel.push({ type: 'text', content: 'partial response', done: false })
     await sleep(40)
-    // After the timeout, HandleRelay consumes the next event to unblock its
-    // loop, then spawns the drain; one more result event lets the drain
-    // close the session cleanly.
+    // After the timeout the caller returns on the abort arm; the background
+    // drain consumes the turn's tail and closes the session cleanly.
     session.channel.push({ type: 'thinking', content: 'still working', done: false })
     session.channel.push({ type: 'result', content: 'done', done: true })
 
@@ -85,13 +84,16 @@ describe('HandleRelay_TimeoutWithoutTextReturnsContextError', () => {
 
     const signal = AbortSignal.timeout(20)
     const done = e.handleRelay(signal, 'source', 'chat-1', 'hello')
+    // Attach the catch before the timeout can fire — the abort arm now
+    // rejects as soon as the signal trips, not at the next event.
+    const errP = done.catch((e: unknown) => e)
 
     await sleep(40)
-    // One event to unblock HandleRelay's loop, one for the drain goroutine.
-    session.channel.push({ type: 'thinking', content: 'still working', done: false })
+    // One event for the drain goroutine (the caller no longer needs one to
+    // unblock its loop).
     session.channel.push({ type: 'result', content: 'done', done: true })
 
-    const err: unknown = await done.catch((e: unknown) => e)
+    const err: unknown = await errP
     expect(err).toBeDefined()
     expect(String(err)).toMatch(/abort|timeout/i)
 
@@ -127,6 +129,29 @@ describe('HandleRelay_ResumeFailureFallsBackToFreshSession', () => {
 
     await expect(done).resolves.toBe('recovered')
     await vi.waitFor(() => { expect(freshSession.closed).toBe(true) })
+  })
+})
+
+describe('HandleRelay_TimeoutWithSilentTarget', () => {
+  it('returns at the timeout instead of hanging on a target that never emits events', async () => {
+    // A target parked inside a long tool call emits nothing; polling the
+    // abort flag only after receive() resolves never fires, so the caller's
+    // rm.send would hang forever.
+    const session = newControllableSession('relay-silent')
+    const e = new Engine('test', createControllableAgent(session), [createStubPlatform()], '', 'en')
+
+    const signal = AbortSignal.timeout(20)
+    const done = e.handleRelay(signal, 'source', 'chat-1', 'hello')
+
+    const settled: unknown = await Promise.race([
+      done.then(
+        () => 'resolved',
+        (err: unknown) => `rejected:${String(err)}`,
+      ),
+      sleep(500).then(() => 'HUNG'),
+    ])
+    expect(settled, 'the relay must return once the wait signal aborts').not.toBe('HUNG')
+    expect(String(settled)).toMatch(/rejected:.*(?:abort|timeout)/i)
   })
 })
 

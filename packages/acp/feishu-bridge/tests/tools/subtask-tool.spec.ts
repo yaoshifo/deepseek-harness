@@ -241,11 +241,11 @@ describe('feishu_bridge_subtask action routing', () => {
     expect(v.message).toContain('Reported result back to the parent conversation')
   })
 
-  it('interrupt routes to interruptNativeChild with the child key', async () => {
+  it('interrupt routes to interruptNativeChild with the child key and the caller session', async () => {
     const r = newRoutedEngine('test')
-    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:p' }))
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:parent-chat' }))
     const v = value(await execute(test, { action: 'interrupt', child: 'test:child-1' })) as { message: string }
-    expect(r.interrupt).toHaveBeenCalledWith('test:child-1')
+    expect(r.interrupt).toHaveBeenCalledWith('test:child-1', 'test:parent-chat')
     expect(v.message).toContain('Interrupt requested')
   })
 

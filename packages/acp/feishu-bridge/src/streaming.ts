@@ -1145,17 +1145,18 @@ export class StreamPreview {
       if (updater === undefined) return false
       if (finalText === '') return false
 
-      // Skip the redundant API call when the final text is byte-identical to
-      // the last UpdateMessage payload — unless it only went out via
-      // SendPreviewStart (formatting may differ) or progressMode is on.
-      if (finalText === this.lastSentText && this.lastSentViaUpdate && !this.progressMode) {
-        return true
-      }
-
       // In progressMode the final message only contains the AI response
       // text; the structured completion status greens the header (carrying
-      // the pending-subtasks count for text-only turns too).
+      // the pending-subtasks count for text-only turns too). The PATCH runs
+      // even when the text is byte-identical to the last streamed payload:
+      // streaming PATCHes carry no status, so skipping would leave the card
+      // in its running color.
       this.completed = true
+      // Drain queued running snapshots first: this PATCH runs inline, so a
+      // coalescable snapshot still queued would land after it and revert the
+      // card to 执行中 (markCompleted/markFailed enqueue as terminals for
+      // exactly this ordering).
+      if (this.async !== undefined) await this.async.barrier()
       const content: ProgressContent = {
         kind: 'text',
         text: finalText,

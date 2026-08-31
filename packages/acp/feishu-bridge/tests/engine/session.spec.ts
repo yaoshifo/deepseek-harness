@@ -97,6 +97,53 @@ describe('SessionManager', () => {
     expect(main).toBeDefined()
   })
 
+  it('deleting a chat\'s last session leaves no empty array or orphaned names/meta in the snapshot', async () => {
+    const path = await tempSessionsPath()
+    const sm = new SessionManager(path)
+    const s = sm.getOrCreateActive('feishu:chat1')
+    s.setAgentSessionID('agent-1', 'stub')
+    sm.setSessionName('agent-1', 'named')
+    sm.updateUserMeta('feishu:chat1', 'User One', 'Chat One')
+
+    expect(sm.deleteByID(s.id)).toBe(true)
+
+    const snap = JSON.parse(await readFile(path, 'utf8')) as {
+      userSessions: Record<string, string[]>
+      sessionNames: Record<string, string>
+      userMeta: Record<string, unknown>
+    }
+    expect(snap.userSessions, 'no empty array keys').toEqual({})
+    expect(snap.sessionNames, 'the deleted session\'s name is unreachable').toEqual({})
+    expect(snap.userMeta, 'the emptied chat\'s cached display meta is stale').toEqual({})
+  })
+
+  it('SessionCleanup drops a pruned session\'s name while the surviving chat keeps its satellites', async () => {
+    const path = await tempSessionsPath()
+    const sm = new SessionManager(path)
+    sm.setCleanupDays(30)
+    const main = sm.getOrCreateActive('feishu:chat1')
+    main.setAgentSessionID('agent-main', 'stub')
+    const side = sm.newSideSession('feishu:chat1', 'cron-job')
+    side.setAgentSessionID('agent-side', 'stub')
+    // Names are set while both sessions live; the side session ages out after.
+    sm.setSessionName('agent-main', 'main name')
+    sm.setSessionName('agent-side', 'side name')
+    sm.updateUserMeta('feishu:chat1', 'User One', 'Chat One')
+    side.updatedAt = new Date(Date.now() - 40 * 24 * 3_600_000).toISOString()
+
+    sm.save()
+
+    expect(sm.listSessions('feishu:chat1'), 'expired side session pruned, active survives').toHaveLength(1)
+    const snap = JSON.parse(await readFile(path, 'utf8')) as {
+      userSessions: Record<string, string[]>
+      sessionNames: Record<string, string>
+      userMeta: Record<string, unknown>
+    }
+    expect(snap.sessionNames, 'only the surviving session\'s name stays').toEqual({ 'agent-main': 'main name' } as Record<string, string>)
+    expect(snap.userSessions['feishu:chat1'], 'the surviving chat keeps its session list').toEqual([main.id])
+    expect(snap.userMeta['feishu:chat1']).toBeDefined()
+  })
+
   it('SwitchSession', () => {
     const sm = new SessionManager('')
     const s1 = sm.newSession('user1', 'first')

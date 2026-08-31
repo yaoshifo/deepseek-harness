@@ -17,6 +17,7 @@
 
 import { Msg, I18n, langEnglish } from '../i18n/index.js'
 import type { Language } from '../i18n/index.js'
+import { assertNever } from '@deepseek-ai/dsh-llm'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.js'
 import { AllowList } from '../feishu/allowlist.js'
 import type {
@@ -266,6 +267,36 @@ function readerStopped(handle: UnsolicitedReaderHandle): boolean {
   return handle.stopped
 }
 
+/** Entry cap for the per-state satellite maps (BoundedMap semantics). */
+const stateMapCapacity = 128
+
+/**
+ * Map whose set() refreshes the key's recency and evicts the least-recently-
+ * set entry past {@link stateMapCapacity}: export keys are per-turn card
+ * message ids and the idle reaper is off by default, so an unbounded map
+ * grows for the life of an active chat. Wrapping happens on assignment (see
+ * InteractiveState's satellite-map accessors) so plain `new Map()` writers
+ * are bounded too.
+ */
+class BoundedStateMap<K, V> extends Map<K, V> {
+  override set(key: K, value: V): this {
+    super.delete(key)
+    super.set(key, value)
+    while (this.size > stateMapCapacity) {
+      const oldest = this.keys().next().value
+      if (oldest === undefined) break
+      super.delete(oldest)
+    }
+    return this
+  }
+}
+
+/** Wrap an assigned satellite map, copying entries into a bounded one. */
+function asBoundedStateMap<K, V>(value: Map<K, V>): BoundedStateMap<K, V> {
+  if (value instanceof BoundedStateMap) return value
+  return new BoundedStateMap(value)
+}
+
 /**
  * A running interactive agent session and its turn state (Go interactiveState,
  * M1 subset). `closing` resolves when cleanup has fully torn the agent down so
@@ -411,12 +442,32 @@ export class InteractiveState {
   renderCancels: RenderCancelHandle[] = []
   /** exportKey → rendered reply HTML temp path; teardown reaps them (Go renderedReplyHTML). */
   renderedReplyHTML: Map<string, string> | undefined
+
+  // ── satellite maps (BoundedStateMap-wrapped on assignment) ──
+  // Export keys are per-turn card message ids; the setters wrap any assigned
+  // plain Map so every writer (engine loop, plan-render) shares the bound.
+  #renderStatuses: BoundedStateMap<string, RenderStatusEntry> | undefined
+  #planCardRender: BoundedStateMap<string, PlanCardHandle> | undefined
+  #exportContent: BoundedStateMap<string, string> | undefined
+
   /** Latest render-task status per exportKey (Go renderStatuses). */
-  renderStatuses: Map<string, RenderStatusEntry> | undefined
+  get renderStatuses(): Map<string, RenderStatusEntry> | undefined { return this.#renderStatuses }
+  set renderStatuses(value: Map<string, RenderStatusEntry> | undefined) {
+    this.#renderStatuses = value === undefined ? undefined : asBoundedStateMap(value)
+  }
+
   /** Sent plan cards by exportKey for status PATCHes (Go planCardRender). */
-  planCardRender: Map<string, PlanCardHandle> | undefined
+  get planCardRender(): Map<string, PlanCardHandle> | undefined { return this.#planCardRender }
+  set planCardRender(value: Map<string, PlanCardHandle> | undefined) {
+    this.#planCardRender = value === undefined ? undefined : asBoundedStateMap(value)
+  }
+
   /** Full reply/plan content per export key for the export buttons (Go exportContent). */
-  exportContent: Map<string, string> | undefined
+  get exportContent(): Map<string, string> | undefined { return this.#exportContent }
+  set exportContent(value: Map<string, string> | undefined) {
+    this.#exportContent = value === undefined ? undefined : asBoundedStateMap(value)
+  }
+
   /** Clean reply text fallback for the export buttons (Go lastBaseResponse). */
   lastBaseResponse: string = ''
 
@@ -2629,8 +2680,17 @@ export class Engine {
           state.eventsNeedResync = true
           return true
         }
-        default:
+        case 'text_delta':
+        case 'thinking_delta':
+        case 'thinking':
+        case 'subagent_status':
+        case 'compaction':
+        case 'todo_update':
+          // Preview- and card-only frames carry nothing the plain-text
+          // spillover relay could surface.
           break
+        default:
+          assertNever(event.type, 'spillover event switch')
       }
     }
   }
@@ -2681,7 +2741,11 @@ export class Engine {
     for (;;) {
       const state = this.interactiveStates.get(sessionKey)
       if (state === undefined || state.closing === undefined) break
-      await Promise.race([state.closing, cancellableSleep(this.agentCloseTimeout + 10_000).promise])
+      // Cancel the sleep when the close wins the race — a live 130s timer
+      // per racing close would pile up under frequent message traffic.
+      const closeWait = cancellableSleep(this.agentCloseTimeout + 10_000)
+      await Promise.race([state.closing, closeWait.promise])
+      closeWait.cancel()
     }
 
     const existing = this.interactiveStates.get(sessionKey)
@@ -3083,6 +3147,17 @@ export class Engine {
           if (outcome.error !== undefined) {
             const errText = errorMessage(outcome.error)
             console.error(`failed to send prompt (${sessionKey}): ${errText}`)
+            // Same terminal treatment as the error event: drain queued
+            // PATCHes, fail BOTH surfaces (the compact writer's structured
+            // card first — it PATCHes inline, so a queued running update
+            // landing past it would revert the color; the !inProgressMode
+            // gate skips it when the preview card owns the progress display),
+            // and force the next turn to drain the channel, or the cards
+            // freeze on 执行中 with a live stop button forever.
+            await barrier()
+            if (!sp.inProgressMode()) await cp.finalize('failed')
+            await sp.markFailed()
+            state.eventsNeedResync = true
             this.notifyDroppedQueuedMessages(state, new Error(errText))
             if (state.agentSession === undefined || !state.agentSession.alive()) {
               await this.cleanupInteractiveState(sessionKey, state)
@@ -3510,6 +3585,7 @@ export class Engine {
               cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
                 this.i18n.currentLang(), undefined, sender)
               state.preview = sp
+              state.progressWriter = cp
               if (this.display.toolProgress && sp.canPreview()) {
                 void sp.showPlaceholder(this.i18n.t(Msg.Processing))
               }
@@ -3524,6 +3600,14 @@ export class Engine {
 
           case 'error': {
             state.eventsNeedResync = true
+            // Fail both surfaces (Go EventError: barrier + cp.Finalize(Failed)
+            // before sp.markFailed). The compact writer's finalize PATCHes
+            // inline, so the barrier must drain its queued running updates
+            // first or they would land past the terminal PATCH; the same
+            // !inProgressMode gate as the result path skips it when the
+            // preview card owns the progress display.
+            await barrier()
+            if (!sp.inProgressMode()) await cp.finalize('failed')
             await sp.markFailed()
             if (event.error !== undefined && p !== undefined) {
               await this.send(p, replyCtx, this.i18n.tf(Msg.Error, event.error.message))
@@ -3536,7 +3620,7 @@ export class Engine {
           }
 
           default:
-            break
+            assertNever(event.type, 'interactive event switch')
         }
       }
     } finally {
@@ -3835,7 +3919,14 @@ export class Engine {
     // Guarantee the terminal PATCH has landed before the ✅ notification so
     // the progress card is not still mid-state when the push arrives.
     await barrier()
-    void cp
+    // Card-style structured progress card: when the stream preview did not
+    // take over the progress display, the compact writer's card is the one
+    // the user watched — settle its header state (Go EventResult's
+    // cp.Finalize; an errored result turn reports Failed, mirroring Go's
+    // EventError Finalize(Failed)). After the barrier so the writer's queued
+    // running updates cannot land past the terminal PATCH; finalize PATCHes
+    // inline (Go parity) and no-ops without a card.
+    if (!sp.inProgressMode()) await cp.finalize(errored ? 'failed' : 'completed')
     if (sendCompletionNotification && p !== undefined && state.pendingMessages.length === 0) {
       // Parked-ask wall time is the user deciding, not the agent working —
       // the hard cap above already exempts it (resumeCapPark banks it into
@@ -4208,14 +4299,18 @@ export class Engine {
   private async closeAgentSessionWithTimeout(sessionKey: string, agentSession: AgentSession): Promise<void> {
     // Boxed so the sleep's callback assignment escapes literal-type narrowing.
     const timeout = { hit: false }
+    const closeWait = cancellableSleep(this.agentCloseTimeout)
     await Promise.race([
       agentSession.close().catch((error: unknown) => {
         console.error(`engine: agent session close failed (${sessionKey}): ${String(error)}`)
       }),
-      cancellableSleep(this.agentCloseTimeout).promise.then(() => {
+      closeWait.promise.then(() => {
         timeout.hit = true
       }),
     ])
+    // A close that won the race leaves the sleep's timer armed for the full
+    // agentCloseTimeout; cancel it so frequent closes do not pile up timers.
+    closeWait.cancel()
     if (timeout.hit) {
       // Abandoned mid-close: the agent session may stay live in the agent's
       // registry and block later resumes of the same id.
@@ -4702,8 +4797,34 @@ export class Engine {
     }
 
     const textParts: string[] = []
+    // One abort arm for the whole loop (drainRelaySession's race pattern): a
+    // target parked in a long tool call emits nothing, so polling
+    // signal.aborted only after receive() resolves never fires and the
+    // caller's rm.send would hang forever. The arm resolves with the signal
+    // so the aborted branch holds the narrowed type.
+    const abortArm = signal === undefined ? undefined : new Promise<AbortSignal>((resolve) => {
+      if (signal.aborted) {
+        resolve(signal)
+        return
+      }
+      signal.addEventListener('abort', () => { resolve(signal) }, { once: true })
+    })
     for (;;) {
-      const r = await agentSession.events().receive()
+      const recvArm = agentSession.events().receiveArmed()
+      const outcome = abortArm === undefined
+        ? await recvArm.promise.then(r => ({ kind: 'recv' as const, r }))
+        : await Promise.race([
+          recvArm.promise.then(r => ({ kind: 'recv' as const, r })),
+          abortArm.then(sig => ({ kind: 'aborted' as const, sig })),
+        ])
+      if (outcome.kind === 'aborted') {
+        // Cancel the parked waiter so it cannot steal the background drain's
+        // first event.
+        recvArm.cancel()
+        void this.drainRelaySession(agentSession, relaySessionKey)
+        return relayPartialResponseOrError(outcome.sig, textParts)
+      }
+      const r = outcome.r
       if (r.done) break
       const event = r.event
       switch (event.type) {
@@ -4733,8 +4854,18 @@ export class Engine {
           if (event.error !== undefined) throw event.error
           if (event.errorText !== undefined && event.errorText !== '') throw new Error(event.errorText)
           throw new Error('agent error (no details)')
-        default:
+        case 'text_delta':
+        case 'thinking_delta':
+        case 'thinking':
+        case 'tool_use':
+        case 'subagent_status':
+        case 'compaction':
+        case 'todo_update':
+          // Preview- and card-only frames have no relayed text to collect
+          // (Go's HandleRelay switch ignores them the same way).
           break
+        default:
+          assertNever(event.type, 'relay event switch')
       }
       if (signal?.aborted) {
         // Relay timed out. Let the agent finish its turn in the background
@@ -5374,7 +5505,8 @@ export class Engine {
         await ibs.sendWithButtons(replyCtx, prompt, buttons)
         return
       } catch {
-        // fall through to card
+        // sendWithButtons failed (unsupported message type or HTTP error);
+        // fall through to the card form.
       }
     }
 
@@ -5402,7 +5534,8 @@ export class Engine {
         await cs.sendCard(replyCtx, card)
         return
       } catch {
-        // fall through to plain text
+        // sendCard failed (HTTP error or card rejected); fall through to
+        // plain text.
       }
     }
 
@@ -5434,7 +5567,8 @@ export class Engine {
         console.log(`engine: ask card sent (${sessionKey}, ${total} question${total > 1 ? 's' : ''})`)
         return
       } catch {
-        // fall through to inline buttons
+        // sendCard failed (HTTP error or card rejected); fall through to
+        // inline buttons.
       }
     }
 
@@ -5452,7 +5586,8 @@ export class Engine {
         await ibs.sendWithButtons(replyCtx, text, buttons)
         return
       } catch {
-        // fall through to plain text
+        // sendWithButtons failed (unsupported message type or HTTP error);
+        // fall through to plain text.
       }
     }
 
@@ -6784,13 +6919,18 @@ export class Engine {
 
   /**
    * Interrupt one native child's current turn (de-baggage B4's model-visible
-   * interruption surface).
+   * interruption surface). Only the child's own parent may interrupt it —
+   * the same ownership rule {@link sendToSubtask} enforces on follow-ups.
    * @param childId - The durable native child session id.
+   * @param callerSessionKey - Session key of the parent requesting the stop.
    */
-  interruptNativeChild(childId: string): void {
+  interruptNativeChild(childId: string, callerSessionKey: string): void {
     const entry = this.nativeChildEntries()[childId]
     if (entry === undefined) {
       throw new Error('subtask: not a native child of this project')
+    }
+    if (entry.parent_key !== callerSessionKey) {
+      throw new Error(this.i18n.t(Msg.SubtaskSendNotChild))
     }
     const delegator = asContinuableDelegator(this.agent)
     if (delegator === undefined) {
@@ -6862,7 +7002,9 @@ export class Engine {
     for (const [childId, rec] of toDrain) {
       if (delegator?.childLive?.(childId) === true) {
         try {
-          this.interruptNativeChild(childId)
+          // The drain walks a parent → descendant chain, so each child's own
+          // parent_key is the authorizing caller.
+          this.interruptNativeChild(childId, rec.parent_key)
         } catch (error) {
           console.warn(`subtask: native descendant interrupt failed (child=${childId}): ${String(error)}`)
         }
@@ -8086,7 +8228,7 @@ export class Engine {
       }
       sess.setWorktreeInfo('', '', '', '', '')
       this.sessions.save()
-      const cleaned = removeOrphanMemory(memDir === '' ? '' : memDir)
+      const cleaned = removeOrphanMemory(memDir)
       if (cleaned !== '') return this.i18n.tf(Msg.WorktreeOrphanCleaned, cleaned)
       return ''
     }
@@ -8209,17 +8351,7 @@ export class Engine {
         const n = Number.parseInt(args, 10)
         if (Number.isInteger(n) && n > 0) page = n
       }
-      const card = renderDirCardSafe(this, msg.sessionKey, page, notice)
-      const refresher = asCardRefresher(p)
-      if (refresher !== undefined) {
-        try {
-          await refresher.refreshCard(msg.sessionKey, card)
-          return
-        } catch (error) {
-          console.warn(`engine: card refresh failed, sending a new card (${msg.sessionKey}): ${String(error)}`)
-        }
-      }
-      await this.replyWithCard(p, msg.replyCtx, card)
+      await this.refreshOrReplyCard(p, msg, renderDirCardSafe(this, msg.sessionKey, page, notice))
       return
     }
 
@@ -8229,18 +8361,7 @@ export class Engine {
     const cardAction = this.cardActionHandlers.get(cmd)
     if (cardAction !== undefined) {
       const card = cardAction(msg.sessionKey, cmd, args)
-      if (card !== undefined) {
-        const refresher = asCardRefresher(p)
-        if (refresher !== undefined) {
-          try {
-            await refresher.refreshCard(msg.sessionKey, card)
-            return
-          } catch (error) {
-            console.warn(`engine: card refresh failed, sending a new card (${msg.sessionKey}): ${String(error)}`)
-          }
-        }
-        await this.replyWithCard(p, msg.replyCtx, card)
-      }
+      if (card !== undefined) await this.refreshOrReplyCard(p, msg, card)
       return
     }
     // Background-subtask panel's Stop-all button: interrupt every unreported
@@ -8251,7 +8372,7 @@ export class Engine {
         for (const [childId, rec] of Object.entries(this.nativeChildEntries())) {
           if (rec.parent_key !== msg.sessionKey || rec.reported) continue
           try {
-            this.interruptNativeChild(childId)
+            this.interruptNativeChild(childId, msg.sessionKey)
           } catch (error) {
             console.warn(`subtask: panel stop interrupt failed (child=${childId}): ${String(error)}`)
           }
@@ -8264,17 +8385,8 @@ export class Engine {
     // /new, then re-render the pressed card as the confirmation.
     if (cmd === '/nopred') {
       this.setPredictNextDisabled(msg.sessionKey)
-      const card = newCard().title(this.i18n.t(Msg.NopredTitle), 'red').markdown(this.i18n.t(Msg.NopredBody)).build()
-      const refresher = asCardRefresher(p)
-      if (refresher !== undefined) {
-        try {
-          await refresher.refreshCard(msg.sessionKey, card)
-          return
-        } catch (error) {
-          console.warn(`engine: card refresh failed, sending a new card (${msg.sessionKey}): ${String(error)}`)
-        }
-      }
-      await this.replyWithCard(p, msg.replyCtx, card)
+      await this.refreshOrReplyCard(p, msg,
+        newCard().title(this.i18n.t(Msg.NopredTitle), 'red').markdown(this.i18n.t(Msg.NopredBody)).build())
       return
     }
     if (cmd !== '/wt') {
@@ -8282,17 +8394,7 @@ export class Engine {
       return
     }
     const notification = await this.executeWorktreeAction(msg.sessionKey, args)
-    const card = this.renderWorktreeDoneCard(args, notification)
-    const refresher = asCardRefresher(p)
-    if (refresher !== undefined) {
-      try {
-        await refresher.refreshCard(msg.sessionKey, card)
-        return
-      } catch (error) {
-        console.warn(`engine: card refresh failed, sending a new card (${msg.sessionKey}): ${String(error)}`)
-      }
-    }
-    await this.replyWithCard(p, msg.replyCtx, card)
+    await this.refreshOrReplyCard(p, msg, this.renderWorktreeDoneCard(args, notification))
   }
 
   /**
@@ -8376,7 +8478,7 @@ export class Engine {
     let msg = mergedInto !== ''
       ? this.i18n.tf(Msg.WorktreeRemovedMerged, mergedInto, branch)
       : this.i18n.tf(Msg.WorktreeRemoved, branch)
-    const cleaned = removeOrphanMemory(memDir === '' ? '' : memDir)
+    const cleaned = removeOrphanMemory(memDir)
     if (cleaned !== '') msg += `\n${this.i18n.tf(Msg.WorktreeOrphanCleaned, cleaned)}`
     await this.reply(p, replyCtx, msg)
   }

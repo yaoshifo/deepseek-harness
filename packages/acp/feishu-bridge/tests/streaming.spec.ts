@@ -548,6 +548,66 @@ describe('StreamPreview', () => {
     expect(last?.text).toBe('Hello World Final')
   })
 
+  it('finish greens the card even when the final text is byte-identical to the last streamed PATCH', async () => {
+    // Streaming PATCHes carry no status; fast replies commonly finish with
+    // exactly the streamed bytes. Skipping the terminal PATCH then leaves
+    // the card yellow 执行中 forever.
+    const mp = createMockKeepPreviewPlatform()
+    const as = newAsyncSender('test-finish-identical')
+    try {
+      const sp = newStreamPreview(cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000 }), mp, 'ctx', undefined, as)
+      // First flush opens the card via SendPreviewStart; the second lands as
+      // an UpdateMessage PATCH carrying the complete text, so the final text
+      // matches the last streamed PATCH byte-for-byte.
+      await sp.appendText('hello')
+      await as.barrier()
+      await sp.appendText(' world')
+      await as.barrier()
+      expect(lastTextContent(mp)?.status, 'streaming PATCHes carry no status').toBeUndefined()
+
+      const delivered = await sp.finish('hello world')
+      expect(delivered).toBe(true)
+      expect(lastTextContent(mp)?.status?.state, 'the terminal PATCH must green the card').toBe('completed')
+    } finally {
+      as.close()
+    }
+  })
+
+  it('finish drains a still-queued running PATCH before the terminal PATCH', async () => {
+    // finish() PATCHes inline; a coalescable running snapshot still queued on
+    // the async sender would land AFTER it and revert the green card to
+    // 执行中. markCompleted/markFailed enqueue as terminals for exactly this
+    // ordering — finish must at least drain what is already queued.
+    const mp = createMockKeepPreviewPlatform()
+    const as = newAsyncSender('test-finish-order')
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    let gated = false
+    const inner = mp.updateMessage.bind(mp)
+    mp.updateMessage = async (rc: unknown, content: ProgressContent) => {
+      if (!gated) {
+        gated = true
+        await firstGate
+      }
+      await inner(rc, content)
+    }
+    try {
+      const sp = newStreamPreview(cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000 }), mp, 'ctx', undefined, as)
+      await sp.appendText('partial') // opens the card via SendPreviewStart
+      await as.barrier()
+      await sp.appendText(' more') // its UpdateMessage PATCH stalls in the gate
+      const finishP = sp.finish('final answer')
+      await sleep(20)
+      releaseFirst()
+      expect(await finishP).toBe(true)
+
+      const states = mp.contents.map(c => (c.kind === 'text' ? c.status?.state : undefined))
+      expect(states.at(-1), `states=${JSON.stringify(states)}`).toBe('completed')
+    } finally {
+      as.close()
+    }
+  })
+
   it('freeze + finish deletes the stale preview', async () => {
     const mp = createMockCleanerPlatform()
     const sp = newStreamPreview(cfg(), mp, 'ctx', undefined, undefined)

@@ -58,9 +58,12 @@ describe('Engine feishu workspace routing (#18)', () => {
 
     const signal = AbortSignal.timeout(20)
     const done = e.handleRelay(signal, 'other', 'chat1', 'hi')
+    // Attach the catch before the timeout can fire — the abort arm rejects
+    // as soon as the signal trips, not at the next event.
+    const doneP = done.catch(() => undefined)
     await new Promise((resolve) => { setTimeout(resolve, 40) })
     session.channel.push({ type: 'result', content: 'ok', done: true })
-    await done.catch(() => undefined)
+    await doneP
 
     expect(agent.lastOptions()?.feishuWorkspace).toEqual({ wikiSpaceId: '7777', folderToken: '', wikiNodeToken: '', description: 'x' })
     expect(agent.lastOptions()?.sessionKey).toBe('relay:other:chat1')

@@ -196,7 +196,7 @@ export function registerSubtaskTool(
         case 'interrupt': {
           const child = (args.child ?? '').trim()
           if (child === '') throw new Error('feishu_bridge_subtask: interrupt requires the target subtask\'s session key (child)')
-          engine.interruptNativeChild(child)
+          engine.interruptNativeChild(child, sessionKey)
           return {
             status: 'ok' as const,
             message: `Interrupt requested for subtask ${child}; its current turn stops but the session survives — `

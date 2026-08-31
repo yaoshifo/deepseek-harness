@@ -1438,8 +1438,17 @@ describe('SendToSubtask native children', () => {
     const { e, agent } = newNativeEngine(p, parentKey)
     await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
 
-    e.interruptNativeChild('native-child-1')
+    e.interruptNativeChild('native-child-1', parentKey)
     expect(agent.interrupts).toEqual(['native-child-1'])
+  })
+
+  it('interruptNativeChild rejects a caller that is not the child parent', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agent } = newNativeEngine(p, parentKey)
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
+
+    expect(() => e.interruptNativeChild('native-child-1', 'test:other-chat:u1')).toThrow()
+    expect(agent.interrupts, 'a rejected interrupt must not reach the delegator').toEqual([])
   })
 })
 
@@ -1575,7 +1584,7 @@ describe('gather barrier death accounting', () => {
     twoChildren(e)
 
     const wait = e.gatherSubtasksBlocking(parentKey)
-    e.interruptNativeChild('native-child-1')
+    e.interruptNativeChild('native-child-1', parentKey)
     // One interrupted child alone does not fire: the other still owes a report.
     const partial = await Promise.race([
       wait.then(() => '__resolved__'),
@@ -1583,7 +1592,7 @@ describe('gather barrier death accounting', () => {
     ])
     expect(partial).toBe('__pending__')
 
-    e.interruptNativeChild('native-child-2')
+    e.interruptNativeChild('native-child-2', parentKey)
     const summary = await wait
 
     // The waiter resolves with the interrupted children accounted as aborted,
@@ -1600,7 +1609,7 @@ describe('gather barrier death accounting', () => {
     twoChildren(e)
 
     const wait = e.gatherSubtasksBlocking(parentKey)
-    e.interruptNativeChild('native-child-2')
+    e.interruptNativeChild('native-child-2', parentKey)
     await e.reportNativeChild('native-child-1', 'first result')
     const summary = await wait
 
@@ -1613,7 +1622,7 @@ describe('gather barrier death accounting', () => {
     const { e } = newNativeEngine(p, parentKey)
     twoChildren(e)
 
-    e.interruptNativeChild('native-child-1')
+    e.interruptNativeChild('native-child-1', parentKey)
     await settle()
 
     // Teardown stays silent: no settlement card, no wake — only the record flips.
@@ -1715,7 +1724,7 @@ describe('pending native children visibility', () => {
     await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
     expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
 
-    e.interruptNativeChild('native-child-1')
+    e.interruptNativeChild('native-child-1', parentKey)
 
     expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
   })

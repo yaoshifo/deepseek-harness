@@ -1289,11 +1289,28 @@ export class SessionManager {
   }
 
   private deleteByIDLocked(id: string): void {
+    const s = this.sessions.get(id)
     this.sessions.delete(id)
+    if (s !== undefined) {
+      // The deleted session's display-name entries are unreachable afterward
+      // (keys are its internal id, current agent session id, or past ones).
+      this.sessionNames.delete(s.id)
+      if (s.agentSessionID !== '') this.sessionNames.delete(s.agentSessionID)
+      for (const past of s.pastAgentSessionIDs) this.sessionNames.delete(past)
+    }
     for (const [userKey, ids] of this.userSessions) {
       const idx = ids.indexOf(id)
       if (idx >= 0) ids.splice(idx, 1)
+      if (ids.length === 0) this.userSessions.delete(userKey)
       if (this.activeSession.get(userKey) === id) this.activeSession.delete(userKey)
+    }
+    // A chat whose sessions are all gone loses its cached display metadata;
+    // the next message re-populates it (updateUserMeta runs on arrival).
+    for (const key of this.userMeta.keys()) {
+      const ids = this.userSessions.get(key)
+      if ((ids === undefined || ids.length === 0) && !this.activeSession.has(key)) {
+        this.userMeta.delete(key)
+      }
     }
   }
 
