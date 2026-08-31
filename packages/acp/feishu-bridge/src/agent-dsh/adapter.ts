@@ -2350,12 +2350,20 @@ export class DshAgentSession implements AgentSession {
         // Human prompts enter the recent-turn window; synthetic injections
         // (plugin context, notices) stay out, matching the retired
         // bridge-side history's contents.
-        const source = data.source as { kind?: string } | undefined
+        const source = data.source as { kind?: string; name?: unknown } | undefined
         if (source?.kind === 'user') {
           const content = textOfBlocks(data.content as ContentBlock[] | undefined)
           if (content !== '') {
             const time = typeof event.time === 'number' ? event.time : Date.now()
             this.pushRecentTurn({ role: 'user', content, timestamp: new Date(time).toISOString() })
+          }
+        } else if (source?.kind === 'skill-invocation') {
+          // A user's `/<name>` gesture injects the skill body as a synthetic
+          // message; the card needs the load surfaced even though no `skill`
+          // tool call will ever follow (that path is the model-invoked one).
+          const name = typeof source.name === 'string' ? source.name : ''
+          if (name !== '') {
+            this.channel.push({ type: 'skill_invocation', content: name, done: false })
           }
         }
         break

@@ -196,3 +196,39 @@ describe('projectSessionEvent compaction lifecycle', () => {
     expect(events[0]?.type).toBe('compaction')
   })
 })
+
+describe('projectSessionEvent skill-invocation injection', () => {
+  it('projects the injected skill instructions message as a skill_invocation event', async () => {
+    const s = newSession()
+    const events = await project(s, {
+      type: 'user/message', seq: 1, time: 0,
+      data: {
+        content: [{ type: 'text', text: '<skill_content name="explain">…</skill_content>' }],
+        source: { kind: 'skill-invocation', name: 'explain', form: 'instructions' },
+      },
+    })
+    expect(events).toHaveLength(1)
+    expect(events[0]?.type).toBe('skill_invocation')
+    expect(events[0]?.content).toBe('explain')
+  })
+
+  it('emits nothing for non-invocation sources and nameless invocations', async () => {
+    const cases: Array<Record<string, unknown>> = [
+      { kind: 'user' },
+      { kind: 'plugin', plugin: '@deepseek-ai/dsh-system-prompt' },
+      { kind: 'skill-catalog', form: 'catalog' },
+      { kind: 'dsh-memory', version: 2 },
+      { kind: 'skill-invocation' },
+      { kind: 'skill-invocation', name: '' },
+      { kind: 'skill-invocation', name: 42 },
+    ]
+    for (const source of cases) {
+      const s = newSession()
+      const events = await project(s, {
+        type: 'user/message', seq: 1, time: 0,
+        data: { content: [{ type: 'text', text: 'x' }], source },
+      })
+      expect(events, JSON.stringify(source)).toHaveLength(0)
+    }
+  })
+})

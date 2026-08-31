@@ -371,6 +371,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   skills_unavailable: { en: 'The skill registry is not composed in this deployment, so there is no skill catalog to list.', zh: '当前部署未组合 skill 注册表，没有可列出的 skill 目录。' },
   skills_title: { en: 'Skills (%d)', zh: 'Skills（%d）' },
   skills_user_only: { en: ' (command-only)', zh: '（仅命令面）' },
+  skill_loaded: { en: 'Skill instructions loaded', zh: '已加载技能指令' },
   mcp: { en: 'List live MCP servers and their tools', zh: '列出在线 MCP 服务器及其工具' },
   mcp_usage: { en: 'Usage: `/mcp`\nLists every MCP server with tools registered in this process (`mcp__<server>__*`), marks servers configured for health watching that have no live tools, and marks servers this project\'s `mcpServers` allowlist hides from its sessions.', zh: '用法：`/mcp`\n列出当前进程注册了工具的全部 MCP 服务器（`mcp__<server>__*`），标注已配置健康监视但无在线工具的服务器，以及被本项目 `mcpServers` 白名单对会话隐藏的服务器。' },
   mcp_empty: { en: 'No MCP server tools are registered in this process.', zh: '当前进程没有注册任何 MCP 服务器工具。' },

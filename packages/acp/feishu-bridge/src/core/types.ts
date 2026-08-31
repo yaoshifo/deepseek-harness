@@ -224,10 +224,12 @@ export type EventKind =
   | 'subagent_status'
   | 'compaction'
   | 'todo_update'
+  | 'skill_invocation'
 
 /** A single piece of agent output streamed to the engine (Go Event). */
 export interface Event {
   type: EventKind
+  /** Event payload text; on `skill_invocation` events it is the loaded skill's name. */
   content: string
   toolName?: string
   toolInput?: string

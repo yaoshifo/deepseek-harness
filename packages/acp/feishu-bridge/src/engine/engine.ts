@@ -2729,6 +2729,7 @@ export class Engine {
         case 'subagent_status':
         case 'compaction':
         case 'todo_update':
+        case 'skill_invocation':
           // Preview- and card-only frames carry nothing the plain-text
           // spillover relay could surface.
           break
@@ -3543,6 +3544,24 @@ export class Engine {
             if (event.fromSubagent !== true && event.todos !== undefined) {
               if (sp.canPreview()) await sp.updateTodoSection(event.todos)
               cp.setTodos(event.todos)
+            }
+            break
+          }
+
+          case 'skill_invocation': {
+          // A user's `/<name>` gesture injected the skill body through
+          // pre-step, so no `skill` tool call will follow; surface the load
+          // with the same 📚 entry presentation that path gets.
+            if (this.display.toolProgress && sp.canPreview()) {
+              const entry = new ProgressEntry({
+                header: `**${new Date().toTimeString().slice(0, 8)}**`,
+                isTool: true,
+                skillName: event.content,
+                hasResult: true,
+                success: true,
+                result: this.i18n.t(Msg.SkillLoaded),
+              })
+              await sp.appendProgress(entry)
             }
             break
           }
@@ -4904,6 +4923,7 @@ export class Engine {
         case 'subagent_status':
         case 'compaction':
         case 'todo_update':
+        case 'skill_invocation':
           // Preview- and card-only frames have no relayed text to collect
           // (Go's HandleRelay switch ignores them the same way).
           break
