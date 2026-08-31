@@ -415,7 +415,9 @@ export function apply(ctx: Context, config: Config): void {
       entered = entered.toSpliced(at, 0, message)
       at++
     }
-    return { kind: 'enter', messages: entered }
+    // Spread the downstream decision: an inner listener may have declared
+    // startsRequestSeries, which a literal rebuild would silently drop.
+    return { ...decision, messages: entered }
   })
 
   /**

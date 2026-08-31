@@ -316,6 +316,25 @@ describe('session-start index injection', () => {
     expect(enterCount(await emitPreStep(ctx, later, { step: 2 }))).toBe(1)
   })
 
+  it('preserves a downstream listener decision when rebuilding the enter', async () => {
+    const ctx = await setup()
+    context = ctx
+    await seedIndex('# Memory Index\n- [A](a.md) — hook about ainvest')
+    const agent = makeAgent(ctx, { cwd: CWD })
+    // Registered after the plugin, this listener runs downstream in the
+    // waterfall: its decision flows back through the plugin's next() and must
+    // survive the rebuild that splices in the index messages.
+    ctx.on('agent/pre-step', async (_payload, next) => {
+      const decision = await next()
+      return decision.kind === 'enter' ? { ...decision, startsRequestSeries: true } : decision
+    })
+    const decision = await emitPreStep(ctx, agent)
+    if (decision.kind !== 'enter') throw new Error('expected enter')
+    expect(decision.messages).toHaveLength(2)
+    expect(decision.messages.at(1)?.source).toMatchObject({ kind: 'dsh-memory' })
+    expect(decision.startsRequestSeries).toBe(true)
+  })
+
   it('leaves a reject decision untouched', async () => {
     const ctx = await setup()
     context = ctx
