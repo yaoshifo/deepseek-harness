@@ -10,8 +10,10 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildProgressCardPayload, type ProgressCardEntry } from '../../src/progress.js'
+import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.js'
 import { buildPreviewCardJSON, buildProgressCardJSONFromPayload, markCardStopped } from '../../src/feishu/progress.js'
 import { noSpinner, resolveSpinnerAsset, type SpinnerCfg } from '../../src/feishu/spinner.js'
+import { retryTiming } from '../../src/feishu/retry.js'
 import type { ProgressStatus } from '../../src/core/types.js'
 import { jObj, jParse, jStr, type JsonObj } from '../stubs/json.js'
 
@@ -87,6 +89,62 @@ describe('progress card spinner icon (payload path)', () => {
   it('disabled spinnerCfg produces no icon', () => {
     const payload = buildProgressCardPayload([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
     expect(hasHeaderIcon(buildProgressCardJSONFromPayload(payload!, noSpinner))).toBe(false)
+  })
+})
+
+describe('spinner gif upload (platform)', () => {
+  /** Platform whose apiClient records every uploadImage call through `upload`. */
+  function uploadPlatform(upload: (fileName: string) => Promise<string>): { p: FeishuPlatform; uploads: string[] } {
+    const uploads: string[] = []
+    const api: FeishuApiClient = {
+      async reply() { return { messageId: 'om_ok' } },
+      async create() { return { messageId: 'om_ok' } },
+      async uploadImage({ fileName }) {
+        uploads.push(fileName)
+        return upload(fileName)
+      },
+    }
+    return {
+      p: new FeishuPlatform({ appID: 'cli_spin', appSecret: 's', apiClient: api, wsStart: async () => {} }),
+      uploads,
+    }
+  }
+
+  it('a transient upload failure retries within spinnerCfg', async () => {
+    const saved = { ...retryTiming }
+    retryTiming.initialDelay = 5
+    retryTiming.maxDelay = 10
+    const failedOnce = new Set<string>()
+    try {
+      const { p, uploads } = uploadPlatform(async (fileName) => {
+        // First attempt per gif fails transiently; the retry must succeed.
+        if (!failedOnce.has(fileName)) {
+          failedOnce.add(fileName)
+          throw new Error('dial tcp: i/o timeout')
+        }
+        return `img_${fileName}`
+      })
+      const cfg = await p.spinnerCfg()
+      expect(cfg).toEqual({ enabled: true, thinkingKey: 'img_thinking.gif', executingKey: 'img_executing.gif' })
+      expect(uploads).toEqual(['thinking.gif', 'thinking.gif', 'executing.gif', 'executing.gif'])
+    } finally {
+      Object.assign(retryTiming, saved)
+    }
+  })
+
+  it('a failed upload attempt is not cached — the next spinnerCfg retries', async () => {
+    let failAll = true
+    const { p, uploads } = uploadPlatform(async (fileName) => {
+      // Non-transient so the retry wrapper gives up immediately.
+      if (failAll) throw new Error('feishu: upload image code=230001 msg=bad request')
+      return `img_${fileName}`
+    })
+
+    expect(await p.spinnerCfg()).toEqual(noSpinner)
+    failAll = false
+    // The once-cache must not pin the failure: the next call retries.
+    expect(await p.spinnerCfg()).toEqual({ enabled: true, thinkingKey: 'img_thinking.gif', executingKey: 'img_executing.gif' })
+    expect(uploads).toHaveLength(4)
   })
 })
 

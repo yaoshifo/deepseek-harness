@@ -8,8 +8,11 @@
 
 import { describe, expect, it } from 'vitest'
 import { jArr, jObj, jParse, jStr, type JsonObj } from '../stubs/json.js'
+import { buildProgressCardPayload } from '../../src/progress.js'
+import { noSpinner } from '../../src/feishu/spinner.js'
 import {
   collapseStructuralBlankLines,
+  buildProgressCardJSONFromPayload,
   formatProgressToolInput,
   injectReplyButtons,
   injectStopButton,
@@ -177,6 +180,18 @@ describe('formatProgressToolInput todo rendering', () => {
     const out = formatProgressToolInput('bash', 'echo hi')
     expect(out).toContain('```')
   })
+
+  it('strips bare HTML tags from todo content and active form', () => {
+    const dirty = JSON.stringify({
+      todos: [
+        { content: 'fix <anonymous> handler', status: 'pending', activeForm: 'Fixing the <script>evil one' },
+      ],
+    })
+    const out = formatProgressToolInput('todo_write', dirty)
+    expect(out).toContain('⏳')
+    expect(out).not.toContain('<anonymous>')
+    expect(out).not.toContain('<script>')
+  })
 })
 
 describe('injectReplyButtons status text', () => {
@@ -266,8 +281,64 @@ describe('collapseStructuralBlankLines', () => {
     expect(collapseStructuralBlankLines(in5)).toBe(in5)
   })
 
+  it('preserves a blank inside a four-backtick fence after a ``` line', () => {
+    // The inner ``` run is content of the ```` fence: a naive toggle would
+    // flip the state and let the blank collapse as structural.
+    const in7 = '````md\n```\n\nreal code\n````'
+    expect(collapseStructuralBlankLines(in7)).toBe(in7)
+  })
+
   it('preserves a blank adjacent to a table row', () => {
     const in6 = 'para\n\n| a | b |\n|---|---|\n| 1 | 2 |'
     expect(collapseStructuralBlankLines(in6)).toBe(in6)
+  })
+})
+
+describe('payload path HTML sanitization', () => {
+  it('error entry prose loses bare HTML tags but keeps the text_tag chrome', () => {
+    const payload = buildProgressCardPayload(
+      [{ kind: 'error', text: 'TypeError: boom\n    at <anonymous>:1:1' }],
+      false, 'Agent', 'zh', 'failed', [], '',
+    )
+    expect(payload).toBeDefined()
+    const cardJSON = buildProgressCardJSONFromPayload(payload!, noSpinner)
+    // The untrusted text is sanitized before the trusted <text_tag> chrome
+    // is composed around it: a bare tag in an error stack would otherwise
+    // reach the card markdown and trigger the 11311 PATCH-rejection loop.
+    expect(cardJSON).toContain("<text_tag color='red'>")
+    expect(cardJSON).not.toContain('<anonymous>')
+  })
+
+  it('tool result strips tags in prose outside fences and keeps fenced content verbatim', () => {
+    const payload = buildProgressCardPayload(
+      [{ kind: 'tool_result', tool: 'Bash', text: 'wrote <anonymous> bytes\n```\n<div>kept</div>\n```' }],
+      false, 'Agent', 'zh', 'running', [], '',
+    )
+    expect(payload).toBeDefined()
+    const cardJSON = buildProgressCardJSONFromPayload(payload!, noSpinner)
+    expect(cardJSON).toContain('<div>kept</div>')
+    expect(cardJSON).not.toContain('<anonymous>')
+  })
+
+  it('tool input strips tags in prose outside embedded fences', () => {
+    const payload = buildProgressCardPayload(
+      [{ kind: 'tool_use', tool: 'Edit', text: 'editing <anonymous> section\n```\n<span>kept</span>\n```' }],
+      false, 'Agent', 'zh', 'running', [], '',
+    )
+    expect(payload).toBeDefined()
+    const cardJSON = buildProgressCardJSONFromPayload(payload!, noSpinner)
+    expect(cardJSON).toContain('<span>kept</span>')
+    expect(cardJSON).not.toContain('<anonymous>')
+  })
+
+  it('info entry prose loses bare HTML tags', () => {
+    const payload = buildProgressCardPayload(
+      [{ kind: 'info', text: 'see <anonymous> for details' }],
+      false, 'Agent', 'zh', 'running', [], '',
+    )
+    expect(payload).toBeDefined()
+    const cardJSON = buildProgressCardJSONFromPayload(payload!, noSpinner)
+    expect(cardJSON).toContain('see')
+    expect(cardJSON).not.toContain('<anonymous>')
   })
 })

@@ -17,6 +17,7 @@ import { basename } from 'node:path'
 import { promisify } from 'node:util'
 import type { Agent, AgentSession } from '../core/types.js'
 import { asProviderSwitcher } from '../core/types.js'
+import { BoundedMap } from '../feishu/platform.js'
 import type { CardButton, CardElement, CardMarkdown } from '../card.js'
 import type { I18n } from '../i18n/index.js'
 import { Msg } from '../i18n/index.js'
@@ -326,8 +327,13 @@ export function formatMemInfo(): string {
 /** How long a (dir → branch/files) result is reused (Go gitBranchCacheTTL). */
 export const gitBranchCacheTTLms = 3000
 
-/** TTL cache so back-to-back completions don't spawn git twice per turn (Go gitBranchCache). */
-export const gitBranchCache = new Map<string, { line: string; files: string[]; at: number }>()
+/**
+ * TTL cache so back-to-back completions don't spawn git twice per turn (Go
+ * gitBranchCache). Capacity-bounded: keys are work dirs and worktree paths
+ * carry unique timestamp suffixes, so an unbounded map would grow once per
+ * task for the daemon's lifetime.
+ */
+export const gitBranchCache = new BoundedMap<string, { line: string; files: string[]; at: number }>()
 
 /**
  * Branch line + uncommitted file list for the notification footer (Go

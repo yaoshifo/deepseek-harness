@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { FeishuPlatform, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.js'
-import { detectFeishuFileType, detectMimeType } from '../../src/feishu/media.js'
+import { FeishuPlatform, collectDownloadStream, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.js'
+import { detectFeishuFileType, detectMimeType, maxFeishuDownloadBytes } from '../../src/feishu/media.js'
+import type { Message } from '../../src/core/types.js'
 
 // Ported from cc-connect platform/feishu/feishu_media_test.go: a failed
 // attachment download must notify the user via a direct reply (never through
@@ -80,6 +81,64 @@ describe('dispatch file message', () => {
 
     expect(replies).toHaveLength(1)
     expect(replies[0]!.content).toContain('DCE.zip')
+  })
+
+  it('treats an over-cap download as a failure instead of dispatching a truncated attachment', async () => {
+    const replies: Array<{ messageId: string; msgType: string; content: string }> = []
+    const dispatched: Message[] = []
+    const api: FeishuApiClient = {
+      async reply(params) {
+        replies.push(params)
+        return { messageId: 'om_ok' }
+      },
+      async create() {
+        return { messageId: 'om_ok' }
+      },
+      async downloadMessageResource() {
+        return new Uint8Array(maxFeishuDownloadBytes + 1)
+      },
+    }
+    const p = newPlatform(api)
+    await p.start((_platform, msg) => { dispatched.push(msg) })
+
+    p.onMessage(fileEvent())
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    // An oversized resource must reach the agent never: silently truncating
+    // it hands the agent a corrupted file that looks complete.
+    expect(dispatched).toHaveLength(0)
+    expect(replies).toHaveLength(1)
+    expect(replies[0]!.content).toContain('DCE.zip')
+    expect(replies[0]!.content).toContain('下载失败')
+  })
+})
+
+describe('collectDownloadStream', () => {
+  it('aborts an over-cap stream mid-transfer instead of draining or truncating it', async () => {
+    const chunk = Buffer.alloc(1024 * 1024)
+    let yielded = 0
+    async function* oversized(): AsyncGenerator<Buffer> {
+      for (let i = 0; i < 200; i++) {
+        yielded++
+        yield chunk
+      }
+    }
+
+    await expect(collectDownloadStream(oversized())).rejects.toThrow('exceeds')
+    // The transfer must stop once the running length crosses the cap
+    // (chunk 101 of 1MB each), not drain all 200MB into memory.
+    expect(yielded).toBeLessThanOrEqual(102)
+  })
+
+  it('returns the complete bytes of an in-cap stream', async () => {
+    const first = Buffer.from('feishu')
+    const second = Buffer.from('download')
+    async function* resource(): AsyncGenerator<Buffer> {
+      yield first
+      yield second
+    }
+
+    expect(await collectDownloadStream(resource())).toEqual(new Uint8Array(Buffer.concat([first, second])))
   })
 })
 

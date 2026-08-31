@@ -49,12 +49,14 @@ export function hasComplexMarkdown(s: string): boolean {
 }
 
 /**
- * Length-aware code-fence tracker shared by the table heuristics: a fence
- * opens on a leading backtick run (``` or longer, info string allowed) and
- * closes on a pure-backtick line at least as long as the opener. Inside a
- * fence, pipe lines are code text, not table rows.
+ * Length-aware code-fence tracker shared by the fence-aware transforms in
+ * this module, markdown-html, and progress: a fence opens on a leading
+ * backtick run (``` or longer, info string allowed) and closes on a
+ * pure-backtick line at least as long as the opener. Inside a fence, pipe
+ * lines are code text, not table rows, and a shorter ``` run is content,
+ * not a toggle.
  */
-class FenceTracker {
+export class FenceTracker {
   private openLen = 0
 
   /** Update the tracker with one line's trimmed text; returns whether the line sits inside a fence. */
@@ -284,12 +286,14 @@ function stripNonFeishuTags(line: string): string {
 export function sanitizeFeishuMarkdownHTML(md: string): string {
   const lines = md.split('\n')
   let b = ''
-  let inCodeBlock = false
+  const fence = new FenceTracker()
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] as string
-    const isFence = line.trim().startsWith('```')
-    if (isFence) inCodeBlock = !inCodeBlock
-    b += inCodeBlock || isFence ? line : stripNonFeishuTags(line)
+    const inFence = fence.update(line.trim())
+    // Fence lines carry no strippable tags (pure backticks plus an info
+    // string), so a separate isFence clause is unneeded; the length-aware
+    // tracker keeps a shorter ``` run inside a longer fence as content.
+    b += inFence ? line : stripNonFeishuTags(line)
     if (i < lines.length - 1) b += '\n'
   }
   return b
@@ -331,12 +335,9 @@ export function padBoldDelimiters(md: string): string {
     return out.replaceAll(/\u0000(\d+)\u0000/g, (_, i) => masks[Number(i)] ?? '')
   }
   const lines = md.split('\n')
-  let inCodeBlock = false
+  const fence = new FenceTracker()
   return lines
-    .map((line) => {
-      if (line.trim().startsWith('```')) inCodeBlock = !inCodeBlock
-      return inCodeBlock ? line : padLine(line)
-    })
+    .map(line => fence.update(line.trim()) ? line : padLine(line))
     .join('\n')
 }
 

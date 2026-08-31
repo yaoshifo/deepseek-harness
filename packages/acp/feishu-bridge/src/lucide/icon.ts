@@ -12,21 +12,31 @@ import { iconsSpriteFull } from './sprite.js'
 // (?s) in the Go symbolRe becomes [\s\S] here; ids are [\w-].
 const symbolRe = /<symbol\s+id="([\w-]+)"([^>]*)>([\s\S]*?)<\/symbol>/g
 
-let iconIDCache: string[] | undefined
+let iconIndexCache: Map<string, string> | undefined
+
+/**
+ * Lowercased id → symbol inner markup for the whole Lucide sprite, built by
+ * one scan on first use. lucideIconSVG's exact and fuzzy passes both read
+ * this index instead of re-scanning the 550KB sprite on every call.
+ * @returns The cached index map; iteration order matches sprite order.
+ */
+function lucideIconIndex(): Map<string, string> {
+  if (iconIndexCache === undefined) {
+    iconIndexCache = new Map()
+    for (const sm of iconsSpriteFull.matchAll(symbolRe)) {
+      iconIndexCache.set((sm[1] ?? '').toLowerCase(), sm[3] ?? '')
+    }
+  }
+  return iconIndexCache
+}
 
 /**
  * All symbol ids in the Lucide sprite, lowercased (Go loadLucideIconIDs).
- * Scans the sprite once and caches; group-name icon sampling reads this.
+ * Shares the one-shot index scan; group-name icon sampling reads this.
  * @returns The cached id list.
  */
 export function lucideIconIDs(): string[] {
-  if (iconIDCache === undefined) {
-    iconIDCache = []
-    for (const sm of iconsSpriteFull.matchAll(symbolRe)) {
-      iconIDCache.push((sm[1] ?? '').toLowerCase())
-    }
-  }
-  return iconIDCache
+  return Array.from(lucideIconIndex().keys())
 }
 
 // Matches a single numeric token in an SVG path: integer, decimal, negative,
@@ -266,24 +276,23 @@ export function lucideIconSVG(name: string, strokeColor: string): string | undef
     return undefined
   }
   const stroke = strokeColor === '' ? '#1f2329' : strokeColor
-  for (const sm of iconsSpriteFull.matchAll(symbolRe)) {
-    if ((sm[1] ?? '').toLowerCase() === key) {
-      return wrapIconSVG(splitRepeatedArcsInPaths(normalizeArcFlagsInPaths(sm[3] ?? '')), stroke)
-    }
+  const index = lucideIconIndex()
+  const exact = index.get(key)
+  if (exact !== undefined) {
+    return wrapIconSVG(splitRepeatedArcsInPaths(normalizeArcFlagsInPaths(exact)), stroke)
   }
-  // Exact miss: fuzzy fallback.
+  // Exact miss: fuzzy fallback (first minimum wins; index order is sprite order).
   const threshold = fuzzyThreshold(key)
   let bestInner = ''
   let bestDist = threshold + 1
-  for (const sm of iconsSpriteFull.matchAll(symbolRe)) {
-    const id = (sm[1] ?? '').toLowerCase()
+  for (const [id, inner] of index) {
     if (absLen(id, key) > threshold) {
       continue // length gap alone already exceeds the budget; skip the work
     }
     const dist = levenshtein(key, id)
     if (dist < bestDist) {
       bestDist = dist
-      bestInner = sm[3] ?? ''
+      bestInner = inner
     }
   }
   if (bestDist <= threshold) {

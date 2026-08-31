@@ -308,6 +308,14 @@ For more info, visit [docs](https://example.com).`
     const out = markdownToSimpleHTML('> just a quote')
     expect(out).toContain('<blockquote>just a quote</blockquote>')
   })
+
+  it('treats a ``` line inside a four-backtick fence as code content', () => {
+    // A naive ``` toggle would close the block early and render the code
+    // line as prose (bold-parsed, tag-escaped).
+    const out = markdownToSimpleHTML('````md\n```\nbold **x**\n````')
+    expect(out).toContain('```\nbold **x**')
+    expect(out).not.toContain('<b>')
+  })
 })
 
 describe('splitMessageCodeFenceAware', () => {
@@ -349,5 +357,21 @@ describe('splitMessageCodeFenceAware', () => {
     for (const chunk of chunks) {
       expect(chunk.length).toBeLessThanOrEqual(maxLen)
     }
+  })
+
+  it('keeps the tracked fence open across a ``` line inside a four-backtick block', () => {
+    // A naive ``` toggle would clear the tracked fence at the inner run, so
+    // continuation chunks would neither re-open nor close the block.
+    const lines = ['````md', '```']
+    for (let i = 0; i < 12; i++) lines.push(`line ${i}: some content`)
+    lines.push('````')
+
+    const chunks = splitMessageCodeFenceAware(lines.join('\n'), 60)
+    expect(chunks.length).toBeGreaterThanOrEqual(2)
+    for (const chunk of chunks.slice(0, -1)) {
+      expect(chunk.startsWith('````md')).toBe(true)
+      expect(chunk.endsWith('\n```')).toBe(true)
+    }
+    expect(chunks.at(-1)?.endsWith('````')).toBe(true)
   })
 })

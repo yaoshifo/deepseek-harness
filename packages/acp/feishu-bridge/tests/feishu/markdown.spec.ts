@@ -44,6 +44,13 @@ describe('sanitizeFeishuMarkdownHTML', () => {
       expect(sanitizeFeishuMarkdownHTML(input)).toBe(want)
     })
   }
+
+  it('keeps stripping off inside a four-backtick fence containing a ``` line', () => {
+    // The inner ``` run is content of the ```` fence: a naive toggle would
+    // flip the state there and strip the tag on the next line as prose.
+    const md = '````md\ninner\n```\n<kept>inside</kept>\n````'
+    expect(sanitizeFeishuMarkdownHTML(md)).toBe(md)
+  })
 })
 
 describe('parseInlineMarkdown', () => {
@@ -140,6 +147,13 @@ describe('padBoldDelimiters', () => {
     expect(padBoldDelimiters(reply)).toBe(
       '**运行在你安装 mico 的本地终端（你的电脑）上，不在 mico 服务器上。** mico 服务器只负责签发凭证和协调。',
     )
+  })
+
+  it('pads prose after a four-backtick fence containing a ``` line', () => {
+    // The inner ``` run is content of the ```` fence: a naive toggle would
+    // flip the state there and leave the trailing prose line unpadded.
+    const md = '````md\ncode\n```\n````\n**glued**text'
+    expect(padBoldDelimiters(md)).toBe('````md\ncode\n```\n````\n**glued** text')
   })
 })
 

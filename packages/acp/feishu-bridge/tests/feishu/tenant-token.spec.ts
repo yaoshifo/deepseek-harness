@@ -58,4 +58,19 @@ describe('newCachedTenantTokenMinter', () => {
     await expect(mint()).resolves.toBe('tat-2')
     expect(mints).toBe(2)
   })
+
+  it('concurrent cold-start mints share one in-flight request', async () => {
+    let mints = 0
+    let release!: (r: Response) => void
+    const gate = new Promise<Response>((resolve) => { release = resolve })
+    const fetchFn = async (): Promise<Response> => {
+      mints++
+      return gate
+    }
+    const mint = newCachedTenantTokenMinter('cli_c', 's', fetchFn as typeof fetch)
+    const callers = [mint(), mint(), mint()]
+    release(jsonResponse({ tenant_access_token: 'tat-c', expire: 7200 }))
+    for (const call of callers) await expect(call).resolves.toBe('tat-c')
+    expect(mints, 'every concurrent caller shares the one in-flight mint').toBe(1)
+  })
 })

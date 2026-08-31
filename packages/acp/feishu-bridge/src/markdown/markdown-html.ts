@@ -7,6 +7,8 @@
  * @module dsh-feishu-bridge/markdown-html
  */
 
+import { FenceTracker } from '../feishu/markdown.js'
+
 const encoder = new TextEncoder()
 
 /**
@@ -125,6 +127,9 @@ export function markdownToSimpleHTML(md: string): string {
   let bqLines: string[] = []
   let inTable = false
   let tblLines: string[] = []
+  // Length-aware fence tracking: a ``` run shorter than the opening fence
+  // is code content, not a toggle.
+  const fence = new FenceTracker()
 
   // flushBlockquote merges buffered blockquote lines into a single
   // <blockquote>. Supports Obsidian-style callouts: `> [!type] Title`.
@@ -215,9 +220,13 @@ export function markdownToSimpleHTML(md: string): string {
 
   for (const [i, line] of lines.entries()) {
     const trimmed = line.trim()
+    const inFence = fence.update(trimmed)
 
-    if (trimmed.startsWith('```')) {
-      if (!inCodeBlock) {
+    // A state transition marks a fence delimiter line (open on entering,
+    // close on leaving); inside a longer fence a shorter ``` line keeps the
+    // state and falls through to the code-content branch below.
+    if (inFence !== inCodeBlock) {
+      if (inFence) {
         if (inBlockquote) {
           flushBlockquote()
           b += '\n'
@@ -332,6 +341,9 @@ export function splitMessageCodeFenceAware(text: string, maxLen: number): string
   let current: string[] = []
   let currentLen = 0
   let openFence = '' // the ``` opening line, or "" if outside code block
+  // Length-aware fence tracking: a ``` run shorter than the opening fence
+  // is content, so the tracked fence stays open across it.
+  const fence = new FenceTracker()
 
   for (const line of lines) {
     const lineLen = byteLength(line) + 1 // +1 for newline
@@ -356,10 +368,9 @@ export function splitMessageCodeFenceAware(text: string, maxLen: number): string
     current.push(line)
     currentLen += lineLen
 
-    const trimmed = line.trim()
-    if (trimmed.startsWith('```')) {
-      openFence = openFence !== '' ? '' : trimmed
-    }
+    const inFence = fence.update(line.trim())
+    if (inFence && openFence === '') openFence = line.trim()
+    else if (!inFence && openFence !== '') openFence = ''
   }
 
   if (current.length > 0) {

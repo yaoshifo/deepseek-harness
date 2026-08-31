@@ -1866,15 +1866,18 @@ export class FeishuPlatform implements Platform {
   private ensureSpinnerKeys(): Promise<void> {
     this.spinnerOnce ??= (async () => {
       const upload = async (name: string): Promise<string> => {
-        const client = await this.ensureApi()
-        if (client.uploadImage === undefined) return ''
         try {
+          // ensureApi() stays inside the try: a rejection here must not
+          // poison the once-cache for every later spinnerCfg() call.
+          const client = await this.ensureApi()
+          const uploadImage = client.uploadImage
+          if (uploadImage === undefined) return ''
           // Resolve against this module's location so the path survives the
           // tsdown bundle (lib/index.js) as well as the source tree.
           const asset = resolveSpinnerAsset(name)
           if (asset === undefined) throw new Error(`spinner asset not found (${name})`)
           const data = new Uint8Array(await readFile(asset))
-          return await client.uploadImage({ data, mimeType: 'image/gif', fileName: name })
+          return await this.withRetry(`upload spinner gif (${name})`, () => uploadImage({ data, mimeType: 'image/gif', fileName: name }))
         } catch (error) {
           console.warn(`feishu: upload spinner gif failed (${name}): ${String(error)}`)
           return ''
@@ -1882,6 +1885,10 @@ export class FeishuPlatform implements Platform {
       }
       this.thinkingImgKey = await upload('thinking.gif')
       this.executingImgKey = await upload('executing.gif')
+      // A fully failed attempt must not be pinned by the once-cache: the
+      // next spinnerCfg() retries the upload instead of running without
+      // spinners until restart. Partial success (one key) stays cached.
+      if (this.thinkingImgKey === '' && this.executingImgKey === '') this.spinnerOnce = undefined
     })()
     return this.spinnerOnce
   }
@@ -3220,7 +3227,8 @@ export class FeishuPlatform implements Platform {
   /**
    * Download a message resource's raw bytes (Go downloadResource). Downloads
    * deliberately skip the retry wrappers: a large slow download must fail
-   * fast, and the size is capped at the download ceiling.
+   * fast. An over-cap resource takes the download-failure reply path —
+   * never a silently truncated attachment that looks complete.
    */
   private async downloadMessageResource(messageID: string, fileKey: string, resType: string): Promise<Uint8Array> {
     const client = await this.ensureApi()
@@ -3228,7 +3236,10 @@ export class FeishuPlatform implements Platform {
       throw new ErrNotSupported('feishu client without download support')
     }
     const data = await client.downloadMessageResource({ messageId: messageID, fileKey, type: resType })
-    return data.subarray(0, maxFeishuDownloadBytes + 1)
+    if (data.byteLength > maxFeishuDownloadBytes) {
+      throw new Error(`feishu: download exceeds ${maxFeishuDownloadBytes} bytes`)
+    }
+    return data
   }
 
   /** Download an image resource and sniff its MIME type (Go downloadImage). */
@@ -3263,7 +3274,7 @@ export class FeishuPlatform implements Platform {
  * platform's per-message caches (one entry per message id) would otherwise
  * grow without limit on a long-running daemon.
  */
-class BoundedMap<K, V> {
+export class BoundedMap<K, V> {
   private readonly items = new Map<K, V>()
 
   get(key: K): V | undefined { return this.items.get(key) }
@@ -3287,6 +3298,32 @@ class BoundedMap<K, V> {
 function requirePreviewHandle(handle: unknown): FeishuPreviewHandle {
   if (handle instanceof FeishuPreviewHandle) return handle
   throw new Error(`feishu: invalid preview handle type ${String(handle)}`)
+}
+
+/**
+ * Consume a message-resource download stream into one byte array, aborting
+ * the transfer as soon as the running length passes
+ * {@link maxFeishuDownloadBytes}. Buffering the whole stream first (or
+ * slicing it afterwards) would hand the agent a silently truncated file
+ * that looks complete.
+ * @param stream - The SDK response's readable stream.
+ * @returns The complete resource bytes.
+ * @throws Error when the resource exceeds the download byte cap; throwing
+ *   from the loop body closes the async iterator, interrupting the
+ *   transfer instead of draining it.
+ */
+export async function collectDownloadStream(stream: AsyncIterable<unknown>): Promise<Uint8Array> {
+  const chunks: Buffer[] = []
+  let total = 0
+  for await (const chunk of stream) {
+    const buf = chunk as Buffer
+    total += buf.length
+    if (total > maxFeishuDownloadBytes) {
+      throw new Error(`feishu: download exceeds ${maxFeishuDownloadBytes} bytes`)
+    }
+    chunks.push(buf)
+  }
+  return new Uint8Array(Buffer.concat(chunks))
 }
 
 /**
@@ -3321,21 +3358,31 @@ export function newCachedTenantTokenMinter(
   fetchFn: typeof globalThis.fetch,
 ): TenantTokenMinter {
   let cached: { token: string; expiresAt: number } | undefined
+  let inflight: Promise<string> | undefined
   const mint = async (): Promise<string> => {
     if (cached !== undefined && Date.now() < cached.expiresAt) return cached.token
-    const resp = await fetchFn('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ app_id: appID, app_secret: appSecret }),
-      // Bare fetch, no withRetry wrapper: bound it like the other bare calls.
-      signal: AbortSignal.timeout(retryTiming.requestTimeout),
-    })
-    const data = await resp.json() as { tenant_access_token?: string; expire?: number }
-    const token = data.tenant_access_token ?? ''
-    if (token !== '' && typeof data.expire === 'number' && data.expire > tenantTokenRefreshSkewSec) {
-      cached = { token, expiresAt: Date.now() + (data.expire - tenantTokenRefreshSkewSec) * 1000 }
-    }
-    return token
+    // Concurrent cold-start/expiry callers share one mint: without the
+    // in-flight promise each would hit the token endpoint separately.
+    inflight ??= (async () => {
+      try {
+        const resp = await fetchFn('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ app_id: appID, app_secret: appSecret }),
+          // Bare fetch, no withRetry wrapper: bound it like the other bare calls.
+          signal: AbortSignal.timeout(retryTiming.requestTimeout),
+        })
+        const data = await resp.json() as { tenant_access_token?: string; expire?: number }
+        const token = data.tenant_access_token ?? ''
+        if (token !== '' && typeof data.expire === 'number' && data.expire > tenantTokenRefreshSkewSec) {
+          cached = { token, expiresAt: Date.now() + (data.expire - tenantTokenRefreshSkewSec) * 1000 }
+        }
+        return token
+      } finally {
+        inflight = undefined
+      }
+    })()
+    return inflight
   }
   return Object.assign(mint, {
     invalidate(): void { cached = undefined },
@@ -3518,11 +3565,7 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
         path: { message_id: messageId, file_key: fileKey },
         params: { type },
       }, await tokened(opts))
-      const chunks: Buffer[] = []
-      for await (const chunk of resp.getReadableStream()) {
-        chunks.push(chunk as Buffer)
-      }
-      return new Uint8Array(Buffer.concat(chunks))
+      return collectDownloadStream(resp.getReadableStream())
     },
     async listMessages({ chatId, sortType, pageSize, startTimeSec }) {
       const resp = await client.im.message.list({

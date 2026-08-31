@@ -26,6 +26,7 @@ import {
   sanitizeFeishuMarkdownHTML,
   sanitizeMarkdownURLs,
   isTableRow,
+  FenceTracker,
 } from './markdown.js'
 import { cardHeaderPadding, compactCardBody, type FeishuCardMap } from './card.js'
 import { noSpinner, spinnerKeyForItems, spinnerKeyForState, type SpinnerCfg } from './spinner.js'
@@ -210,7 +211,9 @@ export function inlineCodeText(s: string): string {
 
 /**
  * Format a todo-list tool input into a readable markdown list; empty string
- * when parsing fails or no todos remain.
+ * when parsing fails or no todos remain. Todo content and active forms are
+ * untrusted card markdown, so the composed list is HTML-sanitized — bare
+ * tags would trigger the 11311 card rejection.
  *
  * @param text - Raw todo tool input JSON.
  * @returns Markdown list with status icons, or empty string.
@@ -245,7 +248,10 @@ export function formatTodoWriteInput(text: string): string {
     }
     sb += '\n'
   }
-  return sb.endsWith('\n') ? sb.slice(0, -1) : sb
+  const list = sb.endsWith('\n') ? sb.slice(0, -1) : sb
+  // Sanitize after the loop's backtick neutralization: with no backticks
+  // left, no line can look like a fence opener and hide a tag from the strip.
+  return sanitizeFeishuMarkdownHTML(list)
 }
 
 /**
@@ -346,7 +352,10 @@ export function formatProgressToolInput(toolName: string, text: string): string 
     return `\`\`\`python\n${padProgressLines(t, maxProgressEntryLines)}\n\`\`\``
   }
 
-  t = preprocessFeishuMarkdown(sanitizeMarkdownURLs(t))
+  // Sanitize before any formatting: prose outside fences carries bare HTML
+  // tags that card markdown rejects with 11311; fenced lines stay verbatim
+  // inside the sanitizer.
+  t = preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(t)))
   if (t.includes('```')) return padCodeBlockContent(t, maxProgressEntryLines)
   t = padProgressLines(t, maxProgressEntryLines)
   return `\`\`\`python\n${t}\n\`\`\``
@@ -360,7 +369,10 @@ export function formatProgressToolInput(toolName: string, text: string): string 
  */
 export function formatProgressToolResult(text: string): string {
   let t = text.trim()
-  t = preprocessFeishuMarkdown(sanitizeMarkdownURLs(t))
+  // Sanitize before any formatting: prose outside fences carries bare HTML
+  // tags (error stacks, HTML-ish tool output) that card markdown rejects
+  // with 11311; fenced lines stay verbatim inside the sanitizer.
+  t = preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(t)))
   if (t.includes('```')) return padCodeBlockContent(t, maxProgressEntryLines)
   t = padProgressLines(t, maxProgressEntryLines)
   return `\`\`\`python\n${t}\n\`\`\``
@@ -432,10 +444,16 @@ export function renderProgressEntryElement(item: ProgressCardEntry, lang: string
     case 'error':
       return {
         tag: 'markdown',
-        content: `<text_tag color='red'>${progressKindLabel(item.kind, lang)}</text_tag>\n${preprocessFeishuMarkdown(sanitizeMarkdownURLs(text))}`,
+        // Sanitize the untrusted text before the trusted <text_tag> chrome
+        // is composed around it: sanitizeFeishuMarkdownHTML would strip the
+        // chrome too, and a bare tag (error stacks carry <anonymous>) would
+        // trigger the 11311 PATCH-rejection loop.
+        content: `<text_tag color='red'>${progressKindLabel(item.kind, lang)}</text_tag>\n${preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(text)))}`,
       }
     default:
-      return { tag: 'markdown', content: preprocessFeishuMarkdown(sanitizeMarkdownURLs(text)) }
+      // Same first-step HTML sanitize as the error branch: info prose
+      // carries untrusted text (agent updates, excerpts) into card markdown.
+      return { tag: 'markdown', content: preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(text))) }
   }
 }
 
@@ -618,12 +636,10 @@ export function collapseStructuralBlankLines(s: string): string {
     return n > 0 && (t.length === n || t.charAt(n) === ' ' || t.charAt(n) === '\t')
   }
   const isStructural = (l: string): boolean => isFence(l) || isHeading(l)
-  let inside = false
-  const inCode: boolean[] = lines.map((l) => {
-    const was = inside
-    if (isFence(l)) inside = !inside
-    return was
-  })
+  // Length-aware fence tracking: a ``` run shorter than the opening fence
+  // is content, so blanks after it stay protected as code blanks.
+  const fence = new FenceTracker()
+  const inCode: boolean[] = lines.map(l => fence.update(l.trim()))
   const out: string[] = []
   lines.forEach((l, i) => {
     if (l === '' && i > 0 && i + 1 < lines.length && !inCode[i]) {

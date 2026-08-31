@@ -31,6 +31,7 @@ import {
   formatTokenK,
   formatTokenRate,
   formatTurnDuration,
+  gitBranchCache,
   parseMemoryPressureFreePct,
   parseSelfReportedCtx,
   replyFooterContextText,
@@ -41,6 +42,7 @@ import {
   unionDuration,
   type UsageReport,
 } from '../../src/engine/status-footer.js'
+import { platformCacheCapacity } from '../../src/feishu/platform.js'
 import type { Interval } from '../../src/engine/status-footer.js'
 import type { Agent, AgentSession, Platform } from '../../src/core/types.js'
 import type { Card, CardElement } from '../../src/card.js'
@@ -400,6 +402,18 @@ describe('formatGitBranch', () => {
     // Within the TTL the cached branch is served even though HEAD moved.
     const cached = await formatGitBranch(dir)
     expect(cached.line).toBe('🌿 main')
+  })
+
+  it('caps the cache: worktree dirs are unique per task, so the key space is unbounded', () => {
+    // Fill past the capacity; the oldest entries must fall out so a
+    // long-running daemon holds at most the bounded set of recent dirs.
+    const dirs = Array.from({ length: platformCacheCapacity + 10 }, (_, i) => `footer-cap-dir-${i}`)
+    for (const [i, dir] of dirs.entries()) {
+      gitBranchCache.set(dir, { line: `🌿 b${i}`, files: [], at: Date.now() })
+    }
+    expect(gitBranchCache.size).toBeLessThanOrEqual(platformCacheCapacity)
+    expect(gitBranchCache.has(dirs[0] ?? '')).toBe(false)
+    expect(gitBranchCache.has(dirs[dirs.length - 1] ?? '')).toBe(true)
   })
 })
 

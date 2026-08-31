@@ -326,6 +326,9 @@ export function memoryHasContent(dir: string): boolean {
  * @returns The removed memory/ path, or '' when there was nothing to remove.
  */
 export function removeOrphanMemory(dir: string): string {
+  // '' must stay a no-op: join('', 'memory') resolves CWD-relative, and a
+  // populated memory/ under the process CWD would be rmSync'd recursively.
+  if (dir === '') return ''
   if (!memoryHasContent(dir)) return ''
   const mem = join(dir, 'memory')
   try {

@@ -155,7 +155,10 @@ export async function withTransientRetry<T>(
     await new Promise<void>((resolve) => { setTimeout(resolve, actualDelay) })
     delay = Math.min(delay * 2, retryTiming.maxDelay)
   }
-  throw new Error(`${operation} failed after ${retryTiming.maxRetries} retries: ${String(lastErr)}`)
+  // Rethrow the original error, not a wrapper: wrapping drops
+  // response.data.code, so downstream business-code classifiers (streaming
+  // PATCH fallback) would misread an exhausted rate limit as permanent.
+  throw lastErr
 }
 
 /**

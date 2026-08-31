@@ -109,15 +109,17 @@ describe('withTransientRetry', () => {
     expect(calls).toBe(1)
   })
 
-  it('gives up after max retries', async () => {
+  it('gives up after max retries and rethrows the original error shape', async () => {
     let calls = 0
     const error = await withTransientRetry('test', async () => {
       calls++
-      throw err('unexpected EOF')
+      throw apiErr(230020)
     }).catch((e: unknown) => e)
     expect(calls).toBe(retryTiming.maxRetries + 1)
-    expect(String(error)).toContain('failed after')
-    expect(String(error)).toContain('unexpected EOF')
+    // Exhaustion must rethrow the original error: wrapping it in a plain
+    // Error drops response.data.code, so downstream classifiers (streaming
+    // PATCH fallback) misread an exhausted rate limit as permanent failure.
+    expect(feishuBusinessCode(error)).toBe('230020')
   })
 
   it('respects abort cancellation during backoff', async () => {
@@ -139,7 +141,7 @@ describe('withTransientRetry', () => {
       calls++
       // Hang until the per-attempt deadline rejects the race.
       setTimeout(() => { reject(new Error('late success — should be unreachable before deadline')) }, 1000)
-    }))).rejects.toThrow('failed after')
+    }))).rejects.toThrow('context deadline exceeded')
     const elapsed = Date.now() - start
     expect(calls).toBe(retryTiming.maxRetries + 1)
     expect(elapsed).toBeLessThan(3000)
