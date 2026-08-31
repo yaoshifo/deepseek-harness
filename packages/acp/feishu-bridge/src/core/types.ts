@@ -15,6 +15,7 @@
 
 import type { ProgressCardPayload, TodoItem } from '../progress.js'
 import type { ContextSnapshotValues } from '../context/types.js'
+import type { I18n } from '../i18n/index.js'
 
 /** Sentinel AgentSessionID telling the agent to resume the most recent session. */
 export const ContinueSession = '__continue__'
@@ -1847,4 +1848,24 @@ export interface HintClickReporter {
  */
 export function asHintClickReporter(p: Platform): HintClickReporter | undefined {
   return withMethod<HintClickReporter>(p, 'setHintClickHandler')
+}
+
+/**
+ * Optional: platform localizes its own user-visible copy (perm card rebuilds,
+ * export/sendreply failure notices) through the engine's message handle —
+ * config.language reaches the engine's i18n, never the platform, so the
+ * engine hands its {@link I18n} instance over at mount.
+ */
+export interface I18nHandleReceiver {
+  setI18nHandle(handle: I18n): void
+}
+
+/**
+ * Structural check for the {@link I18nHandleReceiver} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asI18nHandleReceiver(p: Platform): I18nHandleReceiver | undefined {
+  return withMethod<I18nHandleReceiver>(p, 'setI18nHandle')
 }

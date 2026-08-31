@@ -11,8 +11,8 @@ import { mkdtemp, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { DshAgentAdapter, type DshContextLike } from '../../src/agent-dsh/adapter.js'
-import { SessionId, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { DshAgentAdapter, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.js'
+import { SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
 
 const PROJECT_DIR = '/home/hm/workspace/proj'
 
@@ -159,5 +159,107 @@ describe('DshAgentAdapter.listSessions persisted view', () => {
       { agentName: 'a', cwd: PROJECT_DIR, providers: [{ name: 'r', provider: 'p', model: 'm' }], activeProvider: 'r' },
     )
     await expect(adapter.listSessions()).resolves.toEqual([])
+  })
+
+  /**
+   * Harness for the seeded side-query paths (forkQuery /
+   * forkSessionWithProvider over oneShotQuery): a live parent feeds the seed,
+   * the created side agent parks mid-turn until the test fires its scripted
+   * answer, and the create meta's origin lands in the session header the way
+   * core/session copies it (session.spec "attaches oneshot origin from meta
+   * to the header") — so isOneshot sees what production would persist.
+   */
+  function forkSideHarness(parentEvents: SessionEvent[]): {
+    ctx: DshContextLike
+    creates: DshCreateOptionsLike[]
+    answer: (text: string) => void
+  } {
+    const creates: DshCreateOptionsLike[] = []
+    const listeners: Array<(session: { id: unknown }, event: Record<string, unknown>) => void> = []
+    const parent: DshAgentLike = {
+      id: 'cc-parent-1',
+      status: 'idle',
+      session: { events: parentEvents },
+      followup: () => {},
+      steer: () => {},
+      cancel: () => {},
+    }
+    const ctx: DshContextLike = {
+      agents: {
+        create: async (options: DshCreateOptionsLike) => {
+          creates.push(options)
+          return {
+            agent: {
+              id: 'fork-side-1',
+              status: 'running',
+              session: { events: [], header: { origin: options.meta?.origin } },
+              followup: () => {},
+              steer: () => {},
+              cancel: () => {},
+            },
+            dispose: async () => {},
+          }
+        },
+        resume: async () => { throw new Error('unused') },
+        get: (id: unknown) => (String(id) === parent.id ? parent : undefined),
+      },
+      on: (event: string, listener: (...args: never[]) => unknown) => {
+        if (event === 'session/event') {
+          listeners.push(listener as (session: { id: unknown }, event: Record<string, unknown>) => void)
+        }
+        return () => {}
+      },
+      get: () => undefined,
+    }
+    const answer = (text: string): void => {
+      for (const l of listeners) {
+        l({ id: 'fork-side-1' }, { type: 'assistant/message', seq: 0, time: 0, data: { message: { content: [{ type: 'text', text }] } } })
+        l({ id: 'fork-side-1' }, { type: 'turn/end', seq: 1, time: 0, data: { reason: { kind: 'stop' } } })
+      }
+    }
+    return { ctx, creates, answer }
+  }
+
+  /** One completed parent turn (turn/start, assistant/message, turn/end). */
+  function turn(seq: number): SessionEvent[] {
+    return [
+      { type: 'turn/start', seq, time: seq, data: {} } as SessionEvent,
+      { type: 'assistant/message', seq: seq + 1, time: seq + 1, data: {} } as SessionEvent,
+      { type: 'turn/end', seq: seq + 2, time: seq + 2, data: {} } as SessionEvent,
+    ]
+  }
+
+  it('excludes an in-flight forkQuery side session from the live view', async () => {
+    // forkQuery is a bypass side query like lightweightQuery (Go ForkQuery):
+    // its session must carry origin 'oneshot' so neither the in-flight
+    // session nor its persisted log surfaces in /list.
+    const h = forkSideHarness([...turn(0), ...turn(3)])
+    const adapter = new DshAgentAdapter(
+      h.ctx,
+      { agentName: 'a', cwd: PROJECT_DIR, providers: [{ name: 'r', provider: 'p', model: 'm' }], activeProvider: 'r' },
+    )
+    const query = adapter.forkQuery('cc-parent-1', '问题', PROJECT_DIR)
+    // One macrotask drains the create continuation, so the side session is
+    // registered in the live view before /list looks.
+    await new Promise((r) => { setTimeout(r, 0) })
+    expect((await adapter.listSessions()).map(s => s.id)).toEqual([])
+    // The origin marker changes only the persisted identity: the fork seed
+    // still rides the create, and the answer still flows back to the caller.
+    expect(h.creates[0]?.seed?.length).toBeGreaterThan(0)
+    h.answer('答')
+    await expect(query).resolves.toBe('答')
+  })
+
+  it('excludes an in-flight forkSessionWithProvider side session from the live view', async () => {
+    const h = forkSideHarness(turn(0))
+    const adapter = new DshAgentAdapter(
+      h.ctx,
+      { agentName: 'a', cwd: PROJECT_DIR, providers: [{ name: 'r', provider: 'p', model: 'm' }], activeProvider: 'r' },
+    )
+    const query = adapter.forkSessionWithProvider('cc-parent-1', '问题', 'r', PROJECT_DIR)
+    await new Promise((r) => { setTimeout(r, 0) })
+    expect((await adapter.listSessions()).map(s => s.id)).toEqual([])
+    h.answer('答')
+    await expect(query).resolves.toBe('答')
   })
 })

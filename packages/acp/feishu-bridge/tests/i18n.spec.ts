@@ -101,6 +101,24 @@ describe('lookupMessage', () => {
   })
 })
 
+describe('platform-owned copy (perm card rebuilds, export/sendreply notices)', () => {
+  it('carries the five platform strings with the pre-i18n hardcoded Chinese', () => {
+    // zh pins the exact pre-i18n literals: the platform falls back to them
+    // when no handle is wired, so the table values must stay byte-identical.
+    expect(messages[Msg.PermResultAllow]).toEqual({ en: '✅ Allowed', zh: '✅ 已允许' })
+    expect(messages[Msg.PermResultDeny]).toEqual({ en: '❌ Denied', zh: '❌ 已拒绝' })
+    expect(messages[Msg.PermResultAllowAll]).toEqual({ en: '✅ Allowed all', zh: '✅ 已全部允许' })
+    expect(messages[Msg.ExportNotFound]).toEqual({
+      en: 'Export failed: content not found; the session may have expired',
+      zh: '导出失败：未找到对应内容，可能会话已过期',
+    })
+    expect(messages[Msg.SendReplyNotFound]).toEqual({
+      en: 'Content not found; the session may have expired',
+      zh: '未找到对应内容，可能会话已过期',
+    })
+  })
+})
+
 describe('registerMessages', () => {
   /** A disposable subtable the tests clean up after themselves. */
   const subtableA = { en: { spec_sub_a: 'A' }, zh: { spec_sub_a: 'A·zh' } }

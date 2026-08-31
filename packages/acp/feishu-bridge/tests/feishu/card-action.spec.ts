@@ -11,6 +11,8 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { FeishuPlatform, type CardActionTriggerEvent, type FeishuApiClient } from '../../src/feishu/platform.js'
+import { asI18nHandleReceiver, type Platform } from '../../src/core/types.js'
+import { I18n, langEnglish } from '../../src/i18n/index.js'
 import { newCard } from '../../src/card.js'
 import { hintButtonName } from '../../src/engine/hints-panel.js'
 import type { Message } from '../../src/core/types.js'
@@ -39,6 +41,11 @@ function newPlatform(options: Partial<ConstructorParameters<typeof FeishuPlatfor
     wsStart: async () => {},
     ...options,
   })
+}
+
+/** The engine wires its own I18n instance at mount; the same instance type drives these tests. */
+function enHandle(): I18n {
+  return new I18n(langEnglish)
 }
 
 async function dispatched(
@@ -259,6 +266,84 @@ describe('onCardAction perm: in-place card update (Go feishu_dispatch.go perm br
   })
 })
 
+describe('onCardAction i18n handle (platform-owned copy localizes)', () => {
+  it('rebuilds the allow card with the localized label through the handle', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setI18nHandle(enHandle())
+    await p.start(() => {})
+    const event: CardActionTriggerEvent = {
+      action: { name: 'perm_allow' },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_i18n_1' },
+    }
+    const resp = p.onCardAction(event) as { card: { data: Record<string, unknown> } } | undefined
+    const header = (resp!.card.data as { header: { title: { content: string } } }).header
+    expect(header.title.content).toBe('✅ Allowed')
+  })
+
+  it('rebuilds the deny card with the localized label through the handle', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setI18nHandle(enHandle())
+    await p.start(() => {})
+    const event: CardActionTriggerEvent = {
+      action: { name: 'perm_deny', form_value: { perm_note: 'too broad' } },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_i18n_3' },
+    }
+    const resp = p.onCardAction(event) as { card: { data: Record<string, unknown> } } | undefined
+    const header = (resp!.card.data as { header: { title: { content: string }; template: string } }).header
+    expect(header.title.content).toBe('❌ Denied')
+    expect(header.template).toBe('red')
+  })
+
+  it('rebuilds the allow_all card with the localized label through the handle', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setI18nHandle(enHandle())
+    await p.start(() => {})
+    const event: CardActionTriggerEvent = {
+      action: { name: 'perm_allow_all' },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_i18n_4' },
+    }
+    const resp = p.onCardAction(event) as { card: { data: Record<string, unknown> } } | undefined
+    const header = (resp!.card.data as { header: { title: { content: string } } }).header
+    expect(header.title.content).toBe('✅ Allowed all')
+  })
+
+  it('the engine probes and wires the handle through asI18nHandleReceiver', async () => {
+    // The engine layer wires platforms without importing FeishuPlatform; the
+    // probe must return a setter that accepts the engine's I18n instance.
+    const p = newPlatform({ allowChat: '*' })
+    const receiver = asI18nHandleReceiver(p)
+    expect(receiver).toBeDefined()
+    receiver?.setI18nHandle(enHandle())
+    await p.start(() => {})
+    const event: CardActionTriggerEvent = {
+      action: { name: 'perm_allow' },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_i18n_5' },
+    }
+    const resp = p.onCardAction(event) as { card: { data: Record<string, unknown> } } | undefined
+    const header = (resp!.card.data as { header: { title: { content: string } } }).header
+    expect(header.title.content).toBe('✅ Allowed')
+    // A platform without the setter stays undetected.
+    expect(asI18nHandleReceiver({} as Platform)).toBeUndefined()
+  })
+
+  it('keeps the hardcoded Chinese label without a handle', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    await p.start(() => {})
+    const event: CardActionTriggerEvent = {
+      action: { name: 'perm_allow' },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: 'om_i18n_2' },
+    }
+    const resp = p.onCardAction(event) as { card: { data: Record<string, unknown> } } | undefined
+    const header = (resp!.card.data as { header: { title: { content: string } } }).header
+    expect(header.title.content).toBe('✅ 已允许')
+  })
+})
+
 describe('onCardAction export:/sendreply: (Go feishu_dispatch.go export branches)', () => {
   it('export: sends the cached content as a plan_<stamp>.md attachment', async () => {
     const p = newPlatform({ allowChat: '*' })
@@ -296,6 +381,19 @@ describe('onCardAction export:/sendreply: (Go feishu_dispatch.go export branches
     expect(sent).toEqual(['导出失败：未找到对应内容，可能会话已过期'])
   })
 
+  it('export: with missing content replies the localized expired notice', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setI18nHandle(enHandle())
+    p.setExportHandler(() => ({ text: '', ok: false }))
+    const sent: string[] = []
+    p.reply = async (_rc, content) => { sent.push(content) }
+    await p.start(() => {})
+    p.onCardAction(cardEvent({ action: 'export:om_1', value: { action: 'export:om_1', session_key: 'feishu:oc_1:ou_9' } }))
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    expect(sent).toEqual(['Export failed: content not found; the session may have expired'])
+  })
+
   it('sendreply: replies the cached full content', async () => {
     const p = newPlatform({ allowChat: '*' })
     p.setExportHandler(() => ({ text: 'full reply', ok: true }))
@@ -318,6 +416,19 @@ describe('onCardAction export:/sendreply: (Go feishu_dispatch.go export branches
     await new Promise((resolve) => { setTimeout(resolve, 20) })
 
     expect(sent).toEqual(['未找到对应内容，可能会话已过期'])
+  })
+
+  it('sendreply: with missing content replies the localized expired notice', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setI18nHandle(enHandle())
+    p.setExportHandler(() => ({ text: '', ok: false }))
+    const sent: string[] = []
+    p.reply = async (_rc, content) => { sent.push(content) }
+    await p.start(() => {})
+    p.onCardAction(cardEvent({ action: 'sendreply:om_1', value: { action: 'sendreply:om_1', session_key: 'feishu:oc_1:ou_9' } }))
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    expect(sent).toEqual(['Content not found; the session may have expired'])
   })
 })
 

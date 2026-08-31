@@ -417,6 +417,11 @@ export const ALL_MSG_KEYS = [
   'monitor_learn_list_count',
   'monitor_learn_list_count_title',
   'subtask_interrupt_not_child',
+  'perm_result_allow',
+  'perm_result_deny',
+  'perm_result_allow_all',
+  'export_not_found',
+  'sendreply_not_found',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -835,4 +840,9 @@ export const Msg = {
   MonitorLearnListCount: 'monitor_learn_list_count',
   MonitorLearnListCountTitle: 'monitor_learn_list_count_title',
   SubtaskInterruptNotChild: 'subtask_interrupt_not_child',
+  PermResultAllow: 'perm_result_allow',
+  PermResultDeny: 'perm_result_deny',
+  PermResultAllowAll: 'perm_result_allow_all',
+  ExportNotFound: 'export_not_found',
+  SendReplyNotFound: 'sendreply_not_found',
 } as const

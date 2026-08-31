@@ -1390,7 +1390,11 @@ export class DshAgentAdapter {
   /**
    * ForkQuerier: a side question against the full context of an existing
    * session without affecting the main conversation (Go ForkQuery — the
-   * persisted-log copy becomes a seedable seed from the live parent).
+   * persisted-log copy becomes a seedable seed from the live parent). The
+   * session carries origin `oneshot` like every one-shot side query: it owns
+   * no engine session, so /list hides it and memory-index injection and LLM
+   * title generation stay off while the seed and the returned answer are
+   * unaffected.
    *
    * @param sessionID - the native id of the live parent session to seed from.
    * @param question - the side question asked against the parent's context.
@@ -1398,7 +1402,7 @@ export class DshAgentAdapter {
    * @returns the answer text.
    */
   async forkQuery(sessionID: string, question: string, workDir: string): Promise<string> {
-    return this.oneShotQuery({ prompt: question, workDir, seed: this.seedForLiveParent(sessionID) })
+    return this.oneShotQuery({ prompt: question, workDir, seed: this.seedForLiveParent(sessionID), origin: 'oneshot' })
   }
 
   /**
@@ -1416,6 +1420,7 @@ export class DshAgentAdapter {
       providerName,
       workDir,
       seed: this.seedForLiveParent(sessionID),
+      origin: 'oneshot',
     })
   }
 

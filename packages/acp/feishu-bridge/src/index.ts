@@ -1043,6 +1043,15 @@ export function buildProjectAssembly(
   sharedQuestionRouting?: QuestionRouting,
   bridge?: BridgeDispatch,
 ): { engine: Engine; adapter: DshAgentAdapter; platform: FeishuPlatform } {
+  // agent.provider keys the same config's providers map, so a typo is
+  // self-contained misconfiguration: fail loud at load instead of silently
+  // resolving to no route (empty agent options, default-model drift). An
+  // unset or empty provider legitimately falls back to the first route.
+  const configuredProvider = project.agent?.provider
+  if (configuredProvider !== undefined && configuredProvider !== '' && config.providers[configuredProvider] === undefined) {
+    const available = Object.keys(config.providers).join(', ')
+    throw new Error(`feishu-bridge: project '${project.name}' agent.provider '${configuredProvider}' is not in config.providers — available: ${available === '' ? '(none)' : available}`)
+  }
   const routeNames = Object.keys(config.providers)
   const projectDataDir = join(dataRoot, project.name)
   // The engine/platform stores assume the data dirs exist (Go main created

@@ -122,6 +122,27 @@ describe('buildProjectAssembly', () => {
       warn.mockRestore()
     }
   })
+
+  it('fails loud when agent.provider names no configured provider', () => {
+    // The providers map and agent.provider sit in the same config file — a
+    // typo is self-contained misconfiguration that would otherwise silently
+    // resolve to no route (empty agent options, default-model drift), the
+    // config-side twin of the persisted-provider fallback above.
+    expect(() => buildProjectAssembly(stubContext(), config(), { ...project(), agent: { provider: 'mify-dhs' } }, '/tmp/fb-root'))
+      .toThrow(/project 'smoke-project'.*'mify-dhs'.*available: mify-dsh/)
+  })
+
+  it('wires a valid agent.provider as the active route and defaults to the first without one', () => {
+    const cfg = config()
+    cfg.providers = {
+      'mify-dsh': { route: 'mify-dsh', model: 'glm-5.2' },
+      turbo: { route: 'turbo-route', model: 'glm-5.3-flash' },
+    }
+    const named = buildProjectAssembly(stubContext(), cfg, { ...project(), agent: { provider: 'turbo' } }, '/tmp/fb-root')
+    expect(named.adapter.getActiveProvider()?.name).toBe('turbo')
+    const bare = buildProjectAssembly(stubContext(), cfg, project(), '/tmp/fb-root')
+    expect(bare.adapter.getActiveProvider()?.name).toBe('mify-dsh')
+  })
 })
 
 describe('buildProjectAssembly group naming (Go wireGroupName)', () => {

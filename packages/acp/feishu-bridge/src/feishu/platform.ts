@@ -23,6 +23,7 @@ import { readFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { MessageDedup, isOldMessage } from '../dedup.js'
 import { AllowList } from './allowlist.js'
+import { Msg, type MsgKey } from '../i18n/keys.js'
 import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.js'
 import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostImageKeys, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.js'
 import { isMonitorCommand } from '../core/types.js'
@@ -62,6 +63,19 @@ export interface FeishuReplyContext {
   messageID: string
   chatID: string
   sessionKey: string
+}
+
+/**
+ * Minimal message-lookup handle the engine wires into the platform so
+ * platform-owned user-visible copy (perm card rebuilds, export/sendreply
+ * failure notices) localizes by config.language — which reaches the engine's
+ * i18n, never the platform. Structurally compatible with the engine's
+ * `I18n` instance (i18n/index.ts): any object exposing its exact `t`/`tf`
+ * signatures satisfies this.
+ */
+export interface PlatformI18nHandle {
+  t(key: MsgKey | (string & {})): string
+  tf(key: MsgKey | (string & {}), ...args: unknown[]): string
 }
 
 /** One item of an im.message.list response, as consumed by the monitor poll path. */
@@ -570,6 +584,8 @@ export class FeishuPlatform implements Platform {
   private exportHandler: ((sessionKey: string, exportKey: string) => { text: string; ok: boolean }) | undefined
   /** Engine callback for message recalls (im.message.recalled_v1, Go recallHandler, #30). */
   private recallHandler: ((messageID: string) => void) | undefined
+  /** Engine i18n handle localizing platform-owned copy (config.language lives engine-side). */
+  private i18nHandle: PlatformI18nHandle | undefined
 
   private hintClickHandler: ((hintText: string, category: 'hints' | 'hints_with_param' | 'hints_common') => void) | undefined
 
@@ -1055,14 +1071,14 @@ export class FeishuPlatform implements Platform {
         // form_submit callbacks omit action.value; build the response from
         // the determined action.
         if (actionVal === 'perm:allow') {
-          permLabel = '✅ 已允许'
+          permLabel = this.t(Msg.PermResultAllow, '✅ 已允许')
           permColor = 'green'
         } else if (actionVal === 'perm:deny') {
-          permLabel = '❌ 已拒绝'
+          permLabel = this.t(Msg.PermResultDeny, '❌ 已拒绝')
           permColor = 'red'
           if (note !== '') permBody = `> ${note}`
         } else {
-          permLabel = '✅ 已全部允许'
+          permLabel = this.t(Msg.PermResultAllowAll, '✅ 已全部允许')
           permColor = 'green'
         }
       }
@@ -1172,7 +1188,7 @@ export class FeishuPlatform implements Platform {
         }
         const { text, ok } = this.exportHandler(sessionKey, exportKey)
         if (!ok || text === '') {
-          await this.reply(replyCtx, '导出失败：未找到对应内容，可能会话已过期')
+          await this.reply(replyCtx, this.t(Msg.ExportNotFound, '导出失败：未找到对应内容，可能会话已过期'))
           return
         }
         const namePrefix = exportKey.startsWith('plan:') ? 'plan' : 'reply'
@@ -1199,7 +1215,7 @@ export class FeishuPlatform implements Platform {
         }
         const { text, ok } = this.exportHandler(sessionKey, exportKey)
         if (!ok || text === '') {
-          await this.reply(replyCtx, '未找到对应内容，可能会话已过期')
+          await this.reply(replyCtx, this.t(Msg.SendReplyNotFound, '未找到对应内容，可能会话已过期'))
           return
         }
         for (const chunk of splitMessage(text, MaxPlatformMessageLen)) {
@@ -1306,6 +1322,29 @@ export class FeishuPlatform implements Platform {
    */
   setHintClickHandler(handler: (hintText: string, category: 'hints' | 'hints_with_param' | 'hints_common') => void): void {
     this.hintClickHandler = handler
+  }
+
+  /**
+   * Wire the engine's i18n handle so platform-owned copy localizes by
+   * config.language (the engine mounts this before any user-facing card; a
+   * platform without the wiring — unit tests, partial mounts — falls back to
+   * the hardcoded literals).
+   * @param handle - Message-lookup handle; the engine passes its I18n instance.
+   */
+  setI18nHandle(handle: PlatformI18nHandle): void {
+    this.i18nHandle = handle
+  }
+
+  /**
+   * Localize one platform-owned message. The fallback literal only serves a
+   * platform mounted without the engine wiring (tests, partial mounts) —
+   * production always has the handle, so config.language drives the copy.
+   * @param key - Message key from i18n/keys.ts.
+   * @param fallback - Pre-i18n hardcoded literal, byte-identical to the message table's zh.
+   * @returns The localized message, or the fallback without a handle.
+   */
+  private t(key: MsgKey, fallback: string): string {
+    return this.i18nHandle?.t(key) ?? fallback
   }
 
   /**

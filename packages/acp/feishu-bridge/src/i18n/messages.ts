@@ -423,4 +423,9 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   monitor_learn_list_count: { en: '**%d example(s) learned** (delete via the buttons; quote a message and send `/learn <instruction>` to add, `/learn --ignore` marks no-response)\n\n', zh: '**已学 %d 条示例**（点对应按钮删除；引用消息发 `/learn <处理要求>` 新增，`/learn --ignore` 标记无需响应）\n\n' },
   monitor_learn_list_count_title: { en: '📚 %d example(s) learned', zh: '📚 已学 %d 条示例' },
   subtask_interrupt_not_child: { en: 'Only the session that spawned this subtask can stop it', zh: '只有创建该子任务的会话才能停止它' },
+  perm_result_allow: { en: '✅ Allowed', zh: '✅ 已允许' },
+  perm_result_deny: { en: '❌ Denied', zh: '❌ 已拒绝' },
+  perm_result_allow_all: { en: '✅ Allowed all', zh: '✅ 已全部允许' },
+  export_not_found: { en: 'Export failed: content not found; the session may have expired', zh: '导出失败：未找到对应内容，可能会话已过期' },
+  sendreply_not_found: { en: 'Content not found; the session may have expired', zh: '未找到对应内容，可能会话已过期' },
 }
