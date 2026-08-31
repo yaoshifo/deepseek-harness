@@ -16,7 +16,9 @@ import { Context } from '@deepseek-ai/cordis'
 import * as workspaceContext from '@deepseek-ai/dsh-agent-instructions'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Inbox, agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
+import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import { Session, SessionId, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -90,6 +92,8 @@ describe('agentInstructions.suppress', () => {
     const ctx = new Context()
     try {
       await ctx.plugin(LocalFileSystem, { cwd: '/' })
+      await ctx.plugin(SessionProjectionRegistry)
+      ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
       const agent = stubAgent(root)
       const scope = createScope(ctx, agent)
@@ -114,6 +118,8 @@ describe('agentInstructions.suppress', () => {
     const ctx = new Context()
     try {
       await ctx.plugin(LocalFileSystem, { cwd: '/' })
+      await ctx.plugin(SessionProjectionRegistry)
+      ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
       const suppressed = stubAgent(root)
       const other = stubAgent(root)
@@ -144,6 +150,8 @@ describe('agentInstructions.suppress', () => {
     const ctx = new Context()
     try {
       await ctx.plugin(LocalFileSystem, { cwd: '/' })
+      await ctx.plugin(SessionProjectionRegistry)
+      ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
       const parent = stubAgent(root)
       const child = stubAgent(root)
@@ -175,6 +183,8 @@ describe('agentInstructions.suppress', () => {
     const ctx = new Context()
     try {
       await ctx.plugin(LocalFileSystem, { cwd: '/' })
+      await ctx.plugin(SessionProjectionRegistry)
+      ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
       const agent = stubAgent(root)
       const scope = createScope(ctx, agent)
@@ -206,6 +216,8 @@ describe('agentInstructions.suppress', () => {
       await ctx.plugin(ToolRuntime)
       await ctx.plugin(LocalFileSystem, { cwd: '/' })
       await ctx.plugin(ToolFs)
+      await ctx.plugin(SessionProjectionRegistry)
+      ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
       const agent = stubAgent(root)
       const scope = createScope(ctx, agent)
@@ -251,6 +263,8 @@ describe('agentInstructions.suppress', () => {
     const ctx = new Context()
     try {
       await ctx.plugin(LocalFileSystem, { cwd: '/' })
+      await ctx.plugin(SessionProjectionRegistry)
+      ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
       const agent = stubAgent(root)
       const dispose = ctx.get('agentInstructions')!.suppress()

@@ -452,6 +452,7 @@ describe('SessionTitleService Provider lifecycle', () => {
   it('skips automatic generation for oneshot side-query sessions, keeping the local fallback', async () => {
     const ctx = new Context()
     await ctx.plugin(SessionStore)
+    await ctx.plugin(SessionProjectionRegistry)
     await ctx.plugin(SessionTitleService, CONFIG)
     const generate = vi.fn(async (request: SessionTitleProviderRequest): Promise<SessionTitleProviderResult> => ({
       title: 'Should not run',
