@@ -16,6 +16,7 @@ import { SHELL_SETTINGS_NAMESPACE, ShellExecutor } from '@deepseek-ai/dsh-shell'
 import type { ShellExecRequest, ShellExecSpec, ShellProcess, ShellProcessRead, ShellRunResult, CollectedOutput } from '@deepseek-ai/dsh-shell'
 import type { SubprocessCollect, SubprocessHandle, SubprocessOutputReader, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-system-prompt'
 import { clampTimeout, deadline, MAX_TIMER_DELAY_MS, timeoutOf } from '@deepseek-ai/dsh-timeout'
 
 /**
@@ -37,6 +38,14 @@ const DEFAULT_GRACE_MS = 3_000
 
 /** Per-stream spill cap (the `maxSpillBytes` config). */
 const DEFAULT_MAX_SPILL_BYTES = 64 * 1024 * 1024
+
+/**
+ * Marker variable carrying the current envFile key names (names only, never
+ * values) so an `env` dump answers provenance without prompt cost. Rebuilt at
+ * each spawn, exactly like the values themselves, so appended keys appear in
+ * the marker on the next command even though the prompt section is boot-fixed.
+ */
+const DSH_ENVFILE_KEYS_VAR = 'DSH_ENVFILE_KEYS'
 
 /**
  * Parse one `KEY=VALUE` document into an environment map. The first `=`
@@ -177,6 +186,19 @@ export class LocalBashExecutor extends ShellExecutor {
         onChange: () => {},
       })
     })
+    // Model visibility for the whitelist: one boot-fixed section explains the
+    // mechanism (so a var present in the command env but absent from the daemon
+    // process environment reads as expected, not as an anomaly worth probing),
+    // while the live key names ride per-command in $DSH_ENVFILE_KEYS. Only the
+    // boot value of envFile gates the section — a settings change needs a reload.
+    ctx.inject(['systemPrompt'], (promptCtx) => {
+      if (entry.envFile === undefined) return
+      promptCtx.systemPrompt.section({
+        name: 'bash:env-file',
+        order: promptCtx.systemPrompt.getSectionOrder('BASH_ENV_FILE'),
+        text: 'Some credential-shaped environment entries come from the deployment\'s reviewed secrets whitelist (envFile). They are injected per command, so their presence in your command environment while absent from the daemon process environment is expected — use them directly and never print their values. The injected key names are listed in $DSH_ENVFILE_KEYS.',
+      })
+    })
   }
 
   /**
@@ -237,21 +259,25 @@ export class LocalBashExecutor extends ShellExecutor {
       // snapshot beats the caller's env, the envFile deployment entries, and
       // the terminal overrides; the subprocess service merges the whole map
       // after its ambient scrub. envFile is re-read at each spawn, so edits
-      // apply to the next command.
-      env: { ...ENV_OVERRIDES, ...this.envFileEntries(), ...spec.env, ...spec.dshEnv },
+      // apply to the next command. The marker carries the same layer's key
+      // names so an `env` dump self-answers provenance.
+      env: { ...ENV_OVERRIDES, ...this.envFileLayer(), ...spec.env, ...spec.dshEnv },
     }
   }
 
   /**
-   * Current envFile entries, or an empty map when none is configured. Read
-   * fresh at each spawn; an unreadable file fails that command loudly with the
-   * path rather than silently dropping the deployment's secrets.
+   * Current envFile entries plus the key-name marker, or an empty map when
+   * none is configured. Read fresh at each spawn; an unreadable file fails
+   * that command loudly with the path rather than silently dropping the
+   * deployment's secrets.
    */
-  private envFileEntries(): Record<string, string> {
+  private envFileLayer(): Record<string, string> {
     const path = this.config.envFile
     if (path === undefined) return {}
     try {
-      return parseEnvFile(readFileSync(path, 'utf8'), path)
+      const entries = parseEnvFile(readFileSync(path, 'utf8'), path)
+      const names = Object.keys(entries).join(',')
+      return names === '' ? entries : { ...entries, [DSH_ENVFILE_KEYS_VAR]: names }
     } catch (error: unknown) {
       if (error instanceof Error && error.message.startsWith('bash-local: envFile')) throw error
       throw new Error(`bash-local: envFile ${path} unreadable: ${String(error)}`)

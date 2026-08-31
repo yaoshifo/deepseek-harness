@@ -175,6 +175,17 @@ describe('the provider hand-off', () => {
     expect(calls).toHaveLength(1)
   })
 
+  // The key-name marker rides the same inherited spawn-env machinery; the
+  // prompt section (bash-local's own test covers its text) only works when a
+  // systemPrompt service is present, which this minimal setup omits.
+  it('carries the envFile key-name marker into confined commands', async () => {
+    const envFile = join(spillDir, `sandbox-env-${Math.random().toString(36).slice(2)}`)
+    writeFileSync(envFile, 'TEST_SANDBOX_ENVFILE=sandbox-value\n')
+    const { bash } = await setup({ envFile })
+    const result = await bash.run(bash.resolve({ command: 'printf %s "$DSH_ENVFILE_KEYS"' }))
+    expect(result.stdout.text).toBe('TEST_SANDBOX_ENVFILE')
+  })
+
 })
 
 describe('fail closed', () => {

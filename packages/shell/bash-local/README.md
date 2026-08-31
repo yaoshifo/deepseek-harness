@@ -55,6 +55,8 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 
 Ambient credential-shaped names (`*KEY*`, `*PASSWORD*`, `*SECRET*`, `*TOKEN*`) are scrubbed before they can reach a command — a deliberate seam rule, so harness-side secrets never leak implicitly. `envFile` is the deployment's explicit opt-in around that rule: point it at an operator-maintained `KEY=VALUE` document (typically `chmod 600`) and every command — foreground and background — runs with those entries under their original names, layered under an explicit caller entry and the trusted `DSH_*` facts, above the terminal overrides. The file is re-read at each spawn: an edited value, an appended key, or a removed line applies to the very next command, with no restart. A configured file that is missing or malformed fails plugin load naming the line; a file that disappears while the executor runs fails that one command loudly instead of silently dropping the entries. Entries are visible to the command and therefore to the model — treat the file as the reviewed whitelist of what model-run commands may hold, not as a hiding place.
 
+When a system-prompt service is composed and `envFile` is configured, the executor registers one boot-fixed prompt section (`bash:env-file`) telling the model these entries are per-command trusted injection — present in the command environment while absent from the daemon process environment, which is expected rather than an anomaly worth probing — and to never print their values. The live key names ride separately in a `DSH_ENVFILE_KEYS` marker variable, rebuilt at each spawn exactly like the values, so appended keys appear in the marker on the next command even though the section text is boot-fixed (a settings change to `envFile` moves the section only after a reload).
+
 ### Running commands
 
 Run a command with `run` and read its output from the result. A nonzero exit, a timeout, or a cancellation resolves with a descriptive result — only infrastructure failures reject. Per-call `timeoutMs` overrides are capped by the configuration, while `workdir` falls back to the configured default when unset; a trusted foreground caller can also raise the stdout capture budget for one call, while stderr and background runs keep `maxOutputBytes`. The environment is model-friendly by default: `NO_COLOR=1 TERM=dumb PAGER=cat GIT_PAGER=cat` keep pagers and ANSI colors from garbling output, and an explicit caller-provided entry still wins.
@@ -130,7 +132,7 @@ Indirectly, through `dsh-tool-bash`, which renders this executor's bounded stdou
 
 #### KV Cache effect
 
-No direct invalidation; the named consumer owns any request-prefix changes.
+The `bash:env-file` prompt section (only when `envFile` is configured) is boot-fixed request-prefix content: it adds one stable section and never changes between requests, so it invalidates nothing after the first cached request. Everything else has no direct invalidation; the named consumer owns any request-prefix changes.
 
 ## Known Limitations and Deferred Work
 

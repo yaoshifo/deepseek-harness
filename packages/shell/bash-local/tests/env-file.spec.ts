@@ -5,11 +5,23 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { LocalBashExecutor, parseEnvFile } from '@deepseek-ai/dsh-bash-local'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
+import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 
 const spillDir = mkdtempSync(join(tmpdir(), 'dsh-bash-env-file-spec-'))
 
 async function setup(config: ConstructorParameters<typeof LocalBashExecutor>[1] = {}) {
   const ctx = new Context()
+  await ctx.plugin(LocalSubprocessRuntime)
+  ;(ctx.subprocess as LocalSubprocessRuntime).internals = { spillDir }
+  await ctx.plugin(LocalBashExecutor, { graceMs: 200, ...config })
+  const bash = ctx.shell as LocalBashExecutor
+  return { ctx, bash }
+}
+
+/** Boot with the system-prompt service so prompt-section registration is observable. */
+async function setupWithPrompt(config: ConstructorParameters<typeof LocalBashExecutor>[1] = {}) {
+  const ctx = new Context()
+  await ctx.plugin(SystemPrompt)
   await ctx.plugin(LocalSubprocessRuntime)
   ;(ctx.subprocess as LocalSubprocessRuntime).internals = { spillDir }
   await ctx.plugin(LocalBashExecutor, { graceMs: 200, ...config })
@@ -104,5 +116,37 @@ describe('LocalBashExecutor envFile failure modes', () => {
     const { bash } = await setup({ envFile: path })
     rmSync(path)
     await expect(bash.run(bash.resolve({ command: 'true' }))).rejects.toThrow(/envFile .* unreadable/)
+  })
+})
+
+describe('LocalBashExecutor envFile model visibility', () => {
+  it('registers a prompt section and injects the key-name marker when envFile is configured', async () => {
+    const { ctx, bash } = await setupWithPrompt({ envFile: envFile({ TEST_ENVFILE_SECRET: 'alpha' }) })
+    const assembly = await ctx.systemPrompt.assemble()
+    const section = assembly.sections.find(s => s.name === 'bash:env-file')
+    expect(section?.text).toContain('whitelist')
+    expect(section?.text).toContain('daemon process environment')
+    expect(section?.text).toContain('never print')
+
+    const result = await bash.run(bash.resolve({ command: 'printf %s "$DSH_ENVFILE_KEYS"' }))
+    expect(result.stdout.text).toBe('TEST_ENVFILE_SECRET')
+  })
+
+  it('registers no section and no marker without envFile (behavior unchanged)', async () => {
+    const { ctx, bash } = await setupWithPrompt()
+    const assembly = await ctx.systemPrompt.assemble()
+    expect(assembly.sections.find(s => s.name === 'bash:env-file')).toBeUndefined()
+    const result = await bash.run(bash.resolve({ command: 'printf %s "${DSH_ENVFILE_KEYS:-absent}"' }))
+    expect(result.stdout.text).toBe('absent')
+  })
+
+  it('appended keys appear in the marker on the next command (names re-read per spawn)', async () => {
+    const path = envFile({ TEST_ENVFILE_FIRST: '1' })
+    const { bash } = await setupWithPrompt({ envFile: path })
+    const first = await bash.run(bash.resolve({ command: 'printf %s "$DSH_ENVFILE_KEYS"' }))
+    expect(first.stdout.text).toBe('TEST_ENVFILE_FIRST')
+    writeFileSync(path, 'TEST_ENVFILE_FIRST=1\nTEST_ENVFILE_SECOND=2\n')
+    const second = await bash.run(bash.resolve({ command: 'printf %s "$DSH_ENVFILE_KEYS"' }))
+    expect(second.stdout.text).toBe('TEST_ENVFILE_FIRST,TEST_ENVFILE_SECOND')
   })
 })

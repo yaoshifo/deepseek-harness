@@ -24,6 +24,10 @@ cc-connect 时代的 secret 架构（见 `~/.config/secrets-management-guide.md`
 
 条目对命令可见即对模型可见——与 cc-connect 同级（`printenv`/`echo $X` 从来拦不住，deny 规则拦的只是读文件）。因此部署把该文件当评审白名单：feishu-bridge 部署指向专用 `~/.config/agent-secrets.env`（文件即白名单），而不是全量 `secrets.env`。新凭据消费方的选择口诀是「谁发起带凭据的调用」：harness 发起的调用走配置引用（`apiKeyEnv`、MCP headers）；harness 替模型代跑的专用工具在自己的 spawn 边界做逐子进程注入（lark-cli 工具）；只有 agent 的任意命令才落到 envFile。工具式安全的来源是面窄——窄面工具不提供能回显凭据的动词——因此不存在「带凭据跑任意命令」的通用包装工具：那是换皮的 envFile，安全收益为零。真正的隔离（模型完全看不到值）只能是 harness 侧消费（`apiKeyEnv`、MCP headers）——新增集成优先走各自的 seam，而不是往 bash env 里塞。
 
+### 白名单的模型可见性
+
+配置了 `envFile` 且组合了 system-prompt 服务时，执行器注册一个 boot 固定小节（`bash:env-file`）：声明这些条目是逐命令的受信注入、在 daemon 进程环境中缺席属预期、值永不回显；当前键名搭载在每次 spawn 重建的 `DSH_ENVFILE_KEYS` 标记里。动机：2026-08-31 dida 群会话在首次使用前花了十条工具调用考古注入机制（「tool-shell 有、daemon 无」）——预先声明直接回答来源问题。已否决备选：`ShellExecutor` seam 方法 + tool-bash 描述行（为一句话跨三个包）；按会话键的首触结果注记（按需付费，但引入运行时状态、逐命令匹配与结果文本改写，而静态小节经前缀缓存摊薄后成本近零）。
+
 ## Alternatives considered
 
 - **shellEnv 贡献者插件**：走受信 `DSH_*` 注册表，但键名强制前缀改写（存量脚本 `os.getenv("VOLCENGINE_ACCESS_KEY")` 全要改名）、键集注册时固定（新增键要 `/reload`）、还要新包全套仪式。UX 全面劣于 envFile。
