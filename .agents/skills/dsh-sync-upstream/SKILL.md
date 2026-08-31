@@ -43,13 +43,14 @@ dev 上 `git merge master`。用 merge 不用 rebase：保留 dev 已推送的�
 
 ### 4. 依赖、再生成与 typecheck
 
-`CI=true pnpm install`（CI=true 必带，见 Gotcha 1）→ **跑全部五个生成器** → `pnpm run typecheck`（会顺带构建部分包，属正常）。
+`CI=true pnpm install`（CI=true 必带，见 Gotcha 1）→ **跑全部六个生成器** → `pnpm run typecheck`（会顺带构建部分包，属正常）。lockfile 若因 fork 包缺依赖被 frozen 拒绝，加 `--no-frozen-lockfile` 让其收敛（见 Gotchas 末条）。
 
-生成产物（api-catalog、config-catalog、tool-catalog、图文档、client slot-catalog）的冲突解法是取一侧后靠再生成收敛，fork 本地包会自动回到生成结果：
+生成产物（api-catalog、config-catalog、persistence-catalog、tool-catalog、图文档、client slot-catalog）的冲突解法是取一侧后靠再生成收敛，fork 本地包会自动回到生成结果：
 
 ```sh
 pnpm run gen-cordis-api        # packages/extensions/tool-cordis/src/api-catalog.ts
 pnpm run gen-config-catalog    # docs/config-catalog.md
+pnpm run gen-persistence-catalog  # docs/persistence-catalog.md + known-event-types.ts（漏跑会静默丢 fork 事件字段，如 approval/decided 的 note）
 pnpm run gen-tool-catalog      # docs/tool-catalog.md
 pnpm run gen-doc-graphs        # docs/ 事件矩阵等 8 个图文档
 pnpm run gen-client-catalog    # cordis-client-runner 的 slot-catalog（易漏，漏了到 doc-sync 才炸）
@@ -64,6 +65,8 @@ pnpm run gen-client-catalog    # cordis-client-runner 的 slot-catalog（易漏�
 归纳 dev 改动面包：`git diff --name-only master...dev | awk -F/ '{print $1"/"$2}' | sort | uniq -c | sort -rn`，对改动面包跑 `pnpm vitest run <packages/... 路径>`。上游那批提交的上游 CI 已验证过，风险面只在 fork 改动与上游改动的交叠处。
 
 fork 本地包（feishu-bridge adapter、feishu-bridge-chatroom 等）用 `*Like` 结构接口和手写假件消费上游服务，typecheck 和单测都可能看不见上游服务 API 面的删除或改名——上游合入后额外做一遍 seam 自查：列出 fork seam 对上游服务的调用面，再到上游包源码逐一确认仍存在；并跑 seam 的真组合测试（组合真实上游服务而非假件的那些用例，如 `pnpm vitest run packages/acp/feishu-bridge/tests/agent-dsh/adapter.spec.ts -t 'real UserQuestionService'`）。典型反例见 2026-08-29 oc_cd00410d 事故：上游删 `userQuestions.registerProvider` 改 waterfall，adapter 仍调旧 API，假件全绿，重建重启后全 daemon 追问卡片 NO_PROVIDER。
+
+**inject 硬化自查（固定项）**：上游持续给插件加 `inject`/`static inject` 硬依赖（2026-08-31 批：AgentLoop、agent-instructions、session-title、plan-mode 全部要求 `sessionProjections`）。上游只更新自己的测试，fork 测试的组合缺依赖时插件静默不挂载（症状：`no agent factory registered`、`ctx.get(...)` undefined、真组合测试超时）。修法：组合里补 `await ctx.plugin(SessionProjectionRegistry)`；不挂 AgentLoop 的组合还要 `ctx.sessionProjections.register(turnBoundaryProjectionDefinition)`（定义从 `@deepseek-ai/dsh-agent-loop` 导入）。对照上游同场景测试（如 `grep -rn 'SessionProjectionRegistry' packages/experimental/agent-team/tests/`）抄挂载序列即可。
 
 **成功标准**：全绿且 seam 调用面逐项在上游源码命中；失败走第 6 步分流，不要直接开修。
 
@@ -94,3 +97,6 @@ fork 本地包（feishu-bridge adapter、feishu-bridge-chatroom 等）用 `*Like
 - 规则：fork 二次开发五原则——同步节奏封顶（上游重构期 2–3 天、平静期至多一周、待合超过 ~800 提交立即同步）、改动优先落 fork 本地包（必须动上游缝时收敛文件数、稳定后提上游）、不编辑上游拥有的双语 README 正文、不偏离上游工具链（构建/测试基础设施逐字一致）、吸收操作纪律（中途 `pnpm add` 后必须全量 `CI=true pnpm install` 复核、不熟悉的失败先开纯净 upstream worktree 归因、每批冲突解完即跑 typecheck）。完整决策与理由见 Agent Note `implemented/process/2026-08-29-fork-secondary-development-principles.md`。
 - 规则：修复一律新提交，不 amend、不混入 merge commit（仓库规约：优先新提交）。
 - 规则：push 是外部可见操作，确认后再推；`origin/master` 每次一并推。
+- 症状：pre-commit 配对门逐个暴露结构分歧，`--write` 后提交又冒新的（实例：2026-08-31 三轮才过）→ 做法：这是正常循环不是修不完——en 侧重生成后 zh 缺 fork 新字段/新事件行（fork 提交者加了源码没回填中文侧）。一次把所有代码块 diff 出来（按 ```` ```ts config-catalog ```` 围栏正则逐块比）批量回填，比逐轮提交试探快；表格类（事件矩阵）行内容是原样链接，直接搬 en 行 + 保留 zh 翻译表头即可。
+- 症状：测试报 `posix_openpt failed: Operation not permitted` → 做法：会话沙箱拒绝 PTY 分配（与 HOME mkdtemp 同类），放权原样重跑该文件即绿，非回归。
+- 症状：`CI=true pnpm install` 报 `ERR_PNPM_OUTDATED_LOCKFILE`（fork 本地包依赖不在上游侧 lockfile 里）→ 做法：改用 `CI=true pnpm install --no-frozen-lockfile` 让 lockfile 收敛到合并后的 package.json 集合，CI=true 仍保留以避开无 TTY 确认。
