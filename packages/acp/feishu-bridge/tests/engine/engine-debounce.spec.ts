@@ -18,7 +18,7 @@ import type { Platform } from '../../src/core/types.js'
  * drained turn terminates instead of parking on the idle watchdog. */
 function newResultingQueuingSession(id: string): ReturnType<typeof newQueuingSession> {
   const s = newQueuingSession(id)
-  const origSend = s.send
+  const origSend = s.send.bind(s)
   s.send = async (prompt: string) => {
     await origSend(prompt, [], [])
     s.channel.push({ type: 'result', content: 'done', done: true })
@@ -90,7 +90,7 @@ describe('DebounceWaitAndMerge', () => {
     expect(elapsed, '5ms timer must fire well inside the 300ms window').toBeLessThan(150)
 
     await withTimeout(drainP, 2000, 'drain did not finish')
-    sess.close()
+    void sess.close()
   })
 
   it('merges a message queued inside the window into the lead turn', async () => {
@@ -104,7 +104,7 @@ describe('DebounceWaitAndMerge', () => {
     setTimeout(() => { state.pendingMessages.push(queuedMsg(p, 'second message')) }, 30)
 
     await withTimeout(drainP, 3000, 'drain did not finish')
-    sess.close()
+    void sess.close()
 
     expect(sess.sendCalls, 'both messages share one lead turn').toHaveLength(1)
     expect(sess.sendCalls[0]).toContain('first message')

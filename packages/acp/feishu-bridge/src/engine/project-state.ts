@@ -219,7 +219,7 @@ export class ProjectStateStore {
         console.error(`project_state: ${this.storePath} is not a state object; starting empty`)
         return
       }
-      this.state = parsed as ProjectStateData
+      this.state = parsed
     } catch (error) {
       console.error(`project_state: failed to unmarshal ${this.storePath}: ${String(error)}`)
     }

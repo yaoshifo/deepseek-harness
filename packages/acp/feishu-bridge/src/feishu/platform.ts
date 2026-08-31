@@ -2668,7 +2668,7 @@ export class FeishuPlatform implements Platform {
     const out: Message[] = []
     let latestSec = 0
     for (const m of items) {
-      const t = msgTimeSec(m.createTime ?? '')
+      const t = msgTimeSec(m.createTime)
       if (t > latestSec) latestSec = t
       const msg = await this.pollItemToMessage(m, chatID)
       if (msg !== undefined) out.push(msg)

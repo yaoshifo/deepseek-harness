@@ -20,7 +20,7 @@ describe('newCachedTenantTokenMinter', () => {
       mints++
       return jsonResponse({ tenant_access_token: 'tat-p', expire: 7200 })
     }
-    const mint = newCachedTenantTokenMinter('cli_x', 's', fetchFn as typeof fetch)
+    const mint = newCachedTenantTokenMinter('cli_x', 's', fetchFn)
     await expect(mint()).resolves.toBe('tat-p')
     await expect(mint()).resolves.toBe('tat-p')
     expect(mints, 'the quoted chain minted one token for both messages').toBe(1)
@@ -32,7 +32,7 @@ describe('newCachedTenantTokenMinter', () => {
       mints++
       return jsonResponse({ tenant_access_token: 'tat-p' })
     }
-    const mint = newCachedTenantTokenMinter('cli_y', 's', fetchFn as typeof fetch)
+    const mint = newCachedTenantTokenMinter('cli_y', 's', fetchFn)
     await mint()
     await mint()
     expect(mints, 'no declared lifetime → no reuse').toBe(2)
@@ -40,7 +40,7 @@ describe('newCachedTenantTokenMinter', () => {
 
   it('keeps minting when the response carries no token', async () => {
     const fetchFn = async (): Promise<Response> => jsonResponse({})
-    const mint = newCachedTenantTokenMinter('cli_z', 's', fetchFn as typeof fetch)
+    const mint = newCachedTenantTokenMinter('cli_z', 's', fetchFn)
     await expect(mint()).resolves.toBe('')
   })
 
@@ -50,7 +50,7 @@ describe('newCachedTenantTokenMinter', () => {
       mints++
       return jsonResponse({ tenant_access_token: `tat-${mints}`, expire: 7200 })
     }
-    const mint = newCachedTenantTokenMinter('cli_x', 's', fetchFn as typeof fetch)
+    const mint = newCachedTenantTokenMinter('cli_x', 's', fetchFn)
     await expect(mint()).resolves.toBe('tat-1')
     await expect(mint()).resolves.toBe('tat-1')
     expect(mints).toBe(1)

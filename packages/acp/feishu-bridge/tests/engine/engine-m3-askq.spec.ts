@@ -380,7 +380,7 @@ describe('interactive slot keys (cron new-per-run)', () => {
     expect(handled).toBe(false)
     const settled = await Promise.race([
       decision.then(() => 'settled'),
-      new Promise((r) => { setTimeout(() => r('pending'), 50) }),
+      new Promise((r) => { setTimeout(() => { r('pending') }, 50) }),
     ])
     expect(settled, 'the parked ask must not settle from a bare-key free-text reply').toBe('pending')
   })

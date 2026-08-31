@@ -907,7 +907,7 @@ export class StreamPreview {
         // optimistic claim here or finish() would skip the final PATCH for
         // content the card never received.
         if (this.lastSentText === sentText) this.lastSentText = prevLastSentText
-        if (this.lastSentViaUpdate) this.lastSentViaUpdate = prevLastSentViaUpdate
+        this.lastSentViaUpdate = prevLastSentViaUpdate
       }
       return
     }

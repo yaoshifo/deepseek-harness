@@ -217,7 +217,7 @@ describe('DshAgentAdapter', () => {
     const session = (await a.startSession('', { sessionKey: 'feishu:oc_z2:ou_z' })) as DshAgentSession
     const id = session.currentSessionID()
 
-    h.disposeAgent(h.agents.find(ag => String(ag.id) === id)!)
+    h.disposeAgent(h.agents.find(ag => ag.id === id)!)
 
     expect((await a.listSessions()).some(s => s.id === id), 'vanished agent must not list as live').toBe(false)
   })
