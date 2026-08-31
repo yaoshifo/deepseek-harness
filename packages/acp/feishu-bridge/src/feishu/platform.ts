@@ -895,7 +895,7 @@ export class FeishuPlatform implements Platform {
       this.dispatch(sessionKey, messageID, userID, chatID, chatType, '', '', replyCtx, isSpawned, '', false, false, [], [file])
     } catch (err) {
       console.error(`${this.tag()}: download file failed: ${String(err)}`)
-      await this.replyDownloadError(replyCtx, '文件', fileBody.file_name ?? '')
+      await this.replyDownloadError(replyCtx, this.t(Msg.DownloadKindFile, '文件'), fileBody.file_name ?? '')
     }
   }
 
@@ -923,7 +923,7 @@ export class FeishuPlatform implements Platform {
       this.dispatch(sessionKey, messageID, userID, chatID, chatType, '', '', replyCtx, isSpawned, '', false, false, [image], [])
     } catch (err) {
       console.error(`${this.tag()}: download image failed: ${String(err)}`)
-      await this.replyDownloadError(replyCtx, '图片', '')
+      await this.replyDownloadError(replyCtx, this.t(Msg.DownloadKindImage, '图片'), '')
     }
   }
 
@@ -3294,15 +3294,22 @@ export class FeishuPlatform implements Platform {
   /**
    * Notify the user that an attachment download failed (Go replyDownloadError)
    * — directly through reply, never via the agent handler, so a download
-   * failure must not wake the agent. Hard-coded Chinese (the primary user
-   * language); upgrade path: an i18n handle on the platform.
+   * failure must not wake the agent. Localized through the i18n handle; the
+   * Chinese text stays as the handle-less fallback (tests and any platform
+   * that never receives a handle).
    * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
-   * @param kind - Attachment kind label shown to the user.
+   * @param kind - Localized attachment kind label shown to the user.
    * @param name - Attachment file name; empty omits it from the message.
    */
   async replyDownloadError(replyCtx: unknown, kind: string, name: string): Promise<void> {
-    const label = name === '' ? kind : `${kind}「${name}」`
-    const msg = `⚠️ ${label}下载失败：可能超时或文件过大。请重试，或拆分后上传，或直接发送服务器上的文件路径。`
+    const fallback = name === ''
+      ? `⚠️ ${kind}下载失败：可能超时或文件过大。请重试，或拆分后上传，或直接发送服务器上的文件路径。`
+      : `⚠️ ${kind}「${name}」下载失败：可能超时或文件过大。请重试，或拆分后上传，或直接发送服务器上的文件路径。`
+    const msg = this.i18nHandle === undefined
+      ? fallback
+      : name === ''
+        ? this.i18nHandle.tf(Msg.DownloadFailed, kind)
+        : this.i18nHandle.tf(Msg.DownloadFailedNamed, kind, name)
     try {
       await this.reply(replyCtx, msg)
     } catch (err) {

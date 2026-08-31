@@ -1032,6 +1032,21 @@ function applyProjectStateOverride(adapter: DshAgentAdapter, configured: string,
  * @param bridge - The feishuBridge dispatch face the engine and adapter dispatch through (undefined = bare, listener-less).
  * @returns The engine and the adapter owning its agents.
  */
+/**
+ * The load-time error for a provider reference that names no configured
+ * route: the reference and the providers map sit in the same config file,
+ * so a typo is self-contained misconfiguration and fails loud.
+ * @param config - The bridge config holding the providers map.
+ * @param projectName - The project whose config row carries the bad reference.
+ * @param field - Dotted path of the offending field (for example `agent.provider`).
+ * @param value - The referenced provider name.
+ * @returns The error message text.
+ */
+function providerRefError(config: FeishuBridgeConfig, projectName: string, field: string, value: string): string {
+  const available = Object.keys(config.providers).join(', ')
+  return `feishu-bridge: project '${projectName}' ${field} '${value}' is not in config.providers — available: ${available === '' ? '(none)' : available}`
+}
+
 export function buildProjectAssembly(
   ctx: Context,
   config: FeishuBridgeConfig,
@@ -1049,8 +1064,22 @@ export function buildProjectAssembly(
   // unset or empty provider legitimately falls back to the first route.
   const configuredProvider = project.agent?.provider
   if (configuredProvider !== undefined && configuredProvider !== '' && config.providers[configuredProvider] === undefined) {
-    const available = Object.keys(config.providers).join(', ')
-    throw new Error(`feishu-bridge: project '${project.name}' agent.provider '${configuredProvider}' is not in config.providers — available: ${available === '' ? '(none)' : available}`)
+    throw new Error(providerRefError(config, project.name, 'agent.provider', configuredProvider))
+  }
+  // Side-query provider references share the same self-contained typo class:
+  // a bad name falls back to the active route silently (wrong model for the
+  // naming/render/predict/summary/triage forks).
+  const sideProviderRefs: Array<[string, string | undefined]> = [
+    ['groupName.provider', project.groupName?.provider],
+    ['planRender.provider', project.planRender?.provider],
+    ['predictNext.provider', project.predictNext?.provider],
+    ['turnSummary.provider', project.turnSummary?.provider],
+    ['monitor.triageProvider', project.monitor?.triageProvider],
+  ]
+  for (const [field, value] of sideProviderRefs) {
+    if (value !== undefined && value !== '' && config.providers[value] === undefined) {
+      throw new Error(providerRefError(config, project.name, field, value))
+    }
   }
   const routeNames = Object.keys(config.providers)
   const projectDataDir = join(dataRoot, project.name)

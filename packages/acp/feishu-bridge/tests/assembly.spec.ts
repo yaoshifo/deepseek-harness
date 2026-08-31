@@ -132,6 +132,18 @@ describe('buildProjectAssembly', () => {
       .toThrow(/project 'smoke-project'.*'mify-dhs'.*available: mify-dsh/)
   })
 
+  it('fails loud when a side provider reference names no configured provider', () => {
+    // groupName/planRender/predictNext/turnSummary/monitor.triageProvider
+    // flow into side forks; a typo there falls back to the active route just
+    // as silently as agent.provider did.
+    expect(() => buildProjectAssembly(stubContext(), config(), { ...project(), groupName: { provider: 'mify-dhs' } }, '/tmp/fb-root'))
+      .toThrow(/groupName\.provider.*'mify-dhs'.*available: mify-dsh/)
+    expect(() => buildProjectAssembly(stubContext(), config(), { ...project(), monitor: { triageProvider: 'nope' } }, '/tmp/fb-root'))
+      .toThrow(/monitor\.triageProvider.*'nope'.*available: mify-dsh/)
+    // An empty value legitimately means "use the active route".
+    expect(() => buildProjectAssembly(stubContext(), config(), { ...project(), groupName: { provider: '' } }, '/tmp/fb-root')).not.toThrow()
+  })
+
   it('wires a valid agent.provider as the active route and defaults to the first without one', () => {
     const cfg = config()
     cfg.providers = {
@@ -158,11 +170,16 @@ describe('buildProjectAssembly group naming (Go wireGroupName)', () => {
   })
 
   it('honors an explicit groupName section', () => {
+    const cfg = config()
+    cfg.providers = {
+      'mify-dsh': { route: 'mify-dsh', model: 'glm-5.2' },
+      turbo: { route: 'turbo-route', model: 'glm-5.3-flash' },
+    }
     const proj = {
       ...project(),
       groupName: { provider: 'turbo', timeoutSec: 45, prompt: '起个短名', setAvatar: false },
     }
-    const { engine } = buildProjectAssembly(stubContext(), config(), proj, '/tmp/fb-root')
+    const { engine } = buildProjectAssembly(stubContext(), cfg, proj, '/tmp/fb-root')
     expect(engine.groupNameEnabled).toBe(true)
     expect(engine.groupNameProvider).toBe('turbo')
     expect(engine.groupNameTimeout).toBe(45_000)

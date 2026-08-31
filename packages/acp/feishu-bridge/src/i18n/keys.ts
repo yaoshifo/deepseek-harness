@@ -422,6 +422,10 @@ export const ALL_MSG_KEYS = [
   'perm_result_allow_all',
   'export_not_found',
   'sendreply_not_found',
+  'download_failed',
+  'download_failed_named',
+  'download_kind_file',
+  'download_kind_image',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -845,4 +849,8 @@ export const Msg = {
   PermResultAllowAll: 'perm_result_allow_all',
   ExportNotFound: 'export_not_found',
   SendReplyNotFound: 'sendreply_not_found',
+  DownloadFailed: 'download_failed',
+  DownloadFailedNamed: 'download_failed_named',
+  DownloadKindFile: 'download_kind_file',
+  DownloadKindImage: 'download_kind_image',
 } as const

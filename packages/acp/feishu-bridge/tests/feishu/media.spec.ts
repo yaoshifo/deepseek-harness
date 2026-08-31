@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { FeishuPlatform, collectDownloadStream, type FeishuApiClient, type FeishuReceiveEvent } from '../../src/feishu/platform.js'
 import { detectFeishuFileType, detectMimeType, maxFeishuDownloadBytes } from '../../src/feishu/media.js'
+import { I18n, langEnglish } from '../../src/i18n/index.js'
 import type { Message } from '../../src/core/types.js'
 
 // Ported from cc-connect platform/feishu/feishu_media_test.go: a failed
@@ -54,6 +55,59 @@ describe('replyDownloadError', () => {
     expect(replies[0]!.msgType).toBe('text')
     expect(replies[0]!.content).toContain('DCE.zip')
     expect(replies[0]!.content).toContain('下载失败')
+  })
+
+  it('localizes the named failure through the i18n handle', async () => {
+    const replies: Array<{ messageId: string; msgType: string; content: string }> = []
+    const api: FeishuApiClient = {
+      async reply(params) {
+        replies.push(params)
+        return { messageId: 'om_ok' }
+      },
+      async create() {
+        return { messageId: 'om_ok' }
+      },
+    }
+    const p = newPlatform(api)
+    p.setI18nHandle(new I18n(langEnglish))
+
+    await p.replyDownloadError(
+      { messageID: 'om_root', chatID: 'oc_chat', sessionKey: 'feishu:oc_chat' },
+      'file',
+      'DCE.zip',
+    )
+
+    expect(replies).toHaveLength(1)
+    // The text message body is JSON-encoded, so the quoted name arrives escaped.
+    expect(replies[0]!.content).toContain('Failed to download the file')
+    expect(replies[0]!.content).toContain('DCE.zip')
+    expect(replies[0]!.content).not.toContain('下载失败')
+  })
+
+  it('localizes the kind label on the dispatch path', async () => {
+    const replies: Array<{ messageId: string; msgType: string; content: string }> = []
+    const api: FeishuApiClient = {
+      async reply(params) {
+        replies.push(params)
+        return { messageId: 'om_ok' }
+      },
+      async create() {
+        return { messageId: 'om_ok' }
+      },
+      async downloadMessageResource() {
+        throw new Error('boom')
+      },
+    }
+    const p = newPlatform(api)
+    p.setI18nHandle(new I18n(langEnglish))
+    await p.start(() => {})
+
+    p.onMessage(fileEvent())
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    expect(replies).toHaveLength(1)
+    expect(replies[0]!.content).toContain('Failed to download the file')
+    expect(replies[0]!.content).not.toContain('下载失败')
   })
 })
 

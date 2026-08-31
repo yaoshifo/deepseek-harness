@@ -428,4 +428,8 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   perm_result_allow_all: { en: '✅ Allowed all', zh: '✅ 已全部允许' },
   export_not_found: { en: 'Export failed: content not found; the session may have expired', zh: '导出失败：未找到对应内容，可能会话已过期' },
   sendreply_not_found: { en: 'Content not found; the session may have expired', zh: '未找到对应内容，可能会话已过期' },
+  download_failed: { en: '⚠️ Failed to download the %s: it may have timed out or be too large. Retry, upload it in smaller parts, or send the server-side file path instead.', zh: '⚠️ %s下载失败：可能超时或文件过大。请重试，或拆分后上传，或直接发送服务器上的文件路径。' },
+  download_failed_named: { en: '⚠️ Failed to download the %s "%s": it may have timed out or be too large. Retry, upload it in smaller parts, or send the server-side file path instead.', zh: '⚠️ %s「%s」下载失败：可能超时或文件过大。请重试，或拆分后上传，或直接发送服务器上的文件路径。' },
+  download_kind_file: { en: 'file', zh: '文件' },
+  download_kind_image: { en: 'image', zh: '图片' },
 }
