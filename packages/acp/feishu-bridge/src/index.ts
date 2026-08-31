@@ -54,7 +54,7 @@ import { registerSessionMiscCommands } from './engine/session-misc.js'
 import { getProviderModel } from './engine/provider.js'
 import { renderSkillName } from './engine/plan-render.js'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.js'
-import type { StreamPreviewCfg } from './streaming.js'
+import type { StreamPreviewCfg } from './streaming.ts'
 
 export const name = 'feishu-bridge'
 
