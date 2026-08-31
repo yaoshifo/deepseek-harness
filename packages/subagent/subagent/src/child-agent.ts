@@ -223,19 +223,29 @@ export function applyChildComposition(
   if (composition.toolFilter !== undefined) childCtx.tools.restrict(composition.toolFilter)
 }
 
+/** Once-per-process guard: one absent-service warning covers a whole daemon run. */
+let workspaceMcpAbsentWarned = false
+
 /**
  * Mount the child's cwd-scoped `.mcp.json` servers (directory MCP discovery)
  * at the end of the child's creation window, outside every tool mask the
  * child composition installed — the same exemption semantics the bridge
  * adapter's outer wrapper gives top-level sessions. An absent service means
- * the deployment did not include the feature: skip silently, because the
- * entry composition points (bridge adapter, session controller) already warn
- * once per process.
+ * the deployment did not include the feature: warn once per process (the
+ * entry composition points warn the same way), then skip — a child that
+ * mounts nothing is a deployment choice, not a fault.
  * @param childCtx - the unpublished child agent's scoped creation context.
  */
 export async function mountDirectoryMcp(childCtx: Context): Promise<void> {
   const service = childCtx.get('mcpWorkspace')
-  if (service !== undefined) await service.mount(childCtx)
+  if (service === undefined) {
+    if (!workspaceMcpAbsentWarned) {
+      workspaceMcpAbsentWarned = true
+      console.warn('subagent child: the mcp-workspace service is not mounted; directory .mcp.json discovery is inactive for child agents (add the mcp-workspace plugin row to enable it)')
+    }
+    return
+  }
+  await service.mount(childCtx)
 }
 
 /** Policy seeded onto a child session's log at the delegation boundary. */
