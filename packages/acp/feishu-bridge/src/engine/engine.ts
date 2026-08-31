@@ -141,7 +141,7 @@ import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
-import { asCompletionNotifier, asChatPhasePainter, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.js'
+import { asCompletionNotifier, asChatPhasePainter, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.js'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.js'
 import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.js'
 import { renderHelpGroupCard } from './misc-commands.js'
@@ -162,6 +162,7 @@ import {
   defaultReplyPreRenderLen,
   displayReplyText,
   launchPlanRender,
+  removeRenderedTemp,
   renderAndDeliverReply,
   sendPlanCard,
   shouldDiscardPreviewBeforeReplyRender,
@@ -276,25 +277,43 @@ const stateMapCapacity = 128
  * message ids and the idle reaper is off by default, so an unbounded map
  * grows for the life of an active chat. Wrapping happens on assignment (see
  * InteractiveState's satellite-map accessors) so plain `new Map()` writers
- * are bounded too.
+ * are bounded too. An optional constructor cleanup callback runs per evicted
+ * entry — used by maps whose entries own an external resource
+ * (renderedReplyHTML's temp files) so eviction cannot leak it.
  */
 class BoundedStateMap<K, V> extends Map<K, V> {
+  /** Cleanup for one evicted entry's value; must tolerate an already-reaped resource. */
+  readonly #onEvict: ((value: V) => void) | undefined
+
+  constructor(entries?: Iterable<readonly [K, V]> | null, onEvict?: (value: V) => void) {
+    // Copy manually: super(entries) would run the overridden set() before
+    // #onEvict exists, so an over-capacity source map would crash on the
+    // private-field read instead of evicting.
+    super()
+    this.#onEvict = onEvict
+    if (entries !== undefined && entries !== null) {
+      for (const [key, value] of entries) this.set(key, value)
+    }
+  }
+
   override set(key: K, value: V): this {
     super.delete(key)
     super.set(key, value)
     while (this.size > stateMapCapacity) {
       const oldest = this.keys().next().value
       if (oldest === undefined) break
+      const evicted = this.get(oldest)
       super.delete(oldest)
+      if (evicted !== undefined) this.#onEvict?.(evicted)
     }
     return this
   }
 }
 
 /** Wrap an assigned satellite map, copying entries into a bounded one. */
-function asBoundedStateMap<K, V>(value: Map<K, V>): BoundedStateMap<K, V> {
+function asBoundedStateMap<K, V>(value: Map<K, V>, onEvict?: (value: V) => void): BoundedStateMap<K, V> {
   if (value instanceof BoundedStateMap) return value
-  return new BoundedStateMap(value)
+  return new BoundedStateMap(value, onEvict)
 }
 
 /**
@@ -440,8 +459,6 @@ export class InteractiveState {
   preRenderingKey: string = ''
   /** In-flight render fork cancels, drained by cancelRenders (Go renderCancels). */
   renderCancels: RenderCancelHandle[] = []
-  /** exportKey → rendered reply HTML temp path; teardown reaps them (Go renderedReplyHTML). */
-  renderedReplyHTML: Map<string, string> | undefined
 
   // ── satellite maps (BoundedStateMap-wrapped on assignment) ──
   // Export keys are per-turn card message ids; the setters wrap any assigned
@@ -449,6 +466,7 @@ export class InteractiveState {
   #renderStatuses: BoundedStateMap<string, RenderStatusEntry> | undefined
   #planCardRender: BoundedStateMap<string, PlanCardHandle> | undefined
   #exportContent: BoundedStateMap<string, string> | undefined
+  #renderedReplyHTML: BoundedStateMap<string, string> | undefined
 
   /** Latest render-task status per exportKey (Go renderStatuses). */
   get renderStatuses(): Map<string, RenderStatusEntry> | undefined { return this.#renderStatuses }
@@ -466,6 +484,20 @@ export class InteractiveState {
   get exportContent(): Map<string, string> | undefined { return this.#exportContent }
   set exportContent(value: Map<string, string> | undefined) {
     this.#exportContent = value === undefined ? undefined : asBoundedStateMap(value)
+  }
+
+  /**
+   * Rendered reply HTML temp path per exportKey (Go renderedReplyHTML): a
+   * cleanup manifest, not a click cache — eviction and session teardown both
+   * reap the recorded cc-plan-render-* temp dir.
+   */
+  get renderedReplyHTML(): Map<string, string> | undefined { return this.#renderedReplyHTML }
+  set renderedReplyHTML(value: Map<string, string> | undefined) {
+    // Evicting a manifest entry must reap its temp dir: teardown only sees
+    // what is still in the map, so a bare bound would leak the file forever.
+    this.#renderedReplyHTML = value === undefined
+      ? undefined
+      : asBoundedStateMap(value, (htmlPath) => { void removeRenderedTemp(htmlPath) })
   }
 
   /** Clean reply text fallback for the export buttons (Go lastBaseResponse). */
@@ -1503,6 +1535,14 @@ export class Engine {
         console.warn(`platform start failed: ${p.name()}: ${String(error)}`)
         startErrs.push(error)
         continue
+      }
+      // i18n handle wiring (Go engine.go platform startup): platforms
+      // exposing the receiver get the engine's I18n instance, so
+      // platform-owned copy localizes by config.language before any
+      // user-facing card.
+      const i18nReceiver = asI18nHandleReceiver(p)
+      if (i18nReceiver !== undefined) {
+        i18nReceiver.setI18nHandle(this.i18n)
       }
       // Chat-update wiring (Go engine.go platform startup): renames sync
       // session labels; name/avatar changes bump the active preview back to
@@ -8264,8 +8304,9 @@ export class Engine {
     const args = spaceIdx === -1 ? '' : body.slice(spaceIdx + 1).trim()
     if (cmd === '/cron') {
       // Cron card buttons only flip scheduler state; no card is re-rendered
-      // (Go executeCardAction's "/cron" case returns an empty string).
-      if (prefix === 'act') executeCardAction(this, cmd, args, msg.sessionKey)
+      // (Go executeCardAction's "/cron" case returns an empty string). The
+      // pressing user's ID rides along so admins may act cross-chat.
+      if (prefix === 'act') executeCardAction(this, cmd, args, msg.sessionKey, msg.userID)
       return
     }
 

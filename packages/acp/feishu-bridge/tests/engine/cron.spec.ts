@@ -239,19 +239,19 @@ describe('ExecuteCardAction_CronActions', () => {
     scheduler.registerEngine('test', e)
     scheduler.start()
     try {
-      executeCardAction(e, '/cron', 'disable act1', 'test:ch1')
+      executeCardAction(e, '/cron', 'disable act1', 'test:ch1', '')
       expect(store.get('act1')?.enabled).toBe(false)
 
-      executeCardAction(e, '/cron', 'enable act1', 'test:ch1')
+      executeCardAction(e, '/cron', 'enable act1', 'test:ch1', '')
       expect(store.get('act1')?.enabled).toBe(true)
 
-      executeCardAction(e, '/cron', 'mute act1', 'test:ch1')
+      executeCardAction(e, '/cron', 'mute act1', 'test:ch1', '')
       expect(store.get('act1')?.mute).toBe(true)
 
-      executeCardAction(e, '/cron', 'unmute act1', 'test:ch1')
+      executeCardAction(e, '/cron', 'unmute act1', 'test:ch1', '')
       expect(store.get('act1')?.mute).toBe(false)
 
-      executeCardAction(e, '/cron', 'delete act1', 'test:ch1')
+      executeCardAction(e, '/cron', 'delete act1', 'test:ch1', '')
       expect(store.get('act1')).toBeUndefined()
     } finally {
       scheduler.stop()
@@ -274,10 +274,66 @@ describe('ExecuteCardAction_CronActions', () => {
     e.cronScheduler = scheduler
 
     // A crafted/replayed card action from another chat must not mutate the job.
-    executeCardAction(e, '/cron', 'delete frgn1', 'test:ch2')
+    executeCardAction(e, '/cron', 'delete frgn1', 'test:ch2', '')
     expect(store.get('frgn1')).toBeDefined()
-    executeCardAction(e, '/cron', 'disable frgn2', 'test:ch2')
+    executeCardAction(e, '/cron', 'disable frgn2', 'test:ch2', '')
     expect(store.get('frgn2')?.enabled).toBe(true)
+  })
+
+  it('a card action carrying an admin userID may act on another chat\'s job; a non-admin still may not', () => {
+    const store = new CronStore(tempDir())
+    store.add(newJob({
+      id: 'adm1', project: 'test', sessionKey: 'test:ch1',
+      cronExpr: '0 6 * * *', prompt: 'task', enabled: true,
+    }))
+    store.add(newJob({
+      id: 'adm2', project: 'test', sessionKey: 'test:ch1',
+      cronExpr: '0 6 * * *', prompt: 'task', enabled: true,
+    }))
+
+    const e = new Engine('test', createStubAgent(), [createStubPlatform('test')], '', 'en')
+    const scheduler = new CronScheduler(store)
+    e.cronScheduler = scheduler
+    e.adminFrom = 'boss'
+
+    executeCardAction(e, '/cron', 'disable adm1', 'test:ch2', 'boss')
+    expect(store.get('adm1')?.enabled).toBe(false)
+
+    executeCardAction(e, '/cron', 'disable adm2', 'test:ch2', 'someone')
+    expect(store.get('adm2')?.enabled).toBe(true)
+  })
+
+  it('handleCardAction forwards the pressing user\'s ID: admin cross-chat passes, non-admin does not', async () => {
+    const store = new CronStore(tempDir())
+    store.add(newJob({
+      id: 'hca1', project: 'test', sessionKey: 'test:ch1',
+      cronExpr: '0 6 * * *', prompt: 'task', enabled: true,
+    }))
+    store.add(newJob({
+      id: 'hca2', project: 'test', sessionKey: 'test:ch1',
+      cronExpr: '0 6 * * *', prompt: 'task', enabled: true,
+    }))
+
+    const p = createStubPlatform('test')
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    e.cronScheduler = new CronScheduler(store)
+    e.adminFrom = 'boss'
+
+    const adminMsg = {
+      ...newStubMessage(),
+      sessionKey: 'test:ch2', platform: 'test', userID: 'boss',
+      content: 'act:/cron disable hca1', isCardAction: true,
+    }
+    await e.handleCardAction(p, adminMsg, 'act:/cron disable hca1')
+    expect(store.get('hca1')?.enabled).toBe(false)
+
+    const plainMsg = {
+      ...newStubMessage(),
+      sessionKey: 'test:ch2', platform: 'test', userID: 'someone',
+      content: 'act:/cron disable hca2', isCardAction: true,
+    }
+    await e.handleCardAction(p, plainMsg, 'act:/cron disable hca2')
+    expect(store.get('hca2')?.enabled).toBe(true)
   })
 })
 

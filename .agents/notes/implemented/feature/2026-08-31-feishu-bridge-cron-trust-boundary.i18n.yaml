@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-31-feishu-bridge-cron-trust-boundary.md
-2026-08-31-feishu-bridge-cron-trust-boundary.md: 81b936b15365d05f286af5fdc49f5ec58ddfe4ab
-2026-08-31-feishu-bridge-cron-trust-boundary.zh.md: 4f153418a2e4629aca797c56b26648d176b001fb
+2026-08-31-feishu-bridge-cron-trust-boundary.md: eda05b8b6da5703933051cbf8b9689542d2a4f04
+2026-08-31-feishu-bridge-cron-trust-boundary.zh.md: f4ec99991f5af7f2875b55880f95e001aef7c151

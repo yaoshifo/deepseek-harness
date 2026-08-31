@@ -17,7 +17,7 @@ Jobs belong to the chat that created them (`job.sessionKey`); the `admin_from` w
 - **del / enable / disable / mute / info** — owner-or-admin across all three entry points, closing the global-id read leak alongside the write leaks.
 - **list** — a non-admin sees only the calling chat's jobs, with the prompt/exec fallback text capped at 60 runes; admins keep the full project view.
 
-The acting user is the session's spawn user (`session.getSpawnUserID()`); a chat with no active session resolves to `''`, which the admin checks treat as non-admin — fail closed. The card-button path receives only the session key (engine.ts's `handleCardAction` does not plumb `msg.userID` through), so its gate degrades to pure ownership: a forged cross-chat card action is rejected even for an admin, which is stricter and accepted as-is.
+The acting user is the session's spawn user (`session.getSpawnUserID()`); a chat with no active session resolves to `''`, which the admin checks treat as non-admin — fail closed. The card-button path passes `msg.userID` from `handleCardAction` into `executeCardAction`, so a card action carries the same owner-or-admin gate as the other entry points; a test-constructed call without a user id degrades to pure ownership (fail closed).
 
 ## Alternatives considered
 
@@ -27,7 +27,7 @@ The acting user is the session's spawn user (`session.getSpawnUserID()`); a chat
 
 ## Consequences
 
-The trust line is now uniform: everything that executes shell or changes what a job executes requires an admin; everything that manages an existing job requires owning it or admin. Any future cron entry point must go through `cronJobActionAllowed` rather than touching `scheduler.store()` directly. Known limitation: the card path's lack of an admin exemption means an admin cannot operate another chat's job via a forged card callback — restoring that would need `msg.userID` plumbed into `executeCardAction` (one line in engine.ts); the stricter behavior was kept deliberately.
+The trust line is now uniform: everything that executes shell or changes what a job executes requires an admin; everything that manages an existing job requires owning it or admin. Any future cron entry point must go through `cronJobActionAllowed` rather than touching `scheduler.store()` directly. The card path shipped initially without the user id (pure ownership, admin included) and gained the `msg.userID` plumbing in the same day's follow-up batch; a card callback that arrives without an operator id still fails closed to ownership.
 
 ## Testing
 

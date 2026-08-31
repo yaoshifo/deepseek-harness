@@ -45,8 +45,8 @@ const cronSensitiveEditFields = new Set(['exec', 'prompt', 'project', 'session_k
  * text commands, card buttons): a job belongs to the chat that created it
  * (`sessionKey` match), admins override ownership, and sensitive-field edits
  * (exec/prompt/project/session_key/work_dir/mode) additionally require
- * admin. `userID === ''` never passes the admin check, so entrances without
- * a user identity (card buttons) degrade to pure chat ownership.
+ * admin. `userID === ''` never passes the admin check, so an entrance
+ * without a user identity degrades to pure chat ownership.
  *
  * @param e - The engine carrying the admin_from allowlist.
  * @param job - The job the action targets.
@@ -467,17 +467,18 @@ export async function cmdCronSetup(e: Engine, p: Platform, msg: Message): Promis
 /**
  * Execute a card-button action for the cron domain (Go
  * Engine.executeCardAction's "/cron" case): `act:/cron <sub> <id>` buttons
- * enable/disable/delete/mute/unmute jobs. Card actions arrive without a user
- * identity (the engine passes only the session key), so the shared gate
- * degrades to pure chat ownership: a job's buttons work only from the chat
- * the job belongs to.
+ * enable/disable/delete/mute/unmute jobs. The acting user's platform ID
+ * reaches the shared gate, so admins may operate another chat's job from
+ * anywhere while everyone else is held to chat ownership.
  *
  * @param e - The engine whose scheduler holds the jobs.
  * @param cmd - Action domain; only '/cron' is handled.
  * @param args - `<sub> <id>` action payload.
  * @param sessionKey - The chat the card action originated from.
+ * @param userID - The platform user who pressed the button; '' leaves the
+ *   gate on pure chat ownership.
  */
-export function executeCardAction(e: Engine, cmd: string, args: string, sessionKey: string): void {
+export function executeCardAction(e: Engine, cmd: string, args: string, sessionKey: string, userID: string): void {
   if (cmd !== '/cron') return
   const scheduler = e.cronScheduler
   if (scheduler === undefined || args === '') return
@@ -486,7 +487,7 @@ export function executeCardAction(e: Engine, cmd: string, args: string, sessionK
   const sub = subArgs[0] ?? ''
   const id = subArgs[1] ?? ''
   const job = scheduler.store().get(id)
-  if (job !== undefined && !cronJobActionAllowed(e, job, sessionKey, '')) {
+  if (job !== undefined && !cronJobActionAllowed(e, job, sessionKey, userID)) {
     console.info(`engine: cron card action denied for another chat's job (${sessionKey}: ${args})`)
     return
   }
