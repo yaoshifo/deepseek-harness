@@ -22,7 +22,7 @@ cc-connect 时代的 secret 架构（见 `~/.config/secrets-management-guide.md`
 
 ### 暴露面定性
 
-条目对命令可见即对模型可见——与 cc-connect 同级（`printenv`/`echo $X` 从来拦不住，deny 规则拦的只是读文件）。因此部署把该文件当评审白名单：feishu-bridge 部署指向专用 `~/.config/agent-secrets.env`（文件即白名单），而不是全量 `secrets.env`。真正的隔离（模型完全看不到值）只能是 harness 侧消费（`apiKeyEnv`、MCP headers）——新增集成优先走各自的 seam，而不是往 bash env 里塞。
+条目对命令可见即对模型可见——与 cc-connect 同级（`printenv`/`echo $X` 从来拦不住，deny 规则拦的只是读文件）。因此部署把该文件当评审白名单：feishu-bridge 部署指向专用 `~/.config/agent-secrets.env`（文件即白名单），而不是全量 `secrets.env`。新凭据消费方的选择口诀是「谁发起带凭据的调用」：harness 发起的调用走配置引用（`apiKeyEnv`、MCP headers）；harness 替模型代跑的专用工具在自己的 spawn 边界做逐子进程注入（lark-cli 工具）；只有 agent 的任意命令才落到 envFile。工具式安全的来源是面窄——窄面工具不提供能回显凭据的动词——因此不存在「带凭据跑任意命令」的通用包装工具：那是换皮的 envFile，安全收益为零。真正的隔离（模型完全看不到值）只能是 harness 侧消费（`apiKeyEnv`、MCP headers）——新增集成优先走各自的 seam，而不是往 bash env 里塞。
 
 ## Alternatives considered
 
