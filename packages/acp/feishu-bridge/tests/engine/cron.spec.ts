@@ -257,6 +257,28 @@ describe('ExecuteCardAction_CronActions', () => {
       scheduler.stop()
     }
   })
+
+  it('card actions for another chat\'s job are denied (no user identity → owner-only)', () => {
+    const store = new CronStore(tempDir())
+    store.add(newJob({
+      id: 'frgn1', project: 'test', sessionKey: 'test:ch1',
+      cronExpr: '0 6 * * *', prompt: 'task', enabled: true,
+    }))
+    store.add(newJob({
+      id: 'frgn2', project: 'test', sessionKey: 'test:ch1',
+      cronExpr: '0 6 * * *', prompt: 'task', enabled: true,
+    }))
+
+    const e = new Engine('test', createStubAgent(), [createStubPlatform('test')], '', 'en')
+    const scheduler = new CronScheduler(store)
+    e.cronScheduler = scheduler
+
+    // A crafted/replayed card action from another chat must not mutate the job.
+    executeCardAction(e, '/cron', 'delete frgn1', 'test:ch2')
+    expect(store.get('frgn1')).toBeDefined()
+    executeCardAction(e, '/cron', 'disable frgn2', 'test:ch2')
+    expect(store.get('frgn2')?.enabled).toBe(true)
+  })
 })
 
 describe('CmdCronMute_TextCommand', () => {

@@ -418,6 +418,28 @@ describe('runLarkInvocation', () => {
     const { deps } = fakeDeps({ spawn: async () => ({ stdout: 'out', stderr: 'warn', code: 0 }) })
     expect(await runLarkInvocation(creds, ['docs', '+search'], { deps })).toBe('out\nwarn')
   })
+
+  it('caps oversized child output at 4000 runes with an ellipsis (stdout, stderr, multibyte)', async () => {
+    // A whole-document export would otherwise flood the model context; the
+    // bound counts runes (the /shell command applies the same 4000-rune cap).
+    const big = fakeDeps({ spawn: async () => ({ stdout: 'x'.repeat(10_000), stderr: '', code: 0 }) })
+    const out = await runLarkInvocation(creds, ['docs', '+export'], { deps: big.deps })
+    expect(Array.from(out)).toHaveLength(4000)
+    expect(out.endsWith('...')).toBe(true)
+
+    const bigErr = fakeDeps({ spawn: async () => ({ stdout: '', stderr: 'y'.repeat(10_000), code: 1 }) })
+    const errOut = await runLarkInvocation(creds, ['docs', '+export'], { deps: bigErr.deps })
+    expect(Array.from(errOut)).toHaveLength(4000)
+    expect(errOut.endsWith('...')).toBe(true)
+
+    const cjk = fakeDeps({ spawn: async () => ({ stdout: '好'.repeat(10_000), stderr: '', code: 0 }) })
+    const cjkOut = await runLarkInvocation(creds, ['docs', '+search'], { deps: cjk.deps })
+    expect(Array.from(cjkOut)).toHaveLength(4000)
+
+    // The exact limit passes through unchanged.
+    const exact = fakeDeps({ spawn: async () => ({ stdout: 'z'.repeat(4000), stderr: '', code: 0 }) })
+    expect(await runLarkInvocation(creds, ['docs', '+search'], { deps: exact.deps })).toBe('z'.repeat(4000))
+  })
 })
 
 // ── registration over a real Cordis Context ───────────────────────────────

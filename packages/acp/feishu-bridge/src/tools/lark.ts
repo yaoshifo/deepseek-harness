@@ -551,11 +551,22 @@ function sanitizedChildEnv(env: Record<string, string>): Record<string, string> 
   return out
 }
 
+/**
+ * Max runes of lark-cli child output relayed to the model. The native paths
+ * bound themselves with page limits; the passthrough child can emit whole
+ * document exports, so it gets the same cap the `/shell` command applies
+ * (first max-3 runes + '...').
+ */
+const larkOutputMaxRunes = 4000
+
 function childOutput(child: LarkChildResult): string {
   const parts = [child.stdout.trim()]
   if (child.stderr.trim() !== '') parts.push(child.stderr.trim())
   const output = parts.filter(p => p !== '').join('\n')
-  return output === '' ? `(lark-cli exited with code ${child.code})` : output
+  const text = output === '' ? `(lark-cli exited with code ${child.code})` : output
+  const runes = Array.from(text)
+  if (runes.length <= larkOutputMaxRunes) return text
+  return `${runes.slice(0, larkOutputMaxRunes - 3).join('')}...`
 }
 
 /** Version gate with an on-disk mtime cache (Go checkLarkCLIVersion); fail-open on probe issues. */

@@ -13,11 +13,46 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { CronJob, generateCronID, normalizeCronSessionMode } from '../engine/cron.js'
+import { isAdmin } from '../engine/commands.js'
+import type { Engine } from '../engine/engine.js'
+import { cronJobActionAllowed } from '../engine/cron-commands.js'
+import { CronJob, generateCronID, normalizeCronSessionMode, truncateStr } from '../engine/cron.js'
 import type { SubtaskRoute } from './subtask.js'
 
 /** Resolves the calling dsh agent to its engine session (shared with the subtask tool). */
 export type CronAgentRouter = (agent: unknown) => SubtaskRoute | undefined
+
+/**
+ * The platform user a tool invocation acts as: the chat's active session
+ * records the last interacting user as its spawn user. '' when no active
+ * session exists — the admin checks treat that as non-admin (fail closed).
+ *
+ * @param engine - The engine owning the chat session.
+ * @param sessionKey - The chat session key the caller was routed to.
+ * @returns The acting user's platform ID, or ''.
+ */
+function actingUserID(engine: Engine, sessionKey: string): string {
+  return engine.sessions.findActive(sessionKey)?.getSpawnUserID() ?? ''
+}
+
+/**
+ * The denial error for a gated cron action: distinguishes a foreign chat's
+ * job from a sensitive-field edit the owning chat is not allowed to make.
+ *
+ * @param id - The job id the action targeted.
+ * @param owned - Whether the job belongs to the calling chat.
+ * @param field - The field being edited, when the action is an edit.
+ * @returns The error to throw.
+ */
+function cronDenied(id: string, owned: boolean, field?: string): Error {
+  if (!owned) {
+    return new Error(`feishu_bridge_cron: job "${id}" belongs to another chat; only that chat or an admin may operate on it`)
+  }
+  return new Error(
+    `feishu_bridge_cron: editing "${field}" needs an administrator (same trust line as exec jobs); `
+    + 'this chat may edit non-sensitive fields only (cron_expr, description, enabled, mute, silent, timeout_mins, session_mode)',
+  )
+}
 
 const DESCRIPTION =
   'Manage scheduled tasks (standard 5-field cron expressions) bound to this chat session. '
@@ -27,10 +62,22 @@ const DESCRIPTION =
   + 'session_mode, mode, timeout_mins, silent, work_dir); del: remove a task by id. '
   + 'The user can also manage tasks directly with the /cron command in the chat.'
 
-/** Format one job the way the Go CLI's list output did. */
-function jobLine(j: CronJob): string {
+/**
+ * Format one job the way the Go CLI's list output did. The prompt/exec
+ * fallback is capped at 60 runes for non-admins so a job listing cannot dump
+ * whole prompts into the model context.
+ *
+ * @param j - The job to render.
+ * @param fullText - Whether the viewer may see untruncated prompt/exec text.
+ * @returns One list line.
+ */
+function jobLine(j: CronJob, fullText: boolean): string {
   const state = j.enabled ? 'active' : 'paused'
-  const desc = j.description !== '' ? j.description : (j.isShellJob() ? j.exec : j.prompt)
+  let desc = j.description
+  if (desc === '') {
+    const fallback = j.isShellJob() ? j.exec : j.prompt
+    desc = fullText ? fallback : truncateStr(fallback, 60)
+  }
   const mute = j.mute ? ' [mute]' : ''
   return `${state}${mute} ${j.id}  ${j.cronExpr}  ${desc}`
 }
@@ -161,6 +208,17 @@ function runCronAction(route: CronAgentRouter, args: CronToolArgs, exec: { agent
       if (cronExpr === '') throw new Error('feishu_bridge_cron: add requires a cron expression (cronExpr)')
       if (prompt === '' && execCmd === '') throw new Error('feishu_bridge_cron: add requires either prompt or exec')
       if (prompt !== '' && execCmd !== '') throw new Error('feishu_bridge_cron: prompt and exec are mutually exclusive')
+      if (execCmd !== '') {
+        // Trust boundary: an exec job runs a shell command unattended, so the
+        // /cron addexec admin gate applies here too; prompt jobs instead run
+        // inside the agent session with its normal per-turn approvals.
+        if (!isAdmin(engine, actingUserID(engine, sessionKey))) {
+          throw new Error(
+            'feishu_bridge_cron: exec cron jobs require an administrator (admin_from); '
+            + 'ask an admin to create it via /cron addexec, or add a prompt-only task',
+          )
+        }
+      }
       const job = new CronJob()
       job.id = generateCronID()
       job.project = engine.name
@@ -184,11 +242,15 @@ function runCronAction(route: CronAgentRouter, args: CronToolArgs, exec: { agent
       }
     }
     case 'list': {
+      // A non-admin only sees its own chat's jobs; admins keep the whole
+      // project view. The store itself stays project-scoped and unchanged.
+      const admin = isAdmin(engine, actingUserID(engine, sessionKey))
       const jobs = scheduler.store().listByProject(engine.name)
+        .filter(j => admin || j.sessionKey === sessionKey)
       if (jobs.length === 0) return { status: 'ok' as const, message: 'No cron jobs for this project.' }
       return {
         status: 'ok' as const,
-        message: jobs.map(jobLine).join('\n'),
+        message: jobs.map(j => jobLine(j, admin)).join('\n'),
       }
     }
     case 'info': {
@@ -196,9 +258,12 @@ function runCronAction(route: CronAgentRouter, args: CronToolArgs, exec: { agent
       if (id === '') throw new Error('feishu_bridge_cron: info requires the task id')
       const job = scheduler.store().get(id)
       if (job === undefined) throw new Error(`job "${id}" not found`)
+      if (!cronJobActionAllowed(engine, job, sessionKey, actingUserID(engine, sessionKey))) {
+        throw cronDenied(id, job.sessionKey === sessionKey)
+      }
       return {
         status: 'ok' as const,
-        message: `${jobLine(job)}\n${JSON.stringify(job.toJSON())}`,
+        message: `${jobLine(job, true)}\n${JSON.stringify(job.toJSON())}`,
       }
     }
     case 'edit': {
@@ -218,12 +283,20 @@ function runCronAction(route: CronAgentRouter, args: CronToolArgs, exec: { agent
         if (!Number.isInteger(n) || n < 0) throw new Error('feishu_bridge_cron: timeout_mins must be an integer >= 0')
         value = n
       }
+      const job = scheduler.store().get(id)
+      if (job !== undefined && !cronJobActionAllowed(engine, job, sessionKey, actingUserID(engine, sessionKey), field)) {
+        throw cronDenied(id, job.sessionKey === sessionKey, field)
+      }
       scheduler.updateJob(id, field, value)
       return { status: 'ok' as const, message: `Cron job ${id} updated: ${field} = ${args.value}` }
     }
     case 'del': {
       const id = (args.id ?? '').trim()
       if (id === '') throw new Error('feishu_bridge_cron: del requires the task id')
+      const job = scheduler.store().get(id)
+      if (job !== undefined && !cronJobActionAllowed(engine, job, sessionKey, actingUserID(engine, sessionKey))) {
+        throw cronDenied(id, job.sessionKey === sessionKey)
+      }
       if (!scheduler.removeJob(id)) throw new Error(`job "${id}" not found`)
       return { status: 'ok' as const, message: `Cron job ${id} deleted.` }
     }

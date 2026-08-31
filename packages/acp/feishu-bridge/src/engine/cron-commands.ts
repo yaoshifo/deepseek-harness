@@ -31,6 +31,36 @@ function matchSubCommand(input: string, candidates: string[]): string {
   return matched
 }
 
+/**
+ * Editable fields that rewrite what a job runs, where it runs, or with which
+ * permissions: exec/prompt/project/session_key/work_dir move or define the
+ * execution itself, and mode can lift the per-turn approvals for unattended
+ * runs — the same trust line as `/cron addexec`, so editing them requires an
+ * admin even in the owning chat.
+ */
+const cronSensitiveEditFields = new Set(['exec', 'prompt', 'project', 'session_key', 'work_dir', 'mode'])
+
+/**
+ * The cron ownership gate shared by all three entrances (agent tool, `/cron`
+ * text commands, card buttons): a job belongs to the chat that created it
+ * (`sessionKey` match), admins override ownership, and sensitive-field edits
+ * (exec/prompt/project/session_key/work_dir/mode) additionally require
+ * admin. `userID === ''` never passes the admin check, so entrances without
+ * a user identity (card buttons) degrade to pure chat ownership.
+ *
+ * @param e - The engine carrying the admin_from allowlist.
+ * @param job - The job the action targets.
+ * @param sessionKey - The chat the action originates from.
+ * @param userID - The acting platform user ID.
+ * @param editField - The snake_case field being edited, when the action is an edit.
+ * @returns Whether the action is allowed.
+ */
+export function cronJobActionAllowed(e: Engine, job: CronJob, sessionKey: string, userID: string, editField?: string): boolean {
+  if (isAdmin(e, userID)) return true
+  if (job.sessionKey !== sessionKey) return false
+  return editField === undefined || !cronSensitiveEditFields.has(editField)
+}
+
 /** "01-02 15:04", or with the year when it differs from now (Go cronTimeFormat). */
 function cronTimeFormat(t: Date, now: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
@@ -295,7 +325,11 @@ export async function cmdCronAddExec(e: Engine, p: Platform, msg: Message, args:
 export async function cmdCronList(e: Engine, p: Platform, msg: Message): Promise<void> {
   const scheduler = e.cronScheduler
   if (scheduler === undefined) return
+  // A non-admin only sees its own chat's jobs; admins keep the whole
+  // project view (the listing already caps prompt/exec at 60 runes).
+  const admin = isAdmin(e, msg.userID)
   const jobs = scheduler.store().listByProject(e.name)
+    .filter(j => admin || j.sessionKey === msg.sessionKey)
   if (jobs.length === 0) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.CronEmpty))
     return
@@ -355,6 +389,11 @@ export async function cmdCronDel(e: Engine, p: Platform, msg: Message, args: str
     return
   }
   const id = args[0] ?? ''
+  const job = e.cronScheduler?.store().get(id)
+  if (job !== undefined && !cronJobActionAllowed(e, job, msg.sessionKey, msg.userID)) {
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.AdminRequired, `/cron del ${id}`))
+    return
+  }
   if (e.cronScheduler?.removeJob(id)) {
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.CronDeleted, id))
   } else {
@@ -377,6 +416,11 @@ export async function cmdCronToggle(e: Engine, p: Platform, msg: Message, args: 
     return
   }
   const id = args[0] ?? ''
+  const job = e.cronScheduler?.store().get(id)
+  if (job !== undefined && !cronJobActionAllowed(e, job, msg.sessionKey, msg.userID)) {
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.AdminRequired, `/cron ${enable ? 'enable' : 'disable'} ${id}`))
+    return
+  }
   try {
     if (enable) {
       e.cronScheduler?.enableJob(id)
@@ -405,6 +449,11 @@ export async function cmdCronMute(e: Engine, p: Platform, msg: Message, args: st
     return
   }
   const id = args[0] ?? ''
+  const job = e.cronScheduler?.store().get(id)
+  if (job !== undefined && !cronJobActionAllowed(e, job, msg.sessionKey, msg.userID)) {
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.AdminRequired, `/cron ${mute ? 'mute' : 'unmute'} ${id}`))
+    return
+  }
   if (!e.cronScheduler?.store().setMute(id, mute)) {
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.CronNotFound, id))
     return
@@ -428,14 +477,17 @@ export async function cmdCronSetup(e: Engine, p: Platform, msg: Message): Promis
 /**
  * Execute a card-button action for the cron domain (Go
  * Engine.executeCardAction's "/cron" case): `act:/cron <sub> <id>` buttons
- * enable/disable/delete/mute/unmute jobs.
+ * enable/disable/delete/mute/unmute jobs. Card actions arrive without a user
+ * identity (the engine passes only the session key), so the shared gate
+ * degrades to pure chat ownership: a job's buttons work only from the chat
+ * the job belongs to.
  *
  * @param e - The engine whose scheduler holds the jobs.
  * @param cmd - Action domain; only '/cron' is handled.
  * @param args - `<sub> <id>` action payload.
- * @param _sessionKey - Unused; kept for the shared action-handler signature.
+ * @param sessionKey - The chat the card action originated from.
  */
-export function executeCardAction(e: Engine, cmd: string, args: string, _sessionKey: string): void {
+export function executeCardAction(e: Engine, cmd: string, args: string, sessionKey: string): void {
   if (cmd !== '/cron') return
   const scheduler = e.cronScheduler
   if (scheduler === undefined || args === '') return
@@ -443,6 +495,11 @@ export function executeCardAction(e: Engine, cmd: string, args: string, _session
   if (subArgs.length < 2) return
   const sub = subArgs[0] ?? ''
   const id = subArgs[1] ?? ''
+  const job = scheduler.store().get(id)
+  if (job !== undefined && !cronJobActionAllowed(e, job, sessionKey, '')) {
+    console.info(`engine: cron card action denied for another chat's job (${sessionKey}: ${args})`)
+    return
+  }
   switch (sub) {
     case 'enable':
       try {

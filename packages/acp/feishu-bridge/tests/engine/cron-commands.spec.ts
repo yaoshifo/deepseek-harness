@@ -35,6 +35,23 @@ function cronMsg(content: string) {
   return { ...newStubMessage(), sessionKey: 'test:ch1', userID: 'u1', replyCtx: 'ctx', content }
 }
 
+/** A message from another chat of the same project (same engine). */
+function foreignMsg(content: string) {
+  return { ...newStubMessage(), sessionKey: 'test:ch2', userID: 'u2', replyCtx: 'ctx2', content }
+}
+
+function addJob(store: CronStore, id: string, sessionKey: string): CronJob {
+  const job = new CronJob()
+  job.id = id
+  job.project = 'test'
+  job.sessionKey = sessionKey
+  job.cronExpr = '0 6 * * *'
+  job.prompt = 'task'
+  job.enabled = true
+  store.add(job)
+  return job
+}
+
 describe('registerCronCommands', () => {
   it('merges into the session command table and keeps /new dispatchable', async () => {
     const { e, disposeSession } = newEngine()
@@ -118,6 +135,88 @@ describe('registerCronCommands', () => {
     try {
       await e.handleCardAction(p, cronMsg(''), 'act:/cron disable act1')
       expect(store.get('act1')?.enabled).toBe(false)
+    } finally {
+      disposeCron()
+      disposeSession()
+    }
+  })
+})
+
+describe('/cron ownership gate (text commands)', () => {
+  it('del/enable/disable/mute from another chat are denied for non-admins', async () => {
+    const { e, disposeSession } = newEngine()
+    const p = e.platforms[0] as ReturnType<typeof createStubCardPlatform>
+    const store = new CronStore(tempDir())
+    e.cronScheduler = new CronScheduler(store)
+    addJob(store, 'own1', 'test:ch1')
+    const disposeCron = registerCronCommands(e)
+    try {
+      expect(e.dispatchCommand(p, foreignMsg('/cron del own1'), '/cron del own1')).toBe(true)
+      expect(store.get('own1')).toBeDefined()
+      let sent = p.getSent()
+      expect(sent[sent.length - 1]).toContain('admin')
+
+      expect(e.dispatchCommand(p, foreignMsg('/cron disable own1'), '/cron disable own1')).toBe(true)
+      expect(store.get('own1')?.enabled).toBe(true)
+      sent = p.getSent()
+      expect(sent[sent.length - 1]).toContain('admin')
+
+      expect(e.dispatchCommand(p, foreignMsg('/cron mute own1'), '/cron mute own1')).toBe(true)
+      expect(store.get('own1')?.mute).toBe(false)
+      sent = p.getSent()
+      expect(sent[sent.length - 1]).toContain('admin')
+    } finally {
+      disposeCron()
+      disposeSession()
+    }
+  })
+
+  it('the owning chat and admins operate freely', async () => {
+    const { e, disposeSession } = newEngine()
+    const p = e.platforms[0] as ReturnType<typeof createStubCardPlatform>
+    const store = new CronStore(tempDir())
+    e.cronScheduler = new CronScheduler(store)
+    addJob(store, 'own2', 'test:ch1')
+    addJob(store, 'own3', 'test:ch1')
+    const disposeCron = registerCronCommands(e)
+    try {
+      // Owner (non-admin, same chat): del works.
+      expect(e.dispatchCommand(p, cronMsg('/cron del own2'), '/cron del own2')).toBe(true)
+      expect(store.get('own2')).toBeUndefined()
+      let sent = p.getSent()
+      expect(sent[sent.length - 1]).toContain('deleted')
+
+      // Admin from another chat: del works.
+      e.adminFrom = 'u2'
+      expect(e.dispatchCommand(p, foreignMsg('/cron del own3'), '/cron del own3')).toBe(true)
+      expect(store.get('own3')).toBeUndefined()
+      sent = p.getSent()
+      expect(sent[sent.length - 1]).toContain('deleted')
+    } finally {
+      disposeCron()
+      disposeSession()
+    }
+  })
+
+  it('/cron list shows a non-admin only its own chat\'s jobs; admins see the project', async () => {
+    const { e, disposeSession } = newEngine()
+    const p = e.platforms[0] as ReturnType<typeof createStubCardPlatform>
+    const store = new CronStore(tempDir())
+    e.cronScheduler = new CronScheduler(store)
+    addJob(store, 'lst1', 'test:ch2')
+    addJob(store, 'lst2', 'test:ch1')
+    const disposeCron = registerCronCommands(e)
+    try {
+      expect(e.dispatchCommand(p, foreignMsg('/cron list'), '/cron list')).toBe(true)
+      let sent = p.getSent()
+      expect(sent[sent.length - 1]).toContain('lst1')
+      expect(sent[sent.length - 1]).not.toContain('lst2')
+
+      e.adminFrom = 'u2'
+      expect(e.dispatchCommand(p, foreignMsg('/cron list'), '/cron list')).toBe(true)
+      sent = p.getSent()
+      expect(sent[sent.length - 1]).toContain('lst1')
+      expect(sent[sent.length - 1]).toContain('lst2')
     } finally {
       disposeCron()
       disposeSession()
