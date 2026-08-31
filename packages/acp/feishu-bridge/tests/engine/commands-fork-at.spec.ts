@@ -30,8 +30,9 @@ interface ForkAtCall {
 }
 
 /** Agent with a recording prepareForkAtSession (the ForkAtPreparer capability). */
-function forkAtAgent(newID: string, err?: Error): Agent & { calls: ForkAtCall[] } {
+function forkAtAgent(newID: string, err?: Error): Agent & { calls: ForkAtCall[]; forgotten: string[] } {
   const calls: ForkAtCall[] = []
+  const forgotten: string[] = []
   const agent = {
     ...createStubAgent(),
     prepareForkAtSession: async (
@@ -45,8 +46,11 @@ function forkAtAgent(newID: string, err?: Error): Agent & { calls: ForkAtCall[] 
       if (err !== undefined) throw err
       return newID
     },
+    forgetForkAtSeed: (forkID: string): void => {
+      forgotten.push(forkID)
+    },
   }
-  return Object.assign(agent, { calls })
+  return Object.assign(agent, { calls, forgotten })
 }
 
 function quotedMsg(overrides: Partial<Message> = {}): Message {
@@ -190,6 +194,36 @@ describe('cmdFork quoted-message rollback', () => {
       await waitForSent(p)
       expect(p.sent[0]).toContain('not supported')
       expect(p.count).toBe(0)
+    } finally {
+      dispose()
+    }
+  })
+
+  it('drops the staged rollback seed when group creation fails', async () => {
+    // The staged seed holds the parent's whole event array; a spawn that
+    // dies after prepare must release it, or it stays resident until a
+    // daemon restart.
+    const agent = forkAtAgent('cc-truncated')
+    const { e, p, dispose } = newHarness(agent)
+    p.spawnGroup = async () => { throw new Error('group quota exceeded') }
+    try {
+      await cmdFork(e, p, quotedMsg(), [])
+      await waitForSent(p)
+      expect(p.sent[0]).toContain('Failed to create group')
+      expect(p.count).toBe(0)
+      expect(agent.forgotten).toEqual(['cc-truncated'])
+    } finally {
+      dispose()
+    }
+  })
+
+  it('keeps the staged rollback seed when the spawn succeeds', async () => {
+    const agent = forkAtAgent('cc-truncated')
+    const { e, p, dispose } = newHarness(agent)
+    try {
+      await cmdFork(e, p, quotedMsg(), [])
+      expect(agent.forgotten).toEqual([])
+      expect(e.sessions.getOrCreateActive('test:role-1').getAgentSessionID()).toBe('__forkat__cc-truncated')
     } finally {
       dispose()
     }

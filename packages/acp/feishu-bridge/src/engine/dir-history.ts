@@ -217,8 +217,22 @@ export class DirHistory {
       return
     }
     try {
-      const parsed = JSON.parse(data) as Record<string, string[]>
-      for (const [k, v] of Object.entries(parsed)) this.entries.set(k, [...v])
+      const parsed: unknown = JSON.parse(data)
+      // Legal-but-wrong JSON (an array, a primitive) is not a history map.
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        console.warn(`dir_history: ${this.storePath} is not a history object; starting empty`)
+        return
+      }
+      for (const [k, v] of Object.entries(parsed)) {
+        // A malformed row must not half-load: a string would spread into
+        // single-character entries and a non-iterable throws mid-loop,
+        // keeping only the rows already set.
+        if (!Array.isArray(v) || !v.every(x => typeof x === 'string')) {
+          console.warn(`dir_history: skipping malformed MRU list for '${k}' in ${this.storePath}`)
+          continue
+        }
+        this.entries.set(k, [...v])
+      }
     } catch (error) {
       console.error(`dir_history: failed to unmarshal ${this.storePath}: ${String(error)}`)
     }

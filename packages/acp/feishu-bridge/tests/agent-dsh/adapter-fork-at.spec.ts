@@ -268,3 +268,44 @@ describe('startSession __forkat__ sentinel', () => {
     expect(session.currentSessionID()).toBe('cc-lost')
   })
 })
+
+describe('staged-seed bounds', () => {
+  it('drops a staged seed on forgetForkAtSeed (spawn-failure cleanup)', async () => {
+    const persistence = fakePersistence(new Map([
+      ['cc-parent', { meta: parentHeader('/workspace/project'), events: twoTurnLog() }],
+    ]))
+    const { ctx, creates } = createHarness(persistence)
+    const adapter = newAdapter(ctx)
+
+    const newID = await adapter.prepareForkAtSession(
+      'cc-parent', '/workspace/child', 'the login bug is fixed', 'app', 2000,
+    )
+    adapter.forgetForkAtSeed(newID)
+    await adapter.startSession(`${ForkAtSessionPrefix}${newID}`)
+
+    expect(creates[0]?.seed).toBeUndefined()
+  })
+
+  it('caps staged seeds at 8 by evicting the oldest insert', async () => {
+    // A failed spawn between prepare and start leaves the parent's whole
+    // event array resident per seed; the cap bounds that residue.
+    const persistence = fakePersistence(new Map([
+      ['cc-parent', { meta: parentHeader('/workspace/project'), events: twoTurnLog() }],
+    ]))
+    const { ctx, creates } = createHarness(persistence)
+    const adapter = newAdapter(ctx)
+
+    const ids: string[] = []
+    for (let i = 0; i < 9; i++) {
+      ids.push(await adapter.prepareForkAtSession(
+        'cc-parent', '/workspace/child', 'the login bug is fixed', 'app', 2000,
+      ))
+    }
+    // The 9th prepare evicted the 1st: its sentinel degrades to fresh,
+    // the 2nd (still staged) seeds the truncated prefix.
+    await adapter.startSession(`${ForkAtSessionPrefix}${ids[0]}`)
+    await adapter.startSession(`${ForkAtSessionPrefix}${ids[1]}`)
+    expect(creates[0]?.seed).toBeUndefined()
+    expect((creates[1]?.seed as SessionEvent[]).map(e => e.seq)).toEqual([0, 1, 2, 3])
+  })
+})

@@ -10,9 +10,10 @@
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { buildProjectAssembly, Config, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.js'
+import { ProjectStateStore } from '../src/engine/project-state.js'
 
 /** Structural Cordis slice the adapter consumes; nothing else boots. */
 function stubContext(): Context {
@@ -82,6 +83,42 @@ describe('buildProjectAssembly', () => {
     expect(bare.platform.notifyOnComplete).toBe(false)
     expect(bare.platform.topNoticeEnabled).toBe(false)
     expect(bare.platform.pinEnabled).toBe(false)
+  })
+
+  it('falls back to the config default with a warning when the persisted provider is gone', async () => {
+    // A runtime /provider switch persists into the project state; when the
+    // operator deletes that route from cordis.yml, restart must not
+    // silently resolve to no route (misconfiguration fails loud).
+    const root = await mkdtemp(join(tmpdir(), 'fb-assembly-provider-'))
+    const state = new ProjectStateStore(join(root, 'smoke-project', 'state.json'))
+    state.setActiveProvider('removed-route')
+    state.save()
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { adapter } = buildProjectAssembly(stubContext(), config(), project(), root)
+      expect(adapter.getActiveProvider()?.name).toBe('mify-dsh')
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('removed-route'))
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('mify-dsh'))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('keeps a persisted provider that is still configured', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fb-assembly-provider-'))
+    const state = new ProjectStateStore(join(root, 'smoke-project', 'state.json'))
+    state.setActiveProvider('mify-dsh')
+    state.save()
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { adapter } = buildProjectAssembly(stubContext(), config(), project(), root)
+      expect(adapter.getActiveProvider()?.name).toBe('mify-dsh')
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
 

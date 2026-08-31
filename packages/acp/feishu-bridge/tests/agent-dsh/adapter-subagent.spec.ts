@@ -257,4 +257,20 @@ describe('DshAgentAdapter subagent activity recorder', () => {
     h.emitSession({ id: 'plain-1' }, { type: 'tool/call', callId: 'c1', name: 'bash', arguments: 'ls' })
     expect(a.subagentActivitySnapshot().has('plain-1')).toBe(false)
   })
+
+  it('forgets the activity record at settlement (subagent/end) without any panel', () => {
+    const h = createHarness()
+    const a = new DshAgentAdapter(h.ctx, { agentName: 'dsh', cwd: '/w', providers: [], activeProvider: '' })
+    const childRef: SessionRef = { id: 'child-1', header: { parentSession: 'bridge-1' } }
+    h.emitSession(childRef, { type: 'tool/call', callId: 'c1', name: 'bash', arguments: 'ls' })
+    expect(a.subagentActivitySnapshot().has('child-1')).toBe(true)
+
+    // Settlement must forget the child wherever the record lives: with the
+    // background-subtask panel disabled (or on an adapter that only
+    // overheard a sibling engine's child) no panel-finalize path runs.
+    for (const l of h.listeners.get('subagent/end') ?? []) {
+      ;(l as unknown as (info: { id: string }) => void)({ id: 'child-1' })
+    }
+    expect(a.subagentActivitySnapshot().has('child-1')).toBe(false)
+  })
 })

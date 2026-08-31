@@ -244,6 +244,29 @@ describe('registry enumeration failure containment', () => {
     expect(text({})).toContain('"devx-mcp"')
     expect(text({})).not.toContain('Fix:')
   })
+
+  it('states the observable fact without asserting tool failure (zero-tool servers)', () => {
+    // Registry presence cannot distinguish a dead connection from a server
+    // that legitimately exposes no tools (resources/prompts-only): the line
+    // must not inject "its tools will fail" as fact into every prompt.
+    let text: ((context: unknown) => string) | undefined
+    const stub = {
+      systemPrompt: {
+        context: (registration: { text: (context: unknown) => string }) => {
+          text = registration.text
+          return () => {}
+        },
+      },
+      tools: { schemas: () => [] },
+      effect: () => () => {},
+    } as unknown as CordisContext
+    registerMcpHealthContext(stub, { servers: [{ serverName: 'devx-mcp' }], startupGraceSecs: 0 })
+    if (text === undefined) throw new Error('context was not registered')
+    const line = text({})
+    expect(line).toContain('"devx-mcp"')
+    expect(line).toContain('no tools registered')
+    expect(line).not.toContain('will fail')
+  })
 })
 
 describe('splitMcpToolName (mcp-client naming contract)', () => {

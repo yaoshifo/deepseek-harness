@@ -61,11 +61,30 @@ export class HintUsage {
       return
     }
     try {
-      const parsed = JSON.parse(data) as Partial<Record<HintCategory, Record<string, number>>>
+      const parsed: unknown = JSON.parse(data)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        console.warn(`hint_usage: ${this.storePath} is not a usage object; starting empty`)
+        return
+      }
+      const raw = parsed as Partial<Record<HintCategory, unknown>>
       for (const category of Object.keys(this.counts) as HintCategory[]) {
-        const raw = parsed[category]
-        if (raw === undefined) continue
-        this.counts[category] = new Map(Object.entries(raw))
+        const cat = raw[category]
+        if (cat === undefined) continue
+        if (typeof cat !== 'object' || cat === null) {
+          console.warn(`hint_usage: skipping malformed '${category}' table in ${this.storePath}`)
+          continue
+        }
+        // A non-number count would turn increments into string
+        // concatenation and corrupt the store on the next write-through.
+        const counts = new Map<string, number>()
+        for (const [hint, count] of Object.entries(cat)) {
+          if (typeof count !== 'number' || !Number.isFinite(count)) {
+            console.warn(`hint_usage: skipping malformed count for '${hint}' in ${this.storePath}`)
+            continue
+          }
+          counts.set(hint, count)
+        }
+        this.counts[category] = counts
       }
     } catch (error) {
       console.error(`hint_usage: failed to unmarshal ${this.storePath}: ${String(error)}`)

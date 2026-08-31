@@ -54,7 +54,7 @@ import { registerSessionMiscCommands } from './engine/session-misc.js'
 import { getProviderModel } from './engine/provider.js'
 import { renderSkillName } from './engine/plan-render.js'
 import { langAuto, langChinese, langEnglish, langJapanese, langSpanish, langTraditionalChinese, type Language } from './i18n/index.js'
-import type { StreamPreviewCfg } from './streaming.ts'
+import type { StreamPreviewCfg } from './streaming.js'
 
 export const name = 'feishu-bridge'
 
@@ -1056,8 +1056,17 @@ export function buildProjectAssembly(
   const projectState = new ProjectStateStore(join(projectDataDir, 'state.json'))
   // A runtime /provider switch persists into the project state; it wins over
   // the config default on restart (Go writes config.toml, this runtime is
-  // read-only — the same override pattern the monitor chats use).
-  const activeProvider = projectState.activeProvider() || project.agent?.provider || routeNames[0] || ''
+  // read-only — the same override pattern the monitor chats use). A name the
+  // operator has since deleted from config.providers would resolve to no
+  // route at all (silently empty agent options) — warn and fall back to the
+  // config default; the runtime setProviders switch self-heals the same way.
+  const configDefaultProvider = project.agent?.provider || routeNames[0] || ''
+  const persistedProvider = projectState.activeProvider()
+  let activeProvider = configDefaultProvider
+  if (persistedProvider !== '') {
+    if (routeNames.includes(persistedProvider)) activeProvider = persistedProvider
+    else console.warn(`feishu-bridge: project '${project.name}' persisted provider '${persistedProvider}' is no longer in config.providers; falling back to '${configDefaultProvider}'`)
+  }
   const routes: AdapterProviderRoute[] = routeNames.flatMap((routeName) => {
     const route = config.providers[routeName]
     if (route === undefined) return []

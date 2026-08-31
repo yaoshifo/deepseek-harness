@@ -8,11 +8,16 @@
  * down before they try to call it.
  *
  * Detection is tool-registry presence, not connection state: a server is
- * degraded when no `mcp__<serverName>__*` tool is visible in the global tool
+ * reported when no `mcp__<serverName>__*` tool is visible in the global tool
  * view (`ctx.tools.schemas()` with no scope — mcp-client rows mount at profile
  * root, so their registrations land in the global layer). The text is
  * re-evaluated at each assembly, so recovery needs no listener: once the
- * server re-registers its tools, the line disappears.
+ * server re-registers its tools, the line disappears. That inference errs in
+ * both directions: a half-dead connection whose stale registrations remain
+ * reads as healthy (under-report), and a connected server that legitimately
+ * exposes no tools (resources/prompts-only) is indistinguishable from a dead
+ * one — the line therefore states the observable fact without asserting
+ * that the server's tools will fail.
  *
  * @module dsh-feishu-bridge/core-mcp-health
  */
@@ -93,17 +98,21 @@ function renderMcpHealthText(ctx: Context, config: McpHealthConfig, startedAtMs:
 }
 
 /**
- * One server's degradation line as the model reads it.
+ * One missing server's line as the model reads it. Registry presence cannot
+ * tell a dead connection from a server that exposes no tools, so the line
+ * states the observable fact and names both possibilities instead of
+ * asserting the server's tools will fail.
  *
  * @param server - the missing server's config (name + optional fix hint).
- * @returns the single-line degradation description.
+ * @returns the single-line missing-server description.
  */
 function degradedLine(server: McpHealthServerConfig): string {
   const fix = server.fixHint === undefined || server.fixHint === ''
     ? ''
     : ` Fix: ${server.fixHint}`
-  return `MCP server "${server.serverName}" is degraded: none of its tools are registered in this process.`
-    + ` Its tools will fail or be unavailable until the connection is restored (common causes: auth token expired, connection failed, or reconnect attempts exhausted).${fix}`
+  return `MCP server "${server.serverName}" has no tools registered in this process`
+    + ' — it may expose none (resources/prompts-only servers do), or its connection may be down'
+    + ` (common causes: auth token expired, connection failed, or reconnect attempts exhausted).${fix}`
 }
 
 /**

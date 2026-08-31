@@ -60,7 +60,7 @@ export interface DshAgentLike {
   /** The agent's durable session log (fork seeds slice its seedable prefix). */
   readonly session: {
     readonly events: readonly SessionEvent[]
-    readonly header?: { readonly parentSession?: unknown; readonly cwd?: unknown }
+    readonly header?: { readonly parentSession?: unknown; readonly cwd?: unknown; readonly origin?: unknown }
   }
   followup(message: unknown): void
   steer(message: unknown): void
@@ -564,6 +564,10 @@ function labelOfBrief(brief: string): string {
  * a live bridge session — guards against a corrupted lineage cycle. */
 const subagentLineageMaxDepth = 8
 
+/** Cap on concurrently staged fork-at seeds; the oldest insert is evicted
+ * past it (each seed holds a parent session's whole event array). */
+const forkAtSeedCap = 8
+
 /** Lightweight-query budget (Go LightweightQuery: 90s). */
 export const lightweightQueryTimeoutMs = 90_000
 
@@ -750,6 +754,14 @@ export class DshAgentAdapter {
       if (ancestor !== undefined) ancestor.projectSubagentEvent(String(session.id), event)
     }
     this.disposers.push(ctx.on('session/event', onSessionEvent))
+    // Settlement forgets the child's activity record unconditionally: the
+    // engine's panel paths only forget on panel finalize, so with the
+    // background-subtask panel disabled — or for a sibling engine's child
+    // this adapter merely overheard on the shared context — the map would
+    // otherwise grow with the daemon's lifetime.
+    this.disposers.push(ctx.on('subagent/end', (info: { id: string }) => {
+      this.subagentActivity.delete(info.id)
+    }))
     // A disposed agent is the Go "process exited" signal: close the channel.
     const onAgentDisposed = (payload: { agent: DshAgentLike }): void => {
       const target = this.liveSessions.get(String(payload.agent.id))
@@ -1124,12 +1136,30 @@ export class DshAgentAdapter {
     // synthetic closure the plain fork seed uses — a balanced slice passes
     // through unchanged.
     const newID = freshNativeSessionId()
+    // Each staged seed holds the parent's whole event array; evict the
+    // oldest insert at the cap so a run of failed spawns cannot accumulate
+    // unbounded residue (the engine also drops seeds on spawn failure).
+    if (this.forkAtSeeds.size >= forkAtSeedCap) {
+      const oldest = this.forkAtSeeds.keys().next().value
+      if (oldest !== undefined) this.forkAtSeeds.delete(oldest)
+    }
     this.forkAtSeeds.set(newID, {
       seed: seedablePrefix(inspection.events.slice(0, keep)),
       parentID: origID,
       childWorkDir,
     })
     return newID
+  }
+
+  /**
+   * Drop one staged fork-at seed. The engine's spawn path calls this when
+   * the group creation it staged the seed for failed, so the parent's
+   * event array does not stay resident; unknown ids are a no-op.
+   *
+   * @param forkID - the staged seed's id ({@link prepareForkAtSession}'s return).
+   */
+  forgetForkAtSeed(forkID: string): void {
+    this.forkAtSeeds.delete(forkID)
   }
 
   /**
@@ -1858,8 +1888,11 @@ export class DshAgentAdapter {
   /**
    * Live sessions plus persisted ones from the session store (exclusive to
    * this daemon): top-level sessions under this project's directory tree,
-   * newest first. Summaries/message counts arrive engine-side from the
-   * adapter's recent-turn window (`enrichSessionSummaries`); sessions from
+   * newest first. One-shot side queries (origin 'oneshot' — group naming,
+   * predict-next, turn-summary) stay unlisted on both sides: they own no
+   * engine session, and their logs land in the project cwd like any other.
+   * Summaries/message counts arrive engine-side from the adapter's
+   * recent-turn window (`enrichSessionSummaries`); sessions from
    * per-chat `/dir` overrides outside the tree stay unlisted, matching the
    * Go per-cwd store semantics. Persisted recency is the JSONL log file's
    * mtime (SessionHeader has no updatedAt); a backend without `locate` falls
@@ -1868,7 +1901,7 @@ export class DshAgentAdapter {
    * @returns the known sessions with native ids and timestamps.
    */
   async listSessions(): Promise<AgentSessionInfo[]> {
-    const live = [...this.liveSessions.values()].map(s => ({
+    const live = [...this.liveSessions.values()].filter(s => !s.isOneshot()).map(s => ({
       id: s.currentSessionID(),
       summary: s.lastAssistantText().slice(0, 40),
       messageCount: 0,
@@ -1883,6 +1916,7 @@ export class DshAgentAdapter {
     for (const h of headers) {
       if (liveIDs.has(String(h.id))) continue
       if (h.parentSession !== undefined) continue
+      if (h.origin === 'oneshot') continue
       if (h.cwd === undefined || !(h.cwd === base || h.cwd.startsWith(`${base}/`))) continue
       persisted.push({ id: String(h.id), summary: '', messageCount: 0, modifiedAt: await this.logMtimeMs(persistence, h) })
     }
@@ -2088,6 +2122,17 @@ export class DshAgentSession implements AgentSession {
 
   currentSessionID(): string {
     return String(this.handle.agent.id)
+  }
+
+  /**
+   * Whether the wrapped native session is a self-contained one-shot side
+   * query (session origin 'oneshot'): it owns no engine session, so
+   * user-visible listings skip it.
+   *
+   * @returns true when the native session header marks origin 'oneshot'.
+   */
+  isOneshot(): boolean {
+    return this.handle.agent.session.header?.origin === 'oneshot'
   }
 
   alive(): boolean {

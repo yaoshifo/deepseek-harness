@@ -4,9 +4,9 @@
  * session after prolonged inactivity), auto_compress (Go SetAutoCompressConfig
  * + cmdCompress + the turn-end trigger, re-based on dsh's ctx.compaction
  * compactNow instead of a "/compact" message round-trip), and the
- * filter_external_sessions setter surface. session_cleanup_days is not
- * ported — the TS /list view is live-sessions-only (M1 shape) with no
- * persisted-session enumeration or deletion to clean up.
+ * filter_external_sessions setter surface. session_cleanup_days is owned by
+ * SessionManager (setCleanupDays prunes idle sessions on the full save;
+ * wired from the project's sessionCleanupDays config, default 30 days).
  *
  * @module dsh-feishu-bridge/session-misc
  */

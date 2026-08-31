@@ -1028,6 +1028,20 @@ interface SpawnCommonOpts {
 }
 
 /**
+ * Drop the agent's staged rollback-fork seed when the spawn it was staged
+ * for failed. Every spawnGroupCommon failure exit below runs before the
+ * child session plants its `__forkat__` sentinel, so without this the
+ * parent's whole event array stays resident in the adapter until a daemon
+ * restart. Probes structurally (the dsh adapter owns the seed map); other
+ * agents have nothing staged and skip.
+ */
+function forgetStagedForkSeed(e: Engine, sentinelID: string): void {
+  if (!sentinelID.startsWith(ForkAtSessionPrefix)) return
+  const cleaner = e.agent as { forgetForkAtSeed?: (forkID: string) => void }
+  cleaner.forgetForkAtSeed?.(sentinelID.slice(ForkAtSessionPrefix.length))
+}
+
+/**
  * The shared /spawn //fork group-creation skeleton: spawner assertion →
  * memory guard → workdir resolution (per-chat override → agent base → --dir
  * → worktree) → group creation → per-chat override persistence → child
@@ -1039,10 +1053,14 @@ async function spawnGroupCommon(
 ): Promise<void> {
   const spawner = asGroupSpawner(p)
   if (spawner === undefined) {
+    forgetStagedForkSeed(e, opts.forkSentinelID)
     void e.reply(p, msg.replyCtx, e.i18n.t(Msg.SpawnNotSupported))
     return
   }
-  if (checkSpawnMemoryGuard(e, p, msg.replyCtx)) return
+  if (checkSpawnMemoryGuard(e, p, msg.replyCtx)) {
+    forgetStagedForkSeed(e, opts.forkSentinelID)
+    return
+  }
 
   const spawnOpts: GroupSpawnOptions = { ...opts.spawnOpts }
   let wtPath = ''
@@ -1058,6 +1076,7 @@ async function spawnGroupCommon(
     if (opts.dirArg !== '') {
       const resolved = resolveDir(e, opts.dirArg)
       if (resolved === undefined) {
+        forgetStagedForkSeed(e, opts.forkSentinelID)
         void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.SpawnDirError, opts.dirArg))
         return
       }
@@ -1076,6 +1095,7 @@ async function spawnGroupCommon(
         wtRoot = wt.root
         workDir = wt.path
       } else if (!auto) {
+        forgetStagedForkSeed(e, opts.forkSentinelID)
         return
       }
     }
@@ -1090,6 +1110,7 @@ async function spawnGroupCommon(
       ? await spawnerEx.spawnGroupWithOptions(spawnMsg, groupName, firstMsg, spawnOpts)
       : await spawner.spawnGroup(spawnMsg, groupName, firstMsg)
   } catch (error) {
+    forgetStagedForkSeed(e, opts.forkSentinelID)
     void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.SpawnError, String(error instanceof Error ? error.message : error)))
     return
   }
