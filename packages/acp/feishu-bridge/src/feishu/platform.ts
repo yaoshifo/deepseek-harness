@@ -311,6 +311,21 @@ function askCardMeta(card: Card): AskCardMeta | undefined {
         options: elem.options.map(o => ({ label: o.label, description: o.description ?? '' })),
         multiSelect: true,
       })
+    } else if (elem.kind === 'form' && (elem.name ?? '').startsWith('askq_text_form_')) {
+      // An optionless question's only on-card representation is its text
+      // form — without this branch the question vanishes from every rebuild
+      // (callback replacement and syncAskCard PATCH alike). Questions with
+      // options already registered richer data above; never overwrite.
+      const qIdx = Number.parseInt((elem.name ?? '').slice('askq_text_form_'.length), 10)
+      if (!Number.isInteger(qIdx) || qIdx < 0 || questions.has(qIdx)) continue
+      let question = ''
+      for (const child of elem.elements) {
+        if (child.kind === 'actions' && child.buttons[0] !== undefined) {
+          question = child.buttons[0].extra?.askq_question ?? ''
+          break
+        }
+      }
+      questions.set(qIdx, { question, header: '', options: [], multiSelect: false })
     }
   }
   if (questions.size === 0) return undefined

@@ -391,6 +391,10 @@ function questionElements(
           value: `askq_text:${qIdx}`,
           name: `askq_text_submit_${qIdx}`,
           actionType: 'form_submit',
+          // Self-describes the form's question for askCardMeta — an
+          // optionless question has no listItems, so its text form is the
+          // only element naming it.
+          extra: { askq_question: q.question },
         }],
         layout: 'row',
       },

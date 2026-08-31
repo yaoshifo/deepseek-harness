@@ -13,7 +13,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { FeishuPlatform, type CardActionTriggerEvent, type FeishuApiClient } from '../../src/feishu/platform.js'
 import { newCard } from '../../src/card.js'
 import { hintButtonName } from '../../src/engine/hints-panel.js'
-import type { Message } from '../../src/core/types.js'
+import { buildAskQuestionsCard } from '../../src/engine/ask.js'
+import type { Message, UserQuestion } from '../../src/core/types.js'
 
 let counter = 0
 
@@ -480,6 +481,40 @@ describe('onCardAction ask card replacement (B2 multi-question card)', () => {
     await p.start(() => {})
     await p.syncAskCard('feishu:oc_1:ou_9', new Map([[0, { indices: [1] }]]))
     expect(patches).toHaveLength(0)
+  })
+
+  it('optionless questions stay in the meta and survive card rebuilds', async () => {
+    const { client, patches } = patchRecordingClient()
+    const p = newPlatform({ allowChat: '*', apiClient: client })
+    await p.start(() => {})
+    const questions: UserQuestion[] = [
+      { question: 'Pick one', header: '', options: [{ label: 'A', description: '' }], multiSelect: false },
+      { question: 'Say something', header: '', options: [], multiSelect: false },
+    ]
+    await p.sendCard({ messageID: 'om_t', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' },
+      buildAskQuestionsCard('‼️ Ask', questions, new Map()))
+    const meta = p.askqMetaCache.get('feishu:oc_1:ou_9')
+    expect(meta?.questions).toHaveLength(2)
+    expect(meta?.questions[1]).toMatchObject({ question: 'Say something', options: [], multiSelect: false })
+
+    // A click on question 1 rebuilds the card from the cached meta — the
+    // optionless question and its text input must survive the replacement.
+    const resp = p.onCardAction(cardEvent({
+      action: 'askq:0:1',
+      messageID: 'om_askq_1',
+      value: { action: 'askq:0:1', askq_label: 'A', askq_question: 'Pick one' },
+    })) as { card: { data: Record<string, unknown> } } | undefined
+    expect(resp).toBeDefined()
+    const raw = JSON.stringify(resp!.card.data)
+    expect(raw).toContain('Say something')
+    expect(raw).toContain('askq_text_1')
+    // The meta cache survives: question 2 of two is still unanswered.
+    expect(p.askqMetaCache.has('feishu:oc_1:ou_9')).toBe(true)
+
+    // The sync PATCH path rebuilds from the same meta — same guarantee.
+    await p.syncAskCard('feishu:oc_1:ou_9', new Map([[1, { indices: [], custom: 'hello' }]]))
+    expect(patches).toHaveLength(1)
+    expect(patches[0]!.content).toContain('Say something')
   })
 
   function cardBody(resp: { card: { data: Record<string, unknown> } }): { title: string; template: string; markdown: string } {

@@ -43,4 +43,4 @@ Status: implemented
 
 ## Testing
 
-`tests/engine/ask.spec.ts`：NUL 切分解析（`askq_text:`、随带文字、文本含冒号）、custom 与 selected 并存的解析、活表单卡形状（输入表单、可改答的已答题、终态卡、卡级教学 note）。`tests/engine/engine-ask.spec.ts`：前缀选题与改答、越界回退、钟点时间不误判、带进度与教学回显、卡内文字提交结算、旧卡点击消费、文字答案的卡面同步（及卡片动作跳过）。`tests/engine/engine-m3-askq.spec.ts`：带文字表单的卡片元素形状。`tests/feishu/card-action.spec.ts`：文字提交派发与终态换卡、多选提交随带输入、带提示的空提交拒绝、精确重复去重与改答放行、`syncAskCard` PATCH 记录卡且后续点击保留同步状态。`tests/feishu/card.spec.ts`：checker 表单内渲染输入框并去掉聊天输入提示。
+`tests/engine/ask.spec.ts`：NUL 切分解析（`askq_text:`、随带文字、文本含冒号）、custom 与 selected 并存的解析、活表单卡形状（输入表单、可改答的已答题、终态卡、卡级教学 note）。`tests/engine/engine-ask.spec.ts`：前缀选题与改答、越界回退、钟点时间不误判、带进度与教学回显、卡内文字提交结算、旧卡点击消费、文字答案的卡面同步（及卡片动作跳过）。`tests/engine/engine-m3-askq.spec.ts`：带文字表单的卡片元素形状。`tests/feishu/card-action.spec.ts`：文字提交派发与终态换卡、多选提交随带输入、带提示的空提交拒绝、精确重复去重与改答放行、`syncAskCard` PATCH 记录卡且后续点击保留同步状态、`askCardMeta` 从自描述文字表单重建无选项问题使每次换卡保留它们（线上发现：无选项问题在首次换卡后消失）。`tests/feishu/card.spec.ts`：checker 表单内渲染输入框并去掉聊天输入提示。
