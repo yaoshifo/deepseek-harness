@@ -1291,6 +1291,30 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     ],
   },
   {
+    key: 'mcpWorkspace',
+    summary: 'The directory MCP discovery service.',
+    description: 'The directory MCP discovery service.\n\n`wrap(setup)` composes the directory mount onto a creation-time AgentSetup (fresh, fork, and resume paths alike): the inner setup runs first so its publication commit propagates, then every `.mcp.json` server mounts into the agent scope through `agentCtx.plugin(mcpClient, config)`. `mountedFor` answers which servers a cwd would mount, for `/mcp` display.',
+    methods: [
+      {
+        signature: 'wrap(setup: AgentSetup | undefined): AgentSetup',
+        description: 'Wrap a creation-time AgentSetup with this session\'s directory MCP mount. The inner setup runs first (a project tool mask computed inside it must not see the directory tools), then `.mcp.json` servers mount into the agent\'s own scope and disappear with it. Each server failure degrades to that server\'s tools being absent; session creation never rolls back.',
+        parameters: [{ name: 'setup', description: 'the inner creation-time setup, or undefined.' }],
+        returns: 'the wrapping setup.',
+      },
+      {
+        signature: 'async mount(agentCtx: Context): Promise<void>',
+        description: 'Mount the session-cwd `.mcp.json` servers into one agent scope. The composition primitive behind wrap, for callers that already hold an agent creation window of their own.',
+        parameters: [{ name: 'agentCtx', description: 'the unpublished agent\'s scoped creation context.' }],
+      },
+      {
+        signature: 'async mountedFor(cwd: string): Promise<readonly DirectoryMcpServer[]>',
+        description: 'List the servers a directory mount would load for one cwd, for `/mcp`.',
+        parameters: [{ name: 'cwd', description: 'the session working directory to inspect.' }],
+        returns: 'mapped server entries; empty when the cwd is untrusted, the file is absent, or parsing fails.',
+      },
+    ],
+  },
+  {
     key: 'messageFeedback',
     summary: 'Storage-domain sidecar service.',
     description: 'Storage-domain sidecar service. It inspects persisted Session history and never creates or resumes an Agent or Session.',
@@ -1550,7 +1574,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     methods: [
       {
         signature: 'abstract locate(meta: SessionHeader): SessionLocation | undefined',
-        description: 'Resolve this backend\'s independent local artifact for a session without reading, creating, flushing, or otherwise materializing it. Backends such as SQLite that do not own one artifact per session return `undefined`.',
+        description: 'Resolve this backend\'s independent local artifact for a session without reading, creating, flushing, or otherwise materializing it. A backend that does not own one artifact per Session returns `undefined`.',
         parameters: [{ name: 'meta', description: 'the immutable session header whose artifact is requested.' }],
         returns: 'the backend-specific absolute location, when one exists.',
       },
@@ -1607,7 +1631,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'abstract readFrom(id: SessionId, fromSeq: number, signal?: AbortSignal): Promise<{ meta: SessionHeader; events: SessionEvent[] }>',
-        description: 'Read the stored events from `fromSeq` onward — the read-from-seq primitive for read models that resume from a watermark (e.g. a persisted projection cache folding only the tail past its checkpoint). Unlike inspect, it is a detached physical suffix read: no preparation cache, torn-tail truncation, synthetic closers, or coordinator-state publication. Only events from the valid contiguous stored prefix are returned, so a torn fragment never reaches the caller. `fromSeq` at or beyond the stored prefix returns an empty event list (never an error). Backends whose medium can seek by seq (SQLite) read only the suffix; sequential media (JSONL, both encodings) still parse the whole artifact and skip forward — the primitive bounds what is RETURNED and refolded, not every backend\'s physical read.',
+        description: 'Read the stored events from `fromSeq` onward — the read-from-seq primitive for read models that resume from a watermark (e.g. a persisted projection cache folding only the tail past its checkpoint). Unlike inspect, it is a detached physical suffix read: no preparation cache, torn-tail truncation, synthetic closers, or coordinator-state publication. Only events from the valid contiguous stored prefix are returned, so a torn fragment never reaches the caller. `fromSeq` at or beyond the stored prefix returns an empty event list (never an error). A backend whose medium can seek by seq may read only the suffix; sequential media such as JSONL still parse the whole artifact and skip forward. The primitive bounds what is returned and refolded, not every backend\'s physical read.',
         parameters: [{ name: 'id', description: 'the persisted session to read.' }, { name: 'fromSeq', description: 'first event seq to include; a non-negative safe integer.' }, { name: 'signal', description: 'optional cancellation for queued and backend read work.' }],
         returns: 'the header and the stored events with `seq >= fromSeq`.',
       },
@@ -1659,7 +1683,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'sessionProjections',
     summary: '`ctx.sessionProjections`: the projection unit table and its drive.',
-    description: '`ctx.sessionProjections`: the projection unit table and its drive. The service subscribes to `session/event` once; every committed event passes every registered unit\'s `apply` (eager drive), and a changed state reference in a client-visible unit notifies the change feed with the schema-validated view. Cells build lazily — a unit registered after events flowed, or a session older than the registry, folds `init` over the in-memory log on first touch (event or read). Registration is an effect (disposer rides the calling fiber): an unloaded domain plugin\'s key disappears from snapshots and clients read it as capability absence. A host reader either declares `sessionProjections` in its plugin `inject` or fails explicitly when the registry or required key is absent. Contributors may preserve optional registration through `ctx.inject([\'sessionProjections\'], ...)`. Registrants sharing a key share one unit and are counted: the same tool package mounted in N agent presets registers N times, and the key survives until the last one unloads.',
+    description: '`ctx.sessionProjections`: the projection unit table and its drive. The service subscribes to `session/event` once; every committed event passes every registered unit\'s `apply` (eager drive). A changed state reference computes the next client view; the change feed is notified only when its raw result changes by `Object.is`. Cells build lazily — a unit registered after events flowed, or a session older than the registry, folds `init` over the in-memory log on first touch (event or read). Registration is an effect (disposer rides the calling fiber): an unloaded domain plugin\'s key disappears from snapshots and clients read it as capability absence. A host reader either declares `sessionProjections` in its plugin `inject` or fails explicitly when the registry or required key is absent. Contributors may preserve optional registration through `ctx.inject([\'sessionProjections\'], ...)`. Registrants sharing a key share one unit and are counted: the same tool package mounted in N agent presets registers N times, and the key survives until the last one unloads.',
     methods: [
       {
         signature: 'register< K extends keyof SessionProjectionMap, S extends SessionProjectionStateMap[K], >( definition: Omit<ProjectionDefinition<K, S>, \'wire\'> & { wire: NonNullable<ProjectionDefinition<K, S>[\'wire\']> }, ): () => void',
@@ -1676,7 +1700,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'onChanged(listener: ProjectionChangeListener): () => void',
         description: 'Subscribe to the change feed. The registration is an effect on the calling context\'s fiber.',
-        parameters: [{ name: 'listener', description: 'called once per client-visible unit whose state reference changed, per committed event.' }],
+        parameters: [{ name: 'listener', description: 'called once per client-visible unit whose raw view changed by `Object.is`, per committed event.' }],
         returns: 'the exact disposer that unsubscribes.',
       },
       {
@@ -2342,10 +2366,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: '@Remote(\'prompt\') async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>',
-        description: 'Deliver one browser-authored message to a continuable child through the exact live direct parent, retaining the caller-minted request identity and validated browser zone on the accepted message. Success identifies the message the child\'s FIFO inbox accepted; later execution is independent of this call.',
+        description: 'Deliver one browser-authored message to a continuable child through the exact live direct parent, retaining the caller-minted request identity and validated browser zone on the accepted message. Success identifies the message the child\'s FIFO inbox accepted; later execution is independent of this call. Image parts are admitted and persisted through the attachment store before delivery, and the child\'s model must accept image input.',
         parameters: [{ name: 'request', description: 'durable address, minted identity, content, and optional browser zone.' }, { name: 'signal', description: 'carrier cancellation, owning the call until inbox acceptance.' }],
         returns: 'the accepted message\'s inbox identity.',
-        throws: ['{RemoteError} `gateway/bad-request`, `subagent/attachment-unsupported`, `subagent/invalid-time-zone`, `subagent/parent-unavailable`, `subagent/not-resumable`, `subagent/unauthorized`, `subagent/delivery-unavailable`, `gateway/cancelled`, or `gateway/internal`.'],
+        throws: ['{RemoteError} `gateway/bad-request`, `subagent/attachment-invalid`, `subagent/invalid-time-zone`, `subagent/parent-unavailable`, `subagent/not-resumable`, `subagent/unauthorized`, `subagent/delivery-unavailable`, `gateway/cancelled`, or `gateway/internal`.'],
       },
       {
         signature: '@Remote(\'interruptByParent\') interruptByParent( childSessionId: SessionId, parentSessionId: SessionId, mode: \'continuable\', ): SubagentInterruptReceipt',
@@ -3921,6 +3945,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface CardSelectOption {\n    text: string;\n    value: string;\n}',
   },
   {
+    name: 'ChunkRow',
+    declaration: 'export type ChunkRow = {\n    type: \'text-chunks\';\n    seq0: number;\n    time0: number;\n    data: TextRunData;\n} | {\n    type: \'reasoning-chunks\';\n    seq0: number;\n    time0: number;\n    data: TextRunData;\n} | {\n    type: \'tool-call-chunks\';\n    seq0: number;\n    time0: number;\n    data: ToolCallRunData;\n};',
+  },
+  {
     name: 'ChunkRowEvent',
     declaration: 'export type ChunkRowEvent = {\n    [Kind in ChunkRow[\'type\']]: {\n        readonly type: `chunkrow/${Kind}`;\n        readonly seq: number;\n        readonly time: number;\n        readonly data: Extract<ChunkRow, {\n            readonly type: Kind;\n        }>[\'data\'];\n    };\n}[ChunkRow[\'type\']];',
   },
@@ -4225,6 +4253,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface DirectoryListing {\n    path: string;\n    home: string;\n    crumbs: DirectoryEntry[];\n    entries: DirectoryEntry[];\n    truncated: boolean;\n}',
   },
   {
+    name: 'DirectoryMcpServer',
+    declaration: 'export interface DirectoryMcpServer {\n    readonly name: string;\n    readonly transport: \'stdio\' | \'streamable-http\';\n}',
+  },
+  {
     name: 'DirectoryPickerBrowseCapability',
     declaration: 'export interface DirectoryPickerBrowseCapability {\n    kind: \'browse\';\n    list(path?: string, signal?: AbortSignal): Promise<DirectoryListing>;\n    createDirectory(path: string, name: string): Promise<string>;\n}',
   },
@@ -4353,10 +4385,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface EncodedImageAttachment {\n    mediaType: ImageMediaType;\n    data: string;\n    name?: string;\n}',
   },
   {
-    name: 'EncodedImagePromptBlock',
-    declaration: 'export interface EncodedImagePromptBlock extends EncodedImageAttachment {\n    readonly type: \'image\';\n}',
-  },
-  {
     name: 'Engine',
     declaration: 'export class Engine {\n    readonly name: string;\n    readonly agent: Agent;\n    readonly platforms: Platform[];\n    readonly sessions: SessionManager;\n    readonly i18n: I18n;\n    readonly startedAt: number;\n    readonly bridge: BridgeDispatch;\n    display: DisplayCfg;\n    streamPreview: StreamPreviewCfg;\n    bumpDebounceInterval: number;\n    injectSender: boolean;\n    attachmentSendEnabled: boolean;\n    feishuWorkspace: FeishuWorkspaceInfo | undefined;\n    eventIdleTimeout: number;\n    stallMaxRetries: number;\n    maxQueuedMessages: number;\n    debounceInterval: number;\n    interactiveIdleTimeout: number;\n    subtaskMaxDepth: number;\n    spawnWorktree: WorktreeMode;\n    spawnMemWarnPct: number;\n    spawnMemBlockPct: number;\n    subtaskQuiet: boolean;\n    subtaskPanelEnabled: boolean;\n    subtaskPanelIntervalMs: number;\n    subtaskPanelStallMs: number;\n    subtaskGatherTimeout: number;\n    groupNameEnabled: boolean;\n    groupNameProvider: string;\n    groupNameTimeout: number;\n    groupNamePrompt: string;\n    groupNameSetAvatar: boolean;\n    readonly monitor: MonitorCore;\n    cronScheduler: CronScheduler | undefined;\n    relayManager: RelayManager | undefined;\n    planRenderEnabled: boolean;\n    planRenderProvider: string;\n    planRenderTimeoutMs: number;\n    planRenderPngScript: string;\n    planRenderSkillSource: (() => Promise<string | undefined>) | undefined;\n    planDir: string;\n    readonly modelContextWindow: 200000;\n    showContextIndicator: boolean;\n    contextWindow:  /* …truncated — full shape in source */',
   },
@@ -4374,7 +4402,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'EventKind',
-    declaration: 'export type EventKind = \'text\' | \'text_delta\' | \'thinking_delta\' | \'tool_use\' | \'tool_result\' | \'result\' | \'error\' | \'thinking\' | \'subagent_status\' | \'compaction\' | \'todo_update\';',
+    declaration: 'export type EventKind = \'text\' | \'text_delta\' | \'thinking_delta\' | \'tool_use\' | \'tool_result\' | \'result\' | \'error\' | \'thinking\' | \'subagent_status\' | \'compaction\' | \'todo_update\' | \'skill_invocation\';',
   },
   {
     name: 'FeishuBridgeEventName',
@@ -4566,7 +4594,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'InteractiveState',
-    declaration: 'export class InteractiveState {\n    agentSession: AgentSession | undefined;\n    platform: Platform | undefined;\n    replyCtx: unknown;\n    agent: Agent | undefined;\n    sessionStartOptions: SessionStartOptions | undefined;\n    closing: Promise<void> | undefined;\n    stopped: boolean;\n    userStopped: boolean;\n    engineStopped: boolean;\n    stopNoticeSent: boolean;\n    pendingMessages: QueuedMessage[];\n    inflightMessage: QueuedMessage | undefined;\n    sideText: string;\n    eventsNeedResync: boolean;\n    effectiveMode: string;\n    effectiveIdleTimeout: number;\n    lastActivity: number;\n    activeTurns: number;\n    lastEventAt: number;\n    activeToolCalls: number;\n    turnSeq: number;\n    fromVoice: boolean;\n    lastPrompt: string;\n    pendingAsk: PendingAsk | undefined;\n    capPausedMs: number;\n    capParkStart: number;\n    compactionCount: number;\n    cumulativeInputTokens: number;\n    cumulativeCacheInputTokens: number;\n    notificationHandle: unknown;\n    notificationFooterMsg: string;\n    notificationFooterElements: CardElement[];\n    notificationHeaderSuffix: string;\n    predictNextRunning: boolean;\n    predictNextDisabled: boolean;\n    turnSummaryRunning: boolean;\n    lastAutoCompressAt: number;\n    lastAutoCompressTokens: number;\n    sender: AsyncSender | undefined;\n    preview: StreamPreview | undefined;\n    progressWriter: CompactProgressWriter | undefined;\n    deleteMode: import(\'./session-card.js\').DeleteModeState | undefined;\n    backgroundTasksPending: number;\n  /* …truncated — full shape in source */',
+    declaration: 'export class InteractiveState {\n    agentSession: AgentSession | undefined;\n    platform: Platform | undefined;\n    replyCtx: unknown;\n    agent: Agent | undefined;\n    sessionStartOptions: SessionStartOptions | undefined;\n    closing: Promise<void> | undefined;\n    stopped: boolean;\n    userStopped: boolean;\n    engineStopped: boolean;\n    stopNoticeSent: boolean;\n    pendingMessages: QueuedMessage[];\n    inflightMessage: QueuedMessage | undefined;\n    sideText: string;\n    eventsNeedResync: boolean;\n    effectiveMode: string;\n    effectiveIdleTimeout: number;\n    lastActivity: number;\n    activeTurns: number;\n    lastEventAt: number;\n    activeToolCalls: number;\n    turnSeq: number;\n    fromVoice: boolean;\n    lastPrompt: string;\n    pendingAsk: PendingAsk | undefined;\n    capPausedMs: number;\n    capParkStart: number;\n    compactionCount: number;\n    cumulativeInputTokens: number;\n    cumulativeCacheInputTokens: number;\n    notificationHandle: unknown;\n    notificationFooterMsg: string;\n    notificationFooterElements: CardElement[];\n    notificationHeaderSuffix: string;\n    predictNextRunning: boolean;\n    predictNextDisabled: boolean;\n    turnSummaryRunning: boolean;\n    lastAutoCompressAt: number;\n    lastAutoCompressTokens: number;\n    sender: AsyncSender | undefined;\n    preview: StreamPreview | undefined;\n    progressWriter: CompactProgressWriter | undefined;\n    deleteMode: import(\'./session-card.ts\').DeleteModeState | undefined;\n    backgroundTasksPending: number;\n  /* …truncated — full shape in source */',
   },
   {
     name: 'InvariantFailure',
@@ -5091,10 +5119,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'PromptAssembly',
     declaration: 'export interface PromptAssembly {\n    sections: AssembledSection[];\n    contexts: AssembledContext[];\n    tools: ToolSchema[];\n    variables: Record<string, string | undefined>;\n}',
-  },
-  {
-    name: 'PromptContentPart',
-    declaration: 'export type PromptContentPart = {\n    readonly type: \'text\';\n    readonly text: string;\n} | {\n    readonly type: \'image\';\n    readonly mediaType: ImageMediaType;\n    readonly data: string;\n    readonly name?: string;\n};',
   },
   {
     name: 'PromptContext',
@@ -5961,16 +5985,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type SubagentListEntry = {\n    readonly kind: \'child\';\n    readonly id: SessionId;\n    readonly activity: \'running\' | \'inactive\';\n    readonly hasChildren: boolean;\n} & ({\n    readonly mode: \'one-shot\';\n    readonly label?: string;\n} | {\n    readonly mode: \'continuable\';\n    readonly label: string;\n}) | {\n    readonly kind: \'diagnostic\';\n    readonly id: SessionId;\n    readonly reason: \'corrupt\' | \'unsupported\' | \'unavailable\';\n};',
   },
   {
-    name: 'SubagentPromptContentPart',
-    declaration: 'export type SubagentPromptContentPart = ContentBlock | EncodedImagePromptBlock;',
-  },
-  {
     name: 'SubagentPromptReceipt',
     declaration: 'export interface SubagentPromptReceipt {\n    readonly messageId: MessageId;\n}',
   },
   {
     name: 'SubagentPromptRequest',
-    declaration: 'export interface SubagentPromptRequest {\n    readonly requestId: SubagentPromptRequestId;\n    readonly parentSessionId: SessionId;\n    readonly childSessionId: SessionId;\n    readonly mode: \'continuable\';\n    readonly content: readonly SubagentPromptContentPart[];\n    readonly clientTimeZone?: string;\n}',
+    declaration: 'export interface SubagentPromptRequest {\n    readonly requestId: SubagentPromptRequestId;\n    readonly parentSessionId: SessionId;\n    readonly childSessionId: SessionId;\n    readonly mode: \'continuable\';\n    readonly content: readonly PromptContentPart[];\n    readonly clientTimeZone?: string;\n}',
   },
   {
     name: 'SubagentPromptRequestId',

@@ -183,6 +183,47 @@ Host service backing the generated `ctx.remote.directoryPicker` namespace. The s
 
 Source: [`packages/api/workspace-controller/src/directory-picker.ts`](../../packages/api/workspace-controller/src/directory-picker.ts)
 
+<a id="ctxmcpworkspace--mcpworkspaceservice"></a>
+
+### `ctx.mcpWorkspace` — `McpWorkspaceService`
+
+The directory MCP discovery service.
+
+`wrap(setup)` composes the directory mount onto a creation-time AgentSetup (fresh, fork, and resume paths alike): the inner setup runs first so its publication commit propagates, then every `.mcp.json` server mounts into the agent scope through `agentCtx.plugin(mcpClient, config)`. `mountedFor` answers which servers a cwd would mount, for `/mcp` display.
+
+```ts cordis-catalog
+/**
+ * Wrap a creation-time AgentSetup with this session's directory MCP mount.
+ * The inner setup runs first (a project tool mask computed inside it must
+ * not see the directory tools), then `.mcp.json` servers mount into the
+ * agent's own scope and disappear with it. Each server failure degrades to
+ * that server's tools being absent; session creation never rolls back.
+ * @param setup - the inner creation-time setup, or undefined.
+ * @returns the wrapping setup.
+ */
+wrap(setup: AgentSetup | undefined): AgentSetup
+
+/**
+ * Mount the session-cwd `.mcp.json` servers into one agent scope. The
+ * composition primitive behind {@link wrap}, for callers that already hold
+ * an agent creation window of their own.
+ * @param agentCtx - the unpublished agent's scoped creation context.
+ */
+async mount(agentCtx: Context): Promise<void>
+
+/**
+ * List the servers a directory mount would load for one cwd, for `/mcp`.
+ * @param cwd - the session working directory to inspect.
+ * @returns mapped server entries; empty when the cwd is untrusted, the file
+ *   is absent, or parsing fails.
+ */
+async mountedFor(cwd: string): Promise<readonly DirectoryMcpServer[]>
+```
+
+Types: [AgentSetup](core.zh.md) · [DirectoryMcpServer](workspace MCP isolation contract is owned by packages/mcp/mcp-workspace/src/types.ts)
+
+Source: [`packages/mcp/mcp-workspace/src/index.ts`](../../packages/mcp/mcp-workspace/src/index.ts)
+
 <a id="ctxworkspacecontroller--workspacecontroller"></a>
 
 ### `ctx.workspaceController` — `WorkspaceController`
