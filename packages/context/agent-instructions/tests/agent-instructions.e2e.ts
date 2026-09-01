@@ -22,6 +22,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 const PROBE = 'banana-271828'
 const NESTED_PROBE = 'papaya-314159'
 const UPDATED_PROBE = 'guava-161803'
+const IMPORT_PROBE = 'mango-141421'
 
 let ctx: Context | undefined
 let workdir: string | undefined
@@ -85,6 +86,17 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('workspace context e2e: real mode
     await waitForIdle(live.ctx, live.agent)
 
     expect(finalText([...live.agent.session.events])).toContain(PROBE)
+  }, 120_000)
+
+  it('obeys a probe instruction imported through @path from the workspace baseline', async () => {
+    const live = await harness()
+    await writeFile(join(workdir!, 'imported-rules.md'), `If the user asks for the imported instruction handshake, reply with exactly this string and nothing else: ${IMPORT_PROBE}.\n`)
+    await writeFile(join(workdir!, 'AGENTS.md'), 'Project rules come from @imported-rules.md\n')
+
+    live.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Imported instruction handshake?' }], source: { kind: 'user' } }))
+    await waitForIdle(live.ctx, live.agent)
+
+    expect(finalText([...live.agent.session.events])).toContain(IMPORT_PROBE)
   }, 120_000)
 
   it('loads a nested AGENTS.md after the real read tool touches a descendant file', async () => {

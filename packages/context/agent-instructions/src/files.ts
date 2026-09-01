@@ -12,6 +12,7 @@ import { dshHomeDisplay } from '@deepseek-ai/dsh-home-paths'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { resolveConfig, resolveDiscoveryConfig, type CandidateSelection, type ResolvedConfig } from './config.ts'
 import { trimmedInstructionDigest } from './digest.ts'
+import { expandInstructionImports, type InstructionImportReader } from './imports.ts'
 import {
   decodeScopeKey,
   renderWorkspaceInstructionSet,
@@ -28,7 +29,14 @@ export interface InstructionFile {
 
 /** An instruction file whose UTF-8 content was read successfully. */
 export interface LoadedInstructionFile extends InstructionFile {
+  /**
+   * Content with every `@path` import reference expanded in place. The SHA-1
+   * identity tracked for this file covers the expanded text, matching what is
+   * rendered.
+   */
   content: string
+  /** Absolute paths of every imported file inlined into `content`, directly or transitively. */
+  imports?: string[]
   /** Provider freshness token when the file was loaded through `ctx.fs`. */
   version?: FsVersion
 }
@@ -409,6 +417,47 @@ export async function loadBaselineInstructions(
 }
 
 /**
+ * Build a bounded import reader that resolves provider targets first so an
+ * imported file loads through the same provider as its referencing file.
+ */
+function instructionImportReader(
+  maxSourceBytes: number,
+  fileSystem: FileSystem | undefined,
+  signal: AbortSignal | undefined,
+): InstructionImportReader {
+  return async (absolutePath) => {
+    if (fileSystem === undefined) {
+      return readBounded({ absolutePath }, maxSourceBytes, undefined, signal)
+    }
+    try {
+      const target = await fileSystem.resolve(absolutePath, signalOptions(signal))
+      return await readBounded({ absolutePath, target }, maxSourceBytes, fileSystem, signal)
+    } catch {
+      signal?.throwIfAborted()
+      return undefined
+    }
+  }
+}
+
+async function expandLoadedContent(
+  content: string,
+  originDir: string,
+  maxSourceBytes: number,
+  fileSystem: FileSystem | undefined,
+  signal: AbortSignal | undefined,
+): Promise<{ content: string; imports?: string[] }> {
+  const expanded = await expandInstructionImports(
+    content,
+    originDir,
+    instructionImportReader(maxSourceBytes, fileSystem, signal),
+  )
+  return {
+    content: expanded.content,
+    ...expanded.imports.length === 0 ? {} : { imports: expanded.imports },
+  }
+}
+
+/**
  * Load a baseline together with the files retained after rendering.
  * @param options - discovery, source-size, byte-budget, and cancellation configuration.
  * @param fileSystem - optional provider used instead of host filesystem reads.
@@ -426,10 +475,17 @@ export async function loadBaselineInstructionSet(
   for (const file of discovered) {
     const content = await readBounded(file, config.maxSourceBytes, fileSystem, options.signal)
     if (content !== undefined) {
+      const expanded = await expandLoadedContent(
+        content,
+        dirname(file.absolutePath),
+        config.maxSourceBytes,
+        fileSystem,
+        options.signal,
+      )
       loaded.push({
         absolutePath: file.absolutePath,
         displayPath: file.displayPath,
-        content,
+        ...expanded,
         ...file.version === undefined ? {} : { version: file.version },
       })
     }
@@ -520,10 +576,11 @@ export async function readScopeInstruction(
 ): Promise<LoadedInstructionFile | undefined> {
   const content = await readBounded(file, maxSourceBytes, fileSystem, signal)
   if (content === undefined) return undefined
+  const expanded = await expandLoadedContent(content, dirname(file.absolutePath), maxSourceBytes, fileSystem, signal)
   return {
     absolutePath: file.absolutePath,
     displayPath: file.displayPath,
-    content,
+    ...expanded,
     version: file.version,
   }
 }

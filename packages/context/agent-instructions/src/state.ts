@@ -9,6 +9,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Message } from '@deepseek-ai/dsh-llm'
 import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
 import type { FileSystem, FsVersion } from '@deepseek-ai/dsh-fs'
+import { resolve } from 'node:path'
 import type { ResolvedConfig } from './config.ts'
 import { instructionContentSha1, trimmedInstructionDigest } from './digest.ts'
 import {
@@ -61,6 +62,12 @@ export interface InstructionVersionState {
    * per-directory duplicates on the metadata fast path without re-reading a sibling.
    */
   trimmedDigest: string
+  /**
+   * Absolute paths of every imported file inlined into this scope's expanded
+   * content. A touch of any of them must force a re-read even when the scope
+   * file itself is unchanged, because its rendered content changed.
+   */
+  imports?: string[]
 }
 
 /** Session-isolated fast-path state keyed by logical instruction scope. */
@@ -181,6 +188,7 @@ export function baselineInstructionState(files: LoadedInstructionFile[]): {
         version: file.version,
         digest,
         trimmedDigest: trimmedInstructionDigest(file.content),
+        ...file.imports === undefined || file.imports.length === 0 ? {} : { imports: file.imports },
       })
     }
   }
@@ -299,6 +307,17 @@ export async function reconcileInstructionContext(
   }
 
   const versions = versionStatesFor(session, versionCache)
+  // A touched path that an expanded scope imported is not a candidate file in
+  // any directory, so it reaches its owning scope through the version cache's
+  // import records instead of directory discovery.
+  const touchedImportPaths = new Set(options.touchedPaths.map(touchedPath => resolve(cwd, touchedPath)))
+  const importsTouched = (state: InstructionVersionState): boolean =>
+    state.imports !== undefined && state.imports.some(importPath => touchedImportPaths.has(importPath))
+  if (touchedImportPaths.size > 0) {
+    for (const [scope, state] of versions) {
+      if (importsTouched(state)) scopes.add(scope)
+    }
+  }
   const seenAbsolutePaths = new Set<string>()
   // Per-directory trimmed-content identities kept so far this pass, iterated in
   // candidate order (base before local); a later sibling matching an earlier one
@@ -414,6 +433,9 @@ export async function reconcileInstructionContext(
         cached !== undefined
         && cached.path === probedFile.displayPath
         && cached.version === probedFile.version
+        // An unchanged scope file with a touched import still re-renders: its
+        // expanded content changed even though its own bytes did not.
+        && !importsTouched(cached)
         && previous !== undefined
         && previous.action !== 'remove'
         && previous.path === cached.path
@@ -441,6 +463,7 @@ export async function reconcileInstructionContext(
         version: probedFile.version,
         digest: currentDigest,
         trimmedDigest,
+        ...file.imports === undefined || file.imports.length === 0 ? {} : { imports: file.imports },
       }
       if (previous !== undefined && previous.action !== 'remove' && previous.path === file.displayPath && previous.digest === currentDigest) {
         versions.set(scope, nextVersion)
