@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-mcp-workspace",
   "description": "Directory-scoped MCP discovery: mounts a session cwd's Claude Code-compatible .mcp.json servers into the agent scope",
-  "version": "0.1.2-alpha.2",
+  "version": "0.1.2-alpha.3",
   "publishConfig": {
     "access": "public"
   },

@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-feishu-bridge",
   "description": "Feishu bridge plugin for DeepSeek Harness: engine + Feishu platform orchestration migrated from cc-connect (packages/acp/feishu-bridge/docs/MIGRATION.md)",
-  "version": "0.1.2-alpha.2",
+  "version": "0.1.2-alpha.3",
   "license": "MIT",
   "publishConfig": {
     "access": "public"

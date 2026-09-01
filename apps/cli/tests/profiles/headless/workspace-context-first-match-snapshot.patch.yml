@@ -1,0 +1,35 @@
+# Patch for resuming one seeded workspace-instruction session under
+# `first-existing` candidate selection: `CLAUDE.md` wins any directory where
+# both siblings exist, and a selection-mode change supersedes a visible
+# baseline seeded under the default `all-existing` semantics.
+- id: headless-startup
+  disabled: true
+
+- id: headless-runner
+  disabled: true
+
+- id: llm-deepseek
+  disabled: true
+
+- id: agent-instructions
+  config:
+    maxBytes: 65536
+    dshHome: !!js process.cwd() + '/.dsh'
+    instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md']
+    candidateSelection: first-existing
+
+- id: session-persistence-jsonl
+  config:
+    root: './.sessions'
+    compression: none
+
+- insert:
+    - id: replay
+      name: '@deepseek-ai/dsh-llm-replay'
+      config:
+        file: !!js process.env.DSH_SNAPSHOT_FILE
+        overrideFile: !!js process.env.DSH_SNAPSHOT_OVERRIDE
+
+    # Publish the persisted agent before the driver selects the single root.
+    - id: resumed-agent
+      name: './tests/fixtures/workspace-context-resume-agent.ts'
