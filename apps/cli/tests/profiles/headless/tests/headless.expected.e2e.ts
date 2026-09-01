@@ -17,6 +17,12 @@ import {
 } from '@deepseek-ai/dsh-session-persistence-jsonl/src/zstd.ts'
 import { describe, expect, it } from 'vitest'
 
+// The subagent child's warn-once stderr line when no mcp-workspace service is
+// mounted (packages/subagent/subagent/src/child-agent.ts); these compositions
+// mount no mcp-workspace row, so it is the whole expected stderr.
+const subagentMcpWorkspaceWarning = 'subagent child: the mcp-workspace service is not mounted; '
+  + 'directory .mcp.json discovery is inactive for child agents (add the mcp-workspace plugin row to enable it)\n'
+
 const goldensDir = fileURLToPath(new URL('./expected/', import.meta.url))
 const goalScenarioDir = join(goldensDir, 'goal-tools')
 const goalConfigPath = fileURLToPath(new URL('../goal-snapshot.patch.yml', import.meta.url))
@@ -576,7 +582,7 @@ describe('headless stream-json snapshots', () => {
         }
       },
     })
-    expect(result.stderr).toBe('')
+    expect(result.stderr).toBe(subagentMcpWorkspaceWarning)
     expect(parseJsonl(result.stdout).at(-1)).toMatchObject({
       type: 'result',
       output: 'TEAM_WORKFLOW_OK: both teammates and dependent tasks completed.',
@@ -726,7 +732,7 @@ describe('headless stream-json snapshots', () => {
       },
     })
 
-    expect(result.stderr).toBe('')
+    expect(result.stderr).toBe(subagentMcpWorkspaceWarning)
     const records = parseJsonl(result.stdout)
     expect(records.at(-1)).toMatchObject({
       type: 'result',

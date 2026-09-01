@@ -6,5 +6,8 @@ recording: authored
 header:
   class: ask-variant
   pin: true
+  # The composition only swaps the ask tool and its auto-answer provider; the
+  # system prompt is the acp-default one, so pin it from that class's source.
+  systemPromptSource: escalation-approved
 replay:
   override: true
