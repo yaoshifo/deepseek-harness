@@ -47,6 +47,77 @@
 - id: tool-subagent-fork
   disabled: true
 
+# The question machinery: the ask_user_question tool (bridge ask cards,
+# user-questions settlement) has no dsh-base row — every bridge composition
+# needs it, so the bundle patch mounts it.
+- insert:
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'
+
+# The session memory surface (memory_* tools, per-session plus global
+# indexes) is part of the bridge product experience; index limits tuned for
+# card-length context. Mounted here so every bridge composition carries it.
+- insert:
+    - id: dsh-memory
+      name: '@deepseek-ai/dsh-memory'
+      config:
+        maxIndexBytes: 25600
+        global:
+          maxIndexBytes: 8192
+
+# Deployment tool roster (2026-08-20 cc-connect lineage, carried identically
+# by both live profiles): the goal family (domain + round driver + /goal
+# command + tool — disabling only the tool row would leave /goal-created
+# goals with no tool to close, burning rounds), workflow, and ralph stay
+# off: low-frequency orchestration whose schemas cost request context every
+# turn. A fresh bridge deployment gets the same lean roster.
+- id: goal
+  disabled: true
+
+- id: goal-round-driver
+  disabled: true
+
+- id: command-goal
+  disabled: true
+
+- id: tool-goal
+  disabled: true
+
+- id: tool-workflow
+  disabled: true
+
+- id: workflow-worker-thread
+  disabled: true
+
+- id: tool-ralph
+  disabled: true
+
+# Single editor surface: the session editor is dsh-tool-fs's edit — the same
+# single-editor decision that keeps tool-str-replace-editor out of the
+# general-purpose presets. dsh-base still mounts the row, so the bridge
+# disables it; a second editor only doubles selection ambiguity.
+- id: tool-str-replace-editor
+  disabled: true
+
+# Bridge sessions carry their own identity and persona injection (deployment
+# persona sections, CC_FEISHU_* routing); base's harness identity line would
+# duplicate it. Config is key-replacement, so persona repeats base's value.
+- id: system-prompt
+  config:
+    includeHarnessIdentity: false
+    persona: ''
+
+# Instruction-file convention: bridge sessions read CLAUDE.md and
+# CLAUDE.local.md (the Claude Code-compatible convention). Config is
+# key-replacement, so maxBytes repeats dsh-base's value.
+- id: agent-instructions
+  config:
+    maxBytes: 65536
+    instructionFileCandidates:
+      - CLAUDE.md
+    localInstructionFileCandidates:
+      - CLAUDE.local.md
+
 # The plan-mode delegation sentence: this composition disables the generic
 # subagent / subagent_fork tools (the disables above), so the base bundle's
 # "background subagent delegations" wording would name tools the model cannot

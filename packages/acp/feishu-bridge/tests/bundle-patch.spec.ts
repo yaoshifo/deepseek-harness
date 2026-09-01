@@ -32,6 +32,16 @@ function loadPatches(file: string): PatchOptions[] {
   return parsed as PatchOptions[]
 }
 
+function composeEntries(): { entries: ReturnType<typeof applyEntryPatches>; warnings: string[] } {
+  const warnings: string[] = []
+  const warn = (message: string): void => { warnings.push(message) }
+  let entries: ReturnType<typeof applyEntryPatches> = []
+  for (const file of [basePatchFile, bridgePatchFile]) {
+    entries = applyEntryPatches(entries, loadPatches(file), warn)
+  }
+  return { entries, warnings }
+}
+
 function composePlanModeSection(patchFiles: string[]): { section: unknown; warnings: string[] } {
   const warnings: string[] = []
   const warn = (message: string): void => { warnings.push(message) }
@@ -44,6 +54,13 @@ function composePlanModeSection(patchFiles: string[]): { section: unknown; warni
   // through a structural cast before reading.
   const config = row?.config as Record<string, unknown> | undefined
   return { section: config?.section, warnings }
+}
+
+/** Row lookup with the file-boundary config narrowed to a plain record. */
+function findRow(entries: ReturnType<typeof applyEntryPatches>, id: string):
+{ disabled?: boolean | { __jsExpr?: string }; config?: Record<string, unknown> } | undefined {
+  const row = entries.find(entry => entry.id === id)
+  return row as { disabled?: boolean | { __jsExpr?: string }; config?: Record<string, unknown> } | undefined
 }
 
 function asSectionText(section: unknown): string {
@@ -64,6 +81,42 @@ describe('bridge bundle patch', () => {
     // An id-targeted patch that matches nothing is skipped with a warning: a
     // plan-mode warning here would mean the override never reached the row.
     expect(warnings.filter(message => message.includes('plan-mode'))).toEqual([])
+  })
+
+  it('mounts the ask-user and memory rows base does not ship', () => {
+    const { entries, warnings } = composeEntries()
+    const askUser = findRow(entries, 'tool-ask-user')
+    expect(askUser?.config).toBeUndefined()
+    expect(askUser?.disabled).not.toBe(true)
+    const memory = findRow(entries, 'dsh-memory')
+    expect(memory?.disabled).not.toBe(true)
+    expect(memory?.config).toMatchObject({ maxIndexBytes: 25600, global: { maxIndexBytes: 8192 } })
+    expect(warnings.filter(message => message.includes('ask-user') || message.includes('dsh-memory'))).toEqual([])
+  })
+
+  it('curates the deployment tool roster: goal family, workflow, ralph, and the second editor stay disabled', () => {
+    const { entries } = composeEntries()
+    for (const id of [
+      'goal', 'goal-round-driver', 'command-goal', 'tool-goal',
+      'tool-workflow', 'workflow-worker-thread', 'tool-ralph',
+      'tool-str-replace-editor',
+    ]) {
+      const row = findRow(entries, id)
+      expect(row, `${id} must be mounted by dsh-base`).toBeDefined()
+      expect(row?.disabled, `${id} must be disabled by the bundle patch`).toBe(true)
+    }
+  })
+
+  it('suppresses harness identity and pins the CLAUDE.md instruction candidates', () => {
+    const { entries } = composeEntries()
+    const systemPrompt = findRow(entries, 'system-prompt')
+    expect(systemPrompt?.config).toEqual({ includeHarnessIdentity: false, persona: '' })
+    const instructions = findRow(entries, 'agent-instructions')
+    expect(instructions?.config).toEqual({
+      maxBytes: 65536,
+      instructionFileCandidates: ['CLAUDE.md'],
+      localInstructionFileCandidates: ['CLAUDE.local.md'],
+    })
   })
 
   it('keeps the section in lockstep with dsh-base modulo the one delegation sentence', () => {
