@@ -492,16 +492,19 @@ function isThreadSessionKey(sessionKey: string): boolean {
 
 /**
  * Checked option indices from a multi-select askq form submission (Go
- * collectAskqMultiSelectedFromFormValue): form_value keys follow askq_opt_{N}
- * with a truthy value when checked. Sorted numerically (Go sorted the index
- * strings, which misorders 10 before 2 — harmless there, fixed here).
+ * collectAskqMultiSelectedFromFormValue): form_value keys follow
+ * askq_opt_{q}_{N} with a truthy value when checked — the question index
+ * namespaces checker names card-wide (single-question legacy cards sent
+ * bare askq_opt_{N}). Both forms take the option index after the last
+ * underscore. Sorted numerically (Go sorted the index strings, which
+ * misorders 10 before 2 — harmless there, fixed here).
  */
 function collectAskqMultiSelected(formValue: Record<string, unknown> | undefined): string[] {
   if (formValue === undefined) return []
   const indices: number[] = []
   for (const [key, raw] of Object.entries(formValue)) {
     if (!key.startsWith('askq_opt_')) continue
-    const idx = Number.parseInt(key.slice('askq_opt_'.length), 10)
+    const idx = Number.parseInt(key.slice(key.lastIndexOf('_') + 1), 10)
     if (!Number.isFinite(idx)) continue
     // Live form_value checkbox entries may arrive as strings or booleans
     // (Go received any); coerce before the truthiness check.

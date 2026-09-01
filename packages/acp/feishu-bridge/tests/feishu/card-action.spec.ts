@@ -471,6 +471,23 @@ describe('onCardAction askq_multi submit', () => {
     expect(messages[0]!.content).toBe('askq:0:2,10')
     expect(messages[0]!.isAskqCardAction).toBe(true)
   })
+
+  it('parses per-question checker names askq_opt_{q}_{n} from multi-question cards', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const event: CardActionTriggerEvent = {
+      action: {
+        value: { action: 'askq_multi:1', askq_question: 'pick' },
+        name: 'askq_multi_submit_1',
+        form_value: { askq_opt_1_2: 'true', askq_opt_1_10: true, askq_opt_1_1: 'false', other: 'x' },
+      },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: `om_${Date.now()}` },
+    }
+    const messages = await dispatched(p, event)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('askq:1:2,10')
+    expect(messages[0]!.isAskqCardAction).toBe(true)
+  })
 })
 
 describe('onCardAction hint buttons (Go feishu_dispatch.go hint__ branch)', () => {

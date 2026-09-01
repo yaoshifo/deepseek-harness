@@ -5567,9 +5567,10 @@ export class Engine {
       try {
         await ibs.sendWithButtons(replyCtx, prompt, buttons)
         return
-      } catch {
+      } catch (err) {
         // sendWithButtons failed (unsupported message type or HTTP error);
         // fall through to the card form.
+        console.warn(`engine: permission inline-buttons send failed (${toolName}), falling back: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
 
@@ -5596,9 +5597,10 @@ export class Engine {
       try {
         await cs.sendCard(replyCtx, card)
         return
-      } catch {
+      } catch (err) {
         // sendCard failed (HTTP error or card rejected); fall through to
         // plain text.
+        console.warn(`engine: permission card send failed (${toolName}), falling back: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
 
@@ -5629,9 +5631,10 @@ export class Engine {
         await cs.sendCard(replyCtx, card)
         console.log(`engine: ask card sent (${sessionKey}, ${total} question${total > 1 ? 's' : ''})`)
         return
-      } catch {
+      } catch (err) {
         // sendCard failed (HTTP error or card rejected); fall through to
         // inline buttons.
+        console.warn(`engine: ask card send failed (${sessionKey}), falling back: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
 
@@ -5648,9 +5651,10 @@ export class Engine {
       try {
         await ibs.sendWithButtons(replyCtx, text, buttons)
         return
-      } catch {
+      } catch (err) {
         // sendWithButtons failed (unsupported message type or HTTP error);
         // fall through to plain text.
+        console.warn(`engine: ask inline-buttons send failed (${sessionKey}), falling back: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
 

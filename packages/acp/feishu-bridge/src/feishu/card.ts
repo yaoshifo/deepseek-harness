@@ -215,6 +215,11 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
       return selectElem
     }
     case 'checkOptions': {
+      // Feishu validates interactive-control names card-wide (creation fails
+      // 400, ErrCode 11310 name duplicate), so checker names carry the
+      // question index from the action — two multiSelect questions on one
+      // card would otherwise both start at askq_opt_1.
+      const qNum = (elem.action ?? '').replace(/^askq_multi:/, '')
       const formElements: FeishuCardMap[] = []
       if ((elem.question ?? '') !== '') {
         formElements.push({ tag: 'markdown', content: `**${elem.question ?? ''}**` })
@@ -225,7 +230,7 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
         checkContent = finalizeFeishuCardMarkdown(checkContent)
         formElements.push({
           tag: 'checker',
-          name: `askq_opt_${i + 1}`,
+          name: `askq_opt_${qNum}_${i + 1}`,
           text: { tag: 'lark_md', content: checkContent },
           ...opt.checked === true ? { checked: true } : {},
         })

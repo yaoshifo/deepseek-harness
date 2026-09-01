@@ -22,6 +22,8 @@ import {
   renderCardMap,
   renderElement,
 } from '../../src/feishu/card.ts'
+import { buildAskQuestionsCard } from '../../src/engine/ask.ts'
+import type { UserQuestion } from '../../src/core/types.ts'
 import { buildReplyContent, buildPreviewCardJSON } from '../../src/feishu/progress.ts'
 import { noSpinner } from '../../src/feishu/spinner.ts'
 import { msgTypeInteractive } from '../../src/feishu/markdown.ts'
@@ -134,9 +136,36 @@ describe('renderCardMap', () => {
     expect(form).toBeDefined()
     const checkers = jArr(jObj(form).elements).map(jObj).filter(e => jStr(e.tag) === 'checker')
     expect(checkers.map(c => [jStr(c.name), c.checked])).toEqual([
-      ['askq_opt_1', true],
-      ['askq_opt_2', undefined],
+      ['askq_opt_0_1', true],
+      ['askq_opt_0_2', undefined],
     ])
+  })
+
+  it('multi-question ask cards render card-wide unique form-control names', () => {
+    // Feishu rejects card creation (ErrCode 11310 name duplicate) when any
+    // two interactive controls share a name, so two multiSelect questions on
+    // one card must namespace their checkers per question.
+    const questions: UserQuestion[] = [
+      {
+        id: 'a', header: 'A', question: 'Pick fixes', multiSelect: true,
+        options: [{ label: 'one', description: '' }, { label: 'two', description: '' }],
+      },
+      {
+        id: 'b', header: 'B', question: 'Pick more', multiSelect: true,
+        options: [{ label: 'three', description: '' }, { label: 'four', description: '' }],
+      },
+    ]
+    const got = decodeRenderedCard(buildAskQuestionsCard('Ask', questions, new Map()))
+    const names: string[] = []
+    const walk = (x: unknown): void => {
+      if (Array.isArray(x)) { x.forEach(walk); return }
+      if (typeof x !== 'object' || x === null) return
+      const rec = x as Record<string, unknown>
+      if (typeof rec.name === 'string') names.push(rec.name)
+      Object.values(rec).forEach(walk)
+    }
+    walk(jObj(got.body))
+    expect(new Set(names).size).toBe(names.length)
   })
 
   it('checkOptions submit row carries the free-text hint beside the button', () => {
