@@ -680,6 +680,14 @@ const SERVICE_ROLES: ServiceRole[] = [
     consumers: ['feishu-bridge-chatroom'],
     note: 'Owns the live project registry and caller routing, and is the feishuBridge/* dispatch seam that sibling bridge plugins (chatroom policy and lifecycle) build on instead of owning engines.',
   },
+  {
+    key: 'mcpWorkspace',
+    pkg: 'mcp-workspace',
+    title: 'Directory-scoped workspace MCP discovery',
+    mode: 'core',
+    consumers: ['api-session-controller', 'subagent', 'feishu-bridge'],
+    note: 'Discovers directory-level .mcp.json files along the session working directory and composes the discovered directory mounts onto each creation-time AgentSetup; an absent service degrades to a per-process warning with discovery inactive.',
+  },
 ]
 
 function generatedHeader(title: string): string[] {
