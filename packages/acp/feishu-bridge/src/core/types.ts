@@ -451,6 +451,12 @@ export interface SessionStartOptions {
    * sessions.
    */
   workDir?: string
+  /**
+   * Mode pinned for this chat's sessions by a /spawn --plan/--default flag;
+   * absent or '' keeps the project default (config agent.mode). One-shot
+   * mode overrides and the unattended-subtask bypass outrank it.
+   */
+  spawnMode?: string
   /** Default Feishu workspace routing (#18); absent = no routing section. */
   feishuWorkspace?: FeishuWorkspaceInfo
   /** Shared research venv root; absent = none. Inlined into the assistant preamble (no Go-era env injection exists here). */

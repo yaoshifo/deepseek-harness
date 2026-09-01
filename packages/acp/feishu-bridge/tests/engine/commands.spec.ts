@@ -807,3 +807,46 @@ describe('/spawn readiness card (Go buildCompletionUsage(0) parity)', () => {
     }
   })
 })
+
+describe('/spawn --plan/--default pins the child group mode', () => {
+  it('records the flagged mode on the spawned session without leaking into the task text', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      const parent: Partial<Message> = {
+        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
+      }
+
+      await cmdSpawn(e, p, msg(parent), ['--plan', 'delegated task'])
+      expect(e.sessions.getOrCreateActive('test:role-1').getInheritedMode()).toBe('plan')
+      expect(p.firstMsgs[0]).toBe('delegated task')
+
+      await cmdSpawn(e, p, msg(parent), ['--default', 'another task'])
+      expect(e.sessions.getOrCreateActive('test:role-2').getInheritedMode()).toBe('default')
+      expect(p.firstMsgs[1]).toBe('another task')
+
+      // No flag: the child keeps the project default (no pin).
+      await cmdSpawn(e, p, msg(parent), ['plain task'])
+      expect(e.sessions.getOrCreateActive('test:role-3').getInheritedMode()).toBe('')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('rejects --plan together with --default without spawning', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      await cmdSpawn(e, p, msg({
+        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
+      }), ['--plan', '--default', 'task'])
+      expect(p.count).toBe(0)
+      expect(p.sent.length).toBeGreaterThanOrEqual(1)
+      expect(p.sent[0]).toContain('--plan')
+    } finally {
+      dispose()
+    }
+  })
+})

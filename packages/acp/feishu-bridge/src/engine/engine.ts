@@ -2957,6 +2957,7 @@ export class Engine {
           },
         }
         : {}),
+      ...(session.getInheritedMode() !== '' ? { spawnMode: session.getInheritedMode() } : {}),
       ...(this.feishuWorkspace !== undefined ? { feishuWorkspace: this.feishuWorkspace } : {}),
     }
     this.bridge.waterfall('feishuBridge/session-start-options', { engine: this, session, options }, () => undefined)

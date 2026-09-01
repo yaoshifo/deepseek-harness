@@ -1022,6 +1022,22 @@ describe('buildSessionStartOptions', () => {
     const options = e.buildSessionStartOptions(key, e.sessions.getOrCreateActive(key))
     expect(options.sessionKey).toBe(key)
   })
+
+  it('carries a pinned spawn mode from the session record', () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+
+    const key = 'feishu:oc_plan-pinned'
+    const pinned = e.sessions.getOrCreateActive(key)
+    pinned.setInheritedMode('plan')
+
+    expect(e.buildSessionStartOptions(key, pinned).spawnMode).toBe('plan')
+
+    // No pin: the field stays absent (project default path).
+    const plainKey = 'feishu:oc_plain'
+    const plain = e.sessions.getOrCreateActive(plainKey)
+    expect('spawnMode' in e.buildSessionStartOptions(plainKey, plain)).toBe(false)
+  })
 })
 
 // ── native continuable children (de-baggage B4) ───────────────────────────

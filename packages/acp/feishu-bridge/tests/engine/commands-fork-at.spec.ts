@@ -228,4 +228,15 @@ describe('cmdFork quoted-message rollback', () => {
       dispose()
     }
   })
+
+  it('pins the --plan/--default flag on the forked child session', async () => {
+    const { e, p, dispose } = newHarness(createStubAgent())
+    try {
+      await cmdFork(e, p, quotedMsg({ parentMessageID: '', quotedText: '', quotedUpdateTimeMs: 0 }), ['--plan', 'continue here'])
+      expect(e.sessions.getOrCreateActive('test:role-1').getInheritedMode()).toBe('plan')
+      expect(p.firstMsgs[0]).toBe('continue here')
+    } finally {
+      dispose()
+    }
+  })
 })
