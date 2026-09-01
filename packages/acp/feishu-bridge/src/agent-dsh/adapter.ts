@@ -537,7 +537,7 @@ function buildSessionSetup(options: SessionStartOptions | undefined): import('@d
     // Go --bare parity: a bare-persona session replaces the assembled system
     // prompt AND forgoes workspace-instruction injection (AGENTS.md/CLAUDE.md
     // reminders), so cwd ancestors cannot smuggle foreign contracts in.
-    const instructionSvc = agentCtx.get('agentInstructions') as { suppress(): () => void } | undefined
+    const instructionSvc = agentCtx.get('agentInstructionSuppression') as { suppress(): () => void } | undefined
     instructionSvc?.suppress()
     // A persona that is not a coding agent also loses the skill catalog and
     // its loader: denying the global `skill` tool is dsh's designed lever —
@@ -639,7 +639,7 @@ function buildCompletePromptSetup(
   opts: { name?: string; toolFilter?: { allow?: readonly string[]; deny?: readonly string[] } } = {},
 ): import('@deepseek-ai/dsh-agent').AgentSetup {
   return (agentCtx) => {
-    const instructionSvc = agentCtx.get('agentInstructions') as { suppress(): () => void } | undefined
+    const instructionSvc = agentCtx.get('agentInstructionSuppression') as { suppress(): () => void } | undefined
     instructionSvc?.suppress()
     const toolsSvc = agentCtx.get('tools') as DshToolsLike | undefined
     const filter = opts.toolFilter
