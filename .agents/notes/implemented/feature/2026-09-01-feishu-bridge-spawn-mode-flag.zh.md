@@ -12,7 +12,7 @@ Status: implemented
 
 `/spawn` 与 `/fork` 接受布尔 `--plan` / `--default` 参数（互斥；同现回复 `spawn_mode_conflict`，在建群之前中止）。指定的模式 pin 在子群的 chat 上，而非某一次会话启动，经既有管道流转：
 
-- pin 落在 bridge `Session` 的 `inheritedMode` 字段——chat 级记录，`carryChatScopedState` 本就把它带过 `/new` 重置，所以 chat 内换会话 pin 不丢。它保持内存态（不序列化）：daemon 重启丢 pin、chat 回落项目默认，与 `pendingMonitorClarification` 同款取舍。不带 flag 的 spawn 仍写父会话的 `parentEffectiveMode()`——今天恒为 `''`（`effectiveMode` 没有非 `''` 写点），激活读侧因此未改变任何既有行为。
+- pin 落在 bridge `Session` 的 `inheritedMode` 字段——chat 级记录，`carryChatScopedState` 本就把它带过 `/new` 重置，所以 chat 内换会话 pin 不丢。它保持内存态（不序列化）：daemon 重启丢 pin、chat 回落项目默认，与 `pendingMonitorClarification` 同款取舍。该字段此前按 Go 保形写入的 `parentEffectiveMode()`（意为继承父会话当前模式）存的是常量 `''`——`InteractiveState.effectiveMode` 没有非 `''` 写点——这条死路径已在同一改动中移除，字段现在只由显式 flag 写入。
 - `buildSessionStartOptions` 把非空 pin 提升进新增的 `SessionStartOptions.spawnMode` 字段（与 `persona.forceMode` 同型）。
 - dsh adapter 的模式链变为：无人值守子任务 `bypassPermissions` > 一次性 `modeOverride`（cron job 模式）> `spawnMode` pin > 项目 `defaultMode`，之后照旧过 `feishuBridge/mode-policy` waterfall（聊天室 persona 降级）。pin 在该 chat 的每次 `startSession` 重新应用——会话被 idle 回收重启、`/new` 换会话都保持——不同于 adapter 只消费一次的一次性 override。
 

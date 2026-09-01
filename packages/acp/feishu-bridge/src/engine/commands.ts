@@ -1168,10 +1168,7 @@ async function spawnGroupCommon(
     ns.setName(groupName)
     if (msg.userID !== '') ns.setSpawnUserID(msg.userID)
     if (wtPath !== '') ns.setWorktreeInfo(wtPath, wtBranch, wtBase, wtRoot, wtBaseBranch)
-    // The child carries the explicitly flagged mode, or inherits the parent's
-    // current effective permission mode, so it doesn't reset to the configured
-    // plan and re-prompt for an ExitPlanMode the parent already approved.
-    ns.setInheritedMode(opts.modeArg !== '' ? opts.modeArg : parentEffectiveMode(e, msg.sessionKey))
+    if (opts.modeArg !== '') ns.setInheritedMode(opts.modeArg)
     e.sessions.save()
   }
 
@@ -1224,13 +1221,6 @@ function effectiveParentLabel(e: Engine, p: Platform, msg: Message): string {
     return e.name
   }
   return msg.chatName
-}
-
-/** Parent's current effective permission mode, '' with no live state (Go parentEffectiveMode). */
-function parentEffectiveMode(e: Engine, sessionKey: string): string {
-  const state = e.interactiveStates.get(sessionKey)
-  if (state === undefined) return ''
-  return state.effectiveMode
 }
 
 /** Parent-jump markdown line for the spawn notify card. */
