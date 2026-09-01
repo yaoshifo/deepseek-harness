@@ -4,8 +4,10 @@
   "options": {
     "typeAware": false,
     // Non-type-aware passes never exercise type-aware rules, so their disable
-    // directives read as unused here; the full type-aware lint owns this report.
-    "reportUnusedDisableDirectives": "allow"
+    // directives surface as warnings here; the full type-aware lint owns the
+    // blocking report. "warn" keeps the staged pass non-failing while the
+    // fix/report channel the oxlint contract pins stays observable.
+    "reportUnusedDisableDirectives": "warn"
   },
   "ignorePatterns": [
     "**/lib/**",
