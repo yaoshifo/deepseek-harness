@@ -7,11 +7,13 @@ description: "在 feishu-bridge 聊天里把工作派发到并行子任务（隔
 
 这个 skill 驱动 `feishu_bridge_subtask` 工具——把每一块工作作为**隔离的原生子 agent 会话**派发，并行运行，再把结果折回本对话。它适合多方向并行调研、需要独立目录、git worktree 隔离、或运行时间较长的工作。子任务**没有用户可见的群**：用户要围观或介入的活走 `/spawn`（attended 群），不用这里。
 
-## 在 plan mode 下：请求退出，不要降级
+## 在 plan mode 下：只读探索直接派，执行型派发先请求退出
 
 先按「什么时候不该用子任务」自查：轻量单焦点问题（一两次 read/grep 可答）不该走到这里。如果工作确实需要子任务（多方向调研并行、用户明确要并行派发，或需要独立目录 / worktree 隔离），**不要**偷偷换成不开子任务的轻量委派；那会丢掉用户刚要的隔离和并行。
 
-spawn 有真实副作用（起 agent 会话、可能建 worktree），plan mode 会拦住它。设计上的绕法是 `ExitPlanMode`：
+**只读探索 spawn 直接派。** brief 写明只读回报的多方向调研 spawn，plan-mode 引导文案已授权在 plan mode 内直接派发——结果折回本对话写进计划，不需要先退出 plan mode。
+
+**执行型 spawn（子任务要改文件、建 worktree）是「执行」**，plan mode 会拦住它，必须先过用户的批准门。设计上的通路是 `ExitPlanMode`：
 
 1. 调用 `ExitPlanMode`，带一个具体计划，列出你要派发哪些子任务——每块 `action: spawn` 的 brief、各自做什么，以及你打算怎么综合它们的回报结果。
 2. 如果用户**批准**，你就退出 plan mode——然后按下面正常派发。
