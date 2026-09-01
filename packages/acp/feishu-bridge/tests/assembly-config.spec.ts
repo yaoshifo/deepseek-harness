@@ -482,6 +482,11 @@ describe('agent.mode default session mode wiring', () => {
     const bare = assemble(baseConfig(), project())
     expect((bare.adapter as unknown as { defaultMode?: string }).defaultMode).toBe('')
   })
+
+  it('rejects a misspelled agent.mode at assembly, naming the project and the valid modes', () => {
+    expect(() => assemble(baseConfig(), { ...project(), agent: { mode: 'defualt' } }))
+      .toThrow(/smoke-project.*"defualt".*default, bypassPermissions, acceptEdits, plan, auto, or dontAsk/)
+  })
 })
 
 describe('shared userQuestions routing across projects', () => {

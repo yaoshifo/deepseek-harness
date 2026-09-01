@@ -36,7 +36,7 @@ import { registerSpawnFamilyCommands } from './engine/spawn-family-commands.ts'
 import { registerMiscCommands } from './engine/misc-commands.ts'
 import { registerSkillsMcpCommands } from './engine/skills-mcp-commands.ts'
 import { registerContextCommands } from './engine/context-commands.ts'
-import { CronScheduler, CronStore } from './engine/cron.ts'
+import { CronScheduler, CronStore, validJobModes } from './engine/cron.ts'
 import { registerCronCommands } from './engine/cron-commands.ts'
 import { RelayManager } from './engine/relay.ts'
 import { registerRelayCommands } from './engine/relay-commands.ts'
@@ -1245,6 +1245,12 @@ export function buildProjectAssembly(
   }
   wireGroupName(engine, project)
   if (project.agent?.mode !== undefined && project.agent.mode !== '') {
+    // Any non-plan value silently means "plan off", so a typo would quietly
+    // drop the deployment's only human gate — reject it at load instead.
+    if (!validJobModes.has(project.agent.mode)) {
+      throw new Error(`project "${project.name}" agent.mode "${project.agent.mode}" is invalid `
+        + '(want default, bypassPermissions, acceptEdits, plan, auto, or dontAsk)')
+    }
     adapter.setDefaultMode(project.agent.mode)
   }
   wirePlanRender(ctx, engine, adapter, project)
