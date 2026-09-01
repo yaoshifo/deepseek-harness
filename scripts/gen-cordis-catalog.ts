@@ -56,7 +56,7 @@ export { REGION_BEGIN, REGION_END }
 export const SERVICE_PAGE: Record<string, string> = {
   agentLoop: 'core.md',
   agentDefaultModel: 'core.md',
-  agentInstructions: 'system-prompt.md',
+  agentInstructionSuppression: 'system-prompt.md',
   agentPresets: 'core.md',
   agents: 'core.md',
   approval: 'approval.md',
