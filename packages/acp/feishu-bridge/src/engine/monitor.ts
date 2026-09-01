@@ -1262,7 +1262,7 @@ export class MonitorCore {
       })),
       multiSelect: false,
     }
-    void this.e.sendAskQuestionsCard(p, msg.replyCtx, [userQ], msg.sessionKey)
+    void this.e.sendAskQuestionPrompt(p, msg.replyCtx, [userQ], new Map(), msg.sessionKey)
     console.info(`monitor: clarification asked (chat=${chatID} candidates=${capped.length})`)
   }
 

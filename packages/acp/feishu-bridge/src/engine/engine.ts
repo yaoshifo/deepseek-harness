@@ -35,6 +35,7 @@ import type {
   Message,
   ParkOutcome,
   PendingAsk,
+  PendingAskAnswer,
   Platform,
   SessionStartOptions,
   UserQuestion,
@@ -77,14 +78,12 @@ import type { NativeChildRecord } from './project-state.ts'
 import { shouldSurfaceUnsolicitedPermission as shouldSurfaceHelper } from './permission.ts'
 import {
   askAnswerDisplay,
-  buildAskQuestionsCard,
-  cardAnsweredFrom,
+  buildAskQuestionCard,
   finalAskAnswers,
   parseAskqSelection,
   parsePermissionVerdict,
   parseQuestionAddress,
   resolveAskAnswer,
-  type AskCardAnswered,
 } from './ask.ts'
 import { CardButton, newCard, appendIntoLastCollapsible, type Card, type CardElement, type CardHeader } from '../card.ts'
 import {
@@ -760,15 +759,12 @@ export const defaultSubtaskMaxDepth = 3
  * @param questions - All questions of the ask, in order.
  * @returns The message text.
  */
-function askQuestionsPlainText(e: Engine, questions: UserQuestion[]): string {
+function askQuestionPlainText(e: Engine, q: UserQuestion): string {
   const lines: string[] = []
-  for (const [i, q] of questions.entries()) {
-    const prefix = questions.length > 1 ? `${i + 1}. ` : ''
-    const header = q.header !== '' ? `[${q.header}] ` : ''
-    lines.push(`${header}❓ ${prefix}${q.question}${q.multiSelect ? e.i18n.t(Msg.AskQuestionMulti) : ''}`)
-    for (const [j, opt] of q.options.entries()) {
-      lines.push(`  ${j + 1}) ${opt.label}${opt.description !== '' ? ` — ${opt.description}` : ''}`)
-    }
+  const header = q.header !== '' ? `[${q.header}] ` : ''
+  lines.push(`${header}❓ ${q.question}${q.multiSelect ? e.i18n.t(Msg.AskQuestionMulti) : ''}`)
+  for (const [j, opt] of q.options.entries()) {
+    lines.push(`  ${j + 1}) ${opt.label}${opt.description !== '' ? ` — ${opt.description}` : ''}`)
   }
   return lines.join('\n')
 }
@@ -5258,7 +5254,7 @@ export class Engine {
         // Feature guards on the whole ask ride the ask-parked emit (a
         // research-manual hub arms the auto-default timer).
         this.bridge.emit('feishuBridge/ask-parked', { engine: this, platform: p, sessionKey, replyCtx, pending })
-        await this.sendAskQuestionsCard(p, replyCtx, request.questions, sessionKey)
+        await this.sendAskQuestionPrompt(p, replyCtx, request.questions, pending.answers, sessionKey)
       } else {
         const toolName = request.kind === 'plan-review' ? 'ExitPlanMode' : request.toolName
         const preview = request.kind === 'plan-review'
@@ -5617,19 +5613,27 @@ export class Engine {
    * @param questions - All questions in the ask.
    * @param sessionKey - Interactive-state slot key, logged on card send.
    */
-  async sendAskQuestionsCard(p: Platform, replyCtx: unknown, questions: UserQuestion[], sessionKey: string): Promise<void> {
-    if (questions.length === 0) return
+  async sendAskQuestionPrompt(
+    p: Platform, replyCtx: unknown, questions: UserQuestion[], answered: Map<number, PendingAskAnswer>, sessionKey: string,
+  ): Promise<void> {
+    // One card per question: send the first unanswered one; each answer
+    // advances to the next card, so no card is ever rewritten mid-ask (the
+    // 2026-09-01 oc_52c9347bd incident: whole-card replacement per answer
+    // broke the callback chain and froze every later button).
+    const qIdx = questions.findIndex((_q, i) => !answered.has(i))
+    if (qIdx < 0) return
+    const q = questions[qIdx]
+    if (q === undefined) return
     const total = questions.length
-    const titleSuffix = total > 1 ? ` (${total})` : ''
+    const progress = total > 1 ? ` (${qIdx + 1}/${total})` : ''
 
-    // Try card (Feishu-style platforms): every question on one card.
+    // Try card (Feishu-style platforms): this question on its own card.
     const cs = p as Platform & CardSender
     if (typeof cs.sendCard === 'function') {
-      const cardTitle = questions.map(q => q.header).find(h => h !== '') ?? this.i18n.t(Msg.AskQuestionTitle)
-      const card = buildAskQuestionsCard(`‼️ ${cardTitle}${titleSuffix}`, questions, new Map(), this.i18n)
+      const card = buildAskQuestionCard(q, qIdx, total, this.i18n)
       try {
         await cs.sendCard(replyCtx, card)
-        console.log(`engine: ask card sent (${sessionKey}, ${total} question${total > 1 ? 's' : ''})`)
+        console.log(`engine: ask question card sent (${sessionKey}, question ${qIdx + 1}/${total})`)
         return
       } catch (err) {
         // sendCard failed (HTTP error or card rejected); fall through to
@@ -5638,16 +5642,15 @@ export class Engine {
       }
     }
 
-    // Inline buttons: buttons answer the first unanswered question; every
-    // question is still listed so free-text replies can address the rest.
-    const first = questions[0]
+    // Inline buttons: buttons answer this question; later questions arrive
+    // with their own prompts, so free-text replies also stay unambiguous.
     const ibs = p as Platform & InlineButtonSender
-    if (typeof ibs.sendWithButtons === 'function' && first !== undefined) {
-      const buttons = first.options.map((opt, i) => [{
+    if (typeof ibs.sendWithButtons === 'function') {
+      const buttons = q.options.map((opt, i) => [{
         text: opt.label,
-        data: `askq:0:${i + 1}`,
+        data: `askq:${qIdx}:${i + 1}`,
       }])
-      const text = `${askQuestionsPlainText(this, questions)}${titleSuffix}`
+      const text = `${askQuestionPlainText(this, q)}${progress}`
       try {
         await ibs.sendWithButtons(replyCtx, text, buttons)
         return
@@ -5658,8 +5661,8 @@ export class Engine {
       }
     }
 
-    // Plain text fallback: every question with its numbered options.
-    await this.send(p, replyCtx, `${askQuestionsPlainText(this, questions)}${titleSuffix}`)
+    // Plain text fallback: this question with its numbered options.
+    await this.send(p, replyCtx, `${askQuestionPlainText(this, q)}${progress}`)
   }
 
   /**
@@ -5797,6 +5800,7 @@ export class Engine {
       return false
     }
     const openBefore = questions.filter((_qc, i) => !pending.answers.has(i)).length
+    const firstOpenBefore = questions.findIndex((_q, i) => !pending.answers.has(i))
     const answer = resolveAskAnswer(q, answerInput)
     pending.answers.set(qIdx, answer)
     // A free-text answer may ride with attachments (text + image in one
@@ -5807,13 +5811,6 @@ export class Engine {
       this.stageAttachments(p, msg, msg.sessionKey)
     }
     if (!msg.isAskqCardAction) {
-      // Chat-text answers have no card callback of their own — push the
-      // state so the card shows the current answer (card-capable platforms
-      // only; the callback path replaces the card in its own response).
-      const sp = p as Platform & { syncAskCard?: (sessionKey: string, answered: AskCardAnswered) => void }
-      if (typeof sp.syncAskCard === 'function') {
-        sp.syncAskCard(msg.sessionKey, cardAnsweredFrom(questions, pending.answers))
-      }
       const answeredCount = questions.filter((_qc, i) => pending.answers.has(i)).length
       const progress = questions.length > 1 ? `（${answeredCount}/${questions.length}）` : ''
       // Unprefixed free text landing on the first open question is ambiguous
@@ -5826,6 +5823,17 @@ export class Engine {
     // Every question answered — settle the whole ask.
     if (questions.every((_q, i) => pending.answers.has(i))) {
       pending.resolve({ answers: finalAskAnswers(questions, pending.answers) })
+      return true
+    }
+    // One card per question: answering the open question advances to the
+    // next question's card. An addressed answer to a later question only
+    // records it — the open card stays. Fire-and-forget keeps this router
+    // synchronous like the Go original.
+    if (qIdx === firstOpenBefore) {
+      void this.sendAskQuestionPrompt(p, msg.replyCtx, questions, pending.answers, msg.sessionKey)
+        .catch((err: unknown) => {
+          console.warn(`engine: next ask question card send failed (${msg.sessionKey}): ${err instanceof Error ? err.message : String(err)}`)
+        })
     }
     return true
   }

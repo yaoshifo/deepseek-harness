@@ -75,33 +75,45 @@ async function armedAsk(
   return { e, p, decision }
 }
 
-describe('sendAskQuestionsCard', () => {
-  it('CardPlatform: one blue-header card for the whole ask', async () => {
+describe('sendAskQuestionPrompt', () => {
+  it('CardPlatform: one blue-header card for the open question', async () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
 
-    await e.sendAskQuestionsCard(p, 'ctx', testQuestions(), 'test:askq')
+    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), new Map(), 'test:askq')
 
     expect(p.sentCards).toHaveLength(1)
   })
 
-  it('CardPlatform_MultiQuestion_OneCard: both questions ride the same card', async () => {
+  it('CardPlatform_MultiQuestion: only the first question rides its own card, titled with progress', async () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
 
-    await e.sendAskQuestionsCard(p, 'ctx', testMultiQuestions(), 'test:askq')
+    await e.sendAskQuestionPrompt(p, 'ctx', testMultiQuestions(), new Map(), 'test:askq')
 
     expect(p.sentCards).toHaveLength(1)
-    const card = p.sentCards[0] as { elements: Array<{ kind: string; content?: string }> }
+    const card = p.sentCards[0] as { header?: { title: string }; elements: Array<{ kind: string; content?: string }> }
+    expect(card.header?.title).toContain('(1/2)')
     const headings = card.elements.filter(el => el.kind === 'markdown')
-    expect(headings).toHaveLength(2)
+    expect(headings).toHaveLength(1)
   })
 
-  it('InlineButtonPlatform: first question options as askq:0:N buttons', async () => {
+  it('CardPlatform_MultiQuestion: already-answered questions are skipped', async () => {
+    const e = newTestEngine()
+    const p = createStubCardPlatform('feishu')
+
+    await e.sendAskQuestionPrompt(p, 'ctx', testMultiQuestions(), new Map([[0, { selected: ['PostgreSQL'] }]]), 'test:askq')
+
+    expect(p.sentCards).toHaveLength(1)
+    const card = p.sentCards[0] as { header?: { title: string } }
+    expect(card.header?.title).toContain('(2/2)')
+  })
+
+  it('InlineButtonPlatform: open question options as askq:0:N buttons', async () => {
     const e = newTestEngine()
     const p = createStubInlineButtonPlatform('telegram')
 
-    await e.sendAskQuestionsCard(p, 'ctx', testQuestions(), 'test:askq')
+    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), new Map(), 'test:askq')
 
     expect(p.buttonRows).toHaveLength(3)
     expect(p.buttonRows[0]![0]!.data).toBe('askq:0:1')
@@ -111,7 +123,7 @@ describe('sendAskQuestionsCard', () => {
     const e = newTestEngine()
     const p = createStubPlatform('plain')
 
-    await e.sendAskQuestionsCard(p, 'ctx', testQuestions(), 'test:askq')
+    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), new Map(), 'test:askq')
 
     expect(p.getSent()).toHaveLength(1)
     const sentMsg = p.getSent()[0]!
@@ -124,7 +136,7 @@ describe('sendAskQuestionsCard', () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
 
-    await e.sendAskQuestionsCard(p, 'ctx', testQuestions(), 'test:askq')
+    await e.sendAskQuestionPrompt(p, 'ctx', testQuestions(), new Map(), 'test:askq')
 
     const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
     expect(card.elements.length).toBe(6) // 1 markdown question + 3 list rows + 1 text-input form + 1 chat-text note
@@ -161,10 +173,9 @@ describe('sendAskQuestionsCard', () => {
       ],
     }]
 
-    await e.sendAskQuestionsCard(p, 'ctx', questions, 'test:askq')
+    await e.sendAskQuestionPrompt(p, 'ctx', questions, new Map(), 'test:askq')
 
     const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
-    // The one-card layout leads with the question heading; the checker follows.
     const check = card.elements.find(el => el['kind'] === 'checkOptions') as {
       kind: string
       options: Array<{ label: string; checked?: boolean }>

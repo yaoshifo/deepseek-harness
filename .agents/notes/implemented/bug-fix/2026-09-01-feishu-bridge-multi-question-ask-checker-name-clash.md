@@ -4,6 +4,8 @@ Status: implemented
 
 English | [中文](2026-09-01-feishu-bridge-multi-question-ask-checker-name-clash.zh.md)
 
+> Same-day follow-up: the multi-question live form this fix served was rolled back to one card per question — see [ask-card-one-card-per-question-rollback](2026-09-01-feishu-bridge-ask-card-one-card-per-question-rollback.md). The namespaced checker names survive on per-question cards.
+
 ## Problem
 
 When one ask carries two or more multiSelect questions, both questions' checker forms rendered their checkers starting at `askq_opt_1` — the checkOptions renderer numbered checker names by the option's index within its question only. Feishu validates interactive-control names card-wide and rejects card creation with HTTP 400 (code 230099, ErrCode 11310 `name(askq_opt_1) duplicate`). `sendAskQuestionsCard`'s `sendCard` catch is silent, the Feishu platform has no `sendWithButtons`, so the ask degraded to the numbered plain-text fallback: the questions stayed answerable by replying with digits, but the card with clickable checkers never appeared. First triggered in production on 2026-09-01 09:05 by a dida todo-triage ask with two multiSelect questions (9 + 8 options). Single-question cards never collide, and single-select questions in multi-question cards take the listItem-button path whose payloads carry the question index — only the multiSelect checker path was misnamed.

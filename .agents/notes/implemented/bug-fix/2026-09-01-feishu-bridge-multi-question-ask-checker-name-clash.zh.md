@@ -4,6 +4,8 @@ Status: implemented
 
 [English](2026-09-01-feishu-bridge-multi-question-ask-checker-name-clash.md) | 中文
 
+> 同日后续：本修复所服务的多题活表单已回退为一题一卡——见 [ask-card-one-card-per-question-rollback](2026-09-01-feishu-bridge-ask-card-one-card-per-question-rollback.zh.md)。带题号的 checker 命名在一题一卡上保留。
+
 ## Problem
 
 一次 ask 携带 ≥2 个 multiSelect 问题时，两题的 checker 表单都从 `askq_opt_1` 起编号——checkOptions 渲染器只按选项在题内的序号给 checker 命名。飞书按卡片级校验交互组件 name 唯一，卡片创建被拒（HTTP 400，code 230099，ErrCode 11310 `name(askq_opt_1) duplicate`）。`sendAskQuestionsCard` 的 `sendCard` catch 不留痕迹，飞书平台又没有 `sendWithButtons` 能力，于是 ask 降级为编号纯文本：回数字仍可作答，但可点选的卡片再也没出现。2026-09-01 09:05 生产首次触发：dida 待办整理的一次 ask 带两道 multiSelect 题（9 + 8 个选项）。单问题卡永不撞名；多问题卡里的单选题走 listItem 按钮路径、载荷自带题号——只有 multiSelect 的 checker 路径命名漏了题号。

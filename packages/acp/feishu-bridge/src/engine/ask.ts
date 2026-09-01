@@ -3,8 +3,9 @@
  * (`askq:{q}:{i1},{i2}`), the permission verdict parser (structured `perm:`
  * payloads first, keyword tables as the card-less fallback), per-question
  * answer resolution with the selected/custom split, the research-timeout
- * default, and the one-card-per-ask question card builder shared by the
- * engine (send) and the Feishu platform (callback card replacement).
+ * default, and the one-card-per-question builders (live prompt card and
+ * settled snapshot) shared by the engine (send) and the Feishu platform
+ * (callback card replacement).
  *
  * @module dsh-feishu-bridge/engine-ask
  */
@@ -269,113 +270,77 @@ export interface AskCardAnswer {
   custom?: string
 }
 
-/** Answered-state marks for one rendered question, keyed by question index. */
-export type AskCardAnswered = Map<number, AskCardAnswer>
-
-/**
- * Project the engine's collected answers onto the card's answered state:
- * `selected` labels resolve back to 1-based option indices (a duplicated
- * label marks every row carrying it) and custom text rides along. Powers the
- * engine→platform card sync after chat-text answers.
- *
- * @param questions - The ask's questions, in order.
- * @param collected - Collected answers keyed by question index.
- * @returns The per-question on-card answer state.
- */
-export function cardAnsweredFrom(questions: UserQuestion[], collected: Map<number, PendingAskAnswer>): AskCardAnswered {
-  const out: AskCardAnswered = new Map()
-  for (const [i, answer] of collected) {
-    const q = questions[i]
-    if (q === undefined) continue
-    const indices: number[] = []
-    for (const [optIdx, opt] of q.options.entries()) {
-      if (answer.selected.includes(opt.label)) indices.push(optIdx + 1)
-    }
-    out.set(i, {
-      indices,
-      ...(answer.custom !== undefined && answer.custom !== '' ? { custom: answer.custom } : {}),
-    })
-  }
-  return out
+/** The card title's question-position suffix: ' (2/5)' on multi-question asks, '' otherwise. */
+function progressSuffix(qIdx: number, total: number): string {
+  return total > 1 ? ` (${qIdx + 1}/${total})` : ''
 }
 
 /**
- * Build the one card that carries every question of one ask as a live form:
- * every not-yet-settled question stays interactive — single-select list rows
- * (`askq:{q}:{n}`), multi-select checker forms (`askq_multi:{q}`), and one
- * text-input form per question (`askq_text:{q}`) so free text names its
- * question — with answered questions showing their current answer (a
- * 当前 line / checker ticks) so any question can be revised until the ask
- * settles. Once every question is answered the card renders its read-only
- * terminal state: frozen selection marks and custom text, no controls.
+ * Build the live prompt card for ONE question of an ask: the question, its
+ * single-select list rows (`askq:{q}:{n}`) or multi-select checker form
+ * (`askq_multi:{q}`), and the per-question text-input form (`askq_text:{q}`).
+ * One card per question — the engine sends the first unanswered question and
+ * the next one after each answer, so a card never needs an in-place rewrite
+ * mid-ask (the 2026-09-01 oc_52c9347bd incident: whole-card replacement per
+ * answer broke the callback chain).
  *
- * @param title - Card title, computed by the caller.
- * @param questions - All questions of the ask, in order.
- * @param answered - Current answer per answered question index.
+ * @param q - The question to render.
+ * @param qIdx - Zero-based index of the question in the ask.
+ * @param total - Total questions of the ask (drives the title progress suffix).
  * @param i18n - Ask-card copy face (engine I18n or platform handle); defaults to zh.
  * @returns The assembled card.
  */
-export function buildAskQuestionsCard(
-  title: string, questions: UserQuestion[], answered: AskCardAnswered, i18n: AskCardI18n = zhAskCardI18n,
+export function buildAskQuestionCard(
+  q: UserQuestion, qIdx: number, total: number, i18n: AskCardI18n = zhAskCardI18n,
 ): Card {
+  const title = `‼️ ${q.header !== '' ? q.header : i18n.t(Msg.AskQuestionTitle)}${progressSuffix(qIdx, total)}`
   const cb = newCard().title(title, 'blue')
-  const multiple = questions.length > 1
-  const settled = questions.every((_q, i) => answered.has(i))
-  for (const [i, q] of questions.entries()) {
-    // A divider between question blocks visually groups each question's
-    // controls (its 提交第 N 题 button belongs to it, not the whole card).
-    if (multiple && i > 0) cb.raw({ kind: 'divider' })
-    cb.raw(...questionElements(q, i, multiple, settled, answered.get(i), i18n))
+  cb.raw(...questionElements(q, qIdx, i18n))
+  return cb.build()
+}
+
+/**
+ * Build the read-only settled card for ONE answered question: frozen
+ * selection marks and custom text, no controls. The Feishu platform returns
+ * it as the card-action callback response, swapping the pressed prompt card
+ * for its answer snapshot; one terminal replacement per card, with no
+ * follow-up interaction depending on it.
+ *
+ * @param q - The answered question.
+ * @param qIdx - Zero-based index of the question in the ask.
+ * @param total - Total questions of the ask (keeps the title progress suffix).
+ * @param answer - The collected answer for the question.
+ * @param i18n - Ask-card copy face; defaults to zh.
+ * @returns The assembled card.
+ */
+export function buildAskQuestionCardSettled(
+  q: UserQuestion, qIdx: number, total: number, answer: AskCardAnswer, i18n: AskCardI18n = zhAskCardI18n,
+): Card {
+  const title = `${i18n.t(Msg.AskQuestionAnswered)} · ${q.header !== '' ? q.header : i18n.t(Msg.AskQuestionTitle)}${progressSuffix(qIdx, total)}`
+  const cb = newCard().title(title, 'blue')
+  cb.raw({ kind: 'markdown', content: `**${q.question}**` })
+  const marks = q.options.map((opt, i) =>
+    `${answer.indices.includes(i + 1) ? '✅' : '◻️'} **${opt.label}**${opt.description !== '' ? `\n${opt.description}` : ''}`)
+  if (marks.length > 0) {
+    cb.raw({ kind: 'markdown', content: marks.join('\n') })
   }
-  // Card-level teaching, multi-question cards only: revision and auto-submit
-  // guidance. Single-question cards end with the per-question hint note
-  // instead — a card-level variant would duplicate it verbatim. Skipped when
-  // settled (no controls to explain) and when no question has options to
-  // re-pick.
-  if (!settled && multiple && questions.some(q => q.options.length > 0)) {
-    cb.note(i18n.t(Msg.AskqCardTeachingMulti))
+  if ((answer.custom ?? '') !== '') {
+    cb.raw({ kind: 'markdown', content: `✍️ ${answer.custom ?? ''}` })
   }
   return cb.build()
 }
 
 /**
- * Render one question's elements. Settled cards freeze marks and custom text
- * (read-only terminal state); otherwise the question stays a live form:
- * current-answer line for answered ones, interactive options, the per-question
- * text-input form — including for option-less questions, where the input is
- * the only on-card answer path — and the locale-owned free-text hint note on
- * option-bearing questions.
+ * Render one live question's elements: the bold question, interactive
+ * options (single-select list rows or the multi-select checker form), and
+ * the per-question text-input form — including for option-less questions,
+ * where the input is the only on-card answer path — plus the locale-owned
+ * free-text hint note on option-bearing questions.
  */
-function questionElements(
-  q: UserQuestion, qIdx: number, multiple: boolean, settled: boolean, cur: AskCardAnswer | undefined, i18n: AskCardI18n,
-): CardElement[] {
-  const prefix = multiple ? `${qIdx + 1}. ` : ''
+function questionElements(q: UserQuestion, qIdx: number, i18n: AskCardI18n): CardElement[] {
   const elements: CardElement[] = [
-    { kind: 'markdown', content: `**${prefix}${q.question}**` },
+    { kind: 'markdown', content: `**${q.question}**` },
   ]
-  if (settled) {
-    if (cur !== undefined) {
-      const marks = q.options.map((opt, i) =>
-        `${cur.indices.includes(i + 1) ? '✅' : '◻️'} **${opt.label}**${opt.description !== '' ? `\n${opt.description}` : ''}`)
-      if (marks.length > 0) {
-        elements.push({ kind: 'markdown', content: marks.join('\n') })
-      }
-      if ((cur.custom ?? '') !== '') {
-        elements.push({ kind: 'markdown', content: `✍️ ${cur.custom ?? ''}` })
-      }
-    }
-    return elements
-  }
-  if (cur !== undefined) {
-    const current = cur.indices.length > 0
-      ? `${i18n.t(Msg.AskqCurrentPrefix)}${cur.indices.map(i => `**${q.options[i - 1]?.label ?? String(i)}**`).join(i18n.t(Msg.AskqListSeparator))}`
-      : ''
-    const custom = (cur.custom ?? '') !== '' ? `✍️ ${cur.custom ?? ''}` : ''
-    const line = [current, custom].filter(s => s !== '').join(' · ')
-    if (line !== '') {
-      elements.push({ kind: 'markdown', content: `> ${line}` })
-    }
-  }
   if (q.multiSelect) {
     elements.push({
       kind: 'checkOptions',
@@ -384,12 +349,12 @@ function questionElements(
         label: opt.label,
         description: opt.description,
         value: String(i + 1),
-        ...((opt.recommended === true || cur?.indices.includes(i + 1)) ? { checked: true } : {}),
+        ...(opt.recommended === true ? { checked: true } : {}),
       })),
       action: `askq_multi:${qIdx}`,
       extra: { askq_question: q.question },
       textInput: { name: `askq_text_${qIdx}`, placeholder: i18n.t(Msg.AskqMultiTextPlaceholder) },
-      submitLabel: multiple ? i18n.tf(Msg.AskqSubmitQuestionN, qIdx + 1) : i18n.t(Msg.AskqSubmitThisQuestion),
+      submitLabel: i18n.t(Msg.AskqSubmitThisQuestion),
     })
     return elements
   }

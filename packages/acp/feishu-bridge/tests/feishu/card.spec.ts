@@ -22,7 +22,7 @@ import {
   renderCardMap,
   renderElement,
 } from '../../src/feishu/card.ts'
-import { buildAskQuestionsCard } from '../../src/engine/ask.ts'
+import { buildAskQuestionCard } from '../../src/engine/ask.ts'
 import type { UserQuestion } from '../../src/core/types.ts'
 import { buildReplyContent, buildPreviewCardJSON } from '../../src/feishu/progress.ts'
 import { noSpinner } from '../../src/feishu/spinner.ts'
@@ -141,21 +141,16 @@ describe('renderCardMap', () => {
     ])
   })
 
-  it('multi-question ask cards render card-wide unique form-control names', () => {
+  it('a question card renders card-wide unique form-control names', () => {
     // Feishu rejects card creation (ErrCode 11310 name duplicate) when any
-    // two interactive controls share a name, so two multiSelect questions on
-    // one card must namespace their checkers per question.
-    const questions: UserQuestion[] = [
-      {
-        id: 'a', header: 'A', question: 'Pick fixes', multiSelect: true,
-        options: [{ label: 'one', description: '' }, { label: 'two', description: '' }],
-      },
-      {
-        id: 'b', header: 'B', question: 'Pick more', multiSelect: true,
-        options: [{ label: 'three', description: '' }, { label: 'four', description: '' }],
-      },
-    ]
-    const got = decodeRenderedCard(buildAskQuestionsCard('Ask', questions, new Map()))
+    // two interactive controls share a name; one card per question keeps the
+    // checker group alone, and its names must stay unique against the rest
+    // of the card.
+    const q: UserQuestion = {
+      id: 'a', header: 'A', question: 'Pick fixes', multiSelect: true,
+      options: [{ label: 'one', description: '' }, { label: 'two', description: '' }],
+    }
+    const got = decodeRenderedCard(buildAskQuestionCard(q, 0, 1))
     const names: string[] = []
     const walk = (x: unknown): void => {
       if (Array.isArray(x)) { x.forEach(walk); return }

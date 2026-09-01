@@ -190,7 +190,7 @@ describe('askUser permission kind', () => {
 })
 
 describe('askUser questions kind', () => {
-  it('renders ALL questions on one card', async () => {
+  it('sends only the first unanswered question per card, titled with its progress', async () => {
     const p = createStubCardPlatform('feishu')
     const { e } = armedState(p)
 
@@ -198,20 +198,27 @@ describe('askUser questions kind', () => {
     await tick()
 
     expect(p.sentCards).toHaveLength(1)
+    expect((p.sentCards[0] as { header?: { title: string } }).header?.title).toContain('(1/2)')
     abandon(decision)
   })
 
-  it('button answers accumulate per question and settle once all are answered', async () => {
-    const p = createStubPlatform('test')
+  it('button answers advance to the next question card and settle once all are answered', async () => {
+    const p = createStubCardPlatform('feishu')
     const { e, state } = armedState(p)
     const decision = e.askUser('test:chat:user1', {
       kind: 'questions',
       questions: testMultiQuestions().map((q, i) => ({ ...q, id: `q${i}` })),
     })
     await tick()
+    expect(p.sentCards).toHaveLength(1)
 
     expect(e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')).toBe(true)
     expect(state.pendingAsk).toBeDefined()
+    await tick()
+    // Answering the current question sends the next question's card.
+    expect(p.sentCards).toHaveLength(2)
+    expect((p.sentCards[1] as { header?: { title: string } }).header?.title).toContain('(2/2)')
+
     expect(e.routeAskResponse(p, msg({ content: 'askq:1:2', isAskqCardAction: true }), 'askq:1:2')).toBe(true)
 
     await expect(decision).resolves.toEqual({
@@ -221,6 +228,34 @@ describe('askUser questions kind', () => {
       ],
     })
     expect(state.pendingAsk).toBeUndefined()
+    // The last answer settles the ask: no third card.
+    await tick()
+    expect(p.sentCards).toHaveLength(2)
+  })
+
+  it('an addressed text answer to a later question records it without advancing the card', async () => {
+    const p = createStubCardPlatform('feishu')
+    const { e, state } = armedState(p)
+    const decision = e.askUser('test:chat:user1', {
+      kind: 'questions',
+      questions: testMultiQuestions().map((q, i) => ({ ...q, id: `q${i}` })),
+    })
+    await tick()
+    expect(p.sentCards).toHaveLength(1)
+
+    expect(e.routeAskResponse(p, msg({ content: '2: 1' }), '2: 1')).toBe(true)
+    await tick()
+    // Question 2 is recorded but question 1 is still the open card.
+    expect(p.sentCards).toHaveLength(1)
+    expect(state.pendingAsk?.answers.get(1)).toEqual({ selected: ['Gin'] })
+
+    expect(e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')).toBe(true)
+    await expect(decision).resolves.toEqual({
+      answers: [
+        { id: 'q0', selected: ['PostgreSQL'] },
+        { id: 'q1', selected: ['Gin'] },
+      ],
+    })
   })
 
   it('free text answers the first unanswered question: numeric → selected, words → custom', async () => {
@@ -364,30 +399,24 @@ describe('askUser questions kind', () => {
     expect(sent).toContain('type “N: answer”')
   })
 
-  it('a free-text answer syncs the live-form state to the ask card; card actions do not', async () => {
-    const p = createStubPlatform('test')
-    const synced: Array<{ sessionKey: string; answered: Map<number, { indices: number[]; custom?: string }> }> = []
-    ;(p as unknown as {
-      syncAskCard(sessionKey: string, answered: Map<number, { indices: number[]; custom?: string }>): void
-    }).syncAskCard = (sessionKey, answered) => {
-      synced.push({ sessionKey, answered: new Map(answered) })
-    }
+  it('a free-text answer to the current question advances to the next card', async () => {
+    const p = createStubCardPlatform('feishu')
     const { e } = armedState(p)
     const decision = e.askUser('test:chat:user1', {
       kind: 'questions',
       questions: testMultiQuestions().map((q, i) => ({ ...q, id: `q${i}` })),
     })
     await tick()
+    expect(p.sentCards).toHaveLength(1)
 
-    // A card action replaces the card in its own callback response — no sync.
+    // A card action freezes its own card in the callback response; a
+    // chat-text answer has no callback — the next question's card is the
+    // answer's visible confirmation either way.
     expect(e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')).toBe(true)
-    expect(synced).toHaveLength(0)
-    // A chat-text answer has no callback, so the engine pushes the state.
+    await tick()
+    expect(p.sentCards).toHaveLength(2)
+
     expect(e.routeAskResponse(p, msg({ content: 'Gin' }), 'Gin')).toBe(true)
-    expect(synced).toHaveLength(1)
-    expect(synced[0]!.sessionKey).toBe('test:chat:user1')
-    expect(synced[0]!.answered.get(0)).toEqual({ indices: [1] })
-    expect(synced[0]!.answered.get(1)).toEqual({ indices: [], custom: 'Gin' })
 
     await expect(decision).resolves.toEqual({
       answers: [

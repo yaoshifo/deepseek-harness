@@ -28,7 +28,7 @@ import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.ts'
 import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostImageKeys, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.ts'
 import { isMonitorCommand } from '../core/types.ts'
 import type { UserQuestion, MonitorPollPage } from '../core/types.ts'
-import { buildAskQuestionsCard, parseAskqSelection, zhAskCardI18n, type AskCardAnswer, type AskCardAnswered } from '../engine/ask.ts'
+import { buildAskQuestionCardSettled, parseAskqSelection, zhAskCardI18n } from '../engine/ask.ts'
 import { hintCategoryOfCode, parseHintButtonName } from '../engine/hints-panel.ts'
 import type { FeishuMention } from './extract.ts'
 import type { Card } from '../card.ts'
@@ -284,28 +284,30 @@ export interface CardActionCallbackResponse {
 }
 
 /**
- * Every question of one ask card, captured at send time (B2 replaces the
- * Go single-question askqMeta): form_submit callbacks carry no action.value
- * and button-click callbacks only the clicked option, so the platform caches
- * the full question set (mirroring permBodyCache) and reads it back to
- * rebuild the card with answered questions frozen.
+ * The open question of one ask card, captured at send time: form_submit
+ * callbacks carry no action.value and button-click callbacks only the
+ * clicked option, so the platform caches the question itself (mirroring
+ * permBodyCache) and reads it back to freeze the card with
+ * buildAskQuestionCardSettled on its answer callback.
  */
 interface AskCardMeta {
-  /** Card title as sent. */
-  title: string
-  /** All questions in ask order. */
-  questions: UserQuestion[]
+  /** The question the card prompts. */
+  question: UserQuestion
+  /** Zero-based index of the question in its ask. */
+  qIdx: number
+  /** Total questions of the ask (settled cards keep the progress suffix). */
+  total: number
 }
 
 /**
- * Extract one ask card's questions from the core card model: single-select
- * rows carry `askq:{q}:{n}` button values, multi-select forms carry
- * `askq_multi:{q}` actions — both keyed by their question index.
- * @param card - The ask card being sent.
- * @returns The extracted question set, or undefined when the card carries no ask questions.
+ * Extract one question prompt card's question from the core card model: a
+ * single-select card carries `askq:{q}:{n}` button values, a multi-select
+ * card one `askq_multi:{q}` action, an optionless card its text form — the
+ * question index names the card's place in its ask.
+ * @param card - The question card being sent.
+ * @returns The extracted question, or undefined when the card is not a question prompt.
  */
 function askCardMeta(card: Card): AskCardMeta | undefined {
-  const title = card.header?.title ?? ''
   const questions = new Map<number, UserQuestion>()
   for (const elem of card.elements) {
     if (elem.kind === 'listItem' && elem.btnValue.startsWith('askq:')) {
@@ -327,9 +329,9 @@ function askCardMeta(card: Card): AskCardMeta | undefined {
       })
     } else if (elem.kind === 'form' && (elem.name ?? '').startsWith('askq_text_form_')) {
       // An optionless question's only on-card representation is its text
-      // form — without this branch the question vanishes from every rebuild
-      // (callback replacement and syncAskCard PATCH alike). Questions with
-      // options already registered richer data above; never overwrite.
+      // form — without this branch the question vanishes from the settled
+      // rebuild. Questions with options already registered richer data
+      // above; never overwrite.
       const qIdx = Number.parseInt((elem.name ?? '').slice('askq_text_form_'.length), 10)
       if (!Number.isInteger(qIdx) || qIdx < 0 || questions.has(qIdx)) continue
       let question = ''
@@ -342,12 +344,18 @@ function askCardMeta(card: Card): AskCardMeta | undefined {
       questions.set(qIdx, { question, header: '', options: [], multiSelect: false })
     }
   }
-  if (questions.size === 0) return undefined
-  const ordered: UserQuestion[] = []
-  for (const [i, q] of [...questions.entries()].sort((a, b) => a[0] - b[0])) {
-    ordered[i] = q
-  }
-  return { title, questions: ordered }
+  if (questions.size !== 1) return undefined
+  const entry = [...questions.entries()][0]
+  const qIdx = entry?.[0]
+  const question = entry?.[1]
+  if (qIdx === undefined || question === undefined) return undefined
+  // The ask's total rides the title's progress suffix ("‼️ Setup (2/5)",
+  // baked in by the engine at send time); a suffix-less card is a
+  // single-question ask, so total collapses onto its own index.
+  const suffix = (card.header?.title ?? '').match(/\((\d+)\/(\d+)\)\s*$/)
+  const total = suffix !== null ? Number.parseInt(suffix[2] ?? '', 10) : qIdx + 1
+  if (!Number.isInteger(total) || total < qIdx + 1) return undefined
+  return { question, qIdx, total }
 }
 
 /**
@@ -574,12 +582,8 @@ export class FeishuPlatform implements Platform {
   private readonly chatActivity = new Map<string, number>()
   /** sessionKey → permission card body (M3 card-action replacement). */
   readonly permBodyCache = new BoundedMap<string, string>()
-  /** sessionKey → the ask card's full question set, cached at send time to rebuild the card on callbacks. */
+  /** sessionKey → the open question card's question, cached at send time to freeze the card on its answer callback. */
   readonly askqMetaCache = new BoundedMap<string, AskCardMeta>()
-  /** messageID → current answer per answered question; exact-repeat callbacks are deduped, revisions pass. */
-  readonly askqAnswered = new BoundedMap<string, Map<number, AskCardAnswer>>()
-  /** sessionKey → ask card message id, recorded at send so text answers can PATCH the card. */
-  readonly askqCardMsgIDs = new BoundedMap<string, string>()
   /** sessionKey → messageID tracked from card-action callbacks (M3 writes it). */
   readonly cardActionMsgIDs = new BoundedMap<string, string>()
   /** Engine callback for group renames (im.chat.updated_v1, Go chatRenamedHandler). */
@@ -1105,15 +1109,18 @@ export class FeishuPlatform implements Platform {
       return { card: { type: 'raw', data: renderCardMap(cb.build(), sessionKey) } }
     }
 
-    // askq: → one question's answer on the ask card (B2 multi-question card):
-    // a multi-select form submit collects its checked indices from form_value
-    // (Go collectAskqMultiSelectedFromFormValue) into the same converged
-    // askq:{q}:{i1},{i2} payload a single-select button carries; a text-submit
-    // click (askq_text_submit_{q}) and the multi submit alike ride their
-    // askq_text_{q} input after the NUL separator, so card-input text always
-    // names its question. The callback response rebuilds the card — still a
-    // live form while questions remain open, the read-only terminal card once
-    // every question is answered (the cache entry drops with it).
+    // askq: → one question's answer on its prompt card (one card per
+    // question): a multi-select form submit collects its checked indices from
+    // form_value (Go collectAskqMultiSelectedFromFormValue) into the same
+    // converged askq:{q}:{i1},{i2} payload a single-select button carries; a
+    // text-submit click (askq_text_submit_{q}) and the multi submit alike
+    // ride their askq_text_{q} input after the NUL separator, so card-input
+    // text always names its question. The callback response freezes the
+    // pressed card — its settled snapshot replaces it in place; the next
+    // question arrives as a brand-new card from the engine, never a rewrite
+    // of this one. The meta entry is read and consumed BEFORE dispatch:
+    // dispatch settles the answer and the engine then sends the next card,
+    // whose send overwrites the same cache key.
     if (actionVal.startsWith('askq:') || actionVal.startsWith('askq_multi:') || actionVal.startsWith('askq_text:')) {
       let qIdx = -1
       if (actionVal.startsWith('askq_text:')) {
@@ -1142,25 +1149,18 @@ export class FeishuPlatform implements Platform {
       }
       const sel = parseAskqSelection(actionVal)
       if (sel === undefined) return undefined
-      // Dedup exact repeats per card message and question: a double-click or
-      // a Feishu callback retry must not forward the same answer twice; a
-      // CHANGED answer on an answered question is a revision — it passes and
-      // updates the recorded answer.
-      const next: AskCardAnswer = {
-        indices: sel.indices,
-        ...(sel.custom !== '' ? { custom: sel.custom } : {}),
-      }
-      let answered: Map<number, AskCardAnswer>
-      if (messageID !== '') {
-        const prior = this.askqAnswered.get(messageID)
-        const prev = prior?.get(sel.qIdx)
-        if (prev !== undefined && prev.indices.join(',') === next.indices.join(',')
-          && (prev.custom ?? '') === (next.custom ?? '')) return undefined
-        answered = new Map(prior ?? [])
-        answered.set(sel.qIdx, next)
-        this.askqAnswered.set(messageID, answered)
+      const meta = this.askqMetaCache.get(sessionKey)
+      if (meta !== undefined) {
+        this.askqMetaCache.delete(sessionKey)
       } else {
-        answered = new Map([[sel.qIdx, next]])
+        // The pressed card's question is gone from the cache (already
+        // consumed by this callback once, or the daemon restarted). The
+        // dispatch still goes through — the engine's ask state decides
+        // whether the answer lands or the click is stale — but this card
+        // cannot be frozen, and the drop leaves a trace: silent branches
+        // here cost hours of exclusion-method triage (2026-09-01
+        // oc_52c9347bd).
+        console.warn(`${this.tag()}: ask card callback without cached question (${sessionKey}, payload ${actionVal.split('\x00')[0]})`)
       }
       const isTextSubmit = actionVal.startsWith('askq_text:')
       const content = isTextSubmit
@@ -1171,10 +1171,13 @@ export class FeishuPlatform implements Platform {
       this.dispatch(sessionKey, messageID, userID, chatID, 'group',
         content, '', replyCtx, isSpawned, '', false, true)
 
-      const meta = this.askqMetaCache.get(sessionKey)
       if (meta === undefined) return undefined
-      if (meta.questions.every((_q, i) => answered.has(i))) this.askqMetaCache.delete(sessionKey)
-      return this.buildAskCardResponse(sessionKey, meta, answered)
+      const card = buildAskQuestionCardSettled(
+        meta.question, meta.qIdx, meta.total,
+        { indices: sel.indices, ...(sel.custom !== '' ? { custom: sel.custom } : {}) },
+        this.i18nHandle ?? zhAskCardI18n,
+      )
+      return { card: { type: 'raw', data: renderCardMap(card, sessionKey) } }
     }
 
     // cmd: → command shortcut from a card button; forward as a message
@@ -1832,25 +1835,18 @@ export class FeishuPlatform implements Platform {
     const rc = this.requireReplyCtx(replyCtx)
     const permBody = card.permBody ?? ''
     if (permBody !== '') this.permBodyCache.set(rc.sessionKey, permBody)
-    const isAskCard = this.cacheAskqMeta(rc.sessionKey, card)
-    const recordAskMsg = (messageId: string | undefined): void => {
-      if (isAskCard && messageId !== undefined && messageId !== '') {
-        this.askqCardMsgIDs.set(rc.sessionKey, messageId)
-      }
-    }
+    this.cacheAskqMeta(rc.sessionKey, card)
     const cardJSON = renderCard(card, rc.sessionKey)
     if (!this.shouldUseThreadOrReplyAPI(rc)) {
       if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
-      const resp = await this.withRetry('send card', () => this.request('send card', client =>
+      await this.withRetry('send card', () => this.request('send card', client =>
         client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })))
-      recordAskMsg(resp?.messageId)
       this.touchChatActivity(rc.chatID)
       return
     }
     const replyInThread = this.shouldReplyInThread(rc)
-    const resp = await this.withRetry('reply card', () => this.request('reply card', client =>
+    await this.withRetry('reply card', () => this.request('reply card', client =>
       client.reply({ messageId: rc.messageID, msgType: 'interactive', content: cardJSON, replyInThread })))
-    recordAskMsg(resp?.messageId)
     this.touchChatActivity(rc.chatID)
   }
 
@@ -1864,24 +1860,21 @@ export class FeishuPlatform implements Platform {
     if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
     const permBody = card.permBody ?? ''
     if (permBody !== '') this.permBodyCache.set(rc.sessionKey, permBody)
-    const isAskCard = this.cacheAskqMeta(rc.sessionKey, card)
+    this.cacheAskqMeta(rc.sessionKey, card)
     if (this.o.noReplyToTrigger !== true && this.shouldReplyInThread(rc)) {
       await this.replyCard(replyCtx, card)
       return
     }
     const cardJSON = renderCard(card, rc.sessionKey)
-    const resp = await this.withRetry('send card', () => this.request('send card', client =>
+    await this.withRetry('send card', () => this.request('send card', client =>
       client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })))
-    if (isAskCard && resp?.messageId !== undefined && resp.messageId !== '') {
-      this.askqCardMsgIDs.set(rc.sessionKey, resp.messageId)
-    }
     this.touchChatActivity(rc.chatID)
   }
 
   /**
-   * Cache the full question set of an ask card at send time: a callback
-   * cannot carry the whole card, so it is read back to rebuild the card with
-   * answered questions frozen. Only ask cards are cached.
+   * Cache the open question of a question prompt card at send time: a
+   * callback cannot carry the card, so it is read back to freeze the card
+   * with its settled snapshot. Only question cards are cached.
    * @param sessionKey - Session the card was sent to.
    * @param card - The card being sent.
    */
@@ -1890,62 +1883,6 @@ export class FeishuPlatform implements Platform {
     if (meta === undefined) return false
     this.askqMetaCache.set(sessionKey, meta)
     return true
-  }
-
-  /**
-   * Build the callback card replacement after one answer on a multi-question
-   * ask card: while questions remain open the card stays a live form with each
-   * answered question's current answer shown (revisable); once every question
-   * is answered the replacement is the read-only terminal card, its title
-   * stamped with the localized settled suffix.
-   * @param sessionKey - Session key stamped into the rendered card.
-   * @param meta - The cached question set of the ask card.
-   * @param answered - Current answer per answered question index.
-   * @returns The callback response replacing the pressed card.
-   */
-  private buildAskCardResponse(
-    sessionKey: string,
-    meta: AskCardMeta,
-    answered: Map<number, AskCardAnswer>,
-  ): CardActionCallbackResponse {
-    const settled = meta.questions.every((_q, i) => answered.has(i))
-    const title = settled ? `${meta.title}${this.t(Msg.AskCardSettledSuffix, ' · 已全部作答')}` : meta.title
-    const card = buildAskQuestionsCard(title, meta.questions, answered, this.i18nHandle ?? zhAskCardI18n)
-    return { card: { type: 'raw', data: renderCardMap(card, sessionKey) } }
-  }
-
-  /**
-   * PATCH the session's ask card with engine-side answer state — the sync
-   * path for chat-text answers, which have no card callback of their own.
-   * The state merges into {@link askqAnswered} first so a later click's
-   * callback replacement keeps the text-answered questions; a fully answered
-   * ask renders the read-only terminal card and consumes the meta cache.
-   * No-op (not an error) without a recorded card or cached meta; PATCH
-   * failures are logged, never thrown — the card staying stale must not
-   * break answer routing.
-   * @param sessionKey - Session whose ask card should update.
-   * @param answered - Current per-question answer state from the engine.
-   */
-  async syncAskCard(sessionKey: string, answered: AskCardAnswered): Promise<void> {
-    try {
-      const msgID = this.askqCardMsgIDs.get(sessionKey) ?? ''
-      const meta = this.askqMetaCache.get(sessionKey)
-      if (msgID === '' || meta === undefined) return
-      const merged = new Map(this.askqAnswered.get(msgID) ?? [])
-      for (const [qIdx, answer] of answered) merged.set(qIdx, answer)
-      this.askqAnswered.set(msgID, merged)
-      if (meta.questions.every((_q, i) => merged.has(i))) this.askqMetaCache.delete(sessionKey)
-      const cardJSON = renderCard(buildAskQuestionsCard(
-        meta.questions.every((_q, i) => merged.has(i))
-          ? `${meta.title}${this.t(Msg.AskCardSettledSuffix, ' · 已全部作答')}`
-          : meta.title,
-        meta.questions, merged, this.i18nHandle ?? zhAskCardI18n,
-      ), sessionKey)
-      await this.patchRateWait()
-      await this.withRetry('sync ask card', () => this.patchMessage(msgID, cardJSON))
-    } catch (error) {
-      console.warn(`${this.tag()}: ask card sync failed: ${String(error)}`)
-    }
   }
 
   /**
