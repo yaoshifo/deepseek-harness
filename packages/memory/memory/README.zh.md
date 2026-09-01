@@ -1,9 +1,32 @@
+---
+description: "dsh 会话的 Claude Code 兼容持久记忆：共享的按项目记忆目录、默认开启的跨项目全局 scope、会话开始的索引注入，以及 memory_list / memory_read / memory_write / memory_delete / memory_index 五个工具。"
+kind: "package-reference"
+---
+
 # @deepseek-ai/dsh-memory
 
 [English](README.md) | 中文
 
+## 概述
+
+给每个 dsh 会话一份可通过专用工具读写的持久文件记忆：记忆积累在 Claude Code 拥有的同一按项目目录里，两个 harness 因此召回同一批事实；一个跨项目的全局目录把机器级知识共享给本机所有 dsh 会话。`MEMORY.md` 索引在会话开始时按配置预算注入，并用 `memory_index` 保持最新；五个工具只在记忆目录内操作。全局 scope 默认开启，一个配置字段即可关闭。
+
+## 目录
+
+- [贡献了什么](#what-it-contributes)
+- [scope 判定:project 还是 global](#scope-decision-project-or-global)
+- [slug 编码](#slug-encoding)
+- [配置](#configuration)
+- [并发与失败行为](#concurrency-and-failure-behavior)
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
+
+-----
+
 Claude Code 记忆兼容加默认开启的 dsh 专属全局 scope:dsh 会话直接读写 Claude Code 拥有的按项目隔离的记忆目录(`~/.claude/projects/<slug>/memory/`),Claude Code 积累的记忆 dsh 能召回,dsh 写下的记忆会出现在 Claude Code 的下一个会话里。一个跨项目记忆目录(`~/.claude/memory/`)被本机上所有 dsh 会话共享,与项目无关;Claude Code 不读写它。插件不引入任何自有存储——存储、格式、slug 编码与索引纪律全部锁定为 Claude Code 的实证行为(泄漏系统提示与本机磁盘布局交叉验证)。
 
+<a id="what-it-contributes"></a>
 ## 贡献了什么
 
 三个模型可见面,均只作用于带 POSIX cwd 的顶层会话(子代理一概不获得;子代理调用工具会明确报错):
@@ -14,14 +37,17 @@ Claude Code 记忆兼容加默认开启的 dsh 专属全局 scope:dsh 会话直�
 
 `memory_write` 会在已有 frontmatter `metadata:` 块内兜底补上 `node_type: memory` 与 `originSessionId`(dsh 会话 id),对齐 Claude Code harness 在模型 Write 后补写的行为;没有 `metadata:` 块的 frontmatter 与纯正文原样通过。主题文件名统一规范化为 `.md` 后缀(`MEMORY.md` 保持原名),使索引链接与工具调用一致;写入结果回告实际落盘名,读/删未命中时把 `.md` 后缀按加上/去掉各重试一次,自愈旧会话留下的无扩展名文件。对 `MEMORY.md` 的写入超出任一预算时仍然成功,但返回"把细节移入主题文件并重写索引"的警告。指针行仍由模型撰写——`memory_index` 每次调用按记忆文件名 upsert 或删除一行,但绝不发明标题或 hook;单行 hook 的质量正是召回可用性的来源。
 
+<a id="scope-decision-project-or-global"></a>
 ## scope 判定:project 还是 global
 
 写哪个 scope 由模型在写入时选择。引导放在离决策点最近的三个面上:默认开启的 `## Global memory` 提示规则(一个单问判定——*这条记忆拿到一个无关项目的会话里还有用吗?*——并把 `When unsure, choose project` 作为失败安全默认,因为写窄了只是别处召回不到,写宽了是每个会话都注入噪声)、`scope` 工具参数的 description、以及全局索引帧头——每次召回都标明跨项目语义。规则还规定了惰性晋升:发现某条 project 记忆实际跨项目时当场重归档(写 global、upsert 全局指针、删除项目文件与指针)。同一事实出现在两个 scope 时只留归档正确的那份——通过单问判定的留 global,不通过的留 project——放错的那份连同其索引指针一并删除;这同时就是错归入 global 的记忆的降级路径。刻意不做定时晋升——写时与惰性路径掌握的上下文更多,且无人看守地写入全局注入内容会绕过人工把关,这一点更小的全局预算只能部分补偿。
 
+<a id="slug-encoding"></a>
 ## slug 编码
 
 命名各 `~/.claude/projects/` 目录的 `<slug>` 是会话工作目录中每个 `/` 和 `.` 替换为 `-` 的结果(大小写保留):`/home/hm/workspace/ainvest` → `-home-hm-workspace-ainvest`,`/home/hm/.claude` → `-home-hm--claude`。编码直接按 cwd,不按 git root——这是磁盘上的实证行为。`claudeProjectSlug` 对相对路径与反斜杠路径抛错;插件自身的守卫把非 POSIX cwd 变为无 section、无注入、工具明确报错,而不是猜测 slug。全局目录(`<claudeHome>/memory/`)没有 slug;global scope 的工具调用只要求一个归属会话。
 
+<a id="configuration"></a>
 ## 配置
 
 | 键 | 默认 | 约定 |
@@ -35,6 +61,7 @@ Claude Code 记忆兼容加默认开启的 dsh 专属全局 scope:dsh 会话直�
 
 全局预算继承项目预算,组合显式声明的单一预算同时约束两个 scope;只覆盖全局数字则声明更紧(或更松)的全局注入上限。
 
+<a id="concurrency-and-failure-behavior"></a>
 ## 并发与失败行为
 
 并发会话(dsh 或 Claude Code)写同一记忆文件按 last-write-wins 收敛,与两个并发 Claude Code 会话完全一致——全局目录同样如此,其写者群体是本机上所有 dsh 会话。写入原子(临时文件加 rename)且惰性建目录。文件在 `memory_list` 的目录读取与其后逐文件 stat 之间被删除时,该条目从列表中跳过。会话开始时的瞬时读失败跳过该次注入;被调用时记忆工具仍以真实错误明确失败。`claudeHome` 指向的目录尚不存在同样不是错误:section 照常渲染,无 `MEMORY.md` 的 scope 不注入,首次写入惰性建目录。
@@ -128,3 +155,13 @@ When you find a project memory that is actually cross-project — an unrelated p
 - **并发写者 last-write-wins** —— 无文件锁;与两个并发 Claude Code 会话一致。全局目录把写者群体扩大到本机上所有 dsh 会话。
 - **无定时 project→global 晋升** —— 刻意取舍:写时规则与惰性重归档掌握的上下文多于周期扫描,且无人看守地写入全局注入内容会绕过人工把关。跨 scope 重复只由已教的去重规则机会性清理。若错归档被证明常见,升级路径是按需审查 skill。
 - **无 frontmatter schema 校验** —— 与 Claude Code 的刻意对齐(它同样不强制);插件只在已有 `metadata:` 块内增量补写溯源字段。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者的工作上下文——点击展开</summary>
+
+无。
+
+</details>

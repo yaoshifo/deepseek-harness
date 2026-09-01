@@ -1,9 +1,27 @@
+---
+description: "The chatroom layer of the Feishu bridge: multi-role chatroom orchestration — role groups, the moderator, the /chatroom command family, and the feishu_bridge_chatroom tool — for teams running parallel agent roles inside one Feishu group."
+kind: "package-bundle"
+---
+
 # dsh-feishu-bridge-chatroom
 
 English | [中文](README.zh.md)
 
+## Summary
+
+Orchestrate multi-agent chatrooms inside one Feishu group: start role groups or a moderator through the `feishu_bridge_chatroom` tool or the `/chatroom` commands, fan one question out to every role and gather the answers into a single summary, and let the moderator drive a round-table discussion across independent role sessions. Roles run as dsh agents with whole-prompt personas assembled from the persona directory; research assistants dig in a shared workspace beside the chatroom. A project opts out with `enabled: false`, which removes the commands, masks the tool out of that project's model requests, and hides the bundled moderator skill.
+
+## Table of Contents
+
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
+
+-----
+
 The chatroom plugin of the Feishu bridge: multi-role chatroom orchestration — role groups, the moderator, the `/chatroom` command family, the `feishu_bridge_chatroom` tool, and the bundled chatroom-moderator skill — as its own dsh package mounted beside `@deepseek-ai/dsh-feishu-bridge` (dependency direction: this package imports the bridge's export face; the bridge never imports this package). The engine seam halves ride the bridge service's `feishuBridge/*` events; the per-engine configuration and command registration apply in the plugin's startup sweep once the bridge reports readiness. A project configured `enabled: false` (in this plugin's `defaults` or its `projects` entry) gets no `/chatroom` commands, its agents' `feishu_bridge_chatroom` calls fail loud, and the tool definition is masked out of its sessions' model requests through the bridge service's per-engine deny registry.
 
+<a id="model-experience"></a>
 ## Model Experience
 
 ### What the model sees
@@ -21,6 +39,7 @@ The tool description and schema reach every dsh agent in enabled projects (the t
 
 Chatroom sessions use whole-prompt persona replacement, so each role/moderator session has its own stable prefix; the tool schema extends the model request for bridge-owned agents, adding to (not invalidating) their reusable prefix.
 
+<a id="known-limitations-and-deferred-work"></a>
 ## Known Limitations and Deferred Work
 
 - **Pre-readiness window**: messages a platform delivers between the bridge's engine start and this plugin's `whenReady()` sweep are handled with default-valued chatroom configuration (no roles dir override, ledger off) — a window the in-bridge wiring did not have. It is structural to the sibling-plugin mount order; recovery and all later turns see the swept configuration.
@@ -30,3 +49,13 @@ Chatroom sessions use whole-prompt persona replacement, so each role/moderator s
 - **Picker state is in-memory**: a daemon restart drops the armed pickers; the next click on an orphaned pick card swaps it in place for a grey expired card prompting a fresh `/chatroom` (Go left the orphan buttons silent or fake-confirming).
 - **Deployment migration is manual**: production profiles carry chatroom sections under the `feishu-bridge` row in their self-evolved `cordis.patch.yml`; the bridge now fails loud on such residue, and the sections must move to this plugin's own config (`defaults` + per-project `projects`, keyed by bridge project name). The migration snippet and profile-template updates land with the C3 deployment batch.
 - **Coverage of the REAL-composition surface**: the apply/HMR specs mount the plugin on real Cordis services (event bus, tool registry, skill registry, bridge service) but not through the Loader with a `cordis.yml`; a boot-through-the-Loader composition test and the production `/reload` smoke checklist land with C3.
+
+<a id="dev-note"></a>
+### Dev Note
+
+<details>
+<summary>Working context for maintainers — click to expand</summary>
+
+None.
+
+</details>

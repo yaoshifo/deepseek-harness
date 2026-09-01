@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/acp/feishu-bridge/README.md
-README.md: 875bde59e6f55d602d8b87d0d2adf9980f3c9a16
-README.zh.md: d7ffcd99a30dc818ef2bd43394915c213b591594
+README.md: b199df26f5e984737cafd06cda5cf59219a3e170
+README.zh.md: ede73be2f76f9bedd0c079753663827457f3552b

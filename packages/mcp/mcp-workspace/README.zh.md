@@ -7,17 +7,19 @@ kind: "package-reference"
 
 [English](README.md) | 中文
 
-## Summary
+<a id="summary"></a>
+## 概述
 
 `dsh-mcp-workspace` 为 harness 提供与 Claude Code 等价的目录级 MCP 隔离：工作目录下存在 Claude Code 兼容 `.mcp.json` 的会话，会把其中声明的 MCP 服务器挂载为仅该会话 agent scope 可见的工具，命名沿用 mcp-client 的 `mcp__<serverName>__<tool>`。其他目录的会话看不到该文件里的任何工具，无需为各项目配置白名单。发现只信任显式 `roots` 绝对目录清单——roots 之外一律不挂载——且默认不启用。主要代价：roots 内每个会话各建一条连接（stdio 服务器即各起一个子进程），以及会话创建期受 `startupTimeoutMs` 限制的等待。
 
-## Table of Contents
+## 目录
 
-- [Summary](#summary)
+- [概述](#summary)
 - [Use this package](#use-this-package)
 - [Understand the implementation](#understand-the-implementation)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
 
 -----
 
@@ -93,3 +95,13 @@ cwd 位于配置根目录内的会话看到 `.mcp.json` 服务器的工具以 `m
 - **stdio 相对 command 经 daemon PATH 解析** — 与强制绝对路径的 ACP 路径不同；被植入的 `.mcp.json` 可指名 PATH 上的任意程序。
 - **同名全局服务器被遮蔽且无告警** — 会话内 scoped 注册获胜，全局实例继续服务其他会话；mcp-client 的名字保留按 scope 分键，本服务看不到全局名单。
 - **录制 keyless 会话快照需要 API key** — composition 测试已钉住模型可见的工具名集合与一次真实工具调用；会话驱动快照待有 key 时补录。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者的工作上下文——点击展开</summary>
+
+无。
+
+</details>

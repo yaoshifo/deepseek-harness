@@ -171,3 +171,13 @@ Use lsp workspaceSymbol to find functions, classes, types, and other symbols by 
 - **不做 `workspace/symbol/resolve`**：返回未解析 `WorkspaceSymbol` 的服务器会以 `location: null`（渲染时去掉位置后缀）保留条目，而不做 resolve 往返；实践中在用的服务器都返回已解析的位置。
 - **不承诺跨服务器完整性**：受支持的服务器仍可能根据索引就绪情况返回空或部分结果；该工具不承诺跨语言或服务器的完整性。
 - **对上游操作集的 fork 扩展**：`workspaceSymbol` 扩展了上游四操作工具契约；未来上游若出现等价能力需要做语义合并（见采用率 Agent Note）。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者的工作上下文——点击展开</summary>
+
+无。
+
+</details>

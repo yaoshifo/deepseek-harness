@@ -7,6 +7,7 @@ kind: "package-reference"
 
 English | [中文](README.zh.md)
 
+<a id="summary"></a>
 ## Summary
 
 `dsh-mcp-workspace` gives the harness Claude Code-equivalent directory-level MCP isolation: a session whose working directory holds a Claude Code-compatible `.mcp.json` gets those MCP servers mounted as tools visible only to that session's agent scope, under the same `mcp__<serverName>__<tool>` names mcp-client uses. Sessions in other directories see nothing from that file, without per-project allowlist configuration. Discovery trusts an explicit `roots` list of absolute directory paths — nothing mounts outside a root — and nothing ships enabled. The main costs are one connection (and for stdio servers, one child process) per session in a root directory, and a `startupTimeoutMs`-bounded wait during session creation.
@@ -18,6 +19,7 @@ English | [中文](README.zh.md)
 - [Understand the implementation](#understand-the-implementation)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
 
 -----
 
@@ -93,3 +95,13 @@ The directory tool-definition prefix is stable while the mounted set is unchange
 - **Relative stdio commands resolve through the daemon PATH** — unlike the ACP path, which requires absolute commands; a planted `.mcp.json` can name anything on PATH.
 - **Same-named global servers are shadowed without a warning** — the scoped registration wins inside the session and the global instance keeps serving every other session; mcp-client's name reservations are per scope, so the service cannot see global names.
 - **A recorded keyless session snapshot needs an API key to record** — the composition test pins the model-visible tool names and a real tool call; the session-driven snapshot remains to be recorded when a key is available.
+
+<a id="dev-note"></a>
+### Dev Note
+
+<details>
+<summary>Working context for maintainers — click to expand</summary>
+
+None.
+
+</details>

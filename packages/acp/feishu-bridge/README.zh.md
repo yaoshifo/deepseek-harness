@@ -1,6 +1,23 @@
+---
+description: "以 dsh bundle 层形态交付的飞书群聊 bot 桥：按项目配置的 bot、卡片化的轮次渲染与审批/计划卡、可汇报的原生子任务、cron、relay、监控与 lark 工具族——面向组装或排查飞书部署的运维者。"
+kind: "package-bundle"
+---
+
 # dsh-feishu-bridge
 
 [English](README.md) | 中文
+
+## 概述
+
+用一个长驻 dsh 进程运行飞书群聊 bot：每个配置的 project 得到一个 engine 加一个飞书长连接平台，群聊驱动真实 agent 会话，轮次渲染为实时进度卡、审批与追问卡、终态完成卡。用 `feishu_bridge_subtask` 派发并行工作——子任务作为原生可续会话运行并结算回父聊天——用 cron 排无人值守运行，用 `lark-cli` 工具调飞书开放 API。每个 project 是一条配置；斜杠命令族（`/reload`、`/spawn`、`/dir`、`/skills`、`/context` 等）、i18n 与按项目的工具可见性随层提供，机器级策略留在 profile。
+
+## 目录
+
+- [模型体验](#model-experience)
+- [已知限制与延期工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
+
+-----
 
 cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形态：一个长驻 dsh 进程按配置为每个 project 组装一个 Engine + 一个飞书 WS 平台（官方 node-sdk 长连接，D5），agent 会话经 `ctx.agents` 原生创建，不再有桥协议。迁移计划、里程碑与决策记录见 [docs/MIGRATION.md](docs/MIGRATION.md)；61 项 feature 对照见 [docs/FEATURE-PARITY.md](docs/FEATURE-PARITY.md)；部署与配置映射见 [docs/OPERATIONS.md](docs/OPERATIONS.md)。
 
@@ -54,3 +71,13 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 - **位移自愈随内容节拍收敛，边界已知**：自愈搭在预览自身的节流刷新节拍上，被压住的卡在下一次状态变化落地时夺回尾部——静默工具执行期间侧栏继续显示压住它的消息（那本身就是最新信息）；不产生账本所记事件的位移类别（改名/头像之外的系统消息）在下一次被记活动前不治愈；chat-changed bump 与自愈共用台账门，其事件时刻只是系统消息落地的近似——落在消息落地与事件到达之间重发的卡仍会多付一次重发；合法重发的墓碑数等于被压次数——飞书除撤回重发外没有重排原语，turn 结束的头像重绘已不再贡献墓碑（挪到终态卡渲染之后），余下的复尾源只剩罕见的 attention 重绘（stall、子任务子会话死亡）与 turn 中途消息；同一群两个流式 bot 仍会互相压尾重发（现网单 bot 拓扑不存在该形态）。
 - **`/list`、`/status`、`/switch` 仍是纯文本**：Go 侧渲染 `renderListCardSafe`/`renderStatusCard` 卡片并带 `act:/list switch|delete N` 动作；TS 命令保持文本输出，待该渲染域移植。
 - **Go 命令清单为有意筛选**：`/shell`+`!`、`/tag`、`/untag`、`/undone`、`/notify`、`/board`、`/help`、`/ps` 已落地（Agent Note `feature/2026-08-20-feishu-bridge-shell-command.md` 与 `feature/2026-08-20-feishu-bridge-seven-commands.md`）；TS 原生另加 `/reload`（admin，detached 运行 reload.sh，见 OPERATIONS.md §3.3；非 Go `/restart` 的移植）、`/skills`、`/mcp`（只读查询：当前会话工作目录的运行时 skill 目录，以及在线 MCP 服务器清单，含降级与白名单遮蔽标注；无 Go 对应）与 `/context`（来自当前会话投影的上下文洞察卡：占用概览、六桶构成与逐轮趋势（原生 chart 元素）、最近上下文事件、会话统计与工具 schema 体积，卡片刷新按钮原地重读快照；未挂载 dsh-context 时降级为 token-meter 概览，无活跃 agent 会话时为友好空卡）；`/help` 列表从注册表动态生成、不会漂移。Go 53 条 builtin 命令剩余约 27 条为有意裁剪（用户裁定 2026-08-21）：upgrade/restart/web/doctor/version 属 D 类，其余（`/whoami`、`/history`、`/current`、`/search`、`/delete`、`/name`、`/memory`、`/model`、`/reasoning`、`/mode`、`/lang`、`/quiet`、`/tts`、`/allow`、`/config`、`/show`、`/diff` 等）设计上不迁；`/tts` 另依赖待裁定的语音能力面。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者的工作上下文——点击展开</summary>
+
+无。
+
+</details>
