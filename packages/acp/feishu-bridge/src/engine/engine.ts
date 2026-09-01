@@ -7578,6 +7578,26 @@ export class Engine {
   }
 
   /**
+   * Disarm a session's pending subtask gather without waking: stop the
+   * fallback timer and drop the barrier, so the timeout can no longer wake
+   * the session later. Precondition: when the gather was blocking, its
+   * calling turn must already be aborted ({@link stopInteractiveSession}) —
+   * the abort listener settles the parked tool promise, which this method
+   * deliberately never resolves. Teardown paths use this; a plain user stop
+   * keeps the barrier armed so partial results still arrive.
+   * @param sessionKey - Session key whose gather barrier to drop.
+   * @returns True when an armed barrier was disarmed.
+   */
+  clearSubtaskGather(sessionKey: string): boolean {
+    const sess = this.sessions.findActive(sessionKey)
+    const g = sess?.getPendingSubtaskGather()
+    if (sess === undefined || g === undefined) return false
+    if (g.timer !== undefined) clearTimeout(g.timer)
+    sess.setPendingSubtaskGather(undefined)
+    return true
+  }
+
+  /**
    * Complete an armed gather: resolve the blocking waiter (the summary lands
    * as the gather tool result in the still-open turn) or, without one, inject
    * the synthetic [子任务汇总] wake message (Go wakeParentWithGather).

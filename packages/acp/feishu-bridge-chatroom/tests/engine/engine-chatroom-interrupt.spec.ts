@@ -112,6 +112,37 @@ describe('interruptChatroom', () => {
     expect(res.missing).toEqual(['taleb'])
   })
 
+  it('disarms armed subtask gathers on member sessions so the fallback timeout cannot wake them', async () => {
+    vi.useFakeTimers()
+    try {
+      const p = createStubChatroomSpawner()
+      const e = newEngine(p)
+      armedChatroom(e)
+      // Research-mode delegation: role taleb spawned an assistant subtask
+      // child and armed the subtask gather barrier waiting on its report
+      // (2026-09-01 oc_0e4b: the barriers outlived the interrupt and their
+      // 20-minute fallback timer woke the stopped roles as fresh turns).
+      const asst = e.sessions.getOrCreateActive('test:assistant-taleb')
+      asst.setParentSessionKey('test:role-taleb')
+      asst.setSubtaskDepth(1)
+      asst.setSubtaskReported(false)
+      asst.setName('taleb 研究助手')
+      e.gatherSubtasks('test:role-taleb')
+      expect(e.sessions.getOrCreateActive('test:role-taleb').getPendingSubtaskGather()).toBeDefined()
+      const recv = vi.spyOn(e, 'receiveMessage').mockImplementation(() => {})
+
+      interruptChatroom(e, hubKey)
+
+      // The barrier is torn down with the chatroom and the fallback timer
+      // can no longer wake the stopped role with a [子任务汇总] turn.
+      expect(e.sessions.getOrCreateActive('test:role-taleb').getPendingSubtaskGather()).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+      expect(recv.mock.calls).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('is a no-op teardown when the chatroom already ended', () => {
     const p = createStubChatroomSpawner()
     const e = newEngine(p)

@@ -10,7 +10,7 @@ The 2026-08-26 oc_b46da chatroom-hub incident had a third layer beyond the [froz
 
 ## Decision
 
-- `gatherSubtasksBlocking` settles on abort: the abort listener clears the waiter (unchanged — later reports must take the async wake, not a dead waiter) and resolves the promise with the new `subtask_gather_aborted` message ("Gather wait aborted by a stop; reports already banked still arrive via the timeout wake."). The parked runtime turn gets its tool result and can end, `aborted/user` becomes reachable, quiescence returns, and dispose can deregister the session. The armed barrier is untouched: the timeout wake still delivers banked reports.
+- `gatherSubtasksBlocking` settles on abort: the abort listener clears the waiter (unchanged — later reports must take the async wake, not a dead waiter) and resolves the promise with the new `subtask_gather_aborted` message ("Gather wait aborted by a stop; reports already banked still arrive via the timeout wake."). The parked runtime turn gets its tool result and can end, `aborted/user` becomes reachable, quiescence returns, and dispose can deregister the session. The armed barrier is untouched: the timeout wake still delivers banked reports — except under teardown, where [chatroom interrupt disarms member barriers](2026-09-01-feishu-bridge-chatroom-interrupt-disarms-gathers.md) so the fallback timer cannot wake a torn-down room.
 - `stopInteractiveSession`'s close now goes through `closeAgentSessionWithTimeout` like every other close site: a dispose parked on a non-quiescing turn surfaces the `close timed out` warn and is abandoned instead of hanging silently.
 
 ## Alternatives considered

@@ -1386,8 +1386,10 @@ export interface ChatroomInterruptResult {
  * the teardown until the timeout wakes a chatroom the user abandoned).
  * Interrupt consumes both barriers without waking, stops the moderator turn
  * and every in-flight role/assistant turn instead of draining, then reuses
- * finalizeChatroomEnd's teardown. The moderator gets no turn: the interrupt
- * card is the only terminal record.
+ * finalizeChatroomEnd's teardown. Member sessions' armed subtask gathers are
+ * disarmed as well: their 20-minute fallback timer must not wake a torn-down
+ * room's roles as fresh turns (2026-09-01 oc_0e4b incident). The moderator
+ * gets no turn: the interrupt card is the only terminal record.
  *
  * @param e - Engine carrying the session registry and platform.
  * @param hubKey - Session key of the chatroom hub to interrupt.
@@ -1401,6 +1403,7 @@ export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptR
   // Stop the brain first: a mid-orchestration moderator turn would otherwise
   // keep issuing asks into groups the teardown is about to delete.
   e.stopInteractiveSession(hubKey)
+  let clearedGathers = e.clearSubtaskGather(hubKey) ? 1 : 0
 
   // Consume both barriers without waking: the interrupt card is the only
   // terminal record the user asked for.
@@ -1420,9 +1423,12 @@ export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptR
   e.sessions.save()
 
   // Stop every in-flight role/assistant turn instead of draining (end's
-  // semantics): interrupt waits for nothing.
+  // semantics): interrupt waits for nothing. Each member's armed subtask
+  // gather is disarmed after its turn stops (the abort listener settles the
+  // blocking tool promise first).
   for (const childKey of e.collectSubtree(hubKey)) {
     e.stopInteractiveSession(childKey)
+    if (e.clearSubtaskGather(childKey)) clearedGathers += 1
   }
   const rolesRemoved = finalizeChatroomEnd(e, hubKey)
 
@@ -1446,7 +1452,7 @@ export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptR
       },
     )
   }
-  console.info(`chatroom: interrupted (hub=${hubKey} roles_removed=${rolesRemoved} missing=${uniqueMissing.join(',')})`)
+  console.info(`chatroom: interrupted (hub=${hubKey} roles_removed=${rolesRemoved} missing=${uniqueMissing.join(',')} gathers_cleared=${clearedGathers})`)
   return { rolesRemoved, missing: uniqueMissing }
 }
 
