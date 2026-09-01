@@ -16,7 +16,7 @@ feishu-bridge 会话日志（344 个会话，2026-08-19 至 08-31）显示并行
 
 ## Decision
 
-- plan-mode 调研句从条件句改为带明确例外的默认句，落在全部四份 preset/bundle 副本及 live-profile patch 覆盖：全仓库扫描、横切审计、点名了几个方向的请求，预先拆成 2–5 个独立角度并在一个 assistant message 里一起派发（brief 要求只读回报）；仅单一焦点、一两次 read 即可回答的问题保持串行。仓库副本保持工具中性（"background subagent delegations"）；live-profile 覆盖点名 `feishu_bridge_subtask`，维持部署层的路由分工。
+- plan-mode 调研句从条件句改为带明确例外的默认句，落在全部四份 preset/bundle 副本及 bridge bundle patch 的 plan-mode 覆盖：全仓库扫描、横切审计、点名了几个方向的请求，预先拆成 2–5 个独立角度并在一个 assistant message 里一起派发（brief 要求只读回报）；仅单一焦点、一两次 read 即可回答的问题保持串行。通用仓库副本保持工具中性（"background subagent delegations"）；bridge bundle patch 覆盖点名 `feishu_bridge_subtask`——2026-09-01 起它落在 bridge 包自己的 `cordis.patch.yml` 里（[bundle patch 所有权 note](../architecture/2026-09-01-feishu-bridge-plan-mode-guidance-in-bundle-patch.zh.md)）。
 - "group implementation changes by subsystem" 追加 "and mark which groups are independent enough to implement in parallel versus serially dependent"——推迟的实施阶段闸门在判据满足后落地。标记写在用户 review 的计划里，审批闸门仍在用户手中。
 - skill 的排除边界收窄到它的成本理由：轻量单焦点问题（一两次 read/grep）保持串行；多方向调研默认并行无群 spawn。2026-08-21 的边界定价的是 attended 群面；2026-08-24 起无值守 spawn 走原生 continuable seam、不再建群，该成本前提已消失。
 
@@ -29,7 +29,7 @@ feishu-bridge 会话日志（344 个会话，2026-08-19 至 08-31）显示并行
 
 ## Consequences
 
-- 部署：live profile 的 plan-mode 覆盖整行替换该 section，携带两句新文本，`/reload` 在任何 bundle promote 之前即可生效；待 dsh-base release 带上文本后该覆盖仍可删除（与 2026-08-21 相同的回收条件）。
-- 工具名路由维持在[委派面措辞 note](../architecture/2026-08-20-delegation-surface-selection-wording.zh.md)划定的位置：仓库副本工具中性，仅部署层覆盖点名工具。[并行调度](2026-08-09-parallel-subagent-delegations.zh.md)与[无值守原生 seam](2026-08-24-feishu-bridge-native-unattended-subtasks.zh.md)机制未动。
+- 部署：bridge bundle patch 的 plan-mode 覆盖整行替换该 section（[所有权 note](../architecture/2026-09-01-feishu-bridge-plan-mode-guidance-in-bundle-patch.zh.md)）；2026-08-21 决策加的每机 profile shim 已从两台 live profile 删除，引导演进随 link 包的 pull + `/reload` 流动，不再逐机重抄整段（2026-08-21 的「dsh-base release 带上文本后删除」回收条件被取代：release 文本保持工具中性，本组合用不了）。
+- 工具名路由按组合范围划分：通用仓库副本（presets、dsh-base bundle）工具中性；bridge bundle patch——限定 bridge 组合的仓库副本——点名工具。[并行调度](2026-08-09-parallel-subagent-delegations.zh.md)与[无值守原生 seam](2026-08-24-feishu-bridge-native-unattended-subtasks.zh.md)机制未动。
 - 验收：不带「并行」字样复放三种失败形状（三方向调研、多角度验证、跨会话日志分析）——三例中至少两例应在单个 assistant message 内 fan-out；显式指令回归测试仍应 fan-out。关注 spawn 数量：单任务常态超出 2–5 路说明默认过度触发，需收紧上限。
 - 已知残余：不稳定性的一部分是采样层面的（相同输入、计划分化），单次复放成功不构成证据；上述多任务标准才是闸门。
