@@ -76,8 +76,14 @@ describe('bridge bundle patch', () => {
     expect(text).toContain('2–5 independent angles')
     expect(text).toContain('Keep exploration serial only for a single-focus question')
     expect(text).toContain('mark which groups are independent enough to implement in parallel')
+    // A rejection opens a discussion round: answer in the reply, end the turn,
+    // re-present only on the user's request (2026-09 plan-rejection UX).
+    expect(text).toContain('the feedback opens a discussion round')
+    expect(text).toContain('end your turn without calling exit_plan_mode again')
+    expect(text).toContain('only after the user asks for the updated plan')
     // The generic delegation sentence names native tools this composition disables.
     expect(text).not.toContain('background subagent delegations')
+    expect(text).not.toContain('incorporate the feedback and present again')
     // An id-targeted patch that matches nothing is skipped with a warning: a
     // plan-mode warning here would mean the override never reached the row.
     expect(warnings.filter(message => message.includes('plan-mode'))).toEqual([])
