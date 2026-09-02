@@ -102,10 +102,16 @@ function isExcluded(file: string): boolean {
 
 // Enumerate the scope once: the whole corpus, or exactly the named pairs'
 // three files (a named pair whose files are absent is caught by the same
-// completeness rules that cover discovered remnants).
+// completeness rules that cover discovered remnants). Hook mode names every
+// staged Markdown side, not only sidecars: an anchor without its consistency
+// record in the index belongs to no recorded pair, so corpus completeness
+// stays with doc-sync.
 const files = new Set<string>()
+const anchors = request.scope === 'pairs' && indexMode
+  ? request.anchors.filter(anchor => repositoryFileExists(translationPairPaths(anchor).meta))
+  : request.anchors
 if (request.scope === 'pairs') {
-  for (const anchor of request.anchors) {
+  for (const anchor of anchors) {
     const { source, zh, meta } = translationPairPaths(anchor)
     for (const file of [source, zh, meta]) {
       if (repositoryFileExists(file)) files.add(file)
@@ -128,8 +134,8 @@ const metas = [...files].filter(f => f.endsWith('.i18n.yaml')).sort()
 const sources = [...files].filter(f => f.endsWith('.md') && !f.endsWith('.zh.md')).sort()
 
 if (request.scope === 'pairs') {
-  const rejected = request.anchors.filter(anchor => !isTranslationScopeFile(anchor) || isExcluded(anchor))
-  const absent = request.anchors.filter((anchor) => {
+  const rejected = anchors.filter(anchor => !isTranslationScopeFile(anchor) || isExcluded(anchor))
+  const absent = anchors.filter((anchor) => {
     const { source, zh, meta } = translationPairPaths(anchor)
     return ![source, zh, meta].some(repositoryFileExists)
   })
