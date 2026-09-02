@@ -31,6 +31,7 @@ import {
 } from './core/types.ts'
 import type { AsyncSender } from './async-sender.ts'
 import { splitMcpToolName } from './core/mcp-health.ts'
+import { capProgressLineChars, splitCardLines } from './feishu/markdown.ts'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './engine/message-split.ts'
 import type { TodoItem } from './progress.ts'
 
@@ -201,21 +202,25 @@ export class ProgressEntry {
 
 /**
  * Keep the first maxLines lines plus an overflow marker (Go truncateToMaxLines).
+ * Lines are counted with the card renderer's line endings (see splitCardLines).
  *
  * @param s - Text to truncate.
  * @param maxLines - Maximum number of lines to keep.
- * @returns s unchanged when it fits; otherwise the kept lines plus the overflow marker.
+ * @returns s with line endings normalized when it fits; otherwise the kept lines plus the overflow marker.
  */
 export function truncateToMaxLines(s: string, maxLines: number): string {
   if (s === '' || maxLines <= 0) return s
-  const lines = s.split('\n')
-  if (lines.length <= maxLines) return s
+  const lines = splitCardLines(s)
+  if (lines.length <= maxLines) return lines.join('\n')
   const extra = lines.length - maxLines
   return `${lines.slice(0, maxLines).join('\n')}\n... (${extra} more lines)`
 }
 
 /**
- * Normalize s to exactly maxLines lines for stable card height.
+ * Normalize s to exactly maxLines lines for stable card height. Lines are
+ * counted with the card renderer's line endings and capped per line (see
+ * splitCardLines / capProgressLineChars), so neither a lone \r nor a long
+ * line can expand the rendered height past the window.
  *
  * @param s - Text to normalize.
  * @param maxLines - Exact line count to produce.
@@ -224,7 +229,7 @@ export function truncateToMaxLines(s: string, maxLines: number): string {
 export function padToFixedLines(s: string, maxLines: number): string {
   if (maxLines <= 0) return s
   if (s === '') return ' \n'.repeat(maxLines - 1) + ' '
-  const lines = s.split('\n')
+  const lines = splitCardLines(s).map(capProgressLineChars)
   if (lines.length <= maxLines) {
     while (lines.length < maxLines) lines.push(' ')
     return lines.join('\n')

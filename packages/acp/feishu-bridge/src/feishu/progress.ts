@@ -14,6 +14,7 @@
 import {
   collapseExcessCardTables,
   buildPostMdJSON,
+  capProgressLineChars,
   containsMarkdown,
   countMarkdownTables,
   finalizeFeishuCardMarkdown,
@@ -25,6 +26,7 @@ import {
   preprocessFeishuMarkdown,
   sanitizeFeishuMarkdownHTML,
   sanitizeMarkdownURLs,
+  splitCardLines,
   isTableRow,
   FenceTracker,
 } from './markdown.ts'
@@ -260,12 +262,12 @@ export function formatTodoWriteInput(text: string): string {
  */
 export const maxProgressEntryLines = 6
 
-/** Characters per line cap in progress code blocks (prevents wrapping). */
-export const maxProgressLineChars = 120
-
 /**
  * Normalize s to exactly maxLines lines: empty → placeholders, fewer →
- * padded, more → first maxLines-1 lines + "... (N more lines)".
+ * padded, more → first maxLines-1 lines + "... (N more lines)". Lines are
+ * counted with the card renderer's line endings and capped per line (see
+ * splitCardLines / capProgressLineChars), so neither a lone \r nor a long
+ * line can expand the rendered height past the window.
  *
  * @param s - Raw text to normalize.
  * @param maxLines - Exact line count to produce.
@@ -274,13 +276,7 @@ export const maxProgressLineChars = 120
 export function padProgressLines(s: string, maxLines: number): string {
   if (maxLines <= 0) return s
   if (s === '') return ' \n'.repeat(maxLines - 1) + ' '
-  const lines = s.split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] as string
-    if (Array.from(line).length > maxProgressLineChars) {
-      lines[i] = `${Array.from(line).slice(0, maxProgressLineChars).join('')}...`
-    }
-  }
+  const lines = splitCardLines(s).map(capProgressLineChars)
   if (lines.length < maxLines) {
     while (lines.length < maxLines) lines.push(' ')
     return lines.join('\n')

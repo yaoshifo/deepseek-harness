@@ -160,6 +160,37 @@ export function isTableRow(line: string): boolean {
 }
 
 /**
+ * Split text into lines the way the Feishu card markdown renderer breaks
+ * them: \n, \r\n, and a lone \r each end a line (CommonMark line endings).
+ * Line-count caps must count with this rule — tool output holding
+ * \r-separated progress updates (git checkout) packs many rendered lines
+ * into one \n-line and would otherwise break fixed-height card windows.
+ * @param s - Text to split.
+ * @returns Lines without their line-ending characters.
+ */
+export function splitCardLines(s: string): string[] {
+  return s.split(/\r\n|\r|\n/)
+}
+
+/**
+ * Characters per line cap in progress-card code blocks (prevents wrapping).
+ */
+export const maxProgressLineChars = 120
+
+/**
+ * Cap one card line at {@link maxProgressLineChars} code points, appending
+ * an ellipsis when cut: a longer line wraps inside the card code block and
+ * grows a fixed-height window past its line budget.
+ * @param line - Single line, without line-ending characters.
+ * @returns The line unchanged when it fits; otherwise the first
+ * {@link maxProgressLineChars} code points plus `...`.
+ */
+export function capProgressLineChars(line: string): string {
+  if (Array.from(line).length <= maxProgressLineChars) return line
+  return `${Array.from(line).slice(0, maxProgressLineChars).join('')}...`
+}
+
+/**
  * Ensure proper line breaks for Feishu card schema 2.0 markdown elements,
  * where a single \n is treated as whitespace (like HTML): converts \n between
  * non-empty lines to \n\n outside code blocks, preserves \n between adjacent
