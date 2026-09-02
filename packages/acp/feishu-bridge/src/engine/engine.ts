@@ -5133,6 +5133,23 @@ export class Engine {
       state.pendingFollowups = question
       state.lastEventAt = Date.now()
       console.info(`engine: closing-card ask converted to followups (${sessionKey}, ${question?.options.length ?? 0} options)`)
+      // Deliver the pre-ask reply segment the parked path renders at
+      // deliverCards: the trailing text after the ask replaces the 实时播报
+      // section, so without this render the closing summary survives only
+      // behind the export button. Segment flush and completeAndDetach are
+      // deliberately absent — the turn keeps streaming, and keeping
+      // segmentStart lets the turn-end export register the full joined reply.
+      const sp = state.preview
+      if (sp !== undefined) {
+        const session = this.sessions.findActive(sessionKey)
+        const captured = captureReplyForExport(sp, state)
+        const triggered = this.planRenderEnabled
+          && captured.text !== '' && Array.from(captured.text).length >= defaultReplyPreRenderLen
+          && !(session?.shouldSuppressAutoRender(this.bridge) ?? false)
+        if (triggered) {
+          renderAndDeliverReply(this, state, sessionKey, captured.text, captured.exportKey)
+        }
+      }
       return {
         answers: request.questions.map(q => ({
           id: q.id ?? q.question,

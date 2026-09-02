@@ -11,8 +11,11 @@
 import { describe, expect, it } from 'vitest'
 import { FOLLOWUPS_ASK_HEADER, isFollowupsAsk } from '../../src/engine/ask.ts'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
-import { createStubAgent, createStubCardPlatform, createStubPlatform } from '../stubs/engine-stubs.ts'
+import { createStubAgent, createStubCardPlatform, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.ts'
 import { createControllableAgent, newControllableSession, type ControllableAgentSession } from '../stubs/engine-stubs.ts'
+import { newStreamPreview, type StreamPreview } from '../../src/streaming.ts'
+import { createRenderAgent, pollUntil, renderSkillBodyFixture } from './plan-render-helpers.ts'
+import type { Platform } from '../../src/core/types.ts'
 import type { AskRequest, FileAttachment, ImageAttachment, Message, UserQuestion } from '../../src/core/types.ts'
 import type { Card } from '../../src/card.ts'
 
@@ -114,6 +117,10 @@ describe('askUser followups conversion', () => {
     expect(decision.answers?.[0]?.selected).toEqual([])
     expect(decision.answers?.[0]?.id).toBe('后续处理哪些？')
     expect(decision.answers?.[0]?.custom).toContain('新消息')
+    // The notice must also tell the model not to restate it: the suggestion
+    // card already explains the flow to the user, so a restating reply
+    // delivers the same information twice.
+    expect(decision.answers?.[0]?.custom).toContain('复述')
     // No card at ask time — the suggestion card rides the turn-end emission.
     expect(p.sentCards).toHaveLength(0)
     // The turn is not parked.
@@ -141,6 +148,90 @@ describe('askUser followups conversion', () => {
     const handled = e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')
     expect(handled).toBe(true)
     await expect(decision).resolves.toBeDefined()
+  })
+})
+
+describe('askUser followups conversion: pre-ask reply segment render', () => {
+  /** A started streaming preview whose handle carries an export key (recall.spec pattern). */
+  function startedPreview(p: Platform): StreamPreview {
+    const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500 }
+    const starter = Object.assign(p, {
+      async sendPreviewStart(): Promise<unknown> {
+        return { messageID: 'om_card1', exportKey: () => 'om_card1' }
+      },
+      async updateMessage(): Promise<void> {},
+      async deletePreviewMessage(): Promise<void> {},
+    })
+    return newStreamPreview(cfg, starter, 'ctx', undefined, undefined, 'test:chat:user1')
+  }
+
+  /** Engine + state with plan render armed and a preview showing `analysis`. */
+  async function renderArmedState(
+    analysis: string,
+  ): Promise<{ e: Engine; state: InteractiveState; p: ReturnType<typeof createStubMediaPlatform> }> {
+    const p = createStubMediaPlatform('feishu')
+    const e = new Engine('test', createRenderAgent(), [p], '', 'zh')
+    e.planRenderEnabled = true
+    e.planRenderProvider = 'p'
+    e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    const sp = startedPreview(p)
+    await sp.showPlaceholder('处理中')
+    if (analysis !== '') await sp.appendAnalysisText(analysis)
+    state.preview = sp
+    e.interactiveStates.set('test:chat:user1', state)
+    return { e, state, p }
+  }
+
+  it('renders and delivers the pre-ask reply segment like the parked path', async () => {
+    const summary = `收尾总结：全部完成。${'详细内容。'.repeat(100)}`
+    const { e, state, p } = await renderArmedState(summary)
+
+    const decision = await e.askUser('test:chat:user1', questionsAsk(q()))
+
+    // The conversion itself is unchanged: deferred decision, no park.
+    expect(decision.answers?.[0]?.selected).toEqual([])
+    expect(state.pendingAsk).toBeUndefined()
+    // The pre-ask reply segment renders and delivers (the trailing-segment
+    // replacement after the ask would otherwise swallow it).
+    await pollUntil(() => p.files.length > 0, 2000)
+    expect(p.files).toHaveLength(1)
+    // The capture also registered the segment under the card's export key.
+    expect(state.exportContent?.get('om_card1')).toContain('收尾总结')
+  })
+
+  it('does not render below the speculative-render length threshold', async () => {
+    const { e, state, p } = await renderArmedState('简短收尾。')
+
+    await e.askUser('test:chat:user1', questionsAsk(q()))
+
+    await new Promise((r) => { setTimeout(r, 300) })
+    expect(p.files).toHaveLength(0)
+    expect(state.preRenderRunning).toBe(false)
+  })
+
+  it('does not render when plan render is disabled', async () => {
+    const summary = `收尾总结：全部完成。${'详细内容。'.repeat(100)}`
+    const { e, p } = await renderArmedState(summary)
+    e.planRenderEnabled = false
+
+    await e.askUser('test:chat:user1', questionsAsk(q()))
+
+    await new Promise((r) => { setTimeout(r, 300) })
+    expect(p.files).toHaveLength(0)
+  })
+
+  it('returns the deferred decision without a live preview', async () => {
+    const { e, state, p } = await renderArmedState('')
+    state.preview = undefined
+
+    const decision = await e.askUser('test:chat:user1', questionsAsk(q()))
+
+    expect(decision.answers?.[0]?.selected).toEqual([])
+    expect(state.pendingFollowups).toEqual(q())
+    expect(p.files).toHaveLength(0)
   })
 })
 
