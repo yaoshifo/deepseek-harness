@@ -487,6 +487,13 @@ describe('agent.mode default session mode wiring', () => {
     expect(() => assemble(baseConfig(), { ...project(), agent: { mode: 'defualt' } }))
       .toThrow(/smoke-project.*"defualt".*default, bypassPermissions, acceptEdits, plan, auto, or dontAsk/)
   })
+
+  it('forwards project.agent.planApprovalPreset onto the adapter; absent leaves it unset', () => {
+    const { adapter } = assemble(baseConfig(), { ...project(), agent: { planApprovalPreset: 'danger-full-access' } })
+    expect((adapter as unknown as { cfg: { planApprovalPreset?: string } }).cfg.planApprovalPreset).toBe('danger-full-access')
+    const bare = assemble(baseConfig(), project())
+    expect((bare.adapter as unknown as { cfg: { planApprovalPreset?: string } }).cfg.planApprovalPreset).toBeUndefined()
+  })
 })
 
 describe('shared userQuestions routing across projects', () => {

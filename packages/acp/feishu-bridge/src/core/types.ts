@@ -183,6 +183,14 @@ export interface Message {
   isSpawnedGroup: boolean
   isPermissionAction: boolean
   isAskqCardAction: boolean
+  /**
+   * A followups suggestion-card submission (`fw:` payload from the
+   * `fw_multi:` form): the content is a machine-parsed selection that starts
+   * a fresh turn, never an answer to a parked ask — the ask router must not
+   * claim it. Optional like `machine`: a later-added routing discriminator
+   * absent on ordinary messages.
+   */
+  isFollowupAction?: boolean
   /** A card.action.trigger button press with an act:/nav: value (M4). */
   isCardAction: boolean
   /**
@@ -451,6 +459,12 @@ export interface SessionStartOptions {
    * sessions.
    */
   workDir?: string
+  /**
+   * Mode pinned for this chat's sessions by a /spawn --plan/--default flag;
+   * absent or '' keeps the project default (config agent.mode). One-shot
+   * mode overrides and the unattended-subtask bypass outrank it.
+   */
+  spawnMode?: string
   /** Default Feishu workspace routing (#18); absent = no routing section. */
   feishuWorkspace?: FeishuWorkspaceInfo
   /** Shared research venv root; absent = none. Inlined into the assistant preamble (no Go-era env injection exists here). */
@@ -758,6 +772,16 @@ export interface CompletionNotifier {
   sendCompletionNotification(replyCtx: unknown, usageMsg: string): Promise<void>
 }
 
+/**
+ * Optional: platform gates its ✅ completion notification behind a config
+ * switch (Go notify_on_complete). Platforms that do not implement this
+ * capability always receive the completion notification.
+ */
+export interface CompletionNoticePreference {
+  /** Whether the per-turn completion notification is enabled. */
+  completionNoticeEnabled(): boolean
+}
+
 /** Structural checks for the M2 card capability interfaces. */
 function withMethod<T>(obj: object, method: keyof T & string): T | undefined {
   return typeof (obj as Partial<T>)[method] === 'function' ? (obj as T) : undefined
@@ -911,6 +935,16 @@ export function asCardRefresher(p: Platform): CardRefresher | undefined {
  */
 export function asCompletionNotifier(p: Platform): CompletionNotifier | undefined {
   return withMethod<CompletionNotifier>(p, 'sendCompletionNotification')
+}
+
+/**
+ * Structural check for the {@link CompletionNoticePreference} capability.
+ *
+ * @param p - the platform to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asCompletionNoticePreference(p: Platform): CompletionNoticePreference | undefined {
+  return withMethod<CompletionNoticePreference>(p, 'completionNoticeEnabled')
 }
 
 // ── M4 subtask / group-management capability interfaces (Go interfaces.go) ──

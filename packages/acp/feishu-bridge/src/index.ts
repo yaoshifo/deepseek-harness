@@ -95,7 +95,7 @@ export interface FeishuAppConfig {
   progressStyle?: string
   /** Explicit active-tag name override (Go active_tag_name). */
   activeTagName?: string
-  /** ✅ push notification after in-place completion (Go notify_on_complete). */
+  /** ✅ per-turn completion notification — purple card or text fallback; default off (Go notify_on_complete). */
   notifyOnComplete?: boolean
   /** Emoji reaction on the user's message; '' or 'none' disables (Go reaction_emoji). */
   reactionEmoji?: string
@@ -117,6 +117,14 @@ export interface AgentOptions {
   model?: string
   /** Default session mode: 'plan' starts every session in plan mode (Go agent options mode). */
   mode?: string
+  /**
+   * Permission preset switched onto the session when a plan review is
+   * approved ('' or absent keeps permissions unchanged). The name must exist
+   * in the composed permission-presets service's preset table (the profile's
+   * `permission` plugin row; the default table ships `workspace-write` and
+   * `danger-full-access`).
+   */
+  planApprovalPreset?: string
   /**
    * Reasoning effort passed through to `ctx.agents` agent options; also the
    * status footer's 🤖 line display source. Ids must exist in some adapter's
@@ -549,7 +557,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       enableFeishuCard: Schema.boolean().description('Interactive cards (default true)'),
       progressStyle: Schema.string().description("Progress rendering: 'legacy' | 'compact' | 'card'"),
       activeTagName: Schema.string().description('Explicit active-tag name override'),
-      notifyOnComplete: Schema.boolean().description('✅ notification after in-place completion'),
+      notifyOnComplete: Schema.boolean().description('✅ per-turn completion notification (card or text fallback); default off'),
       reactionEmoji: Schema.string().description('Reaction emoji on user message'),
       doneEmoji: Schema.string().description('Reaction emoji on completion card'),
       cancelEmoji: Schema.string().description('Reaction emoji on stopped card'),
@@ -560,6 +568,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       provider: Schema.string().description('Key into providers'),
       model: Schema.string().description('Model override'),
       mode: Schema.string().description("Default session mode ('plan' = review before execution)"),
+      planApprovalPreset: Schema.string().description("Permission preset switched to when a plan is approved ('' = unchanged; e.g. 'danger-full-access')"),
       reasoningEffort: Schema.union(['off', 'low', 'medium', 'high', 'max']).description('Reasoning effort'),
     }),
     features: Schema.object({
@@ -1132,6 +1141,9 @@ export function buildProjectAssembly(
     providers: routes,
     activeProvider,
     ...(project.agentCloseSec !== undefined ? { closeTimeoutMs: project.agentCloseSec * 1000 } : {}),
+    ...(project.agent?.planApprovalPreset !== undefined && project.agent.planApprovalPreset !== ''
+      ? { planApprovalPreset: project.agent.planApprovalPreset }
+      : {}),
     ...(project.mcpServers !== undefined && project.mcpServers.length > 0 ? { mcpServers: project.mcpServers } : {}),
     ...(sharedQuestionRouting !== undefined ? { questionRouting: sharedQuestionRouting } : {}),
   })

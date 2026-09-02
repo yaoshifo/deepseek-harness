@@ -48,7 +48,7 @@ describe('DshAgentAdapter bare persona setup hook', () => {
           if (options.setup !== undefined) {
             void options.setup({
               get: (name: string): unknown => {
-                if (name === 'agentInstructions') {
+                if (name === 'agentInstructionSuppression') {
                   return {
                     suppress: (): (() => void) => {
                       suppressions.count += 1
@@ -241,7 +241,8 @@ describe('DshAgentAdapter bare persona setup hook', () => {
 方式：收尾回复单列一节「发现的问题 / 可优化点」，每条一行——短标题加一句验证依据；\`path:line\` 与建议动作只放进追问卡片的选项描述，不在正文重复。
 
 ### 收尾追问卡片
-「发现的问题 / 可优化点」一节非空时，发出收尾文本后紧接着调用 ask_user_question 发一个多选问题：单个问题、multi_select 为 true、header 为「后续处理」；每个发现对应一个选项（label 为短标题，description 为 \`path:line\` 与建议动作一句话），并附一个「暂不处理」选项。选项按你推荐的处理优先级排序，推荐要处理的选项置前并设 recommended: true（卡片会默认勾选）。该节为空或缺失时不发卡片。用户提交的勾选视为授权，直接开始处理；「暂不处理」或与选项无关的自由文本答复则不处理任何条目，自由文本按新任务理解并执行。
+「发现的问题 / 可优化点」一节非空时，发出收尾文本后紧接着调用 ask_user_question 发一个多选问题：单个问题、multi_select 为 true、header 为「后续处理」（保留字，引擎按它识别收尾卡）；每个发现对应一个选项（label 为短标题，description 为 \`path:line\` 与建议动作一句话）。选项按你推荐的处理优先级排序，推荐要处理的选项置前并设 recommended: true（卡片会默认勾选）。该节为空或缺失时不发卡片，也不必提"没有发现"。
+引擎会把这张卡登记为非阻塞建议卡，随本轮完成通知之后投递；工具会立即返回登记确认——收到后**正常结束回合，不要等待用户作答**。用户在卡上提交的选择会作为 [后续处理] 新消息到达：勾选视为授权，直接开始处理对应条目；不点即不处理，无需再确认。
 
 ### 主动沉淀可复用流程（skillify）
 完成一个跨多步骤、含明确可复用模式、且你判断后续会再次遇到类似需求的任务后，在回合结束前用一句话向用户提议：

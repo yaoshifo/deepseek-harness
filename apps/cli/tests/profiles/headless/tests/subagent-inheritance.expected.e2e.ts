@@ -26,6 +26,12 @@ const sessionId = SessionId('subagent-inheritance-parent')
 const refreshing = process.env.DSH_SNAPSHOT === 'refresh'
 const task = 'Delegate the write probe to a subagent.'
 
+// The subagent child's warn-once stderr line when no mcp-workspace service is
+// mounted (packages/subagent/subagent/src/child-agent.ts); this composition
+// mounts no mcp-workspace row, so it is the whole expected stderr.
+const subagentMcpWorkspaceWarning = 'subagent child: the mcp-workspace service is not mounted; '
+  + 'directory .mcp.json discovery is inactive for child agents (add the mcp-workspace plugin row to enable it)\n'
+
 /** Seed a completed parent turn with its read-only policy and current LLM selection. */
 async function seedReadOnlyParent(root: string, cwd: string): Promise<void> {
   const ctx = new Context()
@@ -147,7 +153,7 @@ describe('parent-only override inheritance snapshot', () => {
       },
     })
 
-    expect(result.stderr).toBe('')
+    expect(result.stderr).toBe(subagentMcpWorkspaceWarning)
     const records = result.stdout.trimEnd().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
     expect(records.at(-1)).toMatchObject({
       type: 'result',

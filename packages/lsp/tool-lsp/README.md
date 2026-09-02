@@ -171,3 +171,13 @@ These limits define when the tool is a poor fit. They are current package constr
 - **No `workspace/symbol/resolve`** — servers that return unresolved `WorkspaceSymbol` entries keep them with `location: null` (rendered without a position suffix) instead of a resolve round-trip; in practice the servers in use return resolved locations.
 - **No cross-server completeness promise** — supported servers may return empty or partial results depending on indexing readiness; the tool promises no completeness across languages or servers.
 - **Fork extension of the upstream operation set** — `workspaceSymbol` extends the upstream four-operation tool contract; a future upstream equivalent would need a semantic merge (see the adoption Agent Note).
+
+<a id="dev-note"></a>
+### Dev Note
+
+<details>
+<summary>Working context for maintainers — click to expand</summary>
+
+None.
+
+</details>

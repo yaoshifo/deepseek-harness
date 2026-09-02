@@ -91,11 +91,11 @@ interface PromptContext {
 
 Generated from source by `scripts/gen-cordis-catalog.ts` (verified fresh by `pnpm run verify-cordis-catalog` in doc-sync; regenerate with `pnpm run gen-cordis-catalog`) — the language sides differ only in locale-specific paired document paths. Signature blocks use a `ts cordis-catalog` fence and keep the original source JSDoc; dispatch modes are defined in the [primer](../cordis-primer.md#dispatch-modes), and the framework-inherited `ctx` API lives in [cordis-api/inherited.md](../cordis-api/inherited.md).
 
-<a id="ctxagentinstructions--agentinstructions"></a>
+<a id="ctxagentinstructionsuppression--agentinstructionsuppression"></a>
 
-### `ctx.agentInstructions` — `AgentInstructions`
+### `ctx.agentInstructionSuppression` — `AgentInstructionSuppression`
 
-Service owning workspace-instruction injection. Registering the listeners on a service (rather than directly on the plugin body) is what exposes the scoped suppress seam: consumers composing a wholesale-replacement persona call it in their agent setup so the instruction channel stays silent for that agent.
+Registry of scoped suppression markers for workspace-instruction injection. Registering on a service (rather than on the plugin body) exposes the scoped suppress seam: consumers composing a wholesale-replacement persona call it in their agent setup so the instruction channel stays silent for that agent.
 
 ```ts cordis-catalog
 /**
@@ -108,9 +108,19 @@ Service owning workspace-instruction injection. Registering the listeners on a s
  * @returns the exact Cordis effect disposer.
  */
 suppress(): () => void
+
+/**
+ * Whether any suppression marker covers this agent: the global layer or any
+ * layer along the agent's scope chain.
+ * @param agent - the agent whose scope chain is inspected.
+ * @returns whether workspace-instruction injection is suppressed for it.
+ */
+suppressedFor(agent: Agent): boolean
 ```
 
-Source: [`packages/context/agent-instructions/src/index.ts`](../../packages/context/agent-instructions/src/index.ts)
+Types: [Agent](core.md)
+
+Source: [`packages/context/agent-instructions/src/suppression.ts`](../../packages/context/agent-instructions/src/suppression.ts)
 
 <a id="ctxsystemprompt--systemprompt"></a>
 

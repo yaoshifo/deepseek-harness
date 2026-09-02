@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-07-agent-instructions-suppression-host-plane-service.md
+2026-09-07-agent-instructions-suppression-host-plane-service.md: 93063b5bdc4ad0e0c39ef50aaba47ca4b13ac600
+2026-09-07-agent-instructions-suppression-host-plane-service.zh.md: 374b188224b23c764d618bf491d749a5b394a04b

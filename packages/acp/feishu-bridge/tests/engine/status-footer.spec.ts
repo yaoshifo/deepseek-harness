@@ -901,6 +901,26 @@ describe('sendTurnCompletionCard', () => {
     expect(state.notificationHeaderSuffix).toBe(card.header?.title)
   })
 
+  it('suppresses the card when the platform reports completion notices disabled', async () => {
+    const p = { ...createCardUpdatePlatform(), completionNoticeEnabled: (): boolean => false }
+    const e = new Engine('test', footerAgent('glm-4.7', '', '/w/repo'), [p], '', 'en')
+    e.usage.ctxMsg = 'ctx: +1k=10k'
+    const state = new InteractiveState()
+    await e.sendTurnCompletionCard(state, p, 'ctx', e.sessions.getOrCreateActive('feishu:oc_gate'), 'feishu:oc_gate', '/w/repo')
+    expect(p.handleCards).toHaveLength(0)
+    expect(state.notificationHandle).toBeUndefined()
+  })
+
+  it('keeps sending the card when the platform reports completion notices enabled', async () => {
+    const p = { ...createCardUpdatePlatform(), completionNoticeEnabled: (): boolean => true }
+    const e = new Engine('test', footerAgent('glm-4.7', '', '/w/repo'), [p], '', 'en')
+    e.usage.ctxMsg = 'ctx: +1k=10k'
+    const state = new InteractiveState()
+    await e.sendTurnCompletionCard(state, p, 'ctx', e.sessions.getOrCreateActive('feishu:oc_gate_on'), 'feishu:oc_gate_on', '/w/repo')
+    expect(p.handleCards).toHaveLength(1)
+    expect(state.notificationHandle).toBe('h1')
+  })
+
   it('skips the card when nothing is populated', async () => {
     const p = createCardUpdatePlatform()
     const e = new Engine('test', createStubAgent(), [p], '', 'en')
@@ -924,6 +944,21 @@ describe('sendTurnCompletionCard', () => {
     expect(notifications).toHaveLength(1)
     expect(notifications[0]).toContain('🤖 glm-4.7')
     expect(notifications[0]).toContain('📊 ctx: +1k=10k')
+  })
+
+  it('suppresses the text fallback when the platform reports completion notices disabled', async () => {
+    const notifications: string[] = []
+    const p = {
+      ...createStubPlatform('telegram'),
+      sendCompletionNotification: async (_rc: unknown, msg: string) => {
+        notifications.push(msg)
+      },
+      completionNoticeEnabled: (): boolean => false,
+    }
+    const e = new Engine('test', footerAgent('glm-4.7', '', '/w/repo'), [p], '', 'en')
+    e.usage.ctxMsg = 'ctx: +1k=10k'
+    await e.sendTurnCompletionCard(new InteractiveState(), p, 'ctx', e.sessions.getOrCreateActive('telegram:u_gate'), 'telegram:u_gate', '')
+    expect(notifications).toHaveLength(0)
   })
 
   it('subtask diff elements are appended after the footer elements', async () => {

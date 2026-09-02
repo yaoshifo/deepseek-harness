@@ -18,7 +18,7 @@
 | # | 特性 | 状态 | 里程碑 | 落点 / 理由 |
 |---|---|---|---|---|
 | 1 | UsageProvider：配置式服务商余量信息（/usage + buildCompletionUsage + ActiveDetector） | ✅ | M7-b | `src/engine/usage.ts`（glm/minimax 工厂注册 + 5min 缓存 + ActiveDetector/SyncUsageFetcher 能力面）+ `usage_providers` 配置块；/usage 命令本体未移植（Go 无对应输出需求方，quota 已上 ✅ 页脚 ⌛ 行） |
-| 2 | notify_on_complete：任务完成后触发飞书通知红点 | ✅ | M2 | `projects[].feishu.notifyOnComplete`；真机验证（✅ 通知 tokens 行） |
+| 2 | notify_on_complete：任务完成后触发飞书通知红点 | ✅ | M2 | `projects[].feishu.notifyOnComplete`；真机验证（✅ 通知 tokens 行）；2026-09-02 修复：M7-b 紫卡路径未继承门禁致配置失效，已经 `CompletionNoticePreference` 能力面接线（[Agent Note](../../../.agents/notes/implemented/bug-fix/2026-09-02-feishu-bridge-notify-on-complete-gates-completion-card.md)） |
 | 3 | dir_scan_paths：自动扫描子目录加入 /dir 列表 | ✅ | M7-d | `dirScanPaths` 配置 + `setScanPaths` 装配 + 模糊兜底（resolveScanPathFuzzy 随迁），/dir 建议列表与裸名解析全链路 |
 | 4 | 多选问题（MultiSelect）：checker+form 渲染 | ✅ | M3 | askq_multi 回调路径 |
 | 5 | Inline Plan 去重（两条路径不重复显示） | ✅ | M3 | plan 域 |
@@ -50,7 +50,7 @@
 | 31 | AskUserQuestion 卡片增强（header + 选项预览） | ✅ | M3 | 问题卡渲染 |
 | 32 | 流式卡片合并（progress + summary 统一卡片） | ✅ | M2 | streaming 域 |
 | 33 | Predict Next：回复后预测用户下一步 | ✅ | M7-c | generatePrediction（lightweight/resume 双模式）+ 洞察卡（发送/屏蔽按钮，turnSeq 防过期）+ turn_summary 合并卡片 + /btw 旁路提问 |
-| 34 | /spawn（/sp）：快速创建独立任务群聊 | ✅ | M4 | 真机三轮冒烟通过 |
+| 34 | /spawn（/sp）：快速创建独立任务群聊 | ✅ | M4 | 真机三轮冒烟通过。**TS 增强**：`--plan` / `--default` 按群 pin 权限模式（`/fork` 同）——`SessionStartOptions.spawnMode` 经 Session 的 `inheritedMode`（chat 级，跨 `/new` 保留、重启回落项目默认）传入 adapter 决定链（一次性 override 与无人值守 bypass 优先于它） |
 | 35 | Pin 每条用户消息到 Pin 面板（spawn 群） | ✅ | M4 | MessagePinAppender；子项 #35a（spawn 群反馈精简）：topnotice 门控已对齐（spawn 群默认关）；表情链裁定不迁（2026-08-21 用户裁定）——platform 的 startTyping/Done/CrossMark 机制已移植但引擎不接调用点（Go engine_events.go:1370/4981/5317、engine_predict.go:81），进度卡/完成卡已承担全部反馈 |
 | 36 | /fork（/fk）：复制上下文的隔离分支群 | ✅ | M4 | completedTurnPrefix seed（原生 agents.create）；M8 前补充 19 解除 live-only 天花板：seed live 优先、持久化兜底（Go 读盘对齐） |
 | 37 | /done --reply 回灌父会话 + /spawn --dir 换目录 | ✅ | M4 | 真机验证（--dir 修复后） |

@@ -1,9 +1,27 @@
+---
+description: "飞书桥的 chatroom 层：多角色聊天室编排——角色组、主持人、/chatroom 命令族与 feishu_bridge_chatroom 工具——面向在一个飞书群里并行运行多个 agent 角色的团队。"
+kind: "package-bundle"
+---
+
 # dsh-feishu-bridge-chatroom（中文）
 
 [English](README.md) | 中文
 
+## 概述
+
+在一个飞书群里编排多 agent 聊天室：通过 `feishu_bridge_chatroom` 工具或 `/chatroom` 命令启动角色组或主持人，把一个问题扇出给所有角色并把回答汇聚成一份摘要，或让主持人跨独立角色会话驱动圆桌讨论。角色以 dsh agent 运行，persona 来自 persona 目录的整体提示词替换；research assistant 在聊天室旁的共享工作区里深挖。项目用 `enabled: false` 退出：命令消失、工具定义从该项目的模型请求中掩除、内置主持 skill 隐藏。
+
+## 目录
+
+- [模型体验](#model-experience)
+- [已知限制与延后工作](#known-limitations-and-deferred-work)
+- [开发备注](#dev-note)
+
+-----
+
 飞书桥的 chatroom 插件：多角色聊天室编排——角色组、主持人、`/chatroom` 命令族、`feishu_bridge_chatroom` 工具与内置 chatroom-moderator skill——作为独立的 dsh 包，挂载在 `@deepseek-ai/dsh-feishu-bridge` 旁（依赖方向：本包引用桥的导出面；桥绝不引用本包）。引擎接缝的两半走桥服务的 `feishuBridge/*` 事件；各引擎的配置与命令注册在插件启动扫描中应用，时机是桥报告就绪之后。配置了 `enabled: false` 的项目（本插件的 `defaults` 或其 `projects` 条目）没有 `/chatroom` 命令，其 agent 调 `feishu_bridge_chatroom` 会 fail loud，且工具定义经桥服务的按引擎 deny 注册表从其会话的模型请求中掩除。
 
+<a id="model-experience"></a>
 ## 模型体验
 
 ### 模型看到什么
@@ -21,6 +39,7 @@
 
 Chatroom 会话使用整体替换的 persona 提示词，因此每个 role/moderator 会话拥有各自稳定的前缀；工具 schema 会对桥自有 agent 的模型请求做扩展，叠加（而非使其失效）其可复用前缀。
 
+<a id="known-limitations-and-deferred-work"></a>
 ## 已知限制与延后工作
 
 - **就绪前窗口**：桥的引擎启动到本插件 `whenReady()` 扫描之间平台投递的消息，会按默认值的 chatroom 配置处理（无 roles 目录覆盖、ledger 关闭）——这是桥内接线所没有的窗口。它结构性源于兄弟插件的挂载顺序；恢复及之后所有轮次看到的都是扫描后的配置。
@@ -30,3 +49,13 @@ Chatroom 会话使用整体替换的 persona 提示词，因此每个 role/moder
 - **Picker 状态在内存**：daemon 重启会丢弃已武装的 picker；孤儿 pick 卡的下次点击会原位换成灰色过期卡并提示重新 `/chatroom`（Go 版对孤儿按钮是静默或假确认）。
 - **部署迁移是手动的**：生产 profile 在其自演化的 `cordis.patch.yml` 里把 chatroom 段放在 `feishu-bridge` 行下；桥现在会对这类残留 fail loud，需要把段迁移到本插件自己的配置（`defaults` + 按 `projects`、以桥项目名为键）。迁移片段与 profile 模板更新随 C3 部署批次落地。
 - **REAL 组合面的覆盖**：apply/HMR spec 把插件挂在真实 Cordis 服务上（事件总线、工具注册表、skill 注册表、桥服务），但未经过 Loader 与 `cordis.yml`；走 Loader 的组合测试与生产 `/reload` 冒烟清单随 C3 落地。
+
+<a id="dev-note"></a>
+### 开发备注
+
+<details>
+<summary>维护者的工作上下文——点击展开</summary>
+
+无。
+
+</details>

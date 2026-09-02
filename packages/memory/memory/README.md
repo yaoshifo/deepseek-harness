@@ -1,9 +1,32 @@
+---
+description: "Claude Code-compatible persistent memory for dsh sessions: the shared per-project memory directory, an on-by-default cross-project global scope, session-start index injection, and the memory_list / memory_read / memory_write / memory_delete / memory_index tools."
+kind: "package-reference"
+---
+
 # @deepseek-ai/dsh-memory
 
 English | [中文](README.zh.md)
 
+## Summary
+
+Give every dsh session a persistent file-based memory it can read and write through dedicated tools: memories accumulate in the same per-project directory Claude Code owns, so both harnesses recall the same facts, and a cross-project global directory shares machine-wide knowledge across every dsh session. The `MEMORY.md` index is injected at session start within configured budgets and kept current with `memory_index`; five tools operate only inside the memory directories. The global scope is on by default and turns off with one config field.
+
+## Table of Contents
+
+- [What it contributes](#what-it-contributes)
+- [Scope decision: project or global](#scope-decision-project-or-global)
+- [Slug encoding](#slug-encoding)
+- [Configuration](#configuration)
+- [Concurrency and failure behavior](#concurrency-and-failure-behavior)
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
+
+-----
+
 Claude Code memory compatibility plus an on-by-default dsh-only global scope: dsh sessions read and write the same per-project memory directory Claude Code owns (`~/.claude/projects/<slug>/memory/`), so memories accumulated in Claude Code are recalled by dsh and memories written by dsh appear in Claude Code's next session. A cross-project memory directory (`~/.claude/memory/`) is shared by every dsh session regardless of project; Claude Code does not read or write it. The plugin introduces no storage of its own — storage, format, slug encoding, and index discipline are locked to Claude Code's observed behavior (leaked system prompt cross-checked against on-disk layouts).
 
+<a id="what-it-contributes"></a>
 ## What it contributes
 
 Three model-visible surfaces, all gated to top-level POSIX-cwd sessions (subagents get none; a subagent tool call fails loud):
@@ -14,14 +37,17 @@ Three model-visible surfaces, all gated to top-level POSIX-cwd sessions (subagen
 
 `memory_write` backfills `node_type: memory` and `originSessionId` (the dsh session id) into an existing frontmatter `metadata:` block, mirroring what the Claude Code harness adds after a model Write; frontmatter without a `metadata:` block and plain content pass through untouched. Topic-file names normalize to the `.md` suffix (`MEMORY.md` stays exact) so index links and tool calls agree; the write result reports the stored name, and a missed read or delete retries once with the suffix added or removed, healing extension-less files written by older sessions. Writes to `MEMORY.md` that exceed either index budget still succeed but return a warning to move detail into topic files and rewrite the index. Pointer lines stay model-authored — `memory_index` upserts or removes one line per call, keyed by the memory file's name, but never invents titles or hooks; the one-line hook quality is what makes recall work.
 
+<a id="scope-decision-project-or-global"></a>
 ## Scope decision: project or global
 
 The model chooses the scope at write time. Guidance lives on the three surfaces closest to the decision point: the on-by-default `## Global memory` prompt rule (a one-question test — *would this memory still be useful in a session for an unrelated project?* — with `When unsure, choose project` as the fail-safe default, because a memory filed too narrowly only misses recall elsewhere while one filed too broadly injects noise into every session), the `scope` tool-parameter description, and the global index frame header, which names the cross-project semantics on every recall. The rule also prescribes lazy promotion: when a project memory turns out to be cross-project, re-file it (write global, upsert the global pointer, delete the project file and pointer). A fact found in both scopes keeps only the correctly-scoped copy — the global one when it passes the scope test, the project one when it fails — with the misplaced file and its pointer deleted; this doubles as the demotion path back from a memory misfiled into global. There is deliberately no scheduled promotion pass — the write-time and lazy paths carry more context, and unattended writes into globally injected content would bypass the human gatekeeping that the smaller global budget only partially compensates for.
 
+<a id="slug-encoding"></a>
 ## Slug encoding
 
 The `<slug>` naming each `~/.claude/projects/` directory is the session working directory with every `/` and `.` replaced by `-` (case preserved): `/home/hm/workspace/ainvest` → `-home-hm-workspace-ainvest`, `/home/hm/.claude` → `-home-hm--claude`. Encoding is by cwd directly, not by git root — that is the observed on-disk behavior. `claudeProjectSlug` throws on relative or backslash paths; the plugin's own guards turn a non-POSIX cwd into no section, no injection, and loud tool errors rather than a guessed slug. The global directory (`<claudeHome>/memory/`) has no slug; global-scope tool calls require only an owning session.
 
+<a id="configuration"></a>
 ## Configuration
 
 | Key | Default | Contract |
@@ -35,6 +61,7 @@ The `<slug>` naming each `~/.claude/projects/` directory is the session working 
 
 The global budgets inherit the project ones, so a composition's single explicit budget choice governs both scopes; overriding only the global numbers states a tighter (or looser) cap for globally injected content.
 
+<a id="concurrency-and-failure-behavior"></a>
 ## Concurrency and failure behavior
 
 Concurrent sessions (dsh or Claude Code) writing one memory file resolve last-write-wins, identical to two concurrent Claude Code sessions — this also holds for the global directory, whose writer population is every dsh session on the machine. Writes are atomic (temp file plus rename) and create the directory lazily. A file deleted between `memory_list`'s directory read and its per-file stat is skipped from the listing. A transient read failure at session start skips that injection; the memory tools still fail loud with the real error when called. A `claudeHome` whose directories do not exist yet is not an error: the section still renders, a scope without `MEMORY.md` injects nothing, and the first write creates the directory lazily.
@@ -128,3 +155,13 @@ Prefix-stable while definitions and visibility are unchanged. Plugin lifecycle o
 - **Concurrent writers last-write-wins** — no file locking; identical to two concurrent Claude Code sessions. The global directory widens the writer population to every dsh session on the machine.
 - **No scheduled project→global promotion** — deliberate: the write-time rule and lazy re-filing carry more context than a periodic scan, and unattended writes into globally injected content would bypass human gatekeeping. Cross-scope duplicates are cleaned only opportunistically by the taught dedup rule. The upgrade path is an on-demand audit skill if misfiling proves common.
 - **No frontmatter schema validation** — deliberate parity with Claude Code, which also has no enforcement; the plugin only backfills provenance additively into an existing `metadata:` block.
+
+<a id="dev-note"></a>
+### Dev Note
+
+<details>
+<summary>Working context for maintainers — click to expand</summary>
+
+None.
+
+</details>

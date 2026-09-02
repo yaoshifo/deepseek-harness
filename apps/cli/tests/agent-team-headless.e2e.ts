@@ -12,6 +12,13 @@ const fixturePlugin = pathToFileURL(fileURLToPath(
   new URL('./profiles/headless/tests/fixtures/team-llm.mjs', import.meta.url),
 )).href
 
+// The subagent child's warn-once stderr line when no mcp-workspace service is
+// mounted (packages/subagent/subagent/src/child-agent.ts); this composition
+// mounts no mcp-workspace row, so it is the whole expected stderr (execa
+// captures it without the trailing newline).
+const subagentMcpWorkspaceWarning = 'subagent child: the mcp-workspace service is not mounted; '
+  + 'directory .mcp.json discovery is inactive for child agents (add the mcp-workspace plugin row to enable it)'
+
 function records(content: string): Record<string, unknown>[] {
   return content.split('\n').filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>)
 }
@@ -80,7 +87,7 @@ describe('dsh run with Agent Teams enabled', () => {
         result.exitCode,
         `dsh headless profile exited unexpectedly.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
       ).toBe(0)
-      expect(result.stderr).toBe('')
+      expect(result.stderr).toBe(subagentMcpWorkspaceWarning)
       expect(result.stdout).toContain('TEAM_WORKFLOW_OK')
 
       const files = (await readdir(sessions, { recursive: true }))

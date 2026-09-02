@@ -180,7 +180,7 @@ describe('lightweightQuery', () => {
     const restricts: Array<{ allow?: readonly string[]; deny?: readonly string[] }> = []
     setup?.({
       get: (name: string): unknown => {
-        if (name === 'agentInstructions') {
+        if (name === 'agentInstructionSuppression') {
           return { suppress: (): (() => void) => { suppressions += 1; return () => {} } }
         }
         if (name === 'tools') {
@@ -326,7 +326,7 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
     const restricts: Array<{ allow?: readonly string[]; deny?: readonly string[] }> = []
     setup?.({
       get: (name: string): unknown => {
-        if (name === 'agentInstructions') {
+        if (name === 'agentInstructionSuppression') {
           return { suppress: (): (() => void) => { suppressions += 1; return () => {} } }
         }
         if (name === 'tools') {

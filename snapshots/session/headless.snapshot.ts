@@ -301,11 +301,22 @@ function turnReasonFromSession(log: string): JsonObject | undefined {
   return endings.at(-1)
 }
 
+/** Headless-profile tools whose first call spawns a child agent. */
+const CHILD_SPAWNING_TOOLS = new Set(['subagent', 'ralph', 'workflow'])
+
+// The first child-agent spawn warns once on stderr that directory .mcp.json
+// discovery is inactive (packages/subagent/subagent/src/child-agent.ts); the
+// headless profile mounts no mcp-workspace row, so every child-spawning
+// scenario carries this single line at its first delegation tool call.
+const MCP_WORKSPACE_ABSENT_WARNING = 'subagent child: the mcp-workspace service is not mounted; '
+  + 'directory .mcp.json discovery is inactive for child agents (add the mcp-workspace plugin row to enable it)\n'
+
 function stderrFromSession(log: string): string {
   let output = ''
   let started = false
   let open = false
   let endsWithNewline = true
+  let childWarningEmitted = false
   const appendReasoning = (text: string): void => {
     if (text === '') return
     if (!open) {
@@ -353,6 +364,11 @@ function stderrFromSession(log: string): string {
       case 'block-end': {
         const block = chunk.block as JsonObject | undefined
         if (block?.type !== 'reasoning') close()
+        if (block?.type === 'tool-call' && !childWarningEmitted && typeof block.name === 'string'
+          && CHILD_SPAWNING_TOOLS.has(block.name)) {
+          childWarningEmitted = true
+          output += MCP_WORKSPACE_ABSENT_WARNING
+        }
         break
       }
       case 'usage':

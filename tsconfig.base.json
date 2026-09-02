@@ -249,6 +249,10 @@
       // so these aliases stay hand-written like dsh-util-crypto above.
       "@deepseek-ai/dsh-util-time": ["./packages/util/time/src"],
       "@deepseek-ai/dsh-util-time/invariant": ["./packages/util/time/src/invariant.ts"],
+      // The generator covers only bare names and src/invariant.ts; other
+      // subpath exports (like dsh-typert-registry/client above) stay
+      // hand-written.
+      "@deepseek-ai/dsh-agent-instructions/suppression": ["./packages/context/agent-instructions/src/suppression.ts"],
       // BEGIN generated package aliases — pnpm run gen-tsconfig-paths
       "@deepseek-ai/dsh-acp": ["./packages/acp/acp/src"],
       "@deepseek-ai/dsh-acp/invariant": ["./packages/acp/acp/src/invariant.ts"],

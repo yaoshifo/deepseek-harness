@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -1027,6 +1027,165 @@ describe('DshAgentAdapter userQuestions answerer', () => {
   })
 })
 
+describe('DshAgentAdapter plan-approval permission preset', () => {
+  /**
+   * Provider over the plan-review ask path with a configured preset and a
+   * preset service under test: a recording fake by default, an explicit
+   * replacement via {@link PresetProviderOpts.presets}, or none at all via
+   * {@link PresetProviderOpts.noPresets} (a composition without the
+   * permission-presets plugin resolves ctx.get to undefined).
+   */
+  interface PresetProviderOpts {
+    preset?: string
+    presets?: unknown
+    noPresets?: boolean
+  }
+
+  async function presetProvider(opts: PresetProviderOpts = {}): Promise<{
+    session: DshAgentSession
+    ask: (req: Record<string, unknown>) => Promise<unknown>
+    delegate: ReturnType<typeof recordingDelegate>
+    agent: RecordedAgent
+    presetCalls: Array<{ session: unknown; name: string }>
+  }> {
+    const h = createHarness()
+    const presetCalls: Array<{ session: unknown; name: string }> = []
+    if (opts.noPresets !== true) {
+      h.services.permissionPresets = opts.presets ?? {
+        set(session: unknown, name: string): void { presetCalls.push({ session, name }) },
+      }
+    }
+    const adapter = new DshAgentAdapter(h.ctx, {
+      agentName: 'dsh',
+      cwd: '/workspace/project',
+      providers: [{ name: 'glm', provider: 'glm-route', model: 'glm-5.3' }],
+      activeProvider: 'glm',
+      ...opts.preset !== undefined ? { planApprovalPreset: opts.preset } : {},
+    })
+    const delegate = recordingDelegate()
+    adapter.setAskDelegate(delegate)
+    const session = (await adapter.startSession('')) as DshAgentSession
+    return { session, ask: userQuestionsAsk(h), delegate, agent: h.agents[0]!, presetCalls }
+  }
+
+  it('approving the plan review switches the configured permission preset onto the native session', async () => {
+    const { session, ask, delegate, agent, presetCalls } = await presetProvider({ preset: 'danger-full-access' })
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-once' })
+    await askPromise
+
+    expect(presetCalls).toEqual([{ session: agent.session, name: 'danger-full-access' }])
+  })
+
+  it('denying the plan review leaves permissions untouched', async () => {
+    const { session, ask, delegate, presetCalls } = await presetProvider({ preset: 'danger-full-access' })
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'rejected', note: 'add tests first' })
+    await askPromise
+
+    expect(presetCalls).toEqual([])
+  })
+
+  it('approving with allow-always applies the same preset switch', async () => {
+    const { session, ask, delegate, agent, presetCalls } = await presetProvider({ preset: 'danger-full-access' })
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-always' })
+    await askPromise
+
+    expect(presetCalls).toEqual([{ session: agent.session, name: 'danger-full-access' }])
+  })
+
+  it('approving without a configured preset leaves permissions untouched', async () => {
+    const { session, ask, delegate, presetCalls } = await presetProvider({})
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-once' })
+    await askPromise
+
+    expect(presetCalls).toEqual([])
+  })
+
+  it('approving with an empty configured preset leaves permissions untouched', async () => {
+    const { session, ask, delegate, presetCalls } = await presetProvider({ preset: '' })
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-once' })
+    await askPromise
+
+    expect(presetCalls).toEqual([])
+  })
+
+  it('a missing permissionPresets service degrades safe: approval completes with an error log', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // presetProvider injects a service unless one is given; a null service
+      // models a composition without the permission-presets plugin.
+      const { session, ask, delegate } = await presetProvider({ preset: 'danger-full-access', noPresets: true })
+
+      const askPromise = ask({
+        questions: [planReviewQuestion()],
+        agent: { session: { id: session.currentSessionID() } },
+      })
+      await new Promise((r) => { setTimeout(r, 10) })
+      delegate.settle({ outcome: 'allowed-once' })
+
+      await expect(askPromise).resolves.toEqual({
+        answers: [{ id: 'plan-review', selected: ['Approve'] }],
+      })
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(String(errorSpy.mock.calls[0]?.[0])).toContain('permissionPresets is not composed')
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('a throwing preset switch degrades safe: approval completes with an error log', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const throwing = { set(): void { throw new Error('permission: unknown preset "typo"') } }
+      const { session, ask, delegate } = await presetProvider({ preset: 'typo', presets: throwing })
+
+      const askPromise = ask({
+        questions: [planReviewQuestion()],
+        agent: { session: { id: session.currentSessionID() } },
+      })
+      await new Promise((r) => { setTimeout(r, 10) })
+      delegate.settle({ outcome: 'allowed-once' })
+
+      await expect(askPromise).resolves.toEqual({
+        answers: [{ id: 'plan-review', selected: ['Approve'] }],
+      })
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(String(errorSpy.mock.calls[0]?.[0])).toContain('unknown preset')
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+})
+
 describe('DshAgentAdapter approval answerer', () => {
   /** Started session plus the registered approval/request listener. */
   async function startedAnswerer(delegate?: AskDelegate): Promise<{
@@ -1416,6 +1575,39 @@ it('a chatroom moderator downgrades an explicit plan override too (one rule: mod
   expect(planSets).toEqual([false])
 })
 
+it('spawnMode pins the mode between one-shot overrides and the project default', async () => {
+  const h = createHarness()
+  const planSets: boolean[] = []
+  h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
+  const a = newAdapter(h)
+
+  // A pinned non-plan mode overrides the plan project default and persists
+  // across sessions (unlike the one-shot override, it is not consumed).
+  await a.startSession('', { sessionKey: 'feishu:oc_m1:ou_9', spawnMode: 'default' })
+  await a.startSession('', { sessionKey: 'feishu:oc_m2:ou_9', spawnMode: 'default' })
+  expect(planSets).toEqual([false, false])
+
+  // A pinned plan overrides a non-plan project default.
+  const b = newAdapter(h)
+  b.setDefaultMode('default')
+  await b.startSession('', { sessionKey: 'feishu:oc_m3:ou_9', spawnMode: 'plan' })
+  expect(planSets).toEqual([false, false, true])
+
+  // A one-shot override outranks the pin once; the pin resumes after it.
+  b.setSessionMode('default')
+  await b.startSession('', { sessionKey: 'feishu:oc_m4:ou_9', spawnMode: 'plan' })
+  await b.startSession('', { sessionKey: 'feishu:oc_m5:ou_9', spawnMode: 'plan' })
+  expect(planSets).toEqual([false, false, true, false, true])
+
+  // The unattended-subtask bypass outranks any pin.
+  await a.startSession('', {
+    sessionKey: 'feishu:oc_m6:ou_9',
+    spawnMode: 'plan',
+    subtask: { attended: false, noReport: false, researchAssistant: false },
+  })
+  expect(planSets).toEqual([false, false, true, false, true, false])
+})
+
 describe('unattendedSubtaskBypassesPermissions (the permission-policy built-in base)', () => {
   it('elevates unattended subtasks only; chatroom personas join via the policy listener', () => {
     expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', subtask: { attended: false, noReport: false, researchAssistant: false } })).toBe(true)
@@ -1500,5 +1692,40 @@ describe('effectiveMode bypass wiring', () => {
       subtask: { attended: false, noReport: false, researchAssistant: false },
     })
     expect(planSets).toEqual([false])
+  })
+
+  it('a bypassPermissions mode override auto-approves tool permissions without a card (cron job.mode)', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    // The cron path: startAgentLocked arms a one-shot mode override before
+    // the session starts. 'bypassPermissions' must mean the same
+    // auto-approval the unattended base grants, not just "plan off".
+    a.setSessionMode('bypassPermissions')
+    const session = await a.startSession('', { sessionKey: 'feishu:cron:ou_9' })
+    const listener = h.listeners.get('approval/request')?.[0]
+    if (listener === undefined) throw new Error('approval/request listener was not registered')
+    const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-4',
+    })
+    // No ask delegate is wired: without the bypass the answerer would fail
+    // closed as 'unavailable' instead of granting.
+    await expect(outcome).resolves.toBe('allowed-once')
+  })
+
+  it('a bypassPermissions project default auto-approves tool permissions too', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    a.setDefaultMode('bypassPermissions')
+    const session = await a.startSession('', { sessionKey: 'feishu:default:ou_9' })
+    const listener = h.listeners.get('approval/request')?.[0]
+    if (listener === undefined) throw new Error('approval/request listener was not registered')
+    const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-5',
+    })
+    await expect(outcome).resolves.toBe('allowed-once')
   })
 })

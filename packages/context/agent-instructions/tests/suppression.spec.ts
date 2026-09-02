@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import * as workspaceContext from '@deepseek-ai/dsh-agent-instructions'
+import AgentInstructionSuppression from '@deepseek-ai/dsh-agent-instructions/suppression'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Inbox, agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
 import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
@@ -95,9 +96,10 @@ describe('agentInstructions.suppress', () => {
       await ctx.plugin(SessionProjectionRegistry)
       ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
+      await ctx.plugin(AgentInstructionSuppression)
       const agent = stubAgent(root)
       const scope = createScope(ctx, agent)
-      const dispose = scope.ctx.get('agentInstructions')!.suppress()
+      const dispose = scope.ctx.get('agentInstructionSuppression')!.suppress()
 
       await drivePreStep(ctx, agent)
 
@@ -121,10 +123,11 @@ describe('agentInstructions.suppress', () => {
       await ctx.plugin(SessionProjectionRegistry)
       ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
+      await ctx.plugin(AgentInstructionSuppression)
       const suppressed = stubAgent(root)
       const other = stubAgent(root)
       const scope = createScope(ctx, suppressed)
-      scope.ctx.get('agentInstructions')!.suppress()
+      scope.ctx.get('agentInstructionSuppression')!.suppress()
 
       await drivePreStep(ctx, suppressed)
       expect(suppressed.inbox.nextStep).toEqual([])
@@ -153,10 +156,11 @@ describe('agentInstructions.suppress', () => {
       await ctx.plugin(SessionProjectionRegistry)
       ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
+      await ctx.plugin(AgentInstructionSuppression)
       const parent = stubAgent(root)
       const child = stubAgent(root)
       const parentScope = createScope(ctx, parent)
-      const dispose = parentScope.ctx.get('agentInstructions')!.suppress()
+      const dispose = parentScope.ctx.get('agentInstructionSuppression')!.suppress()
       bindScopeParent(child, parent)
 
       await drivePreStep(ctx, child)
@@ -186,9 +190,10 @@ describe('agentInstructions.suppress', () => {
       await ctx.plugin(SessionProjectionRegistry)
       ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
+      await ctx.plugin(AgentInstructionSuppression)
       const agent = stubAgent(root)
       const scope = createScope(ctx, agent)
-      const dispose = scope.ctx.get('agentInstructions')!.suppress()
+      const dispose = scope.ctx.get('agentInstructionSuppression')!.suppress()
       await drivePreStep(ctx, agent)
       expect(await pendingContext(agent)).toBe(0)
 
@@ -219,9 +224,10 @@ describe('agentInstructions.suppress', () => {
       await ctx.plugin(SessionProjectionRegistry)
       ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
+      await ctx.plugin(AgentInstructionSuppression)
       const agent = stubAgent(root)
       const scope = createScope(ctx, agent)
-      const dispose = scope.ctx.get('agentInstructions')!.suppress()
+      const dispose = scope.ctx.get('agentInstructionSuppression')!.suppress()
 
       const first = await ctx.tools.execute({
         signal: testToolSignal,
@@ -266,8 +272,9 @@ describe('agentInstructions.suppress', () => {
       await ctx.plugin(SessionProjectionRegistry)
       ctx.sessionProjections.register(turnBoundaryProjectionDefinition)
       await ctx.plugin(workspaceContext, { dshHome: home, maxBytes: 65536 })
+      await ctx.plugin(AgentInstructionSuppression)
       const agent = stubAgent(root)
-      const dispose = ctx.get('agentInstructions')!.suppress()
+      const dispose = ctx.get('agentInstructionSuppression')!.suppress()
 
       await drivePreStep(ctx, agent)
       expect(await pendingContext(agent)).toBe(0)
