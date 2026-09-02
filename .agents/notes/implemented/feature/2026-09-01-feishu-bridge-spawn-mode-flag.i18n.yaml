@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-01-feishu-bridge-spawn-mode-flag.md
+2026-09-01-feishu-bridge-spawn-mode-flag.md: 14aa822eb3d55232c06370b6c53ad2d84530f6b1
+2026-09-01-feishu-bridge-spawn-mode-flag.zh.md: 73621592f1724ff642fd5b480b84ee4cfcfc4fc0

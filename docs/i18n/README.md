@@ -35,6 +35,8 @@ Source-oriented code gates consume an exact `.zh.md` fence sequence as a derivat
 
 `pnpm run verify-translation-pairing <pair...>` checks just the named pairs — any of a pair's three files (or its bare stem) names it — so an update loop verifies its own pair in seconds instead of re-scanning the corpus. The no-argument corpus-wide form is what `doc-sync` and CI run; a scoped green never substitutes for it at PR level.
 
+The pre-commit and pre-merge-commit hooks run this scoped check over every staged Markdown side of a recorded pair — `foo.md` and `foo.zh.md`, not only `foo.i18n.yaml` — so a commit that edits one side without re-recording fails before it lands. Staged Markdown without a consistency record is outside the hook's scope; pair completeness across the corpus stays with `doc-sync` and CI.
+
 The practical rule this gate creates: **when a PR edits either side of a paired document, the same PR updates the counterpart directly in one terminology-guided pass and re-records the pair with `--write <pair>`**, exactly like the repo's existing doc-sync rule for code and READMEs. A PR that leaves a pair out of sync goes red in CI.
 
 The gate's limit, stated plainly: **a green gate means the pair was confirmed consistent at these exact contents, not that the confirmation was sound.** It checks hashes and Markdown structure; it cannot judge whether the two sides say the same thing, or whether the wording is accurate, well-termed, and natural — that is the reviewer's half of the contract, per [translation-rules.md](translation-rules.md). A re-recorded pair with a sloppy counterpart passes the gate; it must not pass review.
