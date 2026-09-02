@@ -2027,18 +2027,21 @@ export class Engine {
   }
 
   /**
-   * Effective work dir for a command context (agent cwd or process cwd).
+   * Effective work dir for a command context: the chat's per-chat /dir
+   * override, else the agent's work dir, else process.cwd(). The override
+   * leads so a command's cwd agrees with what /dir displays for the chat
+   * (sessionWorkDir and effectiveWorkDirForPending use the same order).
    * @param msg - Message whose session key selects the per-chat override.
    * @returns The resolved working directory.
    */
   commandWorkDir(msg: Message): string {
+    const override = this.perChatWorkDir(this.dirOverrideKey(msg.sessionKey))
+    if (override !== '') return override
     const switcher = this.agent as { getWorkDir?: () => string }
     if (typeof switcher.getWorkDir === 'function') {
       const wd = switcher.getWorkDir().trim()
       if (wd !== '') return wd
     }
-    const override = this.perChatWorkDir(this.dirOverrideKey(msg.sessionKey))
-    if (override !== '') return override
     return process.cwd()
   }
 
