@@ -281,8 +281,10 @@ describe('GatherRoles', () => {
 
     gatherRoles(e, hub, 'r1', true)
     chatroomState(hubSess).pendingGather?.stopTimer()
+    chatroomState(hubSess).pendingGather = undefined // round 1 completed and woke the moderator
     gatherRoles(e, hub, 'r2', true)
     chatroomState(hubSess).pendingGather?.stopTimer()
+    chatroomState(hubSess).pendingGather = undefined // round 2 completed
 
     // Round 3 must be rejected (cap = 2).
     expect(() => { gatherRoles(e, hub, 'r3', true) }).toThrow()
@@ -311,8 +313,10 @@ describe('GatherRoles', () => {
 
     gatherRoles(e, hub, 'r1', true)
     chatroomState(hubSess).pendingGather?.stopTimer()
+    chatroomState(hubSess).pendingGather = undefined // round 1 completed and woke the moderator
     gatherRoles(e, hub, 'r2', true)
     chatroomState(hubSess).pendingGather?.stopTimer()
+    chatroomState(hubSess).pendingGather = undefined // round 2 completed
 
     const barrierBefore = chatroomState(hubSess).pendingGather
     const seqBefore = chatroomState(hubSess).chatroomGatherSeq
@@ -541,6 +545,47 @@ describe('GatherRoles vs pending human question', () => {
     // The armed gather round is untouched.
     expect(chatroomState(hubSess).pendingGather).toBe(g)
     expect(g.expected.has('taleb')).toBe(true)
+  })
+})
+
+describe('GatherRoles vs an armed gather', () => {
+  it('is rejected while a gather is in flight, preserving the armed barrier', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    await startChatroom(e, hub, ['taleb'], 'topic')
+    const hubSess = e.sessions.getOrCreateActive(hub)
+
+    const armed = newGather('第一轮', ['taleb'])
+    chatroomState(hubSess).pendingGather = armed
+
+    expect(() => { gatherRoles(e, hub, '第二轮', false) }).toThrow('仍在进行中')
+
+    // A rejected repeat must not overwrite the armed barrier or consume the seq.
+    expect(chatroomState(hubSess).pendingGather).toBe(armed)
+    expect(chatroomState(hubSess).chatroomGatherSeq).toBe(0)
+  })
+})
+
+describe('askRole vs an armed gather', () => {
+  it('is rejected while a gather is in flight — the reply would be swallowed or lost', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom, askRole } = await import('../../src/engine/chatroom.ts')
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    chatroomState(hubSess).pendingGather = newGather('并行问题', ['taleb'])
+
+    await expect(askRole(e, hub, 'taleb', '追问')).rejects.toThrow('并行收集进行中')
+
+    // The role was not re-armed: no in-flight mark, no question injected.
+    const roleSess = e.sessions.getOrCreateActive(roles[0]!.sessionKey)
+    expect(chatroomState(roleSess).chatroomInFlight).toBe(false)
+    expect(chatroomState(roleSess).chatroomAsked).toBe(false)
   })
 })
 

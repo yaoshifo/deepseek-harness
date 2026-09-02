@@ -81,6 +81,8 @@ const en: Record<string, string> = {
   chatroom_moderator_opening: 'The moderator is opening the discussion…',
   chatroom_gather_ask_human_blocked: 'A parallel gather is in progress — do not use ask-human. Give the question you want to ask the user as your reply text; the moderator will collect and ask the user once.',
   chatroom_gather_pending_human_blocked: 'An ask-human question is still pending — the discussion is suspended until the user replies. Gather again after their reply.',
+  chatroom_gather_in_flight: 'A parallel gather is still in flight — a repeat gather would overwrite the armed barrier and lose collected replies. Start the next one after this round completes or times out and wakes you.',
+  chatroom_ask_gather_blocked: 'A parallel gather is in progress — do not ask yet: the role\'s reply would be swallowed by or lost to this round\'s barrier. Ask after the round wakes you, or fold the question into the next gather task.',
   chatroom_already_running: 'A chatroom is already running in this chat. Send /chatroom stop before starting a new one.',
   chatroom_end_moderator_only: 'Only the chatroom moderator may end the chatroom; the calling session is a role or assistant group. Ask the user to send /chatroom stop to interrupt.',
 }
@@ -156,6 +158,8 @@ const zh: Record<string, string> = {
   chatroom_moderator_opening: '主持人正在开场…',
   chatroom_gather_ask_human_blocked: '并行收集进行中——不要用 ask-human。把你想问用户的问题作为回复文本给我，主持人会统一收集后向用户提问。',
   chatroom_gather_pending_human_blocked: '有待回复的角色提问（ask-human）——讨论已暂停，等用户回复后再发起 gather。',
+  chatroom_gather_in_flight: '上一轮并行收集仍在进行中——重复 gather 会覆盖在途屏障、丢失已收回复。等本轮收齐或超时唤醒你后再发起。',
+  chatroom_ask_gather_blocked: '并行收集进行中——先不要 ask：角色的回复会被本轮屏障吞掉或丢失。等收齐/超时唤醒你后再问，或把追问并入下一轮 gather 任务。',
   chatroom_already_running: '这个群已有聊天室在进行中；请先发 /chatroom stop 中断后再开新聊天室。',
   chatroom_end_moderator_only: '只有聊天室主持人可以收尾；当前会话是角色/助手群。需要中断请让用户发送 /chatroom stop。',
 }
@@ -240,6 +244,8 @@ export const Msg = {
   ChatroomModeratorOpening: 'chatroom_moderator_opening',
   ChatroomGatherAskHumanBlocked: 'chatroom_gather_ask_human_blocked',
   ChatroomGatherPendingHumanBlocked: 'chatroom_gather_pending_human_blocked',
+  ChatroomGatherInFlight: 'chatroom_gather_in_flight',
+  ChatroomAskGatherBlocked: 'chatroom_ask_gather_blocked',
   ChatroomAlreadyRunning: 'chatroom_already_running',
   ChatroomEndModeratorOnly: 'chatroom_end_moderator_only',
   SpawnNotSupported: 'spawn_not_supported',

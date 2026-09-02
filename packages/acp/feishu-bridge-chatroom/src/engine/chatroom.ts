@@ -636,6 +636,14 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
   if (askHub !== undefined && chatroomState(askHub).pendingEndBarrier !== undefined) {
     throw new Error('chatroom: 正在收尾中，无法 ask')
   }
+  // Ask during an armed gather loses the answer either way: a busy role's
+  // reply never relays (its one-shot gate was consumed by the gather
+  // question), an idle role's reply is absorbed as its gather reply.
+  // The pending-ask-human reply path cannot reach here — the two states
+  // are mutually exclusive by askHuman's and gatherRoles' two-way guards.
+  if (askHub !== undefined && chatroomState(askHub).pendingGather !== undefined) {
+    throw new Error(e.i18n.t(Msg.ChatroomAskGatherBlocked))
+  }
   const p = e.spawnCapablePlatform()
   if (p === undefined) throw new Error('chatroom: no platform available')
   const roleKey = resolveChatroomRole(e, callerHubKey, roleRef)
@@ -740,6 +748,12 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   if (hub === undefined) throw new Error(`chatroom: hub session missing (hub=${hubKey})`)
   if (chatroomState(hub).pendingEndBarrier !== undefined) {
     throw new Error('chatroom: 正在收尾中，无法 gather')
+  }
+  // A repeat gather while one is armed overwrites the barrier: the old
+  // round's timer, expected set, and collected replies are dropped while
+  // its roles keep generating against a barrier nobody holds.
+  if (chatroomState(hub).pendingGather !== undefined) {
+    throw new Error(e.i18n.t(Msg.ChatroomGatherInFlight))
   }
   // Mirror of askHuman's pendingGather guard (guards must be two-way): a
   // gather while a human question is pending would inject a second in-flight
