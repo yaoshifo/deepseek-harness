@@ -95,7 +95,7 @@ export interface FeishuAppConfig {
   progressStyle?: string
   /** Explicit active-tag name override (Go active_tag_name). */
   activeTagName?: string
-  /** ✅ push notification after in-place completion (Go notify_on_complete). */
+  /** ✅ per-turn completion notification — purple card or text fallback; default off (Go notify_on_complete). */
   notifyOnComplete?: boolean
   /** Emoji reaction on the user's message; '' or 'none' disables (Go reaction_emoji). */
   reactionEmoji?: string
@@ -557,7 +557,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       enableFeishuCard: Schema.boolean().description('Interactive cards (default true)'),
       progressStyle: Schema.string().description("Progress rendering: 'legacy' | 'compact' | 'card'"),
       activeTagName: Schema.string().description('Explicit active-tag name override'),
-      notifyOnComplete: Schema.boolean().description('✅ notification after in-place completion'),
+      notifyOnComplete: Schema.boolean().description('✅ per-turn completion notification (card or text fallback); default off'),
       reactionEmoji: Schema.string().description('Reaction emoji on user message'),
       doneEmoji: Schema.string().description('Reaction emoji on completion card'),
       cancelEmoji: Schema.string().description('Reaction emoji on stopped card'),

@@ -62,7 +62,7 @@ Linux 部署面用 systemd user unit（§5）。
 | `data_dir` | `feishu-bridge` 行 `config.dataDir` | 默认 `~/.dsh/feishu-bridge`（per-project store 根） |
 | `language` | 插件行 `config.language`（'zh'/'zh-TW'/'ja'/'es'/'en'，其余自动探测） | |
 | `[platform_options.feishu]` `reaction_emoji` / `done_emoji` / `cancel_emoji` | `config.projects[].feishu.reactionEmoji` / `doneEmoji` / `cancelEmoji` | |
-| `[platform_options.feishu]` `notify_on_complete` | `config.projects[].feishu.notifyOnComplete` | |
+| `[platform_options.feishu]` `notify_on_complete` | `config.projects[].feishu.notifyOnComplete` | 门禁每轮 ✅ 完成通知（紫色卡与文本回退统一受控）；缺省关 |
 | `[platform_options.feishu]` `topnotice_first_message` | `config.projects[].feishu.topNoticeFirstMessage` | |
 | `[platform_options.feishu]` `pin_user_messages` | `config.projects[].feishu.pinUserMessages` | |
 | `[[providers]]` `name` / `api_key` / `base_url` / `model` / `context_window` | `llm-pi-ai` 行 `providers.<route>`（`apiKeyEnv` 引用 + `baseURL` + `models[].contextWindow`）；插件行 `config.providers.<name>.route` / `.model` | key 实际值放 launchd/systemd 的 Environment（不在 yml）；`rewrite_tui_fingerprint` 不迁移（FEATURE-PARITY #16） |

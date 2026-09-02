@@ -145,7 +145,7 @@ import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
-import { asCompletionNotifier, asChatPhasePainter, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
+import { asCompletionNoticePreference, asCompletionNotifier, asChatPhasePainter, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.ts'
 import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.ts'
 import { renderHelpGroupCard } from './misc-commands.ts'
@@ -6228,6 +6228,8 @@ export class Engine {
     workspaceDir: string,
   ): Promise<void> {
     if (state.pendingMessages.length > 0) return
+    const noticePref = asCompletionNoticePreference(p)
+    if (noticePref !== undefined && !noticePref.completionNoticeEnabled()) return
     const footerMsg = await this.buildStatusFooter(
       this.i18n.t(Msg.TurnCompleted), this.agent, workspaceDir, session.getAgentSessionID(), sessionKey)
     const cu = asCardSenderWithUpdate(p)

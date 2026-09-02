@@ -18,7 +18,7 @@
 | # | 特性 | 状态 | 里程碑 | 落点 / 理由 |
 |---|---|---|---|---|
 | 1 | UsageProvider：配置式服务商余量信息（/usage + buildCompletionUsage + ActiveDetector） | ✅ | M7-b | `src/engine/usage.ts`（glm/minimax 工厂注册 + 5min 缓存 + ActiveDetector/SyncUsageFetcher 能力面）+ `usage_providers` 配置块；/usage 命令本体未移植（Go 无对应输出需求方，quota 已上 ✅ 页脚 ⌛ 行） |
-| 2 | notify_on_complete：任务完成后触发飞书通知红点 | ✅ | M2 | `projects[].feishu.notifyOnComplete`；真机验证（✅ 通知 tokens 行） |
+| 2 | notify_on_complete：任务完成后触发飞书通知红点 | ✅ | M2 | `projects[].feishu.notifyOnComplete`；真机验证（✅ 通知 tokens 行）；2026-09-02 修复：M7-b 紫卡路径未继承门禁致配置失效，已经 `CompletionNoticePreference` 能力面接线（[Agent Note](../../../.agents/notes/implemented/bug-fix/2026-09-02-feishu-bridge-notify-on-complete-gates-completion-card.md)） |
 | 3 | dir_scan_paths：自动扫描子目录加入 /dir 列表 | ✅ | M7-d | `dirScanPaths` 配置 + `setScanPaths` 装配 + 模糊兜底（resolveScanPathFuzzy 随迁），/dir 建议列表与裸名解析全链路 |
 | 4 | 多选问题（MultiSelect）：checker+form 渲染 | ✅ | M3 | askq_multi 回调路径 |
 | 5 | Inline Plan 去重（两条路径不重复显示） | ✅ | M3 | plan 域 |
