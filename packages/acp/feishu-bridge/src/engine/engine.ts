@@ -3096,14 +3096,15 @@ export class Engine {
     let deltaAccum = ''
     let deltaFlushed = false
 
-    // Plan-mode tracking (Go engine_events.go): the plan .md path written by
-    // the agent, the content last sent as the plan card, and the revision
-    // counter for export keys / render artifacts.
+    // Plan-mode tracking (Go engine_events.go): the plan .md path and the
+    // last-sent card content reset per turn; the revision counter for export
+    // keys / render artifacts survives turns — a discussion-round
+    // re-presentation lands in a later turn, and its (vN) title must keep
+    // counting from the session's earlier presentations.
     state.planFilePath = ''
     state.pendingPlanFilePath = ''
     state.pendingPlanToolID = ''
     state.sentPlanContent = ''
-    state.planRevisionCount = 0
 
     /** Drain queued async PATCHes before a terminal card state. */
     const barrier = (): Promise<void> => sender.barrier()

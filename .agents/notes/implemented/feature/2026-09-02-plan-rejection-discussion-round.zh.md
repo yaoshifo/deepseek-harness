@@ -24,4 +24,4 @@ Status: implemented
 
 ## 后果
 
-桥引擎与卡片代码零改动——回答走既有 turn 终局投递，追问选项走既有收尾卡转换。presets 与 base/bridge 的节奏分歧保留至按 fork 同步节奏适时向上游提议。live profile 部署需先把 `@deepseek-ai/dsh-plan-mode` 加为 `link:` 依赖（profile 现经 registry 钉版的 dsh-base 解析它），`/reload` 才能拿到中性化后的描述。快照套件存在已知预存金样漂移（fs 工具 `sandbox_permissions` schema 字段；见[09-07 审计注记](../process/2026-09-07-full-suite-audit-fork-drift.zh.md)）——本改动经主仓基线对照验证未新增失败。
+回答走既有 turn 终局投递、追问选项走既有收尾卡转换；契约唯一被迫的引擎改动是把 plan 版本计数器改为会话作用域（`processInteractiveEvents` 原本每 turn 清零——讨论轮契约下重提交落在后续 turn，(vN) 卡片标题与 `plan:{N}` 导出键必须延续计数，否则每次修订都顶着首版标题并覆写 `plan:1` 导出条目）。presets 与 base/bridge 的节奏分歧保留至按 fork 同步节奏适时向上游提议。live profile 部署需先把 `@deepseek-ai/dsh-plan-mode` 加为 `link:` 依赖（profile 现经 registry 钉版的 dsh-base 解析它），`/reload` 才能拿到中性化后的描述。快照套件存在已知预存金样漂移（fs 工具 `sandbox_permissions` schema 字段；见[09-07 审计注记](../process/2026-09-07-full-suite-audit-fork-drift.zh.md)）——本改动经主仓基线对照验证未新增失败。

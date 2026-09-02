@@ -14,6 +14,7 @@ import {
   createStubAgent,
   createStubCardPlatform,
   createStubPlatform,
+  newControllableSession,
   testMultiQuestions,
   testQuestions,
   type StubPlatform,
@@ -487,6 +488,36 @@ describe('askUser plan-review kind', () => {
     const content = 'perm:deny\x00narrow the scope'
     expect(e.routeAskResponse(p, msg({ content, isPermissionAction: true }), content)).toBe(true)
     await expect(decision).resolves.toEqual({ outcome: 'rejected', note: 'narrow the scope' })
+  })
+
+  it('a re-presented plan in a later turn keeps the (vN) revision title', async () => {
+    const p = createStubCardPlatform('feishu')
+    const { e, state } = armedState(p)
+    state.agentSession = newControllableSession('s1')
+    const sessionKey = 'test:chat:user1'
+
+    // First presentation (turn 1), rejected.
+    const first = e.askUser(sessionKey, { kind: 'plan-review', heading: '# P', plan: '# P\n\n1. first' })
+    await tick()
+    expect(e.routeAskResponse(p, msg({ content: 'perm:deny', isPermissionAction: true }), 'perm:deny')).toBe(true)
+    await expect(first).resolves.toEqual({ outcome: 'rejected' })
+
+    // The answer turn ends: the pump's per-turn reset runs between the asks
+    // (the discussion-round contract re-presents across turn boundaries).
+    ;(state.agentSession as ReturnType<typeof newControllableSession>).channel
+      .push({ type: 'result', content: 'answered', done: true })
+    await e.processInteractiveEvents(
+      state, e.sessions.getOrCreateActive(sessionKey), e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    // Second presentation in the NEXT turn: the revision counter survived.
+    const second = e.askUser(sessionKey, { kind: 'plan-review', heading: '# P', plan: '# P\n\n1. second' })
+    await tick()
+    const secondPlanCard = p.sentCards.find(
+      card => JSON.stringify(card).includes('1. second')) as unknown
+    expect(JSON.stringify(secondPlanCard)).toContain('Plan (v2)')
+
+    expect(e.routeAskResponse(p, msg({ content: 'perm:deny', isPermissionAction: true }), 'perm:deny')).toBe(true)
+    await expect(second).resolves.toEqual({ outcome: 'rejected' })
   })
 })
 
