@@ -129,6 +129,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   hints_empty: { en: 'No hints configured', zh: '未配置快捷提示' },
   hint: { en: 'Show configured hint buttons', zh: '显示快捷提示按钮' },
   failed_to_start_agent_session: { en: '❌ Error: failed to start agent session', zh: '❌ 错误: 启动 Agent 会话失败', 'zh-TW': '❌ 錯誤: 啟動 Agent 會話失敗', ja: '❌ エラー: Agentセッションの起動に失敗しました', es: '❌ Error: error al iniciar la sesión del agente' },
+  askq_stale_card: { en: '⚠️ This card is no longer active — its question is no longer waiting for a reply (already answered, replaced by a newer question, or lost to a restart). Just send a message in chat instead.', zh: '⚠️ 这张卡片已失效——它对应的问题已不在等待回复（已答完、被新问题取代或服务重启过）。直接在聊天里发消息说明即可。' },
   askq_stale_question: { en: '⚠️ This question card is no longer current — the ask has changed. Reply in text to answer the current question.', zh: '⚠️ 这张问题卡片已过期——问题列表已变化。请用文字回答当前问题。' },
   askq_text_address_hint: { en: ' · to answer a specific question type “N: answer”', zh: ' · 要指定题目可输入「题号: 答案」' },
   askq_text_placeholder_options: { en: 'None of the above? Type your answer', zh: '以上都不合适？输入你的答案' },

@@ -5757,14 +5757,17 @@ export class Engine {
   /**
    * Consume a card-button askq action whose ask is gone: without the guard
    * the raw `askq:N:M` payload would fall through as a plain message and
-   * become the model's next prompt.
+   * become the model's next prompt. Distinct from the in-flight stale
+   * variant in routeQuestionResponse (AskqStaleQuestion, the parked ask's
+   * question list changed): here no ask is parked at all, so the hint must
+   * point at plain chat, not at "the current question".
    * @param p - Platform the action arrived on.
    * @param msg - The card-action message.
    * @returns True when the action was consumed with the stale hint.
    */
   private staleAskqCardAction(p: Platform, msg: Message): boolean {
     if (!msg.isAskqCardAction || parseAskqSelection(msg.content) === undefined) return false
-    void this.reply(p, msg.replyCtx, this.i18n.t(Msg.AskqStaleQuestion))
+    void this.reply(p, msg.replyCtx, this.i18n.t(Msg.AskqStaleCard))
     return true
   }
 

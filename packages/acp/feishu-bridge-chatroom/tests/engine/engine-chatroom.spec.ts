@@ -1281,6 +1281,38 @@ describe('afterChatroomStarted recycles the hub agent process', () => {
   })
 })
 
+describe('hub ready card', () => {
+  it('carries the interjection hint beside the ledger note', async () => {
+    const p = createStubChatroomSpawner()
+    const agent = {
+      ...createStubAgent(),
+      startSession: async () => createStubAgentSession(),
+    }
+    const e = new Engine('test', agent, [p], '', 'zh', chatroomPolicyFace())
+    e.setProjectStateStore(new ProjectStateStore(''))
+    registerSessionCommands(e)
+    registerChatroomCommands(e)
+    const rolesRoot = await scaffoldTwoRoles()
+    const moderatorHome = await mkdtemp(join(tmpdir(), 'chatroom-ready-'))
+    chatroomConfig(e).applySection({ rolesDir: rolesRoot, moderatorDir: moderatorHome })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+
+    const bodies: string[] = []
+    vi.spyOn(e, 'sendAsCard').mockImplementation(async (_p: Platform, _rc: unknown, content: string) => {
+      bodies.push(content)
+    })
+
+    const { afterChatroomStarted } = await import('../../src/engine/chatroom-cmd.ts')
+    await afterChatroomStarted(e, p, hub, 'user-1', 'group', 'ctx', roles, 'topic')
+
+    const card = bodies.find(b => b.includes('主持人正在开场'))
+    expect(card).toBeDefined()
+    expect(card).toContain('账本目录')
+    expect(card).toContain('💡 随时在本群发消息即可插话、追问或调整方向，主持人会处理。')
+  })
+})
+
 describe('topic-pick priming ledger history', () => {
   it('surfaces the ledger dir when a moderator dir is configured', async () => {
     const { buildChatroomTopicPickPriming } = await import('../../src/engine/chatroom-priming.ts')

@@ -22,7 +22,7 @@ Status: implemented
 - **每题自带文字通道**：输入框（`askq_text_{q}`）+ form_submit「✍️ 文字作答」按钮（`askq_text_submit_{q}`），无选项的题也有——输入框是它唯一的卡内作答路径。wire 格式新增 `askq_text:{q}`，且任意载荷可在 NUL 分隔符后随带文字（`askq:{q}:{idx}\x00{text}`）——与 `perm:` 裁决 note 同一约定。`parseAskqSelection` 先按 NUL 切分再解析序号，答案文本里的冒号不会破坏 wire 格式；`resolveAskAnswer` 允许 `custom` 与 `selected` 并存——上游 user-questions 类型本就允许这一对。
 - **聊天文字可显式选题**：多题 ask 上 `N: 答案` 前缀绑定（并修订）第 N 题。半角冒号后必须跟空白，`2:30` 因此仍是普通答案；全角冒号允许无空白，贴合输入法习惯。越界前缀按普通文本处理。✅ 回显带 `（n/total）` 进度，且当还有其他题开放时附选题教学（`Msg.AskqTextAddressHint`）。
 - **改答放行、重试吞掉**：平台去重只吞完全相同的重复（双击/回调重试）；变化的答案更新记录并重新派发，引擎按题覆盖——同题最后写入者胜。
-- **旧卡点击被消费**：无停放 ask 的 askq 卡片动作回 `AskqStaleQuestion` 提示，不再泄漏载荷。
+- **旧卡点击被消费**：无停放 ask 的 askq 卡片动作回 `AskqStaleCard` 提示（2026-09-02 自 `AskqStaleQuestion` 拆分：无停放 ask 的提示改为指向普通聊天消息；`AskqStaleQuestion` 保留给在途 ask 的题目列表变化场景），不再泄漏载荷。
 
 ## Alternatives considered
 

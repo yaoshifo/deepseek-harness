@@ -467,6 +467,10 @@ export async function afterChatroomStarted(
   if (ledgerOK) {
     sb.push(e.i18n.tf(Msg.ChatroomLedgerDirNote, ledgerDir))
   }
+  // The ready card is the one place every chatroom member reads: state here
+  // that plain messages in the hub reach the moderator, so mid-run
+  // participation is discoverable without a command.
+  sb.push(e.i18n.t(Msg.ChatroomInterjectHint))
   sb.push(`\n${e.i18n.t(Msg.ChatroomModeratorOpening)}`)
   void e.sendAsCard(p, rctx, sb.join(''), { title: e.i18n.t(Msg.ChatroomReady), color: 'purple' })
 
