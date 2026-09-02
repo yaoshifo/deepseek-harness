@@ -91,7 +91,7 @@ The plugin is a function/namespace plugin: it exports `name` / `inject` / `apply
 
 ### Session projection
 
-When the composition mounts `ctx.sessionProjections` ([`@deepseek-ai/dsh-session-projection`](../../session/session-projection/README.md)), this package registers the `todos` unit on an injected child: the projection is the standing plan — the latest whole `todo/write` list, `null` before the first write, cleared when the next turn starts while `turn/end` keeps the finished checklist visible. The key merges into `SessionProjectionMap` here; carriers serve the value on the history tail page and the `session/projection` push frame. Compositions without the registry are unaffected; see [src/index.ts](src/index.ts) for the unit registration. The lifetime rationale lives in the [todo plan clears on next turn Agent Note](../../../.agents/notes/implemented/feature/2026-07-28-todo-plan-clears-on-next-turn.md).
+This package requires `ctx.sessionProjections` ([`@deepseek-ai/dsh-session-projection`](../../session/session-projection/README.md)) and registers the `todos` unit directly on it: the projection is the standing plan — the latest whole `todo/write` list, `null` before the first write, cleared when the next turn starts while `turn/end` keeps the finished checklist visible. The key merges into `SessionProjectionMap` here; carriers serve the value on the history tail page and the `session/projection` push frame. A composition that omits the projection registry cannot activate this plugin, so the `todo_write` tool is never registered; see [src/index.ts](src/index.ts) for the unit registration. The lifetime rationale lives in the [todo plan clears on next turn Agent Note](../../../.agents/notes/implemented/feature/2026-07-28-todo-plan-clears-on-next-turn.md).
 
 ### Durable-log invariant
 
@@ -161,6 +161,8 @@ These limits define when the tool is a poor fit. They are current package constr
 - **Single-owner scope only** — the list belongs to the one calling agent session; subagent, shared, and swarm scopes are a deliberate cut, and a non-agent caller is rejected.
 - **The item shape is deliberately minimal** — `content`, three-state `status`, and optional `activeForm`; whole-list replacement needs no stable id or priority fields.
 - **Whole-list replacement is the only operation** — no partial updates, no read-back tool, and no per-item edits; the model must resend the entire list each call.
+- **No list-size bounds** — item count and per-item text length are uncapped, and every call submits the whole list and appends a full snapshot to the durable log, so request tokens and log volume grow with list size and update frequency.
+- **The model's only view of the list is its own call arguments** — the `todos` projection serves the history tail page and the `session/projection` push frame, not model requests, and once compaction replaces the carrying tool calls with a summary, nothing re-injects the standing plan into the model's context.
 
 <a id="dev-note"></a>
 ### Dev Note

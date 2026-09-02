@@ -91,7 +91,7 @@ agent 每次更新都发送完整列表；新列表替换旧列表，因此没�
 
 ### 会话投影
 
-当组合挂载 `ctx.sessionProjections`（[`@deepseek-ai/dsh-session-projection`](../../session/session-projection/README.zh.md)）时，本包在注入的子插件中注册 `todos` 单元：投影即有效计划——最新的整份 `todo/write` 列表，首次写入前为 `null`，下一轮次开始时清空，而 `turn/end` 保留刚完成的清单。该键在此处合并进 `SessionProjectionMap`；载体通过历史尾页与 `session/projection` 推送帧提供该值。未挂载注册表的组合不受影响；单元注册见 [src/index.ts](src/index.ts)。生命周期理由见 [todo 计划在下一轮次清空 Agent Note](../../../.agents/notes/implemented/feature/2026-07-28-todo-plan-clears-on-next-turn.zh.md)。
+本包依赖 `ctx.sessionProjections`（[`@deepseek-ai/dsh-session-projection`](../../session/session-projection/README.zh.md)），并直接在其上注册 `todos` 单元：投影即有效计划——最新的整份 `todo/write` 列表，首次写入前为 `null`，下一轮次开始时清空，而 `turn/end` 保留刚完成的清单。该键在此处合并进 `SessionProjectionMap`；载体通过历史尾页与 `session/projection` 推送帧提供该值。未挂载注册表的组合无法激活本插件，`todo_write` 工具因此不会注册；单元注册见 [src/index.ts](src/index.ts)。生命周期理由见 [todo 计划在下一轮次清空 Agent Note](../../../.agents/notes/implemented/feature/2026-07-28-todo-plan-clears-on-next-turn.zh.md)。
 
 ### 持久日志不变式
 
@@ -161,6 +161,8 @@ token 用量随模型每次提交的完整列表增长，这些调用参数会�
 - **仅单一所有者作用域**——列表属于唯一调用 agent 会话；subagent、共享与 swarm 作用域是有意砍掉的部分，非 agent 调用方会被拒绝。
 - **条目形状刻意保持最小**——`content`、三态 `status` 加可选 `activeForm`；整表替换不需要稳定 id 或优先级字段。
 - **整表替换是唯一操作**——没有部分更新、没有回读工具、没有逐项编辑；模型每次调用都必须重新发送完整列表。
+- **列表规模无上限**——条目数与每条文本长度均不受约束，而每次调用都提交整份列表、并向持久日志追加完整快照，请求 token 与日志体积随列表规模和更新频率增长。
+- **模型对列表的唯一视图是自己的调用参数**——`todos` 投影服务历史尾页与 `session/projection` 推送帧，而非模型请求；压缩把承载列表的工具调用替换为摘要后，没有任何机制把有效计划重新注入模型上下文。
 
 <a id="dev-note"></a>
 ### 开发备注
