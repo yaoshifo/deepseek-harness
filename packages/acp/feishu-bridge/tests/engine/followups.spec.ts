@@ -117,6 +117,10 @@ describe('askUser followups conversion', () => {
     expect(decision.answers?.[0]?.selected).toEqual([])
     expect(decision.answers?.[0]?.id).toBe('后续处理哪些？')
     expect(decision.answers?.[0]?.custom).toContain('新消息')
+    // The notice must also tell the model not to restate it: the suggestion
+    // card already explains the flow to the user, so a restating reply
+    // delivers the same information twice.
+    expect(decision.answers?.[0]?.custom).toContain('复述')
     // No card at ask time — the suggestion card rides the turn-end emission.
     expect(p.sentCards).toHaveLength(0)
     // The turn is not parked.
