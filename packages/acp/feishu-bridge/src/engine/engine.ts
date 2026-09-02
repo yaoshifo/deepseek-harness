@@ -6967,8 +6967,13 @@ export class Engine {
     if (entry === undefined) {
       throw new Error('subtask: not a native child of this project')
     }
-    if (entry.reported || this.nativeDeliveryInFlight.has(childId)) {
-      console.info(`subtask: native report already delivered, skipping duplicate (child=${childId})`)
+    // An explicit re-report delivers again: a mid-epoch intermediate report
+    // must not strand the child's final result — the one-shot drop left an
+    // idle parent stalled 13 minutes (2026-09-02 G6 replay). Settlement
+    // stays one-shot through settleNativeChild's own reported guard; only a
+    // concurrent in-flight delivery of the same report is skipped.
+    if (this.nativeDeliveryInFlight.has(childId)) {
+      console.info(`subtask: native report already in flight, skipping duplicate (child=${childId})`)
       return
     }
     if (result.trim() === '') {
@@ -7311,12 +7316,10 @@ export class Engine {
     if (sess === undefined) {
       throw new Error(`subtask: no subtask session ${childSessionKey} — the key may be mistyped`)
     }
-    if (sess.getSubtaskReported()) {
-      // Already delivered: skip idempotently so a model re-calling report
-      // cannot flood the parent. Nil (not an error) so the agent does not retry.
-      console.info(`subtask: report already delivered, skipping duplicate (child=${childSessionKey})`)
-      return
-    }
+    // An explicit re-report delivers again — a mid-flight intermediate report
+    // must not strand the child's final result (2026-09-02 G6 replay stall).
+    // The one-shot auto-fallback keeps its own reported guards here (below)
+    // and in maybeAutoReportSubtask, so it never double-delivers a turn.
     // Fire-and-forget child (monitor no_report rule): never push a result
     // card to the parent.
     if (sess.getSubtaskNoReport()) {

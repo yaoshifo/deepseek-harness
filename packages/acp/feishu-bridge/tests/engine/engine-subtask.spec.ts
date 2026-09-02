@@ -190,7 +190,7 @@ describe('ReportSubtask', () => {
     expect(p.sentCards.length).toBe(1)
   })
 
-  it('is idempotent after a first report', async () => {
+  it('re-delivers an explicit re-report instead of stranding the final result', async () => {
     const p = createStubCardPlatformFull('test')
     const e = newSubtaskTestEngine(p)
 
@@ -199,16 +199,17 @@ describe('ReportSubtask', () => {
     child.setParentSessionKey('test:parent-chat:user-1')
     child.setSubtaskDepth(1)
 
-    // First report delivers exactly one card to the parent.
-    await expect(e.reportSubtask(childKey, 'explicit result')).resolves.toBeUndefined()
+    await expect(e.reportSubtask(childKey, 'intermediate status')).resolves.toBeUndefined()
     await settle()
     expect(p.sentCards.length).toBe(1)
 
-    // A model re-calling report must not re-inject: no duplicate card, no
-    // error (idempotent).
-    await expect(e.reportSubtask(childKey, 'explicit result again')).resolves.toBeUndefined()
+    // A mid-flight report followed by a final report must both deliver;
+    // dropping the second stalled the idle parent (2026-09-02 G6 replay).
+    await expect(e.reportSubtask(childKey, 'final result')).resolves.toBeUndefined()
     await settle()
-    expect(p.sentCards.length).toBe(1)
+    expect(p.sentCards.length).toBe(2)
+    expect(cardBody(p.sentCards[1])).toContain('final result')
+    expect(child.getSubtaskReported()).toBe(true)
   })
 
   it('no-report child is a no-op', async () => {
@@ -1230,16 +1231,22 @@ describe('reportNativeChild', () => {
     return r
   }
 
-  it('delivers the result card to the engine parent and is idempotent', async () => {
+  it('delivers the result card to the engine parent and re-delivers an explicit re-report', async () => {
     const p = createStubCardPlatformFull('test')
     const { e } = armedEngine(p)
 
-    await e.reportNativeChild('native-child-1', 'all done')
-    await e.reportNativeChild('native-child-1', 'duplicate')
-
+    await e.reportNativeChild('native-child-1', 'intermediate status')
     await settle()
     expect(p.sentCards.length).toBe(1)
-    expect(cardBody(p.sentCards[0])).toContain('all done')
+    expect(cardBody(p.sentCards[0])).toContain('intermediate status')
+
+    // A mid-epoch re-report must reach the parent too: the one-shot drop
+    // stranded a child's final result behind an intermediate report and
+    // stalled the idle parent 13 minutes (2026-09-02 G6 replay).
+    await e.reportNativeChild('native-child-1', 'final result')
+    await settle()
+    expect(p.sentCards.length).toBe(2)
+    expect(cardBody(p.sentCards[1])).toContain('final result')
     expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
   })
 
