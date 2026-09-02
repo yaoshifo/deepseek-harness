@@ -12,7 +12,7 @@ agent 约定提示词要求：turn 的「发现的问题 / 可优化点」一节
 
 引擎的 `askUser` 委托对识别为收尾卡的 ask 就地转换而非 park。识别在引擎侧、按签名进行——模型行为零改动、零迁移：单题 questions 且 header 为保留字「后续处理」，或单题多选且含「暂不处理」选项。两个键都是提示词既已规定的特征，存量收尾卡在首次部署即被转换；header 常量放在 `engine/ask.ts`、提示词模板 import 同一常量，匹配器与提示词不可能漂移。
 
-- `isFollowupsAsk`（engine/ask.ts）持有匹配器；`Engine.askUser` 的转换分支把问题登记到 `InteractiveState.pendingFollowups`，并返回合成的延迟 Decision——custom 文本告知模型选择会作为新消息到达。工具结果本身就是第二道防线：即使会话带着过时提示词，也会正确收尾而非干等。
+- `isFollowupsAsk`（engine/ask.ts）持有匹配器；`Engine.askUser` 的转换分支把问题登记到 `InteractiveState.pendingFollowups`，投递 ask 前的回复段（与 parked 路径在 deliverCards 执行的同一套 captureReplyForExport + 字数阈值 + 自动渲染守卫的 speculative render——ask 之后的尾段文本会替换实时播报段，缺了这次渲染、收尾总结就只剩导出按钮可看；刻意不做段落 flush 与 completeAndDetach，让 turn 继续流式、turn-end 导出仍登记完整 joined 回复），并返回合成的延迟 Decision——custom 文本告知模型选择会作为新消息到达。工具结果本身就是第二道防线：即使会话带着过时提示词，也会正确收尾而非干等。
 - `sendFollowupsCard` 在 `handleResultEvent` 里紧跟 `sendTurnCompletionCard` 发出蓝色建议卡（checkOptions 表单、`fw_multi:0` action、recommended 选项预勾选、卡内附言输入框）；errored turn 丢弃登记，排队接管把登记结转到最终 turn 的完成卡。
 - 飞书平台的卡片回调 intake 新增 `fw_multi:` 分支：合成自包含的「[后续处理]」选择消息（勾选与未勾选项带标签、附附言；发送时 meta 缓存丢失时退化为仅序号），并以 `isFollowupAction` 旗标派发。`routeAskResponse` 永不认领该旗标——即使该会话上另有 ask 正在 park，选择也开新 turn；提交后的卡按发送时缓存的 meta 冻结为已提交快照，且各命名空间只消费各自的 meta。
 - 提示词段改写为新语义（登记后正常结束回合；选择即授权；不点即不处理），不再要求「暂不处理」选项。
@@ -29,4 +29,4 @@ agent 约定提示词要求：turn 的「发现的问题 / 可优化点」一节
 
 ## Consequences
 
-收尾卡 turn 现在正常结束：✅ 通知按时到达、会话锁即释放（cron 复用任务可跑）、自由文本开新 turn、idle reaper 正常回收会话、重启后点旧卡选择仍以新 turn 到达——严格优于重启即作废的 parked ask。代价：两条推送背靠背（✅ 卡之后是建议卡）——「完成→选择」的自然顺序被接受，若实际吵再考虑配置开关；匹配器是显示文本契约，三特征全偏离的收尾卡回落到 park（fail-open 到旧行为，可用 askq park 频率监控）。真正的中途 `ask_user_question` 提问照旧 park。由 `tests/engine/followups.spec.ts`（匹配器、转换、发射、路由）、`tests/feishu/card-action.spec.ts`（fw_multi intake 与冻结）、`tests/agent-dsh/adapter-persona.spec.ts`（提示词逐字钉）钉住。
+收尾卡 turn 现在正常结束：✅ 通知按时到达、会话锁即释放（cron 复用任务可跑）、自由文本开新 turn、idle reaper 正常回收会话、重启后点旧卡选择仍以新 turn 到达——严格优于重启即作废的 parked ask。ask 前的收尾总结保有 parked 路径的可见性：speculative render 在 turn 结束前把它投递出去（低于字数阈值、plan render 关闭或渲染管线失败时留在导出按钮后——三者各自都是 parked 路径的既有行为）。代价：两条推送背靠背（✅ 卡之后是建议卡）——「完成→选择」的自然顺序被接受，若实际吵再考虑配置开关；匹配器是显示文本契约，三特征全偏离的收尾卡回落到 park（fail-open 到旧行为，可用 askq park 频率监控）。真正的中途 `ask_user_question` 提问照旧 park。由 `tests/engine/followups.spec.ts`（匹配器、转换、ask 前渲染、发射、路由）、`tests/feishu/card-action.spec.ts`（fw_multi intake 与冻结）、`tests/agent-dsh/adapter-persona.spec.ts`（提示词逐字钉）钉住。
