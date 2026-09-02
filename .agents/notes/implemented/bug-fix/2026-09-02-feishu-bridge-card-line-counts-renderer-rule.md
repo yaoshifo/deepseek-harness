@@ -10,7 +10,7 @@ The streaming progress card fixes each tool entry's code-block height by countin
 
 ## Decision
 
-Line counting now uses the renderer's rule. `splitCardLines` in `src/feishu/markdown.ts` (beside the other schema 2.0 line-break normalization) splits on `/\r\n|\r|\n/`; `padToFixedLines` and `truncateToMaxLines` (streaming.ts) and `padProgressLines` (feishu/progress.ts) count and rejoin through it, so card text never carries a raw `\r` and every fixed-height window truncates with an honest `... (N more lines)` marker. The rule lives in the line-fixing functions, not at tool-result ingress: `ProgressEntry.result` feeds only `render()`, and fixing at the counting seam covers every ingress at once — streaming updates, payload cards, offline replay.
+Line counting now uses the renderer's rule, and line width is capped with it. `src/feishu/markdown.ts` owns both geometry rules beside the other schema 2.0 line-break normalization: `splitCardLines` splits on `/\r\n|\r|\n/`, and `capProgressLineChars` caps one line at `maxProgressLineChars` (120 code points plus `...`, moved there from `feishu/progress.ts` so both card paths share it). `padToFixedLines` and `truncateToMaxLines` (streaming.ts) count and rejoin through `splitCardLines`; `padToFixedLines` and `padProgressLines` (feishu/progress.ts) additionally cap every line. Card text never carries a raw `\r`, no line wraps past the code-block width, and every fixed-height window truncates with an honest `... (N more lines)` marker. The rules live in the line-fixing functions, not at tool-result ingress: `ProgressEntry.result` feeds only `render()`, and fixing at the counting seam covers every ingress at once — streaming updates, payload cards, offline replay.
 
 ## Alternatives considered
 
@@ -20,8 +20,8 @@ Line counting now uses the renderer's rule. `splitCardLines` in `src/feishu/mark
 
 ## Consequences
 
-Tool results with `\r` progress render as an honest truncation (first lines + overflow marker) on both card paths; `\r`-free output is byte-identical to before. Raw tool output still reaches the model and exports unchanged. Known residual: `padToFixedLines` has no per-line character cap (unlike `padProgressLines`'s 120), so a very long single `\n`-line can still wrap the streaming card's window tall — a separate failure mode, unaddressed.
+Tool results with `\r` progress render as an honest truncation (first lines + overflow marker) on both card paths, and an over-long single `\n`-line (a one-line JSON result) caps at 120 code points instead of wrapping the streaming card's window tall; output with no `\r` and no long line is byte-identical to before. Raw tool output still reaches the model and exports unchanged.
 
 ## Testing
 
-`tests/streaming.spec.ts`: the git-worktree `updateToolResult` case (36 `\r`-separated updates through `tail -3`) and the `line fixing counts lines with the renderer rule` describe. `tests/feishu/progress.spec.ts`: `formatProgressToolResult renderer line counting`.
+`tests/streaming.spec.ts`: the git-worktree `updateToolResult` case (36 `\r`-separated updates through `tail -3`) and the `line fixing counts lines with the renderer rule` describe (line-ending counting plus the per-line wrap cap). `tests/feishu/progress.spec.ts`: `formatProgressToolResult renderer line counting`.

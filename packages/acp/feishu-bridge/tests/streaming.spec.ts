@@ -1840,4 +1840,15 @@ describe('line fixing counts lines with the renderer rule', () => {
     expect(padToFixedLines('a\rb\rc', 1)).toBe('a  ...+2')
     expect(padToFixedLines('x\ny', 3)).toBe('x\ny\n ')
   })
+
+  it('padToFixedLines caps each line at the card wrap limit', () => {
+    const long = 'x'.repeat(300)
+    const capped = `${'x'.repeat(120)}...`
+    // fits the window: the long line is capped, then padded
+    expect(padToFixedLines(long, 3)).toBe(`${capped}\n \n `)
+    // overflows: the kept line is capped before the overflow marker
+    expect(padToFixedLines(`${long}\nshort\ntail`, 2)).toBe(`${capped}\n... (2 more lines)`)
+    // single-line window: the capped line carries the count suffix
+    expect(padToFixedLines(`${long}\nsecond`, 1)).toBe(`${capped}  ...+1`)
+  })
 })

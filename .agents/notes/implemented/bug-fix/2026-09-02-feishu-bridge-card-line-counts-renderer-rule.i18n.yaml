@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-02-feishu-bridge-card-line-counts-renderer-rule.md
-2026-09-02-feishu-bridge-card-line-counts-renderer-rule.md: 33f4e39bcbe885c15c2eb13af82e31cd06167ee8
-2026-09-02-feishu-bridge-card-line-counts-renderer-rule.zh.md: 960c99e1f3f6ea8875662e666c91f181aba3e556
+2026-09-02-feishu-bridge-card-line-counts-renderer-rule.md: 0624ebe428c510ea061910f3b679196d334b3b1e
+2026-09-02-feishu-bridge-card-line-counts-renderer-rule.zh.md: 57d74f00ac5cf5bd804b153de9ccb67d41e50143

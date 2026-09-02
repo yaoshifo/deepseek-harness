@@ -10,7 +10,7 @@ Status: implemented
 
 ## 决策
 
-行数计数改用渲染器的规则。`src/feishu/markdown.ts` 的 `splitCardLines`（与其他 schema 2.0 行断归一化放在一起）按 `/\r\n|\r|\n/` 切行；`padToFixedLines` 与 `truncateToMaxLines`（streaming.ts）、`padProgressLines`（feishu/progress.ts）经它计数并重组，卡片文本不再携带原始 `\r`，每个固定高度窗口都以诚实的 `... (N more lines)` 标记截断。规则放在行数规整函数里而非工具结果入口：`ProgressEntry.result` 只被 `render()` 消费，在计数环节修一次即覆盖全部入口——流式更新、payload 卡、离线重放。
+行数计数改用渲染器的规则，行宽随之封顶。`src/feishu/markdown.ts` 与其他 schema 2.0 行断归一化放在一起，拥有两条几何规则：`splitCardLines` 按 `/\r\n|\r|\n/` 切行，`capProgressLineChars` 把单行截到 `maxProgressLineChars`（120 码点加 `...`，从 `feishu/progress.ts` 移来，两条卡片路径共用）。`padToFixedLines` 与 `truncateToMaxLines`（streaming.ts）经 `splitCardLines` 计数并重组；`padToFixedLines` 与 `padProgressLines`（feishu/progress.ts）另对每行封顶。卡片文本不再携带原始 `\r`，任何行都不会折出代码块宽度，每个固定高度窗口都以诚实的 `... (N more lines)` 标记截断。规则放在行数规整函数里而非工具结果入口：`ProgressEntry.result` 只被 `render()` 消费，在计数环节修一次即覆盖全部入口——流式更新、payload 卡、离线重放。
 
 ## 备选方案
 
@@ -20,8 +20,8 @@ Status: implemented
 
 ## 后果
 
-带 `\r` 进度的工具结果在两条卡片路径上都渲染为诚实截断（前几行 + 溢出标记）；无 `\r` 输出与之前逐字节一致。原始工具输出到达模型与导出的内容不变。已知残留：`padToFixedLines` 没有每行字符上限（不同于 `padProgressLines` 的 120），超长单 `\n`-行仍可能把流式卡窗口折行撑高——另一类失效模式，未处理。
+带 `\r` 进度的工具结果在两条卡片路径上都渲染为诚实截断（前几行 + 溢出标记），超长单 `\n`-行（如一行 JSON 结果）截到 120 码点而不是把流式卡窗口折行撑高；无 `\r` 且无长行的输出与之前逐字节一致。原始工具输出到达模型与导出的内容不变。
 
 ## 测试
 
-`tests/streaming.spec.ts`：git-worktree 形状的 `updateToolResult` 案例（`tail -3` 后的 36 段 `\r` 更新）与 `line fixing counts lines with the renderer rule` describe。`tests/feishu/progress.spec.ts`：`formatProgressToolResult renderer line counting`。
+`tests/streaming.spec.ts`：git-worktree 形状的 `updateToolResult` 案例（`tail -3` 后的 36 段 `\r` 更新）与 `line fixing counts lines with the renderer rule` describe（行尾计数加每行折行上限）。`tests/feishu/progress.spec.ts`：`formatProgressToolResult renderer line counting`。
