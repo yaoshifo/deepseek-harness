@@ -268,6 +268,12 @@ export interface DshAdapterConfig {
    * `mcp__*` tools of servers outside the list; absent = unrestricted.
    */
   mcpServers?: readonly string[]
+  /**
+   * Permission preset switched onto the native session when a plan review is
+   * approved; resolves through the composed permission-presets service's
+   * preset table. Absent or '' keeps permissions unchanged on approval.
+   */
+  planApprovalPreset?: string
   /** Shared routing for multi-project daemons; absent = single-adapter fallback. */
   questionRouting?: QuestionRouting
 }
@@ -942,6 +948,13 @@ export class DshAgentAdapter {
     if (decision.outcome === 'allowed-once' || decision.outcome === 'allowed-always') {
       const supplement = (decision.note ?? '').trim()
       if (supplement !== '') target.steer(supplement)
+      // The approval is the user's authorization of the plan's execution:
+      // apply the configured permission preset before the model's next step
+      // reads the runtime-context policy (cfg.planApprovalPreset; '' keeps
+      // permissions unchanged).
+      if (this.cfg.planApprovalPreset !== undefined && this.cfg.planApprovalPreset !== '') {
+        target.applyPermissionPreset(this.cfg.planApprovalPreset)
+      }
       return {
         answers: [{
           id: item.id ?? item.question,
@@ -2206,6 +2219,33 @@ export class DshAgentSession implements AgentSession {
       throw new Error('compaction service not available')
     }
     await compaction.compactNow(this.handle.agent, signal ?? new AbortController().signal)
+  }
+
+  /**
+   * Switch the native session's permission preset — the plan-approval
+   * elevation (cfg.planApprovalPreset). The composed permission-presets
+   * service owns the write path: the switch lands as durable
+   * permission/preset + sandbox/mode + approval/policy events and takes
+   * effect on the session's next confined call. A missing service or a
+   * rejected preset name (typo, absent table entry) degrades safe: the
+   * approval already given still completes, permissions stay unchanged, and
+   * the misconfiguration surfaces in the daemon log.
+   *
+   * @param name - the preset name to switch to (resolved by the preset table).
+   */
+  applyPermissionPreset(name: string): void {
+    const presets = this.ctx?.get('permissionPresets') as
+      | { set(session: unknown, name: string): void }
+      | undefined
+    if (presets === undefined) {
+      console.error(`agent-dsh: plan approval preset "${name}" requested but permissionPresets is not composed; permissions unchanged`)
+      return
+    }
+    try {
+      presets.set(this.handle.agent.session, name)
+    } catch (error: unknown) {
+      console.error(`agent-dsh: plan approval preset "${name}" failed (${String(error)}); permissions unchanged`)
+    }
   }
 
   /**

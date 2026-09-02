@@ -68,7 +68,8 @@ Linux 部署面用 systemd user unit（§5）。
 | `[[providers]]` `name` / `api_key` / `base_url` / `model` / `context_window` | `llm-pi-ai` 行 `providers.<route>`（`apiKeyEnv` 引用 + `baseURL` + `models[].contextWindow`）；插件行 `config.providers.<name>.route` / `.model` | key 实际值放 launchd/systemd 的 Environment（不在 yml）；`rewrite_tui_fingerprint` 不迁移（FEATURE-PARITY #16） |
 | `[[projects]]` `name` / `work_dir` | `config.projects[].name` / `.workdir` | |
 | `[projects.agent.options]` `provider` | `config.projects[].agent.provider` | 指向 `config.providers` 的键名 |
-| `[projects.agent.options]` `mode` | `config.projects[].agent.mode` | `'plan'` = 每会话默认计划模式（含审批 preset）；按群覆盖：`/spawn --plan` / `--default`（也适用于 `/fork`）。Go 的 `/mode` 单次覆盖命令未迁移（2026-08-21 裁定） |
+| `[projects.agent.options]` `mode` | `config.projects[].agent.mode` | `'plan'` = 每会话默认计划模式；按群覆盖：`/spawn --plan` / `--default`（也适用于 `/fork`）。Go 的 `/mode` 单次覆盖命令未迁移（2026-08-21 裁定） |
+| —（TS 原生新增） | `config.projects[].agent.planApprovalPreset` | plan 审批「允许」时经 permission-presets 服务切换会话权限预设（如 `danger-full-access`：计划执行期全文件访问、不弹审批卡）；缺省不联动。名称须存在于 permission 插件预设表；TS 无 Go 对应 |
 | 项目级 `quiet` | `config.projects[].features.quiet` | |
 | `[projects.platforms.options]` `allow_chat` | `config.projects[].features.allowChat` | |
 | `inject_sender` | `config.projects[].features.injectSender` | |

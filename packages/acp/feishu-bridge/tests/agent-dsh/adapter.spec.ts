@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry, { type Agent } from '@deepseek-ai/dsh-agent'
 import UserQuestionService from '@deepseek-ai/dsh-user-questions'
@@ -1024,6 +1024,165 @@ describe('DshAgentAdapter userQuestions answerer', () => {
       agent: { session: { id: session.currentSessionID() } },
     })
     await expect(askPromise).resolves.toEqual({ answers: [] })
+  })
+})
+
+describe('DshAgentAdapter plan-approval permission preset', () => {
+  /**
+   * Provider over the plan-review ask path with a configured preset and a
+   * preset service under test: a recording fake by default, an explicit
+   * replacement via {@link PresetProviderOpts.presets}, or none at all via
+   * {@link PresetProviderOpts.noPresets} (a composition without the
+   * permission-presets plugin resolves ctx.get to undefined).
+   */
+  interface PresetProviderOpts {
+    preset?: string
+    presets?: unknown
+    noPresets?: boolean
+  }
+
+  async function presetProvider(opts: PresetProviderOpts = {}): Promise<{
+    session: DshAgentSession
+    ask: (req: Record<string, unknown>) => Promise<unknown>
+    delegate: ReturnType<typeof recordingDelegate>
+    agent: RecordedAgent
+    presetCalls: Array<{ session: unknown; name: string }>
+  }> {
+    const h = createHarness()
+    const presetCalls: Array<{ session: unknown; name: string }> = []
+    if (opts.noPresets !== true) {
+      h.services.permissionPresets = opts.presets ?? {
+        set(session: unknown, name: string): void { presetCalls.push({ session, name }) },
+      }
+    }
+    const adapter = new DshAgentAdapter(h.ctx, {
+      agentName: 'dsh',
+      cwd: '/workspace/project',
+      providers: [{ name: 'glm', provider: 'glm-route', model: 'glm-5.3' }],
+      activeProvider: 'glm',
+      ...opts.preset !== undefined ? { planApprovalPreset: opts.preset } : {},
+    })
+    const delegate = recordingDelegate()
+    adapter.setAskDelegate(delegate)
+    const session = (await adapter.startSession('')) as DshAgentSession
+    return { session, ask: userQuestionsAsk(h), delegate, agent: h.agents[0]!, presetCalls }
+  }
+
+  it('approving the plan review switches the configured permission preset onto the native session', async () => {
+    const { session, ask, delegate, agent, presetCalls } = await presetProvider({ preset: 'danger-full-access' })
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-once' })
+    await askPromise
+
+    expect(presetCalls).toEqual([{ session: agent.session, name: 'danger-full-access' }])
+  })
+
+  it('denying the plan review leaves permissions untouched', async () => {
+    const { session, ask, delegate, presetCalls } = await presetProvider({ preset: 'danger-full-access' })
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'rejected', note: 'add tests first' })
+    await askPromise
+
+    expect(presetCalls).toEqual([])
+  })
+
+  it('approving with allow-always applies the same preset switch', async () => {
+    const { session, ask, delegate, agent, presetCalls } = await presetProvider({ preset: 'danger-full-access' })
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-always' })
+    await askPromise
+
+    expect(presetCalls).toEqual([{ session: agent.session, name: 'danger-full-access' }])
+  })
+
+  it('approving without a configured preset leaves permissions untouched', async () => {
+    const { session, ask, delegate, presetCalls } = await presetProvider({})
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-once' })
+    await askPromise
+
+    expect(presetCalls).toEqual([])
+  })
+
+  it('approving with an empty configured preset leaves permissions untouched', async () => {
+    const { session, ask, delegate, presetCalls } = await presetProvider({ preset: '' })
+
+    const askPromise = ask({
+      questions: [planReviewQuestion()],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+    delegate.settle({ outcome: 'allowed-once' })
+    await askPromise
+
+    expect(presetCalls).toEqual([])
+  })
+
+  it('a missing permissionPresets service degrades safe: approval completes with an error log', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      // presetProvider injects a service unless one is given; a null service
+      // models a composition without the permission-presets plugin.
+      const { session, ask, delegate } = await presetProvider({ preset: 'danger-full-access', noPresets: true })
+
+      const askPromise = ask({
+        questions: [planReviewQuestion()],
+        agent: { session: { id: session.currentSessionID() } },
+      })
+      await new Promise((r) => { setTimeout(r, 10) })
+      delegate.settle({ outcome: 'allowed-once' })
+
+      await expect(askPromise).resolves.toEqual({
+        answers: [{ id: 'plan-review', selected: ['Approve'] }],
+      })
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(String(errorSpy.mock.calls[0]?.[0])).toContain('permissionPresets is not composed')
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
+  it('a throwing preset switch degrades safe: approval completes with an error log', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const throwing = { set(): void { throw new Error('permission: unknown preset "typo"') } }
+      const { session, ask, delegate } = await presetProvider({ preset: 'typo', presets: throwing })
+
+      const askPromise = ask({
+        questions: [planReviewQuestion()],
+        agent: { session: { id: session.currentSessionID() } },
+      })
+      await new Promise((r) => { setTimeout(r, 10) })
+      delegate.settle({ outcome: 'allowed-once' })
+
+      await expect(askPromise).resolves.toEqual({
+        answers: [{ id: 'plan-review', selected: ['Approve'] }],
+      })
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(String(errorSpy.mock.calls[0]?.[0])).toContain('unknown preset')
+    } finally {
+      errorSpy.mockRestore()
+    }
   })
 })
 

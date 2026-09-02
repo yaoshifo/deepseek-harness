@@ -118,6 +118,14 @@ export interface AgentOptions {
   /** Default session mode: 'plan' starts every session in plan mode (Go agent options mode). */
   mode?: string
   /**
+   * Permission preset switched onto the session when a plan review is
+   * approved ('' or absent keeps permissions unchanged). The name must exist
+   * in the composed permission-presets service's preset table (the profile's
+   * `permission` plugin row; the default table ships `workspace-write` and
+   * `danger-full-access`).
+   */
+  planApprovalPreset?: string
+  /**
    * Reasoning effort passed through to `ctx.agents` agent options; also the
    * status footer's 🤖 line display source. Ids must exist in some adapter's
    * advertised set: no adapter offers 'minimal'.
@@ -560,6 +568,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       provider: Schema.string().description('Key into providers'),
       model: Schema.string().description('Model override'),
       mode: Schema.string().description("Default session mode ('plan' = review before execution)"),
+      planApprovalPreset: Schema.string().description("Permission preset switched to when a plan is approved ('' = unchanged; e.g. 'danger-full-access')"),
       reasoningEffort: Schema.union(['off', 'low', 'medium', 'high', 'max']).description('Reasoning effort'),
     }),
     features: Schema.object({
@@ -1132,6 +1141,9 @@ export function buildProjectAssembly(
     providers: routes,
     activeProvider,
     ...(project.agentCloseSec !== undefined ? { closeTimeoutMs: project.agentCloseSec * 1000 } : {}),
+    ...(project.agent?.planApprovalPreset !== undefined && project.agent.planApprovalPreset !== ''
+      ? { planApprovalPreset: project.agent.planApprovalPreset }
+      : {}),
     ...(project.mcpServers !== undefined && project.mcpServers.length > 0 ? { mcpServers: project.mcpServers } : {}),
     ...(sharedQuestionRouting !== undefined ? { questionRouting: sharedQuestionRouting } : {}),
   })
