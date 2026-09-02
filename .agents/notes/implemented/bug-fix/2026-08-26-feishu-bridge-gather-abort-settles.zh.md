@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-- `gatherSubtasksBlocking` 中止即结算：abort 监听器清 waiter（不变——后续回报必须走异步唤醒而非死 waiter）并以新增的 `subtask_gather_aborted` 消息结算 promise（「gather 等待被停止中止；已收集的回报仍会经超时唤醒送达。」）。挂起的 runtime 回合拿到工具结果得以终结、`aborted/user` 可达、静息恢复、dispose 能注销会话。武装中的屏障不动：超时唤醒照常投递已收集的回报。
+- `gatherSubtasksBlocking` 中止即结算：abort 监听器清 waiter（不变——后续回报必须走异步唤醒而非死 waiter）并以新增的 `subtask_gather_aborted` 消息结算 promise（「gather 等待被停止中止；已收集的回报仍会经超时唤醒送达。」）。挂起的 runtime 回合拿到工具结果得以终结、`aborted/user` 可达、静息恢复、dispose 能注销会话。武装中的屏障不动：超时唤醒照常投递已收集的回报——拆除场景除外，[chatroom interrupt 会解除成员屏障](2026-09-01-feishu-bridge-chatroom-interrupt-disarms-gathers.zh.md)，兜底定时器不再能唤醒已拆除的聊天室。
 - `stopInteractiveSession` 的关闭改走 `closeAgentSessionWithTimeout`，与其他关闭点对齐：挂在永不静息回合上的 dispose 会打出 `close timed out` 警告并被放弃，而不是静默悬挂。
 
 ## Alternatives considered

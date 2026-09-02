@@ -181,8 +181,8 @@ export function normalizeCronSessionMode(s: string): string {
   return s
 }
 
-/** The permission modes a job may override with (Go validateCronJob). */
-const validJobModes = new Set(['default', 'bypassPermissions', 'acceptEdits', 'plan', 'auto', 'dontAsk'])
+/** The permission modes a cron-job override or a project agent.mode may name (Go validateCronJob). */
+export const validJobModes = new Set(['default', 'bypassPermissions', 'acceptEdits', 'plan', 'auto', 'dontAsk'])
 
 /**
  * Validate a job's session_mode/mode/timeout_mins (Go validateCronJob).

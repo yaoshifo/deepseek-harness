@@ -483,6 +483,11 @@ describe('agent.mode default session mode wiring', () => {
     expect((bare.adapter as unknown as { defaultMode?: string }).defaultMode).toBe('')
   })
 
+  it('rejects a misspelled agent.mode at assembly, naming the project and the valid modes', () => {
+    expect(() => assemble(baseConfig(), { ...project(), agent: { mode: 'defualt' } }))
+      .toThrow(/smoke-project.*"defualt".*default, bypassPermissions, acceptEdits, plan, auto, or dontAsk/)
+  })
+
   it('forwards project.agent.planApprovalPreset onto the adapter; absent leaves it unset', () => {
     const { adapter } = assemble(baseConfig(), { ...project(), agent: { planApprovalPreset: 'danger-full-access' } })
     expect((adapter as unknown as { cfg: { planApprovalPreset?: string } }).cfg.planApprovalPreset).toBe('danger-full-access')
