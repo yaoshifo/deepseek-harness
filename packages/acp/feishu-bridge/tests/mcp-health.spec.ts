@@ -23,7 +23,7 @@ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
 import * as entry from '../src/index.ts'
-import { MCP_HEALTH_CONTEXT_NAME, registerMcpHealthContext, splitMcpToolName } from '../src/core/mcp-health.ts'
+import { MCP_HEALTH_CONTEXT_NAME, mcpToolCounts, registerMcpHealthContext, splitMcpToolName } from '../src/core/mcp-health.ts'
 import type { McpHealthConfig, FeishuBridgeConfig } from '../src/index.ts'
 
 const contexts: CordisContext[] = []
@@ -287,4 +287,29 @@ describe('splitMcpToolName (mcp-client naming contract)', () => {
       expect(splitMcpToolName(name)).toEqual(want)
     })
   }
+})
+
+describe('mcpToolCounts (public tool-name surface)', () => {
+  it('counts only mcp-client tools and groups them per server', () => {
+    const counts = mcpToolCounts([
+      'bash', 'lsp', 'read',
+      'mcp__devx__create_issue', 'mcp__devx__list_repos',
+      'mcp__zread__search_doc',
+      'mcp__web_search_prime__web_search_prime',
+    ])
+    expect(counts.total).toBe(4)
+    expect(counts.byServer.get('devx')).toBe(2)
+    expect(counts.byServer.get('zread')).toBe(1)
+    expect(counts.byServer.get('web_search_prime')).toBe(1)
+  })
+
+  it('orders byServer heaviest first, ties by server name', () => {
+    const counts = mcpToolCounts([
+      'mcp__beta__q',
+      'mcp__zread__a', 'mcp__zread__b',
+      'mcp__alpha__q',
+      'mcp__devx__x', 'mcp__devx__y', 'mcp__devx__z',
+    ])
+    expect([...counts.byServer.keys()]).toEqual(['devx', 'zread', 'alpha', 'beta'])
+  })
 })

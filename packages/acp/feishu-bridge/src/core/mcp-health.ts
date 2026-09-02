@@ -71,6 +71,36 @@ export function splitMcpToolName(name: string): { server: string; raw: string } 
   return { server: rest.slice(0, sep), raw: rest.slice(sep + 2) }
 }
 
+/** mcp-client tool totals over public tool names, for surface-size notices. */
+export interface McpToolCounts {
+  /** Total mcp-client tools among the names. */
+  total: number
+  /** Per-server tool counts keyed by serverName, heaviest server first (ties by name). */
+  byServer: ReadonlyMap<string, number>
+}
+
+/**
+ * Count the mcp-client tools among public tool names and split them per
+ * server, heaviest first. Non-MCP names and malformed `mcp__` names are
+ * ignored — the same narrowing {@link splitMcpToolName} applies.
+ *
+ * @param names - Public tool names from the process-global tool registry.
+ * @returns The totals; `byServer` is empty when no mcp tools are present.
+ */
+export function mcpToolCounts(names: readonly string[]): McpToolCounts {
+  const counts = new Map<string, number>()
+  let total = 0
+  for (const name of names) {
+    const split = splitMcpToolName(name)
+    if (split === undefined) continue
+    total += 1
+    counts.set(split.server, (counts.get(split.server) ?? 0) + 1)
+  }
+  const byServer = new Map([...counts].sort(([a, aCount], [b, bCount]) =>
+    aCount !== bCount ? bCount - aCount : a.localeCompare(b)))
+  return { total, byServer }
+}
+
 /**
  * Render the degradation text for one assembly: one line per configured
  * server still missing from the global tool view after the startup grace

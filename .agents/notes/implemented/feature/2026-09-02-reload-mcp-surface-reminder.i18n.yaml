@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-02-reload-mcp-surface-reminder.md
+2026-09-02-reload-mcp-surface-reminder.md: 6ffce4ce1aa7d141da735f2446d6e1fd9c5a111b
+2026-09-02-reload-mcp-surface-reminder.zh.md: 2443e774c1e3a176b5216d965b4e37570d4aae36

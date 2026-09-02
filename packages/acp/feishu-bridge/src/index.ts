@@ -886,7 +886,7 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
 
   // The daemon is up: settle a /reload that restarted this process (each
   // start already carries its own catch, so this always runs).
-  void Promise.all(starts).then(() => { void completePendingReload(service.projects.map(({ engine }) => engine)) })
+  void Promise.all(starts).then(() => { void completePendingReload(service.projects.map(({ engine }) => engine), ctx.tools) })
 
   // Start the cron scheduler after every engine registered (Go main).
   cronScheduler.start()

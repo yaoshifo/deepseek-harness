@@ -30,6 +30,7 @@ import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync, w
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Msg } from '../i18n/index.ts'
+import { mcpToolCounts } from '../core/mcp-health.ts'
 import type { Message, Platform } from '../core/types.ts'
 import type { Engine } from './engine.ts'
 
@@ -98,6 +99,49 @@ interface ReloadPendingMarker {
 /** Marker freshness window: the build takes minutes, the restart seconds; a marker older than this is stale. */
 const PENDING_TTL_MS = 15 * 60_000
 
+/**
+ * MCP tool-count line above which the completion notice is followed by a
+ * surface reminder. Evidence (2026-09-02 session-log scan of the live
+ * daemon): resident servers carry 5 tools; 13 were carried for days without
+ * complaint; one server mounting 71 tools pushed requests to ~25k tokens of
+ * tool schema across 115 sessions before being unmounted by hand.
+ */
+const MCP_SURFACE_REMINDER_ABOVE_TOOLS = 20
+
+/** The process-global tool view the reminder counts; only `name` is read. */
+export interface GlobalToolView {
+  /** Tool schemas in the global view (mcp-client rows register at profile root). */
+  schemas(): Array<{ name: string }>
+}
+
+/**
+ * Follow the completion notice with an MCP surface reminder when the global
+ * tool view carries more than {@link MCP_SURFACE_REMINDER_ABOVE_TOOLS}
+ * mcp-client tools: the total plus the per-server breakdown, heaviest first.
+ * Any failure — registry read or send — is contained: the reminder must
+ * never affect the completion notice or the marker cleanup.
+ *
+ * @param platform - The platform that delivered the /reload command.
+ * @param engine - The engine whose i18n renders the reminder.
+ * @param replyCtx - The recorded reply context of the /reload message.
+ * @param tools - The process-global tool view.
+ */
+async function sendMcpSurfaceReminder(
+  platform: Platform,
+  engine: Engine,
+  replyCtx: unknown,
+  tools: GlobalToolView,
+): Promise<void> {
+  try {
+    const counts = mcpToolCounts(tools.schemas().map(schema => schema.name))
+    if (counts.total <= MCP_SURFACE_REMINDER_ABOVE_TOOLS) return
+    const breakdown = [...counts.byServer].map(([server, count]) => `${server} ${String(count)}`).join(' · ')
+    await platform.send(replyCtx, engine.i18n.tf(Msg.ReloadMcpSurfaceReminder, String(counts.total), breakdown))
+  } catch (error) {
+    console.warn(`/reload: MCP surface reminder failed: ${String(error)}`)
+  }
+}
+
 function pendingPath(): string {
   return join(reloadLogDir(), 'feishu-bridge-reload-pending.json')
 }
@@ -118,8 +162,9 @@ function pendingPath(): string {
  * @param engines - The daemon's live engines; the recorded (engine,
  * platform) pair is looked up among them — both names, because tagless
  * deployments name every platform 'feishu'.
+ * @param tools - The process-global tool view for the MCP surface reminder.
  */
-export async function completePendingReload(engines: readonly Engine[]): Promise<void> {
+export async function completePendingReload(engines: readonly Engine[], tools: GlobalToolView): Promise<void> {
   const path = pendingPath()
   let raw: string
   try {
@@ -158,6 +203,7 @@ export async function completePendingReload(engines: readonly Engine[]): Promise
         console.warn(`/reload: completion marker names unknown engine ${marker.engine} or platform ${marker.platform}; dropping it`)
       } else {
         await platform.send(marker.replyCtx, engine.i18n.tf(Msg.ReloadCompleted, join(reloadLogDir(), 'feishu-bridge-reload.log')))
+        await sendMcpSurfaceReminder(platform, engine, marker.replyCtx, tools)
       }
     }
   } catch (error) {
