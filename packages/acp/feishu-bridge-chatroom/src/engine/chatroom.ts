@@ -1328,6 +1328,38 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
 }
 
 /**
+ * Whether a non-role session in the chatroom hub's subtree descends from a
+ * chatroom executor — a chatroom role or the research steward: the ancestor
+ * that hangs directly off the hub. Descendants at every depth below those
+ * (role assistants, the assistants' recursive fetchers, the steward's
+ * per-source fetchers) are cleaned with the room; subtrees below other
+ * hub-direct children (the end-of-run HTML renderers) are preserved.
+ *
+ * collectSubtree is deepest-first, so no ancestor has been cleared yet when
+ * this runs. A cycle in the parent chain (malformed state) preserves rather
+ * than loops.
+ *
+ * @param e - Engine carrying the session registry.
+ * @param sess - The subtree session being classified.
+ * @param hubKey - Session key of the chatroom hub.
+ * @returns True when the session belongs to a role's or the steward's subtree.
+ */
+function hangsOffChatroomExecutor(e: Engine, sess: Session, hubKey: string): boolean {
+  let cur = sess
+  const seen = new Set<string>()
+  for (;;) {
+    const pk = cur.getParentSessionKey()
+    if (pk === '') return false
+    if (pk === hubKey) {
+      return chatroomState(cur).chatroomHubKey === hubKey || chatroomState(cur).researchAssistant
+    }
+    if (seen.has(pk)) return false
+    seen.add(pk)
+    cur = e.sessions.getOrCreateActive(pk)
+  }
+}
+
+/**
  * Tear down every chatroom role under the hub: stops each role session,
  * clears the chatroom marking, and drops the end barrier. The Session
  * records themselves are kept. Returns the number of roles removed.
@@ -1346,18 +1378,12 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
   for (const childKey of e.collectSubtree(hubKey)) {
     const sess = e.sessions.getOrCreateActive(childKey)
     if (chatroomState(sess).chatroomHubKey === '') {
-      // Not a chatroom role. It may still be a research-mode role's
-      // pre-spawned assistant (child of a role) or the hub's pre-spawned
-      // research steward — clean both up. Leave the hub's other direct
-      // /spawn children (end-of-run HTML renderers) alone. collectSubtree
-      // is deepest-first, so the parent role's hub key has not been
-      // cleared yet.
-      const pk = sess.getParentSessionKey()
-      if (pk === '') continue
-      const parentIsRole = chatroomState(e.sessions.getOrCreateActive(pk)).chatroomHubKey === hubKey
-      // The steward is the hub's only research-flagged direct child.
-      const isSteward = pk === hubKey && chatroomState(sess).researchAssistant
-      if (!parentIsRole && !isSteward) continue
+      // Not a chatroom role. Everything in the hub's subtree hangs off the
+      // hub through a chatroom role, the research steward, or a preserved
+      // hub-direct /spawn child (the end-of-run HTML renderers) — clean the
+      // first two families at every depth (role assistants and their
+      // recursive fetchers included), preserve the third with its subtree.
+      if (!hangsOffChatroomExecutor(e, sess, hubKey)) continue
     }
     void cleanupOneChat(e, p, childKey, undefined, true)
     chatroomState(sess).chatroomHubKey = ''

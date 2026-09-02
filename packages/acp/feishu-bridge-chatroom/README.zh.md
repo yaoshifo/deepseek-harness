@@ -50,7 +50,7 @@ Chatroom 会话使用整体替换的 persona 提示词，因此每个 role/moder
 - **Picker 状态在内存**：daemon 重启会丢弃已武装的 picker；孤儿 pick 卡的下次点击会原位换成灰色过期卡并提示重新 `/chatroom`（Go 版对孤儿按钮是静默或假确认）。
 - **部署迁移是手动的**：生产 profile 在其自演化的 `cordis.patch.yml` 里把 chatroom 段放在 `feishu-bridge` 行下；桥现在会对这类残留 fail loud，需要把段迁移到本插件自己的配置（`defaults` + 按 `projects`、以桥项目名为键）。迁移片段与 profile 模板更新随 C3 部署批次落地。
 - **REAL 组合面的覆盖**：apply/HMR spec 把插件挂在真实 Cordis 服务上（事件总线、工具注册表、skill 注册表、桥服务），但未经过 Loader 与 `cordis.yml`；走 Loader 的组合测试与生产 `/reload` 冒烟清单随 C3 落地。
-- **用户参与可发现但不强制；收尾卡与群残留是既有行为**：hub 群的普通消息一直能中途到达主持人——就绪卡与 research 进度卡现在写明这一点，auto 模式 priming 指示每轮一条进展同步，中途发言并入下一轮或经 `ask` 转达。仍延后：auto 模式收尾 `ask_user_question` 无超时兜底（无限等待，daemon 重启即失效——过期卡提示还会让用户"用文字回答当前问题"，而问题已不存在）；`end`/`/chatroom stop` 停掉角色、助手与管家会话但从不删除它们的飞书群（桥没有解散群 API），角色/助手群只能手动清理。
+- **用户参与可发现但不强制；收尾卡与群残留是既有行为**：hub 群的普通消息一直能中途到达主持人——就绪卡与 research 进度卡现在写明这一点，auto 模式 priming 指示每轮一条进展同步，中途发言并入下一轮或经 `ask` 转达。仍延后：auto 模式收尾 `ask_user_question` 无超时兜底（无限等待，daemon 重启即失效——过期卡提示还会让用户"用文字回答当前问题"，而问题已不存在）；`end`/`/chatroom stop` 停掉聊天室子树里的全部会话——角色、角色助手及其递归于会话、管家及其抓取子任务——但从不删除它们的飞书群（桥没有解散群 API），这些群只能手动清理。
 - **research 数据去重是提示词层约定**：抓取台账、按角色数据目录、同域限速与认领分区都活在 priming 与前言文本里——遵从是软性的，只能靠按记录基线复挖 research 聊天室的会话日志来度量（见 2026-09-13 Agent Note）；引擎层的兜底（单一调度器接缝、按域名抓取队列）保持延后。
 
 <a id="dev-note"></a>

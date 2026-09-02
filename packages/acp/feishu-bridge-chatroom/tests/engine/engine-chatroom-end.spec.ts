@@ -282,13 +282,16 @@ describe('EndChatroom', () => {
 })
 
 describe('finalizeChatroomEnd', () => {
-  it('cleans research assistants and the steward but preserves hub-direct children', async () => {
+  it('cleans research descendants but preserves hub-direct children', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
     const hub = 'test:hub:user-1'
     const roleKey = 'test:role-1:user-1'
     const assistantKey = 'test:assistant-1'
+    const fetcherKey = 'test:fetcher-1' // assistant's recursive child (grandchild of hub)
+    const fetcher2Key = 'test:fetcher-2' // deeper still (child of a fetcher)
     const hubChildKey = 'test:hub-child:user-1' // hub's direct /spawn child (HTML render)
+    const htmlHelperKey = 'test:html-helper-1' // child of the preserved HTML renderer
     const stewardKey = 'test:steward-1' // hub's pre-spawned research steward
 
     // Hub (moderator), pointing at its steward.
@@ -304,10 +307,21 @@ describe('finalizeChatroomEnd', () => {
     const assistant = e.sessions.getOrCreateActive(assistantKey)
     assistant.setParentSessionKey(roleKey)
     assistant.setSubtaskDepth(1)
-    // Hub's direct /spawn child — must be preserved.
+    // Recursive fetcher spawned by the assistant (grandchild of the hub) — cleaned with the room.
+    const fetcher = e.sessions.getOrCreateActive(fetcherKey)
+    fetcher.setParentSessionKey(assistantKey)
+    fetcher.setSubtaskDepth(2)
+    // Deeper recursive child (child of a fetcher) — cleaned with the room.
+    const fetcher2 = e.sessions.getOrCreateActive(fetcher2Key)
+    fetcher2.setParentSessionKey(fetcherKey)
+    fetcher2.setSubtaskDepth(3)
+    // Hub's direct /spawn child — must be preserved, with its own subtree.
     const hubChild = e.sessions.getOrCreateActive(hubChildKey)
     hubChild.setParentSessionKey(hub)
     hubChild.setSubtaskDepth(1)
+    const htmlHelper = e.sessions.getOrCreateActive(htmlHelperKey)
+    htmlHelper.setParentSessionKey(hubChildKey)
+    htmlHelper.setSubtaskDepth(2)
     // Hub's pre-spawned research steward (direct child, research-flagged) — cleaned with the room.
     const steward = e.sessions.getOrCreateActive(stewardKey)
     steward.setParentSessionKey(hub)
@@ -316,8 +330,9 @@ describe('finalizeChatroomEnd', () => {
 
     const removed = finalizeChatroomEnd(e, hub)
 
-    // Role + research assistant + steward cleaned (3); hub-direct child preserved.
-    expect(removed).toBe(3)
+    // Role + assistant + both fetchers + steward cleaned (5); the hub-direct
+    // child and its subtree preserved.
+    expect(removed).toBe(5)
     expect(chatroomState(role).researchAssistantKey).toBe('')
     // The hub's steward pointer dies with the room.
     expect(chatroomState(hubSess).researchAssistantKey).toBe('')

@@ -12,7 +12,7 @@ Status: implemented
 
 去重的对象是数据层，不是执行——判断独立性保留，数据共享下沉到它下面。
 
-- 引擎在角色助手之外预配一个挂在 hub 下的数据管家（`chatroom-cmd.ts` afterChatroomStarted）：同样的 research-assistant 标志、共享 venv、共享工作区；主持人的 `child "assistant"` 别名按调用方解析，hub 的 key 直达管家，零监听器改动。`finalizeChatroomEnd` 随聊天室清理管家——它是 hub 唯一带 research 标志的直接子，收尾期的 HTML 渲染子因此保持保留——且 `clearChatroomResearchFlags` 清掉 hub 的管家指针。
+- 引擎在角色助手之外预配一个挂在 hub 下的数据管家（`chatroom-cmd.ts` afterChatroomStarted）：同样的 research-assistant 标志、共享 venv、共享工作区；主持人的 `child "assistant"` 别名按调用方解析，hub 的 key 直达管家，零监听器改动。`finalizeChatroomEnd` 随聊天室清理管家，并覆盖角色或管家的全部递归后代（角色助手及其抓取子任务），收尾期 HTML 渲染子树保持保留；`clearChatroomResearchFlags` 清掉 hub 的管家指针。
 - research 主持人 priming 在第 1 轮之前编排：一次普通（非 research）gather 收各角色的纯判断数据需求清单（20 分钟普通 gather 兜底拥有降级路径）；合并后的公共清单——控制在 ~6-8 项、绝不广播给角色——派给管家抓进 `data/core/`，按数据源拆并行子任务、同域限速、登记 `DATA_LEDGER.md`；一条用户可见的等待告知（静默一小时会被当成卡死）；第 1 轮广播把各角色指向台账，其助手只把缺口下取到 `data/<角色>/`。
 - research-assistant 前言——角色助手与管家共用——携带抓取台账纪律及显式的裁决例外（独立双源拉取不得复用台账文件；拉完仍登记）、按角色数据目录约定、限速与反 fan-out 规则（批量抓取优先单脚本循环，不为每页 spawn 子任务）。
 - 第 2 轮起的引导复用台账、新的公共数据走常驻管家、裁决靶点点名分配：默认一个认领者，最多争议方加一位中立方，其余角色只做判断不重下。
@@ -33,7 +33,7 @@ Status: implemented
 
 ## 测试
 
-`engine-chatroom-steward.spec.ts` 钉住管家预配（父链、标志、群名、别名 key、工作区门控）；`engine-chatroom-gather.spec.ts` 钉住 priming 流程（需求 gather、管家预取、台账、认领分区、无工作区时的省略）；`engine-chatroom-end.spec.ts` 钉住管家清理与 hub 指针清除；`adapter-persona.spec.ts` 与 `chatroom-persona.spec.ts` 钉住新前言与契约纪律文本。两包全套通过（244 + 2795 个测试）。
+`engine-chatroom-steward.spec.ts` 钉住管家预配（父链、标志、群名、别名 key、工作区门控）；`engine-chatroom-gather.spec.ts` 钉住 priming 流程（需求 gather、管家预取、台账、认领分区、无工作区时的省略）；`engine-chatroom-end.spec.ts` 钉住执行者子树清理（管家、任意深度的递归 fetcher、保留的 HTML 渲染子树）与 hub 指针清除；`adapter-persona.spec.ts` 与 `chatroom-persona.spec.ts` 钉住新前言与契约纪律文本。两包全套通过（244 + 2795 个测试）。
 
 ## 相关
 
