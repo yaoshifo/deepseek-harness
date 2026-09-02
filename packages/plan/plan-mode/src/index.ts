@@ -74,11 +74,13 @@ const APPROVE_LABEL = 'Approve'
 /** The review question's keep-planning option label. */
 const KEEP_PLANNING_LABEL = 'Keep planning'
 
+// Mechanism only: how the agent acts on rejection feedback is deployment-owned
+// policy in the plan-mode section, so the description stays policy-free.
 const EXIT_DESCRIPTION
   = 'Use only in plan mode. Present your plan for the user\'s review and, on approval, leave plan mode. '
   + 'Send the COMPLETE plan as markdown, starting with a # heading that names it. '
   + 'The user may approve (carry out the plan from your next step) or keep '
-  + 'planning — their feedback comes back in the tool result; revise and present again.'
+  + 'planning — their feedback comes back in the tool result.'
 
 /** The plan's first markdown heading (any level), or `undefined` when it has none. */
 function firstHeading(plan: string): string | undefined {
