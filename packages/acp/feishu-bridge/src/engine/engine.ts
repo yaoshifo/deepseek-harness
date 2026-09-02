@@ -79,7 +79,9 @@ import { shouldSurfaceUnsolicitedPermission as shouldSurfaceHelper } from './per
 import {
   askAnswerDisplay,
   buildAskQuestionCard,
+  buildFollowupsCard,
   finalAskAnswers,
+  isFollowupsAsk,
   parseAskqSelection,
   parsePermissionVerdict,
   parseQuestionAddress,
@@ -373,6 +375,13 @@ export class InteractiveState {
   lastPrompt: string = ''
   /** The parked ask awaiting the user's card or text response (B2). */
   pendingAsk: PendingAsk | undefined
+  /**
+   * Followups registered by a converted closing-card ask (engine-side
+   * signature conversion in askUser): rendered as the non-blocking suggestion
+   * card after the turn's ✅ completion card, cleared on emission. Never set
+   * while a question parks — the two are mutually exclusive ask fates.
+   */
+  pendingFollowups: UserQuestion | undefined
   /** Hard-cap time already spent parked on asks this turn (ms); the cap clock only measures active pumping. */
   capPausedMs: number = 0
   /** When the current ask parked (epoch ms); 0 while no ask is parked. Pairs with {@link capPausedMs}. */
@@ -4001,6 +4010,15 @@ export class Engine {
       await this.sendTurnCompletionCard(
         state, p, replyCtx, session, sessionKey,
         this.perChatWorkDir(this.dirOverrideKey(sessionKey)))
+      // The followups suggestion card follows the ✅ card (completion first,
+      // choice second); a queued takeover keeps the registration for the
+      // drain loop's final turn.
+      await this.sendFollowupsCard(state, p, replyCtx, sessionKey)
+    } else if (state.pendingMessages.length === 0) {
+      // Errored or non-completing turn with no queued takeover: drop the
+      // registration — a failed turn's follow-up suggestions are not worth
+      // surfacing, and carrying them would leak a card one turn late.
+      state.pendingFollowups = undefined
     }
 
     // Phase avatar: an errored turn needs the user's eyes (red); a completed
@@ -5102,6 +5120,27 @@ export class Engine {
     }
     const replyCtx = state.replyCtx
 
+    // Closing-card signature: register as non-blocking followups instead of
+    // parking. The suggestion card rides the turn-end emission (after the ✅
+    // completion card), and the deferred decision below is the tool result —
+    // it tells the model the selection arrives as a new message, so even a
+    // session running a stale prompt ends its turn correctly. This branch is
+    // the engine-side trigger: the agent keeps calling ask_user_question with
+    // the prompt-mandated signature, no model-side change required.
+    if (request.kind === 'questions' && isFollowupsAsk(request)) {
+      const [question] = request.questions
+      state.pendingFollowups = question
+      state.lastEventAt = Date.now()
+      console.info(`engine: closing-card ask converted to followups (${sessionKey}, ${question?.options.length ?? 0} options)`)
+      return {
+        answers: request.questions.map(q => ({
+          id: q.id ?? q.question,
+          selected: [],
+          custom: this.i18n.tf(Msg.FollowupsDeferred, q.options.length),
+        })),
+      }
+    }
+
     // Arm the stop/abort races before any delivery await — pre-card flush,
     // park, and card sends alike: an engine stop or turn abort landing while
     // the ask is still being delivered must settle the ask immediately, not
@@ -5680,6 +5719,10 @@ export class Engine {
    * @returns True when the message was consumed as an ask response.
    */
   routeAskResponse(p: Platform, msg: Message, content: string): boolean {
+    // A followups suggestion-card submission answers no question: it starts a
+    // fresh turn, so it must fall through to the normal pipeline even while
+    // an ask is parked on this session.
+    if (msg.isFollowupAction === true) return false
     const state = this.interactiveStates.get(msg.sessionKey) ?? this.cronSlotAskState(msg)
     if (state === undefined) {
       if (msg.isPermissionAction && parsePermissionVerdict(content) !== undefined) {
@@ -6227,6 +6270,35 @@ export class Engine {
       } catch (error) {
         console.warn(`completion notification failed (${p.name()}): ${String(error)}`)
       }
+    }
+  }
+
+  /**
+   * Emit the non-blocking followups suggestion card registered by a converted
+   * closing-card ask (see askUser): one blue card after the turn's ✅
+   * completion card, whose submissions arrive as new turns via the
+   * `fw_multi:` callback namespace. Card-less platforms drop the
+   * registration — the findings already live in the delivered reply text.
+   * Renders and clears in one step; a failed send still clears (no retry
+   * loop for a card the turn has already moved past).
+   * @param state - Turn state whose followups render.
+   * @param p - Platform the card is sent to.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param sessionKey - Session key for logging.
+   */
+  async sendFollowupsCard(
+    state: InteractiveState, p: Platform, replyCtx: unknown, sessionKey: string,
+  ): Promise<void> {
+    const q = state.pendingFollowups
+    if (q === undefined) return
+    state.pendingFollowups = undefined
+    const cs = p as Platform & CardSender
+    if (typeof cs.sendCard !== 'function') return
+    try {
+      await cs.sendCard(replyCtx, buildFollowupsCard(q, this.i18n))
+      console.info(`engine: followups card sent (${sessionKey}, ${q.options.length} options)`)
+    } catch (error) {
+      console.warn(`followups card send failed (${p.name()}): ${String(error)}`)
     }
   }
 

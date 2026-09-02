@@ -928,3 +928,93 @@ describe('onCardAction cmd: dedup (▶ 继续执行 one-shot guard)', () => {
     }
   })
 })
+
+describe('onCardAction fw_multi submit (followups suggestion card)', () => {
+  function fwEvent(formValue: Record<string, unknown>, valueAction = 'fw_multi:0'): CardActionTriggerEvent {
+    return {
+      action: {
+        value: { action: valueAction, fw_question: 'fix?' },
+        name: 'fw_multi_submit_0',
+        form_value: formValue,
+      },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: `om_fw_${Date.now()}_${Math.random()}` },
+    }
+  }
+
+  it('dispatches the checked selection and note as a followup-action message', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages = await dispatched(p, fwEvent({ askq_opt_0_2: 'true', askq_opt_0_1: true, fw_text_0: ' 附言 ' }))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('fw:1,2\x00附言')
+    expect(messages[0]!.isFollowupAction).toBe(true)
+    expect(messages[0]!.isAskqCardAction).toBe(false)
+    expect(messages[0]!.isCardAction).toBe(false)
+  })
+
+  it('recovers the action from the submit name when the callback omits value', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const event: CardActionTriggerEvent = {
+      action: { name: 'fw_multi_submit_0', form_value: { askq_opt_0_1: true } },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: `om_fw_nv_${Date.now()}` },
+    }
+    const messages = await dispatched(p, event)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('fw:1')
+    expect(messages[0]!.isFollowupAction).toBe(true)
+  })
+
+  it('rejects an empty submit with the localized hint and dispatches nothing', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.setI18nHandle(enHandle())
+    const replies: string[] = []
+    p.reply = async (_rc, content) => { replies.push(content) }
+    await p.start(() => {})
+    p.onCardAction(fwEvent({ askq_opt_0_1: 'false', fw_text_0: '  ' }))
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+
+    expect(replies).toHaveLength(1)
+    expect(replies[0]).toContain('at least one option')
+  })
+
+  it('freezes the pressed card with the settled marks from the send-time cache', async () => {
+    const api: FeishuApiClient = {
+      async create() { return { messageId: 'om_fw_card' } },
+      async reply() { return { messageId: 'om_fw_card' } },
+      async patch() {},
+      async delete() {},
+    }
+    const p = new FeishuPlatform({ appID: 'cli_test', appSecret: 's', allowChat: '*', apiClient: api })
+    const { buildFollowupsCard } = await import('../../src/engine/ask.ts')
+    const card = buildFollowupsCard({
+      question: 'fix?',
+      header: '后续处理',
+      options: [
+        { label: 'Fix A', description: 'src/a.ts:1', recommended: true },
+        { label: 'Skip', description: '' },
+      ],
+      multiSelect: true,
+    })
+    await p.sendCard({ messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, card)
+
+    const response = p.onCardAction(fwEvent({ askq_opt_0_1: true, fw_text_0: 'go' })) as unknown
+    expect(JSON.stringify(response)).toContain('Fix A')
+    expect(JSON.stringify(response)).toContain('go')
+  })
+
+  it('leaves a cached askq meta untouched on an fw submit', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    // Seed the cache with an askq (non-followups) meta, as a later live
+    // question card would.
+    p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      question: { question: 'Pick', header: '', options: [], multiSelect: false },
+      qIdx: 0,
+      total: 1,
+    })
+    const messages = await dispatched(p, fwEvent({ askq_opt_0_1: true }))
+    expect(messages).toHaveLength(1)
+    // The askq meta survives for its own card's freeze.
+    expect(p.askqMetaCache.get('feishu:oc_1:ou_9')).toBeDefined()
+  })
+})

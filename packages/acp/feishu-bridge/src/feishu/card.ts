@@ -218,8 +218,12 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
       // Feishu validates interactive-control names card-wide (creation fails
       // 400, ErrCode 11310 name duplicate), so checker names carry the
       // question index from the action — two multiSelect questions on one
-      // card would otherwise both start at askq_opt_1.
-      const qNum = (elem.action ?? '').replace(/^askq_multi:/, '')
+      // card would otherwise both start at askq_opt_1. The verb prefix
+      // (askq_multi / fw_multi) generalizes to followups cards: the index is
+      // whatever follows the first colon, and the submit button's name keeps
+      // its verb so the callback's name recovery maps it back.
+      const verb = (elem.action ?? '').split(':')[0] ?? ''
+      const qNum = (elem.action ?? '').replace(/^[^:]*:/, '')
       const formElements: FeishuCardMap[] = []
       if ((elem.question ?? '') !== '') {
         formElements.push({ tag: 'markdown', content: `**${elem.question ?? ''}**` })
@@ -244,7 +248,7 @@ export function renderElement(elem: CardElement, sessionKey: string): FeishuCard
         text: plainText(elem.submitLabel ?? '提交选择'),
         type: 'primary',
         form_action_type: 'submit',
-        name: `askq_multi_submit_${(elem.action ?? '').replace(/^askq_multi:/, '')}`,
+        name: `${verb}_submit_${qNum}`,
         value: valMap,
       }
       // With the in-form text input the submit row is the button alone; the

@@ -28,7 +28,7 @@ import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.ts'
 import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostImageKeys, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.ts'
 import { isMonitorCommand } from '../core/types.ts'
 import type { UserQuestion, MonitorPollPage } from '../core/types.ts'
-import { buildAskQuestionCardSettled, parseAskqSelection, zhAskCardI18n } from '../engine/ask.ts'
+import { buildAskQuestionCardSettled, buildFollowupsCardSettled, parseAskqSelection, zhAskCardI18n } from '../engine/ask.ts'
 import { hintCategoryOfCode, parseHintButtonName } from '../engine/hints-panel.ts'
 import type { FeishuMention } from './extract.ts'
 import type { Card } from '../card.ts'
@@ -297,6 +297,8 @@ interface AskCardMeta {
   qIdx: number
   /** Total questions of the ask (settled cards keep the progress suffix). */
   total: number
+  /** Set on a followups suggestion card: an `fw_multi:` form, not an ask. */
+  followups?: true
 }
 
 /**
@@ -309,6 +311,7 @@ interface AskCardMeta {
  */
 function askCardMeta(card: Card): AskCardMeta | undefined {
   const questions = new Map<number, UserQuestion>()
+  let followupsSeen = false
   for (const elem of card.elements) {
     if (elem.kind === 'listItem' && elem.btnValue.startsWith('askq:')) {
       const sel = parseAskqSelection(elem.btnValue)
@@ -318,6 +321,17 @@ function askCardMeta(card: Card): AskCardMeta | undefined {
       const optIdx = (sel.indices[0] ?? 1) - 1
       q.options[optIdx] = { label: elem.text, description: elem.description ?? '' }
       questions.set(sel.qIdx, q)
+    } else if (elem.kind === 'checkOptions' && (elem.action ?? '').startsWith('fw_multi:')) {
+      // A followups suggestion card: the checker form is the whole card and
+      // its qIdx namespace is fixed at 0; flag it so an fw submit freezes
+      // with the followups snapshot while an askq click leaves it alone.
+      questions.set(0, {
+        question: elem.extra?.fw_question ?? elem.question ?? '',
+        header: '',
+        options: elem.options.map(o => ({ label: o.label, description: o.description ?? '' })),
+        multiSelect: true,
+      })
+      followupsSeen = true
     } else if (elem.kind === 'checkOptions' && (elem.action ?? '').startsWith('askq_multi:')) {
       const qIdx = Number.parseInt((elem.action ?? '').slice('askq_multi:'.length), 10)
       if (!Number.isInteger(qIdx) || qIdx < 0) continue
@@ -355,7 +369,7 @@ function askCardMeta(card: Card): AskCardMeta | undefined {
   const suffix = (card.header?.title ?? '').match(/\((\d+)\/(\d+)\)\s*$/)
   const total = suffix !== null ? Number.parseInt(suffix[2] ?? '', 10) : qIdx + 1
   if (!Number.isInteger(total) || total < qIdx + 1) return undefined
-  return { question, qIdx, total }
+  return { question, qIdx, total, ...(followupsSeen ? { followups: true as const } : {}) }
 }
 
 /**
@@ -1027,6 +1041,7 @@ export class FeishuPlatform implements Platform {
       else if (name === 'perm_allow_all') actionVal = 'perm:allow_all'
       else if (name.startsWith('askq_text_submit_')) actionVal = `askq_text:${name.slice('askq_text_submit_'.length)}`
       else if (name.startsWith('askq_multi_submit_')) actionVal = `askq_multi:${name.slice('askq_multi_submit_'.length)}`
+      else if (name.startsWith('fw_multi_submit_')) actionVal = `fw_multi:${name.slice('fw_multi_submit_'.length)}`
       else if (name.startsWith('askq_') && name !== 'askq_multi_submit_') {
         // Single-select askq button: value carries "askq:qIdx:optIdx"
         actionVal = action.value?.action ?? name
@@ -1109,6 +1124,40 @@ export class FeishuPlatform implements Platform {
       return { card: { type: 'raw', data: renderCardMap(cb.build(), sessionKey) } }
     }
 
+    // fw_multi: → a followups suggestion-card submit (engine-side closing-card
+    // conversion): the checked indices and the in-form note converge onto an
+    // `fw:{i1},{i2}` payload dispatched flagged isFollowupAction, which the
+    // engine routes to a fresh turn instead of resolving a parked ask. The
+    // callback response freezes the pressed card with its settled marks —
+    // rebuilt from the send-time cached meta, consumed only when it is an fw
+    // entry (a newer askq card's meta stays for its own freeze).
+    if (actionVal.startsWith('fw_multi:') && !actionVal.slice('fw_multi:'.length).includes(':')) {
+      const indices = collectAskqMultiSelected(action.form_value)
+      const rawNote = action.form_value?.fw_text_0
+      const note = typeof rawNote === 'string' ? rawNote.trim() : ''
+      if (indices.length === 0 && note === '') {
+        this.replyAskqEmptySubmit(chatID, sessionKey, this.t(Msg.FollowupsEmptySubmit, '请至少勾选一项，或在输入框填写文字后再提交'))
+        return undefined
+      }
+      const content = note !== '' ? `fw:${indices.join(',')}\x00${note}` : `fw:${indices.join(',')}`
+      const meta = this.askqMetaCache.get(sessionKey)
+      if (meta !== undefined && meta.followups === true) {
+        this.askqMetaCache.delete(sessionKey)
+        this.dispatch(sessionKey, messageID, userID, chatID, 'group',
+          content, '', replyCtx, isSpawned, '', false, false, [], [], false, undefined, true)
+        const card = buildFollowupsCardSettled(
+          meta.question, indices.map(s => Number.parseInt(s, 10)), note, this.i18nHandle ?? zhAskCardI18n)
+        return { card: { type: 'raw', data: renderCardMap(card, sessionKey) } }
+      }
+      // No fw meta (the daemon restarted, the card predates it, or a newer
+      // askq card owns the cache key): the selection still reaches the agent
+      // — only the freeze is lost — and the drop leaves a trace.
+      console.warn(`${this.tag()}: followups card callback without cached meta (${sessionKey})`)
+      this.dispatch(sessionKey, messageID, userID, chatID, 'group',
+        content, '', replyCtx, isSpawned, '', false, false, [], [], false, undefined, true)
+      return undefined
+    }
+
     // askq: → one question's answer on its prompt card (one card per
     // question): a multi-select form submit collects its checked indices from
     // form_value (Go collectAskqMultiSelectedFromFormValue) into the same
@@ -1149,7 +1198,10 @@ export class FeishuPlatform implements Platform {
       }
       const sel = parseAskqSelection(actionVal)
       if (sel === undefined) return undefined
-      const meta = this.askqMetaCache.get(sessionKey)
+      const cached = this.askqMetaCache.get(sessionKey)
+      // An fw suggestion card's meta is not this ask card's: leave it cached
+      // for its own submit's freeze and treat this card as uncached.
+      const meta = cached !== undefined && cached.followups === true ? undefined : cached
       if (meta !== undefined) {
         this.askqMetaCache.delete(sessionKey)
       } else {
@@ -1474,6 +1526,7 @@ export class FeishuPlatform implements Platform {
     files: FileAttachment[] = [],
     isCardAction = false,
     quoted?: { text: string; senderType: string; updateTimeMs: number },
+    isFollowupAction = false,
   ): void {
     if (this.handler === undefined) return
     const message: Message = {
@@ -1495,6 +1548,7 @@ export class FeishuPlatform implements Platform {
       isPermissionAction,
       isAskqCardAction,
       isCardAction,
+      ...(isFollowupAction ? { isFollowupAction: true } : {}),
       parentMessageID,
       quotedText: quoted?.text ?? '',
       ...(quoted !== undefined ? { quotedSenderType: quoted.senderType, quotedUpdateTimeMs: quoted.updateTimeMs } : {}),

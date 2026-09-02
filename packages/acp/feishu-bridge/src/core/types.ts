@@ -183,6 +183,14 @@ export interface Message {
   isSpawnedGroup: boolean
   isPermissionAction: boolean
   isAskqCardAction: boolean
+  /**
+   * A followups suggestion-card submission (`fw:` payload from the
+   * `fw_multi:` form): the content is a machine-parsed selection that starts
+   * a fresh turn, never an answer to a parked ask — the ask router must not
+   * claim it. Optional like `machine`: a later-added routing discriminator
+   * absent on ordinary messages.
+   */
+  isFollowupAction?: boolean
   /** A card.action.trigger button press with an act:/nav: value (M4). */
   isCardAction: boolean
   /**

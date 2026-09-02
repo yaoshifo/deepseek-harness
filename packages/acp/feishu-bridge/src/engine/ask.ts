@@ -13,7 +13,7 @@
 import type { Card, CardElement } from '../card.ts'
 import { newCard } from '../card.ts'
 import { I18n, langChinese, Msg, type MsgKey } from '../i18n/index.ts'
-import type { PendingAskAnswer, UserQuestion } from '../core/types.ts'
+import type { AskRequest, PendingAskAnswer, UserQuestion } from '../core/types.ts'
 import { isAllowResponse, isApproveAllResponse, isDenyResponse } from './permission.ts'
 
 /**
@@ -34,6 +34,42 @@ export const zhAskCardI18n: AskCardI18n = new I18n(langChinese)
 
 /** Prefix of every ask card button payload. */
 const askqPrefix = 'askq:'
+
+/**
+ * Reserved header marking a closing-card questions ask as non-blocking
+ * followups. The agent-conventions prompt template mandates this exact value
+ * (single source: the prompt imports this constant), and the engine's
+ * {@link isFollowupsAsk} matches it — the two cannot drift.
+ */
+export const FOLLOWUPS_ASK_HEADER = '后续处理'
+
+/**
+ * Option label completing the fallback closing-card signature: a single
+ * multi-select question offering「暂不处理」reads as followups even when the
+ * reserved header is missing. Also mandated by the agent-conventions prompt.
+ */
+export const FOLLOWUPS_DECLINE_LABEL = '暂不处理'
+
+/**
+ * Whether a questions ask carries the closing-card signature the engine
+ * converts into non-blocking followups (register + deferred decision) instead
+ * of parking the turn: a single question whose header is the reserved
+ * {@link FOLLOWUPS_ASK_HEADER}, or a single multi-select question offering
+ * {@link FOLLOWUPS_DECLINE_LABEL}. Both keys describe what the
+ * agent-conventions prompt already mandates for closing cards, so live
+ * behavior converts with zero model-side change; every other ask parks as
+ * before (fail-open to the blocking semantics).
+ *
+ * @param request - The ask about to be delegated to askUser.
+ * @returns True when the ask converts to non-blocking followups.
+ */
+export function isFollowupsAsk(request: AskRequest): boolean {
+  if (request.kind !== 'questions' || request.questions.length !== 1) return false
+  const [question] = request.questions
+  if (question === undefined) return false
+  if (question.header === FOLLOWUPS_ASK_HEADER) return true
+  return question.multiSelect && question.options.some(o => o.label === FOLLOWUPS_DECLINE_LABEL)
+}
 
 /** Multi-select form submit prefix, normalized onto {@link askqPrefix}. */
 const askqMultiPrefix = 'askq_multi:'
@@ -296,6 +332,66 @@ export function buildAskQuestionCard(
   const title = `‼️ ${q.header !== '' ? q.header : i18n.t(Msg.AskQuestionTitle)}${progressSuffix(qIdx, total)}`
   const cb = newCard().title(title, 'blue')
   cb.raw(...questionElements(q, qIdx, i18n))
+  return cb.build()
+}
+
+/**
+ * Build the non-blocking followups suggestion card for a converted
+ * closing-card ask: the multi-select checker form alone (the question text,
+ * labels, and descriptions already live in the delivered reply), acting on
+ * the `fw_multi:` callback namespace so submissions route to a fresh turn
+ * instead of resolving a parked ask. Rendered after the turn's ✅ completion
+ * card; not clicking it declines silently.
+ *
+ * @param q - The registered followups question.
+ * @param i18n - Card copy face; defaults to zh.
+ * @returns The assembled card.
+ */
+export function buildFollowupsCard(q: UserQuestion, i18n: AskCardI18n = zhAskCardI18n): Card {
+  const cb = newCard().title(i18n.t(Msg.FollowupsCardTitle), 'blue')
+  cb.raw({
+    kind: 'checkOptions',
+    question: '',
+    options: q.options.map((opt, i) => ({
+      label: opt.label,
+      description: opt.description,
+      value: String(i + 1),
+      ...(opt.recommended === true ? { checked: true } : {}),
+    })),
+    action: 'fw_multi:0',
+    extra: { fw_question: q.question },
+    textInput: { name: 'fw_text_0', placeholder: i18n.t(Msg.AskqMultiTextPlaceholder) },
+    submitLabel: i18n.t(Msg.FollowupsCardSubmit),
+  })
+  return cb.build()
+}
+
+/**
+ * Build the read-only settled snapshot for a submitted followups card:
+ * frozen selection marks and the submitted note, no controls. The Feishu
+ * platform returns it as the card-action callback response, swapping the
+ * pressed suggestion card for its answer snapshot (the same terminal
+ * replacement `buildAskQuestionCardSettled` performs on ask cards).
+ *
+ * @param q - The followups question the card was built from.
+ * @param indices - 1-based option indices the user checked.
+ * @param note - The in-form note text ('' when none).
+ * @param i18n - Card copy face; defaults to zh.
+ * @returns The assembled card.
+ */
+export function buildFollowupsCardSettled(
+  q: UserQuestion, indices: number[], note: string, i18n: AskCardI18n = zhAskCardI18n,
+): Card {
+  const cb = newCard().title(i18n.t(Msg.FollowupsCardTitle), 'green')
+  const marks = q.options.map((opt, i) =>
+    `${indices.includes(i + 1) ? '✅' : '◻️'} **${opt.label}**${opt.description !== '' ? `\n${opt.description}` : ''}`)
+  if (marks.length > 0) {
+    cb.raw({ kind: 'markdown', content: marks.join('\n') })
+  }
+  if (note !== '') {
+    cb.raw({ kind: 'markdown', content: `✍️ ${note}` })
+  }
+  cb.raw({ kind: 'note', text: i18n.t(Msg.FollowupsSubmitted) })
   return cb.build()
 }
 
