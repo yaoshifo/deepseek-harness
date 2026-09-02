@@ -19,6 +19,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { Engine } from '../../src/engine/engine.ts'
 import { registerSessionCommands } from '../../src/engine/commands.ts'
 import { completePendingReload, reloadSpawnArgv, registerReloadCommands, resolveReloadScript } from '../../src/engine/reload-commands.ts'
+import type { GlobalToolView } from '../../src/engine/reload-commands.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import {
   createStubAgent,
@@ -291,13 +292,16 @@ describe('cmdReload', () => {
   })
 })
 
+/** Empty global tool view — these tests exercise the marker lifecycle; tests/reload-completion.spec.ts owns the MCP surface reminder. */
+const emptyToolView: GlobalToolView = { schemas: () => [] }
+
 describe('completePendingReload', () => {
   it('sends the completion notice through the matching platform and clears the marker', async () => {
     const { e, p } = newEngine()
     const sends: Array<{ rc: unknown; content: string }> = []
     p.send = async (rc, content) => { sends.push({ rc, content }) }
     writeMarker({ replyCtx: 'ctx-marker' })
-    await completePendingReload([e])
+    await completePendingReload([e], emptyToolView)
     expect(sends).toEqual([{ rc: 'ctx-marker', content: e.i18n.tf(Msg.ReloadCompleted, join(logDir, 'feishu-bridge-reload.log')) }])
     expect(existsSync(pendingPath())).toBe(false)
   })
@@ -305,7 +309,7 @@ describe('completePendingReload', () => {
   it('keeps the marker and stays silent when the pid matches (HMR re-apply mid-reload)', async () => {
     const { e, p } = newEngine()
     writeMarker({ pid: process.pid })
-    await completePendingReload([e])
+    await completePendingReload([e], emptyToolView)
     expect(p.getSent()).toEqual([])
     expect(existsSync(pendingPath())).toBe(true)
   })
@@ -313,7 +317,7 @@ describe('completePendingReload', () => {
   it('drops a stale marker without sending', async () => {
     const { e, p } = newEngine()
     writeMarker({ at: Date.now() - 15 * 60_000 - 1 })
-    await completePendingReload([e])
+    await completePendingReload([e], emptyToolView)
     expect(p.getSent()).toEqual([])
     expect(existsSync(pendingPath())).toBe(false)
   })
@@ -331,7 +335,7 @@ describe('completePendingReload', () => {
     const rightSends: string[] = []
     rightPlatform.send = async (_rc, content) => { rightSends.push(content) }
     writeMarker({ engine: 'test', platform: 'feishu' })
-    await completePendingReload([wrongEngine, rightEngine])
+    await completePendingReload([wrongEngine, rightEngine], emptyToolView)
     expect(wrongSends).toEqual([])
     expect(rightSends).toEqual([rightEngine.i18n.tf(Msg.ReloadCompleted, join(logDir, 'feishu-bridge-reload.log'))])
     expect(existsSync(pendingPath())).toBe(false)
@@ -340,7 +344,7 @@ describe('completePendingReload', () => {
   it('drops the marker when no engine matches (project removed or renamed mid-reload)', async () => {
     const { e, p } = newEngine()
     writeMarker({ engine: 'gone' })
-    await completePendingReload([e])
+    await completePendingReload([e], emptyToolView)
     expect(p.getSent()).toEqual([])
     expect(existsSync(pendingPath())).toBe(false)
   })
@@ -348,14 +352,14 @@ describe('completePendingReload', () => {
   it('drops the marker when no platform matches (project removed from config)', async () => {
     const { e, p } = newEngine()
     writeMarker({ platform: 'gone' })
-    await completePendingReload([e])
+    await completePendingReload([e], emptyToolView)
     expect(p.getSent()).toEqual([])
     expect(existsSync(pendingPath())).toBe(false)
   })
 
   it('is a no-op when no marker exists', async () => {
     const { e, p } = newEngine()
-    await completePendingReload([e])
+    await completePendingReload([e], emptyToolView)
     expect(p.getSent()).toEqual([])
     expect(existsSync(pendingPath())).toBe(false)
   })
@@ -363,7 +367,7 @@ describe('completePendingReload', () => {
   it('drops a corrupt marker without sending', async () => {
     const { e, p } = newEngine()
     writeFileSync(pendingPath(), 'not json')
-    await completePendingReload([e])
+    await completePendingReload([e], emptyToolView)
     expect(p.getSent()).toEqual([])
     expect(existsSync(pendingPath())).toBe(false)
   })
@@ -372,7 +376,7 @@ describe('completePendingReload', () => {
     const { e, p } = newEngine()
     p.send = async () => { throw new Error('chat message withdrawn') }
     writeMarker()
-    await completePendingReload([e])
+    await completePendingReload([e], emptyToolView)
     expect(existsSync(pendingPath())).toBe(false)
   })
 })
