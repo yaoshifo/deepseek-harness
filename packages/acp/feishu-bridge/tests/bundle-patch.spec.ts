@@ -75,7 +75,7 @@ describe('bridge bundle patch', () => {
     expect(text).toContain('feishu_bridge_subtask spawns')
     expect(text).toContain('2–5 independent angles')
     expect(text).toContain('Keep exploration serial only for a single-focus question')
-    expect(text).toContain('mark which groups are independent enough to implement in parallel')
+    expect(text).toContain('state the execution order — independent groups dispatched together as parallel subtask spawns when execution begins, serially dependent groups executed in order')
     // A rejection opens a discussion round: answer in the reply, end the turn,
     // re-present only on the user's request (2026-09 plan-rejection UX).
     expect(text).toContain('the feedback opens a discussion round')

@@ -155,6 +155,14 @@ describe('feishu_bridge_subtask registration', () => {
     expect(dir).toContain('instruction files')
   })
 
+  it('states the approved-plan execution boundary in the model-facing wording', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:parent' }))
+    const description = test.ctx.tools.get('feishu_bridge_subtask')?.description ?? ''
+    expect(description).toContain('begin executing an approved plan')
+    expect(description).toContain('spawn them together in one message instead of implementing them serially yourself')
+  })
+
   it('describes fork, send, and the assistant literal as the code behaves', async () => {
     const r = newRoutedEngine('test')
     const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:parent' }))
