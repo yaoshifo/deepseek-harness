@@ -1796,17 +1796,7 @@ export class DshAgentAdapter {
         ...(setup !== undefined ? { setup } : {}),
       })
     }
-    const bypass = this.bridgeEvents.waterfall('feishuBridge/permission-policy', { options }, () => unattendedSubtaskBypassesPermissions(options))
-    const session = new DshAgentSession(
-      key, handle, this.workDir, this.ctx, bypass,
-      options?.interactiveSlotKey ?? '',
-    )
-    // Seed the recent-turn window from the log the agent carries (empty for a
-    // fresh session, the resumed/forked history otherwise) and drop any cold
-    // fold of this id — the live window is authoritative from here on.
-    session.seedRecentTurns(handle.agent.session.events)
-    this.recentTurnsCache.delete(session.currentSessionID())
-
+    const unattended = this.bridgeEvents.waterfall('feishuBridge/permission-policy', { options }, () => unattendedSubtaskBypassesPermissions(options))
     // Lazily register the user-questions answerer alongside the first
     // session this adapter creates.
     this.ensureUserQuestionsAnswerer()
@@ -1815,7 +1805,7 @@ export class DshAgentAdapter {
     // stays off (a delegated child nobody can approve must not stall on an
     // ExitPlanMode card). Rank otherwise: one-shot override > the chat's
     // /spawn-pinned mode > the project default.
-    let mode = bypass ? 'bypassPermissions'
+    let mode = unattended ? 'bypassPermissions'
       : this.modeOverride !== '' ? this.modeOverride
         : options?.spawnMode !== undefined && options.spawnMode !== '' ? options.spawnMode
           : this.defaultMode
@@ -1837,6 +1827,19 @@ export class DshAgentAdapter {
       }
       this.modeOverride = ''
     }
+    // A resolved 'bypassPermissions' mode (one-shot override, spawn pin, or
+    // project default — the cron job.mode path) grants the same auto-approval
+    // the unattended base does; it must not silently degrade to "plan off".
+    const bypass = unattended || mode === 'bypassPermissions'
+    const session = new DshAgentSession(
+      key, handle, this.workDir, this.ctx, bypass,
+      options?.interactiveSlotKey ?? '',
+    )
+    // Seed the recent-turn window from the log the agent carries (empty for a
+    // fresh session, the resumed/forked history otherwise) and drop any cold
+    // fold of this id — the live window is authoritative from here on.
+    session.seedRecentTurns(handle.agent.session.events)
+    this.recentTurnsCache.delete(session.currentSessionID())
     this.sessionsByEngineKey.set(key, session)
     this.liveSessions.set(session.currentSessionID(), session)
     // A closed/vanished session unregisters itself: without this, /new

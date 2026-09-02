@@ -1693,4 +1693,39 @@ describe('effectiveMode bypass wiring', () => {
     })
     expect(planSets).toEqual([false])
   })
+
+  it('a bypassPermissions mode override auto-approves tool permissions without a card (cron job.mode)', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    // The cron path: startAgentLocked arms a one-shot mode override before
+    // the session starts. 'bypassPermissions' must mean the same
+    // auto-approval the unattended base grants, not just "plan off".
+    a.setSessionMode('bypassPermissions')
+    const session = await a.startSession('', { sessionKey: 'feishu:cron:ou_9' })
+    const listener = h.listeners.get('approval/request')?.[0]
+    if (listener === undefined) throw new Error('approval/request listener was not registered')
+    const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-4',
+    })
+    // No ask delegate is wired: without the bypass the answerer would fail
+    // closed as 'unavailable' instead of granting.
+    await expect(outcome).resolves.toBe('allowed-once')
+  })
+
+  it('a bypassPermissions project default auto-approves tool permissions too', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    a.setDefaultMode('bypassPermissions')
+    const session = await a.startSession('', { sessionKey: 'feishu:default:ou_9' })
+    const listener = h.listeners.get('approval/request')?.[0]
+    if (listener === undefined) throw new Error('approval/request listener was not registered')
+    const outcome = (listener as unknown as (req: Record<string, unknown>) => Promise<string>)({
+      agent: { session: { id: session.currentSessionID() } },
+      toolName: 'Bash',
+      callId: 'call-5',
+    })
+    await expect(outcome).resolves.toBe('allowed-once')
+  })
 })
