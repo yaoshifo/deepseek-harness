@@ -50,7 +50,7 @@ A backend, optionally the policy plugin, then the tool; the editor composes with
 
 ### Failures and recovery
 
-A metadata miss from `view`, `str_replace`, or `insert` records confirmed absence before returning `FS_NOT_FOUND`, so a later `create` can recover an externally deleted path through the mounted policy's guarded-create flow; absence never authorizes `str_replace` or `insert`. Guarded mutations inherit the policy plugin's codes and remedies — `FS_NOT_OBSERVED` (read the file, then retry), `FS_STALE_VERSION` (re-read, then retry) — and sandbox denials surface as the `[sandbox: file access denied under <mode> mode]` marker. Paths must be absolute; a relative path is refused with a hint.
+A metadata miss from `view`, `str_replace`, or `insert` records confirmed absence before returning `FS_NOT_FOUND`, so a later `create` can recover an externally deleted path through the mounted policy's guarded-create flow; absence never authorizes `str_replace` or `insert`. Guarded mutations inherit the policy plugin's codes and remedies — `FS_NOT_OBSERVED` (read the file, then retry), `FS_STALE_VERSION` (re-read, then retry) — and sandbox denials surface as the `[sandbox: file access denied under <mode> mode]` marker plus the same-turn escalation hint, with the `sandbox_permissions` + `justification` retry fields advertised exactly like the `write`/`edit` tools (an approved escalation stamps the granted mode onto that one mutation). Paths must be absolute; a relative path is refused with a hint.
 
 -----
 

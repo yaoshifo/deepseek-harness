@@ -6,7 +6,7 @@ Status: implemented
 
 ## Problem
 
-bridge 的 mode 词表承诺六个值（`default`、`bypassPermissions`、`acceptEdits`、`plan`、`auto`、`dontAsk`——cron store 校验、cron 工具 schema 通告），但 `startSession` 对 mode 字符串只消费一件事：`planMode.set(agent, mode === 'plan')`。配置了 `mode: 'bypassPermissions'` 的 cron job 因此只关掉了 plan 模式——其工具审批询问照样路由到卡片，无人值守运行在那里以 `unavailable` 失败关闭。[cron 无人值守 mode 笔记](../2026-08-24-feishu-bridge-cron-unattended-mode-default.md)明确把 per-job `mode` 字段称作「想要 bypass 的任务特意留下的更强逃生门」；实现从未兑现这个承诺。真正翻转会话 `bypassPermissions` 标志的只有无人值守子任务基座（以及经 permission-policy waterfall 加入的 chatroom persona）。
+bridge 的 mode 词表承诺六个值（`default`、`bypassPermissions`、`acceptEdits`、`plan`、`auto`、`dontAsk`——cron store 校验、cron 工具 schema 通告），但 `startSession` 对 mode 字符串只消费一件事：`planMode.set(agent, mode === 'plan')`。配置了 `mode: 'bypassPermissions'` 的 cron job 因此只关掉了 plan 模式——其工具审批询问照样路由到卡片，无人值守运行在那里以 `unavailable` 失败关闭。[cron 无人值守 mode 笔记](2026-08-24-feishu-bridge-cron-unattended-mode-default.zh.md)明确把 per-job `mode` 字段称作「想要 bypass 的任务特意留下的更强逃生门」；实现从未兑现这个承诺。真正翻转会话 `bypassPermissions` 标志的只有无人值守子任务基座（以及经 permission-policy waterfall 加入的 chatroom persona）。
 
 ## Decision
 

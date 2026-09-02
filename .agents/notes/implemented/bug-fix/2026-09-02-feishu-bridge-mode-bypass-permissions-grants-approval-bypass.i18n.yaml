@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-02-feishu-bridge-mode-bypass-permissions-grants-approval-bypass.md
-2026-09-02-feishu-bridge-mode-bypass-permissions-grants-approval-bypass.md: a446b3f2c0b40378b04ae0e5879a14f06931cb59
-2026-09-02-feishu-bridge-mode-bypass-permissions-grants-approval-bypass.zh.md: 896363843881dca2d704646a1e5ae01665ea082f
+2026-09-02-feishu-bridge-mode-bypass-permissions-grants-approval-bypass.md: 1405184e565e06cef960caf52ee8e69290bc296a
+2026-09-02-feishu-bridge-mode-bypass-permissions-grants-approval-bypass.zh.md: a6a0bf0e9184e55ebb34749ea5645e24f56d6a19

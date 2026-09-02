@@ -12,6 +12,7 @@ import LocalFileSystem from '@deepseek-ai/dsh-fs-local'
 import * as FsPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 import SandboxedFileSystem from '@deepseek-ai/dsh-fs-sandbox'
 import SandboxPolicy from '@deepseek-ai/dsh-sandbox-policy'
+import ApprovalService from '@deepseek-ai/dsh-user-approval'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -65,7 +66,7 @@ function call(ctx: Context, owner: Agent | undefined, args: unknown) {
 
 async function setup(
   config: ToolStrReplaceEditor.Config = {},
-  options: { fsPolicy?: boolean; sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access' } = {},
+  options: { fsPolicy?: boolean; sandboxMode?: 'read-only' | 'workspace-write' | 'danger-full-access'; approval?: boolean } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), 'dsh-tool-str-replace-editor-'))
   roots.push(root)
@@ -84,8 +85,32 @@ async function setup(
     await ctx.plugin(SandboxedFileSystem, { cwd: root })
   }
   if (options.fsPolicy === true) await ctx.plugin(FsPolicy)
+  if (options.approval === true) await ctx.plugin(ApprovalService)
   const fiber = await ctx.plugin(ToolStrReplaceEditor, config)
   return { ctx, root, fiber, owner: agent(ctx, root) }
+}
+
+/**
+ * A fake agent whose session records appends (the approval audit trail)
+ * mid-turn — `turn/start` stays open so an approval ask is turn-enclosed.
+ */
+function escalationAgent(): object {
+  const events: Array<{ type: string; data?: Record<string, unknown> }> = [{ type: 'turn/start', data: { turn: 1 } }]
+  return {
+    id: 'agent-editor-esc',
+    session: {
+      header: { version: 0, id: 'sess-editor-esc', createdAt: 0, cwd: '/session-project' },
+      events,
+      append: (type: string, data: Record<string, unknown>) => { events.push({ type, data }) },
+    },
+  }
+}
+
+/** The registered editor schema's parameter properties. */
+function editorSchemaProperties(ctx: Context): Record<string, { enum?: string[] }> {
+  const schema = ctx.tools.schemas().find(s => s.name === 'str_replace_editor')
+  if (!schema) throw new Error('str_replace_editor tool not registered')
+  return (schema as unknown as { parameters: { properties: Record<string, { enum?: string[] }> } }).parameters.properties
 }
 
 describe('tool-str-replace-editor', () => {
@@ -639,5 +664,90 @@ describe('tool-str-replace-editor', () => {
     expect(() => {
       ToolStrReplaceEditor.apply(new Context(), { description: ' ' })
     }).toThrow('description must be non-empty')
+  })
+})
+
+describe('tool-str-replace-editor sandbox escalation', () => {
+  it('advertises no escalation fields under a non-confining backend', async () => {
+    const { ctx } = await setup()
+    expect(ctx.fs.sandboxMode).toBeUndefined()
+    const props = editorSchemaProperties(ctx)
+    expect(props['sandbox_permissions']).toBeUndefined()
+    expect(props['justification']).toBeUndefined()
+  })
+
+  it('advertises the closed target vocabulary under a confining backend', async () => {
+    const { ctx } = await setup({}, { sandboxMode: 'workspace-write' })
+    const props = editorSchemaProperties(ctx)
+    expect(props['sandbox_permissions']?.enum).toEqual(['workspace-write', 'danger-full-access'])
+    expect(props['justification']).toBeDefined()
+  })
+
+  it('a denied mutation maps to the shared marker plus the escalation hint', async () => {
+    const { ctx, root } = await setup({}, { sandboxMode: 'read-only' })
+    const result = await call(ctx, escalationAgent() as never, {
+      command: 'create',
+      path: join(root, 'blocked.txt'),
+      file_text: 'blocked',
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('[sandbox: file access denied under read-only mode]')
+    expect(text(result)).toContain('retry this exact operation once with sandbox_permissions')
+  })
+
+  it('an approved escalation stamps the granted mode onto the mutation', async () => {
+    const { ctx, root } = await setup({}, { sandboxMode: 'read-only', approval: true })
+    ctx.on('approval/request', () => Promise.resolve('allowed-once' as const))
+    const path = join(root, 'escalated.txt')
+    const result = await call(ctx, escalationAgent() as never, {
+      command: 'create',
+      path,
+      file_text: 'escalated',
+      sandbox_permissions: 'workspace-write',
+      justification: 'the test needs it',
+    })
+    expect(result.isError).toBe(false)
+    expect(await readFile(path, 'utf8')).toBe('escalated')
+  })
+
+  it('a rejected escalation fails closed with its own text and never mutates', async () => {
+    const { ctx, root } = await setup({}, { sandboxMode: 'read-only', approval: true })
+    ctx.on('approval/request', () => Promise.resolve('rejected' as const))
+    const path = join(root, 'rejected.txt')
+    const result = await call(ctx, escalationAgent() as never, {
+      command: 'create',
+      path,
+      file_text: 'rejected',
+      sandbox_permissions: 'workspace-write',
+      justification: 'the test needs it',
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('the user rejected escalating this operation to "workspace-write"')
+    expect(await readFile(path, 'utf8').catch(() => undefined)).toBeUndefined()
+  })
+
+  it('an escalating call without an approval service fails closed', async () => {
+    const { ctx, root } = await setup({}, { sandboxMode: 'read-only' })
+    const result = await call(ctx, escalationAgent() as never, {
+      command: 'create',
+      path: join(root, 'no-approver.txt'),
+      file_text: 'x',
+      sandbox_permissions: 'workspace-write',
+      justification: 'the test needs it',
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('no approval service is composed')
+  })
+
+  it('rejects the escalation argument pairing (one field without the other)', async () => {
+    const { ctx, root } = await setup({}, { sandboxMode: 'read-only', approval: true })
+    const result = await call(ctx, escalationAgent() as never, {
+      command: 'create',
+      path: join(root, 'unpaired.txt'),
+      file_text: 'x',
+      sandbox_permissions: 'workspace-write',
+    })
+    expect(result.isError).toBe(true)
+    expect(text(result)).toContain('justification')
   })
 })

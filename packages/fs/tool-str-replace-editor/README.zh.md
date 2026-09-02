@@ -50,7 +50,7 @@ kind: "package-reference"
 
 ### 失败与恢复
 
-`view`、`str_replace` 或 `insert` 发生元数据未命中时，工具会在返回 `FS_NOT_FOUND` 前记录确认缺失，因此后续 `create` 可以通过已挂载策略的防护创建流程恢复外部删除的路径；缺失状态绝不会授权 `str_replace` 或 `insert`。防护变更继承策略插件的错误码与恢复指令——`FS_NOT_OBSERVED`（先读取文件再重试）、`FS_STALE_VERSION`（先重新读取再重试）——沙箱拒绝则表现为 `[sandbox: file access denied under <mode> mode]` 标记。路径必须是绝对路径；相对路径会被拒绝并给出提示。
+`view`、`str_replace` 或 `insert` 发生元数据未命中时，工具会在返回 `FS_NOT_FOUND` 前记录确认缺失，因此后续 `create` 可以通过已挂载策略的防护创建流程恢复外部删除的路径；缺失状态绝不会授权 `str_replace` 或 `insert`。防护变更继承策略插件的错误码与恢复指令——`FS_NOT_OBSERVED`（先读取文件再重试）、`FS_STALE_VERSION`（先重新读取再重试）——沙箱拒绝则表现为 `[sandbox: file access denied under <mode> mode]` 标记加同回合升级提示，`sandbox_permissions` + `justification` 重试字段与 `write`/`edit` 工具的通告方式完全一致（批准的升级把所授模式只盖在这一次变更上）。路径必须是绝对路径；相对路径会被拒绝并给出提示。
 
 -----
 
