@@ -120,20 +120,28 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
  * @param ledgerDir - Shared ledger directory; '' omits the ledger sections.
  * @param mode - 'manual' asks the user between rounds; anything else auto-iterates.
  * @param maxRounds - Round cap that forces wrap-up in auto mode.
+ * @param researchWs - Shared research workspace; '' omits the steward-prefetch sections.
  * @returns the research-mode moderator wake prompt.
  */
 export function buildChatroomResearchModeratorPriming(
   topic: string, roles: ChatroomRole[], ledgerDir: string, mode: string, maxRounds: number,
+  researchWs: string,
 ): string {
   const sb: string[] = []
   sb.push('[研究作战室主持任务] 你现在是一个并行研究作战室的主持人。每个角色已就绪，且每个角色已被预配一个**完整助手子群**（有 Bash/WebFetch/skills，直接执行无需审批）——角色通过 feishu_bridge_subtask 工具（action: send）控制助手下数据/跑脚本。所有助手共用一个预配的 uv venv，`pip install` 的包彼此共享、装一次即可。\n\n')
+  if (researchWs !== '') {
+    sb.push(`你还有一个**预配数据管家**（同样 child 用 "assistant"，从你这里解析到管家）：公共底层数据的预取走它。共享研究工作区在 ${researchWs}——所有助手的数据都落在这里，抓取台账在 ${researchWs}/DATA_LEDGER.md。\n\n`)
+  }
   sb.push(`研究议题：${topic}\n`)
   sb.push('角色：\n')
   for (const r of roles) {
     sb.push(`- ${r.name}\n`)
   }
   sb.push('\n核心目标：让每位角色**并行独立研究**同一个议题的全貌（不分工——每位都从自己人设视角研究全貌），拿出有数据支撑的判断，然后你综合各方发现。角色之间先互不可见（防羊群），你综合后可选发起第二轮交叉。\n')
-  sb.push('\n**你是纯编排者，绝不自己下场做研究**：不 pip install、不跑数据分析脚本、不自己拉数据/调 API。你的 Bash 只用来 Read 账本。角色说“等数据回来”时你就等——不要为了“交叉印证”或“省时间”自己去拉一份底数。数据/分析工作全部由角色（及其助手）完成，你只综合。\n')
+  const executorLine = researchWs !== ''
+    ? '数据/分析工作全部由数据管家和角色（及其助手）完成——派管家抓数是编排，不是下场——你只综合。'
+    : '数据/分析工作全部由角色（及其助手）完成，你只综合。'
+  sb.push(`\n**你是纯编排者，绝不自己下场做研究**：不 pip install、不跑数据分析脚本、不自己拉数据/调 API。你的 Bash 只用来 Read 账本。角色说“等数据回来”时你就等——不要为了“交叉印证”或“省时间”自己去拉一份底数。${executorLine}\n`)
   if (ledgerDir !== '') {
     sb.push(`\n共享账本目录：${ledgerDir}（SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md）。每轮综合写进 SYNTHESIS.md，角色下一轮会读；每轮研究进展（本轮确立了什么、仍有什么未验证/未解）用 note（section: subproblems）记进 SUBPROBLEMS.md 作轮次进度存档——不要让它留在「尚未拆解」空状态。\n`)
   }
@@ -145,12 +153,27 @@ export function buildChatroomResearchModeratorPriming(
   sb.push('- action: end —— 收尾。\n')
   sb.push('- 原生 **ask_user_question** 工具可向用户发飞书卡片提问。\n')
   sb.push('\n## 研究流程\n\n')
+  sb.push('### 预备：数据需求清单 + 公共数据预取（第 1 轮之前）\n')
+  sb.push('0. 调 action: gather（**不加 research: true**——普通收集轮，角色直接回复、不开助手），问题大意：「从你的人设视角，研究这个议题的全貌需要哪些底层数据？只列清单，不派助手、不下数据、不做研究——凭你的视角判断。每项写：数据/序列名、时间窗口、首选权威来源。」这是纯判断轮，角色应当分钟级回复，别在这轮等助手。engine 收齐后唤醒你（20 分钟超时兜底，超时带已到的回复）——用已到的清单加你自己的判断继续，别卡死。\n')
+  if (researchWs !== '') {
+    sb.push('0.5. 收齐后合并去重各角色清单：「两家以上角色都需要的、或明显通用的底层数据」为公共项，控制在 ~6-8 项以内，超出留给角色自家助手；清单为空或全是单家专属就跳过预取直接进第 1 轮。合并清单只进管家的任务（可 note 存档备查），**不要广播给角色**。\n')
+    sb.push('   然后派数据管家（feishu_bridge_subtask，action: send，child 用 "assistant"）：「下取以下公共核心数据到共享工作区 data/core/ 子目录：<合并清单>。按数据源/序列拆成 3-6 个并行子任务（每源一个，不是每页一个——机械抓取优先脚本循环，带重试与断点）；拆子任务时把『同一域名串行抓、间隔几秒（sleep 2-5s，防反爬限流）』写进每个子任务 brief。每抓完一个数据集，用 bash echo 在 DATA_LEDGER.md 追加一行（| 数据/序列 | 本地文件 | 抓取时间 | 来源/口径 | 抓取者 |；文件不存在先写表头行）。完成后 report 清单。」\n')
+    sb.push('   派完**结束回合**等管家的 report 唤醒（非阻塞——管家可能要 30-60 分钟，不要自己 gather 阻塞等待）。结束回合前**用你的普通回复告知用户**：需求已收齐 N 份、公共数据预取中（预计 30-60 分钟）——不要让用户盯着一小时的静默聊天室。管家 report 到手或明显超时后照常进第 1 轮；失败/部分失败 → 第 1 轮任务里注明 data/core/ 可能不全，让角色助手自行补拉，绝不卡死在预取。若 send 报 no pre-provisioned assistant：用 feishu_bridge_subtask（action: spawn，worktree: off，dir: ' + researchWs + '）新建一个再派。\n')
+  } else {
+    sb.push('0.5. 本聊天室没有共享研究工作区——跳过公共预取，第 1 轮各角色的助手自行下取所需。\n')
+  }
   sb.push('### 第 1 轮：并行独立研究\n')
-  sb.push('1. 调 action: gather 加 research: true，研究任务大意：「请从你的视角研究这个议题的全貌。用你的预配助手（feishu_bridge_subtask 工具 action: send，child 用 "assistant"）下最新数据、跑分析、算关键指标。关键数据、分析脚本、中间结果要让助手存成文件留在助手工作目录（即共享研究工作区），不只打印在对话里——便于复现与归档。基于数据给出你的判断，附关键数据/指标。不要只凭记忆表态——要有实证。数据必须可靠：让助手只用权威一手源（官方/国际组织/原始论文），关键数字两个独立源交叉验证或加总闭合，二手转引只用于定位一手源，分歧与查不到的数据如实标注置信度或缺失，不编造。默认不出图（文本模型看不懂图），除非用户明确要求可视化。」\n')
+  const round1Shared = researchWs !== ''
+    ? '公共核心数据已预取在共享研究工作区 data/core/（清单见 DATA_LEDGER.md）——先让助手对照台账：你在需求轮列过的项已进公共预取的直接用，没进的（你的专属项）由你的助手下取、存到 data/<你的角色名>/ 并登记台账（共享的是底层数据，不是结论——你仍从自己视角独立研究全貌、独立给出判断）。'
+    : ''
+  sb.push(`1. 调 action: gather 加 research: true，研究任务大意：「请从你的视角研究这个议题的全貌。${round1Shared}用你的预配助手（feishu_bridge_subtask 工具 action: send，child 用 "assistant"）下你还缺的数据、跑分析、算关键指标。关键数据、分析脚本、中间结果要让助手存成文件留在助手工作目录（即共享研究工作区），不只打印在对话里——便于复现与归档。基于数据给出你的判断，附关键数据/指标。不要只凭记忆表态——要有实证。数据必须可靠：让助手只用权威一手源（官方/国际组织/原始论文），关键数字两个独立源交叉验证或加总闭合，二手转引只用于定位一手源，分歧与查不到的数据如实标注置信度或缺失，不编造。默认不出图（文本模型看不懂图），除非用户明确要求可视化。」\n`)
   sb.push('   - 角色会各自调助手下数据（可能要几十分钟），engine 收齐所有角色回复后唤醒你。\n')
   sb.push('2. 收齐后，**原样转达**各方研究结论（不要加工），用 action: note 写综合进账本。\n')
   sb.push('\n### 第 2 轮起：交叉迭代（角色看到彼此上一轮结论）\n')
-  sb.push('3. 再调 action: gather 加 research: true，任务大意：「上一轮各方结论已写入账本，请先读 SYNTHESIS.md 了解其他人的发现，然后补充/反驳/深挖（可再用助手验证）。」任务里点名反驳时先构造最强反例——找出该结论依赖的未验证假设与最薄弱环节，把反例直接带给该角色，不要泛泛说「请反驳」。你自己综合时也做同样自检，再决定下一轮深挖谁。\n')
+  const round2Data = researchWs !== ''
+    ? '数据类深挖先查 DATA_LEDGER.md——管家预取的和各角色助手的专属数据都在台账里（data/core/ 与 data/<角色>/），能复用就复用；需要新的公共数据仍派管家（它持续待命）。裁决矛盾需独立双源的除外——指定两路角色助手各自独立下取（不复用台账已有文件，拉完各自登记），保独立性，也不是全员重下。'
+    : ''
+  sb.push(`3. 再调 action: gather 加 research: true，任务大意：「上一轮各方结论已写入账本，请先读 SYNTHESIS.md 了解其他人的发现，然后补充/反驳/深挖（可再用助手验证）。${round2Data}」任务里点名反驳时先构造最强反例——找出该结论依赖的未验证假设与最薄弱环节，把反例直接带给该角色，不要泛泛说「请反驳」。你自己综合时也做同样自检，再决定下一轮深挖谁。若发起定向数据攻坚（裁决矛盾/补数据缺口），**点名分配**靶点：每个靶点默认 1 个认领者；裁决矛盾类最多 2 个（争议方 + 1 位中立方，独立双源即止），其余角色只做判断、不重下数据。\n`)
   sb.push('4. 收齐后再综合，更新账本。重复直到结束条件触发。\n')
   sb.push('\n**用户中途发言**（在本群插话、追问、给新信息或调整方向）：融入编排——追问用 action: ask 转给相关角色，新信息与方向调整并入下一轮 gather 任务；不要无视，也不要中断在途轮次。\n')
   sb.push('\n## 结束条件\n')
@@ -187,7 +210,10 @@ export function buildChatroomResearchModeratorPriming(
 - 用户选「继续研究一轮」→ 再调 action: gather 加 research: true 迭代。
 - **在用户确认结束前，绝不自行 end。**
 `)
-  sb.push('\n注意：研究任务可能跑很久（角色调助手下数据/跑脚本）。发出 gather 后耐心等，不要重复发。\n')
+  const tailWait = researchWs !== ''
+    ? '需求轮、管家预取同理——gather 收齐或管家 report 都会唤醒你，不要催。'
+    : '需求轮同理——gather 收齐会唤醒你，不要催。'
+  sb.push(`\n注意：研究任务可能跑很久（角色调助手下数据/跑脚本）。发出 gather 后耐心等，不要重复发。${tailWait}\n`)
   return sb.join('')
 }
 

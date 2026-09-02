@@ -22,6 +22,7 @@ import {
   chatroomAssistantGroupName,
   chatroomLedgerDirFor,
   chatroomResearchWorkspace,
+  chatroomStewardGroupName,
   ChatroomRole,
   clearChatroomResearchFlags,
   ensureResearchPythonEnv,
@@ -530,6 +531,40 @@ export async function afterChatroomStarted(
         })
       }
     }
+    // Data steward: one more idle assistant, parented on the HUB. The role
+    // assistants each fetch what their own role needs, duplicating the
+    // shared public datasets (observed: one NBS page pulled by all five);
+    // the steward fetches those once into the shared workspace, so it only
+    // exists when that workspace resolved (without it the role assistants
+    // already scatter into their persona dirs — no shared area to prefetch
+    // into). Hub parentage keeps the roles' own "assistant" alias targets
+    // intact: the alias resolves per caller, so the moderator's "assistant"
+    // reaches the steward.
+    if (assistantDir !== '') {
+      let childKey = ''
+      try {
+        const spawned = await e.spawnSubtask(sessionKey, assistantDir, WorktreeMode.ForceOff, false, '', [], false)
+        childKey = spawned.childKey
+      } catch (error) {
+        console.warn(`chatroom: research steward spawn failed: ${String(error)}`)
+      }
+      if (childKey !== '') {
+        chatroomState(s).researchAssistantKey = childKey
+        chatroomChildKeys.push(childKey)
+        // Flag the child session as a research assistant so its bare persona
+        // carries the research preamble + venv instructions.
+        const child = e.sessions.getOrCreateActive(childKey)
+        chatroomState(child).researchAssistant = true
+        if (researchVenv !== '') chatroomState(child).researchVenv = researchVenv
+        child.setName(chatroomStewardGroupName())
+        const renamer = asGroupRenamer(p)
+        if (renamer !== undefined) {
+          void renamer.renameGroupAny(childKey, chatroomStewardGroupName()).catch((error: unknown) => {
+            console.warn(`chatroom: failed to rename research steward group: ${String(error)}`)
+          })
+        }
+      }
+    }
     e.sessions.save()
   }
 
@@ -545,7 +580,7 @@ export async function afterChatroomStarted(
     let maxRounds = chatroomConfig(e).maxResearchRounds()
     const override = chatroomState(s).chatroomResearchMaxRounds
     if (override > 0) maxRounds = override
-    priming = buildChatroomResearchModeratorPriming(topic, started, ledgerDir ?? '', mode, maxRounds)
+    priming = buildChatroomResearchModeratorPriming(topic, started, ledgerDir ?? '', mode, maxRounds, chatroomResearchWorkspace(e))
   }
   const wake: Message = {
     ...emptyMessage(),

@@ -74,6 +74,12 @@ describe('buildChatroomSystemPrompt', () => {
     // sentinel resolves server-side (a model copying hex keys drops
     // characters — 2026-08-25 oc_ac5db incident).
     expect(text).toContain('child: "assistant"')
+    // Check-before-fetch: the butler pre-fetches common baselines into
+    // data/core/ and the ledger; roles must reuse them instead of
+    // re-fetching the same public pages per role.
+    for (const want of ['先查再拉', 'DATA_LEDGER', 'data/core/', 'data/<角色名>']) {
+      expect(text).toContain(want)
+    }
   })
 
   it('uses the direct contract for 1:1 sessions and no ledger section', async () => {

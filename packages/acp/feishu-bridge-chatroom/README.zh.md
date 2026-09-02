@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## 概述
 
-在一个飞书群里编排多 agent 聊天室：通过 `feishu_bridge_chatroom` 工具或 `/chatroom` 命令启动角色组或主持人，把一个问题扇出给所有角色并把回答汇聚成一份摘要，或让主持人跨独立角色会话驱动圆桌讨论。角色以 dsh agent 运行，persona 来自 persona 目录的整体提示词替换；research assistant 在聊天室旁的共享工作区里深挖。项目用 `enabled: false` 退出：命令消失、工具定义从该项目的模型请求中掩除、内置主持 skill 隐藏。
+在一个飞书群里编排多 agent 聊天室：通过 `feishu_bridge_chatroom` 工具或 `/chatroom` 命令启动角色组或主持人，把一个问题扇出给所有角色并把回答汇聚成一份摘要，或让主持人跨独立角色会话驱动圆桌讨论。角色以 dsh agent 运行，persona 来自 persona 目录的整体提示词替换；research 模式先向所有角色收一份纯判断的数据需求清单，由挂在 hub 下的数据管家把公共数据集一次性预取进共享研究工作区，再以每角色一个助手做角度化深挖，全程遵守抓取台账约定。项目用 `enabled: false` 退出：命令消失、工具定义从该项目的模型请求中掩除、内置主持 skill 隐藏。
 
 ## 目录
 
@@ -28,12 +28,13 @@ kind: "package-bundle"
 
 - `feishu_bridge_chatroom` 工具（family 标签 `feishu_bridge_chatroom`）：主持人通过其 actions（`start` / `ask` / `gather` / `pick-roles` / `pick-topic` / `ask-human` / `end` / `list` / `note`）编排聊天室；角色 persona 通过整体提示词替换引用它。
 - Chatroom persona：role、direct-role、moderator 与 research-assistant 会话以完整系统提示词替换运行，提示词由 persona 目录的扁平化 CLAUDE.md 加参与/研究契约组装（由 session-start-options 监听器预计算；adapter 将其注册为 `complete: true` section）。
-- Moderator priming 与唤醒消息（gather 扇入摘要、end-barrier 收束、重启恢复 note），以及随 subtask 启动选项携带的 research-assistant 前言。
+- Moderator priming 与唤醒消息（gather 扇入摘要、end-barrier 收束、重启恢复 note），以及随 subtask 启动选项携带的 research-assistant 前言——同一份前言服务各角色助手与 hub 预配的数据管家，携带抓取台账、按角色数据目录与同域限速纪律。
+- research 模式由 moderator priming 编排的流程：一次普通（非 research）gather 收各角色的数据需求清单；管家把合并后的公共数据抓进工作区 `data/core/` 并把每次抓取登记进 `DATA_LEDGER.md`；第 1 轮广播把各角色指向该台账，其助手只补缺口；后续轮次复用台账，裁决靶点点名分配、最多争议方加一位中立方各拉一路。
 - 内置 `feishu-bridge-chatroom-moderator` skill，作为隔离的 skill provider 挂载。
 
 #### Token 影响
 
-工具描述与 schema 到达启用该项目里每个 dsh agent（工具是进程级、按调用方路由的）；配置了 `enabled: false` 的项目把定义从其会话请求中掩除（adapter 在会话创建时 restrict 服务登记的拒绝名），内置主持 skill 的目录条目也一并离开（provider 以启用项目 workdir 为 cwd 前缀作用域挂载）。Persona 提示词整体替换各 chatroom 会话的系统提示词而非追加；moderator 唤醒与 relay 卡是用户可见消息，不进模型请求。
+工具描述与 schema 到达启用该项目里每个 dsh agent（工具是进程级、按调用方路由的）；配置了 `enabled: false` 的项目把定义从其会话请求中掩除（adapter 在会话创建时 restrict 服务登记的拒绝名），内置主持 skill 的目录条目也一并离开（provider 以启用项目 workdir 为 cwd 前缀作用域挂载）。Persona 提示词整体替换各 chatroom 会话的系统提示词而非追加；moderator 唤醒与 relay 卡是用户可见消息，不进模型请求。research 模式用一次廉价的普通 gather 需求轮加一次管家预取，换掉原本各家助手重复抓取的轮次；priming 与 research-assistant 前言增长的是台账与限速纪律文本。
 
 #### KV Cache 影响
 
@@ -49,7 +50,8 @@ Chatroom 会话使用整体替换的 persona 提示词，因此每个 role/moder
 - **Picker 状态在内存**：daemon 重启会丢弃已武装的 picker；孤儿 pick 卡的下次点击会原位换成灰色过期卡并提示重新 `/chatroom`（Go 版对孤儿按钮是静默或假确认）。
 - **部署迁移是手动的**：生产 profile 在其自演化的 `cordis.patch.yml` 里把 chatroom 段放在 `feishu-bridge` 行下；桥现在会对这类残留 fail loud，需要把段迁移到本插件自己的配置（`defaults` + 按 `projects`、以桥项目名为键）。迁移片段与 profile 模板更新随 C3 部署批次落地。
 - **REAL 组合面的覆盖**：apply/HMR spec 把插件挂在真实 Cordis 服务上（事件总线、工具注册表、skill 注册表、桥服务），但未经过 Loader 与 `cordis.yml`；走 Loader 的组合测试与生产 `/reload` 冒烟清单随 C3 落地。
-- **用户参与可发现但不强制；收尾卡与群残留是既有行为**：hub 群的普通消息一直能中途到达主持人——就绪卡与 research 进度卡现在写明这一点，auto 模式 priming 指示每轮一条进展同步，中途发言并入下一轮或经 `ask` 转达。仍延后：auto 模式收尾 `ask_user_question` 无超时兜底（无限等待，daemon 重启即失效——过期卡提示还会让用户"用文字回答当前问题"，而问题已不存在）；`end`/`/chatroom stop` 停掉角色与助手会话但从不删除它们的飞书群（桥没有解散群 API），角色/助手群只能手动清理。
+- **用户参与可发现但不强制；收尾卡与群残留是既有行为**：hub 群的普通消息一直能中途到达主持人——就绪卡与 research 进度卡现在写明这一点，auto 模式 priming 指示每轮一条进展同步，中途发言并入下一轮或经 `ask` 转达。仍延后：auto 模式收尾 `ask_user_question` 无超时兜底（无限等待，daemon 重启即失效——过期卡提示还会让用户"用文字回答当前问题"，而问题已不存在）；`end`/`/chatroom stop` 停掉角色、助手与管家会话但从不删除它们的飞书群（桥没有解散群 API），角色/助手群只能手动清理。
+- **research 数据去重是提示词层约定**：抓取台账、按角色数据目录、同域限速与认领分区都活在 priming 与前言文本里——遵从是软性的，只能靠按记录基线复挖 research 聊天室的会话日志来度量（见 2026-09-13 Agent Note）；引擎层的兜底（单一调度器接缝、按域名抓取队列）保持延后。
 
 <a id="dev-note"></a>
 ### 开发备注

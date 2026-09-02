@@ -282,16 +282,19 @@ describe('EndChatroom', () => {
 })
 
 describe('finalizeChatroomEnd', () => {
-  it('cleans research assistants but preserves hub-direct children', async () => {
+  it('cleans research assistants and the steward but preserves hub-direct children', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
     const hub = 'test:hub:user-1'
     const roleKey = 'test:role-1:user-1'
     const assistantKey = 'test:assistant-1'
     const hubChildKey = 'test:hub-child:user-1' // hub's direct /spawn child (HTML render)
+    const stewardKey = 'test:steward-1' // hub's pre-spawned research steward
 
-    // Hub (moderator).
-    chatroomState(e.sessions.getOrCreateActive(hub)).chatroomModerator = true
+    // Hub (moderator), pointing at its steward.
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    chatroomState(hubSess).chatroomModerator = true
+    chatroomState(hubSess).researchAssistantKey = stewardKey
     // Role (child of hub).
     const role = e.sessions.getOrCreateActive(roleKey)
     chatroomState(role).chatroomHubKey = hub
@@ -305,12 +308,19 @@ describe('finalizeChatroomEnd', () => {
     const hubChild = e.sessions.getOrCreateActive(hubChildKey)
     hubChild.setParentSessionKey(hub)
     hubChild.setSubtaskDepth(1)
+    // Hub's pre-spawned research steward (direct child, research-flagged) — cleaned with the room.
+    const steward = e.sessions.getOrCreateActive(stewardKey)
+    steward.setParentSessionKey(hub)
+    steward.setSubtaskDepth(1)
+    chatroomState(steward).researchAssistant = true
 
     const removed = finalizeChatroomEnd(e, hub)
 
-    // Role + research assistant cleaned (2); hub-direct child preserved.
-    expect(removed).toBe(2)
+    // Role + research assistant + steward cleaned (3); hub-direct child preserved.
+    expect(removed).toBe(3)
     expect(chatroomState(role).researchAssistantKey).toBe('')
+    // The hub's steward pointer dies with the room.
+    expect(chatroomState(hubSess).researchAssistantKey).toBe('')
   })
 
   it('clears dirty hub research flags', async () => {
@@ -323,6 +333,7 @@ describe('finalizeChatroomEnd', () => {
     chatroomState(h).chatroomResearchMode = 'manual'
     chatroomState(h).chatroomResearchRound = 3
     chatroomState(h).chatroomResearchMaxRounds = 3
+    chatroomState(h).researchAssistantKey = 'test:steward-1'
 
     finalizeChatroomEnd(e, hub)
 
@@ -330,6 +341,7 @@ describe('finalizeChatroomEnd', () => {
     expect(chatroomState(h).chatroomResearchMode).toBe('')
     expect(chatroomState(h).chatroomResearchRound).toBe(0)
     expect(chatroomState(h).chatroomResearchMaxRounds).toBe(0)
+    expect(chatroomState(h).researchAssistantKey).toBe('')
   })
 })
 
@@ -343,6 +355,7 @@ describe('stashChatroomResearchFlags', () => {
     chatroomState(h).chatroomResearchMode = 'auto'
     chatroomState(h).chatroomResearchRound = 2
     chatroomState(h).chatroomResearchMaxRounds = 5
+    chatroomState(h).researchAssistantKey = 'test:steward-1'
 
     stashChatroomResearchFlags(e, hub, false, '', 0)
 
@@ -350,6 +363,7 @@ describe('stashChatroomResearchFlags', () => {
     expect(chatroomState(h).chatroomResearchMode).toBe('')
     expect(chatroomState(h).chatroomResearchRound).toBe(0)
     expect(chatroomState(h).chatroomResearchMaxRounds).toBe(0)
+    expect(chatroomState(h).researchAssistantKey).toBe('')
   })
 })
 

@@ -414,6 +414,14 @@ export function chatroomAssistantGroupName(roleName: string): string {
   return `${prefix}${r.slice(0, remaining).join('')}...`
 }
 
+/** Research steward subgroup display name: the hub-parented shared-data assistant.
+ *
+ * @returns The fixed display name 「聊天室·数据管家」 — 8 runes, far below the rune ceiling, so no truncation applies.
+ */
+export function chatroomStewardGroupName(): string {
+  return '聊天室·数据管家'
+}
+
 // ── roles listing / resolution ────────────────────────────────────────────
 
 /** The ledger directory for a chatroom hub, or undefined when the ledger is off.
@@ -1339,13 +1347,17 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
     const sess = e.sessions.getOrCreateActive(childKey)
     if (chatroomState(sess).chatroomHubKey === '') {
       // Not a chatroom role. It may still be a research-mode role's
-      // pre-spawned assistant (child of a role). Clean it up iff its parent
-      // is a role in THIS chatroom; leave the hub's direct /spawn children
-      // alone. collectSubtree is deepest-first, so the parent role's hub key
-      // has not been cleared yet.
+      // pre-spawned assistant (child of a role) or the hub's pre-spawned
+      // research steward — clean both up. Leave the hub's other direct
+      // /spawn children (end-of-run HTML renderers) alone. collectSubtree
+      // is deepest-first, so the parent role's hub key has not been
+      // cleared yet.
       const pk = sess.getParentSessionKey()
       if (pk === '') continue
-      if (chatroomState(e.sessions.getOrCreateActive(pk)).chatroomHubKey !== hubKey) continue
+      const parentIsRole = chatroomState(e.sessions.getOrCreateActive(pk)).chatroomHubKey === hubKey
+      // The steward is the hub's only research-flagged direct child.
+      const isSteward = pk === hubKey && chatroomState(sess).researchAssistant
+      if (!parentIsRole && !isSteward) continue
     }
     void cleanupOneChat(e, p, childKey, undefined, true)
     chatroomState(sess).chatroomHubKey = ''
@@ -1690,6 +1702,7 @@ export function clearChatroomResearchFlags(hub: Session): void {
   chatroomState(hub).chatroomResearchMode = ''
   chatroomState(hub).chatroomResearchRound = 0
   chatroomState(hub).chatroomResearchMaxRounds = 0
+  chatroomState(hub).researchAssistantKey = ''
 }
 
 /**

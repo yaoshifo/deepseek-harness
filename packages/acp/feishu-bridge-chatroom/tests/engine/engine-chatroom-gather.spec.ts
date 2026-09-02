@@ -911,7 +911,7 @@ describe('buildChatroomModeratorPriming', () => {
   it('uses 总分结构 wording and never induces a pyramid graphic', () => {
     const cases: Array<[string, string]> = [
       ['moderator', buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')],
-      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)],
+      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')],
     ]
     for (const [, priming] of cases) {
       expect(priming).toContain('总分结构')
@@ -924,7 +924,7 @@ describe('buildChatroomModeratorPriming', () => {
   it('offers the plain (Feynman) default AND the optional academic version', () => {
     const cases: Array<[string, string]> = [
       ['moderator', buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')],
-      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)],
+      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')],
     ]
     for (const [, priming] of cases) {
       for (const want of ['summary.html', '费曼法通俗版', '生活类比', '最小例子', '仍有的分歧']) {
@@ -939,12 +939,12 @@ describe('buildChatroomModeratorPriming', () => {
 
 describe('buildChatroomResearchModeratorPriming', () => {
   it('instructs note (section: subproblems) to fill SUBPROBLEMS.md', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
     expect(priming).toContain('section: subproblems')
   })
 
   it('addresses the assistant by the "assistant" sentinel, never a key the model must transcribe', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
     expect(priming).toContain('child 用 "assistant"')
     // The Go-era env var no longer exists in the dsh backend; mentioning it
     // sent models hunting for a value they cannot see (2026-08-25 oc_ac5db).
@@ -952,33 +952,62 @@ describe('buildChatroomResearchModeratorPriming', () => {
   })
 
   it('instructs persisting artifacts into the shared workspace', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
     expect(priming).toContain('存成文件')
     expect(priming).toContain('工作区')
   })
 
   it('relays data-reliability requirements to assistants in the round-1 task template', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
     for (const want of ['数据必须可靠', '权威一手源', '两个独立源交叉验证或加总闭合', '不编造']) {
       expect(priming).toContain(want)
     }
   })
 
   it('instructs a plain per-round progress sync to the user in auto mode only', () => {
-    const auto = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)
+    const auto = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
     expect(auto).toContain('用一条普通回复向用户同步进展')
     expect(auto).toContain('不用卡片、不等回复、不暂停研究')
-    const manual = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'manual', 3)
+    const manual = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'manual', 3, '/tmp/ws')
     expect(manual).not.toContain('同步进展')
   })
 
   it('instructs handling mid-run user messages in both modes', () => {
     for (const mode of ['auto', 'manual']) {
-      const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', mode, 3)
+      const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', mode, 3, '/tmp/ws')
       expect(priming).toContain('用户中途发言')
       expect(priming).toContain('追问用 action: ask 转给相关角色')
       expect(priming).toContain('并入下一轮 gather 任务')
       expect(priming).toContain('不要无视')
+    }
+  })
+
+  it('stages a needs gather then a steward prefetch before round 1', () => {
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
+    for (const want of [
+      '只列清单，不派助手、不下数据',
+      '数据管家',
+      'data/core/',
+      'DATA_LEDGER',
+      '按数据源/序列拆成 3-6 个并行子任务',
+      '点名分配',
+      '独立双源即止',
+      '不复用台账已有文件',
+      '预计 30-60 分钟',
+    ]) {
+      expect(priming).toContain(want)
+    }
+  })
+
+  it('omits the steward and ledger sections without a shared research workspace', () => {
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '')
+    // The needs gather still runs — it costs minutes and shapes round 1.
+    expect(priming).toContain('只列清单，不派助手、不下数据')
+    expect(priming).toContain('跳过公共预取')
+    // The claim partition is workspace-independent.
+    expect(priming).toContain('点名分配')
+    for (const banned of ['数据管家', 'data/core/', 'DATA_LEDGER']) {
+      expect(priming).not.toContain(banned)
     }
   })
 })

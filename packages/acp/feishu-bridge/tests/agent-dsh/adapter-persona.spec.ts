@@ -180,6 +180,13 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     for (const want of ['只用权威一手数据', '两个相互独立源', '加总闭合', '不悄悄二选一', '不编造', '置信度']) {
       expect(sections[1]?.text).toContain(want)
     }
+    // Data-dedup discipline: parallel research assistants once fetched the
+    // same public pages five independent ways with zero cross-reads, so the
+    // preamble pins ledger check-before-fetch, per-role data dirs, and
+    // same-domain serial fetching.
+    for (const want of ['DATA_LEDGER', '独立双源', 'data/<角色名>', '串行抓', '脚本循环']) {
+      expect(sections[1]?.text).toContain(want)
+    }
   })
 
   it('registers the report-back preamble for a plain subtask child', async () => {
