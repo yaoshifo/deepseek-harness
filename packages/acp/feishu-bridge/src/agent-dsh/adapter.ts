@@ -1800,8 +1800,12 @@ export class DshAgentAdapter {
     // Go effectiveMode: an unattended session overrides ANY configured or
     // overridden mode with bypassPermissions — which also means plan mode
     // stays off (a delegated child nobody can approve must not stall on an
-    // ExitPlanMode card).
-    let mode = bypass ? 'bypassPermissions' : (this.modeOverride !== '' ? this.modeOverride : this.defaultMode)
+    // ExitPlanMode card). Rank otherwise: one-shot override > the chat's
+    // /spawn-pinned mode > the project default.
+    let mode = bypass ? 'bypassPermissions'
+      : this.modeOverride !== '' ? this.modeOverride
+        : options?.spawnMode !== undefined && options.spawnMode !== '' ? options.spawnMode
+          : this.defaultMode
     // A moderator drives a running discussion, never an implementation: an
     // inherited plan default (project agent.mode) would re-arm plan mode on
     // every recycled start and stall the discussion on an ExitPlanMode

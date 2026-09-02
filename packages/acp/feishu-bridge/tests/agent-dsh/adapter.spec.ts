@@ -1416,6 +1416,39 @@ it('a chatroom moderator downgrades an explicit plan override too (one rule: mod
   expect(planSets).toEqual([false])
 })
 
+it('spawnMode pins the mode between one-shot overrides and the project default', async () => {
+  const h = createHarness()
+  const planSets: boolean[] = []
+  h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
+  const a = newAdapter(h)
+
+  // A pinned non-plan mode overrides the plan project default and persists
+  // across sessions (unlike the one-shot override, it is not consumed).
+  await a.startSession('', { sessionKey: 'feishu:oc_m1:ou_9', spawnMode: 'default' })
+  await a.startSession('', { sessionKey: 'feishu:oc_m2:ou_9', spawnMode: 'default' })
+  expect(planSets).toEqual([false, false])
+
+  // A pinned plan overrides a non-plan project default.
+  const b = newAdapter(h)
+  b.setDefaultMode('default')
+  await b.startSession('', { sessionKey: 'feishu:oc_m3:ou_9', spawnMode: 'plan' })
+  expect(planSets).toEqual([false, false, true])
+
+  // A one-shot override outranks the pin once; the pin resumes after it.
+  b.setSessionMode('default')
+  await b.startSession('', { sessionKey: 'feishu:oc_m4:ou_9', spawnMode: 'plan' })
+  await b.startSession('', { sessionKey: 'feishu:oc_m5:ou_9', spawnMode: 'plan' })
+  expect(planSets).toEqual([false, false, true, false, true])
+
+  // The unattended-subtask bypass outranks any pin.
+  await a.startSession('', {
+    sessionKey: 'feishu:oc_m6:ou_9',
+    spawnMode: 'plan',
+    subtask: { attended: false, noReport: false, researchAssistant: false },
+  })
+  expect(planSets).toEqual([false, false, true, false, true, false])
+})
+
 describe('unattendedSubtaskBypassesPermissions (the permission-policy built-in base)', () => {
   it('elevates unattended subtasks only; chatroom personas join via the policy listener', () => {
     expect(unattendedSubtaskBypassesPermissions({ sessionKey: 'k', subtask: { attended: false, noReport: false, researchAssistant: false } })).toBe(true)

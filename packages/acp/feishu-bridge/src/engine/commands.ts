@@ -803,6 +803,29 @@ export function extractWorktreeFlag(args: string[]): [boolean, string[]] {
   return [use, out]
 }
 
+/**
+ * Strip a boolean --plan / --default mode flag from args: the per-group mode
+ * pin for the spawned child ('' = keep the project default). The two flags
+ * are mutually exclusive.
+ * @param args - Raw command arguments to scan.
+ * @returns The flagged mode ('' when absent), the arguments without the flag,
+ *   and whether both flags were present.
+ */
+export function extractModeFlag(args: string[]): { mode: string; rest: string[]; conflict: boolean } {
+  let mode = ''
+  let conflict = false
+  const rest: string[] = []
+  for (const a of args) {
+    if (a === '--plan' || a === '--default') {
+      if (mode !== '') conflict = true
+      mode = a === '--plan' ? 'plan' : 'default'
+      continue
+    }
+    rest.push(a)
+  }
+  return { mode, rest, conflict }
+}
+
 /** Whether any of the given flags appears in args (Go hasFlag). */
 function hasFlag(args: string[], ...flags: string[]): boolean {
   return args.some(a => flags.includes(a))
@@ -902,9 +925,14 @@ async function setupWorktree(
  * @param args - The delegated task text, with optional --dir/-d, --worktree/-w, and --thread/-t flags.
  */
 export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
+  const { mode: modeArg, rest: noMode, conflict } = extractModeFlag(args)
+  if (conflict) {
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.SpawnModeConflict))
+    return
+  }
   let threadFlag = false
   const noThread: string[] = []
-  for (const a of args) {
+  for (const a of noMode) {
     if (a === '--thread' || a === '-t') {
       threadFlag = true
       continue
@@ -938,6 +966,7 @@ export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: strin
     spawnOpts: { topicGroup: threadFlag, workDir: '' },
     threadFlag,
     forkSentinelID,
+    modeArg,
     readyTitleKey: Msg.SpawnGroupReady,
   })
 }
@@ -950,7 +979,12 @@ export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: strin
  * @param args - The first message for the forked group, with optional --dir/-d and --worktree/-w flags.
  */
 export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
-  const [dirArg, afterDir] = extractDirFlag(args)
+  const { mode: modeArg, rest: noMode, conflict } = extractModeFlag(args)
+  if (conflict) {
+    void e.reply(p, msg.replyCtx, e.i18n.t(Msg.SpawnModeConflict))
+    return
+  }
+  const [dirArg, afterDir] = extractDirFlag(noMode)
   const [flagWT, rest] = extractWorktreeFlag(afterDir)
   const bad = unknownFlag(rest, new Set())
   if (bad !== '') {
@@ -1013,6 +1047,7 @@ export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string
     spawnOpts: { topicGroup: false, workDir: '' },
     threadFlag: false,
     forkSentinelID,
+    modeArg,
     readyTitleKey: Msg.ForkGroupReady,
   })
 }
@@ -1024,6 +1059,8 @@ interface SpawnCommonOpts {
   spawnOpts: GroupSpawnOptions
   threadFlag: boolean
   forkSentinelID: string
+  /** Mode pinned for the child group by --plan/--default ('' = project default). */
+  modeArg: string
   readyTitleKey: Parameters<Engine['i18n']['t']>[0]
 }
 
@@ -1131,10 +1168,7 @@ async function spawnGroupCommon(
     ns.setName(groupName)
     if (msg.userID !== '') ns.setSpawnUserID(msg.userID)
     if (wtPath !== '') ns.setWorktreeInfo(wtPath, wtBranch, wtBase, wtRoot, wtBaseBranch)
-    // Inherit the parent's current effective permission mode so the child
-    // doesn't reset to the configured plan and re-prompt for an ExitPlanMode
-    // the parent already approved.
-    ns.setInheritedMode(parentEffectiveMode(e, msg.sessionKey))
+    if (opts.modeArg !== '') ns.setInheritedMode(opts.modeArg)
     e.sessions.save()
   }
 
@@ -1187,13 +1221,6 @@ function effectiveParentLabel(e: Engine, p: Platform, msg: Message): string {
     return e.name
   }
   return msg.chatName
-}
-
-/** Parent's current effective permission mode, '' with no live state (Go parentEffectiveMode). */
-function parentEffectiveMode(e: Engine, sessionKey: string): string {
-  const state = e.interactiveStates.get(sessionKey)
-  if (state === undefined) return ''
-  return state.effectiveMode
 }
 
 /** Parent-jump markdown line for the spawn notify card. */
