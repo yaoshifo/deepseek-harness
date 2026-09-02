@@ -310,6 +310,20 @@ describe('routeAskResponse question variants', () => {
     expect(p.getSent()).toEqual([])
   })
 
+  it('a parseable stale askq click with no parked ask points at plain chat, not a current question', () => {
+    // The ask is gone entirely (answered, superseded, or lost to a restart):
+    // the hint must not tell the user to "answer the current question" —
+    // there is none. It directs them to send a normal message.
+    const e = newTestEngine()
+    const p = createStubPlatform('test')
+
+    const handled = e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')
+
+    expect(handled).toBe(true)
+    expect(p.getSent().join('\n')).toContain('no longer waiting for a reply')
+    expect(p.getSent().join('\n')).toContain('send a message')
+  })
+
   it('second card answer for the same question updates it instead of settling early', async () => {
     const { e, p, decision } = await armedAsk(testMultiQuestions())
 

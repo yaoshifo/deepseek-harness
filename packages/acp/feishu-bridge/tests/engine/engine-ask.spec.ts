@@ -542,7 +542,9 @@ describe('routeAskResponse stale handling', () => {
     const p = createStubPlatform('test')
 
     expect(e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')).toBe(true)
-    expect(p.getSent().join('\n')).toContain('no longer current')
+    // The no-parked-ask hint points at plain chat, distinct from the
+    // question-list-changed copy in routeQuestionResponse.
+    expect(p.getSent().join('\n')).toContain('no longer active')
   })
 
   it('plain text without a pending ask passes through', () => {
