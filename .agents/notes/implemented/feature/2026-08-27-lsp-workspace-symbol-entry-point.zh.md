@@ -16,7 +16,7 @@ Status: implemented
 
 `lsp` 工具暴露第五个按名操作：`workspaceSymbol` 接受非空 `query`，不需要任何坐标。工具描述与提示词引导以它开头，并教会工作流链条——`workspaceSymbol` 返回的 `path:line:character` 可原样传给位置操作。
 
-seam 增加独立的 `LspService.symbol()` 方法而非第五个 `LspOperation`：符号查找的请求 schema 不同（无文件、无位置），也没有可路由的扩展名，因此服务端把请求按注册顺序扇出到所有已注册提供方并合并各组结果。server 缺少 `workspaceSymbolProvider` 能力的提供方不做贡献；所有提供方都缺少时调用以 `LSP_UNSUPPORTED_OPERATION` 失败；其余错误正常传播。grep 工具描述的交叉引用现在点名入口（"prefer the lsp tool (workspaceSymbol for a symbol name)"）。
+seam 增加独立的 `LspService.symbol()` 方法而非第五个 `LspOperation`：符号查找的请求 schema 不同（无文件、无位置），也没有可路由的扩展名，因此服务端把请求按注册顺序扇出到所有已注册提供方并合并各组结果。server 缺少 `workspaceSymbolProvider` 能力的提供方不做贡献；所有提供方都缺少时调用以 `LSP_UNSUPPORTED_OPERATION` 失败；其余错误正常传播。grep 工具描述的交叉引用自此改动起点名入口（"prefer the lsp tool (workspaceSymbol for a symbol name)"），直到 2026-09-02 的 profile 摘除将其移除为止。
 
 真机 e2e 地板在发布前抓住了一个会阻断部署的怪癖：tsserver 的 `navto` 在文档打开前回答 `No Project`，最后一个文档关闭时卸载项目，因此在瞬态打开宿主下，裸符号查询在那里必然失败。为此请求携带可选的 `seedFilePath`：提供方读取该文件、按自己的映射派生 language id，实例在 `workspace/symbol` 期间临时打开它并记住供后续无种查询复用；没有种子时，实例重开上一次打开过的文档。工具把种子暴露为 `workspaceSymbol` 上被推荐的 `file_path`（冒烟实测显示冷首查会把模型推回 grep，因此描述改为开篇推荐）。
 
@@ -34,7 +34,7 @@ seam 增加独立的 `LspService.symbol()` 方法而非第五个 `LspOperation`�
 
 ## Consequences
 
-模型可以一次调用按名找到符号，输入人机工学与 grep 对齐而返回语义解析的声明位置；坐标操作从障碍变成链条的自然下一步。tsserver 种子机制增加了一个记住文档字段与每提供方一次有界种子读取，且按项目加载服务器上的冷无种查询会诚实地透出服务器错误而不是静默重试。fork 从此携带对上游 seam 与工具契约的本地扩展——未来上游的符号 API 需要语义合并，README 已标记该偏离。未解析的 `WorkspaceSymbol` 条目不带位置渲染，而不做 `workspace/symbol/resolve` 往返；空 query 的全量匹配语义在工具层被拒绝以约束服务器负载。在度量判据评估之前，采用率仍是未证实的；若失败，下一个杠杆（结果增强，或接受 grep 主导）是独立决策。
+模型可以一次调用按名找到符号，输入人机工学与 grep 对齐而返回语义解析的声明位置；坐标操作从障碍变成链条的自然下一步。tsserver 种子机制增加了一个记住文档字段与每提供方一次有界种子读取，且按项目加载服务器上的冷无种查询会诚实地透出服务器错误而不是静默重试。fork 从此携带对上游 seam 与工具契约的本地扩展——未来上游的符号 API 需要语义合并，README 已标记该偏离。未解析的 `WorkspaceSymbol` 条目不带位置渲染，而不做 `workspace/symbol/resolve` 往返；空 query 的全量匹配语义在工具层被拒绝以约束服务器负载。采用率已于 2026-09-02 按预声明判据评估并失败——双机 31,350 次工具调用中有机调用仅 1 次——后续决策将工具从 feishu-bridge profile 摘除、三包保留（[2026-09-02](../process/2026-09-02-lsp-tool-unmount-adoption-failure.zh.md)）。
 
 ## Verification
 

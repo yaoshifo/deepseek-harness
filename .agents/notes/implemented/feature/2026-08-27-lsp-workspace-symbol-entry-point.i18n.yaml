@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-27-lsp-workspace-symbol-entry-point.md
-2026-08-27-lsp-workspace-symbol-entry-point.md: 2a1a2c73d5c01bed4be6353b1b1582f0c8069adf
-2026-08-27-lsp-workspace-symbol-entry-point.zh.md: 22ff7a63d7635c789d6aa129edee0a077a275f2b
+2026-08-27-lsp-workspace-symbol-entry-point.md: c3a7ad650a165dad9b2643c11ffcfefe8f4422c7
+2026-08-27-lsp-workspace-symbol-entry-point.zh.md: d172caec307cd7e7aa124bc3752fca71d7e4424f

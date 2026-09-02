@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-09-02-lsp-tool-unmount-adoption-failure.md
+2026-09-02-lsp-tool-unmount-adoption-failure.md: 0b23de5042bb98fd0a52a320aced997cc3633a1b
+2026-09-02-lsp-tool-unmount-adoption-failure.zh.md: 296cc14dda06bb22b3d011170cb49eb979a73e93
