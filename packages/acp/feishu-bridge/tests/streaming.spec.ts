@@ -19,8 +19,10 @@ import {
   maxConsecutivePatchFailures,
   newStreamPreview,
   newToolProgressEntry,
+  padToFixedLines,
   parseSkillToolUse,
   toolTagForProgress,
+  truncateToMaxLines,
   type StreamPreviewCfg,
 } from '../src/streaming.ts'
 import { newAsyncSender } from '../src/async-sender.ts'
@@ -851,6 +853,35 @@ describe('StreamPreview', () => {
     expect(tool2Line).not.toBe('')
     expect(tool2Line).toContain('🚨')
     if (tool0Line !== '') expect(tool0Line).not.toContain('🚨')
+  })
+
+  it('updateToolResult counts lines with the renderer rule (lone \r breaks a line)', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(cfg({ maxChars: 5000 }), mp, 'ctx', undefined, undefined)
+    await sp.appendProgress(new ProgressEntry({
+      header: '**12:00:00**',
+      body: 'git worktree add .claude/worktrees/x -b cc/x dev 2>&1 | tail -3',
+      lang: 'bash',
+      isTool: true,
+      toolID: 't-cr',
+      toolName: 'bash',
+    }))
+    await sleep(500)
+    // git checkout progress: one \n-line holding 36 \r-separated updates
+    // (65%..100%), exactly what `2>&1 | tail -3` passes through.
+    const segments = Array.from({ length: 36 }, (_, i) =>
+      `Updating files:  ${65 + i}% (${6530 + i * 68}/${9996})${i === 35 ? ', done.' : ''}`)
+    const result = `Preparing worktree (new branch 'cc/x')\n${segments.join('\r')}\nHEAD is now at 1246f5`
+    await sp.updateToolResult('t-cr', result, true)
+    await sleep(500)
+    const last = mp.messages[mp.messages.length - 1] ?? ''
+    // Feishu card markdown breaks a line on a lone \r, so the card must not
+    // carry one and the fixed 3-line result window must truncate honestly.
+    expect(last).not.toContain('\r')
+    expect(last).toContain('Preparing worktree (new branch \'cc/x\')')
+    expect(last).toContain('Updating files:  65% (6530/9996)')
+    expect(last).not.toContain('Updating files:  66%')
+    expect(last).toContain('... (36 more lines)')
   })
 
   it('analysisText is not truncated by MaxChars during streaming', async () => {
@@ -1793,5 +1824,20 @@ describe('toolTagForProgress icon families (⚙️ default subdivision)', () => 
     expect(toolTagForProgress('read', 20, 'failed')).toBe("<text_tag color='red'>🔍 read</text_tag>")
     expect(toolTagForProgress('read', 20, 'running')).toBe("<text_tag color='turquoise'>🔍 read</text_tag>")
     expect(toolTagForProgress('read', 20)).toBe("<text_tag color='turquoise'>🔍 read</text_tag>")
+  })
+})
+
+describe('line fixing counts lines with the renderer rule', () => {
+  it('truncateToMaxLines breaks on lone \r and counts \r\n once', () => {
+    expect(truncateToMaxLines('a\rb\rc\rd', 2)).toBe('a\nb\n... (2 more lines)')
+    expect(truncateToMaxLines('one\r\ntwo\r\nthree', 2)).toBe('one\ntwo\n... (1 more lines)')
+    // \r-free text is unchanged (kept lines plus marker, no \r handling).
+    expect(truncateToMaxLines('x\ny\nz', 2)).toBe('x\ny\n... (1 more lines)')
+  })
+
+  it('padToFixedLines normalizes \r and \r\n to \n and pads to the window', () => {
+    expect(padToFixedLines('a\r\nb\rc', 5)).toBe('a\nb\nc\n \n ')
+    expect(padToFixedLines('a\rb\rc', 1)).toBe('a  ...+2')
+    expect(padToFixedLines('x\ny', 3)).toBe('x\ny\n ')
   })
 })

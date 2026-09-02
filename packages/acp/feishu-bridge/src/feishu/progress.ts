@@ -25,6 +25,7 @@ import {
   preprocessFeishuMarkdown,
   sanitizeFeishuMarkdownHTML,
   sanitizeMarkdownURLs,
+  splitCardLines,
   isTableRow,
   FenceTracker,
 } from './markdown.ts'
@@ -265,7 +266,9 @@ export const maxProgressLineChars = 120
 
 /**
  * Normalize s to exactly maxLines lines: empty → placeholders, fewer →
- * padded, more → first maxLines-1 lines + "... (N more lines)".
+ * padded, more → first maxLines-1 lines + "... (N more lines)". Lines are
+ * counted with the card renderer's line endings (see splitCardLines), so a
+ * lone \r inside a line cannot expand the rendered height past the window.
  *
  * @param s - Raw text to normalize.
  * @param maxLines - Exact line count to produce.
@@ -274,7 +277,7 @@ export const maxProgressLineChars = 120
 export function padProgressLines(s: string, maxLines: number): string {
   if (maxLines <= 0) return s
   if (s === '') return ' \n'.repeat(maxLines - 1) + ' '
-  const lines = s.split('\n')
+  const lines = splitCardLines(s)
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] as string
     if (Array.from(line).length > maxProgressLineChars) {

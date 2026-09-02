@@ -14,6 +14,7 @@ import {
   collapseStructuralBlankLines,
   buildProgressCardJSONFromPayload,
   formatProgressToolInput,
+  formatProgressToolResult,
   injectReplyButtons,
   injectStopButton,
   injectStoppedButtons,
@@ -191,6 +192,22 @@ describe('formatProgressToolInput todo rendering', () => {
     expect(out).toContain('⏳')
     expect(out).not.toContain('<anonymous>')
     expect(out).not.toContain('<script>')
+  })
+})
+
+describe('formatProgressToolResult renderer line counting', () => {
+  it('counts \r-separated progress updates as separate lines', () => {
+    // git checkout progress: one \n-line holding 10 \r-separated updates.
+    const segments = Array.from({ length: 10 }, (_, i) => `Updating files:  ${65 + i}% (${6530 + i * 68}/9996)`)
+    const text = `Preparing worktree\n${segments.join('\r')}\nHEAD is now at 1246f5`
+    const out = formatProgressToolResult(text)
+    // The card markdown renderer breaks a line on a lone \r, so the fenced
+    // block must not carry one and must truncate with the overflow marker
+    // instead of the 120-char mid-line cut.
+    expect(out).not.toContain('\r')
+    expect(out).toContain('Updating files:  65% (6530/9996)')
+    expect(out).not.toContain('Updating files:  68%')
+    expect(out).toContain('... (9 more lines)')
   })
 })
 
