@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-The lsp group gives agents precise, language-server-backed code navigation: go to a symbol's definition, find its references, jump to its implementations, or read hover documentation, without the model ever knowing which server answers. The capability is split across three product packages: the `dsh-lsp` seam (`ctx.lsp`) that selects a provider by file extension and normalizes results, the `dsh-lsp-stdio` provider that drives configured local language-server commands, and the model-facing `dsh-tool-lsp` tool that owns the `lsp` schema, prompt, and presentation. Only the provider and the tool do anything when loaded; deployments configure server commands and extension mappings explicitly, and the group ships no language server of its own.
+The lsp group gives agents precise, language-server-backed code navigation: find symbols by name, go to a symbol's definition, find its references, jump to its implementations, or read hover documentation, without the model ever knowing which server answers. The capability is split across three product packages: the `dsh-lsp` seam (`ctx.lsp`) that selects a provider by file extension and normalizes results, the `dsh-lsp-stdio` provider that drives configured local language-server commands, and the model-facing `dsh-tool-lsp` tool that owns the `lsp` schema, prompt, and presentation. Only the provider and the tool do anything when loaded; deployments configure server commands and extension mappings explicitly, and the group ships no language server of its own.
 
 ## Table of Contents
 
@@ -24,7 +24,7 @@ The lsp group gives agents precise, language-server-backed code navigation: go t
 
 | Package | Role | ctx key |
 |---|---|---|
-| [`lsp/`](lsp/README.md) | Defines the code-navigation service: provider selection by file extension, four normalized read-only operations, and structured errors | `ctx.lsp` |
+| [`lsp/`](lsp/README.md) | Defines the code-navigation service: provider selection by file extension, four normalized read-only position operations plus the name-based symbol lookup, and structured errors | `ctx.lsp` |
 | [`lsp-stdio/`](lsp-stdio/README.md) | Drives configured stdio language-server commands as providers over `ctx.fs` and `ctx.subprocess` | registers on `ctx.lsp` |
 | [`tool-lsp/`](tool-lsp/README.md) | Exposes precise code navigation to the model through the `lsp` tool | registers on `ctx.tools` |
 

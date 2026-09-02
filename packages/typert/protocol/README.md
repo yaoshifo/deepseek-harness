@@ -83,7 +83,7 @@ The package keeps strict reflection in the compiler: decorator initializers reta
 
 ### Remote markers
 
-`@Remote` and `@RemoteScope` schedule an initializer that appends the method name, an optional export name, and the invocation mode to the prototype descriptor; `remoteMethods(service)` validates its version and returns a detached declaration-order snapshot that the Gateway's source-mode fallback reads. Markers require public, non-static instance methods with string names, and conflicting markers on one method are rejected.
+`@Remote` and `@RemoteScope` schedule an initializer that appends the method name, an optional export name, the invocation mode, and an optional stream mode to the prototype descriptor; a stream method opts in through `RemoteMethodOptions` (`mode: 'stream'`) and yields many independently validated result items. `remoteMethods(service)` validates its version and returns a detached declaration-order snapshot that the Gateway's source-mode fallback reads. Markers require public, non-static instance methods with string names, and conflicting markers on one method are rejected.
 
 ### Protocol maps and descriptors
 
@@ -135,7 +135,7 @@ No direct effect; the declared contracts reach a request only when an assembly p
 
 These limits define what the declarations can represent; they are current package constraints, not a task backlog.
 
-- **Decorator markers are minimal** — markers contain only the method name and the direct or Context invocation mode; parameter, result, lookup, and schema reflection require the Typert build pipeline.
+- **Decorator markers are minimal** — markers contain only the method name, an optional export name, the direct or Context invocation mode, and an optional stream mode; parameter, result, lookup, and schema reflection require the Typert build pipeline.
 - **Remote signatures are restricted** — decorators accept only public, non-static instance methods with string names, and source-mode execution cannot represent overloaded, destructured, defaulted, or rest-parameter signatures.
 
 <a id="dev-note"></a>

@@ -22,7 +22,7 @@ Add LSP as a three-package capability seam with one read-only model tool and one
 
 `dsh-lsp-stdio` is a generic host, not a language-server catalog or installer. Deployments explicitly configure commands and mappings; future presets belong in composition plugins or `cordis.yml` overlays.
 
-The model and seam expose exactly `goToDefinition`, `findReferences`, `goToImplementation`, and `hover`; no arbitrary JSON-RPC method escapes through `ctx.lsp`. These operation literals match Claude Code's familiar camelCase names while the tool name and `file_path` field remain harness-owned.
+The model and seam expose exactly the four position operations `goToDefinition`, `findReferences`, `goToImplementation`, and `hover` plus the name-based `symbol()` lookup, a fork-local extension delivered 2026-08-27 ([workspace-symbol entry-point note](../feature/2026-08-27-lsp-workspace-symbol-entry-point.md)); no arbitrary JSON-RPC method escapes through `ctx.lsp`. These operation literals match Claude Code's familiar camelCase names while the tool name and `file_path` field remain harness-owned.
 
 The prompt positions LSP as a precision aid: `Use search/read for ordinary navigation. Use lsp when textual matches are ambiguous or before a change requires precise definitions, implementations, or references.`
 
@@ -30,7 +30,7 @@ The prompt positions LSP as a precision aid: `Use search/read for ordinary navig
 
 `dsh-lsp` registers providers by branded id and extension-to-language-id mapping. `registerProvider()` atomically reserves the id and every normalized extension: invalid input or any conflict publishes nothing, and its disposer releases all reservations. Provider plugins register through `ctx.effect()`. Selection is per query and order-independent; no match returns a structured unavailable error. The first version has no glob, language-id, or explicit route selector and no statically declared operation capabilities.
 
-The seam exposes one `query(request, signal?)` operation because no fields need implementation defaulting: `workspaceRoot` is required, `languageId` comes from the registration, and consumers own timeouts and result limits. `query()` selects and derives without hidden `??` fallbacks, leaving no executable spec to resolve. `dsh-tool-lsp` validates model arguments and passes only `exec.signal` as a bare `AbortSignal`, matching web and keeping `dsh-lsp` independent of `dsh-tools`. Removal before selection fails as unavailable; later disposal follows the selected provider's cancellation lifecycle without rerouting.
+The seam exposes `query(request, signal?)` because no fields need implementation defaulting: `workspaceRoot` is required, `languageId` comes from the registration, and consumers own timeouts and result limits. `query()` selects and derives without hidden `??` fallbacks, leaving no executable spec to resolve. `dsh-tool-lsp` validates model arguments and passes only `exec.signal` as a bare `AbortSignal`, matching web and keeping `dsh-lsp` independent of `dsh-tools`. Removal before selection fails as unavailable; later disposal follows the selected provider's cancellation lifecycle without rerouting.
 
 The contract shape:
 
@@ -65,15 +65,34 @@ type LspQueryResult =
   | { readonly kind: 'locations'; readonly locations: readonly { readonly uri: string; readonly range: LspRange }[]; readonly resolvedWorkspaceUri: string }
   | { readonly kind: 'hover'; readonly hover: { readonly contents: string; readonly range?: LspRange } | null }
 
+interface LspSymbolRequest {
+  readonly query: string
+  readonly workspaceRoot: string
+  readonly seedFilePath?: string
+}
+
+interface LspSymbolResult {
+  readonly symbols: readonly { readonly name: string; readonly kind: string; readonly containerName?: string; readonly location: { readonly uri: string; readonly range: LspRange } | null }[]
+  readonly resolvedWorkspaceUri: string
+}
+
+interface LspSymbolsMerged {
+  readonly groups: readonly LspSymbolResult[]
+  readonly failures?: readonly { readonly provider: string; readonly message: string }[]
+  readonly uncoveredSeedExtension?: string
+}
+
 interface LspProvider {
   readonly id: LspProviderId
   readonly extensionToLanguage: Readonly<Record<string, string>>
   query(request: LspProviderQuery, signal?: AbortSignal): Promise<LspQueryResult>
+  symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<LspSymbolResult>
 }
 
 interface LspService {
   registerProvider(provider: LspProvider): () => void
   query(request: LspQueryRequest, signal?: AbortSignal): Promise<LspQueryResult>
+  symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<LspSymbolsMerged>
 }
 ```
 
@@ -87,14 +106,15 @@ The single `lsp` tool accepts:
 
 ```ts
 interface LspToolInput {
-  readonly operation: 'goToDefinition' | 'findReferences' | 'goToImplementation' | 'hover'
-  readonly file_path: string
-  readonly line: number
-  readonly character: number
+  readonly operation: 'workspaceSymbol' | 'goToDefinition' | 'findReferences' | 'goToImplementation' | 'hover'
+  readonly query?: string
+  readonly file_path?: string
+  readonly line?: number
+  readonly character?: number
 }
 ```
 
-`line` and `character` are positive, one-based UTF-16 cursor coordinates; the tool converts them to the seam's zero-based `LspPosition` and converts rendered locations back. `findReferences` includes declarations so impact analysis does not omit the defining site. Provider, language id, workspace root, limits, timeout, initialization, and executable remain outside model input.
+`line` and `character` are positive, one-based UTF-16 cursor coordinates; the tool converts them to the seam's zero-based `LspPosition` and converts rendered locations back. `workspaceSymbol` takes a non-empty symbol-name `query` and no coordinates, plus a recommended same-language `file_path` seed that routes the lookup to that language's server. `findReferences` includes declarations so impact analysis does not omit the defining site. Provider, language id, workspace root, limits, timeout, initialization, and executable remain outside model input.
 
 The tool requires `workspaceRoot` from session `header.cwd`, with no fallback; absence fails as `LSP_WORKSPACE_REQUIRED` before querying or startup. The local provider resolves relative paths against that root and accepts absolute paths directly; both forms are canonicalized and rejected before startup when the target is outside the canonical workspace.
 
@@ -104,7 +124,7 @@ The transport-neutral presenter uses `{ card: 'generic', kind: 'search', title, 
 
 ## Timeout ownership
 
-`dsh-tool-lsp` attaches one configurable `timeoutMs` budget, default `60_000`, to the tool definition. `dsh-tool-call-timeout-policy` enforces it and supplies `exec.signal`, which reaches `ctx.lsp.query`; the budget covers the complete queued open/query/close lifecycle and is not model-configurable.
+`dsh-tool-lsp` attaches one configurable `timeoutMs` budget, default `60_000`, to the tool definition. `dsh-tool-call-timeout-policy` enforces it and supplies `exec.signal`, which reaches `ctx.lsp.query` and `ctx.lsp.symbol`; the budget covers the complete queued open/query/close lifecycle and is not model-configurable.
 
 The seam and provider add no startup or request deadline. Non-tool callers therefore receive no hidden timeout and must supply an `AbortSignal`, using `deadline()` when they need a budget.
 
@@ -139,7 +159,7 @@ Abort reaches every query phase and sends `$/cancelRequest` once an id exists. A
 
 ## Deliberately deferred API
 
-Symbols are deferred because they need different schemas and overlap read/search; a future workspace-symbol tool must accept a search query. Call hierarchy is deferred because support is uneven, and `prepareCallHierarchy` remains an internal prerequisite rather than a model operation.
+The name-based symbol lookup shipped on 2026-08-27 as the seam's `symbol()` fan-out and the tool's `workspaceSymbol` operation, which takes a symbol-name query instead of a position ([workspace-symbol entry-point note](../feature/2026-08-27-lsp-workspace-symbol-entry-point.md)). Call hierarchy is deferred because support is uneven, and `prepareCallHierarchy` remains an internal prerequisite rather than a model operation.
 
 Diagnostics need separate freshness, accumulation, and transcript rules. Mutations such as rename, code actions, and formatting require separate tools with preview, permission, and write-policy integration.
 
@@ -147,7 +167,7 @@ The provider trusts its configured server. Its filesystem visibility and process
 
 ## Alternatives considered
 
-**Copy Claude Code's unified schema.** Its cursor operations validate the core use case, but symbols and call hierarchy need different arguments. Copying all nine operations would freeze speculative surface, so the seam aligns only on the four semantic queries.
+**Copy Claude Code's unified schema.** Its cursor operations validate the core use case, but symbols and call hierarchy need different arguments. Copying all nine operations would freeze speculative surface, so the seam aligns on the four semantic queries and carries the name-based symbol lookup as a fork-local extension ([workspace-symbol entry-point note](../feature/2026-08-27-lsp-workspace-symbol-entry-point.md)).
 
 **Let providers register tools.** Loaded servers would then control model schema and prompts, preventing one stable contract across local and remote providers.
 

@@ -22,7 +22,7 @@ harness 已具备文本搜索与文件读取能力，但二者都无法识别程
 
 `dsh-lsp-stdio` 是通用 host，不是语言服务器目录或安装器。部署显式配置命令与映射；未来 preset 属于组合插件或 `cordis.yml` overlay。
 
-模型与 seam 仅公开 `goToDefinition`、`findReferences`、`goToImplementation` 和 `hover`；`ctx.lsp` 不提供任意 JSON-RPC 方法。这些操作字面量与 Claude Code 熟悉的 camelCase 命名一致，而工具名与 `file_path` 字段仍由 harness 自行定义。
+模型与 seam 恰好公开四个位置操作 `goToDefinition`、`findReferences`、`goToImplementation`、`hover`，外加按名的 `symbol()` 符号查找——2026-08-27 交付的 fork 本地扩展（见[workspaceSymbol 按名入口点 note](../feature/2026-08-27-lsp-workspace-symbol-entry-point.zh.md)）；`ctx.lsp` 不提供任意 JSON-RPC 方法。这些操作字面量与 Claude Code 熟悉的 camelCase 命名一致，而工具名与 `file_path` 字段仍由 harness 自行定义。
 
 提示词将 LSP 定位为精确查询手段：`Use search/read for ordinary navigation. Use lsp when textual matches are ambiguous or before a change requires precise definitions, implementations, or references.`
 
@@ -30,7 +30,7 @@ harness 已具备文本搜索与文件读取能力，但二者都无法识别程
 
 `dsh-lsp` 按带品牌类型的 id 和扩展名到语言 id 的映射注册提供方。`registerProvider()` 以原子方式占用 id 与所有规范化扩展名：输入无效或存在冲突时不发布任何状态，dispose（资源释放）函数释放全部占用。提供方插件通过 `ctx.effect()` 注册。系统按查询且不受顺序影响地选择提供方；没有匹配项时返回结构化不可用错误。第一版不提供 glob、language-id 或显式路由选择器，也不静态声明操作能力。
 
-seam 只公开 `query(request, signal?)`，因为没有字段需要实现层填充默认值：`workspaceRoot` 是必填项，`languageId` 来自注册映射，超时与结果限制由消费方负责。`query()` 执行选择与推导时不使用隐藏的 `??` 后备逻辑，因此没有需要 resolve 的可执行 spec。`dsh-tool-lsp` 校验模型参数，并只把 `exec.signal` 作为裸 `AbortSignal` 传递，与 web 一致，并使 `dsh-lsp` 不依赖 `dsh-tools`。提供方在选择前被移除时按不可用失败；之后的 dispose 遵循已选提供方的取消生命周期，不改路由。
+seam 公开 `query(request, signal?)`，因为没有字段需要实现层填充默认值：`workspaceRoot` 是必填项，`languageId` 来自注册映射，超时与结果限制由消费方负责。`query()` 执行选择与推导时不使用隐藏的 `??` 后备逻辑，因此没有需要 resolve 的可执行 spec。`dsh-tool-lsp` 校验模型参数，并只把 `exec.signal` 作为裸 `AbortSignal` 传递，与 web 一致，并使 `dsh-lsp` 不依赖 `dsh-tools`。提供方在选择前被移除时按不可用失败；之后的 dispose 遵循已选提供方的取消生命周期，不改路由。
 
 约定如下：
 
@@ -65,15 +65,34 @@ type LspQueryResult =
   | { readonly kind: 'locations'; readonly locations: readonly { readonly uri: string; readonly range: LspRange }[]; readonly resolvedWorkspaceUri: string }
   | { readonly kind: 'hover'; readonly hover: { readonly contents: string; readonly range?: LspRange } | null }
 
+interface LspSymbolRequest {
+  readonly query: string
+  readonly workspaceRoot: string
+  readonly seedFilePath?: string
+}
+
+interface LspSymbolResult {
+  readonly symbols: readonly { readonly name: string; readonly kind: string; readonly containerName?: string; readonly location: { readonly uri: string; readonly range: LspRange } | null }[]
+  readonly resolvedWorkspaceUri: string
+}
+
+interface LspSymbolsMerged {
+  readonly groups: readonly LspSymbolResult[]
+  readonly failures?: readonly { readonly provider: string; readonly message: string }[]
+  readonly uncoveredSeedExtension?: string
+}
+
 interface LspProvider {
   readonly id: LspProviderId
   readonly extensionToLanguage: Readonly<Record<string, string>>
   query(request: LspProviderQuery, signal?: AbortSignal): Promise<LspQueryResult>
+  symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<LspSymbolResult>
 }
 
 interface LspService {
   registerProvider(provider: LspProvider): () => void
   query(request: LspQueryRequest, signal?: AbortSignal): Promise<LspQueryResult>
+  symbol(request: LspSymbolRequest, signal?: AbortSignal): Promise<LspSymbolsMerged>
 }
 ```
 
@@ -87,14 +106,15 @@ interface LspService {
 
 ```ts
 interface LspToolInput {
-  readonly operation: 'goToDefinition' | 'findReferences' | 'goToImplementation' | 'hover'
-  readonly file_path: string
-  readonly line: number
-  readonly character: number
+  readonly operation: 'workspaceSymbol' | 'goToDefinition' | 'findReferences' | 'goToImplementation' | 'hover'
+  readonly query?: string
+  readonly file_path?: string
+  readonly line?: number
+  readonly character?: number
 }
 ```
 
-`line` 和 `character` 是从 1 开始计数的正数 UTF-16 光标坐标；工具将其转换为 seam 中从零开始的 `LspPosition`，并将渲染位置转回。`findReferences` 包含声明，避免影响分析漏掉定义位置。提供方、语言 id、工作区根目录、限制、超时、初始化和可执行文件均不进入模型输入。
+`line` 和 `character` 是从 1 开始计数的正数 UTF-16 光标坐标；工具将其转换为 seam 中从零开始的 `LspPosition`，并将渲染位置转回。`workspaceSymbol` 接受非空符号名 `query`，不需要坐标，另可携带与符号同语言的 `file_path` 种子，把查找路由到该语言的服务器。`findReferences` 包含声明，避免影响分析漏掉定义位置。提供方、语言 id、工作区根目录、限制、超时、初始化和可执行文件均不进入模型输入。
 
 工具必须从会话 `header.cwd` 取得 `workspaceRoot`，没有后备值；缺失时在查询或启动前以 `LSP_WORKSPACE_REQUIRED` 失败。本地提供方基于根目录解析相对路径并直接接受绝对路径；两种路径都会进行规范化，如果目标位于规范工作区外，则在启动前拒绝。
 
@@ -104,7 +124,7 @@ interface LspToolInput {
 
 ## 超时归属
 
-`dsh-tool-lsp` 将一个可配置的 `timeoutMs` 预算附加到工具定义，默认值为 `60_000`。`dsh-tool-call-timeout-policy` 执行预算并提供传入 `ctx.lsp.query` 的 `exec.signal`；该预算覆盖排队、打开、查询和关闭的完整生命周期，模型不可配置。
+`dsh-tool-lsp` 将一个可配置的 `timeoutMs` 预算附加到工具定义，默认值为 `60_000`。`dsh-tool-call-timeout-policy` 执行预算并提供传入 `ctx.lsp.query` 与 `ctx.lsp.symbol` 的 `exec.signal`；该预算覆盖排队、打开、查询和关闭的完整生命周期，模型不可配置。
 
 seam 和提供方不增加启动或请求截止时间。非工具调用方不会获得隐藏超时，必须自行提供 `AbortSignal`，并在需要预算时使用 `deadline()`。
 
@@ -139,7 +159,7 @@ seam 和提供方不增加启动或请求截止时间。非工具调用方不会
 
 ## 明确延后的 API
 
-符号操作因需要不同 schema 且与读取或搜索重叠而延后；未来的工作区符号工具必须接收搜索词。调用层级因支持度不一而延后，`prepareCallHierarchy` 仍是内部准备步骤，不是模型操作。
+按名符号查找已于 2026-08-27 交付：seam 的 `symbol()` 扇出与工具的 `workspaceSymbol` 操作，按符号名而非位置查询（见[workspaceSymbol 按名入口点 note](../feature/2026-08-27-lsp-workspace-symbol-entry-point.zh.md)）。调用层级因支持度不一而延后，`prepareCallHierarchy` 仍是内部准备步骤，不是模型操作。
 
 诊断需要独立的新鲜度、累积与 transcript 规则。重命名、代码操作和格式化等变更能力需要单独工具，并集成预览、权限和写入策略。
 
@@ -147,7 +167,7 @@ seam 和提供方不增加启动或请求截止时间。非工具调用方不会
 
 ## 备选方案
 
-**照搬 Claude Code 的统一 schema。** 它的光标操作验证了核心场景，但符号与调用层级需要不同参数。照搬九种操作会固化尚未验证的接口，因此该 seam 只对齐四种语义查询。
+**照搬 Claude Code 的统一 schema。** 它的光标操作验证了核心场景，但符号与调用层级需要不同参数。照搬九种操作会固化尚未验证的接口，因此该 seam 对齐四种语义查询，按名符号查找则是 fork 本地扩展（见[workspaceSymbol 按名入口点 note](../feature/2026-08-27-lsp-workspace-symbol-entry-point.zh.md)）。
 
 **允许提供方注册工具。** 已加载服务器会控制模型 schema 和提示词，无法在本地与远程提供方之间维持统一约定。
 

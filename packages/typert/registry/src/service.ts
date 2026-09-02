@@ -720,6 +720,8 @@ function validateCodec(codec: InvocationDescriptor['result'], subject: string): 
 }
 
 function validateWireName(subject: string, value: string): void {
+  // dsh-typert-protocol is a type-only devDependency here, so this inlined grammar
+  // must mirror isTypertRemoteSegment(); a runtime import would not fail typecheck.
   if (value === '.' || value === '..' || !/^[A-Za-z0-9_$.-]+$/.test(value)) {
     throw new Error(`typert: invalid ${subject} "${value}" — must contain only RPC endpoint segment characters`)
   }

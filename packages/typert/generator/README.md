@@ -124,7 +124,9 @@ These limits define what the generator cannot model or emit; they are current pa
 
 - **Package export patterns are skipped** — contributing packages need concrete export targets; wildcard export patterns are not analyzed.
 - **Namespace re-exports across faces fail** — named and star re-exports produce links, but a namespace re-export cannot be represented until `TypeTargetModel` can model a module namespace without flattening it.
-- **The Zod emitter supports a deliberate subset** — generic schema declarations and computed constructs such as conditional or mapped schema roots fail until a concrete schema-factory policy exists.
+- **The Zod emitter supports a deliberate subset** — computed constructs such as conditional, mapped, or indexed-access types fail anywhere inside a schema, and enum declarations fail because the model retains only their member initializer text; generic declarations emit as schema factory functions, but a schema export root must be a concrete declaration.
+- **Generic Remote methods are not supported** — a Remote method with type parameters fails the build; the wire invocation descriptor fixes one schema set per method and carries no type arguments.
+- **Remote boundary types must be exported from a public non-root type subpath** — a type exported only through the root `.` export fails the build unless its package is in the generator's hardcoded `PUBLIC_REMOTE_TYPE_ROOTS` allowlist (currently only `@deepseek-ai/dsh-util-values`); a new package joins that allowlist only by editing generator source.
 - **No generated schema imports across faces** — cross-face links are represented for analysis, but no generated schema requires a runtime cross-face Zod import.
 - **Discovery covers concrete public exports only** — declarations neither exported nor imported by the reachable graph are intentionally outside the package model.
 

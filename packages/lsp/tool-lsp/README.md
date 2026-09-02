@@ -63,7 +63,7 @@ This section explains the design decisions behind the tool and where the code re
 
 - **Consumer-only.** The tool runtime-injects only `tools`, `lsp`, and `systemPrompt`, imports no provider, and passes only `exec.signal` to the seam.
 - **Coordinate conversion.** `parseLspArgs` validates that `line` and `character` are positive integers and converts them to the seam's zero-based positions; rendered locations convert back to one-based form.
-- **Canonical result passthrough.** The tool returns the seam's closed union (`{ kind: 'locations', locations, resolvedWorkspaceUri }` or `{ kind: 'hover', hover }`) so native renderers can inspect every acquired location and zero-based range directly.
+- **Canonical result passthrough.** The tool returns the seam's closed union (`{ kind: 'locations', locations, resolvedWorkspaceUri }`, `{ kind: 'hover', hover }`, or `{ kind: 'symbols', groups, providerFailures?, uncoveredSeedExtension? }`) so native renderers can inspect every acquired location and zero-based range directly.
 - **Execution-world URI rendering.** `renderUri` resolves a `file:` URI against the provider's canonical workspace URI — workspace-relative inside it, URI-derived absolute outside it, verbatim when malformed or not `file:` — never applying host-platform path rules to the session cwd.
 - **Caps after rendering.** `maxLocations` bounds the item count first, then `maxResultChars` bounds the complete rendered text including its omission or truncation marker.
 - **Generic search-card presentation.** `presentLspCall` renders a `{ card: 'generic', kind: 'search', title, locations: [{ path, line }] }` view; the args-derived title carries the operation and one-based cursor, and follow-along focuses the queried line while the title preserves the column.
@@ -170,7 +170,7 @@ These limits define when the tool is a poor fit. They are current package constr
 - **Project-loading servers need a seed** — tsserver answers a cold `workspace/symbol` with `No Project` until a document opens; the tool's `file_path` routes the query to the seed's language and seeds that server, and the host re-opens the last opened document when no seed is given. A seedless fan-out surfaces a cold tsserver as a `providerFailures` note while the other providers answer; the same server's navto also searches only the seed's project graph on multi-package workspaces.
 - **No `workspace/symbol/resolve`** — servers that return unresolved `WorkspaceSymbol` entries keep them with `location: null` (rendered without a position suffix) instead of a resolve round-trip; in practice the servers in use return resolved locations.
 - **No cross-server completeness promise** — supported servers may return empty or partial results depending on indexing readiness; the tool promises no completeness across languages or servers.
-- **Fork extension of the upstream operation set** — `workspaceSymbol` extends the upstream four-operation tool contract; a future upstream equivalent would need a semantic merge (see the adoption Agent Note).
+- **Fork extension of the upstream operation set** — `workspaceSymbol` extends the upstream four-operation tool contract; a future upstream equivalent would need a semantic merge (see the [adoption Agent Note](../../../.agents/notes/implemented/feature/2026-08-27-lsp-workspace-symbol-entry-point.md)).
 
 <a id="dev-note"></a>
 ### Dev Note

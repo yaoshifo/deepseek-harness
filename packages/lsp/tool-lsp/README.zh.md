@@ -63,7 +63,7 @@ kind: "package-reference"
 
 - **只做消费方。** 工具运行时只注入 `tools`、`lsp` 与 `systemPrompt`，不导入任何提供方，并且只把 `exec.signal` 传给 seam。
 - **坐标转换。** `parseLspArgs` 验证 `line` 与 `character` 是正整数，并转换为 seam 从零开始的位置；渲染出的位置再转回从 1 开始的形式。
-- **规范结果透传。** 工具返回 seam 的封闭联合（`{ kind: 'locations', locations, resolvedWorkspaceUri }` 或 `{ kind: 'hover', hover }`），原生渲染器可以直接检查每个已取得的位置与从零开始的范围。
+- **规范结果透传。** 工具返回 seam 的封闭联合（`{ kind: 'locations', locations, resolvedWorkspaceUri }`、`{ kind: 'hover', hover }` 或 `{ kind: 'symbols', groups, providerFailures?, uncoveredSeedExtension? }`），原生渲染器可以直接检查每个已取得的位置与从零开始的范围。
 - **执行世界 URI 渲染。** `renderUri` 以提供方的规范工作区 URI 为基准解析 `file:` URI——在其内为工作区相对路径，在其外为从 URI 派生的绝对路径，格式错误或非 `file:` 时原样保留——绝不把宿主平台路径规则应用到会话 cwd。
 - **渲染后再设限。** `maxLocations` 先限制条目数量，`maxResultChars` 再限制包含省略或截断标记在内的完整渲染文本。
 - **通用搜索卡片呈现。** `presentLspCall` 渲染 `{ card: 'generic', kind: 'search', title, locations: [{ path, line }] }` 视图；从 args 派生的标题携带操作与从 1 开始的光标，跟随焦点对准查询行，标题则保留列号。
@@ -170,7 +170,7 @@ Use lsp workspaceSymbol to find functions, classes, types, and other symbols by 
 - **按项目加载的服务器需要种子**：tsserver 在没有文档打开时对冷 `workspace/symbol` 回答 `No Project`；工具的 `file_path` 把查询路由到种子语言并播种该服务器，无种子时宿主重开上一个打开过的文档。无种扇出会把冷的 tsserver 折为 `providerFailures` 附注，同时其他提供方照常应答；该服务器的 navto 在多包工作区上也只搜索种子所属的项目图。
 - **不做 `workspace/symbol/resolve`**：返回未解析 `WorkspaceSymbol` 的服务器会以 `location: null`（渲染时去掉位置后缀）保留条目，而不做 resolve 往返；实践中在用的服务器都返回已解析的位置。
 - **不承诺跨服务器完整性**：受支持的服务器仍可能根据索引就绪情况返回空或部分结果；该工具不承诺跨语言或服务器的完整性。
-- **对上游操作集的 fork 扩展**：`workspaceSymbol` 扩展了上游四操作工具契约；未来上游若出现等价能力需要做语义合并（见采用率 Agent Note）。
+- **对上游操作集的 fork 扩展**：`workspaceSymbol` 扩展了上游四操作工具契约；未来上游若出现等价能力需要做语义合并（见[采用率 Agent Note](../../../.agents/notes/implemented/feature/2026-08-27-lsp-workspace-symbol-entry-point.zh.md)）。
 
 <a id="dev-note"></a>
 ### 开发备注

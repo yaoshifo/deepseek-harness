@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-lsp` provides the harness's language-server code navigation: an agent can go to a symbol's definition, find its references, jump to its implementations, or read hover documentation, and the code-navigation service (`ctx.lsp`) routes each query to the language-server provider that owns the file's extension. Providers register by branded id and file extension, so a provider swap never changes how navigation is requested or what the model sees. The service exposes exactly four read-only operations and no generic JSON-RPC escape hatch, and it contributes no prompt or tool schema itself — the model-facing `lsp` tool lives in `dsh-tool-lsp`. Compose it with a provider such as `dsh-lsp-stdio` and the tool to give agents precise navigation; this package does nothing on its own.
+`dsh-lsp` provides the harness's language-server code navigation: an agent can go to a symbol's definition, find its references, jump to its implementations, or read hover documentation, and the code-navigation service (`ctx.lsp`) routes each query to the language-server provider that owns the file's extension. Providers register by branded id and file extension, so a provider swap never changes how navigation is requested or what the model sees. The service exposes exactly the four position operations plus the name-based workspace symbol lookup, all read-only with no generic JSON-RPC escape hatch, and it contributes no prompt or tool schema itself — the model-facing `lsp` tool lives in `dsh-tool-lsp`. Compose it with a provider such as `dsh-lsp-stdio` and the tool to give agents precise navigation; this package does nothing on its own.
 
 ## Table of Contents
 
@@ -29,7 +29,7 @@ Mount a language-server provider and the `lsp` tool to give agents semantics-bas
 
 ### When to choose it
 
-Choose this service when a deployment wants model-visible code navigation backed by language servers. It covers read-only navigation — definitions, references, implementations, and hover — and deliberately omits mutations (rename, code actions, formatting), symbol lists, and diagnostics. The service is provider-neutral: local stdio servers, remote servers, and sandbox-native providers register the same way, so replacing the backend does not change what the model sees or how it asks.
+Choose this service when a deployment wants model-visible code navigation backed by language servers. It covers read-only navigation — definitions, references, implementations, and hover — and deliberately omits mutations (rename, code actions, formatting), `documentSymbol` list queries, and diagnostics. The service is provider-neutral: local stdio servers, remote servers, and sandbox-native providers register the same way, so replacing the backend does not change what the model sees or how it asks.
 
 ### Composing a navigation stack
 
@@ -143,7 +143,7 @@ These limits define the seam's current scope. They are package constraints, not 
 - **Exclusive extension ownership within one runtime** — two providers cannot both claim `.ts`, even with different language ids; overlaps fail registration. A deployment-configured selector above registrations is the intended extension, which can relax exclusive reservation without adding provider choice to model input ([seam Agent Note](../../../.agents/notes/implemented/architecture/2026-07-15-lsp-capability-seam.md)).
 - **Four position operations plus name-based symbols** — call hierarchy and `documentSymbol` are deferred (they need different schemas); diagnostics need separate freshness/accumulation rules; mutations (rename, code actions, formatting) require separate tools with preview, permission, and write-policy integration.
 - **Fork extension of the upstream seam** — upstream closes the seam at four operations; `symbol()` is a fork-local addition pending an upstream equivalent (semantic merge if upstream ships one).
-- **No observation API** — availability is observed only by running `query()` and routing the thrown `LspError` codes; there is no provider-change event or capability-status query.
+- **No observation API** — availability is observed only by running `query()` or `symbol()` and routing the thrown `LspError` codes; there is no provider-change event or capability-status query.
 
 <a id="dev-note"></a>
 ### Dev Note
