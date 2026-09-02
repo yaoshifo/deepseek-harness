@@ -448,7 +448,7 @@ export interface FeishuPlatformOptions {
   useInteractiveCard?: boolean
   /** "legacy" (default), "compact", or "card" (Go progress_style). */
   progressStyle?: string
-  /** ✅ push notification after in-place completion (Go notify_on_complete). */
+  /** ✅ per-turn completion notification — purple card or text fallback; default off (Go notify_on_complete). */
   notifyOnComplete?: boolean
   /** Emoji reactions (empty or "none" disables the respective reaction). */
   reactionEmoji?: string
@@ -2212,6 +2212,15 @@ export class FeishuPlatform implements Platform {
   async sendCompletionNotification(replyCtx: unknown, usageMsg: string): Promise<void> {
     if (!this.notifyOnComplete || usageMsg === '') return
     await this.reply(replyCtx, usageMsg)
+  }
+
+  /**
+   * CompletionNoticePreference: the ✅ completion card and its text fallback
+   * both follow `feishu.notifyOnComplete` (Go notify_on_complete).
+   * @returns Whether the per-turn completion notification is enabled.
+   */
+  completionNoticeEnabled(): boolean {
+    return this.notifyOnComplete
   }
 
   /**

@@ -75,6 +75,7 @@ describe('buildProjectAssembly', () => {
     }
     const { platform } = buildProjectAssembly(stubContext(), cfg, proj, root)
     expect(platform.notifyOnComplete).toBe(true)
+    expect(platform.completionNoticeEnabled()).toBe(true)
     expect(platform.reactionEmoji).toBe('Get')
     expect(platform.doneEmoji).toBe('Done')
     expect(platform.cancelEmoji).toBe('CrossMark')
@@ -83,6 +84,7 @@ describe('buildProjectAssembly', () => {
     // Defaults stay off when the config omits them.
     const bare = buildProjectAssembly(stubContext(), config(), project(), root)
     expect(bare.platform.notifyOnComplete).toBe(false)
+    expect(bare.platform.completionNoticeEnabled()).toBe(false)
     expect(bare.platform.topNoticeEnabled).toBe(false)
     expect(bare.platform.pinEnabled).toBe(false)
   })
