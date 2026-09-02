@@ -1,5 +1,5 @@
 /**
- * The chatroom package's message subtable: the 70 chatroom keys (69
+ * The chatroom package's message subtable: the 71 chatroom keys (70
  * `chatroom_*` plus the bare `chatroom` command-description key) moved
  * verbatim from the feishu-bridge main table. Registered once per process in
  * the plugin apply through the bridge's `registerMessages`, so every engine
@@ -27,6 +27,7 @@ const en: Record<string, string> = {
   chatroom_gather_timed_out_idle: '%s (not started)',
   chatroom_research_progress_title: '⏳ Parallel research in progress',
   chatroom_research_progress_body: '%d/%d roles have replied',
+  chatroom_interject_hint: '💡 Message this group anytime to interject, follow up, or change direction — the moderator will act on it.',
   chatroom_research_progress_done: '✅ All roles replied',
   chatroom_research_progress_timed_out: '⏱ Timed out: %d/%d',
   chatroom_research_progress_timed_out_title: '⏱ Research timed out',
@@ -101,6 +102,7 @@ const zh: Record<string, string> = {
   chatroom_gather_timed_out_idle: '%s（未开始）',
   chatroom_research_progress_title: '⏳ 并行研究进行中',
   chatroom_research_progress_body: '%d/%d 角色已回复',
+  chatroom_interject_hint: '💡 随时在本群发消息即可插话、追问或调整方向，主持人会处理。',
   chatroom_research_progress_done: '✅ 全部角色已回复',
   chatroom_research_progress_timed_out: '⏱ 已超时：%d/%d',
   chatroom_research_progress_timed_out_title: '⏱ 研究已超时',
@@ -184,6 +186,7 @@ export const Msg = {
   ChatroomGatherTimedOutIdle: 'chatroom_gather_timed_out_idle',
   ChatroomResearchProgressTitle: 'chatroom_research_progress_title',
   ChatroomResearchProgressBody: 'chatroom_research_progress_body',
+  ChatroomInterjectHint: 'chatroom_interject_hint',
   ChatroomResearchProgressDone: 'chatroom_research_progress_done',
   ChatroomResearchProgressTimedOut: 'chatroom_research_progress_timed_out',
   ChatroomResearchProgressTimedOutTitle: 'chatroom_research_progress_timed_out_title',

@@ -833,6 +833,10 @@ function fireGatherTimeout(e: Engine, hubKey: string): void {
 
 /** The research gather progress card; terminal is '' (X/N), 'done', or 'timedout'.
  *
+ * The live card carries the interjection hint: a research round runs up to an
+ * hour with the moderator asleep between rounds, and nothing else on the card
+ * tells the user their messages reach the moderator.
+ *
  * @param e - Engine carrying the i18n surface.
  * @param done - Number of role replies collected so far.
  * @param total - Total number of roles in the gather.
@@ -842,7 +846,9 @@ function fireGatherTimeout(e: Engine, hubKey: string): void {
 export function buildResearchProgressCard(e: Engine, done: number, total: number, terminal: string): Card {
   let title = e.i18n.t(Msg.ChatroomResearchProgressTitle)
   let body = e.i18n.tf(Msg.ChatroomResearchProgressBody, done, total)
-  if (terminal === 'done') {
+  if (terminal === '') {
+    body += `\n\n${e.i18n.t(Msg.ChatroomInterjectHint)}`
+  } else if (terminal === 'done') {
     title = e.i18n.t(Msg.ChatroomResearchProgressDone)
   } else if (terminal === 'timedout') {
     title = e.i18n.t(Msg.ChatroomResearchProgressTimedOutTitle)

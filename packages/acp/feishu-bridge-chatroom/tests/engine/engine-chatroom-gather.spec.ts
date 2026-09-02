@@ -695,6 +695,17 @@ describe('research progress card', () => {
     expect(titles).toHaveLength(2)
     expect(titles[titles.length - 1]).toContain('全部角色已回复')
   })
+
+  it('carries the interjection hint on the live body, not on terminal states', async () => {
+    const { buildResearchProgressCard } = await import('../../src/engine/chatroom.ts')
+    const e = new Engine('test', createStubAgent(), [], '', 'zh')
+    const live = JSON.stringify(buildResearchProgressCard(e, 1, 2, ''))
+    expect(live).toContain('1/2')
+    expect(live).toContain('💡 随时在本群发消息即可插话、追问或调整方向，主持人会处理。')
+    const done = JSON.stringify(buildResearchProgressCard(e, 2, 2, 'done'))
+    expect(done).toContain('全部角色已回复')
+    expect(done).not.toContain('插话')
+  })
 })
 
 describe('research config range clamping', () => {
@@ -905,6 +916,24 @@ describe('buildChatroomResearchModeratorPriming', () => {
     const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)
     for (const want of ['数据必须可靠', '权威一手源', '两个独立源交叉验证或加总闭合', '不编造']) {
       expect(priming).toContain(want)
+    }
+  })
+
+  it('instructs a plain per-round progress sync to the user in auto mode only', () => {
+    const auto = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3)
+    expect(auto).toContain('用一条普通回复向用户同步进展')
+    expect(auto).toContain('不用卡片、不等回复、不暂停研究')
+    const manual = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'manual', 3)
+    expect(manual).not.toContain('同步进展')
+  })
+
+  it('instructs handling mid-run user messages in both modes', () => {
+    for (const mode of ['auto', 'manual']) {
+      const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', mode, 3)
+      expect(priming).toContain('用户中途发言')
+      expect(priming).toContain('追问用 action: ask 转给相关角色')
+      expect(priming).toContain('并入下一轮 gather 任务')
+      expect(priming).toContain('不要无视')
     }
   })
 })
