@@ -17,6 +17,7 @@ kind: "package-library"
 - [理解实现](#understand-the-implementation)
 - [进一步探索](#further-exploration)
 - [开发备注](#dev-note)
+- [参见](#see-also)
 
 -----
 
@@ -92,3 +93,10 @@ const sessionId = brandString<SessionId>('session-1')
 无。
 
 </details>
+
+-----
+
+<a id="see-also"></a>
+## 参见
+
+- [术语表](../../../docs/glossary.zh.md)——仓库共享术语表。

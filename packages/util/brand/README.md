@@ -17,6 +17,7 @@ English | [中文](README.zh.md)
 - [Understand the implementation](#understand-the-implementation)
 - [Further Exploration](#further-exploration)
 - [Dev Note](#dev-note)
+- [See also](#see-also)
 
 -----
 
@@ -92,3 +93,10 @@ Read these pages when you need the ids this primitive brands or the type convent
 None.
 
 </details>
+
+-----
+
+<a id="see-also"></a>
+## See also
+
+- [Glossary](../../../docs/glossary.md) — shared repository terminology.
