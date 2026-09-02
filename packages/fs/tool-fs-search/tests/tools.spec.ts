@@ -246,7 +246,7 @@ describe('registration', () => {
     const glob = ctx.tools.schemas().find(schema => schema.name === 'glob')
     expect(glob?.description).toContain('sampled across top-level entries')
     const grep = ctx.tools.schemas().find(schema => schema.name === 'grep')
-    expect(grep?.description).toContain('prefer the lsp tool')
+    expect(grep?.description).not.toContain('lsp')
   })
 
   it('stays pending until ctx.subprocess exists (inject)', async () => {
