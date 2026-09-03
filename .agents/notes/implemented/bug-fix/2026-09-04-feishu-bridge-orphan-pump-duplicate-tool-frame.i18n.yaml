@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-04-feishu-bridge-orphan-pump-duplicate-tool-frame.md
+2026-09-04-feishu-bridge-orphan-pump-duplicate-tool-frame.md: 2cea5bf4436dc6fac591f0c9533cca40835f5790
+2026-09-04-feishu-bridge-orphan-pump-duplicate-tool-frame.zh.md: 94f5173c4265bc9298438d2d4751008a05ea9b99
