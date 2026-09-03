@@ -35,6 +35,8 @@ interface Harness {
   ctx: DshContextLike
   creates: DshCreateOptionsLike[]
   restricts: RecordedRestriction[]
+  /** Recorded `skills.restrict` calls from scoped setup hooks. */
+  skillRestricts: RecordedRestriction[]
   /** startContinuable requests recorded by the fake subagents service. */
   continuableSpecs: Array<{
     provider: string
@@ -66,12 +68,19 @@ const toolNames = [
 function createHarness(scriptedReply?: string): Harness {
   const creates: DshCreateOptionsLike[] = []
   const restricts: RecordedRestriction[] = []
+  const skillRestricts: RecordedRestriction[] = []
   const continuableSpecs: Harness['continuableSpecs'] = []
   const tools: DshToolsLike = {
     schemas: () => toolNames.map(name => ({ name })),
     get: name => toolNames.includes(name) ? { name } : undefined,
     restrict: (filter) => {
       restricts.push(filter)
+      return () => {}
+    },
+  }
+  const skills = {
+    restrict: (filter: RecordedRestriction) => {
+      skillRestricts.push(filter)
       return () => {}
     },
   }
@@ -85,7 +94,11 @@ function createHarness(scriptedReply?: string): Harness {
   const agents: FakeAgent[] = []
   const counter = { n: 0 }
   const agentCtx = {
-    get: (name: string): unknown => name === 'tools' ? tools : undefined,
+    get: (name: string): unknown => {
+      if (name === 'tools') return tools
+      if (name === 'skills') return skills
+      return undefined
+    },
   }
   const ctx: DshContextLike = {
     agents: {
@@ -160,7 +173,7 @@ function createHarness(scriptedReply?: string): Harness {
       return undefined
     },
   }
-  return { ctx, creates, restricts, continuableSpecs, tools }
+  return { ctx, creates, restricts, skillRestricts, continuableSpecs, tools }
 }
 
 function newAdapter(harness: Harness, mcpServers?: readonly string[]): DshAgentAdapter {
@@ -334,5 +347,36 @@ describe('adapter service-denied tool mask', () => {
     const adapter = newAdapter(harness)
     await adapter.startSession('')
     expect(harness.restricts).toEqual([])
+  })
+})
+
+describe('adapter service-denied skill mask', () => {
+  it('restricts service-denied skill names on the agent scope at session create', async () => {
+    const harness = createHarness()
+    const adapter = newAdapter(harness)
+    adapter.setDeniedSkills(() => ['feishu-bridge-chatroom-moderator'])
+    await adapter.startSession('')
+    expect(harness.skillRestricts).toEqual([{ deny: ['feishu-bridge-chatroom-moderator'] }])
+    // The tool surface is a different registry: a skill denial adds no tool
+    // restriction.
+    expect(harness.restricts).toEqual([])
+  })
+
+  it('a resumed session and a render one-shot apply the same skill mask', async () => {
+    const harness = createHarness('ok')
+    const adapter = newAdapter(harness)
+    adapter.setDeniedSkills(() => ['feishu-bridge-chatroom-moderator'])
+    await adapter.startSession('agent-9')
+    expect(harness.skillRestricts).toEqual([{ deny: ['feishu-bridge-chatroom-moderator'] }])
+    harness.skillRestricts.length = 0
+    await adapter.renderQuery('render', 'glm', 'render system prompt')
+    expect(harness.skillRestricts).toEqual([{ deny: ['feishu-bridge-chatroom-moderator'] }])
+  })
+
+  it('a project with no skill mask source never restricts skills', async () => {
+    const harness = createHarness()
+    const adapter = newAdapter(harness)
+    await adapter.startSession('')
+    expect(harness.skillRestricts).toEqual([])
   })
 })

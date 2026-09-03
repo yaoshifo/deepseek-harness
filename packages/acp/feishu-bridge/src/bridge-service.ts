@@ -98,6 +98,13 @@ export class FeishuBridgeService extends Service implements BridgeDispatch {
    * non-goal).
    */
   private readonly deniedToolNames = new WeakMap<Engine, Set<string>>()
+  /**
+   * Skill names sibling plugins registered as hidden for one engine's
+   * project, keyed per engine. The adapter reads the live set at every
+   * session create and restricts those names on the agent scope, so the
+   * catalog entry and loader never reach that project's model requests.
+   */
+  private readonly deniedSkillNames = new WeakMap<Engine, Set<string>>()
 
   constructor(ctx: Context) {
     super(ctx, 'feishuBridge')
@@ -143,6 +150,45 @@ export class FeishuBridgeService extends Service implements BridgeDispatch {
    */
   deniedToolsOf(engine: Engine): readonly string[] {
     return [...this.deniedToolNames.get(engine) ?? []]
+  }
+
+  /**
+   * Register skill names hidden from every session of one engine's project.
+   *
+   * A sibling plugin calls this for a project it is disabled on (the chatroom
+   * plugin hides `feishu-bridge-chatroom-moderator` on projects configured
+   * `enabled: false`), so the skill stops appearing in that project's session
+   * catalogs and loading through the `skill` tool — including sessions whose
+   * workdir falls under another project's enabled workdir (spawn workspace
+   * overrides), where the provider's cwd scoping alone would still show it.
+   *
+   * @param engine - The engine whose project sessions the mask applies to.
+   * @param names - Skill names to hide; names matching nothing under a
+   *   session's workdir are inert there.
+   * @returns Disposer removing the names again; idempotent.
+   */
+  denySkills(engine: Engine, names: readonly string[]): () => void {
+    let set = this.deniedSkillNames.get(engine)
+    if (set === undefined) {
+      set = new Set()
+      this.deniedSkillNames.set(engine, set)
+    }
+    for (const name of names) set.add(name)
+    let disposed = false
+    return () => {
+      if (disposed) return
+      disposed = true
+      for (const name of names) set.delete(name)
+    }
+  }
+
+  /**
+   * The skill names currently registered as hidden for one engine's project.
+   * @param engine - The engine whose mask set is addressed.
+   * @returns The hidden names in registration order.
+   */
+  deniedSkillsOf(engine: Engine): readonly string[] {
+    return [...this.deniedSkillNames.get(engine) ?? []]
   }
 
   /**
