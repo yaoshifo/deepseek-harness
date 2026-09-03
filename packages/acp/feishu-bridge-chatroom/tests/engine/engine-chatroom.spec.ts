@@ -17,6 +17,7 @@ import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.ts'
 import {
+  ChatroomGather,
   askHuman,
   askRole,
   endChatroom,
@@ -385,6 +386,124 @@ describe('maybeAutoRelayRole', () => {
     maybeAutoRelayRole(e, st, role, '沪深300未过热，可定投', false)
     await waitFor(() => p.sentCards.length === 1, 'turn-2 relay')
     expect(chatroomState(role).chatroomAsked).toBe(true)
+  })
+
+  it('relays the in-turn conclusion once the dispatched assistant reported back', async () => {
+    // Live-run shape (2026-09-02 oc_e51a): the role dispatches its assistant
+    // and blocks on the subtask gather INSIDE the same turn; the assistant's
+    // report resolves that gather and the role concludes before turn end.
+    // That turn-end reply IS the conclusion — deferring it strands the armed
+    // gather until the research timeout, because the assistant already
+    // reported and no later conclusion turn will ever come.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const { role } = newRole(e, false)
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    const g = new ChatroomGather('并行研究', 2)
+    g.expected.add('Taleb')
+    g.expected.add('Munger')
+    chatroomState(hubSess).pendingGather = g
+
+    const assistant = e.sessions.getOrCreateActive('test:assistant-chat')
+    assistant.setSubtaskReported(true)
+    chatroomState(role).researchAwaitingAssistant = true
+    chatroomState(role).researchDispatched = true
+    chatroomState(role).researchAssistantKey = 'test:assistant-chat'
+    chatroomState(role).chatroomAskSeq = 2
+    chatroomState(role).chatroomInFlight = true
+
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, role, '第 1 轮结论：三问全答', false)
+    await settle()
+
+    expect(g.collected.get('Taleb')).toBe('第 1 轮结论：三问全答')
+    expect(chatroomState(hubSess).pendingGather).toBe(g)
+    expect(chatroomState(role).chatroomAsked).toBe(true)
+  })
+
+  it('still defers while the dispatched assistant has a turn in flight', async () => {
+    // The marks-r1 shape: the role re-dispatched mid-round and ended its
+    // turn while the assistant was verifiably still working.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const { role } = newRole(e, false)
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    const g = new ChatroomGather('并行研究', 2)
+    g.expected.add('Taleb')
+    chatroomState(hubSess).pendingGather = g
+
+    const assistant = e.sessions.getOrCreateActive('test:assistant-chat')
+    assistant.setSubtaskReported(true)
+    const assistantTurn = new InteractiveState()
+    assistantTurn.beginTurn()
+    e.interactiveStates.set('test:assistant-chat', assistantTurn)
+    chatroomState(role).researchAwaitingAssistant = true
+    chatroomState(role).researchDispatched = true
+    chatroomState(role).researchAssistantKey = 'test:assistant-chat'
+    chatroomState(role).chatroomAskSeq = 2
+
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, role, '助手还在跑', false)
+    await settle()
+
+    expect(g.collected.size).toBe(0)
+    expect(chatroomState(role).researchAwaitingAssistant).toBe(false)
+    expect(chatroomState(role).chatroomAsked).toBe(false)
+  })
+
+  it('still defers when the assistant has not reported its dispatch cycle', async () => {
+    // Silent or re-armed assistant (a parent follow-up resets the one-shot
+    // report): the report is still owed, so the conclusion must wait.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const { role } = newRole(e, false)
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    const g = new ChatroomGather('并行研究', 2)
+    g.expected.add('Taleb')
+    chatroomState(hubSess).pendingGather = g
+
+    const assistant = e.sessions.getOrCreateActive('test:assistant-chat')
+    assistant.setSubtaskReported(false)
+    chatroomState(role).researchAwaitingAssistant = true
+    chatroomState(role).researchDispatched = true
+    chatroomState(role).researchAssistantKey = 'test:assistant-chat'
+    chatroomState(role).chatroomAskSeq = 2
+
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, role, '等助手回报', false)
+    await settle()
+
+    expect(g.collected.size).toBe(0)
+    expect(chatroomState(role).researchAwaitingAssistant).toBe(false)
+    expect(chatroomState(role).chatroomAsked).toBe(false)
+  })
+
+  it('still defers when the assistant session cannot be resolved', async () => {
+    // A stale key (assistant dissolved with an earlier room) reads as
+    // pending — the conservative defer keeps the pre-fix behavior.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const { role } = newRole(e, false)
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    const g = new ChatroomGather('并行研究', 2)
+    g.expected.add('Taleb')
+    chatroomState(hubSess).pendingGather = g
+
+    chatroomState(role).researchAwaitingAssistant = true
+    chatroomState(role).researchDispatched = true
+    chatroomState(role).researchAssistantKey = 'test:gone-assistant'
+    chatroomState(role).chatroomAskSeq = 2
+
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, role, '保守处理', false)
+    await settle()
+
+    expect(g.collected.size).toBe(0)
+    expect(chatroomState(role).chatroomAsked).toBe(false)
   })
 
   it('relays an undispatched turn immediately (direct answer)', async () => {

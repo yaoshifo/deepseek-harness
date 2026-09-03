@@ -1078,6 +1078,24 @@ export function routePendingHumanReply(e: Engine, _p: Platform, hubKey: string, 
 // ── relay (turn-end hook) ─────────────────────────────────────────────────
 
 /**
+ * Whether a research role's dispatched assistant still owes its contribution:
+ * its turn is in flight, or its current dispatch cycle has not reported yet
+ * (a parent follow-up re-arms the one-shot report). An unresolvable assistant
+ * (no pre-provisioned key, session gone) reads as pending so the relay defers
+ * conservatively.
+ * @param e - Engine carrying the session registry and live-turn states.
+ * @param role - Role session whose pre-provisioned assistant to check.
+ * @returns True when the assistant's report has not been initiated.
+ */
+function assistantReportPending(e: Engine, role: Session): boolean {
+  const key = chatroomState(role).researchAssistantKey
+  if (key === '') return true
+  const assistant = e.sessions.findActive(key)
+  if (assistant === undefined) return true
+  return (e.interactiveStates.get(key)?.activeTurns ?? 0) > 0 || !assistant.getSubtaskReported()
+}
+
+/**
  * The deterministic turn-end hook for a chatroom role session: at the end of
  * each role turn it relays the reply to the hub as 【name】 AND wakes the
  * moderator. One-shot per ask (gated by chatroomAsked). Silent/empty replies
@@ -1111,17 +1129,22 @@ export function maybeAutoRelayRole(
     stale = true
   }
   // Research mode: the role's first turn after a gather dispatches its
-  // assistant and ends without a conclusion. Defer the relay only if the
-  // turn ACTUALLY dispatched (researchDispatched); the dispatched flag stays
-  // set — the gather timeout report reads it.
+  // assistant and ends without a conclusion. Defer the relay only when the
+  // turn dispatched AND the assistant still owes its report — a turn that
+  // consumed the assistant's results in-turn (the blocking subtask gather
+  // resolving inside the same turn) IS the conclusion, and deferring it would
+  // strand the armed gather until the research timeout, because the
+  // already-reported assistant never wakes a later turn (2026-09-02 oc_e51a).
+  // The dispatched flag itself stays set — the gather timeout report reads it.
   if (!stale && chatroomState(session).researchAwaitingAssistant) {
-    if (chatroomState(session).researchDispatched) {
+    if (chatroomState(session).researchDispatched && assistantReportPending(e, session)) {
       chatroomState(session).researchAwaitingAssistant = false
       e.sessions.save()
       console.info(`chatroom: research role dispatched assistant; deferring relay to conclusion turn (role=${chatroomState(session).chatroomRoleName})`)
       return
     }
-    // No dispatch happened this turn — this IS the conclusion.
+    // No dispatch this turn, or the dispatched assistant already reported —
+    // this turn IS the conclusion.
     chatroomState(session).researchAwaitingAssistant = false
     e.sessions.save()
   }
