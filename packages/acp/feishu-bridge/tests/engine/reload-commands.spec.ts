@@ -11,7 +11,7 @@
  */
 
 import { existsSync } from 'node:fs'
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -252,6 +252,31 @@ describe('cmdReload', () => {
     await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(2) })
   })
 
+  it('strips ANSI color codes from the failure tail (build tools color their output)', async () => {
+    const { e, p } = newEngine()
+    currentPlatform = p
+    expect(e.dispatchCommand(p, reloadMsg('/reload'), '/reload')).toBe(true)
+    await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(1) })
+    appendFileSync(join(logDir, 'feishu-bridge-reload.log'), '\x1b[34merror\x1b[0m TS2345: boom\n')
+    childCbs.get('exit')?.(1)
+    await vi.waitFor(() => { expect(lastSent(p)).toContain('error TS2345: boom') })
+    expect(lastSent(p)).not.toContain('\x1b[')
+  })
+
+  it('truncates an oversized output to the last lines (the error sits at the end)', async () => {
+    const { e, p } = newEngine()
+    currentPlatform = p
+    expect(e.dispatchCommand(p, reloadMsg('/reload'), '/reload')).toBe(true)
+    await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(1) })
+    const lines = Array.from({ length: 40 }, (_, i) => `build-step-${String(i + 1).padStart(2, '0')}\n`).join('')
+    appendFileSync(join(logDir, 'feishu-bridge-reload.log'), `${lines}error TS2345: boom\n`)
+    childCbs.get('exit')?.(1)
+    await vi.waitFor(() => { expect(lastSent(p)).toContain('error TS2345: boom') })
+    // The head of a full build log is noise; only the tail rides along.
+    expect(lastSent(p)).toContain('build-step-40')
+    expect(lastSent(p)).not.toContain('build-step-01')
+  })
+
   it('a clean script exit sends no failure reply', async () => {
     const { e, p } = newEngine()
     currentPlatform = p
@@ -289,6 +314,21 @@ describe('cmdReload', () => {
     childCbs.get('exit')?.(2)
     await vi.waitFor(() => { expect(lastSent(p)).toBe(e.i18n.tf(Msg.ReloadFailed, 2, join(logDir, 'feishu-bridge-reload.log'))) })
     expect(existsSync(pendingPath())).toBe(false)
+  })
+
+  it('appends the script output tail to the failure reply (a build error lands only in the log)', async () => {
+    const { e, p } = newEngine()
+    currentPlatform = p
+    expect(e.dispatchCommand(p, reloadMsg('/reload'), '/reload')).toBe(true)
+    await vi.waitFor(() => { expect(mockSpawn).toHaveBeenCalledTimes(1) })
+    // The script's own output follows the "==> /reload by" header the
+    // handler wrote before spawning; only that output is the failure clue.
+    appendFileSync(join(logDir, 'feishu-bridge-reload.log'), 'packages/x/y.spec.ts(1,1): error TS2345: boom\n[ELIFECYCLE] Command failed with exit code 1.\n')
+    childCbs.get('exit')?.(1)
+    await vi.waitFor(() => { expect(lastSent(p)).toContain('error TS2345') })
+    expect(lastSent(p)).toContain('[ELIFECYCLE] Command failed with exit code 1.')
+    expect(lastSent(p)).toContain('exit code 1')
+    expect(lastSent(p)).not.toContain('==>')
   })
 })
 

@@ -368,6 +368,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   reload_completed: { en: '✅ Reload complete: the daemon restarted (this notice is sent by the new process). Build and WS-probe details in the log: %s', zh: '✅ Reload 完成：daemon 已重启（本通知由新进程发出）。构建与 WS 探活详情见日志: %s' },
   reload_mcp_surface_reminder: { en: 'ℹ️ Heads-up: %s MCP tools are mounted (%s). Their schemas ride along on every model request; disable unused servers in the profile if you do not need them.', zh: 'ℹ️ 提醒：当前挂载了 %s 个 MCP 工具（%s）。这些工具的 schema 每轮模型请求都会携带；未使用的 server 可在 profile 中禁用。' },
   reload_failed: { en: '❌ Reload failed (exit code %d); the daemon was not restarted. Log: %s', zh: '❌ Reload 失败（退出码 %d），daemon 未重启。日志: %s' },
+  reload_failed_tail: { en: '❌ Reload failed (exit code %d); the daemon was not restarted. Log: %s\n\n%s', zh: '❌ Reload 失败（退出码 %d），daemon 未重启。日志: %s\n\n%s' },
   reload_in_progress: { en: '⏳ A reload is already in progress; wait for it to finish.', zh: '⏳ Reload 已在进行中，请等待其完成。' },
   reload_script_missing: { en: 'reload.sh not found at `%s` — this deployment is not a repo checkout, so /reload is unavailable here.', zh: '未找到 reload.sh（`%s`）——当前部署不是 repo checkout，无法执行 /reload。' },
   skills: { en: 'List skills available in this workspace', zh: '列出当前工作区可用的 skill' },

@@ -26,7 +26,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Msg } from '../i18n/index.ts'
@@ -239,6 +239,46 @@ export function reloadSpawnArgv(platform: NodeJS.Platform, scriptPath: string, s
   return { cmd: 'sh', args: [scriptPath, ...scriptArgs] }
 }
 
+/** CSI escape sequences (SGR color codes and cursor moves) — rendered as raw noise in chat. */
+// eslint-disable-next-line no-control-regex
+const ansiCsi = /\x1b\[[0-9;]*[A-Za-z]/g
+
+/** Byte and line budgets for the failure reply's log excerpt: a full build log
+ * runs to hundreds of KB, and the failure reason sits at its end. */
+const OUTPUT_TAIL_BYTES = 4096
+const OUTPUT_TAIL_LINES = 15
+
+/**
+ * Read the current reload's script output from the log (from the offset the
+ * handler recorded after its own "==> /reload by" header line), with ANSI
+ * escape sequences stripped and oversized output truncated to the last
+ * {@link OUTPUT_TAIL_LINES} lines. Any read failure yields '' — the failure
+ * reply must still go out without the tail.
+ * @param logPath - The reload log path.
+ * @param offset - Byte offset where the script's output starts; -1 when the
+ * log could not be opened for the spawn.
+ * @returns The script output written since this reload started, or ''.
+ */
+function readReloadOutput(logPath: string, offset: number): string {
+  if (offset < 0) return ''
+  try {
+    const fd = openSync(logPath, 'r')
+    try {
+      const size = fstatSync(fd).size
+      const start = Math.max(offset, size - OUTPUT_TAIL_BYTES)
+      if (size <= start) return ''
+      const buf = Buffer.alloc(size - start)
+      const read = readSync(fd, buf, 0, buf.length, start)
+      const lines = buf.toString('utf8', 0, read).replace(ansiCsi, '').split('\n').filter(l => l !== '')
+      return lines.slice(-OUTPUT_TAIL_LINES).join('\n')
+    } finally {
+      closeSync(fd)
+    }
+  } catch {
+    return ''
+  }
+}
+
 /**
  * /reload [--skip-build]: spawn reload.sh detached and restart the daemon on
  * the latest build (the same effect as running the script from a plain
@@ -285,10 +325,14 @@ async function cmdReload(e: Engine, p: Platform, msg: Message, args: string[]): 
     console.warn(`/reload: cannot write ${pendingPath()}; completion will not be notified: ${String(error)}`)
   }
   let logFd: number | undefined
+  // Byte offset where the script's own output starts (after the header line);
+  // -1 when the log could not be opened, so the failure reply skips the tail.
+  let outputStart = -1
   try {
     logFd = openSync(logPath, 'a')
     const who = msg.userName !== '' ? msg.userName : msg.userID
     writeSync(logFd, `\n==> /reload by ${who} at ${new Date().toISOString()}\n`)
+    outputStart = fstatSync(logFd).size
   } catch (error) {
     // The reload is worth more than its log; continue with output discarded.
     logFd = undefined
@@ -313,7 +357,10 @@ async function cmdReload(e: Engine, p: Platform, msg: Message, args: string[]): 
     // The daemon survived, so no new process will ever consume the pending
     // marker — clear it or the next unrelated daemon start would notify.
     rmSync(pendingPath(), { force: true })
-    void e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ReloadFailed, code, logPath))
+    const tail = readReloadOutput(logPath, outputStart)
+    void e.reply(p, msg.replyCtx, tail === ''
+      ? e.i18n.tf(Msg.ReloadFailed, code, logPath)
+      : e.i18n.tf(Msg.ReloadFailedTail, code, logPath, tail))
   }
   child.on('exit', (code) => { finish(code ?? -1) })
   child.on('error', () => { finish(-1) })
