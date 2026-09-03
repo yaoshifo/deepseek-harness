@@ -28,7 +28,7 @@ Status: implemented
 
 ## Consequences
 
-- **内置主持 skill 随同一道门禁，按 cwd 作用域**：skill 目录条目本身就是行为入口——首次生产探针（2026-08-30，被禁机器人收到未识别命令文本 `/chatroom`）里，模型仅凭目录描述就加载并开始照主持 skill 执行，"惰性残留"的判断被证伪。provider 现以启用引擎的 base workdir 为 `cwdPrefixes` 挂载（为此给 skill-filesystem 增加 `scopedSkillDirs` 配置）：禁用项目的会话完全看不到条目。天花板：cwd 只是项目身份的代理——会话把工作目录切到启用 workdir 之下会重新看到条目（工具仍被掩），共享 workdir 的项目无法区分。
+- **内置主持 skill 随同一道门禁，按 cwd 作用域外加按引擎 skill 掩码**：skill 目录条目本身就是行为入口——首次生产探针（2026-08-30，被禁机器人收到未识别命令文本 `/chatroom`）里，模型仅凭目录描述就加载并开始照主持 skill 执行，"惰性残留"的判断被证伪。provider 以启用引擎的 base workdir 为 `cwdPrefixes` 挂载（为此给 skill-filesystem 增加 `scopedSkillDirs` 配置），且扫描的禁用分支另外在桥服务的按引擎 skill 掩码（`denySkills`，见 [skill 引擎掩蔽笔记](2026-09-03-feishu-bridge-chatroom-skill-engine-mask.zh.md)）上登记该名字——禁用项目的会话即便 workdir 落在启用项目 workdir 之下（spawn workspace override，即 2026-09-03 oc_0ace 探针暴露的形状）也看不到条目。天花板：cwd 对启用侧仍是代理——启用项目的会话切到别处会失去条目但保留命令与工具，共享 workdir 的项目无法区分。
 - 掩码有启动窗口：桥就绪到 chatroom 扫描之间创建的会话看得到工具定义与 skill 条目，改在 execute 被拒。
 - deny 掩码机制的启动窗口与复活天花板原样适用（deny 掩码放行后到的未具名全局；不在活注册表里的名字静默掉落——登记方可能已卸载）。
 - `defaults.enabled: false` 且无项目覆盖即禁用所有机器人，等效插件行 `disabled: true`；按项目门控与 presets 仍可组合（将来若把 chatroom 模型面拆进 preset，会叠加在 execute 检查之上）。

@@ -25,11 +25,13 @@ import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import SessionStore from '@deepseek-ai/dsh-session'
+import AgentLoop from '@deepseek-ai/dsh-agent-loop'
+import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
+import LlmRuntime from '@deepseek-ai/dsh-llm'
 import * as bridgeEntry from '@deepseek-ai/dsh-feishu-bridge'
 import {
   featureStateCodecs,
@@ -94,6 +96,14 @@ describe('chatroom real Loader composition', () => {
       // composition mirrors that row or the bridge fiber stays inactive.
       '- id: session-projection',
       "  name: '@deepseek-ai/dsh-session-projection'",
+      // The cross-project assertion creates a real agent through the gated
+      // project's adapter, so the composition carries the real factory pair
+      // dsh-base always mounts (no turns run; the LLM runtime is never
+      // called).
+      '- id: llm',
+      "  name: '@deepseek-ai/dsh-llm'",
+      '- id: agent-loop',
+      "  name: '@deepseek-ai/dsh-agent-loop'",
       '- id: feishu-bridge',
       "  name: '@deepseek-ai/dsh-feishu-bridge'",
       '  config:',
@@ -133,11 +143,13 @@ describe('chatroom real Loader composition', () => {
     context.loader.builtins.include = Include
     const modules = new Map<string, unknown>([
       ['@deepseek-ai/dsh-agent', AgentRegistry],
+      ['@deepseek-ai/dsh-agent-loop', AgentLoop],
       ['@deepseek-ai/dsh-session', SessionStore],
       ['@deepseek-ai/dsh-session-projection', SessionProjectionRegistry],
       ['@deepseek-ai/dsh-system-prompt', SystemPrompt],
       ['@deepseek-ai/dsh-tools', ToolRuntime],
       ['@deepseek-ai/dsh-skill', SkillRegistry],
+      ['@deepseek-ai/dsh-llm', LlmRuntime],
       ['@deepseek-ai/dsh-feishu-bridge', bridgeEntry],
       ['@deepseek-ai/dsh-feishu-bridge-chatroom', chatroomEntry],
     ])
@@ -208,5 +220,21 @@ describe('chatroom real Loader composition', () => {
     expect(moderator?.provider).toBe('feishu-bridge-chatroom-skills')
     expect((await context.skills.list({ cwd: betaDir }))
       .some(skill => skill.name === 'feishu-bridge-chatroom-moderator')).toBe(false)
+
+    // Cross-project cwd (the oc_0ace leak shape): a gated project's session
+    // whose workdir falls under the ENABLED project's workdir — a spawn
+    // workspace override — still must not see the moderator skill. The
+    // per-engine skill denial, applied by the real adapter's setup hook,
+    // does the masking; the unscoped view at the same cwd keeps the entry.
+    const gatedAdapter = service.projects[1]!.adapter
+    const crossSession = await gatedAdapter.startSession('', {
+      sessionKey: 'feishu:oc_cross',
+      workDir: alphaDir,
+    })
+    const crossAgent = context.agents.get(SessionId(crossSession.currentSessionID()))
+    expect(crossAgent).toBeDefined()
+    expect((await context.skills.list({ cwd: alphaDir, scope: crossAgent }))
+      .some(skill => skill.name === 'feishu-bridge-chatroom-moderator')).toBe(false)
+    expect(alphaSkills.some(skill => skill.name === 'feishu-bridge-chatroom-moderator')).toBe(true)
   })
 })

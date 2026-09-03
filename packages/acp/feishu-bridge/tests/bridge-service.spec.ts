@@ -65,6 +65,26 @@ describe('FeishuBridgeService', () => {
     expect(service.deniedToolsOf(entry.engine)).toEqual([])
   })
 
+  it('registers per-engine skill masks with disposal (denySkills)', async () => {
+    const { service } = await mountedService()
+    const entry = liveProject('p1', undefined)
+    service.registerProject(entry)
+    expect(service.deniedSkillsOf(entry.engine)).toEqual([])
+
+    const dispose = service.denySkills(entry.engine, ['feishu-bridge-chatroom-moderator'])
+    expect(service.deniedSkillsOf(entry.engine)).toEqual(['feishu-bridge-chatroom-moderator'])
+
+    // Masks are per engine: another project stays unrestricted.
+    const other = liveProject('p2', undefined)
+    service.registerProject(other)
+    expect(service.deniedSkillsOf(other.engine)).toEqual([])
+
+    dispose()
+    expect(service.deniedSkillsOf(entry.engine)).toEqual([])
+    dispose() // idempotent
+    expect(service.deniedSkillsOf(entry.engine)).toEqual([])
+  })
+
   it('routes a caller agent to its engine session (plan D4)', async () => {
     const { service } = await mountedService()
     service.registerProject(liveProject('p1', 'feishu:oc_1:ou_9'))

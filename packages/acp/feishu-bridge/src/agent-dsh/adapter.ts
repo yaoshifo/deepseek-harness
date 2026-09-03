@@ -485,6 +485,36 @@ function withProjectToolMask(
 }
 
 /**
+ * Wrap a session setup hook with the service-denied skill mask: the denied
+ * names are restricted on the agent scope, so the catalog and the `skill`
+ * loader never resolve them for that session. Unlike the tool mask, denied
+ * skill names are not dropped against a live view — skill availability is
+ * cwd-dependent, and a name matching nothing under a session's workdir is
+ * inert there.
+ *
+ * @param setup - the wrapped setup hook, or undefined.
+ * @param denied - the service-denied skill names for this engine, read live
+ *   at session create (registration happens after adapter construction).
+ * @returns the wrapped setup hook, or the original when no mask applies.
+ */
+function withDeniedSkills(
+  setup: import('@deepseek-ai/dsh-agent').AgentSetup | undefined,
+  denied: readonly string[],
+): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
+  if (denied.length === 0) return setup
+  return async (agentCtx) => {
+    const skillsSvc = agentCtx.get('skills') as
+      | { restrict(filter: { deny: readonly string[] }): () => void }
+      | undefined
+    skillsSvc?.restrict({ deny: denied })
+    // Propagate the wrapped setup's publication commit: the registry invokes
+    // it immediately before publication, and swallowing it here would drop
+    // the inner setup's validation.
+    return await setup?.(agentCtx)
+  }
+}
+
+/**
  * Build the agents.create/resume setup hook for the typed start options:
  * a session carrying a `persona` (Go isChatroomBareSession) replaces the
  * whole system prompt with the precomputed persona text. A subtask child
@@ -711,6 +741,13 @@ export class DshAgentAdapter {
    * and child spawn so a registration after adapter construction applies.
    */
   private deniedToolsSource: (() => readonly string[]) | undefined
+  /**
+   * Live source of the service-denied skill names for this adapter's engine
+   * (a sibling plugin registered them on the bridge service; assembly wires
+   * the closure when the service is mounted). Read at every session create
+   * so a registration after adapter construction applies.
+   */
+  private deniedSkillsSource: (() => readonly string[]) | undefined
 
   /**
    * Inject the engine-side ask delegate the native approval answerer and
@@ -747,6 +784,22 @@ export class DshAgentAdapter {
   /** The service-denied tool names for this engine ('' when unwired). */
   private deniedTools(): readonly string[] {
     return this.deniedToolsSource?.() ?? []
+  }
+
+  /**
+   * Inject the source of this engine's service-denied skill names. Assembly
+   * wires it to the bridge service's per-engine mask registry; each read is
+   * live, so a sibling plugin's registration (or its disposal) applies at
+   * the next session create.
+   * @param source - reads the current denied skill names for this engine.
+   */
+  setDeniedSkills(source: () => readonly string[]): void {
+    this.deniedSkillsSource = source
+  }
+
+  /** The service-denied skill names for this engine ('' when unwired). */
+  private deniedSkills(): readonly string[] {
+    return this.deniedSkillsSource?.() ?? []
   }
 
   constructor(ctx: DshContextLike, cfg: DshAdapterConfig) {
@@ -1662,7 +1715,12 @@ export class DshAgentAdapter {
     // servers included), so the project mask wrap would add a redundant
     // second restriction on the same scope.
     const denyAll = opts.toolFilter?.allow !== undefined && opts.toolFilter.allow.length === 0
-    const setup = denyAll ? innerSetup : withProjectToolMask(innerSetup, this.cfg.mcpServers, this.deniedTools())
+    const setup = denyAll
+      ? innerSetup
+      : withDeniedSkills(
+        withProjectToolMask(innerSetup, this.cfg.mcpServers, this.deniedTools()),
+        this.deniedSkills(),
+      )
     const handle = await this.ctx.agents.create({
       sessionId: SessionId(freshNativeSessionId()),
       meta: {
@@ -1773,7 +1831,10 @@ export class DshAgentAdapter {
     // its deny list from the global tool view (directory tools not yet
     // mounted), so directory-mounted servers stay exempt from the per-project
     // mcpServers allowlist — the two visibility axes are independent.
-    const setup = this.withWorkspaceMcp(withProjectToolMask(buildSessionSetup(options), this.cfg.mcpServers, this.deniedTools()))
+    const setup = this.withWorkspaceMcp(withDeniedSkills(
+      withProjectToolMask(buildSessionSetup(options), this.cfg.mcpServers, this.deniedTools()),
+      this.deniedSkills(),
+    ))
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing

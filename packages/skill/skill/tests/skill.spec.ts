@@ -1268,4 +1268,112 @@ describe('SkillRegistry scoped layers', () => {
     expect(await ctx.skills.list({ scope })).toEqual([])
     await preset.dispose()
   })
+
+  it('restricts inherited skill names for a scope view and restores them on disposal', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SkillRegistry)
+    registerProvider(ctx, new MemoryProvider([
+      memorySkill('kept-skill', 'Kept', 10),
+      memorySkill('denied-skill', 'Denied', 10),
+    ]))
+    const preset = createScope(ctx, { preset: 'restricted' })
+    const scope = scopeOf(preset.ctx)
+    const dispose = scopedSkills(preset.ctx).restrict({ deny: ['denied-skill'] })
+
+    expect((await ctx.skills.list({ scope })).map(skill => skill.name)).toEqual(['kept-skill'])
+    expect((await ctx.skills.list()).map(skill => skill.name)).toEqual(['denied-skill', 'kept-skill'])
+    dispose()
+    expect((await ctx.skills.list({ scope })).map(skill => skill.name)).toEqual(['denied-skill', 'kept-skill'])
+    await preset.dispose()
+  })
+
+  it('denies a restricted name through get and keeps snapshot completeness', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SkillRegistry)
+    registerProvider(ctx, new MemoryProvider([
+      memorySkill('loadable', 'Loadable', 10),
+      memorySkill('masked', 'Masked', 10),
+    ]))
+    const preset = createScope(ctx, { preset: 'masked' })
+    const scope = scopeOf(preset.ctx)
+    scopedSkills(preset.ctx).restrict({ deny: ['masked'] })
+
+    const snapshot = await ctx.skills.snapshot({ scope })
+    expect(snapshot.complete).toBe(true)
+    expect(snapshot.skills.map(skill => skill.name)).toEqual(['loadable'])
+    expect(await ctx.skills.get('masked', { scope })).toBeUndefined()
+    expect((await ctx.skills.get('loadable', { scope }))?.content).toBe('loadable body.')
+    await preset.dispose()
+  })
+
+  it('intersects allow and deny restrictions across the scope chain for nested views', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SkillRegistry)
+    registerProvider(ctx, new MemoryProvider([
+      memorySkill('alpha', 'Alpha', 10),
+      memorySkill('beta', 'Beta', 10),
+      memorySkill('gamma', 'Gamma', 10),
+    ]))
+    const preset = createScope(ctx, { preset: 'chain' })
+    scopedSkills(preset.ctx).restrict({ allow: ['alpha', 'beta'] })
+    const agentKey = {}
+    const nested = createScope(ctx, agentKey, { parent: scopeOf(preset.ctx) as object })
+    scopedSkills(nested.ctx).restrict({ deny: ['beta'] })
+
+    expect((await ctx.skills.list({ scope: scopeOf(preset.ctx) })).map(skill => skill.name)).toEqual(['alpha', 'beta'])
+    expect((await ctx.skills.list({ scope: agentKey })).map(skill => skill.name)).toEqual(['alpha'])
+    await nested.dispose()
+    await preset.dispose()
+  })
+
+  it('keeps the exact scope own registrations outside the restriction filter', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SkillRegistry)
+    registerProvider(ctx, new MemoryProvider([memorySkill('shadowed', 'Global', 10)]))
+    const preset = createScope(ctx, { preset: 'bypass' })
+    const scope = scopeOf(preset.ctx)
+    scopedSkills(preset.ctx).restrict({ deny: ['shadowed'] })
+    const disposeOverride = scopedSkills(preset.ctx).register({
+      name: 'shadowed',
+      description: 'Scoped override',
+      source: 'preset',
+      content: 'Scoped body.',
+    })
+
+    expect((await ctx.skills.list({ scope })).map(skill => skill.description)).toEqual(['Scoped override'])
+    expect((await ctx.skills.get('shadowed', { scope }))?.content).toBe('Scoped body.')
+    disposeOverride()
+    expect(await ctx.skills.list({ scope })).toEqual([])
+    await preset.dispose()
+  })
+
+  it('rejects unscoped, empty, and invalid-name restrictions', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SkillRegistry)
+    expect(() => ctx.skills.restrict({ deny: ['any-skill'] })).toThrow('requires a scoped context')
+    const preset = createScope(ctx, { preset: 'rejects' })
+    expect(() => scopedSkills(preset.ctx).restrict({})).toThrow('no-op')
+    expect(() => scopedSkills(preset.ctx).restrict({ deny: ['Bad_Name'] })).toThrow('invalid skill name')
+    expect(() => scopedSkills(preset.ctx).restrict({ allow: ['fine'], deny: ['also-fine'] })).not.toThrow()
+    await preset.dispose()
+  })
+
+  it('invalidates cached views and notifies change on restriction mutations', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SkillRegistry)
+    registerProvider(ctx, new MemoryProvider([memorySkill('cached', 'Cached', 10)]))
+    const changes = vi.fn()
+    ctx.on('skills/change', changes)
+    const preset = createScope(ctx, { preset: 'cache' })
+    const scope = scopeOf(preset.ctx)
+    expect((await ctx.skills.list({ scope })).map(skill => skill.name)).toEqual(['cached'])
+
+    const before = changes.mock.calls.length
+    const dispose = scopedSkills(preset.ctx).restrict({ deny: ['cached'] })
+    expect(changes.mock.calls.length).toBe(before + 1)
+    expect(await ctx.skills.list({ scope })).toEqual([])
+    dispose()
+    expect((await ctx.skills.list({ scope })).map(skill => skill.name)).toEqual(['cached'])
+    await preset.dispose()
+  })
 })

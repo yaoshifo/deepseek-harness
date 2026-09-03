@@ -121,6 +121,39 @@ describe('registerSkillsMcpCommands', () => {
     }
   })
 
+  it('/skills hides engine-denied skill names and reports empty when all are denied', async () => {
+    const { e, p, disposeSession, disposeCommands } = newFixture({
+      listSkills: async () => [
+        skill('alpha', 'Does alpha things'),
+        skill('feishu-bridge-chatroom-moderator', 'Runs chatrooms'),
+      ],
+      deniedSkills: () => ['feishu-bridge-chatroom-moderator'],
+    })
+    try {
+      expect(e.dispatchCommand(p, cmdMsg('/skills'), '/skills')).toBe(true)
+      await flush()
+      const text = p.getSent().at(-1) ?? ''
+      expect(text).toContain('- `alpha` — Does alpha things')
+      expect(text).not.toContain('chatroom-moderator')
+    } finally {
+      disposeCommands()
+      disposeSession()
+    }
+
+    const denied = newFixture({
+      listSkills: async () => [skill('feishu-bridge-chatroom-moderator', 'Runs chatrooms')],
+      deniedSkills: () => ['feishu-bridge-chatroom-moderator'],
+    })
+    try {
+      expect(denied.e.dispatchCommand(denied.p, cmdMsg('/skills'), '/skills')).toBe(true)
+      await flush()
+      expect(denied.p.getSent().at(-1)).toBe(denied.e.i18n.t(Msg.SkillsEmpty))
+    } finally {
+      denied.disposeCommands()
+      denied.disposeSession()
+    }
+  })
+
   it('/mcp groups live servers, caps tool names, and marks allowlist-masked servers', async () => {
     const tools = ['bash', 'mcp__weird', 'mcp__zread__read_file', 'mcp__web-reader__webReader']
     for (let i = 1; i <= 9; i++) tools.push(`mcp__fs__tool${i}`)
