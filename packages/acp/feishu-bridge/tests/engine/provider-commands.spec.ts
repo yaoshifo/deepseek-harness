@@ -358,12 +358,12 @@ describe('provider card (Go renderProviderCard + card actions)', () => {
       expect(cardMarkdowns(card).join('\n')).toContain(e.i18n.tf(Msg.ProviderCardCurrent, 'openai'))
       const rows = cardRows(card)
       expect(rows).toHaveLength(2)
-      expect(rows[0]).toMatchObject({ text: '▶ **openai**', btnValue: 'act:/provider openai', btnType: 'primary' })
-      expect(rows[1]).toMatchObject({ text: '◻ **azure**  `gpt-5.2`', btnValue: 'act:/provider azure', btnType: 'default' })
-      // Mode row first: plain selected by default.
+      expect(rows[0]).toMatchObject({ text: '▶ **openai**', btnValue: 'act:/provider openai -r', btnType: 'primary' })
+      expect(rows[1]).toMatchObject({ text: '◻ **azure**  `gpt-5.2`', btnValue: 'act:/provider azure -r', btnType: 'default' })
+      // Mode row first: hot selected by default, hot button leftmost.
       expect(cardActionRows(card)[0]).toEqual([
-        { text: e.i18n.t(Msg.ProviderCardModePlain), type: 'primary', value: 'nav:/provider' },
-        { text: e.i18n.t(Msg.ProviderCardModeHot), type: 'default', value: 'nav:/provider -r' },
+        { text: e.i18n.t(Msg.ProviderCardModeHot), type: 'primary', value: 'nav:/provider -r' },
+        { text: e.i18n.t(Msg.ProviderCardModePlain), type: 'default', value: 'nav:/provider' },
       ])
       // The card replaces the plain-text listing entirely.
       expect(p.getSent()).toEqual([])
@@ -416,10 +416,10 @@ describe('provider card (Go renderProviderCard + card actions)', () => {
       const rows = cardRows(card)
       expect(rows[0]).toMatchObject({ text: '▶ **openai**', btnText: e.i18n.t(Msg.ProviderCardHotBtn), btnValue: 'act:/provider openai -r' })
       expect(rows[1]).toMatchObject({ text: '◻ **azure**', btnValue: 'act:/provider azure -r' })
-      // Hot mode is the selected one in the mode row.
+      // Hot mode is the selected one in the mode row, with the hot button leftmost.
       expect(cardActionRows(card)[0]).toEqual([
-        { text: e.i18n.t(Msg.ProviderCardModePlain), type: 'default', value: 'nav:/provider' },
         { text: e.i18n.t(Msg.ProviderCardModeHot), type: 'primary', value: 'nav:/provider -r' },
+        { text: e.i18n.t(Msg.ProviderCardModePlain), type: 'default', value: 'nav:/provider' },
       ])
     } finally {
       dispose()
