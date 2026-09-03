@@ -188,6 +188,20 @@ describe('feishu_bridge_subtask registration', () => {
     // resolves no alias and addresses native child ids only.
     expect(params.properties?.child?.description).toContain('send also accepts the literal "assistant"')
   })
+
+  it('documents the delivery modes where the model reads them', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:parent' }))
+    const tool = test.ctx.tools.get('feishu_bridge_subtask')
+    const delivery = (tool?.parameters as {
+      properties?: { delivery?: { enum?: string[]; description?: string } }
+    }).properties?.delivery
+    expect(delivery?.enum).toEqual(['queue', 'steer'])
+    // Decision guidance, not bare semantics: when to reach a running child.
+    expect(delivery?.description).toContain('running')
+    expect(tool?.description).toContain('steer')
+    expect(tool?.description).toContain('mid-turn')
+  })
 })
 
 describe('feishu_bridge_subtask action routing', () => {
@@ -208,6 +222,16 @@ describe('feishu_bridge_subtask action routing', () => {
     expect(v.message).toContain('test 任务')
     expect(v.message).toContain('test:child-1')
     expect(v.message).toContain('runs in parallel')
+  })
+
+  it('spawn result tells the parent it can follow up mid-run', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:p' }))
+    const v = value(await execute(test, { action: 'spawn', message: 'brief' })) as { message: string }
+    // The spawn result is where the parent learns it keeps an intervention
+    // channel — send with steer reaches a running child mid-turn.
+    expect(v.message).toContain('send')
+    expect(v.message).toContain('steer')
   })
 
   it('spawn defaults worktree to auto and fork off', async () => {
@@ -265,7 +289,7 @@ describe('feishu_bridge_subtask action routing', () => {
     expect(v.message).toContain('No barrier armed')
   })
 
-  it('send routes to SendToSubtask with parent key, child key, and message', async () => {
+  it('send routes to SendToSubtask with parent key, child key, message, and queue default', async () => {
     const r = newRoutedEngine('test')
     const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:parent-chat' }))
     const v = value(await execute(test, {
@@ -273,8 +297,22 @@ describe('feishu_bridge_subtask action routing', () => {
       child: 'test:child-1',
       message: '把完整报告贴出来',
     })) as { message: string }
-    expect(r.send).toHaveBeenCalledWith('test:parent-chat', 'test:child-1', '把完整报告贴出来')
+    expect(r.send).toHaveBeenCalledWith('test:parent-chat', 'test:child-1', '把完整报告贴出来', 'queue')
     expect(v.message).toContain('test:child-1')
+  })
+
+  it('send with steer routes the mode and says the running child gets it mid-turn', async () => {
+    const r = newRoutedEngine('test')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:parent-chat' }))
+    const v = value(await execute(test, {
+      action: 'send',
+      child: 'test:child-1',
+      message: 'course correction',
+      delivery: 'steer',
+    })) as { message: string }
+    expect(r.send).toHaveBeenCalledWith('test:parent-chat', 'test:child-1', 'course correction', 'steer')
+    expect(v.message).toContain('steer')
+    expect(v.message).toContain('mid-turn')
   })
 
   it('send without child or message fails', async () => {

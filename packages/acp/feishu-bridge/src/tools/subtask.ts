@@ -57,8 +57,11 @@ const DESCRIPTION =
   + 'report: push THIS subtask\'s result back '
   + 'to the parent conversation that dispatched you — call exactly once when your work is '
   + 'complete; omit message to use your last reply. send: ask one of your running subtasks a '
-  + 'follow-up question — native subtasks queue it until the child\'s current turn finishes '
-  + 'and its answer wakes you; an attended group child that is busy rejects it (wait for its '
+  + 'follow-up question — with delivery queue (default) a native subtask queues it until the '
+  + 'child\'s current turn finishes; with delivery steer it lands mid-turn, at the running '
+  + 'child\'s nearest step boundary (native subtasks only — the way to correct a long-running '
+  + 'child without waiting it out); the child\'s answer wakes you either way; an attended '
+  + 'group child that is busy rejects it (wait for its '
   + 'completion notice, then retry). gather: after spawning all the children you want to batch, BLOCK '
   + 'until every in-flight subtask has reported (or the timeout, ~20 minutes, returns partial '
   + 'results) — the combined summary arrives as THIS tool call\'s result, so call it when your '
@@ -123,6 +126,14 @@ export function registerSubtaskTool(
           + 'send also accepts the literal "assistant" for your pre-provisioned research assistant, '
           + 'when one exists — prefer it over copying a long key by hand.',
       },
+      delivery: {
+        type: 'string',
+        enum: ['queue', 'steer'],
+        description: 'send only: queue (default) schedules the follow-up as the child\'s next '
+          + 'turn; steer admits it at a running child\'s nearest step boundary — prefer steer to '
+          + 'correct course or add key context while a long-running subtask is still working. '
+          + 'Native subtasks only; an idle child wakes, a finished one cold-resumes.',
+      },
     },
     output: {
       schema: {
@@ -155,7 +166,8 @@ export function registerSubtaskTool(
           return {
             status: 'ok' as const,
             message: `Spawned subtask "${childName}" (session ${childKey}). `
-              + 'It runs in parallel; you will be woken with its result when it reports back.',
+              + 'It runs in parallel; you will be woken with its result when it reports back. '
+              + 'While it runs you can send a follow-up — send with delivery steer reaches it mid-turn.',
           }
         }
         case 'report': {
@@ -171,7 +183,16 @@ export function registerSubtaskTool(
           if (child === '') throw new Error('feishu_bridge_subtask: send requires the target subtask\'s session key (child)')
           const question = (args.message ?? '').trim()
           if (question === '') throw new Error('feishu_bridge_subtask: send requires a follow-up message')
-          await engine.sendToSubtask(sessionKey, child, question)
+          const delivery = args.delivery ?? 'queue'
+          await engine.sendToSubtask(sessionKey, child, question, delivery)
+          if (delivery === 'steer') {
+            return {
+              status: 'ok' as const,
+              message: `Follow-up steered into subtask ${child}: it lands mid-turn at the running child's `
+                + 'nearest step boundary; an idle child wakes, a finished one cold-resumes, '
+                + 'and its answer will wake you when ready.',
+            }
+          }
           return {
             status: 'ok' as const,
             message: `Follow-up sent to subtask ${child}; it is queued until the child's current turn finishes, `

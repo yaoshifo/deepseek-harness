@@ -20,6 +20,7 @@ interface RecordedFollowup {
   content: Array<Record<string, unknown>>
   source: Record<string, unknown>
   signal: AbortSignal | undefined
+  delivery: 'queue' | 'steer' | undefined
 }
 
 function createHarness(): {
@@ -54,7 +55,7 @@ function createHarness(): {
           signal?: AbortSignal,
           _delivery?: 'queue' | 'steer',
         ) => {
-          followups.push({ parent, child, content, source, signal })
+          followups.push({ parent, child, content, source, signal, delivery: _delivery })
         },
         interrupt: () => {},
         reportFrom: async () => {},
@@ -85,5 +86,26 @@ describe('followupChild signal', () => {
     expect(followups[0]?.source.kind).toBe('coordinator')
     expect(followups[0]?.signal).toBeInstanceOf(AbortSignal)
     expect(followups[0]?.signal?.aborted).toBe(false)
+  })
+
+  it('defaults the delivery mode to queue', async () => {
+    const { ctx, followups } = createHarness()
+    const adapter = newAdapter(ctx)
+
+    await adapter.followupChild('parent-1', 'child-1', 'hint text')
+
+    expect(followups).toHaveLength(1)
+    expect(followups[0]?.delivery).toBe('queue')
+  })
+
+  it("threads 'steer' through so a running child is reached mid-turn", async () => {
+    const { ctx, followups } = createHarness()
+    const adapter = newAdapter(ctx)
+
+    await adapter.followupChild('parent-1', 'child-1', 'course correction', 'steer')
+
+    expect(followups).toHaveLength(1)
+    expect(followups[0]?.delivery).toBe('steer')
+    expect(followups[0]?.content).toEqual([{ type: 'text', text: 'course correction' }])
   })
 })

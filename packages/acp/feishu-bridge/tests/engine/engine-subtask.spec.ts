@@ -20,7 +20,7 @@ import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import { WorktreeMode } from '../../src/engine/worktree.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import { registerNativeSettlementListener } from '../../src/index.ts'
-import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, ProviderSwitcher, RecentTurnsReader, TextPreviewContent } from '../../src/core/types.ts'
+import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, ProviderSwitcher, RecentTurnsReader, SubtaskDelivery, TextPreviewContent } from '../../src/core/types.ts'
 import { SubtaskGather } from '../../src/engine/subtask.ts'
 import {
   createNoOverwriteAgent,
@@ -797,6 +797,21 @@ describe('SendToSubtask', () => {
     await expect(e.sendToSubtask(parentKey, childKey, '   ')).rejects.toThrow()
   })
 
+  it('rejects steer delivery on an attended group child loudly', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+    const child = e.sessions.getOrCreateActive(childKey)
+    child.setParentSessionKey(parentKey)
+    child.setSubtaskDepth(1)
+
+    // Steer rides the native subagent runtime only; an attended group child
+    // must fail loudly instead of silently degrading to queue.
+    await expect(e.sendToSubtask(parentKey, childKey, 'mid-turn note', 'steer'))
+      .rejects.toThrow('steer')
+    await settle()
+    expect(p.sentCards.length).toBe(0)
+  })
+
 
   it('rejects a busy child', async () => {
     const p = createStubCardPlatformFull('test')
@@ -1104,7 +1119,7 @@ describe('buildSessionStartOptions', () => {
 /** Stub agent implementing the ContinuableDelegator seam, recording every call. */
 function createDelegatorAgent(): Agent & ContinuableDelegator & {
   started: ContinuableChildStart[]
-  followups: Array<{ parent: string; child: string; message: string }>
+  followups: Array<{ parent: string; child: string; message: string; delivery: SubtaskDelivery }>
   interrupts: string[]
   reports: Array<{ child: string; content: string }>
   nextChildId: string
@@ -1114,7 +1129,7 @@ function createDelegatorAgent(): Agent & ContinuableDelegator & {
   const agent = {
     ...createStubAgent(),
     started: [] as ContinuableChildStart[],
-    followups: [] as Array<{ parent: string; child: string; message: string }>,
+    followups: [] as Array<{ parent: string; child: string; message: string; delivery: SubtaskDelivery }>,
     interrupts: [] as string[],
     reports: [] as Array<{ child: string; content: string }>,
     nextChildId: 'native-child-1',
@@ -1132,8 +1147,8 @@ function createDelegatorAgent(): Agent & ContinuableDelegator & {
       agent.started.push(request)
       return { childId: agent.nextChildId, label: request.prompt.split('\n')[0] ?? '' }
     },
-    async followupChild(parent: string, child: string, message: string): Promise<void> {
-      agent.followups.push({ parent, child, message })
+    async followupChild(parent: string, child: string, message: string, delivery: SubtaskDelivery = 'queue'): Promise<void> {
+      agent.followups.push({ parent, child, message, delivery })
     },
     interruptChild(_parent: string, child: string): void {
       agent.interrupts.push(child)
@@ -1488,7 +1503,18 @@ describe('SendToSubtask native children', () => {
 
     await e.sendToSubtask(parentKey, 'native-child-1', 'show the full report')
 
-    expect(agent.followups).toEqual([{ parent: 'parent-native-1', child: 'native-child-1', message: 'show the full report' }])
+    expect(agent.followups).toEqual([{ parent: 'parent-native-1', child: 'native-child-1', message: 'show the full report', delivery: 'queue' }])
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
+  })
+
+  it("threads a 'steer' delivery to the delegator for mid-turn course correction", async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agent } = newNativeEngine(p, parentKey)
+    await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
+
+    await e.sendToSubtask(parentKey, 'native-child-1', 'course correction', 'steer')
+
+    expect(agent.followups).toEqual([{ parent: 'parent-native-1', child: 'native-child-1', message: 'course correction', delivery: 'steer' }])
     expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
   })
 

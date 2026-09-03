@@ -38,6 +38,7 @@ import type {
   PendingAskAnswer,
   Platform,
   SessionStartOptions,
+  SubtaskDelivery,
   UserQuestion,
 } from '../core/types.ts'
 import {
@@ -7384,8 +7385,10 @@ export class Engine {
    * @param callerSessionKey - Session key of the parent issuing the follow-up.
    * @param childSessionKey - Session key of the target child group.
    * @param message - Follow-up text for the child.
+   * @param delivery - Native children only: queue as the next turn (default)
+   * or steer into the running child's current turn.
    */
-  async sendToSubtask(callerSessionKey: string, childSessionKey: string, message: string): Promise<void> {
+  async sendToSubtask(callerSessionKey: string, childSessionKey: string, message: string, delivery: SubtaskDelivery = 'queue'): Promise<void> {
     const msg = message.trim()
     if (msg === '') throw new Error('subtask: message is required')
     if (childSessionKey.trim() === '') throw new Error('subtask: child session key is required')
@@ -7420,6 +7423,7 @@ export class Engine {
         liveParent !== '' ? liveParent : nativeEntry.parent_agent_session_id,
         childKey,
         msg,
+        delivery,
       )
       // Re-arm only after the follow-up landed: a failed delivery must not
       // leave an unreported record with no running epoch — the footer and
@@ -7441,6 +7445,12 @@ export class Engine {
     }
     if (child.getParentSessionKey() !== callerSessionKey) {
       throw new Error(this.i18n.t(Msg.SubtaskSendNotChild))
+    }
+    // Steer rides the native subagent runtime only: an attended group child
+    // has no runtime inbox to admit it mid-turn, so fail loudly instead of
+    // silently degrading to queue.
+    if (delivery === 'steer') {
+      throw new Error('subtask: steer delivery is only supported for native subtasks; use queue for attended group children')
     }
     // Backpressure: a queued follow-up's answer would never report back (the
     // in-flight turn's auto-report consumes any re-arm); reject instead.
