@@ -63,6 +63,7 @@ function contextAgent(current: { snapshot: ContextSnapshotValues | undefined }):
     listProviders: () => [],
     setProviders: () => {},
     setActiveProvider: () => false,
+    setSessionProvider: () => false,
   }
   return agent
 }

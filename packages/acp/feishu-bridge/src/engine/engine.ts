@@ -1201,8 +1201,8 @@ export class Engine {
   providerShortcuts: Record<string, string> = {}
   /** Executor for a provider shortcut (armed by registerProviderCommands). */
   providerShortcutHandler: ((p: Platform, msg: Message, providerName: string) => void) | undefined
-  /** Persists the active provider name across restarts (Go providerSaveFunc). */
-  providerSaveFunc: ((name: string) => void) | undefined
+  /** Persists one session's route override across restarts (Go providerSaveFunc). */
+  providerSaveFunc: ((sessionKey: string, name: string) => void) | undefined
   /** Predict-next config (#33, Go SetPredictNextConfig). */
   predictNextEnabled: boolean = false
   /** Provider route for predict-next forks; '' = the active provider. */
@@ -1320,29 +1320,12 @@ export class Engine {
 
   /**
    * Set the provider quota list appended to the completion footer (Go
-   * SetUsageProviders). Implementations of the optional active-detection
-   * capability are seeded with the current active provider name so their
-   * gate holds from the first turn.
+   * SetUsageProviders). Detector gating resolves per turn from the
+   * completing session's effective route, so no seeding is needed here.
    * @param providers - Providers whose quota lines are appended.
    */
   setUsageProviders(providers: UsageProvider[]): void {
     this.usageProviders = providers
-    this.syncUsageProvidersActive()
-  }
-
-  /**
-   * Push the active provider name into every usage provider implementing the
-   * optional active-detection capability (Go SetUsageProviders +
-   * engine_provider.go's switch/flip paths). Detectors gate their ⌛ summary
-   * on the name, so it must follow every active-route change — otherwise a
-   * matching provider's summary never appears.
-   */
-  syncUsageProvidersActive(): void {
-    const name = asProviderSwitcher(this.agent)?.getActiveProvider()?.name ?? ''
-    for (const up of this.usageProviders) {
-      const detector = up as UsageProvider & { setActiveProvider?: (name: string) => void }
-      if (typeof detector.setActiveProvider === 'function') detector.setActiveProvider(name)
-    }
   }
 
   /**
@@ -2119,10 +2102,11 @@ export class Engine {
   }
 
   /**
-   * Set the active-provider persistence hook (Go SetProviderSaveFunc).
-   * @param fn - Hook invoked with the provider name on every switch.
+   * Set the per-session provider persistence hook (Go SetProviderSaveFunc).
+   * @param fn - Hook invoked with the session key and route name on every
+   * per-chat switch; an empty name clears that session's override.
    */
-  setProviderSaveFunc(fn: (name: string) => void): void {
+  setProviderSaveFunc(fn: (sessionKey: string, name: string) => void): void {
     this.providerSaveFunc = fn
   }
 
@@ -3854,7 +3838,7 @@ export class Engine {
       cachedCum: state.cumulativeCacheInputTokens,
       numTurns: event.numTurns ?? 0,
       compactionCount: state.compactionCount,
-    })
+    }, sessionKey)
     // The rate's thinking time is the union of the turn's streamed generation
     // spans — a deliberate divergence from Go's wall-clock-minus-tool-intervals
     // formula, which charged first-token latency and dispatch overhead against
@@ -3869,6 +3853,7 @@ export class Engine {
         state.agentSession,
         '',
         replyFooterContextText(this.replyFooterSessionContextUsage(state.agentSession), this.i18n),
+        sessionKey,
       )
       if (footer !== '') cleanResponse = appendReplyFooter(cleanResponse, footer)
     }
@@ -6041,9 +6026,11 @@ export class Engine {
   /**
    * Build and store the per-turn completion usage fields (Go buildCompletionUsage).
    * @param args - Turn token counters and self-reported context percent.
+   * @param sessionKey - Completing session; its effective route name gates the ⌛ quota line.
    */
-  async buildCompletionUsage(args: BuildCompletionUsageArgs): Promise<void> {
-    await buildCompletionUsageFields(this.usage, this.showContextIndicator, this.usageProviders, this.baseWorkDir, args)
+  async buildCompletionUsage(args: BuildCompletionUsageArgs, sessionKey = ''): Promise<void> {
+    const activeProviderName = asProviderSwitcher(this.agent)?.getActiveProvider(sessionKey)?.name ?? ''
+    await buildCompletionUsageFields(this.usage, this.showContextIndicator, this.usageProviders, this.baseWorkDir, activeProviderName, args)
   }
 
   /**
@@ -6130,6 +6117,7 @@ export class Engine {
     agentSession: AgentSession | undefined,
     workspaceDir: string,
     contextLeft: string,
+    sessionKey = '',
   ): Promise<string> {
     if (!this.replyFooterEnabled || agent === undefined) return ''
     return buildReplyFooterText(
@@ -6138,6 +6126,7 @@ export class Engine {
       agentSession,
       workspaceDir,
       contextLeft,
+      sessionKey,
     )
   }
 
@@ -6495,7 +6484,7 @@ export class Engine {
         totalInputTokens: 0, sdkPlausible: false, selfPct: 0,
         nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
         numTurns: 0, compactionCount: 0,
-      })
+      }, syntheticMsg.sessionKey)
       const jumpMD = jumpButtonsMarkdown(parentJumpButtons(parentSessionKey, this.subtaskParentLabel(parent), p))
       const card = await this.buildSpawnNotifyCard(
         workDir, this.i18n.t(Msg.SpawnGroupReady), '', jumpMD, syntheticMsg.sessionKey)
@@ -8041,9 +8030,11 @@ export class Engine {
    * @param signal - Aborts the query; the caller owns the deadline.
    * @param workDir - Pins the fork session's cwd (the chat's effective
    *   directory); omitted or empty falls back to the adapter's base cwd.
+   * @param sessionKey - Session key whose route override resolves the empty
+   *   provider config; omitted uses the project default.
    * @returns The generated [name, icon] pair.
    */
-  async generateGroupName(seed: string, signal?: AbortSignal, workDir?: string): Promise<[string, string]> {
+  async generateGroupName(seed: string, signal?: AbortSignal, workDir?: string, sessionKey?: string): Promise<[string, string]> {
     const fq = asForkQuerierWithProvider(this.agent)
     if (fq === undefined) {
       throw new Error('group-name: agent does not implement ForkQuerierWithProvider')
@@ -8052,7 +8043,7 @@ export class Engine {
     let provider = this.groupNameProvider
     if (provider === '') {
       const sw = asProviderSwitcher(this.agent)
-      const ap = sw?.getActiveProvider()
+      const ap = sw?.getActiveProvider(sessionKey)
       if (ap !== undefined) provider = ap.name
     }
     if (provider === '') {
@@ -8087,7 +8078,7 @@ export class Engine {
     querySignal: AbortSignal | undefined,
     setAvatar: boolean,
   ): Promise<{ name: string; icon: string }> {
-    const [name, icon] = await this.generateGroupName(seed, querySignal, this.sessionWorkDir(sessionKey))
+    const [name, icon] = await this.generateGroupName(seed, querySignal, this.sessionWorkDir(sessionKey), sessionKey)
     if (name === '') return { name: '', icon: '' }
     const renameSignal = AbortSignal.timeout(30_000)
     await renamer(sessionKey, name, renameSignal)

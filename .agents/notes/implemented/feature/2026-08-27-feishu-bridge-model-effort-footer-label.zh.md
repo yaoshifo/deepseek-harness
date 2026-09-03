@@ -12,7 +12,7 @@ Status: implemented
 
 两个页脚构造器共用同一个 `formatModelLine` 渲染 🤖 行：`🤖 <模型>·<effort>[ · <模式>]`。effort 以紧连形式接在模型后——对齐钉死的产品示例 `zhipuai/glm-5.3-flash·max`——既有的间隔式模式段原样追加在其后。effort 文本来自 dsh adapter 既有的 `getReasoningEffort()` 探针，即活跃 provider 路由的配置值（Go GetReasoningEffort 对齐）。没有该能力、或配置值为空的 agent 逐字节保持原样。
 
-显示源选路由配置而非 llm 运行时的生效默认值：路由行才是运营者声明「agent 跑在哪一档」的地方，与 `getModel()` 读的是同一个显式声明面，因此标签不需要给 bridge 引入新的核心服务依赖。`agent.reasoningEffort` 是**项目级**配置，装配时注入项目的**每一条**路由——运行期 `/provider` 切换只改 adapter 的活跃路由指针、不重建路由，因此必须全路由注入，档位显示与 agent 创建携带的显式 effort 才能跟随切换。要保持真实需人工维护一条一致性规则：`agent.reasoningEffort` 必须等于同一网关 pi-ai provider 层 `reasoning:` 默认值（现网配置两处均为 max）。
+显示源选路由配置而非 llm 运行时的生效默认值：路由行才是运营者声明「agent 跑在哪一档」的地方，与 `getModel()` 读的是同一个显式声明面，因此标签不需要给 bridge 引入新的核心服务依赖。`agent.reasoningEffort` 是**项目级**配置，装配时注入项目的**每一条**路由——运行期 `/provider` 切换只钉住该群的 override、不重建路由（见[按群生效的 provider 路由](2026-09-03-feishu-bridge-per-chat-provider-routes.zh.md)），因此必须全路由注入，档位显示与 agent 创建携带的显式 effort 才能跟随切换。要保持真实需人工维护一条一致性规则：`agent.reasoningEffort` 必须等于同一网关 pi-ai provider 层 `reasoning:` 默认值（现网配置两处均为 max）。
 
 Config：`agent.reasoningEffort` 的 union 现为 `'off' | 'low' | 'medium' | 'high' | 'max'`——增补 glm 各网关此前无法表达的 `'max'`，移除从未被任何 adapter 声明过的 `'minimal'`；其余拼写错误仍在加载期 fail-loud。
 

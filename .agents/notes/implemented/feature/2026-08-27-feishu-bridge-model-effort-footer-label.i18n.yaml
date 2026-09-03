@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-27-feishu-bridge-model-effort-footer-label.md
-2026-08-27-feishu-bridge-model-effort-footer-label.md: 4f73d358b64128ce105b0027c7dba2898163fbc9
-2026-08-27-feishu-bridge-model-effort-footer-label.zh.md: 11b70a1f7bfce55530cec764d6b36cecec0b9d71
+2026-08-27-feishu-bridge-model-effort-footer-label.md: 43ef6796fcc61329dc0b1525af0cac3db9c36cca
+2026-08-27-feishu-bridge-model-effort-footer-label.zh.md: f2293935de27068b265602c98339919981a9b784

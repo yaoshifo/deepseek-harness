@@ -1147,6 +1147,15 @@ export function buildProjectAssembly(
     ...(project.mcpServers !== undefined && project.mcpServers.length > 0 ? { mcpServers: project.mcpServers } : {}),
     ...(sharedQuestionRouting !== undefined ? { questionRouting: sharedQuestionRouting } : {}),
   })
+  // Per-chat /provider overrides persist in the project state; seed them
+  // into the adapter. A name the operator has since deleted from
+  // config.providers fails to pin and that chat falls back to the project
+  // default — the same self-heal the project-level restore above applies.
+  for (const [key, name] of Object.entries(projectState.providerOverrides())) {
+    if (!adapter.setSessionProvider(key, name)) {
+      console.warn(`feishu-bridge: project '${project.name}' persisted session provider '${name}' (${key}) is no longer in config.providers; that chat falls back to '${activeProvider}'`)
+    }
+  }
 
   const platform = new FeishuPlatform({
     appID: project.feishu.appId,
@@ -1248,8 +1257,8 @@ export function buildProjectAssembly(
   ctx.effect(() => registerProviderCommands(engine))
   ctx.effect(() => registerPredictCommands(engine))
   ctx.effect(() => registerSessionMiscCommands(engine))
-  engine.setProviderSaveFunc((name) => {
-    projectState.setActiveProvider(name)
+  engine.setProviderSaveFunc((sessionKey, name) => {
+    projectState.setProviderOverride(sessionKey, name)
     projectState.save()
   })
   if (project.providerShortcuts !== undefined) {

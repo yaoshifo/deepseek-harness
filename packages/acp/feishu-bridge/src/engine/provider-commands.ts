@@ -1,16 +1,20 @@
 /**
  * The `/provider` command family ported from cc-connect
- * core/engine_provider.go (#9 全局 Providers / #12 per-provider switching):
- * bare listing, `switch <name> [--resume]`, `current`, and `clear`. A plain
- * switch drops the session (the next message starts fresh on the new
- * route); `--resume` keeps the agent session id so the next message
- * resumes the same transcript under the new route (MIGRATION.md D1:
- * dispose + resume with new agentOptions). The add/remove/preset flows are
- * not ported: a provider is a named llm route in the profile config, which
- * the runtime cannot create. Card platforms render the bare listing as the
- * provider card (Go renderProviderCard): a plain/hot mode row selects
- * whether the `act:/provider <name>[-r]` rows drop the session or keep the
- * transcript, and the pressed card refreshes in place.
+ * core/engine_provider.go (#9 全局 Providers / #12 per-provider switching),
+ * reshaped to per-chat semantics: bare listing, `switch <name> [--resume]`,
+ * `current`, and `clear` all act on the chat the command ran in. A switch
+ * pins that session's route override (which wins over the project default
+ * for that chat only and persists across restarts); a plain switch drops the
+ * session (the next message starts fresh on the new route); `--resume` keeps
+ * the agent session id so the next message resumes the same transcript under
+ * the new route (MIGRATION.md D1: dispose + resume with new agentOptions).
+ * The project default route itself never moves at runtime — chats without
+ * an override keep using it. The add/remove/preset flows are not ported: a
+ * provider is a named llm route in the profile config, which the runtime
+ * cannot create. Card platforms render the bare listing as the provider
+ * card (Go renderProviderCard): a plain/hot mode row selects whether the
+ * `act:/provider <name>[-r]` rows drop the session or keep the transcript,
+ * and the pressed card refreshes in place.
  *
  * Registration lives here (not in engine/commands.ts) so the provider
  * domain cannot collide with parallel work on that file;
@@ -63,8 +67,8 @@ function parseProviderResumeFlag(args: string[]): { name: string; resume: boolea
 }
 
 /** One /provider list body: current header, marked rows, switch hint. */
-function providerListText(e: Engine, switcher: ProviderSwitcher): string {
-  const current = switcher.getActiveProvider()
+function providerListText(e: Engine, switcher: ProviderSwitcher, sessionKey: string): string {
+  const current = switcher.getActiveProvider(sessionKey)
   const providers = switcher.listProviders()
   if (current === undefined && providers.length === 0) return e.i18n.t(Msg.ProviderNone)
   let sb = ''
@@ -84,21 +88,23 @@ function providerListText(e: Engine, switcher: ProviderSwitcher): string {
  * -mode row (plain / hot), one list row per route with an
  * `act:/provider <name>[-r]` switch button, the click hint, and a back
  * button. The add/preset buttons are not ported — the runtime cannot create
- * routes.
+ * routes. The current line and the ▶ marker resolve the session's override
+ * first, so two chats can sit on different routes.
  *
  * @param e - Engine owning the switcher and i18n.
  * @param notice - Extra markdown line under the current line (the outcome of a pressed row).
+ * @param sessionKey - Engine session key whose effective route marks the current line.
  * @param hot - Hot-switch mode: rows carry the `-r` flag (keep context) instead of dropping the
  * session. Defaults to hot — the card opens hot-switched; the card action passes the pressed mode explicitly.
  * @returns The assembled card; a red not-supported card when the agent has no switcher.
  */
-function renderProviderCard(e: Engine, notice: string, hot = true): Card {
+function renderProviderCard(e: Engine, notice: string, sessionKey: string, hot = true): Card {
   const switcher = asProviderSwitcher(e.agent)
   if (switcher === undefined) {
     return newCard().title(e.i18n.t(Msg.ProviderCardTitle), 'red')
       .markdown(e.i18n.t(Msg.ProviderNotSupported)).build()
   }
-  const current = switcher.getActiveProvider()
+  const current = switcher.getActiveProvider(sessionKey)
   const providers = switcher.listProviders()
   const cb = newCard().title(e.i18n.t(Msg.ProviderCardTitle), 'indigo')
   if (current === undefined && providers.length === 0) {
@@ -161,11 +167,11 @@ export function registerProviderCommands(e: Engine): () => void {
   const disposeCardAction = e.registerCardAction(['/provider'], (sessionKey, _cmd, args) => {
     const { name, resume } = parseProviderResumeFlag(args.split(/\s+/).filter(a => a !== ''))
     const switcher = asProviderSwitcher(e.agent)
-    if (name === '' || switcher === undefined) return renderProviderCard(e, '', resume)
+    if (name === '' || switcher === undefined) return renderProviderCard(e, '', sessionKey, resume)
     const notice = applyProviderSwitch(e, sessionKey, switcher, name, resume)
       ? e.i18n.tf(resume ? Msg.ProviderHotSwitched : Msg.ProviderSwitched, name)
       : e.i18n.tf(Msg.ProviderNotFound, name)
-    return renderProviderCard(e, notice, resume)
+    return renderProviderCard(e, notice, sessionKey, resume)
   })
   return () => {
     handlers.delete('provider')
@@ -176,7 +182,7 @@ export function registerProviderCommands(e: Engine): () => void {
   }
 }
 
-/** /provider: list, switch, current, clear (Go cmdProvider). */
+/** /provider: list, switch, current, clear (Go cmdProvider; per-chat routes). */
 async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[]): Promise<void> {
   const switcher = asProviderSwitcher(e.agent)
   if (switcher === undefined) {
@@ -186,10 +192,10 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
 
   if (args.length === 0) {
     if (supportsCards(p)) {
-      await e.replyWithCard(p, msg.replyCtx, renderProviderCard(e, ''))
+      await e.replyWithCard(p, msg.replyCtx, renderProviderCard(e, '', msg.sessionKey))
       return
     }
-    await e.reply(p, msg.replyCtx, providerListText(e, switcher))
+    await e.reply(p, msg.replyCtx, providerListText(e, switcher, msg.sessionKey))
     return
   }
 
@@ -201,7 +207,7 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
         await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ProviderListEmpty))
         return
       }
-      await e.reply(p, msg.replyCtx, providerListText(e, switcher))
+      await e.reply(p, msg.replyCtx, providerListText(e, switcher, msg.sessionKey))
       return
     }
     case 'switch': {
@@ -219,7 +225,7 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
       return
     }
     case 'current': {
-      const current = switcher.getActiveProvider()
+      const current = switcher.getActiveProvider(msg.sessionKey)
       if (current === undefined) {
         await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ProviderNone))
         return
@@ -230,14 +236,15 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
     case 'clear':
     case 'reset':
     case 'none': {
-      switcher.setActiveProvider('')
-      e.applyActiveProviderContextWindow()
-      e.syncUsageProvidersActive()
+      // Clearing drops this chat's override (the project default stays) and
+      // starts the next message fresh on the default route, matching a
+      // plain switch's session handling.
+      switcher.setSessionProvider(msg.sessionKey, '')
       e.stopInteractiveSession(msg.sessionKey)
       const s = e.sessions.getOrCreateActive(msg.sessionKey)
       s.setAgentSessionID('', '')
       e.sessions.save()
-      saveProvider(e, '')
+      saveProvider(e, msg.sessionKey, '')
       await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ProviderCleared))
       return
     }
@@ -254,37 +261,35 @@ async function cmdProvider(e: Engine, p: Platform, msg: Message, args: string[])
   }
 }
 
-/** Persist the active provider name; save failures only warn (Go slog.Error). */
-function saveProvider(e: Engine, name: string): void {
+/** Persist one session's route override; save failures only warn (Go slog.Error). */
+function saveProvider(e: Engine, sessionKey: string, name: string): void {
   if (e.providerSaveFunc === undefined) return
   try {
-    e.providerSaveFunc(name)
+    e.providerSaveFunc(sessionKey, name)
   } catch (error) {
-    console.error(`provider: failed to save active provider: ${String(error)}`)
+    console.error(`provider: failed to save session provider: ${String(error)}`)
   }
 }
 
 /**
  * Run the switch side effects shared by the text commands and a pressed
  * provider-card row (Go switchProvider/switchProviderResume minus the
- * reply): swap the route, re-resolve the context window and usage
- * detectors, handle the agent session id, and persist the choice. A plain
- * switch drops the id (the next message starts fresh on the new route); a
- * resume switch captures it before the interactive-session stop and
- * restores it after, so the next message resumes the same transcript under
- * the new route's agentOptions (history is NOT cleared).
+ * reply): pin this session's route override, handle the agent session id,
+ * and persist the choice. A plain switch drops the id (the next message
+ * starts fresh on the new route); a resume switch captures it before the
+ * interactive-session stop and restores it after, so the next message
+ * resumes the same transcript under the new route's agentOptions (history
+ * is NOT cleared). Other chats' routes are untouched.
  *
  * @param e - Engine owning the sessions and the persistence hook.
- * @param sessionKey - Session whose agent session id is handled.
+ * @param sessionKey - Session whose route is pinned and whose agent session id is handled.
  * @param switcher - Agent provider switcher.
- * @param name - Route to activate.
+ * @param name - Route to pin for this session.
  * @param resume - True keeps the agent session id (Go --resume); false drops it.
  * @returns True when the route exists and the switch ran; false leaves all state untouched.
  */
 function applyProviderSwitch(e: Engine, sessionKey: string, switcher: ProviderSwitcher, name: string, resume: boolean): boolean {
-  if (!switcher.setActiveProvider(name)) return false
-  e.applyActiveProviderContextWindow()
-  e.syncUsageProvidersActive()
+  if (!switcher.setSessionProvider(sessionKey, name)) return false
   const s = e.sessions.getOrCreateActive(sessionKey)
   const agentSessionID = s.getAgentSessionID()
   const agentType = s.agentType
@@ -297,7 +302,7 @@ function applyProviderSwitch(e: Engine, sessionKey: string, switcher: ProviderSw
     s.setAgentSessionID('', '')
   }
   e.sessions.save()
-  saveProvider(e, name)
+  saveProvider(e, sessionKey, name)
   return true
 }
 
@@ -319,25 +324,23 @@ async function switchProviderResume(e: Engine, p: Platform, msg: Message, switch
   await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderHotSwitched, name))
 }
 
-/** A provider shortcut (/strong): switch + fresh session in one step (Go cmdProviderShortcut). */
+/** A provider shortcut (/strong): switch this chat + fresh session in one step (Go cmdProviderShortcut). */
 async function cmdProviderShortcut(e: Engine, p: Platform, msg: Message, providerName: string): Promise<void> {
   const switcher = asProviderSwitcher(e.agent)
   if (switcher === undefined) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ProviderNotSupported))
     return
   }
-  if (!switcher.setActiveProvider(providerName)) {
+  if (!switcher.setSessionProvider(msg.sessionKey, providerName)) {
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderNotFound, providerName))
     return
   }
-  e.applyActiveProviderContextWindow()
-  e.syncUsageProvidersActive()
 
   e.stopInteractiveSession(msg.sessionKey)
   const old = e.sessions.getOrCreateActive(msg.sessionKey)
   old.setAgentSessionID('', '')
   e.sessions.save()
   e.sessions.newSession(msg.sessionKey, '')
-  saveProvider(e, providerName)
+  saveProvider(e, msg.sessionKey, providerName)
   await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ProviderShortcutNew, providerName))
 }

@@ -1000,8 +1000,23 @@ export interface ForkQuerierWithProvider {
 export interface ProviderSwitcher {
   setProviders(providers: ProviderConfig[]): void
   setActiveProvider(name: string): boolean
-  getActiveProvider(): ProviderConfig | undefined
+  /**
+   * The effective active route. A session key resolves that session's
+   * override first; without one (or with no override set) the project
+   * default is returned.
+   * @param sessionKey - Engine session key whose override wins; omitted reads the project default.
+   */
+  getActiveProvider(sessionKey?: string): ProviderConfig | undefined
   listProviders(): ProviderConfig[]
+  /**
+   * Set or clear one session's route override. Overrides win over the
+   * project default for that session only; they persist across session
+   * rotation and daemon restarts (the project default does not move).
+   * @param sessionKey - Engine session key the override applies to.
+   * @param name - Route name to pin; '' clears the override.
+   * @returns whether the route exists (clearing always succeeds).
+   */
+  setSessionProvider(sessionKey: string, name: string): boolean
 }
 
 /**
@@ -1412,7 +1427,7 @@ export function asForkQuerierWithProvider(a: Agent): ForkQuerierWithProvider | u
 }
 
 /**
- * Structural check for the {@link ProviderSwitcher} capability (all four members required).
+ * Structural check for the {@link ProviderSwitcher} capability (all five members required).
  *
  * @param a - the agent to inspect.
  * @returns the capability view, or undefined when not implemented.
@@ -1423,6 +1438,7 @@ export function asProviderSwitcher(a: Agent): ProviderSwitcher | undefined {
     && typeof candidate.setActiveProvider === 'function'
     && typeof candidate.setProviders === 'function'
     && typeof candidate.listProviders === 'function'
+    && typeof candidate.setSessionProvider === 'function'
     ? candidate as ProviderSwitcher
     : undefined
 }

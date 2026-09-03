@@ -557,6 +557,17 @@ describe('llmTriage', () => {
     expect(a.state.gotProvider).toBe('active-prov')
   })
 
+  it('falls back to the session override when triage_provider is empty', async () => {
+    const a = createGroupNameSwitcherAgent('active-prov', { resp: '{"actionable": true, "dir": "/pay", "task": "x"}' })
+    expect(a.setSessionProvider('feishu:oc_x:ou_y', 'chat-prov')).toBe(true)
+    const e = triageEngine(a, [{ path: '/pay', description: '' }])
+    e.monitor.triageProvider = ''
+
+    const res = await e.monitor.llmTriage('余额算不对', 'oc_x', 'feishu:oc_x:ou_y')
+    expect(res.action).toBe('spawn')
+    expect(a.state.gotProvider).toBe('chat-prov')
+  })
+
   it('drops when no provider can be resolved', async () => {
     const a = createGroupNameSwitcherAgent('', { resp: '{"actionable": true, "dir": "/pay", "task": "x"}' })
     const e = triageEngine(a, [{ path: '/pay', description: '' }])

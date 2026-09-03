@@ -686,6 +686,8 @@ export class DshAgentAdapter {
   private readonly recentTurnsCache = new Map<string, HistoryEntry[]>()
   /** Staged fork-at seeds keyed by the sentinel id, consumed by startSession. */
   private readonly forkAtSeeds = new Map<string, { seed: SessionEvent[]; parentID: string; childWorkDir: string }>()
+  /** Per-session route overrides (engine session key → route name), set by /provider in that chat. */
+  private readonly sessionProviders = new Map<string, string>()
   private modeOverride = ''
   /** Project-level default session mode ('' = no default; 'plan' starts every session in plan mode). */
   private defaultMode = ''
@@ -985,45 +987,57 @@ export class DshAgentAdapter {
   /**
    * The active named route.
    *
-   * @returns the route whose name matches the active provider, when one is configured.
+   * @param sessionKey - engine session key whose override wins; omitted reads the project default.
+   * @returns the route whose name matches the effective provider, when one is configured.
    */
-  activeRoute(): ProviderRoute | undefined {
-    return this.cfg.providers.find(p => p.name === this.cfg.activeProvider)
+  activeRoute(sessionKey?: string): ProviderRoute | undefined {
+    const name = this.getActiveProvider(sessionKey)?.name ?? ''
+    return this.cfg.providers.find(p => p.name === name)
   }
 
   /**
-   * ModelSwitcher (Go ModelSwitcher): the active route's model, for the
+   * ModelSwitcher (Go ModelSwitcher): the effective route's model, for the
    * status footer's 🤖 line. The [1m] alias stays stripped for display.
    *
-   * @returns the active route's model with the [1m] alias stripped.
+   * @param sessionKey - engine session key whose override wins; omitted reads the project default.
+   * @returns the effective route's model with the [1m] alias stripped.
    */
-  getModel(): string {
-    return stripModelAlias(this.activeRoute()?.model ?? '')
+  getModel(sessionKey?: string): string {
+    return stripModelAlias(this.activeRoute(sessionKey)?.model ?? '')
   }
 
   /**
-   * The active route's reasoning effort, for the reply footer (Go GetReasoningEffort).
+   * The effective route's reasoning effort, for the reply footer (Go GetReasoningEffort).
    *
-   * @returns the active route's reasoning effort, or '' when unset.
+   * @param sessionKey - engine session key whose override wins; omitted reads the project default.
+   * @returns the effective route's reasoning effort, or '' when unset.
    */
-  getReasoningEffort(): string {
-    return this.activeRoute()?.reasoningEffort ?? ''
+  getReasoningEffort(sessionKey?: string): string {
+    return this.activeRoute(sessionKey)?.reasoningEffort ?? ''
   }
 
-  /** agentOptions for the active route (with the [1m] alias stripped). */
-  private routeAgentOptions(): { provider: string; model: string; reasoningEffort?: string } {
-    return this.agentOptionsForQuery('', '')
+  /** agentOptions for the effective route of one engine session key (with the [1m] alias stripped). */
+  private routeAgentOptions(key: string): { provider: string; model: string; reasoningEffort?: string } {
+    return this.agentOptionsForQuery('', '', key)
   }
 
   /**
    * agentOptions for a one-shot query (Go spawnConfigFor): a named provider
-   * route when it matches, else the active route; `reasoning` (when
-   * non-empty) overrides the route's configured effort.
+   * route when it matches, else the effective route of the session key; `reasoning`
+   * (when non-empty) overrides the route's configured effort.
+   *
+   * @param providerName - explicit route name; '' uses the session key's effective route.
+   * @param reasoning - effort override; '' keeps the route's configured effort.
+   * @param sessionKey - engine session key whose override resolves the fallback route.
    */
-  private agentOptionsForQuery(providerName: string, reasoning: string): { provider: string; model: string; reasoningEffort?: string } {
+  private agentOptionsForQuery(providerName: string, reasoning: string, sessionKey?: string): {
+    provider: string
+    model: string
+    reasoningEffort?: string
+  } {
     const route = providerName !== ''
-      ? (this.cfg.providers.find(p => p.name === providerName) ?? this.activeRoute())
-      : this.activeRoute()
+      ? (this.cfg.providers.find(p => p.name === providerName) ?? this.activeRoute(sessionKey))
+      : this.activeRoute(sessionKey)
     return {
       provider: route?.provider ?? '',
       model: stripModelAlias(route?.model ?? ''),
@@ -1523,6 +1537,12 @@ export class DshAgentAdapter {
     if (!providers.some(pc => pc.name === this.cfg.activeProvider)) {
       this.cfg.activeProvider = providers[0]?.name ?? ''
     }
+    // Overrides naming routes that no longer exist fall back to the project
+    // default; dropping them keeps getActiveProvider(sessionKey) honest
+    // without a second membership check.
+    for (const [key, name] of [...this.sessionProviders]) {
+      if (!providers.some(pc => pc.name === name)) this.sessionProviders.delete(key)
+    }
   }
 
   /**
@@ -1544,14 +1564,40 @@ export class DshAgentAdapter {
   }
 
   /**
-   * ProviderSwitcher: the active route as a name-only config plus its
-   * context window, which the engine re-resolves on every switch (Go
+   * ProviderSwitcher: set or clear one session's route override. The
+   * override wins over the project default for that session only; the
+   * project default pointer does not move.
+   *
+   * @param sessionKey - engine session key the override applies to.
+   * @param name - route name to pin; '' clears the override.
+   * @returns whether the route exists in the registry; clearing always succeeds.
+   */
+  setSessionProvider(sessionKey: string, name: string): boolean {
+    if (name === '') {
+      this.sessionProviders.delete(sessionKey)
+      return true
+    }
+    if (!this.cfg.providers.some(r => r.name === name)) return false
+    this.sessionProviders.set(sessionKey, name)
+    return true
+  }
+
+  /**
+   * ProviderSwitcher: the effective active route as a name-only config plus
+   * its context window, which the engine re-resolves on every switch (Go
    * ProviderConfig.ContextWindow).
    *
+   * @param sessionKey - engine session key whose override wins; omitted or empty reads the project default.
    * @returns the active provider, or undefined when the selection is empty or unknown.
    */
-  getActiveProvider(): ProviderConfig | undefined {
-    const name = this.cfg.activeProvider
+  getActiveProvider(sessionKey?: string): ProviderConfig | undefined {
+    let name = this.cfg.activeProvider
+    if (sessionKey !== undefined && sessionKey !== '') {
+      const override = this.sessionProviders.get(sessionKey)
+      // A stale override (route deleted without a setProviders rebuild)
+      // falls back to the project default instead of resolving to nothing.
+      if (override !== undefined && this.cfg.providers.some(r => r.name === override)) name = override
+    }
     if (name === '' || !this.cfg.providers.some(r => r.name === name)) return undefined
     const route = this.cfg.providers.find(r => r.name === name)
     return { name, ...(route?.contextWindow !== undefined ? { contextWindow: route.contextWindow } : {}) }
@@ -1755,7 +1801,7 @@ export class DshAgentAdapter {
           ...(prepared !== undefined ? { parentSession: SessionId(prepared.parentID), seedLength: prepared.seed.length } : {}),
         },
         ...(prepared !== undefined && prepared.seed.length > 0 ? { seed: prepared.seed } : {}),
-        agentOptions: this.routeAgentOptions(),
+        agentOptions: this.routeAgentOptions(key),
         ...(setup !== undefined ? { setup } : {}),
       })
     } else if (isFork) {
@@ -1785,13 +1831,13 @@ export class DshAgentAdapter {
           ...(seeded !== undefined ? { parentSession: SessionId(origID), seedLength: seed.length } : {}),
         },
         ...(seed.length > 0 ? { seed } : {}),
-        agentOptions: this.routeAgentOptions(),
+        agentOptions: this.routeAgentOptions(key),
         ...(setup !== undefined ? { setup } : {}),
       })
     } else if (isResume) {
       handle = await this.ctx.agents.resume({
         resumeSessionId: SessionId(sessionID),
-        agentOptions: this.routeAgentOptions(),
+        agentOptions: this.routeAgentOptions(key),
         ...(setup !== undefined ? { setup } : {}),
       })
     } else {
@@ -1802,7 +1848,7 @@ export class DshAgentAdapter {
       handle = await this.ctx.agents.create({
         sessionId: SessionId(freshNativeSessionId()),
         meta: { cwd: options?.workDir ?? this.workDir },
-        agentOptions: this.routeAgentOptions(),
+        agentOptions: this.routeAgentOptions(key),
         ...(setup !== undefined ? { setup } : {}),
       })
     }

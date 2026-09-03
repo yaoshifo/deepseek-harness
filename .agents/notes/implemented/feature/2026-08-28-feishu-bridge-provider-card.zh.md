@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-卡片平台（`supportsCards`）上裸 `/provider` 渲染 provider 卡（移植 Go `renderProviderCard`，engine_provider.go）：indigo 标题卡，含当前路由行、每路由一行 `listItemBtn`（`▶`/`◻` + 名称 + 可选 model 反引号标注），行按钮携带 `act:/provider <name>`，一行提示与返回按钮。按下的行经 `registerProviderCommands` 注册的 `registerCardAction(['/provider'])` 分发：非空参数即切换，走与文本命令相同的 `applyProviderSwitch` 核心（setActiveProvider → context window 重算 → usage 探测器同步 → agent session id 处理 → 持久化），引擎将返回的卡原地 PATCH；查找失败（路由表变化后的陈旧卡）不切换，以 not-found 通知重渲染。帮助卡的 provider 行原地打开本卡（`nav:/provider`，无参 → 仅渲染）。两个前缀共用一个 handler，前提是本卡自持其发出的全部动作值：任何 `nav:/provider <name>` 生产者都必须被刻意添加，而现状不存在。（同日晚些时候，模式行把热切换搬上了卡——[provider 卡热切换模式](2026-08-28-feishu-bridge-provider-card-hot-mode.zh.md)——取代下方备选方案里的"仅文本"立场。）
+卡片平台（`supportsCards`）上裸 `/provider` 渲染 provider 卡（移植 Go `renderProviderCard`，engine_provider.go）：indigo 标题卡，含当前路由行、每路由一行 `listItemBtn`（`▶`/`◻` + 名称 + 可选 model 反引号标注），行按钮携带 `act:/provider <name>`，一行提示与返回按钮。按下的行经 `registerProviderCommands` 注册的 `registerCardAction(['/provider'])` 分发：非空参数即切换，走与文本命令相同的 `applyProviderSwitch` 核心（setSessionProvider → agent session id 处理 → 按群持久化；切换只钉住按下按钮那个群的路由——见[按群生效的 provider 路由](2026-09-03-feishu-bridge-per-chat-provider-routes.zh.md)），引擎将返回的卡原地 PATCH；查找失败（路由表变化后的陈旧卡）不切换，以 not-found 通知重渲染。帮助卡的 provider 行原地打开本卡（`nav:/provider`，无参 → 仅渲染）。两个前缀共用一个 handler，前提是本卡自持其发出的全部动作值：任何 `nav:/provider <name>` 生产者都必须被刻意添加，而现状不存在。（同日晚些时候，模式行把热切换搬上了卡——[provider 卡热切换模式](2026-08-28-feishu-bridge-provider-card-hot-mode.zh.md)——取代下方备选方案里的"仅文本"立场。）
 
 ## Alternatives considered
 

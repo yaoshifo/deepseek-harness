@@ -20,6 +20,7 @@ import {
 } from '../../src/engine/predict.ts'
 import type { Agent, ForkQuerierWithProvider, Message, RecentTurnsReader } from '../../src/core/types.ts'
 import {
+  createGroupNameSwitcherAgent,
   createStubAgent,
   createStubCardPlatform,
   newControllableSession,
@@ -250,6 +251,19 @@ describe('generatePrediction', () => {
     expect(agent.gotQueryWorkDir).toBe('/workspace/chat-override')
     dispose()
   })
+
+  it('resolves an empty provider config from the session override', async () => {
+    const p = createStubCardPlatform('test')
+    const agent = createGroupNameSwitcherAgent('project-prov', { resp: '预测行' })
+    expect(agent.setSessionProvider('feishu:oc_a', 'chat-prov')).toBe(true)
+    const { e, dispose } = newEngine(agent, p)
+    e.setPredictNextConfig(true, '', '', 1000, '', 'lightweight')
+
+    const out = await generatePrediction(e, 'User: q\n', 's', '', 'feishu:oc_a')
+    expect(out).toBe('预测行')
+    expect(agent.state.gotProvider).toBe('chat-prov')
+    dispose()
+  })
 })
 
 describe('generateTurnSummary', () => {
@@ -278,6 +292,19 @@ describe('generateTurnSummary', () => {
     e.setTurnSummaryConfig(true, 'mimo', 1000, '')
 
     expect(await generateTurnSummary(e, [])).toBe('ok')
+    dispose()
+  })
+
+  it('resolves an empty provider config from the session override', async () => {
+    const p = createStubCardPlatform('test')
+    const agent = createGroupNameSwitcherAgent('project-prov', { resp: '摘要行' })
+    expect(agent.setSessionProvider('feishu:oc_a', 'chat-prov')).toBe(true)
+    const { e, dispose } = newEngine(agent, p)
+    e.setTurnSummaryConfig(true, '', 1000, '')
+
+    const out = await generateTurnSummary(e, [], '', 'feishu:oc_a')
+    expect(out).toBe('摘要行')
+    expect(agent.state.gotProvider).toBe('chat-prov')
     dispose()
   })
 

@@ -169,14 +169,13 @@ describe('glm provider', () => {
     await vi.waitFor(() => { expect(p.summary()).toContain('wk: 84%(9%)') })
   })
 
-  it('isActive matches the glm prefix; default off', () => {
+  it('isActive matches the glm prefix in the passed route name; empty means off', () => {
     const p = createUsageProvider('glm', { api_key: 'k' }) as UsageProvider & {
-      isActive(dir: string): boolean
-      setActiveProvider(name: string): void
+      isActive(dir: string, activeName: string): boolean
     }
-    expect(p.isActive('/w')).toBe(false)
-    p.setActiveProvider('glm-turbo')
-    expect(p.isActive('/w')).toBe(true)
+    expect(p.isActive('/w', '')).toBe(false)
+    expect(p.isActive('/w', 'minimax')).toBe(false)
+    expect(p.isActive('/w', 'glm-turbo')).toBe(true)
   })
 })
 
@@ -251,16 +250,13 @@ describe('minimax provider', () => {
     expect(await asFetcher(p).fetchSummary()).toBe('')
   })
 
-  it('isActive matches minimax exactly; default off', () => {
+  it('isActive matches minimax exactly in the passed route name; default off', () => {
     const p = createUsageProvider('minimax', { api_key: 'k' }) as UsageProvider & {
-      isActive(dir: string): boolean
-      setActiveProvider(name: string): void
+      isActive(dir: string, activeName: string): boolean
     }
-    expect(p.isActive('/w')).toBe(false)
-    p.setActiveProvider('minimax')
-    expect(p.isActive('/w')).toBe(true)
-    p.setActiveProvider('minimax-cn')
-    expect(p.isActive('/w')).toBe(false)
+    expect(p.isActive('/w', '')).toBe(false)
+    expect(p.isActive('/w', 'minimax')).toBe(true)
+    expect(p.isActive('/w', 'minimax-cn')).toBe(false)
   })
 })
 

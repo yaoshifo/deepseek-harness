@@ -8,7 +8,7 @@
  * @module dsh-feishu-bridge/predict
  */
 
-import { asCardSender, asForkQuerierWithProvider, type HistoryEntry, type Message, type Platform } from '../core/types.ts'
+import { asCardSender, asForkQuerierWithProvider, asProviderSwitcher, type HistoryEntry, type Message, type Platform } from '../core/types.ts'
 import { dangerBtn, newCard, primaryBtn } from '../card.ts'
 import { Msg } from '../i18n/index.ts'
 import type { Engine, InteractiveState } from './engine.ts'
@@ -98,15 +98,20 @@ export function buildSummaryContext(entries: HistoryEntry[]): string {
  * @param compactContext - The compacted conversation context (lightweight mode).
  * @param sessionID - The live agent session id (resume mode).
  * @param workDir - The session's workdir (resume mode).
+ * @param sessionKey - Session key whose route override resolves an empty provider config.
  * @returns the prediction text, or '' when nothing usable came back.
  */
-export async function generatePrediction(e: Engine, compactContext: string, sessionID: string, workDir: string): Promise<string> {
+export async function generatePrediction(e: Engine, compactContext: string, sessionID: string, workDir: string, sessionKey = ''): Promise<string> {
   const fq = asForkQuerierWithProvider(e.agent)
   if (fq === undefined) throw new Error('agent does not implement ForkQuerierWithProvider')
   const prompt = e.predictNextPrompt !== '' ? e.predictNextPrompt : defaultPredictPrompt
+  // '' = the session's effective route (a per-chat override), else the project default.
+  const provider = e.predictNextProvider !== ''
+    ? e.predictNextProvider
+    : asProviderSwitcher(e.agent)?.getActiveProvider(sessionKey)?.name ?? ''
   const resp = e.predictNextResume
-    ? await fq.forkSessionWithProvider(sessionID, prompt, e.predictNextProvider, workDir)
-    : await fq.lightweightQuery(`${compactContext}\n\n${prompt}`, e.predictNextProvider, undefined, workDir)
+    ? await fq.forkSessionWithProvider(sessionID, prompt, provider, workDir)
+    : await fq.lightweightQuery(`${compactContext}\n\n${prompt}`, provider, undefined, workDir)
   return firstShortLine(resp, maxPredictLineLen)
 }
 
@@ -117,13 +122,18 @@ export async function generatePrediction(e: Engine, compactContext: string, sess
  * @param history - The session history through this turn.
  * @param workDir - Pins the fork session's cwd (the chat's effective
  *   directory); omitted or empty falls back to the adapter's base cwd.
+ * @param sessionKey - Session key whose route override resolves an empty provider config.
  * @returns the summary text, or '' when nothing usable came back.
  */
-export async function generateTurnSummary(e: Engine, history: HistoryEntry[], workDir?: string): Promise<string> {
+export async function generateTurnSummary(e: Engine, history: HistoryEntry[], workDir?: string, sessionKey = ''): Promise<string> {
   const fq = asForkQuerierWithProvider(e.agent)
   if (fq === undefined) throw new Error('agent does not implement ForkQuerierWithProvider')
   const prompt = e.turnSummaryPrompt !== '' ? e.turnSummaryPrompt : defaultSummaryPrompt
-  const resp = await fq.lightweightQuery(`${buildSummaryContext(history)}\n${prompt}`, e.turnSummaryProvider, undefined, workDir)
+  // '' = the session's effective route (a per-chat override), else the project default.
+  const provider = e.turnSummaryProvider !== ''
+    ? e.turnSummaryProvider
+    : asProviderSwitcher(e.agent)?.getActiveProvider(sessionKey)?.name ?? ''
+  const resp = await fq.lightweightQuery(`${buildSummaryContext(history)}\n${prompt}`, provider, undefined, workDir)
   return firstShortLine(resp, maxSummaryLineLen)
 }
 
@@ -266,7 +276,7 @@ export async function triggerInsights(
     }
     if (Array.from(lastAssistant).length > shortReplyRunes) {
       state.turnSummaryRunning = true
-      summaryCh = generateTurnSummary(e, history, workDir)
+      summaryCh = generateTurnSummary(e, history, workDir, sessionKey)
         .catch((error: unknown) => {
           console.error(`turn-summary: failed: ${String(error)}`)
           return ''
@@ -278,7 +288,7 @@ export async function triggerInsights(
   if (e.predictNextEnabled && !state.predictNextDisabled && !state.predictNextRunning) {
     state.predictNextRunning = true
     const sid = state.agentSession?.currentSessionID() ?? ''
-    predictCh = generatePrediction(e, buildCompactContext(history), sid, workDir)
+    predictCh = generatePrediction(e, buildCompactContext(history), sid, workDir, sessionKey)
       .catch((error: unknown) => {
         console.error(`predict-next: failed: ${String(error)}`)
         return ''

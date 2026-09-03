@@ -96,7 +96,7 @@ function contextCard(e: Engine, sessionKey: string): Card {
     i18n: e.i18n,
     sessionKey,
     sessionTitle: title,
-    model: displayModel(asProviderSwitcher(e.agent)?.getActiveProvider()?.model ?? ''),
+    model: displayModel(asProviderSwitcher(e.agent)?.getActiveProvider(sessionKey)?.model ?? ''),
     snapshot,
   })
 }

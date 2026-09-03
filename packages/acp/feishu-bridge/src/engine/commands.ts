@@ -136,7 +136,7 @@ export async function cmdNew(e: Engine, p: Platform, msg: Message, args: string[
     totalInputTokens: 0, sdkPlausible: false, selfPct: 0,
     nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
     numTurns: 0, compactionCount: 0,
-  })
+  }, msg.sessionKey)
   const workDir = e.perChatWorkDir(e.dirOverrideKey(msg.sessionKey))
   const cs = asCardSender(p)
   if (cs !== undefined) {
@@ -1185,7 +1185,7 @@ async function spawnGroupCommon(
       totalInputTokens: 0, sdkPlausible: false, selfPct: 0,
       nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
       numTurns: 0, compactionCount: 0,
-    })
+    }, syntheticMsg.sessionKey)
     try {
       const note = threadNote(e, opts.threadFlag)
       const card = await e.buildSpawnNotifyCard(spawnOpts.workDir, readyTitle, note, jumpMD, syntheticMsg.sessionKey)
@@ -1446,6 +1446,7 @@ export async function cmdRename(e: Engine, p: Platform, msg: Message, args: stri
         buildCompactContext(history),
         AbortSignal.timeout(timeout),
         e.sessionWorkDir(sessionKey),
+        sessionKey,
       )
       if (generated === '') {
         void e.reply(p, replyCtx, e.i18n.t(Msg.RenameFailed))

@@ -18,8 +18,10 @@ interface ProjectStateData {
   monitor_chats?: string
   /** Runtime /monitor mode override (#53; empty = use config). */
   monitor_mode?: string
-  /** Runtime active-provider override from /provider switch (#9; empty = use config). */
+  /** Runtime active-provider override (#9; empty = use config). */
   active_provider?: string
+  /** Per-chat route overrides from /provider (sessionKey → route name; a cleared entry is removed). */
+  provider_overrides?: Record<string, string> | undefined
   /** Native continuable subtask children (de-baggage B4), keyed by native child id. */
   native_children?: Record<string, NativeChildRecord> | undefined
 }
@@ -158,6 +160,34 @@ export class ProjectStateStore {
    */
   setActiveProvider(name: string): void {
     this.state.active_provider = name
+  }
+
+  /**
+   * All persisted per-chat route overrides (a copy; never undefined).
+   * @returns Session key → route name.
+   */
+  providerOverrides(): Record<string, string> {
+    return { ...(this.state.provider_overrides ?? {}) }
+  }
+
+  /**
+   * Set or clear one chat's route override; a cleared entry is removed so
+   * the persisted map only names chats that pinned a route.
+   * @param key - Engine session key the override applies to.
+   * @param name - Route name to pin; '' removes the entry.
+   */
+  setProviderOverride(key: string, name: string): void {
+    if (name === '') {
+      if (this.state.provider_overrides === undefined) return
+      const next: Record<string, string> = {}
+      for (const [k, v] of Object.entries(this.state.provider_overrides)) {
+        if (k !== key) next[k] = v
+      }
+      this.state.provider_overrides = Object.keys(next).length === 0 ? undefined : next
+      return
+    }
+    if (this.state.provider_overrides === undefined) this.state.provider_overrides = {}
+    this.state.provider_overrides[key] = name
   }
 
   /**

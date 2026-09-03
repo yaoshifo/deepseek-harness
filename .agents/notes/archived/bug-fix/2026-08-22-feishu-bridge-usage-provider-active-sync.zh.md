@@ -1,6 +1,7 @@
 # Agent Note: feishu-bridge 的 usage provider 从未收到活跃 provider 名
 
 Status: implemented
+Archived: 2026-09-03
 
 [English](2026-08-22-feishu-bridge-usage-provider-active-sync.md) | 中文
 

@@ -909,7 +909,7 @@ export async function renderContentToHTML(
   let providerName = e.planRenderProvider
   if (providerName === '') {
     const ps = asProviderSwitcher(e.agent)
-    const active = ps?.getActiveProvider()
+    const active = ps?.getActiveProvider(sessionKey)
     if (active !== undefined) providerName = active.name
   }
   if (providerName === '') {

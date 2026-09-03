@@ -129,7 +129,7 @@ describe('provider wiring', () => {
     expect(engine.commandResolver?.('compress')).toBe('compress')
   })
 
-  it('a provider-card action switches the assembled adapter route (Go executeCardAction "/provider")', async () => {
+  it('a provider-card action pins the assembled adapter route for that chat (Go executeCardAction "/provider")', async () => {
     // Isolated root: the card action persists the switch into the project
     // state, which must not leak into the shared-default-root assemblies.
     const root = await mkdtemp(join(tmpdir(), 'fb-assembly-provider-card-'))
@@ -141,7 +141,10 @@ describe('provider wiring', () => {
       sessionKey: 'smoke-project:chat1',
       replyCtx: 'ctx',
     }, 'act:/provider turbo')
-    expect(adapter.getActiveProvider()?.name).toBe('turbo')
+    expect(adapter.getActiveProvider('smoke-project:chat1')?.name).toBe('turbo')
+    // Other chats and the project default keep the configured route.
+    expect(adapter.getActiveProvider('smoke-project:chat2')?.name).toBe('mify-dsh')
+    expect(adapter.getActiveProvider()?.name).toBe('mify-dsh')
     // The pressed card is replaced by the re-rendered provider card.
     expect(p.sentCards).toHaveLength(1)
     expect(JSON.stringify(p.sentCards[0])).toContain('turbo')
@@ -158,17 +161,18 @@ describe('provider wiring', () => {
       sessionKey: 'smoke-project:chat1',
       replyCtx: 'ctx',
     }, 'act:/provider turbo -r')
-    expect(adapter.getActiveProvider()?.name).toBe('turbo')
+    expect(adapter.getActiveProvider('smoke-project:chat1')?.name).toBe('turbo')
     expect(s.getAgentSessionID()).toBe('agent-sid-9')
   })
 
-  it('the persisted active provider survives assembly (Go providerSaveFunc → config)', async () => {
+  it('a persisted per-chat provider override survives assembly; unset chats fall back', async () => {
     const root = await mkdtemp(join(tmpdir(), 'fb-assembly-provider-'))
     const proj = { ...project(), agent: { provider: 'mify-dsh' } }
     const first = assemble(baseConfig(), proj, root)
-    first.engine.providerSaveFunc?.('turbo')
-    // The save hook persisted the switch to the project state store.
+    first.engine.providerSaveFunc?.('smoke-project:chat1', 'turbo')
+    // The save hook persisted the override to the project state store.
     const second = assemble(baseConfig(), proj, root)
-    expect(second.adapter.getActiveProvider()?.name).toBe('turbo')
+    expect(second.adapter.getActiveProvider('smoke-project:chat1')?.name).toBe('turbo')
+    expect(second.adapter.getActiveProvider('smoke-project:chat2')?.name).toBe('mify-dsh')
   })
 })

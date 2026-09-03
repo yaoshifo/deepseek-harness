@@ -128,7 +128,7 @@ async function cmdNotify(e: Engine, p: Platform, msg: Message, args: string[]): 
     totalInputTokens: 0, sdkPlausible: false, selfPct: 0,
     nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
     numTurns: 0, compactionCount: 0,
-  })
+  }, msg.sessionKey)
   const card = await e.buildSpawnNotifyCard(
     workDir,
     e.i18n.t(Msg.SpawnGroupReady),

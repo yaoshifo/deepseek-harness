@@ -617,16 +617,24 @@ export function createGroupNameAgent(opts: {
   }
 }
 
-/** Go stubGroupNameAgentSwitcher: adds ProviderSwitcher with an active provider. */
+/** Go stubGroupNameAgentSwitcher: adds ProviderSwitcher with an active provider and per-chat overrides. */
 export function createGroupNameSwitcherAgent(
   activeName: string, opts: { resp?: string; err?: Error },
 ): Agent & { state: GroupNameAgentState } & ForkQuerierWithProvider & ProviderSwitcher {
   const base = createGroupNameAgent(opts)
+  const overrides = new Map<string, string>()
   return {
     ...base,
     setProviders: () => {},
     setActiveProvider: () => false,
-    getActiveProvider: () => ({ name: activeName }),
+    setSessionProvider: (key: string, name: string) => {
+      if (name === '') overrides.delete(key)
+      else overrides.set(key, name)
+      return true
+    },
+    getActiveProvider: (sessionKey?: string) => ({
+      name: (sessionKey !== undefined && sessionKey !== '' ? overrides.get(sessionKey) : undefined) ?? activeName,
+    }),
     listProviders: () => [],
   }
 }

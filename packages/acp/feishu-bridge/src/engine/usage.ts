@@ -20,12 +20,12 @@ export interface UsageProvider {
 
 /**
  * Optional capability (Go ActiveDetector): the engine only shows this
- * provider's usage when it is the active LLM backend. Providers without it
- * are always shown.
+ * provider's usage when the completing session's effective route matches.
+ * The route name arrives per turn — per-chat route overrides gate their own
+ * quota line. Providers without the capability are always shown.
  */
 export interface UsageActiveDetector {
-  isActive(workDir: string): boolean
-  setActiveProvider(name: string): void
+  isActive(workDir: string, activeProviderName: string): boolean
 }
 
 /**
@@ -163,7 +163,6 @@ class GlmProvider extends CachedUsageProvider implements UsageActiveDetector {
   private readonly apiKey: string
   private readonly quotaURL: string
   private readonly fetchFn: FetchFn
-  private activeProviderName = ''
 
   constructor(apiKey: string, quotaURL: string, fetchFn: FetchFn) {
     super()
@@ -176,12 +175,8 @@ class GlmProvider extends CachedUsageProvider implements UsageActiveDetector {
     return 'glm'
   }
 
-  isActive(_workDir: string): boolean {
-    return this.activeProviderName.startsWith('glm')
-  }
-
-  setActiveProvider(name: string): void {
-    this.activeProviderName = name
+  isActive(_workDir: string, activeProviderName: string): boolean {
+    return activeProviderName.startsWith('glm')
   }
 
   protected async doFetch(): Promise<string> {
@@ -313,7 +308,6 @@ class MinimaxProvider extends CachedUsageProvider implements UsageActiveDetector
   private readonly apiKey: string
   private readonly region: string
   private readonly fetchFn: FetchFn
-  private activeProviderName = ''
 
   constructor(apiKey: string, region: string, fetchFn: FetchFn) {
     super()
@@ -326,12 +320,8 @@ class MinimaxProvider extends CachedUsageProvider implements UsageActiveDetector
     return 'minimax'
   }
 
-  isActive(_workDir: string): boolean {
-    return this.activeProviderName === 'minimax'
-  }
-
-  setActiveProvider(name: string): void {
-    this.activeProviderName = name
+  isActive(_workDir: string, activeProviderName: string): boolean {
+    return activeProviderName === 'minimax'
   }
 
   protected async doFetch(): Promise<string> {

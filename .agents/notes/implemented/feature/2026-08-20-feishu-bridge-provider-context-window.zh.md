@@ -10,7 +10,7 @@ M7-b usage 域落地了 ctx% 消费方（状态页脚的 SDK token 累积）和�
 
 ## 决策
 
-把 Go `ProviderConfig.ContextWindow` 链路端到端接通。`ProviderRoute`（插件配置）新增 `contextWindow?: number`；`buildProjectAssembly` 转发到 adapter 路由；`DshAgentAdapter.getActiveProvider()` 在有值时带出（`exactOptionalPropertyTypes` 下用条件展开，JSDoc 的 "name-only" 措辞同步更新）。`provider-commands.ts` 的全部切换点——`switchProvider` 与 provider 卡动作（两者经共享核心 `applyProviderSwitch`）、`switchProviderResume`、`clear` 子命令、`cmdProviderShortcut`——在 `setActiveProvider` 成功后立即调用 `e.applyActiveProviderContextWindow()`，先于 interactive-session 清理，对齐 Go 顺序。未声明窗口的路由与清除选择回退 `projectContextWindow`（project `contextWindow`，默认 200k），行为不变。
+把 Go `ProviderConfig.ContextWindow` 链路端到端接通。`ProviderRoute`（插件配置）新增 `contextWindow?: number`；`buildProjectAssembly` 转发到 adapter 路由；`DshAgentAdapter.getActiveProvider()` 在有值时带出（`exactOptionalPropertyTypes` 下用条件展开，JSDoc 的 "name-only" 措辞同步更新）。切换路径上的 `applyActiveProviderContextWindow()` 调用（此处为对齐 Go 而加）后由[按群生效的 provider 路由](2026-09-03-feishu-bridge-per-chat-provider-routes.zh.md)移除：按群切换不移动项目指针，没有需要重算的东西。未声明窗口的路由与清除选择回退 `projectContextWindow`（project `contextWindow`，默认 200k），行为不变。
 
 ## 备选方案
 
@@ -18,8 +18,8 @@ M7-b usage 域落地了 ctx% 消费方（状态页脚的 SDK token 累积）和�
 
 ## 后果
 
-声明了 `contextWindow` 的路由从装配起、以及每次切换后，都由它驱动 ctx% 分母——多窗口舰队（如 1M 窗口的 GLM 与 128k 路由并存）能报出诚实的百分比。不带该字段的配置行为与之前完全一致（回退链未动）。live daemon 在运维者给某路由加字段之前无需任何变更；既有的「/provider 双路由切换」日常验证项顺带覆盖真机检查（切换到窗口不同的路由后观察 ctx% 变化）。
+`Engine.contextWindow` 目前是只写不读的状态：2026-09-03 的穷尽检查没有找到任何读取方——ctx%/占用率的分母来自各会话自己的 context snapshot（`/context` 投影与 reply-footer 探测），不是引擎字段——因此该配置字段唯一存活的效果是 `getActiveProvider()` 把它带出。启动调用（`buildProjectAssembly`）与 `setContextWindow` 保留；接一个真实消费方（或移除死字段）是开放项。不带该字段的配置行为与之前完全一致（回退链未动）。
 
 ## 测试
 
-`tests/engine/provider-commands.spec.ts`（stub switcher 扩展了 per-route 窗口）：切到有窗口的路由、切回（project 回退恢复）、clear（回退）、shortcut 与 `--resume` 都重算。`tests/agent-dsh/adapter.spec.ts`：`getActiveProvider` 只在有值时带出窗口。`tests/assembly-config.spec.ts`：active 路由窗口胜过 project 窗口并到达 adapter。包全量 1843 绿；包 typecheck 与新增文件 lint 干净。
+`tests/agent-dsh/adapter.spec.ts`：`getActiveProvider` 只在有值时带出窗口。`tests/assembly-config.spec.ts`：active 路由窗口胜过 project 窗口并到达 adapter。切换路径的重算测试随按群改动一并移除（见取代 note）。包全量绿；包 typecheck 干净。

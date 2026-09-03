@@ -10,7 +10,7 @@ The M7-b usage domain landed the ctx-percentage consumer (the status footer's SD
 
 ## Decision
 
-Wire the Go `ProviderConfig.ContextWindow` chain end to end. `ProviderRoute` (plugin config) gains `contextWindow?: number`; `buildProjectAssembly` forwards it onto the adapter route; `DshAgentAdapter.getActiveProvider()` includes it when set (conditional spread under `exactOptionalPropertyTypes`, and the JSDoc's "name-only" wording updated). Every provider-switch site in `provider-commands.ts` — `switchProvider` and the provider-card action (both through the shared core `applyProviderSwitch`), `switchProviderResume`, the `clear` subcommand, and `cmdProviderShortcut` — calls `e.applyActiveProviderContextWindow()` immediately after a successful `setActiveProvider`, before the interactive-session cleanup, matching Go's ordering. Routes without their own window and a cleared selection fall back to `projectContextWindow` (project `contextWindow`, default 200k), unchanged.
+Wire the Go `ProviderConfig.ContextWindow` chain end to end. `ProviderRoute` (plugin config) gains `contextWindow?: number`; `buildProjectAssembly` forwards it onto the adapter route; `DshAgentAdapter.getActiveProvider()` includes it when set (conditional spread under `exactOptionalPropertyTypes`, and the JSDoc's "name-only" wording updated). The switch-path calls to `applyActiveProviderContextWindow()` (added here for Go parity) were later removed by [per-chat provider routes](2026-09-03-feishu-bridge-per-chat-provider-routes.md): a per-chat switch does not move the project pointer, so there is nothing to re-resolve. Routes without their own window and a cleared selection fall back to `projectContextWindow` (project `contextWindow`, default 200k), unchanged.
 
 ## Alternatives considered
 
@@ -18,8 +18,8 @@ Wire the Go `ProviderConfig.ContextWindow` chain end to end. `ProviderRoute` (pl
 
 ## Consequences
 
-A route that declares `contextWindow` now drives the ctx% denominator from assembly time and after every switch, so multi-window fleets (e.g. 1M-window GLM vs 128k routes) report honest percentages. Configurations without the field behave exactly as before — the fallback chain is untouched. The live daemon needs no change until an operator adds the field to a route; the existing "/provider dual-route switch" daily-verification item covers the real-device check (watch ctx% change after a switch between routes with different windows).
+`Engine.contextWindow` is currently write-only state: an exhaustive check (2026-09-03) found no reader — the ctx%/occupancy denominators come from each session's own context snapshot (the `/context` projection and the reply-footer probes), not the engine field — so the config field's only live effect is `getActiveProvider()` reporting it. The startup call (`buildProjectAssembly`) and `setContextWindow` remain; wiring a real consumer (or removing the dead field) is open. Configurations without the field behave exactly as before — the fallback chain is untouched.
 
 ## Testing
 
-`tests/engine/provider-commands.spec.ts` (stub switcher extended with per-route windows): switch onto a windowed route, switch back (project fallback restored), clear (fallback), shortcut and `--resume` both re-resolve. `tests/agent-dsh/adapter.spec.ts`: `getActiveProvider` exposes the route window only when set. `tests/assembly-config.spec.ts`: the active route's window wins over the project window and reaches the adapter. Full package suite 1843 green; package typecheck and the new-file lint clean.
+`tests/agent-dsh/adapter.spec.ts`: `getActiveProvider` exposes the route window only when set. `tests/assembly-config.spec.ts`: the active route's window wins over the project window and reaches the adapter. The switch-path re-resolution tests were removed with the per-chat change (see the superseding note). Full package suite green; package typecheck clean.

@@ -924,7 +924,7 @@ export class MonitorCore {
     const noReport = rule.noReport
     if (dir === '') {
       // No rule matched → LLM triage.
-      const res = await this.llmTriage(text, chatID)
+      const res = await this.llmTriage(text, chatID, msg.sessionKey)
       if (res.action === 'drop') {
         if (this.modeVal() === 'dispatch') {
           // Hub mode: couldn't identify the target project → surface a
@@ -1289,20 +1289,22 @@ export class MonitorCore {
    * known), or clarify (actionable but dir uncertain).
    * @param text - the message text to judge.
    * @param chatID - the monitored chat, for logs and the context buffer.
+   * @param sessionKey - the monitored chat's session key; its route override
+   * resolves an empty triage_provider.
    * @returns the triage action; drop when triage cannot run or is uncertain.
    */
-  async llmTriage(text: string, chatID: string): Promise<TriageResult> {
+  async llmTriage(text: string, chatID: string, sessionKey = ''): Promise<TriageResult> {
     const fq = asForkQuerierWithProvider(this.e.agent)
     if (fq === undefined) {
       console.debug(`monitor: agent lacks LightweightQuery, skipping LLM triage (chat=${chatID})`)
       return { action: 'drop', dir: '', task: '', candidates: undefined }
     }
-    // Resolve provider: explicit config → active provider fallback. Without
-    // this, an empty triage_provider makes every non-rule message silently
-    // dropped.
+    // Resolve provider: explicit config → the chat's effective route
+    // fallback. Without this, an empty triage_provider makes every non-rule
+    // message silently dropped.
     let provider = this.triageProvider
     if (provider === '') {
-      const ap = asProviderSwitcher(this.e.agent)?.getActiveProvider()
+      const ap = asProviderSwitcher(this.e.agent)?.getActiveProvider(sessionKey)
       if (ap !== undefined) provider = ap.name
     }
     if (provider === '') {

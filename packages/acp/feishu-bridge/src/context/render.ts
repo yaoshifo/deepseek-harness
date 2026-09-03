@@ -82,7 +82,7 @@ export interface ContextCardArgs {
   sessionKey: string
   /** Session display name ('' omits the header segment). */
   sessionTitle: string
-  /** Active provider route's model name ('' omits the header segment). */
+  /** The chat's effective provider route's model name ('' omits the header segment). */
   model: string
   /**
    * Projection snapshot of the chat's live agent session; undefined (no live

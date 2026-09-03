@@ -60,7 +60,7 @@ export interface BuildCompletionUsageArgs {
 
 /** Provider with the optional active-detection capability (Go ActiveDetector). */
 type MaybeActiveDetector = UsageProvider & {
-  isActive?: (workDir: string) => boolean
+  isActive?: (workDir: string, activeProviderName: string) => boolean
 }
 
 /** Provider with the optional on-demand fetch (Go SyncUsageFetcher). */
@@ -75,6 +75,8 @@ type MaybeSyncFetcher = UsageProvider & Partial<SyncUsageFetcher>
  * @param showContextIndicator - Whether to render the 📊 ctx and 🍵 cache lines at all.
  * @param usageProviders - Candidate providers; ones whose isActive rejects the work dir are skipped.
  * @param baseWorkDir - Work dir passed to each provider's active detection.
+ * @param activeProviderName - The completing session's effective route name, passed to each
+ * detector's gate so per-chat route overrides gate their own quota line.
  * @param args - Turn-token accounting for the ctx/cache lines.
  */
 export async function buildCompletionUsage(
@@ -82,6 +84,7 @@ export async function buildCompletionUsage(
   showContextIndicator: boolean,
   usageProviders: UsageProvider[],
   baseWorkDir: string,
+  activeProviderName: string,
   args: BuildCompletionUsageArgs,
 ): Promise<void> {
   fields.ctxMsg = ''
@@ -104,7 +107,7 @@ export async function buildCompletionUsage(
   const usageParts: string[] = []
   for (const up of usageProviders) {
     const detector = up as MaybeActiveDetector
-    if (typeof detector.isActive === 'function' && !detector.isActive(baseWorkDir)) continue
+    if (typeof detector.isActive === 'function' && !detector.isActive(baseWorkDir, activeProviderName)) continue
     const fetcher = up as MaybeSyncFetcher
     const s = typeof fetcher.fetchSummary === 'function'
       ? await fetcher.fetchSummary()
@@ -410,15 +413,17 @@ export function formatModeLabel(agent: Agent | undefined): string {
  * Human-readable model label for the footer (Go currentModelLabel). The TS
  * ProviderSwitcher surface carries only route membership (no model detail),
  * so the ModelSwitcher probe runs first; the switcher's active name is the
- * fallback.
+ * fallback. The session key threads through both probes so a per-chat
+ * route override renders its own model.
  *
  * @param agent - Agent to probe for its model; undefined yields ''.
- * @returns The model name when known, else the active provider's model or name, else ''.
+ * @param sessionKey - Engine session key whose override resolves the model; '' reads the project default.
+ * @returns The model name when known, else the effective provider's model or name, else ''.
  */
-export function currentModelLabel(agent: Agent | undefined): string {
-  const model = (agent as { getModel?: () => string } | undefined)?.getModel?.().trim()
+export function currentModelLabel(agent: Agent | undefined, sessionKey?: string): string {
+  const model = (agent as { getModel?: (sessionKey?: string) => string } | undefined)?.getModel?.(sessionKey).trim()
   if (model !== undefined && model !== '') return model
-  const active = agent === undefined ? undefined : asProviderSwitcher(agent)?.getActiveProvider()
+  const active = agent === undefined ? undefined : asProviderSwitcher(agent)?.getActiveProvider(sessionKey)
   if (active === undefined) return ''
   return active.model !== undefined && active.model !== '' ? active.model : active.name
 }
@@ -428,12 +433,15 @@ export function currentModelLabel(agent: Agent | undefined): string {
  * reasoning effort label mirrors the dsh adapter's route-configured
  * `getReasoningEffort` (Go GetReasoningEffort) — the explicit declaration of
  * the effort agents run at; agents without that probe render as before.
+ *
+ * @param agent - Agent to probe for model and effort; undefined yields ''.
+ * @param sessionKey - Engine session key whose override resolves the probes; '' reads the project default.
  */
-function formatModelLine(agent: Agent | undefined): string {
-  const modelLabel = currentModelLabel(agent)
+function formatModelLine(agent: Agent | undefined, sessionKey = ''): string {
+  const modelLabel = currentModelLabel(agent, sessionKey)
   if (modelLabel === '') return ''
   let s = `🤖 ${modelLabel}`
-  const effort = (agent as { getReasoningEffort?: () => string } | undefined)?.getReasoningEffort?.().trim() ?? ''
+  const effort = (agent as { getReasoningEffort?: (sessionKey?: string) => string } | undefined)?.getReasoningEffort?.(sessionKey).trim() ?? ''
   if (effort !== '') s += `·${effort}`
   const modeLabel = formatModeLabel(agent)
   if (modeLabel !== '') s += ` · ${modeLabel}`
@@ -484,7 +492,7 @@ function footerDir(inputs: StatusFooterInputs): string {
 export async function buildStatusFooter(_prefix: string, inputs: StatusFooterInputs): Promise<string> {
   const lines: string[] = []
 
-  const modelLine = formatModelLine(inputs.agent)
+  const modelLine = formatModelLine(inputs.agent, inputs.sessionKey)
   if (modelLine !== '') lines.push(modelLine)
 
   if (inputs.fields.ctxMsg !== '') lines.push(`📊 ${inputs.fields.ctxMsg}`)
@@ -553,7 +561,7 @@ export async function buildStatusFooterElements(inputs: StatusFooterInputs): Pro
     ? `⌛ ${inputs.fields.providerMsg.slice('💰 '.length)}`
     : ''
 
-  const modelLine = formatModelLine(inputs.agent)
+  const modelLine = formatModelLine(inputs.agent, inputs.sessionKey)
   if (modelLine !== '') {
     if (usageCollapsibleTitle !== '') collapsed.push({ kind: 'markdown', content: modelLine })
   }
@@ -671,8 +679,9 @@ type FooterCapSession = AgentSession & Partial<{
 }>
 
 type FooterCapAgent = Agent & Partial<{
-  getModel(): string
-  getReasoningEffort(): string
+  /** The optional key resolves a per-chat route override (Go ModelSwitcher). */
+  getModel(sessionKey?: string): string
+  getReasoningEffort(sessionKey?: string): string
   getUsage(): Promise<UsageReport | undefined>
   getWorkDir(): string
 }>
@@ -691,18 +700,18 @@ export interface ReplyFooterDeps {
   cache: ReplyFooterUsageCache
 }
 
-/** Session-level model, else the agent's (Go replyFooterModel). */
-function replyFooterModel(session: FooterCapSession | undefined, agent: FooterCapAgent | undefined): string {
+/** Session-level model, else the agent's for that chat (Go replyFooterModel). */
+function replyFooterModel(session: FooterCapSession | undefined, agent: FooterCapAgent | undefined, sessionKey = ''): string {
   const fromSession = session?.getModel?.().trim()
   if (fromSession !== undefined && fromSession !== '') return fromSession
-  return agent?.getModel?.().trim() ?? ''
+  return agent?.getModel?.(sessionKey).trim() ?? ''
 }
 
-/** Session-level reasoning effort, else the agent's (Go replyFooterReasoningEffort). */
-function replyFooterReasoningEffort(session: FooterCapSession | undefined, agent: FooterCapAgent | undefined): string {
+/** Session-level reasoning effort, else the agent's for that chat (Go replyFooterReasoningEffort). */
+function replyFooterReasoningEffort(session: FooterCapSession | undefined, agent: FooterCapAgent | undefined, sessionKey = ''): string {
   const fromSession = session?.getReasoningEffort?.().trim()
   if (fromSession !== undefined && fromSession !== '') return fromSession
-  return agent?.getReasoningEffort?.().trim() ?? ''
+  return agent?.getReasoningEffort?.(sessionKey).trim() ?? ''
 }
 
 /** "N% left" from a quota report's primary window (Go formatReplyFooterUsage). */
@@ -836,6 +845,7 @@ export function appendReplyFooter(content: string, footer: string): string {
  * @param session - Session whose model/effort/workdir take precedence over the agent's.
  * @param workspaceDir - Explicit workdir override; blank falls back to session then agent.
  * @param contextLeft - Precomputed "N% left" context text; blank triggers the quota fetch.
+ * @param sessionKey - Engine session key resolving the agent-level model/effort probes.
  * @returns The dot-joined footer parts, '' when no status part is known.
  */
 export async function buildReplyFooter(
@@ -844,15 +854,16 @@ export async function buildReplyFooter(
   session: FooterCapSession | undefined,
   workspaceDir: string,
   contextLeft: string,
+  sessionKey = '',
 ): Promise<string> {
   const parts: string[] = []
   let hasStatus = false
-  const model = replyFooterModel(session, agent)
+  const model = replyFooterModel(session, agent, sessionKey)
   if (model !== '') {
     parts.push(model)
     hasStatus = true
   }
-  const effort = replyFooterReasoningEffort(session, agent)
+  const effort = replyFooterReasoningEffort(session, agent, sessionKey)
   if (effort !== '') {
     parts.push(effort)
     hasStatus = true

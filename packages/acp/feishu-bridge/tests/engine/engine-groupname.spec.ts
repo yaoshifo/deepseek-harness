@@ -136,6 +136,16 @@ describe('generateGroupName', () => {
     expect(a.state.gotProvider).toBe('active-prov')
   })
 
+  it('falls back to the session override when none configured', async () => {
+    const a = createGroupNameSwitcherAgent('active-prov', { resp: '名' })
+    expect(a.setSessionProvider('feishu:oc_a', 'chat-prov')).toBe(true)
+    const { e } = newGroupNameEngine(a)
+    e.setGroupNameConfig(true, '', 1000, '')
+
+    await expect(e.generateGroupName('x', undefined, undefined, 'feishu:oc_a')).resolves.toBeDefined()
+    expect(a.state.gotProvider).toBe('chat-prov')
+  })
+
   it('parses the icon line', async () => {
     const a = createGroupNameAgent({ resp: '数据库迁移\ndatabase' })
     const { e } = newGroupNameEngine(a)

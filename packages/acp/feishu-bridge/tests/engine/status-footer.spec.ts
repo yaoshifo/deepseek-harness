@@ -247,7 +247,7 @@ function stubUsageProvider(name: string, summaryText: string): UsageProvider {
 describe('buildCompletionUsage', () => {
   it('builds the ctx and hit lines from plausible SDK tokens', async () => {
     const f = new CompletionUsageFields()
-    await buildCompletionUsage(f, true, [], '', {
+    await buildCompletionUsage(f, true, [], '', '', {
       totalInputTokens: 10_000, sdkPlausible: true, selfPct: 0,
       nonCachedDelta: 1_000, nonCachedCum: 10_000,
       cachedDelta: 20_000, cachedCum: 90_000,
@@ -261,7 +261,7 @@ describe('buildCompletionUsage', () => {
 
   it('falls back to the self-reported percentage when SDK tokens are implausible', async () => {
     const f = new CompletionUsageFields()
-    await buildCompletionUsage(f, true, [], '', {
+    await buildCompletionUsage(f, true, [], '', '', {
       totalInputTokens: 0, sdkPlausible: false, selfPct: 42,
       nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
       numTurns: 0, compactionCount: 0,
@@ -272,7 +272,7 @@ describe('buildCompletionUsage', () => {
 
   it('suppresses both lines when the indicator is off', async () => {
     const f = new CompletionUsageFields()
-    await buildCompletionUsage(f, false, [], '', {
+    await buildCompletionUsage(f, false, [], '', '', {
       totalInputTokens: 10_000, sdkPlausible: true, selfPct: 42,
       nonCachedDelta: 1_000, nonCachedCum: 10_000,
       cachedDelta: 0, cachedCum: 0, numTurns: 1, compactionCount: 0,
@@ -283,7 +283,7 @@ describe('buildCompletionUsage', () => {
 
   it('collects provider summaries under the 💰 prefix and RAM/disk into 💾', async () => {
     const f = new CompletionUsageFields()
-    await buildCompletionUsage(f, false, [stubUsageProvider('glm', 'wk: 50%(10%)')], '', {
+    await buildCompletionUsage(f, false, [stubUsageProvider('glm', 'wk: 50%(10%)')], '', '', {
       totalInputTokens: 0, sdkPlausible: false, selfPct: 0,
       nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
       numTurns: 0, compactionCount: 0,
@@ -296,7 +296,7 @@ describe('buildCompletionUsage', () => {
     const f = new CompletionUsageFields()
     setTokenRate(f, 500, 1000)
     expect(f.tokenRateMsg).not.toBe('')
-    await buildCompletionUsage(f, false, [], '', {
+    await buildCompletionUsage(f, false, [], '', '', {
       totalInputTokens: 0, sdkPlausible: false, selfPct: 0,
       nonCachedDelta: 0, nonCachedCum: 0, cachedDelta: 0, cachedCum: 0,
       numTurns: 0, compactionCount: 0,
@@ -509,6 +509,30 @@ describe('buildStatusFooter', () => {
       editorUrl: '',
     })
     expect(got).toBe('')
+  })
+
+  it('renders the session override model when the agent resolves per key', async () => {
+    // Per-chat /provider overrides: the agent's model probe receives the
+    // footer's session key and resolves that chat's route.
+    const agent: Agent & {
+      getModel(sessionKey?: string): string
+      getReasoningEffort(): string
+      getWorkDir(): string
+    } = {
+      ...createStubAgent(),
+      getModel: (sessionKey?: string) => (sessionKey === 'feishu:oc_a' ? 'deepseek-v4-flash' : 'glm-4.7'),
+      getReasoningEffort: () => '',
+      getWorkDir: () => '',
+    }
+    const got = await buildStatusFooter('✅ Done', {
+      fields: new CompletionUsageFields(),
+      agent,
+      workspaceDir: '',
+      agentSessionID: '',
+      sessionKey: 'feishu:oc_a',
+      editorUrl: '',
+    })
+    expect(got.split('\\n')[0]).toBe('🤖 deepseek-v4-flash')
   })
 })
 

@@ -22,3 +22,31 @@ describe('ProjectStateStore corrupt-shape fallback', () => {
     expect(s.workspaceDirOverride('k')).toBe('')
   })
 })
+
+describe('ProjectStateStore provider overrides', () => {
+  function newStore(): { s: ProjectStateStore; path: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'fb-pstate-prov-'))
+    const path = join(dir, 'test.state.json')
+    return { s: new ProjectStateStore(path), path }
+  }
+
+  it('round-trips per-chat overrides through save and reload', () => {
+    const { s, path } = newStore()
+    s.setProviderOverride('feishu:oc_a', 'turbo')
+    s.setProviderOverride('feishu:oc_b', 'glm')
+    s.save()
+
+    const reloaded = new ProjectStateStore(path)
+    expect(reloaded.providerOverrides()).toEqual({ 'feishu:oc_a': 'turbo', 'feishu:oc_b': 'glm' })
+  })
+
+  it('clearing an override removes the entry; the map drops once empty', () => {
+    const { s, path } = newStore()
+    s.setProviderOverride('feishu:oc_a', 'turbo')
+    s.setProviderOverride('feishu:oc_a', '')
+    s.save()
+
+    const reloaded = new ProjectStateStore(path)
+    expect(reloaded.providerOverrides()).toEqual({})
+  })
+})

@@ -238,6 +238,68 @@ describe('DshAgentAdapter', () => {
     expect(a.getActiveProvider()).toEqual({ name: 'turbo', contextWindow: 1_000_000 })
   })
 
+  it('resolves the session override ahead of the project default without touching it', () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    expect(a.setSessionProvider('feishu:oc_a', 'turbo')).toBe(true)
+    expect(a.getActiveProvider('feishu:oc_a')?.name).toBe('turbo')
+    expect(a.getActiveProvider('feishu:oc_b')?.name).toBe('glm')
+    expect(a.getActiveProvider()?.name).toBe('glm')
+  })
+
+  it('starts sessions on the session override route while other keys stay on the project default', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    expect(a.setSessionProvider('feishu:oc_a', 'turbo')).toBe(true)
+
+    await a.startSession('', { sessionKey: 'feishu:oc_a' })
+    await a.startSession('', { sessionKey: 'feishu:oc_b' })
+
+    expect(h.creates[0]!.agentOptions).toEqual({ provider: 'turbo-route', model: 'deepseek-v4-flash' })
+    expect(h.creates[1]!.agentOptions).toEqual({ provider: 'glm-route', model: 'glm-5.3' })
+  })
+
+  it('rejects an unknown route and clears the override with an empty name', () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    expect(a.setSessionProvider('feishu:oc_a', 'turbo')).toBe(true)
+
+    expect(a.setSessionProvider('feishu:oc_a', 'nope')).toBe(false)
+    expect(a.getActiveProvider('feishu:oc_a')?.name).toBe('turbo')
+
+    expect(a.setSessionProvider('feishu:oc_a', '')).toBe(true)
+    expect(a.getActiveProvider('feishu:oc_a')?.name).toBe('glm')
+  })
+
+  it('setProviders drops overrides naming routes that no longer exist', () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    expect(a.setSessionProvider('feishu:oc_a', 'turbo')).toBe(true)
+
+    a.setProviders([{ name: 'glm' }])
+
+    expect(a.getActiveProvider('feishu:oc_a')?.name).toBe('glm')
+  })
+
+  it('getModel and getReasoningEffort resolve the session override', () => {
+    const h = createHarness()
+    const a = new DshAgentAdapter(h.ctx, {
+      agentName: 'dsh',
+      cwd: '/workspace/project',
+      providers: [
+        { name: 'glm', provider: 'glm-route', model: 'glm-5.3[1m]' },
+        { name: 'turbo', provider: 'turbo-route', model: 'deepseek-v4-flash', reasoningEffort: 'high' },
+      ],
+      activeProvider: 'glm',
+    })
+    expect(a.setSessionProvider('feishu:oc_a', 'turbo')).toBe(true)
+
+    expect(a.getModel('feishu:oc_a')).toBe('deepseek-v4-flash')
+    expect(a.getModel('feishu:oc_b')).toBe('glm-5.3')
+    expect(a.getReasoningEffort('feishu:oc_a')).toBe('high')
+    expect(a.getReasoningEffort('feishu:oc_b')).toBe('')
+  })
+
   it('creates a fresh native session keyed by the engine session key', async () => {
     const h = createHarness()
     const a = newAdapter(h)
