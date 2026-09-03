@@ -1,9 +1,12 @@
 /**
  * Chatroom interactive pickers ported from cc-connect core/engine_chatroom.go
  * (beginChatroomPick / RenderChatroomPickCard / executeChatroomPickAction in
- * engine_cmd_card.go): the #43 role picker and the #59 topic picker. Picker
- * state lives on the engine's InteractiveState (chatroomPick /
- * chatroomTopicPick), guarded by the single-threaded JS event loop.
+ * engine_cmd_card.go): the #43 role picker and the #59 topic picker, plus the
+ * guided start picker (new discussion vs continue a past chatroom) and the
+ * guided mode picker (plain / research-auto / research-manual) that replace
+ * unstated --continue / --research / --mode flags with one-tap cards. Picker
+ * state lives on engine-keyed maps, guarded by the single-threaded JS event
+ * loop.
  *
  * @module dsh-feishu-bridge/chatroom-pick
  */
@@ -17,10 +20,13 @@ import type { Card } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { Msg } from '../i18n.ts'
 import { chatroomState } from '../chatroom-state.ts'
 import { chatroomConfig } from '../chatroom-config.ts'
+import type { ChatroomHistoryEntry } from './chatroom-ledger.ts'
+import { readChatroomLedgerHeader } from './chatroom-ledger.ts'
 import { listRoleNames } from './chatroom-roles.ts'
 import { buildChatroomPickPriming, buildChatroomTopicPickPriming } from './chatroom-priming.ts'
-import { clearChatroomResearchFlags, startChatroom } from './chatroom.ts'
-import { afterChatroomStarted, startChatroomDirectRole } from './chatroom-cmd.ts'
+import { chatroomResearchWorkspace, clearChatroomResearchFlags, ensureResearchPythonEnv, startChatroom } from './chatroom.ts'
+import type { ChatroomInheritTarget } from './chatroom.ts'
+import { afterChatroomStarted, startChatroomDirectRole, stashChatroomResearchFlags } from './chatroom-cmd.ts'
 
 /** How long beginChatroomPick waits for the moderator's pick call (Go chatroomPickWatchdogTimeout). */
 export const chatroomPickWatchdogTimeout = 5 * 60 * 1000
@@ -78,6 +84,33 @@ export interface ChatroomTopicPickState {
 }
 
 /**
+ * The guided start-picker state: the new-vs-continue choice offered when a
+ * bare /chatroom finds recorded chatrooms. No picking phase — the card is
+ * rendered from the ledger snapshot without waking the moderator.
+ */
+export interface ChatroomStartPickState {
+  /** Ledger snapshot, newest first (bounded by the caller). */
+  history: ChatroomHistoryEntry[]
+  userID: string
+  chatType: string
+}
+
+/**
+ * The guided mode-picker state: the plain / research-auto / research-manual
+ * choice offered before any multi-role start whose mode the user did not
+ * state explicitly. Armed with the topic, cast, and (when continuing) the
+ * resolved prior; the buttons start the chatroom directly.
+ */
+export interface ChatroomModePickState {
+  topic: string
+  roles: string[]
+  /** Resolved prior when the flow continues a past chatroom. */
+  prior?: ChatroomInheritTarget
+  userID: string
+  chatType: string
+}
+
+/**
  * Picker state storage: Go parks these fields on the interactiveState,
  * whose object survives agent-process swaps. The TS interactive state is
  * REPLACED on each new agent session (only the message queue is adopted),
@@ -87,6 +120,8 @@ export interface ChatroomTopicPickState {
 export interface PickerStates {
   chatroomPick: Map<string, ChatroomPickState>
   chatroomTopicPick: Map<string, ChatroomTopicPickState>
+  chatroomStartPick: Map<string, ChatroomStartPickState>
+  chatroomModePick: Map<string, ChatroomModePickState>
 }
 
 const pickerMaps = new WeakMap<Engine, PickerStates>()
@@ -111,6 +146,26 @@ export function getChatroomTopicPickState(e: Engine, sessionKey: string): Chatro
   return pickers(e).chatroomTopicPick.get(sessionKey)
 }
 
+/** The armed guided start-picker state for a session key (undefined when none).
+ *
+ * @param e - Engine owning the picker maps.
+ * @param sessionKey - Hub session key.
+ * @returns the armed start-picker state, or undefined when none.
+ */
+export function getChatroomStartPickState(e: Engine, sessionKey: string): ChatroomStartPickState | undefined {
+  return pickers(e).chatroomStartPick.get(sessionKey)
+}
+
+/** The armed guided mode-picker state for a session key (undefined when none).
+ *
+ * @param e - Engine owning the picker maps.
+ * @param sessionKey - Hub session key.
+ * @returns the armed mode-picker state, or undefined when none.
+ */
+export function getChatroomModePickState(e: Engine, sessionKey: string): ChatroomModePickState | undefined {
+  return pickers(e).chatroomModePick.get(sessionKey)
+}
+
 /** Drop the armed role-picker state (picker cleared / reset).
  *
  * @param e - Engine owning the picker maps.
@@ -123,7 +178,7 @@ export function clearChatroomPickState(e: Engine, sessionKey: string): void {
 function pickers(e: Engine): PickerStates {
   let m = pickerMaps.get(e)
   if (m === undefined) {
-    m = { chatroomPick: new Map(), chatroomTopicPick: new Map() }
+    m = { chatroomPick: new Map(), chatroomTopicPick: new Map(), chatroomStartPick: new Map(), chatroomModePick: new Map() }
     pickerMaps.set(e, m)
   }
   return m
@@ -374,6 +429,14 @@ export function executeChatroomPickAction(e: Engine, sessionKey: string, args: s
       const names = [...ps.selected.keys()].sort()
       const { topic, userID, chatType } = ps
       pickers(e).chatroomPick.delete(sessionKey) // clear before async dispatch
+      // A multi-role cast whose mode the user did not state explicitly goes
+      // through the mode picker — the confirm card swaps into it in place.
+      // Single-role casts start the direct chat; an explicitly-stashed
+      // --research skips the card (the decision is already made).
+      if (names.length >= 2 && !chatroomState(e.sessions.getOrCreateActive(sessionKey)).chatroomResearch) {
+        pickers(e).chatroomModePick.set(sessionKey, { topic, roles: names, userID, chatType })
+        return
+      }
       void finalizeChatroomPick(e, sessionKey, names, topic, userID, chatType)
       return
     }
@@ -382,6 +445,310 @@ export function executeChatroomPickAction(e: Engine, sessionKey: string, args: s
       return
     default:
       return
+  }
+}
+
+// ── guided start picker ────────────────────────────────────────────────────
+
+/**
+ * Bare /chatroom with recorded chatrooms: arm the start-picker state and
+ * send the new-vs-continue card. No moderator wake — the card renders from
+ * the ledger snapshot the caller captured.
+ *
+ * @param e - Engine owning the picker maps.
+ * @param p - Platform used for the card send.
+ * @param msg - Triggering message; its session key becomes the hub.
+ * @param history - Ledger snapshot, newest first; must be non-empty.
+ */
+export function beginChatroomStartPick(e: Engine, p: Platform, msg: Message, history: ChatroomHistoryEntry[]): void {
+  if (history.length === 0) throw new Error('chatroom: start picker requires a non-empty history snapshot')
+  pickers(e).chatroomStartPick.set(msg.sessionKey, {
+    history,
+    userID: msg.userID,
+    chatType: msg.chatType,
+  })
+  const cs = asCardSender(p)
+  if (cs !== undefined) {
+    void cs.sendCard(msg.replyCtx, renderChatroomStartPickCard(e, history)).catch(() => {
+      // Best-effort start card; the user can re-run /chatroom.
+    })
+  }
+}
+
+/** Render the new-vs-continue start card from the ledger snapshot.
+ *
+ * @param e - Engine providing i18n strings.
+ * @param history - Ledger snapshot, newest first.
+ * @returns the start picker card.
+ */
+export function renderChatroomStartPickCard(e: Engine, history: ChatroomHistoryEntry[]): Card {
+  const cb = newCard().title(e.i18n.t(Msg.ChatroomStartPickTitle), 'purple')
+  cb.markdown(e.i18n.t(Msg.ChatroomStartPickHint))
+  cb.listItemBtn(
+    `**${e.i18n.t(Msg.ChatroomStartPickNew)}**\n${e.i18n.t(Msg.ChatroomStartPickNewBlurb)}`,
+    e.i18n.t(Msg.ChatroomStartPickNew),
+    'primary',
+    'act:/chatroom-start-pick new',
+  )
+  history.forEach((h, i) => {
+    cb.listItemBtn(
+      `**${e.i18n.t(Msg.ChatroomStartPickContinue)}：${h.header.topic}**\n`
+        + e.i18n.tf(Msg.ChatroomStartPickHistoryBlurb, h.header.roles.join(', '), h.header.started),
+      e.i18n.t(Msg.ChatroomStartPickContinue),
+      'default',
+      `act:/chatroom-start-pick continue ${i}`,
+    )
+  })
+  cb.buttons({ text: e.i18n.t(Msg.ChatroomPickCancel), type: 'default', value: 'act:/chatroom-start-pick cancel' })
+  return cb.build()
+}
+
+/** Render the plain / research-auto / research-manual mode card.
+ *
+ * @param e - Engine providing i18n strings and the research-round cap.
+ * @param ms - Mode-picker state to render.
+ * @returns the mode picker card.
+ */
+export function renderChatroomModePickCard(e: Engine, ms: ChatroomModePickState): Card {
+  const cb = newCard().title(e.i18n.t(Msg.ChatroomModePickTitle), 'purple')
+  let body = `### ${e.i18n.t(Msg.ChatroomTopicLabel)}\n${ms.topic}\n${ms.roles.join(', ')}`
+  if (ms.prior !== undefined) body += `\n${e.i18n.tf(Msg.ChatroomInheritNote, ms.prior.topic)}`
+  cb.markdown(body)
+  const max = chatroomConfig(e).maxResearchRounds()
+  cb.listItemBtn(
+    `**${e.i18n.t(Msg.ChatroomModePlain)}**\n${e.i18n.t(Msg.ChatroomModePlainBlurb)}`,
+    e.i18n.t(Msg.ChatroomModePickStart), 'primary', 'act:/chatroom-mode-pick start plain',
+  )
+  cb.listItemBtn(
+    `**${e.i18n.t(Msg.ChatroomModeResearchAuto)}**\n${e.i18n.tf(Msg.ChatroomModeResearchAutoBlurb, max)}`,
+    e.i18n.t(Msg.ChatroomModePickStart), 'default', 'act:/chatroom-mode-pick start research-auto',
+  )
+  cb.listItemBtn(
+    `**${e.i18n.t(Msg.ChatroomModeResearchManual)}**\n${e.i18n.t(Msg.ChatroomModeResearchManualBlurb)}`,
+    e.i18n.t(Msg.ChatroomModePickStart), 'default', 'act:/chatroom-mode-pick start research-manual',
+  )
+  cb.buttons({ text: e.i18n.t(Msg.ChatroomPickCancel), type: 'default', value: 'act:/chatroom-mode-pick cancel' })
+  return cb.build()
+}
+
+/**
+ * The start-picker state machine behind the card actions: 'new' dispatches
+ * the async handoff to the topic picker; 'continue <i>' re-validates the
+ * snapshot entry and either arms the mode picker (mode undecided) or starts
+ * directly (explicit --research already stashed); 'cancel' clears the state.
+ *
+ * @param e - Engine owning the picker state.
+ * @param sessionKey - Hub session key the card action targets.
+ * @param args - Space-separated action words: 'new', 'continue <i>', or 'cancel'.
+ * @returns the outcome for the card wrapper: '' (no-op), 'new', 'cancel',
+ *   'continue-armed', 'continue-starting', 'continue-roles', or 'continue-gone'.
+ */
+export function executeChatroomStartPickAction(e: Engine, sessionKey: string, args: string): '' | 'new' | 'cancel' | 'continue-armed' | 'continue-starting' | 'continue-roles' | 'continue-gone' {
+  const ps = pickers(e).chatroomStartPick.get(sessionKey)
+  if (ps === undefined) return ''
+  const fields = args.split(/\s+/).filter(f => f !== '')
+  if (fields.length === 0) return ''
+  switch (fields[0]) {
+    case 'new': {
+      pickers(e).chatroomStartPick.delete(sessionKey) // clear before async dispatch
+      void finalizeChatroomStartPickNew(e, sessionKey, ps.userID, ps.chatType)
+      return 'new'
+    }
+    case 'continue': {
+      const idx = Number.parseInt(fields[1] ?? '', 10)
+      if (!Number.isInteger(idx) || idx < 0 || idx >= ps.history.length) return ''
+      const entry = ps.history[idx]
+      if (entry === undefined) return ''
+      // The ledger dir may have been deleted since the card was rendered;
+      // continuing a dangling pointer would fail deep inside the moderator.
+      if (readChatroomLedgerHeader(entry.dir) === undefined) {
+        pickers(e).chatroomStartPick.delete(sessionKey)
+        return 'continue-gone'
+      }
+      const prior: ChatroomInheritTarget = { topic: entry.header.topic, dir: entry.dir, roles: [...entry.header.roles] }
+      pickers(e).chatroomStartPick.delete(sessionKey)
+      // An empty-cast prior falls through to the role picker, matching the
+      // explicit --continue path (the picker chain carries no prior).
+      if (prior.roles.length === 0) {
+        void finalizeChatroomStartPickRoles(e, sessionKey, prior.topic, ps.userID, ps.chatType)
+        return 'continue-roles'
+      }
+      const ms: ChatroomModePickState = { topic: prior.topic, roles: [...prior.roles], prior, userID: ps.userID, chatType: ps.chatType }
+      // Research already decided (explicit --research): start now, no mode card.
+      if (chatroomState(e.sessions.getOrCreateActive(sessionKey)).chatroomResearch) {
+        void finalizeChatroomStart(e, sessionKey, ms)
+        return 'continue-starting'
+      }
+      pickers(e).chatroomModePick.set(sessionKey, ms)
+      return 'continue-armed'
+    }
+    case 'cancel':
+      pickers(e).chatroomStartPick.delete(sessionKey)
+      return 'cancel'
+    default:
+      return ''
+  }
+}
+
+/** Start-pick 'new': hand off to the #59 topic picker (async rctx reconstruct). */
+async function finalizeChatroomStartPickNew(e: Engine, hubKey: string, userID: string, chatType: string): Promise<void> {
+  const p = e.spawnCapablePlatform()
+  if (p === undefined) {
+    console.warn(`chatroom: start-pick finalize: no spawn-capable platform (hub=${hubKey})`)
+    return
+  }
+  const rctx = await reconstructReplyCtx(e, p, hubKey)
+  const msg: Message = {
+    ...emptyMessage(),
+    sessionKey: hubKey,
+    platform: p.name(),
+    userID,
+    userName: '[聊天室]',
+    replyCtx: rctx,
+    chatType,
+  }
+  try {
+    beginChatroomTopicPick(e, p, msg)
+  } catch (error) {
+    void e.sendAsCard(p, rctx, String(error instanceof Error ? error.message : error), { title: e.i18n.t(Msg.ChatroomStartPickTitle), color: 'red' })
+  }
+}
+
+/** Start-pick 'continue' with an empty-cast prior: hand off to the #43 role picker. */
+async function finalizeChatroomStartPickRoles(e: Engine, hubKey: string, topic: string, userID: string, chatType: string): Promise<void> {
+  const p = e.spawnCapablePlatform()
+  if (p === undefined) {
+    console.warn(`chatroom: start-pick finalize: no spawn-capable platform (hub=${hubKey})`)
+    return
+  }
+  const rctx = await reconstructReplyCtx(e, p, hubKey)
+  const msg: Message = {
+    ...emptyMessage(),
+    sessionKey: hubKey,
+    platform: p.name(),
+    userID,
+    userName: '[聊天室]',
+    replyCtx: rctx,
+    chatType,
+  }
+  try {
+    beginChatroomPick(e, p, msg, topic)
+  } catch (error) {
+    void e.sendAsCard(p, rctx, String(error instanceof Error ? error.message : error), { title: e.i18n.t(Msg.ChatroomStartPickTitle), color: 'red' })
+  }
+}
+
+/** Start a chatroom whose mode flags are already stashed on the hub session. */
+async function finalizeChatroomStart(e: Engine, hubKey: string, ms: ChatroomModePickState): Promise<void> {
+  const p = e.spawnCapablePlatform()
+  if (p === undefined) {
+    console.warn(`chatroom: start finalize: no spawn-capable platform (hub=${hubKey})`)
+    return
+  }
+  const rctx = await reconstructReplyCtx(e, p, hubKey)
+  let started
+  try {
+    started = await startChatroom(e, hubKey, ms.roles, ms.topic, ms.prior)
+  } catch (error) {
+    console.warn(`chatroom: start finalize StartChatroom failed (hub=${hubKey}): ${String(error)}`)
+    void e.sendAsCard(p, rctx, String(error instanceof Error ? error.message : error), { title: e.i18n.t(Msg.ChatroomReady), color: 'red' })
+    return
+  }
+  await afterChatroomStarted(e, p, hubKey, ms.userID, ms.chatType, rctx, started, ms.topic, ms.prior)
+}
+
+/**
+ * The mode-picker state machine behind the card actions: 'start
+ * <plain|research-auto|research-manual>' stashes the mode's research flags
+ * and dispatches the async start (research modes gate on the shared venv);
+ * 'cancel' clears the state.
+ *
+ * @param e - Engine owning the picker state.
+ * @param sessionKey - Hub session key the card action targets.
+ * @param args - Space-separated action words: 'start <mode>' or 'cancel'.
+ * @returns the outcome for the card wrapper: '' (no-op), 'start', or 'cancel'.
+ */
+export function executeChatroomModePickAction(e: Engine, sessionKey: string, args: string): '' | 'start' | 'cancel' {
+  const ps = pickers(e).chatroomModePick.get(sessionKey)
+  if (ps === undefined) return ''
+  const fields = args.split(/\s+/).filter(f => f !== '')
+  if (fields.length === 0) return ''
+  switch (fields[0]) {
+    case 'start': {
+      if (fields[1] !== 'plain' && fields[1] !== 'research-auto' && fields[1] !== 'research-manual') return ''
+      const mode = fields[1]
+      pickers(e).chatroomModePick.delete(sessionKey) // clear before async dispatch
+      void finalizeChatroomModePickStart(e, sessionKey, ps, mode)
+      return 'start'
+    }
+    case 'cancel':
+      pickers(e).chatroomModePick.delete(sessionKey)
+      return 'cancel'
+    default:
+      return ''
+  }
+}
+
+/** Mode-pick start: stash the chosen mode's flags, gate research on the shared venv, then start. */
+async function finalizeChatroomModePickStart(
+  e: Engine, hubKey: string, ms: ChatroomModePickState, mode: 'plain' | 'research-auto' | 'research-manual',
+): Promise<void> {
+  const p = e.spawnCapablePlatform()
+  if (p === undefined) {
+    console.warn(`chatroom: mode-pick finalize: no spawn-capable platform (hub=${hubKey})`)
+    return
+  }
+  const rctx = await reconstructReplyCtx(e, p, hubKey)
+  stashChatroomResearchFlags(e, hubKey, mode !== 'plain', mode === 'research-auto' ? 'auto' : 'manual', 0)
+  if (mode !== 'plain') {
+    try {
+      await ensureResearchPythonEnv(e, chatroomResearchWorkspace(e))
+    } catch (error) {
+      console.warn(`chatroom: research venv provisioning failed; blocking startup (hub=${hubKey}): ${String(error)}`)
+      void e.sendAsCard(p, rctx, e.i18n.t(Msg.ChatroomResearchNeedsUv), { title: e.i18n.t(Msg.ChatroomModePickTitle), color: 'red' })
+      return
+    }
+  }
+  let started
+  try {
+    started = await startChatroom(e, hubKey, ms.roles, ms.topic, ms.prior)
+  } catch (error) {
+    console.warn(`chatroom: mode-pick finalize StartChatroom failed (hub=${hubKey}): ${String(error)}`)
+    void e.sendAsCard(p, rctx, String(error instanceof Error ? error.message : error), { title: e.i18n.t(Msg.ChatroomReady), color: 'red' })
+    return
+  }
+  await afterChatroomStarted(e, p, hubKey, ms.userID, ms.chatType, rctx, started, ms.topic, ms.prior)
+}
+
+/**
+ * A multi-role start whose mode the user did not state explicitly: arm the
+ * mode-picker state and send the mode card (no moderator wake). Used by the
+ * explicit `/chatroom <roles> <topic>` command path; the picker flows arm
+ * the state inline on confirm.
+ *
+ * @param e - Engine owning the picker maps.
+ * @param p - Platform used for the card send.
+ * @param msg - Triggering message; its session key becomes the hub.
+ * @param topic - Discussion topic.
+ * @param roles - Role names to start once the mode is picked.
+ * @param prior - Resolved inherit target when continuing a past chatroom.
+ */
+export function beginChatroomModePick(
+  e: Engine, p: Platform, msg: Message, topic: string, roles: string[], prior?: ChatroomInheritTarget,
+): void {
+  const ms: ChatroomModePickState = {
+    topic,
+    roles: [...roles],
+    ...(prior !== undefined ? { prior } : {}),
+    userID: msg.userID,
+    chatType: msg.chatType,
+  }
+  pickers(e).chatroomModePick.set(msg.sessionKey, ms)
+  const cs = asCardSender(p)
+  if (cs !== undefined) {
+    void cs.sendCard(msg.replyCtx, renderChatroomModePickCard(e, ms)).catch(() => {
+      // Best-effort mode card; the user can re-run /chatroom.
+    })
   }
 }
 
@@ -606,6 +973,45 @@ export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: st
   // pressed card for the expired card — confirm used to reply 正在启动
   // while starting nothing, and toggle was silently consumed.
 
+  if (cmd === '/chatroom-start-pick') {
+    if (pickers(e).chatroomStartPick.get(sessionKey) === undefined) {
+      return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'grey', e.i18n.t(Msg.ChatroomPickExpired))
+    }
+    const outcome = executeChatroomStartPickAction(e, sessionKey, args)
+    switch (outcome) {
+      case 'cancel':
+        return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'grey', e.i18n.t(Msg.ChatroomStartPickCancelled))
+      case 'new':
+        return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'purple', e.i18n.t(Msg.ChatroomStartPickToTopic))
+      case 'continue-armed': {
+        const ms = pickers(e).chatroomModePick.get(sessionKey)
+        return ms === undefined ? undefined : renderChatroomModePickCard(e, ms)
+      }
+      case 'continue-starting':
+        return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'purple', e.i18n.t(Msg.ChatroomPickStarting))
+      case 'continue-roles':
+        return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'purple', e.i18n.t(Msg.ChatroomStartPickToRoles))
+      case 'continue-gone':
+        return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'grey', e.i18n.t(Msg.ChatroomStartPickGone))
+      default:
+        return undefined
+    }
+  }
+  if (cmd === '/chatroom-mode-pick') {
+    if (pickers(e).chatroomModePick.get(sessionKey) === undefined) {
+      return simpleCard(e.i18n.t(Msg.ChatroomModePickTitle), 'grey', e.i18n.t(Msg.ChatroomPickExpired))
+    }
+    const outcome = executeChatroomModePickAction(e, sessionKey, args)
+    if (outcome === 'cancel') {
+      return simpleCard(e.i18n.t(Msg.ChatroomModePickTitle), 'grey', e.i18n.t(Msg.ChatroomModePickCancelled))
+    }
+    if (outcome === 'start') {
+      // Research modes provision the venv first; plain starts immediately.
+      return simpleCard(e.i18n.t(Msg.ChatroomModePickTitle), 'purple',
+        args.includes('research') ? e.i18n.t(Msg.ChatroomModePickPreparing) : e.i18n.t(Msg.ChatroomPickStarting))
+    }
+    return undefined
+  }
   if (cmd === '/chatroom-pick') {
     if (pickers(e).chatroomPick.get(sessionKey) === undefined) {
       return simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'grey', e.i18n.t(Msg.ChatroomPickExpired))
@@ -619,6 +1025,9 @@ export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: st
       // over-max) and left the picker alive; re-render it with its hint.
       const ps = pickers(e).chatroomPick.get(sessionKey)
       if (ps !== undefined && ps.phase === 'select') return renderChatroomPickCard(e, ps)
+      // A multi-role confirm with the mode undecided armed the mode picker.
+      const ms = pickers(e).chatroomModePick.get(sessionKey)
+      if (ms !== undefined) return renderChatroomModePickCard(e, ms)
       return simpleCard(e.i18n.t(Msg.ChatroomPickTitle), 'purple', e.i18n.t(Msg.ChatroomPickStarting))
     }
     // toggle: re-render the picker from current state.

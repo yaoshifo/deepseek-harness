@@ -9,11 +9,13 @@
 import type {
   Agent,
   AgentSession,
+  Engine,
   EventChannel,
   Message,
   Platform,
 } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { EventChannel as EventChannelImpl } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { executeChatroomCardAction, getChatroomModePickState } from '../../src/engine/chatroom-pick.ts'
 
 /** Go stubAgent: empty agent, StartSession returns a stubAgentSession. */
 export type StubAgent = Agent
@@ -369,4 +371,24 @@ export function createStubSpawnerPlatform(n = 'test'): StubSpawnerPlatform {
     },
   }
   return p
+}
+
+/**
+ * Tap the guided mode card's plain start: a /chatroom invocation that named
+ * no mode now stops at the mode picker, so specs that expect the plain
+ * multi-role start complete the flow with this tap. Waits briefly for the
+ * async command body to arm the picker; returns without tapping when it
+ * never arms (explicit --research, direct role, error paths).
+ *
+ * @param e - Engine whose mode picker is armed.
+ * @param hub - Hub session key the card action targets.
+ */
+export async function confirmChatroomModePlain(e: Engine, hub: string): Promise<void> {
+  const deadline = Date.now() + 2000
+  for (;;) {
+    if (getChatroomModePickState(e, hub) !== undefined) break
+    if (Date.now() > deadline) return
+    await new Promise((resolve) => { setTimeout(resolve, 0) })
+  }
+  executeChatroomCardAction(e, hub, '/chatroom-mode-pick', 'start plain')
 }

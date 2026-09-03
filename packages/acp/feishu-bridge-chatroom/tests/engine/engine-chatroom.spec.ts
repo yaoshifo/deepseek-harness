@@ -43,6 +43,7 @@ import { Msg, type ChatroomMsgKey } from '../../src/i18n.ts'
 import type { Message, Platform, SessionStartOptions } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import {
   clearCards,
+  confirmChatroomModePlain,
   createStubAgent,
   createStubAgentSession,
   createStubChatroomSpawner,
@@ -679,6 +680,7 @@ describe('cmdChatroom', () => {
     const handler = e.commandHandlers?.get('chatroom')
     expect(handler).toBeDefined()
     handler?.(p, hubMsg(hub), ['taleb,munger', '程序员还要学算法吗'])
+    await confirmChatroomModePlain(e, hub)
     await waitFor(() => p.count === 2, '2 roles spawned')
     expect(listChatroomRoles(e, hub)).toHaveLength(2)
     await waitFor(() => p.sentCards.some(c => cardBody(c).includes('程序员还要学算法吗')), 'summary card')
@@ -746,6 +748,7 @@ describe('cmdChatroom', () => {
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg('test:hub:user-1'), ['--roles', 'taleb,munger', '议题'])
+    await confirmChatroomModePlain(e, 'test:hub:user-1')
     await waitFor(() => p.count === 2, '2 roles via --roles')
   })
 
@@ -793,6 +796,7 @@ describe('cmdChatroom', () => {
     expect(chatroomState(e.sessions.getOrCreateActive(hub)).chatroomDirectRole).toBe(true)
 
     handler?.(p, hubMsg(hub), ['taleb,munger', '议题二'])
+    await confirmChatroomModePlain(e, hub)
     await waitFor(() => p.count === 2, 'roles spawned')
     // The ready cards now carry the status footer (async git probe), so the
     // after-start flag clear trails the last spawn by a beat.
@@ -976,6 +980,7 @@ describe('hub rename on /chatroom', () => {
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg(hub, { chatType: 'group' }), ['taleb,munger', '换房计划'])
+    await confirmChatroomModePlain(e, hub)
     await waitFor(() => p.renamedAnyCalls().length > 0, 'hub renamed')
     const calls = p.renamedAnyCalls()
     expect(calls).toHaveLength(1)
@@ -1016,6 +1021,7 @@ describe('hub rename on /chatroom', () => {
     const handler = e.commandHandlers?.get('chatroom')
     const longTopic = '字'.repeat(80)
     handler?.(p, hubMsg(hub, { chatType: 'group' }), ['taleb,munger', longTopic])
+    await confirmChatroomModePlain(e, hub)
     await waitFor(() => p.renamedAnyCalls().length > 0, 'hub renamed')
     const calls = p.renamedAnyCalls()
     expect(calls).toHaveLength(1)
@@ -1031,6 +1037,7 @@ describe('hub rename on /chatroom', () => {
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const handler = e.commandHandlers?.get('chatroom')
     handler?.(p, hubMsg('test:hub:user-1', { chatType: 'group' }), ['taleb,munger', 'topic'])
+    await confirmChatroomModePlain(e, 'test:hub:user-1')
     await waitFor(() => p.count === 2, '2 roles spawned without renamer')
   })
 })
@@ -1169,6 +1176,8 @@ describe('ExecuteChatroomPickAction', () => {
     const hub = 'test:hub:user-1'
     await armedPicker(e, p, hub)
     executeChatroomPickAction(e, hub, 'confirm')
+    // The mode-undecided confirm armed the mode picker; tap plain to start.
+    executeChatroomCardAction(e, hub, '/chatroom-mode-pick', 'start plain')
     await waitFor(() => p.count === 2, '2 roles spawned on confirm')
     expect(listChatroomRoles(e, hub)).toHaveLength(2)
   })

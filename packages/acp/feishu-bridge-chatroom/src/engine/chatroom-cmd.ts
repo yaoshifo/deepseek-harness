@@ -39,7 +39,8 @@ import {
   minChatroomResearchRounds,
 } from './chatroom.ts'
 import { listRoleNames, roleDir, roleExists, roleEssence } from './chatroom-roles.ts'
-import { beginChatroomPick, beginChatroomTopicPick, executeChatroomCardAction } from './chatroom-pick.ts'
+import { beginChatroomModePick, beginChatroomPick, beginChatroomStartPick, beginChatroomTopicPick, executeChatroomCardAction } from './chatroom-pick.ts'
+import { listChatroomLedgers } from './chatroom-ledger.ts'
 import {
   buildChatroomModeratorPriming,
   buildChatroomResearchModeratorPriming,
@@ -78,7 +79,7 @@ export function registerChatroomCommands(e: Engine): () => void {
     group: 'session',
   })
   const disposeCardAction = e.registerCardAction(
-    ['/chatroom-pick', '/chatroom-topic-pick'],
+    ['/chatroom-pick', '/chatroom-topic-pick', '/chatroom-start-pick', '/chatroom-mode-pick'],
     (sessionKey, cmd, args) => executeChatroomCardAction(e, sessionKey, cmd, args),
   )
   return () => {
@@ -88,9 +89,12 @@ export function registerChatroomCommands(e: Engine): () => void {
 }
 
 /**
- * /chatroom [--roles a,b] <topic…> | /chatroom a,b <topic…> | /chatroom
- * <topic…> | /chatroom — list, single-role direct chat, research mode, the
- * #43 role picker, and the #59 topic picker (Go cmdChatroom).
+ * /chatroom — the fully guided flow (start card with recorded chatrooms →
+ * #59 topic picker → #43 role picker → mode card), plus list, stop, and the
+ * flag forms: /chatroom [--roles a,b] <topic…> | /chatroom a,b <topic…> |
+ * /chatroom <topic…> (Go cmdChatroom, extended with the guided pickers).
+ * Every decision not stated explicitly gets its card; a stated flag skips
+ * its card.
  *
  * @param e - Engine whose sessions, platforms, and pickers drive the flow.
  * @param p - Platform that delivered the command message.
@@ -217,26 +221,9 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
     const trimmed = r.trim()
     if (trimmed !== '') roles.push(trimmed)
   }
-  if (topic === '') {
-    // #59 随便聊聊: no topic at all → the moderator suggests candidate
-    // topics; the user picks one, then enters the #43 role picker. Naming
-    // roles or --continue without a topic is a misuse → usage error.
-    if (gotRoles || roles.length > 0 || continueRequested) {
-      await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomUsage))
-      return
-    }
-    if (!(await gateResearchUvOrFail(e, p, msg, research))) return
-    stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode, maxRounds)
-    try {
-      beginChatroomTopicPick(e, p, msg)
-    } catch (error) {
-      await e.reply(p, msg.replyCtx, String(error instanceof Error ? error.message : error))
-    }
-    return
-  }
-
   // --continue resolves the prior BEFORE any spawn path, so an unresolvable
-  // reference fails loud without side effects.
+  // reference fails loud without side effects. A bare --continue takes the
+  // prior's recorded topic — the continuation has a subject by definition.
   let prior: ChatroomInheritTarget | undefined
   if (continueRequested) {
     try {
@@ -245,6 +232,30 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
       await e.reply(p, msg.replyCtx, String(error instanceof Error ? error.message : error))
       return
     }
+    if (topic === '') topic = prior.topic
+  }
+
+  if (topic === '') {
+    // #59 随便聊聊: no topic at all → the moderator suggests candidate
+    // topics; the user picks one, then enters the #43 role picker. Naming
+    // roles without a topic is a misuse → usage error (--continue already
+    // resolved its topic above). Recorded chatrooms instead get the guided
+    // start card (new discussion vs continue one).
+    if (gotRoles || roles.length > 0) {
+      await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomUsage))
+      return
+    }
+    if (!(await gateResearchUvOrFail(e, p, msg, research))) return
+    stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode, maxRounds)
+    const mod = chatroomConfig(e).moderatorDir()
+    const history = mod.ok ? listChatroomLedgers(join(mod.dir, 'ledgers'), 5) : []
+    try {
+      if (history.length > 0) beginChatroomStartPick(e, p, msg, history)
+      else beginChatroomTopicPick(e, p, msg)
+    } catch (error) {
+      await e.reply(p, msg.replyCtx, String(error instanceof Error ? error.message : error))
+    }
+    return
   }
 
   // Feature 2: a single explicitly-named role → direct 1:1 conversation in
@@ -288,7 +299,13 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
     return
   }
 
-  // Explicit multi-role path: spawn + post-spawn steps.
+  // Explicit multi-role path: the mode-undecided invocation gets the mode
+  // card (plain / research-auto / research-manual); an explicitly-stashed
+  // --research skips the card — the decision is already made.
+  if (!chatroomState(e.sessions.getOrCreateActive(msg.sessionKey)).chatroomResearch) {
+    beginChatroomModePick(e, p, msg, topic, roles, prior)
+    return
+  }
   let started: ChatroomRole[]
   try {
     started = await startChatroom(e, msg.sessionKey, roles, topic, prior)

@@ -19,7 +19,7 @@ import { uvHooks } from '../../src/engine/chatroom.ts'
 import { chatroomState } from '../../src/chatroom-state.ts'
 import { chatroomConfig } from '../../src/chatroom-config.ts'
 import { roleDir } from '../../src/engine/chatroom-roles.ts'
-import { createStubAgent, createStubChatroomSpawnerEx, newStubMessage } from '../stubs/engine-stubs.ts'
+import { confirmChatroomModePlain, createStubAgent, createStubChatroomSpawnerEx, newStubMessage } from '../stubs/engine-stubs.ts'
 import { chatroomPolicyFace } from '../stubs/bridge-policy.ts'
 import type { Message, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import '../stubs/messages.js'
@@ -152,6 +152,7 @@ describe('research steward pre-spawn', () => {
 
     const hub = 'test:hub:user-1'
     e.commandHandlers?.get('chatroom')?.(p, hubMsg(hub), [`${names.join(',')}`, '该不该 all-in'])
+    await confirmChatroomModePlain(e, hub)
     await waitFor(() => p.count === 2, '2 role groups only')
     await settle()
 
