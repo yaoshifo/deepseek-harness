@@ -1293,7 +1293,7 @@ export class MonitorCore {
    * resolves an empty triage_provider.
    * @returns the triage action; drop when triage cannot run or is uncertain.
    */
-  async llmTriage(text: string, chatID: string, sessionKey = ''): Promise<TriageResult> {
+  async llmTriage(text: string, chatID: string, sessionKey: string = ''): Promise<TriageResult> {
     const fq = asForkQuerierWithProvider(this.e.agent)
     if (fq === undefined) {
       console.debug(`monitor: agent lacks LightweightQuery, skipping LLM triage (chat=${chatID})`)

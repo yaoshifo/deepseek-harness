@@ -13,8 +13,8 @@
  *
  * Public operations express caller intent: `start` returns one published owned
  * one-shot run, `startContinuable` establishes a durable continuable child, and
- * `followup` delivers later content without exposing whether the child is
- * resident. Continuable children never become a {@link SubagentRun}: the
+ * `sendMessage` steers between adjacent Agents without exposing whether a child
+ * is resident. Continuable children never become a {@link SubagentRun}: the
  * continuation manager holds their `AgentHandle` directly and orders every turn
  * through the child's own inbox, so providers contribute only the detached
  * creation spec and see no handle, turn, or teardown. Child and descendant
@@ -36,7 +36,7 @@ import { admitPromptContent } from '@deepseek-ai/dsh-attachment'
 import { scopeTarget } from '@deepseek-ai/dsh-scope'
 import type { Scoped } from '@deepseek-ai/dsh-scope'
 import { assertObjectJsonSchema } from '@deepseek-ai/dsh-tools'
-import type { ContentBlock, MessageId } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { canonicalClientTimeZone } from '@deepseek-ai/dsh-util-time'
@@ -71,17 +71,18 @@ import SubagentContinuationManager from './continuation.ts'
 import type {
   ContinuableStart,
   ContinuableStartSpec,
-  SubagentFollowupOptions,
   SubagentInterruptAuthority,
   SubagentReportOptions,
+  SubagentSendMessageOptions,
   SubagentSettlementDelivery,
 } from './continuation.ts'
-import SubagentActivationSetupRegistry from './activation-setup-registry.ts'
-import type { ContinuableSetupContribution } from './activation-setup-registry.ts'
 import { listChildren as listSubagentChildren, listDescendants as listSubagentDescendants } from './list-children.ts'
 import type { SubagentDescendantListEntry, SubagentListEntry } from './list-children.ts'
+import SubagentActivationSetupRegistry from './activation-setup-registry.ts'
+import type { ContinuableSetupContribution } from './activation-setup-registry.ts'
 import { snapshotSubagentDescriptor } from './descriptor.ts'
 import { subagentIdentityProjectionDefinition, subagentTimingProjectionDefinition } from './projection.ts'
+import { deliverSubagentPrompt, type HostPromptDeliveryMode } from './internal.ts'
 
 export * from './out-of-process.ts'
 export { AssistantOutputFold, finalAssistantOutput } from './assistant-output.ts'
@@ -129,14 +130,15 @@ export {
 } from './child-agent.ts'
 export type { ChildComposition, DelegatedPolicyOverrides } from './child-agent.ts'
 export type {
+  AgentMessageSource,
   ContinuableStart,
   ContinuableStartSpec,
   CoordinatorMessageSource,
-  SubagentFollowupOptions,
   SubagentInterruptAuthority,
   SubagentReportDelivery,
   SubagentReportMessageSource,
   SubagentReportOptions,
+  SubagentSendMessageOptions,
   SubagentSettledMessageSource,
   SubagentSettlementDelivery,
 } from './continuation.ts'
@@ -268,46 +270,51 @@ export class SubagentRuntime extends TypertRemoteService {
   }
 
   /**
-   * Deliver one later message to a continuable child as its next FIFO turn. A
-   * resident child's Agent inbox accepts it directly (waking a `waiting`
-   * Activation), while an absent one is cold-resumed from its persisted
-   * Session. The Agent inbox is the only queue, so every accepted message has
-   * one observable order.
-   * @param parent - the exact live direct parent authorizing this delivery.
-   * @param childId - durable child session id.
-   * @param content - user-role content to deliver.
-   * @param options - the message source fields and caller cancellation, which stops the
-   *   operation only before inbox acceptance.
+   * Steer one model-authored message to the sender's direct parent or direct
+   * continuable child. A running target admits it at the nearest step boundary;
+   * an idle target starts a turn, and an absent direct child cold-resumes from
+   * persistence. The service derives durable sender attribution from the exact
+   * live sender. Caller cancellation stops only pre-acceptance work.
+   * @param sender - exact live Agent authorizing and originating the message.
+   * @param targetId - durable direct-parent or direct-child session id.
+   * @param content - model-authored content to deliver.
+   * @param options - caller cancellation before inbox acceptance.
    * @returns the accepted message's inbox id.
-   * @throws when continuation services are unavailable, parent authority is
-   *   rejected, or the message was not admitted.
+   * @throws when continuation services are unavailable, adjacency is rejected,
+   *   or the message was not admitted.
    */
-  async followup(
-    parent: Agent,
-    childId: SessionId,
+  async sendMessage(
+    sender: Agent,
+    targetId: SessionId,
     content: ContentBlock[],
-    options: SubagentFollowupOptions,
+    options: SubagentSendMessageOptions,
   ): Promise<MessageId> {
-    return this.requireContinuations().followup(parent, childId, content, options)
+    return this.requireContinuations().sendMessage(sender, targetId, content, options)
   }
 
   /**
-   * Interrupt one live continuable child's current turn under a human parent
-   * address or an exact live ancestor Agent. Fire-and-return: the cancel
-   * signal is issued before this returns, but the target may keep running
-   * until it observes the signal. Unclaimed pending inbox work, the Activation,
-   * and published descendants are preserved; claimed work is not requeued.
-   * Once the interrupted driver is idle, a waking send resumes the parked FIFO
-   * queue. An absent target — including a one-shot or unknown id —
-   * is an accepted no-op, as is a manager-less composition, which cannot own a
-   * live Activation.
-   * @param targetSessionId - the durable child session id to interrupt.
-   * @param authority - the human parent address or exact live ancestor Agent.
-   * @throws {SubagentError} `UNAUTHORIZED` when the authority does not own the
-   *   live target.
+   * Deliver one host-protocol message to a direct continuable child.
+   * Symbol-keyed so host adapters can preserve their own provenance without
+   * widening the public Service Definition or impersonating an Agent sender.
+   * @param parent - exact live direct parent authorizing delivery.
+   * @param childId - durable direct-child session id.
+   * @param content - host-authored content to deliver.
+   * @param source - durable host-protocol provenance.
+   * @param signal - caller cancellation before inbox acceptance.
+   * @param delivery - Queue as a distinct turn or Steer at the nearest step.
+   * @returns the accepted message's inbox id.
    */
-  interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void {
-    this.continuations?.interrupt(targetSessionId, authority)
+  private [deliverSubagentPrompt](
+    parent: Agent,
+    childId: SessionId,
+    content: ContentBlock[],
+    source: MessageSource,
+    signal: AbortSignal,
+    delivery: HostPromptDeliveryMode,
+  ): Promise<MessageId> {
+    return delivery === 'steer'
+      ? this.requireContinuations().steerPrompt(parent, childId, content, source, signal)
+      : this.requireContinuations().queuePrompt(parent, childId, content, source, signal)
   }
 
   /**
@@ -343,6 +350,25 @@ export class SubagentRuntime extends TypertRemoteService {
       () => this.setupRegistry.register(contribution),
       'subagents.registerContinuableSetup()',
     )
+  }
+
+  /**
+   * Interrupt one live continuable child's current turn under a human parent
+   * address or an exact live ancestor Agent. Fire-and-return: the cancel
+   * signal is issued before this returns, but the target may keep running
+   * until it observes the signal. Unclaimed pending inbox work, the Activation,
+   * and published descendants are preserved; claimed work is not requeued.
+   * Once the interrupted driver is idle, a waking send resumes the parked FIFO
+   * queue. An absent target — including a one-shot or unknown id —
+   * is an accepted no-op, as is a manager-less composition, which cannot own a
+   * live Activation.
+   * @param targetSessionId - the durable child session id to interrupt.
+   * @param authority - the human parent address or exact live ancestor Agent.
+   * @throws {SubagentError} `UNAUTHORIZED` when the authority does not own the
+   *   live target.
+   */
+  interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void {
+    this.continuations?.interrupt(targetSessionId, authority)
   }
 
   /**
@@ -495,7 +521,16 @@ export class SubagentRuntime extends TypertRemoteService {
         if (attachments === undefined) throw new Error('subagent image prompt requires an attachment store')
         content = await admitPromptContent(attachments, request.content)
       }
-      return { messageId: await this.followup(parent, childSessionId, content, { source, signal }) }
+      return {
+        messageId: await this[deliverSubagentPrompt](
+          parent,
+          childSessionId,
+          content,
+          source,
+          signal,
+          'queue',
+        ),
+      }
     } catch (error: unknown) {
       return rejectPrompt(error, childSessionId, signal)
     }

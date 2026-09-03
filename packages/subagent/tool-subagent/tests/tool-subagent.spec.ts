@@ -19,6 +19,7 @@ import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
 import * as SubagentSpawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import * as ToolTasks from '@deepseek-ai/dsh-tool-jobs'
 import { MockAdapter, textResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
+import { loadStoredSession } from '../../subagent/tests/persistence-helpers.ts'
 import * as mock from './scripted-provider.ts'
 import * as tool from '../src/index.ts'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -1237,7 +1238,7 @@ describe('dsh-tool-subagent continuable background mode', () => {
     ctx.llm.registerAdapter(['mock'], new MockAdapter([
       textResponse('continuable answer'),
     ]))
-    const parent = ctx.agentLoop.create(SessionId('parent'), { provider: 'mock', model: 'mock' })
+    const parent = await ctx.agentLoop.create(SessionId('parent'), { provider: 'mock', model: 'mock' })
     return { ctx, parent }
   }
 
@@ -1258,6 +1259,8 @@ describe('dsh-tool-subagent continuable background mode', () => {
     expect(schema.description).not.toContain('job_output')
     expect(schema.description).not.toContain('job_kill')
     expect(schema.description).toContain('send_message')
+    expect(schema.description).toContain('steers the child\'s nearest step while it is running')
+    expect(schema.description).not.toContain('send_message` starts a later turn')
     expect(schema.description).toContain('runs in the background by default')
     expect(schema.description).not.toContain('never poll or wait on it')
     const properties = (schema.parameters as {
@@ -1285,7 +1288,7 @@ describe('dsh-tool-subagent continuable background mode', () => {
       expect(ctx.agents.get(SessionId(childId!))).toBeUndefined()
     }, { timeout: 5_000 })
     // The child id names a durable session carrying its continuation descriptor.
-    const loaded = await ctx.sessionPersistence.load(SessionId(childId!))
+    const loaded = await loadStoredSession(ctx.sessionPersistence, SessionId(childId!))
     expect(loaded.events.some(event => event.type === 'subagent/descriptor')).toBe(true)
     expect(loaded.events.some(event => event.type === 'assistant/message')).toBe(true)
   })
@@ -1362,7 +1365,7 @@ describe('dsh-tool-subagent continuable background mode', () => {
     expect(cancelledChildId).toBeDefined()
     expect(survivingChildId).toBeDefined()
     expect(ctx.agents.get(cancelledChildId!)).toBeUndefined()
-    await expect(ctx.sessionPersistence.load(cancelledChildId!)).rejects.toThrow(/not found/)
+    await expect(loadStoredSession(ctx.sessionPersistence, cancelledChildId!)).rejects.toThrow(/not found/)
 
     expect(succeeded.isError ? undefined : succeeded.value).toEqual({
       kind: 'continuable',
@@ -1371,7 +1374,7 @@ describe('dsh-tool-subagent continuable background mode', () => {
     await vi.waitFor(() => {
       expect(ctx.agents.get(survivingChildId!)).toBeUndefined()
     }, { timeout: 5_000 })
-    const loaded = await ctx.sessionPersistence.load(survivingChildId!)
+    const loaded = await loadStoredSession(ctx.sessionPersistence, survivingChildId!)
     expect(loaded.events.some(event => event.type === 'subagent/descriptor')).toBe(true)
     expect(loaded.events.some(event => event.type === 'assistant/message')).toBe(true)
   })

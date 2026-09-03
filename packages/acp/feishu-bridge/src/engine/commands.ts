@@ -292,7 +292,7 @@ export async function collectAgentSessions(e: Engine, sessionKey: string): Promi
 /**
  * Fill summaries and message counts from the sessions' recent-turn windows
  * (Go enrichSessionSummaries). Each listed session is a user command away
- * from a cold persistence.inspect — acceptable per /list invocation, and the
+ * from a cold persistence read — acceptable per /list invocation, and the
  * adapter caches the folded windows in-process.
  */
 async function enrichSessionSummaries(e: Engine, agentSessions: AgentSessionInfo[]): Promise<void> {

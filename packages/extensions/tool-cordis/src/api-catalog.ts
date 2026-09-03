@@ -130,8 +130,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
       },
       {
-        signature: 'create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, \'cwd\'> = {}): Agent',
-        description: 'Create an agent and session under one caller-supplied identity, owned by the accessing fiber. Constructor-driven config calls mint a fresh combined id before entering this boundary.',
+        signature: 'async create(id: SessionId, options: AgentOptions = {}, meta: Pick<SessionHeader, \'cwd\'> = {}): Promise<Agent>',
+        description: 'Create an agent and session under one caller-supplied identity, owned by the accessing fiber. Constructor-driven config calls mint a fresh combined id before entering this boundary. When a persistence backend is mounted, the session\'s durable identity and any seed are stored before publication.',
         parameters: [{ name: 'id', description: 'shared agent/session identity.' }, { name: 'options', description: 'concrete loop options.' }, { name: 'meta', description: 'optional fresh-session workspace metadata.' }],
         returns: 'the published running agent.',
       },
@@ -389,7 +389,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'async sendMessage(caller: Agent, request: SendTeamMessageRequest): Promise<SendTeamMessageResult>',
         description: 'Queue one durable peer message, then attempt immediate delivery.',
-        parameters: [{ name: 'caller', description: 'exact live sending Team member.' }, { name: 'request', description: 'target name, content, scheduling mode, and pre-queue cancellation.' }],
+        parameters: [{ name: 'caller', description: 'exact live sending Team member.' }, { name: 'request', description: 'target name, content, and pre-queue cancellation.' }],
         returns: 'durable message identity and immediate-delivery observation.',
       },
       {
@@ -617,7 +617,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     methods: [
       {
         signature: 'abstract readonly language: string',
-        description: 'The source language run expects `program` to be written in, as a lowercase identifier. Informational, not gating — a consumer that generates language-specific presentation (typed SDK stubs, usage instructions) switches on it and fails loud on a language it cannot present. Well-known values: `\'typescript\'` and `\'python\'`, those `dsh-tools` presents; only `\'typescript\'` has a published backend.',
+        description: 'The source language run expects `program` to be written in, as a lowercase identifier. Informational, not gating — a consumer that generates language-specific presentation (typed SDK stubs, usage instructions) switches on it and fails loud on a language it cannot present. Well-known values: `\'typescript\'` and `\'python\'`, those `dsh-tools` presents; the TypeScript backend is released, the Python backend is experimental and private (not published).',
         parameters: [],
       },
       {
@@ -683,7 +683,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['{@link ManualCompactionError} for expected busy, agent-cancellation, changed-span, summarization/shrink, commit-stage, or persistence failures; an aborted request preserves its exact abort reason. Failed attempts remain visible in the log.'],
       },
       {
-        signature: 'abstract compactRegion( start: number, end: number, agent: CompactionAgentContext, signal?: AbortSignal, ): Promise<CompactionResult>',
+        signature: 'abstract compactRegion( start: SessionSeq, end: SessionSeq, agent: CompactionAgentContext, signal?: AbortSignal, ): Promise<CompactionResult>',
         description: 'Forcibly compact a range of surface nodes into a single summary node. `start` and `end` name an inclusive span by surface position, not numeric seq order; replacements can make visible seqs non-monotonic. Both edges must be balanced so assistant tool calls remain paired with their results. A model- backed implementation forwards cancellation and rejects active, missing, reversed, or unbalanced ranges. The target session is `agent.session`. Its replacement user message must use compactCheckpointSource with the transaction\'s `CompactionId`. Use toolPairingBalancedBefore and toolPairingBalancedAfter for the edge checks.',
         parameters: [{ name: 'start', description: 'first surface seq, inclusive.' }, { name: 'end', description: 'last surface seq, inclusive.' }, { name: 'agent', description: 'context whose session is mutated and whose routing options guide summarization.' }, { name: 'signal', description: 'optional cancellation; model-backed implementations must forward it.' }],
         returns: 'the appended event seqs, summary, replaced range, and token accounting.',
@@ -1456,7 +1456,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the live Agent or the stable Session-domain failure.',
       },
       {
-        signature: 'inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<{ meta: SessionHeader; events: SessionEvent[] }>',
+        signature: 'inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<SessionInspection>',
         description: 'Inspect one attached or persisted Session without activating its Agent.',
         parameters: [{ name: 'sessionId', description: 'durable Session identity.' }, { name: 'signal', description: 'optional caller cancellation for persistence reads.' }],
         returns: 'the current attached state or persisted header and event prefix.',
@@ -1575,83 +1575,41 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   },
   {
     key: 'sessionPersistence',
-    summary: 'Durable append-only session storage.',
-    description: 'Durable append-only session storage. Implementations preserve contiguous, losslessly JSON-serializable events; append resolves only after durability, and load balances a complete interrupted tail without rewriting committed events.',
+    summary: 'Durable append-only session storage addressed through per-session handles.',
+    description: 'Durable append-only session storage addressed through per-session handles.\n\nStorage semantics shared by every backend: events are contiguous from seq 0 and never rewritten; a torn physical tail is never returned to a reader and is truncated by the write path before its first append; reads validate current-format records only and refuse unknown vocabulary fail-closed. `append` persists best-effort; `flush` — per handle or service-wide — is the durability barrier.\n\nVisibility: a created session is observable through `stat`/`list`/`open` in this process from the moment `create` resolves, even while a backend defers physical materialization (a pure optimization); other processes see the session only once it materializes, and a session that never materialized before a crash never existed. `SessionHandle.flush` forces materialization.\n\nFreshness: once an `append` or `flush` resolves, reads started afterwards on this backend instance observe at least that prefix.',
     methods: [
       {
-        signature: 'abstract locate(meta: SessionHeader): SessionLocation | undefined',
-        description: 'Resolve this backend\'s independent local artifact for a session without reading, creating, flushing, or otherwise materializing it. A backend that does not own one artifact per Session returns `undefined`.',
-        parameters: [{ name: 'meta', description: 'the immutable session header whose artifact is requested.' }],
-        returns: 'the backend-specific absolute location, when one exists.',
+        signature: 'abstract create(header: SessionHeader, options?: SessionPersistenceCreateOptions): Promise<SessionHandle>',
+        description: 'Create a new stored session and take its write ownership.',
+        parameters: [{ name: 'header', description: 'the immutable header (id, version, cwd, lineage) to store.' }, { name: 'options', description: 'optional cancellation.' }],
+        returns: 'a `write` handle owned by the caller; close it to release ownership.',
+        throws: ['{SessionAlreadyExistsError} when the id already exists.'],
       },
       {
-        signature: 'abstract readonly supportsRawArtifacts: boolean',
-        description: 'Whether this backend exposes one verbatim raw artifact per session. A backend that declares `true` must override readRaw.',
+        signature: 'abstract open(id: SessionId, access: SessionAccess, options?: SessionPersistenceOpenOptions): Promise<SessionHandle>',
+        description: 'Open an existing stored session.\n\n`read` never takes ownership and works while another handle (or process) holds write ownership. `write` atomically claims single-writer ownership; an existing active owner rejects.',
+        parameters: [{ name: 'id', description: 'the stored session to open.' }, { name: 'access', description: '`read` or `write`.' }, { name: 'options', description: 'optional cancellation.' }],
+        returns: 'the open handle.',
+        throws: ['{SessionPersistenceNotFoundError} when the session does not exist.', '{SessionAlreadyOwnedError} for `write` when ownership is taken.'],
+      },
+      {
+        signature: 'abstract flush(): Promise<void>',
+        description: 'Flush every active write handle owned by this service instance in one durability barrier: each handle\'s routed live events drain durably and its session materializes, exactly as that handle\'s own `SessionHandle.flush` would. Read handles buffer nothing and are untouched. A handle closed concurrently counts as flushed — close itself drains durably.',
         parameters: [],
+        returns: 'resolution once every write handle active at the call has flushed.',
+        throws: ['{AggregateError} naming each session whose flush failed; the remaining handles still flush.'],
       },
       {
-        signature: 'readRaw(_id: SessionId, signal?: AbortSignal): Promise<SessionRawArtifact | undefined>',
-        description: 'Read a session\'s backend-owned artifact text verbatim — the exact durable bytes the backend wrote (decoded from its physical encoding, e.g. a decompressed JSONL). The returned `content` is the raw text, not a reconstruction from parsed events, so it preserves backend-specific serialization (chunk packing, key order, line breaks). Callers first test supportsRawArtifacts; `undefined` then means only that the requested session has no materialized artifact.',
-        parameters: [{ name: '_id', description: 'the persisted session to read (unused by the default: no per-session artifact).' }, { name: 'signal', description: 'optional cancellation for backend read work.' }],
-        returns: 'the raw artifact plus its parsed header, or `undefined` when the session is absent.',
-        throws: ['when this backend does not expose per-session raw artifacts.'],
+        signature: 'abstract stat(id: SessionId, options?: SessionPersistenceStatOptions): Promise<SessionPersistenceSnapshot | undefined>',
+        description: 'Observe one stored session without reading its event log or taking ownership.\n\nThe snapshot\'s `revision` is an opaque change token comparable only against revisions from the same service instance and session id: equal revisions may be treated as an unchanged log; unequal revisions promise nothing. Write-ownership churn does not change a revision. It exists for derived read-model caches keyed off `stat`/`list`; it plays no part in open, read, or resume.',
+        parameters: [{ name: 'id', description: 'the stored session to observe.' }, { name: 'options', description: 'optional cancellation.' }],
+        returns: 'the snapshot, or `undefined` when the session does not exist.',
       },
       {
-        signature: 'abstract create(meta: SessionHeader): Promise<void>',
-        description: 'Register a new session\'s metadata. A backend MAY defer the physical write until the first append (lazy materialization), in which case a created-but-never-appended session is absent from list — abandoned sessions leave nothing behind.',
-        parameters: [{ name: 'meta', description: 'the immutable header (id, version, cwd, lineage) to record.' }],
-      },
-      {
-        signature: 'ensureMaterialized(_session: Session): Promise<void>',
-        description: 'Ensure a live session has a durable header even when it has no events. Ordinary sessions remain lazily materialized; lifecycle frontends call this only when an empty session itself is a durable resumable resource.',
-        parameters: [{ name: '_session', description: 'exact live session whose registered header is materialized.' }],
-      },
-      {
-        signature: 'abstract append(id: SessionId, events: readonly SessionEvent[]): Promise<void>',
-        description: 'Durably persist a batch of events. Honors the append-only and contiguous- seq contracts: the first event\'s `seq` MUST equal the stored next-seq (after `load` has durably closed any interrupted turn). Rejects non-JSON- serializable `event.data` with an error naming the offending event type.',
-        parameters: [{ name: 'id', description: 'the session the batch belongs to.' }, { name: 'events', description: 'the contiguous batch to persist, in seq order.' }],
-      },
-      {
-        signature: 'async prepare(id: SessionId, signal?: AbortSignal): Promise<SessionPreparation>',
-        description: 'Prepare the exact unpublished Session used by resume. Implementations may reuse object graphs retained by an earlier inspect after confirming their durable revision is still current; disposal releases an unpublished reservation. Revision retries require the durable log to remain unchanged for one read/check round trip; continuous external writers may delay completion.',
-        parameters: [{ name: 'id', description: 'persisted session to prepare.' }, { name: 'signal', description: 'optional cancellation for preparation work.' }],
-        returns: 'one owned unpublished Session preparation.',
-      },
-      {
-        signature: 'abstract load(id: SessionId): Promise<SessionInspection>',
-        description: 'Load an immutable balanced logical view and commit any required cold recovery. A complete interrupted final turn is preserved and durably closed with missing tool errors plus any open step and turn boundaries; only a torn final record is discarded. Unknown versions and corruption in the committed prefix reject. Implementations MUST NOT crash-repair an identity still bound to a live Session: a balanced live log may return as a durable snapshot, while an open live turn rejects. Returned values may be shared with immutable live or prepared state and must not be mutated. Revision-based implementations may wait for one stable read/check round trip.',
-        parameters: [{ name: 'id', description: 'the persisted session to reload.' }],
-        returns: 'the header and a log ending on a balanced `turn/end`.',
-      },
-      {
-        signature: 'abstract inspect(id: SessionId, signal?: AbortSignal): Promise<SessionInspection>',
-        description: 'Inspect an immutable logical session without committing recovery or publishing it. A cold complete interrupted turn receives synthetic closers in memory and a torn physical tail remains untouched. An already-live Session instead yields its current immutable snapshot, which may contain an open turn and its `session/end-seed` boundary. Coordinator-backed implementations retain the exact cold unpublished Session for bounded reuse by a later prepare. A stale ready source is reloaded; a source already committing or reserved for resume remains exclusive, and inspection may borrow its immutable view. Callers borrow only the immutable header and log. Continuous external writers may delay revision convergence.',
-        parameters: [{ name: 'id', description: 'the persisted session to inspect.' }, { name: 'signal', description: 'optional cancellation for queued and backend read work.' }],
-        returns: 'the validated header and current logical event log.',
-      },
-      {
-        signature: 'abstract borrowSession(id: SessionId, signal?: AbortSignal): Promise<BorrowedSessionSource>',
-        description: 'Borrow one exact inspection while retaining any reusable prepared source. A cold observation must pin the exact prepared Session that a later prepare reserves. Implementations must not degrade this operation to a detached inspect result.',
-        parameters: [{ name: 'id', description: 'persisted session to observe.' }, { name: 'signal', description: 'optional cancellation for preparation work.' }],
-        returns: 'a disposable immutable observation.',
-      },
-      {
-        signature: 'abstract readFrom(id: SessionId, fromSeq: number, signal?: AbortSignal): Promise<{ meta: SessionHeader; events: SessionEvent[] }>',
-        description: 'Read the stored events from `fromSeq` onward — the read-from-seq primitive for read models that resume from a watermark (e.g. a persisted projection cache folding only the tail past its checkpoint). Unlike inspect, it is a detached physical suffix read: no preparation cache, torn-tail truncation, synthetic closers, or coordinator-state publication. Only events from the valid contiguous stored prefix are returned, so a torn fragment never reaches the caller. `fromSeq` at or beyond the stored prefix returns an empty event list (never an error). A backend whose medium can seek by seq may read only the suffix; sequential media such as JSONL still parse the whole artifact and skip forward. The primitive bounds what is returned and refolded, not every backend\'s physical read.',
-        parameters: [{ name: 'id', description: 'the persisted session to read.' }, { name: 'fromSeq', description: 'first event seq to include; a non-negative safe integer.' }, { name: 'signal', description: 'optional cancellation for queued and backend read work.' }],
-        returns: 'the header and the stored events with `seq >= fromSeq`.',
-      },
-      {
-        signature: 'abstract list(signal?: AbortSignal): Promise<SessionHeader[]>',
-        description: 'Lightweight listing from metadata, without a full-log parse.',
-        parameters: [{ name: 'signal', description: 'optional cancellation for backend listing work.' }],
-        returns: 'one header per materialized session.',
-      },
-      {
-        signature: 'abstract listSnapshots(signal?: AbortSignal): Promise<SessionPersistenceSnapshot[]>',
-        description: 'List materialized sessions with cheap per-log change tokens.\n\nRepeated observations of an unchanged log return the same revision. A successful mutating load repair changes the next listed revision. Revisions also distinguish independently backed stores so backend-local counters cannot compare equal across different persistence sources.',
-        parameters: [{ name: 'signal', description: 'optional cancellation for backend snapshot-listing work.' }],
-        returns: 'one header and opaque revision per materialized session without loading full logs.',
+        signature: 'abstract list(options?: SessionPersistenceListOptions): Promise<readonly SessionPersistenceSnapshot[]>',
+        description: 'List every stored session visible to this process, in no promised order.',
+        parameters: [{ name: 'options', description: 'optional cancellation.' }],
+        returns: 'one snapshot per stored session.',
       },
     ],
   },
@@ -1661,15 +1619,15 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'The persisted projection cache service. Opens the `session_projcache` domain at init, checkpoints live sessions on a throttled write-behind (count/interval triggers from Config) plus three mandatory points — session creation, `turn/end`, and session disposal (the live-to-cold moment) — and serves the cached rows for a session header. Every durable write is fail-soft: failures log a warning and the cache self-heals on the next write.',
     methods: [
       {
-        signature: 'cachedSnapshot( meta: SessionHeader, keys?: readonly Extract<keyof SessionProjectionMap, string>[], ): ProjectionSnapshot | undefined',
+        signature: 'cachedSnapshot( meta: SessionHeader, inheritedEventCount: SessionLogOffset, keys?: readonly Extract<keyof SessionProjectionMap, string>[], ): ProjectionSnapshot | undefined',
         description: 'The zero-I/O listing read: whole values viewed straight from the stored rows (version-matching keys only), each cut carried with its watermark so a client value store can seed under its higher-seq-wins rule — as stale as the last durable checkpoint but never wrong, and never from an unrelated log (the caller\'s header is the identity witness). Fresher paths (the history tail baseline) supersede these values whenever a session is actually opened.',
-        parameters: [{ name: 'meta', description: 'the listed session\'s header (identity witness; no log read).' }, { name: 'keys', description: 'optional projection keys required by the caller\'s audience.' }],
+        parameters: [{ name: 'meta', description: 'the listed session\'s header (identity witness; no log read).' }, { name: 'inheritedEventCount', description: 'exact inherited prefix length that completes the checkpoint identity.' }, { name: 'keys', description: 'optional projection keys required by the caller\'s audience.' }],
         returns: 'the cut (`asOfSeq` = lowest served-row watermark), or `undefined` when no usable row exists for this lifecycle.',
       },
       {
-        signature: 'hydratePrepared( session: Session, meta: SessionHeader, events: readonly SessionEvent[], ): ProjectionSnapshot',
+        signature: 'hydratePrepared( session: Session, events: readonly SessionEvent[], ): ProjectionSnapshot',
         description: 'Hydrate projection cells for an already-prepared Session without another persistence read. The cache seeds matching rows; the supplied exact log advances every unit to the observation cut. No checkpoint is written because the logical observation may contain recovery events not yet durable.',
-        parameters: [{ name: 'session', description: 'exact unpublished Session retained by persistence.' }, { name: 'meta', description: 'observed lifecycle header.' }, { name: 'events', description: 'exact logical event prefix represented by the observation.' }],
+        parameters: [{ name: 'session', description: 'exact unpublished Session retained by persistence.' }, { name: 'events', description: 'exact logical event prefix represented by the observation.' }],
         returns: 'all projection values at the event cut.',
       },
       {
@@ -1679,9 +1637,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'resolution after durability and event emission.',
       },
       {
-        signature: 'coldSnapshot(meta: SessionHeader, events: readonly SessionEvent[]): ProjectionSnapshot',
+        signature: 'coldSnapshot( meta: SessionHeader, inheritedEventCount: SessionLogOffset, events: readonly SessionEvent[], ): ProjectionSnapshot',
         description: 'Cold-read one session\'s projections from its complete log. Each unit is seeded from the identity-checked cached rows — the registry skips `apply` for the already-folded prefix (events at or below the row\'s `seq`) — and the refreshed checkpoint is written back (fail-soft, fire-and-forget), so the first cold read creates the cache row and later ones seed from it. The caller supplies the complete log in seq order: this service never consults the persistence layer.',
-        parameters: [{ name: 'meta', description: 'the stored session header (identity witness).' }, { name: 'events', description: 'the session\'s complete log, in seq order.' }],
+        parameters: [{ name: 'meta', description: 'the stored session header (identity witness).' }, { name: 'inheritedEventCount', description: 'exact inherited prefix length for projection initialization and identity.' }, { name: 'events', description: 'the session\'s complete log, in seq order.' }],
         returns: 'the projection cut at the log end.',
       },
     ],
@@ -1734,10 +1692,10 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'one row per registered key.',
       },
       {
-        signature: 'restoreFloor(checkpoint: ProjectionCheckpoint): number | undefined',
+        signature: 'restoreFloor(checkpoint: ProjectionCheckpoint): SessionLogOffset | undefined',
         description: 'The stored seq a restore tail read over `checkpoint` must start at: one event BELOW the lowest usable watermark (a row is usable when its `ver` matches the live unit\'s `stateVersion`; an absent or mismatched row pulls the floor to `0` — that key must refold the full log). The one-below anchor is load-bearing: the tail then proves how far the stored log still extends, so restore can detect a log that shrank below a row\'s watermark (crash-repair truncation) instead of serving the stale row as current — an empty tail read from the anchor yields an end below every watermark and the restore rejects for a full re-read.',
         parameters: [{ name: 'checkpoint', description: 'persisted rows for one session (possibly stale or empty).' }],
-        returns: 'the seq to hand the persistence `readFrom`, or `undefined` when no unit is registered (no read needed — {@link restore} would serve empty values regardless).',
+        returns: 'the offset for the stored-log suffix read (`SessionHandle.read`), or `undefined` when no unit is registered (no read needed — {@link restore} would serve empty values regardless).',
       },
       {
         signature: 'viewCheckpoint( checkpoint: ProjectionCheckpoint, keys?: readonly Extract<keyof SessionProjectionMap, string>[], ): Partial<SessionProjectionMap>',
@@ -1746,13 +1704,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'whole values per key with a usable row; empty when none.',
       },
       {
-        signature: 'restore( checkpoint: ProjectionCheckpoint, events: readonly SessionEvent[], baseSeq: number, header: SessionHeader, ): { snapshot: ProjectionSnapshot; checkpoint: ProjectionCheckpoint }',
-        description: 'Cold read: fold every persisted unit over a stored log suffix, seeding each from its checkpoint row when usable — the one read recipe (cached state + forward tail replay + `view`) applied without a live `Session`. Call with the events returned by a persistence `readFrom(id, restoreFloor(checkpoint))` and that same floor as `baseSeq`; the floor\'s one-below anchor makes the supplied end honest, so a shrunk log is detected here. A row is usable iff its `ver` matches the live unit\'s `stateVersion`, it does not predate `baseSeq` (`seq >= baseSeq - 1`), and it does not claim events past the supplied end (`seq <= endSeq`); an unusable row is discarded and its key refolds from `init` — which is only sound over the full log, so a discarded row with `baseSeq > 0` throws (the caller re-reads from seq 0, e.g. after a crash-repair truncation shrank the log below a row\'s watermark).',
-        parameters: [{ name: 'checkpoint', description: 'persisted rows for one session (possibly stale or empty).' }, { name: 'events', description: 'the stored events with `seq >= baseSeq`, in seq order.' }, { name: 'baseSeq', description: 'the seq `events` starts at (its first event\'s seq when non-empty).' }, { name: 'header', description: 'immutable metadata for the Session being restored.' }],
+        signature: 'restore( checkpoint: ProjectionCheckpoint, events: readonly SessionEvent[], baseSeq: SessionLogOffset, header: SessionHeader, inheritedEventCount: SessionLogOffset, ): { snapshot: ProjectionSnapshot; checkpoint: ProjectionCheckpoint }',
+        description: 'Cold read: fold every persisted unit over a stored log suffix, seeding each from its checkpoint row when usable — the one read recipe (cached state + forward tail replay + `view`) applied without a live `Session`. Call with the stored events at or past `restoreFloor(checkpoint)` (a `SessionHandle.read` slice) and that same floor as `baseSeq`; the floor\'s one-below anchor makes the supplied end honest, so a shrunk log is detected here. A row is usable iff its `ver` matches the live unit\'s `stateVersion`, it does not predate `baseSeq` (`seq >= baseSeq - 1`), and it does not claim events past the supplied end (`seq <= endSeq`); an unusable row is discarded and its key refolds from `init` — which is only sound over the full log, so a discarded row with `baseSeq > 0` throws (the caller re-reads from seq 0, e.g. after a crash-repair truncation shrank the log below a row\'s watermark).',
+        parameters: [{ name: 'checkpoint', description: 'persisted rows for one session (possibly stale or empty).' }, { name: 'events', description: 'the stored events with `seq >= baseSeq`, in seq order.' }, { name: 'baseSeq', description: 'the seq `events` starts at (its first event\'s seq when non-empty).' }, { name: 'header', description: 'immutable metadata for the Session being restored.' }, { name: 'inheritedEventCount', description: 'exact fork-inherited prefix length supplied to unit initialization.' }],
         returns: 'the snapshot cut at the supplied log end (`asOfSeq` is the last supplied event\'s seq, `baseSeq - 1` for an empty tail) plus the refreshed checkpoint rows at that cut, ready for a durable write-back.',
       },
       {
-        signature: 'hydrate( session: Session, checkpoint: ProjectionCheckpoint, events: readonly SessionEvent[], baseSeq: number, ): ProjectionSnapshot',
+        signature: 'hydrate( session: Session, checkpoint: ProjectionCheckpoint, events: readonly SessionEvent[], baseSeq: SessionLogOffset, ): ProjectionSnapshot',
         description: 'Restore an exact cut and install its states on the supplied prepared Session. A later publication reuses these cells; ordinary live reads and event drive advance any constructor-owned suffix exactly once.',
         parameters: [{ name: 'session', description: 'exact prepared Session that owns the restored log prefix.' }, { name: 'checkpoint', description: 'persisted rows for this Session lifecycle.' }, { name: 'events', description: 'exact events at the observation cut.' }, { name: 'baseSeq', description: 'first supplied event sequence.' }],
         returns: 'all projection values at the supplied cut.',
@@ -1888,7 +1846,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'sessions',
     summary: 'In-memory session store (`ctx.sessions`).',
-    description: 'In-memory session store (`ctx.sessions`).\n\nPersistence is intentionally not implemented here — persistence plugins subscribe to `session/event` and flush on `session/flush` / dispose.',
+    description: 'In-memory session store (`ctx.sessions`).\n\nPersistence is intentionally not implemented here — the agent lifecycle attaches a session-log writer to each published session\'s write handle; a session published outside that lifecycle persists nothing.',
     methods: [
       {
         signature: 'create(id?: SessionId, options?: CreateSessionOptions): Session',
@@ -1937,7 +1895,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'a fresh array; mutating it does not affect the store.',
       },
       {
-        signature: 'fork(source: SessionForkSource, boundary?: number, childSessionId?: SessionId): Session',
+        signature: 'fork(source: SessionForkSource, boundary?: SessionSeq, childSessionId?: SessionId): Session',
         description: 'Create a live child session from a stable prefix of a live source. `boundary` is an inclusive source event seq; omitted means the source\'s current last event. The selected slice may end with a between-turn event but must not end inside an open turn.',
         parameters: [{ name: 'source', description: 'Live source session object or id.' }, { name: 'boundary', description: 'Inclusive source event seq to fork through; omitted means the source\'s current last event, and omitted on an empty source forks an empty child.' }, { name: 'childSessionId', description: 'Optional child session id; omitted delegates to `SessionStore`\'s id policy.' }],
         returns: 'The created live child session.',
@@ -2266,7 +2224,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     methods: [
       {
         signature: 'async open<S extends DomainSpec>(spec: S): Promise<Domain<S>>',
-        description: 'Open one declared domain. Steps, each failing the whole call: reject a name that is already open (`already-open`); resolve the backend route (`backend-not-found` passes through from the hub); require its `kv` facet (`facet-unsupported`); open the unit projected from the spec (backend `version-mismatch`/`malformed-medium` pass through); load and validate every stored record against the spec\'s zod schemas (`invalid-record` with the offending table and key); construct the domain.\n\nLifecycle: the CALLER owns the returned handle and closes it via `Domain.close()` (typically as its own `ctx.effect` disposer) — the facility does not tie the domain to any consumer fiber. Domains still open when the facility unmounts are closed by the plugin disposer.',
+        description: 'Open one declared domain. Steps, each failing the whole call: reject a name that is already open (`already-open`); resolve the backend route (`backend-not-found` passes through from the hub); require its `kv` facet (`facet-unsupported`); open the unit projected from the spec (backend `version-mismatch`/`malformed-medium` pass through); load and validate every stored record against the spec\'s zod schemas (`invalid-record` with the offending table and key — unless the spec declares `invalidRecords: \'backup-and-skip\'` and the unit can move documents aside, in which case the failing record is backed up, logged, and skipped); construct the domain.\n\nLifecycle: the CALLER owns the returned handle and closes it via `Domain.close()` (typically as its own `ctx.effect` disposer) — the facility does not tie the domain to any consumer fiber. Domains still open when the facility unmounts are closed by the plugin disposer.',
         parameters: [{ name: 'spec', description: 'The domain declaration, typically from `defineDomain`.' }],
         returns: 'the opened domain handle, typed by the spec.',
       },
@@ -2310,17 +2268,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['when continuation services are unavailable or materialization fails.'],
       },
       {
-        signature: 'async followup( parent: Agent, childId: SessionId, content: ContentBlock[], options: SubagentFollowupOptions, ): Promise<MessageId>',
-        description: 'Deliver one later message to a continuable child as its next FIFO turn. A resident child\'s Agent inbox accepts it directly (waking a `waiting` Activation), while an absent one is cold-resumed from its persisted Session. The Agent inbox is the only queue, so every accepted message has one observable order.',
-        parameters: [{ name: 'parent', description: 'the exact live direct parent authorizing this delivery.' }, { name: 'childId', description: 'durable child session id.' }, { name: 'content', description: 'user-role content to deliver.' }, { name: 'options', description: 'the message source fields and caller cancellation, which stops the operation only before inbox acceptance.' }],
+        signature: 'async sendMessage( sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions, ): Promise<MessageId>',
+        description: 'Steer one model-authored message to the sender\'s direct parent or direct continuable child. A running target admits it at the nearest step boundary; an idle target starts a turn, and an absent direct child cold-resumes from persistence. The service derives durable sender attribution from the exact live sender. Caller cancellation stops only pre-acceptance work.',
+        parameters: [{ name: 'sender', description: 'exact live Agent authorizing and originating the message.' }, { name: 'targetId', description: 'durable direct-parent or direct-child session id.' }, { name: 'content', description: 'model-authored content to deliver.' }, { name: 'options', description: 'caller cancellation before inbox acceptance.' }],
         returns: 'the accepted message\'s inbox id.',
-        throws: ['when continuation services are unavailable, parent authority is rejected, or the message was not admitted.'],
-      },
-      {
-        signature: 'interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void',
-        description: 'Interrupt one live continuable child\'s current turn under a human parent address or an exact live ancestor Agent. Fire-and-return: the cancel signal is issued before this returns, but the target may keep running until it observes the signal. Unclaimed pending inbox work, the Activation, and published descendants are preserved; claimed work is not requeued. Once the interrupted driver is idle, a waking send resumes the parked FIFO queue. An absent target — including a one-shot or unknown id — is an accepted no-op, as is a manager-less composition, which cannot own a live Activation.',
-        parameters: [{ name: 'targetSessionId', description: 'the durable child session id to interrupt.' }, { name: 'authority', description: 'the human parent address or exact live ancestor Agent.' }],
-        throws: ['{SubagentError} `UNAUTHORIZED` when the authority does not own the live target.'],
+        throws: ['when continuation services are unavailable, adjacency is rejected, or the message was not admitted.'],
       },
       {
         signature: 'async reportFrom( child: Agent, content: ContentBlock[], options: SubagentReportOptions, ): Promise<MessageId>',
@@ -2334,6 +2286,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Compose one deployment capability into every continuable child\'s unpublished creation context on fresh creation and cold resume. Grants wait for the next Activation; removing the contribution revokes every resident installation immediately.',
         parameters: [{ name: 'contribution', description: 'synchronous child-scope installer.' }],
         returns: 'the exact Cordis effect disposer.',
+      },
+      {
+        signature: 'interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void',
+        description: 'Interrupt one live continuable child\'s current turn under a human parent address or an exact live ancestor Agent. Fire-and-return: the cancel signal is issued before this returns, but the target may keep running until it observes the signal. Unclaimed pending inbox work, the Activation, and published descendants are preserved; claimed work is not requeued. Once the interrupted driver is idle, a waking send resumes the parked FIFO queue. An absent target — including a one-shot or unknown id — is an accepted no-op, as is a manager-less composition, which cannot own a live Activation.',
+        parameters: [{ name: 'targetSessionId', description: 'the durable child session id to interrupt.' }, { name: 'authority', description: 'the human parent address or exact live ancestor Agent.' }],
+        throws: ['{SubagentError} `UNAUTHORIZED` when the authority does not own the live target.'],
       },
       {
         signature: 'async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>',
@@ -3879,12 +3837,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface BashEnvVariableInfo extends BashEnvVariable {\n    contributor: string;\n    key: DshEnvironmentKey;\n}',
   },
   {
-    name: 'BorrowedSessionSource',
-    declaration: 'export type BorrowedSessionSource = Disposable & ({\n    readonly source: \'prepared\';\n    readonly inspection: SessionInspection;\n    readonly revision: SessionPersistenceRevision;\n    readonly preparedSession: Session;\n} | {\n    readonly source: \'live\';\n    readonly inspection: SessionInspection;\n});',
-  },
-  {
     name: 'Branded',
     declaration: 'export type Branded<B extends string> = string & {\n    readonly [BRAND]: B;\n};',
+  },
+  {
+    name: 'BrandedNumber',
+    declaration: 'export type BrandedNumber<B extends string> = number & {\n    readonly [BRAND]: B;\n};',
   },
   {
     name: 'BridgeDispatch',
@@ -3952,7 +3910,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ChunkRow',
-    declaration: 'export type ChunkRow = {\n    type: \'text-chunks\';\n    seq0: number;\n    time0: number;\n    data: TextRunData;\n} | {\n    type: \'reasoning-chunks\';\n    seq0: number;\n    time0: number;\n    data: TextRunData;\n} | {\n    type: \'tool-call-chunks\';\n    seq0: number;\n    time0: number;\n    data: ToolCallRunData;\n};',
+    declaration: 'export type ChunkRow = {\n    type: \'text-chunks\';\n    seq0: SessionSeqType;\n    time0: number;\n    data: TextRunData;\n} | {\n    type: \'reasoning-chunks\';\n    seq0: SessionSeqType;\n    time0: number;\n    data: TextRunData;\n} | {\n    type: \'tool-call-chunks\';\n    seq0: SessionSeqType;\n    time0: number;\n    data: ToolCallRunData;\n};',
   },
   {
     name: 'ChunkRowEvent',
@@ -4020,7 +3978,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CommandResult',
-    declaration: 'export type CommandResult = {\n    readonly kind: \'success\';\n    readonly text?: string;\n    readonly sourceEventSeq?: number;\n} | {\n    readonly kind: \'error\';\n    readonly text: string;\n};',
+    declaration: 'export type CommandResult = {\n    readonly kind: \'success\';\n    readonly text?: string;\n    readonly sourceEventSeq?: SessionSeq;\n} | {\n    readonly kind: \'error\';\n    readonly text: string;\n};',
   },
   {
     name: 'CompactionAgentContext',
@@ -4032,7 +3990,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CompactionResult',
-    declaration: 'export interface CompactionResult {\n    compactionId: CompactionId;\n    sourceCommandId?: CommandId;\n    startSeq: number;\n    summarySeq: number;\n    endSeq: number;\n    summary: ContentBlock[];\n    shadowedRange: {\n        start: number;\n        end: number;\n    };\n    shadowedSeqs: number[];\n    shadowedTokenCount: number;\n}',
+    declaration: 'export interface CompactionResult {\n    compactionId: CompactionId;\n    sourceCommandId?: CommandId;\n    startSeq: SessionSeq;\n    summarySeq: SessionSeq;\n    endSeq: SessionSeq;\n    summary: ContentBlock[];\n    shadowedRange: {\n        start: SessionSeq;\n        end: SessionSeq;\n    };\n    shadowedSeqs: SessionSeq[];\n    shadowedTokenCount: number;\n}',
   },
   {
     name: 'CompactionTrigger',
@@ -4061,14 +4019,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ContentBlockType',
     declaration: 'export type ContentBlockType = keyof ContentBlockMap;',
-  },
-  {
-    name: 'ContextFormed',
-    declaration: 'export type ContextFormed = {\n    readonly form?: never;\n} | {\n    readonly form: \'instructions\';\n} | {\n    readonly form: \'catalog\';\n} | {\n    readonly form: \'snapshot\';\n    readonly sections: readonly ContextSnapshotSection[];\n} | {\n    readonly form: \'notice\';\n    readonly summary: string;\n} | {\n    readonly form: \'relay\';\n} | {\n    readonly form: \'recall\';\n};',
-  },
-  {
-    name: 'ContextSnapshotSection',
-    declaration: 'export interface ContextSnapshotSection {\n    readonly name: string;\n    readonly text: string;\n}',
   },
   {
     name: 'ContinuableChildStart',
@@ -4168,7 +4118,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CreateAgentOptions',
-    declaration: 'export interface CreateAgentOptions {\n    readonly sessionId: SessionId;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly seedLength?: number;\n        readonly origin?: SessionOrigin;\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n    readonly seed?: readonly SessionEvent[];\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
+    declaration: 'export interface CreateAgentOptions {\n    readonly sessionId: SessionId;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly isSeeded?: boolean;\n        readonly origin?: SessionOrigin;\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n    readonly inheritedEventCount?: SessionLogOffset;\n    readonly seed?: readonly SessionEvent[];\n    readonly agentOptions?: AgentOptions;\n    readonly signal?: AbortSignal;\n    readonly setup?: AgentSetup;\n}',
   },
   {
     name: 'CreateGoalRequest',
@@ -4180,7 +4130,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CreateSessionOptions',
-    declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly seedLength?: number;\n        readonly origin?: SessionOrigin;\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
+    declaration: 'export interface CreateSessionOptions {\n    readonly seed?: readonly SessionEvent[];\n    readonly inheritedEventCount?: SessionLogOffset;\n    readonly meta?: {\n        readonly cwd?: string;\n        readonly parentSession?: SessionId;\n        readonly createdAt?: number;\n        readonly isSeeded?: boolean;\n        readonly origin?: SessionOrigin;\n        readonly delegationDepth?: number;\n        readonly agentPreset?: string;\n    };\n}',
   },
   {
     name: 'CreateTeamTaskRequest',
@@ -4324,7 +4274,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DomainSpec',
-    declaration: 'export interface DomainSpec {\n    readonly name: string;\n    readonly version: number;\n    readonly layout?: \'single\' | \'per-record\';\n    readonly global?: DomainGlobalSpec<unknown>;\n    readonly tables: Record<string, DomainTableSpec>;\n}',
+    declaration: 'export interface DomainSpec {\n    readonly name: string;\n    readonly version: number;\n    readonly layout?: \'single\' | \'per-record\';\n    readonly compatibleVersions?: readonly number[];\n    readonly invalidRecords?: \'backup-and-skip\';\n    readonly global?: DomainGlobalSpec<unknown>;\n    readonly tables: Record<string, DomainTableSpec>;\n}',
   },
   {
     name: 'DomainTableSpec',
@@ -4332,11 +4282,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DshAdapterConfig',
-    declaration: 'export interface DshAdapterConfig {\n    agentName: string;\n    cwd: string;\n    providers: ProviderRoute[];\n    activeProvider: string;\n    closeTimeoutMs?: number;\n    mcpServers?: readonly string[];\n    questionRouting?: QuestionRouting;\n}',
+    declaration: 'export interface DshAdapterConfig {\n    agentName: string;\n    cwd: string;\n    providers: ProviderRoute[];\n    activeProvider: string;\n    closeTimeoutMs?: number;\n    mcpServers?: readonly string[];\n    planApprovalPreset?: string;\n    questionRouting?: QuestionRouting;\n}',
   },
   {
     name: 'DshAgentAdapter',
-    declaration: 'export class DshAgentAdapter {\n    setAskDelegate(d: AskDelegate): void;\n    setBridgeEvents(bridge: BridgeDispatch): void;\n    setDeniedTools(source: () => readonly string[]): void;\n    constructor(ctx: DshContextLike, cfg: DshAdapterConfig);\n    async handleUserQuestion(request: UserQuestionsAskRequest): Promise<UserQuestionsAskResult | undefined>;\n    name(): string;\n    activeRoute(): ProviderRoute | undefined;\n    getModel(): string;\n    getReasoningEffort(): string;\n    setWorkDir(dir: string): void;\n    getWorkDir(): string;\n    setSessionMode(mode: string): void;\n    setDefaultMode(mode: string): void;\n    async prepareForkSession(origID: string, _parentWorkDir: string, _childWorkDir: string): Promise<void>;\n    async prepareForkAtSession(origID: string, childWorkDir: string, quotedText: string, quotedSenderType: string, quotedTimeMs: number): Promise<string>;\n    forgetForkAtSeed(forkID: string): void;\n    engineKeyForAgentID(nativeID: string): string | undefined;\n    async startContinuableChild(request: ContinuableChildStart): Promise<{\n        childId: string;\n        label: string;\n    }>;\n    async followupChild(parentAgentSessionID: string, childId: string, message: string): Promise<void>;\n    interruptChild(parentAgentSessionID: string, childId: string): void;\n    async reportChildToNativeParent(childId: string, content: string): Promise<void>;\n    childLive(childId: string): boolean;\n    childCwd(childId: string): string;\n    contextSnapshot(agentSessionID: st /* …truncated — full shape in source */',
+    declaration: 'export class DshAgentAdapter {\n    setAskDelegate(d: AskDelegate): void;\n    setBridgeEvents(bridge: BridgeDispatch): void;\n    setDeniedTools(source: () => readonly string[]): void;\n    constructor(ctx: DshContextLike, cfg: DshAdapterConfig);\n    async handleUserQuestion(request: UserQuestionsAskRequest): Promise<UserQuestionsAskResult | undefined>;\n    name(): string;\n    activeRoute(sessionKey?: string): ProviderRoute | undefined;\n    getModel(sessionKey?: string): string;\n    getReasoningEffort(sessionKey?: string): string;\n    setWorkDir(dir: string): void;\n    getWorkDir(): string;\n    setSessionMode(mode: string): void;\n    setDefaultMode(mode: string): void;\n    async prepareForkSession(origID: string, _parentWorkDir: string, _childWorkDir: string): Promise<void>;\n    async prepareForkAtSession(origID: string, childWorkDir: string, quotedText: string, quotedSenderType: string, quotedTimeMs: number): Promise<string>;\n    forgetForkAtSeed(forkID: string): void;\n    engineKeyForAgentID(nativeID: string): string | undefined;\n    async startContinuableChild(request: ContinuableChildStart): Promise<{\n        childId: string;\n        label: string;\n    }>;\n    async followupChild(parentAgentSessionID: string, childId: string, message: string): Promise<void>;\n    interruptChild(parentAgentSessionID: string, childId: string): void;\n    async reportChildToNativeParent(childId: string, content: string): Promise<void>;\n    childLive(childId: string): boolean;\n    childCwd(childId /* …truncated — full shape in source */',
   },
   {
     name: 'DshAgentHandleLike',
@@ -4356,7 +4306,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DshCreateOptionsLike',
-    declaration: 'export interface DshCreateOptionsLike {\n    sessionId?: unknown;\n    resumeSessionId?: unknown;\n    meta?: {\n        cwd?: string;\n        parentSession?: unknown;\n        seedLength?: number;\n        origin?: \'subagent\' | \'oneshot\';\n    };\n    seed?: readonly SessionEvent[];\n    agentOptions?: {\n        provider?: string;\n        model?: string;\n        reasoningEffort?: string;\n    };\n    setup?: import(\'@deepseek-ai/dsh-agent\').AgentSetup;\n}',
+    declaration: 'export interface DshCreateOptionsLike {\n    sessionId?: unknown;\n    resumeSessionId?: unknown;\n    meta?: {\n        cwd?: string;\n        parentSession?: unknown;\n        isSeeded?: boolean;\n        origin?: \'subagent\' | \'oneshot\';\n    };\n    inheritedEventCount?: import(\'@deepseek-ai/dsh-session\').SessionLogOffset;\n    seed?: readonly SessionEvent[];\n    agentOptions?: {\n        provider?: string;\n        model?: string;\n        reasoningEffort?: string;\n    };\n    setup?: import(\'@deepseek-ai/dsh-agent\').AgentSetup;\n}',
   },
   {
     name: 'DshEnvironment',
@@ -4392,7 +4342,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'Engine',
-    declaration: 'export class Engine {\n    readonly name: string;\n    readonly agent: Agent;\n    readonly platforms: Platform[];\n    readonly sessions: SessionManager;\n    readonly i18n: I18n;\n    readonly startedAt: number;\n    readonly bridge: BridgeDispatch;\n    display: DisplayCfg;\n    streamPreview: StreamPreviewCfg;\n    bumpDebounceInterval: number;\n    injectSender: boolean;\n    attachmentSendEnabled: boolean;\n    feishuWorkspace: FeishuWorkspaceInfo | undefined;\n    eventIdleTimeout: number;\n    stallMaxRetries: number;\n    maxQueuedMessages: number;\n    debounceInterval: number;\n    interactiveIdleTimeout: number;\n    subtaskMaxDepth: number;\n    spawnWorktree: WorktreeMode;\n    spawnMemWarnPct: number;\n    spawnMemBlockPct: number;\n    subtaskQuiet: boolean;\n    subtaskPanelEnabled: boolean;\n    subtaskPanelIntervalMs: number;\n    subtaskPanelStallMs: number;\n    subtaskGatherTimeout: number;\n    groupNameEnabled: boolean;\n    groupNameProvider: string;\n    groupNameTimeout: number;\n    groupNamePrompt: string;\n    groupNameSetAvatar: boolean;\n    readonly monitor: MonitorCore;\n    cronScheduler: CronScheduler | undefined;\n    relayManager: RelayManager | undefined;\n    planRenderEnabled: boolean;\n    planRenderProvider: string;\n    planRenderTimeoutMs: number;\n    planRenderPngScript: string;\n    planRenderSkillSource: (() => Promise<string | undefined>) | undefined;\n    planDir: string;\n    readonly modelContextWindow: 200000;\n    showContextIndicator: boolean;\n    contextWindow:  /* …truncated — full shape in source */',
+    declaration: 'export class Engine {\n    readonly name: string;\n    readonly agent: Agent;\n    readonly platforms: Platform[];\n    readonly sessions: SessionManager;\n    readonly i18n: I18n;\n    readonly startedAt: number;\n    readonly bridge: BridgeDispatch;\n    display: DisplayCfg;\n    streamPreview: StreamPreviewCfg;\n    bumpDebounceInterval: number;\n    injectSender: boolean;\n    attachmentSendEnabled: boolean;\n    feishuWorkspace: FeishuWorkspaceInfo | undefined;\n    eventIdleTimeout: number;\n    stallMaxRetries: number;\n    maxQueuedMessages: number;\n    debounceInterval: number;\n    interactiveIdleTimeout: number;\n    subtaskMaxDepth: number;\n    spawnWorktree: WorktreeMode;\n    spawnProvider: string;\n    spawnMemWarnPct: number;\n    spawnMemBlockPct: number;\n    subtaskQuiet: boolean;\n    subtaskPanelEnabled: boolean;\n    subtaskPanelIntervalMs: number;\n    subtaskPanelStallMs: number;\n    subtaskGatherTimeout: number;\n    groupNameEnabled: boolean;\n    groupNameProvider: string;\n    groupNameTimeout: number;\n    groupNamePrompt: string;\n    groupNameSetAvatar: boolean;\n    readonly monitor: MonitorCore;\n    cronScheduler: CronScheduler | undefined;\n    relayManager: RelayManager | undefined;\n    planRenderEnabled: boolean;\n    planRenderProvider: string;\n    planRenderTimeoutMs: number;\n    planRenderPngScript: string;\n    planRenderSkillSource: (() => Promise<string | undefined>) | undefined;\n    planDir: string;\n    showContextIndicator: boolean;\n    usageProviders: UsageProvider /* …truncated — full shape in source */',
   },
   {
     name: 'EpochHeader',
@@ -4600,7 +4550,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'InteractiveState',
-    declaration: 'export class InteractiveState {\n    agentSession: AgentSession | undefined;\n    platform: Platform | undefined;\n    replyCtx: unknown;\n    agent: Agent | undefined;\n    sessionStartOptions: SessionStartOptions | undefined;\n    closing: Promise<void> | undefined;\n    stopped: boolean;\n    userStopped: boolean;\n    engineStopped: boolean;\n    stopNoticeSent: boolean;\n    pendingMessages: QueuedMessage[];\n    inflightMessage: QueuedMessage | undefined;\n    sideText: string;\n    eventsNeedResync: boolean;\n    effectiveMode: string;\n    effectiveIdleTimeout: number;\n    lastActivity: number;\n    activeTurns: number;\n    lastEventAt: number;\n    activeToolCalls: number;\n    turnSeq: number;\n    fromVoice: boolean;\n    lastPrompt: string;\n    pendingAsk: PendingAsk | undefined;\n    capPausedMs: number;\n    capParkStart: number;\n    compactionCount: number;\n    cumulativeInputTokens: number;\n    cumulativeCacheInputTokens: number;\n    notificationHandle: unknown;\n    notificationFooterMsg: string;\n    notificationFooterElements: CardElement[];\n    notificationHeaderSuffix: string;\n    predictNextRunning: boolean;\n    predictNextDisabled: boolean;\n    turnSummaryRunning: boolean;\n    lastAutoCompressAt: number;\n    lastAutoCompressTokens: number;\n    sender: AsyncSender | undefined;\n    preview: StreamPreview | undefined;\n    progressWriter: CompactProgressWriter | undefined;\n    deleteMode: import(\'./session-card.ts\').DeleteModeState | undefined;\n    backgroundTasksPending: number;\n  /* …truncated — full shape in source */',
+    declaration: 'export class InteractiveState {\n    agentSession: AgentSession | undefined;\n    platform: Platform | undefined;\n    replyCtx: unknown;\n    agent: Agent | undefined;\n    sessionStartOptions: SessionStartOptions | undefined;\n    closing: Promise<void> | undefined;\n    stopped: boolean;\n    userStopped: boolean;\n    engineStopped: boolean;\n    stopNoticeSent: boolean;\n    pendingMessages: QueuedMessage[];\n    inflightMessage: QueuedMessage | undefined;\n    sideText: string;\n    eventsNeedResync: boolean;\n    effectiveMode: string;\n    effectiveIdleTimeout: number;\n    lastActivity: number;\n    activeTurns: number;\n    lastEventAt: number;\n    activeToolCalls: number;\n    turnSeq: number;\n    fromVoice: boolean;\n    lastPrompt: string;\n    pendingAsk: PendingAsk | undefined;\n    pendingFollowups: UserQuestion | undefined;\n    capPausedMs: number;\n    capParkStart: number;\n    compactionCount: number;\n    cumulativeInputTokens: number;\n    cumulativeCacheInputTokens: number;\n    notificationHandle: unknown;\n    notificationFooterMsg: string;\n    notificationFooterElements: CardElement[];\n    notificationHeaderSuffix: string;\n    predictNextRunning: boolean;\n    predictNextDisabled: boolean;\n    turnSummaryRunning: boolean;\n    lastAutoCompressAt: number;\n    lastAutoCompressTokens: number;\n    sender: AsyncSender | undefined;\n    preview: StreamPreview | undefined;\n    progressWriter: CompactProgressWriter | undefined;\n    deleteMode: import(\'./session-card.ts\').DeleteModeState |  /* …truncated — full shape in source */',
   },
   {
     name: 'InvariantFailure',
@@ -4700,11 +4650,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'KvUnit',
-    declaration: 'export interface KvUnit {\n    loadAll(): Promise<{\n        tables: Record<string, Record<string, unknown>>;\n        global: unknown;\n    }>;\n    putRecord(table: string, key: string, value: unknown): Promise<void>;\n    deleteRecord(table: string, key: string): Promise<void>;\n    setGlobal(value: unknown): Promise<void>;\n    close(): Promise<void>;\n}',
+    declaration: 'export interface KvUnit {\n    loadAll(): Promise<{\n        tables: Record<string, Record<string, unknown>>;\n        global: unknown;\n    }>;\n    putRecord(table: string, key: string, value: unknown): Promise<void>;\n    deleteRecord(table: string, key: string): Promise<void>;\n    backupRecord?(table: string, key: string): Promise<string>;\n    setGlobal(value: unknown): Promise<void>;\n    close(): Promise<void>;\n}',
   },
   {
     name: 'KvUnitDescriptor',
-    declaration: 'export interface KvUnitDescriptor {\n    readonly name: string;\n    readonly version: number;\n    readonly tables: readonly string[];\n    readonly hasGlobal: boolean;\n    readonly layout?: \'single\' | \'per-record\';\n}',
+    declaration: 'export interface KvUnitDescriptor {\n    readonly name: string;\n    readonly version: number;\n    readonly tables: readonly string[];\n    readonly hasGlobal: boolean;\n    readonly layout?: \'single\' | \'per-record\';\n    readonly compatibleVersions?: readonly number[];\n}',
   },
   {
     name: 'Language',
@@ -4927,14 +4877,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type MessageId = Branded<\'MessageId\'>;',
   },
   {
-    name: 'MessageSource',
-    declaration: 'export type MessageSource = MessageSourceMap[keyof MessageSourceMap];',
-  },
-  {
-    name: 'MessageSourceMap',
-    declaration: 'export interface MessageSourceMap {\n    user: {\n        kind: \'user\';\n    };\n    plugin: {\n        kind: \'plugin\';\n        plugin: string;\n    } & ContextFormed;\n    model: ModelMessageSource;\n    tool: ToolMessageSource;\n}',
-  },
-  {
     name: 'ModelCatalog',
     declaration: 'export interface ModelCatalog {\n    readonly default: ModelSelection;\n    readonly routableProviders: readonly string[];\n    readonly groups: readonly ModelProviderGroup[];\n    readonly failures: readonly ModelCatalogFailure[];\n}',
   },
@@ -5013,6 +4955,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'OneShotSubagentDescriptorData',
     declaration: 'export interface OneShotSubagentDescriptorData extends SubagentDescriptorBase {\n    readonly mode: \'one-shot\';\n    readonly label?: string;\n}',
+  },
+  {
+    name: 'OptionalSessionSeq',
+    declaration: 'export type OptionalSessionSeq = SessionSeq | null;',
   },
   {
     name: 'ParkOutcome',
@@ -5104,7 +5050,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ProjectionChangeListener',
-    declaration: 'export type ProjectionChangeListener = (session: Session, key: Extract<keyof SessionProjectionMap, string>, value: unknown, seq: number) => void;',
+    declaration: 'export type ProjectionChangeListener = (session: Session, key: Extract<keyof SessionProjectionMap, string>, value: unknown, seq: SessionSeq) => void;',
   },
   {
     name: 'ProjectionCheckpoint',
@@ -5112,15 +5058,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ProjectionCheckpointRow',
-    declaration: 'export interface ProjectionCheckpointRow {\n    ver: number;\n    seq: number;\n    val: unknown;\n}',
+    declaration: 'export interface ProjectionCheckpointRow {\n    ver: number;\n    seq: SessionSeqCursor;\n    val: unknown;\n}',
   },
   {
     name: 'ProjectionDefinition',
-    declaration: 'export interface ProjectionDefinition<K extends keyof SessionProjectionStateMap, S extends SessionProjectionStateMap[K] = SessionProjectionStateMap[K]> {\n    key: K;\n    stateSchema: ZodType<S>;\n    init(header: SessionHeader): NoInfer<S>;\n    apply(state: NoInfer<S>, event: SessionEvent): NoInfer<S>;\n    wire?: K extends keyof SessionProjectionMap ? {\n        viewSchema: ZodType<SessionProjectionMap[K]>;\n        view(state: NoInfer<S>): SessionProjectionMap[K];\n    } : never;\n    stateVersion: number;\n}',
+    declaration: 'export interface ProjectionDefinition<K extends keyof SessionProjectionStateMap, S extends SessionProjectionStateMap[K] = SessionProjectionStateMap[K]> {\n    key: K;\n    stateSchema: ZodType<S>;\n    init(header: SessionHeader, inheritedEventCount: SessionLogOffset): NoInfer<S>;\n    apply(state: NoInfer<S>, event: SessionEvent): NoInfer<S>;\n    wire?: K extends keyof SessionProjectionMap ? {\n        viewSchema: ZodType<SessionProjectionMap[K]>;\n        view(state: NoInfer<S>): SessionProjectionMap[K];\n    } : never;\n    stateVersion: number;\n}',
   },
   {
     name: 'ProjectionSnapshot',
-    declaration: 'export interface ProjectionSnapshot {\n    asOfSeq: number;\n    values: Partial<SessionProjectionMap>;\n}',
+    declaration: 'export interface ProjectionSnapshot {\n    asOfSeq: SessionSeqCursor;\n    values: Partial<SessionProjectionMap>;\n}',
   },
   {
     name: 'PromptAssembly',
@@ -5148,7 +5094,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'PrunedEntry',
-    declaration: 'export interface PrunedEntry {\n    readonly originalSeq: number;\n    readonly replacementSeq: number;\n    readonly callId: ToolCallId;\n    readonly charsBefore: number;\n    readonly charsAfter: number;\n}',
+    declaration: 'export interface PrunedEntry {\n    readonly originalSeq: SessionSeq;\n    readonly replacementSeq: SessionSeq;\n    readonly callId: ToolCallId;\n    readonly charsBefore: number;\n    readonly charsAfter: number;\n}',
   },
   {
     name: 'PruneResult',
@@ -5264,7 +5210,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'RestoredSessionOptions',
-    declaration: 'export interface RestoredSessionOptions {\n    readonly seed: SessionEvent[];\n    readonly meta: SessionHeader;\n    readonly seedSource: \'persistence\';\n}',
+    declaration: 'export interface RestoredSessionOptions {\n    readonly seed: SessionEvent[];\n    readonly meta: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    readonly seedSource: \'persistence\';\n}',
   },
   {
     name: 'ResumeAgentOptions',
@@ -5340,11 +5286,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SendTeamMessageRequest',
-    declaration: 'export interface SendTeamMessageRequest {\n    readonly target: string;\n    readonly content: ContentBlock[];\n    readonly delivery: \'quiet\' | \'wakeup\';\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface SendTeamMessageRequest {\n    readonly target: string;\n    readonly content: ContentBlock[];\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SendTeamMessageResult',
     declaration: 'export interface SendTeamMessageResult {\n    readonly messageId: TeamMessageId;\n    readonly status: \'accepted\' | \'queued\';\n}',
+  },
+  {
+    name: 'SessionAccess',
+    declaration: 'export type SessionAccess = \'read\' | \'write\';',
   },
   {
     name: 'SessionAddress',
@@ -5392,7 +5342,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionEvent',
-    declaration: 'export type SessionEvent<T extends SessionEventType = SessionEventType> = {\n    [K in SessionEventType]: {\n        type: K;\n        seq: number;\n        time: number;\n        data: SessionEventMap[K];\n        ignorable?: true;\n    } & (K extends SurfaceEventType ? {\n        sourceEventSeqs?: number[];\n        surfaceOp?: SurfaceOp;\n    } : object);\n}[T];',
+    declaration: 'export type SessionEvent<T extends SessionEventType = SessionEventType> = {\n    [K in SessionEventType]: {\n        type: K;\n        seq: SessionSeq;\n        time: number;\n        data: SessionEventMap[K];\n        ignorable?: true;\n    } & (K extends SurfaceEventType ? {\n        sourceEventSeqs?: SessionSeq[];\n        surfaceOp?: SurfaceOp;\n    } : object);\n}[T];',
   },
   {
     name: 'SessionEventEntry',
@@ -5408,11 +5358,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionEventReadRequest',
-    declaration: 'export interface SessionEventReadRequest {\n    sessionId: SessionId;\n    seq: number;\n    before?: number;\n    after?: number;\n}',
+    declaration: 'export interface SessionEventReadRequest {\n    sessionId: SessionId;\n    seq: SessionSeq;\n    before?: number;\n    after?: number;\n}',
   },
   {
     name: 'SessionEventRecord',
-    declaration: 'export interface SessionEventRecord {\n    sessionId: SessionId;\n    seq: number;\n    type: SessionEventType;\n    time: number;\n    surface: SessionEventSurface;\n}',
+    declaration: 'export interface SessionEventRecord {\n    sessionId: SessionId;\n    seq: SessionSeq;\n    type: SessionEventType;\n    time: number;\n    surface: SessionEventSurface;\n}',
   },
   {
     name: 'SessionEventResultFilter',
@@ -5440,7 +5390,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionEventTrace',
-    declaration: 'export interface SessionEventTrace {\n    target: SessionEventRecord;\n    replacedBy?: number;\n    replacementChain: number[];\n    replacedEventSeqs: number[];\n    sourceEventSeqs: number[];\n    derivedEventSeqs: number[];\n}',
+    declaration: 'export interface SessionEventTrace {\n    target: SessionEventRecord;\n    replacedBy?: SessionSeq;\n    replacementChain: SessionSeq[];\n    replacedEventSeqs: SessionSeq[];\n    sourceEventSeqs: SessionSeq[];\n    derivedEventSeqs: SessionSeq[];\n}',
   },
   {
     name: 'SessionEventTraceObservation',
@@ -5448,7 +5398,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionEventTraceRequest',
-    declaration: 'export interface SessionEventTraceRequest {\n    sessionId: SessionId;\n    seq: number;\n}',
+    declaration: 'export interface SessionEventTraceRequest {\n    sessionId: SessionId;\n    seq: SessionSeq;\n}',
   },
   {
     name: 'SessionEventType',
@@ -5456,11 +5406,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionEventWindow',
-    declaration: 'export interface SessionEventWindow {\n    session: SessionHeader;\n    target: SessionEvent;\n    events: SessionEvent[];\n    startSeq: number;\n    endSeq: number;\n}',
+    declaration: 'export interface SessionEventWindow {\n    session: SessionHeader;\n    inheritedEventCount: SessionLogOffset;\n    target: SessionEvent;\n    events: SessionEvent[];\n    startSeq: SessionSeq;\n    endSeq: SessionSeq;\n}',
   },
   {
     name: 'SessionFollowFrame',
-    declaration: 'export type SessionFollowFrame = {\n    readonly type: \'snapshot\';\n    readonly header: SessionHeader;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly projections: SessionProjectionBaseline;\n} | SessionEventEntry;',
+    declaration: 'export type SessionFollowFrame = {\n    readonly type: \'snapshot\';\n    readonly header: SessionWireHeader;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly projections: SessionProjectionBaseline;\n} | SessionEventEntry;',
   },
   {
     name: 'SessionFollowRequest',
@@ -5479,8 +5429,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionForkValue {\n    readonly sessionId: SessionId;\n}',
   },
   {
+    name: 'SessionHandle',
+    declaration: 'export interface SessionHandle extends AsyncDisposable {\n    readonly id: SessionId;\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n    readonly access: SessionAccess;\n    read(offset?: number, length?: number, options?: SessionHandleReadOptions): Promise<readonly SessionEvent[]>;\n    append(events: readonly SessionEvent[], options?: SessionHandleAppendOptions): Promise<void>;\n    flush(options?: SessionHandleFlushOptions): Promise<void>;\n    close(): Promise<void>;\n}',
+  },
+  {
+    name: 'SessionHandleAppendOptions',
+    declaration: 'export interface SessionHandleAppendOptions {\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'SessionHandleFlushOptions',
+    declaration: 'export interface SessionHandleFlushOptions {\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'SessionHandleReadOptions',
+    declaration: 'export interface SessionHandleReadOptions {\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
     name: 'SessionHeader',
-    declaration: 'export interface SessionHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly seedLength?: number;\n    readonly origin?: SessionOrigin;\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
+    declaration: 'export interface SessionHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly isSeeded: boolean;\n    readonly origin?: SessionOrigin;\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
   },
   {
     name: 'SessionHistoryRecord',
@@ -5492,7 +5458,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionInspection',
-    declaration: 'export interface SessionInspection {\n    readonly meta: SessionHeader;\n    readonly events: readonly SessionEvent[];\n}',
+    declaration: 'export interface SessionInspection extends SessionStorageMetadata {\n    readonly events: readonly SessionEvent[];\n}',
   },
   {
     name: 'SessionJob',
@@ -5515,12 +5481,12 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionListValue {\n    readonly items: readonly SessionSummary[];\n}',
   },
   {
-    name: 'SessionLocation',
-    declaration: 'export interface SessionLocation {\n    readonly kind: string;\n    readonly path: string;\n}',
+    name: 'SessionLogOffset',
+    declaration: 'export type SessionLogOffset = BrandedNumber<\'SessionLogOffset\'>;',
   },
   {
     name: 'SessionLogSnapshot',
-    declaration: 'export interface SessionLogSnapshot {\n    session: SessionHeader;\n    events: SessionEvent[];\n}',
+    declaration: 'export interface SessionLogSnapshot {\n    session: SessionHeader;\n    inheritedEventCount: SessionLogOffset;\n    events: SessionEvent[];\n}',
   },
   {
     name: 'SessionManager',
@@ -5528,7 +5494,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionObservation',
-    declaration: 'export interface SessionObservation extends Disposable {\n    readonly source: \'live\' | \'prepared\';\n    readonly header: SessionHeader;\n    readonly events: readonly SessionEvent[];\n    readonly cursor: number;\n    readonly revision?: SessionPersistenceRevision;\n    readonly projections?: ProjectionSnapshot;\n    retain(): SessionObservation;\n}',
+    declaration: 'export interface SessionObservation extends Disposable {\n    readonly source: \'live\' | \'prepared\';\n    readonly header: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffsetType;\n    readonly events: readonly SessionEvent[];\n    readonly cursor: SessionSeqCursor;\n    readonly revision?: SessionPersistenceRevision;\n    readonly projections?: ProjectionSnapshot;\n    retain(): SessionObservation;\n}',
   },
   {
     name: 'SessionObservationOptions',
@@ -5555,20 +5521,28 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionPageRequest {\n    readonly address: SessionAddress;\n    readonly throughSeq: number;\n    readonly beforeSeq?: number;\n    readonly maxMessages?: number;\n}',
   },
   {
+    name: 'SessionPersistenceCreateOptions',
+    declaration: 'export interface SessionPersistenceCreateOptions {\n    readonly signal?: AbortSignal;\n    readonly inheritedEventCount?: SessionLogOffset;\n}',
+  },
+  {
+    name: 'SessionPersistenceListOptions',
+    declaration: 'export interface SessionPersistenceListOptions {\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
+    name: 'SessionPersistenceOpenOptions',
+    declaration: 'export interface SessionPersistenceOpenOptions {\n    readonly signal?: AbortSignal;\n}',
+  },
+  {
     name: 'SessionPersistenceRevision',
     declaration: 'export type SessionPersistenceRevision = Branded<\'SessionPersistenceRevision\'>;',
   },
   {
     name: 'SessionPersistenceSnapshot',
-    declaration: 'export interface SessionPersistenceSnapshot {\n    header: SessionHeader;\n    revision: SessionPersistenceRevision;\n}',
+    declaration: 'export interface SessionPersistenceSnapshot {\n    readonly header: SessionHeader;\n    readonly revision: SessionPersistenceRevision;\n    readonly eventCount?: number;\n    readonly sizeBytes?: number;\n}',
   },
   {
-    name: 'SessionPreparation',
-    declaration: 'export class SessionPreparation implements Disposable {\n    readonly session: Session;\n    static create(session: Session, options?: SessionPreparationOptions): SessionPreparation;\n    [Symbol.dispose](): void;\n}',
-  },
-  {
-    name: 'SessionPreparationOptions',
-    declaration: 'export interface SessionPreparationOptions {\n    readonly release?: () => void;\n}',
+    name: 'SessionPersistenceStatOptions',
+    declaration: 'export interface SessionPersistenceStatOptions {\n    readonly signal?: AbortSignal;\n}',
   },
   {
     name: 'SessionProjectionBaseline',
@@ -5609,10 +5583,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionQueuedItem',
     declaration: 'export interface SessionQueuedItem {\n    readonly id: MessageId;\n    readonly placement: \'queued\' | \'steering\' | \'context\';\n    readonly rpcId?: SessionRequestId;\n    readonly message: {\n        readonly id: MessageId;\n        readonly content: readonly JsonValue[];\n    };\n}',
-  },
-  {
-    name: 'SessionRawArtifact',
-    declaration: 'export interface SessionRawArtifact {\n    readonly meta: SessionHeader;\n    readonly filename: string;\n    readonly content: string;\n}',
   },
   {
     name: 'SessionRecord',
@@ -5683,12 +5653,24 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SessionSelectModelValue {\n    readonly selected: ModelSelection;\n}',
   },
   {
+    name: 'SessionSeq',
+    declaration: 'export type SessionSeq = BrandedNumber<\'SessionSeq\'>;',
+  },
+  {
+    name: 'SessionSeqCursor',
+    declaration: 'export type SessionSeqCursor = SessionSeq | -1;',
+  },
+  {
     name: 'SessionStartOptions',
-    declaration: 'export interface SessionStartOptions {\n    sessionKey: string;\n    interactiveSlotKey?: string;\n    subtask?: {\n        attended: boolean;\n        noReport: boolean;\n        researchAssistant?: boolean;\n    };\n    persona?: {\n        prompt: string;\n        bypassPermissions: boolean;\n        forceMode: string | undefined;\n    };\n    workDir?: string;\n    feishuWorkspace?: FeishuWorkspaceInfo;\n    venv?: {\n        virtualEnv: string;\n    };\n}',
+    declaration: 'export interface SessionStartOptions {\n    sessionKey: string;\n    interactiveSlotKey?: string;\n    subtask?: {\n        attended: boolean;\n        noReport: boolean;\n        researchAssistant?: boolean;\n    };\n    persona?: {\n        prompt: string;\n        bypassPermissions: boolean;\n        forceMode: string | undefined;\n    };\n    workDir?: string;\n    spawnMode?: string;\n    feishuWorkspace?: FeishuWorkspaceInfo;\n    venv?: {\n        virtualEnv: string;\n    };\n}',
   },
   {
     name: 'SessionStartSource',
     declaration: 'export type SessionStartSource = \'startup\' | \'resume\' | \'clear\' | \'compact\';',
+  },
+  {
+    name: 'SessionStorageMetadata',
+    declaration: 'export interface SessionStorageMetadata {\n    readonly meta: SessionHeader;\n    readonly inheritedEventCount: SessionLogOffset;\n}',
   },
   {
     name: 'SessionSummary',
@@ -5696,7 +5678,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionSurfaceSnapshot',
-    declaration: 'export interface SessionSurfaceSnapshot {\n    session: SessionHeader;\n    capturedThroughSeq: number | null;\n    events: SurfaceEvent[];\n}',
+    declaration: 'export interface SessionSurfaceSnapshot {\n    session: SessionHeader;\n    inheritedEventCount: SessionLogOffset;\n    capturedThroughSeq: OptionalSessionSeq;\n    events: SurfaceEvent[];\n}',
   },
   {
     name: 'SessionTelemetryRecord',
@@ -5716,7 +5698,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionTitleEventData',
-    declaration: 'export interface SessionTitleEventData {\n    readonly title: string;\n    readonly messageSeqs: number[];\n    readonly source: SessionTitleSource;\n}',
+    declaration: 'export interface SessionTitleEventData {\n    readonly title: string;\n    readonly messageSeqs: SessionSeq[];\n    readonly source: SessionTitleSource;\n}',
   },
   {
     name: 'SessionTitleModelProvenance',
@@ -5740,11 +5722,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionTitleProviderResult',
-    declaration: 'export interface SessionTitleProviderResult {\n    readonly title: string;\n    readonly messageSeqs: readonly number[];\n    readonly model?: SessionTitleModelProvenance;\n}',
+    declaration: 'export interface SessionTitleProviderResult {\n    readonly title: string;\n    readonly messageSeqs: readonly SessionSeq[];\n    readonly model?: SessionTitleModelProvenance;\n}',
   },
   {
     name: 'SessionTitleSnapshot',
-    declaration: 'export interface SessionTitleSnapshot extends SessionTitleEventData {\n    readonly eventSeq: number;\n    readonly updatedAt: number;\n}',
+    declaration: 'export interface SessionTitleSnapshot extends SessionTitleEventData {\n    readonly eventSeq: SessionSeq;\n    readonly updatedAt: number;\n}',
   },
   {
     name: 'SessionTitleSource',
@@ -5752,7 +5734,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionTitleUserMessage',
-    declaration: 'export interface SessionTitleUserMessage {\n    readonly seq: number;\n    readonly text: string;\n}',
+    declaration: 'export interface SessionTitleUserMessage {\n    readonly seq: SessionSeq;\n    readonly text: string;\n}',
   },
   {
     name: 'SessionUpdateQueueRequest',
@@ -5764,7 +5746,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionWireEvent',
-    declaration: 'export interface SessionWireEvent {\n    readonly type: string;\n    readonly seq: number;\n    readonly time: number;\n    readonly data: JsonValue;\n    readonly ignorable?: true;\n    readonly sourceEventSeqs?: number[];\n    readonly surfaceOp?: SurfaceOp;\n}',
+    declaration: 'export interface SessionWireEvent {\n    readonly type: string;\n    readonly seq: number;\n    readonly time: number;\n    readonly data: JsonValue;\n    readonly ignorable?: true;\n    readonly sourceEventSeqs?: number[];\n    readonly surfaceOp?: SessionWireSurfaceOp;\n}',
+  },
+  {
+    name: 'SessionWireHeader',
+    declaration: 'export interface SessionWireHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly seedLength?: number;\n    readonly origin?: \'subagent\';\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
+  },
+  {
+    name: 'SessionWireSurfaceOp',
+    declaration: 'export type SessionWireSurfaceOp = \'append\' | {\n    readonly op: \'replace\';\n    readonly start: number;\n    readonly end: number;\n};',
   },
   {
     name: 'SettingsApplies',
@@ -5952,7 +5942,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'StreamPreview',
-    declaration: 'export class StreamPreview {\n    fullText: string;\n    previewMsgID: unknown;\n    degraded: boolean;\n    failedPatchStreak: number;\n    progressEntries: ProgressEntry[];\n    skillNames: string[];\n    analysisText: string;\n    analysisTruncated: boolean;\n    completed: boolean;\n    waiting: boolean;\n    failed: boolean;\n    stoppedCardRendered: boolean;\n    timer: TimerHandle | undefined;\n    placedAtMs: number;\n    lastProgressFlush: number;\n    readonly sessionKey: string;\n    constructor(cfg: StreamPreviewCfg, p: Platform, replyCtx: unknown, transform: ((s: string) => string) | undefined, as: AsyncSender | undefined, sessionKey = \'\');\n    canPreview(): boolean;\n    async showPlaceholder(placeholderText: string): Promise<void>;\n    async appendText(text: string): Promise<void>;\n    progressStatusLocked(): ProgressStatus;\n    async freeze(): Promise<void>;\n    async completeAndDetach(park: boolean = false): Promise<unknown>;\n    async settleParkedCard(handle: unknown, outcome: ParkOutcome): Promise<void>;\n    async resumeFromFreeze(): Promise<void>;\n    async discard(): Promise<void>;\n    async finish(finalTextIn: string): Promise<boolean>;\n    async detachPreview(): Promise<void>;\n    async bumpToEnd(): Promise<void>;\n    cardMessageID(): string;\n    async markRecalled(): Promise<void>;\n    needsDoneReaction(): boolean;\n    hasStarted(): boolean;\n    inProgressMode(): boolean;\n    async forceStart(text: string): Promise<void>;\n    async updateProgress(text: string): Promise< /* …truncated — full shape in source */',
+    declaration: 'export class StreamPreview {\n    fullText: string;\n    previewMsgID: unknown;\n    degraded: boolean;\n    failedPatchStreak: number;\n    progressEntries: ProgressEntry[];\n    skillNames: string[];\n    analysisText: string;\n    pinnedAnalysis: string;\n    analysisTruncated: boolean;\n    completed: boolean;\n    waiting: boolean;\n    failed: boolean;\n    stoppedCardRendered: boolean;\n    timer: TimerHandle | undefined;\n    placedAtMs: number;\n    lastProgressFlush: number;\n    readonly sessionKey: string;\n    constructor(cfg: StreamPreviewCfg, p: Platform, replyCtx: unknown, transform: ((s: string) => string) | undefined, as: AsyncSender | undefined, sessionKey = \'\');\n    canPreview(): boolean;\n    async showPlaceholder(placeholderText: string): Promise<void>;\n    async appendText(text: string): Promise<void>;\n    progressStatusLocked(): ProgressStatus;\n    async freeze(): Promise<void>;\n    async completeAndDetach(park: boolean = false): Promise<unknown>;\n    async settleParkedCard(handle: unknown, outcome: ParkOutcome): Promise<void>;\n    async resumeFromFreeze(): Promise<void>;\n    async discard(): Promise<void>;\n    async finish(finalTextIn: string): Promise<boolean>;\n    async detachPreview(): Promise<void>;\n    async bumpToEnd(): Promise<void>;\n    cardMessageID(): string;\n    async markRecalled(): Promise<void>;\n    needsDoneReaction(): boolean;\n    hasStarted(): boolean;\n    inProgressMode(): boolean;\n    async forceStart(text: string): Promise<void>;\n    async updateProg /* …truncated — full shape in source */',
   },
   {
     name: 'StreamPreviewCfg',
@@ -5973,10 +5963,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SubagentDescriptorData',
     declaration: 'export type SubagentDescriptorData = OneShotSubagentDescriptorData | ContinuableSubagentDescriptorData;',
-  },
-  {
-    name: 'SubagentFollowupOptions',
-    declaration: 'export interface SubagentFollowupOptions {\n    readonly source: MessageSource;\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SubagentInterruptAuthority',
@@ -6036,11 +6022,15 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SubagentRuntime',
-    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config: z<SubagentRuntimeConfig>;\n    constructor(ctx: Context, config: SubagentRuntimeConfig = {});\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async followup(parent: Agent, childId: SessionId, content: ContentBlock[], options: SubagentFollowupOptions): Promise<MessageId>;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async reportFrom(child: Agent, content: ContentBlock[], options: SubagentReportOptions): Promise<MessageId>;\n    registerContinuableSetup(contribution: ContinuableSetupContribution): () => void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentListEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote(\'list\')\n    async remoteExportList(parentSessionId: SessionId, signal: AbortSignal): Promise<SubagentCatalog>;\n    @Remote(\'prompt\')\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote(\'interruptByParent\')\n    interruptByParent(childSessionId: SessionId, parentSessionId: SessionId, mode: \'continuable\'): SubagentInterruptReceipt;\n    registerProvider(provider: Su /* …truncated — full shape in source */',
+    declaration: 'export class SubagentRuntime extends TypertRemoteService {\n    static Config: z<SubagentRuntimeConfig>;\n    constructor(ctx: Context, config: SubagentRuntimeConfig = {});\n    async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart>;\n    async sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: SubagentSendMessageOptions): Promise<MessageId>;\n    async reportFrom(child: Agent, content: ContentBlock[], options: SubagentReportOptions): Promise<MessageId>;\n    registerContinuableSetup(contribution: ContinuableSetupContribution): () => void;\n    interrupt(targetSessionId: SessionId, authority: SubagentInterruptAuthority): void;\n    async drainContinuableDescendants(parents: readonly Agent[]): Promise<void>;\n    async drainContinuableChildren(parent: Agent, childIds: readonly SessionId[]): Promise<void>;\n    listChildren(parentSessionId: SessionId, signal?: AbortSignal): Promise<SubagentListEntry[]>;\n    listDescendants(rootSessionId: SessionId, signal?: AbortSignal): Promise<SubagentDescendantListEntry[]>;\n    @Remote(\'list\')\n    async remoteExportList(parentSessionId: SessionId, signal: AbortSignal): Promise<SubagentCatalog>;\n    @Remote(\'prompt\')\n    async prompt(request: SubagentPromptRequest, signal: AbortSignal): Promise<SubagentPromptReceipt>;\n    @Remote(\'interruptByParent\')\n    interruptByParent(childSessionId: SessionId, parentSessionId: SessionId, mode: \'continuable\'): SubagentInterruptReceipt;\n    registerProvider(provi /* …truncated — full shape in source */',
   },
   {
     name: 'SubagentRuntimeConfig',
     declaration: 'export interface SubagentRuntimeConfig {\n    settlementNotice?: SubagentSettlementDelivery;\n}',
+  },
+  {
+    name: 'SubagentSendMessageOptions',
+    declaration: 'export interface SubagentSendMessageOptions {\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'SubagentSettlementDelivery',
@@ -6128,7 +6118,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SurfaceOp',
-    declaration: 'export type SurfaceOp = \'append\' | {\n    op: \'replace\';\n    start: number;\n    end: number;\n};',
+    declaration: 'export type SurfaceOp = \'append\' | {\n    op: \'replace\';\n    start: SessionSeq;\n    end: SessionSeq;\n};',
   },
   {
     name: 'SystemPrompt',
@@ -6268,7 +6258,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TokenMeasurement',
-    declaration: 'export interface TokenMeasurement {\n    readonly logRevision: number;\n    readonly baseline: TokenMeasurementBaseline;\n    readonly surfaceDeltaTokens: number;\n    readonly totalTokens: number;\n    readonly surfaceTokens: number;\n    readonly nodes: readonly TokenSurfaceNode[];\n}',
+    declaration: 'export interface TokenMeasurement {\n    readonly logRevision: SessionLogOffset;\n    readonly baseline: TokenMeasurementBaseline;\n    readonly surfaceDeltaTokens: number;\n    readonly totalTokens: number;\n    readonly surfaceTokens: number;\n    readonly nodes: readonly TokenSurfaceNode[];\n}',
   },
   {
     name: 'TokenMeasurementBaseline',
@@ -6276,7 +6266,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'TokenSurfaceNode',
-    declaration: 'export interface TokenSurfaceNode {\n    readonly seq: number;\n    readonly tokens: number;\n    readonly heuristicTokens: number;\n}',
+    declaration: 'export interface TokenSurfaceNode {\n    readonly seq: SessionSeq;\n    readonly tokens: number;\n    readonly heuristicTokens: number;\n}',
   },
   {
     name: 'TokenUsage',
@@ -6501,6 +6491,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'UpdateTeamTaskRequest',
     declaration: 'export interface UpdateTeamTaskRequest {\n    readonly taskId: TeamTaskId;\n    readonly expectedRevision: number;\n    readonly action: TeamTaskAction;\n    readonly subject?: string;\n    readonly description?: string;\n    readonly blockedBy?: readonly TeamTaskId[];\n    readonly writeScopes?: readonly string[];\n    readonly owner?: string;\n}',
+  },
+  {
+    name: 'UsageProvider',
+    declaration: 'export interface UsageProvider {\n    name(): string;\n    summary(): string;\n    refresh(): void;\n}',
   },
   {
     name: 'UserMessage',

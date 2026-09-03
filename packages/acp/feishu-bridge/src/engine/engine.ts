@@ -1020,7 +1020,7 @@ export class Engine {
    * subgroups); '' keeps spawned groups on the project default route
    * (profile `projects[].agent.spawnProvider`).
    */
-  spawnProvider = ''
+  spawnProvider: string = ''
   /** Integrate-branch override for /done merged auto-removal; '' uses each worktree's recorded base branch. */
   private spawnIntegrateBranch = ''
   /** /spawn //fork RAM guard thresholds in percent; 0 disables a tier (Go spawnMemWarnPct/BlockPct). */
@@ -6020,7 +6020,7 @@ export class Engine {
    * @param args - Turn token counters and self-reported context percent.
    * @param sessionKey - Completing session; its effective route name gates the ⌛ quota line.
    */
-  async buildCompletionUsage(args: BuildCompletionUsageArgs, sessionKey = ''): Promise<void> {
+  async buildCompletionUsage(args: BuildCompletionUsageArgs, sessionKey: string = ''): Promise<void> {
     const activeProviderName = asProviderSwitcher(this.agent)?.getActiveProvider(sessionKey)?.name ?? ''
     await buildCompletionUsageFields(this.usage, this.showContextIndicator, this.usageProviders, this.baseWorkDir, activeProviderName, args)
   }
@@ -6109,7 +6109,7 @@ export class Engine {
     agentSession: AgentSession | undefined,
     workspaceDir: string,
     contextLeft: string,
-    sessionKey = '',
+    sessionKey: string = '',
   ): Promise<string> {
     if (!this.replyFooterEnabled || agent === undefined) return ''
     return buildReplyFooterText(

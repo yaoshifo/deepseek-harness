@@ -10,6 +10,7 @@ import { RpcId } from '../src/client/api.ts'
 import type { SessionOrigin } from '@deepseek-ai/dsh-session/types'
 import { decodeStorageRecord } from '@deepseek-ai/dsh-session/chunk-rows'
 import type { ChunkRow } from '@deepseek-ai/dsh-session/chunk-rows'
+import { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import {
   createFixtureConnectionRpc,
   createFixtureFaces,
@@ -73,11 +74,11 @@ function historyEvents(records: readonly FixtureHistoryRecord[]): SessionEvent[]
 function chunkRow(event: FixtureChunkRowEvent): ChunkRow {
   switch (event.type) {
     case 'chunkrow/text-chunks':
-      return { type: 'text-chunks', seq0: event.seq, time0: event.time, data: event.data }
+      return { type: 'text-chunks', seq0: SessionSeq(event.seq), time0: event.time, data: event.data }
     case 'chunkrow/reasoning-chunks':
-      return { type: 'reasoning-chunks', seq0: event.seq, time0: event.time, data: event.data }
+      return { type: 'reasoning-chunks', seq0: SessionSeq(event.seq), time0: event.time, data: event.data }
     case 'chunkrow/tool-call-chunks':
-      return { type: 'tool-call-chunks', seq0: event.seq, time0: event.time, data: event.data }
+      return { type: 'tool-call-chunks', seq0: SessionSeq(event.seq), time0: event.time, data: event.data }
   }
 }
 

@@ -43,14 +43,12 @@ function parentAgent(id: string, events: SessionEvent[]): ParentAgent {
 /** A persisted source the seed path can fall back to (Go's on-disk transcript). */
 function fakePersistence(stored: Map<string, SessionEvent[]>): DshPersistenceLike {
   return {
-    inspect: async (id: unknown) => {
+    open: async (id: unknown, _access: 'read') => {
       const events = stored.get(String(id))
       if (events === undefined) throw new Error(`session "${String(id)}" not found`)
-      const meta = { version: 0, id: String(id), createdAt: 0 } as SessionHeader
-      return { meta, events }
+      const header = { version: 0, id: String(id), createdAt: 0 } as SessionHeader
+      return { header, read: async () => events }
     },
-    create: async () => {},
-    append: async () => {},
     list: async () => [],
   }
 }
@@ -119,7 +117,8 @@ describe('fork session seed', () => {
     expect(String(opts.meta?.parentSession)).toBe('cc-parent-1')
     // both complete turns plus the open turn's user message, closed with a
     // synthetic turn/end (seq 10) — the flying input is no longer dropped
-    expect(opts.meta?.seedLength).toBe(11)
+    expect(opts.meta?.isSeeded).toBe(true)
+    expect(opts.inheritedEventCount).toBe(11)
     expect((opts.seed ?? []).map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     const closer = opts.seed!.at(-1)! as SessionEvent<'turn/end'>
     expect(closer.type).toBe('turn/end')
@@ -157,7 +156,8 @@ describe('fork session seed', () => {
     })
     expect(settled.data.message.content[0]).toMatchObject({ type: 'tool-result', isError: true })
     expect((seed[11]! as SessionEvent<'turn/end'>).data.reason).toEqual({ kind: 'interrupted' })
-    expect(opts.meta?.seedLength).toBe(12)
+    expect(opts.meta?.isSeeded).toBe(true)
+    expect(opts.inheritedEventCount).toBe(12)
   })
 
   it('creates without a seed when the parent has no completed turn', async () => {
@@ -170,7 +170,8 @@ describe('fork session seed', () => {
     expect(opts.seed).toBeUndefined()
     // Fork lineage is recorded even with nothing to inherit.
     expect(String(opts.meta?.parentSession)).toBe('cc-parent-2')
-    expect(opts.meta?.seedLength).toBe(0)
+    expect(opts.meta?.isSeeded).toBe(true)
+    expect(opts.inheritedEventCount).toBe(0)
   })
 
   it('degrades to a fresh session when the source is not live', async () => {
@@ -198,7 +199,8 @@ describe('fork session seed', () => {
     expect((opts.seed ?? []).map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     expect((opts.seed!.at(-1)! as SessionEvent<'turn/end'>).data).toEqual({ turn: 0, reason: { kind: 'interrupted' } })
     expect(String(opts.meta?.parentSession)).toBe('cc-cold')
-    expect(opts.meta?.seedLength).toBe(11)
+    expect(opts.meta?.isSeeded).toBe(true)
+    expect(opts.inheritedEventCount).toBe(11)
   })
 
   it('prefers the live parent over the stale persisted log', async () => {

@@ -6,9 +6,6 @@
 - id: tool-subagent-list-agents
   disabled: true
 
-- id: tool-subagent-report
-  disabled: true
-
 - id: tool-subagent
   config:
     provider: spawn
@@ -20,6 +17,9 @@
     provider: fork
     toolName: subagent_fork
     backgroundMode: one-shot
+
+- id: tool-subagent-report
+  disabled: true
 
 - insert:
     - id: agent-team

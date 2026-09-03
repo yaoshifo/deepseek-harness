@@ -17,32 +17,26 @@ import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 /** Structural slice of the sessionPersistence service the adapter consumes. */
 interface FakePersistence {
   stored: Map<string, { meta: SessionHeader; events: SessionEvent[] }>
-  creates: SessionHeader[]
-  appends: { id: string; events: SessionEvent[] }[]
-  inspect(id: unknown): Promise<{ meta: SessionHeader; events: SessionEvent[] }>
-  create(meta: SessionHeader): Promise<void>
-  append(id: unknown, events: readonly SessionEvent[]): Promise<void>
-  list(signal?: AbortSignal): Promise<SessionHeader[]>
+  /** Ids opened with non-read access; the fork-at flow must never write directly. */
+  writes: string[]
+  open(id: unknown, access: 'read'): Promise<{
+    header: SessionHeader
+    read(offset?: number, length?: number): Promise<readonly SessionEvent[]>
+  }>
+  list(signal?: AbortSignal): Promise<Array<{ header: SessionHeader }>>
 }
 
 function fakePersistence(stored: Map<string, { meta: SessionHeader; events: SessionEvent[] }>): FakePersistence {
   const persistence: FakePersistence = {
     stored,
-    creates: [],
-    appends: [],
-    inspect: async (id: unknown) => {
+    writes: [],
+    open: async (id: unknown, access: 'read') => {
+      if (access !== 'read') persistence.writes.push(String(id))
       const hit = stored.get(String(id))
       if (hit === undefined) throw new Error(`session "${String(id)}" not found`)
-      return hit
+      return { header: hit.meta, read: async () => hit.events }
     },
-    create: async (meta: SessionHeader) => {
-      if (stored.has(meta.id)) throw new Error(`session "${meta.id}" already exists`)
-      persistence.creates.push(meta)
-    },
-    append: async (id: unknown, events: readonly SessionEvent[]) => {
-      persistence.appends.push({ id: String(id), events: [...events] })
-    },
-    list: async () => [...stored.values()].map(hit => hit.meta),
+    list: async () => [...stored.values()].map(hit => ({ header: hit.meta })),
   }
   return persistence
 }
@@ -146,8 +140,7 @@ describe('prepareForkAtSession', () => {
     expect(newID).not.toBe('cc-parent')
     expect(newID).toMatch(/^cc-\d{8}-\d{6}-/)
     // no persisted pre-copy: the child's own log is written by its session
-    expect(persistence.creates).toHaveLength(0)
-    expect(persistence.appends).toHaveLength(0)
+    expect(persistence.writes).toHaveLength(0)
     expect(creates).toHaveLength(0)
   })
 
@@ -171,7 +164,8 @@ describe('prepareForkAtSession', () => {
     // truncated at the FIRST turn/end — the logout turn is rolled back
     expect((creates[0]?.seed as SessionEvent[]).map(e => e.seq)).toEqual([0, 1, 2, 3])
     // the whole inherited prefix is marked as seed
-    expect(creates[0]?.meta?.seedLength).toBe(4)
+    expect(creates[0]?.meta?.isSeeded).toBe(true)
+    expect(creates[0]?.inheritedEventCount).toBe(4)
     expect(session.currentSessionID()).toBe(newID)
   })
 
@@ -204,7 +198,7 @@ describe('prepareForkAtSession', () => {
     const adapter = newAdapter(ctx)
     await expect(adapter.prepareForkAtSession('cc-parent', '/w', 'text', 'app', 1724309999000))
       .rejects.toThrow('within window')
-    expect(persistence.creates).toHaveLength(0)
+    expect(persistence.writes).toHaveLength(0)
   })
 
   it('rejects when the sessionPersistence service is unavailable', async () => {
@@ -251,7 +245,8 @@ describe('prepareForkAtSession', () => {
     expect(settled.data.message.source).toEqual({ kind: 'tool', callId: 'call-ask' })
     expect((seed[10] as SessionEvent<'turn/end'>).data.reason).toEqual({ kind: 'interrupted' })
     expect(seed.map(e => e.seq)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
-    expect(creates[0]?.meta?.seedLength).toBe(11)
+    expect(creates[0]?.meta?.isSeeded).toBe(true)
+    expect(creates[0]?.inheritedEventCount).toBe(11)
   })
 })
 

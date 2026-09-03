@@ -17,10 +17,10 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { stat } from 'node:fs/promises'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { deliverSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import {
@@ -109,7 +109,9 @@ export interface DshAgentHandleLike {
 export interface DshCreateOptionsLike {
   sessionId?: unknown
   resumeSessionId?: unknown
-  meta?: { cwd?: string; parentSession?: unknown; seedLength?: number; origin?: 'subagent' | 'oneshot' }
+  meta?: { cwd?: string; parentSession?: unknown; isSeeded?: boolean; origin?: 'subagent' | 'oneshot' }
+  /** Exact fork-inherited prefix length when `meta.isSeeded` is set. */
+  inheritedEventCount?: import('@deepseek-ai/dsh-session').SessionLogOffset
   /** Fork seed: the parent's seedable prefix (see startSession). */
   seed?: readonly SessionEvent[]
   agentOptions?: { provider?: string; model?: string; reasoningEffort?: string }
@@ -161,21 +163,18 @@ export interface DshSessionProjectionsLike {
 }
 
 /**
- * Structural slice of the `sessionPersistence` service the fork-at path
- * consumes: read the source log and persist the truncated copy. The profile's
- * jsonl backend (same on-disk format as Go's session root) satisfies it.
+ * Structural slice of the `sessionPersistence` service the fork paths
+ * consume: read a stored log (fork seed, fork-at staging, cold recent-turn
+ * windows) and list stored headers. The profile's jsonl backend satisfies it.
  */
 export interface DshPersistenceLike {
-  /** Immutable header plus current logical event log (live snapshot for a live session). */
-  inspect(id: unknown): Promise<{ meta: SessionHeader; events: readonly SessionEvent[] }>
-  /** Register a new session's metadata (lazy until the first append). */
-  create(meta: SessionHeader): Promise<void>
-  /** Durably persist a contiguous event batch. */
-  append(id: unknown, events: readonly SessionEvent[]): Promise<void>
+  /** Read-only handle over one stored session: header plus the logical log. */
+  open(id: unknown, access: 'read'): Promise<{
+    header: SessionHeader
+    read(offset?: number, length?: number): Promise<readonly SessionEvent[]>
+  }>
   /** Lightweight listing from metadata, without a full-log parse. */
-  list(signal?: AbortSignal): Promise<SessionHeader[]>
-  /** Absolute log-file path for a header without touching the filesystem (jsonl backend `locate`); absent on backends without files. */
-  locate?(meta: SessionHeader): { path: string }
+  list(signal?: AbortSignal): Promise<Array<{ header: SessionHeader }>>
 }
 
 /**
@@ -199,11 +198,13 @@ export interface DshSubagentsLike {
     }
     signal: AbortSignal
   }): Promise<{ childId: unknown }>
-  followup(
+  [deliverSubagentPrompt](
     parent: unknown,
     childId: unknown,
     content: Array<Record<string, unknown>>,
-    options: { source: Record<string, unknown>; signal: AbortSignal },
+    source: Record<string, unknown>,
+    signal: AbortSignal,
+    delivery: 'queue' | 'steer',
   ): Promise<unknown>
   interrupt(targetSessionId: unknown, authority: Record<string, unknown>): void
   reportFrom(child: unknown, content: Array<Record<string, unknown>>, options: { delivery: string; signal: AbortSignal }): Promise<unknown>
@@ -1117,10 +1118,10 @@ export class DshAgentAdapter {
     if (persistence === undefined) return undefined
     let events: readonly SessionEvent[]
     try {
-      events = (await persistence.inspect(SessionId(origID))).events
+      events = await (await persistence.open(SessionId(origID), 'read')).read()
     } catch {
       // The backend rejects unknown ids; that rejection is the only error
-      // path (inspect of an existing session resolves), and it means "no
+      // path (a read of an existing session resolves), and it means "no
       // persisted seed".
       return undefined
     }
@@ -1158,7 +1159,8 @@ export class DshAgentAdapter {
     }
     let inspection: { meta: SessionHeader; events: readonly SessionEvent[] }
     try {
-      inspection = await persistence.inspect(SessionId(origID))
+      const handle = await persistence.open(SessionId(origID), 'read')
+      inspection = { meta: handle.header, events: await handle.read() }
     } catch (error) {
       throw new Error(`dsh: fork-at source session "${origID}" not found: ${String(error instanceof Error ? error.message : error)}`)
     }
@@ -1286,15 +1288,15 @@ export class DshAgentAdapter {
     if (parent === undefined) {
       throw new Error('subtask: the parent agent session is not live; cannot deliver the follow-up')
     }
-    // The signal is mandatory: the cold-resume arm of the runtime's followup
-    // (a child that already settled to storage) dereferences it — omitting it
-    // crashed every follow-up to a settled child (2026-08-27 oc_56801302: two
-    // environment-hint sends failed with "Cannot read properties of undefined
-    // (reading 'throwIfAborted')" and the hints were never delivered).
-    await subagents.followup(parent, SessionId(childId), [{ type: 'text', text: message }], {
-      source: { kind: 'coordinator', form: 'relay', senderSessionId: SessionId(parentAgentSessionID) },
-      signal: AbortSignal.timeout(startContinuableTimeoutMs),
-    })
+    // The signal is mandatory: the cold-resume arm of the runtime's queue
+    // delivery (a child that already settled to storage) dereferences it —
+    // omitting it crashed every follow-up to a settled child (2026-08-27
+    // oc_56801302: two environment-hint sends failed with "Cannot read
+    // properties of undefined (reading 'throwIfAborted')" and the hints were
+    // never delivered).
+    await subagents[deliverSubagentPrompt](parent, SessionId(childId), [{ type: 'text', text: message }], {
+      kind: 'coordinator', form: 'relay', senderSessionId: SessionId(parentAgentSessionID),
+    }, AbortSignal.timeout(startContinuableTimeoutMs), 'queue')
   }
 
   /**
@@ -1793,8 +1795,9 @@ export class DshAgentAdapter {
         sessionId: SessionId(forkID),
         meta: {
           cwd: prepared !== undefined && prepared.childWorkDir !== '' ? prepared.childWorkDir : this.workDir,
-          ...(prepared !== undefined ? { parentSession: SessionId(prepared.parentID), seedLength: prepared.seed.length } : {}),
+          ...(prepared !== undefined ? { parentSession: SessionId(prepared.parentID), isSeeded: true } : {}),
         },
+        ...(prepared !== undefined ? { inheritedEventCount: SessionLogOffset(prepared.seed.length) } : {}),
         ...(prepared !== undefined && prepared.seed.length > 0 ? { seed: prepared.seed } : {}),
         agentOptions: this.routeAgentOptions(key),
         ...(setup !== undefined ? { setup } : {}),
@@ -1823,8 +1826,9 @@ export class DshAgentAdapter {
         sessionId: SessionId(freshNativeSessionId()),
         meta: {
           cwd: options?.workDir ?? this.workDir,
-          ...(seeded !== undefined ? { parentSession: SessionId(origID), seedLength: seed.length } : {}),
+          ...(seeded !== undefined ? { parentSession: SessionId(origID), isSeeded: true } : {}),
         },
+        ...(seeded !== undefined ? { inheritedEventCount: SessionLogOffset(seed.length) } : {}),
         ...(seed.length > 0 ? { seed } : {}),
         agentOptions: this.routeAgentOptions(key),
         ...(setup !== undefined ? { setup } : {}),
@@ -1982,7 +1986,7 @@ export class DshAgentAdapter {
     if (persistence === undefined) return []
     let events: readonly SessionEvent[]
     try {
-      events = (await persistence.inspect(SessionId(agentSessionID))).events
+      events = await (await persistence.open(SessionId(agentSessionID), 'read')).read()
     } catch {
       // The backend rejects unknown ids; that rejection is the only error
       // path here and means "no window".
@@ -2011,8 +2015,8 @@ export class DshAgentAdapter {
    * own no engine session, and their logs land in the project cwd like any
    * other. Summaries/message counts arrive engine-side from the adapter's
    * recent-turn window (`enrichSessionSummaries`). Persisted recency is the
-   * JSONL log file's mtime (SessionHeader has no updatedAt); a backend
-   * without `locate` falls back to createdAt.
+   * header's createdAt (the persistence seam no longer exposes artifact
+   * mtimes).
    *
    * @param workDir - Directory tree scoping both views; omitted or empty falls back to the base cwd.
    * @returns the known sessions with native ids and timestamps.
@@ -2037,32 +2041,19 @@ export class DshAgentAdapter {
     const persistence = this.ctx.get('sessionPersistence') as DshPersistenceLike | undefined
     if (persistence === undefined) return live
     const liveIDs = new Set(live.map(s => s.id))
-    const headers = await persistence.list()
+    const snapshots = await persistence.list()
     const persisted: AgentSessionInfo[] = []
-    for (const h of headers) {
+    for (const { header: h } of snapshots) {
       if (liveIDs.has(String(h.id))) continue
       if (h.parentSession !== undefined) continue
       if (h.origin === 'oneshot') continue
       if (h.cwd === undefined || !(h.cwd === base || h.cwd.startsWith(`${base}/`))) continue
-      persisted.push({ id: String(h.id), summary: '', messageCount: 0, modifiedAt: await this.logMtimeMs(persistence, h) })
+      // The persistence seam no longer exposes artifact paths, so recency
+      // falls back to the header's createdAt; aligning with upstream's
+      // projection-based lastPromptAt is a follow-up.
+      persisted.push({ id: String(h.id), summary: '', messageCount: 0, modifiedAt: h.createdAt })
     }
     return [...persisted, ...live].sort((a, b) => b.modifiedAt - a.modifiedAt)
-  }
-
-  /**
-   * Recency of a persisted session: the mtime of its log file when the
-   * backend can locate it, else the header's createdAt.
-   */
-  private async logMtimeMs(persistence: DshPersistenceLike, h: SessionHeader): Promise<number> {
-    const located = persistence.locate?.(h)
-    if (located !== undefined) {
-      try {
-        return (await stat(located.path)).mtimeMs
-      } catch {
-        // Materialization is lazy; a listed-but-unwritten log falls back.
-      }
-    }
-    return h.createdAt
   }
 
   /** Dispose every live agent (engine shutdown). */

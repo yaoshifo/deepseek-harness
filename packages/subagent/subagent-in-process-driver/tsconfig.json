@@ -33,9 +33,6 @@
       "path": "../../mcp/mcp-workspace"
     },
     {
-      "path": "../../runtime-diagnostics/invariants"
-    },
-    {
       "path": "../subagent"
     }
   ]

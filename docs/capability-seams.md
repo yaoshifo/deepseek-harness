@@ -162,6 +162,7 @@ flowchart LR
   pkg_code_runtime["code-runtime"]
   svc_codeRuntime["ctx.codeRuntime<br/>Code-execution seam"]
   pkg_code_runtime_worker_thread["code-runtime-worker-thread"]
+  pkg_experimental_code_runtime_python["experimental-code-runtime-python"]
   pkg_fs["fs"]
   svc_fs["ctx.fs<br/>Filesystem provider seam"]
   pkg_fs_local["fs-local"]
@@ -218,7 +219,7 @@ flowchart LR
   svc_dynamicCordisRunner["ctx.dynamicCordisRunner<br/>Dynamic Cordis package host runner"]
   svc_cordisInspect["ctx.cordisInspect<br/>Dynamic Cordis inspect registry"]
   pkg_agent_instructions["agent-instructions"]
-  svc_agentInstructions["ctx.agentInstructions<br/>Workspace instruction baselines"]
+  svc_agentInstructionSuppression["ctx.agentInstructionSuppression<br/>Workspace instruction suppression registry"]
   pkg_feishu_bridge["feishu-bridge"]
   svc_feishuBridge["ctx.feishuBridge<br/>Feishu bridge dispatch face"]
   pkg_feishu_bridge_chatroom["feishu-bridge-chatroom"]
@@ -226,7 +227,7 @@ flowchart LR
   svc_mcpWorkspace["ctx.mcpWorkspace<br/>Directory-scoped workspace MCP discovery"]
   pkg_agent --> svc_agents
   pkg_agent_default_model --> svc_agentDefaultModel
-  pkg_agent_instructions --> svc_agentInstructions
+  pkg_agent_instructions --> svc_agentInstructionSuppression
   pkg_agent_loop --> svc_agentLoop
   pkg_agent_presets --> svc_agentPresets
   pkg_api_gateway --> svc_typertGateway
@@ -256,6 +257,7 @@ flowchart LR
   pkg_deepseek_llm_api_extensions --> svc_deepseekLlmApiExtensions
   pkg_e2b --> svc_e2b
   pkg_experimental_agent_team --> svc_agentTeams
+  pkg_experimental_code_runtime_python --> svc_codeRuntime
   pkg_feishu_bridge --> svc_feishuBridge
   pkg_file_reference --> svc_fileReferences
   pkg_file_reference_local --> svc_fileReferences
@@ -344,7 +346,7 @@ flowchart LR
   pkg_workspace --> svc_workspaceRegistry
   svc_agentDefaultModel --> pkg_api_session_controller
   svc_agentDefaultModel --> pkg_headless
-  svc_agentInstructions --> pkg_feishu_bridge
+  svc_agentInstructionSuppression --> pkg_feishu_bridge
   svc_agentLoop --> pkg_base
   svc_agentLoop --> pkg_sdk_minimal
   svc_agentTeams --> pkg_experimental_client_ui_agent_team
@@ -530,7 +532,7 @@ flowchart LR
 | `ctx.sandboxPolicy` | `core` | [`sandbox-policy`](../packages/sandbox/sandbox-policy) | - | [`bash-sandbox`](../packages/shell/bash-sandbox), [`fs-sandbox`](../packages/fs/fs-sandbox), [`terminal-bash`](../packages/terminal/terminal-bash) | - | The one home for the deployment default mode + workspace root; only the sandboxed executor and provider read the service (the tool layers use the pure `sandbox/mode` fold it also exports). Both enforcing families read it so bash and fs cannot confine to different roots. |
 | `ctx.approval` | `seam` | [`user-approval`](../packages/interaction/user-approval) | - | [`tools`](../packages/core/tools), [`tool-bash`](../packages/shell/tool-bash), [`acp`](../packages/acp/acp) | - | One-shot permission decisions dispatched over the `approval/request` waterfall; answerers are listeners (the ACP bridge for its own agents), absence fails closed to `unavailable`. |
 | `ctx.permissionPresets` | `core` | [`permission-presets`](../packages/interaction/permission-presets) | - | - | - | User-facing preset table (`workspace-write`/`danger-full-access`) bundling the sandbox-mode and approval-policy knobs; a switch writes one `permission/preset` event through to both knob events. |
-| `ctx.codeRuntime` | `seam` | [`code-runtime`](../packages/code-runtime/code-runtime) | [`code-runtime-worker-thread`](../packages/code-runtime/code-runtime-worker-thread) | [`tools`](../packages/core/tools) | - | Runs one model-written program against host-provided async bindings; backends differ by substrate and language (the tool registry consumes it for PTC mode). |
+| `ctx.codeRuntime` | `seam` | [`code-runtime`](../packages/code-runtime/code-runtime) | [`code-runtime-worker-thread`](../packages/code-runtime/code-runtime-worker-thread), [`experimental-code-runtime-python`](../packages/experimental/code-runtime-python) | [`tools`](../packages/core/tools) | - | Runs one model-written program against host-provided async bindings; backends differ by substrate and language (the tool registry consumes it for PTC mode). |
 | `ctx.fs` | `seam` | [`fs`](../packages/fs/fs) | [`fs-local`](../packages/fs/fs-local), [`fs-sandbox`](../packages/fs/fs-sandbox), [`fs-e2b`](../packages/e2b/fs-e2b) | [`tool-fs`](../packages/fs/tool-fs) | [`fs-observation-policy`](../packages/fs/fs-observation-policy) | tool-fs executes read/write/edit through ctx.fs; fs-sandbox fences mutations by the shared sandbox mode; fs-observation-policy contributes observed-state checks through the fs/* event gate. |
 | `ctx.compaction` | `seam` | [`compaction`](../packages/compaction/compaction) | [`compaction-basic`](../packages/compaction/compaction-basic) | [`compaction-basic`](../packages/compaction/compaction-basic) | - | The basic backend consumes post-step pressure and request-error recovery events; there is no model-facing compact tool. |
 | `ctx.subagents` | `seam` | [`subagent`](../packages/subagent/subagent) | [`subagent-spawn-in-process`](../packages/subagent/subagent-spawn-in-process), [`subagent-fork-in-process`](../packages/subagent/subagent-fork-in-process), [`subagent-acp`](../packages/subagent/subagent-acp), [`subagent-codex`](../packages/subagent/subagent-codex), [`subagent-claude-code`](../packages/subagent/subagent-claude-code), [`subagent-dsh-sdk`](../packages/subagent/subagent-dsh-sdk) | [`tool-subagent`](../packages/subagent/tool-subagent), [`tool-subagent-control`](../packages/subagent/tool-subagent-control), [`tool-ralph`](../packages/workflow/tool-ralph) | - | Providers implement transports; the service also owns optional Activation-based continuation orchestration, tool-subagent selects one-shot or continuable delegation, tool-subagent-control delivers follow-ups, and tool-ralph requires one fresh structured-output route. |
@@ -547,7 +549,7 @@ flowchart LR
 | `ctx.lsp` | `seam` | [`lsp`](../packages/lsp/lsp) | [`lsp-stdio`](../packages/lsp/lsp-stdio) | [`tool-lsp`](../packages/lsp/tool-lsp) | - | Provider registration and selection plus normalized query execution over exactly four operations; the seam offers no protocol escape hatch, so a backend translates into the normalized request and result. |
 | `ctx.dynamicCordisRunner` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | Owns the in-memory definition registry, the vm sandbox for host halves, and the request-run round trip; browser pages reach the same service over the wire through its remote namespace. |
 | `ctx.cordisInspect` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | Registers host inspect providers, mirrors the client provider manifest, and routes client queries through the dynamic Cordis transport. |
-| `ctx.agentInstructions` | `core` | [`agent-instructions`](../packages/context/agent-instructions) | - | [`feishu-bridge`](../packages/acp/feishu-bridge) | - | AGENTS.md-compatible baselines enter durable context before the first request and fs tool touches refresh nested, changed, and removed files through the inbox; compositions that replace the persona wholesale suppress the scope so it receives no baseline and no dynamic updates. |
+| `ctx.agentInstructionSuppression` | `core` | [`agent-instructions`](../packages/context/agent-instructions) | - | [`feishu-bridge`](../packages/acp/feishu-bridge) | - | Host-plane scoped registry behind the serviceless instruction plugin: compositions that replace the persona wholesale suppress a scope so it receives no baseline and no dynamic updates; a missing registry suppresses nothing. |
 | `ctx.feishuBridge` | `core` | [`feishu-bridge`](../packages/acp/feishu-bridge) | - | [`feishu-bridge-chatroom`](../packages/acp/feishu-bridge-chatroom) | - | Owns the live project registry and caller routing, and is the feishuBridge/* dispatch seam that sibling bridge plugins (chatroom policy and lifecycle) build on instead of owning engines. |
 | `ctx.mcpWorkspace` | `core` | [`mcp-workspace`](../packages/mcp/mcp-workspace) | - | [`api-session-controller`](../packages/api/session-controller), [`subagent`](../packages/subagent/subagent), [`feishu-bridge`](../packages/acp/feishu-bridge) | - | Discovers directory-level .mcp.json files along the session working directory and composes the discovered directory mounts onto each creation-time AgentSetup; an absent service degrades to a per-process warning with discovery inactive. |
 

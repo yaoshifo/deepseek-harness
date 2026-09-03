@@ -19,10 +19,10 @@ import type {
 import type { AttachmentIdType, ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import type {
   SessionEvent,
-  SessionHeader,
   SessionId,
   SessionOrigin,
 } from '@deepseek-ai/dsh-session/types'
+import { SessionSeq } from '@deepseek-ai/dsh-session/types'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { isChunkRow, packChunkRuns } from '@deepseek-ai/dsh-session/chunk-rows'
 import type { ChunkRow } from '@deepseek-ai/dsh-session/chunk-rows'
@@ -136,10 +136,22 @@ interface FixturePageRequest {
   readonly maxMessages?: number
 }
 
+interface FixtureSessionWireHeader {
+  readonly version: number
+  readonly id: SessionId
+  readonly createdAt: number
+  readonly cwd?: string
+  readonly parentSession?: SessionId
+  readonly seedLength?: number
+  readonly origin?: 'subagent'
+  readonly delegationDepth?: number
+  readonly agentPreset?: string
+}
+
 type FixtureFollowFrame =
   | {
     readonly type: 'snapshot'
-    readonly header: SessionHeader
+    readonly header: FixtureSessionWireHeader
     readonly cursor: number
     readonly records: readonly FixtureHistoryRecord[]
     readonly hasMore: boolean
@@ -2049,7 +2061,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
   }
   const append = (id: SessionId, e: Record<string, unknown>): void => {
     const log = logOf(id)
-    const event = { seq: log.length, time: Date.now(), ...e } as unknown as SessionEvent
+    const event = { seq: SessionSeq(log.length), time: Date.now(), ...e } as unknown as SessionEvent
     log.push(event)
     emitFollow(id, { type: 'event', event })
     // Host eager-drive parallel: a unit-advancing event pushes its finished value.
@@ -2673,7 +2685,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
     /** Log append without follow delivery: a frame lost in transit that page repair must recover. */
     appendSilent(id: string, msg: string): void {
       const log = logOf(sid(id))
-      log.push({ type: 'user/message', surfaceOp: 'append', seq: log.length, time: Date.now(), data: userMessage(text(msg)) } as unknown as SessionEvent)
+      log.push({ type: 'user/message', surfaceOp: 'append', seq: SessionSeq(log.length), time: Date.now(), data: userMessage(text(msg)) } as unknown as SessionEvent)
     },
     /** End every open stream generator (client sees both streams close -> reconnect + resync path). */
     breakStreams(): void {

@@ -164,6 +164,7 @@ flowchart LR
   pkg_code_runtime["code-runtime"]
   svc_codeRuntime["ctx.codeRuntime<br/>Code-execution seam"]
   pkg_code_runtime_worker_thread["code-runtime-worker-thread"]
+  pkg_experimental_code_runtime_python["experimental-code-runtime-python"]
   pkg_fs["fs"]
   svc_fs["ctx.fs<br/>Filesystem provider seam"]
   pkg_fs_local["fs-local"]
@@ -220,7 +221,7 @@ flowchart LR
   svc_dynamicCordisRunner["ctx.dynamicCordisRunner<br/>Dynamic Cordis package host runner"]
   svc_cordisInspect["ctx.cordisInspect<br/>Dynamic Cordis inspect registry"]
   pkg_agent_instructions["agent-instructions"]
-  svc_agentInstructions["ctx.agentInstructions<br/>Workspace instruction baselines"]
+  svc_agentInstructionSuppression["ctx.agentInstructionSuppression<br/>Workspace instruction suppression registry"]
   pkg_feishu_bridge["feishu-bridge"]
   svc_feishuBridge["ctx.feishuBridge<br/>Feishu bridge dispatch face"]
   pkg_feishu_bridge_chatroom["feishu-bridge-chatroom"]
@@ -228,7 +229,7 @@ flowchart LR
   svc_mcpWorkspace["ctx.mcpWorkspace<br/>Directory-scoped workspace MCP discovery"]
   pkg_agent --> svc_agents
   pkg_agent_default_model --> svc_agentDefaultModel
-  pkg_agent_instructions --> svc_agentInstructions
+  pkg_agent_instructions --> svc_agentInstructionSuppression
   pkg_agent_loop --> svc_agentLoop
   pkg_agent_presets --> svc_agentPresets
   pkg_api_gateway --> svc_typertGateway
@@ -258,6 +259,7 @@ flowchart LR
   pkg_deepseek_llm_api_extensions --> svc_deepseekLlmApiExtensions
   pkg_e2b --> svc_e2b
   pkg_experimental_agent_team --> svc_agentTeams
+  pkg_experimental_code_runtime_python --> svc_codeRuntime
   pkg_feishu_bridge --> svc_feishuBridge
   pkg_file_reference --> svc_fileReferences
   pkg_file_reference_local --> svc_fileReferences
@@ -346,7 +348,7 @@ flowchart LR
   pkg_workspace --> svc_workspaceRegistry
   svc_agentDefaultModel --> pkg_api_session_controller
   svc_agentDefaultModel --> pkg_headless
-  svc_agentInstructions --> pkg_feishu_bridge
+  svc_agentInstructionSuppression --> pkg_feishu_bridge
   svc_agentLoop --> pkg_base
   svc_agentLoop --> pkg_sdk_minimal
   svc_agentTeams --> pkg_experimental_client_ui_agent_team
@@ -532,7 +534,7 @@ flowchart LR
 | `ctx.sandboxPolicy` | `core` | [`sandbox-policy`](../packages/sandbox/sandbox-policy) | - | [`bash-sandbox`](../packages/shell/bash-sandbox), [`fs-sandbox`](../packages/fs/fs-sandbox), [`terminal-bash`](../packages/terminal/terminal-bash) | - | 统一保存部署默认模式和工作区根目录；只有沙箱执行器和提供方读取该服务（工具层使用它同时导出的纯 `sandbox/mode` 折叠区）。两类强制执行组件都读取该服务，因此 bash 与 fs 不会限制到不同的根目录。 |
 | `ctx.approval` | `seam` | [`user-approval`](../packages/interaction/user-approval) | - | [`tools`](../packages/core/tools), [`tool-bash`](../packages/shell/tool-bash), [`acp`](../packages/acp/acp) | - | 一次性权限决策通过 `approval/request` waterfall（瀑布式事件）分派；回答方是监听器（即 ACP 为自身 agent 提供的桥接），没有回答方时以 `unavailable` 关闭失败。 |
 | `ctx.permissionPresets` | `core` | [`permission-presets`](../packages/interaction/permission-presets) | - | - | - | 面向用户的预设表（`workspace-write`／`danger-full-access`），将沙箱模式与审批策略选项组合在一起；一次切换会写入一个 `permission/preset` 事件，并贯通到两个选项事件。 |
-| `ctx.codeRuntime` | `seam` | [`code-runtime`](../packages/code-runtime/code-runtime) | [`code-runtime-worker-thread`](../packages/code-runtime/code-runtime-worker-thread) | [`tools`](../packages/core/tools) | - | 使用 Host 提供的异步绑定运行一段由模型编写的程序；各后端采用不同的基础环境和语言（工具注册表在 PTC mode 下消费该服务）。 |
+| `ctx.codeRuntime` | `seam` | [`code-runtime`](../packages/code-runtime/code-runtime) | [`code-runtime-worker-thread`](../packages/code-runtime/code-runtime-worker-thread), [`experimental-code-runtime-python`](../packages/experimental/code-runtime-python) | [`tools`](../packages/core/tools) | - | 使用 Host 提供的异步绑定运行一段由模型编写的程序；各后端采用不同的基础环境和语言（工具注册表在 PTC mode 下消费该服务）。 |
 | `ctx.fs` | `seam` | [`fs`](../packages/fs/fs) | [`fs-local`](../packages/fs/fs-local), [`fs-sandbox`](../packages/fs/fs-sandbox), [`fs-e2b`](../packages/e2b/fs-e2b) | [`tool-fs`](../packages/fs/tool-fs) | [`fs-observation-policy`](../packages/fs/fs-observation-policy) | tool-fs 通过 ctx.fs 执行读取／写入／编辑；fs-sandbox 按共享沙箱模式限制变更；fs-observation-policy 通过 fs/* 事件门禁贡献基于观测状态的检查。 |
 | `ctx.compaction` | `seam` | [`compaction`](../packages/compaction/compaction) | [`compaction-basic`](../packages/compaction/compaction-basic) | [`compaction-basic`](../packages/compaction/compaction-basic) | - | 基础后端消费步骤后的压力事件和请求错误恢复事件；不存在面向模型的压缩工具。 |
 | `ctx.subagents` | `seam` | [`subagent`](../packages/subagent/subagent) | [`subagent-spawn-in-process`](../packages/subagent/subagent-spawn-in-process), [`subagent-fork-in-process`](../packages/subagent/subagent-fork-in-process), [`subagent-acp`](../packages/subagent/subagent-acp), [`subagent-codex`](../packages/subagent/subagent-codex), [`subagent-claude-code`](../packages/subagent/subagent-claude-code), [`subagent-dsh-sdk`](../packages/subagent/subagent-dsh-sdk) | [`tool-subagent`](../packages/subagent/tool-subagent), [`tool-subagent-control`](../packages/subagent/tool-subagent-control), [`tool-ralph`](../packages/workflow/tool-ralph) | - | 提供方实现传输；该服务还负责可选的、基于 Activation 的延续编排，tool-subagent 选择一次性或可延续委派，tool-subagent-control 传递后续消息，而 tool-ralph 要求一条全新的结构化输出路由。 |
@@ -549,7 +551,7 @@ flowchart LR
 | `ctx.lsp` | `seam` | [`lsp`](../packages/lsp/lsp) | [`lsp-stdio`](../packages/lsp/lsp-stdio) | [`tool-lsp`](../packages/lsp/tool-lsp) | - | 提供方注册与选择，加上恰好四种操作的标准化查询执行；该 seam 不提供协议逃生口，后端必须转换为标准化请求和结果。 |
 | `ctx.dynamicCordisRunner` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | 拥有内存定义注册表、Host 半的 vm 沙箱和 request-run 往返流程；浏览器页面通过其 Remote 命名空间在线访问同一服务。 |
 | `ctx.cordisInspect` | `core` | [`cordis-host-runner`](../packages/extensions/cordis-host-runner) | - | [`tool-cordis`](../packages/extensions/tool-cordis) | - | 注册 Host inspect 提供方、镜像 Client 提供方 manifest，并通过动态 Cordis 传输路由 Client 查询。 |
-| `ctx.agentInstructions` | `core` | [`agent-instructions`](../packages/context/agent-instructions) | - | [`feishu-bridge`](../packages/acp/feishu-bridge) | - | 与 AGENTS.md 兼容的 baseline 在首个请求前进入持久上下文，fs 工具触碰会经 inbox 刷新嵌套、变更与移除的指令文件；整体替换 persona 的组合会抑制该 scope，使其既收不到 baseline 也收不到动态更新。 |
+| `ctx.agentInstructionSuppression` | `core` | [`agent-instructions`](../packages/context/agent-instructions) | - | [`feishu-bridge`](../packages/acp/feishu-bridge) | - | 无服务指令插件背后的 host-plane 作用域注册表：整体替换 persona 的组合会抑制某 scope，使其既收不到 baseline 也收不到动态更新；注册表缺失时什么也不抑制。 |
 | `ctx.feishuBridge` | `core` | [`feishu-bridge`](../packages/acp/feishu-bridge) | - | [`feishu-bridge-chatroom`](../packages/acp/feishu-bridge-chatroom) | - | 持有活跃项目注册表与调用方路由，是兄弟桥插件（chatroom 策略与生命周期）赖以构建的 feishuBridge/* 派发缝，它们不各自持有 engine。 |
 | `ctx.mcpWorkspace` | `core` | [`mcp-workspace`](../packages/mcp/mcp-workspace) | - | [`api-session-controller`](../packages/api/session-controller), [`subagent`](../packages/subagent/subagent), [`feishu-bridge`](../packages/acp/feishu-bridge) | - | 沿会话工作目录发现目录级 `.mcp.json` 文件，并把发现的目录挂载组合进每个创建期 AgentSetup；服务缺席时降级为每进程一次的警告，发现功能保持关闭。 |
 
