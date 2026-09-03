@@ -91,7 +91,7 @@ const rowAction = new Map<string, string>([
   ['switch', 'nav:/list 1'],
   ['status', 'nav:/status'],
   ['dir', 'nav:/dir 1'],
-  ['provider', 'nav:/provider'],
+  ['provider', 'nav:/provider -r'],
   ['help', 'nav:/help'],
 ])
 

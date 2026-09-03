@@ -88,10 +88,11 @@ function providerListText(e: Engine, switcher: ProviderSwitcher): string {
  *
  * @param e - Engine owning the switcher and i18n.
  * @param notice - Extra markdown line under the current line (the outcome of a pressed row).
- * @param hot - Hot-switch mode: rows carry the `-r` flag (keep context) instead of dropping the session.
+ * @param hot - Hot-switch mode: rows carry the `-r` flag (keep context) instead of dropping the
+ * session. Defaults to hot — the card opens hot-switched; the card action passes the pressed mode explicitly.
  * @returns The assembled card; a red not-supported card when the agent has no switcher.
  */
-function renderProviderCard(e: Engine, notice: string, hot = false): Card {
+function renderProviderCard(e: Engine, notice: string, hot = true): Card {
   const switcher = asProviderSwitcher(e.agent)
   if (switcher === undefined) {
     return newCard().title(e.i18n.t(Msg.ProviderCardTitle), 'red')
@@ -109,8 +110,8 @@ function renderProviderCard(e: Engine, notice: string, hot = false): Card {
   if (notice !== '') cb.markdown(notice)
   if (providers.length > 0) {
     cb.buttonsEqual(
-      { text: e.i18n.t(Msg.ProviderCardModePlain), type: hot ? 'default' : 'primary', value: 'nav:/provider' },
       { text: e.i18n.t(Msg.ProviderCardModeHot), type: hot ? 'primary' : 'default', value: 'nav:/provider -r' },
+      { text: e.i18n.t(Msg.ProviderCardModePlain), type: hot ? 'default' : 'primary', value: 'nav:/provider' },
     )
     cb.divider()
     for (const prov of providers) {
@@ -151,8 +152,9 @@ export function registerProviderCommands(e: Engine): () => void {
   // shortcut hook when no builtin command claims the token.
   e.providerShortcutHandler = (p, msg, providerName) => { void cmdProviderShortcut(e, p, msg, providerName) }
   // Provider-card actions: a pressed row carries `act:/provider <name>[-r]`,
-  // the mode row and the help card's provider entry carry `nav:/provider`
-  // [-r] with no route name. Both prefixes share the handler because the
+  // the mode row carries `nav:/provider` [-r] with no route name, and the
+  // help card's provider entry opens the hot default (`nav:/provider -r`).
+  // Both prefixes share the handler because the
   // card owns every action value it emits: the -r flag can only arrive on a
   // value this card produced, and a non-empty route name is always a
   // pressed row.
