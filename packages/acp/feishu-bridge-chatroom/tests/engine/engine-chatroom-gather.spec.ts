@@ -977,6 +977,9 @@ describe('buildChatroomResearchModeratorPriming', () => {
       const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', mode, 3, '/tmp/ws')
       expect(priming).toContain('用户中途发言')
       expect(priming).toContain('追问用 action: ask 转给相关角色')
+      // The ask-during-gather interlock rejects askRole mid-round; the
+      // priming must pre-announce that instead of letting the model hit it.
+      expect(priming).toContain('gather 在途时 ask 会被拒')
       expect(priming).toContain('并入下一轮 gather 任务')
       expect(priming).toContain('不要无视')
     }
