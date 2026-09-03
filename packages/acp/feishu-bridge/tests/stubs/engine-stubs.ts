@@ -579,6 +579,7 @@ export function createForkPreparerAgent(workDir: string, forkErr: Error | undefi
 export interface GroupNameAgentState {
   gotPrompt: string
   gotProvider: string
+  gotWorkDir: string
   callCount: number
 }
 
@@ -593,15 +594,16 @@ export function createGroupNameAgent(opts: {
   err?: Error
   blockUntilSignal?: boolean
 }): Agent & { state: GroupNameAgentState } & ForkQuerierWithProvider {
-  const state: GroupNameAgentState = { gotPrompt: '', gotProvider: '', callCount: 0 }
+  const state: GroupNameAgentState = { gotPrompt: '', gotProvider: '', gotWorkDir: '', callCount: 0 }
   return {
     ...createStubAgent(),
     state,
     forkQuery: async () => '',
     forkSessionWithProvider: async () => '',
-    lightweightQuery: async (prompt: string, provider: string, signal?: AbortSignal) => {
+    lightweightQuery: async (prompt: string, provider: string, signal?: AbortSignal, workDir?: string) => {
       state.gotPrompt = prompt
       state.gotProvider = provider
+      state.gotWorkDir = workDir ?? ''
       state.callCount++
       if (opts.blockUntilSignal === true && signal !== undefined) {
         if (signal.aborted) return opts.resp ?? ''

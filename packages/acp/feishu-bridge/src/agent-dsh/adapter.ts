@@ -1391,14 +1391,19 @@ export class DshAgentAdapter {
    * needed, and the skill catalog goes with them) — so cwd-derived context
    * cannot leak into or skew the answer. Light text output needs no deep
    * reasoning (and thinking would eat most of the 90s budget), so the query
-   * runs at reasoningEffort 'low'.
+   * runs at reasoningEffort 'low'. The session cwd stays caller-pinned via
+   * `workDir` (the calling chat's effective directory): the harness core
+   * synthesizes cwd-derived workspace instructions and runtime context from
+   * it, so a chat whose `/dir` override differs from the project base gets
+   * its own directory's context, not the base's.
    *
    * @param prompt - the standalone question; all context lives in the prompt itself.
    * @param providerName - the named provider route to run on.
    * @param signal - caller abort; rejects the wait and still disposes the session.
+   * @param workDir - pins the session cwd; omitted or empty falls back to the adapter's base cwd.
    * @returns the turn's final text.
    */
-  async lightweightQuery(prompt: string, providerName: string, signal?: AbortSignal): Promise<string> {
+  async lightweightQuery(prompt: string, providerName: string, signal?: AbortSignal, workDir?: string): Promise<string> {
     return this.oneShotQuery({
       prompt,
       providerName,
@@ -1408,6 +1413,7 @@ export class DshAgentAdapter {
       systemPromptName: 'feishu-bridge-lightweight-query',
       toolFilter: { allow: [] },
       ...(signal !== undefined ? { signal } : {}),
+      ...(workDir !== undefined && workDir !== '' ? { workDir } : {}),
       timeoutMs: lightweightQueryTimeoutMs,
     })
   }
@@ -1478,6 +1484,8 @@ export class DshAgentAdapter {
    * @param providerName - the named provider route to run on.
    * @param systemPrompt - the complete-replacement system prompt for the render session.
    * @param signal - caller abort; rejects the wait and still disposes the session.
+   * @param workDir - pins the session cwd (the calling chat's effective directory);
+   *   omitted or empty falls back to the adapter's base cwd.
    * @returns the session's trimmed stdout.
    */
   async renderQuery(
@@ -1485,6 +1493,7 @@ export class DshAgentAdapter {
     providerName: string,
     systemPrompt: string,
     signal?: AbortSignal,
+    workDir?: string,
   ): Promise<string> {
     return this.oneShotQuery({
       prompt,
@@ -1494,6 +1503,7 @@ export class DshAgentAdapter {
       toolFilter: { deny: ['skill'] },
       reasoning: renderReasoningLevel(this.renderEffort),
       ...(signal !== undefined ? { signal } : {}),
+      ...(workDir !== undefined && workDir !== '' ? { workDir } : {}),
       timeoutMs: renderQueryTimeoutMs,
     })
   }
@@ -1950,30 +1960,42 @@ export class DshAgentAdapter {
 
   /**
    * Live sessions plus persisted ones from the session store (exclusive to
-   * this daemon): top-level sessions under this project's directory tree,
-   * newest first. One-shot side queries (origin 'oneshot' — group naming,
-   * predict-next, turn-summary) stay unlisted on both sides: they own no
-   * engine session, and their logs land in the project cwd like any other.
-   * Summaries/message counts arrive engine-side from the adapter's
-   * recent-turn window (`enrichSessionSummaries`); sessions from
-   * per-chat `/dir` overrides outside the tree stay unlisted, matching the
-   * Go per-cwd store semantics. Persisted recency is the JSONL log file's
-   * mtime (SessionHeader has no updatedAt); a backend without `locate` falls
-   * back to createdAt.
+   * this daemon): top-level sessions under one directory tree, newest
+   * first. The tree is `workDir` — the calling chat's effective directory
+   * (its /dir override) — when supplied, else the adapter's base cwd, so an
+   * overridden chat sees its own directory's sessions rather than the
+   * base's (Go per-cwd store semantics). Live sessions recorded without a
+   * cwd stay visible. One-shot side queries (origin 'oneshot' — group
+   * naming, predict-next, turn-summary) stay unlisted on both sides: they
+   * own no engine session, and their logs land in the project cwd like any
+   * other. Summaries/message counts arrive engine-side from the adapter's
+   * recent-turn window (`enrichSessionSummaries`). Persisted recency is the
+   * JSONL log file's mtime (SessionHeader has no updatedAt); a backend
+   * without `locate` falls back to createdAt.
    *
+   * @param workDir - Directory tree scoping both views; omitted or empty falls back to the base cwd.
    * @returns the known sessions with native ids and timestamps.
    */
-  async listSessions(): Promise<AgentSessionInfo[]> {
-    const live = [...this.liveSessions.values()].filter(s => !s.isOneshot()).map(s => ({
-      id: s.currentSessionID(),
-      summary: s.lastAssistantText().slice(0, 40),
-      messageCount: 0,
-      modifiedAt: s.lastActivityAt,
-    }))
+  async listSessions(workDir?: string): Promise<AgentSessionInfo[]> {
+    const base = workDir !== undefined && workDir !== '' ? workDir : this.cfg.cwd
+    const live = [...this.liveSessions.values()]
+      .filter(s => !s.isOneshot())
+      .filter((s) => {
+        // Sessions without a recorded cwd stay visible (unknown ≠ foreign);
+        // recorded cwds scope the view to the requested tree exactly like the
+        // persisted headers below.
+        const cwd = s.cwd()
+        return cwd === '' || cwd === base || cwd.startsWith(`${base}/`)
+      })
+      .map(s => ({
+        id: s.currentSessionID(),
+        summary: s.lastAssistantText().slice(0, 40),
+        messageCount: 0,
+        modifiedAt: s.lastActivityAt,
+      }))
     const persistence = this.ctx.get('sessionPersistence') as DshPersistenceLike | undefined
     if (persistence === undefined) return live
     const liveIDs = new Set(live.map(s => s.id))
-    const base = this.cfg.cwd
     const headers = await persistence.list()
     const persisted: AgentSessionInfo[] = []
     for (const h of headers) {
@@ -2169,6 +2191,18 @@ export class DshAgentSession implements AgentSession {
    */
   sessionKey(): string {
     return this.key
+  }
+
+  /**
+   * The native session's recorded cwd (the agent session header's), or ''
+   * when unknown — /list's live view scopes on this the way the persisted
+   * view scopes on the header cwd.
+   *
+   * @returns the recorded cwd, or '' when unknown.
+   */
+  cwd(): string {
+    const cwd = this.handle.agent?.session?.header?.cwd
+    return typeof cwd === 'string' ? cwd : ''
   }
 
   /**

@@ -163,6 +163,16 @@ describe('lightweightQuery', () => {
     expect(a.engineKeyForAgentID('agent-1')).toBeUndefined()
   })
 
+  it('creates the one-shot session in the caller-supplied workDir (chat dir override)', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    h.script.push({ text: '名' })
+
+    await a.lightweightQuery('起个群名', 'turbo', undefined, '/workspace/chat-override')
+
+    expect(h.creates[0]!.meta?.cwd).toBe('/workspace/chat-override')
+  })
+
   it('runs bare: oneshot origin, complete minimal system prompt, no instructions, and no tools', async () => {
     const h = createHarness()
     const a = newAdapter(h)
@@ -387,6 +397,16 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
     await a.renderQuery('p', 'glm', 'sp')
 
     expect(h.creates[0]!.agentOptions).toEqual({ provider: 'glm-route', model: 'glm-5.3', reasoningEffort: 'low' })
+  })
+
+  it('creates the render session in the caller-supplied workDir (chat dir override)', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    h.script.push({ text: 'ok' })
+
+    await a.renderQuery('p', 'glm', 'sp', undefined, '/workspace/chat-override')
+
+    expect(h.creates[0]!.meta?.cwd).toBe('/workspace/chat-override')
   })
 })
 

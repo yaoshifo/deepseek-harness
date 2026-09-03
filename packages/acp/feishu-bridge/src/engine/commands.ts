@@ -184,7 +184,7 @@ export async function cmdList(e: Engine, p: Platform, msg: Message, args?: strin
   const { agent, sessions } = commandContext(e, msg)
   let agentSessions: AgentSessionInfo[]
   try {
-    agentSessions = await agent.listSessions()
+    agentSessions = await agent.listSessions(e.sessionWorkDir(msg.sessionKey))
   } catch (error) {
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ListError, String(error)))
     return
@@ -281,7 +281,7 @@ export async function collectAgentSessions(e: Engine, sessionKey: string): Promi
   const { agent } = commandContext(e, { sessionKey } as Message)
   let agentSessions: AgentSessionInfo[]
   try {
-    agentSessions = await agent.listSessions()
+    agentSessions = await agent.listSessions(e.sessionWorkDir(sessionKey))
   } catch {
     return undefined
   }
@@ -348,7 +348,7 @@ export async function cmdSwitch(e: Engine, p: Platform, msg: Message, args: stri
   const { agent, sessions, interactiveKey } = commandContext(e, msg)
   let agentSessions: AgentSessionInfo[]
   try {
-    agentSessions = await agent.listSessions()
+    agentSessions = await agent.listSessions(e.sessionWorkDir(msg.sessionKey))
   } catch (error) {
     await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.Error, String(error)))
     return
@@ -1445,6 +1445,7 @@ export async function cmdRename(e: Engine, p: Platform, msg: Message, args: stri
       const [generated, icon] = await e.generateGroupName(
         buildCompactContext(history),
         AbortSignal.timeout(timeout),
+        e.sessionWorkDir(sessionKey),
       )
       if (generated === '') {
         void e.reply(p, replyCtx, e.i18n.t(Msg.RenameFailed))

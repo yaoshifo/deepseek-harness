@@ -106,7 +106,7 @@ export async function generatePrediction(e: Engine, compactContext: string, sess
   const prompt = e.predictNextPrompt !== '' ? e.predictNextPrompt : defaultPredictPrompt
   const resp = e.predictNextResume
     ? await fq.forkSessionWithProvider(sessionID, prompt, e.predictNextProvider, workDir)
-    : await fq.lightweightQuery(`${compactContext}\n\n${prompt}`, e.predictNextProvider)
+    : await fq.lightweightQuery(`${compactContext}\n\n${prompt}`, e.predictNextProvider, undefined, workDir)
   return firstShortLine(resp, maxPredictLineLen)
 }
 
@@ -115,13 +115,15 @@ export async function generatePrediction(e: Engine, compactContext: string, sess
  *
  * @param e - Engine carrying the turn-summary config.
  * @param history - The session history through this turn.
+ * @param workDir - Pins the fork session's cwd (the chat's effective
+ *   directory); omitted or empty falls back to the adapter's base cwd.
  * @returns the summary text, or '' when nothing usable came back.
  */
-export async function generateTurnSummary(e: Engine, history: HistoryEntry[]): Promise<string> {
+export async function generateTurnSummary(e: Engine, history: HistoryEntry[], workDir?: string): Promise<string> {
   const fq = asForkQuerierWithProvider(e.agent)
   if (fq === undefined) throw new Error('agent does not implement ForkQuerierWithProvider')
   const prompt = e.turnSummaryPrompt !== '' ? e.turnSummaryPrompt : defaultSummaryPrompt
-  const resp = await fq.lightweightQuery(`${buildSummaryContext(history)}\n${prompt}`, e.turnSummaryProvider)
+  const resp = await fq.lightweightQuery(`${buildSummaryContext(history)}\n${prompt}`, e.turnSummaryProvider, undefined, workDir)
   return firstShortLine(resp, maxSummaryLineLen)
 }
 
@@ -251,6 +253,8 @@ export async function triggerInsights(
   // The conversation window is the adapter's recent-turn projection of the
   // native session log.
   const history = await e.recentTurnsOf(sessionKey, session)
+  const [wtPath] = session.getWorktreeInfo()
+  const workDir = wtPath !== '' ? wtPath : e.perChatWorkDir(e.dirOverrideKey(sessionKey))
 
   if (e.turnSummaryEnabled && !state.turnSummaryRunning) {
     let lastAssistant = ''
@@ -262,7 +266,7 @@ export async function triggerInsights(
     }
     if (Array.from(lastAssistant).length > shortReplyRunes) {
       state.turnSummaryRunning = true
-      summaryCh = generateTurnSummary(e, history)
+      summaryCh = generateTurnSummary(e, history, workDir)
         .catch((error: unknown) => {
           console.error(`turn-summary: failed: ${String(error)}`)
           return ''
@@ -274,8 +278,6 @@ export async function triggerInsights(
   if (e.predictNextEnabled && !state.predictNextDisabled && !state.predictNextRunning) {
     state.predictNextRunning = true
     const sid = state.agentSession?.currentSessionID() ?? ''
-    const [wtPath] = session.getWorktreeInfo()
-    const workDir = wtPath !== '' ? wtPath : e.perChatWorkDir(e.dirOverrideKey(sessionKey))
     predictCh = generatePrediction(e, buildCompactContext(history), sid, workDir)
       .catch((error: unknown) => {
         console.error(`predict-next: failed: ${String(error)}`)

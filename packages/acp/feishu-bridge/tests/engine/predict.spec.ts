@@ -53,12 +53,19 @@ function msg(overrides: Partial<Message> = {}): Message {
 }
 
 /** Agent with a recording ForkQuerier (Go stubForkQuerierAgent). */
-type ForkAgent = Agent & ForkQuerierWithProvider & { gotSessionID: string; gotWorkDir: string; gotPrompt: string; calls: number }
+type ForkAgent = Agent & ForkQuerierWithProvider & {
+  gotSessionID: string
+  gotWorkDir: string
+  gotQueryWorkDir: string
+  gotPrompt: string
+  calls: number
+}
 
 function forkAgent(resp: string): ForkAgent {
   const rec: ForkAgent = {
     gotSessionID: '',
     gotWorkDir: '',
+    gotQueryWorkDir: '',
     gotPrompt: '',
     calls: 0,
     ...createStubAgent(),
@@ -75,8 +82,9 @@ function forkAgent(resp: string): ForkAgent {
       rec.calls++
       return resp
     },
-    lightweightQuery: async (prompt: string) => {
+    lightweightQuery: async (prompt: string, _provider: string, _signal?: AbortSignal, workDir?: string) => {
       rec.gotPrompt = prompt
+      rec.gotQueryWorkDir = workDir ?? ''
       rec.calls++
       return resp
     },
@@ -231,6 +239,17 @@ describe('generatePrediction', () => {
     expect(agent.gotPrompt).not.toContain(defaultPredictPrompt)
     dispose()
   })
+
+  it('forwards the workDir to the lightweight query (chat dir override)', async () => {
+    const p = createStubCardPlatform('test')
+    const agent = forkAgent('ok')
+    const { e, dispose } = newEngine(agent, p)
+    e.setPredictNextConfig(true, 'mimo', '', 1000, '', 'lightweight')
+
+    await generatePrediction(e, 'User: q\n', 's', '/workspace/chat-override')
+    expect(agent.gotQueryWorkDir).toBe('/workspace/chat-override')
+    dispose()
+  })
 })
 
 describe('generateTurnSummary', () => {
@@ -259,6 +278,17 @@ describe('generateTurnSummary', () => {
     e.setTurnSummaryConfig(true, 'mimo', 1000, '')
 
     expect(await generateTurnSummary(e, [])).toBe('ok')
+    dispose()
+  })
+
+  it('forwards the workDir to the lightweight query (chat dir override)', async () => {
+    const p = createStubCardPlatform('test')
+    const agent = forkAgent('ok')
+    const { e, dispose } = newEngine(agent, p)
+    e.setTurnSummaryConfig(true, 'mimo', 1000, '')
+
+    await generateTurnSummary(e, [], '/workspace/chat-override')
+    expect(agent.gotQueryWorkDir).toBe('/workspace/chat-override')
     dispose()
   })
 })

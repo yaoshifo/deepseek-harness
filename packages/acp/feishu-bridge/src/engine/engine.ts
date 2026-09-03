@@ -128,6 +128,7 @@ import {
   fallbackGroupIcon,
   groupIconRecentMax,
   iconsPerCategory,
+  isNameableGroupNameSeed,
   maxGroupNameRunes,
   parseGroupIcon,
   sampleAcrossCategories,
@@ -8038,9 +8039,11 @@ export class Engine {
    * omits the second line.
    * @param seed - First message the name is derived from.
    * @param signal - Aborts the query; the caller owns the deadline.
+   * @param workDir - Pins the fork session's cwd (the chat's effective
+   *   directory); omitted or empty falls back to the adapter's base cwd.
    * @returns The generated [name, icon] pair.
    */
-  async generateGroupName(seed: string, signal?: AbortSignal): Promise<[string, string]> {
+  async generateGroupName(seed: string, signal?: AbortSignal, workDir?: string): Promise<[string, string]> {
     const fq = asForkQuerierWithProvider(this.agent)
     if (fq === undefined) {
       throw new Error('group-name: agent does not implement ForkQuerierWithProvider')
@@ -8057,7 +8060,7 @@ export class Engine {
     }
 
     const fullPrompt = this.buildGroupNamePrompt(seed)
-    const resp = await fq.lightweightQuery(fullPrompt, provider, signal)
+    const resp = await fq.lightweightQuery(fullPrompt, provider, signal, workDir)
 
     const name = sanitizeGroupName(resp)
     let icon = parseGroupIcon(resp)
@@ -8084,7 +8087,7 @@ export class Engine {
     querySignal: AbortSignal | undefined,
     setAvatar: boolean,
   ): Promise<{ name: string; icon: string }> {
-    const [name, icon] = await this.generateGroupName(seed, querySignal)
+    const [name, icon] = await this.generateGroupName(seed, querySignal, this.sessionWorkDir(sessionKey))
     if (name === '') return { name: '', icon: '' }
     const renameSignal = AbortSignal.timeout(30_000)
     await renamer(sessionKey, name, renameSignal)
@@ -8117,6 +8120,10 @@ export class Engine {
    */
   handleGroupNameGenerate(p: Platform, sessionKey: string, firstMessage: string, interactiveKey: string): void {
     if (firstMessage === '') return
+    if (!isNameableGroupNameSeed(firstMessage)) {
+      console.info(`group-name: skip auto rename, ambiguous first message (${sessionKey})`)
+      return
+    }
     const timeout = this.groupNameTimeout > 0 ? this.groupNameTimeout : 30_000
     void this.groupNameGenerateTask(p, sessionKey, firstMessage, timeout, interactiveKey)
   }

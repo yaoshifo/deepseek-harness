@@ -72,6 +72,8 @@ python3 <skill-dir>/scripts/locate-session.py "$chat_id"
 - **症状**：daemon 日志里搜新增埋点零命中，怀疑「日志被吞」 → **做法**：先核验 daemon 部署新旧（`tail ~/.dsh/feishu-bridge-reload.log` 的最后 reload 轮转戳，对比进程启动时间）——daemon 常比仓库代码旧得多。
 - **症状**：bot 会话里用 `ps` / `XPC_SERVICE_NAME` 查 daemon 进程 → **做法**：沙箱拒绝 `ps`、把 `XPC_SERVICE_NAME` 改写成 `0`；用 `launchctl list` 与 `DSH_SESSION_JSONL` / `DSH_HOME`。
 - **症状**：降级通知后的会话「上下文丢了」 → **做法**：降级是开新会话，被泄漏的原会话 jsonl 仍完整，按本 skill 定位后 zstdcat 找回。
+- **症状**：群名被改成与该群任务无关的项目主题 → **做法**：daemon stdout.log grep `chat renamed` 定时刻，找紧邻的群名 fork 会话（one-shot，落桶 = 其真实 cwd），看首条消息的摘录段与注入；跑题根因通常是 fork cwd 回退项目基目录 + seed 含糊（指纹表 F）。
+- **症状**：某项目桶里出现别的群的一次性 fork（渲染/群名）会话 → **做法**：不代表该群属于此项目；归属以 fork 首条消息里的会话 key / html_path 为准（指纹表 F）。
 
 ## 维护
 

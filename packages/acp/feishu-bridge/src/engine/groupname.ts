@@ -20,6 +20,27 @@ export const iconsPerCategory = 4
 /** Capacity of the recent-icon ring buffer for the 避免重复 prompt rule (Go groupIconRecentMax). */
 export const groupIconRecentMax = 8
 
+/** First-message seeds at or under this many runes never name a group. */
+export const minGroupNameSeedRunes = 4
+
+/** Exact first-message seeds that are conversation nudges, never a task to name. */
+const vagueGroupNameSeeds = new Set(['继续', '接着', 'continue', 'go on', '好的', '收到', 'ok', 'next', '嗯', '嗯嗯'])
+
+/**
+ * Whether the first-message auto-rename should run. A seed that is too
+ * short or a bare continuation nudge carries no task signal, and the name
+ * the LLM produces from it is invented from ambient context rather than
+ * the user's request.
+ *
+ * @param seed - The first message the name would be derived from.
+ * @returns True when the seed names a task.
+ */
+export function isNameableGroupNameSeed(seed: string): boolean {
+  const trimmed = seed.trim()
+  if (Array.from(trimmed).length < minGroupNameSeedRunes) return false
+  return !vagueGroupNameSeeds.has(trimmed.toLowerCase())
+}
+
 /** Default group-name + icon generation prompt (Go defaultGroupNamePrompt). */
 export const defaultGroupNamePrompt = `你是一个群聊名 + 图标生成器。只输出两行：第 1 行群名，第 2 行一个 Lucide 图标名（kebab-case）。两行都要有。
 

@@ -921,7 +921,7 @@ export async function renderContentToHTML(
 
   let out = ''
   try {
-    out = await rq.renderQuery(prompt, providerName, systemPrompt, signal)
+    out = await rq.renderQuery(prompt, providerName, systemPrompt, signal, e.sessionWorkDir(sessionKey))
   } catch (error) {
     if (error === errRenderStalled) {
       // LLM stall (no stream output): the caller retries — distinct from a

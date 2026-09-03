@@ -13,9 +13,13 @@ const hubNamer = (topic: string): string => {
 }
 
 import { describe, expect, it } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { Engine } from '../../src/engine/engine.ts'
 import { Session } from '../../src/engine/session.ts'
+import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import { ctxBridgeDispatch } from '../../src/bridge-service.ts'
 import { cmdNew } from '../../src/engine/commands.ts'
 import { lucideIconSVG } from '../../src/lucide/icon.ts'
@@ -24,6 +28,7 @@ import {
   fallbackGroupIcon,
   groupIconRecentMax,
   iconsPerCategory,
+  isNameableGroupNameSeed,
   loadIconCategories,
   parseGroupIcon,
   sampleAcrossCategories,
@@ -165,6 +170,41 @@ describe('handleGroupNameGenerate (fork → RenameGroup wiring)', () => {
 
     expect(p.renamedKeys).toEqual(['test:chat-1'])
     expect(p.renamedNames).toEqual(['调试 500 错误'])
+  })
+
+  it('skips the rename for an ambiguous first message (bare continuation)', async () => {
+    // 「继续」 carries no task signal: naming from it invents a topic from
+    // ambient context instead of the user's request.
+    const a = createGroupNameAgent({ resp: '不该发生的名字' })
+    const { e, p } = newGroupNameEngine(a)
+    e.setGroupNameConfig(true, 'p', 1000, '')
+
+    e.handleGroupNameGenerate(p, 'test:chat-1', '继续', 'test:chat-1')
+
+    await sleep(100)
+    expect(a.state.callCount).toBe(0)
+    expect(p.renamedNames).toEqual([])
+  })
+
+  it('runs the rename query in the chat\'s workDir (per-chat dir override)', async () => {
+    // The group-name fork must see the chat's own directory context — the
+    // /dir override when one exists, not the project base.
+    const a = createGroupNameAgent({ resp: '调试 500 错误' })
+    const { e, p } = newGroupNameEngine(a)
+    e.setGroupNameConfig(true, 'p', 1000, '')
+    const root = mkdtempSync(join(tmpdir(), 'fb-groupname-dir-'))
+    try {
+      const store = new ProjectStateStore(join(root, 'state.json'))
+      store.setWorkspaceDirOverride(e.dirOverrideKey('test:chat-1'), '/workspace/chat-override')
+      e.setProjectStateStore(store)
+
+      e.handleGroupNameGenerate(p, 'test:chat-1', '帮我修 500 错误', 'test:chat-1')
+
+      await waitFor(() => a.state.callCount === 1, 'LightweightQuery was not invoked')
+      expect(a.state.gotWorkDir).toBe('/workspace/chat-override')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('falls back to the first message on error, with a deterministic icon avatar', async () => {
@@ -386,6 +426,28 @@ describe('handleGroupNameGenerate → SetGroupIconAvatar wiring (#52)', () => {
     // Must not throw.
     e.handleGroupNameGenerate(p, 'test:chat-1', 'x', 'test:chat-1')
     await sleep(200)
+  })
+})
+
+describe('isNameableGroupNameSeed', () => {
+  it.each([
+    ['帮我修 500 错误', true],
+    [' 帮我看下 ', true],
+    ['abcd', true],
+    ['继续', false],
+    ['继续吧', false],
+    ['接着', false],
+    ['收到', false],
+    ['好的', false],
+    ['嗯', false],
+    ['嗯嗯', false],
+    ['ok', false],
+    ['next', false],
+    ['continue', false],
+    ['go on', false],
+    ['ab', false],
+  ])('%j → %j', (input, want) => {
+    expect(isNameableGroupNameSeed(input)).toBe(want)
   })
 })
 

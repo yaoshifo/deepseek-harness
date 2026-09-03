@@ -96,6 +96,54 @@ describe('DshAgentAdapter.listSessions persisted view', () => {
     expect(got.map(s => s.id)).toEqual(['wt-1'])
   })
 
+  it('filters the persisted view by the caller-supplied workDir (chat dir override)', async () => {
+    // A chat whose /dir override points outside the configured project base
+    // must see its own directory's sessions, not the base's.
+    const adapter = newAdapter([
+      header({ id: 'base-1', createdAt: 1000 }),
+      header({ id: 'chat-1', createdAt: 2000, cwd: '/home/hm/workspace/other' }),
+    ])
+    const got = await adapter.listSessions('/home/hm/workspace/other')
+    expect(got.map(s => s.id)).toEqual(['chat-1'])
+  })
+
+  it('filters the live view by the caller-supplied workDir (chat dir override)', async () => {
+    // /list is scoped to the calling chat's effective directory: live
+    // sessions recorded in other dirs (other chats' /dir overrides) stay
+    // out; sessions without a recorded cwd stay visible (unknown ≠ foreign).
+    const mkAgent = (id: string, cwd?: string): DshAgentLike => ({
+      id,
+      status: 'idle',
+      session: { events: [], ...(cwd !== undefined ? { header: { cwd } } : {}) },
+      followup: () => {},
+      steer: () => {},
+      cancel: () => {},
+    })
+    const queue = [mkAgent('live-base', PROJECT_DIR), mkAgent('live-other', '/home/hm/workspace/other'), mkAgent('live-unknown')]
+    const adapter = new DshAgentAdapter(
+      {
+        agents: {
+          create: async () => ({ agent: queue.shift()!, dispose: async () => {} }),
+          resume: async () => { throw new Error('unused') },
+          get: () => undefined,
+        },
+        on: () => () => {},
+        get: () => undefined,
+      },
+      { agentName: 'a', cwd: PROJECT_DIR, providers: [{ name: 'r', provider: 'p', model: 'm' }], activeProvider: 'r' },
+    )
+    const s1 = await adapter.startSession('', { sessionKey: 'feishu:oc_1:ou_1' })
+    const s2 = await adapter.startSession('', { sessionKey: 'feishu:oc_2:ou_2' })
+    const s3 = await adapter.startSession('', { sessionKey: 'feishu:oc_3:ou_3' })
+
+    expect((await adapter.listSessions()).map(s => s.id).sort()).toEqual(['live-base', 'live-unknown'])
+    expect((await adapter.listSessions('/home/hm/workspace/other')).map(s => s.id).sort()).toEqual(['live-other', 'live-unknown'])
+
+    await s1.close()
+    await s2.close()
+    await s3.close()
+  })
+
   it('drops one-shot side-query sessions (origin oneshot) from the persisted view', async () => {
     // Group naming, predict-next, and turn-summary run on origin:'oneshot'
     // sessions whose logs land in the project cwd — user-visible /list must

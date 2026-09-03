@@ -42,6 +42,13 @@
 - **会话日志**：`turn/end` reason 为 aborted / disposed，且包括模型仍在正常出流的 turn。
 - **后果与补救**：降级 = 开全新会话丢上下文；被泄漏的原会话 jsonl 仍完整，按定位链找到后 zstdcat 可找回。恢复操作（kickstart 重启等）先向用户确认。
 
+### F 群名跑题 / 一次性 fork 落错桶（2026-09-03 实测）
+
+- **症状**：群名被 LLM 改成与该群任务无关的项目主题（如 deepseek-harness 的群被改成「mem0 记忆服务开发」+ database 图标）；或别的群的渲染/群名 fork 会话出现在某项目桶里。
+- **定位**：daemon stdout.log 搜 `chat renamed` 拿改名精确时刻（紧随的 `group icon avatar set` 同源）；改名前 1–3 秒会有一个 one-shot fork 会话落在**其真实 cwd 的桶**——读它的首条 user/message：开头是「你是一个群聊名 + 图标生成器」即群名 fork；摘录段只有含糊词（如「继续」）而注入上下文来自别的项目 = 实锤。
+- **根因（修复前指纹）**：one-shot fork（群名/渲染/标题/预测）的 cwd 回退项目基目录，不认聊天 `/dir` override；群名 seed 含糊时 LLM 按注入上下文起名。
+- **归属判别**：会话属于哪个群看 fork 首条消息里的群名/会话 key/html_path，不看所在桶。
+
 ## 审批事件判别（卡片没弹 / 反复要授权）
 
 - 会话日志事件 `approval/asked` → `approval/decided` 的**时间差**：秒级/分钟级 = 真弹卡等用户点击；0–1ms = 被常设授权短路放行。两种情况日志事件形态相同，只有时间差能区分。

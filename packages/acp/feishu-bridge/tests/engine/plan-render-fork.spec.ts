@@ -14,6 +14,7 @@ import { existsSync, writeFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import {
   deliverReplyHTML,
   getRenderStatus,
@@ -109,6 +110,21 @@ describe('RenderPlanToHTML', () => {
     const sibling = join(planDir, `${slugifyTitle(title, '')}.html`)
     expect(existsSync(sibling)).toBe(true)
     expect(statSync(sibling).size).toBeGreaterThan(0)
+  })
+
+  it('DirOverrideWorkDir: the render fork runs in the chat\'s workDir', async () => {
+    // The render fork must run in the chat's own directory context — the
+    // /dir override when one exists, not the project base.
+    const a = createRenderAgent()
+    const e = newRenderEngine(a, createStubMediaPlatform())
+    const store = new ProjectStateStore(join(tempDir('plan-dirstate-'), 'state.json'))
+    store.setWorkspaceDirOverride(e.dirOverrideKey('feishu_oc_abc'), '/workspace/chat-override')
+    e.setProjectStateStore(store)
+
+    await renderPlanToHTML(e, 'feishu_oc_abc', '# plan', join(tempDir('plan-dir-'), 'foo.md'), 1)
+
+    expect(a.getCalls()).toHaveLength(1)
+    expect(a.getCalls()[0]!.workDir).toBe('/workspace/chat-override')
   })
 
   it('AgentNotRenderQuerier: an agent without renderQuery is a silent no-op', async () => {

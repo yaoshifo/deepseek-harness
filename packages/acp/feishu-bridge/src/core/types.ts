@@ -478,7 +478,12 @@ export interface SessionStartOptions {
 export interface Agent {
   name(): string
   startSession(sessionID: string, options?: SessionStartOptions): Promise<AgentSession>
-  listSessions(): Promise<AgentSessionInfo[]>
+  /**
+   * Known sessions for /list. `workDir` scopes both views to one directory
+   * tree (the calling chat's effective directory); omitted or empty falls
+   * back to the adapter's base cwd.
+   */
+  listSessions(workDir?: string): Promise<AgentSessionInfo[]>
   stop(): Promise<void>
 }
 
@@ -984,7 +989,11 @@ export interface ProviderConfig {
 export interface ForkQuerierWithProvider {
   forkQuery(sessionID: string, question: string, workDir: string): Promise<string>
   forkSessionWithProvider(sessionID: string, question: string, providerName: string, workDir: string): Promise<string>
-  lightweightQuery(prompt: string, providerName: string, signal?: AbortSignal): Promise<string>
+  /**
+   * `workDir` pins the one-shot session's cwd (the calling chat's effective
+   * directory); omitted or empty falls back to the adapter's base cwd.
+   */
+  lightweightQuery(prompt: string, providerName: string, signal?: AbortSignal, workDir?: string): Promise<string>
 }
 
 /** Agent whose active provider can be queried for fallbacks (Go ProviderSwitcher). */
@@ -1795,10 +1804,12 @@ export function asMonitorChatConfigurable(p: Platform): MonitorChatConfigurable 
 export interface RenderQuerier {
   /**
    * Run a standalone query with an injected system prompt. `providerName`
-   * selects the provider route. Returns the session's trimmed stdout
-   * (expected one-line confirmation).
+   * selects the provider route. `workDir` pins the session cwd (the calling
+   * chat's effective directory); omitted or empty falls back to the
+   * adapter's base cwd. Returns the session's trimmed stdout (expected
+   * one-line confirmation).
    */
-  renderQuery(prompt: string, providerName: string, systemPrompt: string, signal?: AbortSignal): Promise<string>
+  renderQuery(prompt: string, providerName: string, systemPrompt: string, signal?: AbortSignal, workDir?: string): Promise<string>
 }
 
 /** Optional: platform can send standalone image messages (Go ImageSender). */
