@@ -83,6 +83,8 @@ fork 本地包（feishu-bridge adapter、feishu-bridge-chatroom 等）用 `*Like
 
 **成功标准**：两分支推送成功，`git status` 显示 dev 与 origin/dev 同步。
 
+推送完成后可接 `dsh-absorb-upstream`（合并后吸收循环）：盘点这次合并带来了什么、评估二开功能能吃上哪些、拍板后 TDD 落地。不接不影响本 skill 收尾；用户单独问「合并后有哪些变化」时直接命中该 skill。
+
 ## Gotchas
 
 - 症状：`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` → 做法：`CI=true pnpm install`。lockfile 大改后必现，是无 TTY 确认问题，不是故障。
