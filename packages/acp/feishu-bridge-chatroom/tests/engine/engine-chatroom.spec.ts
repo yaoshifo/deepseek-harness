@@ -1485,7 +1485,7 @@ describe('/chatroom re-entry from a role group', () => {
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const roles = await startChatroom(e, hub, ['taleb'], 'topic')
-    const reply = vi.spyOn(e, 'reply').mockImplementation(() => {})
+    const reply = vi.spyOn(e, 'reply').mockImplementation(async () => {})
 
     // The role-list guard only checks roles parented on the CALLING session,
     // so a role group passed it and became a nested moderator
