@@ -1066,14 +1066,8 @@ export class Engine {
   /** Directory presented plans are written to; '' disables writing. */
   planDir: string = joinPath(homedir(), '.claude', 'plans')
   // ── usage + status footer (Go engine usage* fields, M7) ─────────────────
-  /** Generic fallback context window for heuristic ctx estimates (Go modelContextWindow). */
-  readonly modelContextWindow: 200000 = 200_000 as const
   /** Whether the ctx/cache lines are shown on the completion footer (Go showContextIndicator). */
   showContextIndicator: boolean = true
-  /** Effective context window in tokens (Go contextWindow). */
-  contextWindow: number = this.modelContextWindow
-  /** Project-level fallback window (Go projectContextWindow). */
-  projectContextWindow: number = this.modelContextWindow
   /** Provider quota summaries appended to the completion footer (Go usageProviders). */
   usageProviders: UsageProvider[] = []
   /** Per-turn completion footer fields (Go completionUsage* fields). */
@@ -1299,23 +1293,6 @@ export class Engine {
    */
   setShowContextIndicator(show: boolean): void {
     this.showContextIndicator = show
-  }
-
-  /**
-   * Set the project-level context window fallback (Go SetContextWindow).
-   * @param w - Context window size in tokens.
-   */
-  setContextWindow(w: number): void {
-    this.contextWindow = w
-    this.projectContextWindow = w
-  }
-
-  /** Re-resolve the context window from the active provider (Go ApplyActiveProviderContextWindow). */
-  applyActiveProviderContextWindow(): void {
-    const active = asProviderSwitcher(this.agent)?.getActiveProvider()
-    this.contextWindow = active?.contextWindow && active.contextWindow > 0
-      ? active.contextWindow
-      : this.projectContextWindow
   }
 
   /**

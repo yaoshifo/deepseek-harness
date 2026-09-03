@@ -978,8 +978,6 @@ export interface ProviderConfig {
   name: string
   /** Model the route pins (Go ProviderConfig.Model). */
   model?: string
-  /** Model context window in tokens; 0 = project/default (Go ContextWindow). */
-  contextWindow?: number
 }
 
 /**

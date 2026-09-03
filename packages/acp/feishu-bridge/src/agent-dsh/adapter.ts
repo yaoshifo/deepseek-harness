@@ -215,8 +215,6 @@ export interface ProviderRoute {
   provider: string
   model: string
   reasoningEffort?: string
-  /** Context window in tokens; 0/unset = the project-level window (Go ContextWindow, #12). */
-  contextWindow?: number
 }
 
 /** Adapter construction config. */
@@ -1583,9 +1581,7 @@ export class DshAgentAdapter {
   }
 
   /**
-   * ProviderSwitcher: the effective active route as a name-only config plus
-   * its context window, which the engine re-resolves on every switch (Go
-   * ProviderConfig.ContextWindow).
+   * ProviderSwitcher: the effective active route as a name-only config.
    *
    * @param sessionKey - engine session key whose override wins; omitted or empty reads the project default.
    * @returns the active provider, or undefined when the selection is empty or unknown.
@@ -1599,8 +1595,7 @@ export class DshAgentAdapter {
       if (override !== undefined && this.cfg.providers.some(r => r.name === override)) name = override
     }
     if (name === '' || !this.cfg.providers.some(r => r.name === name)) return undefined
-    const route = this.cfg.providers.find(r => r.name === name)
-    return { name, ...(route?.contextWindow !== undefined ? { contextWindow: route.contextWindow } : {}) }
+    return { name }
   }
 
   /**

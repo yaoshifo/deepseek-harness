@@ -24,11 +24,11 @@ Status: implemented
 
 **保留项目级指针的运行期可达性（scope 旗标或第二个命令）。** 否决：一个命令家族里两套切换范围不可学习，且按群切换后没有任何运行期调用方会动项目默认——它保持为配置/启动期所有的值。
 
-**按群的 context window 状态。** 未做：`Engine.contextWindow` 经穷尽检查是只写不读的死状态（ctx%/占用率的分母来自各会话自己的 context snapshot），因此切换路径上的重解析调用直接移除，而非重新定界。
+**按群的 context window 状态。** 未做：`Engine.contextWindow` 经穷尽检查是只写不读的死状态（ctx%/占用率的分母来自各会话自己的 context snapshot），因此切换路径上的重解析调用直接移除，而非重新定界——该字段及其整条链其后被移除（[context-window 链移除](../simplification/2026-09-03-feishu-bridge-context-window-chain-removal.zh.md)）。
 
 ## Consequences
 
-同一 bot 的两个群可并发跑不同路由，其他群的活跃会话保持其创建时锁定的路由——此前只是会话生命周期的偶然，现在按构造即正确。项目默认路由在运行期不可变；要改它就编辑配置（或持久化的 `active_provider`）并 reload。`state.json` 新增 `provider_overrides`（缺字段 = 无 override，向后兼容）；⌛ 行、🤖 行与 `/context` 头各自反映本群路由。已知限制：被派发的子任务与 chatroom 群跑项目默认而非父群路由；继承可在 spawn 时给子会话种 override 再加。context-window note 的切换路径事实与 usage-sync note 的推送机制被取代（[per-provider context_window wiring](2026-08-20-feishu-bridge-provider-context-window.zh.md) 已就地更新；[usage providers never learned the active provider name](../../archived/bug-fix/2026-08-22-feishu-bridge-usage-provider-active-sync.md) 已归档）。
+同一 bot 的两个群可并发跑不同路由，其他群的活跃会话保持其创建时锁定的路由——此前只是会话生命周期的偶然，现在按构造即正确。项目默认路由在运行期不可变；要改它就编辑配置（或持久化的 `active_provider`）并 reload。`state.json` 新增 `provider_overrides`（缺字段 = 无 override，向后兼容）；⌛ 行、🤖 行与 `/context` 头各自反映本群路由。已知限制：被派发的子任务与 chatroom 群跑项目默认而非父群路由；继承可在 spawn 时给子会话种 override 再加。context-window 链其后被整链移除（[context-window 链移除](../simplification/2026-09-03-feishu-bridge-context-window-chain-removal.zh.md) 合并了 2026-08-20 接线 note）；usage-sync note 的推送机制被取代（[usage providers never learned the active provider name](../../archived/bug-fix/2026-08-22-feishu-bridge-usage-provider-active-sync.md) 已归档）。
 
 ## Testing
 

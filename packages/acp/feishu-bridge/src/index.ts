@@ -287,8 +287,6 @@ export interface ProjectConfig {
   chatroom?: unknown
   /** Monitor-group mode (#53): observe + triage + auto-spawn subgroups. */
   monitor?: MonitorConfig
-  /** Model context window in tokens; 0 = the 200k default (Go context_window). */
-  contextWindow?: number
 
   /** Parent dirs whose subdirs are auto-listed in /dir (Go dir_scan_paths, #3). */
   dirScanPaths?: string[]
@@ -317,8 +315,6 @@ export interface ProviderRoute {
   route: string
   /** Model override applied when sessions use this route. */
   model?: string
-  /** Context window in tokens for this route's models; 0/unset = the project-level context_window (Go ContextWindow, #12). */
-  contextWindow?: number
 }
 
 /** How intermediate messages (thinking, tool output) are shown (MIGRATION.md M2/M3). */
@@ -654,7 +650,6 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       coalesceEnabled: Schema.boolean().description('Route same-dir alerts into the existing active subgroup; default true'),
       coalesceWindowSec: Schema.natural().description('Coalescing window in seconds; default 300; 0 = no age limit'),
     }).description('Monitor-group mode (#53)'),
-    contextWindow: Schema.natural().description('Model context window in tokens; 0 = 200k default (Go context_window)'),
     adminFrom: Schema.string().description('Comma-separated admin user IDs; * = all'),
     dirScanPaths: Schema.array(Schema.string()).description('Parent dirs whose subdirs are auto-listed in /dir (Go dir_scan_paths, #3)'),
     mcpServers: Schema.array(Schema.string()).description('MCP server-name allowlist: present = this project\'s sessions only see these servers\' mcp__ tools; absent = unrestricted'),
@@ -669,7 +664,6 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   providers: Schema.dict(Schema.object({
     route: Schema.string().required().description('LLM service route name from the profile'),
     model: Schema.string().description('Model override'),
-    contextWindow: Schema.natural().description('Context window in tokens for this route; 0 = project context_window / 200k default (#12)'),
   })).default({}).description('Named LLM routes (MIGRATION.md D2)'),
   display: Schema.object({
     thinkingMessages: Schema.boolean().description('Show thinking messages'),
@@ -1122,7 +1116,6 @@ export function buildProjectAssembly(
       name: routeName,
       provider: route.route,
       model: route.model ?? '',
-      ...(route.contextWindow !== undefined ? { contextWindow: route.contextWindow } : {}),
       // The project-level effort rides every route: a runtime /provider
       // switch only repoints cfg.activeProvider, so baking it on the
       // construction-time active route alone lost the effort label (and the
@@ -1357,10 +1350,6 @@ export function buildProjectAssembly(
   if (project.features?.showContextIndicator !== undefined) {
     engine.setShowContextIndicator(project.features.showContextIndicator)
   }
-  if (project.contextWindow !== undefined) {
-    engine.setContextWindow(project.contextWindow)
-  }
-  engine.applyActiveProviderContextWindow()
   if (project.features?.replyFooter !== undefined) {
     engine.setReplyFooterEnabled(project.features.replyFooter)
   }

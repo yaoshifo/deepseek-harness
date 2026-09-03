@@ -25,7 +25,6 @@ import { Msg } from '../../src/i18n/index.ts'
 function providerAgent(
   providers: string[],
   active: string,
-  windows: Record<string, number> = {},
   models: Record<string, string> = {},
 ): Agent & ProviderSwitcher & {
   calls: Array<{ key: string; name: string }>
@@ -59,9 +58,7 @@ function providerAgent(
     getActiveProvider: (sessionKey?: string) => {
       const override = sessionKey !== undefined && sessionKey !== '' ? overrides.get(sessionKey) : undefined
       const name = override !== undefined && providers.includes(override) ? override : current
-      return name !== '' && providers.includes(name)
-        ? { name, ...(windows[name] !== undefined ? { contextWindow: windows[name] } : {}) }
-        : undefined
+      return name !== '' && providers.includes(name) ? { name } : undefined
     },
     listProviders: () => providers.map(name => ({
       name,
@@ -162,17 +159,6 @@ describe('/provider switch', () => {
     expect(e.sessions.getOrCreateActive('test:user2').getAgentSessionID()).toBe('agent-sid-2')
     expect(saved).toEqual([{ key: 'test:user1', name: 'azure' }])
     expect(p.getSent()).toEqual([e.i18n.tf('provider_switched', 'azure')])
-    dispose()
-  })
-
-  it('leaves the project context window untouched (per-chat routes do not move it)', async () => {
-    const agent = providerAgent(['openai', 'azure'], 'openai', { azure: 1_000_000 })
-    const { e, p, dispose } = newEngine(agent)
-    e.setContextWindow(128_000)
-
-    e.dispatchCommand(p, msg(), '/provider switch azure')
-    await new Promise(resolve => setTimeout(resolve, 0))
-    expect(e.contextWindow).toBe(128_000)
     dispose()
   })
 
@@ -343,7 +329,7 @@ async function waitFor(cond: () => boolean, what: string): Promise<void> {
 
 describe('provider card (Go renderProviderCard + card actions)', () => {
   it('bare /provider replies the provider card on card platforms', async () => {
-    const agent = providerAgent(['openai', 'azure'], 'openai', {}, { azure: 'gpt-5.2' })
+    const agent = providerAgent(['openai', 'azure'], 'openai', { azure: 'gpt-5.2' })
     const p = createStubCardPlatform('test')
     const e = new Engine('test', agent, [p], '', 'en')
     const dispose = registerProviderCommands(e)

@@ -222,22 +222,6 @@ describe('DshAgentAdapter', () => {
     expect((await a.listSessions()).some(s => s.id === id), 'vanished agent must not list as live').toBe(false)
   })
 
-  it('getActiveProvider exposes the route context window (Go ProviderConfig.ContextWindow)', () => {
-    const h = createHarness()
-    const a = new DshAgentAdapter(h.ctx, {
-      agentName: 'dsh',
-      cwd: '/workspace/project',
-      providers: [
-        { name: 'glm', provider: 'glm-route', model: 'glm-5.3[1m]' },
-        { name: 'turbo', provider: 'turbo-route', model: 'deepseek-v4-flash', contextWindow: 1_000_000 },
-      ],
-      activeProvider: 'glm',
-    })
-    expect(a.getActiveProvider()).toEqual({ name: 'glm' })
-    expect(a.setActiveProvider('turbo')).toBe(true)
-    expect(a.getActiveProvider()).toEqual({ name: 'turbo', contextWindow: 1_000_000 })
-  })
-
   it('resolves the session override ahead of the project default without touching it', () => {
     const h = createHarness()
     const a = newAdapter(h)
