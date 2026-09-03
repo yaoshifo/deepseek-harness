@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-02-feishu-bridge-command-cwd-override-first.md
-2026-09-02-feishu-bridge-command-cwd-override-first.md: eb527d02721e7e72f3e1b726037a890b06e20653
-2026-09-02-feishu-bridge-command-cwd-override-first.zh.md: 59edc28c22954af0d3d7366f75e6cd1c36a549c8
+2026-09-02-feishu-bridge-command-cwd-override-first.md: ac38b9a1fdc9c09c690c0a51d67fd469ae601976
+2026-09-02-feishu-bridge-command-cwd-override-first.zh.md: e6712ce2ce682ac21d7c284542b9d4e1b08cb5c0

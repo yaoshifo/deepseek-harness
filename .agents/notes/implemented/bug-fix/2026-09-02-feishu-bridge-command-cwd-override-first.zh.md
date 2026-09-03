@@ -10,4 +10,12 @@ Status: implemented
 
 ## Decision
 
-每群 override 优先，对齐会话解析器；`/shell`、`/skills`、`/mcp`、`/status` 随群目录走。`planWorkDir()` 刻意保持槽位优先：它给计划文件命名，应跟踪项目而非群会话。用户可见效果：`/status` 显示的目录与 `/skills`、`/mcp` 的 workspace 列表随各群 override 变化。测试：`tests/engine/shell-commands.spec.ts`——"prefers the chat dir override over the agent work dir (/dir display and /shell cwd agree)"，叠加保留的 "runs in the command working directory (agent work dir)" 锚。
+每群 override 优先，对齐会话解析器；`/shell`、`/skills`、`/mcp`、`/status` 随群目录走。
+
+## 备选方案
+
+**`planWorkDir()` 也跟随 override。** 否决：它给计划文件命名，应跟踪项目而非群会话，故刻意保持槽位优先——修复范围只限命令解析器，命令的产出才是群真正消费的东西。
+
+## 后果
+
+用户可见效果：`/status` 显示的目录与 `/skills`、`/mcp` 的 workspace 列表随各群 override 变化。测试：`tests/engine/shell-commands.spec.ts`——"prefers the chat dir override over the agent work dir (/dir display and /shell cwd agree)"，叠加保留的 "runs in the command working directory (agent work dir)" 锚。

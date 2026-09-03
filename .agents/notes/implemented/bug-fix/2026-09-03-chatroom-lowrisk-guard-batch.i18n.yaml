@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-03-chatroom-lowrisk-guard-batch.md
-2026-09-03-chatroom-lowrisk-guard-batch.md: a29e2cbe424621773737910f7101462f0df6d49c
-2026-09-03-chatroom-lowrisk-guard-batch.zh.md: 1dfe2090f72bb3de9e20cfb8a7e84b9ee0b37efe
+2026-09-03-chatroom-lowrisk-guard-batch.md: 52d9f9a5f9b1d60da174dc38203dc0ba760aef93
+2026-09-03-chatroom-lowrisk-guard-batch.zh.md: 327d2b7bc7099958f01efc942ad0f9560d89f49d

@@ -15,6 +15,14 @@ The 2026-09-03 audit left four low-severity guard and message gaps. (1) `askRole
 - `end` distinguishes `''` (not in any chatroom → `chatroom_not_in_room`) from a resolved foreign hub (moderator-only, unchanged). `note` resolves the hub the same way and rejects non-moderators with `chatroom_note_moderator_only` before any ledger-directory resolution.
 - The replacement-steward guidance now says to address the spawned child by its returned session key — the `assistant` alias cannot resolve it. The originally-feared session leak does not materialize: the tool's spawn produces a native child, and `finalizeChatroomEnd` drains the hub's native descendants (`drainNativeDescendants`) like every other subagent; only the group-spawned pre-provisioned stewards need the `researchAssistant` classification.
 
+## Alternatives considered
+
+**Reply-style guards on the tool path, mirroring the command path.** Rejected: a tool caller consumes an error result, not a chat reply — the tool path throws the structured codes (`ChatroomAlreadyRunning`, the new member-forbidden error) while only the `/chatroom` command path keeps its reply-style guard.
+
+**Extending the command path's re-entry check to see all roles.** Rejected: the check's session-parented visibility was the wrong seam; the member-session guard (`chatroomHubKey !== '' || researchAssistant`) is shared by both paths and closes the nested-moderator hole at its root instead of widening one caller's view.
+
+**Pre-provisioning the `assistant` alias so the replacement-steward guidance could keep it.** Rejected: addressing the spawned child by its returned session key needs no new resolver surface, while the alias stays keyed to the group-spawned pre-provisioned stewards.
+
 ## Consequences
 
 - Tests: ask rejects under a pending human question without arming the role; a repeat tool start and a role-session tool start both reject before `startChatroom`; `/chatroom` from a role session replies with the member-forbidden message and installs no nested moderator flag; end/note from plain sessions report not-in-room; note from a role session reports moderator-only instead of ENOENT. The routing-proof test's note assertion moved with the behavior (not-in-room now fires before the moderator-dir check).

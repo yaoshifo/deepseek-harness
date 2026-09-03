@@ -10,4 +10,12 @@ English | [中文](2026-09-02-feishu-bridge-command-cwd-override-first.zh.md)
 
 ## Decision
 
-Per-chat override first, matching the session resolvers; `/shell`, `/skills`, `/mcp`, `/status` now follow the chat's dir. `planWorkDir()` deliberately keeps slot-first: it names plan files, which track the project rather than the chat. User-visible effect: `/status` dir display and the `/skills` / `/mcp` workspace lists now vary with the chat's override. Tests: `tests/engine/shell-commands.spec.ts` — "prefers the chat dir override over the agent work dir (/dir display and /shell cwd agree)" over the kept "runs in the command working directory (agent work dir)" anchor.
+Per-chat override first, matching the session resolvers; `/shell`, `/skills`, `/mcp`, `/status` now follow the chat's dir.
+
+## Alternatives considered
+
+**`planWorkDir()` following the override too.** Rejected: it names plan files, which track the project rather than the chat, so it deliberately keeps slot-first — the fix is scoped to the command resolvers whose outputs the chat actually consumes.
+
+## Consequences
+
+User-visible effect: `/status` dir display and the `/skills` / `/mcp` workspace lists now vary with the chat's override. Tests: `tests/engine/shell-commands.spec.ts` — "prefers the chat dir override over the agent work dir (/dir display and /shell cwd agree)" over the kept "runs in the command working directory (agent work dir)" anchor.

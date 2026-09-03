@@ -15,6 +15,14 @@ Status: implemented
 - `end` 区分 `''`（不在任何聊天室 → `chatroom_not_in_room`）与解析到外部 hub（moderator-only，不变）。`note` 以同样方式解析 hub，非主持人在任何账本目录解析之前即被 `chatroom_note_moderator_only` 拒绝。
 - 替补管家引导改为用 spawn 返回的 child 会话键派任务——`assistant` 别名解析不到替补。原担心的会话泄漏在实际路径不成立：工具 spawn 生成 native child，`finalizeChatroomEnd` 经 `drainNativeDescendants` 排空 hub 的原生后代（与所有子代理一致）；只有群路径预配的管家才需要 `researchAssistant` 分类。
 
+## 备选方案
+
+**工具路径沿用命令路径的回复式守卫。** 否决：工具调用方消费的是错误结果而非聊天回复——工具路径抛结构化错误码（`ChatroomAlreadyRunning`、新的成员禁止错误），只有 `/chatroom` 命令路径保持回复式守卫。
+
+**扩展命令路径的重入检查使其看到所有角色。** 否决：该检查按调用会话名下的父子关系可见性本就是错误的接缝；成员会话守卫（`chatroomHubKey !== '' || researchAssistant`）为两条路径共享，从根上关掉嵌套主持人漏洞，而不是放大某一个调用方的视野。
+
+**预配 `assistant` 别名让替补管家引导保持原样。** 否决：用 spawn 返回的会话键派任务不需要新的解析面，别名继续只指向群路径预配的管家。
+
 ## Consequences
 
 - 测试：挂起人类提问时 ask 拒绝且不武装角色；工具重复 start 与角色会话 start 都在 `startChatroom` 之前拒绝；角色会话发 `/chatroom` 收到成员禁止回复且不装嵌套主持人标志；普通会话 end/note 报 not-in-room；角色会话 note 报 moderator-only 而非 ENOENT。routing-proof 测试的 note 断言随行为更新（not-in-room 先于 moderator-dir 检查）。
