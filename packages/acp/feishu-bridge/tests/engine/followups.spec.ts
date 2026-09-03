@@ -254,10 +254,10 @@ describe('followups conversion: pinned narration through a live turn', () => {
     const codaGate = new Promise<void>((r) => { releaseCoda = r })
     sess.send = async (prompt: string, _images: ImageAttachment[], _files: FileAttachment[]) => {
       sess.sendCalls.push(prompt)
-      sess.channel.push({ type: 'text', content: 'ask 前的分析总结' })
+      sess.channel.push({ type: 'text', content: 'ask 前的分析总结', done: false })
       await codaGate
-      sess.channel.push({ type: 'text', content: '收尾块一' })
-      sess.channel.push({ type: 'text', content: '收尾块二' })
+      sess.channel.push({ type: 'text', content: '收尾块一', done: false })
+      sess.channel.push({ type: 'text', content: '收尾块二', done: false })
       sess.channel.push({ type: 'result', content: '收尾块二', done: true })
     }
     const p = previewPlatform()
