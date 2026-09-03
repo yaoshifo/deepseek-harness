@@ -13,7 +13,7 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-llm'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
-import { NamedEntries, ScopedLayers, scopeChainOf, scopeOf } from '@deepseek-ai/dsh-scope'
+import { NamedEntries, AnonymousEntries, ScopedLayers, scopeChainOf, scopeOf } from '@deepseek-ai/dsh-scope'
 import type { ScopeKey, ScopeLayer } from '@deepseek-ai/dsh-scope'
 import z from '@deepseek-ai/schemastery'
 import type Schema from '@deepseek-ai/schemastery'
@@ -101,6 +101,20 @@ export type SkillRegistration = Omit<SkillDefinition, 'invocation' | 'provider'>
   readonly provider?: string
 }
 
+/**
+ * Per-scope filter over inherited skills. Restrictions from every layer on
+ * the viewing scope's chain intersect — any scope on it may mask an
+ * inherited name for everything nested inside it — while the exact scope's
+ * own registrations shadow inherited names and stay outside the filter (the
+ * tools registry's restriction seam).
+ */
+export interface SkillRestriction {
+  /** Inherited skill names that stay visible; every other name is removed. */
+  readonly allow?: readonly string[]
+  /** Inherited skill names removed from visibility. */
+  readonly deny?: readonly string[]
+}
+
 /** Caller context used for cwd-sensitive and abortable provider work. */
 export interface SkillLookupOptions {
   /** Workspace selector for the current lookup. */
@@ -116,7 +130,11 @@ export interface SkillLookupOptions {
  * contract from it.
  */
 export interface SkillViewOptions extends SkillLookupOptions {
-  /** Viewing scope (the calling agent); omitted reads the global layer alone. */
+  /**
+   * Viewing scope (the calling agent); omitted reads the global layer alone.
+   * A scoped view merges the chain's layers and applies their restrictions
+   * to inherited names.
+   */
   readonly scope?: ScopeKey | undefined
 }
 
@@ -308,6 +326,12 @@ interface IndexedCandidate {
   layer: SkillLayer
 }
 
+/** One restriction compiled at registration for repeated live lookups. */
+interface CompiledSkillRestriction {
+  readonly allow?: ReadonlySet<string>
+  readonly deny?: ReadonlySet<string>
+}
+
 /** One provider registration retained by its layer. */
 interface RegisteredProvider {
   provider: SkillProvider
@@ -331,6 +355,8 @@ class SkillLayer implements ScopeLayer {
   readonly providers: NamedEntries<RegisteredProvider>
   /** Runtime skills registered through contexts carrying this scope. */
   readonly runtime = new Map<string, SkillDefinition>()
+  /** Restrictions registered through contexts carrying this scope. */
+  readonly restrictions = new AnonymousEntries<CompiledSkillRestriction>()
 
   constructor(scope: ScopeKey | undefined) {
     this.providers = new NamedEntries(name => new Error(scope === undefined
@@ -340,7 +366,16 @@ class SkillLayer implements ScopeLayer {
 
   /** Whether every contribution table in this aggregate layer is empty. */
   isEmpty(): boolean {
-    return this.providers.isEmpty() && this.runtime.size === 0
+    return this.providers.isEmpty() && this.runtime.size === 0 && this.restrictions.isEmpty()
+  }
+
+  /** Whether every compiled restriction in this layer admits an inherited skill name. */
+  admits(name: string): boolean {
+    for (const filter of this.restrictions.values()) {
+      if ((filter.allow !== undefined && !filter.allow.has(name))
+        || (filter.deny !== undefined && filter.deny.has(name))) return false
+    }
+    return true
   }
 }
 
@@ -352,8 +387,9 @@ class SkillLayer implements ScopeLayer {
  * composition lands in that preset's layer. A read merges the global layer
  * with the viewing scope's chain — the nearest layer's entry wins a duplicate
  * name outright, and the rank order decides duplicates only within one layer.
- * It exposes sorted invocation-neutral summaries and loads full skill bodies
- * on demand.
+ * Scope-layer restrictions ({@link SkillRegistry.restrict}) intersect over
+ * the inherited names of every nested view. It exposes sorted
+ * invocation-neutral summaries and loads full skill bodies on demand.
  */
 export class SkillRegistry extends Service {
   static Config: Schema<Config> = z.object({
@@ -462,6 +498,40 @@ export class SkillRegistry extends Service {
   }
 
   /**
+   * Register a per-scope restriction over inherited skills, from the calling
+   * context's layer. Restrictions from every layer on a viewing scope's chain
+   * intersect; the exact scope's own registrations are unaffected. Names are
+   * validated against the skill-name grammar only — availability is
+   * cwd-dependent, so a name matching no live skill under some workdir is
+   * inert there.
+   * @param filter - `allow` keeps only the listed inherited names, `deny` removes the listed ones; at least one is required.
+   * @returns the exact Cordis effect disposer that unregisters the restriction.
+   */
+  restrict(filter: SkillRestriction): () => void {
+    const scope = scopeOf(this.ctx)
+    if (scope === undefined) {
+      throw new Error('skills.restrict() requires a scoped context (agent.ctx): a context-global restriction would mask every viewer — restrict for the intended scope instead')
+    }
+    const allow = filter.allow
+    const deny = filter.deny
+    if (allow === undefined && deny === undefined) {
+      throw new Error('skills.restrict({}) is a no-op: pass `allow` and/or `deny` (an empty filter is almost always a materialized-empty-config bug)')
+    }
+    for (const name of [...allow ?? [], ...deny ?? []]) {
+      if (!isSkillName(name)) throw new Error(`skills.restrict() names invalid skill name "${name}"`)
+    }
+    const compiled: CompiledSkillRestriction = {
+      ...allow !== undefined ? { allow: new Set(allow) } : {},
+      ...deny !== undefined ? { deny: new Set(deny) } : {},
+    }
+    return this.layers.effect(
+      this.ctx,
+      layer => layer.restrictions.append(compiled),
+      { label: 'skills.restrict()' },
+    )
+  }
+
+  /**
    * List invocation-neutral skill summaries for a workspace. Consumers apply
    * model or user invocation policy at their operational boundary. Lookup
    * options and provider candidates are readonly same-process values borrowed
@@ -551,15 +621,33 @@ export class SkillRegistry extends Service {
   }
 
   private async collectFresh(options: SkillViewOptions): Promise<CollectResult> {
-    // Global first, then existing chain overlays farthest ancestor first and
-    // the exact scope last, so the nearest layer's same-name entry replaces
-    // the farther ones — the tools registry's shadowing rule. Rank decides
-    // duplicates only within one layer.
-    const layers = [this.layers.global, ...this.layers.chainLayers(options.scope)]
+    // Scope-chain layers, farthest ancestor first, the exact scope last.
+    const chain = this.layers.chainLayers(options.scope)
+    // Chain-blind on purpose: this is the ONE layer whose registrations the
+    // scope owns rather than inherits, and it is absent until the scope
+    // contributes something.
+    const own = this.layers.peek(options.scope)
     const merged = new Map<string, IndexedCandidate>()
     let cacheable = true
-    for (const layer of layers) {
+    // Inherited surface: global first, then ancestors farthest-first, so the
+    // nearest inherited layer's same-name entry wins — the tools registry's
+    // shadowing rule; rank decides duplicates only within one layer.
+    // Restrictions intersect across the whole chain: any scope on it may
+    // mask an inherited name for everything nested inside it.
+    for (const layer of [this.layers.global, ...chain]) {
+      if (layer === own) continue
       const collected = await this.collectLayer(layer, options)
+      if (!collected.cacheable) cacheable = false
+      for (const entry of collected.entries) {
+        if (chain.every(restricting => restricting.admits(entry.candidate.name))) {
+          merged.set(entry.candidate.name, entry)
+        }
+      }
+    }
+    // The scope's own registrations last, shadowing an inherited name and
+    // outside the restriction filter.
+    if (own !== undefined) {
+      const collected = await this.collectLayer(own, options)
       if (!collected.cacheable) cacheable = false
       for (const entry of collected.entries) merged.set(entry.candidate.name, entry)
     }
