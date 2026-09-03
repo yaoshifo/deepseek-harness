@@ -153,6 +153,13 @@ if ! node "$FORK_DIR/apps/cli/lib/bin.js" --profile "$PROFILE" --dump-config >/d
   tail -5 "$CHECK_ERR" >&2 2>/dev/null || true
   exit 1
 fi
+# A non-empty err file on a passing dump means the loader skipped patch rows
+# (warn-and-skip, never fatal): surface them instead of leaving them buried
+# here — the 2026-09-03 suppression row hid in this file for two days.
+if [ -s "$CHECK_ERR" ]; then
+  echo "warning: profile config composed with warnings (patch rows may be silently skipped):" >&2
+  cat "$CHECK_ERR" >&2
+fi
 
 if [ "$OS" = Darwin ]; then
   echo "==> restarting daemon $LABEL"
