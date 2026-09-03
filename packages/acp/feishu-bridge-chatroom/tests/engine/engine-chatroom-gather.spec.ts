@@ -952,6 +952,40 @@ describe('buildChatroomModeratorPriming', () => {
       }
     }
   })
+
+  it('carries the prior screening flow only when a prior is given', () => {
+    const prior = { topic: '旧议题', dir: '/tmp/prior' }
+    const plain = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')
+    const withPrior = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger', { prior })
+    for (const want of ['前情（继承自 旧议题，未经本次讨论验证）', '/tmp/prior', '采信', '修正：', '循环印证']) {
+      expect(withPrior).toContain(want)
+    }
+    expect(plain).not.toContain('前情（继承自')
+    const research = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws', prior)
+    expect(research).toContain('前情（继承自 旧议题，未经本次讨论验证）')
+    expect(research).toContain('采信')
+    expect(buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')).not.toContain('前情（继承自')
+  })
+
+  it('mentions the shared research data in the plain priming only when a workspace is passed', () => {
+    const withWs = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger', { researchWs: '/tmp/ws' })
+    expect(withWs).toContain('/tmp/ws')
+    expect(withWs).toContain('DATA_LEDGER.md')
+    expect(withWs).toContain('三列')
+    expect(withWs).toContain('spot-check')
+    expect(buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')).not.toContain('DATA_LEDGER.md')
+  })
+
+  it('instructs writing the closing summary to REPORT.md via note section report', () => {
+    const cases: Array<[string, string]> = [
+      ['moderator', buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')],
+      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')],
+    ]
+    for (const [, priming] of cases) {
+      expect(priming).toContain('section: report')
+      expect(priming).toContain('REPORT.md')
+    }
+  })
 })
 
 describe('buildChatroomResearchModeratorPriming', () => {

@@ -15,6 +15,8 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { defineTool, normalizeKeyStyleVariants, validateJsonSchemaValue, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import type { SubtaskAgentRouter } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { declareToolFamily } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -24,14 +26,18 @@ import {
   askHuman,
   askRole,
   chatroomLedgerDirFor,
+  chatroomResearchWorkspace,
   endChatroom,
   gatherRoles,
   interruptChatroom,
   listChatroomRoles,
   noteChatroom,
   resolveChatroomHubKey,
+  resolveChatroomInheritPrior,
   startChatroom,
+  type ChatroomInheritTarget,
 } from '../engine/chatroom.ts'
+import { listChatroomLedgers } from '../engine/chatroom-ledger.ts'
 import {
   renderChatroomPickCardAndPush,
   renderChatroomTopicPickCardAndPush,
@@ -44,14 +50,17 @@ const DESCRIPTION =
   'Run a multi-role chatroom discussion: several independent role agents (each with its own persona '
   + 'directory and accumulated memory) discuss a topic while you (the moderator) orchestrate. Use for '
   + 'multi-role / round-table discussions made of real independent agents. start: spawn the role groups '
-  + '(or list available roles). ask: address ONE role with a question (serial roundtable). gather: '
+  + '(or list available roles); pass inherit: a past chatroom to continue from (topic substring or '
+  + 'ledger dir name, empty = the newest) — the engine seeds a prior-context pointer that stays '
+  + 'unverified until you screen it. ask: address ONE role with a question (serial roundtable). gather: '
   + 'broadcast ONE question to ALL roles in parallel; the engine wakes you exactly once with every '
   + 'reply (research: true marks a research round — roles drive full assistants, longer timeout). '
   + 'pick-roles: submit role recommendations as a JSON array; the engine renders a multi-select card '
   + 'for the user. pick-topic: submit candidate topics as a JSON array; the engine renders a '
   + 'single-select card. ask-human: a ROLE asks the user a question only the human knows; the '
   + 'discussion suspends until they reply. end: tear the chatroom down. note: update the shared '
-  + 'ledger\'s synthesis (or subproblems) section.'
+  + 'ledger\'s synthesis (or subproblems, or report — the closing summary) section. history: list past '
+  + 'chatrooms (topic, status, ledger dir, reports) and the shared research-data workspace.'
 
 interface RolePickJSON {
   name: string
@@ -123,15 +132,15 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
       action: {
         type: 'string',
         required: true,
-        enum: ['start', 'ask', 'gather', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note'],
+        enum: ['start', 'ask', 'gather', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note', 'history'],
         description: 'start = spawn role groups; ask = question one role; gather = broadcast to all roles; '
           + 'pick-roles = submit role recommendations; pick-topic = submit candidate topics; ask-human = a role '
           + 'asks the user; end = tear down (add force: true to interrupt immediately from any state); '
-          + 'list = available roles; note = update the ledger.',
+          + 'list = available roles; note = update the ledger; history = past chatrooms and shared research data.',
       },
       message: {
         type: 'string',
-        description: 'start: the topic. ask/gather/ask-human: the question. note: the synthesis/subproblem text.',
+        description: 'start: the topic. ask/gather/ask-human: the question. note: the synthesis/subproblem/report text.',
       },
       role: {
         type: 'string',
@@ -141,6 +150,12 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
         type: 'string',
         description: 'start only: comma-separated role names; omit to use every configured role.',
       },
+      inherit: {
+        type: 'string',
+        description: 'start only: a past chatroom to continue from — a ledger dir name or a topic substring; '
+          + 'empty = the newest chatroom. Seeds a prior-context pointer into the new ledger; the prior '
+          + 'judgements stay unverified until you screen and adopt them.',
+      },
       picks: {
         type: 'string',
         description: 'pick-roles/pick-topic only: JSON array — [{"name","recommended","blurb"}] for roles, '
@@ -148,8 +163,8 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
       },
       section: {
         type: 'string',
-        enum: ['synthesis', 'subproblems'],
-        description: 'note only: which ledger section to update (default synthesis).',
+        enum: ['synthesis', 'subproblems', 'report'],
+        description: 'note only: which ledger section to update (default synthesis; report = the closing summary).',
       },
       research: {
         type: 'boolean',
@@ -207,11 +222,21 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
           const profileError = chatroomUserProfileError(engine)
           if (profileError !== '') throw new Error(profileError)
           const roles = (args.roles ?? '').split(',').map(r => r.trim()).filter(r => r !== '')
-          const started = await startChatroom(engine, sessionKey, roles, topic)
+          // inherit resolves BEFORE spawning so an unresolvable reference
+          // fails without side effects; '' (bare) takes the newest chatroom.
+          let prior: ChatroomInheritTarget | undefined
+          if (args.inherit !== undefined) {
+            prior = resolveChatroomInheritPrior(engine, args.inherit.trim())
+          }
+          const started = await startChatroom(engine, sessionKey, roles, topic, prior)
           const lines = started.map(r => `  • ${r.name} (session ${r.sessionKey})`)
+          const priorLine = prior !== undefined
+            ? `Continuing from 「${prior.topic}」 — the prior-context pointer is seeded into the ledger; its judgements are UNVERIFIED until you Read, screen, and note the adopted parts into the synthesis.\n`
+            : ''
           return {
             status: 'ok' as const,
             message: `Chatroom started on "${topic}" with ${started.length} role(s):\n${lines.join('\n')}\n`
+              + priorLine
               + 'Roles are idle. Address one with action: ask (role: <name>).',
           }
         }
@@ -325,6 +350,30 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
             return ess !== '' ? `  • ${n} — ${ess}` : `  • ${n}`
           })
           return { status: 'ok' as const, message: `Available roles:\n${lines.join('\n')}` }
+        }
+        case 'history': {
+          const mod = chatroomConfig(engine).moderatorDir()
+          if (!mod.ok) {
+            throw new Error('feishu_bridge_chatroom: no chatroom history (moderator dir not configured)')
+          }
+          const entries = listChatroomLedgers(join(mod.dir, 'ledgers'))
+          const lines = entries.map((l) => {
+            const status = l.header.endedStatus === 'ended'
+              ? 'ended'
+              : l.header.endedStatus === 'interrupted' ? 'interrupted' : 'unfinished'
+            const reports = l.reports.length > 0 ? `; reports: ${l.reports.join(', ')}` : ''
+            const prior = l.header.prior !== '' ? `; prior: ${l.header.prior}` : ''
+            return `  • ${l.header.started || '?'} [${status}] 「${l.header.topic}」 roles: ${l.header.roles.join(', ')} — ${l.dir}${reports}${prior}`
+          })
+          let message = entries.length === 0
+            ? 'No past chatrooms recorded yet.'
+            : 'Past chatrooms, newest first (each entry is THAT discussion\'s conclusion — an unverified judgement, not established fact):\n'
+              + lines.join('\n')
+          const ws = chatroomResearchWorkspace(engine)
+          if (ws !== '' && existsSync(join(ws, 'DATA_LEDGER.md'))) {
+            message += `\nShared research data (reusable across chatrooms): workspace ${ws}; fetch ledger ${join(ws, 'DATA_LEDGER.md')} — check the source/scope/fetched-at columns before reusing a dataset (data/core/ holds common pulls, data/<role>/ per-role ones).`
+          }
+          return { status: 'ok' as const, message }
         }
         case 'note': {
           const text = (args.message ?? '').trim()

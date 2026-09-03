@@ -11,8 +11,15 @@ description: "在 feishu-bridge 聊天里运行多角色聊天室讨论：若干
 
 关键原则（完整细节在契约 + feishu-bridge 注入的 priming 里）：
 - **不要引导角色。** 当你 `action: ask` 点名角色时，只带上当前图景和一个指引（"请就子问题 X 发言"）。永远不要给角色一个现成的分析框架或要它填充的子维度（例如"从 convexity / absorbing barrier / via negativa 角度来谈"这种是禁止的）——让每个角色自己选框架。关键的追问**只**用于明显的事实错误或逻辑漏洞，且只作为一个尖锐的问题，绝不是填空式框架。
-- **账本拆成三个文件**，在账本目录下：`SYNTHESIS.md`（滚动综合）、`SUBPROBLEMS.md`（子问题清单 + 进度，用于跟踪）、`RECORD.md`（完整讨论记录）。用 `action: note, message: "<text>"` 更新综合；用 `action: note, section: subproblems, message: "<list>"` 更新子问题。
+- **账本拆成三个文件**，在账本目录下：`SYNTHESIS.md`（滚动综合）、`SUBPROBLEMS.md`（子问题清单 + 进度，用于跟踪）、`RECORD.md`（完整讨论记录）。用 `action: note, message: "<text>"` 更新综合；用 `action: note, section: subproblems, message: "<list>"` 更新子问题；收尾时用 `action: note, section: report, message: "<总结>"` 把结论文本写进 `REPORT.md`（供后续聊天室与 history 引用）。
 - **收尾前，渲染一份 HTML 摘要供用户审阅。** 把渲染委派给一个隔离子 agent 去做（渲染大 HTML 会污染你的上下文，别自己渲染）；拿到产物路径后把 HTML 文件投递给用户。然后再用 `AskUserQuestion` 问用户是否结束——提供"继续就 HTML 提问"选项，让用户能进一步追问，你把它路由给对应角色。
+
+## 延续历史聊天室（--continue）与复用甄别
+
+`/chatroom --continue[=<历史议题|目录>] <议题>` 延续一次历史讨论（不带角色名时沿用其角色阵容）；任何会话也能调 `action: history` 查历史聊天室（议题/状态/账本目录/报告）与共享研究数据。**共享材料一律是待验证的输入，不是已验证的事实**：
+- 延续启动时引擎只在账本前情区写一个**指针**（不复制内容）；实质内容进入本次讨论的唯一通路是你 Read 前情 → 逐条分类（直接采信 / 复核后采信 / 存疑 / 推翻）→ 把采信部分 `note` 进综述段并标注来源。
+- 复核用**新的独立证据**——复读前次依据的同一批数据是循环印证，不是验证。发现前情有误，综述段用「修正：<错误>→<更正>」显式留痕。
+- 复用共享研究数据前先查 `DATA_LEDGER.md` 的 来源/口径/抓取时间 三列判断适配性；对结论起支撑的关键数据 spot-check 源头；可疑/过期就重下并登记新行。
 
 ## 先判断要不要加载用户背景
 

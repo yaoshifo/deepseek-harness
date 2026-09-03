@@ -31,8 +31,13 @@ import {
   appendChatroomLedger,
   chatroomLedgerDir,
   initChatroomLedger,
+  listChatroomLedgers,
+  resolveChatroomInherit,
   updateChatroomLedgerSynthesis,
+  updateChatroomReport,
   updateChatroomSubproblems,
+  writeChatroomLedgerEnded,
+  type ChatroomLedgerPrior,
 } from './chatroom-ledger.ts'
 import { listRoleNames, roleDir, roleExists } from './chatroom-roles.ts'
 import { cleanupOneChat } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -425,15 +430,19 @@ export function chatroomStewardGroupName(): string {
 // ── roles listing / resolution ────────────────────────────────────────────
 
 /** The ledger directory for a chatroom hub, or undefined when the ledger is off.
+ * The directory carries the hub's current run number, so a second chatroom
+ * on the same hub gets its own dir instead of overwriting the first ledger.
  *
- * @param e - Engine carrying the moderator-dir configuration.
+ * @param e - Engine carrying the moderator-dir configuration and session registry.
  * @param hubKey - Session key of the chatroom hub.
  * @returns The hub's ledger directory, or undefined when no moderator dir is configured.
  */
 export function chatroomLedgerDirFor(e: Engine, hubKey: string): string | undefined {
-  const dir = chatroomConfig(e).moderatorDir().dir
-  if (dir === '') return undefined
-  return chatroomLedgerDir(dir, hubKey)
+  const mod = chatroomConfig(e).moderatorDir()
+  if (!mod.ok) return undefined
+  const hub = e.sessions.findActive(hubKey)
+  const run = hub === undefined ? 1 : Math.max(chatroomState(hub).chatroomLedgerRun, 1)
+  return chatroomLedgerDir(mod.dir, hubKey, run)
 }
 
 /** The roles in a chatroom (sessions whose chatroomHubKey matches).
@@ -532,6 +541,7 @@ function groupSpawnerOf(
  */
 export async function startChatroom(
   e: Engine, hubSessionKey: string, roleNames: string[] | undefined, topic: string,
+  prior?: ChatroomLedgerPrior,
 ): Promise<ChatroomRole[]> {
   const p = e.spawnCapablePlatform()
   if (p === undefined) throw new Error('chatroom: no group-capable platform available')
@@ -615,9 +625,15 @@ export async function startChatroom(
     }
     out.push({ name, sessionKey: syntheticMsg.sessionKey, dir })
   }
+  // Consume the next run number BEFORE resolving the ledger dir: every
+  // chatroom on this hub gets its own dir, so a new discussion never
+  // overwrites a previous one's ledger.
+  const run = chatroomState(parent).chatroomLedgerRun + 1
+  chatroomState(parent).chatroomLedgerRun = run
+  e.sessions.save()
   const ledgerDir = chatroomLedgerDirFor(e, hubSessionKey)
   if (ledgerDir !== undefined) {
-    void initChatroomLedger(ledgerDir, topic, names).catch((error: unknown) => {
+    void initChatroomLedger(ledgerDir, topic, names, prior).catch((error: unknown) => {
       console.warn(`chatroom: ledger init failed (${ledgerDir}): ${String(error)}`)
     })
   }
@@ -1398,7 +1414,7 @@ function hangsOffChatroomExecutor(e: Engine, sess: Session, hubKey: string): boo
  * @param hubKey - Session key of the chatroom hub whose roles are removed.
  * @returns The number of role sessions cleaned up (0 when no platform is available).
  */
-export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
+export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'ended' | 'interrupted' = 'ended'): number {
   const p = e.spawnCapablePlatform()
   if (p === undefined) return 0
   // Native continuable descendants chain through the project state, not the
@@ -1440,7 +1456,16 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string): number {
     clearChatroomResearchFlags(hub)
   }
   e.sessions.save()
-  console.info(`chatroom: ended (hub=${hubKey} roles_removed=${removed})`)
+  // Stamp the terminal state into the ledger header (best-effort: the write
+  // rides the ledger chain; a failure warns and leaves the entry 未收尾,
+  // which the history read tolerates).
+  const lp = chatroomLedgerDirFor(e, hubKey)
+  if (lp !== undefined) {
+    void writeChatroomLedgerEnded(lp, endedStatus).catch((error: unknown) => {
+      console.warn(`chatroom: ledger ended-line write failed (${lp}): ${String(error)}`)
+    })
+  }
+  console.info(`chatroom: ended (hub=${hubKey} roles_removed=${removed} status=${endedStatus})`)
   return removed
 }
 
@@ -1518,7 +1543,7 @@ export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptR
     e.stopInteractiveSession(childKey)
     if (e.clearSubtaskGather(childKey)) clearedGathers += 1
   }
-  const rolesRemoved = finalizeChatroomEnd(e, hubKey)
+  const rolesRemoved = finalizeChatroomEnd(e, hubKey, 'interrupted')
 
   const uniqueMissing = [...new Set(missing)].sort()
   const cs = asCardSender(p)
@@ -1741,10 +1766,41 @@ export async function noteChatroom(e: Engine, hubKey: string, section: string, t
     await updateChatroomLedgerSynthesis(lp, text)
   } else if (section === 'subproblems') {
     await updateChatroomSubproblems(lp, text)
+  } else if (section === 'report') {
+    await updateChatroomReport(lp, text)
   } else {
-    throw new Error(`chatroom: note: unknown section "${section}" (want synthesis|subproblems)`)
+    throw new Error(`chatroom: note: unknown section "${section}" (want synthesis|subproblems|report)`)
   }
   console.info(`chatroom: moderator updated ledger (hub=${hubKey} section=${section})`)
+}
+
+// ── cross-chatroom sharing ─────────────────────────────────────────────────
+
+/** A resolved inherit target: the prior's pointer plus its recorded cast. */
+export interface ChatroomInheritTarget extends ChatroomLedgerPrior {
+  /** The prior chatroom's recorded roles — the default cast for a continuation. */
+  roles: string[]
+}
+
+/**
+ * Resolve a `--continue`/`inherit` reference against the engine's moderator
+ * dir: the matched prior chatroom's topic, ledger dir, and recorded cast,
+ * for {@link startChatroom} to seed the new ledger's prior-context pointer.
+ *
+ * @param e - Engine carrying the moderator-dir configuration and i18n surface.
+ * @param ref - Ledger dir name or topic substring; '' means the newest chatroom.
+ * @returns the prior chatroom's topic, ledger directory, and roles.
+ * @throws When the ledger is off (no moderator dir) or the reference matches nothing.
+ */
+export function resolveChatroomInheritPrior(e: Engine, ref: string): ChatroomInheritTarget {
+  const mod = chatroomConfig(e).moderatorDir()
+  if (!mod.ok) throw new Error(e.i18n.t(Msg.ChatroomContinueNoLedger))
+  const entry = resolveChatroomInherit(join(mod.dir, 'ledgers'), ref)
+  if (entry === undefined) {
+    const recent = listChatroomLedgers(join(mod.dir, 'ledgers'), 5).map(l => l.header.topic).join('、')
+    throw new Error(e.i18n.tf(Msg.ChatroomContinueNoMatch, ref, recent === '' ? e.i18n.t(Msg.ChatroomHistoryEmpty) : recent))
+  }
+  return { topic: entry.header.topic, dir: entry.dir, roles: entry.header.roles }
 }
 
 // ── research flags / venv ─────────────────────────────────────────────────

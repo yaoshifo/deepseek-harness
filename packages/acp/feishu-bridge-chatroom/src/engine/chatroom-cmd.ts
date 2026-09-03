@@ -8,7 +8,8 @@
  * @module dsh-feishu-bridge/chatroom-cmd
  */
 
-import { mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { emptyMessage } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Message, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -23,12 +24,14 @@ import {
   chatroomLedgerDirFor,
   chatroomResearchWorkspace,
   chatroomStewardGroupName,
+  ChatroomInheritTarget,
   ChatroomRole,
   clearChatroomResearchFlags,
   ensureResearchPythonEnv,
   interruptChatroom,
   listChatroomRoles,
   resolveChatroomHubKey,
+  resolveChatroomInheritPrior,
   startChatroom,
 } from './chatroom.ts'
 import {
@@ -139,9 +142,21 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   let research = false
   let researchMode = ''
   let maxRounds = 0
+  let continueRequested = false
+  let continueRef = ''
   for (let i = 0; i < args.length; i++) {
     const a = args[i]
     if (a === undefined) continue
+    if (a === '--continue' || a === '-c') {
+      continueRequested = true
+      continueRef = ''
+      continue
+    }
+    if (a.startsWith('--continue=')) {
+      continueRequested = true
+      continueRef = a.slice('--continue='.length).trim()
+      continue
+    }
     if (a === '--roles' || a === '-r') {
       const next = args[i + 1]
       if (next !== undefined) {
@@ -205,8 +220,8 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   if (topic === '') {
     // #59 随便聊聊: no topic at all → the moderator suggests candidate
     // topics; the user picks one, then enters the #43 role picker. Naming
-    // roles without a topic is a misuse → usage error.
-    if (gotRoles || roles.length > 0) {
+    // roles or --continue without a topic is a misuse → usage error.
+    if (gotRoles || roles.length > 0 || continueRequested) {
       await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomUsage))
       return
     }
@@ -220,11 +235,28 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
     return
   }
 
+  // --continue resolves the prior BEFORE any spawn path, so an unresolvable
+  // reference fails loud without side effects.
+  let prior: ChatroomInheritTarget | undefined
+  if (continueRequested) {
+    try {
+      prior = resolveChatroomInheritPrior(e, continueRef)
+    } catch (error) {
+      await e.reply(p, msg.replyCtx, String(error instanceof Error ? error.message : error))
+      return
+    }
+  }
+
   // Feature 2: a single explicitly-named role → direct 1:1 conversation in
-  // this chat, no moderator. Research mode does not apply — reject it.
+  // this chat, no moderator. Research mode and --continue do not apply —
+  // both need the moderator's ledger orchestration.
   if (roles.length === 1) {
     if (research) {
       await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomResearchSingleRole))
+      return
+    }
+    if (continueRequested) {
+      await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomUsage))
       return
     }
     await startChatroomDirectRole(e, p, msg, roles[0] ?? '', topic)
@@ -235,6 +267,15 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   // to afterChatroomStarted so --research survives the async pick flows.
   if (!(await gateResearchUvOrFail(e, p, msg, research))) return
   stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode, maxRounds)
+
+  // --continue with no roles named → reuse the prior chatroom's recorded
+  // cast; continuing a discussion keeps its participants by default.
+  if (roles.length === 0 && prior !== undefined) {
+    for (const r of prior.roles) {
+      const t = r.trim()
+      if (t !== '') roles.push(t)
+    }
+  }
 
   // Feature 1: no roles named → wake the moderator to recommend roles based
   // on the topic, then render a picker card for the user to confirm.
@@ -250,12 +291,12 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   // Explicit multi-role path: spawn + post-spawn steps.
   let started: ChatroomRole[]
   try {
-    started = await startChatroom(e, msg.sessionKey, roles, topic)
+    started = await startChatroom(e, msg.sessionKey, roles, topic, prior)
   } catch (error) {
     await e.reply(p, msg.replyCtx, String(error instanceof Error ? error.message : error))
     return
   }
-  void afterChatroomStarted(e, p, msg.sessionKey, msg.userID, msg.chatType, msg.replyCtx, started, topic)
+  void afterChatroomStarted(e, p, msg.sessionKey, msg.userID, msg.chatType, msg.replyCtx, started, topic, prior)
 }
 
 /**
@@ -468,6 +509,7 @@ export async function afterChatroomStarted(
   rctx: unknown,
   started: ChatroomRole[],
   topic: string,
+  prior?: ChatroomInheritTarget,
 ): Promise<void> {
   // Collect chatroom child group keys for the family avatar: role groups
   // here, research-assistant groups in the research branch below.
@@ -504,6 +546,9 @@ export async function afterChatroomStarted(
   }
   if (ledgerOK) {
     sb.push(e.i18n.tf(Msg.ChatroomLedgerDirNote, ledgerDir))
+  }
+  if (prior !== undefined) {
+    sb.push(e.i18n.tf(Msg.ChatroomInheritNote, prior.topic))
   }
   // The ready card is the one place every chatroom member reads: state here
   // that plain messages in the hub reach the moderator, so mid-run
@@ -610,14 +655,21 @@ export async function afterChatroomStarted(
   e.renameHubToTopic(p, sessionKey, chatType, topic, chatroomChildKeys, chatroomHubGroupName)
 
   // Wake the hub agent as the moderator with the orchestration contract.
-  let priming = buildChatroomModeratorPriming(topic, started, ledgerDir ?? '')
+  // The plain priming names the shared research data only when the workspace
+  // already has a fetch ledger — a fresh workspace would point at nothing.
+  const ws = chatroomResearchWorkspace(e)
+  const researchDataWs = ws !== '' && existsSync(join(ws, 'DATA_LEDGER.md')) ? ws : ''
+  let priming = buildChatroomModeratorPriming(topic, started, ledgerDir ?? '', {
+    ...(prior !== undefined ? { prior } : {}),
+    researchWs: researchDataWs,
+  })
   if (research) {
     let mode = chatroomState(s).chatroomResearchMode
     if (mode === '') mode = 'auto'
     let maxRounds = chatroomConfig(e).maxResearchRounds()
     const override = chatroomState(s).chatroomResearchMaxRounds
     if (override > 0) maxRounds = override
-    priming = buildChatroomResearchModeratorPriming(topic, started, ledgerDir ?? '', mode, maxRounds, chatroomResearchWorkspace(e))
+    priming = buildChatroomResearchModeratorPriming(topic, started, ledgerDir ?? '', mode, maxRounds, ws, prior)
   }
   const wake: Message = {
     ...emptyMessage(),
