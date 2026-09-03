@@ -1,5 +1,5 @@
 /**
- * The chatroom package's message subtable: the 71 chatroom keys (70
+ * The chatroom package's message subtable: the 73 chatroom keys (72
  * `chatroom_*` plus the bare `chatroom` command-description key) moved
  * verbatim from the feishu-bridge main table. Registered once per process in
  * the plugin apply through the bridge's `registerMessages`, so every engine

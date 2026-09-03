@@ -2,7 +2,7 @@
 
 Status: implemented
 
-[English](2026-09-13-chatroom-research-data-dedup.md) | 中文
+[English](2026-09-02-chatroom-research-data-dedup.md) | 中文
 
 ## 问题
 
