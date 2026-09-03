@@ -14,6 +14,7 @@ import {
   buildChatroomSystemPrompt,
   chatroomLedgerReadPrompt,
   chatroomResearchRolePrompt,
+  chatroomRoleMemoryPrompt,
   loadFlattenedPersona,
 } from '../src/engine/chatroom-persona.ts'
 
@@ -60,6 +61,24 @@ describe('buildChatroomSystemPrompt', () => {
     expect(text).toContain('# Munger')
   })
 
+  it('carries the cross-run memory discipline in the role persona', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-persona-memory-'))
+    await writeFile(join(dir, 'CLAUDE.md'), '# R\n', 'utf8')
+    const text = buildChatroomSystemPrompt({
+      workDir: dir,
+      isRole: true,
+      isDirect: false,
+      isModerator: false,
+      research: false,
+      ledgerDir: '',
+      platformPrompt: '',
+      userProfilePath: '',
+    })
+    expect(text).toContain('跨场记忆')
+    expect(text).toContain('memory_write')
+    expect(text).toContain('memory_index')
+  })
+
   it('adds the research contract in research mode, addressing the assistant by sentinel', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fb-persona-research-'))
     await writeFile(join(dir, 'CLAUDE.md'), '# R\n', 'utf8')
@@ -87,6 +106,23 @@ describe('buildChatroomSystemPrompt', () => {
     }
   })
 
+  it('carries the memory discipline in the research persona too', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-persona-memory-research-'))
+    await writeFile(join(dir, 'CLAUDE.md'), '# R\n', 'utf8')
+    const text = buildChatroomSystemPrompt({
+      workDir: dir,
+      isRole: true,
+      isDirect: false,
+      isModerator: false,
+      research: true,
+      ledgerDir: '',
+      platformPrompt: '',
+      userProfilePath: '',
+    })
+    expect(text).toContain('跨场记忆')
+    expect(text).toContain('memory_write')
+  })
+
   it('uses the direct contract for 1:1 sessions and no ledger section', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fb-persona-direct-'))
     await writeFile(join(dir, 'CLAUDE.md'), '# R\n', 'utf8')
@@ -103,6 +139,40 @@ describe('buildChatroomSystemPrompt', () => {
     expect(text).toContain('1:1 回答用户')
     expect(text).not.toContain('共享账本——回答前先读')
     expect(text).not.toContain('多角色聊天室的一个参与者')
+  })
+
+  it('carries the memory discipline in the direct persona', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-persona-memory-direct-'))
+    await writeFile(join(dir, 'CLAUDE.md'), '# R\n', 'utf8')
+    const text = buildChatroomSystemPrompt({
+      workDir: dir,
+      isRole: false,
+      isDirect: true,
+      isModerator: false,
+      research: false,
+      ledgerDir: '',
+      platformPrompt: '',
+      userProfilePath: '',
+    })
+    expect(text).toContain('跨场记忆')
+    expect(text).toContain('memory_write')
+  })
+
+  it('keeps the memory discipline out of the moderator persona', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-persona-memory-moderator-'))
+    await writeFile(join(dir, 'CLAUDE.md'), '# M\n', 'utf8')
+    const text = buildChatroomSystemPrompt({
+      workDir: dir,
+      isRole: false,
+      isDirect: false,
+      isModerator: true,
+      research: false,
+      ledgerDir: '/data/ledgers/abc',
+      platformPrompt: '',
+      userProfilePath: '',
+    })
+    expect(text).toContain('共享账本——回答前先读')
+    expect(text).not.toContain('跨场记忆')
   })
 
   it('injects the user-background section after the role persona', async () => {
@@ -160,5 +230,12 @@ describe('cross-chatroom sharing disciplines', () => {
     expect(p).toContain('三列')
     expect(p).toContain('spot-check')
     expect(p).toContain('登记新行')
+  })
+
+  it('role memory prompt pins the write-now and no-chatter disciplines', () => {
+    const p = chatroomRoleMemoryPrompt()
+    expect(p).toContain('不要等收场信号')
+    expect(p).toContain('宁缺毋滥')
+    expect(p).toContain('memory_index')
   })
 })

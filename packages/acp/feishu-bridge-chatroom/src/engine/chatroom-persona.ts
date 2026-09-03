@@ -113,6 +113,9 @@ export function buildChatroomSystemPrompt(opts: {
   } else if (opts.isDirect) {
     b.push(chatroomDirectRoleContractPrompt())
   }
+  if (opts.isRole || opts.isDirect) {
+    b.push(chatroomRoleMemoryPrompt())
+  }
   if ((opts.isRole || opts.isModerator) && opts.ledgerDir !== '') {
     b.push(chatroomLedgerReadPrompt(opts.ledgerDir))
   }
@@ -229,6 +232,23 @@ export function chatroomDirectRoleContractPrompt(): string {
 - 不要用 feishu_bridge_chatroom 的 ask/gather/ask-human/end——那些是多角色编排工具，1:1 聊天用不上。
 - 如果缺少一个只有用户才知道的关键事实（他们的个人数字、日期、约束、偏好），直接用纯文本问他们。不要编造。
 - 始终正常回复——绝不 \`NO_REPLY\`（没有主持人要唤醒）。
+`
+}
+
+/**
+ * The cross-run memory discipline carried by every role persona (roles,
+ * research roles, and direct-role 1:1 sessions). The persona's complete
+ * system-prompt replacement drops the dsh-memory strategy section, so this
+ * contract is the only prompt surface that teaches roles to use the
+ * per-persona memory directory their sessions resolve to.
+ *
+ * @returns the cross-run memory discipline prompt.
+ */
+export function chatroomRoleMemoryPrompt(): string {
+  return `
+
+### 你的跨场记忆
+你在每场聊天室解析到同一个记忆目录：开局若已有积累，其索引会注入你的上下文；memory_read / memory_write / memory_list / memory_delete / memory_index 操作的就是这份记忆，写下的一切未来每场都能召回。讨论中一旦形成值得长期保留的判断——你的视角下被验证有效的分析路径、用户确认过的偏好与约束、对反复出现议题的立场演化——当场用 memory_write 记下，并用 memory_index 登记一行索引；聊天室收尾不会通知你，不要等收场信号。只记可复用的判断，不记单场讨论流水；没有值得记的就跳过，宁缺毋滥。
 `
 }
 
