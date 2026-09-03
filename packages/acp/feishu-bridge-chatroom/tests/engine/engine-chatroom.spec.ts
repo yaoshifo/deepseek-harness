@@ -17,6 +17,7 @@ import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomCommands, cmdChatroom } from '../../src/engine/chatroom-cmd.ts'
 import {
+  ChatroomEndBarrier,
   ChatroomGather,
   askHuman,
   askRole,
@@ -308,6 +309,88 @@ describe('AskRole', () => {
     // the one-shot relay gate.
     await expect(askRole(e, hub, 'taleb', '追问')).rejects.toThrow('ask-human')
     expect(chatroomState(e.sessions.getOrCreateActive(roleKey)).chatroomInFlight).toBe(false)
+  })
+
+  it('steers into a busy role mid-turn when asked with delivery steer', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const roleKey = roles[0]!.sessionKey
+    // Busy mid-turn with a live agent session: the steer branch applies.
+    const sess = newControllableSession('role-agent-1')
+    const st = new InteractiveState()
+    st.agentSession = sess
+    e.interactiveStates.set(roleKey, st)
+    expect(e.sessions.getOrCreateActive(roleKey).tryLock()).toBe(true)
+    clearCards(p)
+
+    await askRole(e, hub, 'taleb', '换个角度分析', 'steer')
+    await settle()
+
+    // The guidance reached the running turn; the relay still re-armed.
+    expect(sess.steerCalls.some(c => c.includes('换个角度分析'))).toBe(true)
+    expect(p.sentCards).toHaveLength(1)
+    expect(chatroomState(e.sessions.getOrCreateActive(roleKey)).chatroomAsked).toBe(false)
+  })
+
+  it('steer on an idle role rides the pipeline, not the steer primitive', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const roleKey = roles[0]!.sessionKey
+    // Live session but idle: steer mode must fall through to the pipeline.
+    const sess = newControllableSession('role-agent-1')
+    const st = new InteractiveState()
+    st.agentSession = sess
+    e.interactiveStates.set(roleKey, st)
+    clearCards(p)
+
+    await askRole(e, hub, 'taleb', '首轮提问', 'steer')
+    await settle()
+
+    expect(sess.steerCalls).toEqual([])
+    expect(p.sentCards).toHaveLength(1)
+    expect(chatroomState(e.sessions.getOrCreateActive(roleKey)).chatroomAsked).toBe(false)
+  })
+
+  it('steer is allowed during an armed gather; queue still rejects', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const roleKey = roles[0]!.sessionKey
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = new ChatroomGather('round question', 1)
+
+    // Queue still rejects during a gather: the answer is lost either way
+    // (a busy role's one-shot gate was consumed by the gather question).
+    await expect(askRole(e, hub, 'taleb', '追问')).rejects.toThrow()
+
+    // Steer reaches a busy role mid-round; the reply still counts as the
+    // role's gather reply (the barrier consumes by session, not by turn).
+    const sess = newControllableSession('role-agent-1')
+    const st = new InteractiveState()
+    st.agentSession = sess
+    e.interactiveStates.set(roleKey, st)
+    expect(e.sessions.getOrCreateActive(roleKey).tryLock()).toBe(true)
+    await expect(askRole(e, hub, 'taleb', '纠正方向', 'steer')).resolves.toBeUndefined()
+    await settle()
+    expect(sess.steerCalls.some(c => c.includes('纠正方向'))).toBe(true)
+  })
+
+  it('steer still rejects during an end barrier', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    await startChatroom(e, hub, ['taleb'], 'topic')
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier = new ChatroomEndBarrier()
+
+    await expect(askRole(e, hub, 'taleb', '收尾别问了', 'steer')).rejects.toThrow('收尾')
   })
 })
 

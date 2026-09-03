@@ -17,7 +17,7 @@ import { mkdirSync, rmSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import type { Session } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import type { Session, SubtaskDelivery } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { emptyMessage, jumpButtonsMarkdown, parentJumpButtons } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { maxGroupNameRunes } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Message, PendingAsk, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -653,8 +653,11 @@ export async function startChatroom(
  * @param callerHubKey - Session key of the chatroom hub the role must belong to.
  * @param roleRef - The role to ask: a role name or session key.
  * @param question - The moderator's question text; empty is rejected.
+ * @param delivery - Queue (default) injects a new turn; steer admits the
+ * question into a busy role's running turn at its nearest step boundary
+ * (`deliverMachineMessage`), falling back to the pipeline when idle.
  */
-export async function askRole(e: Engine, callerHubKey: string, roleRef: string, question: string): Promise<void> {
+export async function askRole(e: Engine, callerHubKey: string, roleRef: string, question: string, delivery: SubtaskDelivery = 'queue'): Promise<void> {
   const q = question.trim()
   if (q === '') throw new Error('chatroom: question is required')
   const askHub = chatroomHubOf(e, callerHubKey)
@@ -664,9 +667,12 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
   // Ask during an armed gather loses the answer either way: a busy role's
   // reply never relays (its one-shot gate was consumed by the gather
   // question), an idle role's reply is absorbed as its gather reply.
+  // Steer is the exception: it reaches a busy role inside the running turn
+  // (the reply still counts as that role's gather reply), so mid-round
+  // course correction stays available to the moderator.
   // The pending-ask-human reply path cannot reach here — the two states
   // are mutually exclusive by askHuman's and gatherRoles' two-way guards.
-  if (askHub !== undefined && chatroomState(askHub).pendingGather !== undefined) {
+  if (askHub !== undefined && chatroomState(askHub).pendingGather !== undefined && delivery !== 'steer') {
     throw new Error(e.i18n.t(Msg.ChatroomAskGatherBlocked))
   }
   // Mirror of gather's pendingHumanQuestionRole guard (guards must be
@@ -684,7 +690,7 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
     throw new Error(e.i18n.t(Msg.ChatroomAskNotInRoom))
   }
   const roleName = chatroomState(role).chatroomRoleName
-  await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(Msg.ChatroomAskHeader, roleName), 0, false)
+  await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(Msg.ChatroomAskHeader, roleName), 0, false, delivery)
   console.info(`chatroom: moderator asked role (hub=${callerHubKey} role=${roleKey})`)
 }
 
@@ -692,7 +698,10 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
  * The shared "post question card to the role group + inject the question as
  * a new role turn + re-arm the one-shot relay" path (Go askRoleInternal).
  * askSeq is the gather round stamp; 0 for serial asks. awaitAssistant arms
- * the research dispatch-defer at turn start.
+ * the research dispatch-defer at turn start. Steer delivery routes the
+ * injection through `deliverMachineMessage`: a busy role receives the
+ * question mid-turn at its nearest step boundary; an idle role rides the
+ * same synthetic-message pipeline as every machine wake.
  */
 async function askRoleInternal(
   e: Engine,
@@ -704,6 +713,7 @@ async function askRoleInternal(
   headerTitle: string,
   askSeq: number,
   awaitAssistant: boolean,
+  delivery: SubtaskDelivery = 'queue',
 ): Promise<void> {
   const r = asReplyContextReconstructor(p)
   if (r === undefined) {
@@ -762,7 +772,14 @@ async function askRoleInternal(
     metadata: { chatroomAskSeq: askSeq, chatroomAwaitAssistant: awaitAssistant },
   }
   try {
-    e.receiveMessage(p, roleMsg)
+    if (delivery === 'steer') {
+      // Busy → mid-turn steer claimed at the next step boundary (the role's
+      // reply still relays through the one-shot gate re-armed above); idle →
+      // the machine-wake pipeline with the full turn machinery.
+      e.deliverMachineMessage(p, roleMsg)
+    } else {
+      e.receiveMessage(p, roleMsg)
+    }
   } catch (error) {
     console.error(`engine: receive-message failed (${roleKey}): ${String(error)}`)
   }

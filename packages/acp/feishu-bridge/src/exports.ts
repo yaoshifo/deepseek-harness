@@ -35,6 +35,7 @@ export type {
   Platform,
   ProviderSwitcher,
   SessionStartOptions,
+  SubtaskDelivery,
   UserQuestion,
 } from './core/types.ts'
 export {
