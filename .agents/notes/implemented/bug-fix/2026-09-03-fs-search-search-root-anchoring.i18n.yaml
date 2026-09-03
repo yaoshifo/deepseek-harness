@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-03-fs-search-search-root-anchoring.md
-2026-09-03-fs-search-search-root-anchoring.md: e54b811ab08efc463f733304820ac306363d501c
-2026-09-03-fs-search-search-root-anchoring.zh.md: 4ffd8347ec1fe1d6a7d116439f01e3c0f7991463
+2026-09-03-fs-search-search-root-anchoring.md: 7d8c0d9a862588b8bcfe86c9711e34d696034931
+2026-09-03-fs-search-search-root-anchoring.zh.md: b996fa7bcbd2c042e3e6f9579b62d00794e46786

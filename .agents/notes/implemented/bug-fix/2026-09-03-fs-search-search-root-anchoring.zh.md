@@ -29,3 +29,4 @@ Status: implemented
 - 快照：四个参数 description 改了 model-visible 文本，37 个快照文件（tool-schemas.expected.json 与 system-prompt.expected.md）做了机械替换，docs/tool-catalog.md 重新生成。16 个 SDK 回放快照通过 worktree 软链的 node_modules 加载主树构建的 lib，因此要到干净构建环境（CI）里验证；session-sandbox-root 与 PTY 类快照失败在本会话沙箱下于未改动的主树上同样预存。
 - 修复前的可靠形态（pattern 带 cwd 完整前缀再加 `path`）现在返回空——pre-release 立场下的有意破坏性变更；description 写明了新锚定。
 - 部署：host 构建 + `/reload`；下一个带 `path` 与相对 pattern 的会话就是活体验证信号。
+- 若上游后来修复同一缺陷，下次吸收会在四个源文件、快照 expected 与 README/tool-catalog 配对上撞到本改动。裁决者是本包测试套件——合并后跑 `node_modules/.bin/vitest run packages/fs/tool-fs-search/tests/`：绿说明上游修复覆盖钉住的事故形态（采纳上游文本、保留我们的测试），红说明其更弱（保留本实现、吸收其余改动）。tool-catalog 靠重新生成收敛；快照 expected 按胜出的实现做同款机械 description 替换。merge-tree 预演与冲突归属的通用流程见 `dsh-sync-upstream`。
