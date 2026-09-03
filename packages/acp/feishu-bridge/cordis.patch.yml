@@ -122,8 +122,9 @@
 # render-fork sessions suppress instruction injection through it in agent
 # setup. The plugin itself is serviceless (preset-mountable), so the registry
 # mounts here on the host plane.
-- id: agent-instruction-suppression
-  name: '@deepseek-ai/dsh-agent-instructions/suppression'
+- insert:
+    - id: agent-instruction-suppression
+      name: '@deepseek-ai/dsh-agent-instructions/suppression'
 
 # The plan-mode delegation sentence: this composition disables the generic
 # subagent / subagent_fork tools (the disables above), so the base bundle's

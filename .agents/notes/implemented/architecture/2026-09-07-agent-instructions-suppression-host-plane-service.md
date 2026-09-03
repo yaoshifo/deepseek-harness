@@ -13,7 +13,7 @@ The fork had converted `dsh-agent-instructions` from upstream's function plugin 
 The plugin returns to upstream's serviceless function-plugin shape, and the suppression state moves to a dedicated `AgentInstructionSuppression` service exported from the `@deepseek-ai/dsh-agent-instructions/suppression` subpath. The subpath resolves to `lib/types/` — the same tsc-emitted convention `dsh-tool-subagent-control/list-agents` uses — so a scoped `tsc -b` of the package is enough to produce it.
 
 - The plugin reads the registry optionally (`ctx.get('agentInstructionSuppression')`); a missing registry suppresses nothing, so a preset mount publishes no service and passes the mount rule.
-- Only the bridge composition mounts the registry — a host row in `packages/acp/feishu-bridge/cordis.patch.yml` — and the adapter's two session-start call sites read `agentCtx.get('agentInstructionSuppression')`.
+- Only the bridge composition mounts the registry — an insert row in `packages/acp/feishu-bridge/cordis.patch.yml` (an id-targeted entry cannot mount a row dsh-base never defined; the [bug-fix note](../bug-fix/2026-09-03-feishu-bridge-suppression-row-never-mounted.md) records that failure mode) — and the adapter's two session-start call sites read `agentCtx.get('agentInstructionSuppression')`.
 - Suppression semantics are unchanged: caller-scope markers through the service proxy, the scope-chain walk (an enclosing scope suppresses descendant agents), and disposal restoring injection. `tests/suppression.spec.ts` pins all of it, now mounting the registry beside the plugin.
 
 ## Alternatives considered

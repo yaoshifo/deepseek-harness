@@ -58,9 +58,9 @@ function composePlanModeSection(patchFiles: string[]): { section: unknown; warni
 
 /** Row lookup with the file-boundary config narrowed to a plain record. */
 function findRow(entries: ReturnType<typeof applyEntryPatches>, id: string):
-{ disabled?: boolean | { __jsExpr?: string }; config?: Record<string, unknown> } | undefined {
+{ name?: string; disabled?: boolean | { __jsExpr?: string }; config?: Record<string, unknown> } | undefined {
   const row = entries.find(entry => entry.id === id)
-  return row as { disabled?: boolean | { __jsExpr?: string }; config?: Record<string, unknown> } | undefined
+  return row as { name?: string; disabled?: boolean | { __jsExpr?: string }; config?: Record<string, unknown> } | undefined
 }
 
 function asSectionText(section: unknown): string {
@@ -98,6 +98,17 @@ describe('bridge bundle patch', () => {
     expect(memory?.disabled).not.toBe(true)
     expect(memory?.config).toMatchObject({ maxIndexBytes: 25600, global: { maxIndexBytes: 8192 } })
     expect(warnings.filter(message => message.includes('ask-user') || message.includes('dsh-memory'))).toEqual([])
+  })
+
+  it('mounts the agent-instruction-suppression registry base does not ship', () => {
+    const { entries, warnings } = composeEntries()
+    const suppression = findRow(entries, 'agent-instruction-suppression')
+    // Bare-persona and complete-prompt sessions suppress workspace-instruction
+    // injection through this registry; an id-targeted patch entry can never
+    // mount a row base does not define (it warns and is skipped).
+    expect(suppression?.name).toBe('@deepseek-ai/dsh-agent-instructions/suppression')
+    expect(suppression?.disabled).not.toBe(true)
+    expect(warnings.filter(message => message.includes('agent-instruction-suppression'))).toEqual([])
   })
 
   it('curates the deployment tool roster: goal family, workflow, ralph, and the second editor stay disabled', () => {

@@ -41,6 +41,7 @@
   "dependencies": {
     "@deepseek-ai/cosmokit": "workspace:^",
     "@deepseek-ai/dsh-agent": "workspace:^",
+    "@deepseek-ai/dsh-agent-instructions": "workspace:^",
     "@deepseek-ai/dsh-llm": "workspace:^",
     "@deepseek-ai/dsh-memory": "workspace:^",
     "@deepseek-ai/dsh-session": "workspace:^",

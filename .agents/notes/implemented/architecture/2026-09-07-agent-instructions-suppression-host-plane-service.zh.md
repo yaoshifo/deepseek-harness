@@ -13,7 +13,7 @@ fork 曾把 `dsh-agent-instructions` 从上游的函数插件改造成 Cordis `S
 插件回归上游的无服务函数插件形态，抑制状态移入独立的 `AgentInstructionSuppression` 服务，经 `@deepseek-ai/dsh-agent-instructions/suppression` 子路径导出。子路径解析到 `lib/types/`——与 `dsh-tool-subagent-control/list-agents` 相同的 tsc 直出约定——因此对该包做一次 `tsc -b` 即可产出。
 
 - 插件以可选方式读取注册表（`ctx.get('agentInstructionSuppression')`）；注册表缺失时什么都不抑制，因此 preset 挂载不发布任何服务，通过挂载规则。
-- 只有桥组合挂载注册表——`packages/acp/feishu-bridge/cordis.patch.yml` 里的一行宿主行——adapter 的两处 session-start 调用点改为读 `agentCtx.get('agentInstructionSuppression')`。
+- 只有桥组合挂载注册表——`packages/acp/feishu-bridge/cordis.patch.yml` 里的一条 insert 行（id 定位条目挂不了 dsh-base 从未定义的行，该失败模式记录在[bug-fix note](../bug-fix/2026-09-03-feishu-bridge-suppression-row-never-mounted.zh.md)）——adapter 的两处 session-start 调用点改为读 `agentCtx.get('agentInstructionSuppression')`。
 - 抑制语义不变：经服务代理按调用方作用域落标记、沿作用域链检查（外层作用域的标记抑制后代 agent）、dispose 后恢复注入。`tests/suppression.spec.ts` 钉住全部语义，现在在插件旁一并挂载注册表。
 
 ## Alternatives considered

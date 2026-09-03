@@ -633,6 +633,9 @@ importers:
       '@deepseek-ai/dsh-agent':
         specifier: workspace:^
         version: link:../../core/agent
+      '@deepseek-ai/dsh-agent-instructions':
+        specifier: workspace:^
+        version: link:../../context/agent-instructions
       '@deepseek-ai/dsh-llm':
         specifier: workspace:^
         version: link:../../llm/llm
