@@ -75,6 +75,15 @@ const transientSubstrings = [
 export const feishuPatchRateLimitCode = '230020'
 
 /**
+ * Feishu's app-level "request trigger frequency limit" business code: the
+ * server rejects with HTTP 400 and this code in the body when the calling
+ * app exceeds an API method's rate. Distinct from the PATCH-specific code:
+ * this one rides generic verbs (the im/v2 tag relation reads) and callers
+ * abort or back off rather than retry in place.
+ */
+export const feishuFrequencyLimitCode = '99991400'
+
+/**
  * Extract Feishu's business error code regardless of error shape.
  * @larksuiteoapi/node-sdk surfaces API failures as AxiosErrors whose message
  * is only "Request failed with status code NNN" and whose business code rides

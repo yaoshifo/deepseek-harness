@@ -901,6 +901,23 @@ describe('buildChatroomModeratorPriming', () => {
     }
   })
 
+  it('research priming opens with a bounded clarify stage before the data-needs stage', () => {
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
+    for (const want of ['澄清研究背景', '最多 2 轮', 'ask_user_question', '用户背景与约束', '无需追问']) {
+      expect(priming).toContain(want)
+    }
+    // The clarify stage precedes the data-needs stage, and both precede
+    // round 1.
+    expect(priming.indexOf('澄清研究背景')).toBeLessThan(priming.indexOf('数据需求清单'))
+    expect(priming.indexOf('数据需求清单')).toBeLessThan(priming.indexOf('### 第 1 轮'))
+  })
+
+  it('the plain chatroom priming keeps its own 3-round clarify loop', () => {
+    const priming = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')
+    expect(priming).toContain('最多 3 轮澄清')
+    expect(priming).not.toContain('澄清研究背景')
+  })
+
   it('never instructs an ExitPlanMode dance (moderator sessions are never in plan mode)', () => {
     const priming = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')
     for (const banned of ['plan mode', 'ExitPlanMode']) {

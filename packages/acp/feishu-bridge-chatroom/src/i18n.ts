@@ -1,5 +1,5 @@
 /**
- * The chatroom package's message subtable: the 77 chatroom keys (76
+ * The chatroom package's message subtable: the 78 chatroom keys (77
  * `chatroom_*` plus the bare `chatroom` command-description key) moved
  * verbatim from the feishu-bridge main table. Registered once per process in
  * the plugin apply through the bridge's `registerMessages`, so every engine
@@ -47,6 +47,7 @@ const en: Record<string, string> = {
   chatroom_no_roles: 'No roles in this chatroom.',
   chatroom_no_roles_configured: 'No roles found under %s. Add one by creating <name>/CLAUDE.md in that directory.',
   chatroom_research_needs_uv: 'Research mode requires uv to pre-provision a shared Python venv. Install it (https://docs.astral.sh/uv/) and retry.',
+  chatroom_user_profile_unreadable: 'The configured user-profile file cannot be read: %s. Fix the userProfile path in the chatroom config and retry.',
   chatroom_list_title: 'Available thinkers (%d)',
   chatroom_gather_header: ' ⟳ Gather · %s',
   chatroom_gather_timeout: '%d role(s) timed out: %s. Continuing with the replies received.',
@@ -128,6 +129,7 @@ const zh: Record<string, string> = {
   chatroom_no_roles: '当前聊天室没有角色。',
   chatroom_no_roles_configured: 'thinkers 目录下没有角色。在该目录下建 `<名字>/CLAUDE.md` 即可添加。',
   chatroom_research_needs_uv: 'research 模式需要 uv 来预配共享 Python 环境。请先安装 uv（https://docs.astral.sh/uv/）后重试。',
+  chatroom_user_profile_unreadable: '聊天室用户背景文件读取失败：%s。请修正 chatroom 配置里的 userProfile 路径后重试。',
   chatroom_list_title: '可用的 thinkers（%d 个）',
   chatroom_gather_header: ' ⟳ 并行收集 · %s',
   chatroom_gather_timeout: '%d 个角色超时未回复：%s。按已收到的继续。',
@@ -218,6 +220,7 @@ export const Msg = {
   ChatroomNoRoles: 'chatroom_no_roles',
   ChatroomNoRolesConfigured: 'chatroom_no_roles_configured',
   ChatroomResearchNeedsUv: 'chatroom_research_needs_uv',
+  ChatroomUserProfileUnreadable: 'chatroom_user_profile_unreadable',
   ChatroomListTitle: 'chatroom_list_title',
   ChatroomGatherHeader: 'chatroom_gather_header',
   ChatroomGatherTimeout: 'chatroom_gather_timeout',

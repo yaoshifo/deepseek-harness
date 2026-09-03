@@ -689,6 +689,20 @@ describe('cmdChatroom', () => {
     expect(p.count).toBe(0)
   })
 
+  it('blocks startup when the configured user profile is unreadable', async () => {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    chatroomConfig(e).applySection({ userProfile: '/nonexistent/fb-user-profile.md' })
+    const handler = e.commandHandlers?.get('chatroom')
+    handler?.(p, hubMsg('test:hub:user-1'), ['taleb,munger', 'topic'])
+    await settle()
+    expect(p.count).toBe(0)
+    expect(p.getSent().some(s => s.includes('用户背景'))).toBe(true)
+    // The research flags never land on the hub.
+    expect(chatroomState(e.sessions.getOrCreateActive('test:hub:user-1')).chatroomResearch).toBe(false)
+  })
+
   it('rejects a second open while live role groups exist (stop first)', async () => {
     // No re-entry guard existed for direct→multi-role or repeated opens: a
     // second /chatroom would spawn a NEW generation of role groups under the
