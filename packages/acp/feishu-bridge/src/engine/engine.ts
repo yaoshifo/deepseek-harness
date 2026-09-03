@@ -3573,7 +3573,17 @@ export class Engine {
             const text = event.content
             if (text !== '' && !isSilentReply(text)) {
               state.textParts.push(text)
-              if (deltaFlushed) {
+              // Pinned narration (followups conversion froze the pre-ask
+              // summary): every completed block folds into the prefix. The
+              // silent-hold machinery is bypassed — a hold release displays
+              // the whole accumulated segment, which under the pin would
+              // re-fold pre-ask blocks already frozen in the prefix, and
+              // isSilentReply has already filtered silent blocks.
+              if (sp.isAnalysisPinned() && sp.canPreview()) {
+                deltaAccum = ''
+                deltaFlushed = false
+                await sp.foldAnalysisBlock(text)
+              } else if (deltaFlushed) {
               // This block was already previewed via deltas; state.textParts (the
               // final-message source of truth) is still updated.
                 deltaAccum = ''
@@ -5122,22 +5132,20 @@ export class Engine {
       state.pendingFollowups = question
       state.lastEventAt = Date.now()
       console.info(`engine: closing-card ask converted to followups (${sessionKey}, ${question?.options.length ?? 0} options)`)
-      // Deliver the pre-ask reply segment the parked path renders at
-      // deliverCards: the trailing text after the ask replaces the 实时播报
-      // section, so without this render the closing summary survives only
-      // behind the export button. Segment flush and completeAndDetach are
-      // deliberately absent — the turn keeps streaming, and keeping
-      // segmentStart lets the turn-end export register the full joined reply.
+      // Freeze the pre-ask live narration into a pinned prefix: the
+      // non-blocking ask lets the turn keep streaming, and the post-ask
+      // block would otherwise replace the 实时播报 section, leaving the
+      // closing summary with no display surface (2026-09-03 oc_f924a2: the
+      // pre-ask analysis survived only behind the export button). A
+      // speculative summary render cannot cover it — the render session is a
+      // one-screen digest by design and lands ~25s later, after the
+      // followups card. captureReplyForExport still registers the segment
+      // for the export button, and segmentStart stays untouched so the
+      // turn-end export registers the full joined reply.
       const sp = state.preview
       if (sp !== undefined) {
-        const session = this.sessions.findActive(sessionKey)
-        const captured = captureReplyForExport(sp, state)
-        const triggered = this.planRenderEnabled
-          && captured.text !== '' && Array.from(captured.text).length >= defaultReplyPreRenderLen
-          && !(session?.shouldSuppressAutoRender(this.bridge) ?? false)
-        if (triggered) {
-          renderAndDeliverReply(this, state, sessionKey, captured.text, captured.exportKey)
-        }
+        captureReplyForExport(sp, state)
+        await sp.pinAnalysisText()
       }
       return {
         answers: request.questions.map(q => ({

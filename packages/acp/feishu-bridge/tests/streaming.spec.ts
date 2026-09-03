@@ -1234,6 +1234,100 @@ describe('markCompleted / markFailed fallbacks', () => {
   })
 })
 
+describe('pinned live narration (followups conversion)', () => {
+  /** Progress-mode preview with one tool entry, ready for narration text. */
+  function narratedPreview(): StreamPreview {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000 }), mp, 'ctx', undefined, undefined)
+    void sp.appendProgress(new ProgressEntry({ isTool: true, header: '**00:00:01**', body: 'ls', lang: 'bash', toolID: 't1' }))
+    return sp
+  }
+
+  it('keeps the pinned pre-ask text on the card when post-ask blocks stream', async () => {
+    const sp = narratedPreview()
+    await sp.appendAnalysisText('ask 前的分析总结')
+    await sp.pinAnalysisText()
+    await sp.appendAnalysisText('ask 后的收尾文本')
+    const display = sp.buildProgressDisplayLocked()
+    expect(display).toContain('ask 前的分析总结')
+    expect(display).toContain('ask 后的收尾文本')
+  })
+
+  it('folds a completed post-ask block into the prefix so the next block cannot erase it', async () => {
+    const sp = narratedPreview()
+    await sp.appendAnalysisText('分析总结')
+    await sp.pinAnalysisText()
+    await sp.appendAnalysisText('收尾块一')
+    await sp.foldAnalysisBlock('收尾块一')
+    await sp.appendAnalysisText('收尾块二')
+    await sp.foldAnalysisBlock('收尾块二')
+    const display = sp.buildProgressDisplayLocked()
+    expect(display).toContain('分析总结')
+    expect(display).toContain('收尾块一')
+    expect(display).toContain('收尾块二')
+  })
+
+  it('setAnalysisTextIfEmpty does not fill under a pinned prefix', async () => {
+    const sp = narratedPreview()
+    await sp.appendAnalysisText('分析总结')
+    await sp.pinAnalysisText()
+    await sp.foldAnalysisBlock('收尾块')
+    await sp.setAnalysisTextIfEmpty('joined 全量回复')
+    const display = sp.buildProgressDisplayLocked()
+    expect(display).toContain('分析总结')
+    expect(display).toContain('收尾块')
+    expect(display).not.toContain('joined 全量回复')
+  })
+
+  it('delivers the full pinned reply out-of-band when the composed display overflows', async () => {
+    const mp = createFallbackCapablePlatform()
+    const sp = await newSyncStreamPreviewForFallback(mp)
+    const preAsk = '前'.repeat(3000)
+    const coda = '后'.repeat(maxAnalysisDisplayChars)
+    await sp.setAnalysisText(preAsk)
+    await sp.pinAnalysisText()
+    await sp.appendAnalysisText(coda)
+    sp.buildProgressDisplayLocked() // marks analysisTruncated on the composed source
+    expect(sp.analysisTruncated).toBe(true)
+    await sp.markCompleted()
+    expect(mp.files.length).toBe(1)
+    expect(new TextDecoder().decode(mp.files[0]?.data ?? new Uint8Array())).toBe(`${preAsk}\n\n${coda}`)
+  })
+
+  it('a second pin appends instead of dropping the first prefix', async () => {
+    const sp = narratedPreview()
+    await sp.appendAnalysisText('第一段总结')
+    await sp.pinAnalysisText()
+    await sp.appendAnalysisText('第二段总结')
+    await sp.pinAnalysisText()
+    const display = sp.buildProgressDisplayLocked()
+    expect(display).toContain('第一段总结')
+    expect(display).toContain('第二段总结')
+    expect(sp.pinnedAnalysis).toBe('第一段总结\n\n第二段总结')
+  })
+
+  it('pin and fold are inert on a degraded preview', async () => {
+    const errs: Array<Error | undefined> = [undefined]
+    for (let i = 0; i < maxConsecutivePatchFailures; i++) errs.push(err(`fail-${i}`))
+    const mp = createMockFailingUpdaterPlatform(errs)
+    const sp = newStreamPreview(cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000 }), mp, 'ctx', undefined, undefined)
+    await sp.appendText('a')
+    await sp.appendText('b')
+    for (let i = 0; i < maxConsecutivePatchFailures - 1; i++) {
+      await sp.appendText(`x${i}`)
+      expect(sp.isDegraded()).toBe(false)
+    }
+    await sp.appendText('final')
+    expect(sp.isDegraded()).toBe(true)
+    sp.analysisText = '总结'
+    await sp.pinAnalysisText()
+    await sp.foldAnalysisBlock('块')
+    // Degraded turns deliver text as messages instead; a dead card must not
+    // accumulate narration it can never render.
+    expect(sp.pinnedAnalysis).toBe('')
+  })
+})
+
 describe('buildProgressDisplay truncation', () => {
   it('char-truncates oversized analysis with a note', async () => {
     const mp = createFallbackCapablePlatform()
