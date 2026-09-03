@@ -40,6 +40,7 @@ import {
   type ChatroomLedgerPrior,
 } from './chatroom-ledger.ts'
 import { listRoleNames, roleDir, roleExists } from './chatroom-roles.ts'
+import { chatroomRoleAnchorPrompt } from './chatroom-persona.ts'
 import { cleanupOneChat } from '@deepseek-ai/dsh-feishu-bridge/exports'
 
 const execFileP = promisify(execFile)
@@ -746,6 +747,11 @@ async function askRoleInternal(
   if (lp !== undefined) {
     roleContent += `\n\n（完整上下文见账本目录：${lp}；SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md，回答前先读）`
   }
+  // Per-turn persona re-anchor: the one-shot system-prompt persona decays into
+  // a distant prefix over long research sessions while the moderator's task
+  // register pulls the role toward ops-report language (2026-09 oc_e51a
+  // session-log evidence) — every turn message re-states the anchor.
+  roleContent += `\n\n${chatroomRoleAnchorPrompt()}`
   const roleMsg: Message = {
     ...emptyMessage(),
     sessionKey: roleKey,

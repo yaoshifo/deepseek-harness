@@ -27,7 +27,7 @@ kind: "package-bundle"
 ### 模型看到什么
 
 - `feishu_bridge_chatroom` 工具（family 标签 `feishu_bridge_chatroom`）：主持人通过其 actions（`start` / `ask` / `gather` / `pick-roles` / `pick-topic` / `ask-human` / `end` / `list` / `note` / `history`）编排聊天室；角色 persona 通过整体提示词替换引用它。
-- Chatroom persona：role、direct-role、moderator 与 research-assistant 会话以完整系统提示词替换运行，提示词由 persona 目录的扁平化 CLAUDE.md 加参与/研究契约组装（由 session-start-options 监听器预计算；adapter 将其注册为 `complete: true` section）。配置了 `userProfile` 文件时，每个 role/moderator/direct-role persona 追加一段用户背景；研究助手与数据管家不注入（角色把相关背景写进派给助手的任务文本）。role 与 direct-role persona 另携带跨场记忆纪律段——完整替换会丢掉 dsh-memory 的策略段，纪律段是唯一教角色用 memory_* 工具沉淀跨场判断的提示词面；moderator 与助手不携带。
+- Chatroom persona：role、direct-role、moderator 与 research-assistant 会话以完整系统提示词替换运行，提示词由 persona 目录的扁平化 CLAUDE.md 加参与/研究契约组装（由 session-start-options 监听器预计算；adapter 将其注册为 `complete: true` section）。配置了 `userProfile` 文件时，每个 role/moderator/direct-role persona 追加一段用户背景；研究助手与数据管家不注入（角色把相关背景写进派给助手的任务文本）。role 与 direct-role persona 另携带跨场记忆纪律段——完整替换会丢掉 dsh-memory 的策略段，纪律段是唯一教角色用 memory_* 工具沉淀跨场判断的提示词面；moderator 与助手不携带。每条主持→角色回合消息（串行 ask、普通 gather 与 research gather，全部走共享的 `askRoleInternal` 路径）追加一行固定的人设再锚定——一次性注入的系统提示词人设在长研究会话里会衰减成远端弱信号，而主持人的任务语域又把角色往研究运营腔里拉，每轮锚定是对冲。
 - Moderator priming 与唤醒消息（gather 扇入摘要、end-barrier 收束、重启恢复 note），以及随 subtask 启动选项携带的 research-assistant 前言——同一份前言服务各角色助手与 hub 预配的数据管家，携带抓取台账、按角色数据目录与同域限速纪律。
 - research 模式由 moderator priming 编排的流程：先跑有界澄清阶段——普通 gather 收各角色的用户背景问题，合并成一张追问卡，回答以「用户背景与约束」落进账本综述段（最多 2 轮；议题清晰且已注入背景足够时可跳过）；随后一次普通（非 research）gather 收各角色的数据需求清单；管家把合并后的公共数据抓进工作区 `data/core/` 并把每次抓取登记进 `DATA_LEDGER.md`；第 1 轮广播把各角色指向该台账，其助手只补缺口；后续轮次复用台账，裁决靶点点名分配、最多争议方加一位中立方各拉一路。
 - 跨聊天室共享面：`history` 动作（历史聊天室——议题/结束状态/账本目录/报告——外加共享研究工作区，前提是其抓取台账存在）、`start: inherit` / `/chatroom --continue`（引擎向新账本播种前情指针，未点名角色时沿用前情阵容）、`note: section report`（REPORT.md 收尾结论）、两版 moderator priming 按条件携带的前情甄别与共享研究数据段、以及 ledger-read prompt 对 REPORT.md / 前情区的提及——前情区只是指针，被采纳的内容要经主持人综述才到达角色。
@@ -35,7 +35,7 @@ kind: "package-bundle"
 
 #### Token 影响
 
-工具描述与 schema 到达启用该项目里每个 dsh agent（工具是进程级、按调用方路由的）；配置了 `enabled: false` 的项目把定义从其会话请求中掩除（adapter 在会话创建时 restrict 服务登记的拒绝名），内置主持 skill 的目录条目也一并离开（provider 以启用项目 workdir 为 cwd 前缀作用域挂载）。Persona 提示词整体替换各 chatroom 会话的系统提示词而非追加；moderator 唤醒与 relay 卡是用户可见消息，不进模型请求。research 模式用一次廉价的普通 gather 需求轮加一次管家预取，换掉原本各家助手重复抓取的轮次；priming 与 research-assistant 前言增长的是台账与限速纪律文本，role/direct persona 携带的跨场记忆纪律段给每个角色会话增加一小段固定文本。`userProfile` 文本复制进每个角色与主持人 persona（每场聊天室 N+1 份），部署应保持该文件精炼。工具描述与 schema 随 history 动作、inherit 参数与 report section 增长；按条件出现的 priming 段（前情甄别、共享研究数据）与 persona 复用纪律只给携带它们的会话增加提示词文本。
+工具描述与 schema 到达启用该项目里每个 dsh agent（工具是进程级、按调用方路由的）；配置了 `enabled: false` 的项目把定义从其会话请求中掩除（adapter 在会话创建时 restrict 服务登记的拒绝名），内置主持 skill 的目录条目也一并离开（provider 以启用项目 workdir 为 cwd 前缀作用域挂载）。Persona 提示词整体替换各 chatroom 会话的系统提示词而非追加；moderator 唤醒与 relay 卡是用户可见消息，不进模型请求。research 模式用一次廉价的普通 gather 需求轮加一次管家预取，换掉原本各家助手重复抓取的轮次；priming 与 research-assistant 前言增长的是台账与限速纪律文本，role/direct persona 携带的跨场记忆纪律段给每个角色会话增加一小段固定文本；每轮人设再锚定给每条主持→角色回合消息增加一行短固定文本（它随回合文本走，加长的是消息历史而非稳定前缀）。`userProfile` 文本复制进每个角色与主持人 persona（每场聊天室 N+1 份），部署应保持该文件精炼。工具描述与 schema 随 history 动作、inherit 参数与 report section 增长；按条件出现的 priming 段（前情甄别、共享研究数据）与 persona 复用纪律只给携带它们的会话增加提示词文本。
 
 #### KV Cache 影响
 

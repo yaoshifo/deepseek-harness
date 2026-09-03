@@ -589,6 +589,51 @@ describe('askRole vs an armed gather', () => {
   })
 })
 
+describe('role-turn persona anchor', () => {
+  // Long sessions pull the role's register toward ops-report language while
+  // the one-shot persona injection decays into a distant prefix (2026-09
+  // oc_e51a session-log evidence: zero catchphrases, zero historical
+  // analogies, half the turns bare ops status). Every moderator→role turn
+  // message therefore re-anchors the persona.
+  it('serial ask injects the persona re-anchor line into the role turn', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom, askRole } = await import('../../src/engine/chatroom.ts')
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const recv = vi.spyOn(e, 'receiveMessage').mockImplementation(() => {})
+
+    await askRole(e, hub, roles[0]!.sessionKey, '你的判断是什么')
+
+    const turns = recv.mock.calls.map(c => c[1] as { sessionKey: string; content: string })
+    const turn = turns.find(m => m.content.startsWith('[主持]'))
+    expect(turn).toBeDefined()
+    expect(turn!.content).toContain('（以你的人设作答')
+  })
+
+  it('gather broadcast carries the same anchor on every role turn', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+    const recv = vi.spyOn(e, 'receiveMessage').mockImplementation(() => {})
+
+    gatherRoles(e, hub, '并行问题', false)
+    await waitFor(() => recv.mock.calls.length >= roles.length, `${roles.length} gather broadcasts`)
+
+    const turns = recv.mock.calls
+      .map(c => c[1] as { sessionKey: string; content: string })
+      .filter(m => m.content.includes('[并行收集]'))
+    expect(turns).toHaveLength(roles.length)
+    for (const m of turns) {
+      expect(m.content).toContain('（以你的人设作答')
+    }
+  })
+})
+
 describe('gather broadcast failure', () => {
   /** A spawner whose ctx reconstruction fails for the second spawned role. */
   function spawnerFailingSecondRole() {

@@ -252,6 +252,21 @@ export function chatroomRoleMemoryPrompt(): string {
 `
 }
 
+/** The per-turn persona re-anchor (Go ChatroomRoleAnchorPrompt).
+ *
+ * The persona is injected once as a stable system-prompt prefix; long research
+ * sessions then pull the role's register toward ops-report language until the
+ * prefix decays into a distant signal (2026-09 oc_e51a session-log evidence:
+ * zero catchphrases, zero historical analogies, half the turns bare ops
+ * status). askRoleInternal therefore appends this anchor to every
+ * moderator→role turn message (serial ask, gather, and research gather).
+ *
+ * @returns the per-turn persona re-anchor line.
+ */
+export function chatroomRoleAnchorPrompt(): string {
+  return '（以你的人设作答——用你的签名框架与声口，别让研究运营腔替你说话。）'
+}
+
 /** The read-the-ledger-first instruction (Go ChatroomLedgerReadPrompt).
  *
  * @param ledgerDir - Shared ledger directory to read before answering.
