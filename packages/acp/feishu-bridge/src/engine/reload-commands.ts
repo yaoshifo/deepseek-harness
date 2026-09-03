@@ -240,7 +240,6 @@ export function reloadSpawnArgv(platform: NodeJS.Platform, scriptPath: string, s
 }
 
 /** CSI escape sequences (SGR color codes and cursor moves) — rendered as raw noise in chat. */
-// eslint-disable-next-line no-control-regex
 const ansiCsi = /\x1b\[[0-9;]*[A-Za-z]/g
 
 /** Byte and line budgets for the failure reply's log excerpt: a full build log
