@@ -39,10 +39,13 @@ export interface ChatroomConfig {
 
 /**
  * Mount the package-bundled `skills/` directory as an isolated skill
- * provider, scoped to the enabled projects' workdirs: the moderator skill's
+ * provider, scoped to the enabled projects' workdirs. The moderator skill's
  * catalog entry — whose description names `/chatroom` — is itself a behavior
- * entry point, so a chatroom-disabled project's sessions must not see it at
- * all (cwd-scoped custom roots; sessions under an enabled workdir do).
+ * entry point, so it must not reach a chatroom-disabled project's sessions:
+ * cwd scoping keeps it off unrelated workdirs, and the per-engine
+ * `denySkills` registration in the disabled branch of the sweep covers the
+ * sessions whose workdir lands inside an enabled project's workdir (spawn
+ * workspace overrides, per-chat `/dir`).
  * @param ctx - Plugin context; the `skills` service is provided by the host
  *   composition (dsh-base), not mounted here.
  * @param cwdPrefixes - The enabled engines' base workdirs; empty skips the
@@ -108,11 +111,16 @@ export async function apply(ctx: Context, config: ChatroomConfig): Promise<void>
       if (engine.baseWorkDir !== '') enabledWorkdirs.add(engine.baseWorkDir)
     } else {
       // The disabled project gets no /chatroom command family, and the tool
-      // definition is masked out of its sessions' model requests (the
-      // adapter restricts service-denied names at session create). Sessions
-      // from the startup window before this registration see the definition;
-      // the tool's execute gate below refuses them.
+      // definition and the moderator skill are masked out of its sessions
+      // (the adapter restricts service-denied tool and skill names at
+      // session create). The skill mask matters for sessions whose workdir
+      // falls under an enabled project's workdir — spawn workspace overrides
+      // — where the provider's cwd scoping alone would still show the
+      // catalog entry. Sessions from the startup window before this
+      // registration see the definition; the tool's execute gate below
+      // refuses them.
       ctx.effect(() => service.denyTools(engine, ['feishu_bridge_chatroom']))
+      ctx.effect(() => service.denySkills(engine, ['feishu-bridge-chatroom-moderator']))
     }
     // Engines whose platforms beat the plugin to readiness missed the
     // platforms-ready emit; recover their barriers here (idempotent: the

@@ -19,7 +19,7 @@ kind: "package-bundle"
 
 -----
 
-飞书桥的 chatroom 插件：多角色聊天室编排——角色组、主持人、`/chatroom` 命令族、`feishu_bridge_chatroom` 工具与内置 chatroom-moderator skill——作为独立的 dsh 包，挂载在 `@deepseek-ai/dsh-feishu-bridge` 旁（依赖方向：本包引用桥的导出面；桥绝不引用本包）。引擎接缝的两半走桥服务的 `feishuBridge/*` 事件；各引擎的配置与命令注册在插件启动扫描中应用，时机是桥报告就绪之后。配置了 `enabled: false` 的项目（本插件的 `defaults` 或其 `projects` 条目）没有 `/chatroom` 命令，其 agent 调 `feishu_bridge_chatroom` 会 fail loud，且工具定义经桥服务的按引擎 deny 注册表从其会话的模型请求中掩除。
+飞书桥的 chatroom 插件：多角色聊天室编排——角色组、主持人、`/chatroom` 命令族、`feishu_bridge_chatroom` 工具与内置 chatroom-moderator skill——作为独立的 dsh 包，挂载在 `@deepseek-ai/dsh-feishu-bridge` 旁（依赖方向：本包引用桥的导出面；桥绝不引用本包）。引擎接缝的两半走桥服务的 `feishuBridge/*` 事件；各引擎的配置与命令注册在插件启动扫描中应用，时机是桥报告就绪之后。配置了 `enabled: false` 的项目（本插件的 `defaults` 或其 `projects` 条目）没有 `/chatroom` 命令，其 agent 调 `feishu_bridge_chatroom` 会 fail loud，且工具定义与内置主持 skill 经桥服务的按引擎 deny 注册表从其会话的模型请求中掩除——skill 掩蔽在会话 workdir 落入其他启用项目 workdir 时（spawn workspace override、按群 `/dir`）依然成立。
 
 <a id="model-experience"></a>
 ## 模型体验
@@ -45,8 +45,9 @@ Chatroom 会话使用整体替换的 persona 提示词，因此每个 role/moder
 ## 已知限制与延后工作
 
 - **就绪前窗口**：桥的引擎启动到本插件 `whenReady()` 扫描之间平台投递的消息，会按默认值的 chatroom 配置处理（无 roles 目录覆盖、ledger 关闭）——这是桥内接线所没有的窗口。它结构性源于兄弟插件的挂载顺序；恢复及之后所有轮次看到的都是扫描后的配置。
-- **工具掩码有启动窗口**：桥就绪到本插件扫描（登记按引擎 deny 掩码、挂载带 cwd 前缀的 skill provider）之间创建的会话仍能看到 `feishu_bridge_chatroom` 定义与主持 skill 条目；它们的调用改在工具 execute 检查处 fail loud。扫描之后创建的会话两者都看不到。
-- **内置 skill 按 cwd 而非项目身份作用域**：主持 skill 的目录条目——其描述点名 `/chatroom`——本身就是行为入口（看得见它的模型可以加载并照做），因此 provider 以启用引擎的 base workdir 为 `cwdPrefixes` 挂载，禁用项目的会话看不到条目。天花板：cwd 只是代理——会话把工作目录切到启用项目 workdir 之下会重新看到条目（工具仍被掩）、共享同一 workdir 的两个项目无法区分、不带 cwd 的宿主面查询看不到任何作用域根。
+- **工具掩码有启动窗口**：桥就绪到本插件扫描（登记按引擎 deny 掩码组、挂载带 cwd 前缀的 skill provider）之间创建的会话仍能看到 `feishu_bridge_chatroom` 定义与主持 skill 条目；它们的调用改在工具 execute 检查处 fail loud。扫描之后创建的会话两者都看不到。
+- **内置 skill 按 cwd 作用域，跨项目场景由按引擎拒绝兜底**：主持 skill 的目录条目——其描述点名 `/chatroom`——本身就是行为入口（看得见它的模型可以加载并照做），因此 provider 以启用引擎的 base workdir 为 `cwdPrefixes` 挂载，且禁用分支同时在桥服务的按引擎 skill 掩码（`denySkills`）上登记该名字——禁用项目的会话即便 workdir 落在启用项目 workdir 之下（spawn workspace override、按群 `/dir`）也看不到条目。天花板：cwd 对启用侧仍是代理——启用项目的会话把工作目录切到别处会失去条目但保留命令与工具、共享同一 workdir 的两个项目无法区分、不带 cwd 的宿主面查询看不到任何作用域根。
+- **禁用项目会话的 subtask 子会话仍可能列出主持 skill**：continuable-subagent 请求不带 skills 挂点，跑在启用项目 workdir 下的受派发子会话能看到目录条目；其继承的 `toolFilter` 仍拒绝 `feishu_bridge_chatroom`，照做该 skill 会在工具调用处 fail loud。
 - **卸载插件丢失内存态聊天室状态**：已武装的 barrier 实例、进行中标记与 gather 轮次戳都是进程内的；dispose 插件 fiber 即丢弃。持久化的 `featureState.chatroom` 段保留——各会话访问器就地写入，无 codec 的保存会原样持久化——重启后的 barrier 恢复走持久化快照而非实例。
 - **Picker 状态在内存**：daemon 重启会丢弃已武装的 picker；孤儿 pick 卡的下次点击会原位换成灰色过期卡并提示重新 `/chatroom`（Go 版对孤儿按钮是静默或假确认）。
 - **引导式模式卡只覆盖多角色启动**：单角色确认直接进入 1:1 直聊（研究需要主持人编排）；`--max-rounds` 保留为 flag 加配置默认值（自动模式的卡片行写明上限）；引导式「继续」原样沿用前情阵容——空前情阵容落回角色选择卡并丢弃前情，与显式 `--continue` 路径一致。

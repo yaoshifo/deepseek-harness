@@ -150,23 +150,27 @@ describe('chatroom plugin entry', () => {
     const fiber = await ctx.plugin({ name, inject, apply }, { projects: { alpha: { enabled: false } } })
 
     // The disabled project: no /chatroom command family (no alias either),
-    // and the tool name is masked on the service for this engine.
+    // and the tool and moderator-skill names are masked on the service for
+    // this engine.
     expect(engine.commandHandlers?.get('chatroom')).toBeUndefined()
     expect(engine.commandResolver?.('cr')).toBe('')
     expect(service.deniedToolsOf(engine)).toEqual(['feishu_bridge_chatroom'])
+    expect(service.deniedSkillsOf(engine)).toEqual(['feishu-bridge-chatroom-moderator'])
 
     // The enabled project is untouched: commands registered, no mask.
     expect(startedEngine.commandHandlers?.get('chatroom')).toBeDefined()
     expect(service.deniedToolsOf(startedEngine)).toEqual([])
+    expect(service.deniedSkillsOf(startedEngine)).toEqual([])
 
     // The bundled skill follows the same gate: the disabled project's cwd
     // sees no moderator skill entry, the enabled project's does.
     expect(await skillNamesAt(ctx, '/workspace/alpha')).not.toContain('feishu-bridge-chatroom-moderator')
     expect(await skillNamesAt(ctx, '/workspace/beta')).toContain('feishu-bridge-chatroom-moderator')
 
-    // Disposing the fiber releases the mask (HMR safety).
+    // Disposing the fiber releases both masks (HMR safety).
     await fiber.dispose()
     expect(service.deniedToolsOf(engine)).toEqual([])
+    expect(service.deniedSkillsOf(engine)).toEqual([])
   })
 
   it('routes the registered tool through the bridge service (foreign callers fail loud)', async () => {
