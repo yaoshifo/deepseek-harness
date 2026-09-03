@@ -28,7 +28,7 @@ Status: implemented
 
 ## Consequences
 
-同一 bot 的两个群可并发跑不同路由，其他群的活跃会话保持其创建时锁定的路由——此前只是会话生命周期的偶然，现在按构造即正确。项目默认路由在运行期不可变；要改它就编辑配置（或持久化的 `active_provider`）并 reload。`state.json` 新增 `provider_overrides`（缺字段 = 无 override，向后兼容）；⌛ 行、🤖 行与 `/context` 头各自反映本群路由。已知限制：被派发的子任务与 chatroom 群跑项目默认而非父群路由；继承可在 spawn 时给子会话种 override 再加。context-window 链其后被整链移除（[context-window 链移除](../simplification/2026-09-03-feishu-bridge-context-window-chain-removal.zh.md) 合并了 2026-08-20 接线 note）；usage-sync note 的推送机制被取代（[usage providers never learned the active provider name](../../archived/bug-fix/2026-08-22-feishu-bridge-usage-provider-active-sync.md) 已归档）。
+同一 bot 的两个群可并发跑不同路由，其他群的活跃会话保持其创建时锁定的路由——此前只是会话生命周期的偶然，现在按构造即正确。项目默认路由在运行期不可变；要改它就编辑配置（或持久化的 `active_provider`）并 reload。`state.json` 新增 `provider_overrides`（缺字段 = 无 override，向后兼容）；⌛ 行、🤖 行与 `/context` 头各自反映本群路由。已知限制：被派发的子任务与 chatroom 群不继承发令群的路由——它们跑项目默认，或在项目配置了 `agent.spawnProvider` 时跑该路由（[spawn 群默认 provider 路由](2026-09-03-feishu-bridge-spawn-default-provider.zh.md)）；spawn 时继承父群路由仍留待后续。context-window 链其后被整链移除（[context-window 链移除](../simplification/2026-09-03-feishu-bridge-context-window-chain-removal.zh.md) 合并了 2026-08-20 接线 note）；usage-sync note 的推送机制被取代（[usage providers never learned the active provider name](../../archived/bug-fix/2026-08-22-feishu-bridge-usage-provider-active-sync.md) 已归档）。
 
 ## Testing
 

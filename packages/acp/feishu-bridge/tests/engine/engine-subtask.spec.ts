@@ -20,7 +20,7 @@ import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import { WorktreeMode } from '../../src/engine/worktree.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import { registerNativeSettlementListener } from '../../src/index.ts'
-import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, RecentTurnsReader, TextPreviewContent } from '../../src/core/types.ts'
+import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, ProviderSwitcher, RecentTurnsReader, TextPreviewContent } from '../../src/core/types.ts'
 import { SubtaskGather } from '../../src/engine/subtask.ts'
 import {
   createNoOverwriteAgent,
@@ -57,6 +57,31 @@ async function settle(): Promise<void> {
 
 function newSubtaskTestEngine(p: Platform, agent: Agent = createStubAgent(), bridge?: BridgeDispatch): Engine {
   return new Engine('test', agent, [p], '', 'en', bridge)
+}
+
+/** Agent that is also a ProviderSwitcher over a static route table. */
+function switcherAgent(providers: string[], active: string): Agent & ProviderSwitcher {
+  const overrides = new Map<string, string>()
+  return {
+    ...createStubAgent(),
+    setProviders: () => {},
+    setActiveProvider: () => true,
+    setSessionProvider: (sessionKey: string, name: string) => {
+      if (name === '') {
+        overrides.delete(sessionKey)
+        return true
+      }
+      if (!providers.includes(name)) return false
+      overrides.set(sessionKey, name)
+      return true
+    },
+    getActiveProvider: (sessionKey?: string) => {
+      const override = sessionKey !== undefined && sessionKey !== '' ? overrides.get(sessionKey) : undefined
+      const name = override ?? active
+      return name !== '' && providers.includes(name) ? { name } : undefined
+    },
+    listProviders: () => providers.map(name => ({ name })),
+  }
 }
 
 /** Engine whose agent's recent-turn window serves one assistant entry for 'child-agent'. */
@@ -342,6 +367,39 @@ describe('SpawnSubtask', () => {
     // Unattended spawn leaves the flag off.
     const { childKey: autoKey } = await e.spawnSubtask(parentKey, '', WorktreeMode.ForceOff, false, 'auto task', [], false)
     expect(e.sessions.getOrCreateActive(autoKey).getSubtaskAttended()).toBe(false)
+  })
+
+  it('pins the configured spawn-default route on the child group and persists it', async () => {
+    const p = createStubSpawnerPlatform()
+    const agent = switcherAgent(['mify-dsh', 'mify-flash'], 'mify-dsh')
+    const e = newSubtaskTestEngine(p, agent)
+    const saved: Array<{ key: string; name: string }> = []
+    e.setProviderSaveFunc((key, name) => { saved.push({ key, name }) })
+    e.spawnProvider = 'mify-flash'
+
+    const parentKey = 'test:parent-chat:user-1'
+    const { childKey } = await e.spawnSubtask(parentKey, '', WorktreeMode.ForceOff, false, 'do the thing', [], false)
+    await settle()
+
+    expect(agent.getActiveProvider(childKey)?.name).toBe('mify-flash')
+    expect(saved).toContainEqual({ key: childKey, name: 'mify-flash' })
+    // The delegating parent chat keeps the project default route.
+    expect(agent.getActiveProvider(parentKey)?.name).toBe('mify-dsh')
+  })
+
+  it('pins the route on idle spawns (chatroom pre-provisioned assistants) too', async () => {
+    const p = createStubSpawnerPlatform()
+    const agent = switcherAgent(['mify-dsh', 'mify-flash'], 'mify-dsh')
+    const e = newSubtaskTestEngine(p, agent)
+    const saved: Array<{ key: string; name: string }> = []
+    e.setProviderSaveFunc((key, name) => { saved.push({ key, name }) })
+    e.spawnProvider = 'mify-flash'
+
+    const parentKey = 'test:parent-chat:user-1'
+    const { childKey } = await e.spawnSubtask(parentKey, '', WorktreeMode.ForceOff, false, '', [], false)
+
+    expect(agent.getActiveProvider(childKey)?.name).toBe('mify-flash')
+    expect(saved).toContainEqual({ key: childKey, name: 'mify-flash' })
   })
 
   it('starts the child session in the --dir override (start-options workDir)', async () => {

@@ -131,6 +131,13 @@ export interface AgentOptions {
    * advertised set: no adapter offers 'minimal'.
    */
   reasoningEffort?: 'off' | 'low' | 'medium' | 'high' | 'max'
+  /**
+   * Route name pinned as the provider override of every group this project's
+   * bot spawns (/spawn, //fork, subtask children, chatroom roles, monitor
+   * subgroups); '' or absent keeps spawned groups on the project default
+   * route. Key into the top-level `providers` map.
+   */
+  spawnProvider?: string
 }
 
 /** Per-project feature switches (subset grown per milestone; MIGRATION.md §4). */
@@ -1072,8 +1079,11 @@ export function buildProjectAssembly(
   }
   // Side-query provider references share the same self-contained typo class:
   // a bad name falls back to the active route silently (wrong model for the
-  // naming/render/predict/summary/triage forks).
+  // naming/render/predict/summary/triage forks). agent.spawnProvider is the
+  // spawn-group twin: a typo would leave spawned groups on the project
+  // default route.
   const sideProviderRefs: Array<[string, string | undefined]> = [
+    ['agent.spawnProvider', project.agent?.spawnProvider],
     ['groupName.provider', project.groupName?.provider],
     ['planRender.provider', project.planRender?.provider],
     ['predictNext.provider', project.predictNext?.provider],
@@ -1257,6 +1267,9 @@ export function buildProjectAssembly(
   if (project.providerShortcuts !== undefined) {
     engine.setProviderShortcuts(project.providerShortcuts)
   }
+  // Spawned groups default to the configured route instead of the project
+  // default (agent.spawnProvider; validated against config.providers above).
+  engine.spawnProvider = project.agent?.spawnProvider ?? ''
   wireGroupName(engine, project)
   if (project.agent?.mode !== undefined && project.agent.mode !== '') {
     // Any non-plan value silently means "plan off", so a typo would quietly

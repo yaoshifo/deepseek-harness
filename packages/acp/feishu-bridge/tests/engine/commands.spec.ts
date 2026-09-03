@@ -8,8 +8,8 @@ import type { Card } from '../../src/card.ts'
 import { DirHistory } from '../../src/engine/dir-history.ts'
 import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.ts'
-import { cmdDir, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.ts'
-import type { Agent, AgentSessionInfo, Message } from '../../src/core/types.ts'
+import { cmdDir, cmdFork, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.ts'
+import type { Agent, AgentSessionInfo, Message, ProviderSwitcher } from '../../src/core/types.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import {
   createStubAgent,
@@ -845,6 +845,96 @@ describe('/spawn --plan/--default pins the child group mode', () => {
       expect(p.count).toBe(0)
       expect(p.sent.length).toBeGreaterThanOrEqual(1)
       expect(p.sent[0]).toContain('--plan')
+    } finally {
+      dispose()
+    }
+  })
+})
+
+describe('/spawn //fork default provider for spawned groups', () => {
+  /** Work-dir agent that is also a ProviderSwitcher over a static route table. */
+  function switcherAgent(workDir: string, providers: string[], active: string): Agent & ProviderSwitcher {
+    const base = createWorkDirAgent(workDir)
+    const overrides = new Map<string, string>()
+    return {
+      ...base,
+      setProviders: () => {},
+      setActiveProvider: () => true,
+      setSessionProvider: (sessionKey: string, name: string) => {
+        if (name === '') {
+          overrides.delete(sessionKey)
+          return true
+        }
+        if (!providers.includes(name)) return false
+        overrides.set(sessionKey, name)
+        return true
+      },
+      getActiveProvider: (sessionKey?: string) => {
+        const override = sessionKey !== undefined && sessionKey !== '' ? overrides.get(sessionKey) : undefined
+        const name = override ?? active
+        return name !== '' && providers.includes(name) ? { name } : undefined
+      },
+      listProviders: () => providers.map(name => ({ name })),
+    }
+  }
+
+  function spawnParentMsg(): Message {
+    return msg({ sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent' })
+  }
+
+  it('pins the configured spawn route on the spawned group and persists it, leaving the parent chat on the default', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const agent = switcherAgent('/w/repo', ['mify-dsh', 'mify-flash'], 'mify-dsh')
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    const saved: Array<{ key: string; name: string }> = []
+    e.setProviderSaveFunc((key, name) => { saved.push({ key, name }) })
+    e.spawnProvider = 'mify-flash'
+    try {
+      await cmdSpawn(e, p, spawnParentMsg(), ['delegated task'])
+
+      // The spawned group resolves its route from the seeded override...
+      expect(agent.getActiveProvider('test:role-1')?.name).toBe('mify-flash')
+      // ...the choice is persisted for the next daemon start...
+      expect(saved).toContainEqual({ key: 'test:role-1', name: 'mify-flash' })
+      // ...and the parent chat keeps the project default route.
+      expect(agent.getActiveProvider('feishu:oc_parent:ou_u')?.name).toBe('mify-dsh')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('pins the same route on a //fork group', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const agent = switcherAgent('/w/repo', ['mify-dsh', 'mify-flash'], 'mify-dsh')
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    const saved: Array<{ key: string; name: string }> = []
+    e.setProviderSaveFunc((key, name) => { saved.push({ key, name }) })
+    e.spawnProvider = 'mify-flash'
+    try {
+      e.sessions.getOrCreateActive('feishu:oc_parent:ou_u').setAgentSessionID('agent-sid-1', 'dsh')
+      await cmdFork(e, p, spawnParentMsg(), ['forked continuation'])
+
+      expect(agent.getActiveProvider('test:role-1')?.name).toBe('mify-flash')
+      expect(saved).toContainEqual({ key: 'test:role-1', name: 'mify-flash' })
+    } finally {
+      dispose()
+    }
+  })
+
+  it('leaves the spawned group on the project default when no spawn route is configured', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const agent = switcherAgent('/w/repo', ['mify-dsh', 'mify-flash'], 'mify-dsh')
+    const e = new Engine('test', agent, [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    const saved: Array<{ key: string; name: string }> = []
+    e.setProviderSaveFunc((key, name) => { saved.push({ key, name }) })
+    try {
+      await cmdSpawn(e, p, spawnParentMsg(), ['delegated task'])
+
+      expect(agent.getActiveProvider('test:role-1')?.name).toBe('mify-dsh')
+      expect(saved).toEqual([])
     } finally {
       dispose()
     }

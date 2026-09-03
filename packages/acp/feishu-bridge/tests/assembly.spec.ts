@@ -157,6 +157,27 @@ describe('buildProjectAssembly', () => {
     const bare = buildProjectAssembly(stubContext(), cfg, project(), '/tmp/fb-root')
     expect(bare.adapter.getActiveProvider()?.name).toBe('mify-dsh')
   })
+
+  it('fails loud when agent.spawnProvider names no configured provider', () => {
+    // agent.spawnProvider seeds every spawned group's route override; a typo
+    // would silently leave spawned groups on the project default.
+    expect(() => buildProjectAssembly(stubContext(), config(), { ...project(), agent: { spawnProvider: 'mify-flsh' } }, '/tmp/fb-root'))
+      .toThrow(/agent\.spawnProvider.*'mify-flsh'.*available: mify-dsh/)
+    // An empty value legitimately means "spawned groups keep the project default".
+    expect(() => buildProjectAssembly(stubContext(), config(), { ...project(), agent: { spawnProvider: '' } }, '/tmp/fb-root')).not.toThrow()
+  })
+
+  it('wires a valid agent.spawnProvider onto the engine and defaults to empty', () => {
+    const cfg = config()
+    cfg.providers = {
+      'mify-dsh': { route: 'mify-dsh', model: 'zhipuai/glm-5.3' },
+      'mify-flash': { route: 'mify-dsh', model: 'zhipuai/glm-5.3-flash' },
+    }
+    const named = buildProjectAssembly(stubContext(), cfg, { ...project(), agent: { provider: 'mify-dsh', spawnProvider: 'mify-flash' } }, '/tmp/fb-root')
+    expect(named.engine.spawnProvider).toBe('mify-flash')
+    const bare = buildProjectAssembly(stubContext(), cfg, { ...project(), agent: { provider: 'mify-dsh' } }, '/tmp/fb-root')
+    expect(bare.engine.spawnProvider).toBe('')
+  })
 })
 
 describe('buildProjectAssembly group naming (Go wireGroupName)', () => {

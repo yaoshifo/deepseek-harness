@@ -1014,6 +1014,13 @@ export class Engine {
   subtaskMaxDepth: number = 0
   /** Default worktree isolation for /spawn //fork (Go spawnWorktree). */
   spawnWorktree: WorktreeMode = WorktreeMode.ForceOff
+  /**
+   * Route name pinned as the provider override of every group this bot
+   * spawns (/spawn, //fork, subtask children, chatroom roles, monitor
+   * subgroups); '' keeps spawned groups on the project default route
+   * (profile `projects[].agent.spawnProvider`).
+   */
+  spawnProvider = ''
   /** Integrate-branch override for /done merged auto-removal; '' uses each worktree's recorded base branch. */
   private spawnIntegrateBranch = ''
   /** /spawn //fork RAM guard thresholds in percent; 0 disables a tier (Go spawnMemWarnPct/BlockPct). */
@@ -6304,6 +6311,34 @@ export class Engine {
   }
 
   /**
+   * Pin the configured spawn-default route onto a freshly created child
+   * group, before its first agent turn resolves the route. A real provider
+   * override entry: it persists across restarts, survives /new, and the
+   * child chat's /provider can switch or clear it (clear falls back to the
+   * project default, not this spawn default). Callers must invoke it before
+   * injecting the child's first message. No-op without a configured
+   * {@link Engine.spawnProvider}.
+   * @param childKey - Engine session key of the newly spawned child group.
+   */
+  seedSpawnProvider(childKey: string): void {
+    if (this.spawnProvider === '') return
+    const switcher = asProviderSwitcher(this.agent)
+    if (switcher === undefined) {
+      console.warn(`spawn: agent has no provider switcher; spawned group ${childKey} keeps the project default route`)
+      return
+    }
+    if (!switcher.setSessionProvider(childKey, this.spawnProvider)) {
+      console.warn(`spawn: route '${this.spawnProvider}' not found; spawned group ${childKey} keeps the project default route`)
+      return
+    }
+    try {
+      this.providerSaveFunc?.(childKey, this.spawnProvider)
+    } catch (error) {
+      console.error(`spawn: failed to save spawned group provider: ${String(error)}`)
+    }
+  }
+
+  /**
    * Create an isolated child group + session that runs a delegated piece of
    * work in parallel, woken from the agent via the subtask tool (Go
    * SpawnSubtask). Records parent linkage + delegation depth for the
@@ -6450,6 +6485,10 @@ export class Engine {
     if (userID !== '') ns.setSpawnUserID(userID)
     if (wtPath !== '') ns.setWorktreeInfo(wtPath, wtBranch, wtBase, wtRoot, wtBaseBranch)
     this.sessions.save()
+
+    // Pin the configured spawn-default route before the injected first
+    // message starts the child's agent session (agent.spawnProvider).
+    this.seedSpawnProvider(syntheticMsg.sessionKey)
 
     // Fold a late-spawned child into an armed gather barrier so gather also
     // awaits it; without a barrier this is a no-op.

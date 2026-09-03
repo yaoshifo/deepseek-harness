@@ -1172,6 +1172,10 @@ async function spawnGroupCommon(
     e.sessions.save()
   }
 
+  // Pin the configured spawn-default route before the injected first message
+  // starts the child's agent session (agent.spawnProvider).
+  e.seedSpawnProvider(syntheticMsg.sessionKey)
+
   e.addReaction(p, msg.replyCtx, 'Done')
 
   // Notification card for both paths (with and without user message).
