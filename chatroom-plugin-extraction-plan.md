@@ -1,6 +1,6 @@
 # chatroom 抽取为独立插件包：实施计划与调研底稿
 
-> **状态**：计划已批准，本次未实施。恢复实施时以本文档为准，动手前按仓库惯例重新核实代码现状（行号基于 2026-01-30 的 dev 分支）。
+> **状态**：已实施。抽取于 2026-08-27 起落地（package skeleton `896b7dfca8` 及后续批次），产物在 `packages/acp/feishu-bridge-chatroom/`；决策与迁移语义的正式记录见 `.agents/notes/implemented/architecture/2026-08-29-feishu-bridge-chatroom-extraction.md`（中文版）。本文档保留为实施前的调研底稿：行号基于抽取落地前的 dev 分支（2026-08-27，`896b7dfca8` 的父提交），与当前代码不对应。
 >
 > **背景**：chatroom（多角色聊天室）现实现于 `packages/acp/feishu-bridge`：`src/engine/chatroom*.ts` 7 个模块（3796 行）+ `src/tools/chatroom.ts`（275 行），另有 12 个专项测试（3790 行）、i18n 79 个 key、`skills/feishu-bridge-chatroom-moderator`、`ChatroomConfig`。目标：整体迁出到新包 `@deepseek-ai/dsh-feishu-bridge-chatroom`（`packages/acp/feishu-bridge-chatroom/`），依赖方向 **chatroom → bridge**（bridge 不 import chatroom），行为零变化，让 feishu-bridge 保持纯净。
 >
