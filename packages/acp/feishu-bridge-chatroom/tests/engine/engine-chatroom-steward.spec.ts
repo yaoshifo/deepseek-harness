@@ -39,7 +39,13 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => { setTimeout(resolve, 0) })
 }
 
-async function waitFor(cond: () => boolean, what: string, timeoutMs = 2000): Promise<void> {
+// Default sized to this spec's awaited work: every wait below counts engine
+// research-startup spawns (the heaviest waits for 11 groups — venv
+// provisioning, role groups, per-role assistants, the steward, the family
+// rename). ~1.1s solo, >2s under concurrent full-suite event-loop contention
+// (CI slower still); the 2000ms default undercut both the vitest lane budget
+// and the measured contention and flaked the suite.
+async function waitFor(cond: () => boolean, what: string, timeoutMs = 10000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     if (cond()) return
@@ -72,7 +78,7 @@ function hubMsg(hub: string): Message {
 }
 
 describe('research steward pre-spawn', () => {
-  it('spawns a hub-parented steward beside the per-role assistants', async () => {
+  it('spawns a hub-parented steward beside the per-role assistants', { timeout: 15000 }, async () => {
     // The venv must provision for the startup gate and land on every
     // assistant; uv is stubbed so the suite never needs a host install.
     uvHooks.lookupPath = async () => 'uv'
@@ -138,7 +144,7 @@ describe('research steward pre-spawn', () => {
     }
   })
 
-  it('spawns no steward in a non-research chatroom, workspace or not', async () => {
+  it('spawns no steward in a non-research chatroom, workspace or not', { timeout: 15000 }, async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newStewardTestEngine(p)
     const names = ['taleb', 'munger']
@@ -161,7 +167,7 @@ describe('research steward pre-spawn', () => {
       .filter(k => chatroomState(e.sessions.getOrCreateActive(k)).researchAssistant)).toHaveLength(0)
   })
 
-  it('spawns no steward without a research workspace; role assistants fall back to their persona dirs', async () => {
+  it('spawns no steward without a research workspace; role assistants fall back to their persona dirs', { timeout: 15000 }, async () => {
     const p = createStubChatroomSpawnerEx()
     // The storeless test engine derives no workspace and none is configured,
     // so the role assistants scatter into their persona dirs — the steward's
