@@ -855,6 +855,10 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
     // registration after assembly — the chatroom sweep runs once the bridge
     // reports readiness — still masks every later session.
     adapter.setDeniedTools(() => service.deniedToolsOf(engine))
+    // Service-denied skill masks (the chatroom plugin hides its moderator
+    // skill on disabled projects) apply through the adapter's create-time
+    // skills.restrict, with the same live-closure timing as the tool mask.
+    adapter.setDeniedSkills(() => service.deniedSkillsOf(engine))
     if (project.features?.injectSender === true) engine.setInjectSender(true)
     if (project.features?.quiet === true) {
       engine.setDisplayConfig({ thinkingMessages: false, toolMessages: false })
@@ -1246,8 +1250,10 @@ export function buildProjectAssembly(
   {
     const skills = ctx.get('skills')
     const mcpWorkspace = ctx.get('mcpWorkspace')
+    const bridgeService = ctx.get('feishuBridge')
     ctx.effect(() => registerSkillsMcpCommands(engine, {
       listSkills: skills === undefined ? undefined : cwd => skills.list({ cwd }),
+      deniedSkills: bridgeService === undefined ? undefined : () => bridgeService.deniedSkillsOf(engine),
       toolNames: () => ctx.tools.schemas().map(schema => schema.name),
       healthServers: config.mcpHealth?.servers,
       allowlist: project.mcpServers,

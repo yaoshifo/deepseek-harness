@@ -51,6 +51,7 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
 - **On-demand loading.** Asking for one skill by name returns the full instruction body from whichever provider owns the winning candidate; the registry re-validates the loaded definition and rejects a stale selection whose name changed between discovery and load.
 - **Embedded skills.** Plugins register an in-memory skill with `ctx.skills.register(...)`; the registry fills in a default invocation policy and the `runtime` provider label. Same-name runtime registrations in one layer are first-wins with a warning.
 - **Provider registration.** A provider contributes its catalog with `ctx.skills.registerProvider(...)`; registration is synchronous, and the returned disposer removes the provider. `runtime` is a reserved provider name.
+- **Scoped restrictions.** A scoped context (an agent or preset composition) masks inherited skills with `ctx.skills.restrict({ allow?, deny? })`: restrictions from every layer on a viewing scope's chain intersect, while the exact scope's own registrations stay visible. An unscoped call throws; names are validated against the skill-name grammar only, because availability is cwd-dependent — a denied name matching nothing under some workdir is inert there.
 
 An invocation policy on every skill decides which surfaces may advertise and load it: `modelInvocable` for model-facing tools and catalogs, `userInvocable` for human-facing commands. The registry keeps all four combinations, so one discovery result can serve both surfaces without conflating their catalogs.
 
@@ -90,7 +91,7 @@ The registry is host+per-scope layered, the shape the tools registry established
 
 ### Catalog collection
 
-A read (`list`/`snapshot`) collects each layer's candidates: runtime skills first, then each provider's `list()` result, awaiting providers sequentially and containing failures. Candidates are validated, deduplicated within the layer, and merged across layers; summaries sort by name. Completed collections are cached per cwd, scope chain, and revision up to `collectCacheMaxEntries`; an in-flight collection retries once when a provider or runtime mutation bumps the revision mid-read, and a second change returns the latest candidates as an incomplete, uncached observation.
+A read (`list`/`snapshot`) collects each layer's candidates: runtime skills first, then each provider's `list()` result, awaiting providers sequentially and containing failures. Candidates are validated, deduplicated within the layer, and merged across layers — the global layer and ancestors form the inherited surface, subject to the viewing chain's restrictions, while the exact scope's own layer overlays last and outside the filter; summaries sort by name. Completed collections are cached per cwd, scope chain, and revision up to `collectCacheMaxEntries`; an in-flight collection retries once when a provider or runtime mutation bumps the revision mid-read, and a second change returns the latest candidates as an incomplete, uncached observation.
 
 ### Loading and staleness
 
@@ -98,7 +99,7 @@ A read (`list`/`snapshot`) collects each layer's candidates: runtime skills firs
 
 ### Invalidation
 
-The registry has no TTL: only a provider calling its registration-scoped `invalidate()`, or a runtime registration or disposal, clears completed catalogs. Each invalidation bumps a revision, clears the cache, and emits the unfiltered `skills/change` event; consumers refetch with their own lookup options. `invalidate()` takes effect only while the exact registration that received it is still active, so a late callback cannot disturb a replacement provider with the same name.
+The registry has no TTL: only a provider calling its registration-scoped `invalidate()`, a runtime or restriction registration or disposal, or a provider registration change clears completed catalogs. Each invalidation bumps a revision, clears the cache, and emits the unfiltered `skills/change` event; consumers refetch with their own lookup options. `invalidate()` takes effect only while the exact registration that received it is still active, so a late callback cannot disturb a replacement provider with the same name.
 
 </details>
 

@@ -16,7 +16,7 @@ feishu-bridge 会话日志（344 个会话，2026-08-19 至 08-31）显示并行
 
 ## Decision
 
-- plan-mode 调研句从条件句改为带明确例外的默认句，落在全部四份 preset/bundle 副本及 bridge bundle patch 的 plan-mode 覆盖：全仓库扫描、横切审计、点名了几个方向的请求，预先拆成 2–5 个独立角度并在一个 assistant message 里一起派发（brief 要求只读回报）；仅单一焦点、一两次 read 即可回答的问题保持串行。通用仓库副本保持工具中性（"background subagent delegations"）；bridge bundle patch 覆盖点名 `feishu_bridge_subtask`——2026-09-01 起它落在 bridge 包自己的 `cordis.patch.yml` 里（[bundle patch 所有权 note](../architecture/2026-09-01-feishu-bridge-plan-mode-guidance-in-bundle-patch.zh.md)）。
+- plan-mode 调研句从条件句改为带明确例外的默认句，落在全部四份 preset/bundle 副本及 bridge bundle patch 的 plan-mode 覆盖：全仓库扫描、横切审计、点名了几个方向的请求，预先拆成 2–5 个独立角度并在一个 assistant message 里一起派发（brief 要求只读回报）；仅单一焦点、一两次 read 即可回答的问题保持串行——2026-09-03 起该例外按答案要覆盖的子系统/方向数判定、不看命令数（[单焦点广度判据](2026-09-03-single-focus-breadth-criterion.zh.md)）。通用仓库副本保持工具中性（"background subagent delegations"）；bridge bundle patch 覆盖点名 `feishu_bridge_subtask`——2026-09-01 起它落在 bridge 包自己的 `cordis.patch.yml` 里（[bundle patch 所有权 note](../architecture/2026-09-01-feishu-bridge-plan-mode-guidance-in-bundle-patch.zh.md)）。
 - "group implementation changes by subsystem" 现在携带 "and state the execution order — independent groups dispatched together as parallel subtask spawns when execution begins, serially dependent groups executed in order"——审批后消费缺口补上时，标注升级为命令式执行顺序声明（[审批后执行引导](2026-09-02-post-approval-parallel-execution-guidance.zh.md)）。执行顺序写在用户 review 的计划里，审批闸门仍在用户手中。
 - skill 的排除边界收窄到它的成本理由：轻量单焦点问题（一两次 read/grep）保持串行；多方向调研默认并行无群 spawn。2026-08-21 的边界定价的是 attended 群面；2026-08-24 起无值守 spawn 走原生 continuable seam、不再建群，该成本前提已消失。skill 的 plan-mode 段与 plan-mode 提示词陈述同一条边界：只读回报型探索 spawn 在 plan mode 内直接派发；ExitPlanMode 闸门只覆盖要改文件、建 worktree 的变异型派发。
 

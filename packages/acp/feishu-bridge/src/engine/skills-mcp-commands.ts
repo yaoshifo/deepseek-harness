@@ -32,6 +32,8 @@ const MCP_TOOLS_PER_SERVER = 8
 export interface SkillsMcpCommandDeps {
   /** Skill summaries for a workspace directory; absent = the skill registry is not composed. */
   readonly listSkills?: ((cwd: string) => Promise<readonly SkillSummary[]>) | undefined
+  /** Skill names the bridge service masks for this engine's sessions; absent = no mask. */
+  readonly deniedSkills?: (() => readonly string[]) | undefined
   /** Live process-global public tool names (the same read as the mcpHealth runtime context). */
   readonly toolNames: () => readonly string[]
   /** Servers configured for health watching (degradation cross-check). */
@@ -79,7 +81,9 @@ export function registerSkillsMcpCommands(e: Engine, deps: SkillsMcpCommandDeps)
  * /skills: list the skill catalog visible to this chat's work dir — name,
  * capped description, and a command-only marker on entries the model cannot
  * invoke. The skill registry is not composed or has no entries: the command
- * says so instead of rendering an empty card.
+ * says so instead of rendering an empty card. Engine-denied names (the
+ * bridge service's per-engine mask, e.g. a sibling plugin disabled on this
+ * project) are dropped before rendering.
  * @param e - Engine whose i18n and card senders render the listing.
  * @param p - Platform that delivered the command message.
  * @param msg - Triggering message; its session selects the work dir.
@@ -91,7 +95,10 @@ async function cmdSkills(e: Engine, p: Platform, msg: Message, deps: SkillsMcpCo
     return
   }
   const workDir = e.commandWorkDir(msg)
-  const skills = await deps.listSkills(workDir)
+  const denied = deps.deniedSkills?.() ?? []
+  const skills = denied.length === 0
+    ? await deps.listSkills(workDir)
+    : (await deps.listSkills(workDir)).filter(entry => !denied.includes(entry.name))
   if (skills.length === 0) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.SkillsEmpty))
     return

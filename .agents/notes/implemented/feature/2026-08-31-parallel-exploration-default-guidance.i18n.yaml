@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-31-parallel-exploration-default-guidance.md
-2026-08-31-parallel-exploration-default-guidance.md: 436f10d0974fa939f4f0e7ad08dfc90094c04f12
-2026-08-31-parallel-exploration-default-guidance.zh.md: cbd7e162adb5418ff8e806c84674e30e01f77fcd
+2026-08-31-parallel-exploration-default-guidance.md: c8b82ba9e28450e4fb00393cdc3afaa69adba618
+2026-08-31-parallel-exploration-default-guidance.zh.md: cfbaf68f2c9a2705afcfe91ce3f8459f7dde2cb0

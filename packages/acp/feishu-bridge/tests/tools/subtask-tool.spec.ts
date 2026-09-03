@@ -161,6 +161,7 @@ describe('feishu_bridge_subtask registration', () => {
     const description = test.ctx.tools.get('feishu_bridge_subtask')?.description ?? ''
     expect(description).toContain('begin executing an approved plan')
     expect(description).toContain('spawn them together in one message instead of implementing them serially yourself')
+    expect(description).toContain('Judge independence by whether the groups span disjoint subsystems or directions')
   })
 
   it('describes fork, send, and the assistant literal as the code behaves', async () => {
