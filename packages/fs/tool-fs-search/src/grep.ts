@@ -12,12 +12,14 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { statSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView, SearchResultView, ToolResult } from '@deepseek-ai/dsh-tools'
 import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SpillRef } from '@deepseek-ai/dsh-spill'
 import type { GrepMatch } from './search-core.ts'
-import { SearchError, previewLine, retainGrepMatches, runRipgrep, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
+import { SearchError, previewLine, resolveSearchRoot, retainGrepMatches, runRipgrep, sessionCwdOf, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
 import { grepSearchMeta, searchViewFromMeta } from './presentation.ts'
 import { acceptedDirectCallValue } from './direct-call.ts'
 
@@ -77,6 +79,17 @@ function validateInclude(include: string): void {
   }
 }
 
+/** True when the path exists and is a directory; an absent or unreadable path stays a non-directory so rg names it in the failure. */
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    // Only statSync's own errors (absence, permissions) reach here, and both
+    // mean "not a directory target": rg reports the exact path on exit 2.
+    return false
+  }
+}
+
 /**
  * Validate value constraints the schema DSL can't express: a non-EMPTY
  * `pattern` (whitespace is a legitimate regex), a non-blank `path` when given,
@@ -99,19 +112,21 @@ export function parseGrepArgs(args: { pattern: string; path?: string; include?: 
 
 /**
  * Build the fixed line-oriented `rg --json` argv for one `grep` call. Every
- * model-controlled value ({@link GrepInput.pattern}, {@link GrepInput.path},
- * {@link GrepInput.include}) is a plain argv element — no shell layer exists,
- * so no quoting applies; the pattern and include ride in `--flag=value` form
- * and the target behind `--`, so a leading-dash value can never be parsed as
- * a flag.
+ * model-controlled value (the pattern, the include filter, the target) is a
+ * plain argv element — no shell layer exists, so no quoting applies; the
+ * pattern and include ride in `--flag=value` form and the target behind `--`,
+ * so a leading-dash value can never be parsed as a flag. The target is a
+ * single basename, not the caller's path argument: rg runs with its cwd at
+ * the search root (a directory) or the target's parent directory (a file),
+ * so include filters and output anchor at the search root.
  *
- * @param input - the validated arguments.
+ * @param input - the validated pattern, the optional include filter, and the optional single-file basename target.
  * @returns the complete ripgrep argument vector (excluding the binary itself).
  */
-export function buildGrepCommand(input: GrepInput): string[] {
+export function buildGrepCommand(input: { pattern: string; include?: string; target?: string }): string[] {
   const parts = ['--json', `--regexp=${input.pattern}`]
   if (input.include !== undefined) parts.push(`--glob=${input.include}`)
-  if (input.path !== undefined) parts.push('--', input.path)
+  if (input.target !== undefined) parts.push('--', input.target)
   return parts
 }
 
@@ -285,8 +300,8 @@ export function applyGrepTool(ctx: Context, caps: GrepToolCaps): void {
       + 'Use read on a matched file for surrounding context.',
     parameters: {
       pattern: { type: 'string', required: true, description: 'Regular expression to search for (ripgrep syntax).' },
-      path: { type: 'string', description: 'File or directory to search. Defaults to the session workspace; a relative path resolves against it.' },
-      include: { type: 'string', description: 'One glob filter for which files to search (e.g. "*.ts", "*.{js,jsx}"). Not a list; negation is not supported.' },
+      path: { type: 'string', description: 'File or directory to search; an include filter is matched relative to this root. Defaults to the session workspace; a relative path or a ~/ prefix resolves against it.' },
+      include: { type: 'string', description: 'One glob filter for which files to search (e.g. "*.ts", "*.{js,jsx}"), matched relative to the search root (the path argument, default the session workspace). Not a list; negation is not supported.' },
     },
     timeoutMs: caps.timeoutMs,
     output: {
@@ -318,13 +333,32 @@ export function applyGrepTool(ctx: Context, caps: GrepToolCaps): void {
     },
     async execute(args, exec) {
       const input = parseGrepArgs(args)
-      const run = await runRipgrep(ctx, exec, 'grep', buildGrepCommand(input), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes)
+      const sessionCwd = sessionCwdOf(exec)
+      let resolvedRoot = input.path === undefined ? sessionCwd : resolveSearchRoot(input.path, sessionCwd)
+      // A directory target runs rg with its cwd at the root, so include
+      // filters and output anchor there. A file target — or a path that does
+      // not exist, which rg then names in its failure — runs from the parent
+      // with the basename behind `--`.
+      let target: string | undefined
+      if (input.path !== undefined && !isDirectory(resolvedRoot)) {
+        target = basename(resolvedRoot)
+        resolvedRoot = dirname(resolvedRoot)
+      }
+      const run = await runRipgrep(ctx, exec, 'grep', buildGrepCommand({
+        pattern: input.pattern,
+        ...input.include !== undefined ? { include: input.include } : {},
+        ...target !== undefined ? { target } : {},
+      }), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes, resolvedRoot)
       if (run.noMatches) return { matches: [] }
 
       const all: GrepMatch[] = []
       for (const raw of parseGrepMatches(run.stdout)) {
+        // rg prints search-root-relative paths; re-anchor them at the session
+        // cwd so every returned path stays follow-up-readable there (relative
+        // inside it, absolute outside).
+        const absolute = isAbsolute(raw.path) ? raw.path : join(resolvedRoot, raw.path)
         const match: GrepMatch = {
-          path: toWorkdirRelative(raw.path, run.workdir),
+          path: toWorkdirRelative(absolute, sessionCwd),
           lineNumber: raw.lineNumber,
           line: raw.line,
         }

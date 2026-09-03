@@ -139,11 +139,11 @@
         "properties": {
           "pattern": {
             "type": "string",
-            "description": "Glob pattern to match file paths against (e.g. \"**/*.ts\", \"src/**/*.test.js\"). A pattern with no \"/\" matches the basename at any depth, so \"*\" and \"*.ts\" both search the whole tree; include a separator to anchor the depth."
+            "description": "Glob pattern to match file paths against (e.g. \"**/*.ts\", \"src/**/*.test.js\"). A pattern with no \"/\" matches the basename at any depth, so \"*\" and \"*.ts\" both search the whole tree; include a separator to anchor the depth. Patterns are matched relative to the search root (the path argument, default the session workspace); a ~/-prefixed or absolute pattern is resolved the same way first."
           },
           "path": {
             "type": "string",
-            "description": "Directory to search in. Defaults to the session workspace; a relative path resolves against it."
+            "description": "Directory to search in; the pattern is matched relative to this root. Defaults to the session workspace; a relative path or a ~/ prefix resolves against it."
           }
         },
         "required": [
@@ -163,11 +163,11 @@
           },
           "path": {
             "type": "string",
-            "description": "File or directory to search. Defaults to the session workspace; a relative path resolves against it."
+            "description": "File or directory to search; an include filter is matched relative to this root. Defaults to the session workspace; a relative path or a ~/ prefix resolves against it."
           },
           "include": {
             "type": "string",
-            "description": "One glob filter for which files to search (e.g. \"*.ts\", \"*.{js,jsx}\"). Not a list; negation is not supported."
+            "description": "One glob filter for which files to search (e.g. \"*.ts\", \"*.{js,jsx}\"), matched relative to the search root (the path argument, default the session workspace). Not a list; negation is not supported."
           }
         },
         "required": [
@@ -856,11 +856,11 @@
           "properties": {
             "pattern": {
               "type": "string",
-              "description": "Glob pattern to match file paths against (e.g. \"**/*.ts\", \"src/**/*.test.js\"). A pattern with no \"/\" matches the basename at any depth, so \"*\" and \"*.ts\" both search the whole tree; include a separator to anchor the depth."
+              "description": "Glob pattern to match file paths against (e.g. \"**/*.ts\", \"src/**/*.test.js\"). A pattern with no \"/\" matches the basename at any depth, so \"*\" and \"*.ts\" both search the whole tree; include a separator to anchor the depth. Patterns are matched relative to the search root (the path argument, default the session workspace); a ~/-prefixed or absolute pattern is resolved the same way first."
             },
             "path": {
               "type": "string",
-              "description": "Directory to search in. Defaults to the session workspace; a relative path resolves against it."
+              "description": "Directory to search in; the pattern is matched relative to this root. Defaults to the session workspace; a relative path or a ~/ prefix resolves against it."
             }
           },
           "required": [
@@ -880,11 +880,11 @@
             },
             "path": {
               "type": "string",
-              "description": "File or directory to search. Defaults to the session workspace; a relative path resolves against it."
+              "description": "File or directory to search; an include filter is matched relative to this root. Defaults to the session workspace; a relative path or a ~/ prefix resolves against it."
             },
             "include": {
               "type": "string",
-              "description": "One glob filter for which files to search (e.g. \"*.ts\", \"*.{js,jsx}\"). Not a list; negation is not supported."
+              "description": "One glob filter for which files to search (e.g. \"*.ts\", \"*.{js,jsx}\"), matched relative to the search root (the path argument, default the session workspace). Not a list; negation is not supported."
             }
           },
           "required": [

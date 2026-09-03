@@ -10,11 +10,12 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { sep } from 'node:path'
+import { homedir } from 'node:os'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView, SearchResultView, ToolResult } from '@deepseek-ai/dsh-tools'
 import type { SpillRef } from '@deepseek-ai/dsh-spill'
-import { runRipgrep, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
+import { resolveSearchRoot, runRipgrep, sessionCwdOf, toWorkdirRelative, trySaveFormattedResult } from './search-core.ts'
 import { globSearchMeta, searchViewFromMeta } from './presentation.ts'
 import { acceptedDirectCallValue } from './direct-call.ts'
 
@@ -60,6 +61,37 @@ export interface GlobInput {
   path?: string
 }
 
+/** True when the search root itself sits inside a VCS metadata directory. */
+function insideVcsDirectory(root: string): boolean {
+  return root.split(sep).some(segment => GLOB_VCS_EXCLUDES.includes(segment))
+}
+
+/**
+ * Anchor a pattern at the search root: a relative pattern passes through
+ * unchanged; `~` alone and a `~/`-prefixed pattern expand against the home
+ * directory first; an absolute pattern inside the root is stripped to its
+ * root-relative form (rg matches `--glob` against root-relative paths), the
+ * root itself collapses to `**`, and an absolute pattern outside the root is
+ * rejected — a silent miss would read as "no such files".
+ *
+ * @param pattern - the model-facing glob pattern.
+ * @param resolvedRoot - the absolute search root the pattern anchors to.
+ * @returns the root-relative pattern handed to rg.
+ * @throws a plain `Error` when an absolute pattern anchors outside the root.
+ */
+export function resolveGlobPattern(pattern: string, resolvedRoot: string): string {
+  let anchored = pattern
+  if (anchored === '~') anchored = homedir()
+  else if (anchored.startsWith('~/')) anchored = join(homedir(), anchored.slice(2))
+  if (!isAbsolute(anchored)) return anchored
+  const rel = relative(resolvedRoot, anchored)
+  if (rel.length === 0) return '**'
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new Error(`glob pattern '${pattern}' is outside the search root '${resolvedRoot}'; pass the directory as the path argument instead`)
+  }
+  return rel.split(sep).join('/')
+}
+
 /**
  * Validate value constraints the schema DSL can't express: a non-blank
  * `pattern`, and a non-blank `path` when given. Throws a plain `Error` (an
@@ -75,19 +107,19 @@ export function parseGlobArgs(args: { pattern: string; path?: string }): GlobInp
 }
 
 /**
- * Build the fixed `rg --files` argv for one `glob` call. Every
- * model-controlled value ({@link GlobInput.pattern}, {@link GlobInput.path})
- * is a plain argv element — no shell layer exists, so no quoting applies; the
- * search root rides behind `--` so a leading-dash path can never be parsed as
- * a flag. `--sort=modified` orders by modification time, `--no-ignore
- * --hidden` searches ignored and hidden files, and
+ * Build the fixed `rg --files` argv for one `glob` call. The pattern is a
+ * plain argv element — no shell layer exists, so no quoting applies — and the
+ * search root NEVER rides in argv: the caller runs rg with its cwd AT the
+ * root (see {@link applyGlobTool}), which is what makes the pattern match
+ * paths relative to that root. `--sort=modified` orders by modification time,
+ * `--no-ignore --hidden` searches ignored and hidden files, and
  * {@link GLOB_VCS_EXCLUDES} keeps VCS metadata out.
  *
- * @param input - the validated arguments.
+ * @param input - the validated pattern.
  * @returns the complete ripgrep argument vector (excluding the binary itself).
  */
-export function buildGlobCommand(input: GlobInput): string[] {
-  const parts = [
+export function buildGlobCommand(input: { pattern: string }): string[] {
+  return [
     '--files',
     `--glob=${input.pattern}`,
     '--sort=modified',
@@ -102,8 +134,6 @@ export function buildGlobCommand(input: GlobInput): string[] {
       `--glob=!**/${name}/**`,
     ]),
   ]
-  if (input.path !== undefined) parts.push('--', input.path)
-  return parts
 }
 
 /**
@@ -318,9 +348,11 @@ export function applyGlobTool(ctx: Context, caps: GlobToolCaps): void {
         type: 'string',
         required: true,
         description: 'Glob pattern to match file paths against (e.g. "**/*.ts", "src/**/*.test.js"). '
-          + 'A pattern with no "/" matches the basename at any depth, so "*" and "*.ts" both search the whole tree; include a separator to anchor the depth.',
+          + 'A pattern with no "/" matches the basename at any depth, so "*" and "*.ts" both search the whole tree; include a separator to anchor the depth. '
+          + 'Patterns are matched relative to the search root (the path argument, default the session workspace); '
+          + 'a ~/-prefixed or absolute pattern is resolved the same way first.',
       },
-      path: { type: 'string', description: 'Directory to search in. Defaults to the session workspace; a relative path resolves against it.' },
+      path: { type: 'string', description: 'Directory to search in; the pattern is matched relative to this root. Defaults to the session workspace; a relative path or a ~/ prefix resolves against it.' },
     },
     timeoutMs: caps.timeoutMs,
     output: {
@@ -340,15 +372,25 @@ export function applyGlobTool(ctx: Context, caps: GlobToolCaps): void {
     },
     async execute(args, exec) {
       const input = parseGlobArgs(args)
-      const run = await runRipgrep(ctx, exec, 'glob', buildGlobCommand(input), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes)
-      const root = input.path === undefined ? '.' : toWorkdirRelative(input.path, run.workdir)
+      const sessionCwd = sessionCwdOf(exec)
+      const resolvedRoot = input.path === undefined ? sessionCwd : resolveSearchRoot(input.path, sessionCwd)
+      const root = toWorkdirRelative(resolvedRoot, sessionCwd)
+      // VCS internals stay excluded even when the search root sits inside one:
+      // rg's cwd rides at the root, so candidates carry no VCS segment of
+      // their own and the argv prune globs cannot fire — the root's own path
+      // segments are the remaining signal.
+      if (insideVcsDirectory(resolvedRoot)) return { root, paths: [] }
+      const run = await runRipgrep(ctx, exec, 'glob', buildGlobCommand({ pattern: resolveGlobPattern(input.pattern, resolvedRoot) }), caps.rawOutputMaxBytes, caps.graceMs, caps.stderrMaxBytes, resolvedRoot)
       if (run.noMatches) return { root, paths: [] }
 
       const all: string[] = []
       for (const line of run.stdout.split('\n')) {
         if (line.length === 0) continue
-        const displayPath = toWorkdirRelative(line, run.workdir)
-        all.push(displayPath)
+        // rg prints search-root-relative paths; re-anchor them at the session
+        // cwd so every returned path stays follow-up-readable in the session
+        // workspace (relative inside it, absolute outside).
+        const absolute = isAbsolute(line) ? line : join(resolvedRoot, line)
+        all.push(toWorkdirRelative(absolute, sessionCwd))
       }
       return { root, paths: all }
     },

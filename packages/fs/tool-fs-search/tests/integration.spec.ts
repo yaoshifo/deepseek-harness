@@ -47,11 +47,12 @@ const agent = () => ({ session: { header: { id: 'session-int', cwd: dir } } })
 describe('search tools over the real subprocess service + the packaged rg', () => {
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'dsh-search-int-'))
-    await mkdir(join(dir, 'src'), { recursive: true })
+    await mkdir(join(dir, 'src', 'nested'), { recursive: true })
     await mkdir(join(dir, '.git'), { recursive: true })
     await mkdir(join(dir, 'spaced dir'), { recursive: true })
     await writeFile(join(dir, 'src', 'alpha.ts'), 'export const alpha = 1\n// TODO: refit alpha\n')
     await writeFile(join(dir, 'src', 'beta.ts'), 'export const beta = 2\n')
+    await writeFile(join(dir, 'src', 'nested', 'gamma.ts'), 'export const gamma = 3\n')
     await writeFile(join(dir, 'notes.md'), 'alpha appears here too\n')
     await writeFile(join(dir, '.hidden.ts'), 'export const hidden = 3\n')
     await writeFile(join(dir, '.git', 'config.ts'), 'never listed\n')
@@ -85,7 +86,68 @@ describe('search tools over the real subprocess service + the packaged rg', () =
 
     it('scopes to a directory search root (path arg)', async () => {
       const result = await call('glob', { pattern: '*.ts', path: 'src' }, agent())
-      expect(text(result).split('\n').sort()).toEqual([join('src', 'alpha.ts'), join('src', 'beta.ts')])
+      expect(text(result).split('\n').sort()).toEqual([
+        join('src', 'alpha.ts'),
+        join('src', 'beta.ts'),
+        join('src', 'nested', 'gamma.ts'),
+      ])
+    })
+
+    it('matches a separator-bearing pattern relative to the search root (absolute path arg)', async () => {
+      // The search root is the pattern's anchor, so the absolute form of the
+      // path arg behaves exactly like the relative one above.
+      const result = await call('glob', { pattern: 'src/**/*.ts', path: dir }, agent())
+      expect(result.isError).toBe(false)
+      expect(text(result).split('\n').sort()).toEqual([
+        join('src', 'alpha.ts'),
+        join('src', 'beta.ts'),
+        join('src', 'nested', 'gamma.ts'),
+      ])
+    })
+
+    it('matches a separator-bearing pattern relative to the search root (relative path arg)', async () => {
+      const result = await call('glob', { pattern: 'nested/*.ts', path: 'src' }, agent())
+      expect(result.isError).toBe(false)
+      expect(text(result).split('\n')).toEqual([join('src', 'nested', 'gamma.ts')])
+    })
+
+    it('strips the search-root prefix off an absolute pattern', async () => {
+      const result = await call('glob', { pattern: join(dir, 'src', '**', '*.ts'), path: dir }, agent())
+      expect(result.isError).toBe(false)
+      expect(text(result).split('\n').sort()).toEqual([
+        join('src', 'alpha.ts'),
+        join('src', 'beta.ts'),
+        join('src', 'nested', 'gamma.ts'),
+      ])
+    })
+
+    it('rejects an absolute pattern outside the search root with a plain argument error', async () => {
+      const result = await call('glob', { pattern: join('/definitely', 'outside', '**'), path: dir }, agent())
+      expect(result.isError).toBe(true)
+      expect(text(result)).toContain('is outside the search root')
+      expect(text(result)).toContain('pass the directory as the path argument')
+    })
+
+    it('treats a pattern equal to the search root as the whole tree', async () => {
+      const result = await call('glob', { pattern: dir, path: dir }, agent())
+      expect(result.isError).toBe(false)
+      const paths = text(result).split('\n')
+      expect(paths).toContain('.hidden.ts')
+      expect(paths).toContain(join('src', 'nested', 'gamma.ts'))
+      expect(paths).not.toContain(join('.git', 'config.ts'))
+    })
+
+    it('returns absolute, follow-up-readable paths for a search root outside the session workspace', async () => {
+      const outside = await mkdtemp(join(tmpdir(), 'dsh-search-out-'))
+      try {
+        await mkdir(join(outside, 'html'))
+        await writeFile(join(outside, 'html', 'SKILL.md'), 'skill body\n')
+        const result = await call('glob', { pattern: 'html/**', path: outside }, agent())
+        expect(result.isError).toBe(false)
+        expect(text(result).split('\n')).toEqual([join(outside, 'html', 'SKILL.md')])
+      } finally {
+        await rm(outside, { recursive: true, force: true })
+      }
     })
 
     it('reports zero discoveries as No files found', async () => {
@@ -125,6 +187,19 @@ describe('search tools over the real subprocess service + the packaged rg', () =
       const output = text(result)
       expect(output).toContain('alpha.ts')
       expect(output).not.toContain('notes.md')
+    })
+
+    it('matches a separator-bearing include filter relative to the search root (absolute path arg)', async () => {
+      const result = await call('grep', { pattern: 'alpha', path: dir, include: 'src/*.ts' }, agent())
+      expect(result.isError).toBe(false)
+      expect(text(result)).toContain(`${join('src', 'alpha.ts')}\nLine 1: export const alpha = 1`)
+      expect(text(result)).not.toContain('notes.md')
+    })
+
+    it('greps a single FILE target given absolutely, from its parent directory', async () => {
+      const result = await call('grep', { pattern: 'alpha', path: join(dir, 'notes.md') }, agent())
+      expect(result.isError).toBe(false)
+      expect(text(result)).toBe('Found 1 match\n\nnotes.md\nLine 1: alpha appears here too')
     })
 
     it('a hostile pattern stays inert (a plain argv element, the world untouched)', async () => {
