@@ -9,10 +9,24 @@
  * @module dsh-feishu-bridge/chatroom-priming
  */
 
+import type { ChatroomLedgerPrior } from './chatroom-ledger.ts'
 import type { ChatroomRole } from './chatroom.ts'
 
 /** The tool-call phrasing shared by every priming (replaces the Bash CLI). */
 const TOOL = 'feishu_bridge_chatroom'
+
+/** Extra context the plain moderator priming can carry (both optional). */
+export interface ChatroomModeratorPrimingContext {
+  /** A prior chatroom this one continues; omitted starts a fresh discussion. */
+  prior?: ChatroomLedgerPrior
+  /** A shared research workspace with recorded fetches; '' or omitted omits the section. */
+  researchWs?: string
+}
+
+/** The prior-screening section shared by both moderator primings. */
+function priorScreeningSection(prior: ChatroomLedgerPrior, beforeWhat: string): string {
+  return `\n## 前情（继承自 ${prior.topic}，未经本次讨论验证）\n上一个聊天室的判断在 ${prior.dir}（SYNTHESIS.md 综述 / SUBPROBLEMS.md 进度 / RECORD.md 记录 / REPORT.md 结论；账本前情区已写入同一指针）。${beforeWhat}先做甄别：Read 前情目录的 SYNTHESIS.md 与 REPORT.md，把每条判断分类——直接采信 / 复核后采信 / 存疑 / 推翻；**采信的部分**用 ${TOOL} 工具（action: note）写进账本综述段并标注「继承自 ${prior.topic}」；存疑项作为开放问题带入讨论；发现错误用「修正：<错误>→<更正>」显式记入综述，不静默沿用也不静默抛弃。复核用**新的独立证据**——复读前情依据的同一批数据只是循环印证，不是验证。\n`
+}
 
 /**
  * The default moderator priming: two-phase flow (clarify via parallel
@@ -22,9 +36,12 @@ const TOOL = 'feishu_bridge_chatroom'
  * @param topic - Discussion topic.
  * @param roles - Spawned roles the moderator orchestrates.
  * @param ledgerDir - Shared ledger directory; '' omits the ledger sections.
+ * @param ctx - Optional prior chatroom and shared research workspace.
  * @returns the moderator wake prompt.
  */
-export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole[], ledgerDir: string): string {
+export function buildChatroomModeratorPriming(
+  topic: string, roles: ChatroomRole[], ledgerDir: string, ctx?: ChatroomModeratorPrimingContext,
+): string {
   const sb: string[] = []
   sb.push('[聊天室主持任务] 你现在是聊天室的主持人。聊天室已就绪。\n\n')
   sb.push(`议题：${topic}\n`)
@@ -37,11 +54,17 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
   if (ledgerDir !== '') {
     sb.push(`\n共享账本目录：${ledgerDir}（含 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md；每次 ask/gather 也会带给角色，角色回答前会读它拿到完整上下文）。\n- 点人前先读账本目录下三文件，了解当前图景与各方已发言，别凭印象点名。\n- 综述段（当前图景/进展）用 ${TOOL} 工具（action: note，message: \"<综述>\"）更新（写 SYNTHESIS.md）；子问题清单用 action: note 加 section: subproblems（message: \"<清单>\"）更新（写 SUBPROBLEMS.md，用于跟踪存档）；用户回答、讨论进度也写进综述段。\n`)
   }
+  if (ctx?.prior !== undefined) {
+    sb.push(priorScreeningSection(ctx.prior, '进入阶段 1 之前'))
+  }
+  if (ctx?.researchWs !== undefined && ctx.researchWs !== '') {
+    sb.push(`\n## 共享研究数据（历史聊天室下取，复用前先甄别）\n共享研究工作区 ${ctx.researchWs} 存有历史研究聊天室下取的数据：抓取台账 ${ctx.researchWs}/DATA_LEDGER.md（data/core/ 为公共数据、data/<角色名>/ 为角色专属）。议题相关时先查台账的 来源/口径/抓取时间 三列判断适配性——口径不符的数据再新也是错的；对结论起支撑的关键数据让角色 spot-check 源头或对独立源；确认适配后再在任务里给角色指出具体文件路径。\n`)
+  }
   sb.push(`
 ## 工具（调 ${TOOL} 工具）
 - action: gather（message: \"<问题>\"）—— **并行**把同一个问题同时发给所有角色，各自独立回答，engine 收齐所有回复后**一次性**唤醒你（带全部回复）。非阻塞：发出后结束回合。用于澄清/拆解这种「需要全员独立判断再汇总」的环节。
 - action: ask（role: \"<角色名>\"，message: \"<问题>\"）—— **串行**点名一位角色发言。非阻塞：发出后结束回合；角色的回复会以【角色名】形式自动转发到聊天室并唤醒你。用于逐个讨论子问题时的圆桌轮流发言。**只把当前图景带给角色，请它从自己视角自由发言；不要给它预设回答角度/分析框架/子维度让它填空**——框架由角色自己选，你只提供图景和指向（"请就子问题 X 发言"），不替它构造论证路径。
-- action: note（message: \"<综述>\"）—— 更新账本综述段（SYNTHESIS.md）；加 section: subproblems 写子问题清单（SUBPROBLEMS.md，用于跟踪存档）。
+- action: note（message: \"<综述>\"）—— 更新账本综述段（SYNTHESIS.md）；加 section: subproblems 写子问题清单（SUBPROBLEMS.md，用于跟踪存档）；加 section: report 写收尾总结（REPORT.md）。
 - action: end —— 收尾：清掉角色群。
 - 你还可以直接调原生 **ask_user_question（multi_select: true）** 工具向用户发飞书多选卡片提问——用来一次性收集用户对澄清问题的回答，降低用户输入门槛。
 
@@ -102,7 +125,7 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
 - **在用户确认结束前，绝不自行 end。**
 
 ## 收尾总结
-调 ${TOOL} 工具 action: end，给出结构化总结。**若用户此前选过「出一份深度学术版」**，保持学术结构化总结：**综合出的完整图景、各视角的贡献、仍未解决的开放问题（明确交回人类定夺）**；**否则**走费曼法通俗语气：用一个生活类比讲全貌、拆 2-3 核心点配最小例子、零术语（必要术语用日常语言解释）、分歧仍显式标出但不用学术表述。不要假装分歧已被消解。
+调 ${TOOL} 工具 action: end，给出结构化总结；总结文字同时用 ${TOOL} 工具（action: note 加 section: report）写进账本 REPORT.md 落盘——它是本次讨论的结论文本，供后续聊天室与 history 查询引用。**若用户此前选过「出一份深度学术版」**，保持学术结构化总结：**综合出的完整图景、各视角的贡献、仍未解决的开放问题（明确交回人类定夺）**；**否则**走费曼法通俗语气：用一个生活类比讲全貌、拆 2-3 核心点配最小例子、零术语（必要术语用日常语言解释）、分歧仍显式标出但不用学术表述。不要假装分歧已被消解。
 
 ## 归档到 vault（仅按需）
 **不要主动归档。** 仅当用户明确要求把这次讨论存进知识库（vault）时：读共享账本，按 /vault-archive 格式写 \`~/workspace/vault/raw/notes/YYYY-MM-DD-<topic>.md\`（\`## 来源项目\` = 本聊天室 + 账本路径；\`## 核心结论\` = 账本综述段；\`## 详细内容\` = 关键交锋；\`## 用户观点\` = 用户明确表达的判断）。只写 vault/raw/notes/，完事提醒用户回 vault 项目 ingest。
@@ -121,11 +144,12 @@ export function buildChatroomModeratorPriming(topic: string, roles: ChatroomRole
  * @param mode - 'manual' asks the user between rounds; anything else auto-iterates.
  * @param maxRounds - Round cap that forces wrap-up in auto mode.
  * @param researchWs - Shared research workspace; '' omits the steward-prefetch sections.
+ * @param prior - Prior chatroom this research continues; omitted starts fresh.
  * @returns the research-mode moderator wake prompt.
  */
 export function buildChatroomResearchModeratorPriming(
   topic: string, roles: ChatroomRole[], ledgerDir: string, mode: string, maxRounds: number,
-  researchWs: string,
+  researchWs: string, prior?: ChatroomLedgerPrior,
 ): string {
   const sb: string[] = []
   sb.push('[研究作战室主持任务] 你现在是一个并行研究作战室的主持人。每个角色已就绪，且每个角色已被预配一个**完整助手子群**（有 Bash/WebFetch/skills，直接执行无需审批）——角色通过 feishu_bridge_subtask 工具（action: send）控制助手下数据/跑脚本。所有助手共用一个预配的 uv venv，`pip install` 的包彼此共享、装一次即可。\n\n')
@@ -145,37 +169,44 @@ export function buildChatroomResearchModeratorPriming(
   if (ledgerDir !== '') {
     sb.push(`\n共享账本目录：${ledgerDir}（SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md）。每轮综合写进 SYNTHESIS.md，角色下一轮会读；每轮研究进展（本轮确立了什么、仍有什么未验证/未解）用 note（section: subproblems）记进 SUBPROBLEMS.md 作轮次进度存档——不要让它留在「尚未拆解」空状态。\n`)
   }
+  if (prior !== undefined) {
+    sb.push(priorScreeningSection(prior, '进入第 1 轮之前'))
+  }
   sb.push(`\n## 工具（调 ${TOOL} 工具）\n`)
   sb.push('- action: gather 加 research: true（message: "<研究任务>"）—— **并行**把研究任务同时发给所有角色。每个角色收到后会用自己的助手子群下数据/跑脚本，助手 report 回角色后，角色基于数据出观点 relay 回你。engine 收齐所有角色回复后**一次性**唤醒你。非阻塞：发出后结束回合。\n')
   sb.push('- action: ask（role: \"<角色名>\"，message: \"<问题>\"）—— 串行点名一位角色追问。\n')
   sb.push('- action: note（message: \"<综述>\"）—— 更新账本综述段（SYNTHESIS.md）。\n')
   sb.push('- action: note 加 section: subproblems（message: \"<轮次进度>\"）—— 把每轮研究进展（确立/未验证）记进 SUBPROBLEMS.md。\n')
+  sb.push('- action: note 加 section: report（message: \"<收尾总结>\"）—— 收尾时把总结写进 REPORT.md。\n')
   sb.push('- action: end —— 收尾。\n')
   sb.push('- 原生 **ask_user_question** 工具可向用户发飞书卡片提问。\n')
   sb.push('\n## 研究流程\n\n')
+  sb.push('### 预备：澄清研究背景（数据需求清单之前）\n')
+  sb.push('0. 先判断是否需要澄清：议题明确、且你系统提示词里的「用户背景」段（若有）已足够支撑有用研究时，直接进步骤 1。否则调 action: gather（**不加 research: true**——普通收集轮），问题大意：「从你的人设视角，要让这次研究对用户有用，需要向用户澄清哪些背景/约束/目标（研究目的、受众、已知偏好、硬约束）？若需要，把问题整理成 2-4 个多选题（含候选项）；若你已掌握的背景足够，回复『无需追问』。」角色应当分钟级回复，别在这轮等助手。engine 收齐后唤醒你。\n')
+  sb.push('0.5. 合并去重各角色的澄清建议，调原生 **ask_user_question（multi_select: true）**发给用户；用户回答后用 action: note 把回答整理写入账本综述段（标注「用户背景与约束」）——角色下一轮读账本即可见。仍有角色认为关键背景缺失可再来一轮，**最多 2 轮**；到顶后把剩余疑问作为假设标注进综述段继续，不要卡死。已注入的「用户背景」段为底：只问它没覆盖且与本次议题相关的缺口，不要重复问已知信息。\n')
   sb.push('### 预备：数据需求清单 + 公共数据预取（第 1 轮之前）\n')
-  sb.push('0. 调 action: gather（**不加 research: true**——普通收集轮，角色直接回复、不开助手），问题大意：「从你的人设视角，研究这个议题的全貌需要哪些底层数据？只列清单，不派助手、不下数据、不做研究——凭你的视角判断。每项写：数据/序列名、时间窗口、首选权威来源。」这是纯判断轮，角色应当分钟级回复，别在这轮等助手。engine 收齐后唤醒你（20 分钟超时兜底，超时带已到的回复）——用已到的清单加你自己的判断继续，别卡死。\n')
+  sb.push('1. 调 action: gather（**不加 research: true**——普通收集轮，角色直接回复、不开助手），问题大意：「从你的人设视角，研究这个议题的全貌需要哪些底层数据？只列清单，不派助手、不下数据、不做研究——凭你的视角判断。每项写：数据/序列名、时间窗口、首选权威来源。」这是纯判断轮，角色应当分钟级回复，别在这轮等助手。engine 收齐后唤醒你（20 分钟超时兜底，超时带已到的回复）——用已到的清单加你自己的判断继续，别卡死。\n')
   if (researchWs !== '') {
-    sb.push('0.5. 收齐后合并去重各角色清单：「两家以上角色都需要的、或明显通用的底层数据」为公共项，控制在 ~6-8 项以内，超出留给角色自家助手；清单为空或全是单家专属就跳过预取直接进第 1 轮。合并清单只进管家的任务（可 note 存档备查），**不要广播给角色**。\n')
+    sb.push('1.5. 收齐后合并去重各角色清单：「两家以上角色都需要的、或明显通用的底层数据」为公共项，控制在 ~6-8 项以内，超出留给角色自家助手；清单为空或全是单家专属就跳过预取直接进第 1 轮。合并清单只进管家的任务（可 note 存档备查），**不要广播给角色**。\n')
     sb.push('   然后派数据管家（feishu_bridge_subtask，action: send，child 用 "assistant"）：「下取以下公共核心数据到共享工作区 data/core/ 子目录：<合并清单>。按数据源/序列拆成 3-6 个并行子任务（每源一个，不是每页一个——机械抓取优先脚本循环，带重试与断点）；拆子任务时把『同一域名串行抓、间隔几秒（sleep 2-5s，防反爬限流）』写进每个子任务 brief。每抓完一个数据集，用 bash echo 在 DATA_LEDGER.md 追加一行（| 数据/序列 | 本地文件 | 抓取时间 | 来源/口径 | 抓取者 |；文件不存在先写表头行）。完成后 report 清单。」\n')
-    sb.push('   派完**结束回合**等管家的 report 唤醒（非阻塞——管家可能要 30-60 分钟，不要自己 gather 阻塞等待）。结束回合前**用你的普通回复告知用户**：需求已收齐 N 份、公共数据预取中（预计 30-60 分钟）——不要让用户盯着一小时的静默聊天室。管家 report 到手或明显超时后照常进第 1 轮；失败/部分失败 → 第 1 轮任务里注明 data/core/ 可能不全，让角色助手自行补拉，绝不卡死在预取。若 send 报 no pre-provisioned assistant：用 feishu_bridge_subtask（action: spawn，worktree: off，dir: ' + researchWs + '）新建一个再派。\n')
+    sb.push('   派完**结束回合**等管家的 report 唤醒（非阻塞——管家可能要 30-60 分钟，不要自己 gather 阻塞等待）。结束回合前**用你的普通回复告知用户**：需求已收齐 N 份、公共数据预取中（预计 30-60 分钟）——不要让用户盯着一小时的静默聊天室。管家 report 到手或明显超时后照常进第 1 轮；失败/部分失败 → 第 1 轮任务里注明 data/core/ 可能不全，让角色助手自行补拉，绝不卡死在预取。若 send 报 no pre-provisioned assistant：用 feishu_bridge_subtask（action: spawn，worktree: off，dir: ' + researchWs + '）新建替补管家，之后 send 用 spawn 返回的 child 会话键派任务——"assistant" 别名仍解析不到替补。\n')
   } else {
-    sb.push('0.5. 本聊天室没有共享研究工作区——跳过公共预取，第 1 轮各角色的助手自行下取所需。\n')
+    sb.push('1.5. 本聊天室没有共享研究工作区——跳过公共预取，第 1 轮各角色的助手自行下取所需。\n')
   }
   sb.push('### 第 1 轮：并行独立研究\n')
   const round1Shared = researchWs !== ''
     ? '公共核心数据已预取在共享研究工作区 data/core/（清单见 DATA_LEDGER.md）——先让助手对照台账：你在需求轮列过的项已进公共预取的直接用，没进的（你的专属项）由你的助手下取、存到 data/<你的角色名>/ 并登记台账（共享的是底层数据，不是结论——你仍从自己视角独立研究全貌、独立给出判断）。'
     : ''
-  sb.push(`1. 调 action: gather 加 research: true，研究任务大意：「请从你的视角研究这个议题的全貌。${round1Shared}用你的预配助手（feishu_bridge_subtask 工具 action: send，child 用 "assistant"）下你还缺的数据、跑分析、算关键指标。关键数据、分析脚本、中间结果要让助手存成文件留在助手工作目录（即共享研究工作区），不只打印在对话里——便于复现与归档。基于数据给出你的判断，附关键数据/指标。不要只凭记忆表态——要有实证。数据必须可靠：让助手只用权威一手源（官方/国际组织/原始论文），关键数字两个独立源交叉验证或加总闭合，二手转引只用于定位一手源，分歧与查不到的数据如实标注置信度或缺失，不编造。默认不出图（文本模型看不懂图），除非用户明确要求可视化。」\n`)
+  sb.push(`2. 调 action: gather 加 research: true，研究任务大意：「请从你的视角研究这个议题的全貌。${round1Shared}用你的预配助手（feishu_bridge_subtask 工具 action: send，child 用 "assistant"）下你还缺的数据、跑分析、算关键指标。关键数据、分析脚本、中间结果要让助手存成文件留在助手工作目录（即共享研究工作区），不只打印在对话里——便于复现与归档。基于数据给出你的判断，附关键数据/指标。不要只凭记忆表态——要有实证。数据必须可靠：让助手只用权威一手源（官方/国际组织/原始论文），关键数字两个独立源交叉验证或加总闭合，二手转引只用于定位一手源，分歧与查不到的数据如实标注置信度或缺失，不编造。默认不出图（文本模型看不懂图），除非用户明确要求可视化。」\n`)
   sb.push('   - 角色会各自调助手下数据（可能要几十分钟），engine 收齐所有角色回复后唤醒你。\n')
-  sb.push('2. 收齐后，**原样转达**各方研究结论（不要加工），用 action: note 写综合进账本。\n')
+  sb.push('3. 收齐后，**原样转达**各方研究结论（不要加工），用 action: note 写综合进账本。\n')
   sb.push('\n### 第 2 轮起：交叉迭代（角色看到彼此上一轮结论）\n')
   const round2Data = researchWs !== ''
-    ? '数据类深挖先查 DATA_LEDGER.md——管家预取的和各角色助手的专属数据都在台账里（data/core/ 与 data/<角色>/），能复用就复用；需要新的公共数据仍派管家（它持续待命）。裁决矛盾需独立双源的除外——指定两路角色助手各自独立下取（不复用台账已有文件，拉完各自登记），保独立性，也不是全员重下。'
+    ? '数据类深挖先查 DATA_LEDGER.md——管家预取的和各角色助手的专属数据都在台账里（data/core/ 与 data/<角色>/）；复用前先看 来源/口径/抓取时间 三列判断适配性（口径不符的数据再新也是错的），对本次结论起支撑的关键数据让助手 spot-check 源头或对独立源，确认适配才复用；需要新的公共数据仍派管家（它持续待命）。裁决矛盾需独立双源的除外——指定两路角色助手各自独立下取（不复用台账已有文件，拉完各自登记），保独立性，也不是全员重下。'
     : ''
-  sb.push(`3. 再调 action: gather 加 research: true，任务大意：「上一轮各方结论已写入账本，请先读 SYNTHESIS.md 了解其他人的发现，然后补充/反驳/深挖（可再用助手验证）。${round2Data}」任务里点名反驳时先构造最强反例——找出该结论依赖的未验证假设与最薄弱环节，把反例直接带给该角色，不要泛泛说「请反驳」。你自己综合时也做同样自检，再决定下一轮深挖谁。若发起定向数据攻坚（裁决矛盾/补数据缺口），**点名分配**靶点：每个靶点默认 1 个认领者；裁决矛盾类最多 2 个（争议方 + 1 位中立方，独立双源即止），其余角色只做判断、不重下数据。\n`)
-  sb.push('4. 收齐后再综合，更新账本。重复直到结束条件触发。\n')
-  sb.push('\n**用户中途发言**（在本群插话、追问、给新信息或调整方向）：融入编排——追问用 action: ask 转给相关角色，新信息与方向调整并入下一轮 gather 任务；不要无视，也不要中断在途轮次。\n')
+  sb.push(`4. 再调 action: gather 加 research: true，任务大意：「上一轮各方结论已写入账本，请先读 SYNTHESIS.md 了解其他人的发现，然后补充/反驳/深挖（可再用助手验证）。${round2Data}」任务里点名反驳时先构造最强反例——找出该结论依赖的未验证假设与最薄弱环节，把反例直接带给该角色，不要泛泛说「请反驳」。你自己综合时也做同样自检，再决定下一轮深挖谁。若发起定向数据攻坚（裁决矛盾/补数据缺口），**点名分配**靶点：每个靶点默认 1 个认领者；裁决矛盾类最多 2 个（争议方 + 1 位中立方，独立双源即止），其余角色只做判断、不重下数据。\n`)
+  sb.push('5. 收齐后再综合，更新账本。重复直到结束条件触发。\n')
+  sb.push('\n**用户中途发言**（在本群插话、追问、给新信息或调整方向）：融入编排——追问用 action: ask 转给相关角色（gather 在途时 ask 会被拒：等收齐或超时唤醒后再问，或把追问并入下一轮 gather 任务），新信息与方向调整并入下一轮 gather 任务；不要无视，也不要中断在途轮次。\n')
   sb.push('\n## 结束条件\n')
   if (mode === 'manual') {
     sb.push('手动模式：每轮综合后，你**必须**用 ask_user_question 问用户「建议再迭代一轮深挖 X / 回复结束」。用户说继续才继续；用户 10 分钟不回复将按第一个选项（默认设计为「再迭代一轮」）自动推进。无轮数上限。\n')
@@ -205,7 +236,7 @@ export function buildChatroomResearchModeratorPriming(
 2. 子 agent report 回父群后（你会收到 [子任务完成] 消息，含 HTML 路径），用 feishu_bridge_send 工具把 HTML 文件投递给用户。
 3. 调原生 **ask_user_question** 问用户下一步，选项含『结束并出总结』『出一份深度学术版』『就报告内容继续提问』『继续研究一轮』。
 - 用户选「出一份深度学术版」→ 调 feishu_bridge_subtask（action: spawn，worktree: off，dir: ${ledgerDir}，message: \"<学术版 brief>\"，brief 见上方【学术深度版 brief】）。子 agent report 回父群后（[子任务完成] 消息含 HTML 路径），投递学术版 HTML。投递后再调原生 **ask_user_question** 问下一步，选项含『结束并出总结』『就报告内容继续提问』『继续研究一轮』（不再重复出学术版选项——已生成，要重看直接说）。**记住用户已选过学术版**，后续收尾纯文字总结走学术语气。
-- 用户选「结束并出总结」→ 调 ${TOOL} 工具 action: end + 结构化总结。**若用户此前选过「出一份深度学术版」**，保持学术结构化总结（综合图景、各方贡献与数据、仍有的分歧/开放问题，明确交回人类定夺）；**否则**走费曼法通俗语气（数据仍保留，用日常语言解释含义）。不要假装分歧已被消解。
+- 用户选「结束并出总结」→ 调 ${TOOL} 工具 action: end + 结构化总结，总结文字同时用 ${TOOL} 工具（action: note 加 section: report）写进账本 REPORT.md 落盘。**若用户此前选过「出一份深度学术版」**，保持学术结构化总结（综合图景、各方贡献与数据、仍有的分歧/开放问题，明确交回人类定夺）；**否则**走费曼法通俗语气（数据仍保留，用日常语言解释含义）。不要假装分歧已被消解。
 - 用户选「就报告内容继续提问」→ 用户提问 → 你判断该转给哪位角色，用 action: ask 把问题转过去（只带图景+问题，不塞框架）→ 角色回答后回到第 3 步再次问是否收尾。
 - 用户选「继续研究一轮」→ 再调 action: gather 加 research: true 迭代。
 - **在用户确认结束前，绝不自行 end。**

@@ -18,10 +18,11 @@
  * `subprocess` — deliberately NOT `fs`, and `ctx.spillStore` is read
  * opportunistically with `ctx.get()` because formatted-result spill is optional.
  *
- * Returned paths are displayed relative to the resolved workdir and are
- * follow-up-readable only in co-located deployments where the workdir and the
- * filesystem `read` root are the same workspace — a documented v1 deployment
- * requirement, not runtime-validated.
+ * Returned paths are displayed relative to the calling session's cwd — a
+ * search root outside it yields absolute paths — and are follow-up-readable
+ * in co-located deployments where the session cwd and the filesystem `read`
+ * root are the same workspace: a documented v1 deployment requirement, not
+ * runtime-validated.
  *
  * @module @deepseek-ai/dsh-tool-fs-search
  */
@@ -33,7 +34,7 @@ import { GLOB_MAX_RESULTS, applyGlobTool } from './glob.ts'
 import { GREP_MAX_LINE_BYTES, GREP_MAX_MATCHES, applyGrepTool } from './grep.ts'
 import { RAW_OUTPUT_MAX_BYTES, SEARCH_GRACE_MS, SEARCH_META_MAX_BYTES, SEARCH_STDERR_MAX_BYTES, SEARCH_TIMEOUT_MS } from './search-core.ts'
 
-export { GLOB_MAX_RESULTS, GLOB_VCS_EXCLUDES, applyGlobTool, buildGlobCommand, formatGlobOutput, parseGlobArgs, presentGlobCall, presentGlobResult, sampleAcrossTopLevel } from './glob.ts'
+export { GLOB_MAX_RESULTS, GLOB_VCS_EXCLUDES, applyGlobTool, buildGlobCommand, formatGlobOutput, parseGlobArgs, presentGlobCall, presentGlobResult, resolveGlobPattern, sampleAcrossTopLevel } from './glob.ts'
 export type { GlobInput, GlobSample, GlobToolCaps } from './glob.ts'
 export {
   GREP_MAX_LINE_BYTES,
@@ -57,7 +58,9 @@ export {
   SearchError,
   previewLine,
   resolveRgPath,
+  resolveSearchRoot,
   runRipgrep,
+  sessionCwdOf,
   toWorkdirRelative,
   trySaveFormattedResult,
 } from './search-core.ts'

@@ -8,7 +8,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -25,6 +25,14 @@ import { registerChatroomTool } from '../../src/tools/chatroom.ts'
 import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { applyChatroomEngineConfig } from '../../src/chatroom-config.ts'
 import { beginChatroomTopicPick } from '../../src/engine/chatroom-pick.ts'
+import {
+  chatroomLedgerDir,
+  initChatroomLedger,
+  readChatroomLedgerHeader,
+  updateChatroomReport,
+  writeChatroomLedgerEnded,
+} from '../../src/engine/chatroom-ledger.ts'
+import { chatroomResearchWorkspace } from '../../src/engine/chatroom.ts'
 import { createStubAgent, createStubChatroomSpawner, createStubSpawnerPlatform, newStubMessage } from '../stubs/engine-stubs.ts'
 import { chatroomState } from '../../src/chatroom-state.ts'
 import '../stubs/messages.js'
@@ -113,7 +121,7 @@ describe('feishu_bridge_chatroom registration', () => {
       properties?: { action?: { enum?: string[] } }
     }
     expect(schema.properties?.action?.enum).toEqual(
-      ['start', 'ask', 'gather', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note'],
+      ['start', 'ask', 'gather', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note', 'history'],
     )
     test.dispose()
     test.dispose() // idempotent
@@ -133,6 +141,18 @@ describe('feishu_bridge_chatroom action routing', () => {
     test.dispose()
   })
 
+  it('start fails loud when the configured user profile is unreadable', async () => {
+    const engine = newEngine()
+    applyChatroomEngineConfig(engine, { userProfile: '/nonexistent/fb-user-profile.md' }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const res = await test.execute({ action: 'start', message: 'topic', roles: 'taleb,munger' })
+    // The profile gate fires before role validation: the unreadable-profile
+    // reply, not the unknown-role one.
+    expect(errorText(res)).toContain('用户背景')
+    expect(errorText(res)).toContain('/nonexistent/fb-user-profile.md')
+    test.dispose()
+  })
+
   it('gather/ask/note/ask-human fail loud when their preconditions miss (routing proof)', async () => {
     const engine = newEngine()
     const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
@@ -145,10 +165,11 @@ describe('feishu_bridge_chatroom action routing', () => {
     const askRes = await test.execute({ action: 'ask', role: 'ghost', message: 'q' })
     expect(askRes.isError).toBe(true)
 
-    // note without a moderator dir.
+    // note from a session outside any chatroom (the not-in-room guard now
+    // fires before the moderator-dir check).
     const noteRes = await test.execute({ action: 'note', message: '综述' })
     expect(noteRes.isError).toBe(true)
-    expect(errorText(noteRes)).toContain('ledger')
+    expect(errorText(noteRes)).toContain('不在任何聊天室')
 
     // ask-human on a non-role session.
     const humanRes = await test.execute({ action: 'ask-human', message: '截止日？' })
@@ -235,19 +256,47 @@ describe('feishu_bridge_chatroom action routing', () => {
   })
 })
 
-describe('feishu_bridge_chatroom end moderator guard', () => {
-  /** A chatroom with one live role bound under a moderator hub. */
-  function armedRoom(engine: Engine): { hubKey: string; roleKey: string } {
-    const hubKey = 'feishu:oc_hub:ou_1'
-    const roleKey = 'feishu:oc_role-1:ou_1'
-    chatroomState(engine.sessions.getOrCreateActive(hubKey)).chatroomModerator = true
-    const role = engine.sessions.getOrCreateActive(roleKey)
-    role.setParentSessionKey(hubKey)
-    chatroomState(role).chatroomHubKey = hubKey
-    chatroomState(role).chatroomRoleName = 'taleb'
-    return { hubKey, roleKey }
-  }
+/** A chatroom with one live role bound under a moderator hub. */
+function armedRoom(engine: Engine): { hubKey: string; roleKey: string } {
+  const hubKey = 'feishu:oc_hub:ou_1'
+  const roleKey = 'feishu:oc_role-1:ou_1'
+  chatroomState(engine.sessions.getOrCreateActive(hubKey)).chatroomModerator = true
+  const role = engine.sessions.getOrCreateActive(roleKey)
+  role.setParentSessionKey(hubKey)
+  chatroomState(role).chatroomHubKey = hubKey
+  chatroomState(role).chatroomRoleName = 'taleb'
+  return { hubKey, roleKey }
+}
 
+describe('feishu_bridge_chatroom start guards', () => {
+  it('rejects a repeat start while the chatroom is running (no second generation)', async () => {
+    const engine = newEngine()
+    const { hubKey } = armedRoom(engine)
+    const test = await harness(() => ({ engine, sessionKey: hubKey }))
+
+    const res = await test.execute({ action: 'start', message: '另一场讨论', roles: 'taleb' })
+
+    // The guard must fire before startChatroom's own validation — otherwise
+    // a second generation of role groups spawns under the live hub.
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('进行中')
+    test.dispose()
+  })
+
+  it('rejects start from a role session (no nested moderation)', async () => {
+    const engine = newEngine()
+    const { roleKey } = armedRoom(engine)
+    const test = await harness(() => ({ engine, sessionKey: roleKey }))
+
+    const res = await test.execute({ action: 'start', message: '嵌套题目' })
+
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('角色/助手')
+    test.dispose()
+  })
+})
+
+describe('feishu_bridge_chatroom end moderator guard', () => {
   function newChatroomEngine(): Engine {
     const e = new Engine('chatroom-test', createStubAgent(), [createStubChatroomSpawner()], '', 'zh')
     e.setProjectStateStore(new ProjectStateStore(''))
@@ -285,6 +334,145 @@ describe('feishu_bridge_chatroom end moderator guard', () => {
     expect(v.status).toBe('ok')
     expect(v.message).toContain('Chatroom ended')
     expect(chatroomState(engine.sessions.getOrCreateActive(roleKey)).chatroomHubKey).toBe('')
+    test.dispose()
+  })
+
+  it('rejects end from a plain session with the not-in-room message', async () => {
+    const engine = newChatroomEngine()
+    const plainKey = 'feishu:oc_plain:ou_1'
+    engine.sessions.getOrCreateActive(plainKey) // no chatroom flags, no parent chain
+    const test = await harness(() => ({ engine, sessionKey: plainKey }))
+
+    const res = await test.execute({ action: 'end' })
+
+    // A session outside any chatroom is not a role/assistant group — the
+    // moderator-only text would misdiagnose and point at /chatroom stop.
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('不在任何聊天室')
+    expect(errorText(res)).not.toContain('主持人')
+    test.dispose()
+  })
+
+  it('rejects note from a role session with the moderator-only message, not a raw ENOENT', async () => {
+    const engine = newChatroomEngine()
+    const { roleKey } = armedRoom(engine)
+    const dir = await mkdtemp(join(tmpdir(), 'chatroom-note-guard-'))
+    applyChatroomEngineConfig(engine, { moderatorDir: dir }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: roleKey }))
+
+    const res = await test.execute({ action: 'note', message: '综述' })
+
+    // Before the guard the role key resolved to a nonexistent ledger dir and
+    // readFileSync surfaced a raw ENOENT.
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('主持人')
+    expect(errorText(res)).not.toContain('ENOENT')
+    test.dispose()
+  })
+
+  it('rejects note from a plain session with the not-in-room message', async () => {
+    const engine = newChatroomEngine()
+    const plainKey = 'feishu:oc_plain:ou_1'
+    engine.sessions.getOrCreateActive(plainKey)
+    const test = await harness(() => ({ engine, sessionKey: plainKey }))
+
+    const res = await test.execute({ action: 'note', message: '综述' })
+
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('不在任何聊天室')
+    test.dispose()
+  })
+})
+
+describe('feishu_bridge_chatroom cross-chatroom sharing', () => {
+  /** An engine with a spawner, a moderator home, and one role. */
+  async function sharingEngine(): Promise<{ engine: Engine; home: string; rolesDir: string }> {
+    const engine = new Engine('chatroom-test', createStubAgent(), [createStubChatroomSpawner()], '', 'zh')
+    engine.setProjectStateStore(new ProjectStateStore(''))
+    const home = await mkdtemp(join(tmpdir(), 'fb-tool-mod-'))
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-tool-roles-'))
+    await mkdir(join(rolesDir, 'taleb'), { recursive: true })
+    await writeFile(join(rolesDir, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    applyChatroomEngineConfig(engine, { rolesDir, moderatorDir: home, researchWorkspace: home }, undefined)
+    return { engine, home, rolesDir }
+  }
+
+  it('history fails loud without a moderator dir', async () => {
+    const engine = newEngine()
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const res = await test.execute({ action: 'history' })
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('moderator')
+    test.dispose()
+  })
+
+  it('history lists ledgers newest-first with status and reports, and the research-data section when the workspace has a fetch ledger', async () => {
+    const { engine, home } = await sharingEngine()
+    const oldDir = chatroomLedgerDir(home, 'feishu:oc_old:ou_1')
+    await initChatroomLedger(oldDir, '老议题', ['taleb'])
+    await writeChatroomLedgerEnded(oldDir, 'ended')
+    const newDir = chatroomLedgerDir(home, 'feishu:oc_new:ou_1')
+    await initChatroomLedger(newDir, '新议题', ['taleb', 'munger'])
+    await updateChatroomReport(newDir, '结论')
+    const ws = chatroomResearchWorkspace(engine)
+    await mkdir(join(ws, 'data', 'core'), { recursive: true })
+    await writeFile(join(ws, 'DATA_LEDGER.md'), '| 数据 | 文件 | 时间 | 来源 | 抓取者 |\n', 'utf8')
+
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const v = value(await test.execute({ action: 'history' }))
+    expect(v.message.indexOf('新议题')).toBeLessThan(v.message.indexOf('老议题'))
+    expect(v.message).toContain('unfinished')
+    expect(v.message).toContain('ended')
+    expect(v.message).toContain('REPORT.md')
+    expect(v.message).toContain('DATA_LEDGER.md')
+    test.dispose()
+  })
+
+  it('history with no recorded chatrooms is an empty ok, not an error', async () => {
+    const { engine } = await sharingEngine()
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const v = value(await test.execute({ action: 'history' }))
+    expect(v.message).toContain('No past chatrooms')
+    test.dispose()
+  })
+
+  it('start with inherit seeds the prior pointer into the new ledger', async () => {
+    const { engine, home } = await sharingEngine()
+    const priorDir = chatroomLedgerDir(home, 'feishu:oc_prior:ou_1')
+    await initChatroomLedger(priorDir, '旧议题', ['taleb'])
+
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const v = value(await test.execute({ action: 'start', message: '新议题', roles: 'taleb', inherit: '旧议题' }))
+    expect(v.message).toContain('旧议题')
+    const header = readChatroomLedgerHeader(chatroomLedgerDir(home, 'feishu:oc_hub:ou_1'))
+    expect(header?.prior).toContain('旧议题')
+    test.dispose()
+  })
+
+  it('start with an unresolvable inherit fails loud with candidates', async () => {
+    const { engine, home } = await sharingEngine()
+    await initChatroomLedger(chatroomLedgerDir(home, 'feishu:oc_prior:ou_1'), '旧议题', ['taleb'])
+
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const res = await test.execute({ action: 'start', message: '新议题', roles: 'taleb', inherit: '不存在' })
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('不存在')
+    expect(errorText(res)).toContain('旧议题')
+    test.dispose()
+  })
+
+  it('note with section report writes REPORT.md into the caller hub ledger', async () => {
+    const { engine, home } = await sharingEngine()
+    const hubKey = 'feishu:oc_hub:ou_1'
+    await initChatroomLedger(chatroomLedgerDir(home, hubKey), '议题', ['taleb'])
+    // The guard batch made note moderator-only: arm the caller as the hub.
+    chatroomState(engine.sessions.getOrCreateActive(hubKey)).chatroomModerator = true
+
+    const test = await harness(() => ({ engine, sessionKey: hubKey }))
+    const v = value(await test.execute({ action: 'note', message: '收尾总结', section: 'report' }))
+    expect(v.status).toBe('ok')
+    const rep = await readFile(join(chatroomLedgerDir(home, hubKey), 'REPORT.md'), 'utf8')
+    expect(rep).toContain('收尾总结')
     test.dispose()
   })
 })

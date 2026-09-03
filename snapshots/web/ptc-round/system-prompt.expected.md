@@ -126,18 +126,18 @@ interface ToolArgsMap {
   get_goal: Record<string, JsonValue>;
   /** Find files whose paths match a glob pattern. Returns matching file paths — never directories — including hidden and ignored files (VCS metadata directories are excluded). Up to 100 paths come back in modification-time order; a larger result returns the first 100 paths in modification-time order, says so, and reports where the complete sorted list was saved. This tool does not enumerate directory entries. */
   glob: {
-    /** Glob pattern to match file paths against (e.g. "**\/*.ts", "src/**\/*.test.js"). A pattern with no "/" matches the basename at any depth, so "*" and "*.ts" both search the whole tree; include a separator to anchor the depth. */
+    /** Glob pattern to match file paths against (e.g. "**\/*.ts", "src/**\/*.test.js"). A pattern with no "/" matches the basename at any depth, so "*" and "*.ts" both search the whole tree; include a separator to anchor the depth. Patterns are matched relative to the search root (the path argument, default the session workspace); a ~/-prefixed or absolute pattern is resolved the same way first. */
     pattern: string;
-    /** Directory to search in. Defaults to the session workspace; a relative path resolves against it. */
+    /** Directory to search in; the pattern is matched relative to this root. Defaults to the session workspace; a relative path or a ~/ prefix resolves against it. */
     path?: string;
   } & Record<string, JsonValue>;
   /** Search file contents with a ripgrep regular expression. Returns matching lines with line numbers, grouped by file. Returns the first 250 matches inline; a capped result reports where the complete match list was saved. Use read on a matched file for surrounding context. */
   grep: {
     /** Regular expression to search for (ripgrep syntax). */
     pattern: string;
-    /** File or directory to search. Defaults to the session workspace; a relative path resolves against it. */
+    /** File or directory to search; an include filter is matched relative to this root. Defaults to the session workspace; a relative path or a ~/ prefix resolves against it. */
     path?: string;
-    /** One glob filter for which files to search (e.g. "*.ts", "*.{js,jsx}"). Not a list; negation is not supported. */
+    /** One glob filter for which files to search (e.g. "*.ts", "*.{js,jsx}"), matched relative to the search root (the path argument, default the session workspace). Not a list; negation is not supported. */
     include?: string;
   } & Record<string, JsonValue>;
   /** Request cancellation of a background agent's current turn by its agent id. The target may be your direct child or a deeper agent created under you. Only the current turn stops: messages already queued for the agent stay parked until a later send_message, agents it started keep running, and the agent itself stays available for follow-ups. This call returns as soon as the stop request is accepted, so the target may keep running briefly; interrupting an agent that already finished is an accepted no-op. */

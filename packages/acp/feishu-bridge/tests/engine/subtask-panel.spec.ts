@@ -75,7 +75,7 @@ describe('renderSubtaskPanelCard', () => {
     expect(card.header?.title).toContain('1')
     expect(cardText(card)).toContain('implementation task A1')
     expect(cardText(card)).toContain('42')
-    expect(cardText(card)).toContain('just now')
+    expect(cardText(card)).toMatch(/last active \d{2}:\d{2}:\d{2}/)
     expect(cardText(card)).toContain('reported 1')
     const buttons = card.elements.filter(e => e.kind === 'actions').flatMap(e => e.buttons)
     expect(buttons.some(b => b.value === 'act:/subtask-panel stop')).toBe(true)
@@ -94,9 +94,9 @@ describe('renderSubtaskPanelCard', () => {
     expect(card.header?.color).toBe('yellow')
   })
 
-  it('pairs the absolute last-active clock with a relative age on each row', () => {
+  it('renders only the absolute last-active clock on each row', () => {
     const card = renderSubtaskPanelCard(i18n, { pending: [child], reportedCount: 0, startedAt: now, phase: 'running' }, now, 120_000)
-    expect(cardText(card)).toMatch(/last active \d{2}:\d{2}:\d{2} \(just now\)/)
+    expect(cardText(card)).toMatch(/last active \d{2}:\d{2}:\d{2}$/)
   })
 
   it('flags a silent child as stalled past the window', () => {
@@ -110,7 +110,7 @@ describe('renderSubtaskPanelCard', () => {
     const card = renderSubtaskPanelCard(i18n, { pending: [stalled], reportedCount: 0, startedAt: now - 60_000, phase: 'running' }, now, 120_000)
     expect(card.header?.color).toBe('orange')
     expect(card.header?.title).toMatch(/^Background subtasks · 1 running · \d{2}:\d{2}:\d{2} · ⚠️ 1 stalled$/)
-    expect(cardText(card)).toMatch(/last active \d{2}:\d{2}:\d{2} \(5 min ago\)/)
+    expect(cardText(card)).toMatch(/last active \d{2}:\d{2}:\d{2}$/)
   })
 
   it('marks a child without events as waiting', () => {

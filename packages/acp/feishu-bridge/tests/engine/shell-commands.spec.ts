@@ -15,11 +15,13 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { registerSessionCommands } from '../../src/engine/commands.ts'
+import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import { registerShellCommands } from '../../src/engine/shell-commands.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import {
   createStubAgent,
   createStubPlatform,
+  createWorkDirAgent,
   newPendingAsk,
   newStubMessage,
   testQuestions,
@@ -93,6 +95,18 @@ describe('cmdShell', () => {
     await vi.waitFor(() => { expect(lastSent(p)).toContain('```') })
     expect(lastSent(p)).toContain(realpathSync(dir))
     expect(lastSent(p)).toContain('$ pwd')
+  })
+
+  it('prefers the chat dir override over the agent work dir (/dir display and /shell cwd agree)', async () => {
+    const slotDir = mkdtempSync(join(tmpdir(), 'fb-shell-'))
+    const overrideDir = mkdtempSync(join(tmpdir(), 'fb-shell-'))
+    const { e, p } = newEngine(createWorkDirAgent(slotDir))
+    e.setProjectStateStore(new ProjectStateStore(join(mkdtempSync(join(tmpdir(), 'fb-shell-')), 'state.json')))
+    e.projectState?.setWorkspaceDirOverride(e.dirOverrideKey('test:ch1'), overrideDir)
+    expect(e.dispatchCommand(p, shellMsg('/shell pwd'), '/shell pwd')).toBe(true)
+    await vi.waitFor(() => { expect(lastSent(p)).toContain('```') })
+    expect(lastSent(p)).toContain(realpathSync(overrideDir))
+    expect(lastSent(p)).not.toContain(realpathSync(slotDir))
   })
 
   it('resolves /sh /exec /run aliases and the /she prefix', async () => {

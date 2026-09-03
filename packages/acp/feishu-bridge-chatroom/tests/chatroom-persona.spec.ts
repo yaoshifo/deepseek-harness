@@ -12,6 +12,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildChatroomSystemPrompt,
+  chatroomLedgerReadPrompt,
+  chatroomResearchRolePrompt,
   loadFlattenedPersona,
 } from '../src/engine/chatroom-persona.ts'
 
@@ -47,6 +49,7 @@ describe('buildChatroomSystemPrompt', () => {
       research: false,
       ledgerDir: '/data/ledgers/abc',
       platformPrompt: '',
+      userProfilePath: '',
     })
     expect(text).toContain('feishu-bridge')
     expect(text).toContain('feishu_bridge_send')
@@ -68,16 +71,18 @@ describe('buildChatroomSystemPrompt', () => {
       research: true,
       ledgerDir: '',
       platformPrompt: '',
+      userProfilePath: '',
     })
     expect(text).toContain('研究任务：用预配的助手子群干活')
     // The role never transcribes a long session key: the "assistant"
     // sentinel resolves server-side (a model copying hex keys drops
     // characters — 2026-08-25 oc_ac5db incident).
     expect(text).toContain('child: "assistant"')
-    // Check-before-fetch: the butler pre-fetches common baselines into
-    // data/core/ and the ledger; roles must reuse them instead of
-    // re-fetching the same public pages per role.
-    for (const want of ['先查再拉', 'DATA_LEDGER', 'data/core/', 'data/<角色名>']) {
+    // Check-screen-fetch: the butler pre-fetches common baselines into
+    // data/core/ and the ledger; roles must judge the three ledger columns
+    // (source/scope/fetched-at) before reusing, spot-check load-bearing
+    // data, and re-fetch suspect datasets instead of reusing them.
+    for (const want of ['先查再甄别再拉', '三列', 'spot-check', '登记新行', 'DATA_LEDGER', 'data/core/', 'data/<角色名>']) {
       expect(text).toContain(want)
     }
   })
@@ -93,9 +98,67 @@ describe('buildChatroomSystemPrompt', () => {
       research: false,
       ledgerDir: '/data/ledgers/abc',
       platformPrompt: '',
+      userProfilePath: '',
     })
     expect(text).toContain('1:1 回答用户')
     expect(text).not.toContain('共享账本——回答前先读')
     expect(text).not.toContain('多角色聊天室的一个参与者')
+  })
+
+  it('injects the user-background section after the role persona', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-persona-profile-'))
+    await writeFile(join(dir, 'CLAUDE.md'), '# Munger\n', 'utf8')
+    const profilePath = join(dir, 'user-profile.md')
+    await writeFile(profilePath, '用户是量化研究员，偏好数据先行。\n', 'utf8')
+
+    const text = buildChatroomSystemPrompt({
+      workDir: dir,
+      isRole: true,
+      isDirect: false,
+      isModerator: false,
+      research: false,
+      ledgerDir: '',
+      platformPrompt: '',
+      userProfilePath: profilePath,
+    })
+    expect(text).toContain('## 用户背景')
+    expect(text).toContain('用户是量化研究员，偏好数据先行。')
+    // The section rides after the role persona, not before it.
+    expect(text.indexOf('# Munger')).toBeLessThan(text.indexOf('## 用户背景'))
+  })
+
+  it('skips the user-background section when the file is blank or missing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fb-persona-profile-skip-'))
+    await writeFile(join(dir, 'CLAUDE.md'), '# R\n', 'utf8')
+    const blank = join(dir, 'blank.md')
+    await writeFile(blank, '   \n', 'utf8')
+    const base = {
+      workDir: dir,
+      isRole: true,
+      isDirect: false,
+      isModerator: false,
+      research: false,
+      ledgerDir: '',
+      platformPrompt: '',
+    }
+    for (const userProfilePath of ['', blank, join(dir, 'missing.md')]) {
+      expect(buildChatroomSystemPrompt({ ...base, userProfilePath })).not.toContain('## 用户背景')
+    }
+  })
+})
+
+describe('cross-chatroom sharing disciplines', () => {
+  it('ledger-read prompt names REPORT.md and marks the prior section as an unverified pointer', () => {
+    const p = chatroomLedgerReadPrompt('/tmp/ledger')
+    expect(p).toContain('REPORT.md')
+    expect(p).toContain('前情')
+    expect(p).toContain('未经本次讨论验证')
+  })
+
+  it('research role prompt carries the three-column reuse discipline', () => {
+    const p = chatroomResearchRolePrompt()
+    expect(p).toContain('三列')
+    expect(p).toContain('spot-check')
+    expect(p).toContain('登记新行')
   })
 })

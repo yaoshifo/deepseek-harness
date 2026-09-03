@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-02-chatroom-research-data-dedup.md
+2026-09-02-chatroom-research-data-dedup.md: c44a69faeb078ead38c7d175696a96a820082200
+2026-09-02-chatroom-research-data-dedup.zh.md: 936e6a4fb3f2a57eb3b9541715be38e48852141d

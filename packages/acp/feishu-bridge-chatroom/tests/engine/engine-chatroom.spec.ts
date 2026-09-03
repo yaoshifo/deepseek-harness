@@ -15,8 +15,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.ts'
+import { registerChatroomCommands, cmdChatroom } from '../../src/engine/chatroom-cmd.ts'
 import {
+  ChatroomGather,
   askHuman,
   askRole,
   endChatroom,
@@ -291,6 +292,22 @@ describe('AskRole', () => {
     const roles = await startChatroom(e, 'test:hub-A:user-1', ['taleb'], 'topic')
     await expect(askRole(e, 'test:hub-B:user-2', roles[0]!.sessionKey, 'q')).rejects.toThrow()
   })
+
+  it('rejects while an ask-human question is pending on the hub', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const roleKey = roles[0]!.sessionKey
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingHumanQuestionRole = 'taleb'
+
+    // The gather side rejects this state two-way; ask must too — a second
+    // in-flight question on the asking role loses one of the two replies to
+    // the one-shot relay gate.
+    await expect(askRole(e, hub, 'taleb', '追问')).rejects.toThrow('ask-human')
+    expect(chatroomState(e.sessions.getOrCreateActive(roleKey)).chatroomInFlight).toBe(false)
+  })
 })
 
 describe('maybeAutoRelayRole', () => {
@@ -385,6 +402,124 @@ describe('maybeAutoRelayRole', () => {
     maybeAutoRelayRole(e, st, role, '沪深300未过热，可定投', false)
     await waitFor(() => p.sentCards.length === 1, 'turn-2 relay')
     expect(chatroomState(role).chatroomAsked).toBe(true)
+  })
+
+  it('relays the in-turn conclusion once the dispatched assistant reported back', async () => {
+    // Live-run shape (2026-09-02 oc_e51a): the role dispatches its assistant
+    // and blocks on the subtask gather INSIDE the same turn; the assistant's
+    // report resolves that gather and the role concludes before turn end.
+    // That turn-end reply IS the conclusion — deferring it strands the armed
+    // gather until the research timeout, because the assistant already
+    // reported and no later conclusion turn will ever come.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const { role } = newRole(e, false)
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    const g = new ChatroomGather('并行研究', 2)
+    g.expected.add('Taleb')
+    g.expected.add('Munger')
+    chatroomState(hubSess).pendingGather = g
+
+    const assistant = e.sessions.getOrCreateActive('test:assistant-chat')
+    assistant.setSubtaskReported(true)
+    chatroomState(role).researchAwaitingAssistant = true
+    chatroomState(role).researchDispatched = true
+    chatroomState(role).researchAssistantKey = 'test:assistant-chat'
+    chatroomState(role).chatroomAskSeq = 2
+    chatroomState(role).chatroomInFlight = true
+
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, role, '第 1 轮结论：三问全答', false)
+    await settle()
+
+    expect(g.collected.get('Taleb')).toBe('第 1 轮结论：三问全答')
+    expect(chatroomState(hubSess).pendingGather).toBe(g)
+    expect(chatroomState(role).chatroomAsked).toBe(true)
+  })
+
+  it('still defers while the dispatched assistant has a turn in flight', async () => {
+    // The marks-r1 shape: the role re-dispatched mid-round and ended its
+    // turn while the assistant was verifiably still working.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const { role } = newRole(e, false)
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    const g = new ChatroomGather('并行研究', 2)
+    g.expected.add('Taleb')
+    chatroomState(hubSess).pendingGather = g
+
+    const assistant = e.sessions.getOrCreateActive('test:assistant-chat')
+    assistant.setSubtaskReported(true)
+    const assistantTurn = new InteractiveState()
+    assistantTurn.beginTurn()
+    e.interactiveStates.set('test:assistant-chat', assistantTurn)
+    chatroomState(role).researchAwaitingAssistant = true
+    chatroomState(role).researchDispatched = true
+    chatroomState(role).researchAssistantKey = 'test:assistant-chat'
+    chatroomState(role).chatroomAskSeq = 2
+
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, role, '助手还在跑', false)
+    await settle()
+
+    expect(g.collected.size).toBe(0)
+    expect(chatroomState(role).researchAwaitingAssistant).toBe(false)
+    expect(chatroomState(role).chatroomAsked).toBe(false)
+  })
+
+  it('still defers when the assistant has not reported its dispatch cycle', async () => {
+    // Silent or re-armed assistant (a parent follow-up resets the one-shot
+    // report): the report is still owed, so the conclusion must wait.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const { role } = newRole(e, false)
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    const g = new ChatroomGather('并行研究', 2)
+    g.expected.add('Taleb')
+    chatroomState(hubSess).pendingGather = g
+
+    const assistant = e.sessions.getOrCreateActive('test:assistant-chat')
+    assistant.setSubtaskReported(false)
+    chatroomState(role).researchAwaitingAssistant = true
+    chatroomState(role).researchDispatched = true
+    chatroomState(role).researchAssistantKey = 'test:assistant-chat'
+    chatroomState(role).chatroomAskSeq = 2
+
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, role, '等助手回报', false)
+    await settle()
+
+    expect(g.collected.size).toBe(0)
+    expect(chatroomState(role).researchAwaitingAssistant).toBe(false)
+    expect(chatroomState(role).chatroomAsked).toBe(false)
+  })
+
+  it('still defers when the assistant session cannot be resolved', async () => {
+    // A stale key (assistant dissolved with an earlier room) reads as
+    // pending — the conservative defer keeps the pre-fix behavior.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const { role } = newRole(e, false)
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    const g = new ChatroomGather('并行研究', 2)
+    g.expected.add('Taleb')
+    chatroomState(hubSess).pendingGather = g
+
+    chatroomState(role).researchAwaitingAssistant = true
+    chatroomState(role).researchDispatched = true
+    chatroomState(role).researchAssistantKey = 'test:gone-assistant'
+    chatroomState(role).chatroomAskSeq = 2
+
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, role, '保守处理', false)
+    await settle()
+
+    expect(g.collected.size).toBe(0)
+    expect(chatroomState(role).chatroomAsked).toBe(false)
   })
 
   it('relays an undispatched turn immediately (direct answer)', async () => {
@@ -568,6 +703,20 @@ describe('cmdChatroom', () => {
     handler?.(p, hubMsg('test:hub:user-1'), ['taleb,ghost', 'topic'])
     await settle()
     expect(p.count).toBe(0)
+  })
+
+  it('blocks startup when the configured user profile is unreadable', async () => {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    chatroomConfig(e).applySection({ userProfile: '/nonexistent/fb-user-profile.md' })
+    const handler = e.commandHandlers?.get('chatroom')
+    handler?.(p, hubMsg('test:hub:user-1'), ['taleb,munger', 'topic'])
+    await settle()
+    expect(p.count).toBe(0)
+    expect(p.getSent().some(s => s.includes('用户背景'))).toBe(true)
+    // The research flags never land on the hub.
+    expect(chatroomState(e.sessions.getOrCreateActive('test:hub:user-1')).chatroomResearch).toBe(false)
   })
 
   it('rejects a second open while live role groups exist (stop first)', async () => {
@@ -1326,5 +1475,26 @@ describe('topic-pick priming ledger history', () => {
     const { buildChatroomTopicPickPriming } = await import('../../src/engine/chatroom-priming.ts')
     const s = buildChatroomTopicPickPriming(['taleb'], '/roles', '')
     expect(s).not.toContain('ledgers')
+  })
+})
+
+describe('/chatroom re-entry from a role group', () => {
+  it('rejects /chatroom sent from a role session instead of nesting a chatroom under it', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const reply = vi.spyOn(e, 'reply').mockImplementation(async () => {})
+
+    // The role-list guard only checks roles parented on the CALLING session,
+    // so a role group passed it and became a nested moderator
+    // (chatroomModerator alongside its outer chatroomHubKey).
+    await cmdChatroom(e, p, hubMsg(roles[0]!.sessionKey), ['嵌套题目'])
+
+    expect(reply.mock.calls).toHaveLength(1)
+    expect(String(reply.mock.calls[0]?.[2])).toContain('角色/助手')
+    // No nested moderator flag was installed on the role session.
+    expect(chatroomState(e.sessions.getOrCreateActive(roles[0]!.sessionKey)).chatroomModerator).toBe(false)
   })
 })

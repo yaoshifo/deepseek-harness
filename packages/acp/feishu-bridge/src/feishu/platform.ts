@@ -3309,7 +3309,9 @@ export class FeishuPlatform implements Platform {
     }
     let needSave = false
     for (const [chatID] of unknown) {
-      const active = await this.tagManager.chatHasActiveTag(chatID)
+      // Tri-state verify: an unknown readback keeps the chat out of the
+      // active list (same as before), never errors the listing.
+      const active = (await this.tagManager.chatHasActiveTag(chatID)) === true
       const meta = this.spawnStore.get(chatID)
       if (meta !== undefined) {
         meta.active = active

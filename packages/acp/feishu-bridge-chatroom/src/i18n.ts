@@ -1,5 +1,5 @@
 /**
- * The chatroom package's message subtable: the 71 chatroom keys (70
+ * The chatroom package's message subtable: the 78 chatroom keys (77
  * `chatroom_*` plus the bare `chatroom` command-description key) moved
  * verbatim from the feishu-bridge main table. Registered once per process in
  * the plugin apply through the bridge's `registerMessages`, so every engine
@@ -13,7 +13,7 @@ import type { Language } from '@deepseek-ai/dsh-feishu-bridge/exports'
 /** The English messages of the chatroom subtable. */
 const en: Record<string, string> = {
   chatroom: 'Start a multi-role roundtable discussion',
-  chatroom_usage: 'Usage: `/chatroom <topic>`\n       `/chatroom <role1,role2> <topic>`\n       `/chatroom --roles <a,b,c> <topic>`\nStarts a multi-role roundtable. Omit roles to use all roles under roles_dir; omit the topic too to let the moderator suggest topics.\nExample: `/chatroom taleb,munger should I quit my job`',
+  chatroom_usage: 'Usage: `/chatroom <topic>`\n       `/chatroom <role1,role2> <topic>`\n       `/chatroom --roles <a,b,c> <topic>`\n       `/chatroom --continue[=<prior topic|dir>] <topic>`\nStarts a multi-role roundtable. Omit roles to use all roles under roles_dir; omit the topic too to let the moderator suggest topics. --continue inherits the matched past chatroom as prior context (unverified until the moderator screens it) and reuses its cast when no roles are named.\nExample: `/chatroom taleb,munger should I quit my job`',
   chatroom_ready: 'Chatroom role ready',
   chatroom_topic_label: 'Topic:',
   chatroom_unknown_role: 'Role %s is not set up. Create it by adding a CLAUDE.md under %s/ in your thinkers directory.',
@@ -47,6 +47,7 @@ const en: Record<string, string> = {
   chatroom_no_roles: 'No roles in this chatroom.',
   chatroom_no_roles_configured: 'No roles found under %s. Add one by creating <name>/CLAUDE.md in that directory.',
   chatroom_research_needs_uv: 'Research mode requires uv to pre-provision a shared Python venv. Install it (https://docs.astral.sh/uv/) and retry.',
+  chatroom_user_profile_unreadable: 'The configured user-profile file cannot be read: %s. Fix the userProfile path in the chatroom config and retry.',
   chatroom_list_title: 'Available thinkers (%d)',
   chatroom_gather_header: ' ⟳ Gather · %s',
   chatroom_gather_timeout: '%d role(s) timed out: %s. Continuing with the replies received.',
@@ -83,14 +84,22 @@ const en: Record<string, string> = {
   chatroom_gather_pending_human_blocked: 'An ask-human question is still pending — the discussion is suspended until the user replies. Gather again after their reply.',
   chatroom_gather_in_flight: 'A parallel gather is still in flight — a repeat gather would overwrite the armed barrier and lose collected replies. Start the next one after this round completes or times out and wakes you.',
   chatroom_ask_gather_blocked: 'A parallel gather is in progress — do not ask yet: the role\'s reply would be swallowed by or lost to this round\'s barrier. Ask after the round wakes you, or fold the question into the next gather task.',
+  chatroom_ask_pending_human_blocked: 'An ask-human question is still pending — do not ask yet: a role can hold only one in-flight question, and one of the two replies would be lost to the one-shot relay gate. Ask again after the user replies.',
   chatroom_already_running: 'A chatroom is already running in this chat. Send /chatroom stop before starting a new one.',
+  chatroom_start_member_forbidden: 'This session is already a chatroom role or assistant group; it cannot start a new chatroom as the moderator.',
+  chatroom_not_in_room: 'This session is not part of any chatroom.',
+  chatroom_note_moderator_only: 'Only the chatroom moderator may update the ledger; the calling session is a role or assistant group.',
   chatroom_end_moderator_only: 'Only the chatroom moderator may end the chatroom; the calling session is a role or assistant group. Ask the user to send /chatroom stop to interrupt.',
+  chatroom_continue_no_ledger: 'Continuing a past chatroom requires the ledger (moderator_dir is not configured).',
+  chatroom_continue_no_match: 'No past chatroom matches "%s". Recent topics: %s',
+  chatroom_history_empty: '(no recorded chatrooms yet)',
+  chatroom_inherit_note: 'Prior context: continuing from "%s" (unverified — the moderator screens it before adopting)',
 }
 
 /** The Simplified-Chinese messages of the chatroom subtable. */
 const zh: Record<string, string> = {
   chatroom: '开启多角色圆桌讨论',
-  chatroom_usage: '用法：`/chatroom <议题>`\n      `/chatroom <角色1,角色2> <议题>`\n      `/chatroom --roles <a,b,c> <议题>`\n开启多角色圆桌讨论。不指定角色则用 roles_dir 下全部角色；不带题目则由主持人推荐候选题目（随便聊聊）。\n示例：`/chatroom taleb,munger 是否该裸辞`',
+  chatroom_usage: '用法：`/chatroom <议题>`\n      `/chatroom <角色1,角色2> <议题>`\n      `/chatroom --roles <a,b,c> <议题>`\n      `/chatroom --continue[=<历史议题|目录>] <议题>`\n开启多角色圆桌讨论。不指定角色则用 roles_dir 下全部角色；不带题目则由主持人推荐候选题目（随便聊聊）。--continue 把匹配到的历史聊天室作为前情延续（未经本次讨论验证，主持人甄别后才采信），未指定角色时沿用其角色阵容。\n示例：`/chatroom taleb,munger 是否该裸辞`',
   chatroom_ready: '聊天室角色就绪',
   chatroom_topic_label: '议题：',
   chatroom_unknown_role: '角色 %s 尚未创建。请在 thinkers 目录下建 `%s/CLAUDE.md`。',
@@ -124,6 +133,7 @@ const zh: Record<string, string> = {
   chatroom_no_roles: '当前聊天室没有角色。',
   chatroom_no_roles_configured: 'thinkers 目录下没有角色。在该目录下建 `<名字>/CLAUDE.md` 即可添加。',
   chatroom_research_needs_uv: 'research 模式需要 uv 来预配共享 Python 环境。请先安装 uv（https://docs.astral.sh/uv/）后重试。',
+  chatroom_user_profile_unreadable: '聊天室用户背景文件读取失败：%s。请修正 chatroom 配置里的 userProfile 路径后重试。',
   chatroom_list_title: '可用的 thinkers（%d 个）',
   chatroom_gather_header: ' ⟳ 并行收集 · %s',
   chatroom_gather_timeout: '%d 个角色超时未回复：%s。按已收到的继续。',
@@ -160,8 +170,16 @@ const zh: Record<string, string> = {
   chatroom_gather_pending_human_blocked: '有待回复的角色提问（ask-human）——讨论已暂停，等用户回复后再发起 gather。',
   chatroom_gather_in_flight: '上一轮并行收集仍在进行中——重复 gather 会覆盖在途屏障、丢失已收回复。等本轮收齐或超时唤醒你后再发起。',
   chatroom_ask_gather_blocked: '并行收集进行中——先不要 ask：角色的回复会被本轮屏障吞掉或丢失。等收齐/超时唤醒你后再问，或把追问并入下一轮 gather 任务。',
+  chatroom_ask_pending_human_blocked: '有待回复的角色提问（ask-human）挂起中——先不要 ask：一个角色同时只能有一个在途问题，等用户回复后再问。',
   chatroom_already_running: '这个群已有聊天室在进行中；请先发 /chatroom stop 中断后再开新聊天室。',
+  chatroom_start_member_forbidden: '当前会话已是聊天室的角色/助手群，不能再作为主持人开新聊天室。',
+  chatroom_not_in_room: '当前会话不在任何聊天室中。',
+  chatroom_note_moderator_only: '台账只有聊天室主持人能更新；当前会话是角色/助手群。',
   chatroom_end_moderator_only: '只有聊天室主持人可以收尾；当前会话是角色/助手群。需要中断请让用户发送 /chatroom stop。',
+  chatroom_continue_no_ledger: '延续历史聊天室需要账本（未配置 moderator_dir）。',
+  chatroom_continue_no_match: '没有匹配 "%s" 的历史聊天室。最近的议题：%s',
+  chatroom_history_empty: '（暂无历史聊天室）',
+  chatroom_inherit_note: '前情：延续自「%s」（未经本次讨论验证，主持人甄别后才采信）',
 }
 
 /** The chatroom message subtable handed to the bridge's registerMessages. */
@@ -210,6 +228,7 @@ export const Msg = {
   ChatroomNoRoles: 'chatroom_no_roles',
   ChatroomNoRolesConfigured: 'chatroom_no_roles_configured',
   ChatroomResearchNeedsUv: 'chatroom_research_needs_uv',
+  ChatroomUserProfileUnreadable: 'chatroom_user_profile_unreadable',
   ChatroomListTitle: 'chatroom_list_title',
   ChatroomGatherHeader: 'chatroom_gather_header',
   ChatroomGatherTimeout: 'chatroom_gather_timeout',
@@ -246,8 +265,16 @@ export const Msg = {
   ChatroomGatherPendingHumanBlocked: 'chatroom_gather_pending_human_blocked',
   ChatroomGatherInFlight: 'chatroom_gather_in_flight',
   ChatroomAskGatherBlocked: 'chatroom_ask_gather_blocked',
+  ChatroomAskPendingHumanBlocked: 'chatroom_ask_pending_human_blocked',
   ChatroomAlreadyRunning: 'chatroom_already_running',
+  ChatroomStartMemberForbidden: 'chatroom_start_member_forbidden',
+  ChatroomNotInRoom: 'chatroom_not_in_room',
+  ChatroomNoteModeratorOnly: 'chatroom_note_moderator_only',
   ChatroomEndModeratorOnly: 'chatroom_end_moderator_only',
+  ChatroomContinueNoLedger: 'chatroom_continue_no_ledger',
+  ChatroomContinueNoMatch: 'chatroom_continue_no_match',
+  ChatroomHistoryEmpty: 'chatroom_history_empty',
+  ChatroomInheritNote: 'chatroom_inherit_note',
   SpawnNotSupported: 'spawn_not_supported',
 } as const
 

@@ -9,10 +9,9 @@
  * The header mirrors the tool-progress card's 执行中 composition: running
  * color template, spinner icon, and a wall-clock last-activity timestamp
  * that advances on every tick. A stalled child freezes that clock at a
- * glance and flips the template orange past the stall window. Rows pair the
- * absolute timestamp with a relative age — the absolute half stays readable
- * on a dead card (PATCH failures) because the reader compares it against
- * their own clock.
+ * glance and flips the template orange past the stall window. Rows show the
+ * absolute timestamp — it stays readable on a dead card (PATCH failures)
+ * because the reader compares it against their own clock.
  *
  * The card holds its own message handle and never touches the progress-card
  * machinery, so the post-detach PATCH channel that deferred the 2026-08-26
@@ -58,20 +57,12 @@ function wallClock(epochMs: number): string {
   return new Date(epochMs).toTimeString().slice(0, 8)
 }
 
-/** Relative-age wording for the parenthesized half of a last-active line. */
-function relativeAge(i18n: PanelI18n, ageMs: number): string {
-  const secs = Math.floor(ageMs / 1000)
-  if (secs < 10) return i18n.t(Msg.SubtaskPanelAgoNow)
-  if (secs < 60) return i18n.tf(Msg.SubtaskPanelAgoSecs, secs)
-  return i18n.tf(Msg.SubtaskPanelAgoMins, Math.floor(secs / 60))
-}
-
 /** Whether a child row is past the stall window (0 = no events, never stalled). */
 function isStalled(child: SubtaskPanelChild, now: number, stallMs: number): boolean {
   return child.lastEventAt !== 0 && now - child.lastEventAt >= stallMs
 }
 
-/** Last-activity wording for one child row: absolute clock plus relative age. */
+/** Last-activity wording for one child row: the absolute clock alone. */
 function activityLine(
   i18n: PanelI18n,
   child: SubtaskPanelChild,
@@ -80,7 +71,7 @@ function activityLine(
 ): string {
   if (child.lastEventAt === 0) return i18n.t(Msg.SubtaskPanelWaiting)
   const age = now - child.lastEventAt
-  const base = i18n.tf(Msg.SubtaskPanelLastActive, wallClock(child.lastEventAt), relativeAge(i18n, age))
+  const base = i18n.tf(Msg.SubtaskPanelLastActive, wallClock(child.lastEventAt))
   if (age >= stallMs) {
     const mins = Math.floor(age / 60_000)
     return `${i18n.tf(Msg.SubtaskPanelStalled, mins >= 1 ? mins : 1)} · ${base}`

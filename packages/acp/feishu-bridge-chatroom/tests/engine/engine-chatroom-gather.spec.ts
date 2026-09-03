@@ -901,6 +901,23 @@ describe('buildChatroomModeratorPriming', () => {
     }
   })
 
+  it('research priming opens with a bounded clarify stage before the data-needs stage', () => {
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
+    for (const want of ['澄清研究背景', '最多 2 轮', 'ask_user_question', '用户背景与约束', '无需追问']) {
+      expect(priming).toContain(want)
+    }
+    // The clarify stage precedes the data-needs stage, and both precede
+    // round 1.
+    expect(priming.indexOf('澄清研究背景')).toBeLessThan(priming.indexOf('数据需求清单'))
+    expect(priming.indexOf('数据需求清单')).toBeLessThan(priming.indexOf('### 第 1 轮'))
+  })
+
+  it('the plain chatroom priming keeps its own 3-round clarify loop', () => {
+    const priming = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')
+    expect(priming).toContain('最多 3 轮澄清')
+    expect(priming).not.toContain('澄清研究背景')
+  })
+
   it('never instructs an ExitPlanMode dance (moderator sessions are never in plan mode)', () => {
     const priming = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')
     for (const banned of ['plan mode', 'ExitPlanMode']) {
@@ -933,6 +950,40 @@ describe('buildChatroomModeratorPriming', () => {
       for (const want of ['summary-academic.html', '出一份深度学术版', '总分结构', '记住用户已选过学术版', '若用户此前选过「出一份深度学术版」']) {
         expect(priming).toContain(want)
       }
+    }
+  })
+
+  it('carries the prior screening flow only when a prior is given', () => {
+    const prior = { topic: '旧议题', dir: '/tmp/prior' }
+    const plain = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')
+    const withPrior = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger', { prior })
+    for (const want of ['前情（继承自 旧议题，未经本次讨论验证）', '/tmp/prior', '采信', '修正：', '循环印证']) {
+      expect(withPrior).toContain(want)
+    }
+    expect(plain).not.toContain('前情（继承自')
+    const research = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws', prior)
+    expect(research).toContain('前情（继承自 旧议题，未经本次讨论验证）')
+    expect(research).toContain('采信')
+    expect(buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')).not.toContain('前情（继承自')
+  })
+
+  it('mentions the shared research data in the plain priming only when a workspace is passed', () => {
+    const withWs = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger', { researchWs: '/tmp/ws' })
+    expect(withWs).toContain('/tmp/ws')
+    expect(withWs).toContain('DATA_LEDGER.md')
+    expect(withWs).toContain('三列')
+    expect(withWs).toContain('spot-check')
+    expect(buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')).not.toContain('DATA_LEDGER.md')
+  })
+
+  it('instructs writing the closing summary to REPORT.md via note section report', () => {
+    const cases: Array<[string, string]> = [
+      ['moderator', buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')],
+      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')],
+    ]
+    for (const [, priming] of cases) {
+      expect(priming).toContain('section: report')
+      expect(priming).toContain('REPORT.md')
     }
   })
 })
@@ -977,6 +1028,9 @@ describe('buildChatroomResearchModeratorPriming', () => {
       const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', mode, 3, '/tmp/ws')
       expect(priming).toContain('用户中途发言')
       expect(priming).toContain('追问用 action: ask 转给相关角色')
+      // The ask-during-gather interlock rejects askRole mid-round; the
+      // priming must pre-announce that instead of letting the model hit it.
+      expect(priming).toContain('gather 在途时 ask 会被拒')
       expect(priming).toContain('并入下一轮 gather 任务')
       expect(priming).toContain('不要无视')
     }
@@ -994,6 +1048,11 @@ describe('buildChatroomResearchModeratorPriming', () => {
       '独立双源即止',
       '不复用台账已有文件',
       '预计 30-60 分钟',
+      // The replacement-steward path must address the spawned child by its
+      // returned session key — the "assistant" alias still resolves to the
+      // empty pre-provision and errors.
+      '新建替补管家',
+      '"assistant" 别名仍解析不到替补',
     ]) {
       expect(priming).toContain(want)
     }
