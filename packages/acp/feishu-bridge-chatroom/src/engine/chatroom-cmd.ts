@@ -108,6 +108,15 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
     await cmdChatroomStop(e, p, msg)
     return
   }
+  // Member-session guard: a role or assistant group sending /chatroom would
+  // pass the role-list check below (it only sees roles parented on the
+  // CALLING session) and become a nested moderator — chatroomModerator
+  // alongside its outer chatroomHubKey.
+  const callerState = chatroomState(e.sessions.getOrCreateActive(msg.sessionKey))
+  if (callerState.chatroomHubKey !== '' || callerState.researchAssistant) {
+    await e.reply(p, msg.replyCtx, e.i18n.t(Msg.ChatroomStartMemberForbidden))
+    return
+  }
   // Re-entry guard: live role groups under this hub mean a chatroom is
   // already running. A second open (direct→multi-role, repeated open, or a
   // fresh picker) would spawn a new generation of role groups while the old

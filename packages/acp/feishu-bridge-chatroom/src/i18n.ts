@@ -1,5 +1,5 @@
 /**
- * The chatroom package's message subtable: the 74 chatroom keys (73
+ * The chatroom package's message subtable: the 78 chatroom keys (77
  * `chatroom_*` plus the bare `chatroom` command-description key) moved
  * verbatim from the feishu-bridge main table. Registered once per process in
  * the plugin apply through the bridge's `registerMessages`, so every engine
@@ -84,7 +84,11 @@ const en: Record<string, string> = {
   chatroom_gather_pending_human_blocked: 'An ask-human question is still pending — the discussion is suspended until the user replies. Gather again after their reply.',
   chatroom_gather_in_flight: 'A parallel gather is still in flight — a repeat gather would overwrite the armed barrier and lose collected replies. Start the next one after this round completes or times out and wakes you.',
   chatroom_ask_gather_blocked: 'A parallel gather is in progress — do not ask yet: the role\'s reply would be swallowed by or lost to this round\'s barrier. Ask after the round wakes you, or fold the question into the next gather task.',
+  chatroom_ask_pending_human_blocked: 'An ask-human question is still pending — do not ask yet: a role can hold only one in-flight question, and one of the two replies would be lost to the one-shot relay gate. Ask again after the user replies.',
   chatroom_already_running: 'A chatroom is already running in this chat. Send /chatroom stop before starting a new one.',
+  chatroom_start_member_forbidden: 'This session is already a chatroom role or assistant group; it cannot start a new chatroom as the moderator.',
+  chatroom_not_in_room: 'This session is not part of any chatroom.',
+  chatroom_note_moderator_only: 'Only the chatroom moderator may update the ledger; the calling session is a role or assistant group.',
   chatroom_end_moderator_only: 'Only the chatroom moderator may end the chatroom; the calling session is a role or assistant group. Ask the user to send /chatroom stop to interrupt.',
 }
 
@@ -162,7 +166,11 @@ const zh: Record<string, string> = {
   chatroom_gather_pending_human_blocked: '有待回复的角色提问（ask-human）——讨论已暂停，等用户回复后再发起 gather。',
   chatroom_gather_in_flight: '上一轮并行收集仍在进行中——重复 gather 会覆盖在途屏障、丢失已收回复。等本轮收齐或超时唤醒你后再发起。',
   chatroom_ask_gather_blocked: '并行收集进行中——先不要 ask：角色的回复会被本轮屏障吞掉或丢失。等收齐/超时唤醒你后再问，或把追问并入下一轮 gather 任务。',
+  chatroom_ask_pending_human_blocked: '有待回复的角色提问（ask-human）挂起中——先不要 ask：一个角色同时只能有一个在途问题，等用户回复后再问。',
   chatroom_already_running: '这个群已有聊天室在进行中；请先发 /chatroom stop 中断后再开新聊天室。',
+  chatroom_start_member_forbidden: '当前会话已是聊天室的角色/助手群，不能再作为主持人开新聊天室。',
+  chatroom_not_in_room: '当前会话不在任何聊天室中。',
+  chatroom_note_moderator_only: '台账只有聊天室主持人能更新；当前会话是角色/助手群。',
   chatroom_end_moderator_only: '只有聊天室主持人可以收尾；当前会话是角色/助手群。需要中断请让用户发送 /chatroom stop。',
 }
 
@@ -249,7 +257,11 @@ export const Msg = {
   ChatroomGatherPendingHumanBlocked: 'chatroom_gather_pending_human_blocked',
   ChatroomGatherInFlight: 'chatroom_gather_in_flight',
   ChatroomAskGatherBlocked: 'chatroom_ask_gather_blocked',
+  ChatroomAskPendingHumanBlocked: 'chatroom_ask_pending_human_blocked',
   ChatroomAlreadyRunning: 'chatroom_already_running',
+  ChatroomStartMemberForbidden: 'chatroom_start_member_forbidden',
+  ChatroomNotInRoom: 'chatroom_not_in_room',
+  ChatroomNoteModeratorOnly: 'chatroom_note_moderator_only',
   ChatroomEndModeratorOnly: 'chatroom_end_moderator_only',
   SpawnNotSupported: 'spawn_not_supported',
 } as const

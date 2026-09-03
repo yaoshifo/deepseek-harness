@@ -38,6 +38,7 @@ import {
 } from '../engine/chatroom-pick.ts'
 import { listRoleNames, roleEssence } from '../engine/chatroom-roles.ts'
 import { chatroomUserProfileError } from '../engine/chatroom-cmd.ts'
+import { chatroomState } from '../chatroom-state.ts'
 
 const DESCRIPTION =
   'Run a multi-role chatroom discussion: several independent role agents (each with its own persona '
@@ -188,6 +189,19 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
         case 'start': {
           const topic = (args.message ?? '').trim()
           if (topic === '') throw new Error('feishu_bridge_chatroom: start requires a topic (message)')
+          // A role or assistant group cannot become a nested moderator: the
+          // command path's role-list guard cannot see this — it only checks
+          // roles parented on the CALLING session.
+          const callerState = chatroomState(engine.sessions.getOrCreateActive(sessionKey))
+          if (callerState.chatroomHubKey !== '' || callerState.researchAssistant) {
+            throw new Error(engine.i18n.t(Msg.ChatroomStartMemberForbidden))
+          }
+          // Same already-running guard as the /chatroom command: a repeat
+          // start would spawn a second generation of role groups under the
+          // live hub.
+          if (listChatroomRoles(engine, sessionKey).length > 0) {
+            throw new Error(engine.i18n.t(Msg.ChatroomAlreadyRunning))
+          }
           // Same fail-loud referent check as the /chatroom command: a
           // configured-but-unreadable user profile blocks the start.
           const profileError = chatroomUserProfileError(engine)
@@ -264,6 +278,12 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
           // tear down only its own subtree — force even stops its own turn —
           // while the real hub's armed barriers drain to their timeouts.
           const hubKey = resolveChatroomHubKey(engine, sessionKey)
+          if (hubKey === '') {
+            // A session outside any chatroom is not a role/assistant group —
+            // the moderator-only text would misdiagnose and point at
+            // /chatroom stop, which would answer not-in-room itself.
+            throw new Error(engine.i18n.t(Msg.ChatroomNotInRoom))
+          }
           if (hubKey !== sessionKey) {
             throw new Error(engine.i18n.t(Msg.ChatroomEndModeratorOnly))
           }
@@ -309,6 +329,16 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
         case 'note': {
           const text = (args.message ?? '').trim()
           if (text === '') throw new Error('feishu_bridge_chatroom: note requires text (message)')
+          // Mirror end's resolution: a role session would otherwise resolve
+          // the ledger dir from its own key and surface a raw ENOENT from a
+          // nonexistent directory.
+          const noteHubKey = resolveChatroomHubKey(engine, sessionKey)
+          if (noteHubKey === '') {
+            throw new Error(engine.i18n.t(Msg.ChatroomNotInRoom))
+          }
+          if (noteHubKey !== sessionKey) {
+            throw new Error(engine.i18n.t(Msg.ChatroomNoteModeratorOnly))
+          }
           await noteChatroom(engine, sessionKey, args.section ?? 'synthesis', text)
           const dir = chatroomLedgerDirFor(engine, sessionKey)
           return {
