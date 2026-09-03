@@ -62,7 +62,7 @@ describe('todo snapshot invariants', () => {
       { content: 'Apply fix', status: 'in_progress', activeForm: 'Applying fix' },
       { content: 'Run checks', status: 'pending' },
     ]
-    expect(() => { ctx.emit('session/event', { events: [{ type: 'turn/start', seq: 0, time: 0, data: { turn: 1 } }] } as unknown as Session, event(todos)) }).not.toThrow()
+    expect(() => { ctx.emit('session/event', { snapshotEvents: () => [{ type: 'turn/start', seq: 0, time: 0, data: { turn: 1 } }] } as unknown as Session, event(todos)) }).not.toThrow()
   })
 
   it.each([
@@ -71,7 +71,7 @@ describe('todo snapshot invariants', () => {
     [[{ content: 'task', status: 'pending', activeForm: '' }], /activeForm must be non-empty/],
   ])('rejects an incoherent activeForm', async (todos, message) => {
     const ctx = await setup()
-    expect(() => { ctx.emit('session/event', { events: [{ type: 'turn/start', seq: 0, time: 0, data: { turn: 1 } }] } as unknown as Session, event(todos)) }).toThrow(message)
+    expect(() => { ctx.emit('session/event', { snapshotEvents: () => [{ type: 'turn/start', seq: 0, time: 0, data: { turn: 1 } }] } as unknown as Session, event(todos)) }).toThrow(message)
   })
 
   it('ignores unrelated dispatches and session events', async () => {

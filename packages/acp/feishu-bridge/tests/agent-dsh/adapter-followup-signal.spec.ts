@@ -11,6 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { DshAgentAdapter, type DshAgentLike, type DshContextLike } from '../../src/agent-dsh/adapter.ts'
+import { deliverSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 
 /** One recorded followup call against the fake subagents service. */
 interface RecordedFollowup {
@@ -45,13 +46,15 @@ function createHarness(): {
       if (name !== 'subagents') return undefined
       return {
         startContinuable: async () => ({ childId: 'child-1' }),
-        followup: async (
+        [deliverSubagentPrompt]: async (
           parent: unknown,
           child: unknown,
           content: Array<Record<string, unknown>>,
-          options: { source: Record<string, unknown>; signal?: AbortSignal },
+          source: Record<string, unknown>,
+          signal?: AbortSignal,
+          _delivery?: 'queue' | 'steer',
         ) => {
-          followups.push({ parent, child, content, source: options.source, signal: options.signal })
+          followups.push({ parent, child, content, source, signal })
         },
         interrupt: () => {},
         reportFrom: async () => {},

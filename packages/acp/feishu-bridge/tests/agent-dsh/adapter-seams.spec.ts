@@ -122,8 +122,10 @@ async function seamHarness(): Promise<{
   // A second durable session the adapter must reach only through
   // persistence (never live, never in ctx.agents).
   const persisted = ctx.sessions.create(undefined, { meta: { cwd } })
+  await ctx.sessionPersistence.create(persisted.header)
   appendClosedTurn(persisted)
-  await ctx.sessions.flush(persisted)
+  // Service-wide barrier: drains each write handle's routed live buffer.
+  await ctx.sessionPersistence.flush()
   return { ctx, adapter, agents, persisted }
 }
 

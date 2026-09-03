@@ -152,16 +152,16 @@ describe('DshAgentAdapter.recentTurns', () => {
 
   it('folds a cold session from persistence once and caches the fold', async () => {
     const events = conversation([['cold question', 'cold answer']])
-    let inspectCalls = 0
+    let openCalls = 0
     const adapter = new DshAgentAdapter(
       {
         agents: { create: async () => { throw new Error('unused') }, resume: async () => { throw new Error('unused') }, get: () => undefined },
         on: () => () => {},
         get: (name: string) => (name === 'sessionPersistence'
           ? {
-            inspect: async () => {
-              inspectCalls++
-              return { meta: {} as never, events }
+            open: async () => {
+              openCalls++
+              return { header: {} as never, read: async () => events }
             },
           }
           : undefined),
@@ -173,7 +173,7 @@ describe('DshAgentAdapter.recentTurns', () => {
     expect(first.map(e => [e.role, e.content])).toEqual([['user', 'cold question'], ['assistant', 'cold answer']])
     const second = await adapter.recentTurns('cc-cold-1', 0)
     expect(second).toEqual(first)
-    expect(inspectCalls).toBe(1)
+    expect(openCalls).toBe(1)
   })
 
   it('returns [] for an unknown id, an empty id, and a missing persistence service', async () => {
