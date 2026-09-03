@@ -14,7 +14,7 @@ import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { createStubAgent, createStubCardPlatform, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.ts'
 import { createControllableAgent, newControllableSession, type ControllableAgentSession } from '../stubs/engine-stubs.ts'
 import { newStreamPreview, type StreamPreview } from '../../src/streaming.ts'
-import { createRenderAgent, pollUntil, renderSkillBodyFixture } from './plan-render-helpers.ts'
+import { createRenderAgent, renderSkillBodyFixture } from './plan-render-helpers.ts'
 import type { Platform } from '../../src/core/types.ts'
 import type { AskRequest, FileAttachment, ImageAttachment, Message, UserQuestion } from '../../src/core/types.ts'
 import type { Card } from '../../src/card.ts'
@@ -151,7 +151,7 @@ describe('askUser followups conversion', () => {
   })
 })
 
-describe('askUser followups conversion: pre-ask reply segment render', () => {
+describe('askUser followups conversion: pre-ask reply segment pin', () => {
   /** A started streaming preview whose handle carries an export key (recall.spec pattern). */
   function startedPreview(p: Platform): StreamPreview {
     const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500 }
@@ -185,7 +185,7 @@ describe('askUser followups conversion: pre-ask reply segment render', () => {
     return { e, state, p }
   }
 
-  it('renders and delivers the pre-ask reply segment like the parked path', async () => {
+  it('freezes the pre-ask segment onto the card instead of rendering a digest', async () => {
     const summary = `收尾总结：全部完成。${'详细内容。'.repeat(100)}`
     const { e, state, p } = await renderArmedState(summary)
 
@@ -194,33 +194,33 @@ describe('askUser followups conversion: pre-ask reply segment render', () => {
     // The conversion itself is unchanged: deferred decision, no park.
     expect(decision.answers?.[0]?.selected).toEqual([])
     expect(state.pendingAsk).toBeUndefined()
-    // The pre-ask reply segment renders and delivers (the trailing-segment
-    // replacement after the ask would otherwise swallow it).
-    await pollUntil(() => p.files.length > 0, 2000)
-    expect(p.files).toHaveLength(1)
+    // The pre-ask segment is pinned onto the card — no speculative digest
+    // render: the digest is a one-screen summary by design and lands after
+    // the followups card, so it cannot stand in for the frozen summary.
+    await new Promise((r) => { setTimeout(r, 300) })
+    expect(p.files).toHaveLength(0)
+    expect(state.preRenderRunning).toBe(false)
+    expect(state.preview?.pinnedAnalysis).toContain('收尾总结')
     // The capture also registered the segment under the card's export key.
     expect(state.exportContent?.get('om_card1')).toContain('收尾总结')
   })
 
-  it('does not render below the speculative-render length threshold', async () => {
-    const { e, state, p } = await renderArmedState('简短收尾。')
+  it('pins a short pre-ask segment too (no length threshold)', async () => {
+    const { e, state } = await renderArmedState('简短收尾。')
 
     await e.askUser('test:chat:user1', questionsAsk(q()))
 
-    await new Promise((r) => { setTimeout(r, 300) })
-    expect(p.files).toHaveLength(0)
-    expect(state.preRenderRunning).toBe(false)
+    expect(state.preview?.pinnedAnalysis).toBe('简短收尾。')
   })
 
-  it('does not render when plan render is disabled', async () => {
+  it('pins even when plan render is disabled', async () => {
     const summary = `收尾总结：全部完成。${'详细内容。'.repeat(100)}`
-    const { e, p } = await renderArmedState(summary)
+    const { e, state } = await renderArmedState(summary)
     e.planRenderEnabled = false
 
     await e.askUser('test:chat:user1', questionsAsk(q()))
 
-    await new Promise((r) => { setTimeout(r, 300) })
-    expect(p.files).toHaveLength(0)
+    expect(state.preview?.pinnedAnalysis).toContain('收尾总结')
   })
 
   it('returns the deferred decision without a live preview', async () => {
@@ -232,6 +232,63 @@ describe('askUser followups conversion: pre-ask reply segment render', () => {
     expect(decision.answers?.[0]?.selected).toEqual([])
     expect(state.pendingFollowups).toEqual(q())
     expect(p.files).toHaveLength(0)
+  })
+})
+
+describe('followups conversion: pinned narration through a live turn', () => {
+  /** Card platform with the preview trio the live pump needs. */
+  function previewPlatform(): ReturnType<typeof createStubCardPlatform> {
+    const p = createStubCardPlatform('feishu')
+    return Object.assign(p, {
+      async sendPreviewStart(): Promise<unknown> {
+        return { messageID: 'om_live1', exportKey: () => 'om_live1' }
+      },
+      async updateMessage(): Promise<void> {},
+      async deletePreviewMessage(): Promise<void> {},
+    })
+  }
+
+  it('the completed card carries the pre-ask analysis and every post-ask block (oc_f924a2 shape)', async () => {
+    const sess: ControllableAgentSession = newControllableSession('s1')
+    let releaseCoda = (): void => {}
+    const codaGate = new Promise<void>((r) => { releaseCoda = r })
+    sess.send = async (prompt: string, _images: ImageAttachment[], _files: FileAttachment[]) => {
+      sess.sendCalls.push(prompt)
+      sess.channel.push({ type: 'text', content: 'ask 前的分析总结' })
+      await codaGate
+      sess.channel.push({ type: 'text', content: '收尾块一' })
+      sess.channel.push({ type: 'text', content: '收尾块二' })
+      sess.channel.push({ type: 'result', content: '收尾块二', done: true })
+    }
+    const p = previewPlatform()
+    const e = new Engine('test', createControllableAgent(sess), [p], '', 'zh')
+    e.setDisplayConfig({ thinkingMessages: false, toolMessages: false, toolProgress: true })
+    const key = 'test:chat:user1'
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    state.agentSession = sess
+    e.interactiveStates.set(key, state)
+    e.sessions.getOrCreateActive(key).setAgentSessionID('s1', 'stub')
+
+    e.receiveMessage(p, msg({ content: '分析任务' }))
+    await waitFor(() => state.textParts.length === 1)
+    await e.askUser(key, questionsAsk(q()))
+    releaseCoda()
+    await waitFor(() => e.sessions.findActive(key)?.lastResult !== '')
+    void sess.close()
+
+    const sp = state.preview
+    expect(sp).toBeDefined()
+    const display = sp!.buildProgressDisplayLocked()
+    expect(display).toContain('ask 前的分析总结')
+    expect(display).toContain('收尾块一')
+    expect(display).toContain('收尾块二')
+    // Exactly once: the finalize fallback must not re-inject the joined
+    // reply beneath the pinned prefix.
+    expect(display.split('ask 前的分析总结').length - 1).toBe(1)
+    // Nothing leaked into plain messages — the card carries the reply.
+    expect(p.sent.join('')).not.toContain('分析总结')
   })
 })
 

@@ -578,6 +578,14 @@ export class StreamPreview {
    */
   analysisText: string = ''
   /**
+   * Live-narration text frozen by {@link pinAnalysisText} (the followups-ask
+   * conversion): post-ask blocks render under it instead of replacing it.
+   * '' while unpinned. {@link analysisText} keeps slot semantics so delta
+   * flushes (growing block text) stay replace-safe beneath the pin.
+   * @internal White-box: ported same-package tests read this directly.
+   */
+  pinnedAnalysis: string = ''
+  /**
    * True when the card shows a truncated 实时播报 and the full answer is delivered out-of-band.
    * @internal White-box: ported same-package tests read/write this directly.
    */
@@ -991,7 +999,7 @@ export class StreamPreview {
         if (this.progressMode) {
           this.finalizePendingEntriesLocked(true)
           content = this.progressContentLocked(this.buildProgressDisplayLocked())
-          if (this.analysisTruncated) deliverText = this.analysisText
+          if (this.analysisTruncated) deliverText = this.pinnedAnswerText()
         } else {
           let text = this.fullText
           if (this.transform !== undefined) text = this.transform(text)
@@ -1562,6 +1570,73 @@ export class StreamPreview {
   }
 
   /**
+   * Composed live-narration text: the pinned prefix plus the live slot, raw
+   * and unstripped — one join shared by the card display and the
+   * truncation-fallback delivery so the out-of-band answer never misses the
+   * frozen prefix.
+   *
+   * @returns The composed narration; the bare slot while unpinned.
+   */
+  private pinnedAnswerText(): string {
+    if (this.pinnedAnalysis === '') return this.analysisText
+    if (this.analysisText === '') return this.pinnedAnalysis
+    return `${this.pinnedAnalysis}\n\n${this.analysisText}`
+  }
+
+  /**
+   * Whether the live narration is pinned ({@link pinAnalysisText} froze a
+   * pre-ask prefix): completed blocks must fold into the prefix instead of
+   * replacing the slot.
+   *
+   * @returns True while a pinned prefix is active.
+   */
+  isAnalysisPinned(): boolean {
+    return this.pinnedAnalysis !== ''
+  }
+
+  /**
+   * Freeze the current 实时播报 into a pinned prefix (followups-ask
+   * conversion): the non-blocking ask lets the turn keep streaming, and
+   * without the pin the post-ask block replaces the live narration, leaving
+   * the pre-ask reply summary with no display surface (2026-09-03
+   * oc_f924a2: the 4k-char analysis survived only behind the export button).
+   * A second pin appends — consecutive asks must not drop the first prefix.
+   * The live slot is cleared so the display does not duplicate it.
+   *
+   * @returns Promise resolving once the pin is recorded.
+   */
+  async pinAnalysisText(): Promise<void> {
+    await this.locked(async () => {
+      if (this.degraded) return
+      const current = this.analysisText.trim()
+      this.analysisText = ''
+      if (current === '') return
+      this.pinnedAnalysis = this.pinnedAnalysis === '' ? current : `${this.pinnedAnalysis}\n\n${current}`
+      await this.flushProgressRebuildLocked()
+    })
+  }
+
+  /**
+   * Fold a completed post-ask text block into the pinned prefix and clear
+   * the live slot: the next streamed block starts a fresh slot instead of
+   * erasing the folded one. Only meaningful while pinned; a no-op otherwise
+   * (the unpinned narration is replace-by-design).
+   *
+   * @param text - Completed EventText block to fold.
+   * @returns Promise resolving once the fold is recorded.
+   */
+  async foldAnalysisBlock(text: string): Promise<void> {
+    const block = text.trim()
+    if (block === '') return
+    await this.locked(async () => {
+      if (this.degraded || this.pinnedAnalysis === '') return
+      this.pinnedAnalysis = `${this.pinnedAnalysis}\n\n${block}`
+      this.analysisText = ''
+      await this.flushProgressRebuildLocked()
+    })
+  }
+
+  /**
    * Update the 实时播报 section with the latest EventText chunk (replaced).
    *
    * @param chunk - Latest EventText chunk; replaces the previous one.
@@ -1616,13 +1691,16 @@ export class StreamPreview {
   }
 
   /**
-   * Set the analysis text only when streaming has not populated it yet.
+   * Set the analysis text only when streaming has not populated it yet. A
+   * pinned prefix also counts as populated: the finalize fallback would
+   * otherwise duplicate the full joined reply beneath the frozen pre-ask
+   * summary.
    *
    * @param text - Analysis text used only when the current one is empty.
    */
   async setAnalysisTextIfEmpty(text: string): Promise<void> {
     return this.locked(() => {
-      if (this.analysisText === '' && text !== '') this.analysisText = text
+      if (this.analysisText === '' && this.pinnedAnalysis === '' && text !== '') this.analysisText = text
     })
   }
 
@@ -1720,7 +1798,7 @@ export class StreamPreview {
       const display = this.buildProgressDisplayLocked()
       const updater = asMessageUpdater(this.platform)
       if (updater === undefined) return
-      const answerText = this.analysisText
+      const answerText = this.pinnedAnswerText()
       const truncated = this.analysisTruncated
       const content = this.progressContentLocked(display)
       if (this.async !== undefined) {
@@ -1771,7 +1849,7 @@ export class StreamPreview {
     const content = this.progressContentLocked(display)
     const updater = asMessageUpdater(this.platform)
     if (updater === undefined) return
-    const answerText = this.analysisText
+    const answerText = this.pinnedAnswerText()
     if (this.async !== undefined) {
       const handle = this.previewMsgID
       this.lastSentText = display
@@ -1942,9 +2020,11 @@ export class StreamPreview {
       }
     }
 
-    // Section 3: 实时播报 (latest EventText)
-    if (this.analysisText !== '') {
-      const [stripped] = stripTrailingSilent(this.analysisText)
+    // Section 3: 实时播报 (latest EventText; a pinned prefix from the
+    // followups conversion keeps the pre-ask summary above the live slot)
+    const analysisSource = this.pinnedAnswerText()
+    if (analysisSource !== '') {
+      const [stripped] = stripTrailingSilent(analysisSource)
       const analysisDisplay = stripped
       if (analysisDisplay !== '') {
         const charOverflow = runeCount(analysisDisplay) > maxAnalysisDisplayChars
