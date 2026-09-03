@@ -53,6 +53,7 @@ function makeAgent(ctx: Context, over: { cwd?: string; origin?: 'subagent' | 'on
     version: 0,
     id,
     createdAt: Date.now(),
+    isSeeded: false,
     ...(over.cwd !== undefined ? { cwd: over.cwd } : {}),
     ...(over.origin !== undefined ? { origin: over.origin } : {}),
   }

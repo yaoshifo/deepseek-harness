@@ -550,7 +550,7 @@ describe('allowed-always and the note channel', () => {
     expect(second.outcome).toBe('allowed-always')
     expect(asks).toBe(1)
 
-    const audit = agent.session.events.filter(event => event.type === 'approval/decided')
+    const audit = agent.session.snapshotEvents().filter(event => event.type === 'approval/decided')
     expect(audit).toHaveLength(2)
     expect(audit.every(event => event.data.outcome === 'allowed-always')).toBe(true)
   })
@@ -580,7 +580,7 @@ describe('allowed-always and the note channel', () => {
     const result = await ctx.approval.request(requestOf(agent, { toolName: 'bash' }))
     expect(result.outcome).toBe('rejected')
     expect(result.note).toBe('use the staging bucket instead')
-    const decided = session.events.find((event): event is SessionEvent<'approval/decided'> => event.type === 'approval/decided')
+    const decided = session.snapshotEvents().find((event): event is SessionEvent<'approval/decided'> => event.type === 'approval/decided')
     expect(decided?.data.note).toBe('use the staging bucket instead')
   })
 
@@ -592,7 +592,7 @@ describe('allowed-always and the note channel', () => {
     const result = await ctx.approval.request(requestOf(agent))
     expect(result.note?.length).toBe(500)
     expect(result.note).toBe('x'.repeat(500))
-    const decided = session.events.find((event): event is SessionEvent<'approval/decided'> => event.type === 'approval/decided')
+    const decided = session.snapshotEvents().find((event): event is SessionEvent<'approval/decided'> => event.type === 'approval/decided')
     expect(decided?.data.note?.length).toBe(500)
   })
 
@@ -617,7 +617,7 @@ describe('allowed-always and the note channel', () => {
 
     await ctx.approval.request(requestOf(agent, { toolInput: '{"command":"ls"}' }))
     expect(received?.toolInput).toBe('{"command":"ls"}')
-    const asked = session.events.find((event): event is SessionEvent<'approval/asked'> => event.type === 'approval/asked')
+    const asked = session.snapshotEvents().find((event): event is SessionEvent<'approval/asked'> => event.type === 'approval/asked')
     expect(asked && 'toolInput' in asked.data).toBe(false)
   })
 })

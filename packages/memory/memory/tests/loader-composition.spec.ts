@@ -74,7 +74,7 @@ async function boot(configFor: (home: string) => readonly string[]): Promise<Con
 function makeAgent(ctx: Context): Agent {
   const scope = ctx.plugin(() => {})
   const id = SessionId('dsh-memory-loader-agent')
-  const session = Session.create(id, [], { version: 0, id, createdAt: Date.now(), cwd: CWD })
+  const session = Session.create(id, [], { version: 0, id, createdAt: Date.now(), isSeeded: false, cwd: CWD })
   const value: Agent = {
     id,
     options: {},

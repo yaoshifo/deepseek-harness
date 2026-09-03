@@ -25,7 +25,7 @@ function newHarness(): { ctx: DshContextLike; agent: RecordingAgent } {
   const agent: RecordingAgent = {
     id: 'agent-1',
     status: 'running',
-    session: { events: [] },
+    session: { snapshotEvents: () => [] },
     steered: [],
     followedUp: 0,
     followup(): void {

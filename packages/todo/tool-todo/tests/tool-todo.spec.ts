@@ -106,7 +106,7 @@ describe('dsh-tool-todo', () => {
     expect(result.isError).toBe(false)
     if (result.isError) throw new Error('expected todo_write success')
 
-    const logged = agent.session.events.findLast(e => e.type === 'todo/write')!.data.todos
+    const logged = agent.session.snapshotEvents().findLast(e => e.type === 'todo/write')!.data.todos
     expect(logged).toEqual([
       { content: 'plan', status: 'in_progress', activeForm: 'planning the work' },
       { content: 'build', status: 'pending' },

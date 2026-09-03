@@ -29,7 +29,7 @@ function createHarness(): {
   const agent: DshAgentLike = {
     id: 'parent-1',
     status: 'idle',
-    session: { events: [] },
+    session: { snapshotEvents: () => [] },
     followup: () => {},
     steer: () => {},
     cancel: () => {},

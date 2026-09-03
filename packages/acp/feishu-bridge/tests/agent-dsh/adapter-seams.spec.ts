@@ -133,7 +133,7 @@ describe('DshAgentAdapter service seams against real upstream services', () => {
     adapter.setDefaultMode('plan')
     await adapter.startSession('')
     // The controller committed a plan/mode event onto the real session.
-    expect(agents[0]!.session.events.some(e => e.type === 'plan/mode')).toBe(true)
+    expect(agents[0]!.session.snapshotEvents().some(e => e.type === 'plan/mode')).toBe(true)
   })
 
   it('contextSnapshot reads the real sessionProjections registry', async () => {

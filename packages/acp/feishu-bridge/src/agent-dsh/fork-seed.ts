@@ -10,6 +10,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
 /**
@@ -52,13 +53,13 @@ export function seedablePrefix(events: readonly SessionEvent[]): SessionEvent[] 
       const danglers = danglingCalls(events, openStepStart, cut)
       const time = at(events, cut).time
       const synthetics: SessionEvent[] = []
-      let seq = cut + 1
+      let seq = SessionSeq(cut + 1)
       for (const call of danglers) {
         synthetics.push(syntheticToolResult(seq, time, turn, step, call.callId, call.seq))
-        seq += 1
+        seq = SessionSeq(seq + 1)
       }
       synthetics.push({ type: 'step/end', seq, time, data: { turn, step } })
-      synthetics.push(syntheticTurnEnd(seq + 1, time, turn))
+      synthetics.push(syntheticTurnEnd(SessionSeq(seq + 1), time, turn))
       return [...events.slice(0, cut + 1), ...synthetics]
     }
   }
@@ -68,7 +69,7 @@ export function seedablePrefix(events: readonly SessionEvent[]): SessionEvent[] 
   if (lastStepEnd > turnStart) {
     return [
       ...events.slice(0, lastStepEnd + 1),
-      syntheticTurnEnd(lastStepEnd + 1, at(events, lastStepEnd).time, turn),
+      syntheticTurnEnd(SessionSeq(lastStepEnd + 1), at(events, lastStepEnd).time, turn),
     ]
   }
 
@@ -81,7 +82,7 @@ export function seedablePrefix(events: readonly SessionEvent[]): SessionEvent[] 
     if (events[i]?.type === 'user/message') cut = i
   }
   if (cut === -1) return events.slice(0, lastEnd + 1) // bare turn/start: drop it
-  return [...events.slice(0, cut + 1), syntheticTurnEnd(cut + 1, at(events, cut).time, turn)]
+  return [...events.slice(0, cut + 1), syntheticTurnEnd(SessionSeq(cut + 1), at(events, cut).time, turn)]
 }
 
 /**
@@ -110,9 +111,9 @@ function openStepCut(events: readonly SessionEvent[], openStepStart: number): nu
  */
 function danglingCalls(
   events: readonly SessionEvent[], openStepStart: number, cut: number,
-): { callId: string; seq: number }[] {
+): { callId: string; seq: SessionSeq }[] {
   const settled = new Set<string>()
-  const calls: { callId: string; seq: number }[] = []
+  const calls: { callId: string; seq: SessionSeq }[] = []
   for (const event of events.slice(openStepStart, cut + 1)) {
     if (event.type === 'tool/call' && typeof event.data.callId === 'string') {
       calls.push({ callId: event.data.callId, seq: event.seq })
@@ -137,7 +138,7 @@ function numberOf(value: unknown): number {
  * is fresh per event).
  */
 function syntheticToolResult(
-  seq: number, time: number, turn: number, step: number, callId: string, callSeq: number,
+  seq: SessionSeq, time: number, turn: number, step: number, callId: string, callSeq: SessionSeq,
 ): SessionEvent {
   return {
     type: 'tool/result',
@@ -165,7 +166,7 @@ function syntheticToolResult(
 }
 
 /** A synthetic turn/end closing the cut turn with the interrupted marker. */
-function syntheticTurnEnd(seq: number, time: number, turn: number): SessionEvent {
+function syntheticTurnEnd(seq: SessionSeq, time: number, turn: number): SessionEvent {
   return {
     type: 'turn/end',
     seq,

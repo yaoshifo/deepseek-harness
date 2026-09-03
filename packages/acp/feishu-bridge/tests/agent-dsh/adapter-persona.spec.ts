@@ -38,7 +38,7 @@ describe('DshAgentAdapter bare persona setup hook', () => {
           const agent = {
             id: `agent-${agents.length + 1}`,
             status: 'idle' as const,
-            session: { events: [] },
+            session: { snapshotEvents: () => [] },
             disposed: false,
             followup: () => {},
             steer: () => {},

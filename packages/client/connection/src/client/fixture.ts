@@ -143,7 +143,7 @@ interface FixtureSessionWireHeader {
   readonly cwd?: string
   readonly parentSession?: SessionId
   readonly seedLength?: number
-  readonly origin?: 'subagent'
+  readonly origin?: SessionOrigin
   readonly delegationDepth?: number
   readonly agentPreset?: string
 }

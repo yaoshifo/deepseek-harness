@@ -51,7 +51,7 @@ function createFakeAgent(id: string, sink: (sessionId: string, event: Record<str
   const agent: RecordedAgent & { status: 'idle' | 'running' } = {
     id,
     status: 'idle',
-    session: { events: [] },
+    session: { snapshotEvents: () => [] },
     followups: [] as unknown[],
     steers: [] as unknown[],
     cancels: [] as Array<{ cause: { kind: string }; keepInbox?: boolean | undefined }>,
@@ -743,7 +743,7 @@ describe('DshAgentAdapter userQuestions answerer', () => {
     policyContexts.push(ctx)
     await ctx.plugin(AgentRegistry)
     await ctx.plugin(UserQuestionService)
-    const agents: Array<RecordedAgent & { session: { id: string; events: never[] } }> = []
+    const agents: Array<RecordedAgent & { session: { id: string; snapshotEvents(): readonly never[] } }> = []
     let n = 0
     const registry: DshAgentsRegistryLike = {
       create: async () => {
@@ -751,7 +751,7 @@ describe('DshAgentAdapter userQuestions answerer', () => {
         const agent = {
           id: `agent-${n}`,
           status: 'idle' as const,
-          session: { id: `agent-${n}`, events: [] as never[] },
+          session: { id: `agent-${n}`, snapshotEvents: () => [] as never[] },
           followups: [] as unknown[],
           steers: [] as unknown[],
           cancels: [] as Array<{ cause: { kind: string }; keepInbox?: boolean | undefined }>,

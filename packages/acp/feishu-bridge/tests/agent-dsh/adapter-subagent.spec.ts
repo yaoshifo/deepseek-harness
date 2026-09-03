@@ -26,7 +26,7 @@ function createAgent(id: string, parentSession?: string): FakeAgent {
   return {
     id,
     status: 'idle',
-    session: { events: [], ...(parentSession !== undefined ? { header: { parentSession } } : {}) },
+    session: { snapshotEvents: () => [], ...(parentSession !== undefined ? { header: { parentSession } } : {}) },
     sessionRef: { id, ...(parentSession !== undefined ? { header: { parentSession } } : {}) },
     followup: () => {},
     steer: () => {},

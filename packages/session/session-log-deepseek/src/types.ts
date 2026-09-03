@@ -1,6 +1,7 @@
 /** Wire types for lossless incremental DeepSeek session-log upload. */
 
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type { SessionOrigin } from '@deepseek-ai/dsh-session/types'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 
 /** Version-0 Session header fields serialized on the external request wire. */
@@ -12,7 +13,7 @@ export interface DeepSeekSessionLogWireHeader {
   readonly parentSession?: string
   /** Exact inherited prefix length; absent for an unseeded Session. */
   readonly seedLength?: number
-  readonly origin?: 'subagent'
+  readonly origin?: SessionOrigin
   readonly delegationDepth?: number
   readonly agentPreset?: string
 }

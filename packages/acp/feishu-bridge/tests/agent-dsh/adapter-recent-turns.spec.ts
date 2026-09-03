@@ -8,6 +8,7 @@
  * @module dsh-feishu-bridge/tests-agent-dsh-adapter-recent-turns
  */
 import { describe, expect, it } from 'vitest'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { foldRecentTurns } from '../../src/agent-dsh/adapter.ts'
 import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentLike } from '../../src/agent-dsh/adapter.ts'
@@ -18,7 +19,7 @@ let messageSeq = 0
 function userEvent(text: string, kind = 'user'): SessionEvent {
   return {
     type: 'user/message',
-    seq: messageSeq++,
+    seq: SessionSeq(messageSeq++),
     time: 1_700_000_000_000 + messageSeq,
     data: {
       id: `m-${messageSeq}` as never,
@@ -32,7 +33,7 @@ function userEvent(text: string, kind = 'user'): SessionEvent {
 function assistantEvent(text: string): SessionEvent {
   return {
     type: 'assistant/message',
-    seq: messageSeq++,
+    seq: SessionSeq(messageSeq++),
     time: 1_700_000_000_000 + messageSeq,
     data: {
       turn: 1,
@@ -50,7 +51,7 @@ function assistantEvent(text: string): SessionEvent {
 function turnEnd(): SessionEvent {
   return {
     type: 'turn/end',
-    seq: messageSeq++,
+    seq: SessionSeq(messageSeq++),
     time: 1_700_000_000_000 + messageSeq,
     data: { turn: 1, reason: { kind: 'completed' } },
   }
@@ -107,7 +108,7 @@ function fakeHandle(events: SessionEvent[], id = 'cc-live-1'): { handle: DshAgen
   const agent: DshAgentLike = {
     id,
     status: 'idle',
-    session: { events },
+    session: { snapshotEvents: () => events },
     followup: () => {},
     steer: () => {},
     cancel: () => {},

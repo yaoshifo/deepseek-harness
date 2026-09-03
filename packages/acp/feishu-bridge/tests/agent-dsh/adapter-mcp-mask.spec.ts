@@ -96,7 +96,7 @@ function createHarness(scriptedReply?: string): Harness {
         const agent: FakeAgent = {
           id,
           status: 'idle',
-          session: { events: [] },
+          session: { snapshotEvents: () => [] },
           disposed: false,
           followup: () => {
             if (scriptedReply === undefined) return
@@ -124,7 +124,7 @@ function createHarness(scriptedReply?: string): Harness {
         const agent: FakeAgent = {
           id: typeof rid === 'string' ? rid : 'resumed',
           status: 'idle',
-          session: { events: [] },
+          session: { snapshotEvents: () => [] },
           disposed: false,
           followup: () => {},
           steer: () => {},

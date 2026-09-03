@@ -418,8 +418,8 @@ describe('SubagentRuntime.startContinuable', () => {
       request: { prompt: message('child task'), parent, cwd: '/tmp/dsh-cwd-override' },
     })
     await waitNoActivation(ctx, started.childId)
-    const loaded = await ctx.sessionPersistence.load(started.childId)
-    expect(loaded.meta.cwd).toBe('/tmp/dsh-cwd-override')
+    const loaded = await ctx.sessionPersistence.stat(started.childId)
+    expect(loaded?.header.cwd).toBe('/tmp/dsh-cwd-override')
   })
 
   it('rejects a relative continuable cwd override before reserving the child', async () => {

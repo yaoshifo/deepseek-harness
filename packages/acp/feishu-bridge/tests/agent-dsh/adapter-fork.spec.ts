@@ -17,7 +17,7 @@ import type { DshCreateOptionsLike, DshContextLike } from '../../src/agent-dsh/a
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 
 interface FakeSession {
-  events: SessionEvent[]
+  snapshotEvents(): SessionEvent[]
 }
 
 interface ParentAgent extends DshAgentLike {
@@ -33,7 +33,7 @@ function parentAgent(id: string, events: SessionEvent[]): ParentAgent {
   return {
     id,
     status: 'idle',
-    session: { events },
+    session: { snapshotEvents: () => events },
     followup: () => {},
     steer: () => {},
     cancel: () => {},

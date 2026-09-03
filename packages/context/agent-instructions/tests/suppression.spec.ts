@@ -51,7 +51,7 @@ async function seededRepo(): Promise<{ root: string; home: string }> {
 
 function stubAgent(cwd: string): Agent {
   const id = SessionId('s1')
-  const session = Session.create(id, [], { version: SESSION_FORMAT_VERSION, id, createdAt: 0, cwd })
+  const session = Session.create(id, [], { version: SESSION_FORMAT_VERSION, id, createdAt: 0, isSeeded: false, cwd })
   return {
     ctx: new Context(),
     id: SessionId('a1'),

@@ -34,7 +34,7 @@ interface Harness {
 
 /** A live parent agent with the given durable events. */
 function parentAgent(id: string, events: SessionEvent[]): DshAgentLike {
-  return { id, status: 'idle', session: { events }, followup: () => {}, steer: () => {}, cancel: () => {} }
+  return { id, status: 'idle', session: { snapshotEvents: () => events }, followup: () => {}, steer: () => {}, cancel: () => {} }
 }
 
 function createHarness(parents: DshAgentLike[] = []): Harness {
@@ -60,7 +60,7 @@ function createHarness(parents: DshAgentLike[] = []): Harness {
         const agent: OneShotAgent = {
           id,
           status: 'idle',
-          session: { events: [] },
+          session: { snapshotEvents: () => [] },
           followups: [],
           disposed: false,
           followup(message: unknown): void {
@@ -96,7 +96,7 @@ function createHarness(parents: DshAgentLike[] = []): Harness {
         const agent: OneShotAgent = {
           id,
           status: 'idle',
-          session: { events: [] },
+          session: { snapshotEvents: () => [] },
           followups: [],
           disposed: false,
           followup(): void {},

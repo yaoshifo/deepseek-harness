@@ -438,7 +438,7 @@ export function apply(ctx: Context, config: Config): void {
     ]
     for (const { scope, dir, limits: scopeLimits } of scopes) {
       if (scopeLimits === undefined) continue
-      if (hasMemoryInjection(agent.session.events, scope)) continue
+      if (hasMemoryInjection(agent.session.snapshotEvents(), scope)) continue
       let index
       try {
         index = await readMemoryIndex(dir, scopeLimits, signal)

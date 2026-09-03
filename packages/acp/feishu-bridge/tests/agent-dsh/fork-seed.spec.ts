@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { seedablePrefix } from '../../src/agent-dsh/fork-seed.ts'
 
@@ -186,17 +187,17 @@ describe('seedablePrefix', () => {
     // The incident log with full durable shapes: a completed turn, then a
     // flying turn whose open step blocks on an unanswered ask_user_question.
     const log: SessionEvent[] = [
-      { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+      { type: 'turn/start', seq: SessionSeq(0), time: 1, data: { turn: 1 } },
       {
-        type: 'user/message', seq: 1, time: 2, surfaceOp: 'append',
+        type: 'user/message', seq: SessionSeq(1), time: 2, surfaceOp: 'append',
         data: {
           id: msgId('1'), role: 'user', source: { kind: 'user' },
           content: [{ type: 'text', text: '完成率 = 实际平仓手数 / 理论平仓手数' }],
         },
       } as SessionEvent,
-      { type: 'step/start', seq: 2, time: 3, data: { turn: 1, step: 1 } },
+      { type: 'step/start', seq: SessionSeq(2), time: 3, data: { turn: 1, step: 1 } },
       {
-        type: 'assistant/message', seq: 3, time: 4, surfaceOp: 'append',
+        type: 'assistant/message', seq: SessionSeq(3), time: 4, surfaceOp: 'append',
         data: {
           message: {
             id: msgId('2'), role: 'assistant',
@@ -205,9 +206,9 @@ describe('seedablePrefix', () => {
           },
         },
       } as SessionEvent,
-      { type: 'tool/call', seq: 4, time: 5, data: { turn: 1, step: 1, callId: 'call-run', name: 'bash', arguments: '{}' } } as SessionEvent,
+      { type: 'tool/call', seq: SessionSeq(4), time: 5, data: { turn: 1, step: 1, callId: 'call-run', name: 'bash', arguments: '{}' } } as SessionEvent,
       {
-        type: 'tool/result', seq: 5, time: 6, surfaceOp: 'append', sourceEventSeqs: [4],
+        type: 'tool/result', seq: SessionSeq(5), time: 6, surfaceOp: 'append', sourceEventSeqs: [4],
         data: {
           turn: 1, step: 1,
           message: {
@@ -219,10 +220,10 @@ describe('seedablePrefix', () => {
           },
         },
       } as SessionEvent,
-      { type: 'step/end', seq: 6, time: 7, data: { turn: 1, step: 1 } },
-      { type: 'step/start', seq: 7, time: 8, data: { turn: 1, step: 2 } },
+      { type: 'step/end', seq: SessionSeq(6), time: 7, data: { turn: 1, step: 1 } },
+      { type: 'step/start', seq: SessionSeq(7), time: 8, data: { turn: 1, step: 2 } },
       {
-        type: 'assistant/message', seq: 8, time: 9, surfaceOp: 'append',
+        type: 'assistant/message', seq: SessionSeq(8), time: 9, surfaceOp: 'append',
         data: {
           message: {
             id: msgId('4'), role: 'assistant',
@@ -231,13 +232,13 @@ describe('seedablePrefix', () => {
           },
         },
       } as SessionEvent,
-      { type: 'tool/call', seq: 9, time: 10, data: { turn: 1, step: 2, callId: 'call-ask', name: 'ask_user_question', arguments: '{}' } } as SessionEvent,
+      { type: 'tool/call', seq: SessionSeq(9), time: 10, data: { turn: 1, step: 2, callId: 'call-ask', name: 'ask_user_question', arguments: '{}' } } as SessionEvent,
     ]
     const seed = seedablePrefix(log)
     const child = Session.create(SessionId('fork-child'), seed)
     // the constructor appends session/end-seed after the borrowed events
-    expect(child.events.slice(0, seed.length).map(e => e.type)).toEqual(seed.map(e => e.type))
-    expect(child.events.at(-1)!.type).toBe('session/end-seed')
+    expect(child.snapshotEvents().slice(0, seed.length).map(e => e.type)).toEqual(seed.map(e => e.type))
+    expect(child.snapshotEvents().at(-1)!.type).toBe('session/end-seed')
     expect(seed.at(-1)!.data).toEqual({ turn: 1, reason: { kind: 'interrupted' } })
   })
 })

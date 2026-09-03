@@ -950,10 +950,10 @@ describe('workspace instruction imports', () => {
       expect(derivedText(original)).toContain('old shared rule')
 
       await write(join(root, 'rules', 'common.md'), 'new shared rule')
-      const resumed = stubAgent(root, [...original.session.events])
+      const resumed = stubAgent(root, [...original.session.snapshotEvents()])
       await composeBaselinePrefix(ctx, resumed)
 
-      const update = resumed.session.events.findLast(event => event.type === 'user/message'
+      const update = resumed.session.snapshotEvents().findLast(event => event.type === 'user/message'
         && event.data.source.kind === 'agent-instructions'
         && event.data.source.baseline !== true)
       expect(update?.type === 'user/message' && update.data.source.kind === 'agent-instructions'
@@ -1558,7 +1558,7 @@ describe('workspace context request injection', () => {
         instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md'],
         candidateSelection: 'first-existing',
       })
-      const resumed = stubAgent(root, [...original.session.events])
+      const resumed = stubAgent(root, [...original.session.snapshotEvents()])
       await composeBaselinePrefix(resumedCtx, resumed)
 
       const baselines = baselineEvents(resumed)

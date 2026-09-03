@@ -77,7 +77,7 @@ async function setup(options: { load?: boolean; config?: tool.Config } = {}) {
     : await ctx.plugin(tool, options.config ?? { reportDelivery: 'quiet' })
   const adapter = new HeldAdapter()
   ctx.llm.registerAdapter(['mock'], adapter)
-  const parent = ctx.agentLoop.create(SessionId('parent'), { provider: 'mock', model: 'mock' })
+  const parent = await ctx.agentLoop.create(SessionId('parent'), { provider: 'mock', model: 'mock' })
   cleanups.push(async () => {
     adapter.release()
     await ctx.fiber.dispose()
@@ -140,7 +140,7 @@ function registerReportConflict(child: Agent): () => void {
 
 /** Reports already visible or still pending in one Agent. */
 function reports(agent: Agent): { id: string; text: string; sender: string }[] {
-  const visible = agent.session.events.flatMap(event => event.type === 'user/message' ? [event.data] : [])
+  const visible = agent.session.snapshotEvents().flatMap(event => event.type === 'user/message' ? [event.data] : [])
   return [...visible, ...agent.inbox.nextStep].flatMap((message) => {
     if (message.source.kind !== 'subagent-report') return []
     return [{
@@ -602,7 +602,8 @@ describe('dsh-tool-subagent-report result independence', () => {
     // continuation service's, carried under its own `subagent-settled` source.
     // Nothing turns the child's final answer into a report it did not send.
     expect(reports(parent)).toEqual([])
-    expect(userTexts((await ctx.sessionPersistence.load(started.childId)).events)).toEqual(['child task'])
+    const childLog = await ctx.sessionPersistence.open(started.childId, 'read')
+    expect(userTexts(await childLog.read())).toEqual(['child task'])
     expect(ctx.get('jobs')).toBeUndefined()
   })
 })

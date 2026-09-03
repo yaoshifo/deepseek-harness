@@ -96,7 +96,7 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY)('workspace context e2e: real mode
     live.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Imported instruction handshake?' }], source: { kind: 'user' } }))
     await waitForIdle(live.ctx, live.agent)
 
-    expect(finalText([...live.agent.session.events])).toContain(IMPORT_PROBE)
+    expect(finalText([...live.agent.session.snapshotEvents()])).toContain(IMPORT_PROBE)
   }, 120_000)
 
   it('loads a nested AGENTS.md after the real read tool touches a descendant file', async () => {

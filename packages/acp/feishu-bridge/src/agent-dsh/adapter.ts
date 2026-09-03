@@ -59,7 +59,7 @@ export interface DshAgentLike {
   readonly status: 'idle' | 'running'
   /** The agent's durable session log (fork seeds slice its seedable prefix). */
   readonly session: {
-    readonly events: readonly SessionEvent[]
+    snapshotEvents(): readonly SessionEvent[]
     readonly header?: { readonly parentSession?: unknown; readonly cwd?: unknown; readonly origin?: unknown }
   }
   followup(message: unknown): void
@@ -299,7 +299,7 @@ export function stripModelAlias(model: string): string {
  * array indexes, the slice stays a valid seed contiguous from seq 0.
  */
 function completedTurnPrefix(parent: DshAgentLike): SessionEvent[] {
-  return seedablePrefix(parent.session.events)
+  return seedablePrefix(parent.session.snapshotEvents())
 }
 
 /**
@@ -1893,7 +1893,7 @@ export class DshAgentAdapter {
     // Seed the recent-turn window from the log the agent carries (empty for a
     // fresh session, the resumed/forked history otherwise) and drop any cold
     // fold of this id — the live window is authoritative from here on.
-    session.seedRecentTurns(handle.agent.session.events)
+    session.seedRecentTurns(handle.agent.session.snapshotEvents())
     this.recentTurnsCache.delete(session.currentSessionID())
     this.sessionsByEngineKey.set(key, session)
     this.liveSessions.set(session.currentSessionID(), session)

@@ -42,14 +42,14 @@ function fakePersistence(stored: Map<string, { meta: SessionHeader; events: Sess
 }
 
 interface FakeAgent extends DshAgentLike {
-  session: { events: SessionEvent[] }
+  session: { snapshotEvents(): readonly SessionEvent[] }
 }
 
 function agentWith(events: SessionEvent[], id = ''): FakeAgent {
   return {
     id,
     status: 'idle',
-    session: { events },
+    session: { snapshotEvents: () => events },
     followup: () => {},
     steer: () => {},
     cancel: () => {},
@@ -86,6 +86,7 @@ function parentHeader(cwd: string): SessionHeader {
     version: 0,
     id: 'cc-20260822-100000-aaaa' as SessionHeader['id'],
     createdAt: 1724300000000,
+    isSeeded: false,
     cwd,
   }
 }

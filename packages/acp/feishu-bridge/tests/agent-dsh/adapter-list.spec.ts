@@ -25,6 +25,7 @@ function header(over: Partial<Omit<SessionHeader, 'id' | 'parentSession'>> & {
   const { id, parentSession, ...rest } = over
   return {
     version: 0,
+    isSeeded: false,
     cwd: PROJECT_DIR,
     ...rest,
     id: SessionId(id),
@@ -114,7 +115,7 @@ describe('DshAgentAdapter.listSessions persisted view', () => {
     const mkAgent = (id: string, cwd?: string): DshAgentLike => ({
       id,
       status: 'idle',
-      session: { events: [], ...(cwd !== undefined ? { header: { cwd } } : {}) },
+      session: { snapshotEvents: () => [], ...(cwd !== undefined ? { header: { cwd } } : {}) },
       followup: () => {},
       steer: () => {},
       cancel: () => {},
@@ -168,7 +169,7 @@ describe('DshAgentAdapter.listSessions persisted view', () => {
             agent: {
               id: 'one-shot-live',
               status: 'running',
-              session: { events: [], header: { origin: 'oneshot' } },
+              session: { snapshotEvents: () => [], header: { origin: 'oneshot' } },
               followup: () => {},
               steer: () => {},
               cancel: () => {},
@@ -227,7 +228,7 @@ describe('DshAgentAdapter.listSessions persisted view', () => {
     const parent: DshAgentLike = {
       id: 'cc-parent-1',
       status: 'idle',
-      session: { events: parentEvents },
+      session: { snapshotEvents: () => parentEvents },
       followup: () => {},
       steer: () => {},
       cancel: () => {},
@@ -240,7 +241,7 @@ describe('DshAgentAdapter.listSessions persisted view', () => {
             agent: {
               id: 'fork-side-1',
               status: 'running',
-              session: { events: [], header: { origin: options.meta?.origin } },
+              session: { snapshotEvents: () => [], header: { origin: options.meta?.origin } },
               followup: () => {},
               steer: () => {},
               cancel: () => {},

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { SessionSeq } from '@deepseek-ai/dsh-session'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   hasMemoryInjection,
@@ -126,7 +127,7 @@ describe('hasMemoryInjection', () => {
   function messageEvent(source: object): SessionEvent<'user/message'> {
     return {
       type: 'user/message',
-      seq: 0,
+      seq: SessionSeq(0),
       time: 0,
       data: createUserMessage({
         content: [{ type: 'text', text: 'x' }],
