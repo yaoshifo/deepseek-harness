@@ -28,7 +28,7 @@ import {
   readChatroomLedgerHeader,
 } from '../../src/engine/chatroom-ledger.ts'
 import { chatroomConfig } from '../../src/chatroom-config.ts'
-import { createStubAgent, createStubChatroomSpawner } from '../stubs/engine-stubs.ts'
+import { createStubAgent, createStubChatroomSpawner, confirmChatroomModePlain } from '../stubs/engine-stubs.ts'
 import type { Message, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import '../stubs/messages.js'
 
@@ -176,6 +176,10 @@ describe('cmdChatroom --continue', () => {
     handler?.(p, hubMsg(hub), args)
     await settle()
     await settle()
+    // A mode-undecided multi-role start now stops at the guided mode card;
+    // complete it as the plain roundtable (no-op on every other path).
+    await confirmChatroomModePlain(e, hub)
+    await settle()
   }
 
   it('seeds the prior pointer, defaults to the prior cast, and notes the prior in the ready card', async () => {
@@ -234,12 +238,12 @@ describe('cmdChatroom --continue', () => {
     expect(p.getSent().some(s => s.includes('旧议题'))).toBe(true)
   })
 
-  it('--continue without a topic is a usage error', async () => {
+  it('bare --continue without a ledger fails loud (no usage error: a prior is its topic)', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldRoles(['taleb']) })
     await runCmd(e, p, 'test:hub:user-1', ['--continue'])
     expect(p.count).toBe(0)
-    expect(p.getSent().some(s => s.includes('用法'))).toBe(true)
+    expect(p.getSent().some(s => s.includes('需要账本'))).toBe(true)
   })
 })
