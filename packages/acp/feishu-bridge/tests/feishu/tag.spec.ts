@@ -160,6 +160,101 @@ describe('applySpawnDirTag', () => {
     // The empty cache never persists (save skips empty maps).
     await expect(readFile(join(dir, 'mine_tag_cache.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
+  it('keeps the bound id when the verify readback query fails', async () => {
+    // 2026-09-02 oc_e51a: the frequency-limited readback (HTTP 400, code
+    // 99991400) read as "bind did not verify" and evicted ids whose binds
+    // had actually landed. A failed query is unknown, not not-attached.
+    const tagName = 'research'
+    const freshID = '7673094447147518944'
+    const relationCalls: string[] = []
+    let createCalls = 0
+    const api: TagApi = {
+      async createTag() { createCalls++; return { code: 0, id: freshID } },
+      async getTagRelation(chatId: string) {
+        relationCalls.push(chatId)
+        throw Object.assign(new Error('Request failed with status code 400'), {
+          response: { data: { code: 99991400, msg: 'request trigger frequency limit' } },
+        })
+      },
+      async createTagRelation() { return { code: 0 } },
+      async updateTagRelation() { return { code: 0 } },
+    }
+    const p = newManager(api, { dirTagName: tagName })
+
+    await p.applySpawnDirTag('oc_spawned', tagName)
+
+    expect(p.cachedTagID(tagName)).toBe(freshID)
+    expect(createCalls).toBe(1)
+    expect(relationCalls).toHaveLength(1)
+  })
+})
+
+describe('discoverTagFromSpawnedChats under the API frequency limit', () => {
+  const discoveredID = '7673094447147518944'
+  function scanApi(opts: {
+    carries?: string
+    limitOn?: string
+  }): TagApi & { relationCalls: string[] } {
+    const relationCalls: string[] = []
+    const attached = new Set<string>()
+    return {
+      relationCalls,
+      async createTag() { return { code: 402, msg: 'duplicate name in tenant' } },
+      async getTagRelation(chatId: string) {
+        relationCalls.push(chatId)
+        if (opts.limitOn === chatId) {
+          throw Object.assign(new Error('Request failed with status code 400'), {
+            response: { data: { code: 99991400, msg: 'request trigger frequency limit' } },
+          })
+        }
+        const tags: Array<{ id?: string; name?: string }> = []
+        if (opts.carries === chatId || attached.has(chatId)) tags.push({ id: discoveredID, name: 'research' })
+        return { code: 0, tags }
+      },
+      async createTagRelation(chatId: string, tagIds: string[]) {
+        if (tagIds.includes(discoveredID)) attached.add(chatId)
+        return { code: 0 }
+      },
+      async updateTagRelation() { return { code: 0 } },
+    }
+  }
+
+  it('paces the scan through the shared limiter and resolves on the carrying chat', async () => {
+    const api = scanApi({ carries: 'oc_c' })
+    const waits: number[] = []
+    const p = newManager(api, {
+      dirTagName: 'research',
+      spawnedChatIDs: () => ['oc_a', 'oc_b', 'oc_c'],
+      scanLimiter: { wait: () => { waits.push(1); return Promise.resolve() } },
+    })
+
+    await p.applySpawnDirTag('oc_spawned', 'research')
+
+    // Three paced discover reads, then the unpaced bind-verify readback.
+    expect(api.relationCalls).toEqual(['oc_a', 'oc_b', 'oc_c', 'oc_spawned'])
+    expect(waits).toHaveLength(3)
+    expect(p.cachedTagID('research')).toBe(discoveredID)
+  })
+
+  it('aborts the scan at the first frequency-limited read', async () => {
+    const api = scanApi({ limitOn: 'oc_b' })
+    const waits: number[] = []
+    const p = newManager(api, {
+      dirTagName: 'research',
+      spawnedChatIDs: () => ['oc_a', 'oc_b', 'oc_c'],
+      scanLimiter: { wait: () => { waits.push(1); return Promise.resolve() } },
+    })
+
+    await p.applySpawnDirTag('oc_spawned', 'research')
+
+    // oc_b's 400-with-99991400 stops the scan before oc_c; scanning on only
+    // deepens the drained quota and fails anyway (2026-09-02 oc_e51a: 1388
+    // consecutive rejected reads across every spawned chat).
+    expect(api.relationCalls).toEqual(['oc_a', 'oc_b'])
+    expect(waits).toHaveLength(2)
+    expect(p.cachedTagID('research')).toBeUndefined()
+  })
 })
 
 describe('legacy tag cache migration', () => {

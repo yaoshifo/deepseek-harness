@@ -15,9 +15,23 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 import { atomicWriteFile } from '../atomicwrite.ts'
+import { TokenBucketRateLimiter, feishuBusinessCode, feishuFrequencyLimitCode } from './retry.ts'
 
 /** Default active-tag name applied to spawned groups (Go core.ActiveTagName). */
 export const activeTagName = '❤️'
+
+/**
+ * Mutable pacing for the spawned-chat discover scan so tests can shrink it
+ * (mirrors retryTiming): a token bucket with this interval and burst gates
+ * every relation read, keeping a full ~200-chat scan inside the im/v2
+ * tag-relation method's app rate limit.
+ */
+export const tagScanTiming = {
+  /** Minimum spacing between discover reads. */
+  intervalMs: 400,
+  /** Reads that pass immediately before the spacing kicks in. */
+  burst: 2,
+}
 
 /**
  * Per-bot active-tag name candidates tried in order: Feishu tenant-tag names
@@ -172,6 +186,12 @@ export interface TagManagerOptions {
   activeTagOverride?: string
   /** Registered spawned-chat ids for tag discovery scans. */
   spawnedChatIDs?: () => string[]
+  /**
+   * Pacing gate for the spawned-chat discover scan; defaults to a token
+   * bucket built from {@link tagScanTiming}. Injectable so tests observe
+   * the pacing without sleeping.
+   */
+  scanLimiter?: { wait(): Promise<void> }
 }
 
 /**
@@ -181,6 +201,7 @@ export interface TagManagerOptions {
 export class TagManager {
   private readonly o: TagManagerOptions
   private readonly tagIDCache = new Map<string, string>()
+  private readonly scanLimiter: { wait(): Promise<void> }
   private activeTagNameField: string
 
   /**
@@ -196,6 +217,7 @@ export class TagManager {
 
   constructor(options: TagManagerOptions) {
     this.o = options
+    this.scanLimiter = options.scanLimiter ?? new TokenBucketRateLimiter(tagScanTiming.intervalMs, tagScanTiming.burst)
     this.dirTagName = options.dirTagName ?? ''
     this.activeTagNameField = options.activeTagOverride?.trim() ?? ''
   }
@@ -307,7 +329,10 @@ export class TagManager {
   /**
    * Last-resort tag discovery: scan the spawned chats' tag relations for a tag
    * whose sanitized name matches. The only way to find an existing tag's id by
-   * name — im/v2 has no Tag.List/Get.
+   * name — im/v2 has no Tag.List/Get. Reads pace through the shared scan
+   * limiter, and the first frequency-limited rejection aborts the scan:
+   * pressing on drains the app's rate budget further while every subsequent
+   * read fails anyway (2026-09-02 oc_e51a: 1388 consecutive rejected reads).
    * @param tagName - Tag name to find.
    * @returns The tag id, or empty.
    */
@@ -317,6 +342,7 @@ export class TagManager {
     if (chatIDs.length === 0) return ''
     const target = sanitizeTagName(tagName)
     for (const chatID of chatIDs) {
+      await this.scanLimiter.wait()
       try {
         const resp = await this.o.api.getTagRelation(chatID)
         if (resp.code !== undefined && resp.code !== 0) continue
@@ -325,6 +351,10 @@ export class TagManager {
           if (sanitizeTagName(t.name) === target) return t.id
         }
       } catch (err) {
+        if (feishuBusinessCode(err) === feishuFrequencyLimitCode) {
+          console.warn(`feishu: tag discover scan hit the API frequency limit; stopping (tag ${tagName}, chat_id ${chatID})`)
+          return ''
+        }
         console.warn(`feishu: discover tag query failed (chat_id ${chatID}, tag ${tagName}): ${String(err)}`)
       }
     }
@@ -397,9 +427,19 @@ export class TagManager {
       if (id === '' || tried.has(id)) return false
       tried.add(id)
       await this.tagChat(chatID, [id])
-      if (await this.chatHasActiveTag(chatID)) {
+      const verified = await this.chatHasActiveTag(chatID)
+      if (verified === true) {
         this.tagIDCache.set(name, id)
         await this.save()
+        return true
+      }
+      if (verified === undefined) {
+        // The bind returned code=0; only the readback failed. Keep the id
+        // instead of blacklisting it on a query failure (see
+        // applySpawnDirTag's verify-unknown handling).
+        this.tagIDCache.set(name, id)
+        await this.save()
+        console.warn(`feishu: active tag verify query failed; keeping the bound id (id ${id}, chat_id ${chatID})`)
         return true
       }
       this.markTagUnbindable(name, id)
@@ -560,19 +600,22 @@ export class TagManager {
    * verified by reading the relation back.
    * @param chatID - Chat ID.
    * @param tagID - Tag id to look for.
-   * @returns True when the chat carries the tag; false on query failure.
+   * @returns True when the chat carries the tag; false when the readback
+   *   succeeded and excludes the id; undefined when the query itself failed —
+   *   verification unknown, which callers must not read as not-attached (the
+   *   2026-09-02 oc_e51a run evicted ids whose binds had landed this way).
    */
-  async chatHasTagID(chatID: string, tagID: string): Promise<boolean> {
+  async chatHasTagID(chatID: string, tagID: string): Promise<boolean | undefined> {
     let resp: Awaited<ReturnType<TagApi['getTagRelation']>>
     try {
       resp = await this.o.api.getTagRelation(chatID)
     } catch (err) {
       console.warn(`feishu: check spawn tag failed (chat_id ${chatID}): ${String(err)}`)
-      return false
+      return undefined
     }
     if (resp.code !== undefined && resp.code !== 0) {
-      console.warn(`feishu: spawn tag check query failed; assuming not attached (chat_id ${chatID}, code ${resp.code}, msg ${resp.msg ?? ''})`)
-      return false
+      console.warn(`feishu: spawn tag check query failed; verification unknown (chat_id ${chatID}, code ${resp.code}, msg ${resp.msg ?? ''})`)
+      return undefined
     }
     return resp.tags.some(t => t.id === tagID)
   }
@@ -580,21 +623,22 @@ export class TagManager {
   /**
    * Whether the chat still carries the active (heart) tag.
    * @param chatID - Chat ID.
-   * @returns True when the chat carries the active tag; false on query failure.
+   * @returns True when the chat carries the active tag; false on a successful
+   *   readback without it; undefined when the query failed (unknown).
    */
-  async chatHasActiveTag(chatID: string): Promise<boolean> {
+  async chatHasActiveTag(chatID: string): Promise<boolean | undefined> {
     let resp: Awaited<ReturnType<TagApi['getTagRelation']>>
     try {
       resp = await this.o.api.getTagRelation(chatID)
     } catch (err) {
       console.warn(`feishu: check active tag failed (chat_id ${chatID}): ${String(err)}`)
-      return false
+      return undefined
     }
     if (resp.code !== undefined && resp.code !== 0) {
       // A GET failure (e.g. missing scope) must not read as a clean
-      // "not attached" — surface it, then assume not attached.
-      console.warn(`feishu: active tag check query failed; assuming not attached (chat_id ${chatID}, code ${resp.code}, msg ${resp.msg ?? ''})`)
-      return false
+      // "not attached" — surface it, then report the unknown.
+      console.warn(`feishu: active tag check query failed; verification unknown (chat_id ${chatID}, code ${resp.code}, msg ${resp.msg ?? ''})`)
+      return undefined
     }
     return resp.tags.some(t => t.name === this.activeTagName())
   }
@@ -625,18 +669,30 @@ export class TagManager {
     const id = await resolve()
     if (id === '') return
     await this.tagChat(chatID, [id])
-    if (await this.chatHasTagID(chatID, id)) return
+    const verified = await this.chatHasTagID(chatID, id)
+    if (verified === true) return
+    if (verified === undefined) {
+      // The bind returned code=0; only the readback failed. Keeping the id
+      // beats evicting it on a query failure — under the API frequency limit
+      // a false "did not take effect" once drained the whole cache.
+      console.warn(`feishu: spawn tag verify query failed; keeping the bound id (chat_id ${chatID}, tag ${tagName}, tag_id ${id})`)
+      return
+    }
     console.warn(`feishu: spawn tag bind did not take effect, evicting cached id and re-resolving (chat_id ${chatID}, tag ${tagName}, tag_id ${id})`)
     this.markTagUnbindable(tagName, id)
     await this.evictTagCacheEntry(tagName)
     const fresh = await resolve()
     if (fresh === '') return
     await this.tagChat(chatID, [fresh])
-    if (!await this.chatHasTagID(chatID, fresh)) {
-      console.warn(`feishu: spawn tag bind still not effective after retry (chat_id ${chatID}, tag ${tagName}, tag_id ${fresh})`)
-      this.markTagUnbindable(tagName, fresh)
-      await this.evictTagCacheEntry(tagName)
+    const freshVerified = await this.chatHasTagID(chatID, fresh)
+    if (freshVerified === true) return
+    if (freshVerified === undefined) {
+      console.warn(`feishu: spawn tag verify query failed; keeping the rebound id (chat_id ${chatID}, tag ${tagName}, tag_id ${fresh})`)
+      return
     }
+    console.warn(`feishu: spawn tag bind still not effective after retry (chat_id ${chatID}, tag ${tagName}, tag_id ${fresh})`)
+    this.markTagUnbindable(tagName, fresh)
+    await this.evictTagCacheEntry(tagName)
   }
 
   /**
