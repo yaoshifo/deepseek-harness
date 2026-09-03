@@ -48,6 +48,8 @@ export interface ChatroomFeatureState {
   chatroomResearchMaxRounds?: number
   /** Monotonic per-hub gather-round counter. */
   chatroomGatherSeq?: number
+  /** 1-based count of chatrooms started on this hub; run ≥ 2 gets its own ledger dir. */
+  chatroomLedgerRun?: number
   /** Shared uv venv path for research assistants. */
   researchVenv?: string
   /** Hub-side pending role name for a routed human reply. */
@@ -128,6 +130,10 @@ export class ChatroomSessionState {
   /** Monotonic per-hub gather-round counter. */
   get chatroomGatherSeq(): number { return this.section.chatroomGatherSeq ?? 0 }
   set chatroomGatherSeq(value: number) { this.section.chatroomGatherSeq = value }
+
+  /** 1-based count of chatrooms started on this hub (0 before the first). */
+  get chatroomLedgerRun(): number { return this.section.chatroomLedgerRun ?? 0 }
+  set chatroomLedgerRun(value: number) { this.section.chatroomLedgerRun = value }
 
   /** Shared uv venv path research assistants reuse. */
   get researchVenv(): string { return this.section.researchVenv ?? '' }
@@ -216,6 +222,7 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
       ...(s.chatroomResearchRound !== 0 ? { chatroomResearchRound: s.chatroomResearchRound } : {}),
       ...(s.chatroomResearchMaxRounds !== 0 ? { chatroomResearchMaxRounds: s.chatroomResearchMaxRounds } : {}),
       ...(s.chatroomGatherSeq !== 0 ? { chatroomGatherSeq: s.chatroomGatherSeq } : {}),
+      ...(s.chatroomLedgerRun !== 0 ? { chatroomLedgerRun: s.chatroomLedgerRun } : {}),
       ...(s.researchVenv !== '' ? { researchVenv: s.researchVenv } : {}),
       ...(s.pendingHumanQuestionRole !== '' ? { pendingHumanQuestionRole: s.pendingHumanQuestionRole } : {}),
       ...(pendingGatherData !== undefined ? { pendingGatherData } : {}),
@@ -236,6 +243,7 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
     t.chatroomResearchRound = f.chatroomResearchRound
     t.chatroomResearchMaxRounds = f.chatroomResearchMaxRounds
     t.chatroomGatherSeq = f.chatroomGatherSeq
+    t.chatroomLedgerRun = f.chatroomLedgerRun
     // The chat's provisioned research assistant.
     t.researchAssistantKey = f.researchAssistantKey
     t.researchAssistant = f.researchAssistant

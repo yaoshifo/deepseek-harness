@@ -1,5 +1,5 @@
 /**
- * The chatroom package's message subtable: the 73 chatroom keys (72
+ * The chatroom package's message subtable: the 77 chatroom keys (76
  * `chatroom_*` plus the bare `chatroom` command-description key) moved
  * verbatim from the feishu-bridge main table. Registered once per process in
  * the plugin apply through the bridge's `registerMessages`, so every engine
@@ -13,7 +13,7 @@ import type { Language } from '@deepseek-ai/dsh-feishu-bridge/exports'
 /** The English messages of the chatroom subtable. */
 const en: Record<string, string> = {
   chatroom: 'Start a multi-role roundtable discussion',
-  chatroom_usage: 'Usage: `/chatroom <topic>`\n       `/chatroom <role1,role2> <topic>`\n       `/chatroom --roles <a,b,c> <topic>`\nStarts a multi-role roundtable. Omit roles to use all roles under roles_dir; omit the topic too to let the moderator suggest topics.\nExample: `/chatroom taleb,munger should I quit my job`',
+  chatroom_usage: 'Usage: `/chatroom <topic>`\n       `/chatroom <role1,role2> <topic>`\n       `/chatroom --roles <a,b,c> <topic>`\n       `/chatroom --continue[=<prior topic|dir>] <topic>`\nStarts a multi-role roundtable. Omit roles to use all roles under roles_dir; omit the topic too to let the moderator suggest topics. --continue inherits the matched past chatroom as prior context (unverified until the moderator screens it) and reuses its cast when no roles are named.\nExample: `/chatroom taleb,munger should I quit my job`',
   chatroom_ready: 'Chatroom role ready',
   chatroom_topic_label: 'Topic:',
   chatroom_unknown_role: 'Role %s is not set up. Create it by adding a CLAUDE.md under %s/ in your thinkers directory.',
@@ -85,12 +85,16 @@ const en: Record<string, string> = {
   chatroom_ask_gather_blocked: 'A parallel gather is in progress — do not ask yet: the role\'s reply would be swallowed by or lost to this round\'s barrier. Ask after the round wakes you, or fold the question into the next gather task.',
   chatroom_already_running: 'A chatroom is already running in this chat. Send /chatroom stop before starting a new one.',
   chatroom_end_moderator_only: 'Only the chatroom moderator may end the chatroom; the calling session is a role or assistant group. Ask the user to send /chatroom stop to interrupt.',
+  chatroom_continue_no_ledger: 'Continuing a past chatroom requires the ledger (moderator_dir is not configured).',
+  chatroom_continue_no_match: 'No past chatroom matches "%s". Recent topics: %s',
+  chatroom_history_empty: '(no recorded chatrooms yet)',
+  chatroom_inherit_note: 'Prior context: continuing from "%s" (unverified — the moderator screens it before adopting)',
 }
 
 /** The Simplified-Chinese messages of the chatroom subtable. */
 const zh: Record<string, string> = {
   chatroom: '开启多角色圆桌讨论',
-  chatroom_usage: '用法：`/chatroom <议题>`\n      `/chatroom <角色1,角色2> <议题>`\n      `/chatroom --roles <a,b,c> <议题>`\n开启多角色圆桌讨论。不指定角色则用 roles_dir 下全部角色；不带题目则由主持人推荐候选题目（随便聊聊）。\n示例：`/chatroom taleb,munger 是否该裸辞`',
+  chatroom_usage: '用法：`/chatroom <议题>`\n      `/chatroom <角色1,角色2> <议题>`\n      `/chatroom --roles <a,b,c> <议题>`\n      `/chatroom --continue[=<历史议题|目录>] <议题>`\n开启多角色圆桌讨论。不指定角色则用 roles_dir 下全部角色；不带题目则由主持人推荐候选题目（随便聊聊）。--continue 把匹配到的历史聊天室作为前情延续（未经本次讨论验证，主持人甄别后才采信），未指定角色时沿用其角色阵容。\n示例：`/chatroom taleb,munger 是否该裸辞`',
   chatroom_ready: '聊天室角色就绪',
   chatroom_topic_label: '议题：',
   chatroom_unknown_role: '角色 %s 尚未创建。请在 thinkers 目录下建 `%s/CLAUDE.md`。',
@@ -162,6 +166,10 @@ const zh: Record<string, string> = {
   chatroom_ask_gather_blocked: '并行收集进行中——先不要 ask：角色的回复会被本轮屏障吞掉或丢失。等收齐/超时唤醒你后再问，或把追问并入下一轮 gather 任务。',
   chatroom_already_running: '这个群已有聊天室在进行中；请先发 /chatroom stop 中断后再开新聊天室。',
   chatroom_end_moderator_only: '只有聊天室主持人可以收尾；当前会话是角色/助手群。需要中断请让用户发送 /chatroom stop。',
+  chatroom_continue_no_ledger: '延续历史聊天室需要账本（未配置 moderator_dir）。',
+  chatroom_continue_no_match: '没有匹配 "%s" 的历史聊天室。最近的议题：%s',
+  chatroom_history_empty: '（暂无历史聊天室）',
+  chatroom_inherit_note: '前情：延续自「%s」（未经本次讨论验证，主持人甄别后才采信）',
 }
 
 /** The chatroom message subtable handed to the bridge's registerMessages. */
@@ -248,6 +256,10 @@ export const Msg = {
   ChatroomAskGatherBlocked: 'chatroom_ask_gather_blocked',
   ChatroomAlreadyRunning: 'chatroom_already_running',
   ChatroomEndModeratorOnly: 'chatroom_end_moderator_only',
+  ChatroomContinueNoLedger: 'chatroom_continue_no_ledger',
+  ChatroomContinueNoMatch: 'chatroom_continue_no_match',
+  ChatroomHistoryEmpty: 'chatroom_history_empty',
+  ChatroomInheritNote: 'chatroom_inherit_note',
   SpawnNotSupported: 'spawn_not_supported',
 } as const
 

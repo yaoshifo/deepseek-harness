@@ -12,6 +12,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildChatroomSystemPrompt,
+  chatroomLedgerReadPrompt,
+  chatroomResearchRolePrompt,
   loadFlattenedPersona,
 } from '../src/engine/chatroom-persona.ts'
 
@@ -74,10 +76,11 @@ describe('buildChatroomSystemPrompt', () => {
     // sentinel resolves server-side (a model copying hex keys drops
     // characters — 2026-08-25 oc_ac5db incident).
     expect(text).toContain('child: "assistant"')
-    // Check-before-fetch: the butler pre-fetches common baselines into
-    // data/core/ and the ledger; roles must reuse them instead of
-    // re-fetching the same public pages per role.
-    for (const want of ['先查再拉', 'DATA_LEDGER', 'data/core/', 'data/<角色名>']) {
+    // Check-screen-fetch: the butler pre-fetches common baselines into
+    // data/core/ and the ledger; roles must judge the three ledger columns
+    // (source/scope/fetched-at) before reusing, spot-check load-bearing
+    // data, and re-fetch suspect datasets instead of reusing them.
+    for (const want of ['先查再甄别再拉', '三列', 'spot-check', '登记新行', 'DATA_LEDGER', 'data/core/', 'data/<角色名>']) {
       expect(text).toContain(want)
     }
   })
@@ -97,5 +100,21 @@ describe('buildChatroomSystemPrompt', () => {
     expect(text).toContain('1:1 回答用户')
     expect(text).not.toContain('共享账本——回答前先读')
     expect(text).not.toContain('多角色聊天室的一个参与者')
+  })
+})
+
+describe('cross-chatroom sharing disciplines', () => {
+  it('ledger-read prompt names REPORT.md and marks the prior section as an unverified pointer', () => {
+    const p = chatroomLedgerReadPrompt('/tmp/ledger')
+    expect(p).toContain('REPORT.md')
+    expect(p).toContain('前情')
+    expect(p).toContain('未经本次讨论验证')
+  })
+
+  it('research role prompt carries the three-column reuse discipline', () => {
+    const p = chatroomResearchRolePrompt()
+    expect(p).toContain('三列')
+    expect(p).toContain('spot-check')
+    expect(p).toContain('登记新行')
   })
 })

@@ -8,7 +8,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -25,6 +25,14 @@ import { registerChatroomTool } from '../../src/tools/chatroom.ts'
 import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { applyChatroomEngineConfig } from '../../src/chatroom-config.ts'
 import { beginChatroomTopicPick } from '../../src/engine/chatroom-pick.ts'
+import {
+  chatroomLedgerDir,
+  initChatroomLedger,
+  readChatroomLedgerHeader,
+  updateChatroomReport,
+  writeChatroomLedgerEnded,
+} from '../../src/engine/chatroom-ledger.ts'
+import { chatroomResearchWorkspace } from '../../src/engine/chatroom.ts'
 import { createStubAgent, createStubChatroomSpawner, createStubSpawnerPlatform, newStubMessage } from '../stubs/engine-stubs.ts'
 import { chatroomState } from '../../src/chatroom-state.ts'
 import '../stubs/messages.js'
@@ -113,7 +121,7 @@ describe('feishu_bridge_chatroom registration', () => {
       properties?: { action?: { enum?: string[] } }
     }
     expect(schema.properties?.action?.enum).toEqual(
-      ['start', 'ask', 'gather', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note'],
+      ['start', 'ask', 'gather', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note', 'history'],
     )
     test.dispose()
     test.dispose() // idempotent
@@ -285,6 +293,97 @@ describe('feishu_bridge_chatroom end moderator guard', () => {
     expect(v.status).toBe('ok')
     expect(v.message).toContain('Chatroom ended')
     expect(chatroomState(engine.sessions.getOrCreateActive(roleKey)).chatroomHubKey).toBe('')
+    test.dispose()
+  })
+})
+
+describe('feishu_bridge_chatroom cross-chatroom sharing', () => {
+  /** An engine with a spawner, a moderator home, and one role. */
+  async function sharingEngine(): Promise<{ engine: Engine; home: string; rolesDir: string }> {
+    const engine = new Engine('chatroom-test', createStubAgent(), [createStubChatroomSpawner()], '', 'zh')
+    engine.setProjectStateStore(new ProjectStateStore(''))
+    const home = await mkdtemp(join(tmpdir(), 'fb-tool-mod-'))
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-tool-roles-'))
+    await mkdir(join(rolesDir, 'taleb'), { recursive: true })
+    await writeFile(join(rolesDir, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    applyChatroomEngineConfig(engine, { rolesDir, moderatorDir: home, researchWorkspace: home }, undefined)
+    return { engine, home, rolesDir }
+  }
+
+  it('history fails loud without a moderator dir', async () => {
+    const engine = newEngine()
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const res = await test.execute({ action: 'history' })
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('moderator')
+    test.dispose()
+  })
+
+  it('history lists ledgers newest-first with status and reports, and the research-data section when the workspace has a fetch ledger', async () => {
+    const { engine, home } = await sharingEngine()
+    const oldDir = chatroomLedgerDir(home, 'feishu:oc_old:ou_1')
+    await initChatroomLedger(oldDir, '老议题', ['taleb'])
+    await writeChatroomLedgerEnded(oldDir, 'ended')
+    const newDir = chatroomLedgerDir(home, 'feishu:oc_new:ou_1')
+    await initChatroomLedger(newDir, '新议题', ['taleb', 'munger'])
+    await updateChatroomReport(newDir, '结论')
+    const ws = chatroomResearchWorkspace(engine)
+    await mkdir(join(ws, 'data', 'core'), { recursive: true })
+    await writeFile(join(ws, 'DATA_LEDGER.md'), '| 数据 | 文件 | 时间 | 来源 | 抓取者 |\n', 'utf8')
+
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const v = value(await test.execute({ action: 'history' }))
+    expect(v.message.indexOf('新议题')).toBeLessThan(v.message.indexOf('老议题'))
+    expect(v.message).toContain('unfinished')
+    expect(v.message).toContain('ended')
+    expect(v.message).toContain('REPORT.md')
+    expect(v.message).toContain('DATA_LEDGER.md')
+    test.dispose()
+  })
+
+  it('history with no recorded chatrooms is an empty ok, not an error', async () => {
+    const { engine } = await sharingEngine()
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const v = value(await test.execute({ action: 'history' }))
+    expect(v.message).toContain('No past chatrooms')
+    test.dispose()
+  })
+
+  it('start with inherit seeds the prior pointer into the new ledger', async () => {
+    const { engine, home } = await sharingEngine()
+    const priorDir = chatroomLedgerDir(home, 'feishu:oc_prior:ou_1')
+    await initChatroomLedger(priorDir, '旧议题', ['taleb'])
+
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const v = value(await test.execute({ action: 'start', message: '新议题', roles: 'taleb', inherit: '旧议题' }))
+    expect(v.message).toContain('旧议题')
+    const header = readChatroomLedgerHeader(chatroomLedgerDir(home, 'feishu:oc_hub:ou_1'))
+    expect(header?.prior).toContain('旧议题')
+    test.dispose()
+  })
+
+  it('start with an unresolvable inherit fails loud with candidates', async () => {
+    const { engine, home } = await sharingEngine()
+    await initChatroomLedger(chatroomLedgerDir(home, 'feishu:oc_prior:ou_1'), '旧议题', ['taleb'])
+
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const res = await test.execute({ action: 'start', message: '新议题', roles: 'taleb', inherit: '不存在' })
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('不存在')
+    expect(errorText(res)).toContain('旧议题')
+    test.dispose()
+  })
+
+  it('note with section report writes REPORT.md into the caller hub ledger', async () => {
+    const { engine, home } = await sharingEngine()
+    const hubKey = 'feishu:oc_hub:ou_1'
+    await initChatroomLedger(chatroomLedgerDir(home, hubKey), '议题', ['taleb'])
+
+    const test = await harness(() => ({ engine, sessionKey: hubKey }))
+    const v = value(await test.execute({ action: 'note', message: '收尾总结', section: 'report' }))
+    expect(v.status).toBe('ok')
+    const rep = await readFile(join(chatroomLedgerDir(home, hubKey), 'REPORT.md'), 'utf8')
+    expect(rep).toContain('收尾总结')
     test.dispose()
   })
 })
