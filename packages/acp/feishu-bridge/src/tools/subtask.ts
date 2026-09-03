@@ -50,6 +50,7 @@ const DESCRIPTION =
   + 'When you begin executing an approved plan, its independently-marked groups are parallel work: '
   + 'spawn them together in one message instead of implementing them serially yourself; '
   + 'execute serially dependent groups yourself in order. '
+  + 'Judge independence by whether the groups span disjoint subsystems or directions, not by how few commands could chain them. '
   + 'spawn: dispatch one self-contained task brief (the child runs in parallel and wakes you '
   + 'with its result when it reports back); default worktree isolation is "auto" — isolated '
   + 'when the child shares your repository; fork=true copies your conversation context into '

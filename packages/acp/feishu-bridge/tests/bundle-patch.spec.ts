@@ -76,6 +76,12 @@ describe('bridge bundle patch', () => {
     expect(text).toContain('2–5 independent angles')
     expect(text).toContain('Keep exploration serial only for a single-focus question')
     expect(text).toContain('state the execution order — independent groups dispatched together as parallel subtask spawns when execution begins, serially dependent groups executed in order')
+    // The single-focus exemption is sized by answer breadth, not by how few
+    // commands could skim the surface: a broad merge review is several
+    // investigations (2026-09-03: a 300-commit merge review was judged
+    // single-focus and explored serially).
+    expect(text).toContain('broad merge or release review')
+    expect(text).toContain('not by how few commands could skim it')
     // A rejection opens a discussion round: answer in the reply, end the turn,
     // re-present only on the user's request (2026-09 plan-rejection UX).
     expect(text).toContain('the feedback opens a discussion round')

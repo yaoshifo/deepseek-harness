@@ -15,7 +15,7 @@ Status: implemented
   2. 计划模板的标注在两份有门禁的拷贝（bundle base patch + bridge patch）里升级为命令式执行顺序声明："state the execution order — independent groups dispatched together as parallel subtask spawns when execution begins, serially dependent groups executed in order"。执行策略成为用户审批的计划内容；`bundle-patch.spec` 钉住该句并维持 base≡bridge lockstep。
   3. 委派面陈述同一边界：`feishu_bridge_subtask` 工具描述新增审批后执行句（`subtask-tool.spec` 钉住），`feishu-bridge-subtask` skill 的 frontmatter description 与 plan-mode 段携带同一触发词。
 - 分层原则：原则层（全局指令、skill、计划模板）只承载决策边界。机制——worktree 默认值与只读例外、派发节奏、gather 屏障——留在工具描述里，模型在 spawn 决策点读到的正是它。2–5 路上限是调研形状的护栏、只留在 plan-mode 调研句里；执行期 fan-out 广度由计划自身经用户审批的分组界定，不设数字。
-- preset 不动：三份 preset 拷贝不在 fork 的 live 装配链（web-app 面）且已落后一版；base↔bridge lockstep 门禁覆盖 live 那一对。
+- preset 的执行顺序句不动：三份 preset 拷贝不在 fork 的 live 装配链（web-app 面）且已落后一版；base↔bridge lockstep 门禁覆盖 live 那一对。探索句一族已于 2026-09-03 重新同步到 preset（[单焦点广度判据](2026-09-03-single-focus-breadth-criterion.zh.md)）。
 
 ## Alternatives considered
 
