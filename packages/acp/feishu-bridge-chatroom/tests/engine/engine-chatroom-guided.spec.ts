@@ -100,11 +100,24 @@ function newStubMessage(): Message {
   return {
     sessionKey: 'test:hub:user-1',
     platform: 'test',
+    messageID: '',
     userID: 'user-1',
     userName: 'u',
-    content: '',
-    replyCtx: 'hub-ctx',
+    chatName: '',
     chatType: 'group',
+    content: '',
+    originalContent: '',
+    images: [],
+    files: [],
+    extraContent: '',
+    replyCtx: 'hub-ctx',
+    fromVoice: false,
+    isSpawnedGroup: false,
+    isPermissionAction: false,
+    isAskqCardAction: false,
+    isCardAction: false,
+    parentMessageID: '',
+    quotedText: '',
   }
 }
 
