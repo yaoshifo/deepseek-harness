@@ -75,6 +75,17 @@ describe('chatroom config wiring', () => {
     expect(chatroomConfig(e).rolesDir().startsWith(homedir())).toBe(true)
   })
 
+  it('resolves the user profile path with ~ expansion; empty opts out', () => {
+    const e = configure({ userProfile: '~/user-profile.md' })
+    expect(chatroomConfig(e).userProfile().startsWith(homedir())).toBe(true)
+    expect(chatroomConfig(e).userProfile().endsWith('user-profile.md')).toBe(true)
+    // A project section overrides the shared default; '' opts out of it.
+    expect(chatroomConfig(configure({ userProfile: '/p/user.md' }, { userProfile: '/d/user.md' })).userProfile()).toBe('/p/user.md')
+    expect(chatroomConfig(configure({ userProfile: '' }, { userProfile: '/d/user.md' })).userProfile()).toBe('')
+    // Unset everywhere (the unswept window included) reads ''.
+    expect(chatroomConfig(newEngine()).userProfile()).toBe('')
+  })
+
   it('defaults: research venv on, ledger off, research mode auto, effective timeouts', () => {
     const e = configure(undefined)
     expect(chatroomConfig(e).researchPythonEnv).toBe(true)

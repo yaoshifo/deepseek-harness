@@ -8,7 +8,7 @@
  * @module dsh-feishu-bridge/chatroom-cmd
  */
 
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { emptyMessage } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Message, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -180,6 +180,14 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
     topic = `${topic} ${a}`.trim()
   }
   topic = topic.trim()
+  // The configured user-profile referent, validated at the earliest
+  // resolvable point: an unreadable profile fails loud instead of silently
+  // dropping the background from every persona.
+  const profileError = chatroomUserProfileError(e)
+  if (profileError !== '') {
+    await e.reply(p, msg.replyCtx, profileError)
+    return
+  }
   const roles: string[] = []
   for (const r of rolesCSV.split(',')) {
     const trimmed = r.trim()
@@ -239,6 +247,26 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
     return
   }
   void afterChatroomStarted(e, p, msg.sessionKey, msg.userID, msg.chatType, msg.replyCtx, started, topic)
+}
+
+/**
+ * Check the configured user-profile referent before a chatroom starts:
+ * '' when unset or readable, else the formatted error. Shared by the
+ * /chatroom command (replies the message) and the tool's start action
+ * (throws it back to the moderator).
+ *
+ * @param e - Engine whose chatroom configuration names the profile.
+ * @returns '' when the chatroom may proceed, else the error message.
+ */
+export function chatroomUserProfileError(e: Engine): string {
+  const path = chatroomConfig(e).userProfile()
+  if (path === '') return ''
+  try {
+    readFileSync(path, 'utf8')
+  } catch {
+    return e.i18n.tf(Msg.ChatroomUserProfileUnreadable, path)
+  }
+  return ''
 }
 
 /**

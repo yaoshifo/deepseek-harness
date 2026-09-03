@@ -37,6 +37,7 @@ import {
   renderChatroomTopicPickCardAndPush,
 } from '../engine/chatroom-pick.ts'
 import { listRoleNames, roleEssence } from '../engine/chatroom-roles.ts'
+import { chatroomUserProfileError } from '../engine/chatroom-cmd.ts'
 
 const DESCRIPTION =
   'Run a multi-role chatroom discussion: several independent role agents (each with its own persona '
@@ -187,6 +188,10 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
         case 'start': {
           const topic = (args.message ?? '').trim()
           if (topic === '') throw new Error('feishu_bridge_chatroom: start requires a topic (message)')
+          // Same fail-loud referent check as the /chatroom command: a
+          // configured-but-unreadable user profile blocks the start.
+          const profileError = chatroomUserProfileError(engine)
+          if (profileError !== '') throw new Error(profileError)
           const roles = (args.roles ?? '').split(',').map(r => r.trim()).filter(r => r !== '')
           const started = await startChatroom(engine, sessionKey, roles, topic)
           const lines = started.map(r => `  • ${r.name} (session ${r.sessionKey})`)

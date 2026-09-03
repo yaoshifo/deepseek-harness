@@ -63,12 +63,33 @@ function flattenClaudeImports(content: string, baseDir: string, onPath: Set<stri
 }
 
 /**
+ * Read the configured user-background file for persona injection. Returns ''
+ * when unset, unreadable (warned — /chatroom startup already gated
+ * readability, so this is a mid-run deletion), or blank.
+ *
+ * @param path - Configured user-profile file; '' = none.
+ * @returns the trimmed profile text, or '' when nothing injects.
+ */
+function loadUserProfile(path: string): string {
+  if (path === '') return ''
+  let data: string
+  try {
+    data = readFileSync(path, 'utf8')
+  } catch (error) {
+    console.warn(`dsh chatroom persona: user profile unreadable, skipped (path=${path}): ${String(error instanceof Error ? error.message : error)}`)
+    return ''
+  }
+  return data.trim()
+}
+
+/**
  * Build the whole system prompt for a chatroom bare session (Go
  * buildChatroomSystemPrompt): bridge base + safety floor + the applicable
  * contract (role / research role / direct) + ledger read instruction +
- * subtask plumbing + the flattened persona from the workdir's CLAUDE.md.
+ * subtask plumbing + the flattened persona from the workdir's CLAUDE.md +
+ * the configured user background.
  *
- * @param opts - Role/moderator flags, ledger and assistant keys, workdir, and platform formatting prompt.
+ * @param opts - Role/moderator flags, ledger and assistant keys, workdir, user-profile path, and platform formatting prompt.
  * @returns the assembled whole system prompt.
  */
 export function buildChatroomSystemPrompt(opts: {
@@ -78,6 +99,7 @@ export function buildChatroomSystemPrompt(opts: {
   isModerator: boolean
   research: boolean
   ledgerDir: string
+  userProfilePath: string
   platformPrompt: string
 }): string {
   const b: string[] = []
@@ -101,6 +123,12 @@ export function buildChatroomSystemPrompt(opts: {
   if (persona !== '') {
     b.push('\n\n## 你的角色人设（来自 workdir 的 CLAUDE.md，@import 已展平）\n\n')
     b.push(persona)
+    b.push('\n')
+  }
+  const userProfile = loadUserProfile(opts.userProfilePath)
+  if (userProfile !== '') {
+    b.push('\n\n## 用户背景（服务对象）\n\n以下是人类用户的背景信息，你的视角、判断与措辞应对该用户有用：\n\n')
+    b.push(userProfile)
     b.push('\n')
   }
   return b.join('')

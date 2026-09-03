@@ -133,6 +133,18 @@ describe('feishu_bridge_chatroom action routing', () => {
     test.dispose()
   })
 
+  it('start fails loud when the configured user profile is unreadable', async () => {
+    const engine = newEngine()
+    applyChatroomEngineConfig(engine, { userProfile: '/nonexistent/fb-user-profile.md' }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const res = await test.execute({ action: 'start', message: 'topic', roles: 'taleb,munger' })
+    // The profile gate fires before role validation: the unreadable-profile
+    // reply, not the unknown-role one.
+    expect(errorText(res)).toContain('用户背景')
+    expect(errorText(res)).toContain('/nonexistent/fb-user-profile.md')
+    test.dispose()
+  })
+
   it('gather/ask/note/ask-human fail loud when their preconditions miss (routing proof)', async () => {
     const engine = newEngine()
     const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
