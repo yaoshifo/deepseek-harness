@@ -465,6 +465,8 @@ describe('feishu_bridge_chatroom cross-chatroom sharing', () => {
     const { engine, home } = await sharingEngine()
     const hubKey = 'feishu:oc_hub:ou_1'
     await initChatroomLedger(chatroomLedgerDir(home, hubKey), '议题', ['taleb'])
+    // The guard batch made note moderator-only: arm the caller as the hub.
+    chatroomState(engine.sessions.getOrCreateActive(hubKey)).chatroomModerator = true
 
     const test = await harness(() => ({ engine, sessionKey: hubKey }))
     const v = value(await test.execute({ action: 'note', message: '收尾总结', section: 'report' }))
