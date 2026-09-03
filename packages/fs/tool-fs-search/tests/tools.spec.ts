@@ -12,6 +12,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { homedir } from 'node:os'
 import { join, sep } from 'node:path'
 import { createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
@@ -33,7 +34,9 @@ import {
   presentGrepCall,
   presentGrepResult,
   previewLine,
+  resolveGlobPattern,
   resolveRgPath,
+  resolveSearchRoot,
   runRipgrep,
   sampleAcrossTopLevel,
   toWorkdirRelative,
@@ -327,6 +330,26 @@ describe('config validation', () => {
   })
 })
 
+describe('search-root and pattern resolution', () => {
+  it('resolves a search root: ~ against the home directory, relative against the session cwd, absolute unchanged', () => {
+    expect(resolveSearchRoot('~', '/sessions/s1')).toBe(homedir())
+    expect(resolveSearchRoot('~', '/sessions/s1')).not.toBe('~')
+    expect(resolveSearchRoot(join('~', 'skills'), '/sessions/s1')).toBe(join(homedir(), 'skills'))
+    expect(resolveSearchRoot('sub dir', '/sessions/s1')).toBe(join('/sessions/s1', 'sub dir'))
+    expect(resolveSearchRoot(w('/abs/root'), '/sessions/s1')).toBe(w('/abs/root'))
+  })
+
+  it('expands a ~/-prefixed pattern against the home directory before anchoring it', () => {
+    expect(resolveGlobPattern('~/skills/html/**', join(homedir(), 'skills'))).toBe('html/**')
+    expect(resolveGlobPattern('~', homedir())).toBe('**')
+  })
+
+  it('keeps a relative pattern and rejects an absolute pattern outside the root', () => {
+    expect(resolveGlobPattern('src/**/*.ts', w('/w'))).toBe('src/**/*.ts')
+    expect(() => resolveGlobPattern(w('/elsewhere/**'), w('/w'))).toThrow('is outside the search root')
+  })
+})
+
 describe('command construction (plain argv)', () => {
   it('glob: fixed rg --files argv with the pattern and paired VCS excludes', () => {
     expect(buildGlobCommand({ pattern: '**/*.ts' })).toEqual([
@@ -344,23 +367,20 @@ describe('command construction (plain argv)', () => {
     ])
   })
 
-  it('glob: the search root rides behind -- as a plain element', () => {
-    expect(buildGlobCommand({ pattern: '*.md', path: 'docs dir' })).toEqual(['--files', '--glob=*.md', '--sort=modified', '--no-ignore', '--hidden',
-      '--glob=!**/.git', '--glob=!**/.git/**',
-      '--glob=!**/.svn', '--glob=!**/.svn/**',
-      '--glob=!**/.hg', '--glob=!**/.hg/**',
-      '--glob=!**/.bzr', '--glob=!**/.bzr/**',
-      '--glob=!**/.jj', '--glob=!**/.jj/**',
-      '--glob=!**/.sl', '--glob=!**/.sl/**',
-      '--', 'docs dir'])
+  it('glob: a path arg never enters argv — the spawn cwd carries the search root', async () => {
+    const { ctx, subprocess } = await setup()
+    subprocess.handler = () => runResult('a.ts\n')
+    await call(ctx, 'glob', { pattern: '*', path: 'docs dir' }, { agent: agent('/sessions/s1') })
+    expect(subprocess.spawns[0]?.cwd).toBe(join('/sessions/s1', 'docs dir'))
+    expect(subprocess.spawns[0]?.argv.join(' ')).not.toContain('docs dir')
   })
 
   it('grep: fixed rg --json argv with the pattern in --regexp= form', () => {
     expect(buildGrepCommand({ pattern: 'foo.*bar' })).toEqual(['--json', '--regexp=foo.*bar'])
   })
 
-  it('grep: include in --glob= form, path behind --, both plain elements', () => {
-    expect(buildGrepCommand({ pattern: 'x', path: '-leading-dash', include: '*.{ts,tsx}' }))
+  it('grep: include in --glob= form, the file target behind --, both plain elements', () => {
+    expect(buildGrepCommand({ pattern: 'x', include: '*.{ts,tsx}', target: '-leading-dash' }))
       .toEqual(['--json', '--regexp=x', '--glob=*.{ts,tsx}', '--', '-leading-dash'])
   })
 
@@ -745,19 +765,24 @@ describe('glob results', () => {
     expect(text(await call(ctx, 'glob', { pattern: '*', path: ' ' }))).toContain('path must be a non-empty string')
   })
 
-  it('threads a valid path through to the spawn as the plain search root element', async () => {
+  it('threads a valid path through to the spawn as its working directory', async () => {
     const { ctx, subprocess } = await setup()
-    subprocess.handler = () => runResult('sub/a.ts\n')
-    const result = await call(ctx, 'glob', { pattern: '*.ts', path: 'sub' })
+    subprocess.handler = () => runResult('a.ts\n')
+    const result = await call(ctx, 'glob', { pattern: '*.ts', path: 'sub' }, { agent: agent('/sessions/s1') })
     expect(result.isError).toBe(false)
+    // rg runs with its cwd AT the search root, so the pattern matches paths
+    // relative to it; the root never rides in argv.
+    expect(subprocess.spawns[0]?.cwd).toBe(join('/sessions/s1', 'sub'))
     expect(subprocess.spawns[0]?.argv).toEqual([rgPath, '--no-config', '--files', '--glob=*.ts', '--sort=modified', '--no-ignore', '--hidden',
       '--glob=!**/.git', '--glob=!**/.git/**',
       '--glob=!**/.svn', '--glob=!**/.svn/**',
       '--glob=!**/.hg', '--glob=!**/.hg/**',
       '--glob=!**/.bzr', '--glob=!**/.bzr/**',
       '--glob=!**/.jj', '--glob=!**/.jj/**',
-      '--glob=!**/.sl', '--glob=!**/.sl/**',
-      '--', 'sub'])
+      '--glob=!**/.sl', '--glob=!**/.sl/**'])
+    if (result.isError) throw new Error('expected glob success')
+    // The search-root-relative stdout line re-anchors at the session cwd.
+    expect(result.value).toEqual({ root: 'sub', paths: [join('sub', 'a.ts')] })
   })
 
   it('caps at globMaxResults and saves the FULL sorted list through spillStore', async () => {
@@ -810,11 +835,13 @@ describe('glob results', () => {
 
   it('samples relative to the explicit search root instead of its workdir prefix', async () => {
     const { ctx, subprocess } = await setup({ config: { globMaxResults: 3 } })
+    // rg prints search-root-relative paths; display re-anchors them at the
+    // session cwd, so the sample groups by entries under the root.
     subprocess.handler = () => runResult([
-      'workspace/vendor/a.ts',
-      'workspace/vendor/b.ts',
-      'workspace/source/c.ts',
-      'workspace/guides/d.md',
+      'vendor/a.ts',
+      'vendor/b.ts',
+      'source/c.ts',
+      'guides/d.md',
     ].map(w).join('\n'))
     const result = await call(ctx, 'glob', { pattern: '*', path: w('workspace') }, { agent: agent('/w') })
     expect(text(result)).toContain(['workspace/vendor/a.ts', 'workspace/source/c.ts', 'workspace/guides/d.md'].map(w).join('\n'))
@@ -824,10 +851,10 @@ describe('glob results', () => {
   it('samples relative to an absolute search root after workdir display conversion', async () => {
     const { ctx, subprocess } = await setup({ config: { globMaxResults: 3 } })
     subprocess.handler = () => runResult([
-      '/w/workspace/vendor/a.ts',
-      '/w/workspace/vendor/b.ts',
-      '/w/workspace/source/c.ts',
-      '/w/workspace/guides/d.md',
+      'vendor/a.ts',
+      'vendor/b.ts',
+      'source/c.ts',
+      'guides/d.md',
     ].map(w).join('\n'))
     const result = await call(ctx, 'glob', { pattern: '*', path: w('/w/workspace') }, { agent: agent(w('/w')) })
     expect(text(result)).toContain(['workspace/vendor/a.ts', 'workspace/source/c.ts', 'workspace/guides/d.md'].map(w).join('\n'))

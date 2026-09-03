@@ -20,6 +20,7 @@
  */
 
 import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { isAbsolute, join, parse, relative, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { HarnessError } from '@deepseek-ai/dsh-llm'
@@ -96,14 +97,12 @@ export class SearchError extends HarnessError {
   }
 }
 
-/** The completed acquisition of one `rg` run: complete stdout plus the resolved workdir. */
+/** The completed acquisition of one `rg` run: complete stdout plus the zero-result flag. */
 export interface RipgrepRun {
   /** Complete raw stdout retained by the subprocess seam within the requested cap. */
   stdout: string
   /** True when ripgrep exited 1: a successful search with zero results. */
   noMatches: boolean
-  /** The resolved working directory the command ran in (the display-relativization base). */
-  workdir: string
 }
 
 /**
@@ -181,9 +180,36 @@ export function resolveRgPath(): Promise<string> {
 }
 
 /**
+ * The calling agent's session cwd — the display base every search tool
+ * relativizes its returned paths to.
+ *
+ * @param exec - the tool-execution context; supplies the session cwd.
+ * @returns the session cwd, or `process.cwd()` when the caller carries no session.
+ */
+export function sessionCwdOf(exec: ToolExecution): string {
+  return exec.agent?.session.header.cwd ?? process.cwd()
+}
+
+/**
+ * Resolve a search-root argument to its absolute form: `~` alone or a
+ * `~/`-prefixed path against the home directory, a relative path against the
+ * session cwd, an absolute path unchanged.
+ *
+ * @param path - the model-facing search-root argument.
+ * @param sessionCwd - the calling agent's session cwd.
+ * @returns the absolute search root.
+ */
+export function resolveSearchRoot(path: string, sessionCwd: string): string {
+  if (path === '~') return homedir()
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2))
+  return isAbsolute(path) ? path : join(sessionCwd, path)
+}
+
+/**
  * Run the packaged ripgrep binary with a plain argv vector and return its
- * complete raw stdout. The working directory is the calling agent's session
- * cwd (`exec.agent.session.header.cwd`) when available, else
+ * complete raw stdout. The working directory is `spawnCwd` when given — the
+ * search tools pass the resolved search root, so `--glob` patterns match
+ * paths relative to that root — else the calling agent's session cwd, else
  * `process.cwd()`. `exec.signal` is forwarded so the cooperative tool timeout
  * (`@deepseek-ai/dsh-tool-call-timeout-policy`) and caller cancellation terminate the
  * process tree.
@@ -213,7 +239,8 @@ export function resolveRgPath(): Promise<string> {
  * @param rawOutputMaxBytes - cap on the complete raw stdout the tool will parse.
  * @param graceMs - the seam's terminate-escalation grace period.
  * @param stderrMaxBytes - cap on the retained stderr diagnostic tail.
- * @returns the complete stdout, the zero-result flag, and the resolved workdir.
+ * @param spawnCwd - the working directory to run in; defaults to the session cwd (or `process.cwd()`).
+ * @returns the complete stdout and the zero-result flag.
  */
 export async function runRipgrep(
   ctx: Context,
@@ -223,12 +250,12 @@ export async function runRipgrep(
   rawOutputMaxBytes: number,
   graceMs: number,
   stderrMaxBytes: number,
+  spawnCwd?: string,
 ): Promise<RipgrepRun> {
   if (exec.signal.aborted) {
     throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED')
   }
-  const cwd = exec.agent?.session.header.cwd
-  const workdir = cwd ?? process.cwd()
+  const workdir = spawnCwd ?? sessionCwdOf(exec)
   let handle: SubprocessHandle
   try {
     handle = ctx.subprocess.spawn({
@@ -278,7 +305,7 @@ export async function runRipgrep(
     throw classifyRunFailure(toolName, outcome.exitCode, stderr.text, stderr.lossy)
   }
   const text = completeStdout(toolName, stdout, rawOutputMaxBytes)
-  return { stdout: text, noMatches: outcome.exitCode === 1, workdir }
+  return { stdout: text, noMatches: outcome.exitCode === 1 }
 }
 
 /**
