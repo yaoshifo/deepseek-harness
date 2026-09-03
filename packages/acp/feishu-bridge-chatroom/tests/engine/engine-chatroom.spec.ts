@@ -15,7 +15,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.ts'
+import { registerChatroomCommands, cmdChatroom } from '../../src/engine/chatroom-cmd.ts'
 import {
   ChatroomGather,
   askHuman,
@@ -291,6 +291,22 @@ describe('AskRole', () => {
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const roles = await startChatroom(e, 'test:hub-A:user-1', ['taleb'], 'topic')
     await expect(askRole(e, 'test:hub-B:user-2', roles[0]!.sessionKey, 'q')).rejects.toThrow()
+  })
+
+  it('rejects while an ask-human question is pending on the hub', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const roleKey = roles[0]!.sessionKey
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingHumanQuestionRole = 'taleb'
+
+    // The gather side rejects this state two-way; ask must too — a second
+    // in-flight question on the asking role loses one of the two replies to
+    // the one-shot relay gate.
+    await expect(askRole(e, hub, 'taleb', '追问')).rejects.toThrow('ask-human')
+    expect(chatroomState(e.sessions.getOrCreateActive(roleKey)).chatroomInFlight).toBe(false)
   })
 })
 
@@ -1459,5 +1475,26 @@ describe('topic-pick priming ledger history', () => {
     const { buildChatroomTopicPickPriming } = await import('../../src/engine/chatroom-priming.ts')
     const s = buildChatroomTopicPickPriming(['taleb'], '/roles', '')
     expect(s).not.toContain('ledgers')
+  })
+})
+
+describe('/chatroom re-entry from a role group', () => {
+  it('rejects /chatroom sent from a role session instead of nesting a chatroom under it', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const reply = vi.spyOn(e, 'reply').mockImplementation(() => {})
+
+    // The role-list guard only checks roles parented on the CALLING session,
+    // so a role group passed it and became a nested moderator
+    // (chatroomModerator alongside its outer chatroomHubKey).
+    await cmdChatroom(e, p, hubMsg(roles[0]!.sessionKey), ['嵌套题目'])
+
+    expect(reply.mock.calls).toHaveLength(1)
+    expect(String(reply.mock.calls[0]?.[2])).toContain('角色/助手')
+    // No nested moderator flag was installed on the role session.
+    expect(chatroomState(e.sessions.getOrCreateActive(roles[0]!.sessionKey)).chatroomModerator).toBe(false)
   })
 })

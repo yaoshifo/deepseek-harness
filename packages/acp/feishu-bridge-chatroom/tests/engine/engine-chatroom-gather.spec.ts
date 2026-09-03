@@ -1048,6 +1048,11 @@ describe('buildChatroomResearchModeratorPriming', () => {
       '独立双源即止',
       '不复用台账已有文件',
       '预计 30-60 分钟',
+      // The replacement-steward path must address the spawned child by its
+      // returned session key — the "assistant" alias still resolves to the
+      // empty pre-provision and errors.
+      '新建替补管家',
+      '"assistant" 别名仍解析不到替补',
     ]) {
       expect(priming).toContain(want)
     }

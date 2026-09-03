@@ -668,6 +668,13 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
   if (askHub !== undefined && chatroomState(askHub).pendingGather !== undefined) {
     throw new Error(e.i18n.t(Msg.ChatroomAskGatherBlocked))
   }
+  // Mirror of gather's pendingHumanQuestionRole guard (guards must be
+  // two-way): asking the role that holds the pending human question injects
+  // a second in-flight question — one of the two replies is then lost to the
+  // one-shot relay gate.
+  if (askHub !== undefined && chatroomState(askHub).pendingHumanQuestionRole !== '') {
+    throw new Error(e.i18n.t(Msg.ChatroomAskPendingHumanBlocked))
+  }
   const p = e.spawnCapablePlatform()
   if (p === undefined) throw new Error('chatroom: no platform available')
   const roleKey = resolveChatroomRole(e, callerHubKey, roleRef)

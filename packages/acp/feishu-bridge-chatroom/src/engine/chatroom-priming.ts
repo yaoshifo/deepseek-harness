@@ -189,7 +189,7 @@ export function buildChatroomResearchModeratorPriming(
   if (researchWs !== '') {
     sb.push('1.5. 收齐后合并去重各角色清单：「两家以上角色都需要的、或明显通用的底层数据」为公共项，控制在 ~6-8 项以内，超出留给角色自家助手；清单为空或全是单家专属就跳过预取直接进第 1 轮。合并清单只进管家的任务（可 note 存档备查），**不要广播给角色**。\n')
     sb.push('   然后派数据管家（feishu_bridge_subtask，action: send，child 用 "assistant"）：「下取以下公共核心数据到共享工作区 data/core/ 子目录：<合并清单>。按数据源/序列拆成 3-6 个并行子任务（每源一个，不是每页一个——机械抓取优先脚本循环，带重试与断点）；拆子任务时把『同一域名串行抓、间隔几秒（sleep 2-5s，防反爬限流）』写进每个子任务 brief。每抓完一个数据集，用 bash echo 在 DATA_LEDGER.md 追加一行（| 数据/序列 | 本地文件 | 抓取时间 | 来源/口径 | 抓取者 |；文件不存在先写表头行）。完成后 report 清单。」\n')
-    sb.push('   派完**结束回合**等管家的 report 唤醒（非阻塞——管家可能要 30-60 分钟，不要自己 gather 阻塞等待）。结束回合前**用你的普通回复告知用户**：需求已收齐 N 份、公共数据预取中（预计 30-60 分钟）——不要让用户盯着一小时的静默聊天室。管家 report 到手或明显超时后照常进第 1 轮；失败/部分失败 → 第 1 轮任务里注明 data/core/ 可能不全，让角色助手自行补拉，绝不卡死在预取。若 send 报 no pre-provisioned assistant：用 feishu_bridge_subtask（action: spawn，worktree: off，dir: ' + researchWs + '）新建一个再派。\n')
+    sb.push('   派完**结束回合**等管家的 report 唤醒（非阻塞——管家可能要 30-60 分钟，不要自己 gather 阻塞等待）。结束回合前**用你的普通回复告知用户**：需求已收齐 N 份、公共数据预取中（预计 30-60 分钟）——不要让用户盯着一小时的静默聊天室。管家 report 到手或明显超时后照常进第 1 轮；失败/部分失败 → 第 1 轮任务里注明 data/core/ 可能不全，让角色助手自行补拉，绝不卡死在预取。若 send 报 no pre-provisioned assistant：用 feishu_bridge_subtask（action: spawn，worktree: off，dir: ' + researchWs + '）新建替补管家，之后 send 用 spawn 返回的 child 会话键派任务——"assistant" 别名仍解析不到替补。\n')
   } else {
     sb.push('1.5. 本聊天室没有共享研究工作区——跳过公共预取，第 1 轮各角色的助手自行下取所需。\n')
   }

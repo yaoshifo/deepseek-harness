@@ -165,10 +165,11 @@ describe('feishu_bridge_chatroom action routing', () => {
     const askRes = await test.execute({ action: 'ask', role: 'ghost', message: 'q' })
     expect(askRes.isError).toBe(true)
 
-    // note without a moderator dir.
+    // note from a session outside any chatroom (the not-in-room guard now
+    // fires before the moderator-dir check).
     const noteRes = await test.execute({ action: 'note', message: '综述' })
     expect(noteRes.isError).toBe(true)
-    expect(errorText(noteRes)).toContain('ledger')
+    expect(errorText(noteRes)).toContain('不在任何聊天室')
 
     // ask-human on a non-role session.
     const humanRes = await test.execute({ action: 'ask-human', message: '截止日？' })
@@ -255,19 +256,47 @@ describe('feishu_bridge_chatroom action routing', () => {
   })
 })
 
-describe('feishu_bridge_chatroom end moderator guard', () => {
-  /** A chatroom with one live role bound under a moderator hub. */
-  function armedRoom(engine: Engine): { hubKey: string; roleKey: string } {
-    const hubKey = 'feishu:oc_hub:ou_1'
-    const roleKey = 'feishu:oc_role-1:ou_1'
-    chatroomState(engine.sessions.getOrCreateActive(hubKey)).chatroomModerator = true
-    const role = engine.sessions.getOrCreateActive(roleKey)
-    role.setParentSessionKey(hubKey)
-    chatroomState(role).chatroomHubKey = hubKey
-    chatroomState(role).chatroomRoleName = 'taleb'
-    return { hubKey, roleKey }
-  }
+/** A chatroom with one live role bound under a moderator hub. */
+function armedRoom(engine: Engine): { hubKey: string; roleKey: string } {
+  const hubKey = 'feishu:oc_hub:ou_1'
+  const roleKey = 'feishu:oc_role-1:ou_1'
+  chatroomState(engine.sessions.getOrCreateActive(hubKey)).chatroomModerator = true
+  const role = engine.sessions.getOrCreateActive(roleKey)
+  role.setParentSessionKey(hubKey)
+  chatroomState(role).chatroomHubKey = hubKey
+  chatroomState(role).chatroomRoleName = 'taleb'
+  return { hubKey, roleKey }
+}
 
+describe('feishu_bridge_chatroom start guards', () => {
+  it('rejects a repeat start while the chatroom is running (no second generation)', async () => {
+    const engine = newEngine()
+    const { hubKey } = armedRoom(engine)
+    const test = await harness(() => ({ engine, sessionKey: hubKey }))
+
+    const res = await test.execute({ action: 'start', message: '另一场讨论', roles: 'taleb' })
+
+    // The guard must fire before startChatroom's own validation — otherwise
+    // a second generation of role groups spawns under the live hub.
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('进行中')
+    test.dispose()
+  })
+
+  it('rejects start from a role session (no nested moderation)', async () => {
+    const engine = newEngine()
+    const { roleKey } = armedRoom(engine)
+    const test = await harness(() => ({ engine, sessionKey: roleKey }))
+
+    const res = await test.execute({ action: 'start', message: '嵌套题目' })
+
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('角色/助手')
+    test.dispose()
+  })
+})
+
+describe('feishu_bridge_chatroom end moderator guard', () => {
   function newChatroomEngine(): Engine {
     const e = new Engine('chatroom-test', createStubAgent(), [createStubChatroomSpawner()], '', 'zh')
     e.setProjectStateStore(new ProjectStateStore(''))
@@ -305,6 +334,52 @@ describe('feishu_bridge_chatroom end moderator guard', () => {
     expect(v.status).toBe('ok')
     expect(v.message).toContain('Chatroom ended')
     expect(chatroomState(engine.sessions.getOrCreateActive(roleKey)).chatroomHubKey).toBe('')
+    test.dispose()
+  })
+
+  it('rejects end from a plain session with the not-in-room message', async () => {
+    const engine = newChatroomEngine()
+    const plainKey = 'feishu:oc_plain:ou_1'
+    engine.sessions.getOrCreateActive(plainKey) // no chatroom flags, no parent chain
+    const test = await harness(() => ({ engine, sessionKey: plainKey }))
+
+    const res = await test.execute({ action: 'end' })
+
+    // A session outside any chatroom is not a role/assistant group — the
+    // moderator-only text would misdiagnose and point at /chatroom stop.
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('不在任何聊天室')
+    expect(errorText(res)).not.toContain('主持人')
+    test.dispose()
+  })
+
+  it('rejects note from a role session with the moderator-only message, not a raw ENOENT', async () => {
+    const engine = newChatroomEngine()
+    const { roleKey } = armedRoom(engine)
+    const dir = await mkdtemp(join(tmpdir(), 'chatroom-note-guard-'))
+    applyChatroomEngineConfig(engine, { moderatorDir: dir }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: roleKey }))
+
+    const res = await test.execute({ action: 'note', message: '综述' })
+
+    // Before the guard the role key resolved to a nonexistent ledger dir and
+    // readFileSync surfaced a raw ENOENT.
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('主持人')
+    expect(errorText(res)).not.toContain('ENOENT')
+    test.dispose()
+  })
+
+  it('rejects note from a plain session with the not-in-room message', async () => {
+    const engine = newChatroomEngine()
+    const plainKey = 'feishu:oc_plain:ou_1'
+    engine.sessions.getOrCreateActive(plainKey)
+    const test = await harness(() => ({ engine, sessionKey: plainKey }))
+
+    const res = await test.execute({ action: 'note', message: '综述' })
+
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('不在任何聊天室')
     test.dispose()
   })
 })
