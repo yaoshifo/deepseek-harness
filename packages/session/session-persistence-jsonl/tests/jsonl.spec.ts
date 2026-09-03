@@ -220,6 +220,19 @@ describe('JsonlSessionPersistence: format helpers', () => {
     expect(scan.inheritedEventCount).toBe(3)
   })
 
+  it('round-trips an oneshot origin header (fork one-shot sessions stay readable)', () => {
+    const oneshot: SessionHeader = {
+      version: 0,
+      id: SessionId('oneshot-header'),
+      createdAt: 5,
+      isSeeded: false,
+      origin: 'oneshot',
+      delegationDepth: 0,
+    }
+    const scan = scanLog(Buffer.from(`${JSON.stringify(toHeaderLine(oneshot))}\n`))
+    expect(scan.meta).toEqual(oneshot)
+  })
+
   it.each([
     ['absent', undefined, false, 0],
     ['zero', 0, true, 0],

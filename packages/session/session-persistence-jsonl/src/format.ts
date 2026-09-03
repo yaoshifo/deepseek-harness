@@ -135,7 +135,8 @@ function isHeaderLine(value: unknown): value is HeaderLine {
         && (value as { seedLength: number }).seedLength >= 0
         && !Object.is((value as { seedLength: number }).seedLength, -0)))
     && ((value as { origin?: unknown }).origin === undefined
-      || (value as { origin?: unknown }).origin === 'subagent')
+      || (value as { origin?: unknown }).origin === 'subagent'
+      || (value as { origin?: unknown }).origin === 'oneshot')
     && ((value as { agentPreset?: unknown }).agentPreset === undefined
       || typeof (value as { agentPreset?: unknown }).agentPreset === 'string')
   )
