@@ -34,7 +34,6 @@ describe('chatroom config wiring', () => {
       gatherTimeoutSec: 600,
       endTimeoutSec: 300,
       researchTimeoutSec: 1800,
-      maxResearchRounds: 5,
       defaultResearchMode: 'manual',
       researchWorkspace: '/shared/research',
       researchPythonEnv: false,
@@ -45,7 +44,6 @@ describe('chatroom config wiring', () => {
     expect(chatroomConfig(e).gatherTimeoutDuration()).toBe(600_000)
     expect(chatroomConfig(e).endTimeoutDuration()).toBe(300_000)
     expect(chatroomConfig(e).researchTimeoutDuration()).toBe(1_800_000)
-    expect(chatroomConfig(e).maxResearchRounds()).toBe(5)
     expect(chatroomConfig(e).defaultResearchMode()).toBe('manual')
     expect(chatroomResearchWorkspace(e)).toBe('/shared/research')
   })
@@ -76,9 +74,8 @@ describe('chatroom config wiring', () => {
   })
 
   it('clamps out-of-range research values (Go EffectiveChatroomResearch)', () => {
-    const e = configure({ researchTimeoutSec: 10, maxResearchRounds: 99 })
+    const e = configure({ researchTimeoutSec: 10 })
     expect(chatroomConfig(e).researchTimeoutDuration()).toBe(60_000)
-    expect(chatroomConfig(e).maxResearchRounds()).toBe(20)
   })
 
   it('per-project section overrides the plugin-level default', () => {
@@ -121,7 +118,6 @@ describe('chatroom config wiring', () => {
     // End waits for replies already generating: half the gather default.
     expect(chatroomConfig(e).endTimeoutDuration()).toBe(10 * 60 * 1000)
     expect(chatroomConfig(e).researchTimeoutDuration()).toBe(60 * 60 * 1000)
-    expect(chatroomConfig(e).maxResearchRounds()).toBe(3)
   })
 
   it('an unswept engine reads default-valued config (the pre-sweep window)', () => {

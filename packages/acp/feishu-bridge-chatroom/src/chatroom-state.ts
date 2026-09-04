@@ -42,10 +42,6 @@ export interface ChatroomFeatureState {
   chatroomModerator?: boolean
   /** Research iteration driver: 'auto' | 'manual'. */
   chatroomResearchMode?: string
-  /** Current research iteration round, 1-based. */
-  chatroomResearchRound?: number
-  /** Per-invocation override of the auto-mode research round cap. */
-  chatroomResearchMaxRounds?: number
   /** Monotonic per-hub gather-round counter. */
   chatroomGatherSeq?: number
   /** 1-based count of chatrooms started on this hub; run ≥ 2 gets its own ledger dir. */
@@ -120,14 +116,6 @@ export class ChatroomSessionState {
   /** Research iteration driver: 'auto' | 'manual' ('' when unset). */
   get chatroomResearchMode(): string { return this.section.chatroomResearchMode ?? '' }
   set chatroomResearchMode(value: string) { this.section.chatroomResearchMode = value }
-
-  /** Current research iteration round, 1-based (0 before the first). */
-  get chatroomResearchRound(): number { return this.section.chatroomResearchRound ?? 0 }
-  set chatroomResearchRound(value: number) { this.section.chatroomResearchRound = value }
-
-  /** Per-invocation auto-mode research round cap (0 for the default). */
-  get chatroomResearchMaxRounds(): number { return this.section.chatroomResearchMaxRounds ?? 0 }
-  set chatroomResearchMaxRounds(value: number) { this.section.chatroomResearchMaxRounds = value }
 
   /** Monotonic per-hub gather-round counter. */
   get chatroomGatherSeq(): number { return this.section.chatroomGatherSeq ?? 0 }
@@ -225,8 +213,6 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
       ...(s.researchAwaitingAssistant ? { researchAwaitingAssistant: true } : {}),
       ...(s.chatroomModerator ? { chatroomModerator: true } : {}),
       ...(s.chatroomResearchMode !== '' ? { chatroomResearchMode: s.chatroomResearchMode } : {}),
-      ...(s.chatroomResearchRound !== 0 ? { chatroomResearchRound: s.chatroomResearchRound } : {}),
-      ...(s.chatroomResearchMaxRounds !== 0 ? { chatroomResearchMaxRounds: s.chatroomResearchMaxRounds } : {}),
       ...(s.chatroomGatherSeq !== 0 ? { chatroomGatherSeq: s.chatroomGatherSeq } : {}),
       ...(s.chatroomLedgerRun !== 0 ? { chatroomLedgerRun: s.chatroomLedgerRun } : {}),
       ...(s.researchVenv !== '' ? { researchVenv: s.researchVenv } : {}),
@@ -247,8 +233,6 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
     t.chatroomDirectRole = f.chatroomDirectRole
     t.chatroomResearch = f.chatroomResearch
     t.chatroomResearchMode = f.chatroomResearchMode
-    t.chatroomResearchRound = f.chatroomResearchRound
-    t.chatroomResearchMaxRounds = f.chatroomResearchMaxRounds
     t.chatroomGatherSeq = f.chatroomGatherSeq
     t.chatroomLedgerRun = f.chatroomLedgerRun
     // The chat's provisioned research assistant.

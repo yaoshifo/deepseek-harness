@@ -34,10 +34,6 @@ import {
   resolveChatroomInheritPrior,
   startChatroom,
 } from './chatroom.ts'
-import {
-  maxChatroomResearchRounds,
-  minChatroomResearchRounds,
-} from './chatroom.ts'
 import { listRoleNames, roleDir, roleExists, roleEssence } from './chatroom-roles.ts'
 import { beginChatroomModePick, beginChatroomPick, beginChatroomStartPick, beginChatroomTopicPick, executeChatroomCardAction } from './chatroom-pick.ts'
 import { hashID, listChatroomLedgers } from './chatroom-ledger.ts'
@@ -145,7 +141,6 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   let gotRoles = false
   let research = false
   let researchMode = ''
-  let maxRounds = 0
   let continueRequested = false
   let continueRef = ''
   for (let i = 0; i < args.length; i++) {
@@ -180,23 +175,6 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
         i++
         researchMode = next.trim()
       }
-      continue
-    }
-    if (a === '--max-rounds') {
-      const next = args[i + 1]
-      if (next === undefined) {
-        await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ChatroomMaxRoundsRange, maxChatroomResearchRounds))
-        return
-      }
-      i++
-      const n = Number.parseInt(next.trim(), 10)
-      // Reject instead of silently dropping an invalid value — the moderator
-      // would otherwise believe the cap took effect.
-      if (Number.isNaN(n) || n < minChatroomResearchRounds || n > maxChatroomResearchRounds) {
-        await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ChatroomMaxRoundsRange, maxChatroomResearchRounds))
-        return
-      }
-      maxRounds = n
       continue
     }
     if (a.startsWith('-')) continue
@@ -246,7 +224,7 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
       return
     }
     if (!(await gateResearchUvOrFail(e, p, msg, research))) return
-    stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode, maxRounds)
+    stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode)
     const mod = chatroomConfig(e).moderatorDir()
     const history = mod.ok ? listChatroomLedgers(join(mod.dir, 'ledgers'), 5) : []
     try {
@@ -277,7 +255,7 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   // Stash research-mode flags on the hub session BEFORE any path that leads
   // to afterChatroomStarted so --research survives the async pick flows.
   if (!(await gateResearchUvOrFail(e, p, msg, research))) return
-  stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode, maxRounds)
+  stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode)
 
   // --continue with no roles named → reuse the prior chatroom's recorded
   // cast; continuing a discussion keeps its participants by default.
@@ -337,22 +315,21 @@ export function chatroomUserProfileError(e: Engine): string {
 }
 
 /**
- * Persist the --research / --mode / --max-rounds flags onto the hub session
- * so they survive the async picker flows (Go stashChatroomResearchFlags).
+ * Persist the --research / --mode flags onto the hub session so they survive
+ * the async picker flows (Go stashChatroomResearchFlags).
  *
  * @param e - Engine whose session store holds the hub session.
  * @param hubKey - Session key of the hub (group) session to stamp.
  * @param research - Whether --research was given; false scrubs stale flags.
  * @param mode - Requested research mode; anything but 'auto'/'manual' resolves to the configured default.
- * @param maxRounds - Per-invocation round cap override; 0 keeps the configured cap.
  */
 export function stashChatroomResearchFlags(
-  e: Engine, hubKey: string, research: boolean, mode: string, maxRounds: number,
+  e: Engine, hubKey: string, research: boolean, mode: string,
 ): void {
   const hub = e.sessions.getOrCreateActive(hubKey)
   if (!research) {
     // A previous research chatroom in this group left flags on the hub;
-    // scrub them so the next research chatroom starts from round 0.
+    // scrub them so the next research chatroom starts fresh.
     clearChatroomResearchFlags(hub)
     e.sessions.save()
     return
@@ -362,10 +339,6 @@ export function stashChatroomResearchFlags(
     mode = chatroomConfig(e).defaultResearchMode()
   }
   chatroomState(hub).chatroomResearchMode = mode
-  if (maxRounds > 0) {
-    // Per-invocation override of the configured cap (auto mode only).
-    chatroomState(hub).chatroomResearchMaxRounds = maxRounds
-  }
   e.sessions.save()
 }
 
@@ -702,10 +675,7 @@ export async function afterChatroomStarted(
   if (research) {
     let mode = chatroomState(s).chatroomResearchMode
     if (mode === '') mode = 'auto'
-    let maxRounds = chatroomConfig(e).maxResearchRounds()
-    const override = chatroomState(s).chatroomResearchMaxRounds
-    if (override > 0) maxRounds = override
-    priming = buildChatroomResearchModeratorPriming(topic, started, ledgerDir ?? '', mode, maxRounds, ws, prior)
+    priming = buildChatroomResearchModeratorPriming(topic, started, ledgerDir ?? '', mode, ws, prior)
   }
   const wake: Message = {
     ...emptyMessage(),

@@ -62,15 +62,13 @@ describe('chatroom session fields persist', () => {
     expect(chatroomState(sm4.getOrCreateActive('test:hub:user-1')).pendingHumanQuestionRole).toBe('Munger')
   })
 
-  it('moderator/research-mode/round/gather-seq/venv round-trip through save/load', async () => {
+  it('moderator/research-mode/gather-seq/venv round-trip through save/load', async () => {
     const store = join(await mkdtemp(join(tmpdir(), 'fb-chatroom-session-')), 'sessions.json')
     const sm1 = new SessionManager(store)
     const hub = sm1.getOrCreateActive('test:hub:user-1')
     chatroomState(hub).chatroomModerator = true
     chatroomState(hub).chatroomResearch = true
     chatroomState(hub).chatroomResearchMode = 'manual'
-    chatroomState(hub).chatroomResearchRound = 2
-    chatroomState(hub).chatroomResearchMaxRounds = 5
     chatroomState(hub).chatroomGatherSeq = 7
     chatroomState(hub).researchVenv = '/tmp/research/.venv'
     sm1.save()
@@ -80,8 +78,6 @@ describe('chatroom session fields persist', () => {
     expect(chatroomState(got).chatroomModerator).toBe(true)
     expect(chatroomState(got).chatroomResearch).toBe(true)
     expect(chatroomState(got).chatroomResearchMode).toBe('manual')
-    expect(chatroomState(got).chatroomResearchRound).toBe(2)
-    expect(chatroomState(got).chatroomResearchMaxRounds).toBe(5)
     expect(chatroomState(got).chatroomGatherSeq).toBe(7)
     expect(chatroomState(got).researchVenv).toBe('/tmp/research/.venv')
   })
@@ -142,7 +138,6 @@ describe('chat-scoped state survives a conversation reset', () => {
     chatroomState(hub).chatroomModerator = true
     chatroomState(hub).chatroomResearch = true
     chatroomState(hub).chatroomResearchMode = 'manual'
-    chatroomState(hub).chatroomResearchRound = 2
     const g = new ChatroomGather('研究问题', 3)
     g.expected.add('taleb')
     chatroomState(hub).pendingGather = g
@@ -152,7 +147,6 @@ describe('chat-scoped state survives a conversation reset', () => {
     expect(chatroomState(fresh).chatroomModerator).toBe(true)
     expect(chatroomState(fresh).chatroomResearch).toBe(true)
     expect(chatroomState(fresh).chatroomResearchMode).toBe('manual')
-    expect(chatroomState(fresh).chatroomResearchRound).toBe(2)
     // The in-flight round survives the reset — its replies still fan in.
     expect(chatroomState(fresh).pendingGather).toBe(g)
 

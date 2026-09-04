@@ -17,12 +17,9 @@ import { defaultChatroomRolesDir } from './engine/chatroom-roles.ts'
 import {
   defaultChatroomGatherTimeout,
   defaultChatroomResearchTimeout,
-  defaultMaxChatroomResearchRounds,
   defaultMaxChatroomRoles,
   maxChatroomResearchTimeout,
-  maxChatroomResearchRounds,
   minChatroomResearchTimeout,
-  minChatroomResearchRounds,
 } from './engine/chatroom.ts'
 
 /** One chatroom tuning section (Go [chatroom]; same shape the bridge carried). */
@@ -41,8 +38,6 @@ export interface ChatroomProjectConfig {
   endTimeoutSec?: number
   /** Research-mode gather round timeout in seconds, clamped to [60, 86400] (Go research_timeout_sec). */
   researchTimeoutSec?: number
-  /** Auto-mode research iteration cap, clamped to [1, 20] (Go max_research_rounds). */
-  maxResearchRounds?: number
   /** Default research iteration driver when --mode is omitted (Go default_research_mode). */
   defaultResearchMode?: 'auto' | 'manual'
   /** Shared research-assistant workdir; empty falls back to <moderatorDir>/research (Go research_workspace). */
@@ -65,7 +60,6 @@ const chatroomSection = Schema.object({
   gatherTimeoutSec: Schema.natural().description('Gather barrier fallback timeout in seconds (default 1200)'),
   endTimeoutSec: Schema.natural().description('End barrier drain timeout in seconds (default 600)'),
   researchTimeoutSec: Schema.natural().description('Research gather round timeout in seconds, clamped to [60, 86400]'),
-  maxResearchRounds: Schema.natural().description('Auto-mode research iteration cap, clamped to [1, 20]'),
   defaultResearchMode: Schema.union(['auto', 'manual']).description('Default research driver when --mode is omitted'),
   researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <projectDataDir>/chatroom-research)'),
   researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
@@ -113,8 +107,6 @@ class ChatroomEngineConfig {
   endTimeoutMs = 0
   /** Research gather round timeout override in ms; 0 = the 60m default. */
   researchTimeoutMs = 0
-  /** Auto-mode research iteration cap override; 0 = default 3. */
-  maxResearchRoundsOverride = 0
   /** Default research iteration driver; '' behaves as 'auto'. */
   defaultResearchModeValue = ''
   /** Shared research-assistant workdir override; '' = <projectDataDir>/chatroom-research. */
@@ -155,9 +147,6 @@ class ChatroomEngineConfig {
     }
     if (cfg.researchTimeoutSec !== undefined && cfg.researchTimeoutSec > 0) {
       this.researchTimeoutMs = Math.min(maxChatroomResearchTimeout, Math.max(minChatroomResearchTimeout, cfg.researchTimeoutSec * 1000))
-    }
-    if (cfg.maxResearchRounds !== undefined && cfg.maxResearchRounds > 0) {
-      this.maxResearchRoundsOverride = Math.min(maxChatroomResearchRounds, Math.max(minChatroomResearchRounds, cfg.maxResearchRounds))
     }
     if (cfg.defaultResearchMode !== undefined) {
       this.defaultResearchModeValue = cfg.defaultResearchMode
@@ -222,11 +211,6 @@ class ChatroomEngineConfig {
   /** Effective research gather timeout (the override, or the 60m default). */
   researchTimeoutDuration(): number {
     return this.researchTimeoutMs > 0 ? this.researchTimeoutMs : defaultChatroomResearchTimeout
-  }
-
-  /** Effective auto-mode research round cap (the override, or the default of 3). */
-  maxResearchRounds(): number {
-    return this.maxResearchRoundsOverride > 0 ? this.maxResearchRoundsOverride : defaultMaxChatroomResearchRounds
   }
 
   /** Effective default research mode; unknown values behave as 'auto'. */

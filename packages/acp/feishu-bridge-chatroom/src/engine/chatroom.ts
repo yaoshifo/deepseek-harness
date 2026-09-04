@@ -55,20 +55,11 @@ export const defaultChatroomGatherTimeout = 20 * 60 * 1000
 /** Default research-mode gather round timeout: 60 minutes (Go defaultChatroomResearchTimeout). */
 export const defaultChatroomResearchTimeout = 60 * 60 * 1000
 
-/** Default auto-mode research iteration cap (Go defaultMaxChatroomResearchRounds). */
-export const defaultMaxChatroomResearchRounds = 3
-
 /** Research config ranges (Go constants, mirrored from config). */
 export const minChatroomResearchTimeout = 60 * 1000
 
 /** Upper bound a configured research gather timeout may take. */
 export const maxChatroomResearchTimeout = 24 * 60 * 60 * 1000
-
-/** Lower bound a configured research round cap may take. */
-export const minChatroomResearchRounds = 1
-
-/** Upper bound a configured research round cap may take. */
-export const maxChatroomResearchRounds = 20
 
 /** How long a research-manual AskUserQuestion card waits before answering itself (Go var). */
 export const chatroomResearchManualAskTimeout = { ms: 10 * 60 * 1000 }
@@ -794,7 +785,7 @@ async function askRoleInternal(
  * @param e - Engine carrying the session registry and gather timeouts.
  * @param hubKey - Session key of the chatroom hub.
  * @param question - The question broadcast to every role; empty is rejected.
- * @param research - True to run a research round (longer timeout, round cap, progress card).
+ * @param research - True to run a research round (longer timeout, progress card).
  */
 export function gatherRoles(e: Engine, hubKey: string, question: string, research: boolean): void {
   const q = question.trim()
@@ -822,23 +813,6 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   const roles = listChatroomRoles(e, hubKey)
   if (roles.length === 0) throw new Error(e.i18n.t(Msg.ChatroomNoRoles))
 
-  // Research round cap FIRST — before any state is installed: a barrier
-  // persisted without a timer or broadcast never completes, and `end`
-  // refuses to run while pendingGather is set. Manual mode is uncapped
-  // (the user decides). The counter is consumed only by a round that
-  // actually proceeds.
-  if (research) {
-    const mode = chatroomState(hub).chatroomResearchMode
-    if (mode === 'auto' || mode === '') {
-      let cap = chatroomConfig(e).maxResearchRounds()
-      const override = chatroomState(hub).chatroomResearchMaxRounds
-      if (override > 0) cap = override
-      if (chatroomState(hub).chatroomResearchRound + 1 > cap) {
-        throw new Error(`chatroom: research 已达自动模式上限 ${cap} 轮，请用 note 写最终综合后 end 收尾（或切 --mode manual 手动继续）`)
-      }
-    }
-  }
-
   // Set up the fan-in barrier BEFORE broadcasting so the first role reply
   // can't race ahead and find no pendingGather.
   const seq = chatroomState(hub).chatroomGatherSeq + 1
@@ -846,7 +820,6 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   const g = new ChatroomGather(q, seq)
   for (const r of roles) g.expected.add(r.name)
   chatroomState(hub).pendingGather = g
-  if (research) chatroomState(hub).chatroomResearchRound += 1
   e.sessions.save()
 
   // Fallback timer: wake the moderator with partial results if a role stalls.
@@ -1842,8 +1815,6 @@ export function resolveChatroomInheritPrior(e: Engine, ref: string): ChatroomInh
 export function clearChatroomResearchFlags(hub: Session): void {
   chatroomState(hub).chatroomResearch = false
   chatroomState(hub).chatroomResearchMode = ''
-  chatroomState(hub).chatroomResearchRound = 0
-  chatroomState(hub).chatroomResearchMaxRounds = 0
   chatroomState(hub).researchAssistantKey = ''
 }
 

@@ -346,16 +346,12 @@ describe('finalizeChatroomEnd', () => {
     chatroomState(h).chatroomModerator = true
     chatroomState(h).chatroomResearch = true
     chatroomState(h).chatroomResearchMode = 'manual'
-    chatroomState(h).chatroomResearchRound = 3
-    chatroomState(h).chatroomResearchMaxRounds = 3
     chatroomState(h).researchAssistantKey = 'test:steward-1'
 
     finalizeChatroomEnd(e, hub)
 
     expect(chatroomState(h).chatroomResearch).toBe(false)
     expect(chatroomState(h).chatroomResearchMode).toBe('')
-    expect(chatroomState(h).chatroomResearchRound).toBe(0)
-    expect(chatroomState(h).chatroomResearchMaxRounds).toBe(0)
     expect(chatroomState(h).researchAssistantKey).toBe('')
   })
 })
@@ -368,16 +364,12 @@ describe('stashChatroomResearchFlags', () => {
     const h = e.sessions.getOrCreateActive(hub)
     chatroomState(h).chatroomResearch = true
     chatroomState(h).chatroomResearchMode = 'auto'
-    chatroomState(h).chatroomResearchRound = 2
-    chatroomState(h).chatroomResearchMaxRounds = 5
     chatroomState(h).researchAssistantKey = 'test:steward-1'
 
-    stashChatroomResearchFlags(e, hub, false, '', 0)
+    stashChatroomResearchFlags(e, hub, false, '')
 
     expect(chatroomState(h).chatroomResearch).toBe(false)
     expect(chatroomState(h).chatroomResearchMode).toBe('')
-    expect(chatroomState(h).chatroomResearchRound).toBe(0)
-    expect(chatroomState(h).chatroomResearchMaxRounds).toBe(0)
     expect(chatroomState(h).researchAssistantKey).toBe('')
   })
 })

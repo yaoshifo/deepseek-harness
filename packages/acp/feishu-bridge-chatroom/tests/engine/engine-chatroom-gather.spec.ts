@@ -267,11 +267,10 @@ describe('GatherRoles', () => {
     g?.stopTimer()
   })
 
-  it('hard-caps auto-mode research rounds; manual is uncapped', async () => {
+  it('auto-mode research rounds are uncapped — rounds proceed past any count', async () => {
     const p = createStubChatroomSpawner()
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
-    chatroomConfig(e).applySection({ maxResearchRounds: 2 })
     const hub = 'test:hub:user-1'
     const { startChatroom } = await import('../../src/engine/chatroom.ts')
     await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
@@ -279,54 +278,13 @@ describe('GatherRoles', () => {
     chatroomState(hubSess).chatroomResearch = true
     chatroomState(hubSess).chatroomResearchMode = 'auto'
 
-    gatherRoles(e, hub, 'r1', true)
-    chatroomState(hubSess).pendingGather?.stopTimer()
-    chatroomState(hubSess).pendingGather = undefined // round 1 completed and woke the moderator
-    gatherRoles(e, hub, 'r2', true)
-    chatroomState(hubSess).pendingGather?.stopTimer()
-    chatroomState(hubSess).pendingGather = undefined // round 2 completed
-
-    // Round 3 must be rejected (cap = 2).
-    expect(() => { gatherRoles(e, hub, 'r3', true) }).toThrow()
-
-    // Manual mode is uncapped.
-    chatroomState(hubSess).chatroomResearchMode = 'manual'
-    expect(() => { gatherRoles(e, hub, 'r3 manual', true) }).not.toThrow()
-    chatroomState(hubSess).pendingGather?.stopTimer()
-  })
-
-  it('a cap-rejected research round leaves no orphan barrier and consumes no state', async () => {
-    // The cap check must run BEFORE any state is installed: a barrier
-    // persisted without a timer or broadcast never completes, and `end`
-    // refuses to run while pendingGather is set — the moderator is stuck
-    // until force/stop.
-    const p = createStubChatroomSpawner()
-    const e = newChatroomTestEngine(p)
-    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
-    chatroomConfig(e).applySection({ maxResearchRounds: 2 })
-    const hub = 'test:hub:user-1'
-    const { startChatroom } = await import('../../src/engine/chatroom.ts')
-    await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
-    const hubSess = e.sessions.getOrCreateActive(hub)
-    chatroomState(hubSess).chatroomResearch = true
-    chatroomState(hubSess).chatroomResearchMode = 'auto'
-
-    gatherRoles(e, hub, 'r1', true)
-    chatroomState(hubSess).pendingGather?.stopTimer()
-    chatroomState(hubSess).pendingGather = undefined // round 1 completed and woke the moderator
-    gatherRoles(e, hub, 'r2', true)
-    chatroomState(hubSess).pendingGather?.stopTimer()
-    chatroomState(hubSess).pendingGather = undefined // round 2 completed
-
-    const barrierBefore = chatroomState(hubSess).pendingGather
-    const seqBefore = chatroomState(hubSess).chatroomGatherSeq
-
-    expect(() => { gatherRoles(e, hub, 'r3', true) }).toThrow()
-
-    const st = chatroomState(hubSess)
-    expect(st.pendingGather, 'rejected round must not install an orphan barrier').toBe(barrierBefore)
-    expect(st.chatroomGatherSeq, 'rejected round must not consume the seq').toBe(seqBefore)
-    expect(st.chatroomResearchRound, 'rejected round must not consume the counter').toBe(2)
+    // Well past the old default cap of 3: no engine-side round limit
+    // remains; the moderator alone decides when to wrap up.
+    for (let round = 1; round <= 6; round++) {
+      expect(() => { gatherRoles(e, hub, `r${round}`, true) }, `round ${round}`).not.toThrow()
+      chatroomState(hubSess).pendingGather?.stopTimer()
+      chatroomState(hubSess).pendingGather = undefined // round completed and woke the moderator
+    }
   })
 
   it('errors when the hub has no roles', () => {
@@ -799,14 +757,12 @@ describe('research progress card', () => {
 })
 
 describe('research config range clamping', () => {
-  it('clamps the timeout to [1m, 24h] and rounds to [1, 20]', () => {
+  it('clamps the timeout to [1m, 24h]', () => {
     const e = new Engine('test', createStubAgent(), [], '', 'zh')
     chatroomConfig(e).applySection({ researchTimeoutSec: Math.round(1_000 / 1000) })
     expect(chatroomConfig(e).researchTimeoutDuration()).toBe(60_000)
     chatroomConfig(e).applySection({ researchTimeoutSec: Math.round(48 * 60 * 60 * 1000 / 1000) })
     expect(chatroomConfig(e).researchTimeoutDuration()).toBe(24 * 60 * 60 * 1000)
-    chatroomConfig(e).applySection({ maxResearchRounds: 99 })
-    expect(chatroomConfig(e).maxResearchRounds()).toBe(20)
   })
 })
 
@@ -947,7 +903,7 @@ describe('buildChatroomModeratorPriming', () => {
   })
 
   it('research priming opens with a bounded clarify stage before the data-needs stage', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')
     for (const want of ['澄清研究背景', '最多 2 轮', 'ask_user_question', '用户背景与约束', '无需追问']) {
       expect(priming).toContain(want)
     }
@@ -973,7 +929,7 @@ describe('buildChatroomModeratorPriming', () => {
   it('uses 总分结构 wording and never induces a pyramid graphic', () => {
     const cases: Array<[string, string]> = [
       ['moderator', buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')],
-      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')],
+      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')],
     ]
     for (const [, priming] of cases) {
       expect(priming).toContain('总分结构')
@@ -986,7 +942,7 @@ describe('buildChatroomModeratorPriming', () => {
   it('offers the plain (Feynman) default AND the optional academic version', () => {
     const cases: Array<[string, string]> = [
       ['moderator', buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')],
-      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')],
+      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')],
     ]
     for (const [, priming] of cases) {
       for (const want of ['summary.html', '费曼法通俗版', '生活类比', '最小例子', '仍有的分歧']) {
@@ -1006,10 +962,10 @@ describe('buildChatroomModeratorPriming', () => {
       expect(withPrior).toContain(want)
     }
     expect(plain).not.toContain('前情（继承自')
-    const research = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws', prior)
+    const research = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws', prior)
     expect(research).toContain('前情（继承自 旧议题，未经本次讨论验证）')
     expect(research).toContain('采信')
-    expect(buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')).not.toContain('前情（继承自')
+    expect(buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')).not.toContain('前情（继承自')
   })
 
   it('mentions the shared research data in the plain priming only when a workspace is passed', () => {
@@ -1024,7 +980,7 @@ describe('buildChatroomModeratorPriming', () => {
   it('instructs writing the closing summary to REPORT.md via note section report', () => {
     const cases: Array<[string, string]> = [
       ['moderator', buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')],
-      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')],
+      ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')],
     ]
     for (const [, priming] of cases) {
       expect(priming).toContain('section: report')
@@ -1035,12 +991,12 @@ describe('buildChatroomModeratorPriming', () => {
 
 describe('buildChatroomResearchModeratorPriming', () => {
   it('instructs note (section: subproblems) to fill SUBPROBLEMS.md', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')
     expect(priming).toContain('section: subproblems')
   })
 
   it('addresses the assistant by the "assistant" sentinel, never a key the model must transcribe', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')
     expect(priming).toContain('child 用 "assistant"')
     // The Go-era env var no longer exists in the dsh backend; mentioning it
     // sent models hunting for a value they cannot see (2026-08-25 oc_ac5db).
@@ -1048,29 +1004,30 @@ describe('buildChatroomResearchModeratorPriming', () => {
   })
 
   it('instructs persisting artifacts into the shared workspace', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')
     expect(priming).toContain('存成文件')
     expect(priming).toContain('工作区')
   })
 
   it('relays data-reliability requirements to assistants in the round-1 task template', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')
     for (const want of ['数据必须可靠', '权威一手源', '两个独立源交叉验证或加总闭合', '不编造']) {
       expect(priming).toContain(want)
     }
   })
 
-  it('instructs a plain per-round progress sync to the user in auto mode only', () => {
-    const auto = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
+  it('instructs a plain per-round progress sync and an uncapped iterate-as-needed loop in auto mode only', () => {
+    const auto = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')
+    expect(auto).toContain('无轮数上限')
     expect(auto).toContain('用一条普通回复向用户同步进展')
     expect(auto).toContain('不用卡片、不等回复、不暂停研究')
-    const manual = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'manual', 3, '/tmp/ws')
+    const manual = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'manual', '/tmp/ws')
     expect(manual).not.toContain('同步进展')
   })
 
   it('instructs handling mid-run user messages in both modes', () => {
     for (const mode of ['auto', 'manual']) {
-      const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', mode, 3, '/tmp/ws')
+      const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', mode, '/tmp/ws')
       expect(priming).toContain('用户中途发言')
       expect(priming).toContain('追问用 action: ask 转给相关角色')
       // The ask-during-gather interlock rejects askRole mid-round; the
@@ -1082,7 +1039,7 @@ describe('buildChatroomResearchModeratorPriming', () => {
   })
 
   it('stages a needs gather then a steward prefetch before round 1', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '/tmp/ws')
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')
     for (const want of [
       '只列清单，不派助手、不下数据',
       '数据管家',
@@ -1104,7 +1061,7 @@ describe('buildChatroomResearchModeratorPriming', () => {
   })
 
   it('omits the steward and ledger sections without a shared research workspace', () => {
-    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', 3, '')
+    const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '')
     // The needs gather still runs — it costs minutes and shapes round 1.
     expect(priming).toContain('只列清单，不派助手、不下数据')
     expect(priming).toContain('跳过公共预取')

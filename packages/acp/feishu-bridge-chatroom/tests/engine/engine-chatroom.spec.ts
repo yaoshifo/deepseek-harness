@@ -886,18 +886,17 @@ describe('cmdChatroom', () => {
     await waitFor(() => !chatroomState(e.sessions.getOrCreateActive(hub)).chatroomDirectRole, 'direct flag cleared')
   })
 
-  it('stashes --research/--mode/--max-rounds on the picker path', async () => {
+  it('stashes --research/--mode on the picker path', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
     chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
     const hub = 'test:hub:user-1'
     const handler = e.commandHandlers?.get('chatroom')
-    handler?.(p, hubMsg(hub), ['--research', '--mode', 'manual', '--max-rounds', '5', '研究中国股市是否过热'])
+    handler?.(p, hubMsg(hub), ['--research', '--mode', 'manual', '研究中国股市是否过热'])
     await settle()
     const s = e.sessions.getOrCreateActive(hub)
     expect(chatroomState(s).chatroomResearch).toBe(true)
     expect(chatroomState(s).chatroomResearchMode).toBe('manual')
-    expect(chatroomState(s).chatroomResearchMaxRounds).toBe(5)
     expect(p.count).toBe(0)
   })
 
@@ -937,17 +936,6 @@ describe('cmdChatroom', () => {
     expect(chatroomState(sess).chatroomResearch).toBe(false)
     expect(p.sentCards).toHaveLength(0)
     expect(p.getSent().some(c => c.includes('research'))).toBe(true)
-  })
-
-  it('rejects out-of-range --max-rounds before any spawn', async () => {
-    const p = createStubChatroomSpawner()
-    const e = newChatroomTestEngine(p)
-    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
-    const handler = e.commandHandlers?.get('chatroom')
-    handler?.(p, hubMsg('test:hub:user-1'), ['--research', '--max-rounds', '99', 'taleb,munger', '议题'])
-    await settle()
-    expect(p.firstMsgs).toHaveLength(0)
-    expect(p.getSent().some(c => c.includes('max-rounds'))).toBe(true)
   })
 
   it('topic-only begins the #43 role picker (no spawn)', async () => {

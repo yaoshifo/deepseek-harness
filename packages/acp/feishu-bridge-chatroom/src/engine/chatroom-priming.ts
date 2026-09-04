@@ -142,13 +142,12 @@ export function buildChatroomModeratorPriming(
  * @param roles - Spawned research roles.
  * @param ledgerDir - Shared ledger directory; '' omits the ledger sections.
  * @param mode - 'manual' asks the user between rounds; anything else auto-iterates.
- * @param maxRounds - Round cap that forces wrap-up in auto mode.
  * @param researchWs - Shared research workspace; '' omits the steward-prefetch sections.
  * @param prior - Prior chatroom this research continues; omitted starts fresh.
  * @returns the research-mode moderator wake prompt.
  */
 export function buildChatroomResearchModeratorPriming(
-  topic: string, roles: ChatroomRole[], ledgerDir: string, mode: string, maxRounds: number,
+  topic: string, roles: ChatroomRole[], ledgerDir: string, mode: string,
   researchWs: string, prior?: ChatroomLedgerPrior,
 ): string {
   const sb: string[] = []
@@ -211,11 +210,11 @@ export function buildChatroomResearchModeratorPriming(
   if (mode === 'manual') {
     sb.push('手动模式：每轮综合后，你**必须**用 ask_user_question 问用户「建议再迭代一轮深挖 X / 回复结束」。用户说继续才继续；用户 10 分钟不回复将按第一个选项（默认设计为「再迭代一轮」）自动推进。无轮数上限。\n')
   } else {
-    sb.push(`自动模式：每轮综合后，你自己判断——若各方仍存在实质性分歧或有明显未验证假设，再迭代一轮（指明深挖方向）；若图景已完整，收尾。**最多 ${maxRounds} 轮**，达到上限强制收尾。每轮综合写完账本后，用一条普通回复向用户同步进展：本轮图景一句话 + 下一轮深挖什么（不用卡片、不等回复、不暂停研究——用户想插话随时能接）。\n`)
+    sb.push('自动模式：每轮综合后，你自己判断——若各方仍存在实质性分歧或有明显未验证假设，再迭代一轮（指明深挖方向）；若图景已完整，收尾。无轮数上限，按需迭代——但每轮都要有明确的深挖靶点，不为迭代而迭代。每轮综合写完账本后，用一条普通回复向用户同步进展：本轮图景一句话 + 下一轮深挖什么（不用卡片、不等回复、不暂停研究——用户想插话随时能接）。\n')
   }
   sb.push(`
 ## 收尾流程（决定收尾时：先出报告，再 end）
-无论 auto 自判图景完整、达上限被 engine 拦截、还是 manual 下用户说结束——**都先渲染一份 HTML 研究报告给用户 review，再问是否结束**：
+无论 auto 自判图景完整、还是 manual 下用户说结束——**都先渲染一份 HTML 研究报告给用户 review，再问是否结束**：
 1. 调 feishu_bridge_subtask 工具（action: spawn，worktree: off，dir: ${ledgerDir}，message: \"<brief>\"），brief 内容：『读账本目录 ${ledgerDir} 下 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md，用 html skill 渲染一份【费曼法通俗版】的研究报告 HTML，写到 ${ledgerDir}/summary.html（与 SYNTHESIS.md 同目录，便于 Quartz 发布与归档）。务必按以下分层（覆盖 html skill 的默认模板）：
 
 1. 一个生活类比讲全貌（顶部第一屏，默认展开）：用一个人人都能懂的日常类比把研究核心判断讲清楚——「这件事就像……」。类比要贴切（结构对应），让读者一眼建立直觉。类比之后跟 2 句大白话补充：各方基于数据倾向于什么、在什么地方仍有诚实分歧。零术语——必要术语用括号日常语言解释。有定论处给定论，有分歧处显式标出分歧，不要为了干脆而假装分歧已消解。
