@@ -190,6 +190,11 @@ function decorateSessionStartOptions(engine: Engine, session: Session, options: 
   // section (the engine fills attended/no-report only; the flag appears
   // only when the session is a research assistant).
   if (options.subtask !== undefined && chatroomState(session).researchAssistant) options.subtask.researchAssistant = true
+  // The per-chatroom run dir rides the same subtask section; '' (no
+  // workspace, or a pre-stamp session recovered from disk) leaves it absent
+  // so the assistant preamble falls back to cwd.
+  const runDir = chatroomState(session).researchRunDir
+  if (options.subtask !== undefined && runDir !== '') options.subtask.researchRunDir = runDir
   const hubKey = chatroomState(session).chatroomHubKey
   if (hubKey !== '') {
     const ledger = chatroomConfig(engine).moderatorDir()

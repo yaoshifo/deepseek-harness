@@ -49,6 +49,7 @@ describe('chatroom feature-state codec', () => {
     chatroomState(s).chatroomResearchMaxRounds = 5
     chatroomState(s).chatroomGatherSeq = 7
     chatroomState(s).researchVenv = '/ws/.venv'
+    chatroomState(s).researchRunDir = '/ws/runs/hub-1/munger'
     chatroomState(s).pendingHumanQuestionRole = 'taleb'
     const gather = new ChatroomGather('研究问题', 3)
     gather.expected.add('taleb')
@@ -72,6 +73,7 @@ describe('chatroom feature-state codec', () => {
       chatroomResearchMaxRounds: 5,
       chatroomGatherSeq: 7,
       researchVenv: '/ws/.venv',
+      researchRunDir: '/ws/runs/hub-1/munger',
       pendingHumanQuestionRole: 'taleb',
       pendingGatherData: { question: '研究问题', seq: 3, expected: ['taleb'], collected: {} },
       pendingEndBarrierData: { expected: ['taleb'], collected: {} },

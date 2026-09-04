@@ -40,7 +40,7 @@ import {
 } from './chatroom.ts'
 import { listRoleNames, roleDir, roleExists, roleEssence } from './chatroom-roles.ts'
 import { beginChatroomModePick, beginChatroomPick, beginChatroomStartPick, beginChatroomTopicPick, executeChatroomCardAction } from './chatroom-pick.ts'
-import { listChatroomLedgers } from './chatroom-ledger.ts'
+import { hashID, listChatroomLedgers } from './chatroom-ledger.ts'
 import {
   buildChatroomModeratorPriming,
   buildChatroomResearchModeratorPriming,
@@ -597,6 +597,23 @@ export async function afterChatroomStarted(
         console.warn(`chatroom: research workspace unavailable; assistants run without shared venv (ws=${ws}): ${String(error)}`)
       }
     }
+    // Per-chatroom run dirs keep each assistant's scratch (scripts, logs,
+    // intermediate fetches) off the shared workspace root, so parallel
+    // chatrooms never overwrite each other's generic scratch names. The tag
+    // matches the ledger dir (hashID-run): same audit trail, one dir per
+    // chatroom instance. Shared assets (venv, data/core, DATA_LEDGER) stay
+    // at the workspace root untouched.
+    const runTag = assistantDir !== '' ? `${hashID(sessionKey)}-${chatroomState(s).chatroomLedgerRun}` : ''
+    const stampRunDir = (childKey: string, runDir: string): void => {
+      chatroomState(e.sessions.getOrCreateActive(childKey)).researchRunDir = runDir
+      try {
+        mkdirSync(runDir, { recursive: true })
+      } catch (error) {
+        // Best-effort: the stamp alone suffices — the assistant's preamble
+        // names the dir, so it mkdir -p's on first use.
+        console.warn(`chatroom: run dir mkdir failed (dir=${runDir}): ${String(error)}`)
+      }
+    }
     for (const r of started) {
       // Idle spawn: create the assistant group + session record but do NOT
       // fire a first turn — the assistant waits for the role's real task.
@@ -619,6 +636,7 @@ export async function afterChatroomStarted(
       const child = e.sessions.getOrCreateActive(childKey)
       chatroomState(child).researchAssistant = true
       if (researchVenv !== '') chatroomState(child).researchVenv = researchVenv
+      if (runTag !== '') stampRunDir(childKey, join(ws, 'runs', runTag, `assistant-${r.name}`))
       // Rename the assistant group so the user can tell assistants apart in
       // the group list; the idle spawn's neutral placeholder would stick.
       const assistantName = chatroomAssistantGroupName(r.name)
@@ -655,6 +673,7 @@ export async function afterChatroomStarted(
         const child = e.sessions.getOrCreateActive(childKey)
         chatroomState(child).researchAssistant = true
         if (researchVenv !== '') chatroomState(child).researchVenv = researchVenv
+        stampRunDir(childKey, join(ws, 'runs', runTag, 'steward'))
         child.setName(chatroomStewardGroupName())
         const renamer = asGroupRenamer(p)
         if (renamer !== undefined) {

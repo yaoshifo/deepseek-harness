@@ -438,6 +438,14 @@ export interface SessionStartOptions {
      * session-start-options listener; absent = not a research assistant.
      */
     researchAssistant?: boolean
+    /**
+     * The research assistant's per-chatroom run dir for scratch files
+     * (scripts, logs, intermediate fetches), so parallel chatrooms keep
+     * disjoint scratch areas. Decorated by the owning feature's
+     * session-start-options listener from the session state; absent = fall
+     * back to cwd.
+     */
+    researchRunDir?: string
   }
   /**
    * Whole-prompt persona for the session; absent = plain session. The

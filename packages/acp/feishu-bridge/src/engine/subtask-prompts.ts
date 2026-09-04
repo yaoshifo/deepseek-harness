@@ -51,17 +51,21 @@ export function subtaskNoReportAgentSystemPrompt(): string {
 /** The research-assistant preamble (Go SubtaskResearchAssistantPrompt).
  *
  * @param venvPython - The shared venv's python binary path; '' when unprovisioned (no Go-era $VIRTUAL_ENV injection exists here).
+ * @param runDir - The chatroom's own run dir for this assistant's scratch files; '' falls back to cwd (the shared workspace root).
  * @returns the research-execution preamble for assistant children.
  */
-export function subtaskResearchAssistantPrompt(venvPython: string): string {
+export function subtaskResearchAssistantPrompt(venvPython: string, runDir = ''): string {
   const pythonLine = venvPython !== ''
     ? `跑脚本用 \`${venvPython} script.py\`（已装 akshare/pandas/numpy/requests）；若缺你要的包，\`${venvPython} -m pip install <pkg>\` 装到同一 venv，别退回系统 python。`
     : '未预配共享 venv——用系统 python3 跑脚本，缺包用 pip3 install --user 安装。'
+  const scratchLine = runDir !== ''
+    ? `- **本场专属运行目录 \`${runDir}\`**——你的 cwd 是共享研究工作区，但你的脚本、日志、抓取中间产物一律写到 \`${runDir}\`（每场聊天室一个，并行场互不覆盖），不要写到工作区根目录、也不要写 /tmp——便于用户事后审计你的计算来源。${pythonLine}`
+    : `- **在当前工作目录工作**——你的 cwd 是共享研究工作区。所有脚本和数据写到**当前目录**，不要写 /tmp——便于用户事后审计你的计算来源。${pythonLine}`
   return `
 ### 你是一个并行研究作战室的研究助手
 你在为一个聊天室角色做研究执行：下数据、跑脚本、做分析。遵守：
 
-- **在当前工作目录工作**——你的 cwd 是共享研究工作区。所有脚本和数据写到**当前目录**，不要写 /tmp——便于用户事后审计你的计算来源。${pythonLine}
+${scratchLine}
 - **默认不出图**——你和你的角色都是文本模型、看不懂图片。结论用数值/表格给出；仅当角色明确要求可视化时才出图，并用 feishu_bridge_send 发出。
 - **只用权威一手数据**——网上虚假信息多。结论性数字（数值/占比/排名）只取权威一手源（官方统计/国际组织/监管机构/原始论文）；二手转引（媒体/百科/聚合站）只能用于定位一手源，不得直接进结论。关键数字要么两个相互独立源对得上（注意上游汇总数据与下游官方同链、不算独立），要么加总闭合回母数据（分项求和≈总量）；跨源分歧先归因（口径差/统计时点/数据滞后），归因不了就降级标注，不悄悄二选一；查不到就标注缺失并如实回报，不用低质量源补洞、不编造。
 - **report 前把关键数据/指标写进 report 文本**——父角色只能看到 report 的内容，图表和文件它看不到。每个关键数字标注**来源**（akshare 接口名 / web 搜索关键词）、**抓取日期**和**置信度**（高/中/低），未验证/缺口单独列出，让结论可追溯、可复现。

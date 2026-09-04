@@ -52,6 +52,8 @@ export interface ChatroomFeatureState {
   chatroomLedgerRun?: number
   /** Shared uv venv path for research assistants. */
   researchVenv?: string
+  /** Per-chatroom run dir a research assistant keeps its scratch files in. */
+  researchRunDir?: string
   /** Hub-side pending role name for a routed human reply. */
   pendingHumanQuestionRole?: string
   /** Durable snapshot of the armed gather barrier (consumed at engine start). */
@@ -139,6 +141,10 @@ export class ChatroomSessionState {
   get researchVenv(): string { return this.section.researchVenv ?? '' }
   set researchVenv(value: string) { this.section.researchVenv = value }
 
+  /** Per-chatroom run dir a research assistant keeps its scratch files in ('' = fall back to cwd). */
+  get researchRunDir(): string { return this.section.researchRunDir ?? '' }
+  set researchRunDir(value: string) { this.section.researchRunDir = value }
+
   /** Role has an asked question whose turn is generating; in-memory only. */
   chatroomInFlight = false
 
@@ -224,6 +230,7 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
       ...(s.chatroomGatherSeq !== 0 ? { chatroomGatherSeq: s.chatroomGatherSeq } : {}),
       ...(s.chatroomLedgerRun !== 0 ? { chatroomLedgerRun: s.chatroomLedgerRun } : {}),
       ...(s.researchVenv !== '' ? { researchVenv: s.researchVenv } : {}),
+      ...(s.researchRunDir !== '' ? { researchRunDir: s.researchRunDir } : {}),
       ...(s.pendingHumanQuestionRole !== '' ? { pendingHumanQuestionRole: s.pendingHumanQuestionRole } : {}),
       ...(pendingGatherData !== undefined ? { pendingGatherData } : {}),
       ...(pendingEndBarrierData !== undefined ? { pendingEndBarrierData } : {}),
@@ -248,6 +255,7 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
     t.researchAssistantKey = f.researchAssistantKey
     t.researchAssistant = f.researchAssistant
     t.researchVenv = f.researchVenv
+    t.researchRunDir = f.researchRunDir
     // Chat-scoped scheduling: in-flight barriers and the pending human
     // question survive a conversation reset, or a running round silently
     // degrades and a suspended question stops routing.

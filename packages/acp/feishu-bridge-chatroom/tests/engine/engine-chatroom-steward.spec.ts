@@ -8,6 +8,7 @@
  */
 
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +19,7 @@ import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.ts'
 import { uvHooks } from '../../src/engine/chatroom.ts'
 import { chatroomState } from '../../src/chatroom-state.ts'
 import { chatroomConfig } from '../../src/chatroom-config.ts'
+import { hashID } from '../../src/engine/chatroom-ledger.ts'
 import { roleDir } from '../../src/engine/chatroom-roles.ts'
 import { confirmChatroomModePlain, createStubAgent, createStubChatroomSpawnerEx, newStubMessage } from '../stubs/engine-stubs.ts'
 import { chatroomPolicyFace } from '../stubs/bridge-policy.ts'
@@ -118,6 +120,12 @@ describe('research steward pre-spawn', () => {
     expect(steward.getParentSessionKey()).toBe(hub)
     expect(chatroomState(steward).researchAssistant).toBe(true)
     expect(chatroomState(steward).researchVenv).toBe(join(ws, '.venv'))
+    // Scratch isolation: the steward keeps its scripts and intermediate
+    // products in the chatroom's own run dir (same tag as the ledger dir), so
+    // parallel chatrooms never overwrite each other's root-level scratch.
+    const runTag = `${hashID(hub)}-1`
+    expect(chatroomState(steward).researchRunDir).toBe(join(ws, 'runs', runTag, 'steward'))
+    expect(existsSync(join(ws, 'runs', runTag, 'steward'))).toBe(true)
     expect(steward.getName()).toBe('聊天室·数据管家')
     expect(e.perChatWorkDir(e.dirOverrideKey(stewardKey))).toBe(ws)
     expect(p.renamedAnyCalls().some(r => r.key === stewardKey && r.name === '聊天室·数据管家')).toBe(true)
@@ -141,6 +149,11 @@ describe('research steward pre-spawn', () => {
       expect(roleAssistant, `assistant for ${name}`).not.toBe('')
       expect(roleAssistant).not.toBe(stewardKey)
       expect(e.sessions.getOrCreateActive(roleAssistant).getParentSessionKey()).toBe(roleKey)
+      // Each role assistant gets its own scratch dir under the chatroom's
+      // run tag, pre-created on disk.
+      const wantRunDir = join(ws, 'runs', runTag, `assistant-${name}`)
+      expect(chatroomState(e.sessions.getOrCreateActive(roleAssistant)).researchRunDir).toBe(wantRunDir)
+      expect(existsSync(wantRunDir)).toBe(true)
     }
   })
 
@@ -194,6 +207,9 @@ describe('research steward pre-spawn', () => {
       const assistantKey = chatroomState(e.sessions.getOrCreateActive(roleKey)).researchAssistantKey
       expect(assistantKey, `assistant for ${name}`).not.toBe('')
       expect(e.perChatWorkDir(e.dirOverrideKey(assistantKey))).toBe(roleDir(rolesDir, name))
+      // No shared workspace → no run dir either: the assistant falls back to
+      // its cwd (the persona dir) for scratch.
+      expect(chatroomState(e.sessions.getOrCreateActive(assistantKey)).researchRunDir).toBe('')
     }
   })
 })

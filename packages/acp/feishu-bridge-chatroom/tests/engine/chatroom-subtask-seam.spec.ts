@@ -141,4 +141,22 @@ describe('buildSessionStartOptions chatroom halves', () => {
     chatroomState(sess).researchAssistant = false
     expect(e.buildSessionStartOptions(key, sess).subtask?.researchAssistant).toBeUndefined()
   })
+
+  it('carries the assistant run dir beside the research assistant flag', () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newSubtaskTestEngine(p)
+
+    const key = 'test:assistant-chat'
+    const sess = e.sessions.getOrCreateActive(key)
+    sess.setSubtaskDepth(1)
+    chatroomState(sess).researchAssistant = true
+    chatroomState(sess).researchRunDir = '/ws/runs/hub-1/assistant-munger'
+
+    expect(e.buildSessionStartOptions(key, sess).subtask?.researchRunDir).toBe('/ws/runs/hub-1/assistant-munger')
+
+    // An assistant without a run dir (no workspace, or a pre-stamp session
+    // recovered from disk) stays undefined: the adapter falls back to cwd.
+    chatroomState(sess).researchRunDir = ''
+    expect(e.buildSessionStartOptions(key, sess).subtask?.researchRunDir).toBeUndefined()
+  })
 })

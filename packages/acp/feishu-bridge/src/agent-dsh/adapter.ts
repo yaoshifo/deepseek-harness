@@ -549,7 +549,7 @@ function buildSessionSetup(options: SessionStartOptions | undefined): import('@d
     const venvPython = options.venv !== undefined ? `${options.venv.virtualEnv}/bin/python` : ''
     const preamble = isNoReport
       ? subtaskNoReportAgentSystemPrompt()
-      : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt(venvPython) : ''}`
+      : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt(venvPython, options.subtask.researchRunDir ?? '') : ''}`
     return (agentCtx) => {
       // Research assistants are coding agents: their workspace lives under
       // the project data dir, off every persona's ancestor chain, so they
