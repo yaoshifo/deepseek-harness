@@ -165,6 +165,7 @@ describe('sendAskQuestionPrompt', () => {
     const questions: UserQuestion[] = [{
       question: 'Which database?',
       header: 'Choose',
+      multiSelect: false,
       options: [
         { label: 'PostgreSQL', description: 'Full-featured', recommended: true },
         { label: 'SQLite', description: 'Lightweight' },
