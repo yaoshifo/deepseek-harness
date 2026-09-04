@@ -85,21 +85,41 @@ function indexHeader(dir: string, scope: MemoryScope): string {
     : `Memory index from your persistent memory at ${dir}. ${caveat}`
 }
 
+/** Most names the unindexed-files note lists before its overflow count. */
+const UNINDEXED_NOTE_NAMES = 5
+
+/** The session-start note for memory files that exist but have no pointer line. */
+function unindexedNote(unindexed: readonly string[]): string {
+  const shown = unindexed.slice(0, UNINDEXED_NOTE_NAMES)
+  const overflow = unindexed.length - shown.length
+  const names = overflow > 0 ? `${shown.join(', ')}, and ${overflow} more` : shown.join(', ')
+  return `\n\nUnindexed memory files on disk but missing from MEMORY.md: ${names} — add pointer lines with memory_index, or delete the files.`
+}
+
 /**
  * Frame one bounded index as the durable recall message. The plugin owns the
  * complete `<system-reminder>` frame; a literal close tag inside the index
- * cannot end it.
+ * cannot end it. `unindexed` names memory files that exist without a pointer
+ * line, appending a one-line healing note; an empty or absent list adds
+ * nothing.
  *
  * @param index - the bounded index with its digest and truncation flag.
  * @param dir - the memory directory the index was read from.
  * @param scope - which memory scope the index belongs to.
+ * @param unindexed - unindexed memory file names, sorted.
  * @returns the framed message text.
  */
-export function renderIndexInjection(index: MemoryIndexContent, dir: string, scope: MemoryScope): string {
+export function renderIndexInjection(
+  index: MemoryIndexContent,
+  dir: string,
+  scope: MemoryScope,
+  unindexed?: readonly string[],
+): string {
   const truncation = index.truncated
     ? '\n\nTruncated: only part of MEMORY.md is shown. Read the full file with memory_read, then prune the index with memory_write.'
     : ''
-  const body = `${indexHeader(dir, scope)}\n\n${index.content}${truncation}`
+  const unindexedLine = unindexed === undefined || unindexed.length === 0 ? '' : unindexedNote(unindexed)
+  const body = `${indexHeader(dir, scope)}\n\n${index.content}${truncation}${unindexedLine}`
   return [SYSTEM_REMINDER_OPEN, escapeFrameBody(body), SYSTEM_REMINDER_CLOSE].join('\n')
 }
 

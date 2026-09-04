@@ -230,6 +230,40 @@ describe('memory tools', () => {
     expect((after.value as { content: string }).content).not.toContain('](feedback-x.md)')
   })
 
+  it('flags an unindexed memory_write and clears the flag once a pointer line exists', async () => {
+    const ctx = await setup()
+    context = ctx
+    const agent = makeAgent(ctx, { cwd: CWD })
+    await seedIndex('# Memory Index\n\n- [Existing](existing.md) — hooked\n')
+    const orphan = await call(ctx, 'memory_write', { name: 'orphan-topic', content: 'body' }, agent)
+    expect(orphan.isError).toBe(false)
+    if (orphan.isError) throw new Error('expected success')
+    expect((orphan.value as { indexed: boolean }).indexed).toBe(false)
+    expect(JSON.stringify(orphan.content)).toContain('No pointer line for orphan-topic.md')
+    expect(JSON.stringify(orphan.content)).toContain('memory_index')
+    const hooked = await call(ctx, 'memory_write', { name: 'existing.md', content: 'body' }, agent)
+    expect(hooked.isError).toBe(false)
+    if (hooked.isError) throw new Error('expected success')
+    expect((hooked.value as { indexed: boolean }).indexed).toBe(true)
+    expect(JSON.stringify(hooked.content)).not.toContain('No pointer line')
+    const indexWrite = await call(ctx, 'memory_write', { name: 'MEMORY.md', content: '# Memory Index\n' }, agent)
+    expect(indexWrite.isError).toBe(false)
+    if (indexWrite.isError) throw new Error('expected success')
+    expect((indexWrite.value as { indexed: boolean }).indexed).toBe(true)
+    const upsert = await call(ctx, 'memory_index', {
+      action: 'upsert',
+      name: 'orphan-topic',
+      title: 'Orphan topic',
+      hook: 'once lost',
+    }, agent)
+    expect(upsert.isError).toBe(false)
+    const again = await call(ctx, 'memory_write', { name: 'orphan-topic', content: 'body v2' }, agent)
+    expect(again.isError).toBe(false)
+    if (again.isError) throw new Error('expected success')
+    expect((again.value as { indexed: boolean }).indexed).toBe(true)
+    expect(JSON.stringify(again.content)).not.toContain('No pointer line')
+  })
+
   it('rejects a memory_index upsert missing title or hook, and multi-line values', async () => {
     const ctx = await setup()
     context = ctx
@@ -283,6 +317,38 @@ describe('session-start index injection', () => {
     expect(injected.source).toMatchObject({ kind: 'dsh-memory', project: '-home-hm-workspace-ainvest' })
     expect(JSON.stringify(injected.content)).toContain('hook about ainvest')
     expect(JSON.stringify(injected.content)).toContain('<system-reminder>')
+  })
+
+  it('appends the unindexed-files healing note to a session-start injection', async () => {
+    const ctx = await setup()
+    context = ctx
+    const dir = join(root, 'projects', '-home-hm-workspace-ainvest', 'memory')
+    await rm(dir, { recursive: true, force: true })
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'MEMORY.md'), '# Memory Index\n\n- [A](a.md) — hooked\n')
+    await writeFile(join(dir, 'orphan.md'), 'body')
+    await writeFile(join(dir, '.MEMORY.md.tmp-1-x'), 'partial')
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const decision = await emitPreStep(ctx, agent)
+    if (decision.kind !== 'enter') throw new Error('expected enter')
+    const text = JSON.stringify(decision.messages.at(1)?.content)
+    expect(text).toContain('Unindexed memory files on disk but missing from MEMORY.md: orphan.md')
+    expect(text).toContain('add pointer lines with memory_index, or delete the files')
+    expect(text).not.toContain('.MEMORY.md.tmp')
+  })
+
+  it('leaves the injection note-free when every memory file is indexed', async () => {
+    const ctx = await setup()
+    context = ctx
+    const dir = join(root, 'projects', '-home-hm-workspace-ainvest', 'memory')
+    await rm(dir, { recursive: true, force: true })
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'MEMORY.md'), '# Memory Index\n\n- [A](a.md) — hooked\n')
+    await writeFile(join(dir, 'a.md'), 'body')
+    const agent = makeAgent(ctx, { cwd: CWD })
+    const decision = await emitPreStep(ctx, agent)
+    if (decision.kind !== 'enter') throw new Error('expected enter')
+    expect(JSON.stringify(decision.messages.at(1)?.content)).not.toContain('Unindexed')
   })
 
   it('injects only once per session', async () => {

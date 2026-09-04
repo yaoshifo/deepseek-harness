@@ -121,6 +121,24 @@ describe('renderIndexInjection', () => {
     expect(rendered).toContain('Truncated')
     expect(rendered).toContain('MEMORY.md')
   })
+
+  it('appends an unindexed-files note listing the orphan memories', () => {
+    const rendered = renderIndexInjection(index, '/dir/memory', 'project', ['orphan.md', 'lost-legacy'])
+    expect(rendered).toContain('Unindexed memory files on disk but missing from MEMORY.md: orphan.md, lost-legacy')
+    expect(rendered).toContain('add pointer lines with memory_index, or delete the files')
+  })
+
+  it('caps the unindexed note at five names with an overflow count', () => {
+    const names = ['a.md', 'b.md', 'c.md', 'd.md', 'e.md', 'f.md', 'g.md']
+    const rendered = renderIndexInjection(index, '/dir/memory', 'project', names)
+    expect(rendered).toContain('a.md, b.md, c.md, d.md, e.md, and 2 more')
+    expect(rendered).not.toContain('f.md')
+  })
+
+  it('leaves the frame unchanged without unindexed files', () => {
+    expect(renderIndexInjection(index, '/dir/memory', 'project', [])).not.toContain('Unindexed')
+    expect(renderIndexInjection(index, '/dir/memory', 'project')).not.toContain('Unindexed')
+  })
 })
 
 describe('hasMemoryInjection', () => {

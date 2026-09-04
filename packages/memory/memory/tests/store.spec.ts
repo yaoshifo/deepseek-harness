@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   deleteMemory,
+  hasMemoryPointer,
+  listUnindexedMemoryFiles,
   listMemory,
   readMemory,
   resolveGlobalMemoryDir,
@@ -256,6 +258,59 @@ describe('MEMORY.md index limits', () => {
     const big = 'x'.repeat(60_000)
     const result = await writeMemory(dir(), 'big-topic.md', big, 's1', LIMITS)
     expect(result.warning).toBeUndefined()
+  })
+})
+
+describe('hasMemoryPointer', () => {
+  it('reports whether MEMORY.md carries a pointer line, under both link spellings', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    await seed({
+      'MEMORY.md': '# Memory Index\n\n- [A](a.md) — hook a\n- [B](legacy-b) — hook b\n',
+    })
+    expect(await hasMemoryPointer(dir(), 'a.md')).toBe(true)
+    expect(await hasMemoryPointer(dir(), 'a')).toBe(true)
+    expect(await hasMemoryPointer(dir(), 'legacy-b')).toBe(true)
+    expect(await hasMemoryPointer(dir(), 'legacy-b.md')).toBe(true)
+    expect(await hasMemoryPointer(dir(), 'c-topic.md')).toBe(false)
+  })
+
+  it('returns false without a memory directory or a MEMORY.md', async () => {
+    expect(await hasMemoryPointer(resolveMemoryDir(root, '/home/hm/workspace/nowhere'), 'x.md')).toBe(false)
+    await rm(dir(), { recursive: true, force: true })
+    await mkdir(dir(), { recursive: true })
+    expect(await hasMemoryPointer(dir(), 'x.md')).toBe(false)
+  })
+
+  it('rejects an invalid name like every other memory operation', async () => {
+    await expect(hasMemoryPointer(dir(), '../evil.md')).rejects.toThrow(/memory name/)
+  })
+})
+
+describe('listUnindexedMemoryFiles', () => {
+  it('lists files present on disk but missing from the index, across spellings, excluding artifacts', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    await seed({
+      'MEMORY.md': '# Memory Index\n\n- [A](a.md) — hook\n- [B](legacy-b) — hook\n',
+      'a.md': 'body',
+      'legacy-b': 'body',
+      'orphan.md': 'body',
+      'second-orphan': 'body',
+      '.MEMORY.md.tmp-123-abc': 'partial',
+    })
+    expect(await listUnindexedMemoryFiles(dir())).toEqual(['orphan.md', 'second-orphan'])
+  })
+
+  it('returns undefined without a directory or a MEMORY.md', async () => {
+    expect(await listUnindexedMemoryFiles(resolveMemoryDir(root, '/home/hm/workspace/nowhere'))).toBeUndefined()
+    await rm(dir(), { recursive: true, force: true })
+    await mkdir(dir(), { recursive: true })
+    expect(await listUnindexedMemoryFiles(dir())).toBeUndefined()
+  })
+
+  it('returns an empty list for a fully indexed directory', async () => {
+    await rm(dir(), { recursive: true, force: true })
+    await seed({ 'MEMORY.md': '# Memory Index\n\n- [A](a.md) — hook\n', 'a.md': 'body' })
+    expect(await listUnindexedMemoryFiles(dir())).toEqual([])
   })
 })
 

@@ -287,6 +287,66 @@ export async function writeMemory(
 }
 
 /**
+ * Whether one MEMORY.md line is a pointer to one memory file under either
+ * spelling of its link target.
+ */
+function pointsAt(line: string, fileName: string, alternate: string | undefined): boolean {
+  return line.includes(`](${fileName})`) || (alternate !== undefined && line.includes(`](${alternate})`))
+}
+
+/**
+ * Whether MEMORY.md already carries a pointer line for one memory file, under
+ * either spelling of the link target. A missing directory or index reports
+ * `false`: the file is not recallable until a pointer line exists.
+ *
+ * @param dir - the resolved memory directory.
+ * @param name - single-segment memory file name, with or without the `.md` suffix.
+ * @param signal - cancellation for the read.
+ * @returns whether a pointer line for the file exists in the index.
+ */
+export async function hasMemoryPointer(dir: string, name: string, signal?: AbortSignal): Promise<boolean> {
+  assertMemoryName(name)
+  const fileName = resolveMemoryFileName(name)
+  const alternate = alternateMemoryName(fileName)
+  const index = await readFileOrNull(join(dir, 'MEMORY.md'), signal)
+  if (index === undefined) return false
+  return index.split('\n').some(line => pointsAt(line, fileName, alternate))
+}
+
+/**
+ * Memory files present on disk but missing from the index. The comparison
+ * crosses the `.md` spelling boundary in both directions (an extension-less
+ * pointer indexes the `.md` file and vice versa); MEMORY.md itself and
+ * dot-prefixed artifacts stay out of the list.
+ *
+ * @param dir - the resolved memory directory.
+ * @param signal - cancellation for the reads.
+ * @returns the unindexed file names, sorted; `undefined` when the directory or
+ * MEMORY.md does not exist.
+ */
+export async function listUnindexedMemoryFiles(dir: string, signal?: AbortSignal): Promise<string[] | undefined> {
+  const index = await readFileOrNull(join(dir, 'MEMORY.md'), signal)
+  if (index === undefined) return undefined
+  let dirents
+  try {
+    dirents = await readdir(dir, { withFileTypes: true })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+  const targets = new Set<string>()
+  for (const match of index.matchAll(/\]\(([^)\s]+)\)/g)) {
+    const target = match[1] ?? ''
+    targets.add(target.endsWith('.md') ? target : `${target}.md`)
+  }
+  return dirents
+    .filter(dirent => dirent.isFile() && dirent.name !== 'MEMORY.md' && !dirent.name.startsWith('.'))
+    .map(dirent => dirent.name)
+    .sort()
+    .filter(name => !targets.has(name.endsWith('.md') ? name : `${name}.md`))
+}
+
+/**
  * Delete one memory file. A miss is retried once with the `.md` suffix added
  * or removed, mirroring {@link readMemory}.
  *
@@ -345,8 +405,7 @@ export async function updateMemoryIndex(
   }
 
   /** Whether one line is a pointer to this memory file under either spelling. */
-  const pointsAt = (line: string): boolean =>
-    line.includes(`](${fileName})`) || (alternate !== undefined && line.includes(`](${alternate})`))
+  const linePointsAt = (line: string): boolean => pointsAt(line, fileName, alternate)
 
   if (current === undefined) {
     // A missing index gains its canonical header and the first pointer line.
@@ -372,7 +431,7 @@ export async function updateMemoryIndex(
   let changed = false
   let placed = false
   for (const line of current.split('\n')) {
-    if (!pointsAt(line)) {
+    if (!linePointsAt(line)) {
       result.push(line)
       continue
     }

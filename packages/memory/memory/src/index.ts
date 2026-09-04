@@ -26,13 +26,15 @@ import { hasMemoryInjection, readMemoryIndex, renderIndexInjection } from './inj
 import type { MemoryScope } from './inject.ts'
 import { GLOBAL_MEMORY_PROMPT, MEMORY_PROMPT } from './prompt.ts'
 import { claudeProjectSlug } from './slug.ts'
-import { deleteMemory, listMemory, readMemory, resolveGlobalMemoryDir, resolveMemoryDir, updateMemoryIndex, writeMemory } from './store.ts'
+import { deleteMemory, hasMemoryPointer, listMemory, listUnindexedMemoryFiles, readMemory, resolveGlobalMemoryDir, resolveMemoryDir, updateMemoryIndex, writeMemory } from './store.ts'
 import type { IndexLimits, MemoryIndexChange } from './store.ts'
 
 export { claudeProjectSlug } from './slug.ts'
 export {
   deleteMemory,
+  hasMemoryPointer,
   listMemory,
+  listUnindexedMemoryFiles,
   readMemory,
   resolveGlobalMemoryDir,
   resolveMemoryDir,
@@ -315,15 +317,23 @@ export function apply(ctx: Context, config: Config): void {
           lines: { type: 'number', required: true },
           annotations: { type: 'array', required: true, items: { type: 'string', enum: ['provenance'] } },
           warning: { type: 'string' },
+          indexed: { type: 'boolean', required: true },
         },
       },
-      render: (_args, value) => [{ type: 'text', text: value.warning === undefined
-        ? `Wrote ${value.lines} lines (${value.bytes}B) to ${value.name}${value.annotations.includes('provenance') ? ' + provenance frontmatter' : ''}.`
-        : `Wrote ${value.lines} lines (${value.bytes}B) to ${value.name}. ${value.warning}` }],
+      render: (_args, value) => [{
+        type: 'text',
+        text: (value.warning === undefined
+          ? `Wrote ${value.lines} lines (${value.bytes}B) to ${value.name}${value.annotations.includes('provenance') ? ' + provenance frontmatter' : ''}.`
+          : `Wrote ${value.lines} lines (${value.bytes}B) to ${value.name}. ${value.warning}`)
+          + (value.indexed ? '' : ` No pointer line for ${value.name} in MEMORY.md yet — add one with memory_index (action upsert, name, title, hook) so future sessions recall it.`),
+      }],
     },
     async execute(args, exec) {
       const { dir, limits: callLimits, sessionId } = resolveCall(exec.agent, args)
-      return await writeMemory(dir, args.name, args.content, sessionId, callLimits, exec.signal)
+      const result = await writeMemory(dir, args.name, args.content, sessionId, callLimits, exec.signal)
+      // MEMORY.md is the index itself; every topic file is recallable only through a pointer line.
+      const indexed = result.name === 'MEMORY.md' || await hasMemoryPointer(dir, result.name, exec.signal)
+      return { ...result, indexed }
     },
   }))
 
@@ -440,8 +450,13 @@ export function apply(ctx: Context, config: Config): void {
       if (scopeLimits === undefined) continue
       if (hasMemoryInjection(agent.session.snapshotEvents(), scope)) continue
       let index
+      let unindexed: string[] | undefined
       try {
         index = await readMemoryIndex(dir, scopeLimits, signal)
+        // The healing note derives from the same directory state as the index;
+        // a transient failure of either read skips the injection, and the
+        // memory tools still fail loud with the real error when called.
+        unindexed = index === undefined ? undefined : await listUnindexedMemoryFiles(dir, signal)
       } catch (error) {
         if (signal.aborted || (error instanceof Error && error.name === 'AbortError')) throw error
         continue
@@ -449,7 +464,7 @@ export function apply(ctx: Context, config: Config): void {
       if (index === undefined) continue
       signal.throwIfAborted()
       injections.push(createUserMessage({
-        content: [{ type: 'text', text: renderIndexInjection(index, dir, scope) }],
+        content: [{ type: 'text', text: renderIndexInjection(index, dir, scope, unindexed ?? []) }],
         source: {
           kind: 'dsh-memory',
           version: 2,
