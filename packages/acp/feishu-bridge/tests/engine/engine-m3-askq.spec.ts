@@ -159,6 +159,28 @@ describe('sendAskQuestionPrompt', () => {
     }
   })
 
+  it('single-select renders the recommended option button as primary', async () => {
+    const e = newTestEngine()
+    const p = createStubCardPlatform('feishu')
+    const questions: UserQuestion[] = [{
+      question: 'Which database?',
+      header: 'Choose',
+      options: [
+        { label: 'PostgreSQL', description: 'Full-featured', recommended: true },
+        { label: 'SQLite', description: 'Lightweight' },
+      ],
+    }]
+
+    await e.sendAskQuestionPrompt(p, 'ctx', questions, new Map(), 'test:askq')
+
+    const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
+    const rows = card.elements.filter(el => el['kind'] === 'listItem') as Array<{ text: string; btnType: string }>
+    expect(rows.map(row => [row.text, row.btnType])).toEqual([
+      ['PostgreSQL', 'primary'],
+      ['SQLite', 'default'],
+    ])
+  })
+
   it('multi-select pre-checks recommended options in the checker form', async () => {
     const e = newTestEngine()
     const p = createStubCardPlatform('feishu')
