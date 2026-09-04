@@ -372,6 +372,20 @@ declare module '@deepseek-ai/cordis' {
      */
     'feishuBridge/route-human-reply'(payload: { engine: Engine; platform: Platform; sessionKey: string; content: string; machine: boolean }, next: () => boolean): boolean
     /**
+     * A `/done` teardown is about to run on this chat's subtree. Feature
+     * plugins owning state under it clean that state here (the chatroom
+     * plugin interrupts a live room, consuming its barriers and persona
+     * flags); every descendant session key a listener pushes into
+     * `payload.handled` was fully cleaned by the listener and is skipped by
+     * the bridge's own descendant loop (the root chat is always the
+     * bridge's to clean).
+     * @param payload.engine - The engine owning the session registry.
+     * @param payload.sessionKey - Session key of the chat the user `/done`d.
+     * @param payload.handled - Mutable accumulator for fully-cleaned descendant keys.
+     * @mode waterfall
+     */
+    'feishuBridge/pre-done'(payload: { engine: Engine; sessionKey: string; handled: string[] }, next: () => void): void
+    /**
      * An ask card was parked and rendered (any kind; the questions kind is
      * the only current dispatcher). Listeners arm their own whole-ask
      * guards on the pending object (a research-manual hub arms the

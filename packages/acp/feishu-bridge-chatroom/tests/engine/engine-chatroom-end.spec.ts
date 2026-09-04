@@ -332,7 +332,7 @@ describe('finalizeChatroomEnd', () => {
 
     // Role + assistant + both fetchers + steward cleaned (5); the hub-direct
     // child and its subtree preserved.
-    expect(removed).toBe(5)
+    expect(removed).toHaveLength(5)
     expect(chatroomState(role).researchAssistantKey).toBe('')
     // The hub's steward pointer dies with the room.
     expect(chatroomState(hubSess).researchAssistantKey).toBe('')

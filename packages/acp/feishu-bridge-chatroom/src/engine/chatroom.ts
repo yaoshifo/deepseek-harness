@@ -1365,7 +1365,7 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   }
 
   if (inFlightNames.size === 0) {
-    const removed = finalizeChatroomEnd(e, hubKey)
+    const removed = finalizeChatroomEnd(e, hubKey).length
     return { status: 'ended', inFlight: [], timeoutSecs: 0, rolesRemoved: removed }
   }
 
@@ -1385,7 +1385,7 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   }
   const remaining = b.expectedRemaining()
   if (remaining.length === 0) {
-    const removed = finalizeChatroomEnd(e, hubKey)
+    const removed = finalizeChatroomEnd(e, hubKey).length
     return { status: 'ended', inFlight: [], timeoutSecs: 0, rolesRemoved: removed }
   }
 
@@ -1431,19 +1431,22 @@ function hangsOffChatroomExecutor(e: Engine, sess: Session, hubKey: string): boo
 /**
  * Tear down every chatroom role under the hub: stops each role session,
  * clears the chatroom marking, and drops the end barrier. The Session
- * records themselves are kept. Returns the number of roles removed.
+ * records themselves are kept.
  *
  * @param e - Engine carrying the session registry and platform.
  * @param hubKey - Session key of the chatroom hub whose roles are removed.
- * @returns The number of role sessions cleaned up (0 when no platform is available).
+ * @param endedStatus - Terminal status stamped into the ledger header.
+ * @returns The session keys whose cleanup ran (roles, their assistants, the
+ *   research steward and its fetchers); a `/done` skip list consumes these
+ *   so the bridge's own descendant loop does not re-clean them.
  */
-export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'ended' | 'interrupted' = 'ended'): number {
+export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'ended' | 'interrupted' = 'ended'): string[] {
   const p = e.spawnCapablePlatform()
-  if (p === undefined) return 0
+  if (p === undefined) return []
   // Native continuable descendants chain through the project state, not the
   // session tree (de-baggage B4) — drain them alongside the role groups.
   void e.drainNativeDescendants([hubKey, ...e.collectSubtree(hubKey)])
-  let removed = 0
+  const cleaned: string[] = []
   for (const childKey of e.collectSubtree(hubKey)) {
     const sess = e.sessions.getOrCreateActive(childKey)
     if (chatroomState(sess).chatroomHubKey === '') {
@@ -1462,7 +1465,7 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'end
     chatroomState(sess).researchAssistantKey = ''
     chatroomState(sess).researchAwaitingAssistant = false
     chatroomState(sess).researchAssistant = false
-    removed++
+    cleaned.push(childKey)
   }
   const hub = chatroomHubOf(e, hubKey)
   if (hub !== undefined) {
@@ -1488,8 +1491,8 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'end
       console.warn(`chatroom: ledger ended-line write failed (${lp}): ${String(error)}`)
     })
   }
-  console.info(`chatroom: ended (hub=${hubKey} roles_removed=${removed} status=${endedStatus})`)
-  return removed
+  console.info(`chatroom: ended (hub=${hubKey} roles_removed=${cleaned.length} status=${endedStatus})`)
+  return cleaned
 }
 
 /** finalizeChatroomEnd + the closing-summary wake off the turn-end stack (Go finalizeChatroomEndAsync).
@@ -1513,6 +1516,8 @@ export interface ChatroomInterruptResult {
   rolesRemoved: number
   /** Role names whose replies the interrupted barriers were still awaiting. */
   missing: string[]
+  /** Session keys whose cleanup ran (the `/done` pre-done skip list). */
+  cleanedKeys: string[]
 }
 
 /**
@@ -1566,7 +1571,8 @@ export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptR
     e.stopInteractiveSession(childKey)
     if (e.clearSubtaskGather(childKey)) clearedGathers += 1
   }
-  const rolesRemoved = finalizeChatroomEnd(e, hubKey, 'interrupted')
+  const cleanedKeys = finalizeChatroomEnd(e, hubKey, 'interrupted')
+  const rolesRemoved = cleanedKeys.length
 
   const uniqueMissing = [...new Set(missing)].sort()
   const cs = asCardSender(p)
@@ -1589,7 +1595,7 @@ export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptR
     )
   }
   console.info(`chatroom: interrupted (hub=${hubKey} roles_removed=${rolesRemoved} missing=${uniqueMissing.join(',')} gathers_cleared=${clearedGathers})`)
-  return { rolesRemoved, missing: uniqueMissing }
+  return { rolesRemoved, missing: uniqueMissing, cleanedKeys }
 }
 
 /**
