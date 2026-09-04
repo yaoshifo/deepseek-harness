@@ -102,6 +102,15 @@ export class AcpSession {
   private outputTail = Promise.resolve()
   private inflight: InflightPrompt | undefined
   private closing: Promise<void> | undefined
+  /**
+   * Whether topology notifications may emit. A session starts unarmed: the
+   * creating `session/new` or `session/resume` response itself carries the
+   * initial config state, and an adapter registration racing that window
+   * (agent-scope provider mounting during option discovery) must not echo it
+   * as a config_option_update — that echo would be redundant with the
+   * response and its arrival would race a fast cancellation or close.
+   */
+  private topologyArmed = false
   private readonly pendingSelections = new Map<string, ModelSelection>()
 
   private constructor(
@@ -211,9 +220,18 @@ export class AcpSession {
     return this.modelControl.set(configId, value, signal)
   }
 
+  /**
+   * Arm topology notifications once the session's creating response has
+   * resolved its config state; the response itself is the initial
+   * config_option_update, so only later topology changes notify.
+   */
+  armTopologyNotifications(): void {
+    this.topologyArmed = true
+  }
+
   /** Resolve topology state off-chain, then serialize its notification without blocking execution updates. */
   topologyChanged(): void {
-    if (this.closing !== undefined) return
+    if (this.closing !== undefined || !this.topologyArmed) return
     void this.modelControl.options()
       .then((configOptions) => {
         if (this.closing !== undefined) return

@@ -530,6 +530,44 @@ describe('automation-only ACP bridge', () => {
     expect(harness.adapter.requests[0]).toMatchObject({ provider: 'mock', model: 'plain' })
   })
 
+  it('keeps the session-creation window silent; the response carries the initial state', async () => {
+    harness = await makeBridgeHarness()
+    await harness.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
+    // One adapter registration lands inside the creation window (during option
+    // discovery) and one after it. The in-window registration must not emit
+    // config_option_update — the newSession response already carries the
+    // resulting state — so exactly one notification arrives, from the
+    // post-window registration, advertising the post-window provider.
+    const original = harness.ctx.llm.listModels.bind(harness.ctx.llm)
+    let injected = false
+    const listModels = vi.spyOn(harness.ctx.llm, 'listModels').mockImplementation((provider: string) => {
+      if (!injected) {
+        injected = true
+        harness!.registerCatalogProvider('in-window')
+      }
+      return original(provider)
+    })
+    try {
+      const created = await harness.client.newSession({ cwd: process.cwd(), mcpServers: [] })
+      const model = created.configOptions?.find(option => option.id === 'model')
+      if (model?.type !== 'select') throw new Error('expected a model select option in the response')
+
+      harness.registerCatalogProvider('after-window')
+
+      await vi.waitFor(() => {
+        const configUpdates = harness!.updates.filter(item => item.sessionUpdate === 'config_option_update')
+        expect(configUpdates).toHaveLength(1)
+        const update = configUpdates.at(-1)
+        if (update?.sessionUpdate !== 'config_option_update') throw new Error('expected config update')
+        const notified = update.configOptions.find(option => option.id === 'model')
+        if (notified?.type !== 'select') throw new Error('expected a model select option')
+        expect(notified.options.some(option => 'group' in option && option.group === 'after-window')).toBe(true)
+      })
+    } finally {
+      listModels.mockRestore()
+    }
+  })
+
   it('publishes complete config options when adapter topology changes', async () => {
     harness = await makeBridgeHarness()
     await harness.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
