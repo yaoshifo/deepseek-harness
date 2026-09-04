@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import { registerRenderCancel } from '../../src/engine/plan-render.ts'
 import {
   createStubAgent,
   createStubCardPlatform,
@@ -552,6 +553,111 @@ describe('routeAskResponse stale handling', () => {
     const p = createStubPlatform('test')
 
     expect(e.routeAskResponse(p, msg({ content: '好' }), '好')).toBe(false)
+  })
+})
+
+describe('routeAskResponse render-cancel semantics', () => {
+  it('an approving card verdict settles the ask without cancelling in-flight renders', async () => {
+    const p = createStubCardPlatform('feishu')
+    const { e, state } = armedState(p)
+
+    const decision = e.askUser('test:chat:user1', { kind: 'permission', toolName: 'bash', preview: 'ls /tmp' })
+    await tick()
+
+    let cancelled = false
+    registerRenderCancel(state, () => { cancelled = true })
+
+    expect(e.routeAskResponse(p, msg({ content: 'perm:allow', isPermissionAction: true }), 'perm:allow')).toBe(true)
+    expect(cancelled).toBe(false)
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+  })
+
+  it('an allow-all card verdict keeps renders alive and settles allowed-always', async () => {
+    const p = createStubCardPlatform('feishu')
+    const { e, state } = armedState(p)
+
+    const decision = e.askUser('test:chat:user1', { kind: 'permission', toolName: 'bash', preview: 'ls /tmp' })
+    await tick()
+
+    let cancelled = false
+    registerRenderCancel(state, () => { cancelled = true })
+
+    expect(e.routeAskResponse(p, msg({ content: 'perm:allow_all', isPermissionAction: true }), 'perm:allow_all')).toBe(true)
+    expect(cancelled).toBe(false)
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-always' })
+  })
+
+  it('a free-text approval keeps renders alive too', async () => {
+    const p = createStubCardPlatform('feishu')
+    const { e, state } = armedState(p)
+
+    const decision = e.askUser('test:chat:user1', { kind: 'permission', toolName: 'bash', preview: 'ls /tmp' })
+    await tick()
+
+    let cancelled = false
+    registerRenderCancel(state, () => { cancelled = true })
+
+    expect(e.routeAskResponse(p, msg({ content: '允许' }), '允许')).toBe(true)
+    expect(cancelled).toBe(false)
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+  })
+
+  it('approving a plan review keeps the in-flight plan render alive', async () => {
+    const p = createStubCardPlatform('feishu')
+    const { e, state } = armedState(p)
+
+    const decision = e.askUser('test:chat:user1', { kind: 'plan-review', heading: '# P', plan: '# P' })
+    await tick()
+
+    let cancelled = false
+    registerRenderCancel(state, () => { cancelled = true })
+
+    expect(e.routeAskResponse(p, msg({ content: 'perm:allow', isPermissionAction: true }), 'perm:allow')).toBe(true)
+    expect(cancelled).toBe(false)
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+  })
+
+  it('a deny still cancels in-flight renders', async () => {
+    const p = createStubCardPlatform('feishu')
+    const { e, state } = armedState(p)
+
+    const decision = e.askUser('test:chat:user1', { kind: 'permission', toolName: 'bash', preview: 'ls /tmp' })
+    await tick()
+
+    let cancelled = false
+    registerRenderCancel(state, () => { cancelled = true })
+
+    expect(e.routeAskResponse(p, msg({ content: 'perm:deny', isPermissionAction: true }), 'perm:deny')).toBe(true)
+    expect(cancelled).toBe(true)
+    await expect(decision).resolves.toEqual({ outcome: 'rejected' })
+  })
+
+  it('a question answer still cancels in-flight renders', async () => {
+    const p = createStubCardPlatform('feishu')
+    const { e, state } = armedState(p)
+
+    const decision = e.askUser('test:chat:user1', { kind: 'questions', questions: testQuestions() })
+    await tick()
+
+    let cancelled = false
+    registerRenderCancel(state, () => { cancelled = true })
+
+    expect(e.routeAskResponse(p, msg({ content: 'askq:0:1', isAskqCardAction: true }), 'askq:0:1')).toBe(true)
+    expect(cancelled).toBe(true)
+    const settled = await decision
+    expect(settled.answers).toHaveLength(1)
+  })
+
+  it('a stale approval button with no pending ask still cancels renders', () => {
+    const p = createStubCardPlatform('feishu')
+    const { e, state } = armedState(p)
+
+    let cancelled = false
+    registerRenderCancel(state, () => { cancelled = true })
+
+    expect(e.routeAskResponse(p, msg({ content: 'perm:allow', isPermissionAction: true }), 'perm:allow')).toBe(true)
+    expect(cancelled).toBe(true)
+    expect(p.getSent().join('\n')).toContain('expired')
   })
 })
 
