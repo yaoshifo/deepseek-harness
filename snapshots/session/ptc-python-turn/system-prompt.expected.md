@@ -174,9 +174,9 @@ class GetGoalOutput2(TypedDict):
     activation: Literal["armed", "disarmed"]
 
 class GlobArgs(TypedDict):
-    # Glob pattern to match file paths against (e.g. "**/*.ts", "src/**/*.test.js"). A pattern with no "/" matches the basename at any depth, so "*" and "*.ts" both search the whole tree; include a separator to anchor the depth.
+    # Glob pattern to match file paths against (e.g. "**/*.ts", "src/**/*.test.js"). A pattern with no "/" matches the basename at any depth, so "*" and "*.ts" both search the whole tree; include a separator to anchor the depth. Patterns are matched relative to the search root (the path argument, default the session workspace); a ~/-prefixed or absolute pattern is resolved the same way first.
     pattern: str
-    # Directory to search in. Defaults to the session workspace; a relative path resolves against it.
+    # Directory to search in; the pattern is matched relative to this root. Defaults to the session workspace; a relative path or a ~/ prefix resolves against it.
     path: NotRequired[str]
     # Additional keys beyond those declared are allowed.
 
@@ -187,9 +187,9 @@ class GlobOutput(TypedDict):
 class GrepArgs(TypedDict):
     # Regular expression to search for (ripgrep syntax).
     pattern: str
-    # File or directory to search. Defaults to the session workspace; a relative path resolves against it.
+    # File or directory to search; an include filter is matched relative to this root. Defaults to the session workspace; a relative path or a ~/ prefix resolves against it.
     path: NotRequired[str]
-    # One glob filter for which files to search (e.g. "*.ts", "*.{js,jsx}"). Not a list; negation is not supported.
+    # One glob filter for which files to search (e.g. "*.ts", "*.{js,jsx}"), matched relative to the search root (the path argument, default the session workspace). Not a list; negation is not supported.
     include: NotRequired[str]
     # Additional keys beyond those declared are allowed.
 
@@ -381,6 +381,10 @@ class StrReplaceEditorArgs(TypedDict):
     old_str: NotRequired[str | None]
     # Optional parameter of `view` command when `path` points to a file. If omitted or null, the full file is shown. If provided, the file will be shown in the indicated line number range, e.g. [11, 12] will show lines 11 and 12. Indexing at 1 to start. Setting `[start_line, -1]` shows all lines from `start_line` to the end of the file.
     view_range: NotRequired[list[int] | None]
+    # The wider sandbox mode this file operation needs. Only valid as a one-shot retry of an operation the sandbox just denied; requires justification and user approval.
+    sandbox_permissions: NotRequired[Literal["workspace-write", "danger-full-access"]]
+    # Required with sandbox_permissions: one sentence for the user explaining why this exact file operation needs the wider access.
+    justification: NotRequired[str]
     # Additional keys beyond those declared are allowed.
 
 class SubagentArgs(TypedDict):
@@ -430,6 +434,8 @@ class TodoWriteArgsTodos(TypedDict):
     content: str
     # pending (not started) | in_progress (now) | completed (done).
     status: Literal["pending", "in_progress", "completed"]
+    # Optional present-progressive label shown while the task runs (e.g. "Planning the work").
+    activeForm: NotRequired[str]
 
 class TodoWriteArgs(TypedDict):
     # The COMPLETE task list, replacing any previous list.
@@ -439,6 +445,7 @@ class TodoWriteArgs(TypedDict):
 class TodoWriteOutputTodos(TypedDict):
     content: str
     status: Literal["pending", "in_progress", "completed"]
+    activeForm: NotRequired[str]
 
 class TodoWriteOutputCounts(TypedDict):
     pending: int
@@ -580,7 +587,7 @@ class Tools(Protocol):
     async def edit(self, args: EditArgs) -> EditOutput:
         """Edit an existing UTF-8 text file by replacing literal text."""
     async def exit_plan_mode(self, args: ExitPlanModeArgs) -> ExitPlanModeOutput:
-        """Use only in plan mode. Present your plan for the user's review and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it. The user may approve (carry out the plan from your next step) or keep planning — their feedback comes back in the tool result; revise and present again."""
+        """Use only in plan mode. Present your plan for the user's review and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it. The user may approve (carry out the plan from your next step) or keep planning — their feedback comes back in the tool result."""
     async def get_goal(self, args: dict[str, Any]) -> GetGoalOutput1 | GetGoalOutput2:
         """Read the current same-session goal, including its exact id/revision, objective, phase, completed continuation rounds, round limit, blocker reason when present, and whether another continuation is armed. Call this before updating a goal."""
     async def glob(self, args: GlobArgs) -> GlobOutput:
@@ -610,9 +617,9 @@ class Tools(Protocol):
     async def str_replace_editor(self, args: StrReplaceEditorArgs) -> str:
         """Custom editing tool for viewing, creating and editing files * State is persistent across command calls and discussions with the user * If `path` is a file, `view` displays the result of applying `cat -n`. If `path` is a directory, `view` lists non-hidden files and directories up to 2 levels deep * The `create` command cannot be used if the specified `path` already exists as a file * If a `command` generates a long output, it will be truncated and marked with `<response clipped>` * A null placeholder for a parameter unused by the selected command is treated as omitted. Required parameters still need values; omit `str_replace.new_str` rather than setting it to null when deleting a match Notes for using the `str_replace` command: * The `old_str` parameter should match EXACTLY one or more consecutive lines from the original file. Be mindful of whitespaces! * If the `old_str` parameter is not unique in the file, the replacement will not be performed. Make sure to include enough context in `old_str` to make it unique * The `new_str` parameter should contain the edited lines that should replace the `old_str`"""
     async def subagent(self, args: SubagentArgs) -> SubagentOutput1 | SubagentOutput2 | SubagentOutput3:
-        """Delegate a self-contained task to a subagent (a separate agent that works in its own context) to offload focused, independent work — research, a scoped implementation, an analysis — so it does not consume this conversation's context. The subagent returns its result, not its intermediate steps. Give it a complete, standalone prompt: it does not see this conversation. This tool runs in the background by default, immediately returns a durable subagent id, and keeps the child conversation available for later turns. When that run settles, the runtime sends the parent a notice containing its outcome and any final assistant message; `send_message` steers the child's nearest step while it is running and starts a turn while it is idle. Set `run_in_background: false` only when your next action depends on receiving the result."""
+        """Delegate a self-contained task to a subagent (a separate agent that works in its own context) to offload focused, independent work — research, a scoped implementation, an analysis — so it does not consume this conversation's context. The subagent returns its result, not its intermediate steps. Give it a complete, standalone prompt: it does not see this conversation. The child shares this session's working directory and its instruction files; a delegation cannot redirect it to another directory. This tool runs in the background by default, immediately returns a durable subagent id, and keeps the child conversation available for later turns. When that run settles, the runtime sends the parent a notice containing its outcome and any final assistant message; `send_message` steers the child's nearest step while it is running and starts a turn while it is idle. Set `run_in_background: false` only when your next action depends on receiving the result."""
     async def subagent_fork(self, args: SubagentForkArgs) -> SubagentForkOutput1 | SubagentForkOutput2 | SubagentForkOutput3:
-        """Delegate a task to a subagent that inherits this conversation: a child agent seeded with all completed turns so far (it does not see the current in-flight turn). Use this when the subtask builds on this conversation's context — a follow-up analysis, a review, a continuation — without consuming this conversation's context for the work itself. You receive its result, not its intermediate steps. This call waits for the subagent and returns its result."""
+        """Delegate a task to a subagent that inherits this conversation: a child agent seeded with all completed turns so far (it does not see the current in-flight turn). Use this when the subtask builds on this conversation's context — a follow-up analysis, a review, a continuation — without consuming this conversation's context for the work itself. You receive its result, not its intermediate steps. The child shares this session's working directory and its instruction files; a delegation cannot redirect it to another directory. This call waits for the subagent and returns its result."""
     async def todo_write(self, args: TodoWriteArgs) -> TodoWriteOutput:
         """Record and update a structured task list for the current work. Send the ENTIRE list every call — it REPLACES the previous list (there are no partial updates, no per-item edits). Use it to plan multi-step work and show progress: add one todo per concrete step before you start. Mark every todo being actively worked on `in_progress` — several at once when work genuinely runs in parallel (e.g. concurrent subagents or background commands), one for sequential work; while work remains, at least one task should be `in_progress`. Mark a todo `completed` the moment it is done (do not batch completions), and allow no `in_progress` item only once all work is complete. Skip the list for trivial single-step tasks. Statuses: `pending` (not started), `in_progress` (being worked on now), `completed` (finished)."""
     async def update_goal(self, args: UpdateGoalArgs) -> UpdateGoalOutput1 | UpdateGoalOutput2:
