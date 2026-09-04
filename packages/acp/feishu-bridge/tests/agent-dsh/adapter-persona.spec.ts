@@ -211,6 +211,44 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     }
   })
 
+  it('surfaces the research playbook and uv-first install guidance', async () => {
+    const sections: RecordedSection[] = []
+    const a = newAdapter(createHarness({ sections }), '/ws')
+    await a.startSession('', {
+      sessionKey: 'test:assistant-4',
+      venv: { virtualEnv: '/ws/.venv' },
+      playbook: '/stable/research-playbook.md',
+      subtask: { attended: false, noReport: false, researchAssistant: true },
+    })
+    expect(sections).toHaveLength(2)
+    const text = sections[1]?.text ?? ''
+    // Machine-proven experience lives in a persistent playbook file outside
+    // the (archivable) research workspace: read before fetching, appended
+    // after a new source recipe is proven.
+    expect(text).toContain('/stable/research-playbook.md')
+    expect(text).toContain('先 Read')
+    expect(text).toContain('追加')
+    // uv-first installs (no pip-in-venv dependency, uv cache) with the
+    // venv python fallback; the package list is no longer hardcoded here.
+    expect(text).toContain('uv pip install --python /ws/.venv/bin/python')
+    expect(text).not.toContain('已装 akshare/pandas/numpy/requests')
+    // Academic literature routes through the scholar skill.
+    expect(text).toContain('scholar')
+  })
+
+  it('omits the playbook bullet without a configured playbook', async () => {
+    const sections: RecordedSection[] = []
+    const a = newAdapter(createHarness({ sections }), '/ws')
+    await a.startSession('', {
+      sessionKey: 'test:assistant-5',
+      venv: { virtualEnv: '/ws/.venv' },
+      subtask: { attended: false, noReport: false, researchAssistant: true },
+    })
+    const text = sections[1]?.text ?? ''
+    expect(text).not.toContain('PLAYBOOK')
+    expect(text).toContain('uv pip install --python /ws/.venv/bin/python')
+  })
+
   it('registers the report-back preamble for a plain subtask child', async () => {
     const sections: RecordedSection[] = []
     const a = newAdapter(createHarness({ sections }), '/ws')

@@ -480,6 +480,8 @@ export interface SessionStartOptions {
     /** venv root directory. */
     virtualEnv: string
   }
+  /** Persistent research playbook surfaced to research assistants; absent = none. */
+  playbook?: string
 }
 
 /** An AI coding assistant backend (Go Agent). */

@@ -251,4 +251,11 @@ function decorateSessionStartOptions(engine: Engine, session: Session, options: 
   // plus <venv>/bin prepended to the child PATH).
   const venv = chatroomState(session).researchVenv
   if (venv !== '') options.venv = { virtualEnv: venv }
+  // The persistent research playbook rides the same research-assistant
+  // surface as the venv: configured engine-wide, read/appended by every
+  // assistant and steward session.
+  if (chatroomState(session).researchAssistant) {
+    const playbook = chatroomConfig(engine).researchPlaybook()
+    if (playbook !== '') options.playbook = playbook
+  }
 }

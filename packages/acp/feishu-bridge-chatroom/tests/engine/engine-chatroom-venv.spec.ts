@@ -8,7 +8,7 @@
  */
 
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
-import { statSync } from 'node:fs'
+import { statSync, readFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,11 +28,13 @@ import '../stubs/messages.js'
 const savedLookup = uvHooks.lookupPath
 const savedCreate = uvHooks.createVenv
 const savedInstall = uvHooks.pipInstall
+const savedExec = uvHooks.exec
 
 afterEach(() => {
   uvHooks.lookupPath = savedLookup
   uvHooks.createVenv = savedCreate
   uvHooks.pipInstall = savedInstall
+  uvHooks.exec = savedExec
 })
 
 function newEngine(): Engine {
@@ -102,6 +104,71 @@ describe('ensureResearchPythonEnv', () => {
     expect(calls).toBe(1)
   })
 
+  it('seeds pip into the fresh venv and installs the configured base packages', async () => {
+    const e = newEngine()
+    chatroomConfig(e).applySection({ researchPythonEnv: true, researchVenvPackages: ['akshare', 'pandas<3', 'scipy'] })
+    const calls: string[][] = []
+    // createVenv/pipInstall stay REAL: the test observes the true exec args.
+    // The stub only simulates `uv venv`'s minimal side effect (creating the
+    // dir) so the marker write has somewhere to land.
+    uvHooks.exec = (async (_bin: string, args: readonly string[]) => {
+      calls.push([...args])
+      if (args[0] === 'venv') await mkdir(join(ws, '.venv', 'bin'), { recursive: true })
+      return { stdout: '', stderr: '' }
+    }) as typeof uvHooks.exec
+    const ws = await mkdtemp(join(tmpdir(), 'fb-venv-'))
+    await ensureResearchPythonEnv(e, ws)
+    // lookupPath also rides the exec seam, so [0] is the --version probe.
+    expect(calls[1]).toContain('--seed')
+    expect(calls[2]?.slice(0, 3)).toEqual(['pip', 'install', '--quiet'])
+    expect(calls[2]).toContain('pandas<3')
+    expect(calls[2]).toContain('scipy')
+    // The installed base list lands in the in-venv marker for delta installs.
+    const marker = readFileSync(join(ws, '.venv', '.dsh-base-packages.txt'), 'utf8')
+    expect(marker).toContain('pandas<3')
+    expect(marker).toContain('scipy')
+  })
+
+  it('reconciles a pre-existing venv by installing only missing base packages', async () => {
+    const e = newEngine()
+    chatroomConfig(e).applySection({ researchPythonEnv: true })
+    const calls: string[][] = []
+    uvHooks.exec = (async (_bin: string, args: readonly string[]) => {
+      if (args[0] !== '--version') calls.push([...args])
+      return { stdout: '', stderr: '' }
+    }) as typeof uvHooks.exec
+    const ws = await mkdtemp(join(tmpdir(), 'fb-venv-'))
+    const venv = join(ws, '.venv')
+    await mkdir(join(venv, 'bin'), { recursive: true })
+    // Marker predates a config extension: only the old four are recorded.
+    await writeFile(join(venv, '.dsh-base-packages.txt'), 'akshare\npandas\nnumpy\nrequests\n', 'utf8')
+    await ensureResearchPythonEnv(e, ws)
+    // No venv re-creation; a single pip install covering exactly the delta
+    // (the default list pins pandas<3, so pandas is missing from the marker).
+    expect(calls.length).toBe(1)
+    expect(calls[0]?.slice(0, 3)).toEqual(['pip', 'install', '--quiet'])
+    expect(calls[0]).toContain('pandas<3')
+    expect(calls[0]).not.toContain('akshare')
+    // The marker absorbs the delta for the next startup.
+    expect(readFileSync(join(venv, '.dsh-base-packages.txt'), 'utf8')).toContain('pandas<3')
+  })
+
+  it('skips installing into an up-to-date venv (marker covers the list)', async () => {
+    const e = newEngine()
+    chatroomConfig(e).applySection({ researchPythonEnv: true })
+    let execCalls = 0
+    uvHooks.exec = (async (_bin: string, args: readonly string[]) => {
+      if (args[0] !== '--version') execCalls++
+      return { stdout: '', stderr: '' }
+    }) as typeof uvHooks.exec
+    const ws = await mkdtemp(join(tmpdir(), 'fb-venv-'))
+    const venv = join(ws, '.venv')
+    await mkdir(join(venv, 'bin'), { recursive: true })
+    await writeFile(join(venv, '.dsh-base-packages.txt'), 'akshare\npandas<3\nnumpy\nrequests\n', 'utf8')
+    await ensureResearchPythonEnv(e, ws)
+    expect(execCalls).toBe(0)
+  })
+
   it('removes the half-created venv when the deps install fails', async () => {
     const e = newEngine()
     chatroomConfig(e).applySection({ researchPythonEnv: true })
@@ -157,6 +224,22 @@ describe('buildSessionStartOptions research venv', () => {
     const e = newEngine()
     const s = e.sessions.getOrCreateActive('test:plain-chat')
     expect(e.buildSessionStartOptions('k', s).venv).toBeUndefined()
+  })
+
+  it('carries the configured playbook for research assistants only', () => {
+    const e = newEngine()
+    chatroomConfig(e).applySection({ researchPlaybook: '/stable/research-playbook.md' })
+    const s = e.sessions.getOrCreateActive('test:assistant-2')
+    chatroomState(s).researchAssistant = true
+    expect(e.buildSessionStartOptions('k', s).playbook).toBe('/stable/research-playbook.md')
+    // Plain sessions never see it…
+    const plain = e.sessions.getOrCreateActive('test:plain-2')
+    expect(e.buildSessionStartOptions('k', plain).playbook).toBeUndefined()
+    // …and an assistant without configured playbook stays undefined.
+    const bare = newEngine()
+    const bareAssistant = bare.sessions.getOrCreateActive('test:assistant-3')
+    chatroomState(bareAssistant).researchAssistant = true
+    expect(bare.buildSessionStartOptions('k', bareAssistant).playbook).toBeUndefined()
   })
 
   it('emits the chatroom persona block for roles, moderators, and direct roles', () => {

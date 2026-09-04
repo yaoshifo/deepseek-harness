@@ -13,7 +13,8 @@
  */
 
 import { execFile } from 'node:child_process'
-import { mkdirSync, rmSync, statSync } from 'node:fs'
+import type { ExecFileOptions } from 'node:child_process'
+import { mkdirSync, rmSync, statSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -1868,18 +1869,39 @@ export function chatroomResearchWorkspace(e: Engine): string {
 
 /**
  * Process-level uv hooks so tests can simulate uv being absent (or stub the
- * slow install) without mangling PATH for other tests (Go package vars).
+ * slow install) without mangling PATH for other tests (Go package vars). The
+ * `exec` hook routes createVenv/pipInstall through one overridable seam so a
+ * test can observe the real argument lists.
  */
 export const uvHooks = {
+  /** The execFile promise both uv hooks run through (overridable in tests). */
+  exec: execFileP as (file: string, args: readonly string[], options: ExecFileOptions) => Promise<{ stdout: string; stderr: string }>,
   /** Resolve the uv binary (execFile rejects when not on PATH). */
-  lookupPath: (): Promise<string> => execFileP('uv', ['--version'], { timeout: 10_000 }).then(() => 'uv'),
-  /** Create the venv (<ws>/.venv) via `uv venv`. */
+  lookupPath: (): Promise<string> => uvHooks.exec('uv', ['--version'], { timeout: 10_000 }).then(() => 'uv'),
+  /** Create the venv (<ws>/.venv) via `uv venv --seed` (seed = ship pip, so `-m pip` works on day one). */
   createVenv: (uvPath: string, venv: string): Promise<void> =>
-    execFileP(uvPath, ['venv', venv], { timeout: 30_000 }).then(() => undefined),
-  /** Install the base research data deps into <venv>. */
-  pipInstall: (uvPath: string, venv: string): Promise<void> =>
-    execFileP(uvPath, ['pip', 'install', '--quiet', 'akshare', 'pandas', 'numpy', 'requests'],
-      { timeout: 180_000, env: { ...process.env, VIRTUAL_ENV: venv } }).then(() => undefined),
+    uvHooks.exec(uvPath, ['venv', '--seed', venv], { timeout: 30_000 }).then(() => undefined),
+  /** Install the given packages into <venv>. */
+  pipInstall: (uvPath: string, venv: string, packages: readonly string[]): Promise<void> =>
+    uvHooks.exec(uvPath, ['pip', 'install', '--quiet', ...packages],
+      { timeout: 300_000, env: { ...process.env, VIRTUAL_ENV: venv } }).then(() => undefined),
+}
+
+/** The in-venv marker recording which configured base packages are installed. */
+const basePackagesMarker = '.dsh-base-packages.txt'
+
+/** Read the installed-base marker inside a venv; unreadable counts as none installed. */
+function readBasePackages(venv: string): string[] {
+  try {
+    return readFileSync(join(venv, basePackagesMarker), 'utf8').split('\n').map(l => l.trim()).filter(l => l !== '')
+  } catch {
+    return []
+  }
+}
+
+/** Write the installed-base marker inside a venv (one package per line). */
+function writeBasePackages(venv: string, packages: readonly string[]): void {
+  writeFileSync(join(venv, basePackagesMarker), `${packages.join('\n')}\n`, 'utf8')
 }
 
 /** Serializes shared-venv creation across concurrent chatrooms (Go researchVenvMu). */
@@ -1890,9 +1912,13 @@ let researchVenvChain: Promise<unknown> = Promise.resolve()
  * assistants and return its absolute path (Go ensureResearchPythonEnv).
  * ('', undefined) when the feature switch is off; ('', Error) when uv is
  * unavailable or creation fails — /chatroom --research gates startup on it.
- * Idempotent: an existing .venv is reused without re-installing.
+ * Idempotent: an existing .venv is reused, reconciled against the configured
+ * base-package list — only packages missing from the in-venv marker are
+ * installed, so a later config extension warm-upgrades a live venv without
+ * touching packages assistants installed themselves. (A corrupted venv:
+ * delete <ws>/.venv to force a rebuild.)
  *
- * @param e - Engine carrying the research-python-env feature switch.
+ * @param e - Engine carrying the research-python-env switch and package list.
  * @param ws - The shared research workspace directory; empty rejects.
  * @returns The venv's absolute path, undefined when the switch is off; rejects when creation fails.
  */
@@ -1902,6 +1928,7 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
   if (workspace === '') {
     return Promise.reject(new Error('chatroom: research workspace not configured'))
   }
+  const packages = chatroomConfig(e).researchVenvPackages()
   const run = researchVenvChain.then(async (): Promise<string | undefined> => {
     try {
       mkdirSync(workspace, { recursive: true })
@@ -1916,12 +1943,28 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
     }
     const venv = join(workspace, '.venv')
     // Reuse an existing venv; --clear would wipe packages a prior assistant
-    // installed. (A corrupted venv: delete <ws>/.venv to force a rebuild.)
+    // installed. Instead reconcile: install exactly the configured base
+    // packages the marker does not record yet.
+    let existed = true
     try {
       statSync(venv)
-      return venv
     } catch {
-      // fall through to creation
+      existed = false
+    }
+    if (existed) {
+      const installed = readBasePackages(venv)
+      const missing = packages.filter(p => !installed.includes(p))
+      if (missing.length > 0) {
+        try {
+          await uvHooks.pipInstall(uvPath, venv, missing)
+        } catch (error) {
+          // The venv predates this call and keeps its value: no teardown,
+          // the next startup retries the delta.
+          throw new Error(`chatroom: research venv base-package install failed: ${String(error instanceof Error ? error.message : error)}`)
+        }
+        writeBasePackages(venv, [...new Set([...installed, ...missing])])
+      }
+      return venv
     }
     try {
       await uvHooks.createVenv(uvPath, venv)
@@ -1932,7 +1975,7 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
     // half-created venv so the next startup retries instead of reusing a
     // package-less venv.
     try {
-      await uvHooks.pipInstall(uvPath, venv)
+      await uvHooks.pipInstall(uvPath, venv, packages)
     } catch (error) {
       try {
         rmSync(venv, { recursive: true, force: true })
@@ -1941,6 +1984,7 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
       }
       throw new Error(`chatroom: research venv deps install failed: ${String(error instanceof Error ? error.message : error)}`)
     }
+    writeBasePackages(venv, packages)
     return venv
   })
   researchVenvChain = run.catch(() => undefined)

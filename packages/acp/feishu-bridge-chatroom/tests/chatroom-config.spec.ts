@@ -50,6 +50,31 @@ describe('chatroom config wiring', () => {
     expect(chatroomResearchWorkspace(e)).toBe('/shared/research')
   })
 
+  it('defaults the research venv base packages with pandas pinned below 3', () => {
+    const e = configure({})
+    // akshare's own metadata only requires pandas>=2.0.0 with no upper
+    // bound, and pandas 3.x breaks it — the pin is ecosystem fact, not a
+    // machine preference.
+    expect(chatroomConfig(e).researchVenvPackages()).toEqual(['akshare', 'pandas<3', 'numpy', 'requests'])
+    // An unswept engine (the pre-sweep window) reads the same default.
+    expect(chatroomConfig(newEngine()).researchVenvPackages()).toEqual(['akshare', 'pandas<3', 'numpy', 'requests'])
+  })
+
+  it('a configured research venv package list replaces the default', () => {
+    const e = configure({ researchVenvPackages: ['akshare', 'pandas<3', 'scipy'] })
+    expect(chatroomConfig(e).researchVenvPackages()).toEqual(['akshare', 'pandas<3', 'scipy'])
+  })
+
+  it('resolves the research playbook path with ~ expansion; unset opts out', () => {
+    const e = configure({ researchPlaybook: '~/research-playbook.md' })
+    expect(chatroomConfig(e).researchPlaybook().startsWith(homedir())).toBe(true)
+    expect(chatroomConfig(e).researchPlaybook().endsWith('research-playbook.md')).toBe(true)
+    // A project section overrides the shared default; unset reads ''.
+    expect(chatroomConfig(configure({ researchPlaybook: '/p/pb.md' }, { researchPlaybook: '/d/pb.md' })).researchPlaybook()).toBe('/p/pb.md')
+    expect(chatroomConfig(configure({})).researchPlaybook()).toBe('')
+    expect(chatroomConfig(newEngine()).researchPlaybook()).toBe('')
+  })
+
   it('clamps out-of-range research values (Go EffectiveChatroomResearch)', () => {
     const e = configure({ researchTimeoutSec: 10, maxResearchRounds: 99 })
     expect(chatroomConfig(e).researchTimeoutDuration()).toBe(60_000)

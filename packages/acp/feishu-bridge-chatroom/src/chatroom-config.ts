@@ -49,6 +49,10 @@ export interface ChatroomProjectConfig {
   researchWorkspace?: string
   /** Pre-provision the shared uv venv for research assistants; default true (Go research_python_env). */
   researchPythonEnv?: boolean
+  /** Base packages installed into the shared research venv; unset or empty = the akshare base list with pandas pinned <3. */
+  researchVenvPackages?: string[]
+  /** Persistent research-playbook file surfaced to research assistants; '' or unset opts out. */
+  researchPlaybook?: string
   /** User-background file injected into every chatroom persona; '' opts out (Go user_profile). */
   userProfile?: string
 }
@@ -65,6 +69,8 @@ const chatroomSection = Schema.object({
   defaultResearchMode: Schema.union(['auto', 'manual']).description('Default research driver when --mode is omitted'),
   researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <projectDataDir>/chatroom-research)'),
   researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
+  researchVenvPackages: Schema.array(Schema.string()).description('Base packages installed into the shared research venv (default akshare, pandas<3, numpy, requests)'),
+  researchPlaybook: Schema.string().description('Persistent playbook file read/appended by research assistants (default off)'),
   userProfile: Schema.string().description('User-background file injected into every chatroom persona (roles, moderator, direct-role)'),
 })
 
@@ -115,6 +121,10 @@ class ChatroomEngineConfig {
   researchWorkspaceCfg = ''
   /** Whether the shared uv venv is pre-provisioned for research assistants. */
   researchPythonEnv = false
+  /** Base packages for the shared research venv; undefined = the pinned akshare base list. */
+  private researchVenvPackagesValue: string[] | undefined = undefined
+  /** Persistent research-playbook file surfaced to research assistants; '' = none. */
+  private researchPlaybookCfg = ''
   /** User-background file injected into chatroom personas; '' = none. */
   userProfileCfg = ''
 
@@ -165,6 +175,13 @@ class ChatroomEngineConfig {
     // test call never flips the switch by accident.
     if (cfg.researchPythonEnv !== undefined) {
       this.researchPythonEnv = cfg.researchPythonEnv
+    }
+    if (cfg.researchVenvPackages !== undefined && cfg.researchVenvPackages.length > 0) {
+      this.researchVenvPackagesValue = cfg.researchVenvPackages
+    }
+    // Like researchWorkspace, only a non-empty path engages the feature.
+    if (cfg.researchPlaybook !== undefined && cfg.researchPlaybook.trim() !== '') {
+      this.researchPlaybookCfg = expandHome(cfg.researchPlaybook)
     }
   }
 
@@ -220,6 +237,20 @@ class ChatroomEngineConfig {
   /** Effective user-background file injected into chatroom personas; '' = none. */
   userProfile(): string {
     return this.userProfileCfg
+  }
+
+  /**
+   * Effective base-package list installed into the shared research venv.
+   * akshare's metadata requires pandas>=2.0.0 with no upper bound and
+   * pandas 3.x breaks it, so the default pins pandas<3.
+   */
+  researchVenvPackages(): string[] {
+    return this.researchVenvPackagesValue ?? ['akshare', 'pandas<3', 'numpy', 'requests']
+  }
+
+  /** Effective persistent research-playbook file; '' = none surfaced. */
+  researchPlaybook(): string {
+    return this.researchPlaybookCfg
   }
 }
 
