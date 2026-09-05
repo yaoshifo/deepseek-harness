@@ -939,14 +939,17 @@ describe('buildChatroomModeratorPriming', () => {
     }
   })
 
-  it('offers the plain (Feynman) default AND the optional academic version', () => {
+  it('offers the plain plain-talk default AND the optional academic version', () => {
     const cases: Array<[string, string]> = [
       ['moderator', buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')],
       ['research', buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')],
     ]
     for (const [, priming] of cases) {
-      for (const want of ['summary.html', '费曼法通俗版', '生活类比', '最小例子', '仍有的分歧']) {
+      for (const want of ['summary.html', '白话直讲版', '直接讲事情本身', '最小实例', '仍有的分歧']) {
         expect(priming).toContain(want)
+      }
+      for (const banned of ['费曼', '生活类比']) {
+        expect(priming).not.toContain(banned)
       }
       for (const want of ['summary-academic.html', '出一份深度学术版', '总分结构', '记住用户已选过学术版', '若用户此前选过「出一份深度学术版」']) {
         expect(priming).toContain(want)
