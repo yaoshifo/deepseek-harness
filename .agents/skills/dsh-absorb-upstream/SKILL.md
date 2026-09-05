@@ -11,7 +11,7 @@ description: "Use after an upstream merge into dev to review what changed, evalu
 
 - `$description`（可选）：聚焦某个能力或包（如「看 steer 服务」）；缺省则全量盘点
 - 合并范围（可选）：merge commit 引用或日期窗口；缺省取最近一次 `Merge branch 'master' into dev`
-- 回复深度（可选）：默认「概括」；用户说「通俗的解释」时按费曼法重答，不是继续往下走
+- 回复深度（可选）：默认「概括」；用户说「通俗的解释」时按白话直讲重答（直接讲事情本身，术语展开成大白话，用具体的事实和数字做支撑），不是继续往下走
 
 ## 步骤
 
