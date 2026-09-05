@@ -115,7 +115,7 @@ describe('ensureResearchPythonEnv', () => {
       calls.push([...args])
       if (args[0] === 'venv') await mkdir(join(ws, '.venv', 'bin'), { recursive: true })
       return { stdout: '', stderr: '' }
-    }) as typeof uvHooks.exec
+    })
     const ws = await mkdtemp(join(tmpdir(), 'fb-venv-'))
     await ensureResearchPythonEnv(e, ws)
     // lookupPath also rides the exec seam, so [0] is the --version probe.
@@ -136,7 +136,7 @@ describe('ensureResearchPythonEnv', () => {
     uvHooks.exec = (async (_bin: string, args: readonly string[]) => {
       if (args[0] !== '--version') calls.push([...args])
       return { stdout: '', stderr: '' }
-    }) as typeof uvHooks.exec
+    })
     const ws = await mkdtemp(join(tmpdir(), 'fb-venv-'))
     const venv = join(ws, '.venv')
     await mkdir(join(venv, 'bin'), { recursive: true })
@@ -160,7 +160,7 @@ describe('ensureResearchPythonEnv', () => {
     uvHooks.exec = (async (_bin: string, args: readonly string[]) => {
       if (args[0] !== '--version') execCalls++
       return { stdout: '', stderr: '' }
-    }) as typeof uvHooks.exec
+    })
     const ws = await mkdtemp(join(tmpdir(), 'fb-venv-'))
     const venv = join(ws, '.venv')
     await mkdir(join(venv, 'bin'), { recursive: true })

@@ -139,7 +139,7 @@ describe('SessionManager', () => {
       sessionNames: Record<string, string>
       userMeta: Record<string, unknown>
     }
-    expect(snap.sessionNames, 'only the surviving session\'s name stays').toEqual({ 'agent-main': 'main name' } as Record<string, string>)
+    expect(snap.sessionNames, 'only the surviving session\'s name stays').toEqual({ 'agent-main': 'main name' })
     expect(snap.userSessions['feishu:chat1'], 'the surviving chat keeps its session list').toEqual([main.id])
     expect(snap.userMeta['feishu:chat1']).toBeDefined()
   })

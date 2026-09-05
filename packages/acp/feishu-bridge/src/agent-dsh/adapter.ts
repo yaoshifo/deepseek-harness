@@ -2297,7 +2297,7 @@ export class DshAgentSession implements AgentSession {
    * @returns the recorded cwd, or '' when unknown.
    */
   cwd(): string {
-    const cwd = this.handle.agent?.session?.header?.cwd
+    const cwd = this.handle.agent.session.header?.cwd
     return typeof cwd === 'string' ? cwd : ''
   }
 

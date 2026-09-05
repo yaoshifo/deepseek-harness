@@ -844,7 +844,7 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
         const { done, wakeContent } = g.forgetFailed(r.name)
         if (!done) return
         updateResearchProgressCard(e, p, g, 'done')
-        if (hub !== undefined) chatroomState(hub).pendingGather = undefined
+        chatroomState(hub).pendingGather = undefined
         e.sessions.save()
         wakeChatroomModerator(e, hubKey, wakeContent)
         console.info(`chatroom: gather closed after broadcast failure (hub=${hubKey} role=${r.name})`)

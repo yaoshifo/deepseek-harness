@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 
 /** A context stub whose `get` answers with the given service table. */
@@ -15,7 +15,7 @@ async function freshMountDirectoryMcp(): Promise<
 }
 
 describe('mountDirectoryMcp', () => {
-  let warn: ReturnType<typeof vi.spyOn>
+  let warn: MockInstance<typeof console.warn>
 
   beforeEach(() => {
     warn = vi.spyOn(console, 'warn').mockImplementation(() => {})

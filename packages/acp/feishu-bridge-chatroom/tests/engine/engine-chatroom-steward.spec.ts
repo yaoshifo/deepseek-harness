@@ -170,7 +170,7 @@ describe('research steward pre-spawn', () => {
     })
 
     const hub = 'test:hub:user-1'
-    e.commandHandlers?.get('chatroom')?.(p, hubMsg(hub), [`${names.join(',')}`, '该不该 all-in'])
+    e.commandHandlers?.get('chatroom')?.(p, hubMsg(hub), [names.join(','), '该不该 all-in'])
     await confirmChatroomModePlain(e, hub)
     await waitFor(() => p.count === 2, '2 role groups only')
     await settle()

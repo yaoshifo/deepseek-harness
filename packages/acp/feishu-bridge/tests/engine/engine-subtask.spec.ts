@@ -1556,7 +1556,7 @@ describe('SendToSubtask native children', () => {
     await e.spawnSubtaskNative(parentKey, '', WorktreeMode.ForceOff, false, 'brief')
 
     // The interrupt context has its own wording — not the follow-up message.
-    expect(() => e.interruptNativeChild('native-child-1', 'test:other-chat:u1'))
+    expect(() => { e.interruptNativeChild('native-child-1', 'test:other-chat:u1') })
       .toThrow(e.i18n.t(Msg.SubtaskInterruptNotChild))
     expect(agent.interrupts, 'a rejected interrupt must not reach the delegator').toEqual([])
   })

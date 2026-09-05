@@ -513,7 +513,7 @@ describe('askUser plan-review kind', () => {
     const second = e.askUser(sessionKey, { kind: 'plan-review', heading: '# P', plan: '# P\n\n1. second' })
     await tick()
     const secondPlanCard = p.sentCards.find(
-      card => JSON.stringify(card).includes('1. second')) as unknown
+      card => JSON.stringify(card).includes('1. second'))
     expect(JSON.stringify(secondPlanCard)).toContain('Plan (v2)')
 
     expect(e.routeAskResponse(p, msg({ content: 'perm:deny', isPermissionAction: true }), 'perm:deny')).toBe(true)

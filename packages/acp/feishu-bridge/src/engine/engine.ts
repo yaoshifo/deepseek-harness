@@ -318,7 +318,9 @@ class BoundedStateMap<K, V> extends Map<K, V> {
 
 /** Wrap an assigned satellite map, copying entries into a bounded one. */
 function asBoundedStateMap<K, V>(value: Map<K, V>, onEvict?: (value: V) => void): BoundedStateMap<K, V> {
-  if (value instanceof BoundedStateMap) return value
+  // instanceof narrows to BoundedStateMap<any, any> only; the parameter's
+  // static Map<K, V> guarantees the recovered instance's type arguments.
+  if (value instanceof BoundedStateMap) return value as BoundedStateMap<K, V>
   return new BoundedStateMap(value, onEvict)
 }
 

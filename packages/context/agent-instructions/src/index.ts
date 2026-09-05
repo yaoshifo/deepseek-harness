@@ -90,7 +90,7 @@ function filePathFromExecution(exec: ToolExecution): string | undefined {
  * @param ctx - plugin context.
  * @param config - validated plugin config.
  */
-export async function apply(ctx: Context, config: Config): Promise<void> {
+export function apply(ctx: Context, config: Config): void {
   const resolved: ResolvedConfig = resolveConfig(config)
   const instructionVersions: InstructionVersionCache = new WeakMap()
   const baselinePreparations = new WeakMap<Session, {
