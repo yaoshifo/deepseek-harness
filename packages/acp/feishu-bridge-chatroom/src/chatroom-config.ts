@@ -50,8 +50,6 @@ export interface ChatroomProjectConfig {
   researchVenvPackages?: string[]
   /** Persistent research-playbook file surfaced to research assistants; '' or unset opts out. */
   researchPlaybook?: string
-  /** User-background file injected into every chatroom persona; '' opts out (Go user_profile). */
-  userProfile?: string
   /**
    * Research-assistant stall deadline in seconds: a hub↔steward relation
    * quiet this long gets a supervision wake; 0 disables the supervisor.
@@ -73,7 +71,6 @@ const chatroomSection = Schema.object({
   researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
   researchVenvPackages: Schema.array(Schema.string()).description('Base packages installed into the shared research venv (default akshare, pandas<3, numpy, requests)'),
   researchPlaybook: Schema.string().description('Persistent playbook file read/appended by research assistants (default off)'),
-  userProfile: Schema.string().description('User-background file injected into every chatroom persona (roles, moderator, direct-role)'),
   assistantStallSec: Schema.natural().description('Research-assistant stall deadline in seconds; a quiet hub↔steward relation past it gets a supervision wake (default 1800, 0 disables, minimum 600)'),
 })
 
@@ -126,8 +123,6 @@ class ChatroomEngineConfig {
   private researchVenvPackagesValue: string[] | undefined = undefined
   /** Persistent research-playbook file surfaced to research assistants; '' = none. */
   private researchPlaybookCfg = ''
-  /** User-background file injected into chatroom personas; '' = none. */
-  userProfileCfg = ''
   /** Research-assistant stall deadline override in ms; 0 = the 30m default. */
   private assistantStallMs = 0
   /** Whether the supervisor is explicitly disabled for this engine. */
@@ -166,11 +161,6 @@ class ChatroomEngineConfig {
     }
     if (cfg.researchWorkspace !== undefined && cfg.researchWorkspace.trim() !== '') {
       this.researchWorkspaceCfg = expandHome(cfg.researchWorkspace)
-    }
-    // Like moderatorDir, '' is a meaningful value: a project section opting
-    // out of a shared default profile.
-    if (cfg.userProfile !== undefined) {
-      this.userProfileCfg = expandHome(cfg.userProfile).trim()
     }
     // Research venv provisioning defaults ON (Go wire.go: nil → enabled);
     // the production sweep always passes the resolved value, so a per-field
@@ -242,11 +232,6 @@ class ChatroomEngineConfig {
   /** Effective default research mode; unknown values behave as 'auto'. */
   defaultResearchMode(): string {
     return this.defaultResearchModeValue === 'manual' ? 'manual' : 'auto'
-  }
-
-  /** Effective user-background file injected into chatroom personas; '' = none. */
-  userProfile(): string {
-    return this.userProfileCfg
   }
 
   /**

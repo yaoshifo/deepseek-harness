@@ -10,9 +10,6 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { mkdtemp, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import {
   Engine,
   Session,
@@ -22,7 +19,6 @@ import {
   type SessionStartOptions,
 } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { chatroomState } from '../src/chatroom-state.ts'
-import { applyChatroomEngineConfig } from '../src/chatroom-config.ts'
 import { registerChatroomPolicyListeners } from '../src/engine/chatroom-policy.ts'
 import { createStubAgent } from './stubs/engine-stubs.ts'
 
@@ -234,29 +230,23 @@ describe('session-start-options decoration', () => {
     expect(plainOptions.subtask?.researchAssistant).toBeUndefined()
   })
 
-  it('injects the configured user background into role and moderator personas, not into research assistants', async () => {
+  it('builds personas for moderator and role sessions, not for research assistants', async () => {
     const face = policyFace()
-    const dir = await mkdtemp(join(tmpdir(), 'fb-policy-profile-'))
-    const profilePath = join(dir, 'user-profile.md')
-    await writeFile(profilePath, '用户偏好数据先行。\n', 'utf8')
-
     const e = new Engine('test', createStubAgent(), [], '', 'en')
-    applyChatroomEngineConfig(e, { userProfile: profilePath }, undefined)
 
     // Moderator hub: the direct/moderator branch builds its persona.
     const hub = e.sessions.getOrCreateActive('test:hub:user-1')
     chatroomState(hub).chatroomModerator = true
     const moderatorOptions: SessionStartOptions = { sessionKey: 'test:hub:user-1' }
     face.waterfall('feishuBridge/session-start-options', { engine: e, session: hub, options: moderatorOptions }, () => {})
-    expect(moderatorOptions.persona?.prompt).toContain('## 用户背景')
-    expect(moderatorOptions.persona?.prompt).toContain('用户偏好数据先行。')
+    expect(moderatorOptions.persona?.prompt).toContain('feishu-bridge')
 
     // Role: the hub branch builds its persona.
     const role = e.sessions.getOrCreateActive('test:role:user-1')
     chatroomState(role).chatroomHubKey = 'test:hub:user-1'
     const roleOptions: SessionStartOptions = { sessionKey: 'test:role:user-1' }
     face.waterfall('feishuBridge/session-start-options', { engine: e, session: role, options: roleOptions }, () => {})
-    expect(roleOptions.persona?.prompt).toContain('用户偏好数据先行。')
+    expect(roleOptions.persona?.prompt).toContain('feishu-bridge')
 
     // Research assistant: the subtask section carries the flag, no persona.
     const assistant = e.sessions.getOrCreateActive('test:assistant-1')

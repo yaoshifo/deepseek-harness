@@ -43,7 +43,6 @@ import {
   renderChatroomTopicPickCardAndPush,
 } from '../engine/chatroom-pick.ts'
 import { listRoleNames, roleEssence } from '../engine/chatroom-roles.ts'
-import { chatroomUserProfileError } from '../engine/chatroom-cmd.ts'
 import { chatroomState } from '../chatroom-state.ts'
 
 const DESCRIPTION =
@@ -226,10 +225,6 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
           if (listChatroomRoles(engine, sessionKey).length > 0) {
             throw new Error(engine.i18n.t(Msg.ChatroomAlreadyRunning))
           }
-          // Same fail-loud referent check as the /chatroom command: a
-          // configured-but-unreadable user profile blocks the start.
-          const profileError = chatroomUserProfileError(engine)
-          if (profileError !== '') throw new Error(profileError)
           const roles = (args.roles ?? '').split(',').map(r => r.trim()).filter(r => r !== '')
           // inherit resolves BEFORE spawning so an unresolvable reference
           // fails without side effects; '' (bare) takes the newest chatroom.

@@ -67,7 +67,7 @@ export const defaultChatroomAssistantStallSec = 1800
 /** Floor for a configured non-zero stall deadline; below it the supervisor would nag through legitimate quiet stretches. */
 export const minChatroomAssistantStallSec = 600
 
-/** How long a research-manual AskUserQuestion card waits before answering itself (Go var). */
+/** How long a research-manual ask_user_question card waits before answering itself (Go var). */
 export const chatroomResearchManualAskTimeout = { ms: 10 * 60 * 1000 }
 
 /** One spawned role agent in a chatroom (Go ChatroomRole). */

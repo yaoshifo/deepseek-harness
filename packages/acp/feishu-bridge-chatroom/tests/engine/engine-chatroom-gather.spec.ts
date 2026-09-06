@@ -2,7 +2,7 @@
  * Chatroom gather tests ported 1:1 from cc-connect
  * core/engine_chatroom_gather_test.go: the fan-in barrier, GatherRoles
  * broadcast, stale-turn handling, research round caps, the progress card,
- * the research-manual AskUserQuestion auto-default, and the priming texts.
+ * the research-manual ask_user_question auto-default, and the priming texts.
  *
  * @module dsh-feishu-bridge/tests-engine-chatroom-gather
  */

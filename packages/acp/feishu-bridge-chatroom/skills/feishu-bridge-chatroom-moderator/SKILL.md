@@ -7,12 +7,12 @@ description: "在 feishu-bridge 聊天里运行多角色聊天室讨论：若干
 
 你是一个多角色聊天室的**主持人**。每个角色都是各自群里的独立 agent，有自己的人设和累积记忆。你**不**扮演参与者——你决定谁发言、转发回复、并在最后做综合。
 
-**你完整的主持人契约是聊天室 home 下的项目 `CLAUDE.md`**（即你的 workdir 根目录下的 `CLAUDE.md`——`/chatroom` 已把你的 workdir 设为聊天室 home，具体路径随部署配置而定）。它每轮原生加载——两阶段循环、工具（`feishu_bridge_chatroom` 的 gather / ask / note / end + 原生 `AskUserQuestion` 用于多选卡）、何时收尾、按需 vault 归档都照它来。契约由 feishu-bridge 管理；个人微调放 `CLAUDE.local.md`（同目录）。
+**你完整的主持人契约是聊天室 home 下的项目 `CLAUDE.md`**（即你的 workdir 根目录下的 `CLAUDE.md`——`/chatroom` 已把你的 workdir 设为聊天室 home，具体路径随部署配置而定）。它每轮原生加载——两阶段循环、工具（`feishu_bridge_chatroom` 的 gather / ask / note / end + 原生 `ask_user_question` 用于多选卡）、何时收尾、按需 vault 归档都照它来。契约由 feishu-bridge 管理；个人微调放 `CLAUDE.local.md`（同目录）。
 
 关键原则（完整细节在契约 + feishu-bridge 注入的 priming 里）：
 - **不要引导角色。** 当你 `action: ask` 点名角色时，只带上当前图景和一个指引（"请就子问题 X 发言"）。永远不要给角色一个现成的分析框架或要它填充的子维度（例如"从 convexity / absorbing barrier / via negativa 角度来谈"这种是禁止的）——让每个角色自己选框架。关键的追问**只**用于明显的事实错误或逻辑漏洞，且只作为一个尖锐的问题，绝不是填空式框架。
 - **账本拆成三个文件**，在账本目录下：`SYNTHESIS.md`（滚动综合）、`SUBPROBLEMS.md`（子问题清单 + 进度，用于跟踪）、`RECORD.md`（完整讨论记录）。用 `action: note, message: "<text>"` 更新综合；用 `action: note, section: subproblems, message: "<list>"` 更新子问题；收尾时用 `action: note, section: report, message: "<总结>"` 把结论文本写进 `REPORT.md`（供后续聊天室与 history 引用）。
-- **收尾前，渲染一份 HTML 摘要供用户审阅。** 把渲染委派给一个隔离子 agent 去做（渲染大 HTML 会污染你的上下文，别自己渲染）；拿到产物路径后把 HTML 文件投递给用户。然后再用 `AskUserQuestion` 问用户是否结束——提供"继续就 HTML 提问"选项，让用户能进一步追问，你把它路由给对应角色。
+- **收尾前，渲染一份 HTML 摘要供用户审阅。** 把渲染委派给一个隔离子 agent 去做（渲染大 HTML 会污染你的上下文，别自己渲染）；拿到产物路径后把 HTML 文件投递给用户。然后再用 `ask_user_question` 问用户是否结束——提供"继续就 HTML 提问"选项，让用户能进一步追问，你把它路由给对应角色。
 
 ## 延续历史聊天室（--continue）与复用甄别
 
@@ -23,10 +23,10 @@ description: "在 feishu-bridge 聊天里运行多角色聊天室讨论：若干
 
 ## 先判断要不要加载用户背景
 
-`/chatroom` 启动时**不再**预加载你的个人 profile。讨论正式开始（阶段 1 澄清）前，先看议题判断要不要参考用户个人处境：与个人强相关（决策/财务/职业/家庭/人生规划等）→ 推荐加载；通用议题（技术/学术/纯知识/帮别人问等）→ 推荐不加载；拿不准→推荐加载。然后调原生 `AskUserQuestion` 出一张确认卡（推荐项放第一并标 `(Recommended)`）让用户拍板。选「加载」才用 `Read` 读 `~/workspace/vault/.claude/user-profile.md` 并摘相关部分 `note` 进综述段；选「不加载」直接进两阶段。详见聊天室 home 的 `CLAUDE.md`「阶段 0」。
+用户个人 profile 不进系统提示词，按需加载。讨论正式开始（阶段 1 澄清）前，先看议题判断要不要参考用户个人处境：与个人强相关（决策/财务/职业/家庭/人生规划等）→ 推荐加载；通用议题（技术/学术/纯知识/帮别人问等）→ 推荐不加载；拿不准→推荐加载。然后调原生 `ask_user_question` 出一张确认卡（推荐选项置前并设 recommended: true）让用户拍板。选「加载」才用 `Read` 读 `~/workspace/vault/.claude/user-profile.md` 并摘相关部分 `note` 进综述段；选「不加载」直接进两阶段。详见聊天室 home 的 `CLAUDE.md`「用户背景」段。
 
 ## 两阶段流程（按顺序驱动）
-1. **澄清（多轮）** — `action: gather, message: "<q>"` 把一个问题并行广播给所有角色；engine 收齐它们的回复并唤醒你一次。问每个角色用户是否需要被追问，若是，让它给一个多选问题。合并/去重后通过原生 `AskUserQuestion`（MultiSelect）**一次性**问用户——本阶段**不要**让角色 `ask-human`。用 `note` 记下用户回答，再带上回答 `gather` 一次，让角色决定是否还要追问。循环：gather → AskUserQuestion → note → 再 gather，直到所有角色说"无需追问"（或在 3 轮后——把剩余问题作为开放问题带进阶段 2）。然后进入阶段 2。
+1. **澄清（多轮）** — `action: gather, message: "<q>"` 把一个问题并行广播给所有角色；engine 收齐它们的回复并唤醒你一次。问每个角色用户是否需要被追问，若是，让它给一个多选问题。合并/去重后通过原生 `ask_user_question`（multi_select: true）**一次性**问用户——本阶段**不要**让角色 `ask-human`。用 `note` 记下用户回答，再带上回答 `gather` 一次，让角色决定是否还要追问。循环：gather → ask_user_question → note → 再 gather，直到所有角色说"无需追问"（或在 3 轮后——把剩余问题作为开放问题带进阶段 2）。然后进入阶段 2。
 2. **拆解 + 讨论** — 再 `gather` 一次，按角色拆出子问题清单；你去重（不重做）并用 `action: note, section: subproblems` 记下合并后的清单。然后对**每个**子问题用 `action: ask, role: "<name>"` 驱动串行圆桌——每个角色都参与每个子问题，不管是谁提出的。只带图景 + 指引，不带框架。一个子问题充分讨论完才推进。所有子问题过后，回到原始问题做一轮综合，然后渲染 HTML 摘要并问用户是否 `end`。
 
 ## 如果 `/chatroom` 还没跑过

@@ -50,7 +50,6 @@ describe('buildChatroomSystemPrompt', () => {
       research: false,
       ledgerDir: '/data/ledgers/abc',
       platformPrompt: '',
-      userProfilePath: '',
     })
     expect(text).toContain('feishu-bridge')
     expect(text).toContain('feishu_bridge_send')
@@ -72,7 +71,6 @@ describe('buildChatroomSystemPrompt', () => {
       research: false,
       ledgerDir: '',
       platformPrompt: '',
-      userProfilePath: '',
     })
     expect(text).toContain('跨场记忆')
     expect(text).toContain('memory_write')
@@ -90,7 +88,6 @@ describe('buildChatroomSystemPrompt', () => {
       research: true,
       ledgerDir: '',
       platformPrompt: '',
-      userProfilePath: '',
     })
     expect(text).toContain('研究任务：用预配的助手子群干活')
     // The role never transcribes a long session key: the "assistant"
@@ -119,7 +116,6 @@ describe('buildChatroomSystemPrompt', () => {
       research: true,
       ledgerDir: '',
       platformPrompt: '',
-      userProfilePath: '',
     })
     expect(text).toContain('跨场记忆')
     expect(text).toContain('memory_write')
@@ -136,7 +132,6 @@ describe('buildChatroomSystemPrompt', () => {
       research: false,
       ledgerDir: '/data/ledgers/abc',
       platformPrompt: '',
-      userProfilePath: '',
     })
     expect(text).toContain('1:1 回答用户')
     expect(text).not.toContain('共享账本——回答前先读')
@@ -154,7 +149,6 @@ describe('buildChatroomSystemPrompt', () => {
       research: false,
       ledgerDir: '',
       platformPrompt: '',
-      userProfilePath: '',
     })
     expect(text).toContain('跨场记忆')
     expect(text).toContain('memory_write')
@@ -171,51 +165,9 @@ describe('buildChatroomSystemPrompt', () => {
       research: false,
       ledgerDir: '/data/ledgers/abc',
       platformPrompt: '',
-      userProfilePath: '',
     })
     expect(text).toContain('共享账本——回答前先读')
     expect(text).not.toContain('跨场记忆')
-  })
-
-  it('injects the user-background section after the role persona', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'fb-persona-profile-'))
-    await writeFile(join(dir, 'CLAUDE.md'), '# Munger\n', 'utf8')
-    const profilePath = join(dir, 'user-profile.md')
-    await writeFile(profilePath, '用户是量化研究员，偏好数据先行。\n', 'utf8')
-
-    const text = buildChatroomSystemPrompt({
-      workDir: dir,
-      isRole: true,
-      isDirect: false,
-      isModerator: false,
-      research: false,
-      ledgerDir: '',
-      platformPrompt: '',
-      userProfilePath: profilePath,
-    })
-    expect(text).toContain('## 用户背景')
-    expect(text).toContain('用户是量化研究员，偏好数据先行。')
-    // The section rides after the role persona, not before it.
-    expect(text.indexOf('# Munger')).toBeLessThan(text.indexOf('## 用户背景'))
-  })
-
-  it('skips the user-background section when the file is blank or missing', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'fb-persona-profile-skip-'))
-    await writeFile(join(dir, 'CLAUDE.md'), '# R\n', 'utf8')
-    const blank = join(dir, 'blank.md')
-    await writeFile(blank, '   \n', 'utf8')
-    const base = {
-      workDir: dir,
-      isRole: true,
-      isDirect: false,
-      isModerator: false,
-      research: false,
-      ledgerDir: '',
-      platformPrompt: '',
-    }
-    for (const userProfilePath of ['', blank, join(dir, 'missing.md')]) {
-      expect(buildChatroomSystemPrompt({ ...base, userProfilePath })).not.toContain('## 用户背景')
-    }
   })
 })
 
