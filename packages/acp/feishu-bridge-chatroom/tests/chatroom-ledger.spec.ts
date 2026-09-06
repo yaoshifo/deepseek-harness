@@ -5,7 +5,7 @@
  * @module dsh-feishu-bridge/tests-engine-chatroom-ledger
  */
 
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
@@ -24,6 +24,11 @@ import {
 } from '../src/engine/chatroom-ledger.ts'
 
 const read = async (p: string): Promise<string> => readFile(p, 'utf8')
+
+const byteLen = (s: string): number => Buffer.byteLength(s)
+
+/** All MARK-nnnn markers in text, in order. */
+const marksOf = (text: string): string[] => [...text.matchAll(/【taleb】：(MARK-\d{4})/g)].map(m => m[1]!)
 
 describe('chatroomLedgerDir', () => {
   it('stable per hub key, distinct across hubs, a directory under ledgers/', () => {
@@ -71,6 +76,95 @@ describe('appendChatroomLedger', () => {
     expect(syn).not.toContain('厚尾下平均会骗人')
     const sub = await read(join(d, 'SUBPROBLEMS.md'))
     expect(sub).not.toContain('厚尾下平均会骗人')
+  })
+})
+
+/** A freshly initialized single-role ledger dir for rotation tests. */
+async function freshRotationLedger(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'fb-ledger-rot-'))
+  const d = chatroomLedgerDir(root, 'hub-1')
+  await initChatroomLedger(d, 'topic', ['taleb'])
+  return d
+}
+
+/** The ledger dir's RECORD-<n>.md archive file names. */
+async function recordArchives(d: string): Promise<string[]> {
+  return (await readdir(d)).filter(n => /^RECORD-\d+\.md$/.test(n))
+}
+
+/** Append 1000-byte MARK-nnnn entries until `stop` accepts the archive
+ * names (the cap fails the test if rotation never fires); returns the
+ * appended markers in order.
+ */
+async function appendEntriesUntil(d: string, cap: number, stop: (archives: string[]) => boolean): Promise<string[]> {
+  const pad = 'x'.repeat(963)
+  const appended: string[] = []
+  for (let i = 0; i < cap; i++) {
+    const mark = `MARK-${String(i).padStart(4, '0')}`
+    appended.push(mark)
+    await appendChatroomLedger(d, 'taleb', `${mark} ${pad}`)
+    if (stop(await recordArchives(d))) break
+  }
+  return appended
+}
+
+describe('appendChatroomLedger rotation', () => {
+  it('creates no archive while RECORD.md stays under the rotation threshold', async () => {
+    const d = await freshRotationLedger()
+    for (let i = 0; i < 8; i++) {
+      await appendChatroomLedger(d, 'taleb', `短回复 ${i}`)
+    }
+    expect(await recordArchives(d)).toEqual([])
+    const rec = await read(join(d, 'RECORD.md'))
+    for (let i = 0; i < 8; i++) {
+      expect(rec).toContain(`短回复 ${i}`)
+    }
+  })
+
+  it('rotates into RECORD-1.md past the threshold; RECORD.md keeps heading + pointer + recent tail ≤32KB', async () => {
+    const d = await freshRotationLedger()
+    const appended = await appendEntriesUntil(d, 120, a => a.length > 0)
+    expect(await recordArchives(d)).toEqual(['RECORD-1.md'])
+
+    const archive = await read(join(d, 'RECORD-1.md'))
+    expect(archive.split('\n')[0]).toBe('# 讨论记录归档 1（更早轮次，自 RECORD.md 轮转）')
+
+    const rec = await read(join(d, 'RECORD.md'))
+    expect(rec.startsWith('## 讨论记录\n（更早记录见 RECORD-*.md 归档）\n')).toBe(true)
+    expect(byteLen(rec)).toBeLessThanOrEqual(32 * 1024)
+    // No entry lost, none duplicated; the archive holds the older entries.
+    expect([...marksOf(archive), ...marksOf(rec)]).toEqual(appended)
+  })
+
+  it('a second overflow archives into RECORD-2.md, keeping the three-part chronology', async () => {
+    const d = await freshRotationLedger()
+    const appended = await appendEntriesUntil(d, 240, a => a.includes('RECORD-2.md'))
+    expect(await recordArchives(d)).toEqual(['RECORD-1.md', 'RECORD-2.md'])
+    expect((await read(join(d, 'RECORD-2.md'))).split('\n')[0]).toBe('# 讨论记录归档 2（更早轮次，自 RECORD.md 轮转）')
+    const rec = await read(join(d, 'RECORD.md'))
+    expect(byteLen(rec)).toBeLessThanOrEqual(32 * 1024)
+    const ordered = [
+      ...marksOf(await read(join(d, 'RECORD-1.md'))),
+      ...marksOf(await read(join(d, 'RECORD-2.md'))),
+      ...marksOf(rec),
+    ]
+    expect(ordered).toEqual(appended)
+  })
+
+  it('splits at a line boundary: no entry line is ever cut in half', async () => {
+    const d = await freshRotationLedger()
+    const appended = await appendEntriesUntil(d, 120, a => a.length > 0)
+    const entryLines = (text: string): string[] => text.split('\n').filter(l => l.startsWith('- ['))
+    const lines = [
+      ...entryLines(await read(join(d, 'RECORD-1.md'))),
+      ...entryLines(await read(join(d, 'RECORD.md'))),
+    ]
+    // Every seeded entry line is exactly 1000 bytes; a split mid-line would
+    // leave a short line at the archive's end or the record's start.
+    expect(lines).toHaveLength(appended.length)
+    for (const line of lines) {
+      expect(byteLen(line)).toBe(1000)
+    }
   })
 })
 

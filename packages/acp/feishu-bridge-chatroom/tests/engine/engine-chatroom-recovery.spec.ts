@@ -98,6 +98,7 @@ describe('chatroom barrier persistence', () => {
       seq: 1,
       expected: ['taleb'],
       collected: { munger: '部分回复' },
+      startedAt: 0,
     })
 
     // A woken barrier is cleared before the next save except inside the
@@ -278,5 +279,64 @@ describe('chatroom restart recovery', () => {
     // The old progress card's handle died with the process; a fresh terminal
     // card replaces it so the group does not freeze on 「进行中」.
     await waitFor(() => p.sentCards.some(card => JSON.stringify(card).includes('重启后收束')), 'terminal progress card')
+  })
+})
+
+describe('serial-ask persistence and restart recovery', () => {
+  it('persists an outstanding serial ask and drops it once completed', async () => {
+    const store = join(await mkdtemp(join(tmpdir(), 'fb-recovery-')), 'sessions.json')
+    const e = newRecoveryEngine(createStubChatroomSpawner(), store)
+    const hub = 'test:hub:user-1'
+    armHubAndRole(e, hub)
+    const hubSess = chatroomState(e.sessions.getOrCreateActive(hub))
+    hubSess.chatroomGatherSeq = 1
+    hubSess.pendingSerialAsks.set('taleb', { id: 1, question: '请给出终版结论', armedAt: Date.now(), lastWakeAt: 0, wakeCount: 0 })
+    e.sessions.save()
+
+    const sections = Object.values(readStore(store).sessions).map(chatroomSection)
+    const snap = sections.find(s => s.pendingSerialAsksData !== undefined)?.pendingSerialAsksData
+    const armedAt = (snap as Array<{ armedAt: number }>)[0]?.armedAt
+    expect(typeof armedAt).toBe('number')
+    expect(snap).toEqual([{
+      roleName: 'taleb', id: 1, question: '请给出终版结论',
+      armedAt, lastWakeAt: 0, wakeCount: 0,
+    }])
+
+    hubSess.pendingSerialAsks.delete('taleb')
+    e.sessions.save()
+    for (const s of Object.values(readStore(store).sessions)) {
+      expect(chatroomSection(s).pendingSerialAsksData).toBeUndefined()
+    }
+  })
+
+  it('a restart retires the restored serial ask with a bounded wake — it never re-arms as an in-flight ask', async () => {
+    const store = join(await mkdtemp(join(tmpdir(), 'fb-recovery-')), 'sessions.json')
+    const hub = 'test:hub:user-1'
+    {
+      const e = newRecoveryEngine(createStubChatroomSpawner(), store)
+      armHubAndRole(e, hub)
+      const hubSess = chatroomState(e.sessions.getOrCreateActive(hub))
+      hubSess.chatroomGatherSeq = 1
+      hubSess.pendingSerialAsks.set('taleb', { id: 1, question: '请给出终版结论', armedAt: Date.now(), lastWakeAt: 0, wakeCount: 0 })
+      e.sessions.save()
+    }
+
+    const e2 = newRecoveryEngine(createStubChatroomSpawner(), store)
+    const recv = vi.spyOn(e2, 'receiveMessage').mockImplementation(() => {})
+    await e2.start()
+    await waitFor(() => recv.mock.calls.some(([, m]) => m.sessionKey === hub), 'moderator wake')
+
+    const wake = recv.mock.calls.map(([, m]) => m).find(m => m.sessionKey === hub)
+    expect(wake?.content).toContain('检测到进程重启')
+    expect(wake?.content).toContain('taleb')
+    expect(wake?.content).toContain('请给出终版结论')
+
+    // Retired, not re-armed: the entry is gone and a later save carries none.
+    const hub2 = e2.sessions.getOrCreateActive(hub)
+    expect(chatroomState(hub2).pendingSerialAsks.size).toBe(0)
+    e2.sessions.save()
+    for (const s of Object.values(readStore(store).sessions)) {
+      expect(chatroomSection(s).pendingSerialAsksData).toBeUndefined()
+    }
   })
 })

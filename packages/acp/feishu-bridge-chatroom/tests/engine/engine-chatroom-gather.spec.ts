@@ -373,7 +373,9 @@ describe('gather fan-in via maybeAutoRelayRole', () => {
     expect(chatroomState(role).chatroomAsked).toBe(false)
     expect(chatroomState(role).researchAwaitingAssistant).toBe(true)
     expect(chatroomState(hubSess).pendingGather?.collected.size).toBe(0)
-    expect(chatroomState(role).chatroomInFlight).toBe(false)
+    // The superseded turn must NOT clear the in-flight flag: the newer
+    // round's broadcast re-armed it and owns it until its own turn relays.
+    expect(chatroomState(role).chatroomInFlight).toBe(true)
     // The reply still has value: relayed as a free-reply card.
     expect(p.sentCards).toHaveLength(1)
   })
@@ -1072,6 +1074,99 @@ describe('buildChatroomResearchModeratorPriming', () => {
     expect(priming).toContain('点名分配')
     for (const banned of ['数据管家', 'data/core/', 'DATA_LEDGER']) {
       expect(priming).not.toContain(banned)
+    }
+  })
+})
+
+describe('research progress card projection (heartbeat + merge)', () => {
+  it('the live body names waiting roles and elapsed minutes; terminal states omit them', async () => {
+    const { buildResearchProgressCard } = await import('../../src/engine/chatroom.ts')
+    const e = new Engine('test', createStubAgent(), [], '', 'zh')
+    const live = JSON.stringify(buildResearchProgressCard(e, 3, 5, '', ['dalio', 'marks'], 37))
+    expect(live).toContain('3/5')
+    expect(live).toContain('等待中：dalio、marks（已进行 37 分钟）')
+    expect(live).toContain('插话')
+    const done = JSON.stringify(buildResearchProgressCard(e, 5, 5, 'done', [], 0))
+    expect(done).not.toContain('等待中')
+    expect(done).not.toContain('已进行')
+  })
+
+  it('heartbeats the live card with waiting roles while a research round waits on the slow role', async () => {
+    const p = createStubProgressCardPlatform()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+    chatroomState(e.sessions.getOrCreateActive(hub)).chatroomResearch = true
+    clearCards(p)
+    await settle()
+    clearCards(p)
+    // Setup done under real timers; the heartbeat interval and its clock
+    // are exercised under fake timers.
+    vi.useFakeTimers()
+    try {
+      gatherRoles(e, hub, '研究中国股市', true)
+      const g = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
+      expect(g).toBeDefined()
+      // No stopTimer here: it is a terminal-transition helper and also stops
+      // the heartbeat; the 20m fallback never fires under the faked clock.
+      // Flush the async card-send chain (microtasks only; timers are faked).
+      for (let i = 0; i < 10 && g!.progressHandle === undefined; i++) await vi.advanceTimersByTimeAsync(0)
+      expect(g!.progressHandle).toBeDefined()
+      const before = p.updateCards.length
+
+      // One minute in: the heartbeat PATCHes the live card with waiting info.
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(p.updateCards.length).toBe(before + 1)
+      const body = JSON.stringify(p.updateCards[p.updateCards.length - 1])
+      expect(body).toContain('等待中：taleb、munger')
+      expect(body).toContain('已进行 1 分钟')
+
+      // A later tick PATCHes again with the rolled elapsed clock.
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(p.updateCards.length).toBe(before + 2)
+      expect(JSON.stringify(p.updateCards[p.updateCards.length - 1])).toContain('已进行 2 分钟')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('merges bursty live PATCHes and lands terminal states immediately', async () => {
+    vi.useFakeTimers()
+    try {
+      const hub = 'test:hub:user-1'
+      const p = createStubProgressCardPlatform()
+      const e = newChatroomTestEngine(p)
+      const { updateResearchProgressCard } = await import('../../src/engine/chatroom.ts')
+      const hubSess = e.sessions.getOrCreateActive(hub)
+      const g = new ChatroomGather('q', 1)
+      g.expected.add('Taleb')
+      g.expected.add('Munger')
+      g.expected.add('Graham')
+      g.progressHandle = 'h'
+      g.startedAt = Date.now() - 90_000
+      chatroomState(hubSess).pendingGather = g
+
+      // Three replies land within the merge window: one immediate live
+      // PATCH plus one trailing coalesced PATCH — never three.
+      updateResearchProgressCard(e, p, g, '')
+      g.accumulate('Taleb', 'r1')
+      updateResearchProgressCard(e, p, g, '')
+      g.accumulate('Munger', 'r2')
+      updateResearchProgressCard(e, p, g, '')
+      expect(p.updateCards.length).toBe(1)
+      await vi.advanceTimersByTimeAsync(2_100)
+      expect(p.updateCards.length).toBe(2)
+      expect(JSON.stringify(p.updateCards[1])).toContain('2/3')
+
+      // The terminal state bypasses the merge window entirely.
+      g.accumulate('Graham', 'r3')
+      updateResearchProgressCard(e, p, g, 'done')
+      expect(p.updateCards.length).toBe(3)
+      expect(p.patchedTitles()[2]).toContain('全部角色已回复')
+    } finally {
+      vi.useRealTimers()
     }
   })
 })

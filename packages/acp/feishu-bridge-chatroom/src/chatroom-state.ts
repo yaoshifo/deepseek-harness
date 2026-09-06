@@ -10,7 +10,7 @@
  */
 
 import type { FeatureStateCodec, Session } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { ChatroomEndBarrier, ChatroomGather, type EndBarrierSnapshot, type GatherBarrierSnapshot } from './engine/chatroom.ts'
+import { ChatroomEndBarrier, ChatroomGather, type EndBarrierSnapshot, type GatherBarrierSnapshot, type SerialAskEntry, type SerialAskSnapshot } from './engine/chatroom.ts'
 
 /** The featureState key of the chatroom section. */
 export const chatroomFeatureStateKey = 'chatroom'
@@ -26,7 +26,13 @@ export interface ChatroomFeatureState {
   chatroomHubKey?: string
   /** Role name this session plays in its chatroom. */
   chatroomRoleName?: string
-  /** One-shot ask gate: the hub already asked this role in the current gather round. */
+  /**
+   * Answered-latch for the current ask: armed when an ask opens a turn,
+   * consumed at the answering turn's end. Correlation itself is by ask
+   * identity (the turn stamp vs the outstanding gather/serial asks); this
+   * latch only suppresses relays from later turns of an already-answered
+   * ask (a metadata-less wake inherits the persisted identity).
+   */
   chatroomAsked?: boolean
   /** Hub session driving a research-mode chatroom. */
   chatroomResearch?: boolean
@@ -54,6 +60,8 @@ export interface ChatroomFeatureState {
   pendingHumanQuestionRole?: string
   /** Durable snapshot of the armed gather barrier (consumed at engine start). */
   pendingGatherData?: GatherBarrierSnapshot | undefined
+  /** Durable snapshots of the outstanding serial asks (consumed at engine start). */
+  pendingSerialAsksData?: SerialAskSnapshot[] | undefined
   /** Durable snapshot of the armed end barrier (consumed at engine start). */
   pendingEndBarrierData?: EndBarrierSnapshot | undefined
   /** Hub↔steward relation's last organic activity (ms epoch; 0 = never observed). */
@@ -62,6 +70,8 @@ export interface ChatroomFeatureState {
   supervisionWakeCount?: number
   /** When the supervisor last woke the moderator or posted a breaker notice (ms epoch). */
   supervisionLastWakeAt?: number
+  /** Role session's last organic turn (ms epoch); the serial-ask stall clock resets on it. */
+  roleActivityAt?: number
 }
 
 /**
@@ -149,6 +159,9 @@ export class ChatroomSessionState {
   /** Armed chatroom gather barrier on a hub session; in-memory only. */
   pendingGather: ChatroomGather | undefined
 
+  /** Outstanding serial asks on a hub, keyed by role name; in-memory only. */
+  pendingSerialAsks: Map<string, SerialAskEntry> = new Map()
+
   /** Armed chatroom end barrier on a hub session; in-memory only. */
   pendingEndBarrier: ChatroomEndBarrier | undefined
 
@@ -158,6 +171,13 @@ export class ChatroomSessionState {
    */
   get pendingGatherData(): GatherBarrierSnapshot | undefined { return this.section.pendingGatherData }
   set pendingGatherData(value: GatherBarrierSnapshot | undefined) { this.section.pendingGatherData = value }
+
+  /**
+   * Durable snapshots of pendingSerialAsks from the last on-disk load;
+   * recovery (recoverChatroomBarriers) consumes them at engine start.
+   */
+  get pendingSerialAsksData(): SerialAskSnapshot[] | undefined { return this.section.pendingSerialAsksData }
+  set pendingSerialAsksData(value: SerialAskSnapshot[] | undefined) { this.section.pendingSerialAsksData = value }
 
   /**
    * Durable snapshot of pendingEndBarrier from the last on-disk load;
@@ -177,6 +197,10 @@ export class ChatroomSessionState {
   /** When the supervisor last woke the moderator or posted a breaker notice (ms epoch). */
   get supervisionLastWakeAt(): number { return this.section.supervisionLastWakeAt ?? 0 }
   set supervisionLastWakeAt(value: number) { this.section.supervisionLastWakeAt = value }
+
+  /** Role session's last organic turn (ms epoch; 0 = never observed). */
+  get roleActivityAt(): number { return this.section.roleActivityAt ?? 0 }
+  set roleActivityAt(value: number) { this.section.roleActivityAt = value }
 }
 
 const liveStates = new WeakMap<Session, ChatroomSessionState>()
@@ -220,6 +244,9 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
     const s = chatroomState(session)
     const pendingGatherData = s.pendingGather?.snapshot()
     const pendingEndBarrierData = s.pendingEndBarrier?.snapshot()
+    const pendingSerialAsksData = s.pendingSerialAsks.size > 0
+      ? [...s.pendingSerialAsks.entries()].map(([roleName, entry]) => { return { roleName, ...entry } })
+      : undefined
     const section = {
       ...(s.chatroomHubKey !== '' ? { chatroomHubKey: s.chatroomHubKey } : {}),
       ...(s.chatroomRoleName !== '' ? { chatroomRoleName: s.chatroomRoleName } : {}),
@@ -237,10 +264,12 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
       ...(s.researchRunDir !== '' ? { researchRunDir: s.researchRunDir } : {}),
       ...(s.pendingHumanQuestionRole !== '' ? { pendingHumanQuestionRole: s.pendingHumanQuestionRole } : {}),
       ...(pendingGatherData !== undefined ? { pendingGatherData } : {}),
+      ...(pendingSerialAsksData !== undefined ? { pendingSerialAsksData } : {}),
       ...(pendingEndBarrierData !== undefined ? { pendingEndBarrierData } : {}),
       ...(s.supervisionActivityAt !== 0 ? { supervisionActivityAt: s.supervisionActivityAt } : {}),
       ...(s.supervisionWakeCount !== 0 ? { supervisionWakeCount: s.supervisionWakeCount } : {}),
       ...(s.supervisionLastWakeAt !== 0 ? { supervisionLastWakeAt: s.supervisionLastWakeAt } : {}),
+      ...(s.roleActivityAt !== 0 ? { roleActivityAt: s.roleActivityAt } : {}),
     }
     return Object.keys(section).length > 0 ? section : undefined
   },
@@ -267,9 +296,11 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
     // question stops routing, and a stalled relation loses its wake budget.
     t.pendingGather = f.pendingGather
     t.pendingEndBarrier = f.pendingEndBarrier
+    t.pendingSerialAsks = f.pendingSerialAsks
     t.pendingHumanQuestionRole = f.pendingHumanQuestionRole
     t.supervisionActivityAt = f.supervisionActivityAt
     t.supervisionWakeCount = f.supervisionWakeCount
     t.supervisionLastWakeAt = f.supervisionLastWakeAt
+    t.roleActivityAt = f.roleActivityAt
   },
 }

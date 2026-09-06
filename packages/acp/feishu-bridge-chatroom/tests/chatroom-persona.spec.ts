@@ -225,6 +225,8 @@ describe('cross-chatroom sharing disciplines', () => {
     expect(p).toContain('REPORT.md')
     expect(p).toContain('前情')
     expect(p).toContain('未经本次讨论验证')
+    // RECORD.md rotates: the prompt must tell roles where the older rounds went.
+    expect(p).toContain('RECORD.md 只保留近期记录，更早轮次归档在同目录 RECORD-*.md，需要回溯再读。')
   })
 
   it('research role prompt carries the three-column reuse discipline', () => {

@@ -120,6 +120,8 @@ export interface GatherBarrierSnapshot {
   expected: string[]
   /** Role name → reply text collected so far. */
   collected: Record<string, string>
+  /** When the round was armed (ms epoch); absent in pre-field snapshots reads as 0. */
+  startedAt?: number
 }
 
 /** Durable snapshot of an armed end barrier (sessions.json; timer and woken flag stay in memory). */
@@ -129,6 +131,39 @@ export interface EndBarrierSnapshot {
   /** Role name → final reply text collected so far. */
   collected: Record<string, string>
 }
+
+/**
+ * One outstanding serial ask on a hub (a moderator→single-role question
+ * outside any gather round). Keyed by role name on
+ * {@link ChatroomSessionState.pendingSerialAsks}; the entry is the durable
+ * unit of "this role owes the moderator an answer" — ask-identity routing
+ * completes it when the role's answering turn ends, the stall supervisor
+ * reads it as the relation's deadline, and a restart recovery retires it.
+ */
+export interface SerialAskEntry {
+  /** Ask identity from the hub's shared counter; role turns carry it as their stamp. */
+  readonly id: number
+  /** The question the moderator asked (excerpt for wakes and recovery notices). */
+  readonly question: string
+  /** When the ask was minted (ms epoch); the stall deadline counts from here. */
+  readonly armedAt: number
+  /** When the stall supervisor last woke the moderator about this entry (ms epoch). */
+  lastWakeAt: number
+  /** Supervisor wakes already spent on this entry's stall episode. */
+  wakeCount: number
+}
+
+/** Durable form of a serial ask: the map key (role name) rides the entry. */
+export interface SerialAskSnapshot extends SerialAskEntry {
+  /** The role the moderator asked (the pendingSerialAsks map key). */
+  roleName: string
+}
+
+/** Research progress-card heartbeat cadence: the live card refreshes with waiting roles and elapsed time. */
+const progressCardTickMs = 60_000
+
+/** Merge window for live progress PATCHes: replies arriving together coalesce into one card update. */
+const progressCardMergeMs = 2_000
 
 /**
  * The in-memory fan-in barrier for a parallel gather (Go chatroomGather):
@@ -149,6 +184,14 @@ export class ChatroomGather {
   readonly collected = new Map<string, string>()
   /** Fallback wake timer; stopped on early completion. */
   timer: ReturnType<typeof setTimeout> | undefined
+  /** Live progress-card heartbeat timer (research gathers only). */
+  tickTimer: ReturnType<typeof setInterval> | undefined
+  /** Trailing merge timer for coalesced live progress PATCHes. */
+  mergeTimer: ReturnType<typeof setTimeout> | undefined
+  /** When the live-progress merge window last flushed a PATCH (ms epoch). */
+  lastPatchAt = 0
+  /** When this round was armed (ms epoch); the live card's elapsed clock. */
+  startedAt = 0
   private woken = false
   /** Research progress-card handle (research gathers only). */
   progressHandle: unknown
@@ -171,6 +214,7 @@ export class ChatroomGather {
       seq: this.seq,
       expected: [...this.expected],
       collected: Object.fromEntries(this.collected),
+      startedAt: this.startedAt,
     }
   }
 
@@ -231,6 +275,14 @@ export class ChatroomGather {
   /** Stop the fallback timer once the barrier completes (early or timed out). */
   stopTimer(): void {
     stopFallbackTimer(this.timer, (t: ReturnType<typeof setTimeout> | undefined) => { this.timer = t })
+    if (this.tickTimer !== undefined) {
+      clearInterval(this.tickTimer)
+      this.tickTimer = undefined
+    }
+    if (this.mergeTimer !== undefined) {
+      clearTimeout(this.mergeTimer)
+      this.mergeTimer = undefined
+    }
   }
 
   /** The wake message: broadcast question + each role's reply, role-tagged.
@@ -724,11 +776,39 @@ async function askRoleInternal(
     throw new Error(`chatroom: reconstruct role reply ctx: ${String(error instanceof Error ? error.message : error)}`)
   }
 
+  // Serial asks (askSeq 0) mint the next identity from the hub's shared
+  // counter and register an outstanding entry; the role's answering turn
+  // routes by the identity and completes the entry. A steer that arrives
+  // while a gather is armed is a course correction OF that round — the
+  // role's reply counts as its round reply (no new identity). Steer
+  // delivery never opens a turn, so the stamp is applied here directly —
+  // turn-start stamping would otherwise never fire for a steered question.
+  const hub = chatroomHubOf(e, hubKey)
+  let stamp = askSeq
+  if (askSeq === 0) {
+    if (hub === undefined) throw new Error(`chatroom: hub session missing (hub=${hubKey})`)
+    const armed = chatroomState(hub).pendingGather
+    if (armed !== undefined) {
+      stamp = armed.seq
+    } else {
+      stamp = chatroomState(hub).chatroomGatherSeq + 1
+      chatroomState(hub).chatroomGatherSeq = stamp
+      chatroomState(hub).pendingSerialAsks.set(_roleName, {
+        id: stamp,
+        question,
+        armedAt: Date.now(),
+        lastWakeAt: 0,
+        wakeCount: 0,
+      })
+    }
+  }
+
   // Re-arm the one-shot relay so this role's next reply forwards to the
   // hub. Mark in-flight so endChatroom can detect a generating role.
   const role = e.sessions.getOrCreateActive(roleKey)
   chatroomState(role).chatroomAsked = false
   chatroomState(role).chatroomInFlight = true
+  if (delivery === 'steer' && askSeq === 0) chatroomState(role).chatroomAskSeq = stamp
   // Research mode: new round — clear the previous round's sticky dispatch
   // flag. ResearchAwaitingAssistant arms at turn start.
   const researchHub = chatroomHubOf(e, hubKey)
@@ -746,6 +826,7 @@ async function askRoleInternal(
     await e.sendAsCard(p, roleRctx, question, { title: headerTitle, color: 'blue' })
   } catch (error) {
     chatroomState(role).chatroomInFlight = false
+    if (askSeq === 0 && hub !== undefined) chatroomState(hub).pendingSerialAsks.delete(_roleName)
     e.sessions.save()
     throw error
   }
@@ -767,7 +848,7 @@ async function askRoleInternal(
     userName: '[主持]',
     content: roleContent,
     replyCtx: roleRctx,
-    metadata: { chatroomAskSeq: askSeq, chatroomAwaitAssistant: awaitAssistant },
+    metadata: { chatroomAskSeq: stamp, chatroomAwaitAssistant: awaitAssistant },
   }
   try {
     if (delivery === 'steer') {
@@ -820,12 +901,15 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   if (roles.length === 0) throw new Error(e.i18n.t(Msg.ChatroomNoRoles))
 
   // Set up the fan-in barrier BEFORE broadcasting so the first role reply
-  // can't race ahead and find no pendingGather.
+  // can't race ahead and find no pendingGather. A new round supersedes every
+  // outstanding serial ask: those turns route as free replies instead of
+  // being absorbed as round answers.
   const seq = chatroomState(hub).chatroomGatherSeq + 1
   chatroomState(hub).chatroomGatherSeq = seq
   const g = new ChatroomGather(q, seq)
   for (const r of roles) g.expected.add(r.name)
   chatroomState(hub).pendingGather = g
+  chatroomState(hub).pendingSerialAsks.clear()
   e.sessions.save()
 
   // Fallback timer: wake the moderator with partial results if a role stalls.
@@ -857,8 +941,15 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
       })
   }
   // Research rounds run up to 60m: post a progress card so the user has a
-  // live X/N view instead of silence.
-  if (research) sendResearchProgressCard(e, p, hubKey, g)
+  // live X/N view instead of silence, and heartbeat it with waiting roles
+  // and elapsed time so a slow role is visible as "still waiting", not
+  // silence.
+  if (research) {
+    g.startedAt = Date.now()
+    sendResearchProgressCard(e, p, hubKey, g)
+    g.tickTimer = setInterval(() => { updateResearchProgressCard(e, p, g, '') }, progressCardTickMs)
+    g.tickTimer.unref()
+  }
   console.info(`chatroom: moderator gathered roles (hub=${hubKey} roles=${roles.length})`)
 }
 
@@ -891,10 +982,20 @@ function fireGatherTimeout(e: Engine, hubKey: string): void {
  * @param terminal - Terminal state ('' for live progress, 'done', or 'timedout').
  * @returns The progress card for the current state.
  */
-export function buildResearchProgressCard(e: Engine, done: number, total: number, terminal: string): Card {
+export function buildResearchProgressCard(
+  e: Engine,
+  done: number,
+  total: number,
+  terminal: string,
+  waiting: readonly string[] = [],
+  elapsedMin = 0,
+): Card {
   let title = e.i18n.t(Msg.ChatroomResearchProgressTitle)
   let body = e.i18n.tf(Msg.ChatroomResearchProgressBody, done, total)
   if (terminal === '') {
+    if (waiting.length > 0) {
+      body += `\n\n${e.i18n.tf(Msg.ChatroomResearchProgressWaiting, waiting.join('、'), elapsedMin)}`
+    }
     body += `\n\n${e.i18n.t(Msg.ChatroomInterjectHint)}`
   } else if (terminal === 'done') {
     title = e.i18n.t(Msg.ChatroomResearchProgressDone)
@@ -930,16 +1031,54 @@ function sendResearchProgressCard(e: Engine, p: Platform, hubKey: string, g: Cha
   )
 }
 
-/** PATCH the research progress card to X/N (or a terminal state); no-op for plain gathers. */
-function updateResearchProgressCard(e: Engine, p: Platform, g: ChatroomGather, terminal: string): void {
+/**
+ * PATCH the research progress card — the single projection of barrier state.
+ * Live updates coalesce through a {@link progressCardMergeMs} window (roles
+ * replying in a burst produce one trailing PATCH, not N); terminal states
+ * land immediately and cancel any pending merge. No-op without a handle
+ * (plain gathers post no card).
+ *
+ * @param e - Engine carrying the i18n surface.
+ * @param p - Platform that can update the card by handle.
+ * @param g - The armed gather whose state is projected.
+ * @param terminal - '' (live), 'done', or 'timedout'.
+ */
+export function updateResearchProgressCard(e: Engine, p: Platform, g: ChatroomGather, terminal: string): void {
   const handle = g.progressHandle
   if (handle === undefined || handle === null) return
   const cu = asCardSenderWithUpdate(p)
   if (cu === undefined) return
+  if (terminal === '') {
+    if (Date.now() - g.lastPatchAt < progressCardMergeMs) {
+      if (g.mergeTimer === undefined) {
+        g.mergeTimer = setTimeout(() => {
+          g.mergeTimer = undefined
+          patchResearchProgressCard(e, cu, g, '')
+        }, progressCardMergeMs)
+        g.mergeTimer.unref()
+      }
+      return
+    }
+  } else if (g.mergeTimer !== undefined) {
+    clearTimeout(g.mergeTimer)
+    g.mergeTimer = undefined
+  }
+  patchResearchProgressCard(e, cu, g, terminal)
+}
+
+function patchResearchProgressCard(
+  e: Engine,
+  cu: NonNullable<ReturnType<typeof asCardSenderWithUpdate>>,
+  g: ChatroomGather,
+  terminal: string,
+): void {
+  g.lastPatchAt = Date.now()
   const done = g.collected.size
   const total = g.collected.size + g.expected.size
-  const card = buildResearchProgressCard(e, done, total, terminal)
-  void cu.updateCardWithHandle(handle, card).catch((error: unknown) => {
+  const waiting = terminal === '' ? [...g.expected] : []
+  const elapsedMin = terminal === '' && g.startedAt !== 0 ? Math.floor((Date.now() - g.startedAt) / 60_000) : 0
+  const card = buildResearchProgressCard(e, done, total, terminal, waiting, elapsedMin)
+  void cu.updateCardWithHandle(g.progressHandle, card).catch((error: unknown) => {
     console.warn(`chatroom: research progress card update failed: ${String(error)}`)
   })
 }
@@ -1116,7 +1255,7 @@ export function routePendingHumanReply(e: Engine, _p: Platform, hubKey: string, 
  * @param role - Role session whose pre-provisioned assistant to check.
  * @returns True when the assistant's report has not been initiated.
  */
-function assistantReportPending(e: Engine, role: Session): boolean {
+export function assistantReportPending(e: Engine, role: Session): boolean {
   const key = chatroomState(role).researchAssistantKey
   if (key === '') return true
   const assistant = e.sessions.findActive(key)
@@ -1148,14 +1287,21 @@ export function maybeAutoRelayRole(
   isSilent: boolean,
 ): void {
   if (chatroomState(session).chatroomHubKey === '' || chatroomState(session).chatroomAsked) return
-  // Stale-turn guard: this turn was stamped with a PREVIOUS gather round at
-  // its start. Judged BEFORE the awaiting defer so a stale turn can neither
-  // consume nor re-defer the current round's ResearchAwaitingAssistant.
-  let stale = false
+  // Superseded-turn guard: this turn's ask identity no longer matches any
+  // outstanding ask (its gather timed out, or a newer ask to this role
+  // superseded it). Judged BEFORE the awaiting defer so a superseded turn
+  // can neither consume nor re-defer the current round's
+  // ResearchAwaitingAssistant. A stamp of 0 (an armed turn no ask message
+  // opened — legacy or a wake before the first stamp) keeps today's
+  // best-effort serial semantics.
+  const stamp = chatroomState(session).chatroomAskSeq
+  let outstanding = stamp === 0
   const staleHub = chatroomHubOf(e, chatroomState(session).chatroomHubKey)
   const b = staleHub !== undefined ? chatroomState(staleHub).pendingGather : undefined
-  if (b !== undefined && chatroomState(session).chatroomAskSeq !== 0 && chatroomState(session).chatroomAskSeq !== b.seq) {
-    stale = true
+  const roleName = chatroomState(session).chatroomRoleName
+  const serialEntry = staleHub !== undefined ? chatroomState(staleHub).pendingSerialAsks.get(roleName) : undefined
+  if ((b !== undefined && b.seq === stamp) || (serialEntry !== undefined && serialEntry.id === stamp)) {
+    outstanding = true
   }
   // Research mode: the role's first turn after a gather dispatches its
   // assistant and ends without a conclusion. Defer the relay only when the
@@ -1165,7 +1311,7 @@ export function maybeAutoRelayRole(
   // strand the armed gather until the research timeout, because the
   // already-reported assistant never wakes a later turn (2026-09-02 oc_e51a).
   // The dispatched flag itself stays set — the gather timeout report reads it.
-  if (!stale && chatroomState(session).researchAwaitingAssistant) {
+  if (outstanding && chatroomState(session).researchAwaitingAssistant) {
     if (chatroomState(session).researchDispatched && assistantReportPending(e, session)) {
       chatroomState(session).researchAwaitingAssistant = false
       e.sessions.save()
@@ -1182,7 +1328,6 @@ export function maybeAutoRelayRole(
   const hubKey = chatroomState(session).chatroomHubKey
   const r = asReplyContextReconstructor(p)
   if (r === undefined) return
-  const roleName = chatroomState(session).chatroomRoleName
   const reply = baseResponse.trim()
 
   /**
@@ -1209,30 +1354,10 @@ export function maybeAutoRelayRole(
     }
   }
 
-  if (stale) {
-    void r.reconstructReplyCtx(hubKey).then(
-      (hubRctx) => {
-        void relayRoleReply(hubRctx)
-      },
-      (error: unknown) => {
-        console.warn(`chatroom: reconstruct hub ctx failed (hub=${hubKey}): ${String(error)}`)
-      },
-    )
-    chatroomState(session).chatroomInFlight = false
-    e.sessions.save()
-    console.info(`chatroom: stale turn from previous gather round; relayed as free reply (role=${roleName} askSeq=${chatroomState(session).chatroomAskSeq} barrierSeq=${b?.seq ?? 0})`)
-    return
-  }
-
-  // Always consume the one-shot gate at turn end — with or without a reply —
-  // so a later turn on this role does not re-fire. Crucially, we wake the
-  // moderator even on a silent/empty reply (NO_REPLY): without that, a role
-  // that passes would leave the moderator idle forever and stall the
-  // discussion.
-  chatroomState(session).chatroomAsked = true
-  e.sessions.save()
-
   // --- End barrier path (draining in-flight replies before teardown) ---
+  // Runs for EVERY stamped turn — including superseded and late ones: the
+  // drain owns collection while the room is closing, and a turn whose ask
+  // retired at endChatroom must not detour into the free-relay path.
   const barrierHub = chatroomHubOf(e, hubKey)
   const barrier = barrierHub !== undefined ? chatroomState(barrierHub).pendingEndBarrier : undefined
   if (barrier !== undefined) {
@@ -1257,10 +1382,37 @@ export function maybeAutoRelayRole(
     return
   }
 
+  if (!outstanding) {
+    void r.reconstructReplyCtx(hubKey).then(
+      (hubRctx) => {
+        void relayRoleReply(hubRctx)
+      },
+      (error: unknown) => {
+        console.warn(`chatroom: reconstruct hub ctx failed (hub=${hubKey}): ${String(error)}`)
+      },
+    )
+    // A superseded turn must not clear the in-flight flag: the newer ask
+    // that superseded it owns the flag until its own turn relays.
+    e.sessions.save()
+    console.info(`chatroom: turn from a superseded ask; relayed as free reply (role=${roleName} askSeq=${stamp} barrierSeq=${b?.seq ?? 0})`)
+    return
+  }
+
+  // The answering turn ends — with or without a reply — so a later turn on
+  // this role does not re-fire. Crucially, we wake the moderator even on a
+  // silent/empty reply (NO_REPLY): without that, a role that passes would
+  // leave the moderator idle forever and stall the discussion.
+  chatroomState(session).chatroomAsked = true
+  e.sessions.save()
+
   // --- Gather fan-in path (two-phase flow) ---
   const hub = chatroomHubOf(e, hubKey)
   const g = hub !== undefined ? chatroomState(hub).pendingGather : undefined
   if (g !== undefined) {
+    // The round consumed this role's answer; a serial entry minted after
+    // the round armed (a mid-round steer) retires here, not at the serial
+    // path — its wake is the round's own.
+    if (hub !== undefined) chatroomState(hub).pendingSerialAsks.delete(roleName)
     const relayP = r.reconstructReplyCtx(hubKey).then(
       (hubRctx) => { return relayRoleReply(hubRctx) },
       (error: unknown) => {
@@ -1286,6 +1438,14 @@ export function maybeAutoRelayRole(
   }
 
   // --- Serial path (free-form roundtable) ---
+  // The turn's stamp matched this role's outstanding serial ask (or fell
+  // through with no gather and no barrier): complete the entry and wake the
+  // moderator with the reply.
+  if (serialEntry !== undefined && serialEntry.id === stamp) {
+    const entryHub = chatroomHubOf(e, hubKey)
+    if (entryHub !== undefined) chatroomState(entryHub).pendingSerialAsks.delete(roleName)
+    e.sessions.save()
+  }
   const reminder = e.i18n.t(Msg.ChatroomReminder)
   let wake: string
   if (reply !== '' && !isSilent) {
@@ -1340,6 +1500,10 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   }
 
   // Phase A: collect in-flight role names without yet installing the barrier.
+  // The end barrier owns collection from here: outstanding serial asks retire
+  // so their answering turns drain into the barrier instead of waking the
+  // moderator for a room already closing.
+  chatroomState(hub).pendingSerialAsks.clear()
   const inFlightNames = new Set<string>()
   for (const childKey of e.collectSubtree(hubKey)) {
     const sess = e.sessions.getOrCreateActive(childKey)
@@ -1638,6 +1802,7 @@ function restoreGatherBarrier(raw: unknown): ChatroomGather | undefined {
   for (const n of s.expected) g.expected.add(n)
   // The guard above proved every collected value is a string; the cast only carries that into the entries type.
   for (const [k, v] of Object.entries(s.collected) as [string, string][]) g.collected.set(k, v)
+  if (typeof s.startedAt === 'number') g.startedAt = s.startedAt
   return g
 }
 
@@ -1668,14 +1833,16 @@ function restoreEndBarrier(raw: unknown): ChatroomEndBarrier | undefined {
  */
 export function recoverChatroomBarriers(e: Engine): void {
   const { idToKey } = e.sessions.sessionKeyMap()
-  const restored: Array<{ key: string; gather: unknown; end: unknown }> = []
+  const restored: Array<{ key: string; gather: unknown; end: unknown; serialAsks: unknown }> = []
   for (const s of e.sessions.allSessions()) {
-    if (chatroomState(s).pendingGatherData === undefined && chatroomState(s).pendingEndBarrierData === undefined) continue
+    const cs = chatroomState(s)
+    if (cs.pendingGatherData === undefined && cs.pendingEndBarrierData === undefined && cs.pendingSerialAsksData === undefined) continue
     const key = idToKey[s.id] ?? ''
     if (key === '') continue
-    restored.push({ key, gather: chatroomState(s).pendingGatherData, end: chatroomState(s).pendingEndBarrierData })
+    restored.push({ key, gather: cs.pendingGatherData, end: cs.pendingEndBarrierData, serialAsks: cs.pendingSerialAsksData })
     chatroomState(s).pendingGatherData = undefined
     chatroomState(s).pendingEndBarrierData = undefined
+    chatroomState(s).pendingSerialAsksData = undefined
   }
   if (restored.length === 0) return
   const p = e.spawnCapablePlatform()
@@ -1686,7 +1853,7 @@ export function recoverChatroomBarriers(e: Engine): void {
     if (chatroomState(s).chatroomHubKey === '') continue
     if (chatroomState(s).researchAwaitingAssistant) chatroomState(s).researchAwaitingAssistant = false
   }
-  for (const { key, gather, end } of restored) {
+  for (const { key, gather, end, serialAsks } of restored) {
     if (gather !== undefined) {
       const g = restoreGatherBarrier(gather)
       if (g === undefined) {
@@ -1715,8 +1882,43 @@ export function recoverChatroomBarriers(e: Engine): void {
         console.info(`chatroom: finalized restored end barrier after restart (hub=${key} lost=${missing.join(',')})`)
       }
     }
+    // Outstanding serial asks never survive a restart: the answering turn
+    // died with the process, and a restored entry would read as in-flight
+    // and misdirect endChatroom into draining a dead turn. Retire with one
+    // bounded wake — the moderator re-asks or moves on (mirror of the
+    // barrier recovery: never wait for a reply that cannot arrive).
+    if (serialAsks !== undefined) {
+      const entries = restoreSerialAsks(serialAsks)
+      for (const entry of entries) {
+        const note = e.i18n.tf(Msg.ChatroomSerialAskRestarted, entry.roleName, entry.question)
+        wakeChatroomModerator(e, key, note)
+        console.info('chatroom: retired restored serial ask after restart'
+          + ` (hub=${key} role=${entry.roleName} id=${entry.id})`)
+      }
+    }
   }
   e.sessions.save()
+}
+
+/** Validate a restored pendingSerialAsksData payload; malformed entries are dropped. */
+function restoreSerialAsks(raw: unknown): SerialAskSnapshot[] {
+  if (!Array.isArray(raw)) return []
+  const out: SerialAskSnapshot[] = []
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue
+    const o = item as Record<string, unknown>
+    if (typeof o.id !== 'number' || typeof o.question !== 'string' || typeof o.armedAt !== 'number') continue
+    if (typeof o.roleName !== 'string' || o.roleName === '') continue
+    out.push({
+      id: o.id,
+      roleName: o.roleName,
+      question: o.question,
+      armedAt: o.armedAt,
+      lastWakeAt: typeof o.lastWakeAt === 'number' ? o.lastWakeAt : 0,
+      wakeCount: typeof o.wakeCount === 'number' ? o.wakeCount : 0,
+    })
+  }
+  return out
 }
 
 /** Send a fresh terminal research progress card for a restart-closed round (the old handle died with the process). */
