@@ -68,3 +68,5 @@ Chatroom sessions use whole-prompt persona replacement, so each role/moderator s
 None.
 
 </details>
+
+**Runtime invariant:** No companion is published. The chatroom's mutable state (the featureState section, armed barriers, pickers) lives inside the feishu-bridge engine's session registry and is asserted where it is exercised — the codec projection/carry specs and the gather/end/recovery suites pin every save and reset path; the package observes no event stream of its own at runtime.

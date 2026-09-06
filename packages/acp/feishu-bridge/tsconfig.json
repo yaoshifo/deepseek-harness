@@ -39,9 +39,6 @@
       "path": "../../mcp/mcp-workspace"
     },
     {
-      "path": "../../runtime-diagnostics/invariants"
-    },
-    {
       "path": "../../skill/skill"
     },
     {

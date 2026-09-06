@@ -105,3 +105,5 @@ The directory tool-definition prefix is stable while the mounted set is unchange
 None.
 
 </details>
+
+**Runtime invariant:** No companion is published. Directory mounts register tools through the per-agent tool-registry scope; the service holds no independent server-to-tool state beyond what that registry and the session header already record.

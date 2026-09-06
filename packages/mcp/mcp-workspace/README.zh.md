@@ -105,3 +105,5 @@ cwd 位于配置根目录内的会话看到 `.mcp.json` 服务器的工具以 `m
 无。
 
 </details>
+
+**运行时不变量：** 不发布 companion。目录挂载经每 agent 的工具注册表 scope 注册工具；服务不持有该注册表与会话头之外的自有 server-to-tool 状态。

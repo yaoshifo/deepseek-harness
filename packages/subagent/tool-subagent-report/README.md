@@ -173,3 +173,5 @@ These limits define what an accepted report does and does not guarantee; they ar
 None.
 
 </details>
+
+**Runtime invariant:** No companion is published. The adapter has no independent lifecycle stream; sender authorization and delivery relations belong to the subagent service.

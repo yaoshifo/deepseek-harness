@@ -68,3 +68,5 @@ Chatroom 会话使用整体替换的 persona 提示词，因此每个 role/moder
 无。
 
 </details>
+
+**运行时不变量：** 不发布 companion。聊天室的可变状态（featureState 段、armed barrier、picker）都存在 feishu-bridge 引擎的会话注册表里，并在被行使处校验——codec 投影/携带 spec 与 gather/end/recovery 套件钉住每条保存与重置路径；包在运行时没有自己的事件流。
