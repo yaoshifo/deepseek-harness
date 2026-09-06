@@ -31,7 +31,7 @@ import { asReplyContextReconstructor } from '@deepseek-ai/dsh-feishu-bridge/expo
 import { Msg } from '../i18n.ts'
 import { chatroomState } from '../chatroom-state.ts'
 import { chatroomConfig } from '../chatroom-config.ts'
-import { chatroomStewardGroupName, wakeChatroomModerator } from './chatroom.ts'
+import { assistantReportPending, chatroomStewardGroupName, findRoleKeyByName, wakeChatroomModerator } from './chatroom.ts'
 
 /** Message-metadata flag marking the supervisor's own wakes for activity tracking. */
 export const chatroomSupervisorWakeMetadata = 'chatroomSupervisorWake'
@@ -59,6 +59,13 @@ export function touchChatroomSupervisionActivity(e: Engine, session: Session, me
   const s = chatroomState(session)
   if (s.chatroomModerator && s.researchAssistantKey !== '') {
     s.supervisionActivityAt = Date.now()
+    e.sessions.save()
+    return
+  }
+  // A chatroom role's own turns are the organic activity of every serial
+  // ask addressed to it: the stall clock below resets on this stamp.
+  if (s.chatroomHubKey !== '' && !s.chatroomModerator) {
+    s.roleActivityAt = Date.now()
     e.sessions.save()
     return
   }
@@ -94,6 +101,7 @@ function declaredWait(e: Engine, hubKey: string, stewardKey: string): boolean {
 export function superviseChatroomAssistants(e: Engine, nowMs: number = Date.now()): void {
   const stallMs = chatroomConfig(e).assistantStallDuration()
   if (stallMs <= 0) return
+  superviseSerialAsks(e, nowMs, stallMs)
   for (const [hubKey, hub] of e.sessions.activeSessionEntries()) {
     const hs = chatroomState(hub)
     if (!hs.chatroomModerator || hs.researchAssistantKey === '') continue
@@ -133,6 +141,69 @@ export function superviseChatroomAssistants(e: Engine, nowMs: number = Date.now(
     )
     console.info(`chatroom: supervisor woke stalled moderator (hub=${hubKey} quietSec=${Math.floor(quietMs / 1000)} wake=${hs.supervisionWakeCount}/${chatroomSupervisorMaxWakes})`)
     wakeChatroomModerator(e, hubKey, content, { [chatroomSupervisorWakeMetadata]: true })
+  }
+}
+
+/** Whether a declared wait covers an outstanding serial ask (not a stall). */
+function serialAskDeclaredWait(e: Engine, hubKey: string, roleKey: string): boolean {
+  const hubState = e.interactiveStates.get(hubKey)
+  if ((hubState?.activeTurns ?? 0) > 0) return true
+  if (hubState?.pendingAsk !== undefined) return true
+  if (roleKey === '') return false
+  const roleState = e.interactiveStates.get(roleKey)
+  if ((roleState?.activeTurns ?? 0) > 0) return true
+  if ((roleState?.backgroundTasksPending ?? 0) > 0) return true
+  const role = e.sessions.findActive(roleKey)
+  if (role === undefined) return false
+  // assistantReportPending reads an unprovisioned assistant as pending (the
+  // relay defers conservatively); only a role actually awaiting its report
+  // makes that a declared wait.
+  return chatroomState(role).researchAwaitingAssistant && assistantReportPending(e, role)
+}
+
+/**
+ * Sweep one pass of every hub's outstanding serial asks: a moderator
+ * question whose role shows neither organic activity nor a declared wait
+ * past the stall deadline becomes a visible decision point (facts +
+ * follow-up/skip/wrap-up). Same three-layer noise discipline as the steward
+ * relation: declared waits gate the clock, organic role activity reopens the
+ * episode, and the breaker hands a spent ask to the user with one group
+ * notice per stall window.
+ */
+function superviseSerialAsks(e: Engine, nowMs: number, stallMs: number): void {
+  for (const [hubKey, hub] of e.sessions.activeSessionEntries()) {
+    const hs = chatroomState(hub)
+    if (!hs.chatroomModerator || hs.pendingSerialAsks.size === 0) continue
+    if (hs.pendingGather !== undefined || hs.pendingEndBarrier !== undefined) continue
+    if (hs.pendingHumanQuestionRole !== '') continue
+    for (const [roleName, entry] of [...hs.pendingSerialAsks.entries()]) {
+      const roleKey = findRoleKeyByName(e, hubKey, roleName)
+      if (serialAskDeclaredWait(e, hubKey, roleKey)) continue
+      const role = roleKey !== '' ? e.sessions.findActive(roleKey) : undefined
+      const quietMs = nowMs - Math.max(entry.armedAt, role !== undefined ? chatroomState(role).roleActivityAt : 0)
+      if (quietMs < stallMs) continue
+      if (entry.lastWakeAt !== 0 && nowMs - entry.lastWakeAt < stallMs) continue
+      if (entry.wakeCount >= chatroomSupervisorMaxWakes) {
+        entry.lastWakeAt = nowMs
+        e.sessions.save()
+        console.warn(`chatroom: supervisor breaker tripped (hub=${hubKey} role=${roleName} wakes=${entry.wakeCount}) — handing the stalled ask to the user`)
+        postSupervisionBreakerNotice(e, hubKey, entry.wakeCount)
+        continue
+      }
+      entry.wakeCount += 1
+      entry.lastWakeAt = nowMs
+      e.sessions.save()
+      const minutes = Math.floor(quietMs / 60_000)
+      const excerpt = role?.lastResult.slice(0, supervisionExcerptChars) ?? ''
+      const content = e.i18n.tf(
+        Msg.ChatroomRoleSupervisorWake,
+        roleName,
+        minutes,
+        excerpt === '' ? '—' : excerpt,
+      )
+      console.info(`chatroom: supervisor woke stalled moderator about serial ask (hub=${hubKey} role=${roleName} quietSec=${Math.floor(quietMs / 1000)} wake=${entry.wakeCount}/${chatroomSupervisorMaxWakes})`)
+      wakeChatroomModerator(e, hubKey, content, { [chatroomSupervisorWakeMetadata]: true })
+    }
   }
 }
 

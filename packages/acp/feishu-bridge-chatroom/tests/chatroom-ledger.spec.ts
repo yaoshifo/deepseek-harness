@@ -28,7 +28,7 @@ const read = async (p: string): Promise<string> => readFile(p, 'utf8')
 const byteLen = (s: string): number => Buffer.byteLength(s)
 
 /** All MARK-nnnn markers in text, in order. */
-const marksOf = (text: string): string[] => [...text.matchAll(/【taleb】：(MARK-\d{4})/g)].map(m => m[1])
+const marksOf = (text: string): string[] => [...text.matchAll(/【taleb】：(MARK-\d{4})/g)].map(m => m[1]!)
 
 describe('chatroomLedgerDir', () => {
   it('stable per hub key, distinct across hubs, a directory under ledgers/', () => {

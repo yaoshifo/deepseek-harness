@@ -71,7 +71,7 @@ describe('chatroom feature-state codec', () => {
       researchVenv: '/ws/.venv',
       researchRunDir: '/ws/runs/hub-1/munger',
       pendingHumanQuestionRole: 'taleb',
-      pendingGatherData: { question: '研究问题', seq: 3, expected: ['taleb'], collected: {} },
+      pendingGatherData: { question: '研究问题', seq: 3, expected: ['taleb'], collected: {}, startedAt: 0 },
       pendingEndBarrierData: { expected: ['taleb'], collected: {} },
     })
 

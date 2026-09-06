@@ -25,6 +25,6 @@ Status: implemented
 
 - 测试钉死：拥有存活任务的子级不结算（无 `subagent/end`、任务存活）；任务终态记录恰好重推导出一次结算；只含终态记录的注册表立即结算；血缘排空仍取消存活任务。监督网测试逐字钉死唤醒消息（事实 + 选项 + 标记）、每个证据门分支、周期去重、熔断的每窗口一条通知、有机活动重置唤醒预算、主持人标志即停止、配置下界/零关闭/默认值。
 - 唤醒是新的模型可见输入：走既有合成 `user/message` 路径（`wakeChatroomModerator`），消息 metadata 带 `chatroomSupervisorWake` 标记，活动追踪因此跳过它。
-- 覆盖面：机制 A 让所有 continuable-subagent 消费方受益——任何群、项目、前端；聊天室只是第一个被完整取证的患者。机制 B 只覆盖 hub↔管家关系：角色↔助手等待由其武装 gather 自带超时负责，通用 subtask 父级有用户可见面板且无持久任务状态，用户停驻的 ask 是有意等待。管家确已收工而主持人仍在 discussing 中静默的房间同样读作 stalled——叫醒主持人推进房间正是设计意图。
+- 覆盖面：机制 A 让所有 continuable-subagent 消费方受益——任何群、项目、前端；聊天室只是第一个被完整取证的患者。机制 B 落地时只覆盖 hub↔管家关系，同日的提问身份路由工作已把监督网扩展到未决串行提问（见[提问身份路由](2026-09-06-chatroom-ask-identity-routing.zh.md)）：角色↔助手等待由其武装 gather 自带超时负责，通用 subtask 父级有用户可见面板且无持久任务状态，用户停驻的 ask 是有意等待。管家确已收工而主持人仍在 discussing 中静默的房间同样读作 stalled——叫醒主持人推进房间正是设计意图。
 - 管家长任务期间，监督网每期限的催办代价是一个主持人回合 + 一个管家回合；管家的状态答复重置时钟。
 - 部署：bridge 重建 + `/reload`；之后冻结的事故房间在一个扫描周期内收到首条监督唤醒，journal 的 `chatroom: supervisor woke stalled moderator` 行标记每次介入。

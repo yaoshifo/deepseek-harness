@@ -216,3 +216,104 @@ describe('superviseChatroomAssistants', () => {
     expect(chatroomConfig(def).assistantStallDuration()).toBe(1_800_000)
   })
 })
+
+describe('serial-ask supervision', () => {
+  const roleKey = 'test:role-serial'
+
+  /** A plain-room hub with one outstanding serial ask that went quiet `quietMs` ago. */
+  function stalledSerialAsk(e: Engine, quietMs: number): void {
+    const hub = e.sessions.getOrCreateActive(hubKey)
+    chatroomState(hub).chatroomModerator = true
+    const role = e.sessions.getOrCreateActive(roleKey)
+    role.setParentSessionKey(hubKey)
+    chatroomState(role).chatroomHubKey = hubKey
+    chatroomState(role).chatroomRoleName = 'taleb'
+    role.lastResult = '上轮在查 CCASS 持仓'
+    chatroomState(hub).pendingSerialAsks.set('taleb', {
+      id: 1, question: '请给出终版结论', armedAt: Date.now() - quietMs, lastWakeAt: 0, wakeCount: 0,
+    })
+    e.sessions.save()
+  }
+
+  it('wakes the moderator about a stalled serial ask with facts and options', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newEngine(p)
+    chatroomConfig(e).applySection({ assistantStallSec: 600 })
+    stalledSerialAsk(e, 700_000)
+    const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+
+    superviseChatroomAssistants(e)
+    await settle()
+
+    expect(wake).toHaveBeenCalledTimes(1)
+    const msg = wake.mock.calls[0]![1]
+    expect(msg.sessionKey).toBe(hubKey)
+    expect(msg.content).toContain('taleb')
+    expect(msg.content).toContain('11 分钟')
+    expect(msg.content).toContain('上轮在查 CCASS 持仓')
+    expect(msg.metadata?.[chatroomSupervisorWakeMetadata]).toBe(true)
+    // Entry bookkeeping advanced; a second sweep in the same window dedupes.
+    const entry = chatroomState(e.sessions.getOrCreateActive(hubKey)).pendingSerialAsks.get('taleb')
+    expect(entry?.wakeCount).toBe(1)
+    superviseChatroomAssistants(e)
+    await settle()
+    expect(wake).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not count declared waits as stalls: open turns, pending asks, background tasks, and armed barriers gate the clock', async () => {
+    const cases: Array<(e: Engine) => void> = [
+      (e) => { const st = new InteractiveState(); st.activeTurns = 1; e.interactiveStates.set(hubKey, st) },
+      (e) => { const st = new InteractiveState(); st.activeTurns = 1; e.interactiveStates.set(roleKey, st) },
+      (e) => { const st = new InteractiveState(); st.backgroundTasksPending = 1; e.interactiveStates.set(roleKey, st) },
+      (e) => { const st = new InteractiveState(); st.pendingAsk = { request: { kind: 'questions', questions: [] }, answers: new Map(), resolve: () => {} }; e.interactiveStates.set(hubKey, st) },
+      (e) => { chatroomState(e.sessions.getOrCreateActive(hubKey)).pendingGather = new ChatroomGather('新一轮', 2) },
+    ]
+    for (const setup of cases) {
+      const p = createStubChatroomSpawner()
+      const e = newEngine(p)
+      chatroomConfig(e).applySection({ assistantStallSec: 600 })
+      stalledSerialAsk(e, 700_000)
+      setup(e)
+      const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+      superviseChatroomAssistants(e)
+      await settle()
+      expect(wake).not.toHaveBeenCalled()
+    }
+  })
+
+  it('organic role activity resets the stall clock', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newEngine(p)
+    chatroomConfig(e).applySection({ assistantStallSec: 600 })
+    stalledSerialAsk(e, 700_000)
+    // The role ran a turn one minute ago — the ask is not stalled yet.
+    touchChatroomSupervisionActivity(e, e.sessions.getOrCreateActive(roleKey))
+    const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+    superviseChatroomAssistants(e)
+    await settle()
+    expect(wake).not.toHaveBeenCalled()
+  })
+
+  it('the breaker hands a fully-spent serial ask to the user with one group notice', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newEngine(p)
+    chatroomConfig(e).applySection({ assistantStallSec: 600 })
+    stalledSerialAsk(e, 700_000)
+    const hubSess = e.sessions.getOrCreateActive(hubKey)
+    chatroomState(hubSess).pendingSerialAsks.set('taleb', {
+      id: 1, question: '请给出终版结论', armedAt: Date.now() - 700_000, lastWakeAt: Date.now() - 700_000, wakeCount: 3,
+    })
+    const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+    const notice = vi.spyOn(e, 'sendAsCard').mockImplementation(async () => {})
+
+    superviseChatroomAssistants(e)
+    await settle()
+
+    expect(wake).not.toHaveBeenCalled()
+    expect(notice).toHaveBeenCalledTimes(1)
+    // Breaker cadence: a same-window sweep does not post a second notice.
+    superviseChatroomAssistants(e)
+    await settle()
+    expect(notice).toHaveBeenCalledTimes(1)
+  })
+})

@@ -98,9 +98,12 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
       return provisioned
     }),
     ctx.on('feishuBridge/turn-start', (payload) => {
-      // Go stampChatroomAskOnTurnStart: consume the gather-round metadata at
-      // the moment the turn actually starts. The stamp persists whenever the
-      // session is chatroom-bound, even when both values are no-ops.
+      // Go stampChatroomAskOnTurnStart: consume the ask identity at the
+      // moment the turn actually starts. An ask message stamps its identity
+      // (serial asks mint from the same counter); a metadata-less wake (an
+      // assistant report) keeps the persisted identity, so a deferred
+      // conclusion turn still routes as the round it answers. The stamp
+      // persists whenever the session is chatroom-bound.
       const { engine, session, metadata } = payload
       if (chatroomState(session).chatroomHubKey === '') return
       const askSeq = typeof metadata?.chatroomAskSeq === 'number' ? metadata.chatroomAskSeq : 0
