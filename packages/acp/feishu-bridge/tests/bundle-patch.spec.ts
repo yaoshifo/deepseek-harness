@@ -142,16 +142,32 @@ describe('bridge bundle patch', () => {
     })
   })
 
-  it('keeps the section in lockstep with dsh-base modulo the one delegation sentence', () => {
+  it('keeps the section in lockstep with dsh-base modulo the three fork guidance deltas', () => {
     const base = asSectionText(composePlanModeSection([basePatchFile]).section)
     const bridge = asSectionText(composePlanModeSection([basePatchFile, bridgePatchFile]).section)
-    // Guard the adaptation source: when dsh-base rewords its delegation
-    // sentence, this assertion fails first with a pointer at the base text.
-    expect(base).toContain('start them together as background subagent delegations in one assistant message, each with a focused, self-contained prompt')
+    // Guard the adaptation anchors: when upstream rewords any anchored
+    // sentence, these assertions fail first with a pointer at the base text.
+    expect(base).toContain('Prefer existing functions and patterns over new machinery.')
+    expect(base).toContain('group implementation changes by subsystem; identify public API')
+    expect(base).toContain('If review rejects it, incorporate the feedback and present again.')
     expect(base).not.toContain('feishu_bridge_subtask')
-    const adapted = base.replace(
-      'start them together as background subagent delegations in one assistant message, each with a focused, self-contained prompt',
-      'dispatch them together as feishu_bridge_subtask spawns in one assistant message, each with a focused, self-contained brief',
+    let adapted = base
+    // Fork delta 1: exploration parallelizes by default, dispatched through
+    // the bridge's own delegation tool (base stays upstream-verbatim and
+    // names no delegation channel).
+    adapted = adapted.replace(
+      'Prefer existing functions and patterns over new machinery.',
+      'Prefer existing functions and patterns over new machinery. Exploration parallelizes by default: a repo-wide scan, cross-cutting audit, broad merge or release review, or a request naming several directions is several investigations — split it into 2–5 independent angles up front and dispatch them together as feishu_bridge_subtask spawns in one assistant message, each with a focused, self-contained brief that tells the child to read and report only, and fold their results into the plan. Keep exploration serial only for a single-focus question one or two reads can answer — judge focus by how many subsystems or directions the answer must cover, not by how few commands could skim it.',
+    )
+    // Fork delta 2: parallel/serial group marking in the decision-complete paragraph.
+    adapted = adapted.replace(
+      'group implementation changes by subsystem; identify public API',
+      'group implementation changes by subsystem and state the execution order — independent groups dispatched together as parallel subtask spawns when execution begins, serially dependent groups executed in order; identify public API',
+    )
+    // Fork delta 3: rejection opens a discussion round instead of immediate re-presentation.
+    adapted = adapted.replace(
+      'If review rejects it, incorporate the feedback and present again.',
+      'If review rejects it, the feedback opens a discussion round: respond to it in your reply text and end your turn without calling exit_plan_mode again — the user reads your response and decides when the plan is revised; when the feedback is empty, ask what to change instead of guessing. Revise and present again only after the user asks for the updated plan; an explicit request for the revision inside the rejection feedback already counts as asking, and otherwise offering the update as a closing follow-up option keeps the choice with the user.',
     )
     expect(bridge).toBe(adapted)
   })
