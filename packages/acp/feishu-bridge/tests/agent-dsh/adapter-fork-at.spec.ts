@@ -13,6 +13,7 @@ import { ForkAtSessionPrefix } from '../../src/core/types.ts'
 import { DshAgentAdapter, type DshAgentLike } from '../../src/agent-dsh/adapter.ts'
 import type { DshContextLike, DshCreateOptionsLike } from '../../src/agent-dsh/adapter.ts'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 
 /** Structural slice of the sessionPersistence service the adapter consumes. */
 interface FakePersistence {
@@ -83,7 +84,7 @@ function twoTurnLog(): SessionEvent[] {
 
 function parentHeader(cwd: string): SessionHeader {
   return {
-    version: 0,
+    version: SESSION_FORMAT_VERSION,
     id: 'cc-20260822-100000-aaaa' as SessionHeader['id'],
     createdAt: 1724300000000,
     isSeeded: false,

@@ -183,7 +183,8 @@ describe('seedablePrefix', () => {
 
   it('produces a seed the dsh-session boundary accepts (real event shapes)', async () => {
     const { Session, SessionId } = await import('@deepseek-ai/dsh-session')
-    const msgId = (n: string): string => `00000000-0000-4000-8000-${n.padStart(12, '0')}`
+    const { MessageId } = await import('@deepseek-ai/dsh-llm')
+    const msgId = (n: string) => MessageId(`00000000-0000-4000-8000-${n.padStart(12, '0')}`)
     // The incident log with full durable shapes: a completed turn, then a
     // flying turn whose open step blocks on an unanswered ask_user_question.
     const log: SessionEvent[] = [
@@ -199,11 +200,13 @@ describe('seedablePrefix', () => {
       {
         type: 'assistant/message', seq: SessionSeq(3), time: 4, surfaceOp: 'append',
         data: {
+          turn: 1, step: 1,
           message: {
             id: msgId('2'), role: 'assistant',
             source: { kind: 'model', provider: 'glm', model: 'glm-5.3' },
             content: [{ type: 'text', text: '我来验证' }],
           },
+          stream: [],
         },
       } as SessionEvent,
       { type: 'tool/call', seq: SessionSeq(4), time: 5, data: { turn: 1, step: 1, callId: 'call-run', name: 'bash', arguments: '{}' } } as SessionEvent,
@@ -225,11 +228,13 @@ describe('seedablePrefix', () => {
       {
         type: 'assistant/message', seq: SessionSeq(8), time: 9, surfaceOp: 'append',
         data: {
+          turn: 1, step: 1,
           message: {
             id: msgId('4'), role: 'assistant',
             source: { kind: 'model', provider: 'glm', model: 'glm-5.3' },
             content: [{ type: 'text', text: '验证发现不一致，需要调整哪些？' }],
           },
+          stream: [],
         },
       } as SessionEvent,
       { type: 'tool/call', seq: SessionSeq(9), time: 10, data: { turn: 1, step: 2, callId: 'call-ask', name: 'ask_user_question', arguments: '{}' } } as SessionEvent,

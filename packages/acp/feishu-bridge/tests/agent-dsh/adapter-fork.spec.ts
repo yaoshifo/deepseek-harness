@@ -15,6 +15,7 @@ import { ForkSessionPrefix } from '../../src/core/types.ts'
 import { DshAgentAdapter, type DshAgentLike, type DshPersistenceLike } from '../../src/agent-dsh/adapter.ts'
 import type { DshCreateOptionsLike, DshContextLike } from '../../src/agent-dsh/adapter.ts'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 
 interface FakeSession {
   snapshotEvents(): SessionEvent[]
@@ -46,7 +47,7 @@ function fakePersistence(stored: Map<string, SessionEvent[]>): DshPersistenceLik
     open: async (id: unknown, _access: 'read') => {
       const events = stored.get(String(id))
       if (events === undefined) throw new Error(`session "${String(id)}" not found`)
-      const header = { version: 0, id: String(id), createdAt: 0 } as SessionHeader
+      const header = { version: SESSION_FORMAT_VERSION, id: String(id), createdAt: 0 } as SessionHeader
       return { header, read: async () => events }
     },
     list: async () => [],

@@ -336,7 +336,7 @@ describe('JsonlSessionPersistence: format helpers', () => {
 
   it('round-trips an oneshot origin header (fork one-shot sessions stay readable)', () => {
     const oneshot: SessionHeader = {
-      version: 0,
+      version: SESSION_FORMAT_VERSION,
       id: SessionId('oneshot-header'),
       createdAt: 5,
       isSeeded: false,

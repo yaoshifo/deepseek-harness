@@ -44,6 +44,7 @@ function assistantEvent(text: string): SessionEvent {
         content: [{ type: 'text', text }],
         source: { kind: 'model', provider: 'p', model: 'm' },
       },
+      stream: [],
     },
   }
 }

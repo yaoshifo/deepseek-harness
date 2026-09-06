@@ -8,7 +8,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { SessionHeader } from '@deepseek-ai/dsh-session'
 import AgentRegistry, { agentEvents, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
@@ -49,8 +50,8 @@ let agentCounter = 0
 function makeAgent(ctx: Context, over: { cwd?: string; origin?: 'subagent' | 'oneshot' } = {}): Agent {
   const scope = ctx.plugin(() => {})
   const id = SessionId(`mem-agent-${++agentCounter}`)
-  const header = {
-    version: 0,
+  const header: SessionHeader = {
+    version: SESSION_FORMAT_VERSION,
     id,
     createdAt: Date.now(),
     isSeeded: false,

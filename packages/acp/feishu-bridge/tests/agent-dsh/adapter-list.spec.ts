@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { DshAgentAdapter, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.ts'
-import { SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, SessionId, type SessionEvent, type SessionHeader } from '@deepseek-ai/dsh-session'
 
 const PROJECT_DIR = '/home/hm/workspace/proj'
 
@@ -21,7 +21,7 @@ function header(over: Partial<Omit<SessionHeader, 'id' | 'parentSession'>> & {
 }): SessionHeader {
   const { id, parentSession, ...rest } = over
   return {
-    version: 0,
+    version: SESSION_FORMAT_VERSION,
     isSeeded: false,
     cwd: PROJECT_DIR,
     ...rest,

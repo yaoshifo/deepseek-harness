@@ -11,7 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
 import AgentRegistry, { agentEvents, Inbox } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
@@ -74,7 +74,7 @@ async function boot(configFor: (home: string) => readonly string[]): Promise<Con
 function makeAgent(ctx: Context): Agent {
   const scope = ctx.plugin(() => {})
   const id = SessionId('dsh-memory-loader-agent')
-  const session = Session.create(id, [], { version: 0, id, createdAt: Date.now(), isSeeded: false, cwd: CWD })
+  const session = Session.create(id, [], { version: SESSION_FORMAT_VERSION, id, createdAt: Date.now(), isSeeded: false, cwd: CWD })
   const value: Agent = {
     id,
     options: {},

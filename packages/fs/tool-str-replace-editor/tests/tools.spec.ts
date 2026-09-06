@@ -97,15 +97,12 @@ async function setup(
  * mid-turn — `turn/start` stays open so an approval ask is turn-enclosed.
  */
 function escalationAgent(): object {
-  const events: Array<{ type: string; data?: Record<string, unknown> }> = [{ type: 'turn/start', data: { turn: 1 } }]
-  return {
-    id: 'agent-editor-esc',
-    session: {
-      header: { version: 0, id: 'sess-editor-esc', createdAt: 0, cwd: '/session-project' },
-      events,
-      append: (type: string, data: Record<string, unknown>) => { events.push({ type, data }) },
-    },
-  }
+  const id = SessionId('agent-editor-esc')
+  const session = Session.create(id, [], {
+    version: SESSION_FORMAT_VERSION, id, createdAt: 0, cwd: '/session-project', isSeeded: false,
+  })
+  session.append('turn/start', { turn: 1 })
+  return { id, session }
 }
 
 /** The registered editor schema's parameter properties. */
