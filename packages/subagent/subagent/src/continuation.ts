@@ -39,6 +39,7 @@ import type { SessionEvent, SessionId , SessionLogOffset as SessionLogOffsetType
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionObservation, SessionQueryEngine } from '@deepseek-ai/dsh-session-query'
 import type { ToolRestriction } from '@deepseek-ai/dsh-tools'
+import type { JobRegistry } from '@deepseek-ai/dsh-jobs'
 import { foldSubagentDescriptor, snapshotSubagentDescriptor } from './descriptor.ts'
 import type { SubagentDescriptorData } from './descriptor.ts'
 import {
@@ -200,9 +201,10 @@ type ChildDeliveryOptions =
  * The residency state of one continuable child, derived from Agent quiescence
  * and the owned-child set rather than a second state machine:
  * `running` — the Agent has an active admission or turn, or waking inbox work;
- * `waiting` — the Agent is quiescent but still owns undisposed children;
- * `settled` — quiescent with every owned child disposed, so the manager
- * disposes the `AgentHandle` and removes the Activation.
+ * `waiting` — the Agent is quiescent but still owns undisposed children or
+ * live background jobs;
+ * `settled` — quiescent with every owned child disposed and no live background
+ * job, so the manager disposes the `AgentHandle` and removes the Activation.
  */
 type ActivationState = 'running' | 'waiting' | 'settled'
 
@@ -455,6 +457,16 @@ export class SubagentContinuationManager {
    */
   private readonly closingScopes = new Map<Agent, Set<Agent>>()
   private draining = false
+  /**
+   * The process job registry when one is loaded, else `undefined`. Live jobs
+   * the child owns hold its Activation resident exactly like undisposed
+   * children: the background-job tool contract promises a completion wake,
+   * and handle disposal cancels the job before that wake can land
+   * (2026-09-06 oc_97be4a1c — a chatroom data fetcher lost its whole process
+   * tree the moment its turn ended). Bound through `inject` so the optional
+   * registry may load before or after the runtime.
+   */
+  private jobs: JobRegistry | undefined
 
   constructor(
     private readonly ctx: Context,
@@ -472,6 +484,23 @@ export class SubagentContinuationManager {
     this.ownerCtx = scope.ctx
     ctx.on('agent/disposed', ({ agent }) => {
       this.closingScopes.delete(agent)
+    })
+    // Job settlements re-observe residency: a settled job is the poke that
+    // lets a jobs-held watcher re-derive `settled` while the Agent itself
+    // stays idle (the completion wake needs a composition tool-jobs mounts;
+    // none exists in a bare registry deployment).
+    ctx.inject(['jobs'], (jobsCtx: Context) => {
+      const jobs = jobsCtx.jobs
+      const disposeListener = jobs.onJobsChanged((owner) => {
+        if (owner === undefined) return
+        const activation = this.activations.get(owner.id)
+        if (activation !== undefined) this.wake(activation)
+      })
+      jobsCtx.effect(() => () => {
+        disposeListener()
+        if (this.jobs === jobs) this.jobs = undefined
+      }, 'subagents.jobResidency()')
+      this.jobs = jobs
     })
     ctx.effect(function* (this: SubagentContinuationManager) {
       yield scope.dispose
@@ -1211,18 +1240,37 @@ export class SubagentContinuationManager {
   }
 
   /**
-   * Derive residency from Agent quiescence and the owned-child set. `running`
-   * covers an active admission, an open turn, or accepted waking inbox work.
+   * Derive residency from Agent quiescence, the owned-child set, and live
+   * background jobs. `running` covers an active admission, an open turn, or
+   * accepted waking inbox work.
    *
    * `Agent.status` alone is insufficient: it stays `idle` between an accepted
    * waking send and the microtask that admits it, so a synchronous inbox
    * observer would see `settled` while a turn is already queued. `accepted`
    * holds the ids this manager admitted but has not yet seen drained.
+   *
+   * Live background jobs count the same way undisposed children do: the
+   * background-job tool contract promises a completion wake, and disposing the
+   * handle cancels the job before that wake can land, silently stranding the
+   * work the child scheduled its whole plan around.
    */
   private stateOf(activation: Activation): ActivationState {
     if (activation.handle.agent.status === 'running' || activation.accepted.size > 0) return 'running'
     if (activation.ownedChildren.size > 0) return 'waiting'
+    if (this.ownsLiveJobs(activation.handle.agent)) return 'waiting'
     return 'settled'
+  }
+
+  /**
+   * Whether the child owns a live (`running` or `stopping`) background job.
+   * `stopping` still holds: a compliant producer eventually settles, and the
+   * settlement is what re-observes residency.
+   * @param agent - the resident child Agent whose owned jobs to inspect.
+   */
+  private ownsLiveJobs(agent: Agent): boolean {
+    const jobs = this.jobs
+    if (jobs === undefined) return false
+    return jobs.list(agent).some(job => job.status === 'running' || job.status === 'stopping')
   }
 
   /**

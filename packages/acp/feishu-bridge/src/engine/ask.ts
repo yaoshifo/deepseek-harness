@@ -428,7 +428,8 @@ export function buildAskQuestionCardSettled(
 
 /**
  * Render one live question's elements: the bold question, interactive
- * options (single-select list rows or the multi-select checker form), and
+ * options (single-select list rows — a recommended option's button renders
+ * primary — or the multi-select checker form), and
  * the per-question text-input form — including for option-less questions,
  * where the input is the only on-card answer path — plus the locale-owned
  * free-text hint note on option-bearing questions.
@@ -460,7 +461,7 @@ function questionElements(q: UserQuestion, qIdx: number, i18n: AskCardI18n): Car
       text: opt.label,
       description: opt.description,
       btnText: String(i + 1),
-      btnType: 'default',
+      btnType: opt.recommended === true ? 'primary' : 'default',
       btnValue: `askq:${qIdx}:${i + 1}`,
       extra: { askq_label: opt.label, askq_question: q.question },
     })

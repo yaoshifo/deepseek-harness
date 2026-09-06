@@ -74,7 +74,7 @@ function commitPair(fixture: Fixture): void {
   write(fixture.root, paths.source, source)
   write(fixture.root, paths.zh, zh)
   const record = [
-    `# ${'Consistency record'}`,
+    '# Consistency record',
     `guide.md: ${gitBlobHash(Buffer.from(source))}`,
     `guide.zh.md: ${gitBlobHash(Buffer.from(zh))}`,
     '',

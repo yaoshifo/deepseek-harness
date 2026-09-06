@@ -13,7 +13,7 @@ import type { Language } from '@deepseek-ai/dsh-feishu-bridge/exports'
 /** The English messages of the chatroom subtable. */
 const en: Record<string, string> = {
   chatroom: 'Start a multi-role roundtable discussion',
-  chatroom_usage: 'Usage: `/chatroom` — fully guided (new or continue → topic → roles → mode)\n       `/chatroom <topic>` — pick roles, then the mode\n       `/chatroom <role1,role2> <topic>` — pick the mode and start\nAdvanced (giving a flag skips its card): `--roles <a,b,c>`, `--continue[=<prior topic|dir>]` (a bare one keeps the prior\'s topic), `--research`, `--mode auto|manual`, `--max-rounds <n>` (research-auto cap override)\nExample: `/chatroom taleb,munger should I quit my job`',
+  chatroom_usage: 'Usage: `/chatroom` — fully guided (new or continue → topic → roles → mode)\n       `/chatroom <topic>` — pick roles, then the mode\n       `/chatroom <role1,role2> <topic>` — pick the mode and start\nAdvanced (giving a flag skips its card): `--roles <a,b,c>`, `--continue[=<prior topic|dir>]` (a bare one keeps the prior\'s topic), `--research`, `--mode auto|manual`\nExample: `/chatroom taleb,munger should I quit my job`',
   chatroom_ready: 'Chatroom role ready',
   chatroom_topic_label: 'Topic:',
   chatroom_unknown_role: 'Role %s is not set up. Create it by adding a CLAUDE.md under %s/ in your thinkers directory.',
@@ -39,7 +39,6 @@ const en: Record<string, string> = {
   chatroom_interrupt_missing: 'Unreceived replies: %s',
   chatroom_interrupt_ledger: 'Ledger retained at %s',
   chatroom_stop_not_in_room: 'This chat belongs to no chatroom (no hub, role, or assistant group).',
-  chatroom_max_rounds_range: '--max-rounds must be between 1 and %d',
   chatroom_research_single_role: '--research requires multiple roles — a 1:1 direct role chat has no moderator orchestration.',
   chatroom_research_ask_timeout: '(No reply within 10 minutes — proceeding with the default option.)',
   chatroom_pending_header: '⏸ %s asks you',
@@ -92,7 +91,7 @@ const en: Record<string, string> = {
   chatroom_mode_plain: 'Plain roundtable',
   chatroom_mode_plain_blurb: 'Moderated multi-role discussion.',
   chatroom_mode_research_auto: 'Research · auto',
-  chatroom_mode_research_auto_blurb: 'Roles drive full assistants to fetch data and analyze; rounds auto-advance (cap %d; --max-rounds overrides).',
+  chatroom_mode_research_auto_blurb: 'Roles drive full assistants to fetch data and analyze; rounds auto-advance with no cap — iterate as long as the picture is incomplete.',
   chatroom_mode_research_manual: 'Research · manual',
   chatroom_mode_research_manual_blurb: 'Same research assistants; the moderator advances each round manually.',
   chatroom_mode_pick_start: 'Start',
@@ -114,12 +113,15 @@ const en: Record<string, string> = {
   chatroom_continue_no_match: 'No past chatroom matches "%s". Recent topics: %s',
   chatroom_history_empty: '(no recorded chatrooms yet)',
   chatroom_inherit_note: 'Prior context: continuing from "%s" (unverified — the moderator screens it before adopting)',
+  chatroom_supervisor_wake: '⏰ Research-assistant stall: the data steward (%s) and this room have been quiet for about %d minutes. Last steward reply: %s\n\nDecide the next step: nudge the steward with a follow-up, wrap up with the results already delivered, or stop this chatroom. If it is genuinely long-running work, reply with a status note and an ETA — this reminder will not repeat while the room keeps making progress.',
+  chatroom_supervisor_breaker_title: '⏰ Research assistant stalled for a long time',
+  chatroom_supervisor_breaker_body: 'The moderator has been reminded %d times about a stalled research assistant with no progress. Check the steward\'s group, or send /chatroom stop to end this room.',
 }
 
 /** The Simplified-Chinese messages of the chatroom subtable. */
 const zh: Record<string, string> = {
   chatroom: '开启多角色圆桌讨论',
-  chatroom_usage: '用法：`/chatroom` — 全程点选引导（新讨论或继续历史 → 话题 → 角色 → 模式）\n      `/chatroom <议题>` — 点选角色后再点选模式\n      `/chatroom <角色1,角色2> <议题>` — 点选讨论模式后开始\n高级（显式给出即跳过对应选择卡）：`--roles <a,b,c>`、`--continue[=<历史议题|目录>]`（不带话题则沿用前情话题）、`--research`、`--mode auto|manual`、`--max-rounds <n>`（自动模式轮数上限覆盖）\n示例：`/chatroom taleb,munger 是否该裸辞`',
+  chatroom_usage: '用法：`/chatroom` — 全程点选引导（新讨论或继续历史 → 话题 → 角色 → 模式）\n      `/chatroom <议题>` — 点选角色后再点选模式\n      `/chatroom <角色1,角色2> <议题>` — 点选讨论模式后开始\n高级（显式给出即跳过对应选择卡）：`--roles <a,b,c>`、`--continue[=<历史议题|目录>]`（不带话题则沿用前情话题）、`--research`、`--mode auto|manual`\n示例：`/chatroom taleb,munger 是否该裸辞`',
   chatroom_ready: '聊天室角色就绪',
   chatroom_topic_label: '议题：',
   chatroom_unknown_role: '角色 %s 尚未创建。请在 thinkers 目录下建 `%s/CLAUDE.md`。',
@@ -145,7 +147,6 @@ const zh: Record<string, string> = {
   chatroom_interrupt_missing: '未收回复：%s',
   chatroom_interrupt_ledger: '账本保留于 %s',
   chatroom_stop_not_in_room: '当前聊天不属于任何聊天室（未找到主持人/角色/助手群）。',
-  chatroom_max_rounds_range: '--max-rounds 必须在 1 到 %d 之间',
   chatroom_research_single_role: '--research 需要多个角色——单角色直聊没有主持人编排，不支持研究模式。',
   chatroom_research_ask_timeout: '（10 分钟未回复，已按默认选项推进。）',
   chatroom_pending_header: '⏸ %s 向你提问',
@@ -198,7 +199,7 @@ const zh: Record<string, string> = {
   chatroom_mode_plain: '普通讨论',
   chatroom_mode_plain_blurb: '主持人编排的多角色圆桌讨论。',
   chatroom_mode_research_auto: '研究 · 自动',
-  chatroom_mode_research_auto_blurb: '角色驱动完整助手检索分析，自动推进轮次（上限 %d 轮，可用 --max-rounds 覆盖）。',
+  chatroom_mode_research_auto_blurb: '角色驱动完整助手检索分析，自动推进轮次（无轮数上限，图景不完整就继续迭代）。',
   chatroom_mode_research_manual: '研究 · 手动',
   chatroom_mode_research_manual_blurb: '同样配研究助手，轮次由主持人手动推进。',
   chatroom_mode_pick_start: '开始',
@@ -220,6 +221,9 @@ const zh: Record<string, string> = {
   chatroom_continue_no_match: '没有匹配 "%s" 的历史聊天室。最近的议题：%s',
   chatroom_history_empty: '（暂无历史聊天室）',
   chatroom_inherit_note: '前情：延续自「%s」（未经本次讨论验证，主持人甄别后才采信）',
+  chatroom_supervisor_wake: '⏰ 研究助手静默提醒：数据管家（%s）与讨论室已静默约 %d 分钟，最后一次回复：%s。\n\n请决定下一步：向数据管家发 follow-up 催办、用现有结果收尾，或停止本场讨论；若确属长任务，回复状态与预计完成时间即可——只要房间保持进展，本提醒不会重复。',
+  chatroom_supervisor_breaker_title: '⏰ 研究助手长时间静默',
+  chatroom_supervisor_breaker_body: '已提醒主持人 %d 次研究助手静默仍无进展。请到数据管家群查看进度，或发送 /chatroom stop 结束本场讨论。',
 }
 
 /** The chatroom message subtable handed to the bridge's registerMessages. */
@@ -260,7 +264,6 @@ export const Msg = {
   ChatroomInterruptMissing: 'chatroom_interrupt_missing',
   ChatroomInterruptLedger: 'chatroom_interrupt_ledger',
   ChatroomStopNotInRoom: 'chatroom_stop_not_in_room',
-  ChatroomMaxRoundsRange: 'chatroom_max_rounds_range',
   ChatroomResearchSingleRole: 'chatroom_research_single_role',
   ChatroomResearchAskTimeout: 'chatroom_research_ask_timeout',
   ChatroomPendingHeader: 'chatroom_pending_header',
@@ -335,6 +338,9 @@ export const Msg = {
   ChatroomContinueNoMatch: 'chatroom_continue_no_match',
   ChatroomHistoryEmpty: 'chatroom_history_empty',
   ChatroomInheritNote: 'chatroom_inherit_note',
+  ChatroomSupervisorWake: 'chatroom_supervisor_wake',
+  ChatroomSupervisorBreakerTitle: 'chatroom_supervisor_breaker_title',
+  ChatroomSupervisorBreakerBody: 'chatroom_supervisor_breaker_body',
   SpawnNotSupported: 'spawn_not_supported',
 } as const
 

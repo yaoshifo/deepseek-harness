@@ -50,6 +50,7 @@ import type {
   FileAttachment,
   ImageAttachment,
   ProviderConfig,
+  SubtaskDelivery,
   SessionStartOptions,
 } from '../core/types.ts'
 
@@ -548,7 +549,7 @@ function buildSessionSetup(options: SessionStartOptions | undefined): import('@d
     const venvPython = options.venv !== undefined ? `${options.venv.virtualEnv}/bin/python` : ''
     const preamble = isNoReport
       ? subtaskNoReportAgentSystemPrompt()
-      : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt(venvPython) : ''}`
+      : `${subtaskAgentSystemPrompt()}${isResearchAssistant ? subtaskResearchAssistantPrompt(venvPython, options.subtask?.researchRunDir ?? '', options.playbook ?? '') : ''}`
     return (agentCtx) => {
       // Research assistants are coding agents: their workspace lives under
       // the project data dir, off every persona's ancestor chain, so they
@@ -1327,29 +1328,31 @@ export class DshAgentAdapter {
   }
 
   /**
-   * ContinuableDelegator: deliver a parent follow-up as the child's next FIFO
-   * turn. Native semantics queue behind a running turn — the deliberate
-   * deviation from Go's busy-reject, recorded in the B4 Agent Note.
+   * ContinuableDelegator: deliver a parent follow-up. Queue mode (default)
+   * schedules it as the child's next FIFO turn — the deliberate deviation
+   * from Go's busy-reject, recorded in the B4 Agent Note. Steer mode admits
+   * it at the running child's nearest step boundary.
    *
    * @param parentAgentSessionID - native id of the live direct parent.
    * @param childId - the durable native child session id.
    * @param message - the follow-up text.
+   * @param delivery - queue as a distinct turn or steer into the current one.
    */
-  async followupChild(parentAgentSessionID: string, childId: string, message: string): Promise<void> {
+  async followupChild(parentAgentSessionID: string, childId: string, message: string, delivery: SubtaskDelivery = 'queue'): Promise<void> {
     const subagents = this.requireSubagents()
     const parent = this.ctx.agents.get(SessionId(parentAgentSessionID))
     if (parent === undefined) {
       throw new Error('subtask: the parent agent session is not live; cannot deliver the follow-up')
     }
-    // The signal is mandatory: the cold-resume arm of the runtime's queue
-    // delivery (a child that already settled to storage) dereferences it —
+    // The signal is mandatory: the cold-resume arm of the runtime's delivery
+    // (a child that already settled to storage) dereferences it —
     // omitting it crashed every follow-up to a settled child (2026-08-27
     // oc_56801302: two environment-hint sends failed with "Cannot read
     // properties of undefined (reading 'throwIfAborted')" and the hints were
     // never delivered).
     await subagents[deliverSubagentPrompt](parent, SessionId(childId), [{ type: 'text', text: message }], {
       kind: 'coordinator', form: 'relay', senderSessionId: SessionId(parentAgentSessionID),
-    }, AbortSignal.timeout(startContinuableTimeoutMs), 'queue')
+    }, AbortSignal.timeout(startContinuableTimeoutMs), delivery)
   }
 
   /**
@@ -2294,7 +2297,7 @@ export class DshAgentSession implements AgentSession {
    * @returns the recorded cwd, or '' when unknown.
    */
   cwd(): string {
-    const cwd = this.handle.agent?.session?.header?.cwd
+    const cwd = this.handle.agent.session.header?.cwd
     return typeof cwd === 'string' ? cwd : ''
   }
 

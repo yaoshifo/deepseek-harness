@@ -20,6 +20,7 @@ import { applyChatroomEngineConfig, chatroomConfig, Config, type ChatroomProject
 import { chatroomMessages } from './i18n.ts'
 import { registerChatroomPolicyListeners } from './engine/chatroom-policy.ts'
 import { recoverChatroomBarriers } from './engine/chatroom.ts'
+import { registerChatroomSupervisor } from './engine/chatroom-supervise.ts'
 import { registerChatroomCommands } from './engine/chatroom-cmd.ts'
 import { registerChatroomTool } from './tools/chatroom.ts'
 
@@ -87,8 +88,10 @@ export async function apply(ctx: Context, config: ChatroomConfig): Promise<void>
     throw new Error('feishu-bridge-chatroom: the feishuBridge service is unavailable')
   }
   // One process-wide policy/tool registration — the listeners are payload
-  // functions, so per-project wiring would double-fire them.
+  // functions, so per-project wiring would double-fire them. The stall
+  // supervisor sweeps every project's engines from the same single timer.
   ctx.effect(() => registerChatroomPolicyListeners(ctx))
+  ctx.effect(() => registerChatroomSupervisor(ctx, () => service.projects))
   ctx.effect(() => registerChatroomTool(ctx, caller => service.route(caller)))
   // Deterministic project list: the bridge registers every project before
   // its apply resolves readiness.

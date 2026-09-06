@@ -13,11 +13,12 @@
  */
 
 import { execFile } from 'node:child_process'
-import { mkdirSync, rmSync, statSync } from 'node:fs'
+import type { ExecFileOptions } from 'node:child_process'
+import { mkdirSync, rmSync, statSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import type { Session } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import type { Session, SubtaskDelivery } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { emptyMessage, jumpButtonsMarkdown, parentJumpButtons } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { maxGroupNameRunes } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Message, PendingAsk, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -54,20 +55,17 @@ export const defaultChatroomGatherTimeout = 20 * 60 * 1000
 /** Default research-mode gather round timeout: 60 minutes (Go defaultChatroomResearchTimeout). */
 export const defaultChatroomResearchTimeout = 60 * 60 * 1000
 
-/** Default auto-mode research iteration cap (Go defaultMaxChatroomResearchRounds). */
-export const defaultMaxChatroomResearchRounds = 3
-
 /** Research config ranges (Go constants, mirrored from config). */
 export const minChatroomResearchTimeout = 60 * 1000
 
 /** Upper bound a configured research gather timeout may take. */
 export const maxChatroomResearchTimeout = 24 * 60 * 60 * 1000
 
-/** Lower bound a configured research round cap may take. */
-export const minChatroomResearchRounds = 1
+/** Default research-assistant stall deadline: 30 minutes of hub↔steward quiet before a supervision wake. */
+export const defaultChatroomAssistantStallSec = 1800
 
-/** Upper bound a configured research round cap may take. */
-export const maxChatroomResearchRounds = 20
+/** Floor for a configured non-zero stall deadline; below it the supervisor would nag through legitimate quiet stretches. */
+export const minChatroomAssistantStallSec = 600
 
 /** How long a research-manual AskUserQuestion card waits before answering itself (Go var). */
 export const chatroomResearchManualAskTimeout = { ms: 10 * 60 * 1000 }
@@ -653,8 +651,11 @@ export async function startChatroom(
  * @param callerHubKey - Session key of the chatroom hub the role must belong to.
  * @param roleRef - The role to ask: a role name or session key.
  * @param question - The moderator's question text; empty is rejected.
+ * @param delivery - Queue (default) injects a new turn; steer admits the
+ * question into a busy role's running turn at its nearest step boundary
+ * (`deliverMachineMessage`), falling back to the pipeline when idle.
  */
-export async function askRole(e: Engine, callerHubKey: string, roleRef: string, question: string): Promise<void> {
+export async function askRole(e: Engine, callerHubKey: string, roleRef: string, question: string, delivery: SubtaskDelivery = 'queue'): Promise<void> {
   const q = question.trim()
   if (q === '') throw new Error('chatroom: question is required')
   const askHub = chatroomHubOf(e, callerHubKey)
@@ -664,9 +665,12 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
   // Ask during an armed gather loses the answer either way: a busy role's
   // reply never relays (its one-shot gate was consumed by the gather
   // question), an idle role's reply is absorbed as its gather reply.
+  // Steer is the exception: it reaches a busy role inside the running turn
+  // (the reply still counts as that role's gather reply), so mid-round
+  // course correction stays available to the moderator.
   // The pending-ask-human reply path cannot reach here — the two states
   // are mutually exclusive by askHuman's and gatherRoles' two-way guards.
-  if (askHub !== undefined && chatroomState(askHub).pendingGather !== undefined) {
+  if (askHub !== undefined && chatroomState(askHub).pendingGather !== undefined && delivery !== 'steer') {
     throw new Error(e.i18n.t(Msg.ChatroomAskGatherBlocked))
   }
   // Mirror of gather's pendingHumanQuestionRole guard (guards must be
@@ -684,7 +688,7 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
     throw new Error(e.i18n.t(Msg.ChatroomAskNotInRoom))
   }
   const roleName = chatroomState(role).chatroomRoleName
-  await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(Msg.ChatroomAskHeader, roleName), 0, false)
+  await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(Msg.ChatroomAskHeader, roleName), 0, false, delivery)
   console.info(`chatroom: moderator asked role (hub=${callerHubKey} role=${roleKey})`)
 }
 
@@ -692,7 +696,10 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
  * The shared "post question card to the role group + inject the question as
  * a new role turn + re-arm the one-shot relay" path (Go askRoleInternal).
  * askSeq is the gather round stamp; 0 for serial asks. awaitAssistant arms
- * the research dispatch-defer at turn start.
+ * the research dispatch-defer at turn start. Steer delivery routes the
+ * injection through `deliverMachineMessage`: a busy role receives the
+ * question mid-turn at its nearest step boundary; an idle role rides the
+ * same synthetic-message pipeline as every machine wake.
  */
 async function askRoleInternal(
   e: Engine,
@@ -704,6 +711,7 @@ async function askRoleInternal(
   headerTitle: string,
   askSeq: number,
   awaitAssistant: boolean,
+  delivery: SubtaskDelivery = 'queue',
 ): Promise<void> {
   const r = asReplyContextReconstructor(p)
   if (r === undefined) {
@@ -762,7 +770,14 @@ async function askRoleInternal(
     metadata: { chatroomAskSeq: askSeq, chatroomAwaitAssistant: awaitAssistant },
   }
   try {
-    e.receiveMessage(p, roleMsg)
+    if (delivery === 'steer') {
+      // Busy → mid-turn steer claimed at the next step boundary (the role's
+      // reply still relays through the one-shot gate re-armed above); idle →
+      // the machine-wake pipeline with the full turn machinery.
+      e.deliverMachineMessage(p, roleMsg)
+    } else {
+      e.receiveMessage(p, roleMsg)
+    }
   } catch (error) {
     console.error(`engine: receive-message failed (${roleKey}): ${String(error)}`)
   }
@@ -776,7 +791,7 @@ async function askRoleInternal(
  * @param e - Engine carrying the session registry and gather timeouts.
  * @param hubKey - Session key of the chatroom hub.
  * @param question - The question broadcast to every role; empty is rejected.
- * @param research - True to run a research round (longer timeout, round cap, progress card).
+ * @param research - True to run a research round (longer timeout, progress card).
  */
 export function gatherRoles(e: Engine, hubKey: string, question: string, research: boolean): void {
   const q = question.trim()
@@ -804,23 +819,6 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   const roles = listChatroomRoles(e, hubKey)
   if (roles.length === 0) throw new Error(e.i18n.t(Msg.ChatroomNoRoles))
 
-  // Research round cap FIRST — before any state is installed: a barrier
-  // persisted without a timer or broadcast never completes, and `end`
-  // refuses to run while pendingGather is set. Manual mode is uncapped
-  // (the user decides). The counter is consumed only by a round that
-  // actually proceeds.
-  if (research) {
-    const mode = chatroomState(hub).chatroomResearchMode
-    if (mode === 'auto' || mode === '') {
-      let cap = chatroomConfig(e).maxResearchRounds()
-      const override = chatroomState(hub).chatroomResearchMaxRounds
-      if (override > 0) cap = override
-      if (chatroomState(hub).chatroomResearchRound + 1 > cap) {
-        throw new Error(`chatroom: research 已达自动模式上限 ${cap} 轮，请用 note 写最终综合后 end 收尾（或切 --mode manual 手动继续）`)
-      }
-    }
-  }
-
   // Set up the fan-in barrier BEFORE broadcasting so the first role reply
   // can't race ahead and find no pendingGather.
   const seq = chatroomState(hub).chatroomGatherSeq + 1
@@ -828,7 +826,6 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
   const g = new ChatroomGather(q, seq)
   for (const r of roles) g.expected.add(r.name)
   chatroomState(hub).pendingGather = g
-  if (research) chatroomState(hub).chatroomResearchRound += 1
   e.sessions.save()
 
   // Fallback timer: wake the moderator with partial results if a role stalls.
@@ -853,7 +850,7 @@ export function gatherRoles(e: Engine, hubKey: string, question: string, researc
         const { done, wakeContent } = g.forgetFailed(r.name)
         if (!done) return
         updateResearchProgressCard(e, p, g, 'done')
-        if (hub !== undefined) chatroomState(hub).pendingGather = undefined
+        chatroomState(hub).pendingGather = undefined
         e.sessions.save()
         wakeChatroomModerator(e, hubKey, wakeContent)
         console.info(`chatroom: gather closed after broadcast failure (hub=${hubKey} role=${r.name})`)
@@ -981,8 +978,10 @@ export function buildGatherTimeoutWake(e: Engine, hubKey: string, missing: strin
  * @param e - Engine carrying the session registry and i18n surface.
  * @param hubKey - Session key of the chatroom hub to wake.
  * @param content - The wake message text delivered to the moderator.
+ * @param metadata - Optional message metadata carried to the opened turn (the
+ * stall supervisor tags its wakes so activity tracking skips them).
  */
-export function wakeChatroomModerator(e: Engine, hubKey: string, content: string): void {
+export function wakeChatroomModerator(e: Engine, hubKey: string, content: string, metadata?: Record<string, unknown>): void {
   const p = e.spawnCapablePlatform()
   if (p === undefined) return
   const r = asReplyContextReconstructor(p)
@@ -997,6 +996,7 @@ export function wakeChatroomModerator(e: Engine, hubKey: string, content: string
         userName: '[聊天室]',
         content: wake,
         replyCtx: hubRctx,
+        ...metadata !== undefined ? { metadata } : {},
       })
     },
     (error: unknown) => {
@@ -1348,7 +1348,7 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   }
 
   if (inFlightNames.size === 0) {
-    const removed = finalizeChatroomEnd(e, hubKey)
+    const removed = finalizeChatroomEnd(e, hubKey).length
     return { status: 'ended', inFlight: [], timeoutSecs: 0, rolesRemoved: removed }
   }
 
@@ -1368,7 +1368,7 @@ export function endChatroom(e: Engine, hubKey: string): ChatroomEndResult {
   }
   const remaining = b.expectedRemaining()
   if (remaining.length === 0) {
-    const removed = finalizeChatroomEnd(e, hubKey)
+    const removed = finalizeChatroomEnd(e, hubKey).length
     return { status: 'ended', inFlight: [], timeoutSecs: 0, rolesRemoved: removed }
   }
 
@@ -1414,19 +1414,22 @@ function hangsOffChatroomExecutor(e: Engine, sess: Session, hubKey: string): boo
 /**
  * Tear down every chatroom role under the hub: stops each role session,
  * clears the chatroom marking, and drops the end barrier. The Session
- * records themselves are kept. Returns the number of roles removed.
+ * records themselves are kept.
  *
  * @param e - Engine carrying the session registry and platform.
  * @param hubKey - Session key of the chatroom hub whose roles are removed.
- * @returns The number of role sessions cleaned up (0 when no platform is available).
+ * @param endedStatus - Terminal status stamped into the ledger header.
+ * @returns The session keys whose cleanup ran (roles, their assistants, the
+ *   research steward and its fetchers); a `/done` skip list consumes these
+ *   so the bridge's own descendant loop does not re-clean them.
  */
-export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'ended' | 'interrupted' = 'ended'): number {
+export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'ended' | 'interrupted' = 'ended'): string[] {
   const p = e.spawnCapablePlatform()
-  if (p === undefined) return 0
+  if (p === undefined) return []
   // Native continuable descendants chain through the project state, not the
   // session tree (de-baggage B4) — drain them alongside the role groups.
   void e.drainNativeDescendants([hubKey, ...e.collectSubtree(hubKey)])
-  let removed = 0
+  const cleaned: string[] = []
   for (const childKey of e.collectSubtree(hubKey)) {
     const sess = e.sessions.getOrCreateActive(childKey)
     if (chatroomState(sess).chatroomHubKey === '') {
@@ -1445,7 +1448,7 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'end
     chatroomState(sess).researchAssistantKey = ''
     chatroomState(sess).researchAwaitingAssistant = false
     chatroomState(sess).researchAssistant = false
-    removed++
+    cleaned.push(childKey)
   }
   const hub = chatroomHubOf(e, hubKey)
   if (hub !== undefined) {
@@ -1471,8 +1474,8 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'end
       console.warn(`chatroom: ledger ended-line write failed (${lp}): ${String(error)}`)
     })
   }
-  console.info(`chatroom: ended (hub=${hubKey} roles_removed=${removed} status=${endedStatus})`)
-  return removed
+  console.info(`chatroom: ended (hub=${hubKey} roles_removed=${cleaned.length} status=${endedStatus})`)
+  return cleaned
 }
 
 /** finalizeChatroomEnd + the closing-summary wake off the turn-end stack (Go finalizeChatroomEndAsync).
@@ -1496,6 +1499,8 @@ export interface ChatroomInterruptResult {
   rolesRemoved: number
   /** Role names whose replies the interrupted barriers were still awaiting. */
   missing: string[]
+  /** Session keys whose cleanup ran (the `/done` pre-done skip list). */
+  cleanedKeys: string[]
 }
 
 /**
@@ -1549,7 +1554,8 @@ export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptR
     e.stopInteractiveSession(childKey)
     if (e.clearSubtaskGather(childKey)) clearedGathers += 1
   }
-  const rolesRemoved = finalizeChatroomEnd(e, hubKey, 'interrupted')
+  const cleanedKeys = finalizeChatroomEnd(e, hubKey, 'interrupted')
+  const rolesRemoved = cleanedKeys.length
 
   const uniqueMissing = [...new Set(missing)].sort()
   const cs = asCardSender(p)
@@ -1572,7 +1578,7 @@ export function interruptChatroom(e: Engine, hubKey: string): ChatroomInterruptR
     )
   }
   console.info(`chatroom: interrupted (hub=${hubKey} roles_removed=${rolesRemoved} missing=${uniqueMissing.join(',')} gathers_cleared=${clearedGathers})`)
-  return { rolesRemoved, missing: uniqueMissing }
+  return { rolesRemoved, missing: uniqueMissing, cleanedKeys }
 }
 
 /**
@@ -1818,8 +1824,6 @@ export function resolveChatroomInheritPrior(e: Engine, ref: string): ChatroomInh
 export function clearChatroomResearchFlags(hub: Session): void {
   chatroomState(hub).chatroomResearch = false
   chatroomState(hub).chatroomResearchMode = ''
-  chatroomState(hub).chatroomResearchRound = 0
-  chatroomState(hub).chatroomResearchMaxRounds = 0
   chatroomState(hub).researchAssistantKey = ''
 }
 
@@ -1845,18 +1849,39 @@ export function chatroomResearchWorkspace(e: Engine): string {
 
 /**
  * Process-level uv hooks so tests can simulate uv being absent (or stub the
- * slow install) without mangling PATH for other tests (Go package vars).
+ * slow install) without mangling PATH for other tests (Go package vars). The
+ * `exec` hook routes createVenv/pipInstall through one overridable seam so a
+ * test can observe the real argument lists.
  */
 export const uvHooks = {
+  /** The execFile promise both uv hooks run through (overridable in tests). */
+  exec: execFileP as (file: string, args: readonly string[], options: ExecFileOptions) => Promise<{ stdout: string; stderr: string }>,
   /** Resolve the uv binary (execFile rejects when not on PATH). */
-  lookupPath: (): Promise<string> => execFileP('uv', ['--version'], { timeout: 10_000 }).then(() => 'uv'),
-  /** Create the venv (<ws>/.venv) via `uv venv`. */
+  lookupPath: (): Promise<string> => uvHooks.exec('uv', ['--version'], { timeout: 10_000 }).then(() => 'uv'),
+  /** Create the venv (<ws>/.venv) via `uv venv --seed` (seed = ship pip, so `-m pip` works on day one). */
   createVenv: (uvPath: string, venv: string): Promise<void> =>
-    execFileP(uvPath, ['venv', venv], { timeout: 30_000 }).then(() => undefined),
-  /** Install the base research data deps into <venv>. */
-  pipInstall: (uvPath: string, venv: string): Promise<void> =>
-    execFileP(uvPath, ['pip', 'install', '--quiet', 'akshare', 'pandas', 'numpy', 'requests'],
-      { timeout: 180_000, env: { ...process.env, VIRTUAL_ENV: venv } }).then(() => undefined),
+    uvHooks.exec(uvPath, ['venv', '--seed', venv], { timeout: 30_000 }).then(() => undefined),
+  /** Install the given packages into <venv>. */
+  pipInstall: (uvPath: string, venv: string, packages: readonly string[]): Promise<void> =>
+    uvHooks.exec(uvPath, ['pip', 'install', '--quiet', ...packages],
+      { timeout: 300_000, env: { ...process.env, VIRTUAL_ENV: venv } }).then(() => undefined),
+}
+
+/** The in-venv marker recording which configured base packages are installed. */
+const basePackagesMarker = '.dsh-base-packages.txt'
+
+/** Read the installed-base marker inside a venv; unreadable counts as none installed. */
+function readBasePackages(venv: string): string[] {
+  try {
+    return readFileSync(join(venv, basePackagesMarker), 'utf8').split('\n').map(l => l.trim()).filter(l => l !== '')
+  } catch {
+    return []
+  }
+}
+
+/** Write the installed-base marker inside a venv (one package per line). */
+function writeBasePackages(venv: string, packages: readonly string[]): void {
+  writeFileSync(join(venv, basePackagesMarker), `${packages.join('\n')}\n`, 'utf8')
 }
 
 /** Serializes shared-venv creation across concurrent chatrooms (Go researchVenvMu). */
@@ -1867,9 +1892,13 @@ let researchVenvChain: Promise<unknown> = Promise.resolve()
  * assistants and return its absolute path (Go ensureResearchPythonEnv).
  * ('', undefined) when the feature switch is off; ('', Error) when uv is
  * unavailable or creation fails — /chatroom --research gates startup on it.
- * Idempotent: an existing .venv is reused without re-installing.
+ * Idempotent: an existing .venv is reused, reconciled against the configured
+ * base-package list — only packages missing from the in-venv marker are
+ * installed, so a later config extension warm-upgrades a live venv without
+ * touching packages assistants installed themselves. (A corrupted venv:
+ * delete <ws>/.venv to force a rebuild.)
  *
- * @param e - Engine carrying the research-python-env feature switch.
+ * @param e - Engine carrying the research-python-env switch and package list.
  * @param ws - The shared research workspace directory; empty rejects.
  * @returns The venv's absolute path, undefined when the switch is off; rejects when creation fails.
  */
@@ -1879,6 +1908,7 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
   if (workspace === '') {
     return Promise.reject(new Error('chatroom: research workspace not configured'))
   }
+  const packages = chatroomConfig(e).researchVenvPackages()
   const run = researchVenvChain.then(async (): Promise<string | undefined> => {
     try {
       mkdirSync(workspace, { recursive: true })
@@ -1893,12 +1923,28 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
     }
     const venv = join(workspace, '.venv')
     // Reuse an existing venv; --clear would wipe packages a prior assistant
-    // installed. (A corrupted venv: delete <ws>/.venv to force a rebuild.)
+    // installed. Instead reconcile: install exactly the configured base
+    // packages the marker does not record yet.
+    let existed = true
     try {
       statSync(venv)
-      return venv
     } catch {
-      // fall through to creation
+      existed = false
+    }
+    if (existed) {
+      const installed = readBasePackages(venv)
+      const missing = packages.filter(p => !installed.includes(p))
+      if (missing.length > 0) {
+        try {
+          await uvHooks.pipInstall(uvPath, venv, missing)
+        } catch (error) {
+          // The venv predates this call and keeps its value: no teardown,
+          // the next startup retries the delta.
+          throw new Error(`chatroom: research venv base-package install failed: ${String(error instanceof Error ? error.message : error)}`)
+        }
+        writeBasePackages(venv, [...new Set([...installed, ...missing])])
+      }
+      return venv
     }
     try {
       await uvHooks.createVenv(uvPath, venv)
@@ -1909,7 +1955,7 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
     // half-created venv so the next startup retries instead of reusing a
     // package-less venv.
     try {
-      await uvHooks.pipInstall(uvPath, venv)
+      await uvHooks.pipInstall(uvPath, venv, packages)
     } catch (error) {
       try {
         rmSync(venv, { recursive: true, force: true })
@@ -1918,6 +1964,7 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
       }
       throw new Error(`chatroom: research venv deps install failed: ${String(error instanceof Error ? error.message : error)}`)
     }
+    writeBasePackages(venv, packages)
     return venv
   })
   researchVenvChain = run.catch(() => undefined)

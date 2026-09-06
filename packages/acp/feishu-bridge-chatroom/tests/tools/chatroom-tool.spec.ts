@@ -20,10 +20,10 @@ import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import type { ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { Engine, ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { Engine, InteractiveState, ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerChatroomTool } from '../../src/tools/chatroom.ts'
 import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { applyChatroomEngineConfig } from '../../src/chatroom-config.ts'
+import { applyChatroomEngineConfig, chatroomConfig } from '../../src/chatroom-config.ts'
 import { beginChatroomTopicPick } from '../../src/engine/chatroom-pick.ts'
 import {
   chatroomLedgerDir,
@@ -32,8 +32,8 @@ import {
   updateChatroomReport,
   writeChatroomLedgerEnded,
 } from '../../src/engine/chatroom-ledger.ts'
-import { chatroomResearchWorkspace } from '../../src/engine/chatroom.ts'
-import { createStubAgent, createStubChatroomSpawner, createStubSpawnerPlatform, newStubMessage } from '../stubs/engine-stubs.ts'
+import { chatroomResearchWorkspace, startChatroom } from '../../src/engine/chatroom.ts'
+import { createStubAgent, createStubChatroomSpawner, createStubSpawnerPlatform, newControllableSession, newStubMessage } from '../stubs/engine-stubs.ts'
 import { chatroomState } from '../../src/chatroom-state.ts'
 import '../stubs/messages.js'
 
@@ -127,6 +127,20 @@ describe('feishu_bridge_chatroom registration', () => {
     test.dispose() // idempotent
     expect(test.ctx.tools.get('feishu_bridge_chatroom')).toBeUndefined()
   })
+
+  it('documents the ask delivery modes where the model reads them', async () => {
+    const engine = newEngine()
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    const tool = test.ctx.tools.get('feishu_bridge_chatroom')
+    const delivery = (tool?.parameters as {
+      properties?: { delivery?: { enum?: string[]; description?: string } }
+    }).properties?.delivery
+    expect(delivery?.enum).toEqual(['queue', 'steer'])
+    // Decision guidance, not bare semantics: when to reach a running role.
+    expect(delivery?.description).toContain('running')
+    expect(tool?.description).toContain('steer')
+    test.dispose()
+  })
 })
 
 describe('feishu_bridge_chatroom action routing', () => {
@@ -175,6 +189,31 @@ describe('feishu_bridge_chatroom action routing', () => {
     const humanRes = await test.execute({ action: 'ask-human', message: '截止日？' })
     expect(humanRes.isError).toBe(true)
 
+    test.dispose()
+  })
+
+  it('ask with steer reaches a busy role mid-turn through the real engine', async () => {
+    const engine = new Engine('chatroom-test', createStubAgent(), [createStubChatroomSpawner()], '', 'zh')
+    engine.setProjectStateStore(new ProjectStateStore(''))
+    const root = await mkdtemp(join(tmpdir(), 'fb-chatroom-roles-'))
+    await mkdir(join(root, 'taleb'), { recursive: true })
+    await writeFile(join(root, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    chatroomConfig(engine).applySection({ rolesDir: root })
+    const hub = 'feishu:oc_hub:ou_1'
+    const roles = await startChatroom(engine, hub, ['taleb'], 'topic')
+    const roleKey = roles[0]!.sessionKey
+    const sess = newControllableSession('role-agent-1')
+    const st = new InteractiveState()
+    st.agentSession = sess
+    engine.interactiveStates.set(roleKey, st)
+    expect(engine.sessions.getOrCreateActive(roleKey).tryLock()).toBe(true)
+
+    const test = await harness(() => ({ engine, sessionKey: hub }))
+    const v = value(await test.execute({ action: 'ask', role: 'taleb', message: '换个角度分析', delivery: 'steer' }))
+
+    expect(sess.steerCalls.some(c => c.includes('换个角度分析'))).toBe(true)
+    expect(v.message).toContain('steer')
+    expect(v.message).toContain('mid-turn')
     test.dispose()
   })
 

@@ -187,6 +187,66 @@ describe('DshAgentAdapter bare persona setup hook', () => {
     for (const want of ['DATA_LEDGER', '独立双源', 'data/<角色名>', '串行抓', '脚本循环']) {
       expect(sections[1]?.text).toContain(want)
     }
+    // Without a provisioned run dir the scratch bullet stays cwd-scoped.
+    expect(sections[1]?.text).toContain('在当前工作目录工作')
+  })
+
+  it('pins the per-chatroom run dir for assistant scratch when provisioned', async () => {
+    const sections: RecordedSection[] = []
+    const a = newAdapter(createHarness({ sections }), '/ws')
+    await a.startSession('', {
+      sessionKey: 'test:assistant-9',
+      subtask: { attended: false, noReport: false, researchAssistant: true, researchRunDir: '/ws/runs/hub-1/assistant-munger' },
+    })
+    expect(sections).toHaveLength(2)
+    // Scratch (scripts, logs, intermediate fetches) goes to the chatroom's
+    // own run dir instead of the shared workspace root, so parallel
+    // chatrooms never overwrite each other's generic scratch names; the
+    // shared-data discipline (data/core, data/<role>, ledger) is unchanged.
+    expect(sections[1]?.text).toContain('/ws/runs/hub-1/assistant-munger')
+    expect(sections[1]?.text).toContain('本场专属运行目录')
+    expect(sections[1]?.text).not.toContain('在当前工作目录工作')
+    for (const want of ['DATA_LEDGER', 'data/<角色名>']) {
+      expect(sections[1]?.text).toContain(want)
+    }
+  })
+
+  it('surfaces the research playbook and uv-first install guidance', async () => {
+    const sections: RecordedSection[] = []
+    const a = newAdapter(createHarness({ sections }), '/ws')
+    await a.startSession('', {
+      sessionKey: 'test:assistant-4',
+      venv: { virtualEnv: '/ws/.venv' },
+      playbook: '/stable/research-playbook.md',
+      subtask: { attended: false, noReport: false, researchAssistant: true },
+    })
+    expect(sections).toHaveLength(2)
+    const text = sections[1]?.text ?? ''
+    // Machine-proven experience lives in a persistent playbook file outside
+    // the (archivable) research workspace: read before fetching, appended
+    // after a new source recipe is proven.
+    expect(text).toContain('/stable/research-playbook.md')
+    expect(text).toContain('先 Read')
+    expect(text).toContain('追加')
+    // uv-first installs (no pip-in-venv dependency, uv cache) with the
+    // venv python fallback; the package list is no longer hardcoded here.
+    expect(text).toContain('uv pip install --python /ws/.venv/bin/python')
+    expect(text).not.toContain('已装 akshare/pandas/numpy/requests')
+    // Academic literature routes through the scholar skill.
+    expect(text).toContain('scholar')
+  })
+
+  it('omits the playbook bullet without a configured playbook', async () => {
+    const sections: RecordedSection[] = []
+    const a = newAdapter(createHarness({ sections }), '/ws')
+    await a.startSession('', {
+      sessionKey: 'test:assistant-5',
+      venv: { virtualEnv: '/ws/.venv' },
+      subtask: { attended: false, noReport: false, researchAssistant: true },
+    })
+    const text = sections[1]?.text ?? ''
+    expect(text).not.toContain('PLAYBOOK')
+    expect(text).toContain('uv pip install --python /ws/.venv/bin/python')
   })
 
   it('registers the report-back preamble for a plain subtask child', async () => {

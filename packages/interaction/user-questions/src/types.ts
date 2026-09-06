@@ -10,8 +10,9 @@ export interface AskUserQuestionOption {
   /** Optional extra context rendered by capable UIs. */
   description?: string
   /**
-   * Presentation-only flag marking a recommended option. Capable multi-select
-   * UIs pre-check recommended options; it never changes the answer encoding.
+   * Presentation-only flag marking a recommended option: capable multi-select
+   * UIs pre-check it and single-select UIs highlight it; it never changes the
+   * answer encoding.
    */
   recommended?: boolean
 }

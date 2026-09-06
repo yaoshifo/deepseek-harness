@@ -67,7 +67,7 @@ describe('newCachedTenantTokenMinter', () => {
       mints++
       return gate
     }
-    const mint = newCachedTenantTokenMinter('cli_c', 's', fetchFn as typeof fetch)
+    const mint = newCachedTenantTokenMinter('cli_c', 's', fetchFn)
     const callers = [mint(), mint(), mint()]
     release(jsonResponse({ tenant_access_token: 'tat-c', expire: 7200 }))
     for (const call of callers) await expect(call).resolves.toBe('tat-c')

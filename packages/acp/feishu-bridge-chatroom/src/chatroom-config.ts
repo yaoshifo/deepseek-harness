@@ -15,14 +15,13 @@ import Schema from '@deepseek-ai/schemastery'
 import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { defaultChatroomRolesDir } from './engine/chatroom-roles.ts'
 import {
+  defaultChatroomAssistantStallSec,
   defaultChatroomGatherTimeout,
   defaultChatroomResearchTimeout,
-  defaultMaxChatroomResearchRounds,
   defaultMaxChatroomRoles,
   maxChatroomResearchTimeout,
-  maxChatroomResearchRounds,
+  minChatroomAssistantStallSec,
   minChatroomResearchTimeout,
-  minChatroomResearchRounds,
 } from './engine/chatroom.ts'
 
 /** One chatroom tuning section (Go [chatroom]; same shape the bridge carried). */
@@ -41,16 +40,24 @@ export interface ChatroomProjectConfig {
   endTimeoutSec?: number
   /** Research-mode gather round timeout in seconds, clamped to [60, 86400] (Go research_timeout_sec). */
   researchTimeoutSec?: number
-  /** Auto-mode research iteration cap, clamped to [1, 20] (Go max_research_rounds). */
-  maxResearchRounds?: number
   /** Default research iteration driver when --mode is omitted (Go default_research_mode). */
   defaultResearchMode?: 'auto' | 'manual'
   /** Shared research-assistant workdir; empty falls back to <moderatorDir>/research (Go research_workspace). */
   researchWorkspace?: string
   /** Pre-provision the shared uv venv for research assistants; default true (Go research_python_env). */
   researchPythonEnv?: boolean
+  /** Base packages installed into the shared research venv; unset or empty = the akshare base list with pandas pinned <3. */
+  researchVenvPackages?: string[]
+  /** Persistent research-playbook file surfaced to research assistants; '' or unset opts out. */
+  researchPlaybook?: string
   /** User-background file injected into every chatroom persona; '' opts out (Go user_profile). */
   userProfile?: string
+  /**
+   * Research-assistant stall deadline in seconds: a hub↔steward relation
+   * quiet this long gets a supervision wake; 0 disables the supervisor.
+   * Non-zero values below 600 are rejected at apply.
+   */
+  assistantStallSec?: number
 }
 
 const chatroomSection = Schema.object({
@@ -61,11 +68,13 @@ const chatroomSection = Schema.object({
   gatherTimeoutSec: Schema.natural().description('Gather barrier fallback timeout in seconds (default 1200)'),
   endTimeoutSec: Schema.natural().description('End barrier drain timeout in seconds (default 600)'),
   researchTimeoutSec: Schema.natural().description('Research gather round timeout in seconds, clamped to [60, 86400]'),
-  maxResearchRounds: Schema.natural().description('Auto-mode research iteration cap, clamped to [1, 20]'),
   defaultResearchMode: Schema.union(['auto', 'manual']).description('Default research driver when --mode is omitted'),
   researchWorkspace: Schema.string().description('Shared research-assistant workdir (default <projectDataDir>/chatroom-research)'),
   researchPythonEnv: Schema.boolean().description('Pre-provision the shared uv venv for research; default true'),
+  researchVenvPackages: Schema.array(Schema.string()).description('Base packages installed into the shared research venv (default akshare, pandas<3, numpy, requests)'),
+  researchPlaybook: Schema.string().description('Persistent playbook file read/appended by research assistants (default off)'),
   userProfile: Schema.string().description('User-background file injected into every chatroom persona (roles, moderator, direct-role)'),
+  assistantStallSec: Schema.natural().description('Research-assistant stall deadline in seconds; a quiet hub↔steward relation past it gets a supervision wake (default 1800, 0 disables, minimum 600)'),
 })
 
 /**
@@ -107,16 +116,22 @@ class ChatroomEngineConfig {
   endTimeoutMs = 0
   /** Research gather round timeout override in ms; 0 = the 60m default. */
   researchTimeoutMs = 0
-  /** Auto-mode research iteration cap override; 0 = default 3. */
-  maxResearchRoundsOverride = 0
   /** Default research iteration driver; '' behaves as 'auto'. */
   defaultResearchModeValue = ''
   /** Shared research-assistant workdir override; '' = <projectDataDir>/chatroom-research. */
   researchWorkspaceCfg = ''
   /** Whether the shared uv venv is pre-provisioned for research assistants. */
   researchPythonEnv = false
+  /** Base packages for the shared research venv; undefined = the pinned akshare base list. */
+  private researchVenvPackagesValue: string[] | undefined = undefined
+  /** Persistent research-playbook file surfaced to research assistants; '' = none. */
+  private researchPlaybookCfg = ''
   /** User-background file injected into chatroom personas; '' = none. */
   userProfileCfg = ''
+  /** Research-assistant stall deadline override in ms; 0 = the 30m default. */
+  private assistantStallMs = 0
+  /** Whether the supervisor is explicitly disabled for this engine. */
+  private assistantStallOff = false
 
   /**
    * Apply one config section's overrides (Go wireChatroom: the project
@@ -146,9 +161,6 @@ class ChatroomEngineConfig {
     if (cfg.researchTimeoutSec !== undefined && cfg.researchTimeoutSec > 0) {
       this.researchTimeoutMs = Math.min(maxChatroomResearchTimeout, Math.max(minChatroomResearchTimeout, cfg.researchTimeoutSec * 1000))
     }
-    if (cfg.maxResearchRounds !== undefined && cfg.maxResearchRounds > 0) {
-      this.maxResearchRoundsOverride = Math.min(maxChatroomResearchRounds, Math.max(minChatroomResearchRounds, cfg.maxResearchRounds))
-    }
     if (cfg.defaultResearchMode !== undefined) {
       this.defaultResearchModeValue = cfg.defaultResearchMode
     }
@@ -165,6 +177,26 @@ class ChatroomEngineConfig {
     // test call never flips the switch by accident.
     if (cfg.researchPythonEnv !== undefined) {
       this.researchPythonEnv = cfg.researchPythonEnv
+    }
+    if (cfg.researchVenvPackages !== undefined && cfg.researchVenvPackages.length > 0) {
+      this.researchVenvPackagesValue = cfg.researchVenvPackages
+    }
+    // Like researchWorkspace, only a non-empty path engages the feature.
+    if (cfg.researchPlaybook !== undefined && cfg.researchPlaybook.trim() !== '') {
+      this.researchPlaybookCfg = expandHome(cfg.researchPlaybook)
+    }
+    if (cfg.assistantStallSec !== undefined) {
+      if (cfg.assistantStallSec === 0) {
+        this.assistantStallOff = true
+      } else {
+        // Below the floor a supervisor would nag through every legitimate
+        // quiet stretch (the gather barrier alone waits up to 20 minutes);
+        // fail loud at apply instead of arming a noisy loop.
+        if (cfg.assistantStallSec < minChatroomAssistantStallSec) {
+          throw new Error(`chatroom: assistantStallSec must be 0 (off) or at least ${minChatroomAssistantStallSec}, got ${cfg.assistantStallSec}`)
+        }
+        this.assistantStallMs = cfg.assistantStallSec * 1000
+      }
     }
   }
 
@@ -207,11 +239,6 @@ class ChatroomEngineConfig {
     return this.researchTimeoutMs > 0 ? this.researchTimeoutMs : defaultChatroomResearchTimeout
   }
 
-  /** Effective auto-mode research round cap (the override, or the default of 3). */
-  maxResearchRounds(): number {
-    return this.maxResearchRoundsOverride > 0 ? this.maxResearchRoundsOverride : defaultMaxChatroomResearchRounds
-  }
-
   /** Effective default research mode; unknown values behave as 'auto'. */
   defaultResearchMode(): string {
     return this.defaultResearchModeValue === 'manual' ? 'manual' : 'auto'
@@ -220,6 +247,30 @@ class ChatroomEngineConfig {
   /** Effective user-background file injected into chatroom personas; '' = none. */
   userProfile(): string {
     return this.userProfileCfg
+  }
+
+  /**
+   * Effective base-package list installed into the shared research venv.
+   * akshare's metadata requires pandas>=2.0.0 with no upper bound and
+   * pandas 3.x breaks it, so the default pins pandas<3.
+   */
+  researchVenvPackages(): string[] {
+    return this.researchVenvPackagesValue ?? ['akshare', 'pandas<3', 'numpy', 'requests']
+  }
+
+  /** Effective persistent research-playbook file; '' = none surfaced. */
+  researchPlaybook(): string {
+    return this.researchPlaybookCfg
+  }
+
+  /**
+   * Effective research-assistant stall deadline; 0 disables the supervisor.
+   * The default of 30 minutes sits above the gather barrier's 20-minute
+   * quiet window and the incident's observed long-job cadence.
+   */
+  assistantStallDuration(): number {
+    if (this.assistantStallOff) return 0
+    return this.assistantStallMs > 0 ? this.assistantStallMs : defaultChatroomAssistantStallSec * 1000
   }
 }
 

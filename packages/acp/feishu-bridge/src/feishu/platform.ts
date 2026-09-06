@@ -2028,7 +2028,9 @@ export class FeishuPlatform implements Platform {
           // ensureApi() stays inside the try: a rejection here must not
           // poison the once-cache for every later spinnerCfg() call.
           const client = await this.ensureApi()
-          const uploadImage = client.uploadImage
+          // Bound: the extracted method must keep its receiver when the
+          // withRetry closure invokes it later.
+          const uploadImage = client.uploadImage?.bind(client)
           if (uploadImage === undefined) return ''
           // Resolve against this module's location so the path survives the
           // tsdown bundle (lib/index.js) as well as the source tree.

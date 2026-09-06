@@ -31,7 +31,7 @@ kind: "package-reference"
 ### 关键类型
 
 - `AskUserQuestionRequest`：`{ questions: [{ id, question, detail?, header?, options?, multiSelect?, intent? }], agent?, signal? }`；`detail` 提供辅助文本，提供方会将其随问题一起渲染，而不会将其变成选项标签。如提供 `agent`，它必须与注册表中的存活运行时根 agent（智能体）是同一对象。
-- `AskUserQuestionOption`：`{ label, description?, recommended? }`；`recommended` 仅影响呈现——支持的多选 UI 会默认勾选该选项，回答编码不变。
+- `AskUserQuestionOption`：`{ label, description?, recommended? }`；`recommended` 仅影响呈现——支持的多选 UI 会默认勾选该选项、单选 UI 会高亮该选项，回答编码不变。
 - `AskUserQuestionIntent`：`{ kind: 'plan-review', approve }`；即下文的带标签呈现意图。
 - `AskUserQuestionAnswer`：`{ answers: [{ id, selected, custom? }] }`。
 - `UserQuestionError`：`HarnessError` 的子类，包含 `EMPTY_QUESTIONS`、`BAD_INTENT`、`NO_PROVIDER`、`ASK_ABORTED`、`CALLER_NOT_LIVE` 和 `DELEGATED_CALLER` 等代码。

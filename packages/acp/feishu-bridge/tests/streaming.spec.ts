@@ -870,7 +870,7 @@ describe('StreamPreview', () => {
     // git checkout progress: one \n-line holding 36 \r-separated updates
     // (65%..100%), exactly what `2>&1 | tail -3` passes through.
     const segments = Array.from({ length: 36 }, (_, i) =>
-      `Updating files:  ${65 + i}% (${6530 + i * 68}/${9996})${i === 35 ? ', done.' : ''}`)
+      `Updating files:  ${65 + i}% (${6530 + i * 68}/9996)` + (i === 35 ? ', done.' : ''))
     const result = `Preparing worktree (new branch 'cc/x')\n${segments.join('\r')}\nHEAD is now at 1246f5`
     await sp.updateToolResult('t-cr', result, true)
     await sleep(500)

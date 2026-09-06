@@ -438,6 +438,14 @@ export interface SessionStartOptions {
      * session-start-options listener; absent = not a research assistant.
      */
     researchAssistant?: boolean
+    /**
+     * The research assistant's per-chatroom run dir for scratch files
+     * (scripts, logs, intermediate fetches), so parallel chatrooms keep
+     * disjoint scratch areas. Decorated by the owning feature's
+     * session-start-options listener from the session state; absent = fall
+     * back to cwd.
+     */
+    researchRunDir?: string
   }
   /**
    * Whole-prompt persona for the session; absent = plain session. The
@@ -472,6 +480,8 @@ export interface SessionStartOptions {
     /** venv root directory. */
     virtualEnv: string
   }
+  /** Persistent research playbook surfaced to research assistants; absent = none. */
+  playbook?: string
 }
 
 /** An AI coding assistant backend (Go Agent). */
@@ -1048,6 +1058,13 @@ export interface ContinuableChildStart {
 }
 
 /**
+ * Follow-up delivery to a native continuable child: queue as the next FIFO
+ * turn, or steer into the running child's current turn at its nearest step
+ * boundary (idle children wake; settled ones cold-resume).
+ */
+export type SubtaskDelivery = 'queue' | 'steer'
+
+/**
  * Agent that delegates continuable child sessions to the native subagent
  * runtime (`ctx.subagents`, mounted with external settlement delivery).
  * Child turns run on the native inbox FIFO; settlement reaches the engine
@@ -1060,13 +1077,16 @@ export interface ContinuableDelegator {
    */
   startContinuableChild(request: ContinuableChildStart): Promise<{ childId: string; label: string }>
   /**
-   * Deliver a follow-up to a native child as its next FIFO turn; a running
-   * child queues it (the deliberate deviation from Go's busy-reject).
+   * Deliver a follow-up to a native child: queue (default) schedules it as
+   * the child's next FIFO turn (the deliberate deviation from Go's
+   * busy-reject); steer admits it at the running child's nearest step
+   * boundary.
    * @param parentAgentSessionID - native id of the live direct parent.
    * @param childId - the durable native child session id.
    * @param message - the follow-up text.
+   * @param delivery - queue as a distinct turn or steer into the current one.
    */
-  followupChild(parentAgentSessionID: string, childId: string, message: string): Promise<void>
+  followupChild(parentAgentSessionID: string, childId: string, message: string, delivery?: SubtaskDelivery): Promise<void>
   /**
    * Interrupt one native child's current turn (fire-and-return).
    * @param parentAgentSessionID - native id of the live direct parent (the authority).

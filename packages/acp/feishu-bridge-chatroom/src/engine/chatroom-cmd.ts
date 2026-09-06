@@ -34,13 +34,9 @@ import {
   resolveChatroomInheritPrior,
   startChatroom,
 } from './chatroom.ts'
-import {
-  maxChatroomResearchRounds,
-  minChatroomResearchRounds,
-} from './chatroom.ts'
 import { listRoleNames, roleDir, roleExists, roleEssence } from './chatroom-roles.ts'
 import { beginChatroomModePick, beginChatroomPick, beginChatroomStartPick, beginChatroomTopicPick, executeChatroomCardAction } from './chatroom-pick.ts'
-import { listChatroomLedgers } from './chatroom-ledger.ts'
+import { hashID, listChatroomLedgers } from './chatroom-ledger.ts'
 import {
   buildChatroomModeratorPriming,
   buildChatroomResearchModeratorPriming,
@@ -145,7 +141,6 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   let gotRoles = false
   let research = false
   let researchMode = ''
-  let maxRounds = 0
   let continueRequested = false
   let continueRef = ''
   for (let i = 0; i < args.length; i++) {
@@ -180,23 +175,6 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
         i++
         researchMode = next.trim()
       }
-      continue
-    }
-    if (a === '--max-rounds') {
-      const next = args[i + 1]
-      if (next === undefined) {
-        await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ChatroomMaxRoundsRange, maxChatroomResearchRounds))
-        return
-      }
-      i++
-      const n = Number.parseInt(next.trim(), 10)
-      // Reject instead of silently dropping an invalid value — the moderator
-      // would otherwise believe the cap took effect.
-      if (Number.isNaN(n) || n < minChatroomResearchRounds || n > maxChatroomResearchRounds) {
-        await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.ChatroomMaxRoundsRange, maxChatroomResearchRounds))
-        return
-      }
-      maxRounds = n
       continue
     }
     if (a.startsWith('-')) continue
@@ -246,7 +224,7 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
       return
     }
     if (!(await gateResearchUvOrFail(e, p, msg, research))) return
-    stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode, maxRounds)
+    stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode)
     const mod = chatroomConfig(e).moderatorDir()
     const history = mod.ok ? listChatroomLedgers(join(mod.dir, 'ledgers'), 5) : []
     try {
@@ -277,7 +255,7 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
   // Stash research-mode flags on the hub session BEFORE any path that leads
   // to afterChatroomStarted so --research survives the async pick flows.
   if (!(await gateResearchUvOrFail(e, p, msg, research))) return
-  stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode, maxRounds)
+  stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode)
 
   // --continue with no roles named → reuse the prior chatroom's recorded
   // cast; continuing a discussion keeps its participants by default.
@@ -337,22 +315,21 @@ export function chatroomUserProfileError(e: Engine): string {
 }
 
 /**
- * Persist the --research / --mode / --max-rounds flags onto the hub session
- * so they survive the async picker flows (Go stashChatroomResearchFlags).
+ * Persist the --research / --mode flags onto the hub session so they survive
+ * the async picker flows (Go stashChatroomResearchFlags).
  *
  * @param e - Engine whose session store holds the hub session.
  * @param hubKey - Session key of the hub (group) session to stamp.
  * @param research - Whether --research was given; false scrubs stale flags.
  * @param mode - Requested research mode; anything but 'auto'/'manual' resolves to the configured default.
- * @param maxRounds - Per-invocation round cap override; 0 keeps the configured cap.
  */
 export function stashChatroomResearchFlags(
-  e: Engine, hubKey: string, research: boolean, mode: string, maxRounds: number,
+  e: Engine, hubKey: string, research: boolean, mode: string,
 ): void {
   const hub = e.sessions.getOrCreateActive(hubKey)
   if (!research) {
     // A previous research chatroom in this group left flags on the hub;
-    // scrub them so the next research chatroom starts from round 0.
+    // scrub them so the next research chatroom starts fresh.
     clearChatroomResearchFlags(hub)
     e.sessions.save()
     return
@@ -362,10 +339,6 @@ export function stashChatroomResearchFlags(
     mode = chatroomConfig(e).defaultResearchMode()
   }
   chatroomState(hub).chatroomResearchMode = mode
-  if (maxRounds > 0) {
-    // Per-invocation override of the configured cap (auto mode only).
-    chatroomState(hub).chatroomResearchMaxRounds = maxRounds
-  }
   e.sessions.save()
 }
 
@@ -597,6 +570,23 @@ export async function afterChatroomStarted(
         console.warn(`chatroom: research workspace unavailable; assistants run without shared venv (ws=${ws}): ${String(error)}`)
       }
     }
+    // Per-chatroom run dirs keep each assistant's scratch (scripts, logs,
+    // intermediate fetches) off the shared workspace root, so parallel
+    // chatrooms never overwrite each other's generic scratch names. The tag
+    // matches the ledger dir (hashID-run): same audit trail, one dir per
+    // chatroom instance. Shared assets (venv, data/core, DATA_LEDGER) stay
+    // at the workspace root untouched.
+    const runTag = assistantDir !== '' ? `${hashID(sessionKey)}-${chatroomState(s).chatroomLedgerRun}` : ''
+    const stampRunDir = (childKey: string, runDir: string): void => {
+      chatroomState(e.sessions.getOrCreateActive(childKey)).researchRunDir = runDir
+      try {
+        mkdirSync(runDir, { recursive: true })
+      } catch (error) {
+        // Best-effort: the stamp alone suffices — the assistant's preamble
+        // names the dir, so it mkdir -p's on first use.
+        console.warn(`chatroom: run dir mkdir failed (dir=${runDir}): ${String(error)}`)
+      }
+    }
     for (const r of started) {
       // Idle spawn: create the assistant group + session record but do NOT
       // fire a first turn — the assistant waits for the role's real task.
@@ -619,6 +609,7 @@ export async function afterChatroomStarted(
       const child = e.sessions.getOrCreateActive(childKey)
       chatroomState(child).researchAssistant = true
       if (researchVenv !== '') chatroomState(child).researchVenv = researchVenv
+      if (runTag !== '') stampRunDir(childKey, join(ws, 'runs', runTag, `assistant-${r.name}`))
       // Rename the assistant group so the user can tell assistants apart in
       // the group list; the idle spawn's neutral placeholder would stick.
       const assistantName = chatroomAssistantGroupName(r.name)
@@ -655,6 +646,7 @@ export async function afterChatroomStarted(
         const child = e.sessions.getOrCreateActive(childKey)
         chatroomState(child).researchAssistant = true
         if (researchVenv !== '') chatroomState(child).researchVenv = researchVenv
+        stampRunDir(childKey, join(ws, 'runs', runTag, 'steward'))
         child.setName(chatroomStewardGroupName())
         const renamer = asGroupRenamer(p)
         if (renamer !== undefined) {
@@ -683,10 +675,7 @@ export async function afterChatroomStarted(
   if (research) {
     let mode = chatroomState(s).chatroomResearchMode
     if (mode === '') mode = 'auto'
-    let maxRounds = chatroomConfig(e).maxResearchRounds()
-    const override = chatroomState(s).chatroomResearchMaxRounds
-    if (override > 0) maxRounds = override
-    priming = buildChatroomResearchModeratorPriming(topic, started, ledgerDir ?? '', mode, maxRounds, ws, prior)
+    priming = buildChatroomResearchModeratorPriming(topic, started, ledgerDir ?? '', mode, ws, prior)
   }
   const wake: Message = {
     ...emptyMessage(),

@@ -178,6 +178,106 @@ describe('orphan turn pump', () => {
     expect(p.getSent().some(t => t.includes('second report'))).toBe(true)
   })
 
+  it('drops a duplicate tool frame re-projected after the pump exited', async () => {
+    // The foreground turn consumes tool call c1, then completes. The runtime
+    // re-projects c1's tool_use ~40s late (2026-09-04 oc_1fbe11 incident):
+    // the reader must drop the duplicate instead of escalating it to a full
+    // orphan pump — no phantom card, no session lock; the message path stays
+    // free for the next user turn.
+    const agentSession = newControllableSession('s1')
+    agentSession.send = async () => {
+      agentSession.sendCalls.push('sent')
+      agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'pytest', toolID: 'c1', content: '', done: false })
+      agentSession.channel.push({ type: 'result', content: 'turn 1 done', done: true })
+    }
+    const agent = createControllableAgent(agentSession)
+    const { e, p } = newEngine(agent)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    e.receiveMessage(p, msg({ content: 'go', sessionKey }))
+    await waitFor(() => session.lastResult === 'turn 1 done')
+    expect(session.lastResult).toBe('turn 1 done')
+    p.clearSent()
+
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'pytest', toolID: 'c1', content: '', done: false })
+      await new Promise((r) => { setTimeout(r, 100) })
+      expect(infoSpy.mock.calls.some(c => String(c[0]).includes('orphan turn pump started'))).toBe(false)
+
+      // No phantom lock: the next user message takes the message path, not
+      // the pending queue.
+      agentSession.send = async (prompt: string) => {
+        agentSession.sendCalls.push(prompt)
+        agentSession.channel.push({ type: 'result', content: 'turn 2 done', done: true })
+      }
+      e.receiveMessage(p, msg({ content: 'next', sessionKey }))
+      await waitFor(() => session.lastResult === 'turn 2 done')
+      expect(agentSession.sendCalls.some(c => c.includes('next'))).toBe(true)
+      const state = e.interactiveStates.get(sessionKey)
+      expect(state?.pendingMessages.some(m => m.content === 'next')).toBe(false)
+    } finally {
+      infoSpy.mockRestore()
+    }
+  })
+
+  it('opens the pump for a tool frame without a call id', async () => {
+    // Frames that carry no toolID cannot be classified as duplicates; the
+    // reader keeps today's escalation so a genuine engine-woken turn is
+    // never dropped.
+    const agentSession = newControllableSession('s1')
+    agentSession.send = async () => {
+      agentSession.sendCalls.push('sent')
+      agentSession.channel.push({ type: 'result', content: 'turn 1 done', done: true })
+    }
+    const agent = createControllableAgent(agentSession)
+    const { e, p } = newEngine(agent)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    e.receiveMessage(p, msg({ content: 'go', sessionKey }))
+    await waitFor(() => session.lastResult === 'turn 1 done')
+    p.clearSent()
+
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'pytest', content: '', done: false })
+      await waitFor(() => infoSpy.mock.calls.some(c => String(c[0]).includes('orphan turn pump started')))
+      expect(infoSpy.mock.calls.some(c => String(c[0]).includes('orphan turn pump started'))).toBe(true)
+    } finally {
+      infoSpy.mockRestore()
+    }
+  })
+
+  it('drops a duplicate tool result re-projected after the pump exited', async () => {
+    const agentSession = newControllableSession('s1')
+    agentSession.send = async () => {
+      agentSession.sendCalls.push('sent')
+      agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'pytest', toolID: 'c1', content: '', done: false })
+      agentSession.channel.push({ type: 'tool_result', toolID: 'c1', toolResult: 'ok', content: '', done: true })
+      agentSession.channel.push({ type: 'result', content: 'turn 1 done', done: true })
+    }
+    const agent = createControllableAgent(agentSession)
+    const { e, p } = newEngine(agent)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    e.receiveMessage(p, msg({ content: 'go', sessionKey }))
+    await waitFor(() => session.lastResult === 'turn 1 done')
+    p.clearSent()
+
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    try {
+      agentSession.channel.push({ type: 'tool_result', toolID: 'c1', toolResult: 'ok', content: '', done: true })
+      await new Promise((r) => { setTimeout(r, 100) })
+      expect(infoSpy.mock.calls.some(c => String(c[0]).includes('orphan turn pump started'))).toBe(false)
+      // The reader stays armed for genuine wakes after the drop.
+      agentSession.channel.push({ type: 'result', content: 'real report', done: true })
+      await waitFor(() => p.getSent().some(t => t.includes('real report')))
+      expect(p.getSent().some(t => t.includes('real report'))).toBe(true)
+    } finally {
+      infoSpy.mockRestore()
+    }
+  })
+
   it('queues a user message arriving while an orphan pump owns the session', async () => {
     const agentSession = resultSession('s1', 'turn 1 done')
     const agent = createControllableAgent(agentSession)

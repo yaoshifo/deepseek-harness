@@ -34,7 +34,6 @@ describe('chatroom config wiring', () => {
       gatherTimeoutSec: 600,
       endTimeoutSec: 300,
       researchTimeoutSec: 1800,
-      maxResearchRounds: 5,
       defaultResearchMode: 'manual',
       researchWorkspace: '/shared/research',
       researchPythonEnv: false,
@@ -45,15 +44,38 @@ describe('chatroom config wiring', () => {
     expect(chatroomConfig(e).gatherTimeoutDuration()).toBe(600_000)
     expect(chatroomConfig(e).endTimeoutDuration()).toBe(300_000)
     expect(chatroomConfig(e).researchTimeoutDuration()).toBe(1_800_000)
-    expect(chatroomConfig(e).maxResearchRounds()).toBe(5)
     expect(chatroomConfig(e).defaultResearchMode()).toBe('manual')
     expect(chatroomResearchWorkspace(e)).toBe('/shared/research')
   })
 
+  it('defaults the research venv base packages with pandas pinned below 3', () => {
+    const e = configure({})
+    // akshare's own metadata only requires pandas>=2.0.0 with no upper
+    // bound, and pandas 3.x breaks it — the pin is ecosystem fact, not a
+    // machine preference.
+    expect(chatroomConfig(e).researchVenvPackages()).toEqual(['akshare', 'pandas<3', 'numpy', 'requests'])
+    // An unswept engine (the pre-sweep window) reads the same default.
+    expect(chatroomConfig(newEngine()).researchVenvPackages()).toEqual(['akshare', 'pandas<3', 'numpy', 'requests'])
+  })
+
+  it('a configured research venv package list replaces the default', () => {
+    const e = configure({ researchVenvPackages: ['akshare', 'pandas<3', 'scipy'] })
+    expect(chatroomConfig(e).researchVenvPackages()).toEqual(['akshare', 'pandas<3', 'scipy'])
+  })
+
+  it('resolves the research playbook path with ~ expansion; unset opts out', () => {
+    const e = configure({ researchPlaybook: '~/research-playbook.md' })
+    expect(chatroomConfig(e).researchPlaybook().startsWith(homedir())).toBe(true)
+    expect(chatroomConfig(e).researchPlaybook().endsWith('research-playbook.md')).toBe(true)
+    // A project section overrides the shared default; unset reads ''.
+    expect(chatroomConfig(configure({ researchPlaybook: '/p/pb.md' }, { researchPlaybook: '/d/pb.md' })).researchPlaybook()).toBe('/p/pb.md')
+    expect(chatroomConfig(configure({})).researchPlaybook()).toBe('')
+    expect(chatroomConfig(newEngine()).researchPlaybook()).toBe('')
+  })
+
   it('clamps out-of-range research values (Go EffectiveChatroomResearch)', () => {
-    const e = configure({ researchTimeoutSec: 10, maxResearchRounds: 99 })
+    const e = configure({ researchTimeoutSec: 10 })
     expect(chatroomConfig(e).researchTimeoutDuration()).toBe(60_000)
-    expect(chatroomConfig(e).maxResearchRounds()).toBe(20)
   })
 
   it('per-project section overrides the plugin-level default', () => {
@@ -96,7 +118,6 @@ describe('chatroom config wiring', () => {
     // End waits for replies already generating: half the gather default.
     expect(chatroomConfig(e).endTimeoutDuration()).toBe(10 * 60 * 1000)
     expect(chatroomConfig(e).researchTimeoutDuration()).toBe(60 * 60 * 1000)
-    expect(chatroomConfig(e).maxResearchRounds()).toBe(3)
   })
 
   it('an unswept engine reads default-valued config (the pre-sweep window)', () => {

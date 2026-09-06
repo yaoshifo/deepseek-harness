@@ -208,7 +208,12 @@ describe('stall retry over the real dsh runtime', () => {
     const stalls = rt.platform.sent.filter(s => s.includes('retrying') || s.includes('正在重试')).length
     expect(stalls).toBe(3)
     expect(rt.platform.sent.some(s => s.includes('exited unexpectedly') || s.includes('进程意外退出'))).toBe(false)
-    expect(rt.engine.interactiveStates.has('test:ch:user1')).toBe(false)
+    // The terminated notification is sent before the bounded close wait;
+    // state removal trails it asynchronously (the sibling test below awaits
+    // the same condition the same way).
+    await vi.waitFor(() => {
+      expect(rt.engine.interactiveStates.has('test:ch:user1')).toBe(false)
+    }, { timeout: 5_000 })
   })
 
   it('retires the stalled card with a failed render and starts a fresh card for the retried turn', { timeout: 15_000 }, async () => {

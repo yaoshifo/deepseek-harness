@@ -52,7 +52,8 @@ const DESCRIPTION =
   + 'multi-role / round-table discussions made of real independent agents. start: spawn the role groups '
   + '(or list available roles); pass inherit: a past chatroom to continue from (topic substring or '
   + 'ledger dir name, empty = the newest) — the engine seeds a prior-context pointer that stays '
-  + 'unverified until you screen it. ask: address ONE role with a question (serial roundtable). gather: '
+  + 'unverified until you screen it. ask: address ONE role with a question (serial roundtable); '
+  + 'delivery steer reaches a busy role mid-turn for mid-round course correction. gather: '
   + 'broadcast ONE question to ALL roles in parallel; the engine wakes you exactly once with every '
   + 'reply (research: true marks a research round — roles drive full assistants, longer timeout). '
   + 'pick-roles: submit role recommendations as a JSON array; the engine renders a multi-select card '
@@ -145,6 +146,14 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
       role: {
         type: 'string',
         description: 'ask only: target role name (or session key).',
+      },
+      delivery: {
+        type: 'string',
+        enum: ['queue', 'steer'],
+        description: 'ask only: queue (default) injects the question as the role\'s next turn; '
+          + 'steer admits it at a running role\'s nearest step boundary — prefer steer to correct '
+          + 'course mid-round while a role is still generating (allowed during an armed gather; '
+          + 'the reply still counts as that role\'s round answer).',
       },
       roles: {
         type: 'string',
@@ -245,7 +254,16 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
           if (role === '') throw new Error('feishu_bridge_chatroom: ask requires a role (name or session key)')
           const question = (args.message ?? '').trim()
           if (question === '') throw new Error('feishu_bridge_chatroom: ask requires a question (message)')
-          await askRole(engine, sessionKey, role, question)
+          const delivery = args.delivery ?? 'queue'
+          await askRole(engine, sessionKey, role, question, delivery)
+          if (delivery === 'steer') {
+            return {
+              status: 'ok' as const,
+              message: `Question steered into role "${role}": it lands mid-turn at the running role's `
+                + 'nearest step boundary (an idle role starts a new turn); its reply still relays to the '
+                + 'chatroom and wakes you.',
+            }
+          }
           return {
             status: 'ok' as const,
             message: `Asked role "${role}"; its reply will be relayed to the chatroom as 【${role}】 and wake you.`,

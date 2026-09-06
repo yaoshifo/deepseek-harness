@@ -139,7 +139,7 @@ describe('SessionManager', () => {
       sessionNames: Record<string, string>
       userMeta: Record<string, unknown>
     }
-    expect(snap.sessionNames, 'only the surviving session\'s name stays').toEqual({ 'agent-main': 'main name' } as Record<string, string>)
+    expect(snap.sessionNames, 'only the surviving session\'s name stays').toEqual({ 'agent-main': 'main name' })
     expect(snap.userSessions['feishu:chat1'], 'the surviving chat keeps its session list').toEqual([main.id])
     expect(snap.userMeta['feishu:chat1']).toBeDefined()
   })
@@ -730,7 +730,7 @@ describe('Snapshot v2 → v3 migration', () => {
       "agentSessionID": "",
       "chatroomModerator": true,
       "chatroomResearch": true,
-      "chatroomResearchRound": 2,
+      "chatroomResearchMode": "manual",
       "pendingGatherData": {"question": "研究问题", "seq": 3, "expected": ["taleb"], "collected": {"munger": "部分回复"}},
       "createdAt": "2026-01-01T00:00:00Z",
       "updatedAt": "2026-01-01T00:00:00Z"
@@ -756,7 +756,7 @@ describe('Snapshot v2 → v3 migration', () => {
     const section = hub.featureState.chatroom as Record<string, unknown>
     expect(section.chatroomModerator).toBe(true)
     expect(section.chatroomResearch).toBe(true)
-    expect(section.chatroomResearchRound).toBe(2)
+    expect(section.chatroomResearchMode).toBe('manual')
     expect(section.pendingGatherData).toEqual({ question: '研究问题', seq: 3, expected: ['taleb'], collected: { munger: '部分回复' } })
 
     // The one-way rewrite backs the pre-v3 original up once, byte for byte.
@@ -773,7 +773,7 @@ describe('Snapshot v2 → v3 migration', () => {
       chatroom: {
         chatroomModerator: true,
         chatroomResearch: true,
-        chatroomResearchRound: 2,
+        chatroomResearchMode: 'manual',
         pendingGatherData: { question: '研究问题', seq: 3, expected: ['taleb'], collected: { munger: '部分回复' } },
       },
     })

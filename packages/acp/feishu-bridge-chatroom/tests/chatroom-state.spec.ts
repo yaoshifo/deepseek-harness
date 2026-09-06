@@ -45,10 +45,9 @@ describe('chatroom feature-state codec', () => {
     chatroomState(s).researchAwaitingAssistant = true
     chatroomState(s).chatroomModerator = true
     chatroomState(s).chatroomResearchMode = 'manual'
-    chatroomState(s).chatroomResearchRound = 2
-    chatroomState(s).chatroomResearchMaxRounds = 5
     chatroomState(s).chatroomGatherSeq = 7
     chatroomState(s).researchVenv = '/ws/.venv'
+    chatroomState(s).researchRunDir = '/ws/runs/hub-1/munger'
     chatroomState(s).pendingHumanQuestionRole = 'taleb'
     const gather = new ChatroomGather('研究问题', 3)
     gather.expected.add('taleb')
@@ -68,10 +67,9 @@ describe('chatroom feature-state codec', () => {
       researchAwaitingAssistant: true,
       chatroomModerator: true,
       chatroomResearchMode: 'manual',
-      chatroomResearchRound: 2,
-      chatroomResearchMaxRounds: 5,
       chatroomGatherSeq: 7,
       researchVenv: '/ws/.venv',
+      researchRunDir: '/ws/runs/hub-1/munger',
       pendingHumanQuestionRole: 'taleb',
       pendingGatherData: { question: '研究问题', seq: 3, expected: ['taleb'], collected: {} },
       pendingEndBarrierData: { expected: ['taleb'], collected: {} },
@@ -92,8 +90,6 @@ describe('chatroom feature-state codec', () => {
     chatroomState(from).chatroomDirectRole = true
     chatroomState(from).chatroomResearch = true
     chatroomState(from).chatroomResearchMode = 'manual'
-    chatroomState(from).chatroomResearchRound = 2
-    chatroomState(from).chatroomResearchMaxRounds = 5
     chatroomState(from).chatroomGatherSeq = 7
     chatroomState(from).researchAssistantKey = 'test:assistant-1'
     chatroomState(from).researchAssistant = true
@@ -115,8 +111,6 @@ describe('chatroom feature-state codec', () => {
     expect(chatroomState(to).chatroomDirectRole).toBe(true)
     expect(chatroomState(to).chatroomResearch).toBe(true)
     expect(chatroomState(to).chatroomResearchMode).toBe('manual')
-    expect(chatroomState(to).chatroomResearchRound).toBe(2)
-    expect(chatroomState(to).chatroomResearchMaxRounds).toBe(5)
     expect(chatroomState(to).chatroomGatherSeq).toBe(7)
     expect(chatroomState(to).researchAssistantKey).toBe('test:assistant-1')
     expect(chatroomState(to).researchAssistant).toBe(true)

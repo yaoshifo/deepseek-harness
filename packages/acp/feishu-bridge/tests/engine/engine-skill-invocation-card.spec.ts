@@ -30,7 +30,7 @@ function createPreviewPlatform(): PreviewPlatform {
     async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
       bodies.push(previewText(content))
     },
-  }) as PreviewPlatform
+  })
 }
 
 /** Run one interactive turn over the given channel events and return the recorded card bodies. */

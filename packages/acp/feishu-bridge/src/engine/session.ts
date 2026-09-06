@@ -714,8 +714,6 @@ interface SerializedSession {
   researchAwaitingAssistant?: boolean
   chatroomModerator?: boolean
   chatroomResearchMode?: string
-  chatroomResearchRound?: number
-  chatroomResearchMaxRounds?: number
   chatroomGatherSeq?: number
   researchVenv?: string
   pendingHumanQuestionRole?: string
@@ -741,8 +739,6 @@ const legacyChatroomFieldNames = [
   'researchAwaitingAssistant',
   'chatroomModerator',
   'chatroomResearchMode',
-  'chatroomResearchRound',
-  'chatroomResearchMaxRounds',
   'chatroomGatherSeq',
   'researchVenv',
   'pendingHumanQuestionRole',
@@ -893,8 +889,6 @@ interface LegacySessionV1 {
   research_awaiting_assistant?: boolean
   chatroom_moderator?: boolean
   chatroom_research_mode?: string
-  chatroom_research_round?: number
-  chatroom_research_max_rounds?: number
   chatroom_gather_seq?: number
   research_venv?: string
   pending_human_question_role?: string
@@ -938,8 +932,6 @@ function deserializeSessionV1(raw: LegacySessionV1): Session {
     ...(raw.research_awaiting_assistant !== undefined ? { researchAwaitingAssistant: raw.research_awaiting_assistant } : {}),
     ...(raw.chatroom_moderator !== undefined ? { chatroomModerator: raw.chatroom_moderator } : {}),
     ...(raw.chatroom_research_mode !== undefined ? { chatroomResearchMode: raw.chatroom_research_mode } : {}),
-    ...(raw.chatroom_research_round !== undefined ? { chatroomResearchRound: raw.chatroom_research_round } : {}),
-    ...(raw.chatroom_research_max_rounds !== undefined ? { chatroomResearchMaxRounds: raw.chatroom_research_max_rounds } : {}),
     ...(raw.chatroom_gather_seq !== undefined ? { chatroomGatherSeq: raw.chatroom_gather_seq } : {}),
     ...(raw.research_venv !== undefined ? { researchVenv: raw.research_venv } : {}),
     ...(raw.pending_human_question_role !== undefined ? { pendingHumanQuestionRole: raw.pending_human_question_role } : {}),
@@ -1215,6 +1207,23 @@ export class SessionManager {
    */
   allSessions(): Session[] {
     return [...this.sessions.values()]
+  }
+
+  /**
+   * Every chat-keyed active session entry: the current active session per
+   * chat key. Read-side enumeration for level-triggered sweeps that address
+   * interactive state and machine delivery by key (the internal sessions map
+   * is keyed by session id, not by chat key).
+   *
+   * @returns chat-key/session pairs.
+   */
+  activeSessionEntries(): Array<[string, Session]> {
+    const out: Array<[string, Session]> = []
+    for (const [userKey, id] of this.activeSession) {
+      const s = this.sessions.get(id)
+      if (s !== undefined) out.push([userKey, s])
+    }
+    return out
   }
 
   /**

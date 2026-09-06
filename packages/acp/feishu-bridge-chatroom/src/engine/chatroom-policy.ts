@@ -12,7 +12,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Session } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { armResearchManualAskTimeout, maybeAutoRelayRole, recoverChatroomBarriers, routePendingHumanReply } from './chatroom.ts'
+import { armResearchManualAskTimeout, interruptChatroom, maybeAutoRelayRole, recoverChatroomBarriers, routePendingHumanReply } from './chatroom.ts'
 import { chatroomPickActive } from './chatroom-pick.ts'
 import { chatroomLedgerDir } from './chatroom-ledger.ts'
 import { buildChatroomSystemPrompt } from './chatroom-persona.ts'
@@ -33,6 +33,8 @@ import { chatroomConfig } from '../chatroom-config.ts'
  *   product),
  * - the pending ask-human reply routing (consumed replies outrank command
  *   dispatch and permission handling),
+ * - the `/done` takeover of a live chatroom hub (interrupt the room, claim
+ *   the cleaned role groups),
  * - the research-manual whole-ask auto-default timer on parked asks,
  * - the assistant-dispatch marking on subtask dispatches,
  * - the "assistant" child-alias resolution,
@@ -121,6 +123,24 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
       }
       return await next()
     }),
+    ctx.on('feishuBridge/pre-done', (payload, next) => {
+      // A live chatroom must not survive a `/done` as persona flags and armed
+      // barriers over a torn-down subtree: route the whole room through the
+      // interrupt (barriers consumed, flags cleared, ledger 已中断) and claim
+      // the cleaned keys so the bridge's descendant loop skips them. An
+      // ended hub (moderator flag down) falls through to the plain teardown.
+      const hub = payload.engine.sessions.getOrCreateActive(payload.sessionKey)
+      if (!chatroomState(hub).chatroomModerator) {
+        next()
+        return
+      }
+      try {
+        payload.handled.push(...interruptChatroom(payload.engine, payload.sessionKey).cleanedKeys)
+      } catch (error) {
+        console.warn(`chatroom: /done interrupt failed, falling back to plain teardown (${payload.sessionKey}): ${String(error)}`)
+      }
+      next()
+    }),
     ctx.on('feishuBridge/platforms-ready', (payload) => {
       // Barriers restored from disk close here, once platforms can deliver
       // the wakes: every reply they awaited died with the old process.
@@ -170,6 +190,11 @@ function decorateSessionStartOptions(engine: Engine, session: Session, options: 
   // section (the engine fills attended/no-report only; the flag appears
   // only when the session is a research assistant).
   if (options.subtask !== undefined && chatroomState(session).researchAssistant) options.subtask.researchAssistant = true
+  // The per-chatroom run dir rides the same subtask section; '' (no
+  // workspace, or a pre-stamp session recovered from disk) leaves it absent
+  // so the assistant preamble falls back to cwd.
+  const runDir = chatroomState(session).researchRunDir
+  if (options.subtask !== undefined && runDir !== '') options.subtask.researchRunDir = runDir
   const hubKey = chatroomState(session).chatroomHubKey
   if (hubKey !== '') {
     const ledger = chatroomConfig(engine).moderatorDir()
@@ -226,4 +251,11 @@ function decorateSessionStartOptions(engine: Engine, session: Session, options: 
   // plus <venv>/bin prepended to the child PATH).
   const venv = chatroomState(session).researchVenv
   if (venv !== '') options.venv = { virtualEnv: venv }
+  // The persistent research playbook rides the same research-assistant
+  // surface as the venv: configured engine-wide, read/appended by every
+  // assistant and steward session.
+  if (chatroomState(session).researchAssistant) {
+    const playbook = chatroomConfig(engine).researchPlaybook()
+    if (playbook !== '') options.playbook = playbook
+  }
 }

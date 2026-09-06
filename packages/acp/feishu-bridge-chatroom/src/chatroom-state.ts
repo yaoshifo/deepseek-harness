@@ -42,22 +42,26 @@ export interface ChatroomFeatureState {
   chatroomModerator?: boolean
   /** Research iteration driver: 'auto' | 'manual'. */
   chatroomResearchMode?: string
-  /** Current research iteration round, 1-based. */
-  chatroomResearchRound?: number
-  /** Per-invocation override of the auto-mode research round cap. */
-  chatroomResearchMaxRounds?: number
   /** Monotonic per-hub gather-round counter. */
   chatroomGatherSeq?: number
   /** 1-based count of chatrooms started on this hub; run ≥ 2 gets its own ledger dir. */
   chatroomLedgerRun?: number
   /** Shared uv venv path for research assistants. */
   researchVenv?: string
+  /** Per-chatroom run dir a research assistant keeps its scratch files in. */
+  researchRunDir?: string
   /** Hub-side pending role name for a routed human reply. */
   pendingHumanQuestionRole?: string
   /** Durable snapshot of the armed gather barrier (consumed at engine start). */
   pendingGatherData?: GatherBarrierSnapshot | undefined
   /** Durable snapshot of the armed end barrier (consumed at engine start). */
   pendingEndBarrierData?: EndBarrierSnapshot | undefined
+  /** Hub↔steward relation's last organic activity (ms epoch; 0 = never observed). */
+  supervisionActivityAt?: number
+  /** Supervisor wakes already sent for the current stall episode. */
+  supervisionWakeCount?: number
+  /** When the supervisor last woke the moderator or posted a breaker notice (ms epoch). */
+  supervisionLastWakeAt?: number
 }
 
 /**
@@ -119,14 +123,6 @@ export class ChatroomSessionState {
   get chatroomResearchMode(): string { return this.section.chatroomResearchMode ?? '' }
   set chatroomResearchMode(value: string) { this.section.chatroomResearchMode = value }
 
-  /** Current research iteration round, 1-based (0 before the first). */
-  get chatroomResearchRound(): number { return this.section.chatroomResearchRound ?? 0 }
-  set chatroomResearchRound(value: number) { this.section.chatroomResearchRound = value }
-
-  /** Per-invocation auto-mode research round cap (0 for the default). */
-  get chatroomResearchMaxRounds(): number { return this.section.chatroomResearchMaxRounds ?? 0 }
-  set chatroomResearchMaxRounds(value: number) { this.section.chatroomResearchMaxRounds = value }
-
   /** Monotonic per-hub gather-round counter. */
   get chatroomGatherSeq(): number { return this.section.chatroomGatherSeq ?? 0 }
   set chatroomGatherSeq(value: number) { this.section.chatroomGatherSeq = value }
@@ -138,6 +134,10 @@ export class ChatroomSessionState {
   /** Shared uv venv path research assistants reuse. */
   get researchVenv(): string { return this.section.researchVenv ?? '' }
   set researchVenv(value: string) { this.section.researchVenv = value }
+
+  /** Per-chatroom run dir a research assistant keeps its scratch files in ('' = fall back to cwd). */
+  get researchRunDir(): string { return this.section.researchRunDir ?? '' }
+  set researchRunDir(value: string) { this.section.researchRunDir = value }
 
   /** Role has an asked question whose turn is generating; in-memory only. */
   chatroomInFlight = false
@@ -165,6 +165,18 @@ export class ChatroomSessionState {
    */
   get pendingEndBarrierData(): EndBarrierSnapshot | undefined { return this.section.pendingEndBarrierData }
   set pendingEndBarrierData(value: EndBarrierSnapshot | undefined) { this.section.pendingEndBarrierData = value }
+
+  /** Hub↔steward relation's last organic activity (ms epoch; 0 = never observed). */
+  get supervisionActivityAt(): number { return this.section.supervisionActivityAt ?? 0 }
+  set supervisionActivityAt(value: number) { this.section.supervisionActivityAt = value }
+
+  /** Supervisor wakes already sent for the current stall episode. */
+  get supervisionWakeCount(): number { return this.section.supervisionWakeCount ?? 0 }
+  set supervisionWakeCount(value: number) { this.section.supervisionWakeCount = value }
+
+  /** When the supervisor last woke the moderator or posted a breaker notice (ms epoch). */
+  get supervisionLastWakeAt(): number { return this.section.supervisionLastWakeAt ?? 0 }
+  set supervisionLastWakeAt(value: number) { this.section.supervisionLastWakeAt = value }
 }
 
 const liveStates = new WeakMap<Session, ChatroomSessionState>()
@@ -219,14 +231,16 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
       ...(s.researchAwaitingAssistant ? { researchAwaitingAssistant: true } : {}),
       ...(s.chatroomModerator ? { chatroomModerator: true } : {}),
       ...(s.chatroomResearchMode !== '' ? { chatroomResearchMode: s.chatroomResearchMode } : {}),
-      ...(s.chatroomResearchRound !== 0 ? { chatroomResearchRound: s.chatroomResearchRound } : {}),
-      ...(s.chatroomResearchMaxRounds !== 0 ? { chatroomResearchMaxRounds: s.chatroomResearchMaxRounds } : {}),
       ...(s.chatroomGatherSeq !== 0 ? { chatroomGatherSeq: s.chatroomGatherSeq } : {}),
       ...(s.chatroomLedgerRun !== 0 ? { chatroomLedgerRun: s.chatroomLedgerRun } : {}),
       ...(s.researchVenv !== '' ? { researchVenv: s.researchVenv } : {}),
+      ...(s.researchRunDir !== '' ? { researchRunDir: s.researchRunDir } : {}),
       ...(s.pendingHumanQuestionRole !== '' ? { pendingHumanQuestionRole: s.pendingHumanQuestionRole } : {}),
       ...(pendingGatherData !== undefined ? { pendingGatherData } : {}),
       ...(pendingEndBarrierData !== undefined ? { pendingEndBarrierData } : {}),
+      ...(s.supervisionActivityAt !== 0 ? { supervisionActivityAt: s.supervisionActivityAt } : {}),
+      ...(s.supervisionWakeCount !== 0 ? { supervisionWakeCount: s.supervisionWakeCount } : {}),
+      ...(s.supervisionLastWakeAt !== 0 ? { supervisionLastWakeAt: s.supervisionLastWakeAt } : {}),
     }
     return Object.keys(section).length > 0 ? section : undefined
   },
@@ -240,19 +254,22 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
     t.chatroomDirectRole = f.chatroomDirectRole
     t.chatroomResearch = f.chatroomResearch
     t.chatroomResearchMode = f.chatroomResearchMode
-    t.chatroomResearchRound = f.chatroomResearchRound
-    t.chatroomResearchMaxRounds = f.chatroomResearchMaxRounds
     t.chatroomGatherSeq = f.chatroomGatherSeq
     t.chatroomLedgerRun = f.chatroomLedgerRun
     // The chat's provisioned research assistant.
     t.researchAssistantKey = f.researchAssistantKey
     t.researchAssistant = f.researchAssistant
     t.researchVenv = f.researchVenv
-    // Chat-scoped scheduling: in-flight barriers and the pending human
-    // question survive a conversation reset, or a running round silently
-    // degrades and a suspended question stops routing.
+    t.researchRunDir = f.researchRunDir
+    // Chat-scoped scheduling: in-flight barriers, the pending human
+    // question, and the stall supervisor's episode bookkeeping survive a
+    // conversation reset, or a running round silently degrades, a suspended
+    // question stops routing, and a stalled relation loses its wake budget.
     t.pendingGather = f.pendingGather
     t.pendingEndBarrier = f.pendingEndBarrier
     t.pendingHumanQuestionRole = f.pendingHumanQuestionRole
+    t.supervisionActivityAt = f.supervisionActivityAt
+    t.supervisionWakeCount = f.supervisionWakeCount
+    t.supervisionLastWakeAt = f.supervisionLastWakeAt
   },
 }

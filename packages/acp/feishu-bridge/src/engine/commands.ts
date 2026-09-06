@@ -1275,6 +1275,13 @@ export async function cmdDone(e: Engine, p: Platform, msg: Message, args: string
 
   e.addReaction(p, msg.replyCtx, 'Done')
 
+  // Feature plugins owning state under this subtree clean it here (the
+  // chatroom plugin interrupts a live room); keys they push into `handled`
+  // were fully cleaned already and are skipped by the loop below.
+  const pre = { engine: e, sessionKey: msg.sessionKey, handled: [] as string[] }
+  e.bridge.waterfall('feishuBridge/pre-done', pre, () => undefined)
+  const handled = new Set(pre.handled)
+
   // Recursively tear down descendant subtask groups (deepest first), then
   // this chat; git/worktree ops can be slow → run in the background.
   const descendants = e.collectSubtree(msg.sessionKey)
@@ -1285,7 +1292,10 @@ export async function cmdDone(e: Engine, p: Platform, msg: Message, args: string
     // the session tree (de-baggage B4) — drain them alongside the groups.
     await e.drainNativeDescendants([rootKey, ...descendants])
     const dirtyLines: string[] = []
+    let cleaned = 0
     for (const childKey of descendants) {
+      if (handled.has(childKey)) continue
+      cleaned++
       const { name, dirty } = await cleanupOneChat(e, p, childKey, undefined, true)
       if (!dirty) continue
       const url = e.chatJumpURL(p, extractChannelID(childKey))
@@ -1295,8 +1305,8 @@ export async function cmdDone(e: Engine, p: Platform, msg: Message, args: string
     // here shows the interactive Keep/Remove card.
     await cleanupOneChat(e, p, rootKey, rootCtx, false)
 
-    if (descendants.length > 0) {
-      void e.reply(p, rootCtx, e.i18n.tf(Msg.DoneRecursiveSummary, descendants.length))
+    if (cleaned > 0) {
+      void e.reply(p, rootCtx, e.i18n.tf(Msg.DoneRecursiveSummary, cleaned))
     }
     if (dirtyLines.length > 0) {
       void e.reply(p, rootCtx, e.i18n.tf(Msg.DoneDirtyChildren, dirtyLines.join('\n')))

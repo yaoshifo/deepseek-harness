@@ -505,7 +505,7 @@ export function renderChatroomStartPickCard(e: Engine, history: ChatroomHistoryE
 
 /** Render the plain / research-auto / research-manual mode card.
  *
- * @param e - Engine providing i18n strings and the research-round cap.
+ * @param e - Engine providing i18n strings.
  * @param ms - Mode-picker state to render.
  * @returns the mode picker card.
  */
@@ -514,13 +514,12 @@ export function renderChatroomModePickCard(e: Engine, ms: ChatroomModePickState)
   let body = `### ${e.i18n.t(Msg.ChatroomTopicLabel)}\n${ms.topic}\n${ms.roles.join(', ')}`
   if (ms.prior !== undefined) body += `\n${e.i18n.tf(Msg.ChatroomInheritNote, ms.prior.topic)}`
   cb.markdown(body)
-  const max = chatroomConfig(e).maxResearchRounds()
   cb.listItemBtn(
     `**${e.i18n.t(Msg.ChatroomModePlain)}**\n${e.i18n.t(Msg.ChatroomModePlainBlurb)}`,
     e.i18n.t(Msg.ChatroomModePickStart), 'primary', 'act:/chatroom-mode-pick start plain',
   )
   cb.listItemBtn(
-    `**${e.i18n.t(Msg.ChatroomModeResearchAuto)}**\n${e.i18n.tf(Msg.ChatroomModeResearchAutoBlurb, max)}`,
+    `**${e.i18n.t(Msg.ChatroomModeResearchAuto)}**\n${e.i18n.t(Msg.ChatroomModeResearchAutoBlurb)}`,
     e.i18n.t(Msg.ChatroomModePickStart), 'default', 'act:/chatroom-mode-pick start research-auto',
   )
   cb.listItemBtn(
@@ -699,7 +698,7 @@ async function finalizeChatroomModePickStart(
     return
   }
   const rctx = await reconstructReplyCtx(e, p, hubKey)
-  stashChatroomResearchFlags(e, hubKey, mode !== 'plain', mode === 'research-auto' ? 'auto' : 'manual', 0)
+  stashChatroomResearchFlags(e, hubKey, mode !== 'plain', mode === 'research-auto' ? 'auto' : 'manual')
   if (mode !== 'plain') {
     try {
       await ensureResearchPythonEnv(e, chatroomResearchWorkspace(e))

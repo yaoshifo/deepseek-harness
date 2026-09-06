@@ -104,6 +104,8 @@ describe('buildChatroomSystemPrompt', () => {
     for (const want of ['先查再甄别再拉', '三列', 'spot-check', '登记新行', 'DATA_LEDGER', 'data/core/', 'data/<角色名>']) {
       expect(text).toContain(want)
     }
+    // Shared-env installs are uv-first, matching the assistant preamble.
+    expect(text).toContain('uv pip install')
   })
 
   it('carries the memory discipline in the research persona too', async () => {

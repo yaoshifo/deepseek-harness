@@ -176,7 +176,7 @@ export function chatroomResearchRolePrompt(): string {
 
 child 固定写 "assistant"——它指向你的预配助手，服务端解析；不要自己抄写 session key（长 key 容易抄错）。若 send 报 "no pre-provisioned assistant"——预配失败——退回 feishu_bridge_subtask（action: spawn，worktree: off，message: \"<任务>\") 新建一个；spawn 结果会给 session key，后续追问把那个 key 原样复制进 send 的 child。
 
-**助手已预配共享 Python 环境**（uv venv）：所有角色的助手共用同一个 venv，pip install 装的包彼此共享、装一次即可。派装包任务时直接让助手执行 pip install 即可，不必让助手各自新建 venv——环境已就绪。
+**助手已预配共享 Python 环境**（uv venv）：所有角色的助手共用同一个 venv，\`uv pip install\` 装的包彼此共享、装一次即可。派装包任务时直接让助手执行装包即可，不必让助手各自新建 venv——环境已就绪。
 
 **先查再甄别再拉**：派助手下数据前，先让它查共享工作区的 \`DATA_LEDGER.md\` 和 \`data/core/\`——管家已预取公共底数。复用台账已有数据前先看 来源/口径/抓取时间 三列判断适配性（口径不符的数据再新也是错的），对本次结论起支撑的关键数据让助手 spot-check 源头或对独立源，确认适配才用、别重拉；你的专属数据让助手存到 \`data/<角色名>/\` 并登记台账，后面轮次别的角色能复用。发现台账数据可疑或过期，重下到自己的目录并登记新行，别沿用。
 

@@ -38,6 +38,7 @@ import type {
   PendingAskAnswer,
   Platform,
   SessionStartOptions,
+  SubtaskDelivery,
   UserQuestion,
 } from '../core/types.ts'
 import {
@@ -317,7 +318,9 @@ class BoundedStateMap<K, V> extends Map<K, V> {
 
 /** Wrap an assigned satellite map, copying entries into a bounded one. */
 function asBoundedStateMap<K, V>(value: Map<K, V>, onEvict?: (value: V) => void): BoundedStateMap<K, V> {
-  if (value instanceof BoundedStateMap) return value
+  // instanceof narrows to BoundedStateMap<any, any> only; the parameter's
+  // static Map<K, V> guarantees the recovered instance's type arguments.
+  if (value instanceof BoundedStateMap) return value as BoundedStateMap<K, V>
   return new BoundedStateMap(value, onEvict)
 }
 
@@ -427,6 +430,13 @@ export class InteractiveState {
   lastForegroundCompletionAt: number = 0
   /** The unsolicited reader parked on this state; undefined when disarmed. */
   unsolicitedReader: UnsolicitedReaderHandle | undefined
+  /**
+   * Tool call ids consumed by this state's pumps, FIFO-capped: a late
+   * re-projection of an already-consumed call names one of these and is
+   * dropped by the unsolicited reader instead of opening a phantom pump
+   * (2026-09-04 oc_1fbe11 incident). In-memory only; daemon restart clears it.
+   */
+  consumedToolIDs: Set<string> = new Set()
 
   // ── turn surfaces shared with the ask delegate (B2) ──
   // The event loop owns these per turn, but an askUser running from the
@@ -712,6 +722,24 @@ function isSubstantiveUnsolicitedEvent(event: Event): boolean {
       // Deltas, thinking blocks, compaction, and todo snapshots are handled
       // by the turn pumps only (Go handles EventCompaction foreground-only).
       return false
+  }
+}
+
+/** FIFO cap for {@link InteractiveState.consumedToolIDs}. */
+const ConsumedToolIDCap = 64
+
+/**
+ * Record a consumed tool call id so its late re-projection is recognized as a
+ * duplicate by the unsolicited reader.
+ * @param state - State whose pumps consumed the call.
+ * @param toolID - The tool_use frame's call id; empty or absent is ignored.
+ */
+function recordConsumedToolID(state: InteractiveState, toolID: string | undefined): void {
+  if (toolID === undefined || toolID === '') return
+  state.consumedToolIDs.add(toolID)
+  if (state.consumedToolIDs.size > ConsumedToolIDCap) {
+    const oldest = state.consumedToolIDs.keys().next().value
+    if (oldest !== undefined) state.consumedToolIDs.delete(oldest)
   }
 }
 
@@ -2590,6 +2618,14 @@ export class Engine {
         state.lastEventAt = Date.now()
         if (!isSubstantiveUnsolicitedEvent(event)) continue
 
+        // A tool frame naming a call a previous pump already consumed is a
+        // late re-projection, not an engine-woken turn's first event: drop it
+        // rather than escalate — it carries nothing user-visible and must not
+        // open a phantom pump or take the session lock (2026-09-04 oc_1fbe11).
+        if ((event.type === 'tool_use' || event.type === 'tool_result')
+          && event.toolID !== undefined && event.toolID !== ''
+          && state.consumedToolIDs.has(event.toolID)) continue
+
         // Spillover: duplicate frames right after a foreground turn's ✅
         // completion are relayed as plain text — never a second streaming and
         // completion card (Go unsolicitedSpilloverGrace).
@@ -2676,6 +2712,7 @@ export class Engine {
         }
         case 'tool_use': {
           state.activeToolCalls++
+          recordConsumedToolID(state, event.toolID)
           break
         }
         case 'tool_result': {
@@ -3393,6 +3430,7 @@ export class Engine {
             state.toolCount++
             activeToolCalls++
             state.activeToolCalls = activeToolCalls
+            recordConsumedToolID(state, event.toolID)
             if (event.toolBackground === true) {
               // A run_in_background call returns immediately; its completion
               // arrives as a later engine-woken turn. Count it so the reader
@@ -7395,8 +7433,10 @@ export class Engine {
    * @param callerSessionKey - Session key of the parent issuing the follow-up.
    * @param childSessionKey - Session key of the target child group.
    * @param message - Follow-up text for the child.
+   * @param delivery - Native children only: queue as the next turn (default)
+   * or steer into the running child's current turn.
    */
-  async sendToSubtask(callerSessionKey: string, childSessionKey: string, message: string): Promise<void> {
+  async sendToSubtask(callerSessionKey: string, childSessionKey: string, message: string, delivery: SubtaskDelivery = 'queue'): Promise<void> {
     const msg = message.trim()
     if (msg === '') throw new Error('subtask: message is required')
     if (childSessionKey.trim() === '') throw new Error('subtask: child session key is required')
@@ -7431,6 +7471,7 @@ export class Engine {
         liveParent !== '' ? liveParent : nativeEntry.parent_agent_session_id,
         childKey,
         msg,
+        delivery,
       )
       // Re-arm only after the follow-up landed: a failed delivery must not
       // leave an unreported record with no running epoch — the footer and
@@ -7452,6 +7493,12 @@ export class Engine {
     }
     if (child.getParentSessionKey() !== callerSessionKey) {
       throw new Error(this.i18n.t(Msg.SubtaskSendNotChild))
+    }
+    // Steer rides the native subagent runtime only: an attended group child
+    // has no runtime inbox to admit it mid-turn, so fail loudly instead of
+    // silently degrading to queue.
+    if (delivery === 'steer') {
+      throw new Error('subtask: steer delivery is only supported for native subtasks; use queue for attended group children')
     }
     // Backpressure: a queued follow-up's answer would never report back (the
     // in-flight turn's auto-report consumes any re-arm); reject instead.
