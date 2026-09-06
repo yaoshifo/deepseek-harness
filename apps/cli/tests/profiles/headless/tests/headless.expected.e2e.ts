@@ -296,6 +296,12 @@ describe('headless stream-json snapshots', () => {
     const streamExpected = join(retryScenarioDir, 'stream-json.expected.jsonl')
     let runCwd = ''
     const result = await runLoaderSmoke({
+      // One-shot persistence races entry activation under the tsx src mode: the
+      // agent-creating entry can settle before session-persistence-jsonl
+      // mounts, and the v2 createStoredSession then silently skips persistence
+      // (an upstream 0.1.3-alpha.1 regression CI cannot see — CI boots lib).
+      // Pin the product artifact until the loader ordering is fixed upstream.
+      mode: 'lib',
       label: 'provider retry headless stream-json snapshot',
       tempDirPrefix: 'headless-snapshot-provider-retry-',
       binScript,
@@ -559,6 +565,8 @@ describe('headless stream-json snapshots', () => {
   it('runs a keyless Agent Team with peer mail, dependent tasks, waiting, and Lead aggregation', async () => {
     let projection: unknown
     const result = await runLoaderSmoke({
+      // Src-mode entry-activation race; see the provider-retry test note.
+      mode: 'lib',
       label: 'Agent Teams headless snapshot',
       tempDirPrefix: 'headless-snapshot-agent-team-',
       binScript,
@@ -695,6 +703,8 @@ describe('headless stream-json snapshots', () => {
     const streamExpected = join(goalScenarioDir, 'stream-json.expected.jsonl')
     let runCwd = ''
     const result = await runLoaderSmoke({
+      // Src-mode entry-activation race; see the provider-retry test note.
+      mode: 'lib',
       label: 'goal tools headless stream-json snapshot',
       tempDirPrefix: 'headless-snapshot-goal-tools-',
       binScript,
@@ -756,6 +766,8 @@ describe('headless stream-json snapshots', () => {
     const task = 'Start one continuable background subagent and answer from its completion notice. Do not call list_agents, send_message, job_output, or job_list.'
     let runCwd = ''
     const result = await runLoaderSmoke({
+      // Src-mode entry-activation race; see the provider-retry test note.
+      mode: 'lib',
       label: 'continuable settlement headless stream-json snapshot',
       tempDirPrefix: 'headless-snapshot-subagent-settlement-',
       binScript,
