@@ -3,7 +3,11 @@
  * Feishu context-insight cards. No React, no dsh-context imports — every
  * input is one of this module's narrow wire types.
  *
- * Upstream provenance (re-align by hand when dsh-context changes):
+ * Source provenance — bowenliang123/dsh-context, a separate repository the
+ * live profile links directly (`link:…/dsh-context`); it is never a
+ * workspace dependency of this repo and has no deepseek-harness upstream
+ * counterpart, so this copy cannot be replaced by an import. Re-align by
+ * hand when that repo changes:
  * - dsh-context `src/client/headline.ts` `headlineOf`: the anchor chain
  *   (official `contextPressure` projection first, the last request's prompt
  *   estimate second, the heuristic composition total last).

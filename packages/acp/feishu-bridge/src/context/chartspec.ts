@@ -3,7 +3,9 @@
  * (飞书卡片图表组件, VChart-backed). Pure declarative JSON — no JS syntax, no
  * React, no dsh-context imports.
  *
- * Upstream provenance (re-align by hand when dsh-context changes):
+ * Source provenance — bowenliang123/dsh-context, a separate repository the
+ * live profile links directly (`link:…/dsh-context`); never a workspace
+ * dependency of this repo. Re-align by hand when that repo changes:
  * - dsh-context `src/client/categories.ts` `CATS`: the six bucket colors,
  *   copied verbatim so the Feishu cards match the web client's palette.
  * - dsh-context `src/client/i18n.ts` `cat.*` (zh): the six bucket labels,
