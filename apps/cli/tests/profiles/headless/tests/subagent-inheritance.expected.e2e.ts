@@ -31,12 +31,6 @@ const sessionId = SessionId('subagent-inheritance-parent')
 const refreshing = process.env.DSH_SNAPSHOT === 'refresh'
 const task = 'Delegate the write probe to a subagent.'
 
-// The subagent child's warn-once stderr line when no mcp-workspace service is
-// mounted (packages/subagent/subagent/src/child-agent.ts); this composition
-// mounts no mcp-workspace row, so it is the whole expected stderr.
-const subagentMcpWorkspaceWarning = 'subagent child: the mcp-workspace service is not mounted; '
-  + 'directory .mcp.json discovery is inactive for child agents (add the mcp-workspace plugin row to enable it)\n'
-
 /** Compare one current normalized Session with its generation-aware committed fixture. */
 async function expectSession(actual: string, expectedPath: string): Promise<void> {
   const expected = await readFile(expectedPath, 'utf8')
@@ -169,7 +163,7 @@ describe('parent-only override inheritance snapshot', () => {
       },
     })
 
-    expect(result.stderr).toBe(subagentMcpWorkspaceWarning)
+    expect(result.stderr).toBe('')
     const records = result.stdout.trimEnd().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
     expect(records.at(-1)).toMatchObject({
       type: 'result',

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { Context } from '@deepseek-ai/cordis'
 
 /** A context stub whose `get` answers with the given service table. */
-function ctxWith(services: Record<string, unknown>): Context {
-  return { get: (name: string) => services[name] } as unknown as Context
+function ctxWith(services: Record<string, unknown>, logger: { warn: MockInstance }): Context {
+  return { get: (name: string) => services[name], logger } as unknown as Context
 }
 
 /** Fresh module import so the once-per-process warn flag starts unspent. */
@@ -15,31 +15,35 @@ async function freshMountDirectoryMcp(): Promise<
 }
 
 describe('mountDirectoryMcp', () => {
-  let warn: MockInstance<typeof console.warn>
+  let consoleWarn: MockInstance<typeof console.warn>
 
   beforeEach(() => {
-    warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
   })
 
   afterEach(() => {
-    warn.mockRestore()
+    consoleWarn.mockRestore()
     vi.resetModules()
   })
 
-  it('warns exactly once when the mcp-workspace service is absent, then stays silent', async () => {
+  it('warns exactly once through the structured logger when the mcp-workspace service is absent, keeping process stderr clean', async () => {
     const mountDirectoryMcp = await freshMountDirectoryMcp()
-    await mountDirectoryMcp(ctxWith({}))
-    await mountDirectoryMcp(ctxWith({}))
+    const warn = vi.fn()
+    await mountDirectoryMcp(ctxWith({}, { warn }))
+    await mountDirectoryMcp(ctxWith({}, { warn }))
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0]?.[0]).toMatch(/mcp-workspace service is not mounted/)
+    expect(consoleWarn).not.toHaveBeenCalled()
   })
 
   it('mounts through the service and never warns when it is present', async () => {
     const mountDirectoryMcp = await freshMountDirectoryMcp()
     const mount = vi.fn().mockResolvedValue(undefined)
-    const childCtx = ctxWith({ mcpWorkspace: { mount } })
+    const warn = vi.fn()
+    const childCtx = ctxWith({ mcpWorkspace: { mount } }, { warn })
     await mountDirectoryMcp(childCtx)
     expect(mount).toHaveBeenCalledExactlyOnceWith(childCtx)
     expect(warn).not.toHaveBeenCalled()
+    expect(consoleWarn).not.toHaveBeenCalled()
   })
 })
