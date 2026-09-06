@@ -54,6 +54,13 @@ const ledgerSubproblemsFile = 'SUBPROBLEMS.md'
 const ledgerRecordFile = 'RECORD.md'
 const ledgerReportFile = 'REPORT.md'
 
+/** RECORD.md 超过该字节数后，旧内容按行边界轮转进 RECORD-<n>.md 归档。
+ * 轮转阈值是产品常量；若部署出现分化再升 Config 字段。
+ */
+const ledgerRecordRotateBytes = 64 * 1024
+/** 轮转后 RECORD.md（标题 + 指针 + 保留尾部）的字节数上限。 */
+const ledgerRecordKeepBytes = 32 * 1024
+
 /** The header block of one chatroom's SYNTHESIS.md, as the engine writes it.
  * The fields are the engine-written facts only (topic, roles, start, end,
  * prior-context pointer); the discussion body lives below the section marker.
@@ -182,7 +189,11 @@ export function initChatroomLedger(dir: string, topic: string, roles: string[], 
   })
 }
 
-/** Append a role's reply to RECORD.md (append-only).
+/** Append a role's reply to RECORD.md (append-only). Past the rotation
+ * threshold the older entries move to a new RECORD-<n>.md archive and
+ * RECORD.md keeps its heading, an archive pointer, and the newest entries
+ * that fit the keep budget — every role reads the full file each turn, so
+ * an unbounded record scales token cost with the square of the turns.
  *
  * @param dir - Ledger directory.
  * @param roleName - Role credited with the reply.
@@ -192,8 +203,59 @@ export function appendChatroomLedger(dir: string, roleName: string, reply: strin
   return serialize(() => {
     const time = nowClock().slice(11)
     const entry = `- [${time}] 【${roleName}】：${reply.trim()}\n`
-    appendFileSync(join(dir, ledgerRecordFile), entry, 'utf8')
+    const recordPath = join(dir, ledgerRecordFile)
+    appendFileSync(recordPath, entry, 'utf8')
+    rotateChatroomRecord(dir, recordPath)
   })
+}
+
+/** Next free RECORD-<n>.md sequence number in dir: the highest existing
+ * number plus one, 1 when no archive exists yet.
+ *
+ * @param dir - Ledger directory to scan for archives.
+ * @returns the next archive sequence number.
+ */
+function nextChatroomRecordArchiveIndex(dir: string): number {
+  let max = 0
+  for (const name of readdirSync(dir)) {
+    const m = /^RECORD-(\d+)\.md$/.exec(name)
+    if (m !== null) max = Math.max(max, Number(m[1]))
+  }
+  return max + 1
+}
+
+/** Rotate RECORD.md in place when it exceeds the threshold: split the
+ * content at a line boundary into a head (written, under an archive
+ * heading, to a new RECORD-<n>.md) and a tail that together with the
+ * heading and pointer lines stays within the keep budget.
+ *
+ * @param dir - Ledger directory holding RECORD.md.
+ * @param recordPath - Absolute RECORD.md path, already appended to.
+ */
+function rotateChatroomRecord(dir: string, recordPath: string): void {
+  if (statSync(recordPath).size <= ledgerRecordRotateBytes) return
+  const encoder = new TextEncoder()
+  const lines = readFileSync(recordPath, 'utf8').split('\n')
+  // Grow the kept tail from the last line upwards; the rewritten heading
+  // and pointer bytes count against the budget so the whole file stays
+  // within the keep size.
+  const prefix = '## 讨论记录\n（更早记录见 RECORD-*.md 归档）\n'
+  let keepBytes = encoder.encode(prefix).length
+  let tailStart = lines.length
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const withLine = keepBytes + encoder.encode(lines[i]).length + 1
+    if (withLine > ledgerRecordKeepBytes) break
+    keepBytes = withLine
+    tailStart = i
+  }
+  const head = lines.slice(0, tailStart).join('\n')
+  const tail = lines.slice(tailStart).join('\n')
+  const n = nextChatroomRecordArchiveIndex(dir)
+  const archive = `# 讨论记录归档 ${n}（更早轮次，自 RECORD.md 轮转）\n${head}${head.endsWith('\n') ? '' : '\n'}`
+  // Archive before record: a crash between the two writes duplicates the
+  // head into the next archive; the reverse order would lose it.
+  atomicWriteFileSync(join(dir, `RECORD-${n}.md`), encoder.encode(archive), 0o644)
+  atomicWriteFileSync(recordPath, encoder.encode(prefix + tail), 0o644)
 }
 
 /**
