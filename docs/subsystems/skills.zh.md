@@ -269,7 +269,7 @@ Source: [`packages/api/session-controller/src/skill-catalog.ts`](../../packages/
 
 ### `ctx.skills` — `SkillRegistry`
 
-Layered registry of skill providers, the host+per-scope shape the tools registry established. A registration files into the layer of its calling context's scope (scopeOf): host rows and repository plugins land in the global layer, while a plugin mounted by an agent preset's standing composition lands in that preset's layer. A read merges the global layer with the viewing scope's chain — the nearest layer's entry wins a duplicate name outright, and the rank order decides duplicates only within one layer. It exposes sorted invocation-neutral summaries and loads full skill bodies on demand.
+Layered registry of skill providers, the host+per-scope shape the tools registry established. A registration files into the layer of its calling context's scope (scopeOf): host rows and repository plugins land in the global layer, while a plugin mounted by an agent preset's standing composition lands in that preset's layer. A read merges the global layer with the viewing scope's chain — the nearest layer's entry wins a duplicate name outright, and the rank order decides duplicates only within one layer. Scope-layer restrictions (SkillRegistry.restrict) intersect over the inherited names of every nested view. It exposes sorted invocation-neutral summaries and loads full skill bodies on demand.
 
 ```ts cordis-catalog
 /**
@@ -295,6 +295,18 @@ registerProvider(create: (control: SkillProviderControl) => SkillProvider): () =
  * @returns the exact Cordis effect disposer, preserving composite teardown order and invalidating caches.
  */
 register(skill: SkillRegistration): () => void
+
+/**
+ * Register a per-scope restriction over inherited skills, from the calling
+ * context's layer. Restrictions from every layer on a viewing scope's chain
+ * intersect; the exact scope's own registrations are unaffected. Names are
+ * validated against the skill-name grammar only — availability is
+ * cwd-dependent, so a name matching no live skill under some workdir is
+ * inert there.
+ * @param filter - `allow` keeps only the listed inherited names, `deny` removes the listed ones; at least one is required.
+ * @returns the exact Cordis effect disposer that unregisters the restriction.
+ */
+restrict(filter: SkillRestriction): () => void
 
 /**
  * List invocation-neutral skill summaries for a workspace. Consumers apply

@@ -502,6 +502,26 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'durable normalized attachment references in the same order after every member succeeds.',
       },
       {
+        signature: 'async admitPromptContent( content: readonly AttachmentAdmissionPart[], ): Promise<AdmittedPromptContentPart[]>',
+        description: 'Admit one Host prompt and replace each uploaded image with its durable reference. Text and durable file references pass through unchanged. A prompt without image parts performs no storage operation.',
+        parameters: [{ name: 'content', description: 'prompt parts in message order after file receipt resolution.' }],
+        returns: 'admitted prompt parts in the same order as `content`.',
+        throws: ['AttachmentError when the image batch is refused.'],
+      },
+      {
+        signature: 'admitEncodedFile(input: EncodedFileAttachment): Promise<FileAttachmentRef>',
+        description: 'Decode and durably commit one canonical base64 file upload.',
+        parameters: [{ name: 'input', description: 'canonical base64 bytes and optional display name.' }],
+        returns: 'the durable content-addressed file reference.',
+        throws: ['AttachmentError when the encoding or storage operation is refused.'],
+      },
+      {
+        signature: 'isAttachmentError(error: unknown): error is AttachmentError',
+        description: 'Identify a failure emitted by this attachment capability by its stable code.',
+        parameters: [{ name: 'error', description: 'value caught from an attachment operation.' }],
+        returns: 'whether the value is an attachment failure.',
+      },
+      {
         signature: 'abstract saveImage(input: SaveImageAttachment): Promise<ImageAttachmentRef>',
         description: 'Validate and durably commit one image before its owning session event is appended. The returned reference describes the persisted normalized image. When normalization reduces the raster, its `originalDimensions` records the orientation-applied input dimensions.',
         parameters: [{ name: 'input', description: 'encoded bytes, declared media type, and optional display name.' }],
@@ -518,6 +538,31 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: 'imageHostPath(ref: ImageAttachmentRef): string | undefined',
         description: 'Locate the provider-owned normalized object in the harness host filesystem.',
         parameters: [{ name: 'ref', description: 'durable normalized attachment reference.' }],
+        returns: 'an absolute host path, or undefined when this backend is not host-file-backed.',
+        throws: ['an AttachmentError when the durable reference is invalid.'],
+      },
+      {
+        signature: 'saveFile(input: SaveFileAttachment): Promise<FileAttachmentRef>',
+        description: 'Durably commit one file byte-for-byte before its owning session event is appended. Files carry no admission limits: any byte content and length is accepted, and the stored object is the exact submitted bytes. Backends without verbatim file storage keep this default rejection.',
+        parameters: [{ name: 'input', description: 'exact bytes and optional display name.' }],
+        returns: 'the durable content-addressed file reference.',
+      },
+      {
+        signature: 'saveFileStream(input: SaveFileStreamAttachment): Promise<FileAttachmentRef>',
+        description: 'Durably commit one file byte-for-byte from bounded chunks. Providers must apply backpressure and must not collect the complete file in memory. Backends without streamed verbatim storage keep this default rejection.',
+        parameters: [{ name: 'input', description: 'ordered exact bytes, optional cancellation, and display name.' }],
+        returns: 'the durable content-addressed file reference.',
+      },
+      {
+        signature: 'async *readFileStream( ref: FileAttachmentRef, signal?: AbortSignal, ): AsyncIterable<Uint8Array>',
+        description: 'Read and verify one verbatim stored file as bounded chunks. Providers must not collect the complete file in memory. Backends without verbatim file reads keep this default rejection.',
+        parameters: [{ name: 'ref', description: 'durable reference from the session log.' }, { name: 'signal', description: 'optional cancellation for backend reads and verification work.' }],
+        returns: 'exact file bytes in order; integrity failures reject the iteration.',
+      },
+      {
+        signature: 'fileHostPath(ref: FileAttachmentRef): string | undefined',
+        description: 'Locate the verbatim stored file object in the harness host filesystem.',
+        parameters: [{ name: 'ref', description: 'durable file reference.' }],
         returns: 'an absolute host path, or undefined when this backend is not host-file-backed.',
         throws: ['an AttachmentError when the durable reference is invalid.'],
       },
@@ -645,6 +690,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the exact effect disposer that unregisters this definition.',
       },
       {
+        signature: 'registerFileReceiptResolver(resolver: CommandFileReceiptResolver): () => void',
+        description: 'Register the sole authority that resolves staged file receipts for command submissions.',
+        parameters: [{ name: 'resolver', description: 'Session-aware receipt resolver.' }],
+        returns: 'disposer that removes this exact resolver.',
+      },
+      {
         signature: '@Remote list(agent: Agent): readonly CommandDescriptor[]',
         description: 'List the effective immutable command descriptors for one agent.',
         parameters: [{ name: 'agent', description: 'exact receiving agent and scoped-layer key.' }],
@@ -657,9 +708,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the scoped shadow or global definition.',
       },
       {
-        signature: '@Remote async execute( agent: Agent, line: string, images: readonly EncodedImageAttachment[], signal: AbortSignal, ): Promise<CommandExecution | undefined>',
-        description: 'Parse and execute a known command without sending it to the model.\n\nA resolved command\'s lifecycle is logged: `command/run` is appended before the handler is invoked and `command/done` after settlement (a thrown or aborted handler settles as `kind: \'error\'`). Both are direct log-only appends — no turn wraps them, and persistence drains them at ordinary checkpoints. Admission misses (syntax or unknown name) log nothing — they never entered a handler. A `command/run` append failure fails the execution loud; a `command/done` append failure on the handler-failure path is contained so the handler\'s own error stays the reported failure.\n\nImage admission is enforced here, not in the composer: images sent to a command that does not declare `input.images`, an absent attachment store, and an exceeded attachment limit each settle as an error result before the handler runs, and a rejected batch publishes no durable object.',
-        parameters: [{ name: 'agent', description: 'exact receiving agent.' }, { name: 'line', description: 'complete slash-command line.' }, { name: 'images', description: 'base64-encoded composer images accompanying the line, in submission order; empty for a plain invocation.' }, { name: 'signal', description: 'cancellation signal owned by the UI request.' }],
+        signature: '@Remote async execute( agent: Agent, line: string, submittedAttachments: readonly CommandSubmitAttachment[], signal: AbortSignal, ): Promise<CommandExecution | undefined>',
+        description: 'Parse and execute a known command without sending it to the model.\n\nA resolved command\'s lifecycle is logged: `command/run` is appended before the handler is invoked and `command/done` after settlement (a thrown or aborted handler settles as `kind: \'error\'`). Both are direct log-only appends — no turn wraps them, and persistence drains them at ordinary checkpoints. Admission misses (syntax or unknown name) log nothing — they never entered a handler. A `command/run` append failure fails the execution loud; a `command/done` append failure on the handler-failure path is contained so the handler\'s own error stays the reported failure.\n\nAttachment admission is enforced here, not in the composer: attachments sent to a command that does not declare `input.attachments`, an absent attachment store, and an exceeded image limit each settle as an error result before the handler runs. Validation rejection starts no attachment writes; a storage failure can leave only unreachable content-addressed objects for deferred collection.',
+        parameters: [{ name: 'agent', description: 'exact receiving agent.' }, { name: 'line', description: 'complete slash-command line.' }, { name: 'submittedAttachments', description: 'encoded images and staged file receipts accompanying the line, in submission order; empty for a plain invocation.' }, { name: 'signal', description: 'cancellation signal owned by the UI request.' }],
         returns: 'the settled execution (result + lifecycle pairing id), or `undefined` when syntax or name does not resolve.',
       },
     ],
@@ -874,6 +925,18 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'The hidden names in registration order.',
       },
       {
+        signature: 'denySkills(engine: Engine, names: readonly string[]): () => void',
+        description: 'Register skill names hidden from every session of one engine\'s project.\n\nA sibling plugin calls this for a project it is disabled on (the chatroom plugin hides `feishu-bridge-chatroom-moderator` on projects configured `enabled: false`), so the skill stops appearing in that project\'s session catalogs and loading through the `skill` tool — including sessions whose workdir falls under another project\'s enabled workdir (spawn workspace overrides), where the provider\'s cwd scoping alone would still show it.',
+        parameters: [{ name: 'engine', description: 'The engine whose project sessions the mask applies to.' }, { name: 'names', description: 'Skill names to hide; names matching nothing under a session\'s workdir are inert there.' }],
+        returns: 'Disposer removing the names again; idempotent.',
+      },
+      {
+        signature: 'deniedSkillsOf(engine: Engine): readonly string[]',
+        description: 'The skill names currently registered as hidden for one engine\'s project.',
+        parameters: [{ name: 'engine', description: 'The engine whose mask set is addressed.' }],
+        returns: 'The hidden names in registration order.',
+      },
+      {
         signature: 'whenReady(): Promise<void>',
         description: 'Resolve once every live project is registered. The bridge\'s apply calls FeishuBridgeService.markReady after its project-assembly loop, so a sibling plugin awaiting this deterministically sees the full project list (its per-project wiring then targets every engine). Idempotent: callers after readiness resolve immediately.',
         parameters: [],
@@ -931,6 +994,48 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'List file and directory candidates for one agent\'s working directory.',
         parameters: [{ name: 'agent', description: 'target agent whose session cwd bounds discovery.' }, { name: 'query', description: 'path text following `@` or `@"`.' }, { name: 'signal', description: 'caller cancellation.' }],
         returns: 'deterministic path-only candidates.',
+      },
+    ],
+  },
+  {
+    key: 'fileUploads',
+    summary: 'Host service owning upload storage and Agent-scoped staged receipts.',
+    description: 'Host service owning upload storage and Agent-scoped staged receipts.',
+    methods: [
+      {
+        signature: 'registerAgentResolver(resolve: AgentResolver): () => void',
+        description: 'Register the ordinary-Session resolver used when a raw upload addresses a cold Session.',
+        parameters: [{ name: 'resolve', description: 'resolver that returns the exact live Agent or throws a Remote error.' }],
+        returns: 'disposer removing this resolver.',
+      },
+      {
+        signature: '@Remote(\'upload\') upload(agent: Agent, request: EncodedFileUploadRequest, signal: AbortSignal): Promise<FileUploadValue>',
+        description: 'Persist one encoded upload and stage it under the Agent receiver selected by Typert.',
+        parameters: [{ name: 'agent', description: 'receiving Agent resolved from the Remote Agent scope.' }, { name: 'request', description: 'canonical base64 bytes and optional display name.' }, { name: 'signal', description: 'caller cancellation before storage begins.' }],
+        returns: 'the staged receipt and durable file reference.',
+      },
+      {
+        signature: 'async uploadStream(request: { readonly sessionId: SessionId readonly data: AsyncIterable<Uint8Array> readonly signal?: AbortSignal readonly name?: string }): Promise<FileUploadValue>',
+        description: 'Persist raw chunks for one Session without aggregating the upload.',
+        parameters: [{ name: 'request', description: 'Session identity, ordered bytes, cancellation, and optional display name.' }],
+        returns: 'the staged receipt and durable file reference.',
+      },
+      {
+        signature: 'resolve(agent: Agent, receiptId: FileUploadReceiptId): FileAttachmentRef | undefined',
+        description: 'Resolve one staged receipt inside its receiving Agent scope.',
+        parameters: [{ name: 'agent', description: 'receiving Agent.' }, { name: 'receiptId', description: 'opaque receipt minted for one completed upload.' }],
+        returns: 'durable file reference, or `undefined` for an unknown or foreign receipt.',
+      },
+      {
+        signature: 'bindPrompt( agent: Agent, receiptIds: readonly FileUploadReceiptId[], requestId: string, ): PromptFileBinding',
+        description: 'Bind receipts while one prompt enters an Agent inbox. Disposal restores every prior binding unless the caller commits successful delivery.',
+        parameters: [{ name: 'agent', description: 'receiving Agent.' }, { name: 'receiptIds', description: 'distinct staged receipts referenced by the prompt.' }, { name: 'requestId', description: 'prompt identity later observed in queue or history.' }],
+        returns: 'binding kept after commit until queue or history observation retires its receipts.',
+      },
+      {
+        signature: 'retirePrompt(agent: Agent, requestId: string): void',
+        description: 'Retire every receipt accepted by one removed queue occurrence.',
+        parameters: [{ name: 'agent', description: 'receiving Agent.' }, { name: 'requestId', description: 'prompt identity carried by the queue occurrence.' }],
       },
     ],
   },
@@ -1237,6 +1342,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Resolve provider-side request-image pricing for one exact route, or `undefined` when the provider is unregistered or declares none. Unknown providers degrade to `undefined` rather than throwing because callers price durable history whose route may no longer be mounted.',
         parameters: [{ name: 'provider', description: 'provider route named by a request header.' }, { name: 'model', description: 'exact model id named by the same header.' }],
         returns: 'the owning adapter\'s image pricing for the route, when declared.',
+      },
+      {
+        signature: 'fileRequestText(ref: FileAttachmentRef): string',
+        description: 'Resolve the exact text one durable file occurrence contributes to every provider request in the current execution environment.',
+        parameters: [{ name: 'ref', description: 'durable verbatim file reference from model history.' }],
+        returns: 'the same deterministic handle text used at adapter dispatch.',
       },
       {
         signature: 'async listModels(provider: string): Promise<LlmModelInfo[]>',
@@ -1550,7 +1661,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         signature: '@Remote({ mode: \'stream\' }) follow(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame>',
         description: 'Follow one Session log from its opening or resume cursor.',
         parameters: [{ name: 'request', description: 'durable address and last committed sequence already held by the caller.' }, { name: 'signal', description: 'cancellation owned by the Remote stream carrier.' }],
-        returns: 'a complete opening snapshot followed by gap-free event frames.',
+        returns: 'a complete opening snapshot followed by gap-free durable event frames and optional cursorless assistant-stream frames.',
       },
       {
         signature: '@Remote({ mode: \'stream\' }) control(signal: AbortSignal): AsyncIterable<SessionControlFrame>',
@@ -1623,6 +1734,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'The zero-I/O listing read: whole values viewed straight from the stored rows (version-matching keys only), each cut carried with its watermark so a client value store can seed under its higher-seq-wins rule — as stale as the last durable checkpoint but never wrong, and never from an unrelated log (the caller\'s header is the identity witness). Fresher paths (the history tail baseline) supersede these values whenever a session is actually opened.',
         parameters: [{ name: 'meta', description: 'the listed session\'s header (identity witness; no log read).' }, { name: 'inheritedEventCount', description: 'exact inherited prefix length that completes the checkpoint identity.' }, { name: 'keys', description: 'optional projection keys required by the caller\'s audience.' }],
         returns: 'the cut (`asOfSeq` = lowest served-row watermark), or `undefined` when no usable row exists for this lifecycle.',
+      },
+      {
+        signature: 'cachedPredecessorTitle( meta: SessionHeader, inheritedEventCount: SessionLogOffset, ): ProjectionSnapshot | undefined',
+        description: 'Read only a predecessor checkpoint\'s title as a zero-I/O listing hint.\n\nThe authoritative Session header supplies the lifecycle identity. A cache checkpoint can lag that log but cannot lead it because writes flush the log first, so a matching predecessor title is a genuine (possibly stale) fact from this Session. The registry still requires the current title projection\'s row version and schema. No other predecessor projection is exposed: format normalization can change their current meaning, and the strict cachedSnapshot / hydration paths continue to reject them.',
+        parameters: [{ name: 'meta', description: 'authoritative listed Session header.' }, { name: 'inheritedEventCount', description: 'exact inherited cut completing the lifecycle identity.' }],
+        returns: 'a title-only checkpoint view with `asOfSeq: -1`, or `undefined` when the record is current, newer, unrelated, missing, or incompatible with the title unit. The sentinel avoids reusing a sequence that a cardinality-changing Session migration may have remapped.',
       },
       {
         signature: 'hydratePrepared( session: Session, events: readonly SessionEvent[], ): ProjectionSnapshot',
@@ -2146,7 +2263,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
   {
     key: 'skills',
     summary: 'Layered registry of skill providers, the host+per-scope shape the tools registry established.',
-    description: 'Layered registry of skill providers, the host+per-scope shape the tools registry established. A registration files into the layer of its calling context\'s scope (scopeOf): host rows and repository plugins land in the global layer, while a plugin mounted by an agent preset\'s standing composition lands in that preset\'s layer. A read merges the global layer with the viewing scope\'s chain — the nearest layer\'s entry wins a duplicate name outright, and the rank order decides duplicates only within one layer. It exposes sorted invocation-neutral summaries and loads full skill bodies on demand.',
+    description: 'Layered registry of skill providers, the host+per-scope shape the tools registry established. A registration files into the layer of its calling context\'s scope (scopeOf): host rows and repository plugins land in the global layer, while a plugin mounted by an agent preset\'s standing composition lands in that preset\'s layer. A read merges the global layer with the viewing scope\'s chain — the nearest layer\'s entry wins a duplicate name outright, and the rank order decides duplicates only within one layer. Scope-layer restrictions (SkillRegistry.restrict) intersect over the inherited names of every nested view. It exposes sorted invocation-neutral summaries and loads full skill bodies on demand.',
     methods: [
       {
         signature: 'registerProvider(create: (control: SkillProviderControl) => SkillProvider): () => void',
@@ -2159,6 +2276,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Register a borrowed readonly runtime skill into the calling context\'s layer. Project entries outrank runtime entries, which outrank user entries, within one layer. Same-name runtime entries in one layer are first-wins; a duplicate logs a warning and receives a no-op disposer so it cannot remove the winner.',
         parameters: [{ name: 'skill', description: 'the skill definition input; omitted invocation and provider fields receive defaults.' }],
         returns: 'the exact Cordis effect disposer, preserving composite teardown order and invalidating caches.',
+      },
+      {
+        signature: 'restrict(filter: SkillRestriction): () => void',
+        description: 'Register a per-scope restriction over inherited skills, from the calling context\'s layer. Restrictions from every layer on a viewing scope\'s chain intersect; the exact scope\'s own registrations are unaffected. Names are validated against the skill-name grammar only — availability is cwd-dependent, so a name matching no live skill under some workdir is inert there.',
+        parameters: [{ name: 'filter', description: '`allow` keeps only the listed inherited names, `deny` removes the listed ones; at least one is required.' }],
+        returns: 'the exact Cordis effect disposer that unregisters the restriction.',
       },
       {
         signature: 'async list(options: SkillViewOptions = {}): Promise<SkillSummary[]>',
@@ -2914,8 +3037,8 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     methods: [
       {
         signature: 'async create(path: string, title?: string): Promise<Workspace>',
-        description: 'Create or reuse a workspace for an existing directory. The path is canonicalized through `fs.realpath`; a nonexistent path rejects with the original error and a non-directory rejects. Repeated calls for the same canonical path return the existing entity without changing its title. A newly created workspace is prepended to the durable registry order. Different canonical paths may share a display title.',
-        parameters: [{ name: 'path', description: 'Existing directory to own, in any path spelling.' }, { name: 'title', description: 'Display title used only when a new record is created.' }],
+        description: 'Create or reuse a workspace for an existing directory. The fully qualified path is canonicalized through `fs.realpath`; a relative, nonexistent, or non-directory path rejects. Repeated calls for the same canonical path return the existing entity without changing its title. A newly created workspace is prepended to the durable registry order. Different canonical paths may share a display title.',
+        parameters: [{ name: 'path', description: 'Existing directory to own, in a fully qualified path spelling.' }, { name: 'title', description: 'Display title used only when a new record is created.' }],
         returns: 'the existing or newly durable workspace.',
       },
       {
@@ -2951,7 +3074,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'async resolveByPath(path: string): Promise<Workspace | undefined>',
         description: 'Resolve by canonical directory path without creating or mutating a workspace. A missing path rejects during `realpath`; an existing unowned directory returns `undefined`.',
-        parameters: [{ name: 'path', description: 'Existing directory path in any spelling.' }],
+        parameters: [{ name: 'path', description: 'Existing directory path in a fully qualified spelling.' }],
         returns: 'the workspace owning the canonical path, when one exists.',
       },
     ],
@@ -2975,6 +3098,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'One session committed a different agent preset to its durable log.',
     description: 'One session committed a different agent preset to its durable log. Consumers invalidate only state derived from that session\'s composition.',
     parameters: [{ name: 'sessionId', description: 'the session whose composition changed.' }, { name: 'agentPreset', description: 'the preset recorded by the committed selection.' }],
+  },
+  {
+    name: 'agent/assistant-stream',
+    mode: 'emit',
+    signature: '\'agent/assistant-stream\'(this: Scoped<Agent>, payload: { agent: Agent; frame: AssistantStreamFrame }): void',
+    summary: 'Process-local assistant-stream publication.',
+    description: 'Process-local assistant-stream publication. Chunk frames are transient; the loop appends one final v2 `assistant/message` or `assistant/attempt` with the same stream before a committed end frame.',
+    parameters: [{ name: 'payload', description: '.frame - one ordered start, chunk, or end publication. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.' }],
   },
   {
     name: 'agent/created',
@@ -3271,6 +3402,14 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Every platform of an engine finished starting.',
     description: 'Every platform of an engine finished starting. Listeners recover cross-restart state that needs live platforms (a listener closes armed gather/end barriers from the persisted snapshot).',
     parameters: [{ name: 'payload', description: '.engine - The engine whose platforms are live.' }],
+  },
+  {
+    name: 'feishuBridge/pre-done',
+    mode: 'waterfall',
+    signature: '\'feishuBridge/pre-done\'(payload: { engine: Engine; sessionKey: string; handled: string[] }, next: () => void): void',
+    summary: 'A `/done` teardown is about to run on this chat\'s subtree.',
+    description: 'A `/done` teardown is about to run on this chat\'s subtree. Feature plugins owning state under it clean that state here (the chatroom plugin interrupts a live room, consuming its barriers and persona flags); every descendant session key a listener pushes into `payload.handled` was fully cleaned by the listener and is skipped by the bridge\'s own descendant loop (the root chat is always the bridge\'s to clean).',
+    parameters: [{ name: 'payload', description: '.handled - Mutable accumulator for fully-cleaned descendant keys.' }],
   },
   {
     name: 'feishuBridge/rename-exemption',
@@ -3609,6 +3748,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AdapterRegistrationHandle {\n    (): void;\n    replace(providers: string[]): void;\n}',
   },
   {
+    name: 'AdmittedPromptContentPart',
+    declaration: 'export type AdmittedPromptContentPart = {\n    readonly type: \'text\';\n    readonly text: string;\n} | {\n    readonly type: \'image\';\n    readonly attachment: ImageAttachmentRef;\n} | {\n    readonly type: \'file\';\n    readonly attachment: FileAttachmentRef;\n};',
+  },
+  {
     name: 'AgentCancelCause',
     declaration: 'export type AgentCancelCause = {\n    readonly kind: \'user\';\n} | {\n    readonly kind: \'parent\';\n} | {\n    readonly kind: \'hook\';\n    readonly reason: string;\n} | {\n    readonly kind: \'disposed\';\n};',
   },
@@ -3647,6 +3790,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'AgentPresetRow',
     declaration: 'export interface AgentPresetRow {\n    readonly id: string;\n    readonly trust: PresetTrust;\n    readonly isDefault: boolean;\n    readonly name?: string;\n    readonly description?: string;\n    readonly broken?: string;\n}',
+  },
+  {
+    name: 'AgentResolver',
+    declaration: 'export type AgentResolver = (sessionId: SessionId) => Promise<Agent>;',
   },
   {
     name: 'AgentSession',
@@ -3765,8 +3912,28 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface AssistantProvenance {\n    provider: string;\n    model: string;\n    replayState?: unknown;\n}',
   },
   {
+    name: 'AssistantStreamFrame',
+    declaration: 'export type AssistantStreamFrame = {\n    readonly type: \'start\';\n    readonly attemptId: LlmAttemptId;\n    readonly revision: number;\n    readonly turn: number;\n    readonly step: number;\n} | {\n    readonly type: \'chunk\';\n    readonly attemptId: LlmAttemptId;\n    readonly revision: number;\n    readonly index: number;\n    readonly time: number;\n    readonly chunk: StreamChunk;\n} | {\n    readonly type: \'end\';\n    readonly attemptId: LlmAttemptId;\n    readonly revision: number;\n    readonly index: number;\n    readonly outcome: {\n        readonly kind: \'committed\';\n        readonly eventType: \'assistant/message\' | \'assistant/attempt\';\n        readonly seq: SessionSeq;\n    } | {\n        readonly kind: \'abandoned\';\n    };\n};',
+  },
+  {
+    name: 'AssistantStreamRecord',
+    declaration: 'export type AssistantStreamRecord = {\n    readonly type: \'text-chunks\';\n    readonly time0: number;\n    readonly index: number;\n    readonly dt: readonly number[];\n    readonly texts: readonly string[];\n} | {\n    readonly type: \'reasoning-chunks\';\n    readonly time0: number;\n    readonly index: number;\n    readonly dt: readonly number[];\n    readonly texts: readonly string[];\n} | {\n    readonly type: \'tool-call-chunks\';\n    readonly time0: number;\n    readonly index: number;\n    readonly dt: readonly number[];\n    readonly id: ToolCallId;\n    readonly name?: string;\n    readonly args: readonly string[];\n} | {\n    readonly type: \'chunk\';\n    readonly time: number;\n    readonly chunk: StreamChunk;\n};',
+  },
+  {
     name: 'AsyncSender',
     declaration: 'export class AsyncSender {\n    constructor(name: string);\n    enqueue(fn: () => void | Promise<void>): void;\n    enqueueCoalescable(fn: () => void | Promise<void>): boolean;\n    enqueueTerminal(fn: () => void | Promise<void>): void;\n    enqueueOrInline(fn: () => void | Promise<void>): void;\n    barrier(): Promise<void>;\n    close(): void;\n}',
+  },
+  {
+    name: 'AttachmentAdmissionPart',
+    declaration: 'export type AttachmentAdmissionPart = PromptContentPart | {\n    readonly type: \'file\';\n    readonly attachment: FileAttachmentRef;\n};',
+  },
+  {
+    name: 'AttachmentError',
+    declaration: 'export class AttachmentError extends Error {\n    readonly code: AttachmentErrorCode;\n    constructor(message: string, code: AttachmentErrorCode, options?: ErrorOptions);\n}',
+  },
+  {
+    name: 'AttachmentErrorCode',
+    declaration: 'export type AttachmentErrorCode = typeof ATTACHMENT_ERROR_CODES[number];',
   },
   {
     name: 'AttachmentId',
@@ -3909,14 +4076,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface CardSelectOption {\n    text: string;\n    value: string;\n}',
   },
   {
-    name: 'ChunkRow',
-    declaration: 'export type ChunkRow = {\n    type: \'text-chunks\';\n    seq0: SessionSeqType;\n    time0: number;\n    data: TextRunData;\n} | {\n    type: \'reasoning-chunks\';\n    seq0: SessionSeqType;\n    time0: number;\n    data: TextRunData;\n} | {\n    type: \'tool-call-chunks\';\n    seq0: SessionSeqType;\n    time0: number;\n    data: ToolCallRunData;\n};',
-  },
-  {
-    name: 'ChunkRowEvent',
-    declaration: 'export type ChunkRowEvent = {\n    [Kind in ChunkRow[\'type\']]: {\n        readonly type: `chunkrow/${Kind}`;\n        readonly seq: number;\n        readonly time: number;\n        readonly data: Extract<ChunkRow, {\n            readonly type: Kind;\n        }>[\'data\'];\n    };\n}[ChunkRow[\'type\']];',
-  },
-  {
     name: 'ClientArtifactBaseline',
     declaration: 'export interface ClientArtifactBaseline {\n    readonly path: string;\n    readonly mtimeMs: number;\n    readonly size: number;\n}',
   },
@@ -3965,20 +4124,28 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface CommandExecution {\n    readonly commandId: CommandId;\n    readonly result: CommandResult;\n}',
   },
   {
+    name: 'CommandFileReceiptResolver',
+    declaration: 'export type CommandFileReceiptResolver = (agent: Agent, receiptId: string) => FileAttachmentRef | undefined;',
+  },
+  {
     name: 'CommandId',
     declaration: 'export type CommandId = Branded<\'CommandId\'>;',
   },
   {
     name: 'CommandInputDescriptor',
-    declaration: 'export interface CommandInputDescriptor {\n    readonly hint: string;\n    readonly images?: boolean;\n}',
+    declaration: 'export interface CommandInputDescriptor {\n    readonly hint: string;\n    readonly attachments?: boolean;\n}',
   },
   {
     name: 'CommandInvocation',
-    declaration: 'export interface CommandInvocation {\n    readonly commandId: CommandId;\n    readonly agent: Agent;\n    readonly rawInput: string;\n    readonly attachments: readonly ImageBlock[];\n    readonly signal: AbortSignal;\n}',
+    declaration: 'export interface CommandInvocation {\n    readonly commandId: CommandId;\n    readonly agent: Agent;\n    readonly rawInput: string;\n    readonly attachments: readonly (ImageBlock | FileBlock)[];\n    readonly signal: AbortSignal;\n}',
   },
   {
     name: 'CommandResult',
     declaration: 'export type CommandResult = {\n    readonly kind: \'success\';\n    readonly text?: string;\n    readonly sourceEventSeq?: SessionSeq;\n} | {\n    readonly kind: \'error\';\n    readonly text: string;\n};',
+  },
+  {
+    name: 'CommandSubmitAttachment',
+    declaration: 'export type CommandSubmitAttachment = ({\n    readonly type: \'image\';\n} & EncodedImageAttachment) | {\n    readonly type: \'file\';\n    readonly receiptId: string;\n};',
   },
   {
     name: 'CompactionAgentContext',
@@ -4014,7 +4181,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'ContentBlockMap',
-    declaration: 'export interface ContentBlockMap {\n    \'text\': TextBlock;\n    \'reasoning\': ReasoningBlock;\n    \'image\': ImageBlock;\n    \'tool-call\': ToolCallBlock;\n    \'tool-result\': ToolResultBlock;\n}',
+    declaration: 'export interface ContentBlockMap {\n    \'text\': TextBlock;\n    \'reasoning\': ReasoningBlock;\n    \'image\': ImageBlock;\n    \'file\': FileBlock;\n    \'tool-call\': ToolCallBlock;\n    \'tool-result\': ToolResultBlock;\n}',
   },
   {
     name: 'ContentBlockType',
@@ -4286,7 +4453,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DshAgentAdapter',
-    declaration: 'export class DshAgentAdapter {\n    setAskDelegate(d: AskDelegate): void;\n    setBridgeEvents(bridge: BridgeDispatch): void;\n    setDeniedTools(source: () => readonly string[]): void;\n    constructor(ctx: DshContextLike, cfg: DshAdapterConfig);\n    async handleUserQuestion(request: UserQuestionsAskRequest): Promise<UserQuestionsAskResult | undefined>;\n    name(): string;\n    activeRoute(sessionKey?: string): ProviderRoute | undefined;\n    getModel(sessionKey?: string): string;\n    getReasoningEffort(sessionKey?: string): string;\n    setWorkDir(dir: string): void;\n    getWorkDir(): string;\n    setSessionMode(mode: string): void;\n    setDefaultMode(mode: string): void;\n    async prepareForkSession(origID: string, _parentWorkDir: string, _childWorkDir: string): Promise<void>;\n    async prepareForkAtSession(origID: string, childWorkDir: string, quotedText: string, quotedSenderType: string, quotedTimeMs: number): Promise<string>;\n    forgetForkAtSeed(forkID: string): void;\n    engineKeyForAgentID(nativeID: string): string | undefined;\n    async startContinuableChild(request: ContinuableChildStart): Promise<{\n        childId: string;\n        label: string;\n    }>;\n    async followupChild(parentAgentSessionID: string, childId: string, message: string): Promise<void>;\n    interruptChild(parentAgentSessionID: string, childId: string): void;\n    async reportChildToNativeParent(childId: string, content: string): Promise<void>;\n    childLive(childId: string): boolean;\n    childCwd(childId /* …truncated — full shape in source */',
+    declaration: 'export class DshAgentAdapter {\n    setAskDelegate(d: AskDelegate): void;\n    setBridgeEvents(bridge: BridgeDispatch): void;\n    setDeniedTools(source: () => readonly string[]): void;\n    setDeniedSkills(source: () => readonly string[]): void;\n    constructor(ctx: DshContextLike, cfg: DshAdapterConfig);\n    async handleUserQuestion(request: UserQuestionsAskRequest): Promise<UserQuestionsAskResult | undefined>;\n    name(): string;\n    activeRoute(sessionKey?: string): ProviderRoute | undefined;\n    getModel(sessionKey?: string): string;\n    getReasoningEffort(sessionKey?: string): string;\n    setWorkDir(dir: string): void;\n    getWorkDir(): string;\n    setSessionMode(mode: string): void;\n    setDefaultMode(mode: string): void;\n    async prepareForkSession(origID: string, _parentWorkDir: string, _childWorkDir: string): Promise<void>;\n    async prepareForkAtSession(origID: string, childWorkDir: string, quotedText: string, quotedSenderType: string, quotedTimeMs: number): Promise<string>;\n    forgetForkAtSeed(forkID: string): void;\n    engineKeyForAgentID(nativeID: string): string | undefined;\n    async startContinuableChild(request: ContinuableChildStart): Promise<{\n        childId: string;\n        label: string;\n    }>;\n    async followupChild(parentAgentSessionID: string, childId: string, message: string, delivery: SubtaskDelivery = \'queue\'): Promise<void>;\n    interruptChild(parentAgentSessionID: string, childId: string): void;\n    async reportChildToNativeParent(childId: strin /* …truncated — full shape in source */',
   },
   {
     name: 'DshAgentHandleLike',
@@ -4294,7 +4461,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DshAgentLike',
-    declaration: 'export interface DshAgentLike {\n    readonly id: unknown;\n    readonly status: \'idle\' | \'running\';\n    readonly session: {\n        readonly events: readonly SessionEvent[];\n        readonly header?: {\n            readonly parentSession?: unknown;\n            readonly cwd?: unknown;\n            readonly origin?: unknown;\n        };\n    };\n    followup(message: unknown): void;\n    steer(message: unknown): void;\n    cancel(cause: {\n        kind: string;\n    }, options?: {\n        keepInbox?: boolean;\n    }): void;\n}',
+    declaration: 'export interface DshAgentLike {\n    readonly id: unknown;\n    readonly status: \'idle\' | \'running\';\n    readonly session: {\n        snapshotEvents(): readonly SessionEvent[];\n        readonly header?: {\n            readonly parentSession?: unknown;\n            readonly cwd?: unknown;\n            readonly origin?: unknown;\n        };\n    };\n    followup(message: unknown): void;\n    steer(message: unknown): void;\n    cancel(cause: {\n        kind: string;\n    }, options?: {\n        keepInbox?: boolean;\n    }): void;\n}',
   },
   {
     name: 'DshAgentsRegistryLike',
@@ -4337,6 +4504,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface EditGoalRequest {\n    readonly objective?: string;\n    readonly maxGoalRounds?: number;\n}',
   },
   {
+    name: 'EncodedFileAttachment',
+    declaration: 'export interface EncodedFileAttachment {\n    data: string;\n    name?: string;\n}',
+  },
+  {
+    name: 'EncodedFileUploadRequest',
+    declaration: 'export interface EncodedFileUploadRequest {\n    readonly data: string;\n    readonly name?: string;\n}',
+  },
+  {
     name: 'EncodedImageAttachment',
     declaration: 'export interface EncodedImageAttachment {\n    mediaType: ImageMediaType;\n    data: string;\n    name?: string;\n}',
   },
@@ -4377,6 +4552,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface FileAttachment {\n    mimeType: string;\n    data: Uint8Array;\n    fileName: string;\n}',
   },
   {
+    name: 'FileAttachmentRef',
+    declaration: 'export interface FileAttachmentRef {\n    attachmentId: AttachmentId;\n    name: string;\n    bytes: number;\n}',
+  },
+  {
+    name: 'FileBlock',
+    declaration: 'export interface FileBlock {\n    type: \'file\';\n    attachment: FileAttachmentRef;\n}',
+  },
+  {
     name: 'FileDiff',
     declaration: 'export interface FileDiff {\n    path: string;\n    oldText: string | null;\n    newText: string;\n}',
   },
@@ -4387,6 +4570,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'FileReferenceCandidate',
     declaration: 'export interface FileReferenceCandidate {\n    path: string;\n    kind: \'file\' | \'directory\';\n}',
+  },
+  {
+    name: 'FileUploadReceiptId',
+    declaration: 'export type FileUploadReceiptId = Branded<\'file-upload-receipt-id\'>;',
+  },
+  {
+    name: 'FileUploadValue',
+    declaration: 'export interface FileUploadValue {\n    readonly receiptId: FileUploadReceiptId;\n    readonly file: FileAttachmentRef;\n}',
   },
   {
     name: 'FinishReason',
@@ -4669,6 +4860,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export abstract class LlmAdapter {\n    providerInfo(provider: string): LlmProviderInfo;\n    providerRetryPolicy(_provider: string): ResolvedRetryPolicy | undefined;\n    imageRequestPricing(_provider: string, _model: string): LlmImageRequestPricing | undefined;\n    listModels(_provider: string): Promise<readonly LlmModelInfo[]>;\n    resolveModel(provider: string, model: string, _signal?: AbortSignal): Promise<LlmResolvedModelInfo>;\n    async prepareCall(provider: string, model: string, signal?: AbortSignal): Promise<PreparedAdapterCall>;\n    abstract stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
   },
   {
+    name: 'LlmAttemptId',
+    declaration: 'export type LlmAttemptId = Branded<\'LlmAttemptId\'>;',
+  },
+  {
     name: 'LlmCallConfig',
     declaration: 'export interface LlmCallConfig {\n    provider: string;\n    model: string;\n    reasoningEffort?: ReasoningEffortId;\n    temperature?: number;\n    maxTokens?: number;\n    stop?: string[];\n}',
   },
@@ -4726,7 +4921,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'LlmRuntime',
-    declaration: 'export class LlmRuntime extends TypertRemoteService {\n    constructor(ctx: Context);\n    registerAdapter(providers: string[], adapter: LlmAdapter): AdapterRegistrationHandle;\n    @Remote\n    listProviders(): LlmProviderInfo[];\n    registerConfigurableProviders(entries: readonly LlmConfigurableProvider[]): DirectoryRegistrationHandle;\n    @Remote\n    listConfigurableProviders(): LlmConfigurableProvider[];\n    registerModelDiscovery(settingsNs: string, discover: (request: LlmModelDiscoveryRequest, signal?: AbortSignal) => Promise<readonly LlmDiscoveredModel[]>): () => void;\n    async discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal?: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    @Remote(\'discoverModels\')\n    async remoteDiscoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    providerRetryPolicy(provider: string): ResolvedRetryPolicy;\n    imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined;\n    async listModels(provider: string): Promise<LlmModelInfo[]>;\n    async resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>;\n    async resolveCallConfig(config: LlmCallConfig, signal?: AbortSignal): Promise<LlmCallConfig>;\n    async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall>;\n    stream(options: GenerateOptions): AsyncIterable<StreamChunk>;\n}',
+    declaration: 'export class LlmRuntime extends TypertRemoteService {\n    constructor(ctx: Context);\n    registerAdapter(providers: string[], adapter: LlmAdapter): AdapterRegistrationHandle;\n    @Remote\n    listProviders(): LlmProviderInfo[];\n    registerConfigurableProviders(entries: readonly LlmConfigurableProvider[]): DirectoryRegistrationHandle;\n    @Remote\n    listConfigurableProviders(): LlmConfigurableProvider[];\n    registerModelDiscovery(settingsNs: string, discover: (request: LlmModelDiscoveryRequest, signal?: AbortSignal) => Promise<readonly LlmDiscoveredModel[]>): () => void;\n    async discoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal?: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    @Remote(\'discoverModels\')\n    async remoteDiscoverModels(settingsNs: string, request: LlmModelDiscoveryRequest, signal: AbortSignal): Promise<LlmDiscoveredModel[]>;\n    providerRetryPolicy(provider: string): ResolvedRetryPolicy;\n    imageRequestPricing(provider: string, model: string): LlmImageRequestPricing | undefined;\n    fileRequestText(ref: FileAttachmentRef): string;\n    async listModels(provider: string): Promise<LlmModelInfo[]>;\n    async resolveModelInfo(provider: string, model: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo>;\n    async resolveCallConfig(config: LlmCallConfig, signal?: AbortSignal): Promise<LlmCallConfig>;\n    async prepareCall(config: LlmCallConfig, signal?: AbortSignal): Promise<PreparedLlmCall>;\n    stream(options: GenerateOptions) /* …truncated — full shape in source */',
   },
   {
     name: 'LspHover',
@@ -5081,6 +5276,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type PromptContextOrderName = keyof typeof CONTEXT_ORDERS;',
   },
   {
+    name: 'PromptFileBinding',
+    declaration: 'export interface PromptFileBinding extends Disposable {\n    commit(): void;\n}',
+  },
+  {
     name: 'PromptSection',
     declaration: 'export interface PromptSection {\n    readonly name: string;\n    readonly order: number;\n    readonly text: string | ((context: AssembleContext) => string);\n    readonly complete?: boolean;\n}',
   },
@@ -5241,6 +5440,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export interface SandboxPolicyRequest {\n    session?: Session;\n    mode?: SandboxMode;\n}',
   },
   {
+    name: 'SaveFileAttachment',
+    declaration: 'export interface SaveFileAttachment {\n    data: Uint8Array;\n    name?: string;\n}',
+  },
+  {
+    name: 'SaveFileStreamAttachment',
+    declaration: 'export interface SaveFileStreamAttachment {\n    data: AsyncIterable<Uint8Array>;\n    signal?: AbortSignal;\n    name?: string;\n}',
+  },
+  {
     name: 'SaveImageAttachment',
     declaration: 'export interface SaveImageAttachment {\n    data: Uint8Array;\n    mediaType: ImageMediaType;\n    name?: string;\n}',
   },
@@ -5301,6 +5508,18 @@ export const TYPE_API: readonly TypeApiEntry[] = [
     declaration: 'export type SessionAddress = {\n    readonly kind: \'session\';\n    readonly sessionId: SessionId;\n} | {\n    readonly kind: \'subagent\';\n    readonly parentSessionId: SessionId;\n    readonly childSessionId: SessionId;\n    readonly mode: \'one-shot\' | \'continuable\';\n};',
   },
   {
+    name: 'SessionAssistantStreamAttempt',
+    declaration: 'export interface SessionAssistantStreamAttempt {\n    readonly attemptId: LlmAttemptId;\n    readonly startedAfterSeq: SessionSeqCursor;\n    readonly turn: number;\n    readonly step: number;\n    readonly nextIndex: number;\n    readonly stream: readonly JsonValue[];\n}',
+  },
+  {
+    name: 'SessionAssistantStreamBaseline',
+    declaration: 'export interface SessionAssistantStreamBaseline {\n    readonly revision: number;\n    readonly activeAttempt?: SessionAssistantStreamAttempt;\n}',
+  },
+  {
+    name: 'SessionAssistantStreamFrame',
+    declaration: 'export type SessionAssistantStreamFrame = {\n    readonly type: \'start\';\n    readonly attemptId: LlmAttemptId;\n    readonly revision: number;\n    readonly startedAfterSeq: SessionSeqCursor;\n    readonly turn: number;\n    readonly step: number;\n} | {\n    readonly type: \'chunk\';\n    readonly attemptId: LlmAttemptId;\n    readonly revision: number;\n    readonly index: number;\n    readonly time: number;\n    readonly chunk: JsonValue;\n} | {\n    readonly type: \'end\';\n    readonly attemptId: LlmAttemptId;\n    readonly revision: number;\n    readonly index: number;\n    readonly outcome: {\n        readonly kind: \'committed\';\n        readonly eventType: \'assistant/message\' | \'assistant/attempt\';\n        readonly seq: number;\n    } | {\n        readonly kind: \'abandoned\';\n    };\n};',
+  },
+  {
     name: 'SessionAttachmentRequest',
     declaration: 'export interface SessionAttachmentRequest {\n    readonly sessionId: SessionId;\n    readonly attachmentId: AttachmentIdType;\n}',
   },
@@ -5319,10 +5538,6 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SessionCancelValue',
     declaration: 'export interface SessionCancelValue {\n    readonly accepted: true;\n}',
-  },
-  {
-    name: 'SessionChunkRun',
-    declaration: 'export interface SessionChunkRun {\n    readonly type: \'chunks\';\n    readonly event: ChunkRowEvent;\n}',
   },
   {
     name: 'SessionControlBaseline',
@@ -5350,7 +5565,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionEventMap',
-    declaration: 'export interface SessionEventMap {\n    \'turn/start\': {\n        turn: number;\n    };\n    \'turn/end\': {\n        turn: number;\n        reason: TurnEndReason;\n    };\n    \'step/start\': {\n        turn: number;\n        step: number;\n    };\n    \'step/end\': {\n        turn: number;\n        step: number;\n    };\n    \'user/message\': UserMessage;\n    \'assistant/chunk\': {\n        turn: number;\n        step: number;\n        chunk: StreamChunk;\n    };\n    \'assistant/message\': {\n        turn: number;\n        step: number;\n        message: AssistantMessage;\n        usage?: TokenUsage;\n        interrupted?: true;\n    };\n    \'tool/call\': {\n        turn: number;\n        step: number;\n        callId: ToolCallId;\n        name: string;\n        arguments: string;\n    };\n    \'tool/result\': {\n        turn: number;\n        step: number;\n        message: ToolResultMessage;\n        error?: {\n            name: string;\n            code: string;\n        };\n        meta?: JsonValue;\n    };\n    \'request/header\': {\n        header: EpochHeader;\n        reason: RequestHeaderReason;\n        startsSeries?: true;\n    };\n    \'request/context\': RequestContext;\n    \'session/end-seed\': Record<string, never>;\n}',
+    declaration: 'export interface SessionEventMap {\n    \'turn/start\': {\n        turn: number;\n    };\n    \'turn/end\': {\n        turn: number;\n        reason: TurnEndReason;\n    };\n    \'step/start\': {\n        turn: number;\n        step: number;\n    };\n    \'step/end\': {\n        turn: number;\n        step: number;\n    };\n    \'user/message\': UserMessage;\n    \'assistant/message\': {\n        turn: number;\n        step: number;\n        message: AssistantMessage;\n        stream: AssistantStreamRecord[];\n        usage?: TokenUsage;\n        interrupted?: true;\n    };\n    \'assistant/attempt\': {\n        turn: number;\n        step: number;\n        stream: AssistantStreamRecord[];\n    };\n    \'tool/call\': {\n        turn: number;\n        step: number;\n        callId: ToolCallId;\n        name: string;\n        arguments: string;\n    };\n    \'tool/result\': {\n        turn: number;\n        step: number;\n        message: ToolResultMessage;\n        error?: {\n            name: string;\n            code: string;\n        };\n        meta?: JsonValue;\n    };\n    \'request/header\': {\n        header: EpochHeader;\n        reason: RequestHeaderReason;\n        startsSeries?: true;\n    };\n    \'request/context\': RequestContext;\n    \'session/end-seed\': {\n        inherited?: true;\n    };\n}',
   },
   {
     name: 'SessionEventMetadataFilter',
@@ -5410,11 +5625,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionFollowFrame',
-    declaration: 'export type SessionFollowFrame = {\n    readonly type: \'snapshot\';\n    readonly header: SessionWireHeader;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly projections: SessionProjectionBaseline;\n} | SessionEventEntry;',
+    declaration: 'export type SessionFollowFrame = {\n    readonly type: \'snapshot\';\n    readonly header: SessionWireHeader;\n    readonly cursor: number;\n    readonly records: readonly SessionHistoryRecord[];\n    readonly hasMore: boolean;\n    readonly projections: SessionProjectionBaseline;\n    readonly assistantStream?: SessionAssistantStreamBaseline;\n} | SessionEventEntry | {\n    readonly type: \'assistant-stream\';\n    readonly frame: SessionAssistantStreamFrame;\n};',
   },
   {
     name: 'SessionFollowRequest',
-    declaration: 'export interface SessionFollowRequest {\n    readonly address: SessionAddress;\n    readonly maxMessages?: number;\n}',
+    declaration: 'export interface SessionFollowRequest {\n    readonly address: SessionAddress;\n    readonly maxMessages?: number;\n    readonly assistantStream?: true;\n}',
   },
   {
     name: 'SessionForkRequest',
@@ -5446,11 +5661,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionHeader',
-    declaration: 'export interface SessionHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly isSeeded: boolean;\n    readonly origin?: SessionOrigin;\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
+    declaration: 'export interface SessionHeader {\n    readonly version: typeof SESSION_FORMAT_VERSION;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly isSeeded: boolean;\n    readonly origin?: SessionOrigin;\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
   },
   {
     name: 'SessionHistoryRecord',
-    declaration: 'export type SessionHistoryRecord = SessionEventEntry | SessionChunkRun;',
+    declaration: 'export type SessionHistoryRecord = SessionEventEntry;',
   },
   {
     name: 'SessionId',
@@ -5490,7 +5705,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionManager',
-    declaration: 'export class SessionManager {\n    constructor(storePath: string);\n    storePath(): string;\n    setCleanupDays(days: number): void;\n    getOrCreateActive(userKey: string): Session;\n    newSession(userKey: string, name: string): Session;\n    newSideSession(userKey: string, name: string): Session;\n    switchSession(userKey: string, target: string): Session;\n    switchToAgentSession(userKey: string, agentSID: string, agentName: string, summary: string): Session;\n    listSessions(userKey: string): Session[];\n    activeSessionID(userKey: string): string;\n    findActive(userKey: string): Session | undefined;\n    setSessionName(agentSessionID: string, name: string): void;\n    getSessionName(agentSessionID: string): string;\n    updateUserMeta(sessionKey: string, userName: string, chatName: string): void;\n    getUserMeta(sessionKey: string): UserMeta | undefined;\n    allSessions(): Session[];\n    findByAgentSessionID(agentSID: string): Session | undefined;\n    sessionKeyMap(): {\n        idToKey: Record<string, string>;\n        activeIDs: Record<string, true>;\n    };\n    findByID(id: string): Session | undefined;\n    deleteByID(id: string): boolean;\n    deleteByAgentSessionID(agentSessionID: string): number;\n    save(): void;\n    invalidateForAgent(agentType: string): void;\n}',
+    declaration: 'export class SessionManager {\n    constructor(storePath: string);\n    storePath(): string;\n    setCleanupDays(days: number): void;\n    getOrCreateActive(userKey: string): Session;\n    newSession(userKey: string, name: string): Session;\n    newSideSession(userKey: string, name: string): Session;\n    switchSession(userKey: string, target: string): Session;\n    switchToAgentSession(userKey: string, agentSID: string, agentName: string, summary: string): Session;\n    listSessions(userKey: string): Session[];\n    activeSessionID(userKey: string): string;\n    findActive(userKey: string): Session | undefined;\n    setSessionName(agentSessionID: string, name: string): void;\n    getSessionName(agentSessionID: string): string;\n    updateUserMeta(sessionKey: string, userName: string, chatName: string): void;\n    getUserMeta(sessionKey: string): UserMeta | undefined;\n    allSessions(): Session[];\n    activeSessionEntries(): Array<[\n        string,\n        Session\n    ]>;\n    findByAgentSessionID(agentSID: string): Session | undefined;\n    sessionKeyMap(): {\n        idToKey: Record<string, string>;\n        activeIDs: Record<string, true>;\n    };\n    findByID(id: string): Session | undefined;\n    deleteByID(id: string): boolean;\n    deleteByAgentSessionID(agentSessionID: string): number;\n    save(): void;\n    invalidateForAgent(agentType: string): void;\n}',
   },
   {
     name: 'SessionObservation',
@@ -5662,7 +5877,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionStartOptions',
-    declaration: 'export interface SessionStartOptions {\n    sessionKey: string;\n    interactiveSlotKey?: string;\n    subtask?: {\n        attended: boolean;\n        noReport: boolean;\n        researchAssistant?: boolean;\n    };\n    persona?: {\n        prompt: string;\n        bypassPermissions: boolean;\n        forceMode: string | undefined;\n    };\n    workDir?: string;\n    spawnMode?: string;\n    feishuWorkspace?: FeishuWorkspaceInfo;\n    venv?: {\n        virtualEnv: string;\n    };\n}',
+    declaration: 'export interface SessionStartOptions {\n    sessionKey: string;\n    interactiveSlotKey?: string;\n    subtask?: {\n        attended: boolean;\n        noReport: boolean;\n        researchAssistant?: boolean;\n        researchRunDir?: string;\n    };\n    persona?: {\n        prompt: string;\n        bypassPermissions: boolean;\n        forceMode: string | undefined;\n    };\n    workDir?: string;\n    spawnMode?: string;\n    feishuWorkspace?: FeishuWorkspaceInfo;\n    venv?: {\n        virtualEnv: string;\n    };\n    playbook?: string;\n}',
   },
   {
     name: 'SessionStartSource',
@@ -5750,7 +5965,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionWireHeader',
-    declaration: 'export interface SessionWireHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly seedLength?: number;\n    readonly origin?: \'subagent\';\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
+    declaration: 'export interface SessionWireHeader {\n    readonly version: number;\n    readonly id: SessionId;\n    readonly createdAt: number;\n    readonly cwd?: string;\n    readonly parentSession?: SessionId;\n    readonly isSeeded: boolean;\n    readonly origin?: SessionOrigin;\n    readonly delegationDepth?: number;\n    readonly agentPreset?: string;\n}',
   },
   {
     name: 'SessionWireSurfaceOp',
@@ -5887,6 +6102,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SkillResourceBase',
     declaration: 'export type SkillResourceBase = {\n    readonly kind: \'directory\';\n    readonly path: string;\n} | {\n    readonly kind: \'url\';\n    readonly url: string;\n} | {\n    readonly kind: \'opaque\';\n    readonly description: string;\n};',
+  },
+  {
+    name: 'SkillRestriction',
+    declaration: 'export interface SkillRestriction {\n    readonly allow?: readonly string[];\n    readonly deny?: readonly string[];\n}',
   },
   {
     name: 'SkillSource',
@@ -6103,6 +6322,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'SubprocessTerminalSpawnSpec',
     declaration: 'export interface SubprocessTerminalSpawnSpec {\n    argv: readonly string[];\n    cwd: string;\n    env?: Record<string, string> | undefined;\n    rows: number;\n    cols: number;\n    graceMs: number;\n    signal?: AbortSignal | undefined;\n}',
+  },
+  {
+    name: 'SubtaskDelivery',
+    declaration: 'export type SubtaskDelivery = \'queue\' | \'steer\';',
   },
   {
     name: 'SubtaskRoute',

@@ -44,6 +44,30 @@ denyTools(engine: Engine, names: readonly string[]): () => void
 deniedToolsOf(engine: Engine): readonly string[]
 
 /**
+ * Register skill names hidden from every session of one engine's project.
+ *
+ * A sibling plugin calls this for a project it is disabled on (the chatroom
+ * plugin hides `feishu-bridge-chatroom-moderator` on projects configured
+ * `enabled: false`), so the skill stops appearing in that project's session
+ * catalogs and loading through the `skill` tool — including sessions whose
+ * workdir falls under another project's enabled workdir (spawn workspace
+ * overrides), where the provider's cwd scoping alone would still show it.
+ *
+ * @param engine - The engine whose project sessions the mask applies to.
+ * @param names - Skill names to hide; names matching nothing under a
+ *   session's workdir are inert there.
+ * @returns Disposer removing the names again; idempotent.
+ */
+denySkills(engine: Engine, names: readonly string[]): () => void
+
+/**
+ * The skill names currently registered as hidden for one engine's project.
+ * @param engine - The engine whose mask set is addressed.
+ * @returns The hidden names in registration order.
+ */
+deniedSkillsOf(engine: Engine): readonly string[]
+
+/**
  * Resolve once every live project is registered. The bridge's apply calls
  * {@link FeishuBridgeService.markReady} after its project-assembly loop, so
  * a sibling plugin awaiting this deterministically sees the full project
@@ -294,6 +318,31 @@ Every platform of an engine finished starting. Listeners recover cross-restart s
  * @mode emit
  */
 'feishuBridge/platforms-ready'(payload: { engine: Engine }): void
+```
+
+Source: [`packages/acp/feishu-bridge/src/bridge-service.ts`](../../packages/acp/feishu-bridge/src/bridge-service.ts)
+
+<a id="feishubridgepre-done--waterfall"></a>
+
+#### `feishuBridge/pre-done` — waterfall
+
+A `/done` teardown is about to run on this chat's subtree. Feature plugins owning state under it clean that state here (the chatroom plugin interrupts a live room, consuming its barriers and persona flags); every descendant session key a listener pushes into `payload.handled` was fully cleaned by the listener and is skipped by the bridge's own descendant loop (the root chat is always the bridge's to clean).
+
+```ts cordis-catalog
+/**
+ * A `/done` teardown is about to run on this chat's subtree. Feature
+ * plugins owning state under it clean that state here (the chatroom
+ * plugin interrupts a live room, consuming its barriers and persona
+ * flags); every descendant session key a listener pushes into
+ * `payload.handled` was fully cleaned by the listener and is skipped by
+ * the bridge's own descendant loop (the root chat is always the
+ * bridge's to clean).
+ * @param payload.engine - The engine owning the session registry.
+ * @param payload.sessionKey - Session key of the chat the user `/done`d.
+ * @param payload.handled - Mutable accumulator for fully-cleaned descendant keys.
+ * @mode waterfall
+ */
+'feishuBridge/pre-done'(payload: { engine: Engine; sessionKey: string; handled: string[] }, next: () => void): void
 ```
 
 Source: [`packages/acp/feishu-bridge/src/bridge-service.ts`](../../packages/acp/feishu-bridge/src/bridge-service.ts)
