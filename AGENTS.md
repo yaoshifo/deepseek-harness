@@ -23,6 +23,7 @@ packages/    @deepseek-ai/dsh-<pkg> workspaces at packages/<group>/<pkg>/
   terminal/         persistent sessions
   fs/          filesystem capability + policy
   lsp/         language-server capability
+  memory/      fork-local Claude Code-compatible memory plugin (dsh-memory)
   skill/       skill provider registry + local impl + catalog/loader tool
   web/         web capability: Service Definition + search/fetch providers + tool Consumer
   compaction/     compaction capability + basic provider

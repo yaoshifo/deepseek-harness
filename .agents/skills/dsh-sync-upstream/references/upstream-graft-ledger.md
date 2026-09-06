@@ -57,7 +57,7 @@
 
 ## 定位备注
 
-- **dsh-memory**：上游 2026-07-31 note 明确「不做」memory（仅 MCP overlay 示例）——不提上游；fork-only 定位写入原则与 durable kind 'dsh-memory' 命名风险登记待用户拍板。
+- **dsh-memory**：上游 2026-07-31 note 明确「不做」memory（仅 MCP overlay 示例）——不提上游。fork-only 定位已拍板（2026-09-06）并写入包 README 与原则 note；durable kind 'dsh-memory' 不可回收，若上游将来自己做 memory → 采纳上游表面 + 重放 fork 增量。
 - **vitest 工具链**：四 lane 原生解析半分叉已于 2026-09-06 全量退回 vite-tsconfig-paths 插件，原则 4 偏差终结。
 - **README 双语对债务**（74 文件）：随各 seam 上游 PR 走（fork 侧 revert）；上游化即自动收缩。
 - **dsh-context 外部仓移植**（aggregate.ts / chartspec.ts）：来源是 bowenliang123/dsh-context 独立仓（live profile 直链，非本仓依赖、无上游对应物，无法改 import）。升级 profile 里的 dsh-context 版本时须手工重对齐两份移植；移植头注释已标明来源仓与版本锚。
