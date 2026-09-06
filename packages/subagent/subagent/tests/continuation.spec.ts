@@ -3195,7 +3195,7 @@ describe('continuable residency with live background jobs', () => {
         jobs.start({
           kind: 'bash',
           label: 'manual job',
-          owner: exec.agent,
+          ...exec.agent !== undefined ? { owner: exec.agent } : {},
           run: makeHooks,
         })
         return Promise.resolve({})
