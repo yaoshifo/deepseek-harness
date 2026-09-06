@@ -15,10 +15,12 @@ import Schema from '@deepseek-ai/schemastery'
 import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { defaultChatroomRolesDir } from './engine/chatroom-roles.ts'
 import {
+  defaultChatroomAssistantStallSec,
   defaultChatroomGatherTimeout,
   defaultChatroomResearchTimeout,
   defaultMaxChatroomRoles,
   maxChatroomResearchTimeout,
+  minChatroomAssistantStallSec,
   minChatroomResearchTimeout,
 } from './engine/chatroom.ts'
 
@@ -50,6 +52,12 @@ export interface ChatroomProjectConfig {
   researchPlaybook?: string
   /** User-background file injected into every chatroom persona; '' opts out (Go user_profile). */
   userProfile?: string
+  /**
+   * Research-assistant stall deadline in seconds: a hub↔steward relation
+   * quiet this long gets a supervision wake; 0 disables the supervisor.
+   * Non-zero values below 600 are rejected at apply.
+   */
+  assistantStallSec?: number
 }
 
 const chatroomSection = Schema.object({
@@ -66,6 +74,7 @@ const chatroomSection = Schema.object({
   researchVenvPackages: Schema.array(Schema.string()).description('Base packages installed into the shared research venv (default akshare, pandas<3, numpy, requests)'),
   researchPlaybook: Schema.string().description('Persistent playbook file read/appended by research assistants (default off)'),
   userProfile: Schema.string().description('User-background file injected into every chatroom persona (roles, moderator, direct-role)'),
+  assistantStallSec: Schema.natural().description('Research-assistant stall deadline in seconds; a quiet hub↔steward relation past it gets a supervision wake (default 1800, 0 disables, minimum 600)'),
 })
 
 /**
@@ -119,6 +128,10 @@ class ChatroomEngineConfig {
   private researchPlaybookCfg = ''
   /** User-background file injected into chatroom personas; '' = none. */
   userProfileCfg = ''
+  /** Research-assistant stall deadline override in ms; 0 = the 30m default. */
+  private assistantStallMs = 0
+  /** Whether the supervisor is explicitly disabled for this engine. */
+  private assistantStallOff = false
 
   /**
    * Apply one config section's overrides (Go wireChatroom: the project
@@ -171,6 +184,19 @@ class ChatroomEngineConfig {
     // Like researchWorkspace, only a non-empty path engages the feature.
     if (cfg.researchPlaybook !== undefined && cfg.researchPlaybook.trim() !== '') {
       this.researchPlaybookCfg = expandHome(cfg.researchPlaybook)
+    }
+    if (cfg.assistantStallSec !== undefined) {
+      if (cfg.assistantStallSec === 0) {
+        this.assistantStallOff = true
+      } else {
+        // Below the floor a supervisor would nag through every legitimate
+        // quiet stretch (the gather barrier alone waits up to 20 minutes);
+        // fail loud at apply instead of arming a noisy loop.
+        if (cfg.assistantStallSec < minChatroomAssistantStallSec) {
+          throw new Error(`chatroom: assistantStallSec must be 0 (off) or at least ${minChatroomAssistantStallSec}, got ${cfg.assistantStallSec}`)
+        }
+        this.assistantStallMs = cfg.assistantStallSec * 1000
+      }
     }
   }
 
@@ -235,6 +261,16 @@ class ChatroomEngineConfig {
   /** Effective persistent research-playbook file; '' = none surfaced. */
   researchPlaybook(): string {
     return this.researchPlaybookCfg
+  }
+
+  /**
+   * Effective research-assistant stall deadline; 0 disables the supervisor.
+   * The default of 30 minutes sits above the gather barrier's 20-minute
+   * quiet window and the incident's observed long-job cadence.
+   */
+  assistantStallDuration(): number {
+    if (this.assistantStallOff) return 0
+    return this.assistantStallMs > 0 ? this.assistantStallMs : defaultChatroomAssistantStallSec * 1000
   }
 }
 

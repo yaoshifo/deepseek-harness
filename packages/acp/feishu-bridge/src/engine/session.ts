@@ -1210,6 +1210,23 @@ export class SessionManager {
   }
 
   /**
+   * Every chat-keyed active session entry: the current active session per
+   * chat key. Read-side enumeration for level-triggered sweeps that address
+   * interactive state and machine delivery by key (the internal sessions map
+   * is keyed by session id, not by chat key).
+   *
+   * @returns chat-key/session pairs.
+   */
+  activeSessionEntries(): Array<[string, Session]> {
+    const out: Array<[string, Session]> = []
+    for (const [userKey, id] of this.activeSession) {
+      const s = this.sessions.get(id)
+      if (s !== undefined) out.push([userKey, s])
+    }
+    return out
+  }
+
+  /**
    * Find the session currently or historically mapped to an agent session ID.
    *
    * @param agentSID - the agent session ID to look up.

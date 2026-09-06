@@ -49,6 +49,12 @@
 - **根因（修复前指纹）**：one-shot fork（群名/渲染/标题/预测）的 cwd 回退项目基目录，不认聊天 `/dir` override；群名 seed 含糊时 LLM 按注入上下文起名。
 - **归属判别**：会话属于哪个群看 fork 首条消息里的群名/会话 key/html_path，不看所在桶。
 
+### G 子任务后台任务随 epoch 收尾团灭（2026-09-06 实测，已修 dev@c48b659543 + chatroom 监督网）
+
+- **症状**：chatroom/子任务的研究数据管线整体停摆——子任务数据文件与日志的 mtime 精确停在其 turn/end 时刻；research 目录零活进程；会话日志无任何挂起（最后事件是 `turn/end completed`）；无限流痕迹（无 -32001/429）；journal 在停摆时刻仅有 `subtask: native child reported to parent`。
+- **根因（修复前指纹）**：native 子任务回合结束 → 静默判定 `settled` → dispose AgentHandle → jobs seam 的 owner-disposal 语义取消其全部存活后台任务；而子任务的计划恰恰依赖该任务的完成通知续命。上游再叠「数据管家一次性自动回报被进度消息消耗 + moderator 被动散文等待」→ 整条唤醒链断、房间冻结在 discussing。
+- **修复后判别**：子任务拥有 live（running/stopping）任务时不 settle（`continuation.ts` stateOf）；chatroom hub↔管家关系静默超过 `assistantStallSec`（默认 1800s）会被监督网唤醒 moderator，journal 出现 `chatroom: supervisor woke stalled moderator`，三次无进展熔断为群内可见通知。部署后遗留冻结房间在首个扫描周期自动被捞起。
+
 ## 审批事件判别（卡片没弹 / 反复要授权）
 
 - 会话日志事件 `approval/asked` → `approval/decided` 的**时间差**：秒级/分钟级 = 真弹卡等用户点击；0–1ms = 被常设授权短路放行。两种情况日志事件形态相同，只有时间差能区分。

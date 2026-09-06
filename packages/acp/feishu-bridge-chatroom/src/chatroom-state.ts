@@ -56,6 +56,12 @@ export interface ChatroomFeatureState {
   pendingGatherData?: GatherBarrierSnapshot | undefined
   /** Durable snapshot of the armed end barrier (consumed at engine start). */
   pendingEndBarrierData?: EndBarrierSnapshot | undefined
+  /** Hub↔steward relation's last organic activity (ms epoch; 0 = never observed). */
+  supervisionActivityAt?: number
+  /** Supervisor wakes already sent for the current stall episode. */
+  supervisionWakeCount?: number
+  /** When the supervisor last woke the moderator or posted a breaker notice (ms epoch). */
+  supervisionLastWakeAt?: number
 }
 
 /**
@@ -159,6 +165,18 @@ export class ChatroomSessionState {
    */
   get pendingEndBarrierData(): EndBarrierSnapshot | undefined { return this.section.pendingEndBarrierData }
   set pendingEndBarrierData(value: EndBarrierSnapshot | undefined) { this.section.pendingEndBarrierData = value }
+
+  /** Hub↔steward relation's last organic activity (ms epoch; 0 = never observed). */
+  get supervisionActivityAt(): number { return this.section.supervisionActivityAt ?? 0 }
+  set supervisionActivityAt(value: number) { this.section.supervisionActivityAt = value }
+
+  /** Supervisor wakes already sent for the current stall episode. */
+  get supervisionWakeCount(): number { return this.section.supervisionWakeCount ?? 0 }
+  set supervisionWakeCount(value: number) { this.section.supervisionWakeCount = value }
+
+  /** When the supervisor last woke the moderator or posted a breaker notice (ms epoch). */
+  get supervisionLastWakeAt(): number { return this.section.supervisionLastWakeAt ?? 0 }
+  set supervisionLastWakeAt(value: number) { this.section.supervisionLastWakeAt = value }
 }
 
 const liveStates = new WeakMap<Session, ChatroomSessionState>()
@@ -220,6 +238,9 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
       ...(s.pendingHumanQuestionRole !== '' ? { pendingHumanQuestionRole: s.pendingHumanQuestionRole } : {}),
       ...(pendingGatherData !== undefined ? { pendingGatherData } : {}),
       ...(pendingEndBarrierData !== undefined ? { pendingEndBarrierData } : {}),
+      ...(s.supervisionActivityAt !== 0 ? { supervisionActivityAt: s.supervisionActivityAt } : {}),
+      ...(s.supervisionWakeCount !== 0 ? { supervisionWakeCount: s.supervisionWakeCount } : {}),
+      ...(s.supervisionLastWakeAt !== 0 ? { supervisionLastWakeAt: s.supervisionLastWakeAt } : {}),
     }
     return Object.keys(section).length > 0 ? section : undefined
   },
@@ -240,11 +261,15 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
     t.researchAssistant = f.researchAssistant
     t.researchVenv = f.researchVenv
     t.researchRunDir = f.researchRunDir
-    // Chat-scoped scheduling: in-flight barriers and the pending human
-    // question survive a conversation reset, or a running round silently
-    // degrades and a suspended question stops routing.
+    // Chat-scoped scheduling: in-flight barriers, the pending human
+    // question, and the stall supervisor's episode bookkeeping survive a
+    // conversation reset, or a running round silently degrades, a suspended
+    // question stops routing, and a stalled relation loses its wake budget.
     t.pendingGather = f.pendingGather
     t.pendingEndBarrier = f.pendingEndBarrier
     t.pendingHumanQuestionRole = f.pendingHumanQuestionRole
+    t.supervisionActivityAt = f.supervisionActivityAt
+    t.supervisionWakeCount = f.supervisionWakeCount
+    t.supervisionLastWakeAt = f.supervisionLastWakeAt
   },
 }

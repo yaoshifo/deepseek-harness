@@ -61,6 +61,12 @@ export const minChatroomResearchTimeout = 60 * 1000
 /** Upper bound a configured research gather timeout may take. */
 export const maxChatroomResearchTimeout = 24 * 60 * 60 * 1000
 
+/** Default research-assistant stall deadline: 30 minutes of hub↔steward quiet before a supervision wake. */
+export const defaultChatroomAssistantStallSec = 1800
+
+/** Floor for a configured non-zero stall deadline; below it the supervisor would nag through legitimate quiet stretches. */
+export const minChatroomAssistantStallSec = 600
+
 /** How long a research-manual AskUserQuestion card waits before answering itself (Go var). */
 export const chatroomResearchManualAskTimeout = { ms: 10 * 60 * 1000 }
 
@@ -972,8 +978,10 @@ export function buildGatherTimeoutWake(e: Engine, hubKey: string, missing: strin
  * @param e - Engine carrying the session registry and i18n surface.
  * @param hubKey - Session key of the chatroom hub to wake.
  * @param content - The wake message text delivered to the moderator.
+ * @param metadata - Optional message metadata carried to the opened turn (the
+ * stall supervisor tags its wakes so activity tracking skips them).
  */
-export function wakeChatroomModerator(e: Engine, hubKey: string, content: string): void {
+export function wakeChatroomModerator(e: Engine, hubKey: string, content: string, metadata?: Record<string, unknown>): void {
   const p = e.spawnCapablePlatform()
   if (p === undefined) return
   const r = asReplyContextReconstructor(p)
@@ -988,6 +996,7 @@ export function wakeChatroomModerator(e: Engine, hubKey: string, content: string
         userName: '[聊天室]',
         content: wake,
         replyCtx: hubRctx,
+        ...metadata !== undefined ? { metadata } : {},
       })
     },
     (error: unknown) => {

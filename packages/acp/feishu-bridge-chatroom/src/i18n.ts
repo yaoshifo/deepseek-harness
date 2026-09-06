@@ -113,6 +113,9 @@ const en: Record<string, string> = {
   chatroom_continue_no_match: 'No past chatroom matches "%s". Recent topics: %s',
   chatroom_history_empty: '(no recorded chatrooms yet)',
   chatroom_inherit_note: 'Prior context: continuing from "%s" (unverified — the moderator screens it before adopting)',
+  chatroom_supervisor_wake: '⏰ Research-assistant stall: the data steward (%s) and this room have been quiet for about %d minutes. Last steward reply: %s\n\nDecide the next step: nudge the steward with a follow-up, wrap up with the results already delivered, or stop this chatroom. If it is genuinely long-running work, reply with a status note and an ETA — this reminder will not repeat while the room keeps making progress.',
+  chatroom_supervisor_breaker_title: '⏰ Research assistant stalled for a long time',
+  chatroom_supervisor_breaker_body: 'The moderator has been reminded %d times about a stalled research assistant with no progress. Check the steward\'s group, or send /chatroom stop to end this room.',
 }
 
 /** The Simplified-Chinese messages of the chatroom subtable. */
@@ -218,6 +221,9 @@ const zh: Record<string, string> = {
   chatroom_continue_no_match: '没有匹配 "%s" 的历史聊天室。最近的议题：%s',
   chatroom_history_empty: '（暂无历史聊天室）',
   chatroom_inherit_note: '前情：延续自「%s」（未经本次讨论验证，主持人甄别后才采信）',
+  chatroom_supervisor_wake: '⏰ 研究助手静默提醒：数据管家（%s）与讨论室已静默约 %d 分钟，最后一次回复：%s。\n\n请决定下一步：向数据管家发 follow-up 催办、用现有结果收尾，或停止本场讨论；若确属长任务，回复状态与预计完成时间即可——只要房间保持进展，本提醒不会重复。',
+  chatroom_supervisor_breaker_title: '⏰ 研究助手长时间静默',
+  chatroom_supervisor_breaker_body: '已提醒主持人 %d 次研究助手静默仍无进展。请到数据管家群查看进度，或发送 /chatroom stop 结束本场讨论。',
 }
 
 /** The chatroom message subtable handed to the bridge's registerMessages. */
@@ -332,6 +338,9 @@ export const Msg = {
   ChatroomContinueNoMatch: 'chatroom_continue_no_match',
   ChatroomHistoryEmpty: 'chatroom_history_empty',
   ChatroomInheritNote: 'chatroom_inherit_note',
+  ChatroomSupervisorWake: 'chatroom_supervisor_wake',
+  ChatroomSupervisorBreakerTitle: 'chatroom_supervisor_breaker_title',
+  ChatroomSupervisorBreakerBody: 'chatroom_supervisor_breaker_body',
   SpawnNotSupported: 'spawn_not_supported',
 } as const
 
