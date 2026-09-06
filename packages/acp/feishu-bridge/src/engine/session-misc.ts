@@ -12,30 +12,42 @@
  */
 
 import type { Message, Platform } from '../core/types.ts'
-import { asSessionCompressor } from '../core/types.ts'
+import { asContextSnapshotReader, asSessionCompressor } from '../core/types.ts'
 import { Msg } from '../i18n/index.ts'
 import type { Engine, InteractiveState } from './engine.ts'
-import type { HistoryEntry } from '../core/types.ts'
 import type { Session } from './session.ts'
 
 /** Default minimum gap between auto compressions (Go 30min). */
 export const defaultAutoCompressMinGapMs = 30 * 60_000
 
 /**
- * Rough context-size estimate: one token per four runes of user+assistant
- * history text plus the pending assistant reply (Go
- * estimateTokensWithPendingAssistant).
+ * Provider-anchored occupancy of a chat's next request, read from the live
+ * agent session's token-meter `contextPressure` projection — the same
+ * `projectedTokens` anchor the /context card headline uses. The value is the
+ * newest usage sample's prompt-side pressure plus the heuristic surface
+ * movement since it was taken, so a compaction shrinks it immediately and
+ * the compression trigger rides the same source as the card and the upstream
+ * meter instead of a local chars-per-rune estimate.
  *
- * @param entries - The session history.
- * @param pendingAssistant - This turn's reply not yet in history ('' here).
- * @returns the estimated token count.
+ * Absent until a provider reports usage or without a snapshot-capable live
+ * agent; the caller treats absence as below the cap — a session with no
+ * usage sample has no provider-anchored context to compress.
+ *
+ * @param e - Engine whose agent serves the snapshot.
+ * @param sessionKey - Interactive-state slot key of the chat.
+ * @param session - The bridge session the read belongs to.
+ * @returns the projected occupancy, or undefined when unreadable.
  */
-export function estimateTokensWithPendingAssistant(entries: HistoryEntry[], pendingAssistant: string): number {
-  let count = 0
-  for (const h of entries) count += Array.from(h.content).length
-  count += Array.from(pendingAssistant).length
-  if (count === 0) return 0
-  return Math.ceil(count / 4)
+export function projectedContextTokens(e: Engine, sessionKey: string, session: Session): number | undefined {
+  try {
+    return asContextSnapshotReader(e.agent)?.contextSnapshot(e.activeAgentSessionID(sessionKey, session))?.pressure?.projectedTokens
+  } catch (error) {
+    // A registering plugin's view parse failed inside the registry's
+    // snapshot; the check degrades to "below the cap" instead of failing
+    // the turn-end path (the /context card degrades the same way).
+    console.warn(`auto-compress: projection snapshot read failed (${sessionKey}): ${String(error)}`)
+    return undefined
+  }
 }
 
 /**
@@ -82,9 +94,9 @@ export async function maybeAutoResetSessionOnIdle(
 /**
  * Run one context compression on the live session (Go runCompress, minus
  * the event-drain loop: dsh's compactNow owns the summarization turn).
- * Auto-triggered runs notify the user about the compaction with the token
- * estimate and suppress the completion chatter; manual runs (/compress)
- * report the outcome. The session lock stays with the caller.
+ * Auto-triggered runs notify the user about the compaction with the
+ * projected occupancy and suppress the completion chatter; manual runs
+ * (/compress) report the outcome. The session lock stays with the caller.
  *
  * @param e - Engine carrying the i18n surface.
  * @param state - The interactive state holding the live agent session.
