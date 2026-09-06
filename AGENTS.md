@@ -52,6 +52,7 @@ python/      Python SDK and bundled runtime (see python/README.md)
 native/      @deepseek-ai/node-addon-landlock-run source of record (see native/README.md)
 .agents/     Agent workflows and Agent Notes (`notes/`)
 docs/        architecture, generated catalogs, postmortems, cookbook (see docs/AGENTS.md)
+examples/    opt-in profile overlay examples (fork-local; see examples/dsh-memory)
 scripts/     repo gates and generators
 website/     VitePress projection of selected bilingual docs/ sources
 ```
@@ -75,7 +76,7 @@ pnpm run duplication    # cross-file TypeScript clone detection
 pnpm run build          # tsc emits lib/types, tsdown bundles runtime
 packages/acp/feishu-bridge/reload.sh  # make bridge changes live: host build; restarts launchd (WS-ready gated)
 pnpm run hygiene        # publint + workspace/package/dependency checks + NodeNext consumer check
-pnpm run check:windows-wine  # ONLY for known Windows failures (needs wine); CI owns this signal
+pnpm run check:windows-wine  # ONLY when diagnosing a known Windows failure (needs wine); CI owns this signal
 pnpm run doc-sync       # all documentation gates; leaf list in scripts/run-gates.ts
 pnpm run test:docs      # quick documentation checks (no build; doc-quick aggregate)
 pnpm run website:build  # VitePress build (doubles as dead-link check)
@@ -89,7 +90,7 @@ If a required `gh`, `pnpm`, build, test, or generator command fails because the 
 
 ### Run relevant checks locally
 
-Run checks before pushes via [dsh-pre-push-checks](.agents/skills/dsh-pre-push-checks/SKILL.md); report only commands run. After `gh stack sync`, validate immediately; never merge before checks pass.
+Run checks before pushes via [dsh-pre-push-checks](.agents/skills/dsh-pre-push-checks/SKILL.md); report only commands run. After `gh stack sync`, validate immediately; do not merge before checks pass.
 
 - Match evidence to the surface: focused behavior tests, model/user-output snapshots, `doc-sync` for docs, built smokes for published paths, and real-API e2e for providers.
 - **Fork policy (secondary development on `dev`):** skip `doc-sync` and the generated-document gates (`gen-*-catalog`, `gen-doc-graphs`, `gen-scoped-events`, `verify-translation-pairing`, `verify-type-equiv`); doc/source drift is accepted and needs no regeneration. This fork rule overrides the doc-sync requirement above and in linked skills. Exception: [dsh-sync-upstream](.agents/skills/dsh-sync-upstream/SKILL.md) step 4 still runs its five generators after upstream merges — `packages/extensions/tool-cordis/src/api-catalog.ts` is generated runtime source that tool-cordis imports, and with `doc-sync` skipped nothing else catches a missed generator. Follow the [fork secondary-development principles](.agents/notes/implemented/process/2026-08-29-fork-secondary-development-principles.md) for sync cadence, change placement, and toolchain parity — including proposing seam features upstream once stable instead of re-grafting them at every absorption.
@@ -133,7 +134,7 @@ Real-API tests and demos read `DEEPSEEK_API_KEY`, optional `DEEPSEEK_BASE_URL`, 
 - **Choose PR history deliberately.** Split independent changes and fix the introducing PR before propagation. Standalone/stack branches may merge-forward or rebase. Rewrites use `--force-with-lease`, abort on remote movement, never raw `--force`; preserve an in-progress merge-forward checkpoint before taking a newer base ([rationale](.agents/notes/implemented/process/2026-08-02-native-github-stacks-and-optional-rebases.md)).
 - **Labels:** one PR `kind/*`, all material `area/*`, and native Issue Type ([taxonomy](.agents/notes/implemented/process/2026-08-08-unified-github-label-taxonomy.md)).
 - TODO markers: `FIXME`/`TODO`/`XXX` by urgency ([semantics](docs/development.md)).
-- Files end with exactly one trailing newline; `git diff --cached --check` gates it.
+- Files end with exactly one trailing newline; `git diff --cached --check` (pre-commit) gates it.
 
 ## Defensive patterns
 
