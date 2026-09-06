@@ -175,7 +175,7 @@ export interface DshPersistenceLike {
     read(offset?: number, length?: number): Promise<readonly SessionEvent[]>
   }>
   /** Lightweight listing from metadata, without a full-log parse. */
-  list(signal?: AbortSignal): Promise<Array<{ header: SessionHeader }>>
+  list(options?: unknown): Promise<readonly { header: SessionHeader }[]>
 }
 
 /**
@@ -189,7 +189,7 @@ export interface DshSubagentsLike {
     provider: string
     label: string
     request: {
-      prompt: Array<Record<string, unknown>>
+      prompt: readonly unknown[]
       parent: unknown
       maxDepth?: number
       persona?: string
@@ -202,13 +202,13 @@ export interface DshSubagentsLike {
   [deliverSubagentPrompt](
     parent: unknown,
     childId: unknown,
-    content: Array<Record<string, unknown>>,
-    source: Record<string, unknown>,
+    content: readonly unknown[],
+    source: unknown,
     signal: AbortSignal,
     delivery: 'queue' | 'steer',
   ): Promise<unknown>
   interrupt(targetSessionId: unknown, authority: Record<string, unknown>): void
-  reportFrom(child: unknown, content: Array<Record<string, unknown>>, options: { delivery: string; signal: AbortSignal }): Promise<unknown>
+  reportFrom(child: unknown, content: readonly unknown[], options: { delivery: string; signal: AbortSignal }): Promise<unknown>
 }
 
 /** One named provider route (plan D2: one llm route per provider). */
