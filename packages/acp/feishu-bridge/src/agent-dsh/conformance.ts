@@ -16,6 +16,7 @@
  */
 
 import type AgentRegistry from '@deepseek-ai/dsh-agent'
+import type { Context } from '@deepseek-ai/cordis'
 import type { deliverSubagentPrompt, HostPromptDeliverer } from '@deepseek-ai/dsh-subagent/internal'
 import type SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import type ToolRuntime from '@deepseek-ai/dsh-tools'
@@ -27,6 +28,7 @@ import type {
   DshAgentHandleLike,
   DshAgentLike,
   DshAgentsRegistryLike,
+  DshContextLike,
   DshCreateOptionsLike,
   DshPersistenceLike,
   DshSessionProjectionsLike,
@@ -92,3 +94,7 @@ export type McpWorkspaceSliceConforms =
 /** `permissionPresets` inline slice (set) from applyPermissionPreset. */
 export type PermissionPresetsSliceConforms =
   Expect<SatisfiesSlice<PermissionPresetService, { set(session: unknown, name: string): void }>>
+
+/** The ctx slice's optional logger matches Cordis's real Context logger (production always provides it). */
+export type ContextLoggerConforms =
+  Expect<SatisfiesSlice<Pick<Context, 'logger'>, Required<Pick<DshContextLike, 'logger'>>>>

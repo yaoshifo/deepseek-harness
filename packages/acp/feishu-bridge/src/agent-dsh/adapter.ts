@@ -137,6 +137,12 @@ export interface DshContextLike {
   agents: DshAgentsRegistryLike
   on(event: string, listener: (...args: never[]) => unknown): () => void
   get(name: string): unknown
+  /**
+   * Scoped logger for warn-once deployment notices. Optional so unit-test
+   * fakes can omit it; the production Cordis Context always provides it
+   * (pinned by conformance.ts).
+   */
+  logger?: { warn(...args: unknown[]): void }
 }
 
 /**
@@ -1808,8 +1814,11 @@ export class DshAgentAdapter {
    * setup. The service resolves the session cwd from the session header at
    * setup time, so fresh, fork, and resume paths all mount by the session's
    * own cwd. An absent service means the profile did not deploy the feature:
-   * warn once per process and keep the inner setup unchanged — a missing
-   * optional service row is a deployment choice, not a misconfiguration.
+   * warn once per process through the scoped logger (the structured channel
+   * the entry composition points and the subagent child-agent path use, so
+   * a legal mcp-workspace-less deployment keeps process stderr clean) and
+   * keep the inner setup unchanged — a missing optional service row is a
+   * deployment choice, not a misconfiguration.
    */
   private withWorkspaceMcp(
     setup: import('@deepseek-ai/dsh-agent').AgentSetup | undefined,
@@ -1818,7 +1827,7 @@ export class DshAgentAdapter {
     if (service == null) {
       if (!workspaceMcpAbsentWarned) {
         workspaceMcpAbsentWarned = true
-        console.warn('agent-dsh: the mcp-workspace service is not mounted; directory .mcp.json discovery is inactive (add the mcp-workspace plugin row to enable it)')
+        this.ctx.logger?.warn('agent-dsh: the mcp-workspace service is not mounted; directory .mcp.json discovery is inactive (add the mcp-workspace plugin row to enable it)')
       }
       return setup
     }
