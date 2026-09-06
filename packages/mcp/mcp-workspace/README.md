@@ -42,7 +42,7 @@ The plugin is a Host service (`ctx.mcpWorkspace`). Load it from `cordis.yml` and
 | `roots` | `[]` | Absolute directory paths; a session cwd equal to or under a root mounts its `.mcp.json`, any other cwd mounts nothing and logs an error |
 | `startupTimeoutMs` | `10,000` | Cap each server's initial connection + tool discovery during session setup; tools register late when a server exceeds it |
 
-Consumers compose the mount at session creation: the feishu-bridge adapter (fresh, fork, and resume paths, outside the per-project `mcpServers` mask), the API session controller's `composeAgent`, and the subagent child factory (children mount by their own cwd). `/mcp` lists a chat's directory mounts through `mountedFor(cwd)`. Consumers whose profile did not load the plugin skip the feature and warn once per process.
+Each surface composes the mount at session creation. This plugin registers a `subagents.registerContinuableSetup()` contribution, so continuable subagent children mount by their own cwd on fresh creation and cold resume — after the child composition's tool masks, like the continuation manager's own setup steps — and stop mounting when this plugin unloads. One-shot subagent children mount through the in-process driver's optional-service lookup of this service; a deployment that did not load this plugin skips that mount, and the dsh-subagent package warns once per process. The feishu-bridge adapter (fresh, fork, and resume paths, outside the per-project `mcpServers` mask) and the API session controller's `composeAgent` wrap their top-level setups through `wrap(setup)`. `/mcp` lists a chat's directory mounts through `mountedFor(cwd)`.
 
 A `.mcp.json` in a trusted directory follows the Claude Code project format. The parser maps entries the way Claude Code documents them; misconfigured entries are skipped with a logged problem rather than failing the session:
 
@@ -65,7 +65,7 @@ The service is a class plugin extending Cordis `Service`, registered as `ctx.mcp
 
 | File | Responsibility |
 |---|---|
-| [`src/index.ts`](src/index.ts) | Service: `Config` (roots/startupTimeoutMs), `wrap`/`mount`, `mountedFor`, roots trust check, provenance logging |
+| [`src/index.ts`](src/index.ts) | Service: `Config` (roots/startupTimeoutMs), `wrap`/`mount`, `mountedFor`, the continuable-subagent setup contribution, roots trust check, provenance logging |
 | [`src/parse.ts`](src/parse.ts) | Claude Code-compatible `.mcp.json` parsing: mapping, skips, duplicate detection, `${VAR}` expansion |
 | [`src/types.ts`](src/types.ts) | Types only |
 | [`src/invariant.ts`](src/invariant.ts) | Package invariant companion (no runtime invariant; the tool registry owns the observable state) |

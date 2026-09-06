@@ -13,7 +13,7 @@
 | settlementNotice: 'external' 部署旋钮 | — | 待提上游 |
 | SubagentRunEndInfo.diagnostic 失败细节上浮 | — | 待提上游 |
 | list-agents status 图例行 | — | 待提上游 |
-| mcp-workspace 挂载 graft ×3（child-agent / in-process-driver / session-controller，one-shot 路径绕过 setup registry） | bec306dc49 | 根治=上游通用 agent-setup seam；continuable 路径已改走 registerContinuableSetup |
+| mcp-workspace 挂载 graft ×3（child-agent / in-process-driver / session-controller） | bec306dc49 | continuable 路径已改走 registerContinuableSetup（mcp-workspace 自注册贡献者，2026-09-06；seam 扩展为 async）；one-shot 路径（本地接口 + 特征测试防线）与 session-controller wrap 留待上游通用 agent-setup seam |
 
 ## lsp 组（25 文件，fork 已卸载仍付嫁接税）
 

@@ -42,7 +42,7 @@ kind: "package-reference"
 | `roots` | `[]` | 绝对目录路径；会话 cwd 等于或位于某个 root 之下时挂载其 `.mcp.json`，其余 cwd 不挂载并记 error 日志 |
 | `startupTimeoutMs` | `10,000` | 会话 setup 期间单个服务器初始连接 + 工具发现的上限；超时服务器的工具晚到 |
 
-消费者在会话创建时组合挂载：feishu-bridge adapter（fresh/fork/resume 三路径，位于项目 `mcpServers` 遮罩之外）、API session controller 的 `composeAgent`、以及 subagent 子任务工厂（子任务按自身 cwd 挂载）。`/mcp` 通过 `mountedFor(cwd)` 列出当前会话的目录挂载。profile 未加载该插件的消费方跳过该特性并每进程 warn 一次。
+各挂载面在会话创建时组合挂载。本插件注册 `subagents.registerContinuableSetup()` 贡献，continuable 子任务因此在新建与冷恢复时按自身 cwd 挂载——位于子级组合的工具遮罩之后，与继续执行管理器自身的 setup 步骤同序——且本插件卸载后即停止挂载。One-shot 子任务经 in-process driver 对本服务的可选服务查找挂载；未加载本插件的部署跳过该挂载，dsh-subagent 包每进程 warn 一次。feishu-bridge adapter（fresh/fork/resume 三路径，位于项目 `mcpServers` 遮罩之外）与 API session controller 的 `composeAgent` 通过 `wrap(setup)` 包装各自的顶层 setup。`/mcp` 通过 `mountedFor(cwd)` 列出当前会话的目录挂载。
 
 受信目录中的 `.mcp.json` 遵循 Claude Code 项目格式。解析按 Claude Code 文档的语义映射；误配条目跳过并记录问题，不影响会话：
 
@@ -65,7 +65,7 @@ kind: "package-reference"
 
 | 文件 | 职责 |
 |---|---|
-| [`src/index.ts`](src/index.ts) | 服务：`Config`（roots/startupTimeoutMs）、`wrap`/`mount`、`mountedFor`、roots 信任判定、取证日志 |
+| [`src/index.ts`](src/index.ts) | 服务：`Config`（roots/startupTimeoutMs）、`wrap`/`mount`、`mountedFor`、continuable 子任务 setup 贡献、roots 信任判定、取证日志 |
 | [`src/parse.ts`](src/parse.ts) | Claude Code 兼容 `.mcp.json` 解析：映射、跳过、重复检测、`${VAR}` 展开 |
 | [`src/types.ts`](src/types.ts) | 仅类型 |
 | [`src/invariant.ts`](src/invariant.ts) | 包 invariant 伴随件（无运行时 invariant；可观测状态归工具注册表所有） |
