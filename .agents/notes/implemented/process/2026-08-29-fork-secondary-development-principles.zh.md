@@ -37,3 +37,5 @@ fork 在 `dev` 上分批吸收上游更新，同时承载自己的特性，但�
 - 提交上游的特性带时延且可能以修订后的形态落地；落地前 fork 承载差异，落地后下一次吸收仍需一次语义合并。
 - fork 文档以 fork 拥有的文件增长，而非上游配对编辑，其可发现性依赖 `AGENTS.md` 里的 fork 政策指针。
 - 节奏封顶的代价是更频繁、更小的同步会话；每次都要重跑 install、生成器与聚焦测试套件。
+- 原则 2 背后的嫁接清单——每处落在上游拥有 seam 上的 fork 改动及其上游提案状态——维护在 sync skill 的[上游嫁接台账](../../../.agents/skills/dsh-sync-upstream/references/upstream-graft-ledger.md)里；提案提交与落地时更新。
+- `dsh-memory` 按 fork-local 定位持有（2026-09-06 拍板）：上游明确不做 memory 能力，该包永不提上游、吸收时按 fork 自有内容对待；其不可回收的 durable kind 与「可换 MCP memory server」的边界记录在包 README 与台账。

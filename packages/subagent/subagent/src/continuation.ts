@@ -45,7 +45,6 @@ import type { SubagentDescriptorData } from './descriptor.ts'
 import {
   appendDelegatedPolicyOverrides,
   applyChildComposition,
-  mountDirectoryMcp,
   captureDelegatedPolicyOverrides,
   childSessionMeta,
   resolveChildAgentOptions,
@@ -1448,8 +1447,10 @@ export class SubagentContinuationManager {
         appendDelegatedPolicyOverrides(child.session, create.delegatedPolicies)
       }
       applyChildComposition(childCtx, parent, inputs.composition)
-      const commit = this.setupRegistry.apply(childCtx)
-      await mountDirectoryMcp(childCtx)
+      // Deployment contributions install after the child composition's tool
+      // masks (directory MCP mounts stay exempt from them) and may await
+      // inside this creation window; their batch commits together.
+      const commit = await this.setupRegistry.apply(childCtx)
       return commit
     }
     const observer = this.host.observeActivation(provider, childId, parent)

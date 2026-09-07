@@ -1,3 +1,4 @@
+import tsconfigPaths from 'vite-tsconfig-paths'
 import { defineConfig } from 'vitest/config'
 import { standardDecoratorPlugin, vitestExecArgv } from './vitest.shared.ts'
 
@@ -34,10 +35,7 @@ export default defineConfig({
   // Built-artifact e2e suites are unaffected: their built-ness lives in
   // subprocesses and createRequire lookups, which bypass vite resolution
   // entirely.
-  plugins: [standardDecoratorPlugin()],
-  resolve: {
-    tsconfigPaths: true,
-  },
+  plugins: [tsconfigPaths({ projects: ['./tsconfig.base.json'] }), standardDecoratorPlugin()],
   test: {
     execArgv: vitestExecArgv,
     setupFiles: ['./scripts/test-proxy-environment.ts', './scripts/test-invariants.ts'],

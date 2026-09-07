@@ -12,12 +12,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { registerSessionCommands } from '../../src/engine/commands.ts'
 import {
-  estimateTokensWithPendingAssistant,
   maybeAutoResetSessionOnIdle,
   registerSessionMiscCommands,
   runCompress,
 } from '../../src/engine/session-misc.ts'
-import type { Agent, HistoryEntry, Message, RecentTurnsReader } from '../../src/core/types.ts'
+import type { Agent, ContextSnapshotReader, HistoryEntry, Message, RecentTurnsReader } from '../../src/core/types.ts'
+import type { ContextSnapshotValues } from '../../src/context/types.ts'
 import {
   createStubAgent,
   createStubPlatform,
@@ -198,15 +198,63 @@ function compressorSession(id: string): ControllableAgentSession & { compressCal
   return rec
 }
 
-describe('estimateTokensWithPendingAssistant', () => {
-  it('estimates one token per four runes including the pending reply', () => {
-    const history = [
-      { role: 'user' as const, content: 'a'.repeat(40), timestamp: '1' },
-      { role: 'assistant' as const, content: 'b'.repeat(10), timestamp: '2' },
-    ]
-    expect(estimateTokensWithPendingAssistant(history, 'c'.repeat(6))).toBe(14)
-    expect(estimateTokensWithPendingAssistant([], '')).toBe(0)
-    expect(estimateTokensWithPendingAssistant([{ role: 'user' as const, content: 'x'.repeat(400), timestamp: '1' }], '')).toBe(100)
+describe('projectedContextTokens', () => {
+  it('follows the pressure projection, not the recent-turn character count', async () => {
+    const cs = compressorSession('s1')
+    // A fat window (200 chars ≈ 50 tokens at the retired chars/4 estimate)
+    // with a below-cap projection: only the projection decides.
+    const agent: Agent & RecentTurnsReader & ContextSnapshotReader = {
+      ...createStubAgent(),
+      startSession: async () => cs,
+      recentTurns: async (id: string) => id === 's1'
+        ? [{ role: 'user', content: 'x'.repeat(200), timestamp: '2026-01-01T00:00:00Z' }]
+        : [],
+      contextSnapshot: (id: string): ContextSnapshotValues | undefined => id === 's1'
+        ? { pressure: { projectedTokens: 5 } }
+        : undefined,
+    }
+    const { e, p } = newEngine(agent)
+    e.setAutoCompressConfig(true, 10, 0)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const state = new InteractiveState()
+    state.agentSession = cs
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(sessionKey, state)
+
+    cs.channel.push({ type: 'result', content: 'y'.repeat(100), done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    await new Promise(resolve => setTimeout(resolve, 30))
+
+    expect(cs.compressCalls).toBe(0)
+  })
+
+  it('stays idle without a readable projection instead of estimating', async () => {
+    const cs = compressorSession('s1')
+    // No contextSnapshot capability: nothing to compare, no compression.
+    const agent: Agent & RecentTurnsReader = {
+      ...createStubAgent(),
+      startSession: async () => cs,
+      recentTurns: async (id: string) => id === 's1'
+        ? [{ role: 'user', content: 'x'.repeat(200), timestamp: '2026-01-01T00:00:00Z' }]
+        : [],
+    }
+    const { e, p } = newEngine(agent)
+    e.setAutoCompressConfig(true, 10, 0)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const state = new InteractiveState()
+    state.agentSession = cs
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(sessionKey, state)
+
+    cs.channel.push({ type: 'result', content: 'y'.repeat(100), done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    await new Promise(resolve => setTimeout(resolve, 30))
+
+    expect(cs.compressCalls).toBe(0)
   })
 })
 
@@ -264,15 +312,16 @@ describe('/compress', () => {
 })
 
 describe('auto_compress trigger', () => {
-  it('fires runCompress after a long turn when the estimate crosses the cap', async () => {
+  it('fires runCompress when the pressure projection crosses the cap', async () => {
     const cs = compressorSession('s1')
-    // The estimate reads the agent's recent-turn window for the live session.
-    const agent: Agent & RecentTurnsReader = {
+    // The trigger reads the token-meter contextPressure projection of the
+    // live session (the same anchor the /context card headline uses).
+    const agent: Agent & ContextSnapshotReader = {
       ...createStubAgent(),
       startSession: async () => cs,
-      recentTurns: async (id: string) => id === 's1'
-        ? [{ role: 'user', content: 'x'.repeat(200), timestamp: '2026-01-01T00:00:00Z' }]
-        : [],
+      contextSnapshot: (id: string): ContextSnapshotValues | undefined => id === 's1'
+        ? { pressure: { projectedTokens: 12 } }
+        : undefined,
     }
     const { e, p } = newEngine(agent)
     registerSessionMiscCommands(e)
@@ -295,12 +344,12 @@ describe('auto_compress trigger', () => {
 
   it('does not re-trigger within the min gap', async () => {
     const cs = compressorSession('s1')
-    const agent: Agent & RecentTurnsReader = {
+    const agent: Agent & ContextSnapshotReader = {
       ...createStubAgent(),
       startSession: async () => cs,
-      recentTurns: async (id: string) => id === 's1'
-        ? [{ role: 'user', content: 'x'.repeat(200), timestamp: '2026-01-01T00:00:00Z' }]
-        : [],
+      contextSnapshot: (id: string): ContextSnapshotValues | undefined => id === 's1'
+        ? { pressure: { projectedTokens: 12 } }
+        : undefined,
     }
     const { e, p } = newEngine(agent)
     registerSessionMiscCommands(e)

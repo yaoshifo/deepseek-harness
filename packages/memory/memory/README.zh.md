@@ -149,6 +149,7 @@ When you find a project memory that is actually cross-project — an unrelated p
 
 ## Known Limitations and Deferred Work
 
+- **fork-only 定位（2026-09-06 拍板）** —— 上游已明确不做 memory 能力（2026-07-31 third-party-memory-mcp-examples note：无 vendor 专属插件、无通用服务，仅 MCP overlay 示例），故本包不处于「待上游化」状态、也不向上游提案；上游吸收时 `packages/memory/**` 按 fork 自有内容对待（同 feishu-bridge）。durable kind `'dsh-memory'` 已写入已发布会话日志、按相邻迁移规范不可改名——若上游将来自己做 memory，采纳上游表面并重放 fork 增量，而不是给本包改名。存储刻意保持 Claude Code 形态，部署可随时改挂 MCP memory server 替代本包，DSH 侧无数据纠缠。
 - **无接近上限提醒** —— Claude Code 还会在 `MEMORY.md` 接近上限时提醒模型;本插件只在写入超预算后警告。追加式接近上限提示可以后续无格式变更地补上。
 - **不支持 Windows cwd** —— Claude Code 的 slug 规则只有 POSIX 磁盘布局的实证;盘符 cwd 得不到 section、注入,工具明确报错而不是猜测 slug。先补实证规则再放宽守卫。
 - **会话中途不重载索引** —— resume 与 compaction 不重注入;模型用 `memory_read` 读当前状态。只有当会话内索引漂移被证明代价高昂时,才需要 `dsh-agent-instructions` 式的 baseline-identity 重组。

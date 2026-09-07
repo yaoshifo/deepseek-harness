@@ -158,7 +158,7 @@ import { executeCardAction } from './cron-commands.ts'
 import { cancelQueuedByMessageID, cancelStagedAttachmentsByMessageID, markRecalledPreview } from './recall.ts'
 import { renderSubtaskPanelCard } from './subtask-panel.ts'
 import { triggerInsights } from './predict.ts'
-import { defaultAutoCompressMinGapMs, estimateTokensWithPendingAssistant, maybeAutoResetSessionOnIdle, runCompress } from './session-misc.ts'
+import { defaultAutoCompressMinGapMs, maybeAutoResetSessionOnIdle, projectedContextTokens, runCompress } from './session-misc.ts'
 import type { RelayManager } from './relay.ts'
 import { MonitorCore, isMonitorCommand } from './monitor.ts'
 import {
@@ -412,7 +412,7 @@ export class InteractiveState {
   turnSummaryRunning: boolean = false
   /** Timestamp of the last auto compression (Go state.lastAutoCompressAt). */
   lastAutoCompressAt: number = 0
-  /** Token estimate recorded when the last auto compression armed. */
+  /** Projected context occupancy recorded when the last auto compression armed. */
   lastAutoCompressTokens: number = 0
   /** Per-state async sender serializing platform PATCHes (Go state.sender). */
   sender: AsyncSender | undefined
@@ -2167,7 +2167,8 @@ export class Engine {
   /**
    * Auto context compression (Go SetAutoCompressConfig); minGap <= 0 falls back to 30min.
    * @param enabled - Whether auto compression is armed.
-   * @param maxTokens - Token estimate that triggers compression; 0 = off.
+   * @param maxTokens - Projected context occupancy (token-meter contextPressure
+   *   projection) that triggers compression; 0 = off.
    * @param minGapMs - Minimum gap between compressions; <= 0 uses the 30min default.
    */
   setAutoCompressConfig(enabled: boolean, maxTokens: number, minGapMs: number): void {
@@ -4061,15 +4062,19 @@ export class Engine {
     // prediction; both skip silent turns and turns with queued follow-ups.
     void triggerInsights(this, state, session, p, replyCtx, sessionKey, sendCompletionNotification, isSilent)
 
-    // Auto-compress (Go triggerAutoCompress): when the token estimate
-    // crosses the configured cap outside the min gap, compact the live
-    // session's context before the queued messages continue this loop.
+    // Auto-compress (Go triggerAutoCompress): when the projected context
+    // occupancy (the token-meter contextPressure projection — same source as
+    // the /context card) crosses the configured cap outside the min gap,
+    // compact the live session's context before the queued messages continue
+    // this loop. Without a readable projection there is no anchored occupancy
+    // to compare, so the check stays idle.
     if (this.autoCompressEnabled && this.autoCompressMaxTokens > 0) {
-      const estimate = estimateTokensWithPendingAssistant(await this.recentTurnsOf(sessionKey, session), '')
+      const occupancy = projectedContextTokens(this, sessionKey, session)
       const last = state.lastAutoCompressAt
-      if (estimate >= this.autoCompressMaxTokens && (last === 0 || Date.now() - last >= this.autoCompressMinGap)) {
+      const overCap = occupancy !== undefined && occupancy >= this.autoCompressMaxTokens
+      if (overCap && (last === 0 || Date.now() - last >= this.autoCompressMinGap)) {
         state.lastAutoCompressAt = Date.now()
-        state.lastAutoCompressTokens = estimate
+        state.lastAutoCompressTokens = occupancy
         if (pendingSend !== undefined) await pendingSend.catch(() => undefined)
         await runCompress(this, state, p, replyCtx, true)
       }

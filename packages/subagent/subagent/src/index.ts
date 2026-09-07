@@ -337,14 +337,15 @@ export class SubagentRuntime extends TypertRemoteService {
 
   /**
    * Compose one deployment capability into every continuable child's
-   * unpublished creation context on fresh creation and cold resume. Grants wait
-   * for the next Activation; removing the contribution revokes every resident
-   * installation immediately.
-   * @param contribution - synchronous child-scope installer.
+   * unpublished creation context on fresh creation and cold resume. Awaitable
+   * installs settle inside the child's creation window, before the next
+   * contribution and before publication. Grants wait for the next Activation;
+   * removing the contribution revokes every resident installation immediately.
+   * @param contribution - child-scope installer, synchronous or awaitable.
    * @returns the exact Cordis effect disposer.
    */
   registerContinuableSetup(contribution: ContinuableSetupContribution): () => void {
-    // oxlint-disable-next-line typescript/no-misused-promises -- synchronous disposer
+    // oxlint-disable-next-line typescript/no-misused-promises -- synchronous registration disposer
     return this.ctx.effect(
       () => this.setupRegistry.register(contribution),
       'subagents.registerContinuableSetup()',

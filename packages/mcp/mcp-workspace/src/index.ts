@@ -22,6 +22,10 @@ import z from '@deepseek-ai/schemastery'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 import type { AgentSetup } from '@deepseek-ai/dsh-agent'
+// Type-only: resolves `ctx.subagents` to the runtime service augmentation, so
+// the continuable-child contribution registers without this package teaching
+// the continuation manager this service's name.
+import type {} from '@deepseek-ai/dsh-subagent'
 import type { DirectoryMcpServer, McpWorkspaceConfig, WorkspaceParseOutcome } from './types.ts'
 import { parseWorkspaceMcp } from './parse.ts'
 
@@ -85,6 +89,21 @@ export class McpWorkspaceService extends Service {
     }
     this.roots = [...new Set(config.roots.map(root => resolve(root)))]
     this.startupTimeoutMs = config.startupTimeoutMs
+    // Continuable children mount through the subagent setup seam: the
+    // contribution runs inside each child's creation window, after the child
+    // composition's tool masks, exactly like the manager's own setup steps,
+    // and unloading this plugin revokes it for every future child. One-shot
+    // children mount through the in-process driver instead.
+    ctx.inject(['subagents'], (injectedCtx: Context) => {
+      injectedCtx.effect(
+        () => injectedCtx.subagents.registerContinuableSetup(
+          async (childCtx) => {
+            await this.mount(childCtx)
+          },
+        ),
+        'mcpWorkspace.continuableSetup()',
+      )
+    })
   }
 
   /**

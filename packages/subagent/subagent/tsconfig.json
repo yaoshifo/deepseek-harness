@@ -39,9 +39,6 @@
       "path": "../../llm/llm"
     },
     {
-      "path": "../../mcp/mcp-workspace"
-    },
-    {
       "path": "../../preset/agent-presets"
     },
     {

@@ -10,14 +10,14 @@ function childContext(): { ctx: Context; close: () => Promise<void> } {
 }
 
 describe('SubagentActivationSetupRegistry', () => {
-  it('installs contributions in registration order and commits them', () => {
+  it('installs contributions in registration order and commits them', async () => {
     const registry = new SubagentActivationSetupRegistry()
     const order: string[] = []
     registry.register(() => { order.push('first'); return () => order.push('undo-first') })
     registry.register(() => { order.push('second'); return () => order.push('undo-second') })
     const child = childContext()
 
-    const transaction = registry.apply(child.ctx)
+    const transaction = await registry.apply(child.ctx)
     expect(order).toEqual(['first', 'second'])
     expect(() => { transaction.commit() }).not.toThrow()
     expect(order).toEqual(['first', 'second'])
@@ -28,7 +28,7 @@ describe('SubagentActivationSetupRegistry', () => {
     let disposals = 0
     const remove = registry.register(() => () => { disposals += 1 })
     const child = childContext()
-    registry.apply(child.ctx).commit()
+    ;(await registry.apply(child.ctx)).commit()
 
     remove()
     remove()
@@ -41,36 +41,36 @@ describe('SubagentActivationSetupRegistry', () => {
     let disposals = 0
     const remove = registry.register(() => () => { disposals += 1 })
     const child = childContext()
-    registry.apply(child.ctx).commit()
+    ;(await registry.apply(child.ctx)).commit()
 
     await child.close()
     remove()
     expect(disposals).toBe(1)
   })
 
-  it('skips a contribution removed before a child is applied', () => {
+  it('skips a contribution removed before a child is applied', async () => {
     const registry = new SubagentActivationSetupRegistry()
     const installed: string[] = []
     const remove = registry.register(() => { installed.push('gone'); return () => {} })
     registry.register(() => { installed.push('kept'); return () => {} })
     remove()
 
-    registry.apply(childContext().ctx).commit()
+    ;(await registry.apply(childContext().ctx)).commit()
     expect(installed).toEqual(['kept'])
   })
 
-  it('invalidates a provisioning batch revoked before commit', () => {
+  it('invalidates a provisioning batch revoked before commit', async () => {
     const registry = new SubagentActivationSetupRegistry()
     let disposals = 0
     const remove = registry.register(() => () => { disposals += 1 })
-    const transaction = registry.apply(childContext().ctx)
+    const transaction = await registry.apply(childContext().ctx)
 
     remove()
     expect(disposals).toBe(1)
     expect(() => { transaction.commit() }).toThrow(/revoked while this child was being built/)
   })
 
-  it('catches a contribution revoked inside its own installer', () => {
+  it('catches a contribution revoked inside its own installer', async () => {
     const registry = new SubagentActivationSetupRegistry()
     let disposals = 0
     const self: { remove?: () => void } = {}
@@ -79,12 +79,12 @@ describe('SubagentActivationSetupRegistry', () => {
       return () => { disposals += 1 }
     })
 
-    const transaction = registry.apply(childContext().ctx)
+    const transaction = await registry.apply(childContext().ctx)
     expect(disposals).toBe(1)
     expect(() => { transaction.commit() }).toThrow(/revoked/)
   })
 
-  it('attempts every contribution-removal disposer before reporting failures', () => {
+  it('attempts every contribution-removal disposer before reporting failures', async () => {
     const registry = new SubagentActivationSetupRegistry()
     const released: string[] = []
     let seq = 0
@@ -96,7 +96,7 @@ describe('SubagentActivationSetupRegistry', () => {
       }
     })
     for (const child of [childContext(), childContext(), childContext()]) {
-      registry.apply(child.ctx).commit()
+      (await registry.apply(child.ctx)).commit()
     }
 
     expect(() => { remove() }).toThrow(/failed to release 1 installation\(s\)/)
@@ -112,24 +112,24 @@ describe('SubagentActivationSetupRegistry', () => {
     })
     registry.register(() => () => { released.push('b') })
     const child = childContext()
-    registry.apply(child.ctx).commit()
+    ;(await registry.apply(child.ctx)).commit()
 
     await child.close().catch(() => undefined)
     expect(released).toEqual(['a', 'b'])
   })
 
-  it('rolls back earlier installations when a later contribution throws', () => {
+  it('rolls back earlier installations when a later contribution throws', async () => {
     const registry = new SubagentActivationSetupRegistry()
     const undone: string[] = []
     registry.register(() => () => undone.push('first'))
     registry.register(() => { throw new Error('boom') })
     registry.register(() => () => undone.push('third'))
 
-    expect(() => registry.apply(childContext().ctx)).toThrow(/boom/)
+    await expect(registry.apply(childContext().ctx)).rejects.toThrow(/boom/)
     expect(undone).toEqual(['first'])
   })
 
-  it('does not dispose twice when revocation precedes setup rollback', () => {
+  it('does not dispose twice when revocation precedes setup rollback', async () => {
     const registry = new SubagentActivationSetupRegistry()
     const disposals: string[] = []
     const removeFirst = registry.register(() => () => { disposals.push('first') })
@@ -138,7 +138,7 @@ describe('SubagentActivationSetupRegistry', () => {
       throw new Error('second failed after revoking the first')
     })
 
-    expect(() => registry.apply(childContext().ctx)).toThrow(/second failed/)
+    await expect(registry.apply(childContext().ctx)).rejects.toThrow(/second failed/)
     expect(disposals).toEqual(['first'])
   })
 
@@ -152,12 +152,61 @@ describe('SubagentActivationSetupRegistry', () => {
     })
     const first = childContext()
     const second = childContext()
-    registry.apply(first.ctx).commit()
-    registry.apply(second.ctx).commit()
+    ;(await registry.apply(first.ctx)).commit()
+    ;(await registry.apply(second.ctx)).commit()
 
     await first.close()
     expect(disposed).toEqual(['child-1'])
     await second.close()
     expect(disposed).toEqual(['child-1', 'child-2'])
+  })
+
+  it('awaits an async contribution before returning the commit', async () => {
+    const registry = new SubagentActivationSetupRegistry()
+    const events: string[] = []
+    registry.register(() => {
+      events.push('sync-before')
+      return () => {}
+    })
+    registry.register(async () => {
+      await Promise.resolve()
+      events.push('async-installed')
+      return () => { events.push('async-undone') }
+    })
+    const child = childContext()
+
+    const transaction = await registry.apply(child.ctx)
+    expect(events).toEqual(['sync-before', 'async-installed'])
+    transaction.commit()
+
+    await child.close()
+    expect(events).toEqual(['sync-before', 'async-installed', 'async-undone'])
+  })
+
+  it('revokes an async contribution whose removal raced its pending install', async () => {
+    const registry = new SubagentActivationSetupRegistry()
+    const events: string[] = []
+    let releaseInstall: () => void = () => {}
+    const gate = new Promise<void>((resolve) => { releaseInstall = resolve })
+    const remove = registry.register(async () => {
+      await gate
+      events.push('installed')
+      return () => { events.push('undone') }
+    })
+    registry.register(() => {
+      events.push('kept-installed')
+      return () => {}
+    })
+
+    const applying = registry.apply(childContext().ctx)
+    // Revocation reports completion while the first install is still pending.
+    remove()
+    releaseInstall()
+    const transaction = await applying
+
+    // The raced install settles, is revoked immediately, and fails the batch;
+    // the untouched contribution installs normally.
+    expect(events).toEqual(['installed', 'undone', 'kept-installed'])
+    expect(() => { transaction.commit() }).toThrow(/revoked while this child was being built/)
   })
 })

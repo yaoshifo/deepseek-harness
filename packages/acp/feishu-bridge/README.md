@@ -80,3 +80,5 @@ Reply prefixes and attachment notes are appended inside each user message (appen
 None.
 
 </details>
+
+**Runtime invariant:** No companion is published. The bridge owns no durable package-local event stream: engine messages project onto the in-memory EventChannel, and the caller's dsh session owns the durable log every turn appends to; the `mcpHealth` runtime context re-derives its text from the live tool registry at each assembly, so it is a view with no owned state to check.

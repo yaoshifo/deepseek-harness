@@ -173,3 +173,5 @@ kind: "package-reference"
 无。
 
 </details>
+
+**运行时不变量：** 不发布 companion。该适配器没有独立的生命周期流；发送者鉴权与投递关系归 subagent 服务所有。

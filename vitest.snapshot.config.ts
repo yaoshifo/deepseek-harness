@@ -1,4 +1,5 @@
 import { availableParallelism } from 'node:os'
+import tsconfigPaths from 'vite-tsconfig-paths'
 import { defineConfig } from 'vitest/config'
 import { standardDecoratorPlugin, vitestExecArgv } from './vitest.shared.ts'
 
@@ -38,12 +39,8 @@ if (process.env.DSH_SNAPSHOT === 'record') {
 export default defineConfig({
   // Same resolution contract as vitest.config.ts: bare workspace names
   // resolve through the tsconfig.base.json paths map to source, never through
-  // package exports to built lib/. Native Vite discovery (walk-up + extends)
-  // now provides this; the root solution file needs no paths of its own.
-  plugins: [standardDecoratorPlugin()],
-  resolve: {
-    tsconfigPaths: true,
-  },
+  // package exports to built lib/.
+  plugins: [tsconfigPaths({ projects: ['./tsconfig.base.json'] }), standardDecoratorPlugin()],
   test: {
     execArgv: vitestExecArgv,
     setupFiles: ['./scripts/test-proxy-environment.ts', './scripts/test-invariants.ts'],

@@ -19,10 +19,10 @@
       "path": "../../core/agent"
     },
     {
-      "path": "../mcp-client"
+      "path": "../../subagent/subagent"
     },
     {
-      "path": "../../runtime-diagnostics/invariants"
+      "path": "../mcp-client"
     }
   ]
 }

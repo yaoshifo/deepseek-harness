@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-06-feishu-bridge-auto-compress-projection-source.md
+2026-09-06-feishu-bridge-auto-compress-projection-source.md: d4cfdefc759ce66ad46f3c662e7cdaf0b16fbb98
+2026-09-06-feishu-bridge-auto-compress-projection-source.zh.md: af20f3f1f32fd5dc9f7c4ff9345919889e8be484

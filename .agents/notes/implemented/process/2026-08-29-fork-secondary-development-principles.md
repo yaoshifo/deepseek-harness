@@ -37,3 +37,5 @@ The [sync skill](../../../.agents/skills/dsh-sync-upstream/SKILL.md) carries the
 - Features proposed upstream carry latency and may land amended; the fork carries the difference until they land, and a landed equivalent still needs a semantic merge at the next absorption.
 - Fork documentation grows fork-owned files instead of upstream-pair edits, so their discoverability relies on the fork-policy pointer in `AGENTS.md`.
 - The cadence ceiling costs more frequent, smaller sync sessions; each one re-runs install, generators, and the focused suites.
+- The graft inventory behind principle 2 — every fork change sitting on an upstream-owned seam, with its upstream-proposal status — lives in the sync skill's [upstream graft ledger](../../../.agents/skills/dsh-sync-upstream/references/upstream-graft-ledger.md); keep it current as proposals are filed and landed.
+- `dsh-memory` is fork-local by decision (2026-09-06): upstream declined memory as a DSH capability, so the package is never proposed upstream and absorbs as fork-owned content; its unreclaimable durable kind and the swap-to-MCP boundary are recorded in the package README and the ledger.

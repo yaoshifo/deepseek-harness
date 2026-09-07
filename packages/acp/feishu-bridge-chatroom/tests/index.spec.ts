@@ -83,13 +83,6 @@ describe('chatroom plugin entry', () => {
     expect('default' in mod).toBe(false)
   })
 
-  it('ships the invariant companion with a skeleton-stage reason', async () => {
-    const invariant = await import('../src/invariant.ts')
-    expect(invariant.name).toBe('feishu-bridge-chatroom-invariant')
-    expect(invariant.inject).toEqual(['invariants'])
-    expect(typeof invariant.apply).toBe('function')
-  })
-
   it('sweeps the live projects: config, commands, and recovery for started engines', async () => {
     const ctx = await liveContext()
     const service = ctx.get('feishuBridge')

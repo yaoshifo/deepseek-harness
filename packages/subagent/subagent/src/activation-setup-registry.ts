@@ -6,7 +6,9 @@
  * continuation manager which capabilities exist. The manager owns residency;
  * this registry owns the join between plugin lifetime, unpublished setup, and
  * Activation disposal, so no installation outlives either owner and no removed
- * contribution can be installed after revocation reports completion.
+ * contribution can be installed after revocation reports completion — an
+ * awaitable install already in flight settles, is revoked immediately, and
+ * fails its provisioning batch.
  *
  * @module @deepseek-ai/dsh-subagent/activation-setup-registry
  */
@@ -18,12 +20,16 @@ import { SubagentError } from './error.ts'
 
 /**
  * One deployment capability installed into a continuable child's unpublished
- * creation context. It composes synchronously before publication and returns
- * the disposer for exactly that installation.
+ * creation context. It composes before publication — synchronously, or with an
+ * awaitable install whose settled disposer is awaited before the next
+ * contribution runs — and returns the disposer for exactly that installation,
+ * or nothing when the child scope alone owns the cleanup.
  * @param childCtx - the child's unpublished scoped context.
- * @returns the disposer revoking this installation.
+ * @returns the disposer revoking this installation, a promise of one, or nothing.
  */
-export type ContinuableSetupContribution = (childCtx: Context) => () => void
+export type ContinuableSetupContribution = (
+  childCtx: Context,
+) => (() => void) | Promise<(() => void) | void>
 
 /** One contribution's live registration. */
 interface Registration {
@@ -36,7 +42,7 @@ interface Registration {
 interface Installation {
   readonly registration: Registration
   readonly childCtx: Context
-  readonly dispose: () => void
+  readonly dispose: (() => void) | undefined
   released: boolean
   /** Present until the child reaches residency. */
   transaction: TransactionState | undefined
@@ -84,20 +90,25 @@ export class SubagentActivationSetupRegistry {
 
   /**
    * Install every live contribution into one unpublished child context.
+   * Awaitable installs settle in registration order before the next
+   * contribution starts, all inside the child's creation window.
    * @param childCtx - the child's unpublished scoped context.
    * @returns the provisioning commit consumed at Agent publication.
    */
-  apply(childCtx: Context): AgentSetupCommit {
+  async apply(childCtx: Context): Promise<AgentSetupCommit> {
     const state: TransactionState = { installations: [], invalidated: false }
     try {
       for (const registration of [...this.registrations]) {
         /* v8 ignore next -- only a synchronous re-entrant revocation of an
          * already-snapshotted registration reaches this guard. */
         if (registration.removed) continue
+        const started = registration.contribution(childCtx)
+        const settled = started instanceof Promise ? await started : started
+        const dispose = typeof settled === 'function' ? settled : undefined
         const installation: Installation = {
           registration,
           childCtx,
-          dispose: registration.contribution(childCtx),
+          dispose,
           released: false,
           transaction: state,
         }
@@ -178,7 +189,7 @@ export class SubagentActivationSetupRegistry {
       if (indexed.size === 0) this.byChild.delete(installation.childCtx)
     }
     if (installation.transaction !== undefined) installation.transaction.invalidated = true
-    installation.dispose()
+    installation.dispose?.()
   }
 }
 

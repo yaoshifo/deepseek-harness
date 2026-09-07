@@ -9,8 +9,6 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-// Type-only: resolves `ctx.get('mcpWorkspace')` to the service augmentation.
-import type {} from '@deepseek-ai/dsh-mcp-workspace'
 import type { Agent, AgentOptions, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import type { SandboxMode } from '@deepseek-ai/dsh-sandbox'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
@@ -227,21 +225,37 @@ export function applyChildComposition(
 let workspaceMcpAbsentWarned = false
 
 /**
- * Mount the child's cwd-scoped `.mcp.json` servers (directory MCP discovery)
- * at the end of the child's creation window, outside every tool mask the
- * child composition installed — the same exemption semantics the bridge
- * adapter's outer wrapper gives top-level sessions. An absent service means
- * the deployment did not include the feature: warn once per process (the
- * entry composition points warn the same way), then skip — a child that
- * mounts nothing is a deployment choice, not a fault.
+ * The least this package consumes of the optional directory-MCP service.
+ * Kept local because the provider is an optional deployment capability this
+ * package must not reference: the mcp-workspace package's integration spec
+ * exercises this exact lookup against the real service, so a signature drift
+ * fails that spec instead of this compile unit.
+ */
+interface DirectoryMcpService {
+  mount(childCtx: Context): Promise<void>
+}
+
+/**
+ * Mount the one-shot child's cwd-scoped `.mcp.json` servers (directory MCP
+ * discovery) at the end of the child's creation window, outside every tool
+ * mask the child composition installed — the same exemption semantics the
+ * bridge adapter's outer wrapper gives top-level sessions. Continuable
+ * children mount through the mcp-workspace plugin's own
+ * `subagents.registerContinuableSetup()` contribution instead; the one-shot
+ * driver has no equivalent setup seam, so it composes this helper directly.
+ * An absent service means the deployment did not include the feature: warn
+ * once per process through the scoped logger (the entry composition points
+ * warn the same way), then skip — a child that mounts nothing is a deployment
+ * choice, not a fault. The structured logger reaches registered exporters
+ * only, so a legal mcp-workspace-less deployment keeps process stderr clean.
  * @param childCtx - the unpublished child agent's scoped creation context.
  */
 export async function mountDirectoryMcp(childCtx: Context): Promise<void> {
-  const service = childCtx.get('mcpWorkspace')
+  const service = childCtx.get('mcpWorkspace') as DirectoryMcpService | undefined
   if (service === undefined) {
     if (!workspaceMcpAbsentWarned) {
       workspaceMcpAbsentWarned = true
-      console.warn('subagent child: the mcp-workspace service is not mounted; directory .mcp.json discovery is inactive for child agents (add the mcp-workspace plugin row to enable it)')
+      childCtx.logger.warn('subagent child: the mcp-workspace service is not mounted; directory .mcp.json discovery is inactive for child agents (add the mcp-workspace plugin row to enable it)')
     }
     return
   }
