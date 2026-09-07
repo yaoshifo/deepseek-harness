@@ -268,6 +268,9 @@ describe('GatherRoles', () => {
     // demand authoritative sources from their assistants.
     for (const c of researchCards) {
       expect(cardBody(c)).toContain('数据可靠性要求：让助手只用权威一手源')
+      // Verified recipes first (macro/valuation via the playbook speed
+      // table); aggregators only as fallback, ledger-registered.
+      expect(cardBody(c)).toContain('playbook 的已验证配方')
     }
     expect(collectCards.length).toBe(0)
     const g = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
@@ -1119,6 +1122,32 @@ describe('buildChatroomResearchModeratorPriming', () => {
     ]) {
       expect(priming).toContain(want)
     }
+  })
+
+  it('gates the closing numeric reconciliation leg on the research workspace', () => {
+    const withWs = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')
+    for (const want of ['数字对账', 'RECON.md', '禁止联网重抓、禁止装包', '对账存疑']) {
+      expect(withWs).toContain(want)
+    }
+    // Reconciliation maps report numbers against DATA_LEDGER/data artifacts;
+    // without a shared workspace there is nothing to map against, and the
+    // default (non-research) chatroom closing never reconciles either.
+    expect(buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '')).not.toContain('RECON.md')
+    expect(buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')).not.toContain('RECON.md')
+  })
+
+  it('binds round-1 fetch tasks to the research playbook recipes with and without a workspace', () => {
+    // The playbook rides the research-assistant persona (chatroom-policy),
+    // not the shared workspace — the binding phrase reaches assistants in
+    // both shapes of research room.
+    for (const ws of ['/tmp/ws', '']) {
+      const priming = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', ws)
+      expect(priming).toContain('playbook 的已验证配方')
+    }
+    // The steward prefetch brief carries its own binding (workspace-gated).
+    const withWs = buildChatroomResearchModeratorPriming('topic', testRoles, '/tmp/ledger', 'auto', '/tmp/ws')
+    expect(withWs).toContain('抓取优先按研究 playbook 已验证配方')
+    expect(withWs).toContain('新抓取同样优先 playbook 已验证配方')
   })
 
   it('omits the steward and ledger sections without a shared research workspace', () => {
