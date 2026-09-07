@@ -815,7 +815,7 @@ describe('/spawn readiness card (Go buildCompletionUsage(0) parity)', () => {
 describe('/spawn //fork parent jump notice', () => {
   /** The parent-chat notice card as recorded by the stub: header, body, buttons. */
   interface RecordedNotice {
-    header?: { title: string; color: string }
+    header?: { title: string; color: string } | undefined
     body: string
     buttons: Array<{ text: string; type: string; url?: string }>
   }
