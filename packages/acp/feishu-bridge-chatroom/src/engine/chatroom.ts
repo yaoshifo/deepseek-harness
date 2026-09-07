@@ -2161,7 +2161,9 @@ let researchVenvChain: Promise<unknown> = Promise.resolve()
  * Idempotent: an existing .venv is reused, reconciled against the configured
  * base-package list — only packages missing from the in-venv marker are
  * installed, so a later config extension warm-upgrades a live venv without
- * touching packages assistants installed themselves. (A corrupted venv:
+ * touching packages assistants installed themselves. Each success outcome
+ * logs one console.log line (created / delta-installed / reused as-is) so
+ * journald can prove the reconcile ran. (A corrupted venv:
  * delete <ws>/.venv to force a rebuild.)
  *
  * @param e - Engine carrying the research-python-env switch and package list.
@@ -2209,6 +2211,9 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
           throw new Error(`chatroom: research venv base-package install failed: ${String(error instanceof Error ? error.message : error)}`)
         }
         writeBasePackages(venv, [...new Set([...installed, ...missing])])
+        console.log(`chatroom: research venv delta-installed (${missing.join(', ')}, venv=${venv})`)
+      } else {
+        console.log(`chatroom: research venv reused as-is (${installed.length} base packages recorded, venv=${venv})`)
       }
       return venv
     }
@@ -2231,6 +2236,7 @@ export function ensureResearchPythonEnv(e: Engine, ws: string): Promise<string |
       throw new Error(`chatroom: research venv deps install failed: ${String(error instanceof Error ? error.message : error)}`)
     }
     writeBasePackages(venv, packages)
+    console.log(`chatroom: research venv created (${packages.length} base packages, venv=${venv})`)
     return venv
   })
   researchVenvChain = run.catch(() => undefined)
