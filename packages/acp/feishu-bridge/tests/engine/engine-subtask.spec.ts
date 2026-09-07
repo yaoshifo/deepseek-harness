@@ -1452,7 +1452,7 @@ describe('reportNativeChild', () => {
     expect(e.replyToParent(p, child, 'group result')).toBe(true)
     child.setSubtaskReported(true)
 
-    for (let i = 0; i < 100 && child.getSubtaskReported() !== false; i++) {
+    for (let i = 0; i < 100 && child.getSubtaskReported(); i++) {
       await settle()
     }
     expect(child.getSubtaskReported()).toBe(false)

@@ -782,7 +782,7 @@ describe('research progress card', () => {
     clearCards(p)
     await settle()
     clearCards(p)
-    const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(async () => {})
+    const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
 
     vi.useFakeTimers()
     try {

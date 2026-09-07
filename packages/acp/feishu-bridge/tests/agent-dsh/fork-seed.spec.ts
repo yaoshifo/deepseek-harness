@@ -195,7 +195,7 @@ describe('seedablePrefix', () => {
           id: msgId('1'), role: 'user', source: { kind: 'user' },
           content: [{ type: 'text', text: '完成率 = 实际平仓手数 / 理论平仓手数' }],
         },
-      } as SessionEvent,
+      },
       { type: 'step/start', seq: SessionSeq(2), time: 3, data: { turn: 1, step: 1 } },
       {
         type: 'assistant/message', seq: SessionSeq(3), time: 4, surfaceOp: 'append',
@@ -208,7 +208,7 @@ describe('seedablePrefix', () => {
           },
           stream: [],
         },
-      } as SessionEvent,
+      },
       { type: 'tool/call', seq: SessionSeq(4), time: 5, data: { turn: 1, step: 1, callId: 'call-run', name: 'bash', arguments: '{}' } } as SessionEvent,
       {
         type: 'tool/result', seq: SessionSeq(5), time: 6, surfaceOp: 'append', sourceEventSeqs: [4],
@@ -236,7 +236,7 @@ describe('seedablePrefix', () => {
           },
           stream: [],
         },
-      } as SessionEvent,
+      },
       { type: 'tool/call', seq: SessionSeq(9), time: 10, data: { turn: 1, step: 2, callId: 'call-ask', name: 'ask_user_question', arguments: '{}' } } as SessionEvent,
     ]
     const seed = seedablePrefix(log)
