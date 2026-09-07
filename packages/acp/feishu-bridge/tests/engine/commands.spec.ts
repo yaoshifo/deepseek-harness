@@ -8,7 +8,7 @@ import type { Card } from '../../src/card.ts'
 import { DirHistory } from '../../src/engine/dir-history.ts'
 import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.ts'
-import { cmdDir, cmdFork, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.ts'
+import { cleanupOneChat, cmdDir, cmdFork, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.ts'
 import type { Agent, AgentSessionInfo, Message, ProviderSwitcher } from '../../src/core/types.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import {
@@ -922,6 +922,93 @@ describe('/spawn //fork parent jump notice', () => {
       for (const s of p.sentCards.map(c => JSON.stringify(c))) {
         expect(s).not.toContain('applink.feishu.cn')
       }
+    } finally {
+      dispose()
+    }
+  })
+
+  it('sends the notice through the updatable-card path so a later rename can relabel the button', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const withHandleSends: Array<{ card: unknown; handle: unknown }> = []
+    ;(p as { sendCardWithHandle?: (rc: unknown, card: unknown) => Promise<unknown> }).sendCardWithHandle =
+      async (_rc, card) => {
+        const handle = `notice-handle-${withHandleSends.length + 1}`
+        withHandleSends.push({ card, handle })
+        return handle
+      }
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      e.sessions.getOrCreateActive('feishu:oc_parent:ou_u').setAgentSessionID('agent-sid-1', 'dsh')
+      await cmdFork(e, p, msg({
+        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
+      }), ['forked continuation'])
+
+      // Updatable platforms get the same button-only card plus a handle.
+      expect(withHandleSends).toHaveLength(1)
+      const card = withHandleSends[0]!.card as {
+        header?: unknown
+        elements: Array<{ kind: string; buttons?: Array<{ text: string; type: string; url?: string }> }>
+      }
+      expect(card.header).toBeUndefined()
+      expect(card.elements).toHaveLength(1)
+      expect(card.elements[0]?.kind).toBe('actions')
+      expect(card.elements[0]?.buttons?.[0]?.type).toBe('primary')
+      expect(card.elements[0]?.buttons?.[0]?.url).toBe('https://applink.feishu.cn/client/chat/open?openChatId=role-1')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('relabels the notice button when the platform reports the group renamed, and stops after /done cleanup', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const patches: Array<{ handle: unknown; card: unknown }> = []
+    ;(p as { sendCardWithHandle?: (rc: unknown, card: unknown) => Promise<unknown> }).sendCardWithHandle = async () => 'notice-h'
+    ;(p as { updateCardWithHandle?: (h: unknown, card: unknown) => Promise<void> }).updateCardWithHandle =
+      async (h, card) => { patches.push({ handle: h, card }) }
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    const pollPatches = async (n: number): Promise<void> => {
+      const deadline = Date.now() + 2000
+      while (patches.length < n && Date.now() < deadline) {
+        await new Promise((resolve) => { setTimeout(resolve, 5) })
+      }
+    }
+    try {
+      e.sessions.getOrCreateActive('feishu:oc_parent:ou_u').setAgentSessionID('agent-sid-1', 'dsh')
+      await cmdFork(e, p, msg({
+        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
+      }), [])
+
+      // The platform's rename report (im.chat.updated_v1 → handleChatRenamed)
+      // relabels the jump button in place.
+      e.handleChatRenamed('test:role-1', 'LLM 起的新名')
+      await pollPatches(1)
+      expect(patches).toHaveLength(1)
+      let card = patches[0]!.card as {
+        header?: unknown
+        elements: Array<{ kind: string; buttons?: Array<{ text: string; type: string; url?: string }> }>
+      }
+      expect(card.header).toBeUndefined()
+      let btn = card.elements.find(el => el.kind === 'actions')?.buttons?.[0]
+      expect(btn?.type).toBe('primary')
+      expect(btn?.text).toBe('Open LLM 起的新名')
+      expect(btn?.url).toBe('https://applink.feishu.cn/client/chat/open?openChatId=role-1')
+
+      // The label follows every rename the platform reports.
+      e.handleChatRenamed('test:role-1', '用户在 UI 改的名')
+      await pollPatches(2)
+      expect(patches).toHaveLength(2)
+      card = patches[1]!.card as typeof card
+      btn = card.elements.find(el => el.kind === 'actions')?.buttons?.[0]
+      expect(btn?.text).toBe('Open 用户在 UI 改的名')
+
+      // Tearing the child chat down drops the handle: later renames no
+      // longer touch the parent's notice card.
+      await cleanupOneChat(e, p, 'test:role-1', undefined, true)
+      e.handleChatRenamed('test:role-1', '收尾后的改名')
+      await new Promise((resolve) => { setTimeout(resolve, 50) })
+      expect(patches).toHaveLength(2)
     } finally {
       dispose()
     }

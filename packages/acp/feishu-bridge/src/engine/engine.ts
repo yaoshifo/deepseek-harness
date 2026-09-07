@@ -160,7 +160,7 @@ import { renderSubtaskPanelCard } from './subtask-panel.ts'
 import { triggerInsights } from './predict.ts'
 import { defaultAutoCompressMinGapMs, maybeAutoResetSessionOnIdle, projectedContextTokens, runCompress } from './session-misc.ts'
 import type { RelayManager } from './relay.ts'
-import { MonitorCore, isMonitorCommand } from './monitor.ts'
+import { MonitorCore, isMonitorCommand, truncateMonitor } from './monitor.ts'
 import {
   cancelRenders,
   captureReplyForExport,
@@ -1703,6 +1703,7 @@ export class Engine {
    */
   handleChatRenamed(sessionKey: string, newName: string): void {
     if (newName === '') return
+    void this.updateParentNoticeLabel(sessionKey, newName)
     const { idToKey } = this.sessions.sessionKeyMap()
     let changed = false
     for (const s of this.sessions.allSessions()) {
@@ -8510,6 +8511,54 @@ export class Engine {
     if (fallback === '') fallback = jumpButtonsMarkdown(buttons).content
     if (fallback === '') return
     await this.send(p, replyCtx, fallback)
+  }
+
+  /** Parent-notice card handles by child session key (in-memory: a daemon
+   * restart drops them and the card keeps its generic label). */
+  private readonly parentNoticeHandles = new Map<string, { p: Platform; handle: unknown }>()
+
+  /**
+   * Record the parent-notice card handle of a spawned child so a later group
+   * rename can PATCH the jump button's label in place.
+   * @param childKey - Session key of the spawned group.
+   * @param p - Platform the notice card was sent on (owns the handle).
+   * @param handle - Updatable card handle returned by the platform.
+   */
+  registerParentNoticeHandle(childKey: string, p: Platform, handle: unknown): void {
+    this.parentNoticeHandles.set(childKey, { p, handle })
+  }
+
+  /** Drop a child's parent-notice handle (chat teardown). */
+  forgetParentNotice(childKey: string): void {
+    this.parentNoticeHandles.delete(childKey)
+  }
+
+  /**
+   * PATCH the parent-notice card of a renamed child so the jump button's
+   * label follows the new group name (Go has no counterpart). Reached from
+   * {@link handleChatRenamed}, so every rename the platform reports — the
+   * async LLM rename, its fallback, /rename, and a user rename in the Feishu
+   * UI — relabels the button. The handle stays registered so later renames
+   * keep relabeling; it is dropped when the child chat is torn down. A
+   * failed PATCH only warns — the next rename retries.
+   * @param childKey - Session key of the renamed group.
+   * @param name - The new group name.
+   */
+  private async updateParentNoticeLabel(childKey: string, name: string): Promise<void> {
+    if (name === '') return
+    const entry = this.parentNoticeHandles.get(childKey)
+    if (entry === undefined) return
+    const upd = asCardSenderWithUpdate(entry.p)
+    if (upd === undefined) return
+    const url = this.chatJumpURL(entry.p, extractChannelID(childKey))
+    if (url === '') return
+    const label = this.i18n.tf(Msg.SpawnJumpBtnNamed, truncateMonitor(name, 20))
+    const card = newCard().buttons({ text: label, type: 'primary', value: '', url }).build()
+    try {
+      await upd.updateCardWithHandle(entry.handle, card)
+    } catch (error) {
+      console.warn(`spawn: parent notice label update failed (${entry.p.name()}): ${String(error)}`)
+    }
   }
 
   /**
