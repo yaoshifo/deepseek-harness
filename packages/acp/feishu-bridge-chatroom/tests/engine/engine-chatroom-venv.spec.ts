@@ -12,7 +12,7 @@ import { statSync, readFileSync } from 'node:fs'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -117,12 +117,16 @@ describe('ensureResearchPythonEnv', () => {
       return { stdout: '', stderr: '' }
     })
     const ws = await mkdtemp(join(tmpdir(), 'fb-venv-'))
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     await ensureResearchPythonEnv(e, ws)
     // lookupPath also rides the exec seam, so [0] is the --version probe.
     expect(calls[1]).toContain('--seed')
     expect(calls[2]?.slice(0, 3)).toEqual(['pip', 'install', '--quiet'])
     expect(calls[2]).toContain('pandas<3')
     expect(calls[2]).toContain('scipy')
+    // The daemon log records the creation.
+    expect(log).toHaveBeenCalledWith(`chatroom: research venv created (3 base packages, venv=${join(ws, '.venv')})`)
+    log.mockRestore()
     // The installed base list lands in the in-venv marker for delta installs.
     const marker = readFileSync(join(ws, '.venv', '.dsh-base-packages.txt'), 'utf8')
     expect(marker).toContain('pandas<3')
@@ -142,6 +146,7 @@ describe('ensureResearchPythonEnv', () => {
     await mkdir(join(venv, 'bin'), { recursive: true })
     // Marker predates a config extension: only the old four are recorded.
     await writeFile(join(venv, '.dsh-base-packages.txt'), 'akshare\npandas\nnumpy\nrequests\n', 'utf8')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     await ensureResearchPythonEnv(e, ws)
     // No venv re-creation; a single pip install covering exactly the delta
     // (the default list pins pandas<3, so pandas is missing from the marker).
@@ -149,6 +154,9 @@ describe('ensureResearchPythonEnv', () => {
     expect(calls[0]?.slice(0, 3)).toEqual(['pip', 'install', '--quiet'])
     expect(calls[0]).toContain('pandas<3')
     expect(calls[0]).not.toContain('akshare')
+    // The daemon log names the delta it installed.
+    expect(log).toHaveBeenCalledWith(`chatroom: research venv delta-installed (pandas<3, venv=${venv})`)
+    log.mockRestore()
     // The marker absorbs the delta for the next startup.
     expect(readFileSync(join(venv, '.dsh-base-packages.txt'), 'utf8')).toContain('pandas<3')
   })
@@ -165,8 +173,12 @@ describe('ensureResearchPythonEnv', () => {
     const venv = join(ws, '.venv')
     await mkdir(join(venv, 'bin'), { recursive: true })
     await writeFile(join(venv, '.dsh-base-packages.txt'), 'akshare\npandas<3\nnumpy\nrequests\n', 'utf8')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     await ensureResearchPythonEnv(e, ws)
     expect(execCalls).toBe(0)
+    // The daemon log records the reuse outcome (grep-able in journald).
+    expect(log).toHaveBeenCalledWith(`chatroom: research venv reused as-is (4 base packages recorded, venv=${venv})`)
+    log.mockRestore()
   })
 
   it('removes the half-created venv when the deps install fails', async () => {
