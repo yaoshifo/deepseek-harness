@@ -2,6 +2,8 @@
 
 Status: implemented
 
+[English](2026-09-06-chatroom-user-profile-injection-removal.md) | 中文
+
 ## Problem
 
 chatroom 的 `userProfile` 配置项（Go `user_profile` 迁移残留）把一份用户背景文件无条件注入所有 chatroom persona（角色、主持人、direct-role），并在 `/chatroom` 启动与工具 `start` 动作处 fail loud 校验可读性。该机制已被有意废弃：chatroom 前身仓库（yaoshifo/chatroom）早在 36beb5f 就把「启动自动注入」改为「主持人出卡确认后按需 `Read` vault 的 user-profile.md」，决策规则由 books 主持人契约（books/chatroom/CLAUDE.md「用户背景」段）承载。生产 profile 从未配置该键，但配置面存在本身就是漂移源——哪天配上即双机制打架：系统提示词已注入全文，主持人仍按契约出卡问用户「要不要加载」。

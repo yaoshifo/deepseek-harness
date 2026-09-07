@@ -2,6 +2,8 @@
 
 Status: implemented
 
+[English](2026-09-04-feishu-bridge-approval-render-cancel.md) | 中文
+
 ## Problem
 
 2026-09-04 oc_3b2fa 群事故链：`/provider` 切到 glm-5.3-flash 后，第一次 bash 提权弹卡（全准记忆按 Agent 实例记，新会话清零），审批 park 时触发的 speculative reply 渲染（超阈值的 pre-ask 文本段，`engine.ts` deliverCards → `renderAndDeliverReply`）在 8 秒后被用户批准按钮的 `cancelRenders` 杀掉；turn-end 兜底渲染因最终回复低于 `defaultReplyPreRenderLen` 阈值不触发——该段（模型外显的完整计划文本）永久失去渲染投递，只留在过程卡上。结构性原因：权限审批的决策耗时（秒级）与渲染 fork 耗时（~12s）的量级差，使 Go `handlePendingPermission` 遗留的「用户响应即无条件取消」对 speculative render 几乎必杀；plan 渲染当日 33 次投递全部幸存，只因用户读计划卡的时间普遍超过渲染耗时。`cancelRenders` 自述的取消动机是省 token（stale render 不值得烧），而批准场景下渲染内容是本 turn 的有效投递物，并不 stale。
