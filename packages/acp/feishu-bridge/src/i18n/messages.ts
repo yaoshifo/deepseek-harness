@@ -45,6 +45,8 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   spawn_error: { en: 'Failed to create group: %v', zh: '创建群聊失败：%v', 'zh-TW': '建立群組失敗：%v', ja: 'グループの作成に失敗しました：%v', es: 'Error al crear el grupo: %v' },
   spawn_dir_error: { en: 'Invalid --dir path (not an existing directory): %v', zh: '--dir 路径无效（目录不存在）：%v', 'zh-TW': '--dir 路徑無效（目錄不存在）：%v', ja: '--dir のパスが無効です（ディレクトリが存在しません）：%v', es: 'Ruta --dir no válida (el directorio no existe): %v' },
   spawn_group_ready: { en: 'Group ready, send a message to start', zh: '群聊已就绪，发送消息开始对话' },
+  spawn_parent_notice_title: { en: '🌿 Sub-group created', zh: '🌿 已创建子群' },
+  spawn_jump_btn: { en: 'Open sub-group', zh: '进入子群' },
   spawn_memory_warn_title: { en: 'Memory High', zh: '内存偏高' },
   spawn_memory_warn: { en: '⚠️ Memory at %d%% — spawning more risks freezing the system. Consider /done on idle children or /board to review.', zh: '⚠️ 内存占用 %d%%，继续 spawn 可能导致系统卡死。建议先 /done 清理空闲子会话，或 /board 查看会话树。' },
   spawn_memory_block_title: { en: 'Spawn Declined', zh: '已拒绝 spawn' },

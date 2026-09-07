@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { Msg } from '../i18n/index.ts'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.ts'
 import { asCardSender, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, asStagedForkSeedForgetter, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.ts'
-import { newCard } from '../card.ts'
+import { newCard, type CardButton } from '../card.ts'
 import type { Engine } from './engine.ts'
 import type { SessionManager } from './session.ts'
 import { childLabel } from './subtask.ts'
@@ -31,6 +31,7 @@ import {
 import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName } from './groupname.ts'
 import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.ts'
 import { renderDirCardSafe } from './dir-card.ts'
+import { truncateMonitor } from './monitor.ts'
 import { renderListCardSafe, renderStatusCard } from './session-card.ts'
 import { extractChannelID } from './engine.ts'
 
@@ -1177,6 +1178,23 @@ async function spawnGroupCommon(
   e.seedSpawnProvider(syntheticMsg.sessionKey)
 
   e.addReaction(p, msg.replyCtx, 'Done')
+
+  // Parent-chat jump notice: the new group is a separate chat the user would
+  // otherwise have to find in the chat list; a card with the jump button
+  // lands in the chat they are in (Go has no counterpart). Platforms without
+  // a chat-jump URL keep the reaction-only flow.
+  {
+    const jumpURL = e.chatJumpURL(p, extractChannelID(syntheticMsg.sessionKey))
+    if (jumpURL !== '') {
+      const body = firstMsg !== '' ? `> ${truncateMonitor(firstMsg, 200)}` : e.i18n.t(opts.readyTitleKey)
+      const buttons: CardButton[] = [{ text: e.i18n.t(Msg.SpawnJumpBtn), type: 'primary', value: '', url: jumpURL }]
+      try {
+        await e.sendAsCardWithButtons(p, msg.replyCtx, body, { title: e.i18n.t(Msg.SpawnParentNoticeTitle), color: 'indigo' }, buttons)
+      } catch (error) {
+        console.warn(`spawn: parent notice send failed (${p.name()}): ${String(error)}`)
+      }
+    }
+  }
 
   // Notification card for both paths (with and without user message).
   {
