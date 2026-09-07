@@ -84,6 +84,14 @@ export const feishuPatchRateLimitCode = '230020'
 export const feishuFrequencyLimitCode = '99991400'
 
 /**
+ * Feishu im/v2 tag-create business code for "duplicate name in tenant": the
+ * tenant already holds a tag with that name. When create returns it without
+ * a duplicate id, the same-named tag belongs to another app and this app can
+ * neither create nor see it.
+ */
+export const feishuTagDuplicateNameCode = '402'
+
+/**
  * Extract Feishu's business error code regardless of error shape.
  * @larksuiteoapi/node-sdk surfaces API failures as AxiosErrors whose message
  * is only "Request failed with status code NNN" and whose business code rides

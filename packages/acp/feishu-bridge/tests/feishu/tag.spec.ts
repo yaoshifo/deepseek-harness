@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import {
   TagManager,
   type TagApi,
@@ -161,6 +161,51 @@ describe('applySpawnDirTag', () => {
     await expect(readFile(join(dir, 'mine_tag_cache.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('diagnoses a foreign-app duplicate name when every fallback comes up empty', async () => {
+    // 2026-09-06 "graham": the tenant holds a same-named tag owned by another
+    // app, so create returns 402 without a duplicate id, no spawned chat
+    // carries the tag, and no sibling cache knows its id. The generic
+    // "leaving untagged" line hid the cause and the remedy every spawn.
+    const tagName = 'graham'
+    const api: TagApi = {
+      async createTag() { return { code: 402, msg: 'duplicate name in tenant' } },
+      async getTagRelation() { return { code: 0, tags: [] } },
+      async createTagRelation() { return { code: 0 } },
+      async updateTagRelation() { return { code: 0 } },
+    }
+    const p = newManager(api, { dirTagName: tagName })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let warned = ''
+    try {
+      await p.applySpawnDirTag('oc_spawned', tagName)
+      warned = warn.mock.calls.map(c => String(c[0])).join('\n')
+    } finally {
+      warn.mockRestore()
+    }
+    expect(warned).toContain('belongs to another app')
+    expect(warned).toContain('tag cache')
+    expect(warned).toContain('non-conflicting')
+    expect(p.cachedTagID(tagName)).toBeUndefined()
+  })
+
+  it('resolves through the same-app duplicate id without a create', async () => {
+    // Same-app duplicates come back from create as duplicateId: ensureTag is
+    // idempotent and the id binds like a fresh one.
+    const tagName = 'dupai'
+    const duplicateID = '7674012345678901234'
+    const api = fakeTagApi({
+      tagName,
+      liveIDs: [duplicateID],
+      create: () => ({ code: 0, duplicateId: duplicateID }),
+    })
+    const p = newManager(api, { dirTagName: tagName })
+
+    await p.applySpawnDirTag('oc_spawned', tagName)
+
+    expect(p.cachedTagID(tagName)).toBe(duplicateID)
+    expect(await p.chatHasTagID('oc_spawned', duplicateID)).toBe(true)
+  })
+
   it('keeps the bound id when the verify readback query fails', async () => {
     // 2026-09-02 oc_e51a: the frequency-limited readback (HTTP 400, code
     // 99991400) read as "bind did not verify" and evicted ids whose binds
@@ -254,6 +299,34 @@ describe('discoverTagFromSpawnedChats under the API frequency limit', () => {
     expect(api.relationCalls).toEqual(['oc_a', 'oc_b'])
     expect(waits).toHaveLength(2)
     expect(p.cachedTagID('research')).toBeUndefined()
+  })
+
+  it('logs a completed empty scan distinctly from a rate-limited abort', async () => {
+    // Triage must tell "no chat carries the tag" from "the scan never
+    // finished" — both return '' silently today.
+    const runScan = async (limitOn?: string): Promise<{ completed: boolean; aborted: boolean }> => {
+      const api = scanApi(limitOn === undefined ? {} : { limitOn })
+      const p = newManager(api, {
+        dirTagName: 'research',
+        spawnedChatIDs: () => ['oc_a', 'oc_b'],
+        scanLimiter: { wait: () => Promise.resolve() },
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+      try {
+        await p.applySpawnDirTag('oc_spawned', 'research')
+        return {
+          completed: info.mock.calls.some(c => String(c[0]).includes('no matching tag')),
+          aborted: warn.mock.calls.some(c => String(c[0]).includes('frequency limit')),
+        }
+      } finally {
+        warn.mockRestore()
+        info.mockRestore()
+      }
+    }
+
+    expect(await runScan()).toEqual({ completed: true, aborted: false })
+    expect(await runScan('oc_a')).toEqual({ completed: false, aborted: true })
   })
 })
 

@@ -15,7 +15,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 import { atomicWriteFile } from '../atomicwrite.ts'
-import { TokenBucketRateLimiter, feishuBusinessCode, feishuFrequencyLimitCode } from './retry.ts'
+import { TokenBucketRateLimiter, feishuBusinessCode, feishuFrequencyLimitCode, feishuTagDuplicateNameCode } from './retry.ts'
 
 /** Default active-tag name applied to spawned groups (Go core.ActiveTagName). */
 export const activeTagName = '❤️'
@@ -358,6 +358,9 @@ export class TagManager {
         console.warn(`feishu: discover tag query failed (chat_id ${chatID}, tag ${tagName}): ${String(err)}`)
       }
     }
+    // Distinct from the rate-limit abort above: triage reading this log can
+    // tell "nothing carries the tag" from "the scan never finished".
+    console.info(`feishu: tag discover scan complete, no matching tag visible to this app (tag ${tagName}, ${chatIDs.length} chats scanned)`)
     return ''
   }
 
@@ -366,7 +369,10 @@ export class TagManager {
    * failure, fall back to discovering the id from this bot's chats or a
    * sibling bot's cache file. Ids known to have failed bind verification are
    * skipped in every source; when nothing usable remains the original failure
-   * (or an only-unbindable-ids error) propagates. Results are cached.
+   * (or an only-unbindable-ids error) propagates. A 402 duplicate-name
+   * failure that survives every fallback throws a diagnosis instead: the
+   * tenant's same-named tag is invisible to this app (most likely another
+   * app's), with the import-or-rename remedy spelled out. Results are cached.
    * @param tagName - Tag name.
    * @returns The tag id.
    */
@@ -390,6 +396,13 @@ export class TagManager {
         if (sibling !== '' && !this.tagUnbindable(tagName, sibling)) {
           id = sibling
         } else if (createErr !== undefined) {
+          if (feishuBusinessCode(createErr) === feishuTagDuplicateNameCode) {
+            // A same-app duplicate would have come back as duplicateId on
+            // create; reaching here with 402 means the tenant's same-named
+            // tag is invisible to this app — name the remedy instead of a
+            // bare code (2026-09-06 "graham": untagged on every spawn).
+            throw new Error(`feishu: tag "${tagName}" is taken in the tenant but this app can neither create it nor find its id — the tag most likely belongs to another app. Import its id from the owning app into the tag cache, or configure a non-conflicting tag name for this project. (${createErr.message})`)
+          }
           throw createErr
         } else if (id === '') {
           throw new Error(`feishu: tag "${tagName}" not found via create, discover or sibling caches`)
