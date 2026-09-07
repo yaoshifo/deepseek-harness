@@ -1,5 +1,5 @@
 /**
- * The chatroom package's message subtable: the 78 chatroom keys (77
+ * The chatroom package's message subtable: the 79 chatroom keys (78
  * `chatroom_*` plus the bare `chatroom` command-description key) moved
  * verbatim from the feishu-bridge main table. Registered once per process in
  * the plugin apply through the bridge's `registerMessages`, so every engine
@@ -52,6 +52,7 @@ const en: Record<string, string> = {
   chatroom_list_title: 'Available thinkers (%d)',
   chatroom_gather_header: ' ⟳ Gather · %s',
   chatroom_gather_timeout: '%d role(s) timed out: %s. Continuing with the replies received.',
+  chatroom_gather_rearmed: '%d role(s) timed out: %s. The gather barrier is re-armed for up to %d more minutes — their late replies keep funneling into this round, and you will be woken again either with every reply in hand or, once the window lapses, with whatever has arrived by then. Work on other matters meanwhile; do not re-run the round.',
   chatroom_direct_started: 'Now in a 1:1 chat with %s (direct mode, no moderator).',
   chatroom_pick_title: 'Choose chatroom roles',
   chatroom_pick_recommended: 'Recommended',
@@ -162,6 +163,7 @@ const zh: Record<string, string> = {
   chatroom_list_title: '可用的 thinkers（%d 个）',
   chatroom_gather_header: ' ⟳ 并行收集 · %s',
   chatroom_gather_timeout: '%d 个角色超时未回复：%s。按已收到的继续。',
+  chatroom_gather_rearmed: '%d 个角色超时未回复：%s。本轮并行收集已重挂，最多再等 %d 分钟：上述角色的迟到回复会继续汇入本轮，全部到齐（或等待窗口结束）会再次唤醒你并附上届时的全部回复。期间可先处理其他事项，不要重复发起本轮。',
   chatroom_direct_started: '已进入与「%s」的 1:1 直接对话（不开主持人）。',
   chatroom_pick_title: '挑选聊天室角色',
   chatroom_pick_recommended: '推荐',
@@ -282,6 +284,7 @@ export const Msg = {
   ChatroomListTitle: 'chatroom_list_title',
   ChatroomGatherHeader: 'chatroom_gather_header',
   ChatroomGatherTimeout: 'chatroom_gather_timeout',
+  ChatroomGatherRearmed: 'chatroom_gather_rearmed',
   ChatroomDirectStarted: 'chatroom_direct_started',
   ChatroomPickTitle: 'chatroom_pick_title',
   ChatroomPickRecommended: 'chatroom_pick_recommended',

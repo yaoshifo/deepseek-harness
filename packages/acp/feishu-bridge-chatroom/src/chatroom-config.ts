@@ -16,6 +16,7 @@ import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { defaultChatroomRolesDir } from './engine/chatroom-roles.ts'
 import {
   defaultChatroomAssistantStallSec,
+  defaultChatroomGatherRearm,
   defaultChatroomGatherTimeout,
   defaultChatroomResearchTimeout,
   defaultMaxChatroomRoles,
@@ -36,6 +37,12 @@ export interface ChatroomProjectConfig {
   moderatorDir?: string
   /** Gather barrier fallback timeout in seconds (Go gather_timeout_sec). */
   gatherTimeoutSec?: number
+  /**
+   * Re-arm window after a gather timeout in seconds: one more window for
+   * the still-missing roles before the barrier degrades to free relay
+   * (0 = the 20m default).
+   */
+  gatherRearmSec?: number
   /** End barrier drain timeout in seconds (Go end_timeout_sec). */
   endTimeoutSec?: number
   /** Research-mode gather round timeout in seconds, clamped to [60, 86400] (Go research_timeout_sec). */
@@ -64,6 +71,7 @@ const chatroomSection = Schema.object({
   maxRoles: Schema.natural().description('Cap on role agents per chatroom (default 5)'),
   moderatorDir: Schema.string().description('Moderator data dir holding per-chatroom ledgers'),
   gatherTimeoutSec: Schema.natural().description('Gather barrier fallback timeout in seconds (default 1200)'),
+  gatherRearmSec: Schema.natural().description('Re-arm window after a gather timeout in seconds — one more window for late replies before the barrier degrades to free relay (default 1200)'),
   endTimeoutSec: Schema.natural().description('End barrier drain timeout in seconds (default 600)'),
   researchTimeoutSec: Schema.natural().description('Research gather round timeout in seconds, clamped to [60, 86400]'),
   defaultResearchMode: Schema.union(['auto', 'manual']).description('Default research driver when --mode is omitted'),
@@ -109,6 +117,8 @@ class ChatroomEngineConfig {
   moderatorDirValue = ''
   /** Gather barrier fallback timeout override in ms; 0 = the 20m default. */
   gatherTimeoutMs = 0
+  /** Re-arm window after a gather timeout override in ms; 0 = the 20m default. */
+  gatherRearmMs = 0
   /** End-barrier drain timeout override in ms; 0 = half the gather default. */
   endTimeoutMs = 0
   /** Research gather round timeout override in ms; 0 = the 60m default. */
@@ -149,6 +159,9 @@ class ChatroomEngineConfig {
     }
     if (cfg.gatherTimeoutSec !== undefined && cfg.gatherTimeoutSec > 0) {
       this.gatherTimeoutMs = cfg.gatherTimeoutSec * 1000
+    }
+    if (cfg.gatherRearmSec !== undefined && cfg.gatherRearmSec > 0) {
+      this.gatherRearmMs = cfg.gatherRearmSec * 1000
     }
     if (cfg.endTimeoutSec !== undefined && cfg.endTimeoutSec > 0) {
       this.endTimeoutMs = cfg.endTimeoutSec * 1000
@@ -213,6 +226,15 @@ class ChatroomEngineConfig {
   /** Effective gather barrier timeout (the override, or the 20m default). */
   gatherTimeoutDuration(): number {
     return this.gatherTimeoutMs > 0 ? this.gatherTimeoutMs : defaultChatroomGatherTimeout
+  }
+
+  /**
+   * Effective re-arm window after a gather timeout (the override, or the
+   * 20m default). One re-arm per gather round bounds the total wait at
+   * ≈ 2× the gather timeout.
+   */
+  gatherRearmDuration(): number {
+    return this.gatherRearmMs > 0 ? this.gatherRearmMs : defaultChatroomGatherRearm
   }
 
   /**

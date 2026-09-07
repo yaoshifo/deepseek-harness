@@ -99,7 +99,16 @@ describe('chatroom barrier persistence', () => {
       expected: ['taleb'],
       collected: { munger: '部分回复' },
       startedAt: 0,
+      rearmed: false,
     })
+
+    // A barrier already re-armed once persists that count: a restart
+    // mid-window must not restart the re-arm budget.
+    g.rearmed = true
+    e.sessions.save()
+    const rearmedSnap = Object.values(readStore(store).sessions)
+      .map(chatroomSection).find(s => s.pendingGatherData !== undefined)?.pendingGatherData
+    expect((rearmedSnap as { rearmed?: boolean } | undefined)?.rearmed).toBe(true)
 
     // A woken barrier is cleared before the next save except inside the
     // async finalize window; a restart there must not resurrect it.
@@ -160,6 +169,54 @@ describe('chatroom restart recovery', () => {
     e2.sessions.save()
     for (const s of Object.values(readStore(store).sessions)) {
       expect(chatroomSection(s).pendingGatherData).toBeUndefined()
+    }
+  })
+
+  it('a restart inside the re-arm window closes the round with the collected replies and never re-arms again', async () => {
+    // The window that matters for the 2026-09-06 incident: the timeout had
+    // already re-armed the barrier (late replies expected within minutes)
+    // when the daemon restarted. No role turn survives a restart, so the
+    // recovered round must close once with what it holds — the collected
+    // replies survive, and the restored barrier must not arm a new window
+    // (not the gather timeout, not the re-arm one).
+    const store = join(await mkdtemp(join(tmpdir(), 'fb-recovery-')), 'sessions.json')
+    const hub = 'test:hub:user-1'
+    {
+      const e = newRecoveryEngine(createStubChatroomSpawner(), store)
+      armHubAndRole(e, hub)
+      const g = armedGather()
+      g.rearmed = true // the timeout had re-armed before the restart
+      chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = g
+      e.sessions.save()
+    }
+
+    vi.useFakeTimers()
+    try {
+      const e2 = newRecoveryEngine(createStubChatroomSpawner(), store)
+      const recv = vi.spyOn(e2, 'receiveMessage').mockImplementation(() => {})
+      await e2.start()
+      for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(0)
+      await waitFor(() => recv.mock.calls.some(([, m]) => m.sessionKey === hub), 'moderator wake')
+
+      const wake = recv.mock.calls.map(([, m]) => m).find(m => m.sessionKey === hub)
+      expect(wake?.content).toContain('检测到进程重启')
+      expect(wake?.content).toContain('部分回复')
+      // The round closed; the barrier neither survives in memory nor arms a
+      // new re-arm window (advancing past both windows wakes nobody).
+      expect(chatroomState(e2.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
+      const hubWakes = () => recv.mock.calls.filter(([, m]) => m.sessionKey === hub).length
+      const atClose = hubWakes()
+      await vi.advanceTimersByTimeAsync(40 * 60 * 1000)
+      for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(0)
+      expect(hubWakes()).toBe(atClose)
+      expect(chatroomState(e2.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
+
+      e2.sessions.save()
+      for (const s of Object.values(readStore(store).sessions)) {
+        expect(chatroomSection(s).pendingGatherData).toBeUndefined()
+      }
+    } finally {
+      vi.useRealTimers()
     }
   })
 

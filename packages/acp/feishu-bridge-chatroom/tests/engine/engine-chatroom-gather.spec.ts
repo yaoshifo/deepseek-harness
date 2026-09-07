@@ -95,6 +95,13 @@ describe('chatroom gather timeout duration', () => {
     chatroomConfig(e).applySection({ gatherTimeoutSec: Math.round(90_000 / 1000) })
     expect(chatroomConfig(e).gatherTimeoutDuration()).toBe(90_000)
   })
+
+  it('re-arm window defaults to 20m and is overridable via gatherRearmSec', () => {
+    const e = new Engine('test', createStubAgent(), [], '', 'zh')
+    expect(chatroomConfig(e).gatherRearmDuration()).toBe(20 * 60 * 1000)
+    chatroomConfig(e).applySection({ gatherRearmSec: Math.round(90_000 / 1000) })
+    expect(chatroomConfig(e).gatherRearmDuration()).toBe(90_000)
+  })
 })
 
 describe('ChatroomGather accumulate', () => {
@@ -1165,6 +1172,238 @@ describe('research progress card projection (heartbeat + merge)', () => {
       updateResearchProgressCard(e, p, g, 'done')
       expect(p.updateCards.length).toBe(3)
       expect(p.patchedTitles()[2]).toContain('全部角色已回复')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+// ── gather timeout re-arm barrier (G-A) ────────────────────────────────────
+//
+// 2026-09-06 incident: the hub's 5-role research gather collected 1/5 at the
+// 1200s timeout and partially woke the moderator, which reasonably assumed
+// "the remaining reports will wake me when they land" — but the 4 late
+// deliveries (all on disk 5-10 minutes past the timeout) hit the ask-identity
+// router as superseded asks and relayed as free replies: group-visible, never
+// injected, never waking. The supervision net dragged the room back 30-60
+// minutes later. A timed-out gather now re-arms the barrier ONCE for the
+// still-missing roles instead of destroying it: late replies keep funneling
+// through the gather path, and only a second timeout degrades to free relay.
+
+describe('gather timeout re-arm barrier', () => {
+  /** Flush the async broadcast/relay/wake chains under faked timers. */
+  async function flush(times = 10): Promise<void> {
+    for (let i = 0; i < times; i++) await vi.advanceTimersByTimeAsync(0)
+  }
+
+  /** End a role's turn with a stamped reply through the production relay path. */
+  function relayStamped(e: Engine, p: Platform, roleKey: string, roleName: string, hub: string, seq: number, reply: string): void {
+    const role = e.sessions.getOrCreateActive(roleKey)
+    chatroomState(role).chatroomHubKey = hub
+    chatroomState(role).chatroomRoleName = roleName
+    chatroomState(role).chatroomAsked = false
+    chatroomState(role).chatroomAskSeq = seq
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, role, reply, false)
+  }
+
+  it('times out once and re-arms the barrier instead of destroying it, waking the moderator with the re-arm notice', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+    clearCards(p)
+    await settle()
+    clearCards(p)
+    const wake = vi.spyOn(e, 'deliverMachineMessage')
+
+    vi.useFakeTimers()
+    try {
+      gatherRoles(e, hub, '并行问题', false)
+      await flush()
+      const g = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
+      expect(g).toBeDefined()
+
+      // taleb replies in time; munger is the late one.
+      relayStamped(e, p, roles[0]!.sessionKey, 'taleb', hub, g!.seq, '按时回复')
+      await flush()
+
+      // The gather timeout fires (default 20m): the barrier is NOT destroyed.
+      await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+      await flush()
+
+      const hubGather = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
+      expect(hubGather).toBe(g)
+      expect(hubGather!.expected.has('munger')).toBe(true)
+      expect((hubGather as unknown as { rearmed?: boolean }).rearmed).toBe(true)
+      // The re-armed fallback timer is live again.
+      expect(hubGather!.timer).toBeDefined()
+      hubGather!.stopTimer()
+
+      // The moderator got the partial wake: the collected reply plus the
+      // re-arm notice naming the still-missing role.
+      const wakes = wake.mock.calls.map(c => c[1]).filter(m => m.sessionKey === hub)
+      expect(wakes).toHaveLength(1)
+      expect(String(wakes[0]?.content)).toContain('按时回复')
+      expect(String(wakes[0]?.content)).toContain('重挂')
+      expect(String(wakes[0]?.content)).toContain('munger')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('late deliveries inside the re-arm window funnel through the gather path and wake the moderator with ALL replies', async () => {
+    // The incident shape: one role on time, two late by minutes past the
+    // timeout. Their relays must take the gather fan-in path (not the
+    // superseded-ask free relay) and the final wake carries every reply.
+    const root = await mkdtemp(join(tmpdir(), 'fb-gather-roles-'))
+    for (const n of ['taleb', 'munger', 'dalio']) {
+      await mkdir(join(root, n), { recursive: true })
+      await writeFile(join(root, n, 'CLAUDE.md'), `# ${n}\n`, 'utf8')
+    }
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: root })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    const roles = await startChatroom(e, hub, ['taleb', 'munger', 'dalio'], 'topic')
+    clearCards(p)
+    await settle()
+    clearCards(p)
+    const wake = vi.spyOn(e, 'deliverMachineMessage')
+    const journal = vi.spyOn(console, 'info').mockImplementation(() => {})
+
+    vi.useFakeTimers()
+    try {
+      gatherRoles(e, hub, '并行问题', false)
+      await flush()
+      const g = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
+      expect(g).toBeDefined()
+
+      relayStamped(e, p, roles[0]!.sessionKey, 'taleb', hub, g!.seq, '按时回复')
+      await flush()
+      await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+      await flush()
+      expect(wake.mock.calls.filter(c => (c[1] as { sessionKey: string }).sessionKey === hub)).toHaveLength(1)
+
+      // munger lands 5 minutes into the re-arm window: the gather fan-in
+      // path keeps the barrier and logs the waiting-for-more fingerprint.
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+      relayStamped(e, p, roles[1]!.sessionKey, 'munger', hub, g!.seq, '迟到回复一')
+      await flush()
+      const hubGather = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
+      expect(hubGather).toBe(g)
+      expect(hubGather!.collected.get('munger')).toBe('迟到回复一')
+      expect(journal.mock.calls.some(c => String(c[0]).includes('gathered role reply (waiting for more)'))).toBe(true)
+      // No extra wake for a partial late reply.
+      expect(wake.mock.calls.filter(c => (c[1] as { sessionKey: string }).sessionKey === hub)).toHaveLength(1)
+
+      // dalio lands 3 minutes later: the barrier completes —
+      // destroyed, and ONE wake carries all three replies (batch injection).
+      await vi.advanceTimersByTimeAsync(3 * 60 * 1000)
+      relayStamped(e, p, roles[2]!.sessionKey, 'dalio', hub, g!.seq, '迟到回复二')
+      await flush()
+      expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
+      const wakes = wake.mock.calls.map(c => c[1]).filter(m => m.sessionKey === hub)
+      expect(wakes).toHaveLength(2)
+      const finalWake = String(wakes[1]?.content)
+      expect(finalWake).toContain('按时回复')
+      expect(finalWake).toContain('迟到回复一')
+      expect(finalWake).toContain('迟到回复二')
+    } finally {
+      journal.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('a second timeout degrades to free relay and never re-arms again', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+    clearCards(p)
+    await settle()
+    clearCards(p)
+    const wake = vi.spyOn(e, 'deliverMachineMessage')
+
+    vi.useFakeTimers()
+    try {
+      gatherRoles(e, hub, '并行问题', false)
+      await flush()
+      const g = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
+      expect(g).toBeDefined()
+
+      relayStamped(e, p, roles[0]!.sessionKey, 'taleb', hub, g!.seq, '按时回复')
+      await flush()
+      // First window elapses (re-arm), then the whole re-arm window too —
+      // the late reply never comes.
+      await vi.advanceTimersByTimeAsync(40 * 60 * 1000)
+      await flush()
+
+      // The barrier is destroyed; the moderator got the final partial wake
+      // naming the missing role.
+      expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
+      const wakes = wake.mock.calls.map(c => c[1]).filter(m => m.sessionKey === hub)
+      expect(wakes).toHaveLength(2)
+      expect(String(wakes[1]?.content)).toContain('超时未回复')
+      expect(String(wakes[1]?.content)).toContain('munger')
+
+      // munger finally lands AFTER the round closed: the superseded-ask
+      // path relays it as a free reply (group-visible card, no barrier, no
+      // wake) — the pre-re-arm behavior is the final degradation.
+      const cardsBefore = p.sentCards.length
+      relayStamped(e, p, roles[1]!.sessionKey, 'munger', hub, g!.seq, '彻底迟到的回复')
+      await flush()
+      expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
+      expect(p.sentCards.length).toBe(cardsBefore + 1)
+      expect(p.sentCards[p.sentCards.length - 1] ? cardBody(p.sentCards[p.sentCards.length - 1]) : '').toContain('彻底迟到的回复')
+      expect(wake.mock.calls.map(c => c[1]).filter(m => m.sessionKey === hub)).toHaveLength(2)
+
+      // No third window ever exists: advancing past a whole extra window
+      // wakes nobody and mints no barrier.
+      await vi.advanceTimersByTimeAsync(40 * 60 * 1000)
+      await flush()
+      expect(wake.mock.calls.map(c => c[1]).filter(m => m.sessionKey === hub)).toHaveLength(2)
+      expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('honors a configured gatherRearmSec for the re-armed window', async () => {
+    // A 1-second re-arm window proves the config drives the armed timer,
+    // not just the getter: the second timeout fires at +1s, not +20m.
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    chatroomConfig(e).applySection({ gatherRearmSec: 1 })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+    clearCards(p)
+    await settle()
+    clearCards(p)
+    const wake = vi.spyOn(e, 'deliverMachineMessage')
+
+    vi.useFakeTimers()
+    try {
+      gatherRoles(e, hub, '并行问题', false)
+      await flush()
+      expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeDefined()
+
+      await vi.advanceTimersByTimeAsync(20 * 60 * 1000)
+      await flush()
+      expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeDefined() // re-armed
+
+      await vi.advanceTimersByTimeAsync(1000)
+      await flush()
+      expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined() // 1s window burned
+      expect(wake.mock.calls.map(c => c[1]).filter(m => m.sessionKey === hub)).toHaveLength(2)
     } finally {
       vi.useRealTimers()
     }

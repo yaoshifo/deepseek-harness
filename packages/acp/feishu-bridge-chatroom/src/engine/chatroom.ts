@@ -52,6 +52,13 @@ export const defaultMaxChatroomRoles = 5
 /** Default gather barrier fallback timeout: 20 minutes (Go defaultChatroomGatherTimeout). */
 export const defaultChatroomGatherTimeout = 20 * 60 * 1000
 
+/**
+ * Default re-arm window after a gather timeout: 20 more minutes for the
+ * still-missing roles before the barrier degrades to free relay. One re-arm
+ * per gather round, so the total wait is bounded at ≈ 2× the gather timeout.
+ */
+export const defaultChatroomGatherRearm = 20 * 60 * 1000
+
 /** Default research-mode gather round timeout: 60 minutes (Go defaultChatroomResearchTimeout). */
 export const defaultChatroomResearchTimeout = 60 * 60 * 1000
 
@@ -122,6 +129,8 @@ export interface GatherBarrierSnapshot {
   collected: Record<string, string>
   /** When the round was armed (ms epoch); absent in pre-field snapshots reads as 0. */
   startedAt?: number
+  /** Whether the timeout already re-armed this barrier once; absent reads as false. */
+  rearmed?: boolean
 }
 
 /** Durable snapshot of an armed end barrier (sessions.json; timer and woken flag stay in memory). */
@@ -192,6 +201,13 @@ export class ChatroomGather {
   lastPatchAt = 0
   /** When this round was armed (ms epoch); the live card's elapsed clock. */
   startedAt = 0
+  /**
+   * Whether the fallback timeout already re-armed this barrier once. A
+   * re-armed barrier waits one more window for the still-missing roles
+   * (late replies keep funneling in); the NEXT timeout degrades to free
+   * relay. Persisted so a restart mid-window cannot lose the count.
+   */
+  rearmed = false
   private woken = false
   /** Research progress-card handle (research gathers only). */
   progressHandle: unknown
@@ -215,6 +231,7 @@ export class ChatroomGather {
       expected: [...this.expected],
       collected: Object.fromEntries(this.collected),
       startedAt: this.startedAt,
+      rearmed: this.rearmed,
     }
   }
 
@@ -959,6 +976,24 @@ function fireGatherTimeout(e: Engine, hubKey: string): void {
   if (hub === undefined) return
   const g = chatroomState(hub).pendingGather
   if (g === undefined) return
+  // First timeout: re-arm the barrier once for the still-missing roles
+  // instead of destroying it (2026-09-06: the 4 late deliveries 5-10
+  // minutes past the timeout hit the superseded-ask router — group-visible,
+  // never injected, never waking; the supervision net needed 30-60 more
+  // minutes). Late replies keep funneling through the gather path; only the
+  // next timeout degrades to free relay.
+  if (!g.rearmed) {
+    g.rearmed = true
+    const rearmMs = chatroomConfig(e).gatherRearmDuration()
+    g.timer = setTimeout(() => { fireGatherTimeout(e, hubKey) }, rearmMs)
+    g.timer.unref()
+    e.sessions.save()
+    const missing = [...g.expected].sort()
+    const wake = buildGatherRearmWake(e, hubKey, missing, g.summary(), Math.round(rearmMs / 60_000))
+    wakeChatroomModerator(e, hubKey, wake)
+    console.info(`chatroom: gather timed out; re-armed barrier for late replies (hub=${hubKey} missing=${missing.join(',')} rearmMs=${rearmMs})`)
+    return
+  }
   const { done, wake, missing } = g.timeoutFire()
   if (!done) return // already woken by the last reply
   chatroomState(hub).pendingGather = undefined
@@ -1093,7 +1128,8 @@ function patchResearchProgressCard(
  * @param base - The partial wake text (broadcast question + collected replies).
  * @returns The timeout prefix joined with base, ready to wake the moderator.
  */
-export function buildGatherTimeoutWake(e: Engine, hubKey: string, missing: string[], base: string): string {
+/** Each missing role's state line: dispatched assistant / in-flight / never started. */
+function missingRoleStateLines(e: Engine, hubKey: string, missing: string[]): string[] {
   const sts: string[] = []
   for (const name of missing) {
     let role: Session | undefined
@@ -1107,7 +1143,31 @@ export function buildGatherTimeoutWake(e: Engine, hubKey: string, missing: strin
       sts.push(e.i18n.tf(Msg.ChatroomGatherTimedOutIdle, name))
     }
   }
+  return sts
+}
+
+export function buildGatherTimeoutWake(e: Engine, hubKey: string, missing: string[], base: string): string {
+  const sts = missingRoleStateLines(e, hubKey, missing)
   return `${e.i18n.tf(Msg.ChatroomGatherTimeout, missing.length, sts.join('、'))}\n\n${base}`
+}
+
+/**
+ * Prefix a re-arm wake: the still-missing roles with their states, plus the
+ * re-arm contract — late replies keep funneling into this round and the
+ * moderator is woken again on completion or window lapse, so it must not
+ * treat the partial set as final (2026-09-06: it reasonably did, and the
+ * room idled on an assumption nothing owned).
+ *
+ * @param e - Engine carrying the session registry and i18n surface.
+ * @param hubKey - Session key of the chatroom hub.
+ * @param missing - Names of the roles whose replies are still awaited.
+ * @param base - The partial wake text (broadcast question + collected replies).
+ * @param minutes - The re-arm window length in minutes.
+ * @returns The re-arm prefix joined with base, ready to wake the moderator.
+ */
+export function buildGatherRearmWake(e: Engine, hubKey: string, missing: string[], base: string, minutes: number): string {
+  const sts = missingRoleStateLines(e, hubKey, missing)
+  return `${e.i18n.tf(Msg.ChatroomGatherRearmed, missing.length, sts.join('、'), minutes)}\n\n${base}`
 }
 
 /**
@@ -1803,6 +1863,7 @@ function restoreGatherBarrier(raw: unknown): ChatroomGather | undefined {
   // The guard above proved every collected value is a string; the cast only carries that into the entries type.
   for (const [k, v] of Object.entries(s.collected) as [string, string][]) g.collected.set(k, v)
   if (typeof s.startedAt === 'number') g.startedAt = s.startedAt
+  if (s.rearmed === true) g.rearmed = true
   return g
 }
 
