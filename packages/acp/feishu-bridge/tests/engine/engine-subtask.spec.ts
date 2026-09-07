@@ -12,7 +12,7 @@ import { mkdtemp, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { Session } from '../../src/engine/session.ts'
@@ -1389,6 +1389,73 @@ describe('reportNativeChild', () => {
 
     expect(agent.reports).toEqual([{ child: 'native-child-1', content: 'result for native parent' }])
     expect(p.sentCards.length).toBe(0)
+  })
+
+  it('delivers the wake when the report card send fails (card best-effort, wake essential)', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agent } = armedEngine(p)
+    const parentSession = newQueuingSession('parent-native-1')
+    agent.startSession = async () => parentSession
+    vi.spyOn(e, 'sendAsCard').mockRejectedValue(new Error('card send failed'))
+
+    await e.reportNativeChild('native-child-1', 'all done')
+
+    for (let i = 0; i < 100 && !parentSession.sendCalls.some(c => c.includes('[子任务完成]')); i++) {
+      await settle()
+    }
+    expect(parentSession.sendCalls.some(c => c.includes('[子任务完成]'))).toBe(true)
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+  })
+
+  it('rolls back the reported flag when the wake itself fails, so a later epoch can re-deliver', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, agent } = armedEngine(p)
+    // Busy parent whose steer throws: the wake path itself fails while the
+    // card half succeeds.
+    const parentSession = newQueuingSession('parent-native-1')
+    agent.startSession = async () => parentSession
+    e.interactiveStates.get(parentKey)!.agentSession = parentSession
+    parentSession.steer = () => { throw new Error('steer failed') }
+    e.sessions.getOrCreateActive(parentKey).tryLock()
+
+    await e.reportNativeChild('native-child-1', 'all done')
+    for (let i = 0; i < 100 && e.nativeChildEntries()['native-child-1']?.reported !== false; i++) {
+      await settle()
+    }
+    // The initiation marked it reported; the failed wake rolls that back so
+    // restart recovery (or a later settle) can still deliver — otherwise the
+    // report is lost forever while reading as delivered.
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(false)
+
+    // Recovery re-delivers once the parent accepts wakes again.
+    parentSession.steer = (prompt: string) => { parentSession.steerCalls.push(prompt) }
+    e.sessions.getOrCreateActive(parentKey).unlock()
+    await e.reportNativeChild('native-child-1', 'retry result')
+    for (let i = 0; i < 100 && !parentSession.sendCalls.some(c => c.includes('retry result')); i++) {
+      await settle()
+    }
+    expect(parentSession.sendCalls.some(c => c.includes('[子任务完成]') && c.includes('retry result'))).toBe(true)
+    expect(e.nativeChildEntries()['native-child-1']?.reported).toBe(true)
+  })
+
+  it('rolls back a group child\'s reported flag when the wake itself fails', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e } = armedEngine(p)
+    const parentSession = newControllableSession('parent-native-1')
+    e.interactiveStates.get(parentKey)!.agentSession = parentSession
+    parentSession.steer = () => { throw new Error('steer failed') }
+    e.sessions.getOrCreateActive(parentKey).tryLock()
+    const child = e.sessions.getOrCreateActive('test:child-chat')
+    child.setParentSessionKey(parentKey)
+
+    // The caller sequence after a successful initiation (engine.ts:7419ff).
+    expect(e.replyToParent(p, child, 'group result')).toBe(true)
+    child.setSubtaskReported(true)
+
+    for (let i = 0; i < 100 && child.getSubtaskReported() !== false; i++) {
+      await settle()
+    }
+    expect(child.getSubtaskReported()).toBe(false)
   })
 
   it('settleNativeChild delivers once and skips an already-reported child', async () => {

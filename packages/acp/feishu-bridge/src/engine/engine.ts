@@ -7192,7 +7192,13 @@ export class Engine {
     if (r === undefined) return false
     void r.reconstructReplyCtx(entry.parent_key).then(
       (parentRctx) => {
+        // Only a failed wake (this rejection) rolls the reported flag back;
+        // card failures are contained inside deliverParentReply.
         void this.deliverParentReply(p, entry.parent_key, childId, entry.label, parentRctx, content, this.subtaskQuiet)
+          .catch((error: unknown) => {
+            console.warn(`subtask: native report wake failed, rolling back the reported flag for re-delivery (child=${childId}): ${String(error)}`)
+            this.updateNativeChild(childId, { reported: false })
+          })
       },
       (error: unknown) => {
         console.warn(`replyNativeToParent: reconstruct reply ctx failed (parent=${entry.parent_key}): ${String(error)}`)
@@ -7890,7 +7896,15 @@ export class Engine {
     const childKey = this.sessions.sessionKeyMap().idToKey[sess.id] ?? ''
     void r.reconstructReplyCtx(parentKey).then(
       (parentRctx) => {
+        // Same rollback as the native path's wake failure: the initiation
+        // consumed the one-shot flag, and a lost report must not read as
+        // delivered. Card failures are contained inside deliverParentReply.
         void this.deliverParentReply(p, parentKey, childKey, childLabel(sess), parentRctx, content, false)
+          .catch((error: unknown) => {
+            console.warn(`subtask: group report wake failed, rolling back the reported flag for re-delivery (child=${childKey}): ${String(error)}`)
+            sess.setSubtaskReported(false)
+            this.sessions.save()
+          })
       },
       (error: unknown) => {
         console.warn(`replyToParent: reconstruct reply ctx failed (parent=${parentKey}): ${String(error)}`)
@@ -7908,10 +7922,13 @@ export class Engine {
    * the parent reply ctx resolved. The child arrives as its key and label
    * only, so group children and native continuable children share one
    * delivery machine. `silentCard` (unattended native settlements under
-   * features.subtaskQuiet) skips the user-visible card; the parent-agent
-   * wake below is always delivered — through {@link deliverMachineMessage},
-   * so a busy parent turn receives it mid-turn instead of queueing it behind
-   * itself.
+   * features.subtaskQuiet) skips the user-visible card; the card itself is
+   * best-effort (a failed send logs and the delivery continues), while the
+   * parent-agent wake below is always delivered — through
+   * {@link deliverMachineMessage}, so a busy parent turn receives it
+   * mid-turn instead of queueing it behind itself. Callers roll the child's
+   * one-shot reported flag back when this rejection escapes: a lost wake
+   * must stay re-deliverable.
    */
   private async deliverParentReply(
     p: Platform,
@@ -7929,10 +7946,17 @@ export class Engine {
     const parentSess = this.sessions.findActive(parentKey)
     const waiterArmed = parentSess?.getGatherWaiter() !== undefined
     if (!silentCard && !waiterArmed) {
-      await this.sendAsCard(p, parentRctx, content, {
-        title: this.i18n.tf(Msg.DoneReplyParentHeader, label),
-        color: 'indigo',
-      })
+      // Best-effort card: it is the human-facing UI, while the wake below is
+      // the essential delivery — a failed card send must not strand the wake
+      // on an unhandled rejection (the 2026-09-06 frozen-report family).
+      try {
+        await this.sendAsCard(p, parentRctx, content, {
+          title: this.i18n.tf(Msg.DoneReplyParentHeader, label),
+          color: 'indigo',
+        })
+      } catch (error) {
+        console.warn(`subtask: report card failed, delivering the wake anyway (parent=${parentKey} child=${childKey}): ${String(error)}`)
+      }
     }
 
     // Monitor-mode parent: the monitored chat has no interactive agent —
@@ -7947,6 +7971,9 @@ export class Engine {
         const mr = asMessageReactionAdder(p)
         if (mr !== undefined) {
           void mr.addReactionToMessage(chatIDFromSessionKey(parentKey, p.name()), msgID, 'Done')
+            .catch((error: unknown) => {
+              console.warn(`subtask: monitor done reaction failed (parent=${parentKey}): ${String(error)}`)
+            })
         }
       }
       return
