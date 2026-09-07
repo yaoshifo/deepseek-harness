@@ -32,6 +32,7 @@ import {
   interruptChatroom,
   listChatroomRoles,
   noteChatroom,
+  pollRoles,
   resolveChatroomHubKey,
   resolveChatroomInheritPrior,
   startChatroom,
@@ -55,6 +56,9 @@ const DESCRIPTION =
   + 'delivery steer reaches a busy role mid-turn for mid-round course correction. gather: '
   + 'broadcast ONE question to ALL roles in parallel; the engine wakes you exactly once with every '
   + 'reply (research: true marks a research round — roles drive full assistants, longer timeout). '
+  + 'poll: lightning round — ONE cheap tool-less statement from every NON-spawned role (opening: before '
+  + 'recommending the cast, closing: final blind-spot sweep before end); the engine wakes you once with '
+  + 'all statements. '
   + 'pick-roles: submit role recommendations as a JSON array; the engine renders a multi-select card '
   + 'for the user. pick-topic: submit candidate topics as a JSON array; the engine renders a '
   + 'single-select card. ask-human: a ROLE asks the user a question only the human knows; the '
@@ -132,19 +136,26 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
       action: {
         type: 'string',
         required: true,
-        enum: ['start', 'ask', 'gather', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note', 'history'],
+        enum: ['start', 'ask', 'gather', 'poll', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note', 'history'],
         description: 'start = spawn role groups; ask = question one role; gather = broadcast to all roles; '
+          + 'poll = lightning-round one-shot statements from every NON-spawned role (cheap, tool-less, no groups); '
           + 'pick-roles = submit role recommendations; pick-topic = submit candidate topics; ask-human = a role '
           + 'asks the user; end = tear down (add force: true to interrupt immediately from any state); '
           + 'list = available roles; note = update the ledger; history = past chatrooms and shared research data.',
       },
       message: {
         type: 'string',
-        description: 'start: the topic. ask/gather/ask-human: the question. note: the synthesis/subproblem/report text.',
+        description: 'start: the topic. ask/gather/ask-human: the question. poll: the statement brief. note: the synthesis/subproblem/report text.',
       },
       role: {
         type: 'string',
         description: 'ask only: target role name (or session key).',
+      },
+      round: {
+        type: 'string',
+        enum: ['opening', 'closing'],
+        description: 'poll only: which phase the round serves — opening (pre-cast statements that drive '
+          + 'role recommendations) or closing (final blind-spot sweep before end).',
       },
       delivery: {
         type: 'string',
@@ -156,7 +167,8 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
       },
       roles: {
         type: 'string',
-        description: 'start only: comma-separated role names; omit to use every configured role.',
+        description: 'start/poll only: comma-separated role names; start omits to use every configured role, '
+          + 'poll omits to poll every non-spawned role (the spawned core cast answers through ask/gather instead).',
       },
       inherit: {
         type: 'string',
@@ -272,6 +284,21 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
             status: 'ok' as const,
             message: 'Gathered all roles in parallel; replies will be collected and you will be woken once '
               + 'with the full set. End your turn now.',
+          }
+        }
+        case 'poll': {
+          const brief = (args.message ?? '').trim()
+          if (brief === '') throw new Error('feishu_bridge_chatroom: poll requires a statement brief (message)')
+          const round = args.round === 'closing' ? 'closing' : 'opening'
+          const requested = (args.roles ?? '').split(',').map(r => r.trim()).filter(r => r !== '')
+          pollRoles(engine, sessionKey, brief, round, requested.length > 0 ? requested : undefined)
+          return {
+            status: 'ok' as const,
+            message: round === 'opening'
+              ? 'Lightning round dispatched to every non-spawned role; their one-shot statements will be '
+                + 'collected and you will be woken once with the full set. End your turn now.'
+              : 'Closing blind-spot sweep dispatched; the polled statements will be collected and you will '
+                + 'be woken once. End your turn now.',
           }
         }
         case 'pick-roles': {

@@ -1002,6 +1002,25 @@ export interface ForkQuerierWithProvider {
    * directory); omitted or empty falls back to the adapter's base cwd.
    */
   lightweightQuery(prompt: string, providerName: string, signal?: AbortSignal, workDir?: string): Promise<string>
+  /**
+   * A chatroom lightning-round statement: a persona-preserving single-turn
+   * query (unlike {@link lightweightQuery} the workspace instructions at
+   * `workDir` stay assembled, so a role directory's CLAUDE.md persona
+   * loads), with every tool masked so the polled role cannot run research.
+   * Session-origin side effects (LLM title generation) are accepted for the
+   * kept memory-index injection.
+   */
+  pollQuery(prompt: string, workDir: string, opts?: PollQueryOptions): Promise<string>
+}
+
+/** Optional knobs for {@link ForkQuerierWithProvider.pollQuery}. */
+export interface PollQueryOptions {
+  /** Named provider route; omitted or empty runs the default route. */
+  providerName?: string
+  /** Caller abort; rejects the wait and still disposes the session. */
+  signal?: AbortSignal
+  /** Turn budget; defaults to the adapter's poll budget. */
+  timeoutMs?: number
 }
 
 /** Agent whose active provider can be queried for fallbacks (Go ProviderSwitcher). */
@@ -1430,7 +1449,7 @@ export function asCronReplyTargetResolver(p: Platform): CronReplyTargetResolver 
 }
 
 /**
- * Structural check for the {@link ForkQuerierWithProvider} capability (all three members required).
+ * Structural check for the {@link ForkQuerierWithProvider} capability (all four members required).
  *
  * @param a - the agent to inspect.
  * @returns the capability view, or undefined when not implemented.
@@ -1440,6 +1459,7 @@ export function asForkQuerierWithProvider(a: Agent): ForkQuerierWithProvider | u
   return typeof candidate.lightweightQuery === 'function'
     && typeof candidate.forkQuery === 'function'
     && typeof candidate.forkSessionWithProvider === 'function'
+    && typeof candidate.pollQuery === 'function'
     ? candidate as ForkQuerierWithProvider
     : undefined
 }

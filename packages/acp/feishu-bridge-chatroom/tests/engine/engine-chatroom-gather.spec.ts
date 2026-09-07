@@ -980,6 +980,15 @@ describe('buildChatroomModeratorPriming', () => {
     expect(priming).not.toContain('澄清研究背景')
   })
 
+  it('documents the poll action and the closing blind-spot sweep', () => {
+    const priming = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')
+    // The tool list names the lightning round...
+    expect(priming).toContain('action: poll')
+    // ...and the closing flow sweeps the sidelined roles before the summary.
+    expect(priming).toContain('round: closing')
+    expect(priming).toContain('补盲')
+  })
+
   it('never instructs an ExitPlanMode dance (moderator sessions are never in plan mode)', () => {
     const priming = buildChatroomModeratorPriming('topic', testRoles, '/tmp/ledger')
     for (const banned of ['plan mode', 'ExitPlanMode']) {

@@ -63,6 +63,7 @@ export function buildChatroomModeratorPriming(
   sb.push(`
 ## 工具（调 ${TOOL} 工具）
 - action: gather（message: \"<问题>\"）—— **并行**把同一个问题同时发给所有角色，各自独立回答，engine 收齐所有回复后**一次性**唤醒你（带全部回复）。非阻塞：发出后结束回合。用于澄清/拆解这种「需要全员独立判断再汇总」的环节。
+- action: poll（message: \"<快答任务书>\"，round: \"opening\" 或 \"closing\"，roles: \"<逗号分隔角色名，可省略>\"）—— 闪电轮：给**未进核心席**的每个角色发一次性快答（无工具、人设生效），收齐后一次性唤醒你。opening 用于开场全员表态（角色挑选阶段自动发生）；closing 用于收尾补盲。
 - action: ask（role: \"<角色名>\"，message: \"<问题>\"）—— **串行**点名一位角色发言。非阻塞：发出后结束回合；角色的回复会以【角色名】形式自动转发到聊天室并唤醒你。用于逐个讨论子问题时的圆桌轮流发言。**只把当前图景带给角色，请它从自己视角自由发言；不要给它预设回答角度/分析框架/子维度让它填空**——框架由角色自己选，你只提供图景和指向（"请就子问题 X 发言"），不替它构造论证路径。
 - action: note（message: \"<综述>\"）—— 更新账本综述段（SYNTHESIS.md）；加 section: subproblems 写子问题清单（SUBPROBLEMS.md，用于跟踪存档）；加 section: report 写收尾总结（REPORT.md）。
 - action: end —— 收尾：清掉角色群。
@@ -98,6 +99,7 @@ export function buildChatroomModeratorPriming(
 
 ## 何时收尾（不限定轮数，按内容判断 + 用户确认）
 讨论**不预设轮数**——继续推进的判据是「是否还带来新的视角或图景碎片」，不是轮到第几轮。
+- **收尾补盲轮（先于 HTML 总结）**：若开场快答里有场外角色标了「想深聊」但未进核心席、或图景仍有明确盲点，先调 action: poll（round: closing，roles: <那些角色名>），message 带：当前图景简述 + 「对最终图景你还有什么必须补充或反对的？没有就回『无补充』」。收齐唤醒后把有实质内容的补充 note 进综述段，再继续下面的收尾流程；全是『无补充』或没有可问角色就跳过本步。
 - 当讨论已不再带来新视角（各方只是在展开/重复/发散，或剩下的都是诚实的开放问题/盲点）时，**先渲染一份 HTML 总结给用户 review**，再问是否收尾：
   1. 调 feishu_bridge_subtask 工具（action: spawn，worktree: off，dir: ${ledgerDir}，message: \"<brief>\"），brief 内容：『读账本目录 ${ledgerDir} 下 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md，用 html skill 渲染一份【白话直讲版】的总结 HTML，写到 ${ledgerDir}/summary.html（与 SYNTHESIS.md 同目录，便于 Quartz 发布与归档）。务必按以下分层（覆盖 html skill 的默认模板）：
 
@@ -173,6 +175,7 @@ export function buildChatroomResearchModeratorPriming(
   }
   sb.push(`\n## 工具（调 ${TOOL} 工具）\n`)
   sb.push('- action: gather 加 research: true（message: "<研究任务>"）—— **并行**把研究任务同时发给所有角色。每个角色收到后会用自己的助手子群下数据/跑脚本，助手 report 回角色后，角色基于数据出观点 relay 回你。engine 收齐所有角色回复后**一次性**唤醒你。非阻塞：发出后结束回合。\n')
+  sb.push('- action: poll（message: "<快答任务书>"，round: "opening" 或 "closing"，roles: "<逗号分隔角色名，可省略>"）—— 闪电轮：给**未进核心席**的每个角色发一次性快答（无工具、人设生效），收齐后一次性唤醒你。收尾补盲用 round: closing。\n')
   sb.push('- action: ask（role: \"<角色名>\"，message: \"<问题>\"）—— 串行点名一位角色追问。\n')
   sb.push('- action: note（message: \"<综述>\"）—— 更新账本综述段（SYNTHESIS.md）。\n')
   sb.push('- action: note 加 section: subproblems（message: \"<轮次进度>\"）—— 把每轮研究进展（确立/未验证）记进 SUBPROBLEMS.md。\n')
@@ -217,6 +220,7 @@ export function buildChatroomResearchModeratorPriming(
     : ''
   sb.push(`
 ## 收尾流程（决定收尾时：先出报告，再 end）
+**收尾补盲轮（先于数字对账与 HTML 报告）**：若开场快答里有场外角色标了「想深聊」但未进核心席、或研究图景仍有明确盲点，先调 action: poll（round: closing，roles: <那些角色名>），message 带：当前图景简述 + 「对最终研究图景你还有什么必须补充或反对的？没有就回『无补充』」。收齐唤醒后把有实质内容的补充 note 进综述段再继续；全是『无补充』或没有可问角色就跳过本步。
 无论 auto 自判图景完整、还是 manual 下用户说结束——**都先渲染一份 HTML 研究报告给用户 review，再问是否结束**：${reconStep}
 1. 调 feishu_bridge_subtask 工具（action: spawn，worktree: off，dir: ${ledgerDir}，message: \"<brief>\"），brief 内容：『读账本目录 ${ledgerDir} 下 SYNTHESIS.md/SUBPROBLEMS.md/RECORD.md，用 html skill 渲染一份【白话直讲版】的研究报告 HTML，写到 ${ledgerDir}/summary.html（与 SYNTHESIS.md 同目录，便于 Quartz 发布与归档）。务必按以下分层（覆盖 html skill 的默认模板）：
 
@@ -251,8 +255,9 @@ export function buildChatroomResearchModeratorPriming(
 }
 
 /**
- * The #43 role-pick priming: recommend roles for the topic, call pick-roles,
- * end the turn (Go buildChatroomPickPriming).
+ * The #43 role-pick priming: run the opening lightning round (poll), then
+ * recommend roles from the collected statements, call pick-roles, end the
+ * turn (Go buildChatroomPickPriming, extended with the poll-driven cast).
  *
  * @param topic - Topic roles are recommended for.
  * @param roleNames - Candidate role names enumerated from the roles dir.
@@ -267,16 +272,14 @@ export function buildChatroomPickPriming(topic: string, roleNames: string[], rol
 可选角色名单：${roleNames.join('、')}
 
 ## 你的任务（仅此一步，做完结束回合）
-1. 用 Read 读 \`<角色目录>/<每个角色>/CLAUDE.md\` 和 \`ESSENCE.md\`，了解每个角色是谁、看问题的视角。
-2. 基于议题，按「与议题的相关度」给所有角色排序，最相关的排最前。给每个角色一句 blurb：
-   - 与议题相关的（推荐参与）写「为什么推荐」（紧扣议题的视角贡献），标 recommended: true；
-   - 其余也保留在列表，写一句「简介」（它是什么视角），标 recommended: false。
+1. 先跑全员闪电轮：调 ${TOOL} 工具 action: poll，round: opening，message 是发给**每个角色**的快答任务书——包含议题原文 + 三段式要求：①一句话立场（≤40 字）②本题最可能被漏的**具体**盲点一句 ③参与意愿：想深聊 / 表态即可 / 不相关。角色是一次性无工具快答（人设照常生效）。发起后**结束回合**，等全员表态收齐唤醒你（缺席角色会标（未表态））。
+2. 被唤醒后，**基于全员表态**（不是只读文件的印象）给所有角色排序：把「想深聊且盲点具体」的排最前、标 recommended: true，blurb 写它的自荐依据（立场/盲点摘要）；其余保留在列表、写一句简介、标 recommended: false。对「（未表态）」的角色才用 Read 读它的 CLAUDE.md 和 ESSENCE.md 补判断。
 3. 调 ${TOOL} 工具：action: pick-roles，picks: <JSON 数组字符串>，元素形如 {"name":"<角色名>","recommended":true,"blurb":"<一句话>"}。
    engine 会校验角色名（剔除幻觉）、把推荐项默认勾选、渲染一张飞书多选卡给用户增删确认。
 4. 调完后**结束回合**（非阻塞，和 gather 一样）。用户在卡片上点「确认开始」后，engine 会自动启动聊天室并再次唤醒你（带正式讨论的编排指令）。
 
 ## plan mode
-pick-roles 有副作用。若处于 plan mode：先调 \`exit_plan_mode\` 带一行计划（读角色文件 → pick-roles 推荐列表），用户批准后再执行；用户拒绝就停，不要自己代用户选角色。
+pick-roles 有副作用。若处于 plan mode：先调 \`exit_plan_mode\` 带一行计划（poll 全员快答 → 基于表态 pick-roles 推荐列表），用户批准后再执行；用户拒绝就停，不要自己代用户选角色。
 `
 }
 

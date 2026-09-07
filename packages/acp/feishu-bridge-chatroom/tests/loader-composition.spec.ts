@@ -185,7 +185,7 @@ describe('chatroom real Loader composition', () => {
       | undefined
     expect(schema).toBeDefined()
     expect(schema?.parameters?.properties?.action?.enum).toEqual(
-      ['start', 'ask', 'gather', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note', 'history'],
+      ['start', 'ask', 'gather', 'poll', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note', 'history'],
     )
 
     // User-visible: the /chatroom command family on the live engine,

@@ -1544,6 +1544,22 @@ describe('topic-pick priming ledger history', () => {
   })
 })
 
+describe('role-pick priming lightning round', () => {
+  it('drives the recommendation through an opening poll before pick-roles', async () => {
+    const { buildChatroomPickPriming } = await import('../../src/engine/chatroom-priming.ts')
+    const s = buildChatroomPickPriming('定投频率', ['taleb', 'munger'], '/roles')
+    expect(s).toContain('action: poll')
+    expect(s).toContain('opening')
+    // The statement brief's fixed shape: stance / blind spot / willingness.
+    expect(s).toContain('立场')
+    expect(s).toContain('盲点')
+    expect(s).toContain('想深聊')
+    // Recommendations build on the collected statements, not file skimming alone.
+    expect(s).toContain('表态')
+    expect(s).toContain('pick-roles')
+  })
+})
+
 describe('/chatroom re-entry from a role group', () => {
   it('rejects /chatroom sent from a role session instead of nesting a chatroom under it', async () => {
     const p = createStubChatroomSpawner()

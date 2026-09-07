@@ -22,12 +22,13 @@ import type { Session, SubtaskDelivery } from '@deepseek-ai/dsh-feishu-bridge/ex
 import { emptyMessage, jumpButtonsMarkdown, parentJumpButtons } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { maxGroupNameRunes } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Message, PendingAsk, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
-import { asCardSender, asCardSenderWithUpdate, asReplyContextReconstructor } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { asCardSender, asCardSenderWithUpdate, asForkQuerierWithProvider, asReplyContextReconstructor } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { newCard } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Card } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { Msg } from '../i18n.ts'
 import { chatroomState } from '../chatroom-state.ts'
 import { chatroomConfig } from '../chatroom-config.ts'
+import { ChatroomPoll, type ChatroomPollRound } from './chatroom-poll.ts'
 import {
   appendChatroomLedger,
   chatroomLedgerDir,
@@ -48,6 +49,23 @@ const execFileP = promisify(execFile)
 
 /** Default cap on role agents per chatroom (bounds token cost; Go defaultMaxChatroomRoles). */
 export const defaultMaxChatroomRoles = 5
+
+/**
+ * Default lightning-round poll timeout: 10 minutes. A poll statement is one
+ * cheap single-turn query; the window only needs to cover a slow provider,
+ * not research work (tools are masked), so it stays far below the gather
+ * timeout and degrades in one shot — the closing round remains as the
+ * second chance for absent roles.
+ */
+export const defaultChatroomPollTimeout = 10 * 60 * 1000
+
+/**
+ * Default lightning-round concurrency cap: at most 4 one-shot queries in
+ * flight. A 13-role library would otherwise hit the LLM gateway with the
+ * full fan-out at once (the 2026-08-31 incident: rate-limit windows hang
+ * instead of returning 429).
+ */
+export const defaultChatroomPollConcurrent = 4
 
 /** Default gather barrier fallback timeout: 20 minutes (Go defaultChatroomGatherTimeout). */
 export const defaultChatroomGatherTimeout = 20 * 60 * 1000
@@ -1006,6 +1024,196 @@ function fireGatherTimeout(e: Engine, hubKey: string): void {
   const finalWake = missing.length > 0 ? buildGatherTimeoutWake(e, hubKey, missing, wake) : wake
   wakeChatroomModerator(e, hubKey, finalWake)
   console.info(`chatroom: gather timed out; woke moderator with partial replies (hub=${hubKey})`)
+}
+
+// ── lightning-round poll ───────────────────────────────────────────────────
+
+/** One in-flight poll round per hub. In-memory by design: the one-shot
+ * queries it tracks live in engine memory and cannot survive a restart, so
+ * the barrier does not persist either.
+ */
+interface ChatroomPollRoundState {
+  poll: ChatroomPoll
+  /** Fallback wake timer; stopped on early completion. */
+  timer: ReturnType<typeof setTimeout>
+  /** Aborts the still-pending one-shot queries once the round settles. */
+  abort: AbortController
+}
+
+const pollRounds = new WeakMap<Engine, Map<string, ChatroomPollRoundState>>()
+
+function pollStates(e: Engine): Map<string, ChatroomPollRoundState> {
+  let m = pollRounds.get(e)
+  if (m === undefined) {
+    m = new Map()
+    pollRounds.set(e, m)
+  }
+  return m
+}
+
+/**
+ * Run a lightning-round poll: one cheap single-turn statement from every
+ * non-spawned role (persona dir as cwd, tools masked) so the whole library
+ * participates in every discussion while only the core cast keeps resident
+ * agents. Non-blocking — the moderator is woken once the barrier completes
+ * or the poll timeout degrades it.
+ *
+ * @param e - Engine carrying the session registry and the one-shot query capability.
+ * @param hubKey - Session key of the moderator hub.
+ * @param brief - The statement brief forwarded verbatim to every polled role.
+ * @param round - Which discussion phase this round serves.
+ * @param roleNames - Explicit role subset; omitted polls every non-spawned role.
+ */
+export function pollRoles(
+  e: Engine, hubKey: string, brief: string, round: ChatroomPollRound, roleNames?: string[],
+): void {
+  const q = brief.trim()
+  if (q === '') throw new Error('chatroom: poll brief is required')
+  const hub = chatroomHubOf(e, hubKey)
+  if (hub === undefined) throw new Error(`chatroom: hub session missing (hub=${hubKey})`)
+  if (chatroomState(hub).pendingEndBarrier !== undefined) {
+    throw new Error('chatroom: 正在收尾中，无法 poll')
+  }
+  if (chatroomState(hub).pendingGather !== undefined) {
+    throw new Error(e.i18n.t(Msg.ChatroomPollGatherBlocked))
+  }
+  if (chatroomState(hub).pendingHumanQuestionRole !== '') {
+    throw new Error(e.i18n.t(Msg.ChatroomGatherPendingHumanBlocked))
+  }
+  if (pollStates(e).has(hubKey)) {
+    throw new Error(e.i18n.t(Msg.ChatroomPollInFlight))
+  }
+  const fq = asForkQuerierWithProvider(e.agent)
+  if (fq === undefined) throw new Error('chatroom: agent backend cannot run one-shot queries')
+
+  const rolesDir = chatroomConfig(e).rolesDir()
+  const spawned = new Set(listChatroomRoles(e, hubKey).map(r => r.name))
+  const names = [...new Set((roleNames ?? listRoleNames(rolesDir)).filter(n => !spawned.has(n) && roleExists(rolesDir, n)))].sort()
+  if (names.length === 0) throw new Error('chatroom: no unpolled roles available')
+
+  const poll = new ChatroomPoll(q, round)
+  for (const n of names) poll.expected.add(n)
+  const state: ChatroomPollRoundState = {
+    poll,
+    abort: new AbortController(),
+    timer: setTimeout(() => { firePollTimeout(e, hubKey) }, chatroomConfig(e).pollTimeoutDuration()),
+  }
+  state.timer.unref()
+  pollStates(e).set(hubKey, state)
+
+  const settle = (result: { done: boolean; wakeContent: string }): void => {
+    if (!result.done) return
+    pollStates(e).delete(hubKey)
+    clearTimeout(state.timer)
+    state.abort.abort()
+    void persistPollStatements(e, hubKey, poll)
+    sendPollStatementCard(e, hubKey, poll)
+    wakeChatroomModerator(e, hubKey, result.wakeContent)
+    console.info(`chatroom: poll round settled (hub=${hubKey} round=${round} statements=${poll.collected.size}/${names.length})`)
+  }
+
+  // Worker-pool dispatch: the concurrency cap keeps a 13-role library from
+  // hitting the LLM gateway with the full fan-out at once. Snapshot the
+  // worker count before dispatching — each dispatch consumes the queue
+  // synchronously, so a live queue.length in the loop condition would decay
+  // the pool to one worker.
+  const queue = names.map(n => ({ name: n, dir: roleDir(rolesDir, n) }))
+  const workers = Math.min(chatroomConfig(e).pollMaxConcurrent(), queue.length)
+  const provider = chatroomConfig(e).pollProvider()
+  const dispatch = (): void => {
+    const t = queue.shift()
+    if (t === undefined) return
+    void fq.pollQuery(q, t.dir, {
+      ...(provider !== '' ? { providerName: provider } : {}),
+      signal: state.abort.signal,
+    })
+      .then(
+        (text) => { settle(poll.accumulate(t.name, text)) },
+        () => { settle(poll.fail(t.name)) },
+      )
+      .finally(() => { dispatch() })
+  }
+  for (let i = 0; i < workers; i++) dispatch()
+  console.info(`chatroom: moderator polled roles (hub=${hubKey} round=${round} roles=${names.join(',')})`)
+}
+
+/** Timer callback: degrade the round with absent-role annotations and wake. */
+function firePollTimeout(e: Engine, hubKey: string): void {
+  const state = pollStates(e).get(hubKey)
+  if (state === undefined) return
+  const { done, wake, missing } = state.poll.timeoutFire()
+  if (!done) return
+  pollStates(e).delete(hubKey)
+  state.abort.abort()
+  wakeChatroomModerator(e, hubKey, wake)
+  console.info(`chatroom: poll timed out; woke moderator with partial statements (hub=${hubKey} missing=${missing.join(',')})`)
+}
+
+/**
+ * Whether a lightning-round poll is in flight on a hub. The pick watchdog
+ * defers while this is true so the opening poll's wake (not a stale
+ * five-minute fallback card) carries the moderator into pick-roles.
+ *
+ * @param e - Engine owning the poll rounds.
+ * @param hubKey - Session key of the moderator hub.
+ * @returns true when a poll round is armed on the hub.
+ */
+export function hasActiveChatroomPoll(e: Engine, hubKey: string): boolean {
+  return pollStates(e).has(hubKey)
+}
+
+/**
+ * Persist one ledger RECORD line per polled role (absent roles annotated):
+ * the every-role attendance record that makes a lightning round count as
+ * participation, independent of the moderator writing anything.
+ *
+ * @param e - Engine whose chatroom ledger is addressed.
+ * @param hubKey - Session key of the moderator hub.
+ * @param poll - The settled poll round whose statements are persisted.
+ */
+async function persistPollStatements(e: Engine, hubKey: string, poll: ChatroomPoll): Promise<void> {
+  const dir = chatroomLedgerDirFor(e, hubKey)
+  if (dir === undefined) return
+  const tag = poll.round === 'opening' ? '开场快答' : '收尾补盲'
+  const names = [...poll.collected.keys(), ...poll.expected].sort()
+  for (const n of names) {
+    const text = poll.collected.get(n)
+    const body = text === undefined || text.trim() === '' ? '（未表态）' : text.trim()
+    try {
+      await appendChatroomLedger(dir, n, `（${tag}）${body}`)
+    } catch (error) {
+      console.warn(`chatroom: poll statement ledger append failed (hub=${hubKey} role=${n}): ${String(error)}`)
+    }
+  }
+}
+
+/**
+ * Post one merged statement card to the hub group so the user sees every
+ * role's lightning-round appearance without N separate messages.
+ *
+ * @param e - Engine owning the card sender.
+ * @param hubKey - Session key of the moderator hub the card addresses.
+ * @param poll - The settled poll round whose summary the card renders.
+ */
+function sendPollStatementCard(e: Engine, hubKey: string, poll: ChatroomPoll): void {
+  const p = e.spawnCapablePlatform()
+  if (p === undefined) return
+  const cs = asCardSender(p)
+  if (cs === undefined) return
+  const title = e.i18n.t(poll.round === 'opening' ? Msg.ChatroomPollCardOpening : Msg.ChatroomPollCardClosing)
+  const card = newCard().title(title, 'purple').markdown(poll.summary()).build()
+  const r = asReplyContextReconstructor(p)
+  if (r === undefined) return
+  void r.reconstructReplyCtx(hubKey).then(
+    (rctx) => {
+      void cs.sendCard(rctx, card).catch((error: unknown) => {
+        console.warn(`chatroom: poll statement card send failed (hub=${hubKey}): ${String(error)}`)
+      })
+    },
+    (error: unknown) => {
+      console.warn(`chatroom: poll statement card ctx failed (hub=${hubKey}): ${String(error)}`)
+    },
+  )
 }
 
 /** The research gather progress card; terminal is '' (X/N), 'done', or 'timedout'.

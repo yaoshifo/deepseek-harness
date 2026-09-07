@@ -33,6 +33,7 @@ export type {
   Message,
   PendingAsk,
   Platform,
+  PollQueryOptions,
   ProviderSwitcher,
   SessionStartOptions,
   SubtaskDelivery,
@@ -42,6 +43,7 @@ export {
   EventChannel,
   asCardSender,
   asCardSenderWithUpdate,
+  asForkQuerierWithProvider,
   asGroupRenamer,
   asReplyContextReconstructor,
 } from './core/types.ts'

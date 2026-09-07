@@ -135,3 +135,19 @@ describe('chatroom config wiring', () => {
     expect(chatroomConfig(newEngine()).enabled()).toBe(true)
   })
 })
+
+describe('poll tuning', () => {
+  it('defaults to a 10m timeout, 4 concurrent queries, and the default route', () => {
+    const c = chatroomConfig(newEngine())
+    expect(c.pollTimeoutDuration()).toBe(10 * 60 * 1000)
+    expect(c.pollMaxConcurrent()).toBe(4)
+    expect(c.pollProvider()).toBe('')
+  })
+
+  it('applies pollTimeoutSec/pollMaxConcurrent/pollProvider overrides', () => {
+    const c = chatroomConfig(configure(undefined, { pollTimeoutSec: 120, pollMaxConcurrent: 2, pollProvider: 'glm-flash' }))
+    expect(c.pollTimeoutDuration()).toBe(120_000)
+    expect(c.pollMaxConcurrent()).toBe(2)
+    expect(c.pollProvider()).toBe('glm-flash')
+  })
+})

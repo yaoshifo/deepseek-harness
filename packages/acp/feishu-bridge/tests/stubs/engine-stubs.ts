@@ -600,6 +600,7 @@ export function createGroupNameAgent(opts: {
     state,
     forkQuery: async () => '',
     forkSessionWithProvider: async () => '',
+    pollQuery: async () => '',
     lightweightQuery: async (prompt: string, provider: string, signal?: AbortSignal, workDir?: string) => {
       state.gotPrompt = prompt
       state.gotProvider = provider

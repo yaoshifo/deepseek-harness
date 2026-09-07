@@ -24,7 +24,7 @@ import type { ChatroomHistoryEntry } from './chatroom-ledger.ts'
 import { readChatroomLedgerHeader } from './chatroom-ledger.ts'
 import { listRoleNames } from './chatroom-roles.ts'
 import { buildChatroomPickPriming, buildChatroomTopicPickPriming } from './chatroom-priming.ts'
-import { chatroomResearchWorkspace, clearChatroomResearchFlags, ensureResearchPythonEnv, startChatroom } from './chatroom.ts'
+import { chatroomResearchWorkspace, clearChatroomResearchFlags, ensureResearchPythonEnv, hasActiveChatroomPoll, startChatroom } from './chatroom.ts'
 import type { ChatroomInheritTarget } from './chatroom.ts'
 import { afterChatroomStarted, startChatroomDirectRole, stashChatroomResearchFlags } from './chatroom-cmd.ts'
 
@@ -282,9 +282,17 @@ export function beginChatroomPick(e: Engine, p: Platform, msg: Message, topic: s
 
 /** Watchdog: render a fallback picker card (all roles, none recommended) if the moderator never calls pick-roles. */
 function armChatroomPickWatchdog(e: Engine, p: Platform, hubKey: string): void {
-  const timer = setTimeout(() => {
+  const timer = setTimeout(function pickWatchdogFire(): void {
     const ps = pickers(e).chatroomPick.get(hubKey)
     if (ps === undefined || ps.phase !== 'picking') return
+    // The priming's first act is the opening poll; while it is in flight the
+    // moderator cannot have called pick-roles yet — defer this watchdog by
+    // one more window instead of painting a stale no-recommendation card.
+    if (hasActiveChatroomPoll(e, hubKey)) {
+      const rearm = setTimeout(pickWatchdogFire, chatroomPickWatchdogTimeout)
+      rearm.unref()
+      return
+    }
     ps.recs = ps.allNames.map(n => ({ name: n, recommended: false, blurb: '' }))
     ps.selected = new Map()
     ps.phase = 'select'

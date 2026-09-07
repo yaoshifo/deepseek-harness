@@ -18,6 +18,8 @@ import {
   defaultChatroomAssistantStallSec,
   defaultChatroomGatherRearm,
   defaultChatroomGatherTimeout,
+  defaultChatroomPollConcurrent,
+  defaultChatroomPollTimeout,
   defaultChatroomResearchTimeout,
   defaultMaxChatroomRoles,
   maxChatroomResearchTimeout,
@@ -63,6 +65,12 @@ export interface ChatroomProjectConfig {
    * Non-zero values below 600 are rejected at apply.
    */
   assistantStallSec?: number
+  /** Lightning-round poll timeout in seconds; 0 = the 10m default. */
+  pollTimeoutSec?: number
+  /** Lightning-round concurrent one-shot query cap; 0 = the default of 4. */
+  pollMaxConcurrent?: number
+  /** Named provider route for lightning-round statements; '' = the default route. */
+  pollProvider?: string
 }
 
 const chatroomSection = Schema.object({
@@ -80,6 +88,9 @@ const chatroomSection = Schema.object({
   researchVenvPackages: Schema.array(Schema.string()).description('Base packages installed into the shared research venv (default akshare, pandas<3, numpy, requests)'),
   researchPlaybook: Schema.string().description('Persistent playbook file read/appended by research assistants (default off)'),
   assistantStallSec: Schema.natural().description('Research-assistant stall deadline in seconds; a quiet hub↔steward relation past it gets a supervision wake (default 1800, 0 disables, minimum 600)'),
+  pollTimeoutSec: Schema.natural().description('Lightning-round poll timeout in seconds — one-shot persona statements degrade after this window (default 600)'),
+  pollMaxConcurrent: Schema.natural().description('Lightning-round concurrent one-shot query cap, protecting the LLM gateway from the full role fan-out (default 4)'),
+  pollProvider: Schema.string().description('Named provider route for lightning-round statements (default: the default route)'),
 })
 
 /**
@@ -137,6 +148,12 @@ class ChatroomEngineConfig {
   private assistantStallMs = 0
   /** Whether the supervisor is explicitly disabled for this engine. */
   private assistantStallOff = false
+  /** Lightning-round poll timeout override in ms; 0 = the 10m default. */
+  private pollTimeoutMs = 0
+  /** Lightning-round concurrency cap override; 0 = the default of 4. */
+  private pollMaxConcurrentCfg = 0
+  /** Named provider route for lightning-round statements; '' = default. */
+  private pollProviderCfg = ''
 
   /**
    * Apply one config section's overrides (Go wireChatroom: the project
@@ -200,6 +217,15 @@ class ChatroomEngineConfig {
         }
         this.assistantStallMs = cfg.assistantStallSec * 1000
       }
+    }
+    if (cfg.pollTimeoutSec !== undefined && cfg.pollTimeoutSec > 0) {
+      this.pollTimeoutMs = cfg.pollTimeoutSec * 1000
+    }
+    if (cfg.pollMaxConcurrent !== undefined && cfg.pollMaxConcurrent > 0) {
+      this.pollMaxConcurrentCfg = cfg.pollMaxConcurrent
+    }
+    if (cfg.pollProvider !== undefined) {
+      this.pollProviderCfg = cfg.pollProvider.trim()
     }
   }
 
@@ -278,6 +304,21 @@ class ChatroomEngineConfig {
   assistantStallDuration(): number {
     if (this.assistantStallOff) return 0
     return this.assistantStallMs > 0 ? this.assistantStallMs : defaultChatroomAssistantStallSec * 1000
+  }
+
+  /** Effective lightning-round poll timeout (the override, or the 10m default). */
+  pollTimeoutDuration(): number {
+    return this.pollTimeoutMs > 0 ? this.pollTimeoutMs : defaultChatroomPollTimeout
+  }
+
+  /** Effective lightning-round concurrency cap (the override, or the default of 4). */
+  pollMaxConcurrent(): number {
+    return this.pollMaxConcurrentCfg > 0 ? this.pollMaxConcurrentCfg : defaultChatroomPollConcurrent
+  }
+
+  /** Named provider route for lightning-round statements; '' = the default route. */
+  pollProvider(): string {
+    return this.pollProviderCfg
   }
 }
 

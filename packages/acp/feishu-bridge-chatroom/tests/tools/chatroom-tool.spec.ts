@@ -121,7 +121,7 @@ describe('feishu_bridge_chatroom registration', () => {
       properties?: { action?: { enum?: string[] } }
     }
     expect(schema.properties?.action?.enum).toEqual(
-      ['start', 'ask', 'gather', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note', 'history'],
+      ['start', 'ask', 'gather', 'poll', 'pick-roles', 'pick-topic', 'ask-human', 'end', 'list', 'note', 'history'],
     )
     test.dispose()
     test.dispose() // idempotent
@@ -176,6 +176,18 @@ describe('feishu_bridge_chatroom action routing', () => {
     // ask-human on a non-role session.
     const humanRes = await test.execute({ action: 'ask-human', message: '截止日？' })
     expect(humanRes.isError).toBe(true)
+
+    test.dispose()
+  })
+
+  it('poll routes to pollRoles and fails loud without a hub (routing proof)', async () => {
+    const engine = newEngine()
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+
+    const res = await test.execute({ action: 'poll', message: '快答 brief', round: 'opening' })
+    expect(res.isError).toBe(true)
+    // The hub-missing failure proves pollRoles ran with the caller's session key.
+    expect(errorText(res)).toContain('hub session missing')
 
     test.dispose()
   })

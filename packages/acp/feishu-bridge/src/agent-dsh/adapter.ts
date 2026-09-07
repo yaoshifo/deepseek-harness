@@ -49,6 +49,7 @@ import type {
   ContinuableChildStart,
   FileAttachment,
   ImageAttachment,
+  PollQueryOptions,
   ProviderConfig,
   SubtaskDelivery,
   SessionStartOptions,
@@ -1495,6 +1496,33 @@ export class DshAgentAdapter {
   }
 
   /**
+   * ForkQuerierWithProvider.pollQuery: a chatroom lightning-round statement.
+   * A single-turn query whose session keeps the workspace-instruction
+   * assembly at `workDir` — a role directory's CLAUDE.md persona loads
+   * through the same cwd-instruction discovery the resident role sessions
+   * use — while every tool is masked at the engine level so a polled persona
+   * cannot start research. Unlike {@link lightweightQuery} the memory-index
+   * injection and LLM title generation stay on: the title call is accepted
+   * overhead for keeping role-memory continuity, and reasoning runs at the
+   * route default (a stance call is the persona's value, not formatting).
+   *
+   * @param prompt - the statement brief; all context lives in the prompt itself.
+   * @param workDir - the role directory the one-shot session runs under.
+   * @param opts - optional provider route, abort signal, and turn budget.
+   * @returns the turn's final text.
+   */
+  async pollQuery(prompt: string, workDir: string, opts?: PollQueryOptions): Promise<string> {
+    return this.oneShotQuery({
+      prompt,
+      workDir,
+      toolFilter: { allow: [] },
+      ...(opts?.providerName !== undefined && opts.providerName !== '' ? { providerName: opts.providerName } : {}),
+      ...(opts?.signal !== undefined ? { signal: opts.signal } : {}),
+      ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+    })
+  }
+
+  /**
    * ForkQuerier: a side question against the full context of an existing
    * session without affecting the main conversation (Go ForkQuery — the
    * persisted-log copy becomes a seedable seed from the live parent). The
@@ -1722,14 +1750,27 @@ export class DshAgentAdapter {
       : undefined
     // A tool filter with an empty allow list already masks every tool (MCP
     // servers included), so the project mask wrap would add a redundant
-    // second restriction on the same scope.
+    // second restriction on the same scope. Without a complete-prompt
+    // replacement (pollQuery keeps the assembled workspace instructions)
+    // there is no setup to ride, so the mask needs its own bare hook.
     const denyAll = opts.toolFilter?.allow !== undefined && opts.toolFilter.allow.length === 0
-    const setup = denyAll
-      ? innerSetup
-      : withDeniedSkills(
-        withProjectToolMask(innerSetup, this.cfg.mcpServers, this.deniedTools()),
-        this.deniedSkills(),
-      )
+    let setup: import('@deepseek-ai/dsh-agent').AgentSetup | undefined
+    if (denyAll && innerSetup === undefined) {
+      setup = (agentCtx) => {
+        const toolsSvc = agentCtx.get('tools') as DshToolsLike | undefined
+        if (toolsSvc !== undefined) {
+          const names = toolsSvc.schemas().map(schema => schema.name)
+          if (names.length > 0) toolsSvc.restrict({ deny: names })
+        }
+      }
+    } else {
+      setup = denyAll
+        ? innerSetup
+        : withDeniedSkills(
+          withProjectToolMask(innerSetup, this.cfg.mcpServers, this.deniedTools()),
+          this.deniedSkills(),
+        )
+    }
     const handle = await this.ctx.agents.create({
       sessionId: SessionId(freshNativeSessionId()),
       meta: {

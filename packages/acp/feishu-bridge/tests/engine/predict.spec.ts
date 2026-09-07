@@ -83,6 +83,7 @@ function forkAgent(resp: string): ForkAgent {
       rec.calls++
       return resp
     },
+    pollQuery: async () => '',
     lightweightQuery: async (prompt: string, _provider: string, _signal?: AbortSignal, workDir?: string) => {
       rec.gotPrompt = prompt
       rec.gotQueryWorkDir = workDir ?? ''
@@ -208,6 +209,7 @@ describe('generatePrediction', () => {
         forked = [sessionID, question, provider]
         return '预测结果'
       },
+      pollQuery: async () => '',
       lightweightQuery: async () => '',
     }
     const { e, dispose } = newEngine(agent, p)
