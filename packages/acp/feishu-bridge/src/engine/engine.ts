@@ -160,7 +160,7 @@ import { renderSubtaskPanelCard } from './subtask-panel.ts'
 import { triggerInsights } from './predict.ts'
 import { defaultAutoCompressMinGapMs, maybeAutoResetSessionOnIdle, projectedContextTokens, runCompress } from './session-misc.ts'
 import type { RelayManager } from './relay.ts'
-import { MonitorCore, isMonitorCommand } from './monitor.ts'
+import { MonitorCore, isMonitorCommand, truncateMonitor } from './monitor.ts'
 import {
   cancelRenders,
   captureReplyForExport,
@@ -1703,6 +1703,7 @@ export class Engine {
    */
   handleChatRenamed(sessionKey: string, newName: string): void {
     if (newName === '') return
+    void this.updateParentNoticeLabel(sessionKey, newName)
     const { idToKey } = this.sessions.sessionKeyMap()
     let changed = false
     for (const s of this.sessions.allSessions()) {
@@ -8482,16 +8483,21 @@ export class Engine {
    * sendAsCard plus an optional row of buttons appended after the markdown
    * body (Go sendAsCardWithButtons). Monitor spawn/coalesce notices use it
    * for their jump buttons; the plain-text fallback keeps the header title.
+   * An empty header title renders no header, and when body and title are
+   * both empty the fallback degrades to the buttons' link line (an empty
+   * message is never sent).
    * @param p - Platform the card is sent to.
    * @param replyCtx - Platform reply context addressing the chat.
-   * @param content - Markdown body of the card.
-   * @param header - Card title and color.
+   * @param content - Markdown body of the card; empty renders none.
+   * @param header - Card title and color; an empty title renders no header.
    * @param buttons - Buttons appended after the body; empty renders none.
    */
   async sendAsCardWithButtons(p: Platform, replyCtx: unknown, content: string, header: CardHeader, buttons: CardButton[]): Promise<void> {
     const cs = asCardSender(p)
     if (cs !== undefined) {
-      const builder = newCard().title(header.title, header.color).markdown(content)
+      const builder = newCard()
+      if (header.title !== '') builder.title(header.title, header.color)
+      builder.markdown(content)
       if (buttons.length > 0) builder.buttons(...buttons)
       const card = builder.build()
       try {
@@ -8501,8 +8507,58 @@ export class Engine {
         console.error(`platform send card failed; falling back to plain send (${p.name()}): ${String(error)}`)
       }
     }
-    const fallback = header.title !== '' ? `**${header.title}**\n\n${content}` : content
+    let fallback = header.title !== '' ? `**${header.title}**\n\n${content}` : content
+    if (fallback === '') fallback = jumpButtonsMarkdown(buttons).content
+    if (fallback === '') return
     await this.send(p, replyCtx, fallback)
+  }
+
+  /** Parent-notice card handles by child session key (in-memory: a daemon
+   * restart drops them and the card keeps its generic label). */
+  private readonly parentNoticeHandles = new Map<string, { p: Platform; handle: unknown }>()
+
+  /**
+   * Record the parent-notice card handle of a spawned child so a later group
+   * rename can PATCH the jump button's label in place.
+   * @param childKey - Session key of the spawned group.
+   * @param p - Platform the notice card was sent on (owns the handle).
+   * @param handle - Updatable card handle returned by the platform.
+   */
+  registerParentNoticeHandle(childKey: string, p: Platform, handle: unknown): void {
+    this.parentNoticeHandles.set(childKey, { p, handle })
+  }
+
+  /** Drop a child's parent-notice handle (chat teardown). */
+  forgetParentNotice(childKey: string): void {
+    this.parentNoticeHandles.delete(childKey)
+  }
+
+  /**
+   * PATCH the parent-notice card of a renamed child so the jump button's
+   * label follows the new group name (Go has no counterpart). Reached from
+   * {@link handleChatRenamed}, so every rename the platform reports — the
+   * async LLM rename, its fallback, /rename, and a user rename in the Feishu
+   * UI — relabels the button. The handle stays registered so later renames
+   * keep relabeling; it is dropped when the child chat is torn down. A
+   * failed PATCH only warns — the next rename retries.
+   * @param childKey - Session key of the renamed group.
+   * @param name - The new group name.
+   */
+  private async updateParentNoticeLabel(childKey: string, name: string): Promise<void> {
+    if (name === '') return
+    const entry = this.parentNoticeHandles.get(childKey)
+    if (entry === undefined) return
+    const upd = asCardSenderWithUpdate(entry.p)
+    if (upd === undefined) return
+    const url = this.chatJumpURL(entry.p, extractChannelID(childKey))
+    if (url === '') return
+    const label = this.i18n.tf(Msg.SpawnJumpBtnNamed, truncateMonitor(name, 20))
+    const card = newCard().buttons({ text: label, type: 'primary', value: '', url }).build()
+    try {
+      await upd.updateCardWithHandle(entry.handle, card)
+    } catch (error) {
+      console.warn(`spawn: parent notice label update failed (${entry.p.name()}): ${String(error)}`)
+    }
   }
 
   /**

@@ -8,7 +8,7 @@ import type { Card } from '../../src/card.ts'
 import { DirHistory } from '../../src/engine/dir-history.ts'
 import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.ts'
-import { cmdDir, cmdFork, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.ts'
+import { cleanupOneChat, cmdDir, cmdFork, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.ts'
 import type { Agent, AgentSessionInfo, Message, ProviderSwitcher } from '../../src/core/types.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import {
@@ -769,6 +769,10 @@ describe('/spawn readiness card (Go buildCompletionUsage(0) parity)', () => {
     }
   }
 
+  /** Readiness cards among the recorded sends, selected structurally by header color. */
+  const purpleCards = (cards: unknown[]): unknown[] =>
+    cards.filter(c => (c as { header?: { color?: string } }).header?.color === 'purple')
+
   it('sends a purple readiness card without the parent turn\'s duration/rate, bare and with a task', async () => {
     const p = createStubChatroomSpawner('feishu')
     const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
@@ -785,7 +789,7 @@ describe('/spawn readiness card (Go buildCompletionUsage(0) parity)', () => {
       await cmdSpawn(e, p, parentMsg(), [])
       await waitForCards(p)
       expect(p.sentCards.length).toBeGreaterThanOrEqual(1)
-      const bare = p.sentCards[0] as { header?: { title: string; color: string }; elements: unknown[] }
+      const bare = purpleCards(p.sentCards)[0] as { header?: { title: string; color: string }; elements: unknown[] }
       expect(bare.header?.color).toBe('purple')
       expect(bare.header?.title).toContain('repo')
       expect(bare.header?.title).not.toContain('18s')
@@ -799,9 +803,212 @@ describe('/spawn readiness card (Go buildCompletionUsage(0) parity)', () => {
       e.usage.tokenRateMsg = '42 t/s'
       await cmdSpawn(e, p, parentMsg(), ['delegated task'])
       await waitForCards(p, 2)
-      const withTask = p.sentCards[1] as { header?: { title: string; color: string }; elements: unknown[] }
+      const withTask = purpleCards(p.sentCards)[1] as { header?: { title: string; color: string }; elements: unknown[] }
       expect(withTask.header?.color).toBe('purple')
       expect(withTask.header?.title).not.toContain('42 t/s')
+    } finally {
+      dispose()
+    }
+  })
+})
+
+describe('/spawn //fork parent jump notice', () => {
+  /** The notice card for the parent chat, selected by its jump-button target. */
+  interface RecordedNotice {
+    header: unknown
+    kinds: string[]
+    buttons: Array<{ text: string; type: string; url?: string }>
+  }
+
+  /**
+   * The notice card for the parent chat: the recorded card whose action
+   * button jumps to the spawned group's chat ID.
+   */
+  function jumpNotice(p: { sentCards: unknown[] }, childChat: string): RecordedNotice | undefined {
+    const want = `https://applink.feishu.cn/client/chat/open?openChatId=${childChat}`
+    for (const c of p.sentCards as Array<{
+      header?: unknown
+      elements: Array<{ kind: string; buttons?: Array<{ text: string; type: string; url?: string }> }>
+    }>) {
+      for (const el of c.elements) {
+        if (el.kind !== 'actions') continue
+        if ((el.buttons ?? []).some(b => b.url === want)) {
+          return { header: c.header, kinds: c.elements.map(e2 => e2.kind), buttons: el.buttons ?? [] }
+        }
+      }
+    }
+    return undefined
+  }
+
+  it('sends the parent chat a button-only notice card that jumps to the forked group', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      e.sessions.getOrCreateActive('feishu:oc_parent:ou_u').setAgentSessionID('agent-sid-1', 'dsh')
+      await cmdFork(e, p, msg({
+        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
+      }), ['forked continuation'])
+
+      // Minimal card: no header, no text element — the button is the card.
+      const notice = jumpNotice(p, 'role-1')
+      expect(notice).toBeDefined()
+      expect(notice?.header).toBeUndefined()
+      expect(notice?.kinds).toEqual(['actions'])
+      expect(notice?.buttons).toHaveLength(1)
+      expect(notice?.buttons[0]?.type).toBe('primary')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('signals the spawn only with the notice card, without a Done reaction on the command message', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const reactions: string[] = []
+    ;(p as { addReaction?: (rc: unknown, emoji: string) => void }).addReaction = (_rc, emoji) => { reactions.push(emoji) }
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      e.sessions.getOrCreateActive('feishu:oc_parent:ou_u').setAgentSessionID('agent-sid-1', 'dsh')
+      const parent = { sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent' }
+      await cmdFork(e, p, msg(parent), ['forked continuation'])
+      await cmdSpawn(e, p, msg(parent), ['delegated task'])
+
+      // The card is the sole parent-chat signal; the reaction is gone.
+      expect(reactions).toEqual([])
+      expect(jumpNotice(p, 'role-1')).toBeDefined()
+      expect(jumpNotice(p, 'role-2')).toBeDefined()
+    } finally {
+      dispose()
+    }
+  })
+
+  it('sends the same notice card for /spawn', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      await cmdSpawn(e, p, msg({
+        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
+      }), ['delegated task'])
+
+      const notice = jumpNotice(p, 'role-1')
+      expect(notice).toBeDefined()
+      expect(notice?.header).toBeUndefined()
+      expect(notice?.kinds).toEqual(['actions'])
+      expect(notice?.buttons[0]?.type).toBe('primary')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('skips the notice card on platforms without a chat-jump URL', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    delete (p as { chatJumpURL?: unknown }).chatJumpURL
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      await cmdSpawn(e, p, msg({
+        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
+      }), ['delegated task'])
+
+      // The spawn itself is unaffected; the parent chat gets no feedback on
+      // a platform without jump URLs (production is always Feishu, which
+      // produces one) — no dead-button card and no applink leak.
+      expect(p.count).toBe(1)
+      const buttonCards = p.sentCards.filter(c =>
+        (c as { elements?: Array<{ kind: string }> }).elements?.some(el => el.kind === 'actions'))
+      expect(buttonCards).toHaveLength(0)
+      for (const s of p.sentCards.map(c => JSON.stringify(c))) {
+        expect(s).not.toContain('applink.feishu.cn')
+      }
+    } finally {
+      dispose()
+    }
+  })
+
+  it('sends the notice through the updatable-card path so a later rename can relabel the button', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const withHandleSends: Array<{ card: unknown; handle: unknown }> = []
+    ;(p as { sendCardWithHandle?: (rc: unknown, card: unknown) => Promise<unknown> }).sendCardWithHandle =
+      async (_rc, card) => {
+        const handle = `notice-handle-${withHandleSends.length + 1}`
+        withHandleSends.push({ card, handle })
+        return handle
+      }
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      e.sessions.getOrCreateActive('feishu:oc_parent:ou_u').setAgentSessionID('agent-sid-1', 'dsh')
+      await cmdFork(e, p, msg({
+        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
+      }), ['forked continuation'])
+
+      // Updatable platforms get the same button-only card plus a handle.
+      expect(withHandleSends).toHaveLength(1)
+      const card = withHandleSends[0]!.card as {
+        header?: unknown
+        elements: Array<{ kind: string; buttons?: Array<{ text: string; type: string; url?: string }> }>
+      }
+      expect(card.header).toBeUndefined()
+      expect(card.elements).toHaveLength(1)
+      expect(card.elements[0]?.kind).toBe('actions')
+      expect(card.elements[0]?.buttons?.[0]?.type).toBe('primary')
+      expect(card.elements[0]?.buttons?.[0]?.url).toBe('https://applink.feishu.cn/client/chat/open?openChatId=role-1')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('relabels the notice button when the platform reports the group renamed, and stops after /done cleanup', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const patches: Array<{ handle: unknown; card: unknown }> = []
+    ;(p as { sendCardWithHandle?: (rc: unknown, card: unknown) => Promise<unknown> }).sendCardWithHandle = async () => 'notice-h'
+    ;(p as { updateCardWithHandle?: (h: unknown, card: unknown) => Promise<void> }).updateCardWithHandle =
+      async (h, card) => { patches.push({ handle: h, card }) }
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    const pollPatches = async (n: number): Promise<void> => {
+      const deadline = Date.now() + 2000
+      while (patches.length < n && Date.now() < deadline) {
+        await new Promise((resolve) => { setTimeout(resolve, 5) })
+      }
+    }
+    try {
+      e.sessions.getOrCreateActive('feishu:oc_parent:ou_u').setAgentSessionID('agent-sid-1', 'dsh')
+      await cmdFork(e, p, msg({
+        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
+      }), [])
+
+      // The platform's rename report (im.chat.updated_v1 → handleChatRenamed)
+      // relabels the jump button in place.
+      e.handleChatRenamed('test:role-1', 'LLM 起的新名')
+      await pollPatches(1)
+      expect(patches).toHaveLength(1)
+      let card = patches[0]!.card as {
+        header?: unknown
+        elements: Array<{ kind: string; buttons?: Array<{ text: string; type: string; url?: string }> }>
+      }
+      expect(card.header).toBeUndefined()
+      let btn = card.elements.find(el => el.kind === 'actions')?.buttons?.[0]
+      expect(btn?.type).toBe('primary')
+      expect(btn?.text).toBe('Open LLM 起的新名')
+      expect(btn?.url).toBe('https://applink.feishu.cn/client/chat/open?openChatId=role-1')
+
+      // The label follows every rename the platform reports.
+      e.handleChatRenamed('test:role-1', '用户在 UI 改的名')
+      await pollPatches(2)
+      expect(patches).toHaveLength(2)
+      card = patches[1]!.card as typeof card
+      btn = card.elements.find(el => el.kind === 'actions')?.buttons?.[0]
+      expect(btn?.text).toBe('Open 用户在 UI 改的名')
+
+      // Tearing the child chat down drops the handle: later renames no
+      // longer touch the parent's notice card.
+      await cleanupOneChat(e, p, 'test:role-1', undefined, true)
+      e.handleChatRenamed('test:role-1', '收尾后的改名')
+      await new Promise((resolve) => { setTimeout(resolve, 50) })
+      expect(patches).toHaveLength(2)
     } finally {
       dispose()
     }

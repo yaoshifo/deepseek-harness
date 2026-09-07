@@ -14,8 +14,8 @@ import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { Msg } from '../i18n/index.ts'
 import type { AgentSessionInfo, Message, Platform } from '../core/types.ts'
-import { asCardSender, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, asStagedForkSeedForgetter, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.ts'
-import { newCard } from '../card.ts'
+import { asCardSender, asCardSenderWithUpdate, asChatPhasePainter, asForkAtPreparer, asGroupIconAvatarSetter, asGroupRenamer, asGroupSpawner, asGroupSpawnerEx, asReplyContextReconstructor, asStagedForkSeedForgetter, ContinueSession, ForkAtSessionPrefix, ForkSessionPrefix, supportsCards, type GroupSpawnOptions } from '../core/types.ts'
+import { newCard, type CardButton } from '../card.ts'
 import type { Engine } from './engine.ts'
 import type { SessionManager } from './session.ts'
 import { childLabel } from './subtask.ts'
@@ -1176,7 +1176,28 @@ async function spawnGroupCommon(
   // starts the child's agent session (agent.spawnProvider).
   e.seedSpawnProvider(syntheticMsg.sessionKey)
 
-  e.addReaction(p, msg.replyCtx, 'Done')
+  // Parent-chat jump notice: the new group is a separate chat the user would
+  // otherwise have to find in the chat list; a card whose sole element is the
+  // jump button lands in the chat they are in (Go has no counterpart). On
+  // updatable-card platforms the handle is kept so a later group rename can
+  // relabel the button in place.
+  {
+    const jumpURL = e.chatJumpURL(p, extractChannelID(syntheticMsg.sessionKey))
+    if (jumpURL !== '') {
+      const buttons: CardButton[] = [{ text: e.i18n.t(Msg.SpawnJumpBtn), type: 'primary', value: '', url: jumpURL }]
+      const card = newCard().buttons(...buttons).build()
+      try {
+        const upd = asCardSenderWithUpdate(p)
+        if (upd !== undefined) {
+          e.registerParentNoticeHandle(syntheticMsg.sessionKey, p, await upd.sendCardWithHandle(msg.replyCtx, card))
+        } else {
+          await e.sendAsCardWithButtons(p, msg.replyCtx, '', { title: '', color: '' }, buttons)
+        }
+      } catch (error) {
+        console.warn(`spawn: parent notice send failed (${p.name()}): ${String(error)}`)
+      }
+    }
+  }
 
   // Notification card for both paths (with and without user message).
   {
@@ -1353,6 +1374,7 @@ export async function cleanupOneChat(
   } catch (error) {
     console.warn(`done: mark spawned chat failed (${sessionKey}): ${String(error)}`)
   }
+  e.forgetParentNotice(sessionKey)
 
   // /done grays the avatar (phase 'done') and marks the chat inactive; the
   // heart tag is untouched — tagging is the independent /tag-/untag axis.
