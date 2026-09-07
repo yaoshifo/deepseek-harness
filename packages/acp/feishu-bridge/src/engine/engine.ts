@@ -8482,16 +8482,21 @@ export class Engine {
    * sendAsCard plus an optional row of buttons appended after the markdown
    * body (Go sendAsCardWithButtons). Monitor spawn/coalesce notices use it
    * for their jump buttons; the plain-text fallback keeps the header title.
+   * An empty header title renders no header, and when body and title are
+   * both empty the fallback degrades to the buttons' link line (an empty
+   * message is never sent).
    * @param p - Platform the card is sent to.
    * @param replyCtx - Platform reply context addressing the chat.
-   * @param content - Markdown body of the card.
-   * @param header - Card title and color.
+   * @param content - Markdown body of the card; empty renders none.
+   * @param header - Card title and color; an empty title renders no header.
    * @param buttons - Buttons appended after the body; empty renders none.
    */
   async sendAsCardWithButtons(p: Platform, replyCtx: unknown, content: string, header: CardHeader, buttons: CardButton[]): Promise<void> {
     const cs = asCardSender(p)
     if (cs !== undefined) {
-      const builder = newCard().title(header.title, header.color).markdown(content)
+      const builder = newCard()
+      if (header.title !== '') builder.title(header.title, header.color)
+      builder.markdown(content)
       if (buttons.length > 0) builder.buttons(...buttons)
       const card = builder.build()
       try {
@@ -8501,7 +8506,9 @@ export class Engine {
         console.error(`platform send card failed; falling back to plain send (${p.name()}): ${String(error)}`)
       }
     }
-    const fallback = header.title !== '' ? `**${header.title}**\n\n${content}` : content
+    let fallback = header.title !== '' ? `**${header.title}**\n\n${content}` : content
+    if (fallback === '') fallback = jumpButtonsMarkdown(buttons).content
+    if (fallback === '') return
     await this.send(p, replyCtx, fallback)
   }
 

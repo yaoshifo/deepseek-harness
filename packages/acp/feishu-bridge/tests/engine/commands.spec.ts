@@ -813,10 +813,10 @@ describe('/spawn readiness card (Go buildCompletionUsage(0) parity)', () => {
 })
 
 describe('/spawn //fork parent jump notice', () => {
-  /** The parent-chat notice card as recorded by the stub: header, body, buttons. */
+  /** The notice card for the parent chat, selected by its jump-button target. */
   interface RecordedNotice {
-    header?: { title: string; color: string } | undefined
-    body: string
+    header: unknown
+    kinds: string[]
     buttons: Array<{ text: string; type: string; url?: string }>
   }
 
@@ -827,21 +827,20 @@ describe('/spawn //fork parent jump notice', () => {
   function jumpNotice(p: { sentCards: unknown[] }, childChat: string): RecordedNotice | undefined {
     const want = `https://applink.feishu.cn/client/chat/open?openChatId=${childChat}`
     for (const c of p.sentCards as Array<{
-      header?: { title: string; color: string }
-      elements: Array<{ kind: string; content?: string; buttons?: Array<{ text: string; type: string; url?: string }> }>
+      header?: unknown
+      elements: Array<{ kind: string; buttons?: Array<{ text: string; type: string; url?: string }> }>
     }>) {
       for (const el of c.elements) {
         if (el.kind !== 'actions') continue
         if ((el.buttons ?? []).some(b => b.url === want)) {
-          const body = c.elements.find(e2 => e2.kind === 'markdown')?.content ?? ''
-          return { header: c.header, body, buttons: el.buttons ?? [] }
+          return { header: c.header, kinds: c.elements.map(e2 => e2.kind), buttons: el.buttons ?? [] }
         }
       }
     }
     return undefined
   }
 
-  it('sends the parent chat a notice card whose primary button jumps to the forked group', async () => {
+  it('sends the parent chat a button-only notice card that jumps to the forked group', async () => {
     const p = createStubChatroomSpawner('feishu')
     const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
     const dispose = registerSessionCommands(e)
@@ -851,12 +850,34 @@ describe('/spawn //fork parent jump notice', () => {
         sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
       }), ['forked continuation'])
 
+      // Minimal card: no header, no text element — the button is the card.
       const notice = jumpNotice(p, 'role-1')
       expect(notice).toBeDefined()
-      expect(notice?.header?.color).toBe('indigo')
-      expect(notice?.body).toContain('> forked continuation')
+      expect(notice?.header).toBeUndefined()
+      expect(notice?.kinds).toEqual(['actions'])
       expect(notice?.buttons).toHaveLength(1)
       expect(notice?.buttons[0]?.type).toBe('primary')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('signals the spawn only with the notice card, without a Done reaction on the command message', async () => {
+    const p = createStubChatroomSpawner('feishu')
+    const reactions: string[] = []
+    ;(p as { addReaction?: (rc: unknown, emoji: string) => void }).addReaction = (_rc, emoji) => { reactions.push(emoji) }
+    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
+    const dispose = registerSessionCommands(e)
+    try {
+      e.sessions.getOrCreateActive('feishu:oc_parent:ou_u').setAgentSessionID('agent-sid-1', 'dsh')
+      const parent = { sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent' }
+      await cmdFork(e, p, msg(parent), ['forked continuation'])
+      await cmdSpawn(e, p, msg(parent), ['delegated task'])
+
+      // The card is the sole parent-chat signal; the reaction is gone.
+      expect(reactions).toEqual([])
+      expect(jumpNotice(p, 'role-1')).toBeDefined()
+      expect(jumpNotice(p, 'role-2')).toBeDefined()
     } finally {
       dispose()
     }
@@ -873,8 +894,9 @@ describe('/spawn //fork parent jump notice', () => {
 
       const notice = jumpNotice(p, 'role-1')
       expect(notice).toBeDefined()
-      expect(notice?.header?.color).toBe('indigo')
-      expect(notice?.body).toContain('> delegated task')
+      expect(notice?.header).toBeUndefined()
+      expect(notice?.kinds).toEqual(['actions'])
+      expect(notice?.buttons[0]?.type).toBe('primary')
     } finally {
       dispose()
     }
@@ -890,8 +912,9 @@ describe('/spawn //fork parent jump notice', () => {
         sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
       }), ['delegated task'])
 
-      // The spawn itself is unaffected; the parent flow stays reaction-only
-      // with no dead-button card and no applink leak.
+      // The spawn itself is unaffected; the parent chat gets no feedback on
+      // a platform without jump URLs (production is always Feishu, which
+      // produces one) — no dead-button card and no applink leak.
       expect(p.count).toBe(1)
       const buttonCards = p.sentCards.filter(c =>
         (c as { elements?: Array<{ kind: string }> }).elements?.some(el => el.kind === 'actions'))
@@ -899,24 +922,6 @@ describe('/spawn //fork parent jump notice', () => {
       for (const s of p.sentCards.map(c => JSON.stringify(c))) {
         expect(s).not.toContain('applink.feishu.cn')
       }
-    } finally {
-      dispose()
-    }
-  })
-
-  it('falls back to the readiness line when the fork carries no message', async () => {
-    const p = createStubChatroomSpawner('feishu')
-    const e = new Engine('test', createWorkDirAgent('/w/repo'), [p], '', 'en')
-    const dispose = registerSessionCommands(e)
-    try {
-      e.sessions.getOrCreateActive('feishu:oc_parent:ou_u').setAgentSessionID('agent-sid-1', 'dsh')
-      await cmdFork(e, p, msg({
-        sessionKey: 'feishu:oc_parent:ou_u', platform: 'feishu', chatType: 'group', chatName: 'parent',
-      }), [])
-
-      const notice = jumpNotice(p, 'role-1')
-      expect(notice).toBeDefined()
-      expect(notice?.body).toBe(e.i18n.t(Msg.ForkGroupReady))
     } finally {
       dispose()
     }

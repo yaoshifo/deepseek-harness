@@ -1,4 +1,4 @@
-# Agent Note: parent-chat jump notice card for /spawn and /fork
+# Agent Note: parent-chat jump notice for /spawn and /fork
 
 Status: implemented
 
@@ -6,13 +6,13 @@ English | [中文](2026-09-07-feishu-bridge-parent-jump-notice.zh.md)
 
 ## Problem
 
-After `/spawn` or `/fork` created a sub-group, the parent chat only received a Done reaction. The new group is a separate chat, so the user had to find it manually in the chat list. The readiness card (with the ↩ parent breadcrumb) is sent into the child group, which orients the child session, not the parent user. Monitor had already solved this exact orientation problem for its triage groups (`sendMonitorSpawnNotice`: card + jump button), while the user-invoked spawn family lagged behind.
+After `/spawn` or `/fork` created a sub-group, the parent chat only received a Done reaction. The new group is a separate chat, so the user had to find it manually in the chat list. The readiness card (with the ↩ parent breadcrumb) is sent into the child group, which orients the child session, not the parent user. Monitor had already solved this orientation problem for its triage groups (`sendMonitorSpawnNotice`: card + jump button), while the user-invoked spawn family lagged behind.
 
 ## Decision
 
-`spawnGroupCommon` (`src/engine/commands.ts`) sends a parent-chat notice card right after the Done reaction and before the child readiness card: indigo header 🌿 已创建子群 (`spawn_parent_notice_title`), body quoting the first message truncated at 200 runes (`truncateMonitor`) or the ready-title line when the command carried no message, and one primary button 进入子群 (`spawn_jump_btn`) whose URL is `chatJumpURL(platform, extractChannelID(child session key))` — the AppLink that opens the sub-group in the Feishu client. A failed notice send is caught and warned; the spawn flow itself is unaffected. Platforms without a chat-jump URL keep the reaction-only flow: no dead-button card, no applink leak, mirroring the monitor notice discipline.
+`spawnGroupCommon` (`src/engine/commands.ts`) sends the parent chat a notice card whose **only element is the jump button**: no header, no text line — one primary button 进入子群 (`spawn_jump_btn`) whose URL is `chatJumpURL(platform, extractChannelID(child session key))`, the AppLink that opens the sub-group in the Feishu client. Two user rulings shaped it (both 2026-09-07): first the card replaced the Done reaction as the sole parent-chat success signal, then the card was reduced to the button alone — the button label carries the whole message. A failed notice send is caught and warned; the spawn flow itself is unaffected.
 
-Both `/spawn` and `/fork` get the card because they share the skeleton; no per-command flag exists. Subtask children and monitor groups are excluded — the subtask panel already aggregates child visibility with jump links in the parent chat, and monitor sends its own notice.
+`sendAsCardWithButtons` gained two generalizations: an empty header title renders no header (the Feishu renderer and the plain-text fallback both already tolerated header-less cards), and when title and body are both empty the plain-text fallback degrades to the buttons' link line instead of sending an empty message. Platforms without a chat-jump URL get no parent-chat feedback at all — production is always Feishu, which produces a URL. Subtask children and monitor groups are excluded: the subtask panel already aggregates child visibility with jump links in the parent chat, and monitor sends its own notices.
 
 ## Alternatives considered
 
@@ -20,10 +20,14 @@ Both `/spawn` and `/fork` get the card because they share the skeleton; no per-c
 
 **Group name as the button label, following the footer/cap-notice button convention.** Rejected: with LLM group rename enabled the group is created under a placeholder name and renamed asynchronously, so a name-labeled button ships stale text; the generic verb label never goes stale.
 
+**Keep the Done reaction as a fallback success signal.** Rejected as redundant with the card (user ruling). Accepted trade-off: a failed card send now leaves the parent chat without immediate feedback — the failure is logged, and the group still appears in the chat list.
+
+**A text line plus the button (header removed, two elements).** Rejected mid-review: the user ruled the line should fold into the button — the label 进入子群 states both what happened and where the button leads.
+
 ## Consequences
 
-The parent chat gains one card per user-invoked spawn — acceptable noise since each card corresponds to a command the user just typed. cc-connect's `spawnGroupCommon` has no parent notice, so this is a deliberate fork-local divergence from Go parity; once stable it is a candidate for an upstream seam proposal per the fork secondary-development principles. Platforms without jump support see no change.
+The parent chat gets exactly one interactive element per user-invoked spawn: the jump button. cc-connect's `spawnGroupCommon` has no parent notice and does add a Done reaction, so this diverges from Go parity in both directions; the divergence is deliberate and fork-local, and remains an upstream seam proposal candidate once stable. The notice's i18n surface is a single key (`spawn_jump_btn`); the intermediate `spawn_parent_notice_title` key was added and removed the same day. On platforms without jump support the parent chat is silent.
 
 ## Testing
 
-`tests/engine/commands.spec.ts` `/spawn //fork parent jump notice` (4 cases): the fork notice card with its jump button and quoted task, the `/spawn` symmetry case, the no-jump-platform skip (no button card, no applink leak, spawn still succeeds), and the no-message body fallback to the ready line. The readiness-card spec selects its cards structurally by purple header instead of by index, since the notice card now precedes the readiness card in the same recorder.
+`tests/engine/commands.spec.ts` `/spawn //fork parent jump notice` (4 cases): the button-only card shape (no header, a single actions element, one primary jump button), the no-reaction ruling (reactions stay empty across both commands while the cards land), the `/spawn` symmetry case, and the no-jump-platform skip (no button card, no applink leak, spawn still succeeds). The readiness-card spec selects its cards structurally by purple header instead of by index.
