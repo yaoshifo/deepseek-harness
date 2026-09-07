@@ -28,7 +28,7 @@ import { MaxPlatformMessageLen, splitMessage } from '../engine/message-split.ts'
 import { extractCardImageKeys, extractInteractiveCardText, extractPollText, extractPostImageKeys, extractPostPlainText, hasHumanMention, interactiveCardPlaceholder, isBotMentioned, replaceMentions, stripMentions, unwrapCardContent } from './extract.ts'
 import { isMonitorCommand } from '../core/types.ts'
 import type { UserQuestion, MonitorPollPage } from '../core/types.ts'
-import { buildAskQuestionCardSettled, buildFollowupsCardSettled, parseAskqSelection, zhAskCardI18n } from '../engine/ask.ts'
+import { buildAskQuestionCardSettled, buildFollowupsCardSettled, followupsSelectionMessage, parseAskqSelection, zhAskCardI18n } from '../engine/ask.ts'
 import { hintCategoryOfCode, parseHintButtonName } from '../engine/hints-panel.ts'
 import type { FeishuMention } from './extract.ts'
 import type { Card } from '../card.ts'
@@ -1125,12 +1125,14 @@ export class FeishuPlatform implements Platform {
     }
 
     // fw_multi: → a followups suggestion-card submit (engine-side closing-card
-    // conversion): the checked indices and the in-form note converge onto an
-    // `fw:{i1},{i2}` payload dispatched flagged isFollowupAction, which the
-    // engine routes to a fresh turn instead of resolving a parked ask. The
-    // callback response freezes the pressed card with its settled marks —
-    // rebuilt from the send-time cached meta, consumed only when it is an fw
-    // entry (a newer askq card's meta stays for its own freeze).
+    // conversion): the checked indices and the in-form note converge onto a
+    // self-contained「[后续处理]」selection message (labels and descriptions
+    // from the send-time cached meta, never the raw `fw:` wire indices)
+    // dispatched flagged isFollowupAction, which the engine routes to a fresh
+    // turn instead of resolving a parked ask. The callback response freezes
+    // the pressed card with its settled marks — rebuilt from the same cached
+    // meta, consumed only when it is an fw entry (a newer askq card's meta
+    // stays for its own freeze).
     if (actionVal.startsWith('fw_multi:') && !actionVal.slice('fw_multi:'.length).includes(':')) {
       const indices = collectAskqMultiSelected(action.form_value)
       const rawNote = action.form_value?.fw_text_0
@@ -1139,10 +1141,11 @@ export class FeishuPlatform implements Platform {
         this.replyAskqEmptySubmit(chatID, sessionKey, this.t(Msg.FollowupsEmptySubmit, '请至少勾选一项，或在输入框填写文字后再提交'))
         return undefined
       }
-      const content = note !== '' ? `fw:${indices.join(',')}\x00${note}` : `fw:${indices.join(',')}`
       const meta = this.askqMetaCache.get(sessionKey)
       if (meta !== undefined && meta.followups === true) {
         this.askqMetaCache.delete(sessionKey)
+        const content = followupsSelectionMessage(
+          meta.question, indices.map(s => Number.parseInt(s, 10)), note, this.i18nHandle ?? zhAskCardI18n)
         this.dispatch(sessionKey, messageID, userID, chatID, 'group',
           content, '', replyCtx, isSpawned, '', false, false, [], [], false, undefined, true)
         const card = buildFollowupsCardSettled(
@@ -1151,10 +1154,17 @@ export class FeishuPlatform implements Platform {
       }
       // No fw meta (the daemon restarted, the card predates it, or a newer
       // askq card owns the cache key): the selection still reaches the agent
-      // — only the freeze is lost — and the drop leaves a trace.
+      // as a readable stale notice — only the freeze and the option labels
+      // are lost — and the drop leaves a trace.
       console.warn(`${this.tag()}: followups card callback without cached meta (${sessionKey})`)
+      const stale = (this.i18nHandle ?? zhAskCardI18n).tf(Msg.FollowupsStale, indices.join(','))
+      const questionHint = action.value?.fw_question
+      let staleContent = typeof questionHint === 'string' && questionHint !== ''
+        ? `${stale}\n**${questionHint}**`
+        : stale
+      if (note !== '') staleContent += `\n✍️ ${note}`
       this.dispatch(sessionKey, messageID, userID, chatID, 'group',
-        content, '', replyCtx, isSpawned, '', false, false, [], [], false, undefined, true)
+        staleContent, '', replyCtx, isSpawned, '', false, false, [], [], false, undefined, true)
       return undefined
     }
 

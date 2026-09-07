@@ -942,26 +942,67 @@ describe('onCardAction fw_multi submit (followups suggestion card)', () => {
     }
   }
 
-  it('dispatches the checked selection and note as a followup-action message', async () => {
+  it('dispatches the checked selection and note as a readable followup-action message', async () => {
     const p = newPlatform({ allowChat: '*' })
-    const messages = await dispatched(p, fwEvent({ askq_opt_0_2: 'true', askq_opt_0_1: true, fw_text_0: ' 附言 ' }))
+    // Seed the send-time meta a live followups card would have cached, so the
+    // dispatch can name the checked options instead of their raw indices.
+    p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      question: {
+        question: 'fix?', header: '后续处理', multiSelect: true,
+        options: [
+          { label: 'Fix A', description: 'src/a.ts:1', recommended: true },
+          { label: 'Skip', description: '', recommended: false },
+        ],
+      },
+      qIdx: 0,
+      total: 1,
+      followups: true,
+    })
+    const messages = await dispatched(p, fwEvent({ askq_opt_0_1: true, fw_text_0: ' 附言 ' }))
     expect(messages).toHaveLength(1)
-    expect(messages[0]!.content).toBe('fw:1,2\x00附言')
+    expect(messages[0]!.content).toBe(
+      '[后续处理] 用户在本轮完成卡上提交了选择：\n**fix?**\n✅ **Fix A**\nsrc/a.ts:1\n◻️ **Skip**\n✍️ 附言')
     expect(messages[0]!.isFollowupAction).toBe(true)
     expect(messages[0]!.isAskqCardAction).toBe(false)
     expect(messages[0]!.isCardAction).toBe(false)
+    // The consumed meta frees the cache key for a later card.
+    expect(p.askqMetaCache.get('feishu:oc_1:ou_9')).toBeUndefined()
   })
 
-  it('recovers the action from the submit name when the callback omits value', async () => {
+  it('dispatches a note-only submit with every option unchecked, not a raw payload', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    p.askqMetaCache.set('feishu:oc_1:ou_9', {
+      question: {
+        question: 'fix?', header: '后续处理', multiSelect: true,
+        options: [
+          { label: 'Fix A', description: 'src/a.ts:1', recommended: true },
+          { label: 'Skip', description: '', recommended: false },
+        ],
+      },
+      qIdx: 0,
+      total: 1,
+      followups: true,
+    })
+    const messages = await dispatched(p, fwEvent({ fw_text_0: '先不动' }))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe(
+      '[后续处理] 用户在本轮完成卡上提交了选择：\n**fix?**\n◻️ **Fix A**\nsrc/a.ts:1\n◻️ **Skip**\n✍️ 先不动')
+    expect(messages[0]!.isFollowupAction).toBe(true)
+  })
+
+  it('recovers the action from the submit name and dispatches a readable stale notice without cached meta', async () => {
     const p = newPlatform({ allowChat: '*' })
     const event: CardActionTriggerEvent = {
-      action: { name: 'fw_multi_submit_0', form_value: { askq_opt_0_1: true } },
+      action: { name: 'fw_multi_submit_0', form_value: { askq_opt_0_1: true, fw_text_0: '尽快' } },
       operator: { open_id: 'ou_9' },
       context: { open_chat_id: 'oc_1', open_message_id: `om_fw_nv_${Date.now()}` },
     }
     const messages = await dispatched(p, event)
     expect(messages).toHaveLength(1)
-    expect(messages[0]!.content).toBe('fw:1')
+    // No send-time meta (daemon restart or a pre-dating card): the raw
+    // `fw:{i}` payload must still never reach the agent.
+    expect(messages[0]!.content).toBe(
+      '[后续处理] 用户在重启前的收尾卡上提交了第 1 项，但选项文本已因重启丢失——请与用户确认要处理哪条。\n✍️ 尽快')
     expect(messages[0]!.isFollowupAction).toBe(true)
   })
 

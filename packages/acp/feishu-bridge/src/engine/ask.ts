@@ -367,6 +367,19 @@ export function buildFollowupsCard(q: UserQuestion, i18n: AskCardI18n = zhAskCar
 }
 
 /**
+ * Frozen selection marks shared by the settled cards and the dispatched
+ * followups selection message: `✅/◻️ **label**` plus the option description.
+ *
+ * @param q - The question whose options render.
+ * @param indices - 1-based option indices marked checked.
+ * @returns One mark string per option.
+ */
+function settledOptionMarks(q: UserQuestion, indices: number[]): string[] {
+  return q.options.map((opt, i) =>
+    `${indices.includes(i + 1) ? '✅' : '◻️'} **${opt.label}**${opt.description !== '' ? `\n${opt.description}` : ''}`)
+}
+
+/**
  * Build the read-only settled snapshot for a submitted followups card:
  * frozen selection marks and the submitted note, no controls. The Feishu
  * platform returns it as the card-action callback response, swapping the
@@ -383,8 +396,7 @@ export function buildFollowupsCardSettled(
   q: UserQuestion, indices: number[], note: string, i18n: AskCardI18n = zhAskCardI18n,
 ): Card {
   const cb = newCard().title(i18n.t(Msg.FollowupsCardTitle), 'green')
-  const marks = q.options.map((opt, i) =>
-    `${indices.includes(i + 1) ? '✅' : '◻️'} **${opt.label}**${opt.description !== '' ? `\n${opt.description}` : ''}`)
+  const marks = settledOptionMarks(q, indices)
   if (marks.length > 0) {
     cb.raw({ kind: 'markdown', content: marks.join('\n') })
   }
@@ -393,6 +405,28 @@ export function buildFollowupsCardSettled(
   }
   cb.raw({ kind: 'note', text: i18n.t(Msg.FollowupsSubmitted) })
   return cb.build()
+}
+
+/**
+ * Compose the self-contained「[后续处理]」message a followups suggestion-card
+ * submission dispatches as: the selection headline, the question, the frozen
+ * option marks (labels and descriptions, never raw wire indices), and the
+ * in-form note. The agent reads this text as its next prompt.
+ *
+ * @param q - The followups question the card was built from.
+ * @param indices - 1-based option indices the user checked.
+ * @param note - The in-form note text ('' when none).
+ * @param i18n - Card copy face; defaults to zh.
+ * @returns The dispatched message text.
+ */
+export function followupsSelectionMessage(
+  q: UserQuestion, indices: number[], note: string, i18n: AskCardI18n = zhAskCardI18n,
+): string {
+  const lines = [i18n.t(Msg.FollowupsSelection)]
+  if (q.question !== '') lines.push(`**${q.question}**`)
+  lines.push(...settledOptionMarks(q, indices))
+  if (note !== '') lines.push(`✍️ ${note}`)
+  return lines.join('\n')
 }
 
 /**
@@ -415,8 +449,7 @@ export function buildAskQuestionCardSettled(
   const title = `${i18n.t(Msg.AskQuestionAnswered)} · ${q.header !== '' ? q.header : i18n.t(Msg.AskQuestionTitle)}${progressSuffix(qIdx, total)}`
   const cb = newCard().title(title, 'blue')
   cb.raw({ kind: 'markdown', content: `**${q.question}**` })
-  const marks = q.options.map((opt, i) =>
-    `${answer.indices.includes(i + 1) ? '✅' : '◻️'} **${opt.label}**${opt.description !== '' ? `\n${opt.description}` : ''}`)
+  const marks = settledOptionMarks(q, answer.indices)
   if (marks.length > 0) {
     cb.raw({ kind: 'markdown', content: marks.join('\n') })
   }
