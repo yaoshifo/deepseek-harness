@@ -266,6 +266,9 @@ export class ChatroomGather {
   timeoutFire(): { done: boolean; wake: string; missing: string[] } {
     if (this.woken) return { done: false, wake: '', missing: [] }
     this.woken = true
+    // The timer fired, but the research heartbeat/merge timers must die with
+    // the barrier or they PATCH the terminal card back to a live view.
+    this.stopTimer()
     const wake = this.summary()
     const missing = [...this.expected].sort()
     return { done: true, wake, missing }

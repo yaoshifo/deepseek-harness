@@ -763,6 +763,55 @@ describe('research progress card', () => {
     expect(done).toContain('全部角色已回复')
     expect(done).not.toContain('插话')
   })
+
+  it('stops the heartbeat after the final timeout: no live PATCH follows the timedout terminal', async () => {
+    // 2026-09-07: the second-timeout destroy path left tickTimer running, so
+    // the heartbeat kept PATCHing the just-timedout card back to a live X/N
+    // view every minute. The final timeout must stop the heartbeat with the
+    // barrier.
+    const p = createStubProgressCardPlatform()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+    chatroomState(e.sessions.getOrCreateActive(hub)).chatroomResearch = true
+    clearCards(p)
+    await settle()
+    clearCards(p)
+    const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(async () => {})
+
+    vi.useFakeTimers()
+    try {
+      gatherRoles(e, hub, '研究中国股市', true)
+      for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(0)
+      const g = chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather
+      expect(g).toBeDefined()
+      await waitFor(() => g!.progressHandle !== undefined, 'progress card handle stored')
+
+      // Nobody replies: the research window (60m) re-arms the barrier, the
+      // re-arm window (20m) degrades it — the card lands on the timedout
+      // terminal and the moderator is woken twice.
+      await vi.advanceTimersByTimeAsync(80 * 60 * 1000)
+      for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(0)
+      expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
+      expect(wake.mock.calls.filter(c => (c[1] as { sessionKey: string }).sessionKey === hub)).toHaveLength(2)
+      const titles = p.patchedTitles()
+      expect(titles.length).toBeGreaterThan(0)
+      expect(titles[titles.length - 1]).toContain('研究已超时')
+
+      // Five more heartbeat minutes: the dead barrier must not PATCH the
+      // card back to a live view.
+      const patchCount = p.updateCards.length
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+      for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(0)
+      expect(p.updateCards).toHaveLength(patchCount)
+      expect(p.patchedTitles()[p.patchedTitles().length - 1]).toContain('研究已超时')
+    } finally {
+      wake.mockRestore()
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('research config range clamping', () => {
