@@ -14,7 +14,7 @@ agent 约定提示词要求：turn 的「发现的问题 / 可优化点」一节
 
 - `isFollowupsAsk`（engine/ask.ts）持有匹配器；`Engine.askUser` 的转换分支把问题登记到 `InteractiveState.pendingFollowups`，把 ask 前的回复段钉进实时播报段（`StreamPreview.pinAnalysisText` 把该段冻结为前缀——`appendAnalysisText` 按文本块整体替换该段，ask 之后的尾段文本本会把收尾总结顶出卡片；ask 后的块折叠进前缀，完成卡因此承载完整回复；`captureReplyForExport` 仍为导出按钮登记该段，segmentStart 不动、turn-end 导出仍登记完整 joined 回复，二次 pin 追加而非丢弃首个前缀），并返回合成的延迟 Decision——custom 文本告知模型选择会作为新消息到达、且不要向用户复述该说明（建议卡本身已说明流程）。工具结果本身就是第二道防线：即使会话带着过时提示词，也会正确收尾而非干等。
 - `sendFollowupsCard` 在 `handleResultEvent` 里紧跟 `sendTurnCompletionCard` 发出蓝色建议卡（checkOptions 表单、`fw_multi:0` action、recommended 选项预勾选、卡内附言输入框）；errored turn 丢弃登记，排队接管把登记结转到最终 turn 的完成卡。
-- 飞书平台的卡片回调 intake 新增 `fw_multi:` 分支：合成自包含的「[后续处理]」选择消息（勾选与未勾选项带标签、附附言；发送时 meta 缓存丢失时退化为仅序号），并以 `isFollowupAction` 旗标派发。`routeAskResponse` 永不认领该旗标——即使该会话上另有 ask 正在 park，选择也开新 turn；提交后的卡按发送时缓存的 meta 冻结为已提交快照，且各命名空间只消费各自的 meta。
+- 飞书平台的卡片回调 intake 新增 `fw_multi:` 分支：合成自包含的「[后续处理]」选择消息（勾选与未勾选项带标签、附附言；发送时 meta 缓存丢失时降级为点名序号的重启提示——[合成细节](2026-09-07-feishu-bridge-followups-selection-message.zh.md)），并以 `isFollowupAction` 旗标派发。`routeAskResponse` 永不认领该旗标——即使该会话上另有 ask 正在 park，选择也开新 turn；提交后的卡按发送时缓存的 meta 冻结为已提交快照，且各命名空间只消费各自的 meta。
 - 提示词段改写为新语义（登记后正常结束回合；选择即授权；不点即不处理），不再要求「暂不处理」选项。
 
 ## Alternatives considered

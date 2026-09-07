@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { FOLLOWUPS_ASK_HEADER, isFollowupsAsk } from '../../src/engine/ask.ts'
+import { FOLLOWUPS_ASK_HEADER, followupsSelectionMessage, isFollowupsAsk } from '../../src/engine/ask.ts'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { createStubAgent, createStubCardPlatform, createStubMediaPlatform, createStubPlatform } from '../stubs/engine-stubs.ts'
 import { createControllableAgent, newControllableSession, type ControllableAgentSession } from '../stubs/engine-stubs.ts'
@@ -360,7 +360,7 @@ describe('followups submission routing', () => {
     await new Promise((r) => { setTimeout(r, 10) })
     expect(state.pendingAsk).toBeDefined()
 
-    const fw = msg({ content: '[后续处理] 用户提交了选择：\n✅ A', isFollowupAction: true })
+    const fw = msg({ content: followupsSelectionMessage(q(), [1], ''), isFollowupAction: true })
     expect(e.routeAskResponse(p, fw, fw.content)).toBe(false)
     expect(state.pendingAsk).toBeDefined()
 
@@ -398,13 +398,13 @@ describe('followups submission routing', () => {
     expect(state.pendingAsk).toBeDefined()
 
     const fw = msg({
-      content: '[后续处理] 用户提交了选择：\n✅ 修复 A（src/a.ts:1 空指针）\n◻️ 暂不处理\n✍️ 附言',
+      content: followupsSelectionMessage(q(), [1], '附言'),
       isFollowupAction: true,
     })
     e.receiveMessage(p, fw)
 
     await waitFor(() => sess.sendCalls.length === 1)
-    expect(sess.sendCalls[0]).toContain('✅ 修复 A')
+    expect(sess.sendCalls[0]).toContain('✅ **修复 A**')
     expect(sess.sendCalls[0]).toContain('✍️ 附言')
     // The parked ask survived untouched — the submission answered nothing.
     expect(state.pendingAsk).toBeDefined()
