@@ -72,6 +72,7 @@ python3 <skill-dir>/scripts/locate-session.py "$chat_id"
 - **症状**：会话 name 显示为「飞书群 oc_…」 → **做法**：这是标题生成降级拿 chat id 兜底，不代表会话异常。
 - **症状**：单聊 key 长得像 `feishu:oc_…:ou_…` → **做法**：单聊 key 带 `:ou_` 用户后缀，脚本反查已覆盖，手动拼 key 时别漏。
 - **症状**：daemon 日志里搜新增埋点零命中，怀疑「日志被吞」 → **做法**：先核验 daemon 部署新旧（`tail ~/.dsh/feishu-bridge-reload.log` 的最后 reload 轮转戳，对比进程启动时间）——daemon 常比仓库代码旧得多。
+- **症状**：reload.log 最后轮转戳远早于预期，据此判「daemon 没部署上新」，但新埋点其实已生效 → **做法**：reload.log 只由群内 `/reload` 命令写入；shell 直跑 reload.sh 从不写它——bot 会话里只能走 `FB_RELOAD_FROM_DAEMON=1 systemd-run --user --scope bash packages/acp/feishu-bridge/reload.sh` 逃生路径（shell 在 daemon 内会被拒），因此这类部署在 reload.log 里零痕迹。systemd 托管主机核部署新旧用 `systemctl --user show feishu-bridge -p ActiveState,ExecMainStartTimestamp` 对比构建产物 mtime（如 `packages/acp/feishu-bridge-chatroom/lib/index.js`），重启时刻晚于产物 mtime 即新构建在跑。
 - **症状**：bot 会话里用 `ps` / `XPC_SERVICE_NAME` / `launchctl list` 查 daemon 进程 → **做法**：沙箱拒绝 `ps`、把 `XPC_SERVICE_NAME` 改写成 `0`、`launchctl list` 输出 0 行空白（在跑也全空，别据「无条目」判未加载）；用 `launchctl print gui/$(id -u)/com.dsh.feishu-bridge` 与 `DSH_SESSION_JSONL` / `DSH_HOME`。
 - **症状**：降级通知后的会话「上下文丢了」 → **做法**：降级是开新会话，被泄漏的原会话 jsonl 仍完整，按本 skill 定位后 zstdcat 找回。
 - **症状**：群名被改成与该群任务无关的项目主题 → **做法**：daemon stdout.log grep `chat renamed` 定时刻，找紧邻的群名 fork 会话（one-shot，落桶 = 其真实 cwd），看首条消息的摘录段与注入；跑题根因通常是 fork cwd 回退项目基目录 + seed 含糊（指纹表 F）。

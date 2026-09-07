@@ -65,7 +65,7 @@
 - 本机（macOS）：`~/.dsh/feishu-bridge-stdout.log` 与 `~/.dsh/feishu-bridge-stderr.log`（历史轮转为 `.old-<时间戳>` 后缀）。
 - dev 服务器：journalctl（systemd 托管）。
 - **多数日志行不带时间戳**：用 `~/.dsh/feishu-bridge-reload.log` 的最后 reload 轮转戳 + `.old-` 轮转文件名切定时段，再与会话日志事件的 `time` 字段对齐。
-- **零命中先查部署新旧**：`tail ~/.dsh/feishu-bridge-reload.log` + 进程启动时间对比——daemon 常比仓库代码旧得多，新埋点零命中多半是没部署，不是日志被吞。
+- **零命中先查部署新旧**：`tail ~/.dsh/feishu-bridge-reload.log` + 进程启动时间对比——daemon 常比仓库代码旧得多，新埋点零命中多半是没部署，不是日志被吞。（注意：reload.log 只由群内 `/reload` 命令写入，shell 直跑 reload.sh——含 `FB_RELOAD_FROM_DAEMON=1 systemd-run --user --scope` 逃生路径——不写；此时以 `systemctl --user show feishu-bridge -p ExecMainStartTimestamp` 为准。）
 - **区分 in-process 全量重载与真重启**：日志里连续 `ws client closed manually (force)` 且无 systemd `Stopped` = in-process 重载（常由 profile 文件被热编辑触发，用 profile mtime 对齐时刻）；出现 `Stopping` / `Started` = 真重启。
 
 ## 常用统计管道
