@@ -934,6 +934,22 @@ describe('sendMonitorSpawnNotice', () => {
       expect(s).not.toContain('applink.feishu.cn')
     }
   })
+
+  it('drops the jump button instead of sending a dead one when the platform has no chat-jump URL', async () => {
+    const p = createStubCardPlatform('feishu')
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    setConfig(e, { spawnNotice: true })
+    await e.monitor.sendMonitorSpawnNotice(p, 'rc', 'oc_child123', '/p/riskai', '原始消息')
+
+    // The announcement card still lands; only the jump affordance is absent.
+    expect(p.sentCards.length).toBeGreaterThan(0)
+    const card = p.sentCards[p.sentCards.length - 1] as RecordedCard
+    expect(card.header?.title).toContain('Spawned a triage group')
+    expect(card.elements.filter(el => el.kind === 'actions')).toHaveLength(0)
+    for (const s of p.sentCards.map(c => JSON.stringify(c))) {
+      expect(s).not.toContain('applink.feishu.cn')
+    }
+  })
 })
 
 describe('cap and coalesce notices (i18n)', () => {
@@ -975,6 +991,40 @@ describe('cap and coalesce notices (i18n)', () => {
     expect(p.sentCards.length).toBeGreaterThan(0)
     const card = p.sentCards[p.sentCards.length - 1] as RecordedCard
     expect(card.header?.title).toContain(e.i18n.t(Msg.MonitorCoalesceTitle))
+  })
+
+  it('drops the coalesce jump button when the platform has no chat-jump URL', async () => {
+    const p = createStubCardPlatform('feishu')
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+
+    await notices(e).sendMonitorCoalesceNotice(p, 'rc', 'oc_child9', '补充告警内容')
+
+    expect(p.sentCards.length).toBeGreaterThan(0)
+    const card = p.sentCards[p.sentCards.length - 1] as RecordedCard
+    expect(card.header?.title).toContain(e.i18n.t(Msg.MonitorCoalesceTitle))
+    expect(card.elements.filter(el => el.kind === 'actions')).toHaveLength(0)
+  })
+
+  it('filters cap-card jump buttons to children with a jump URL', async () => {
+    const p = createStubCardPlatform('feishu') as unknown as StubCardPlatform & {
+      spawnedChats: SpawnedChatInfo[]
+      listActiveSpawnedChats(): Promise<SpawnedChatInfo[]>
+    }
+    p.spawnedChats = [{ chatID: 'oc_c1', chatName: 'child', botName: 'feishu' }]
+    p.listActiveSpawnedChats = async () => p.spawnedChats
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    setConfig(e, { maxConcurrent: 2 })
+    const child = e.sessions.getOrCreateActive('feishu:oc_c1')
+    child.setParentSessionKey('feishu:oc_x:u1')
+
+    await notices(e).sendMonitorCapNotice(p, msg({ sessionKey: 'feishu:oc_x:u1', replyCtx: 'rc', content: 'x' }), 'feishu:oc_x:u1')
+
+    // The cap card still lists the children; none of them gets a dead button.
+    expect(p.sentCards.length).toBeGreaterThan(0)
+    const card = p.sentCards[p.sentCards.length - 1] as RecordedCard
+    const body = card.elements[0]?.kind === 'markdown' ? (card.elements[0].content ?? '') : ''
+    expect(body).toContain(e.i18n.tf(Msg.MonitorCapBody, 1, 2))
+    expect(card.elements.filter(el => el.kind === 'actions')).toHaveLength(0)
   })
 })
 

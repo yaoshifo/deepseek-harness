@@ -1544,7 +1544,10 @@ export class MonitorCore {
     const base = basename(dir)
     if (base !== '' && base !== '.') headerTitle += ` ${base}`
     const jumpURL = this.e.chatJumpURL(p, childChat)
-    const buttons: CardButton[] = [{ text: this.e.i18n.t(Msg.MonitorJumpBtn), type: 'primary', value: '', url: jumpURL }]
+    // No jump URL on this platform: keep the announcement, drop the dead button.
+    const buttons: CardButton[] = jumpURL !== ''
+      ? [{ text: this.e.i18n.t(Msg.MonitorJumpBtn), type: 'primary', value: '', url: jumpURL }]
+      : []
     const body = `> ${truncateMonitor(origText, 200)}`
     const header: CardHeader = { title: headerTitle, color: 'indigo' }
     await this.e.sendAsCardWithButtons(p, replyCtx, body, header, buttons)
@@ -1553,7 +1556,10 @@ export class MonitorCore {
   /** Heads-up that the alert was forwarded into an existing subgroup (Go sendMonitorCoalesceNotice). */
   private async sendMonitorCoalesceNotice(p: Platform, replyCtx: unknown, childChat: string, origText: string): Promise<void> {
     const headerTitle = this.e.i18n.t(Msg.MonitorCoalesceTitle)
-    const buttons: CardButton[] = [{ text: this.e.i18n.t(Msg.MonitorJumpBtn), type: 'primary', value: '', url: this.e.chatJumpURL(p, childChat) }]
+    const coalesceURL = this.e.chatJumpURL(p, childChat)
+    const buttons: CardButton[] = coalesceURL !== ''
+      ? [{ text: this.e.i18n.t(Msg.MonitorJumpBtn), type: 'primary', value: '', url: coalesceURL }]
+      : []
     const body = `> ${truncateMonitor(origText, 200)}`
     const header: CardHeader = { title: headerTitle, color: 'indigo' }
     await this.e.sendAsCardWithButtons(p, replyCtx, body, header, buttons)
@@ -1567,10 +1573,13 @@ export class MonitorCore {
       await this.e.send(p, msg.replyCtx, `⏳ ${body}`)
       return
     }
-    const buttons: CardButton[] = children.map((c) => {
+    // Jump affordances only: children this platform cannot link to get no button.
+    const buttons: CardButton[] = children.flatMap((c) => {
       const ccid = chatIDFromSessionKey(c.sessionKey, p.name())
+      const url = this.e.chatJumpURL(p, ccid)
+      if (url === '') return []
       const name = sessionDisplayName(c.session, this.e.sessions, c.sessionKey)
-      return { text: `🔍 ${truncateMonitor(name, 30)}`, type: 'primary', value: '', url: this.e.chatJumpURL(p, ccid) }
+      return [{ text: `🔍 ${truncateMonitor(name, 30)}`, type: 'primary', value: '', url }]
     })
     const header: CardHeader = { title: this.e.i18n.t(Msg.MonitorCapTitle), color: 'yellow' }
     await this.e.sendAsCardWithButtons(p, msg.replyCtx, body, header, buttons)
