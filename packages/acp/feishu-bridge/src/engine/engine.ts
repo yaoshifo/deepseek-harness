@@ -2597,7 +2597,7 @@ export class Engine {
           // the tool-in-flight budget so its result is not abandoned, unless
           // the tool is genuinely hung.
           if (state.activeToolCalls > 0 && this.unsolicitedToolInFlightTimeout > 0
-            && !this.stallConfirmed(state, Date.now(), this.unsolicitedToolInFlightTimeout)) continue
+            && !this.stallConfirmed(state, interactiveKey, Date.now(), this.unsolicitedToolInFlightTimeout)) continue
           // A pending background task completes as a later engine-woken turn;
           // keep the reader alive up to the background grace so the completion
           // is consumed, then give up on a task that never completes.
@@ -3239,7 +3239,7 @@ export class Engine {
         // event resolved is stale — keep waiting (Go stallConfirmed). The
         // window is the armed budget (turn idle, or tool-in-flight on a
         // background turn).
-          if (idleMs <= 0 || !this.stallConfirmed(state, Date.now(), idleMs)) continue
+          if (idleMs <= 0 || !this.stallConfirmed(state, sessionKey, Date.now(), idleMs)) continue
 
           stallRetries++
           if (stallRetries <= this.stallMaxRetries) {
@@ -3730,18 +3730,19 @@ export class Engine {
    * froze `streamLast` 8s newer than the pump's last receive and pinned the
    * session lock behind a pump turn no watchdog would kill).
    * @param state - State whose last event timestamp is checked.
+   * @param sessionKey - Key of the session being checked, for the override log.
    * @param now - Current timestamp in ms.
    * @param idle - Effective idle timeout in ms.
    * @returns True when no live stream nor pump event arrived within the idle window.
    */
-  stallConfirmed(state: InteractiveState, now: number, idle: number): boolean {
+  stallConfirmed(state: InteractiveState, sessionKey: string, now: number, idle: number): boolean {
     const last = state.lastEventAt
     if (last === 0) return true
     const streamLast = state.agentSession?.lastStreamActivity?.() ?? 0
     if (streamLast > last && now - streamLast < idle) {
       const pumpIdleSec = Math.round((now - last) / 1000)
       const streamIdleSec = Math.round((now - streamLast) / 1000)
-      console.warn(`stall check overridden: agent is streaming but the pump saw no event (last pump event ${pumpIdleSec}s ago, last stream event ${streamIdleSec}s ago) — blind pump, not a stall`)
+      console.warn(`stall check overridden: agent is streaming but the pump saw no event (${sessionKey}: last pump event ${pumpIdleSec}s ago, last stream event ${streamIdleSec}s ago) — blind pump, not a stall`)
       return false
     }
     return now - last >= idle

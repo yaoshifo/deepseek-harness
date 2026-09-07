@@ -146,9 +146,12 @@ describe('stallConfirmed blind-pump guard', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     try {
-      const confirmed = e.stallConfirmed(state, Date.now(), 200_000)
+      const confirmed = e.stallConfirmed(state, sessionKey, Date.now(), 200_000)
       expect(confirmed).toBe(false)
       expect(warn).toHaveBeenCalledTimes(1)
+      // The session key must identify which chat's pump went blind — without
+      // it, triage meant diffing tail timestamps across every session.
+      expect(String(warn.mock.calls[0]![0])).toContain(sessionKey)
       expect(String(warn.mock.calls[0]![0])).toContain('blind pump')
     } finally {
       warn.mockRestore()
@@ -165,7 +168,7 @@ describe('stallConfirmed blind-pump guard', () => {
     state.agentSession = agentSession
     e.interactiveStates.set(sessionKey, state)
 
-    expect(e.stallConfirmed(state, Date.now(), 200_000)).toBe(true)
+    expect(e.stallConfirmed(state, sessionKey, Date.now(), 200_000)).toBe(true)
   })
 
   it('confirms the stall when the stream is newer than the pump but both are long stale (2026-08-26 oc_b46 frozen clocks)', () => {
@@ -184,7 +187,7 @@ describe('stallConfirmed blind-pump guard', () => {
     try {
       // 352s of silence against a 200s budget: the frozen pair must not
       // shield the pump forever.
-      expect(e.stallConfirmed(state, Date.now(), 200_000)).toBe(true)
+      expect(e.stallConfirmed(state, sessionKey, Date.now(), 200_000)).toBe(true)
       expect(warn).not.toHaveBeenCalled()
     } finally {
       warn.mockRestore()

@@ -269,13 +269,13 @@ describe('stallConfirmed', () => {
     const idle = 2 * 60 * 1000
 
     state.lastEventAt = 0
-    expect(e.stallConfirmed(state, idle * 2, idle), 'want stalled when no event has ever arrived').toBe(true)
+    expect(e.stallConfirmed(state, 'test:sess:u1', idle * 2, idle), 'want stalled when no event has ever arrived').toBe(true)
 
     state.lastEventAt = Date.now() - 6000
-    expect(e.stallConfirmed(state, Date.now(), idle), 'want NOT stalled when an event arrived recently').toBe(false)
+    expect(e.stallConfirmed(state, 'test:sess:u1', Date.now(), idle), 'want NOT stalled when an event arrived recently').toBe(false)
 
     state.lastEventAt = Date.now() - 3 * 60 * 1000
-    expect(e.stallConfirmed(state, Date.now(), idle), 'want stalled past the idle timeout').toBe(true)
+    expect(e.stallConfirmed(state, 'test:sess:u1', Date.now(), idle), 'want stalled past the idle timeout').toBe(true)
   })
 })
 
