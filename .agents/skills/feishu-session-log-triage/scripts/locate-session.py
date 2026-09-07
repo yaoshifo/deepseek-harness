@@ -3,8 +3,12 @@
 
 Scans every bot's sessions.json under <dsh-home>/feishu-bridge/, resolves the
 s-id -> agentSessionID mapping, and prints each session.jsonl.zstd path.
-Also reports spawn-group registration (sessions/<bot>_spawned.json) and
-workspace directory overrides that mention the chat.
+Session keys are `<project>:<chat_id>` where <project> is the bridge project
+name (feishu, vault, op-dev, ...); keys are matched by the `:<chat_id>` suffix,
+never by a hardcoded prefix. Single-chat keys carry a trailing `:ou_...` user
+segment and cannot match an oc_ suffix. Also reports spawn-group registration
+(sessions/<bot>_spawned.json) and workspace directory overrides that mention
+the chat.
 
 Usage:
   python3 locate-session.py <oc_chat_id> [--dsh-home <dir>]
@@ -24,8 +28,11 @@ def scan_logs(dsh_home, agent_session_id):
     roots = os.path.join(dsh_home, "feishu-bridge-sessions", "*")
     hits = []
     for workspace in sorted(glob.glob(roots)):
-        candidate = os.path.join(workspace, agent_session_id, "session.jsonl.zstd")
-        if os.path.isfile(candidate):
+        # Log file names carry the session format version (session.jsonl.zstd,
+        # session.v2.jsonl.zstd, ...); match any version rather than one name.
+        for candidate in sorted(
+            glob.glob(os.path.join(workspace, agent_session_id, "session*.jsonl.zstd"))
+        ):
             hits.append(candidate)
     return hits
 
@@ -35,7 +42,9 @@ def main():
     parser.add_argument("chat_id", help="Feishu chat id, e.g. oc_9e68bd6a...")
     parser.add_argument("--dsh-home", default=os.path.expanduser("~/.dsh"))
     args = parser.parse_args()
-    key = "feishu:" + args.chat_id
+    # Session keys are `<project>:<chat_id>`; the project segment varies per
+    # bridge deployment, so match by suffix instead of assuming a prefix.
+    suffix = ":" + args.chat_id
 
     session_files = sorted(
         glob.glob(os.path.join(args.dsh_home, "feishu-bridge", "*", "sessions.json"))
@@ -50,44 +59,72 @@ def main():
         with open(sessions_file, encoding="utf-8") as handle:
             data = json.load(handle)
 
-        active = data.get("activeSession", {}).get(key)
-        user_sessions = data.get("userSessions", {}).get(key) or []
+        active_by_key = {
+            key: sid
+            for key, sid in (data.get("activeSession") or {}).items()
+            if isinstance(key, str) and key.endswith(suffix)
+        }
+        user_sessions_by_key = {
+            key: sids
+            for key, sids in (data.get("userSessions") or {}).items()
+            if isinstance(key, str) and key.endswith(suffix)
+        }
+        matched_keys = sorted(
+            set(active_by_key) | set(user_sessions_by_key),
+            key=lambda k: (k != "feishu" + suffix, k),
+        )
         sessions = data.get("sessions", {})
         # Sessions spawned FROM this chat record the chat as their parent key.
         children = [
             sid
             for sid, entry in sessions.items()
             if isinstance(entry, dict)
-            and str(entry.get("parentSessionKey", "")).startswith(key)
+            and str(entry.get("parentSessionKey", "")).endswith(suffix)
         ]
-        owned = list(dict.fromkeys(
-            ([active] if active else []) + list(user_sessions) + children
-        ))
-        if not owned:
+        if not matched_keys and not children:
             continue
         found_any = True
 
         print(f"== bot: {bot}  ({sessions_file})")
-        print(f"   key: {key}")
-        print(f"   activeSession -> {active}")
-        print(f"   userSessions  -> {user_sessions}")
-        meta = data.get("userMeta", {}).get(key)
-        if meta:
-            print(f"   userMeta      -> userName={meta.get('userName')!r} chatName={meta.get('chatName')!r}")
+        for key in matched_keys:
+            active = active_by_key.get(key)
+            user_sessions = user_sessions_by_key.get(key) or []
+            owned = list(dict.fromkeys(
+                ([active] if active else []) + list(user_sessions)
+            ))
+            print(f"   key: {key}")
+            print(f"   activeSession -> {active}")
+            print(f"   userSessions  -> {user_sessions}")
+            meta = data.get("userMeta", {}).get(key)
+            if meta:
+                print(f"   userMeta      -> userName={meta.get('userName')!r} chatName={meta.get('chatName')!r}")
+            for sid in owned:
+                entry = sessions.get(sid)
+                if not isinstance(entry, dict):
+                    print(f"   {sid}  (no session record)")
+                    continue
+                agent_id = entry.get("agentSessionID", "?")
+                parent = entry.get("parentSessionKey")
+                print(f"   {sid}  [owns-this-chat]  name={entry.get('name')!r}")
+                print(f"         agent={agent_id}")
+                if parent:
+                    print(f"         parent={parent}")
+                print(f"         created={entry.get('createdAt')} updated={entry.get('updatedAt')}")
+                logs = scan_logs(args.dsh_home, agent_id)
+                if logs:
+                    for path in logs:
+                        print(f"         log: {path}")
+                else:
+                    print(f"         log: (not found; try: find {args.dsh_home}/feishu-bridge-sessions -name {agent_id})")
 
-        for sid in owned:
+        for sid in children:
             entry = sessions.get(sid)
             if not isinstance(entry, dict):
-                print(f"   {sid}  (no session record)")
                 continue
             agent_id = entry.get("agentSessionID", "?")
-            parent = entry.get("parentSessionKey")
-            relation = "child-of-this-chat" if sid in children else "owns-this-chat"
-            print(f"   {sid}  [{relation}]  name={entry.get('name')!r}")
+            print(f"   {sid}  [child-of-this-chat]  name={entry.get('name')!r}")
             print(f"         agent={agent_id}")
-            if parent:
-                marker = " (spawned FROM this chat)" if sid in children else ""
-                print(f"         parent={parent}{marker}")
+            print(f"         parent={entry.get('parentSessionKey')} (spawned FROM this chat)")
             print(f"         created={entry.get('createdAt')} updated={entry.get('updatedAt')}")
             logs = scan_logs(args.dsh_home, agent_id)
             if logs:

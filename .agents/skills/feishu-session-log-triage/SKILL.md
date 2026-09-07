@@ -62,6 +62,8 @@ python3 <skill-dir>/scripts/locate-session.py "$chat_id"
 
 ## Gotchas
 
+- **症状**：项目名不是 `feishu` 的群（vault/op-dev/teach 等）定位脚本 0 命中 → **做法**：会话 key 是 `<项目名>:<chat_id>`，前缀随部署变；脚本 2026-09-07 起按 `:<chat_id>` 后缀匹配所有前缀，旧版先升级脚本，再手动看 sessions.json 里该群 key 的实际前缀。
+- **症状**：定位到会话但 `log:` 显示 not found → **做法**：日志文件名带会话格式版本号（`session.v2.jsonl.zstd`，后续还会再升）；脚本已 glob `session*.jsonl.zstd`，手动 find 时别只找旧名。
 - **症状**：拿 chat_id 直接 grep 日志内容来「验证」定位 → **做法**：定位只能走 sessions.json 映射链；日志事件结构里没有 chat id 字段，只有消息文本本身带群名时才碰巧命中，不可依赖。
 - **症状**：grep session.jsonl.zstd 永远 0 命中，误判「日志丢失」 → **做法**：文件是 zstd 压缩，用 `zstdcat`。
 - **症状**：把目录级 CLAUDE.md 注入当用户输入 → **做法**：它在日志里记作无正文的合成 `user/message`。
