@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/testing/2026-09-07-pairing-hook-rejects-unrecorded-staged-pairs.md
+2026-09-07-pairing-hook-rejects-unrecorded-staged-pairs.md: 2d6922c4c9aa86c1da8a430307efe06d1d184c83
+2026-09-07-pairing-hook-rejects-unrecorded-staged-pairs.zh.md: aaa8f2fdb6e46b39a0e0e3c908d9b4a05aec7d37

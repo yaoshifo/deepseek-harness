@@ -105,11 +105,25 @@ function isExcluded(file: string): boolean {
 // completeness rules that cover discovered remnants). Hook mode names every
 // staged Markdown side, not only sidecars: an anchor without its consistency
 // record in the index belongs to no recorded pair, so corpus completeness
-// stays with doc-sync.
+// stays with doc-sync — except a pair whose BOTH languages are staged: that
+// commit is the one moment a fork skipping doc-sync could still catch the
+// missing record, so the hook rejects it instead of letting it through.
+const unrecordedCompletePairs: string[] = []
 const files = new Set<string>()
 const anchors = request.scope === 'pairs' && indexMode
   ? request.anchors.filter(anchor => repositoryFileExists(translationPairPaths(anchor).meta))
   : request.anchors
+if (indexMode && request.scope === 'pairs') {
+  const seen = new Set<string>()
+  for (const anchor of request.anchors) {
+    const { source, zh, meta } = translationPairPaths(anchor)
+    if (repositoryFileExists(meta) || seen.has(source)) continue
+    if (repositoryFileExists(source) && repositoryFileExists(zh)) {
+      seen.add(source)
+      unrecordedCompletePairs.push(source)
+    }
+  }
+}
 if (request.scope === 'pairs') {
   for (const anchor of anchors) {
     const { source, zh, meta } = translationPairPaths(anchor)
@@ -187,6 +201,16 @@ if (writeMode) {
 
 const errors: string[] = []
 const state = new Map<string, 'ok' | 'out-of-sync' | 'missing'>()
+
+// 0. A completely staged pair without its consistency record: the staged
+// languages merge whole, so the record must ride the same commit.
+for (const source of unrecordedCompletePairs) {
+  errors.push(
+    `${source}: incomplete pair — both languages are staged but the .i18n.yaml consistency record is missing; `
+    + `record it with pnpm run verify-translation-pairing --write ${source} and stage the sidecar (pairs merge whole: both languages plus the .i18n.yaml record)`,
+  )
+  state.set(source, 'missing')
+}
 
 // 1. Every discovered, non-excluded source merges bilingual.
 for (const source of sources) {

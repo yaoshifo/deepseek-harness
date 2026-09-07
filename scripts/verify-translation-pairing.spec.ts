@@ -139,6 +139,38 @@ describe('verify-translation-pairing --cached (hook mode)', () => {
     expect(result.stdout).toContain('0 named staged pair(s) consistent')
   })
 
+  it('rejects a completely staged pair whose consistency record is absent', () => {
+    const fixture = createFixture()
+    write(fixture.root, '.agents/notes/implemented/feature/new-note.md', '# Note\n\nEnglish | [中文](new-note.zh.md)\n\nAlpha.\n')
+    write(fixture.root, '.agents/notes/implemented/feature/new-note.zh.md', '# 笔记\n\n[English](new-note.md) | 中文\n\n甲。\n')
+    git(fixture, ['add', '.agents/notes/implemented/feature/new-note.md', '.agents/notes/implemented/feature/new-note.zh.md'])
+
+    const result = runCached(fixture, ['.agents/notes/implemented/feature/new-note.md', '.agents/notes/implemented/feature/new-note.zh.md'])
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('new-note.md: incomplete pair')
+    expect(result.stderr).toContain('--write')
+  })
+
+  it('accepts a completely staged pair once its record joins the index', () => {
+    const fixture = createFixture()
+    const source = '# Note\n\nEnglish | [中文](new-note.zh.md)\n\nAlpha.\n'
+    const zh = '# 笔记\n\n[English](new-note.md) | 中文\n\n甲。\n'
+    write(fixture.root, '.agents/notes/implemented/feature/new-note.md', source)
+    write(fixture.root, '.agents/notes/implemented/feature/new-note.zh.md', zh)
+    write(fixture.root, '.agents/notes/implemented/feature/new-note.i18n.yaml', [
+      '# Bilingual-pair consistency record',
+      `new-note.md: ${gitBlobHash(Buffer.from(source))}`,
+      `new-note.zh.md: ${gitBlobHash(Buffer.from(zh))}`,
+      '',
+    ].join('\n'))
+    git(fixture, ['add', '.agents/notes/implemented/feature/new-note.md', '.agents/notes/implemented/feature/new-note.zh.md', '.agents/notes/implemented/feature/new-note.i18n.yaml'])
+
+    const result = runCached(fixture, ['.agents/notes/implemented/feature/new-note.md', '.agents/notes/implemented/feature/new-note.zh.md'])
+
+    expect(result.status).toBe(0)
+  })
+
   it('accepts a complete three-file pair deletion', () => {
     const fixture = createFixture()
     commitPair(fixture)
