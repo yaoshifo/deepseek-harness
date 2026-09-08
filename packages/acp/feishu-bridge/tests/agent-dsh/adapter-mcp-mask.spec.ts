@@ -94,6 +94,7 @@ function createHarness(scriptedReply?: string): Harness {
   const agents: FakeAgent[] = []
   const counter = { n: 0 }
   const agentCtx = {
+    on: (): (() => void) => () => {},
     get: (name: string): unknown => {
       if (name === 'tools') return tools
       if (name === 'skills') return skills

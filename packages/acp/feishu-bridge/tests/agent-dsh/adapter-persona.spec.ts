@@ -47,6 +47,7 @@ describe('DshAgentAdapter bare persona setup hook', () => {
           agents.push(agent)
           if (options.setup !== undefined) {
             void options.setup({
+              on: (): (() => void) => () => {},
               get: (name: string): unknown => {
                 if (name === 'agentInstructionSuppression') {
                   return {

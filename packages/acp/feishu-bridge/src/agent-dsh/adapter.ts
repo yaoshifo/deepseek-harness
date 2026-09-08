@@ -17,6 +17,8 @@
  */
 
 import { randomBytes } from 'node:crypto'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { installModelSelection, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
@@ -1861,6 +1863,31 @@ export class DshAgentAdapter {
    * keep the inner setup unchanged — a missing optional service row is a
    * deployment choice, not a misconfiguration.
    */
+  /**
+   * Wire upstream's model-switch notice into one session's setup chain: the
+   * session's effective route becomes its model selection, so a hot switch
+   * that resumes the transcript on a different route appends a model-visible
+   * `[model changed: ...]` notice to the first request the new model sees.
+   * Sessions without a resolved route keep `current` unset, which leaves
+   * request config to the loop's own resolution.
+   */
+  private withModelSelection(
+    setup: import('@deepseek-ai/dsh-agent').AgentSetup | undefined,
+    key: string,
+  ): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
+    const route = this.routeAgentOptions(key)
+    const current: ModelSelectionRef['current'] = route.provider === '' ? undefined : {
+      provider: route.provider,
+      model: route.model,
+      ...route.reasoningEffort !== undefined ? { reasoningEffort: ReasoningEffortId(route.reasoningEffort) } : {},
+    }
+    const selection: ModelSelectionRef = { current, assembled: undefined }
+    return (agentCtx) => {
+      installModelSelection(agentCtx, selection)
+      return setup?.(agentCtx)
+    }
+  }
+
   private withWorkspaceMcp(
     setup: import('@deepseek-ai/dsh-agent').AgentSetup | undefined,
   ): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
@@ -1884,10 +1911,13 @@ export class DshAgentAdapter {
     // its deny list from the global tool view (directory tools not yet
     // mounted), so directory-mounted servers stay exempt from the per-project
     // mcpServers allowlist — the two visibility axes are independent.
-    const setup = this.withWorkspaceMcp(withDeniedSkills(
-      withProjectToolMask(buildSessionSetup(options), this.cfg.mcpServers, this.deniedTools()),
-      this.deniedSkills(),
-    ))
+    const setup = this.withModelSelection(
+      this.withWorkspaceMcp(withDeniedSkills(
+        withProjectToolMask(buildSessionSetup(options), this.cfg.mcpServers, this.deniedTools()),
+        this.deniedSkills(),
+      )),
+      key,
+    )
 
     const existing = this.sessionsByEngineKey.get(key)
     if (existing !== undefined && existing.alive()) return existing
