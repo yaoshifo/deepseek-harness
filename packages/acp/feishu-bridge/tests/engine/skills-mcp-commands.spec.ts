@@ -6,7 +6,8 @@
  * empty, unavailable, degraded, masked, capped), filter /skills by a fuzzy
  * name/description query, page long listings with nav:/skills buttons whose
  * card action re-renders the captured snapshot in place (query scope kept,
- * stale notice after disposal), and dispose cleanly.
+ * stale notice after disposal), filter /mcp by server or tool name, and
+ * dispose cleanly.
  *
  * @module dsh-feishu-bridge/tests-engine-skills-mcp-commands
  */
@@ -445,6 +446,87 @@ describe('registerSkillsMcpCommands', () => {
       expect(text.startsWith(`**${e.i18n.tf(Msg.McpTitle, 2)}**\n\n`)).toBe(true)
       expect(text).toContain(`**agentichub**${e.i18n.t(Msg.McpDegraded)}`)
       expect(text).toContain(`**web**${e.i18n.tf(Msg.McpTools, 1)}`)
+    } finally {
+      disposeCommands()
+      disposeSession()
+    }
+  })
+
+  it('/mcp <query> filters servers by case-insensitive server-name substring', async () => {
+    const { e, p, disposeSession, disposeCommands } = newFixture({
+      toolNames: () => ['mcp__web-reader__webReader', 'mcp__zread__read_file'],
+    })
+    try {
+      expect(e.dispatchCommand(p, cmdMsg('/mcp ZREAD'), '/mcp ZREAD')).toBe(true)
+      await flush()
+      const text = p.getSent().at(-1) ?? ''
+      expect(text.startsWith(`**${e.i18n.tf(Msg.McpTitle, 1)}**`)).toBe(true)
+      expect(text).toContain('**zread**')
+      expect(text).not.toContain('web-reader')
+    } finally {
+      disposeCommands()
+      disposeSession()
+    }
+  })
+
+  it('/mcp <query> also matches a server whose tool names contain the query', async () => {
+    const { e, p, disposeSession, disposeCommands } = newFixture({
+      toolNames: () => ['mcp__web-reader__webReader', 'mcp__zread__read_file'],
+    })
+    try {
+      expect(e.dispatchCommand(p, cmdMsg('/mcp read_file'), '/mcp read_file')).toBe(true)
+      await flush()
+      const text = p.getSent().at(-1) ?? ''
+      expect(text).toContain('**zread**')
+      expect(text).not.toContain('web-reader')
+
+      // Multi-token AND over the server name and its tool names.
+      expect(e.dispatchCommand(p, cmdMsg('/mcp zread file'), '/mcp zread file')).toBe(true)
+      await flush()
+      expect(p.getSent().at(-1) ?? '').toContain('**zread**')
+      expect(e.dispatchCommand(p, cmdMsg('/mcp zread webReader'), '/mcp zread webReader')).toBe(true)
+      await flush()
+      expect(p.getSent().at(-1) ?? '').not.toContain('**zread**')
+    } finally {
+      disposeCommands()
+      disposeSession()
+    }
+  })
+
+  it('/mcp <query> also filters degraded and workspace sections, echoes the scope, and reports no matches', async () => {
+    const { e, p, disposeSession, disposeCommands } = newFixture({
+      toolNames: () => ['mcp__web__ping'],
+      healthServers: [{ serverName: 'agentichub' }],
+      listWorkspaceServers: async () => [{ name: 'dir-mount', transport: 'stdio' }],
+    })
+    try {
+      // Degraded servers match on their name; live groups and workspace
+      // mounts without the query hide.
+      expect(e.dispatchCommand(p, cmdMsg('/mcp agentichub'), '/mcp agentichub')).toBe(true)
+      await flush()
+      let text = p.getSent().at(-1) ?? ''
+      expect(text).toContain('**agentichub**')
+      expect(text).not.toContain('**web**')
+      expect(text).not.toContain('dir-mount')
+
+      // Workspace mounts match on their name.
+      expect(e.dispatchCommand(p, cmdMsg('/mcp dir-mount'), '/mcp dir-mount')).toBe(true)
+      await flush()
+      text = p.getSent().at(-1) ?? ''
+      expect(text).toContain('**dir-mount** (stdio)')
+      expect(text).not.toContain('**web**')
+
+      // A filtered view echoes the query and the matched/total counts.
+      expect(e.dispatchCommand(p, cmdMsg('/mcp web'), '/mcp web')).toBe(true)
+      await flush()
+      text = p.getSent().at(-1) ?? ''
+      expect(text).toContain(e.i18n.tf(Msg.McpQueryLine, 'web', 1, 3))
+      expect(text).toContain('**web**')
+
+      // Zero matches get their own reply, distinct from an empty registry.
+      expect(e.dispatchCommand(p, cmdMsg('/mcp zzz'), '/mcp zzz')).toBe(true)
+      await flush()
+      expect(p.getSent().at(-1)).toBe(e.i18n.tf(Msg.McpNoMatch, 'zzz'))
     } finally {
       disposeCommands()
       disposeSession()

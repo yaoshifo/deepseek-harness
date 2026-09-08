@@ -11,7 +11,9 @@
  * in place. /mcp groups the process-global tool registry's
  * `mcp__<serverName>__*` names by server (the same read as the mcpHealth
  * runtime context), marks health-watched servers that have no live tools,
- * and marks servers a project `mcpServers` allowlist hides from its sessions.
+ * and marks servers a project `mcpServers` allowlist hides from its
+ * sessions; a query (`/mcp [query]`) filters every section to servers whose
+ * name — or, for live groups, any tool name — matches it.
  *
  * Both commands are read-only and register through the engine's
  * registerCommand seam so /help lists them under the tools group.
@@ -108,7 +110,7 @@ export function registerSkillsMcpCommands(e: Engine, deps: SkillsMcpCommandDeps)
   })
   const disposeMcp = e.registerCommand({
     id: 'mcp',
-    handler: (p, msg) => { void cmdMcp(e, p, msg, deps); return true },
+    handler: (p, msg, args) => { void cmdMcp(e, p, msg, args, deps); return true },
     match: cmd => (cmd === 'mcp' || ('mcp'.startsWith(cmd) && cmd.length >= 2)) ? 'mcp' : '',
     group: 'tools',
   })
@@ -233,29 +235,46 @@ function renderSkillsCard(e: Engine, snapshot: SkillsSnapshot, page: number): Ca
  * /mcp: list live MCP servers — one line per server with its tool count and
  * tool names (capped per server), a degraded marker on health-watched
  * servers with no live tools, and a masked marker on servers this project's
- * `mcpServers` allowlist hides from its sessions. No servers at all: the
- * command says so instead of rendering an empty card.
+ * `mcpServers` allowlist hides from its sessions. An argument filters every
+ * section to servers matching it (case-insensitive substring of the server
+ * name or, for live groups, any tool name; every whitespace-separated token
+ * must hit). No servers at all: the command says so instead of rendering an
+ * empty card; a query that matches nothing gets its own no-match reply.
  * @param e - Engine whose i18n and card senders render the listing.
  * @param p - Platform that delivered the command message.
  * @param msg - Triggering message (reply context only).
+ * @param args - Command arguments; joined into the filter query.
  * @param deps - The tool-registry and configuration sources.
  */
-async function cmdMcp(e: Engine, p: Platform, msg: Message, deps: SkillsMcpCommandDeps): Promise<void> {
-  const groups = mcpServerGroups(deps.toolNames())
-  const degraded = (deps.healthServers ?? [])
+async function cmdMcp(e: Engine, p: Platform, msg: Message, args: string[], deps: SkillsMcpCommandDeps): Promise<void> {
+  const displayQuery = args.join(' ').trim()
+  const query = displayQuery.toLowerCase()
+  const allGroups = mcpServerGroups(deps.toolNames())
+  const groups = query === '' ? allGroups : allGroups.filter(group => mcpGroupMatchesQuery(query, group.server, group.tools))
+  const allDegraded = (deps.healthServers ?? [])
     .map(server => server.serverName)
-    .filter(name => !groups.some(group => group.server === name))
+    .filter(name => !allGroups.some(group => group.server === name))
+  const degraded = query === '' ? allDegraded : allDegraded.filter(name => matchesNameQuery(query, name))
   // Directory mounts are per-session (agent scope), never in the
   // process-global view, so the section reads the discovery service by the
   // chat's work dir instead of the tool registry.
-  const workspace = deps.listWorkspaceServers === undefined
+  const allWorkspace = deps.listWorkspaceServers === undefined
     ? []
     : await deps.listWorkspaceServers(e.commandWorkDir(msg))
-  if (groups.length === 0 && degraded.length === 0 && workspace.length === 0) {
+  const workspace = query === '' ? allWorkspace : allWorkspace.filter(server => matchesNameQuery(query, server.name))
+  const total = allGroups.length + allDegraded.length + allWorkspace.length
+  if (total === 0) {
     await e.reply(p, msg.replyCtx, e.i18n.t(Msg.McpEmpty))
     return
   }
+  if (groups.length === 0 && degraded.length === 0 && workspace.length === 0) {
+    await e.reply(p, msg.replyCtx, e.i18n.tf(Msg.McpNoMatch, displayQuery))
+    return
+  }
   const lines: string[] = []
+  if (query !== '') {
+    lines.push(e.i18n.tf(Msg.McpQueryLine, displayQuery, groups.length + degraded.length + workspace.length, total), '')
+  }
   for (const group of groups) {
     let line = `**${group.server}**${e.i18n.tf(Msg.McpTools, group.tools.length)}`
     if (deps.allowlist !== undefined && !deps.allowlist.includes(group.server)) {
@@ -277,6 +296,34 @@ async function cmdMcp(e: Engine, p: Platform, msg: Message, deps: SkillsMcpComma
     title: e.i18n.tf(Msg.McpTitle, groups.length + degraded.length + workspace.length),
     color: 'blue',
   })
+}
+
+/**
+ * Whether an MCP server matches a lowercased /mcp query: every
+ * whitespace-separated token must be a case-insensitive substring of the
+ * server name or one of its tool names.
+ * @param query - Lowercased query string.
+ * @param server - The server's name.
+ * @param tools - The server's tool names.
+ * @returns True when every token hits the server name or any tool name.
+ */
+function mcpGroupMatchesQuery(query: string, server: string, tools: readonly string[]): boolean {
+  const name = server.toLowerCase()
+  return query.split(/\s+/).every(token =>
+    name.includes(token) || tools.some(tool => tool.toLowerCase().includes(token)))
+}
+
+/**
+ * Whether a bare server name (degraded or workspace mounts — no tool names)
+ * matches a lowercased /mcp query: every whitespace-separated token must be
+ * a case-insensitive substring of the name.
+ * @param query - Lowercased query string.
+ * @param name - The server's name.
+ * @returns True when every token hits the name.
+ */
+function matchesNameQuery(query: string, name: string): boolean {
+  const lowered = name.toLowerCase()
+  return query.split(/\s+/).every(token => lowered.includes(token))
 }
 
 /**
