@@ -57,8 +57,8 @@
 
 ### H 追问卡登记后随 stop 丢失（2026-09-08 实测，已修）
 
-- **症状**：turn 收尾的问题卡片（closing-card ask 转非阻塞追问卡登记）没发出来；此前用户在执行中发过消息（队列接管），随后对接管 turn 执行了 /stop（或 /new、/switch）。
-- **日志形状**：journal 有 `engine: closing-card ask converted to followups`，但始终没有 `engine: followups card sent`；turn/end 序列 = 完成 turn（队列非空，按设计跳过投递、登记保留）→ 接管 turn `aborted/user` + `stopping interactive session`。
+- **症状**：turn 收尾的问题卡片（closing-card ask 转非阻塞追问卡登记）没发出来；此前用户在执行中发过消息（收到 📬 排队回执、队列接管），随后任意走 `stopInteractiveSession` 的路径打断接管 turn——/stop、/new、/switch、Provider 卡片热切换等都算。
+- **日志形状**：journal 有 `engine: closing-card ask converted to followups`，但始终没有 `engine: followups card sent`；turn/end 序列 = 完成 turn（队列非空，按设计跳过投递、登记保留）→ 接管 turn `aborted/user` + `stopping interactive session`。触发动作若是卡片按钮（如 Provider 热切换）在群消息历史里不可见，别只找文本命令。
 - **修复后判别**：`stopInteractiveSession` 拆除前会抢救投递存活登记；修后若仍丢，查 `followups card send failed` 告警（发送失败不重试）。
 
 ## 审批事件判别（卡片没弹 / 反复要授权）

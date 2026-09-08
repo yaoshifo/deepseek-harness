@@ -6,7 +6,7 @@ Status: implemented
 
 ## Problem
 
-2026-09-08 oc_469693e0 事故（spawned 讨论群「图片查看分析」，tingting bot）：agent 收尾的 closing-card ask 在 turn 中被转换为非阻塞追问卡登记（3 个选项）。该 turn 结束时队列里已有消息（用户在执行期间发了消息），turn 末投递按设计同时跳过 ✅ 完成卡与追问卡，把登记保留给「drain 循环的最后 turn」。队列消息接手为下一个 turn 后，用户对其执行了 `/stop`。`stopInteractiveSession` 整体拆除 `InteractiveState`，未投递的登记随之消亡：问题卡片永远没有到达聊天，也没有任何提示。用户把这理解为「执行中发消息把卡片压没了」。
+2026-09-08 oc_469693e0 事故（spawned 讨论群「图片查看分析」，tingting bot）：agent 收尾的 closing-card ask 在 turn 中被转换为非阻塞追问卡登记（3 个选项）。该 turn 结束时队列里已有消息（用户在执行期间发了消息并看到 📬 排队回执），turn 末投递按设计同时跳过 ✅ 完成卡与追问卡，把登记保留给「drain 循环的最后 turn」。队列消息接手为下一个 turn 后，用户从 Provider 卡片做了热切换（保留上下文）：其 `applyProviderSwitch` 调用 `stopInteractiveSession` 中止了接管 turn，拆除过程丢弃了未投递的登记：问题卡片永远没有到达聊天，也没有任何提示。（群历史已核实：用户消息一条未丢——接管 turn 的输入就是那条排队消息，追问卡是唯一损失。）
 
 ## Decision
 
@@ -21,5 +21,5 @@ Status: implemented
 
 - 测试钉住抢救行为：`stopInteractiveSession` 带存活登记时恰好发送一张追问卡并清除登记；无登记时不发（`packages/acp/feishu-bridge/tests/engine/followups.spec.ts`）。
 - 抢救卡与 ⏹ stop 终结卡都是 fire-and-forget，两者顺序不保证——对非阻塞建议卡可接受。
-- 队列消息不受影响：stop 本就通知被丢弃的发送方（`notifyDroppedQueuedMessages`），事故中「排队」消息正是这样带着可见错误回复被丢弃的。
+- 队列消息不受影响：事故中的排队消息有 📬 回执并作为接管 turn 被处理；stop 本就通知被丢弃的发送方（`notifyDroppedQueuedMessages`），队列真被截断时有可见提示。
 - 部署：桥重建 + `/reload`。

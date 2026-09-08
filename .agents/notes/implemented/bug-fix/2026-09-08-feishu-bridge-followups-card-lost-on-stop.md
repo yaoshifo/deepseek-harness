@@ -6,7 +6,7 @@ English | [中文](2026-09-08-feishu-bridge-followups-card-lost-on-stop.zh.md)
 
 ## Problem
 
-The 2026-09-08 oc_469693e0 incident (spawned group 「图片查看分析」, tingting bot): the agent's closing-card ask was converted to a non-blocking followups registration mid-turn (three options). The turn then completed with a message already queued (the user had written during execution), so the turn-end emission skipped both the ✅ completion card and the followups card, keeping the registration for "the drain loop's final turn" — by design. The queued message took over as the next turn, and the user ran `/stop` on it. `stopInteractiveSession` tears down the whole `InteractiveState`, and the pending registration died with it: the question card never reached the chat, with no notice. The user read this as "sending a message during execution suppressed the card."
+The 2026-09-08 oc_469693e0 incident (spawned group 「图片查看分析」, tingting bot): the agent's closing-card ask was converted to a non-blocking followups registration mid-turn (three options). The turn then completed with a message already queued (the user had written during execution and seen the 📬 queue ack), so the turn-end emission skipped both the ✅ completion card and the followups card, keeping the registration for "the drain loop's final turn" — by design. The queued message took over as the next turn, and the user then hot-switched the chat's provider from the Provider card (keep-context switch): its `applyProviderSwitch` calls `stopInteractiveSession`, aborting the takeover turn. The teardown discarded the pending registration: the question card never reached the chat, with no notice. (Group history verified: no user message was lost — the takeover input was the queued message itself, and the followups card was the only casualty.)
 
 ## Decision
 
@@ -21,5 +21,5 @@ The 2026-09-08 oc_469693e0 incident (spawned group 「图片查看分析」, tin
 
 - Tests pin the salvage: `stopInteractiveSession` with a live registration sends exactly one followups card and clears the registry; with nothing registered it sends nothing (`packages/acp/feishu-bridge/tests/engine/followups.spec.ts`).
 - The salvaged card races the ⏹ stop finalize (both fire-and-forget); their ordering is not guaranteed — acceptable for a non-blocking suggestion card.
-- Queued messages are unaffected: stops already notify dropped senders (`notifyDroppedQueuedMessages`), which is how the incident's 「排队」 message was dropped with a visible error reply.
+- Queued messages are unaffected: the incident's queued message was acked (📬) and processed as the takeover turn, and stops already notify dropped senders (`notifyDroppedQueuedMessages`) when a queue does get cut.
 - Deployment: bridge rebuild + `/reload`.
