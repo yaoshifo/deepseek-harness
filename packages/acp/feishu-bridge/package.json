@@ -36,6 +36,11 @@
   "dependencies": {
     "@deepseek-ai/cosmokit": "workspace:^",
     "@deepseek-ai/dsh-agent": "workspace:^",
+    "@deepseek-ai/dsh-agent-loop": "workspace:^",
+    "@deepseek-ai/dsh-brand": "workspace:^",
+    "@deepseek-ai/dsh-session-persistence": "workspace:^",
+    "@deepseek-ai/dsh-settings": "workspace:^",
+    "zod": "^4.4.3",
     "@deepseek-ai/dsh-agent-instructions": "workspace:^",
     "@deepseek-ai/dsh-llm": "workspace:^",
     "@deepseek-ai/dsh-memory": "workspace:^",
@@ -60,7 +65,6 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:^",
-    "@deepseek-ai/dsh-agent-loop": "workspace:^",
     "@deepseek-ai/dsh-agent-loop-testkit": "workspace:^",
     "@deepseek-ai/dsh-mcp-workspace": "workspace:^",
     "@deepseek-ai/dsh-permission-presets": "workspace:^",

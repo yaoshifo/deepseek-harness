@@ -922,4 +922,7 @@ export class AgentLoop extends Service implements AgentFactory {
   }
 }
 
+/** Durable Inbox projection unit; exported for hosts that cold-read pending input. */
+export { inboxProjectionDefinition } from './inbox.ts'
+
 export default AgentLoop

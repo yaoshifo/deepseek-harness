@@ -21,6 +21,7 @@ import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.ts'
 import { AllowList } from '../feishu/allowlist.ts'
 import type {
+  EngineInboxReader,
   EngineSubprocess,
   Agent,
   AgentSession,
@@ -1264,6 +1265,8 @@ export class Engine {
   private reaperTimer: ReturnType<typeof setInterval> | undefined
   /** Host-wired foreground subprocess runner; cron exec fails loud without it. */
   private readonly subprocess: EngineSubprocess | undefined
+  /** Host-wired cold inbox reader; restart visibility stays silent without it. */
+  private readonly inboxReader: EngineInboxReader | undefined
 
   constructor(
     name: string,
@@ -1273,11 +1276,13 @@ export class Engine {
     lang: Language = langEnglish,
     bridge?: BridgeDispatch,
     subprocess?: EngineSubprocess,
+    inboxReader?: EngineInboxReader,
   ) {
     this.name = name
     this.agent = agent
     this.platforms = platforms
     this.subprocess = subprocess
+    this.inboxReader = inboxReader
     this.bridge = bridge ?? bareBridgeDispatch()
     this.sessions = new SessionManager(sessionStorePath)
     this.i18n = new I18n(lang)
@@ -1608,6 +1613,7 @@ export class Engine {
     // Feature barriers restored from disk close here, once platforms can
     // deliver the wakes: every reply they awaited died with the old process.
     this.recoverInterruptedNativeChildren()
+    void this.reportRecoveredPendingInboxes()
     this.platformsStartedValue = true
     this.bridge.emit('feishuBridge/platforms-ready', { engine: this })
   }
@@ -1695,6 +1701,41 @@ export class Engine {
       )
     }
     console.info(`subtask: restart recovery settled ${interrupted.size} parent chat(s) with interrupted children`)
+  }
+
+  /**
+   * Restart visibility for undelivered queued input: the driver dies with
+   * the process but inbox splices are durable, so messages queued during the
+   * last turn survive and will be claimed together with the next message.
+   * Chats whose persisted session still holds pending input get a one-time
+   * notice (visibility only — nothing is auto-woken).
+   */
+  private async reportRecoveredPendingInboxes(): Promise<void> {
+    if (this.inboxReader === undefined) return
+    const p = this.reportCapablePlatform()
+    if (p === undefined) return
+    const r = asReplyContextReconstructor(p)
+    if (r === undefined) return
+    for (const key of this.sessions.activeSessionKeys()) {
+      // Machine-facing side sessions (relay pipelines, cron slots) queue
+      // their own input; a chat notice there is noise.
+      if (key.startsWith('relay:') || key.includes('#cron')) continue
+      // The reader addresses the agent-side session id (the persistence key),
+      // not the engine's internal record id.
+      const sessionId = this.sessions.findActive(key)?.agentSessionID ?? ''
+      if (sessionId === '') continue
+      try {
+        const pending = await this.inboxReader.pendingCount(sessionId)
+        if (pending <= 0) continue
+        const replyCtx = await r.reconstructReplyCtx(key)
+        await this.sendAsCard(p, replyCtx, this.i18n.tf(Msg.PendingInboxNotice, String(pending)), {
+          title: this.i18n.t(Msg.PendingInboxCardTitle),
+          color: 'orange',
+        })
+      } catch (error: unknown) {
+        console.warn(`restart pending notice failed (${key}): ${String(error)}`)
+      }
+    }
   }
 
   /**

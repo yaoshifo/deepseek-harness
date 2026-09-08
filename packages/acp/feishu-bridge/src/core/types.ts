@@ -400,6 +400,15 @@ export interface EngineSubprocessResult {
   timedOut: boolean
 }
 
+/** Cold pending-inbox reader the host wires for restart visibility. */
+export interface EngineInboxReader {
+  /**
+   * Count pending inbox messages (next-turn plus next-step) persisted for one
+   * agent session; 0 when the session has no pending input or no log.
+   */
+  pendingCount(sessionId: string): Promise<number>
+}
+
 /** Foreground subprocess runner the host wires for engine-owned shell jobs (cron exec). */
 export interface EngineSubprocess {
   run(spec: EngineSubprocessSpec): Promise<EngineSubprocessResult>

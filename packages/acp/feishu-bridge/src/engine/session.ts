@@ -1132,6 +1132,11 @@ export class SessionManager {
    * @param userKey - the chat's session key.
    * @returns the active session ID, '' when none.
    */
+  /** Session keys with an active session record (restart visibility enumeration). */
+  activeSessionKeys(): string[] {
+    return [...this.activeSession.keys()]
+  }
+
   activeSessionID(userKey: string): string {
     return this.activeSession.get(userKey) ?? ''
   }

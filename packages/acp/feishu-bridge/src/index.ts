@@ -21,6 +21,8 @@ import * as SkillFileSystem from '@deepseek-ai/dsh-skill-filesystem'
 import type { SubagentRunEndInfo, SubagentRunInfo } from '@deepseek-ai/dsh-subagent'
 import Schema from '@deepseek-ai/schemastery'
 import type { EngineSubprocess } from './core/types.ts'
+import { inboxProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
+import type { EngineInboxReader } from './core/types.ts'
 import { DshAgentAdapter } from './agent-dsh/adapter.ts'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.ts'
 import { installLogTimestamps } from './log-timestamps.ts'
@@ -1122,6 +1124,49 @@ export function createCronSubprocessRunner(ctx: Context): EngineSubprocess {
   }
 }
 
+/** Structural slice of the `sessionQuery` service the inbox reader consumes. */
+interface SessionQueryLike {
+  observeSession(sessionId: string, options: { projectionMode: 'all' }): Promise<{
+    projections?: { values: { inbox?: { 'next-turn': readonly unknown[]; 'next-step': readonly unknown[] } } }
+    [Symbol.dispose](): void
+  }>
+}
+
+/** Structural slice of the `sessionProjections` registry the inbox reader consumes. */
+interface SessionProjectionsLike {
+  register(definition: typeof inboxProjectionDefinition): () => void
+}
+
+/**
+ * Cold pending-inbox reader for restart visibility: one exact observation
+ * over the persisted log, reading the inbox projection's pending counts.
+ * The inbox unit registers here because it otherwise only exists once some
+ * agent owns an inbox — at platforms-ready none does yet. Returns 0 when the
+ * query or projection services are not mounted.
+ * @param ctx - composition context.
+ * @returns the reader handed to the engine.
+ */
+export function createPendingInboxReader(ctx: Context): EngineInboxReader {
+  const projections = ctx.get('sessionProjections') as SessionProjectionsLike | undefined
+  projections?.register(inboxProjectionDefinition)
+  return {
+    pendingCount: async (sessionId) => {
+      const query = ctx.get('sessionQuery') as SessionQueryLike | undefined
+      if (query === undefined) return 0
+      try {
+        const observation = await query.observeSession(sessionId, { projectionMode: 'all' })
+        using _ = observation
+        const inbox = observation.projections?.values['inbox']
+        if (inbox === undefined) return 0
+        return inbox['next-turn'].length + inbox['next-step'].length
+      } catch {
+        // An unknown or unreadable session id simply has no pending input.
+        return 0
+      }
+    },
+  }
+}
+
 export function buildProjectAssembly(
   ctx: Context,
   config: FeishuBridgeConfig,
@@ -1256,7 +1301,7 @@ export function buildProjectAssembly(
     dataDir: projectDataDir,
   })
 
-  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language), bridge, createCronSubprocessRunner(ctx))
+  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language), bridge, createCronSubprocessRunner(ctx), createPendingInboxReader(ctx))
 
   // B2: native approval asks and userQuestions asks delegate card rendering
   // and decision waiting to the engine's askUser.
