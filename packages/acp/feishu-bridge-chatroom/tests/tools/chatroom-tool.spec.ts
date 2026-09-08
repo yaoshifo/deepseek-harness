@@ -285,12 +285,52 @@ describe('feishu_bridge_chatroom action routing', () => {
     test.dispose()
   })
 
-  it('pick-roles requires a live picker state', async () => {
+  it('pick-roles with no armed state and no topic fails with a bootstrap hint', async () => {
     const engine = newEngine()
     const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
     const res = await test.execute({ action: 'pick-roles', picks: '[{"name":"taleb","recommended":true,"blurb":"why"}]' })
     expect(res.isError).toBe(true)
     expect(errorText(res)).toContain('picker')
+    expect(errorText(res)).toContain('topic')
+    test.dispose()
+  })
+
+  it('pick-roles bootstraps a missing picker when topic is supplied', async () => {
+    // A plain-text topic message bypasses the /chatroom command path, so the
+    // armed picker state never exists; the moderator's pick-roles call with a
+    // topic must bootstrap the state and still render the user-facing card
+    // (2026-09-07 oc_94b41a: moderator lost the role card and picked alone).
+    const engine = newEngine()
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-pick-boot-'))
+    await mkdir(join(rolesDir, 'taleb'), { recursive: true })
+    await writeFile(join(rolesDir, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    applyChatroomEngineConfig(engine, { rolesDir }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+
+    const v = value(await test.execute({ action: 'pick-roles', topic: '三市机会', picks: '[{"name":"taleb","recommended":true,"blurb":"why"}]' }))
+
+    expect(v.status).toBe('ok')
+    await new Promise(r => setTimeout(r, 20))
+    const p = engine.spawnCapablePlatform() as unknown as { sentCards: Array<{ elements: Array<{ content?: string; text?: string }> }> }
+    const bodies = p.sentCards.map(c => c.elements.map(el => el.content ?? el.text ?? '').join('\n')).join('\n')
+    expect(bodies).toContain('taleb')
+    expect(bodies).toContain('三市机会')
+    test.dispose()
+  })
+
+  it('pick-roles bootstrap refuses a hub whose chatroom already started', async () => {
+    const engine = newEngine()
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-pick-boot-'))
+    await mkdir(join(rolesDir, 'taleb'), { recursive: true })
+    await writeFile(join(rolesDir, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    applyChatroomEngineConfig(engine, { rolesDir }, undefined)
+    chatroomState(engine.sessions.getOrCreateActive('feishu:oc_hub:ou_1')).chatroomModerator = true
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+
+    const res = await test.execute({ action: 'pick-roles', topic: '三市机会', picks: '[{"name":"taleb","recommended":true,"blurb":"why"}]' })
+
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('already runs')
     test.dispose()
   })
 })

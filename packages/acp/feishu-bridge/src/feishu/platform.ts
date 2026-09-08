@@ -1042,6 +1042,11 @@ export class FeishuPlatform implements Platform {
       else if (name.startsWith('askq_text_submit_')) actionVal = `askq_text:${name.slice('askq_text_submit_'.length)}`
       else if (name.startsWith('askq_multi_submit_')) actionVal = `askq_multi:${name.slice('askq_multi_submit_'.length)}`
       else if (name.startsWith('fw_multi_submit_')) actionVal = `fw_multi:${name.slice('fw_multi_submit_'.length)}`
+      else if (name === 'chatroom_topic_custom_submit') {
+        // Chatroom #59 custom-topic form submit: form_submit drops
+        // action.value, so the act path is recovered from the button name.
+        actionVal = 'act:/chatroom-topic-pick custom'
+      }
       else if (name.startsWith('askq_') && name !== 'askq_multi_submit_') {
         // Single-select askq button: value carries "askq:qIdx:optIdx"
         actionVal = action.value?.action ?? name
@@ -1057,6 +1062,16 @@ export class FeishuPlatform implements Platform {
       }
     }
     if (actionVal === '') return
+
+    // The chatroom custom-topic submit carries the typed topic in
+    // form_value (act: buttons otherwise have no text channel); append it
+    // to the recovered act payload so the picker state machine receives
+    // `custom <topic>`.
+    if (actionVal === 'act:/chatroom-topic-pick custom') {
+      const raw = action.form_value?.chatroom_topic_custom
+      const text = typeof raw === 'string' ? raw.trim() : ''
+      if (text !== '') actionVal = `act:/chatroom-topic-pick custom ${text}`
+    }
 
     const sessionKey = this.sessionKeyFromCardAction(chatID, userID, action.value ?? {})
     const replyCtx: FeishuReplyContext = { messageID, chatID, sessionKey }

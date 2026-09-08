@@ -40,6 +40,8 @@ import {
 } from '../engine/chatroom.ts'
 import { listChatroomLedgers } from '../engine/chatroom-ledger.ts'
 import {
+  bootstrapChatroomPick,
+  getChatroomPickState,
   renderChatroomPickCardAndPush,
   renderChatroomTopicPickCardAndPush,
 } from '../engine/chatroom-pick.ts'
@@ -181,6 +183,11 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
         description: 'pick-roles/pick-topic only: JSON array — [{"name","recommended","blurb"}] for roles, '
           + '[{"title","recommended","blurb"}] for topics.',
       },
+      topic: {
+        type: 'string',
+        description: 'pick-roles only: the discussion topic, required to arm the role-selection card when '
+          + 'the picker was never started (the user typed the topic as a plain message); harmless otherwise.',
+      },
       section: {
         type: 'string',
         enum: ['synthesis', 'subproblems', 'report'],
@@ -303,6 +310,15 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
         }
         case 'pick-roles': {
           const recs = parsePicks<RolePickJSON>(args.picks ?? '', 'roles')
+          const topic = (args.topic ?? '').trim()
+          if (getChatroomPickState(engine, sessionKey) === undefined) {
+            if (topic === '') {
+              throw new Error('chatroom: picker not active for this chat (a plain-text topic bypasses the '
+                + '/chatroom command path); retry pick-roles with a non-empty topic to bootstrap the '
+                + 'role-selection card')
+            }
+            bootstrapChatroomPick(engine, sessionKey, topic)
+          }
           renderChatroomPickCardAndPush(engine, sessionKey, recs.map(r => ({
             name: r.name,
             recommended: r.recommended,

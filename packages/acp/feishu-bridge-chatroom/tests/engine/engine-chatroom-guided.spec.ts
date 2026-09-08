@@ -21,7 +21,10 @@ import {
   getChatroomPickState,
   getChatroomStartPickState,
   getChatroomTopicPickState,
+  bootstrapChatroomPick,
   renderChatroomPickCardAndPush,
+  renderChatroomTopicPickCard,
+  renderChatroomTopicPickCardAndPush,
 } from '../../src/engine/chatroom-pick.ts'
 import { initChatroomLedger } from '../../src/engine/chatroom-ledger.ts'
 import { chatroomConfig } from '../../src/chatroom-config.ts'
@@ -307,6 +310,52 @@ describe('guided start: the start picker', () => {
     expect(getChatroomTopicPickState(e, hub)).toBeDefined()
   })
 
+  it('a custom typed topic on the topic card arms the role picker with that topic', async () => {
+    // The card's free-text submit: the typed topic must travel the same
+    // finalize handoff as a picked candidate (2026-09-07 oc_94b41a: no
+    // custom field existed, so the user typed a plain message and the role
+    // picker was never armed).
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+
+    e.commandHandlers?.get('chatroom')?.(p, hubMsg(hub), [])
+    await settle()
+    expect(getChatroomTopicPickState(e, hub)).toBeDefined()
+    renderChatroomTopicPickCardAndPush(e, hub, [{ title: '候选一', recommended: true, blurb: '' }])
+    // The card carries the free-text escape so the user never has to fall
+    // back to a plain message.
+    const rendered = renderChatroomTopicPickCard(e, getChatroomTopicPickState(e, hub)!)
+    const form = (rendered as { elements: Array<{ kind?: string; elements?: Array<{ kind?: string; name?: string }> }> }).elements
+      .find(el => el.kind === 'form')
+    expect(form?.elements?.some(child => child.kind === 'input' && child.name === 'chatroom_topic_custom')).toBe(true)
+
+    const card = executeChatroomCardAction(e, hub, '/chatroom-topic-pick', 'custom 我的自定义题目')
+    await waitFor(() => getChatroomPickState(e, hub) !== undefined, 'role picker armed')
+
+    expect(getChatroomTopicPickState(e, hub)).toBeUndefined()
+    expect(getChatroomPickState(e, hub)?.topic).toBe('我的自定义题目')
+    expect(cardBody(card)).toContain('正在进入角色挑选')
+  })
+
+  it('a custom submit with an empty topic keeps the card with a hint', async () => {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+
+    e.commandHandlers?.get('chatroom')?.(p, hubMsg(hub), [])
+    await settle()
+    renderChatroomTopicPickCardAndPush(e, hub, [{ title: '候选一', recommended: true, blurb: '' }])
+
+    const card = executeChatroomCardAction(e, hub, '/chatroom-topic-pick', 'custom')
+    await settle()
+
+    expect(getChatroomTopicPickState(e, hub)).toBeDefined()
+    expect(cardBody(card)).toContain('请先选一个题目')
+  })
+
   it('continue with explicit --research stashed starts immediately (no mode card)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
@@ -327,6 +376,30 @@ describe('guided start: the start picker', () => {
 })
 
 describe('guided start: the role-picker handoff', () => {
+  it('a bootstrapped picker confirms into the mode card like the command path', async () => {
+    // The plain-text topic path arms no picker; bootstrapChatroomPick is the
+    // repair leg — its state must behave exactly like the /chatroom-begun
+    // one through confirm.
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+
+    bootstrapChatroomPick(e, hub, '议题')
+    renderChatroomPickCardAndPush(e, hub, [
+      { name: 'taleb', recommended: true, blurb: '' },
+      { name: 'munger', recommended: true, blurb: '' },
+    ])
+    const card = executeChatroomCardAction(e, hub, '/chatroom-pick', 'confirm')
+    await settle()
+
+    expect(p.count).toBe(0) // nothing spawned yet
+    const ms = getChatroomModePickState(e, hub)
+    expect(ms?.topic).toBe('议题')
+    expect([...(ms?.roles ?? [])].sort()).toEqual(['munger', 'taleb'])
+    expect(cardBody(card)).toContain('议题')
+  })
+
   it('role-picker confirm with mode undecided swaps in the mode card instead of starting', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)

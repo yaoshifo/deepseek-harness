@@ -1059,3 +1059,39 @@ describe('onCardAction fw_multi submit (followups suggestion card)', () => {
     expect(p.askqMetaCache.get('feishu:oc_1:ou_9')).toBeDefined()
   })
 })
+
+describe('onCardAction chatroom custom-topic form submit', () => {
+  /** A form_submit callback: action.value is dropped, the button name and
+   * form_value carry everything. */
+  function customEvent(formText: string, overrides: { chatID?: string; userID?: string } = {}): CardActionTriggerEvent {
+    return {
+      action: {
+        name: 'chatroom_topic_custom_submit',
+        form_value: formText === '' ? {} : { chatroom_topic_custom: formText },
+      },
+      operator: { open_id: overrides.userID ?? 'ou_9' },
+      context: { open_chat_id: overrides.chatID ?? 'oc_1', open_message_id: 'om_topic' },
+    }
+  }
+
+  it('dispatches the typed topic as an act: card action', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages = await dispatched(p, customEvent('中国股债房机会'))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('act:/chatroom-topic-pick custom 中国股债房机会')
+    expect(messages[0]!.isCardAction).toBe(true)
+  })
+
+  it('an empty input still dispatches the bare custom action for the hint path', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages = await dispatched(p, customEvent(''))
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe('act:/chatroom-topic-pick custom')
+  })
+
+  it('trims surrounding whitespace from the typed topic', async () => {
+    const p = newPlatform({ allowChat: '*' })
+    const messages = await dispatched(p, customEvent('  我的题目  '))
+    expect(messages[0]!.content).toBe('act:/chatroom-topic-pick custom 我的题目')
+  })
+})

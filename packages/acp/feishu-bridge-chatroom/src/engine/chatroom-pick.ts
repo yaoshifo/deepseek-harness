@@ -136,6 +136,43 @@ export function getChatroomPickState(e: Engine, sessionKey: string): ChatroomPic
   return pickers(e).chatroomPick.get(sessionKey)
 }
 
+/**
+ * Arm the role-picker state for a hub whose picker was never begun — the
+ * plain-text path: a user typing the topic as a normal message bypasses
+ * /chatroom, so the moderator's pick-roles call finds no armed state
+ * (2026-09-07 oc_94b41a). No wake, no watchdog: the moderator is already
+ * mid-turn and arrives with recommendations, so the picker goes straight to
+ * the render call that follows.
+ *
+ * @param e - Engine owning the picker maps.
+ * @param hubKey - Hub session key the picker is armed on.
+ * @param topic - Topic the moderator's recommendations are for.
+ * @throws when the hub already runs a chatroom (start has happened) or no
+ * roles are configured.
+ */
+export function bootstrapChatroomPick(e: Engine, hubKey: string, topic: string): void {
+  if (chatroomState(e.sessions.getOrCreateActive(hubKey)).chatroomModerator) {
+    throw new Error(`chatroom: cannot arm the role picker; a chatroom already runs for ${hubKey}`)
+  }
+  const rolesDir = chatroomConfig(e).rolesDir()
+  const all = listRoleNames(rolesDir)
+  if (all.length === 0) {
+    throw new Error(e.i18n.t(Msg.ChatroomNoRolesConfigured))
+  }
+  pickers(e).chatroomPick.set(hubKey, {
+    phase: 'picking',
+    topic,
+    rolesDir,
+    allNames: all,
+    recs: [],
+    selected: new Map(),
+    hint: '',
+    userTouched: false,
+    userID: '',
+    chatType: 'group',
+  })
+}
+
 /** The armed topic-picker state for a session key (undefined when none).
  *
  * @param e - Engine owning the picker maps.
@@ -864,6 +901,24 @@ export function renderChatroomTopicPickCard(e: Engine, ps: ChatroomTopicPickStat
     cb.taggedNote('chatroom-topic-pick-status', e.i18n.tf(Msg.ChatroomTopicPickPickedHint, ps.selected))
   }
   if (ps.hint !== '') cb.note(ps.hint)
+  // Free-text escape: the candidates never cover every topic the user has in
+  // mind; without this field the user types a plain message and the guided
+  // flow's state never arms (2026-09-07 oc_94b41a). The typed value rides
+  // form_value.chatroom_topic_custom on submit.
+  cb.form('chatroom_topic_custom_form',
+    { kind: 'input', name: 'chatroom_topic_custom', placeholder: e.i18n.t(Msg.ChatroomTopicPickCustomPH), maxLength: 200 },
+    {
+      kind: 'actions',
+      layout: 'row',
+      buttons: [{
+        text: e.i18n.t(Msg.ChatroomTopicPickCustomBtn),
+        type: 'default',
+        value: 'act:/chatroom-topic-pick custom',
+        name: 'chatroom_topic_custom_submit',
+        actionType: 'form_submit',
+      }],
+    },
+  )
   cb.buttons(
     { text: e.i18n.t(Msg.ChatroomTopicPickConfirm), type: 'primary', value: 'act:/chatroom-topic-pick confirm' },
     { text: e.i18n.t(Msg.ChatroomTopicPickCancel), type: 'default', value: 'act:/chatroom-topic-pick cancel' },
@@ -948,6 +1003,19 @@ export function executeChatroomTopicPickAction(e: Engine, sessionKey: string, ar
         return
       }
       const { selected: topic, userID, chatType } = ps
+      pickers(e).chatroomTopicPick.delete(sessionKey) // clear before async dispatch
+      void finalizeChatroomTopicPick(e, sessionKey, topic, userID, chatType)
+      return
+    }
+    case 'custom': {
+      // Free-text submit from the card's input form: the typed topic rides
+      // the args after 'custom' (platform form_submit path).
+      const topic = fields.slice(1).join(' ').trim()
+      if (topic === '') {
+        ps.hint = e.i18n.t(Msg.ChatroomTopicPickEmpty)
+        return
+      }
+      const { userID, chatType } = ps
       pickers(e).chatroomTopicPick.delete(sessionKey) // clear before async dispatch
       void finalizeChatroomTopicPick(e, sessionKey, topic, userID, chatType)
       return
@@ -1050,9 +1118,10 @@ export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: st
     if (args.startsWith('cancel')) {
       return simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'grey', e.i18n.t(Msg.ChatroomTopicPickCancelled))
     }
-    if (args.startsWith('confirm')) {
+    if (args.startsWith('confirm') || (args.startsWith('custom') && args.trim() !== 'custom')) {
       // The state machine already cleared state + armed the async finalize;
-      // show a transitional card in place of the picker.
+      // show a transitional card in place of the picker. A bare 'custom'
+      // (empty input) fell through to the re-render below with its hint.
       return simpleCard(e.i18n.t(Msg.ChatroomTopicPickTitle), 'purple', e.i18n.t(Msg.ChatroomTopicPickStarting))
     }
     const ps = pickers(e).chatroomTopicPick.get(sessionKey)
