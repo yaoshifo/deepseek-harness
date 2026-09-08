@@ -12,7 +12,7 @@
  */
 
 import { createHash } from 'node:crypto'
-import { mkdirSync, appendFileSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { mkdirSync, appendFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { atomicWriteFileSync } from '@deepseek-ai/dsh-feishu-bridge/exports'
 
@@ -145,8 +145,10 @@ export interface ChatroomLedgerPrior {
 }
 
 /**
- * Write a fresh ledger (three files), creating the parent dir. Overwrites
- * any prior files — a new chatroom is a new discussion. A prior writes a
+ * Write a fresh ledger, creating the parent dir. SYNTHESIS and SUBPROBLEMS
+ * are overwritten (a new chatroom is a new discussion); RECORD.md is written
+ * only when absent, preserving pre-start appends from the opening lightning
+ * round — per-run dirs already isolate distinct chatrooms. A prior writes a
  * pointer (never the prior content) into the header and a 前情 section
  * above the synthesis marker, so synthesis updates preserve it.
  *
@@ -184,8 +186,14 @@ export function initChatroomLedger(dir: string, topic: string, roles: string[], 
     const sub = '## 子问题清单\n\n（主持尚未拆解）\n'
     atomicWriteFileSync(join(dir, ledgerSubproblemsFile), new TextEncoder().encode(sub), 0o644)
 
-    const rec = '## 讨论记录\n\n'
-    atomicWriteFileSync(join(dir, ledgerRecordFile), new TextEncoder().encode(rec), 0o644)
+    // RECORD.md: keep pre-start appends (the opening lightning round settles
+    // before start initializes the ledger, so its self-healed attendance
+    // lines already live here). Per-run dirs isolate distinct chatrooms, so
+    // preserving is never stale-data reuse.
+    const recPath = join(dir, ledgerRecordFile)
+    if (!existsSync(recPath)) {
+      atomicWriteFileSync(recPath, new TextEncoder().encode('## 讨论记录\n\n'), 0o644)
+    }
   })
 }
 
@@ -204,6 +212,13 @@ export function appendChatroomLedger(dir: string, roleName: string, reply: strin
     const time = nowClock().slice(11)
     const entry = `- [${time}] 【${roleName}】：${reply.trim()}\n`
     const recordPath = join(dir, ledgerRecordFile)
+    // Self-heal for appends that land before initChatroomLedger (the
+    // opening lightning round settles before start): create the dir and the
+    // record heading so attendance lines never drop (2026-09-07 oc_94b41a).
+    mkdirSync(dir, { recursive: true })
+    if (!existsSync(recordPath)) {
+      atomicWriteFileSync(recordPath, new TextEncoder().encode('## 讨论记录\n\n'), 0o644)
+    }
     appendFileSync(recordPath, entry, 'utf8')
     rotateChatroomRecord(dir, recordPath)
   })

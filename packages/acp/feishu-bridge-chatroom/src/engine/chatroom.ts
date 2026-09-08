@@ -1172,7 +1172,7 @@ export function hasActiveChatroomPoll(e: Engine, hubKey: string): boolean {
  * @param poll - The settled poll round whose statements are persisted.
  */
 async function persistPollStatements(e: Engine, hubKey: string, poll: ChatroomPoll): Promise<void> {
-  const dir = chatroomLedgerDirFor(e, hubKey)
+  const dir = pollLedgerDirFor(e, hubKey)
   if (dir === undefined) return
   const tag = poll.round === 'opening' ? '开场快答' : '收尾补盲'
   const names = [...poll.collected.keys(), ...poll.expected].sort()
@@ -1185,6 +1185,27 @@ async function persistPollStatements(e: Engine, hubKey: string, poll: ChatroomPo
       console.warn(`chatroom: poll statement ledger append failed (hub=${hubKey} role=${n}): ${String(error)}`)
     }
   }
+}
+
+/**
+ * The ledger dir a settled poll's attendance lines belong to. Pre-start
+ * (moderator flag down — the guided opening round settles before `start`
+ * consumes a run number) that is the NEXT run's dir, so a second chatroom on
+ * the same hub never appends into the previous run's ledger; once started,
+ * the current run's dir is the live ledger.
+ *
+ * @param e - Engine whose chatroom ledger is addressed.
+ * @param hubKey - Session key of the moderator hub.
+ * @returns the ledger dir for the poll's attendance lines, or undefined
+ * when no moderator dir is configured.
+ */
+function pollLedgerDirFor(e: Engine, hubKey: string): string | undefined {
+  const mod = chatroomConfig(e).moderatorDir()
+  if (!mod.ok) return undefined
+  const hub = e.sessions.findActive(hubKey)
+  const started = hub !== undefined && chatroomState(hub).chatroomModerator
+  const run = hub === undefined ? 1 : chatroomState(hub).chatroomLedgerRun + (started ? 0 : 1)
+  return chatroomLedgerDir(mod.dir, hubKey, Math.max(run, 1))
 }
 
 /**
@@ -1899,6 +1920,13 @@ export function finalizeChatroomEnd(e: Engine, hubKey: string, endedStatus: 'end
     // in the same group inherits the previous round count.
     clearChatroomResearchFlags(hub)
   }
+  // The hub's own spawned-chat done mark: roles get theirs through
+  // cleanupOneChat above, but the moderator-tool end path has no generic
+  // /done teardown behind it, so without this the ended hub keeps its
+  // discussing avatar and active spawned-state entry (2026-09-07 oc_94b41a).
+  void e.markSpawnedChatDone(p, hubKey).catch((error: unknown) => {
+    console.warn(`chatroom: hub done-mark failed (${hubKey}): ${String(error)}`)
+  })
   e.sessions.save()
   // Stamp the terminal state into the ledger header (best-effort: the write
   // rides the ledger chain; a failure warns and leaves the entry 未收尾,

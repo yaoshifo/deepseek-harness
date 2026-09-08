@@ -16,6 +16,7 @@ import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { chatroomPolicyFace } from '../stubs/bridge-policy.ts'
 import { registerChatroomCommands } from '../../src/engine/chatroom-cmd.ts'
 import { ChatroomPoll } from '../../src/engine/chatroom-poll.ts'
+import { chatroomLedgerDir } from '../../src/engine/chatroom-ledger.ts'
 import { pollRoles } from '../../src/engine/chatroom.ts'
 import type { Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { createStubAgent, createStubChatroomSpawner, newStubMessage } from '../stubs/engine-stubs.ts'
@@ -298,5 +299,75 @@ describe('pollRoles', () => {
       const els = (card as { elements?: Array<{ kind?: string; content?: string }> }).elements ?? []
       return els.some(el => el.kind === 'markdown' && (el.content ?? '').includes('快答完成'))
     }
+  })
+})
+
+describe('ChatroomPoll attendance persistence', () => {
+  it('an opening poll that settles before start lands its lines in RECORD.md and start keeps them', async () => {
+    // The guided flow's opening lightning round settles BEFORE start
+    // initializes the ledger (2026-09-07 oc_94b41a: 13 ENOENT warns, every
+    // attendance line lost, the moderator re-summarized by hand).
+    const p = createStubChatroomSpawner()
+    const { agent, calls } = createPollStubAgent()
+    const e = newPollTestEngine(p, agent)
+    const mod = await mkdtemp(join(tmpdir(), 'fb-poll-mod-'))
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldThreeRoles(), moderatorDir: mod })
+    const hub = 'test:hub:user-1'
+    e.sessions.getOrCreateActive(hub) // the spawned hub group's session
+    const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+
+    pollRoles(e, hub, '开场快答：一句话立场', 'opening')
+    await waitFor(() => calls.length >= 3, 'poll queries dispatched')
+    calls[0]!.resolveWith('想深聊')
+    calls[1]!.resolveWith('表态即可')
+    calls[2]!.resolveWith('不相关')
+    await waitFor(() => wake.mock.calls.length > 0, 'moderator wake')
+
+    const { chatroomLedgerDirFor, startChatroom } = await import('../../src/engine/chatroom.ts')
+    const dir = chatroomLedgerDirFor(e, hub)!
+    const rec = await readFile(join(dir, 'RECORD.md'), 'utf8')
+    expect(rec).toContain('## 讨论记录')
+    for (const n of ['munger', 'popper', 'taleb']) expect(rec).toContain(`【${n}】`)
+    expect(rec).toContain('想深聊')
+
+    // start initializes the ledger afterwards and must keep the lines.
+    await startChatroom(e, hub, ['taleb'], 'topic')
+    await settle() // init rides the serialized ledger write chain
+    const rec2 = await readFile(join(dir, 'RECORD.md'), 'utf8')
+    expect(rec2).toContain('想深聊')
+  })
+})
+
+describe('ChatroomPoll attendance persistence (multi-run)', () => {
+  it("a second chatroom's pre-start poll lands in the NEXT run dir, not the previous run's ledger", async () => {
+    const p = createStubChatroomSpawner()
+    const { agent, calls } = createPollStubAgent()
+    const e = newPollTestEngine(p, agent)
+    const mod = await mkdtemp(join(tmpdir(), 'fb-poll-mod2-'))
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldThreeRoles(), moderatorDir: mod })
+    const hub = 'test:hub:user-1'
+    e.sessions.getOrCreateActive(hub)
+
+    // Run 1: a full start + end leaves chatroomLedgerRun at 1.
+    const { startChatroom, endChatroom, chatroomLedgerDirFor } = await import('../../src/engine/chatroom.ts')
+    await startChatroom(e, hub, ['taleb'], 'topic-1')
+    expect(endChatroom(e, hub).status).toBe('ended')
+    await settle()
+    const run1Dir = chatroomLedgerDirFor(e, hub)!
+    const run1Before = await readFile(join(run1Dir, 'RECORD.md'), 'utf8')
+
+    // Run 2's guided flow: opening poll settles BEFORE start.
+    const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+    pollRoles(e, hub, '开场快答：一句话立场', 'opening')
+    await waitFor(() => calls.length >= 3, 'poll queries dispatched')
+    for (const c of calls) c.resolveWith('想深聊')
+    await waitFor(() => wake.mock.calls.length > 0, 'moderator wake')
+
+    const run2Dir = chatroomLedgerDir(mod, hub, 2)
+    const rec2 = await readFile(join(run2Dir, 'RECORD.md'), 'utf8')
+    expect(rec2).toContain('想深聊')
+    // The previous run's ledger is untouched.
+    const run1After = await readFile(join(run1Dir, 'RECORD.md'), 'utf8')
+    expect(run1After).toBe(run1Before)
   })
 })

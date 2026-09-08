@@ -747,8 +747,12 @@ describe('EndChatroom teardown of non-role children', () => {
     const { endChatroom } = await import('../../src/engine/chatroom.ts')
     const res = endChatroom(e, hub)
     expect(res.status).toBe('ended')
-    await waitFor(() => p.doneKeys.length === 2, '2 roles cleaned')
-    for (const k of p.doneKeys) expect(roleKeys.has(k)).toBe(true)
+    await waitFor(() => p.doneKeys.length === 3, '2 roles + hub cleaned')
+    for (const k of p.doneKeys) expect(roleKeys.has(k) || k === hub).toBe(true)
+    // The hub itself is marked done too: the moderator-tool end path has no
+    // generic /done teardown behind it, so without this the ended hub keeps
+    // its discussing avatar and spawned-state entry (2026-09-07 oc_94b41a).
+    expect(p.doneKeys).toContain(hub)
     // Ended roles no longer appear in ListChatroomRoles.
     expect(listChatroomRoles(e, hub)).toHaveLength(0)
   })

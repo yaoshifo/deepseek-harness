@@ -77,6 +77,33 @@ describe('appendChatroomLedger', () => {
     const sub = await read(join(d, 'SUBPROBLEMS.md'))
     expect(sub).not.toContain('厚尾下平均会骗人')
   })
+
+  it('self-heals before init: an opening-poll append creates the dir and record heading', async () => {
+    // The opening lightning round settles BEFORE start initializes the
+    // ledger, so the attendance appends find no RECORD.md (2026-09-07
+    // oc_94b41a: 13 ENOENT warns, every attendance line lost).
+    const root = await mkdtemp(join(tmpdir(), 'fb-ledger-'))
+    const d = chatroomLedgerDir(root, 'hub-1')
+    await appendChatroomLedger(d, 'taleb', '（开场快答）想深聊')
+    const rec = await read(join(d, 'RECORD.md'))
+    expect(rec).toContain('## 讨论记录')
+    expect(rec).toContain('【taleb】')
+    expect(rec).toContain('想深聊')
+  })
+
+  it('init preserves pre-start RECORD lines but rewrites the other two files', async () => {
+    // start's init lands after the opening poll's self-healed appends: the
+    // attendance record must survive it (per-run dirs already isolate
+    // distinct chatrooms, so preserving is not stale-data reuse).
+    const root = await mkdtemp(join(tmpdir(), 'fb-ledger-'))
+    const d = chatroomLedgerDir(root, 'hub-1')
+    await appendChatroomLedger(d, 'taleb', '（开场快答）想深聊')
+    await initChatroomLedger(d, '正式议题', ['taleb'])
+    const rec = await read(join(d, 'RECORD.md'))
+    expect(rec).toContain('想深聊')
+    const syn = await read(join(d, 'SYNTHESIS.md'))
+    expect(syn).toContain('正式议题')
+  })
 })
 
 /** A freshly initialized single-role ledger dir for rotation tests. */
