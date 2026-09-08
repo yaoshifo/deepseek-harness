@@ -434,6 +434,25 @@ describe('registerSkillsMcpCommands', () => {
     }
   })
 
+  it('/mcp marks nothing masked when the allowlist is empty (Cordis materializes absent arrays as [])', async () => {
+    const { e, p, disposeSession, disposeCommands } = newFixture({
+      toolNames: () => ['mcp__web-reader__webReader', 'mcp__zread__read_file'],
+      allowlist: [],
+    })
+    try {
+      expect(e.dispatchCommand(p, cmdMsg('/mcp'), '/mcp')).toBe(true)
+      await flush()
+      const text = p.getSent().at(-1) ?? ''
+      expect(text.startsWith(`**${e.i18n.tf(Msg.McpTitle, 2)}**\n\n`)).toBe(true)
+      expect(text).toContain(`**web-reader**${e.i18n.tf(Msg.McpTools, 1)}`)
+      expect(text).toContain(`**zread**${e.i18n.tf(Msg.McpTools, 1)}`)
+      expect(text).not.toContain(e.i18n.t(Msg.McpMasked))
+    } finally {
+      disposeCommands()
+      disposeSession()
+    }
+  })
+
   it('/mcp marks health-watched servers with no live tools as degraded', async () => {
     const { e, p, disposeSession, disposeCommands } = newFixture({
       toolNames: () => ['mcp__web__ping'],

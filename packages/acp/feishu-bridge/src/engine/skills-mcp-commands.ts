@@ -49,7 +49,12 @@ export interface SkillsMcpCommandDeps {
   readonly toolNames: () => readonly string[]
   /** Servers configured for health watching (degradation cross-check). */
   readonly healthServers?: readonly McpHealthServerConfig[] | undefined
-  /** Project `mcpServers` allowlist; present = sessions only see these servers' tools. */
+  /**
+   * Project `mcpServers` allowlist; non-empty = sessions only see these
+   * servers' tools. Empty or absent = unrestricted: Cordis validation
+   * materializes absent `Schema.array()` fields as `[]`, so both forms
+   * arrive identically — the same empty guard the adapter's mask applies.
+   */
   readonly allowlist?: readonly string[] | undefined
   /** Servers a directory `.mcp.json` would mount for a cwd; absent = the mcp-workspace service is not composed. */
   readonly listWorkspaceServers?: ((cwd: string) => Promise<readonly { readonly name: string; readonly transport: string }[]>) | undefined
@@ -277,7 +282,7 @@ async function cmdMcp(e: Engine, p: Platform, msg: Message, args: string[], deps
   }
   for (const group of groups) {
     let line = `**${group.server}**${e.i18n.tf(Msg.McpTools, group.tools.length)}`
-    if (deps.allowlist !== undefined && !deps.allowlist.includes(group.server)) {
+    if (deps.allowlist !== undefined && deps.allowlist.length > 0 && !deps.allowlist.includes(group.server)) {
       line += e.i18n.t(Msg.McpMasked)
     }
     lines.push(line)

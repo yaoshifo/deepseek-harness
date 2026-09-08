@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-`config.projects[].mcpServers` 是 per-project 的 MCP server 名允许列表（缺省 = 不限制、行为不变）。配置后，该项目的 adapter 以可见性掩码拒掉所有非允许 server 的 `mcp__*` 工具——MCP 连接保持进程级全局，改变的只是会话能看到什么。三个创建漏斗承载掩码，全部在 `DshAgentAdapter` 内：
+`config.projects[].mcpServers` 是 per-project 的 MCP server 名允许列表（缺省或空 = 不限制、行为不变——Cordis 校验会把未配置的 `Schema.array()` 字段物化为 `[]`，两种形态到代码里无法区分）。非空时，该项目的 adapter 以可见性掩码拒掉所有非允许 server 的 `mcp__*` 工具——MCP 连接保持进程级全局，改变的只是会话能看到什么。三个创建漏斗承载掩码，全部在 `DshAgentAdapter` 内：
 
 - **会话 setup 钩子**（`withMcpMask` 包装 `buildSessionSetup` 与 one-shot 提示 setup）：在被包装 setup 组装完自己的段之后，枚举 agent 作用域的 schema 视图并调 `tools.restrict({ deny })`。deny 名单在钩子内计算，取自 `restrict` 校验名字所用的同一个未受限视图——setup 时刻先于任何 restriction，视图仍持有全部全局工具。这覆盖普通会话、resume、fork、chatroom 人设（其 `skill` 拒绝与之取交集）与 one-shot 查询。
 - **Continuable subtask 子会话**：子会话不继承父会话的限制（agent 作用域设计），因此 `startContinuableChild` 从全局工具视图重算 deny 名单并作为请求的 `toolFilter` 转发——in-process fork/spawn 两个 provider 都声明 `toolFilter` 能力，在子会话创建窗口应用，并持久化进子会话的 descriptor，resume 的子会话保持掩码。
@@ -27,5 +27,6 @@ Status: implemented
 ## Consequences
 
 - 每个被掩码项目的模型请求去掉非允许 server 的工具 schema（每步复现的节省），Code Mode SDK 绑定被同一 restriction 过滤；未配置的项目与不带 `mcpServers` 的部署不受影响。
+- Cordis 校验把未配置的 `mcpServers` 物化为 `[]`，「缺省」与「配了空列表」因此不可区分，所有消费者都把空列表当不限制——adapter 的 setup 钩子（`allow.length > 0`）与 `/mcp` 遮蔽标注用同一个空列表守卫，未配置的项目不渲染任何遮蔽标注。
 - **复活泄漏**：server 在会话启动后重连，其工具作为该会话 deny 名单之外的晚到名字重新出现——deny 掩码放行晚到未点名的全局工具——直到下次会话创建/resume 重算掩码前一直可见。自愈，已记入包 README 的 Known Limitations；core `tools` 的 pattern 化 restriction 是升级路径。
 - 掩码是可见性组合，不是权限边界（dsh tools 的 scope 安全非目标）：模型看不到被掩码的工具，但该设计不防御绕过视图的调用方。
