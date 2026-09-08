@@ -384,6 +384,13 @@ export interface EngineSubprocessSpec {
   argv: readonly string[]
   /** Working directory for the child. */
   cwd: string
+  /**
+   * Explicit environment entries merged onto the provider's scrubbed ambient
+   * base (credential-shaped names survive only here). Undefined = ambient
+   * only. Values are resolved per run; only the requested names are
+   * persisted anywhere.
+   */
+  env?: Record<string, string> | undefined
   /** Per-stream retained-output bound in bytes. */
   stdoutMaxBytes: number
   /** Caller cancellation; aborting terminates the whole managed range, backgrounded descendants included. */

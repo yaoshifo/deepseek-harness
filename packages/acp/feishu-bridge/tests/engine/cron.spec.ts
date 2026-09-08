@@ -422,6 +422,33 @@ describe('CronJob_JSONLegacyUnmarshal', () => {
   })
 })
 
+describe('CronJob_EnvKeys', () => {
+  it('round-trips declared env_keys names and stays empty on rows without the field', () => {
+    const j = CronJob.fromJSON(JSON.parse(
+      '{"id":"1","project":"p","session_key":"t:1:1","cron_expr":"0 6 * * *","exec":"backup.sh","enabled":true,'
+      + '"env_keys":["VOLCENGINE_ACCESS_KEY","TENCENTCLOUD_SECRET_KEY"]}',
+    ) as Record<string, unknown>)
+    expect(j.envKeys).toEqual(['VOLCENGINE_ACCESS_KEY', 'TENCENTCLOUD_SECRET_KEY'])
+    expect(j.toJSON()).toMatchObject({ env_keys: ['VOLCENGINE_ACCESS_KEY', 'TENCENTCLOUD_SECRET_KEY'] })
+
+    const legacy = CronJob.fromJSON(JSON.parse(
+      '{"id":"2","project":"p","session_key":"t:1:1","cron_expr":"0 6 * * *","prompt":"x","enabled":true}',
+    ) as Record<string, unknown>)
+    expect(legacy.envKeys).toEqual([])
+    expect(legacy.toJSON()).not.toHaveProperty('env_keys')
+  })
+
+  it('drops non-string entries at the durable boundary and updates by field name', () => {
+    const j = CronJob.fromJSON({ env_keys: ['A', 7, '', 'B'] })
+    expect(j.envKeys).toEqual(['A', 'B'])
+    const store = new CronStore(tempDir())
+    store.add(newJob({ id: 'ek1', project: 'p', sessionKey: 'test:1:1', cronExpr: '0 6 * * *', exec: 'run' }))
+    expect(store.update('ek1', 'env_keys', ['C', 'D'])).toBe(true)
+    expect(store.get('ek1')?.envKeys).toEqual(['C', 'D'])
+    expect(store.update('ek1', 'env_keys', 'C,D')).toBe(false)
+  })
+})
+
 describe('CronScheduler_AddJob_NegativeTimeoutMins', () => {
   it('rejects a negative timeout_mins', () => {
     const store = new CronStore(tempDir())

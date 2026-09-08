@@ -4850,6 +4850,22 @@ export class Engine {
     if (this.subprocess === undefined) {
       throw new Error('engine has no subprocess runner wired; cron exec jobs are unavailable')
     }
+    // Declared env_keys resolve from this daemon process's environment (the
+    // systemd EnvironmentFile values); a missing name fails the run loud —
+    // names only, never values, in the message.
+    let env: Record<string, string> | undefined
+    if (job.envKeys.length > 0) {
+      env = {}
+      const missing: string[] = []
+      for (const key of job.envKeys) {
+        const value = process.env[key]
+        if (value === undefined) missing.push(key)
+        else env[key] = value
+      }
+      if (missing.length > 0) {
+        throw new Error(`cron exec env_keys not present in the daemon environment: ${missing.join(', ')}`)
+      }
+    }
     const timeoutMs = job.executionTimeoutMs()
     const ac = new AbortController()
     const timer = timeoutMs > 0 ? setTimeout(() => { ac.abort() }, timeoutMs) : undefined
@@ -4858,6 +4874,7 @@ export class Engine {
       const outcome = await this.subprocess.run({
         argv: ['sh', '-c', job.exec],
         cwd: workDir,
+        env,
         // Memory bound on the collected job output; the chat message
         // truncates to a few thousand characters far below it.
         stdoutMaxBytes: 64 * 1024,

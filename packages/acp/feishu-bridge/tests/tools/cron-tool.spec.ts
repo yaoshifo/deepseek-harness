@@ -9,7 +9,7 @@
  * @module dsh-feishu-bridge/tests-tools-cron
  */
 
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -414,6 +414,67 @@ describe('feishu_bridge_cron action routing', () => {
     const err = await execute(test, { action: 'info', id: 'missing' })
     expect(err.isError).toBe(true)
     expect(errorText(err)).toContain('not found')
+  })
+
+  it('add exec with envKeys stores declared names only; jobs.json never carries values', async () => {
+    const r = newRoutedEngine('proj-x')
+    r.engine.adminFrom = 'boss'
+    r.engine.sessions.getOrCreateActive('feishu:chat-9:boss').setSpawnUserID('boss')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'feishu:chat-9:boss' }))
+    const prev = process.env.FB_CRON_TOOL_KEY
+    process.env.FB_CRON_TOOL_KEY = 'tool-secret-value'
+    try {
+      const v = value(await execute(test, {
+        action: 'add', cronExpr: '0 3 * * *', exec: 'backup-to-cloud.sh',
+        envKeys: ['FB_CRON_TOOL_KEY'],
+      }))
+      const job = r.addJob.mock.calls[0]?.[0] as CronJob
+      expect(job.envKeys).toEqual(['FB_CRON_TOOL_KEY'])
+      // The persisted row and the tool message carry the name, never the value.
+      const persisted = readFileSync(r.store.path, 'utf8')
+      expect(persisted).toContain('FB_CRON_TOOL_KEY')
+      expect(persisted).not.toContain('tool-secret-value')
+      expect(v.message).toContain('FB_CRON_TOOL_KEY')
+      expect(v.message).not.toContain('tool-secret-value')
+    } finally {
+      if (prev === undefined) delete process.env.FB_CRON_TOOL_KEY
+      else process.env.FB_CRON_TOOL_KEY = prev
+    }
+  })
+
+  it('add with envKeys but no exec fails loud (env_keys is the exec-job channel)', async () => {
+    const r = newRoutedEngine('proj-x')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'test:p' }))
+    const err = await execute(test, { action: 'add', cronExpr: '0 3 * * *', prompt: 'digest', envKeys: ['SOME_KEY'] })
+    expect(err.isError).toBe(true)
+    expect(errorText(err)).toContain('exec')
+    expect(r.addJob).not.toHaveBeenCalled()
+  })
+
+  it('editing env_keys needs an admin and parses the comma-separated name list', async () => {
+    const r = newRoutedEngine('proj-x')
+    const job = new CronJob()
+    job.id = 'ek000001'
+    job.project = 'proj-x'
+    job.sessionKey = 'feishu:mine'
+    job.cronExpr = '0 3 * * *'
+    job.exec = 'backup.sh'
+    job.enabled = true
+    r.store.add(job)
+    r.engine.sessions.getOrCreateActive('feishu:mine').setSpawnUserID('u1')
+    const test = await harness(() => ({ engine: r.engine, sessionKey: 'feishu:mine' }))
+
+    // The owning chat cannot widen its job's credential reach (the add-exec trust line).
+    const denied = await execute(test, { action: 'edit', id: 'ek000001', field: 'env_keys', value: 'EVIL_KEY' })
+    expect(denied.isError).toBe(true)
+    expect(errorText(denied)).toContain('administrator')
+    expect(r.store.get('ek000001')?.envKeys).toEqual([])
+
+    r.engine.adminFrom = 'u1'
+    const v = value(await execute(test, { action: 'edit', id: 'ek000001', field: 'env_keys', value: 'KEY_A, KEY_B' }))
+    expect(v.message).toContain('updated')
+    expect(r.updateJob).toHaveBeenCalledWith('ek000001', 'env_keys', ['KEY_A', 'KEY_B'])
+    expect(r.store.get('ek000001')?.envKeys).toEqual(['KEY_A', 'KEY_B'])
   })
 
   it('edit converts typed values and routes to scheduler.updateJob', async () => {

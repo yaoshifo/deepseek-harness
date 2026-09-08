@@ -1070,6 +1070,8 @@ interface SubprocessServiceLike {
   spawn(spec: {
     argv: readonly string[]
     cwd: string
+    /** Explicit entries merged after the service's ambient credential scrub. */
+    env?: Record<string, string> | undefined
     stdio: {
       stdin: 'ignore'
       stdout: { maxBytes: number; spill: { maxBytes: number } }
@@ -1104,6 +1106,7 @@ export function createCronSubprocessRunner(ctx: Context): EngineSubprocess {
       const handle = service.spawn({
         argv: spec.argv,
         cwd: spec.cwd,
+        env: spec.env,
         stdio: {
           stdin: 'ignore',
           stdout: { maxBytes: spec.stdoutMaxBytes, spill: { maxBytes: 0 } },

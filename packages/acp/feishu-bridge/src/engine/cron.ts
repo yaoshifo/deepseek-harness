@@ -61,6 +61,12 @@ export class CronJob {
   sessionMode: string = ''
   /** Permission mode override for this job; '' = project default. */
   mode: string = ''
+  /**
+   * Environment variable names an exec job receives from the daemon
+   * environment (systemd EnvironmentFile values); names only — values are
+   * resolved per run and never persisted, logged, or sent.
+   */
+  envKeys: string[] = []
   /** undefined = default 30m wait; 0 = no limit; >0 = minutes. */
   timeoutMins: number | undefined
   /** Creation time (ISO string; '' = never). */
@@ -122,6 +128,9 @@ export class CronJob {
     j.mute = raw.mute === true
     j.sessionMode = asString(raw.session_mode)
     j.mode = asString(raw.mode)
+    j.envKeys = Array.isArray(raw.env_keys)
+      ? raw.env_keys.filter((k): k is string => typeof k === 'string' && k !== '')
+      : []
     j.timeoutMins = typeof raw.timeout_mins === 'number' ? raw.timeout_mins : undefined
     j.createdAt = zeroToEmpty(asString(raw.created_at))
     j.lastRun = zeroToEmpty(asString(raw.last_run))
@@ -150,6 +159,7 @@ export class CronJob {
     if (this.mute) out.mute = this.mute
     if (this.sessionMode !== '') out.session_mode = this.sessionMode
     if (this.mode !== '') out.mode = this.mode
+    if (this.envKeys.length > 0) out.env_keys = [...this.envKeys]
     if (this.timeoutMins !== undefined) out.timeout_mins = this.timeoutMins
     if (this.createdAt !== '') out.created_at = this.createdAt
     if (this.lastRun !== '') out.last_run = this.lastRun
@@ -432,6 +442,12 @@ function updateJobField(job: CronJob, field: string, value: unknown): boolean {
     case 'timeout_mins':
       if (typeof value === 'number') {
         job.timeoutMins = Math.trunc(value)
+        return true
+      }
+      return false
+    case 'env_keys':
+      if (Array.isArray(value) && value.every(v => typeof v === 'string' && v !== '')) {
+        job.envKeys = (value as string[]).slice()
         return true
       }
       return false
