@@ -341,6 +341,33 @@ describe('sendFollowupsCard', () => {
   })
 })
 
+describe('stopInteractiveSession: followups salvage', () => {
+  it('delivers the deferred followups card instead of discarding it on stop (oc_469693e0 shape)', async () => {
+    const { e, state, p } = armedState()
+    // The closing-card ask registered the suggestion card; a queued takeover
+    // kept the registration for the drain loop's final turn (engine.ts:4038).
+    await e.askUser('test:chat:user1', questionsAsk(q()))
+    expect(state.pendingFollowups).toBeDefined()
+
+    // The user stops the takeover turn: the earned card must still reach the
+    // chat instead of dying with the torn-down state.
+    expect(e.stopInteractiveSession('test:chat:user1')).toBe(true)
+
+    await waitFor(() => p.sentCards.length === 1)
+    expect(p.sentCards).toHaveLength(1)
+    expect(state.pendingFollowups).toBeUndefined()
+  })
+
+  it('sends no card on stop when nothing is registered', async () => {
+    const { e, p } = armedState()
+
+    expect(e.stopInteractiveSession('test:chat:user1')).toBe(true)
+
+    await new Promise((r) => { setTimeout(r, 50) })
+    expect(p.sentCards).toHaveLength(0)
+  })
+})
+
 /** Poll a predicate until it holds or the deadline passes (pump timing). */
 async function waitFor(pred: () => boolean, ms = 3000): Promise<void> {
   const deadline = Date.now() + ms

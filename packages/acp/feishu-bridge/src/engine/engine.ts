@@ -4463,6 +4463,15 @@ export class Engine {
     // Abort in-flight renders so their cancel handles don't orphan with the
     // state and keep burning tokens on a stale HTML (Go cancelRenders).
     cancelRenders(state)
+    // Salvage a deferred followups card: the registration belongs to a turn
+    // that already completed and was kept for the drain loop's final turn —
+    // a stop cutting that takeover short must still deliver it, not let it
+    // die with the torn-down state (2026-09-08 oc_469693e0: queued takeover
+    // + /stop silently lost the card).
+    const salvagePlatform = state.platform
+    if (state.pendingFollowups !== undefined && salvagePlatform !== undefined) {
+      void this.sendFollowupsCard(state, salvagePlatform, state.replyCtx, sessionKey)
+    }
     this.notifyDroppedQueuedMessages(state, new Error('session reset'))
     // Staged attachments die with the session: without this the pendingDir
     // leaks on disk (Go regression test for /new and /stop).
