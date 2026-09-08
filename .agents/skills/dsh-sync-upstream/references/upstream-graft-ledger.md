@@ -31,6 +31,7 @@
 | user-questions recommended 旗标 + tool-ask-user schema 收紧 | — | 待提上游 |
 | core/tools normalizeKeyStyleVariants 输入边界键风格归一 | cec5236dfd | 待提上游 |
 | core/session SessionOrigin oneshot（8 文件一行级涟漪） | — | 待提上游 |
+| dsh-agent-loop 导出 inboxProjectionDefinition（桥重启 pending 告知要注册该单元） | 972c03a146 | 待提上游（导出一行；桥的 G3 依赖它） |
 | core/agent reasoningEffort 会话级覆盖 | — | 随批提 |
 
 ## fs / todo / shell / mcp / skill / llm / client（S 级批）
