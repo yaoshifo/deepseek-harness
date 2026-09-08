@@ -12,8 +12,8 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { Inbox } from '@deepseek-ai/dsh-agent'
-import type { Agent, AgentCancelCause, InboxTarget } from '@deepseek-ai/dsh-agent'
+import AgentRegistry from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentCancelCause, Inbox, InboxTarget } from '@deepseek-ai/dsh-agent'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
@@ -37,6 +37,46 @@ import { createStubAgent, createStubChatroomSpawner, createStubSpawnerPlatform, 
 import { chatroomState } from '../../src/chatroom-state.ts'
 import '../stubs/messages.js'
 
+/** In-memory Inbox double for hand-built Agents; the concrete class is loop-internal. */
+function stubInbox(): Inbox {
+  type Message = Inbox['nextTurn'][number]
+  const nextTurn: Message[] = []
+  const nextStep: Message[] = []
+  const list = (target: InboxTarget): Message[] => (target === 'next-turn' ? nextTurn : nextStep)
+  return {
+    nextTurn,
+    nextStep,
+    clear: () => {
+      nextStep.length = 0
+      nextTurn.length = 0
+    },
+    append: (target, message) => { list(target).push(message) },
+    prepend: (target, message) => { list(target).unshift(message) },
+    replace: (messageId, newMessage) => {
+      for (const messages of [nextStep, nextTurn]) {
+        const index = messages.findIndex(message => message.id === messageId)
+        if (index !== -1) {
+          messages[index] = newMessage
+          return true
+        }
+      }
+      return false
+    },
+    remove: (messageId) => {
+      for (const messages of [nextStep, nextTurn]) {
+        const index = messages.findIndex(message => message.id === messageId)
+        if (index !== -1) {
+          messages.splice(index, 1)
+          return true
+        }
+      }
+      return false
+    },
+    splice: (target, start, deleteCount, inserted) => list(target).splice(start, deleteCount, ...inserted),
+  }
+}
+
+
 const signal = new AbortController().signal
 const contexts: Context[] = []
 
@@ -46,7 +86,7 @@ afterEach(async () => {
 
 function stubAgent(ctx: Context, id: string): Agent {
   const session = ctx.sessions.create(SessionId(id))
-  const inbox = new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} })
+  const inbox = stubInbox()
   return {
     id: session.id,
     options: {},

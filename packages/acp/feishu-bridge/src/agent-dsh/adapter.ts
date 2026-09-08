@@ -179,7 +179,7 @@ export interface DshPersistenceLike {
   /** Read-only handle over one stored session: header plus the logical log. */
   open(id: unknown, access: 'read'): Promise<{
     header: SessionHeader
-    read(offset?: number, length?: number): Promise<readonly SessionEvent[]>
+    read(offset?: number, length?: number): Promise<{ events: readonly SessionEvent[] }>
   }>
   /** Lightweight listing from metadata, without a full-log parse. */
   list(options?: unknown): Promise<readonly { header: SessionHeader }[]>
@@ -1179,7 +1179,7 @@ export class DshAgentAdapter {
     if (persistence === undefined) return undefined
     let events: readonly SessionEvent[]
     try {
-      events = await (await persistence.open(SessionId(origID), 'read')).read()
+      events = (await (await persistence.open(SessionId(origID), 'read')).read()).events
     } catch {
       // The backend rejects unknown ids; that rejection is the only error
       // path (a read of an existing session resolves), and it means "no
@@ -1221,7 +1221,7 @@ export class DshAgentAdapter {
     let inspection: { meta: SessionHeader; events: readonly SessionEvent[] }
     try {
       const handle = await persistence.open(SessionId(origID), 'read')
-      inspection = { meta: handle.header, events: await handle.read() }
+      inspection = { meta: handle.header, events: (await handle.read()).events }
     } catch (error) {
       throw new Error(`dsh: fork-at source session "${origID}" not found: ${String(error instanceof Error ? error.message : error)}`)
     }
@@ -2100,7 +2100,7 @@ export class DshAgentAdapter {
     if (persistence === undefined) return []
     let events: readonly SessionEvent[]
     try {
-      events = await (await persistence.open(SessionId(agentSessionID), 'read')).read()
+      events = (await (await persistence.open(SessionId(agentSessionID), 'read')).read()).events
     } catch {
       // The backend rejects unknown ids; that rejection is the only error
       // path here and means "no window".

@@ -48,7 +48,7 @@ function fakePersistence(stored: Map<string, SessionEvent[]>): DshPersistenceLik
       const events = stored.get(String(id))
       if (events === undefined) throw new Error(`session "${String(id)}" not found`)
       const header = { version: SESSION_FORMAT_VERSION, id: String(id), createdAt: 0 } as SessionHeader
-      return { header, read: async () => events }
+      return { header, read: async () => ({ events }) }
     },
     list: async () => [],
   }

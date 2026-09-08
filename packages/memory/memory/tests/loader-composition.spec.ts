@@ -12,11 +12,52 @@ import Loader from '@deepseek-ai/cordis-plugin-loader'
 import Include from '@deepseek-ai/cordis-plugin-include'
 import { ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
-import AgentRegistry, { agentEvents, Inbox } from '@deepseek-ai/dsh-agent'
+import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
+import type { Inbox, InboxTarget } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as DshMemory from '@deepseek-ai/dsh-memory'
+
+/** In-memory Inbox double for hand-built Agents; the concrete class is loop-internal. */
+function stubInbox(): Inbox {
+  type Message = Inbox['nextTurn'][number]
+  const nextTurn: Message[] = []
+  const nextStep: Message[] = []
+  const list = (target: InboxTarget): Message[] => (target === 'next-turn' ? nextTurn : nextStep)
+  return {
+    nextTurn,
+    nextStep,
+    clear: () => {
+      nextStep.length = 0
+      nextTurn.length = 0
+    },
+    append: (target, message) => { list(target).push(message) },
+    prepend: (target, message) => { list(target).unshift(message) },
+    replace: (messageId, newMessage) => {
+      for (const messages of [nextStep, nextTurn]) {
+        const index = messages.findIndex(message => message.id === messageId)
+        if (index !== -1) {
+          messages[index] = newMessage
+          return true
+        }
+      }
+      return false
+    },
+    remove: (messageId) => {
+      for (const messages of [nextStep, nextTurn]) {
+        const index = messages.findIndex(message => message.id === messageId)
+        if (index !== -1) {
+          messages.splice(index, 1)
+          return true
+        }
+      }
+      return false
+    },
+    splice: (target, start, deleteCount, inserted) => list(target).splice(start, deleteCount, ...inserted),
+  }
+}
+
 
 const signal = new AbortController().signal
 const CWD = '/home/hm/workspace/ainvest'
@@ -79,7 +120,7 @@ function makeAgent(ctx: Context): Agent {
     id,
     options: {},
     session,
-    inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
+    inbox: stubInbox(),
     status: 'idle',
     ctx: scope.ctx,
     followup: () => {},

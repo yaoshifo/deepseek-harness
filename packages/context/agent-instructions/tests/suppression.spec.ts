@@ -16,7 +16,7 @@ import { Context } from '@deepseek-ai/cordis'
 import * as workspaceContext from '@deepseek-ai/dsh-agent-instructions'
 import AgentInstructionSuppression from '@deepseek-ai/dsh-agent-instructions/suppression'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
-import { Inbox, agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
+import { agentEvents, type Agent, type Inbox, type InboxTarget } from '@deepseek-ai/dsh-agent'
 import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
 import { Session, SessionId, SESSION_FORMAT_VERSION } from '@deepseek-ai/dsh-session'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -25,6 +25,46 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
 import { bindScopeParent, createScope } from '@deepseek-ai/dsh-scope'
+
+/** In-memory Inbox double for hand-built Agents; the concrete class is loop-internal. */
+function stubInbox(): Inbox {
+  type Message = Inbox['nextTurn'][number]
+  const nextTurn: Message[] = []
+  const nextStep: Message[] = []
+  const list = (target: InboxTarget): Message[] => (target === 'next-turn' ? nextTurn : nextStep)
+  return {
+    nextTurn,
+    nextStep,
+    clear: () => {
+      nextStep.length = 0
+      nextTurn.length = 0
+    },
+    append: (target, message) => { list(target).push(message) },
+    prepend: (target, message) => { list(target).unshift(message) },
+    replace: (messageId, newMessage) => {
+      for (const messages of [nextStep, nextTurn]) {
+        const index = messages.findIndex(message => message.id === messageId)
+        if (index !== -1) {
+          messages[index] = newMessage
+          return true
+        }
+      }
+      return false
+    },
+    remove: (messageId) => {
+      for (const messages of [nextStep, nextTurn]) {
+        const index = messages.findIndex(message => message.id === messageId)
+        if (index !== -1) {
+          messages.splice(index, 1)
+          return true
+        }
+      }
+      return false
+    },
+    splice: (target, start, deleteCount, inserted) => list(target).splice(start, deleteCount, ...inserted),
+  }
+}
+
 
 const testToolSignal = new AbortController().signal
 
@@ -57,7 +97,7 @@ function stubAgent(cwd: string): Agent {
     id: SessionId('a1'),
     options: {},
     session,
-    inbox: new Inbox(session, { inserted: () => {}, discarded: () => {}, claimed: () => {} }),
+    inbox: stubInbox(),
     status: 'idle',
     send: () => {},
     followup: () => {},

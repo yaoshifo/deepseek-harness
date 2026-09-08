@@ -603,7 +603,7 @@ describe('dsh-tool-subagent-report result independence', () => {
     // Nothing turns the child's final answer into a report it did not send.
     expect(reports(parent)).toEqual([])
     const childLog = await ctx.sessionPersistence.open(started.childId, 'read')
-    expect(userTexts(await childLog.read())).toEqual(['child task'])
+    expect(userTexts((await childLog.read()).events)).toEqual(['child task'])
     expect(ctx.get('jobs')).toBeUndefined()
   })
 })

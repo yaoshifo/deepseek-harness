@@ -816,7 +816,7 @@ describe('workspace instruction imports', () => {
       await write(join(root, 'provider-rules.md'), 'provider import rule')
       await write(join(root, 'AGENTS.md'), '@provider-rules.md\n')
       await mountWorkspaceContext(ctx, { dshHome: home, maxBytes: 65536 })
-      const agent = stubAgent(root)
+      const agent = await stubAgent(root)
 
       await composeBaselinePrefix(ctx, agent)
 
@@ -890,7 +890,7 @@ describe('workspace instruction imports', () => {
       await write(join(root, 'rules', 'common.md'), 'old shared rule')
       await write(join(root, 'AGENTS.md'), '@rules/common.md\n')
       await mountFileToolsAndWorkspaceContext(ctx, { dshHome: home, maxBytes: 65536 })
-      const agent = stubAgent(root)
+      const agent = await stubAgent(root)
 
       await composeBaselinePrefix(ctx, agent)
       expect(derivedText(agent)).toContain('old shared rule')
@@ -922,7 +922,7 @@ describe('workspace instruction imports', () => {
       await write(join(root, 'rules', 'common.md'), 'shared rule')
       await write(join(root, 'AGENTS.md'), '@rules/common.md\n')
       await mountFileToolsAndWorkspaceContext(ctx, { dshHome: home, maxBytes: 65536 })
-      const agent = stubAgent(root)
+      const agent = await stubAgent(root)
 
       await composeBaselinePrefix(ctx, agent)
       await ctx.tools.execute({
@@ -969,12 +969,12 @@ describe('workspace instruction imports', () => {
       await write(join(root, 'rules', 'common.md'), 'old shared rule')
       await write(join(root, 'AGENTS.md'), '@rules/common.md\n')
       await mountWorkspaceContext(ctx, { dshHome: home, maxBytes: 65536 })
-      const original = stubAgent(root)
+      const original = await stubAgent(root)
       await composeBaselinePrefix(ctx, original)
       expect(derivedText(original)).toContain('old shared rule')
 
       await write(join(root, 'rules', 'common.md'), 'new shared rule')
-      const resumed = stubAgent(root, [...original.session.snapshotEvents()])
+      const resumed = await stubAgent(root, [...original.session.snapshotEvents()])
       await composeBaselinePrefix(ctx, resumed)
 
       const update = resumed.session.snapshotEvents().findLast(event => event.type === 'user/message'
@@ -1571,7 +1571,7 @@ describe('workspace context request injection', () => {
       await write(join(root, 'AGENTS.md'), 'agents rule')
       await write(join(root, 'CLAUDE.md'), 'claude rule')
       await mountWorkspaceContext(originalCtx, { dshHome: home, maxBytes: 65536 })
-      const original = stubAgent(root)
+      const original = await stubAgent(root)
       await composeBaselinePrefix(originalCtx, original)
       expect(derivedText(original)).toContain('Instructions from: AGENTS.md')
       expect(derivedText(original)).toContain('Instructions from: CLAUDE.md')
@@ -1582,7 +1582,7 @@ describe('workspace context request injection', () => {
         instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md'],
         candidateSelection: 'first-existing',
       })
-      const resumed = stubAgent(root, [...original.session.snapshotEvents()])
+      const resumed = await stubAgent(root, [...original.session.snapshotEvents()])
       await composeBaselinePrefix(resumedCtx, resumed)
 
       const baselines = baselineEvents(resumed)
@@ -3108,7 +3108,7 @@ describe('dynamic nested workspace context injection', () => {
         instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md'],
         candidateSelection: 'first-existing',
       })
-      const agent = stubAgent(root)
+      const agent = await stubAgent(root)
 
       await ctx.tools.execute({
         signal: testToolSignal,
@@ -3160,7 +3160,7 @@ describe('dynamic nested workspace context injection', () => {
         instructionFileCandidates: ['CLAUDE.md', 'AGENTS.md'],
         candidateSelection: 'first-existing',
       })
-      const agent = stubAgent(root)
+      const agent = await stubAgent(root)
 
       await ctx.tools.execute({
         signal: testToolSignal,
