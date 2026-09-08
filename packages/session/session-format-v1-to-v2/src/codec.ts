@@ -54,8 +54,9 @@ function decodePhysicalHeader(value: unknown): SessionFormatHeader {
       throw new SessionFormatError(`released v2 header ${key} must be a string`)
     }
   }
-  if (record['origin'] !== undefined && record['origin'] !== 'subagent') {
-    throw new SessionFormatError('released v2 header origin must be "subagent"')
+  // 'oneshot': fork bridge one-shot question sessions (see validation.ts).
+  if (record['origin'] !== undefined && record['origin'] !== 'subagent' && record['origin'] !== 'oneshot') {
+    throw new SessionFormatError('released v2 header origin must be "subagent" or "oneshot"')
   }
   const header = snapshotSessionFormatJson({
     version: 2,

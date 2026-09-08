@@ -46,8 +46,11 @@ export function assertReleasedV2Header(header: SessionFormatHeader): void {
       throw new SessionFormatError(`format v2 header ${key} must be a string`)
     }
   }
-  if (record['origin'] !== undefined && record['origin'] !== 'subagent') {
-    throw new SessionFormatError('format v2 header origin must be "subagent"')
+  // 'oneshot' is the fork's origin for bridge one-shot question sessions
+  // (SessionOrigin in dsh-session); committed generations with it must stay
+  // readable now that this validation gates the jsonl read path.
+  if (record['origin'] !== undefined && record['origin'] !== 'subagent' && record['origin'] !== 'oneshot') {
+    throw new SessionFormatError('format v2 header origin must be "subagent" or "oneshot"')
   }
 }
 
