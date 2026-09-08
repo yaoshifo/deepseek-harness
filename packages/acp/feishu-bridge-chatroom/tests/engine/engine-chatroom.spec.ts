@@ -11,7 +11,7 @@
 import { mkdir, mkdtemp, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -28,9 +28,11 @@ import {
   resolveChatroomHubKey,
   routePendingHumanReply,
   startChatroom,
+  wakeChatroomModerator,
 } from '../../src/engine/chatroom.ts'
 import { roleDir } from '../../src/engine/chatroom-roles.ts'
 import {
+  chatroomPickWatchdogTimeout,
   clearChatroomPickState,
   executeChatroomCardAction,
   executeChatroomPickAction,
@@ -1167,11 +1169,68 @@ describe('RenderChatroomPickCard', () => {
     executeChatroomPickAction(e, hub, 'toggle munger')
 
     // The moderator's pick-roles finally arrives, recommending only taleb.
-    renderChatroomPickCardAndPush(e, hub, [{ name: 'taleb', recommended: true, blurb: 'why' }])
+    const outcome = renderChatroomPickCardAndPush(e, hub, [{ name: 'taleb', recommended: true, blurb: 'why' }])
+    expect(outcome).toBe('ignored-user-selecting')
     expect(ps!.selected.get('munger')).toBe(true)
     expect(ps!.selected.get('taleb')).toBeUndefined()
     expect(ps!.recs).toHaveLength(ps!.allNames.length)
     expect(ps!.userTouched).toBe(true)
+  })
+})
+
+describe('pick watchdog timing', () => {
+  /** Arm a picker under fake timers; returns its state for assertions. */
+  async function armedPicker(): Promise<{ e: Engine; hub: string; ps: ChatroomPickState }> {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    const rolesRoot = await scaffoldTwoRoles()
+    vi.useFakeTimers()
+    chatroomConfig(e).applySection({ rolesDir: rolesRoot })
+    const hub = 'test:hub:user-1'
+    const handler = e.commandHandlers?.get('chatroom')
+    handler?.(p, hubMsg(hub), ['议题'])
+    await vi.advanceTimersByTimeAsync(0)
+    const ps = pickStateOf(e, hub).chatroomPick
+    expect(ps).toBeDefined()
+    return { e, hub, ps: ps! }
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('fires the fallback card one window after arming when the moderator never wakes', async () => {
+    const { ps } = await armedPicker()
+    expect(ps.phase).toBe('picking')
+
+    vi.advanceTimersByTime(chatroomPickWatchdogTimeout + 1)
+
+    expect(ps.phase).toBe('select')
+    expect(ps.recs.every(r => !r.recommended)).toBe(true)
+    expect(ps.hint).toContain('自选')
+  })
+
+  it('defers the fallback while the moderator was woken recently (settle→pick-roles leg)', async () => {
+    // 2026-09-08 oc_9b99f: the opening poll settled one second before the
+    // watchdog's window expired; the no-recommendation fallback card went out
+    // into the ranking gap, the user started toggling, and the moderator's
+    // pick-roles was then dropped as late. A recent wake must re-open the
+    // window so the wake→pick-roles leg owns its full timeout.
+    const { e, hub, ps } = await armedPicker()
+    const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+
+    vi.advanceTimersByTime(60_000) // the opening poll settles; the moderator wakes
+    wakeChatroomModerator(e, hub, '全员快答完成（2/2）')
+    wake.mockRestore()
+
+    // Past the original arm deadline, still inside the post-wake window.
+    vi.advanceTimersByTime(chatroomPickWatchdogTimeout)
+    expect(ps.phase).toBe('picking')
+
+    // One full window after the wake, the fallback fires.
+    vi.advanceTimersByTime(chatroomPickWatchdogTimeout)
+    expect(ps.phase).toBe('select')
+    expect(ps.recs.every(r => !r.recommended)).toBe(true)
   })
 })
 

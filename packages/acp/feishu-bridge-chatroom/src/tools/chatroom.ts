@@ -319,15 +319,20 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
             }
             bootstrapChatroomPick(engine, sessionKey, topic)
           }
-          renderChatroomPickCardAndPush(engine, sessionKey, recs.map(r => ({
+          const push = renderChatroomPickCardAndPush(engine, sessionKey, recs.map(r => ({
             name: r.name,
             recommended: r.recommended,
             blurb: r.blurb,
           })))
           return {
             status: 'ok' as const,
-            message: 'Pick-roles submitted; the role-selection card has been rendered in the chatroom. '
-              + 'End your turn now.',
+            message: push === 'rendered'
+              ? 'Pick-roles submitted; the role-selection card has been rendered in the chatroom. '
+                + 'End your turn now.'
+              : 'The user is already selecting roles on the fallback picker card, so these '
+                + 'recommendations were not applied to any card. Do not claim the picker card shows '
+                + 'your picks. Briefly note your recommended roles — especially any the user has not '
+                + 'selected yet — then end your turn.',
           }
         }
         case 'pick-topic': {

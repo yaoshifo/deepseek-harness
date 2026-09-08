@@ -24,7 +24,7 @@ import { Engine, InteractiveState, ProjectStateStore } from '@deepseek-ai/dsh-fe
 import { registerChatroomTool } from '../../src/tools/chatroom.ts'
 import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { applyChatroomEngineConfig, chatroomConfig } from '../../src/chatroom-config.ts'
-import { beginChatroomTopicPick } from '../../src/engine/chatroom-pick.ts'
+import { beginChatroomTopicPick, getChatroomPickState } from '../../src/engine/chatroom-pick.ts'
 import {
   chatroomLedgerDir,
   initChatroomLedger,
@@ -371,6 +371,32 @@ describe('feishu_bridge_chatroom action routing', () => {
 
     expect(res.isError).toBe(true)
     expect(errorText(res)).toContain('already runs')
+    test.dispose()
+  })
+
+  it('pick-roles reports the truth when the user is already selecting', async () => {
+    // 2026-09-08 oc_9b99f: the watchdog's fallback card went out before the
+    // moderator's picks arrived; the user had started toggling roles, the
+    // picks were dropped — yet the tool claimed the card had been rendered
+    // with them, so the moderator told the user a recommendation card went
+    // out. The ignored path must say the picks were not applied.
+    const engine = newEngine()
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-pick-ignored-'))
+    await mkdir(join(rolesDir, 'taleb'), { recursive: true })
+    await writeFile(join(rolesDir, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    applyChatroomEngineConfig(engine, { rolesDir }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    value(await test.execute({ action: 'pick-roles', topic: '三市机会', picks: '[{"name":"taleb","recommended":true,"blurb":"why"}]' }))
+    // The fallback card is out and the user has toggled a role on it.
+    const ps = getChatroomPickState(engine, 'feishu:oc_hub:ou_1')
+    ps!.userTouched = true
+
+    const v = value(await test.execute({ action: 'pick-roles', topic: '三市机会', picks: '[{"name":"taleb","recommended":true,"blurb":"why"}]' }))
+
+    expect(v.status).toBe('ok')
+    expect(v.message).not.toContain('has been rendered')
+    expect(v.message).toContain('not applied')
+    expect(v.message).toContain('already selecting')
     test.dispose()
   })
 })

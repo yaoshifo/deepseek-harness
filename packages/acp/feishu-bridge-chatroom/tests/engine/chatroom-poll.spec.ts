@@ -255,9 +255,16 @@ describe('pollRoles', () => {
       const { getChatroomPickState } = await import('../../src/engine/chatroom-pick.ts')
       expect(getChatroomPickState(e, hub)?.phase).toBe('picking')
 
-      // The poll settles; the watchdog re-arms, and its next window expires
-      // without a pick-roles call → the fallback card renders.
+      // The poll settles; the settle wake re-opens a full window for the
+      // moderator's ranking leg (2026-09-08 oc_9b99f: a fallback fired one
+      // second after settle, the user toggled on the no-recommendation card,
+      // and the late pick-roles was dropped), so the next window expiry is
+      // still protected…
       for (const c of calls) c.resolveWith('表态')
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 100)
+      expect(getChatroomPickState(e, hub)?.phase).toBe('picking')
+      // …and without a pick-roles call the fallback card renders one window
+      // past the wake.
       await vi.advanceTimersByTimeAsync(5 * 60 * 1000 + 100)
       expect(getChatroomPickState(e, hub)?.phase).toBe('select')
     } finally {

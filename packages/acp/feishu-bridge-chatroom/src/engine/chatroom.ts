@@ -1402,6 +1402,22 @@ export function buildGatherRearmWake(e: Engine, hubKey: string, missing: string[
   return `${e.i18n.tf(Msg.ChatroomGatherRearmed, missing.length, sts.join('、'), minutes)}\n\n${base}`
 }
 
+/** Per-hub moderator wake timestamps (epoch ms), read by {@link lastChatroomWakeAt}. */
+const wakeStamps = new WeakMap<Engine, Map<string, number>>()
+
+/**
+ * The epoch-ms time of the moderator's most recent wake on a hub (0 when never
+ * woken). The role-pick watchdog defers its fallback card while a wake is inside
+ * its own window, so the wake→pick-roles ranking leg owns the full timeout.
+ *
+ * @param e - Engine owning the wake stamps.
+ * @param hubKey - Hub session key the wake targeted.
+ * @returns Epoch ms of the last wake, or 0 when none is recorded.
+ */
+export function lastChatroomWakeAt(e: Engine, hubKey: string): number {
+  return wakeStamps.get(e)?.get(hubKey) ?? 0
+}
+
 /**
  * Deliver a synthetic message to the hub session re-arming the moderator for
  * the next orchestration step (Go wakeChatroomModerator).
@@ -1413,6 +1429,12 @@ export function buildGatherRearmWake(e: Engine, hubKey: string, missing: string[
  * stall supervisor tags its wakes so activity tracking skips them).
  */
 export function wakeChatroomModerator(e: Engine, hubKey: string, content: string, metadata?: Record<string, unknown>): void {
+  let stamps = wakeStamps.get(e)
+  if (stamps === undefined) {
+    stamps = new Map()
+    wakeStamps.set(e, stamps)
+  }
+  stamps.set(hubKey, Date.now())
   const p = e.spawnCapablePlatform()
   if (p === undefined) return
   const r = asReplyContextReconstructor(p)

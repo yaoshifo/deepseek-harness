@@ -24,7 +24,7 @@ import type { ChatroomHistoryEntry } from './chatroom-ledger.ts'
 import { readChatroomLedgerHeader } from './chatroom-ledger.ts'
 import { listRoleNames } from './chatroom-roles.ts'
 import { buildChatroomPickPriming, buildChatroomTopicPickPriming } from './chatroom-priming.ts'
-import { chatroomResearchWorkspace, clearChatroomResearchFlags, ensureResearchPythonEnv, hasActiveChatroomPoll, startChatroom } from './chatroom.ts'
+import { chatroomResearchWorkspace, clearChatroomResearchFlags, ensureResearchPythonEnv, hasActiveChatroomPoll, lastChatroomWakeAt, startChatroom } from './chatroom.ts'
 import type { ChatroomInheritTarget } from './chatroom.ts'
 import { afterChatroomStarted, startChatroomDirectRole, stashChatroomResearchFlags } from './chatroom-cmd.ts'
 
@@ -322,10 +322,13 @@ function armChatroomPickWatchdog(e: Engine, p: Platform, hubKey: string): void {
   const timer = setTimeout(function pickWatchdogFire(): void {
     const ps = pickers(e).chatroomPick.get(hubKey)
     if (ps === undefined || ps.phase !== 'picking') return
-    // The priming's first act is the opening poll; while it is in flight the
-    // moderator cannot have called pick-roles yet — defer this watchdog by
-    // one more window instead of painting a stale no-recommendation card.
-    if (hasActiveChatroomPoll(e, hubKey)) {
+    // Defer while the moderator is mid-flight toward pick-roles: during the
+    // opening poll, and for one window after any wake (the poll settle or a
+    // degraded timeout wakes the moderator, whose ranking turn still needs to
+    // emit pick-roles — 2026-09-08 oc_9b99f: the fallback fired one second
+    // after settle, the user started toggling on the no-recommendation card,
+    // and the late pick-roles was then dropped as user-touched).
+    if (hasActiveChatroomPoll(e, hubKey) || Date.now() - lastChatroomWakeAt(e, hubKey) < chatroomPickWatchdogTimeout) {
       const rearm = setTimeout(pickWatchdogFire, chatroomPickWatchdogTimeout)
       rearm.unref()
       return
@@ -375,6 +378,9 @@ export function renderChatroomPickCard(e: Engine, ps: ChatroomPickState): Card {
   return cb.build()
 }
 
+/** Outcome of pushing moderator picks to the hub picker card. */
+export type ChatroomPickPushResult = 'rendered' | 'ignored-user-selecting'
+
 /**
  * Validate the moderator's recommendations, flip to 'select', and push the
  * picker card to the hub group (Go RenderChatroomPickCard, the API entry).
@@ -382,8 +388,11 @@ export function renderChatroomPickCard(e: Engine, ps: ChatroomPickState): Card {
  * @param e - Engine owning the picker state.
  * @param hubKey - Hub session key the picker is armed on.
  * @param recs - Moderator recommendations to validate and preselect from.
+ * @returns 'rendered' when the card carried the picks; 'ignored-user-selecting'
+ * when the user had already toggled roles on a rendered card and the picks
+ * were dropped without touching it.
  */
-export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: ChatroomRolePick[]): void {
+export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: ChatroomRolePick[]): ChatroomPickPushResult {
   const ps = pickers(e).chatroomPick.get(hubKey)
   // Accept 'select' too: the watchdog's fallback card must be overridable by
   // the moderator's late curated recommendations.
@@ -394,7 +403,7 @@ export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: C
   // pick-roles must NOT overwrite their selections or narrow recs.
   if (ps.userTouched) {
     console.info(`chatroom: ignoring late pick-roles; user already selecting (hub=${hubKey} selected=${ps.selected.size})`)
-    return
+    return 'ignored-user-selecting'
   }
   const valid = new Set(ps.allNames)
   const kept: ChatroomRolePick[] = []
@@ -432,6 +441,7 @@ export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: C
       })
     }
   }
+  return 'rendered'
 }
 
 /**
