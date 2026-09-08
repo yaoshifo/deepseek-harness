@@ -55,6 +55,12 @@
 - **根因（修复前指纹）**：native 子任务回合结束 → 静默判定 `settled` → dispose AgentHandle → jobs seam 的 owner-disposal 语义取消其全部存活后台任务；而子任务的计划恰恰依赖该任务的完成通知续命。上游再叠「数据管家一次性自动回报被进度消息消耗 + moderator 被动散文等待」→ 整条唤醒链断、房间冻结在 discussing。
 - **修复后判别**：子任务拥有 live（running/stopping）任务时不 settle（`continuation.ts` stateOf）；chatroom hub↔管家关系静默超过 `assistantStallSec`（默认 1800s）会被监督网唤醒 moderator，journal 出现 `chatroom: supervisor woke stalled moderator`，三次无进展熔断为群内可见通知。部署后遗留冻结房间在首个扫描周期自动被捞起。
 
+### H 追问卡登记后随 stop 丢失（2026-09-08 实测，已修）
+
+- **症状**：turn 收尾的问题卡片（closing-card ask 转非阻塞追问卡登记）没发出来；此前用户在执行中发过消息（队列接管），随后对接管 turn 执行了 /stop（或 /new、/switch）。
+- **日志形状**：journal 有 `engine: closing-card ask converted to followups`，但始终没有 `engine: followups card sent`；turn/end 序列 = 完成 turn（队列非空，按设计跳过投递、登记保留）→ 接管 turn `aborted/user` + `stopping interactive session`。
+- **修复后判别**：`stopInteractiveSession` 拆除前会抢救投递存活登记；修后若仍丢，查 `followups card send failed` 告警（发送失败不重试）。
+
 ## 审批事件判别（卡片没弹 / 反复要授权）
 
 - 会话日志事件 `approval/asked` → `approval/decided` 的**时间差**：秒级/分钟级 = 真弹卡等用户点击；0–1ms = 被常设授权短路放行。两种情况日志事件形态相同，只有时间差能区分。
