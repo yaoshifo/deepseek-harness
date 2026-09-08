@@ -26,7 +26,7 @@ Status: implemented
 `packages/acp/feishu-bridge-chatroom` 两处改动：
 
 1. **护住排序腿。** `wakeChatroomModerator` 记录每 hub 的唤醒时刻（`lastChatroomWakeAt`），pick watchdog 的推迟条件扩为「快答在飞 **或** 一次唤醒还在窗口内」：每次唤醒都为 wake→`pick-roles` 腿重新打开一个完整超时。兜底卡最早落在 moderator 最近一次唤醒的一个窗口之后。不引入 timer 注册表、不让 `chatroom.ts` 反向 import `chatroom-pick.ts`——惰性推迟在开火时读时间戳，保持既有的单向依赖。
-2. **丢弃按丢弃回报。** `renderChatroomPickCardAndPush` 返回 `'rendered' | 'ignored-user-selecting'`，`pick-roles` 工具在 ignored 情形的结果声明推荐未上任何卡、禁止宣称卡片带推荐、建议改为用文字点名推荐。
+2. **丢弃按丢弃回报。** `renderChatroomPickCardAndPush` 返回 `'rendered' | 'ignored-user-selecting'`，`pick-roles` 工具在 ignored 情形的结果声明推荐未上任何卡、禁止宣称卡片带推荐、建议改为用文字点名推荐。`renderChatroomTopicPickCardAndPush` 与 `pick-topic` 工具在同样的 `userTouched` 丢弃上遵循同一契约。
 
 ## 备选方案
 
@@ -36,7 +36,6 @@ Status: implemented
 
 ## 后果
 
-- `tests/engine/engine-chatroom.spec.ts` 用假定时器钉住两个 watchdog 时序（无唤醒时上膛后一个窗口开火；唤醒后越过原始期限仍 `picking`、唤醒后一个窗口才开火）与返回值契约；`tests/tools/chatroom-tool.spec.ts` 钉住 ignored 情形的如实话术。
+- `tests/engine/engine-chatroom.spec.ts` 用假定时器钉住两个 watchdog 时序（无唤醒时上膛后一个窗口开火；唤醒后越过原始期限仍 `picking`、唤醒后一个窗口才开火）与返回值契约；`tests/tools/chatroom-tool.spec.ts` 钉住两个选择器的 ignored 情形如实话术。
 - `tests/engine/chatroom-poll.spec.ts` 的结算后断言随行为更新：结算唤醒现在拥有完整窗口，兜底卡落在唤醒后一个窗口，而非下一个到期点。
-- 选题器（`pick-topic`）保留同构的写死成功话术与同样的 `userTouched` 丢弃，不在本次改动内；暂缓。
 - 部署：bridge 重建 + `/reload`。

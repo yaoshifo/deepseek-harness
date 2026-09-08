@@ -1409,11 +1409,12 @@ describe('topic picker (#59)', () => {
     handler?.(p, hubMsg(hub), [])
     await settle()
 
-    renderChatroomTopicPickCardAndPush(e, hub, [
+    const first = renderChatroomTopicPickCardAndPush(e, hub, [
       { title: '反脆弱', recommended: true, blurb: 'why' },
       { title: '  ', recommended: false, blurb: 'empty' },
       { title: '预测失效', recommended: false, blurb: 'x' },
     ])
+    expect(first).toBe('rendered')
     const ps = getChatroomTopicPickState(e, hub)!
     expect(ps.phase).toBe('select')
     expect(ps.recs.map(t => t.title)).toEqual(['反脆弱', '预测失效'])
@@ -1421,7 +1422,8 @@ describe('topic picker (#59)', () => {
 
     // User toggles another topic → late pick-topic must not overwrite.
     executeChatroomTopicPickAction(e, hub, 'toggle 预测失效')
-    renderChatroomTopicPickCardAndPush(e, hub, [{ title: '新题目', recommended: true, blurb: '' }])
+    const late = renderChatroomTopicPickCardAndPush(e, hub, [{ title: '新题目', recommended: true, blurb: '' }])
+    expect(late).toBe('ignored-user-selecting')
     expect(ps.selected).toBe('预测失效')
   })
 

@@ -24,7 +24,7 @@ import { Engine, InteractiveState, ProjectStateStore } from '@deepseek-ai/dsh-fe
 import { registerChatroomTool } from '../../src/tools/chatroom.ts'
 import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { applyChatroomEngineConfig, chatroomConfig } from '../../src/chatroom-config.ts'
-import { beginChatroomTopicPick, getChatroomPickState } from '../../src/engine/chatroom-pick.ts'
+import { beginChatroomTopicPick, getChatroomPickState, getChatroomTopicPickState } from '../../src/engine/chatroom-pick.ts'
 import {
   chatroomLedgerDir,
   initChatroomLedger,
@@ -295,6 +295,35 @@ describe('feishu_bridge_chatroom action routing', () => {
     expect(errorText(missingField)).toMatch(/title|schema|invalid/i)
     expect(errorText(missingField)).not.toContain('Cannot read propert')
 
+    test.dispose()
+  })
+
+  it('pick-topic reports the truth when the user is already selecting', async () => {
+    // Same honesty contract as pick-roles: a late pick-topic dropped by the
+    // userTouched guard must not be reported back as a rendered card.
+    const p = createStubSpawnerPlatform()
+    const engine = new Engine('chatroom-test', createStubAgent(), [p], '', 'zh')
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-topic-ignored-'))
+    await mkdir(join(rolesDir, 'taleb'), { recursive: true })
+    await writeFile(join(rolesDir, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    applyChatroomEngineConfig(engine, { rolesDir }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    beginChatroomTopicPick(engine, p, {
+      ...newStubMessage(),
+      sessionKey: 'feishu:oc_hub:ou_1',
+      platform: p.name(),
+      userID: 'ou_1',
+    })
+    value(await test.execute({ action: 'pick-topic', picks: '[{"title":"反脆弱","recommended":true,"blurb":"why"}]' }))
+    // The user has toggled a topic on the rendered card.
+    getChatroomTopicPickState(engine, 'feishu:oc_hub:ou_1')!.userTouched = true
+
+    const v = value(await test.execute({ action: 'pick-topic', picks: '[{"title":"预测失效","recommended":false,"blurb":"x"}]' }))
+
+    expect(v.status).toBe('ok')
+    expect(v.message).not.toContain('has been rendered')
+    expect(v.message).toContain('not applied')
+    expect(v.message).toContain('already selecting')
     test.dispose()
   })
 

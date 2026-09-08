@@ -941,8 +941,11 @@ export function renderChatroomTopicPickCard(e: Engine, ps: ChatroomTopicPickStat
  * @param e - Engine owning the picker state.
  * @param hubKey - Hub session key the picker is armed on.
  * @param topics - Moderator-proposed candidate topics to display.
+ * @returns 'rendered' when the card carried the topics; 'ignored-user-selecting'
+ * when the user had already toggled a topic on a rendered card and the topics
+ * were dropped without touching it.
  */
-export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, topics: ChatroomTopicPick[]): void {
+export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, topics: ChatroomTopicPick[]): ChatroomPickPushResult {
   const ps = pickers(e).chatroomTopicPick.get(hubKey)
   if (ps === undefined) {
     throw new Error(`chatroom: topic-picker not active for ${hubKey}`)
@@ -950,7 +953,7 @@ export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, to
   // User has taken control; a late pick-topic must not overwrite.
   if (ps.userTouched) {
     console.info(`chatroom: ignoring late pick-topic; user already selecting (hub=${hubKey} selected=${ps.selected})`)
-    return
+    return 'ignored-user-selecting'
   }
   // No whitelist (topics are free-form); just drop empties.
   const kept = topics.filter(t => t.title.trim() !== '')
@@ -982,6 +985,7 @@ export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, to
       })
     }
   }
+  return 'rendered'
 }
 
 /** The #59 single-select state machine behind the card actions (radio semantics).

@@ -337,15 +337,19 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
         }
         case 'pick-topic': {
           const topics = parsePicks<TopicPickJSON>(args.picks ?? '', 'topics')
-          renderChatroomTopicPickCardAndPush(engine, sessionKey, topics.map(t => ({
+          const push = renderChatroomTopicPickCardAndPush(engine, sessionKey, topics.map(t => ({
             title: t.title,
             recommended: t.recommended,
             blurb: t.blurb,
           })))
           return {
             status: 'ok' as const,
-            message: 'Pick-topic submitted; the topic-selection card has been rendered in the chatroom. '
-              + 'End your turn now.',
+            message: push === 'rendered'
+              ? 'Pick-topic submitted; the topic-selection card has been rendered in the chatroom. '
+                + 'End your turn now.'
+              : 'The user is already selecting a topic on the picker card, so these proposals '
+                + 'were not applied to any card. Do not claim the card shows your topics. Briefly '
+                + 'note your recommended topics in text instead, then end your turn.',
           }
         }
         case 'ask-human': {

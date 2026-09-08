@@ -26,7 +26,7 @@ The designed pick flight (opening poll ≈ 4.5 min + ranking ≈ 2 min) exceeds 
 Two changes in `packages/acp/feishu-bridge-chatroom`:
 
 1. **Defer through the ranking leg.** `wakeChatroomModerator` stamps the per-hub wake time (`lastChatroomWakeAt`), and the pick watchdog now defers while the poll is in flight **or** a wake is inside one window: every wake re-opens a full timeout for the wake→`pick-roles` leg. The fallback card lands no earlier than one window past the moderator's most recent wake. No timer registry and no `chatroom.ts` → `chatroom-pick.ts` back-import — the lazy defer reads the stamp at fire time, keeping the existing one-directional import.
-2. **Report a dropped pick as dropped.** `renderChatroomPickCardAndPush` returns `'rendered' | 'ignored-user-selecting'`, and the `pick-roles` tool result for the ignored case states that the picks were not applied to any card, forbids claiming the card shows them, and suggests naming the recommendations in text instead.
+2. **Report a dropped pick as dropped.** `renderChatroomPickCardAndPush` returns `'rendered' | 'ignored-user-selecting'`, and the `pick-roles` tool result for the ignored case states that the picks were not applied to any card, forbids claiming the card shows them, and suggests naming the recommendations in text instead. `renderChatroomTopicPickCardAndPush` and the `pick-topic` tool follow the same contract over the identical `userTouched` drop.
 
 ## Alternatives considered
 
@@ -36,7 +36,6 @@ Two changes in `packages/acp/feishu-bridge-chatroom`:
 
 ## Consequences
 
-- `tests/engine/engine-chatroom.spec.ts` pins both watchdog timings under fake timers (fires one window after arming with no wake; stays `picking` past the original deadline after a wake, fires one window past the wake) and the return-value contract; `tests/tools/chatroom-tool.spec.ts` pins the honest ignored-case message.
+- `tests/engine/engine-chatroom.spec.ts` pins both watchdog timings under fake timers (fires one window after arming with no wake; stays `picking` past the original deadline after a wake, fires one window past the wake) and the return-value contract; `tests/tools/chatroom-tool.spec.ts` pins the honest ignored-case message for both pickers.
 - `tests/engine/chatroom-poll.spec.ts`'s post-settle expectation changed with the behavior: the settle wake now owns a full window, so the fallback renders one window past the wake rather than at the next expiry.
-- The topic picker (`pick-topic`) keeps the same canned-success pattern over an identical `userTouched` drop and is not covered by this change; deferred.
 - Deployment: bridge rebuild + `/reload`.
