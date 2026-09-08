@@ -162,7 +162,7 @@ describe('DshAgentAdapter.recentTurns', () => {
           ? {
             open: async () => {
               openCalls++
-              return { header: {} as never, read: async () => events }
+              return { header: {} as never, read: async () => ({ events }) }
             },
           }
           : undefined),

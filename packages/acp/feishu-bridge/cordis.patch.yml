@@ -92,12 +92,9 @@
 - id: tool-ralph
   disabled: true
 
-# Single editor surface: the session editor is dsh-tool-fs's edit — the same
-# single-editor decision that keeps tool-str-replace-editor out of the
-# general-purpose presets. dsh-base still mounts the row, so the bridge
-# disables it; a second editor only doubles selection ambiguity.
-- id: tool-str-replace-editor
-  disabled: true
+# Single editor surface: the session editor is dsh-tool-fs's edit. Upstream
+# removed tool-str-replace-editor from the default tools (PR #3611), so the
+# bridge patch no longer needs a disable entry for it.
 
 # Bridge sessions carry their own identity and persona injection (deployment
 # persona sections, CC_FEISHU_* routing); base's harness identity line would

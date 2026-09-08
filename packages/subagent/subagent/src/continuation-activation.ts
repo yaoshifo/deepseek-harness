@@ -786,8 +786,18 @@ export class ContinuableActivationRegistry {
   ): SettlementState {
     if (activation.inbox.closing !== undefined) return 'closed'
     if (activation.poke !== observation) return 'retry'
+    let pending: boolean
+    try {
+      pending = activation.inbox.hasPending
+    } catch {
+      // Context teardown can deactivate the projection backing the inbox
+      // between this watcher's reads; the drain owns the Activation's
+      // disposal from there, so stop watching instead of rejecting the
+      // watcher loop into an unhandled rejection.
+      return 'closed'
+    }
     if (
-      activation.inbox.hasPending || activation.ownedChildren.size > 0
+      pending || activation.ownedChildren.size > 0
       || this.ownsLiveJobs(activation.handle.agent)
     ) return 'wait'
     return 'ready'

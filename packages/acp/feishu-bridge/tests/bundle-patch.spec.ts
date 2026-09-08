@@ -122,12 +122,14 @@ describe('bridge bundle patch', () => {
     for (const id of [
       'goal', 'goal-round-driver', 'command-goal', 'tool-goal',
       'tool-workflow', 'workflow-worker-thread', 'tool-ralph',
-      'tool-str-replace-editor',
     ]) {
       const row = findRow(entries, id)
       expect(row, `${id} must be mounted by dsh-base`).toBeDefined()
       expect(row?.disabled, `${id} must be disabled by the bundle patch`).toBe(true)
     }
+    // Upstream removed str_replace_editor from the default tools (PR #3611),
+    // so no editor row exists for the patch to disable.
+    expect(findRow(entries, 'tool-str-replace-editor')).toBeUndefined()
   })
 
   it('suppresses harness identity and pins the CLAUDE.md instruction candidates', () => {

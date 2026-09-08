@@ -22,7 +22,7 @@ interface FakePersistence {
   writes: string[]
   open(id: unknown, access: 'read'): Promise<{
     header: SessionHeader
-    read(offset?: number, length?: number): Promise<readonly SessionEvent[]>
+    read(offset?: number, length?: number): Promise<{ events: readonly SessionEvent[] }>
   }>
   list(signal?: AbortSignal): Promise<Array<{ header: SessionHeader }>>
 }
@@ -35,7 +35,7 @@ function fakePersistence(stored: Map<string, { meta: SessionHeader; events: Sess
       if (access !== 'read') persistence.writes.push(String(id))
       const hit = stored.get(String(id))
       if (hit === undefined) throw new Error(`session "${String(id)}" not found`)
-      return { header: hit.meta, read: async () => hit.events }
+      return { header: hit.meta, read: async () => ({ events: hit.events }) }
     },
     list: async () => [...stored.values()].map(hit => ({ header: hit.meta })),
   }
