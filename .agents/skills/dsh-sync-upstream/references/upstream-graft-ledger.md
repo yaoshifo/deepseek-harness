@@ -1,6 +1,6 @@
 # 上游嫁接台账（upstream graft ledger）
 
-原则 2 的执行清单：所有嫁接在上游拥有 seam 上的 fork 改动。每次上游吸收后按此逐项核对重嫁接成本；提案状态变更即时更新本表；上游等价物落地且吸收后本地 diff 归零的行删除。基线：2026-09-06 审计（master d347e70390，dev 领先 706 提交，381 个上游文件被改）。
+原则 2 的执行清单：所有嫁接在上游拥有 seam 上的 fork 改动。每次上游吸收后按此逐项核对重嫁接成本；提案状态变更即时更新本表；上游等价物落地且吸收后本地 diff 归零的行删除。基线：2026-09-06 审计（master d347e70390，dev 领先 706 提交，381 个上游文件被改）；2026-09-08 吸收（master c389f96bf3，449 提交）后全部 subagent 载荷重嫁接到上游新抽出的 ContinuableActivationRegistry 结构上（continuation-activation.ts 现承载 setup 贡献、settlement 交付、jobs 常驻三 graft），lsp-stdio 的 symbol 面与上游重试重写并存，session-format v1-to-v2 的读路径校验收编 oneshot origin。
 
 ## subagent 组（历史成本最高，continuation.ts/index.ts 各 11 次重嫁接）
 
