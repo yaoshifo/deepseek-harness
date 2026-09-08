@@ -102,3 +102,9 @@ fork 本地包（feishu-bridge adapter、feishu-bridge-chatroom 等）用 `*Like
 - 症状：pre-commit 配对门逐个暴露结构分歧，`--write` 后提交又冒新的（实例：2026-08-31 三轮才过）→ 做法：这是正常循环不是修不完——en 侧重生成后 zh 缺 fork 新字段/新事件行（fork 提交者加了源码没回填中文侧）。一次把所有代码块 diff 出来（按 ```` ```ts config-catalog ```` 围栏正则逐块比）批量回填，比逐轮提交试探快；表格类（事件矩阵）行内容是原样链接，直接搬 en 行 + 保留 zh 翻译表头即可。
 - 症状：测试报 `posix_openpt failed: Operation not permitted` → 做法：会话沙箱拒绝 PTY 分配（与 HOME mkdtemp 同类），放权原样重跑该文件即绿，非回归。
 - 症状：`CI=true pnpm install` 报 `ERR_PNPM_OUTDATED_LOCKFILE`（fork 本地包依赖不在上游侧 lockfile 里）→ 做法：改用 `CI=true pnpm install --no-frozen-lockfile` 让 lockfile 收敛到合并后的 package.json 集合，CI=true 仍保留以避开无 TTY 确认。
+- 规则：编译器或 conformance 切片报错带行号时，先机械打印那一行（`sed -n '72p' <file>`）再归因，不要凭此前看过的代码区间脑内对行号（实例：2026-09-08 把 conformance(72,10) 误读成 subagents 切片，实为 persistence 切片，围绕错误目标建理论浪费了约十轮排查）。
+- 规则：冲突文件只有少量 import/export 块冲突时就地解，不 checkout --theirs/--ours 整文件——会把本来就正确的自动合并区（fork 的构造器接线、方法委托）一起丢掉；已丢用 `git checkout -m -- <path>` 重建，注意其冲突标记是 `ours`/`theirs` 而非 `HEAD`/`master`，grep 判据要跟上。
+- 症状：测试修复按实例喂，同根问题跨批次反复冒头（实例：2026-09-08 testkit 自带 SessionProjectionRegistry 后的双挂、session read() 返回 `{events}` 形状，各分了三轮才清完）→ 做法：诊断出一个失败类就全仓 grep 同类现场一次修完再跑验证。双挂查法：同文件既有 `mountAgentLoopTestDependencies` 又有 `ctx.plugin(SessionProjectionRegistry)`；API 形状适配必须 grep 测试假件——typecheck 对各 spec 自定义本地 interface 类型的假件（如 FakePersistence）是盲区。
+- 症状：配对门报 link target 分歧且两侧呈同名 `.md` vs `.zh.md` → 做法：链接目标 note 被上游归档搬走了。归档目标的约定是双语两侧都链英文 `.md` 原文件（zh 不切 `.zh.md`，归档语料冻结、不参与链接归一化）。merge 后全量扫死链（解析每个相对链接查存在性，archived/ 有同名的改指新路径）；归档 manifest 取两侧并集（取 theirs 会丢 fork 自己的归档条目），内容与上游封存哈希不一致的归档件恢复为 master 版本再 `--write`。
+- 症状：`DSH_SNAPSHOT=refresh` 跑完自身仍显示几十个失败 → 做法：refresh 模式的失败数不作数（写后比的中间态），以紧随其后的普通模式复跑为准（实例：2026-09-08 refresh 显 50 失败，普通复跑 126 全过）。
+- 规则：从旧 spec 按行号提取测试块移植前先程序化验证边界（括号平衡、块首尾断言），肉眼数行会差一行；往测试文件批量插助手函数时注意多行 import——「最后一个 import 行」可能只是 import 体的开头（实例：2026-09-08 两处各花一轮补漏）。
