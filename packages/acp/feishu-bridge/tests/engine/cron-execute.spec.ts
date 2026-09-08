@@ -13,10 +13,14 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { statSync } from 'node:fs'
 import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.ts'
 import { Engine } from '../../src/engine/engine.ts'
 import { createStubPlatform, newResultAgentSession, testQuestions } from '../stubs/engine-stubs.ts'
-import type { Agent, Platform } from '../../src/core/types.ts'
+import type { Agent, EngineSubprocess, Platform } from '../../src/core/types.ts'
+import { Context } from '@deepseek-ai/cordis'
+import LocalSubprocessRuntime from '../../../../subprocess/subprocess-local/src/index.ts'
+import { createCronSubprocessRunner } from '../../src/index.ts'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'fb-cronexec-'))
@@ -383,4 +387,77 @@ describe('ExecuteCronJob_WorkspacePrefixedSessionKey', () => {
     // The stored session key must remain unchanged.
     expect(job.sessionKey).toBe(prefixedKey)
   })
+})
+
+describe('executeCronShell subprocess containment (real provider)', () => {
+  async function newEngineWithRunner(platform: Platform, agent: Agent) {
+    const ctx = new Context()
+    await ctx.plugin(LocalSubprocessRuntime)
+    return { engine: new Engine('test', agent, [platform], '', 'en', undefined, createCronSubprocessRunner(ctx)), ctx }
+  }
+
+  it('bounds the collected job output at 64 KiB per stream', async () => {
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const agent = resultAgent(newResultAgentSession('unused'))
+    const { engine, ctx } = await newEngineWithRunner(platform, agent)
+    // Wrap the real runner to observe the engine's requested bound and the
+    // collected size — the memory cap is the runner contract, not the chat
+    // message (which truncates far below it either way).
+    const seen: Array<{ bound: number; outLength: number }> = []
+    const original = (engine as unknown as { subprocess: EngineSubprocess }).subprocess
+    const wrapped: EngineSubprocess = {
+      run: async (spec) => {
+        const result = await original.run(spec)
+        seen.push({ bound: spec.stdoutMaxBytes, outLength: result.out.length })
+        return result
+      },
+    }
+    ;(engine as unknown as { subprocess: unknown }).subprocess = wrapped
+    const dir = tempDir()
+    const job = newJob({
+      id: 'job-cap', project: 'test', sessionKey: 'discord:c:u',
+      exec: 'head -c 2097152 /dev/zero | tr \'\\0\' \'x\'',
+      workDir: dir,
+    })
+    job.timeoutMins = 1
+    try {
+      await engine.executeCronShell(platform, 'rctx', job)
+      expect((platform as unknown as { getSent(): string[] }).getSent().join('\n')).toContain('⏰ ✅')
+      expect(seen).toHaveLength(1)
+      expect(seen[0]!.bound).toBe(64 * 1024)
+      expect(seen[0]!.outLength).toBeLessThanOrEqual(2 * 64 * 1024)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  }, 30_000)
+
+  it('times out and kills a backgrounded grandchild with the whole range', async () => {
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const agent = resultAgent(newResultAgentSession('unused'))
+    const { engine, ctx } = await newEngineWithRunner(platform, agent)
+    const dir = tempDir()
+    const hb = join(dir, 'hb')
+    // The direct sh exits at once; the backgrounded loop is the escape the
+    // managed range must still own (2026-09-08: bare spawn let it orphan).
+    const job = newJob({
+      id: 'job-g', project: 'test', sessionKey: 'discord:c:u',
+      exec: `while true; do echo x >> "${hb}"; sleep 0.1; done & echo started`,
+      workDir: dir, timeoutMins: undefined,
+    })
+    job.timeoutMins = 0.01 // 600ms: fractional minutes are the smallest unit the field offers
+    try {
+      await expect(engine.executeCronShell(platform, 'rctx', job)).rejects.toThrow('timed out')
+      expect((platform as unknown as { getSent(): string[] }).getSent().join('\n')).toContain('⏰ ⚠️ timeout')
+      // The range kill took the backgrounded loop with it: the heartbeat
+      // stops growing once the run settles.
+      const sizeA = statSync(hb).size
+      // The grandchild really ran before the kill (the heartbeat is nonempty).
+      expect(sizeA).toBeGreaterThan(0)
+      await new Promise(resolve => setTimeout(resolve, 500))
+      const sizeB = statSync(hb).size
+      expect(sizeB).toBe(sizeA)
+    } finally {
+      await ctx.fiber.dispose()
+    }
+  }, 30_000)
 })

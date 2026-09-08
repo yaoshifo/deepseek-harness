@@ -20,6 +20,7 @@ import * as SkillFileSystem from '@deepseek-ai/dsh-skill-filesystem'
 // itself is mounted by dsh-base, not here).
 import type { SubagentRunEndInfo, SubagentRunInfo } from '@deepseek-ai/dsh-subagent'
 import Schema from '@deepseek-ai/schemastery'
+import type { EngineSubprocess } from './core/types.ts'
 import { DshAgentAdapter } from './agent-dsh/adapter.ts'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.ts'
 import { installLogTimestamps } from './log-timestamps.ts'
@@ -1062,6 +1063,65 @@ function providerRefError(config: FeishuBridgeConfig, projectName: string, field
   return `feishu-bridge: project '${projectName}' ${field} '${value}' is not in config.providers — available: ${available === '' ? '(none)' : available}`
 }
 
+/** Structural slice of the `subprocess` service the cron runner consumes. */
+interface SubprocessServiceLike {
+  spawn(spec: {
+    argv: readonly string[]
+    cwd: string
+    stdio: {
+      stdin: 'ignore'
+      stdout: { maxBytes: number; spill: { maxBytes: number } }
+      stderr: { maxBytes: number; spill: { maxBytes: number } }
+    }
+    graceMs: number
+    signal: AbortSignal
+  }): {
+    done: Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>
+    collected: {
+      stdout?: { readFrom(offset: number): { text: string } }
+      stderr?: { readFrom(offset: number): { text: string } }
+    }
+  }
+}
+
+/**
+ * Foreground subprocess runner for engine-owned cron exec jobs, over the
+ * composition's `subprocess` service: the managed range (process group on
+ * macOS, systemd scope / Job Object on Linux and Windows) owns backgrounded
+ * descendants, so a timeout terminates the whole tree, and collected output
+ * is byte-bounded per stream. The service resolves per run so a composition
+ * that mounts it after the bridge still works.
+ * @param ctx - composition context (the service is optional at apply time).
+ * @returns the runner handed to the engine.
+ */
+export function createCronSubprocessRunner(ctx: Context): EngineSubprocess {
+  return {
+    run: async (spec) => {
+      const service = ctx.get('subprocess') as SubprocessServiceLike | undefined
+      if (service === undefined) throw new Error('feishu-bridge: the subprocess service is not mounted; cron exec jobs cannot run')
+      const handle = service.spawn({
+        argv: spec.argv,
+        cwd: spec.cwd,
+        stdio: {
+          stdin: 'ignore',
+          stdout: { maxBytes: spec.stdoutMaxBytes, spill: { maxBytes: 0 } },
+          stderr: { maxBytes: spec.stdoutMaxBytes, spill: { maxBytes: 0 } },
+        },
+        graceMs: 3000,
+        signal: spec.signal,
+      })
+      const outcome = await handle.done
+      const stdout = handle.collected.stdout?.readFrom(0).text ?? ''
+      const stderr = handle.collected.stderr?.readFrom(0).text ?? ''
+      return {
+        out: stdout + stderr,
+        err: outcome.exitCode === 0 ? undefined : new Error(`exit status ${outcome.exitCode ?? outcome.signal}`),
+        timedOut: spec.signal.aborted,
+      }
+    },
+  }
+}
+
 export function buildProjectAssembly(
   ctx: Context,
   config: FeishuBridgeConfig,
@@ -1196,7 +1256,7 @@ export function buildProjectAssembly(
     dataDir: projectDataDir,
   })
 
-  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language), bridge)
+  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language), bridge, createCronSubprocessRunner(ctx))
 
   // B2: native approval asks and userQuestions asks delegate card rendering
   // and decision waiting to the engine's askUser.

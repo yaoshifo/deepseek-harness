@@ -21,6 +21,7 @@ import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.ts'
 import { AllowList } from '../feishu/allowlist.ts'
 import type {
+  EngineSubprocess,
   Agent,
   AgentSession,
   AskDecision,
@@ -145,7 +146,6 @@ import { RateLimiter } from '../ratelimit.ts'
 import { readFileSync, statSync, existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { spawn } from 'node:child_process'
 import { join as joinPath } from 'node:path'
 import { asCompletionNoticePreference, asCompletionNotifier, asChatPhasePainter, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.ts'
@@ -1262,6 +1262,8 @@ export class Engine {
   autoCompressMinGap: number = 0
 
   private reaperTimer: ReturnType<typeof setInterval> | undefined
+  /** Host-wired foreground subprocess runner; cron exec fails loud without it. */
+  private readonly subprocess: EngineSubprocess | undefined
 
   constructor(
     name: string,
@@ -1270,10 +1272,12 @@ export class Engine {
     sessionStorePath: string,
     lang: Language = langEnglish,
     bridge?: BridgeDispatch,
+    subprocess?: EngineSubprocess,
   ) {
     this.name = name
     this.agent = agent
     this.platforms = platforms
+    this.subprocess = subprocess
     this.bridge = bridge ?? bareBridgeDispatch()
     this.sessions = new SessionManager(sessionStorePath)
     this.i18n = new I18n(lang)
@@ -4802,26 +4806,23 @@ export class Engine {
     }
     if (workDir === '') workDir = process.cwd()
 
+    if (this.subprocess === undefined) {
+      throw new Error('engine has no subprocess runner wired; cron exec jobs are unavailable')
+    }
     const timeoutMs = job.executionTimeoutMs()
     const ac = new AbortController()
     const timer = timeoutMs > 0 ? setTimeout(() => { ac.abort() }, timeoutMs) : undefined
     timer?.unref()
     try {
-      const outcome = await new Promise<{ out: string; err: unknown }>((resolve) => {
-        let out = ''
-        const child = spawn('sh', ['-c', job.exec], { cwd: workDir, signal: ac.signal })
-        child.stdout.on('data', (d: Buffer) => { out += d.toString() })
-        child.stderr.on('data', (d: Buffer) => { out += d.toString() })
-        child.on('error', (err: Error) => { resolve({ out, err }) })
-        child.on('close', (code, signal) => {
-          if (ac.signal.aborted) {
-            resolve({ out, err: new Error('shell command timed out') })
-            return
-          }
-          resolve({ out, err: code === 0 ? undefined : new Error(`exit status ${code ?? signal}`) })
-        })
+      const outcome = await this.subprocess.run({
+        argv: ['sh', '-c', job.exec],
+        cwd: workDir,
+        // Memory bound on the collected job output; the chat message
+        // truncates to a few thousand characters far below it.
+        stdoutMaxBytes: 64 * 1024,
+        signal: ac.signal,
       })
-      if (ac.signal.aborted) {
+      if (outcome.timedOut) {
         await this.send(p, replyCtx, `⏰ ⚠️ timeout: \`${truncateStr(job.exec, 60)}\``)
         throw new Error('shell command timed out')
       }

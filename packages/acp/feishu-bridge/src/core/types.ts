@@ -378,6 +378,33 @@ export interface Platform {
   stop(): Promise<void>
 }
 
+/** One foreground subprocess execution the engine delegates to its host. */
+export interface EngineSubprocessSpec {
+  /** Executable and arguments; `argv[0]` is the program, never shell-interpreted here. */
+  argv: readonly string[]
+  /** Working directory for the child. */
+  cwd: string
+  /** Per-stream retained-output bound in bytes. */
+  stdoutMaxBytes: number
+  /** Caller cancellation; aborting terminates the whole managed range, backgrounded descendants included. */
+  signal: AbortSignal
+}
+
+/** Settled foreground execution: merged output plus exit facts. */
+export interface EngineSubprocessResult {
+  /** stdout and stderr concatenated, each capped at the spec bound. */
+  out: string
+  /** Nonzero exit or terminating signal as an error; `undefined` on exit 0. */
+  err: Error | undefined
+  /** Whether the spec signal aborted before settlement. */
+  timedOut: boolean
+}
+
+/** Foreground subprocess runner the host wires for engine-owned shell jobs (cron exec). */
+export interface EngineSubprocess {
+  run(spec: EngineSubprocessSpec): Promise<EngineSubprocessResult>
+}
+
 /** A running agent session with a persistent process (Go AgentSession). */
 export interface AgentSession {
   send(prompt: string, images: ImageAttachment[], files: FileAttachment[]): Promise<void>
