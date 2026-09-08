@@ -14,7 +14,10 @@ import * as SubagentFork from '@deepseek-ai/dsh-subagent-fork-in-process'
 import type { ContentBlock, GenerateOptions, MessageId, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { ToolCallId, createUserMessage, LlmAdapter, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import InvariantRegistry from '@deepseek-ai/dsh-invariants'
+import LocalJobRegistry from '@deepseek-ai/dsh-jobs-local'
+import type { JobOutcome } from '@deepseek-ai/dsh-jobs'
 import { MockAdapter, maxTokensResponse, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import SubagentRuntime, {
   SubagentError,
@@ -75,7 +78,11 @@ afterEach(async () => {
 /** Boot the full continuable stack: loop, persistence, providers, and subagents. */
 async function setupWith(
   adapter: LlmAdapter,
-  options: { persistence?: boolean; sessionQuery?: boolean } = {},
+  options: {
+    persistence?: boolean
+    sessionQuery?: boolean
+    subagents?: { settlementNotice?: 'inbox' | 'external' }
+  } = {},
 ) {
   const ctx = new Context()
   await mountAgentLoopTestDependencies(ctx)
@@ -93,7 +100,7 @@ async function setupWith(
   }
   await ctx.plugin(AgentLoop, { agents: [] })
   if (options.sessionQuery !== false) await ctx.plugin(TestSessionQuery)
-  await ctx.plugin(SubagentRuntime)
+  await ctx.plugin(SubagentRuntime, options.subagents ?? {})
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
   ctx.llm.registerAdapter(['mock'], adapter)
@@ -101,7 +108,13 @@ async function setupWith(
   return { ctx, parent, disposePersistence, root }
 }
 
-async function setup(script: Script, options: { persistence?: boolean } = {}) {
+async function setup(
+  script: Script,
+  options: {
+    persistence?: boolean
+    subagents?: { settlementNotice?: 'inbox' | 'external' }
+  } = {},
+) {
   const adapter = new MockAdapter(script)
   const booted = await setupWith(adapter, options)
   return { ...booted, adapter }
@@ -591,6 +604,44 @@ describe('SubagentRuntime.startContinuable', () => {
     await waitNoActivation(ctx, started.childId)
     const resumed = await loadStoredSession(ctx.sessionPersistence, started.childId)
     expect(hasUserText(resumed.events, 'resume it')).toBe(true)
+  })
+
+  it('persists a caller cwd override into the continuable child session header', async () => {
+    const { ctx, parent } = await setup([textResponse('child answer')])
+    parkParent(ctx, parent)
+    const started = await ctx.subagents.startContinuable({
+      ...startSpec(parent),
+      request: { prompt: message('child task'), parent, cwd: '/tmp/dsh-cwd-override' },
+    })
+    await waitNoActivation(ctx, started.childId)
+    const loaded = await ctx.sessionPersistence.stat(started.childId)
+    expect(loaded?.header.cwd).toBe('/tmp/dsh-cwd-override')
+  })
+
+  it('rejects a relative continuable cwd override before reserving the child', async () => {
+    const { ctx, parent } = await setup([])
+    await expect(ctx.subagents.startContinuable({
+      ...startSpec(parent),
+      request: { prompt: message('child task'), parent, cwd: 'relative/path' },
+    })).rejects.toMatchObject({ code: 'INVALID_ARGUMENT' })
+    expect(ctx.agents.list().map(agent => agent.id)).toEqual([SessionId('parent')])
+  })
+
+  it('rejects a continuable cwd override on a provider without the capability', async () => {
+    const { ctx, parent } = await setup([])
+    const prepare = vi.fn()
+    ctx.subagents.registerProvider({
+      name: 'no-cwd',
+      capabilities: { agentOptions: true, outputSchema: true, depthLimit: true, toolFilter: true, persona: true, cwdOverride: false },
+      inheritsParentContext: false,
+      start: vi.fn(async () => { throw new Error('must not start') }),
+      prepareContinuable: prepare,
+    })
+    await expect(ctx.subagents.startContinuable({
+      ...startSpec(parent, 'no-cwd'),
+      request: { prompt: message('child task'), parent, cwd: '/tmp/elsewhere' },
+    })).rejects.toMatchObject({ code: 'UNSUPPORTED_CAPABILITY' })
+    expect(prepare).not.toHaveBeenCalled()
   })
 })
 
@@ -2886,6 +2937,21 @@ describe('continuable settlement delivery', () => {
     await Promise.all(drains)
     expect(settlementNotices(parent)).toEqual([])
   })
+
+  it('skips the parent wake when settlement notices are delivered externally', async () => {
+    const { ctx, parent, adapter } = await setup([textResponse('the answer')], {
+      subagents: { settlementNotice: 'external' },
+    })
+    const ends: SubagentRunEndInfo[] = []
+    ctx.on('subagent/end', info => void ends.push(info))
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await waitNoActivation(ctx, started.childId)
+    await vi.waitFor(() => { expect(ends).toHaveLength(1) })
+    // Only the child's model call happened: the parent was never woken, and no
+    // settlement notice reached its inbox.
+    expect(adapter.requests).toHaveLength(1)
+    expect(settlementNotices(parent)).toEqual([])
+  })
 })
 
 describe('continuable lifecycle observation', () => {
@@ -3470,5 +3536,153 @@ describe('SubagentRuntime.interrupt', () => {
 
     hold.resolve(undefined)
     await drained
+  })
+})
+
+describe('continuable residency with live background jobs', () => {
+  /**
+   * Register a tool whose execution starts one manually settled background job
+   * owned by the calling agent — the in-test stand-in for `bash
+   * run_in_background` as tool-bash registers it.
+   */
+  function registerManualJobTool(ctx: Context, makeHooks: () => { cancel: (reason?: string) => void; done: Promise<JobOutcome> }): void {
+    ctx.tools.register(defineTool({
+      name: 'start_job',
+      description: 'start one manually settled background job owned by the calling agent',
+      parameters: {},
+      output: {
+        schema: { type: 'object', additionalProperties: false, properties: {} },
+        render: () => [{ type: 'text', text: 'job started' }],
+      },
+      execute: (_args: unknown, exec: ToolRunContext) => {
+        const jobs = ctx.get('jobs')
+        if (jobs === undefined) throw new Error('jobs registry unavailable')
+        jobs.start({
+          kind: 'bash',
+          label: 'manual job',
+          ...exec.agent !== undefined ? { owner: exec.agent } : {},
+          run: makeHooks,
+        })
+        return Promise.resolve({})
+      },
+    }))
+  }
+
+  it('keeps the Activation resident while the child owns a live background job', async () => {
+    const jobDone = Promise.withResolvers<JobOutcome>()
+    // A tool-call response does not end the turn: the second entry answers
+    // the model call made after the tool result so the epoch completes.
+    const { ctx, parent } = await setup([
+      toolCallResponse('j1', 'start_job', {}, 'starting the job'),
+      textResponse('final answer'),
+    ])
+    // The registry loads after the runtime: late arrival must still bind.
+    // A controller attached from the unscoped root serves every owner, the
+    // same role @deepseek-ai/dsh-tool-jobs plays in a production composition.
+    await ctx.plugin(LocalJobRegistry)
+    ctx.jobs.attachController('continuation-spec')
+    registerManualJobTool(ctx, () => ({ cancel: () => {}, done: jobDone.promise }))
+    parkParent(ctx, parent)
+    const ends: SubagentRunEndInfo[] = []
+    ctx.on('subagent/end', (info) => { ends.push(info) })
+
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    // The child's turn ran the tool and ended; settlement must not follow while
+    // the started job is live (2026-09-06 oc_97be4a1c: disposal killed the job).
+    await vi.waitFor(() => {
+      const child = ctx.agents.get(started.childId)
+      expect(child).toBeDefined()
+      expect(child!.session.snapshotEvents().some(event => event.type === 'turn/end')).toBe(true)
+    })
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(ends).toEqual([])
+    expect(ctx.agents.get(started.childId)).toBeDefined()
+  })
+
+  it('settles exactly once after the held job ends and the watcher re-derives residency', async () => {
+    const jobDone = Promise.withResolvers<JobOutcome>()
+    const { ctx, parent } = await setup([
+      toolCallResponse('j1', 'start_job', {}, 'starting the job'),
+      textResponse('final answer'),
+    ])
+    await ctx.plugin(LocalJobRegistry)
+    ctx.jobs.attachController('continuation-spec')
+    registerManualJobTool(ctx, () => ({ cancel: () => {}, done: jobDone.promise }))
+    parkParent(ctx, parent)
+    const ends: SubagentRunEndInfo[] = []
+    ctx.on('subagent/end', (info) => { ends.push(info) })
+
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await vi.waitFor(() => {
+      const child = ctx.agents.get(started.childId)
+      expect(child).toBeDefined()
+      expect(child!.session.snapshotEvents().some(event => event.type === 'turn/end')).toBe(true)
+    })
+    expect(ends).toEqual([])
+
+    // The job settlement is the poke that re-observes residency while the
+    // Agent itself stays idle: no completion wake exists in a bare registry
+    // composition, so only the onJobsChanged re-derivation can settle.
+    jobDone.resolve({ status: 'completed' })
+    await waitNoActivation(ctx, started.childId)
+
+    await vi.waitFor(() => { expect(ends).toHaveLength(1) })
+    expect(ends[0]!.stopReason).toBe('completed')
+    expect(ends[0]!.lastAssistantMessage).toEqual([{ type: 'text', text: 'final answer' }])
+  })
+
+  it('settles immediately when the registry holds only terminal jobs for the child', async () => {
+    const { ctx, parent } = await setup([
+      toolCallResponse('j1', 'start_job', {}, 'starting the job'),
+      textResponse('final answer'),
+    ])
+    await ctx.plugin(LocalJobRegistry)
+    ctx.jobs.attachController('continuation-spec')
+    registerManualJobTool(ctx, () => ({ cancel: () => {}, done: Promise.resolve({ status: 'completed' }) }))
+    parkParent(ctx, parent)
+    const ends: SubagentRunEndInfo[] = []
+    ctx.on('subagent/end', (info) => { ends.push(info) })
+
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    // A registry with no live job for the child must not delay settlement.
+    await waitNoActivation(ctx, started.childId)
+    await vi.waitFor(() => { expect(ends).toHaveLength(1) })
+    expect(ends[0]!.stopReason).toBe('completed')
+  })
+
+  it('still disposes the Activation and cancels the live job on forced teardown', async () => {
+    const jobDone = Promise.withResolvers<JobOutcome>()
+    let cancelReason = 'never cancelled'
+    const { ctx, parent } = await setup([
+      toolCallResponse('j1', 'start_job', {}, 'starting the job'),
+      textResponse('final answer'),
+    ])
+    await ctx.plugin(LocalJobRegistry)
+    ctx.jobs.attachController('continuation-spec')
+    registerManualJobTool(ctx, () => ({
+      cancel: (reason?: string) => {
+        cancelReason = reason ?? ''
+        // A compliant producer settles `done` after cancellation.
+        jobDone.resolve({ status: 'killed' })
+      },
+      done: jobDone.promise,
+    }))
+    parkParent(ctx, parent)
+    const started = await ctx.subagents.startContinuable(startSpec(parent))
+    await vi.waitFor(() => {
+      const child = ctx.agents.get(started.childId)
+      expect(child).toBeDefined()
+      expect(child!.session.snapshotEvents().some(event => event.type === 'turn/end')).toBe(true)
+    })
+
+    const drained = ctx.subagents.drainContinuableDescendants([parent])
+    await waitNoActivation(ctx, started.childId)
+    await drained
+    // Forced teardown is not gated on job residency: the handle disposed and
+    // owner disposal cancelled the live job through the registry.
+    expect(cancelReason).not.toBe('never cancelled')
+    const jobs = ctx.get('jobs')
+    expect(jobs).toBeDefined()
+    expect(jobs!.list().some(job => job.status === 'running' || job.status === 'stopping')).toBe(false)
   })
 })
