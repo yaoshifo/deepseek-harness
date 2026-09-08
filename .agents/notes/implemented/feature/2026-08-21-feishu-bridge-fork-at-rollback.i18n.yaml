@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-08-21-feishu-bridge-fork-at-rollback.md
-2026-08-21-feishu-bridge-fork-at-rollback.md: 5b38dd019754d7f90940c4355fdf9ec3f53cde30
-2026-08-21-feishu-bridge-fork-at-rollback.zh.md: d2f8a66a5b6dd681c4355605a24c3fb448e680be
+2026-08-21-feishu-bridge-fork-at-rollback.md: 465c01c864377872cf556068c2f7ffa4fccac597
+2026-08-21-feishu-bridge-fork-at-rollback.zh.md: 14d6ec30f746bb8eb358a4e1c61644fbb69a8a59

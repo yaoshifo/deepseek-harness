@@ -15,7 +15,7 @@ Status: implemented
 六组条目从 profile patch 迁入 `packages/acp/feishu-bridge/cordis.patch.yml`：
 
 - goal 全家（域、轮次驱动、`/goal` 命令、工具——只禁工具行会让 /goal 建的 goal 无工具可关）、workflow、ralph 的禁用：低频编排，其 schema 每轮都花请求上下文。
-- `tool-str-replace-editor` 禁用：会话编辑器是 `dsh-tool-fs` 的 edit；dsh-base 仍挂载该行，而[单一编辑器决策](../simplification/2026-08-10-default-presets-single-editor.zh.md)正是通用 preset 不挂它的同一理由。
+- `tool-str-replace-editor` 禁用：会话编辑器是 `dsh-tool-fs` 的 edit；dsh-base 仍挂载该行，而[单一编辑器决策](../../archived/simplification/2026-08-10-default-presets-single-editor.md)正是通用 preset 不挂它的同一理由。
 - `tool-ask-user` 插入：追问卡 / user-questions 机制没有 dsh-base 行，凡 bridge 组合皆需要。
 - `dsh-memory` 插入及索引上限（每会话 25600、全局 8192）：会话记忆面是 bridge 产品体验的一部分。
 - `system-prompt` 的 `includeHarnessIdentity: false`（bridge 会话自带身份/人格注入）；`persona: ''` 因 patch config 是按 key 整体替换而照抄 base 值。

@@ -14,7 +14,7 @@ The package ships `skills/` — the bridge-specific skills (`feishu-bridge-subta
 
 - `ctx.plugin(SkillFileSystem, { providerName: 'feishu-bridge-skills', includeDefaultRoots: false, customSkillDirs: [<package>/skills] })`. The isolated provider sees only its explicit root — the `includeDefaultRoots: false` contract skill-filesystem already documents for multi-provider deployments — so it never re-discovers project, user, or env-bundled roots.
 - The directory is computed from `import.meta.url` (`dirname() + '../skills'`), so source runs (`src/`) and the tsdown-bundled `lib/index.js` resolve the same package root with zero per-deployment paths. `package.json` `files` ships `skills/` for published installs.
-- The bundled root lands at the custom rank (300): project `.dsh/skills` and project `.agents/skills` entries keep their lower ranks and override same-name bundled skills, matching the registry's precedence semantics ([skill system](2026-07-05-skill-system.md)).
+- The bundled root lands at the custom rank (300): project `.dsh/skills` and project `.agents/skills` entries keep their lower ranks and override same-name bundled skills, matching the registry's precedence semantics ([skill system](../../archived/feature/2026-07-05-skill-system.md)).
 - The mount is a child fiber: disposing the feishu-bridge fiber (HMR reload) unregisters the provider and closes its watchers; the skills directory stays chokidar-watched, so editing a bundled skill file hot-refreshes the catalog.
 
 Deployments keep `customSkillDirs` for user-level skill roots (`~/.claude/skills` etc.); the Mac live profile's manual package entry was removed in the same change to avoid same-name duplicate warnings between the two providers.
@@ -25,7 +25,7 @@ Deployments keep `customSkillDirs` for user-level skill roots (`~/.claude/skills
 
 **Reuse `DSH_BUNDLED_SKILL_DIR`.** That env var is the app-level bundled-root channel (the web app sets it); one process has a single bundled root, so a plugin staking it out would collide with the host app's own bundled skills and only work for whichever claim lands.
 
-**A dedicated packaged provider like `dsh-skill-badge`.** The [badge decision](2026-08-06-bundled-dsh-badge-skill.md) registers one immutable skill through a purpose-built provider package. The bridge's skills are a directory of editable Markdown files that want frontmatter parsing, directory resource bases, and hot watching — exactly what skill-filesystem already provides — so composing it as an isolated instance with a distinct `providerName` reuses that machinery instead of duplicating a parser.
+**A dedicated packaged provider like `dsh-skill-badge`.** The [badge decision](../../archived/feature/2026-08-06-bundled-dsh-badge-skill.md) registers one immutable skill through a purpose-built provider package. The bridge's skills are a directory of editable Markdown files that want frontmatter parsing, directory resource bases, and hot watching — exactly what skill-filesystem already provides — so composing it as an isolated instance with a distinct `providerName` reuses that machinery instead of duplicating a parser.
 
 ## Consequences
 

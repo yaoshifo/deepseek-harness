@@ -6,7 +6,7 @@ English | [中文](2026-09-02-lsp-tool-unmount-adoption-failure.zh.md)
 
 ## Problem
 
-The lsp tool ships as a three-package capability seam ([2026-07-15](../architecture/2026-07-15-lsp-capability-seam.md)). Mounting it in the feishu-bridge profiles — the live profiles on both bridge hosts plus the bundled profile — declared `lsp`, `lsp-stdio`, and `tool-lsp`, injected the LSP prompt section into every request, and cross-referenced the tool from the grep description (b650ab0fab). The deployment carried a pre-registered verdict: at least 10% of harness coding sessions should contain an organic lsp call within one week of mounting, terminal date 2026-09-03.
+The lsp tool ships as a three-package capability seam ([2026-07-15](../../archived/architecture/2026-07-15-lsp-capability-seam.md)). Mounting it in the feishu-bridge profiles — the live profiles on both bridge hosts plus the bundled profile — declared `lsp`, `lsp-stdio`, and `tool-lsp`, injected the LSP prompt section into every request, and cross-referenced the tool from the grep description (b650ab0fab). The deployment carried a pre-registered verdict: at least 10% of harness coding sessions should contain an organic lsp call within one week of mounting, terminal date 2026-09-03.
 
 ## Decision
 

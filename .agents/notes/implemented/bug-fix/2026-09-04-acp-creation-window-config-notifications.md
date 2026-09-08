@@ -30,4 +30,4 @@ The regression is deterministic, not probabilistic: a bridge spec injects one ad
 
 ## Related
 
-- [LLM model catalog and ACP selection](../architecture/2026-07-15-llm-model-catalog-and-acp-selection.md) — the catalog and selection machinery whose per-session mounting fires the topology events this note silences in the creation window.
+- [LLM model catalog and ACP selection](../../archived/architecture/2026-07-15-llm-model-catalog-and-acp-selection.md) — the catalog and selection machinery whose per-session mounting fires the topology events this note silences in the creation window.

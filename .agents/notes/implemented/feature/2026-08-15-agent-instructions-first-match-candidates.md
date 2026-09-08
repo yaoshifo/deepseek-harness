@@ -6,7 +6,7 @@ English | [中文](2026-08-15-agent-instructions-first-match-candidates.zh.md)
 
 ## Problem
 
-`@deepseek-ai/dsh-agent-instructions` loaded every existing entry of `instructionFileCandidates` in each project directory and collapsed only per-directory trimmed-content duplicates ([workspace context](../../implemented/feature/2026-06-24-workspace-context.md); `packages/context/agent-instructions/src/config.ts` and `src/files.ts` own the semantics). A deployment could not express a preference order: with the default `['AGENTS.md', 'CLAUDE.md']`, two sibling files with different content both rendered, and no ordering suppressed the later one.
+`@deepseek-ai/dsh-agent-instructions` loaded every existing entry of `instructionFileCandidates` in each project directory and collapsed only per-directory trimmed-content duplicates ([workspace context](../../archived/feature/2026-06-24-workspace-context.md); `packages/context/agent-instructions/src/config.ts` and `src/files.ts` own the semantics). A deployment could not express a preference order: with the default `['AGENTS.md', 'CLAUDE.md']`, two sibling files with different content both rendered, and no ordering suppressed the later one.
 
 The cc-connect bridge profile (the `dsh-cc-connect-bridge` repository, outside this tree) hit this on 2026-08-15. It wants `CLAUDE.md` to win wherever both files exist and `AGENTS.md` to keep serving projects that carry only `AGENTS.md`. Configuration could not say that, so the profile pinned `instructionFileCandidates: ['CLAUDE.md']` and every project with only an `AGENTS.md` silently lost its project instructions.
 

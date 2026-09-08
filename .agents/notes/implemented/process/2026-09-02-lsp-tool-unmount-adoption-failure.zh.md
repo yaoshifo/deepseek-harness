@@ -6,7 +6,7 @@ Status: implemented
 
 ## Problem
 
-lsp 工具以三包能力 seam 交付（[2026-07-15](../architecture/2026-07-15-lsp-capability-seam.zh.md)）。把它挂载进 feishu-bridge profile——双桥接主机的 live profile 与 bundled profile——声明了 `lsp`、`lsp-stdio`、`tool-lsp` 三个插件，向每个请求注入 LSP 提示区段，并在 grep 工具描述中交叉引用该工具（b650ab0fab）。部署携带预登记判据：挂载后一周内，至少 10% 的 harness coding 会话出现有机 lsp 调用，终判日期 2026-09-03。
+lsp 工具以三包能力 seam 交付（[2026-07-15](../../archived/architecture/2026-07-15-lsp-capability-seam.md)）。把它挂载进 feishu-bridge profile——双桥接主机的 live profile 与 bundled profile——声明了 `lsp`、`lsp-stdio`、`tool-lsp` 三个插件，向每个请求注入 LSP 提示区段，并在 grep 工具描述中交叉引用该工具（b650ab0fab）。部署携带预登记判据：挂载后一周内，至少 10% 的 harness coding 会话出现有机 lsp 调用，终判日期 2026-09-03。
 
 ## Decision
 

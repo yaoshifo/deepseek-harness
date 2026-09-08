@@ -30,4 +30,4 @@ Status: implemented
 
 ## Related
 
-- [LLM model catalog and ACP selection](../architecture/2026-07-15-llm-model-catalog-and-acp-selection.zh.md) —— 其目录与选择机制的每会话挂载触发了本 Note 在创建窗口内静默的拓扑事件。
+- [LLM model catalog and ACP selection](../../archived/architecture/2026-07-15-llm-model-catalog-and-acp-selection.md) —— 其目录与选择机制的每会话挂载触发了本 Note 在创建窗口内静默的拓扑事件。

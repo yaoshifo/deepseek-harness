@@ -84,10 +84,9 @@ This section explains the design decisions behind the tool and where the code re
 <a id="further-exploration"></a>
 ## Further Exploration
 
-Read these pages when the package-level contract is not enough. They move from the model-facing surface to the seam, the provider, and the decision evidence.
+Read these pages when the package-level contract is not enough. They move from the model-facing surface to the seam and the provider.
 
 - [LSP navigation subsystem](../../../docs/subsystems/lsp.md) — operations, coordinates, requests and results, and `LspError` codes.
-- [LSP capability seam Agent Note](../../../.agents/notes/implemented/architecture/2026-07-15-lsp-capability-seam.md) — design rationale, alternatives, and deliberately deferred API.
 - [dsh-lsp](../lsp/README.md) — the seam this tool queries.
 - [dsh-lsp-stdio](../lsp-stdio/README.md) — the stdio provider that answers these queries.
 - [lsp group map](../README.md) — the three-package family and its related documentation.
@@ -166,7 +165,7 @@ None; UI presentation is outside the model request.
 
 These limits define when the tool is a poor fit. They are current package constraints, not a task backlog.
 
-- **UTF-16 cursor coordinates** — columns are exact for the protocol but hard for a model to count around non-BMP characters; an off-symbol position may return empty results, so the prompt leads with the coordinate-free `workspaceSymbol` entry point and explains the convention for the position operations ([seam Agent Note](../../../.agents/notes/implemented/architecture/2026-07-15-lsp-capability-seam.md)).
+- **UTF-16 cursor coordinates** — columns are exact for the protocol but hard for a model to count around non-BMP characters; an off-symbol position may return empty results, so the prompt leads with the coordinate-free `workspaceSymbol` entry point and explains the convention for the position operations.
 - **Project-loading servers need a seed** — tsserver answers a cold `workspace/symbol` with `No Project` until a document opens; the tool's `file_path` routes the query to the seed's language and seeds that server, and the host re-opens the last opened document when no seed is given. A seedless fan-out surfaces a cold tsserver as a `providerFailures` note while the other providers answer; the same server's navto also searches only the seed's project graph on multi-package workspaces.
 - **No `workspace/symbol/resolve`** — servers that return unresolved `WorkspaceSymbol` entries keep them with `location: null` (rendered without a position suffix) instead of a resolve round-trip; in practice the servers in use return resolved locations.
 - **No cross-server completeness promise** — supported servers may return empty or partial results depending on indexing readiness; the tool promises no completeness across languages or servers.

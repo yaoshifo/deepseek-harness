@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-09-02-lsp-tool-unmount-adoption-failure.md
-2026-09-02-lsp-tool-unmount-adoption-failure.md: 0b23de5042bb98fd0a52a320aced997cc3633a1b
-2026-09-02-lsp-tool-unmount-adoption-failure.zh.md: 296cc14dda06bb22b3d011170cb49eb979a73e93
+2026-09-02-lsp-tool-unmount-adoption-failure.md: f3a6aae60e4f0fabde3eb9a4689d24b4de8705d9
+2026-09-02-lsp-tool-unmount-adoption-failure.zh.md: a04a7f4a6ae9ff1f5aec3fe4f2e2b32daaa5cba2

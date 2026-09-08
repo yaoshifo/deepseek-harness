@@ -15,7 +15,7 @@ The two-machine diff is the discriminator: rows identical across Mac and dev are
 Six groups move from the profile patch into `packages/acp/feishu-bridge/cordis.patch.yml`:
 
 - The goal family (domain, round driver, `/goal` command, tool — disabling only the tool row would leave `/goal`-created goals with no tool to close), workflow, and ralph disables: low-frequency orchestration whose schemas cost request context every turn.
-- The `tool-str-replace-editor` disable: the session editor is `dsh-tool-fs`'s edit; dsh-base still mounts the row, and the same [single-editor decision](../simplification/2026-08-10-default-presets-single-editor.md) keeps it out of the general-purpose presets.
+- The `tool-str-replace-editor` disable: the session editor is `dsh-tool-fs`'s edit; dsh-base still mounts the row, and the same [single-editor decision](../../archived/simplification/2026-08-10-default-presets-single-editor.md) keeps it out of the general-purpose presets.
 - The `tool-ask-user` insert: the ask-card / user-questions machinery has no dsh-base row, so every bridge composition needs it.
 - The `dsh-memory` insert with index limits (25600 per-session, 8192 global): the session memory surface is part of the bridge product experience.
 - `system-prompt` `includeHarnessIdentity: false` (bridge sessions carry their own identity/persona injection); `persona: ''` repeats base's value because patch config is key-replacement.

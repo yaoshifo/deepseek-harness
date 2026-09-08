@@ -14,7 +14,7 @@ Status: implemented
 
 - `ctx.plugin(SkillFileSystem, { providerName: 'feishu-bridge-skills', includeDefaultRoots: false, customSkillDirs: [<包>/skills] })`。隔离 provider 只看自己的显式根——`includeDefaultRoots: false` 正是 skill-filesystem 为多 provider 部署既有的约定——因此绝不会重新发现项目根、用户根或环境变量 bundled 根。
 - 目录从 `import.meta.url` 计算（`dirname() + '../skills'`），源码运行（`src/`）与 tsdown 打包的 `lib/index.js` 解析到同一个包根，零部署侧路径。`package.json` 的 `files` 带上 `skills/`，发布安装同样生效。
-- bundled 根落在 custom rank（300）：项目 `.dsh/skills` 与 `.agents/skills` 条目保持更低的 rank 并覆盖同名 bundled skill，与注册表的优先级语义一致（[skill system](2026-07-05-skill-system.zh.md)）。
+- bundled 根落在 custom rank（300）：项目 `.dsh/skills` 与 `.agents/skills` 条目保持更低的 rank 并覆盖同名 bundled skill，与注册表的优先级语义一致（[skill system](../../archived/feature/2026-07-05-skill-system.md)）。
 - 挂载是子 fiber：销毁 feishu-bridge fiber（HMR 重载）即注销 provider 并关闭其 watcher；skills 目录保持 chokidar 监视，编辑 bundled skill 文件即热刷新目录。
 
 部署侧的 `customSkillDirs` 继续承担用户级 skill 根（`~/.claude/skills` 等）；Mac live profile 的手写包路径条目在本次改动中一并删除，避免两个 provider 之间的同名重复告警。
@@ -25,7 +25,7 @@ Status: implemented
 
 **复用 `DSH_BUNDLED_SKILL_DIR`。** 该环境变量是应用级 bundled 根通道（web app 在用）；一个进程只有一个 bundled 根，插件占住它会与宿主应用自己的 bundled skills 冲突，且只对抢到的一方生效。
 
-**像 `dsh-skill-badge` 那样做专用打包 provider。** [badge 决策](2026-08-06-bundled-dsh-badge-skill.md)用一个专门构建的 provider 包注册单一不可变 skill。桥接的 skills 是一目录可编辑的 Markdown 文件，需要 frontmatter 解析、目录资源基址与热监视——正是 skill-filesystem 已有的能力——所以用独立 `providerName` 把它作为隔离实例组合进来，复用既有机制而不是复制一个解析器。
+**像 `dsh-skill-badge` 那样做专用打包 provider。** [badge 决策](../../archived/feature/2026-08-06-bundled-dsh-badge-skill.md)用一个专门构建的 provider 包注册单一不可变 skill。桥接的 skills 是一目录可编辑的 Markdown 文件，需要 frontmatter 解析、目录资源基址与热监视——正是 skill-filesystem 已有的能力——所以用独立 `providerName` 把它作为隔离实例组合进来，复用既有机制而不是复制一个解析器。
 
 ## Consequences
 

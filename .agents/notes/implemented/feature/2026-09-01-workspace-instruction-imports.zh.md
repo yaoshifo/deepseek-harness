@@ -44,4 +44,4 @@ Claude Code 用交互式审批对话框拦截外部 import。Headless 组合没�
 - 基线与确认读取为每个被导入文件发起一次有界读取，`src/files.ts` 的聚合读取 `TODO(total-instruction-read-bound)` 因此同样覆盖 import；每文件 `maxSourceBytes` 与渲染预算约束模型可见结果。
 - 不受信任的仓库多了一条把树外文本带进较低优先级指令的途径（绝对路径 import）；包 README 的信任条目同时点名 symlink 与 import，以提供方收敛为缓解手段。
 
-相关：[工作区上下文决策记录](2026-06-24-workspace-context.zh.md)。
+相关：[工作区上下文决策记录](../../archived/feature/2026-06-24-workspace-context.md)。

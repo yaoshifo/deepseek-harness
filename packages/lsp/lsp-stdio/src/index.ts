@@ -342,7 +342,8 @@ class LocalLspProvider implements LspProvider {
   /**
    * Run one instance-bound operation with the pool's transport-replacement policy: a selected child
    * that died while idle or fails during the next write is replaced once and retried transparently
-   * (queries are read-only).
+   * (queries are read-only). When a dead instance's final teardown also fails, both failures
+   * surface together instead of the teardown masking the operation's own error.
    * @param workspaceKey - the canonical workspace key.
    * @param workspace - the canonical workspace identity.
    * @param signal - cancellation fused with provider disposal.
@@ -359,21 +360,33 @@ class LocalLspProvider implements LspProvider {
     // synchronous get-or-create so every spawned process remains owned by teardown.
     this.assertActive(signal)
     let instance = this.instanceFor(workspaceKey, workspace)
-    try {
-      return await run(instance)
-    } catch (error) {
-      if (!instance.isTransportFailure(error)) throw error
-      await instance.dispose()
-      this.evictIfCurrent(workspaceKey, instance)
-      this.assertActive(signal)
-      instance = this.instanceFor(workspaceKey, workspace)
-      return await run(instance)
-    } finally {
-      // Reach quiescence before dropping a dead slot; a replacement must survive this ownership check.
+    let canRetryTransport = true
+    for (;;) {
+      const [runOutcome] = await Promise.allSettled([run(instance)])
+      let teardownOutcome: PromiseSettledResult<void> | undefined
       if (instance.dead) {
-        await instance.dispose()
+        ;[teardownOutcome] = await Promise.allSettled([instance.dispose()])
+        // A dead instance is never reusable, even when its final quiescence observation fails.
         this.evictIfCurrent(workspaceKey, instance)
       }
+      if (teardownOutcome?.status === 'rejected') {
+        if (runOutcome.status === 'rejected') {
+          throw new AggregateError(
+            [runOutcome.reason, teardownOutcome.reason],
+            'LSP operation and teardown failed',
+          )
+        }
+        throw teardownOutcome.reason
+      }
+      if (runOutcome.status === 'fulfilled') return runOutcome.value
+      // A selected child can have died while idle or fail during the next write. Queries are
+      // read-only, so replace that transport once and retry transparently after clean disposal.
+      if (!canRetryTransport || !instance.isTransportFailure(runOutcome.reason)) {
+        throw runOutcome.reason
+      }
+      canRetryTransport = false
+      this.assertActive(signal)
+      instance = this.instanceFor(workspaceKey, workspace)
     }
   }
 

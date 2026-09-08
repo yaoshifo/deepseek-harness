@@ -26,4 +26,4 @@ Config：`agent.reasoningEffort` 的 union 现为 `'off' | 'low' | 'medium' | 'h
 
 ## 后果
 
-共用状态页脚的所有卡片（完成通知卡、/new 卡、spawn 通知卡）都在模型旁标出声明档位。未声明 effort 的 bot 视觉零变化，这对无思考控制的网关是正确表现。包内 vitest 用例钉住三条渲染分支——紧连 effort、空 effort 回归、模式排序——以及带 effort 的折叠面板标题。允许档位的词表仍由 [adapter-owned reasoning effort capabilities](../../architecture/2026-07-24-adapter-owned-reasoning-effort-capabilities.md) 所属的 llm adapter 掌握；本决策只选择 bridge 显示什么。
+共用状态页脚的所有卡片（完成通知卡、/new 卡、spawn 通知卡）都在模型旁标出声明档位。未声明 effort 的 bot 视觉零变化，这对无思考控制的网关是正确表现。包内 vitest 用例钉住三条渲染分支——紧连 effort、空 effort 回归、模式排序——以及带 effort 的折叠面板标题。允许档位的词表仍由 [adapter-owned reasoning effort capabilities](../../archived/architecture/2026-07-24-adapter-owned-reasoning-effort-capabilities.md) 所属的 llm adapter 掌握；本决策只选择 bridge 显示什么。

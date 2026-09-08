@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-01-feishu-bridge-deployment-class-config-in-bundle-patch.md
-2026-09-01-feishu-bridge-deployment-class-config-in-bundle-patch.md: 949e1c51f43b46ac32f657bf5daed91f5d76daa8
-2026-09-01-feishu-bridge-deployment-class-config-in-bundle-patch.zh.md: baf1f3b8017ecff079645f9334489efc95ae86d1
+2026-09-01-feishu-bridge-deployment-class-config-in-bundle-patch.md: ea286a4af942d7885866b4d87045dede1955fbcf
+2026-09-01-feishu-bridge-deployment-class-config-in-bundle-patch.zh.md: 3455f5f0cc702df39e39e1bb97795218a8677b81

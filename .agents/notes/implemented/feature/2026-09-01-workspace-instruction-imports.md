@@ -44,4 +44,4 @@ Claude Code gates external imports behind an interactive approval dialog. Headle
 - Baseline and confirming reads issue one bounded read per imported file, so the aggregate-read `TODO(total-instruction-read-bound)` in `src/files.ts` covers imports too; per-file `maxSourceBytes` and the render budget bound the model-visible result.
 - Untrusted repositories gain one more way to surface off-tree text into lower-authority instructions (absolute-path imports); the package README's trust bullet names both symlinks and imports, with provider confinement as the mitigation.
 
-Related: [workspace context decision record](2026-06-24-workspace-context.md).
+Related: [workspace context decision record](../../archived/feature/2026-06-24-workspace-context.md).
