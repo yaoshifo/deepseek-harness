@@ -3,7 +3,11 @@
 import { getSystemErrorMessage, getSystemErrorName } from 'node:util'
 import koffi from 'koffi'
 
-/** Replace the current process image while preserving the supplied argv and environment. */
+/**
+ * Replace the current process image while preserving the supplied argv and
+ * environment, with the standard descriptors cleared of close-on-exec and
+ * non-blocking flags so the target starts with blocking stdio.
+ */
 export type LinuxExecve = (
   file: string,
   argv: string[],
@@ -21,7 +25,10 @@ type NativeFcntl = (fd: number, command: number, argument: number) => number
 const STANDARD_FILE_DESCRIPTORS = [0, 1, 2] as const
 const F_GETFD = 1
 const F_SETFD = 2
+const F_GETFL = 3
+const F_SETFL = 4
 const FD_CLOEXEC = 1
+const O_NONBLOCK = 0o4000
 
 let cachedExecve: LinuxExecve | undefined
 
@@ -52,12 +59,24 @@ export function loadLinuxExecve(): LinuxExecve {
     'int fcntl(int fd, int cmd, int arg)',
   ) as NativeFcntl
   cachedExecve = (file, argv, env) => {
+    // The hosting Node runtime leaves pipe-backed stdio non-blocking and
+    // execve preserves status flags, so a full pipe would fail the target's
+    // writes with EAGAIN instead of blocking; every fd_spawn'd or
+    // posix_spawn'd child gets blocking stdio, and the exec'd target must too.
     for (const fd of STANDARD_FILE_DESCRIPTORS) {
       const flags = nativeFcntl(fd, F_GETFD, 0)
       if (flags === -1) throw systemError(koffi.errno(), 'fcntl')
-      if ((flags & FD_CLOEXEC) === 0) continue
-      if (nativeFcntl(fd, F_SETFD, flags & ~FD_CLOEXEC) === -1) {
-        throw systemError(koffi.errno(), 'fcntl')
+      if ((flags & FD_CLOEXEC) !== 0) {
+        if (nativeFcntl(fd, F_SETFD, flags & ~FD_CLOEXEC) === -1) {
+          throw systemError(koffi.errno(), 'fcntl')
+        }
+      }
+      const status = nativeFcntl(fd, F_GETFL, 0)
+      if (status === -1) throw systemError(koffi.errno(), 'fcntl')
+      if ((status & O_NONBLOCK) !== 0) {
+        if (nativeFcntl(fd, F_SETFL, status & ~O_NONBLOCK) === -1) {
+          throw systemError(koffi.errno(), 'fcntl')
+        }
       }
     }
     nativeExecve(

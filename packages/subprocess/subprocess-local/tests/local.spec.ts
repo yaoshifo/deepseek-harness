@@ -871,14 +871,16 @@ describe('LocalSubprocessRuntime', () => {
     await fiber.dispose()
   })
 
-  it('disposal contains a spawn-failure rejection that races teardown', async () => {
+  it('a teardown termination that wins the bootstrap race settles as the delivered signal', async () => {
     const ctx = new Context()
     const fiber = await ctx.plugin(LocalSubprocessRuntime)
-    // Dispose before the rejection continuation removes the handle from the
-    // live set, so teardown itself must swallow the rejected done.
+    // Dispose before the bootstrap can fail on its own (bad cwd): the
+    // teardown's termination lands in the startup window and done settles
+    // as the delivered signal — never a startup-failure rejection and never
+    // a hang — while teardown itself stays contained.
     const handle = ctx.subprocess.spawn(spec('true', { cwd: '/nonexistent-dir-dsh-subprocess-test' }))
     await fiber.dispose()
-    await expect(handle.done).rejects.toThrow()
+    await expect(handle.done).resolves.toMatchObject({ exitCode: null, signal: 'SIGTERM' })
   })
 
   it('loading a second implementation throws (one processes service per context — cordis standard)', async () => {
