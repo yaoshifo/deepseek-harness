@@ -9,6 +9,9 @@
  * share_session_in_channel keys on the chat alone.
  */
 
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { FeishuPlatform, type CardActionTriggerEvent, type FeishuApiClient } from '../../src/feishu/platform.ts'
 import { asI18nHandleReceiver, type Platform } from '../../src/core/types.ts'
@@ -1057,6 +1060,117 @@ describe('onCardAction fw_multi submit (followups suggestion card)', () => {
     expect(messages).toHaveLength(1)
     // The askq meta survives for its own card's freeze.
     expect(p.askqMetaCache.get('feishu:oc_1:ou_9')).toBeDefined()
+  })
+})
+
+describe('followups meta persistence across restarts', () => {
+  /** A form_submit callback exactly as Feishu delivers it: action.value is
+   * dropped, the button name and form_value carry everything. */
+  function fwSubmit(formValue: Record<string, unknown>): CardActionTriggerEvent {
+    return {
+      action: { name: 'fw_multi_submit_0', form_value: formValue },
+      operator: { open_id: 'ou_9' },
+      context: { open_chat_id: 'oc_1', open_message_id: `om_fw_${Date.now()}_${Math.random()}` },
+    }
+  }
+
+  function api(): FeishuApiClient {
+    return {
+      async create() { return { messageId: 'om_fw_card' } },
+      async reply() { return { messageId: 'om_fw_card' } },
+      async patch() {},
+      async delete() {},
+    }
+  }
+
+  it('a followups card sent before a restart still dispatches the full selection after it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fwmeta-'))
+    const { buildFollowupsCard } = await import('../../src/engine/ask.ts')
+    const card = buildFollowupsCard({
+      question: 'fix?',
+      header: '后续处理',
+      options: [
+        { label: 'Fix A', description: 'src/a.ts:1', recommended: true },
+        { label: 'Skip', description: '' },
+      ],
+      multiSelect: true,
+    })
+    const sender = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
+    await sender.sendCard({ messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, card)
+    // The send-time sidecar write is fire-and-forget; let it land before the
+    // next generation reads the file.
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    // A fresh platform over the same dataDir: every in-memory cache starts
+    // empty, exactly as after a daemon restart.
+    const restarted = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
+    const messages: Message[] = []
+    await restarted.start((_p, msg) => { messages.push(msg) })
+    const response = restarted.onCardAction(fwSubmit({ askq_opt_0_1: true, fw_text_0: 'go' })) as unknown
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]!.content).toBe(
+      '[后续处理] 用户在本轮完成卡上提交了选择：\n**fix?**\n✅ **Fix A**\nsrc/a.ts:1\n◻️ **Skip**\n✍️ go')
+    expect(messages[0]!.isFollowupAction).toBe(true)
+    // The pressed card still freezes into its settled snapshot.
+    expect(JSON.stringify(response)).toContain('Fix A')
+  })
+
+  it('a consumed registration does not resurrect after another restart', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fwmeta-'))
+    const { buildFollowupsCard } = await import('../../src/engine/ask.ts')
+    const card = buildFollowupsCard({
+      question: 'fix?',
+      header: '后续处理',
+      options: [{ label: 'Fix A', description: '', recommended: true }],
+      multiSelect: true,
+    })
+    const sender = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
+    await sender.sendCard({ messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, card)
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    // One generation consumes the submission.
+    const first = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
+    const firstMessages: Message[] = []
+    await first.start((_p, msg) => { firstMessages.push(msg) })
+    first.onCardAction(fwSubmit({ askq_opt_0_1: true }))
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+    expect(firstMessages[0]!.content).toContain('✅ **Fix A**')
+
+    // A later restart must not resurrect the consumed registration: a repeat
+    // submit degrades to the stale notice instead of double-processing.
+    const second = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
+    const secondMessages: Message[] = []
+    await second.start((_p, msg) => { secondMessages.push(msg) })
+    second.onCardAction(fwSubmit({ askq_opt_0_1: true }))
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(secondMessages[0]!.content).toContain('选项文本已因重启丢失')
+  })
+
+  it('an askq card taking over the session key drops the persisted followups entry', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fwmeta-'))
+    const { buildFollowupsCard, buildAskQuestionCard } = await import('../../src/engine/ask.ts')
+    const question = {
+      question: 'fix?',
+      header: '后续处理',
+      options: [{ label: 'Fix A', description: '', recommended: true }],
+      multiSelect: true,
+    }
+    const sender = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
+    const replyCtx = { messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }
+    await sender.sendCard(replyCtx, buildFollowupsCard(question))
+    // A later live ask card owns the cache key; the followups registration
+    // must not survive a restart above the newer card.
+    await sender.sendCard(replyCtx, buildAskQuestionCard({ ...question, multiSelect: false }, 0, 1))
+    await new Promise((resolve) => { setTimeout(resolve, 20) })
+
+    const restarted = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
+    const messages: Message[] = []
+    await restarted.start((_p, msg) => { messages.push(msg) })
+    restarted.onCardAction(fwSubmit({ askq_opt_0_1: true }))
+    await new Promise((resolve) => { setTimeout(resolve, 10) })
+    expect(messages[0]!.content).toContain('选项文本已因重启丢失')
   })
 })
 

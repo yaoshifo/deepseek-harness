@@ -49,6 +49,7 @@ import { TokenBucketRateLimiter, feishuBusinessCode, feishuPatchRateLimitCode, i
 import { errorMessage } from './retry.ts'
 import { ErrNotSupported, type ChatBasePhase, type ChatPhase, type ImageAttachment, type FileAttachment, type Message, type MessageHandler, type Platform, type ProgressContent } from '../core/types.ts'
 import { SpawnedChatStore, extractFeishuChatID, projectBaseForTag, type GroupSpawnOptions, type SpawnedChatInfo, type SpawnedChatMeta } from './spawn.ts'
+import { FollowupsMetaStore, type AskCardMeta } from './followups-meta.ts'
 import { TagManager, buildDirWordFreq, pickDirTagName, type CreateTagResult, type FeishuCodeReply, type TagApi, type TagRelationTag } from './tag.ts'
 import { grayscaleAvatar, groupAvatarColor, phaseAvatarBG, renderIconPNG } from './avatar.ts'
 import { ChatNameCache } from './chatname.ts'
@@ -281,24 +282,6 @@ export interface FeishuReceiveEvent {
  */
 export interface CardActionCallbackResponse {
   card: { type: 'raw'; data: FeishuCardMap }
-}
-
-/**
- * The open question of one ask card, captured at send time: form_submit
- * callbacks carry no action.value and button-click callbacks only the
- * clicked option, so the platform caches the question itself (mirroring
- * permBodyCache) and reads it back to freeze the card with
- * buildAskQuestionCardSettled on its answer callback.
- */
-interface AskCardMeta {
-  /** The question the card prompts. */
-  question: UserQuestion
-  /** Zero-based index of the question in its ask. */
-  qIdx: number
-  /** Total questions of the ask (settled cards keep the progress suffix). */
-  total: number
-  /** Set on a followups suggestion card: an `fw_multi:` form, not an ask. */
-  followups?: true
 }
 
 /**
@@ -627,6 +610,8 @@ export class FeishuPlatform implements Platform {
 
   /** Spawned-chat registry (loaded from dataDir when set). */
   readonly spawnStore: SpawnedChatStore
+  /** Open followups registrations (loaded from dataDir when set; seeded into {@link askqMetaCache} at init). */
+  readonly followupsMetaStore: FollowupsMetaStore
   /**
    * Per-chat tail of the serialized phase-paint chain: a queued repaint
    * reads the meta the previous paint committed, never a stale snapshot
@@ -685,6 +670,9 @@ export class FeishuPlatform implements Platform {
     this.spawnStore = new SpawnedChatStore(
       sessionsDir === '' ? '' : join(sessionsDir, `${base}_spawned.json`),
       sessionsDir === '' ? [] : legacyBases.map(b => join(sessionsDir, `${b}_spawned.json`)),
+    )
+    this.followupsMetaStore = new FollowupsMetaStore(
+      sessionsDir === '' ? '' : join(sessionsDir, `${base}_followups_meta.json`),
     )
     // The tag cache is tenant-shared state (sibling lookup reuses ids created
     // by other bots), unlike the spawned registry which is this bot's private
@@ -788,6 +776,12 @@ export class FeishuPlatform implements Platform {
   private async init(): Promise<void> {
     await this.spawnStore.load()
     await this.tagManager.load()
+    // Restore open followups registrations into the send-time cache so a
+    // submit on a pre-restart suggestion card still resolves its texts.
+    await this.followupsMetaStore.load()
+    for (const [key, meta] of this.followupsMetaStore.metas()) {
+      this.askqMetaCache.set(key, meta)
+    }
     const wd = this.o.workDir ?? ''
     if (wd !== '') {
       this.dirWordFreq = await buildDirWordFreq(dirname(wd))
@@ -1167,6 +1161,9 @@ export class FeishuPlatform implements Platform {
       const meta = this.askqMetaCache.get(sessionKey)
       if (meta !== undefined && meta.followups === true) {
         this.askqMetaCache.delete(sessionKey)
+        // The submission consumed the registration; drop the persisted copy
+        // too, or a restart would resurrect it for a repeat submit.
+        void this.followupsMetaStore.delete(sessionKey)
         const content = followupsSelectionMessage(
           meta.question, indices.map(s => Number.parseInt(s, 10)), note, this.i18nHandle ?? zhAskCardI18n)
         this.dispatch(sessionKey, messageID, userID, chatID, 'group',
@@ -1969,6 +1966,13 @@ export class FeishuPlatform implements Platform {
     const meta = askCardMeta(card)
     if (meta === undefined) return false
     this.askqMetaCache.set(sessionKey, meta)
+    // The cache key holds one card's meta: mirror the single-slot semantics
+    // onto the persisted store. Followups cards outlive the turn (and
+    // possibly the daemon), so theirs persists for post-restart submits;
+    // any other question card owning the key retires it. Fire-and-forget —
+    // a lost write only degrades to the stale notice, never blocks the send.
+    if (meta.followups === true) void this.followupsMetaStore.set(sessionKey, meta)
+    else void this.followupsMetaStore.delete(sessionKey)
     return true
   }
 

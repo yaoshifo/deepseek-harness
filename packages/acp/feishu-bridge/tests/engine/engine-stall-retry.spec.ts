@@ -19,7 +19,7 @@ import { Context } from '@deepseek-ai/cordis'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm'
+import { LlmAdapter, ToolCallId, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { DshAgentAdapter } from '../../src/agent-dsh/adapter.ts'
 import { Engine } from '../../src/engine/engine.ts'
 import { createStubPlatform, type StubPlatform } from '../stubs/engine-stubs.ts'
@@ -35,6 +35,10 @@ type ScriptEntry =
     readonly reasoning: { readonly chunks: number; readonly intervalMs: number }
     readonly text: string
   }
+  | {
+    /** Stream tool-argument deltas at a fixed cadence, then hold the request open. */
+    readonly toolArgs: { readonly chunks: number; readonly intervalMs: number }
+  }
 
 /**
  * Scripted LLM adapter: each model call consumes the next script entry.
@@ -43,7 +47,11 @@ type ScriptEntry =
  * latency on the retry) then completes with the text; the `reasoning` form
  * streams reasoning deltas at `intervalMs` cadence — a live model generating
  * one long message whose inter-chunk gaps exceed the idle window without any
- * durable event landing (2026-09-09 oc_a8f4 incident shape) — then completes.
+ * durable event landing (2026-09-09 oc_a8f4 incident shape) — then completes;
+ * the `toolArgs` form streams tool-argument deltas at `intervalMs` cadence
+ * then holds the request open — tool-argument chunks stay silent in the
+ * engine's delta projection, so the pump stays blind while chunks keep
+ * arriving and the stream-activity clock alone shields the turn.
  */
 class StallScriptAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
@@ -90,6 +98,19 @@ class StallScriptAdapter extends LlmAdapter {
         if (options.signal?.aborted) throw new Error('aborted')
         yield chunk
       }
+      return
+    }
+    if ('toolArgs' in entry) {
+      yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+      for (let i = 0; i < entry.toolArgs.chunks; i++) {
+        await new Promise<void>((resolve) => { setTimeout(resolve, entry.toolArgs.intervalMs) })
+        if (options.signal?.aborted) throw new Error('aborted')
+        yield { type: 'tool-call-delta', index: 0, id: ToolCallId('call-stall'), name: 'stall_probe', argumentsDelta: `"arg ${i}": ${i}, ` }
+      }
+      await new Promise<void>((_resolve, reject) => {
+        if (options.signal?.aborted) { reject(new Error('aborted')); return }
+        options.signal?.addEventListener('abort', () => { reject(new Error('aborted')) }, { once: true })
+      })
       return
     }
     await new Promise<void>((resolve) => { setTimeout(() => { resolve() }, entry.firstChunkDelayMs) })
@@ -238,11 +259,6 @@ describe('stall retry over the real dsh runtime', () => {
     // (7200s), so the test does too.
     rt.engine.setAbsoluteTurnTimeoutSecs(10)
 
-    const warns: string[] = []
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
-      warns.push(args.map(String).join(' '))
-    })
-
     receive(rt.engine, rt.platform, 'task')
     await vi.waitFor(() => {
       const delivered = rt.platform.sent.some(s => s.includes('designed'))
@@ -250,11 +266,42 @@ describe('stall retry over the real dsh runtime', () => {
       expect(delivered, `sent=${JSON.stringify(rt.platform.sent)} messages=${JSON.stringify(rt.platform.messages)}`).toBe(true)
     }, { timeout: 8_000 })
 
-    // No stall retry happened: the live stream's chunk activity overrode the
-    // idle fire every window instead of the turn dying as aborted/disposed.
+    // No stall retry happened: reasoning deltas project into thinking_delta
+    // engine events, so the pump itself stays fed and the turn never goes
+    // idle — the stream-activity override never needs to fire for this
+    // shape (the tool-argument test below pins that residual net).
     expect(rt.platform.sent.some(s => s.includes('Agent stalled') || s.includes('无响应超时')),
       `sent=${JSON.stringify(rt.platform.sent)}`).toBe(false)
-    expect(warns.some(w => w.includes('stall check overridden')), `warns=${JSON.stringify(warns)}`).toBe(true)
+    const state = rt.engine.interactiveStates.get('test:ch:user1')
+    expect(state?.agentSession?.alive()).toBe(true)
+  })
+
+  it('a tool-argument stream is pump-blind and the stream-activity clock alone overrides the idle fire', { timeout: 15_000 }, async () => {
+    // Tool-argument deltas stay silent in the engine's delta projection, so
+    // a model streaming one large tool call leaves the pump idle for the
+    // whole argument window while chunks keep arriving — the blind-pump
+    // shape the stream-activity clock's override must shield alone.
+    const rt = await bootRuntime([
+      { toolArgs: { chunks: 8, intervalMs: 300 } },
+    ])
+    // Same cap pin as the reasoning incident test: the shrunk 400ms idle
+    // shrinks the unset hard cap to 800ms.
+    rt.engine.setAbsoluteTurnTimeoutSecs(10)
+
+    const warns: string[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warns.push(args.map(String).join(' '))
+    })
+
+    receive(rt.engine, rt.platform, 'task')
+    await vi.waitFor(() => {
+      expect(warns.some(w => w.includes('stall check overridden')), `warns=${JSON.stringify(warns)}`).toBe(true)
+    }, { timeout: 8_000 })
+
+    // The override fired while chunks were still arriving at a 300ms cadence
+    // (under the 400ms idle), so the blind pump was overridden, not killed.
+    expect(rt.platform.sent.some(s => s.includes('Agent stalled') || s.includes('无响应超时')),
+      `sent=${JSON.stringify(rt.platform.sent)}`).toBe(false)
     const state = rt.engine.interactiveStates.get('test:ch:user1')
     expect(state?.agentSession?.alive()).toBe(true)
     warnSpy.mockRestore()
