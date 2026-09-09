@@ -305,7 +305,7 @@ export function beginChatroomPick(e: Engine, p: Platform, msg: Message, topic: s
       platform: p.name(),
       userID: msg.userID,
       userName: '[聊天室]',
-      content: buildChatroomPickPriming(topic, all, rolesDir),
+      content: buildChatroomPickPriming(topic, all, rolesDir, chatroomConfig(e).maxRoles()),
       // One-shot mode override: the pick turn must not run the plan-mode
       // dance (a live hub agent process bypasses this; the engine's pick
       // auto-approve remains the backstop there).
@@ -369,7 +369,7 @@ export function renderChatroomPickCard(e: Engine, ps: ChatroomPickState): Card {
     const btnType = sel ? 'primary' : 'default'
     cb.listItemBtn(desc, btnText, btnType, `act:/chatroom-pick toggle ${r.name}`)
   }
-  cb.taggedNote('chatroom-pick-count', e.i18n.tf(Msg.ChatroomPickSelectedCount, ps.selected.size))
+  cb.taggedNote('chatroom-pick-count', e.i18n.tf(Msg.ChatroomPickSelectedCount, ps.selected.size, chatroomConfig(e).maxRoles()))
   if (ps.hint !== '') cb.note(ps.hint)
   cb.buttons(
     { text: e.i18n.t(Msg.ChatroomPickConfirm), type: 'primary', value: 'act:/chatroom-pick confirm' },

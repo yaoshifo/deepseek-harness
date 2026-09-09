@@ -1150,6 +1150,28 @@ describe('RenderChatroomPickCard', () => {
     expect(ps!.hint).toBe('')
   })
 
+  it('shows the role cap beside the selected count (cap comes from config)', async () => {
+    // 2026-09-08 test ground: the moderator marked 9 roles recommended and the
+    // card read "已选 9 个" with no cap, so confirming looked safe until the
+    // engine rejected the cast for exceeding maxRoles. The count note must
+    // state the cap, sourced from chatroomConfig — not a hardcoded 5.
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles(), maxRoles: 3 })
+    const hub = 'test:hub:user-1'
+    const handler = e.commandHandlers?.get('chatroom')
+    handler?.(p, hubMsg(hub), ['议题'])
+    await settle()
+
+    renderChatroomPickCardAndPush(e, hub, [
+      { name: 'taleb', recommended: true, blurb: '' },
+      { name: 'munger', recommended: true, blurb: '' },
+    ])
+    await waitFor(() => p.sentCards.some(c => JSON.stringify(c).includes('chatroom-pick-count')), 'pick count note')
+
+    expect(JSON.stringify(p.sentCards)).toContain('已选 2 / 上限 3 个')
+  })
+
   it('preserves user selections after a toggle (late pick-roles ignored)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
@@ -1612,7 +1634,7 @@ describe('topic-pick priming ledger history', () => {
 describe('role-pick priming lightning round', () => {
   it('drives the recommendation through an opening poll before pick-roles', async () => {
     const { buildChatroomPickPriming } = await import('../../src/engine/chatroom-priming.ts')
-    const s = buildChatroomPickPriming('定投频率', ['taleb', 'munger'], '/roles')
+    const s = buildChatroomPickPriming('定投频率', ['taleb', 'munger'], '/roles', 5)
     expect(s).toContain('action: poll')
     expect(s).toContain('opening')
     // The statement brief's fixed shape: stance / blind spot / willingness.
@@ -1622,6 +1644,18 @@ describe('role-pick priming lightning round', () => {
     // Recommendations build on the collected statements, not file skimming alone.
     expect(s).toContain('表态')
     expect(s).toContain('pick-roles')
+  })
+
+  it('teaches the recommended-pick cap, with the number from the caller', async () => {
+    // The priming used to stay silent about the role cap, so a moderator
+    // marking 9 roles recommended sailed past the engine's maxRoles check.
+    // The bound must reach the moderator before pick-roles, and the number
+    // must be the passed-in cap — not a hardcoded 5.
+    const { buildChatroomPickPriming } = await import('../../src/engine/chatroom-priming.ts')
+    const s = buildChatroomPickPriming('定投频率', ['taleb', 'munger'], '/roles', 5)
+    expect(s).toContain('recommended')
+    expect(s).toContain('不超过上限 5')
+    expect(buildChatroomPickPriming('定投频率', ['taleb', 'munger'], '/roles', 3)).toContain('不超过上限 3')
   })
 })
 

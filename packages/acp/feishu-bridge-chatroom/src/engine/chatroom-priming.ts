@@ -262,9 +262,10 @@ export function buildChatroomResearchModeratorPriming(
  * @param topic - Topic roles are recommended for.
  * @param roleNames - Candidate role names enumerated from the roles dir.
  * @param rolesDir - Root dir the moderator reads persona files from.
+ * @param maxRoles - Role cap the recommended count must respect (engine maxRoles).
  * @returns the role-pick priming prompt.
  */
-export function buildChatroomPickPriming(topic: string, roleNames: string[], rolesDir: string): string {
+export function buildChatroomPickPriming(topic: string, roleNames: string[], rolesDir: string, maxRoles: number): string {
   return `[聊天室·角色挑选（步骤 0，在正式讨论前）]
 
 议题：${topic}
@@ -273,7 +274,7 @@ export function buildChatroomPickPriming(topic: string, roleNames: string[], rol
 
 ## 你的任务（仅此一步，做完结束回合）
 1. 先跑全员闪电轮：调 ${TOOL} 工具 action: poll，round: opening，message 是发给**每个角色**的快答任务书——包含议题原文 + 三段式要求：①一句话立场（≤40 字）②本题最可能被漏的**具体**盲点一句 ③参与意愿：想深聊 / 表态即可 / 不相关。角色是一次性无工具快答（人设照常生效）。发起后**结束回合**，等全员表态收齐唤醒你（缺席角色会标（未表态））。
-2. 被唤醒后，**基于全员表态**（不是只读文件的印象）给所有角色排序：把「想深聊且盲点具体」的排最前、标 recommended: true，blurb 写它的自荐依据（立场/盲点摘要）；其余保留在列表、写一句简介、标 recommended: false。对「（未表态）」的角色才用 Read 读它的 CLAUDE.md 和 ESSENCE.md 补判断。
+2. 被唤醒后，**基于全员表态**（不是只读文件的印象）给所有角色排序：把「想深聊且盲点具体」的排最前、标 recommended: true（数量**不超过上限 ${maxRoles}**，超出会被引擎拒绝），blurb 写它的自荐依据（立场/盲点摘要）；其余保留在列表、写一句简介、标 recommended: false。对「（未表态）」的角色才用 Read 读它的 CLAUDE.md 和 ESSENCE.md 补判断。
 3. 调 ${TOOL} 工具：action: pick-roles，picks: <JSON 数组字符串>，元素形如 {"name":"<角色名>","recommended":true,"blurb":"<一句话>"}。
    engine 会校验角色名（剔除幻觉）、把推荐项默认勾选、渲染一张飞书多选卡给用户增删确认。
 4. 调完后**结束回合**（非阻塞，和 gather 一样）。用户在卡片上点「确认开始」后，engine 会自动启动聊天室并再次唤醒你（带正式讨论的编排指令）。
