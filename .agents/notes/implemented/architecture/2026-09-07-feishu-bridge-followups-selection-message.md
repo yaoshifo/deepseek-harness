@@ -13,7 +13,7 @@ The closing-card followups conversion dispatched the card submission as the raw 
 The Feishu platform's `fw_multi:` intake composes the dispatched text at the submission point, where the send-time meta (question, options, descriptions) is already in hand for the card freeze:
 
 - `followupsSelectionMessage` (engine/ask.ts) builds the message: the `FollowupsSelection` headline, the question, one `✅/◻️ **label**` + description mark per option, and the `✍️` note line. The mark construction is shared with the settled freeze card (`settledOptionMarks`), so the dispatched text and the user-facing frozen card cannot drift apart.
-- Without cached meta (daemon restart, a pre-dating card, or a newer askq card owning the cache key) the dispatch is a localized `followups_stale` notice naming the checked indices, the question hint from the callback value when present, and the note — the raw `fw:` payload never reaches the model on any path.
+- Without cached meta (a newer askq card owning the cache key, or a registration past its persistence window or lost to a crash mid-send — registrations otherwise survive restarts; [followups meta persistence](../bug-fix/2026-09-09-feishu-bridge-followups-meta-persistence.md)) the dispatch is a localized `followups_stale` notice naming the checked indices, the question hint from the callback value when present, and the note — the raw `fw:` payload never reaches the model on any path.
 - `isFollowupAction` routing semantics are unchanged; only the dispatched text changed.
 
 ## Alternatives considered

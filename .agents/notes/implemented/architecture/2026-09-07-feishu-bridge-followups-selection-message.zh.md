@@ -13,7 +13,7 @@ Status: implemented
 飞书平台的 `fw_multi:` intake 在提交点就地合成派发文本——发送时 meta（问题、选项、描述）本来就在手边供卡片冻结使用：
 
 - `followupsSelectionMessage`（engine/ask.ts）构造消息：`FollowupsSelection` 标题行、问题、每个选项一行 `✅/◻️ **标签**` + 描述、尾行 `✍️` 附言。勾选标记的构造与冻结卡共享（`settledOptionMarks`），派发文本与用户可见的冻结卡不会漂移。
-- 无缓存 meta（daemon 重启、旧于缓存的卡、或缓存键被更新的 askq 卡占用）时，派发本地化的 `followups_stale` 提示——点名勾选序号、回调 value 里可用时带问题提示、附言随行——任何路径上原始 `fw:` 传输码都不再到达模型。
+- 无缓存 meta（缓存键被更新的 askq 卡占用，或注册超出留存窗口、发送途中崩溃写丢失——其余情形注册跨重启存活；见[followups meta 持久化](../bug-fix/2026-09-09-feishu-bridge-followups-meta-persistence.zh.md)）时，派发本地化的 `followups_stale` 提示——点名勾选序号、回调 value 里可用时带问题提示、附言随行——任何路径上原始 `fw:` 传输码都不再到达模型。
 - `isFollowupAction` 的路由语义不变；只改了派发文本。
 
 ## Alternatives considered
