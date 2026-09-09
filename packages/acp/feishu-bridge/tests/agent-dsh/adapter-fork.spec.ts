@@ -10,7 +10,9 @@
  * guard fires before the group is created.
  */
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 import { ForkSessionPrefix } from '../../src/core/types.ts'
 import { DshAgentAdapter, type DshAgentLike, type DshPersistenceLike } from '../../src/agent-dsh/adapter.ts'
 import type { DshCreateOptionsLike, DshContextLike } from '../../src/agent-dsh/adapter.ts'
@@ -46,7 +48,8 @@ function fakePersistence(stored: Map<string, SessionEvent[]>): DshPersistenceLik
   return {
     open: async (id: unknown, _access: 'read') => {
       const events = stored.get(String(id))
-      if (events === undefined) throw new Error(`session "${String(id)}" not found`)
+      // the real backend rejects unknown ids with its NotFound error class
+      if (events === undefined) throw new SessionPersistenceNotFoundError(String(id) as SessionId)
       const header = { version: SESSION_FORMAT_VERSION, id: String(id), createdAt: 0 } as SessionHeader
       return { header, read: async () => ({ events }) }
     },
@@ -103,6 +106,10 @@ function turn(seq: number): SessionEvent[] {
 }
 
 describe('fork session seed', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it('seeds the child with the parent completed-turn prefix via agents.create', async () => {
     const events = [...turn(0), ...turn(4), ev('turn/start', 8), ev('user/message', 9)] // open last turn
     const h = createHarness([parentAgent('cc-parent-1', events)])
@@ -225,6 +232,42 @@ describe('fork session seed', () => {
 
     expect(h.creates[0]!.seed).toBeUndefined()
     expect(session.alive()).toBe(true)
+  })
+
+  it('warns with the real reason when the persisted source is unreadable, still starting fresh', async () => {
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    // the v0 schema-refusal shape: the source exists but its read throws a
+    // non-NotFoundError the old path swallowed into "no seedable turns"
+    const persistence: DshPersistenceLike = {
+      open: async () => {
+        throw new Error('refuses this format v0 Session: todo/write has unexpected member "activeForm"')
+      },
+      list: async () => [],
+    }
+    const h = createHarness([], persistence)
+    const adapter = newAdapter(h.ctx)
+
+    await adapter.startSession(`${ForkSessionPrefix}cc-broken`)
+
+    // degradation behavior is unchanged: a fresh session, no seed
+    expect(h.creates[0]!.seed).toBeUndefined()
+    const warned = consoleWarn.mock.calls.flat().map(String).join('\n')
+    expect(warned).toContain('cc-broken')
+    expect(warned).toContain('activeForm') // the real cause rides the warn
+    expect(warned).not.toContain('no seedable turns')
+  })
+
+  it('stays silent when the persisted source is not found', async () => {
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const h = createHarness([], fakePersistence(new Map()))
+    const adapter = newAdapter(h.ctx)
+
+    await adapter.startSession(`${ForkSessionPrefix}cc-gone`)
+
+    expect(h.creates[0]!.seed).toBeUndefined()
+    const warned = consoleWarn.mock.calls.flat().map(String).join('\n')
+    expect(warned).not.toContain('unreadable') // not-found is not an unreadable source
+    expect(warned).not.toContain('no seedable turns')
   })
 })
 

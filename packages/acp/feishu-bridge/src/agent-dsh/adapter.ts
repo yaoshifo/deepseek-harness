@@ -22,6 +22,7 @@ import { installModelSelection, type ModelSelectionRef } from '@deepseek-ai/dsh-
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
+import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import { deliverSubagentPrompt } from '@deepseek-ai/dsh-subagent/internal'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
@@ -1173,8 +1174,9 @@ export class DshAgentAdapter {
    *
    * @param origID - the native id of the fork source session.
    * @returns the persisted seed (possibly empty when the source has nothing
-   * seedable), or undefined when the service is absent or the session
-   * is not in persistence.
+   * seedable), or undefined when the service is absent, the session is not
+   * in persistence, or its stored log cannot be read (the read failure's
+   * cause is warned, never swallowed into a misleading message).
    */
   private async persistedForkSeed(origID: string): Promise<SessionEvent[] | undefined> {
     const persistence = this.ctx.get('sessionPersistence') as DshPersistenceLike | undefined
@@ -1182,10 +1184,17 @@ export class DshAgentAdapter {
     let events: readonly SessionEvent[]
     try {
       events = (await (await persistence.open(SessionId(origID), 'read')).read()).events
-    } catch {
-      // The backend rejects unknown ids; that rejection is the only error
-      // path (a read of an existing session resolves), and it means "no
-      // persisted seed".
+    } catch (error) {
+      // A missing source (SessionPersistenceNotFoundError) means "no
+      // persisted seed" and stays silent. Any other read failure — a stored
+      // format the migration chain refuses, corruption — also degrades to a
+      // fresh session, but its real cause rides the warn: "no seedable
+      // turns" would misdirect the diagnosis (the 2026-09-09 /fk
+      // context-loss incident pointed at an empty source while the log was
+      // merely unreadable).
+      if (!(error instanceof SessionPersistenceNotFoundError)) {
+        console.warn(`agent-dsh: fork source unreadable, starting fresh (orig=${origID}): ${String(error instanceof Error ? error.message : error)}`)
+      }
       return undefined
     }
     return seedablePrefix(events)
@@ -1963,7 +1972,10 @@ export class DshAgentAdapter {
         seeded = await this.persistedForkSeed(origID)
       }
       const seed = seeded ?? []
-      if (seeded === undefined || seed.length === 0) {
+      // undefined (source not found or unreadable) already warned with its
+      // real cause in persistedForkSeed; only an empty seedable prefix of a
+      // readable source warns here.
+      if (seeded !== undefined && seed.length === 0) {
         console.warn(`agent-dsh: fork source has no seedable turns, starting fresh (orig=${origID})`)
       }
       handle = await this.ctx.agents.create({
