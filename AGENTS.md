@@ -90,7 +90,7 @@ pnpm run demo:ptc -- "task"  # headless PTC mode run (needs key)
 
 If a required `gh`, `pnpm`, build, test, or generator command fails because the sandbox blocks credentials, network, IPC, watching, or nested `sandbox-exec`, retry unchanged with the narrowest host escalation — sandbox evidence required; never bypass test failures or the product sandbox.
 
-### Local checks
+### Run relevant checks locally
 
 Run checks before pushes via [dsh-pre-push-checks](.agents/skills/dsh-pre-push-checks/SKILL.md); report only commands run. After `gh stack sync`, validate before merging.
 
@@ -141,9 +141,9 @@ Real-API tests and demos read `DEEPSEEK_API_KEY`, optional `DEEPSEEK_BASE_URL`, 
 
 ## Type safety and docs
 
-Everything compiles under `strict: true` with `noImplicitAny`; every remaining `any` explains why narrowing is infeasible. Every module and export has concise JSDoc for its non-obvious contract; function-like exports include `@param`/`@returns` (`verify-export-jsdoc`). Heritage-declared members, plugin-protocol slots, and constructors keep docs at the declarer.
+Everything compiles under `strict: true` with `noImplicitAny`; every remaining `any` explains why narrowing is infeasible. Every module and export has concise JSDoc for non-obvious contracts; function-like exports include `@param`/`@returns` (`verify-export-jsdoc`). Heritage-declared members, plugin-protocol slots, and constructors keep docs at the declarer.
 
-Comments and docs state complete contracts and context, not reasoning transcripts. Use direct, concrete terms; no metaphors. Before writing `contract`, `boundary`, or `shape`, ask whether a more exact term names the subject (`response fields`, not `response shape`). Keep `contract` for preconditions, postconditions, invariants, compatibility promises, and similar obligations that callers and implementers rely on. Keep a literal process, wire, security, transaction, or lifecycle boundary. Do not narrate control flow or tests, preserve review history, or restate code. Keep behavior, failure, timing, ownership, and safe-use facts; link the rationale. Use [dsh-prose-standard](.agents/skills/dsh-prose-standard/SKILL.md) for decisions. Wire mechanically checkable invariants into an executed top-level gate and prove each changed acceptance path rejects an invalid case. Use narrow, justified exceptions instead of disabling a rule globally.
+Comments and docs state complete contracts and context, not reasoning transcripts. Use direct, concrete terms; no metaphors. Before writing `contract`, `boundary`, or `shape`, ask whether a more exact term names the subject (`response fields`, not `response shape`). Keep `contract` for preconditions, postconditions, invariants, compatibility promises, and similar obligations callers and implementers rely on. Keep a literal process, wire, security, transaction, or lifecycle boundary. Do not narrate control flow or tests, preserve review history, or restate code. Keep behavior, failure, timing, ownership, and safe-use facts; link the rationale. Use [dsh-prose-standard](.agents/skills/dsh-prose-standard/SKILL.md) for decisions. Wire mechanically checkable invariants into an executed top-level gate and prove each changed acceptance path rejects an invalid case. Use narrow, justified exceptions instead of disabling a rule globally.
 
 Docs accompany every code change: update affected README and JSDoc contracts together. Routine bilingual work follows [docs/AGENTS.md](docs/AGENTS.md); only explicit user invocation may run `dsh-translate-docs`; current-state prose, one physical line per paragraph, one home per fact, and word budgets live there.
 
