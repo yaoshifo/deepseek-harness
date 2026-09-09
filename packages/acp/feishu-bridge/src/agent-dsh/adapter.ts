@@ -2795,6 +2795,13 @@ export class DshAgentSession implements AgentSession {
         const errorText = reason !== undefined && reason.kind === 'error' && reason.error?.message !== undefined
           ? toStr(reason.error.message)
           : undefined
+        // Non-completed turns carry their stop-reason kind so terminal
+        // renders can distinguish a cut turn (max-tokens) from a completed
+        // one instead of claiming 执行完成 (2026-09-09 oc_9eed).
+        const stopReason = reason !== undefined && reason.kind !== 'completed' && reason.kind !== 'error'
+          && typeof reason.kind === 'string'
+          ? reason.kind
+          : undefined
         const turnContent = this.turnWindowParts.join('')
         this.turnWindowParts = []
         if (turnContent !== '') {
@@ -2805,6 +2812,7 @@ export class DshAgentSession implements AgentSession {
           type: 'result',
           content: this.turnText,
           ...(errorText !== undefined ? { errorText } : {}),
+          ...(stopReason !== undefined ? { stopReason } : {}),
           done: true,
           inputTokens: this.turnUsage.inputTokens,
           totalInputTokens: this.turnUsage.inputTokens + this.turnUsage.cachedTokens,

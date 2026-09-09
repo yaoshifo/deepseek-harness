@@ -597,6 +597,14 @@ export class StreamPreview {
    */
   completed: boolean = false
   /**
+   * True when the turn was cut by the output-token cap (max-tokens): the
+   * terminal render titles the card truncated (输出截断) instead of claiming
+   * 执行完成. Distinct from {@link analysisTruncated}, which folds oversized
+   * card bodies.
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
+  turnTruncated: boolean = false
+  /**
    * True once the preview was parked on a user answer (permission/ask) and
    * detached with the waiting header instead of a completed terminal render.
    * @internal White-box: ported same-package tests read/write this directly.
@@ -784,7 +792,7 @@ export class StreamPreview {
    */
   progressStatusLocked(): ProgressStatus {
     const state: ProgressStatus['state'] = this.completed
-      ? 'completed'
+      ? (this.turnTruncated ? 'truncated' : 'completed')
       : this.failed
         ? 'failed'
         : this.waiting
@@ -1118,9 +1126,11 @@ export class StreamPreview {
    * delivered via the preview (caller should skip a separate send).
    *
    * @param finalTextIn - Full final response text; the transform is applied before use.
+   * @param truncated - The turn was cut by the output-token cap; title the
+   *   terminal card truncated instead of claiming 执行完成.
    * @returns True when the final message was delivered via the preview.
    */
-  async finish(finalTextIn: string): Promise<boolean> {
+  async finish(finalTextIn: string, truncated = false): Promise<boolean> {
     return this.locked(async () => {
       this.cancelTimerLocked()
       let finalText = finalTextIn
@@ -1165,6 +1175,7 @@ export class StreamPreview {
       // streaming PATCHes carry no status, so skipping would leave the card
       // in its running color.
       this.completed = true
+      if (truncated) this.turnTruncated = true
       // Drain queued running snapshots first: this PATCH runs inline, so a
       // coalescable snapshot still queued would land after it and revert the
       // card to 执行中 (markCompleted/markFailed enqueue as terminals for
@@ -1791,45 +1802,62 @@ export class StreamPreview {
   /** Mark the turn completed: final PATCH with a green header. */
   async markCompleted(): Promise<void> {
     await this.locked(async () => {
-      this.cancelTimerLocked()
-      if (this.previewMsgID === undefined) return
-      this.completed = true
-      this.finalizePendingEntriesLocked(true)
-      const display = this.buildProgressDisplayLocked()
-      const updater = asMessageUpdater(this.platform)
-      if (updater === undefined) return
-      const answerText = this.pinnedAnswerText()
-      const truncated = this.analysisTruncated
-      const content = this.progressContentLocked(display)
-      if (this.async !== undefined) {
-        const handle = this.previewMsgID
-        this.lastSentText = display
-        this.lastSentViaUpdate = true
-        this.degraded = false
-        this.async.enqueueTerminal(async () => {
-          try {
-            await updater.updateMessage(handle, content)
-          } catch (error) {
-            console.warn(`stream preview: async markCompleted PATCH failed, sending fallback: ${String(error)}`)
-            await this.fallbackSend(handle, answerText)
-            return
-          }
-          if (truncated) await this.deliverAnswer(answerText)
-        })
-        return
-      }
-      try {
-        await updater.updateMessage(this.previewMsgID, content)
-      } catch (error) {
-        console.warn(`stream preview: markCompleted PATCH failed, sending fallback: ${String(error)}`)
-        await this.fallbackSend(this.previewMsgID, answerText)
-        return
-      }
+      await this.markCompletedLocked()
+    })
+  }
+
+  /**
+   * Mark the turn truncated: the completed PATCH with the truncated header
+   * (输出截断 orange) — a max-tokens cut is terminal, but not a completion
+   * claim.
+   */
+  async markTruncated(): Promise<void> {
+    await this.locked(async () => {
+      this.turnTruncated = true
+      await this.markCompletedLocked()
+    })
+  }
+
+  /** markCompleted without re-acquiring the lock. */
+  private async markCompletedLocked(): Promise<void> {
+    this.cancelTimerLocked()
+    if (this.previewMsgID === undefined) return
+    this.completed = true
+    this.finalizePendingEntriesLocked(true)
+    const display = this.buildProgressDisplayLocked()
+    const updater = asMessageUpdater(this.platform)
+    if (updater === undefined) return
+    const answerText = this.pinnedAnswerText()
+    const truncated = this.analysisTruncated
+    const content = this.progressContentLocked(display)
+    if (this.async !== undefined) {
+      const handle = this.previewMsgID
       this.lastSentText = display
       this.lastSentViaUpdate = true
       this.degraded = false
-      if (truncated) await this.deliverAnswer(answerText)
-    })
+      this.async.enqueueTerminal(async () => {
+        try {
+          await updater.updateMessage(handle, content)
+        } catch (error) {
+          console.warn(`stream preview: async markCompleted PATCH failed, sending fallback: ${String(error)}`)
+          await this.fallbackSend(handle, answerText)
+          return
+        }
+        if (truncated) await this.deliverAnswer(answerText)
+      })
+      return
+    }
+    try {
+      await updater.updateMessage(this.previewMsgID, content)
+    } catch (error) {
+      console.warn(`stream preview: markCompleted PATCH failed, sending fallback: ${String(error)}`)
+      await this.fallbackSend(this.previewMsgID, answerText)
+      return
+    }
+    this.lastSentText = display
+    this.lastSentViaUpdate = true
+    this.degraded = false
+    if (truncated) await this.deliverAnswer(answerText)
   }
 
   /** Mark the turn failed: final PATCH with a red header. */

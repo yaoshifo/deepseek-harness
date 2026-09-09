@@ -108,4 +108,28 @@ describe('card-style progress card finalization', () => {
     const states = p.updates.map(cardStateOf)
     expect(states, `updates=${JSON.stringify(states)}`).toContain('failed')
   })
+
+  it('marks the structured card truncated when the turn ends max-tokens', async () => {
+    // A max-tokens turn was cut mid-flight — the card must not claim 执行完成
+    // (2026-09-09 oc_9eed: a turn truncated mid-reasoning settled green).
+    const p = createCardProgressPlatform()
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    const key = 'test:user1'
+    const session = e.sessions.getOrCreateActive(key)
+    const sess = newControllableSession('finalize-4')
+    const state = new InteractiveState()
+    state.agentSession = sess
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+
+    sess.channel.push({ type: 'thinking', content: '分析请求', done: false })
+    sess.channel.push({ type: 'result', content: '部分回答', stopReason: 'max-tokens', done: true })
+
+    await e.processInteractiveEvents(state, session, e.sessions, key, 'm1', Promise.resolve(undefined), 'ctx')
+
+    const states = p.updates.map(cardStateOf)
+    expect(states, `updates=${JSON.stringify(states)}`).toContain('truncated')
+    expect(states).not.toContain('completed')
+  })
 })

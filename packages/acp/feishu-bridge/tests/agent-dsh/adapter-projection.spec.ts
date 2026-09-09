@@ -264,3 +264,26 @@ describe('projectStreamChunk assistant-stream projection', () => {
     expect(events).toHaveLength(0)
   })
 })
+
+describe('projectSessionEvent turn/end stop-reason projection', () => {
+  it('carries a max-tokens reason on the result event so the card need not claim completion', async () => {
+    const s = newSession()
+    const events = await project(s, {
+      type: 'turn/end', seq: 1, time: 0,
+      data: { turn: 1, reason: { kind: 'max-tokens' } },
+    })
+    expect(events).toHaveLength(1)
+    expect(events[0]?.type).toBe('result')
+    expect(events[0]?.stopReason).toBe('max-tokens')
+  })
+
+  it('omits stopReason for a completed turn', async () => {
+    const s = newSession()
+    const events = await project(s, {
+      type: 'turn/end', seq: 1, time: 0,
+      data: { turn: 1, reason: { kind: 'completed' } },
+    })
+    expect(events).toHaveLength(1)
+    expect(events[0]?.stopReason).toBeUndefined()
+  })
+})

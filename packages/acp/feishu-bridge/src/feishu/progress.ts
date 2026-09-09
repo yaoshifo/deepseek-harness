@@ -146,6 +146,10 @@ export function progressStateMeta(
       title = zh ? '执行失败' : 'Failed'
       template = 'red'
       break
+    case 'truncated':
+      title = zh ? '输出截断' : 'Truncated'
+      template = 'orange'
+      break
     default:
       title = zh ? '执行中' : 'Running'
       template = 'yellow'
@@ -569,6 +573,13 @@ export function progressTitleAndColor(
       title = zh ? '执行失败' : 'Failed'
       color = 'red'
       break
+    case 'truncated':
+      // Terminal, but not a completion claim: the turn hit the output-token
+      // cap mid-flight. Orange separates it from both failed-red and
+      // completed-green, and stays off the stop-button template whitelist.
+      title = zh ? '输出截断' : 'Truncated'
+      color = 'orange'
+      break
     case 'waiting':
       title = zh ? '等待中' : 'Waiting'
       color = 'blue'
@@ -604,7 +615,7 @@ export function progressTitleAndColor(
   }
   if (ts !== '') title = `${title} · ${ts}`
   if (tc > 0) title += ` · ${tc}`
-  if (pending > 0 && (state === 'completed' || state === 'failed')) {
+  if (pending > 0 && (state === 'completed' || state === 'failed' || state === 'truncated')) {
     title += ` · ${zh ? `${pending} 个子任务在途` : `${pending} subtask(s) in flight`}`
   }
   return { title, color }
@@ -790,7 +801,7 @@ function notationColumn(content: string): FeishuCardMap {
 
 /**
  * Append a ⏹ 停止执行 danger button to a still-running (yellow/violet) or
- * waiting (blue) card; no-op on terminal (green/red) and settled
+ * waiting (blue) card; no-op on terminal (green/red/orange) and settled
  * (turquoise/grey) cards or cards without a header/body. Settled cards carry
  * the settled ask's export/reply buttons instead — their turn runs on the
  * post-decision card. A non-empty hint rides the button row as a grey
@@ -807,7 +818,7 @@ export function injectStopButton(cardJSON: string, sessionKey: string, hint = ''
   if (card === undefined) return cardJSON
   const hdr = card.header
   if (hdr === undefined) return cardJSON
-  if (hdr.template === 'green' || hdr.template === 'red' || hdr.template === 'turquoise' || hdr.template === 'grey') return cardJSON
+  if (hdr.template === 'green' || hdr.template === 'red' || hdr.template === 'orange' || hdr.template === 'turquoise' || hdr.template === 'grey') return cardJSON
   const body = card.body
   if (body === undefined) return cardJSON
   const elements = body.elements

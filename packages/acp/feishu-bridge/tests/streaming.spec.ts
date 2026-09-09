@@ -467,6 +467,27 @@ describe('StreamPreview', () => {
     }
   })
 
+  it('markTruncated settles the card truncated instead of completed', async () => {
+    // A max-tokens turn is cut mid-flight: the terminal render must not
+    // claim 执行完成 green (2026-09-09 oc_9eed).
+    const mp = createMockUpdaterPlatform()
+    const as = newAsyncSender('test-mark-truncated')
+    try {
+      const sp = newStreamPreview(cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000 }), mp, 'ctx', undefined, as)
+      await sp.appendText('部分回答')
+      await sleep(30)
+      await as.barrier()
+      expect(mp.messages.length).toBeGreaterThan(0)
+
+      await sp.markTruncated()
+      await as.barrier()
+
+      expect(lastTextContent(mp)?.status?.state).toBe('truncated')
+    } finally {
+      as.close()
+    }
+  })
+
   it('a queue-dropped flush does not let finish() skip the final PATCH', async () => {
     // flushLocked records lastSentText optimistically before the queued
     // PATCH runs; when the queue is full the closure never executes and

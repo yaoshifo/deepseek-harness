@@ -9,9 +9,10 @@
 import { describe, expect, it } from 'vitest'
 import { jArr, jObj, jParse, jStr, type JsonObj } from '../stubs/json.ts'
 import { buildProgressCardPayload } from '../../src/progress.ts'
-import { noSpinner } from '../../src/feishu/spinner.ts'
+import { noSpinner, spinnerKeyForState } from '../../src/feishu/spinner.ts'
 import {
   collapseStructuralBlankLines,
+  buildPreviewCardJSON,
   buildProgressCardJSONFromPayload,
   formatProgressToolInput,
   formatProgressToolResult,
@@ -37,6 +38,7 @@ describe('injectStopButton', () => {
     ['waiting blue shows stop', 'blue', 'sk1', true],
     ['completed green hides stop', 'green', 'sk1', false],
     ['failed red hides stop', 'red', 'sk1', false],
+    ['truncated orange hides stop', 'orange', 'sk1', false],
     ['settled approved turquoise hides stop', 'turquoise', 'sk1', false],
     ['settled cancelled grey hides stop', 'grey', 'sk1', false],
     ['empty sessionKey injects nothing', 'violet', '', false],
@@ -357,5 +359,53 @@ describe('payload path HTML sanitization', () => {
     const cardJSON = buildProgressCardJSONFromPayload(payload!, noSpinner)
     expect(cardJSON).toContain('see')
     expect(cardJSON).not.toContain('<anonymous>')
+  })
+})
+
+describe('truncated terminal state rendering', () => {
+  it('payload cards title a truncated turn 输出截断 on orange', () => {
+    const payload = buildProgressCardPayload(
+      [{ kind: 'info', text: '部分回答' }],
+      false, 'Agent', 'zh', 'truncated', [], '17:36:48',
+    )
+    expect(payload).toBeDefined()
+    const card = jParse(buildProgressCardJSONFromPayload(payload!, noSpinner)) as JsonObj
+    const header = jObj(card.header)
+    expect(jStr(header.template)).toBe('orange')
+    expect(jStr(jObj(header.title).content)).toContain('输出截断')
+  })
+
+  it('payload cards localize the truncated title to English', () => {
+    const payload = buildProgressCardPayload(
+      [{ kind: 'info', text: 'partial' }],
+      false, 'Agent', 'en', 'truncated', [], '',
+    )
+    expect(payload).toBeDefined()
+    const card = jParse(buildProgressCardJSONFromPayload(payload!, noSpinner)) as JsonObj
+    expect(jStr(jObj(card.header).template)).toBe('orange')
+    expect(jStr(jObj(jObj(card.header).title).content)).toContain('Truncated')
+  })
+
+  it('preview text cards title a truncated status 输出截断', () => {
+    const card = jParse(buildPreviewCardJSON('部分回答', noSpinner, {
+      state: 'truncated', ts: '17:36:48', toolCallSeq: 9,
+    })) as JsonObj
+    const header = jObj(card.header)
+    expect(jStr(header.template)).toBe('orange')
+    const title = jStr(jObj(header.title).content)
+    expect(title).toContain('输出截断')
+    expect(title).toContain('17:36:48')
+    expect(title).toContain('9')
+  })
+
+  it('a truncated header hides the stop button (terminal, like green/red)', () => {
+    const card = mkCard('orange')
+    expect(injectStopButton(card, 'sk1')).toBe(card)
+  })
+
+  it('a truncated state renders no spinner icon', () => {
+    const spin = { enabled: true, thinkingKey: 'img_think', executingKey: 'img_exec' }
+    expect(spinnerKeyForState(spin, 'truncated')).toBe('')
+    expect(spinnerKeyForState(spin, 'running')).toBe('img_exec')
   })
 })

@@ -52,7 +52,8 @@ export function resolveSpinnerAsset(name: string, moduleDir = dirname(fileURLToP
  * doesn't suppress the icon.
  * @param spin - Uploaded spinner keys.
  * @param state - Progress state ('thinking', 'running', '', 'waiting',
- *   'completed', 'failed', or one of the four settled parked-ask states).
+ *   'completed', 'failed', 'truncated', or one of the four settled parked-ask
+ *   states).
  * @returns The image key for the header icon, or '' when disabled or terminal.
  */
 export function spinnerKeyForState(spin: SpinnerCfg, state: string): string {
@@ -68,6 +69,9 @@ export function spinnerKeyForState(spin: SpinnerCfg, state: string): string {
     case 'rejected':
     case 'answered':
     case 'cancelled':
+    // A max-tokens cut is terminal too — the executing spinner would misread
+    // the truncated header as still running.
+    case 'truncated':
       return ''
     case 'thinking':
       key = spin.thinkingKey

@@ -250,6 +250,12 @@ export interface Event {
   error?: Error
   errorText?: string
   /**
+   * Terminal stop-reason kind from the durable `turn/end` event, carried on
+   * `result` events for turns that did not complete (e.g. 'max-tokens');
+   * absent on completed turns. 'error' turns already carry `errorText`.
+   */
+  stopReason?: string
+  /**
    * Token usage for this event: on `text`/`thinking` events it is the
    * per-request usage of the assistant message that carried it; on `result`
    * events it is the turn sum. Undefined means unreported.
@@ -683,10 +689,11 @@ export interface ProgressStatus {
    * Card lifecycle state; "running" matches the former headerless prefix;
    * "waiting" marks a card parked on a user answer; the four settled states
    * replace that waiting header once the parked ask resolves (the user
-   * answered, or the ask was cancelled).
+   * answered, or the ask was cancelled); "truncated" marks a turn cut by the
+   * output-token cap — terminal, but not a completion claim.
    */
   state: 'running' | 'completed' | 'failed' | 'thinking' | 'waiting'
-    | 'approved' | 'rejected' | 'answered' | 'cancelled'
+    | 'approved' | 'rejected' | 'answered' | 'cancelled' | 'truncated'
   /** Timestamp (HH:MM:SS) appended to the card title; empty string omits it. */
   ts: string
   /** Tool-call count appended to the title when positive. */

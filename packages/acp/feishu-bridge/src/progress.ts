@@ -8,7 +8,7 @@
  */
 
 /** Progress card lifecycle state. */
-export type ProgressCardState = 'running' | 'completed' | 'failed'
+export type ProgressCardState = 'running' | 'completed' | 'failed' | 'truncated'
 
 /** Kind of one progress entry. */
 export type ProgressCardEntryKind = 'info' | 'thinking' | 'tool_use' | 'tool_result' | 'error'

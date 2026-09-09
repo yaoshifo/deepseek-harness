@@ -4003,7 +4003,8 @@ export class Engine {
       }
     } else if (isSilent) {
       await sp.setAnalysisText(this.i18n.t(Msg.SilentReply))
-      await sp.markCompleted()
+      if (event.stopReason === 'max-tokens') await sp.markTruncated()
+      else await sp.markCompleted()
       await sp.detachPreview()
       sendCompletionNotification = true
     } else if (p !== undefined) {
@@ -4041,11 +4042,12 @@ export class Engine {
           // Keep 实时播报 on the last streamed segment; only fall back to
           // the full response when nothing was streamed live.
           await sp.setAnalysisTextIfEmpty(fullResponse)
-          await sp.markCompleted()
+          if (event.stopReason === 'max-tokens') await sp.markTruncated()
+          else await sp.markCompleted()
           await sp.detachPreview()
         }
         sendCompletionNotification = true
-      } else if (await sp.finish(fullResponse)) {
+      } else if (await sp.finish(fullResponse, event.stopReason === 'max-tokens')) {
         // Finalized in place via the stream preview.
         sendCompletionNotification = true
       } else if (cleanResponse !== '') {
@@ -4066,7 +4068,11 @@ export class Engine {
     // EventError Finalize(Failed)). After the barrier so the writer's queued
     // running updates cannot land past the terminal PATCH; finalize PATCHes
     // inline (Go parity) and no-ops without a card.
-    if (!sp.inProgressMode()) await cp.finalize(errored ? 'failed' : 'completed')
+    if (!sp.inProgressMode()) {
+      // A max-tokens cut is terminal but not a completion claim: settle the
+      // card truncated instead of green 执行完成 (2026-09-09 oc_9eed).
+      await cp.finalize(event.stopReason === 'max-tokens' ? 'truncated' : errored ? 'failed' : 'completed')
+    }
     if (sendCompletionNotification && p !== undefined && state.pendingMessages.length === 0) {
       // Parked-ask wall time is the user deciding, not the agent working —
       // the hard cap above already exempts it (resumeCapPark banks it into
