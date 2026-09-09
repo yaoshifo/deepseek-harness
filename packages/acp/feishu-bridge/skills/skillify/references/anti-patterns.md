@@ -46,6 +46,11 @@ skillify 在 **Step 4** 保存前 `Read` 本文件，把生成的 skill 对照�
 - **坏**：`description` / `when_to_use` 裸标量含「冒号+空格」（如 `maintenance: preview`）→ YAML 解析失败 → 发现机制只记 warn 并静默跳过。无报错、无目录条目；且不带 `agents/openai.yaml` 侧卡的 skill 不过仓库 gate，坏文件照常上线。
 - **修**：自由文本值一律整体双引号（内部引号改用「」）；保存前用 YAML 解析器机械校验，PARSE OK 才存。
 
+### 9. 同目录 CLAUDE.md 与 SKILL.md 重复陈述事实
+- **症状**：skill 目录里的 CLAUDE.md 复制了 SKILL.md 的事实段（用法、工作流、额度等数字约定）。
+- **坏**：同一事实两处存放，改一处漏一处（实证：scholar skill 额度修正时改了 SKILL.md、漏了同目录 CLAUDE.md 的同段文字，两份悄悄分叉）。
+- **修**：one home for fact——SKILL.md 是 skill 事实的唯一来源；同目录 CLAUDE.md 只写目录开发说明（怎么改源码、怎么重装生效），不复制任何用户可见事实。
+
 ## 用法
 
 这是 skillify 的**复利资产**。以后用 skillify 造 skill 时撞到新的反模式，回手往这里补一条。
