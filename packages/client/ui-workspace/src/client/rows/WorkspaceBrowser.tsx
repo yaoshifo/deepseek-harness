@@ -299,7 +299,7 @@ function SessionTree({
   useNativeDragAcceptance(nativeDragActive)
   const currentGroup = current === undefined || !workspaceReady
     ? undefined
-    : owningGroupKey(workspaces, current)
+    : owningGroupKey(workspaces, current, list.byId[current]?.cwd)
   useEffect(() => {
     if (current === undefined || currentGroup === undefined || Object.hasOwn(groupExpansion, currentGroup)) return
     setGroupExpanded(currentGroup, true)

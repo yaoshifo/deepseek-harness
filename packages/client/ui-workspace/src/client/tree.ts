@@ -17,21 +17,44 @@ import {
   indexSubagentDescendants, type SubagentDescendantSummary,
 } from './subagent-lineage.ts'
 
-/** Group key for Sessions outside every Workspace. */
+/**
+ * Group key for Sessions outside every Workspace and without a cwd.
+ */
 export const UNGROUPED_KEY = ''
+
+/**
+ * Group-key prefix for directory groups derived from an unaccounted
+ * Session's cwd; `cwd:` cannot collide with a Workspace id (UUID) or
+ * {@link UNGROUPED_KEY}.
+ */
+const CWD_GROUP_PREFIX = 'cwd:'
+
+/**
+ * Resolve the directory-derived group key for one unaccounted Session.
+ * @param cwd - the Session's working directory, when it has one.
+ * @returns `cwd:`-prefixed key, or {@link UNGROUPED_KEY} for a cwd-less Session.
+ */
+export function cwdGroupKey(cwd: string | undefined): string {
+  return cwd === undefined || cwd === '' ? UNGROUPED_KEY : CWD_GROUP_PREFIX + cwd
+}
 
 /**
  * Resolve the Workspace browser group that owns one Session.
  * @param workspaces - authoritative Workspace membership.
  * @param sessionId - Session whose browser group is required.
- * @returns owning Workspace id, or {@link UNGROUPED_KEY} when no Workspace accounts for it.
+ * @param cwd - the Session's working directory, routing unaccounted Sessions
+ *   to their directory group.
+ * @returns owning Workspace id, the Session's directory group key, or
+ *   {@link UNGROUPED_KEY} when no Workspace accounts for a cwd-less Session.
  */
 export function owningGroupKey(
   workspaces: readonly WorkspaceView[],
   sessionId: SessionId,
+  cwd?: string,
 ): string {
-  return (workspaces.find(workspace => workspace.sessionIds.includes(sessionId))
-    ?.workspaceId as string | undefined) ?? UNGROUPED_KEY
+  const owner = workspaces.find(workspace => workspace.sessionIds.includes(sessionId))
+    ?.workspaceId as string | undefined
+  return owner ?? cwdGroupKey(cwd)
 }
 
 /** Pending interaction kinds with dedicated Workspace-row presentation. */
@@ -199,9 +222,11 @@ function orderedUngrouped(members: readonly SessionSummary[], stored: readonly s
 
 /**
  * Group Sessions by Host Workspace: one group per entity in stable Host
- * order, with members resolved from sessionIds in their stored order. Sessions
- * outside every Workspace trail in the browser-local Ungrouped order, which
- * falls back to recency before that order is initialized.
+ * order, with members resolved from sessionIds in their stored order.
+ * Unaccounted Sessions split into one directory group per distinct cwd —
+ * ordered by each group's newest member, members by recency — while
+ * cwd-less Sessions trail in the browser-local Ungrouped order, which falls
+ * back to recency before that order is initialized.
  */
 function groupByWorkspace(
   list: SessionListState,
@@ -225,22 +250,44 @@ function groupByWorkspace(
       Date.parse(workspace.createdAt), workspace.title, members, 'account',
     ))
   }
-  const stray = list.ids
+  const strays = list.ids
     .map(id => list.byId[id])
     .filter((s): s is SessionSummary =>
       s !== undefined && !accounted.has(s.id) && sessionVisible(s, list.current, archived))
-  if (stray.length > 0) {
+  const byDirectory = new Map<string, SessionSummary[]>()
+  const loose: SessionSummary[] = []
+  for (const session of strays) {
+    if (session.cwd === undefined || session.cwd === '') loose.push(session)
+    else {
+      const key = cwdGroupKey(session.cwd)
+      const bucket = byDirectory.get(key)
+      if (bucket === undefined) byDirectory.set(key, [session])
+      else bucket.push(session)
+    }
+  }
+  const directories = [...byDirectory.entries()]
+    .sort((left, right) => newestOf(right[1]) - newestOf(left[1]))
+  for (const [key, members] of directories) {
+    const cwd = key.slice(CWD_GROUP_PREFIX.length)
+    groups.push(buildGroup(key, undefined, cwd, undefined, workspaceLabel(cwd), members, 'recency'))
+  }
+  if (loose.length > 0) {
     groups.push(buildGroup(
       UNGROUPED_KEY,
       undefined,
       undefined,
       undefined,
       '',
-      ungroupedOrder === undefined ? stray : orderedUngrouped(stray, ungroupedOrder),
+      ungroupedOrder === undefined ? loose : orderedUngrouped(loose, ungroupedOrder),
       ungroupedOrder === undefined ? 'recency' : 'account',
     ))
   }
   return groups
+}
+
+/** Highest activity timestamp among a group's members; 0 for an empty input. */
+function newestOf(members: readonly SessionSummary[]): number {
+  return members.reduce((newest, session) => Math.max(newest, session.updatedAt), 0)
 }
 
 /** Keep navigation presentation independent from domain-owned interaction objects. */
@@ -301,7 +348,7 @@ export function deriveGroups(
   const descendants = indexSubagentDescendants(list.byId)
   const currentGroup = list.current === undefined
     ? undefined
-    : owningGroupKey(workspaces, list.current)
+    : owningGroupKey(workspaces, list.current, list.byId[list.current]?.cwd)
   const groups: GroupNode[] = []
   for (const g of groupByWorkspace(list, workspaces, archived, view.ungroupedOrder)) {
     const expanded = expandedGroups.has(g.key)
