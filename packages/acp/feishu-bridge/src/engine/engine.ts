@@ -4091,7 +4091,7 @@ export class Engine {
         Math.max(0, now - state.timing.turnStart - pausedMs))
       await this.sendTurnCompletionCard(
         state, p, replyCtx, session, sessionKey,
-        this.perChatWorkDir(this.dirOverrideKey(sessionKey)))
+        this.perChatWorkDir(this.dirOverrideKey(sessionKey)), event.stopReason ?? '')
       // The followups suggestion card follows the ✅ card (completion first,
       // choice second); a queued takeover keeps the registration for the
       // drain loop's final turn.
@@ -6363,13 +6363,17 @@ export class Engine {
    * model/ctx/workdir/git + spawn jump links + subtask diff) when no queued
    * messages remain (Go sendTurnCompletionCard). Card-update platforms get
    * the structured card and keep its handle; others fall back to the plain
-   * completion notifier.
+   * completion notifier. A `max-tokens` stop reason prefixes the card title
+   * with the truncated marker so the notification does not read as an
+   * ordinary completion (2026-09-09 oc_9eed follow-up).
    * @param state - Turn state the notification closes out.
    * @param p - Platform the notification is sent to.
    * @param replyCtx - Platform reply context addressing the chat.
    * @param session - Session whose agent-session ID feeds the footer.
    * @param sessionKey - Session key shown on the footer.
    * @param workspaceDir - Working directory shown on the footer.
+   * @param stopReason - Terminal stop-reason kind from the turn's result
+   *   event ('' when completed; 'error' turns never reach this call).
    */
   async sendTurnCompletionCard(
     state: InteractiveState,
@@ -6378,16 +6382,22 @@ export class Engine {
     session: Session,
     sessionKey: string,
     workspaceDir: string,
+    stopReason = '',
   ): Promise<void> {
     if (state.pendingMessages.length > 0) return
     const noticePref = asCompletionNoticePreference(p)
     if (noticePref !== undefined && !noticePref.completionNoticeEnabled()) return
+    const truncated = stopReason === 'max-tokens'
     const footerMsg = await this.buildStatusFooter(
-      this.i18n.t(Msg.TurnCompleted), this.agent, workspaceDir, session.getAgentSessionID(), sessionKey)
+      truncated ? this.i18n.t(Msg.TurnTruncated) : this.i18n.t(Msg.TurnCompleted),
+      this.agent, workspaceDir, session.getAgentSessionID(), sessionKey)
     const cu = asCardSenderWithUpdate(p)
     if (cu !== undefined) {
       const { headerSuffix, elements } = await this.buildStatusFooterElements(
         this.agent, workspaceDir, session.getAgentSessionID(), sessionKey)
+      const title = truncated && headerSuffix !== ''
+        ? `${this.i18n.t(Msg.TurnTruncated)} · ${headerSuffix}`
+        : truncated ? this.i18n.t(Msg.TurnTruncated) : headerSuffix
       let footerElements = elements
       const jumpMD = await this.spawnJumpMarkdown(p, this.sessions, session, sessionKey)
       if (jumpMD !== undefined && jumpMD.content !== '') {
@@ -6402,15 +6412,15 @@ export class Engine {
         footerElements = [...footerElements,
           { kind: 'markdown' as const, content: this.i18n.tf(Msg.SubtasksRunningHint, pendingChildren) }]
       }
-      if (footerElements.length > 0 || headerSuffix !== '') {
-        const card = newCard().title(headerSuffix, 'purple')
+      if (footerElements.length > 0 || headerSuffix !== '' || truncated) {
+        const card = newCard().title(title, 'purple')
         for (const el of footerElements) card.raw(el)
         try {
           const h = await cu.sendCardWithHandle(replyCtx, card.build())
           state.notificationHandle = h
           state.notificationFooterMsg = footerMsg
           state.notificationFooterElements = footerElements
-          state.notificationHeaderSuffix = headerSuffix
+          state.notificationHeaderSuffix = title
         } catch (error) {
           console.warn(`notification card send failed (${p.name()}): ${String(error)}`)
         }

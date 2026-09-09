@@ -56,9 +56,15 @@ through its own path); widening their card semantics is a separate decision.
   renderers outside this package that switch on the state string see a new
   terminal value (the stop-button and spinner whitelists already treat
   unknown non-running templates as terminal by default).
-- The ✅ completion-notification footer still reads `✅ 完成` for a
-  max-tokens turn; aligning that footer is left open (it is a status
-  digest, not the turn's terminal claim).
+- The ✅ completion notification carries the same distinction:
+  `sendTurnCompletionCard` takes the turn's stop reason, and a max-tokens
+  turn prefixes the purple card's title with `turn_truncated` (⚠️
+  Truncated / ⚠️ 输出截断) — the completion push never reads as an ordinary
+  completion for a cut turn. (The `turn_completed` text passed to the
+  plain-text fallback's prefix parameter is never rendered — Go parity —
+  so the visible surface is the card title.)
 - Coverage: adapter projection (max-tokens carried, completed omitted),
   engine finalize (truncated, and not completed), preview `markTruncated`,
-  title/color localization both languages, stop-button and spinner hiding.
+  title/color localization both languages, stop-button and spinner hiding,
+  completion-card title prefix (and its plain absence without a stop
+  reason).

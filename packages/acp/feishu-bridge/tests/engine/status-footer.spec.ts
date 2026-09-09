@@ -1005,6 +1005,35 @@ describe('sendTurnCompletionCard', () => {
     const md = collectMarkdown(card)
     expect(md.some(c => c.includes('a.txt') || c.includes('1 file changed') || c.includes('+1'))).toBe(true)
   })
+
+  it('prefixes the card title with the truncated marker for a max-tokens turn', async () => {
+    // The ✅ notification is the phone-glance done signal; a turn cut by the
+    // output cap must not present as an ordinary completion there either
+    // (2026-09-09 oc_9eed follow-up).
+    const p = createCardUpdatePlatform()
+    const e = new Engine('test', footerAgent('glm-4.7', '', '/w/repo'), [p], '', 'en')
+    e.usage.ctxMsg = 'ctx: +1k=10k'
+    setCompletionDurations(e.usage, 12_000, 15_000)
+    const state = new InteractiveState()
+    await e.sendTurnCompletionCard(
+      state, p, 'ctx', e.sessions.getOrCreateActive('feishu:oc_trunc'), 'feishu:oc_trunc', '/w/repo',
+      'max-tokens')
+    expect(p.handleCards).toHaveLength(1)
+    expect(p.handleCards[0]!.header?.title).toContain('⚠️ Truncated')
+    expect(state.notificationHeaderSuffix).toContain('⚠️ Truncated')
+  })
+
+  it('keeps the plain completion title without a stop reason', async () => {
+    const p = createCardUpdatePlatform()
+    const e = new Engine('test', footerAgent('glm-4.7', '', '/w/repo'), [p], '', 'en')
+    e.usage.ctxMsg = 'ctx: +1k=10k'
+    setCompletionDurations(e.usage, 12_000, 15_000)
+    const state = new InteractiveState()
+    await e.sendTurnCompletionCard(
+      state, p, 'ctx', e.sessions.getOrCreateActive('feishu:oc_ok'), 'feishu:oc_ok', '/w/repo')
+    expect(p.handleCards).toHaveLength(1)
+    expect(p.handleCards[0]!.header?.title).not.toContain('Truncated')
+  })
 })
 
 function collectJumpLinkURLs(card: Pick<Card, 'elements'>): string[] {
