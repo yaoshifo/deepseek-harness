@@ -44,12 +44,17 @@ Choose this backend when consumers benefit from one artifact per session — nav
 
 | Field | Default | Meaning |
 |---|---|---|
-| `root` | required | Root directory for all session files |
+| `root` | required | Root directory for all session files; the only root this backend writes to |
+| `readOnlyRoots` | `[]` | Additional existing roots whose sessions are listed and read alongside `root` (see below) |
 | `compression` | `'zstd'` | Physical encoding: `'zstd'` checksummed frames, or `'none'` newline-delimited UTF-8 text |
 
 Live-event write batching is not configuration: the batching window is the seam's internal scheduling policy inside each write handle.
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-session-persistence-jsonl) is the exhaustive source for every accepted field and its JSDoc.
+
+### Read-only extra roots
+
+`readOnlyRoots` mounts another process's session store (for example a bridge daemon writing its own root) into this process for listing and cold reading. Every write path still targets `root` only: `create` refuses an id that already exists under any root, and write-opening a session stored under a read-only root refuses with an error naming both roots. Reads resolve a session id across all roots with the same highest-generation and migration rules as `root`; one session id appearing under more than one root fails loudly rather than picking a copy. Each configured read-only root must already exist as a readable directory, must not repeat, and must differ from `root` — load refuses otherwise, because this backend never creates them.
 
 ### On-disk layout
 

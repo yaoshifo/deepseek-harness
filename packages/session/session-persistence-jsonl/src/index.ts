@@ -25,7 +25,7 @@ import {
   assertStoredId, materializeCreateHeader, sessionFormatVersionRefusal, validateStoredEvents,
   type SessionAccess, type SessionHandle,
   type SessionHandleReadResult,
-  type SessionLocation, type SessionPersistenceCreateOptions,
+  type SessionPersistenceCreateOptions,
   type SessionPersistenceListOptions, type SessionPersistenceOpenOptions,
   type SessionPersistenceSnapshot, type SessionPersistenceStatOptions,
   type SessionPersistenceRevision as PersistenceRevision,
@@ -94,6 +94,15 @@ export interface Config {
    * readable directory; an absent root is created on first materialization.
    */
   root: string
+  /**
+   * Additional read-only roots listed and read alongside `root`, for mounting
+   * another process's session store (for example a bridge daemon's) into this
+   * process. Every write path — create, write-open, migration publication —
+   * still targets `root` only; write-opening a session stored under a
+   * read-only root refuses. Each configured root must already exist and be a
+   * readable directory, must not repeat, and must differ from `root`.
+   */
+  readOnlyRoots?: string[]
   /** Physical encoding; defaults to checksummed Zstandard frames. */
   compression?: JsonlCompression
 }
@@ -158,6 +167,8 @@ interface ResolvedJsonlGeneration {
   readonly sourcePath: string
   readonly sourceVersion: number
   readonly currentPath: string
+  /** Backend root the artifact directory lives under. */
+  readonly root: string
 }
 
 /** One backend-owned historical preparation shared by its current callers. */
@@ -235,6 +246,7 @@ function waitWithAbort<T>(operation: Promise<T>, signal?: AbortSignal): Promise<
 class JsonlSessionPersistence extends SessionPersistence {
   static Config: z<Config> = z.object({
     root: z.string().required(),
+    readOnlyRoots: z.array(z.string()).default([]),
     compression: JsonlCompressionSchema,
   })
 
@@ -243,6 +255,8 @@ class JsonlSessionPersistence extends SessionPersistence {
 
   private root: string
   private compression: JsonlCompression
+  /** Every root whose sessions this backend lists and reads; `roots[0]` is the writable one. */
+  private readonly roots: readonly string[]
   private rootEncodingCheck: Promise<void> | undefined
   private readonly tracker = new JsonlBackendTracker(this.name)
   private readonly generationFormat: JsonlGenerationFormatAdapter
@@ -268,6 +282,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
     // Resolve once so later process.cwd() changes cannot split one backend across roots.
     this.root = resolve(config.root)
+    this.roots = [this.root, ...this.resolveReadOnlyRoots(config.readOnlyRoots ?? [])]
     this.compression = config.compression ?? DEFAULT_COMPRESSION
     this.generationFormat = {
       currentVersion: sessionFormatCatalog.currentVersion,
@@ -283,15 +298,6 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
     this.assertUsableRoot()
     this.tracker.install(ctx)
-  }
-
-  /**
-   * Refusal-diagnostics hook: the absolute target path, without touching the filesystem.
-   * @param meta - the stored header naming the session and its cwd.
-   * @returns the artifact kind and absolute path.
-   */
-  private locate(meta: SessionHeader): SessionLocation {
-    return { kind: 'jsonl', path: logPath(this.root, meta.cwd, meta.id, this.compression) }
   }
 
   // --- SessionPersistence service API ---
@@ -367,6 +373,12 @@ class JsonlSessionPersistence extends SessionPersistence {
     try {
       const resolved = await this.findLog(id, options?.signal)
       if (resolved === undefined) throw new SessionPersistenceNotFoundError(id)
+      if (resolved.root !== this.root) {
+        throw new Error(
+          `session "${id}": refusing write open: its log lives in read-only root `
+          + `${JSON.stringify(resolved.root)} (writable root: ${JSON.stringify(this.root)})`,
+        )
+      }
       lease = await this.acquireLease(id, undefined, dirname(resolved.currentPath))
       const prepared = await this.requireStoredLog(id, options?.signal)
       options?.signal?.throwIfAborted()
@@ -754,8 +766,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     await this.assertStoredIdentity(path, SESSION_FORMAT_VERSION, parsed.meta, expectedId, signal)
     signal?.throwIfAborted()
     assertStoredId(expectedId, parsed.meta)
-    const location = this.locate(parsed.meta)
-    validateStoredEvents(parsed.meta, parsed.events, location)
+    validateStoredEvents(parsed.meta, parsed.events, { kind: 'jsonl', path })
     const { events, ...rest } = parsed
     const stored: CurrentStoredLog = {
       status: 'current',
@@ -978,11 +989,11 @@ class JsonlSessionPersistence extends SessionPersistence {
     signal?.throwIfAborted()
     const artifacts: Array<{ header: SessionHeader; path: string }> = []
     const ids = new Set<SessionId>()
-    for (const project of await this.listProjectDirs(signal)) {
+    for (const { root, project } of await this.listProjectDirs(signal)) {
       signal?.throwIfAborted()
       for (const dir of await this.listSessionDirs(project, signal)) {
         signal?.throwIfAborted()
-        const selected = await this.resolveGenerationInDirectory(dir, signal)
+        const selected = await this.resolveGenerationInDirectory(root, dir, signal)
         if (selected === undefined) continue
         let header: SessionHeader | undefined
         try {
@@ -1186,7 +1197,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     // guards the create path, so this is unreachable-in-practice TOCTOU
     // defense.)
     /* v8 ignore next 3 -- create guards collisions before materialize; this is a TOCTOU backstop */
-    if (await this.resolveGenerationInDirectory(dirname(finalPath)) !== undefined) {
+    if (await this.resolveGenerationInDirectory(this.root, dirname(finalPath)) !== undefined) {
       throw new Error(`refusing to materialize "${id}": a log already exists on disk (open it instead)`)
     }
   }
@@ -1367,6 +1378,7 @@ class JsonlSessionPersistence extends SessionPersistence {
 
   /** Select the numerically highest canonical generation in one Session directory. */
   private async resolveGenerationInDirectory(
+    root: string,
     dir: string,
     signal?: AbortSignal,
   ): Promise<ResolvedJsonlGeneration | undefined> {
@@ -1401,18 +1413,19 @@ class JsonlSessionPersistence extends SessionPersistence {
         dir,
         generationLogFilename(sessionFormatCatalog.currentVersion, this.compression),
       ),
+      root,
     }
   }
 
-  /** Find the unique authoritative generation for an id across project directories. */
+  /** Find the unique authoritative generation for an id across every root's project directories. */
   private async findLog(id: SessionId, signal?: AbortSignal): Promise<ResolvedJsonlGeneration | undefined> {
     const matches: ResolvedJsonlGeneration[] = []
-    for (const project of await this.listProjectDirs(signal)) {
+    for (const { root, project } of await this.listProjectDirs(signal)) {
       signal?.throwIfAborted()
       await this.rejectLegacyFlatArtifact(project, id, signal)
       signal?.throwIfAborted()
       const dir = join(project, encodeSegment(id))
-      const selected = await this.resolveGenerationInDirectory(dir, signal)
+      const selected = await this.resolveGenerationInDirectory(root, dir, signal)
       if (selected !== undefined) matches.push(selected)
     }
     if (matches.length > 1) {
@@ -1432,6 +1445,35 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
   }
 
+  /**
+   * Validate and resolve configured read-only roots: distinct, outside the
+   * writable root, and existing readable directories.
+   */
+  private resolveReadOnlyRoots(configured: readonly string[]): readonly string[] {
+    const resolved: string[] = []
+    for (const value of configured) {
+      const candidate = resolve(value)
+      if (candidate === this.root || resolved.includes(candidate)) {
+        throw new Error(
+          `session-persistence-jsonl: read-only root ${JSON.stringify(candidate)} duplicates `
+          + (candidate === this.root ? 'the writable root' : 'another read-only root'),
+        )
+      }
+      // A read-only root is never created by this backend, so absence is a
+      // configuration error rather than the deferred-materialization intent of `root`.
+      try {
+        readdirSync(candidate)
+      } catch (error: unknown) {
+        throw new Error(
+          `session-persistence-jsonl: read-only root ${JSON.stringify(candidate)} is not a readable directory`,
+          { cause: error },
+        )
+      }
+      resolved.push(candidate)
+    }
+    return resolved
+  }
+
   /** Reject metadata that does not identify the selected physical log. */
   private async assertStoredIdentity(
     path: string,
@@ -1444,22 +1486,29 @@ class JsonlSessionPersistence extends SessionPersistence {
     if (expectedId !== undefined && meta.id !== expectedId) {
       throw new Error(`corrupt session log "${path}": requested id "${expectedId}" does not match header id "${meta.id}"`)
     }
-    let expectedPath: string
+    let expectedPaths: string[]
     try {
-      expectedPath = generationLogPath(
-        this.root,
+      // The artifact may live under any configured root (writable first), so
+      // identity holds when the header names its location under one of them.
+      expectedPaths = this.roots.map(root => generationLogPath(
+        root,
         meta.cwd,
         meta.id,
         storedVersion,
         this.compression,
-      )
+      ))
     } catch (error) {
       throw new Error(`corrupt session log "${path}": header id cannot name a storage path`, { cause: error })
     }
-    if (path !== expectedPath && !await this.sameFile(path, expectedPath, signal)) {
-      throw new Error(`corrupt session log "${path}": header id "${meta.id}" and cwd identify "${expectedPath}"`)
+    if (expectedPaths.includes(path)) return
+    for (const expectedPath of expectedPaths) {
+      if (await this.sameFile(path, expectedPath, signal)) return
     }
     signal?.throwIfAborted()
+    throw new Error(
+      `corrupt session log "${path}": header id "${meta.id}" and cwd identify `
+      + `${JSON.stringify(expectedPaths[0] as string)}`,
+    )
   }
 
   /** Validate a supported historical header against the selected source path. */
@@ -1500,18 +1549,27 @@ class JsonlSessionPersistence extends SessionPersistence {
     }
   }
 
-  /** The human-readable project directories under the configured root. */
-  private async listProjectDirs(signal?: AbortSignal): Promise<string[]> {
-    try {
+  /** One project directory under one backend root. */
+  private async listProjectDirs(signal?: AbortSignal): Promise<Array<{ root: string; project: string }>> {
+    const projects: Array<{ root: string; project: string }> = []
+    for (const root of this.roots) {
       signal?.throwIfAborted()
-      const entries = await readdir(this.root, { withFileTypes: true })
+      let entries: Dirent[]
+      try {
+        entries = await readdir(root, { withFileTypes: true })
+      } catch (error: unknown) {
+        // Only an absent writable root means no sessions; every configured
+        // read-only root was validated to exist at construction, so its
+        // absence here is a concurrent external removal and must surface.
+        if (isENOENT(error) && root === this.root) continue
+        throw error
+      }
       signal?.throwIfAborted()
-      return entries.filter(e => e.isDirectory()).map(e => join(this.root, e.name))
-    } catch (error) {
-      // Only an absent root means no sessions; rethrow every other I/O failure.
-      if (isENOENT(error)) return []
-      throw error
+      for (const entry of entries) {
+        if (entry.isDirectory()) projects.push({ root, project: join(root, entry.name) })
+      }
     }
+    return projects
   }
 
   /** List session-owned directories and reject the obsolete flat-file layout. */
@@ -1532,7 +1590,7 @@ class JsonlSessionPersistence extends SessionPersistence {
   }
 
   private async checkRootEncoding(): Promise<void> {
-    for (const project of await this.listProjectDirs()) {
+    for (const { project } of await this.listProjectDirs()) {
       for (const dir of await this.listSessionDirs(project)) {
         const incompatible = await this.findOppositeGenerationInDirectory(dir)
         if (incompatible !== undefined) throw this.encodingMismatch(incompatible)
