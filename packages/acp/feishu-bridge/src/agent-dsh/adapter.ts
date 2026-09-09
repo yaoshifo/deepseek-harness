@@ -858,9 +858,15 @@ export class DshAgentAdapter {
     // hang. Feeding each chunk into the live session's stream-activity clock
     // arms the watchdog's blind-pump override (2026-09-09 oc_a8f4 incident:
     // three 200s-cadence kills of turns that streamed the whole window).
-    this.disposers.push(ctx.on('agent/assistant-stream', (payload: { agent: DshAgentLike; frame: { type: string } }) => {
+    // Session format v2 also stopped emitting durable `assistant/chunk`
+    // events, so the engine's delta projection (thinking/text preview, the
+    // token-rate span) rides these frames too.
+    this.disposers.push(ctx.on('agent/assistant-stream', (payload: { agent: DshAgentLike; frame: { type: string; chunk?: { type?: string; text?: string } } }) => {
       if (payload.frame.type !== 'chunk') return
-      this.liveSessions.get(String(payload.agent.id))?.noteStreamActivity()
+      const target = this.liveSessions.get(String(payload.agent.id))
+      if (target === undefined) return
+      target.noteStreamActivity()
+      target.projectStreamChunk(payload.frame.chunk ?? {})
     }))
     // B2: the approval answerer. When dsh asks for tool permission, delegate
     // "render one card and await the decision" to the engine's askUser and
@@ -2457,6 +2463,23 @@ export class DshAgentSession implements AgentSession {
   /** Refresh the stream-activity clock: one streamed chunk frame arrived. */
   noteStreamActivity(): void {
     this.lastActivityAt = Date.now()
+  }
+
+  /**
+   * Project one transient `agent/assistant-stream` chunk into the engine
+   * Event stream. Session format v2 embeds streamed chunks in compact
+   * records instead of durable `assistant/chunk` events, so delta
+   * projection rides these frames; the mapping mirrors the retired durable
+   * case one-to-one.
+   *
+   * @param chunk - the streamed chunk ({type, index, text}).
+   */
+  projectStreamChunk(chunk: { type?: string; index?: number; text?: string }): void {
+    if (chunk.type === 'text-delta') {
+      this.channel.push({ type: 'text_delta', content: chunk.text ?? '', done: false })
+    } else if (chunk.type === 'reasoning-delta') {
+      this.channel.push({ type: 'thinking_delta', content: chunk.text ?? '', done: false })
+    }
   }
 
   /**

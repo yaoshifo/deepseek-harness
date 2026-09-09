@@ -423,6 +423,17 @@ describe('workspace browser rows', () => {
     expect(screen.queryByRole('button', { name: /工作区/ })).toBeNull()
   })
 
+  it('a cwd-derived directory group renders its label, not Ungrouped copy', () => {
+    const group: GroupNode = {
+      key: 'cwd:/Users/hm/workspace/deepseek-harness', workspaceId: undefined,
+      cwd: '/Users/hm/workspace/deepseek-harness', createdAt: undefined,
+      label: 'deepseek-harness', sessionCount: 2, expanded: false, containsCurrent: false, sessions: [],
+    }
+    render(<ProjectRowItem group={group} onToggle={vi.fn()} onCreate={vi.fn()} t={t} />)
+    expect(screen.getByText('deepseek-harness')).toBeTruthy()
+    expect(screen.queryByText('未分组')).toBeNull()
+  })
+
   it('blank New Session rows carry no menu, no time label, and no hover-card time', () => {
     vi.useFakeTimers()
     try {

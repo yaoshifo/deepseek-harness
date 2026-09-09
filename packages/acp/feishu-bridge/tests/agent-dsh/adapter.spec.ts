@@ -251,6 +251,36 @@ describe('DshAgentAdapter', () => {
     expect(session.lastStreamActivity()).toBeGreaterThan(before)
   })
 
+  it('assistant-stream chunk frames project into engine stream deltas', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    const session = (await a.startSession('', { sessionKey: 'feishu:oc_streamproj:ou_9' })) as DshAgentSession
+    const agent = h.agents.find(ag => ag.id === session.currentSessionID())!
+    const frames = h.listeners.get('agent/assistant-stream') ?? []
+    type FramePayload = { agent: unknown; frame: { type: string; chunk?: { type?: string; index?: number; text?: string } } }
+    const dispatch = (payload: FramePayload): void => {
+      for (const l of frames) (l as unknown as (p: typeof payload) => void)(payload)
+    }
+    const receive = (): Promise<Event | undefined> => Promise.race([
+      session.events().receive().then(r => r.done ? undefined : r.event),
+      new Promise<undefined>((resolve) => { setTimeout(() => { resolve(undefined) }, 10) }),
+    ])
+
+    // A reasoning chunk lands as a thinking_delta engine event.
+    dispatch({ agent, frame: { type: 'chunk', chunk: { type: 'reasoning-delta', index: 0, text: 'think' } } })
+    expect(await receive()).toEqual({ type: 'thinking_delta', content: 'think', done: false })
+
+    // A text chunk lands as a text_delta engine event.
+    dispatch({ agent, frame: { type: 'chunk', chunk: { type: 'text-delta', index: 1, text: 'answer' } } })
+    expect(await receive()).toEqual({ type: 'text_delta', content: 'answer', done: false })
+
+    // Attempt markers and foreign agents project nothing.
+    dispatch({ agent, frame: { type: 'start' } })
+    dispatch({ agent, frame: { type: 'end' } })
+    dispatch({ agent: { id: 'agent-unknown' }, frame: { type: 'chunk', chunk: { type: 'reasoning-delta', text: 'x' } } })
+    expect(await receive()).toBeUndefined()
+  })
+
   it('resolves the session override ahead of the project default without touching it', () => {
     const h = createHarness()
     const a = newAdapter(h)

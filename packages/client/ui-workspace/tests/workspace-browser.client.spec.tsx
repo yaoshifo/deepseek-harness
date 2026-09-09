@@ -508,6 +508,19 @@ describe('WorkspaceBrowser', () => {
     expect(startSession).not.toHaveBeenCalled()
   })
 
+  it('auto-expands the directory group for an unaccounted current session with a cwd; its header has no menu', () => {
+    mount({
+      useSessions: hook(sessionState(
+        [summary('bridge', 1, { cwd: '/Users/hm/workspace/deepseek-harness' })],
+        { current: sid('bridge') },
+      )),
+      useWorkspaces: hook(workspaceState([workspace('alpha', [])])),
+    })
+    // The current session's group is its cwd-derived key: expanded by the effect.
+    expect(screen.getByText('bridge')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '工作区“deepseek-harness”的操作' })).toBeNull()
+  })
+
   it('keeps an already-expanded group when the selection moves within it', () => {
     const first = sessionState([summary('a', 2), summary('b', 1)], { current: sid('a') })
     const b = mount({

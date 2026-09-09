@@ -17,6 +17,11 @@ function newSession(): DshAgentSession {
 /** Project one wrapped session event and drain buffered bridge events (bounded: the channel stays open). */
 async function project(session: DshAgentSession, wrapped: Record<string, unknown>): Promise<Event[]> {
   session.projectSessionEvent(wrapped)
+  return drain(session)
+}
+
+/** Drain buffered bridge events (bounded: the channel stays open). */
+async function drain(session: DshAgentSession): Promise<Event[]> {
   const out: Event[] = []
   for (;;) {
     const r = await Promise.race([
@@ -230,5 +235,32 @@ describe('projectSessionEvent skill-invocation injection', () => {
       })
       expect(events, JSON.stringify(source)).toHaveLength(0)
     }
+  })
+})
+
+describe('projectStreamChunk assistant-stream projection', () => {
+  it('projects a reasoning-delta chunk into a thinking_delta event', async () => {
+    const s = newSession()
+    s.projectStreamChunk({ type: 'reasoning-delta', index: 0, text: '想' })
+    const events = await drain(s)
+    expect(events).toEqual([{ type: 'thinking_delta', content: '想', done: false }])
+  })
+
+  it('projects a text-delta chunk into a text_delta event', async () => {
+    const s = newSession()
+    s.projectStreamChunk({ type: 'text-delta', index: 1, text: '答' })
+    const events = await drain(s)
+    expect(events).toEqual([{ type: 'text_delta', content: '答', done: false }])
+  })
+
+  it('emits nothing for non-delta chunk kinds', async () => {
+    const s = newSession()
+    s.projectStreamChunk({ type: 'block-start', index: 0 })
+    s.projectStreamChunk({ type: 'block-end', index: 0 })
+    s.projectStreamChunk({ type: 'usage' })
+    s.projectStreamChunk({ type: 'finish' })
+    s.projectStreamChunk({ type: 'tool-call', index: 2 })
+    const events = await drain(s)
+    expect(events).toHaveLength(0)
   })
 })

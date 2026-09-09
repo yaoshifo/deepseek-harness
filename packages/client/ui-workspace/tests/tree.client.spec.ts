@@ -85,13 +85,28 @@ describe('deriveGroups', () => {
     },
   )
 
-  it('puts only real unaccounted Sessions in the trailing Ungrouped group', () => {
-    const sessions = list(summary('owned', 1, '/projects/first'), summary('loose', 9, '/other'))
-    const groups = deriveGroups(
-      sessions, [workspace('first', ['owned'])], noArchive, noAttention, view([UNGROUPED_KEY]),
+  it('groups unaccounted Sessions by cwd; only cwd-less ones trail in Ungrouped', () => {
+    const sessions = list(
+      summary('owned', 1, '/projects/first'),
+      summary('harness-old', 9, '/Users/hm/workspace/deepseek-harness'),
+      summary('harness-new', 12, '/Users/hm/workspace/deepseek-harness'),
+      summary('books-one', 5, '/Users/hm/workspace/books'),
+      summary('cwd-less', 3),
     )
-    expect(groups.map(group => group.key)).toEqual(['first', UNGROUPED_KEY])
-    expect(groups[1]!.sessions.map(session => session.id)).toEqual([sid('loose')])
+    const groups = deriveGroups(
+      sessions, [workspace('first', ['owned'])], noArchive, noAttention,
+      view(['first', 'cwd:/Users/hm/workspace/deepseek-harness', 'cwd:/Users/hm/workspace/books', UNGROUPED_KEY]),
+    )
+    expect(groups.map(group => [group.key, group.label])).toEqual([
+      ['first', 'first'],
+      ['cwd:/Users/hm/workspace/deepseek-harness', 'deepseek-harness'],
+      ['cwd:/Users/hm/workspace/books', 'books'],
+      [UNGROUPED_KEY, ''],
+    ])
+    // Directory groups order themselves by their newest member; members sort by recency.
+    expect(groups[1]!.sessions.map(session => session.id)).toEqual([sid('harness-new'), sid('harness-old')])
+    expect(groups[2]!.sessions.map(session => session.id)).toEqual([sid('books-one')])
+    expect(groups[3]!.sessions.map(session => session.id)).toEqual([sid('cwd-less')])
   })
 
   it('applies stored Ungrouped order and appends new loose Sessions by recency', () => {
