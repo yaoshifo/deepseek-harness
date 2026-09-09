@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-09-feishu-bridge-stall-blind-kill-reasoning-stream.md
-2026-09-09-feishu-bridge-stall-blind-kill-reasoning-stream.md: df94c00fb7db56e3c03c4b7e9222712c2bccdd06
-2026-09-09-feishu-bridge-stall-blind-kill-reasoning-stream.zh.md: 2c85b1f5e360f2a2aec4013b6689fe2d90eac485
+2026-09-09-feishu-bridge-stall-blind-kill-reasoning-stream.md: a2f2d64fcf53c717aab64b5f09c83537ab9f25e8
+2026-09-09-feishu-bridge-stall-blind-kill-reasoning-stream.zh.md: dcabf213ffd6e80b84e4b093a4c6a43e825a35f7
