@@ -529,8 +529,13 @@ export async function assembleHTMLInPlace(htmlPath: string, subtype: string, tit
 
 // ── interactiveState render bookkeeping ────────────────────────────────────
 
-/** A render fork's cancel function, tracked for pointer identity (Go renderCancelHandle). */
+/**
+ * A render fork's cancel function, tracked for pointer identity (Go
+ * renderCancelHandle). `kind` names the fork's render family — approving
+ * ask verdicts cancel `plan` renders only (see {@link cancelPlanRenders}).
+ */
 export interface RenderCancelHandle {
+  kind: 'plan' | 'reply'
   cancel(): void
 }
 
@@ -572,11 +577,15 @@ export function clearPlanRenderRunning(state: InteractiveState | undefined): voi
  *
  * @param state - Per-session interactive state holding the cancel set.
  * @param cancel - The cancel function to track; undefined registers nothing.
+ * @param kind - The fork's render family (`launchPlanRender` → plan,
+ *   `renderAndDeliverReply` → reply).
  * @returns The handle for later unregistration, or undefined when cancel is undefined.
  */
-export function registerRenderCancel(state: InteractiveState, cancel: (() => void) | undefined): RenderCancelHandle | undefined {
+export function registerRenderCancel(
+  state: InteractiveState, cancel: (() => void) | undefined, kind: 'plan' | 'reply',
+): RenderCancelHandle | undefined {
   if (cancel === undefined) return undefined
-  const h: RenderCancelHandle = { cancel }
+  const h: RenderCancelHandle = { kind, cancel }
   state.renderCancels.push(h)
   return h
 }
@@ -604,6 +613,25 @@ export function cancelRenders(state: InteractiveState | undefined): void {
   const handles = state.renderCancels
   state.renderCancels = []
   for (const h of handles) h.cancel()
+}
+
+/**
+ * Abort only the in-flight plan-card renders, leaving speculative reply
+ * renders running: an approving ask verdict settles the ask and resumes
+ * the turn, so a reply render stays a valid delivery of this turn's
+ * content (2026-09-04 oc_3b2fa1), while a plan render after its plan was
+ * approved is stale — the plan is already executing, and the plan card's
+ * export button keeps the content reachable.
+ *
+ * @param state - Per-session state whose plan renders are aborted.
+ */
+export function cancelPlanRenders(state: InteractiveState | undefined): void {
+  if (state === undefined) return
+  const keep: RenderCancelHandle[] = []
+  const kill: RenderCancelHandle[] = []
+  for (const h of state.renderCancels) (h.kind === 'plan' ? kill : keep).push(h)
+  state.renderCancels = keep
+  for (const h of kill) h.cancel()
 }
 
 /**
@@ -1223,7 +1251,7 @@ export function renderAndDeliverReply(
   state.preRenderingKey = exportKey
 
   const parentCtl = new AbortController()
-  const handle = registerRenderCancel(state, () => { parentCtl.abort() })
+  const handle = registerRenderCancel(state, () => { parentCtl.abort() }, 'reply')
   void (async () => {
     try {
       let timeout = e.planRenderTimeoutMs
@@ -1344,7 +1372,7 @@ export function launchPlanRender(
   if (timeout <= 0) timeout = defaultPlanRenderTimeoutMs
 
   const parentCtl = new AbortController()
-  const handle = registerRenderCancel(state, () => { parentCtl.abort() })
+  const handle = registerRenderCancel(state, () => { parentCtl.abort() }, 'plan')
   void (async () => {
     try {
       const renderStart = Date.now()

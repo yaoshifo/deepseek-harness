@@ -163,6 +163,7 @@ import { defaultAutoCompressMinGapMs, maybeAutoResetSessionOnIdle, projectedCont
 import type { RelayManager } from './relay.ts'
 import { MonitorCore, isMonitorCommand, truncateMonitor } from './monitor.ts'
 import {
+  cancelPlanRenders,
   cancelRenders,
   captureReplyForExport,
   cleanupRenderedReplyHTML,
@@ -5830,19 +5831,23 @@ export class Engine {
 
     const pending = state.pendingAsk
     // An approving verdict settles the ask and resumes the turn, so an
-    // in-flight pre-ask render (speculative reply / plan HTML) stays a valid
-    // delivery — it must not die with the response (2026-09-04 oc_3b2fa1:
-    // the approval click killed the only speculative render of a long
-    // pre-ask text; a permission approval takes seconds while a render fork
-    // needs ~12s, so Go handlePendingPermission's unconditional cancel was
-    // structurally lethal to speculative renders). Every other response —
-    // deny, question answers, stale buttons — keeps the Go semantics: the
-    // waiting window ended and a stale render is no longer worth burning
-    // tokens on.
+    // in-flight speculative reply render stays a valid delivery of this
+    // turn's content — it must not die with the response (2026-09-04
+    // oc_3b2fa1: the approval click killed the only speculative render of
+    // a long pre-ask text; a permission approval takes seconds while a
+    // render fork needs ~12s, so Go handlePendingPermission's
+    // unconditional cancel was structurally lethal to speculative
+    // renders). A plan-card render is the opposite case: its plan is
+    // already approved and executing, so the late image is stale — only
+    // the plan-kind renders are cancelled (the plan card's export button
+    // keeps the content reachable). Every other response — deny, question
+    // answers, stale buttons — keeps the Go semantics: the waiting window
+    // ended and a stale render is no longer worth burning tokens on.
     const verdict = parsePermissionVerdict(content)
     const approving = pending !== undefined && pending.request.kind !== 'questions'
       && (verdict?.verdict === 'allow' || verdict?.verdict === 'allow-all')
-    if (!approving) cancelRenders(state)
+    if (approving) cancelPlanRenders(state)
+    else cancelRenders(state)
 
     if (pending === undefined) {
       if (msg.isPermissionAction && verdict !== undefined) {

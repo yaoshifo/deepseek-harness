@@ -17,6 +17,7 @@ import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { newCard } from '../../src/card.ts'
 import {
   assembleHTML,
+  cancelPlanRenders,
   cancelRenders,
   clearPlanRenderRunning,
   cloneCardWithStatusNote,
@@ -209,8 +210,8 @@ describe('RenderCancels', () => {
     const s = new InteractiveState()
     const ctl1 = new AbortController()
     const ctl2 = new AbortController()
-    registerRenderCancel(s, () => { ctl1.abort() })
-    registerRenderCancel(s, () => { ctl2.abort() })
+    registerRenderCancel(s, () => { ctl1.abort() }, 'plan')
+    registerRenderCancel(s, () => { ctl2.abort() }, 'reply')
     cancelRenders(s)
     expect(ctl1.signal.aborted).toBe(true)
     expect(ctl2.signal.aborted).toBe(true)
@@ -219,10 +220,10 @@ describe('RenderCancels', () => {
   it('unregistered cancel is not invoked', () => {
     const s = new InteractiveState()
     const ctl = new AbortController()
-    const h = registerRenderCancel(s, () => { ctl.abort() })
-    registerRenderCancel(s, undefined)
+    const h = registerRenderCancel(s, () => { ctl.abort() }, 'plan')
+    registerRenderCancel(s, undefined, 'reply')
     // @ts-expect-error nil-handle mirror of the Go test
-    registerRenderCancel(undefined, undefined)
+    registerRenderCancel(undefined, undefined, 'reply')
     if (h !== undefined) { /* keep type-narrowed */ }
     // unregister then cancel: not invoked
     s.renderCancels = []
@@ -233,22 +234,42 @@ describe('RenderCancels', () => {
   it('cancel clears the set so a later register works', () => {
     const s = new InteractiveState()
     const ctl1 = new AbortController()
-    registerRenderCancel(s, () => { ctl1.abort() })
+    registerRenderCancel(s, () => { ctl1.abort() }, 'reply')
     cancelRenders(s)
     expect(ctl1.signal.aborted).toBe(true)
     expect(s.renderCancels).toHaveLength(0)
 
     const ctl2 = new AbortController()
-    registerRenderCancel(s, () => { ctl2.abort() })
+    registerRenderCancel(s, () => { ctl2.abort() }, 'plan')
     cancelRenders(s)
     expect(ctl2.signal.aborted).toBe(true)
   })
 
   it('nil and empty are safe', () => {
     const s = new InteractiveState()
-    registerRenderCancel(s, undefined)
+    registerRenderCancel(s, undefined, 'plan')
     cancelRenders(undefined)
     cancelRenders(s)
+  })
+
+  it('cancelPlanRenders aborts plan forks only, leaving reply forks registered', () => {
+    const s = new InteractiveState()
+    const planCtl = new AbortController()
+    const replyCtl = new AbortController()
+    registerRenderCancel(s, () => { replyCtl.abort() }, 'reply')
+    registerRenderCancel(s, () => { planCtl.abort() }, 'plan')
+    cancelPlanRenders(s)
+    expect(planCtl.signal.aborted).toBe(true)
+    expect(replyCtl.signal.aborted).toBe(false)
+    expect(s.renderCancels).toHaveLength(1)
+    cancelRenders(s)
+    expect(replyCtl.signal.aborted).toBe(true)
+  })
+
+  it('cancelPlanRenders nil and empty are safe', () => {
+    const s = new InteractiveState()
+    cancelPlanRenders(undefined)
+    cancelPlanRenders(s)
   })
 })
 

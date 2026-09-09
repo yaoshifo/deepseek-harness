@@ -10,7 +10,7 @@ Status: implemented
 
 ## Decision
 
-`routeAskResponse` 的 `cancelRenders` 改为条件执行：pending ask 存在、`kind !== 'questions'`、且 `parsePermissionVerdict(content)` 为 allow 或 allow-all（卡片按钮与自由文本等价）时跳过取消——批准结算 ask 并恢复 turn，pre-ask 段 / plan 的 in-flight 渲染仍是有效投递。其余响应（deny、questions 的任何回答、无 pending 的过期按钮）维持 Go 语义取消；其余四个 `cancelRenders` 调用点（新 turn 入口、interactive 状态清理、会话停止、卡片导航按钮）不变。
+`routeAskResponse` 的 `cancelRenders` 改为条件执行：pending ask 存在、`kind !== 'questions'`、且 `parsePermissionVerdict(content)` 为 allow 或 allow-all（卡片按钮与自由文本等价）时跳过取消——批准结算 ask 并恢复 turn，pre-ask 段的 in-flight 渲染仍是有效投递（2026-09-09 起豁免按渲染归属收窄：plan 卡渲染随批准取消、仅 reply 投机渲染保留豁免，见 [批准豁免按渲染归属收窄](2026-09-09-feishu-bridge-plan-render-approval-cancel.zh.md)）。其余响应（deny、questions 的任何回答、无 pending 的过期按钮）维持 Go 语义取消；其余四个 `cancelRenders` 调用点（新 turn 入口、interactive 状态清理、会话停止、卡片导航按钮）不变。
 
 ## Alternatives considered
 
@@ -19,7 +19,7 @@ Status: implemented
 
 ## Consequences
 
-- 测试：`engine-ask.spec.ts` 新增 `routeAskResponse render-cancel semantics` describe，经公共接口（`askUser` + `registerRenderCancel` + `routeAskResponse`）钉住四个批准形态不取消（`perm:allow`、`perm:allow_all`、自由文本「允许」、plan-review 批准）与三个保留取消形态（deny、questions 回答、无 pending 过期按钮）。
+- 测试：`engine-ask.spec.ts` 新增 `routeAskResponse render-cancel semantics` describe，经公共接口（`askUser` + `registerRenderCancel` + `routeAskResponse`）钉住批准形态不取消 reply 渲染（`perm:allow`、`perm:allow_all`、自由文本「允许」）与三个保留取消形态（deny、questions 回答、无 pending 过期按钮）；plan-review 批准的现行语义（plan 渲染取消、reply 存活）由 [09-09 收窄笔记](2026-09-09-feishu-bridge-plan-render-approval-cancel.zh.md)记录。
 - 已知边界：questions 回答仍取消渲染（同构场景未修），由 turn-end 兜底与导出按钮覆盖；批准后渲染完成时 turn 已恢复，图落群触发新过程卡 `bumpToEnd` 回底，均为既有机制；渲染未完成时 turn-end 的 `renderAndDeliverReply` 仍被单飞跳过（现状不变）。
 - 部署：构建后用户手动 `/reload`；活体验证信号：权限审批等待期启动的 `reply-html` fork 在批准后日志出现 `render session completed` 而非 `cancelled`。
 - Go parity：有意偏离 `handlePendingPermission` 的无条件取消，`engine.ts` 注释记录案例与理由；若上游后续吸收撞到本改动，以本包测试套件裁决。
