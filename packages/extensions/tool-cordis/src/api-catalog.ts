@@ -3512,10 +3512,10 @@ export const EVENT_API: readonly EventApiEntry[] = [
   {
     name: 'feishuBridge/turn-end',
     mode: 'waterfall',
-    signature: '\'feishuBridge/turn-end\'(payload: { engine: Engine; state: InteractiveState | undefined; session: Session; response: string; isSilent: boolean }, next: () => void): void',
+    signature: '\'feishuBridge/turn-end\'(payload: { engine: Engine; state: InteractiveState | undefined; session: Session; response: string; isSilent: boolean; errored: boolean; errorText: string | undefined }, next: () => void): void',
     summary: 'A turn just produced its final response: listeners may relay the reply elsewhere (feature roles relay to their hub and wake the moderator).',
     description: 'A turn just produced its final response: listeners may relay the reply elsewhere (feature roles relay to their hub and wake the moderator). The built-in base does nothing; call `next()` to let the rest of the chain observe the turn end.',
-    parameters: [{ name: 'payload', description: '.isSilent - Whether the reply was silent (relay may skip).' }],
+    parameters: [{ name: 'payload', description: '.errorText - The interrupting error\'s text when errored, undefined otherwise.' }],
   },
   {
     name: 'feishuBridge/turn-start',
@@ -4387,7 +4387,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'CronJob',
-    declaration: 'export class CronJob {\n    id: string;\n    project: string;\n    sessionKey: string;\n    cronExpr: string;\n    prompt: string;\n    exec: string;\n    workDir: string;\n    description: string;\n    enabled: boolean;\n    silent: boolean | undefined;\n    mute: boolean;\n    sessionMode: string;\n    mode: string;\n    timeoutMins: number | undefined;\n    createdAt: string;\n    lastRun: string;\n    lastError: string;\n    isShellJob(): boolean;\n    executionTimeoutMs(): number;\n    usesNewSessionPerRun(): boolean;\n    static fromJSON(raw: Record<string, unknown>): CronJob;\n    toJSON(): Record<string, unknown>;\n}',
+    declaration: 'export class CronJob {\n    id: string;\n    project: string;\n    sessionKey: string;\n    cronExpr: string;\n    prompt: string;\n    exec: string;\n    workDir: string;\n    description: string;\n    enabled: boolean;\n    silent: boolean | undefined;\n    mute: boolean;\n    sessionMode: string;\n    mode: string;\n    envKeys: string[];\n    timeoutMins: number | undefined;\n    createdAt: string;\n    lastRun: string;\n    lastError: string;\n    isShellJob(): boolean;\n    executionTimeoutMs(): number;\n    usesNewSessionPerRun(): boolean;\n    static fromJSON(raw: Record<string, unknown>): CronJob;\n    toJSON(): Record<string, unknown>;\n}',
   },
   {
     name: 'CronScheduler',
@@ -5767,7 +5767,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'SessionManager',
-    declaration: 'export class SessionManager {\n    constructor(storePath: string);\n    storePath(): string;\n    setCleanupDays(days: number): void;\n    getOrCreateActive(userKey: string): Session;\n    newSession(userKey: string, name: string): Session;\n    newSideSession(userKey: string, name: string): Session;\n    switchSession(userKey: string, target: string): Session;\n    switchToAgentSession(userKey: string, agentSID: string, agentName: string, summary: string): Session;\n    listSessions(userKey: string): Session[];\n    activeSessionID(userKey: string): string;\n    findActive(userKey: string): Session | undefined;\n    setSessionName(agentSessionID: string, name: string): void;\n    getSessionName(agentSessionID: string): string;\n    updateUserMeta(sessionKey: string, userName: string, chatName: string): void;\n    getUserMeta(sessionKey: string): UserMeta | undefined;\n    allSessions(): Session[];\n    activeSessionEntries(): Array<[\n        string,\n        Session\n    ]>;\n    findByAgentSessionID(agentSID: string): Session | undefined;\n    sessionKeyMap(): {\n        idToKey: Record<string, string>;\n        activeIDs: Record<string, true>;\n    };\n    findByID(id: string): Session | undefined;\n    deleteByID(id: string): boolean;\n    deleteByAgentSessionID(agentSessionID: string): number;\n    save(): void;\n    invalidateForAgent(agentType: string): void;\n}',
+    declaration: 'export class SessionManager {\n    constructor(storePath: string);\n    storePath(): string;\n    setCleanupDays(days: number): void;\n    getOrCreateActive(userKey: string): Session;\n    newSession(userKey: string, name: string): Session;\n    newSideSession(userKey: string, name: string): Session;\n    switchSession(userKey: string, target: string): Session;\n    switchToAgentSession(userKey: string, agentSID: string, agentName: string, summary: string): Session;\n    listSessions(userKey: string): Session[];\n    activeSessionKeys(): string[];\n    activeSessionID(userKey: string): string;\n    findActive(userKey: string): Session | undefined;\n    setSessionName(agentSessionID: string, name: string): void;\n    getSessionName(agentSessionID: string): string;\n    updateUserMeta(sessionKey: string, userName: string, chatName: string): void;\n    getUserMeta(sessionKey: string): UserMeta | undefined;\n    allSessions(): Session[];\n    activeSessionEntries(): Array<[\n        string,\n        Session\n    ]>;\n    findByAgentSessionID(agentSID: string): Session | undefined;\n    sessionKeyMap(): {\n        idToKey: Record<string, string>;\n        activeIDs: Record<string, true>;\n    };\n    findByID(id: string): Session | undefined;\n    deleteByID(id: string): boolean;\n    deleteByAgentSessionID(agentSessionID: string): number;\n    save(): void;\n    invalidateForAgent(agentType: string): void;\n}',
   },
   {
     name: 'SessionObservation',

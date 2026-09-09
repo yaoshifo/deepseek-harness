@@ -113,7 +113,10 @@ export function registerChatroomPolicyListeners(ctx: Context): () => void {
       engine.sessions.save()
     }),
     ctx.on('feishuBridge/turn-end', (payload, next) => {
-      maybeAutoRelayRole(payload.engine, payload.state, payload.session, payload.response, payload.isSilent)
+      maybeAutoRelayRole(
+        payload.engine, payload.state, payload.session, payload.response,
+        payload.isSilent, payload.errored, payload.errorText,
+      )
       next()
     }),
     ctx.on('feishuBridge/ask-approval', async (payload, next) => {

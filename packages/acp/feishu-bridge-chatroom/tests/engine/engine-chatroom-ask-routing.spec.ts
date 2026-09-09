@@ -195,3 +195,43 @@ describe('ask-identity routing: supersede and completion', () => {
     expect(wakeSpy).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('ask-identity routing: error-reasoned turn', () => {
+  it('a failed stamped turn wakes the moderator with the failure and its own partial, never a reply relay', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldOneRole() })
+    const hub = 'test:hub:user-1'
+    const roles = await startChatroom(e, hub, ['taleb'], 'topic')
+    const role = e.sessions.getOrCreateActive(roles[0]!.sessionKey)
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    const wakeSpy = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+
+    await askRole(e, hub, 'taleb', '请作答')
+    expect(chatroomState(hubSess).pendingSerialAsks.size).toBe(1)
+    const minted = chatroomState(hubSess).chatroomGatherSeq
+    chatroomState(role).chatroomAskSeq = minted
+
+    clearCards(p)
+    const st = new InteractiveState()
+    st.platform = p
+    // The turn failed mid-generation: baseResponse is this turn's own
+    // partial (the engine contract never hands an errored turn a stale
+    // earlier reply).
+    maybeAutoRelayRole(e, st, role, '被打断前刚写出的半段。', false, true, '1301 sensitive content rejected')
+    await settle()
+    await settle()
+
+    // A failed turn is not a reply: no green 【Role】 relay card, no ledger row.
+    expect(p.sentCards).toHaveLength(0)
+    // Entry completion semantics are unchanged by the failure.
+    expect(chatroomState(hubSess).pendingSerialAsks.size).toBe(0)
+    expect(chatroomState(role).chatroomAsked).toBe(true)
+    expect(chatroomState(role).chatroomInFlight).toBe(false)
+    // The wake carries the failure line and the turn's own partial.
+    const wake = wakeSpy.mock.calls.at(-1)?.[1]?.content ?? ''
+    expect(wake).toContain('本轮发言失败')
+    expect(wake).toContain('1301 sensitive content rejected')
+    expect(wake).toContain('被打断前刚写出的半段。')
+  })
+})

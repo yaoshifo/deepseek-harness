@@ -3954,8 +3954,11 @@ export class Engine {
     }
     // Feature role turn-end: the listener relays the role's reply to its hub
     // and wakes the moderator. Disjoint from the subtask hook above
-    // (feature roles keep depth=0).
-    this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: resultOrReply, isSilent }, () => undefined)
+    // (feature roles keep depth=0). An errored turn relays its own partial
+    // streamed text, never a stale earlier reply — same discipline as the
+    // subtask hook (an error never overwrites session.lastResult, so
+    // resultOrReply would be the previous turn's answer).
+    this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: errored ? joined.trim() : resultOrReply, isSilent, errored, errorText: event.errorText }, () => undefined)
 
     // Export-button + speculative reply-HTML auto-deliver (Go engine_events.go
     // EventResult export block, #48): cache the full reply under the green
@@ -4206,7 +4209,11 @@ export class Engine {
       // crash with no streamed text still settles as a notice.
       const prefixed = `${this.i18n.t(Msg.SubtaskTurnInterrupted)}\n\n${fullResponse}`
       this.maybeAutoReportSubtask(state, session, prefixed, isSilentReply(prefixed))
-      this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: fullResponse, isSilent: isSilentReply(fullResponse) }, () => undefined)
+      // A channel-closed turn never completed, but only a genuine process
+      // crash reads as errored — user stops and engine reloads cut turns
+      // deliberately, and the turn's response is this partial either way.
+      const crashed = unexpectedExit && !state.engineStopped
+      this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: fullResponse, isSilent: isSilentReply(fullResponse), errored: crashed, errorText: crashed ? this.i18n.t(Msg.AgentProcessExited) : undefined }, () => undefined)
       // No-op when the auto-report delivered; covers the silent-reply skip.
       this.reportSubtaskTimeout(sessionKey)
 

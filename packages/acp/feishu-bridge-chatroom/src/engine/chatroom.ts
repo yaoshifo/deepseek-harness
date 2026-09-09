@@ -1582,6 +1582,10 @@ export function assistantReportPending(e: Engine, role: Session): boolean {
  * each role turn it relays the reply to the hub as 【name】 AND wakes the
  * moderator. One-shot per ask (gated by chatroomAsked). Silent/empty replies
  * are skipped. Disjoint from maybeAutoReportSubtask (roles keep depth=0).
+ * An errored turn (an API error interrupted generation) is never relayed as a
+ * reply — the barriers record an explicit failure and the wake carries the
+ * failure line plus the turn's own partial, mirroring the subtask hook's
+ * never-a-stale-earlier-reply discipline.
  *
  * All session/barrier state mutations run synchronously (Go's mutex-guarded
  * sequence); only the platform sends (relay card, ledger append, wake) ride
@@ -1590,8 +1594,12 @@ export function assistantReportPending(e: Engine, role: Session): boolean {
  * @param e - Engine carrying the session registry and i18n surface.
  * @param state - Interactive state of the finished turn; its platform addresses the hub.
  * @param session - The role session whose turn just ended.
- * @param baseResponse - The role's reply text for this turn.
+ * @param baseResponse - The role's reply text for this turn; on an errored
+ *   turn, the turn's own partial streamed text.
  * @param isSilent - True when the turn ran in silent mode (no relay card, wake still fires).
+ * @param errored - True when an error interrupted the turn; baseResponse is
+ *   then a partial, not a final reply.
+ * @param errorText - The interrupting error's text when errored.
  */
 export function maybeAutoRelayRole(
   e: Engine,
@@ -1599,6 +1607,8 @@ export function maybeAutoRelayRole(
   session: Session,
   baseResponse: string,
   isSilent: boolean,
+  errored = false,
+  errorText = '',
 ): void {
   if (chatroomState(session).chatroomHubKey === '' || chatroomState(session).chatroomAsked) return
   // Superseded-turn guard: this turn's ask identity no longer matches any
@@ -1643,6 +1653,8 @@ export function maybeAutoRelayRole(
   const r = asReplyContextReconstructor(p)
   if (r === undefined) return
   const reply = baseResponse.trim()
+  /** Barrier record for an errored turn: an explicit failure, never its partial posing as a reply. */
+  const failedNote = errored ? e.i18n.tf(Msg.ChatroomRoleTurnFailedNote, errorText) : ''
 
   /**
    * Post the 【Role】 card to the hub and append the ledger. Shared by every
@@ -1654,7 +1666,7 @@ export function maybeAutoRelayRole(
    * placeholder card cannot overtake the relay card.
    */
   const relayRoleReply = async (hubRctx: unknown): Promise<void> => {
-    if (reply === '' || isSilent) return
+    if (errored || reply === '' || isSilent) return
     const content = `【${roleName}】${reply}`
     await e.sendAsCard(p, hubRctx, content, { title: e.i18n.tf(Msg.ChatroomRoleReplyHeader, roleName), color: 'green' })
       .catch((error: unknown) => {
@@ -1682,7 +1694,7 @@ export function maybeAutoRelayRole(
       },
     )
     chatroomState(session).chatroomInFlight = false
-    const { done, summary } = barrier.accumulate(roleName, reply)
+    const { done, summary } = barrier.accumulate(roleName, errored ? failedNote : reply)
     if (done) {
       // The relay card must land before the closing summary's wake card
       // (same contract as the gather path): finalize only after the relay
@@ -1734,7 +1746,7 @@ export function maybeAutoRelayRole(
       },
     )
     chatroomState(session).chatroomInFlight = false
-    const { done, wakeContent } = g.accumulate(roleName, reply)
+    const { done, wakeContent } = g.accumulate(roleName, errored ? failedNote : reply)
     if (!done) {
       updateResearchProgressCard(e, p, g, '')
       console.info(`chatroom: gathered role reply (waiting for more) (role=${roleName} hub=${hubKey})`)
@@ -1762,7 +1774,13 @@ export function maybeAutoRelayRole(
   }
   const reminder = e.i18n.t(Msg.ChatroomReminder)
   let wake: string
-  if (reply !== '' && !isSilent) {
+  if (errored) {
+    // The turn died mid-generation: report the failure with whatever the
+    // role did stream, never a full-fledged 发言 framing of a partial.
+    const failedWake = e.i18n.tf(Msg.ChatroomRoleTurnFailedWake, roleName, errorText)
+    wake = `${failedWake}${reply !== '' ? `\n\n${reply}` : ''}\n\n${reminder}`
+    console.info(`chatroom: role turn failed; woke moderator with the failure (role=${roleName} error=${errorText})`)
+  } else if (reply !== '' && !isSilent) {
     wake = `[聊天室·${roleName} 发言]\n\n${reply}\n\n${reminder}`
     console.info(`chatroom: relayed role reply to hub (role=${roleName} hub=${hubKey})`)
   } else {
