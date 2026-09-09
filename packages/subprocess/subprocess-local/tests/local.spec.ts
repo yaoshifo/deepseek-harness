@@ -17,6 +17,21 @@ function unmockWin32ForIsolatedRuntime(): void {
   vi.doUnmock('@deepseek-ai/dsh-win32-process')
 }
 
+function mockLinuxScopeFallbackForIsolatedRuntime(): void {
+  // Pin containment to the fallback path: hosts with a user systemd manager would otherwise
+  // engage the real linux-scope bootstrap, which the fake PTY never consumes.
+  vi.doMock('../src/linux-scope.ts', () => ({
+    launchLinuxScope: vi.fn(),
+    prepareLinuxTerminalScope: vi.fn(),
+    probeLinuxManager: () => false,
+    probeLinuxNative: () => false,
+  }))
+}
+
+function unmockLinuxScopeFallbackForIsolatedRuntime(): void {
+  vi.doUnmock('../src/linux-scope.ts')
+}
+
 function spec(command: string, overrides: Partial<SubprocessSpawnSpec> = {}): SubprocessSpawnSpec {
   // Windows has no bash; the suite's simple commands translate to node one-liners.
   const argv = process.platform === 'win32'
@@ -384,6 +399,7 @@ describe('LocalSubprocessRuntime', () => {
     vi.resetModules()
     mockWin32ForIsolatedRuntime()
     vi.doMock('node-pty', () => ({ spawn: () => terminal }))
+    mockLinuxScopeFallbackForIsolatedRuntime()
     vi.doMock('../src/process-inspector.ts', async importOriginal => ({
       ...await importOriginal<typeof import('../src/process-inspector.ts')>(),
       createProcessInspector: () => inspector,
@@ -404,6 +420,7 @@ describe('LocalSubprocessRuntime', () => {
       await fiber.dispose()
     } finally {
       vi.doUnmock('node-pty')
+      unmockLinuxScopeFallbackForIsolatedRuntime()
       vi.doUnmock('../src/process-inspector.ts')
       unmockWin32ForIsolatedRuntime()
       vi.resetModules()
@@ -593,6 +610,7 @@ describe('LocalSubprocessRuntime', () => {
     vi.resetModules()
     mockWin32ForIsolatedRuntime()
     vi.doMock('node-pty', () => ({ spawn: () => terminal }))
+    mockLinuxScopeFallbackForIsolatedRuntime()
     try {
       const { default: IsolatedLocalSubprocessRuntime } = await import('../src/index.ts')
       const ctx = new Context()
@@ -623,6 +641,7 @@ describe('LocalSubprocessRuntime', () => {
       expect(disposalErrors).toHaveLength(1)
     } finally {
       vi.doUnmock('node-pty')
+      unmockLinuxScopeFallbackForIsolatedRuntime()
       unmockWin32ForIsolatedRuntime()
       vi.resetModules()
     }
