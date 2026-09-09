@@ -334,6 +334,8 @@ export class SubagentContinuationManager {
    * @param options - resolved delivery policy and caller cancellation.
    * @returns the delivered message's id.
    */
+  // Report delivery is synchronous; the seam returns a promise for remote transports.
+  // oxlint-disable-next-line typescript/require-await -- Preserve promise rejection semantics at the async provider contract.
   async reportFrom(
     child: Agent,
     content: ContentBlock[],
