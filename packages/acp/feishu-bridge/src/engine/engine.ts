@@ -3450,13 +3450,17 @@ export class Engine {
 
           case 'text_delta': {
           // Preview-only incremental text; the full block still arrives via
-          // EventText and is reconciled at turn end.
+          // EventText and is reconciled at turn end. In progress mode the
+          // deltas arm only the rate span: streamed working-out typing into
+          // 实时播报 reads as dumping the thinking process onto the card
+          // (2026-09-09 oc_ad04) — the completed EventText block keeps the
+          // section block-granular.
             if (generationStart === undefined) generationStart = Date.now()
+            if (sp.inProgressMode() && sp.canPreview()) break
             deltaAccum += event.content
             if (couldBeSilentPrefix(deltaAccum)) break
             deltaFlushed = true
-            if (sp.canPreview() && sp.inProgressMode()) await sp.appendAnalysisText(deltaAccum)
-            else if (sp.canPreview()) await sp.appendText(event.content)
+            if (sp.canPreview()) await sp.appendText(event.content)
             break
           }
 

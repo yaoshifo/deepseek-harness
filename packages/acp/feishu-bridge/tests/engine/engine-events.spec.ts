@@ -570,6 +570,113 @@ describe('processInteractiveEvents turn token rate', () => {
   })
 })
 
+describe('processInteractiveEvents progress-mode text_delta display gating', () => {
+  const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
+
+  it('keeps streamed working text out of 实时播报 while tools run', async () => {
+    // 2026-09-09 oc_ad04: streamed text deltas typing the agent's working-out
+    // into the card read as dumping the thinking process. Stream frames drive
+    // header state and the rate span only; 实时播报 stays block-granular (the
+    // completed EventText block displays it).
+    const p = createPreviewRecorderPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolProgress: true })
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'tool_result', toolResult: 'ok', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'text_delta', content: '边查边写的工作草稿', done: false })
+    // Let the 300ms deferred progress flush fire while the turn is open —
+    // under the old projection the streamed segment lands in that flush.
+    await sleep(500)
+    agentSession.channel.push({ type: 'result', content: '答案', done: true })
+    await done
+
+    expect(p.messages.some(m => m.includes('边查边写的工作草稿')), `cards=${JSON.stringify(p.messages)}`).toBe(false)
+  })
+
+  it('still shows the completed EventText block in 实时播报', async () => {
+    const p = createPreviewRecorderPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolProgress: true })
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'tool_result', toolResult: 'ok', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'text_delta', content: '中间推敲', done: false })
+    await sleep(50)
+    agentSession.channel.push({ type: 'text', content: '完成了：查证全部结束。', done: false })
+    await sleep(500)
+    agentSession.channel.push({ type: 'result', content: '完成了：查证全部结束。', done: true })
+    await done
+
+    expect(p.messages.some(m => m.includes('完成了：查证全部结束。')), `cards=${JSON.stringify(p.messages)}`).toBe(true)
+  })
+
+  it('keeps streaming answer text on the card outside progress mode', async () => {
+    const p = createPreviewRecorderPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolProgress: true })
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    agentSession.channel.push({ type: 'text_delta', content: '逐字流式的回答正文', done: false })
+    agentSession.channel.push({ type: 'result', content: '逐字流式的回答正文', done: true })
+    await done
+
+    expect(p.messages.some(m => m.includes('逐字流式的回答正文')), `cards=${JSON.stringify(p.messages)}`).toBe(true)
+  })
+
+  it('keeps thinking_delta flipping the header to 思考中 in progress mode', async () => {
+    const p = createPreviewRecorderPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    e.setDisplayConfig({ toolProgress: true })
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    const done = e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+    agentSession.channel.push({ type: 'tool_use', toolName: 'bash', toolInput: 'ls', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'tool_result', toolResult: 'ok', toolID: 'call-1', content: '', done: false })
+    agentSession.channel.push({ type: 'thinking_delta', content: '推理窗口', done: false })
+    // The thinking flush shares the 300ms progress throttle; give the deferred
+    // flush time to land before the turn settles.
+    await sleep(500)
+    agentSession.channel.push({ type: 'result', content: '答案', done: true })
+    await done
+
+    expect(p.states.includes('thinking'), `states=${JSON.stringify(p.states)}`).toBe(true)
+  })
+})
+
 describe('processInteractiveEvents channel closed', () => {
   it('notifies the user that the agent process exited', async () => {
     const p = createStubMediaPlatform()
