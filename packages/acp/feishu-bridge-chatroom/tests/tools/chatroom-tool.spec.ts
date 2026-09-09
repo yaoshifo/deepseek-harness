@@ -195,6 +195,21 @@ describe('feishu_bridge_chatroom action routing', () => {
     test.dispose()
   })
 
+  it('start rejects an over-cap cast before resolving the inherit reference', async () => {
+    const engine = newEngine()
+    const root = await mkdtemp(join(tmpdir(), 'fb-chatroom-roles-'))
+    await mkdir(join(root, 'taleb'), { recursive: true })
+    await writeFile(join(root, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    chatroomConfig(engine).applySection({ rolesDir: root, maxRoles: 2 })
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+
+    const res = await test.execute({ action: 'start', message: 'topic', roles: 'taleb,munger,knight', inherit: '无匹配' })
+
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('chatroom: too many roles (3 > max 2)')
+    test.dispose()
+  })
+
   it('gather/ask/note/ask-human fail loud when their preconditions miss (routing proof)', async () => {
     const engine = newEngine()
     const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))

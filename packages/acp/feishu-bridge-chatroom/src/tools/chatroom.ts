@@ -45,7 +45,7 @@ import {
   renderChatroomPickCardAndPush,
   renderChatroomTopicPickCardAndPush,
 } from '../engine/chatroom-pick.ts'
-import { listRoleNames, roleEssence } from '../engine/chatroom-roles.ts'
+import { assertChatroomRoleCount, listRoleNames, roleEssence } from '../engine/chatroom-roles.ts'
 import { chatroomState } from '../chatroom-state.ts'
 
 const DESCRIPTION =
@@ -245,6 +245,9 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
             throw new Error(engine.i18n.t(Msg.ChatroomAlreadyRunning))
           }
           const roles = (args.roles ?? '').split(',').map(r => r.trim()).filter(r => r !== '')
+          // The cast is final here: reject an over-cap one before the inherit
+          // resolution's ledger scan and startChatroom's deeper work.
+          assertChatroomRoleCount(engine, roles)
           // inherit resolves BEFORE spawning so an unresolvable reference
           // fails without side effects; '' (bare) takes the newest chatroom.
           let prior: ChatroomInheritTarget | undefined

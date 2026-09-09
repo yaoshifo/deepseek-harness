@@ -10,6 +10,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import type { Engine } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { chatroomConfig } from '../chatroom-config.ts'
 
 /** Claude config home: $CLAUDE_CONFIG_DIR, else ~/.claude (Go ClaudeConfigHomeDir).
  *
@@ -105,6 +107,26 @@ export function listRoleNames(rolesDir: string): string[] {
     }
   }
   return names
+}
+
+/**
+ * Reject a chatroom start whose cast exceeds the configured role cap —
+ * before any start side effect (research-venv provisioning, flag stash,
+ * mode card, picker state, spawn). Same message startChatroom's own guard
+ * throws, so every entry surfaces one identical error instead of failing
+ * deep with the side effects already done.
+ *
+ * @param e - Engine whose chatroom configuration supplies maxRoles.
+ * @param names - The cast the start would spawn; an empty list passes and
+ *   defers to startChatroom's default-every-role expansion and its own cap
+ *   guard (which still runs before any side effect there).
+ * @throws When names exceeds chatroomConfig(e).maxRoles().
+ */
+export function assertChatroomRoleCount(e: Engine, names: readonly string[]): void {
+  const max = chatroomConfig(e).maxRoles()
+  if (names.length > max) {
+    throw new Error(`chatroom: too many roles (${names.length} > max ${max})`)
+  }
 }
 
 /**

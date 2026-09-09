@@ -22,7 +22,7 @@ import { chatroomState } from '../chatroom-state.ts'
 import { chatroomConfig } from '../chatroom-config.ts'
 import type { ChatroomHistoryEntry } from './chatroom-ledger.ts'
 import { readChatroomLedgerHeader } from './chatroom-ledger.ts'
-import { listRoleNames } from './chatroom-roles.ts'
+import { assertChatroomRoleCount, listRoleNames } from './chatroom-roles.ts'
 import { buildChatroomPickPriming, buildChatroomTopicPickPriming } from './chatroom-priming.ts'
 import { chatroomResearchWorkspace, clearChatroomResearchFlags, ensureResearchPythonEnv, hasActiveChatroomPoll, lastChatroomWakeAt, startChatroom } from './chatroom.ts'
 import type { ChatroomInheritTarget } from './chatroom.ts'
@@ -620,6 +620,11 @@ export function executeChatroomStartPickAction(e: Engine, sessionKey: string, ar
         return 'continue-gone'
       }
       const prior: ChatroomInheritTarget = { topic: entry.header.topic, dir: entry.dir, roles: [...entry.header.roles] }
+      // The prior's recorded cast can outgrow the configured cap (maxRoles
+      // was lowered since it ran): reject before the picker state is
+      // deleted, so the card stays armed instead of failing deep in the
+      // mode-pick/start chain after its side effects.
+      assertChatroomRoleCount(e, prior.roles)
       pickers(e).chatroomStartPick.delete(sessionKey)
       // An empty-cast prior falls through to the role picker, matching the
       // explicit --continue path (the picker chain carries no prior).
@@ -1066,7 +1071,17 @@ export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: st
     if (pickers(e).chatroomStartPick.get(sessionKey) === undefined) {
       return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'grey', e.i18n.t(Msg.ChatroomPickExpired))
     }
-    const outcome = executeChatroomStartPickAction(e, sessionKey, args)
+    // The state machine may reject the action before touching any state
+    // (an over-cap prior cast); swap the pressed card for the error so the
+    // press is not silently swallowed — the engine only console.errors a
+    // card-action throw.
+    let outcome: ReturnType<typeof executeChatroomStartPickAction>
+    try {
+      outcome = executeChatroomStartPickAction(e, sessionKey, args)
+    } catch (error) {
+      return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'red',
+        String(error instanceof Error ? error.message : error))
+    }
     switch (outcome) {
       case 'cancel':
         return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'grey', e.i18n.t(Msg.ChatroomStartPickCancelled))
