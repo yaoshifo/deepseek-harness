@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-09-05-chatroom-closing-plain-talk-style.md
-2026-09-05-chatroom-closing-plain-talk-style.md: 070a8f6329023bb96e62d1038140c387135551be
-2026-09-05-chatroom-closing-plain-talk-style.zh.md: b0ac74d90e5f14bb00312089e8fee0444744bf3f
+2026-09-05-chatroom-closing-plain-talk-style.md: 1c8a30696c0e232c3a864abbb62c0ddb7788504d
+2026-09-05-chatroom-closing-plain-talk-style.zh.md: 83a3f4e333b07e59588c6ca239f257cf25b666a1

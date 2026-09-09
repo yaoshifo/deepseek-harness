@@ -6,7 +6,7 @@ English | [中文](2026-09-02-feishu-bridge-plan-approval-permission-preset.zh.m
 
 ## Problem
 
-A plan-mode bridge session (the live profile's `agent.mode: plan` default, inherited by `/spawn` groups and main chats alike) approved its ExitPlanMode card yet kept running under the composition's sandbox and approval defaults: writing outside the workspace still denied, retried through a sandbox-permissions escalation, and waited on an approval card. The approval the user just gave authorized the plan's execution, but nothing propagated that authorization into the session's permission knobs — plan state and permission state are deliberately independent ([plan-mode's module contract](../../../../../packages/plan/plan-mode/src/index.ts): sandbox mode and approval policy never read or write plan state).
+A plan-mode bridge session (the live profile's `agent.mode: plan` default, inherited by `/spawn` groups and main chats alike) approved its ExitPlanMode card yet kept running under the composition's sandbox and approval defaults: writing outside the workspace still denied, retried through a sandbox-permissions escalation, and waited on an approval card. The approval the user just gave authorized the plan's execution, but nothing propagated that authorization into the session's permission knobs — plan state and permission state are deliberately independent ([plan-mode's module contract](../../../../packages/plan/plan-mode/src/index.ts): sandbox mode and approval policy never read or write plan state).
 
 ## Decision
 

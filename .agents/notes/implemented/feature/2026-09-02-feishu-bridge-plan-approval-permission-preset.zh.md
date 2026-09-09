@@ -6,7 +6,7 @@ Status: implemented
 
 ## Problem
 
-plan 模式的 bridge 会话（live profile 的 `agent.mode: plan` 默认，`/spawn` 群与主群 alike 继承）在用户批准 ExitPlanMode 卡之后，仍以组合的沙箱与审批默认值运行：写工作区外文件照样被拒、经 sandbox-permissions 升级重试、再等一张审批卡。用户刚给出的批准授权的是计划的执行，但没有任何机制把这份授权传导进会话的权限旋钮——plan 状态与权限状态刻意独立（[plan-mode 模块契约](../../../../../packages/plan/plan-mode/src/index.ts)：sandbox mode 与 approval policy 永不读写 plan 状态）。
+plan 模式的 bridge 会话（live profile 的 `agent.mode: plan` 默认，`/spawn` 群与主群 alike 继承）在用户批准 ExitPlanMode 卡之后，仍以组合的沙箱与审批默认值运行：写工作区外文件照样被拒、经 sandbox-permissions 升级重试、再等一张审批卡。用户刚给出的批准授权的是计划的执行，但没有任何机制把这份授权传导进会话的权限旋钮——plan 状态与权限状态刻意独立（[plan-mode 模块契约](../../../../packages/plan/plan-mode/src/index.ts)：sandbox mode 与 approval policy 永不读写 plan 状态）。
 
 ## Decision
 

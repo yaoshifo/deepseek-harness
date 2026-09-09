@@ -18,7 +18,7 @@ Status: implemented
 
 **把 oneshot origin 一并门掉。** 注入排除所有 origin 值，但 oneshot 旁路会话仍拿到策略 section（其 cwd 就是项目 cwd），拒绝其工具等于拒绝其自身指引描述的能力。维持不变。
 
-**把记忆目录注册为沙箱可写根，让通用工具服务 subagent。** 此前已被 [memory index maintenance](2026-08-17-memory-index-maintenance.md) 否决——非本地文件系统 provider 下通用工具会写错机器——本门不改变该结论。
+**把记忆目录注册为沙箱可写根，让通用工具服务 subagent。** 此前已被 [memory index maintenance](../feature/2026-08-17-memory-index-maintenance.zh.md) 否决——非本地文件系统 provider 下通用工具会写错机器——本门不改变该结论。
 
 ## Consequences
 

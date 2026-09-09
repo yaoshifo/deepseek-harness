@@ -613,7 +613,7 @@ export class InteractiveState {
  * overhead before turn/start, tool execution, and delegated-subagent model
  * time, which the Go wall-clock-minus-tool-intervals formula charged against
  * the rate (measured 5-9 t/s displayed vs 90-130 t/s actual decode on
- * 2026-08-24; see the M7-b divergence note in docs/MIGRATION.md). Providers
+ * 2026-08-24; a migration-era divergence recorded in the M7-b notes). Providers
  * that do not stream deltas produce no spans and the rate line is omitted.
  */
 export interface TurnTiming {

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-08-29-fork-secondary-development-principles.md
-2026-08-29-fork-secondary-development-principles.md: 9c85b811682bfab60a8f4a457d36ec956cfe45d2
-2026-08-29-fork-secondary-development-principles.zh.md: 9c8c5edae994d67876206faca517f2c80090e7c4
+2026-08-29-fork-secondary-development-principles.md: 7356eb502104a50e6dcd40c635340dd2b9d1f784
+2026-08-29-fork-secondary-development-principles.zh.md: 34914b6344f9c783e19ea2210e6a9d815a08aab8

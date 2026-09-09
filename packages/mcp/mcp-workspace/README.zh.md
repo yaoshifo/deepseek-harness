@@ -68,7 +68,6 @@ kind: "package-reference"
 | [`src/index.ts`](src/index.ts) | 服务：`Config`（roots/startupTimeoutMs）、`wrap`/`mount`、`mountedFor`、continuable 子任务 setup 贡献、roots 信任判定、取证日志 |
 | [`src/parse.ts`](src/parse.ts) | Claude Code 兼容 `.mcp.json` 解析：映射、跳过、重复检测、`${VAR}` 展开 |
 | [`src/types.ts`](src/types.ts) | 仅类型 |
-| [`src/invariant.ts`](src/invariant.ts) | 包 invariant 伴随件（无运行时 invariant；可观测状态归工具注册表所有） |
 
 ## Model Experience
 
