@@ -851,6 +851,17 @@ export class DshAgentAdapter {
       if (target !== undefined) target.markDisposed()
     }
     this.disposers.push(ctx.on('agent/disposed', onAgentDisposed))
+    // Streamed chunks are transient frames, not durable session events: a
+    // long single-message generation (max-effort reasoning) lands no durable
+    // event until it completes, so the engine's pump goes event-less for the
+    // whole window and its stall watchdog cannot tell a live stream from a
+    // hang. Feeding each chunk into the live session's stream-activity clock
+    // arms the watchdog's blind-pump override (2026-09-09 oc_a8f4 incident:
+    // three 200s-cadence kills of turns that streamed the whole window).
+    this.disposers.push(ctx.on('agent/assistant-stream', (payload: { agent: DshAgentLike; frame: { type: string } }) => {
+      if (payload.frame.type !== 'chunk') return
+      this.liveSessions.get(String(payload.agent.id))?.noteStreamActivity()
+    }))
     // B2: the approval answerer. When dsh asks for tool permission, delegate
     // "render one card and await the decision" to the engine's askUser and
     // return the decision as the native ApprovalAnswer — the note rides the
@@ -1138,7 +1149,9 @@ export class DshAgentAdapter {
   }
 
   /**
-   * Project default mode applied at every startSession when no one-shot override is armed (Go agent options mode).
+   * Project default mode applied at every FRESH startSession when no one-shot
+   * override is armed (Go agent options mode). A resumed session restores its
+   * own logged plan state instead — the default must not re-arm on it.
    *
    * @param mode - the project default mode name ('plan' or a non-plan mode).
    */
@@ -2014,12 +2027,19 @@ export class DshAgentAdapter {
     // Go effectiveMode: an unattended session overrides ANY configured or
     // overridden mode with bypassPermissions — which also means plan mode
     // stays off (a delegated child nobody can approve must not stall on an
-    // ExitPlanMode card). Rank otherwise: one-shot override > the chat's
-    // /spawn-pinned mode > the project default.
+    // ExitPlanMode card). Rank otherwise: one-shot override > resume skips
+    // inherited modes > the chat's /spawn-pinned mode > the project default.
+    // A resumed session restores its own logged plan state (the plan
+    // projection folds the log), so spawn/default modes must not re-arm on
+    // it: the stall-retry restart replaying the plan default rewound an
+    // approved plan back into plan mode and looped the chat through
+    // re-approval (2026-09-09 oc_a8f4 incident). An explicitly armed
+    // one-shot override still applies — it is user intent, not inheritance.
     let mode = unattended ? 'bypassPermissions'
       : this.modeOverride !== '' ? this.modeOverride
-        : options?.spawnMode !== undefined && options.spawnMode !== '' ? options.spawnMode
-          : this.defaultMode
+        : isResume ? ''
+          : options?.spawnMode !== undefined && options.spawnMode !== '' ? options.spawnMode
+            : this.defaultMode
     // A moderator drives a running discussion, never an implementation: an
     // inherited plan default (project agent.mode) would re-arm plan mode on
     // every recycled start and stall the discussion on an ExitPlanMode
@@ -2424,9 +2444,19 @@ export class DshAgentSession implements AgentSession {
     return !this.disposed
   }
 
-  /** AgentSession.lastStreamActivity: newest projected-event timestamp. */
+  /**
+   * AgentSession.lastStreamActivity: newest projected-event or streamed-chunk
+   * timestamp. Durable projections cover message/tool activity; transient
+   * `agent/assistant-stream` chunk frames cover the in-generation windows
+   * where no durable event exists yet (pure-reasoning generation).
+   */
   lastStreamActivity(): number {
     return this.lastActivityAt
+  }
+
+  /** Refresh the stream-activity clock: one streamed chunk frame arrived. */
+  noteStreamActivity(): void {
+    this.lastActivityAt = Date.now()
   }
 
   /**

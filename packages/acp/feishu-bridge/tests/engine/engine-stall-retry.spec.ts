@@ -30,12 +30,20 @@ import { previewText, statusOf } from '../stubs/preview-content.ts'
 type ScriptEntry =
   | 'hang'
   | { readonly text: string; readonly firstChunkDelayMs: number }
+  | {
+    /** Stream reasoning deltas at a fixed cadence before completing. */
+    readonly reasoning: { readonly chunks: number; readonly intervalMs: number }
+    readonly text: string
+  }
 
 /**
  * Scripted LLM adapter: each model call consumes the next script entry.
  * 'hang' streams one reasoning chunk then waits for the abort signal (a
  * stalled mid-stream request); the object form delays the first chunk (LLM
- * latency on the retry) then completes with the text.
+ * latency on the retry) then completes with the text; the `reasoning` form
+ * streams reasoning deltas at `intervalMs` cadence — a live model generating
+ * one long message whose inter-chunk gaps exceed the idle window without any
+ * durable event landing (2026-09-09 oc_a8f4 incident shape) — then completes.
  */
 class StallScriptAdapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
@@ -59,6 +67,29 @@ class StallScriptAdapter extends LlmAdapter {
         if (options.signal?.aborted) { reject(new Error('aborted')); return }
         options.signal?.addEventListener('abort', () => { reject(new Error('aborted')) }, { once: true })
       })
+      return
+    }
+    if ('reasoning' in entry) {
+      yield { type: 'block-start', index: 0, blockType: 'reasoning' }
+      let thought = ''
+      for (let i = 0; i < entry.reasoning.chunks; i++) {
+        await new Promise<void>((resolve) => { setTimeout(resolve, entry.reasoning.intervalMs) })
+        if (options.signal?.aborted) throw new Error('aborted')
+        thought += `thinking ${i} `
+        yield { type: 'reasoning-delta', index: 0, text: `thinking ${i} ` }
+      }
+      const chunks: StreamChunk[] = [
+        { type: 'block-end', index: 0, block: { type: 'reasoning', text: thought } },
+        { type: 'block-start', index: 1, blockType: 'text' },
+        { type: 'text-delta', index: 1, text: entry.text },
+        { type: 'block-end', index: 1, block: { type: 'text', text: entry.text } },
+        { type: 'usage', usage: { inputTokens: 10, outputTokens: entry.text.length } },
+        { type: 'finish', reason: { kind: 'stop' } },
+      ]
+      for (const chunk of chunks) {
+        if (options.signal?.aborted) throw new Error('aborted')
+        yield chunk
+      }
       return
     }
     await new Promise<void>((resolve) => { setTimeout(() => { resolve() }, entry.firstChunkDelayMs) })
@@ -191,6 +222,42 @@ describe('stall retry over the real dsh runtime', () => {
     expect(rt.platform.sent.some(s => s.includes('exited unexpectedly') || s.includes('进程意外退出'))).toBe(false)
     const state = rt.engine.interactiveStates.get('test:ch:user1')
     expect(state?.agentSession?.alive()).toBe(true)
+  })
+
+  it('a slow reasoning stream is not stall-killed while chunks keep arriving (2026-09-09 oc_a8f4 incident)', { timeout: 15_000 }, async () => {
+    // GLM at max effort generates one long message: 2.4s of pure reasoning
+    // (8 chunks × 300ms, every gap under the 400ms idle but no durable event
+    // until the message lands) then completes. The watchdog blind-killed this
+    // exact shape in production — the pump saw nothing, so the live stream
+    // was indistinguishable from a hang.
+    const rt = await bootRuntime([
+      { reasoning: { chunks: 8, intervalMs: 300 }, text: 'designed' },
+    ])
+    // The shrunk 400ms idle shrinks the unset hard cap to 800ms; the live
+    // reasoning stream outlives it. Production pins the cap explicitly
+    // (7200s), so the test does too.
+    rt.engine.setAbsoluteTurnTimeoutSecs(10)
+
+    const warns: string[] = []
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warns.push(args.map(String).join(' '))
+    })
+
+    receive(rt.engine, rt.platform, 'task')
+    await vi.waitFor(() => {
+      const delivered = rt.platform.sent.some(s => s.includes('designed'))
+        || rt.platform.messages.some(m => m.includes('designed'))
+      expect(delivered, `sent=${JSON.stringify(rt.platform.sent)} messages=${JSON.stringify(rt.platform.messages)}`).toBe(true)
+    }, { timeout: 8_000 })
+
+    // No stall retry happened: the live stream's chunk activity overrode the
+    // idle fire every window instead of the turn dying as aborted/disposed.
+    expect(rt.platform.sent.some(s => s.includes('Agent stalled') || s.includes('无响应超时')),
+      `sent=${JSON.stringify(rt.platform.sent)}`).toBe(false)
+    expect(warns.some(w => w.includes('stall check overridden')), `warns=${JSON.stringify(warns)}`).toBe(true)
+    const state = rt.engine.interactiveStates.get('test:ch:user1')
+    expect(state?.agentSession?.alive()).toBe(true)
+    warnSpy.mockRestore()
   })
 
   it('exhausts stall retries and kills the session when the retry also stalls', async () => {

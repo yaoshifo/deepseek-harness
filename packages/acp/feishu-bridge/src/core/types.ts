@@ -430,13 +430,17 @@ export interface AgentSession {
   close(): Promise<void>
   /**
    * Optional: wall-clock timestamp of the newest event the agent session
-   * projected from its durable event stream. Unlike the engine-side
+   * projected from its durable event stream, or of the newest transient
+   * stream chunk when none has landed yet. Unlike the engine-side
    * `state.lastEventAt` — updated only by the pump currently receiving the
    * channel — this reflects real agent output regardless of which consumer
    * owns the channel, so a stall watchdog can distinguish a silent agent
    * from a blind pump (2026-08-25 oc_29bb incident: a degraded handoff left
-   * the pump event-less while the agent streamed for the whole window).
-   * @returns milliseconds since epoch of the last projected event.
+   * the pump event-less while the agent streamed for the whole window; and
+   * 2026-09-09 oc_a8f4: pure-reasoning generation emits only transient chunk
+   * frames — no durable event — so implementations must fold those frames
+   * into this clock too).
+   * @returns milliseconds since epoch of the last projected event or streamed chunk.
    */
   lastStreamActivity?(): number
 }

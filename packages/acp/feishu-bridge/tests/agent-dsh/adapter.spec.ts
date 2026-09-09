@@ -222,6 +222,35 @@ describe('DshAgentAdapter', () => {
     expect((await a.listSessions()).some(s => s.id === id), 'vanished agent must not list as live').toBe(false)
   })
 
+  it('assistant-stream chunk frames refresh the live session stream clock (stall blind-kill guard)', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    const session = (await a.startSession('', { sessionKey: 'feishu:oc_stream:ou_9' })) as DshAgentSession
+    const agent = h.agents.find(ag => ag.id === session.currentSessionID())!
+    const frames = h.listeners.get('agent/assistant-stream') ?? []
+    expect(frames.length, 'adapter must subscribe to agent/assistant-stream').toBeGreaterThan(0)
+    const dispatch = (payload: { agent: unknown; frame: { type: string } }): void => {
+      for (const l of frames) (l as unknown as (p: { agent: unknown; frame: { type: string } }) => void)(payload)
+    }
+
+    const before = session.lastStreamActivity()
+    await new Promise((resolve) => { setTimeout(resolve, 5) })
+
+    // Non-chunk frames (attempt start/end markers) do not touch the clock.
+    dispatch({ agent, frame: { type: 'start' } })
+    expect(session.lastStreamActivity()).toBe(before)
+
+    // A streamed chunk refreshes the clock even though no durable event
+    // landed — the pure-reasoning window the stall watchdog must survive.
+    dispatch({ agent, frame: { type: 'chunk' } })
+    expect(session.lastStreamActivity()).toBeGreaterThan(before)
+
+    // Frames of agents this adapter does not own are ignored.
+    dispatch({ agent: { id: 'agent-unknown' }, frame: { type: 'chunk' } })
+    expect(session.alive()).toBe(true)
+    expect(session.lastStreamActivity()).toBeGreaterThan(before)
+  })
+
   it('resolves the session override ahead of the project default without touching it', () => {
     const h = createHarness()
     const a = newAdapter(h)
@@ -1591,6 +1620,46 @@ it('defaultMode plan activates plan mode on every startSession (Go agent options
   await a.startSession('', { sessionKey: 'feishu:oc_m3:ou_9' })
   await a.startSession('', { sessionKey: 'feishu:oc_m4:ou_9' })
   expect(planSets).toEqual([true, true, false, true])
+})
+
+it('a resumed session keeps its logged plan state; the project default does not re-arm plan mode (2026-09-09 oc_a8f4)', async () => {
+  const h = createHarness()
+  const planSets: boolean[] = []
+  h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
+  const a = newAdapter(h)
+  a.setDefaultMode('plan')
+
+  // Fresh sessions keep getting the project default.
+  await a.startSession('', { sessionKey: 'feishu:oc_fresh:ou_9' })
+  expect(planSets).toEqual([true])
+
+  // A resume (stall retry, live-guard recycle) must not re-arm it: the
+  // session's own logged plan state is authoritative, so a plan approved
+  // before the restart stays approved instead of rewinding into a
+  // re-approval loop.
+  await a.startSession('cc-resumed', { sessionKey: 'feishu:oc_resumed:ou_9' })
+  expect(planSets).toEqual([true])
+})
+
+it('resume skips the pinned spawnMode too, while an armed one-shot override still applies', async () => {
+  const h = createHarness()
+  const planSets: boolean[] = []
+  h.services['planMode'] = { set: (_agent: unknown, active: boolean) => { planSets.push(active); return '' } }
+  const a = newAdapter(h)
+
+  // The pin governs fresh sessions of the chat...
+  await a.startSession('', { sessionKey: 'feishu:oc_p1:ou_9', spawnMode: 'plan' })
+  expect(planSets).toEqual([true])
+
+  // ...but not a resumed session, whose logged mode stands.
+  await a.startSession('cc-pin', { sessionKey: 'feishu:oc_p2:ou_9', spawnMode: 'plan' })
+  expect(planSets).toEqual([true])
+
+  // An explicitly armed one-shot override survives the resume (/mode switch
+  // on a recycled session relies on it).
+  a.setSessionMode('default')
+  await a.startSession('cc-override', { sessionKey: 'feishu:oc_p3:ou_9', spawnMode: 'plan' })
+  expect(planSets).toEqual([true, false])
 })
 
 it('a chatroom moderator never enters plan mode (an inherited plan default is downgraded)', async () => {
