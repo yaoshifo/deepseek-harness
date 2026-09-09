@@ -147,6 +147,20 @@ describe('withTransientRetry', () => {
     expect(elapsed).toBeLessThan(3000)
   })
 
+  it('per-call attemptTimeoutMs extends the deadline for that call only', async () => {
+    retryTiming.requestTimeout = 50
+    let calls = 0
+    // Resolves past the 50ms global deadline but inside the 300ms per-call
+    // override — a large upload must survive the small-request timeout.
+    await withTransientRetry('test', () => new Promise<void>((resolve) => {
+      calls++
+      setTimeout(resolve, 150)
+    }), undefined, 300)
+    expect(calls).toBe(1)
+    // The override is per-call: the global value stays untouched.
+    expect(retryTiming.requestTimeout).toBe(50)
+  })
+
   it('backoff timing spaces retries', async () => {
     retryTiming.initialDelay = 60
     retryTiming.maxDelay = 120
@@ -223,6 +237,26 @@ describe('API wrappers retry on transient errors', () => {
     await newPlatform(api).reply(rc, 'hello')
     expect(api.counts.reply).toBe(1)
     expect(api.counts.create).toBe(1)
+  })
+
+  it('sendFile sizes the upload deadline by payload, past the small-request timeout', async () => {
+    retryTiming.requestTimeout = 50
+    let uploads = 0
+    const api: FeishuApiClient = {
+      reply: async () => ({ messageId: 'om_ok' }),
+      create: async () => ({ messageId: 'om_ok' }),
+      // Resolves past the 50ms global deadline but inside the payload-sized
+      // deadline (4096 bytes at 2048 B/s → 2000ms): a slow-link upload must
+      // not inherit the small-request timeout.
+      uploadFile: async () => {
+        uploads++
+        await new Promise((resolve) => { setTimeout(resolve, 150) })
+        return 'fk_ok'
+      },
+    }
+    const p = new FeishuPlatform({ appID: 'cli_x', appSecret: 's', apiClient: api, uploadMinBytesPerSec: 2048, uploadMaxDeadlineMs: 60_000 })
+    await p.sendFile(rc, { data: new Uint8Array(4096), fileName: 'big.pdf', mimeType: 'application/pdf' })
+    expect(uploads).toBe(1)
   })
 
   it('patch message retries on transient error', async () => {
