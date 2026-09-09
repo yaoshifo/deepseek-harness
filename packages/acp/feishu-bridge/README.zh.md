@@ -57,6 +57,7 @@ cc-connect 的编排能力（engine + 飞书平台）迁入 dsh 的单插件形�
 - **`mcpHealth` 用「工具注册表存在性」推断降级，而非连接状态真值**：被监视 server 在无 scope 的注册表视图中看不到任何 `mcp__<serverName>__*` 工具即判「降级」——无法区分降因（token 过期、连接失败、重连耗尽），也没有精确的降级起始时刻（只有「启动宽限期之后」）。枚举假设 mcp-client 各行挂载在 profile 根层、注册因此落在全局工具层；挂进 agent-scoped preset 的 server 对全局视图不可见，会被判为永久降级。项目的 `mcpServers` 可见性掩码不影响该检测（它读的是注册真值，不是 per-session 可见性）。
 - **被掩码的 MCP server 宕机期间创建的会话在其复活后泄漏其工具**：deny 掩码按会话创建时刻的 live 工具视图计算，而 deny 掩码放行晚到且未点名的全局工具——server 在会话启动后重连，其工具会回到该会话的视图，直到下次会话创建/resume 重算掩码。`mcpServers` 是可见性组合而非权限边界；server 名拼写错误与宕机不可区分（表现为该 server 工具缺席）。升级路径：core `tools` 的 pattern 化 restriction（见 per-project MCP 可见性 Agent Note）。
 
+- **超时的上传尝试是被放弃而非被取消**：node-sdk 的 `IRequestOptions` 不带 `signal`，per-attempt deadline 竞速丢弃 HTTP 调用后它仍会在后台运行直至自行 settle；上传 deadline 按载荷定尺寸（`uploadMinBytesPerSec`/`uploadMaxDeadlineMs`），真被饿死的尝试已罕见，但要真正取消需自写 multipart fetch（或等 SDK 支持 signal）。
 - **lark 工具仅支持 Feishu 域（open.feishu.cn）**：插件平台侧整体未移植 Go `larkCreds.Brand`（lark.com 双域名）；需要 lark 域时在 `src/tools/lark.ts` 与平台 client 引入 brand 维度。
 - **send 工具只读本地路径**：Go CLI 的 `--image/--file` 还支持 http(s) URL 拉取；agent 产物都在磁盘上，该分支未移植。i18n 的 `relay_setup_ok`/`cron_setup_ok` 消息为保形移植残留：其 Go 调用方把 CLI 指令写进 agent 记忆文件，该机制在 dsh 下已过时（每个会话都有原生系统提示机制），不接线也不删除。
 - **引用消息的发送者名不解析**：平台从不经通讯录 API 解析联系人名（M1 起的既定裁剪），引用链里发送者渲染为 `User`/`Bot`；需要真名时随平台补 `resolveUserName` 缓存。

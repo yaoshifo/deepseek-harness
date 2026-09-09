@@ -55,6 +55,10 @@ describe('buildChatroomSystemPrompt', () => {
     expect(text).toContain('feishu_bridge_send')
     expect(text).toContain('把生成的图片或文件发回给用户')
     expect(text).toContain('多角色聊天室的一个参与者')
+    // Literature lookups route to the scholar skill by name: the catalog
+    // lists eight skills and an academic task phrased loosely ("这个领域
+    // 最近有什么进展") does not reliably match scholar's description.
+    expect(text).toContain('查学术文献/最新论文用 scholar skill')
     expect(text).toContain('共享账本——回答前先读')
     expect(text).toContain('/data/ledgers/abc')
     expect(text).toContain('# Munger')
@@ -134,6 +138,9 @@ describe('buildChatroomSystemPrompt', () => {
       platformPrompt: '',
     })
     expect(text).toContain('1:1 回答用户')
+    // Same literature routing as the multi-role contract (see the role
+    // persona test for why the skill is named).
+    expect(text).toContain('查学术文献/最新论文用 scholar skill')
     expect(text).not.toContain('共享账本——回答前先读')
     expect(text).not.toContain('多角色聊天室的一个参与者')
   })
@@ -186,6 +193,11 @@ describe('cross-chatroom sharing disciplines', () => {
     expect(p).toContain('三列')
     expect(p).toContain('spot-check')
     expect(p).toContain('登记新行')
+    // In research mode the assistant executes the lookup; the contract
+    // names scholar so the role's task brief routes literature requests
+    // there instead of a plain web search.
+    expect(p).toContain('查学术文献/最新论文')
+    expect(p).toContain('scholar skill')
   })
 
   it('role memory prompt pins the write-now and no-chatter disciplines', () => {

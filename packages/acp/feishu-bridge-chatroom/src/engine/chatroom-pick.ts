@@ -22,9 +22,9 @@ import { chatroomState } from '../chatroom-state.ts'
 import { chatroomConfig } from '../chatroom-config.ts'
 import type { ChatroomHistoryEntry } from './chatroom-ledger.ts'
 import { readChatroomLedgerHeader } from './chatroom-ledger.ts'
-import { listRoleNames } from './chatroom-roles.ts'
+import { assertChatroomRoleCount, listRoleNames } from './chatroom-roles.ts'
 import { buildChatroomPickPriming, buildChatroomTopicPickPriming } from './chatroom-priming.ts'
-import { chatroomResearchWorkspace, clearChatroomResearchFlags, ensureResearchPythonEnv, hasActiveChatroomPoll, startChatroom } from './chatroom.ts'
+import { chatroomResearchWorkspace, clearChatroomResearchFlags, ensureResearchPythonEnv, hasActiveChatroomPoll, lastChatroomWakeAt, startChatroom } from './chatroom.ts'
 import type { ChatroomInheritTarget } from './chatroom.ts'
 import { afterChatroomStarted, startChatroomDirectRole, stashChatroomResearchFlags } from './chatroom-cmd.ts'
 
@@ -305,7 +305,7 @@ export function beginChatroomPick(e: Engine, p: Platform, msg: Message, topic: s
       platform: p.name(),
       userID: msg.userID,
       userName: '[聊天室]',
-      content: buildChatroomPickPriming(topic, all, rolesDir),
+      content: buildChatroomPickPriming(topic, all, rolesDir, chatroomConfig(e).maxRoles()),
       // One-shot mode override: the pick turn must not run the plan-mode
       // dance (a live hub agent process bypasses this; the engine's pick
       // auto-approve remains the backstop there).
@@ -322,10 +322,13 @@ function armChatroomPickWatchdog(e: Engine, p: Platform, hubKey: string): void {
   const timer = setTimeout(function pickWatchdogFire(): void {
     const ps = pickers(e).chatroomPick.get(hubKey)
     if (ps === undefined || ps.phase !== 'picking') return
-    // The priming's first act is the opening poll; while it is in flight the
-    // moderator cannot have called pick-roles yet — defer this watchdog by
-    // one more window instead of painting a stale no-recommendation card.
-    if (hasActiveChatroomPoll(e, hubKey)) {
+    // Defer while the moderator is mid-flight toward pick-roles: during the
+    // opening poll, and for one window after any wake (the poll settle or a
+    // degraded timeout wakes the moderator, whose ranking turn still needs to
+    // emit pick-roles — 2026-09-08 oc_9b99f: the fallback fired one second
+    // after settle, the user started toggling on the no-recommendation card,
+    // and the late pick-roles was then dropped as user-touched).
+    if (hasActiveChatroomPoll(e, hubKey) || Date.now() - lastChatroomWakeAt(e, hubKey) < chatroomPickWatchdogTimeout) {
       const rearm = setTimeout(pickWatchdogFire, chatroomPickWatchdogTimeout)
       rearm.unref()
       return
@@ -366,7 +369,7 @@ export function renderChatroomPickCard(e: Engine, ps: ChatroomPickState): Card {
     const btnType = sel ? 'primary' : 'default'
     cb.listItemBtn(desc, btnText, btnType, `act:/chatroom-pick toggle ${r.name}`)
   }
-  cb.taggedNote('chatroom-pick-count', e.i18n.tf(Msg.ChatroomPickSelectedCount, ps.selected.size))
+  cb.taggedNote('chatroom-pick-count', e.i18n.tf(Msg.ChatroomPickSelectedCount, ps.selected.size, chatroomConfig(e).maxRoles()))
   if (ps.hint !== '') cb.note(ps.hint)
   cb.buttons(
     { text: e.i18n.t(Msg.ChatroomPickConfirm), type: 'primary', value: 'act:/chatroom-pick confirm' },
@@ -375,6 +378,9 @@ export function renderChatroomPickCard(e: Engine, ps: ChatroomPickState): Card {
   return cb.build()
 }
 
+/** Outcome of pushing moderator picks to the hub picker card. */
+export type ChatroomPickPushResult = 'rendered' | 'ignored-user-selecting'
+
 /**
  * Validate the moderator's recommendations, flip to 'select', and push the
  * picker card to the hub group (Go RenderChatroomPickCard, the API entry).
@@ -382,8 +388,11 @@ export function renderChatroomPickCard(e: Engine, ps: ChatroomPickState): Card {
  * @param e - Engine owning the picker state.
  * @param hubKey - Hub session key the picker is armed on.
  * @param recs - Moderator recommendations to validate and preselect from.
+ * @returns 'rendered' when the card carried the picks; 'ignored-user-selecting'
+ * when the user had already toggled roles on a rendered card and the picks
+ * were dropped without touching it.
  */
-export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: ChatroomRolePick[]): void {
+export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: ChatroomRolePick[]): ChatroomPickPushResult {
   const ps = pickers(e).chatroomPick.get(hubKey)
   // Accept 'select' too: the watchdog's fallback card must be overridable by
   // the moderator's late curated recommendations.
@@ -394,7 +403,7 @@ export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: C
   // pick-roles must NOT overwrite their selections or narrow recs.
   if (ps.userTouched) {
     console.info(`chatroom: ignoring late pick-roles; user already selecting (hub=${hubKey} selected=${ps.selected.size})`)
-    return
+    return 'ignored-user-selecting'
   }
   const valid = new Set(ps.allNames)
   const kept: ChatroomRolePick[] = []
@@ -432,6 +441,7 @@ export function renderChatroomPickCardAndPush(e: Engine, hubKey: string, recs: C
       })
     }
   }
+  return 'rendered'
 }
 
 /**
@@ -610,6 +620,11 @@ export function executeChatroomStartPickAction(e: Engine, sessionKey: string, ar
         return 'continue-gone'
       }
       const prior: ChatroomInheritTarget = { topic: entry.header.topic, dir: entry.dir, roles: [...entry.header.roles] }
+      // The prior's recorded cast can outgrow the configured cap (maxRoles
+      // was lowered since it ran): reject before the picker state is
+      // deleted, so the card stays armed instead of failing deep in the
+      // mode-pick/start chain after its side effects.
+      assertChatroomRoleCount(e, prior.roles)
       pickers(e).chatroomStartPick.delete(sessionKey)
       // An empty-cast prior falls through to the role picker, matching the
       // explicit --continue path (the picker chain carries no prior).
@@ -931,8 +946,11 @@ export function renderChatroomTopicPickCard(e: Engine, ps: ChatroomTopicPickStat
  * @param e - Engine owning the picker state.
  * @param hubKey - Hub session key the picker is armed on.
  * @param topics - Moderator-proposed candidate topics to display.
+ * @returns 'rendered' when the card carried the topics; 'ignored-user-selecting'
+ * when the user had already toggled a topic on a rendered card and the topics
+ * were dropped without touching it.
  */
-export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, topics: ChatroomTopicPick[]): void {
+export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, topics: ChatroomTopicPick[]): ChatroomPickPushResult {
   const ps = pickers(e).chatroomTopicPick.get(hubKey)
   if (ps === undefined) {
     throw new Error(`chatroom: topic-picker not active for ${hubKey}`)
@@ -940,7 +958,7 @@ export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, to
   // User has taken control; a late pick-topic must not overwrite.
   if (ps.userTouched) {
     console.info(`chatroom: ignoring late pick-topic; user already selecting (hub=${hubKey} selected=${ps.selected})`)
-    return
+    return 'ignored-user-selecting'
   }
   // No whitelist (topics are free-form); just drop empties.
   const kept = topics.filter(t => t.title.trim() !== '')
@@ -972,6 +990,7 @@ export function renderChatroomTopicPickCardAndPush(e: Engine, hubKey: string, to
       })
     }
   }
+  return 'rendered'
 }
 
 /** The #59 single-select state machine behind the card actions (radio semantics).
@@ -1052,7 +1071,17 @@ export function executeChatroomCardAction(e: Engine, sessionKey: string, cmd: st
     if (pickers(e).chatroomStartPick.get(sessionKey) === undefined) {
       return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'grey', e.i18n.t(Msg.ChatroomPickExpired))
     }
-    const outcome = executeChatroomStartPickAction(e, sessionKey, args)
+    // The state machine may reject the action before touching any state
+    // (an over-cap prior cast); swap the pressed card for the error so the
+    // press is not silently swallowed — the engine only console.errors a
+    // card-action throw.
+    let outcome: ReturnType<typeof executeChatroomStartPickAction>
+    try {
+      outcome = executeChatroomStartPickAction(e, sessionKey, args)
+    } catch (error) {
+      return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'red',
+        String(error instanceof Error ? error.message : error))
+    }
     switch (outcome) {
       case 'cancel':
         return simpleCard(e.i18n.t(Msg.ChatroomStartPickTitle), 'grey', e.i18n.t(Msg.ChatroomStartPickCancelled))

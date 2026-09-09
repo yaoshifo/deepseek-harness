@@ -414,6 +414,42 @@ describe('gather fan-in via maybeAutoRelayRole', () => {
     expect(chatroomState(hubSess).pendingGather?.collected.get('Taleb')).toBe('本轮结论')
     expect(chatroomState(role).chatroomAsked).toBe(true)
   })
+
+  it('an error-reasoned turn is absorbed as an explicit failure, never as a reply', async () => {
+    const hub = 'test:hub:user-1'
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    const hubSess = e.sessions.getOrCreateActive(hub)
+    const g = new ChatroomGather('q', 2)
+    g.expected.add('Taleb')
+    g.expected.add('Munger')
+    chatroomState(hubSess).pendingGather = g
+
+    const role = e.sessions.getOrCreateActive('test:role-chat')
+    chatroomState(role).chatroomHubKey = hub
+    chatroomState(role).chatroomRoleName = 'Taleb'
+    chatroomState(role).chatroomAsked = false
+    chatroomState(role).chatroomAskSeq = 2 // current round
+    chatroomState(role).chatroomInFlight = true
+
+    const st = new InteractiveState()
+    st.platform = p
+    maybeAutoRelayRole(e, st, role, '被打断前的半段输出', false, true, '1301 sensitive content rejected')
+    await settle()
+
+    // The round still counts the role as answered, but with an explicit
+    // failure record — the turn's own partial must not pose as the round
+    // answer (and an earlier turn's lastResult never reaches this path).
+    const recorded = g.collected.get('Taleb') ?? ''
+    expect(recorded).toContain('本轮发言失败')
+    expect(recorded).toContain('1301 sensitive content rejected')
+    expect(recorded).not.toContain('半段输出')
+    expect(g.expected.has('Taleb')).toBe(false)
+    // A failed turn is not a reply: no relay card.
+    expect(p.sentCards).toHaveLength(0)
+    expect(chatroomState(role).chatroomAsked).toBe(true)
+    expect(chatroomState(role).chatroomInFlight).toBe(false)
+  })
 })
 
 describe('turn-start ask metadata stamp (feishuBridge/turn-start)', () => {
@@ -642,8 +678,10 @@ describe('gather broadcast failure', () => {
     maybeAutoRelayRole(e, st, taleb, '我的回复', false)
 
     expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
-    await waitFor(() => wake.mock.calls.length > 0, 'moderator woken')
-    expect(String(wake.mock.calls[0]?.[1]?.content)).toContain('我的回复')
+    // Ask injections ride deliverMachineMessage too — wait for the wake that
+    // actually carries the reply, not merely the first channel call.
+    await waitFor(() => wake.mock.calls.some(([, m]) => m.content.includes('我的回复')), 'moderator woken')
+    expect(wake.mock.calls.some(([, m]) => m.content.includes('我的回复'))).toBe(true)
   })
 
   it('every broadcast failing closes the round immediately instead of idling to the timeout', async () => {

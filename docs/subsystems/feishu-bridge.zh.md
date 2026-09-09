@@ -478,11 +478,16 @@ A turn just produced its final response: listeners may relay the reply elsewhere
  * @param payload.engine - The engine owning the turn.
  * @param payload.state - The turn's interactive state (carries the platform).
  * @param payload.session - The session the turn ran under.
- * @param payload.response - The turn's clean final response text.
+ * @param payload.response - The turn's clean final response text; on an
+ *   errored turn, this turn's partial streamed text instead.
  * @param payload.isSilent - Whether the reply was silent (relay may skip).
+ * @param payload.errored - Whether the turn failed (an error interrupted
+ *   it); the response is then never an earlier turn's reply.
+ * @param payload.errorText - The interrupting error's text when errored,
+ *   undefined otherwise.
  * @mode waterfall
  */
-'feishuBridge/turn-end'(payload: { engine: Engine; state: InteractiveState | undefined; session: Session; response: string; isSilent: boolean }, next: () => void): void
+'feishuBridge/turn-end'(payload: { engine: Engine; state: InteractiveState | undefined; session: Session; response: string; isSilent: boolean; errored: boolean; errorText: string | undefined }, next: () => void): void
 ```
 
 Types: [Session](session.zh.md)

@@ -523,3 +523,64 @@ describe('guided start: explicit invocations', () => {
     expect(p.count).toBe(0)
   })
 })
+
+describe('guided start: the role-cap pre-check', () => {
+  it('explicit over-cap roles fail before the research venv is provisioned', async () => {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    const home = await mkdtemp(join(tmpdir(), 'fb-guided-mod-'))
+    const ws = await mkdtemp(join(tmpdir(), 'fb-guided-ws-'))
+    chatroomConfig(e).applySection({
+      rolesDir: await scaffoldTwoRoles(), moderatorDir: home, researchWorkspace: ws,
+      researchPythonEnv: true, maxRoles: 2,
+    })
+    let venvSteps = 0
+    uvHooks.lookupPath = async () => { venvSteps++; return 'uv' }
+    uvHooks.createVenv = async (_uv, venv) => {
+      venvSteps++
+      await mkdir(join(venv, 'bin'), { recursive: true })
+    }
+    uvHooks.pipInstall = async () => { venvSteps++ }
+    const hub = 'test:hub:user-1'
+
+    e.commandHandlers?.get('chatroom')?.(p, hubMsg(hub), ['--research', 'taleb,munger,knight', '议题'])
+    await settle()
+
+    expect(p.getSent().some(s => s.includes('chatroom: too many roles (3 > max 2)'))).toBe(true)
+    expect(venvSteps).toBe(0) // the venv gate never provisioned anything
+    expect(p.count).toBe(0)
+  })
+
+  it('--continue reusing an over-cap prior cast fails before the mode card', async () => {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    const home = await scaffoldHistory('旧议题', ['taleb', 'munger', 'knight'])
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles(), moderatorDir: home, maxRoles: 2 })
+    const hub = 'test:hub:user-1'
+
+    e.commandHandlers?.get('chatroom')?.(p, hubMsg(hub), ['--continue'])
+    await settle()
+
+    expect(p.getSent().some(s => s.includes('chatroom: too many roles (3 > max 2)'))).toBe(true)
+    expect(getChatroomModePickState(e, hub)).toBeUndefined() // the mode card was never armed
+    expect(p.count).toBe(0)
+  })
+
+  it('start-picker continue of an over-cap prior keeps the card state and reports the cap', async () => {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    const home = await scaffoldHistory('旧议题', ['taleb', 'munger', 'knight'])
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles(), moderatorDir: home, maxRoles: 2 })
+    const hub = 'test:hub:user-1'
+
+    e.commandHandlers?.get('chatroom')?.(p, hubMsg(hub), [])
+    await settle()
+    const card = executeChatroomCardAction(e, hub, '/chatroom-start-pick', 'continue 0')
+    await settle()
+
+    expect(cardBody(card)).toContain('chatroom: too many roles (3 > max 2)')
+    expect(getChatroomStartPickState(e, hub)).toBeDefined() // the picker state was never deleted
+    expect(getChatroomModePickState(e, hub)).toBeUndefined()
+    expect(p.count).toBe(0)
+  })
+})

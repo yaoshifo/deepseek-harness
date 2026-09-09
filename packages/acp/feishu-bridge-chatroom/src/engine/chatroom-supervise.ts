@@ -194,12 +194,13 @@ function superviseSerialAsks(e: Engine, nowMs: number, stallMs: number): void {
       entry.lastWakeAt = nowMs
       e.sessions.save()
       const minutes = Math.floor(quietMs / 60_000)
-      const excerpt = role?.lastResult.slice(0, supervisionExcerptChars) ?? ''
+      // No lastResult excerpt here: the role's last answer belongs to a
+      // previous question, and quoting it as "recent state" invites the
+      // moderator to read a stale reply as this turn's answer.
       const content = e.i18n.tf(
         Msg.ChatroomRoleSupervisorWake,
         roleName,
         minutes,
-        excerpt === '' ? '—' : excerpt,
       )
       console.info(`chatroom: supervisor woke stalled moderator about serial ask (hub=${hubKey} role=${roleName} quietSec=${Math.floor(quietMs / 1000)} wake=${entry.wakeCount}/${chatroomSupervisorMaxWakes})`)
       wakeChatroomModerator(e, hubKey, content, { [chatroomSupervisorWakeMetadata]: true })

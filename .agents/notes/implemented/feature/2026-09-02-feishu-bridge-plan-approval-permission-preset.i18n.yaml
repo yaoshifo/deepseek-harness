@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-02-feishu-bridge-plan-approval-permission-preset.md
-2026-09-02-feishu-bridge-plan-approval-permission-preset.md: becf0dd9f0f46f9f7b163875d13b2f4d44687756
-2026-09-02-feishu-bridge-plan-approval-permission-preset.zh.md: b28c983c6e45c80defb2e1dd48c34e1c1483c26c
+2026-09-02-feishu-bridge-plan-approval-permission-preset.md: c107b4a40c0d69df6dd29a1dbd836c1ad77e298d
+2026-09-02-feishu-bridge-plan-approval-permission-preset.zh.md: 6a1d143e4d298fb62da10a77797390543948a776

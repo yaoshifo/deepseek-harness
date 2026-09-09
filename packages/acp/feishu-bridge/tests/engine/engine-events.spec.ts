@@ -449,6 +449,40 @@ describe('processInteractiveEvents error-reasoned turn', () => {
 
     expect(p.getSent().some(m => m.includes('No API key for provider')), `sent=${JSON.stringify(p.getSent())}`).toBe(true)
   })
+
+  it('turn-end carries the turn\'s own partial and the error, never the stale lastResult', async () => {
+    // The event payload as the turn-end contract should carry it; optional
+    // fields keep the capture compiling against the declared map.
+    type TurnEndSeen = { response: string; isSilent: boolean; errored?: boolean; errorText?: string }
+    const seen: TurnEndSeen[] = []
+    const ctx = new Context()
+    contextsForDispose.push(ctx)
+    ctx.on('feishuBridge/turn-end', (payload, next) => { seen.push(payload as TurnEndSeen); next() })
+    const p = createStubPlatform()
+    const { e } = newEngine(createStubAgent(), p, ctxBridgeDispatch(ctx))
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    // A clean earlier turn left its reply behind as lastResult; the errored
+    // turn must not hand that stale text to turn-end listeners as its own.
+    session.setLastResult('上一轮的旧答案')
+    const partial = '本轮已流出的部分内容。'
+    agentSession.channel.push({ type: 'text', content: partial, done: false })
+    agentSession.channel.push({ type: 'result', content: partial, errorText: '1301 sensitive content rejected', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.response).not.toContain('旧答案')
+    expect(seen[0]!.response).toContain(partial)
+    expect(seen[0]!.errored).toBe(true)
+    expect(seen[0]!.errorText).toBe('1301 sensitive content rejected')
+  })
 })
 
 describe('processInteractiveEvents turn token rate', () => {

@@ -88,6 +88,8 @@ This section explains the design decisions behind the seam and where the code re
 |---|---|
 Service methods:
 
+| Method | Behavior |
+|---|---|
 | `registerProvider(provider)` | Register a backend, atomically reserving its branded `id` and every normalized file extension. Any invalid input or conflict publishes nothing and throws `LspError` (`LSP_INVALID_PROVIDER` / `LSP_CONFLICT`). Returns a disposer releasing all reservations. Disposed with the calling fiber. |
 | `query(request, signal?)` | Select the provider by the file's final extension, derive the `languageId` from that provider's mapping, and run one query. No match throws `LspError` `LSP_UNAVAILABLE`. |
 | `symbol(request, signal?)` | Run one name-based symbol lookup. A seeded request (`seedFilePath`) routes to the one provider covering the seed's extension — the seed declares the symbol's language — and returns an empty merged result with `uncoveredSeedExtension` when no provider covers it. A seedless request fans out to every provider in registration order, folds `workspaceSymbolProvider`-less providers away, and retains other failures alongside the successful groups; every provider failing throws. No provider registered throws `LSP_UNAVAILABLE`. |

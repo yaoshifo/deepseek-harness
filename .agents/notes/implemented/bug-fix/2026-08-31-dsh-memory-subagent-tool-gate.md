@@ -18,7 +18,7 @@ The package README states all three model-visible surfaces are gated to top-leve
 
 **Gating oneshot origins too.** The injection excludes every origin value, but a oneshot side query still gets the strategy section (its cwd is the project's), so denying it the tools would deny it capabilities its own guidance describes. Left unchanged.
 
-**Registering the memory directory as a sandbox-writable root so generic tools serve subagents.** Rejected earlier by [memory index maintenance](2026-08-17-memory-index-maintenance.md) — under a non-local filesystem provider generic tools would write the wrong machine — and unchanged by this gate.
+**Registering the memory directory as a sandbox-writable root so generic tools serve subagents.** Rejected earlier by [memory index maintenance](../feature/2026-08-17-memory-index-maintenance.md) — under a non-local filesystem provider generic tools would write the wrong machine — and unchanged by this gate.
 
 ## Consequences
 

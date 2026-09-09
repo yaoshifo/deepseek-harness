@@ -138,18 +138,22 @@ function deadline(ms: number): { promise: Promise<never>; cancel: () => void } {
  * @param operation - Operation label used in retry warnings and error messages.
  * @param fn - The API call to attempt.
  * @param signal - Aborts the retry loop between attempts.
+ * @param attemptTimeoutMs - Per-attempt deadline override for this call;
+ *   uploads size it by payload (a slow link needs minutes for MB bodies,
+ *   far past the small-request {@link retryTiming.requestTimeout}).
  * @returns The value resolved by fn on success.
  */
 export async function withTransientRetry<T>(
   operation: string,
   fn: () => Promise<T>,
   signal?: AbortSignal,
+  attemptTimeoutMs?: number,
 ): Promise<T> {
   let lastErr: unknown
   let delay = retryTiming.initialDelay
   for (let attempt = 0; attempt <= retryTiming.maxRetries; attempt++) {
     // Per-attempt deadline: a stuck call cannot hang the whole turn.
-    const d = deadline(retryTiming.requestTimeout)
+    const d = deadline(attemptTimeoutMs ?? retryTiming.requestTimeout)
     try {
       const result = await Promise.race([fn(), d.promise])
       d.cancel()

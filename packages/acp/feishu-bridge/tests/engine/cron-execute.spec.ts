@@ -17,13 +17,23 @@ import { statSync } from 'node:fs'
 import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.ts'
 import { Engine } from '../../src/engine/engine.ts'
 import { createStubPlatform, newResultAgentSession, testQuestions } from '../stubs/engine-stubs.ts'
-import type { Agent, EngineSubprocess, Platform } from '../../src/core/types.ts'
+import type { Agent, EngineSubprocess, EngineSubprocessSpec, Platform } from '../../src/core/types.ts'
 import { Context } from '@deepseek-ai/cordis'
 import LocalSubprocessRuntime from '../../../../subprocess/subprocess-local/src/index.ts'
 import { createCronSubprocessRunner } from '../../src/index.ts'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'fb-cronexec-'))
+}
+
+/** Restore one process.env slot to its pre-test state (undefined deletes). */
+function restoreEnv(name: string, previous: string | undefined): void {
+  if (previous === undefined) {
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- process.env is a dynamic name map
+    delete process.env[name]
+  } else {
+    process.env[name] = previous
+  }
 }
 
 function newJob(overrides: Partial<CronJob> & { id: string }): CronJob {
@@ -389,6 +399,84 @@ describe('ExecuteCronJob_WorkspacePrefixedSessionKey', () => {
   })
 })
 
+describe('executeCronShell env_keys (declared environment channel)', () => {
+  /** Records every spec the engine hands down; the run always succeeds. */
+  function recordingRunner(specs: EngineSubprocessSpec[]): EngineSubprocess {
+    return {
+      run: async (spec) => {
+        specs.push(spec)
+        return { out: 'done', err: undefined, timedOut: false }
+      },
+    }
+  }
+
+  function newEngineWithRecordedRunner(platform: Platform, specs: EngineSubprocessSpec[]): Engine {
+    return new Engine(
+      'test', resultAgent(newResultAgentSession('unused')), [platform], '', 'en',
+      undefined, recordingRunner(specs),
+    )
+  }
+
+  it('resolves declared env_keys from the daemon environment and passes only those names', async () => {
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const specs: EngineSubprocessSpec[] = []
+    const e = newEngineWithRecordedRunner(platform, specs)
+    const prevDeclared = process.env.FB_CRON_TEST_A_KEY
+    const prevOther = process.env.FB_CRON_TEST_OTHER_SECRET
+    process.env.FB_CRON_TEST_A_KEY = 'declared-value'
+    process.env.FB_CRON_TEST_OTHER_SECRET = 'undeclared-value'
+    try {
+      const job = newJob({
+        id: 'job-ek', project: 'test', sessionKey: 'discord:c:u',
+        exec: 'backup.sh', envKeys: ['FB_CRON_TEST_A_KEY'],
+      })
+      await e.executeCronShell(platform, 'rctx', job)
+    } finally {
+      restoreEnv('FB_CRON_TEST_A_KEY', prevDeclared)
+      restoreEnv('FB_CRON_TEST_OTHER_SECRET', prevOther)
+    }
+    expect(specs).toHaveLength(1)
+    expect(specs[0]!.env).toEqual({ FB_CRON_TEST_A_KEY: 'declared-value' })
+    // The success message carries the command, never any environment value.
+    const sent = (platform as unknown as { getSent(): string[] }).getSent().join('\n')
+    expect(sent).toContain('⏰ ✅')
+    expect(sent).not.toContain('declared-value')
+    expect(sent).not.toContain('undeclared-value')
+  })
+
+  it('leaves spec.env undefined for jobs without env_keys', async () => {
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const specs: EngineSubprocessSpec[] = []
+    const e = newEngineWithRecordedRunner(platform, specs)
+    const job = newJob({ id: 'job-noek', project: 'test', sessionKey: 'discord:c:u', exec: 'date' })
+    await e.executeCronShell(platform, 'rctx', job)
+    expect(specs).toHaveLength(1)
+    expect(specs[0]!.env).toBeUndefined()
+  })
+
+  it('fails loud naming the missing keys, without values, and never spawns', async () => {
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const specs: EngineSubprocessSpec[] = []
+    const e = newEngineWithRecordedRunner(platform, specs)
+    const prevOther = process.env.FB_CRON_TEST_OTHER_SECRET
+    process.env.FB_CRON_TEST_OTHER_SECRET = 'present-but-undeclared'
+    let message = ''
+    try {
+      const job = newJob({
+        id: 'job-miss', project: 'test', sessionKey: 'discord:c:u',
+        exec: 'backup.sh', envKeys: ['FB_CRON_TEST_MISSING_KEY', 'FB_CRON_ALSO_MISSING'],
+      })
+      message = await e.executeCronShell(platform, 'rctx', job).then(() => '', (error: unknown) => String(error))
+    } finally {
+      restoreEnv('FB_CRON_TEST_OTHER_SECRET', prevOther)
+    }
+    expect(message).toContain('FB_CRON_TEST_MISSING_KEY')
+    expect(message).toContain('FB_CRON_ALSO_MISSING')
+    expect(message).not.toContain('present-but-undeclared')
+    expect(specs, 'a job with unresolvable env_keys never reaches the runner').toHaveLength(0)
+  })
+})
+
 describe('executeCronShell subprocess containment (real provider)', () => {
   async function newEngineWithRunner(platform: Platform, agent: Agent) {
     const ctx = new Context()
@@ -427,6 +515,38 @@ describe('executeCronShell subprocess containment (real provider)', () => {
       expect(seen[0]!.bound).toBe(64 * 1024)
       expect(seen[0]!.outLength).toBeLessThanOrEqual(2 * 64 * 1024)
     } finally {
+      await ctx.fiber.dispose()
+    }
+  }, 30_000)
+
+  it('passes declared env_keys into the child and keeps undeclared credential names scrubbed', async () => {
+    const platform = createStubCronReplyTargetPlatform('discord')
+    const agent = resultAgent(newResultAgentSession('unused'))
+    const { engine, ctx } = await newEngineWithRunner(platform, agent)
+    // Both names match the subprocess service's SENSITIVE_ENV_PATTERN, so the
+    // ambient scrub drops them: only the declared one can reach the child —
+    // through the spec's explicit env, merged after the scrub.
+    const declared = 'FB_CRON_INT_A_KEY'
+    const undeclared = 'FB_CRON_INT_B_TOKEN'
+    const prevDeclared = process.env[declared]
+    const prevUndeclared = process.env[undeclared]
+    process.env[declared] = 'declared-value'
+    process.env[undeclared] = 'undeclared-value'
+    try {
+      const job = newJob({
+        id: 'job-env', project: 'test', sessionKey: 'discord:c:u',
+        exec: `echo "a=\${${declared}:-unset} b=\${${undeclared}:-unset}"`,
+        workDir: tempDir(),
+        envKeys: [declared],
+      })
+      await engine.executeCronShell(platform, 'rctx', job)
+      const sent = (platform as unknown as { getSent(): string[] }).getSent().join('\n')
+      expect(sent).toContain('a=declared-value')
+      expect(sent).toContain('b=unset')
+      expect(sent).not.toContain('undeclared-value')
+    } finally {
+      restoreEnv(declared, prevDeclared)
+      restoreEnv(undeclared, prevUndeclared)
       await ctx.fiber.dispose()
     }
   }, 30_000)

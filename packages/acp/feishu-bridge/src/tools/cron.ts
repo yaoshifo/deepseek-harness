@@ -59,7 +59,7 @@ const DESCRIPTION =
   + 'add: create a task that runs a prompt in this conversation (or a shell command with exec) on a schedule; '
   + 'list: show this project\'s tasks with ids, schedules, and last-run state; '
   + 'info: fetch one task by id; edit: change one field (cron_expr, prompt, exec, description, enabled, mute, '
-  + 'session_mode, mode, timeout_mins, silent, work_dir); del: remove a task by id. '
+  + 'session_mode, mode, timeout_mins, silent, work_dir, env_keys); del: remove a task by id. '
   + 'The user can also manage tasks directly with the /cron command in the chat.'
 
 /**
@@ -114,6 +114,13 @@ export function registerCronTool(ctx: Context, route: CronAgentRouter): () => vo
         type: 'string',
         description: 'add only: a shell command to run instead of an agent prompt (mutually exclusive with prompt).',
       },
+      envKeys: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'add only (exec tasks): environment variable names the command receives from the daemon '
+          + 'environment, e.g. cloud credential names for backup scripts. Only names — values are resolved per '
+          + 'run, never stored or logged; a name missing at run time fails the run.',
+      },
       description: {
         type: 'string',
         description: 'add only: human-readable task description shown in lists and start notices.',
@@ -149,11 +156,12 @@ export function registerCronTool(ctx: Context, route: CronAgentRouter): () => vo
       field: {
         type: 'string',
         description: 'edit only: the field to change (cron_expr, prompt, exec, description, enabled, mute, '
-          + 'session_mode, mode, timeout_mins, silent, work_dir).',
+          + 'session_mode, mode, timeout_mins, silent, work_dir, env_keys).',
       },
       value: {
         type: 'string',
-        description: 'edit only: the new value; booleans as "true"/"false", numbers as digits.',
+        description: 'edit only: the new value; booleans as "true"/"false", numbers as digits, '
+          + 'env_keys as a comma-separated name list.',
       },
     },
     output: {
@@ -179,6 +187,7 @@ export interface CronToolArgs {
   cronExpr?: string
   prompt?: string
   exec?: string
+  envKeys?: string[]
   description?: string
   sessionMode?: string
   timeoutMins?: number
@@ -219,6 +228,10 @@ function runCronAction(route: CronAgentRouter, args: CronToolArgs, exec: { agent
           )
         }
       }
+      const envKeys = [...new Set((args.envKeys ?? []).map(k => k.trim()).filter(k => k !== ''))]
+      if (envKeys.length > 0 && execCmd === '') {
+        throw new Error('feishu_bridge_cron: env_keys applies to exec tasks only (no exec given)')
+      }
       const job = new CronJob()
       job.id = generateCronID()
       job.project = engine.name
@@ -234,11 +247,14 @@ function runCronAction(route: CronAgentRouter, args: CronToolArgs, exec: { agent
       job.mode = args.mode ?? ''
       job.workDir = (args.workDir ?? '').trim()
       job.timeoutMins = args.timeoutMins
+      job.envKeys = envKeys
       scheduler.addJob(job)
       const what = execCmd !== '' ? `Command: ${execCmd}` : `Prompt: ${prompt}`
+      // Key names only — the values live in the daemon environment, never here.
+      const envLine = envKeys.length > 0 ? `\nEnv keys: ${envKeys.join(', ')}` : ''
       return {
         status: 'ok' as const,
-        message: `Cron job created: ${job.id}\nSchedule: ${cronExpr}\n${what}`,
+        message: `Cron job created: ${job.id}\nSchedule: ${cronExpr}\n${what}${envLine}`,
       }
     }
     case 'list': {
@@ -282,12 +298,20 @@ function runCronAction(route: CronAgentRouter, args: CronToolArgs, exec: { agent
         const n = Number.parseInt(args.value, 10)
         if (!Number.isInteger(n) || n < 0) throw new Error('feishu_bridge_cron: timeout_mins must be an integer >= 0')
         value = n
+      } else if (field === 'env_keys') {
+        const names = [...new Set(args.value.split(/[\s,]+/).filter(k => k !== ''))]
+        if (names.length === 0) throw new Error('feishu_bridge_cron: env_keys needs at least one variable name')
+        value = names
       }
       const job = scheduler.store().get(id)
       if (job !== undefined && !cronJobActionAllowed(engine, job, sessionKey, actingUserID(engine, sessionKey), field)) {
         throw cronDenied(id, job.sessionKey === sessionKey, field)
       }
+      if (job !== undefined && field === 'env_keys' && !job.isShellJob()) {
+        throw new Error('feishu_bridge_cron: env_keys applies to exec tasks only')
+      }
       scheduler.updateJob(id, field, value)
+      // The echoed value carries key names only for env_keys, same as storage.
       return { status: 'ok' as const, message: `Cron job ${id} updated: ${field} = ${args.value}` }
     }
     case 'del': {

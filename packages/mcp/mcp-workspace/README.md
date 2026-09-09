@@ -68,7 +68,6 @@ The service is a class plugin extending Cordis `Service`, registered as `ctx.mcp
 | [`src/index.ts`](src/index.ts) | Service: `Config` (roots/startupTimeoutMs), `wrap`/`mount`, `mountedFor`, the continuable-subagent setup contribution, roots trust check, provenance logging |
 | [`src/parse.ts`](src/parse.ts) | Claude Code-compatible `.mcp.json` parsing: mapping, skips, duplicate detection, `${VAR}` expansion |
 | [`src/types.ts`](src/types.ts) | Types only |
-| [`src/invariant.ts`](src/invariant.ts) | Package invariant companion (no runtime invariant; the tool registry owns the observable state) |
 
 ## Model Experience
 

@@ -734,16 +734,19 @@ export async function startChatroom(
 
 /**
  * Post the moderator's question to a role's group (visible card) and inject
- * it into the role session as a new turn, re-arming the one-shot relay.
- * Non-blocking. The role is addressed by name or session key.
+ * it into the role session, re-arming the one-shot relay. Non-blocking. The
+ * role is addressed by name or session key. The injection rides
+ * `deliverMachineMessage` for both deliveries: a busy role receives the
+ * question mid-turn at its nearest step boundary, an idle one through the
+ * machine-flagged turn pipeline.
  *
  * @param e - Engine carrying the session registry and i18n surface.
  * @param callerHubKey - Session key of the chatroom hub the role must belong to.
  * @param roleRef - The role to ask: a role name or session key.
  * @param question - The moderator's question text; empty is rejected.
- * @param delivery - Queue (default) injects a new turn; steer admits the
- * question into a busy role's running turn at its nearest step boundary
- * (`deliverMachineMessage`), falling back to the pipeline when idle.
+ * @param delivery - Queue (default) opens the role's answer as its own turn
+ * and is rejected while a gather is armed; steer is the mid-round course
+ * correction — its reply counts as the armed round's answer.
  */
 export async function askRole(e: Engine, callerHubKey: string, roleRef: string, question: string, delivery: SubtaskDelivery = 'queue'): Promise<void> {
   const q = question.trim()
@@ -778,18 +781,21 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
     throw new Error(e.i18n.t(Msg.ChatroomAskNotInRoom))
   }
   const roleName = chatroomState(role).chatroomRoleName
-  await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(Msg.ChatroomAskHeader, roleName), 0, false, delivery)
+  await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(Msg.ChatroomAskHeader, roleName), 0, false)
   console.info(`chatroom: moderator asked role (hub=${callerHubKey} role=${roleKey})`)
 }
 
 /**
- * The shared "post question card to the role group + inject the question as
- * a new role turn + re-arm the one-shot relay" path (Go askRoleInternal).
- * askSeq is the gather round stamp; 0 for serial asks. awaitAssistant arms
- * the research dispatch-defer at turn start. Steer delivery routes the
- * injection through `deliverMachineMessage`: a busy role receives the
- * question mid-turn at its nearest step boundary; an idle role rides the
- * same synthetic-message pipeline as every machine wake.
+ * The shared "post question card to the role group + inject the question
+ * into the role session + re-arm the one-shot relay" path (Go
+ * askRoleInternal). askSeq is the gather round stamp; 0 for serial asks.
+ * awaitAssistant arms the research dispatch-defer at turn start. The
+ * injection rides `deliverMachineMessage`: a busy role receives the
+ * question mid-turn at its nearest step boundary (identity pre-stamped
+ * here — no turn starts, so turn-start stamping never fires); an idle role
+ * rides the same machine-flagged synthetic-message pipeline as every
+ * machine wake, and turn start stamps the identity from the message
+ * metadata.
  */
 async function askRoleInternal(
   e: Engine,
@@ -801,7 +807,6 @@ async function askRoleInternal(
   headerTitle: string,
   askSeq: number,
   awaitAssistant: boolean,
-  delivery: SubtaskDelivery = 'queue',
 ): Promise<void> {
   const r = asReplyContextReconstructor(p)
   if (r === undefined) {
@@ -818,8 +823,8 @@ async function askRoleInternal(
   // counter and register an outstanding entry; the role's answering turn
   // routes by the identity and completes the entry. A steer that arrives
   // while a gather is armed is a course correction OF that round — the
-  // role's reply counts as its round reply (no new identity). Steer
-  // delivery never opens a turn, so the stamp is applied here directly —
+  // role's reply counts as its round reply (no new identity). A mid-turn
+  // steer never opens a turn, so the stamp is applied at delivery time —
   // turn-start stamping would otherwise never fire for a steered question.
   const hub = chatroomHubOf(e, hubKey)
   let stamp = askSeq
@@ -846,7 +851,11 @@ async function askRoleInternal(
   const role = e.sessions.getOrCreateActive(roleKey)
   chatroomState(role).chatroomAsked = false
   chatroomState(role).chatroomInFlight = true
-  if (delivery === 'steer' && askSeq === 0) chatroomState(role).chatroomAskSeq = stamp
+  // A busy role receives the question as a mid-turn steer — no new turn
+  // starts, so turn-start stamping never fires for it. Stamp the identity
+  // here unconditionally: the steer's relay routes by it, and an idle role's
+  // turn-start re-stamps the same value.
+  chatroomState(role).chatroomAskSeq = stamp
   // Research mode: new round — clear the previous round's sticky dispatch
   // flag. ResearchAwaitingAssistant arms at turn start.
   const researchHub = chatroomHubOf(e, hubKey)
@@ -888,17 +897,17 @@ async function askRoleInternal(
     replyCtx: roleRctx,
     metadata: { chatroomAskSeq: stamp, chatroomAwaitAssistant: awaitAssistant },
   }
+  // Every delivery rides the machine channel: busy → mid-turn steer claimed
+  // at the next step boundary (the role's reply still relays through the
+  // one-shot gate re-armed above); idle/startup → the machine-flagged
+  // synthetic-message pipeline with the full turn machinery. The human
+  // pipeline must not carry a role ask — its busy-queue cap and rate-limit
+  // drops would lose the question while the outstanding entry sits
+  // unnoticed.
   try {
-    if (delivery === 'steer') {
-      // Busy → mid-turn steer claimed at the next step boundary (the role's
-      // reply still relays through the one-shot gate re-armed above); idle →
-      // the machine-wake pipeline with the full turn machinery.
-      e.deliverMachineMessage(p, roleMsg)
-    } else {
-      e.receiveMessage(p, roleMsg)
-    }
+    e.deliverMachineMessage(p, roleMsg)
   } catch (error) {
-    console.error(`engine: receive-message failed (${roleKey}): ${String(error)}`)
+    console.error(`engine: deliver-machine-message failed (${roleKey}): ${String(error)}`)
   }
 }
 
@@ -1402,6 +1411,22 @@ export function buildGatherRearmWake(e: Engine, hubKey: string, missing: string[
   return `${e.i18n.tf(Msg.ChatroomGatherRearmed, missing.length, sts.join('、'), minutes)}\n\n${base}`
 }
 
+/** Per-hub moderator wake timestamps (epoch ms), read by {@link lastChatroomWakeAt}. */
+const wakeStamps = new WeakMap<Engine, Map<string, number>>()
+
+/**
+ * The epoch-ms time of the moderator's most recent wake on a hub (0 when never
+ * woken). The role-pick watchdog defers its fallback card while a wake is inside
+ * its own window, so the wake→pick-roles ranking leg owns the full timeout.
+ *
+ * @param e - Engine owning the wake stamps.
+ * @param hubKey - Hub session key the wake targeted.
+ * @returns Epoch ms of the last wake, or 0 when none is recorded.
+ */
+export function lastChatroomWakeAt(e: Engine, hubKey: string): number {
+  return wakeStamps.get(e)?.get(hubKey) ?? 0
+}
+
 /**
  * Deliver a synthetic message to the hub session re-arming the moderator for
  * the next orchestration step (Go wakeChatroomModerator).
@@ -1413,6 +1438,12 @@ export function buildGatherRearmWake(e: Engine, hubKey: string, missing: string[
  * stall supervisor tags its wakes so activity tracking skips them).
  */
 export function wakeChatroomModerator(e: Engine, hubKey: string, content: string, metadata?: Record<string, unknown>): void {
+  let stamps = wakeStamps.get(e)
+  if (stamps === undefined) {
+    stamps = new Map()
+    wakeStamps.set(e, stamps)
+  }
+  stamps.set(hubKey, Date.now())
   const p = e.spawnCapablePlatform()
   if (p === undefined) return
   const r = asReplyContextReconstructor(p)
@@ -1560,6 +1591,10 @@ export function assistantReportPending(e: Engine, role: Session): boolean {
  * each role turn it relays the reply to the hub as 【name】 AND wakes the
  * moderator. One-shot per ask (gated by chatroomAsked). Silent/empty replies
  * are skipped. Disjoint from maybeAutoReportSubtask (roles keep depth=0).
+ * An errored turn (an API error interrupted generation) is never relayed as a
+ * reply — the barriers record an explicit failure and the wake carries the
+ * failure line plus the turn's own partial, mirroring the subtask hook's
+ * never-a-stale-earlier-reply discipline.
  *
  * All session/barrier state mutations run synchronously (Go's mutex-guarded
  * sequence); only the platform sends (relay card, ledger append, wake) ride
@@ -1568,8 +1603,12 @@ export function assistantReportPending(e: Engine, role: Session): boolean {
  * @param e - Engine carrying the session registry and i18n surface.
  * @param state - Interactive state of the finished turn; its platform addresses the hub.
  * @param session - The role session whose turn just ended.
- * @param baseResponse - The role's reply text for this turn.
+ * @param baseResponse - The role's reply text for this turn; on an errored
+ *   turn, the turn's own partial streamed text.
  * @param isSilent - True when the turn ran in silent mode (no relay card, wake still fires).
+ * @param errored - True when an error interrupted the turn; baseResponse is
+ *   then a partial, not a final reply.
+ * @param errorText - The interrupting error's text when errored.
  */
 export function maybeAutoRelayRole(
   e: Engine,
@@ -1577,6 +1616,8 @@ export function maybeAutoRelayRole(
   session: Session,
   baseResponse: string,
   isSilent: boolean,
+  errored = false,
+  errorText = '',
 ): void {
   if (chatroomState(session).chatroomHubKey === '' || chatroomState(session).chatroomAsked) return
   // Superseded-turn guard: this turn's ask identity no longer matches any
@@ -1621,6 +1662,8 @@ export function maybeAutoRelayRole(
   const r = asReplyContextReconstructor(p)
   if (r === undefined) return
   const reply = baseResponse.trim()
+  /** Barrier record for an errored turn: an explicit failure, never its partial posing as a reply. */
+  const failedNote = errored ? e.i18n.tf(Msg.ChatroomRoleTurnFailedNote, errorText) : ''
 
   /**
    * Post the 【Role】 card to the hub and append the ledger. Shared by every
@@ -1632,7 +1675,7 @@ export function maybeAutoRelayRole(
    * placeholder card cannot overtake the relay card.
    */
   const relayRoleReply = async (hubRctx: unknown): Promise<void> => {
-    if (reply === '' || isSilent) return
+    if (errored || reply === '' || isSilent) return
     const content = `【${roleName}】${reply}`
     await e.sendAsCard(p, hubRctx, content, { title: e.i18n.tf(Msg.ChatroomRoleReplyHeader, roleName), color: 'green' })
       .catch((error: unknown) => {
@@ -1660,7 +1703,7 @@ export function maybeAutoRelayRole(
       },
     )
     chatroomState(session).chatroomInFlight = false
-    const { done, summary } = barrier.accumulate(roleName, reply)
+    const { done, summary } = barrier.accumulate(roleName, errored ? failedNote : reply)
     if (done) {
       // The relay card must land before the closing summary's wake card
       // (same contract as the gather path): finalize only after the relay
@@ -1712,7 +1755,7 @@ export function maybeAutoRelayRole(
       },
     )
     chatroomState(session).chatroomInFlight = false
-    const { done, wakeContent } = g.accumulate(roleName, reply)
+    const { done, wakeContent } = g.accumulate(roleName, errored ? failedNote : reply)
     if (!done) {
       updateResearchProgressCard(e, p, g, '')
       console.info(`chatroom: gathered role reply (waiting for more) (role=${roleName} hub=${hubKey})`)
@@ -1740,7 +1783,13 @@ export function maybeAutoRelayRole(
   }
   const reminder = e.i18n.t(Msg.ChatroomReminder)
   let wake: string
-  if (reply !== '' && !isSilent) {
+  if (errored) {
+    // The turn died mid-generation: report the failure with whatever the
+    // role did stream, never a full-fledged 发言 framing of a partial.
+    const failedWake = e.i18n.tf(Msg.ChatroomRoleTurnFailedWake, roleName, errorText)
+    wake = `${failedWake}${reply !== '' ? `\n\n${reply}` : ''}\n\n${reminder}`
+    console.info(`chatroom: role turn failed; woke moderator with the failure (role=${roleName} error=${errorText})`)
+  } else if (reply !== '' && !isSilent) {
     wake = `[聊天室·${roleName} 发言]\n\n${reply}\n\n${reminder}`
     console.info(`chatroom: relayed role reply to hub (role=${roleName} hub=${hubKey})`)
   } else {

@@ -507,6 +507,14 @@ export interface FeishuBridgeConfig {
   idleTimeoutMins?: number
   /** Allow side-channel image/file delivery; default true (Go attachment_send). */
   attachmentSend?: boolean
+  /**
+   * Upload pacing floor in bytes/sec sizing per-attempt upload deadlines
+   * (default 16384). Lower it when the deployment's link to the Feishu CDN
+   * runs slower, so MB-size attachments finish inside their deadline.
+   */
+  uploadMinBytesPerSec?: number
+  /** Per-attempt upload deadline ceiling in ms (default 900000). */
+  uploadMaxDeadlineMs?: number
   /** Inbound message queue cap (Go [queue]). */
   queue?: QueueConfig
   /** Per-session inbound rate limit; defaults 20 messages / 60 s, maxMessages 0 disables (Go [rate_limit]). */
@@ -693,6 +701,8 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   language: Schema.string().description('Reply language (zh/zh-TW/ja/es/en; else auto-detect)'),
   idleTimeoutMins: Schema.number().description('Max minutes between agent events; 0 disables'),
   attachmentSend: Schema.boolean().description('Allow side-channel image/file delivery'),
+  uploadMinBytesPerSec: Schema.natural().description('Upload pacing floor in bytes/sec sizing per-attempt upload deadlines (default 16384)'),
+  uploadMaxDeadlineMs: Schema.natural().description('Per-attempt upload deadline ceiling in ms (default 900000)'),
   queue: Schema.object({
     maxDepth: Schema.natural().description('Max queued messages per session'),
   }).description('Inbound queue cap'),
@@ -1070,6 +1080,8 @@ interface SubprocessServiceLike {
   spawn(spec: {
     argv: readonly string[]
     cwd: string
+    /** Explicit entries merged after the service's ambient credential scrub. */
+    env?: Record<string, string> | undefined
     stdio: {
       stdin: 'ignore'
       stdout: { maxBytes: number; spill: { maxBytes: number } }
@@ -1104,6 +1116,7 @@ export function createCronSubprocessRunner(ctx: Context): EngineSubprocess {
       const handle = service.spawn({
         argv: spec.argv,
         cwd: spec.cwd,
+        env: spec.env,
         stdio: {
           stdin: 'ignore',
           stdout: { maxBytes: spec.stdoutMaxBytes, spill: { maxBytes: 0 } },
@@ -1298,6 +1311,8 @@ export function buildProjectAssembly(
     ...(project.feishu.cancelEmoji !== undefined ? { cancelEmoji: project.feishu.cancelEmoji } : {}),
     ...(project.feishu.topNoticeFirstMessage !== undefined ? { topNoticeFirstMessage: project.feishu.topNoticeFirstMessage } : {}),
     ...(project.feishu.pinUserMessages !== undefined ? { pinUserMessages: project.feishu.pinUserMessages } : {}),
+    ...(config.uploadMinBytesPerSec !== undefined ? { uploadMinBytesPerSec: config.uploadMinBytesPerSec } : {}),
+    ...(config.uploadMaxDeadlineMs !== undefined ? { uploadMaxDeadlineMs: config.uploadMaxDeadlineMs } : {}),
     dataDir: projectDataDir,
   })
 

@@ -34,17 +34,18 @@ function matchSubCommand(input: string, candidates: string[]): string {
 /**
  * Editable fields that rewrite what a job runs, where it runs, or with which
  * permissions: exec/prompt/project/session_key/work_dir move or define the
- * execution itself, and mode can lift the per-turn approvals for unattended
- * runs — the same trust line as `/cron addexec`, so editing them requires an
- * admin even in the owning chat.
+ * execution itself, mode can lift the per-turn approvals for unattended
+ * runs, and env_keys widens which daemon credentials the run receives — the
+ * same trust line as `/cron addexec`, so editing them requires an admin even
+ * in the owning chat.
  */
-const cronSensitiveEditFields = new Set(['exec', 'prompt', 'project', 'session_key', 'work_dir', 'mode'])
+const cronSensitiveEditFields = new Set(['exec', 'prompt', 'project', 'session_key', 'work_dir', 'mode', 'env_keys'])
 
 /**
  * The cron ownership gate shared by all three entrances (agent tool, `/cron`
  * text commands, card buttons): a job belongs to the chat that created it
  * (`sessionKey` match), admins override ownership, and sensitive-field edits
- * (exec/prompt/project/session_key/work_dir/mode) additionally require
+ * (exec/prompt/project/session_key/work_dir/mode/env_keys) additionally require
  * admin. `userID === ''` never passes the admin check, so an entrance
  * without a user identity degrades to pure chat ownership.
  *

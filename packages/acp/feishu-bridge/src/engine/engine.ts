@@ -612,7 +612,7 @@ export class InteractiveState {
  * overhead before turn/start, tool execution, and delegated-subagent model
  * time, which the Go wall-clock-minus-tool-intervals formula charged against
  * the rate (measured 5-9 t/s displayed vs 90-130 t/s actual decode on
- * 2026-08-24; see the M7-b divergence note in docs/MIGRATION.md). Providers
+ * 2026-08-24; a migration-era divergence recorded in the M7-b notes). Providers
  * that do not stream deltas produce no spans and the rate line is omitted.
  */
 export interface TurnTiming {
@@ -3953,8 +3953,11 @@ export class Engine {
     }
     // Feature role turn-end: the listener relays the role's reply to its hub
     // and wakes the moderator. Disjoint from the subtask hook above
-    // (feature roles keep depth=0).
-    this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: resultOrReply, isSilent }, () => undefined)
+    // (feature roles keep depth=0). An errored turn relays its own partial
+    // streamed text, never a stale earlier reply — same discipline as the
+    // subtask hook (an error never overwrites session.lastResult, so
+    // resultOrReply would be the previous turn's answer).
+    this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: errored ? joined.trim() : resultOrReply, isSilent, errored, errorText: event.errorText }, () => undefined)
 
     // Export-button + speculative reply-HTML auto-deliver (Go engine_events.go
     // EventResult export block, #48): cache the full reply under the green
@@ -4205,7 +4208,11 @@ export class Engine {
       // crash with no streamed text still settles as a notice.
       const prefixed = `${this.i18n.t(Msg.SubtaskTurnInterrupted)}\n\n${fullResponse}`
       this.maybeAutoReportSubtask(state, session, prefixed, isSilentReply(prefixed))
-      this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: fullResponse, isSilent: isSilentReply(fullResponse) }, () => undefined)
+      // A channel-closed turn never completed, but only a genuine process
+      // crash reads as errored — user stops and engine reloads cut turns
+      // deliberately, and the turn's response is this partial either way.
+      const crashed = unexpectedExit && !state.engineStopped
+      this.bridge.waterfall('feishuBridge/turn-end', { engine: this, state, session, response: fullResponse, isSilent: isSilentReply(fullResponse), errored: crashed, errorText: crashed ? this.i18n.t(Msg.AgentProcessExited) : undefined }, () => undefined)
       // No-op when the auto-report delivered; covers the silent-reply skip.
       this.reportSubtaskTimeout(sessionKey)
 
@@ -4851,6 +4858,22 @@ export class Engine {
     if (this.subprocess === undefined) {
       throw new Error('engine has no subprocess runner wired; cron exec jobs are unavailable')
     }
+    // Declared env_keys resolve from this daemon process's environment (the
+    // systemd EnvironmentFile values); a missing name fails the run loud —
+    // names only, never values, in the message.
+    let env: Record<string, string> | undefined
+    if (job.envKeys.length > 0) {
+      env = {}
+      const missing: string[] = []
+      for (const key of job.envKeys) {
+        const value = process.env[key]
+        if (value === undefined) missing.push(key)
+        else env[key] = value
+      }
+      if (missing.length > 0) {
+        throw new Error(`cron exec env_keys not present in the daemon environment: ${missing.join(', ')}`)
+      }
+    }
     const timeoutMs = job.executionTimeoutMs()
     const ac = new AbortController()
     const timer = timeoutMs > 0 ? setTimeout(() => { ac.abort() }, timeoutMs) : undefined
@@ -4859,6 +4882,7 @@ export class Engine {
       const outcome = await this.subprocess.run({
         argv: ['sh', '-c', job.exec],
         cwd: workDir,
+        env,
         // Memory bound on the collected job output; the chat message
         // truncates to a few thousand characters far below it.
         stdoutMaxBytes: 64 * 1024,

@@ -45,7 +45,7 @@ import {
   renderChatroomPickCardAndPush,
   renderChatroomTopicPickCardAndPush,
 } from '../engine/chatroom-pick.ts'
-import { listRoleNames, roleEssence } from '../engine/chatroom-roles.ts'
+import { assertChatroomRoleCount, listRoleNames, roleEssence } from '../engine/chatroom-roles.ts'
 import { chatroomState } from '../chatroom-state.ts'
 
 const DESCRIPTION =
@@ -245,6 +245,9 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
             throw new Error(engine.i18n.t(Msg.ChatroomAlreadyRunning))
           }
           const roles = (args.roles ?? '').split(',').map(r => r.trim()).filter(r => r !== '')
+          // The cast is final here: reject an over-cap one before the inherit
+          // resolution's ledger scan and startChatroom's deeper work.
+          assertChatroomRoleCount(engine, roles)
           // inherit resolves BEFORE spawning so an unresolvable reference
           // fails without side effects; '' (bare) takes the newest chatroom.
           let prior: ChatroomInheritTarget | undefined
@@ -319,28 +322,37 @@ export function registerChatroomTool(ctx: Context, route: SubtaskAgentRouter): (
             }
             bootstrapChatroomPick(engine, sessionKey, topic)
           }
-          renderChatroomPickCardAndPush(engine, sessionKey, recs.map(r => ({
+          const push = renderChatroomPickCardAndPush(engine, sessionKey, recs.map(r => ({
             name: r.name,
             recommended: r.recommended,
             blurb: r.blurb,
           })))
           return {
             status: 'ok' as const,
-            message: 'Pick-roles submitted; the role-selection card has been rendered in the chatroom. '
-              + 'End your turn now.',
+            message: push === 'rendered'
+              ? 'Pick-roles submitted; the role-selection card has been rendered in the chatroom. '
+                + 'End your turn now.'
+              : 'The user is already selecting roles on the fallback picker card, so these '
+                + 'recommendations were not applied to any card. Do not claim the picker card shows '
+                + 'your picks. Briefly note your recommended roles — especially any the user has not '
+                + 'selected yet — then end your turn.',
           }
         }
         case 'pick-topic': {
           const topics = parsePicks<TopicPickJSON>(args.picks ?? '', 'topics')
-          renderChatroomTopicPickCardAndPush(engine, sessionKey, topics.map(t => ({
+          const push = renderChatroomTopicPickCardAndPush(engine, sessionKey, topics.map(t => ({
             title: t.title,
             recommended: t.recommended,
             blurb: t.blurb,
           })))
           return {
             status: 'ok' as const,
-            message: 'Pick-topic submitted; the topic-selection card has been rendered in the chatroom. '
-              + 'End your turn now.',
+            message: push === 'rendered'
+              ? 'Pick-topic submitted; the topic-selection card has been rendered in the chatroom. '
+                + 'End your turn now.'
+              : 'The user is already selecting a topic on the picker card, so these proposals '
+                + 'were not applied to any card. Do not claim the card shows your topics. Briefly '
+                + 'note your recommended topics in text instead, then end your turn.',
           }
         }
         case 'ask-human': {

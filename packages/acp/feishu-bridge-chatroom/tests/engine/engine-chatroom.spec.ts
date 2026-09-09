@@ -11,7 +11,7 @@
 import { mkdir, mkdtemp, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { ProjectStateStore } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { registerSessionCommands } from '@deepseek-ai/dsh-feishu-bridge/exports'
@@ -28,9 +28,11 @@ import {
   resolveChatroomHubKey,
   routePendingHumanReply,
   startChatroom,
+  wakeChatroomModerator,
 } from '../../src/engine/chatroom.ts'
 import { roleDir } from '../../src/engine/chatroom-roles.ts'
 import {
+  chatroomPickWatchdogTimeout,
   clearChatroomPickState,
   executeChatroomCardAction,
   executeChatroomPickAction,
@@ -1148,6 +1150,28 @@ describe('RenderChatroomPickCard', () => {
     expect(ps!.hint).toBe('')
   })
 
+  it('shows the role cap beside the selected count (cap comes from config)', async () => {
+    // 2026-09-08 test ground: the moderator marked 9 roles recommended and the
+    // card read "已选 9 个" with no cap, so confirming looked safe until the
+    // engine rejected the cast for exceeding maxRoles. The count note must
+    // state the cap, sourced from chatroomConfig — not a hardcoded 5.
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles(), maxRoles: 3 })
+    const hub = 'test:hub:user-1'
+    const handler = e.commandHandlers?.get('chatroom')
+    handler?.(p, hubMsg(hub), ['议题'])
+    await settle()
+
+    renderChatroomPickCardAndPush(e, hub, [
+      { name: 'taleb', recommended: true, blurb: '' },
+      { name: 'munger', recommended: true, blurb: '' },
+    ])
+    await waitFor(() => p.sentCards.some(c => JSON.stringify(c).includes('chatroom-pick-count')), 'pick count note')
+
+    expect(JSON.stringify(p.sentCards)).toContain('已选 2 / 上限 3 个')
+  })
+
   it('preserves user selections after a toggle (late pick-roles ignored)', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
@@ -1167,11 +1191,68 @@ describe('RenderChatroomPickCard', () => {
     executeChatroomPickAction(e, hub, 'toggle munger')
 
     // The moderator's pick-roles finally arrives, recommending only taleb.
-    renderChatroomPickCardAndPush(e, hub, [{ name: 'taleb', recommended: true, blurb: 'why' }])
+    const outcome = renderChatroomPickCardAndPush(e, hub, [{ name: 'taleb', recommended: true, blurb: 'why' }])
+    expect(outcome).toBe('ignored-user-selecting')
     expect(ps!.selected.get('munger')).toBe(true)
     expect(ps!.selected.get('taleb')).toBeUndefined()
     expect(ps!.recs).toHaveLength(ps!.allNames.length)
     expect(ps!.userTouched).toBe(true)
+  })
+})
+
+describe('pick watchdog timing', () => {
+  /** Arm a picker under fake timers; returns its state for assertions. */
+  async function armedPicker(): Promise<{ e: Engine; hub: string; ps: ChatroomPickState }> {
+    const p = createStubChatroomSpawnerEx()
+    const e = newChatroomTestEngine(p)
+    const rolesRoot = await scaffoldTwoRoles()
+    vi.useFakeTimers()
+    chatroomConfig(e).applySection({ rolesDir: rolesRoot })
+    const hub = 'test:hub:user-1'
+    const handler = e.commandHandlers?.get('chatroom')
+    handler?.(p, hubMsg(hub), ['议题'])
+    await vi.advanceTimersByTimeAsync(0)
+    const ps = pickStateOf(e, hub).chatroomPick
+    expect(ps).toBeDefined()
+    return { e, hub, ps: ps! }
+  }
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('fires the fallback card one window after arming when the moderator never wakes', async () => {
+    const { ps } = await armedPicker()
+    expect(ps.phase).toBe('picking')
+
+    vi.advanceTimersByTime(chatroomPickWatchdogTimeout + 1)
+
+    expect(ps.phase).toBe('select')
+    expect(ps.recs.every(r => !r.recommended)).toBe(true)
+    expect(ps.hint).toContain('自选')
+  })
+
+  it('defers the fallback while the moderator was woken recently (settle→pick-roles leg)', async () => {
+    // 2026-09-08 oc_9b99f: the opening poll settled one second before the
+    // watchdog's window expired; the no-recommendation fallback card went out
+    // into the ranking gap, the user started toggling, and the moderator's
+    // pick-roles was then dropped as late. A recent wake must re-open the
+    // window so the wake→pick-roles leg owns its full timeout.
+    const { e, hub, ps } = await armedPicker()
+    const wake = vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+
+    vi.advanceTimersByTime(60_000) // the opening poll settles; the moderator wakes
+    wakeChatroomModerator(e, hub, '全员快答完成（2/2）')
+    wake.mockRestore()
+
+    // Past the original arm deadline, still inside the post-wake window.
+    vi.advanceTimersByTime(chatroomPickWatchdogTimeout)
+    expect(ps.phase).toBe('picking')
+
+    // One full window after the wake, the fallback fires.
+    vi.advanceTimersByTime(chatroomPickWatchdogTimeout)
+    expect(ps.phase).toBe('select')
+    expect(ps.recs.every(r => !r.recommended)).toBe(true)
   })
 })
 
@@ -1350,11 +1431,12 @@ describe('topic picker (#59)', () => {
     handler?.(p, hubMsg(hub), [])
     await settle()
 
-    renderChatroomTopicPickCardAndPush(e, hub, [
+    const first = renderChatroomTopicPickCardAndPush(e, hub, [
       { title: '反脆弱', recommended: true, blurb: 'why' },
       { title: '  ', recommended: false, blurb: 'empty' },
       { title: '预测失效', recommended: false, blurb: 'x' },
     ])
+    expect(first).toBe('rendered')
     const ps = getChatroomTopicPickState(e, hub)!
     expect(ps.phase).toBe('select')
     expect(ps.recs.map(t => t.title)).toEqual(['反脆弱', '预测失效'])
@@ -1362,7 +1444,8 @@ describe('topic picker (#59)', () => {
 
     // User toggles another topic → late pick-topic must not overwrite.
     executeChatroomTopicPickAction(e, hub, 'toggle 预测失效')
-    renderChatroomTopicPickCardAndPush(e, hub, [{ title: '新题目', recommended: true, blurb: '' }])
+    const late = renderChatroomTopicPickCardAndPush(e, hub, [{ title: '新题目', recommended: true, blurb: '' }])
+    expect(late).toBe('ignored-user-selecting')
     expect(ps.selected).toBe('预测失效')
   })
 
@@ -1551,7 +1634,7 @@ describe('topic-pick priming ledger history', () => {
 describe('role-pick priming lightning round', () => {
   it('drives the recommendation through an opening poll before pick-roles', async () => {
     const { buildChatroomPickPriming } = await import('../../src/engine/chatroom-priming.ts')
-    const s = buildChatroomPickPriming('定投频率', ['taleb', 'munger'], '/roles')
+    const s = buildChatroomPickPriming('定投频率', ['taleb', 'munger'], '/roles', 5)
     expect(s).toContain('action: poll')
     expect(s).toContain('opening')
     // The statement brief's fixed shape: stance / blind spot / willingness.
@@ -1561,6 +1644,18 @@ describe('role-pick priming lightning round', () => {
     // Recommendations build on the collected statements, not file skimming alone.
     expect(s).toContain('表态')
     expect(s).toContain('pick-roles')
+  })
+
+  it('teaches the recommended-pick cap, with the number from the caller', async () => {
+    // The priming used to stay silent about the role cap, so a moderator
+    // marking 9 roles recommended sailed past the engine's maxRoles check.
+    // The bound must reach the moderator before pick-roles, and the number
+    // must be the passed-in cap — not a hardcoded 5.
+    const { buildChatroomPickPriming } = await import('../../src/engine/chatroom-priming.ts')
+    const s = buildChatroomPickPriming('定投频率', ['taleb', 'munger'], '/roles', 5)
+    expect(s).toContain('recommended')
+    expect(s).toContain('不超过上限 5')
+    expect(buildChatroomPickPriming('定投频率', ['taleb', 'munger'], '/roles', 3)).toContain('不超过上限 3')
   })
 })
 

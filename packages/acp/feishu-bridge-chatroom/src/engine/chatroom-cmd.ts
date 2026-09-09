@@ -34,7 +34,7 @@ import {
   resolveChatroomInheritPrior,
   startChatroom,
 } from './chatroom.ts'
-import { listRoleNames, roleDir, roleExists, roleEssence } from './chatroom-roles.ts'
+import { assertChatroomRoleCount, listRoleNames, roleDir, roleExists, roleEssence } from './chatroom-roles.ts'
 import { beginChatroomModePick, beginChatroomPick, beginChatroomStartPick, beginChatroomTopicPick, executeChatroomCardAction } from './chatroom-pick.ts'
 import { hashID, listChatroomLedgers } from './chatroom-ledger.ts'
 import {
@@ -244,19 +244,29 @@ export async function cmdChatroom(e: Engine, p: Platform, msg: Message, args: st
     return
   }
 
-  // Stash research-mode flags on the hub session BEFORE any path that leads
-  // to afterChatroomStarted so --research survives the async pick flows.
-  if (!(await gateResearchUvOrFail(e, p, msg, research))) return
-  stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode)
-
   // --continue with no roles named → reuse the prior chatroom's recorded
-  // cast; continuing a discussion keeps its participants by default.
+  // cast; continuing a discussion keeps its participants by default. Fills
+  // before the venv gate so the cap pre-check below sees the final cast.
   if (roles.length === 0 && prior !== undefined) {
     for (const r of prior.roles) {
       const t = r.trim()
       if (t !== '') roles.push(t)
     }
   }
+  // The cast is final here: reject an over-cap one before the research-venv
+  // gate, the flag stash, and the mode card — a deep failure would leave all
+  // three done and the retry re-running the whole /chatroom.
+  try {
+    assertChatroomRoleCount(e, roles)
+  } catch (error) {
+    await e.reply(p, msg.replyCtx, String(error instanceof Error ? error.message : error))
+    return
+  }
+
+  // Stash research-mode flags on the hub session BEFORE any path that leads
+  // to afterChatroomStarted so --research survives the async pick flows.
+  if (!(await gateResearchUvOrFail(e, p, msg, research))) return
+  stashChatroomResearchFlags(e, msg.sessionKey, research, researchMode)
 
   // Feature 1: no roles named → wake the moderator to recommend roles based
   // on the topic, then render a picker card for the user to confirm.

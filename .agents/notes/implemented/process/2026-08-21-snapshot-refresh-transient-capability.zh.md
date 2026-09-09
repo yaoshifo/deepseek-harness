@@ -8,7 +8,7 @@ Status: implemented
 
 一次全量 `DSH_SNAPSHOT=refresh` 的 acp-agent 快照套件运行，把 `examples/acp-agent/tests/snapshots/code-mode-read-image/stdout.expected.jsonl` 重写为 `promptCapabilities.image: false`，而其前后所有 replay 运行——包括之后两次完整 refresh 尝试——产出的都是 `image: true`。这个一次性的 `false` 是瞬时现象而非行为变更，但刷新出的 fixture 通过了校验，差点作为伪造的 capability 回归被提交。
 
-`supportsAcpImagePrompts`（[`packages/acp/acp/src/content.ts`](../../../../packages/acp/acp/src/content.ts)）在每次瞬时未命中时都报告 `false`：ACP `initialize` 握手执行时 `attachments` 或 `llm` 服务尚未进入 store，或 `resolveModelInfo` 抛进它的 `catch`。在全量套件负载下，该探测有一次输掉了这个竞态。refresh 写回（[`packages/test-support/acp-snapshot/src/suite.ts`](../../../../packages/test-support/acp-snapshot/src/suite.ts)）先写入当前输出、再与自己刚写的内容比较，因此瞬时值能通过 refresh 校验并落进 fixture；损坏只在下一次 replay 运行时暴露。
+`supportsAcpImagePrompts`（[`packages/acp/acp/src/content.ts`](../../../../packages/acp/acp/src/content.ts)）在每次瞬时未命中时都报告 `false`：ACP `initialize` 握手执行时 `attachments` 或 `llm` 服务尚未进入 store，或 `resolveModelInfo` 抛进它的 `catch`。在全量套件负载下，该探测有一次输掉了这个竞态。refresh 写回（[`packages/test-support/session-snapshot/src/suite.ts`](../../../../packages/test-support/session-snapshot/src/suite.ts)）先写入当前输出、再与自己刚写的内容比较，因此瞬时值能通过 refresh 校验并落进 fixture；损坏只在下一次 replay 运行时暴露。
 
 ## Decision
 

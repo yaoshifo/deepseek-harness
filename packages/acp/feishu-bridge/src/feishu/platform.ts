@@ -476,6 +476,14 @@ export interface FeishuPlatformOptions {
   progressSpinner?: boolean
   /** Global PATCH rate-limit refill interval in ms (default 120 ≈ 8 PATCH/s, burst 3). */
   patchRateIntervalMs?: number
+  /**
+   * Upload pacing floor in bytes/sec used to size per-attempt upload
+   * deadlines (default 16384): a deployment whose link to the Feishu CDN
+   * runs slower than this needs it lowered, not a code change.
+   */
+  uploadMinBytesPerSec?: number
+  /** Per-attempt upload deadline ceiling in ms (default 900000). */
+  uploadMaxDeadlineMs?: number
   /** Data directory for persisted state (Go cc_data_dir); empty disables persistence. */
   dataDir?: string
   /**
@@ -1897,8 +1905,8 @@ export class FeishuPlatform implements Platform {
   }
 
   /** All API calls go through transient retry with backoff. */
-  private withRetry<T>(operation: string, fn: () => Promise<T>): Promise<T> {
-    return withTransientRetry(`${this.tag()}: ${operation}`, fn)
+  private withRetry<T>(operation: string, fn: () => Promise<T>, attemptTimeoutMs?: number): Promise<T> {
+    return withTransientRetry(`${this.tag()}: ${operation}`, fn, undefined, attemptTimeoutMs)
   }
 
   // ---------------------------------------------------------------------
@@ -3367,6 +3375,20 @@ export class FeishuPlatform implements Platform {
   // ----- media (Go feishu_media.go) -----
 
   /**
+   * Per-attempt upload deadline sized by payload: a slow link needs minutes
+   * for MB bodies, far past the small-request timeout, so uploads derive
+   * their deadline from the pacing floor and never exceed the ceiling.
+   * @param size - Payload size in bytes.
+   * @returns The per-attempt deadline in ms.
+   */
+  private uploadAttemptTimeoutMs(size: number): number {
+    const floor = this.o.uploadMinBytesPerSec ?? 16_384
+    const ceiling = this.o.uploadMaxDeadlineMs ?? 900_000
+    const sized = Math.ceil(size / floor) * 1000
+    return Math.min(Math.max(retryTiming.requestTimeout, sized), ceiling)
+  }
+
+  /**
    * Upload image bytes and return the image_key without sending a message
    * (Go UploadImage); the engine embeds images inside cards with it.
    * @param img - Image bytes and metadata to upload.
@@ -3376,7 +3398,7 @@ export class FeishuPlatform implements Platform {
     const key = await this.withRetry('upload image', () => this.request('upload image', async (client) => {
       if (client.uploadImage === undefined) throw new ErrNotSupported('feishu client without image upload support')
       return client.uploadImage({ data: img.data, mimeType: img.mimeType, fileName: img.fileName ?? 'image' })
-    }))
+    }), this.uploadAttemptTimeoutMs(img.data.byteLength))
     if (key === '') throw new Error(`${this.tag()}: upload image: no image_key returned`)
     return key
   }
@@ -3407,7 +3429,7 @@ export class FeishuPlatform implements Platform {
       const key = await client.uploadFile({ data: file.data, fileName, fileType })
       if (key === '') throw new Error(`${this.tag()}: upload file: no file_key returned`)
       return key
-    }))
+    }), this.uploadAttemptTimeoutMs(file.data.byteLength))
     await this.sendMediaMessage(rc, 'file', JSON.stringify({ file_key: fileKey }))
   }
 

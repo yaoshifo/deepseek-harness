@@ -88,6 +88,8 @@ seam 需要提供方与消费方才能发挥作用。最小组合挂载服务、
 |---|---|
 服务方法：
 
+| 方法 | 行为 |
+|---|---|
 | `registerProvider(provider)` | 注册后端，以原子方式保留其品牌化 `id` 与每个规范化文件扩展名。任何无效输入或冲突都不会发布内容，并抛出 `LspError`（`LSP_INVALID_PROVIDER`／`LSP_CONFLICT`）。返回释放所有保留项的 disposer。随调用 fiber 释放。 |
 | `query(request, signal?)` | 按文件最终扩展名选择提供方，从该提供方的映射派生 `languageId`，并运行一次查询。没有匹配项时抛出 `LspError` `LSP_UNAVAILABLE`。 |
 | `symbol(request, signal?)` | 执行一次按名符号查找。带种子的请求（`seedFilePath`）按种子扩展名路由到覆盖该语言的唯一提供方——种子声明了符号的语言；没有提供方覆盖时返回带 `uncoveredSeedExtension` 的空合并结果。无种请求按注册顺序扇出到所有提供方，缺少 `workspaceSymbolProvider` 能力的折空，其余失败与成功各组一并保留；全部失败则抛错。没有已注册提供方时抛出 `LSP_UNAVAILABLE`。 |

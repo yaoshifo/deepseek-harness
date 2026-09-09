@@ -86,7 +86,6 @@ The package registers a continuable-child setup contribution rather than a globa
 | File | Role |
 |---|---|
 | [`src/index.ts`](src/index.ts) | Continuable-child setup: `installReportTool`, `Config`, delivery resolution |
-| [`src/invariant.ts`](src/invariant.ts) | Invariant companion |
 
 </details>
 

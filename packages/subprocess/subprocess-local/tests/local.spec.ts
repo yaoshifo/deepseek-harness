@@ -17,6 +17,21 @@ function unmockWin32ForIsolatedRuntime(): void {
   vi.doUnmock('@deepseek-ai/dsh-win32-process')
 }
 
+function mockLinuxScopeFallbackForIsolatedRuntime(): void {
+  // Pin containment to the fallback path: hosts with a user systemd manager would otherwise
+  // engage the real linux-scope bootstrap, which the fake PTY never consumes.
+  vi.doMock('../src/linux-scope.ts', () => ({
+    launchLinuxScope: vi.fn(),
+    prepareLinuxTerminalScope: vi.fn(),
+    probeLinuxManager: () => false,
+    probeLinuxNative: () => false,
+  }))
+}
+
+function unmockLinuxScopeFallbackForIsolatedRuntime(): void {
+  vi.doUnmock('../src/linux-scope.ts')
+}
+
 function spec(command: string, overrides: Partial<SubprocessSpawnSpec> = {}): SubprocessSpawnSpec {
   // Windows has no bash; the suite's simple commands translate to node one-liners.
   const argv = process.platform === 'win32'
@@ -384,6 +399,7 @@ describe('LocalSubprocessRuntime', () => {
     vi.resetModules()
     mockWin32ForIsolatedRuntime()
     vi.doMock('node-pty', () => ({ spawn: () => terminal }))
+    mockLinuxScopeFallbackForIsolatedRuntime()
     vi.doMock('../src/process-inspector.ts', async importOriginal => ({
       ...await importOriginal<typeof import('../src/process-inspector.ts')>(),
       createProcessInspector: () => inspector,
@@ -404,6 +420,7 @@ describe('LocalSubprocessRuntime', () => {
       await fiber.dispose()
     } finally {
       vi.doUnmock('node-pty')
+      unmockLinuxScopeFallbackForIsolatedRuntime()
       vi.doUnmock('../src/process-inspector.ts')
       unmockWin32ForIsolatedRuntime()
       vi.resetModules()
@@ -593,6 +610,7 @@ describe('LocalSubprocessRuntime', () => {
     vi.resetModules()
     mockWin32ForIsolatedRuntime()
     vi.doMock('node-pty', () => ({ spawn: () => terminal }))
+    mockLinuxScopeFallbackForIsolatedRuntime()
     try {
       const { default: IsolatedLocalSubprocessRuntime } = await import('../src/index.ts')
       const ctx = new Context()
@@ -623,6 +641,7 @@ describe('LocalSubprocessRuntime', () => {
       expect(disposalErrors).toHaveLength(1)
     } finally {
       vi.doUnmock('node-pty')
+      unmockLinuxScopeFallbackForIsolatedRuntime()
       unmockWin32ForIsolatedRuntime()
       vi.resetModules()
     }
@@ -871,14 +890,16 @@ describe('LocalSubprocessRuntime', () => {
     await fiber.dispose()
   })
 
-  it('disposal contains a spawn-failure rejection that races teardown', async () => {
+  it('a teardown termination that wins the bootstrap race settles as the delivered signal', async () => {
     const ctx = new Context()
     const fiber = await ctx.plugin(LocalSubprocessRuntime)
-    // Dispose before the rejection continuation removes the handle from the
-    // live set, so teardown itself must swallow the rejected done.
+    // Dispose before the bootstrap can fail on its own (bad cwd): the
+    // teardown's termination lands in the startup window and done settles
+    // as the delivered signal — never a startup-failure rejection and never
+    // a hang — while teardown itself stays contained.
     const handle = ctx.subprocess.spawn(spec('true', { cwd: '/nonexistent-dir-dsh-subprocess-test' }))
     await fiber.dispose()
-    await expect(handle.done).rejects.toThrow()
+    await expect(handle.done).resolves.toMatchObject({ exitCode: null, signal: 'SIGTERM' })
   })
 
   it('loading a second implementation throws (one processes service per context — cordis standard)', async () => {

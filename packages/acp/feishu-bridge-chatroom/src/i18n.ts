@@ -1,5 +1,5 @@
 /**
- * The chatroom package's message subtable: the 79 chatroom keys (78
+ * The chatroom package's message subtable: the 81 chatroom keys (80
  * `chatroom_*` plus the bare `chatroom` command-description key) moved
  * verbatim from the feishu-bridge main table. Registered once per process in
  * the plugin apply through the bridge's `registerMessages`, so every engine
@@ -36,7 +36,7 @@ const en: Record<string, string> = {
   chatroom_restarted: 'Process restart detected: replies from %d role(s) were lost (%s). This round is closed with the replies received; re-ask the lost roles or proceed.',
   chatroom_research_progress_waiting: 'Waiting on: %s (%d min elapsed)',
   chatroom_serial_ask_restarted: 'Process restart detected: your question to %s before the restart (%s) never got its answer — the answering turn died with the process. Re-ask the role or move on.',
-  chatroom_role_supervisor_wake: '[Supervisor] Role %s has not answered your question from %d minutes ago (last state: %s). You may follow up, skip the role and continue, or wrap up; without action this reminder repeats next cycle.',
+  chatroom_role_supervisor_wake: '[Supervisor] Role %s has not answered your question from %d minutes ago. You may follow up, skip the role and continue, or wrap up; without action this reminder repeats next cycle.',
   chatroom_interrupt_title: '⏹ Chatroom interrupted',
   chatroom_interrupt_body: 'Stopped and cleaned up %d role group(s) with their assistants.',
   chatroom_interrupt_missing: 'Unreceived replies: %s',
@@ -58,7 +58,7 @@ const en: Record<string, string> = {
   chatroom_pick_recommended: 'Recommended',
   chatroom_pick_select: 'Select',
   chatroom_pick_selected: 'Selected',
-  chatroom_pick_selected_count: '%d selected',
+  chatroom_pick_selected_count: '%d selected / limit %d',
   chatroom_pick_confirm: 'Start',
   chatroom_pick_cancel: 'Cancel',
   chatroom_pick_cancelled: 'Role selection cancelled.',
@@ -125,6 +125,8 @@ const en: Record<string, string> = {
   chatroom_supervisor_wake: '⏰ Research-assistant stall: the data steward (%s) and this room have been quiet for about %d minutes. Last steward reply: %s\n\nDecide the next step: nudge the steward with a follow-up, wrap up with the results already delivered, or stop this chatroom. If it is genuinely long-running work, reply with a status note and an ETA — this reminder will not repeat while the room keeps making progress.',
   chatroom_supervisor_breaker_title: '⏰ Research assistant stalled for a long time',
   chatroom_supervisor_breaker_body: 'The moderator has been reminded %d times about a stalled research assistant with no progress. Check the steward\'s group, or send /chatroom stop to end this room.',
+  chatroom_role_turn_failed_wake: '[Chatroom·%s turn failed this round (%s)]',
+  chatroom_role_turn_failed_note: '(turn failed this round: %s)',
 }
 
 /** The Simplified-Chinese messages of the chatroom subtable. */
@@ -153,7 +155,7 @@ const zh: Record<string, string> = {
   chatroom_restarted: '检测到进程重启：%d 个角色的回复已丢失（%s）。已按收到的回复收束本轮，可重新点名丢失的角色或直接推进。',
   chatroom_research_progress_waiting: '等待中：%s（已进行 %d 分钟）',
   chatroom_serial_ask_restarted: '检测到进程重启：你重启前对 %s 的提问（%s）未获回答——作答回合已随进程终止。可重问该角色或直接推进。',
-  chatroom_role_supervisor_wake: '[监督] 角色 %s 对你 %d 分钟前的提问仍无响应（最近状态：%s）。可追问该角色、跳过它继续、或收尾；无动作我会在下个周期再次提醒。',
+  chatroom_role_supervisor_wake: '[监督] 角色 %s 对你 %d 分钟前的提问仍无响应。可追问该角色、跳过它继续、或收尾；无动作我会在下个周期再次提醒。',
   chatroom_interrupt_title: '⏹ 聊天室已中断',
   chatroom_interrupt_body: '已停止并清理 %d 个角色群及其助手群。',
   chatroom_interrupt_missing: '未收回复：%s',
@@ -175,7 +177,7 @@ const zh: Record<string, string> = {
   chatroom_pick_recommended: '推荐',
   chatroom_pick_select: '选择',
   chatroom_pick_selected: '已选',
-  chatroom_pick_selected_count: '已选 %d 个',
+  chatroom_pick_selected_count: '已选 %d / 上限 %d 个',
   chatroom_pick_confirm: '确认开始',
   chatroom_pick_cancel: '取消',
   chatroom_pick_cancelled: '已取消挑选角色。',
@@ -242,6 +244,8 @@ const zh: Record<string, string> = {
   chatroom_supervisor_wake: '⏰ 研究助手静默提醒：数据管家（%s）与讨论室已静默约 %d 分钟，最后一次回复：%s。\n\n请决定下一步：向数据管家发 follow-up 催办、用现有结果收尾，或停止本场讨论；若确属长任务，回复状态与预计完成时间即可——只要房间保持进展，本提醒不会重复。',
   chatroom_supervisor_breaker_title: '⏰ 研究助手长时间静默',
   chatroom_supervisor_breaker_body: '已提醒主持人 %d 次研究助手静默仍无进展。请到数据管家群查看进度，或发送 /chatroom stop 结束本场讨论。',
+  chatroom_role_turn_failed_wake: '[聊天室·%s 本轮发言失败（%s）]',
+  chatroom_role_turn_failed_note: '（本轮发言失败：%s）',
 }
 
 /** The chatroom message subtable handed to the bridge's registerMessages. */
@@ -369,6 +373,8 @@ export const Msg = {
   ChatroomSupervisorWake: 'chatroom_supervisor_wake',
   ChatroomSupervisorBreakerTitle: 'chatroom_supervisor_breaker_title',
   ChatroomSupervisorBreakerBody: 'chatroom_supervisor_breaker_body',
+  ChatroomRoleTurnFailedWake: 'chatroom_role_turn_failed_wake',
+  ChatroomRoleTurnFailedNote: 'chatroom_role_turn_failed_note',
   SpawnNotSupported: 'spawn_not_supported',
 } as const
 

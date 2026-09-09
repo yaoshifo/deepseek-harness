@@ -24,7 +24,7 @@ import { Engine, InteractiveState, ProjectStateStore } from '@deepseek-ai/dsh-fe
 import { registerChatroomTool } from '../../src/tools/chatroom.ts'
 import type { SubtaskRoute } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { applyChatroomEngineConfig, chatroomConfig } from '../../src/chatroom-config.ts'
-import { beginChatroomTopicPick } from '../../src/engine/chatroom-pick.ts'
+import { beginChatroomTopicPick, getChatroomPickState, getChatroomTopicPickState } from '../../src/engine/chatroom-pick.ts'
 import {
   chatroomLedgerDir,
   initChatroomLedger,
@@ -195,6 +195,21 @@ describe('feishu_bridge_chatroom action routing', () => {
     test.dispose()
   })
 
+  it('start rejects an over-cap cast before resolving the inherit reference', async () => {
+    const engine = newEngine()
+    const root = await mkdtemp(join(tmpdir(), 'fb-chatroom-roles-'))
+    await mkdir(join(root, 'taleb'), { recursive: true })
+    await writeFile(join(root, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    chatroomConfig(engine).applySection({ rolesDir: root, maxRoles: 2 })
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+
+    const res = await test.execute({ action: 'start', message: 'topic', roles: 'taleb,munger,knight', inherit: '无匹配' })
+
+    expect(res.isError).toBe(true)
+    expect(errorText(res)).toContain('chatroom: too many roles (3 > max 2)')
+    test.dispose()
+  })
+
   it('gather/ask/note/ask-human fail loud when their preconditions miss (routing proof)', async () => {
     const engine = newEngine()
     const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
@@ -298,6 +313,35 @@ describe('feishu_bridge_chatroom action routing', () => {
     test.dispose()
   })
 
+  it('pick-topic reports the truth when the user is already selecting', async () => {
+    // Same honesty contract as pick-roles: a late pick-topic dropped by the
+    // userTouched guard must not be reported back as a rendered card.
+    const p = createStubSpawnerPlatform()
+    const engine = new Engine('chatroom-test', createStubAgent(), [p], '', 'zh')
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-topic-ignored-'))
+    await mkdir(join(rolesDir, 'taleb'), { recursive: true })
+    await writeFile(join(rolesDir, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    applyChatroomEngineConfig(engine, { rolesDir }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    beginChatroomTopicPick(engine, p, {
+      ...newStubMessage(),
+      sessionKey: 'feishu:oc_hub:ou_1',
+      platform: p.name(),
+      userID: 'ou_1',
+    })
+    value(await test.execute({ action: 'pick-topic', picks: '[{"title":"反脆弱","recommended":true,"blurb":"why"}]' }))
+    // The user has toggled a topic on the rendered card.
+    getChatroomTopicPickState(engine, 'feishu:oc_hub:ou_1')!.userTouched = true
+
+    const v = value(await test.execute({ action: 'pick-topic', picks: '[{"title":"预测失效","recommended":false,"blurb":"x"}]' }))
+
+    expect(v.status).toBe('ok')
+    expect(v.message).not.toContain('has been rendered')
+    expect(v.message).toContain('not applied')
+    expect(v.message).toContain('already selecting')
+    test.dispose()
+  })
+
   it('fails loud for a foreign caller (no feishu-bridge engine)', async () => {
     const test = await harness(() => undefined)
     const res = await test.execute({ action: 'list' })
@@ -371,6 +415,32 @@ describe('feishu_bridge_chatroom action routing', () => {
 
     expect(res.isError).toBe(true)
     expect(errorText(res)).toContain('already runs')
+    test.dispose()
+  })
+
+  it('pick-roles reports the truth when the user is already selecting', async () => {
+    // 2026-09-08 oc_9b99f: the watchdog's fallback card went out before the
+    // moderator's picks arrived; the user had started toggling roles, the
+    // picks were dropped — yet the tool claimed the card had been rendered
+    // with them, so the moderator told the user a recommendation card went
+    // out. The ignored path must say the picks were not applied.
+    const engine = newEngine()
+    const rolesDir = await mkdtemp(join(tmpdir(), 'fb-pick-ignored-'))
+    await mkdir(join(rolesDir, 'taleb'), { recursive: true })
+    await writeFile(join(rolesDir, 'taleb', 'CLAUDE.md'), '# taleb\n', 'utf8')
+    applyChatroomEngineConfig(engine, { rolesDir }, undefined)
+    const test = await harness(() => ({ engine, sessionKey: 'feishu:oc_hub:ou_1' }))
+    value(await test.execute({ action: 'pick-roles', topic: '三市机会', picks: '[{"name":"taleb","recommended":true,"blurb":"why"}]' }))
+    // The fallback card is out and the user has toggled a role on it.
+    const ps = getChatroomPickState(engine, 'feishu:oc_hub:ou_1')
+    ps!.userTouched = true
+
+    const v = value(await test.execute({ action: 'pick-roles', topic: '三市机会', picks: '[{"name":"taleb","recommended":true,"blurb":"why"}]' }))
+
+    expect(v.status).toBe('ok')
+    expect(v.message).not.toContain('has been rendered')
+    expect(v.message).toContain('not applied')
+    expect(v.message).toContain('already selecting')
     test.dispose()
   })
 })

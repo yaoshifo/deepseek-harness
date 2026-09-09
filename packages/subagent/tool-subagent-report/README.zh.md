@@ -86,7 +86,6 @@ kind: "package-reference"
 | 文件 | 职责 |
 |---|---|
 | [`src/index.ts`](src/index.ts) | 可继续子级设置：`installReportTool`、`Config`、投递解析 |
-| [`src/invariant.ts`](src/invariant.ts) | 不变式伴生插件 |
 
 </details>
 

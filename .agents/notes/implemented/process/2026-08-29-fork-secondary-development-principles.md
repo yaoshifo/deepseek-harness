@@ -23,7 +23,7 @@ Five principles govern secondary development on `dev`:
 4. **No toolchain forks.** Build and test infrastructure matches upstream verbatim. A deviation needs a concrete failure it fixes plus a recorded revert trigger; a cosmetic motive (silencing a migration warning) is not one. The native-resolution deviation is the reference failure: its per-importer walk-up discovery could not see the face-split packages upstream later added.
 5. **Absorption operation discipline.** Never run `pnpm add` mid-absorption without a full `CI=true pnpm install` afterwards; attribute unfamiliar test failures against a pristine `upstream/master` worktree before diagnosing the merge; re-run `typecheck` after each conflict-resolution batch instead of accumulating one final pass.
 
-The [sync skill](../../../.agents/skills/dsh-sync-upstream/SKILL.md) carries the operational procedure and its gotchas; this note owns the standing principles.
+The [sync skill](../../../../.agents/skills/dsh-sync-upstream/SKILL.md) carries the operational procedure and its gotchas; this note owns the standing principles.
 
 ## Alternatives considered
 
@@ -37,5 +37,5 @@ The [sync skill](../../../.agents/skills/dsh-sync-upstream/SKILL.md) carries the
 - Features proposed upstream carry latency and may land amended; the fork carries the difference until they land, and a landed equivalent still needs a semantic merge at the next absorption.
 - Fork documentation grows fork-owned files instead of upstream-pair edits, so their discoverability relies on the fork-policy pointer in `AGENTS.md`.
 - The cadence ceiling costs more frequent, smaller sync sessions; each one re-runs install, generators, and the focused suites.
-- The graft inventory behind principle 2 — every fork change sitting on an upstream-owned seam, with its upstream-proposal status — lives in the sync skill's [upstream graft ledger](../../../.agents/skills/dsh-sync-upstream/references/upstream-graft-ledger.md); keep it current as proposals are filed and landed.
+- The graft inventory behind principle 2 — every fork change sitting on an upstream-owned seam, with its upstream-proposal status — lives in the sync skill's [upstream graft ledger](../../../../.agents/skills/dsh-sync-upstream/references/upstream-graft-ledger.md); keep it current as proposals are filed and landed.
 - `dsh-memory` is fork-local by decision (2026-09-06): upstream declined memory as a DSH capability, so the package is never proposed upstream and absorbs as fork-owned content; its unreclaimable durable kind and the swap-to-MCP boundary are recorded in the package README and the ledger.

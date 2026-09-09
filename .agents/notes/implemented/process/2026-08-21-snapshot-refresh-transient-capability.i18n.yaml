@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/process/2026-08-21-snapshot-refresh-transient-capability.md
-2026-08-21-snapshot-refresh-transient-capability.md: 3687d57b2fa7a13b06f0036ff93edd8daf4848bb
-2026-08-21-snapshot-refresh-transient-capability.zh.md: f9090e5993bde9a89b9d845fcba9893eb9fed2c5
+2026-08-21-snapshot-refresh-transient-capability.md: 5b144003d552153ffc63f4fcb1716aa58cfc1ea6
+2026-08-21-snapshot-refresh-transient-capability.zh.md: 2e6ff450c377e2fb765654d25ea00c7bbe8599c8

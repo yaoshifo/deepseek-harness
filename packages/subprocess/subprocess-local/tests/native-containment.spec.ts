@@ -165,6 +165,49 @@ describe.skipIf(!linuxNative)('Linux user-systemd native containment', () => {
     }
   })
 
+  it('completes a fast writer that overflows the collected cap without pipe write errors', async () => {
+    // The runner process is a Node runtime, which leaves its pipe-backed
+    // stdout in non-blocking mode; execve preserves that status flag, so the
+    // target inherits a non-blocking write end and a full pipe turns into
+    // EAGAIN ("tr: write error: Resource temporarily unavailable") instead of
+    // a blocking write the draining collector would keep serving.
+    const overflow = spec(['sh', '-c', "head -c 2097152 /dev/zero | tr '\\0' x"], 3_000)
+    overflow.stdio = {
+      stdin: 'ignore',
+      stdout: { maxBytes: 8_192, spill: { maxBytes: 0 } },
+      stderr: { maxBytes: 8_192, spill: { maxBytes: 0 } },
+    }
+    const handle = bindManagedProcess(overflow, launchLinuxScope(overflow, targetEnvironment(overflow)))
+    try {
+      await expect(handle.done).resolves.toMatchObject({ exitCode: 0, signal: null })
+      expect(handle.collected.stderr?.readFrom(0).lossy ?? false, 'the writer never saw a pipe error').toBe(false)
+      expect(handle.collected.stderr?.readFrom(0).text).toBe('')
+      expect(handle.collected.stdout?.readFrom(0).text.length).toBeLessThanOrEqual(8_192)
+    } finally {
+      handle.terminate()
+      await Promise.allSettled([handle.done, handle.waitForExit()])
+    }
+  }, 30_000)
+
+  it('reports a termination that lands during the scope bootstrap as a signalled exit', async () => {
+    // A timeout abort or disposal can fire while the runner is still
+    // bootstrapping — before it consumed the launch request — so the kill
+    // must surface as the delivered signal, never as a startup failure
+    // rejection (the cron timeout path classifies via the signal, and a
+    // rejection reports "exited before consuming the launch request").
+    const request = spec(['bash', '-c', 'sleep 60'], 3_000)
+    const handle = bindManagedProcess(request, launchLinuxScope(request, targetEnvironment(request)))
+    try {
+      handle.terminate()
+      const outcome = await handle.done
+      expect(outcome.signal).toBe('SIGTERM')
+      await expect(handle.waitForExit()).resolves.toBe(true)
+    } finally {
+      handle.terminate()
+      await Promise.allSettled([handle.done, handle.waitForExit()])
+    }
+  }, 30_000)
+
   it('preserves Node-shaped ENOENT and EACCES spawn failures without replay', async () => {
     const missingArgv = [`missing-native-target-${Date.now()}`, 'literal arg']
     const expectedMissing = await directSpawnFailure(missingArgv)
