@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-09-ui-workspace-cwd-groups.md
-2026-09-09-ui-workspace-cwd-groups.md: 9f952a10870486ff2d929d9e7bc9570918fe17f4
-2026-09-09-ui-workspace-cwd-groups.zh.md: 7b537e0b8f2df8760feca30636c67d981a691d6a
+2026-09-09-ui-workspace-cwd-groups.md: f022a69e6a1385244f8b892d792c46fc68e9a360
+2026-09-09-ui-workspace-cwd-groups.zh.md: a63f5826cfbdafc78c16b295658e11e0cd91aafb

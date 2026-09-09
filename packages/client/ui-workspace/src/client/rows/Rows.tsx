@@ -122,8 +122,9 @@ export function ProjectRowItem({ group, onToggle, onCreate, actions, drag, home,
   t: RowTranslate
 }) {
   const row = group
-  // The ungrouped bucket has no workspace title: its label is dictionary copy.
-  const label = row.workspaceId === undefined ? t('group.ungrouped') : row.label
+  // Only the cwd-less Ungrouped bucket falls back to dictionary copy; a
+  // cwd-derived directory group carries its directory-basename label.
+  const label = row.workspaceId === undefined && row.cwd === undefined ? t('group.ungrouped') : row.label
   const active = group.expanded && group.containsCurrent
   const [menuOpen, setMenuOpen] = useState(false)
   const workspaceMenuItems = [

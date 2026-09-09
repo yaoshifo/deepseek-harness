@@ -10,7 +10,7 @@ Status: implemented
 
 ## 决策
 
-`ui-workspace` 的派生把未记账会话按各自不同的 `cwd` 拆分：每个路径一个目录分组，键为 `cwd:<path>`（与 Workspace UUID 及空的 Ungrouped 键都不冲突），标签为目录 basename。目录分组之间按各自最新成员排序、组内按最近更新排序；不参与手动排序，也不持久化顺序。无 cwd 的会话仍按原有浏览器本地顺序语义拖尾在 Ungrouped 桶。`owningGroupKey` 增加 `cwd` 参数，当前选中会话的组解析（自动展开、contains-current 高亮）因此路由到目录分组；真实 Workspace 记账始终优先于 cwd 路由。在目录分组内拖拽是无操作——现有拖拽提交路径找不到该键的记账，天然如此。
+`ui-workspace` 的派生把未记账会话按各自不同的 `cwd` 拆分：每个路径一个目录分组，键为 `cwd:<path>`（与 Workspace UUID 及空的 Ungrouped 键都不冲突），标签为目录 basename。目录分组之间按各自最新成员排序、组内按最近更新排序；不参与手动排序，也不持久化顺序。无 cwd 的会话仍按原有浏览器本地顺序语义拖尾在 Ungrouped 桶。`owningGroupKey` 增加 `cwd` 参数，当前选中会话的组解析（自动展开、contains-current 高亮）因此路由到目录分组；真实 Workspace 记账始终优先于 cwd 路由。组头渲染自带的标签，字典里的 Ungrouped 文案只保留给无 cwd 的桶（`workspaceId` 与 `cwd` 均为 undefined）。在目录分组内拖拽是无操作——现有拖拽提交路径找不到该键的记账，天然如此。
 
 ## 备选方案
 
@@ -24,4 +24,4 @@ Status: implemented
 
 ## 测试
 
-`tree.client.spec.ts`：未记账会话按 cwd 拆分为目录分组（标签、组间最新成员排序、组内最近更新排序），无 cwd 会话留在 Ungrouped，已记账会话绝不泄漏进目录分组。`workspace-browser.client.spec.tsx`：带 cwd 的未记账当前会话自动展开其目录分组，组头不渲染工作区菜单。全包套件通过（152 测试）。
+`tree.client.spec.ts`：未记账会话按 cwd 拆分为目录分组（标签、组间最新成员排序、组内最近更新排序），无 cwd 会话留在 Ungrouped，已记账会话绝不泄漏进目录分组。`workspace-browser.client.spec.tsx`：带 cwd 的未记账当前会话自动展开其目录分组，组头不渲染工作区菜单。`rows.client.spec.tsx`：目录分组渲染目录 basename 标签而非 Ungrouped 字典文案，后者只属于无 cwd 的桶。全包套件通过（153 测试）。
