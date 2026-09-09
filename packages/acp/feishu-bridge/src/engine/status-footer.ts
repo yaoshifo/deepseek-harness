@@ -480,16 +480,14 @@ function footerDir(inputs: StatusFooterInputs): string {
 /**
  * Plain-text status footer shared by the completion-notification fallback
  * (Go buildStatusFooter). Lines join with a literal backslash-n exactly as
- * Go does, keeping the fallback a single physical line. The prefix parameter
- * mirrors Go's signature but is never rendered there either — Go passes the
- * "✅ 完成" heading yet the body never appends it, so card-less platforms
- * receive only the status lines.
+ * Go does, keeping the fallback a single physical line; card-less platforms
+ * receive only the status lines. (Go's heading parameter never rendered
+ * there either; this port drops it.)
  *
- * @param _prefix - Unused heading kept for signature parity with Go; never rendered.
  * @param inputs - Footer inputs; the fields, agent, and dirs decide which lines appear.
  * @returns The status lines joined by a literal "\n", '' when no line applies.
  */
-export async function buildStatusFooter(_prefix: string, inputs: StatusFooterInputs): Promise<string> {
+export async function buildStatusFooter(inputs: StatusFooterInputs): Promise<string> {
   const lines: string[] = []
 
   const modelLine = formatModelLine(inputs.agent, inputs.sessionKey)

@@ -154,7 +154,7 @@ export async function cmdNew(e: Engine, p: Platform, msg: Message, args: string[
     await e.reply(p, msg.replyCtx, prefix)
     return
   }
-  await e.reply(p, msg.replyCtx, await e.buildStatusFooter(prefix, e.agent, workDir, '', msg.sessionKey))
+  await e.reply(p, msg.replyCtx, await e.buildStatusFooter(e.agent, workDir, '', msg.sessionKey))
 }
 
 /**

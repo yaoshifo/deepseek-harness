@@ -60,9 +60,10 @@ through its own path); widening their card semantics is a separate decision.
   `sendTurnCompletionCard` takes the turn's stop reason, and a max-tokens
   turn prefixes the purple card's title with `turn_truncated` (⚠️
   Truncated / ⚠️ 输出截断) — the completion push never reads as an ordinary
-  completion for a cut turn. (The `turn_completed` text passed to the
-  plain-text fallback's prefix parameter is never rendered — Go parity —
-  so the visible surface is the card title.)
+  completion for a cut turn. The `turn_completed` heading passed to the
+  plain-text fallback never rendered anywhere (Go parity dead parameter);
+  the parameter, the key, and both call sites' arguments are since removed,
+  so the card title is the one visible surface.
 - Coverage: adapter projection (max-tokens carried, completed omitted),
   engine finalize (truncated, and not completed), preview `markTruncated`,
   title/color localization both languages, stop-button and spinner hiding,

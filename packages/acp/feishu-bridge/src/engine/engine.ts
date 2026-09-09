@@ -6190,8 +6190,8 @@ export class Engine {
   }
 
   /**
-   * Plain-text status footer (Go buildStatusFooter).
-   * @param prefix - Label starting the footer, e.g. the completion title.
+   * Plain-text status footer (Go buildStatusFooter; Go's heading parameter
+   * never rendered there either, so this port drops it).
    * @param agent - Agent whose model/provider lines are shown.
    * @param workspaceDir - Working directory shown on the footer.
    * @param agentSessionID - Agent session id; '' omits the session line.
@@ -6199,13 +6199,12 @@ export class Engine {
    * @returns The rendered footer text.
    */
   async buildStatusFooter(
-    prefix: string,
     agent: Agent | undefined,
     workspaceDir: string,
     agentSessionID: string,
     sessionKey: string,
   ): Promise<string> {
-    return buildStatusFooterText(prefix, {
+    return buildStatusFooterText({
       fields: this.usage,
       agent,
       workspaceDir,
@@ -6389,7 +6388,6 @@ export class Engine {
     if (noticePref !== undefined && !noticePref.completionNoticeEnabled()) return
     const truncated = stopReason === 'max-tokens'
     const footerMsg = await this.buildStatusFooter(
-      truncated ? this.i18n.t(Msg.TurnTruncated) : this.i18n.t(Msg.TurnCompleted),
       this.agent, workspaceDir, session.getAgentSessionID(), sessionKey)
     const cu = asCardSenderWithUpdate(p)
     if (cu !== undefined) {

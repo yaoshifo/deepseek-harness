@@ -26,5 +26,5 @@ Status: implemented
 ## 后果
 
 - `truncated` 加入 `ProgressStatus['state']` 与 `ProgressCardState`；包外若有对 state 字符串做 switch 的卡片渲染方，会见到一个新的终态值（停止按钮与 spinner 白名单本就把未知的非运行模板按终态缺省处理）。
-- ✅ 完成通知带同样的区分：`sendTurnCompletionCard` 接收回合的 stop reason，max-tokens 回合给紫色卡标题加 `turn_truncated` 前缀（⚠️ Truncated / ⚠️ 输出截断）——截断回合的完成推送不再读作普通完成。（传给纯文本 fallback prefix 参数的 `turn_completed` 文案从不渲染——Go parity——可见面就是卡标题。）
+- ✅ 完成通知带同样的区分：`sendTurnCompletionCard` 接收回合的 stop reason，max-tokens 回合给紫色卡标题加 `turn_truncated` 前缀（⚠️ Truncated / ⚠️ 输出截断）——截断回合的完成推送不再读作普通完成。传给纯文本 fallback 的 `turn_completed` 标题从不渲染（Go parity 死参数）；该参数、词条与两处调用的实参已随后删除，卡标题是唯一可见面。
 - 覆盖：adapter 投影（max-tokens 携带、completed 省略）、引擎 finalize（truncated 且非 completed）、预览 `markTruncated`、双语文案标题/颜色、停止按钮与 spinner 隐藏、完成卡标题前缀（及无 stop reason 时的干净缺失）。

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-09-feishu-bridge-max-tokens-card.md
-2026-09-09-feishu-bridge-max-tokens-card.md: 20df86a92e49b62173745c606065c497a686bcdc
-2026-09-09-feishu-bridge-max-tokens-card.zh.md: b7de6ebf64712202a09fd04807046e823c2eb34c
+2026-09-09-feishu-bridge-max-tokens-card.md: bfa867583a95f606c7ffcb3db7ad482c8589e03a
+2026-09-09-feishu-bridge-max-tokens-card.zh.md: 21b11c3c474c12c5446a9ce7a3d7b3bd839794b7

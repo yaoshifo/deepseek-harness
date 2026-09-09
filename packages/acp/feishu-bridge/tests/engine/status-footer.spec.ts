@@ -440,7 +440,7 @@ describe('buildStatusFooter', () => {
     f.hitMsg = 'hit: +20k=90k · 2 zip'
     f.providerMsg = '💰 wk: 50%(10%)'
     f.memMsg = 'RAM: 60% · Disk: 70%'
-    const got = await buildStatusFooter('✅ Done', {
+    const got = await buildStatusFooter({
       fields: f,
       agent: footerAgent('glm-4.7', 'high', '/w/repo'),
       workspaceDir: '',
@@ -460,7 +460,7 @@ describe('buildStatusFooter', () => {
   })
 
   it('joins the route-configured reasoning effort tightly onto the model label', async () => {
-    const got = await buildStatusFooter('✅ Done', {
+    const got = await buildStatusFooter({
       fields: new CompletionUsageFields(),
       agent: footerAgent('zhipuai/glm-5.3-flash', 'max', ''),
       workspaceDir: '',
@@ -476,7 +476,7 @@ describe('buildStatusFooter', () => {
       ...footerAgent('glm-4.7', 'max', ''),
       getMode: () => 'bypassPermissions',
     }
-    const got = await buildStatusFooter('✅ Done', {
+    const got = await buildStatusFooter({
       fields: new CompletionUsageFields(),
       agent,
       workspaceDir: '',
@@ -488,7 +488,7 @@ describe('buildStatusFooter', () => {
   })
 
   it('appends the editor URL line when configured and a dir exists', async () => {
-    const got = await buildStatusFooter('✅ Done', {
+    const got = await buildStatusFooter({
       fields: new CompletionUsageFields(),
       agent: footerAgent('m', '', '/w/repo'),
       workspaceDir: '',
@@ -500,7 +500,7 @@ describe('buildStatusFooter', () => {
   })
 
   it('returns empty when nothing is populated', async () => {
-    const got = await buildStatusFooter('', {
+    const got = await buildStatusFooter({
       fields: new CompletionUsageFields(),
       agent: undefined,
       workspaceDir: '',
@@ -524,7 +524,7 @@ describe('buildStatusFooter', () => {
       getReasoningEffort: () => '',
       getWorkDir: () => '',
     }
-    const got = await buildStatusFooter('✅ Done', {
+    const got = await buildStatusFooter({
       fields: new CompletionUsageFields(),
       agent,
       workspaceDir: '',
