@@ -360,8 +360,6 @@ export class InteractiveState {
   sideText: string = ''
   /** Whether the event channel must be drained before the next turn. */
   eventsNeedResync: boolean = true
-  /** Mode override injected at session start; '' = none. */
-  effectiveMode: string = ''
   /** Per-state idle-timeout override; 0 falls back to the engine default. */
   effectiveIdleTimeout: number = 0
   /** Timestamp of the last activity, feeding the idle reaper. */
@@ -4255,12 +4253,14 @@ export class Engine {
     oldEvents.drain()
 
     const retryOptions = state.sessionStartOptions
-    const retryMode = state.effectiveMode
     // The retry options carry the session's workDir (startOptions.workDir),
     // so --resume finds the session under the correct directory without any
-    // global switch (Go stall-retry applyWorkDirOverride).
+    // global switch (Go stall-retry applyWorkDirOverride). No mode override:
+    // the resumed session restores its own logged plan state, and an armed
+    // override — like the inherited plan default that caused the 2026-09-09
+    // oc_a8f4 re-approval loop — would stomp it.
     try {
-      const newSess = await this.startAgentLocked(replyAgent, resumeID, retryOptions, retryMode)
+      const newSess = await this.startAgentLocked(replyAgent, resumeID, retryOptions, '')
       state.agentSession = newSess
       state.eventsNeedResync = false
       return newSess
