@@ -250,7 +250,9 @@ describe('serial-ask supervision', () => {
     expect(msg.sessionKey).toBe(hubKey)
     expect(msg.content).toContain('taleb')
     expect(msg.content).toContain('11 分钟')
-    expect(msg.content).toContain('上轮在查 CCASS 持仓')
+    // The role's lastResult is a previous turn's answer; it must not ride
+    // along as if it were the role's current state or this turn's reply.
+    expect(msg.content).not.toContain('上轮在查 CCASS 持仓')
     expect(msg.metadata?.[chatroomSupervisorWakeMetadata]).toBe(true)
     // Entry bookkeeping advanced; a second sweep in the same window dedupes.
     const entry = chatroomState(e.sessions.getOrCreateActive(hubKey)).pendingSerialAsks.get('taleb')
