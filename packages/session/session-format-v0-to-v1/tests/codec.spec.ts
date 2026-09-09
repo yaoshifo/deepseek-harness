@@ -261,3 +261,19 @@ describe('released v0/v1 physical codecs', () => {
     expect(() => decodeArtifact(releasedV1SessionFormatCodec, header, rows)).toThrow(/strictly increasing/)
   })
 })
+
+describe('known committed-data drift (2026-09-09, accepted loss)', () => {
+  // Real v0-era one-shot question sessions carry header origin 'oneshot'
+  // (SessionOrigin in dsh-session); the snapshot header whitelist admits only
+  // 'subagent' — 1330 of the 1726 refused historical logs measured by
+  // scan-migration-drift.mjs start here. Ruling (2026-09-09): historical v0
+  // sessions are abandoned, the snapshot stays unfixed. This case pins the
+  // refusal; flip it to acceptance together with the payload-drift cases in
+  // validation.spec.ts if the snapshot is ever repaired (note 078313831b
+  // already widened the v1-to-v2 side to 'oneshot' — this v0-to-v1 side is
+  // the accepted gap).
+  it('refuses the v0 header origin "oneshot"', () => {
+    expect(() => releasedV0SessionFormatCodec.decodeHeader({ ...fullHeader, version: 0, origin: 'oneshot' }))
+      .toThrow(/origin must be "subagent"/)
+  })
+})

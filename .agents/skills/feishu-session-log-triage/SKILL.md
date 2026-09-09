@@ -77,7 +77,7 @@ python3 <skill-dir>/scripts/locate-session.py "$chat_id"
 - **症状**：降级通知后的会话「上下文丢了」 → **做法**：降级是开新会话，被泄漏的原会话 jsonl 仍完整，按本 skill 定位后 zstdcat 找回。
 - **症状**：群名被改成与该群任务无关的项目主题 → **做法**：daemon stdout.log grep `chat renamed` 定时刻，找紧邻的群名 fork 会话（one-shot，落桶 = 其真实 cwd），看首条消息的摘录段与注入；跑题根因通常是 fork cwd 回退项目基目录 + seed 含糊（指纹表 F）。
 - **症状**：某项目桶里出现别的群的一次性 fork（渲染/群名）会话 → **做法**：不代表该群属于此项目；归属以 fork 首条消息里的会话 key / html_path 为准（指纹表 F）。
-- **症状**：/fk 出的群没继承上下文（子会话日志头 `"isSeeded":false`、日志直接从首条用户消息开始） → **做法**：查 daemon stderr 的 `agent-dsh: fork source` warn；旧版会把一切读错误吞成「no seedable turns」，真实原因多为 v0 会话被 v0→v2 迁移 codec 的 schema 快照拒绝（2026-09-09 实例四类：todo `activeForm`、header `oneshot` origin、permission `origin`、approval `allowed-always`；2625 个 v0 会话 62% 不可读，用户已拍板弃用历史 v0 会话、不修 schema）。复现法：zstdcat 父会话看 header `version:0`，再用 `sessionFormatCatalog.createRestore(header, {recovery:"recoverable",validation:"transformed"})` 逐行 `decodeRow` 找首个被拒事件。
+- **症状**：/fk 出的群没继承上下文（子会话日志头 `"isSeeded":false`、日志直接从首条用户消息开始） → **做法**：查 daemon stderr 的 `agent-dsh: fork source` warn；旧版会把一切读错误吞成「no seedable turns」，真实原因多为 v0 会话被 v0→v2 迁移 codec 的 schema 快照拒绝（2026-09-09 实测五类：todo `activeForm`、header `oneshot` origin、permission `origin`、approval `allowed-always`、subagent/descriptor version 2；历史代日志 60% 不可读，用户已拍板弃用历史 v0 会话、不修 schema，锁定用例见 session-format-v0-to-v1 的 validation/codec spec）。全量核查用本 skill 的 `scripts/scan-migration-drift.mjs`（对 sessions root 跑当前构建的迁移解码，按拒绝原因聚类报告，fail-loud；reload 改动 session-format 包后必跑）。单点复现：zstdcat 父会话看 header `version:0`，再用 `sessionFormatCatalog.createRestore(header, {recovery:"recoverable",validation:"transformed"})` 逐行 `decodeRow` 找首个被拒事件。
 
 ## 维护
 

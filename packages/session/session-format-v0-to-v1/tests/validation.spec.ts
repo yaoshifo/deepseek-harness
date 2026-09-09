@@ -784,3 +784,40 @@ describe('released event and payload inventory', () => {
     }
   })
 })
+
+describe('known committed-data drift (2026-09-09, accepted loss)', () => {
+  // Real v0-era field extensions the hand-written snapshot never absorbed;
+  // measured by .agents/skills/feishu-session-log-triage/scripts/scan-migration-drift.mjs
+  // over the production sessions root (1726 of 2856 historical-generation
+  // logs refused). Ruling (2026-09-09): historical v0 sessions are abandoned,
+  // the snapshot is NOT fixed. These cases pin the refusals so a partial fix
+  // cannot land silently — if the snapshot is ever repaired (e.g.
+  // upstreaming), flip them to acceptance together with the header-origin
+  // case in codec.spec.ts.
+  it('refuses todo/write items carrying activeForm (185 sessions)', () => {
+    expect(() => {
+      assertPayload('todo/write', { todos: [{ content: 'work', status: 'in_progress', activeForm: 'working' }] })
+    }).toThrow(/unexpected member/)
+  })
+
+  it('refuses permission/preset carrying origin (87 sessions)', () => {
+    expect(() => {
+      assertPayload('permission/preset', { preset: 'default', origin: 'user' })
+    }).toThrow(/unexpected member/)
+  })
+
+  it('refuses approval/decided outcome "allowed-always" (53 sessions)', () => {
+    expect(() => {
+      assertPayload('approval/decided', { id: 'approval-1', outcome: 'allowed-always' })
+    }).toThrow(/outcome must be one of/)
+  })
+
+  it('refuses subagent/descriptor version 2 under the v0 payload policy (71 sessions)', () => {
+    expect(() => {
+      assertReleasedEventPayload(
+        { type: 'subagent/descriptor', seq: 3, time: 4, data: { mode: 'continuable', version: 2, provider: 'p', label: 'child' } },
+        0,
+      )
+    }).toThrow(/unsupported descriptor version/)
+  })
+})
