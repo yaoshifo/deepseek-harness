@@ -734,16 +734,19 @@ export async function startChatroom(
 
 /**
  * Post the moderator's question to a role's group (visible card) and inject
- * it into the role session as a new turn, re-arming the one-shot relay.
- * Non-blocking. The role is addressed by name or session key.
+ * it into the role session, re-arming the one-shot relay. Non-blocking. The
+ * role is addressed by name or session key. The injection rides
+ * `deliverMachineMessage` for both deliveries: a busy role receives the
+ * question mid-turn at its nearest step boundary, an idle one through the
+ * machine-flagged turn pipeline.
  *
  * @param e - Engine carrying the session registry and i18n surface.
  * @param callerHubKey - Session key of the chatroom hub the role must belong to.
  * @param roleRef - The role to ask: a role name or session key.
  * @param question - The moderator's question text; empty is rejected.
- * @param delivery - Queue (default) injects a new turn; steer admits the
- * question into a busy role's running turn at its nearest step boundary
- * (`deliverMachineMessage`), falling back to the pipeline when idle.
+ * @param delivery - Queue (default) opens the role's answer as its own turn
+ * and is rejected while a gather is armed; steer is the mid-round course
+ * correction — its reply counts as the armed round's answer.
  */
 export async function askRole(e: Engine, callerHubKey: string, roleRef: string, question: string, delivery: SubtaskDelivery = 'queue'): Promise<void> {
   const q = question.trim()
@@ -778,18 +781,21 @@ export async function askRole(e: Engine, callerHubKey: string, roleRef: string, 
     throw new Error(e.i18n.t(Msg.ChatroomAskNotInRoom))
   }
   const roleName = chatroomState(role).chatroomRoleName
-  await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(Msg.ChatroomAskHeader, roleName), 0, false, delivery)
+  await askRoleInternal(e, p, callerHubKey, roleKey, roleName, q, e.i18n.tf(Msg.ChatroomAskHeader, roleName), 0, false)
   console.info(`chatroom: moderator asked role (hub=${callerHubKey} role=${roleKey})`)
 }
 
 /**
- * The shared "post question card to the role group + inject the question as
- * a new role turn + re-arm the one-shot relay" path (Go askRoleInternal).
- * askSeq is the gather round stamp; 0 for serial asks. awaitAssistant arms
- * the research dispatch-defer at turn start. Steer delivery routes the
- * injection through `deliverMachineMessage`: a busy role receives the
- * question mid-turn at its nearest step boundary; an idle role rides the
- * same synthetic-message pipeline as every machine wake.
+ * The shared "post question card to the role group + inject the question
+ * into the role session + re-arm the one-shot relay" path (Go
+ * askRoleInternal). askSeq is the gather round stamp; 0 for serial asks.
+ * awaitAssistant arms the research dispatch-defer at turn start. The
+ * injection rides `deliverMachineMessage`: a busy role receives the
+ * question mid-turn at its nearest step boundary (identity pre-stamped
+ * here — no turn starts, so turn-start stamping never fires); an idle role
+ * rides the same machine-flagged synthetic-message pipeline as every
+ * machine wake, and turn start stamps the identity from the message
+ * metadata.
  */
 async function askRoleInternal(
   e: Engine,
@@ -801,7 +807,6 @@ async function askRoleInternal(
   headerTitle: string,
   askSeq: number,
   awaitAssistant: boolean,
-  delivery: SubtaskDelivery = 'queue',
 ): Promise<void> {
   const r = asReplyContextReconstructor(p)
   if (r === undefined) {
@@ -818,8 +823,8 @@ async function askRoleInternal(
   // counter and register an outstanding entry; the role's answering turn
   // routes by the identity and completes the entry. A steer that arrives
   // while a gather is armed is a course correction OF that round — the
-  // role's reply counts as its round reply (no new identity). Steer
-  // delivery never opens a turn, so the stamp is applied here directly —
+  // role's reply counts as its round reply (no new identity). A mid-turn
+  // steer never opens a turn, so the stamp is applied at delivery time —
   // turn-start stamping would otherwise never fire for a steered question.
   const hub = chatroomHubOf(e, hubKey)
   let stamp = askSeq
@@ -846,7 +851,11 @@ async function askRoleInternal(
   const role = e.sessions.getOrCreateActive(roleKey)
   chatroomState(role).chatroomAsked = false
   chatroomState(role).chatroomInFlight = true
-  if (delivery === 'steer' && askSeq === 0) chatroomState(role).chatroomAskSeq = stamp
+  // A busy role receives the question as a mid-turn steer — no new turn
+  // starts, so turn-start stamping never fires for it. Stamp the identity
+  // here unconditionally: the steer's relay routes by it, and an idle role's
+  // turn-start re-stamps the same value.
+  chatroomState(role).chatroomAskSeq = stamp
   // Research mode: new round — clear the previous round's sticky dispatch
   // flag. ResearchAwaitingAssistant arms at turn start.
   const researchHub = chatroomHubOf(e, hubKey)
@@ -888,17 +897,17 @@ async function askRoleInternal(
     replyCtx: roleRctx,
     metadata: { chatroomAskSeq: stamp, chatroomAwaitAssistant: awaitAssistant },
   }
+  // Every delivery rides the machine channel: busy → mid-turn steer claimed
+  // at the next step boundary (the role's reply still relays through the
+  // one-shot gate re-armed above); idle/startup → the machine-flagged
+  // synthetic-message pipeline with the full turn machinery. The human
+  // pipeline must not carry a role ask — its busy-queue cap and rate-limit
+  // drops would lose the question while the outstanding entry sits
+  // unnoticed.
   try {
-    if (delivery === 'steer') {
-      // Busy → mid-turn steer claimed at the next step boundary (the role's
-      // reply still relays through the one-shot gate re-armed above); idle →
-      // the machine-wake pipeline with the full turn machinery.
-      e.deliverMachineMessage(p, roleMsg)
-    } else {
-      e.receiveMessage(p, roleMsg)
-    }
+    e.deliverMachineMessage(p, roleMsg)
   } catch (error) {
-    console.error(`engine: receive-message failed (${roleKey}): ${String(error)}`)
+    console.error(`engine: deliver-machine-message failed (${roleKey}): ${String(error)}`)
   }
 }
 

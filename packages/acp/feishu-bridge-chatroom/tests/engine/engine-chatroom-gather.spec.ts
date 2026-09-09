@@ -678,8 +678,10 @@ describe('gather broadcast failure', () => {
     maybeAutoRelayRole(e, st, taleb, '我的回复', false)
 
     expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
-    await waitFor(() => wake.mock.calls.length > 0, 'moderator woken')
-    expect(String(wake.mock.calls[0]?.[1]?.content)).toContain('我的回复')
+    // Ask injections ride deliverMachineMessage too — wait for the wake that
+    // actually carries the reply, not merely the first channel call.
+    await waitFor(() => wake.mock.calls.some(([, m]) => m.content.includes('我的回复')), 'moderator woken')
+    expect(wake.mock.calls.some(([, m]) => m.content.includes('我的回复'))).toBe(true)
   })
 
   it('every broadcast failing closes the round immediately instead of idling to the timeout', async () => {
