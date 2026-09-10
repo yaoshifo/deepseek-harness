@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context, FiberState, type Plugin } from '@deepseek-ai/cordis'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
 import { remoteMethods } from '@deepseek-ai/dsh-typert-protocol'
@@ -32,7 +35,7 @@ async function harness(): Promise<{
 }
 
 describe('PluginInventoryGateway', () => {
-  it('publishes one direct list method under the pluginInventory namespace', async () => {
+  it('publishes the direct list methods under the pluginInventory namespace', async () => {
     const { inventory } = await harness()
     expect(inventory.typertRemote).toMatchObject({
       serviceKey: 'pluginInventory',
@@ -40,6 +43,7 @@ describe('PluginInventoryGateway', () => {
     })
     expect(remoteMethods(inventory)).toEqual([
       { method: 'list', invocation: { kind: 'direct' } },
+      { method: 'listProfiles', invocation: { kind: 'direct' } },
     ])
   })
 
@@ -122,5 +126,49 @@ describe('PluginInventoryGateway', () => {
       },
       { id: 'damaged', trust: 'user', isDefault: false, broken: 'the composition file is missing', rows: [] },
     ])
+  })
+})
+
+describe('PluginInventoryGateway: profile composition', () => {
+  const contexts: Context[] = []
+
+  afterEach(async () => {
+    vi.unstubAllEnvs()
+    await Promise.all(contexts.splice(0).map(ctx => ctx.fiber.dispose()))
+  })
+
+  it('lists every profile directory with its composition files', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-inv-home-'))
+    const profiles = join(home, 'profiles')
+    await mkdir(join(profiles, 'web'), { recursive: true })
+    await mkdir(join(profiles, 'feishu-bridge'), { recursive: true })
+    await writeFile(join(profiles, 'not-a-profile.txt'), 'x')
+    await writeFile(join(profiles, 'web', 'package.json'), JSON.stringify({
+      name: 'dsh-profile-web',
+      private: true,
+      dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } },
+    }))
+    await writeFile(join(profiles, 'web', 'cordis.yml'), '[]\n')
+    await writeFile(join(profiles, 'web', 'cordis.patch.yml'), '- id: session-persistence-jsonl\n  config:\n    root: /tmp/x\n')
+    await writeFile(join(profiles, 'feishu-bridge', 'package.json'), 'not json')
+    vi.stubEnv('DSH_HOME', home)
+
+    const ctx = new Context()
+    contexts.push(ctx)
+    await ctx.plugin(Loader)
+    await ctx.plugin(PluginInventoryGateway)
+    const inventory = ctx.get('pluginInventory') as PluginInventoryGateway
+
+    const snapshot = await inventory.listProfiles()
+    expect(snapshot.profiles.map(profile => profile.name)).toEqual(['feishu-bridge', 'web'])
+    const web = snapshot.profiles.find(profile => profile.name === 'web')
+    expect(web).toMatchObject({
+      bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'],
+      cordisYml: '[]\n',
+      patchYml: '- id: session-persistence-jsonl\n  config:\n    root: /tmp/x\n',
+    })
+    // A damaged package.json degrades to an empty bundle list, never a throw.
+    const bridge = snapshot.profiles.find(profile => profile.name === 'feishu-bridge')
+    expect(bridge).toMatchObject({ name: 'feishu-bridge', bundles: [] })
   })
 })

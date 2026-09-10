@@ -38,6 +38,13 @@ export const zh = {
   active: '运行中',
   failed: '启动失败',
   unloading: '卸载中',
+  profilesTab: '配置组',
+  profilesEmpty: '暂无配置组。',
+  bundlesUnit: '个 bundle',
+  profilePath: '目录',
+  bundlesLabel: 'Bundle 层叠',
+  cordisYmlLabel: 'cordis.yml（入口表）',
+  patchYmlLabel: 'cordis.patch.yml（补丁层）',
 } satisfies Record<string, string>
 
 /** Plugin inventory locale key union. */
@@ -81,4 +88,11 @@ export const en = {
   active: 'Running',
   failed: 'Failed to start',
   unloading: 'Unloading',
+  profilesTab: 'Profiles',
+  profilesEmpty: 'No profiles are stored.',
+  bundlesUnit: 'bundles',
+  profilePath: 'Directory',
+  bundlesLabel: 'Bundle stack',
+  cordisYmlLabel: 'cordis.yml (entry list)',
+  patchYmlLabel: 'cordis.patch.yml (patch layer)',
 } satisfies Record<PluginInventoryLocaleKey, string>

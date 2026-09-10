@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PluginInventorySettingsTab } from '../src/client/PluginInventorySettingsTab.tsx'
+import { ProfilesSettingsTab as ProfilesSettingsTabForTest } from '../src/client/ProfilesSettingsTab.tsx'
 import type {
   PluginInventorySettingsTabInjected,
   PluginInventorySettingsTabProps,
@@ -343,5 +344,68 @@ describe('PluginInventorySettingsTab', () => {
     const pendingFailure = render(<PluginInventorySettingsTab {...props(() => deferredFailure.promise)} />)
     pendingFailure.unmount()
     await act(async () => { deferredFailure.reject(new Error('late failure')) })
+  })
+})
+
+describe('ProfilesSettingsTab', () => {
+  type ProfilesSnapshot = Awaited<ReturnType<import('../src/client/ProfilesSettingsTab.tsx').ProfilesSettingsTabInjected['listProfiles']>>
+  type ProfilesProps = import('../src/client/ProfilesSettingsTab.tsx').ProfilesSettingsTabProps
+
+  const profilesT = ((key: PluginInventoryLocaleKey, params?: Record<string, string>): string =>
+    Object.entries(params ?? {}).reduce(
+      (text, [name, value]) => text.replaceAll(`{${name}}`, value),
+      en[key],
+    )) as ProfilesProps['t']
+
+  function profilesProps(listProfiles: ProfilesProps['listProfiles']): ProfilesProps {
+    return { t: profilesT, listProfiles } as ProfilesProps
+  }
+
+  const PROFILES: ProfilesSnapshot = {
+    profiles: [
+      {
+        name: 'feishu-bridge',
+        path: '/Users/hm/.dsh/profiles/feishu-bridge',
+        bundles: ['@deepseek-ai/dsh-acp-app'],
+        patchYml: '- id: session-persistence-jsonl\n  config:\n    root: /x\n',
+      },
+      {
+        name: 'web',
+        path: '/Users/hm/.dsh/profiles/web',
+        bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'],
+        cordisYml: '[]\n',
+      },
+    ],
+  }
+
+  it('renders one collapsed card per profile with its bundle stack summary', async () => {
+    const listProfiles = vi.fn(() => Promise.resolve(PROFILES))
+    render(<ProfilesSettingsTabForTest {...profilesProps(listProfiles)} />)
+    await waitFor(() => { expect(screen.getByText('feishu-bridge')).toBeTruthy() })
+    expect(screen.getByText('web')).toBeTruthy()
+    expect(screen.getByText('dsh-base + dsh-web-app')).toBeTruthy()
+    expect(screen.queryByText('cordis.yml (entry list)')).toBeNull()
+  })
+
+  it('expands one profile into its bundle list and composition files', async () => {
+    const listProfiles = vi.fn(() => Promise.resolve(PROFILES))
+    render(<ProfilesSettingsTabForTest {...profilesProps(listProfiles)} />)
+    await waitFor(() => { expect(screen.getByText('web')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /web, 2 bundles/u }))
+    expect(screen.getByText('@deepseek-ai/dsh-base')).toBeTruthy()
+    expect(screen.getByText('cordis.yml (entry list)')).toBeTruthy()
+    expect(screen.getByText('[]')).toBeTruthy()
+    // The patch-less profile shows no patch section.
+    expect(screen.queryByText('cordis.patch.yml (patch layer)')).toBeNull()
+  })
+
+  it('shows the error path with a retry that recovers', async () => {
+    const listProfiles = vi.fn()
+      .mockRejectedValueOnce(new Error('down'))
+      .mockResolvedValueOnce(PROFILES)
+    render(<ProfilesSettingsTabForTest {...profilesProps(listProfiles)} />)
+    await waitFor(() => { expect(screen.getByRole('alert')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => { expect(screen.getByText('feishu-bridge')).toBeTruthy() })
   })
 })

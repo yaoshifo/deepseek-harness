@@ -68,3 +68,22 @@ export interface PluginInventorySnapshot {
    */
   readonly agentPresets?: readonly AgentPresetPluginGroup[]
 }
+
+/** One harness profile's composition as stored under the profiles root. */
+export interface ProfileCompositionEntry {
+  /** Profile directory name under the harness home's `profiles/`. */
+  readonly name: string
+  /** Absolute path of the profile directory. */
+  readonly path: string
+  /** Bundle names the profile stacks, from `package.json`; empty when unreadable. */
+  readonly bundles: readonly string[]
+  /** Raw `cordis.yml` entry list, when the file exists. */
+  readonly cordisYml?: string
+  /** Raw `cordis.patch.yml` patch layer, when the file exists. */
+  readonly patchYml?: string
+}
+
+/** Read-only composition inventory of every stored harness profile. */
+export interface ProfileInventorySnapshot {
+  readonly profiles: readonly ProfileCompositionEntry[]
+}

@@ -5,6 +5,9 @@ import type {} from '@deepseek-ai/cordis-plugin-loader'
 // Type-only: the optional agent-preset roster resolved through `ctx.get`.
 import type {} from '@deepseek-ai/dsh-agent-presets'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
+import { readdir, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 // Typert-generated ./typert and ./remote artifacts import Zod at runtime.
 import type {} from 'zod'
 import type {
@@ -13,6 +16,8 @@ import type {
   PluginFiberPhase,
   PluginInventoryEntry,
   PluginInventorySnapshot,
+  ProfileCompositionEntry,
+  ProfileInventorySnapshot,
 } from './types.ts'
 
 export type * from './types.ts'
@@ -86,6 +91,65 @@ export class PluginInventoryGateway extends TypertRemoteService {
       }),
     )
     return { entries, agentPresets }
+  }
+
+  /**
+   * List every stored harness profile with its composition files. A profile
+   * directory whose `package.json` is missing or damaged degrades to an empty
+   * bundle list; a missing composition file is simply absent from the entry.
+   * @returns one entry per profile directory, in name order.
+   */
+  @Remote('listProfiles')
+  async listProfiles(): Promise<ProfileInventorySnapshot> {
+    const root = dshHomePath('profiles')
+    let dirs
+    try {
+      dirs = await readdir(root, { withFileTypes: true })
+    } catch (error: unknown) {
+      // No profiles root yet means no profiles; every other failure surfaces.
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return { profiles: [] }
+      throw error
+    }
+    const profiles: ProfileCompositionEntry[] = []
+    for (const dir of dirs) {
+      if (!dir.isDirectory()) continue
+      profiles.push(await this.readProfile(join(root, dir.name), dir.name))
+    }
+    profiles.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+    return { profiles }
+  }
+
+  /** Read one profile directory's composition, degrading per-file on damage. */
+  private async readProfile(path: string, name: string): Promise<ProfileCompositionEntry> {
+    let bundles: string[] = []
+    try {
+      const raw = JSON.parse(await readFile(join(path, 'package.json'), 'utf8')) as {
+        dsh?: { profile?: { bundles?: unknown } }
+      }
+      const declared = raw.dsh?.profile?.bundles
+      if (Array.isArray(declared) && declared.every(item => typeof item === 'string')) {
+        bundles = declared
+      }
+    } catch {
+      // A damaged or missing package.json leaves the bundle list empty.
+    }
+    const optional = async (file: string): Promise<string | undefined> => {
+      try {
+        return await readFile(join(path, file), 'utf8')
+      } catch (error: unknown) {
+        if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return undefined
+        throw error
+      }
+    }
+    const cordisYml = await optional('cordis.yml')
+    const patchYml = await optional('cordis.patch.yml')
+    return {
+      name,
+      path,
+      bundles,
+      ...(cordisYml === undefined ? {} : { cordisYml }),
+      ...(patchYml === undefined ? {} : { patchYml }),
+    }
   }
 }
 

@@ -10,6 +10,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-agent-preset/client'
 // Inline-safe shared fold: shipped ids map to dictionary keys in one home.
 import { presetDisplayText } from '@deepseek-ai/dsh-agent-presets/display'
 import { PluginInventorySettingsTab, type PluginInventorySettingsTabInjected } from './PluginInventorySettingsTab.tsx'
+import { ProfilesSettingsTab, type ProfilesSettingsTabInjected } from './ProfilesSettingsTab.tsx'
 import { en, zh, type PluginInventoryLocaleKey } from './locales.ts'
 
 export type { PluginInventorySettingsTabInjected, PluginInventorySettingsTabProps } from './PluginInventorySettingsTab.tsx'
@@ -40,6 +41,13 @@ export function apply(ctx: ClientContext): void {
     }
     return result.value
   }
+  const listProfiles: ProfilesSettingsTabInjected['listProfiles'] = async () => {
+    const result = await ctx.remote.pluginInventory.listProfiles()
+    if (!result.ok) {
+      throw new Error(`pluginInventory.listProfiles failed: ${result.error.code}: ${result.error.message}`)
+    }
+    return result.value
+  }
   // Resolved per call over ui-agent-preset's dictionaries, so a language
   // switch re-resolves shipped names; user-authored metadata passes through.
   const agentPresetCopy = ctx.locale.bind('settings.agentPreset')
@@ -55,4 +63,13 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     inject: injected,
   }, PluginInventorySettingsTab))
+
+  ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
+    name: 'settings.plugins.tab',
+    id: 'profiles',
+    order: 20,
+    label: () => t('profilesTab'),
+    locale: NS,
+    inject: () => ({ listProfiles }),
+  }, ProfilesSettingsTab))
 }
