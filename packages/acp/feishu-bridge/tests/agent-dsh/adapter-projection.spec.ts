@@ -287,3 +287,21 @@ describe('projectSessionEvent turn/end stop-reason projection', () => {
     expect(events[0]?.stopReason).toBeUndefined()
   })
 })
+
+describe('projectSessionEvent deliverables/presented', () => {
+  it('projects a presented deliverable batch with its declared files', async () => {
+    const s = newSession()
+    const events = await project(s, {
+      type: 'deliverables/presented', seq: 1, time: 0,
+      data: { turn: 1, callId: 'call_present', files: [{ path: 'out/report.md', description: 'the report' }, { path: 'out/chart.png' }] },
+    })
+    expect(events).toHaveLength(1)
+    expect(events[0]?.type).toBe('presented')
+    expect(events[0]?.content).toContain('out/report.md')
+    expect(events[0]?.content).toContain('out/chart.png')
+    expect(events[0]?.toolInputRaw).toEqual({
+      files: [{ path: 'out/report.md', description: 'the report' }, { path: 'out/chart.png' }],
+    })
+    expect(events[0]?.done).toBe(false)
+  })
+})

@@ -104,6 +104,11 @@ describe('bridge bundle patch', () => {
     expect(memory?.disabled).not.toBe(true)
     expect(memory?.config).toMatchObject({ maxIndexBytes: 25600, global: { maxIndexBytes: 8192 } })
     expect(warnings.filter(message => message.includes('ask-user') || message.includes('dsh-memory'))).toEqual([])
+    // The declarative-delivery tool rides the same insert row: presented
+    // files auto-deliver through the engine's attachment pipeline.
+    const present = findRow(entries, 'tool-present')
+    expect(present?.name).toBe('@deepseek-ai/dsh-tool-present')
+    expect(present?.disabled).not.toBe(true)
   })
 
   it('mounts the agent-instruction-suppression registry base does not ship', () => {

@@ -16,6 +16,7 @@
  */
 
 import { Msg, I18n, langEnglish } from '../i18n/index.ts'
+import { readAttachment } from '../tools/send.ts'
 import type { Language } from '../i18n/index.ts'
 import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.ts'
@@ -2854,6 +2855,7 @@ export class Engine {
         case 'compaction':
         case 'todo_update':
         case 'skill_invocation':
+        case 'presented':
           // Preview- and card-only frames carry nothing the plain-text
           // spillover relay could surface.
           break
@@ -3652,6 +3654,53 @@ export class Engine {
             const count = Number.parseInt(event.content, 10)
             if (Number.isFinite(count) && count >= 0 && sp.canPreview()) {
               await sp.setSubagentCount(count)
+            }
+            break
+          }
+
+          case 'presented': {
+          // A `present` tool declaration: the model named existing files as
+          // the user's deliverables. The engine delivers them through the
+          // standard attachment pipeline (the same path feishu_bridge_send
+          // uses); a file that fails to read or exceeds the cap is skipped
+          // with an explanatory note instead of failing the turn.
+            const declared = event.toolInputRaw?.files
+            if (Array.isArray(declared) && p !== undefined) {
+              // A delegated child's declared paths resolve against its own
+              // session cwd (a worktree), carried by the projection as base;
+              // the parent's own declarations use the chat's work dir.
+              const eventBase = event.toolInputRaw?.base
+              const workDir = typeof eventBase === 'string' && eventBase !== ''
+                ? eventBase
+                : this.effectiveWorkDirForPending(sessionKey)
+              const images: ImageAttachment[] = []
+              const files: FileAttachment[] = []
+              const skipped: Array<{ path: string; reason: string }> = []
+              for (const entry of declared) {
+                const path = typeof (entry as { path?: unknown }).path === 'string' ? (entry as { path: string }).path : ''
+                if (path === '') continue
+                try {
+                  const attachment = await readAttachment(path, workDir)
+                  if (attachment.mimeType.startsWith('image/')) images.push(attachment)
+                  // readAttachment always sets fileName; the optional field
+                  // only reflects the inbound user-attachment shape.
+                  else files.push(attachment as FileAttachment)
+                } catch (error) {
+                  skipped.push({ path, reason: error instanceof Error ? error.message : String(error) })
+                }
+              }
+              if (images.length > 0 || files.length > 0) {
+                try {
+                  await this.sendToSessionWithAttachments(sessionKey, this.i18n.tf(Msg.PresentedDelivery, event.content), images, files)
+                } catch (error) {
+                  console.warn(`engine: presented delivery failed (${sessionKey}): ${String(error)}`)
+                }
+              }
+              for (const skip of skipped) {
+                if (!await cp.appendStructured({ kind: 'tool_result', tool: 'present', text: this.i18n.tf(Msg.PresentedSkipNote, skip.path, skip.reason) }, '')) {
+                  await this.send(p, replyCtx, this.i18n.tf(Msg.PresentedSkipNote, skip.path, skip.reason)).catch(() => undefined)
+                }
+              }
             }
             break
           }
@@ -5124,6 +5173,7 @@ export class Engine {
         case 'compaction':
         case 'todo_update':
         case 'skill_invocation':
+        case 'presented':
           // Preview- and card-only frames have no relayed text to collect
           // (Go's HandleRelay switch ignores them the same way).
           break

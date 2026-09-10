@@ -103,7 +103,7 @@ export function detectAttachmentMimeType(fileName: string, data: Uint8Array): st
  * @param workDir - The session's effective work dir for relative paths; '' keeps the path as-is.
  * @returns The read attachment.
  */
-async function readAttachment(path: string, workDir: string): Promise<ImageAttachment | FileAttachment> {
+export async function readAttachment(path: string, workDir: string): Promise<ImageAttachment | FileAttachment> {
   const cleaned = isAbsolute(path) ? path : resolve(workDir, path)
   let size: number
   try {
@@ -129,12 +129,14 @@ async function readAttachment(path: string, workDir: string): Promise<ImageAttac
 }
 
 const DESCRIPTION =
-  'Deliver generated artifacts (files and images) to the user\'s chat window. '
-  + 'This is the ONLY way a file you produced reaches the user — a bare file path in your text reply is NOT delivered '
-  + '(the user cannot open your working directory). Pass one or more local file paths; images are sent as image '
-  + 'messages, everything else as file messages. Optionally include a short message introducing the delivery; do NOT '
-  + 'repeat that same sentence in your normal reply afterwards (both are delivered, and the engine suppresses the '
-  + 'duplicate). Use only for artifacts the user should receive, not for ordinary conversation.'
+  'Deliver generated artifacts (files and images) directly to the user\'s chat window — a bare file path in your '
+  + 'text reply is NOT delivered (the user cannot open your working directory). Prefer calling `present` first when '
+  + 'a file is a finished deliverable the user asked for: presented files are auto-delivered by the engine, so do NOT '
+  + 'also send the same file here (it would arrive twice). Use this tool for everything else: on-demand sends, '
+  + 'presenting is unavailable, or the delivery needs an accompanying custom message. Pass one or more local file '
+  + 'paths; images are sent as image messages, everything else as file messages. Optionally include a short message '
+  + 'introducing the delivery; do NOT repeat that same sentence in your normal reply afterwards (both are delivered, '
+  + 'and the engine suppresses the duplicate).'
 
 /**
  * Register the `feishu_bridge_send` tool on `ctx.tools`.

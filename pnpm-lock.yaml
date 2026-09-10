@@ -882,6 +882,9 @@ importers:
       '@deepseek-ai/dsh-tool-ask-user':
         specifier: workspace:^
         version: link:../../interaction/tool-ask-user
+      '@deepseek-ai/dsh-tool-present':
+        specifier: workspace:^
+        version: link:../../fs/tool-present
       '@deepseek-ai/dsh-tools':
         specifier: workspace:^
         version: link:../../core/tools

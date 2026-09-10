@@ -54,6 +54,14 @@
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
 
+# Declarative delivery (upstream present tool): the model names finished
+# files as the user's deliverables and the engine auto-delivers them into
+# the chat (deliverables/presented → sendToSessionWithAttachments).
+# feishu_bridge_send stays as the direct on-demand channel.
+- insert:
+    - id: tool-present
+      name: '@deepseek-ai/dsh-tool-present'
+
 # The session memory surface (memory_* tools, per-session plus global
 # indexes) is part of the bridge product experience; index limits tuned for
 # card-length context. Mounted here so every bridge composition carries it.

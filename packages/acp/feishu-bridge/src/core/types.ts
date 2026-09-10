@@ -245,6 +245,7 @@ export type EventKind =
   | 'compaction'
   | 'todo_update'
   | 'skill_invocation'
+  | 'presented'
 
 /** A single piece of agent output streamed to the engine (Go Event). */
 export interface Event {

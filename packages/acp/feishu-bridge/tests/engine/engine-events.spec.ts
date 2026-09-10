@@ -2394,3 +2394,88 @@ describe('processInteractiveEvents native signals (tool failure / compaction / t
     expect(p.messages.join('\n')).not.toContain('child-only')
   })
 })
+
+describe('presented deliverable auto-delivery', () => {
+  it('reads declared files from the session workdir and delivers them', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const work = mkdtempSync(join(tmpdir(), 'fb-presented-'))
+    writeFileSync(join(work, 'report.md'), '# report body', 'utf8')
+
+    const p = createStubMediaPlatform()
+    const agent = { ...createStubAgent(), getWorkDir: () => work }
+    const { e } = newEngine(agent as never, p)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    agentSession.channel.push({
+      type: 'presented', content: 'report.md', done: false,
+      toolInputRaw: { files: [{ path: 'report.md', description: 'the report' }] },
+    })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(p.files).toHaveLength(1)
+    expect(p.files[0]!.fileName).toBe('report.md')
+    expect(p.getSent().some(text => text.includes('report.md'))).toBe(true)
+  })
+
+  it('resolves a delegated child\'s declared paths against its carried base', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const childWt = mkdtempSync(join(tmpdir(), 'fb-presented-wt-'))
+    writeFileSync(join(childWt, 'artifact.txt'), 'child work', 'utf8')
+
+    const p = createStubMediaPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    agentSession.channel.push({
+      type: 'presented', content: 'artifact.txt', done: false, fromSubagent: true,
+      toolInputRaw: { base: childWt, files: [{ path: 'artifact.txt' }] },
+    })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(p.files).toHaveLength(1)
+    expect(p.files[0]!.fileName).toBe('artifact.txt')
+  })
+
+  it('skips an oversized declared file with an explanatory note', async () => {
+    const { Msg } = await import('../../src/i18n/index.ts')
+    const p = createStubMediaPlatform()
+    const { e } = newEngine(createStubAgent(), p)
+    const sessionKey = 'test:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    const state = new InteractiveState()
+    state.agentSession = agentSession
+    state.platform = p
+    state.replyCtx = 'ctx-1'
+    e.interactiveStates.set(sessionKey, state)
+
+    // No files declared at all: the batch resolves to zero deliveries and a
+    // quiet skip (empty presented batches are not an error).
+    agentSession.channel.push({ type: 'presented', content: '', done: false, toolInputRaw: { files: [] } })
+    agentSession.channel.push({ type: 'result', content: 'done', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    expect(p.files).toHaveLength(0)
+    expect(Msg.PresentedDelivery).toBeDefined()
+  })
+})

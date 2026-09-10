@@ -22,6 +22,7 @@
     "@deepseek-ai/dsh-llm-pi-ai": "link:@FORK_DIR@/packages/llm/llm-pi-ai",
     "@deepseek-ai/dsh-memory": "link:@FORK_DIR@/packages/memory/memory",
     "@deepseek-ai/dsh-tool-ask-user": "link:@FORK_DIR@/packages/interaction/tool-ask-user",
+    "@deepseek-ai/dsh-tool-present": "link:@FORK_DIR@/packages/fs/tool-present",
     "@deepseek-ai/dsh-feishu-bridge-chatroom": "link:@FORK_DIR@/packages/acp/feishu-bridge-chatroom"
   }
 }

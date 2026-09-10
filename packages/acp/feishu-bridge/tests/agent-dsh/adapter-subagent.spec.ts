@@ -107,6 +107,34 @@ describe('DshAgentAdapter subagent lineage attribution', () => {
     expect(got[1]).toMatchObject({ type: 'tool_result', toolResult: 'file-a', toolID: 'child-1:c1', fromSubagent: true })
   })
 
+  it('projects a child session presented deliverable batch with fromSubagent', async () => {
+    const h = createHarness()
+    const a = new DshAgentAdapter(h.ctx, { agentName: 'dsh', cwd: '/w', providers: [], activeProvider: '' })
+    const bridge = await a.startSession('')
+    const bridgeID = bridge.currentSessionID()
+    h.agents.set('child-1', createAgent('child-1', bridgeID))
+
+    h.emitSession({ id: 'child-1', header: { parentSession: bridgeID, cwd: '/wt/child-1' } }, {
+      type: 'deliverables/presented',
+      turn: 1,
+      callId: 'call_present',
+      files: [{ path: 'out/analysis.md', description: 'the analysis' }],
+    })
+
+    const got = await receiveN(bridge.events(), 1)
+    expect(got[0]).toMatchObject({
+      type: 'presented',
+      fromSubagent: true,
+      content: 'out/analysis.md',
+    })
+    // The child's declared paths resolve against its own session cwd (a
+    // worktree), not the parent chat's work dir.
+    expect(got[0]?.toolInputRaw).toEqual({
+      base: '/wt/child-1',
+      files: [{ path: 'out/analysis.md', description: 'the analysis' }],
+    })
+  })
+
   it('emits the cumulative count on first turn edges and stays quiet for other child events', async () => {
     const h = createHarness()
     const a = new DshAgentAdapter(h.ctx, { agentName: 'dsh', cwd: '/w', providers: [], activeProvider: '' })

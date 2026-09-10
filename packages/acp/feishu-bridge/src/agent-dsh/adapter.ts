@@ -831,7 +831,10 @@ export class DshAgentAdapter {
     // ancestor lookup dies once the parent turn detaches, so a delegated
     // child also feeds the activity recorder — the background-subtask panel
     // reads it and does not depend on projection liveness.
-    const onSessionEvent = (session: { id: unknown; header?: { parentSession?: unknown } }, event: Record<string, unknown>): void => {
+    const onSessionEvent = (
+      session: { id: unknown; header?: { parentSession?: unknown; cwd?: unknown } },
+      event: Record<string, unknown>,
+    ): void => {
       const target = this.liveSessions.get(String(session.id))
       if (target !== undefined) {
         target.projectSessionEvent(event)
@@ -839,7 +842,9 @@ export class DshAgentAdapter {
       }
       if (session.header?.parentSession !== undefined) this.recordSubagentActivity(String(session.id), event)
       const ancestor = this.resolveSubagentAncestor(session)
-      if (ancestor !== undefined) ancestor.projectSubagentEvent(String(session.id), event)
+      if (ancestor !== undefined) {
+        ancestor.projectSubagentEvent(String(session.id), event, String(session.header?.cwd ?? ''))
+      }
     }
     this.disposers.push(ctx.on('session/event', onSessionEvent))
     // Settlement forgets the child's activity record unconditionally: the
@@ -2829,6 +2834,24 @@ export class DshAgentSession implements AgentSession {
         this.turnSteps = 0
         break
       }
+      case 'deliverables/presented': {
+        const files = (data.files ?? []) as Array<{ path?: unknown; description?: unknown }>
+        const declared = files.flatMap((file) => {
+          const path = typeof file.path === 'string' ? file.path : ''
+          if (path === '') return []
+          return [{
+            path,
+            ...typeof file.description === 'string' && file.description !== '' ? { description: file.description } : {},
+          }]
+        })
+        this.channel.push({
+          type: 'presented',
+          content: declared.map(file => file.path).join('\n'),
+          toolInputRaw: { files: declared },
+          done: false,
+        })
+        break
+      }
       default:
         break
     }
@@ -2845,7 +2868,7 @@ export class DshAgentSession implements AgentSession {
    * @param childSessionId - the emitting child session's id.
    * @param event - the durable session event ({type, seq, time, data}).
    */
-  projectSubagentEvent(childSessionId: string, event: Record<string, unknown>): void {
+  projectSubagentEvent(childSessionId: string, event: Record<string, unknown>, childCwd: string = ''): void {
     this.lastActivityAt = Date.now()
     const data = (event.data ?? {}) as Record<string, unknown>
     switch (toStr(event.type)) {
@@ -2879,6 +2902,26 @@ export class DshAgentSession implements AgentSession {
           toolResult: textOfBlocks(message?.content),
           ...(callId !== '' ? { toolID: `${childSessionId}:${callId}` } : {}),
           content: '',
+          done: false,
+          fromSubagent: true,
+        })
+        break
+      }
+      case 'deliverables/presented': {
+        const files = (data.files ?? []) as Array<{ path?: unknown; description?: unknown }>
+        const declared = files.flatMap((file) => {
+          const path = typeof file.path === 'string' ? file.path : ''
+          if (path === '') return []
+          return [{
+            path,
+            ...typeof file.description === 'string' && file.description !== '' ? { description: file.description } : {},
+          }]
+        })
+        if (declared.length === 0) break
+        this.channel.push({
+          type: 'presented',
+          content: declared.map(file => file.path).join('\n'),
+          toolInputRaw: { base: childCwd, files: declared },
           done: false,
           fromSubagent: true,
         })
