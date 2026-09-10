@@ -95,6 +95,24 @@ describe('renderCardMap', () => {
     }
   })
 
+  it('collapsiblePanel projects to a collapsed collapsible_panel with nested markdown', () => {
+    const card = newCard()
+      .markdown('# P\n\nplain layer')
+      .collapsiblePanel('Implementation details', false, { kind: 'markdown', content: '## details\n\nimplementation detail' })
+      .build()
+
+    const elements = getBodyElements(decodeRenderedCard(card))
+    expect(jStr(jObj(elements[0]).tag)).toBe('markdown')
+    const panel = jObj(elements[1])
+    expect(jStr(panel.tag)).toBe('collapsible_panel')
+    expect(panel.expanded).toBe(false)
+    expect(jStr(jObj(jObj(panel.header).title).content)).toBe('Implementation details')
+    const inner = jArr(panel.elements)
+    expect(inner.length).toBe(1)
+    expect(jStr(jObj(inner[0]).tag)).toBe('markdown')
+    expect(jStr(jObj(inner[0]).content)).toBe('## details\n\nimplementation detail')
+  })
+
   it('default actions use column_set (schema 2.0 forbids action tag)', () => {
     const buttons: CardButton[] = [
       primaryBtn('Yes', 'act:/yes'),

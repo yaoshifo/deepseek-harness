@@ -95,14 +95,26 @@ export interface UserQuestion {
 }
 
 /**
+ * The plan's presentation layers from the exit tool's `details` argument:
+ * `plain` renders expanded, `details` renders in a collapsed panel. Absent
+ * when the model submitted no annex — the card then shows `plan` as one
+ * markdown block.
+ */
+export interface PlanLayers {
+  plain: string
+  details: string
+}
+
+/**
  * One interactive ask delegated to the engine's `askUser` (B2): render ONE
  * card and await the user's decision. Permission asks carry the native
  * `ApprovalRequest` preview (`toolInput`, falling back to `reason`);
- * plan-review asks carry the plan text from the userQuestions intent.
+ * plan-review asks carry the plan text from the userQuestions intent, plus
+ * its layer split when the exit tool submitted a `details` annex.
  */
 export type AskRequest =
   | { kind: 'permission'; toolName: string; preview: string }
-  | { kind: 'plan-review'; heading: string; plan: string }
+  | { kind: 'plan-review'; heading: string; plan: string; layers?: PlanLayers }
   | { kind: 'questions'; questions: UserQuestion[] }
 
 /** One answered question in an {@link AskDecision}. */

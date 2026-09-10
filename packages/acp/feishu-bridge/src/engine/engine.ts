@@ -38,6 +38,7 @@ import type {
   ParkOutcome,
   PendingAsk,
   PendingAskAnswer,
+  PlanLayers,
   Platform,
   SessionStartOptions,
   SubtaskDelivery,
@@ -5293,15 +5294,21 @@ export class Engine {
 
     // Plan review: the ask carries the plan markdown; a plan file the agent
     // wrote this round wins when it is readable (fresher than the submitted
-    // copy, Go engine_events.go plan extraction).
+    // copy, Go engine_events.go plan extraction). The fresher file is one
+    // unsplit blob, so its override drops the submitted layer split too.
     let planContent = ''
+    let planLayers: PlanLayers | undefined
     if (request.kind === 'plan-review') {
       state.planRevisionCount++
       planContent = request.plan.trim()
+      planLayers = request.layers
       if (state.planFilePath !== '') {
         try {
           const fromFile = readFileSync(state.planFilePath, 'utf8').trim()
-          if (fromFile !== '') planContent = fromFile
+          if (fromFile !== '') {
+            planContent = fromFile
+            planLayers = undefined
+          }
         } catch {
           console.warn(`plan file read failed (${state.planFilePath})`)
         }
@@ -5411,9 +5418,9 @@ export class Engine {
           activePlanFilePath = this.persistPlanFile(planContent)
         }
         if (activePlanFilePath !== '') {
-          await this.sendPlanContent(p, replyCtx, state, activePlanFilePath, state.planRevisionCount, exportKey)
+          await this.sendPlanContent(p, replyCtx, state, activePlanFilePath, state.planRevisionCount, exportKey, planLayers)
         } else {
-          await this.sendInlinePlanContent(p, replyCtx, state, planContent, state.planRevisionCount, exportKey)
+          await this.sendInlinePlanContent(p, replyCtx, state, planContent, state.planRevisionCount, exportKey, planLayers)
         }
         if (this.planRenderEnabled && shouldRenderPlan(state, planContent, state.planRevisionCount)) {
           launchPlanRender(this, state, sessionKey, planContent, activePlanFilePath, state.planRevisionCount, exportKey)
@@ -5619,7 +5626,9 @@ export class Engine {
    * as a plan card with an export button (Go sendPlanContent). Returns the
    * (possibly truncated) content string for dedup. When `planMaxLen` is 0, no
    * truncation is applied. The card send is awaited (Go sends synchronously)
-   * so the permission card follows it in the chat.
+   * so the permission card follows it in the chat. Submitted layers, when
+   * present, render as the card body (plain expanded, details collapsed)
+   * instead of the file text; the file still feeds the return and the export.
    * @param p - Platform the card is sent to.
    * @param replyCtx - Platform reply context addressing the chat.
    * @param state - Interactive state recording the plan export content.
@@ -5627,6 +5636,7 @@ export class Engine {
    * @param revision - Plan revision counter, starting at 1; selects the card
    * header's (vN) variant from the second presentation on.
    * @param exportKey - Export-button key the content is stored under.
+   * @param layers - Submitted plan layers from the exit tool, when present.
    * @returns The sent (possibly truncated) content, '' on read failure or empty content.
    */
   async sendPlanContent(
@@ -5636,6 +5646,7 @@ export class Engine {
     filePath: string,
     revision: number,
     exportKey: string,
+    layers?: PlanLayers,
   ): Promise<string> {
     let content = ''
     try {
@@ -5644,18 +5655,11 @@ export class Engine {
       return ''
     }
     if (content === '') return ''
-    // Plan truncation uses "..." (three ASCII dots) to match the Go plan card
-    // rendering, distinct from truncateIf's unicode ellipsis.
-    const maxLen = this.display.planMaxLen
-    if (maxLen > 0) {
-      const runes = Array.from(content)
-      if (runes.length > maxLen) {
-        content = `${runes.slice(0, maxLen).join('')}...`
-      }
-    }
+    content = this.truncatePlanText(content)
     await sendPlanCard(this, p, replyCtx, state, exportKey, content,
       { title: this.planCardTitle(revision), color: 'blue' },
-      [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }])
+      [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }],
+      this.truncatePlanLayers(layers))
     return content
   }
 
@@ -5674,10 +5678,38 @@ export class Engine {
   }
 
   /**
+   * Truncate one plan text to `display.planMaxLen` runes, "..." suffix when
+   * cut. Plan truncation uses "..." (three ASCII dots) to match the Go plan
+   * card rendering, distinct from truncateIf's unicode ellipsis. `0` disables.
+   * @param text - Plan text (whole body or one layer).
+   * @returns The possibly truncated text.
+   */
+  private truncatePlanText(text: string): string {
+    const maxLen = this.display.planMaxLen
+    if (maxLen <= 0) return text
+    const runes = Array.from(text)
+    return runes.length > maxLen ? `${runes.slice(0, maxLen).join('')}...` : text
+  }
+
+  /**
+   * Apply the per-layer plan truncation to submitted layers; each layer gets
+   * the full `planMaxLen` budget. Absent layers stay absent.
+   * @param layers - Submitted plan layers, when present.
+   * @returns Layers with both texts truncated, or the input undefined.
+   */
+  private truncatePlanLayers(layers: PlanLayers | undefined): PlanLayers | undefined {
+    return layers === undefined
+      ? undefined
+      : { plain: this.truncatePlanText(layers.plain), details: this.truncatePlanText(layers.details) }
+  }
+
+  /**
    * Send plan content passed inline in the ExitPlanMode tool input as a plan
    * card with an export button (Go sendInlinePlanContent). Returns the
    * trimmed content for dedup. The card send is awaited (Go sends
-   * synchronously) so the permission card follows it in the chat.
+   * synchronously) so the permission card follows it in the chat. Submitted
+   * layers, when present, render as the card body (plain expanded, details
+   * collapsed) instead of the single content block.
    * @param p - Platform the card is sent to.
    * @param replyCtx - Platform reply context addressing the chat.
    * @param state - Interactive state recording the plan export content.
@@ -5685,6 +5717,7 @@ export class Engine {
    * @param revision - Plan revision counter, starting at 1; selects the card
    * header's (vN) variant from the second presentation on.
    * @param exportKey - Export-button key the content is stored under.
+   * @param layers - Submitted plan layers from the exit tool, when present.
    * @returns The sent (possibly truncated) content, '' when empty.
    */
   async sendInlinePlanContent(
@@ -5694,17 +5727,15 @@ export class Engine {
     content: string,
     revision: number,
     exportKey: string,
+    layers?: PlanLayers,
   ): Promise<string> {
     let body = content.trim()
     if (body === '') return ''
-    const maxLen = this.display.planMaxLen
-    if (maxLen > 0) {
-      const runes = Array.from(body)
-      if (runes.length > maxLen) body = `${runes.slice(0, maxLen).join('')}...`
-    }
+    body = this.truncatePlanText(body)
     await sendPlanCard(this, p, replyCtx, state, exportKey, body,
       { title: this.planCardTitle(revision), color: 'blue' },
-      [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }])
+      [{ text: this.i18n.t(Msg.PlanExportBtn), type: 'default', value: `export:${exportKey}` }],
+      this.truncatePlanLayers(layers))
     return body
   }
 

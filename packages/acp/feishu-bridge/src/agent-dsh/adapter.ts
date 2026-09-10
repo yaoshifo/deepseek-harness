@@ -89,7 +89,12 @@ interface RawAskQuestionItem {
   detail?: string
   options?: Array<{ label: string; description?: string; recommended?: boolean }>
   multiSelect?: boolean
-  intent?: { kind?: string; approve?: string }
+  intent?: {
+    kind?: string
+    approve?: string
+    /** Submitted plan layers (exit tool's `details` annex); presentation-only. */
+    layers?: { plain: string; details: string }
+  }
 }
 
 /** Ask request the userQuestions service passes to the provider (M3). */
@@ -1025,6 +1030,7 @@ export class DshAgentAdapter {
       kind: 'plan-review',
       heading,
       plan,
+      ...item.intent?.layers !== undefined ? { layers: item.intent.layers } : {},
     }, signal)
     const approve = item.intent?.approve ?? ''
     if (decision.outcome === 'allowed-once' || decision.outcome === 'allowed-always') {

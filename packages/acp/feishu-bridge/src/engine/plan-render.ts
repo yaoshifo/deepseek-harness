@@ -35,6 +35,7 @@ import {
   asRenderStatusUpdater,
   asReplyContextReconstructor,
   type ImageAttachment,
+  type PlanLayers,
   type Platform,
 } from '../core/types.ts'
 import { markdownToSimpleHTML } from '../markdown/markdown-html.ts'
@@ -1463,14 +1464,18 @@ export async function cleanupRenderedReplyHTML(state: InteractiveState | undefin
  * back) — callers must await it before sending the permission card so the
  * chat order stays plan → approval (Go sends synchronously, same guarantee).
  *
- * @param e - Engine used for the plain-text fallback.
+ * @param e - Engine used for the plain-text fallback and the panel title.
  * @param p - Platform to send the card through.
  * @param replyCtx - Reply context to address the card to.
  * @param state - Per-session state recording the card handle; undefined forces the plain path.
  * @param exportKey - Export key under which the card handle is recorded.
- * @param content - The plan markdown card body.
+ * @param content - The plan markdown card body (both layers assembled when
+ * layers are present; the plain-text fallback always sends this).
  * @param header - Card header; undefined forces the plain path.
  * @param buttons - Action buttons (e.g. export) appended to the card.
+ * @param layers - Submitted plan layers; when present the body renders the
+ * plain layer expanded and the details layer in a collapsed panel instead of
+ * the single content block.
  * @returns Promise settling after the card (or its fallback) was sent.
  */
 export function sendPlanCard(
@@ -1482,35 +1487,35 @@ export function sendPlanCard(
   content: string,
   header: CardHeader | undefined,
   buttons: CardButton[],
+  layers?: PlanLayers,
 ): Promise<void> {
   if (state !== undefined && header !== undefined) {
     const cu = asCardSenderWithUpdate(p)
     if (cu !== undefined) {
       const baseCard = new Card()
       baseCard.header = header
-      baseCard.elements = [{ kind: 'markdown', content }]
-      if (buttons.length > 0) baseCard.elements.push({ kind: 'actions', buttons, layout: 'row' })
+      setPlanCardElements(baseCard, content, buttons, layers, e.i18n.t(Msg.PlanDetailsPanel))
       return cu.sendCardWithHandle(replyCtx, baseCard).then((handle) => {
         if (state.planCardRender === undefined) state.planCardRender = new Map()
         state.planCardRender.set(exportKey, { handle, baseCard })
         return undefined
       }, (error: unknown) => {
         console.warn(`plan card send with handle failed, falling back to plain card: ${String(error)}`)
-        return sendPlanCardPlain(e, p, replyCtx, content, header, buttons)
+        return sendPlanCardPlain(e, p, replyCtx, content, header, buttons, layers)
       })
     }
   }
-  return sendPlanCardPlain(e, p, replyCtx, content, header, buttons)
+  return sendPlanCardPlain(e, p, replyCtx, content, header, buttons, layers)
 }
 
 async function sendPlanCardPlain(
   e: Engine, p: Platform, replyCtx: unknown, content: string,
-  header: CardHeader | undefined, buttons: CardButton[],
+  header: CardHeader | undefined, buttons: CardButton[], layers?: PlanLayers,
 ): Promise<void> {
   const cs = asCardSender(p)
   if (cs !== undefined && header !== undefined) {
     try {
-      await cs.sendCard(replyCtx, buildPlanCard(content, header, buttons))
+      await cs.sendCard(replyCtx, buildPlanCard(content, header, buttons, layers, e.i18n.t(Msg.PlanDetailsPanel)))
       return
     } catch {
       // fall through to plain text
@@ -1519,10 +1524,41 @@ async function sendPlanCardPlain(
   await e.send(p, replyCtx, content)
 }
 
-function buildPlanCard(content: string, header: CardHeader, buttons: CardButton[]): Card {
+function buildPlanCard(
+  content: string,
+  header: CardHeader,
+  buttons: CardButton[],
+  layers: PlanLayers | undefined,
+  panelTitle: string,
+): Card {
   const card = new Card()
   card.header = header
-  card.elements = [{ kind: 'markdown', content }]
-  if (buttons.length > 0) card.elements.push({ kind: 'actions', buttons, layout: 'row' })
+  setPlanCardElements(card, content, buttons, layers, panelTitle)
   return card
+}
+
+/**
+ * Set the plan card's body elements: a single markdown block, or with
+ * submitted layers the plain layer expanded plus the details layer in a
+ * collapsed panel, then the action row.
+ * @param card - Card whose elements are set.
+ * @param content - Assembled body (single-block path).
+ * @param buttons - Action buttons (e.g. export).
+ * @param layers - Submitted layers; present selects the layered body.
+ * @param panelTitle - Localized title of the details panel.
+ */
+function setPlanCardElements(
+  card: Card,
+  content: string,
+  buttons: CardButton[],
+  layers: PlanLayers | undefined,
+  panelTitle: string,
+): void {
+  card.elements = layers === undefined
+    ? [{ kind: 'markdown', content }]
+    : [
+      { kind: 'markdown', content: layers.plain },
+      { kind: 'collapsiblePanel', title: panelTitle, expanded: false, elements: [{ kind: 'markdown', content: layers.details }] },
+    ]
+  if (buttons.length > 0) card.elements.push({ kind: 'actions', buttons, layout: 'row' })
 }

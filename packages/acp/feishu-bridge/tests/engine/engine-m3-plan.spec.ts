@@ -310,3 +310,113 @@ describe('PlanReviewParkedCardSettle', () => {
     expect(states).toEqual(['running', 'waiting', 'rejected'])
   })
 })
+
+describe('PlanLayeredCard', () => {
+  it('a plan-review with layers renders the plain layer expanded and the details layer collapsed', async () => {
+    const p = createStubCardPlatform('feishu')
+    const e = newTestEngine()
+    const key = 'feishu:oc_plan:u7'
+    e.sessions.getOrCreateActive(key)
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    e.interactiveStates.set(key, state)
+
+    const decision = e.askUser(key, {
+      kind: 'plan-review',
+      heading: '# P',
+      plan: '# P\n\nplain layer body\n\n## details\n\nimplementation detail',
+      layers: { plain: '# P\n\nplain layer body', details: '## details\n\nimplementation detail' },
+    })
+    await new Promise((r) => { setTimeout(r, 30) })
+
+    const planCard = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
+    const panel = planCard.elements.find(el => el.kind === 'collapsiblePanel') as {
+      kind: 'collapsiblePanel'
+      expanded: boolean
+      title: string
+      elements: Array<{ kind: string; content?: string }>
+    }
+    expect(planCard.elements[0]).toMatchObject({ kind: 'markdown', content: '# P\n\nplain layer body' })
+    expect(panel).toBeDefined()
+    expect(panel.expanded).toBe(false)
+    expect(panel.title).toBe('Implementation details')
+    expect(panel.elements.map(el => el.content ?? '').join('\n')).toContain('implementation detail')
+    expect(planCard.elements.some(el => el.kind === 'actions')).toBe(true)
+
+    e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:allow', isPermissionAction: true }), 'perm:allow')
+    await expect(decision).resolves.toEqual({ outcome: 'allowed-once' })
+  })
+
+  it('sendPlanContent layers ride the file-path variant too', async () => {
+    const p = createStubCardPlatform('feishu')
+    const e = newTestEngine()
+    const tmpDir = mkdtempSync(join(tmpdir(), 'plan-test-'))
+    const planFile = join(tmpDir, 'layered-plan.md')
+    writeFileSync(planFile, '# P\n\nplain\n\n## details\n\nimplementation detail', 'utf8')
+
+    await e.sendPlanContent(p, 'replyCtx', undefined, planFile, 1, 'plan:1', {
+      plain: '# P\n\nplain',
+      details: '## details\n\nimplementation detail',
+    })
+
+    const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
+    const panel = card.elements.find(el => el.kind === 'collapsiblePanel') as {
+      expanded: boolean
+      elements: Array<{ kind: string; content?: string }>
+    }
+    expect(card.elements[0]).toMatchObject({ kind: 'markdown', content: '# P\n\nplain' })
+    expect(panel.expanded).toBe(false)
+    expect(panel.elements.map(el => el.content ?? '').join('\n')).toContain('implementation detail')
+  })
+
+  it('planMaxLen truncates each layer separately', async () => {
+    const p = createStubCardPlatform('feishu')
+    const e = newTestEngine()
+    e.display.planMaxLen = 10
+    const tmpDir = mkdtempSync(join(tmpdir(), 'plan-test-'))
+    const planFile = join(tmpDir, 'long-layered.md')
+    writeFileSync(planFile, `${'a'.repeat(20)}\n\n${'b'.repeat(20)}`, 'utf8')
+
+    await e.sendPlanContent(p, 'replyCtx', undefined, planFile, 1, 'plan:1', {
+      plain: 'a'.repeat(20),
+      details: 'b'.repeat(20),
+    })
+
+    const card = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
+    const panel = card.elements.find(el => el.kind === 'collapsiblePanel') as {
+      elements: Array<{ kind: string; content?: string }>
+    }
+    expect(card.elements[0]).toMatchObject({ kind: 'markdown', content: `${'a'.repeat(10)}...` })
+    expect(panel.elements[0]?.content).toBe(`${'b'.repeat(10)}...`)
+  })
+
+  it('an agent-written plan file overrides the submitted layers — no forced split', async () => {
+    const p = createStubCardPlatform('feishu')
+    const e = newTestEngine()
+    const key = 'feishu:oc_plan:u8'
+    const tmpDir = mkdtempSync(join(tmpdir(), 'plan-test-'))
+    const planFile = join(tmpDir, 'agent-plan.md')
+    writeFileSync(planFile, '# From file\n\nfile content wins', 'utf8')
+    const state = new InteractiveState()
+    state.platform = p
+    state.replyCtx = 'ctx'
+    state.planFilePath = planFile
+    e.interactiveStates.set(key, state)
+
+    const decision = e.askUser(key, {
+      kind: 'plan-review',
+      heading: '# Inline',
+      plan: '# Inline\ninline body\n\n## details\n\nimplementation detail',
+      layers: { plain: '# Inline\ninline body', details: '## details\n\nimplementation detail' },
+    })
+    await new Promise((r) => { setTimeout(r, 30) })
+
+    const planCard = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
+    expect(planCard.elements.some(el => el.kind === 'collapsiblePanel')).toBe(false)
+    expect(planCard.elements.map(el => String(el.content ?? '')).join('\n')).toContain('file content wins')
+
+    e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:deny', isPermissionAction: true }), 'perm:deny')
+    await expect(decision).resolves.toEqual({ outcome: 'rejected' })
+  })
+})

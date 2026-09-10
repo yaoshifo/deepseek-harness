@@ -976,6 +976,28 @@ describe('DshAgentAdapter userQuestions answerer', () => {
     await askPromise
   })
 
+  it('plan-review passes the intent layer split through to the plan card', async () => {
+    const { session, ask, delegate } = await startedProvider()
+
+    const askPromise = ask({
+      questions: [planReviewQuestion({
+        detail: '# Fix spinner\n\nplain decisions\n\n## details\n\nimplementation detail',
+        intent: { kind: 'plan-review', approve: 'Approve', layers: { plain: '# Fix spinner\n\nplain decisions', details: '## details\n\nimplementation detail' } },
+      })],
+      agent: { session: { id: session.currentSessionID() } },
+    })
+    await new Promise((r) => { setTimeout(r, 10) })
+
+    expect(delegate.calls[0]?.request).toEqual({
+      kind: 'plan-review',
+      heading: '# Fix spinner',
+      plan: '# Fix spinner\n\nplain decisions\n\n## details\n\nimplementation detail',
+      layers: { plain: '# Fix spinner\n\nplain decisions', details: '## details\n\nimplementation detail' },
+    })
+    delegate.settle({ outcome: 'allowed-once' })
+    await askPromise
+  })
+
   it('a single-line plan falls back to the question as the card heading', async () => {
     const { session, ask, delegate } = await startedProvider()
 

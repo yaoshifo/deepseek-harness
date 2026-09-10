@@ -92,6 +92,8 @@ agent 完成计划后，会以 markdown 形式、从标题开头书写计划并�
 
 `exit_plan_mode` 在计划模式未激活时仍保持注册，因此进入或离开只改变提示词段落，绝不改变请求的工具目录。经批准的评审会记录一个静默的待生效退出，由下一个被接受的轮内 pre-step 追加，当前这批工具调用剩余部分仍保留计划引导。缺少用户交互通道，或评审等待期间服务重载，调用都会失败关闭，`/plan off` 仍是手动退路。
 
+工具入参为 `plan`（计划正文，必须以 `#` 标题开头的 markdown）与可选的 `details`（实施细节附录）。提交 `details` 时，评审提问的 `detail` 携带两层拼合的完整计划，presentation intent 额外携带 `layers: { plain, details }` 供分层展示的 UI 使用（消费方按字段取值，零解析）；空白 `details` 视为未提交。
+
 ### 会话投影单元
 
 组合了 `ctx.sessionProjections` 时，本包通过可选注入注册 `plan` 单元。该单元把已记录的 `/plan` 命令运行转为候选目标，在 `plan/mode` 上提交已记录状态，并为 `view` 推导 `{ active, pending }`，其中 `pending` 仅在未结算或已成功的选择与已记录状态不同时为 true——这是仅凭日志即可恢复的纯回放量。key 由 [`src/types.ts`](src/types.ts) 的声明合并加入 `SessionProjectionMap`；框架负责驱动该单元，卸载插件 fiber 会注销该 key。plan-mode 读取要求该单元与 `turnBoundary` 单元存在；注册表或任一 key 缺失时都会显式失败。

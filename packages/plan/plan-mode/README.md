@@ -92,6 +92,8 @@ The command child activates only when a commands service is composed. It maps ba
 
 `exit_plan_mode` stays registered while plan mode is inactive, so entering or leaving changes only the prompt section, never the request tool catalog. An approved review records a silent pending exit that the next accepted in-turn pre-step appends, keeping plan guidance for the rest of the current tool batch. Without a user-questions channel, or after a service reload while the review is pending, the call fails closed and `/plan off` remains the manual escape.
 
+The tool takes `plan` (the plan body, markdown that must start with a `#` heading) plus an optional `details` (implementation-detail annex). When `details` is submitted, the review question's `detail` carries both layers concatenated, and the presentation intent additionally carries `layers: { plain, details }` for layer-rendering UIs (consumers read the fields, nothing is parsed); a blank `details` counts as not submitted.
+
 ### Session projection unit
 
 When `ctx.sessionProjections` is composed, the package registers the `plan` unit through optional injection. The unit turns logged `/plan` command runs into a candidate target, commits the logged state on `plan/mode`, and derives `{ active, pending }` for `view`, where `pending` is true only while an unsettled or successful selection differs from the logged state — a pure replay quantity recoverable from the log alone. The key merges into `SessionProjectionMap` from [`src/types.ts`](src/types.ts); the framework drives the unit, and unloading the plugin fiber unregisters the key. Plan-mode reads require this unit and the `turnBoundary` unit, and fail explicitly if the registry or either key is absent.
