@@ -102,7 +102,7 @@ export function registerFollowupsTool(ctx: Context, route: (caller: unknown) => 
         options: args.options,
       }
       const decision = await engine.askUser(sessionKey, { kind: 'questions', questions: [question] })
-      const first = decision.answers[0]
+      const first = decision.answers?.[0]
       return { status: 'ok' as const, message: first?.custom ?? '' }
     },
   }))

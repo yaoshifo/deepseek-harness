@@ -53,11 +53,15 @@ function stubInbox(): Inbox {
       }
       return false
     },
-    remove: (messageId: string) => {
+    remove: (messageId) => {
       for (const messages of [nextStep, nextTurn]) {
         const index = messages.findIndex(message => message.id === messageId)
-        if (index !== -1) messages.splice(index, 1)
+        if (index !== -1) {
+          messages.splice(index, 1)
+          return true
+        }
       }
+      return false
     },
     splice: (target, start, deleteCount, inserted) => list(target).splice(start, deleteCount, ...inserted),
   }
