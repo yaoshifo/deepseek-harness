@@ -148,6 +148,8 @@ class EditOutput(TypedDict):
 class ExitPlanModeArgs(TypedDict):
     # The complete plan, as markdown, starting with a # heading that names it.
     plan: str
+    # Implementation-detail annex appended after the plan; capable UIs present it collapsed by default.
+    details: NotRequired[str]
     # Additional keys beyond those declared are allowed.
 
 class ExitPlanModeOutput(TypedDict):
@@ -566,7 +568,7 @@ class Tools(Protocol):
     async def edit(self, args: EditArgs) -> EditOutput:
         """Edit an existing UTF-8 text file by replacing literal text."""
     async def exit_plan_mode(self, args: ExitPlanModeArgs) -> ExitPlanModeOutput:
-        """Use only in plan mode. Present your plan for the user's review and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it. The user may approve (carry out the plan from your next step) or keep planning — their feedback comes back in the tool result."""
+        """Use only in plan mode. Present your plan for the user's review and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it. The user may approve (carry out the plan from your next step) or keep planning — their feedback comes back in the tool result. An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default."""
     async def get_goal(self, args: dict[str, Any]) -> GetGoalOutput1 | GetGoalOutput2:
         """Read the current same-session goal, including its exact id/revision, objective, phase, completed continuation rounds, round limit, blocker reason when present, and whether another continuation is armed. Call this before updating a goal."""
     async def glob(self, args: GlobArgs) -> GlobOutput:
