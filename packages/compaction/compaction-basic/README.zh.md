@@ -217,9 +217,10 @@ Output EXACTLY the Markdown structure below: keep every section, in order. Use t
 Rules:
 - Write concise English engineering prose. Preserve exact file paths, commands, error strings, identifiers, numeric values, function signatures, and syntax fragments.
 - Capture user feedback and explicit instructions faithfully, especially corrections.
+- When the conversation contains an approved plan (an exit_plan_mode tool call the user approved; with several, the latest), copy its full markdown verbatim into Critical Context as a fenced code block, and keep it there while any of its work remains unexecuted; condense it like other completed history once it is fully executed.
 - Do NOT mention this summarization request or that the context was compacted.
 - Output only the checkpoint text: do not call any tool or take any other action.
-- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure.
+- If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure. The verbatim approved-plan copy is the one exception: carry it forward unchanged while any of its work remains unexecuted.
 ```
 
 #### Token 影响
@@ -242,6 +243,7 @@ Rules:
 - **部分不可分单元与仅 envelope 溢出仍不在表层压缩范围内**——恢复无法缩减系统／工具／前缀、拆分不可分的非工具节点，或修复不可剪枝剩余部分仍超出窗口的工具单元。可选 pruner 可以缩减原本不可分工具对内的文本型工具结果主体。
 - **`compactRegion` 要求存在未结束的轮次**——在完全关闭的会话上手动调用会抛出异常（「no open turn」），而不是执行压缩。
 - **摘要失败会保留最新持久表层**——任何替换前，自动路径会记录警告，并携带完整超预算历史继续。如果剪枝已落地，后续摘要失败会从该持久剪枝表层继续。因达到 `maxTokens` 而发生的摘要截断（隐藏推理 token 可能会耗尽该额度）遵循同一规则。
+- **逐字保留的已批准计划会与摘要上限竞争**——保留的 plan 计入 `maxTokens`；放不下的计划会让检查点安全失败（截断报错、保留完整历史），而不是静默丢失计划内容。反复出现时应调大 `maxTokens`。
 
 <a id="dev-note"></a>
 ### 开发备注

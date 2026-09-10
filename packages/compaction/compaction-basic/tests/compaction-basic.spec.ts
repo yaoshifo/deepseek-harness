@@ -1269,6 +1269,25 @@ describe('default one-shot summarizer', () => {
     expect(lastText).toContain('## Primary Request and Intent')
   })
 
+  it('instructs the summarizer to copy an approved plan verbatim into the checkpoint', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }])
+    await compact.runSummarize({ messages: [] }, agent(conversation(1), MODEL))
+
+    const last = adapter.lastOptions?.messages.at(-1)?.content[0]
+    const lastText = last?.type === 'text' ? last.text : ''
+    expect(lastText).toContain('an exit_plan_mode tool call the user approved')
+    expect(lastText).toContain('copy its full markdown verbatim into Critical Context as a fenced code block')
+  })
+
+  it('exempts the verbatim approved-plan copy from the prior-checkpoint merge rule', async () => {
+    const { adapter, compact } = await summarizerHarness([{ type: 'text', text: 'summary' }])
+    await compact.runSummarize({ messages: [] }, agent(conversation(1), MODEL))
+
+    const last = adapter.lastOptions?.messages.at(-1)?.content[0]
+    const lastText = last?.type === 'text' ? last.text : ''
+    expect(lastText).toContain('The verbatim approved-plan copy is the one exception: carry it forward unchanged while any of its work remains unexecuted.')
+  })
+
   it('applies the routed model policy without changing the replayed prefix', async () => {
     const { ctx, compact } = await summarizerHarness(
       [{ type: 'text', text: 'unused default summary' }],
