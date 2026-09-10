@@ -5247,8 +5247,10 @@ export class Engine {
     // completion card), and the deferred decision below is the tool result —
     // it tells the model the selection arrives as a new message, so even a
     // session running a stale prompt ends its turn correctly. This branch is
-    // the engine-side trigger: the agent keeps calling ask_user_question with
-    // the prompt-mandated signature, no model-side change required.
+    // the engine-side trigger: the feishu_bridge_followups tool synthesizes
+    // the signature and delegates here; sessions on the pre-tool prompt still
+    // hand-write it through ask_user_question, which this branch keeps
+    // converting as the compatibility path.
     if (request.kind === 'questions' && isFollowupsAsk(request)) {
       const [question] = request.questions
       state.pendingFollowups = question

@@ -10,7 +10,7 @@ agent 约定提示词要求：turn 的「发现的问题 / 可优化点」一节
 
 ## Decision
 
-引擎的 `askUser` 委托对识别为收尾卡的 ask 就地转换而非 park。识别在引擎侧、按签名进行——模型行为零改动、零迁移：单题 questions 且 header 为保留字「后续处理」，或单题多选且含「暂不处理」选项。两个键都是提示词既已规定的特征，存量收尾卡在首次部署即被转换；header 常量放在 `engine/ask.ts`、提示词模板 import 同一常量，匹配器与提示词不可能漂移。
+引擎的 `askUser` 委托对识别为收尾卡的 ask 就地转换而非 park。识别在引擎侧、按签名进行——模型行为零改动、零迁移：单题 questions 且 header 为保留字「后续处理」，或单题多选且含「暂不处理」选项。两个键都是引擎自有的收尾卡常量；自[专用工具改动](2026-09-10-feishu-bridge-followups-dedicated-tool.zh.md)起，header 由 `feishu_bridge_followups` 工具合成（旧提示词为手写），header 常量放在 `engine/ask.ts`、工具 import 同一常量，匹配器与合成方不可能漂移。
 
 - `isFollowupsAsk`（engine/ask.ts）持有匹配器；`Engine.askUser` 的转换分支把问题登记到 `InteractiveState.pendingFollowups`，把 ask 前的回复段钉进实时播报段（`StreamPreview.pinAnalysisText` 把该段冻结为前缀——`appendAnalysisText` 按文本块整体替换该段，ask 之后的尾段文本本会把收尾总结顶出卡片；ask 后的块折叠进前缀，完成卡因此承载完整回复；`captureReplyForExport` 仍为导出按钮登记该段，segmentStart 不动、turn-end 导出仍登记完整 joined 回复，二次 pin 追加而非丢弃首个前缀），并返回合成的延迟 Decision——custom 文本告知模型选择会作为新消息到达、且不要向用户复述该说明（建议卡本身已说明流程）。工具结果本身就是第二道防线：即使会话带着过时提示词，也会正确收尾而非干等。
 - `sendFollowupsCard` 在 `handleResultEvent` 里紧跟 `sendTurnCompletionCard` 发出蓝色建议卡（checkOptions 表单、`fw_multi:0` action、recommended 选项预勾选、卡内附言输入框）；errored turn 丢弃登记，排队接管把登记结转到最终 turn 的完成卡。
@@ -19,7 +19,7 @@ agent 约定提示词要求：turn 的「发现的问题 / 可优化点」一节
 
 ## Alternatives considered
 
-**提示词驱动的工具切换——新增非阻塞的 `feishu_bridge_followups` 工具，由提示词指示模型调用。** 作为机制被否：它依赖模型遵从，一次漏做、一个带着旧提示词的存量会话、一次提示词漂移都会退回旧的 park 行为。签名转换则锚定模型既有的稳定行为；提示词改写只是对齐说明，不是承重墙。
+**提示词驱动的工具切换——新增非阻塞的 `feishu_bridge_followups` 工具，由提示词指示模型调用。** 作为机制被否：它依赖模型遵从，一次漏做、一个带着旧提示词的存量会话、一次提示词漂移都会退回旧的 park 行为。签名转换则锚定模型既有的稳定行为；提示词改写只是对齐说明，不是承重墙。（2026-09-10 以修正形式接替：本转换自身已是既成兜底，工具失手退到转换而非 park——[专用工具 note](2026-09-10-feishu-bridge-followups-dedicated-tool.zh.md)。）
 
 **把选项渲染在 ✅ 完成卡上。** 产品决策否掉：完成卡是纯状态面，混入决策 UI 的交互设计不好。
 

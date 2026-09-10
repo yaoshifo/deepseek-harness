@@ -446,12 +446,15 @@ describe('followups submission routing', () => {
 })
 
 describe('agent conventions prompt (followups contract)', () => {
-  it('mandates the reserved header and the deferred-selection semantics', async () => {
+  it('mandates the followups tool and the deferred-selection semantics', async () => {
     const { agentConventionsPrompt } = await import('../../src/engine/agent-conventions.ts')
     const prompt = agentConventionsPrompt()
-    // The reserved header is the engine-side matcher's primary key: the
-    // prompt must keep mandating it verbatim.
-    expect(prompt).toContain(FOLLOWUPS_ASK_HEADER)
+    // The dedicated feishu_bridge_followups tool owns the reserved header and
+    // the other card constants (its spec pins the synthesized ask); the
+    // prompt must mandate the tool and stop routing closings through the
+    // generic ask tool.
+    expect(prompt).toContain('feishu_bridge_followups')
+    expect(prompt).not.toContain('ask_user_question')
     // The deferred semantics: end the turn after registering; the selection
     // arrives as a new message and counts as authorization.
     expect(prompt).toContain('正常结束')

@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-09-10-feishu-bridge-followups-dedicated-tool.md
+2026-09-10-feishu-bridge-followups-dedicated-tool.md: 204b69f5b2499279ca13d7cd2c65b077ef48dcc0
+2026-09-10-feishu-bridge-followups-dedicated-tool.zh.md: 4671d3bd65a692727b5820dbfa7b52bca3e6bc0e

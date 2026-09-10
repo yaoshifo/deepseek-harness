@@ -37,16 +37,18 @@ const askqPrefix = 'askq:'
 
 /**
  * Reserved header marking a closing-card questions ask as non-blocking
- * followups. The agent-conventions prompt template mandates this exact value
- * (single source: the prompt imports this constant), and the engine's
- * {@link isFollowupsAsk} matches it — the two cannot drift.
+ * followups. The `feishu_bridge_followups` tool synthesizes this exact value
+ * onto every closing-card ask (single source: the tool imports this
+ * constant), and the engine's {@link isFollowupsAsk} matches it — the two
+ * cannot drift. Sessions on the pre-tool prompt still hand-write it; that
+ * legacy path is why the conversion below stays.
  */
 export const FOLLOWUPS_ASK_HEADER = '后续处理'
 
 /**
  * Option label completing the fallback closing-card signature: a single
  * multi-select question offering「暂不处理」reads as followups even when the
- * reserved header is missing. Also mandated by the agent-conventions prompt.
+ * reserved header is missing (the pre-tool prompt's hand-written shape).
  */
 export const FOLLOWUPS_DECLINE_LABEL = '暂不处理'
 
@@ -55,10 +57,11 @@ export const FOLLOWUPS_DECLINE_LABEL = '暂不处理'
  * converts into non-blocking followups (register + deferred decision) instead
  * of parking the turn: a single question whose header is the reserved
  * {@link FOLLOWUPS_ASK_HEADER}, or a single multi-select question offering
- * {@link FOLLOWUPS_DECLINE_LABEL}. Both keys describe what the
- * agent-conventions prompt already mandates for closing cards, so live
- * behavior converts with zero model-side change; every other ask parks as
- * before (fail-open to the blocking semantics).
+ * {@link FOLLOWUPS_DECLINE_LABEL}. Both keys are engine-owned closing-card
+ * constants — the `feishu_bridge_followups` tool synthesizes the header, and
+ * sessions on the pre-tool prompt hand-wrote both — so live behavior
+ * converts with zero extra dispatch; every other ask parks as before
+ * (fail-open to the blocking semantics).
  *
  * @param request - The ask about to be delegated to askUser.
  * @returns True when the ask converts to non-blocking followups.
