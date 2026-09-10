@@ -124,7 +124,7 @@ function createHarness(scriptedReply?: string): Harness {
         }
         agents.push(agent)
         if (options.setup !== undefined) {
-          void options.setup(agentCtx as unknown as Parameters<NonNullable<DshCreateOptionsLike['setup']>>[0])
+          void options.setup(agentCtx as unknown as Parameters<NonNullable<DshCreateOptionsLike['setup']>>[0], agent as unknown as Parameters<NonNullable<DshCreateOptionsLike['setup']>>[1])
         }
         const handle: DshAgentHandleLike = {
           agent,
@@ -146,7 +146,7 @@ function createHarness(scriptedReply?: string): Harness {
         }
         agents.push(agent)
         if (options.setup !== undefined) {
-          void options.setup(agentCtx as unknown as Parameters<NonNullable<DshCreateOptionsLike['setup']>>[0])
+          void options.setup(agentCtx as unknown as Parameters<NonNullable<DshCreateOptionsLike['setup']>>[0], agent as unknown as Parameters<NonNullable<DshCreateOptionsLike['setup']>>[1])
         }
         return { agent, dispose: async () => { agent.disposed = true } }
       },

@@ -61,7 +61,7 @@ export class FollowupsMetaStore {
   /**
    * @param file - Persistence path; empty disables on-disk persistence.
    */
-  constructor(file = '') {
+  constructor(file: string = '') {
     this.file = file
   }
 

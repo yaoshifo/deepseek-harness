@@ -1547,13 +1547,13 @@ export class FeishuPlatform implements Platform {
     replyCtx: FeishuReplyContext,
     isSpawnedGroup: boolean,
     parentMessageID: string,
-    isPermissionAction = false,
-    isAskqCardAction = false,
+    isPermissionAction: boolean = false,
+    isAskqCardAction: boolean = false,
     images: ImageAttachment[] = [],
     files: FileAttachment[] = [],
-    isCardAction = false,
+    isCardAction: boolean = false,
     quoted?: { text: string; senderType: string; updateTimeMs: number },
-    isFollowupAction = false,
+    isFollowupAction: boolean = false,
   ): void {
     if (this.handler === undefined) return
     const message: Message = {

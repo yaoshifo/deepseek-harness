@@ -87,7 +87,7 @@ export class SpawnedChatStore {
    * (entries the primary file already has win); the merged result persists
    * under the primary path.
    */
-  constructor(file = '', legacyFiles: string[] = []) {
+  constructor(file: string = '', legacyFiles: string[] = []) {
     this.file = file
     this.legacyFiles = legacyFiles
   }

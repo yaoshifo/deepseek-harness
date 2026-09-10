@@ -852,7 +852,7 @@ export async function buildReplyFooter(
   session: FooterCapSession | undefined,
   workspaceDir: string,
   contextLeft: string,
-  sessionKey = '',
+  sessionKey: string = '',
 ): Promise<string> {
   const parts: string[] = []
   let hasStatus = false

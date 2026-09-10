@@ -88,6 +88,7 @@ export const SERVICE_PAGE: Record<string, string> = {
   lsp: 'lsp.md',
   mcpWorkspace: 'workspace.md',
   messageFeedback: 'feedback.md',
+  sessionFeedback: 'feedback.md',
   permissionPresets: 'permission-presets.md',
   planMode: 'plan.md',
   terminals: 'terminal.md',
@@ -149,7 +150,6 @@ export const SERVICE_PAGE: Record<string, string> = {
  * to a model as `cordis_runtime_inspect what:"client"`).
  */
 export const SERVICE_WALK_EXEMPTIONS: Record<string, string> = {
-  agent: 'not a service: the DX accessor field on Agent.ctx (root accessor defaulting to undefined) — docs/subsystems/core.md owns the Agent handle',
   appReady: 'not a service: launcher-provided successful-startup signal — packages/boot/cmdline/README.md owns the launcher contract',
   appExit: 'not a service: launcher-provided bounded process-exit callback — packages/boot/cmdline/README.md owns the launcher contract',
   cmdlineArgs: 'not a service: launcher-provided immutable app argument accessor — packages/boot/cmdline/README.md owns the launcher contract',
@@ -182,6 +182,7 @@ export const SERVICE_WALK_EXEMPTIONS: Record<string, string> = {
   resources: 'client-side resource model (protocol providers, pins, live sources) — packages/client/resources/README.md owns the API',
   sidebarRight: 'client-side right-Sidebar navigation face — packages/client/ui-sidebar-right/README.md owns the API',
   sidebarRightTabs: 'client-side right-Sidebar tab-type registry — packages/client/ui-sidebar-right/README.md owns the API',
+  documentPreviews: 'client-side document renderer registry — docs/subsystems/sidebar-right.md owns the API',
 }
 
 /**
@@ -294,6 +295,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   MessageFeedbackFailure: 'feedback.md',
   MessageFeedbackItem: 'feedback.md',
   MessageFeedbackListRequest: 'feedback.md',
+  SessionFeedbackRecordRequest: 'feedback.md',
+  SessionFeedbackRecordResult: 'feedback.md',
   MessageFeedbackListResult: 'feedback.md',
   MessageFeedbackListValue: 'feedback.md',
   MessageFeedbackNoteBlank: 'feedback.md',
@@ -419,6 +422,7 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   CreateGoalRequest: 'goal.md',
   EditGoalRequest: 'goal.md',
   GoalBlockReason: 'goal.md',
+  GoalActivationChanged: 'goal.md',
   GoalChanged: 'goal.md',
   GoalRef: 'goal.md',
   GoalView: 'goal.md',
@@ -794,6 +798,7 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   LspSymbolRequest: 'symbol lookup request is owned by packages/lsp/lsp/src/types.ts',
   LspSymbolResult: 'symbol lookup result is owned by packages/lsp/lsp/src/types.ts',
   LspSymbolsMerged: 'merged symbol groups are owned by packages/lsp/lsp/src/types.ts',
+  WorkspaceFileScope: 'Host workspace file lookup contract is owned by packages/api/workspace-files/README.md',
   WorkspaceByteRange: 'Host workspace file endpoint contract is owned by packages/api/workspace-files/README.md',
   WorkspaceDirectoryListing: 'Host workspace file endpoint contract is owned by packages/api/workspace-files/README.md',
   WorkspaceFileBytes: 'Host workspace file endpoint contract is owned by packages/api/workspace-files/README.md',

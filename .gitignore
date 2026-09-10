@@ -48,3 +48,4 @@ worktrees/
 .agents/worktrees/
 .typert-*/
 htmls/
+native/system/test/bin/

@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-`dsh-subagent` is the service behind child-agent delegation: an agent hands a task to a named child, collects the finished result, and — for continuable children — keeps sending follow-up work across turns. Multiple providers coexist under one contract, so a single composition can offer in-process children, out-of-process ACP or SDK children, and real Codex or Claude Code children side by side. Children come in two shapes: one-shot runs that settle with a single result, and continuable children whose durable session accepts later messages and can be interrupted. The same service answers discovery questions — which children exist, their mode, activity, and lineage — without loading or resuming them. Mount it with at least one provider backend and a delegation tool; the backends and the model-facing tools live in sibling packages.
+Use `dsh-subagent` to delegate work to named child agents, collect their results, and continue supported child conversations across turns. A composition can offer in-process, ACP, SDK, Codex, or Claude Code children side by side. Choose one-shot children for a single result or continuable children for later messages and interruption. You can also inspect available children, their mode, activity, and lineage without loading or resuming them. Enable at least one supported child backend and a delegation tool.
 
 ## Table of Contents
 
@@ -104,6 +104,8 @@ Start-time features are advertised in `provider.capabilities` because the servic
 - `toolFilter` — apply the requested child tool restriction.
 - `persona` — apply a per-child persona.
 - `cwdOverride` — honor a per-request absolute `cwd` overriding the parent's working directory for the child session. Pure session metadata: git worktree isolation or other directory preparation stays with the caller, composing on top of the override.
+
+Successful local child creation appends a `subagent/catalog` fact to the parent Session. One-shot creation records it after the provider returns; continuable creation records it after initial inbox admission and before returning the child id. Failure releases the child without publishing a compensating catalog event. A one-shot catalog append failure handles the run’s result rejection and preserves the catalog error; disposal failures are logged separately. The `subagentCatalog` projection excludes fork-inherited facts and exposes a direct-child list through `projections.values.subagentCatalog` in Session observations and client snapshots. Invalid own catalog payloads, including unsupported versions, reject projection restoration. Its immutable storage and checkpoint validation use [`dsh-chunked-list`](../../util/chunked-list/README.md). Its view preserves parent catalog event order in O(D) time for D facts. [The parent-catalog decision](../../../.agents/notes/implemented/architecture/2026-09-01-parent-owned-subagent-catalog.md) owns ordering, persistence costs, and alternatives.
 
 ### Ownership and invariants
 

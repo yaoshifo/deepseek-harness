@@ -482,11 +482,11 @@ function withProjectToolMask(
 ): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
   const mcpApplies = allow !== undefined && allow.length > 0
   if (!mcpApplies && denied.length === 0) return setup
-  return async (agentCtx) => {
+  return async (agentCtx, agent) => {
     // Propagate the wrapped setup's publication commit: the registry invokes
     // it immediately before publication, and swallowing it here would drop
     // the inner setup's validation.
-    const commit = await setup?.(agentCtx)
+    const commit = await setup?.(agentCtx, agent)
     const toolsSvc = agentCtx.get('tools') as DshToolsLike | undefined
     if (toolsSvc !== undefined) {
       const names = toolsSvc.schemas().map(schema => schema.name)
@@ -518,7 +518,7 @@ function withDeniedSkills(
   denied: readonly string[],
 ): import('@deepseek-ai/dsh-agent').AgentSetup | undefined {
   if (denied.length === 0) return setup
-  return async (agentCtx) => {
+  return async (agentCtx, agent) => {
     const skillsSvc = agentCtx.get('skills') as
       | { restrict(filter: { deny: readonly string[] }): () => void }
       | undefined
@@ -526,7 +526,7 @@ function withDeniedSkills(
     // Propagate the wrapped setup's publication commit: the registry invokes
     // it immediately before publication, and swallowing it here would drop
     // the inner setup's validation.
-    return await setup?.(agentCtx)
+    return await setup?.(agentCtx, agent)
   }
 }
 
@@ -1916,9 +1916,9 @@ export class DshAgentAdapter {
       ...route.reasoningEffort !== undefined ? { reasoningEffort: ReasoningEffortId(route.reasoningEffort) } : {},
     }
     const selection: ModelSelectionRef = { current, assembled: undefined }
-    return (agentCtx) => {
+    return (agentCtx, agent) => {
       installModelSelection(agentCtx, selection)
-      return setup?.(agentCtx)
+      return setup?.(agentCtx, agent)
     }
   }
 
@@ -2391,10 +2391,10 @@ export class DshAgentSession implements AgentSession {
   constructor(
     key: string,
     handle: DshAgentHandleLike,
-    workDir = '',
+    workDir: string = '',
     ctx?: DshContextLike,
-    bypassPermissions = false,
-    interactiveSlotKey = '',
+    bypassPermissions: boolean = false,
+    interactiveSlotKey: string = '',
   ) {
     this.key = key
     this.handle = handle

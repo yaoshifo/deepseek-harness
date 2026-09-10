@@ -14,7 +14,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { AgentSetupCommit } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentSetupCommit } from '@deepseek-ai/dsh-agent'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import { SubagentError } from './error.ts'
 
@@ -25,10 +25,12 @@ import { SubagentError } from './error.ts'
  * contribution runs — and returns the disposer for exactly that installation,
  * or nothing when the child scope alone owns the cleanup.
  * @param childCtx - the child's unpublished scoped context.
+ * @param child - the unpublished child Agent the context composes.
  * @returns the disposer revoking this installation, a promise of one, or nothing.
  */
 export type ContinuableSetupContribution = (
   childCtx: Context,
+  child: Agent,
 ) => (() => void) | Promise<(() => void) | void>
 
 /** One contribution's live registration. */
@@ -93,16 +95,17 @@ export class SubagentActivationSetupRegistry {
    * Awaitable installs settle in registration order before the next
    * contribution starts, all inside the child's creation window.
    * @param childCtx - the child's unpublished scoped context.
+   * @param child - the unpublished child Agent the context composes.
    * @returns the provisioning commit consumed at Agent publication.
    */
-  async apply(childCtx: Context): Promise<AgentSetupCommit> {
+  async apply(childCtx: Context, child: Agent): Promise<AgentSetupCommit> {
     const state: TransactionState = { installations: [], invalidated: false }
     try {
       for (const registration of [...this.registrations]) {
         /* v8 ignore next -- only a synchronous re-entrant revocation of an
          * already-snapshotted registration reaches this guard. */
         if (registration.removed) continue
-        const started = registration.contribution(childCtx)
+        const started = registration.contribution(childCtx, child)
         const settled = started instanceof Promise ? await started : started
         const dispose = typeof settled === 'function' ? settled : undefined
         const installation: Installation = {

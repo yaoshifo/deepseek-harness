@@ -171,7 +171,7 @@ export class ContinuableActivationRegistry {
   private readonly closingScopes = new Map<Agent, Set<Agent>>()
   private draining = false
   /** Deployment setup contributions composed into every child's creation. */
-  private readonly setupContributions: ((childCtx: Context) => Promise<AgentSetupCommit | void>) | undefined
+  private readonly setupContributions: ((childCtx: Context, child: Agent) => Promise<AgentSetupCommit | void>) | undefined
   private readonly settlementDelivery: SubagentSettlementDelivery
   /**
    * The process job registry when one is loaded, else `undefined`. Live jobs
@@ -201,7 +201,7 @@ export class ContinuableActivationRegistry {
        * Deployment setup contributions composed into every child's unpublished
        * creation context, after the child composition's tool masks.
        */
-      readonly setupContributions?: (childCtx: Context) => Promise<AgentSetupCommit | void>
+      readonly setupContributions?: (childCtx: Context, child: Agent) => Promise<AgentSetupCommit | void>
       /** Who delivers a continuable child's settlement notice to its durable parent. */
       readonly settlementDelivery?: SubagentSettlementDelivery
     } = {},
@@ -543,7 +543,6 @@ export class ContinuableActivationRegistry {
     } finally {
       this.wake(activation)
     }
-    activation.announced = true
     return message.id
   }
 
@@ -621,8 +620,7 @@ export class ContinuableActivationRegistry {
   ): Promise<Activation> {
     const { childId, provider, parent, create } = inputs
     inputs.signal.throwIfAborted()
-    const setup = async (childCtx: Context): Promise<AgentSetupCommit | void> => {
-      const child = childCtx.agent as Agent
+    const setup = async (childCtx: Context, child: Agent): Promise<AgentSetupCommit | void> => {
       // Only fresh creation appends the descriptor and delegated policy after
       // the inherited marker; a cold resume replays those persisted events.
       if (create !== undefined) {
@@ -633,18 +631,20 @@ export class ContinuableActivationRegistry {
       // Deployment contributions install after the child composition's tool
       // masks (directory MCP mounts stay exempt from them) and may await
       // inside this creation window; their batch commits together.
-      return await this.setupContributions?.(childCtx)
+      return await this.setupContributions?.(childCtx, child)
     }
     const observer = this.observeActivation(provider, childId, parent)
     const handle: AgentHandle = create === undefined
       ? await this.ownerCtx.agents.resume({
         resumeSessionId: childId,
+        parentAgent: parent,
         agentOptions: inputs.agentOptions,
         signal: inputs.signal,
         setup,
       })
       : await this.ownerCtx.agents.create({
         sessionId: childId,
+        parentAgent: parent,
         meta: create.meta,
         ...(create.seed === undefined ? {} : { seed: create.seed }),
         inheritedEventCount: create.inheritedEventCount,

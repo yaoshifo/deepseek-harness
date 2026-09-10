@@ -560,7 +560,7 @@ export function progressTitleAndColor(
   zh: boolean,
   ts: string,
   tc: number,
-  pending = 0,
+  pending: number = 0,
 ): { title: string; color: string } {
   let title: string
   let color: string

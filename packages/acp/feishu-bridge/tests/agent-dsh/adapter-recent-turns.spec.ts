@@ -19,6 +19,7 @@ let messageSeq = 0
 function userEvent(text: string, kind = 'user'): SessionEvent {
   return {
     type: 'user/message',
+    surfaceOp: 'append',
     seq: SessionSeq(messageSeq++),
     time: 1_700_000_000_000 + messageSeq,
     data: {
@@ -33,6 +34,7 @@ function userEvent(text: string, kind = 'user'): SessionEvent {
 function assistantEvent(text: string): SessionEvent {
   return {
     type: 'assistant/message',
+    surfaceOp: 'append',
     seq: SessionSeq(messageSeq++),
     time: 1_700_000_000_000 + messageSeq,
     data: {

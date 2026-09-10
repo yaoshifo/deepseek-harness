@@ -88,12 +88,12 @@ class Mutex {
 }
 
 /** Local-time "HH:MM:SS" (Go time.Format("15:04:05")). */
-function hms(date = new Date()): string {
+function hms(date: Date = new Date()): string {
   return date.toTimeString().slice(0, 8)
 }
 
 /** Local-time "HH-MM-SS" for file names. */
-function hmsFile(date = new Date()): string {
+function hmsFile(date: Date = new Date()): string {
   return date.toTimeString().slice(0, 8).replaceAll(':', '-')
 }
 
@@ -660,7 +660,7 @@ export class StreamPreview {
     replyCtx: unknown,
     transform: ((s: string) => string) | undefined,
     as: AsyncSender | undefined,
-    sessionKey = '',
+    sessionKey: string = '',
   ) {
     this.cfg = cfg
     this.platform = p
@@ -1130,7 +1130,7 @@ export class StreamPreview {
    *   terminal card truncated instead of claiming 执行完成.
    * @returns True when the final message was delivered via the preview.
    */
-  async finish(finalTextIn: string, truncated = false): Promise<boolean> {
+  async finish(finalTextIn: string, truncated: boolean = false): Promise<boolean> {
     return this.locked(async () => {
       this.cancelTimerLocked()
       let finalText = finalTextIn
@@ -2106,7 +2106,7 @@ export function newStreamPreview(
   replyCtx: unknown,
   transform: ((s: string) => string) | undefined,
   as: AsyncSender | undefined,
-  sessionKey = '',
+  sessionKey: string = '',
 ): StreamPreview {
   return new StreamPreview(cfg, p, replyCtx, transform, as, sessionKey)
 }

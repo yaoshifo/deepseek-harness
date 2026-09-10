@@ -3814,8 +3814,8 @@ export class Engine {
     sp: StreamPreview,
     cp: CompactProgressWriter,
     barrier: () => Promise<void>,
-    background = false,
-    turnStartedBg = false,
+    background: boolean = false,
+    turnStartedBg: boolean = false,
   ): Promise<{ kind: 'done' } | { kind: 'queued'; sendDone: Promise<unknown> }> {
     // Persist via the live session id.
     if (state.agentSession !== undefined) {
@@ -6425,7 +6425,7 @@ export class Engine {
     session: Session,
     sessionKey: string,
     workspaceDir: string,
-    stopReason = '',
+    stopReason: string = '',
   ): Promise<void> {
     if (state.pendingMessages.length > 0) return
     const noticePref = asCompletionNoticePreference(p)

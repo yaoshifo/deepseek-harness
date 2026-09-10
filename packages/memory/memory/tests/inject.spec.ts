@@ -145,6 +145,7 @@ describe('hasMemoryInjection', () => {
   function messageEvent(source: object): SessionEvent<'user/message'> {
     return {
       type: 'user/message',
+      surfaceOp: 'append',
       seq: SessionSeq(0),
       time: 0,
       data: createUserMessage({

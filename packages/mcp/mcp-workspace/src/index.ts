@@ -21,7 +21,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
-import type { AgentSetup } from '@deepseek-ai/dsh-agent'
+import type { Agent, AgentSetup } from '@deepseek-ai/dsh-agent'
 // Type-only: resolves `ctx.subagents` to the runtime service augmentation, so
 // the continuable-child contribution registers without this package teaching
 // the continuation manager this service's name.
@@ -40,12 +40,11 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /**
- * Read the session cwd off an agent setup context. The agent association is
- * installed on `Agent.ctx` before setup runs; its absence (or a cwd-less
- * header) simply leaves nothing to mount.
+ * Read the session cwd off the unpublished Agent. A cwd-less header simply
+ * leaves nothing to mount.
  */
-function sessionCwdOf(agentCtx: Context): string | undefined {
-  const cwd = agentCtx.agent?.session.header.cwd
+function sessionCwdOf(agent: Agent): string | undefined {
+  const cwd = agent.session.header.cwd
   return cwd !== undefined && cwd !== '' ? cwd : undefined
 }
 
@@ -97,8 +96,8 @@ export class McpWorkspaceService extends Service {
     ctx.inject(['subagents'], (injectedCtx: Context) => {
       injectedCtx.effect(
         () => injectedCtx.subagents.registerContinuableSetup(
-          async (childCtx) => {
-            await this.mount(childCtx)
+          async (childCtx, child) => {
+            await this.mount(childCtx, child)
           },
         ),
         'mcpWorkspace.continuableSetup()',
@@ -116,9 +115,9 @@ export class McpWorkspaceService extends Service {
    * @returns the wrapping setup.
    */
   wrap(setup: AgentSetup | undefined): AgentSetup {
-    return async (agentCtx) => {
-      const commit = await setup?.(agentCtx)
-      await this.mount(agentCtx)
+    return async (agentCtx, agent) => {
+      const commit = await setup?.(agentCtx, agent)
+      await this.mount(agentCtx, agent)
       return commit
     }
   }
@@ -128,9 +127,10 @@ export class McpWorkspaceService extends Service {
    * composition primitive behind {@link wrap}, for callers that already hold
    * an agent creation window of their own.
    * @param agentCtx - the unpublished agent's scoped creation context.
+   * @param agent - the unpublished Agent whose session cwd drives discovery.
    */
-  async mount(agentCtx: Context): Promise<void> {
-    await this.mountForAgent(agentCtx)
+  async mount(agentCtx: Context, agent: Agent): Promise<void> {
+    await this.mountForAgent(agentCtx, agent)
   }
 
   /**
@@ -160,8 +160,8 @@ export class McpWorkspaceService extends Service {
   }
 
   /** Mount every `.mcp.json` server of the agent's session cwd into its scope. */
-  private async mountForAgent(agentCtx: Context): Promise<void> {
-    const cwd = sessionCwdOf(agentCtx)
+  private async mountForAgent(agentCtx: Context, agent: Agent): Promise<void> {
+    const cwd = sessionCwdOf(agent)
     if (cwd === undefined) {
       this.ctx.logger.debug('mcp-workspace: session header carries no cwd; directory MCP discovery skipped')
       return
