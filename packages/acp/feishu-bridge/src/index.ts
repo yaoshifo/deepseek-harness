@@ -22,7 +22,8 @@ import type { SubagentRunEndInfo, SubagentRunInfo } from '@deepseek-ai/dsh-subag
 import Schema from '@deepseek-ai/schemastery'
 import type { EngineSubprocess } from './core/types.ts'
 import { inboxProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
-import type { EngineInboxReader } from './core/types.ts'
+import { subagentCatalogProjectionDefinition } from '@deepseek-ai/dsh-subagent'
+import type { EngineCatalogChild, EngineCatalogReader, EngineInboxReader } from './core/types.ts'
 import { DshAgentAdapter } from './agent-dsh/adapter.ts'
 import type { ProviderRoute as AdapterProviderRoute, QuestionRouting } from './agent-dsh/adapter.ts'
 import { installLogTimestamps } from './log-timestamps.ts'
@@ -1182,6 +1183,44 @@ export function createPendingInboxReader(ctx: Context): EngineInboxReader {
   }
 }
 
+/**
+ * Cold subagent-catalog reader for restart reconciliation: one exact
+ * observation over the persisted log, reading the parent session's
+ * subagentCatalog projection (direct children in creation order). The unit
+ * registers here because no subagent runtime owns a parent session at
+ * platforms-ready. Unknown or unreadable sessions resolve to an empty list.
+ * @param ctx - composition context.
+ * @returns the reader handed to the engine.
+ */
+export function createNativeCatalogReader(ctx: Context): EngineCatalogReader {
+  const projections = ctx.get('sessionProjections') as
+    | { register(definition: typeof subagentCatalogProjectionDefinition): () => void }
+    | undefined
+  projections?.register(subagentCatalogProjectionDefinition)
+  return {
+    children: async (sessionId) => {
+      const query = ctx.get('sessionQuery') as
+        | {
+          observeSession(id: string, options: { projectionMode: 'all' }): Promise<{
+            projections?: { values: { subagentCatalog?: readonly EngineCatalogChild[] } }
+            [Symbol.dispose](): void
+          }>
+        }
+        | undefined
+      if (query === undefined) return []
+      try {
+        const observation = await query.observeSession(sessionId, { projectionMode: 'all' })
+        using _ = observation
+        return [...(observation.projections?.values['subagentCatalog'] ?? [])]
+      } catch {
+        // An unknown, forked-away, or unreadable session id simply has no
+        // catalog to reconcile.
+        return []
+      }
+    },
+  }
+}
+
 export function buildProjectAssembly(
   ctx: Context,
   config: FeishuBridgeConfig,
@@ -1318,7 +1357,7 @@ export function buildProjectAssembly(
     dataDir: projectDataDir,
   })
 
-  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language), bridge, createCronSubprocessRunner(ctx), createPendingInboxReader(ctx))
+  const engine = new Engine(project.name, adapter, [platform], join(projectDataDir, 'sessions.json'), languageOf(config.language), bridge, createCronSubprocessRunner(ctx), createPendingInboxReader(ctx), createNativeCatalogReader(ctx))
 
   // B2: native approval asks and userQuestions asks delegate card rendering
   // and decision waiting to the engine's askUser.

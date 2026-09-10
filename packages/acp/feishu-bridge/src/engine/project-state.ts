@@ -11,6 +11,9 @@ import { atomicWriteFileSync } from '../atomicwrite.ts'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
+/** Cleared-native-children tombstone window (FIFO eviction past this count). */
+const CLEARED_NATIVE_CHILDREN_CAP = 512
+
 interface ProjectStateData {
   work_dir_override?: string
   workspace_dir_overrides?: Record<string, string> | undefined
@@ -24,6 +27,13 @@ interface ProjectStateData {
   provider_overrides?: Record<string, string> | undefined
   /** Native continuable subtask children (de-baggage B4), keyed by native child id. */
   native_children?: Record<string, NativeChildRecord> | undefined
+  /**
+   * Child ids whose records were drained: the session-log subagent catalog
+   * only records creation, so restart reconciliation needs these tombstones
+   * to tell a deliberately cleared child from a lost record. FIFO-capped at
+   * {@link CLEARED_NATIVE_CHILDREN_CAP} entries.
+   */
+  cleared_native_children?: string[] | undefined
 }
 
 /** One persisted native continuable subtask child (de-baggage B4). */
@@ -220,6 +230,26 @@ export class ProjectStateStore {
       if (k !== childId) next[k] = v
     }
     this.state.native_children = Object.keys(next).length === 0 ? undefined : next
+  }
+
+  /**
+   * Record one drained child id, evicting the oldest entry past the cap.
+   * @param childId - The durable native child session id being drained.
+   */
+  markNativeChildCleared(childId: string): void {
+    const ids = this.state.cleared_native_children?.filter(id => id !== childId) ?? []
+    ids.push(childId)
+    this.state.cleared_native_children = ids.length > CLEARED_NATIVE_CHILDREN_CAP
+      ? ids.slice(ids.length - CLEARED_NATIVE_CHILDREN_CAP)
+      : ids
+  }
+
+  /**
+   * Whether a drained child id is still inside the tombstone window.
+   * @param childId - The durable native child session id to check.
+   */
+  nativeChildCleared(childId: string): boolean {
+    return this.state.cleared_native_children?.includes(childId) === true
   }
 
   /** Persist synchronously (Go saveLocked). */

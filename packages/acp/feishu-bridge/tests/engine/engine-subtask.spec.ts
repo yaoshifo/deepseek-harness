@@ -1931,6 +1931,11 @@ describe('drainNativeDescendants', () => {
     expect(e.nativeChildEntries()['native-child-1']).toBeUndefined()
     expect(e.nativeChildEntries()['native-grandchild-1']).toBeUndefined()
     expect(e.nativeChildEntries()['foreign-child']).toBeDefined()
+    // Drained ids tombstone so restart catalog reconciliation does not
+    // mistake a deliberately cleared child for a lost record.
+    expect(e.projectState?.nativeChildCleared('native-child-1')).toBe(true)
+    expect(e.projectState?.nativeChildCleared('native-grandchild-1')).toBe(true)
+    expect(e.projectState?.nativeChildCleared('foreign-child')).toBe(false)
   })
 
   it('interrupts only live children; a dead one clears without an interrupt attempt', async () => {
@@ -2741,5 +2746,84 @@ describe('error-reasoned subtask report: moderation-safe brief and card detail s
     expect(wake).toBeDefined()
     expect(wake).toContain('[failure code=未分类]')
     expect(wake).not.toContain('No API key for provider')
+  })
+})
+
+describe('restart catalog reconciliation (subagent catalog vs project state)', () => {
+  const parentKey = 'test:catalog-parent:u1'
+
+  function catalogEngine(
+    p: Platform,
+    children: readonly { id: string; createdAt: number; mode: 'one-shot' | 'continuable'; label?: string }[],
+  ): Engine {
+    const agent = createDelegatorAgent()
+    const reader = {
+      children: async (sessionId: string) => sessionId === 'parent-agent-sid' ? children : [],
+    }
+    const e = new Engine('test', agent, [p], '', 'en', undefined, undefined, undefined, reader)
+    e.setProjectStateStore(new ProjectStateStore(''))
+    e.sessions.getOrCreateActive(parentKey)
+    e.sessions.switchToAgentSession(parentKey, 'parent-agent-sid', 'dsh', 'summary')
+    return e
+  }
+
+  it('notices catalog children whose records were lost, tombstoned ones excepted', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = catalogEngine(p, [
+      { id: 'lost-child-1', createdAt: 100, mode: 'continuable', label: 'lost research' },
+      { id: 'tombstoned-child', createdAt: 200, mode: 'continuable', label: 'drained earlier' },
+      { id: 'tracked-child-1', createdAt: 300, mode: 'continuable', label: 'tracked fine' },
+    ])
+    e.projectState?.setNativeChild('tracked-child-1', {
+      parent_key: parentKey, parent_agent_session_id: 'parent-agent-sid', label: 'tracked fine',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: true,
+    })
+    e.projectState?.markNativeChildCleared('tombstoned-child')
+
+    void e.start()
+
+    await settle()
+    await settle()
+    await settle()
+    expect(p.sentCards.length).toBe(1)
+    expect(cardBody(p.sentCards[0])).toContain('lost-child-1')
+    expect(cardBody(p.sentCards[0])).toContain('lost research')
+    expect(cardBody(p.sentCards[0])).not.toContain('tombstoned-child')
+    expect(cardBody(p.sentCards[0])).not.toContain('tracked-child-1')
+  })
+
+  it('stays silent when every catalog child is tracked or tombstoned', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = catalogEngine(p, [
+      { id: 'ok-child', createdAt: 100, mode: 'continuable', label: 'fine' },
+    ])
+    e.projectState?.setNativeChild('ok-child', {
+      parent_key: parentKey, parent_agent_session_id: 'parent-agent-sid', label: 'fine',
+      worktree_path: '', worktree_branch: '', worktree_base: '', worktree_base_branch: '', worktree_root: '',
+      reported: true,
+    })
+
+    void e.start()
+
+    await settle()
+    await settle()
+    await settle()
+    expect(p.sentCards.length).toBe(0)
+  })
+
+  it('skips reconciliation entirely without a catalog reader', async () => {
+    const p = createStubCardPlatformFull('test')
+    const agent = createDelegatorAgent()
+    const e = new Engine('test', agent, [p], '', 'en')
+    e.setProjectStateStore(new ProjectStateStore(''))
+    e.sessions.getOrCreateActive(parentKey)
+    e.sessions.switchToAgentSession(parentKey, 'parent-agent-sid', 'dsh', 'summary')
+
+    void e.start()
+
+    await settle()
+    await settle()
+    expect(p.sentCards.length).toBe(0)
   })
 })

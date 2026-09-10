@@ -21,6 +21,7 @@ import { assertNever } from '@deepseek-ai/dsh-util-values'
 import { bareBridgeDispatch, type BridgeDispatch } from '../bridge-service.ts'
 import { AllowList } from '../feishu/allowlist.ts'
 import type {
+  EngineCatalogReader,
   EngineInboxReader,
   EngineSubprocess,
   Agent,
@@ -1267,6 +1268,7 @@ export class Engine {
   private readonly subprocess: EngineSubprocess | undefined
   /** Host-wired cold inbox reader; restart visibility stays silent without it. */
   private readonly inboxReader: EngineInboxReader | undefined
+  private readonly catalogReader: EngineCatalogReader | undefined
 
   constructor(
     name: string,
@@ -1277,12 +1279,14 @@ export class Engine {
     bridge?: BridgeDispatch,
     subprocess?: EngineSubprocess,
     inboxReader?: EngineInboxReader,
+    catalogReader?: EngineCatalogReader,
   ) {
     this.name = name
     this.agent = agent
     this.platforms = platforms
     this.subprocess = subprocess
     this.inboxReader = inboxReader
+    this.catalogReader = catalogReader
     this.bridge = bridge ?? bareBridgeDispatch()
     this.sessions = new SessionManager(sessionStorePath)
     this.i18n = new I18n(lang)
@@ -1660,6 +1664,9 @@ export class Engine {
       bucket.push({ childId, label: rec.label, worktree: rec.worktree_path })
       interrupted.set(rec.parent_key, bucket)
     }
+    // Catalog reconciliation runs regardless of the interrupted set: lost
+    // records are a separate failure class from unreported live children.
+    void this.reconcileNativeCatalog()
     if (interrupted.size === 0) return
     this.projectState?.save()
     const p = this.reportCapablePlatform()
@@ -1701,6 +1708,62 @@ export class Engine {
       )
     }
     console.info(`subtask: restart recovery settled ${interrupted.size} parent chat(s) with interrupted children`)
+  }
+
+  /**
+   * Cross-check the session-log subagent catalog against the native-child
+   * records: a catalog child with neither a record nor a drain tombstone is
+   * a lost registration (crash window between startContinuable and the
+   * projectState save, or a damaged state file). Visibility only — the child
+   * session stays in storage and worktrees need manual cleanup.
+   */
+  private async reconcileNativeCatalog(): Promise<void> {
+    if (this.catalogReader === undefined) return
+    const records = this.nativeChildEntries()
+    const known = new Set(Object.keys(records))
+    const lost = new Map<string, Array<{ childId: string; label: string }>>()
+    for (const parentKey of this.sessions.activeSessionKeys()) {
+      const sessionId = this.sessions.findActive(parentKey)?.agentSessionID ?? ''
+      if (sessionId === '' || sessionId === ContinueSession) continue
+      let children: readonly { id: string; label?: string }[]
+      try {
+        children = await this.catalogReader.children(sessionId)
+      } catch {
+        // An unreadable session simply has nothing to reconcile.
+        continue
+      }
+      const bucket: Array<{ childId: string; label: string }> = []
+      for (const child of children) {
+        if (known.has(child.id)) continue
+        if (this.projectState?.nativeChildCleared(child.id) === true) continue
+        bucket.push({ childId: child.id, label: child.label ?? '' })
+      }
+      if (bucket.length > 0) lost.set(parentKey, bucket)
+    }
+    if (lost.size === 0) return
+    const p = this.reportCapablePlatform()
+    if (p === undefined) {
+      console.warn('subtask: catalog reconciliation has no platform to deliver notices')
+      return
+    }
+    const r = asReplyContextReconstructor(p)
+    for (const [parentKey, children] of lost) {
+      const listing = children.map(c => `- ${c.label !== '' ? `${c.label} (session ${c.childId})` : `session ${c.childId}`}`).join('\n')
+      void r?.reconstructReplyCtx(parentKey).then(
+        (parentRctx) => {
+          void this.sendAsCard(p, parentRctx, this.i18n.tf(Msg.SubtaskCatalogLostNotice, listing), {
+            title: this.i18n.t(Msg.SubtaskCatalogLostCardTitle),
+            color: 'red',
+          }).catch((error: unknown) => {
+            console.warn(`subtask: catalog reconciliation card failed (${parentKey}): ${String(error)}`)
+          })
+        },
+        (error: unknown) => {
+          console.warn(`subtask: catalog reconciliation reconstruct ctx failed (${parentKey}): ${String(error)}`)
+        },
+      )
+    }
+    console.info(`subtask: catalog reconciliation flagged ${lost.size} parent chat(s) with lost child records`)
   }
 
   /**
@@ -7456,6 +7519,10 @@ export class Engine {
       await this.removeNativeWorktreeQuiet(
         rec.worktree_path, rec.worktree_branch, rec.worktree_root, rec.worktree_base, rec.worktree_base_branch,
       )
+      // Tombstone before the record drops: the session-log subagent catalog
+      // keeps the creation fact forever, so reconciliation needs this mark
+      // to tell a deliberately drained child from a lost record.
+      this.projectState?.markNativeChildCleared(childId)
       this.projectState?.clearNativeChild(childId)
     }
     if (toDrain.length > 0) this.projectState?.save()

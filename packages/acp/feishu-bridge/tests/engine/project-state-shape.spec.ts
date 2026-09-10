@@ -50,3 +50,32 @@ describe('ProjectStateStore provider overrides', () => {
     expect(reloaded.providerOverrides()).toEqual({})
   })
 })
+
+describe('ProjectStateStore cleared-native-children tombstones', () => {
+  function newStore(): { s: ProjectStateStore; path: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'fb-pstate-tomb-'))
+    const path = join(dir, 'test.state.json')
+    return { s: new ProjectStateStore(path), path }
+  }
+
+  it('round-trips cleared child ids through save and reload', () => {
+    const { s, path } = newStore()
+    s.markNativeChildCleared('child-1')
+    s.markNativeChildCleared('child-2')
+    s.save()
+
+    const reloaded = new ProjectStateStore(path)
+    expect(reloaded.nativeChildCleared('child-1')).toBe(true)
+    expect(reloaded.nativeChildCleared('child-2')).toBe(true)
+    expect(reloaded.nativeChildCleared('child-3')).toBe(false)
+  })
+
+  it('caps the tombstone set at 512 ids, evicting the oldest first', () => {
+    const { s } = newStore()
+    for (let i = 0; i < 600; i++) s.markNativeChildCleared(`c-${i}`)
+    expect(s.nativeChildCleared('c-0')).toBe(false)
+    expect(s.nativeChildCleared('c-87')).toBe(false)
+    expect(s.nativeChildCleared('c-88')).toBe(true)
+    expect(s.nativeChildCleared('c-599')).toBe(true)
+  })
+})

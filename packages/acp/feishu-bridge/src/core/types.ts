@@ -434,6 +434,27 @@ export interface EngineInboxReader {
   pendingCount(sessionId: string): Promise<number>
 }
 
+/** One direct-child row cold-read from a parent session's subagent catalog. */
+export interface EngineCatalogChild {
+  /** Durable child session id. */
+  id: string
+  /** Creation timestamp from the catalog fact. */
+  createdAt: number
+  /** Delegation mode recorded with the fact. */
+  mode: 'one-shot' | 'continuable'
+  /** Durable creation label; absent on unlabeled one-shot facts. */
+  label?: string
+}
+
+/** Cold subagent-catalog reader the host wires for restart reconciliation. */
+export interface EngineCatalogReader {
+  /**
+   * List the direct children a parent session's log records; empty when the
+   * session has no catalog facts, no log, or an unreadable log.
+   */
+  children(sessionId: string): Promise<readonly EngineCatalogChild[]>
+}
+
 /** Foreground subprocess runner the host wires for engine-owned shell jobs (cron exec). */
 export interface EngineSubprocess {
   run(spec: EngineSubprocessSpec): Promise<EngineSubprocessResult>

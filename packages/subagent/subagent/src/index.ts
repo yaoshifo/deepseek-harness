@@ -85,6 +85,11 @@ import { establishCatalogChild, subagentCatalogProjectionDefinition } from './ca
 import { deliverSubagentPrompt } from './internal.ts'
 
 export type {} from './catalog.ts'
+// The projection definition is exported so deployments without a live
+// subagent runtime (restart reconciliation in a fresh host) can register the
+// unit before any agent exists — the same seam as dsh-agent-loop's exported
+// inboxProjectionDefinition.
+export { subagentCatalogProjectionDefinition } from './catalog.ts'
 export * from './out-of-process.ts'
 export { AssistantOutputFold, finalAssistantOutput } from './assistant-output.ts'
 export { SubagentRunId } from './types.ts'
@@ -346,7 +351,6 @@ export class SubagentRuntime extends TypertRemoteService {
    * @returns the exact Cordis effect disposer.
    */
   registerContinuableSetup(contribution: ContinuableSetupContribution): () => void {
-    // oxlint-disable-next-line typescript/no-misused-promises -- synchronous registration disposer
     return this.ctx.effect(
       () => this.setupRegistry.register(contribution),
       'subagents.registerContinuableSetup()',
@@ -584,7 +588,6 @@ export class SubagentRuntime extends TypertRemoteService {
    */
   registerProvider(provider: SubagentProvider): () => void {
     const name = provider.name
-    // oxlint-disable-next-line typescript/no-misused-promises -- synchronous disposer
     return this.ctx.effect(function* (this: SubagentRuntime) {
       if (this.providers.has(name)) {
         throw new SubagentError(`a subagent provider named "${name}" is already registered`, 'DUPLICATE_PROVIDER')
