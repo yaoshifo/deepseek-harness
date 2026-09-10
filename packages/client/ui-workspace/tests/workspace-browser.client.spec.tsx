@@ -741,6 +741,27 @@ describe('WorkspaceBrowser', () => {
     }
   })
 
+  it('expands and reveals the directory group of an unaccounted search hit', async () => {
+    const open = vi.fn()
+    const b = mount({
+      useSessions: hook(sessionState([
+        summary('target', 1, { cwd: '/Users/hm/workspace/deepseek-harness', displayTitle: 'Bridge notes' }),
+      ])),
+      open,
+    })
+    const input = screen.getByPlaceholderText<HTMLInputElement>('搜索会话…')
+    fireEvent.change(input, { target: { value: 'bridge' } })
+    fireEvent.click(screen.getByRole('treeitem'))
+    expect(open).toHaveBeenCalledWith(sid('target'))
+    await waitFor(() => {
+      expect(b.store.getSnapshot().groupExpansion).toEqual({ 'cwd:/Users/hm/workspace/deepseek-harness': true })
+      expect(screen.getByText('Bridge notes')).toBeTruthy()
+    })
+    const targetRow = screen.getByText('Bridge notes').closest('[role="treeitem"]')
+    expect(targetRow).toBeTruthy()
+    expect(scrollIntoView.mock.instances.at(-1)).toBe(targetRow)
+  })
+
   it('waits for authoritative Workspace membership before revealing a grouped search result', async () => {
     const sessions = sessionState([
       summary('newest-1', 6),
