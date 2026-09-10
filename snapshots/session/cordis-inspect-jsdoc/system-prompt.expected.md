@@ -256,11 +256,11 @@ interface ToolArgsMap {
     /** Required with sandbox_permissions: one sentence for the user explaining why this exact file operation needs the wider access. */
     justification?: string;
   } & Record<string, JsonValue>;
-  /** Use only in plan mode. Present your plan for the user's review and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it. The user may approve (carry out the plan from your next step) or keep planning — their feedback comes back in the tool result. An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default. */
+  /** Use only in plan mode. Present your plan for the user's review and, on approval, leave plan mode. Send the COMPLETE plan as markdown, starting with a # heading that names it. The user may approve (carry out the plan from your next step) or keep planning — their feedback comes back in the tool result. An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default. An inlined details section in the plan is rejected: put implementation detail in `details` (e.g. plan="# Fix X\n<plain-language layer>", details="<changed files, mechanism, tests>"). */
   exit_plan_mode: {
     /** The complete plan, as markdown, starting with a # heading that names it. */
     plan: string;
-    /** Implementation-detail annex appended after the plan; capable UIs present it collapsed by default. */
+    /** Implementation-detail annex appended after the plan; capable UIs present it collapsed by default. Put implementation detail here instead of inlining a details section into the plan; omit only when the plan carries no implementation detail. */
     details?: string;
   } & Record<string, JsonValue>;
   /** Read the current same-session goal, including its exact id/revision, objective, phase, completed continuation rounds, round limit, blocker reason when present, and whether another continuation is armed. Call this before updating a goal. */
