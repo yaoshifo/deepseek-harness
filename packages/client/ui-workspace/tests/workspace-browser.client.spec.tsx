@@ -151,6 +151,33 @@ describe('WorkspaceBrowser', () => {
     })
   })
 
+  it('keeps expanded directory groups across a Workspace snapshot refresh', async () => {
+    const sessions = sessionState([
+      summary('bridge', 1, { cwd: '/Users/hm/workspace/deepseek-harness' }),
+    ])
+    const b = mount({ useSessions: hook(sessions), useWorkspaces: hook(workspaceState([])) })
+    act(() => {
+      b.store.actions.setGroupExpanded('cwd:/Users/hm/workspace/deepseek-harness', true)
+      b.store.actions.setGroupExpanded('cwd:/gone', true)
+    })
+    rerender(b, { useWorkspaces: hook(workspaceState([])) })
+    await act(async () => {})
+    // The live directory group keeps its expansion; a key with no session is pruned.
+    expect(b.store.getSnapshot().groupExpansion).toEqual({ 'cwd:/Users/hm/workspace/deepseek-harness': true })
+  })
+
+  it('does not prune directory keys while the session list is not ready', async () => {
+    const pendingSessions = { ...sessionState([]), phase: 'pending' as const }
+    const b = mount({
+      useSessions: hook(pendingSessions),
+      useWorkspaces: hook(workspaceState([])),
+    })
+    act(() => { b.store.actions.setGroupExpanded('cwd:/Users/hm/workspace/deepseek-harness', true) })
+    rerender(b, { useWorkspaces: hook(workspaceState([])) })
+    await act(async () => {})
+    expect(b.store.getSnapshot().groupExpansion).toEqual({ 'cwd:/Users/hm/workspace/deepseek-harness': true })
+  })
+
   it('renders the grouped tree by default and switches to the flat list via Group by', () => {
     const sessions = sessionState([summary('alpha-s', 2), summary('beta-s', 1)])
     const b = mount({

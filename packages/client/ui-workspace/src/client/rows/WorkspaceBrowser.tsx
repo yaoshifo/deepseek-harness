@@ -23,7 +23,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { SessionNode, SessionOrderBy } from '../tree.ts'
 import {
-  deriveFlat, deriveGroups, deriveSearchResults, owningGroupKey, UNGROUPED_KEY,
+  cwdGroupKey, deriveFlat, deriveGroups, deriveSearchResults, owningGroupKey, UNGROUPED_KEY,
 } from '../tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
 import { FLAT_SESSION_ORDER_KEY } from '../stores.ts'
@@ -873,6 +873,7 @@ export function WorkspaceBrowser({
     const current = state.current
     return current !== undefined && state.byId[current]?.blank === true ? current : undefined
   })
+  const list = useSessions(s => s)
   const currentBlankAccount = currentBlankSessionId === undefined
     || workspacePhase !== 'ready'
     ? undefined
@@ -896,13 +897,24 @@ export function WorkspaceBrowser({
     }
   }, [actions.setSessionOrder, currentBlankAccount, currentBlankSessionId, sessionOrderByAccount])
   useEffect(() => {
-    if (workspacePhase !== 'ready') return
+    if (workspacePhase !== 'ready' || list.phase !== 'ready') return
+    // Directory group keys live only as long as their unaccounted sessions:
+    // a not-yet-ready list must not prune keys restored from persisted state.
+    const accounted = new Set(workspaces.flatMap(workspace => workspace.sessionIds))
+    const directoryKeys = new Set<string>()
+    for (const id of list.ids) {
+      const summary = list.byId[id]
+      if (summary === undefined || accounted.has(id)) continue
+      const key = cwdGroupKey(summary.cwd)
+      if (key !== UNGROUPED_KEY) directoryKeys.add(key)
+    }
     actions.retainAccountKeys([
       UNGROUPED_KEY,
       FLAT_SESSION_ORDER_KEY,
       ...workspaces.map(workspace => workspace.workspaceId as string),
+      ...directoryKeys,
     ])
-  }, [actions.retainAccountKeys, workspacePhase, workspaces])
+  }, [actions.retainAccountKeys, workspacePhase, workspaces, list])
   // The query outlives the tree and the input (both wide-only) so collapsing
   // does not silently drop an in-progress filter.
   const [query, setQuery] = useState('')

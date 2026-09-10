@@ -65,15 +65,16 @@ export function createWorkspaceViewStore(): EngineStoreHandle<WorkspaceViewState
       setGroupExpanded: (d, key: string, expanded: boolean) => { d.groupExpansion[key] = expanded },
       retainAccountKeys: (d, workspaceKeys: readonly string[]) => {
         const retained = new Set(workspaceKeys)
-        d.groupExpansion = Object.fromEntries(
-          Object.entries(d.groupExpansion).filter(([key]) => retained.has(key)),
-        )
-        d.sessionOrderByAccount = Object.fromEntries(
-          Object.entries(d.sessionOrderByAccount).filter(([key]) => retained.has(key)),
-        )
-        d.sessionUpdatedAtByAccount = Object.fromEntries(
-          Object.entries(d.sessionUpdatedAtByAccount).filter(([key]) => retained.has(key)),
-        )
+        // Keep the previous reference when no key is pruned: the retention pass
+        // runs on every session-list snapshot, and a new-but-equal record would
+        // re-render every subscriber for nothing.
+        const pruneKeys = <T>(record: Record<string, T>): Record<string, T> => {
+          const entries = Object.entries(record).filter(([key]) => retained.has(key))
+          return entries.length === Object.keys(record).length ? record : Object.fromEntries(entries)
+        }
+        d.groupExpansion = pruneKeys(d.groupExpansion)
+        d.sessionOrderByAccount = pruneKeys(d.sessionOrderByAccount)
+        d.sessionUpdatedAtByAccount = pruneKeys(d.sessionUpdatedAtByAccount)
       },
       syncSessionOrderAccount: (d, accountKey: string, order: string[], updatedAt: Record<string, number>) => {
         d.sessionOrderByAccount[accountKey] = order
