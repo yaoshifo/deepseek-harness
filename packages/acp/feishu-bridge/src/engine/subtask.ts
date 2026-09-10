@@ -134,3 +134,59 @@ export function childLabel(s: Session): string {
   if (name !== '') return name
   return s.id
 }
+
+/**
+ * Whitelist an extracted error field may carry: ASCII identifier characters
+ * only and at most 32 runes, so a provider-controlled value can smuggle no
+ * prose into the brief (2026-09-09/10 Zhipu 1301 cascade: provider error
+ * wording re-entering a parent agent's context tripped the same moderation
+ * block on the parent's next request).
+ */
+const EXTRACT_FIELD_RE = /^[A-Za-z0-9_.-]{1,32}$/
+
+/** Operator advice per known error code; unknown codes fall to the generic line. */
+const FAILURE_ADVICE: Readonly<Record<string, string>> = {
+  '1301': '内容拦截：重试大概率再触发，建议调整任务或换模型路由',
+  '429': '限流：建议稍候重试',
+  '401': '认证失败：重试无意义，建议报告用户检查密钥配置',
+  '403': '授权不足：重试无意义，建议报告用户检查权限',
+}
+
+/** Trailing Zhipu-style request-id bracket segment, e.g. [202609100805161ffc25f1025c4f2a]. */
+const REQUEST_ID_TAIL_RE = /\[(2026[0-9]{10,}[0-9a-f]+)\][^0-9a-zA-Z]*$/
+
+/**
+ * Fixed-template failure brief for messages that inject a failed subtask or
+ * role turn into another agent's context. The error's original text and the
+ * turn's partial streamed output never ride along: any detection of which
+ * errors are "dangerous" is itself a guess about provider output, so the
+ * only discriminator is the structural fact that the turn errored. Dynamic
+ * content is limited to regex-extracted, whitelist-validated code and
+ * request id plus a per-code advice line from our own table. Zero throw
+ * paths: pure string scanning, no JSON.parse.
+ *
+ * @param errorText - The errored turn's raw error text (any shape).
+ * @returns The brief to inject in place of the raw error text.
+ */
+export function failureBriefForAgentContext(errorText: string): string {
+  let code = ''
+  const codeField = /"code":"([^"]*)"/.exec(errorText)
+  if (codeField !== null) code = codeField[1] ?? ''
+  if (code === '') {
+    const codePrefix = /^\[(\d{1,8})\]/.exec(errorText)
+    if (codePrefix !== null) code = codePrefix[1] ?? ''
+  }
+  let requestId = ''
+  const ridField = /"request_id":"([0-9a-zA-Z]{8,64})"/.exec(errorText)
+  if (ridField !== null) requestId = ridField[1] ?? ''
+  if (requestId === '') {
+    const ridTail = REQUEST_ID_TAIL_RE.exec(errorText)
+    if (ridTail !== null) requestId = ridTail[1] ?? ''
+  }
+  const advice = FAILURE_ADVICE[code] ?? (code.startsWith('5') && code.length === 3
+    ? '平台故障：可稍后重试'
+    : '未识别错误：详情见子会话日志判断可否重试')
+  const codePart = code !== '' && EXTRACT_FIELD_RE.test(code) ? `code=${code}` : 'code=未分类'
+  const idPart = requestId !== '' && /^[0-9a-zA-Z]{8,64}$/.test(requestId) ? `；请求 ID：${requestId}` : ''
+  return `[failure ${codePart}] 子任务回合中断（${advice}）。错误原文与半截输出未随附（防下游连锁误判），完整原文见父群汇报卡片与子会话日志；可用 feishu_bridge_subtask（action: send）追问该子任务获取进展${idPart}。`
+}

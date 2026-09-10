@@ -434,15 +434,17 @@ describe('gather fan-in via maybeAutoRelayRole', () => {
 
     const st = new InteractiveState()
     st.platform = p
-    maybeAutoRelayRole(e, st, role, '被打断前的半段输出', false, true, '1301 sensitive content rejected')
+    maybeAutoRelayRole(e, st, role, '被打断前的半段输出', false, true, '{"type":"error","error":{"type":"invalid_request_error","code":"1301","message":"[1301][系统检测到输入或生成内容可能包含不安全或敏感内容][202609100805161ffc25f1025c4f2a]"}}')
     await settle()
 
     // The round still counts the role as answered, but with an explicit
-    // failure record — the turn's own partial must not pose as the round
-    // answer (and an earlier turn's lastResult never reaches this path).
+    // failure record — the fixed brief, never raw provider wording or the
+    // turn's own partial (2026-09-09/10 Zhipu 1301 cascade).
     const recorded = g.collected.get('Taleb') ?? ''
     expect(recorded).toContain('本轮发言失败')
-    expect(recorded).toContain('1301 sensitive content rejected')
+    expect(recorded).toContain('[failure code=1301]')
+    expect(recorded).not.toContain('系统检测到')
+    expect(recorded).not.toContain('敏感内容')
     expect(recorded).not.toContain('半段输出')
     expect(g.expected.has('Taleb')).toBe(false)
     // A failed turn is not a reply: no relay card.

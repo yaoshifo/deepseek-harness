@@ -24,6 +24,7 @@ import { maxGroupNameRunes } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Message, PendingAsk, Platform } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { asCardSender, asCardSenderWithUpdate, asForkQuerierWithProvider, asReplyContextReconstructor } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { newCard } from '@deepseek-ai/dsh-feishu-bridge/exports'
+import { failureBriefForAgentContext } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import type { Card } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { Msg } from '../i18n.ts'
 import { chatroomState } from '../chatroom-state.ts'
@@ -1662,8 +1663,9 @@ export function maybeAutoRelayRole(
   const r = asReplyContextReconstructor(p)
   if (r === undefined) return
   const reply = baseResponse.trim()
-  /** Barrier record for an errored turn: an explicit failure, never its partial posing as a reply. */
-  const failedNote = errored ? e.i18n.tf(Msg.ChatroomRoleTurnFailedNote, errorText) : ''
+  /** Barrier record for an errored turn: the fixed failure brief — raw provider
+   * wording must not enter the moderator's context (2026-09-09/10 Zhipu 1301 cascade). */
+  const failedNote = errored ? e.i18n.tf(Msg.ChatroomRoleTurnFailedNote, failureBriefForAgentContext(errorText)) : ''
 
   /**
    * Post the 【Role】 card to the hub and append the ledger. Shared by every
@@ -1784,11 +1786,12 @@ export function maybeAutoRelayRole(
   const reminder = e.i18n.t(Msg.ChatroomReminder)
   let wake: string
   if (errored) {
-    // The turn died mid-generation: report the failure with whatever the
-    // role did stream, never a full-fledged 发言 framing of a partial.
-    const failedWake = e.i18n.tf(Msg.ChatroomRoleTurnFailedWake, roleName, errorText)
-    wake = `${failedWake}${reply !== '' ? `\n\n${reply}` : ''}\n\n${reminder}`
-    console.info(`chatroom: role turn failed; woke moderator with the failure (role=${roleName} error=${errorText})`)
+    // The turn died mid-generation: the wake carries the fixed failure brief
+    // — raw provider wording and the partial must not enter the moderator's
+    // context (2026-09-09/10 Zhipu 1301 cascade re-tripped moderation).
+    const failedWake = e.i18n.tf(Msg.ChatroomRoleTurnFailedWake, roleName, failureBriefForAgentContext(errorText))
+    wake = `${failedWake}\n\n${reminder}`
+    console.info(`chatroom: role turn failed; woke moderator with the failure brief (role=${roleName} error=${errorText})`)
   } else if (reply !== '' && !isSilent) {
     wake = `[聊天室·${roleName} 发言]\n\n${reply}\n\n${reminder}`
     console.info(`chatroom: relayed role reply to hub (role=${roleName} hub=${hubKey})`)

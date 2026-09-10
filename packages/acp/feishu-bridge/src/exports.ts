@@ -18,6 +18,7 @@ export { emptyMessage, jumpButtonsMarkdown, parentJumpButtons } from './engine/e
 export { ProjectStateStore } from './engine/project-state.ts'
 export { registerSessionCommands, cleanupOneChat } from './engine/commands.ts'
 export { Session, SessionManager } from './engine/session.ts'
+export { failureBriefForAgentContext } from './engine/subtask.ts'
 export { lookupMessage, registerMessages } from './i18n/index.ts'
 export type { Language } from './i18n/index.ts'
 export { declareToolFamily, toolTagForProgress } from './streaming.ts'

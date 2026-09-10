@@ -112,7 +112,7 @@ import {
 import type { UsageProvider } from './usage.ts'
 import { Session, SessionManager } from './session.ts'
 import { pendingDirFor, saveFilesToDir, saveImagesToDir, spliceStagedAttachments, type StagedAttachment } from './attachments.ts'
-import { childLabel, SubtaskGather } from './subtask.ts'
+import { childLabel, failureBriefForAgentContext, SubtaskGather } from './subtask.ts'
 import {
   createWorktree,
   gitDiffShortstat,
@@ -3946,13 +3946,19 @@ export class Engine {
     // First-turn fallback: if this is a delegated subtask session and the
     // agent finished without explicitly reporting, push the result to the
     // parent so it is never lost. One-shot (Go maybeAutoReportSubtask). An
-    // error-reasoned turn reports its failure explicitly — with this turn's
-    // own partial streamed text, never a stale earlier reply.
+    // error-reasoned turn reports its failure explicitly — as the fixed
+    // failureBriefForAgentContext template (raw provider error wording
+    // re-entering the parent context re-tripped provider moderation in the
+    // 2026-09-09/10 Zhipu 1301 cascade), with the raw text demoted to the
+    // parent-facing card appendix for the human reader.
     const resultOrReply = await this.lastResultOrReply(sessionKey, session)
-    if (errored) {
-      const partial = joined.trim()
-      const failed = this.i18n.tf(Msg.SubtaskTurnFailed, event.errorText)
-      this.maybeAutoReportSubtask(state, session, partial !== '' ? `${failed}\n\n${partial}` : failed, false)
+    if (errored && event.errorText !== undefined) {
+      const failed = this.i18n.tf(Msg.SubtaskTurnFailed, failureBriefForAgentContext(event.errorText))
+      this.maybeAutoReportSubtask(state, session, failed, false, event.errorText)
+    } else if (errored) {
+      // An errored turn with no error text still reports — as the bare brief.
+      const failed = this.i18n.tf(Msg.SubtaskTurnFailed, failureBriefForAgentContext(''))
+      this.maybeAutoReportSubtask(state, session, failed, false)
     } else {
       this.maybeAutoReportSubtask(state, session, resultOrReply, isSilent)
     }
@@ -7692,11 +7698,18 @@ export class Engine {
    * @param session - Child session that finished its first turn.
    * @param baseResponse - The turn's clean reply text.
    * @param isSilent - Whether the turn was a silent reply.
+   * @param cardDetail - Raw detail appended to the parent-facing card only (never the injected wake) — the errored-turn raw error text.
    */
-  maybeAutoReportSubtask(state: InteractiveState | undefined, session: Session, baseResponse: string, isSilent: boolean): void {
+  maybeAutoReportSubtask(
+    state: InteractiveState | undefined,
+    session: Session,
+    baseResponse: string,
+    isSilent: boolean,
+    cardDetail?: string,
+  ): void {
     if (session.getSubtaskDepth() <= 0 || session.getSubtaskReported() || session.getSubtaskAutoReportSuppressed() || isSilent) return
     if (baseResponse.trim() === '' || state === undefined || state.platform === undefined) return
-    if (this.replyToParent(state.platform, session, baseResponse)) {
+    if (this.replyToParent(state.platform, session, baseResponse, cardDetail)) {
       session.setSubtaskReported(true)
       this.sessions.save()
       console.info(`subtask: auto-reported first-turn result to parent (child=${session.id})`)
@@ -8022,9 +8035,10 @@ export class Engine {
    * @param p - Platform delivering the card and wake message.
    * @param sess - Child session carrying the parent link.
    * @param content - Result content to push.
+   * @param cardDetail - Raw detail appended to the parent-facing card only (never the injected wake) — the errored-turn raw error text.
    * @returns True when the delivery was initiated.
    */
-  replyToParent(p: Platform, sess: Session, content: string): boolean {
+  replyToParent(p: Platform, sess: Session, content: string, cardDetail?: string): boolean {
     const parentKey = sess.getParentSessionKey()
     if (parentKey === '' || content.trim() === '') return false
     const r = asReplyContextReconstructor(p)
@@ -8035,7 +8049,7 @@ export class Engine {
         // Same rollback as the native path's wake failure: the initiation
         // consumed the one-shot flag, and a lost report must not read as
         // delivered. Card failures are contained inside deliverParentReply.
-        void this.deliverParentReply(p, parentKey, childKey, childLabel(sess), parentRctx, content, false)
+        void this.deliverParentReply(p, parentKey, childKey, childLabel(sess), parentRctx, content, false, cardDetail)
           .catch((error: unknown) => {
             console.warn(`subtask: group report wake failed, rolling back the reported flag for re-delivery (child=${childKey}): ${String(error)}`)
             sess.setSubtaskReported(false)
@@ -8065,6 +8079,7 @@ export class Engine {
    * mid-turn instead of queueing it behind itself. Callers roll the child's
    * one-shot reported flag back when this rejection escapes: a lost wake
    * must stay re-deliverable.
+   * @param cardDetail - Raw detail appended to the parent-facing card body only; the injected wake always carries `content` alone.
    */
   private async deliverParentReply(
     p: Platform,
@@ -8074,6 +8089,7 @@ export class Engine {
     parentRctx: unknown,
     content: string,
     silentCard: boolean,
+    cardDetail?: string,
   ): Promise<void> {
     // A blocking gather holds the parent turn open with the child activity
     // already streaming on its live card; per-child settlement cards would
@@ -8086,7 +8102,8 @@ export class Engine {
       // the essential delivery — a failed card send must not strand the wake
       // on an unhandled rejection (the 2026-09-06 frozen-report family).
       try {
-        await this.sendAsCard(p, parentRctx, content, {
+        const cardBody = cardDetail !== undefined && cardDetail.trim() !== '' ? `${content}\n\n---\n\n${cardDetail}` : content
+        await this.sendAsCard(p, parentRctx, cardBody, {
           title: this.i18n.tf(Msg.DoneReplyParentHeader, label),
           color: 'indigo',
         })

@@ -21,7 +21,7 @@ import { WorktreeMode } from '../../src/engine/worktree.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import { registerNativeSettlementListener } from '../../src/index.ts'
 import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, ProviderSwitcher, RecentTurnsReader, SubtaskDelivery, TextPreviewContent } from '../../src/core/types.ts'
-import { SubtaskGather } from '../../src/engine/subtask.ts'
+import { SubtaskGather, failureBriefForAgentContext } from '../../src/engine/subtask.ts'
 import {
   createNoOverwriteAgent,
   createStubAgent,
@@ -2186,37 +2186,37 @@ describe('settleNativeChild failure semantics', () => {
   })
 })
 
+/** Engine whose parent wake turns land on a recording queuing session (module level: shared by the group-path and failure-brief suites). */
+function childEngine(p: Platform, parentKey: string): {
+  e: Engine
+  parentSession: ControllableAgentSession
+  child: Session
+  childKey: string
+} {
+  const { e, agent } = newNativeEngine(p, parentKey)
+  const parentSession = newQueuingSession('parent-native-1')
+  agent.startSession = async () => parentSession
+  const childKey = 'test:child-chat:u1'
+  const child = e.sessions.getOrCreateActive(childKey)
+  child.setParentSessionKey(parentKey)
+  child.setSubtaskDepth(1)
+  return { e, parentSession, child, childKey }
+}
+
+/** Await the parent's [子任务完成] wake prompt (bounded polling). */
+async function wakeOf(s: { sendCalls: string[] }): Promise<string | undefined> {
+  for (let i = 0; i < 100 && !s.sendCalls.some(c => c.includes('[子任务完成]')); i++) {
+    await settle()
+  }
+  return s.sendCalls.find(c => c.includes('[子任务完成]'))
+}
+
 describe('group-path failure auto-report', () => {
   const parentKey = 'test:parent-chat:u1'
 
-  /** Engine whose parent wake turns land on a recording queuing session. */
-  function childEngine(p: Platform): {
-    e: Engine
-    parentSession: ControllableAgentSession
-    child: Session
-    childKey: string
-  } {
-    const { e, agent } = newNativeEngine(p, parentKey)
-    const parentSession = newQueuingSession('parent-native-1')
-    agent.startSession = async () => parentSession
-    const childKey = 'test:child-chat:u1'
-    const child = e.sessions.getOrCreateActive(childKey)
-    child.setParentSessionKey(parentKey)
-    child.setSubtaskDepth(1)
-    return { e, parentSession, child, childKey }
-  }
-
-  /** Await the parent's [子任务完成] wake prompt (bounded polling). */
-  async function wakeOf(s: { sendCalls: string[] }): Promise<string | undefined> {
-    for (let i = 0; i < 100 && !s.sendCalls.some(c => c.includes('[子任务完成]')); i++) {
-      await settle()
-    }
-    return s.sendCalls.find(c => c.includes('[子任务完成]'))
-  }
-
-  it('an error-reasoned turn reports the failure with this turn\'s partial text, never a stale reply', async () => {
+  it('an error-reasoned turn reports the failure brief, never a stale reply', async () => {
     const p = createStubCardPlatformFull('test')
-    const { e, parentSession, child, childKey } = childEngine(p)
+    const { e, parentSession, child, childKey } = childEngine(p, parentKey)
     // A stale earlier result must not be misreported as this turn's output.
     child.setLastResult('previous turn result')
 
@@ -2233,14 +2233,17 @@ describe('group-path failure auto-report', () => {
 
     const wake = await wakeOf(parentSession)
     expect(wake).toBeDefined()
-    expect(wake).toContain('No API key for provider')
-    expect(wake).toContain('partial narration')
+    // 2026-09-09/10 Zhipu 1301 cascade: the wake is the fixed brief — the
+    // raw error text and the partial no longer enter the parent context.
+    expect(wake).toContain('[failure code=未分类]')
+    expect(wake).not.toContain('No API key for provider')
+    expect(wake).not.toContain('partial narration')
     expect(wake).not.toContain('previous turn result')
   })
 
   it('a mid-turn process exit reports the partial output with the interruption prefix', async () => {
     const p = createStubCardPlatformFull('test')
-    const { e, parentSession, child, childKey } = childEngine(p)
+    const { e, parentSession, child, childKey } = childEngine(p, parentKey)
 
     const childSession = newControllableSession('child-1')
     const state = new InteractiveState()
@@ -2261,7 +2264,7 @@ describe('group-path failure auto-report', () => {
 
   it('a crash with no streamed text still settles the parent via the timeout notice', async () => {
     const p = createStubCardPlatformFull('test')
-    const { e, parentSession, child, childKey } = childEngine(p)
+    const { e, parentSession, child, childKey } = childEngine(p, parentKey)
 
     const childSession = newControllableSession('child-1')
     const state = new InteractiveState()
@@ -2613,5 +2616,130 @@ describe('registerNativeSettlementListener re-arm', () => {
     } finally {
       dispose()
     }
+  })
+})
+
+describe('failureBriefForAgentContext: platform-moderation error redaction', () => {
+  // 2026-09-09/10 Zhipu 1301 incident: the provider's error message text
+  // ("系统检测到输入或生成内容可能包含不安全或敏感内容…") re-entered the
+  // parent agent's context through the failure report and tripped the same
+  // moderation block on the parent's next request. The brief must carry only
+  // our own template plus whitelisted extracted fields — never foreign text.
+  const zhipu1301 = '{"type":"error","error":{"type":"invalid_request_error","code":"1301","message":"[1301][系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。][202609100805161ffc25f1025c4f2a]"}}'
+
+  it('a content-moderation block becomes a fixed brief with code, advice, and request id — no foreign text', async () => {
+    const { failureBriefForAgentContext } = await import('../../src/engine/subtask.ts')
+    const brief = failureBriefForAgentContext(zhipu1301)
+    expect(brief).toContain('1301')
+    expect(brief).toContain('202609100805161ffc25f1025c4f2a')
+    // The provider's accusation wording must not ride along.
+    expect(brief).not.toContain('系统检测到')
+    expect(brief).not.toContain('敏感内容')
+    expect(brief).not.toContain('invalid_request_error')
+    // Actionable advice for the known code.
+    expect(brief).toContain('重试大概率再触发')
+  })
+})
+
+describe('failureBriefForAgentContext: extraction matrix', () => {
+  it('rate-limit and auth codes map to their advice lines', () => {
+    const brief429 = failureBriefForAgentContext('{"type":"error","error":{"type":"rate_limit_error","code":"429","message":"Too many requests"}}')
+    expect(brief429).toContain('code=429')
+    expect(brief429).toContain('限流')
+    expect(brief429).not.toContain('Too many requests')
+    const brief401 = failureBriefForAgentContext('{"error":{"code":"401","message":"invalid api key"}}')
+    expect(brief401).toContain('code=401')
+    expect(brief401).toContain('认证失败')
+    expect(brief401).not.toContain('invalid api key')
+  })
+
+  it('unknown codes and bare local errors fall to the generic advice without foreign text', () => {
+    const briefUnknown = failureBriefForAgentContext('{"error":{"code":"XYZ123","message":"weird platform prose"}}')
+    expect(briefUnknown).toContain('code=XYZ123')
+    expect(briefUnknown).toContain('未识别错误')
+    expect(briefUnknown).not.toContain('weird platform prose')
+    const briefLocal = failureBriefForAgentContext('No API key for provider')
+    expect(briefLocal).toContain('code=未分类')
+    expect(briefLocal).toContain('未识别错误')
+    expect(briefLocal).not.toContain('No API key')
+  })
+
+  it('a bracket-prefixed code and a trailing request-id bracket both extract', () => {
+    const brief = failureBriefForAgentContext('[1301][系统检测到输入或生成内容可能包含不安全或敏感内容][202609100808173591a639a1fb4e05]')
+    expect(brief).toContain('code=1301')
+    expect(brief).toContain('202609100808173591a639a1fb4e05')
+    expect(brief).not.toContain('系统检测到')
+  })
+
+  it('a provider stuffing oversized or non-whitelisted text into the code field drops the field', () => {
+    const oversized = failureBriefForAgentContext(`{"error":{"code":"${'a'.repeat(40)}","message":"x"}}`)
+    expect(oversized).toContain('code=未分类')
+    const prose = failureBriefForAgentContext('{"error":{"code":"重试 or else","message":"x"}}')
+    expect(prose).toContain('code=未分类')
+  })
+
+  it('5xx codes map to the platform-fault advice', () => {
+    expect(failureBriefForAgentContext('{"error":{"code":"502","message":"bad gateway"}}')).toContain('平台故障')
+    expect(failureBriefForAgentContext('{"error":{"code":"503","message":"unavailable"}}')).toContain('平台故障')
+  })
+})
+
+describe('error-reasoned subtask report: moderation-safe brief and card detail split', () => {
+  const zhipu1301 = '{"type":"error","error":{"type":"invalid_request_error","code":"1301","message":"[1301][系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。][202609100805161ffc25f1025c4f2a]"}}'
+
+  it('the parent wake carries the fixed brief — no raw error text, no partial — while the parent card appends the raw detail', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, parentSession, child, childKey } = childEngine(p, 'test:parent-chat:u1')
+
+    const childSession = newControllableSession('child-1')
+    const state = new InteractiveState()
+    state.agentSession = childSession
+    state.platform = p
+    state.replyCtx = 'child-rctx'
+    e.interactiveStates.set(childKey, state)
+
+    childSession.channel.push({ type: 'text', content: 'partial narration', done: false })
+    childSession.channel.push({ type: 'result', content: '', errorText: zhipu1301, done: true })
+    await e.processInteractiveEvents(state, child, e.sessions, childKey, 'm1', undefined, state.replyCtx)
+
+    const wake = await wakeOf(parentSession)
+    expect(wake).toBeDefined()
+    // The wake (which enters the parent agent's context) is the fixed brief.
+    expect(wake).toContain('[failure code=1301]')
+    expect(wake).toContain('重试大概率再触发')
+    expect(wake).toContain('202609100805161ffc25f1025c4f2a')
+    expect(wake).not.toContain('系统检测到')
+    expect(wake).not.toContain('敏感内容')
+    expect(wake).not.toContain('invalid_request_error')
+    // The partial streamed text does not ride along on an errored turn.
+    expect(wake).not.toContain('partial narration')
+
+    // The parent-facing card keeps the raw detail for the human reader
+    // (the engine under test runs in 'en': the card title is the English entry).
+    const reportCard = (p.sentCards as RecordedCard[]).find(c => c.header?.title.includes('Subtask done'))
+    expect(reportCard).toBeDefined()
+    const cardBody = (reportCard?.elements ?? []).map(el => el.content ?? '').join('\n')
+    expect(cardBody).toContain('[failure code=1301]')
+    expect(cardBody).toContain('系统检测到')
+  })
+
+  it('a plain local error also reports as the brief, without its raw text in the wake', async () => {
+    const p = createStubCardPlatformFull('test')
+    const { e, parentSession, child, childKey } = childEngine(p, 'test:parent-chat:u1')
+
+    const childSession = newControllableSession('child-1')
+    const state = new InteractiveState()
+    state.agentSession = childSession
+    state.platform = p
+    state.replyCtx = 'child-rctx'
+    e.interactiveStates.set(childKey, state)
+
+    childSession.channel.push({ type: 'result', content: '', errorText: 'No API key for provider', done: true })
+    await e.processInteractiveEvents(state, child, e.sessions, childKey, 'm1', undefined, state.replyCtx)
+
+    const wake = await wakeOf(parentSession)
+    expect(wake).toBeDefined()
+    expect(wake).toContain('[failure code=未分类]')
+    expect(wake).not.toContain('No API key for provider')
   })
 })
