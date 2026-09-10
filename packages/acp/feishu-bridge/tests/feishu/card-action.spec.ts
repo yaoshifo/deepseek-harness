@@ -936,7 +936,7 @@ describe('onCardAction fw_multi submit (followups suggestion card)', () => {
   function fwEvent(formValue: Record<string, unknown>, valueAction = 'fw_multi:0'): CardActionTriggerEvent {
     return {
       action: {
-        value: { action: valueAction, fw_question: 'fix?' },
+        value: { action: valueAction },
         name: 'fw_multi_submit_0',
         form_value: formValue,
       },

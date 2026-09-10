@@ -1178,10 +1178,7 @@ export class FeishuPlatform implements Platform {
       // are lost — and the drop leaves a trace.
       console.warn(`${this.tag()}: followups card callback without cached meta (${sessionKey})`)
       const stale = (this.i18nHandle ?? zhAskCardI18n).tf(Msg.FollowupsStale, indices.join(','))
-      const questionHint = action.value?.fw_question
-      let staleContent = typeof questionHint === 'string' && questionHint !== ''
-        ? `${stale}\n**${questionHint}**`
-        : stale
+      let staleContent = stale
       if (note !== '') staleContent += `\n✍️ ${note}`
       this.dispatch(sessionKey, messageID, userID, chatID, 'group',
         staleContent, '', replyCtx, isSpawned, '', false, false, [], [], false, undefined, true)
