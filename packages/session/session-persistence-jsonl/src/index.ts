@@ -100,7 +100,10 @@ export interface Config {
    * process. Every write path — create, write-open, migration publication —
    * still targets `root` only; write-opening a session stored under a
    * read-only root refuses. Each configured root must already exist and be a
-   * readable directory, must not repeat, and must differ from `root`.
+   * readable directory, must not repeat, and must differ from `root`. One
+   * `compression` setting reads every root, so it must match the mounted
+   * store's generation encoding; a mismatch fails the first backend operation
+   * (for example `list`) loudly.
    */
   readOnlyRoots?: string[]
   /** Physical encoding; defaults to checksummed Zstandard frames. */
