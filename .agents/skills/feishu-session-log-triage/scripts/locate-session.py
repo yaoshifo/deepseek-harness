@@ -3,12 +3,13 @@
 
 Scans every bot's sessions.json under <dsh-home>/feishu-bridge/, resolves the
 s-id -> agentSessionID mapping, and prints each session.jsonl.zstd path.
-Session keys are `<project>:<chat_id>` where <project> is the bridge project
-name (feishu, vault, op-dev, ...); keys are matched by the `:<chat_id>` suffix,
-never by a hardcoded prefix. Single-chat keys carry a trailing `:ou_...` user
-segment and cannot match an oc_ suffix. Also reports spawn-group registration
-(sessions/<bot>_spawned.json) and workspace directory overrides that mention
-the chat.
+Session keys are `<project>:<chat_id>` (group chats) or
+`<project>:<chat_id>:<ou_user>` (single chats), where <project> is the bridge
+project name (feishu, vault, op-dev, ...); keys are matched by the chat id
+appearing as a complete `:`-delimited segment, never by a hardcoded prefix,
+so single-chat keys match despite their trailing user segment. Also reports
+spawn-group registration (sessions/<bot>_spawned.json) and workspace
+directory overrides that mention the chat.
 
 Usage:
   python3 locate-session.py <oc_chat_id> [--dsh-home <dir>]
@@ -37,13 +38,20 @@ def scan_logs(dsh_home, agent_session_id):
     return hits
 
 
+def has_chat_segment(key, chat_id):
+    """True when chat_id appears as a complete `:`-delimited segment of key."""
+    return chat_id in key.split(":")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("chat_id", help="Feishu chat id, e.g. oc_9e68bd6a...")
     parser.add_argument("--dsh-home", default=os.path.expanduser("~/.dsh"))
     args = parser.parse_args()
-    # Session keys are `<project>:<chat_id>`; the project segment varies per
-    # bridge deployment, so match by suffix instead of assuming a prefix.
+    # Session keys are `<project>:<chat_id>` (groups) or
+    # `<project>:<chat_id>:<ou_user>` (single chats); the project segment
+    # varies per bridge deployment, so match the chat id as a complete
+    # `:`-delimited segment instead of assuming a prefix.
     suffix = ":" + args.chat_id
 
     session_files = sorted(
@@ -62,12 +70,12 @@ def main():
         active_by_key = {
             key: sid
             for key, sid in (data.get("activeSession") or {}).items()
-            if isinstance(key, str) and key.endswith(suffix)
+            if isinstance(key, str) and has_chat_segment(key, args.chat_id)
         }
         user_sessions_by_key = {
             key: sids
             for key, sids in (data.get("userSessions") or {}).items()
-            if isinstance(key, str) and key.endswith(suffix)
+            if isinstance(key, str) and has_chat_segment(key, args.chat_id)
         }
         matched_keys = sorted(
             set(active_by_key) | set(user_sessions_by_key),
@@ -79,7 +87,7 @@ def main():
             sid
             for sid, entry in sessions.items()
             if isinstance(entry, dict)
-            and str(entry.get("parentSessionKey", "")).endswith(suffix)
+            and has_chat_segment(str(entry.get("parentSessionKey", "")), args.chat_id)
         ]
         if not matched_keys and not children:
             continue
