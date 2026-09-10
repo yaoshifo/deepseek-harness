@@ -1,10 +1,11 @@
 /**
  * The bridge-owned generic prompt sections registered by the dsh adapter:
  * the plain-session agent conventions (async autonomy, curiosity reporting,
- * plain-language output, closing ask_user_question card, skillify offer) as the low-order
- * `feishu-bridge-agent-conventions` section for direct project-chat agents,
- * and the default-TDD prompt as `feishu-bridge-tdd-default` for plain
- * sessions and subtask children alike — coding turns run in both.
+ * plain-language output, closing followups card via the dedicated tool,
+ * skillify offer) as the low-order `feishu-bridge-agent-conventions` section
+ * for direct project-chat agents, and the default-TDD prompt as
+ * `feishu-bridge-tdd-default` for plain sessions and subtask children alike
+ * — coding turns run in both.
  * Deliberately kept out of the chatroom plugin's persona module: subtask
  * children report through their parent session, and chatroom roles carry
  * their own persona.
@@ -12,10 +13,8 @@
  * @module dsh-feishu-bridge/agent-conventions
  */
 
-import { FOLLOWUPS_ASK_HEADER } from './ask.ts'
-
 /** The plain-session agent conventions prompt (async autonomy, curiosity
- * reporting, plain-language output, closing card, skillify offer).
+ * reporting, plain-language output, closing followups card, skillify offer).
  *
  * Registers for direct project-chat agents only: subtask children report
  * through their parent session, and chatroom roles carry their own persona.
@@ -47,8 +46,8 @@ export function agentConventionsPrompt(): string {
 发计划前自检：把白话层单独截出来读一遍，不看代码的人读不懂就重写。
 
 ### 收尾追问卡片
-「发现的问题 / 可优化点」一节非空时，发出收尾文本后紧接着调用 ask_user_question 发一个多选问题：单个问题、multi_select 为 true、header 为「${FOLLOWUPS_ASK_HEADER}」（保留字，引擎按它识别收尾卡）；每个发现对应一个选项（label 为短标题，description 为 \`path:line\` 与建议动作一句话）。选项按你推荐的处理优先级排序，推荐要处理的选项置前并设 recommended: true（卡片会默认勾选）。该节为空或缺失时不发卡片，也不必提"没有发现"。
-引擎会把这张卡登记为非阻塞建议卡，随本轮完成通知之后投递；工具会立即返回登记确认——收到后**正常结束回合，不要等待用户作答**。用户在卡上提交的选择会作为 [后续处理] 新消息到达：勾选视为授权，直接开始处理对应条目；不点即不处理，无需再确认。
+「发现的问题 / 可优化点」一节非空时，发出收尾文本后紧接着调用 feishu_bridge_followups：每个发现对应一个选项（label 为短标题，description 为 \`path:line\` 与建议动作一句话；recommended: true 标记推荐处理的项，卡片会默认勾选）。该节为空或缺失时不调用，也不必提"没有发现"。
+工具会立即返回登记确认——收到后**正常结束回合，不要等待用户作答**。引擎把这张卡登记为非阻塞建议卡，随本轮完成通知之后投递；用户在卡上提交的选择会作为 [后续处理] 新消息到达：勾选视为授权，直接开始处理对应条目；不点即不处理，无需再确认。
 
 ### 主动沉淀可复用流程（skillify）
 完成一个跨多步骤、含明确可复用模式、且你判断后续会再次遇到类似需求的任务后，在回合结束前用一句话向用户提议：

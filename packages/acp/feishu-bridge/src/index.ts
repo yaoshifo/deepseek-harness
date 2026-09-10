@@ -51,6 +51,7 @@ import { createUsageProvider, type UsageProvider } from './engine/usage.ts'
 import { registerCronTool } from './tools/cron.ts'
 import { registerRelayTool } from './tools/relay.ts'
 import { registerSendTool } from './tools/send.ts'
+import { registerFollowupsTool } from './tools/followups.ts'
 import { registerLarkTool, type LarkRoute } from './tools/lark.ts'
 import { registerProviderCommands } from './engine/provider-commands.ts'
 import { registerPredictCommands } from './engine/predict.ts'
@@ -925,6 +926,7 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
   registerCronTool(ctx, route)
   registerRelayTool(ctx, route)
   registerSendTool(ctx, route)
+  registerFollowupsTool(ctx, route)
   registerNativeSettlementListener(ctx, service.projects)
   // The lark passthrough routes to the caller's project BOT credentials
   // (plan D4): bot mode mints a TAT in-process, --as user prepends the
