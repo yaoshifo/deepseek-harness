@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from 'react'
-import type { ProfileCompositionEntry, ProfileInventorySnapshot } from '@deepseek-ai/dsh-api-remotes/client'
-import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ProfileCompositionEntry, ProfileInventorySnapshot, ProfilePluginRow } from '@deepseek-ai/dsh-api-remotes/client'
+import { IconChevronDownOutline14, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './PluginInventorySettingsTab.module.css'
 
@@ -35,6 +35,18 @@ function CompositionFile({ title, body, bodyLabel }: {
         <pre className={css.yamlBlock} aria-label={bodyLabel}>{body}</pre>
       </dd>
     </div>
+  )
+}
+
+/** One flattened patch row: entry identity with its disablement tag. */
+function PluginRow({ row, t }: { readonly row: ProfilePluginRow; readonly t: ProfilesSettingsTabProps['t'] }): ReactNode {
+  const identity = row.name ?? row.id ?? '?'
+  return (
+    <li className={css.profilePluginRow}>
+      <code className={css.entryValue}>{identity}</code>
+      {row.name !== null && row.id !== null && row.id !== row.name ? <span className={css.profileRowId}>{row.id}</span> : null}
+      <Tag tone={row.disabled ? 'neutral' : 'success'}>{row.disabled ? t('disabledTag') : t('enabledTag')}</Tag>
+    </li>
   )
 }
 
@@ -77,6 +89,18 @@ function ProfileCard({ profile, t, expanded, onToggle }: {
                 </ul>
               </dd>
             </div>
+            {profile.pluginRows === undefined || profile.pluginRows.length === 0 ? null : (
+              <div>
+                <dt>{t('pluginRowsLabel')}</dt>
+                <dd>
+                  <ul className={css.profilePluginList}>
+                    {profile.pluginRows.map((row, index) => (
+                      <PluginRow key={`${row.id ?? 'anon'}:${String(index)}`} row={row} t={t} />
+                    ))}
+                  </ul>
+                </dd>
+              </div>
+            )}
             <CompositionFile title={t('cordisYmlLabel')} body={profile.cordisYml} bodyLabel={t('cordisYmlLabel')} />
             <CompositionFile title={t('patchYmlLabel')} body={profile.patchYml} bodyLabel={t('patchYmlLabel')} />
           </dl>

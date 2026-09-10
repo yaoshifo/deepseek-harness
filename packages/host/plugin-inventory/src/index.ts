@@ -8,6 +8,7 @@ import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
+import { load as loadYaml } from 'js-yaml'
 // Typert-generated ./typert and ./remote artifacts import Zod at runtime.
 import type {} from 'zod'
 import type {
@@ -18,6 +19,7 @@ import type {
   PluginInventorySnapshot,
   ProfileCompositionEntry,
   ProfileInventorySnapshot,
+  ProfilePluginRow,
 } from './types.ts'
 
 export type * from './types.ts'
@@ -149,8 +151,40 @@ export class PluginInventoryGateway extends TypertRemoteService {
       bundles,
       ...(cordisYml === undefined ? {} : { cordisYml }),
       ...(patchYml === undefined ? {} : { patchYml }),
+      ...(patchYml === undefined ? {} : { pluginRows: parsePluginRows(patchYml) }),
     }
   }
+}
+
+/**
+ * Flatten a patch layer into display rows. Parsing is deliberately lenient:
+ * the Loader owns the patch schema, so any structure this reader does not
+ * recognize degrades to an absent list rather than failing the profile read.
+ */
+function parsePluginRows(patchYml: string): readonly ProfilePluginRow[] | undefined {
+  let parsed: unknown
+  try {
+    parsed = loadYaml(patchYml)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(parsed)) return undefined
+  const rows: ProfilePluginRow[] = []
+  const walk = (entries: readonly unknown[]): boolean => {
+    for (const entry of entries) {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return false
+      const record = entry as Record<string, unknown>
+      const id = typeof record.id === 'string' ? record.id : null
+      const name = typeof record.name === 'string' ? record.name : null
+      const disabled = record.disabled === true
+      if (id !== null || name !== null) rows.push({ id, name, disabled })
+      if (Array.isArray(record.insert)) {
+        if (!walk(record.insert)) return false
+      }
+    }
+    return true
+  }
+  return walk(parsed) ? rows : undefined
 }
 
 export default PluginInventoryGateway

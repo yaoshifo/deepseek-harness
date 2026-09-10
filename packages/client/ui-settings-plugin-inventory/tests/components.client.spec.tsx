@@ -368,6 +368,11 @@ describe('ProfilesSettingsTab', () => {
         path: '/Users/hm/.dsh/profiles/feishu-bridge',
         bundles: ['@deepseek-ai/dsh-acp-app'],
         patchYml: '- id: session-persistence-jsonl\n  config:\n    root: /x\n',
+        pluginRows: [
+          { id: 'session-persistence-jsonl', name: null, disabled: false },
+          { id: 'dsh-context', name: 'dsh-context', disabled: false },
+          { id: 'feishu-bridge-chatroom', name: null, disabled: true },
+        ],
       },
       {
         name: 'web',
@@ -397,6 +402,17 @@ describe('ProfilesSettingsTab', () => {
     expect(screen.getByText('[]')).toBeTruthy()
     // The patch-less profile shows no patch section.
     expect(screen.queryByText('cordis.patch.yml (patch layer)')).toBeNull()
+  })
+
+  it('expands a profile into its flattened patch entry rows with disablement tags', async () => {
+    const listProfiles = vi.fn(() => Promise.resolve(PROFILES))
+    render(<ProfilesSettingsTabForTest {...profilesProps(listProfiles)} />)
+    await waitFor(() => { expect(screen.getByText('feishu-bridge')).toBeTruthy() })
+    fireEvent.click(screen.getByRole('button', { name: /feishu-bridge, 1 bundle/u }))
+    expect(screen.getByText('Patch entries')).toBeTruthy()
+    expect(screen.getByText('dsh-context')).toBeTruthy()
+    expect(screen.getByText('session-persistence-jsonl')).toBeTruthy()
+    expect(screen.getByText('Disabled')).toBeTruthy()
   })
 
   it('shows the error path with a retry that recovers', async () => {

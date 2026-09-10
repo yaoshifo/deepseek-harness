@@ -45,6 +45,7 @@ export const zh = {
   bundlesLabel: 'Bundle 层叠',
   cordisYmlLabel: 'cordis.yml（入口表）',
   patchYmlLabel: 'cordis.patch.yml（补丁层）',
+  pluginRowsLabel: '插件条目',
 } satisfies Record<string, string>
 
 /** Plugin inventory locale key union. */
@@ -95,4 +96,5 @@ export const en = {
   bundlesLabel: 'Bundle stack',
   cordisYmlLabel: 'cordis.yml (entry list)',
   patchYmlLabel: 'cordis.patch.yml (patch layer)',
+  pluginRowsLabel: 'Patch entries',
 } satisfies Record<PluginInventoryLocaleKey, string>

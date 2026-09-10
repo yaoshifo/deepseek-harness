@@ -11,7 +11,7 @@ kind: "package-reference"
 
 `dsh-client-ui-settings-plugin-inventory` 向 Web 设置的「插件」分区贡献只读的**插件列表**标签页。该标签页在首次被选择时懒调用 `ctx.remote.pluginInventory.list()`，并把清单分成两个可折叠分组渲染。Agent 预设组在前、默认展开：一个只改显示的切换器胶囊覆盖 roster、初始停在默认预设，每个组合行是一张紧凑折叠卡片，携带其启停状态——含宿主无法求值的 disabled 门对应的 `conditional`——出处事实收在折叠里。全局组随后且默认收起，组头带条目计数与失败计数；展开后失败行浮在最前，全局停用但被至少一个预设启用的条目就地标记为预设提供——详情列出启用它的预设——而不是读作单纯的已停用。搜索同时过滤两组、强制撑开收起的分组，并指出未选中预设里的匹配。加载、空结果、无匹配与通用失败状态只属于已挂载组件，读取失败后可以重试，且不会暴露传输细节；没有 roster 时标签页只渲染全局平面并保持展开。
 
-同一分区的第二个**配置组**标签页调用 `ctx.remote.pluginInventory.listProfiles()`，为每个已存的 harness profile 渲染一张收起的折叠卡片：卡片头携带 profile 名与 bundle 层叠摘要，展开后列出 profile 目录、bundle 层叠与 `cordis.yml` / `cordis.patch.yml` 组合文件原文（只读）——这是查看另一个部署的 profile（例如 bridge 守护进程的）如何组合的控制台视图。
+同一分区的第二个**配置组**标签页调用 `ctx.remote.pluginInventory.listProfiles()`，为每个已存的 harness profile 渲染一张收起的折叠卡片：卡片头携带 profile 名与 bundle 层叠摘要，展开后列出 profile 目录、bundle 层叠、带启停标记的压平补丁条目行与 `cordis.yml` / `cordis.patch.yml` 组合文件原文（只读）——这是查看另一个部署的 profile（例如 bridge 守护进程的）如何组合的控制台视图。
 
 ## 目录
 

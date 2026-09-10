@@ -149,7 +149,18 @@ describe('PluginInventoryGateway: profile composition', () => {
       dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'] } },
     }))
     await writeFile(join(profiles, 'web', 'cordis.yml'), '[]\n')
-    await writeFile(join(profiles, 'web', 'cordis.patch.yml'), '- id: session-persistence-jsonl\n  config:\n    root: /tmp/x\n')
+    await writeFile(join(profiles, 'web', 'cordis.patch.yml'), [
+      '- id: session-persistence-jsonl',
+      '  config:',
+      '    root: /tmp/x',
+      '- id: feishu-bridge-chatroom',
+      '  disabled: true',
+      '  insert:',
+      '    - id: dsh-context',
+      '      name: dsh-context',
+      '- insert:',
+      '    - id: late-child',
+    ].join('\n') + '\n')
     await writeFile(join(profiles, 'feishu-bridge', 'package.json'), 'not json')
     vi.stubEnv('DSH_HOME', home)
 
@@ -165,8 +176,14 @@ describe('PluginInventoryGateway: profile composition', () => {
     expect(web).toMatchObject({
       bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'],
       cordisYml: '[]\n',
-      patchYml: '- id: session-persistence-jsonl\n  config:\n    root: /tmp/x\n',
+      pluginRows: [
+        { id: 'session-persistence-jsonl', name: null, disabled: false },
+        { id: 'feishu-bridge-chatroom', name: null, disabled: true },
+        { id: 'dsh-context', name: 'dsh-context', disabled: false },
+        { id: 'late-child', name: null, disabled: false },
+      ],
     })
+    expect(web?.patchYml).toContain('dsh-context')
     // A damaged package.json degrades to an empty bundle list, never a throw.
     const bridge = snapshot.profiles.find(profile => profile.name === 'feishu-bridge')
     expect(bridge).toMatchObject({ name: 'feishu-bridge', bundles: [] })

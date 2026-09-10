@@ -81,9 +81,21 @@ export interface ProfileCompositionEntry {
   readonly cordisYml?: string
   /** Raw `cordis.patch.yml` patch layer, when the file exists. */
   readonly patchYml?: string
+  /** Flattened patch-entry rows, present when the patch layer parses. */
+  readonly pluginRows?: readonly ProfilePluginRow[] | undefined
 }
 
 /** Read-only composition inventory of every stored harness profile. */
 export interface ProfileInventorySnapshot {
   readonly profiles: readonly ProfileCompositionEntry[]
+}
+
+/** One loader patch entry of a profile's patch layer, flattened across inserts. */
+export interface ProfilePluginRow {
+  /** Entry id; null when the patch row carries no id. */
+  readonly id: string | null
+  /** Module name the row references, when the patch names one. */
+  readonly name: string | null
+  /** Whether the patch disables the entry. */
+  readonly disabled: boolean
 }
