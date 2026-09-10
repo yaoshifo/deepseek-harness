@@ -13,7 +13,7 @@ Status: implemented
 分层从提示词约定升级为工具入参结构，展示方按字段取值、零解析：
 
 - **上游共享包（加法式 fork-local 改动，稳定后按惯例提上游）**：`exit_plan_mode` 增可选 `details: string` 参数（描述保持 policy-free：机制是「实施细节附录，有能力分层的 UI 默认折叠展示」；分层政策仍归部署方提示词）。`dsh-user-questions` 的 plan-review intent 增可选 `layers?: { plain, details }`——与该类型既有 presentation-only 语义一致。execute 归一化：空白 `details` 视为未提交；评审提问的 `detail` 携带两层拼合的完整计划（`plan + '\n\n' + details`，通用消费方如 web/CLI 看到完整计划、行为不变），intent 仅在提交 `details` 时携带 `layers`。
-- **飞书桥渲染**：adapter `answerPlanReview` 从 intent 透传 `layers`；engine 在**没有 agent 自写 plan 文件覆盖**时把 `layers` 一路传到 `sendPlanCard`，卡片为 `[markdown(plain), collapsiblePanel(实施细节, expanded:false, markdown(details)), actions(导出)]`；`collapsible_panel` 是 schema 2.0 现成组件（每张完成卡「▸ 详细信息」生产在用）。无 `layers` 时卡片维持单 markdown 整段（旧路径与旧会话零变化）。导出按钮、PNG 渲染、落盘计划文件、审批按钮卡继续走拼合全文。
+- **飞书桥渲染**：adapter `answerPlanReview` 从 intent 透传 `layers`；engine 在**没有 agent 自写 plan 文件覆盖**时把 `layers` 一路传到 `sendPlanCard`，卡片为 `[markdown(plain), collapsiblePanel(实施细节, expanded:false, markdown(details)), actions(导出)]`；`collapsible_panel` 是 schema 2.0 现成组件（每张完成卡「▸ 详细信息」生产在用）。无 `layers` 时卡片维持单 markdown 整段（旧路径与旧会话零变化）。导出按钮、落盘计划文件、审批按钮卡继续走拼合全文；PNG 渲染图是面向批准者的概览，有 `layers` 时只从白话层渲染（细节层留在卡内折叠面板与导出里；无 `layers` 的计划渲染全文——无内容被切走），渲染去重哈希随之基于渲染输入。
 - **边界规则**：agent 本轮自写 plan 文件触发「文件较新则覆盖」时，卡片照旧整段展示该文件——该路径无分层结构可用，不强行切。
 - **提示词**：agent 约定段「白话直讲」计划句改为两参数映射（白话层写进 `plan`、实施细节层写进 `details`），两层内涵与自检句不变。
 

@@ -5428,8 +5428,13 @@ export class Engine {
         } else {
           await this.sendInlinePlanContent(p, replyCtx, state, planContent, state.planRevisionCount, exportKey, planLayers)
         }
-        if (this.planRenderEnabled && shouldRenderPlan(state, planContent, state.planRevisionCount)) {
-          launchPlanRender(this, state, sessionKey, planContent, activePlanFilePath, state.planRevisionCount, exportKey)
+        // The render image is the approver-facing overview: with submitted
+        // layers it renders from the plain layer only, so the details annex
+        // stays in the card's collapsed panel and the export. Unlayered plans
+        // keep their full body — nothing is split away.
+        const renderContent = planLayers?.plain ?? planContent
+        if (this.planRenderEnabled && shouldRenderPlan(state, renderContent, state.planRevisionCount)) {
+          launchPlanRender(this, state, sessionKey, renderContent, activePlanFilePath, state.planRevisionCount, exportKey)
         }
       }
 

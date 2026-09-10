@@ -473,6 +473,40 @@ describe('processInteractiveEvents render integration', () => {
     expect(p.getSent().join('\n')).toContain(planBody)
   })
 
+  it('PlanRenderUsesPlainLayer: a layered plan renders from the plain layer only', async () => {
+    const a = createRenderAgent()
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p)
+    const state = newRenderState(p)
+    const sessionKey = 'feishu:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    const agentSession = newControllableSession('s1')
+    state.agentSession = agentSession
+    e.interactiveStates.set(sessionKey, state)
+
+    const plainLayer = '# 计划\n\n问题是什么、怎么改、改完什么效果'
+    const detailsLayer = '1. **TDD Red** — packages/compaction/compaction-basic/tests/compaction-basic.spec.ts 断言逐字条款\n2. 机制:summarizer 指令 Rules 追加条目'
+    const assembled = `${plainLayer}\n\n${detailsLayer}`
+    const decision = e.askUser(sessionKey, {
+      kind: 'plan-review',
+      heading: '# 计划',
+      plan: assembled,
+      layers: { plain: plainLayer, details: detailsLayer },
+    })
+    await pollUntil(() => state.pendingAsk !== undefined, 2000)
+    state.pendingAsk?.resolve({ outcome: 'allowed-once' })
+    await decision
+    agentSession.channel.push({ type: 'result', content: '', done: true })
+    await e.processInteractiveEvents(state, session, e.sessions, sessionKey, 'm1', undefined, state.replyCtx)
+
+    await pollUntil(() => a.getCalls().length > 0, 2000)
+    expect(a.getCalls()).toHaveLength(1)
+    // The render prompt carries the plain layer, never the details annex.
+    expect(a.getCalls()[0]!.prompt).toContain(plainLayer)
+    expect(a.getCalls()[0]!.prompt).not.toContain('TDD Red')
+    expect(a.getCalls()[0]!.prompt).not.toContain('compaction-basic.spec.ts')
+  })
+
   it('PlanRenderStallRetryThroughLoop: a stalled plan render retries and delivers', async () => {
     const a = createRenderAgent({ stallCount: 1 })
     const p = createStubMediaPlatform()
