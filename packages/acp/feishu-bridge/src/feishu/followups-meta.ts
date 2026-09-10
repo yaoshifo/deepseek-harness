@@ -121,6 +121,16 @@ export class FollowupsMetaStore {
   }
 
   /**
+   * Wait until every mutation queued so far has completed its disk write.
+   * Callers fire-and-forget mutations, so anyone observing persisted state
+   * (a test reloading the file, a fresh store generation) synchronizes on
+   * this drain instead of sleeping.
+   */
+  settle(): Promise<void> {
+    return this.tail
+  }
+
+  /**
    * Serialize one mutation with its disk write. Callers fire-and-forget, so
    * two card sends can queue a set and a delete back-to-back; independent
    * atomic renames could then land out of order and persist the retired

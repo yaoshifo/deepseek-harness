@@ -1097,9 +1097,9 @@ describe('followups meta persistence across restarts', () => {
     })
     const sender = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
     await sender.sendCard({ messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, card)
-    // The send-time sidecar write is fire-and-forget; let it land before the
+    // The send-time sidecar write is fire-and-forget; settle it before the
     // next generation reads the file.
-    await new Promise((resolve) => { setTimeout(resolve, 20) })
+    await sender.followupsMetaStore.settle()
 
     // A fresh platform over the same dataDir: every in-memory cache starts
     // empty, exactly as after a daemon restart.
@@ -1128,7 +1128,7 @@ describe('followups meta persistence across restarts', () => {
     })
     const sender = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
     await sender.sendCard({ messageID: 'om_trigger', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, card)
-    await new Promise((resolve) => { setTimeout(resolve, 20) })
+    await sender.followupsMetaStore.settle()
 
     // One generation consumes the submission.
     const first = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
@@ -1136,6 +1136,9 @@ describe('followups meta persistence across restarts', () => {
     await first.start((_p, msg) => { firstMessages.push(msg) })
     first.onCardAction(fwSubmit({ askq_opt_0_1: true }))
     await new Promise((resolve) => { setTimeout(resolve, 20) })
+    // The consume-delete is queued fire-and-forget; drain it or the next
+    // generation resurrects the entry.
+    await first.followupsMetaStore.settle()
     expect(firstMessages[0]!.content).toContain('✅ **Fix A**')
 
     // A later restart must not resurrect the consumed registration: a repeat
@@ -1163,7 +1166,7 @@ describe('followups meta persistence across restarts', () => {
     // A later live ask card owns the cache key; the followups registration
     // must not survive a restart above the newer card.
     await sender.sendCard(replyCtx, buildAskQuestionCard({ ...question, multiSelect: false }, 0, 1))
-    await new Promise((resolve) => { setTimeout(resolve, 20) })
+    await sender.followupsMetaStore.settle()
 
     const restarted = newPlatform({ allowChat: '*', apiClient: api(), dataDir })
     const messages: Message[] = []

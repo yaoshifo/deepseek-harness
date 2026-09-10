@@ -1,7 +1,8 @@
 /**
- * FollowupsMetaStore retention: unclicked registrations are evicted on write
- * once past the retention window, keeping the sidecar bounded across
- * long-lived and spawned chats.
+ * FollowupsMetaStore: unclicked registrations are evicted on write once past
+ * the retention window, keeping the sidecar bounded across long-lived and
+ * spawned chats; settle() drains the serialized mutation queue for callers
+ * that must observe persisted state.
  */
 
 import { mkdtemp } from 'node:fs/promises'
@@ -48,5 +49,22 @@ describe('FollowupsMetaStore retention', () => {
     await reloaded.load()
     expect(reloaded.metas()).toHaveLength(1)
     expect(reloaded.metas()[0]![1].question.question).toBe('q2')
+  })
+})
+
+describe('FollowupsMetaStore queue drain', () => {
+  it('settle drains fire-and-forget mutations so a fresh generation reads the final state', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fwmeta-'))
+    const file = join(dir, 'fw_meta.json')
+    const store = new FollowupsMetaStore(file)
+    // Fire-and-forget, as the platform issues them: a set then a consuming
+    // delete back-to-back.
+    void store.set('k', meta)
+    void store.delete('k')
+    await store.settle()
+
+    const reloaded = new FollowupsMetaStore(file)
+    await reloaded.load()
+    expect(reloaded.metas()).toHaveLength(0)
   })
 })
