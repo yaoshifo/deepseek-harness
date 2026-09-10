@@ -821,23 +821,25 @@ describe('exit_plan_mode', () => {
     return { ctx, agent, asked }
   }
 
-  function callExit(ctx: Context, agent: Agent | undefined, plan = '# The plan\n\ndo things') {
+  function callExit(ctx: Context, agent: Agent | undefined, plan = '# The plan\n\ndo things', details?: string) {
     return ctx.tools.execute({
       callId: ToolCallId(`call-exit-${++callCounter}`),
       name: EXIT_PLAN_MODE,
-      arguments: { plan },
+      arguments: { plan, ...details === undefined ? {} : { details } },
       signal: new AbortController().signal,
       ...agent ? { agent } : {},
     })
   }
 
-  it('registers the tool with one required plan argument', async () => {
+  it('registers the tool with a required plan and an optional details annex', async () => {
     const ctx = await setup()
     const schema = ctx.tools.schemas().find(entry => entry.name === EXIT_PLAN_MODE)
     const parameters = schema?.parameters as { required?: string[]; properties?: Record<string, unknown> }
     expect(schema?.description).toMatch(/^Use only in plan mode\./)
-    expect(Object.keys(parameters.properties ?? {})).toEqual(['plan'])
+    expect(schema?.description).toContain('An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default.')
+    expect(Object.keys(parameters.properties ?? {})).toEqual(['plan', 'details'])
     expect(parameters.required).toEqual(['plan'])
+    expect(parameters.properties?.details).toEqual({ type: 'string', description: 'Implementation-detail annex appended after the plan; capable UIs present it collapsed by default.' })
   })
 
   it('rejects an agent-less call', async () => {
@@ -1072,6 +1074,35 @@ describe('exit_plan_mode', () => {
     expect(question?.options?.map(option => option.label)).toContain(question?.intent?.approve)
   })
 
+  it('joins the details annex into the review detail and declares both layers', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
+    const plan = '# The plan\n\ndo things'
+    const details = 'Step 1 touches the projection fold.'
+    await callExit(ctx, agent, plan, details)
+    const question = asked[0]?.questions[0]
+    expect(question?.detail).toBe(`${plan}\n\n${details}`)
+    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve', layers: { plain: plan, details } })
+  })
+
+  it('keeps the plan alone and no layers key when no details annex is supplied', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
+    const plan = '# The plan\n\ndo things'
+    await callExit(ctx, agent, plan)
+    const question = asked[0]?.questions[0]
+    expect(question?.detail).toBe(plan)
+    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve' })
+    expect(Object.hasOwn(question?.intent ?? {}, 'layers')).toBe(false)
+  })
+
+  it('treats a whitespace-only details annex as absent', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
+    const plan = '# The plan\n\ndo things'
+    await callExit(ctx, agent, plan, '   ')
+    const question = asked[0]?.questions[0]
+    expect(question?.detail).toBe(plan)
+    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve' })
+  })
+
   it('reads a dismissed review as the user taking the turn back, not as a failure', async () => {
     const { ctx, agent } = await setupWithReview()
     registerQuestionAnswerer(ctx, {
@@ -1161,6 +1192,29 @@ describe('exit_plan_mode', () => {
       title: 'Plan',
       kind: 'other',
       content: [{ type: 'text', text: 'no heading here' }],
+    })
+  })
+
+  it('presents the details annex as a second text segment only when non-blank', async () => {
+    const ctx = await setup()
+    const def = ctx.tools.get(EXIT_PLAN_MODE)!
+    expect(def.presentCall?.({ plan: '# P\n\nsteps', details: 'annex body' })).toEqual({
+      card: 'generic',
+      title: 'P',
+      kind: 'other',
+      content: [{ type: 'text', text: '# P\n\nsteps' }, { type: 'text', text: 'annex body' }],
+    })
+    expect(def.presentCall?.({ plan: '# P\n\nsteps', details: '   ' })).toEqual({
+      card: 'generic',
+      title: 'P',
+      kind: 'other',
+      content: [{ type: 'text', text: '# P\n\nsteps' }],
+    })
+    expect(def.presentCall?.({ plan: '# P\n\nsteps' })).toEqual({
+      card: 'generic',
+      title: 'P',
+      kind: 'other',
+      content: [{ type: 'text', text: '# P\n\nsteps' }],
     })
   })
 

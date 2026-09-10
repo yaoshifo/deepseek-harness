@@ -33,6 +33,12 @@ export type AskUserQuestionIntent = {
    * An `approve` naming no option of its own question is rejected at `ask()`.
    */
   approve: string
+  /**
+   * Optional presentation split of the plan for capable UIs: `plain` is the
+   * layer shown expanded, `details` the annex presented collapsed. Absent when
+   * the asker submitted no annex; `detail` then equals `plain` alone.
+   */
+  layers?: { plain: string; details: string }
 }
 
 /** One question in a user-questions request. */

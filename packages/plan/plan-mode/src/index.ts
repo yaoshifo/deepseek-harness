@@ -81,6 +81,7 @@ const EXIT_DESCRIPTION
   + 'Send the COMPLETE plan as markdown, starting with a # heading that names it. '
   + 'The user may approve (carry out the plan from your next step) or keep '
   + 'planning — their feedback comes back in the tool result.'
+  + ' An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default.'
 
 /** The plan's first markdown heading (any level), or `undefined` when it has none. */
 function firstHeading(plan: string): string | undefined {
@@ -89,6 +90,11 @@ function firstHeading(plan: string): string | undefined {
     if (match) return match[1]
   }
   return undefined
+}
+
+/** Whitespace-only `details` submissions read as absent; a real annex keeps its original text untrimmed. */
+function normalizeDetails(details: string | undefined): string | undefined {
+  return details !== undefined && details.trim() !== '' ? details : undefined
 }
 
 /**
@@ -275,6 +281,7 @@ export class PlanModeController extends Service {
       description: EXIT_DESCRIPTION,
       parameters: {
         plan: { type: 'string', required: true, description: 'The complete plan, as markdown, starting with a # heading that names it.' },
+        details: { type: 'string', description: 'Implementation-detail annex appended after the plan; capable UIs present it collapsed by default.' },
       },
       output: {
         schema: {
@@ -295,6 +302,7 @@ export class PlanModeController extends Service {
         if (!/^#\s+\S/.test(args.plan.trim())) {
           throw new Error(`${EXIT_PLAN_MODE} requires a non-empty markdown plan starting with a # heading`)
         }
+        const details = normalizeDetails(args.details)
         const interaction = ctx.get('userQuestions')
         if (interaction === undefined) {
           throw new Error('no user-questions channel is available to review the plan; ask the user to switch the session mode instead')
@@ -304,7 +312,9 @@ export class PlanModeController extends Service {
             id: REVIEW_ID,
             header: 'Plan review',
             question: 'Approve this plan and leave plan mode?',
-            detail: args.plan,
+            // Generic consumers read the complete plan; `intent.layers` carries
+            // the plain/annex split for capable UIs.
+            detail: details === undefined ? args.plan : `${args.plan}\n\n${details}`,
             options: [
               { label: APPROVE_LABEL, description: 'Leave plan mode; the plan is carried out from the next step.' },
               { label: KEEP_PLANNING_LABEL, description: 'Stay in plan mode; feedback goes back to the model.' },
@@ -312,7 +322,11 @@ export class PlanModeController extends Service {
             // Presentation only: a capable UI renders the plan as a review
             // decision instead of a generic question, and answers with one of
             // the labels above either way.
-            intent: { kind: 'plan-review', approve: APPROVE_LABEL },
+            intent: {
+              kind: 'plan-review',
+              approve: APPROVE_LABEL,
+              ...details === undefined ? {} : { layers: { plain: args.plan, details } },
+            },
           }],
           agent,
           signal: exec.signal,
@@ -347,12 +361,17 @@ export class PlanModeController extends Service {
         this.pendingIntents.set(agent.session, { active: false, narrate: false })
         return { approved: true }
       },
-      presentCall: args => ({
-        card: 'generic',
-        title: firstHeading(args.plan) ?? 'Plan',
-        kind: 'other',
-        content: [{ type: 'text', text: args.plan }],
-      }),
+      presentCall: (args) => {
+        const details = normalizeDetails(args.details)
+        return {
+          card: 'generic',
+          title: firstHeading(args.plan) ?? 'Plan',
+          kind: 'other',
+          content: details === undefined
+            ? [{ type: 'text', text: args.plan }]
+            : [{ type: 'text', text: args.plan }, { type: 'text', text: details }],
+        }
+      },
       presentResult: (_args, result) => ({
         card: 'generic',
         title: 'Plan review',
