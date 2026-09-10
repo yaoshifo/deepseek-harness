@@ -42,14 +42,14 @@ describe('native-catalog reader (REAL cold read)', () => {
     const agent = await ctx.agentLoop.create(SessionId('parent-agent'), { provider: 'mock', model: 'm' })
     agent.session.append('subagent/catalog', {
       version: 0,
-      childId: 'child-continuable-1',
+      childId: SessionId('child-continuable-1'),
       childCreatedAt: 100,
       mode: 'continuable',
       label: 'research the seam',
     })
     agent.session.append('subagent/catalog', {
       version: 0,
-      childId: 'child-oneshot-1',
+      childId: SessionId('child-oneshot-1'),
       childCreatedAt: 200,
       mode: 'one-shot',
     })

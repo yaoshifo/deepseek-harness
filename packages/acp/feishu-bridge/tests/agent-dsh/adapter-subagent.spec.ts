@@ -14,7 +14,7 @@ import type { Event } from '../../src/core/types.ts'
 /** A session reference emitted through `session/event`, header included. */
 interface SessionRef {
   id: string
-  header?: { parentSession?: unknown }
+  header?: { parentSession?: unknown; cwd?: unknown }
 }
 
 /** A live agent the fake registry serves (bridge sessions and subagent children alike). */
