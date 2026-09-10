@@ -839,7 +839,7 @@ describe('exit_plan_mode', () => {
     expect(schema?.description).toContain('An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default.')
     expect(Object.keys(parameters.properties ?? {})).toEqual(['plan', 'details'])
     expect(parameters.required).toEqual(['plan'])
-    expect(parameters.properties?.details).toEqual({ type: 'string', description: 'Implementation-detail annex appended after the plan; capable UIs present it collapsed by default.' })
+    expect(parameters.properties?.details).toEqual({ type: 'string', description: 'Implementation-detail annex appended after the plan; capable UIs present it collapsed by default. Put implementation detail here instead of inlining a details section into the plan; omit only when the plan carries no implementation detail.' })
   })
 
   it('rejects an agent-less call', async () => {
@@ -867,6 +867,35 @@ describe('exit_plan_mode', () => {
     }
     expect(asked).toHaveLength(0)
     expect(foldPlanMode(agent.session.snapshotEvents())).toBe(true)
+  })
+
+  it('rejects an inlined details section before asking the reviewer', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
+    const inlined = '# P\n\nplain layer\n\n## 实施细节\n\nfiles and mechanism'
+    const result = await callExit(ctx, agent, inlined)
+    expect(result.isError).toBe(true)
+    expect(result.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode: the "实施细节" section inlined in the plan belongs in the details argument. Move that section\'s content into details (the plan keeps the plain-language layer only) and call again.' }])
+    expect(asked).toHaveLength(0)
+    expect(foldPlanMode(agent.session.snapshotEvents())).toBe(true)
+
+    const variant = await callExit(ctx, agent, '# P\n\nplain layer\n\n## 技术细节\n\nmechanism')
+    expect(variant.isError).toBe(true)
+    expect(JSON.stringify(variant.content)).toContain('技术细节')
+    expect(asked).toHaveLength(0)
+  })
+
+  it('accepts the same inlined section once its content rides in details', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
+    const result = await callExit(ctx, agent, '# P\n\nplain layer\n\n## 实施细节\n\nfiles', 'files')
+    expect(result.isError).not.toBe(true)
+    expect(asked).toHaveLength(1)
+  })
+
+  it('leaves a plain "Details" section alone when no details argument is submitted', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
+    const result = await callExit(ctx, agent, '# P\n\nplain layer\n\n## Details\n\nordinary prose')
+    expect(result.isError).not.toBe(true)
+    expect(asked).toHaveLength(1)
   })
 
   it('degrades to the manual exit when no user-questions seam is composed', async () => {

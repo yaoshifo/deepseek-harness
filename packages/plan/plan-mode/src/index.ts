@@ -82,6 +82,7 @@ const EXIT_DESCRIPTION
   + 'The user may approve (carry out the plan from your next step) or keep '
   + 'planning — their feedback comes back in the tool result.'
   + ' An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default.'
+  + ' An inlined details section in the plan is rejected: put implementation detail in `details` (e.g. plan="# Fix X\\n<plain-language layer>", details="<changed files, mechanism, tests>").'
 
 /** The plan's first markdown heading (any level), or `undefined` when it has none. */
 function firstHeading(plan: string): string | undefined {
@@ -95,6 +96,16 @@ function firstHeading(plan: string): string | undefined {
 /** Whitespace-only `details` submissions read as absent; a real annex keeps its original text untrimmed. */
 function normalizeDetails(details: string | undefined): string | undefined {
   return details !== undefined && details.trim() !== '' ? details : undefined
+}
+
+/** Heading names that mark an inlined implementation-details section in the
+ * plan; a match without a submitted `details` annex is a mislayered exit. */
+const EMBEDDED_DETAILS_HEADING = /^##\s*(实施细节|技术细节|Implementation Details?|Implementation Notes?)\s*$/m
+
+/** The plan's inlined implementation-details heading text, or `undefined`
+ * when the plan carries no such section. */
+function embeddedDetailsHeading(plan: string): string | undefined {
+  return EMBEDDED_DETAILS_HEADING.exec(plan)?.[1]
 }
 
 /**
@@ -281,7 +292,7 @@ export class PlanModeController extends Service {
       description: EXIT_DESCRIPTION,
       parameters: {
         plan: { type: 'string', required: true, description: 'The complete plan, as markdown, starting with a # heading that names it.' },
-        details: { type: 'string', description: 'Implementation-detail annex appended after the plan; capable UIs present it collapsed by default.' },
+        details: { type: 'string', description: 'Implementation-detail annex appended after the plan; capable UIs present it collapsed by default. Put implementation detail here instead of inlining a details section into the plan; omit only when the plan carries no implementation detail.' },
       },
       output: {
         schema: {
@@ -303,6 +314,13 @@ export class PlanModeController extends Service {
           throw new Error(`${EXIT_PLAN_MODE} requires a non-empty markdown plan starting with a # heading`)
         }
         const details = normalizeDetails(args.details)
+        if (details === undefined) {
+          const embedded = embeddedDetailsHeading(args.plan)
+          if (embedded !== undefined) {
+            throw new Error(`exit_plan_mode: the "${embedded}" section inlined in the plan belongs in the details argument. `
+              + 'Move that section\'s content into details (the plan keeps the plain-language layer only) and call again.')
+          }
+        }
         const interaction = ctx.get('userQuestions')
         if (interaction === undefined) {
           throw new Error('no user-questions channel is available to review the plan; ask the user to switch the session mode instead')

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-10-plan-details-structured-split.md
-2026-09-10-plan-details-structured-split.md: 5a0fbf6d8b686a8129b1c88e299a9352972567ee
-2026-09-10-plan-details-structured-split.zh.md: 94defd68404d22b505cb3085ecbcee8d11fbf61a
+2026-09-10-plan-details-structured-split.md: a9ab5cdb7a01e6761525a006a3e587a3f57b337c
+2026-09-10-plan-details-structured-split.zh.md: 1d2350093174aa69159abb96ca65cc28b2151673

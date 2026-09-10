@@ -92,7 +92,7 @@ The command child activates only when a commands service is composed. It maps ba
 
 `exit_plan_mode` stays registered while plan mode is inactive, so entering or leaving changes only the prompt section, never the request tool catalog. An approved review records a silent pending exit that the next accepted in-turn pre-step appends, keeping plan guidance for the rest of the current tool batch. Without a user-questions channel, or after a service reload while the review is pending, the call fails closed and `/plan off` remains the manual escape.
 
-The tool takes `plan` (the plan body, markdown that must start with a `#` heading) plus an optional `details` (implementation-detail annex). When `details` is submitted, the review question's `detail` carries both layers concatenated, and the presentation intent additionally carries `layers: { plain, details }` for layer-rendering UIs (consumers read the fields, nothing is parsed); a blank `details` counts as not submitted.
+The tool takes `plan` (the plan body, markdown that must start with a `#` heading) plus an optional `details` (implementation-detail annex). When `details` is submitted, the review question's `detail` carries both layers concatenated, and the presentation intent additionally carries `layers: { plain, details }` for layer-rendering UIs (consumers read the fields, nothing is parsed); a blank `details` counts as not submitted. When `details` is not submitted but `plan` inlines a section headed 实施细节 / 技术细节 / Implementation Details / Implementation Notes, the call is rejected with guidance to move that section into `details` — a corrective tool error instead of silently rendering the flat single block.
 
 ### Session projection unit
 

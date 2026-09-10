@@ -92,7 +92,7 @@ agent 完成计划后，会以 markdown 形式、从标题开头书写计划并�
 
 `exit_plan_mode` 在计划模式未激活时仍保持注册，因此进入或离开只改变提示词段落，绝不改变请求的工具目录。经批准的评审会记录一个静默的待生效退出，由下一个被接受的轮内 pre-step 追加，当前这批工具调用剩余部分仍保留计划引导。缺少用户交互通道，或评审等待期间服务重载，调用都会失败关闭，`/plan off` 仍是手动退路。
 
-工具入参为 `plan`（计划正文，必须以 `#` 标题开头的 markdown）与可选的 `details`（实施细节附录）。提交 `details` 时，评审提问的 `detail` 携带两层拼合的完整计划，presentation intent 额外携带 `layers: { plain, details }` 供分层展示的 UI 使用（消费方按字段取值，零解析）；空白 `details` 视为未提交。
+工具入参为 `plan`（计划正文，必须以 `#` 标题开头的 markdown）与可选的 `details`（实施细节附录）。提交 `details` 时，评审提问的 `detail` 携带两层拼合的完整计划，presentation intent 额外携带 `layers: { plain, details }` 供分层展示的 UI 使用（消费方按字段取值，零解析）；空白 `details` 视为未提交。未提交 `details` 而 `plan` 内嵌了「实施细节 / 技术细节 / Implementation Details / Implementation Notes」小节时，调用被直接拒绝并指引把该节移入 `details`——以纠正性工具报错替代静默渲染整段平铺卡。
 
 ### 会话投影单元
 
