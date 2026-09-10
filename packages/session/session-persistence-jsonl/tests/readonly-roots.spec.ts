@@ -8,7 +8,7 @@ import { SessionId as makeSessionId } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionAlreadyExistsError } from '@deepseek-ai/dsh-session-persistence'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
-import { eventLines, generationLogPath } from '../src/format.ts'
+import { generationLogPath } from '../src/format.ts'
 import { meta, oneTurnLog, releasedV1OneTurnLog } from '../../session-persistence/tests/contract.ts'
 
 const dirs: string[] = []
@@ -167,7 +167,7 @@ describe('JsonlSessionPersistence: read-only extra roots', () => {
         createdAt: 1000,
         cwd: '/legacy',
         delegationDepth: 0,
-      })}\n${eventLines(releasedV1OneTurnLog())}\n`,
+      })}\n${releasedV1OneTurnLog().map(event => JSON.stringify(event)).join('\n')}\n`,
     )
     await writeFile(sourcePath, source)
 
@@ -200,7 +200,7 @@ describe('JsonlSessionPersistence: read-only extra roots', () => {
         cwd: '/legacy',
         origin: 'oneshot',
         delegationDepth: 0,
-      })}\n${eventLines(releasedV1OneTurnLog())}\n`,
+      })}\n${releasedV1OneTurnLog().map(event => JSON.stringify(event)).join('\n')}\n`,
     ))
 
     const ctx = new Context()

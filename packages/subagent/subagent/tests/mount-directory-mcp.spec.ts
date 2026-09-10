@@ -29,8 +29,8 @@ describe('mountDirectoryMcp', () => {
   it('warns exactly once through the structured logger when the mcp-workspace service is absent, keeping process stderr clean', async () => {
     const mountDirectoryMcp = await freshMountDirectoryMcp()
     const warn = vi.fn()
-    await mountDirectoryMcp(ctxWith({}, { warn }))
-    await mountDirectoryMcp(ctxWith({}, { warn }))
+    await mountDirectoryMcp(ctxWith({}, { warn }), undefined as never)
+    await mountDirectoryMcp(ctxWith({}, { warn }), undefined as never)
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0]?.[0]).toMatch(/mcp-workspace service is not mounted/)
     expect(consoleWarn).not.toHaveBeenCalled()
@@ -41,8 +41,9 @@ describe('mountDirectoryMcp', () => {
     const mount = vi.fn().mockResolvedValue(undefined)
     const warn = vi.fn()
     const childCtx = ctxWith({ mcpWorkspace: { mount } }, { warn })
-    await mountDirectoryMcp(childCtx)
-    expect(mount).toHaveBeenCalledExactlyOnceWith(childCtx)
+    const child = undefined as never
+    await mountDirectoryMcp(childCtx, child)
+    expect(mount).toHaveBeenCalledExactlyOnceWith(childCtx, child)
     expect(warn).not.toHaveBeenCalled()
     expect(consoleWarn).not.toHaveBeenCalled()
   })

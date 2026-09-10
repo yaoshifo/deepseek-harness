@@ -232,7 +232,7 @@ let workspaceMcpAbsentWarned = false
  * fails that spec instead of this compile unit.
  */
 interface DirectoryMcpService {
-  mount(childCtx: Context): Promise<void>
+  mount(childCtx: Context, child: Agent): Promise<void>
 }
 
 /**
@@ -249,8 +249,9 @@ interface DirectoryMcpService {
  * choice, not a fault. The structured logger reaches registered exporters
  * only, so a legal mcp-workspace-less deployment keeps process stderr clean.
  * @param childCtx - the unpublished child agent's scoped creation context.
+ * @param child - the unpublished child Agent whose session cwd drives discovery.
  */
-export async function mountDirectoryMcp(childCtx: Context): Promise<void> {
+export async function mountDirectoryMcp(childCtx: Context, child: Agent): Promise<void> {
   const service = childCtx.get('mcpWorkspace') as DirectoryMcpService | undefined
   if (service === undefined) {
     if (!workspaceMcpAbsentWarned) {
@@ -259,7 +260,7 @@ export async function mountDirectoryMcp(childCtx: Context): Promise<void> {
     }
     return
   }
-  await service.mount(childCtx)
+  await service.mount(childCtx, child)
 }
 
 /** Policy seeded onto a child session's log at the delegation boundary. */

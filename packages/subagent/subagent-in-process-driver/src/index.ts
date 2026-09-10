@@ -130,7 +130,7 @@ export async function startInProcessRun(
       structured = attachStructuredRuntime(childCtx, request.outputSchema)
     }
     attachDescriptorAppend(childCtx, request.descriptor)
-    await mountDirectoryMcp(childCtx)
+    await mountDirectoryMcp(childCtx, child)
   }
 
   const handle = await parent.ctx.agents.create({
