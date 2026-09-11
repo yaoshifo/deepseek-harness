@@ -217,7 +217,7 @@ Output EXACTLY the Markdown structure below: keep every section, in order. Use t
 Rules:
 - Write concise English engineering prose. Preserve exact file paths, commands, error strings, identifiers, numeric values, function signatures, and syntax fragments.
 - Capture user feedback and explicit instructions faithfully, especially corrections.
-- When the conversation contains an approved plan (an exit_plan_mode tool call the user approved; with several, the latest), copy its full markdown verbatim into Critical Context as a fenced code block, and keep it there while any of its work remains unexecuted; condense it like other completed history once it is fully executed.
+- When the conversation contains an approved plan (an exit_plan_mode tool call the user approved; with several, the latest), copy the plan and details arguments verbatim into Critical Context as fenced code blocks, and keep them there while any of its work remains unexecuted; condense them like other completed history once fully executed.
 - Do NOT mention this summarization request or that the context was compacted.
 - Output only the checkpoint text: do not call any tool or take any other action.
 - If the conversation already contains a <compacted-summary> block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure. The verbatim approved-plan copy is the one exception: carry it forward unchanged while any of its work remains unexecuted.
@@ -243,7 +243,7 @@ These limits define when automatic condensation is a poor fit or needs special c
 - **Some indivisible-unit and envelope-only overflow remains outside surface compaction** — recovery cannot shrink system/tools/prefix, split an indivisible non-tool node, or repair a tool unit whose non-prunable remainder still exceeds the window. The optional pruner can shrink text-bearing tool-result bulk inside an otherwise indivisible pair.
 - **`compactRegion` requires an open turn** — a manual call on a fully-closed session throws ("no open turn") rather than compacting.
 - **Summarization failure preserves the latest durable surface** — before any replacement, the auto path logs a warning and proceeds with full over-budget history. If pruning already landed, a later summarization failure proceeds from that durable pruned surface. Summarization truncation at `maxTokens`, which hidden reasoning tokens can consume, follows the same rule.
-- **A verbatim approved plan competes for the summarization cap** — the preserved plan counts against `maxTokens`; a plan that does not fit makes the checkpoint fail closed (truncation error, full history retained) rather than silently dropping plan content. Raise `maxTokens` when that repeats.
+- **A verbatim approved plan competes for the summarization cap** — the preserved plan and its details annex count against `maxTokens`; a plan that does not fit makes the checkpoint fail closed (truncation error, full history retained) rather than silently dropping plan content. Raise `maxTokens` when that repeats.
 
 <a id="dev-note"></a>
 ### Dev Note

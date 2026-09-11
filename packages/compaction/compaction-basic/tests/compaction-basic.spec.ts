@@ -1372,7 +1372,7 @@ describe('default one-shot summarizer', () => {
     const last = adapter.lastOptions?.messages.at(-1)?.content[0]
     const lastText = last?.type === 'text' ? last.text : ''
     expect(lastText).toContain('an exit_plan_mode tool call the user approved')
-    expect(lastText).toContain('copy its full markdown verbatim into Critical Context as a fenced code block')
+    expect(lastText).toContain('copy the plan and details arguments verbatim into Critical Context as fenced code blocks')
   })
 
   it('exempts the verbatim approved-plan copy from the prior-checkpoint merge rule', async () => {

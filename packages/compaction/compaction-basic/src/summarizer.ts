@@ -60,7 +60,7 @@ const COMPACTION_INSTRUCTION = [
   'Rules:',
   '- Write concise English engineering prose. Preserve exact file paths, commands, error strings, identifiers, numeric values, function signatures, and syntax fragments.',
   '- Capture user feedback and explicit instructions faithfully, especially corrections.',
-  '- When the conversation contains an approved plan (an exit_plan_mode tool call the user approved; with several, the latest), copy its full markdown verbatim into Critical Context as a fenced code block, and keep it there while any of its work remains unexecuted; condense it like other completed history once it is fully executed.',
+  '- When the conversation contains an approved plan (an exit_plan_mode tool call the user approved; with several, the latest), copy the plan and details arguments verbatim into Critical Context as fenced code blocks, and keep them there while any of its work remains unexecuted; condense them like other completed history once fully executed.',
   '- Do NOT mention this summarization request or that the context was compacted.',
   '- Output only the checkpoint text: do not call any tool or take any other action.',
   `- If the conversation already contains a ${SUMMARY_OPEN_TAG} block, it is a PRIOR checkpoint. Do not copy it forward verbatim: preserve still-true facts, drop stale ones, and merge newer information into a single consolidated summary under the same structure. The verbatim approved-plan copy is the one exception: carry it forward unchanged while any of its work remains unexecuted.`,

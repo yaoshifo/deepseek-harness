@@ -12,7 +12,7 @@ When compaction summarizes a long execution, the approved plan (the plan the use
 
 Add a rule to the summarization directive (smallest change: no state, no region selection, no checkpoint-structure change):
 
-- When the conversation contains an approved plan (an exit_plan_mode tool call the user approved; with several, the latest), copy its full markdown verbatim into Critical Context as a fenced code block, and keep it there while any of its work remains unexecuted; condense it like other completed history once it is fully executed.
+- When the conversation contains an approved plan (an exit_plan_mode tool call the user approved; with several, the latest), copy the plan and details arguments verbatim into Critical Context as fenced code blocks, and keep them there while any of its work remains unexecuted; condense them like other completed history once fully executed.
 - The prior-checkpoint merge rule ("do not copy it forward verbatim") exempts exactly that one copy: carry it forward unchanged while any of its work remains unexecuted.
 
 The first compaction picks the verbatim copy up while the exit_plan_mode call is still visible; later compactions carry it forward from the prior checkpoint. Once the plan is fully executed it condenses like any other history, so the budget cost is self-limiting. No behavior change for plan-less sessions; the checkpoint structure (eight sections) is unchanged.
@@ -28,10 +28,10 @@ The first compaction picks the verbatim copy up while the exit_plan_mode call is
 ## Consequences
 
 - Fidelity is probabilistic: the summarizer model follows guidance, not enforcement; the verbatim copy rides with the same compliance probability as the rest of the directive.
-- The preserved plan counts against `maxTokens` (default 8192): a plan that does not fit fails the checkpoint closed (truncation error, full history retained) instead of silently losing plan content — raise `maxTokens` when that repeats (recorded in the README limitations).
+- The preserved plan and its details annex count against `maxTokens` (default 8192): a plan that does not fit fails the checkpoint closed (truncation error, full history retained) instead of silently losing plan content — raise `maxTokens` when that repeats (recorded in the README limitations).
 - A summary dominated by a large verbatim plan can also fail shrink validation; the outcome is the same warning with full history.
 - The directive text in `summarizer.ts` is upstream-owned; per fork principles, propose the clause upstream once it proves stable.
 
 ## Testing
 
-`packages/compaction/compaction-basic/tests/compaction-basic.spec.ts` (describe "default one-shot summarizer"): two new assertions pin the instruction's exact wording on the dispatched call envelope — the `an exit_plan_mode tool call the user approved` / `copy its full markdown verbatim into Critical Context as a fenced code block` rule, and the prior-checkpoint exception sentence.
+`packages/compaction/compaction-basic/tests/compaction-basic.spec.ts` (describe "default one-shot summarizer"): two new assertions pin the instruction's exact wording on the dispatched call envelope — the `an exit_plan_mode tool call the user approved` / `copy the plan and details arguments verbatim into Critical Context as fenced code blocks` rule, and the prior-checkpoint exception sentence.
