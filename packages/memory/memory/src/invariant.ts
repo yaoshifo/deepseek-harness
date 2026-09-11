@@ -74,6 +74,7 @@ function validateInjection(history: readonly SessionEvent[], event: SessionEvent
 /* jscpd:ignore-start -- package companions share replay and dispatch plumbing */
 /** Validate all package-owned injections already present in one session. */
 function validateSession(session: Session, fail: InvariantFailure): void {
+  // oxlint-disable-next-line typescript/no-deprecated -- Invariant inspects the log; migration deferred.
   const events = session.snapshotEvents()
   for (const [index, event] of events.entries()) {
     if (event.type !== 'user/message' || event.data.source.kind !== 'dsh-memory') continue
@@ -89,6 +90,7 @@ const install: InvariantInstaller = Object.assign((ctx: Context, fail: Invariant
     if (eventName !== 'session/event') return
     const [session, event] = args as [Session, SessionEvent]
     if (event.type !== 'user/message' || event.data.source.kind !== 'dsh-memory') return
+    // oxlint-disable-next-line typescript/no-deprecated -- Invariant inspects the log; migration deferred.
     validateInjection(session.snapshotEvents(), event, fail)
   }, { global: true })
 }, { inject: ['sessions'] })

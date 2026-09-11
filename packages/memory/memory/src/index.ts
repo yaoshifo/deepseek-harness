@@ -448,6 +448,7 @@ export function apply(ctx: Context, config: Config): void {
     ]
     for (const { scope, dir, limits: scopeLimits } of scopes) {
       if (scopeLimits === undefined) continue
+      // oxlint-disable-next-line typescript/no-deprecated -- Existing Session history read; migration deferred.
       if (hasMemoryInjection(agent.session.snapshotEvents(), scope)) continue
       let index
       let unindexed: string[] | undefined
