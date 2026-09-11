@@ -10,7 +10,7 @@ Status: implemented
 
 ## 决策
 
-当 launcher 退出携带信号且 launch request 未被消费时，`directOutcome` 现在结算 `{ exitCode: null, signal }`：调用方通过信号分类被终止的运行，启动窗口内的信号退出是一次终止而非启动失败。不携带信号的未消费退出仍保持启动失败拒绝。当直接 launcher 已死且 request 未消费时，`rangeActive()` 将已加载的 unit 视为已停止——request 文件是 bootstrap 的生命线（cleanup 会删除它，孤立的 runner 在消费步骤夭折），这与 missing-unit 路径已有的推断一致。另见同一调查落地的 [exec 边界 stdio 修复](2026-09-09-subprocess-scope-runner-nonblocking-stdio.zh.md)。
+bootstrap 窗口内的信号退出按该终止结算，它可能留下的空 scope 被释放而非继续等待。两半均已由上游落地（提交 b79a227cec）：当 launcher 退出携带本 owner 自己投递的信号（记于 `terminationSignals`）且 launch request 未被消费时，`LinuxScopeStartup.resolveOutcome` 返回该结果；不携带信号的未消费退出仍保持启动失败拒绝。残留的空 cgroup 由 `emptyRange()` 判定——已请求终止、客户端已离开、管理器报告的零任务数——并由 `releaseEmptyRange()` 停止该瞬时 unit，而不是推断其已停。另见同一调查落地的 [exec 边界 stdio 修复](2026-09-09-subprocess-scope-runner-nonblocking-stdio.zh.md)，该修复仍为 fork 本地。
 
 ## 备选方案
 

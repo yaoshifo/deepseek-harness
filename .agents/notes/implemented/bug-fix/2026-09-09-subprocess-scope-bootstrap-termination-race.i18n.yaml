@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-09-subprocess-scope-bootstrap-termination-race.md
-2026-09-09-subprocess-scope-bootstrap-termination-race.md: 811a36d889c2849fc039aedfbf8f65bc832aa243
-2026-09-09-subprocess-scope-bootstrap-termination-race.zh.md: de7a0d3759766fd992777e6d23f6c1e930e39f8c
+2026-09-09-subprocess-scope-bootstrap-termination-race.md: ec9fa41846b66e4371bd9ab6fba7583c19175e3a
+2026-09-09-subprocess-scope-bootstrap-termination-race.zh.md: 470741c0944b8d9b13208b6c9b43d480e764a5e5

@@ -335,12 +335,6 @@ class SystemdScopeOwner implements BoundProcessOwner {
           `systemctl returned unknown state for ${this.unit}: ${JSON.stringify({ loadState, activeState })}`,
         )
       }
-      // A launcher that died before the bootstrap consumed the launch request
-      // can wedge its scope active with an empty cgroup (systemd drops the
-      // empty-cgroup event that arrives while the start is still settling),
-      // and the request file is the bootstrap's lifeline: no consumer means
-      // the range holds nothing this owner must still wait for.
-      if (!this.direct.running() && existsSync(this.startup.files.requestPath)) return false
       this.establishment = 'established'
       if (activeState === 'inactive' || activeState === 'failed') return false
       if (!['active', 'activating', 'reloading', 'deactivating'].includes(activeState)) {

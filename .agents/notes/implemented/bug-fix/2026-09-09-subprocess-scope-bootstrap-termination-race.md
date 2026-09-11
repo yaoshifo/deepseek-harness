@@ -10,7 +10,7 @@ English | [中文](2026-09-09-subprocess-scope-bootstrap-termination-race.zh.md)
 
 ## Decision
 
-`directOutcome` now resolves `{ exitCode: null, signal }` when the launcher exit carries a signal and the launch request is unconsumed: callers classify terminated runs through the signal, and a signalled exit during the startup window is a termination, not a startup failure. An unsignalled pre-consumption exit keeps the startup-failure rejection. `rangeActive()` treats a loaded unit as stopped when the direct launcher is dead and the request is unconsumed — the request file is the bootstrap's lifeline (cleanup unlinks it, so an orphaned runner dies at its consume step), mirroring the inference the missing-unit path already made. See also [the exec-boundary stdio fix](2026-09-09-subprocess-scope-runner-nonblocking-stdio.md), landed from the same investigation.
+A signalled exit inside the bootstrap window settles as that termination, and the empty scope it can leave behind is released instead of waited out. Both halves are realized upstream (commit b79a227cec): `LinuxScopeStartup.resolveOutcome` returns the outcome when the launcher exit carries a signal the owner itself delivered (tracked in `terminationSignals`) while the launch request is unconsumed, and an unsignalled pre-consumption exit keeps the startup-failure rejection; the leftover empty cgroup is proved by `emptyRange()` — a requested termination, a departed client, and a manager-reported zero task count — and `releaseEmptyRange()` stops the transient unit rather than inferring it stopped. See also [the exec-boundary stdio fix](2026-09-09-subprocess-scope-runner-nonblocking-stdio.md), landed from the same investigation and still fork-local.
 
 ## Alternatives considered
 
