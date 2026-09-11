@@ -39,7 +39,7 @@ import {
   truncateGroupName,
   iconCategoryMisc,
 } from '../../src/engine/groupname.ts'
-import type { Agent, HistoryEntry, Message } from '../../src/core/types.ts'
+import type { Agent, HistoryEntry, Message, RecentTurnsReader } from '../../src/core/types.ts'
 import {
   createGroupNameAgent,
   createGroupNameSwitcherAgent,
@@ -820,7 +820,7 @@ describe('spawned group rename opportunity', () => {
     const p = createStubTitleRenamePlatform('test')
     const base = createGroupNameAgent({ resp: opts.resp ?? 'LLM 群名' })
     const sess = newBlockingSendSession('flow-turn')
-    const agent: Agent & { state: GroupNameAgentState } = {
+    const agent: Agent & { state: GroupNameAgentState } & RecentTurnsReader = {
       ...base,
       startSession: async () => sess,
       recentTurns: async () => opts.turns,
