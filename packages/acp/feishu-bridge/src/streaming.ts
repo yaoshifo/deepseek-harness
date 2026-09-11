@@ -1662,9 +1662,10 @@ export class StreamPreview {
   }
 
   /**
-   * Update the 💭 思考中 section with the latest thinking chunk.
+   * Replace the thinking text driving the card-header 思考中 state; the
+   * thinking text is never rendered in the card body.
    *
-   * @param chunk - Latest thinking chunk shown in the section.
+   * @param chunk - Accumulated thinking text; replaces the previous value.
    */
   async appendThinking(chunk: string): Promise<void> {
     if (chunk === '') return
@@ -1679,7 +1680,7 @@ export class StreamPreview {
     })
   }
 
-  /** Drop the 💭 思考中 section once the full thinking block arrives. */
+  /** Clear the thinking text so the header state leaves 思考中. */
   async clearThinking(): Promise<void> {
     await this.locked(async () => {
       if (this.thinkingText === '') return

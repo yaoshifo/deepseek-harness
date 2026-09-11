@@ -3458,8 +3458,8 @@ export class Engine {
         switch (event.type) {
           case 'thinking': {
             if (isEllipsisOnly(event.content)) break
-            // Thinking block complete: drop the streamed 💭 section. Runs even
-            // in quiet mode (Go parity — clearThinking precedes the
+            // Thinking block complete: clear the streamed thinking text.
+            // Runs even in quiet mode (Go parity — clearThinking precedes the
             // !ThinkingMessages branch) so the 思考中 header does not linger.
             if (thinkingStreamed && sp.canPreview()) await sp.clearThinking()
             // In quiet mode (thinkingMessages=false), thinking events must not
@@ -3531,8 +3531,8 @@ export class Engine {
           }
 
           case 'thinking_delta': {
-          // Preview-only: stream thinking into the 💭 section; the full
-          // EventThinking block clears it and dedups. Not gated on
+          // Preview-only: stream thinking to drive the header 思考中 state;
+          // the full EventThinking block clears it and dedups. Not gated on
           // thinkingMessages (Go parity): quiet mode suppresses thinking
           // *messages*, not the streaming 思考中 header.
             if (generationStart === undefined) generationStart = Date.now()
