@@ -343,12 +343,16 @@ describe('task admission and package contracts', () => {
     const root = fileURLToPath(new URL('..', import.meta.url))
     const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
       dependencies?: Record<string, string>
+      optionalDependencies?: Record<string, string>
       files?: string[]
       dsh?: { bundle?: { patch?: string } }
     }
     expect(manifest.dsh?.bundle?.patch).toBe('./cordis.patch.yml')
     expect(manifest.files).toContain('cordis.patch.yml')
-    expect(manifest.dependencies).toHaveProperty(
+    // The SDK is optional: a deployment that never runs Claude Code children
+    // installs without its platform binaries; mounting the provider without
+    // it fails loud with the install hint (run.ts's module-scope loader).
+    expect(manifest.optionalDependencies).toHaveProperty(
       '@anthropic-ai/claude-agent-sdk',
       CLAUDE_AGENT_SDK_VERSION,
     )

@@ -41,7 +41,19 @@ interface CodexPackageManifest {
   }
 }
 
-const codexPackageJsonPath = createRequire(import.meta.url).resolve('@openai/codex/package.json')
+const codexPackageJsonPath = (() => {
+  try {
+    return createRequire(import.meta.url).resolve('@openai/codex/package.json')
+  } catch (error: unknown) {
+    // The SDK is optional: fail loud with the install hint instead of a bare
+    // module error when a deployment mounts this provider without it.
+    throw new Error(
+      'subagent-codex: the optional @openai/codex dependency is not installed; '
+      + 'install it (or remount the provider without it) to use Codex children',
+      { cause: error },
+    )
+  }
+})()
 const codexPackageManifest = JSON.parse(
   readFileSync(codexPackageJsonPath, 'utf8'),
 ) as CodexPackageManifest

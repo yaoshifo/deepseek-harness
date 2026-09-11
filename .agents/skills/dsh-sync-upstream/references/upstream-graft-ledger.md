@@ -33,6 +33,7 @@
 | core/session SessionOrigin oneshot（8 文件一行级涟漪） | — | 待提上游 |
 | dsh-agent-loop 导出 inboxProjectionDefinition（桥重启 pending 告知要注册该单元） | 972c03a146 | 待提上游（导出一行；桥的 G3 依赖它） |
 | dsh-subagent 导出 subagentCatalogProjectionDefinition（桥重启 catalog 对账要注册该单元） | 2026-09-11 吸收批 | 待提上游（与上行同模式，随批提） |
+| subagent-codex/claude-code 的 SDK 二进制改 optionalDependencies + 缺失指路守卫（claude-code 静态导入改模块级顶层 await 加载，过 verify-optional-dependency-imports；契约断言同步） | 2026-09-11 | 待提上游（消 90MB×2 平台二进制对不用方部署的安装负担；dev 服务器 reload 曾被镜像慢下载卡住） |
 | core/agent reasoningEffort 会话级覆盖 | — | 随批提 |
 
 ## fs / todo / shell / mcp / skill / llm / client（S 级批）

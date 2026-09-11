@@ -9561,9 +9561,6 @@ importers:
 
   packages/subagent/subagent-claude-code:
     dependencies:
-      '@anthropic-ai/claude-agent-sdk':
-        specifier: 0.3.263
-        version: 0.3.263(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       '@anthropic-ai/sdk':
         specifier: 0.93.0
         version: 0.93.0(zod@4.4.3)
@@ -9631,6 +9628,10 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: workspace:^
         version: link:../../core/tools
+    optionalDependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: 0.3.263
+        version: 0.3.263(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
 
   packages/subagent/subagent-codex:
     dependencies:
@@ -9643,9 +9644,6 @@ importers:
       '@deepseek-ai/schemastery':
         specifier: link:../../../vendor/schemastery
         version: link:../../../vendor/schemastery
-      '@openai/codex':
-        specifier: 0.153.4
-        version: 0.153.4
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:^
@@ -9698,6 +9696,10 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: workspace:^
         version: link:../../core/tools
+    optionalDependencies:
+      '@openai/codex':
+        specifier: 0.153.4
+        version: 0.153.4
 
   packages/subagent/subagent-dsh-sdk:
     dependencies:
@@ -18662,6 +18664,7 @@ snapshots:
       '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.263
       '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.263
       '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.263
+    optional: true
 
   '@anthropic-ai/sdk@0.123.0(zod@4.4.3)':
     dependencies:
@@ -20161,6 +20164,7 @@ snapshots:
       '@openai/codex-linux-x64': '@openai/codex@0.153.4-linux-x64'
       '@openai/codex-win32-arm64': '@openai/codex@0.153.4-win32-arm64'
       '@openai/codex-win32-x64': '@openai/codex@0.153.4-win32-x64'
+    optional: true
 
   '@openai/codex@0.153.4-darwin-arm64':
     optional: true

@@ -7,13 +7,12 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import {
-  query as officialQuery,
-  type Options,
-  type Query,
-  type SDKMessage,
-  type SDKResultMessage,
-  type SpawnOptions,
+import type {
+  Options,
+  Query,
+  SDKMessage,
+  SDKResultMessage,
+  SpawnOptions,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import { brandString } from '@deepseek-ai/dsh-brand'
@@ -382,6 +381,23 @@ export function claudeQueryOptions(
  * @param spec - Workspace, environment, process service, and diagnostic policy.
  * @returns the published run after both Query and the real CLI handle exist.
  */
+/**
+ * The official SDK query entry, loaded once at module scope (the same
+ * load-time resolution stance as subagent-codex's createRequire lookup).
+ * The SDK is an optional dependency: a deployment that never runs Claude
+ * Code children may install without it, and mounting this provider there
+ * fails loud with the install hint instead of a bare module error.
+ */
+const officialQuery: typeof import('@anthropic-ai/claude-agent-sdk').query = await import('@anthropic-ai/claude-agent-sdk')
+  .then(sdk => sdk.query)
+  .catch((error: unknown) => {
+    throw new Error(
+      'subagent-claude-code: the optional @anthropic-ai/claude-agent-sdk dependency is not installed; '
+      + 'install it (or remount the provider without it) to use Claude Code children',
+      { cause: error },
+    )
+  })
+
 export async function startClaudeCodeRun(
   request: SubagentStartRequest,
   spec: ClaudeCodeRunSpec,

@@ -359,6 +359,7 @@ describe('task admission and package contracts', () => {
     const root = fileURLToPath(new URL('..', import.meta.url))
     const manifest = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')) as {
       dependencies?: Record<string, string>
+      optionalDependencies?: Record<string, string>
       files?: string[]
       dsh?: { bundle?: { patch?: string } }
     }
@@ -368,7 +369,10 @@ describe('task admission and package contracts', () => {
       '@deepseek-ai/dsh-sdk-protocol',
       'workspace:^',
     )
-    expect(manifest.dependencies).toHaveProperty('@openai/codex', CODEX_VERSION)
+    // The Codex SDK is optional: a deployment that never runs Codex children
+    // installs without its platform binaries; run.ts resolves the manifest
+    // lazily through createRequire and fails loud when it is absent.
+    expect(manifest.optionalDependencies).toHaveProperty('@openai/codex', CODEX_VERSION)
     expect(manifest.dependencies).not.toHaveProperty('@deepseek-ai/dsh-subagent-claude-code')
 
     const codexPackageJson = fileURLToPath(import.meta.resolve('@openai/codex/package.json'))
