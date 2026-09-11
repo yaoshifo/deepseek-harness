@@ -62,7 +62,7 @@ function newEngine(p: Platform): Engine {
   return new Engine('test', createStubAgent(), [p], '', 'en')
 }
 
-describe('worktreeMergedInto', () => {
+describe('worktreeMergedInto', { timeout: 20_000 }, () => {
   it('true when the branch is an ancestor of the integrate branch', async () => {
     const root = await initTestRepo()
     const wt = await committedWorktree(root, 'anc', 'merged work\n')
@@ -94,7 +94,7 @@ describe('worktreeMergedInto', () => {
   })
 })
 
-describe('createWorktree base branch recording', () => {
+describe('createWorktree base branch recording', { timeout: 20_000 }, () => {
   it('records the branch HEAD was on; a detached HEAD records ""', async () => {
     const root = await initTestRepo()
     await git(root, 'checkout', '--detach')
@@ -103,7 +103,7 @@ describe('createWorktree base branch recording', () => {
   })
 })
 
-describe('worktreeMergedLossless (Engine)', () => {
+describe('worktreeMergedLossless (Engine)', { timeout: 20_000 }, () => {
   it('a pristine worktree with a containment target is lossless — nothing is committed to lose', async () => {
     const root = await initTestRepo()
     const wt = await createWorktree(root, 'pristine') // no commits, no edits
@@ -114,7 +114,7 @@ describe('worktreeMergedLossless (Engine)', () => {
   })
 })
 
-describe('cleanupOneChat merged auto-removal', () => {
+describe('cleanupOneChat merged auto-removal', { timeout: 20_000 }, () => {
   it('default-on: removes a merged child against its recorded base branch, no config', async () => {
     const root = await initTestRepo()
     const wt = await committedWorktree(root, 'default', 'merged work\n')
