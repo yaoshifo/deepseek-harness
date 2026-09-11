@@ -65,9 +65,11 @@ node ~/.dsh/tools/switch-model.mjs <model-id> [--also-spawn]   # 可先加 --dry
 
 两个信号都要看：
 - 群里发条消息，完成卡 🤖 行显示 `<目标模型>·max`
-- 网关日志 `~/workspace/op-dev/rate-limit-logger/logs/api.jsonl`：`request_fields` 条目出现目标模型且 `output_config: {"effort": "max"}`
+- 会话日志 `request/header` 的 model = 目标模型（`~/.dsh/feishu-bridge-sessions/<workdir>/<session>/session.v*.jsonl.zstd`，zstdcat 解压）
 
 **成功标准**：两个信号都确认。
+
+**规则**：本机 18090 代理已于 2026-09-11 退役（改直连 mify 上游），它写的 `~/workspace/op-dev/rate-limit-logger/logs/api.jsonl` 不再有 live 请求——验收只看会话日志与完成卡两个信号。
 
 ### 6. 回滚说明
 
@@ -81,8 +83,8 @@ node ~/.dsh/tools/switch-model.mjs <model-id> [--also-spawn]   # 可先加 --dry
 - **spawn 群 ≠ 主路由** → `spawnProvider` 独立于 `agent.provider`；存量 spawn 群钉死在 state.json `provider_overrides`，改配置**不迁移存量**，需逐群 `/provider`。
 - **▶ 标记 ≠ 实际请求** → `/provider` ▶ 指向的是路由解析结果；实际请求模型看会话日志 `request/header`（zstd 解压）或完成卡 🤖 行。两者矛盾时是模型选择覆盖链问题，单独排查，别急着改配置。
 - **换 key 免 reload、换模型必须 reload** → llm-pi-ai 的 settings 层热载（chokidar），但 bridge 层配置（agent.provider / spawnProvider / providers 表）要重启生效。
-- **本机专属** → 脚本与路径（~/.dsh、网关 127.0.0.1:18090、仓库 bin.js）均为 Mac live 环境硬编码；dev 服务器（运维驴）需手工同步三落点，不能直接跑本脚本。
-- **改脚本必须跑测试** → `node ~/.dsh/tools/switch-model.test.mjs`（沙盒跑，不碰 live 配置），22 用例全绿才算改完。
+- **本机专属** → 脚本与路径（~/.dsh、mify 上游 `http://model.mify.ai.srv/anthropic`、仓库 bin.js）均为 Mac live 环境硬编码；dev 服务器（运维驴）需手工同步三落点，不能直接跑本脚本。
+- **改脚本必须跑测试** → `node ~/.dsh/tools/switch-model.test.mjs`（沙盒跑，不碰 live 配置）——脚本一改就要跑，全绿才算改完。
 
 ## references
 

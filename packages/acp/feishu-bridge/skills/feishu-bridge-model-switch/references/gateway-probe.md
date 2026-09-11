@@ -1,6 +1,6 @@
 # 新模型网关实测流程
 
-目标模型不在 `KNOWN_MODELS` 表时，**实测全过才能登记切换**。探测的是 mify 网关（`127.0.0.1:18090`，透明转发 `model.mify.ai.srv/anthropic`）——模型 id 原样透传，能否用取决于上游，所以每个新模型都要单独探。
+目标模型不在 `KNOWN_MODELS` 表时，**实测全过才能登记切换**。探测的是 mify 上游（`http://model.mify.ai.srv/anthropic`）——本机 18090 代理已于 2026-09-11 退役，探测与线上走同一跳；模型 id 原样透传，能否用取决于上游，所以每个新模型都要单独探。
 
 ## 前置
 
@@ -16,7 +16,7 @@ KEY=$(grep "FB_MIFY_API_KEY" ~/.dsh/.credentials.yaml | sed 's/^ *FB_MIFY_API_KE
 ### 1. 基础调用（effort=max）
 
 ```sh
-curl -sS -m 60 http://127.0.0.1:18090/v1/messages?beta=true \
+curl -sS -m 60 "http://model.mify.ai.srv/anthropic/v1/messages?beta=true" \
   -H "x-api-key: $KEY" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
   -d '{"model":"<MODEL-ID>","max_tokens":16,"thinking":{"type":"adaptive","display":"summarized"},"output_config":{"effort":"max"},"messages":[{"role":"user","content":"hi"}]}'
 ```
@@ -81,4 +81,4 @@ curl -sS -m 60 http://127.0.0.1:18090/v1/messages?beta=true \
 
 ## 探测留痕
 
-网关日志 `~/workspace/op-dev/rate-limit-logger/logs/api.jsonl` 记录每次探测（request_fields 含 thinking/output_config wire 档位）——事后排障可直接查。
+代理退役后探测不再进代理日志——把每项的通过/拒绝结论写进 `KNOWN_MODELS` 注释与配置注释（档位、窗口下限、图片是否受理），供事后排障对照。
