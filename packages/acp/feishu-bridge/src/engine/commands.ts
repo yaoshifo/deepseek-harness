@@ -28,7 +28,7 @@ import {
   worktreeRepoRoot,
   type WorktreeDirtyDetail,
 } from './worktree.ts'
-import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName } from './groupname.ts'
+import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName, spawnPlaceholderName } from './groupname.ts'
 import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.ts'
 import { renderDirCardSafe } from './dir-card.ts'
 import { renderListCardSafe, renderStatusCard } from './session-card.ts'
@@ -952,7 +952,7 @@ export async function cmdSpawn(e: Engine, p: Platform, msg: Message, args: strin
   // plan-producing turn, and feishu_bridge_subtask's fork covers delegation.
   const forkSentinelID = ''
 
-  let groupName = `${e.name} 副本`
+  let groupName = spawnPlaceholderName(e.name)
   // With LLM rename on the group is created under a neutral placeholder;
   // off, the first message names the group.
   if (firstMsg !== '' && !e.groupNameEnabled) groupName = firstMsg
@@ -1000,7 +1000,7 @@ export async function cmdFork(e: Engine, p: Platform, msg: Message, args: string
     return
   }
 
-  let groupName = `${e.name} 分支`
+  let groupName = spawnPlaceholderName(e.name, true)
   if (firstMsg !== '' && !e.groupNameEnabled) groupName = firstMsg
   if (Array.from(groupName).length > maxGroupNameRunes) {
     groupName = `${Array.from(groupName).slice(0, maxGroupNameRunes - 3).join('')}...`

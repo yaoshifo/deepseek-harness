@@ -34,10 +34,12 @@ import {
   sampleAcrossCategories,
   sanitizeGroupName,
   shortenGroupPathTokens,
+  isSpawnPlaceholderName,
+  spawnPlaceholderName,
   truncateGroupName,
   iconCategoryMisc,
 } from '../../src/engine/groupname.ts'
-import type { Agent, Message } from '../../src/core/types.ts'
+import type { Agent, HistoryEntry, Message } from '../../src/core/types.ts'
 import {
   createGroupNameAgent,
   createGroupNameSwitcherAgent,
@@ -753,6 +755,9 @@ describe('spawn rename skips chatroom sessions', () => {
 
     const sessionKey = 'test:chat-1'
     const session = e.sessions.getOrCreateActive(sessionKey)
+    // The spawn path creates the chat under the placeholder label; the
+    // first-message rename owns the name from there.
+    session.setName(spawnPlaceholderName(e.name))
     expect(session.tryLock()).toBe(true)
     if (decorate !== undefined) decorate(session)
 
@@ -794,5 +799,175 @@ describe('spawn rename skips chatroom sessions', () => {
     const { a, p } = await runSpawnRenameFlow(true)
     await waitFor(() => a.state.callCount > 0, 'control: expected LLM rename to fire for plain spawned group')
     await waitFor(() => p.renamedNames.length > 0, 'control: expected group to be renamed')
+  })
+})
+
+describe('spawned group rename opportunity', () => {
+  /**
+   * Drive one settled turn for a spawned group whose session label is still
+   * the creation placeholder: an idle spawn (`/spawn` with no task) whose
+   * earlier messages already ran without ever naming the group. The native
+   * session's recent-turns window is non-empty, reproducing the state of a
+   * real spawned group on its second and later user messages.
+   */
+  async function runSettledTurn(opts: {
+    sessionName: string
+    content: string
+    turns: HistoryEntry[]
+    resp?: string
+    extra?: Partial<Message>
+  }): Promise<{ a: Agent & { state: GroupNameAgentState }; p: StubTitleRenamePlatform; session: Session }> {
+    const p = createStubTitleRenamePlatform('test')
+    const base = createGroupNameAgent({ resp: opts.resp ?? 'LLM 群名' })
+    const sess = newBlockingSendSession('flow-turn')
+    const agent: Agent & { state: GroupNameAgentState } = {
+      ...base,
+      startSession: async () => sess,
+      recentTurns: async () => opts.turns,
+    }
+    const e = new Engine('test', agent, [p], '', 'en')
+    e.setGroupNameConfig(true, 'p', 1000, '')
+
+    const sessionKey = 'test:chat-1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    session.setName(opts.sessionName)
+    session.setAgentSessionID('native-1', 'stub')
+    expect(session.tryLock()).toBe(true)
+
+    const done = e.processInteractiveMessageWith(p, {
+      ...newStubMessage(),
+      sessionKey,
+      platform: 'test',
+      userID: 'user1',
+      content: opts.content,
+      replyCtx: 'ctx',
+      isSpawnedGroup: true,
+      ...opts.extra,
+    }, session)
+    await sess.sendStarted
+    sess.unblock()
+    sess.channel.push(ev({ type: 'result', content: 'ok', done: true }))
+    await done
+    return { a: agent, p, session }
+  }
+
+  it('renames when the label is still the spawn placeholder, even though the group already has turns', async () => {
+    // Production case: an idle spawn whose first message was 「hi」 (skipped
+    // as ambiguous) kept 「<bot> 副本」 forever, because the rename only ever
+    // ran for a chat whose session window was still empty.
+    const { p } = await runSettledTurn({
+      sessionName: 'test 副本',
+      content: '排查 oc_4e9fa5 群报错 429，dsh 有没有重试机制',
+      turns: [
+        { role: 'user', content: 'hi', timestamp: '' },
+        { role: 'assistant', content: '你好，需要我做什么？', timestamp: '' },
+      ],
+      resp: '429 限流排查',
+    })
+
+    await waitFor(() => p.renamedNames.length === 1, 'expected the placeholder-named group to be renamed')
+    expect(p.renamedNames).toEqual(['429 限流排查'])
+  })
+
+  it('leaves a chat whose label is no longer the placeholder alone', async () => {
+    // Once a rename has landed (automatic or manual), the label is the chosen
+    // name — a later message must not re-enter the rename path.
+    const { a, p } = await runSettledTurn({
+      sessionName: '429 限流排查',
+      content: '再帮我看看另一个群 500 的问题',
+      turns: [
+        { role: 'user', content: '排查 429', timestamp: '' },
+        { role: 'assistant', content: '已经排查完毕', timestamp: '' },
+      ],
+      resp: '不该发生的名字',
+    })
+
+    // Wait out the query window so a late rename cannot slip through after
+    // the assertion.
+    const deadline = Date.now() + 1200
+    while (Date.now() < deadline) {
+      expect(a.state.callCount).toBe(0)
+      expect(p.renamedNames).toEqual([])
+      await sleep(50)
+    }
+  })
+
+  it.each([
+    { name: 'a permission-card answer', extra: { isPermissionAction: true } },
+    { name: 'an ask-question card answer', extra: { isAskqCardAction: true } },
+    { name: 'a followup-card selection', extra: { isFollowupAction: true } },
+  ])('never seeds a name from $name', async ({ extra }) => {
+    // Card replies are not the user's task text; in a placeholder-named group
+    // they must not name the group either.
+    const { a, p } = await runSettledTurn({
+      sessionName: 'test 副本',
+      content: '允许一次',
+      turns: [
+        { role: 'user', content: 'hi', timestamp: '' },
+        { role: 'assistant', content: '需要你授权才能继续', timestamp: '' },
+      ],
+      resp: '不该发生的名字',
+      extra,
+    })
+
+    // Wait out the query window so a late rename cannot slip through after
+    // the assertion.
+    const deadline = Date.now() + 1200
+    while (Date.now() < deadline) {
+      expect(a.state.callCount).toBe(0)
+      expect(p.renamedNames).toEqual([])
+      await sleep(50)
+    }
+  })
+
+  it('starts only one naming query while a rename is already in flight', async () => {
+    // The first message's query blocks until its deadline; a second
+    // informative message inside that window must not start a second query —
+    // two concurrent renames would flip the chat name twice.
+    const a = createGroupNameAgent({ resp: '429 排查中', blockUntilSignal: true })
+    const { e, p } = newGroupNameEngine(a)
+    e.setGroupNameConfig(true, 'p', 1000, '')
+
+    e.handleGroupNameGenerate(p, 'test:chat-1', '排查 429 限流的问题', 'test:chat-1')
+    e.handleGroupNameGenerate(p, 'test:chat-1', '再看看 500 错误', 'test:chat-1')
+
+    await waitFor(() => p.renamedNames.length > 0, 'expected the first query to rename')
+    await sleep(150)
+    expect(a.state.callCount).toBe(1)
+    expect(p.renamedNames).toEqual(['429 排查中'])
+  })
+
+  it('updates the session label with the new name so the next message is not renamed again', async () => {
+    // The platform rename event may lag; syncing the label right after the
+    // rename keeps the placeholder check from firing a second rename in that
+    // window.
+    const { p, session } = await runSettledTurn({
+      sessionName: 'test 副本',
+      content: '排查 oc_4e9fa5 群报错 429 的问题',
+      turns: [
+        { role: 'user', content: 'hi', timestamp: '' },
+        { role: 'assistant', content: '你好，需要我做什么？', timestamp: '' },
+      ],
+      resp: '429 限流排查',
+    })
+
+    await waitFor(() => p.renamedNames.length === 1, 'expected the group to be renamed')
+    expect(session.getName()).toBe('429 限流排查')
+  })
+})
+
+describe('spawn placeholders', () => {
+  it('recognizes exactly the two spawn placeholders and nothing more', () => {
+    expect(spawnPlaceholderName('运维虾')).toBe('运维虾 副本')
+    expect(spawnPlaceholderName('运维虾', true)).toBe('运维虾 分支')
+
+    expect(isSpawnPlaceholderName('运维虾 副本', '运维虾')).toBe(true)
+    expect(isSpawnPlaceholderName('运维虾 分支', '运维虾')).toBe(true)
+    // A label that merely contains the suffix, or names another bot, is not
+    // the placeholder — the check must not widen into a substring match.
+    expect(isSpawnPlaceholderName('运维虾 副本的说明', '运维虾')).toBe(false)
+    expect(isSpawnPlaceholderName('开发虾 副本', '运维虾')).toBe(false)
+    expect(isSpawnPlaceholderName('429 限流排查', '运维虾')).toBe(false)
+    expect(isSpawnPlaceholderName('', '运维虾')).toBe(false)
   })
 })

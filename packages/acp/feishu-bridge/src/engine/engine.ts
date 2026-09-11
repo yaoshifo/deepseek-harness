@@ -135,10 +135,12 @@ import {
   groupIconRecentMax,
   iconsPerCategory,
   isNameableGroupNameSeed,
+  isSpawnPlaceholderName,
   maxGroupNameRunes,
   parseGroupIcon,
   sampleAcrossCategories,
   sanitizeGroupName,
+  spawnPlaceholderName,
   truncateGroupName,
 } from './groupname.ts'
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.ts'
@@ -1117,6 +1119,8 @@ export class Engine {
 
   /** Session keys with a manual rename pending in the async LLM window (Go pendingRename). */
   private readonly pendingRename = new Set<string>()
+  /** Session keys whose automatic group-name task is still running. */
+  private readonly groupNamingInFlight = new Set<string>()
   /** Ring buffer of recently used group icons for prompt dedup (Go recentIcons). */
   private recentIcons: string[] = []
 
@@ -6724,7 +6728,7 @@ export class Engine {
     // LLM overwrites it later, falling back to the first message); idle
     // spawns have no first message and use the placeholder too.
     if (this.groupNameEnabled || idle) {
-      groupName = `${this.name} 副本`
+      groupName = spawnPlaceholderName(this.name)
     }
     if (Array.from(groupName).length > maxGroupNameRunes) {
       groupName = `${Array.from(groupName).slice(0, maxGroupNameRunes - 3).join('')}...`
@@ -8468,6 +8472,9 @@ export class Engine {
     if (name === '') return { name: '', icon: '' }
     const renameSignal = AbortSignal.timeout(30_000)
     await renamer(sessionKey, name, renameSignal)
+    // Reflect the landed name immediately: the platform's rename event may
+    // lag, and the placeholder check keys on the session label.
+    this.handleChatRenamed(sessionKey, name)
     // After a successful rename, set the group avatar from the LLM's icon
     // name; failure only warns. Icon validity is checked by the platform's
     // sprite lookup, which silently skips unknown names.
@@ -8508,6 +8515,12 @@ export class Engine {
   private async groupNameGenerateTask(
     p: Platform, sessionKey: string, seed: string, timeout: number, _interactiveKey: string,
   ): Promise<void> {
+    // One naming query per chat at a time: a second informative message
+    // inside the query window must not start a concurrent rename that would
+    // flip the name twice. The check and the add run synchronously before the
+    // first await, so two back-to-back starts cannot both pass.
+    if (this.groupNamingInFlight.has(sessionKey)) return
+    this.groupNamingInFlight.add(sessionKey)
     // The mark means "a manual rename landed inside this window"; the window
     // ends with this callback, so consume it one-shot — otherwise a /new
     // first message would be wrongly skipped by an orphan mark.
@@ -8535,6 +8548,7 @@ export class Engine {
         clearTimeout(timer)
       }
     } finally {
+      this.groupNamingInFlight.delete(sessionKey)
       this.clearPendingRename(sessionKey)
     }
   }
@@ -8566,6 +8580,8 @@ export class Engine {
       console.warn(`group-name: fallback rename failed (${sessionKey}): ${String(error)}`)
       return
     }
+    // Reflect the landed name immediately, mirroring the LLM path.
+    this.handleChatRenamed(sessionKey, fallback)
     // Mirror the LLM path's avatar step; failure only warns. Safe to reset the
     // phase baseline: the fallback only runs within the spawn window, where
     // the chat's baseline is still `discussing`.
@@ -8602,11 +8618,15 @@ export class Engine {
         })
       }
     }
-    // First message = the chat's session has no conversation window yet. The
-    // agent session for this message does not exist before the interactive
-    // state is created, so an absent/empty live window is exactly "first".
     if (this.bridge.waterfall('feishuBridge/rename-exemption', { session }, () => false)) return
-    if ((await this.recentTurnsOf(msg.sessionKey, session, 1)).length > 0) return
+    // The rename owns the name while the session label is still the creation
+    // placeholder — an idle spawn whose opener carried no task (skipped as
+    // ambiguous) keeps its chance for the next informative message, and a
+    // chat that was already named is never renamed again.
+    if (!isSpawnPlaceholderName(session.getName(), this.name)) return
+    // Card replies carry button labels or verdict keywords, never the user's
+    // task text; they must not seed a name.
+    if (msg.isPermissionAction || msg.isAskqCardAction || msg.isFollowupAction) return
     const raw = msg.originalContent !== '' ? msg.originalContent : msg.content
     if (!this.groupNameEnabled) {
       // Plain sync rename to the first message; with LLM naming on, the

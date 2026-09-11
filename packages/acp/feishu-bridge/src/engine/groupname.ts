@@ -41,6 +41,38 @@ export function isNameableGroupNameSeed(seed: string): boolean {
   return !vagueGroupNameSeeds.has(trimmed.toLowerCase())
 }
 
+/** Suffix of the placeholder a /spawn or subtask group is created under. */
+export const spawnCopySuffix = ' 副本'
+
+/** Suffix of the placeholder a /fork group is created under. */
+export const spawnForkSuffix = ' 分支'
+
+/**
+ * The placeholder name a spawn path creates its group under. The first
+ * message carrying a task replaces it, so a session label still equal to
+ * this value means the group has never been named.
+ *
+ * @param botName - The bridge's own display name.
+ * @param fork - True for the /fork placeholder; /spawn and subtask groups use the copy suffix.
+ * @returns The name to create the group with.
+ */
+export function spawnPlaceholderName(botName: string, fork = false): string {
+  return `${botName}${fork ? spawnForkSuffix : spawnCopySuffix}`
+}
+
+/**
+ * Whether a session label is still the spawn-created placeholder: true while
+ * no rename (automatic or manual) has replaced it, so a later informative
+ * message still owns the name.
+ *
+ * @param name - The chat's current session label.
+ * @param botName - The bridge's own display name.
+ * @returns True while the label is a spawn placeholder.
+ */
+export function isSpawnPlaceholderName(name: string, botName: string): boolean {
+  return name === spawnPlaceholderName(botName) || name === spawnPlaceholderName(botName, true)
+}
+
 /** Default group-name + icon generation prompt (Go defaultGroupNamePrompt). */
 export const defaultGroupNamePrompt = `你是一个群聊名 + 图标生成器。只输出两行：第 1 行群名，第 2 行一个 Lucide 图标名（kebab-case）。两行都要有。
 
