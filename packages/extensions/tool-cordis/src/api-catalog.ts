@@ -4642,7 +4642,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'EventKind',
-    declaration: 'export type EventKind = \'text\' | \'text_delta\' | \'thinking_delta\' | \'tool_use\' | \'tool_result\' | \'result\' | \'error\' | \'thinking\' | \'subagent_status\' | \'compaction\' | \'todo_update\' | \'skill_invocation\';',
+    declaration: 'export type EventKind = \'text\' | \'text_delta\' | \'thinking_delta\' | \'tool_use\' | \'tool_result\' | \'result\' | \'error\' | \'thinking\' | \'subagent_status\' | \'compaction\' | \'todo_update\' | \'skill_invocation\' | \'presented\';',
   },
   {
     name: 'FeedbackCategory',
