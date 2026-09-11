@@ -119,6 +119,20 @@ async function runScript(env: NodeJS.ProcessEnv): Promise<{ code: number; stderr
 }
 
 /**
+ * Poll an observable condition, bounded so a script that never reaches it
+ * fails with the caller's message instead of hanging. The bound only limits
+ * the wait — it is never what makes the assertion correct.
+ */
+async function waitFor(cond: () => Promise<boolean>, message: string, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (await cond()) return
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+  throw new Error(message)
+}
+
+/**
  * Temp FORK_DIR for probe-failure cases: a real git repo ('git' clean,
  * 'git-dirty' with an untracked file, 'bare' with no git at all) to drive
  * the rollback-state capture. The config preflight needs nothing here — the
@@ -176,11 +190,21 @@ describe.skipIf(process.platform !== 'darwin')('reload.sh', () => {
   it('re-loads the service when killed mid-restart (the 2026-08-20 outage)', async () => {
     const s = await stage(true, false, 'none')
     const child = spawn('sh', [scriptPath, '--skip-build'], { env: s.env })
-    const code = await new Promise<number>((resolve) => {
+    const exited = new Promise<number>((resolve) => {
       child.on('exit', (c, signal) => { resolve(c ?? (signal === 'SIGTERM' ? 143 : 1)) })
-      setTimeout(() => child.kill('SIGTERM'), 1500)
     })
-    expect(code).not.toBe(0)
+    try {
+      // Kill only once the unload has landed. Guards, the config preflight,
+      // and the git capture run first, and under a loaded runner that work
+      // outlasts any fixed delay — the kill would land before the restart
+      // window this case exists to cover.
+      await waitFor(async () => (await s.kinds()).includes('unload'), 'reload.sh never unloaded the service')
+      child.kill('SIGTERM')
+      expect(await exited).not.toBe(0)
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      await exited
+    }
     const kinds = await s.kinds()
     expect(kinds[0]).toBe('unload')
     expect(kinds.at(-1)).toBe('load')
