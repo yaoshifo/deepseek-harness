@@ -61,6 +61,14 @@
 - **日志形状**：journal 有 `engine: closing-card ask converted to followups`，但始终没有 `engine: followups card sent`；turn/end 序列 = 完成 turn（队列非空，按设计跳过投递、登记保留）→ 接管 turn `aborted/user` + `stopping interactive session`。触发动作若是卡片按钮（如 Provider 热切换）在群消息历史里不可见，别只找文本命令。
 - **修复后判别**：`stopInteractiveSession` 拆除前会抢救投递存活登记；修后若仍丢，查 `followups card send failed` 告警（发送失败不重试）。
 
+### I 群名长期停在占位名「<bot> 副本 / 分支」（2026-09-11 实测，已修 dev@c173afa7ec）
+
+- **症状**：spawn 出来的群（`/spawn`、`/fk`、subtask）群名始终是「<bot> 副本」或「<bot> 分支」，从未变成任务主题；群内一切正常，只是名字不动。
+- **定位**：stdout.log 搜该群 chat id——应有 `spawned group chat (chat_id …, group_name <bot> 副本, mode group)`，紧随（数秒内）一条 `group-name: skip auto rename, ambiguous first message (<sessionKey>)`，此后该群**再无** `chat renamed` 行。会话日志首条 `user/message` 是含糊开场（`hi`、`在吗` 等 <4 runes，或 继续/ok/好的 类 nudge）。
+- **根因（修复前指纹）**：idle spawn 以占位名建群、靠「首条消息」自动改名；含糊种子 guard（`isNameableGroupNameSeed`：<4 runes 或 nudge 词表）跳过首条时**同时作废了唯一的命名机会**（触发条件为「会话窗口还没有轮次」）。guard 判定本身正确（防跑题），缺陷在「跳过 = 永久放弃」。
+- **修复后判别**：命名机会改为「会话标签仍是占位名」期间持续有效，含糊消息只跳过自己；卡片回执（审批/追问/followup）不参与命名；同群命名查询互斥。修后仍不改名按序查：①该群会话标签是否被 `/new` 重置（重置后不再是占位名，判据随之失效）；②bot 名是否变更（老占位名失配 → 保守拒绝）；③stdout.log 是否仍打 skip 行（说明首条之外的消息也未达门槛）。详见 Agent Note `.agents/notes/implemented/bug-fix/2026-09-11-feishu-bridge-groupname-opportunity.md`。
+- **自愈**：在群里发一条有内容的消息（≥4 字、非「继续/ok」类）即触发改名；想立刻改就 `/rename <名字>`。
+
 ## 审批事件判别（卡片没弹 / 反复要授权）
 
 - 会话日志事件 `approval/asked` → `approval/decided` 的**时间差**：秒级/分钟级 = 真弹卡等用户点击；0–1ms = 被常设授权短路放行。两种情况日志事件形态相同，只有时间差能区分。
