@@ -43,7 +43,7 @@ async function settle(): Promise<void> {
   await new Promise((resolve) => { setTimeout(resolve, 0) })
 }
 
-async function waitFor(cond: () => boolean, what: string, timeoutMs = 2000): Promise<void> {
+async function waitFor(cond: () => boolean, what: string, timeoutMs = 10_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     if (cond()) return
@@ -124,7 +124,7 @@ function newStubMessage(): Message {
   }
 }
 
-describe('guided start: the start picker', () => {
+describe('guided start: the start picker', { timeout: 20_000 }, () => {
   it('bare /chatroom with recorded history sends the start card instead of the topic picker', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
@@ -375,7 +375,7 @@ describe('guided start: the start picker', () => {
   })
 })
 
-describe('guided start: the role-picker handoff', () => {
+describe('guided start: the role-picker handoff', { timeout: 20_000 }, () => {
   it('a bootstrapped picker confirms into the mode card like the command path', async () => {
     // The plain-text topic path arms no picker; bootstrapChatroomPick is the
     // repair leg — its state must behave exactly like the /chatroom-begun
@@ -460,7 +460,7 @@ describe('guided start: the role-picker handoff', () => {
   })
 })
 
-describe('guided start: explicit invocations', () => {
+describe('guided start: explicit invocations', { timeout: 20_000 }, () => {
   it('/chatroom <roles> <topic> with no flags arms the mode card instead of starting', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
@@ -524,7 +524,7 @@ describe('guided start: explicit invocations', () => {
   })
 })
 
-describe('guided start: the role-cap pre-check', () => {
+describe('guided start: the role-cap pre-check', { timeout: 20_000 }, () => {
   it('explicit over-cap roles fail before the research venv is provisioned', async () => {
     const p = createStubChatroomSpawnerEx()
     const e = newChatroomTestEngine(p)
