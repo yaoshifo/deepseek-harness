@@ -219,7 +219,7 @@ dsh-im：botId → 独立 `secretRef`（`DSH_FEISHU_APP_SECRET_<BOTID>`）存 `c
 
 ### 5.4 本插件更稳、不要回退的部分
 
-- 会话卡点击**有**存在性校验（`src/engine/engine.ts:8992-9010` → `src/engine/commands.ts:385-407` 的 `matchSession`），未命中只 `console.info` 不改状态；删除卡另有列表外 id 报 `MissingSession`（`src/feishu/…session-card.ts:408-422`）与 active 禁删（`:434-435`）。dsh-im 的会话菜单只读 `sessionFor` 不校验（`bridge.mjs:2877-2890`）。
+- 会话卡点击**有**存在性校验（`src/engine/engine.ts:8992-9010` → `src/engine/commands.ts:385-407` 的 `matchSession`），未命中只 `console.info` 不改状态；删除卡另有列表外 id 报 `MissingSession`（`src/engine/session-card.ts:419`）与 active 禁删（`:435`）。dsh-im 的会话菜单只读 `sessionFor` 不校验（`bridge.mjs:2877-2890`）。
 - `dirHistory` 的 MRU / 序号 / `-` / scan-path 模糊匹配（`src/engine/commands.ts:667-686`）+ `dirOverrideKey=stripUserID` 让卡片回调与文本命中同一槽（`src/engine/engine.ts:2130-2137`）——dsh-im 的 `/workspacelist` 纯序号没有这个能力。
 - per-user 会话槽（`src/feishu/platform.ts:1721`）+ `share_session_in_channel` 比 dsh-im「一群一会话 + 单独 users 授权表」更直接。
 
@@ -443,6 +443,7 @@ dsh-im 零 TypeScript（0 个 `.ts`、无 tsconfig）→ 类型契约只能靠�
 - **`freeze` / `resumeFromFreeze` 死代码**：删或修，独立议题。
 - **三处反向依赖**（§2.3）：`BoundedMap` 归属、引用串格式契约、`streaming` 依赖飞书排版——收益偏可读性，不紧急。
 - **`Engine` 类 8,200 行 / 252 成员**：应按特性（cron / monitor / subtask / plan）拆分，非按渠道；属重构议题，与本次借鉴无关。
+- **README 双语的「已知限制」条目已过期**（撰写本文时顺带发现）：`README.md:73` 与 `README.zh.md:73` 均称「`/list`、`/status`、`/switch` 仍是纯文本……TS 命令保持文本输出，待该渲染域移植」，但该渲染域已落地——`src/engine/commands.ts:34` 已 import `renderListCardSafe` / `renderStatusCard`（两者即 README 归给 Go 侧的函数名），`:180-181`（`/list`）、`:340-341`（`/switch`）、`:467-468`（`/status`）均走 `supportsCards(p)` → `replyWithCard`，而 `supportsCards`（`src/core/types.ts:999`）= `asCardSender(p) !== undefined` = `withMethod(p, 'sendCard')`，飞书平台已实现（`src/feishu/platform.ts:1939`）。**未核实**该卡片的按钮集（`act:/list switch|delete N`）是否与 Go 侧完全一致，修 README 时需一并核对。
 
 ---
 
