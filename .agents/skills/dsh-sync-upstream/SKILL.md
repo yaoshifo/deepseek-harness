@@ -52,7 +52,7 @@ pnpm run gen-cordis-api        # packages/extensions/tool-cordis/src/api-catalog
 pnpm run gen-config-catalog    # docs/config-catalog.md
 pnpm run gen-persistence-catalog  # docs/persistence-catalog.md + known-event-types.ts（漏跑会静默丢 fork 事件字段，如 approval/decided 的 note）
 pnpm run gen-tool-catalog      # docs/tool-catalog.md
-pnpm run gen-doc-graphs        # docs/ 事件矩阵等 8 个图文档
+pnpm run gen-doc-graphs        # docs/ 事件矩阵等 6 个图文档
 pnpm run gen-client-catalog    # cordis-client-runner 的 slot-catalog（易漏，漏了到 doc-sync 才炸）
 ```
 

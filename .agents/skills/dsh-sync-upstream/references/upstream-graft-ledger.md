@@ -34,7 +34,6 @@
 | dsh-agent-loop 导出 inboxProjectionDefinition（桥重启 pending 告知要注册该单元） | 972c03a146 | 待提上游（导出一行；桥的 G3 依赖它） |
 | dsh-subagent 导出 subagentCatalogProjectionDefinition（桥重启 catalog 对账要注册该单元） | 2026-09-11 吸收批 | 待提上游（与上行同模式，随批提） |
 | subagent-codex/claude-code 的 SDK 二进制改 optionalDependencies + 缺失指路守卫（claude-code 静态导入改模块级顶层 await 加载，过 verify-optional-dependency-imports；契约断言同步） | 2026-09-11 | 待提上游（消 90MB×2 平台二进制对不用方部署的安装负担；dev 服务器 reload 曾被镜像慢下载卡住） |
-| core/agent reasoningEffort 会话级覆盖 | — | 随批提 |
 
 ## fs / todo / shell / mcp / skill / llm / client（S 级批）
 
@@ -47,7 +46,7 @@
 | mcp-client startupTimeoutMs | — | 待提上游 |
 | skill SkillRestriction + skill-filesystem scopedSkillDirs | de9e935ae3 | 待提上游 |
 | llm-pi-ai tagStrictSampling | — | 待提上游 |
-| client/connection fixture stripNodeWarningLines | — | 待提上游 |
+| test-support/session-snapshot harness stripNodeWarningLines | — | 待提上游 |
 
 ## api / acp / apps / bundle
 
@@ -55,7 +54,7 @@
 | --- | --- | --- |
 | acp armTopologyNotifications 创建窗口竞态修复（带回归测试） | f8d269b596 | 现成 PR 素材，pilot 首选 |
 | apps/cli DSH_CONFIG_HMR_DISABLED | — | 待提上游（S） |
-| plan 引导散文嫁接 4 文件（3 preset + bundle/base patch） | eef9cb0327 | 讨论轮段已搬 fork patch layer；并行探索段评估提上游 |
+| plan 引导散文（feishu-bridge/cordis.patch.yml 的 plan-mode section 单点 + tests/bundle-patch.spec.ts lockstep 防线） | eef9cb0327 | 单点收敛于 1a847c57c6（2026-09-07）；讨论轮段已搬 fork patch layer，并行探索段评估提上游 |
 | lefthook secrets job + 配对 glob 扩展、生成器 fork 注册 | — | 保留（fork 政策落地，加严非跳过） |
 
 ## 定位备注
