@@ -2556,7 +2556,7 @@ export class Engine {
       // a busy turn must not take effect until the turn actually begins.
       await this.bridge.serial('feishuBridge/turn-start', { engine: this, session, metadata: msg.metadata })
 
-      await this.handleSpawnedGroupFirstMessage(p, msg, session)
+      this.handleSpawnedGroupFirstMessage(p, msg, session)
 
       // Go separates the interactive-state slot key from the session-key
       // start option: cron new-per-run slots carry a #cron suffix the option
@@ -8606,7 +8606,7 @@ export class Engine {
    * processInteractiveMessageWith; the top-notice banner stays disabled by
    * default exactly like Go's spawnTopNoticeEnabled=false).
    */
-  private async handleSpawnedGroupFirstMessage(p: Platform, msg: Message, session: Session): Promise<void> {
+  private handleSpawnedGroupFirstMessage(p: Platform, msg: Message, session: Session): void {
     if (!msg.isSpawnedGroup) return
     if (msg.messageID !== '') {
       const appender = asMessagePinAppender(p)

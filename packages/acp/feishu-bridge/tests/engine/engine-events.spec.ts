@@ -2399,13 +2399,13 @@ describe('presented deliverable auto-delivery', () => {
   it('reads declared files from the session workdir and delivers them', async () => {
     const { mkdtempSync, writeFileSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')
-    const { join } = await import('node:path')
-    const work = mkdtempSync(join(tmpdir(), 'fb-presented-'))
-    writeFileSync(join(work, 'report.md'), '# report body', 'utf8')
+    const nodePath = await import('node:path')
+    const work = mkdtempSync(nodePath.join(tmpdir(), 'fb-presented-'))
+    writeFileSync(nodePath.join(work, 'report.md'), '# report body', 'utf8')
 
     const p = createStubMediaPlatform()
     const agent = { ...createStubAgent(), getWorkDir: () => work }
-    const { e } = newEngine(agent as never, p)
+    const { e } = newEngine(agent, p)
     const sessionKey = 'test:user1'
     const session = e.sessions.getOrCreateActive(sessionKey)
     const agentSession = newControllableSession('s1')
@@ -2430,9 +2430,9 @@ describe('presented deliverable auto-delivery', () => {
   it('resolves a delegated child\'s declared paths against its carried base', async () => {
     const { mkdtempSync, writeFileSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')
-    const { join } = await import('node:path')
-    const childWt = mkdtempSync(join(tmpdir(), 'fb-presented-wt-'))
-    writeFileSync(join(childWt, 'artifact.txt'), 'child work', 'utf8')
+    const nodePath = await import('node:path')
+    const childWt = mkdtempSync(nodePath.join(tmpdir(), 'fb-presented-wt-'))
+    writeFileSync(nodePath.join(childWt, 'artifact.txt'), 'child work', 'utf8')
 
     const p = createStubMediaPlatform()
     const { e } = newEngine(createStubAgent(), p)

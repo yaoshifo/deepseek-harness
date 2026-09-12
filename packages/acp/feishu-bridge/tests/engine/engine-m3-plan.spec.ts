@@ -414,7 +414,8 @@ describe('PlanLayeredCard', () => {
 
     const planCard = p.sentCards[0] as { elements: Array<Record<string, unknown>> }
     expect(planCard.elements.some(el => el.kind === 'collapsiblePanel')).toBe(false)
-    expect(planCard.elements.map(el => String(el.content ?? '')).join('\n')).toContain('file content wins')
+    expect(planCard.elements.map(el => (typeof el.content === 'string' ? el.content : '')).join('\n'))
+      .toContain('file content wins')
 
     e.routeAskResponse(p, msg({ sessionKey: key, content: 'perm:deny', isPermissionAction: true }), 'perm:deny')
     await expect(decision).resolves.toEqual({ outcome: 'rejected' })

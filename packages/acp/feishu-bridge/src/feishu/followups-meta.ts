@@ -83,7 +83,8 @@ export class FollowupsMetaStore {
     try {
       const parsed = JSON.parse(data) as { entries?: Record<string, PersistedMeta> }
       for (const [key, entry] of Object.entries(parsed.entries ?? {})) {
-        if (entry?.meta === undefined) continue
+        // A file written by an earlier build may predate the card metadata.
+        if ((entry as Partial<PersistedMeta>).meta === undefined) continue
         this.entries.set(key, entry)
       }
     } catch (err) {

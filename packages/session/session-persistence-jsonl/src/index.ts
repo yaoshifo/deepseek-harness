@@ -1510,7 +1510,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     signal?.throwIfAborted()
     throw new Error(
       `corrupt session log "${path}": header id "${meta.id}" and cwd identify `
-      + `${JSON.stringify(expectedPaths[0] as string)}`,
+      + JSON.stringify(expectedPaths[0]),
     )
   }
 

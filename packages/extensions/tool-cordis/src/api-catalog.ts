@@ -4570,7 +4570,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'DshAgentLike',
-    declaration: 'export interface DshAgentLike {\n    readonly id: unknown;\n    readonly status: \'idle\' | \'running\';\n    readonly session: {\n        snapshotEvents(): readonly SessionEvent[];\n        readonly header?: {\n            readonly parentSession?: unknown;\n            readonly cwd?: unknown;\n            readonly origin?: unknown;\n        };\n    };\n    followup(message: unknown): void;\n    steer(message: unknown): void;\n    cancel(cause: {\n        kind: string;\n    }, options?: {\n        keepInbox?: boolean;\n    }): void;\n}',
+    declaration: 'export interface DshAgentLike {\n    readonly id: unknown;\n    readonly status: \'idle\' | \'running\';\n    readonly session: {\n        snapshotEvents(): readonly SessionEvent[];\n        readonly header?: {\n            readonly parentSession?: unknown;\n            readonly cwd?: string;\n            readonly origin?: unknown;\n        };\n    };\n    followup(message: unknown): void;\n    steer(message: unknown): void;\n    cancel(cause: {\n        kind: string;\n    }, options?: {\n        keepInbox?: boolean;\n    }): void;\n}',
   },
   {
     name: 'DshAgentsRegistryLike',

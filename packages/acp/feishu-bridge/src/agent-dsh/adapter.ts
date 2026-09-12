@@ -65,7 +65,7 @@ export interface DshAgentLike {
   /** The agent's durable session log (fork seeds slice its seedable prefix). */
   readonly session: {
     snapshotEvents(): readonly SessionEvent[]
-    readonly header?: { readonly parentSession?: unknown; readonly cwd?: unknown; readonly origin?: unknown }
+    readonly header?: { readonly parentSession?: unknown; readonly cwd?: string; readonly origin?: unknown }
   }
   followup(message: unknown): void
   steer(message: unknown): void
@@ -832,7 +832,7 @@ export class DshAgentAdapter {
     // child also feeds the activity recorder — the background-subtask panel
     // reads it and does not depend on projection liveness.
     const onSessionEvent = (
-      session: { id: unknown; header?: { parentSession?: unknown; cwd?: unknown } },
+      session: { id: unknown; header?: { parentSession?: unknown; cwd?: string } },
       event: Record<string, unknown>,
     ): void => {
       const target = this.liveSessions.get(String(session.id))
@@ -843,7 +843,7 @@ export class DshAgentAdapter {
       if (session.header?.parentSession !== undefined) this.recordSubagentActivity(String(session.id), event)
       const ancestor = this.resolveSubagentAncestor(session)
       if (ancestor !== undefined) {
-        ancestor.projectSubagentEvent(String(session.id), event, String(session.header?.cwd ?? ''))
+        ancestor.projectSubagentEvent(String(session.id), event, session.header?.cwd ?? '')
       }
     }
     this.disposers.push(ctx.on('session/event', onSessionEvent))

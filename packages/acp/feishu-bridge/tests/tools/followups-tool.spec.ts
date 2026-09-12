@@ -91,7 +91,7 @@ function stubAgent(ctx: Context, id: string): Agent {
 }
 
 /** A real Engine whose askUser is spied (request-synthesis assertions). */
-function newRoutedEngine(name: string): { engine: Engine; ask: ReturnType<typeof vi.spyOn> } {
+function newRoutedEngine(name: string) {
   const engine = new Engine(name, createStubAgent(), [createStubPlatform()], '', 'en')
   const ask = vi.spyOn(engine, 'askUser')
     .mockResolvedValue({ answers: [{ id: 'followups', selected: [], custom: 'Registered 1 follow-up suggestions.' }] })

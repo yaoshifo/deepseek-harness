@@ -369,7 +369,7 @@ describe('truncated terminal state rendering', () => {
       false, 'Agent', 'zh', 'truncated', [], '17:36:48',
     )
     expect(payload).toBeDefined()
-    const card = jParse(buildProgressCardJSONFromPayload(payload!, noSpinner)) as JsonObj
+    const card = jParse(buildProgressCardJSONFromPayload(payload!, noSpinner))
     const header = jObj(card.header)
     expect(jStr(header.template)).toBe('orange')
     expect(jStr(jObj(header.title).content)).toContain('输出截断')
@@ -381,7 +381,7 @@ describe('truncated terminal state rendering', () => {
       false, 'Agent', 'en', 'truncated', [], '',
     )
     expect(payload).toBeDefined()
-    const card = jParse(buildProgressCardJSONFromPayload(payload!, noSpinner)) as JsonObj
+    const card = jParse(buildProgressCardJSONFromPayload(payload!, noSpinner))
     expect(jStr(jObj(card.header).template)).toBe('orange')
     expect(jStr(jObj(jObj(card.header).title).content)).toContain('Truncated')
   })
@@ -389,7 +389,7 @@ describe('truncated terminal state rendering', () => {
   it('preview text cards title a truncated status 输出截断', () => {
     const card = jParse(buildPreviewCardJSON('部分回答', noSpinner, {
       state: 'truncated', ts: '17:36:48', toolCallSeq: 9,
-    })) as JsonObj
+    }))
     const header = jObj(card.header)
     expect(jStr(header.template)).toBe('orange')
     const title = jStr(jObj(header.title).content)
