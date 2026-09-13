@@ -58,6 +58,20 @@ describe('durable V3 admission failures', () => {
     expect(() =>{  assertEvent(extension, 2) }).toThrow(/unclassified/)
   })
 
+  it('admits the fork-owned dsh-memory source kind and passes its scalar members through unchanged', () => {
+    // The bridge's dsh-memory plugin injects user messages carrying { kind, version, scope,
+    // digest }: all scalars, no in-session references, so migrating without interpreting the
+    // members is safe — the same latitude the agent-message relay channel takes.
+    const reminder = event('user/message', {
+      ...user,
+      source: { kind: 'dsh-memory', version: 2, scope: 'global', digest: '2868fcdb3f69457121b5a9442d13eb00ee2b06b8' },
+    }, { surfaceOp: 'append' })
+    const output = migrate([...opening, reminder])
+    const migrated = output.events.find(value => value.type === 'user/message')
+    expect(migrated?.data).toMatchObject({ source: { kind: 'dsh-memory', version: 2, scope: 'global', digest: '2868fcdb3f69457121b5a9442d13eb00ee2b06b8' } })
+    expect(() => restoreReleasedV3Artifact(output, new Set())).not.toThrow()
+  })
+
   it.each([0, -1, 1.5])('rejects invalid system step coordinates %s', (step) => {
     expect(() => releasedV3SessionFormatCodec.encodeEvent(event('system/message', { ...system, step }, { surfaceOp: 'append' }))).toThrow()
   })
