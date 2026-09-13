@@ -148,13 +148,67 @@ describe('default deployment (with dsh-fs-observation-policy)', () => {
       expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('hello there')
     })
 
-    it('rejects an edit before any read, leaving the file untouched', async () => {
+    it('rejects an edit before any read, attaching the current content for a direct retry, leaving the file untouched', async () => {
       await writeFile(join(dir, 'a.txt'), 'hello world')
       const result = await call('edit', { file_path: 'a.txt', old_string: 'world', new_string: 'there' })
       expect(result.isError).toBe(true)
       expect(result.error).toMatchObject({ info: { code: 'FS_NOT_OBSERVED' } })
-      expect(text(result)).toBe(notObservedDiagnostic(join(dir, 'a.txt')))
+      const message = text(result)
+      expect(message).toContain(`cannot modify "${join(dir, 'a.txt')}": file has not been read`)
+      expect(message).toContain('retry the edit directly')
+      expect(message).toContain('1: hello world')
       expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('hello world')
+    })
+
+    it('the attached content is actionable: retrying the edit directly succeeds without an intervening read', async () => {
+      await writeFile(join(dir, 'a.txt'), 'hello world')
+      const rejected = await call('edit', { file_path: 'a.txt', old_string: 'world', new_string: 'there' })
+      expect(rejected.isError).toBe(true)
+      // No read in between — the recovery read behind the rejection already
+      // recorded the observation the retry guards on.
+      const retried = await call('edit', { file_path: 'a.txt', old_string: 'world', new_string: 'there' })
+      expect(retried.isError).toBe(false)
+      expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('hello there')
+    })
+
+    it('an unread edit of a missing target passes the sharper not-found refusal through', async () => {
+      const result = await call('edit', { file_path: 'missing.txt', old_string: 'a', new_string: 'b' })
+      expect(result.isError).toBe(true)
+      expect(result.error).toMatchObject({ info: { code: 'FS_NOT_FOUND' } })
+      expect(text(result)).toBe(`Error: cannot edit "${join(dir, 'missing.txt')}": not found`)
+    })
+
+    it('the attached content is bounded: a file past the read limit attaches only the first window', async () => {
+      const lines = Array.from({ length: 2500 }, (_, i) => `line ${i + 1}`)
+      await writeFile(join(dir, 'big.txt'), lines.join('\n'))
+      const result = await call('edit', { file_path: 'big.txt', old_string: 'line 2400', new_string: 'x' })
+      expect(result.isError).toBe(true)
+      expect(result.error).toMatchObject({ info: { code: 'FS_NOT_OBSERVED' } })
+      const message = text(result)
+      expect(message).toContain('1: line 1')
+      expect(message).toContain('2000: line 2000')
+      expect(message).toContain('(Showing lines 1-2000 of 2500. Use offset=2001 to continue.)')
+      expect(message).not.toContain('line 2001')
+      expect(message).not.toContain('line 2400')
+    })
+
+    it('a binary target falls back to the plain unread diagnostic when the recovery read fails', async () => {
+      await writeFile(join(dir, 'bin'), Buffer.from([0x00, 0x01, 0x02]))
+      const result = await call('edit', { file_path: 'bin', old_string: 'a', new_string: 'b' })
+      expect(result.isError).toBe(true)
+      expect(result.error).toMatchObject({ info: { code: 'FS_NOT_OBSERVED' } })
+      expect(text(result)).toBe(notObservedDiagnostic(join(dir, 'bin')))
+    })
+
+    it('the attached observation still guards: an external change after the enriched rejection fails the retry stale', async () => {
+      await writeFile(join(dir, 'a.txt'), 'hello world')
+      const rejected = await call('edit', { file_path: 'a.txt', old_string: 'world', new_string: 'there' })
+      expect(rejected.isError).toBe(true)
+      await writeFile(join(dir, 'a.txt'), 'goodbye world') // out-of-band change
+      const retried = await call('edit', { file_path: 'a.txt', old_string: 'world', new_string: 'there' })
+      expect(retried.isError).toBe(true)
+      expect(retried.error).toMatchObject({ info: { code: 'FS_STALE_VERSION' } })
+      expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('goodbye world')
     })
 
     it('lets a WINDOWED read authorize an edit when the file is unchanged (freshness, not full-view)', async () => {

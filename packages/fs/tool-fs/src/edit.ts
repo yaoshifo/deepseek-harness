@@ -1,16 +1,20 @@
 /**
  * Model-facing literal edit, unique-match by default. It obtains an optional guard from the
  * single intent slot, calls `ctx.fs.editText` without a separate stat, then records the observed
- * version; no policy means an unconditional atomic edit.
+ * version; no policy means an unconditional atomic edit. On the policy's unread refusal the
+ * rejection carries the file's current read window (see {@link enrichNotObserved}).
  * @module @deepseek-ai/dsh-tool-fs/src/edit
  */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { DiffCallView, DiffResultView, ToolResult } from '@deepseek-ai/dsh-tools'
-import type {} from '@deepseek-ai/dsh-fs'
+import type { DiffCallView, DiffResultView, ToolExecution, ToolResult } from '@deepseek-ai/dsh-tools'
+import { FsError } from '@deepseek-ai/dsh-fs'
+import type { FsTarget } from '@deepseek-ai/dsh-fs'
 import { computeHunkDiffs, diffsFromMeta } from './diff.ts'
 import { remediateFsError } from './error.ts'
+import type { ReadToolCaps } from './read.ts'
+import { buildWindow, formatReadOutput } from './read-render.ts'
 import { sessionResolveOptions } from './session-cwd.ts'
 import type { FsSandboxController } from './sandbox.ts'
 
@@ -68,11 +72,65 @@ export function formatEditOutput(displayPath: string, replaceAll: boolean): stri
 }
 
 /**
+ * Attach the file's current read window to an unread-edit rejection so the model can retry
+ * directly instead of spending a round on a separate read. The recovery read is itself an
+ * authoritative observation, so the retried edit guards on its version. A confirmed-absent
+ * target passes the sharper not-found refusal through; any failure of the recovery read
+ * falls back to the plain diagnostic, matching the pre-enrichment behavior byte for byte.
+ * @param ctx - the plugin context providing filesystem access and observation events.
+ * @param exec - the current tool execution, including the cancellation signal.
+ * @param target - the already-resolved edit target.
+ * @param caps - the deployment's read caps, shared with the `read` tool.
+ * @param plain - the plain unread diagnostic this enrichment replaces or wraps.
+ * @returns the enriched (or fallback) `FsError` to throw.
+ */
+async function enrichNotObserved(
+  ctx: Context,
+  exec: ToolExecution,
+  target: FsTarget,
+  caps: ReadToolCaps,
+  plain: FsError,
+): Promise<FsError> {
+  try {
+    const info = await ctx.fs.stat(target, exec.signal)
+    if (info === undefined) {
+      ctx.emit('fs/observed', target, { kind: 'absent' }, exec)
+      return new FsError(`cannot edit "${target.displayPath}": not found`, 'FS_NOT_FOUND', { cause: plain })
+    }
+    if (info.type !== 'file') return plain
+    // Same size routing as the read tool: stream large or size-unknown files.
+    const chunks = info.size === undefined || info.size >= caps.streamMinSize
+      ? await ctx.fs.streamText(target, exec.signal)
+      : [await ctx.fs.readText(target, exec.signal)]
+    const window = await buildWindow(
+      chunks,
+      { offset: 1, limit: caps.limit, maxLineLength: caps.maxLineLength, maxBytes: caps.maxBytes },
+      target.displayPath,
+    )
+    ctx.emit('fs/observed', target, { kind: 'present', version: info.version }, exec)
+    const content = formatReadOutput(target.displayPath, {
+      offset: 1,
+      lines: window.lines,
+      totalLines: window.totalLines,
+      ...window.truncatedByBytes ? { truncatedByBytes: true } : {},
+    })
+    return new FsError(
+      `cannot modify "${target.displayPath}": file has not been read — current content (up to ${caps.limit} lines) follows; retry the edit directly\n\n${content}`,
+      'FS_NOT_OBSERVED',
+      { cause: plain },
+    )
+  } catch {
+    return plain
+  }
+}
+
+/**
  * Register the `edit` tool and its scope-aware system-prompt guidance.
  * @param ctx - the plugin context; registrations are effects scoped to it, and execution uses its `fs` service.
  * @param sandbox - the shared sandbox-escalation API (advertisement, mode stamping, denial mapping).
+ * @param caps - the deployment's read caps, reused for the unread-rejection content attachment.
  */
-export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void {
+export function applyEditTool(ctx: Context, sandbox: FsSandboxController, caps: ReadToolCaps): void {
   ctx.systemPrompt.section({
     name: 'tool:edit',
     order: ctx.systemPrompt.getSectionOrder('TOOL_EDIT'),
@@ -135,8 +193,13 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
       } catch (error: unknown) {
         // A sandbox denial becomes the shared [sandbox: …] marker (the model
         // recognizes it from bash); guarded mutation failures receive their
-        // stable model-facing diagnostic; anything else passes through.
-        throw remediateFsError(sandbox.mapError(error, sandboxPolicy), target.displayPath)
+        // stable model-facing diagnostic; anything else passes through. The
+        // unread diagnostic additionally carries the file's current content
+        // (edit-only: write's unread refusal stays the plain diagnostic).
+        const remediated = remediateFsError(sandbox.mapError(error, sandboxPolicy), target.displayPath)
+        throw remediated instanceof FsError && remediated.code === 'FS_NOT_OBSERVED'
+          ? await enrichNotObserved(ctx, exec, target, caps, remediated)
+          : remediated
       }
       ctx.emit('fs/observed', target, { kind: 'present', version: outcome.version }, exec)
       return {
