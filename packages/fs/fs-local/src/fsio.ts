@@ -17,6 +17,25 @@ import { copyFileDaclWin32, replaceFileWin32 } from './win32.ts'
 const BINARY_SAMPLE_BYTES = 8192
 // Bound one non-abortable FileHandle.read so cancellation is observed between chunks.
 const DIFF_BASIS_READ_CHUNK_BYTES = 64 * 1024
+// Edit rejections embed file lines in a model-visible error message, so they mirror the
+// read window's caps (dsh-tool-fs's READ_MAX_LINE_LENGTH / READ_MAX_BYTES; this package
+// cannot import them — the dependency points the other way): a line is cut at 2000 chars
+// with the read tool's truncation suffix, and the whole message stays within 50 KiB by
+// trimming the match list. Keep the values in sync with the read caps.
+const EDIT_ERROR_LINE_CHARS = 2000
+const EDIT_ERROR_MAX_BYTES = 50 * 1024
+
+/**
+ * One embedded error-message line, truncated to {@link EDIT_ERROR_LINE_CHARS} characters
+ * with the read tool's truncation suffix so the message matches what `read` would show.
+ * @param line - the line text; a caller holding a giant line may pass only its first
+ *   cap-plus-one characters instead of materializing the whole line.
+ */
+function truncateEmbeddedLine(line: string): string {
+  return line.length > EDIT_ERROR_LINE_CHARS
+    ? `${line.substring(0, EDIT_ERROR_LINE_CHARS)}... (line truncated to ${EDIT_ERROR_LINE_CHARS} chars)`
+    : line
+}
 
 function isENOENT(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT'
@@ -699,19 +718,30 @@ function matchOffsets(content: string, needle: string): number[] {
 }
 
 /**
- * The 1-based line number a match starts on and that line's full text, for the
- * rejection's match-location attachment.
+ * The 1-based line number each match starts on and that line's text truncated to the
+ * embedded-line cap, for the rejection's match-location attachment. `offsets` must be
+ * in document order (as {@link matchOffsets} returns them): newline counts accumulate
+ * across entries, so ten matches cost one scan over the content instead of ten.
  * @param content - the LF-normalized file content.
- * @param offset - the match's start offset.
+ * @param offsets - match start offsets in document order.
  */
-function matchStartLine(content: string, offset: number): { line: number; text: string } {
-  const lineStart = content.lastIndexOf('\n', offset - 1) + 1
-  const newline = content.indexOf('\n', offset)
+function matchStartLines(content: string, offsets: readonly number[]): Array<{ line: number; text: string }> {
+  const results: Array<{ line: number; text: string }> = []
   let line = 1
-  for (let cursor = 0; cursor < lineStart; cursor += 1) {
-    if (content.charCodeAt(cursor) === 10 /* '\n' */) line += 1
+  let counted = 0
+  for (const offset of offsets) {
+    const lineStart = content.lastIndexOf('\n', offset - 1) + 1
+    while (counted < lineStart) {
+      if (content.charCodeAt(counted) === 10 /* '\n' */) line += 1
+      counted += 1
+    }
+    const newline = content.indexOf('\n', offset)
+    const lineEnd = newline === -1 ? content.length : newline
+    // One char past the cap proves overflow, so a giant line is never materialized in full.
+    const text = content.slice(lineStart, Math.min(lineEnd, lineStart + EDIT_ERROR_LINE_CHARS + 1))
+    results.push({ line, text: truncateEmbeddedLine(text) })
   }
-  return { line, text: content.slice(lineStart, newline === -1 ? content.length : newline) }
+  return results
 }
 
 /**
@@ -801,11 +831,41 @@ export async function readTextForDiff(
 }
 
 /**
+ * Assemble a rejection message from `line N: <text>` entries under the message byte
+ * budget: entries are kept in order while the complete assembled message fits; a list
+ * cut short by the byte cap (not by the caller's entry-count limit) is flagged so the
+ * message can mark it. The first entry is always kept — per-line truncation bounds a
+ * lone entry well under the budget.
+ * @param entries - rendered `line N: <json>` strings, already count-capped by the caller.
+ * @param assemble - builds the complete message from the joined entries, how many were
+ *   kept, and whether the list is cut short by the byte cap.
+ * @returns the assembled message for the largest entry prefix that fits the budget.
+ */
+function assembleCappedEntries(
+  entries: readonly string[],
+  assemble: (joined: string, shown: number, capped: boolean) => string,
+): string {
+  let kept: string[] = []
+  for (const entry of entries) {
+    const candidate = [...kept, entry]
+    if (kept.length > 0
+      && Buffer.byteLength(assemble(candidate.join(', '), candidate.length, true), 'utf8') > EDIT_ERROR_MAX_BYTES) {
+      return assemble(kept.join(', '), kept.length, true)
+    }
+    kept = candidate
+  }
+  return assemble(kept.join(', '), kept.length, false)
+}
+
+/**
  * Apply a literal replacement to LF-normalized content. Empty or missing search text throws
  * `FS_EDIT_NOT_FOUND` — when missing, with up to three candidate lines sharing the old text's
  * trimmed first line, so the model can correct a whitespace-only mismatch in one round;
  * multiple matches throw `FS_AMBIGUOUS_EDIT` listing where each match starts (capped at ten),
- * so a more specific old_string can be written without rereading the file.
+ * so a more specific old_string can be written without rereading the file. Embedded lines
+ * are truncated at the read line cap and the ambiguous message stays within the read byte
+ * budget by trimming the listed matches, so a giant or minified line cannot inflate the
+ * model-facing rejection.
  * @param content - the current file content, already LF-normalized.
  * @param oldString - literal text to find; CRLF inside it is normalized to LF before
  *   matching.
@@ -831,19 +891,15 @@ export function applyLiteralEdit(
     throw notFoundWithCandidates(content, oldNorm, displayPath)
   }
   if (!replaceAll && offsets.length > 1) {
-    const shown = offsets.slice(0, 10)
-      .map((offset) => {
-        const { line, text } = matchStartLine(content, offset)
-        return `line ${line}: ${JSON.stringify(text)}`
-      })
-      .join(', ')
-    const hidden = offsets.length - 10
-    throw new FsError(
-      `old_string matched ${offsets.length} times in "${displayPath}" `
-        + `(at ${shown}${hidden > 0 ? `; ${hidden} more match${hidden === 1 ? '' : 'es'}` : ''}); `
-        + 'provide a more specific old_string or set replace_all to true',
-      'FS_AMBIGUOUS_EDIT',
-    )
+    const entries = matchStartLines(content, offsets.slice(0, 10))
+      .map(({ line, text }) => `line ${line}: ${JSON.stringify(text)}`)
+    const assemble = (shown: string, shownCount: number, capped: boolean): string => {
+      const hidden = offsets.length - shownCount
+      return `old_string matched ${offsets.length} times in "${displayPath}" `
+        + `(at ${shown}${hidden > 0 ? `; ${hidden} more match${hidden === 1 ? '' : 'es'}` : ''}${capped ? '; list truncated' : ''}); `
+        + 'provide a more specific old_string or set replace_all to true'
+    }
+    throw new FsError(assembleCappedEntries(entries, assemble), 'FS_AMBIGUOUS_EDIT')
   }
   return { content: content.split(oldNorm).join(newNorm), replacements: offsets.length }
 }
@@ -851,7 +907,8 @@ export function applyLiteralEdit(
 /**
  * The not-found rejection, enriched with candidate lines sharing the old text's trimmed first
  * line (the usual failure is a whitespace-only mismatch); without candidates the plain
- * diagnostic stands.
+ * diagnostic stands. Each candidate line is truncated at the read line cap, and three
+ * truncated lines stay well under the message byte budget, so this path trims no list.
  * @param content - the LF-normalized file content.
  * @param oldNorm - the LF-normalized old_string.
  * @param displayPath - the caller-facing path used in error messages.
@@ -863,7 +920,7 @@ function notFoundWithCandidates(content: string, oldNorm: string, displayPath: s
   const candidates: string[] = []
   for (const [index, text] of content.split('\n').entries()) {
     if (candidates.length >= 3) break
-    if (text.includes(probe)) candidates.push(`line ${index + 1}: ${JSON.stringify(text)}`)
+    if (text.includes(probe)) candidates.push(`line ${index + 1}: ${JSON.stringify(truncateEmbeddedLine(text))}`)
   }
   if (candidates.length === 0) return new FsError(plain, 'FS_EDIT_NOT_FOUND')
   return new FsError(`${plain}; nearest first-line matches: ${candidates.join(', ')}`, 'FS_EDIT_NOT_FOUND')

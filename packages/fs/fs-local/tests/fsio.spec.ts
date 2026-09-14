@@ -897,6 +897,54 @@ describe('applyLiteralEdit', () => {
     expect(applyLiteralEdit('a a a', 'a', 'X', true, 'f')).toEqual({ content: 'X X X', replacements: 3 })
   })
 
+  it('truncates each embedded match line at the read line cap with the read truncation suffix', () => {
+    const line = `needle ${'a'.repeat(2600)}`
+    let error: FsError | undefined
+    try {
+      applyLiteralEdit(`${line}\n${line}\n`, 'needle', 'X', false, 'f')
+    } catch (thrown) {
+      error = thrown as FsError
+    }
+    expect(error).toMatchObject({ code: 'FS_AMBIGUOUS_EDIT' })
+    const embedded = JSON.stringify(`needle ${'a'.repeat(1993)}... (line truncated to 2000 chars)`)
+    expect(error!.message).toContain(`line 1: ${embedded}`)
+    expect(error!.message).toContain(`line 2: ${embedded}`)
+    expect(error!.message.length).toBeLessThan(2 * embedded.length + 500)
+  })
+
+  it('truncates embedded candidate lines at the read line cap and bounds the message bytes', () => {
+    const line = `probe ${'b'.repeat(2600)}`
+    let error: FsError | undefined
+    try {
+      // Leading-tab mismatch: the match fails, but the trimmed first-line probe hits the line.
+      applyLiteralEdit(`${line}\n${line}\n`, '\tprobe', 'X', false, 'f')
+    } catch (thrown) {
+      error = thrown as FsError
+    }
+    expect(error).toMatchObject({ code: 'FS_EDIT_NOT_FOUND' })
+    const embedded = JSON.stringify(`probe ${'b'.repeat(1994)}... (line truncated to 2000 chars)`)
+    expect(error!.message).toContain(`nearest first-line matches: line 1: ${embedded}, line 2: ${embedded}`)
+    expect(Buffer.byteLength(error!.message, 'utf8')).toBeLessThanOrEqual(50 * 1024)
+  })
+
+  it('caps the whole ambiguous message at the read byte budget by trimming the match list', () => {
+    // Twelve whole-line matches of multibyte text: ten truncated entries exceed 50 KiB of
+    // UTF-8, so the shown list is cut short and marked while the match count stays exact.
+    const line = '莫'.repeat(2000)
+    const content = Array.from({ length: 12 }, () => line).join('\n')
+    let error: FsError | undefined
+    try {
+      applyLiteralEdit(content, line, 'X', false, 'f')
+    } catch (thrown) {
+      error = thrown as FsError
+    }
+    expect(error).toMatchObject({ code: 'FS_AMBIGUOUS_EDIT' })
+    expect(Buffer.byteLength(error!.message, 'utf8')).toBeLessThanOrEqual(50 * 1024)
+    expect(error!.message).toContain('matched 12 times in')
+    expect(error!.message).toContain('line 1: ')
+    expect(error!.message).toMatch(/; \d+ more matches; list truncated\)/)
+  })
+
   it('matches across normalized line endings', () => {
     expect(applyLiteralEdit('one\ntwo', 'one\ntwo', 'x', false, 'f').replacements).toBe(1)
   })
