@@ -125,6 +125,20 @@ export interface PiAiProviderProfile {
    */
   compat?: PiAiCompatProfile
   /**
+   * Which model identity replayed assistant messages carry for this route:
+   * `'requested'` stamps the model id this route requested at the time, so a
+   * gateway whose reported model name is just another spelling of the same
+   * route model (`zhipuai/glm-5.3` requested, `glm-5.3` reported) replays as
+   * same-model and pi-ai keeps its thinking blocks with their signatures.
+   * The default `'resolved'` stamps the provider-reported model, preserving
+   * pi-ai's cross-model rules for Anthropic alias and fallback history —
+   * which convert every thinking block of a differently-named same model to
+   * plain text, and a gateway name mismatch would trigger on every request.
+   * Only `anthropic-messages` routes read it; Completions replay always uses
+   * the requested id.
+   */
+  replayModelIdentity?: 'requested' | 'resolved'
+  /**
    * Context capacity for a model this route lists that neither the entry nor
    * the installed catalog sizes (default 262,144). A guess by construction, so
    * a deployment whose gateway serves smaller models corrects it here.
@@ -327,6 +341,7 @@ const profile = z.object({
   models: z.array(modelProfile),
   modelOverrides: z.dict(modelOverride),
   compat: compatProfile,
+  replayModelIdentity: z.union(['requested', 'resolved']),
   defaultContextWindow: z.number().step(1).min(1).default(DEFAULT_CONTEXT_WINDOW),
   defaultMaxTokens: z.number().step(1).min(1).default(DEFAULT_MAX_TOKENS),
   defaultInput: z.array(z.union(MODALITIES)).default([...DEFAULT_INPUT]),
