@@ -37,6 +37,21 @@ describe('mountBundledSkills', () => {
     expect(subtask?.source).toBe('custom')
   })
 
+  it('pins the subtask skill plan-mode guidance to the real tool name and an obligation, not a claimed gate', async () => {
+    const ctx = await harness()
+    mountBundledSkills(ctx)
+    const skill = await ctx.skills.get('feishu-bridge-subtask')
+    // The dsh tool's registered name is exit_plan_mode; the Go-era
+    // ExitPlanMode spelling must not come back (2026-09-12 audit #1).
+    expect(skill?.content).not.toContain('ExitPlanMode')
+    expect(skill?.content).toContain('exit_plan_mode')
+    // Plan mode does not mechanically block execution spawns — the skill
+    // states the obligation instead, with read-only exploration exempt
+    // (2026-09-14 audit F2).
+    expect(skill?.content).toContain('plan mode **不会**拦住它')
+    expect(skill?.content).toContain('批准退出前不得派发改写型 child')
+  })
+
   it('unregisters the provider when the mounted fiber is disposed', async () => {
     const ctx = await harness()
     const fiber = mountBundledSkills(ctx)
