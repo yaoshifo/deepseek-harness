@@ -389,6 +389,16 @@ describe('buildProjectAssembly plan_render wiring (Go [projects.plan_render], #4
     expect(engine.planRenderPngScript).toBe('/abs/render-png.sh')
   })
 
+  it('maps directLen onto the engine and keeps the 2000 default when unset', () => {
+    const proj: ProjectConfig = {
+      ...project(),
+      planRender: { enabled: true, directLen: 800 },
+    }
+    expect(assemble(baseConfig(), proj).engine.planRenderDirectLen).toBe(800)
+    const unset = assemble(baseConfig(), { ...project(), planRender: { enabled: true } })
+    expect(unset.engine.planRenderDirectLen).toBe(2000)
+  })
+
   it('maps the effort alias onto the adapter (Go SetRenderEffort)', async () => {
     const proj: ProjectConfig = {
       ...project(),

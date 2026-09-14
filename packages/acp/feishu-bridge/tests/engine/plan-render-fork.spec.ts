@@ -150,7 +150,7 @@ describe('RenderForks_RequireRegisteredSkill', () => {
     e.planRenderProvider = 'p'
 
     await expect(renderPlanToHTML(e, 'sess', '# plan', '/tmp/x.md', 1)).rejects.toThrow(/feishu-bridge-render/)
-    await expect(renderReplyToHTML(e, 'sess', 'reply body')).rejects.toThrow(/feishu-bridge-render/)
+    await expect(renderReplyToHTML(e, 'sess', forkReply)).rejects.toThrow(/feishu-bridge-render/)
     expect(a.getCalls()).toHaveLength(0)
   })
 
@@ -163,7 +163,7 @@ describe('RenderForks_RequireRegisteredSkill', () => {
       return Promise.resolve(renderSkillBodyFixture())
     }
 
-    await renderReplyToHTML(e, 'sess', 'reply body')
+    await renderReplyToHTML(e, 'sess', forkReply)
 
     expect(resolves).toBe(1)
     expect(a.getCalls()[0]!.systemPrompt).toContain(renderSkillBodyFixture())
@@ -175,7 +175,7 @@ describe('RenderReplyToHTML', () => {
     const a = createRenderAgent()
     const e = newRenderEngine(a, createStubMediaPlatform())
 
-    await renderReplyToHTML(e, 'sess', 'the agent reply body')
+    await renderReplyToHTML(e, 'sess', `the agent ${forkReply}`)
 
     const calls = a.getCalls()
     expect(calls).toHaveLength(1)
@@ -190,7 +190,7 @@ describe('RenderReplyToHTML', () => {
   it('ReturnsPath: the returned path is a non-empty .html path', async () => {
     const a = createRenderAgent()
     const e = newRenderEngine(a, createStubMediaPlatform())
-    const hp = await renderReplyToHTML(e, 'sess', 'some reply')
+    const hp = await renderReplyToHTML(e, 'sess', forkSomeReply)
     expect(hp.endsWith('.html')).toBe(true)
     expect(hp).not.toBe('')
   })
@@ -198,12 +198,12 @@ describe('RenderReplyToHTML', () => {
   it('FailureCleansTempDir: a failed fork removes its temp dir; success preserves it', async () => {
     const fail = createRenderAgent({ err: new Error('fork failed') })
     const eFail = newRenderEngine(fail, createStubMediaPlatform())
-    const hpFail = await renderReplyToHTML(eFail, 'sess', 'some reply')
+    const hpFail = await renderReplyToHTML(eFail, 'sess', forkSomeReply)
     expect(existsSync(hpFail.split('/').slice(0, -1).join('/'))).toBe(false)
 
     const ok = createRenderAgent()
     const eOk = newRenderEngine(ok, createStubMediaPlatform())
-    const hpOk = await renderReplyToHTML(eOk, 'sess', 'some reply')
+    const hpOk = await renderReplyToHTML(eOk, 'sess', forkSomeReply)
     expect(existsSync(hpOk.split('/').slice(0, -1).join('/'))).toBe(true)
   })
 })
@@ -227,7 +227,13 @@ describe('DeliverReplyHTML', () => {
   })
 })
 
-const longText = '足够长的回复内容。'.repeat(60)
+// Fork-tier reply fixtures: the direct tier (planRenderDirectLen, default
+// 2000 runes) writes short replies without a render session, so every test
+// below that exercises the fork machinery must stay above that threshold.
+const forkReply = 'reply body — '.repeat(200)
+const forkSomeReply = 'some reply past the direct tier. '.repeat(80)
+
+const longText = '足够长的回复内容。'.repeat(300)
 
 describe('RenderAndDeliverReply', () => {
   it('ForksAndDelivers: auto-delivers the HTML and caches it for the export button', async () => {
