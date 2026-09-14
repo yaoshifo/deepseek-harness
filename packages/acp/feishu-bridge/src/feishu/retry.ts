@@ -113,12 +113,17 @@ export function feishuBusinessCode(err: unknown): string | undefined {
  * @returns True when the business code is the PATCH rate limit or the error
  * text matches a transient network symptom.
  */
-export function isTransientError(err: unknown): boolean {
+export function isTransientError(err: unknown, opts?: { retryOnDeadline?: boolean }): boolean {
   if (err === undefined || err === null) return false
   // Feishu PATCH rate limit clears in seconds; classify it before the
   // message scan because the AxiosError shape carries it only in the body.
   if (feishuBusinessCode(err) === feishuPatchRateLimitCode) return true
   const msg = errorMessage(err).toLowerCase()
+  if (opts?.retryOnDeadline === false && msg.includes('context deadline exceeded')) {
+    // The send-path deadline: the request may already have landed, so a
+    // retry risks a duplicate message (see withTransientRetry).
+    return false
+  }
   return transientSubstrings.some(sub => msg.includes(sub))
 }
 
@@ -141,6 +146,11 @@ function deadline(ms: number): { promise: Promise<never>; cancel: () => void } {
  * @param attemptTimeoutMs - Per-attempt deadline override for this call;
  *   uploads size it by payload (a slow link needs minutes for MB bodies,
  *   far past the small-request {@link retryTiming.requestTimeout}).
+ * @param opts.retryOnDeadline - False for send-shaped calls: the synthesized
+ *   per-attempt deadline is a post-delivery symptom (the request may already
+ *   have landed server-side), so retrying risks a duplicate message — the
+ *   send paths instead surface the unknown outcome to the engine. Defaults
+ *   true (non-send calls keep retrying through a stuck attempt).
  * @returns The value resolved by fn on success.
  */
 export async function withTransientRetry<T>(
@@ -148,7 +158,9 @@ export async function withTransientRetry<T>(
   fn: () => Promise<T>,
   signal?: AbortSignal,
   attemptTimeoutMs?: number,
+  opts?: { retryOnDeadline?: boolean },
 ): Promise<T> {
+  const retryOnDeadline = opts?.retryOnDeadline !== false
   let lastErr: unknown
   let delay = retryTiming.initialDelay
   for (let attempt = 0; attempt <= retryTiming.maxRetries; attempt++) {
@@ -162,7 +174,7 @@ export async function withTransientRetry<T>(
       d.cancel()
       lastErr = error
     }
-    if (!isTransientError(lastErr)) {
+    if (!isTransientError(lastErr, { retryOnDeadline })) {
       throw lastErr
     }
     if (attempt === retryTiming.maxRetries) break

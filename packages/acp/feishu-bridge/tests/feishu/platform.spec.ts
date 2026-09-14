@@ -436,7 +436,11 @@ describe('FeishuPlatform outbound', () => {
     const api = recordingClient()
     const p = newPlatform({ apiClient: api })
     await p.reply({ messageID: 'om_9', chatID: 'oc_1', sessionKey: 'feishu:oc_1:ou_9' }, 'hi there')
-    expect(api.replies).toEqual([{ messageId: 'om_9', msgType: 'text', content: JSON.stringify({ text: 'hi there' }) }])
+    // The intent uuid rides every send for server-side idempotency; its
+    // value is per-intent, so only its presence and shape are pinned.
+    expect(api.replies).toHaveLength(1)
+    expect(api.replies[0]).toMatchObject({ messageId: 'om_9', msgType: 'text', content: JSON.stringify({ text: 'hi there' }) })
+    expect(api.replies[0]?.uuid).toMatch(/^[0-9a-f-]{36}$/)
     expect(api.creates).toHaveLength(0)
   })
 
@@ -444,7 +448,9 @@ describe('FeishuPlatform outbound', () => {
     const api = recordingClient()
     const p = newPlatform({ apiClient: api })
     await p.send({ messageID: '', chatID: 'oc_1', sessionKey: 'feishu:oc_1' }, 'broadcast')
-    expect(api.creates).toEqual([{ chatId: 'oc_1', msgType: 'text', content: JSON.stringify({ text: 'broadcast' }) }])
+    expect(api.creates).toHaveLength(1)
+    expect(api.creates[0]).toMatchObject({ chatId: 'oc_1', msgType: 'text', content: JSON.stringify({ text: 'broadcast' }) })
+    expect(api.creates[0]?.uuid).toMatch(/^[0-9a-f-]{36}$/)
     expect(api.replies).toHaveLength(0)
   })
 

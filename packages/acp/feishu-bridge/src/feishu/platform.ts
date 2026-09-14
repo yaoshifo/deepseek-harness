@@ -20,6 +20,7 @@
  */
 
 import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { basename, dirname, join } from 'node:path'
 import { MessageDedup, isOldMessage } from '../dedup.ts'
 import { AllowList } from './allowlist.ts'
@@ -173,7 +174,7 @@ function emptyMessageShape(): Message {
 }
 
 /** Params for a reply API call. */
-export interface FeishuReplyParams { messageId: string; msgType: string; content: string; replyInThread?: boolean }
+export interface FeishuReplyParams { messageId: string; msgType: string; content: string; replyInThread?: boolean; uuid?: string }
 
 /**
  * A tenant-access-token minting closure. `invalidate`, when present, drops
@@ -189,7 +190,7 @@ export type TenantTokenMinter = (() => Promise<string>) & { invalidate?(): void 
  */
 export interface FeishuApiClient {
   reply(params: FeishuReplyParams): Promise<{ messageId?: string } | undefined>
-  create(params: { chatId: string; msgType: string; content: string }): Promise<{ messageId?: string } | undefined>
+  create(params: { chatId: string; msgType: string; content: string; uuid?: string }): Promise<{ messageId?: string } | undefined>
   patch?(params: { messageId: string; content: string }): Promise<void>
   delete?(params: { messageId: string }): Promise<void>
   fetchTenantAccessToken?: TenantTokenMinter
@@ -1866,8 +1867,12 @@ export class FeishuPlatform implements Platform {
 
   private async sendNewMessageToChat(rc: FeishuReplyContext, msgType: string, content: string): Promise<void> {
     if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send new message')
+    // One uuid per send intent, generated outside the retry loop so every
+    // attempt of this intent is server-side idempotent (verified live:
+    // the same uuid returns the original message_id and lands one message).
+    const uuid = randomUUID()
     await this.withRetry('send', () => this.request('send', client =>
-      client.create({ chatId: rc.chatID, msgType, content })))
+      client.create({ chatId: rc.chatID, msgType, content, uuid })), undefined, { retryOnDeadline: false })
     this.touchChatActivity(rc.chatID)
   }
 
@@ -1876,9 +1881,11 @@ export class FeishuPlatform implements Platform {
     // Object holder: TS control-flow analysis cannot see the closure write,
     // so a bare `let withdrawn` would narrow to `false` after the await.
     const state = { withdrawn: false }
+    // Same intent-uuid discipline as sendNewMessageToChat.
+    const uuid = randomUUID()
     await this.withRetry('reply', () => this.request('reply', async (client) => {
       try {
-        await client.reply({ messageId: rc.messageID, msgType, content, ...(replyInThread ? { replyInThread } : {}) })
+        await client.reply({ messageId: rc.messageID, msgType, content, uuid, ...(replyInThread ? { replyInThread } : {}) })
       } catch (error) {
         if (feishuBusinessCode(error) === String(feishuCodeMessageWithdrawn)) {
           state.withdrawn = true
@@ -1886,7 +1893,7 @@ export class FeishuPlatform implements Platform {
         }
         throw error
       }
-    }))
+    }), undefined, { retryOnDeadline: false })
     this.touchChatActivity(rc.chatID)
     if (state.withdrawn) {
       console.info(`feishu: reply target withdrawn — sending as standalone chat message (chat ${rc.chatID})`)
@@ -1895,8 +1902,13 @@ export class FeishuPlatform implements Platform {
   }
 
   /** All API calls go through transient retry with backoff. */
-  private withRetry<T>(operation: string, fn: () => Promise<T>, attemptTimeoutMs?: number): Promise<T> {
-    return withTransientRetry(`${this.tag()}: ${operation}`, fn, undefined, attemptTimeoutMs)
+  private withRetry<T>(
+    operation: string,
+    fn: () => Promise<T>,
+    attemptTimeoutMs?: number,
+    opts?: { retryOnDeadline?: boolean },
+  ): Promise<T> {
+    return withTransientRetry(`${this.tag()}: ${operation}`, fn, undefined, attemptTimeoutMs, opts)
   }
 
   // ---------------------------------------------------------------------
@@ -3649,17 +3661,22 @@ async function defaultApiClient(appID: string, appSecret: string): Promise<Feish
   const tokened = async (opts?: VerbOpts): Promise<VerbOpts> =>
     ({ ...opts, headers: { Authorization: `Bearer ${(await fetchTenantToken()).trim()}`, ...opts?.headers } })
   const verbSet = (opts?: Parameters<typeof client.im.message.reply>[1]): FeishuApiClient => ({
-    async reply({ messageId, msgType, content, replyInThread }) {
+    async reply({ messageId, msgType, content, replyInThread, uuid }) {
       const resp = await client.im.message.reply({
         path: { message_id: messageId },
-        data: { content, msg_type: msgType, ...(replyInThread === true ? { reply_in_thread: true } : {}) },
+        data: {
+          content,
+          msg_type: msgType,
+          ...(replyInThread === true ? { reply_in_thread: true } : {}),
+          ...(uuid !== undefined ? { uuid } : {}),
+        },
       }, await tokened(opts))
       return resp.data?.message_id !== undefined ? { messageId: resp.data.message_id } : undefined
     },
-    async create({ chatId, msgType, content }) {
+    async create({ chatId, msgType, content, uuid }) {
       const resp = await client.im.message.create({
         params: { receive_id_type: 'chat_id' },
-        data: { receive_id: chatId, content, msg_type: msgType },
+        data: { receive_id: chatId, content, msg_type: msgType, ...(uuid !== undefined ? { uuid } : {}) },
       }, await tokened(opts))
       return resp.data?.message_id !== undefined ? { messageId: resp.data.message_id } : undefined
     },

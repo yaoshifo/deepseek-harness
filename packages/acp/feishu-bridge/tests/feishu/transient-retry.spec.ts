@@ -296,3 +296,60 @@ describe('API wrappers retry on transient errors', () => {
     expect(replyCalls).toBe(3)
   })
 })
+
+describe('send idempotency and deadline retry boundary (absorption u6)', () => {
+  it('reply and create send a stable uuid per intent, reused across retries', async () => {
+    const api = scheduledClient({ reply: [err('write tcp: connection reset by peer'), undefined] })
+    const seen: Array<string | undefined> = []
+    const inner = api.reply.bind(api)
+    api.reply = async (params) => {
+      seen.push((params as { uuid?: string }).uuid)
+      return inner(params)
+    }
+    await newPlatform(api).reply(rc, 'hello')
+    expect(api.counts.reply).toBe(2)
+    expect(seen[0], 'uuid present on the first attempt').toMatch(/^[0-9a-f-]{20,50}$/)
+    expect(seen[1], 'retry reuses the same uuid').toBe(seen[0])
+  })
+
+  it('create sends a uuid too', async () => {
+    const api = scheduledClient({ create: [undefined] })
+    let seen: string | undefined
+    const inner = api.create.bind(api)
+    api.create = async (params) => {
+      seen = (params as { uuid?: string }).uuid
+      return inner(params)
+    }
+    await newPlatform(api, true).send(rc, 'hello')
+    expect(seen).toMatch(/^[0-9a-f-]{20,50}$/)
+  })
+
+  it('a per-attempt deadline on the send path fails without retrying (post-delivery symptom)', async () => {
+    // The synthesized "context deadline exceeded" means the request's fate
+    // is unknowable — it may already have been delivered — so the send path
+    // must not retry it (the duplicate would need the server-side uuid
+    // dedup to save it; the engine instead surfaces the unknown outcome).
+    retryTiming.requestTimeout = 30
+    const api = scheduledClient({ reply: [err('never mind the schedule')] })
+    let calls = 0
+    api.reply = async () => {
+      calls++
+      await new Promise((resolve) => { setTimeout(resolve, 60) })
+      return { messageId: 'om_late' }
+    }
+    await expect(newPlatform(api).reply(rc, 'hello')).rejects.toThrow('context deadline exceeded')
+    expect(calls, 'a timed-out send is not retried').toBe(1)
+  })
+
+  it('the deadline stays retryable for non-send operations', async () => {
+    retryTiming.requestTimeout = 30
+    let calls = 0
+    const run = withTransientRetry('lookup', async () => {
+      calls++
+      await new Promise((resolve) => { setTimeout(resolve, 60) })
+      return 'value'
+    })
+    await expect(run).rejects.toThrow('context deadline exceeded')
+    expect(calls, 'non-send deadline keeps the retry behavior').toBe(retryTiming.maxRetries + 1)
+  })
+})
