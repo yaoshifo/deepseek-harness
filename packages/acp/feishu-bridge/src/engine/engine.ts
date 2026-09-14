@@ -1964,6 +1964,33 @@ export class Engine {
   }
 
   /**
+   * Warn that the turn's answer did not provably land and persist a copy
+   * next to the session (dsh-im absorption batch 1): no-op unless the
+   * recorded outcome is 'unknown' or 'failed'. Shared by the post-barrier
+   * turn-end settlement and the kill-path partial delivery.
+   * @param state - Turn state whose answerDelivery holds the outcome.
+   * @param p - Platform to send the warning on.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param sessionKey - Key whose chat workspace receives the saved copy.
+   */
+  private async warnUndeliveredAnswer(
+    state: InteractiveState,
+    p: Platform,
+    replyCtx: unknown,
+    sessionKey: string,
+  ): Promise<void> {
+    if (state.answerDelivery !== 'unknown' && state.answerDelivery !== 'failed') return
+    const savedPath = this.saveUndeliveredAnswer(state, sessionKey)
+    let warn = state.answerDelivery === 'unknown'
+      ? this.i18n.t(Msg.AnswerDeliveryUnknown)
+      : this.i18n.t(Msg.AnswerDeliveryFailed)
+    if (savedPath !== undefined) {
+      warn = `${warn}\n${this.i18n.tf(Msg.AnswerDeliverySaved, savedPath)}`
+    }
+    await this.send(p, replyCtx, warn)
+  }
+
+  /**
    * Persist the turn's answer next to the session when it could not be
    * delivered (dsh-im absorption batch 1): the warning message then carries
    * the path, so the work stays recoverable even though every send surface
@@ -3472,7 +3499,7 @@ export class Engine {
           // The killed turn's completed streamed text must not die with it
           // (dsh-im absorption batch 1): deliver before the state cleanup
           // drops textParts.
-          if (p !== undefined) await this.deliverKilledTurnPartial(state, session, p, replyCtx)
+          if (p !== undefined) await this.deliverKilledTurnPartial(state, session, sessionKey, p, replyCtx)
           await this.cleanupInteractiveState(sessionKey, state)
           // A stalled-out child never reports; the parent gets the synthetic
           // timeout notice instead of waiting forever.
@@ -3509,7 +3536,7 @@ export class Engine {
           await sp.markFailed()
           // Same as the stall kill: deliver the completed streamed text
           // before the state cleanup drops it.
-          if (p !== undefined) await this.deliverKilledTurnPartial(state, session, p, replyCtx)
+          if (p !== undefined) await this.deliverKilledTurnPartial(state, session, sessionKey, p, replyCtx)
           await this.cleanupInteractiveState(sessionKey, state)
           // The capped child owes its parent a settlement it can no longer deliver.
           this.reportSubtaskTimeout(sessionKey)
@@ -4245,16 +4272,7 @@ export class Engine {
     if (state.answerDelivery === undefined && sp.answerDelivery !== undefined) {
       state.answerDelivery = sp.answerDelivery
     }
-    if (p !== undefined && (state.answerDelivery === 'unknown' || state.answerDelivery === 'failed')) {
-      const savedPath = this.saveUndeliveredAnswer(state, sessionKey)
-      let warn = state.answerDelivery === 'unknown'
-        ? this.i18n.t(Msg.AnswerDeliveryUnknown)
-        : this.i18n.t(Msg.AnswerDeliveryFailed)
-      if (savedPath !== undefined) {
-        warn = `${warn}\n${this.i18n.tf(Msg.AnswerDeliverySaved, savedPath)}`
-      }
-      await this.send(p, replyCtx, warn)
-    }
+    if (p !== undefined) await this.warnUndeliveredAnswer(state, p, replyCtx, sessionKey)
 
     if (sendCompletionNotification && p !== undefined && state.pendingMessages.length === 0) {
       // Parked-ask wall time is the user deciding, not the agent working —
@@ -4436,15 +4454,18 @@ export class Engine {
    * turn — the channel-closed path already delivers it. Mirrors that path's
    * segmentation (inter-segment chunks were already surfaced; deliver the
    * unsent remainder) with the interrupted-subtask settlement, and records
-   * the delivery outcome like the turn-end path.
+   * the delivery outcome like the turn-end path, warning and saving a copy
+   * when the partial could not be proven delivered.
    * @param state - Turn state whose completed textParts are delivered.
    * @param session - Session for the subtask settlement.
+   * @param sessionKey - Key whose chat workspace receives the saved copy.
    * @param p - Platform to deliver on.
    * @param replyCtx - Platform reply context addressing the chat.
    */
   private async deliverKilledTurnPartial(
     state: InteractiveState,
     session: Session,
+    sessionKey: string,
     p: Platform,
     replyCtx: unknown,
   ): Promise<void> {
@@ -4454,19 +4475,26 @@ export class Engine {
     const [stripped, ok] = stripTrailingSilent(fullResponse)
     if (ok && stripped.trim() === '') return
     if (ok) fullResponse = stripped
+    // The kill happens before the turn-end path records the reply text;
+    // lastBaseResponse is what saveUndeliveredAnswer persists below.
+    state.lastBaseResponse = fullResponse
     // The parent gets the real partial (interrupted-marked) instead of the
     // synthetic never-reported timeout; reportSubtaskTimeout no-ops when the
     // auto-report delivered.
     const prefixed = `${this.i18n.t(Msg.SubtaskTurnInterrupted)}\n\n${fullResponse}`
     this.maybeAutoReportSubtask(state, session, prefixed, isSilentReply(prefixed))
-    if (state.toolCount > 0 && state.segmentStart > 0) {
+    // Same in-progress guard as the turn-end segmentation: a live 实时播报
+    // card keeps the streamed segment on its failed render, so a plain-text
+    // copy would double it. Card-less paths re-deliver the unsent remainder.
+    if (state.toolCount > 0 && state.segmentStart > 0 && state.preview?.inProgressMode() !== true) {
       const unsent = state.textParts.slice(state.segmentStart).join('')
       const [uStripped, uOk] = stripTrailingSilent(unsent)
       const deliver = uOk ? uStripped : unsent
       if (deliver !== '') await this.deliverAnswerText(state, p, replyCtx, deliver)
-    } else {
+    } else if (state.preview?.inProgressMode() !== true) {
       await this.deliverAnswerText(state, p, replyCtx, fullResponse)
     }
+    await this.warnUndeliveredAnswer(state, p, replyCtx, sessionKey)
   }
 
   // ── stall retry ─────────────────────────────────────────────────────────

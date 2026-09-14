@@ -10,14 +10,59 @@
  * @module dsh-feishu-bridge/tests-engine-kill-delivery
  */
 
-import { describe, expect, it } from 'vitest'
+import { readFileSync, readdirSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join as joinPath } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { createStubAgent, createStubPlatform, newControllableSession } from '../stubs/engine-stubs.ts'
-import type { Platform } from '../../src/core/types.ts'
+import { classifyDeliveryFailure } from '../../src/feishu/delivery-outcome.ts'
+import type { Platform, ProgressContent } from '../../src/core/types.ts'
 
 /** Platform whose sends succeed (records texts). */
 function okPlatform(): Platform & { sent: string[] } {
   return createStubPlatform('test') as Platform & { sent: string[] }
+}
+
+/** AxiosError shape the SDK surfaces for a definite HTTP rejection. */
+const forbiddenError = {
+  message: 'Request failed with status code 403',
+  response: { status: 403, data: {} },
+}
+
+/**
+ * Platform that definitely rejects the partial-answer send and classifies
+ * through the real Feishu judgment, while every other send (notices, the
+ * warning) succeeds and is recorded.
+ */
+function answerRejectingPlatform(error: unknown): Platform & { sent: string[] } {
+  const p = createStubPlatform('test')
+  return Object.assign(p, {
+    classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' => classifyDeliveryFailure(err),
+    send: async (_rc: unknown, content: string) => {
+      if (content.includes('precious partial answer')) throw error
+      p.sent.push(content)
+    },
+  }) as Platform & { sent: string[] }
+}
+
+/**
+ * Preview-capable platform: records plain sends and every PATCH body, so a
+ * test can tell what reached the chat as text versus what rides the card.
+ */
+function previewRecordingPlatform(): Platform & { sent: string[]; patches: string[] } {
+  const p = createStubPlatform('test')
+  const patches: string[] = []
+  return Object.assign(p, {
+    patches,
+    async sendPreviewStart(_rc: unknown): Promise<unknown> {
+      return 'preview-handle'
+    },
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+      patches.push(JSON.stringify(content))
+    },
+  }) as Platform & { sent: string[]; patches: string[] }
 }
 
 /**
@@ -28,11 +73,12 @@ function okPlatform(): Platform & { sent: string[] } {
  */
 async function runKilledTurn(
   p: Platform,
-  opts: { idleMs: number },
+  opts: { idleMs: number; card?: boolean; workDir?: string },
 ): Promise<{ e: Engine; state: InteractiveState }> {
   const e = new Engine('test', createStubAgent(), [p], '', 'en')
-  e.setDisplayConfig({ toolProgress: false })
+  e.setDisplayConfig({ toolProgress: opts.card === true })
   e.setEventIdleTimeout(opts.idleMs)
+  if (opts.workDir !== undefined) e.setBaseWorkDir(opts.workDir)
   e.setStallMaxRetries(-1)
   const key = 'test:user1'
   const session = e.sessions.getOrCreateActive(key)
@@ -61,11 +107,12 @@ async function runKilledTurn(
  */
 async function runHardCappedTurn(
   p: Platform,
-  opts: { idleMs: number },
+  opts: { idleMs: number; workDir?: string },
 ): Promise<{ e: Engine; state: InteractiveState }> {
   const e = new Engine('test', createStubAgent(), [p], '', 'en')
   e.setDisplayConfig({ toolProgress: false })
   e.setEventIdleTimeout(opts.idleMs)
+  if (opts.workDir !== undefined) e.setBaseWorkDir(opts.workDir)
   const key = 'test:user1'
   const session = e.sessions.getOrCreateActive(key)
   const state = new InteractiveState()
@@ -106,5 +153,53 @@ describe('kill-path partial-answer delivery', () => {
     expect(state.textParts, 'the streamed block completed into textParts').toHaveLength(1)
     expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('precious partial answer')
     expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('exceeded the maximum turn duration')
+  })
+
+  it('a stall kill whose partial delivery fails warns and saves the answer copy', { timeout: 10_000 }, async () => {
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-kill-undelivered-'))
+    try {
+      const p = answerRejectingPlatform(forbiddenError)
+      const { state } = await runKilledTurn(p, { idleMs: 80, workDir })
+      expect(state.answerDelivery, 'the kill path settles the delivery outcome').toBe('failed')
+      const texts = p.sent.join('\n')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('stopped responding')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('failed to deliver')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('undelivered-reply-')
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('precious partial answer')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
+  })
+
+  it('a hard-cap kill whose partial delivery fails warns and saves the answer copy', { timeout: 10_000 }, async () => {
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-kill-undelivered-cap-'))
+    try {
+      const p = answerRejectingPlatform(forbiddenError)
+      const { state } = await runHardCappedTurn(p, { idleMs: 80, workDir })
+      expect(state.answerDelivery, 'the kill path settles the delivery outcome').toBe('failed')
+      const texts = p.sent.join('\n')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('exceeded the maximum turn duration')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('failed to deliver')
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('precious partial answer')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an in-progress preview card keeps the streamed segment off the plain-text re-delivery', { timeout: 10_000 }, async () => {
+    const p = previewRecordingPlatform()
+    const { state } = await runKilledTurn(p, { idleMs: 80, card: true })
+    // The failed card carries the streamed text (its 实时播报 section).
+    await vi.waitFor(() => {
+      expect(p.patches.some(body => body.includes('precious partial answer')),
+        `patches=${JSON.stringify(p.patches)}`).toBe(true)
+    }, { timeout: 5000 })
+    // The same text must not also arrive as a plain message.
+    expect(p.sent.join('\n'), `sent=${JSON.stringify(p.sent)}`).not.toContain('precious partial answer')
+    expect(state.answerDelivery, 'nothing owed on the plain path leaves no outcome').toBeUndefined()
   })
 })
