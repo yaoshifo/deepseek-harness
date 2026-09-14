@@ -367,6 +367,7 @@ Web 设置页 / 管理页（`package.json` 的 `dsh.client` + `settings.section`
 | CI coverage job | `.github/workflows/ci.yml:191` 只跑 install → `pnpm run check:ci:coverage`，**无 build 步骤** |
 | 门的依赖图 | `scripts/run-gates.ts:612-647` 的 `coverageGates()` needs 仅 `['native-system']`；而 `native-system` = `build:native-system`（`:634`）——只构建 native 部分，**不产出本包 `lib/`** |
 | 结论 | 该 spec 在 CI **恒为真跳过**，而它保护的正是 **2026-08-27 跨 bundle 注册表分裂事故**（raw-i18n-key） |
+| 修复（2026-09-12） | spec 改名 `built-bundle-registries.e2e.ts`（默认车道只 glob `*.spec.ts` 且不构建）并列入 `built-bin-smoke` 门（`scripts/run-gates.ts` 的 `builtBinSmokeGate`，`needs: ['build']`，随 `check:ci:consumers` 在 PR 上执行）。实测：build 后 2 passed、临时移走 bundle 后 2 skipped |
 
 ### 10.2 其他工程差异
 
@@ -399,7 +400,7 @@ dsh-im 零 TypeScript（0 个 `.ts`、无 tsconfig）→ 类型契约只能靠�
 | 6 | 配置损坏时另存 `.corrupt` + 告警（照抄同仓 `monitor.ts:148-157`） | 本插件 `project-state.ts:267-286` | 防止空态覆盖用户全部按群设置 | S | 缺口 |
 | 7 | 附件目录清理策略（新增 profile 配置项，不得硬编码） | 本插件 `attachments.ts:120-138`（无清理）；范式 `engine.ts:2495-2513` | 防止工作区无限膨胀 | S-M | 缺口 |
 | 8 | 附件文件名清洗（basename + 剥分隔符/控制符 + 截断） | 本插件 `attachments.ts:47-57`、`:107` | 信任边界输入校验 | S | 缺口 |
-| 9 | CI 恒 skip 门禁接到 build 之后的门（或发布 `./invariant`） | 本插件 `tests/built-bundle-registries.spec.ts:47`、`ci.yml:191`、`run-gates.ts:612-647` | 让跨 bundle 单例契约真正被执行 | S/M | 缺口（已核实） |
+| 9 | CI 恒 skip 门禁接到 build 之后的门（或发布 `./invariant`） | 本插件 `tests/built-bundle-registries.e2e.ts`、`ci.yml:191`、`run-gates.ts` 的 `builtBinSmokeGate` | 让跨 bundle 单例契约真正被执行 | S/M | **已修复（2026-09-12）**：改名 `.e2e.ts` + 列入 `built-bin-smoke` 门 |
 | 10 | `install.sh` 最小回归（已存在文件字节不变等） | 本插件 `install.sh:19-21`；范式 `tests/reload-script.spec.ts:152` | 护住自演化保护 | S | 缺口 |
 | 11 | 写盘永久错误（EACCES/EROFS）一次性提示 | 本插件 `project-state.ts:256-265`、`provider-commands.ts:265-272`+`:315` | 避免"以为改了其实没落盘" | S | 缺口（收窄版） |
 | 12 | 引用链总长上限 + 不可伪造包裹 + "非系统指令"声明；`extractQuotedText` 多条取最后一条 | dsh-im `semantic/reply-reference.mjs:106,117` ↔ 本插件 `platform.ts:134-148`、`monitor.ts:443-449`、`:1374-1399` | 防提示词/存储膨胀与格式伪造 | S | 缺口 |
@@ -443,7 +444,7 @@ dsh-im 零 TypeScript（0 个 `.ts`、无 tsconfig）→ 类型契约只能靠�
 - **`freeze` / `resumeFromFreeze` 死代码**：删或修，独立议题。
 - **三处反向依赖**（§2.3）：`BoundedMap` 归属、引用串格式契约、`streaming` 依赖飞书排版——收益偏可读性，不紧急。
 - **`Engine` 类 8,200 行 / 252 成员**：应按特性（cron / monitor / subtask / plan）拆分，非按渠道；属重构议题，与本次借鉴无关。
-- **README 双语的「已知限制」条目已过期**（撰写本文时顺带发现）：`README.md:73` 与 `README.zh.md:73` 均称「`/list`、`/status`、`/switch` 仍是纯文本……TS 命令保持文本输出，待该渲染域移植」，但该渲染域已落地——`src/engine/commands.ts:34` 已 import `renderListCardSafe` / `renderStatusCard`（两者即 README 归给 Go 侧的函数名），`:180-181`（`/list`）、`:340-341`（`/switch`）、`:467-468`（`/status`）均走 `supportsCards(p)` → `replyWithCard`，而 `supportsCards`（`src/core/types.ts:999`）= `asCardSender(p) !== undefined` = `withMethod(p, 'sendCard')`，飞书平台已实现（`src/feishu/platform.ts:1939`）。**未核实**该卡片的按钮集（`act:/list switch|delete N`）是否与 Go 侧完全一致，修 README 时需一并核对。
+- **README 双语的「已知限制」条目已勘误**（撰写本文时顺带发现；2026-09-12 已修）：原 `README.md:73` 与 `README.zh.md:73` 称「`/list`、`/status`、`/switch` 仍是纯文本……待该渲染域移植」，但该渲染域已落地——`src/engine/commands.ts:34` 已 import `renderListCardSafe` / `renderStatusCard`（两者即 README 归给 Go 侧的函数名），`:180-181`（`/list`）、`:340-341`（`/switch`）、`:467-468`（`/status`）均走 `supportsCards(p)` → `replyWithCard`，而 `supportsCards`（`src/core/types.ts:999`）= `asCardSender(p) !== undefined` = `withMethod(p, 'sendCard')`，飞书平台已实现且 `useInteractiveCard` 缺省为真（`src/feishu/platform.ts:1939`、`:643`）。按钮集已核实：TS 侧为 `act:/switch <id>` 与 `act:/delete-mode …`（`src/engine/session-card.ts:83,90,284-285,336-360`），与 README 所述的 Go 命名 `act:/list switch|delete N` 形态不同、功能对应；中英两条已同步删除。
 
 ---
 
