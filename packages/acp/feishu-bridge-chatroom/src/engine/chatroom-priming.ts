@@ -278,9 +278,6 @@ export function buildChatroomPickPriming(topic: string, roleNames: string[], rol
 3. 调 ${TOOL} 工具：action: pick-roles，picks: <JSON 数组字符串>，元素形如 {"name":"<角色名>","recommended":true,"blurb":"<一句话>"}。
    engine 会校验角色名（剔除幻觉）、把推荐项默认勾选、渲染一张飞书多选卡给用户增删确认。
 4. 调完后**结束回合**（非阻塞，和 gather 一样）。用户在卡片上点「确认开始」后，engine 会自动启动聊天室并再次唤醒你（带正式讨论的编排指令）。
-
-## plan mode
-pick-roles 有副作用。若处于 plan mode：先调 \`exit_plan_mode\` 带一行计划（poll 全员快答 → 基于表态 pick-roles 推荐列表），用户批准后再执行；用户拒绝就停，不要自己代用户选角色。
 `
 }
 
@@ -321,8 +318,5 @@ export function buildChatroomTopicPickPriming(roleNames: string[], rolesDir: str
 4. 调 ${TOOL} 工具：action: pick-topic，picks: <JSON 数组字符串>，元素形如 {"title":"<题目>","recommended":true,"blurb":"<一句推荐理由>"}。
    engine 会渲染一张飞书单选卡给用户选一个；用户选定后 engine 会带你进入正式的角色挑选步骤。
 5. 调完后结束回合（非阻塞，和 gather 一样）。
-
-## plan mode
-pick-topic 有副作用。若处于 plan mode：先调 exit_plan_mode 带一行计划（扫角色文件 + 看最近 vault → pick-topic 给候选），用户批准后再执行；用户拒绝就停，不要自己代用户出题。
 `
 }

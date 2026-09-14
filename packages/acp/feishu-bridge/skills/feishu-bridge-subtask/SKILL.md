@@ -13,13 +13,13 @@ description: "在 feishu-bridge 聊天里把工作派发到并行子任务（隔
 
 **只读探索 spawn 直接派。** brief 写明只读回报的多方向调研 spawn，plan-mode 引导文案已授权在 plan mode 内直接派发——结果折回本对话写进计划，不需要先退出 plan mode。
 
-**执行型 spawn（子任务要改文件、建 worktree）是「执行」**，plan mode 会拦住它，必须先过用户的批准门。设计上的通路是 `ExitPlanMode`：
+**执行型 spawn（子任务要改文件、建 worktree）是「执行」**——plan mode **不会**拦住它；批准退出前不得派发改写型 child（只读探索可直接派），执行先过用户的批准门。通路是 `exit_plan_mode`：
 
-1. 调用 `ExitPlanMode`，带一个具体计划，列出你要派发哪些子任务——每块 `action: spawn` 的 brief、各自做什么，以及你打算怎么综合它们的回报结果。
+1. 调用 `exit_plan_mode`，带一个具体计划，列出你要派发哪些子任务——每块 `action: spawn` 的 brief、各自做什么，以及你打算怎么综合它们的回报结果。
 2. 如果用户**批准**，你就退出 plan mode——然后按下面正常派发。
 3. 如果用户**拒绝**，留在 plan mode 等着；不要派发。
 
-`ExitPlanMode` 是一个*请求*——用户可以拒绝，所以你不是在 overriding 他们的 plan-mode 保护，你只是在请求继续。这才是正路；不要靠降级到别的委派机制来绕开 plan mode。
+`exit_plan_mode` 是一个*请求*——用户可以拒绝，所以你不是在 overriding 他们的 plan-mode 保护，你只是在请求继续。这才是正路；不要靠降级到别的委派机制来绕开 plan mode。
 
 **审批通过后的实施期同样默认并行**：计划里标注独立的组在执行开始时一起派发子任务，串行依赖的组自己按序实施——与全局指令、工具描述是同一条边界。
 
