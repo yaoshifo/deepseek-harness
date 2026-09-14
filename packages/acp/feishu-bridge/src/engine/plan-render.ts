@@ -1253,7 +1253,6 @@ export function renderAndDeliverReply(
   if (state === undefined || replyContent === '') return
   if (state.preRenderRunning) return
   state.preRenderRunning = true
-  state.preRenderingKey = exportKey
 
   const parentCtl = new AbortController()
   const handle = registerRenderCancel(state, () => { parentCtl.abort() }, 'reply')
@@ -1341,7 +1340,6 @@ export function renderAndDeliverReply(
       void removeRenderedTemp(hp)
     } finally {
       state.preRenderRunning = false
-      state.preRenderingKey = ''
       unregisterRenderCancel(state, handle)
     }
   })()

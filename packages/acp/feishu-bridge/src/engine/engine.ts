@@ -479,8 +479,6 @@ export class InteractiveState {
   lastRenderedPlanAt: number = 0
   /** A speculative reply pre-render is running (Go preRenderRunning). */
   preRenderRunning: boolean = false
-  /** exportKey of the running reply pre-render (Go preRenderingKey). */
-  preRenderingKey: string = ''
   /** In-flight render fork cancels, drained by cancelRenders (Go renderCancels). */
   renderCancels: RenderCancelHandle[] = []
 
