@@ -42,6 +42,7 @@ import {
   pollUntil,
   renderSkillBodyFixture,
   tempDir,
+  writeRenderTestScript,
 } from './plan-render-helpers.ts'
 import { afterEach } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -401,6 +402,32 @@ describe('RenderAndDeliverReply', () => {
     expect(p.files).toHaveLength(0)
   })
 
+  it('CancelDuringDeliverRecordsCancelled: aborting while the png retries settles cancelled, not failed', async () => {
+    // The fork already completed (html on disk), the png script keeps
+    // failing, and the user cancels during the png retry backoff: the
+    // aborted renderHTMLToPNG throws and deliverReplyHTML rethrows on its
+    // abort check — the catch must read that as the user's cancel, never as
+    // 渲染失败.
+    const tmp = tempDir('reply-deliver-cancel-')
+    const calls = join(tmp, 'calls')
+    const a = createRenderAgent()
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p)
+    e.planRenderPngScript = writeRenderTestScript(tmp, 'fail-png.sh', `#!/bin/sh\necho x >> "${calls}"\nexit 1\n`)
+
+    const state = newRenderState(p)
+    renderAndDeliverReply(e, state, 'k1', longText, 'om_1')
+
+    // The fork succeeded and the deliver stage ran its first png attempt.
+    await pollUntil(() => existsSync(calls), 2000)
+    cancelRendersFor(state)
+
+    await pollUntil(() => getRenderStatus(state, 'om_1')?.status !== undefined
+      && getRenderStatus(state, 'om_1')?.status !== 'rendering' && !state.preRenderRunning, 3000)
+    expect(getRenderStatus(state, 'om_1')?.status).toBe('cancelled')
+    expect(p.files).toHaveLength(0)
+  })
+
   it('GivesUpAfterTwoFailures: two blocked attempts then no delivery', async () => {
     const a = createRenderAgent({ blockCount: 5 })
     const p = createStubMediaPlatform()
@@ -495,6 +522,46 @@ describe('RenderAndDeliverReply', () => {
     expect(terminalIdx).toBeGreaterThan(-1)
     expect(patches.at(-1)?.text, 'the terminal PATCH is the last one issued').toContain('Render failed')
   })
+
+  it('ProgressDrainInitialPatch: the initial rendering PATCH is drained before the terminal PATCH', async () => {
+    // The initial 'rendering' PATCH is dispatched fire-and-forget with its
+    // own transient-retry chain (~130s worst case). Unless it joins the
+    // drain queue, a fast render issues the terminal PATCH while the initial
+    // one is still on the wire, and its late landing flips the settled card
+    // back to 渲染中. Held PATCH promises place the race at a deterministic
+    // point; no fake clock is needed because the fork completes at once.
+    interface HeldPatch { text: string; release: () => void }
+    const patches: HeldPatch[] = []
+    const heldPlatform = Object.assign(createStubMediaPlatform(), {
+      updateRenderStatus: (_ctx: unknown, _key: string, text: string): Promise<void> => {
+        const patch: HeldPatch = { text, release: (): void => {} }
+        patches.push(patch)
+        return new Promise<void>((resolve) => { patch.release = resolve })
+      },
+    })
+    const a = createRenderAgent()
+    const e = new Engine('test', a, [heldPlatform], '', 'en')
+    e.planRenderEnabled = true
+    e.planRenderProvider = 'p'
+    e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
+
+    const state = newRenderState(heldPlatform)
+    renderAndDeliverReply(e, state, 'k1', longText, 'om_1')
+
+    // The render and delivery complete while the initial PATCH stays held.
+    await pollUntil(() => heldPlatform.files.length > 0, 2000)
+    expect(patches[0]?.text, 'the initial rendering PATCH was issued').toContain('Rendering')
+    // Give the flow a beat to reach its terminal exit, then red marker: the
+    // terminal PATCH must not be issued while the initial PATCH is in flight.
+    await new Promise((resolve) => { setTimeout(resolve, 300) })
+    expect(patches.some(p => p.text.includes('✅ Sent')), 'no terminal PATCH before the initial PATCH settles').toBe(false)
+
+    // Settle the held initial PATCH; the drain then issues the terminal one.
+    for (const patch of patches) patch.release()
+    await pollUntil(() => patches.some(p => p.text.includes('✅ Sent')), 2000)
+    expect(patches.at(-1)?.text, 'the terminal PATCH is the last one issued').toContain('✅ Sent')
+    for (const patch of patches) patch.release()
+  })
 })
 
 function cancelRendersFor(state: InteractiveState): void {
@@ -579,6 +646,31 @@ describe('LaunchPlanRender', () => {
       const hp = htmlPathFromPrompt(a.getCalls()[0]?.prompt ?? '')
       return hp !== '' && existsSync(hp)
     }, 2000)
+    cancelRendersFor(state)
+
+    await pollUntil(() => getRenderStatus(state, 'plan:1')?.status !== undefined
+      && getRenderStatus(state, 'plan:1')?.status !== 'rendering' && !state.planRenderRunning, 3000)
+    expect(getRenderStatus(state, 'plan:1')?.status).toBe('cancelled')
+    expect(p.files).toHaveLength(0)
+  })
+
+  it('CancelDuringDeliverRecordsCancelled: aborting while the png retries settles cancelled, not failed', async () => {
+    // Plan-path sibling of the reply-path case: the fork completed, the png
+    // keeps failing, and the user's cancel lands during the png retry
+    // backoff — the deliver catch must settle cancelled, never failed.
+    const tmp = tempDir('plan-deliver-cancel-')
+    const calls = join(tmp, 'calls')
+    const a = createRenderAgent()
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p)
+    e.planRenderPngScript = writeRenderTestScript(tmp, 'fail-png.sh', `#!/bin/sh\necho x >> "${calls}"\nexit 1\n`)
+
+    const state = newRenderState(p)
+    expect(shouldRenderPlan(state, '# 计划', 1)).toBe(true)
+    launchPlanRender(e, state, 'feishu:user1', '# 计划', '', 1, 'plan:1')
+
+    // The fork succeeded and the deliver stage ran its first png attempt.
+    await pollUntil(() => existsSync(calls), 2000)
     cancelRendersFor(state)
 
     await pollUntil(() => getRenderStatus(state, 'plan:1')?.status !== undefined

@@ -908,8 +908,17 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
   // start already carries its own catch, so this always runs). The build
   // identity is captured first — the completion notice and /status read it.
   void Promise.all(starts).then(async () => {
-    await captureBuildInfo()
-    await completePendingReload(service.projects.map(({ engine }) => engine), ctx.tools)
+    // Best-effort and fail-soft: this continuation can outlive its fiber —
+    // an HMR destroy during captureBuildInfo's git probe deactivates ctx, so
+    // reading ctx.tools throws. The replacement fiber re-runs the whole
+    // settlement (and the marker's TTL bounds a never-replaced one), so the
+    // dead fiber abandons the work instead of racing it unhandled.
+    try {
+      await captureBuildInfo()
+      await completePendingReload(service.projects.map(({ engine }) => engine), ctx.tools)
+    } catch (error) {
+      console.warn(`feishu-bridge: post-start reload settlement skipped: ${String(error)}`)
+    }
   })
 
   // Start the cron scheduler after every engine registered (Go main).

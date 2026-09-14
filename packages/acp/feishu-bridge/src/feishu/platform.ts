@@ -1932,16 +1932,23 @@ export class FeishuPlatform implements Platform {
     if (permBody !== '') this.permBodyCache.set(rc.sessionKey, permBody)
     this.cacheAskqMeta(rc.sessionKey, card)
     const cardJSON = renderCard(card, rc.sessionKey)
+    // One uuid per card-send intent, generated outside the retry loop so
+    // every attempt of this intent is server-side idempotent — the text
+    // surface's discipline (verified live: the same uuid returns the
+    // original message_id and lands one message); a deadline retry without
+    // it would double-send an interactive card.
+    const uuid = randomUUID()
     if (!this.shouldUseThreadOrReplyAPI(rc)) {
       if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
       await this.withRetry('send card', () => this.request('send card', client =>
-        client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })))
+        client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON, uuid })), undefined, { retryOnDeadline: false })
       this.touchChatActivity(rc.chatID)
       return
     }
     const replyInThread = this.shouldReplyInThread(rc)
     await this.withRetry('reply card', () => this.request('reply card', client =>
-      client.reply({ messageId: rc.messageID, msgType: 'interactive', content: cardJSON, replyInThread })))
+      client.reply({ messageId: rc.messageID, msgType: 'interactive', content: cardJSON, replyInThread, uuid })),
+    undefined, { retryOnDeadline: false })
     this.touchChatActivity(rc.chatID)
   }
 
@@ -1961,8 +1968,10 @@ export class FeishuPlatform implements Platform {
       return
     }
     const cardJSON = renderCard(card, rc.sessionKey)
+    // Same intent-uuid discipline as replyCard.
+    const uuid = randomUUID()
     await this.withRetry('send card', () => this.request('send card', client =>
-      client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })))
+      client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON, uuid })), undefined, { retryOnDeadline: false })
     this.touchChatActivity(rc.chatID)
   }
 
@@ -1997,10 +2006,12 @@ export class FeishuPlatform implements Platform {
     const rc = this.requireReplyCtx(replyCtx)
     if (rc.chatID === '') throw new Error('feishu: chatID is empty, cannot send card')
     const cardJSON = renderCard(card, rc.sessionKey)
+    // Same intent-uuid discipline as replyCard.
+    const uuid = randomUUID()
     const msgID = await this.withRetry('send card with handle', () => this.request('send card with handle', async (client) => {
-      const resp = await client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })
+      const resp = await client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON, uuid })
       return resp?.messageId ?? ''
-    }))
+    }), undefined, { retryOnDeadline: false })
     this.touchChatActivity(rc.chatID)
     return new FeishuPreviewHandle(msgID, rc.chatID, rc.sessionKey)
   }
@@ -2132,6 +2143,9 @@ export class FeishuPlatform implements Platform {
     injectStopButtonInto(card, rc.sessionKey, this.bgHintOf(content))
     const cardJSON = JSON.stringify(card)
 
+    // Same intent-uuid discipline as replyCard; one uuid covers whichever
+    // branch this intent takes.
+    const uuid = randomUUID()
     const msgID = await this.withRetry('send preview', () => this.request('send preview', async (client) => {
       // Go SendPreviewStart: reply only under thread isolation so the card
       // lands in the triggering thread; otherwise a new message — never a
@@ -2142,12 +2156,13 @@ export class FeishuPlatform implements Platform {
           msgType: 'interactive',
           content: cardJSON,
           replyInThread: true,
+          uuid,
         })
         return resp?.messageId ?? ''
       }
-      const resp = await client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON })
+      const resp = await client.create({ chatId: rc.chatID, msgType: 'interactive', content: cardJSON, uuid })
       return resp?.messageId ?? ''
-    }))
+    }), undefined, { retryOnDeadline: false })
     if (msgID === '') throw new Error('feishu: send preview: no message ID returned')
 
     this.lastProgressCard.set(msgID, preButton)

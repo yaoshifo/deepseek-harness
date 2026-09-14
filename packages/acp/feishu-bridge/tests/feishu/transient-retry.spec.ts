@@ -10,6 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
+import { Card } from '../../src/card.ts'
 import { feishuBusinessCode, isTransientError, retryTiming, withTransientRetry } from '../../src/feishu/retry.ts'
 
 const err = (msg: string): Error => new Error(msg)
@@ -352,4 +353,51 @@ describe('send idempotency and deadline retry boundary (absorption u6)', () => {
     await expect(run).rejects.toThrow('context deadline exceeded')
     expect(calls, 'non-send deadline keeps the retry behavior').toBe(retryTiming.maxRetries + 1)
   })
+
+  // Card surfaces share the text surface's send-intent discipline: one uuid
+  // per intent reused across the wrapper's internal retries, and no retry
+  // past a per-attempt deadline — an interactive card landing twice is
+  // user-visible in a way a retried PATCH never is.
+  interface CardIntent {
+    name: string
+    verb: 'reply' | 'create'
+    run: (p: FeishuPlatform) => Promise<unknown>
+  }
+  const cardIntents: CardIntent[] = [
+    { name: 'replyCard (reply API)', verb: 'reply', run: p => p.replyCard(rc, new Card()) },
+    { name: 'replyCard (send API)', verb: 'create', run: p => p.replyCard({ ...rc, messageID: '' }, new Card()) },
+    { name: 'sendCard', verb: 'create', run: p => p.sendCard(rc, new Card()) },
+    { name: 'sendCardWithHandle', verb: 'create', run: p => p.sendCardWithHandle(rc, new Card()) },
+    { name: 'sendPreviewStart', verb: 'create', run: p => p.sendPreviewStart(rc, { kind: 'text', text: 'body' }) },
+  ]
+  for (const intent of cardIntents) {
+    it(`${intent.name}: one stable uuid per intent, and a deadline does not retry`, async () => {
+      retryTiming.requestTimeout = 30
+      const params: Array<string | undefined> = []
+      let calls = 0
+      const attempt = async (): Promise<{ messageId: string }> => {
+        calls++
+        if (params.length === 1) throw err('write tcp: connection reset by peer')
+        await new Promise((resolve) => { setTimeout(resolve, 60) })
+        return { messageId: 'om_ok' }
+      }
+      const record = (p: unknown): void => { params.push((p as { uuid?: string }).uuid) }
+      const api: FeishuApiClient = {
+        reply: async (p) => {
+          if (intent.verb !== 'reply') throw new Error('unexpected reply call')
+          record(p)
+          return attempt()
+        },
+        create: async (p) => {
+          if (intent.verb !== 'create') throw new Error('unexpected create call')
+          record(p)
+          return attempt()
+        },
+      }
+      await expect(intent.run(newPlatform(api))).rejects.toThrow('context deadline exceeded')
+      expect(params[0], 'uuid present on the first attempt').toMatch(/^[0-9a-f-]{20,50}$/)
+      expect(params[1], 'retry reuses the same uuid').toBe(params[0])
+      expect(calls, 'a timed-out card send is not retried').toBe(2)
+    })
+  }
 })
