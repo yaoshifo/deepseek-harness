@@ -590,15 +590,14 @@ export function clearPlanRenderRunning(state: InteractiveState | undefined): voi
  * Add a cancel function to the in-flight set (Go registerRenderCancel).
  *
  * @param state - Per-session interactive state holding the cancel set.
- * @param cancel - The cancel function to track; undefined registers nothing.
+ * @param cancel - The cancel function to track.
  * @param kind - The fork's render family (`launchPlanRender` → plan,
  *   `renderAndDeliverReply` → reply).
- * @returns The handle for later unregistration, or undefined when cancel is undefined.
+ * @returns The handle for later unregistration.
  */
 export function registerRenderCancel(
-  state: InteractiveState, cancel: (() => void) | undefined, kind: 'plan' | 'reply',
-): RenderCancelHandle | undefined {
-  if (cancel === undefined) return undefined
+  state: InteractiveState, cancel: () => void, kind: 'plan' | 'reply',
+): RenderCancelHandle {
   const h: RenderCancelHandle = { kind, cancel }
   state.renderCancels.push(h)
   return h
@@ -608,10 +607,9 @@ export function registerRenderCancel(
  * Remove a finished fork's entry so a later cancelRenders cannot invoke it.
  *
  * @param state - Per-session interactive state holding the cancel set.
- * @param handle - Handle returned by registerRenderCancel; undefined is a no-op.
+ * @param handle - Handle returned by registerRenderCancel.
  */
-export function unregisterRenderCancel(state: InteractiveState, handle: RenderCancelHandle | undefined): void {
-  if (handle === undefined) return
+export function unregisterRenderCancel(state: InteractiveState, handle: RenderCancelHandle): void {
   state.renderCancels = state.renderCancels.filter(h => h !== handle)
 }
 
@@ -1075,13 +1073,12 @@ export async function renderReplyToHTML(
  * deliverReplyHTML) — the fallback path when PNG rasterization fails or the
  * platform cannot send images.
  *
- * @param _e - Engine; unused, kept for signature parity with the Go port.
  * @param p - Platform that must support FileSender.
  * @param replyCtx - Reply context to address the file message to.
  * @param htmlPath - Path of the assembled HTML file to send.
  * @param signal - Optional abort signal checked before reading and sending.
  */
-export async function deliverReplyHTML(_e: Engine, p: Platform, replyCtx: unknown, htmlPath: string, signal?: AbortSignal): Promise<void> {
+export async function deliverReplyHTML(p: Platform, replyCtx: unknown, htmlPath: string, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted === true) throw new Error('render delivery aborted')
   let data: Buffer
   try {
@@ -1200,7 +1197,7 @@ export async function deliverRenderedImage(
     pngPath = await renderHTMLToPNG(e, htmlPath, signal)
   } catch (error) {
     console.warn(`render-image: png render failed, falling back to html (${htmlPath}): ${error instanceof Error ? error.message : String(error)}`)
-    await deliverReplyHTML(e, p, replyCtx, htmlPath, signal)
+    await deliverReplyHTML(p, replyCtx, htmlPath, signal)
     return
   }
   let pngData: Buffer
@@ -1208,7 +1205,7 @@ export async function deliverRenderedImage(
     pngData = await readFile(pngPath)
   } catch (error) {
     console.warn(`render-image: read png failed, falling back to html (${htmlPath}): ${error instanceof Error ? error.message : String(error)}`)
-    await deliverReplyHTML(e, p, replyCtx, htmlPath, signal)
+    await deliverReplyHTML(p, replyCtx, htmlPath, signal)
     return
   }
   let htmlData: Buffer | undefined
@@ -1241,7 +1238,7 @@ export async function deliverRenderedImage(
     const is = asImageSender(p)
     if (is === undefined) {
       console.warn(`render-image: platform cannot send images, falling back to html (${p.name()})`)
-      await deliverReplyHTML(e, p, replyCtx, htmlPath, signal)
+      await deliverReplyHTML(p, replyCtx, htmlPath, signal)
       return
     }
     await withTimeout(sendTimeoutMs, () => is.sendImage(replyCtx, img))

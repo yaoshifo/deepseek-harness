@@ -237,15 +237,15 @@ describe('DeliverReplyHTML', () => {
     const htmlBody = '<html><head><title>修复登录 bug</title></head><body>x</body></html>'
     writeFileSync(htmlPath, htmlBody, 'utf8')
     const p = createStubMediaPlatform()
-    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    void new Engine('test', createStubAgent(), [p], '', 'en')
 
-    await deliverReplyHTML(e, p, 'reply-ctx', htmlPath)
+    await deliverReplyHTML(p, 'reply-ctx', htmlPath)
     expect(p.files).toHaveLength(1)
     expect(Buffer.from(p.files[0]!.data).toString('utf8')).toBe(htmlBody)
     expect(p.files[0]!.mimeType).toBe('text/html')
     expect(p.files[0]!.fileName).toBe('修复登录 bug.html')
 
-    await expect(deliverReplyHTML(e, p, 'ctx', join(tmp, 'nope.html'))).rejects.toThrow()
+    await expect(deliverReplyHTML(p, 'ctx', join(tmp, 'nope.html'))).rejects.toThrow()
   })
 })
 
