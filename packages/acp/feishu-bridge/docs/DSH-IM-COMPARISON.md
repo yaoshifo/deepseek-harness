@@ -4,9 +4,9 @@
 >
 > 对照对象：`@xmanrui/dsh-im` v4.20.1（本地 `/Users/hm/workspace/dsh-im`，commit `8850276`），一个成熟的开源多渠道 IM 桥接插件（13 渠道 / 182 个测试文件 / 30+ 篇方案与实测记录）。本插件为单渠道（飞书）fork-local 插件。
 >
-> **本文是调研记录，不是实施计划。** 所有结论按「已核实 / 部分成立 / 不成立」标注并可回溯到两侧源码位置；被推翻的结论保留在 §1 台账中。行号基于上述 commit 快照，后续改动会使行号漂移，检索时以函数名/日志串为准。
+> **本文是调研记录，不是实施计划。** 所有结论按「已核实 / 部分成立 / 不成立」标注并可回溯到两侧源码位置；被推翻的结论保留在 §1 台账中。行号与定量数字基于两侧钉定快照——dsh-im 侧 commit `8850276`，本仓侧 `c3e4612d9d`（本文落盘提交）——后续改动会使行号漂移，检索时以函数名/日志串为准；本仓数字已随后续提交变化（如能力接口 101→102、守卫 64→65），引用现值须自行重数。
 >
-> 相关文档：[MIGRATION.md](MIGRATION.md)（迁移背景与架构决策）、[OPERATIONS.md](OPERATIONS.md)（部署运维）、[FEATURE-PARITY.md](FEATURE-PARITY.md)（cc-connect 功能对照）、[DEBAGGAGE-ROADMAP.md](DEBAGGAGE-ROADMAP.md)（去包袱路线图）。
+> 相关文档：[MIGRATION.md](MIGRATION.md)（迁移背景与架构决策）、[OPERATIONS.md](OPERATIONS.md)（部署运维）、[FEATURE-PARITY.md](FEATURE-PARITY.md)（cc-connect 功能对照）、[DEBAGGAGE-ROADMAP.md](DEBAGGAGE-ROADMAP.md)（去包袱路线图）、[PROGRESS-CARD-AUDIT.md](PROGRESS-CARD-AUDIT.md)（进度卡实现审计——其 F1/F2/F4 与本文 §3.2/§4.2 的节流与终态卡表述相关，见各处交叉引用）。
 
 ## 0. 一句话结论
 
@@ -60,29 +60,32 @@
 
 其 ADR（`docs/adr/0001-semantic-core-native-channel-adapters.md`，状态 accepted）主张"统一语义核心 + 渠道原生适配"。但落地实态是：
 
-- 语义核心**不是集中在 `semantic/` 目录**（该目录仅 4 个文件：`artifact` / `artifact-delivery` / `delivery` / `reply-reference`），而是整个 `src/channels/shared/`（35 文件 / 13,873 行）。
+- 语义核心**不是集中在 `semantic/` 目录**（该目录仅 4 个文件：`artifact` / `artifact-delivery` / `delivery` / `reply-reference`），而是整个 `src/channels/shared/`（65 个 `.mjs` / 15,422 行，含 semantic/ 与 i18n-en/ 子目录；实测于钉定 commit）。
 - 契约由四件事表达，而非显式接口：①注入闭包 + `typeof` 探测（`semantic/artifact-delivery.mjs:41,54`、`text-harness-bridge.mjs:550,553`）②带 `schemaVersion` 的冻结数据对象（`semantic/delivery.mjs:1,130`）③错误码词表（`delivery.mjs:6-16`）④可选渠道渲染钩子（`harness-approval.mjs:251-253`，飞书卡片按钮走此路）。
-- **ADR 声称的"能力矩阵"没有落地文件**——`grep capabilit` 只命中散文与注释；降级规则靠每个调用点手写（`text-harness-bridge.mjs:83-117` 按渠道 key 分支）。
-- 配比：核心 13.9k 行 : 各渠道 39.8k 行（飞书渠道自身 11.9k，为最大）；最小契约面 = `descriptor{key,label,reactions}` + `bot{sendText 必需；sendImage/sendFile/sendDelivery/openDeliveryStream/openStream/sendTyping 可选}` + `harness` + `state`（`text-harness-bridge.mjs:135-172`）。其杠杆来自 5 个纯文本渠道共用一个 bridge（`telegram/telegram-bridge.mjs` 全文仅 15 行）。
+- **ADR 声称的"能力矩阵"没有落地文件**——`grep capabilit` 的代码命中（office 渠道 `capabilities()` 心跳协商、repair capability 命名）均非降级矩阵；降级规则靠每个调用点手写（`text-harness-bridge.mjs:83-117` 按渠道 key 分支）。
+- 配比：核心 13.9k 行 : 各渠道 39.8k 行（飞书渠道自身 11.9k，为最大）；最小契约面 = `descriptor{key,label,reactions}` + `bot{sendText 必需；sendImage/sendFile/sendDelivery/openDeliveryStream/openStream/sendTyping 可选}` + `harness` + `state`（`text-harness-bridge.mjs:135-172`）。其杠杆来自 5 个纯文本渠道共用一个 bridge（`telegram/telegram-bridge.mjs` 全文仅 16 行）。
 
 ### 2.2 本插件的分层实态
 
-`src` 共 51,459 行（engine 42 文件 / 25,512；feishu 15 文件 / 8,372；顶层 6,465）。已有结构：
+`src` 共 51,459 行（engine 42 文件 / 25,512；feishu 15 文件 / 8,372；顶层 6,465；余 agent-dash/core/context/i18n/tools/markdown 等目录 11,110）。已有结构：
 
 - `src/core/types.ts:392` 起：中性 Platform 基接口 + 101 个可选能力接口 + 64 个 `asXxx` 结构守卫
 - `src/card.ts`：中性卡片中间表示（IR）
 - `src/feishu/card.ts`：`renderElement` → `FeishuCardMap` 的渠道渲染器
-- **`engine → ../feishu/` 仅 2 处 import**
+- **`engine → ../feishu/` 仅 2 处 import**（`engine.ts:23` 的 AllowList、`status-footer.ts:20` 的 BoundedMap；同类反向依赖共 6 处，逐条见 §2.3）
 
 即 ADR 主张的"核心表达语义、渠道适配器原生呈现"在本插件**已经实现**，且实现得比 dsh-im 更显式（有真实接口与守卫，而非 `typeof` 探测）。
 
-### 2.3 确属写错层的三处（范围外的技术债）
+### 2.3 确属写错层的同类项（范围外的技术债，共 6 处）
 
 | 处 | 现象 | 影响 |
 |---|---|---|
-| `src/feishu/platform.ts:3503` | 在该文件定义 `BoundedMap`，却被 `src/engine/status-footer.ts:20,339`（git 分支缓存）反向 import | engine→feishu 依赖从 1 处变 2 处；接第二渠道时多一处反向依赖 |
-| `src/feishu/platform.ts:133` | 定义引用串格式，`src/engine/monitor.ts:443-450` 反向反解析该格式 | 跨层格式耦合；多条链时静默返回整段 blob（详见 §6.4） |
+| `src/feishu/platform.ts:3503` | 在该文件定义 `BoundedMap`，却被 `src/engine/status-footer.ts:20,339`（git 分支缓存）反向 import | engine→feishu 的 import 之一（另一处为下条 AllowList）；接第二渠道时多一处反向依赖 |
+| `src/engine/engine.ts:23` | import `feishu/allowlist.ts` 的 `AllowList`——准入门面属渠道中立逻辑，却放在 feishu/ 且被 engine 反向依赖 | §2.2「仅 2 处」的另一处（本表初版漏列）；与 BoundedMap 同类 |
+| `src/feishu/platform.ts:133` | 定义引用串格式，`src/engine/monitor.ts:443-450` 反向反解析该格式 | 跨层格式耦合（非 import）；多条链时静默返回整段 blob（详见 §6.4） |
 | `src/streaming.ts:34` | import `feishu/markdown.ts` | 通用流式层知道飞书排版细节；17/42 个 engine 文件依赖 card/streaming |
+| `src/markdown/markdown-html.ts:10` | 通用 markdown→HTML 转换器（自述面向 HTML 受限平台）import `feishu/markdown.ts` 的 `FenceTracker`；生产路径在用（`engine/plan-render.ts:41`） | 与 `streaming.ts:34` 同类：通用层依赖飞书排版模块内部 |
+| `src/context/render.ts:23` | `/context` 命令的飞书卡渲染器 import `feishu/card.ts` 的 `renderCardMap`，却放在通用命名的 `context/` 目录 | 放置错位（文件本身飞书专用）；接第二渠道时需挪位或分目录 |
 
 ### 2.4 真正的巨兽
 
@@ -108,7 +111,7 @@
 
 | 能力 | 落点 | 说明 |
 |---|---|---|
-| 节流与抖动合并 | `src/streaming.ts:67-75`、`:514`、`src/feishu/platform.ts:654`、`src/async-sender.ts:60-70` | 800ms + minDelta 15 + maxChars 2000 + 进度 300ms + 每实例 `TokenBucket(200ms,3)` + 队列合并，≥ dsh-im 的 800ms 单飞 |
+| 节流与抖动合并 | `src/streaming.ts:67-75`、`:514`、`src/feishu/platform.ts:654`、`src/async-sender.ts:60-70` | 800ms + minDelta 15 + maxChars 2000 + 进度 300ms + 每实例 `TokenBucket(200ms,3)` + 队列合并。**限定**：三个旋钮仅作用于 progressMode 之前的文本窗口，进度路径是固定 300ms 节流且无最小增量门槛（[PROGRESS-CARD-AUDIT.md](PROGRESS-CARD-AUDIT.md) F1/F4），「≥ dsh-im 的 800ms 单飞」仅覆盖早期文本阶段 |
 | 230020 限流处理 | `src/feishu/retry.ts:118-120`、`src/streaming.ts:903-910,938-941` | 已判为 transient 且**不计入**降级计数；dsh-im 相应文件反而无错误码感知 |
 | 终态不丢弃 + 终态前排空在途 PATCH | `src/async-sender.ts:130-138`、`src/streaming.ts:1020-1022,1948-1958` | — |
 | 熔断后整条重发 | `src/streaming.ts:1773-1788` | 删冻结卡 → `deliverAnswer` |
@@ -167,7 +170,7 @@ profile 实测参数（`~/.dsh/profiles/feishu-bridge/cordis.patch.yml:218-227`�
 - 通道异常退出 / 插件重载已分片补投已产出内容（`src/engine/engine.ts:4298-4373`）
 - errored turn 走 `deliverAnswer` 明文补投（`:4118-4130,4164-4167`）
 - stall 重试耗尽后有 ⏹ 卡与「▶ 继续执行」按钮，body 原样保留（`src/feishu/progress.ts:883`、`src/feishu/platform.ts:2224-2233`）
-- 每次退出都有终态卡（`markFailed`/`markStopped`）——「强杀无终态」已修
+- 引擎主动退出路径（stall 耗尽/硬帽/stop）都有终态卡（`markFailed`/`markStopped`）——「强杀无终态」已修；异常逃出回合循环的三处兜底 catch 只记日志不收尾卡片（[PROGRESS-CARD-AUDIT.md](PROGRESS-CARD-AUDIT.md) F2，机制已核实、触发未复现）
 - park 期间不被 idle 杀、不计入硬帽时钟（`src/engine/engine.ts:3284-3285,5532,1429-1436`）
 - `markFailedLocked` **已保留**卡面显示（`src/streaming.ts:1872-1907`）——丢的是超出截断的部分与"以消息形式交付"这个动作
 
@@ -275,7 +278,7 @@ dsh-im 有 `/batch`（10 条纯文字 → `/send` 合并为一次输入，`/canc
 | 项 | dsh-im | 本插件 | 影响 |
 |---|---|---|---|
 | **批准人身份绑定** | `pending.actor` 校验 + 群内需 @（`harness-approval.mjs:156-159,304`；测试 `:469-543`） | **无**：`msg.userID` 从不参与 ask 路由（`src/engine/engine.ts` 仅 1968/1989/2421/7874/7903/8971/8988）。平台层有 `allow_chat` + `allow_from` 门（`src/feishu/platform.ts:1028-1042`），但 `allow_from` **缺省 `''` → `AllowList` 直接放行**（`src/feishu/allowlist.ts:17`、`platform.ts:1032`），本仓 profile 只留注释示例（`profile/cordis.patch.yml:247`） | 默认姿态下**同群任一用户可批准**；且 `allow-all` → `allowed-always` 是 agent 生命周期**常驻**许可，非一次性（`packages/interaction/user-approval/src/index.ts:165,250`）。单人使用无影响，群内有第三人则要紧 |
-| 审批词表 | 精确整条匹配 6 词，**刻意排除**口语词，负例测试覆盖「好的/可以/行/没问题/批准吧」（`harness-approval.mjs:3-10`；测试 `:61-90`） | `src/engine/permission.ts:16-29` 是**整条精确匹配**（`words.includes(s)`，非包含匹配——比初判安全），但含「好/好的/可以/是/ok/y」 | 在 park 期间，一条恰好等于这些词的消息会被当成审批决定 |
+| 审批词表 | 精确整条匹配 6 词，**刻意排除**口语词，负例测试覆盖「好的/可以/行/没问题/批准吧」（`harness-approval.mjs:3-10`；测试 `test/channels/shared/harness-approval.test.mjs:61-75`） | `src/engine/permission.ts:16-29` 是**整条精确匹配**（`words.includes(s)`，非包含匹配——比初判安全），但含「好/好的/可以/是/ok/y」 | 在 park 期间，一条恰好等于这些词的**人工**消息会被当成审批决定（机器消息已被 `70d9e91d33` 移出 parked-ask 路由，误判面仅剩人工消息） |
 | 并发审批 | 按 route FIFO + activationTask 屏障（`harness-approval.mjs:103-211,426-437`） | `pendingAsk` **单槽**，二次 park 无条件覆盖（`src/engine/engine.ts:386,5531`），第一个仅 stop/abort 可解 | **潜在**：标准组合不可达（审批类调用均 exclusive，`packages/core/tools/index.ts:1266-1277` fail-closed；声明 `isConcurrencySafe` 的 read/read-image/session-query/web/subagent 均不请求审批）。若插件/hook 在并发安全工具上 ask，则工具永不返回、turn 挂死 |
 
 ### 7.3 重启后遗留审批
@@ -331,19 +334,19 @@ cardkit.v1.cardElement => update, content, delete, patch, create
 | 侧 | 命令 |
 |---|---|
 | dsh-im | `new compact history workspace conv workspacelist sessionlist session models reasoninglist reasoning model presetlist preset stop steer batch send cancel status version help` |
-| feishu-bridge | `bind board btw compress cron dir done fork help hint list monitor new notify provider ps reload rename shell spawn status stop switch tag undone untag` |
+| feishu-bridge | `bind board btw compress cron dir done fork help hint list monitor new notify provider ps reload rename shell spawn status stop switch tag undone untag skills mcp context` |
 
 各自的独有项：
 
 - **dsh-im 独有且值得注意**：`steer`（= 我们的 `/ps`，见下）、`batch`（§6.5）、`reasoning` / `reasoninglist`（运行期切换推理档位）、`preset` / `presetlist`（agent 预设）。
-- **本插件独有（更偏强力工具）**：`cron`、`monitor`、`fork`、`spawn`、`done`、`shell`、`tag`、`relay`(bind/board)、`notify`、`reload`、`btw`、`ps`。
+- **本插件独有（更偏强力工具）**：`cron`、`monitor`、`fork`、`spawn`、`done`、`shell`、`tag`、`relay`(bind/board)、`notify`、`reload`、`btw`、`ps`；另有 TS 原生新增的 `skills` / `mcp`（只读查询运行时 skill 目录与在线 MCP 服务器）与 `context`（上下文洞察卡）——三者均无 Go 对应。
 
 ### 9.2 不算缺口（避免误判）
 
 - **`/ps` 已是中途纠偏能力，等价 dsh-im 的 `/steer`**：`src/engine/misc-commands.ts:220-243` 的 `cmdPs` 把文本 steer 进运行回合的 inbox；机器消息也走 steer（`src/engine/engine.ts:7600-7620`，附 2026-08-27 队列丢消息事故说明）。
 - **队列满会告知用户**：`src/i18n/messages.ts:29`（上限 5，`src/engine/engine.ts:192`、判定 `:2408-2409`）。
 - **排队消息跨 daemon 重启不丢**：`src/i18n/messages.ts:99`（`pending inbox`，随会话保存，下次消息一并送达）——已是一种延迟投递。
-- 每个退出路径都有终态卡；stall 重试耗尽后有「▶ 继续执行」按钮。
+- 引擎主动退出路径（stall/硬帽/stop）都有终态卡；stall 重试耗尽后有「▶ 继续执行」按钮。异常兜底路径的卡片收尾缺口另见 [PROGRESS-CARD-AUDIT.md](PROGRESS-CARD-AUDIT.md) F2。
 
 ### 9.3 运行期档位切换（真实差异，但需判断）
 
@@ -363,11 +366,11 @@ Web 设置页 / 管理页（`package.json` 的 `dsh.client` + `settings.section`
 
 | 环节 | 事实 |
 |---|---|
-| 测试 | `tests/built-bundle-registries.spec.ts:47` 用 `describe.skipIf(!existsSync(exportsBundle) \|\| !existsSync(pluginBundle))`，文件头自称 "Self-skips on a clean tree without built artifacts; CI runs it after build." |
+| 测试 | `tests/built-bundle-registries.spec.ts:47` 用 `describe.skipIf(!existsSync(exportsBundle) \|\| !existsSync(pluginBundle))`，文件头自称 "Self-skips on a clean tree without built artifacts; CI runs it after build."（该文件现已改名 `.e2e.ts`、skipIf 移至 `:56`，见下「修复」行） |
 | CI coverage job | `.github/workflows/ci.yml:191` 只跑 install → `pnpm run check:ci:coverage`，**无 build 步骤** |
 | 门的依赖图 | `scripts/run-gates.ts:612-647` 的 `coverageGates()` needs 仅 `['native-system']`；而 `native-system` = `build:native-system`（`:634`）——只构建 native 部分，**不产出本包 `lib/`** |
 | 结论 | 该 spec 在 CI **恒为真跳过**，而它保护的正是 **2026-08-27 跨 bundle 注册表分裂事故**（raw-i18n-key） |
-| 修复（2026-09-12） | spec 改名 `built-bundle-registries.e2e.ts`（默认车道只 glob `*.spec.ts` 且不构建）并列入 `built-bin-smoke` 门（`scripts/run-gates.ts` 的 `builtBinSmokeGate`，`needs: ['build']`，随 `check:ci:consumers` 在 PR 上执行）。实测：build 后 2 passed、临时移走 bundle 后 2 skipped |
+| 修复（2026-09-14，`923ba7dd1f`） | spec 改名 `built-bundle-registries.e2e.ts`（默认车道只 glob `*.spec.ts` 且不构建）并列入 `built-bin-smoke` 门（`scripts/run-gates.ts` 的 `builtBinSmokeGate`，`needs: ['build']`，随 `check:ci:consumers` 在 PR 上执行）。实测：build 后 2 passed、临时移走 bundle 后 2 skipped |
 
 ### 10.2 其他工程差异
 
@@ -377,7 +380,7 @@ Web 设置页 / 管理页（`package.json` 的 `dsh.client` + `settings.section`
 | 安装脚本测试 | 无安装脚本 | `install.sh` **零测试**（全包 grep 仅命中 `docs/OPERATIONS.md:22,25`、`docs/MIGRATION.md:391`；`tests/` 与 `src/` 零引用；无 shellcheck 门禁）。对照 `reload.sh` 有 `tests/reload-script.spec.ts:152`（stub launchctl，darwin + Linux） |
 | 真实 SDK 契约测试 | 加载真 lark SDK 两份构建 + 起真 WS 验握手超时（`lark-sdk-handshake-patch.test.mjs`） | 仅 `tests/default-client.spec.ts:21` 一处 mock；WSClient 全走注入替身（`src/feishu/platform.ts:439,3930`）；依赖浮动 `^1.53.0`（`package.json:56`） |
 | 模型可见面 golden | 有 fixture 层（但不进 CI） | `*.snap` = 0、`toMatchSnapshot` = 0；卡片 JSON 全内联 `expect`；仓库 golden 层无 feishu 场景 |
-| **命名纪律（反向结论）** | `regressions` / `races` / `stale` + deferred gate 注入交错复现 | **已具备同等纪律**：race / stale / retry / abort / evict / recall / dedup 等命名 14 个，spec 头记事故日期（如 `built-bundle-registries.spec.ts` 头记 2026-08-27 事故）——**无需借鉴** |
+| **命名纪律（反向结论）** | `regressions` / `races` / `stale` + deferred gate 注入交错复现 | **已具备同等纪律**：race / stale / retry / abort / evict / recall / dedup 等命名 14 个，spec 头记事故日期（如 `built-bundle-registries.e2e.ts`（原 `.spec.ts`）头记 2026-08-27 事故）——**无需借鉴** |
 | 量级 | test 182 个 `*.test.mjs` / 88,373 LOC vs src 55,195 | tests 170 文件 / 51,834 LOC vs src 51,459（**≈1.0:1，并非"欠测"**） |
 
 ### 10.3 形态差异导致不适用
@@ -400,7 +403,7 @@ dsh-im 零 TypeScript（0 个 `.ts`、无 tsconfig）→ 类型契约只能靠�
 | 6 | 配置损坏时另存 `.corrupt` + 告警（照抄同仓 `monitor.ts:148-157`） | 本插件 `project-state.ts:267-286` | 防止空态覆盖用户全部按群设置 | S | 缺口 |
 | 7 | 附件目录清理策略（新增 profile 配置项，不得硬编码） | 本插件 `attachments.ts:120-138`（无清理）；范式 `engine.ts:2495-2513` | 防止工作区无限膨胀 | S-M | 缺口 |
 | 8 | 附件文件名清洗（basename + 剥分隔符/控制符 + 截断） | 本插件 `attachments.ts:47-57`、`:107` | 信任边界输入校验 | S | 缺口 |
-| 9 | CI 恒 skip 门禁接到 build 之后的门（或发布 `./invariant`） | 本插件 `tests/built-bundle-registries.e2e.ts`、`ci.yml:191`、`run-gates.ts` 的 `builtBinSmokeGate` | 让跨 bundle 单例契约真正被执行 | S/M | **已修复（2026-09-12）**：改名 `.e2e.ts` + 列入 `built-bin-smoke` 门 |
+| 9 | CI 恒 skip 门禁接到 build 之后的门（或发布 `./invariant`） | 本插件 `tests/built-bundle-registries.e2e.ts`、`ci.yml:191`、`run-gates.ts` 的 `builtBinSmokeGate` | 让跨 bundle 单例契约真正被执行 | S/M | **已修复（2026-09-14，`923ba7dd1f`）**：改名 `.e2e.ts` + 列入 `built-bin-smoke` 门 |
 | 10 | `install.sh` 最小回归（已存在文件字节不变等） | 本插件 `install.sh:19-21`；范式 `tests/reload-script.spec.ts:152` | 护住自演化保护 | S | 缺口 |
 | 11 | 写盘永久错误（EACCES/EROFS）一次性提示 | 本插件 `project-state.ts:256-265`、`provider-commands.ts:265-272`+`:315` | 避免"以为改了其实没落盘" | S | 缺口（收窄版） |
 | 12 | 引用链总长上限 + 不可伪造包裹 + "非系统指令"声明；`extractQuotedText` 多条取最后一条 | dsh-im `semantic/reply-reference.mjs:106,117` ↔ 本插件 `platform.ts:134-148`、`monitor.ts:443-449`、`:1374-1399` | 防提示词/存储膨胀与格式伪造 | S | 缺口 |
@@ -444,7 +447,7 @@ dsh-im 零 TypeScript（0 个 `.ts`、无 tsconfig）→ 类型契约只能靠�
 - **`freeze` / `resumeFromFreeze` 死代码**：删或修，独立议题。
 - **三处反向依赖**（§2.3）：`BoundedMap` 归属、引用串格式契约、`streaming` 依赖飞书排版——收益偏可读性，不紧急。
 - **`Engine` 类 8,200 行 / 252 成员**：应按特性（cron / monitor / subtask / plan）拆分，非按渠道；属重构议题，与本次借鉴无关。
-- **README 双语的「已知限制」条目已勘误**（撰写本文时顺带发现；2026-09-12 已修）：原 `README.md:73` 与 `README.zh.md:73` 称「`/list`、`/status`、`/switch` 仍是纯文本……待该渲染域移植」，但该渲染域已落地——`src/engine/commands.ts:34` 已 import `renderListCardSafe` / `renderStatusCard`（两者即 README 归给 Go 侧的函数名），`:180-181`（`/list`）、`:340-341`（`/switch`）、`:467-468`（`/status`）均走 `supportsCards(p)` → `replyWithCard`，而 `supportsCards`（`src/core/types.ts:999`）= `asCardSender(p) !== undefined` = `withMethod(p, 'sendCard')`，飞书平台已实现且 `useInteractiveCard` 缺省为真（`src/feishu/platform.ts:1939`、`:643`）。按钮集已核实：TS 侧为 `act:/switch <id>` 与 `act:/delete-mode …`（`src/engine/session-card.ts:83,90,284-285,336-360`），与 README 所述的 Go 命名 `act:/list switch|delete N` 形态不同、功能对应；中英两条已同步删除。
+- **README 双语的「已知限制」条目已勘误**（撰写本文时顺带发现；2026-09-14 `b493166740` 已修）：原 `README.md:73` 与 `README.zh.md:73` 称「`/list`、`/status`、`/switch` 仍是纯文本……待该渲染域移植」，但该渲染域已落地——`src/engine/commands.ts:34` 已 import `renderListCardSafe` / `renderStatusCard`（两者即 README 归给 Go 侧的函数名），`:180-181`（`/list`）、`:340-341`（`/switch`）、`:467-468`（`/status`）均走 `supportsCards(p)` → `replyWithCard`，而 `supportsCards`（`src/core/types.ts:999`）= `asCardSender(p) !== undefined` = `withMethod(p, 'sendCard')`，飞书平台已实现且 `useInteractiveCard` 缺省为真（`src/feishu/platform.ts:1939`、`:643`）。按钮集已核实：TS 侧为 `act:/switch <id>` 与 `act:/delete-mode …`（`src/engine/session-card.ts:83,90,284-285,336-360`），与 README 所述的 Go 命名 `act:/list switch|delete N` 形态不同、功能对应；中英两条已同步删除。
 
 ---
 
