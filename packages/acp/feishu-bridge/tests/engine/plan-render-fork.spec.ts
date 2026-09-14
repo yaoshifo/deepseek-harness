@@ -399,24 +399,32 @@ describe('RenderAndDeliverReply', () => {
     // on the wire must be drained BEFORE the terminal PATCH is issued, or the
     // card can end stuck on 渲染中 (the late tick overwrites the terminal
     // status). Held PATCH promises place the race at a deterministic point.
+    //
+    // The flow's inter-attempt temp cleanups are real fs I/O, which fake-clock
+    // advancement cannot progress deterministically under load — a fixed
+    // advance count made this test flaky (the terminal PATCH never arrived
+    // within the budget). Every wait below is therefore condition-driven on a
+    // real-clock budget, with the fake clock only driving the attempt
+    // timeouts and the tick cadence.
+    interface HeldPatch { text: string; release: () => void }
+    const patches: HeldPatch[] = []
+    const heldPlatform = createStubMediaPlatform()
+    heldPlatform.updateRenderStatus = (_ctx: unknown, _key: string, text: string) => {
+      const patch: HeldPatch = { text, release: (): void => {} }
+      patches.push(patch)
+      return new Promise<void>((resolve) => { patch.release = resolve })
+    }
+    const a = createRenderAgent({ blockCount: 5 })
+    const e = new Engine('test', a, [heldPlatform], '', 'en')
+    e.planRenderEnabled = true
+    e.planRenderProvider = 'p'
+    e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
+    e.planRenderTimeoutMs = 60_000
+    const realNow = Date.now.bind(Date)
+
+    const state = newRenderState(heldPlatform)
     vi.useFakeTimers()
     try {
-      interface HeldPatch { text: string; release: () => void }
-      const patches: HeldPatch[] = []
-      const heldPlatform = createStubMediaPlatform()
-      heldPlatform.updateRenderStatus = (_ctx: unknown, _key: string, text: string) => {
-        const patch: HeldPatch = { text, release: (): void => {} }
-        patches.push(patch)
-        return new Promise<void>((resolve) => { patch.release = resolve })
-      }
-      const a = createRenderAgent({ blockCount: 5 })
-      const e = new Engine('test', a, [heldPlatform], '', 'en')
-      e.planRenderEnabled = true
-      e.planRenderProvider = 'p'
-      e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
-      e.planRenderTimeoutMs = 60_000
-
-      const state = newRenderState(heldPlatform)
       renderAndDeliverReply(e, state, 'k1', longText, 'om_1')
 
       // Initial 'rendering' PATCH, then the 30s tick fires while attempt 1
@@ -425,29 +433,44 @@ describe('RenderAndDeliverReply', () => {
       expect(patches.length).toBeGreaterThanOrEqual(2)
       expect(patches.some(p => p.text.includes('30s')), 'the tick PATCH was issued').toBe(true)
 
-      // Drive both attempt timeouts (60s, 120s) so the failure exit runs.
-      for (let i = 0; i < 30; i++) {
-        await vi.advanceTimersByTimeAsync(5_000)
-        // Red marker: the terminal PATCH must not be issued while a tick
-        // PATCH is still in flight.
-        if (patches.some(p => p.text.includes('Render failed'))) break
+      // Drive both attempt timeouts (60s, 120s) until the flow observably
+      // reaches the failure exit: stopProgress clears the interval there, so
+      // a full interval period advancing with no new PATCH means the exit
+      // ran. The real yields inside each advance give the inter-attempt temp
+      // cleanups time to land.
+      let reachedExit = false
+      const exitDeadline = realNow() + 1_500
+      while (realNow() < exitDeadline) {
+        const before = patches.length
+        await vi.advanceTimersByTimeAsync(35_000)
+        if (patches.length === before) {
+          reachedExit = true
+          break
+        }
       }
+      expect(reachedExit, 'the render flow reached its terminal exit within the budget').toBe(true)
+      expect(a.cancelledCount()).toBe(2)
 
+      // Red marker: the terminal PATCH must not be issued while a tick PATCH
+      // is still in flight.
       expect(patches.some(p => p.text.includes('Render failed')), 'no terminal PATCH before the tick PATCHes settle').toBe(false)
       expect(getRenderStatus(state, 'om_1')?.status).toBe('rendering')
-
-      // Settle the held tick PATCHes; now the terminal PATCH may land.
-      for (const patch of patches) patch.release()
-      for (let i = 0; i < 10; i++) {
-        await vi.advanceTimersByTimeAsync(1_000)
-        if (patches.some(p => p.text.includes('Render failed'))) break
-      }
-      const terminalIdx = patches.findIndex(p => p.text.includes('Render failed'))
-      expect(terminalIdx).toBeGreaterThan(-1)
-      expect(patches.at(-1)?.text, 'the terminal PATCH is the last one issued').toContain('Render failed')
     } finally {
       vi.useRealTimers()
     }
+
+    // Settle the held tick PATCHes; the drain then issues the terminal PATCH.
+    // No fake timer remains on the flow's path once the exit ran (attempt
+    // timers cleared in their finallys, the interval cleared at stopProgress),
+    // so the final wait runs on the real clock.
+    for (const patch of patches) patch.release()
+    const terminalDeadline = realNow() + 1_500
+    while (realNow() < terminalDeadline && !patches.some(p => p.text.includes('Render failed'))) {
+      await new Promise<void>((resolve) => { setTimeout(resolve, 10) })
+    }
+    const terminalIdx = patches.findIndex(p => p.text.includes('Render failed'))
+    expect(terminalIdx).toBeGreaterThan(-1)
+    expect(patches.at(-1)?.text, 'the terminal PATCH is the last one issued').toContain('Render failed')
   })
 })
 
