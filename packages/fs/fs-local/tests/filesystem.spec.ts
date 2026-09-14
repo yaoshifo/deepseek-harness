@@ -720,6 +720,78 @@ describe('editText', () => {
       .rejects.toMatchObject({ code: 'FS_AMBIGUOUS_EDIT' })
   })
 
+  it('an ambiguous rejection lists each match line and its first line of content', async () => {
+    await writeFile(join(dir, 'a.txt'), 'ACCOUNT_FX = "fx"\nblank\nACCOUNT_FX = "fx"\n')
+    const target = await fs.resolve('a.txt')
+    const error = await fs.editText(
+      target,
+      { oldString: 'ACCOUNT_FX = "fx"', newString: 'x', replaceAll: false },
+      { version: await versionOf(target) },
+    ).catch((reason: unknown) => reason as { code?: string; message?: string })
+    expect(error).toMatchObject({ code: 'FS_AMBIGUOUS_EDIT' })
+    const message = (error as { message: string }).message
+    expect(message).toContain('matched 2 times in')
+    expect(message).toContain('line 1: "ACCOUNT_FX = \\"fx\\""')
+    expect(message).toContain('line 3: "ACCOUNT_FX = \\"fx\\""')
+
+    // A multi-line old_string reports the line each match STARTS on.
+    await writeFile(join(dir, 'b.txt'), 'dup\nx\ndup\nx\ndup\nx\n')
+    const multi = await fs.resolve('b.txt')
+    const multiError = await fs.editText(
+      multi,
+      { oldString: 'dup\nx', newString: 'y', replaceAll: false },
+      { version: await versionOf(multi) },
+    ).catch((reason: unknown) => reason as { code?: string; message?: string })
+    const multiMessage = (multiError as { code: string; message: string }).message
+    expect(multiMessage).toContain('matched 3 times in')
+    expect(multiMessage).toContain('line 1')
+    expect(multiMessage).toContain('line 3')
+    expect(multiMessage).toContain('line 5')
+  })
+
+  it('an ambiguous rejection caps the location list at ten matches', async () => {
+    const lines = Array.from({ length: 12 }, (_, index) => `mark ${index === 11 ? 'last' : 'same'}`)
+    await writeFile(join(dir, 'many.txt'), `${lines.join('\n')}\n`)
+    const target = await fs.resolve('many.txt')
+    const error = await fs.editText(
+      target,
+      { oldString: 'mark same', newString: 'x', replaceAll: false },
+      { version: await versionOf(target) },
+    ).catch((reason: unknown) => reason as { code: string; message: string })
+    expect(error).toMatchObject({ code: 'FS_AMBIGUOUS_EDIT' })
+    expect(error.message).toContain('matched 11 times in')
+    expect(error.message).toContain('line 10')
+    expect(error.message).toContain('1 more match')
+    expect(error.message).not.toContain('line 11')
+    expect(error.message).not.toContain('line 12')
+  })
+
+  it('a not-found rejection lists candidate lines sharing the old text\'s trimmed first line', async () => {
+    await writeFile(join(dir, 'a.txt'), 'top\nX = 1\nmid\n  X = 1\nlast\n')
+    const target = await fs.resolve('a.txt')
+    const error = await fs.editText(
+      target,
+      // Wrong leading whitespace: the match fails, but the trimmed first-line probe hits lines 2 and 4.
+      { oldString: '\tX = 1', newString: 'y', replaceAll: false },
+      { version: await versionOf(target) },
+    ).catch((reason: unknown) => reason as { code: string; message: string })
+    expect(error).toMatchObject({ code: 'FS_EDIT_NOT_FOUND' })
+    expect(error.message).toContain('old_string was not found in')
+    expect(error.message).toContain('nearest first-line matches: line 2: "X = 1", line 4: "  X = 1"')
+  })
+
+  it('a not-found rejection without candidates keeps the plain diagnostic byte for byte', async () => {
+    await writeFile(join(dir, 'a.txt'), 'alpha\nbeta\n')
+    const target = await fs.resolve('a.txt')
+    const error = await fs.editText(
+      target,
+      { oldString: 'ZZZ totally absent', newString: 'y', replaceAll: false },
+      { version: await versionOf(target) },
+    ).catch((reason: unknown) => reason as { code: string; message: string })
+    expect(error).toMatchObject({ code: 'FS_EDIT_NOT_FOUND' })
+    expect(error.message).toBe(`old_string was not found in "${join(dir, 'a.txt')}"`)
+  })
+
   it('replaces all matches with replaceAll', async () => {
     await writeFile(join(dir, 'a.txt'), 'a a a')
     const target = await fs.resolve('a.txt')
