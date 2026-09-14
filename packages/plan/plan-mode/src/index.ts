@@ -341,7 +341,11 @@ export class PlanModeController extends Service {
       execute: async (args, exec) => {
         const agent = exec.agent
         if (agent === undefined) throw new Error(`${EXIT_PLAN_MODE} requires a calling agent (no session to switch)`)
-        if (!this.loggedActive(agent.session)) {
+        // The same optimistic read as the plan:policy section — a selection
+        // awaiting the next accepted in-turn pre-step already counts — so the
+        // guidance the model sees and this gate cannot disagree.
+        const pending = this.pendingIntents.get(agent.session)
+        if (!(pending?.active ?? this.loggedActive(agent.session))) {
           throw new Error(`${EXIT_PLAN_MODE} is only available in plan mode`)
         }
         if (!/^#\s+\S/.test(args.plan.trim())) {

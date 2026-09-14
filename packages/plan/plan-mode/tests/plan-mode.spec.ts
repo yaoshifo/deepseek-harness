@@ -896,6 +896,25 @@ describe('exit_plan_mode', () => {
     expect(result.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is only available in plan mode' }])
   })
 
+  it('stays callable while a selected entry awaits its flush (guidance and gate agree)', async () => {
+    const ctx = await setup()
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(UserQuestionService)
+    registerQuestionAnswerer(ctx, {
+      ask: () => Promise.resolve({ answers: [{ id: 'plan-review', selected: ['Keep planning'] }] }),
+    })
+    const agent = await agentWithSession(ctx, 'pending-entry-exit')
+    openTurn(agent.session)
+    expect(ctx.planMode.set(agent, true)).toBe('queued')
+    // The plan:policy section already reads the pending selection; the gate
+    // must not contradict that guidance with "only available in plan mode".
+    expect((await assembleFor(ctx, agent)).sections.find(section => section.name === 'plan:policy')?.text)
+      .toBe(TEST_PLAN_SECTION)
+    const result = await callExit(ctx, agent)
+    expect(JSON.stringify(result.content)).not.toContain('only available in plan mode')
+    expect(JSON.stringify(result.content)).toContain('keep planning')
+  })
+
   it('rejects an empty or heading-less plan before asking the reviewer', async () => {
     const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
     for (const plan of ['', 'do things']) {
@@ -1031,6 +1050,21 @@ describe('exit_plan_mode', () => {
     expect(asked[0]?.agent).toBe(agent)
     expect(asked[0]?.questions[0]?.detail).toBe('# The plan\n\ndo things')
     expect(asked[0]?.questions[0]?.options?.map(option => option.label)).toEqual(['Approve', 'Keep planning'])
+  })
+
+  it('rejects a second exit in the same batch after approval (no second review card)', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
+    const first = await callExit(ctx, agent)
+    expect(first.isError).toBe(false)
+    expect(ctx.planMode.get(agent)).toEqual({ active: true, pending: false })
+    // The approved exit stays pending until the next accepted in-turn
+    // pre-step; reading the logged fold alone would open a second review
+    // card for a decision the user already made.
+    const second = await callExit(ctx, agent)
+    expect(second.isError).toBe(true)
+    expect(second.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is only available in plan mode' }])
+    expect(asked).toHaveLength(1)
+    expect(ctx.planMode.get(agent)).toEqual({ active: true, pending: false })
   })
 
   it('carries the exact plan through a PTC mode review and logs the nested dispatch', async () => {
