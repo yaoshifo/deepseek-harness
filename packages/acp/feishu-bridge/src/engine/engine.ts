@@ -4507,11 +4507,16 @@ export class Engine {
    * Deliver the turn's completed streamed text before a forceful kill
    * (dsh-im absorption batch 1, u4): stall exhaustion and the hard turn cap
    * return without any delivery point, so the streamed answer dies with the
-   * turn — the channel-closed path already delivers it. Mirrors that path's
-   * segmentation (inter-segment chunks were already surfaced; deliver the
-   * unsent remainder) with the interrupted-subtask settlement, and records
-   * the delivery outcome like the turn-end path, warning and saving a copy
-   * when the partial could not be proven delivered.
+   * turn — the channel-closed path already delivers it. Card-less paths
+   * mirror that path's segmentation (inter-segment chunks were already
+   * surfaced; deliver the unsent remainder) with the interrupted-subtask
+   * settlement. An in-progress card owns the segment instead: the kill's
+   * markFailed terminal (final PATCH, then its internal fallback
+   * re-delivery) is drained first, and only a definitely-failed card
+   * settlement retries the segment as plain text — an uncertain one is
+   * recorded, never re-sent. Either way the delivery outcome is recorded
+   * like the turn-end path, warning and saving a copy when the partial
+   * could not be proven delivered.
    * @param state - Turn state whose completed textParts are delivered.
    * @param session - Session for the subtask settlement.
    * @param sessionKey - Key whose chat workspace receives the saved copy.
@@ -4539,15 +4544,36 @@ export class Engine {
     // auto-report delivered.
     const prefixed = `${this.i18n.t(Msg.SubtaskTurnInterrupted)}\n\n${fullResponse}`
     this.maybeAutoReportSubtask(state, session, prefixed, isSilentReply(prefixed))
-    // Same in-progress guard as the turn-end segmentation: a live 实时播报
-    // card keeps the streamed segment on its failed render, so a plain-text
-    // copy would double it. Card-less paths re-deliver the unsent remainder.
-    if (state.toolCount > 0 && state.segmentStart > 0 && state.preview?.inProgressMode() !== true) {
+    const sp = state.preview
+    if (sp?.inProgressMode() === true) {
+      // The streamed segment lives on the card's 实时播报; the kill's
+      // markFailed already enqueued its terminal (final PATCH, then the
+      // streaming-side fallback re-delivery). Drain the shared sender first
+      // so the verdict below is the settled card outcome, not a pending
+      // queue — judging earlier would double-send behind a fallback that
+      // still lands, or skip delivery behind one that still fails.
+      await state.sender?.barrier()
+      const cardOutcome = sp.answerDelivery
+      if (cardOutcome === 'unknown') {
+        // The fallback re-delivery may have landed; an uncertain delivery is
+        // never re-sent — record it for the warning below.
+        state.answerDelivery = 'unknown'
+      } else if (cardOutcome === 'failed') {
+        // Neither the terminal PATCH nor the fallback re-delivery landed the
+        // segment — retry it as plain text like the card-less paths below
+        // (a definite rejection never landed, so the retry cannot double).
+        await this.deliverAnswerText(state, p, replyCtx, fullResponse)
+      }
+      // 'sent' or unset: the card (or its fallback) carried the segment, or
+      // the card owed no answer text — a plain copy would double it. Any
+      // mid-turn plain sends already recorded their own outcome on the state.
+    } else if (state.toolCount > 0 && state.segmentStart > 0) {
+      // Card-less paths re-deliver the unsent remainder.
       const unsent = state.textParts.slice(state.segmentStart).join('')
       const [uStripped, uOk] = stripTrailingSilent(unsent)
       const deliver = uOk ? uStripped : unsent
       if (deliver !== '') await this.deliverAnswerText(state, p, replyCtx, deliver)
-    } else if (state.preview?.inProgressMode() !== true) {
+    } else {
       await this.deliverAnswerText(state, p, replyCtx, fullResponse)
     }
     await this.warnUndeliveredAnswer(state, p, replyCtx, sessionKey)

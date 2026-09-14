@@ -66,6 +66,39 @@ function previewRecordingPlatform(): Platform & { sent: string[]; patches: strin
 }
 
 /**
+ * Preview-card platform whose terminal PATCH always rejects on a real
+ * macrotask delay (so the settled outcome only exists after the sender
+ * barrier drains it): the stall kill's markFailed fallback re-delivery is
+ * the make-or-break surface. `failAnswerOnce` fails exactly the first
+ * answer-content send (the fallback's attempt); otherwise every
+ * answer-content send fails.
+ */
+function failingTerminalCardPlatform(error: unknown, failAnswerOnce: boolean): Platform & { sent: string[]; patches: string[] } {
+  const p = createStubPlatform('test')
+  const patches: string[] = []
+  let answerFailed = false
+  return Object.assign(p, {
+    patches,
+    async sendPreviewStart(_rc: unknown): Promise<unknown> {
+      return 'preview-handle'
+    },
+    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
+      await new Promise((resolve) => { setTimeout(resolve, 25) })
+      patches.push(JSON.stringify(content))
+      throw new Error('terminal PATCH rejected')
+    },
+    classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' => classifyDeliveryFailure(err),
+    send: async (_rc: unknown, content: string) => {
+      if (content.includes('precious partial answer') && (!failAnswerOnce || !answerFailed)) {
+        answerFailed = true
+        throw error
+      }
+      p.sent.push(content)
+    },
+  }) as Platform & { sent: string[]; patches: string[] }
+}
+
+/**
  * Run one turn whose session streams a text block, then goes silent until
  * the engine's idle watchdog kills it (no stall retries).
  * @param p - Platform recording sends.
@@ -201,5 +234,36 @@ describe('kill-path partial-answer delivery', () => {
     // The same text must not also arrive as a plain message.
     expect(p.sent.join('\n'), `sent=${JSON.stringify(p.sent)}`).not.toContain('precious partial answer')
     expect(state.answerDelivery, 'nothing owed on the plain path leaves no outcome').toBeUndefined()
+  })
+
+  it('a killed card whose terminal and fallback re-delivery both fail settles the segment as plain text', { timeout: 10_000 }, async () => {
+    // The terminal PATCH rejects and markFailed's internal fallback
+    // re-delivery is also definitely rejected: with the streamed segment
+    // neither on the card nor re-delivered, the kill path must retry it as
+    // plain text (duplication-safe — a definite rejection never landed)
+    // instead of dropping it silently.
+    const p = failingTerminalCardPlatform(forbiddenError, true)
+    const { state } = await runKilledTurn(p, { idleMs: 80, card: true })
+    const texts = p.sent.join('\n')
+    expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('precious partial answer')
+    expect(state.answerDelivery, 'the retry settles the outcome').toBe('sent')
+    expect(texts, `sent=${JSON.stringify(p.sent)}`).not.toContain('failed to deliver')
+  })
+
+  it('a killed card whose every delivery surface fails warns and saves the answer copy', { timeout: 10_000 }, async () => {
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-kill-card-undelivered-'))
+    try {
+      const p = failingTerminalCardPlatform(forbiddenError, false)
+      const { state } = await runKilledTurn(p, { idleMs: 80, card: true, workDir })
+      expect(state.answerDelivery, 'the kill path settles the card outcome').toBe('failed')
+      const texts = p.sent.join('\n')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('failed to deliver')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('undelivered-reply-')
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('precious partial answer')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
   })
 })
