@@ -44,6 +44,25 @@ async function settle(): Promise<void> {
 const FULL = '修复完成：4 项改动，全部测试通过。' + '细节行。'.repeat(40)
 
 describe('subtask report dedup against a prior direct send_message', () => {
+  it('the engine wires its noteAgentDirectMessage seam onto agents exposing the observation capability', () => {
+    const p = createStubCardPlatformFull('test')
+    const registered: Array<(parentSessionKey: string, fromKey: string, content: string) => void> = []
+    const agent = Object.assign(createStubAgent(), {
+      registerAgentDirectMessageNotifier(fn: (parentSessionKey: string, fromKey: string, content: string) => void): void {
+        registered.push(fn)
+      },
+    })
+    const e = new Engine('test', agent, [p], '', 'en')
+
+    expect(registered).toHaveLength(1)
+    // The registered callback routes into the engine seam: a recorded
+    // direct message lands on the parent session.
+    const parentKey = 'test:parent-chat:user-1'
+    e.sessions.getOrCreateActive(parentKey)
+    registered[0]!(parentKey, 'test:child-chat', FULL)
+    expect(e.sessions.findActive(parentKey)?.lastAgentDirectMessage?.fromKey).toBe('test:child-chat')
+  })
+
   it('a verbatim-identical report injects the short status while the card keeps the full text', async () => {
     const p = createStubCardPlatformFull('test')
     const e = newTestEngine(p)

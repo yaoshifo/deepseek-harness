@@ -957,7 +957,11 @@ export async function renderContentToHTML(
 
   let out = ''
   try {
-    out = await rq.renderQuery(prompt, providerName, systemPrompt, signal, e.sessionWorkDir(sessionKey))
+    // Record the originating chat as the render one-shot's lineage so the
+    // throwaway session stays attributable (2026-09-13 postmortem triage had
+    // to attribute render forks by timestamp archaeology).
+    const parentSession = e.sessions.findActive(sessionKey)?.agentSessionID
+    out = await rq.renderQuery(prompt, providerName, systemPrompt, signal, e.sessionWorkDir(sessionKey), parentSession !== '' ? parentSession : undefined)
   } catch (error) {
     if (error === errRenderStalled) {
       // LLM stall (no stream output): the caller retries — distinct from a

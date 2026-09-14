@@ -74,4 +74,26 @@ describe('renderReplyToHTML direct tier', () => {
 
     expect(agent.getCalls()).toHaveLength(1)
   })
+
+  it('a fork-tier render records the originating chat as the render one-shot parent', async () => {
+    const agent = createRenderAgent()
+    const e = newRenderEngine(agent, createStubMediaPlatform('feishu'))
+    const key = 'test:chat:parentlink'
+    e.sessions.getOrCreateActive(key).setAgentInfo('cc-hub-native-1', 'dsh', 'hub')
+
+    await renderReplyToHTML(e, key, replyOf(2001))
+
+    expect(agent.getCalls()).toHaveLength(1)
+    expect(agent.getCalls()[0]?.parentSession).toBe('cc-hub-native-1')
+  })
+
+  it('a render for a chat with no live session leaves parentSession unset', async () => {
+    const agent = createRenderAgent()
+    const e = newRenderEngine(agent, createStubMediaPlatform('feishu'))
+
+    await renderReplyToHTML(e, 'test:chat:orphan', replyOf(2001))
+
+    expect(agent.getCalls()).toHaveLength(1)
+    expect(agent.getCalls()[0]?.parentSession).toBeUndefined()
+  })
 })

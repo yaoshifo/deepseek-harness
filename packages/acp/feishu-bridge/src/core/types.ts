@@ -1968,6 +1968,33 @@ export interface RenderQuerier {
   ): Promise<string>
 }
 
+/**
+ * Optional: the agent observes runtime agent-to-agent messages (source kind
+ * `agent-message` relayed onto a live session) and forwards them to a
+ * notifier the engine registers — the observation seam behind the subtask
+ * report dedup (the runtime delivers these straight to the native session,
+ * never through the platform pipeline).
+ */
+export interface AgentDirectMessageSource {
+  /**
+   * Register the sink for observed agent-messages. The notifier receives
+   * (parent bridge session key, sender native session id, message text);
+   * registering replaces any previous sink.
+   * @param fn - the engine-side sink.
+   */
+  registerAgentDirectMessageNotifier(fn: (parentSessionKey: string, senderNativeId: string, content: string) => void): void
+}
+
+/**
+ * Structural check for the {@link AgentDirectMessageSource} capability.
+ *
+ * @param a - the agent to inspect.
+ * @returns the capability view, or undefined when not implemented.
+ */
+export function asAgentDirectMessageSource(a: Agent): AgentDirectMessageSource | undefined {
+  return withMethod<AgentDirectMessageSource>(a, 'registerAgentDirectMessageNotifier')
+}
+
 /** Optional: platform can send standalone image messages (Go ImageSender). */
 export interface ImageSender {
   sendImage(replyCtx: unknown, img: ImageAttachment): Promise<void>

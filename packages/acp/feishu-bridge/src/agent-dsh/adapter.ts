@@ -815,6 +815,12 @@ export class DshAgentAdapter {
    * so a registration after adapter construction applies.
    */
   private deniedSkillsSource: (() => readonly string[]) | undefined
+  /**
+   * Engine-side sink for observed agent-to-agent messages (the subtask
+   * report dedup's observation point; the runtime relays these straight
+   * onto the native session, bypassing the platform pipeline).
+   */
+  private agentDirectMessageNotifier: ((parentSessionKey: string, senderNativeId: string, content: string) => void) | undefined
 
   /**
    * Inject the engine-side ask delegate the native approval answerer and
@@ -869,6 +875,35 @@ export class DshAgentAdapter {
     return this.deniedSkillsSource?.() ?? []
   }
 
+  /**
+   * Register the engine-side sink for observed agent-to-agent messages
+   * (AgentDirectMessageSource capability): a relayed agent-message on a
+   * live session forwards (bridge session key, sender native id, text).
+   * Replaces any previously registered sink.
+   * @param fn - the engine's noteAgentDirectMessage seam.
+   */
+  registerAgentDirectMessageNotifier(fn: (parentSessionKey: string, senderNativeId: string, content: string) => void): void {
+    this.agentDirectMessageNotifier = fn
+  }
+
+  /**
+   * Forward one relayed agent-message user/event on a live session to the
+   * registered notifier. Non-relay sources and empty bodies never notify;
+   * without a registered sink the observation is inert.
+   * @param target - the live session the message landed on (the parent chat).
+   * @param event - the durable user/message event being projected.
+   */
+  private noteAgentMessageIfRelay(target: DshAgentSession, event: Record<string, unknown>): void {
+    if (this.agentDirectMessageNotifier === undefined || event['type'] !== 'user/message') return
+    const data = (event['data'] ?? {}) as Record<string, unknown>
+    const source = data['source'] as { kind?: string; senderSessionId?: unknown } | undefined
+    if (source?.kind !== 'agent-message') return
+    const sender = typeof source.senderSessionId === 'string' ? source.senderSessionId : ''
+    const content = textOfBlocks(data['content'] as ContentBlock[] | undefined)
+    if (sender === '' || content === '') return
+    this.agentDirectMessageNotifier(target.sessionKey(), sender, content)
+  }
+
   constructor(ctx: DshContextLike, cfg: DshAdapterConfig) {
     this.ctx = ctx
     this.cfg = cfg
@@ -888,6 +923,7 @@ export class DshAgentAdapter {
     ): void => {
       const target = this.liveSessions.get(String(session.id))
       if (target !== undefined) {
+        this.noteAgentMessageIfRelay(target, event)
         target.projectSessionEvent(event)
         return
       }

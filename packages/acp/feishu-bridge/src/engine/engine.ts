@@ -54,6 +54,7 @@ import {
   asChatJumpURLer,
   asContinuableDelegator,
   asCronReplyTargetResolver,
+  asAgentDirectMessageSource,
   asForkQuerierWithProvider,
   asForkSessionPreparer,
   asGroupIconAvatarSetter,
@@ -1304,6 +1305,12 @@ export class Engine {
     this.i18n = new I18n(lang)
     this.sessions.invalidateForAgent(agent.name())
     this.monitor = new MonitorCore(this)
+    // Feed observed runtime agent-to-agent messages (relayed straight onto a
+    // live native session, bypassing the platform pipeline) into the subtask
+    // report dedup seam.
+    asAgentDirectMessageSource(agent)?.registerAgentDirectMessageNotifier(
+      (parentSessionKey, senderNativeId, content) => { this.noteAgentDirectMessage(parentSessionKey, senderNativeId, content) },
+    )
   }
 
   // ── configuration setters used by ported tests ─────────────────────────
