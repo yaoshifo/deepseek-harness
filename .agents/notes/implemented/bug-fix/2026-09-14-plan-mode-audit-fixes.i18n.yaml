@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-14-plan-mode-audit-fixes.md
-2026-09-14-plan-mode-audit-fixes.md: 44c166f11ccd742899295efe305c10b299e12fda
-2026-09-14-plan-mode-audit-fixes.zh.md: 52207e342221d0dc045e39e8371fa5f86a6bb35e
+2026-09-14-plan-mode-audit-fixes.md: 22f57afe5f7e64062108d98d3a7e863cc268e676
+2026-09-14-plan-mode-audit-fixes.zh.md: 8b81aeba2009b26fbb6977bc1bca56c5cb602108

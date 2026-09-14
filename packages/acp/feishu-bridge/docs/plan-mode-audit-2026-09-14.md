@@ -1,14 +1,14 @@
 # plan 模式实现审计（补充报告，2026-09-14）
 
 - **基线**：`dev` @ `fa9b76a005`（含 09-11 上游 rc.2 同步）
-- **本文件定位**：同一主题的**第二份独立审计**。仓库根目录已有一份并行会话产出的 `plan-mode-audit-2026-09-12.md`（169 行、26 条发现，本文简称「09-12 报告」）。两份互不重叠为主：本文的 F1 / F4a / F6 是 09-12 报告**没有**的（含一条**已实测复现的红门禁**），其余条目与它部分重叠、并补充了证据或反向。
-- **本次不实施任何修复**（用户裁定 2026-09-12）：本文件只记录调研结果；§0 给出两份报告的交叉索引，§4 给出合并后的修复顺序。
-- **置信度标注**：**实测** = 本次实际跑过/逐例算过；**静态核对** = 逐行/逐字节读过；**机制推断** = 从代码路径推演、未实际触发。
-- **复审**：2026-09-14（另一并行会话，dev @ cb939daaf0）——F1-F8 独有发现全数复核属实（F1 为静态坐实：5 份 JSON sidecar + ptc 的 system-prompt 类型块确认过期、门禁接线与 CI 触发核实）；F1 的 dsh-memory 行与样本计数已勘误，§4 分组口径已更正（均见文内复审注）。
+- **本文件定位**：同一主题的**第二份独立审计**。同目录的 `plan-mode-audit-2026-09-12.md`（172 行、26 条发现，本文简称「09-12 报告」）。两份互不重叠为主：本文的 F1 / F4a / F6 是 09-12 报告**没有**的（含一条**已实测复现的红门禁**），其余条目与它部分重叠、并补充了证据或反向。
+- **范围**：本报告只记录调研结果、不实施修复；§0 给出两份报告的交叉索引，§4 给出合并后的修复顺序。
+- **置信度标注**：**实测** = 实际跑过/逐例算过；**静态核对** = 逐行/逐字节读过；**机制推断** = 从代码路径推演、未实际触发。
+- **复审**：2026-09-14（dev @ cb939daaf0）——F1-F8 独有发现全数复核属实（F1 为静态坐实：5 份 JSON sidecar + ptc 的 system-prompt 类型块确认过期、门禁接线与 CI 触发核实）；F1 的 dsh-memory 行与样本计数已勘误，§4 分组口径已更正（均见文内复审注）。
 
 ---
 
-## 0. 交叉索引（我的发现 ↔ 09-12 报告）
+## 0. 交叉索引（本文发现 ↔ 09-12 报告）
 
 | 本文条目 | 09-12 报告 | 关系 |
 | --- | --- | --- |
@@ -23,7 +23,7 @@
 | **F8 缺失测试** | #18（拒绝门边界）、#13（心跳时序） | 部分重叠；补充：`set()` 直提交路径 append 失败、pre-step 的 reject/aborted 守卫、compaction 那条**同义反复**测试 |
 | **F9 其余** | #17（`get().pending` 同名异义）、#20（`get` 无消费者） | 部分重叠；补充：`layers` 在 asker 侧未校验、i18n 三处同值 + locale 覆盖不一致、同一计划三套标题派生、计划文件覆盖时丢弃分层（有意边界） |
 
-**对 09-12 报告两处结论的复核（我重算了，结论支持它）**：
+**对 09-12 报告两处结论的复核（独立重算，结论支持它）**：
 
 - 它的 #5：`/^##\s*(实施细节|技术细节|Implementation Details?|Implementation Notes?)\s*$/m` 逐例实测——`##Implementation Details`（无空格，CommonMark 里不是标题）**命中**、`##\n实施细节`（跨行）**命中**（`\s*` 吃换行）、`### 实施细节` 不命中；`\`\`\`\n## 实施细节\n\`\`\`` 命中（围栏内也拦）。双向都有问题，成立。
 - 它的 #3：`routeAskResponse` 里 `approving ? cancelPlanRenders : cancelRenders`（`packages/acp/feishu-bridge/src/engine/engine.ts:6059-6063`）确实在判决路由（`:6073-6076`）**之前**执行；非判决自由文本时 `approving` 为假 → 走 `cancelRenders` 杀掉在途 plan 渲染，而 `routePermissionResponse` 只回 `PermissionHint`（`:6225`）并保持 ask 挂起。成立（行号与其引用略有偏移）。
@@ -85,7 +85,7 @@
 
 **影响**：模型可依赖一个不存在的保护——brief 未写明「只读」的 child 能在批准前落盘改动，用户审批门被静默绕过。与 `packages/AGENTS.md`「Enforce a decision in the operation that makes it」冲突。
 
-**建议**：(a) 改文案为义务陈述（「plan mode **不会**拦住它；批准前不得派发改写型 child」）——推荐，一行；或 (b) 落地真门禁（bridge 已能读 `ctx.get('planMode')`，child 已支持工具掩码）。用户 2026-09-03 已裁定 plan 模式暂不加固，故本次建议只做 (a)。
+**建议**：(a) 改文案为义务陈述（「plan mode **不会**拦住它；批准前不得派发改写型 child」）——推荐，一行；或 (b) 落地真门禁（bridge 已能读 `ctx.get('planMode')`，child 已支持工具掩码）。2026-09-03 已裁定 plan 模式暂不加固，建议只做 (a)。
 
 **置信度**：静态核对；「是否加门禁」属决策。
 
@@ -97,11 +97,11 @@
 
 - 检测规则 `packages/plan/plan-mode/src/index.ts:104` 三重收窄：仅二级标题、标题名整行精确（无后缀）、仅在 `details` 缺席时检查（`:318-325`）。
 - 漏网面（逐例实测）：`### 实施细节`、`#### 技术细节`、`# Implementation details`、`## Implementation details（附加说明）`、`## Implementation details (annex)`、`## **实施细节**`、`  ## 实施细节`（缩进）、`> ## 实施细节`（引用）、`## 实施细节与风险`、`## Details` 全部**不拒** → 静默退回单块计划卡（正是 `6cbbfd489b` 要治的症状：其 commit 记录 glm-5.3 四次采样中三次内联）。
-- 误伤面（与 09-12 报告 #5 同源，我重算过）：围栏内的 `## 实施细节` 会拒；`##Implementation Details` 与跨行 `##\n实施细节` 也会命中（`\s*` 允许零空格与换行）。
+- 误伤面（与 09-12 报告 #5 同源，独立重算）：围栏内的 `## 实施细节` 会拒；`##Implementation Details` 与跨行 `##\n实施细节` 也会命中（`\s*` 允许零空格与换行）。
 - 测试覆盖不对称：`packages/plan/plan-mode/tests/plan-mode.spec.ts:872-885` 只钉 `## 实施细节` 与 `## 技术细节` 两个中文组合；英文别名零测试，而 `packages/plan/plan-mode/README.md:95` 把它写成契约。
 - 有意接受的重复未记录为限制：`tests/plan-mode.spec.ts:887-892` 接受「plan 内联 + 已提交 details」，卡片会出现白话层被撑大 + 折叠面板重复同一内容（09-12 报告 #11 同点，建议只改测试名）。
-- 模型可见文案自相矛盾：`:80-86` 同时写「Send the COMPLETE plan」与「An **optional** `details` argument…」；`:297` 写「omit only when the plan carries no implementation detail」；拒绝文案 `:322-323` 却要求「the plan keeps the plain-language layer only」。09-12 报告 #6 从「承诺过强」角度看同一处，我补的是「描述内部自相矛盾」（前者字面鼓励把细节塞进 `plan`）。
-- 非飞书装配没有口径：`details`/两层/拒绝句全是 fork 新增，而 `packages/bundle/base/cordis.patch.yml:301-315` 与 `packages/preset/agent-presets/presets/{standard,ptc,cordis}/agent.cordis.yml` 的 plan section 对 `details`/分层**零提及**（`grep -c details` = 0）；两层口径只存在于 `packages/acp/feishu-bridge/src/engine/agent-conventions.ts:43-46`（bridge 普通会话专有；09-12 报告 #8 指出 bridge 子会话也拿不到，我补的是 preset/base 装配同样拿不到）。这些装配的模型只能从英文描述或报错学到分层，却同样被拒绝门拦。
+- 模型可见文案自相矛盾：`:80-86` 同时写「Send the COMPLETE plan」与「An **optional** `details` argument…」；`:297` 写「omit only when the plan carries no implementation detail」；拒绝文案 `:322-323` 却要求「the plan keeps the plain-language layer only」。09-12 报告 #6 从「承诺过强」角度看同一处，本文补充的是「描述内部自相矛盾」（前者字面鼓励把细节塞进 `plan`）。
+- 非飞书装配没有口径：`details`/两层/拒绝句全是 fork 新增，而 `packages/bundle/base/cordis.patch.yml:301-315` 与 `packages/preset/agent-presets/presets/{standard,ptc,cordis}/agent.cordis.yml` 的 plan section 对 `details`/分层**零提及**（`grep -c details` = 0）；两层口径只存在于 `packages/acp/feishu-bridge/src/engine/agent-conventions.ts:43-46`（bridge 普通会话专有；09-12 报告 #8 指出 bridge 子会话也拿不到，本文补充：preset/base 装配同样拿不到）。这些装配的模型只能从英文描述或报错学到分层，却同样被拒绝门拦。
 - 用户可见文案错：`src/index.ts:272-287` 把 `queued`/`cancelled`/`noop` 压成同一句——已在计划模式里再发 `/plan`（常见 `/plan <补充说明>`）会被告知「Entering plan mode (applies from the next step)」，实际什么都不发生；刚排了退出再发还被说成「正在进入」（实为取消退出）。对照 `:255-270` off 分支有四路文案。
 - 判据不对称：退出工具 guard 只读落盘状态（`:312`），提示段（`:237`）与 `set()`（`:456`）用 `pending ?? logged`；批准后 pending 已置 false（`:381`）而落盘仍 true，同一 assistant 批次内第二次 `exit_plan_mode` 会再开一张评审卡（09-12 报告 #19 只把这处建议为「注释互指」）。
 
@@ -188,7 +188,7 @@
 - **`ctx.planMode.get()` 无生产消费者**（同 09-12 报告 #20）：`src/index.ts:431-435`，全仓只有测试调用（`tests/plan-mode.spec.ts` 40+ 处）；bridge 只用 `set`，web 读投影视图，SDK/Python 零命中。
 - **「计划」标签三处分裂 + locale 覆盖不一致**：模板 CSS 硬编码中文并写死 `lang="zh-CN"`（`plan-render-templates.ts:13/:16`，20+ 个 `content:"中文"` 字面量）；`i18n/messages.ts:147`（`plan_content_header`，5 locale）与 `:247`（`render_tag_plan`，仅 en/zh，同值）；`:242-248` 的 `plan_export_btn`/`render_status_*` 只有 en/zh，回退链（`i18n/index.ts:128-145`）让 ja/es 落英文、zh-TW 落简体 → en/ja/es 用户拿到中文图片而同屏卡片是本地化文案。
 - **同一计划三套标题派生**：卡片头 i18n（`engine.ts:5806-5807`）／`.html` 产物名（`plan-render.ts:1003-1012`）／PNG 名与图片卡标题（`:1193-1194`、`:1205-1206` 取渲染 fork 自己写的 `<h1>`）。计划侧不解析 markdown（`markdownToSimpleHTML` 唯一调用点 `:1037` 是 reply 路径），故无重复解析成本，不一致只在命名。
-- **计划文件覆盖会丢弃分层**：`engine.ts:5429-5439` 在 agent 本轮写过计划文件且可读时用文件覆盖 `content` 并 `planLayers = undefined`（卡片退回单块）。**有意设计且有测试**（`tests/engine/engine-m3-plan.spec.ts:394`），本次不改，仅记录为已知边界。
+- **计划文件覆盖会丢弃分层**：`engine.ts:5429-5439` 在 agent 本轮写过计划文件且可读时用文件覆盖 `content` 并 `planLayers = undefined`（卡片退回单块）。**有意设计且有测试**（`tests/engine/engine-m3-plan.spec.ts:394`），不改，仅记录为已知边界。
 
 ---
 
@@ -228,12 +228,12 @@
 | A | compaction：加「落盘前必须含已批准计划」的包含性检查（frameSummary 比对 shadowed region 里 `exit_plan_mode` 的原参数），并把 README 的「fail closed」变成事实；同 09-12 报告 #7 | **做**（现在只有提示词 + 同义反复测试，承诺强于代码） | 改上游包 compaction-basic 的落盘校验 + README 双语 + 行为测试 |
 | B | `layers` 在 asker 侧补第三条校验（或让桥从 `detail` 派生分层） | **做**（补第三断言最小） | 落在上游共享类型包；也可 fork 局部加固 |
 | C | 删 `ctx.planMode.get()`（零生产消费者；同 09-12 报告 #20） | **可做**（pre-stable 允许） | 公共 API 变更，需改 40+ 处测试断言；09-12 报告建议随上游提案（与它的 #17 同名异义同族） |
-| D | 计划图片中文标签本地化 / 词条补齐（ja/es/zh-TW）；至少合并同值词条 | **看你要不要**（图片是否本地化属产品决定） | 模板改造或补 4 个 locale |
+| D | 计划图片中文标签本地化 / 词条补齐（ja/es/zh-TW）；至少合并同值词条 | **待定**（图片是否本地化属产品决定） | 模板改造或补 4 个 locale |
 | E | 把「两层计划」整体提上游（`details` + `layers` + 拒绝门） | **待定** = F6 台账的状态栏 | 需要一份上游 PR；fork 侧 diff 可归零 |
 
 ---
 
-## 4. 合并后的修复顺序（两份报告的并集；本次不实施）
+## 4. 合并后的修复顺序（两份报告的并集；未实施）
 
 - **Wave 1（并行，文件面不相交）**
   - **G1 引导面**：09-12 报告 A 组（#1 工具名 + 内容 pin、#2 patch 补第 4 个 delta 与 lockstep 口径、#6 三处文案条件化、#9/#21 README、#22 计数）+ 本文 F2（假保护声明改义务陈述）、F3 的 `/plan` 文案与 guard 判据、F7 的 README:75 / 永真断言 / 三份 note / chatroom 死文本。
@@ -278,11 +278,11 @@ $ DSH_SNAPSHOT=replay ./node_modules/.bin/vitest run --config vitest.web.config.
  Tests  8 passed (8)
 ```
 
-操作注意：本会话直接跑会先撞两层障碍——(1) 嵌套 `sandbox-exec` 被会话沙箱拒绝（子进程 `SandboxUnavailableError` / `sandbox_apply: Operation not permitted`），需按仓库 host-sandbox 条款一次性提权；(2) `pnpm exec/run` 会触发依赖检查报 `ERR_SQLITE_ERROR`，改用 `./node_modules/.bin/vitest`。
+操作注意：直接跑会先撞两层障碍——(1) 嵌套 `sandbox-exec` 被会话沙箱拒绝（子进程 `SandboxUnavailableError` / `sandbox_apply: Operation not permitted`），需按仓库 host-sandbox 条款一次性提权；(2) `pnpm exec/run` 会触发依赖检查报 `ERR_SQLITE_ERROR`，改用 `./node_modules/.bin/vitest`。
 
 ## 附录 C：未做的验证与边界
 
-- 未执行刷新、未修改任何仓库文件（除本文件）。仓库根目录另有并行会话的 `plan-mode-audit-2026-09-12.md`（untracked），本文件不改动它。
+- 未执行刷新、未修改任何产品文件（两份审计报告本身除外）。同主题的 09-12 报告（`plan-mode-audit-2026-09-12.md`）与本文同目录存放。
 - 两份 `platform: pwsh` 样本的失效为静态核对，本机（macOS）与 Linux 都跳过；`snapshots/acp/dsh-memory` 所在簇另有既存失败（replay 需 `DEEPSEEK_API_KEY`），红/绿需在有 key 的环境确认。
 - F4a 的时序窗口、F4b 的「失败后不可重试」为代码路径静态确定 + 触发时序推断，落地时应各自先写红测试。
 - `presentCall` 零消费者限定 in-tree。

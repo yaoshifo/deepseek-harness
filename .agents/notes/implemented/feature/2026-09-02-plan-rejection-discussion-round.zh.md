@@ -18,7 +18,7 @@ Status: implemented
 
 **桥侧 flush：拒绝后的正文段在新计划卡前以独立卡片投递。** 用户否决：仍是插在消息流中间的一张卡、机械更多，且节奏（立即重提交）没改对。
 
-**硬门：同 turn 重提交自动拒绝**（引擎的 `feishuBridge/ask-approval` 瀑布已存在，role-pick 自动审批在用）。搁置而非否决：决定性强，但会误拒拒绝备注中明确要求立即重看的合法情形（「改完直接给我看」）。设计记录于此；仅当活体观察发现引导被无视时再挂。
+**硬门：同 turn 重提交自动拒绝**（引擎的 `feishuBridge/ask-approval` 瀑布已存在，role-pick 自动审批在用）。搁置而非否决：决定性强，但会误拒拒绝备注中明确要求立即重看的合法情形（「改完直接给我看」）。设计记录于此；仅当活体观察发现引导被无视时再挂。该活体观察已于 2026-09-14 出现，锁定以 [turn-hold note](2026-09-14-plan-rejection-turn-hold.zh.md) 落地。
 
 **section 内声明压过工具描述**（"these rules override the description's revise-and-present-again clause"）。用户否决：不优雅；更干净的修法是把策略从描述里拿掉（机制/策略分离），即已上线方案。
 

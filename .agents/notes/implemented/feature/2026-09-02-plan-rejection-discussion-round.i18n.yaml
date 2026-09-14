@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-02-plan-rejection-discussion-round.md
-2026-09-02-plan-rejection-discussion-round.md: 2b5332cf01e32f0842d4dfa4f8f1c666ccbca81b
-2026-09-02-plan-rejection-discussion-round.zh.md: 297a16517acba8ca24ba624000f94b172b3b169c
+2026-09-02-plan-rejection-discussion-round.md: 541696ab22316d95735fa0069ab6256df3150250
+2026-09-02-plan-rejection-discussion-round.zh.md: fbfd61a8eed7d96f5b8e9c337c2cb677c85aa8e6

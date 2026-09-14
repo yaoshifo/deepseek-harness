@@ -164,7 +164,7 @@ ask_user_question 会暂停工具调用，直到当前 UI 提供方返回人类�
 
 ### `exit_plan_mode`
 
-仅在规划模式下使用。提交计划供用户评审，并在获批后退出规划模式。发送**完整的** Markdown 计划，以一个为计划命名的 # 标题开头。用户可以批准（从你的下一步骤起执行计划），也可以要求继续规划；其反馈会通过工具结果返回，请修改后再次提交。
+仅在规划模式下使用。提交计划供用户评审，并在获批后退出规划模式。发送**完整的** Markdown 计划，以一个为计划命名的 # 标题开头——`plan` 携带白话层，`details` 携带实施细节层。用户可以批准（从你的下一步骤起执行计划），也可以继续规划——其反馈会通过工具结果返回。可选的 `details` 参数在计划之后携带实施细节附录；能力足够的 UI 默认折叠呈现。计划内嵌的实施细节段会被拒绝，除非其内容已随 `details` 提交。
 
 ```json
 {
@@ -172,7 +172,7 @@ ask_user_question 会暂停工具调用，直到当前 UI 提供方返回人类�
   "properties": {
     "plan": {
       "type": "string",
-      "description": "The complete plan, as markdown, starting with a # heading that names it."
+      "description": "The plan's plain-language layer, as markdown, starting with a # heading that names it."
     },
     "details": {
       "type": "string",

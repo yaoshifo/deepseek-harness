@@ -69,11 +69,13 @@
 
 | 项 | dsh-im 参照 | bridge 改动点 | 验收 |
 |---|---|---|---|
-| 三态判据 + 终态联动 | `semantic/delivery.mjs:116-139`、`message-failure.mjs:217-229`（401/403→permission、429→rate-limit、其余→uncertain） | `engine.ts:1911-1926` 失败上抛三态；`engine.ts:3987` 终态纳入投递结果；`feishu/progress.ts:141-144` 与 `engine.ts:4198-4227` 未送达时改警示口径 | 三态判据单测（五类错误形态）；「未送达不显成功」行为测试 |
-| uuid 幂等 + 重试边界 | `telegram-api.mjs:383-400`（fetch 抛错/超时/解析失败→unknown；明确错误码→确定失败） | `platform.ts:3638-3651` 传 uuid；`retry.ts` 把自合成超时移出可重试集合 | **先真机验证服务端去重**（同一 uuid 重发断言只落一条）再全量 |
-| 强杀前交货 | `deferred-delivery.mjs` 廉价版 | 复用 `engine.ts:4298-4373` 分片补投范式，接到 `:3398-3413`（stall 耗尽）与 `:3432-3447`（硬帽）两条 return 路径；`:4682-4686` 的 textParts 删除前先投 | 两条强杀路径的分片投出测试 |
-| 兜底失败交付路径 | — | `streaming.ts:1778-1788` 改「投递成功才删卡」；兜底也失败时至少发含答案文件路径的消息；`:1748-1771` `deliverAnswer` 返回值消费 | 兜底最坏情形（兜底也失败）测试 |
+| 三态判据 + 终态联动（u1；u2+u3） | `semantic/delivery.mjs:116-139`、`message-failure.mjs:217-229`（401/403→permission、429→rate-limit、其余→uncertain） | `engine.ts:1911-1926` 失败上抛三态；`engine.ts:3987` 终态纳入投递结果；`feishu/progress.ts:141-144` 与 `engine.ts:4198-4227` 未送达时改警示口径 | 三态判据单测（五类错误形态）；「未送达不显成功」行为测试 |
+| uuid 幂等 + 重试边界（u6） | `telegram-api.mjs:383-400`（fetch 抛错/超时/解析失败→unknown；明确错误码→确定失败） | `platform.ts:3638-3651` 传 uuid；`retry.ts` 把自合成超时移出可重试集合 | **先真机验证服务端去重**（同一 uuid 重发断言只落一条）再全量 |
+| 强杀前交货（u4） | `deferred-delivery.mjs` 廉价版 | 复用 `engine.ts:4298-4373` 分片补投范式，接到 `:3398-3413`（stall 耗尽）与 `:3432-3447`（硬帽）两条 return 路径；`:4682-4686` 的 textParts 删除前先投 | 两条强杀路径的分片投出测试 |
+| 兜底失败交付路径（u5） | — | `streaming.ts:1778-1788` 改「投递成功才删卡」；兜底也失败时至少发含答案文件路径的消息；`:1748-1771` `deliverAnswer` 返回值消费 | 兜底最坏情形（兜底也失败）测试 |
 | 未知结果提示 | `message-failure.mjs:85-86`（「不要立即重复提交」） | `engine.ts:1911-1926` 按三态走 i18n 词条，与交付物读失败/旁路提问超时的既有文案同风格 | 词条进 i18n；活体制造发送失败看卡片口径 |
+
+批次码 u1–u6 对回[落地 note](../../../../.agents/notes/implemented/feature/2026-09-14-feishu-bridge-delivery-outcome.md) Decision 段的括号定义（u1 三态判据、u2+u3 终态联动、u4 强杀前交货、u5 先投递兜底、u6 发送意图 uuid）；「未知结果提示」行无专属批次码，其词条随 u2+u3 终态联动落地。
 
 **不引入** DeliveryReceipt 全套（单渠道无合并消费者，只搬三态判据）。
 
