@@ -70,6 +70,13 @@ export interface StreamPreviewCfg {
   maxChars: number
   /** Minimum ms between progress-card PATCHes; 0 flushes every progress change immediately. */
   progressFlushIntervalMs: number
+  /**
+   * Max chars of the live-narration section on progress cards; past it the
+   * card shows a truncation note and the engine delivers the full answer
+   * out-of-band (Feishu 11310 guard). Defaults to
+   * {@link maxAnalysisDisplayChars}.
+   */
+  maxAnalysisChars: number
   /** Enable partial-message streaming for earlier preview. */
   partial?: boolean
 }
@@ -89,7 +96,7 @@ export const previewReissueCooldownMs = 2000
 /**
  * Default preview configuration: enabled on all platforms, 800ms text update
  * interval, 15-char minimum delta, 2000-char cap, 300ms progress PATCH
- * interval, partial streaming off.
+ * interval, 6000-char live-narration cap, partial streaming off.
  *
  * @returns A fresh cfg populated with the defaults above.
  */
@@ -101,6 +108,7 @@ export function defaultStreamPreviewCfg(): StreamPreviewCfg {
     minDeltaChars: 15,
     maxChars: 2000,
     progressFlushIntervalMs: progressFlushInterval,
+    maxAnalysisChars: maxAnalysisDisplayChars,
   }
 }
 
@@ -236,6 +244,9 @@ export function padToFixedLines(s: string, maxLines: number): string {
   return `${lines.slice(0, maxLines - 1).join('\n')}\n... (${extra} more lines)`
 }
 
+// Tool entry code blocks pad their first line to this width so the desktop
+// client renders a stable horizontal scrollbar; body length changes between
+// PATCHes would otherwise make the card height jump (upstream Go cca7104b).
 const minCodeBlockLineWidth = 100
 
 function padLineWidth(s: string, minW: number): string {
@@ -2149,12 +2160,13 @@ export class StreamPreview {
       const [stripped] = stripTrailingSilent(analysisSource)
       const analysisDisplay = stripped
       if (analysisDisplay !== '') {
-        const charOverflow = runeCount(analysisDisplay) > maxAnalysisDisplayChars
+        const analysisCap = this.cfg.maxAnalysisChars
+        const charOverflow = runeCount(analysisDisplay) > analysisCap
         let tableOverflow = false
         const r = asPreviewOverflowReporter(this.platform)
         if (r !== undefined) tableOverflow = r.previewOverflow(analysisDisplay)
         if (charOverflow) {
-          b += Array.from(analysisDisplay).slice(0, maxAnalysisDisplayChars).join('')
+          b += Array.from(analysisDisplay).slice(0, analysisCap).join('')
           b += '\n\n…（内容过长，完整回复见下方单独消息/附件）'
           this.analysisTruncated = true
         } else if (tableOverflow) {

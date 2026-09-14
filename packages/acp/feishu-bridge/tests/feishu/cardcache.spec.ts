@@ -114,4 +114,32 @@ describe('per-card preview caches', () => {
     // Status text renders only on green cards; on a running card it is
     // cached for later, not shown inline.
   })
+
+  it('a failed PATCH does not advance the pre-button cache', async () => {
+    // Non-transient failure shape: withRetry gives up after one attempt, so
+    // the rejected updateMessage cannot have landed on the card either.
+    const fail = Object.assign(new Error('Request failed with status code 400'), {
+      response: { data: { code: 230001, msg: 'rate limited' } },
+    })
+    const api = cardCacheClient()
+    let patchCalls = 0
+    api.patch = async (params: { messageId: string; content: string }) => {
+      patchCalls++
+      if (patchCalls === 1) throw fail
+      api.patches.set(params.messageId, params.content)
+    }
+    const p = newPlatform(api)
+    const runningRC = { ...rc, sessionKey: 'sk_running' }
+
+    const h = await p.sendPreviewStart(runningRC, { kind: 'text', text: 'BODY_V1', status: { state: 'thinking', ts: '15:47:00', toolCallSeq: 0 } })
+    await expect(p.updateMessage(h, { kind: 'text', text: 'BODY_V2', status: { state: 'completed', ts: '15:47:01', toolCallSeq: 1 } })).rejects.toThrow('Request failed with status code 400')
+
+    // The stop-card rebuild works from what the card actually shows (V1);
+    // caching V2 ahead of the failed PATCH would restyle content the chat
+    // never received.
+    await p.renderStoppedCard(runningRC, h)
+    const patched = api.patches.get(h.messageID) ?? ''
+    expect(patched).toContain('BODY_V1')
+    expect(patched).not.toContain('BODY_V2')
+  })
 })

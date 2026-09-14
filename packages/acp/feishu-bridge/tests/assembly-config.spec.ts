@@ -390,6 +390,16 @@ describe('buildProjectAssembly config wiring', () => {
     // a module constant.
     expect(assemble(baseConfig()).engine.streamPreview.progressFlushIntervalMs).toBe(300)
   })
+
+  it('wires streamPreview.maxAnalysisChars over the default (2026-09-14 audit F4)', () => {
+    const parsed = Config({ ...baseConfig(), streamPreview: { maxAnalysisChars: 1200 } } as unknown as FeishuBridgeConfig)
+    expect(parsed.streamPreview?.maxAnalysisChars).toBe(1200)
+    const { engine } = assemble({ ...baseConfig(), streamPreview: { maxAnalysisChars: 1200 } })
+    expect(engine.streamPreview.maxAnalysisChars).toBe(1200)
+    // The default keeps the cap the running card had while this value was a
+    // module constant.
+    expect(assemble(baseConfig()).engine.streamPreview.maxAnalysisChars).toBe(6000)
+  })
 })
 
 describe('buildProjectAssembly plan_render wiring (Go [projects.plan_render], #47/#48)', () => {

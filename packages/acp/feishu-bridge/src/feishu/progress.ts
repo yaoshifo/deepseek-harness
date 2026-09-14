@@ -49,9 +49,9 @@ export function buildCardJSON(content: string): string {
  * @param title - Header title; empty string omits the header.
  * @param template - Header color template (e.g. "green").
  * @param iconKey - Header custom_icon image key; empty string renders no icon.
- * @returns Feishu interactive-card JSON string.
+ * @returns The card structure, ready for button injection or serialization.
  */
-export function buildCardJSONWithHeader(content: string, title: string, template: string, iconKey: string): string {
+export function buildCardWithHeader(content: string, title: string, template: string, iconKey: string): FeishuCardMap {
   const card: FeishuCardMap = {
     schema: '2.0',
     config: { wide_screen_mode: true },
@@ -68,7 +68,20 @@ export function buildCardJSONWithHeader(content: string, title: string, template
     card.header = header
   }
   card.body = compactCardBody([{ tag: 'markdown', content }])
-  return JSON.stringify(card)
+  return card
+}
+
+/**
+ * Serialize {@link buildCardWithHeader}'s card for the Feishu send API.
+ *
+ * @param content - Markdown body for the card.
+ * @param title - Header title; empty string omits the header.
+ * @param template - Header color template (e.g. "green").
+ * @param iconKey - Header custom_icon image key; empty string renders no icon.
+ * @returns Feishu interactive-card JSON string.
+ */
+export function buildCardJSONWithHeader(content: string, title: string, template: string, iconKey: string): string {
+  return JSON.stringify(buildCardWithHeader(content, title, template, iconKey))
 }
 
 /**
@@ -210,14 +223,14 @@ export function collapseStructuralBlankLines(s: string): string {
 }
 
 /**
- * Build the streaming-preview card JSON.
+ * Build the streaming-preview card structure.
  *
  * @param content - Text body rendered into the card.
  * @param spin - Spinner configuration for the header icon.
  * @param status - Structured status driving the header title/color/icon; absent renders the running default.
- * @returns Feishu interactive-card JSON string.
+ * @returns The card structure, ready for button injection or serialization.
  */
-export function buildPreviewCardJSON(content: string, spin: SpinnerCfg, status?: ProgressStatus): string {
+export function buildPreviewCard(content: string, spin: SpinnerCfg, status?: ProgressStatus): FeishuCardMap {
   const state = status?.state ?? ''
   // Strip non-whitelisted HTML exactly like the final reply path
   // (finalizeFeishuCardMarkdown): a bare tag PATCHes into an 11311 card
@@ -231,11 +244,23 @@ export function buildPreviewCardJSON(content: string, spin: SpinnerCfg, status?:
     state, true, status?.ts ?? '', status?.toolCallSeq ?? 0, status?.pendingSubtasks ?? 0)
   // Align the header icon with the state — thinking → pulse ring,
   // running/执行中 → Material spinner.
-  return buildCardJSONWithHeader(sanitizeMarkdownURLs(processed), title, color, spinnerKeyForState(spin, state))
+  return buildCardWithHeader(sanitizeMarkdownURLs(processed), title, color, spinnerKeyForState(spin, state))
+}
+
+/**
+ * Serialize {@link buildPreviewCard}'s card for the Feishu send API.
+ *
+ * @param content - Text body rendered into the card.
+ * @param spin - Spinner configuration for the header icon.
+ * @param status - Structured status driving the header title/color/icon; absent renders the running default.
+ * @returns Feishu interactive-card JSON string.
+ */
+export function buildPreviewCardJSON(content: string, spin: SpinnerCfg, status?: ProgressStatus): string {
+  return JSON.stringify(buildPreviewCard(content, spin, status))
 }
 
 /** Mutable parsed card JSON for in-place button injections. */
-interface MutableCardJSON {
+export interface MutableCardJSON {
   header?: { template?: unknown; title?: unknown; icon?: unknown }
   body?: { elements?: unknown[] }
   [key: string]: unknown
@@ -266,30 +291,29 @@ const replyButtonStates: ReadonlySet<string> = new Set([
  * exclusively to the waiting state an ask/permission park entered after
  * captureReplyForExport registered the partial reply under the same key, so
  * keep new blue progress states out of that precondition. No-op otherwise.
+ * Mutates the card in place; callers inject into their own copy.
  *
- * @param cardJSON - Rendered card JSON to mutate.
+ * @param card - Mutable card structure to append the button row to.
  * @param sessionKey - Session the buttons act on; empty string is a no-op.
  * @param exportKey - Key identifying the exportable reply.
  * @param statusText - Optional render-status line; empty string omits it.
  * @param buttonState - Progress status state driving state-keyed eligibility;
  *   undefined falls back to the header-template check.
- * @returns Card JSON with the button row appended, or the input unchanged on no-op.
+ * @returns True when the button row was appended.
  */
-export function injectReplyButtons(
-  cardJSON: string, sessionKey: string, exportKey: string, statusText: string, buttonState?: string,
-): string {
-  if (sessionKey === '') return cardJSON
-  const card = parseMutable(cardJSON)
-  if (card === undefined) return cardJSON
+export function injectReplyButtonsInto(
+  card: MutableCardJSON, sessionKey: string, exportKey: string, statusText: string, buttonState?: string,
+): boolean {
+  if (sessionKey === '') return false
   const hdr = card.header
-  if (hdr === undefined) return cardJSON
+  if (hdr === undefined) return false
   if (buttonState === undefined) {
-    if (hdr.template !== 'green' && hdr.template !== 'blue') return cardJSON
-  } else if (!replyButtonStates.has(buttonState)) return cardJSON
+    if (hdr.template !== 'green' && hdr.template !== 'blue') return false
+  } else if (!replyButtonStates.has(buttonState)) return false
   const body = card.body
-  if (body === undefined) return cardJSON
+  if (body === undefined) return false
   const elements = body.elements
-  if (!Array.isArray(elements)) return cardJSON
+  if (!Array.isArray(elements)) return false
   const columns: FeishuCardMap[] = [
     {
       tag: 'column',
@@ -319,6 +343,25 @@ export function injectReplyButtons(
   // Render-task status line shares the button row (saves vertical space).
   if (statusText.trim() !== '') columns.push(notationColumn(statusText))
   elements.push({ tag: 'column_set', flex_mode: 'none', columns })
+  return true
+}
+
+/**
+ * String form of {@link injectReplyButtonsInto}.
+ *
+ * @param cardJSON - Rendered card JSON to mutate.
+ * @param sessionKey - Session the buttons act on; empty string is a no-op.
+ * @param exportKey - Key identifying the exportable reply.
+ * @param statusText - Optional render-status line; empty string omits it.
+ * @param buttonState - Progress status state driving state-keyed eligibility;
+ *   undefined falls back to the header-template check.
+ * @returns Card JSON with the button row appended, or the input unchanged on no-op.
+ */
+export function injectReplyButtons(
+  cardJSON: string, sessionKey: string, exportKey: string, statusText: string, buttonState?: string,
+): string {
+  const card = parseMutable(cardJSON)
+  if (card === undefined || !injectReplyButtonsInto(card, sessionKey, exportKey, statusText, buttonState)) return cardJSON
   return JSON.stringify(card)
 }
 
@@ -349,23 +392,22 @@ function notationColumn(content: string): FeishuCardMap {
  * the settled ask's export/reply buttons instead — their turn runs on the
  * post-decision card. A non-empty hint rides the button row as a grey
  * notation column beside the button.
+ * Mutates the card in place; callers inject into their own copy.
  *
- * @param cardJSON - Rendered card JSON to mutate.
+ * @param card - Mutable card structure to append the button row to.
  * @param sessionKey - Session the stop command targets; empty string is a no-op.
  * @param hint - Background-task hint rendered beside the button; empty string omits it.
- * @returns Card JSON with the stop button row appended, or the input unchanged.
+ * @returns True when the button row was appended.
  */
-export function injectStopButton(cardJSON: string, sessionKey: string, hint = ''): string {
-  if (sessionKey === '') return cardJSON
-  const card = parseMutable(cardJSON)
-  if (card === undefined) return cardJSON
+export function injectStopButtonInto(card: MutableCardJSON, sessionKey: string, hint = ''): boolean {
+  if (sessionKey === '') return false
   const hdr = card.header
-  if (hdr === undefined) return cardJSON
-  if (hdr.template === 'green' || hdr.template === 'red' || hdr.template === 'orange' || hdr.template === 'turquoise' || hdr.template === 'grey') return cardJSON
+  if (hdr === undefined) return false
+  if (hdr.template === 'green' || hdr.template === 'red' || hdr.template === 'orange' || hdr.template === 'turquoise' || hdr.template === 'grey') return false
   const body = card.body
-  if (body === undefined) return cardJSON
+  if (body === undefined) return false
   const elements = body.elements
-  if (!Array.isArray(elements)) return cardJSON
+  if (!Array.isArray(elements)) return false
   const columns: FeishuCardMap[] = [{
     tag: 'column',
     width: 'auto',
@@ -380,25 +422,38 @@ export function injectStopButton(cardJSON: string, sessionKey: string, hint = ''
   }]
   if (hint.trim() !== '') columns.push(notationColumn(hint))
   elements.push({ tag: 'column_set', flex_mode: 'none', columns })
+  return true
+}
+
+/**
+ * String form of {@link injectStopButtonInto}.
+ *
+ * @param cardJSON - Rendered card JSON to mutate.
+ * @param sessionKey - Session the stop command targets; empty string is a no-op.
+ * @param hint - Background-task hint rendered beside the button; empty string omits it.
+ * @returns Card JSON with the stop button row appended, or the input unchanged.
+ */
+export function injectStopButton(cardJSON: string, sessionKey: string, hint = ''): string {
+  const card = parseMutable(cardJSON)
+  if (card === undefined || !injectStopButtonInto(card, sessionKey, hint)) return cardJSON
   return JSON.stringify(card)
 }
 
 /**
  * Append the stopped-card footer: a disabled "⏹ 已停止" indicator beside an
  * active "▶ 继续执行" button (cmd:继续 resumes the same agent session).
+ * Mutates the card in place; callers inject into their own copy.
  *
- * @param cardJSON - Rendered card JSON to mutate.
+ * @param card - Mutable card structure to append the footer to.
  * @param sessionKey - Session the resume command targets; empty string is a no-op.
- * @returns Card JSON with the stopped footer appended, or the input unchanged.
+ * @returns True when the footer was appended.
  */
-export function injectStoppedButtons(cardJSON: string, sessionKey: string): string {
-  if (sessionKey === '') return cardJSON
-  const card = parseMutable(cardJSON)
-  if (card === undefined) return cardJSON
+export function injectStoppedButtonsInto(card: MutableCardJSON, sessionKey: string): boolean {
+  if (sessionKey === '') return false
   const body = card.body
-  if (body === undefined) return cardJSON
+  if (body === undefined) return false
   const elements = body.elements
-  if (!Array.isArray(elements)) return cardJSON
+  if (!Array.isArray(elements)) return false
   elements.push({
     tag: 'column_set',
     flex_mode: 'none',
@@ -430,12 +485,41 @@ export function injectStoppedButtons(cardJSON: string, sessionKey: string): stri
       },
     ],
   })
+  return true
+}
+
+/**
+ * String form of {@link injectStoppedButtonsInto}.
+ *
+ * @param cardJSON - Rendered card JSON to mutate.
+ * @param sessionKey - Session the resume command targets; empty string is a no-op.
+ * @returns Card JSON with the stopped footer appended, or the input unchanged.
+ */
+export function injectStoppedButtons(cardJSON: string, sessionKey: string): string {
+  const card = parseMutable(cardJSON)
+  if (card === undefined || !injectStoppedButtonsInto(card, sessionKey)) return cardJSON
   return JSON.stringify(card)
 }
 
 /**
  * Turn a cached progress card into a stopped state: red "⏹ 已停止" header
  * (spinner icon dropped) plus the stopped-card footer, preserving the body.
+ * Mutates the card in place; callers pass their own copy of the cached card.
+ *
+ * @param card - Mutable card structure to restyle.
+ * @param sessionKey - Session the resume command targets.
+ */
+export function markCardStoppedInto(card: MutableCardJSON, sessionKey: string): void {
+  if (card.header !== undefined) {
+    card.header.template = 'red'
+    card.header.title = { tag: 'plain_text', content: '⏹ 已停止' }
+    delete card.header.icon
+  }
+  injectStoppedButtonsInto(card, sessionKey)
+}
+
+/**
+ * String form of {@link markCardStoppedInto}.
  *
  * @param cardJSON - Cached card JSON to restyle.
  * @param sessionKey - Session the resume command targets.
@@ -444,12 +528,8 @@ export function injectStoppedButtons(cardJSON: string, sessionKey: string): stri
 export function markCardStopped(cardJSON: string, sessionKey: string): string {
   const card = parseMutable(cardJSON)
   if (card === undefined) return cardJSON
-  if (card.header !== undefined) {
-    card.header.template = 'red'
-    card.header.title = { tag: 'plain_text', content: '⏹ 已停止' }
-    delete card.header.icon
-  }
-  return injectStoppedButtons(JSON.stringify(card), sessionKey)
+  markCardStoppedInto(card, sessionKey)
+  return JSON.stringify(card)
 }
 
 export { noSpinner }

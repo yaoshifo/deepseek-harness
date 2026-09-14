@@ -734,6 +734,7 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
     minDeltaChars: Schema.natural().description('Minimum new chars before a text-path update (same pre-progress window as intervalMs)'),
     maxChars: Schema.natural().description('Max text-path preview length (the pre-progress window and a frozen card without progress entries)'),
     progressFlushIntervalMs: Schema.natural().description('Minimum ms between progress-card PATCHes; 0 PATCHes every change immediately (default 300)'),
+    maxAnalysisChars: Schema.natural().description('Max chars of the live-narration section on progress cards; past it the card shows a truncation note and the full answer is delivered out-of-band (default 6000)'),
     disabledPlatforms: Schema.array(Schema.string()).description('Platforms without preview'),
   }).description('Streaming preview tuning'),
   usageProviders: Schema.array(Schema.object({

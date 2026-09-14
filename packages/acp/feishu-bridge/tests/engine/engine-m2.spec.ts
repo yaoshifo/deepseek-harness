@@ -43,7 +43,7 @@ function newEngine(): Engine {
 }
 
 async function newSyncPreviewForFallback(mp: ReturnType<typeof createBumpPlatform>): Promise<ReturnType<typeof newStreamPreview>> {
-  const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 5000, progressFlushIntervalMs: 300 }
+  const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 5000, progressFlushIntervalMs: 300, maxAnalysisChars: 6000 }
   const sp = newStreamPreview(cfg, mp as never, 'ctx', undefined, undefined)
   await sp.appendText('starting')
   const { ProgressEntry } = await import('../../src/streaming.ts')
