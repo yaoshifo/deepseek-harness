@@ -16,7 +16,7 @@ Keep the policy gate byte-identical; change only what `edit` returns on the unre
 - The recovery read emits `fs/observed` (present, version), so the retried edit guards on that version through the unchanged CAS path.
 - A target the recovery read confirms absent fails with `cannot edit "<path>": not found` instead — one round tells the model the file is gone, and the recorded absence updates the write guard.
 - Any recovery-read failure (binary target, decode error, cancellation) falls back to the plain pre-change diagnostic byte-for-byte: worst case equals the old behavior.
-- `write` is untouched: its unread path is guarded creation, not this friction. `remediateFsError` stays a pure function; the enrichment lives in `edit.ts` because it is IO.
+- `write`'s create path is untouched (guarded creation has no such friction), but its unread-overwrite rejection was later enriched the same way — see the follow-up note on the rejection-enrichment extension. `remediateFsError` stays a pure function; the enrichment lives in `src/unread-attachment.ts` (shared by both tools) because it is IO.
 
 ## Alternatives considered
 
@@ -31,7 +31,7 @@ Keep the policy gate byte-identical; change only what `edit` returns on the unre
 - Unread-edit healing drops from three tool rounds (reject → read → edit) to two (reject+content → edit); the content injected is exactly what `read` would have injected.
 - Each file is enriched at most once — the recovery read records the observation, so a second unread rejection cannot occur; a wrong `old_string` after enrichment fails on the literal-match path, which attaches nothing.
 - The enriched rejection is a single text segment on an `isError` result; session-log, SDK projection, and generic error rendering are unchanged in shape. The `fs-policy-reject` session snapshot was re-recorded through the refresh channel: its recorded second direct edit now succeeds (the fixture shows reject-with-content → retry success → DONE) and `workspace.expected` moves blue → green.
-- Error cards grow by the attached window (bounded by the read caps); the plain form remains for `write` and for recovery-read failures.
+- Error cards grow by the attached window (bounded by the read caps); the plain form remains for recovery-read failures (and, before the follow-up, for `write`).
 
 ## Testing
 

@@ -70,13 +70,25 @@ describe('default deployment (with dsh-fs-observation-policy)', () => {
       expect(await readFile(join(dir, 'new.txt'), 'utf8')).toBe('line one\nline two\n')
     })
 
-    it('rejects overwriting an existing file without reading it first', async () => {
+    it('rejects overwriting an existing unread file, attaching the current content for a direct retry', async () => {
       await writeFile(join(dir, 'a.txt'), 'original')
       const result = await call('write', { file_path: 'a.txt', content: 'clobber' })
       expect(result.isError).toBe(true)
       expect(result.error).toMatchObject({ info: { code: 'FS_NOT_OBSERVED' } })
-      expect(text(result)).toBe(notObservedDiagnostic(join(dir, 'a.txt')))
+      const message = text(result)
+      expect(message).toContain(`cannot modify "${join(dir, 'a.txt')}": file has not been read`)
+      expect(message).toContain('retry the write directly')
+      expect(message).toContain('1: original')
       expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('original')
+    })
+
+    it('the attached content is actionable: retrying the write directly succeeds without an intervening read', async () => {
+      await writeFile(join(dir, 'a.txt'), 'original')
+      const rejected = await call('write', { file_path: 'a.txt', content: 'clobber' })
+      expect(rejected.isError).toBe(true)
+      const retried = await call('write', { file_path: 'a.txt', content: 'replaced' })
+      expect(retried.isError).toBe(false)
+      expect(await readFile(join(dir, 'a.txt'), 'utf8')).toBe('replaced')
     })
 
     it('allows overwriting after a read', async () => {

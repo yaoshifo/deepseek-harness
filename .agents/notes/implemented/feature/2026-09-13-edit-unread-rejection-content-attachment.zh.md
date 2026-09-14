@@ -16,7 +16,7 @@ Status: implemented
 - 恢复读取发出 `fs/observed`（present, version），重试的 edit 经由未改动的 CAS 路径防护该版本。
 - 恢复读取确认缺失的目标以 `cannot edit "<path>": not found` 失败——一轮即告知模型文件没了，登记的缺失同时更新 write 守卫。
 - 恢复读取自身失败（二进制目标、解码错误、取消）逐字节回退到改动前的朴素诊断：最坏情况等于旧行为。
-- `write` 不动：其未读路径是守卫创建，不存在此摩擦。`remediateFsError` 保持纯函数；富化因涉及 IO 放在 `edit.ts`。
+- `write` 的创建路径不动（守卫创建无此摩擦），但其未读覆盖拒绝后来以同款方式富化——见拒绝富化推广的后续 note。`remediateFsError` 保持纯函数；富化因涉及 IO 放在 `src/unread-attachment.ts`（两工具共享）。
 
 ## Alternatives considered
 
@@ -31,7 +31,7 @@ Status: implemented
 - 未读 edit 自愈从三轮工具往返（拒绝 → read → edit）降到两轮（拒绝+内容 → edit）；注入的内容正是 `read` 本会注入的内容。
 - 每个文件最多富化一次——恢复读取登记了观察，第二次未读拒绝不会发生；富化后 `old_string` 写错走字面匹配失败路径，不附带内容。
 - 富化拒绝是 `isError` 结果上的单段文本；会话日志、SDK 投影与通用错误渲染的形态不变。`fs-policy-reject` 会话快照经 refresh 通道重录：录制的第二次直接 edit 现在成功（fixture 展示 拒绝附内容 → 重试成功 → DONE），`workspace.expected` 从 blue 改为 green。
-- 错误卡片因附带窗口变长（受读取上限约束）；朴素形态仍用于 `write` 与恢复读取失败。
+- 错误卡片因附带窗口变长（受读取上限约束）；朴素形态仍用于恢复读取失败（及推广前的 `write`）。
 
 ## Testing
 
