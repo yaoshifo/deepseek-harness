@@ -9,7 +9,7 @@ skillify 在**规范化模式**（用户给了一个既有 skill 要改造）下
 ### 1. 读目标
 - 确定目标 skill 的路径。用户给了名称就定位到 `~/.claude/skills/<name>/`（个人）或 `.claude/skills/<name>/`（仓库）；给了路径就直接用。
 - `Read` 它的 SKILL.md。若是文件夹，用 `Glob` 列出全部文件，掌握现有结构（有没有 `references/` / `scripts/` / `examples/`，各自装了什么）。
-- **先别改**——先看清现状：frontmatter（name / description / allowed-tools / when_to_use 齐不齐）、SKILL.md 体量、是否已是文件夹、中英文是否混杂。
+- **先别改**——先看清现状：frontmatter（name / description 齐不齐；有没有写了 dsh 不解析的字段）、SKILL.md 体量、是否已是文件夹、中英文是否混杂。
 
 ### 2. 审计
 `Read references/anti-patterns.md` 和 `references/skill-categories.md`，对目标逐项查：
@@ -19,7 +19,7 @@ skillify 在**规范化模式**（用户给了一个既有 skill 要改造）下
   1. 单文件该是文件夹（SKILL.md 超 ~200 行 / 含大段参考表、命令清单、模板）
   2. 复述显而易见（删掉 Claude 默认行为不变的内容）
   3. 无 Gotchas 段（footgun 散落或没记）
-  4. description 写给人看（无触发短语 / 漏 when_to_use）
+  4. description 写给人看（无触发短语）
   5. 钉死执行步骤（"先 X 再 Y"而非给目标）
   6. 该脚本的写成散文（确定性逻辑没存成 `scripts/`）
   7. 无 setup 沉淀（每次问同样配置）
@@ -36,14 +36,14 @@ skillify 在**规范化模式**（用户给了一个既有 skill 要改造）下
 - 改 description / name（影响触发）
 - 加 Gotchas（需要用户回忆 footgun 的具体症状）
 
-低风险改动（修格式、补 when_to_use 例句、修笔误）可以打包一并提议。
+低风险改动（修格式、修笔误）可以打包一并提议。
 
 ### 4. 应用
 按用户勾选的清单改：
 - 守"显而易见过滤器"——但删除要有第 3 步的用户授权。
 - 拆文件夹时：`mkdir` 建 `references/` 等，把超长内容迁出去（Write 新文件 + Edit 原 SKILL.md 删掉那段），SKILL.md 只留入口 + "何时读哪个"的指引。
 - 加 `## Gotchas` 段，把用户回忆出的 footgun 路由进去（每条"症状→做法"）。
-- 改 description / when_to_use 成触发导向（参考 `anti-patterns.md` 第 4 条）。
+- 改 description 成触发导向（参考 `anti-patterns.md` 第 4 条）。
 - 必要时 `Read references/output-template.md` 对齐骨架（Gotchas 槽、frontmatter 规则、文件夹结构）。
 
 ### 5. 复审

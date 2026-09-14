@@ -1,15 +1,6 @@
 ---
 name: feishu-bridge-model-switch
 description: "切换 feishu-bridge live bot（运维虾）的 LLM 模型：网关实测 → switch-model.mjs 双落点联动 → 手动 reload → 验收。触发例句：「换模型」「切换模型」「switch model」「运维虾用 glm/deepseek」「切到 deepseek-v4-flash」「还是 glm 模型」。"
-when_to_use: "当用户要更换 feishu-bridge live bot（运维虾）使用的模型，或反馈模型切换未生效/仍是旧模型时使用。涵盖：主模型切换、spawn 群默认路由切换、新模型网关实测与登记。"
-allowed-tools:
-  - Bash(node *)
-  - Bash(curl *)
-  - Bash(grep *)
-  - Bash(tail *)
-  - Bash(zstd *)
-  - Read
-  - Edit
 ---
 
 # feishu-bridge 模型切换
