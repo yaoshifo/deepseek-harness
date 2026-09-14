@@ -10,7 +10,7 @@ description: "飞书群排查运维手册（Runbook）：由群 chat_id（oc_ �
 ## 输入
 
 - `$chat_id`（必需）：`oc_` 开头的群 chat_id。只有群名时先用 lark-im skill 搜群拿 chat_id。
-- 症状（可选）：无响应 / 卡片冻结 / 内容丢失 / 只要日志路径。省略时默认走完整排查。
+- 症状（可选）：无响应 / 卡片冻结 / 内容丢失 / 答非所问 / 只要日志路径。省略时默认走完整排查。
 
 ## 目标
 
@@ -50,6 +50,7 @@ python3 <skill-dir>/scripts/locate-session.py "$chat_id"
 
 - 群无响应 / 卡死 / 卡片不动 → MUST 先读 `references/triage-fingerprints.md`，按指纹表判别后再下结论。
 - 审批卡没弹 / 反复要授权 → 同上，读指纹表的审批事件判别一节。
+- 答非所问 / 回复内容与本会话无关（含交付没人要的产物） → 同上，读指纹表 K 的生成失控取证法。
 - 内容丢失 / 找不到汇报 → MUST 先读 `references/group-history-recovery.md`。
 - 只要日志路径 → 第 1 步为止。
 

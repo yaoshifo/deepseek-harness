@@ -79,6 +79,16 @@
 - **恢复**：子会话判死后仍存活、上下文完整保留（变 idle）；父 agent 用 `feishu_bridge_subtask` 的 send 发一条继续指令即唤醒，turn 2 从断点续跑。并发压力下降后（其他子任务完成）重试成功率自然恢复。
 - **防线状态核对**：看子会话 `llm/retry` 事件里的 `policyKey`——判死时预算是否与 profile 配置一致（不一致说明 daemon 还没 /reload 新配置）；2026-09-14 配置落盘 15 次/60s 帽（总预算 ≈10 分钟，reload 生效后），若新事故仍判死，说明窗口 > 10 分钟，去 `.agents/notes/proposed/architecture/` 找 slowPhase 提案。
 
+### K 答非所问 = 生成失控（正文混入 / 自导自演对话，2026-09-14 oc_7cc5d 实测）
+
+- **症状**：agent 最终回复与本会话内容毫无关系——要么整段是另一话题的完整专业解答（用户直接问「你为什么回复我这个？」），要么交付物是自己幻觉出来的任务产物（如一份没人要的「用户协作备忘录」）。
+- **两种形态（同一故障族：GLM-5.3 超长上下文生成失控，与思考复读同族，正文侧新形态）**：
+  - **K1 正文域漂移**：`assistant/message` 的 reasoning 块正确响应上一条反馈、text 块却是无关领域的完整解答（实测：reasoning 在分析「去掉草稿反馈回流」，text 是 Java Thymeleaf/Joda 问答）。reasoning/text 分裂是决定性指纹。
+  - **K2 对话幻觉**：单条超长生成（实测 45k 字符）里伪造多轮「你说：…」用户追问并自问自答，末尾自我委托一个任务（「生成协作备忘录」）并真实执行（memory_write 已落盘才暴露）。
+- **取证法（先排除上下文污染再归因生成侧）**：①全事件类型（含 system/message、request/context、tool/call、relay 转发）grep 混入内容的关键词——零来源即排除「plan 多版本/记忆注入/调研报告把内容带进来」；②`usage.inputTokens` 看规模（实测 186k / 310k）；③`request/header` 看 model 与 reasoningEffort（实测 glm-5.3 + max）；④伪造用户轮验证：幻觉里的「用户原话」在真实 `user/message`（`source.kind=="user"`）与 exit_plan_mode 评审反馈的 tool/result 里均零命中。
+- **危害不止答非所问**：失控回合里的工具调用是真的——实测把基于幻觉对话的记忆写进了全局记忆并登记索引。收尾须排查污染（删文件+删索引行；全文可从该回合 memory_write 的 tool/call 参数找回）。
+- **恢复**：续用该会话有复发风险（失控上下文仍在模型历史里）；建议 /new 重开。伪造对话轮/域漂移的中流检测属 harness 防线缺口，未立项。
+
 ## 审批事件判别（卡片没弹 / 反复要授权）
 
 - 会话日志事件 `approval/asked` → `approval/decided` 的**时间差**：秒级/分钟级 = 真弹卡等用户点击；0–1ms = 被常设授权短路放行。两种情况日志事件形态相同，只有时间差能区分。
