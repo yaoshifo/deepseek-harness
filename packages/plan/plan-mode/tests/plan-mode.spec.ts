@@ -926,7 +926,7 @@ describe('exit_plan_mode', () => {
     expect(asked).toHaveLength(cases.filter(entry => !entry.gated).length)
   })
 
-  it('accepts the same inlined section once its content rides in details', async () => {
+  it('skips the rejection gate once any non-empty details is submitted', async () => {
     const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
     const result = await callExit(ctx, agent, '# P\n\nplain layer\n\n## 实施细节\n\nfiles', 'files')
     expect(result.isError).not.toBe(true)
