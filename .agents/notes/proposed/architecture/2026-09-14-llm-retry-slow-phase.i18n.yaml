@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-09-14-llm-retry-slow-phase.md
-2026-09-14-llm-retry-slow-phase.md: 38d1f2efeab2e4c6b84a8dafc28967e02b74f264
-2026-09-14-llm-retry-slow-phase.zh.md: 9bca7691162ed350fb42988ffa4cc323af053372
+2026-09-14-llm-retry-slow-phase.md: 8a1f349fcf5104470270e155046dd7d4b2162c9a
+2026-09-14-llm-retry-slow-phase.zh.md: aeaee376e111979d08634c1274095613e76b1fd3

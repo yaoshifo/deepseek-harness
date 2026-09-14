@@ -50,9 +50,16 @@ Why this shape rather than a bigger fast budget: a single exponential curve that
 
 Implementation is deliberately deferred. The 15-retry / 60 s cap deployed on 2026-09-14 must first prove insufficient — i.e., a future incident where a subtask turn dies to RATE_LIMIT exhaustion with the new `policyKey` visible in its `llm/retry` events (the triage fingerprint for this class now records how to check). Until then this note owns the design so implementation is a decision, not an investigation.
 
-## Verification plan (for the implementing change)
+## Acceptance criteria
 
 - `resolveRetryPolicy` unit tests: `slowPhase` absent → behavior identical to today; present → defaults, validation (rejects flat keys, non-positive values), frozen output.
 - Executor tests (`dsh-llm-retry`): fast-exhaust with `slowPhase` schedules a cooldown retry instead of `next()`; slow-exhaust reaches `next()`; non-retryable codes never enter the slow phase; abort during a slow wait settles without a further attempt.
 - Invariant tests: history with `retry > maxRetries` accepted under a slow-phase policy key, rejected without one.
 - A recorded-session snapshot exercising a retry loop is unaffected (no event-shape change) — confirm via the existing snapshot suite for the llm-retry surface.
+
+## Risks
+
+- **A slow-phase turn is a parked turn.** With the shape above, one agent can occupy its turn for up to ≈27 minutes while its subtask siblings and a gather hold everything else open — progress cards sit at a retry narration, and a user watching the chat sees a long silence. The alternative failure (turn death plus re-wake) was visible but bounded; the slow phase trades visible failure for quiet patience, and the trade only pays when the window really closes.
+- **Auth-class misconfigurations no longer fail fast if misclassified.** The slow phase inherits `retryableCodes`, so the protection is exactly as good as that gate; a provider that reports a credential failure under a rate-limit code would burn the full slow budget before surfacing. The fast phase's existing classification is the single point of truth and is unchanged by this note.
+- **Timer ownership under teardown.** A slow wait spans minutes, crossing stall-watchdog, engine-stop, and disposal paths that today only meet sub-30 s waits; the implementing change must prove cancellation settles the wait without a stray late attempt (covered by the abort criterion above).
+- **What the design knowingly gives up:** a dead turn's context re-entry via parent re-wake is removed for this failure class — the session never leaves the running set, so there is no idle-with-context state to resume; and the provider-key concurrency semaphore (the root-cause fix) stays unowned until incidents recur.
