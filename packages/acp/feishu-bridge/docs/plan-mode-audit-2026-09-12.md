@@ -3,8 +3,8 @@
 - **日期**：2026-09-12
 - **基线**：dev @ fa9b76a005（未推送批次之上）
 - **范围**：plan mode 三层实现——核心包 `packages/plan/plan-mode`、feishu-bridge 计划卡与审批链路、提示词引导面与压缩保留层；重点是最近的 fork 改动（de2def5b0e 两层拆分、6cbbfd489b 内嵌拒绝门、215c0e9507 折叠卡、f55c07520e 白话层取图、947fe0eaad/765a901b1b 渲染取消、3d6df58dcd 会话级修订计数、5691013c83/bc9c8a156c 并行引导、797294d9d1/4379cb7e06 压缩保留、1a847c57c6 引导收编、fff1ed7aa2 命令身份修复等）
-- **方法**：三个方向并行只读审计（核心包 / bridge 渲染链路 / 提示词与压缩层），主会话对每条关键发现逐一复核（正则行为 node 逐例实测、engine.ts 路由逻辑亲读、死代码全仓 grep、压缩实现亲读）。**本次未改任何文件。**
-- **复审**：2026-09-14（另一并行会话，dev @ cb939daaf0）——15 条修复项全数独立复核（13 条属实，#14/#21 勘误），§3 分组与 §4 部署状态按当日 dev 更新，行号漂移说明见 §3。另见同主题补充审计 `plan-mode-audit-2026-09-14.md`（F1 回放门禁已红、F4a 渲染族第 5 缺陷、F6 台账漏记等新增发现与两份报告的合并修复顺序）。
+- **方法**：三个方向并行只读审计（核心包 / bridge 渲染链路 / 提示词与压缩层），每条关键发现逐一复核（正则行为 node 逐例实测、engine.ts 路由逻辑亲读、死代码全仓 grep、压缩实现亲读）。全程只读，未改动任何文件。
+- **复审**：2026-09-14（dev @ cb939daaf0）——15 条修复项全数独立复核（13 条属实，#14/#21 勘误），§3 分组与 §4 部署状态按当日 dev 更新，行号漂移说明见 §3。另见同主题补充审计 `plan-mode-audit-2026-09-14.md`（F1 回放门禁已红、F4a 渲染族第 5 缺陷、F6 台账漏记等新增发现与两份报告的合并修复顺序）。
 
 ## 总体结论
 
@@ -68,7 +68,7 @@ agentConventionsPrompt（含两层提交约定）只在 plain session 注册；`
 **10. 单焦点/并行边界在 ≥4 个模型可见面重复，全局副本缺广度判据**
 `cordis.patch.yml:150` + `src/tools/subtask.ts:50-53`（2224 字符/请求）+ `skills/feishu-bridge-subtask/SKILL.md`（frontmatter 318 字符/请求）+ 机器全局 `~/.claude/CLAUDE.md`（经符号链接注入每个会话）
 三面收敛（preset 逐字一致）已完成；剩余问题：全局 AGENTS.md 并行条目与工具描述完全重叠，且**未带 bc9c8a156c 的广度判据**——非 bridge 的 fork 会话（headless/web + 通用 subagent 工具）只看得到粗粒度版，328-commit 合并审查被误判单焦点的原故障模式仍可复现。
-→ 全局条目退役（有 762ec26255 退役机器条目的先例）或补一句广度判据。你自己的配置，去留你定。
+→ 全局条目退役（有 762ec26255 退役机器条目的先例）或补一句广度判据。
 
 ### 低
 
@@ -122,7 +122,7 @@ renderPlanToHTML 每次 attempt 新建临时目录且失败不清理；renderRep
 **22. bridge patch 头注释「four transformations」与 lockstep spec 3 个 replace() 口径不一**
 `cordis.patch.yml:141` vs `bundle-patch.spec.ts:162-178`——委派句本就嵌在 delta 1 里。若做 #2 则自然变成真 4 个，一并改准。
 
-### 可简化（本次不建议动）
+### 可简化（不建议动）
 
 **23.** sendPlanContent/sendInlinePlanContent 尾部重复——`engine.ts:5772-5794` vs `:5853-5870`，只差内容来源，卡片参数与 export 按钮字面量双份。抽私有 helper 消 ~15 行。
 **24.** launchPlanRender/renderAndDeliverReply fork 骨架重复——`plan-render.ts:1363-1442` vs `:1242-1344`，pre-flight/attempt 循环/deliver/finally 成对重复。纯重构、风险大于收益。
@@ -162,11 +162,11 @@ renderPlanToHTML 每次 attempt 新建临时目录且失败不清理；renderRep
 
 ## 四、已裁定与已知未决（不在本方案内）
 
-- **plan 模式无硬门**：2026-08-28 你已裁定暂不加固（候选缓解与 Claude Code 对照参考都在案），本次不重提。
-- **审批停卡两个已知缺口**（9-3 在案）：停卡被中断/reload 吞掉后无法再点「允许」；文本「允许」不结算审批不切预设。缓解候选①停卡恢复（修根因不改契约）②批准类文本结算（与 README 裁定冲突，需你拍板）。
+- **plan 模式无硬门**：2026-08-28 已裁定暂不加固（候选缓解与 Claude Code 对照参考在案）。
+- **审批停卡两个已知缺口**（9-3 在案）：停卡被中断/reload 吞掉后无法再点「允许」；文本「允许」不结算审批不切预设。缓解候选①停卡恢复（修根因不改契约）②批准类文本结算（与 README 裁定冲突，需另行拍板）。
 - **待部署复测**（既有清单；复审 2026-09-14 更新）：36ab6062ae/4379cb7e06/b187efe2bd（执行分组归细节层）已推送（origin/dev 已含），live lib 已于 09-14 14:35 重建（live profile 软链直连本仓库）；复测点不变=新会话计划细节层出现分组标注。cb939daaf0 起 /status 可直接查 daemon 构建年龄与漂移。
 
 ## 五、审计方法备注
 
-- 三个并行审计各自只读；主会话复核了全部高/中发现（正则 node 实测、路由代码亲读、grep 验证死代码、压缩源码亲读），低危发现抽核。
+- 三个并行审计各自只读；全部高/中发现均经复核（正则 node 实测、路由代码亲读、grep 验证死代码、压缩源码亲读），低危发现抽核。
 - 审计中发现的路径勘误：presets 实际在 `packages/preset/agent-presets/`（非 packages/bundle/agent-presets）。

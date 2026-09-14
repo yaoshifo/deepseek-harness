@@ -6,7 +6,7 @@ English | [中文](2026-09-14-plan-mode-audit-fixes.zh.md)
 
 ## Problem
 
-Two plan-mode implementation audits ([2026-09-12 primary](../../../../../plan-mode-audit-2026-09-12.md), 26 findings; [2026-09-14 complementary](../../../../../plan-mode-audit-2026-09-14.md), F1-F9; both as corrected by review) surfaced four defect families:
+Two plan-mode implementation audits ([2026-09-12 primary](../../../../packages/acp/feishu-bridge/docs/plan-mode-audit-2026-09-12.md), 26 findings; [2026-09-14 complementary](../../../../packages/acp/feishu-bridge/docs/plan-mode-audit-2026-09-14.md), F1-F9; both as corrected by review) surfaced four defect families:
 
 1. **Guidance-surface distortions**: the feishu-bridge-subtask skill taught the Go-era tool name `ExitPlanMode` in three places (the dsh name is `exit_plan_mode`) and claimed plan mode intercepts executing spawns (no such mechanism exists; child sessions get `planMode.set(agent, false)`); the patch's plan-mode section carried single-layer narration contradicting the agent-conventions two-layer contract in the same request; three texts promised stronger validation than the gate delivers.
 2. **Submission/command-layer defects**: the `EMBEDDED_DETAILS_HEADING` single-line regex falsely rejected fenced headings and matched cross-line `##\n实施细节`; `/plan` collapsed queued/cancelled/noop into one "entering" message; the exit tool's guard read only the logged state, diverging from `plan:policy`'s `pending ?? logged` (a second review card could open in the same batch after approval).
@@ -33,5 +33,5 @@ Two plan-mode implementation audits ([2026-09-12 primary](../../../../../plan-mo
 
 - All three groups plus Wave 1.5 landed on dev: verification surfaces plan-mode 101/101, bridge guidance 175/175, render lifecycle 9 specs 285/285 (post-merge 4×232 stability), structural cleanup 260/260, template fold byte-identical; full feishu-bridge + chatroom suites 3478/3478.
 - Timing-test lesson (ProgressDrain flake, ~1/4 under load): a fixed count of fake-clock advances cannot drive real fs I/O inside the flow — condition-driven waits (observable signal + real-clock budget + negative control) are the deterministic pattern for such tests.
-- Known remainders: docs/tool-catalog.md drift against the new EXIT_DESCRIPTION, the client fixture's /plan two-outcome mirror not yet carrying the four-way copy, and two pwsh fixtures unrefreshable on this machine (Windows alignment) — all queued for the Wave 2 refresh batch or follow-up.
-- Wave 2 (align the six stale fixtures, refresh all affected lanes once, replay back to green) awaits `DEEPSEEK_API_KEY`; this batch sits on local dev, push/reload manual.
+- Known remainders: the client fixture's /plan two-outcome mirror does not yet carry the four-way copy. The tool-catalog drift against the new EXIT_DESCRIPTION closed when the catalog was regenerated from the current source, and d762ff098c refreshed the two Windows-only pwsh fixtures along with the other Wave 2 lanes.
+- Wave 2 (align the six stale fixtures, refresh all affected lanes once) landed as d762ff098c; this batch is on origin/dev.

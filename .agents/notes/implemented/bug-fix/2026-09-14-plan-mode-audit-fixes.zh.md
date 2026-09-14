@@ -6,7 +6,7 @@ Status: implemented
 
 ## 问题
 
-两份 plan 模式实现审计（[2026-09-12 主审计](../../../../../plan-mode-audit-2026-09-12.md)，26 项发现；[2026-09-14 补充审计](../../../../../plan-mode-audit-2026-09-14.md)，F1-F9；均经复审勘误后为准）核出四族缺陷：
+两份 plan 模式实现审计（[2026-09-12 主审计](../../../../packages/acp/feishu-bridge/docs/plan-mode-audit-2026-09-12.md)，26 项发现；[2026-09-14 补充审计](../../../../packages/acp/feishu-bridge/docs/plan-mode-audit-2026-09-14.md)，F1-F9；均经复审勘误后为准）核出四族缺陷：
 
 1. **引导面失真**：feishu-bridge-subtask skill 三处教 Go 时代工具名 `ExitPlanMode`（dsh 真名 `exit_plan_mode`）；宣称 plan mode 会拦截执行型 spawn（无任何机制，子会话被 `planMode.set(agent, false)` 强制关闭）；patch 的 plan-mode 段单层叙事与 agent-conventions 两层契约同请求矛盾；三处文案承诺强于实际校验。
 2. **提交/命令层缺陷**：`EMBEDDED_DETAILS_HEADING` 单行正则对围栏内标题误拒、对 `##\n实施细节` 跨行误命中；`/plan` 重发把 queued/cancelled/noop 压成同一句「正在进入」；退出工具 guard 只读落盘状态与 `plan:policy` 的 `pending ?? logged` 口径不一（批准后同批次可开第二张评审卡）。
@@ -33,5 +33,5 @@ Status: implemented
 
 - 三组 + Wave 1.5 全部合入 dev：验收面 plan-mode 101/101、bridge 引导面 175/175、渲染生命周期 9 spec 285/285（合并后 4×232 稳定性验证）、结构清理 260/260；模板合并对拍零差异。
 - 时序测试的教训（ProgressDrain flake，~1/4 概率）：fake-clock 固定次数前进无法驱动流程中的真实 fs I/O，负载下流程停在前置 await——条件驱动（可观测信号 + 真实时钟预算 + 负向对照）是这类测试的确定性写法。
-- 遗留：docs/tool-catalog.md 与新 EXIT_DESCRIPTION 的漂移、client fixture 的 /plan 文案二分面未镜像新四路文案、两条 pwsh 快照本机无法刷新（需 Windows 环境对齐）——均待 Wave 2 样本刷新批处理或后续跟进。
-- Wave 2（6 份过期样本对齐 + 全量受影响 lane 一次刷新 + replay 回绿）待 `DEEPSEEK_API_KEY` 后执行；本批次停在 dev 本地，push/reload 手动。
+- 遗留：client fixture 的 /plan 文案二分面未镜像新四路文案。tool-catalog 与新 EXIT_DESCRIPTION 的漂移已随目录按当前源码重生成关闭，两条 Windows-only pwsh 快照已由 d762ff098c 随其余 Wave 2 lane 一并刷新。
+- Wave 2（6 份过期样本对齐 + 全量受影响 lane 一次刷新）以 d762ff098c 落地；本批次已在 origin/dev。
