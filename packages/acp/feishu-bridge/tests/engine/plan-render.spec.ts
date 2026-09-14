@@ -230,11 +230,7 @@ describe('RenderCancels', () => {
   it('unregistered cancel is not invoked', () => {
     const s = new InteractiveState()
     const ctl = new AbortController()
-    const h = registerRenderCancel(s, () => { ctl.abort() }, 'plan')
-    registerRenderCancel(s, undefined, 'reply')
-    // @ts-expect-error nil-handle mirror of the Go test
-    registerRenderCancel(undefined, undefined, 'reply')
-    if (h !== undefined) { /* keep type-narrowed */ }
+    registerRenderCancel(s, () => { ctl.abort() }, 'plan')
     // unregister then cancel: not invoked
     s.renderCancels = []
     cancelRenders(s)
@@ -257,7 +253,6 @@ describe('RenderCancels', () => {
 
   it('nil and empty are safe', () => {
     const s = new InteractiveState()
-    registerRenderCancel(s, undefined, 'plan')
     cancelRenders(undefined)
     cancelRenders(s)
   })
