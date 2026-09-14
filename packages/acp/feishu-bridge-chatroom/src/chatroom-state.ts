@@ -15,6 +15,16 @@ import { ChatroomEndBarrier, ChatroomGather, type EndBarrierSnapshot, type Gathe
 /** The featureState key of the chatroom section. */
 export const chatroomFeatureStateKey = 'chatroom'
 
+/** A completed gather round whose wake has not been consumed by a moderator turn yet. */
+export interface CompletedGatherRecord {
+  /** The completed round's gather stamp. */
+  seq: number
+  /** The wake text the round produced (re-delivered by the supervision fallback). */
+  wakeContent: string
+  /** When the round completed (ms epoch); the fallback's quiet clock starts here. */
+  completedAt: number
+}
+
 /**
  * The chatroom section of `Session.featureState`: the durable chatroom and
  * research session fields (all optional; the live state defaults the missing
@@ -64,14 +74,22 @@ export interface ChatroomFeatureState {
   pendingSerialAsksData?: SerialAskSnapshot[] | undefined
   /** Durable snapshot of the armed end barrier (consumed at engine start). */
   pendingEndBarrierData?: EndBarrierSnapshot | undefined
+  /** A completed-but-unconsumed gather round awaiting its moderator turn. */
+  completedGather?: CompletedGatherRecord | undefined
   /** Hub↔steward relation's last organic activity (ms epoch; 0 = never observed). */
   supervisionActivityAt?: number
   /** Supervisor wakes already sent for the current stall episode. */
   supervisionWakeCount?: number
   /** When the supervisor last woke the moderator or posted a breaker notice (ms epoch). */
   supervisionLastWakeAt?: number
+  /** Visible breaker notices already posted this stall episode; organic activity re-arms. */
+  breakerNoticeCount?: number
   /** Role session's last organic turn (ms epoch); the serial-ask stall clock resets on it. */
   roleActivityAt?: number
+  /** Supervisor re-delivery wakes spent on the current completed gather. */
+  gatherWakeCount?: number
+  /** When the supervisor last re-delivered a completed gather's wake (ms epoch). */
+  gatherLastWakeAt?: number
 }
 
 /**
@@ -190,6 +208,18 @@ export class ChatroomSessionState {
   get supervisionActivityAt(): number { return this.section.supervisionActivityAt ?? 0 }
   set supervisionActivityAt(value: number) { this.section.supervisionActivityAt = value }
 
+  /** A completed-but-unconsumed gather round; cleared at the moderator's next turn start. */
+  get completedGather(): CompletedGatherRecord | undefined { return this.section.completedGather }
+  set completedGather(value: CompletedGatherRecord | undefined) { this.section.completedGather = value }
+
+  /** Supervisor re-delivery wakes spent on the current completed gather. */
+  get gatherWakeCount(): number { return this.section.gatherWakeCount ?? 0 }
+  set gatherWakeCount(value: number) { this.section.gatherWakeCount = value }
+
+  /** When the supervisor last re-delivered a completed gather's wake (ms epoch). */
+  get gatherLastWakeAt(): number { return this.section.gatherLastWakeAt ?? 0 }
+  set gatherLastWakeAt(value: number) { this.section.gatherLastWakeAt = value }
+
   /** Supervisor wakes already sent for the current stall episode. */
   get supervisionWakeCount(): number { return this.section.supervisionWakeCount ?? 0 }
   set supervisionWakeCount(value: number) { this.section.supervisionWakeCount = value }
@@ -197,6 +227,10 @@ export class ChatroomSessionState {
   /** When the supervisor last woke the moderator or posted a breaker notice (ms epoch). */
   get supervisionLastWakeAt(): number { return this.section.supervisionLastWakeAt ?? 0 }
   set supervisionLastWakeAt(value: number) { this.section.supervisionLastWakeAt = value }
+
+  /** Visible breaker notices already posted this stall episode; organic activity re-arms. */
+  get breakerNoticeCount(): number { return this.section.breakerNoticeCount ?? 0 }
+  set breakerNoticeCount(value: number) { this.section.breakerNoticeCount = value }
 
   /** Role session's last organic turn (ms epoch; 0 = never observed). */
   get roleActivityAt(): number { return this.section.roleActivityAt ?? 0 }
@@ -266,10 +300,14 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
       ...(pendingGatherData !== undefined ? { pendingGatherData } : {}),
       ...(pendingSerialAsksData !== undefined ? { pendingSerialAsksData } : {}),
       ...(pendingEndBarrierData !== undefined ? { pendingEndBarrierData } : {}),
+      ...(s.completedGather !== undefined ? { completedGather: s.completedGather } : {}),
       ...(s.supervisionActivityAt !== 0 ? { supervisionActivityAt: s.supervisionActivityAt } : {}),
       ...(s.supervisionWakeCount !== 0 ? { supervisionWakeCount: s.supervisionWakeCount } : {}),
       ...(s.supervisionLastWakeAt !== 0 ? { supervisionLastWakeAt: s.supervisionLastWakeAt } : {}),
+      ...(s.breakerNoticeCount !== 0 ? { breakerNoticeCount: s.breakerNoticeCount } : {}),
       ...(s.roleActivityAt !== 0 ? { roleActivityAt: s.roleActivityAt } : {}),
+      ...(s.gatherWakeCount !== 0 ? { gatherWakeCount: s.gatherWakeCount } : {}),
+      ...(s.gatherLastWakeAt !== 0 ? { gatherLastWakeAt: s.gatherLastWakeAt } : {}),
     }
     return Object.keys(section).length > 0 ? section : undefined
   },
@@ -298,9 +336,13 @@ export const chatroomFeatureStateCodec: FeatureStateCodec = {
     t.pendingEndBarrier = f.pendingEndBarrier
     t.pendingSerialAsks = f.pendingSerialAsks
     t.pendingHumanQuestionRole = f.pendingHumanQuestionRole
+    t.completedGather = f.completedGather
     t.supervisionActivityAt = f.supervisionActivityAt
     t.supervisionWakeCount = f.supervisionWakeCount
     t.supervisionLastWakeAt = f.supervisionLastWakeAt
+    t.breakerNoticeCount = f.breakerNoticeCount
     t.roleActivityAt = f.roleActivityAt
+    t.gatherWakeCount = f.gatherWakeCount
+    t.gatherLastWakeAt = f.gatherLastWakeAt
   },
 }

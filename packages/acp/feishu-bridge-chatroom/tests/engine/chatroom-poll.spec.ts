@@ -57,6 +57,7 @@ async function scaffoldThreeRoles(): Promise<string> {
 interface PollCall {
   workDir: string
   prompt: string
+  opts: { parentSession?: string } | undefined
   resolveWith: (text: string) => void
 }
 
@@ -70,8 +71,8 @@ function createPollStubAgent(): { agent: ReturnType<typeof createStubAgent>; cal
   querier.lightweightQuery = () => Promise.reject(new Error('not implemented'))
   querier.forkQuery = () => Promise.reject(new Error('not implemented'))
   querier.forkSessionWithProvider = () => Promise.reject(new Error('not implemented'))
-  querier.pollQuery = (prompt: string, workDir: string) =>
-    new Promise<string>((resolve) => { calls.push({ workDir, prompt, resolveWith: resolve }) })
+  querier.pollQuery = (prompt: string, workDir: string, opts?: { parentSession?: string }) =>
+    new Promise<string>((resolve) => { calls.push({ workDir, prompt, opts, resolveWith: resolve }) })
   return { agent, calls }
 }
 
@@ -166,6 +167,39 @@ describe('pollRoles', () => {
     calls[1]!.resolveWith('第二条')
     await waitFor(() => wake.mock.calls.length > 0, 'moderator wake')
     expect((wake.mock.calls[0]![1] as { content: string }).content).toContain('全员快答完成')
+  })
+
+  it('links every statement session to the hub\'s live native session via parentSession', async () => {
+    const p = createStubChatroomSpawner()
+    const { agent, calls } = createPollStubAgent()
+    const e = newPollTestEngine(p, agent)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldThreeRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    await startChatroom(e, hub, ['taleb'], 'topic')
+    e.sessions.getOrCreateActive(hub).setAgentInfo('cc-hub-live-42', 'dsh', 'hub')
+    vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+
+    pollRoles(e, hub, '开场快答', 'opening')
+    await waitFor(() => calls.length >= 2, 'poll queries dispatched')
+    for (const c of calls) expect(c.opts?.parentSession).toBe('cc-hub-live-42')
+    for (const c of calls) c.resolveWith('表态')
+  })
+
+  it('omits parentSession when the hub has no recorded live native session', async () => {
+    const p = createStubChatroomSpawner()
+    const { agent, calls } = createPollStubAgent()
+    const e = newPollTestEngine(p, agent)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldThreeRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    await startChatroom(e, hub, ['taleb'], 'topic')
+    vi.spyOn(e, 'deliverMachineMessage').mockImplementation(() => {})
+
+    pollRoles(e, hub, '开场快答', 'opening')
+    await waitFor(() => calls.length >= 2, 'poll queries dispatched')
+    for (const c of calls) expect(c.opts?.parentSession).toBeUndefined()
+    for (const c of calls) c.resolveWith('表态')
   })
 
   it('rejects a poll while a gather is in flight, and a repeat poll while one runs', async () => {

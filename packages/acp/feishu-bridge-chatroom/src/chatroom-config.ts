@@ -65,6 +65,16 @@ export interface ChatroomProjectConfig {
    * Non-zero values below 600 are rejected at apply.
    */
   assistantStallSec?: number
+  /**
+   * Supervisor sweep cadence in seconds (default 60); must stay well below
+   * the stall floor so deadlines resolve within one period of expiring.
+   */
+  superviseTickSec?: number
+  /**
+   * Visible breaker notices per stall episode before the supervisor stops
+   * posting cards and only logs (default 2); organic activity re-arms.
+   */
+  supervisorBreakerNoticeCap?: number
   /** Lightning-round poll timeout in seconds; 0 = the 10m default. */
   pollTimeoutSec?: number
   /** Lightning-round concurrent one-shot query cap; 0 = the default of 4. */
@@ -88,6 +98,8 @@ const chatroomSection = Schema.object({
   researchVenvPackages: Schema.array(Schema.string()).description('Base packages installed into the shared research venv (default akshare, pandas<3, numpy, requests)'),
   researchPlaybook: Schema.string().description('Persistent playbook file read/appended by research assistants (default off)'),
   assistantStallSec: Schema.natural().description('Research-assistant stall deadline in seconds; a quiet hub↔steward relation past it gets a supervision wake (default 1800, 0 disables, minimum 600)'),
+  superviseTickSec: Schema.natural().description('Supervisor sweep cadence in seconds (default 60) — keep it well below the stall deadline'),
+  supervisorBreakerNoticeCap: Schema.natural().description('Visible breaker notices per stall episode before the supervisor only logs (default 2); organic activity re-arms'),
   pollTimeoutSec: Schema.natural().description('Lightning-round poll timeout in seconds — one-shot persona statements degrade after this window (default 600)'),
   pollMaxConcurrent: Schema.natural().description('Lightning-round concurrent one-shot query cap, protecting the LLM gateway from the full role fan-out (default 4)'),
   pollProvider: Schema.string().description('Named provider route for lightning-round statements (default: the default route)'),
@@ -148,6 +160,10 @@ class ChatroomEngineConfig {
   private assistantStallMs = 0
   /** Whether the supervisor is explicitly disabled for this engine. */
   private assistantStallOff = false
+  /** Supervisor sweep cadence override in ms; 0 = the 60s default. */
+  private superviseTickMs = 0
+  /** Breaker-notice cap override; 0 = the default of 2. */
+  private breakerNoticeCap = 0
   /** Lightning-round poll timeout override in ms; 0 = the 10m default. */
   private pollTimeoutMs = 0
   /** Lightning-round concurrency cap override; 0 = the default of 4. */
@@ -217,6 +233,12 @@ class ChatroomEngineConfig {
         }
         this.assistantStallMs = cfg.assistantStallSec * 1000
       }
+    }
+    if (cfg.superviseTickSec !== undefined && cfg.superviseTickSec > 0) {
+      this.superviseTickMs = cfg.superviseTickSec * 1000
+    }
+    if (cfg.supervisorBreakerNoticeCap !== undefined && cfg.supervisorBreakerNoticeCap > 0) {
+      this.breakerNoticeCap = cfg.supervisorBreakerNoticeCap
     }
     if (cfg.pollTimeoutSec !== undefined && cfg.pollTimeoutSec > 0) {
       this.pollTimeoutMs = cfg.pollTimeoutSec * 1000
@@ -304,6 +326,16 @@ class ChatroomEngineConfig {
   assistantStallDuration(): number {
     if (this.assistantStallOff) return 0
     return this.assistantStallMs > 0 ? this.assistantStallMs : defaultChatroomAssistantStallSec * 1000
+  }
+
+  /** Effective supervisor sweep cadence (the override, or the 60s default). */
+  superviseTickDuration(): number {
+    return this.superviseTickMs > 0 ? this.superviseTickMs : 60_000
+  }
+
+  /** Effective breaker-notice cap per stall episode (the override, or 2). */
+  supervisorBreakerNoticeCap(): number {
+    return this.breakerNoticeCap > 0 ? this.breakerNoticeCap : 2
   }
 
   /** Effective lightning-round poll timeout (the override, or the 10m default). */

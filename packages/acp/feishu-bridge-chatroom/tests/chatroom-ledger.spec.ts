@@ -222,6 +222,41 @@ describe('updateChatroomLedgerSynthesis', () => {
     const root = await mkdtemp(join(tmpdir(), 'fb-ledger-'))
     await expect(updateChatroomLedgerSynthesis(root, 'x')).rejects.toThrow()
   })
+
+  it('archives the replaced body into SYNTHESIS-HISTORY.md before overwriting', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fb-ledger-'))
+    const d = chatroomLedgerDir(root, 'hub-1')
+    await initChatroomLedger(d, 'topic', ['taleb'])
+
+    await updateChatroomLedgerSynthesis(d, '图景 v1：初判。')
+    await updateChatroomLedgerSynthesis(d, '图景 v2：修正。')
+
+    const history = await read(join(d, 'SYNTHESIS-HISTORY.md'))
+    expect(history).toContain('图景 v1：初判。')
+    expect(history).not.toContain('图景 v2：修正。')
+    expect(history).toMatch(/^## 存档 \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)
+
+    // A third update appends the second archived body, oldest first.
+    await updateChatroomLedgerSynthesis(d, '图景 v3：终版。')
+    const history2 = await read(join(d, 'SYNTHESIS-HISTORY.md'))
+    expect(history2.indexOf('图景 v1')).toBeLessThan(history2.indexOf('图景 v2'))
+    expect(history2).not.toContain('图景 v3')
+    const syn = await read(join(d, 'SYNTHESIS.md'))
+    expect(syn).toContain('图景 v3：终版。')
+    expect(syn).not.toContain('图景 v1')
+  })
+
+  it('does not create SYNTHESIS-HISTORY.md while the body is still the placeholder', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fb-ledger-'))
+    const d = chatroomLedgerDir(root, 'hub-1')
+    await initChatroomLedger(d, 'topic', ['taleb'])
+
+    // The first real synthesis replaces the init placeholder: archiving
+    // "（主持尚未用 … 写综述）" would be pure noise.
+    await updateChatroomLedgerSynthesis(d, '图景 v1：初判。')
+    const names = await readdir(d)
+    expect(names).not.toContain('SYNTHESIS-HISTORY.md')
+  })
 })
 
 describe('readChatroomLedgerHeader', () => {
@@ -417,5 +452,24 @@ describe('updateChatroomSubproblems', () => {
     const b2 = await read(join(d, 'SUBPROBLEMS.md'))
     expect(b2).toContain('只剩一条')
     expect(b2).not.toContain('择时')
+  })
+
+  it('strips a leading markdown heading that restates the section name', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'fb-ledger-'))
+    const d = chatroomLedgerDir(root, 'hub-1')
+    await initChatroomLedger(d, 'topic', ['taleb'])
+
+    await updateChatroomSubproblems(d, '## 子问题清单（v5·终版）\n1. 择时\n2. 仓位')
+    const b = await read(join(d, 'SUBPROBLEMS.md'))
+    // The engine writes its own `## 子问题清单` heading; the model's
+    // decorated restatement must not nest under it.
+    expect(b).not.toContain('v5·终版')
+    expect(b.split('## 子问题清单').length - 1).toBe(1)
+    expect(b).toContain('1. 择时')
+
+    // A leading heading naming something else stays verbatim.
+    await updateChatroomSubproblems(d, '## 风险清单\n1. 尾部风险')
+    const b2 = await read(join(d, 'SUBPROBLEMS.md'))
+    expect(b2).toContain('## 风险清单')
   })
 })

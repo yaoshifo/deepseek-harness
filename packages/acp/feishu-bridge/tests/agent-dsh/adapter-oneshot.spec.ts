@@ -9,6 +9,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { claudeProjectSlug } from '@deepseek-ai/dsh-memory'
 import { asForkQuerierWithProvider, asProviderSwitcher } from '../../src/core/types.ts'
 import { DshAgentAdapter, type DshAgentHandleLike, type DshAgentLike, type DshCreateOptionsLike, type DshContextLike } from '../../src/agent-dsh/adapter.ts'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -122,7 +126,7 @@ function createHarness(parents: DshAgentLike[] = []): Harness {
   return { ctx, creates, agents, script }
 }
 
-function newAdapter(h: Harness): DshAgentAdapter {
+function newAdapter(h: Harness, extra: { memoryHome?: string } = {}): DshAgentAdapter {
   return new DshAgentAdapter(h.ctx, {
     agentName: 'dsh',
     cwd: '/workspace/project',
@@ -131,6 +135,7 @@ function newAdapter(h: Harness): DshAgentAdapter {
       { name: 'turbo', provider: 'turbo-route', model: 'turbo-5', reasoningEffort: 'high' },
     ],
     activeProvider: 'glm',
+    ...(extra.memoryHome !== undefined ? { memoryHome: extra.memoryHome } : {}),
   })
 }
 
@@ -244,6 +249,112 @@ describe('lightweightQuery', () => {
     const h = createHarness()
     const a = newAdapter(h)
     expect(typeof asForkQuerierWithProvider(a)?.lightweightQuery).toBe('function')
+  })
+})
+
+describe('pollQuery', () => {
+  it('creates the statement session with oneshot origin so LLM title scheduling and /list stay off', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    h.script.push({ text: '快答：谨慎乐观' })
+
+    await a.pollQuery('本轮判断', '/workspace/roles/economist')
+
+    expect(h.creates[0]!.meta?.cwd).toBe('/workspace/roles/economist')
+    expect(h.creates[0]!.meta?.origin).toBe('oneshot')
+  })
+
+  /** Run one captured setup hook on a fake agent scope, capturing its pre-step listeners. */
+  function runSetup(h: Harness, agent: { session: unknown }): Map<string, Array<(...args: unknown[]) => Promise<unknown>>> {
+    const listeners = new Map<string, Array<(...args: unknown[]) => Promise<unknown>>>()
+    const setup = h.creates[0]!.setup as ((agentCtx: unknown, agent: unknown) => void) | undefined
+    expect(setup).toBeTypeOf('function')
+    setup?.({
+      get: (): undefined => undefined,
+      on: (event: string, listener: (...args: unknown[]) => Promise<unknown>): (() => void) => {
+        const list = listeners.get(event) ?? []
+        list.push(listener)
+        listeners.set(event, list)
+        return () => {}
+      },
+    }, agent)
+    return listeners
+  }
+
+  it('re-injects the role-directory memory index that the oneshot origin would otherwise gate off', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-poll-memory-'))
+    const roleDir = join(home, 'roles', 'economist')
+    await mkdir(roleDir, { recursive: true })
+    const memDir = join(home, 'projects', claudeProjectSlug(roleDir), 'memory')
+    await mkdir(memDir, { recursive: true })
+    await writeFile(join(memDir, 'MEMORY.md'), '# Memory\n\n- [feedback-stance](feedback-stance.md) — 谨慎乐观，关键数字两个独立源\n')
+
+    const h = createHarness()
+    const a = newAdapter(h, { memoryHome: home })
+    h.script.push({ text: '快答' })
+
+    await a.pollQuery('本轮判断', roleDir)
+
+    const listeners = runSetup(h, { session: { header: { cwd: roleDir, origin: 'oneshot' }, snapshotEvents: () => [] } })
+    const preStep = listeners.get('agent/pre-step')
+    expect(preStep).toHaveLength(1)
+    const original = { role: 'user', content: 'placeholder' }
+    const decision = await preStep![0]!(
+      { agent: { session: { header: { cwd: roleDir, origin: 'oneshot' }, snapshotEvents: () => [] } }, step: 1, signal: undefined },
+      (): Promise<unknown> => Promise.resolve({ kind: 'enter', messages: [original] }),
+    ) as { kind: string; messages: Array<{ content?: Array<{ type: string; text: string }>; source?: Record<string, unknown> }> }
+
+    expect(decision.kind).toBe('enter')
+    expect(decision.messages).toHaveLength(2)
+    expect(decision.messages[0]).toBe(original)
+    const injected = decision.messages[1]!
+    expect(injected.content?.[0]?.text).toContain('- [feedback-stance](feedback-stance.md)')
+    expect(injected.content?.[0]?.text).toContain('<system-reminder>')
+    expect(injected.source).toMatchObject({ kind: 'dsh-memory', version: 2, scope: 'project', project: claudeProjectSlug(roleDir) })
+  })
+
+  it('keeps the turn unchanged when the role directory has no MEMORY.md', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-poll-memory-'))
+    const roleDir = join(home, 'roles', 'novel')
+    await mkdir(roleDir, { recursive: true })
+
+    const h = createHarness()
+    const a = newAdapter(h, { memoryHome: home })
+    h.script.push({ text: '快答' })
+
+    await a.pollQuery('本轮判断', roleDir)
+
+    const listeners = runSetup(h, { session: { header: { cwd: roleDir, origin: 'oneshot' }, snapshotEvents: () => [] } })
+    const preStep = listeners.get('agent/pre-step')
+    expect(preStep).toHaveLength(1)
+    const original = { role: 'user', content: 'placeholder' }
+    const decision = await preStep![0]!(
+      { agent: { session: { header: { cwd: roleDir, origin: 'oneshot' }, snapshotEvents: () => [] } }, step: 1, signal: undefined },
+      (): Promise<unknown> => Promise.resolve({ kind: 'enter', messages: [original] }),
+    ) as { kind: string; messages: unknown[] }
+
+    expect(decision.messages).toEqual([original])
+  })
+
+  it('links the statement session to the originating hub session through parentSession', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    h.script.push({ text: '快答' })
+
+    await a.pollQuery('本轮判断', '/workspace/roles/economist', { parentSession: 'cc-hub-native-1' })
+
+    expect(h.creates[0]!.meta?.parentSession).toBe('cc-hub-native-1')
+  })
+
+  it('registers no memory re-injection for bare lightweight queries', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    h.script.push({ text: '名' })
+
+    await a.lightweightQuery('起个群名', 'glm')
+
+    const listeners = runSetup(h, { session: { header: { cwd: '/workspace/project' }, snapshotEvents: () => [] } })
+    expect(listeners.get('agent/pre-step')).toBeUndefined()
   })
 })
 
@@ -407,6 +518,16 @@ describe('renderQuery (Go dsh RenderQuery)', () => {
     await a.renderQuery('p', 'glm', 'sp', undefined, '/workspace/chat-override')
 
     expect(h.creates[0]!.meta?.cwd).toBe('/workspace/chat-override')
+  })
+
+  it('links the render one-shot to the originating host session through parentSession', async () => {
+    const h = createHarness()
+    const a = newAdapter(h)
+    h.script.push({ text: 'ok' })
+
+    await a.renderQuery('p', 'glm', 'sp', undefined, undefined, 'cc-host-native-9')
+
+    expect(h.creates[0]!.meta?.parentSession).toBe('cc-host-native-9')
   })
 })
 

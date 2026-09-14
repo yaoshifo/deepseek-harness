@@ -151,3 +151,20 @@ describe('poll tuning', () => {
     expect(c.pollProvider()).toBe('glm-flash')
   })
 })
+
+describe('supervision tuning', () => {
+  it('defaults to a 60s tick and a breaker-notice cap of 2', () => {
+    const c = chatroomConfig(configure(undefined))
+    expect(c.superviseTickDuration()).toBe(60_000)
+    expect(c.supervisorBreakerNoticeCap()).toBe(2)
+  })
+
+  it('applies superviseTickSec and supervisorBreakerNoticeCap overrides; tick 0 keeps the default', () => {
+    const c = chatroomConfig(configure(undefined, { superviseTickSec: 15, supervisorBreakerNoticeCap: 5 }))
+    expect(c.superviseTickDuration()).toBe(15_000)
+    expect(c.supervisorBreakerNoticeCap()).toBe(5)
+    // Schema.natural; an explicit tick-off is not offered — assistantStallSec: 0
+    // already disables the supervisor itself.
+    expect(chatroomConfig(configure(undefined, { superviseTickSec: 0 })).superviseTickDuration()).toBe(60_000)
+  })
+})

@@ -29,18 +29,15 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Engine, Session } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { asReplyContextReconstructor } from '@deepseek-ai/dsh-feishu-bridge/exports'
 import { Msg } from '../i18n.ts'
-import { chatroomState } from '../chatroom-state.ts'
+import { chatroomState, type ChatroomSessionState } from '../chatroom-state.ts'
 import { chatroomConfig } from '../chatroom-config.ts'
-import { assistantReportPending, chatroomStewardGroupName, findRoleKeyByName, wakeChatroomModerator } from './chatroom.ts'
+import { assistantReportPending, chatroomStewardGroupName, consumeCompletedChatroomGather, findRoleKeyByName, wakeChatroomModerator } from './chatroom.ts'
 
 /** Message-metadata flag marking the supervisor's own wakes for activity tracking. */
 export const chatroomSupervisorWakeMetadata = 'chatroomSupervisorWake'
 
 /** Wakes per stall episode before the breaker hands the room to the user. */
 export const chatroomSupervisorMaxWakes = 3
-
-/** Sweep cadence; well below the stall floor so deadlines resolve within one period of expiring. */
-const chatroomSupervisorTickMs = 60_000
 
 /** Excerpt cap for the steward's last reply in a wake message (UTF-16 chars). */
 const supervisionExcerptChars = 200
@@ -104,7 +101,13 @@ export function superviseChatroomAssistants(e: Engine, nowMs: number = Date.now(
   superviseSerialAsks(e, nowMs, stallMs)
   for (const [hubKey, hub] of e.sessions.activeSessionEntries()) {
     const hs = chatroomState(hub)
-    if (!hs.chatroomModerator || hs.researchAssistantKey === '') continue
+    if (!hs.chatroomModerator) continue
+    // A completed-but-unconsumed gather wake: the original delivery is
+    // fire-and-forget (a reconstruct failure only warns), so a silent loss
+    // would freeze ANY room — plain rooms have no steward relation to
+    // supervise, which is exactly why this branch runs before it.
+    if (superviseCompletedGather(e, hubKey, hs, nowMs, stallMs)) continue
+    if (hs.researchAssistantKey === '') continue
     const stewardKey = hs.researchAssistantKey
     const steward = e.sessions.findActive(stewardKey)
     if (steward === undefined) continue
@@ -113,6 +116,7 @@ export function superviseChatroomAssistants(e: Engine, nowMs: number = Date.now(
     // Organic activity since the last wake reopens the wake budget.
     if (hs.supervisionLastWakeAt !== 0 && hs.supervisionActivityAt > hs.supervisionLastWakeAt && hs.supervisionWakeCount !== 0) {
       hs.supervisionWakeCount = 0
+      hs.breakerNoticeCount = 0
       e.sessions.save()
     }
     // An activity stamp of 0 is a room that predates the supervisor (or froze
@@ -123,6 +127,12 @@ export function superviseChatroomAssistants(e: Engine, nowMs: number = Date.now(
     if (hs.supervisionLastWakeAt !== 0 && nowMs - hs.supervisionLastWakeAt < stallMs) continue
     if (hs.supervisionWakeCount >= chatroomSupervisorMaxWakes) {
       hs.supervisionLastWakeAt = nowMs
+      e.sessions.save()
+      if (hs.breakerNoticeCount >= chatroomConfig(e).supervisorBreakerNoticeCap()) {
+        console.warn(`chatroom: supervisor breaker notice cap reached (hub=${hubKey} notices=${hs.breakerNoticeCount}) — staying quiet until organic activity`)
+        continue
+      }
+      hs.breakerNoticeCount += 1
       e.sessions.save()
       console.warn(`chatroom: supervisor breaker tripped (hub=${hubKey} wakes=${hs.supervisionWakeCount}) — handing the stalled relation to the user`)
       postSupervisionBreakerNotice(e, hubKey, hs.supervisionWakeCount)
@@ -144,9 +154,51 @@ export function superviseChatroomAssistants(e: Engine, nowMs: number = Date.now(
   }
 }
 
+/**
+ * One sweep over a hub's completed-but-unconsumed gather record: the round
+ * collected every reply but its wake never reached the moderator (the
+ * delivery chain only warns on failure), so past the stall deadline the
+ * recorded wake text is re-delivered with the same wake budget and breaker
+ * discipline as the steward relation.
+ * @param e - Engine addressing the hub.
+ * @param hubKey - Session key of the moderator hub.
+ * @param hs - The hub's chatroom state (carrying the record).
+ * @param nowMs - Wall clock in ms.
+ * @param stallMs - The supervisor's stall deadline.
+ * @returns true when a record is present (the steward sweep skips the hub).
+ */
+function superviseCompletedGather(e: Engine, hubKey: string, hs: ChatroomSessionState, nowMs: number, stallMs: number): boolean {
+  const cg = hs.completedGather
+  if (cg === undefined) return false
+  // A newer round (or a closing drain) in flight is a declared wait: the
+  // record's wake text is already superseded and must not interject.
+  if (hs.pendingGather !== undefined || hs.pendingEndBarrier !== undefined) return false
+  const quietMs = nowMs - Math.max(cg.completedAt, hs.supervisionActivityAt)
+  if (quietMs < stallMs) return true
+  if (hs.gatherLastWakeAt !== 0 && nowMs - hs.gatherLastWakeAt < stallMs) return true
+  if (hs.gatherWakeCount >= chatroomSupervisorMaxWakes) {
+    hs.gatherLastWakeAt = nowMs
+    e.sessions.save()
+    if (hs.breakerNoticeCount >= chatroomConfig(e).supervisorBreakerNoticeCap()) {
+      console.warn(`chatroom: supervisor breaker notice cap reached (hub=${hubKey} gatherSeq=${cg.seq} notices=${hs.breakerNoticeCount}) — staying quiet until the moderator turns`)
+      return true
+    }
+    hs.breakerNoticeCount += 1
+    e.sessions.save()
+    console.warn(`chatroom: supervisor gather-wake breaker tripped (hub=${hubKey} gatherSeq=${cg.seq} wakes=${hs.gatherWakeCount}) — handing the stalled round to the user`)
+    postSupervisionBreakerNotice(e, hubKey, hs.gatherWakeCount)
+    return true
+  }
+  hs.gatherWakeCount += 1
+  hs.gatherLastWakeAt = nowMs
+  e.sessions.save()
+  console.info(`chatroom: supervisor re-delivered a lost gather wake (hub=${hubKey} gatherSeq=${cg.seq} quietSec=${Math.floor(quietMs / 1000)} wake=${hs.gatherWakeCount}/${chatroomSupervisorMaxWakes})`)
+  wakeChatroomModerator(e, hubKey, cg.wakeContent, { [chatroomSupervisorWakeMetadata]: true })
+  return true
+}
+
 /** Whether a declared wait covers an outstanding serial ask (not a stall). */
-function serialAskDeclaredWait(e: Engine, hubKey: string, roleKey: string): boolean {
-  const hubState = e.interactiveStates.get(hubKey)
+function serialAskDeclaredWait(e: Engine, hubKey: string, roleKey: string): boolean {  const hubState = e.interactiveStates.get(hubKey)
   if ((hubState?.activeTurns ?? 0) > 0) return true
   if (hubState?.pendingAsk !== undefined) return true
   if (roleKey === '') return false
@@ -185,6 +237,12 @@ function superviseSerialAsks(e: Engine, nowMs: number, stallMs: number): void {
       if (entry.lastWakeAt !== 0 && nowMs - entry.lastWakeAt < stallMs) continue
       if (entry.wakeCount >= chatroomSupervisorMaxWakes) {
         entry.lastWakeAt = nowMs
+        e.sessions.save()
+        if (entry.breakerNoticeCount >= chatroomConfig(e).supervisorBreakerNoticeCap()) {
+          console.warn(`chatroom: supervisor breaker notice cap reached (hub=${hubKey} role=${roleName} notices=${entry.breakerNoticeCount}) — staying quiet until the ask retires`)
+          continue
+        }
+        entry.breakerNoticeCount += 1
         e.sessions.save()
         console.warn(`chatroom: supervisor breaker tripped (hub=${hubKey} role=${roleName} wakes=${entry.wakeCount}) — handing the stalled ask to the user`)
         postSupervisionBreakerNotice(e, hubKey, entry.wakeCount)
@@ -237,15 +295,23 @@ function postSupervisionBreakerNotice(e: Engine, hubKey: string, wakes: number):
 
 /**
  * Register the supervisor on a plugin context: the periodic sweep over every
- * live project engine and the turn-start activity touch.
+ * live project engine and the turn-start activity touch. The sweep cadence
+ * reads the first live project's `superviseTickSec` (the deployment shape is
+ * one shared section; per-engine divergence would still keep every engine
+ * within one period of its own deadline).
  * @param ctx - The chatroom plugin's context (effects own both registrations).
  * @param projects - Live project entries whose engines to sweep.
  * @returns disposer stopping the sweep and listener.
  */
 export function registerChatroomSupervisor(ctx: Context, projects: () => ReadonlyArray<{ engine: Engine }>): () => void {
   const disposeListener = ctx.on('feishuBridge/turn-start', (payload) => {
+    // The moderator's own turn proves the completed-gather wake reached it:
+    // consume the record so the fallback sweep stands down.
+    consumeCompletedChatroomGather(payload.engine, payload.session)
     touchChatroomSupervisionActivity(payload.engine, payload.session, payload.metadata)
   })
+  const firstEngine = projects()[0]?.engine
+  const tickMs = firstEngine !== undefined ? chatroomConfig(firstEngine).superviseTickDuration() : 60_000
   const timer: ReturnType<typeof setInterval> = setInterval(() => {
     for (const { engine } of projects()) {
       try {
@@ -254,7 +320,7 @@ export function registerChatroomSupervisor(ctx: Context, projects: () => Readonl
         console.warn(`chatroom: supervisor sweep failed (engine=${engine.name}): ${String(error)}`)
       }
     }
-  }, chatroomSupervisorTickMs)
+  }, tickMs)
   timer.unref()
   return () => {
     clearInterval(timer)

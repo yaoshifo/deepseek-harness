@@ -17,9 +17,13 @@
  */
 
 import { randomBytes } from 'node:crypto'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import type { Context } from '@deepseek-ai/cordis'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import { installModelSelection, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
+import { installModelSelection, type Agent, type ModelSelectionRef } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { claudeProjectSlug, readMemoryIndex, renderIndexInjection, resolveMemoryDir, type IndexLimits } from '@deepseek-ai/dsh-memory'
 import { normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import { SessionId, SessionLogOffset } from '@deepseek-ai/dsh-session'
 import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
@@ -291,7 +295,17 @@ export interface DshAdapterConfig {
   planApprovalPreset?: string
   /** Shared routing for multi-project daemons; absent = single-adapter fallback. */
   questionRouting?: QuestionRouting
+  /**
+   * Claude Code home the poll memory re-injection reads `<home>/projects`
+   * from; absent defaults to `~/.claude` (the dsh-memory plugin's own
+   * default — the plugin does not expose its resolved config, so a
+   * deployment overriding its `claudeHome` must set this to match).
+   */
+  memoryHome?: string
 }
+
+/** Index budget for the poll memory re-injection: the Claude Code session-start read (first 200 lines / 25 KB). */
+const pollMemoryIndexBudget: IndexLimits = { maxIndexLines: 200, maxIndexBytes: 25 * 1024 }
 
 /**
  * Strip the "[1m]" model alias: it is fingerprint-gated to genuine Claude
@@ -712,6 +726,43 @@ function buildCompletePromptSetup(
     if (promptSvc === undefined) return
     promptSvc.section({ name: opts.name ?? 'feishu-bridge-render-session', order: 0, text: systemPrompt, complete: true })
   }
+}
+
+/**
+ * Re-register the project memory-index injection on one oneshot session's
+ * agent scope (pollQuery keeps role-persona memory continuity): the
+ * dsh-memory plugin's own pre-step listener skips every session whose
+ * header carries an origin value, so an origin-marked oneshot that still
+ * wants the index injects it here — same durable message shape, same
+ * render, project scope only (the global scope's enabled flag lives in the
+ * memory plugin's config, which no adapter can read).
+ */
+function registerPollMemoryInjection(
+  agentCtx: Context,
+  agent: Agent,
+  claudeHome: string,
+): void {
+  agentCtx.on('agent/pre-step', async ({ step, signal }, next) => {
+    const decision = await next()
+    if (step !== 1 || decision.kind !== 'enter' || decision.messages.length === 0) return decision
+    const cwd = agent.session.header.cwd
+    if (cwd === undefined || !cwd.startsWith('/') || cwd.includes('\\')) return decision
+    const dir = resolveMemoryDir(claudeHome, cwd)
+    let index
+    try {
+      index = await readMemoryIndex(dir, pollMemoryIndexBudget, signal)
+    } catch {
+      // A transient read failure skips the injection — same policy as the
+      // memory plugin; the statement turn proceeds without the index.
+      return decision
+    }
+    if (index === undefined) return decision
+    const message = createUserMessage({
+      content: [{ type: 'text', text: renderIndexInjection(index, dir, 'project') }],
+      source: { kind: 'dsh-memory', version: 2, scope: 'project', project: claudeProjectSlug(cwd), digest: index.digest },
+    })
+    return { ...decision, messages: [...decision.messages, message] }
+  })
 }
 
 /** Adapter configuration (providers + active route). */
@@ -1542,10 +1593,11 @@ export class DshAgentAdapter {
    * assembly at `workDir` — a role directory's CLAUDE.md persona loads
    * through the same cwd-instruction discovery the resident role sessions
    * use — while every tool is masked at the engine level so a polled persona
-   * cannot start research. Unlike {@link lightweightQuery} the memory-index
-   * injection and LLM title generation stay on: the title call is accepted
-   * overhead for keeping role-memory continuity, and reasoning runs at the
-   * route default (a stance call is the persona's value, not formatting).
+   * cannot start research. Session origin `oneshot` keeps LLM title
+   * generation and /list off; the memory-index injection that origin gates
+   * off is re-registered on the session's own scope (role-persona memory
+   * continuity), and reasoning runs at the route default (a stance call is
+   * the persona's value, not formatting).
    *
    * @param prompt - the statement brief; all context lives in the prompt itself.
    * @param workDir - the role directory the one-shot session runs under.
@@ -1556,10 +1608,13 @@ export class DshAgentAdapter {
     return this.oneShotQuery({
       prompt,
       workDir,
+      origin: 'oneshot',
+      keepMemoryInjection: true,
       toolFilter: { allow: [] },
       ...(opts?.providerName !== undefined && opts.providerName !== '' ? { providerName: opts.providerName } : {}),
       ...(opts?.signal !== undefined ? { signal: opts.signal } : {}),
       ...(opts?.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts?.parentSession !== undefined && opts.parentSession !== '' ? { parentSession: opts.parentSession } : {}),
     })
   }
 
@@ -1639,6 +1694,7 @@ export class DshAgentAdapter {
     systemPrompt: string,
     signal?: AbortSignal,
     workDir?: string,
+    parentSession?: string,
   ): Promise<string> {
     return this.oneShotQuery({
       prompt,
@@ -1649,6 +1705,7 @@ export class DshAgentAdapter {
       reasoning: renderReasoningLevel(this.renderEffort),
       ...(signal !== undefined ? { signal } : {}),
       ...(workDir !== undefined && workDir !== '' ? { workDir } : {}),
+      ...(parentSession !== undefined && parentSession !== '' ? { parentSession } : {}),
       timeoutMs: renderQueryTimeoutMs,
     })
   }
@@ -1750,6 +1807,11 @@ export class DshAgentAdapter {
     return parent !== undefined ? completedTurnPrefix(parent) : []
   }
 
+  /** The Claude Code home default shared with the dsh-memory plugin config. */
+  private memoryHome(): string {
+    return this.cfg.memoryHome ?? join(homedir(), '.claude')
+  }
+
   /**
    * Run one standalone turn on a fresh native session and dispose it (Go
    * oneShotQuery): create (optionally seeded, on the named route), send the
@@ -1772,6 +1834,15 @@ export class DshAgentAdapter {
     toolFilter?: { allow?: readonly string[]; deny?: readonly string[] }
     /** Marks the session as a self-contained side query: no ambient context injection, no LLM title. */
     origin?: 'oneshot'
+    /**
+     * Re-open the memory-index injection an `origin` value gates off: the
+     * dsh-memory plugin's pre-step listener skips every non-plain session,
+     * so a persona-keeping oneshot (pollQuery) re-registers the project
+     * index injection itself.
+     */
+    keepMemoryInjection?: boolean
+    /** Native session id of the originating chat, recorded as `parentSession` lineage. */
+    parentSession?: string
   }): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? oneShotDefaultTimeoutMs
     const ctl = new AbortController()
@@ -1812,11 +1883,20 @@ export class DshAgentAdapter {
           this.deniedSkills(),
         )
     }
+    if (opts.keepMemoryInjection === true) {
+      const inner = setup
+      const home = this.memoryHome()
+      setup = (agentCtx, agent) => {
+        registerPollMemoryInjection(agentCtx, agent, home)
+        return inner?.(agentCtx, agent)
+      }
+    }
     const handle = await this.ctx.agents.create({
       sessionId: SessionId(freshNativeSessionId()),
       meta: {
         cwd: opts.workDir !== undefined && opts.workDir !== '' ? opts.workDir : this.cfg.cwd,
         ...(opts.origin !== undefined ? { origin: opts.origin } : {}),
+        ...(opts.parentSession !== undefined && opts.parentSession !== '' ? { parentSession: SessionId(opts.parentSession) } : {}),
       },
       ...(opts.seed !== undefined && opts.seed.length > 0 ? { seed: opts.seed } : {}),
       ...(setup !== undefined ? { setup } : {}),

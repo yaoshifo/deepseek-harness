@@ -325,6 +325,15 @@ describe('GatherRoles', () => {
   })
 })
 
+/** Relay one role's reply through the turn-end path (the fan-in entry). */
+function relayReply(e: Engine, p: Platform, roleKey: string, reply: string): void {
+  const role = e.sessions.getOrCreateActive(roleKey)
+  chatroomState(role).chatroomAsked = false
+  const st = new InteractiveState()
+  st.platform = p
+  maybeAutoRelayRole(e, st, role, reply, false)
+}
+
 describe('gather fan-in via maybeAutoRelayRole', () => {
   it('N-1 replies keep the barrier; the Nth clears it', async () => {
     const p = createStubChatroomSpawner()
@@ -336,24 +345,39 @@ describe('gather fan-in via maybeAutoRelayRole', () => {
     const g = newGather('需要追问吗？', ['taleb', 'munger'])
     chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = g
 
-    const relay = (roleKey: string, reply: string): void => {
-      const role = e.sessions.getOrCreateActive(roleKey)
-      chatroomState(role).chatroomAsked = false
-      const st = new InteractiveState()
-      st.platform = p
-      maybeAutoRelayRole(e, st, role, reply, false)
-    }
-
     // First reply: relayed as a card but the barrier is NOT cleared.
     clearCards(p)
-    relay(roles[0]!.sessionKey, '需要问预算范围')
+    relayReply(e, p, roles[0]!.sessionKey, '需要问预算范围')
     await settle()
     expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeDefined()
     expect(p.sentCards).toHaveLength(1)
 
     // Second reply: completes the barrier — pendingGather cleared.
-    relay(roles[1]!.sessionKey, '无需追问')
+    relayReply(e, p, roles[1]!.sessionKey, '无需追问')
     expect(chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
+  })
+
+  it('the completed round records a durable completedGather holding the undelivered wake', async () => {
+    const p = createStubChatroomSpawner()
+    const e = newChatroomTestEngine(p)
+    chatroomConfig(e).applySection({ rolesDir: await scaffoldTwoRoles() })
+    const hub = 'test:hub:user-1'
+    const { startChatroom } = await import('../../src/engine/chatroom.ts')
+    const roles = await startChatroom(e, hub, ['taleb', 'munger'], 'topic')
+    const g = newGather('需要追问吗？', ['taleb', 'munger'])
+    chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = g
+
+    relayReply(e, p, roles[0]!.sessionKey, '需要问预算范围')
+    relayReply(e, p, roles[1]!.sessionKey, '无需追问')
+
+    // The wake delivery is fire-and-forget (a reconstruct failure only
+    // warns); the durable record is what lets the supervisor re-deliver it.
+    const s = chatroomState(e.sessions.getOrCreateActive(hub))
+    expect(s.pendingGather).toBeUndefined()
+    expect(s.completedGather).toBeDefined()
+    expect(s.completedGather?.seq).toBe(g.seq)
+    expect(s.completedGather?.wakeContent).toContain('【taleb】需要问预算范围')
+    expect(s.completedGather?.completedAt).toBeGreaterThan(0)
   })
 
   it('a stale turn falls through as a free reply without consuming gates', async () => {
