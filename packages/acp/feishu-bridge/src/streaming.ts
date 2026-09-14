@@ -544,7 +544,7 @@ export class StreamPreview {
    * Minimum ms between card reissues (previewReissueCooldownMs by default).
    * @internal White-box: ported same-package tests read/write this directly.
    */
-  reissueCooldownMs = previewReissueCooldownMs
+  reissueCooldownMs: number = previewReissueCooldownMs
   private lastSentViaUpdate = false
   /**
    * Platform message handle of the preview card; undefined until the card exists.
