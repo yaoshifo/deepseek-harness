@@ -17,6 +17,9 @@ A same-day review of the 2026-09-14 audit-fix batches found nine defects on four
 - A deliver-stage abort whose PNG render also failed settled the render as `failed` instead of `cancelled` — the user's own cancellation read as a render failure.
 - `classifyDeliveryFailure` treated any HTTP status — including 502/503/504 — as `'failed'`, whose wording invites a re-send even though a gateway 5xx does not prove the server skipped the create.
 - The five interactive-card send paths carried no intent uuid and kept deadline retries, so a post-delivery timeout could double-send a card with live buttons.
+- The inter-segment text flush sent through the error-swallowing plain send and advanced `segmentStart` unconditionally: a failed segment was lost forever while the turn still read as pure success.
+- The degraded branch deleted the frozen card before re-delivering its answer — the discard-then-deliver shape u5 removed from `fallbackSend`.
+- A killed turn whose answer lived only on the in-progress card's live-narration segment lost that segment when the terminal PATCH and the fallback both failed: the text re-delivery guard suppressed it and nothing warned or saved.
 
 ## Decision
 
@@ -37,6 +40,12 @@ A same-day review of the 2026-09-14 audit-fix batches found nine defects on four
 **5xx is unknown.** `status >= 500` classifies as `'unknown'`; only a status below 500 or a Feishu business code proves rejection (`'failed'`).
 
 **Cards are idempotent.** Each card send path (reply card, send card, send card with handle, send preview) mints one intent uuid per send intent — shared across the path's internal create/reply fallbacks — and passes `retryOnDeadline: false`, matching the text path's u6 contract.
+
+**Segment flush settles by verdict.** The inter-segment flush records its delivery outcome and branches on it: a definite `'failed'` holds `segmentStart` (the segment stays unsent; the next flush or the turn-end/kill settlement re-delivers a superset, and a later success clears the record), while `'unknown'` advances the boundary — a retry could duplicate an already-landed segment — and stays sticky across later merges. The turn-end gate widens to include `answerDelivery === 'failed'` so a first-segment failure with `segmentStart === 0` still reaches the remainder path, and the state/sp outcome merge takes the worse of the two.
+
+**Degraded delivers, then discards.** The degraded branch re-delivers the answer before deleting the frozen card, so a failed re-delivery leaves the card as the answer's remaining carrier (and records the failure for the warning block).
+
+**Killed cards settle by terminal outcome.** The kill path awaits the sender barrier, then reads the final `sp.answerDelivery`: `'sent'` keeps the text re-delivery excluded; `'unknown'` records without re-sending (the fallback may have landed); a definite `'failed'` — terminal PATCH and fallback both provably never landed — re-delivers the segment as plain text, warns, and saves the copy. The re-delivery is mutually exclusive with the in-card fallback by construction: it runs only after that fallback itself definitely failed.
 
 ## Consequences
 

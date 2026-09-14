@@ -19,6 +19,9 @@ Status: implemented
 - deliver 阶段 abort 且 PNG 渲染同时失败时，渲染 settle 成 `failed` 而非 `cancelled`——用户自己的取消读作渲染失败。
 - `classifyDeliveryFailure` 把任何 HTTP 状态——含 502/503/504——判为 `'failed'`，其措辞诱导重发，而网关 5xx 并不证明服务端跳过了该 create。
 - 五个交互卡片发送路径不带意图 uuid 且保留 deadline 重试，投递后超时可双发带可点按钮的卡片。
+- 段间文本 flush 走吞错的纯文本发送并无条件推进 `segmentStart`：失败的段落永久丢失，回合仍读作纯成功。
+- degraded 分支在补发答案前先删冻结卡——u5 已从 `fallbackSend` 移除的先删后发反模式。
+- 答案只存在于进行中卡片实时播报段落的被杀回合，在终局 PATCH 与 fallback 双双失败时丢失该段：文本补发守卫排除了它，且无警告无存档。
 
 ## Decision
 
@@ -39,6 +42,12 @@ Status: implemented
 **5xx 归 unknown。** `status >= 500` 判 `'unknown'`；只有 500 以下的状态码或飞书业务码才证明拒绝（`'failed'`）。
 
 **卡片幂等。** 每个卡片发送路径（reply card、send card、send card with handle、send preview）为每次发送意图铸一个 uuid——在该路径内部的 create/reply 回退间共享——并传 `retryOnDeadline: false`，与文本面的 u6 契约对齐。
+
+**段间 flush 按 verdict 结算。** 段间 flush 记录交付结果并按其分叉：确定的 `'failed'` 保持 `segmentStart` 不动（该段保持未浮出；下次 flush 或 turn-end/kill 结算从原边界超集重发，后续成功清除该记录）；`'unknown'` 推进边界——重试可能重复已落地的段落——且在后续合并中粘滞。turn-end 门控扩为含 `answerDelivery === 'failed'`，使 `segmentStart === 0` 的首段失败仍能走余量补发路径；state/sp 结果合并取更差者。
+
+**degraded 先补发再删卡。** degraded 分支先补发答案再删冻结卡，补发失败时卡片仍是答案的承载（且失败记入警告块）。
+
+**被杀卡按终局结果结算。** kill 路径先等 sender barrier，再读最终 `sp.answerDelivery`：`'sent'` 维持文本补发排除；`'unknown'` 只记录不重发（fallback 可能已落地）；确定的 `'failed'`——终局 PATCH 与 fallback 都可证从未落地——把该段以纯文本补发、警告并存档。文本补发与卡内 fallback 构造上互斥：它只在后者自身确定失败后才执行。
 
 ## Consequences
 
