@@ -107,7 +107,67 @@ function segmentFlakyPlatform(error: unknown, failCount: number): Platform & { s
   }) as Platform & { sent: string[] }
 }
 
-/** Timeout symptom: the bridge's own synthesized per-attempt deadline. */
+/**
+ * Agent whose session drives five tool calls (each PATCHing the progress
+ * card) then the result, so a platform whose updateMessage always rejects
+ * degrades the in-progress card before the turn ends.
+ */
+function degradingCardAgent(): Agent {
+  const base = createStubAgent()
+  return {
+    ...base,
+    startSession: async () => {
+      const s = newControllableSession('degrade-session')
+      let sentOnce = false
+      s.send = async () => {
+        if (sentOnce) return
+        sentOnce = true
+        for (let i = 0; i < 5; i++) {
+          s.channel.push({ type: 'tool_use', toolName: `bash${i}`, toolInput: `ls ${i}`, toolID: `call-${i}`, content: '', done: false })
+        }
+        s.channel.push({ type: 'result', content: 'the recoverable degraded answer', done: true })
+      }
+      return s
+    },
+  } as Agent
+}
+
+/**
+ * In-progress card platform that degrades under the turn: the initial card
+ * lands, every PATCH is rejected (building the failure streak), every plain
+ * send fails with the definite rejection, and card sends (the ✅ push) are
+ * recorded. Preview-message deletions are recorded so a test can tell
+ * whether the frozen card survived.
+ */
+function frozenCardPlatform(error: unknown): Platform & { sent: string[]; cards: unknown[]; deletes: unknown[] } {
+  const p = createStubPlatform('test')
+  const cards: unknown[] = []
+  const deletes: unknown[] = []
+  return Object.assign(p, {
+    cards,
+    deletes,
+    async sendPreviewStart(_rc: unknown): Promise<unknown> {
+      return 'preview-handle'
+    },
+    async updateMessage(_rc: unknown): Promise<void> {
+      throw new Error('PATCH rejected')
+    },
+    async deletePreviewMessage(handle: unknown): Promise<void> {
+      deletes.push(handle)
+    },
+    async sendCardWithHandle(_rc: unknown, card: unknown): Promise<unknown> {
+      cards.push(card)
+      return 'card-handle'
+    },
+    classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' => classifyDeliveryFailure(err),
+    send: async (_rc: unknown, _content: string) => {
+      throw error
+    },
+  }) as Platform & { sent: string[]; cards: unknown[]; deletes: unknown[] }
+}
+
+/**
+ * Timeout symptom: the bridge's own synthesized per-attempt deadline. */
 const deadlineError = new Error('context deadline exceeded')
 
 /** AxiosError shape the SDK surfaces for a definite HTTP rejection. */
@@ -280,6 +340,33 @@ describe('answer delivery outcome', () => {
       const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
       expect(saved, `dir=${workDir}`).toHaveLength(1)
       expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('precious first segment')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
+  })
+
+  it('a degraded in-progress turn keeps the frozen card when the re-delivery fails', async () => {
+    // The turn-end degraded branch discarded the frozen card before
+    // re-delivering its answer — the fallbackSend anti-pattern (u5): once
+    // the re-delivery also failed, the answer existed nowhere. The frozen
+    // card is the last surface still carrying the streamed text, so it is
+    // deleted only after a delivered answer.
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-degraded-card-'))
+    try {
+      const p = frozenCardPlatform(forbiddenError)
+      const e = new Engine('test', degradingCardAgent(), [p], '', 'en')
+      e.setDisplayConfig({ toolProgress: true })
+      e.streamPreview.progressFlushIntervalMs = 0
+      e.setBaseWorkDir(workDir)
+      e.receiveMessage(p, msg('please answer'))
+      await vi.waitFor(() => {
+        expect(e.interactiveStates.get('testchat')?.answerDelivery).toBe('failed')
+      }, { timeout: 5000 })
+      expect(p.deletes, 'the frozen card survives the failed re-delivery as the answer carrier').toHaveLength(0)
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('the recoverable degraded answer')
+      expect(JSON.stringify(p.cards[0]), 'the ✅ card leads with the delivery warning').toContain('failed to deliver')
     } finally {
       await rm(workDir, { recursive: true, force: true })
     }

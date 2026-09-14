@@ -4281,8 +4281,13 @@ export class Engine {
         sendCompletionNotification = true
       } else if (sp.inProgressMode()) {
         if (sp.isDegraded()) {
-          await sp.discard()
-          await sp.deliverAnswer(fullResponse)
+          // fallbackSend order (u5): delete the frozen card only after the
+          // re-delivery landed — discarding first loses the answer entirely
+          // when the re-delivery also fails, while the frozen card still
+          // shows the streamed text. A failed re-delivery records
+          // sp.answerDelivery, which the post-barrier warning block below
+          // consumes (this branch settles before it).
+          if (await sp.deliverAnswer(fullResponse) === 'sent') await sp.discard()
         } else {
           // Keep 实时播报 on the last streamed segment; only fall back to
           // the full response when nothing was streamed live.
