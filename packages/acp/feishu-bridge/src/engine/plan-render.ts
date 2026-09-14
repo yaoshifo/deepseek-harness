@@ -52,10 +52,10 @@ const execFileAsync = promisify(execFile)
 export const errRenderStalled = new Error('render query stalled: no stream output')
 
 /** Click-fork timeout (Go defaultPlanRenderTimeout, 600s): effort=max html-skill multi-round flow. */
-export const defaultPlanRenderTimeoutMs = 600_000
+const defaultPlanRenderTimeoutMs = 600_000
 
 /** Speculative pre-render timeout cap (Go defaultPreRenderTimeout, 360s). */
-export const defaultPreRenderTimeoutMs = 360_000
+const defaultPreRenderTimeoutMs = 360_000
 
 /** Replies shorter than this (runes) are not speculatively rendered (Go defaultReplyPreRenderLen). */
 export const defaultReplyPreRenderLen = 500
@@ -70,10 +70,10 @@ const sendTimeoutMs = 90_000
 const pngRetryBackoffMs = 1_000
 
 /** Rasterize width, matching the html skill's .wrap (max-width 760 + padding 32×2; Go renderPNGWidth). */
-export const renderPNGWidth = 824
+const renderPNGWidth = 824
 
 /** Lifecycle state of a background render task (#47/#48), surfaced on plan/progress cards. */
-export type RenderStatus = 'rendering' | 'delivered' | 'cancelled' | 'failed'
+type RenderStatus = 'rendering' | 'delivered' | 'cancelled' | 'failed'
 
 /** Latest status of one render task, keyed by exportKey (Go renderStatusEntry). */
 export interface RenderStatusEntry {
@@ -176,7 +176,7 @@ export function renderReplySummaryPrompt(skillContent: string): string {
  * @param s - Raw session key.
  * @returns The session key with `/`, `\`, and `:` replaced by underscores.
  */
-export function sanitizeSessionKey(s: string): string {
+function sanitizeSessionKey(s: string): string {
   return s.replaceAll('/', '_').replaceAll('\\', '_').replaceAll(':', '_')
 }
 
@@ -318,7 +318,7 @@ export async function removeRenderedTemp(htmlPath: string): Promise<void> {
  * @param src - Source file to read.
  * @param dst - Destination path, with parent directories created as needed.
  */
-export function copyFileBestEffort(src: string, dst: string): void {
+function copyFileBestEffort(src: string, dst: string): void {
   let data: Buffer
   try {
     data = readFileSync(src)
@@ -523,7 +523,7 @@ export function assembleHTML(subtype: string, bodyFragment: string, titlePrefix:
  * @param subtype - 'plan' | 'reply' sub-type selecting the template.
  * @param titlePrefix - Prefix prepended to the derived `<title>`.
  */
-export async function assembleHTMLInPlace(htmlPath: string, subtype: string, titlePrefix: string): Promise<void> {
+async function assembleHTMLInPlace(htmlPath: string, subtype: string, titlePrefix: string): Promise<void> {
   const body = await readFile(htmlPath, 'utf8')
   await writeFile(htmlPath, assembleHTML(subtype, body, titlePrefix), 'utf8')
 }
@@ -609,7 +609,7 @@ export function registerRenderCancel(
  * @param state - Per-session interactive state holding the cancel set.
  * @param handle - Handle returned by registerRenderCancel.
  */
-export function unregisterRenderCancel(state: InteractiveState, handle: RenderCancelHandle): void {
+function unregisterRenderCancel(state: InteractiveState, handle: RenderCancelHandle): void {
   state.renderCancels = state.renderCancels.filter(h => h !== handle)
 }
 
@@ -868,7 +868,7 @@ export function updatePlanCardStatus(
  * @param elapsedMs - Elapsed milliseconds appended to the label when > 0.
  * @returns Promise settling after the PATCH (or at once when none is sent).
  */
-export function patchReplyRenderStatus(
+function patchReplyRenderStatus(
   e: Engine, p: Platform | undefined, replyCtx: unknown, state: InteractiveState | undefined,
   exportKey: string, status: RenderStatus, elapsedMs: number,
 ): Promise<void> {
@@ -889,7 +889,7 @@ export function patchReplyRenderStatus(
  * @param subtype - 'plan' | 'reply'; any other value yields no prefix.
  * @returns The localized prefix ending in '·', or ''.
  */
-export function renderSubtypeTag(e: Engine, subtype: string): string {
+function renderSubtypeTag(e: Engine, subtype: string): string {
   switch (subtype) {
     case 'plan':
       return `${e.i18n.t(Msg.RenderTagPlan)}·`
@@ -935,7 +935,7 @@ async function renderSkillBody(e: Engine): Promise<string> {
  * @param signal - Optional abort signal cancelling the fork.
  * @returns Whether the fork produced an assembled HTML file.
  */
-export async function renderContentToHTML(
+async function renderContentToHTML(
   e: Engine,
   logTag: string,
   subtype: 'plan' | 'reply',
@@ -1118,7 +1118,7 @@ function withTimeout<T>(ms: number, fn: () => Promise<T>): Promise<T> {
  * @param sessionKey - Session key used to rebuild the reply context.
  * @returns The resolved platform and a replyCtx that may be undefined.
  */
-export function resolveRenderReplyCtx(state: InteractiveState, sessionKey: string): { platform: Platform | undefined; replyCtx: unknown } {
+function resolveRenderReplyCtx(state: InteractiveState, sessionKey: string): { platform: Platform | undefined; replyCtx: unknown } {
   const p = state.platform
   if (state.replyCtx !== undefined && state.replyCtx !== null) return { platform: p, replyCtx: state.replyCtx }
   if (p === undefined) return { platform: undefined, replyCtx: undefined }
