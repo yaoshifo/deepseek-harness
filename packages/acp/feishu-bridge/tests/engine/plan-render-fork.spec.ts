@@ -14,6 +14,7 @@ import { existsSync, writeFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
+import type { RenderStatusUpdater } from '../../src/core/types.ts'
 import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import {
   deliverReplyHTML,
@@ -455,9 +456,10 @@ describe('RenderAndDeliverReply', () => {
     // timeouts and the tick cadence.
     interface HeldPatch { text: string; release: () => void }
     const patches: HeldPatch[] = []
-    // The stub carries no render-status method; Object.assign types the
-    // dynamic override the ProgressDrain flow calls through RenderStatusUpdater.
-    const heldPlatform = Object.assign(createStubMediaPlatform(), {
+    // The stub carries no render-status method; the & RenderStatusUpdater
+    // annotation binds the override to the real interface so a signature
+    // change fails here at compile time instead of silently drifting.
+    const heldPlatform: ReturnType<typeof createStubMediaPlatform> & RenderStatusUpdater = Object.assign(createStubMediaPlatform(), {
       updateRenderStatus: (_ctx: unknown, _key: string, text: string): Promise<void> => {
         const patch: HeldPatch = { text, release: (): void => {} }
         patches.push(patch)
@@ -532,7 +534,9 @@ describe('RenderAndDeliverReply', () => {
     // point; no fake clock is needed because the fork completes at once.
     interface HeldPatch { text: string; release: () => void }
     const patches: HeldPatch[] = []
-    const heldPlatform = Object.assign(createStubMediaPlatform(), {
+    // Same & RenderStatusUpdater binding as the drain test above: the
+    // annotation pins the override to the interface the engine calls through.
+    const heldPlatform: ReturnType<typeof createStubMediaPlatform> & RenderStatusUpdater = Object.assign(createStubMediaPlatform(), {
       updateRenderStatus: (_ctx: unknown, _key: string, text: string): Promise<void> => {
         const patch: HeldPatch = { text, release: (): void => {} }
         patches.push(patch)
