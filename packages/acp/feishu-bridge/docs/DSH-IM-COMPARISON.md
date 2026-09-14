@@ -111,7 +111,7 @@
 
 | 能力 | 落点 | 说明 |
 |---|---|---|
-| 节流与抖动合并 | `src/streaming.ts:67-75`、`:514`、`src/feishu/platform.ts:654`、`src/async-sender.ts:60-70` | 800ms + minDelta 15 + maxChars 2000 + 进度 300ms + 每实例 `TokenBucket(200ms,3)` + 队列合并。**限定**：三个旋钮仅作用于 progressMode 之前的文本窗口，进度路径是固定 300ms 节流且无最小增量门槛（[PROGRESS-CARD-AUDIT.md](PROGRESS-CARD-AUDIT.md) F1/F4），「≥ dsh-im 的 800ms 单飞」仅覆盖早期文本阶段 |
+| 节流与抖动合并 | `src/streaming.ts:67-75`、`:514`、`src/feishu/platform.ts:654`、`src/async-sender.ts:60-70` | 800ms + minDelta 15 + maxChars 2000 + 进度 300ms + 每实例 `TokenBucket(200ms,3)` + 队列合并。**限定（快照时点；2026-09-14 `3629c72f46` 已修）**：三个旋钮仅作用于 progressMode 之前的文本窗口，进度路径是固定 300ms 节流且无最小增量门槛（[PROGRESS-CARD-AUDIT.md](PROGRESS-CARD-AUDIT.md) F1/F4；修复后去重键扩至整卡渲染结果、进度节流成为 `streamPreview.progressFlushIntervalMs` 配置项），「≥ dsh-im 的 800ms 单飞」仅覆盖早期文本阶段 |
 | 230020 限流处理 | `src/feishu/retry.ts:118-120`、`src/streaming.ts:903-910,938-941` | 已判为 transient 且**不计入**降级计数；dsh-im 相应文件反而无错误码感知 |
 | 终态不丢弃 + 终态前排空在途 PATCH | `src/async-sender.ts:130-138`、`src/streaming.ts:1020-1022,1948-1958` | — |
 | 熔断后整条重发 | `src/streaming.ts:1773-1788` | 删冻结卡 → `deliverAnswer` |
@@ -170,7 +170,7 @@ profile 实测参数（`~/.dsh/profiles/feishu-bridge/cordis.patch.yml:218-227`�
 - 通道异常退出 / 插件重载已分片补投已产出内容（`src/engine/engine.ts:4298-4373`）
 - errored turn 走 `deliverAnswer` 明文补投（`:4118-4130,4164-4167`）
 - stall 重试耗尽后有 ⏹ 卡与「▶ 继续执行」按钮，body 原样保留（`src/feishu/progress.ts:883`、`src/feishu/platform.ts:2224-2233`）
-- 引擎主动退出路径（stall 耗尽/硬帽/stop）都有终态卡（`markFailed`/`markStopped`）——「强杀无终态」已修；异常逃出回合循环的三处兜底 catch 只记日志不收尾卡片（[PROGRESS-CARD-AUDIT.md](PROGRESS-CARD-AUDIT.md) F2，机制已核实、触发未复现）
+- 引擎主动退出路径（stall 耗尽/硬帽/stop）都有终态卡（`markFailed`/`markStopped`）——「强杀无终态」已修；异常逃出回合循环的三处兜底 catch 曾只记日志不收尾卡片（[PROGRESS-CARD-AUDIT.md](PROGRESS-CARD-AUDIT.md) F2；2026-09-14 `3629c72f46` 已修，三处 catch 经 `markFailedIfUnsettled` 收尾）
 - park 期间不被 idle 杀、不计入硬帽时钟（`src/engine/engine.ts:3284-3285,5532,1429-1436`）
 - `markFailedLocked` **已保留**卡面显示（`src/streaming.ts:1872-1907`）——丢的是超出截断的部分与"以消息形式交付"这个动作
 
@@ -346,7 +346,7 @@ cardkit.v1.cardElement => update, content, delete, patch, create
 - **`/ps` 已是中途纠偏能力，等价 dsh-im 的 `/steer`**：`src/engine/misc-commands.ts:220-243` 的 `cmdPs` 把文本 steer 进运行回合的 inbox；机器消息也走 steer（`src/engine/engine.ts:7600-7620`，附 2026-08-27 队列丢消息事故说明）。
 - **队列满会告知用户**：`src/i18n/messages.ts:29`（上限 5，`src/engine/engine.ts:192`、判定 `:2408-2409`）。
 - **排队消息跨 daemon 重启不丢**：`src/i18n/messages.ts:99`（`pending inbox`，随会话保存，下次消息一并送达）——已是一种延迟投递。
-- 引擎主动退出路径（stall/硬帽/stop）都有终态卡；stall 重试耗尽后有「▶ 继续执行」按钮。异常兜底路径的卡片收尾缺口另见 [PROGRESS-CARD-AUDIT.md](PROGRESS-CARD-AUDIT.md) F2。
+- 引擎主动退出路径（stall/硬帽/stop）都有终态卡；stall 重试耗尽后有「▶ 继续执行」按钮。异常兜底路径的卡片收尾缺口见 [PROGRESS-CARD-AUDIT.md](PROGRESS-CARD-AUDIT.md) F2（2026-09-14 `3629c72f46` 已修）。
 
 ### 9.3 运行期档位切换（真实差异，但需判断）
 
