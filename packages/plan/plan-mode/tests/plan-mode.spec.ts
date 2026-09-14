@@ -291,6 +291,25 @@ describe('ctx.planMode: get/set', () => {
     expect(agent.session.snapshotEvents().filter(event => event.type === 'plan/mode')).toHaveLength(2)
   })
 
+  it('a direct-commit append failure surfaces to the caller and keeps the selection retryable', async () => {
+    const ctx = await setup()
+    const agent = await agentWithSession(ctx, 'direct-commit-failure')
+    const original = agent.session.append.bind(agent.session)
+    agent.session.append = (((type: string, ...rest: unknown[]) => {
+      if (type === 'plan/mode') throw new Error('backend gone')
+      return (original as (...args: unknown[]) => unknown)(type, ...rest)
+    }) as unknown) as typeof agent.session.append
+    // No open turn: set() commits directly instead of parking a pending
+    // intent, so the failed durable write must surface as the throw rather
+    // than half-commit or silently drop the selection.
+    expect(() => ctx.planMode.set(agent, true)).toThrow('backend gone')
+    expect(agent.session.snapshotEvents().some(event => event.type === 'plan/mode')).toBe(false)
+    expect(ctx.planMode.get(agent)).toEqual({ active: false })
+    agent.session.append = original
+    expect(ctx.planMode.set(agent, true)).toBe('committed')
+    expect(foldPlanMode(agent.session.snapshotEvents())).toBe(true)
+  })
+
   it('a between-turns reversal of a mid-turn pending intent cancels without logging', async () => {
     const ctx = await setup()
     const agent = await agentWithSession(ctx)
@@ -448,6 +467,40 @@ describe('the boundary flush', () => {
     }) as unknown) as typeof agent.session.append
     await boundary(ctx, agent, 'pre-step')
     expect(warn).toHaveBeenCalledOnce()
+    expect(ctx.planMode.get(agent)).toEqual({ active: false, pending: true })
+  })
+
+  it('does not append the pending selection for a rejected or aborted step', async () => {
+    const ctx = await setup()
+    const agent = await agentWithSession(ctx, 'pre-step-guard')
+    openTurn(agent.session)
+    ctx.planMode.set(agent, true)
+    header(agent.session)
+    const message = createUserMessage({
+      content: [{ type: 'text', text: 'boundary probe' }],
+      source: { kind: 'user' },
+    })
+    // A rejected step never becomes an accepted in-turn pre-step, so the
+    // selection stays pending instead of landing.
+    const rejected = await agentEvents(ctx, agent).waterfall(
+      'agent/pre-step',
+      { messages: [message], turn: 1, step: 1, signal: new AbortController().signal },
+      () => Promise.resolve({ kind: 'reject' as const }),
+    )
+    expect(rejected).toEqual({ kind: 'reject' })
+    expect(agent.session.snapshotEvents().some(event => event.type === 'plan/mode')).toBe(false)
+    expect(ctx.planMode.get(agent)).toEqual({ active: false, pending: true })
+    // An aborted step is equally not accepted, and its decision passes
+    // through without the switch notice.
+    const aborted = new AbortController()
+    aborted.abort()
+    const decision = await agentEvents(ctx, agent).waterfall(
+      'agent/pre-step',
+      { messages: [message], turn: 1, step: 1, signal: aborted.signal },
+      () => Promise.resolve({ kind: 'enter' as const, messages: [message] }),
+    )
+    expect(decision).toEqual({ kind: 'enter', messages: [message] })
+    expect(agent.session.snapshotEvents().some(event => event.type === 'plan/mode')).toBe(false)
     expect(ctx.planMode.get(agent)).toEqual({ active: false, pending: true })
   })
 })
@@ -704,6 +757,43 @@ describe('/plan', () => {
     expect(foldPlanMode(agent.session.snapshotEvents())).toBe(false)
   })
 
+  it('forks the /plan entry copy by outcome like the off branch', async () => {
+    const ctx = await setup()
+    await ctx.plugin(CommandRuntime)
+    await new Promise(resolve => setImmediate(resolve))
+    const signal = new AbortController().signal
+
+    // noop on a truly active session reads idempotent; the message still steers.
+    const active = await agentWithSession(ctx, 'on-noop-active', { active: true })
+    const steer = vi.fn()
+    ;(active as unknown as { steer: typeof steer }).steer = steer
+    expect((await ctx.commands.execute(active, '/plan tighten the scope', [], signal))?.result)
+      .toEqual({ kind: 'success', text: 'Plan mode is already active.' })
+    expect(steer).toHaveBeenCalledExactlyOnceWith({
+      id: expect.any(String) as unknown,
+      role: 'user',
+      content: [{ type: 'text', text: 'tighten the scope' }],
+      source: { kind: 'user' },
+    })
+    expect(ctx.planMode.get(active)).toEqual({ active: true })
+
+    // cancelled: a queued exit is undone; plan mode stays in force.
+    const exiting = await agentWithSession(ctx, 'on-cancelled-exit', { active: true })
+    openTurn(exiting.session)
+    await ctx.commands.execute(exiting, '/plan off', [], signal)
+    expect((await ctx.commands.execute(exiting, '/plan', [], signal))?.result)
+      .toEqual({ kind: 'success', text: 'Plan mode exit cancelled — still in plan mode. Use /plan off to leave.' })
+    expect(ctx.planMode.get(exiting)).toEqual({ active: true, pending: true })
+
+    // noop while an entry still awaits the boundary repeats the queued wording.
+    const entering = await agentWithSession(ctx, 'on-noop-pending')
+    openTurn(entering.session)
+    await ctx.commands.execute(entering, '/plan', [], signal)
+    expect((await ctx.commands.execute(entering, '/plan', [], signal))?.result)
+      .toEqual({ kind: 'success', text: 'Entering plan mode (applies from the next step). Use /plan off to leave.' })
+    expect(ctx.planMode.get(entering)).toEqual({ active: false, pending: true })
+  })
+
   it('steers mixed attachments with or without text and refuses them on /plan off', async () => {
     const ctx = await setup()
     await ctx.plugin(CommandRuntime)
@@ -837,6 +927,7 @@ describe('exit_plan_mode', () => {
     const parameters = schema?.parameters as { required?: string[]; properties?: Record<string, unknown> }
     expect(schema?.description).toMatch(/^Use only in plan mode\./)
     expect(schema?.description).toContain('An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default.')
+    expect(schema?.description).toContain('An inlined details section is rejected unless its content rides in `details`.')
     expect(Object.keys(parameters.properties ?? {})).toEqual(['plan', 'details'])
     expect(parameters.required).toEqual(['plan'])
     expect(parameters.properties?.details).toEqual({ type: 'string', description: 'Implementation-detail annex appended after the plan; capable UIs present it collapsed by default. Put implementation detail here instead of inlining a details section into the plan; omit only when the plan carries no implementation detail.' })
@@ -856,6 +947,25 @@ describe('exit_plan_mode', () => {
     const result = await callExit(ctx, agent)
     expect(result.isError).toBe(true)
     expect(result.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is only available in plan mode' }])
+  })
+
+  it('stays callable while a selected entry awaits its flush (guidance and gate agree)', async () => {
+    const ctx = await setup()
+    await ctx.plugin(AgentRegistry)
+    await ctx.plugin(UserQuestionService)
+    registerQuestionAnswerer(ctx, {
+      ask: () => Promise.resolve({ answers: [{ id: 'plan-review', selected: ['Keep planning'] }] }),
+    })
+    const agent = await agentWithSession(ctx, 'pending-entry-exit')
+    openTurn(agent.session)
+    expect(ctx.planMode.set(agent, true)).toBe('queued')
+    // The plan:policy section already reads the pending selection; the gate
+    // must not contradict that guidance with "only available in plan mode".
+    expect((await assembleFor(ctx, agent)).sections.find(section => section.name === 'plan:policy')?.text)
+      .toBe(TEST_PLAN_SECTION)
+    const result = await callExit(ctx, agent)
+    expect(JSON.stringify(result.content)).not.toContain('only available in plan mode')
+    expect(JSON.stringify(result.content)).toContain('keep planning')
   })
 
   it('rejects an empty or heading-less plan before asking the reviewer', async () => {
@@ -884,7 +994,48 @@ describe('exit_plan_mode', () => {
     expect(asked).toHaveLength(0)
   })
 
-  it('accepts the same inlined section once its content rides in details', async () => {
+  it('gates inlined details sections across levels, case, and fences (table)', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Keep planning'] })
+    // Keep-planning answers leave the mode untouched between rows, so every
+    // row runs against the same state; a gated row never reaches the review.
+    const cases: { plan: string; details?: string; gated: boolean }[] = [
+      // Recognized section titles: any heading level 2-6, English case-insensitive.
+      { plan: '# P\n\nplain\n\n## 实施细节\n\nfiles', gated: true },
+      { plan: '# P\n\nplain\n\n## 技术细节\n\nmechanism', gated: true },
+      { plan: '# P\n\nplain\n\n### 实施细节\n\nfiles', gated: true },
+      { plan: '# P\n\nplain\n\n#### 技术细节\n\nmechanism', gated: true },
+      { plan: '# P\n\nplain\n\n###### 实施细节\n\nfiles', gated: true },
+      { plan: '# P\n\nplain\n\n## implementation details\n\nfiles', gated: true },
+      { plan: '# P\n\nplain\n\n## IMPLEMENTATION NOTES\n\nfiles', gated: true },
+      // A whitespace-only details annex reads as absent, so the gate still fires.
+      { plan: '# P\n\nplain\n\n## 实施细节\n\nfiles', details: '   ', gated: true },
+      // Not a recognized section title: level 1, untaught synonyms, suffixed,
+      // decorated, indented, quoted, or generic names stay in the plan.
+      { plan: '# P\n\nplain\n\n# 实施细节\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n## 实现细节\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n## Technical Details\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n## Implementation Details: files\n\nx', gated: false },
+      { plan: '# P\n\nplain\n\n## 实施细节与风险\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n## **实施细节**\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n ## 实施细节\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n> ## 实施细节\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n## Details\n\nordinary prose', gated: false },
+      // Quoted content, not plan sections: inside a fence, without the ATX
+      // space, or with the title split across lines.
+      { plan: '# P\n\nplain\n\n```\n## Implementation Details\n```\n\nafter', gated: false },
+      { plan: '# P\n\nplain\n\n##Implementation Details\n\nfiles', gated: false },
+      { plan: '# P\n\nplain\n\n##\n实施细节\n\nfiles', gated: false },
+    ]
+    for (const { plan, details, gated } of cases) {
+      const result = await callExit(ctx, agent, plan, details)
+      expect(result.isError, plan).toBe(true)
+      expect(JSON.stringify(result.content), plan)
+        .toContain(gated ? 'belongs in the details argument' : 'keep planning')
+    }
+    expect(asked).toHaveLength(cases.filter(entry => !entry.gated).length)
+  })
+
+  it('skips the rejection gate once any non-empty details is submitted', async () => {
     const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
     const result = await callExit(ctx, agent, '# P\n\nplain layer\n\n## 实施细节\n\nfiles', 'files')
     expect(result.isError).not.toBe(true)
@@ -952,6 +1103,21 @@ describe('exit_plan_mode', () => {
     expect(asked[0]?.agent).toBe(agent)
     expect(asked[0]?.questions[0]?.detail).toBe('# The plan\n\ndo things')
     expect(asked[0]?.questions[0]?.options?.map(option => option.label)).toEqual(['Approve', 'Keep planning'])
+  })
+
+  it('rejects a second exit in the same batch after approval (no second review card)', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
+    const first = await callExit(ctx, agent)
+    expect(first.isError).toBe(false)
+    expect(ctx.planMode.get(agent)).toEqual({ active: true, pending: false })
+    // The approved exit stays pending until the next accepted in-turn
+    // pre-step; reading the logged fold alone would open a second review
+    // card for a decision the user already made.
+    const second = await callExit(ctx, agent)
+    expect(second.isError).toBe(true)
+    expect(second.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is only available in plan mode' }])
+    expect(asked).toHaveLength(1)
+    expect(ctx.planMode.get(agent)).toEqual({ active: true, pending: false })
   })
 
   it('carries the exact plan through a PTC mode review and logs the nested dispatch', async () => {
@@ -1130,6 +1296,16 @@ describe('exit_plan_mode', () => {
     const question = asked[0]?.questions[0]
     expect(question?.detail).toBe(plan)
     expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve' })
+  })
+
+  it('keeps a non-blank details annex untrimmed end to end', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
+    const plan = '# The plan\n\ndo things'
+    const annex = '  padded annex  '
+    await callExit(ctx, agent, plan, annex)
+    const question = asked[0]?.questions[0]
+    expect(question?.detail).toBe(`${plan}\n\n${annex}`)
+    expect(question?.intent).toEqual({ kind: 'plan-review', approve: 'Approve', layers: { plain: plan, details: annex } })
   })
 
   it('reads a dismissed review as the user taking the turn back, not as a failure', async () => {

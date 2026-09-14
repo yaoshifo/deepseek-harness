@@ -79,11 +79,12 @@ const KEEP_PLANNING_LABEL = 'Keep planning'
 // policy in the plan-mode section, so the description stays policy-free.
 const EXIT_DESCRIPTION
   = 'Use only in plan mode. Present your plan for the user\'s review and, on approval, leave plan mode. '
-  + 'Send the COMPLETE plan as markdown, starting with a # heading that names it. '
+  + 'Send the COMPLETE plan as markdown, starting with a # heading that names it — `plan` carries the '
+  + 'plain-language layer, `details` the implementation-detail layer. '
   + 'The user may approve (carry out the plan from your next step) or keep '
   + 'planning — their feedback comes back in the tool result.'
   + ' An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default.'
-  + ' An inlined details section in the plan is rejected: put implementation detail in `details` (e.g. plan="# Fix X\\n<plain-language layer>", details="<changed files, mechanism, tests>").'
+  + ' An inlined details section is rejected unless its content rides in `details`.'
 
 /** The plan's first markdown heading (any level), or `undefined` when it has none. */
 function firstHeading(plan: string): string | undefined {
@@ -99,14 +100,37 @@ function normalizeDetails(details: string | undefined): string | undefined {
   return details !== undefined && details.trim() !== '' ? details : undefined
 }
 
-/** Heading names that mark an inlined implementation-details section in the
- * plan; a match without a submitted `details` annex is a mislayered exit. */
-const EMBEDDED_DETAILS_HEADING = /^##\s*(实施细节|技术细节|Implementation Details?|Implementation Notes?)\s*$/m
+/** Heading titles that mark an inlined implementation-details section in the
+ * plan; a match without a submitted `details` annex is a mislayered exit.
+ * English titles are held lowercase and matched case-insensitively. */
+const EMBEDDED_DETAILS_TITLES = new Set([
+  '实施细节',
+  '技术细节',
+  'implementation detail',
+  'implementation details',
+  'implementation note',
+  'implementation notes',
+])
 
-/** The plan's inlined implementation-details heading text, or `undefined`
- * when the plan carries no such section. */
+/** The plan's inlined implementation-details heading title, or `undefined`
+ * when the plan carries no such section. Matches ATX headings of levels 2-6
+ * outside fenced code blocks: a heading inside a fence is quoted content,
+ * not a plan section. */
 function embeddedDetailsHeading(plan: string): string | undefined {
-  return EMBEDDED_DETAILS_HEADING.exec(plan)?.[1]
+  let inFence = false
+  for (const line of plan.split('\n')) {
+    // A fence-marker line opens a fence (an info string may follow); inside
+    // a fence only a bare marker closes it, regardless of the opening run's
+    // length. Tilde fences are not tracked.
+    if (/^ {0,3}`{3}/.test(line)) {
+      if (!inFence || /^ {0,3}`{3,}[ \t]*$/.test(line)) inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    const title = /^#{2,6}[ \t]+(.+?)[ \t]*$/.exec(line)?.[1]
+    if (title !== undefined && EMBEDDED_DETAILS_TITLES.has(title.toLowerCase())) return title
+  }
+  return undefined
 }
 
 /**
@@ -279,11 +303,20 @@ export class PlanModeController extends Service {
               source: { kind: 'user' },
             }))
           }
-          return {
-            kind: 'success',
-            text: outcome === 'committed'
-              ? 'Plan mode on. Use /plan off to leave.'
-              : 'Entering plan mode (applies from the next step). Use /plan off to leave.',
+          switch (outcome) {
+            case 'committed':
+              return { kind: 'success', text: 'Plan mode on. Use /plan off to leave.' }
+            case 'queued':
+              return { kind: 'success', text: 'Entering plan mode (applies from the next step). Use /plan off to leave.' }
+            case 'cancelled':
+              return { kind: 'success', text: 'Plan mode exit cancelled — still in plan mode. Use /plan off to leave.' }
+            case 'noop':
+              // Repeat the queued wording while an entry still awaits the
+              // next accepted pre-step; only a truly active session reads
+              // idempotent.
+              return this.loggedActive(agent.session)
+                ? { kind: 'success', text: 'Plan mode is already active.' }
+                : { kind: 'success', text: 'Entering plan mode (applies from the next step). Use /plan off to leave.' }
           }
         },
       })
@@ -293,7 +326,7 @@ export class PlanModeController extends Service {
       name: EXIT_PLAN_MODE,
       description: EXIT_DESCRIPTION,
       parameters: {
-        plan: { type: 'string', required: true, description: 'The complete plan, as markdown, starting with a # heading that names it.' },
+        plan: { type: 'string', required: true, description: 'The plan\'s plain-language layer, as markdown, starting with a # heading that names it.' },
         details: { type: 'string', description: 'Implementation-detail annex appended after the plan; capable UIs present it collapsed by default. Put implementation detail here instead of inlining a details section into the plan; omit only when the plan carries no implementation detail.' },
       },
       output: {
@@ -309,7 +342,11 @@ export class PlanModeController extends Service {
       execute: async (args, exec) => {
         const agent = exec.agent
         if (agent === undefined) throw new Error(`${EXIT_PLAN_MODE} requires a calling agent (no session to switch)`)
-        if (!this.loggedActive(agent.session)) {
+        // The same optimistic read as the plan:policy section — a selection
+        // awaiting the next accepted in-turn pre-step already counts — so the
+        // guidance the model sees and this gate cannot disagree.
+        const pending = this.pendingIntents.get(agent.session)
+        if (!(pending?.active ?? this.loggedActive(agent.session))) {
           throw new Error(`${EXIT_PLAN_MODE} is only available in plan mode`)
         }
         if (!/^#\s+\S/.test(args.plan.trim())) {
