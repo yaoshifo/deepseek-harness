@@ -2131,8 +2131,11 @@ export class FeishuPlatform implements Platform {
 
   /**
    * Edit the preview card in place. The rendered card JSON is cached
-   * pre-button; the stop button and (on green) the export/reply buttons are
-   * injected per PATCH, deferring to the latest render-status text.
+   * pre-button — only after the PATCH succeeded, so a failed PATCH leaves
+   * the cache at what the card actually shows (stop-card and render-status
+   * rebuilds restyle delivered content, not an unlanded render). The stop
+   * button and (on green) the export/reply buttons are injected per PATCH,
+   * deferring to the latest render-status text.
    * @param previewHandle - Preview handle from sendPreviewStart.
    * @param content - Updated content.
    */
@@ -2142,7 +2145,6 @@ export class FeishuPlatform implements Platform {
 
     const spin = await this.spinnerCfg()
     const cardJSON = this.renderPreviewCard(content, spin)
-    this.lastProgressCard.set(h.messageID, cardJSON)
     let json = injectStopButton(cardJSON, h.sessionKey, this.bgHintOf(content))
     const statusText = this.renderStatusText.get(h.messageID) ?? ''
     // State-keyed button eligibility: a card PATCHed to a settled parked
@@ -2151,6 +2153,7 @@ export class FeishuPlatform implements Platform {
     json = injectReplyButtons(json, h.sessionKey, h.messageID, statusText, this.buttonStateOf(content))
     await this.patchRateWait(h.messageID)
     await this.withRetry('patch message', () => this.patchMessage(h.messageID, json))
+    this.lastProgressCard.set(h.messageID, cardJSON)
   }
 
   /** Progress status state of preview content ('' when none), for state-keyed button eligibility. */
