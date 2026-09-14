@@ -291,6 +291,25 @@ describe('ctx.planMode: get/set', () => {
     expect(agent.session.snapshotEvents().filter(event => event.type === 'plan/mode')).toHaveLength(2)
   })
 
+  it('a direct-commit append failure surfaces to the caller and keeps the selection retryable', async () => {
+    const ctx = await setup()
+    const agent = await agentWithSession(ctx, 'direct-commit-failure')
+    const original = agent.session.append.bind(agent.session)
+    agent.session.append = (((type: string, ...rest: unknown[]) => {
+      if (type === 'plan/mode') throw new Error('backend gone')
+      return (original as (...args: unknown[]) => unknown)(type, ...rest)
+    }) as unknown) as typeof agent.session.append
+    // No open turn: set() commits directly instead of parking a pending
+    // intent, so the failed durable write must surface as the throw rather
+    // than half-commit or silently drop the selection.
+    expect(() => ctx.planMode.set(agent, true)).toThrow('backend gone')
+    expect(agent.session.snapshotEvents().some(event => event.type === 'plan/mode')).toBe(false)
+    expect(ctx.planMode.get(agent)).toEqual({ active: false })
+    agent.session.append = original
+    expect(ctx.planMode.set(agent, true)).toBe('committed')
+    expect(foldPlanMode(agent.session.snapshotEvents())).toBe(true)
+  })
+
   it('a between-turns reversal of a mid-turn pending intent cancels without logging', async () => {
     const ctx = await setup()
     const agent = await agentWithSession(ctx)
@@ -448,6 +467,40 @@ describe('the boundary flush', () => {
     }) as unknown) as typeof agent.session.append
     await boundary(ctx, agent, 'pre-step')
     expect(warn).toHaveBeenCalledOnce()
+    expect(ctx.planMode.get(agent)).toEqual({ active: false, pending: true })
+  })
+
+  it('does not append the pending selection for a rejected or aborted step', async () => {
+    const ctx = await setup()
+    const agent = await agentWithSession(ctx, 'pre-step-guard')
+    openTurn(agent.session)
+    ctx.planMode.set(agent, true)
+    header(agent.session)
+    const message = createUserMessage({
+      content: [{ type: 'text', text: 'boundary probe' }],
+      source: { kind: 'user' },
+    })
+    // A rejected step never becomes an accepted in-turn pre-step, so the
+    // selection stays pending instead of landing.
+    const rejected = await agentEvents(ctx, agent).waterfall(
+      'agent/pre-step',
+      { messages: [message], turn: 1, step: 1, signal: new AbortController().signal },
+      () => Promise.resolve({ kind: 'reject' as const }),
+    )
+    expect(rejected).toEqual({ kind: 'reject' })
+    expect(agent.session.snapshotEvents().some(event => event.type === 'plan/mode')).toBe(false)
+    expect(ctx.planMode.get(agent)).toEqual({ active: false, pending: true })
+    // An aborted step is equally not accepted, and its decision passes
+    // through without the switch notice.
+    const aborted = new AbortController()
+    aborted.abort()
+    const decision = await agentEvents(ctx, agent).waterfall(
+      'agent/pre-step',
+      { messages: [message], turn: 1, step: 1, signal: aborted.signal },
+      () => Promise.resolve({ kind: 'enter' as const, messages: [message] }),
+    )
+    expect(decision).toEqual({ kind: 'enter', messages: [message] })
+    expect(agent.session.snapshotEvents().some(event => event.type === 'plan/mode')).toBe(false)
     expect(ctx.planMode.get(agent)).toEqual({ active: false, pending: true })
   })
 })
