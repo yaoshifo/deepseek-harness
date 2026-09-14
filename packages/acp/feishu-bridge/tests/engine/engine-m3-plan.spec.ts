@@ -256,7 +256,7 @@ describe('PlanReviewParkedCardSettle', () => {
     state.platform = p
     state.replyCtx = 'ctx'
     const sp = newStreamPreview(
-      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 5000, progressFlushIntervalMs: 300 }, p, 'ctx', undefined, undefined, key)
+      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 5000, progressFlushIntervalMs: 300, maxAnalysisChars: 6000 }, p, 'ctx', undefined, undefined, key)
     await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**00:00:01**', body: 'ls', lang: 'bash', toolID: 't1' }))
     state.preview = sp
     e.interactiveStates.set(key, state)

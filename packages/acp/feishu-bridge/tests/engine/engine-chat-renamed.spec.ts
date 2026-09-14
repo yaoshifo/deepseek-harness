@@ -125,7 +125,7 @@ describe('stopInteractiveSession leaves nothing bumpable', () => {
     state.replyCtx = 'ctx'
     e.interactiveStates.set(key, state)
     const sp = new StreamPreview(
-      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500, progressFlushIntervalMs: 300 }, p, 'ctx', undefined, undefined, key,
+      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500, progressFlushIntervalMs: 300, maxAnalysisChars: 6000 }, p, 'ctx', undefined, undefined, key,
     )
     state.preview = sp
     await sp.appendText('working')
@@ -148,7 +148,7 @@ describe('stopInteractiveSession leaves nothing bumpable', () => {
     state2.replyCtx = 'ctx'
     e.interactiveStates.set('test:other', state2)
     const sp2 = new StreamPreview(
-      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500, progressFlushIntervalMs: 300 }, p2, 'ctx', undefined, undefined, 'test:other',
+      { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500, progressFlushIntervalMs: 300, maxAnalysisChars: 6000 }, p2, 'ctx', undefined, undefined, 'test:other',
     )
     state2.preview = sp2
     await sp2.appendText('working')

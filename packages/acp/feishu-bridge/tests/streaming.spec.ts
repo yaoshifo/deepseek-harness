@@ -279,6 +279,7 @@ function cfg(over: Partial<StreamPreviewCfg> = {}): StreamPreviewCfg {
     minDeltaChars: 1,
     maxChars: 500,
     progressFlushIntervalMs: progressFlushInterval,
+    maxAnalysisChars: maxAnalysisDisplayChars,
     ...over,
   }
 }
@@ -558,7 +559,7 @@ describe('StreamPreview', () => {
 
   it('sends nothing when disabled', async () => {
     const mp = createMockUpdaterPlatform()
-    const sp = newStreamPreview({ enabled: false, intervalMs: 50, minDeltaChars: 1, maxChars: 500, progressFlushIntervalMs: 300 }, mp, 'ctx', undefined, undefined)
+    const sp = newStreamPreview({ enabled: false, intervalMs: 50, minDeltaChars: 1, maxChars: 500, progressFlushIntervalMs: 300, maxAnalysisChars: 6000 }, mp, 'ctx', undefined, undefined)
     expect(sp.canPreview()).toBe(false)
     await sp.appendText('Hello')
     await sleep(50)
@@ -695,7 +696,7 @@ describe('StreamPreview', () => {
 
   it('needsDoneReaction false when disabled', async () => {
     const mp = createMockUpdaterPlatform()
-    const sp = newStreamPreview({ enabled: false, intervalMs: 50, minDeltaChars: 1, maxChars: 500, progressFlushIntervalMs: 300 }, mp, 'ctx', undefined, undefined)
+    const sp = newStreamPreview({ enabled: false, intervalMs: 50, minDeltaChars: 1, maxChars: 500, progressFlushIntervalMs: 300, maxAnalysisChars: 6000 }, mp, 'ctx', undefined, undefined)
     await sp.appendText('Hello')
     await sleep(100)
     expect(sp.needsDoneReaction()).toBe(false)
@@ -2120,6 +2121,24 @@ describe('progress flush interval', () => {
   it('defaultStreamPreviewCfg keeps the 300ms interval', () => {
     expect(progressFlushInterval).toBe(300)
     expect(defaultStreamPreviewCfg().progressFlushIntervalMs).toBe(progressFlushInterval)
+  })
+
+  it('defaultStreamPreviewCfg keeps the 6000-char live-narration cap', () => {
+    expect(defaultStreamPreviewCfg().maxAnalysisChars).toBe(maxAnalysisDisplayChars)
+  })
+
+  it('a smaller maxAnalysisChars truncates the live narration at the configured cap', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(
+      cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000, maxAnalysisChars: 100, progressFlushIntervalMs: 0 }),
+      mp, 'ctx', undefined, undefined,
+    )
+    await sp.appendProgress(new ProgressEntry({ isTool: true, header: '**00:00:01**', body: 'ls', lang: 'bash', toolID: 't1' }))
+    await sp.appendAnalysisText('y'.repeat(150))
+    expect(sp.analysisTruncated).toBe(true)
+    const display = mp.messages.at(-1) ?? ''
+    expect(display).toContain('内容过长')
+    expect(display.split('y').length - 1).toBe(100)
   })
 
   it('the default 300ms interval defers a same-window burst to one delayed flush', async () => {
