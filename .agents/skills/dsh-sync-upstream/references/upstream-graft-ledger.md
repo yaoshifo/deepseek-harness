@@ -54,7 +54,10 @@
 | --- | --- | --- |
 | acp armTopologyNotifications 创建窗口竞态修复（带回归测试） | f8d269b596 | 现成 PR 素材，pilot 首选 |
 | apps/cli DSH_CONFIG_HMR_DISABLED | — | 待提上游（S） |
-| plan 引导散文（feishu-bridge/cordis.patch.yml 的 plan-mode section 单点 + tests/bundle-patch.spec.ts lockstep 防线） | eef9cb0327 | 单点收敛于 1a847c57c6（2026-09-07）；讨论轮段已搬 fork patch layer，并行探索段评估提上游 |
+| plan 引导散文（feishu-bridge/cordis.patch.yml 的 plan-mode section 单点 + tests/bundle-patch.spec.ts lockstep 防线） | eef9cb0327 | 单点收敛于 1a847c57c6（2026-09-07）；patch 现带四个 fork 引导 delta（并行探索 / 分组标记 / 拒绝讨论轮 / 两参数退出），lockstep 防线 pin 全部四个；并行探索段评估提上游 |
+| plan 两层评审：exit_plan_mode 的 `details` 参数 + plan-review intent.layers（bridge 折叠渲染消费） | de2def5b0e | 待提上游（消费者仅 fork bridge；`layers` 字段已在共享类型 AskUserQuestionIntent 内） |
+| 内嵌实施细节段拒绝门（标题集逐行扫描：层级 2–6、英文大小写不敏感、围栏代码块内不识别） | 6cbbfd489b（6815345769 重写收窄） | 待提上游（随上行同批） |
+| compaction 逐字保留已批准计划（summarizer 指令 + 双参数措辞） | 797294d9d1 / 4379cb7e06 | 待提上游（纯提示词实现，落盘无包含性校验） |
 | lefthook secrets job + 配对 glob 扩展、生成器 fork 注册 | — | 保留（fork 政策落地，加严非跳过） |
 
 ## 定位备注
@@ -62,4 +65,5 @@
 - **dsh-memory**：上游 2026-07-31 note 明确「不做」memory（仅 MCP overlay 示例）——不提上游。fork-only 定位已拍板（2026-09-06）并写入包 README 与原则 note；durable kind 'dsh-memory' 不可回收，若上游将来自己做 memory → 采纳上游表面 + 重放 fork 增量。
 - **vitest 工具链**：四 lane 原生解析半分叉已于 2026-09-06 全量退回 vite-tsconfig-paths 插件，原则 4 偏差终结。
 - **README 双语对债务**（74 文件）：随各 seam 上游 PR 走（fork 侧 revert）；上游化即自动收缩。
+- **plan 工具固定面**：36 份 `snapshots/**/expected.*`（2026-09-14 复审 grep 口径）逐字固定了 `exit_plan_mode` 的描述与参数——上游重录样本时必与 fork 文案冲突，属 plan 两层三行的重嫁接成本；`38b665610b` 的记录另示 fork 自有 acp 场景补 `session.v3.jsonl` 后继的先例。
 - **dsh-context 外部仓移植**（aggregate.ts / chartspec.ts）：来源是 bowenliang123/dsh-context 独立仓（live profile 直链，非本仓依赖、无上游对应物，无法改 import）。升级 profile 里的 dsh-context 版本时须手工重对齐两份移植；移植头注释已标明来源仓与版本锚。
