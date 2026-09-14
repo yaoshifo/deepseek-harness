@@ -352,6 +352,35 @@ describe('RenderAndDeliverReply', () => {
     expect(p.files).toHaveLength(0)
   })
 
+  it('AbortAfterCompletionRecordsCancelled: a new turn cancelling a just-finished fork settles as cancelled, not failed', async () => {
+    // F4a's reply-path window: the fork already wrote its html and returned
+    // ok when the user opens a new turn — the file passes the existence check
+    // and the delivery aborts, which must read as a cancel, never a failure,
+    // and must not leak the temp dir (the completed fork skipped the failure
+    // cleanup).
+    const a = createRenderAgent({ writeThenBlockOkCount: 5 })
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p, { timeoutMs: 30_000 })
+
+    const state = newRenderState(p)
+    renderAndDeliverReply(e, state, 'k1', longText, 'om_1')
+
+    // Wait until the fork wrote its html; a new turn then cancels the render,
+    // and the fork's completion still lands after the cancel.
+    await pollUntil(() => {
+      const hp = htmlPathFromPrompt(a.getCalls()[0]?.prompt ?? '')
+      return hp !== '' && existsSync(hp)
+    }, 2000)
+    const attemptDir = dirname(htmlPathFromPrompt(a.getCalls()[0]!.prompt))
+    cancelRendersFor(state)
+
+    await pollUntil(() => getRenderStatus(state, 'om_1')?.status !== undefined
+      && getRenderStatus(state, 'om_1')?.status !== 'rendering' && !state.preRenderRunning
+      && !existsSync(attemptDir), 3000)
+    expect(getRenderStatus(state, 'om_1')?.status).toBe('cancelled')
+    expect(p.files).toHaveLength(0)
+  })
+
   it('GivesUpAfterTwoFailures: two blocked attempts then no delivery', async () => {
     const a = createRenderAgent({ blockCount: 5 })
     const p = createStubMediaPlatform()

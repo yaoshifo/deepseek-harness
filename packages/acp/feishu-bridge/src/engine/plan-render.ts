@@ -1337,11 +1337,15 @@ export function renderAndDeliverReply(
           clearTimeout(timer)
           parentCtl.signal.removeEventListener('abort', onParentAbort)
         }
+        // The aborted check leads the file check (same window as the plan
+        // path): a fork whose html landed just as the user opened a new turn
+        // was still cancelled — its file must not pass into an aborting
+        // delivery that flips the card to 渲染失败.
+        if (parentCtl.signal.aborted) break // user opened a new turn — stop retrying
         if (existsSync(hp)) {
           succeeded = true
           break
         }
-        if (parentCtl.signal.aborted) break // user opened a new turn — stop retrying
         if (attempt < maxAttempts) {
           console.info(`reply-html: first attempt produced no file, retrying (${sessionKey})`)
         }
@@ -1350,6 +1354,10 @@ export function renderAndDeliverReply(
         await drainProgress()
         const status: RenderStatus = parentCtl.signal.aborted ? 'cancelled' : 'failed'
         void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, status, 0)
+        // A completed-then-cancelled attempt leaves its file behind (the fork
+        // returned ok, so renderReplyToHTML's failure cleanup never ran) —
+        // reap it like the plan path's !succeeded exit.
+        await removeRenderedTemp(hp)
         return
       }
       recordRenderedReply(state, exportKey, hp)
