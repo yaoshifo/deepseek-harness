@@ -192,13 +192,21 @@ describe('resolveConfig', () => {
   it('returns a detached plan config', () => {
     const config = { section: TEST_PLAN_SECTION }
     const resolved = resolveConfig(config)
-    expect(resolved).toEqual(config)
+    expect(resolved).toEqual({ section: TEST_PLAN_SECTION, rejectionHold: false })
     expect(resolved).not.toBe(config)
   })
 
   it('rejects fields outside the plan policy config', () => {
     expect(() => resolveConfig({ section: TEST_PLAN_SECTION, tools: ['read'] } as unknown as PlanModeConfig))
-      .toThrow('unknown key(s) tools — config is { section }')
+      .toThrow('unknown key(s) tools — config is { section, rejectionHold }')
+  })
+
+  it('accepts an optional boolean rejectionHold and defaults it off', () => {
+    expect(resolveConfig({ section: TEST_PLAN_SECTION })).toEqual({ section: TEST_PLAN_SECTION, rejectionHold: false })
+    expect(resolveConfig({ section: TEST_PLAN_SECTION, rejectionHold: true }))
+      .toEqual({ section: TEST_PLAN_SECTION, rejectionHold: true })
+    expect(() => resolveConfig({ section: TEST_PLAN_SECTION, rejectionHold: 'yes' } as unknown as PlanModeConfig))
+      .toThrow('needs a boolean `rejectionHold`')
   })
 })
 
@@ -1431,6 +1439,130 @@ describe('exit_plan_mode', () => {
       card: 'generic',
       title: 'Plan review',
       content,
+    })
+  })
+
+  describe('rejection hold', () => {
+    const HOLD_CONFIG = { section: TEST_PLAN_SECTION, rejectionHold: true } satisfies PlanModeConfig
+    const HOLD_DIRECTIVE = 'exit_plan_mode is held for the rest of this turn — respond to the feedback in your reply text and end your turn. Present the updated plan after the user asks for it.'
+
+    async function setupHeld(answer?: { selected: string[]; custom?: string }) {
+      const ctx = await setup(HOLD_CONFIG)
+      await ctx.plugin(AgentRegistry)
+      await ctx.plugin(UserQuestionService)
+      const asked: AskUserQuestionRequest[] = []
+      if (answer !== undefined) {
+        registerQuestionAnswerer(ctx, {
+          ask: (request) => {
+            asked.push(request)
+            return Promise.resolve({ answers: [{ id: 'plan-review', ...answer }] })
+          },
+        })
+      }
+      const agent = await agentWithSession(ctx, 'agent-1', { active: true })
+      return { ctx, agent, asked }
+    }
+
+    /** Dispatch the real pre-step waterfall with explicit claimed messages. */
+    async function preStep(ctx: Context, agent: Agent & { session: Session }, messages: UserMessage[]): Promise<void> {
+      const events = agentEvents(ctx, agent)
+      await events.waterfall(
+        'agent/pre-step',
+        { messages, turn: 1, step: 1, signal: new AbortController().signal },
+        () => Promise.resolve({ kind: 'enter' as const, messages }),
+      )
+    }
+
+    it('a rejection under hold carries the hold directive in the corrective error', async () => {
+      const { ctx, agent } = await setupHeld({ selected: ['Keep planning'], custom: 'consider the resume path' })
+      const result = await callExit(ctx, agent)
+      expect(result.isError).toBe(true)
+      expect(result.content).toEqual([{ type: 'text', text: `Error: The user chose to keep planning; their feedback: consider the resume path\n${HOLD_DIRECTIVE}` }])
+    })
+
+    it('an empty-feedback rejection under hold asks what to change instead of urging revision', async () => {
+      const { ctx, agent } = await setupHeld({ selected: ['Keep planning'] })
+      const result = await callExit(ctx, agent)
+      expect(result.isError).toBe(true)
+      expect(result.content).toEqual([{ type: 'text', text: 'Error: The user chose to keep planning without further feedback.\nexit_plan_mode is held for the rest of this turn — ask what to change and end your turn. Present the updated plan after the user asks for it.' }])
+    })
+
+    it('a same-turn re-presentation bounces with the hold error', async () => {
+      const { ctx, agent, asked } = await setupHeld({ selected: ['Keep planning'], custom: 'rework the storage layer' })
+      openTurn(agent.session)
+      const rejected = await callExit(ctx, agent)
+      expect(rejected.isError).toBe(true)
+      const retry = await callExit(ctx, agent)
+      expect(retry.isError).toBe(true)
+      expect(retry.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is held for the rest of this turn: the user kept planning earlier in this turn. Finish replying in text and end your turn; their next message lifts the hold.' }])
+      // The bounce happens before the review: no second question was asked.
+      expect(asked).toHaveLength(1)
+    })
+
+    it('a user message claimed by a pre-step lifts the hold', async () => {
+      const { ctx, agent } = await setupHeld({ selected: ['Keep planning'], custom: 'rework the storage layer' })
+      openTurn(agent.session)
+      await callExit(ctx, agent)
+      const message = createUserMessage({
+        content: [{ type: 'text', text: 'update the plan now' }],
+        source: { kind: 'user' },
+      })
+      await preStep(ctx, agent, [message])
+      const result = await callExit(ctx, agent)
+      expect(result.isError).toBe(true)
+      expect(result.content).toEqual([{ type: 'text', text: `Error: The user chose to keep planning; their feedback: rework the storage layer\n${HOLD_DIRECTIVE}` }])
+    })
+
+    it('an agent-message claimed by a pre-step does not lift the hold', async () => {
+      const { ctx, agent } = await setupHeld({ selected: ['Keep planning'], custom: 'rework the storage layer' })
+      openTurn(agent.session)
+      await callExit(ctx, agent)
+      const report = createUserMessage({
+        content: [{ type: 'text', text: 'subagent report' }],
+        source: { kind: 'agent-message', form: 'relay', senderSessionId: SessionId('cc-child-native') },
+      })
+      await preStep(ctx, agent, [report])
+      const retry = await callExit(ctx, agent)
+      expect(retry.isError).toBe(true)
+      expect(retry.content).toEqual([{ type: 'text', text: 'Error: exit_plan_mode is held for the rest of this turn: the user kept planning earlier in this turn. Finish replying in text and end your turn; their next message lifts the hold.' }])
+    })
+
+    it('a later turn lifts the hold even without an intervening user message', async () => {
+      const { ctx, agent } = await setupHeld({ selected: ['Keep planning'], custom: 'rework the storage layer' })
+      openTurn(agent.session, 1)
+      await callExit(ctx, agent)
+      closeTurn(agent.session, 1)
+      // A cron-style wake opens a new turn with no user message claimed.
+      openTurn(agent.session, 2)
+      const result = await callExit(ctx, agent)
+      expect(result.isError).toBe(true)
+      expect(result.content).toEqual([{ type: 'text', text: `Error: The user chose to keep planning; their feedback: rework the storage layer\n${HOLD_DIRECTIVE}` }])
+    })
+
+    it('hold off keeps the classic corrective errors untouched', async () => {
+      const ctx = await setup()
+      await ctx.plugin(AgentRegistry)
+      await ctx.plugin(UserQuestionService)
+      const answers: { id: string; selected: string[]; custom?: string }[] = [
+        { id: 'plan-review', selected: ['Keep planning'], custom: 'consider the resume path' },
+        { id: 'plan-review', selected: ['Approve'] },
+      ]
+      let asked = 0
+      registerQuestionAnswerer(ctx, {
+        ask: () => {
+          const answer = answers[asked] ?? answers[answers.length - 1]!
+          asked++
+          return Promise.resolve({ answers: [answer] })
+        },
+      })
+      const agent = await agentWithSession(ctx, 'agent-1', { active: true })
+      openTurn(agent.session)
+      const rejected = await callExit(ctx, agent)
+      expect(rejected.isError).toBe(true)
+      expect(rejected.content).toEqual([{ type: 'text', text: 'Error: The user chose to keep planning; their feedback: consider the resume path' }])
+      // No hold: the same-turn re-presentation reaches the review again.
+      const retry = await callExit(ctx, agent)
+      expect(retry.isError).toBe(false)
     })
   })
 })

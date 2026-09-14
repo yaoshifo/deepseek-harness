@@ -46,6 +46,7 @@ The only required configuration is the guidance text the agent follows while pla
 | Field | Default | Meaning |
 |---|---|---|
 | `section` | required | Guidance rendered as the `plan:policy` prompt section while plan mode is active |
+| `rejectionHold` | `false` | After a rejected review, `exit_plan_mode` fails for the rest of the turn; the user's next message lifts the hold. Off keeps the classic revise-and-present-again rhythm. |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-plan-mode) is the exhaustive source for every accepted field and its JSDoc.
 
@@ -60,7 +61,7 @@ You can attach images and generic files to a `/plan` message, and they are inclu
 
 When the agent has a finished plan, it calls `exit_plan_mode` with the plan written as markdown and starting with a heading. You review that exact plan and choose `Approve` to leave plan mode, or `Keep planning` to send the agent back with feedback.
 
-Choosing `Keep planning` (optionally with free-text feedback) sends the agent back to revise the plan; closing the review to type a message instead tells the agent to wait for your next message. If no interactive review is available, `exit_plan_mode` cannot run and you can still leave plan mode with `/plan off`.
+Choosing `Keep planning` (optionally with free-text feedback) sends the agent back to revise the plan; closing the review to type a message instead tells the agent to wait for your next message. With `rejectionHold: true` the rejection also fails further `exit_plan_mode` calls for the rest of the turn, so the agent answers the feedback in text and presents the revised plan only after you ask for it; your next message — a new turn or a mid-turn interjection — lifts the hold. If no interactive review is available, `exit_plan_mode` cannot run and you can still leave plan mode with `/plan off`.
 
 ### Observing plan state
 
@@ -93,6 +94,10 @@ The command child activates only when a commands service is composed. It maps ba
 `exit_plan_mode` stays registered while plan mode is inactive, so entering or leaving changes only the prompt section, never the request tool catalog. An approved review records a silent pending exit that the next accepted in-turn pre-step appends, keeping plan guidance for the rest of the current tool batch. Without a user-questions channel, or after a service reload while the review is pending, the call fails closed and `/plan off` remains the manual escape.
 
 The tool takes `plan` (the plain-language layer, markdown that must start with a `#` heading) plus an optional `details` (implementation-detail annex after the plan). When `details` is submitted, the review question's `detail` carries both layers concatenated, and the presentation intent additionally carries `layers: { plain, details }` for layer-rendering UIs (consumers read the fields, nothing is parsed); a blank `details` counts as not submitted. When `details` is not submitted but `plan` inlines a section headed exactly 实施细节 / 技术细节 / Implementation Details / Implementation Notes (heading levels 2–6, English case-insensitive, fenced code blocks excluded), the call is rejected with guidance to move that section into `details` — a corrective tool error instead of silently rendering the flat single block.
+
+#### The rejection hold
+
+With `rejectionHold: true`, a rejected review records the open turn's start seq; any later `exit_plan_mode` in that same turn fails with the hold error before a new review is presented. The hold lifts two ways: a step claiming a user message (the turn-opening prompt or a mid-turn steer) clears it in the pre-step listener, and a call in a later turn clears it on entry. The rejection error itself carries the directive — respond to the feedback in reply text and end the turn; the empty-feedback variant asks what to change. The hold state is process-local: a service reload drops it, and the next rejection re-arms it.
 
 ### Session projection unit
 
@@ -165,7 +170,7 @@ The user block is append-only conversation growth. Entering or leaving plan mode
 
 #### What the model sees
 
-The [`exit_plan_mode` schema](../../../docs/tool-catalog.md#deepseek-aidsh-plan-mode) remains available in both states; execution outside plan mode fails, while an approved in-mode review returns the canonical `{ approved: true }` value and renders the existing confirmation text. Rejection remains a failed call carrying review feedback, and a dismissed review a failed call naming the user's takeover.
+The [`exit_plan_mode` schema](../../../docs/tool-catalog.md#deepseek-aidsh-plan-mode) remains available in both states; execution outside plan mode fails, while an approved in-mode review returns the canonical `{ approved: true }` value and renders the existing confirmation text. Rejection remains a failed call carrying review feedback, and a dismissed review a failed call naming the user's takeover. With `rejectionHold: true` the rejection error additionally carries the hold directive, and a held same-turn re-presentation fails before any new review question.
 
 #### Token effect
 
@@ -182,8 +187,8 @@ Mode transitions do not change the tool catalog; plan arguments and review resul
 
 These limits describe when plan mode does not behave as you might expect or needs extra care. They are current package constraints, not a roadmap.
 
-- **Guidance, not enforcement** — plan mode restrains through text only; deployments that need enforced restrictions configure sandbox mode and approval policy independently.
-- **Pending selections are process-local** — a selection made after the turn's final accepted pre-step is lost if the process exits before another accepted in-turn pre-step; the UI must reapply it.
+- **Guidance, not enforcement** — plan mode restrains through text only; deployments that need enforced restrictions configure sandbox mode and approval policy independently. The rejection hold (`rejectionHold: true`) is the one mechanical gate inside the package: it enforces the discussion round for the exit tool alone, and only within the rejecting turn.
+- **Pending selections and holds are process-local** — a selection made after the turn's final accepted pre-step, and a rejection hold, are lost if the process exits or the service reloads; the UI must reapply the selection, and the next rejection re-arms the hold.
 - **No creation-time plan option** — forked agents inherit logged plan state, while newly spawned agents begin inactive.
 - **Live children cannot open the review** — a child owned by another live agent fails the `exit_plan_mode` call and is told to include the unresolved decision in its final result; durable fork lineage alone does not prevent a session resumed as a runtime root from opening the review.
 - **One specialized review renderer** — only the Web UI has a `plan-review` presentation; another interaction provider presents the same request through its generic option flow.

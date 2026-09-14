@@ -55,6 +55,19 @@ function composePlanModeSection(patchFiles: string[]): { section: unknown; warni
   return { section: config?.section, warnings }
 }
 
+/** The composed plan-mode `rejectionHold` value, or undefined when unset. */
+function rejectionHoldOf(patchFiles: string[]): boolean | undefined {
+  const warnings: string[] = []
+  const warn = (message: string): void => { warnings.push(message) }
+  let entries: ReturnType<typeof applyEntryPatches> = []
+  for (const file of patchFiles) {
+    entries = applyEntryPatches(entries, loadPatches(file), warn)
+  }
+  const row = entries.find(entry => entry.id === 'plan-mode')
+  const config = row?.config as Record<string, unknown> | undefined
+  return config?.rejectionHold as boolean | undefined
+}
+
 /** Row lookup with the file-boundary config narrowed to a plain record. */
 function findRow(entries: ReturnType<typeof applyEntryPatches>, id: string):
 { name?: string; disabled?: boolean | { __jsExpr?: string }; config?: Record<string, unknown> } | undefined {
@@ -81,11 +94,15 @@ describe('bridge bundle patch', () => {
     // single-focus and explored serially).
     expect(text).toContain('broad merge or release review')
     expect(text).toContain('not by how few commands could skim it')
-    // A rejection opens a discussion round: answer in the reply, end the turn,
-    // re-present only on the user's request (2026-09 plan-rejection UX).
+    // A rejection opens a discussion round backed by the rejection hold:
+    // answer in the reply, end the turn, re-present only when the user asks
+    // (2026-09-15 plan-rejection UX: questions were read as revision requests
+    // and same-turn re-presentations buried the answers).
     expect(text).toContain('the feedback opens a discussion round')
-    expect(text).toContain('end your turn without calling exit_plan_mode again')
-    expect(text).toContain('only after the user asks for the updated plan')
+    expect(text).toContain('exit_plan_mode is held for the rest of the turn after a rejection')
+    expect(text).toContain('Present the revised plan only when the user asks for it')
+    // The hold enforces the discussion round mechanically for this bundle.
+    expect(rejectionHoldOf([basePatchFile, bridgePatchFile])).toBe(true)
     // The fourth fork delta submits the exit in two layers, matching the
     // conventions' two-argument contract.
     expect(text).toContain("the plan's two layers as its two arguments")
@@ -173,10 +190,11 @@ describe('bridge bundle patch', () => {
       'group implementation changes by subsystem; identify public API',
       'group implementation changes by subsystem and state the execution order — independent groups dispatched together as parallel subtask spawns when execution begins, serially dependent groups executed in order; identify public API',
     )
-    // Fork delta 3: rejection opens a discussion round instead of immediate re-presentation.
+    // Fork delta 3: rejection opens a discussion round enforced by the
+    // rejection hold, instead of immediate re-presentation.
     adapted = adapted.replace(
       'If review rejects it, incorporate the feedback and present again.',
-      'If review rejects it, the feedback opens a discussion round: respond to it in your reply text and end your turn without calling exit_plan_mode again — the user reads your response and decides when the plan is revised; when the feedback is empty, ask what to change instead of guessing. Revise and present again only after the user asks for the updated plan; an explicit request for the revision inside the rejection feedback already counts as asking, and otherwise offering the update as a closing follow-up option keeps the choice with the user.',
+      'If review rejects it, the feedback opens a discussion round: respond to it in your reply text and end your turn — answer questions, address critique, and note any change the feedback implies without resubmitting; exit_plan_mode is held for the rest of the turn after a rejection. Present the revised plan only when the user asks for it; when the feedback is empty, ask what to change instead of guessing.',
     )
     // Fork delta 4: the exit call submits the plan's two layers as the two
     // arguments, and the implementable-by-another-engineer bar extends to

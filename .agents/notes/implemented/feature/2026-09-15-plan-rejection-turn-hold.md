@@ -1,0 +1,27 @@
+# Agent Note: plan-review rejection holds exit_plan_mode for the rest of the turn
+
+Status: implemented
+
+English | [中文](2026-09-15-plan-rejection-turn-hold.zh.md)
+
+## Problem
+
+The 2026-09-02 discussion-round contract proved unenforceable by prose alone. Live session `cc-20260914-155002-5d40edae1146` (Feishu group oc_7cc55d, mico workspace, glm-5.3 reasoning-effort max) rejected ten plan presentations in one afternoon; five rejections carrying questions or discussion-seeking critique were re-presented in the same turn anyway. The worst shape: a pure clarification question ("pg 是 mico 客户端的存储吗？还是服务端的？") got no reply text at all — the model drafted the answer in reasoning, then called exit_plan_mode with the answer baked into the new plan's details layer. Two more structural findings: the section's own first paragraph ("A user's conversational agreement — including an answer confirming something you asked — … submit it through exit_plan_mode") licenses exactly the ask-answer-then-resubmit move the rejection rule forbids, so two sentences of the same section contradict each other; and the rejection arrives as a tool error inside the still-open turn, with the exit tool's description deliberately policy-free, so nothing at the decision point restates the contract. Deployment was verified clean (daemon started 2026-09-12 with the contract sentence in the loaded patch; the model complied precisely whenever the feedback itself said 「先不更新计划」), which isolates the cause to guidance-following, not deployment.
+
+## Decision
+
+A rejected review now mechanically holds `exit_plan_mode` for the rest of the turn when the deployment opts in (`rejectionHold: true`; the bridge bundle patch sets it, presets and default deployments keep the classic revise-and-present-again rhythm). The hold is enforced in the plugin's own tool execution — the rejection already throws there; a later same-turn call now throws the hold error before any new review is presented. The rejection error itself carries the directive (respond in reply text and end the turn; the empty-feedback variant asks what to change), which fixes the base text's "revise the plan and present it again" contradicting the bridge contract. Two lifting paths keep the hold from sticking: a pre-step claiming a user message (turn opener or mid-turn steer) clears it, and a call in a later turn (cron wake without a user message) clears it by turn-seq comparison. The section's rejection sentence shrinks to match the enforced semantics — classification rules, the ask-answer escape clause, and the sentence-contradiction are all deleted because the mechanism replaces the judgment: every rejection is discussion input, and the user's message decides when the plan comes back. This is the deferred hard-gate alternative of the [09-02 discussion-round note](2026-09-02-plan-rejection-discussion-round.md), mounted on the live observation it asked for.
+
+## Alternatives considered
+
+**Tightening the rejection sentence** (add a feedback-classification rule; narrow the escape clause). Rejected: prose fighting prose, probabilistic compliance, and it cannot stop the ask-answer contradiction without another clause — the same session showed direct instructions ("end your turn without calling exit_plan_mode again") being violated under momentum.
+
+**A configurable guidance suffix on the rejection error.** Absorbed, not chosen: the directive text rides the hold, so it states what the mechanism enforces rather than pleading; a prose-only knob without enforcement was judged insufficient.
+
+**Engine-level turn truncation after a rejection.** Rejected: touches agent-loop turn semantics for a win the plugin's own execution path already delivers; the dismissal path (`ASK_CANCELLED` → "stop here, and wait for their message") is the in-code precedent that a plugin-level stop is enough.
+
+**Review-card intent lanes** (separate 「继续讨论」/「拒绝修订」 buttons so the user declares intent). Rejected: moves the classification burden to every rejection click; with the hold, classification is unnecessary — all feedback is discussion until the user asks.
+
+## Consequences
+
+Same-turn re-presentation after a rejection is structurally impossible while held (the 22-minute six-cycle reject/present marathon cannot recur), answers ride the turn-end delivery unburied, and imperative feedback costs one extra exchange ("更新计划") — the rhythm the user themselves dictated in the session's final rejection note. The hold state is process-local: a service reload drops it and the next rejection re-arms it. A stubborn model bouncing on the hold wastes steps but presents no new review card (the bounce precedes the ask; on the bridge only progress-narration tool frames show). The section sentence, its lockstep spec, and both READMEs changed together; presets and `packages/bundle/base` stay upstream-verbatim. Known residual: pure generation glitches (lost text blocks, reasoning leaking as reply text) are model-layer and only mitigated — the bounce forces some text output but cannot guarantee the answer.

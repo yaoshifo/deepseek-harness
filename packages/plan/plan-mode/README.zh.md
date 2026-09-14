@@ -46,6 +46,7 @@ kind: "package-reference"
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `section` | 必填 | 计划模式激活时作为 `plan:policy` 提示词段落渲染的引导 |
+| `rejectionHold` | `false` | 评审被拒绝后，`exit_plan_mode` 在本回合剩余时间内失败；用户的下一条消息解除锁定。关闭则保持经典的「修订并立即重发」节奏 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-plan-mode)完整列出了所有受支持的字段及其 JSDoc。
 
@@ -60,7 +61,7 @@ kind: "package-reference"
 
 agent 完成计划后，会以 markdown 形式、从标题开头书写计划并调用 `exit_plan_mode`。你评审该计划的原文，选择 `Approve` 离开计划模式，或选择 `Keep planning` 带反馈把 agent 送回去。
 
-选择 `Keep planning`（可附自由文本反馈）会让 agent 回去修订计划；关闭评审改为发言，则告知 agent 等待你的下一条消息。若没有可用的交互评审，`exit_plan_mode` 无法运行，你仍可用 `/plan off` 离开计划模式。
+选择 `Keep planning`（可附自由文本反馈）会让 agent 回去修订计划；关闭评审改为发言，则告知 agent 等待你的下一条消息。开启 `rejectionHold: true` 时，拒绝还会让本回合内后续的 `exit_plan_mode` 调用失败，agent 因此以正文回应反馈、仅在你开口后才重新提交修订版计划；你的下一条消息——新回合或回合中插话——都会解除锁定。若没有可用的交互评审，`exit_plan_mode` 无法运行，你仍可用 `/plan off` 离开计划模式。
 
 ### 观察计划状态
 
@@ -93,6 +94,10 @@ agent 完成计划后，会以 markdown 形式、从标题开头书写计划并�
 `exit_plan_mode` 在计划模式未激活时仍保持注册，因此进入或离开只改变提示词段落，绝不改变请求的工具目录。经批准的评审会记录一个静默的待生效退出，由下一个被接受的轮内 pre-step 追加，当前这批工具调用剩余部分仍保留计划引导。缺少用户交互通道，或评审等待期间服务重载，调用都会以拒绝方式失败，`/plan off` 仍是手动退路。
 
 工具入参为 `plan`（白话层，必须以 `#` 标题开头的 markdown）与可选的 `details`（拼接在计划之后的实施细节附录）。提交 `details` 时，评审提问的 `detail` 携带两层拼合的完整计划，presentation intent 额外携带 `layers: { plain, details }` 供分层展示的 UI 使用（消费方按字段取值，零解析）；空白 `details` 视为未提交。未提交 `details` 而 `plan` 内嵌了标题恰为「实施细节 / 技术细节 / Implementation Details / Implementation Notes」的小节（标题层级 2–6、英文大小写不敏感、围栏代码块内不识别）时，调用被直接拒绝并指引把该节移入 `details`——以纠正性工具报错替代静默渲染整段平铺卡。
+
+#### 拒绝锁定
+
+开启 `rejectionHold: true` 时，评审被拒绝会记录当前开回合的起始 seq；同一回合内后续的 `exit_plan_mode` 在进入新评审前就以锁定报错失败。锁定有两条解除通路：认领了用户消息的步骤（回合开场消息或回合中 steer 插话）在 pre-step 监听器里清除它；后续回合中的调用在入口处按回合比较清除。拒绝报错本身携带指令——以正文回应反馈并结束回合；空反馈变体改为询问要改什么。锁定状态是进程本地的：服务重载会丢失它，下一次拒绝会重新上锁。
 
 ### 会话投影单元
 
@@ -165,7 +170,7 @@ You are in plan mode. Explore and design before presenting the complete plan thr
 
 #### 模型看到什么
 
-[`exit_plan_mode` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-plan-mode) 在两种状态下均可用；在计划模式之外执行会失败，而计划模式内经批准的评审返回规范的 `{ approved: true }` 值，并渲染既有的确认文本。拒绝仍是携带评审反馈的失败调用，放弃评审则是一次指明用户接手的失败调用。
+[`exit_plan_mode` schema](../../../docs/tool-catalog.zh.md#deepseek-aidsh-plan-mode) 在两种状态下均可用；在计划模式之外执行会失败，而计划模式内经批准的评审返回规范的 `{ approved: true }` 值，并渲染既有的确认文本。拒绝仍是携带评审反馈的失败调用，放弃评审则是一次指明用户接手的失败调用。开启 `rejectionHold: true` 时，拒绝报错额外携带锁定指令，且被锁定的同回合重提交会在任何新评审提问之前失败。
 
 #### Token 影响
 
@@ -182,8 +187,8 @@ You are in plan mode. Explore and design before presenting the complete plan thr
 
 这些限制描述计划模式在哪些情况下不符合你的预期，或需要额外的注意。它们是当前包约束，不是路线图。
 
-- **引导而非强制**——计划模式只通过文本约束；需要强制限制的部署要分别配置沙箱模式与审批策略。
-- **待生效选择只存在于进程内**——某轮最后一个被接受的 pre-step 之后作出的选择，若进程在另一个被接受的轮内 pre-step 之前退出就会丢失；UI 必须重新应用它。
+- **引导而非强制**——计划模式只通过文本约束；需要强制限制的部署要分别配置沙箱模式与审批策略。拒绝锁定（`rejectionHold: true`）是包内唯一的机械门：仅对退出工具、仅在发生拒绝的回合内强制讨论轮。
+- **待生效选择与锁定只存在于进程内**——某轮最后一个被接受的 pre-step 之后作出的选择，以及拒绝锁定，在进程退出或服务重载时会丢失；UI 必须重新应用选择，而锁定会在下一次拒绝时重新生效。
 - **没有创建时 plan 选项**——fork 的 agent 继承已记录的计划状态，新 spawn 的 agent 则从未激活开始。
 - **存活的子级无法打开评审**——由另一个存活 agent 所有的子级调用 `exit_plan_mode` 会失败，并被要求把尚未解决的决策包含进最终结果；仅有持久化 fork 谱系并不能阻止恢复为运行时根的会话打开该评审。
 - **只有一个专用评审渲染器**——只有 Web UI 具备 `plan-review` 呈现；其他交互提供方通过其通用选项流程呈现同一请求。

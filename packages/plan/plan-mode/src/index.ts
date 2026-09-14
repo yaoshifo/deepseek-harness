@@ -64,6 +64,12 @@ export const EXIT_PLAN_MODE = 'exit_plan_mode'
 export interface PlanModeConfig {
   /** Guidance rendered as the `plan:policy` prompt section while plan mode is active. */
   section: string
+  /**
+   * Hold `exit_plan_mode` for the rest of the turn after a rejected review:
+   * same-turn re-presentations bounce, and the next user message lifts the
+   * hold. Off (default) keeps the classic revise-and-present-again rhythm.
+   */
+  rejectionHold?: boolean
 }
 
 /** The review question's id, echoed in the answer this tool reads. */
@@ -138,7 +144,7 @@ function embeddedDetailsHeading(plan: string): string | undefined {
  * unknown fields fail at plugin load rather than being ignored.
  *
  * @param config Raw plugin config.
- * @returns A detached validated config.
+ * @returns A detached validated config with `rejectionHold` defaulted.
  */
 export function resolveConfig(config: PlanModeConfig): PlanModeConfig {
   const section = (config as Partial<PlanModeConfig>).section
@@ -148,11 +154,15 @@ export function resolveConfig(config: PlanModeConfig): PlanModeConfig {
   if (section.trim() === '') {
     throw new Error('PlanModeConfig needs a non-empty `section`')
   }
-  const unknown = Object.keys(config).filter(key => key !== 'section')
-  if (unknown.length > 0) {
-    throw new Error(`PlanModeConfig has unknown key(s) ${unknown.join(', ')} — config is { section }`)
+  const rejectionHold = (config as Partial<PlanModeConfig>).rejectionHold
+  if (rejectionHold !== undefined && typeof rejectionHold !== 'boolean') {
+    throw new Error('PlanModeConfig needs a boolean `rejectionHold`')
   }
-  return { section }
+  const unknown = Object.keys(config).filter(key => key !== 'section' && key !== 'rejectionHold')
+  if (unknown.length > 0) {
+    throw new Error(`PlanModeConfig has unknown key(s) ${unknown.join(', ')} — config is { section, rejectionHold }`)
+  }
+  return { section, rejectionHold: rejectionHold ?? false }
 }
 
 const planUnitStateSchema: ZodType<PlanUnitState> = zod.object({
@@ -217,6 +227,9 @@ export class PlanModeController extends Service {
   /** Validated deployment-owned guidance. */
   private readonly section: string
 
+  /** Whether a rejected review holds `exit_plan_mode` until the user speaks again. */
+  private readonly rejectionHold: boolean
+
   /**
    * Latest selection per session awaiting the next accepted in-turn pre-step.
    * `narrate` is true for user selections and false for the exit tool, whose
@@ -224,18 +237,32 @@ export class PlanModeController extends Service {
    */
   private readonly pendingIntents = new WeakMap<Session, { active: boolean; narrate: boolean }>()
 
+  /**
+   * Open turn's start seq per session whose review was rejected, while
+   * `rejectionHold` is enabled: `exit_plan_mode` bounces until the next user
+   * message (a new turn or a mid-turn steer both lift it) or a later turn.
+   */
+  private readonly heldTurns = new WeakMap<Session, number>()
+
   constructor(ctx: Context, config: PlanModeConfig = { section: '' }) {
     super(ctx, 'planMode')
-    this.section = resolveConfig(config).section
+    const resolved = resolveConfig(config)
+    this.section = resolved.section
+    this.rejectionHold = resolved.rejectionHold ?? false
     let disposed = false
     // Pre-step is outside Session.append publication, so it can append the
     // log-only mode event inside an open turn without re-entering the session.
     // A failed append remains pending for a later accepted in-turn pre-step,
     // and policy cannot block the step.
     ctx.on('agent/pre-step', async (
-      { agent, signal },
+      { agent, signal, messages },
       next,
     ): Promise<PreStepDecision> => {
+      // Any user message claimed by this step — the turn-opening prompt or a
+      // mid-turn steer — is the user speaking: it lifts a rejection hold.
+      if (this.heldTurns.has(agent.session) && messages.some(message => message.source.kind === 'user')) {
+        this.heldTurns.delete(agent.session)
+      }
       const decision = await next()
       const pending = this.pendingIntents.get(agent.session)
       if (decision.kind === 'reject' || signal.aborted || pending === undefined) return decision
@@ -349,6 +376,19 @@ export class PlanModeController extends Service {
         if (!(pending?.active ?? this.loggedActive(agent.session))) {
           throw new Error(`${EXIT_PLAN_MODE} is only available in plan mode`)
         }
+        if (this.rejectionHold) {
+          const held = this.heldTurns.get(agent.session)
+          if (held !== undefined) {
+            // The hold is turn-scoped: a later turn (cron wake, resumed
+            // session) lifts it even without an intervening user message.
+            const open = this.openTurnStartSeq(agent.session)
+            if (open !== null && open === held) {
+              throw new Error(`${EXIT_PLAN_MODE} is held for the rest of this turn: the user kept planning earlier in this turn. `
+                + 'Finish replying in text and end your turn; their next message lifts the hold.')
+            }
+            this.heldTurns.delete(agent.session)
+          }
+        }
         if (!/^#\s+\S/.test(args.plan.trim())) {
           throw new Error(`${EXIT_PLAN_MODE} requires a non-empty markdown plan starting with a # heading`)
         }
@@ -408,6 +448,19 @@ export class PlanModeController extends Service {
         const item = reviewItems.length === 1 ? reviewItems[0] : undefined
         if (item?.selected.length !== 1 || item.selected[0] !== APPROVE_LABEL || item.custom !== undefined) {
           const feedback = item?.custom ?? ''
+          if (this.rejectionHold) {
+            // A review always settles inside an open turn in practice; with no
+            // open turn there is no same-turn re-presentation to hold.
+            const open = this.openTurnStartSeq(agent.session)
+            if (open !== null) this.heldTurns.set(agent.session, open)
+            throw new Error(feedback === ''
+              ? 'The user chose to keep planning without further feedback.\n'
+                + `${EXIT_PLAN_MODE} is held for the rest of this turn — ask what to change and end your turn. `
+                + 'Present the updated plan after the user asks for it.'
+              : `The user chose to keep planning; their feedback: ${feedback}\n`
+                + `${EXIT_PLAN_MODE} is held for the rest of this turn — respond to the feedback in your reply text and end your turn. `
+                + 'Present the updated plan after the user asks for it.')
+          }
           throw new Error(feedback === ''
             ? 'The user chose to keep planning; revise the plan and present it again.'
             : `The user chose to keep planning; their feedback: ${feedback}`)
@@ -445,6 +498,13 @@ export class PlanModeController extends Service {
     const state = this.ctx.sessionProjections.stateOf(session, 'turnBoundary')
     if (state === undefined) throw new Error('plan-mode requires the turnBoundary session projection')
     return state.openTurnStartSeq !== null
+  }
+
+  /** The open turn's start seq, or null between turns; fail-loud on a missing projection. */
+  private openTurnStartSeq(session: Session): number | null {
+    const state = this.ctx.sessionProjections.stateOf(session, 'turnBoundary')
+    if (state === undefined) throw new Error('plan-mode requires the turnBoundary session projection')
+    return state.openTurnStartSeq
   }
 
   private loggedActiveAtLastHeader(session: Session): boolean | undefined {
