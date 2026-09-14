@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { existsSync, writeFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { ProjectStateStore } from '../../src/engine/project-state.ts'
@@ -454,6 +454,24 @@ describe('LaunchPlanRender', () => {
       && getRenderStatus(state, 'plan:1')?.status !== 'rendering' && !state.planRenderRunning, 3000)
     expect(getRenderStatus(state, 'plan:1')?.status).toBe('cancelled')
     expect(p.files).toHaveLength(0)
+  })
+
+  it('RetryCleansFailedAttemptDir: attempt-1\'s cc-plan-render-* dir is gone once attempt-2 takes over', async () => {
+    // #12: each attempt derives a fresh mkdtemp dir; a failed attempt must
+    // remove its own dir (reply-path symmetry) instead of leaking it when the
+    // retry overwrites the single htmlPath variable.
+    const a = createRenderAgent({ stallCount: 1 })
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p, { timeoutMs: 30_000 })
+
+    const state = newRenderState(p)
+    expect(shouldRenderPlan(state, '# 计划', 1)).toBe(true)
+    launchPlanRender(e, state, 'feishu:user1', '# 计划', '', 1, 'plan:1')
+
+    await pollUntil(() => a.getCalls().length >= 2, 3000)
+    const attempt1Dir = dirname(htmlPathFromPrompt(a.getCalls()[0]!.prompt))
+    await pollUntil(() => getRenderStatus(state, 'plan:1')?.status === 'delivered' && !state.planRenderRunning, 3000)
+    expect(existsSync(attempt1Dir)).toBe(false)
   })
 })
 

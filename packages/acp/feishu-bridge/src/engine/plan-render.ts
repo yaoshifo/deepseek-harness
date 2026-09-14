@@ -998,7 +998,8 @@ export async function renderContentToHTML(
  * renderPlanToHTML). The fork writes to a short ASCII temp path — a
  * CJK/space-laden title path is fragile for the LLM to reproduce verbatim —
  * and the engine best-effort copies the assembled HTML to the pretty sibling
- * path next to the plan .md. Returns the temp write path (delivery source).
+ * path next to the plan .md. A failed fork removes its temp dir (reply-path
+ * symmetry). Returns the temp write path (delivery source).
  *
  * @param e - Engine used to fork the render session.
  * @param sessionKey - Session key for temp-path derivation and logging.
@@ -1006,7 +1007,7 @@ export async function renderContentToHTML(
  * @param planFilePath - Plan .md path for the sibling artifact; may be empty.
  * @param revision - ExitPlanMode revision for the -vN suffix.
  * @param signal - Optional abort signal cancelling the fork.
- * @returns The temp write path, whether or not the render succeeded.
+ * @returns The temp write path; the file exists only when the render succeeded.
  */
 export async function renderPlanToHTML(
   e: Engine,
@@ -1024,10 +1025,14 @@ export async function renderPlanToHTML(
   const writePath = deriveHtmlPath('', sessionKey, '', revision)
   const prompt = `按你的 system-prompt 指令把以下内容渲染成 HTML。\n\n<html_path>${writePath}</html_path>\n\n<plan-markdown>\n${planMarkdown}\n</plan-markdown>`
   const ok = await renderContentToHTML(e, 'plan-render', 'plan', sessionKey, prompt, systemPrompt, writePath, signal)
-  if (ok) {
-    const artifactPath = deriveHtmlPath(planFilePath, sessionKey, nameHint, revision)
-    if (artifactPath !== '' && artifactPath !== writePath) copyFileBestEffort(writePath, artifactPath)
+  if (!ok) {
+    // Failed attempts reap their own mkdtemp dir (reply-path symmetry) so a
+    // retry that derives a fresh dir cannot leak this one.
+    await removeRenderedTemp(writePath)
+    return writePath
   }
+  const artifactPath = deriveHtmlPath(planFilePath, sessionKey, nameHint, revision)
+  if (artifactPath !== '' && artifactPath !== writePath) copyFileBestEffort(writePath, artifactPath)
   return writePath
 }
 
