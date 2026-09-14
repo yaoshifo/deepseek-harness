@@ -6014,6 +6014,14 @@ export class Engine {
     // fresh turn, so it must fall through to the normal pipeline even while
     // an ask is parked on this session.
     if (msg.isFollowupAction === true) return false
+    // Synthetic machine messages (subtask report wake, gather wake, role
+    // forward) are not human replies either: consuming one as the parked
+    // ask's free-text answer both kills the card and answers with the wrong
+    // text (2026-09-13 chatroom f64eb48d: the report wake eaten as
+    // selected:[] + report body 3s after the confirmation card). The message
+    // keeps the pipeline's own semantics below — busy queue / steer — never
+    // the ask router.
+    if (msg.machine === true) return false
     const state = this.interactiveStates.get(msg.sessionKey) ?? this.cronSlotAskState(msg)
     if (state === undefined) {
       if (msg.isPermissionAction && parsePermissionVerdict(content) !== undefined) {
@@ -6838,10 +6846,11 @@ export class Engine {
       // The synthetic first message never went through platform dispatch
       // (which normally sets isSpawnedGroup), so mark it here — otherwise
       // the pin panel and the first-message rename gate never fire for
-      // subtask groups.
+      // subtask groups. machine flags it as a synthetic injection, same as
+      // every deliverMachineMessage wake.
       syntheticMsg.isSpawnedGroup = true
       if (images.length > 0) syntheticMsg.images = images
-      this.receiveMessageSafe(p, syntheticMsg)
+      this.receiveMessageSafe(p, { ...syntheticMsg, machine: true })
     }
 
     console.info(`subtask: spawned (parent=${parentSessionKey} child=${syntheticMsg.sessionKey} depth=${depth} worktree=${wtPath !== ''} dir=${workDir})`)
