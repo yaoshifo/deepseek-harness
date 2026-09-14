@@ -1,6 +1,6 @@
 # feishu-bridge × dsh-im 吸收执行计划
 
-> 2026-09-12 落盘。本文是 [DSH-IM-COMPARISON.md](DSH-IM-COMPARISON.md) 的配套实施路线：那份是调研记录（证据、勘误台账、可借鉴项总表），本文是吸收范围的执行计划。**本文落盘时未实施任何一项；每批开工前须按「改什么、不改什么」核对边界。**
+> 2026-09-12 落盘。本文是 [DSH-IM-COMPARISON.md](DSH-IM-COMPARISON.md) 的配套实施路线：那份是调研记录（证据、勘误台账、可借鉴项总表），本文是吸收范围的执行计划。**本文落盘时未实施任何一项；每批开工前须按「改什么、不改什么」核对边界。** 批次 3 的两项工程门禁已先行完成（CI 门禁 `923ba7dd1f`、README 勘误 `b493166740`），见 §4.3 标注。
 >
 > 调研来源（两份独立调研合并）：
 >
@@ -107,10 +107,10 @@
 
 **工程门禁**：
 
-- CI 恒 skip 门禁修复（`tests/built-bundle-registries.spec.ts:47` skipIf 依赖 lib/，`ci.yml:191` 无 build 步骤、`run-gates.ts:612-647` 依赖图断链——该 spec 保护的是 2026-08-27 跨 bundle 注册表分裂事故面）：把门挂到产出 lib/ 的 build 后；
+- CI 恒 skip 门禁修复：**已完成（`923ba7dd1f`）**——spec 已改名 `tests/built-bundle-registries.e2e.ts` 并列入 `run-gates.ts` 的 `built-bin-smoke` 门（needs `['build']`，随 `check:ci:consumers` 在 PR 上执行）；对照文档 §10.1/§11-#9 已记录；
 - `install.sh` 最小回归测试（范式 `tests/reload-script.spec.ts:152`；顺带修 `:6-9` 注释与 `:19-25` 行为不一致）；
 - SDK 依赖钉版（`^1.53.0` → 钉版）+ 契约窄测（只断言本插件依赖的接口面，参照 dsh-im `lark-sdk-handshake-patch.test.mjs` 真实加载 SDK 的做法）；**八补丁不默认移植**——契约测或实锤踩坑再议；
-- README 双语「已知限制」过期勘误（对照文档 §13 末条：`README.md:73`/`README.zh.md:73` 所称纯文本命令实际已卡片化；修时核对按钮集与 Go 侧一致性）。
+- README 双语「已知限制」过期勘误：**已完成（`b493166740`）**——中英两条已同步删除，按钮集与 Go 侧形态差异当时已核对（对照文档 §13 末条）。
 
 ## 5. 决策台账
 
