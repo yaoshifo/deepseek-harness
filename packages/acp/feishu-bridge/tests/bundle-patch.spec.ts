@@ -1,9 +1,8 @@
 /**
  * Bundle-patch composition tests: applying dsh-base's patch list and then
  * this package's own bundle patch (the profile `dsh.profile.bundles` order)
- * must replace the generic plan-mode section — whose delegation sentence
- * names the native subagent tools this composition disables — with the
- * feishu_bridge_subtask-adapted guidance.
+ * must replace the plan-mode section — base stays upstream-verbatim — with
+ * the feishu_bridge_subtask-adapted fork guidance.
  *
  * @module dsh-feishu-bridge/tests-bundle-patch
  */
@@ -87,8 +86,11 @@ describe('bridge bundle patch', () => {
     expect(text).toContain('the feedback opens a discussion round')
     expect(text).toContain('end your turn without calling exit_plan_mode again')
     expect(text).toContain('only after the user asks for the updated plan')
-    // The generic delegation sentence names native tools this composition disables.
-    expect(text).not.toContain('background subagent delegations')
+    // The fourth fork delta submits the exit in two layers, matching the
+    // conventions' two-argument contract.
+    expect(text).toContain("the plan's two layers as its two arguments")
+    expect(text).toContain('implement the plan together with its details layer')
+    // Delta 3 replaced base's immediate re-presentation sentence.
     expect(text).not.toContain('incorporate the feedback and present again')
     // An id-targeted patch that matches nothing is skipped with a warning: a
     // plan-mode warning here would mean the override never reached the row.
@@ -149,7 +151,7 @@ describe('bridge bundle patch', () => {
     })
   })
 
-  it('keeps the section in lockstep with dsh-base modulo the three fork guidance deltas', () => {
+  it('keeps the section in lockstep with dsh-base modulo the four fork guidance deltas', () => {
     const base = asSectionText(composePlanModeSection([basePatchFile]).section)
     const bridge = asSectionText(composePlanModeSection([basePatchFile, bridgePatchFile]).section)
     // Guard the adaptation anchors: when upstream rewords any anchored
@@ -175,6 +177,13 @@ describe('bridge bundle patch', () => {
     adapted = adapted.replace(
       'If review rejects it, incorporate the feedback and present again.',
       'If review rejects it, the feedback opens a discussion round: respond to it in your reply text and end your turn without calling exit_plan_mode again — the user reads your response and decides when the plan is revised; when the feedback is empty, ask what to change instead of guessing. Revise and present again only after the user asks for the updated plan; an explicit request for the revision inside the rejection feedback already counts as asking, and otherwise offering the update as a closing follow-up option keeps the choice with the user.',
+    )
+    // Fork delta 4: the exit call submits the plan's two layers as the two
+    // arguments, and the implementable-by-another-engineer bar extends to
+    // the details layer.
+    adapted = adapted.replace(
+      'detailed enough that another engineer can implement it without making design decisions.\n\nWhen ready, call exit_plan_mode with the complete plan markdown, starting with a # title.',
+      'detailed enough that another engineer can implement the plan together with its details layer without making design decisions.\n\nWhen ready, call exit_plan_mode with the plan\'s two layers as its two arguments: the plain-language layer in the plan argument (starting with a # title) and the implementation-details layer in the details argument.',
     )
     expect(bridge).toBe(adapted)
   })
