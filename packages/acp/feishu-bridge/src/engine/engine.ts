@@ -1096,12 +1096,6 @@ export class Engine {
   planRenderProvider: string = ''
   /** Render-session fork timeout; 0 = 600s default (Go planRenderTimeout). */
   planRenderTimeoutMs: number = 0
-  /**
-   * Reply length (runes) at or below which renderReplyToHTML writes the
-   * SimpleHTML fragment directly instead of forking a render session;
-   * 0 = off (every pre-render-eligible reply forks).
-   */
-  planRenderDirectLen: number = 2000
   /** HTML→PNG rasterizer script path; '' = fall back to the .html file (Go planRenderPngScript). */
   planRenderPngScript: string = ''
   /**
@@ -1326,16 +1320,14 @@ export class Engine {
   /**
    * Configure the plan/reply HTML render domain (Go [projects.plan_render]):
    * enabled opt-in, an optional provider-route override, a fork timeout in
-   * ms (0 = 600s default), the HTML→PNG rasterizer script path, and the
-   * reply direct-tier length (runes; 0 = off).
+   * ms (0 = 600s default), and the HTML→PNG rasterizer script path.
    * @param cfg - Render config fields; optional members fall back to defaults.
    */
-  setPlanRenderConfig(cfg: { enabled: boolean; provider?: string; timeoutMs?: number; pngScript?: string; directLen?: number }): void {
+  setPlanRenderConfig(cfg: { enabled: boolean; provider?: string; timeoutMs?: number; pngScript?: string }): void {
     this.planRenderEnabled = cfg.enabled
     this.planRenderProvider = cfg.provider ?? ''
     this.planRenderTimeoutMs = cfg.timeoutMs ?? 0
     this.planRenderPngScript = cfg.pngScript ?? ''
-    this.planRenderDirectLen = cfg.directLen ?? 2000
   }
 
   /**

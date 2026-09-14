@@ -60,13 +60,6 @@ export const defaultPreRenderTimeoutMs = 360_000
 /** Replies shorter than this (runes) are not speculatively rendered (Go defaultReplyPreRenderLen). */
 export const defaultReplyPreRenderLen = 500
 
-/**
- * Replies at or below this length (runes) skip the LLM render fork: the
- * engine writes the SimpleHTML fragment directly and assembles the template.
- * 0 disables the direct tier — every pre-render-eligible reply forks.
- */
-export const defaultReplyRenderDirectLen = 2000
-
 /** Per-exec PNG rasterize timeout (Go defaultPngRenderTimeout, 30s). */
 const pngRenderTimeoutMs = 30_000
 
@@ -1031,12 +1024,6 @@ export async function renderPlanToHTML(
  * on failure the temp dir deriveHtmlPath created is removed so it doesn't
  * orphan. Returns the html path (may not exist on failure).
  *
- * Length tiering: a reply at or below the engine's planRenderDirectLen (0 =
- * off) skips the fork entirely — the engine writes the SimpleHTML fragment
- * itself and assembles the template in place, so a mid-sized reply costs no
- * render session (2026-09-13 chatroom postmortem: every ≥500-rune reply
- * burned a fork). The fork's提炼 contract stays for long replies.
- *
  * @param e - Engine used to fork the render session.
  * @param sessionKey - Session key for temp-path derivation and logging.
  * @param replyContent - The completed reply text to render.
@@ -1049,19 +1036,8 @@ export async function renderReplyToHTML(
   replyContent: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const htmlPath = deriveHtmlPath('', sessionKey, '', 0)
-  if (e.planRenderDirectLen > 0 && Array.from(replyContent).length <= e.planRenderDirectLen) {
-    console.info(`reply-html: direct tier, no render fork (${sessionKey}, html_path ${htmlPath})`)
-    try {
-      await writeFile(htmlPath, markdownToSimpleHTML(replyContent), 'utf8')
-      await assembleHTMLInPlace(htmlPath, 'reply', renderSubtypeTag(e, 'reply'))
-    } catch (error) {
-      console.warn(`reply-html: direct tier failed (${htmlPath}): ${String(error)}`)
-      await removeRenderedTemp(htmlPath)
-    }
-    return htmlPath
-  }
   const systemPrompt = renderReplySummaryPrompt(await renderSkillBody(e))
+  const htmlPath = deriveHtmlPath('', sessionKey, '', 0)
   const contentHTML = markdownToSimpleHTML(replyContent)
   const prompt = `按你的 system-prompt 指令把以下内容渲染成 HTML。\n\n<html_path>${htmlPath}</html_path>\n\n<plan-rendered-html>\n${contentHTML}\n</plan-rendered-html>`
   const ok = await renderContentToHTML(e, 'reply-html', 'reply', sessionKey, prompt, systemPrompt, htmlPath, signal)

@@ -193,8 +193,6 @@ export interface PlanRenderConfig {
   renderPngScript?: string
   /** Render-session fork timeout in seconds (default 600; speculative pre-render caps at 360). */
   timeoutSec?: number
-  /** Reply length (runes) at or below which the reply HTML is written directly without an LLM fork (default 2000; 0 = always fork). */
-  directLen?: number
 }
 
 /** Next-message prediction after each turn (Go [projects.predict_next], #33). */
@@ -613,7 +611,6 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       effort: Schema.string().description('Render-session thinking effort alias: low/medium/high/max/off (default low)'),
       renderPngScript: Schema.string().description('HTML→PNG renderer script, absolute path; empty = send the .html file'),
       timeoutSec: Schema.natural().description('Render fork timeout in seconds (default 600, pre-render cap 360)'),
-      directLen: Schema.natural().description('Reply length (runes) at or below which the reply HTML is written directly without an LLM render fork (default 2000; 0 = always fork)'),
     }).description('Plan/reply HTML rendering (Go [projects.plan_render], #47/#48)'),
     planDir: Schema.string().description('Directory presented plans are persisted to as .md; empty string disables (default ~/.claude/plans)'),
 
@@ -1594,7 +1591,6 @@ function wirePlanRender(ctx: Context, engine: Engine, adapter: DshAgentAdapter, 
     ...(r.provider !== undefined && r.provider !== '' ? { provider: r.provider } : {}),
     ...(r.timeoutSec !== undefined && r.timeoutSec > 0 ? { timeoutMs: r.timeoutSec * 1000 } : {}),
     ...(r.renderPngScript !== undefined && r.renderPngScript !== '' ? { pngScript: expandHome(r.renderPngScript) } : {}),
-    ...(r.directLen !== undefined ? { directLen: r.directLen } : {}),
   })
   engine.setPlanRenderSkillSource(async () => {
     const skills: SkillRegistry | undefined = ctx.get('skills')

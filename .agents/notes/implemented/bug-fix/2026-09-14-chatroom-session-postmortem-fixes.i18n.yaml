@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-14-chatroom-session-postmortem-fixes.md
-2026-09-14-chatroom-session-postmortem-fixes.md: 0957b341553e3a7db49cd9bb3a452e23161360ee
-2026-09-14-chatroom-session-postmortem-fixes.zh.md: 5ace4cf17dae06cf527f1e8d474159a3a6d191a3
+2026-09-14-chatroom-session-postmortem-fixes.md: 2b76c48ff0af1b44790d64990775bcf5ab6500fe
+2026-09-14-chatroom-session-postmortem-fixes.zh.md: e97becf08bd5f967f1f510e8fb8e0a27eb222d1a
