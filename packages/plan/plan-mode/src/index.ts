@@ -120,7 +120,8 @@ function embeddedDetailsHeading(plan: string): string | undefined {
   let inFence = false
   for (const line of plan.split('\n')) {
     // A fence-marker line opens a fence (an info string may follow); inside
-    // a fence only a bare marker closes it.
+    // a fence only a bare marker closes it, regardless of the opening run's
+    // length. Tilde fences are not tracked.
     if (/^ {0,3}`{3}/.test(line)) {
       if (!inFence || /^ {0,3}`{3,}[ \t]*$/.test(line)) inFence = !inFence
       continue
