@@ -95,7 +95,7 @@ description: 处理 skill 生命周期的工具——创建（把当前会话里
 
 **反模式审计（保存前）**：`Read references/anti-patterns.md`，把生成的 skill 对照清单查一遍（单文件该是文件夹 / 无 Gotchas / 复述显而易见 / description 无触发短语 / 钉死步骤 / 该脚本的写成散文 / 无 setup 沉淀）。命中就先修再存。
 
-**frontmatter 机械校验（保存前）**：用可用的 YAML 解析器实际解析一遍 frontmatter（如 `node -e` 配 js-yaml、`python3 -c` 配 PyYAML），确认解析得到对象且含 `name` 与 `description`。PARSE OK 才算过——yaml 代码块的语法高亮目测不算。
+**frontmatter 机械校验（保存前）**：跑共享 lint 脚本——`python3 ~/.claude/scripts/skill-lint.py <目标 SKILL.md>`，退出码 0 才算过。它断言键集恰为 dsh 认的真键集（白名单外的键一律拦，含会让整个 skill 被 dsh 静默丢弃的旧驼峰拼法）、name/description 齐全且 kebab-case，并对超 500 字的 description 给截断提醒。脚本缺失时按 `references/output-template.md` 的 frontmatter 规则人工逐键对照（重点：不写任何白名单外的键）——yaml 代码块的语法高亮目测不算。
 
 写文件前，把完整的 SKILL.md 内容作为 yaml 代码块输出在回复里，让用户能在语法高亮下 review。然后用结构化提问问一个简单问题确认，比如"这个 SKILL.md 可以保存吗？"——不要用 body 字段，问题保持简短。
 
