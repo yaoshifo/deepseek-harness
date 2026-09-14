@@ -69,6 +69,16 @@
 - **修复后判别**：命名机会改为「会话标签仍是占位名」期间持续有效，含糊消息只跳过自己；卡片回执（审批/追问/followup）不参与命名；同群命名查询互斥。修后仍不改名按序查：①该群会话标签是否被 `/new` 重置（重置后不再是占位名，判据随之失效）；②bot 名是否变更（老占位名失配 → 保守拒绝）；③stdout.log 是否仍打 skip 行（说明首条之外的消息也未达门槛）。详见 Agent Note `.agents/notes/implemented/bug-fix/2026-09-11-feishu-bridge-groupname-opportunity.md`。
 - **自愈**：在群里发一条有内容的消息（≥4 字、非「继续/ok」类）即触发改名；想立刻改就 `/rename <名字>`。
 
+### J 子任务回合死于限流预算耗尽（429 风暴，2026-09-14 实测）
+
+- **症状**：父 agent 的 `feishu_bridge_subtask` gather 回报里出现「⚠️ 子任务失败（error），未完成」。两种形态：mycontext 型——完全无收尾输出（死得早，没攒下东西）；mico-im 型——留有部分轨迹（死前最后的文本/工具结果出现在失败摘要里）。
+- **日志形状**：子任务自己的会话日志 `turn/end` 的 `data.reason` 为 `{kind: 'error', error: {code: 'RATE_LIMIT', message: '429 …'}}`；死前是一串 `llm/retry` 事件，`retry` 计数递增到 `maxRetries` 顶格、`failure.code` 全部 RATE_LIMIT（退避 800ms 起步指数爬坡到 maxDelayMs）。`policyKey` 字段直接读出当时生效的预算（如 `["normal",8,[…],800,30000,0.3]` = 8 次/110 秒）。
+- **定位子会话**：子会话目录名 = 子任务 uuid（父会话日志里 spawn 的 tool/result 或 gather 摘要可拿到），桶名 = 子任务 cwd 的 mangle：`find ~/.dsh/feishu-bridge-sessions -type d -name "<uuid>"`。locate-session.py 只按群 chat_id 定位，不覆盖子任务。
+- **根因模式**：多路子任务扇出 + 同窗口其他会话共享同一 provider key（本次 5 子任务 + 2 个计划渲染 one-shot = 7 路并发，429 合计 414 次）；限流窗口持续到并发压力消散（约 9 分钟），长于重试总预算 → 预算耗尽判死。谁死谁活取决于哪一步落进长窗口。
+- **判死机制**：预算耗尽后 waterfall 落到默认动作抛 `LlmError`，`turn/end` 记 error——不是 watchdog 杀（那会是 aborted/disposed，走指纹 B/E）；重试期间 llm/retry 事件持续刷新活动时钟，不会触发 stall。
+- **恢复**：子会话判死后仍存活、上下文完整保留（变 idle）；父 agent 用 `feishu_bridge_subtask` 的 send 发一条继续指令即唤醒，turn 2 从断点续跑。并发压力下降后（其他子任务完成）重试成功率自然恢复。
+- **防线状态核对**：看子会话 `llm/retry` 事件里的 `policyKey`——判死时预算是否与 profile 配置一致（不一致说明 daemon 还没 /reload 新配置）；2026-09-14 配置落盘 15 次/60s 帽（总预算 ≈10 分钟，reload 生效后），若新事故仍判死，说明窗口 > 10 分钟，去 `.agents/notes/proposed/architecture/` 找 slowPhase 提案。
+
 ## 审批事件判别（卡片没弹 / 反复要授权）
 
 - 会话日志事件 `approval/asked` → `approval/decided` 的**时间差**：秒级/分钟级 = 真弹卡等用户点击；0–1ms = 被常设授权短路放行。两种情况日志事件形态相同，只有时间差能区分。

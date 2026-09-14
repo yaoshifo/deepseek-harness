@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/proposed/architecture/2026-09-14-llm-retry-slow-phase.md
+2026-09-14-llm-retry-slow-phase.md: 38d1f2efeab2e4c6b84a8dafc28967e02b74f264
+2026-09-14-llm-retry-slow-phase.zh.md: 9bca7691162ed350fb42988ffa4cc323af053372
