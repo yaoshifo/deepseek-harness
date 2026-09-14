@@ -709,6 +709,14 @@ function isEllipsisOnly(text: string): boolean {
 }
 
 /**
+ * One-line status replacing a subtask report body that verbatim repeats the
+ * sender's last direct agent-message (2026-09-13 chatroom postmortem): the
+ * parent model must not read the same body twice — neither as the single
+ * report wake nor as a row of the gather summary.
+ */
+const reportRepeatsDirectStatus = '内容与刚才的直发消息相同，全文见群内卡片'
+
+/**
  * Whether an event represents real turn content the unsolicited reader should
  * open a turn on, versus stream noise it must drop (Go
  * isSubstantiveUnsolicitedEvent): a bare empty or silent-marker text frame
@@ -8443,11 +8451,23 @@ export class Engine {
       return
     }
 
+    // A report whose body is verbatim identical to the sender's last direct
+    // agent-message (the runtime send_message wake recorded by
+    // noteAgentDirectMessage) never re-enters the parent agent as full text:
+    // the gather barrier banks the one-line status, the single wake below
+    // injects it, and the card above keeps the full text for the human.
+    const last = parentSess.lastAgentDirectMessage
+    const childAgentSID = this.sessions.findActive(childKey)?.getAgentSessionID() ?? ''
+    const repeatsDirect = last !== undefined
+      && (last.fromKey === childKey || (childAgentSID !== '' && last.fromKey === childAgentSID))
+      && last.hash === createHash('sha256').update(content).digest('hex')
+
     // Gather barrier: bank this report and wake the parent only when all
     // expected children have reported (or the timeout fires).
     const g = parentSess.getPendingSubtaskGather()
     if (g !== undefined) {
-      const { done, summary, alreadyWoken } = g.accumulate(childKey, label, content)
+      const { done, summary, alreadyWoken } = g.accumulate(childKey, label,
+        repeatsDirect ? reportRepeatsDirectStatus : content)
       if (done) {
         parentSess.setPendingSubtaskGather(undefined)
         this.sessions.save()
@@ -8459,21 +8479,11 @@ export class Engine {
       // normal wake so this late report is not lost.
     }
 
-    // The card body stays clean; the synthetic message the parent agent sees
-    // carries a hint with the child's session key so it can follow up via
-    // the subtask tool even after context compaction. A report whose body is
-    // verbatim identical to the sender's last direct agent-message (the
-    // runtime send_message wake recorded by noteAgentDirectMessage) injects
-    // a one-line status instead — the parent model must not read the same
-    // body twice (2026-09-13 chatroom postmortem); the card above keeps the
-    // full text.
-    const last = parentSess.lastAgentDirectMessage
-    const childAgentSID = this.sessions.findActive(childKey)?.getAgentSessionID() ?? ''
-    const repeatsDirect = last !== undefined
-      && (last.fromKey === childKey || (childAgentSID !== '' && last.fromKey === childAgentSID))
-      && last.hash === createHash('sha256').update(content).digest('hex')
+    // The synthetic message the parent agent sees carries a hint with the
+    // child's session key so it can follow up via the subtask tool even
+    // after context compaction.
     let agentContent = repeatsDirect
-      ? `[子任务完成] ${label}：内容与刚才的直发消息相同，全文见群内卡片`
+      ? `[子任务完成] ${label}：${reportRepeatsDirectStatus}`
       : `[子任务完成] ${label}:\n\n${content}`
     if (childKey !== '') {
       agentContent += `\n\n(如需追问该子任务: feishu_bridge_subtask 工具 action: send, child: ${childKey})`

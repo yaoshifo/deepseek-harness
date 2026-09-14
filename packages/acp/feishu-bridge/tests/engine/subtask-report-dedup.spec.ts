@@ -134,4 +134,33 @@ describe('subtask report dedup against a prior direct send_message', () => {
     expect(rec?.lastAgentDirectMessage?.fromKey).toBe('test:child-chat')
     expect(rec?.lastAgentDirectMessage?.at).toBeGreaterThan(0)
   })
+
+  it('a gather summary banks a one-line status for a child that already sent the same text directly', async () => {
+    const p = createStubCardPlatformFull('test')
+    const e = newTestEngine(p)
+    const parentKey = 'test:parent-chat:user-1'
+    const childA = linkedChild(e, parentKey, 'test:child-a')
+    childA.setName('child A')
+    childA.setSubtaskDepth(1)
+    const childB = linkedChild(e, parentKey, 'test:child-b')
+    childB.setName('child B')
+    childB.setSubtaskDepth(1)
+
+    // Child A already woke the parent directly with the same body; the
+    // gather barrier then banks both children's reports into one summary.
+    e.noteAgentDirectMessage(parentKey, 'test:child-a', FULL)
+    e.gatherSubtasks(parentKey)
+
+    const wake = vi.spyOn(e, 'deliverMachineMessage')
+    expect(e.replyToParent(p, childA, FULL)).toBe(true)
+    await settle()
+    expect(e.replyToParent(p, childB, 'child B finished its own work')).toBe(true)
+    await settle()
+
+    const summary = wake.mock.calls.at(-1)![1].content
+    expect(wake, 'only the completed gather wakes the parent').toHaveBeenCalledTimes(1)
+    expect(summary, `summary=${summary}`).toContain('child B finished its own work')
+    expect(summary, `summary=${summary}`).toContain('内容与刚才的直发消息相同')
+    expect(summary, `summary=${summary}`).not.toContain('细节行')
+  })
 })
