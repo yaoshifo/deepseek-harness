@@ -463,8 +463,6 @@ export class InteractiveState {
   pendingPlanFilePath: string = ''
   /** Tool call id of the pending plan write; the result event carries no tool name, so the match rides the id. */
   pendingPlanToolID: string = ''
-  /** Plan content last sent as the plan card (dedup across asks). */
-  sentPlanContent: string = ''
   /** Plan revision counter for export keys and (vN) card headers. */
   planRevisionCount: number = 0
   /** Staging dir for pure-attachment messages awaiting the next text (#8). */
@@ -3230,15 +3228,14 @@ export class Engine {
     let deltaAccum = ''
     let deltaFlushed = false
 
-    // Plan-mode tracking (Go engine_events.go): the plan .md path and the
-    // last-sent card content reset per turn; the revision counter for export
-    // keys / render artifacts survives turns — a discussion-round
-    // re-presentation lands in a later turn, and its (vN) title must keep
-    // counting from the session's earlier presentations.
+    // Plan-mode tracking (Go engine_events.go): the plan .md path resets per
+    // turn; the revision counter for export keys / render artifacts survives
+    // turns — a discussion-round re-presentation lands in a later turn, and
+    // its (vN) title must keep counting from the session's earlier
+    // presentations.
     state.planFilePath = ''
     state.pendingPlanFilePath = ''
     state.pendingPlanToolID = ''
-    state.sentPlanContent = ''
 
     /** Drain queued async PATCHes before a terminal card state. */
     const barrier = (): Promise<void> => sender.barrier()
@@ -5501,7 +5498,6 @@ export class Engine {
         // fallback; the render fork runs in addition and delivers an image.
         const exportKey = `plan:${String(state.planRevisionCount)}`
         storePlanExport(state, exportKey, planContent)
-        if (planContent !== state.sentPlanContent) state.sentPlanContent = planContent
         let activePlanFilePath = state.planFilePath
         if (activePlanFilePath !== '' && !existsSync(activePlanFilePath)) activePlanFilePath = ''
         if (activePlanFilePath === '') {
