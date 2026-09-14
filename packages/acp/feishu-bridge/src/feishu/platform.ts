@@ -35,11 +35,12 @@ import type { Card } from '../card.ts'
 import { newCard } from '../card.ts'
 import { renderCard, renderCardMap, type FeishuCardMap } from './card.ts'
 import {
-  buildPreviewCardJSON,
+  buildPreviewCard,
   buildReplyContent,
-  injectReplyButtons,
-  injectStopButton,
-  markCardStopped,
+  injectReplyButtonsInto,
+  injectStopButtonInto,
+  markCardStoppedInto,
+  type MutableCardJSON,
 } from './progress.ts'
 import { previewOverflow as previewOverflowFn } from './markdown.ts'
 import { noSpinner, resolveSpinnerAsset, spinnerKeyForState, type SpinnerCfg } from './spinner.ts'
@@ -568,8 +569,13 @@ export class FeishuPlatform implements Platform {
   /** messageID → the bucket pacing that card's PATCHes (see {@link patchBucketFor}). */
   private readonly patchRL = new BoundedMap<string, TokenBucketRateLimiter>()
 
-  /** messageID → pre-button card JSON (stop-card rebuild + render-status rebuild). */
-  private readonly lastProgressCard = new BoundedMap<string, string>()
+  /**
+   * messageID → pre-button card structure (stop-card rebuild + render-status
+   * rebuild). The cached card is never mutated: rebuild paths clone before
+   * injecting their chrome, and updateMessage caches only after its PATCH
+   * landed.
+   */
+  private readonly lastProgressCard = new BoundedMap<string, MutableCardJSON>()
   /** messageID → latest render status text (#48 survival). */
   private readonly renderStatusText = new BoundedMap<string, string>()
   /**
@@ -2103,8 +2109,10 @@ export class FeishuPlatform implements Platform {
     if (rc.chatID === '') throw new Error('feishu: chatID is empty')
 
     const spin = await this.spinnerCfg()
-    const preButtonJSON = this.renderPreviewCard(content, spin)
-    const cardJSON = injectStopButton(preButtonJSON, rc.sessionKey, this.bgHintOf(content))
+    const preButton = this.renderPreviewCard(content, spin)
+    const card = structuredClone(preButton)
+    injectStopButtonInto(card, rc.sessionKey, this.bgHintOf(content))
+    const cardJSON = JSON.stringify(card)
 
     const msgID = await this.withRetry('send preview', () => this.request('send preview', async (client) => {
       // Go SendPreviewStart: reply only under thread isolation so the card
@@ -2124,15 +2132,18 @@ export class FeishuPlatform implements Platform {
     }))
     if (msgID === '') throw new Error('feishu: send preview: no message ID returned')
 
-    this.lastProgressCard.set(msgID, preButtonJSON)
+    this.lastProgressCard.set(msgID, preButton)
     console.info(`feishu: preview card sent (${msgID}, session ${rc.sessionKey})`)
     return new FeishuPreviewHandle(msgID, rc.chatID, rc.sessionKey, this.shouldReplyInThread(rc))
   }
 
   /**
    * Edit the preview card in place. The rendered card JSON is cached
-   * pre-button; the stop button and (on green) the export/reply buttons are
-   * injected per PATCH, deferring to the latest render-status text.
+   * pre-button — only after the PATCH succeeded, so a failed PATCH leaves
+   * the cache at what the card actually shows (stop-card and render-status
+   * rebuilds restyle delivered content, not an unlanded render). The stop
+   * button and (on green) the export/reply buttons are injected per PATCH,
+   * deferring to the latest render-status text.
    * @param previewHandle - Preview handle from sendPreviewStart.
    * @param content - Updated content.
    */
@@ -2141,16 +2152,17 @@ export class FeishuPlatform implements Platform {
     const h = requirePreviewHandle(previewHandle)
 
     const spin = await this.spinnerCfg()
-    const cardJSON = this.renderPreviewCard(content, spin)
-    this.lastProgressCard.set(h.messageID, cardJSON)
-    let json = injectStopButton(cardJSON, h.sessionKey, this.bgHintOf(content))
+    const preButton = this.renderPreviewCard(content, spin)
+    const card = structuredClone(preButton)
+    injectStopButtonInto(card, h.sessionKey, this.bgHintOf(content))
     const statusText = this.renderStatusText.get(h.messageID) ?? ''
     // State-keyed button eligibility: a card PATCHed to a settled parked
     // state keeps the export/reply buttons its waiting render carried (the
     // registered pre-ask reply outlives the decision).
-    json = injectReplyButtons(json, h.sessionKey, h.messageID, statusText, this.buttonStateOf(content))
+    injectReplyButtonsInto(card, h.sessionKey, h.messageID, statusText, this.buttonStateOf(content))
     await this.patchRateWait(h.messageID)
-    await this.withRetry('patch message', () => this.patchMessage(h.messageID, json))
+    await this.withRetry('patch message', () => this.patchMessage(h.messageID, JSON.stringify(card)))
+    this.lastProgressCard.set(h.messageID, preButton)
   }
 
   /** Progress status state of preview content ('' when none), for state-keyed button eligibility. */
@@ -2158,9 +2170,9 @@ export class FeishuPlatform implements Platform {
     return content.status?.state ?? ''
   }
 
-  /** Render preview content into a card JSON string. */
-  private renderPreviewCard(content: ProgressContent, spin: SpinnerCfg): string {
-    return buildPreviewCardJSON(content.text, spin, content.status)
+  /** Render preview content into a mutable pre-button card structure. */
+  private renderPreviewCard(content: ProgressContent, spin: SpinnerCfg): MutableCardJSON {
+    return buildPreviewCard(content.text, spin, content.status)
   }
 
   /**
@@ -2187,11 +2199,12 @@ export class FeishuPlatform implements Platform {
     // Record unconditionally so the green-化 re-PATCH in updateMessage can
     // re-apply it; keyed per card so concurrent sessions don't cross-leak.
     this.renderStatusText.set(exportKey, statusText)
-    const baseJSON = this.requireCachedCard(exportKey, 'update render status')
-    let cardJSON = injectStopButton(baseJSON, rc.sessionKey)
-    cardJSON = injectReplyButtons(cardJSON, rc.sessionKey, exportKey, statusText)
+    const base = this.requireCachedCard(exportKey, 'update render status')
+    const card = structuredClone(base)
+    injectStopButtonInto(card, rc.sessionKey)
+    injectReplyButtonsInto(card, rc.sessionKey, exportKey, statusText)
     await this.patchRateWait(exportKey)
-    await this.withRetry('update render status', () => this.patchMessage(exportKey, cardJSON))
+    await this.withRetry('update render status', () => this.patchMessage(exportKey, JSON.stringify(card)))
   }
 
   /**
@@ -2206,15 +2219,16 @@ export class FeishuPlatform implements Platform {
     const rc = this.requireReplyCtx(replyCtx)
     const h = requirePreviewHandle(previewMsgID)
     if (h.messageID === '') throw new Error('feishu: RenderStoppedCard: empty messageID')
-    const baseJSON = this.requireCachedCard(h.messageID, 'render stopped card')
-    const cardJSON = markCardStopped(baseJSON, rc.sessionKey)
+    const base = this.requireCachedCard(h.messageID, 'render stopped card')
+    const card = structuredClone(base)
+    markCardStoppedInto(card, rc.sessionKey)
     await this.patchRateWait(h.messageID)
-    await this.withRetry('render stopped card', () => this.patchMessage(h.messageID, cardJSON))
+    await this.withRetry('render stopped card', () => this.patchMessage(h.messageID, JSON.stringify(card)))
   }
 
-  private requireCachedCard(msgID: string, op: string): string {
-    const base = this.lastProgressCard.get(msgID) ?? ''
-    if (base === '') throw new Error(`feishu: ${op}: no cached progress card for ${msgID}`)
+  private requireCachedCard(msgID: string, op: string): MutableCardJSON {
+    const base = this.lastProgressCard.get(msgID)
+    if (base === undefined) throw new Error(`feishu: ${op}: no cached progress card for ${msgID}`)
     return base
   }
 
