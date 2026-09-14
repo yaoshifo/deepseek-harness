@@ -22,6 +22,9 @@ Status: implemented
 - 段间文本 flush 走吞错的纯文本发送并无条件推进 `segmentStart`：失败的段落永久丢失，回合仍读作纯成功。
 - degraded 分支在补发答案前先删冻结卡——u5 已从 `fallbackSend` 移除的先删后发反模式。
 - 答案只存在于进行中卡片实时播报段落的被杀回合，在终局 PATCH 与 fallback 双双失败时丢失该段：文本补发守卫排除了它，且无警告无存档。
+- ask 前置卡 flush（`deliverCards`）走吞错的纯文本发送并无条件推进边界——且重启重发条件对 parked 卡是死代码：park 在决议落地前就 completeAndDetach 了前置预览，`hasStarted()` 恒为 false。
+- ask 重启 flush 发完立即清空 `textParts`，即使边界不推进，失败的段也无痕消失（阶段重置还抹掉了 `answerDelivery`）。
+- errored 分支在送达错误文案前先删冻结卡。
 
 ## Decision
 
@@ -48,6 +51,12 @@ Status: implemented
 **degraded 先补发再删卡。** degraded 分支先补发答案再删冻结卡，补发失败时卡片仍是答案的承载（且失败记入警告块）。
 
 **被杀卡按终局结果结算。** kill 路径先等 sender barrier，再读最终 `sp.answerDelivery`：`'sent'` 维持文本补发排除；`'unknown'` 只记录不重发（fallback 可能已落地）；确定的 `'failed'`——终局 PATCH 与 fallback 都可证从未落地——把该段以纯文本补发、警告并存档。文本补发与卡内 fallback 构造上互斥：它只在后者自身确定失败后才执行。
+
+**前置卡 flush 与段间 flush 同规。** `deliverCards` 的段改走 `flushTextSegment`；确定失败保持边界不动，由重启重发补上。重启重发条件从 `old.hasStarted()` 改为 `old !== undefined`——parked 卡没有已启动的预览，旧条件永不触发；无卡场景仍由 turn-end 兜底。
+
+**重启保持失败段可观测。** 重启重发改走 `deliverAnswerText`；确定失败立即保存段副本（`saveUndeliveredAnswer` 新增显式 text 参数——此刻回合最终回复尚不存在、该 span 即将被清空），阶段重置行把 flush 裁决写回 `answerDelivery` 而非 `undefined`。failed 裁决在 turn-end 警告，除非后续交付成功（副本始终兜底）；unknown 粘滞但不存副本——段可能已送达，副本会误导。
+
+**errored 先送达再删卡。** errored 分支先送达错误文案再删冻结卡，交付失败时卡片仍是错误文案的承载。
 
 ## Consequences
 

@@ -20,6 +20,9 @@ A same-day review of the 2026-09-14 audit-fix batches found nine defects on four
 - The inter-segment text flush sent through the error-swallowing plain send and advanced `segmentStart` unconditionally: a failed segment was lost forever while the turn still read as pure success.
 - The degraded branch deleted the frozen card before re-delivering its answer — the discard-then-deliver shape u5 removed from `fallbackSend`.
 - A killed turn whose answer lived only on the in-progress card's live-narration segment lost that segment when the terminal PATCH and the fallback both failed: the text re-delivery guard suppressed it and nothing warned or saved.
+- The pre-ask card flush (`deliverCards`) sent its segment through the error-swallowing plain send and advanced the boundary unconditionally — and the restart re-delivery condition was dead code for a parked card, because parking completes and detaches the preview before the decision lands, so `hasStarted()` reads false.
+- The ask-restart flush cleared `textParts` right after sending, so even an unadvanced boundary lost a failed segment without a trace (the phase reset also wiped `answerDelivery`).
+- The errored branch deleted the frozen card before delivering the error text.
 
 ## Decision
 
@@ -46,6 +49,12 @@ A same-day review of the 2026-09-14 audit-fix batches found nine defects on four
 **Degraded delivers, then discards.** The degraded branch re-delivers the answer before deleting the frozen card, so a failed re-delivery leaves the card as the answer's remaining carrier (and records the failure for the warning block).
 
 **Killed cards settle by terminal outcome.** The kill path awaits the sender barrier, then reads the final `sp.answerDelivery`: `'sent'` keeps the text re-delivery excluded; `'unknown'` records without re-sending (the fallback may have landed); a definite `'failed'` — terminal PATCH and fallback both provably never landed — re-delivers the segment as plain text, warns, and saves the copy. The re-delivery is mutually exclusive with the in-card fallback by construction: it runs only after that fallback itself definitely failed.
+
+**Pre-ask flush settles like the segment flush.** `deliverCards` sends its segment through `flushTextSegment`; a definite failure holds the boundary and the restart re-delivers the segment. The restart re-delivery condition reads `old !== undefined` instead of `old.hasStarted()` — a parked card has no started preview, so the old condition never fired; card-less turns keep the turn-end backstop.
+
+**Restart keeps a failed segment observable.** The restart re-delivery goes through `deliverAnswerText`; a definite failure immediately saves the segment copy (`saveUndeliveredAnswer` takes the segment text explicitly — the turn's final reply does not exist yet and the span is about to be cleared), and the phase reset writes the flush verdict into `answerDelivery` instead of `undefined`. A failed verdict warns at turn end unless later delivery succeeds (the saved copy remains the floor); an unknown verdict stays sticky without a copy — the segment may have landed, and a copy would mislead.
+
+**Errored delivers, then discards.** The errored branch delivers the error text before deleting the frozen card, so a failed delivery keeps the card as the error's carrier.
 
 ## Consequences
 
