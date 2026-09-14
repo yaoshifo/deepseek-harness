@@ -462,6 +462,9 @@ export const ALL_MSG_KEYS = [
   'download_failed_named',
   'download_kind_file',
   'download_kind_image',
+  'status_build',
+  'status_build_disk_newer',
+  'status_build_head_moved',
 ] as const
 
 /** Message key union (all Go MsgKey constant values). */
@@ -925,4 +928,7 @@ export const Msg = {
   DownloadFailedNamed: 'download_failed_named',
   DownloadKindFile: 'download_kind_file',
   DownloadKindImage: 'download_kind_image',
+  StatusBuild: 'status_build',
+  StatusBuildDiskNewer: 'status_build_disk_newer',
+  StatusBuildHeadMoved: 'status_build_head_moved',
 } as const

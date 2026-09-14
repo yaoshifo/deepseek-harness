@@ -468,4 +468,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   download_failed_named: { en: '⚠️ Failed to download the %s "%s": it may have timed out or be too large. Retry, upload it in smaller parts, or send the server-side file path instead.', zh: '⚠️ %s「%s」下载失败：可能超时或文件过大。请重试，或拆分后上传，或直接发送服务器上的文件路径。' },
   download_kind_file: { en: 'file', zh: '文件' },
   download_kind_image: { en: 'image', zh: '图片' },
+  status_build: { en: 'Build: daemon started %s · lib %s · HEAD %s', zh: '构建：daemon %s 启动 · lib %s · HEAD %s' },
+  status_build_disk_newer: { en: '⚠️ A newer build is on disk (%s) but not loaded — run /reload to activate it', zh: '⚠️ 磁盘上有新构建（%s）未加载——跑 /reload 生效' },
+  status_build_head_moved: { en: '⚠️ HEAD has moved to %s (+%s commits, not loaded by this daemon)', zh: '⚠️ HEAD 已前移至 %s（+%s 提交，未随本 daemon 加载）' },
 }

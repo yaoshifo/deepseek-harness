@@ -33,6 +33,7 @@ import { Msg } from '../i18n/index.ts'
 import { mcpToolCounts } from '../core/mcp-health.ts'
 import type { Message, Platform } from '../core/types.ts'
 import type { Engine } from './engine.ts'
+import { buildStatusLines } from './build-info.ts'
 
 /**
  * Register the /reload command on an engine through the
@@ -202,7 +203,13 @@ export async function completePendingReload(engines: readonly Engine[], tools: G
       if (engine === undefined || platform === undefined) {
         console.warn(`/reload: completion marker names unknown engine ${marker.engine} or platform ${marker.platform}; dropping it`)
       } else {
-        await platform.send(marker.replyCtx, engine.i18n.tf(Msg.ReloadCompleted, join(reloadLogDir(), 'feishu-bridge-reload.log')))
+        // Build row: names what the restarted daemon actually loaded and flags
+        // commits that landed past it (a mid-build commit leaves the fresh
+        // daemon instantly stale — invisible without this line).
+        const buildLines = await buildStatusLines(engine.i18n)
+        const notice = engine.i18n.tf(Msg.ReloadCompleted, join(reloadLogDir(), 'feishu-bridge-reload.log'))
+          + (buildLines.length === 0 ? '' : `\n${buildLines.join('\n')}`)
+        await platform.send(marker.replyCtx, notice)
         await sendMcpSurfaceReminder(platform, engine, marker.replyCtx, tools)
       }
     }

@@ -36,6 +36,7 @@ import { HintUsage } from './engine/hint-usage.ts'
 import { registerSessionCommands } from './engine/commands.ts'
 import { registerShellCommands } from './engine/shell-commands.ts'
 import { registerReloadCommands, completePendingReload } from './engine/reload-commands.ts'
+import { captureBuildInfo } from './engine/build-info.ts'
 import { registerSpawnFamilyCommands } from './engine/spawn-family-commands.ts'
 import { registerMiscCommands } from './engine/misc-commands.ts'
 import { registerSkillsMcpCommands } from './engine/skills-mcp-commands.ts'
@@ -905,8 +906,12 @@ export async function apply(ctx: Context, config: FeishuBridgeConfig): Promise<v
   service.markReady()
 
   // The daemon is up: settle a /reload that restarted this process (each
-  // start already carries its own catch, so this always runs).
-  void Promise.all(starts).then(() => { void completePendingReload(service.projects.map(({ engine }) => engine), ctx.tools) })
+  // start already carries its own catch, so this always runs). The build
+  // identity is captured first — the completion notice and /status read it.
+  void Promise.all(starts).then(async () => {
+    await captureBuildInfo()
+    await completePendingReload(service.projects.map(({ engine }) => engine), ctx.tools)
+  })
 
   // Start the cron scheduler after every engine registered (Go main).
   cronScheduler.start()

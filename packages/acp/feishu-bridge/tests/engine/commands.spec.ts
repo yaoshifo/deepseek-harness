@@ -9,6 +9,7 @@ import { DirHistory } from '../../src/engine/dir-history.ts'
 import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import { CronJob, CronScheduler, CronStore } from '../../src/engine/cron.ts'
 import { cleanupOneChat, cmdDir, cmdFork, cmdHint, cmdList, cmdNew, cmdSpawn, cmdStatus, cmdStop, matchPrefix, matchSession, registerSessionCommands } from '../../src/engine/commands.ts'
+import { setBuildInfoForTest, setBuildProbeForTest } from '../../src/engine/build-info.ts'
 import type { Agent, AgentSessionInfo, Message, ProviderSwitcher } from '../../src/core/types.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import {
@@ -236,6 +237,43 @@ describe('/status', () => {
       await cmdStatus(e, p, msg())
       expect(p.sent).toHaveLength(1)
       expect(p.sent[0]).not.toContain('Cron jobs:')
+    } finally {
+      dispose()
+    }
+  })
+
+  it('appends the build row from the captured daemon build identity', async () => {
+    const { e, p, dispose } = newEngine()
+    try {
+      setBuildInfoForTest({
+        startedAt: new Date('2026-09-12T16:03:33+08:00').getTime(),
+        libMtime: new Date('2026-09-12T16:03:32+08:00').getTime(),
+        entryMtime: undefined,
+        headSha: '9c7b1d9eea1234567890abcdef1234567890abcd',
+      })
+      setBuildProbeForTest({
+        statWatched: () => ({ lib: new Date('2026-09-14T14:29:07+08:00').getTime(), entry: undefined }),
+        gitHead: async () => '6b691c02ea1234567890abcdef1234567890abcd',
+        countBetween: async () => 2,
+      })
+      await cmdStatus(e, p, msg())
+      expect(p.sent).toHaveLength(1)
+      expect(p.sent[0]).toContain('Build: daemon started 9-12 16:03 · lib 9-12 16:03 · HEAD 9c7b1d9eea')
+      expect(p.sent[0]).toContain('⚠️ A newer build is on disk (9-14 14:29) but not loaded — run /reload to activate it')
+      expect(p.sent[0]).toContain('⚠️ HEAD has moved to 6b691c02ea (+2 commits, not loaded by this daemon)')
+    } finally {
+      setBuildInfoForTest(undefined)
+      setBuildProbeForTest(undefined)
+      dispose()
+    }
+  })
+
+  it('keeps /status silent about the build before capture ran', async () => {
+    const { e, p, dispose } = newEngine()
+    try {
+      await cmdStatus(e, p, msg())
+      expect(p.sent).toHaveLength(1)
+      expect(p.sent[0]).not.toContain('Build:')
     } finally {
       dispose()
     }

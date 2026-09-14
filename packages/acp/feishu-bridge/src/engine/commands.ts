@@ -32,6 +32,7 @@ import { buildCompactContext, maxGroupNameRunes, sanitizeGroupName, spawnPlaceho
 import { buildHintsCommonElements, buildHintsPanelElements } from './hints-panel.ts'
 import { renderDirCardSafe } from './dir-card.ts'
 import { renderListCardSafe, renderStatusCard } from './session-card.ts'
+import { buildStatusLines } from './build-info.ts'
 import { extractChannelID } from './engine.ts'
 
 const listPageSize = 5
@@ -523,9 +524,13 @@ export async function statusText(e: Engine, msg: Message): Promise<string> {
   let userIDStr = ''
   if (msg.userID !== '') userIDStr = e.i18n.tf(Msg.StatusUserID, msg.userID)
 
-  return e.i18n.tf(Msg.StatusTitle,
+  const base = e.i18n.tf(Msg.StatusTitle,
     e.name, agent.name(), workDirStr, platformStr, uptimeStr, langStr,
     modeStr, sessionStr, cronStr, sessionKeyStr, agentSIDStr, userIDStr, '')
+  // Build row: the daemon's loaded build vs the disk/git state — appended, not
+  // a StatusTitle placeholder, so the five locale templates stay untouched.
+  const buildLines = await buildStatusLines(e.i18n)
+  return buildLines.length === 0 ? base : `${base}\n${buildLines.join('\n')}`
 }
 
 function formatUptime(ms: number): string {

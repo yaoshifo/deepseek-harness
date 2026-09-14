@@ -19,6 +19,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { Engine } from '../../src/engine/engine.ts'
 import { registerSessionCommands } from '../../src/engine/commands.ts'
 import { completePendingReload, reloadSpawnArgv, registerReloadCommands, resolveReloadScript } from '../../src/engine/reload-commands.ts'
+import { setBuildInfoForTest, setBuildProbeForTest } from '../../src/engine/build-info.ts'
 import type { GlobalToolView } from '../../src/engine/reload-commands.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import {
@@ -344,6 +345,32 @@ describe('completePendingReload', () => {
     await completePendingReload([e], emptyToolView)
     expect(sends).toEqual([{ rc: 'ctx-marker', content: e.i18n.tf(Msg.ReloadCompleted, join(logDir, 'feishu-bridge-reload.log')) }])
     expect(existsSync(pendingPath())).toBe(false)
+  })
+
+  it('appends the build row to the notice when HEAD moved during the build', async () => {
+    const { e, p } = newEngine()
+    writeMarker({ replyCtx: 'ctx-marker' })
+    setBuildInfoForTest({
+      startedAt: new Date('2026-09-14T14:29:00+08:00').getTime(),
+      libMtime: new Date('2026-09-14T14:29:07+08:00').getTime(),
+      entryMtime: undefined,
+      headSha: 'e0f27e5174123456789012345678901234567890',
+    })
+    setBuildProbeForTest({
+      statWatched: () => ({ lib: new Date('2026-09-14T14:29:07+08:00').getTime(), entry: undefined }),
+      gitHead: async () => '6b691c02ea1234567890abcdef1234567890abcd',
+      countBetween: async () => 4,
+    })
+    try {
+      await completePendingReload([e], emptyToolView)
+      expect(p.getSent()).toHaveLength(1)
+      expect(p.getSent()[0]).toContain('Build: daemon started 9-14 14:29')
+      expect(p.getSent()[0]).toContain('⚠️ HEAD has moved to 6b691c02ea (+4 commits, not loaded by this daemon)')
+      expect(p.getSent()[0]).not.toContain('A newer build is on disk')
+    } finally {
+      setBuildInfoForTest(undefined)
+      setBuildProbeForTest(undefined)
+    }
   })
 
   it('keeps the marker and stays silent when the pid matches (HMR re-apply mid-reload)', async () => {
