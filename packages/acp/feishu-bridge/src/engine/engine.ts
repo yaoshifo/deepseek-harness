@@ -4150,7 +4150,10 @@ export class Engine {
         state.exportContent.set(exportKey, baseResponse)
       }
       state.lastBaseResponse = baseResponse
-      if (this.planRenderEnabled && Array.from(displayText).length >= defaultReplyPreRenderLen) {
+      // Same suppression as the pre-ask trigger below: role/subtask sessions
+      // relay their output elsewhere, so a local HTML overview is redundant.
+      if (this.planRenderEnabled && Array.from(displayText).length >= defaultReplyPreRenderLen
+        && !session.shouldSuppressAutoRender(this.bridge)) {
         renderAndDeliverReply(this, state, sessionKey, displayText, exportKey)
       }
     }

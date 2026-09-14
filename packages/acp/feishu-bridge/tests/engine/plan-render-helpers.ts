@@ -188,8 +188,8 @@ export function createCardUpdatePlatform(n = 'feishu'): StubCardUpdatePlatform {
 }
 
 /** New engine wired with a render-capable agent + enabled plan_render (Go test setup). */
-export function newRenderEngine(agent: Agent, platform: Platform, opts: { timeoutMs?: number } = {}): Engine {
-  const e = new Engine('test', agent, [platform], '', 'en')
+export function newRenderEngine(agent: Agent, platform: Platform, opts: { timeoutMs?: number; bridge?: import('../../src/bridge-service.ts').BridgeDispatch } = {}): Engine {
+  const e = new Engine('test', agent, [platform], '', 'en', opts.bridge)
   e.planRenderEnabled = true
   e.planRenderProvider = 'p'
   e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())

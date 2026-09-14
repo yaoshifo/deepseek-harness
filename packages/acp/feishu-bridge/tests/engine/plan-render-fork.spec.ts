@@ -43,6 +43,26 @@ import {
   renderSkillBodyFixture,
   tempDir,
 } from './plan-render-helpers.ts'
+import { afterEach } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import { ctxBridgeDispatch } from '../../src/bridge-service.ts'
+import type { Session } from '../../src/engine/session.ts'
+
+// Policy-listener contexts are disposed after each test.
+const contextsForDispose: Context[] = []
+afterEach(async () => {
+  await Promise.allSettled(contextsForDispose.splice(0).map(ctx => ctx.fiber.dispose()))
+})
+
+/** The raw chatroom section of a session (opaque bag; written directly here). */
+function chatroomSection(session: Session): Record<string, unknown> {
+  let section = session.featureState.chatroom
+  if (typeof section !== 'object' || section === null) {
+    section = {}
+    session.featureState.chatroom = section
+  }
+  return section as Record<string, unknown>
+}
 
 describe('RenderPlanToHTML', () => {
   it('NoCrosstalk: each fork receives exactly its own prompt', async () => {
@@ -739,5 +759,70 @@ describe('processInteractiveEvents render integration', () => {
 
     await pollUntil(() => a.getCalls().length >= 2, 3000)
     expect(a.getCalls()).toHaveLength(2)
+  })
+})
+
+describe('turn-end reply-render suppression', () => {
+  /** Engine + render agent + platform with an auto-render-policy listener shaped like the chatroom package's production half. */
+  function chatroomRoleEngine(): { a: ReturnType<typeof createRenderAgent>; e: Engine; p: ReturnType<typeof createStubMediaPlatform> } {
+    const a = createRenderAgent()
+    const p = createStubMediaPlatform()
+    const ctx = new Context()
+    contextsForDispose.push(ctx)
+    ctx.on('feishuBridge/auto-render-policy', (payload: { session: Session }, next: () => boolean) =>
+      next() || chatroomSection(payload.session).chatroomHubKey !== '')
+    const e = newRenderEngine(a, p, { bridge: ctxBridgeDispatch(ctx) })
+    return { a, e, p }
+  }
+
+  it('TurnEndSkipsChatroomRole: a chatroom role session does not fork the reply render', async () => {
+    const { a, e, p } = chatroomRoleEngine()
+    const state = newRenderState(p)
+    const sessionKey = 'feishu:user1'
+    chatroomSection(e.sessions.getOrCreateActive(sessionKey)).chatroomHubKey = 'feishu:hub:ou_user'
+
+    await driveLoop(e, state, sessionKey, [
+      { type: 'text', content: longText },
+      { type: 'result', content: longText, done: true },
+    ])
+    await new Promise((r) => { setTimeout(r, 200) })
+
+    expect(a.getCalls()).toHaveLength(0)
+    expect(state.preRenderRunning).toBe(false)
+  })
+
+  it('TurnEndSkipsSubtaskChild: a subtask child session does not fork the reply render', async () => {
+    const a = createRenderAgent()
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p)
+    const state = newRenderState(p)
+    const sessionKey = 'feishu:user1'
+    e.sessions.getOrCreateActive(sessionKey).setSubtaskDepth(1)
+
+    await driveLoop(e, state, sessionKey, [
+      { type: 'text', content: longText },
+      { type: 'result', content: longText, done: true },
+    ])
+    await new Promise((r) => { setTimeout(r, 200) })
+
+    expect(a.getCalls()).toHaveLength(0)
+    expect(state.preRenderRunning).toBe(false)
+  })
+
+  it('TurnEndKeepsUserTakeover: a user-interjected chatroom role session still forks', async () => {
+    const { a, e, p } = chatroomRoleEngine()
+    const state = newRenderState(p)
+    const sessionKey = 'feishu:user1'
+    const session = e.sessions.getOrCreateActive(sessionKey)
+    chatroomSection(session).chatroomHubKey = 'feishu:hub:ou_user'
+    session.setUserInterjected(true)
+
+    await driveLoop(e, state, sessionKey, [
+      { type: 'text', content: longText },
+      { type: 'result', content: longText, done: true },
+    ])
+
+    await pollUntil(() => a.getCalls().length > 0, 2000)
+    expect(a.getCalls()).toHaveLength(1)
   })
 })
