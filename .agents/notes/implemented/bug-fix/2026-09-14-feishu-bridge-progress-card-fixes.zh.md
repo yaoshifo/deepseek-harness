@@ -15,7 +15,7 @@ Status: implemented
 
 ## Decision
 
-**重复 PATCH。** `StreamPreview.flushLocked` 把带状态的内容按整卡渲染结果做键——正文、标题状态、时钟、工具调用计数、待报子任务、后台提示——当该键与平台最后接受的那次相同时直接返回，除非位移探测报告卡片已被顶下去。纯文本守卫不变。`lastSentKey` 只在内容真正到达平台时写入、PATCH 失败时回滚；而那些只清 `lastSentText` 的重置点（placeholder 重置与进度 flush）不动这个键——在那里清掉会让去重彻底失效。
+**重复 PATCH。** `StreamPreview.flushLocked` 把带状态的内容按整卡渲染结果做键——正文、标题状态、时钟、工具调用计数、待报子任务、后台提示——当该键与平台最后接受的那次相同时直接返回，除非位移探测报告卡片已被顶下去。纯文本守卫不变。`lastSentKey` 只在内容真正到达平台时写入、PATCH 失败时回滚；而那些只清 `lastSentText` 的重置点（showPlaceholder 与 updateProgress）不动这个键——在那里清掉会让去重彻底失效。
 
 **冻卡。** 回合循环的三处兜底 catch 通过 `StreamPreview.markFailedIfUnsettled()` 收尾它们留下的卡片；该方法对已完成、已失败、已截断或已渲染停止态的卡片不做事。因此 drain 阶段的失败不会再重渲一张回合已经绿色收尾的卡。主处理器按槽位键查状态：它失败的 `try` 块里那个 `state` 绑定只在该块内可见。
 

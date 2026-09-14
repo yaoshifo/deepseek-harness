@@ -526,12 +526,12 @@ export class StreamPreview {
   private lastSentText = ''
   /**
    * Dedup key of the content last actually sent (see {@link sentKeyOf}); ''
-   * before anything was sent. Written wherever lastSentText is written and
-   * only for content that reached the platform (a failed PATCH rolls it back).
-   *
-   * The plain-text resets that clear lastSentText to force a body PATCH — the
-   * placeholder reset and the progress flushes — deliberately leave this key
-   * alone: clearing it there would disable the whole-card dedup for good.
+   * before anything was sent. Written only where content reaches the platform
+   * (send, PATCH, reissue, terminal render) and rolled back when a PATCH
+   * fails. Resets that clear lastSentText alone (showPlaceholder,
+   * updateProgress) force the next plain-text body PATCH — the plain-text
+   * guard reads lastSentText, never this key — while the progress path never
+   * touches the key: clearing it would re-PATCH every identical flush.
    */
   private lastSentKey = ''
   private lastSentAt = 0
@@ -1416,7 +1416,6 @@ export class StreamPreview {
     await this.locked(async () => {
       if (this.degraded || this.previewMsgID === undefined || this.fullText !== '') return
       this.lastSentText = '' // force PATCH even if text is similar
-      this.lastSentKey = ''
       await this.flushLocked({ kind: 'text', text })
     })
   }
@@ -1588,7 +1587,6 @@ export class StreamPreview {
         this.timer = this.armTimer(interval - (now - this.lastProgressFlush), async () => {
           if (this.degraded || this.previewMsgID === undefined) return
           const display = this.buildProgressDisplayLocked()
-          this.lastSentText = ''
           await this.flushLocked(this.progressContentLocked(display))
           this.lastProgressFlush = Date.now()
         })
@@ -1596,7 +1594,6 @@ export class StreamPreview {
       return
     }
     this.lastProgressFlush = now
-    this.lastSentText = ''
     await this.flushLocked(this.progressContentLocked(text))
   }
 
@@ -1611,7 +1608,6 @@ export class StreamPreview {
     const interval = this.cfg.progressFlushIntervalMs
     if (interval <= 0 || now - this.lastProgressFlush >= interval) {
       this.lastProgressFlush = now
-      this.lastSentText = ''
       await this.flushLocked(this.progressContentLocked(this.buildProgressDisplayLocked()))
       return
     }
@@ -1621,7 +1617,6 @@ export class StreamPreview {
       this.timer = this.armTimer(interval - (now - this.lastProgressFlush), async () => {
         if (this.degraded || this.previewMsgID === undefined) return
         const display = this.buildProgressDisplayLocked()
-        this.lastSentText = ''
         await this.flushLocked(this.progressContentLocked(display))
         this.lastProgressFlush = Date.now()
       })

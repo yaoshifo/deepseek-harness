@@ -15,7 +15,7 @@ The remaining five: an exception escaping a turn loop leaves the card it drove f
 
 ## Decision
 
-**Duplicate PATCHes.** `StreamPreview.flushLocked` keys status-bearing content on the whole rendered result — body, header state, clock, tool-call count, pending subtasks, background hint — and returns when that key matches the last one the platform accepted, unless the displacement probe reports the card displaced. The plain-text guard is unchanged. `lastSentKey` is written only where content reaches the platform and rolled back when a PATCH fails, while the resets that clear `lastSentText` alone (the placeholder reset and the progress flushes) leave the key alone — clearing it there would disable the dedup.
+**Duplicate PATCHes.** `StreamPreview.flushLocked` keys status-bearing content on the whole rendered result — body, header state, clock, tool-call count, pending subtasks, background hint — and returns when that key matches the last one the platform accepted, unless the displacement probe reports the card displaced. The plain-text guard is unchanged. `lastSentKey` is written only where content reaches the platform and rolled back when a PATCH fails, while the resets that clear `lastSentText` alone (showPlaceholder, updateProgress) leave the key alone — clearing it there would disable the dedup.
 
 **Frozen cards.** The three turn-loop catch handlers settle the card they left running through `StreamPreview.markFailedIfUnsettled()`, which no-ops on a card that already completed, failed, truncated, or rendered its stopped state. A drain-phase failure therefore cannot re-render a card the turn settled green. The main handler resolves the state by its slot key: its `state` binding is scoped to the `try` block that failed.
 
