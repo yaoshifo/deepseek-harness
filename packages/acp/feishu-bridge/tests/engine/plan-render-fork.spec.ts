@@ -495,6 +495,46 @@ describe('RenderAndDeliverReply', () => {
     expect(terminalIdx).toBeGreaterThan(-1)
     expect(patches.at(-1)?.text, 'the terminal PATCH is the last one issued').toContain('Render failed')
   })
+
+  it('ProgressDrainInitialPatch: the initial rendering PATCH is drained before the terminal PATCH', async () => {
+    // The initial 'rendering' PATCH is dispatched fire-and-forget with its
+    // own transient-retry chain (~130s worst case). Unless it joins the
+    // drain queue, a fast render issues the terminal PATCH while the initial
+    // one is still on the wire, and its late landing flips the settled card
+    // back to 渲染中. Held PATCH promises place the race at a deterministic
+    // point; no fake clock is needed because the fork completes at once.
+    interface HeldPatch { text: string; release: () => void }
+    const patches: HeldPatch[] = []
+    const heldPlatform = Object.assign(createStubMediaPlatform(), {
+      updateRenderStatus: (_ctx: unknown, _key: string, text: string): Promise<void> => {
+        const patch: HeldPatch = { text, release: (): void => {} }
+        patches.push(patch)
+        return new Promise<void>((resolve) => { patch.release = resolve })
+      },
+    })
+    const a = createRenderAgent()
+    const e = new Engine('test', a, [heldPlatform], '', 'en')
+    e.planRenderEnabled = true
+    e.planRenderProvider = 'p'
+    e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
+
+    const state = newRenderState(heldPlatform)
+    renderAndDeliverReply(e, state, 'k1', longText, 'om_1')
+
+    // The render and delivery complete while the initial PATCH stays held.
+    await pollUntil(() => heldPlatform.files.length > 0, 2000)
+    expect(patches[0]?.text, 'the initial rendering PATCH was issued').toContain('Rendering')
+    // Give the flow a beat to reach its terminal exit, then red marker: the
+    // terminal PATCH must not be issued while the initial PATCH is in flight.
+    await new Promise((resolve) => { setTimeout(resolve, 300) })
+    expect(patches.some(p => p.text.includes('✅ Sent')), 'no terminal PATCH before the initial PATCH settles').toBe(false)
+
+    // Settle the held initial PATCH; the drain then issues the terminal one.
+    for (const patch of patches) patch.release()
+    await pollUntil(() => patches.some(p => p.text.includes('✅ Sent')), 2000)
+    expect(patches.at(-1)?.text, 'the terminal PATCH is the last one issued').toContain('✅ Sent')
+    for (const patch of patches) patch.release()
+  })
 })
 
 function cancelRendersFor(state: InteractiveState): void {

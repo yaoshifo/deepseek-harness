@@ -1256,8 +1256,9 @@ export async function deliverRenderedImage(
  * render (new turn / card button → cancelRenders) or failed fork silently
  * skips delivery. Retries once when the first attempt stalls or times out
  * without producing a file (upstream LLM jitter). Every exit drains the
- * periodic rendering-status PATCHes before issuing the terminal one, so a
- * late tick cannot overwrite the terminal status on the card.
+ * in-flight rendering-status PATCHes — the initial one and each periodic
+ * tick — before issuing the terminal one, so a late PATCH cannot overwrite
+ * the terminal status on the card.
  *
  * @param e - Engine used to fork and deliver the render.
  * @param state - Per-session state guarding single-flight and cancel tracking.
@@ -1297,11 +1298,11 @@ export function renderAndDeliverReply(
         void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
         return
       }
-      void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', 0)
       // Periodically refresh the elapsed "rendering" status so the user does
-      // not mistake a slow render for a hang. The tick's PATCH promise is
-      // chained into progressInflight so the drain below can wait for the
-      // network call itself, not just the synchronous dispatch.
+      // not mistake a slow render for a hang. Every rendering PATCH — the
+      // initial one and each tick — is chained into progressInflight so the
+      // drain below can wait for the network call itself, not just the
+      // synchronous dispatch.
       let progressStop = false
       const progressInflight: Array<Promise<void>> = []
       const ticker = setInterval(() => {
@@ -1312,13 +1313,14 @@ export function renderAndDeliverReply(
         progressStop = true
         clearInterval(ticker)
       }
-      // Stop future ticks AND wait out every in-flight tick PATCH, so the
-      // terminal PATCH that follows can never be overwritten by a late tick
-      // (the card would read 渲染中 forever). Runs at every exit.
+      // Stop future ticks AND wait out every in-flight rendering PATCH, so
+      // the terminal PATCH that follows can never be overwritten by a late
+      // one (the card would read 渲染中 forever). Runs at every exit.
       const drainProgress = async (): Promise<void> => {
         stopProgress()
         await Promise.allSettled(progressInflight)
       }
+      progressInflight.push(patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', 0))
 
       const maxAttempts = 2
       let hp = ''
