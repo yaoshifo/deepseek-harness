@@ -704,6 +704,43 @@ describe('/plan', () => {
     expect(foldPlanMode(agent.session.snapshotEvents())).toBe(false)
   })
 
+  it('forks the /plan entry copy by outcome like the off branch', async () => {
+    const ctx = await setup()
+    await ctx.plugin(CommandRuntime)
+    await new Promise(resolve => setImmediate(resolve))
+    const signal = new AbortController().signal
+
+    // noop on a truly active session reads idempotent; the message still steers.
+    const active = await agentWithSession(ctx, 'on-noop-active', { active: true })
+    const steer = vi.fn()
+    ;(active as unknown as { steer: typeof steer }).steer = steer
+    expect((await ctx.commands.execute(active, '/plan tighten the scope', [], signal))?.result)
+      .toEqual({ kind: 'success', text: 'Plan mode is already active.' })
+    expect(steer).toHaveBeenCalledExactlyOnceWith({
+      id: expect.any(String) as unknown,
+      role: 'user',
+      content: [{ type: 'text', text: 'tighten the scope' }],
+      source: { kind: 'user' },
+    })
+    expect(ctx.planMode.get(active)).toEqual({ active: true })
+
+    // cancelled: a queued exit is undone; plan mode stays in force.
+    const exiting = await agentWithSession(ctx, 'on-cancelled-exit', { active: true })
+    openTurn(exiting.session)
+    await ctx.commands.execute(exiting, '/plan off', [], signal)
+    expect((await ctx.commands.execute(exiting, '/plan', [], signal))?.result)
+      .toEqual({ kind: 'success', text: 'Plan mode exit cancelled — still in plan mode. Use /plan off to leave.' })
+    expect(ctx.planMode.get(exiting)).toEqual({ active: true, pending: true })
+
+    // noop while an entry still awaits the boundary repeats the queued wording.
+    const entering = await agentWithSession(ctx, 'on-noop-pending')
+    openTurn(entering.session)
+    await ctx.commands.execute(entering, '/plan', [], signal)
+    expect((await ctx.commands.execute(entering, '/plan', [], signal))?.result)
+      .toEqual({ kind: 'success', text: 'Entering plan mode (applies from the next step). Use /plan off to leave.' })
+    expect(ctx.planMode.get(entering)).toEqual({ active: false, pending: true })
+  })
+
   it('steers mixed attachments with or without text and refuses them on /plan off', async () => {
     const ctx = await setup()
     await ctx.plugin(CommandRuntime)

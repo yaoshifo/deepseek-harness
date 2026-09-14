@@ -302,11 +302,20 @@ export class PlanModeController extends Service {
               source: { kind: 'user' },
             }))
           }
-          return {
-            kind: 'success',
-            text: outcome === 'committed'
-              ? 'Plan mode on. Use /plan off to leave.'
-              : 'Entering plan mode (applies from the next step). Use /plan off to leave.',
+          switch (outcome) {
+            case 'committed':
+              return { kind: 'success', text: 'Plan mode on. Use /plan off to leave.' }
+            case 'queued':
+              return { kind: 'success', text: 'Entering plan mode (applies from the next step). Use /plan off to leave.' }
+            case 'cancelled':
+              return { kind: 'success', text: 'Plan mode exit cancelled — still in plan mode. Use /plan off to leave.' }
+            case 'noop':
+              // Repeat the queued wording while an entry still awaits the
+              // next accepted pre-step; only a truly active session reads
+              // idempotent.
+              return this.loggedActive(agent.session)
+                ? { kind: 'success', text: 'Plan mode is already active.' }
+                : { kind: 'success', text: 'Entering plan mode (applies from the next step). Use /plan off to leave.' }
           }
         },
       })
