@@ -89,6 +89,7 @@ describe('chatroom barrier persistence', () => {
     const g = armedGather()
     chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = g
     e.sessions.save()
+    e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
 
     const stored = Object.values(readStore(store).sessions)
     expect(stored).toHaveLength(2)
@@ -106,6 +107,7 @@ describe('chatroom barrier persistence', () => {
     // mid-window must not restart the re-arm budget.
     g.rearmed = true
     e.sessions.save()
+    e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     const rearmedSnap = Object.values(readStore(store).sessions)
       .map(chatroomSection).find(s => s.pendingGatherData !== undefined)?.pendingGatherData
     expect((rearmedSnap as { rearmed?: boolean } | undefined)?.rearmed).toBe(true)
@@ -114,6 +116,7 @@ describe('chatroom barrier persistence', () => {
     // async finalize window; a restart there must not resurrect it.
     g.timeoutFire()
     e.sessions.save()
+    e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     for (const s of Object.values(readStore(store).sessions)) {
       expect(chatroomSection(s).pendingGatherData).toBeUndefined()
     }
@@ -129,6 +132,7 @@ describe('chatroom barrier persistence', () => {
     b.collected.set('munger', '末轮回复')
     chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier = b
     e.sessions.save()
+    e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
 
     const hubSnap = Object.values(readStore(store).sessions).map(chatroomSection).find(s => s.pendingEndBarrierData !== undefined)
     expect(hubSnap?.pendingEndBarrierData).toEqual({
@@ -147,6 +151,7 @@ describe('chatroom restart recovery', () => {
       armHubAndRole(e, hub)
       chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = armedGather()
       e.sessions.save()
+      e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     }
 
     const e2 = newRecoveryEngine(createStubChatroomSpawner(), store)
@@ -167,6 +172,7 @@ describe('chatroom restart recovery', () => {
 
     // The restored data is consumed: a later save carries no barrier.
     e2.sessions.save()
+    e2.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     for (const s of Object.values(readStore(store).sessions)) {
       expect(chatroomSection(s).pendingGatherData).toBeUndefined()
     }
@@ -188,6 +194,7 @@ describe('chatroom restart recovery', () => {
       g.rearmed = true // the timeout had re-armed before the restart
       chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = g
       e.sessions.save()
+      e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     }
 
     vi.useFakeTimers()
@@ -212,6 +219,7 @@ describe('chatroom restart recovery', () => {
       expect(chatroomState(e2.sessions.getOrCreateActive(hub)).pendingGather).toBeUndefined()
 
       e2.sessions.save()
+      e2.sessions.flushNow()  // the debounced save needs an explicit flush before reads
       for (const s of Object.values(readStore(store).sessions)) {
         expect(chatroomSection(s).pendingGatherData).toBeUndefined()
       }
@@ -270,6 +278,7 @@ describe('chatroom restart recovery', () => {
       b.collected.set('munger', '末轮回复')
       chatroomState(e.sessions.getOrCreateActive(hub)).pendingEndBarrier = b
       e.sessions.save()
+      e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     }
 
     const e2 = newRecoveryEngine(createStubChatroomSpawner(), store)
@@ -295,6 +304,7 @@ describe('chatroom restart recovery', () => {
       armHubAndRole(e, hub)
       chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = armedGather()
       e.sessions.save()
+      e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     }
     // Corrupt the snapshot after the fact (hand-edited sessions.json).
     const raw = JSON.parse(await readFile(store, 'utf8')) as Record<string, unknown>
@@ -312,6 +322,7 @@ describe('chatroom restart recovery', () => {
     expect(recv.mock.calls.filter(([, m]) => m.sessionKey === hub)).toHaveLength(0)
 
     e2.sessions.save()
+    e2.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     for (const s of Object.values(readStore(store).sessions)) {
       expect(chatroomSection(s).pendingGatherData).toBeUndefined()
     }
@@ -326,6 +337,7 @@ describe('chatroom restart recovery', () => {
       chatroomState(e.sessions.getOrCreateActive(hub)).chatroomResearch = true
       chatroomState(e.sessions.getOrCreateActive(hub)).pendingGather = armedGather()
       e.sessions.save()
+      e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     }
 
     const p = createStubChatroomSpawner()
@@ -349,6 +361,7 @@ describe('serial-ask persistence and restart recovery', () => {
     hubSess.chatroomGatherSeq = 1
     hubSess.pendingSerialAsks.set('taleb', { id: 1, question: '请给出终版结论', armedAt: Date.now(), lastWakeAt: 0, wakeCount: 0 })
     e.sessions.save()
+    e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
 
     const sections = Object.values(readStore(store).sessions).map(chatroomSection)
     const snap = sections.find(s => s.pendingSerialAsksData !== undefined)?.pendingSerialAsksData
@@ -361,6 +374,7 @@ describe('serial-ask persistence and restart recovery', () => {
 
     hubSess.pendingSerialAsks.delete('taleb')
     e.sessions.save()
+    e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     for (const s of Object.values(readStore(store).sessions)) {
       expect(chatroomSection(s).pendingSerialAsksData).toBeUndefined()
     }
@@ -376,6 +390,7 @@ describe('serial-ask persistence and restart recovery', () => {
       hubSess.chatroomGatherSeq = 1
       hubSess.pendingSerialAsks.set('taleb', { id: 1, question: '请给出终版结论', armedAt: Date.now(), lastWakeAt: 0, wakeCount: 0 })
       e.sessions.save()
+      e.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     }
 
     const e2 = newRecoveryEngine(createStubChatroomSpawner(), store)
@@ -392,6 +407,7 @@ describe('serial-ask persistence and restart recovery', () => {
     const hub2 = e2.sessions.getOrCreateActive(hub)
     expect(chatroomState(hub2).pendingSerialAsks.size).toBe(0)
     e2.sessions.save()
+    e2.sessions.flushNow()  // the debounced save needs an explicit flush before reads
     for (const s of Object.values(readStore(store).sessions)) {
       expect(chatroomSection(s).pendingSerialAsksData).toBeUndefined()
     }

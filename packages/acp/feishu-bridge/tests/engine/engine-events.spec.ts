@@ -1126,6 +1126,8 @@ it('processInteractiveEvents persists the agent session ID', async () => {
 
   agentSession.channel.push({ type: 'result', content: 'done', done: true })
   await e.processInteractiveEvents(state, session, sessions, sessionKey, 'm1', undefined, state.replyCtx)
+  // The engine's save() is debounced; the reload below needs the flushed file.
+  sessions.flushNow()
 
   const reloaded = new SessionManager(path)
   expect(reloaded.getOrCreateActive(sessionKey).getAgentSessionID()).toBe('real-session-xyz')

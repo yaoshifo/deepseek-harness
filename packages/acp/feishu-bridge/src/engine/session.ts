@@ -40,6 +40,23 @@ function nowISO(): string {
   return new Date().toISOString()
 }
 
+/** Trailing debounce window for SessionManager.save (turn-start saves coalesce into one write). */
+const saveDebounceMs = 1_000
+
+/** Managers with a pending debounced save; the shared beforeExit hook flushes them. */
+const pendingSaves = new Set<SessionManager>()
+let beforeExitHooked = false
+
+/** Register the one process-level flush hook (an unref'd timer never holds the loop). */
+function hookBeforeExit(): void {
+  if (beforeExitHooked) return
+  beforeExitHooked = true
+  process.once('beforeExit', () => {
+    for (const sm of pendingSaves) sm.flushNow()
+    pendingSaves.clear()
+  })
+}
+
 /**
  * One conversation between a user and the agent (Go core.Session). Fields not
  * yet exercised by ported M1 tests stay as data carriers for later
@@ -1335,9 +1352,45 @@ export class SessionManager {
     }
   }
 
-  /** Persist current state to disk synchronously (Go saveLocked). */
+  /** Pending trailing-save timer; undefined = nothing scheduled (module saveDebounceMs window). */
+  private saveTimer: ReturnType<typeof setTimeout> | undefined
+
+  /**
+   * Schedule a full persistence write, trailing-debounced by 1s: the
+   * turn-start paths fire save() every turn and only the newest state is
+   * worth a disk write (chatroom 2026-09-13 postmortem — one full
+   * serialize + atomic write per turn). Mutations that must be durable on
+   * return keep calling the synchronous internal path; dispose() and the
+   * process beforeExit hook flush a pending write so nothing is lost.
+   */
   save(): void {
+    if (this.storePathValue === '' || this.saveTimer !== undefined) return
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = undefined
+      pendingSaves.delete(this)
+      this.saveLocked()
+    }, saveDebounceMs)
+    // The timer must not hold the event loop open; beforeExit flushes instead.
+    if (typeof this.saveTimer.unref === 'function') this.saveTimer.unref()
+    pendingSaves.add(this)
+    hookBeforeExit()
+  }
+
+  /**
+   * Write a pending debounced save immediately (Go saveLocked's synchronous
+   * contract for callers that need the file on disk now).
+   */
+  flushNow(): void {
+    if (this.saveTimer === undefined) return
+    clearTimeout(this.saveTimer)
+    this.saveTimer = undefined
+    pendingSaves.delete(this)
     this.saveLocked()
+  }
+
+  /** Teardown: flush any pending debounced save (engine stop, plugin reload). */
+  dispose(): void {
+    this.flushNow()
   }
 
   private saveLocked(): void {

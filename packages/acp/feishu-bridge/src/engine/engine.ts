@@ -1895,6 +1895,8 @@ export class Engine {
     }
     if (this.reaperTimer !== undefined) clearInterval(this.reaperTimer)
     this.rateLimiter?.stop()
+    // Flush any debounced session-store write before the process can go down.
+    this.sessions.dispose()
     await this.agent.stop()
   }
 

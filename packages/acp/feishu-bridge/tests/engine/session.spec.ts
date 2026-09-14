@@ -79,6 +79,7 @@ describe('SessionManager', () => {
     other.updatedAt = new Date(Date.now() - 3 * 24 * 3_600_000).toISOString()
 
     sm.save()
+    sm.flushNow()  // the debounced save needs an explicit flush before reads
 
     expect(sm.listSessions('user1'), 'expired side session pruned, active survives').toHaveLength(1)
     expect(sm.listSessions('user2'), 'within the window survives').toHaveLength(1)
@@ -92,6 +93,7 @@ describe('SessionManager', () => {
     side.updatedAt = new Date(Date.now() - 400 * 24 * 3_600_000).toISOString()
 
     sm.save()
+    sm.flushNow()  // the debounced save needs an explicit flush before reads
 
     expect(sm.listSessions('user1')).toHaveLength(2)
     expect(main).toBeDefined()
@@ -132,6 +134,7 @@ describe('SessionManager', () => {
     side.updatedAt = new Date(Date.now() - 40 * 24 * 3_600_000).toISOString()
 
     sm.save()
+    sm.flushNow()  // the debounced save needs an explicit flush before reads
 
     expect(sm.listSessions('feishu:chat1'), 'expired side session pruned, active survives').toHaveLength(1)
     const snap = JSON.parse(await readFile(path, 'utf8')) as {
@@ -217,6 +220,7 @@ describe('SessionManager', () => {
     s.setSubtaskReported(true)
     s.setUserInterjected(true)
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
 
     const sm2 = new SessionManager(path)
     const got = sm2.getOrCreateActive('feishu:child')
@@ -240,6 +244,7 @@ describe('SessionManager', () => {
     const cs = sm1.getOrCreateActive('feishu:child')
     cs.setSubtaskNoReport(true)
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
 
     const sm2 = new SessionManager(path)
     expect(sm2.getOrCreateActive('feishu:child').getSubtaskNoReport()).toBe(true)
@@ -424,6 +429,7 @@ describe('Session', () => {
     s.agentSessionID = ContinueSession
     s.agentType = 'pi'
     sm.save()
+    sm.flushNow()  // the debounced save needs an explicit flush before reads
     const sm2 = new SessionManager(path)
     expect(sm2.getOrCreateActive('u1').getAgentSessionID()).toBe('')
   })
@@ -508,6 +514,7 @@ describe('SessionManager agent invalidation', () => {
     sm1.newSession('feishu:oc_abc:ou_xyz', 'test')
     sm1.updateUserMeta('feishu:oc_abc:ou_xyz', 'Zhang San', 'Group Name')
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
 
     const sm2 = new SessionManager(path)
     const meta = sm2.getUserMeta('feishu:oc_abc:ou_xyz')
@@ -608,6 +615,7 @@ describe('PastAgentSessionIDs', () => {
     s.setAgentSessionID('thread-old', 'codex')
     s.setAgentSessionID('thread-new', 'codex')
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
 
     const sm2 = new SessionManager(path)
     // The replaced mapping stays resolvable after a reload.
@@ -627,6 +635,7 @@ describe('Snapshot v3', () => {
     s.setSubtaskDepth(2)
     s.setLastResult('done')
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
 
     const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
     expect(raw.version).toBe(3)
@@ -687,6 +696,7 @@ describe('Snapshot v3', () => {
     expect(sm.findByAgentSessionID('thread-old')).toBeDefined()
 
     sm.save()
+    sm.flushNow()  // the debounced save needs an explicit flush before reads
     const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
     expect(raw.version).toBe(3)
     expect(raw.active_session).toBeUndefined()
@@ -715,6 +725,7 @@ describe('Snapshot v3', () => {
     const sm = new SessionManager(path)
     expect(sm.getOrCreateActive('user1').getAgentSessionID()).toBe('thread-1')
     sm.save()
+    sm.flushNow()  // the debounced save needs an explicit flush before reads
     const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
     expect(raw.version).toBe(3)
   })
@@ -763,6 +774,7 @@ describe('Snapshot v2 → v3 migration', () => {
     expect(await readFile(`${path}.v2.bak`, 'utf8')).toBe(v2JSON)
 
     sm.save()
+    sm.flushNow()  // the debounced save needs an explicit flush before reads
     const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
     expect(raw.version).toBe(3)
     const serialized = (raw.sessions as Record<string, Record<string, unknown>>).s1 ?? {}
@@ -819,6 +831,7 @@ describe('Snapshot v2 → v3 migration', () => {
 
     const sm = new SessionManager(path)
     sm.save()
+    sm.flushNow()  // the debounced save needs an explicit flush before reads
     const raw = JSON.parse(await readFile(path, 'utf8')) as { sessions: Record<string, { featureState?: Record<string, unknown> }> }
     expect(raw.sessions.s1?.featureState).toEqual({ other: { payload: [1, 2] } })
 

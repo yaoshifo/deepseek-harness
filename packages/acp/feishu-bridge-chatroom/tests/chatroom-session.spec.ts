@@ -33,6 +33,7 @@ describe('chatroom session fields persist', () => {
     chatroomState(role).chatroomRoleName = 'Taleb'
     chatroomState(role).chatroomAsked = false
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
 
     const sm2 = new SessionManager(store)
     const got = sm2.getOrCreateActive('test:role-chat')
@@ -43,6 +44,7 @@ describe('chatroom session fields persist', () => {
     // (a bool zero-value would mask a missing field on the first reload).
     chatroomState(got).chatroomAsked = true
     sm2.save()
+    sm2.flushNow()  // the debounced save needs an explicit flush before reads
     const sm3 = new SessionManager(store)
     expect(chatroomState(sm3.getOrCreateActive('test:role-chat')).chatroomAsked).toBe(true)
 
@@ -50,6 +52,7 @@ describe('chatroom session fields persist', () => {
     const direct = sm1.getOrCreateActive('test:direct:user-1')
     chatroomState(direct).chatroomDirectRole = true
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
     const smDir = new SessionManager(store)
     expect(chatroomState(smDir.getOrCreateActive('test:direct:user-1')).chatroomDirectRole).toBe(true)
 
@@ -57,6 +60,7 @@ describe('chatroom session fields persist', () => {
     const hub = sm1.getOrCreateActive('test:hub:user-1')
     chatroomState(hub).pendingHumanQuestionRole = 'Munger'
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
 
     const sm4 = new SessionManager(store)
     expect(chatroomState(sm4.getOrCreateActive('test:hub:user-1')).pendingHumanQuestionRole).toBe('Munger')
@@ -72,6 +76,7 @@ describe('chatroom session fields persist', () => {
     chatroomState(hub).chatroomGatherSeq = 7
     chatroomState(hub).researchVenv = '/tmp/research/.venv'
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
 
     const sm2 = new SessionManager(store)
     const got = sm2.getOrCreateActive('test:hub:user-1')
@@ -96,6 +101,7 @@ describe('chatroom session fields persist', () => {
     barrier.expected.add('taleb')
     chatroomState(role).pendingEndBarrier = barrier
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
 
     const sm2 = new SessionManager(store)
     const got = sm2.getOrCreateActive('test:role-chat')
@@ -182,6 +188,7 @@ describe('chat-scoped state survives a conversation reset', () => {
     chatroomState(role).chatroomHubKey = 'test:hub:user-1'
     chatroomState(role).chatroomRoleName = 'munger'
     sm1.save()
+    sm1.flushNow()  // the debounced save needs an explicit flush before reads
 
     const snap = JSON.parse(await readFile(store, 'utf8')) as {
       sessions: Record<string, unknown>
