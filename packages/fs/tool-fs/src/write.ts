@@ -9,9 +9,11 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { DiffCallView, DiffResultView, ToolResult } from '@deepseek-ai/dsh-tools'
 import type { FsWriteOutcome } from '@deepseek-ai/dsh-fs'
-import type {} from '@deepseek-ai/dsh-fs'
+import { FsError } from '@deepseek-ai/dsh-fs'
 import { computeHunkDiffs, diffsFromMeta } from './diff.ts'
 import { remediateFsError } from './error.ts'
+import type { ReadToolCaps } from './read.ts'
+import { enrichNotObserved } from './unread-attachment.ts'
 import { sessionResolveOptions } from './session-cwd.ts'
 import type { FsSandboxController } from './sandbox.ts'
 
@@ -57,8 +59,9 @@ interface WriteToolArgs {
  * Register the `write` tool and its scope-aware system-prompt guidance.
  * @param ctx - the plugin context; registrations are effects scoped to it, and execution uses its `fs` service.
  * @param sandbox - the shared sandbox-escalation API (advertisement, mode stamping, denial mapping).
+ * @param caps - the deployment's read caps, reused for the unread-rejection content attachment.
  */
-export function applyWriteTool(ctx: Context, sandbox: FsSandboxController): void {
+export function applyWriteTool(ctx: Context, sandbox: FsSandboxController, caps: ReadToolCaps): void {
   ctx.systemPrompt.section({
     name: 'tool:write',
     order: ctx.systemPrompt.getSectionOrder('TOOL_WRITE'),
@@ -118,8 +121,14 @@ export function applyWriteTool(ctx: Context, sandbox: FsSandboxController): void
       } catch (error: unknown) {
         // A sandbox denial becomes the shared [sandbox: …] marker (the model
         // recognizes it from bash); guarded mutation failures receive their
-        // stable model-facing diagnostic; anything else passes through.
-        throw remediateFsError(sandbox.mapError(error, sandboxPolicy), target.displayPath)
+        // stable model-facing diagnostic; anything else passes through. The
+        // unread-overwrite rejection additionally carries the existing file's
+        // current content (shared with edit via unread-attachment), so the
+        // model sees what it is about to replace and can retry directly.
+        const remediated = remediateFsError(sandbox.mapError(error, sandboxPolicy), target.displayPath)
+        throw remediated instanceof FsError && remediated.code === 'FS_NOT_OBSERVED'
+          ? await enrichNotObserved(ctx, exec, target, caps, remediated, 'write')
+          : remediated
       }
       ctx.emit('fs/observed', target, { kind: 'present', version: outcome.version }, exec)
       return {

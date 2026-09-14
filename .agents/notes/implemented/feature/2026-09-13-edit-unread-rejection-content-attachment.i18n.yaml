@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-13-edit-unread-rejection-content-attachment.md
-2026-09-13-edit-unread-rejection-content-attachment.md: 242fd031aa54a17fba5f2262112e166ea12b5f44
-2026-09-13-edit-unread-rejection-content-attachment.zh.md: dfeeb6d53c39cd596e60cc78a492f4be55b6483a
+2026-09-13-edit-unread-rejection-content-attachment.md: ebd2780251be83845cf4a95862d4fccf9745b30f
+2026-09-13-edit-unread-rejection-content-attachment.zh.md: 48dd82574fe770b067fa75678e4bc56ccb32274b

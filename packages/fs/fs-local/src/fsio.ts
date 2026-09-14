@@ -686,15 +686,32 @@ function restoreLineEndings(content: string, lineEndings: LineEndings): string {
   return lineEndings === 'LF' ? content : normalizeLineEndings(content).split('\n').join('\r\n')
 }
 
-function countOccurrences(content: string, needle: string): number {
-  let count = 0
+/** Start offsets of every needle occurrence in content, in document order. */
+function matchOffsets(content: string, needle: string): number[] {
+  const offsets: number[] = []
   let index = 0
   while (true) {
     const found = content.indexOf(needle, index)
-    if (found === -1) return count
-    count += 1
+    if (found === -1) return offsets
+    offsets.push(found)
     index = found + needle.length
   }
+}
+
+/**
+ * The 1-based line number a match starts on and that line's full text, for the
+ * rejection's match-location attachment.
+ * @param content - the LF-normalized file content.
+ * @param offset - the match's start offset.
+ */
+function matchStartLine(content: string, offset: number): { line: number; text: string } {
+  const lineStart = content.lastIndexOf('\n', offset - 1) + 1
+  const newline = content.indexOf('\n', offset)
+  let line = 1
+  for (let cursor = 0; cursor < lineStart; cursor += 1) {
+    if (content.charCodeAt(cursor) === 10 /* '\n' */) line += 1
+  }
+  return { line, text: content.slice(lineStart, newline === -1 ? content.length : newline) }
 }
 
 /**
@@ -785,7 +802,10 @@ export async function readTextForDiff(
 
 /**
  * Apply a literal replacement to LF-normalized content. Empty or missing search text throws
- * `FS_EDIT_NOT_FOUND`; multiple matches throw `FS_AMBIGUOUS_EDIT` unless `replaceAll` is true.
+ * `FS_EDIT_NOT_FOUND` — when missing, with up to three candidate lines sharing the old text's
+ * trimmed first line, so the model can correct a whitespace-only mismatch in one round;
+ * multiple matches throw `FS_AMBIGUOUS_EDIT` listing where each match starts (capped at ten),
+ * so a more specific old_string can be written without rereading the file.
  * @param content - the current file content, already LF-normalized.
  * @param oldString - literal text to find; CRLF inside it is normalized to LF before
  *   matching.
@@ -806,14 +826,47 @@ export function applyLiteralEdit(
     throw new FsError('old_string must be a non-empty string', 'FS_EDIT_NOT_FOUND')
   }
   const newNorm = normalizeLineEndings(newString)
-  const replacements = countOccurrences(content, oldNorm)
-  if (replacements === 0) {
-    throw new FsError(`old_string was not found in "${displayPath}"`, 'FS_EDIT_NOT_FOUND')
+  const offsets = matchOffsets(content, oldNorm)
+  if (offsets.length === 0) {
+    throw notFoundWithCandidates(content, oldNorm, displayPath)
   }
-  if (!replaceAll && replacements > 1) {
-    throw new FsError(`old_string matched ${replacements} times in "${displayPath}"; provide a more specific old_string or set replace_all to true`, 'FS_AMBIGUOUS_EDIT')
+  if (!replaceAll && offsets.length > 1) {
+    const shown = offsets.slice(0, 10)
+      .map((offset) => {
+        const { line, text } = matchStartLine(content, offset)
+        return `line ${line}: ${JSON.stringify(text)}`
+      })
+      .join(', ')
+    const hidden = offsets.length - 10
+    throw new FsError(
+      `old_string matched ${offsets.length} times in "${displayPath}" `
+        + `(at ${shown}${hidden > 0 ? `; ${hidden} more match${hidden === 1 ? '' : 'es'}` : ''}); `
+        + 'provide a more specific old_string or set replace_all to true',
+      'FS_AMBIGUOUS_EDIT',
+    )
   }
-  return { content: content.split(oldNorm).join(newNorm), replacements }
+  return { content: content.split(oldNorm).join(newNorm), replacements: offsets.length }
+}
+
+/**
+ * The not-found rejection, enriched with candidate lines sharing the old text's trimmed first
+ * line (the usual failure is a whitespace-only mismatch); without candidates the plain
+ * diagnostic stands.
+ * @param content - the LF-normalized file content.
+ * @param oldNorm - the LF-normalized old_string.
+ * @param displayPath - the caller-facing path used in error messages.
+ */
+function notFoundWithCandidates(content: string, oldNorm: string, displayPath: string): FsError {
+  const plain = `old_string was not found in "${displayPath}"`
+  const probe = (oldNorm.split('\n')[0] ?? '').trim()
+  if (probe.length === 0) return new FsError(plain, 'FS_EDIT_NOT_FOUND')
+  const candidates: string[] = []
+  for (const [index, text] of content.split('\n').entries()) {
+    if (candidates.length >= 3) break
+    if (text.includes(probe)) candidates.push(`line ${index + 1}: ${JSON.stringify(text)}`)
+  }
+  if (candidates.length === 0) return new FsError(plain, 'FS_EDIT_NOT_FOUND')
+  return new FsError(`${plain}; nearest first-line matches: ${candidates.join(', ')}`, 'FS_EDIT_NOT_FOUND')
 }
 
 export { normalizeLineEndings, restoreLineEndings }

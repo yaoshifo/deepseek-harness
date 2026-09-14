@@ -911,6 +911,74 @@ describe('dsh-tool-skill', () => {
     expect(unknownBlock.text).toContain('skill "missing" is unknown or no longer available')
   })
 
+  it('an unknown name lists the closest model-invocable skills so the model can self-correct', async () => {
+    const home = await tempDir('tool-unknown-suggest')
+    const ctx = await setup(home)
+    for (const name of ['deploy-mesh', 'deploy-helper', 'deploy-advanced', 'docs-writer']) {
+      ctx.skills.register({
+        name,
+        description: `${name} description`,
+        invocation: { modelInvocable: true, userInvocable: true },
+        source: 'runtime',
+        content: `${name} instructions.`,
+      })
+    }
+    // Model-disabled skills exist in the registry but must not be suggested:
+    // the `skill` tool would refuse to load them.
+    ctx.skills.register({
+      name: 'deploy-secret',
+      description: 'Disabled skill',
+      invocation: { modelInvocable: false, userInvocable: false },
+      source: 'runtime',
+      content: 'Must not be suggested.',
+    })
+
+    const result = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('c-suggest'), name: 'skill', arguments: { name: 'deploy' } })
+    expect(result.isError).toBe(true)
+    const block = result.content[0]
+    if (block?.type !== 'text') throw new Error('expected text tool result')
+    expect(block.text).toContain('skill "deploy" is unknown or no longer available')
+    expect(block.text).toContain('available skills include: deploy-advanced, deploy-helper, deploy-mesh (4 total)')
+    expect(block.text).toContain('use the closest name')
+    expect(block.text).not.toContain('deploy-secret')
+    expect(block.text).not.toContain('Must not be suggested')
+  })
+
+  it('an unknown name without any containment falls back to the alphabetical first three', async () => {
+    const home = await tempDir('tool-unknown-fallback')
+    const ctx = await setup(home)
+    for (const name of ['zebra-skill', 'alpha-skill', 'middle-skill', 'another-skill']) {
+      ctx.skills.register({
+        name,
+        description: `${name} description`,
+        invocation: { modelInvocable: true, userInvocable: true },
+        source: 'runtime',
+        content: `${name} instructions.`,
+      })
+    }
+
+    const result = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('c-fallback'), name: 'skill', arguments: { name: 'nomatch' } })
+    expect(result.isError).toBe(true)
+    const block = result.content[0]
+    if (block?.type !== 'text') throw new Error('expected text tool result')
+    expect(block.text).toContain('available skills include: alpha-skill, another-skill, middle-skill (4 total)')
+  })
+
+  it('an unknown name with no model-invocable skills reports the empty session instead of a list', async () => {
+    const home = await tempDir('tool-unknown-empty')
+    await writeSkill(join(home, '.dsh/skills'), 'disabled-only', 'Disabled only', 'Disabled.')
+    await writeFile(join(home, '.dsh/skills/disabled-only/SKILL.md'), '---\nname: disabled-only\ndescription: Disabled only\ndisable-model-invocation: true\n---\n\nDisabled.\n')
+    const ctx = await setup(home)
+
+    const result = await ctx.tools.execute({ signal: testToolSignal, callId: ToolCallId('c-empty'), name: 'skill', arguments: { name: 'anything' } })
+    expect(result.isError).toBe(true)
+    const block = result.content[0]
+    if (block?.type !== 'text') throw new Error('expected text tool result')
+    expect(block.text).toContain('skill "anything" is unknown or no longer available')
+    expect(block.text).toContain('no skills are available in this session')
+    expect(block.text).not.toContain('disabled-only')
+  })
+
   it('checks model policy before provider loading and rechecks the loaded definition', async () => {
     const home = await tempDir('tool-policy-before-load')
     const ctx = await setup(home)

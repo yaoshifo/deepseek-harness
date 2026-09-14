@@ -75,6 +75,6 @@ export function apply(ctx: Context, config: Config): void {
   // per-call policy resolution, and denial-marker mapping, all keyed off whether
   // the mounted ctx.fs confines (ctx.fs.sandboxMode).
   const sandbox = new FsSandboxController(ctx)
-  applyWriteTool(ctx, sandbox)
+  applyWriteTool(ctx, sandbox, caps)
   applyEditTool(ctx, sandbox, caps)
 }
