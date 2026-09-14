@@ -1043,6 +1043,26 @@ describe('exit_plan_mode', () => {
     expect(asked).toHaveLength(cases.filter(entry => !entry.gated).length)
   })
 
+  it('gates inlined details sections in CRLF plans (heading titles and fence closes both tolerate the carriage return)', async () => {
+    const { ctx, agent, asked } = await setupWithReview({ selected: ['Keep planning'] })
+    const cases: { plan: string; gated: boolean }[] = [
+      // A CRLF heading line still reads as the details section.
+      { plan: '# P\r\n\r\nplain\r\n\r\n## 实施细节\r\n\r\nfiles', gated: true },
+      // A CRLF fence close still closes, so the fenced heading stays quoted
+      // while the real section after it gates.
+      { plan: '# P\r\n\r\n```\r\n## Implementation Details\r\n```\r\n\r\n## 实施细节\r\n\r\nfiles', gated: true },
+      // The all-fenced shape stays ungated once the CRLF fence closes.
+      { plan: '# P\r\n\r\n```\r\n## Implementation Details\r\n```\r\n\r\nafter', gated: false },
+    ]
+    for (const { plan, gated } of cases) {
+      const result = await callExit(ctx, agent, plan)
+      expect(result.isError, JSON.stringify(plan)).toBe(true)
+      expect(JSON.stringify(result.content), JSON.stringify(plan))
+        .toContain(gated ? 'belongs in the details argument' : 'keep planning')
+    }
+    expect(asked).toHaveLength(cases.filter(entry => !entry.gated).length)
+  })
+
   it('skips the rejection gate once any non-empty details is submitted', async () => {
     const { ctx, agent, asked } = await setupWithReview({ selected: ['Approve'] })
     const result = await callExit(ctx, agent, '# P\n\nplain layer\n\n## 实施细节\n\nfiles', 'files')
