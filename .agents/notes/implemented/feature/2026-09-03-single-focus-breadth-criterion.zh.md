@@ -12,7 +12,7 @@ Status: implemented
 
 - 例外句改为按答案广度判定单焦点："keep exploration serial only for a single-focus question one or two reads can answer — judge focus by how many subsystems or directions the answer must cover, not by how few commands could skim it."
 - 拆分清单增加显式类目："a repo-wide scan, cross-cutting audit, broad merge or release review, or a request naming several directions is several investigations"。
-- 两处修改逐字落在全部五份副本：dsh-base bundle patch、bridge bundle patch（[bundle patch 所有权](../architecture/2026-09-01-feishu-bridge-plan-mode-guidance-in-bundle-patch.zh.md)）、三份 preset 副本。base≡bridge lockstep 门禁仍然只允许那一句委派句作为差异。
+- 两处修改逐字落在当时的全部五份副本：dsh-base bundle patch、bridge bundle patch（[bundle patch 所有权](../architecture/2026-09-01-feishu-bridge-plan-mode-guidance-in-bundle-patch.zh.md)）、三份 preset 副本。2026-09-06 起部分被取代：base 与三份 preset 回退为上游原文，live 引导只剩 bridge patch 一处，其 lockstep 门禁钉住 fork delta（[fork 冲突面缩减](../process/2026-09-06-fork-conflict-surface-reduction.zh.md)）。
 - `feishu_bridge_subtask` 工具描述增加执行期镜像句 "Judge independence by whether the groups span disjoint subsystems or directions, not by how few commands could chain them."——plan-mode 段在批准时卸载，工具描述在执行决策点承载该判据；`subtask-tool.spec` 钉住。
 - `feishu-bridge-subtask` skill 的 frontmatter description 与排除段用中文陈述同一判据：单焦点按答案要覆盖几个子系统/方向判定，不看命令数；大合并审查、发布审查、全仓库扫描、横切审计不算单焦点。
 

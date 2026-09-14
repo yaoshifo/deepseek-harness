@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/feature/2026-09-03-single-focus-breadth-criterion.md
-2026-09-03-single-focus-breadth-criterion.md: 9720e0f9894f21eaaae10bb56abad093e1279d0e
-2026-09-03-single-focus-breadth-criterion.zh.md: 20273080c57deb79ff4407be802fb09895d5fb5e
+2026-09-03-single-focus-breadth-criterion.md: f19ba7c571b8e60ef24eb1a8038ac376e58fa6ec
+2026-09-03-single-focus-breadth-criterion.zh.md: f13a1ebc282573e71b206d0ee6993a26f435fe50
