@@ -30,6 +30,7 @@ import type {
   AskDecision,
   AskRequest,
   CardSender,
+  DeliveryOutcome,
   Event,
   FeishuWorkspaceInfo,
   FileAttachment,
@@ -154,7 +155,7 @@ import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join as joinPath } from 'node:path'
 import { createHash } from 'node:crypto'
-import { asCompletionNoticePreference, asCompletionNotifier, asChatPhasePainter, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
+import { asCompletionNoticePreference, asCompletionNotifier, asChatPhasePainter, asDeliveryOutcomeClassifier, asGroupFamilyAvatarSetter, asChatChangedNotifier, asChatRenamedNotifier, asHintClickReporter, asI18nHandleReceiver, asRecallNotifier, asReplyExporter, type ChatBasePhase, type ChatPhase } from '../core/types.ts'
 import { truncateStr, mutePlatform, type CronJob, type CronScheduler } from './cron.ts'
 import { commandContext, dirApply, collectAgentSessions, matchSession } from './commands.ts'
 import { renderHelpGroupCard } from './misc-commands.ts'
@@ -451,6 +452,12 @@ export class InteractiveState {
   textParts: string[] = []
   /** Index of the first unflushed text segment. */
   segmentStart: number = 0
+  /**
+   * Outcome of this turn's answer delivery: 'sent' landed, 'failed' the
+   * server provably rejected it, 'unknown' its fate is unknowable.
+   * Undefined while untracked (the streaming-card paths wire in later).
+   */
+  answerDelivery: DeliveryOutcome | undefined = undefined
   /** Tool calls seen this turn. */
   toolCount: number = 0
   /** Whether the current text segment may still turn out silent. */
@@ -1929,6 +1936,33 @@ export class Engine {
     })
   }
 
+  /**
+   * Deliver the turn's answer text in platform-sized chunks and classify the
+   * outcome (dsh-im absorption batch 1): 'unknown' outranks 'failed' outranks
+   * 'sent', so one unknowable chunk keeps the conservative verdict — the
+   * completion notification builds its wording on it. Failures still log at
+   * debug like {@link send}; the classification rides the platform's
+   * DeliveryOutcomeClassifier capability when present, defaulting to
+   * 'unknown' (uncertain by default, mirroring dsh-im).
+   * @param state - Turn state whose answerDelivery records the outcome.
+   * @param p - Platform to send on.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param text - Full answer text; split to the platform message limit.
+   */
+  async deliverAnswerText(state: InteractiveState, p: Platform, replyCtx: unknown, text: string): Promise<void> {
+    let outcome: DeliveryOutcome = 'sent'
+    for (const chunk of splitMessage(text, MaxPlatformMessageLen)) {
+      try {
+        await p.send(replyCtx, chunk)
+      } catch (error) {
+        console.debug(`engine: send failed (${p.name()}): ${String(error)}`)
+        const classified = asDeliveryOutcomeClassifier(p)?.classifyDeliveryFailure(error) ?? 'unknown'
+        if (outcome !== 'unknown') outcome = classified
+      }
+    }
+    state.answerDelivery = outcome
+  }
+
   // ── inbound routing ─────────────────────────────────────────────────────
 
   /**
@@ -3190,6 +3224,7 @@ export class Engine {
     state.segmentStart = 0
     state.toolCount = 0
     state.silentHold = false
+    state.answerDelivery = undefined
     let activeToolCalls = 0
     let stallRetries = 0
     let turnStartedBg = false
@@ -3379,6 +3414,7 @@ export class Engine {
               state.segmentStart = 0
               state.toolCount = 0
               state.silentHold = false
+              state.answerDelivery = undefined
               events = retry.events()
               recvArm = events.receiveArmed()
               recvP = recvArm.promise
@@ -3805,6 +3841,7 @@ export class Engine {
               state.segmentStart = 0
               state.toolCount = 0
               state.silentHold = false
+              state.answerDelivery = undefined
               activeToolCalls = 0
               state.activeToolCalls = 0
               turnStartedBg = false
@@ -4095,9 +4132,7 @@ export class Engine {
         await sp.detachPreview()
       } else {
         await sp.discard()
-        for (const chunk of splitMessage(fullResponse, MaxPlatformMessageLen)) {
-          await this.send(p, replyCtx, chunk)
-        }
+        await this.deliverAnswerText(state, p, replyCtx, fullResponse)
       }
     } else if (isSilent) {
       await sp.setAnalysisText(this.i18n.t(Msg.SilentReply))
@@ -4114,9 +4149,7 @@ export class Engine {
           ? cleanResponse.slice(baseResponse.length).trim()
           : cleanResponse.trim()
         if (metaOnly !== '') {
-          for (const chunk of splitMessage(metaOnly, MaxPlatformMessageLen)) {
-            await this.send(p, replyCtx, chunk)
-          }
+          await this.deliverAnswerText(state, p, replyCtx, metaOnly)
         }
         sendCompletionNotification = true
       } else if (state.toolCount > 0 && state.segmentStart > 0 && !sp.inProgressMode()) {
@@ -4127,9 +4160,7 @@ export class Engine {
         const [uStripped, uOk] = stripTrailingSilent(unsent)
         const deliver = uOk ? uStripped : unsent
         if (deliver !== '') {
-          for (const chunk of splitMessage(deliver, MaxPlatformMessageLen)) {
-            await this.send(p, replyCtx, chunk)
-          }
+          await this.deliverAnswerText(state, p, replyCtx, deliver)
         }
         sendCompletionNotification = true
       } else if (sp.inProgressMode()) {
@@ -4149,11 +4180,21 @@ export class Engine {
         // Finalized in place via the stream preview.
         sendCompletionNotification = true
       } else if (cleanResponse !== '') {
-        for (const chunk of splitMessage(cleanResponse, MaxPlatformMessageLen)) {
-          await this.send(p, replyCtx, chunk)
-        }
+        await this.deliverAnswerText(state, p, replyCtx, cleanResponse)
         sendCompletionNotification = true
       }
+    }
+
+    // Answer-delivery warning (dsh-im absorption batch 1): a turn that
+    // finished must not read as success when its answer did not provably
+    // land. Sits right after the delivery branches and rides the plain send
+    // path, so card-less platforms see it too; the ✅ card repeats it in its
+    // body. Streaming-card paths leave answerDelivery unset for now.
+    if (p !== undefined && (state.answerDelivery === 'unknown' || state.answerDelivery === 'failed')) {
+      const warn = state.answerDelivery === 'unknown'
+        ? this.i18n.t(Msg.AnswerDeliveryUnknown)
+        : this.i18n.t(Msg.AnswerDeliveryFailed)
+      await this.send(p, replyCtx, warn)
     }
 
     // Guarantee the terminal PATCH has landed before the ✅ notification so
@@ -5658,6 +5699,7 @@ export class Engine {
     state.segmentStart = 0
     state.toolCount = 0
     state.silentHold = false
+    state.answerDelivery = undefined
   }
 
   /**
@@ -6543,7 +6585,15 @@ export class Engine {
       const title = truncated && headerSuffix !== ''
         ? `${this.i18n.t(Msg.TurnTruncated)} · ${headerSuffix}`
         : truncated ? this.i18n.t(Msg.TurnTruncated) : headerSuffix
-      let footerElements = elements
+      // An answer that did not provably land keeps the ✅ push from reading
+      // as plain success: the delivery warning leads the card body (the
+      // plain-text twin was already sent right after the delivery branches).
+      const deliveryWarn = state.answerDelivery === 'unknown'
+        ? this.i18n.t(Msg.AnswerDeliveryUnknown)
+        : state.answerDelivery === 'failed' ? this.i18n.t(Msg.AnswerDeliveryFailed) : ''
+      let footerElements = deliveryWarn !== '' && (elements.length > 0 || headerSuffix !== '' || truncated)
+        ? [{ kind: 'markdown' as const, content: deliveryWarn }, ...elements]
+        : elements
       const jumpMD = await this.spawnJumpMarkdown(p, this.sessions, session, sessionKey)
       if (jumpMD !== undefined && jumpMD.content !== '') {
         footerElements = appendIntoLastCollapsible(footerElements, { kind: 'markdown', content: jumpMD.content })
