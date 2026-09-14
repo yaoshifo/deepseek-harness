@@ -22,9 +22,9 @@ skillify 在 **Step 4** 保存前 `Read` 本文件，把生成的 skill 对照�
 - **修**：单设 `## Gotchas`，每条"症状→做法"。原会话里用户纠正过的地方优先入此。
 
 ### 4. description 写给人看
-- **症状**：description 是文绉绉摘要，无触发短语；或漏 `when_to_use`。
+- **症状**：description 是文绉绉摘要，无触发短语。
 - **坏**：模型只靠 description 决定要不要加载，对不上号就永不触发（"欠触发"）。
-- **修**：description 写"**何时触发 + 内容类型 + 交付渠道**"；`when_to_use` 列真实触发短语（中英都给，如"babysit"/"盯着 PR"）。把用户真实会说的词埋进去。
+- **修**：description 写"**何时触发 + 内容类型 + 交付渠道**"，把用户真实会说的词埋进去（中英都给，如"babysit"/"盯着 PR"）。
 
 ### 5. 钉死执行步骤
 - **症状**：指令是"先跑 X，再跑 Y，然后 Z"，换情境就失效。
@@ -43,7 +43,7 @@ skillify 在 **Step 4** 保存前 `Read` 本文件，把生成的 skill 对照�
 
 ### 8. frontmatter 非法 YAML（skill 静默不可见）
 - **症状**：SKILL.md 在盘上、内容完好，但从不进 available_skills 目录，`skill` 工具按名加载也报 unknown。
-- **坏**：`description` / `when_to_use` 裸标量含「冒号+空格」（如 `maintenance: preview`）→ YAML 解析失败 → 发现机制只记 warn 并静默跳过。无报错、无目录条目；且不带 `agents/openai.yaml` 侧卡的 skill 不过仓库 gate，坏文件照常上线。
+- **坏**：`description` 裸标量含「冒号+空格」（如 `maintenance: preview`）→ YAML 解析失败 → 发现机制只记 warn 并静默跳过。无报错、无目录条目。
 - **修**：自由文本值一律整体双引号（内部引号改用「」）；保存前用 YAML 解析器机械校验，PARSE OK 才存。
 
 ### 9. 同目录 CLAUDE.md 与 SKILL.md 重复陈述事实

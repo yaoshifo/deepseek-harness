@@ -1,20 +1,6 @@
 ---
 name: skillify
 description: 处理 skill 生命周期的工具——创建（把当前会话里可重复的工作流捕获成一个新 skill）或规范化（把一个既有 skill 按规范审计并改造：拆文件夹、加 Gotchas、改 description、归一类等）。当用户想把工作流存成 skill、或想改造/规范化/audit 一个既有 skill 时使用。完成跨多步、含明确可复用模式的任务后，也在回合结束前主动提议一次（仅提议，不替用户决定；用户拒绝就不再提）。
-allowed-tools:
-  - Read
-  - Write
-  - Edit
-  - Glob
-  - AskUserQuestion
-  - Bash(mkdir -p *)
-when_to_use: >
-  两种模式：
-  创建（默认）——把当前会话的工作流保存/捕获/打包成一个新 skill。例句：'skillify this'、'把这个流程存成 skill'、'turn this into a skill'、'做成可复用命令'、'capture this process'、'把这次会话沉淀成 skill'。
-  规范化——把一个既有 skill 按规范审计并改造。例句：'规范化这个 skill'、'normalize skill X'、'audit skill X'、'把这个 skill 整理一下'、'改造下 xxx skill'。
-argument-hint: "[可选描述，例如「捕获 git rebase 工作流」]"
-arguments:
-  - description
 ---
 
 # Skillify
@@ -68,7 +54,6 @@ arguments:
 **Round 2：更多细节**
 - 把你识别出的高层步骤作为编号列表呈现。告诉用户下一轮会钻进细节。
 - 如果你认为 skill 需要参数，基于观察建议参数。确保你理解别人需要提供什么。
-- 如果不清楚，问这个 skill 该**在当前对话里跑**还是**另开一个独立子 agent 跑**：前者（默认，省略 `context` 字段）能看到对话历史、可中途插话引导；后者（写 `context: fork`）像把自包含的任务派出去、独立干完交结果，看不到主对话、无法插话。
 - 问 skill 该存哪里。基于上下文建议默认值（仓库专属工作流 → 仓库；跨仓库的个人工作流 → 用户）。选项：
   - **本仓库**（`.claude/skills/<name>/SKILL.md`）—— 适合本项目专属的工作流
   - **个人**（`~/.claude/skills/<name>/SKILL.md`）—— 跨所有仓库跟随你

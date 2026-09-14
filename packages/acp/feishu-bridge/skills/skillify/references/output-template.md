@@ -5,26 +5,18 @@ skillify 在 **Step 3** 写 SKILL.md 时 `Read` 本文件取骨架。这是默�
 ## frontmatter 规则
 
 - `name`：kebab-case。
-- `description`：一句话，**写给模型当触发器**（不是写给人的摘要）。见 `anti-patterns.md` 第 4 条。
-- **自由文本值（`description`、`when_to_use`）整体加双引号**：触发描述常含「冒号+空格」、引号、逗号——裸标量里的 `: ` 会被 YAML 当成新映射键，frontmatter 解析失败后 skill 被**静默跳过**、对模型不可见（`anti-patterns.md` 第 8 条）。
-- `allowed-tools`：最小权限，用模式如 `Bash(gh *)` 而非裸 `Bash`。
-- `when_to_use`：**关键**。以「当……时使用」（英文 `Use when...`）开头，含触发短语与例句。模型只靠它 + description 决定要不要加载这个 skill。
-- `arguments` / `argument-hint`：仅当 skill 接参数才写，body 里用 `$name` 代入。
-- `context`：仅自包含、无需中途用户输入的 skill 才设 `context: fork`（=另开一个独立子 agent 跑、看不到主对话历史；省略即在当前对话里跑）。
+- `description`：一句话，**写给模型当触发器**（不是写给人的摘要）。模型只靠它决定要不要加载这个 skill——触发短语必须写在这里。见 `anti-patterns.md` 第 4 条。
+- **自由文本值（`description`）整体加双引号**：触发描述常含「冒号+空格」、引号、逗号——裸标量里的 `: ` 会被 YAML 当成新映射键，frontmatter 解析失败后 skill 被**静默跳过**、对模型不可见（`anti-patterns.md` 第 8 条）。
+- `disable-model-invocation` / `user-invocable`：调用开关（布尔，连字符拼法）。仅在需要禁止模型自动调用、或禁止用户直接调用时写。
+- **只写上面这些。** dsh 不解析 `allowed-tools`、`disallowed-tools`、`argument-hint`、`arguments`、`context`、`when_to_use`（下划线拼法）——写了也不生效（静默忽略）。工具授权走 dsh 的沙箱策略与权限预设，不是 per-skill 声明。`whenToUse`（驼峰）dsh 认，但只进用户侧技能列表（dsh web），**模型看不到**——别指望它做路由。
+- **旧拼法会让 skill 整个消失**：`disableModelInvocation` / `modelInvocable` / `userInvocable` 被判为不支持的字段，该 skill 直接被丢弃（只在日志留一行警告），模型完全看不到它。调用开关一律连字符，`whenToUse` 例外是驼峰。
 
 ## 骨架
 
 ````markdown
 ---
 name: {{skill-name}}
-description: "{{一句话触发描述}}"
-allowed-tools:
-  {{最小权限列表}}
-when_to_use: "{{何时自动调用 + 触发短语 + 例句}}"
-argument-hint: "{{参数占位提示}}"
-arguments:
-  {{参数名列表}}
-context: {{inline 或 fork —— inline 省略}}
+description: "{{一句话触发描述，含触发短语}}"
 ---
 
 # {{Skill 标题}}
@@ -32,7 +24,7 @@ context: {{inline 或 fork —— inline 省略}}
 一句话说清这个 skill 做什么。
 
 ## 输入
-- `$arg_name`: 这个输入的说明
+- 输入名：这个输入的说明（必填 / 可选）
 
 ## 目标
 清晰陈述目标。最好有明确的完成产物 / 判定标准。

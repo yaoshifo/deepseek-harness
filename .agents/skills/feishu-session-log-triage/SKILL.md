@@ -1,7 +1,6 @@
 ---
 name: feishu-session-log-triage
 description: "飞书群排查运维手册（Runbook）：由群 chat_id（oc_ 开头）定位 dsh 会话数据与 zstd 会话日志，按故障指纹判别真挂起、watchdog 强杀、卡片降级冻结、等用户输入等状态，并可从飞书群历史找回丢失的汇报内容。Use when 某个飞书群没响应、卡片不动、内容丢失，或需要查看某群 agent 的会话日志。触发例句：「排查 oc_xxx」「这个群的日志在哪」「群卡死了怎么回事」「找到 oc_xxx 对应的会话数据」「看下这个群的会话日志」"
-argument-hint: "<oc_chat_id> [症状：无响应 | 卡片冻结 | 内容丢失 | 只要日志路径]"
 ---
 
 # 飞书会话日志排查（feishu-session-log-triage）
