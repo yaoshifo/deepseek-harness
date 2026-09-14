@@ -26,7 +26,7 @@ The [dsh-im comparison survey](../../../../packages/acp/feishu-bridge/docs/DSH-I
 
 ## Alternatives considered
 
-**Full DeliveryReceipt port.** dsh-im's receipt objects, deferred-delivery outbox, and history-recovery coordination were rejected for this batch: single-channel, no receipt-merge consumer, and the cheap versions (kill-path delivery, deliver-first fallback) cover the pinned pain. The full deferred system remains a §5.2 candidate.
+**Full DeliveryReceipt port.** dsh-im's receipt objects, deferred-delivery outbox, and history-recovery coordination were rejected for this batch: single-channel, no receipt-merge consumer, and the cheap versions (kill-path delivery, deliver-first fallback) cover the pinned pain. The full deferred system remains a candidate row in the [comparison survey](../../../../packages/acp/feishu-bridge/docs/DSH-IM-COMPARISON.md)'s §11 table.
 
 **Retry the timed-out send under uuid protection.** With the uuid in place, a deadline retry would dedupe server-side — but only on the uuid-carrying verbs, and only when the dedup window holds; the plan chose the conservative pairing (uuid for idempotency, no deadline retry) so the two mechanisms do not depend on each other's edge cases.
 

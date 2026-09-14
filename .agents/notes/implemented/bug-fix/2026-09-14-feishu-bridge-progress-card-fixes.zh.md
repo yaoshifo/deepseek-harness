@@ -21,7 +21,7 @@ Status: implemented
 
 **结构化链路（用户裁定：删除）。** `src/progress-compact.ts`、`src/feishu/progress.ts` 的 payload 渲染器、`src/progress.ts` 的 payload 类型与 style 解析器、`spinnerKeyForItems`、平台的 `progressStyle` 字段与 `supportsProgressCardPayload()`、`progressStyle` 配置键，以及只服务于 payload 的测试全部删除；预览内容类型收敛为 `ProgressContent`。配置里仍带 `feishu.progressStyle` 的项目在加载时失败：schemastery 会保留未知键，只靠校验会让这个已删除的旋钮以静默无效的形式存活。
 
-**刷新间隔（用户裁定：做成可配置）。** `streamPreview.progressFlushIntervalMs` 管辖进度路径——缺省 300，即卡片在它还是模块常量时使用的值；`0` 表示每次变化都 PATCH。三个更早的 `streamPreview` 旋钮改为如实描述它们真正调的东西：出现第一个思考或工具事件之前的纯文本窗口。
+**刷新间隔（用户裁定：做成可配置）。** `streamPreview.progressFlushIntervalMs` 管辖进度路径——缺省 300，即卡片在它还是模块常量时使用的值；`0` 表示每次变化都 PATCH。同批还经同一条 `setStreamPreviewCfg` 路径透出了 `streamPreview.maxAnalysisChars`（缺省 6000，即原 `maxAnalysisDisplayChars` 模块常量），活体旁报的截断上限同样可配。三个更早的 `streamPreview` 旋钮改为如实描述它们真正调的东西：出现第一个思考或工具事件之前的纯文本窗口。
 
 **位移重发。** `previewReissueCooldownMs`（2000，对齐引擎的聊天变更 bump 去抖窗）限制每张卡的重发频率，使「改名 + 换头像」两条通知并成一次尾部搬移。被抑制的重发仍会原地 PATCH 其内容：推迟的只是尾部位置。已结算的卡片从不重发，因此该窗口不需要终态例外。
 

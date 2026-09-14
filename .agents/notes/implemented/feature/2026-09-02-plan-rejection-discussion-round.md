@@ -18,7 +18,7 @@ The contract lives where plan-mode policy already lives: the deployment-owned `s
 
 **A bridge-side flush delivering the post-rejection reply segment as its own card before the new plan card.** Rejected by the user: still a card wedged mid-stream, more machinery, and the rhythm (immediate re-presentation) stays wrong.
 
-**A hard gate auto-denying same-turn re-presents** (the engine's `feishuBridge/ask-approval` waterfall already exists for the role-pick auto-approve). Deferred, not rejected: deterministic, but it would deny the legitimate case where the rejection note explicitly asks for an immediate re-presentation ("改完直接给我看"). Design recorded here; mount it only if live observation shows the guidance being ignored.
+**A hard gate auto-denying same-turn re-presents** (the engine's `feishuBridge/ask-approval` waterfall already exists for the role-pick auto-approve). Deferred, not rejected: deterministic, but it would deny the legitimate case where the rejection note explicitly asks for an immediate re-presentation ("改完直接给我看"). Design recorded here; mount it only if live observation shows the guidance being ignored. That observation arrived on 2026-09-14 and the hold shipped as the [turn-hold note](2026-09-14-plan-rejection-turn-hold.md).
 
 **A section sentence declaring precedence over the tool description** ("these rules override the description's revise-and-present-again clause"). Rejected by the user as inelegant; the cleaner fix removes the policy from the description (mechanism/policy split), which is what shipped.
 

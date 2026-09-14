@@ -2,7 +2,7 @@
 
 Status: implemented
 
-English | [中文](2026-09-15-plan-rejection-turn-hold.zh.md)
+English | [中文](2026-09-14-plan-rejection-turn-hold.zh.md)
 
 ## Problem
 
