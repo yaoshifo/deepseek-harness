@@ -124,7 +124,10 @@ const EMBEDDED_DETAILS_TITLES = new Set([
  * not a plan section. */
 function embeddedDetailsHeading(plan: string): string | undefined {
   let inFence = false
-  for (const line of plan.split('\n')) {
+  // CRLF input leaves a trailing `\r` on each `split('\n')` line; strip it
+  // once so the fence and heading patterns below stay line-ending agnostic.
+  for (const rawLine of plan.split('\n')) {
+    const line = rawLine.replace(/\r$/, '')
     // A fence-marker line opens a fence (an info string may follow); inside
     // a fence only a bare marker closes it, regardless of the opening run's
     // length. Tilde fences are not tracked.
