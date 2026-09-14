@@ -1,6 +1,6 @@
 # feishu-bridge 进度卡（tool process）实现审计
 
-> 2026-09-12 落盘。来源：三路并行只读调查（流式预览渲染循环 / 结构化进度卡可达性 / 引擎事件接线）+ 本机实测（`node --import tsx/esm` 直接驱动 `src/` 真实模块喂模拟事件）。全程只读，未改动任何代码。**本文件只记录调查结论与候选方案，不含改动**；所有行号以 2026-09-12 的工作区为准。
+> 2026-09-12 落盘。来源：三路并行只读调查（流式预览渲染循环 / 结构化进度卡可达性 / 引擎事件接线）+ 本机实测（`node --import tsx/esm` 直接驱动 `src/` 真实模块喂模拟事件）。全程只读，未改动任何代码。**本文件只记录调查结论与候选方案，不含改动**；所有行号以 2026-09-12 的工作区为准。**§9 是 2026-09-14 追加的处置结果；其上正文保持审计当日原貌，行号锚未回填。**
 
 一句话结论：线上真正在跑的进度卡只有一条链路——`StreamPreview`（下称 sp，`src/streaming.ts`）；另有一条结构化进度卡链路——`CompactProgressWriter` + payload 渲染链（下称 cp），**在飞书平台上永不可达**（766 行，占涉及三文件的 48%）。在跑的这条里，最大的可优化点是**思考阶段以约 3.3 次/秒重复上传正文完全相同的卡片**：去重被"标题时钟每秒变一次"短路了。
 
@@ -233,3 +233,21 @@ grep -rn "resetProgressEntries\|truncateToMaxLines\|progressNoOutputText" --incl
 grep -c 'preview card sent' ~/.dsh/feishu-bridge-stdout.log
 grep -c 'preview card deleted' ~/.dsh/feishu-bridge-stdout.log
 ```
+
+## 9. 处置结果（2026-09-14 落地）
+
+| 项 | 处置 | 落地与验证 |
+|---|---|---|
+| F1 思考期重复 PATCH | **已修** | `flushLocked` 增加整卡去重键（正文 + state + ts + toolCallSeq + pendingSubtasks + bgTaskHint）：同一秒内正文与状态都没变时不 PATCH。纯文本路径语义不变；位移自愈不受去重抑制（探测到位移仍重发）。实测 1.2 秒思考流 **5 → 2** 次 PATCH，跨秒仍上传（标题时钟逐秒推进不变） |
+| F2 异常逃出回合循环 | **已修** | 三处兜底 catch 各补 `StreamPreview.markFailedIfUnsettled()`（已结算卡不被翻面，避免 drain 阶段失败把绿卡刷成失败）；主处理器按槽位键查状态（其 `state` 绑定在该 try 块内）。新增 `tests/engine/engine-turn-catch-card.spec.ts` 三例 |
+| F3 766 行死链路 | **已删**（用户裁定） | `src/progress-compact.ts` 整文件、payload 渲染链、payload 类型与 style 解析器、`spinnerKeyForItems`、平台 `progressStyle` 字段、`progress_style` 配置键、payload 专属测试全删；`TextPreviewContent` 收敛为唯一 seam 类型 `ProgressContent`。残留 `feishu.progressStyle` 改为**加载即报错**——schemastery 会保留未知键，只靠校验会让它变成新的「配了却无效」 |
+| F4 旋钮空转 | **已配**（用户裁定 (c) 案） | 新增 `streamPreview.progressFlushIntervalMs`（缺省 300 = 原写死值，`0` = 每次变化都 PATCH）；三个老旋钮的 schema 说明改为如实作用域（只作用于出现思考/工具之前的纯文本窗口）。实测旁白 2.4 秒：缺省 9 次、1000ms → **3** 次、0 → 10 次 |
+| F5 位移重发连发 | **已加冷却窗** | `previewReissueCooldownMs = 2000`（对齐引擎 `bumpDebounceInterval`）：窗口内抑制的只是尾部搬运，内容仍原地 PATCH；已结算卡本就不重发（入口拒绝），故不需要终态例外 |
+| F6 限流桶按机器人共享 | **已按消息分桶** | `patchRateWait(cardKey)` 每 messageID 一桶，随卡片删除释放；**撤掉 bot 级共享门**——它正是「单卡 5 QPS 被摊薄成 5/并发卡数」的根因。残余风险：总吞吐随并发热卡数增长（单卡仍限 5 QPS）；日志出现 230020 时在按消息桶之上加一层 bot 帽 |
+| F7 零调用与过期注释 | **已删** | `resetProgressEntries`、`truncateToMaxLines`、`isThinking` 渲染分支（连同与实现矛盾的「5 行」注释）、`CompactProgressWriter.append`（随 F3 一并消失）、`progressNoOutputText` 全删；`padToFixedLines`、`TodoItem`/`isTodoToolName`/`parseTodoItems`、文本路径的 spinner 保留 |
+
+§5 另两项待拍板：**时钟节拍**维持逐秒（秒值参与去重键，语义不变）；**F6** 按消息分桶（见上）。§4 的负结论不变；§6 的未验证项（CJK 行宽、F5 用户可见度、Go suppress 语义是否照抄）仍未真机验证。
+
+有意未做：生成物未重生成（`docs/config-catalog.md` / `.zh.md`、`packages/extensions/tool-cordis/src/api-catalog.ts` 仍列着已删的键与类，按 fork 政策接受漂移）；部署与 `/reload` 由用户手动触发。
+
+决策全文、替代方案与残余风险见 Agent Note：[2026-09-14-feishu-bridge-progress-card-fixes](../../../../.agents/notes/implemented/bug-fix/2026-09-14-feishu-bridge-progress-card-fixes.md)。

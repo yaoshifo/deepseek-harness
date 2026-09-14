@@ -11,7 +11,6 @@
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { ProgressCardEntry } from '../progress.ts'
 
 /** Uploaded spinner image keys; enabled is false when both uploads failed. */
 export interface SpinnerCfg {
@@ -84,24 +83,5 @@ export function spinnerKeyForState(spin: SpinnerCfg, state: string): string {
   }
   if (key === '') key = spin.thinkingKey
   if (key === '') key = spin.executingKey
-  return key
-}
-
-/**
- * Header-icon key for a running-state card by latest entry kind:
- * tool_use/tool_result → executing, anything else → thinking.
- * @param spin - Uploaded spinner keys.
- * @param items - Progress card entries, latest last.
- * @returns The image key for the header icon, or '' when disabled.
- */
-export function spinnerKeyForItems(spin: SpinnerCfg, items: ProgressCardEntry[]): string {
-  if (!spin.enabled) return ''
-  let key = spin.thinkingKey
-  if (items.length > 0) {
-    const last = items[items.length - 1]
-    if (last?.kind === 'tool_use' || last?.kind === 'tool_result') key = spin.executingKey
-  }
-  if (key === '') key = spin.executingKey
-  if (key === '') key = spin.thinkingKey
   return key
 }

@@ -1,7 +1,7 @@
 /**
  * Feishu progress-card assembly ported from cc-connect platform/feishu
- * feishu_progress.go: text-path and payload-path progress card JSON, the
- * structured preview status (formerly the __cc_state__/__cc_ts__/__cc_tc__
+ * feishu_progress.go: progress card JSON, the structured preview status
+ * (formerly the __cc_state__/__cc_ts__/__cc_tc__
  * header lines), structural blank-line
  * collapsing, and the stop/export button injections that mutate a rendered
  * card JSON in place. buildReplyContent (Go feishu_markdown.go) lives here
@@ -14,7 +14,6 @@
 import {
   collapseExcessCardTables,
   buildPostMdJSON,
-  capProgressLineChars,
   containsMarkdown,
   countMarkdownTables,
   finalizeFeishuCardMarkdown,
@@ -26,19 +25,11 @@ import {
   preprocessFeishuMarkdown,
   sanitizeFeishuMarkdownHTML,
   sanitizeMarkdownURLs,
-  splitCardLines,
   isTableRow,
   FenceTracker,
 } from './markdown.ts'
 import { cardHeaderPadding, compactCardBody, type FeishuCardMap } from './card.ts'
-import { noSpinner, spinnerKeyForItems, spinnerKeyForState, type SpinnerCfg } from './spinner.ts'
-import {
-  isTodoToolName,
-  parseProgressCardPayload,
-  parseTodoItems,
-  type ProgressCardEntry,
-  type ProgressCardPayload,
-} from '../progress.ts'
+import { noSpinner, spinnerKeyForState, type SpinnerCfg } from './spinner.ts'
 import type { ProgressStatus } from '../core/types.ts'
 
 /**
@@ -96,452 +87,6 @@ export function buildReplyContent(content: string): { msgType: string; body: str
     return { msgType: msgTypePost, body: buildPostMdJSON(content) }
   }
   return { msgType: msgTypeInteractive, body: buildCardJSON(finalizeFeishuCardMarkdown(content)) }
-}
-
-/**
- * Whether the progress lang is Chinese-like (titles/labels localize).
- *
- * @param lang - Progress language tag.
- * @returns True when labels should localize to Chinese.
- */
-export function isZhLikeProgressLang(lang: string): boolean {
-  return lang.trim().toLowerCase().startsWith('zh')
-}
-
-/**
- * Normalize the agent label shown on progress cards.
- *
- * @param agent - Raw agent name from the payload.
- * @returns Trimmed label, or "Agent" when empty.
- */
-export function progressAgentLabel(agent: string): string {
-  const trimmed = agent.trim()
-  return trimmed === '' ? 'Agent' : trimmed
-}
-
-/**
- * Card title/template/footer for a progress state.
- *
- * @param state - Payload state driving the title and template.
- * @param lang - Progress language tag.
- * @param _agent - Unused; kept for the Go signature.
- * @param lastTS - Latest tool-call timestamp appended to the title; empty string omits it.
- * @returns Card title, header color template, and footer text.
- */
-export function progressStateMeta(
-  state: ProgressCardPayload['state'],
-  lang: string,
-  _agent: string,
-  lastTS: string,
-): { title: string; template: string; footer: string } {
-  const zh = isZhLikeProgressLang(lang)
-  let title: string
-  let template: string
-  switch (state) {
-    case 'completed':
-      title = zh ? '执行完成' : 'Completed'
-      template = 'green'
-      break
-    case 'failed':
-      title = zh ? '执行失败' : 'Failed'
-      template = 'red'
-      break
-    case 'truncated':
-      title = zh ? '输出截断' : 'Truncated'
-      template = 'orange'
-      break
-    default:
-      title = zh ? '执行中' : 'Running'
-      template = 'yellow'
-      break
-  }
-  if (lastTS !== '') title = `${title} · ${lastTS}`
-  return { title, template, footer: '' }
-}
-
-/**
- * Localized label for one progress entry kind.
- *
- * @param kind - Entry kind to label.
- * @param lang - Progress language tag.
- * @returns Localized label for the kind.
- */
-export function progressKindLabel(kind: ProgressCardEntry['kind'], lang: string): string {
-  const zh = isZhLikeProgressLang(lang)
-  switch (kind) {
-    case 'thinking':
-      return zh ? '思考' : 'Thinking'
-    case 'tool_use':
-      return zh ? '工具调用' : 'Tool'
-    case 'tool_result':
-      return zh ? '工具结果' : 'Result'
-    case 'error':
-      return zh ? '错误' : 'Error'
-    default:
-      return zh ? '更新' : 'Update'
-  }
-}
-
-/**
- * Prefer typed items; fall back to legacy entries with inferred kinds.
- *
- * @param payload - Parsed progress payload (may be undefined).
- * @returns Typed items; legacy entries fall back to emoji-based kind inference.
- */
-export function normalizeProgressItems(payload: ProgressCardPayload | undefined): ProgressCardEntry[] {
-  if (payload === undefined) return []
-  if ((payload.items ?? []).length > 0) return payload.items ?? []
-  const out: ProgressCardEntry[] = []
-  for (const entry of payload.entries ?? []) {
-    const trimmed = entry.trim()
-    if (trimmed === '') continue
-    let kind: ProgressCardEntry['kind'] = 'info'
-    if (trimmed.startsWith('💭')) kind = 'thinking'
-    else if (trimmed.startsWith('🔧') || trimmed.includes('**Tool #')) kind = 'tool_use'
-    else if (trimmed.startsWith('🧾')) kind = 'tool_result'
-    else if (trimmed.startsWith('❌')) kind = 'error'
-    out.push({ kind, text: trimmed })
-  }
-  return out
-}
-
-/**
- * Inline-code text: trim and neutralize backticks.
- *
- * @param s - Raw text.
- * @returns Trimmed text with backticks replaced by single quotes.
- */
-export function inlineCodeText(s: string): string {
-  return s.trim().replaceAll('`', "'")
-}
-
-/**
- * Format a todo-list tool input into a readable markdown list; empty string
- * when parsing fails or no todos remain. Todo content and active forms are
- * untrusted card markdown, so the composed list is HTML-sanitized — bare
- * tags would trigger the 11311 card rejection.
- *
- * @param text - Raw todo tool input JSON.
- * @returns Markdown list with status icons, or empty string.
- */
-export function formatTodoWriteInput(text: string): string {
-  const items = parseTodoItems(text)
-  if (items === undefined || items.length === 0) return ''
-
-  let sb = ''
-  for (const todo of items) {
-    let icon: string
-    switch (todo.status.trim().toLowerCase()) {
-      case 'completed':
-        icon = '✅'
-        break
-      case 'in_progress':
-        icon = '🔄'
-        break
-      case 'pending':
-        icon = '⏳'
-        break
-      default:
-        icon = '•'
-        break
-    }
-    // Escape markdown special characters
-    const safeContent = todo.content.replaceAll('`', "'")
-    sb += `${icon} ${safeContent}`
-    const activeForm = todo.activeForm ?? ''
-    if (activeForm !== '' && activeForm !== todo.content) {
-      sb += ` _(${activeForm.replaceAll('`', "'")})_`
-    }
-    sb += '\n'
-  }
-  const list = sb.endsWith('\n') ? sb.slice(0, -1) : sb
-  // Sanitize after the loop's backtick neutralization: with no backticks
-  // left, no line can look like a fence opener and hide a tag from the strip.
-  return sanitizeFeishuMarkdownHTML(list)
-}
-
-/**
- * Fixed number of lines every tool input/result code block occupies in the
- * progress card, keeping card height stable across PATCH updates.
- */
-export const maxProgressEntryLines = 6
-
-/**
- * Normalize s to exactly maxLines lines: empty → placeholders, fewer →
- * padded, more → first maxLines-1 lines + "... (N more lines)". Lines are
- * counted with the card renderer's line endings and capped per line (see
- * splitCardLines / capProgressLineChars), so neither a lone \r nor a long
- * line can expand the rendered height past the window.
- *
- * @param s - Raw text to normalize.
- * @param maxLines - Exact line count to produce.
- * @returns Text normalized to exactly maxLines lines.
- */
-export function padProgressLines(s: string, maxLines: number): string {
-  if (maxLines <= 0) return s
-  if (s === '') return ' \n'.repeat(maxLines - 1) + ' '
-  const lines = splitCardLines(s).map(capProgressLineChars)
-  if (lines.length < maxLines) {
-    while (lines.length < maxLines) lines.push(' ')
-    return lines.join('\n')
-  }
-  if (lines.length === maxLines) return lines.join('\n')
-  const extra = lines.length - maxLines + 1
-  return `${lines.slice(0, maxLines - 1).join('\n')}\n... (${extra} more lines)`
-}
-
-/**
- * Pad/truncate lines within code blocks; text outside code blocks stays intact.
- *
- * @param s - Text possibly containing fenced code blocks.
- * @param maxLines - Exact line count per code block.
- * @returns Text with padded/truncated code blocks; other text intact.
- */
-export function padCodeBlockContent(s: string, maxLines: number): string {
-  if (maxLines <= 0 || !s.includes('```')) return s
-  let b = ''
-  let remaining = s
-  let inCode = false
-  for (;;) {
-    const idx = remaining.indexOf('```')
-    if (idx === -1) {
-      b += remaining
-      break
-    }
-    if (!inCode) {
-      b += remaining.slice(0, idx)
-      b += '```'
-      const afterFence = remaining.slice(idx + 3)
-      const nlIdx = afterFence.indexOf('\n')
-      if (nlIdx === -1) {
-        b += afterFence
-        break
-      }
-      b += afterFence.slice(0, nlIdx + 1)
-      remaining = afterFence.slice(nlIdx + 1)
-      inCode = true
-    } else {
-      const content = trimTrailingNewlines(remaining.slice(0, idx))
-      b += padProgressLines(content, maxLines)
-      b += '\n```'
-      remaining = remaining.slice(idx + 3)
-      inCode = false
-    }
-  }
-  return b
-}
-
-function trimTrailingNewlines(s: string): string {
-  return s.replace(/\n+$/, '')
-}
-
-/**
- * Format a tool input for the progress card (todo tools get a markdown list).
- *
- * @param toolName - Tool name; `todo_write`/`TodoWrite` input renders as a markdown list.
- * @param text - Raw tool input text.
- * @returns Formatted markdown for the progress card entry.
- */
-export function formatProgressToolInput(toolName: string, text: string): string {
-  let t = text.trim()
-  if (t === '') return ''
-
-  if (isTodoToolName(toolName)) {
-    const formatted = formatTodoWriteInput(t)
-    if (formatted !== '') return formatted
-    return `\`\`\`python\n${padProgressLines(t, maxProgressEntryLines)}\n\`\`\``
-  }
-
-  // Sanitize before any formatting: prose outside fences carries bare HTML
-  // tags that card markdown rejects with 11311; fenced lines stay verbatim
-  // inside the sanitizer.
-  t = preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(t)))
-  if (t.includes('```')) return padCodeBlockContent(t, maxProgressEntryLines)
-  t = padProgressLines(t, maxProgressEntryLines)
-  return `\`\`\`python\n${t}\n\`\`\``
-}
-
-/**
- * Format a tool result for the progress card.
- *
- * @param text - Raw tool result text.
- * @returns Formatted markdown code block for the progress card entry.
- */
-export function formatProgressToolResult(text: string): string {
-  let t = text.trim()
-  // Sanitize before any formatting: prose outside fences carries bare HTML
-  // tags (error stacks, HTML-ish tool output) that card markdown rejects
-  // with 11311; fenced lines stay verbatim inside the sanitizer.
-  t = preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(t)))
-  if (t.includes('```')) return padCodeBlockContent(t, maxProgressEntryLines)
-  t = padProgressLines(t, maxProgressEntryLines)
-  return `\`\`\`python\n${t}\n\`\`\``
-}
-
-/**
- * Localized "no output" label.
- *
- * @param lang - Progress language tag.
- * @returns Localized "no output" label.
- */
-export function progressNoOutputText(lang: string): string {
-  return isZhLikeProgressLang(lang) ? '无输出' : 'No output'
-}
-
-/**
- * Status dot for a tool-result entry: 🟢 success, 🔴 failure, ⚪ unknown.
- *
- * @param item - Tool-result entry whose success indicators decide the dot.
- * @returns Status dot emoji.
- */
-export function progressResultDot(item: ProgressCardEntry): string {
-  if (item.success !== undefined) return item.success ? '🟢' : '🔴'
-  if (item.exitCode !== undefined) return item.exitCode === 0 ? '🟢' : '🔴'
-  const status = (item.status ?? '').trim().toLowerCase()
-  if (status === 'completed' || status === 'success' || status === 'succeeded' || status === 'ok') return '🟢'
-  if (status === 'failed' || status === 'error') return '🔴'
-  return '⚪'
-}
-
-/**
- * Render one progress entry as a card element map.
- *
- * @param item - Progress entry to render.
- * @param lang - Progress language tag.
- * @returns Card element map for the entry.
- */
-export function renderProgressEntryElement(item: ProgressCardEntry, lang: string): FeishuCardMap {
-  const text = item.text.trim() === '' ? ' ' : item.text.trim()
-  switch (item.kind) {
-    case 'thinking':
-      return {
-        tag: 'div',
-        text: {
-          tag: 'plain_text',
-          content: `💭 ${inlineCodeText(text)}`,
-          text_size: 'notation',
-          text_color: 'grey',
-        },
-      }
-    case 'tool_use': {
-      const toolName = item.tool?.trim() === '' ? 'Tool' : (item.tool ?? '').trim()
-      let content = `<text_tag color='blue'>${progressKindLabel(item.kind, lang)}</text_tag> \`${inlineCodeText(toolName)}\``
-      const body = formatProgressToolInput(toolName, text)
-      if (body !== '') content += `\n${body}`
-      return { tag: 'markdown', content }
-    }
-    case 'tool_result': {
-      const toolName = (item.tool ?? '').trim()
-      let content = `<text_tag color='turquoise'>${progressKindLabel(item.kind, lang)}</text_tag>`
-      if (toolName !== '') content += ` \`${inlineCodeText(toolName)}\``
-      const dot = progressResultDot(item)
-      let meta = dot
-      if (item.exitCode !== undefined) meta += ` exit code: \`${item.exitCode}\``
-      content += `\n${meta}`
-      content += `\n${formatProgressToolResult(text)}`
-      return { tag: 'markdown', content }
-    }
-    case 'error':
-      return {
-        tag: 'markdown',
-        // Sanitize the untrusted text before the trusted <text_tag> chrome
-        // is composed around it: sanitizeFeishuMarkdownHTML would strip the
-        // chrome too, and a bare tag (error stacks carry <anonymous>) would
-        // trigger the 11311 PATCH-rejection loop.
-        content: `<text_tag color='red'>${progressKindLabel(item.kind, lang)}</text_tag>\n${preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(text)))}`,
-      }
-    default:
-      // Same first-step HTML sanitize as the error branch: info prose
-      // carries untrusted text (agent updates, excerpts) into card markdown.
-      return { tag: 'markdown', content: preprocessFeishuMarkdown(sanitizeMarkdownURLs(sanitizeFeishuMarkdownHTML(text))) }
-  }
-}
-
-/**
- * Build the structured progress card JSON from a payload.
- *
- * @param payload - Structured progress payload.
- * @param spin - Spinner configuration for the running-state header icon.
- * @returns Feishu interactive-card JSON string.
- */
-export function buildProgressCardJSONFromPayload(payload: ProgressCardPayload, spin: SpinnerCfg): string {
-  const items = normalizeProgressItems(payload)
-  if (items.length === 0) return buildCardJSON(' ')
-
-  const agent = progressAgentLabel(payload.agent ?? '')
-  const { title, template, footer } = progressStateMeta(payload.state, payload.lang ?? '', agent, payload.lastTS ?? '')
-
-  const elements: FeishuCardMap[] = []
-  if (payload.truncated) {
-    const truncatedText = isZhLikeProgressLang(payload.lang ?? '') ? '仅显示最近更新。' : 'Showing latest updates only.'
-    elements.push({
-      tag: 'div',
-      text: { tag: 'plain_text', content: truncatedText, text_size: 'notation', text_color: 'grey' },
-    })
-    elements.push({ tag: 'hr' })
-  }
-
-  // Dedicated todo section on top using plain_text divs to avoid markdown
-  // parsing issues (e.g. # becoming headings).
-  if ((payload.todos ?? []).length > 0) {
-    elements.push({ tag: 'div', text: { tag: 'plain_text', content: '📋 Task List' } })
-    for (const item of payload.todos ?? []) {
-      let icon: string
-      switch (item.status.trim().toLowerCase()) {
-        case 'completed':
-          icon = '✅'
-          break
-        case 'in_progress':
-          icon = '🔄'
-          break
-        case 'pending':
-          icon = '⏳'
-          break
-        default:
-          icon = '•'
-          break
-      }
-      let display: string
-      if (item.status.trim().toLowerCase() === 'in_progress' && (item.activeForm ?? '') !== '') {
-        display = `${icon} ${(item.activeForm ?? '').replaceAll('\n', ' ')}`
-      } else {
-        display = `${icon} ${item.content.replaceAll('\n', ' ')}`
-      }
-      elements.push({ tag: 'div', text: { tag: 'plain_text', content: display } })
-    }
-    elements.push({ tag: 'hr' })
-  }
-
-  items.forEach((item, i) => {
-    elements.push(renderProgressEntryElement(item, payload.lang ?? ''))
-    if (i < items.length - 1) elements.push({ tag: 'hr' })
-  })
-  if (footer !== '') {
-    elements.push({ tag: 'hr' })
-    elements.push({
-      tag: 'div',
-      text: { tag: 'plain_text', content: footer, text_size: 'notation', text_color: 'grey' },
-    })
-  }
-
-  const header: FeishuCardMap = {
-    title: { tag: 'plain_text', content: title },
-    template,
-    padding: cardHeaderPadding,
-  }
-  // Running-state loading GIF as a header prefix icon, chosen by the latest
-  // entry kind (thinking vs executing). Non-running states render no icon.
-  if (payload.state === 'running') {
-    const k = spinnerKeyForItems(spin, items)
-    if (k !== '') header.icon = { tag: 'custom_icon', img_key: k }
-  }
-  const card: FeishuCardMap = {
-    schema: '2.0',
-    config: { wide_screen_mode: true },
-    header,
-    body: compactCardBody(elements),
-  }
-  return JSON.stringify(card)
 }
 
 /**
@@ -665,16 +210,14 @@ export function collapseStructuralBlankLines(s: string): string {
 }
 
 /**
- * Build the streaming-preview card JSON (payload path or text path).
+ * Build the streaming-preview card JSON.
  *
- * @param content - Text body; a payload-prefixed string takes the payload path.
+ * @param content - Text body rendered into the card.
  * @param spin - Spinner configuration for the header icon.
  * @param status - Structured status driving the header title/color/icon; absent renders the running default.
  * @returns Feishu interactive-card JSON string.
  */
 export function buildPreviewCardJSON(content: string, spin: SpinnerCfg, status?: ProgressStatus): string {
-  const payload = parseProgressCardPayload(content)
-  if (payload !== undefined) return buildProgressCardJSONFromPayload(payload, spin)
   const state = status?.state ?? ''
   // Strip non-whitelisted HTML exactly like the final reply path
   // (finalizeFeishuCardMarkdown): a bare tag PATCHes into an 11311 card
@@ -686,8 +229,8 @@ export function buildPreviewCardJSON(content: string, spin: SpinnerCfg, status?:
   processed = collapseStructuralBlankLines(processed)
   const { title, color } = progressTitleAndColor(
     state, true, status?.ts ?? '', status?.toolCallSeq ?? 0, status?.pendingSubtasks ?? 0)
-  // Text-path card (placeholder / streaming preview): align the header icon
-  // with the state — thinking → pulse ring, running/执行中 → Material spinner.
+  // Align the header icon with the state — thinking → pulse ring,
+  // running/执行中 → Material spinner.
   return buildCardJSONWithHeader(sanitizeMarkdownURLs(processed), title, color, spinnerKeyForState(spin, state))
 }
 

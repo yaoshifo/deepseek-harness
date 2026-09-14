@@ -36,7 +36,6 @@ import { newCard } from '../card.ts'
 import { renderCard, renderCardMap, type FeishuCardMap } from './card.ts'
 import {
   buildPreviewCardJSON,
-  buildProgressCardJSONFromPayload,
   buildReplyContent,
   injectReplyButtons,
   injectStopButton,
@@ -44,7 +43,6 @@ import {
 } from './progress.ts'
 import { previewOverflow as previewOverflowFn } from './markdown.ts'
 import { noSpinner, resolveSpinnerAsset, spinnerKeyForState, type SpinnerCfg } from './spinner.ts'
-import { parseProgressStyle } from '../progress.ts'
 import { TokenBucketRateLimiter, feishuBusinessCode, feishuPatchRateLimitCode, isTenantAccessTokenInvalid, retryTiming, withTransientRetry } from './retry.ts'
 import { errorMessage } from './retry.ts'
 import { ErrNotSupported, type ChatBasePhase, type ChatPhase, type ImageAttachment, type FileAttachment, type Message, type MessageHandler, type Platform, type ProgressContent } from '../core/types.ts'
@@ -443,8 +441,6 @@ export interface FeishuPlatformOptions {
   wsStart?: (onRawEvent: (eventType: string, data: unknown) => unknown) => Promise<void | WsClose>
   /** Interactive cards and preview PATCHes (Go enable_feishu_card; default true). */
   useInteractiveCard?: boolean
-  /** "legacy" (default), "compact", or "card" (Go progress_style). */
-  progressStyle?: string
   /** ✅ per-turn completion notification — purple card or text fallback; default off (Go notify_on_complete). */
   notifyOnComplete?: boolean
   /** Emoji reactions (empty or "none" disables the respective reaction). */
@@ -457,7 +453,7 @@ export interface FeishuPlatformOptions {
   pinUserMessages?: boolean
   /** Running-state header GIF on progress cards (Go progress_spinner; default true). */
   progressSpinner?: boolean
-  /** Global PATCH rate-limit refill interval in ms (default 120 ≈ 8 PATCH/s, burst 3). */
+  /** Per-message PATCH rate-limit refill interval in ms (default 200 ≈ 5 PATCH/s, burst 3). */
   patchRateIntervalMs?: number
   /**
    * Upload pacing floor in bytes/sec used to size per-attempt upload
@@ -555,8 +551,6 @@ export class FeishuPlatform implements Platform {
 
   /** Interactive cards enabled (enable_feishu_card). */
   readonly useInteractiveCard: boolean
-  /** Validated progress style ("legacy" | "compact" | "card"). */
-  readonly progressStyle: string
   /** ✅ notifications enabled (notify_on_complete). */
   readonly notifyOnComplete: boolean
   /** Configured reaction emoji (reaction_emoji). */
@@ -571,8 +565,8 @@ export class FeishuPlatform implements Platform {
   readonly pinEnabled: boolean
   /** Running-state header GIF enabled (progress_spinner); observable for assembly tests. */
   readonly spinnerEnabled: boolean
-  /** Global limiter for every card PATCH entry point. */
-  private readonly patchRL: TokenBucketRateLimiter
+  /** messageID → the bucket pacing that card's PATCHes (see {@link patchBucketFor}). */
+  private readonly patchRL = new BoundedMap<string, TokenBucketRateLimiter>()
 
   /** messageID → pre-button card JSON (stop-card rebuild + render-status rebuild). */
   private readonly lastProgressCard = new BoundedMap<string, string>()
@@ -641,7 +635,6 @@ export class FeishuPlatform implements Platform {
     this.opts = { appID: options.appID, appSecret: options.appSecret }
     this.o = options
     this.useInteractiveCard = options.useInteractiveCard !== false
-    this.progressStyle = parseProgressStyle(options.tag ?? 'feishu', options.progressStyle ?? '')
     this.notifyOnComplete = options.notifyOnComplete === true
     this.reactionEmoji = options.reactionEmoji === 'none' ? '' : options.reactionEmoji ?? ''
     this.doneEmoji = options.doneEmoji ?? ''
@@ -649,9 +642,6 @@ export class FeishuPlatform implements Platform {
     this.topNoticeEnabled = options.topNoticeFirstMessage === true
     this.pinEnabled = options.pinUserMessages === true
     this.spinnerEnabled = options.progressSpinner !== false
-    // Feishu caps card PATCHes at 5 QPS per message; 200ms keeps a hot card
-    // at the documented limit instead of tripping 230020 rate-limit errors.
-    this.patchRL = new TokenBucketRateLimiter(options.patchRateIntervalMs ?? 200, 3)
     this.botAvatarKey = options.botAvatarKey ?? ''
     this.botAvatarKeyGray = options.botAvatarKeyGray ?? ''
     this.displayName = options.botDisplayName ?? ''
@@ -1999,7 +1989,7 @@ export class FeishuPlatform implements Platform {
   async updateCardWithHandle(handle: unknown, card: Card): Promise<void> {
     const h = requirePreviewHandle(handle)
     const cardJSON = renderCard(card, h.sessionKey)
-    await this.patchRateWait()
+    await this.patchRateWait(h.messageID)
     await this.withRetry('update card by handle', () => this.patchMessage(h.messageID, cardJSON))
   }
 
@@ -2012,7 +2002,7 @@ export class FeishuPlatform implements Platform {
     const msgID = this.cardActionMsgIDs.get(sessionKey) ?? ''
     if (msgID === '') throw new Error(`feishu: no tracked card messageID for session ${sessionKey}`)
     const cardJSON = renderCard(card, sessionKey)
-    await this.patchRateWait()
+    await this.patchRateWait(msgID)
     await this.withRetry('refresh card', () => this.patchMessage(msgID, cardJSON))
   }
 
@@ -2026,14 +2016,6 @@ export class FeishuPlatform implements Platform {
    */
   keepPreviewOnFinish(): boolean {
     return this.useInteractiveCard
-  }
-
-  /**
-   * Whether the platform renders structured progress payloads.
-   * @returns Always true on this platform.
-   */
-  supportsProgressCardPayload(): boolean {
-    return true
   }
 
   /**
@@ -2112,7 +2094,7 @@ export class FeishuPlatform implements Platform {
    * edits. The pre-button card JSON is cached per messageID so stop-card
    * rebuilds never append a second button row.
    * @param replyCtx - Reply context of the trigger message (FeishuReplyContext).
-   * @param content - Initial preview content: structured payload or text.
+   * @param content - Initial preview content.
    * @returns Handle for subsequent in-place edits.
    */
   async sendPreviewStart(replyCtx: unknown, content: ProgressContent): Promise<FeishuPreviewHandle> {
@@ -2152,7 +2134,7 @@ export class FeishuPlatform implements Platform {
    * pre-button; the stop button and (on green) the export/reply buttons are
    * injected per PATCH, deferring to the latest render-status text.
    * @param previewHandle - Preview handle from sendPreviewStart.
-   * @param content - Updated content: structured payload or text.
+   * @param content - Updated content.
    */
   async updateMessage(previewHandle: unknown, content: ProgressContent): Promise<void> {
     if (!this.useInteractiveCard) throw new ErrNotSupported('feishu: update message without interactive cards')
@@ -2167,29 +2149,27 @@ export class FeishuPlatform implements Platform {
     // state keeps the export/reply buttons its waiting render carried (the
     // registered pre-ask reply outlives the decision).
     json = injectReplyButtons(json, h.sessionKey, h.messageID, statusText, this.buttonStateOf(content))
-    await this.patchRateWait()
+    await this.patchRateWait(h.messageID)
     await this.withRetry('patch message', () => this.patchMessage(h.messageID, json))
   }
 
   /** Progress status state of preview content ('' when none), for state-keyed button eligibility. */
   private buttonStateOf(content: ProgressContent): string {
-    return content.kind === 'card' ? (content.payload.state ?? '') : (content.status?.state ?? '')
+    return content.status?.state ?? ''
   }
 
-  /** Render preview content into a card JSON string (payload or text path). */
+  /** Render preview content into a card JSON string. */
   private renderPreviewCard(content: ProgressContent, spin: SpinnerCfg): string {
-    if (content.kind === 'card') return buildProgressCardJSONFromPayload(content.payload, spin)
     return buildPreviewCardJSON(content.text, spin, content.status)
   }
 
   /**
-   * Background-task hint carried by text-path preview content; the card
-   * payload path and an absent field carry none.
+   * Background-task hint carried by preview content; an absent field carries none.
    * @param content - Preview content being rendered.
    * @returns Hint text for the stop-button row, or the empty string.
    */
   private bgHintOf(content: ProgressContent): string {
-    return content.kind === 'text' ? (content.bgTaskHint ?? '') : ''
+    return content.bgTaskHint ?? ''
   }
 
   /**
@@ -2210,7 +2190,7 @@ export class FeishuPlatform implements Platform {
     const baseJSON = this.requireCachedCard(exportKey, 'update render status')
     let cardJSON = injectStopButton(baseJSON, rc.sessionKey)
     cardJSON = injectReplyButtons(cardJSON, rc.sessionKey, exportKey, statusText)
-    await this.patchRateWait()
+    await this.patchRateWait(exportKey)
     await this.withRetry('update render status', () => this.patchMessage(exportKey, cardJSON))
   }
 
@@ -2228,7 +2208,7 @@ export class FeishuPlatform implements Platform {
     if (h.messageID === '') throw new Error('feishu: RenderStoppedCard: empty messageID')
     const baseJSON = this.requireCachedCard(h.messageID, 'render stopped card')
     const cardJSON = markCardStopped(baseJSON, rc.sessionKey)
-    await this.patchRateWait()
+    await this.patchRateWait(h.messageID)
     await this.withRetry('render stopped card', () => this.patchMessage(h.messageID, cardJSON))
   }
 
@@ -2247,6 +2227,7 @@ export class FeishuPlatform implements Platform {
     const h = requirePreviewHandle(previewHandle)
     this.lastProgressCard.delete(h.messageID)
     this.renderStatusText.delete(h.messageID)
+    this.patchRL.delete(h.messageID)
     const client = await this.ensureApi()
     const boundDelete = client.delete?.bind(client)
     if (boundDelete === undefined) throw new ErrNotSupported('feishu client without delete support')
@@ -2274,11 +2255,38 @@ export class FeishuPlatform implements Platform {
   }
 
   /**
-   * Block until the global PATCH limiter allows one call.
+   * Block until the given card message's own PATCH limiter allows one call.
+   * The bucket is per message — Feishu documents 5 QPS per card message, not
+   * per app — and created on first use, so callers must name the card they
+   * are about to PATCH.
+   * @param cardKey - Message id of the card being PATCHed; its bucket is
+   * released with the card in {@link deletePreviewMessage}.
    * @param signal - Aborts the wait for a limiter slot.
    */
-  async patchRateWait(signal?: AbortSignal): Promise<void> {
-    await this.patchRL.wait(signal)
+  async patchRateWait(cardKey: string, signal?: AbortSignal): Promise<void> {
+    await this.patchBucketFor(cardKey).wait(signal)
+  }
+
+  /**
+   * The token bucket pacing one card message's PATCHes, created on first use
+   * at the configured interval (default 200ms — 5 QPS, the documented
+   * per-message cap — with burst 3).
+   *
+   * No bot-wide bucket sits above these: sharing one bucket across a bot's
+   * chats scaled every card down to 5/n PATCH/s with n cards in flight, while
+   * a single card's refresh rhythm is already held near 3.3 PATCH/s by the
+   * 300ms flush interval, so the aggregate stays near that volume. A bot-wide
+   * bucket is the addition to make if 230020 shows up in the logs with
+   * several hot cards at once.
+   * @param messageID - Message id of the card the PATCH targets.
+   * @returns That card's limiter.
+   */
+  private patchBucketFor(messageID: string): TokenBucketRateLimiter {
+    const bucket = this.patchRL.get(messageID)
+    if (bucket !== undefined) return bucket
+    const created = new TokenBucketRateLimiter(this.o.patchRateIntervalMs ?? 200, 3)
+    this.patchRL.set(messageID, created)
+    return created
   }
 
   /** PATCH a card message body, failing loud without client support. */

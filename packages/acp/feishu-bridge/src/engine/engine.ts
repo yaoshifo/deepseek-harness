@@ -147,7 +147,6 @@ import {
 import { MaxPlatformMessageLen, splitMessage, stripTrailingSilent } from './message-split.ts'
 import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, ProgressEntry, StreamPreview, type StreamPreviewCfg } from '../streaming.ts'
 import { isTodoToolName, parseTodoItems } from '../progress.ts'
-import { newCompactProgressWriter, suppressStandaloneToolResultEvent, type CompactProgressWriter } from '../progress-compact.ts'
 import { newAsyncSender, type AsyncSender } from '../async-sender.ts'
 import { RateLimiter } from '../ratelimit.ts'
 import { readFileSync, statSync, existsSync } from 'node:fs'
@@ -425,8 +424,6 @@ export class InteractiveState {
   sender: AsyncSender | undefined
   /** The turn's active streaming preview (bound for bump routing). */
   preview: StreamPreview | undefined
-  /** The turn's compact progress writer; an ask resolution swaps it with the preview. */
-  progressWriter: CompactProgressWriter | undefined
   /** The delete-mode picker state machine (session-card.ts); undefined when idle. */
   deleteMode: import('./session-card.ts').DeleteModeState | undefined
   /** run_in_background tool calls whose completion turn has not arrived yet. */
@@ -2624,6 +2621,10 @@ export class Engine {
       unlocked = true
     } catch (error) {
       console.error(`engine: turn processing failed (${msg.sessionKey}): ${String(error)}`)
+      // The turn's state is scoped to the try above, so look the slot up by
+      // the key the turn ran on; markFailedIfUnsettled leaves an already
+      // settled card (a drain-phase failure) untouched.
+      try { await this.interactiveStates.get(interactiveKey)?.preview?.markFailedIfUnsettled() } catch (markError) { console.warn(`engine: card finalize failed: ${String(markError)}`) }
     } finally {
       if (!unlocked) session.unlock()
     }
@@ -2775,6 +2776,7 @@ export class Engine {
           await this.drainPendingMessages(state, session, sessions, interactiveKey)
         } catch (error) {
           console.error(`engine: orphan turn failed (${interactiveKey}): ${String(error)}`)
+          try { await state.preview?.markFailedIfUnsettled() } catch (markError) { console.warn(`engine: card finalize failed: ${String(markError)}`) }
           session.unlock()
         } finally {
           state.endTurn()
@@ -3204,17 +3206,14 @@ export class Engine {
     const channel = state.agentSession?.events()
     if (channel === undefined) return
 
-    // M2 preview machinery: one streamPreview + compact writer per turn,
-    // sharing the state's async sender so PATCHes stay off this loop.
+    // M2 preview machinery: one streamPreview per turn, sharing the state's
+    // async sender so PATCHes stay off this loop.
     const platform = state.platform ?? this.platforms[0]
     if (platform === undefined) return
     state.sender ??= newAsyncSender(sessionKey)
     const sender = state.sender
     let sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
     state.preview = sp
-    let cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
-      this.i18n.currentLang(), undefined, sender)
-    state.progressWriter = cp
     // Placeholder card so the user sees visual feedback (with push) before
     // the first agent event arrives. A reader-woken turn with pending
     // background tasks is likely a completion: distinct header (Go
@@ -3309,17 +3308,15 @@ export class Engine {
         const outcome: LoopOutcome = await Promise.race([recvOutcome, sendOutcome, stopOutcome, idleOutcome])
         idleSleep?.cancel()
 
-        // Re-sync the surface locals: an askUser that resolved while the
-        // loop was parked on this select has already swapped the state's
-        // preview and progress writer for fresh ones.
+        // Re-sync the surface local: an askUser that resolved while the loop
+        // was parked on this select has already swapped the state's preview
+        // for a fresh one.
         sp = state.preview
-        cp = state.progressWriter
 
         if (outcome.kind === 'stop') {
           await barrier()
           if (state.isUserStopped() || state.engineStopped) {
-          // User stop or engine teardown: stopped terminal card, skipping
-          // cp.Finalize(Failed) which would clobber the ⏹ 已停止 card.
+            // User stop or engine teardown: the ⏹ stopped card, not a failure.
             await sp.markStopped()
           } else {
             await sp.markFailed()
@@ -3334,14 +3331,10 @@ export class Engine {
             const errText = errorMessage(outcome.error)
             console.error(`failed to send prompt (${sessionKey}): ${errText}`)
             // Same terminal treatment as the error event: drain queued
-            // PATCHes, fail BOTH surfaces (the compact writer's structured
-            // card first — it PATCHes inline, so a queued running update
-            // landing past it would revert the color; the !inProgressMode
-            // gate skips it when the preview card owns the progress display),
-            // and force the next turn to drain the channel, or the cards
-            // freeze on 执行中 with a live stop button forever.
+            // PATCHes, fail the card, and force the next turn to drain the
+            // channel, or the card freezes on 执行中 with a live stop button
+            // forever.
             await barrier()
-            if (!sp.inProgressMode()) await cp.finalize('failed')
             await sp.markFailed()
             state.eventsNeedResync = true
             this.notifyDroppedQueuedMessages(state, new Error(errText))
@@ -3383,10 +3376,7 @@ export class Engine {
               // turn a fresh card instead of PATCHing the stale one.
               await sp.markFailed()
               sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
-              cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
-                this.i18n.currentLang(), undefined, sender)
               state.preview = sp
-              state.progressWriter = cp
               if (this.display.toolProgress && sp.canPreview()) {
                 void sp.showPlaceholder(this.i18n.t(Msg.Processing))
               }
@@ -3519,9 +3509,7 @@ export class Engine {
               await sp.completeAndDetach()
               const preview = truncateIf(event.content, this.display.thinkingMaxLen)
               const thinkingMsg = this.i18n.tf(Msg.Thinking, preview)
-              if (!await cp.appendEvent('thinking', preview, '', thinkingMsg)) {
-                await this.send(p, replyCtx, thinkingMsg)
-              }
+              await this.send(p, replyCtx, thinkingMsg)
             }
             thinkingStreamed = false
             thinkingAccum = ''
@@ -3604,7 +3592,6 @@ export class Engine {
               const items = parseTodoItems(event.toolInput ?? '')
               if (items !== undefined) {
                 if (sp.canPreview()) await sp.updateTodoSection(items)
-                cp.setTodos(items)
               }
             }
             if (this.display.toolProgress && sp.canPreview()) {
@@ -3635,20 +3622,11 @@ export class Engine {
 
             if (this.display.toolMessages) {
               const result = (event.toolResult ?? '').trim() || event.content.trim()
-              if (result !== '' && p !== undefined) {
-                const entry = {
-                  kind: 'tool_result' as const,
-                  tool: event.fromSubagent === true ? 'subagent' : (event.toolName ?? ''),
-                  text: result,
-                }
-                // A subagent child's result stays on the progress card; the
-                // standalone-message fallback would drop child tool output
-                // straight into the chat.
-                if (!await cp.appendStructured(entry, result) && event.fromSubagent !== true) {
-                  if (!suppressStandaloneToolResultEvent(p)) {
-                    await this.send(p, replyCtx, result)
-                  }
-                }
+              // A subagent child's result stays on the child transcript; a
+              // standalone message would drop child tool output straight into
+              // the parent chat.
+              if (result !== '' && p !== undefined && event.fromSubagent !== true) {
+                await this.send(p, replyCtx, result)
               }
             } else if (this.display.toolProgress) {
             // Quiet mode: update the last tool entry with its result.
@@ -3711,9 +3689,7 @@ export class Engine {
                 }
               }
               for (const skip of skipped) {
-                if (!await cp.appendStructured({ kind: 'tool_result', tool: 'present', text: this.i18n.tf(Msg.PresentedSkipNote, skip.path, skip.reason) }, '')) {
-                  await this.send(p, replyCtx, this.i18n.tf(Msg.PresentedSkipNote, skip.path, skip.reason)).catch(() => undefined)
-                }
+                await this.send(p, replyCtx, this.i18n.tf(Msg.PresentedSkipNote, skip.path, skip.reason)).catch(() => undefined)
               }
             }
             break
@@ -3737,7 +3713,6 @@ export class Engine {
           // todo_write tool call. A subagent child's list stays on the child.
             if (event.fromSubagent !== true && event.todos !== undefined) {
               if (sp.canPreview()) await sp.updateTodoSection(event.todos)
-              cp.setTodos(event.todos)
             }
             break
           }
@@ -3819,7 +3794,7 @@ export class Engine {
             }
             const finished = await this.handleResultEvent(
               state, session, sessions, sessionKey, replyCtx, event,
-              pendingSend, sp, cp, barrier, background, turnStartedBg)
+              pendingSend, sp, barrier, background, turnStartedBg)
             if (finished.kind === 'queued') {
             // A queued message takes over this loop as a fresh turn (Go
             // in-loop drain): reset per-turn state and continue. The watchdog
@@ -3848,10 +3823,7 @@ export class Engine {
               // PATCHing it or silently drop its tool progress — start a fresh
               // card, mirroring the post-permission restart below.
               sp = newStreamPreview(this.streamPreview, platform, replyCtx, undefined, sender, sessionKey)
-              cp = newCompactProgressWriter(platform, replyCtx, this.agent.name(),
-                this.i18n.currentLang(), undefined, sender)
               state.preview = sp
-              state.progressWriter = cp
               if (this.display.toolProgress && sp.canPreview()) {
                 void sp.showPlaceholder(this.i18n.t(Msg.Processing))
               }
@@ -3866,14 +3838,9 @@ export class Engine {
 
           case 'error': {
             state.eventsNeedResync = true
-            // Fail both surfaces (Go EventError: barrier + cp.Finalize(Failed)
-            // before sp.markFailed). The compact writer's finalize PATCHes
-            // inline, so the barrier must drain its queued running updates
-            // first or they would land past the terminal PATCH; the same
-            // !inProgressMode gate as the result path skips it when the
-            // preview card owns the progress display.
+            // Drain queued running PATCHes before the terminal render: they
+            // would otherwise land past it and revert the card's color.
             await barrier()
-            if (!sp.inProgressMode()) await cp.finalize('failed')
             await sp.markFailed()
             if (event.error !== undefined && p !== undefined) {
               await this.send(p, replyCtx, this.i18n.tf(Msg.Error, event.error.message))
@@ -3938,7 +3905,6 @@ export class Engine {
     event: Event,
     pendingSend: Promise<unknown> | undefined,
     sp: StreamPreview,
-    cp: CompactProgressWriter,
     barrier: () => Promise<void>,
     background: boolean = false,
     turnStartedBg: boolean = false,
@@ -4198,18 +4164,6 @@ export class Engine {
     // Guarantee the terminal PATCH has landed before the ✅ notification so
     // the progress card is not still mid-state when the push arrives.
     await barrier()
-    // Card-style structured progress card: when the stream preview did not
-    // take over the progress display, the compact writer's card is the one
-    // the user watched — settle its header state (Go EventResult's
-    // cp.Finalize; an errored result turn reports Failed, mirroring Go's
-    // EventError Finalize(Failed)). After the barrier so the writer's queued
-    // running updates cannot land past the terminal PATCH; finalize PATCHes
-    // inline (Go parity) and no-ops without a card.
-    if (!sp.inProgressMode()) {
-      // A max-tokens cut is terminal but not a completion claim: settle the
-      // card truncated instead of green 执行完成 (2026-09-09 oc_9eed).
-      await cp.finalize(event.stopReason === 'max-tokens' ? 'truncated' : errored ? 'failed' : 'completed')
-    }
     if (sendCompletionNotification && p !== undefined && state.pendingMessages.length === 0) {
       // Parked-ask wall time is the user deciding, not the agent working —
       // the hard cap above already exempts it (resumeCapPark banks it into
@@ -4319,9 +4273,9 @@ export class Engine {
     await this.cleanupInteractiveState(sessionKey, state)
 
     if (unexpectedExit && !state.engineStopped) {
-      // Go parity (cp.Finalize(Failed) on the unexpected-exit path, after its
-      // 2026-08-17 incident where the card froze mid-state until the user
-      // resent): fail the preview card rather than leaving it Running.
+      // Go parity (the 2026-08-17 incident where the card froze mid-state
+      // until the user resent): fail the preview card rather than leaving it
+      // Running.
       // Engine.stop deliberately leaves `stopped` unset (it distinguishes a
       // reload from a crash) and already rendered its ⏹ card — skip it.
       await state.preview?.markFailed()
@@ -4482,6 +4436,7 @@ export class Engine {
         await this.processInteractiveEvents(state, session, sessions, sessionKey, '', sendDone, queued.replyCtx)
       } catch (error) {
         console.error(`engine: queued turn failed (${sessionKey}): ${String(error)}`)
+        try { await state.preview?.markFailedIfUnsettled() } catch (markError) { console.warn(`engine: card finalize failed: ${String(markError)}`) }
       } finally {
         state.endTurn()
       }
@@ -5698,10 +5653,7 @@ export class Engine {
       await old.completeAndDetach()
     }
     const sp = newStreamPreview(this.streamPreview, p, replyCtx, undefined, state.sender, sessionKey)
-    const cp = newCompactProgressWriter(p, replyCtx, this.agent.name(),
-      this.i18n.currentLang(), undefined, state.sender)
     state.preview = sp
-    state.progressWriter = cp
     if (this.display.toolProgress && sp.canPreview()) {
       void sp.showPlaceholder(this.i18n.t(Msg.Processing))
     }

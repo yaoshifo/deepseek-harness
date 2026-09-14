@@ -20,7 +20,7 @@ import { ProjectStateStore } from '../../src/engine/project-state.ts'
 import { WorktreeMode } from '../../src/engine/worktree.ts'
 import { Msg } from '../../src/i18n/index.ts'
 import { registerNativeSettlementListener } from '../../src/index.ts'
-import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, ProviderSwitcher, RecentTurnsReader, SubtaskDelivery, TextPreviewContent } from '../../src/core/types.ts'
+import type { Agent, ContinuableChildStart, ContinuableDelegator, Message, Platform, ProgressContent, ProviderSwitcher, RecentTurnsReader, SubtaskDelivery } from '../../src/core/types.ts'
 import { SubtaskGather, failureBriefForAgentContext } from '../../src/engine/subtask.ts'
 import {
   createNoOverwriteAgent,
@@ -1874,7 +1874,7 @@ describe('pending native children visibility', () => {
     await runTurn(e, state, session)
 
     const terminal = [...p.contents].reverse()
-      .find(c => c.kind === 'text' && c.status?.state === 'completed') as TextPreviewContent | undefined
+      .find(c => c.kind === 'text' && c.status?.state === 'completed') as ProgressContent | undefined
     expect(terminal?.status?.pendingSubtasks).toBe(2)
     expect(terminal?.text).toContain('⏳ 2 subtask(s) in flight')
   })
@@ -1890,7 +1890,7 @@ describe('pending native children visibility', () => {
     await runTurn(e, state, session)
 
     const terminal = [...p.contents].reverse()
-      .find(c => c.kind === 'text' && c.status?.state === 'completed') as TextPreviewContent | undefined
+      .find(c => c.kind === 'text' && c.status?.state === 'completed') as ProgressContent | undefined
     expect(terminal?.status?.pendingSubtasks).toBeUndefined()
     expect(terminal?.text).not.toContain('subtask(s) in flight')
   })

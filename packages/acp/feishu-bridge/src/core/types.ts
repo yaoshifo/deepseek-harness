@@ -13,7 +13,7 @@
  * @module dsh-feishu-bridge/core-types
  */
 
-import type { ProgressCardPayload, TodoItem } from '../progress.ts'
+import type { TodoItem } from '../progress.ts'
 import type { ContextSnapshotValues } from '../context/types.ts'
 import type { I18n } from '../i18n/index.ts'
 
@@ -739,26 +739,14 @@ export interface ProgressStatus {
 /** Header states a card parked on an ask settles its waiting header to when the ask resolves. */
 export type ParkOutcome = 'approved' | 'rejected' | 'answered' | 'cancelled'
 
-/** Text-path preview content: a display body with an optional structured status. */
-export interface TextPreviewContent {
+/** Content a preview-capable platform renders in place: a display body with an optional structured status. */
+export interface ProgressContent {
   kind: 'text'
   text: string
   status?: ProgressStatus
   /** Background-task hint; non-terminal cards render it beside the stop button, terminal cards inside the body. */
   bgTaskHint?: string
 }
-
-/** Card-path preview content: a structured progress-card payload. */
-export interface CardPreviewContent {
-  kind: 'card'
-  payload: ProgressCardPayload
-}
-
-/**
- * Content a preview-capable platform renders in place: a structured
- * progress-card payload, or text with an optional structured status.
- */
-export type ProgressContent = TextPreviewContent | CardPreviewContent
 
 /** Optional: platform can update a previously sent message in place (PATCH). */
 export interface MessageUpdater {

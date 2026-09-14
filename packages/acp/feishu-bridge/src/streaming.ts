@@ -27,7 +27,6 @@ import {
   type Platform,
   type ProgressContent,
   type ProgressStatus,
-  type TextPreviewContent,
 } from './core/types.ts'
 import type { AsyncSender } from './async-sender.ts'
 import { splitMcpToolName } from './core/mcp-health.ts'
@@ -54,24 +53,53 @@ export interface StreamPreviewCfg {
   enabled: boolean
   /** Platforms where streaming preview is disabled. */
   disabledPlatforms?: string[]
-  /** Minimum ms between updates. */
+  /**
+   * Minimum ms between text-path updates. This throttle only runs in the
+   * plain-text window before the first thinking or tool event (the appendText
+   * path); progress cards use {@link StreamPreviewCfg.progressFlushIntervalMs}.
+   */
   intervalMs: number
-  /** Minimum new chars before sending an update. */
+  /** Minimum new chars before a text-path update; same plain-text window as {@link StreamPreviewCfg.intervalMs}. */
   minDeltaChars: number
-  /** Max preview length. */
+  /**
+   * Max text-path preview length (the plain-text window and a frozen card
+   * without progress entries).
+   */
   maxChars: number
+  /** Minimum ms between progress-card PATCHes; 0 flushes every progress change immediately. */
+  progressFlushIntervalMs: number
   /** Enable partial-message streaming for earlier preview. */
   partial?: boolean
 }
 
+/** Default minimum ms between progress-card PATCHes (the {@link StreamPreviewCfg.progressFlushIntervalMs} default). */
+export const progressFlushInterval = 300
+
 /**
- * Default preview configuration: enabled on all platforms, 800ms update
- * interval, 15-char minimum delta, 2000-char cap, partial streaming off.
+ * Minimum ms between progress-card reissues (the preview's default reissue
+ * cooldown), aligned with the engine's chat-change bump debounce window
+ * (Engine.bumpDebounceInterval = 2000) so a rename + avatar notice pair
+ * ~1.4s apart collapses into one tail move. Inside the window the suppressed
+ * call defers the tail rearrangement only: content still PATCHes in place.
+ */
+export const previewReissueCooldownMs = 2000
+
+/**
+ * Default preview configuration: enabled on all platforms, 800ms text update
+ * interval, 15-char minimum delta, 2000-char cap, 300ms progress PATCH
+ * interval, partial streaming off.
  *
  * @returns A fresh cfg populated with the defaults above.
  */
 export function defaultStreamPreviewCfg(): StreamPreviewCfg {
-  return { enabled: true, disabledPlatforms: [], intervalMs: 800, minDeltaChars: 15, maxChars: 2000 }
+  return {
+    enabled: true,
+    disabledPlatforms: [],
+    intervalMs: 800,
+    minDeltaChars: 15,
+    maxChars: 2000,
+    progressFlushIntervalMs: progressFlushInterval,
+  }
 }
 
 /** Promise-queue mutex replacing Go's sync.Mutex. */
@@ -101,11 +129,11 @@ const runeCount = (s: string): number => Array.from(s).length
 
 /**
  * One entry in the tool-progress display card. Tool entries (isTool=true)
- * can be updated with a result; non-tool entries (thinking) are immutable
- * once created.
+ * can be updated with a result; non-tool entries (compaction notices) are
+ * immutable once created.
  */
 export class ProgressEntry {
-  /** Fully rendered text for non-tool entries (thinking). */
+  /** Fully rendered text for non-tool entries (compaction notices). */
   text: string = ''
   /** Tool entry: "**HH:MM:SS**" header (timestamp only, tag at render time). */
   header: string = ''
@@ -123,8 +151,6 @@ export class ProgressEntry {
   hasResult: boolean = false
   /** True for tool call entries (can receive result update). */
   isTool: boolean = false
-  /** True for thinking entries (rendered as plain text, 5 lines). */
-  isThinking: boolean = false
   /** True for compaction entries (counted in summary line). */
   isCompact: boolean = false
   /** Tool call sequence number within this turn (0 = not assigned). */
@@ -161,21 +187,6 @@ export class ProgressEntry {
     } else {
       tag = toolTagForProgress(this.toolName, maxNameLen, status)
     }
-    // Thinking entries: code block with 5-line body, no status (they settle
-    // outside the tool-result flow).
-    if (this.isThinking) {
-      let b = this.header
-      b += ' '
-      b += tag
-      if (this.seq > 0) b += ` · ${this.seq}`
-      if (isLatest) b += ' 🚨'
-      b += '\n```\n'
-      const padded = padToFixedLines(this.body, 5)
-      const lines = padded.split('\n', 2)
-      b += padLineWidth(lines[0] ?? '', minCodeBlockLineWidth) + (lines[1] !== undefined ? `\n${lines[1]}` : '')
-      b += '\n```'
-      return b
-    }
     let b = this.header
     b += ' '
     b += tag
@@ -198,22 +209,6 @@ export class ProgressEntry {
     b += '\n```'
     return b
   }
-}
-
-/**
- * Keep the first maxLines lines plus an overflow marker (Go truncateToMaxLines).
- * Lines are counted with the card renderer's line endings (see splitCardLines).
- *
- * @param s - Text to truncate.
- * @param maxLines - Maximum number of lines to keep.
- * @returns s with line endings normalized when it fits; otherwise the kept lines plus the overflow marker.
- */
-export function truncateToMaxLines(s: string, maxLines: number): string {
-  if (s === '' || maxLines <= 0) return s
-  const lines = splitCardLines(s)
-  if (lines.length <= maxLines) return lines.join('\n')
-  const extra = lines.length - maxLines
-  return `${lines.slice(0, maxLines).join('\n')}\n... (${extra} more lines)`
 }
 
 /**
@@ -399,9 +394,6 @@ export function toolTagForProgress(name: string, maxLen: number, status: ToolCal
     case 'bash':
       icon = '💻'
       break
-    case 'Thinking':
-      icon = '💭'
-      break
     default:
       // 前缀组细分：MCP / memory / session；其余保持 ⚙️ 回落。
       if (name.startsWith('mcp__')) icon = '🔌'
@@ -459,10 +451,9 @@ export function parseSkillToolUse(toolName: string, toolInput: string): [string,
 
 /**
  * Build a tool progress entry: timestamped header, escaped body (bash gets a
- * language tag), Thinking entries flagged, and Skill entries relabeled with
- * the skill name.
+ * language tag), and Skill entries relabeled with the skill name.
  *
- * @param name - Invoked tool name; "Thinking" yields a thinking entry, "Bash" gets a bash language tag.
+ * @param name - Invoked tool name; "Bash" gets a bash language tag.
  * @param summary - Tool input shown as the code block body.
  * @param toolID - tool_use id for matching a later result update.
  * @param now - Timestamp source for the header.
@@ -481,7 +472,6 @@ export function newToolProgressEntry(name: string, summary: string, toolID: stri
     body,
     lang,
     isTool: true,
-    isThinking: name === 'Thinking',
     toolID,
     toolName: name,
   })
@@ -510,9 +500,6 @@ export function escapeMarkdownChars(s: string): string {
 /** Max visible progress entries (circular buffer slots). */
 export const maxProgressLines = 3
 
-/** Minimum time between progress-card PATCHes. */
-export const progressFlushInterval = 300
-
 interface TimerHandle {
   /** Go timer.Stop(): true when the timer had not fired yet (callback will never run). */
   stop(): boolean
@@ -537,7 +524,27 @@ export class StreamPreview {
    */
   fullText: string = ''
   private lastSentText = ''
+  /**
+   * Dedup key of the content last actually sent (see {@link sentKeyOf}); ''
+   * before anything was sent. Written wherever lastSentText is written and
+   * only for content that reached the platform (a failed PATCH rolls it back).
+   *
+   * The plain-text resets that clear lastSentText to force a body PATCH — the
+   * placeholder reset and the progress flushes — deliberately leave this key
+   * alone: clearing it there would disable the whole-card dedup for good.
+   */
+  private lastSentKey = ''
   private lastSentAt = 0
+  /**
+   * Epoch ms of the last successful card reissue; 0 before the first one
+   * (a card sent by sendPreviewStart, not by a reissue, is not throttled).
+   */
+  private lastReissueAt = 0
+  /**
+   * Minimum ms between card reissues (previewReissueCooldownMs by default).
+   * @internal White-box: ported same-package tests read/write this directly.
+   */
+  reissueCooldownMs = previewReissueCooldownMs
   private lastSentViaUpdate = false
   /**
    * Platform message handle of the preview card; undefined until the card exists.
@@ -809,7 +816,7 @@ export class StreamPreview {
   }
 
   /** Progress display text wrapped with its structured status. Must hold the lock. */
-  private progressContentLocked(text: string): TextPreviewContent {
+  private progressContentLocked(text: string): ProgressContent {
     return {
       kind: 'text',
       text,
@@ -818,8 +825,31 @@ export class StreamPreview {
     }
   }
 
+  /**
+   * Dedup key for one flush. Plain text keys on the body alone; status-bearing
+   * (progress) content also keys on the title state and clock, the tool-call
+   * count, the pending-subtask count, and the background hint — every field a
+   * PATCH renders. Must hold the lock.
+   *
+   * @param text - Transformed body about to be sent.
+   * @param content - Structured content that body belongs to.
+   * @returns A key that differs whenever a re-PATCH would change the card.
+   */
+  private sentKeyOf(text: string, content: ProgressContent): string {
+    const status = content.status
+    if (status === undefined) return text
+    return [
+      text,
+      status.state,
+      status.ts,
+      String(status.toolCallSeq),
+      String(status.pendingSubtasks ?? 0),
+      content.bgTaskHint ?? '',
+    ].join('\0')
+  }
+
   /** Send the current preview content to the platform. Must hold the lock. */
-  private async flushLocked(contentIn: TextPreviewContent): Promise<void> {
+  private async flushLocked(contentIn: ProgressContent): Promise<void> {
     // Terminal latch: a throttled flush racing the stopped render must not
     // overwrite the ⏹ card with Running content. Completed and failed cards
     // rebuild with their own terminal status, and the stall-retry flow
@@ -832,7 +862,14 @@ export class StreamPreview {
     // renders the header state, and progress flushes have their own throttle.
     // Plain text skips unchanged or empty bodies.
     if (contentIn.status === undefined && (text === this.lastSentText || text === '')) return
-    const content: TextPreviewContent = {
+    const key = this.sentKeyOf(text, contentIn)
+    // Whole-card dedup: a progress flush whose body, title state/clock, counts,
+    // and hint all match what the card already shows would PATCH identical
+    // content (the thinking stream re-flushes the same body every interval,
+    // with only the title clock moving inside one second).
+    const displaced = this.displacedLocked()
+    if (contentIn.status !== undefined && this.previewMsgID !== undefined && key === this.lastSentKey && displaced !== true) return
+    const content: ProgressContent = {
       kind: 'text',
       text,
       ...(contentIn.status !== undefined ? { status: contentIn.status } : {}),
@@ -871,6 +908,7 @@ export class StreamPreview {
         this.previewMsgID = this.replyCtx
       }
       this.lastSentText = text
+      this.lastSentKey = key
       this.lastSentViaUpdate = false
       this.lastSentAt = Date.now()
       return
@@ -882,7 +920,9 @@ export class StreamPreview {
     // the tail carrying this flush's content instead; on send failure fall
     // through to the in-place PATCH (fresh content outranks the tail
     // position) and retry the reissue on the next flush.
-    if (this.displacedLocked() === true && await this.reissueLocked(content)) return
+    // Only a running card heals here (reissueLocked refuses settled cards), so
+    // the cooldown defers a tail rearrangement, never a content update.
+    if (displaced === true && await this.reissueLocked(content)) return
 
     // Update existing preview message
     if (this.async !== undefined) {
@@ -891,8 +931,10 @@ export class StreamPreview {
       // Optimistically update lastSentText so concurrent flushes with the
       // same content don't queue duplicate PATCHes; rewind on failure.
       const prevLastSentText = this.lastSentText
+      const prevLastSentKey = this.lastSentKey
       const prevLastSentViaUpdate = this.lastSentViaUpdate
       this.lastSentText = text
+      this.lastSentKey = key
       this.lastSentViaUpdate = true
       this.lastSentAt = Date.now()
       const queued = this.async.enqueueCoalescable(async () => {
@@ -905,12 +947,18 @@ export class StreamPreview {
             // flush; must NOT count toward degradation.
             const checker = asTransientPatchErrorChecker(this.platform)
             if (checker !== undefined && checker.isTransientPatchError(error)) {
-              if (this.lastSentText === sentText) this.lastSentText = prevLastSentText
+              if (this.lastSentText === sentText) {
+                this.lastSentText = prevLastSentText
+                this.lastSentKey = prevLastSentKey
+              }
               return
             }
             this.failedPatchStreak++
             // Rewind only if no newer flush has overwritten lastSentText.
-            if (this.lastSentText === sentText) this.lastSentText = prevLastSentText
+            if (this.lastSentText === sentText) {
+              this.lastSentText = prevLastSentText
+              this.lastSentKey = prevLastSentKey
+            }
             if (this.failedPatchStreak >= maxConsecutivePatchFailures) {
               console.warn(`stream preview: too many consecutive async update failures, degrading (streak ${this.failedPatchStreak})`)
               this.degraded = true
@@ -927,7 +975,10 @@ export class StreamPreview {
         // runs, so its failure rewind never fires either — rewind the
         // optimistic claim here or finish() would skip the final PATCH for
         // content the card never received.
-        if (this.lastSentText === sentText) this.lastSentText = prevLastSentText
+        if (this.lastSentText === sentText) {
+          this.lastSentText = prevLastSentText
+          this.lastSentKey = prevLastSentKey
+        }
         this.lastSentViaUpdate = prevLastSentViaUpdate
       }
       return
@@ -948,6 +999,7 @@ export class StreamPreview {
     }
     this.failedPatchStreak = 0
     this.lastSentText = text
+    this.lastSentKey = key
     this.lastSentViaUpdate = true
     this.lastSentAt = Date.now()
   }
@@ -1062,7 +1114,7 @@ export class StreamPreview {
     }
   }
   /** Content to display when freezing the preview (progress lines or fullText). */
-  private buildFreezeContentLocked(): TextPreviewContent {
+  private buildFreezeContentLocked(): ProgressContent {
     if (this.progressMode && this.progressEntries.length > 0) {
       let display = this.buildProgressDisplayLocked()
       if (this.transform !== undefined) display = this.transform(display)
@@ -1215,17 +1267,25 @@ export class StreamPreview {
 
   /**
    * Reissue the preview card (create new, delete old) carrying the given
-   * content so it becomes the chat's latest message again. Not throttled:
-   * rename/avatar notices must not eat the last bump. A stopped card is
-   * terminal — a reissue must not resurrect it as a running card
-   * (markStopped leaves degraded=false, so the guard list alone cannot catch
-   * it; 2026-08-25 oc_d22d incident).
+   * content so it becomes the chat's latest message again.
+   *
+   * Reissues are rate-limited by a cooldown window so a burst of bumps cannot
+   * churn the chat: inside the window the call returns false without sending.
+   * That suppression is not a lost update — callers keep the card and PATCH
+   * the same content in place, so only the tail position is deferred until
+   * the next call, while the bump that carried it is re-tried by
+   * {@link StreamPreview.bumpToEnd}.
+   *
+   * A stopped card is terminal — a reissue must not resurrect it as a running
+   * card (markStopped leaves degraded=false, so the guard list alone cannot
+   * catch it; 2026-08-25 oc_d22d incident).
    * Must hold the lock.
    * @param content - Text content the reissued card carries.
    * @returns True when the new card was sent.
    */
-  private async reissueLocked(content: TextPreviewContent): Promise<boolean> {
+  private async reissueLocked(content: ProgressContent): Promise<boolean> {
     if (this.previewMsgID === undefined || this.degraded || this.completed || this.failed || this.stoppedCardRendered) return false
+    if (this.lastReissueAt !== 0 && Date.now() - this.lastReissueAt < this.reissueCooldownMs) return false
     const starter = asPreviewStarter(this.platform)
     if (starter === undefined) return false
     let newHandle: unknown
@@ -1238,7 +1298,9 @@ export class StreamPreview {
     const oldHandle = this.previewMsgID
     this.previewMsgID = newHandle
     this.placedAtMs = Date.now()
+    this.lastReissueAt = this.placedAtMs
     this.lastSentText = content.text
+    this.lastSentKey = this.sentKeyOf(content.text, content)
     this.lastSentViaUpdate = false
     const cleaner = asPreviewCleaner(this.platform)
     if (cleaner !== undefined) {
@@ -1354,6 +1416,7 @@ export class StreamPreview {
     await this.locked(async () => {
       if (this.degraded || this.previewMsgID === undefined || this.fullText !== '') return
       this.lastSentText = '' // force PATCH even if text is similar
+      this.lastSentKey = ''
       await this.flushLocked({ kind: 'text', text })
     })
   }
@@ -1396,24 +1459,6 @@ export class StreamPreview {
   private addSkillName(name: string): void {
     if (this.skillNames.includes(name)) return
     this.skillNames.push(name)
-  }
-
-  /**
-   * Clear per-turn tool-progress state while keeping the card alive; used by
-   * the unsolicited reader so each background turn starts with a clean
-   * 工具调用 section on the one shared card.
-   */
-  async resetProgressEntries(): Promise<void> {
-    return this.locked(() => {
-      this.progressEntries = []
-      this.progressWriteIdx = 0
-      this.progressLatestIdx = 0
-      this.progressTotalCount = 0
-      this.toolCallSeq = 0
-      this.failureCount = 0
-      this.compactCount = 0
-      this.skillNames = []
-    })
   }
 
   /**
@@ -1531,15 +1576,16 @@ export class StreamPreview {
 
   /**
    * Flush the progress display with rate limiting: within
-   * progressFlushInterval of the last flush, skip the PATCH and arm a
-   * delayed flush instead. Must hold the lock.
+   * cfg.progressFlushIntervalMs of the last flush, skip the PATCH and arm a
+   * delayed flush instead; interval 0 disables the throttle. Must hold the lock.
    */
   private async flushProgressLocked(text: string): Promise<void> {
     const now = Date.now()
-    if (now - this.lastProgressFlush < progressFlushInterval) {
+    const interval = this.cfg.progressFlushIntervalMs
+    if (interval > 0 && now - this.lastProgressFlush < interval) {
       // Too soon — schedule a delayed flush if none pending.
       if (this.timer === undefined || this.timer.stop()) {
-        this.timer = this.armTimer(progressFlushInterval - (now - this.lastProgressFlush), async () => {
+        this.timer = this.armTimer(interval - (now - this.lastProgressFlush), async () => {
           if (this.degraded || this.previewMsgID === undefined) return
           const display = this.buildProgressDisplayLocked()
           this.lastSentText = ''
@@ -1557,11 +1603,13 @@ export class StreamPreview {
   /**
    * Variant for high-frequency updaters (per text_delta): defers the
    * expensive buildProgressDisplayLocked to the actual flush so the rebuild
-   * runs at most once per progressFlushInterval. Must hold the lock.
+   * runs at most once per cfg.progressFlushIntervalMs; interval 0 disables
+   * the throttle. Must hold the lock.
    */
   private async flushProgressRebuildLocked(): Promise<void> {
     const now = Date.now()
-    if (now - this.lastProgressFlush >= progressFlushInterval) {
+    const interval = this.cfg.progressFlushIntervalMs
+    if (interval <= 0 || now - this.lastProgressFlush >= interval) {
       this.lastProgressFlush = now
       this.lastSentText = ''
       await this.flushLocked(this.progressContentLocked(this.buildProgressDisplayLocked()))
@@ -1570,7 +1618,7 @@ export class StreamPreview {
     // Within the throttle window: arm a delayed flush that rebuilds with the
     // latest analysisText; a pending timer is reused.
     if (this.timer === undefined || this.timer.stop()) {
-      this.timer = this.armTimer(progressFlushInterval - (now - this.lastProgressFlush), async () => {
+      this.timer = this.armTimer(interval - (now - this.lastProgressFlush), async () => {
         if (this.degraded || this.previewMsgID === undefined) return
         const display = this.buildProgressDisplayLocked()
         this.lastSentText = ''
@@ -1834,6 +1882,7 @@ export class StreamPreview {
     if (this.async !== undefined) {
       const handle = this.previewMsgID
       this.lastSentText = display
+      this.lastSentKey = this.sentKeyOf(display, content)
       this.lastSentViaUpdate = true
       this.degraded = false
       this.async.enqueueTerminal(async () => {
@@ -1856,6 +1905,7 @@ export class StreamPreview {
       return
     }
     this.lastSentText = display
+    this.lastSentKey = this.sentKeyOf(display, content)
     this.lastSentViaUpdate = true
     this.degraded = false
     if (truncated) await this.deliverAnswer(answerText)
@@ -1864,6 +1914,20 @@ export class StreamPreview {
   /** Mark the turn failed: final PATCH with a red header. */
   async markFailed(): Promise<void> {
     await this.locked(async () => {
+      await this.markFailedLocked()
+    })
+  }
+
+  /**
+   * Fail the card unless it already settled; the turn-loop catch handlers
+   * call this. Separate from {@link StreamPreview.markFailed} because
+   * markFailedLocked sets failed unconditionally, while an error can reach a
+   * catch handler after the turn already settled (completed, truncated, or
+   * stopped) — failing a settled card would overwrite its terminal render.
+   */
+  async markFailedIfUnsettled(): Promise<void> {
+    await this.locked(async () => {
+      if (this.completed || this.failed || this.turnTruncated || this.stoppedCardRendered) return
       await this.markFailedLocked()
     })
   }
@@ -1882,6 +1946,7 @@ export class StreamPreview {
     if (this.async !== undefined) {
       const handle = this.previewMsgID
       this.lastSentText = display
+      this.lastSentKey = this.sentKeyOf(display, content)
       this.lastSentViaUpdate = true
       this.degraded = false
       this.async.enqueueTerminal(async () => {
@@ -1902,6 +1967,7 @@ export class StreamPreview {
       return
     }
     this.lastSentText = display
+    this.lastSentKey = this.sentKeyOf(display, content)
     this.lastSentViaUpdate = true
     this.degraded = false
   }

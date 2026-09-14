@@ -8,14 +8,10 @@
 
 import { describe, expect, it } from 'vitest'
 import { jArr, jObj, jParse, jStr, type JsonObj } from '../stubs/json.ts'
-import { buildProgressCardPayload } from '../../src/progress.ts'
 import { noSpinner, spinnerKeyForState } from '../../src/feishu/spinner.ts'
 import {
   collapseStructuralBlankLines,
   buildPreviewCardJSON,
-  buildProgressCardJSONFromPayload,
-  formatProgressToolInput,
-  formatProgressToolResult,
   injectReplyButtons,
   injectStopButton,
   injectStoppedButtons,
@@ -157,62 +153,6 @@ describe('injectReplyButtons', () => {
   }
 })
 
-describe('formatProgressToolInput todo rendering', () => {
-  const todoJson = JSON.stringify({
-    todos: [
-      { content: 'step one', status: 'completed' },
-      { content: 'step two', status: 'in_progress' },
-    ],
-  })
-
-  it('renders a dsh todo_write input as a status-icon checklist', () => {
-    const out = formatProgressToolInput('todo_write', todoJson)
-    expect(out).toContain('✅ step one')
-    expect(out).toContain('🔄 step two')
-    expect(out).not.toContain('```')
-  })
-
-  it('renders a Claude-style TodoWrite input as a status-icon checklist', () => {
-    const out = formatProgressToolInput('TodoWrite', todoJson)
-    expect(out).toContain('✅ step one')
-    expect(out).toContain('🔄 step two')
-    expect(out).not.toContain('```')
-  })
-
-  it('falls back to a code block for non-todo tools', () => {
-    const out = formatProgressToolInput('bash', 'echo hi')
-    expect(out).toContain('```')
-  })
-
-  it('strips bare HTML tags from todo content and active form', () => {
-    const dirty = JSON.stringify({
-      todos: [
-        { content: 'fix <anonymous> handler', status: 'pending', activeForm: 'Fixing the <script>evil one' },
-      ],
-    })
-    const out = formatProgressToolInput('todo_write', dirty)
-    expect(out).toContain('⏳')
-    expect(out).not.toContain('<anonymous>')
-    expect(out).not.toContain('<script>')
-  })
-})
-
-describe('formatProgressToolResult renderer line counting', () => {
-  it('counts \r-separated progress updates as separate lines', () => {
-    // git checkout progress: one \n-line holding 10 \r-separated updates.
-    const segments = Array.from({ length: 10 }, (_, i) => `Updating files:  ${65 + i}% (${6530 + i * 68}/9996)`)
-    const text = `Preparing worktree\n${segments.join('\r')}\nHEAD is now at 1246f5`
-    const out = formatProgressToolResult(text)
-    // The card markdown renderer breaks a line on a lone \r, so the fenced
-    // block must not carry one and must truncate with the overflow marker
-    // instead of the 120-char mid-line cut.
-    expect(out).not.toContain('\r')
-    expect(out).toContain('Updating files:  65% (6530/9996)')
-    expect(out).not.toContain('Updating files:  68%')
-    expect(out).toContain('... (9 more lines)')
-  })
-})
-
 describe('injectReplyButtons status text', () => {
   function findButtonColumnSet(cardJSON: string): JsonObj | undefined {
     const card = jParse(cardJSON)
@@ -313,79 +253,7 @@ describe('collapseStructuralBlankLines', () => {
   })
 })
 
-describe('payload path HTML sanitization', () => {
-  it('error entry prose loses bare HTML tags but keeps the text_tag chrome', () => {
-    const payload = buildProgressCardPayload(
-      [{ kind: 'error', text: 'TypeError: boom\n    at <anonymous>:1:1' }],
-      false, 'Agent', 'zh', 'failed', [], '',
-    )
-    expect(payload).toBeDefined()
-    const cardJSON = buildProgressCardJSONFromPayload(payload!, noSpinner)
-    // The untrusted text is sanitized before the trusted <text_tag> chrome
-    // is composed around it: a bare tag in an error stack would otherwise
-    // reach the card markdown and trigger the 11311 PATCH-rejection loop.
-    expect(cardJSON).toContain("<text_tag color='red'>")
-    expect(cardJSON).not.toContain('<anonymous>')
-  })
-
-  it('tool result strips tags in prose outside fences and keeps fenced content verbatim', () => {
-    const payload = buildProgressCardPayload(
-      [{ kind: 'tool_result', tool: 'Bash', text: 'wrote <anonymous> bytes\n```\n<div>kept</div>\n```' }],
-      false, 'Agent', 'zh', 'running', [], '',
-    )
-    expect(payload).toBeDefined()
-    const cardJSON = buildProgressCardJSONFromPayload(payload!, noSpinner)
-    expect(cardJSON).toContain('<div>kept</div>')
-    expect(cardJSON).not.toContain('<anonymous>')
-  })
-
-  it('tool input strips tags in prose outside embedded fences', () => {
-    const payload = buildProgressCardPayload(
-      [{ kind: 'tool_use', tool: 'Edit', text: 'editing <anonymous> section\n```\n<span>kept</span>\n```' }],
-      false, 'Agent', 'zh', 'running', [], '',
-    )
-    expect(payload).toBeDefined()
-    const cardJSON = buildProgressCardJSONFromPayload(payload!, noSpinner)
-    expect(cardJSON).toContain('<span>kept</span>')
-    expect(cardJSON).not.toContain('<anonymous>')
-  })
-
-  it('info entry prose loses bare HTML tags', () => {
-    const payload = buildProgressCardPayload(
-      [{ kind: 'info', text: 'see <anonymous> for details' }],
-      false, 'Agent', 'zh', 'running', [], '',
-    )
-    expect(payload).toBeDefined()
-    const cardJSON = buildProgressCardJSONFromPayload(payload!, noSpinner)
-    expect(cardJSON).toContain('see')
-    expect(cardJSON).not.toContain('<anonymous>')
-  })
-})
-
 describe('truncated terminal state rendering', () => {
-  it('payload cards title a truncated turn 输出截断 on orange', () => {
-    const payload = buildProgressCardPayload(
-      [{ kind: 'info', text: '部分回答' }],
-      false, 'Agent', 'zh', 'truncated', [], '17:36:48',
-    )
-    expect(payload).toBeDefined()
-    const card = jParse(buildProgressCardJSONFromPayload(payload!, noSpinner))
-    const header = jObj(card.header)
-    expect(jStr(header.template)).toBe('orange')
-    expect(jStr(jObj(header.title).content)).toContain('输出截断')
-  })
-
-  it('payload cards localize the truncated title to English', () => {
-    const payload = buildProgressCardPayload(
-      [{ kind: 'info', text: 'partial' }],
-      false, 'Agent', 'en', 'truncated', [], '',
-    )
-    expect(payload).toBeDefined()
-    const card = jParse(buildProgressCardJSONFromPayload(payload!, noSpinner))
-    expect(jStr(jObj(card.header).template)).toBe('orange')
-    expect(jStr(jObj(jObj(card.header).title).content)).toContain('Truncated')
-  })
-
   it('preview text cards title a truncated status 输出截断', () => {
     const card = jParse(buildPreviewCardJSON('部分回答', noSpinner, {
       state: 'truncated', ts: '17:36:48', toolCallSeq: 9,

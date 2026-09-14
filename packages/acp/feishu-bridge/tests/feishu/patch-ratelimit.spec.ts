@@ -16,7 +16,7 @@ describe('patchRateWait', () => {
     // Go's nil-limiter no-op maps to not calling wait at all (the platform
     // always constructs a limiter); here the first burst token resolves.
     const p = new FeishuPlatform({ appID: 'cli_x', appSecret: 's' })
-    await expect(p.patchRateWait()).resolves.toBeUndefined()
+    await expect(p.patchRateWait('card-a')).resolves.toBeUndefined()
   })
 
   it('burst passes immediately', async () => {
@@ -47,25 +47,47 @@ describe('patchRateWait', () => {
 
   it('platform limiter initialized by default', async () => {
     const p = new FeishuPlatform({ appID: 'cli_x', appSecret: 's' })
-    // burst=3 instant, 4th blocks ~120ms.
+    // burst=3 instant, the 4th waits out one default 200ms refill.
     for (let i = 0; i < 3; i++) {
       const start = Date.now()
-      await p.patchRateWait()
+      await p.patchRateWait('card-a')
       expect(Date.now() - start).toBeLessThan(50)
     }
     const start = Date.now()
-    await p.patchRateWait()
+    await p.patchRateWait('card-a')
     expect(Date.now() - start).toBeGreaterThanOrEqual(60)
   })
 
   it('patch rate interval configurable', async () => {
     const p = new FeishuPlatform({ appID: 'cli_x', appSecret: 's', patchRateIntervalMs: 5 })
     for (let i = 0; i < 3; i++) {
-      await p.patchRateWait()
+      await p.patchRateWait('card-a')
     }
     const start = Date.now()
-    await p.patchRateWait()
+    await p.patchRateWait('card-a')
     expect(Date.now() - start).toBeGreaterThanOrEqual(3)
+  })
+
+  it('paces each card message in its own bucket', async () => {
+    const p = new FeishuPlatform({ appID: 'cli_x', appSecret: 's', patchRateIntervalMs: 200 })
+    for (let i = 0; i < 3; i++) await p.patchRateWait('card-a')
+    const hotStart = Date.now()
+    await p.patchRateWait('card-a')
+    // card-a's burst is spent, so its 4th PATCH waits out a refill...
+    expect(Date.now() - hotStart).toBeGreaterThanOrEqual(60)
+    // ...while card-b, on its own bucket and untouched by card-a's traffic,
+    // still holds a full burst (a shared bucket would have charged it ~200ms).
+    const otherStart = Date.now()
+    await p.patchRateWait('card-b')
+    expect(Date.now() - otherStart).toBeLessThan(50)
+  })
+
+  it('aborts a blocked wait for one card', async () => {
+    const p = new FeishuPlatform({ appID: 'cli_x', appSecret: 's', patchRateIntervalMs: 600 })
+    for (let i = 0; i < 3; i++) await p.patchRateWait('card-a')
+    const controller = new AbortController()
+    setTimeout(() => { controller.abort() }, 20)
+    await expect(p.patchRateWait('card-a', controller.signal)).rejects.toThrow('aborted')
   })
 
   it('limiter refill allows sustained pacing', async () => {

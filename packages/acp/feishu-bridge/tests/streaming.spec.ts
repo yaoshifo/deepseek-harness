@@ -21,12 +21,12 @@ import {
   newToolProgressEntry,
   padToFixedLines,
   parseSkillToolUse,
+  progressFlushInterval,
   toolTagForProgress,
-  truncateToMaxLines,
   type StreamPreviewCfg,
 } from '../src/streaming.ts'
 import { newAsyncSender } from '../src/async-sender.ts'
-import type { FileAttachment, Platform, ProgressContent, TextPreviewContent } from '../src/core/types.ts'
+import type { FileAttachment, Platform, ProgressContent } from '../src/core/types.ts'
 import { previewText, statusOf } from './stubs/preview-content.ts'
 import { createStubPlatform, type StubPlatform } from './stubs/engine-stubs.ts'
 import { feishuBusinessCode, feishuPatchRateLimitCode } from '../src/feishu/retry.ts'
@@ -273,7 +273,14 @@ const apiErr = (code: number, msg = 'This operation triggers the frequency limit
   Object.assign(new Error('Request failed with status code 400'), { response: { data: { code, msg } } })
 
 function cfg(over: Partial<StreamPreviewCfg> = {}): StreamPreviewCfg {
-  return { enabled: true, intervalMs: 50, minDeltaChars: 1, maxChars: 500, ...over }
+  return {
+    enabled: true,
+    intervalMs: 50,
+    minDeltaChars: 1,
+    maxChars: 500,
+    progressFlushIntervalMs: progressFlushInterval,
+    ...over,
+  }
 }
 
 /** Go newSyncStreamPreviewForFallback: started preview in progress mode. */
@@ -1130,11 +1137,11 @@ describe('StreamPreview', () => {
     await sp.setBackgroundHint('💡 1 个后台任务')
     await sleep(400)
     expect(sp.buildProgressDisplayLocked()).not.toContain('💡 1 个后台任务')
-    const running = mp.contents[mp.contents.length - 1] as TextPreviewContent
+    const running = mp.contents[mp.contents.length - 1] as ProgressContent
     expect(running.bgTaskHint).toBe('💡 1 个后台任务')
     await sp.setBackgroundHint('')
     await sleep(400)
-    const cleared = mp.contents[mp.contents.length - 1] as TextPreviewContent
+    const cleared = mp.contents[mp.contents.length - 1] as ProgressContent
     expect(cleared.bgTaskHint).toBeUndefined()
   })
 
@@ -1150,7 +1157,7 @@ describe('StreamPreview', () => {
     }))
     await sp.setBackgroundHint('💡 2 个后台任务')
     await sp.markCompleted()
-    const final = mp.contents[mp.contents.length - 1] as TextPreviewContent
+    const final = mp.contents[mp.contents.length - 1] as ProgressContent
     expect(final.text).toContain('💡 2 个后台任务')
   })
 })
@@ -1625,7 +1632,7 @@ describe('subagent progress entries', () => {
     await sp.appendProgress(newToolProgressEntry('Bash', 'ls', 't1'))
     await sp.setPendingSubtasks(4)
     await sp.markCompleted()
-    const final = mp.contents[mp.contents.length - 1] as TextPreviewContent
+    const final = mp.contents[mp.contents.length - 1] as ProgressContent
     expect(final.status?.pendingSubtasks).toBe(4)
     // Unchanged counts skip the flush.
     const before = mp.messages.length
@@ -1670,14 +1677,6 @@ describe('tool tag status colors', () => {
     const out = e.render(false)
     expect(out).toContain("<text_tag color='green'>📚 tdd</text_tag>")
     expect(out).not.toContain('🟢')
-  })
-
-  it('render drops the fixed status emoji on thinking entries', () => {
-    const e = newToolProgressEntry('Thinking', 'deep thought', 't1')
-    const out = e.render(false)
-    expect(out).toContain("<text_tag color='blue'>💭 Thinking</text_tag>")
-    expect(out).not.toContain('🟢')
-    expect(out).not.toContain('🟡')
   })
 })
 
@@ -1759,15 +1758,26 @@ describe('bump to end', () => {
     }
   })
 
-  it('back-to-back bumps both run (last bump wins)', async () => {
+  it('back-to-back bumps coalesce inside the cooldown window (last bump wins)', async () => {
     const mp = createMockBumpPlatform()
     const sp = await newSyncStreamPreviewForFallback(mp)
     const firstHandle = sp.previewMsgID
     await sp.bumpToEnd()
+    const secondHandle = sp.previewMsgID
+    expect(mp.nextID).toBe(2)
+    // The suppressed bump carries what the card already shows: content updates
+    // ride in-place PATCHes, and a bump only moves the card to the chat tail,
+    // so merging the two coalesces the tail move without losing content.
+    await sp.bumpToEnd()
+    expect(mp.nextID).toBe(2)
+    expect(sp.previewMsgID).toBe(secondHandle)
+    expect(mp.deleted).toEqual([firstHandle])
+    // Past the window the deferred tail move runs.
+    sp.reissueCooldownMs = 0
     await sp.bumpToEnd()
     expect(mp.nextID).toBe(3)
     expect(sp.previewMsgID).toBe('handle-3')
-    expect(mp.deleted).toEqual([firstHandle, 'handle-2'])
+    expect(mp.deleted).toEqual([firstHandle, secondHandle])
   })
 
   it('send failure keeps the old card', async () => {
@@ -1855,7 +1865,7 @@ describe('displacement heal', () => {
 })
 
 /** Last recorded content's text-path view, when it is text content. */
-function lastTextContent(mp: RecorderPlatform): TextPreviewContent | undefined {
+function lastTextContent(mp: RecorderPlatform): ProgressContent | undefined {
   const c = mp.contents[mp.contents.length - 1]
   return c?.kind === 'text' ? c : undefined
 }
@@ -1943,13 +1953,6 @@ describe('toolTagForProgress icon families (⚙️ default subdivision)', () => 
 })
 
 describe('line fixing counts lines with the renderer rule', () => {
-  it('truncateToMaxLines breaks on lone \r and counts \r\n once', () => {
-    expect(truncateToMaxLines('a\rb\rc\rd', 2)).toBe('a\nb\n... (2 more lines)')
-    expect(truncateToMaxLines('one\r\ntwo\r\nthree', 2)).toBe('one\ntwo\n... (1 more lines)')
-    // \r-free text is unchanged (kept lines plus marker, no \r handling).
-    expect(truncateToMaxLines('x\ny\nz', 2)).toBe('x\ny\n... (1 more lines)')
-  })
-
   it('padToFixedLines normalizes \r and \r\n to \n and pads to the window', () => {
     expect(padToFixedLines('a\r\nb\rc', 5)).toBe('a\nb\nc\n \n ')
     expect(padToFixedLines('a\rb\rc', 1)).toBe('a  ...+2')
@@ -1965,5 +1968,246 @@ describe('line fixing counts lines with the renderer rule', () => {
     expect(padToFixedLines(`${long}\nshort\ntail`, 2)).toBe(`${capped}\n... (2 more lines)`)
     // single-line window: the capped line carries the count suffix
     expect(padToFixedLines(`${long}\nsecond`, 1)).toBe(`${capped}  ...+1`)
+  })
+})
+
+describe('whole-card flush dedup', () => {
+  // The card title carries HH:MM:SS, so a pinned clock is what makes "same
+  // second" mean the same dedup key. Pinning only Date leaves the real
+  // setTimeout path (delayed flushes) untouched.
+  const T0 = Date.UTC(2026, 0, 1, 12, 0, 0)
+  const pinClock = (ms: number): void => {
+    vi.useFakeTimers({ toFake: ['Date'], now: ms })
+  }
+  /** Unthrottled progress flush: the dedup, not the flush interval, must suppress. */
+  const unthrottled = (): StreamPreviewCfg => cfg({ intervalMs: 0, minDeltaChars: 0, progressFlushIntervalMs: 0 })
+
+  it('repeated identical thinking flushes inside one second PATCH once', async () => {
+    pinClock(T0)
+    try {
+      const mp = createMockUpdaterPlatform()
+      const sp = newStreamPreview(unthrottled(), mp, 'ctx', undefined, undefined)
+      await sp.appendThinking('thinking harder about the problem')
+      expect(mp.messages.length).toBe(1)
+      for (let i = 0; i < 4; i++) await sp.appendThinking('thinking harder about the problem')
+      expect(mp.messages.length, 'same body, same status, same second').toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a timestamp in the next second still uploads', async () => {
+    pinClock(T0)
+    try {
+      const mp = createMockUpdaterPlatform()
+      const sp = newStreamPreview(unthrottled(), mp, 'ctx', undefined, undefined)
+      await sp.appendThinking('thinking harder about the problem')
+      await sp.appendThinking('thinking harder about the problem')
+      expect(mp.messages.length).toBe(1)
+      // The title clock is the only delta, exactly as in the thinking stream.
+      vi.setSystemTime(T0 + 1000)
+      await sp.appendThinking('thinking harder about the problem')
+      expect(mp.messages.length).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('terminal settles still PATCH inside the dedup window', async () => {
+    pinClock(T0)
+    try {
+      const settles: Array<[string, (sp: StreamPreview) => Promise<void>]> = [
+        ['markCompleted', sp => sp.markCompleted()],
+        ['markFailed', sp => sp.markFailed()],
+        ['markTruncated', sp => sp.markTruncated()],
+      ]
+      for (const [name, settle] of settles) {
+        const mp = createMockUpdaterPlatform()
+        const sp = newStreamPreview(unthrottled(), mp, 'ctx', undefined, undefined)
+        await sp.appendThinking('thinking harder about the problem')
+        await sp.appendThinking('thinking harder about the problem') // deduped
+        expect(mp.messages.length, name).toBe(1)
+        await settle(sp)
+        expect(mp.messages.length, `${name} must still render`).toBe(2)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a failed PATCH rewinds the key so the next identical flush retries', async () => {
+    const mp = createMockFailingUpdaterPlatform([err('flap'), undefined])
+    const as = newAsyncSender('test-dedup-rewind')
+    try {
+      const sp = newStreamPreview(unthrottled(), mp, 'ctx', undefined, as)
+      await sp.appendAnalysisText('hello') // sends the card; nothing to PATCH yet
+      await sp.appendAnalysisText('new narration') // PATCH #0 fails
+      await as.barrier()
+      // The optimistic claim was rewound with lastSentText: identical content
+      // must not read as already sent.
+      await sp.appendAnalysisText('new narration')
+      await as.barrier()
+      expect(mp.callCount).toBe(2)
+      expect(sp.isDegraded()).toBe(false)
+    } finally {
+      as.close()
+    }
+  })
+
+  it('a displaced card is never deduped: the heal still reissues', async () => {
+    const mp = createDisplacedPlatform()
+    const sp = newStreamPreview(unthrottled(), mp, 'ctx', undefined, undefined)
+    await sp.appendAnalysisText('narration')
+    const oldHandle = sp.previewMsgID
+    mp.setDisplaced(true)
+    // Same content as the card already shows, but the card lost the chat tail.
+    await sp.appendAnalysisText('narration')
+    expect(mp.nextID).toBe(2)
+    expect(mp.deleted).toEqual([oldHandle])
+    expect(sp.previewMsgID).not.toBe(oldHandle)
+  })
+})
+
+describe('reissue cooldown window', () => {
+  const healCfg = (): StreamPreviewCfg =>
+    cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000, progressFlushIntervalMs: 0 })
+
+  /** A live displaced card: first flush sends, second heals at the tail. */
+  async function displacedPreview(): Promise<{ mp: ReturnType<typeof createDisplacedPlatform>; sp: StreamPreview }> {
+    const mp = createDisplacedPlatform()
+    const sp = newStreamPreview(healCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendAnalysisText('first')
+    mp.setDisplaced(true)
+    await sp.appendAnalysisText('second')
+    return { mp, sp }
+  }
+
+  it('inside the window the heal PATCHes in place instead of reissuing', async () => {
+    const { mp, sp } = await displacedPreview()
+    expect(mp.nextID).toBe(2)
+    // A window no call in this test can outlast: the heal must be suppressed.
+    sp.reissueCooldownMs = 60_000
+    await sp.appendAnalysisText('third')
+    expect(mp.nextID, 'no second reissue inside the window').toBe(2)
+    expect(sp.previewMsgID).toBe('handle-2')
+    // Suppression is not a dropped update: the content still lands in place.
+    expect(mp.messages[mp.messages.length - 1]).toBe('update:third')
+  })
+
+  it('past the window the next flush reissues again', async () => {
+    const { mp, sp } = await displacedPreview()
+    sp.reissueCooldownMs = 0 // the window has elapsed
+    await sp.appendAnalysisText('third')
+    expect(mp.nextID).toBe(3)
+    expect(sp.previewMsgID).toBe('handle-3')
+    expect(mp.messages[mp.messages.length - 1]).toBe('start:third')
+  })
+
+  it('a terminal card never reissues, cooldown or not', async () => {
+    // The cooldown has no terminal exception: a settled card is refused by
+    // reissueLocked's own guard, so the forced-tail-move path does not exist.
+    const { mp, sp } = await displacedPreview()
+    sp.reissueCooldownMs = 0 // window wide open
+    sp.completed = true
+    await sp.appendAnalysisText('third')
+    expect(mp.nextID).toBe(2)
+    // The content still lands on the settled card in place.
+    expect(mp.messages[mp.messages.length - 1]).toBe('update:third')
+  })
+})
+
+describe('progress flush interval', () => {
+  it('defaultStreamPreviewCfg keeps the 300ms interval', () => {
+    expect(progressFlushInterval).toBe(300)
+    expect(defaultStreamPreviewCfg().progressFlushIntervalMs).toBe(progressFlushInterval)
+  })
+
+  it('the default 300ms interval defers a same-window burst to one delayed flush', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(defaultStreamPreviewCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendAnalysisText('chunk 1') // sends the card; the window starts
+    sp.lastProgressFlush = Date.now() // pin the window boundary
+    await sp.appendAnalysisText('chunk 2')
+    expect(mp.messages.length).toBe(1)
+    expect(sp.timer).toBeDefined()
+    const deadline = Date.now() + 3000
+    while (Date.now() < deadline && mp.messages.length === 1) await sleep(25)
+    expect(mp.messages.length).toBe(2)
+  })
+
+  it('0 disables the throttle: every change flushes immediately', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(
+      cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000, progressFlushIntervalMs: 0 }),
+      mp, 'ctx', undefined, undefined,
+    )
+    await sp.appendAnalysisText('chunk 1') // sends the card
+    for (const chunk of ['chunk 2', 'chunk 3', 'chunk 4']) await sp.appendAnalysisText(chunk)
+    expect(mp.messages.length).toBe(4)
+    expect(sp.timer).toBeUndefined()
+  })
+
+  it('1000ms leaves a burst inside the window to one delayed PATCH with the latest content', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(
+      cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000, progressFlushIntervalMs: 1000 }),
+      mp, 'ctx', undefined, undefined,
+    )
+    await sp.appendAnalysisText('chunk 1') // sends the card; the window starts
+    expect(mp.messages.length).toBe(1)
+    for (const chunk of ['chunk 2', 'chunk 3']) {
+      sp.lastProgressFlush = Date.now() // pin: each change lands at the window start
+      await sp.appendAnalysisText(chunk)
+    }
+    expect(mp.messages.length).toBe(1)
+    expect(sp.timer).toBeDefined()
+    const deadline = Date.now() + 3000
+    while (Date.now() < deadline && mp.messages.length === 1) await sleep(25)
+    expect(mp.messages.length).toBe(2)
+    expect(mp.messages[1]).toContain('chunk 3')
+  })
+})
+
+describe('markFailedIfUnsettled', () => {
+  const catchCfg = (): StreamPreviewCfg =>
+    cfg({ intervalMs: 0, minDeltaChars: 0, maxChars: 5000, progressFlushIntervalMs: 0 })
+
+  it('fails a card whose turn threw before it settled', async () => {
+    const mp = createMockUpdaterPlatform()
+    const sp = newStreamPreview(catchCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendAnalysisText('partial narration')
+    await sp.markFailedIfUnsettled()
+    expect(sp.failed).toBe(true)
+    expect(mp.contents[mp.contents.length - 1]?.status?.state).toBe('failed')
+  })
+
+  it('leaves a card that already settled alone', async () => {
+    const settles: Array<[string, (sp: StreamPreview) => Promise<void>]> = [
+      ['completed', sp => sp.markCompleted()],
+      ['truncated', sp => sp.markTruncated()],
+      ['failed', sp => sp.markFailed()],
+    ]
+    for (const [name, settle] of settles) {
+      const mp = createMockUpdaterPlatform()
+      const sp = newStreamPreview(catchCfg(), mp, 'ctx', undefined, undefined)
+      await sp.appendAnalysisText('answer')
+      await settle(sp)
+      const after = mp.messages.length
+      // A later error (the drain phase) must not overwrite the settled render.
+      await sp.markFailedIfUnsettled()
+      expect(mp.messages.length, name).toBe(after)
+    }
+  })
+
+  it('leaves a stopped card alone', async () => {
+    const mp = createMockStopRendererPlatform()
+    const sp = newStreamPreview(catchCfg(), mp, 'ctx', undefined, undefined)
+    await sp.appendAnalysisText('answer')
+    await sp.markStopped()
+    expect(sp.stoppedCardRendered).toBe(true)
+    const after = mp.messages.length
+    await sp.markFailedIfUnsettled()
+    expect(mp.messages.length).toBe(after)
+    expect(sp.failed).toBe(false)
   })
 })

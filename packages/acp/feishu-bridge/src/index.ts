@@ -97,8 +97,6 @@ export interface FeishuAppConfig {
   respondToAtEveryoneAndHere?: boolean
   /** Interactive cards; default true (Go enable_feishu_card). */
   enableFeishuCard?: boolean
-  /** Progress rendering: 'legacy' | 'compact' | 'card' (Go progress_style). */
-  progressStyle?: string
   /** Explicit active-tag name override (Go active_tag_name). */
   activeTagName?: string
   /** ✅ per-turn completion notification — purple card or text fallback; default off (Go notify_on_complete). */
@@ -572,7 +570,6 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
       replyToTrigger: Schema.boolean().description('Reply to the triggering message (default true)'),
       respondToAtEveryoneAndHere: Schema.boolean().description('Answer @所有人 mentions of this bot'),
       enableFeishuCard: Schema.boolean().description('Interactive cards (default true)'),
-      progressStyle: Schema.string().description("Progress rendering: 'legacy' | 'compact' | 'card'"),
       activeTagName: Schema.string().description('Explicit active-tag name override'),
       notifyOnComplete: Schema.boolean().description('✅ per-turn completion notification (card or text fallback); default off'),
       reactionEmoji: Schema.string().description('Reaction emoji on user message'),
@@ -733,9 +730,10 @@ export const Config: Schema<FeishuBridgeConfig> = Schema.object({
   chatroom: Schema.any().description('Residue guard: chatroom config moved to the chatroom plugin (@deepseek-ai/dsh-feishu-bridge-chatroom); setting it fails at startup'),
   streamPreview: Schema.object({
     enabled: Schema.boolean().description('Enable streaming preview'),
-    intervalMs: Schema.natural().description('Minimum ms between updates'),
-    minDeltaChars: Schema.natural().description('Minimum new chars before an update'),
-    maxChars: Schema.natural().description('Max preview length'),
+    intervalMs: Schema.natural().description('Minimum ms between text-path updates (the window before the first thinking or tool event; progress cards use progressFlushIntervalMs)'),
+    minDeltaChars: Schema.natural().description('Minimum new chars before a text-path update (same pre-progress window as intervalMs)'),
+    maxChars: Schema.natural().description('Max text-path preview length (the pre-progress window and a frozen card without progress entries)'),
+    progressFlushIntervalMs: Schema.natural().description('Minimum ms between progress-card PATCHes; 0 PATCHes every change immediately (default 300)'),
     disabledPlatforms: Schema.array(Schema.string()).description('Platforms without preview'),
   }).description('Streaming preview tuning'),
   usageProviders: Schema.array(Schema.object({
@@ -1263,6 +1261,14 @@ export function buildProjectAssembly(
       throw new Error(providerRefError(config, project.name, field, value))
     }
   }
+  // feishu.progress_style was removed with the structured progress-card path
+  // (2026-09-14 audit F3). Schemastery keeps unknown keys in a validated
+  // object, so a leftover entry would survive load as a configured-but-inert
+  // knob — the same silent misconfiguration class F3 named. Fail at load
+  // instead, before any platform is constructed.
+  if ((project.feishu as unknown as Record<string, unknown>).progressStyle !== undefined) {
+    throw new Error(`feishu-bridge: project '${project.name}' sets feishu.progressStyle, which was removed with the structured progress-card path (2026-09-14 audit F3); remove the key from the configuration`)
+  }
   const routeNames = Object.keys(config.providers)
   const projectDataDir = join(dataRoot, project.name)
   // The engine/platform stores assume the data dirs exist (Go main created
@@ -1350,7 +1356,6 @@ export function buildProjectAssembly(
       ? { respondToAtEveryoneAndHere: project.feishu.respondToAtEveryoneAndHere }
       : {}),
     ...(project.feishu.enableFeishuCard !== undefined ? { useInteractiveCard: project.feishu.enableFeishuCard } : {}),
-    ...(project.feishu.progressStyle !== undefined ? { progressStyle: project.feishu.progressStyle } : {}),
     ...(project.feishu.activeTagName !== undefined ? { activeTagOverride: project.feishu.activeTagName } : {}),
     ...(project.feishu.reactionEmoji !== undefined ? { reactionEmoji: project.feishu.reactionEmoji } : {}),
     ...(project.feishu.doneEmoji !== undefined ? { doneEmoji: project.feishu.doneEmoji } : {}),

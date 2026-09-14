@@ -9,9 +9,8 @@ import { describe, expect, it } from 'vitest'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildProgressCardPayload, type ProgressCardEntry } from '../../src/progress.ts'
 import { FeishuPlatform, type FeishuApiClient } from '../../src/feishu/platform.ts'
-import { buildPreviewCardJSON, buildProgressCardJSONFromPayload, markCardStopped } from '../../src/feishu/progress.ts'
+import { buildPreviewCardJSON, markCardStopped } from '../../src/feishu/progress.ts'
 import { noSpinner, resolveSpinnerAsset, type SpinnerCfg } from '../../src/feishu/spinner.ts'
 import { retryTiming } from '../../src/feishu/retry.ts'
 import type { ProgressStatus } from '../../src/core/types.ts'
@@ -28,69 +27,6 @@ function headerIcon(cardJSON: string): JsonObj | undefined {
 function hasHeaderIcon(cardJSON: string): boolean {
   return headerIcon(cardJSON) !== undefined
 }
-
-describe('progress card spinner icon (payload path)', () => {
-  const spin: SpinnerCfg = { enabled: true, thinkingKey: 'img_think', executingKey: 'img_exec' }
-
-  const cases: Array<[name: string, entries: ProgressCardEntry[], state: 'running' | 'completed' | 'failed', wantIcon: string]> = [
-    [
-      'running latest thinking',
-      [
-        { kind: 'tool_use', tool: 'Bash', text: 'ls' },
-        { kind: 'thinking', text: 'pondering' },
-      ],
-      'running',
-      'img_think',
-    ],
-    [
-      'running latest tool_use',
-      [
-        { kind: 'thinking', text: 'x' },
-        { kind: 'tool_use', tool: 'Bash', text: 'pwd' },
-      ],
-      'running',
-      'img_exec',
-    ],
-    [
-      'running latest tool_result',
-      [{ kind: 'tool_result', tool: 'Bash', text: 'out' }],
-      'running',
-      'img_exec',
-    ],
-    [
-      'completed strips icon',
-      [{ kind: 'tool_use', tool: 'Bash', text: 'pwd' }],
-      'completed',
-      '',
-    ],
-    [
-      'failed strips icon',
-      [{ kind: 'error', text: 'boom' }],
-      'failed',
-      '',
-    ],
-  ]
-
-  for (const [name, entries, state, wantIcon] of cases) {
-    it(name, () => {
-      const payload = buildProgressCardPayload(entries, false, 'Claude', 'zh', state, [], '')
-      expect(payload).toBeDefined()
-      const cardJSON = buildProgressCardJSONFromPayload(payload!, spin)
-      const icon = headerIcon(cardJSON)
-      if (wantIcon === '') {
-        expect(icon).toBeUndefined()
-        return
-      }
-      expect(jStr(icon?.tag)).toBe('custom_icon')
-      expect(jStr(icon?.img_key)).toBe(wantIcon)
-    })
-  }
-
-  it('disabled spinnerCfg produces no icon', () => {
-    const payload = buildProgressCardPayload([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
-    expect(hasHeaderIcon(buildProgressCardJSONFromPayload(payload!, noSpinner))).toBe(false)
-  })
-})
 
 describe('spinner gif upload (platform)', () => {
   /** Platform whose apiClient records every uploadImage call through `upload`. */
@@ -183,8 +119,7 @@ describe('progress card spinner icon (text path)', () => {
 describe('markCardStopped strips spinner icon', () => {
   it('running card icon removed on stop', () => {
     const spin: SpinnerCfg = { enabled: true, thinkingKey: 'img_think', executingKey: 'img_exec' }
-    const payload = buildProgressCardPayload([{ kind: 'thinking', text: 'x' }], false, 'Claude', 'zh', 'running', [], '')
-    const cardJSON = buildProgressCardJSONFromPayload(payload!, spin)
+    const cardJSON = buildPreviewCardJSON('执行中', spin, { state: 'running', ts: '', toolCallSeq: 0 })
     expect(hasHeaderIcon(cardJSON)).toBe(true)
     const stopped = markCardStopped(cardJSON, 'sess-key')
     expect(hasHeaderIcon(stopped)).toBe(false)

@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
-import { buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.ts'
+import { Config, buildProjectAssembly, type FeishuBridgeConfig, type ProjectConfig } from '../src/index.ts'
 import type { QuestionRouting } from '../src/agent-dsh/adapter.ts'
 import type { Engine } from '../src/engine/engine.ts'
 import { HintUsage } from '../src/engine/hint-usage.ts'
@@ -255,7 +255,6 @@ describe('buildProjectAssembly config wiring', () => {
       replyToTrigger: false,
       respondToAtEveryoneAndHere: true,
       enableFeishuCard: false,
-      progressStyle: 'compact',
       activeTagName: 'harness',
     }
     const { platform } = assemble(baseConfig(), proj)
@@ -270,13 +269,30 @@ describe('buildProjectAssembly config wiring', () => {
     expect(o.respondToAtEveryoneAndHere).toBe(true)
     expect(o.activeTagOverride).toBe('harness')
     expect(platform.useInteractiveCard).toBe(false)
-    expect(platform.progressStyle).toBe('compact')
     // Unset keys stay undefined so platform defaults apply (Go zero values).
     const bare = (assemble(baseConfig()).platform as unknown as { o: import('../src/feishu/platform.ts').FeishuPlatformOptions }).o
     expect(bare.allowFrom).toBeUndefined()
     expect(bare.threadIsolation).toBeUndefined()
     expect(assemble(baseConfig()).platform.useInteractiveCard).toBe(true)
-    expect(assemble(baseConfig()).platform.progressStyle).toBe('legacy')
+  })
+
+  it('fails loud on a config left with the removed feishu.progressStyle key (2026-09-14 audit F3)', () => {
+    // Schemastery keeps unknown keys in a validated object, so a leftover
+    // progressStyle reaches the assembly instead of being dropped by config
+    // validation: assert both halves — the key survives the schema, and the
+    // assembly refuses it rather than loading an inert knob.
+    const parsed = Config({
+      projects: [{
+        name: 'smoke-project',
+        workdir: '/workspace/project',
+        feishu: { appId: 'cli_test', appSecret: 'sec', progressStyle: 'card' },
+      }],
+      providers: {},
+    } as unknown as FeishuBridgeConfig)
+    const stale = parsed.projects[0] as ProjectConfig
+    expect((stale.feishu as unknown as Record<string, unknown>).progressStyle).toBe('card')
+    expect(() => assemble(baseConfig(), stale))
+      .toThrow(/feishu\.progressStyle, which was removed with the structured progress-card path/)
   })
 
   it('forwards feishu.tag onto the platform name (Go tag)', () => {
@@ -289,9 +305,9 @@ describe('buildProjectAssembly config wiring', () => {
 
   it('forwards display.patch_rate_interval_ms to the platform PATCH limiter', async () => {
     const { platform } = assemble({ ...baseConfig(), display: { patchRateIntervalMs: 5 } })
-    for (let i = 0; i < 3; i++) await platform.patchRateWait()
+    for (let i = 0; i < 3; i++) await platform.patchRateWait('card-a')
     const start = Date.now()
-    await platform.patchRateWait()
+    await platform.patchRateWait('card-a')
     expect(Date.now() - start).toBeGreaterThanOrEqual(3)
   })
 
@@ -361,6 +377,18 @@ describe('buildProjectAssembly config wiring', () => {
     expect(engine.streamPreview.maxChars).toBe(800)
     // Untouched fields keep the Go defaults.
     expect(engine.streamPreview.minDeltaChars).toBe(15)
+  })
+
+  it('wires streamPreview.progressFlushIntervalMs over the default (2026-09-14 audit F4)', () => {
+    // Assert the schema half too: schemastery keeps unknown keys, so an
+    // undeclared field would still reach the engine as a silent passthrough.
+    const parsed = Config({ ...baseConfig(), streamPreview: { progressFlushIntervalMs: 1000 } } as unknown as FeishuBridgeConfig)
+    expect(parsed.streamPreview?.progressFlushIntervalMs).toBe(1000)
+    const { engine } = assemble({ ...baseConfig(), streamPreview: { progressFlushIntervalMs: 1000 } })
+    expect(engine.streamPreview.progressFlushIntervalMs).toBe(1000)
+    // The default keeps the cadence the running card had while this value was
+    // a module constant.
+    expect(assemble(baseConfig()).engine.streamPreview.progressFlushIntervalMs).toBe(300)
   })
 })
 

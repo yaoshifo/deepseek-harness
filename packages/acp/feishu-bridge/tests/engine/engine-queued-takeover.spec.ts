@@ -1,9 +1,9 @@
 /**
  * Queued-message takeover surface wiring: the in-loop drain that hands the
- * event loop to a queued message must install BOTH fresh surfaces into the
- * interactive state (preview and compact progress writer) — the loop
- * re-reads them from the state at every select boundary, so a stale writer
- * PATCHes the previous turn's already-terminal card (card chain).
+ * event loop to a queued message must install a fresh streaming preview into
+ * the interactive state — the loop re-reads it from the state at every select
+ * boundary, so a stale preview PATCHes the previous turn's already-terminal
+ * card.
  *
  * @module dsh-feishu-bridge/tests-engine-queued-takeover
  */
@@ -14,25 +14,16 @@ import type { QueuedMessage } from '../../src/engine/engine.ts'
 import { createStubAgent, createStubPlatform, newControllableSession, type ControllableAgentSession } from '../stubs/engine-stubs.ts'
 import type { Platform, ProgressContent } from '../../src/core/types.ts'
 
-/** Card-style platform recording preview starts and PATCHes in order. */
-function createCardRecorderPlatform(): Platform & {
-  starts: ProgressContent[]
-  updates: ProgressContent[]
-} {
+/** Platform recording every preview start in order. */
+function createCardRecorderPlatform(): Platform & { starts: ProgressContent[] } {
   const starts: ProgressContent[] = []
-  const updates: ProgressContent[] = []
   return Object.assign(createStubPlatform('feishu'), {
     starts,
-    updates,
-    progressStyle: () => 'card',
-    supportsProgressCardPayload: () => true,
     async sendPreviewStart(_rc: unknown, content: ProgressContent): Promise<unknown> {
       starts.push(content)
       return `card-${starts.length}`
     },
-    async updateMessage(_rc: unknown, content: ProgressContent): Promise<void> {
-      updates.push(content)
-    },
+    async updateMessage(_rc: unknown, _content: ProgressContent): Promise<void> {},
   })
 }
 
@@ -55,11 +46,12 @@ function queuedMsg(p: Platform, content: string): QueuedMessage {
 }
 
 describe('queued takeover installs fresh turn surfaces', () => {
-  it('card style: the queued turn appends to its own card, not the previous turn\'s', async () => {
+  it('the queued turn opens its own card, not the previous turn\'s', async () => {
     const p = createCardRecorderPlatform()
     const e = new Engine('test', createStubAgent(), [p], '', 'en')
-    // Default display (thinkingMessages/toolMessages on, toolProgress off):
-    // the structured progress card belongs to the compact writer.
+    // Tool progress hands the card to the stream preview: each turn's pump
+    // opens its own placeholder card.
+    e.setDisplayConfig({ toolProgress: true })
     const key = 'test:user1'
     const sess: ControllableAgentSession = newControllableSession('takeover-1')
     const session = e.sessions.getOrCreateActive(key)
@@ -91,9 +83,9 @@ describe('queued takeover installs fresh turn surfaces', () => {
       new Promise((_, reject) => { setTimeout(() => { reject(new Error('loop did not finish')) }, 5000) }),
     ])
 
-    // Turn 1 opened one structured card; the queued turn's thinking must
-    // open a SECOND card through the fresh writer instead of PATCHing the
-    // previous turn's (already terminal) card.
-    expect(p.starts.length, `starts=${JSON.stringify(p.starts.map(c => c.kind))}`).toBe(2)
+    // Turn 1 opened one card; the queued turn must open a SECOND card through
+    // the fresh preview instead of PATCHing the previous turn's (already
+    // terminal) card.
+    expect(p.starts.length, `starts=${JSON.stringify(p.starts.map(c => c.text))}`).toBe(2)
   })
 })

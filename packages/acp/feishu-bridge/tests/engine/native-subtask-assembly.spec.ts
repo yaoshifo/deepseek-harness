@@ -27,7 +27,7 @@ import { buildProjectAssembly, registerNativeSettlementListener, type FeishuBrid
 import { InteractiveState } from '../../src/engine/engine.ts'
 import { WorktreeMode } from '../../src/engine/worktree.ts'
 import { createStubCardPlatformFull, newStubMessage, type RecordedCard } from '../stubs/engine-stubs.ts'
-import type { ProgressContent, TextPreviewContent } from '../../src/core/types.ts'
+import type { ProgressContent } from '../../src/core/types.ts'
 
 const contexts: Context[] = []
 const roots: string[] = []
@@ -247,7 +247,7 @@ describe('native subtask REAL composition (buildProjectAssembly + SubagentRuntim
       expect(contents.some(c => c.kind === 'text' && c.status?.state === 'completed')).toBe(true)
     }, { timeout: 20_000 })
     const terminal = [...contents].reverse()
-      .find(c => c.kind === 'text' && c.status?.state === 'completed') as TextPreviewContent | undefined
+      .find(c => c.kind === 'text' && c.status?.state === 'completed') as ProgressContent | undefined
     expect(terminal?.status?.pendingSubtasks).toBe(1)
     // buildProjectAssembly engines run zh; the unit cases pin the en wording.
     expect(terminal?.text).toContain('1 个子任务在途')

@@ -67,6 +67,27 @@ describe('sendPreviewStart routing', () => {
   })
 })
 
+describe('deletePreviewMessage', () => {
+  it('deletes the card message and drops its per-card caches', async () => {
+    const api = recordingClient()
+    const deleted: string[] = []
+    api.delete = async ({ messageId }) => { deleted.push(messageId) }
+    const p = newPlatform(api)
+    const handle = await p.sendPreviewStart(rc, { kind: 'text', text: 'thinking…' })
+    await p.deletePreviewMessage(handle)
+    expect(deleted).toEqual(['om_create_1'])
+    // The card's caches leave with the message: a stopped-card rebuild can no
+    // longer find the deleted one.
+    await expect(p.renderStoppedCard(rc, handle)).rejects.toThrow(/no cached progress card/)
+  })
+
+  it('fails loud when the client cannot delete', async () => {
+    const p = newPlatform(recordingClient())
+    const handle = await p.sendPreviewStart(rc, { kind: 'text', text: 'thinking…' })
+    await expect(p.deletePreviewMessage(handle)).rejects.toThrow(/without delete support/)
+  })
+})
+
 interface CardRow { tag: string; columns?: Array<unknown> }
 
 /** Last body element of a card JSON, asserted to be the injected button row. */
