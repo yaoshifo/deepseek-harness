@@ -114,7 +114,7 @@ import {
   type Interval,
 } from './status-footer.ts'
 import type { UsageProvider } from './usage.ts'
-import { Session, SessionManager } from './session.ts'
+import { hookSigtermFlush, Session, SessionManager } from './session.ts'
 import { pendingDirFor, saveFilesToDir, saveImagesToDir, spliceStagedAttachments, type StagedAttachment } from './attachments.ts'
 import { childLabel, failureBriefForAgentContext, SubtaskGather } from './subtask.ts'
 import {
@@ -1279,6 +1279,8 @@ export class Engine {
   autoCompressMinGap: number = 0
 
   private reaperTimer: ReturnType<typeof setInterval> | undefined
+  /** Disposer of the process-level SIGTERM save flush; runs on {@link Engine.stop}. */
+  private readonly unhookSigtermFlush: () => void
   /** Host-wired foreground subprocess runner; cron exec fails loud without it. */
   private readonly subprocess: EngineSubprocess | undefined
   /** Host-wired cold inbox reader; restart visibility stays silent without it. */
@@ -1305,6 +1307,10 @@ export class Engine {
     this.bridge = bridge ?? bareBridgeDispatch()
     this.sessions = new SessionManager(sessionStorePath)
     this.i18n = new I18n(lang)
+    // SIGTERM (launchctl/systemctl stop, the /reload restart) never fires
+    // beforeExit; the hook flushes a pending debounced save and re-raises
+    // the default death. Scoped to this engine's lifetime — stop() unhooks.
+    this.unhookSigtermFlush = hookSigtermFlush()
     this.sessions.invalidateForAgent(agent.name())
     this.monitor = new MonitorCore(this)
     // Feed observed runtime agent-to-agent messages (relayed straight onto a
@@ -1904,6 +1910,7 @@ export class Engine {
     this.rateLimiter?.stop()
     // Flush any debounced session-store write before the process can go down.
     this.sessions.dispose()
+    this.unhookSigtermFlush()
     await this.agent.stop()
   }
 

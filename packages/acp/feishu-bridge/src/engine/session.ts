@@ -58,6 +58,52 @@ function hookBeforeExit(): void {
 }
 
 /**
+ * The registered SIGTERM handler, while at least one owner keeps it alive.
+ * A signal listener prevents Node's default death, so the handler re-raises
+ * the signal after the synchronous flush — the process still terminates by
+ * SIGTERM the way launchd/systemd expect, just with the debounced writes on
+ * disk (a re-raise is safe: `once` removed the handler before it ran).
+ */
+let sigtermHandler: (() => void) | undefined
+/** Owners (engines) keeping {@link sigtermHandler} registered. */
+let sigtermOwners = 0
+
+/**
+ * Register the process-level SIGTERM flush for as long as one owner lives:
+ * launchctl/systemctl termination never fires beforeExit, so a debounced
+ * save scheduled within the window would otherwise die with the process
+ * (the /reload restart). Refcounted — every owner must run the returned
+ * disposer (engine stop / plugin teardown).
+ *
+ * @returns The unregister function; idempotent per owner.
+ */
+export function hookSigtermFlush(): () => void {
+  if (sigtermHandler === undefined) {
+    const handler = (): void => {
+      // `once` removed this handler before it ran; drop the stale ref so a
+      // later hook (a window where the process survived the re-raise) can
+      // still register a fresh one.
+      sigtermHandler = undefined
+      for (const sm of pendingSaves) sm.flushNow()
+      pendingSaves.clear()
+      process.kill(process.pid, 'SIGTERM')
+    }
+    sigtermHandler = handler
+    process.once('SIGTERM', handler)
+  }
+  sigtermOwners++
+  let done = false
+  return () => {
+    if (done) return
+    done = true
+    sigtermOwners--
+    if (sigtermOwners > 0 || sigtermHandler === undefined) return
+    process.removeListener('SIGTERM', sigtermHandler)
+    sigtermHandler = undefined
+  }
+}
+
+/**
  * One conversation between a user and the agent (Go core.Session). Fields not
  * yet exercised by ported M1 tests stay as data carriers for later
  * milestones; accessors arrive with them.
