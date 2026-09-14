@@ -79,11 +79,12 @@ const KEEP_PLANNING_LABEL = 'Keep planning'
 // policy in the plan-mode section, so the description stays policy-free.
 const EXIT_DESCRIPTION
   = 'Use only in plan mode. Present your plan for the user\'s review and, on approval, leave plan mode. '
-  + 'Send the COMPLETE plan as markdown, starting with a # heading that names it. '
+  + 'Send the COMPLETE plan as markdown, starting with a # heading that names it — `plan` carries the '
+  + 'plain-language layer, `details` the implementation-detail layer. '
   + 'The user may approve (carry out the plan from your next step) or keep '
   + 'planning — their feedback comes back in the tool result.'
   + ' An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default.'
-  + ' An inlined details section in the plan is rejected: put implementation detail in `details` (e.g. plan="# Fix X\\n<plain-language layer>", details="<changed files, mechanism, tests>").'
+  + ' An inlined details section is rejected unless its content rides in `details`.'
 
 /** The plan's first markdown heading (any level), or `undefined` when it has none. */
 function firstHeading(plan: string): string | undefined {
@@ -315,7 +316,7 @@ export class PlanModeController extends Service {
       name: EXIT_PLAN_MODE,
       description: EXIT_DESCRIPTION,
       parameters: {
-        plan: { type: 'string', required: true, description: 'The complete plan, as markdown, starting with a # heading that names it.' },
+        plan: { type: 'string', required: true, description: 'The plan\'s plain-language layer, as markdown, starting with a # heading that names it.' },
         details: { type: 'string', description: 'Implementation-detail annex appended after the plan; capable UIs present it collapsed by default. Put implementation detail here instead of inlining a details section into the plan; omit only when the plan carries no implementation detail.' },
       },
       output: {

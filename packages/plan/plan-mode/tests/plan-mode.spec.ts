@@ -837,6 +837,7 @@ describe('exit_plan_mode', () => {
     const parameters = schema?.parameters as { required?: string[]; properties?: Record<string, unknown> }
     expect(schema?.description).toMatch(/^Use only in plan mode\./)
     expect(schema?.description).toContain('An optional `details` argument carries an implementation-detail annex after the plan; capable UIs present it collapsed by default.')
+    expect(schema?.description).toContain('An inlined details section is rejected unless its content rides in `details`.')
     expect(Object.keys(parameters.properties ?? {})).toEqual(['plan', 'details'])
     expect(parameters.required).toEqual(['plan'])
     expect(parameters.properties?.details).toEqual({ type: 'string', description: 'Implementation-detail annex appended after the plan; capable UIs present it collapsed by default. Put implementation detail here instead of inlining a details section into the plan; omit only when the plan carries no implementation detail.' })
