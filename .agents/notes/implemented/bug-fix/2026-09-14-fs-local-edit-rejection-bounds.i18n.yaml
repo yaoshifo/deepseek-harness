@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-14-fs-local-edit-rejection-bounds.md
+2026-09-14-fs-local-edit-rejection-bounds.md: 83826668eeb2753209f9cac7c50fb60e992581e4
+2026-09-14-fs-local-edit-rejection-bounds.zh.md: c5efa1bed06d25fa4ede74eb3242883860db4fe2
