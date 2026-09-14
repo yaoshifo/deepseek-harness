@@ -29,6 +29,7 @@ import {
   extractUsedIcons,
   fitSVGTextSizes,
   getRenderStatus,
+  recordPlanRendered,
   recordRenderedReply,
   registerRenderCancel,
   removeRenderedTemp,
@@ -55,7 +56,7 @@ function newTestEngine(): Engine {
 }
 
 describe('ShouldRenderPlan_Throttle', () => {
-  it('blocks while running, dedupes unchanged content, debounces rev>1, nil state never renders', () => {
+  it('blocks while running, retries after a failed start, dedupes only what was delivered', () => {
     const e = newTestEngine()
     const state = new InteractiveState()
 
@@ -63,6 +64,15 @@ describe('ShouldRenderPlan_Throttle', () => {
     expect(shouldRenderPlan(state, 'plan A', 1)).toBe(false)
     clearPlanRenderRunning(state)
 
+    // The render started but never delivered: nothing was recorded, so the
+    // same content must render again (F4b).
+    expect(state.lastRenderedPlanHash).toBe('')
+    expect(shouldRenderPlan(state, 'plan A', 2)).toBe(true)
+    clearPlanRenderRunning(state)
+
+    // Delivery is the only thing that dedupes: same content is blocked by
+    // the hash, different content by the 10s throttle since the delivery.
+    recordPlanRendered(state, 'plan A')
     expect(shouldRenderPlan(state, 'plan A', 2)).toBe(false)
     expect(shouldRenderPlan(state, 'plan B', 2)).toBe(false)
 

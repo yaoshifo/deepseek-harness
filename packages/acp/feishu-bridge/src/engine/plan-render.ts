@@ -542,9 +542,10 @@ export interface RenderCancelHandle {
 
 /**
  * Per-session plan-render throttle (Go shouldRenderPlan): allow only when no
- * render is running, the content changed since the last render (sha256), and
- * enough time elapsed since the last render. Revision 1 is always allowed.
- * Sets planRenderRunning on success — the caller must clear it.
+ * render is running, the content changed since the last DELIVERED render
+ * (sha256, recorded by {@link recordPlanRendered}), and enough time elapsed
+ * since that delivery. Revision 1 is always allowed. Sets planRenderRunning
+ * on success — the caller must clear it.
  *
  * @param state - Per-session interactive state; undefined never renders.
  * @param content - Plan markdown content, hashed for change detection.
@@ -558,9 +559,21 @@ export function shouldRenderPlan(state: InteractiveState | undefined, content: s
   if (revision > 1 && hash === state.lastRenderedPlanHash) return false
   if (revision > 1 && Date.now() - state.lastRenderedPlanAt < 10_000) return false
   state.planRenderRunning = true
-  state.lastRenderedPlanHash = hash
-  state.lastRenderedPlanAt = Date.now()
   return true
+}
+
+/**
+ * Record a plan render as delivered (Go shouldRenderPlan's bookkeeping,
+ * moved to the delivery point): the dedup hash and the throttle timestamp
+ * only count once the image actually reached the user, so a failed or
+ * cancelled render never blocks a same-content retry.
+ *
+ * @param state - Per-session state whose delivered hash is recorded.
+ * @param content - The plan markdown whose sha256 becomes the dedup key.
+ */
+export function recordPlanRendered(state: InteractiveState, content: string): void {
+  state.lastRenderedPlanHash = planContentHash(content)
+  state.lastRenderedPlanAt = Date.now()
 }
 
 /**
@@ -1430,6 +1443,7 @@ export function launchPlanRender(
       console.info(`plan-render: delivering image (${sessionKey}, html_path ${htmlPath})`)
       try {
         await deliverRenderedImage(e, platform, replyCtx, htmlPath, parentCtl.signal)
+        recordPlanRendered(state, sentPlanContent)
         updatePlanCardStatus(e, state, exportKey, 'delivered', Date.now() - renderStart)
       } catch (error) {
         console.warn(`plan-render: deliver failed (${sessionKey}): ${String(error)}`)

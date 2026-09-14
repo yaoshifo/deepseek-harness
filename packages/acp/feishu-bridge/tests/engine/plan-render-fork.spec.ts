@@ -432,6 +432,41 @@ describe('LaunchPlanRender', () => {
   })
 })
 
+describe('ShouldRenderPlan_RetryAfterFailure', () => {
+  // F4b: the dedup hash is recorded only after the image is delivered — a
+  // failed or cancelled render must not block a same-content retry (since
+  // 3d6df58dcd the session revision is always ≥2 on re-presentation, so the
+  // old "revision 1 always renders" fallback no longer masks this).
+  it('a failed render allows the same content to render again; delivery dedupes it', async () => {
+    const fail = createRenderAgent({ err: new Error('boom') })
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(fail, p, { timeoutMs: 30_000 })
+    const state = newRenderState(p)
+    state.planRevisionCount = 2
+
+    const content = '# 计划\n\n步骤一：封装'
+    expect(shouldRenderPlan(state, content, 2)).toBe(true)
+    launchPlanRender(e, state, 'feishu:user1', content, '', 2, 'plan:2')
+    await pollUntil(() => getRenderStatus(state, 'plan:2')?.status === 'failed' && !state.planRenderRunning, 3000)
+
+    // Same content re-presented (revision stays ≥2 within the session):
+    // the failed render must not have poisoned the dedup hash.
+    expect(shouldRenderPlan(state, content, 2)).toBe(true)
+    expect(state.lastRenderedPlanHash).toBe('')
+
+    // A delivered render is the only thing that dedupes.
+    const ok = createRenderAgent()
+    const eOk = newRenderEngine(ok, p)
+    const stateOk = newRenderState(p)
+    stateOk.planRevisionCount = 2
+    expect(shouldRenderPlan(stateOk, content, 2)).toBe(true)
+    launchPlanRender(eOk, stateOk, 'feishu:user1', content, '', 2, 'plan:2')
+    await pollUntil(() => getRenderStatus(stateOk, 'plan:2')?.status === 'delivered' && !stateOk.planRenderRunning, 3000)
+    expect(stateOk.lastRenderedPlanHash).not.toBe('')
+    expect(shouldRenderPlan(stateOk, content, 2)).toBe(false)
+  })
+})
+
 // ── event-loop integration (Go TestProcessInteractiveEvents_* render cases) ──
 
 async function driveLoop(e: Engine, state: InteractiveState, sessionKey: string, events: Array<Record<string, unknown>>): Promise<void> {
