@@ -242,6 +242,9 @@ export function padToFixedLines(s: string, maxLines: number): string {
   return `${lines.slice(0, maxLines - 1).join('\n')}\n... (${extra} more lines)`
 }
 
+// Tool entry code blocks pad their first line to this width so the desktop
+// client renders a stable horizontal scrollbar; body length changes between
+// PATCHes would otherwise make the card height jump (upstream Go cca7104b).
 const minCodeBlockLineWidth = 100
 
 function padLineWidth(s: string, minW: number): string {
