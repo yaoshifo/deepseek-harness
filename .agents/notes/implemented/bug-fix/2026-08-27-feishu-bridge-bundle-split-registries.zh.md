@@ -22,5 +22,5 @@ C2 chatroom 抽包上生产后，topic-pick 卡片把 i18n key 原样渲染（`c
 ## Consequences
 
 - 源码面与产物面行为一致：源码面测试（tsconfig `paths` 单实例）不再观察到与生产（双 bundle）不同的世界。
-- 回归防护：`packages/acp/feishu-bridge/tests/built-bundle-registries.spec.ts` 消费构建产物（净树上自跳过；CI 在 build 后跑到）——经 exports bundle 的注册必须落到全局槽，且两个 bundle 文件必须引用同一槽名。
+- 回归防护：`packages/acp/feishu-bridge/tests/built-bundle-registries.e2e.ts` 消费构建产物（净树上自跳过），并列入 `built-bin-smoke` 门——`build` 之后由该车道跑到——经 exports bundle 的注册必须落到全局槽，且两个 bundle 文件必须引用同一槽名。
 - 流程规则：**跨包单例状态一律不放模块级**——任何多入口自包含打包的包都会复制模块；注册类能力要么走 cordis 服务实例，要么显式挂 globalThis 槽。源码面 REAL-composition 测试不能替代产物面组合测试。

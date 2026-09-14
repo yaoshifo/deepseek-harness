@@ -800,6 +800,9 @@ function builtBinSmokeGate(needs: string[] = ['build']): Gate {
     'packages/code-runtime/code-runtime-worker-thread/tests/built-lib.e2e.ts',
     'packages/session/session-persistence-jsonl/tests/built-migration-worker.e2e.ts',
     'packages/lsp/lsp-stdio/tests/built-lib.e2e.ts',
+    // Both bridge bundles execute in one process and must share the registry
+    // slots they read through globalThis (2026-08-27 raw-i18n-key incident).
+    'packages/acp/feishu-bridge/tests/built-bundle-registries.e2e.ts',
   ], {
     label: 'built-bin smoke',
     needs,

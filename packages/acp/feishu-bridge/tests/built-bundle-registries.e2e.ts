@@ -8,8 +8,11 @@
  * bundle copy — so the registry state must live on globalThis, or the two
  * copies silently split (the 2026-08-27 raw-i18n-key live incident).
  *
- * Self-skips on a clean tree without built artifacts; CI runs it after
- * build.
+ * Self-skips on a clean tree without built artifacts, so it is listed
+ * explicitly in the `built-bin-smoke` gate (scripts/run-gates.ts), the lane
+ * that runs it after `build`. Both this file's `*.e2e.ts` name and that
+ * listing are load-bearing: the default lane globs only `*.spec.ts` and runs
+ * unbuilt, where this guard would skip forever.
  *
  * @module dsh-feishu-bridge/tests-built-bundle-registries
  */

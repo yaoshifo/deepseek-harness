@@ -22,5 +22,5 @@ The fix moves the registry **state** onto `globalThis` symbol slots (`__DSH_FEIS
 ## Consequences
 
 - Source-plane and artifact-plane behavior now agree: source-plane tests (tsconfig `paths`, single module instance) no longer observe a different world than production (two bundles).
-- Regression guard: `packages/acp/feishu-bridge/tests/built-bundle-registries.spec.ts` consumes the built artifacts (self-skips on a clean tree; CI reaches it after build) — registrations through the exports bundle must land on the global slots, and both bundle files must reference the same slot names.
+- Regression guard: `packages/acp/feishu-bridge/tests/built-bundle-registries.e2e.ts` consumes the built artifacts (self-skips on a clean tree) and is listed in the `built-bin-smoke` gate, the lane that reaches it after `build` — registrations through the exports bundle must land on the global slots, and both bundle files must reference the same slot names.
 - Process rule going forward: **cross-package singleton state never lives at module level** — any multi-entry self-contained package duplicates modules; registration-style capabilities go through a cordis service instance or an explicit globalThis slot. A source-plane REAL-composition test does not substitute for an artifact-plane composition test.
