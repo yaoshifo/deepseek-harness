@@ -289,7 +289,7 @@ describe('engine.start recall wiring', () => {
 describe('markRecalledPreview', () => {
   /** A started preview whose handle carries a Feishu-style message id. */
   function startedPreview(p: Platform): ReturnType<typeof newStreamPreview> {
-    const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500 }
+    const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500, progressFlushIntervalMs: 300 }
     const starter = Object.assign(p, {
       async sendPreviewStart(): Promise<unknown> {
         return { messageID: 'om_card' }

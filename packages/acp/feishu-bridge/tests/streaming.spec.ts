@@ -558,7 +558,7 @@ describe('StreamPreview', () => {
 
   it('sends nothing when disabled', async () => {
     const mp = createMockUpdaterPlatform()
-    const sp = newStreamPreview({ enabled: false, intervalMs: 50, minDeltaChars: 1, maxChars: 500 }, mp, 'ctx', undefined, undefined)
+    const sp = newStreamPreview({ enabled: false, intervalMs: 50, minDeltaChars: 1, maxChars: 500, progressFlushIntervalMs: 300 }, mp, 'ctx', undefined, undefined)
     expect(sp.canPreview()).toBe(false)
     await sp.appendText('Hello')
     await sleep(50)
@@ -695,7 +695,7 @@ describe('StreamPreview', () => {
 
   it('needsDoneReaction false when disabled', async () => {
     const mp = createMockUpdaterPlatform()
-    const sp = newStreamPreview({ enabled: false, intervalMs: 50, minDeltaChars: 1, maxChars: 500 }, mp, 'ctx', undefined, undefined)
+    const sp = newStreamPreview({ enabled: false, intervalMs: 50, minDeltaChars: 1, maxChars: 500, progressFlushIntervalMs: 300 }, mp, 'ctx', undefined, undefined)
     await sp.appendText('Hello')
     await sleep(100)
     expect(sp.needsDoneReaction()).toBe(false)

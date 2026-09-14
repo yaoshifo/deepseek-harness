@@ -154,7 +154,7 @@ describe('askUser followups conversion', () => {
 describe('askUser followups conversion: pre-ask reply segment pin', () => {
   /** A started streaming preview whose handle carries an export key (recall.spec pattern). */
   function startedPreview(p: Platform): StreamPreview {
-    const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500 }
+    const cfg = { enabled: true, intervalMs: 0, minDeltaChars: 0, maxChars: 500, progressFlushIntervalMs: 300 }
     const starter = Object.assign(p, {
       async sendPreviewStart(): Promise<unknown> {
         return { messageID: 'om_card1', exportKey: () => 'om_card1' }
