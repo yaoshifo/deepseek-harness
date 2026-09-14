@@ -757,7 +757,7 @@ describe('editText', () => {
       target,
       { oldString: 'mark same', newString: 'x', replaceAll: false },
       { version: await versionOf(target) },
-    ).catch((reason: unknown) => reason as { code: string; message: string })
+    ).catch((reason: unknown) => reason as { code: string; message: string }) as { code: string; message: string }
     expect(error).toMatchObject({ code: 'FS_AMBIGUOUS_EDIT' })
     expect(error.message).toContain('matched 11 times in')
     expect(error.message).toContain('line 10')
@@ -774,7 +774,7 @@ describe('editText', () => {
       // Wrong leading whitespace: the match fails, but the trimmed first-line probe hits lines 2 and 4.
       { oldString: '\tX = 1', newString: 'y', replaceAll: false },
       { version: await versionOf(target) },
-    ).catch((reason: unknown) => reason as { code: string; message: string })
+    ).catch((reason: unknown) => reason as { code: string; message: string }) as { code: string; message: string }
     expect(error).toMatchObject({ code: 'FS_EDIT_NOT_FOUND' })
     expect(error.message).toContain('old_string was not found in')
     expect(error.message).toContain('nearest first-line matches: line 2: "X = 1", line 4: "  X = 1"')
@@ -787,7 +787,7 @@ describe('editText', () => {
       target,
       { oldString: 'ZZZ totally absent', newString: 'y', replaceAll: false },
       { version: await versionOf(target) },
-    ).catch((reason: unknown) => reason as { code: string; message: string })
+    ).catch((reason: unknown) => reason as { code: string; message: string }) as { code: string; message: string }
     expect(error).toMatchObject({ code: 'FS_EDIT_NOT_FOUND' })
     expect(error.message).toBe(`old_string was not found in "${join(dir, 'a.txt')}"`)
   })
