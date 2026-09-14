@@ -112,7 +112,7 @@ interface SkillSummary {
   readonly name: string
   /** Short routing description shown by discovery consumers. */
   readonly description: string
-  /** Optional extra routing guidance. */
+  /** Optional extra guidance for user-facing skill listings; the model-facing catalog renders only name and description. */
   readonly whenToUse?: string
   /** Resolved model and user invocation controls. */
   readonly invocation: SkillInvocationPolicy

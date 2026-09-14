@@ -229,7 +229,7 @@ export interface SkillEntry {
   readonly name: string
   /** Short routing description. */
   readonly description: string
-  /** Optional extra routing guidance. */
+  /** Optional extra guidance for user-facing skill listings; the model-facing catalog renders only name and description. */
   readonly whenToUse?: string
   /** Whether the same skill is also advertised to the model. */
   readonly modelInvocable: boolean
