@@ -408,12 +408,15 @@ describe('RenderAndDeliverReply', () => {
     // timeouts and the tick cadence.
     interface HeldPatch { text: string; release: () => void }
     const patches: HeldPatch[] = []
-    const heldPlatform = createStubMediaPlatform()
-    heldPlatform.updateRenderStatus = (_ctx: unknown, _key: string, text: string) => {
-      const patch: HeldPatch = { text, release: (): void => {} }
-      patches.push(patch)
-      return new Promise<void>((resolve) => { patch.release = resolve })
-    }
+    // The stub carries no render-status method; Object.assign types the
+    // dynamic override the ProgressDrain flow calls through RenderStatusUpdater.
+    const heldPlatform = Object.assign(createStubMediaPlatform(), {
+      updateRenderStatus: (_ctx: unknown, _key: string, text: string): Promise<void> => {
+        const patch: HeldPatch = { text, release: (): void => {} }
+        patches.push(patch)
+        return new Promise<void>((resolve) => { patch.release = resolve })
+      },
+    })
     const a = createRenderAgent({ blockCount: 5 })
     const e = new Engine('test', a, [heldPlatform], '', 'en')
     e.planRenderEnabled = true
