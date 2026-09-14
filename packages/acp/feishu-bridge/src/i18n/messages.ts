@@ -278,6 +278,7 @@ export const messages: Record<MsgKey, Partial<Record<LocaleCode, string>>> = {
   watchdog_reset: { en: '⚠️ This turn exceeded the maximum turn duration and was terminated; conversation context is preserved. Pending question/approval cards in this chat are now invalid — please resend your last message.', zh: '⚠️ 本轮执行超出时长上限已被终止，对话上下文已保留；群里待点击的追问/审批卡已失效，请重新发送上一条消息。' },
   answer_delivery_unknown: { en: '⚠️ The answer could not be confirmed as delivered — it may or may not have arrived. Do not resend immediately; check first and wait a moment.', zh: '⚠️ 回答是否送达未能确认——消息可能已送达也可能未送达。请勿立即重发，稍候确认后再决定。' },
   answer_delivery_failed: { en: '⚠️ The answer failed to deliver (send rejected). Ask again if you still need it.', zh: '⚠️ 回答未能送达（发送被拒绝）。如仍需要请再次提问。' },
+  answer_delivery_saved: { en: 'A copy of the answer was saved to %s.', zh: '回答副本已保存至 %s。' },
   delete_active_denied: { en: '❌ Cannot delete the currently active session. Switch to another session first.', zh: '❌ 不能删除当前活跃会话，请先切换到其他会话。', 'zh-TW': '❌ 不能刪除當前活躍會話，請先切換到其他會話。', ja: '❌ 現在アクティブなセッションは削除できません。先に別のセッションに切り替えてください。', es: '❌ No se puede eliminar la sesión activa. Cambie a otra sesión primero.' },
   delete_mode_title: { en: 'Delete Sessions', zh: '删除会话', 'zh-TW': '刪除會話', ja: 'セッション削除', es: 'Eliminar sesiones' },
   delete_mode_select: { en: 'Select', zh: '选择', 'zh-TW': '選擇', ja: '選択', es: 'Seleccionar' },

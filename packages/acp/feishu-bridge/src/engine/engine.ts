@@ -150,7 +150,7 @@ import { defaultStreamPreviewCfg, newStreamPreview, newToolProgressEntry, Progre
 import { isTodoToolName, parseTodoItems } from '../progress.ts'
 import { newAsyncSender, type AsyncSender } from '../async-sender.ts'
 import { RateLimiter } from '../ratelimit.ts'
-import { readFileSync, statSync, existsSync } from 'node:fs'
+import { readFileSync, statSync, existsSync, writeFileSync, mkdirSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join as joinPath } from 'node:path'
@@ -1961,6 +1961,38 @@ export class Engine {
       }
     }
     state.answerDelivery = outcome
+  }
+
+  /**
+   * Persist the turn's answer next to the session when it could not be
+   * delivered (dsh-im absorption batch 1): the warning message then carries
+   * the path, so the work stays recoverable even though every send surface
+   * failed. Best-effort — a write failure returns undefined and the warning
+   * goes out without a path.
+   * @param state - Turn state carrying the last base response.
+   * @param sessionKey - Key whose chat workspace receives the file.
+   * @returns The written file path, or undefined when nothing to save or the
+   *   write failed.
+   */
+  private saveUndeliveredAnswer(state: InteractiveState, sessionKey: string): string | undefined {
+    const text = state.lastBaseResponse?.trim()
+    if (text === undefined || text === '') return undefined
+    // The chat's effective workspace (per-chat override, else the agent's
+    // work dir), falling back to the engine's configured base dir — the
+    // save must land somewhere the user can reach even when the agent-side
+    // dir is unset.
+    const dir = this.sessionWorkDir(sessionKey) || this.baseWorkDir
+    if (dir === '') return undefined
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const path = joinPath(dir, `undelivered-reply-${stamp}.md`)
+    try {
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(path, text, 'utf8')
+      return path
+    } catch (error) {
+      console.warn(`engine: saving undelivered answer failed (${sessionKey}): ${String(error)}`)
+      return undefined
+    }
   }
 
   // ── inbound routing ─────────────────────────────────────────────────────
@@ -4196,11 +4228,21 @@ export class Engine {
     // finished must not read as success when its answer did not provably
     // land. Sits right after the delivery branches and rides the plain send
     // path, so card-less platforms see it too; the ✅ card repeats it in its
-    // body. Streaming-card paths leave answerDelivery unset for now.
+    // body. The streaming-card surfaces report through sp.answerDelivery
+    // (deliverAnswer / terminal PATCH); when the answer could not be
+    // delivered at all, it is also saved next to the session so the work is
+    // recoverable, and the warning carries the path.
+    if (state.answerDelivery === undefined && sp.answerDelivery !== undefined) {
+      state.answerDelivery = sp.answerDelivery
+    }
     if (p !== undefined && (state.answerDelivery === 'unknown' || state.answerDelivery === 'failed')) {
-      const warn = state.answerDelivery === 'unknown'
+      const savedPath = this.saveUndeliveredAnswer(state, sessionKey)
+      let warn = state.answerDelivery === 'unknown'
         ? this.i18n.t(Msg.AnswerDeliveryUnknown)
         : this.i18n.t(Msg.AnswerDeliveryFailed)
+      if (savedPath !== undefined) {
+        warn = `${warn}\n${this.i18n.tf(Msg.AnswerDeliverySaved, savedPath)}`
+      }
       await this.send(p, replyCtx, warn)
     }
 

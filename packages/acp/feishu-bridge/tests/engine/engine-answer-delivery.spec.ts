@@ -9,6 +9,10 @@
  * @module dsh-feishu-bridge/tests-engine-answer-delivery
  */
 
+import { mkdtemp, rm } from 'node:fs/promises'
+import { readFileSync, readdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join as joinPath } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { Engine } from '../../src/engine/engine.ts'
 import { createStubAgent, createStubPlatform, newResultAgentSession } from '../stubs/engine-stubs.ts'
@@ -108,5 +112,29 @@ describe('answer delivery outcome', () => {
     expect(e.interactiveStates.get('testchat')?.answerDelivery).toBe('failed')
     const texts = p.sent.join('\n')
     expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('failed to deliver')
+  })
+
+  it('an undeliverable answer is saved next to the session and the warning carries the path', async () => {
+    // The answer send fails (definite rejection); the later warning send
+    // succeeds (flaky platform) — the answer must be persisted to the chat
+    // workspace and the warning must point at the file.
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-undelivered-'))
+    try {
+      const p = flakyPlatform(forbiddenError)
+      const e = new Engine('test', resultAgent('the recoverable answer'), [p], '', 'en')
+      e.setBaseWorkDir(workDir)
+      e.receiveMessage(p, msg('please answer'))
+      await vi.waitFor(() => {
+        expect(e.interactiveStates.get('testchat')?.answerDelivery).toBe('failed')
+      }, { timeout: 5000 })
+      const texts = p.sent.join('\n')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('failed to deliver')
+      expect(texts, `sent=${JSON.stringify(p.sent)}`).toContain('undelivered-reply-')
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('the recoverable answer')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
   })
 })

@@ -15,6 +15,7 @@
 import { normalizeKeyStyleVariants, type JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import {
   asFileSender,
+  asDeliveryOutcomeClassifier,
   asMessageUpdater,
   asPreviewCleaner,
   asPreviewDisplacementProber,
@@ -23,6 +24,7 @@ import {
   asPreviewStarter,
   asStoppedCardRenderer,
   asTransientPatchErrorChecker,
+  type DeliveryOutcome,
   type ParkOutcome,
   type Platform,
   type ProgressContent,
@@ -635,6 +637,15 @@ export class StreamPreview {
    * @internal White-box: ported same-package tests read/write this directly.
    */
   stoppedCardRendered: boolean = false
+
+  /**
+   * Delivery outcome of this preview's answer-carrying surfaces: set by
+   * {@link StreamPreview.deliverAnswer} and by a successful terminal PATCH
+   * (the card itself carried the answer). The engine reads it at turn end
+   * to gate the completion wording on whether the answer provably landed.
+   * Undefined until a delivery attempt settles it.
+   */
+  answerDelivery: DeliveryOutcome | undefined = undefined
   private todoItems: TodoItem[] = []
   private bgTaskHint = ''
   private subagentCount = 0
@@ -1787,9 +1798,13 @@ export class StreamPreview {
    * Must NOT hold the lock.
    *
    * @param text - Complete answer text to deliver.
+   * @returns The delivery outcome: 'sent' when a chunk (or the file) landed,
+   *   otherwise the conservative worst classification of the failures
+   *   ('unknown' outranks 'failed') — an empty text reports 'sent' since
+   *   nothing was owed.
    */
-  async deliverAnswer(text: string): Promise<void> {
-    if (text.trim() === '') return
+  async deliverAnswer(text: string): Promise<DeliveryOutcome> {
+    if (text.trim() === '') return 'sent'
     const fs = asFileSender(this.platform)
     if (fs !== undefined) {
       const fileName = `reply-${hmsFile()}.md`
@@ -1799,26 +1814,38 @@ export class StreamPreview {
           data: new TextEncoder().encode(text),
           fileName,
         })
-        return
+        this.answerDelivery = 'sent'
+        return 'sent'
       } catch (error) {
         console.warn(`stream preview: deliverAnswer SendFile failed, degrading to plain text: ${String(error)}`)
       }
     }
+    let outcome: DeliveryOutcome = 'sent'
     for (const chunk of splitMessage(text, MaxPlatformMessageLen)) {
       try {
         await this.platform.send(this.replyCtx, chunk)
       } catch (error) {
         console.warn(`stream preview: deliverAnswer Send failed: ${String(error)}`)
+        const classified = asDeliveryOutcomeClassifier(this.platform)?.classifyDeliveryFailure(error) ?? 'unknown'
+        if (outcome !== 'unknown') outcome = classified
       }
     }
+    this.answerDelivery = outcome
+    return outcome
   }
 
   /**
    * Recover when the final terminal PATCH is rejected (e.g. Feishu 11310):
-   * delete the frozen preview card and re-deliver via deliverAnswer. Must
-   * NOT hold the lock.
+   * re-deliver via deliverAnswer, then delete the frozen preview card — in
+   * that order (dsh-im absorption batch 1): deleting first loses the answer
+   * entirely when the re-delivery also fails, while the frozen card still
+   * shows the streamed text. Must NOT hold the lock.
+   *
+   * @returns The re-delivery outcome; the card is deleted only on 'sent'.
    */
-  private async fallbackSend(previewHandle: unknown, text: string): Promise<void> {
+  private async fallbackSend(previewHandle: unknown, text: string): Promise<DeliveryOutcome> {
+    const outcome = await this.deliverAnswer(text)
+    if (outcome !== 'sent') return outcome
     const cleaner = asPreviewCleaner(this.platform)
     if (cleaner !== undefined && previewHandle !== undefined) {
       try {
@@ -1827,7 +1854,7 @@ export class StreamPreview {
         console.debug(`streaming cleanup skipped: ${String(error)}`)
       }
     }
-    await this.deliverAnswer(text)
+    return outcome
   }
 
   /**
@@ -1888,6 +1915,7 @@ export class StreamPreview {
           await this.fallbackSend(handle, answerText)
           return
         }
+        this.answerDelivery = 'sent'
         if (truncated) await this.deliverAnswer(answerText)
       })
       return
@@ -1903,6 +1931,7 @@ export class StreamPreview {
     this.lastSentKey = this.sentKeyOf(display, content)
     this.lastSentViaUpdate = true
     this.degraded = false
+    this.answerDelivery = 'sent'
     if (truncated) await this.deliverAnswer(answerText)
   }
 
@@ -1950,7 +1979,9 @@ export class StreamPreview {
         } catch (error) {
           console.warn(`stream preview: async markFailed PATCH failed, sending fallback: ${String(error)}`)
           await this.fallbackSend(handle, answerText)
+          return
         }
+        this.answerDelivery = 'sent'
       })
       return
     }
@@ -1965,6 +1996,7 @@ export class StreamPreview {
     this.lastSentKey = this.sentKeyOf(display, content)
     this.lastSentViaUpdate = true
     this.degraded = false
+    this.answerDelivery = 'sent'
   }
 
   /**

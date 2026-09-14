@@ -2211,3 +2211,69 @@ describe('markFailedIfUnsettled', () => {
     expect(sp.failed).toBe(false)
   })
 })
+
+/** Platform whose sends classify through a shape-based judgment. */
+function createClassifyingSendPlatform(sendImpl: (rc: unknown, content: string) => Promise<void>): StubPlatform & { sent: string[] } {
+  const p = createStubPlatform('test')
+  ;(p as unknown as { sent: string[] }).sent = []
+  p.send = async (rc: unknown, content: string) => sendImpl(rc, content)
+  return Object.assign(p, {
+    classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' => {
+      const status = (err as { response?: { status?: unknown } }).response?.status
+      if (typeof status === 'number') return 'failed'
+      return 'unknown'
+    },
+  }) as StubPlatform & { sent: string[] }
+}
+
+describe('deliverAnswer / fallbackSend delivery outcome (absorption u5)', () => {
+  it('deliverAnswer classifies chunk failures through the platform capability', async () => {
+    const deadline = new Error('context deadline exceeded')
+    let first = true
+    const p = createClassifyingSendPlatform(async (_rc, content) => {
+      if (first) { first = false; throw deadline }
+      ;(p as unknown as { sent: string[] }).sent.push(content)
+    })
+    const sp = newStreamPreview(defaultStreamPreviewCfg(), p, 'ctx', undefined, undefined)
+    const outcome = await sp.deliverAnswer('the streamed answer')
+    expect(outcome).toBe('unknown')
+  })
+
+  it('fallbackSend deletes the frozen card only after a successful delivery', async () => {
+    const p = createMockUpdaterPlatform()
+    const deleted: unknown[] = []
+    Object.assign(p, { async deletePreviewMessage(h: unknown): Promise<void> { deleted.push(h) } })
+    const sp = newStreamPreview(defaultStreamPreviewCfg(), p, 'ctx', undefined, undefined)
+    await sp.appendAnalysisText('answer text')
+    ;(p as unknown as { updateMessage: (rc: unknown, c: ProgressContent) => Promise<void> }).updateMessage = async () => {
+      throw new Error('update blocked')
+    }
+    await sp.markCompleted()
+    await sleep(50)
+    expect((p as unknown as { sent: string[] }).sent).toContain('answer text')
+    expect(deleted).toEqual(['preview-handle'])
+  })
+
+  it('fallbackSend keeps the frozen card when the fallback delivery also fails', async () => {
+    const p = createMockUpdaterPlatform()
+    const deleted: unknown[] = []
+    Object.assign(p, { async deletePreviewMessage(h: unknown): Promise<void> { deleted.push(h) } })
+    ;(p as unknown as { updateMessage: (rc: unknown, c: ProgressContent) => Promise<void> }).updateMessage = async () => {
+      throw new Error('update blocked')
+    }
+    let first = true
+    ;(p as unknown as { sent: string[] }).sent = []
+    ;(p as unknown as { send: (rc: unknown, c: string) => Promise<void> }).send = async () => {
+      if (first) { first = false; throw new Error('context deadline exceeded') }
+    }
+    Object.assign(p, {
+      classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' =>
+        String((err as Error).message).includes('deadline') ? 'unknown' : 'failed',
+    })
+    const sp = newStreamPreview(defaultStreamPreviewCfg(), p, 'ctx', undefined, undefined)
+    await sp.appendAnalysisText('answer text')
+    await sp.markCompleted()
+    await sleep(50)
+    expect(deleted).toEqual([])
+  })
+})
