@@ -856,6 +856,10 @@ export function updatePlanCardStatus(
  * Record the reply render status and PATCH the tool-progress green card's
  * status line via RenderStatusUpdater (Go patchReplyRenderStatus). The caller
  * resolves platform+replyCtx once so repeated transitions don't re-rebuild.
+ * The status entry is recorded synchronously; the returned promise settles
+ * once the PATCH itself settled (never rejects — failures are logged), so
+ * callers that must order PATCHes (the progress drain) can await it while
+ * fire-and-forget callers keep ignoring it.
  *
  * @param e - Engine providing i18n for the status label.
  * @param p - Platform to PATCH through; undefined records status only.
@@ -864,17 +868,18 @@ export function updatePlanCardStatus(
  * @param exportKey - Export key identifying the reply render.
  * @param status - The render lifecycle status to record and display.
  * @param elapsedMs - Elapsed milliseconds appended to the label when > 0.
+ * @returns Promise settling after the PATCH (or at once when none is sent).
  */
 export function patchReplyRenderStatus(
   e: Engine, p: Platform | undefined, replyCtx: unknown, state: InteractiveState | undefined,
   exportKey: string, status: RenderStatus, elapsedMs: number,
-): void {
-  if (state === undefined || exportKey === '') return
+): Promise<void> {
+  if (state === undefined || exportKey === '') return Promise.resolve()
   setRenderStatus(state, exportKey, 'reply', status)
-  if (p === undefined || replyCtx === undefined || replyCtx === null) return
+  if (p === undefined || replyCtx === undefined || replyCtx === null) return Promise.resolve()
   const ru = asRenderStatusUpdater(p)
-  if (ru === undefined) return
-  void ru.updateRenderStatus(replyCtx, exportKey, renderStatusText(e, status, elapsedMs)).catch((error: unknown) => {
+  if (ru === undefined) return Promise.resolve()
+  return ru.updateRenderStatus(replyCtx, exportKey, renderStatusText(e, status, elapsedMs)).catch((error: unknown) => {
     console.warn(`reply-render: status patch failed (${exportKey}, ${status}): ${String(error)}`)
   })
 }
@@ -1253,7 +1258,9 @@ export async function deliverRenderedImage(
  * Best-effort with single-flight via state.preRenderRunning; a cancelled
  * render (new turn / card button → cancelRenders) or failed fork silently
  * skips delivery. Retries once when the first attempt stalls or times out
- * without producing a file (upstream LLM jitter).
+ * without producing a file (upstream LLM jitter). Every exit drains the
+ * periodic rendering-status PATCHes before issuing the terminal one, so a
+ * late tick cannot overwrite the terminal status on the card.
  *
  * @param e - Engine used to fork and deliver the render.
  * @param state - Per-session state guarding single-flight and cancel tracking.
@@ -1290,22 +1297,30 @@ export function renderAndDeliverReply(
         await renderSkillBody(e)
       } catch (error) {
         console.error(`reply-html: ${error instanceof Error ? error.message : String(error)} (${sessionKey})`)
-        patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
+        void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
         return
       }
-      patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', 0)
+      void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', 0)
       // Periodically refresh the elapsed "rendering" status so the user does
-      // not mistake a slow render for a hang; stopped before the final PATCH
-      // so a late tick cannot reorder statuses.
+      // not mistake a slow render for a hang. The tick's PATCH promise is
+      // chained into progressInflight so the drain below can wait for the
+      // network call itself, not just the synchronous dispatch.
       let progressStop = false
       const progressInflight: Array<Promise<void>> = []
       const ticker = setInterval(() => {
-        progressInflight.push(Promise.resolve().then(() => { patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', Date.now() - renderStart) }))
+        progressInflight.push(patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'rendering', Date.now() - renderStart))
       }, 30_000)
       const stopProgress = (): void => {
         if (progressStop) return
         progressStop = true
         clearInterval(ticker)
+      }
+      // Stop future ticks AND wait out every in-flight tick PATCH, so the
+      // terminal PATCH that follows can never be overwritten by a late tick
+      // (the card would read 渲染中 forever). Runs at every exit.
+      const drainProgress = async (): Promise<void> => {
+        stopProgress()
+        await Promise.allSettled(progressInflight)
       }
 
       const maxAttempts = 2
@@ -1332,29 +1347,28 @@ export function renderAndDeliverReply(
         }
       }
       if (!succeeded) {
-        stopProgress()
+        await drainProgress()
         const status: RenderStatus = parentCtl.signal.aborted ? 'cancelled' : 'failed'
-        patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, status, 0)
+        void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, status, 0)
         return
       }
       recordRenderedReply(state, exportKey, hp)
       console.info(`reply-html-pre: rendered (${sessionKey}, exportKey ${exportKey}, html_path ${hp})`)
       if (platform === undefined || replyCtx === undefined) {
-        stopProgress()
+        await drainProgress()
         console.warn(`reply-html-pre: skip deliver, no replyCtx (${sessionKey})`)
-        patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
+        void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
       } else {
         try {
           await deliverRenderedImage(e, platform, replyCtx, hp, parentCtl.signal)
-          stopProgress()
-          patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'delivered', Date.now() - renderStart)
+          await drainProgress()
+          void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'delivered', Date.now() - renderStart)
         } catch (error) {
-          stopProgress()
+          await drainProgress()
           console.warn(`reply-html-pre: deliver failed (${sessionKey}): ${String(error)}`)
-          patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
+          void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
         }
       }
-      await Promise.allSettled(progressInflight)
       void removeRenderedTemp(hp)
     } finally {
       state.preRenderRunning = false

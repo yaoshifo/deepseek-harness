@@ -9,7 +9,7 @@
  * @module dsh-feishu-bridge/tests-engine-plan-render-fork
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { existsSync, writeFileSync, statSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 
@@ -363,6 +363,62 @@ describe('RenderAndDeliverReply', () => {
     await pollUntil(() => !state.preRenderRunning && a.getCalls().length >= 2, 3000)
     expect(a.getCalls()).toHaveLength(2)
     expect(p.files).toHaveLength(0)
+  })
+
+  it('ProgressDrain: an in-flight tick PATCH lands before the terminal status PATCH', async () => {
+    // #13: stopProgress only stops future ticks; a tick whose PATCH is still
+    // on the wire must be drained BEFORE the terminal PATCH is issued, or the
+    // card can end stuck on 渲染中 (the late tick overwrites the terminal
+    // status). Held PATCH promises place the race at a deterministic point.
+    vi.useFakeTimers()
+    try {
+      interface HeldPatch { text: string; release: () => void }
+      const patches: HeldPatch[] = []
+      const heldPlatform = createStubMediaPlatform()
+      heldPlatform.updateRenderStatus = (_ctx: unknown, _key: string, text: string) => {
+        const patch: HeldPatch = { text, release: (): void => {} }
+        patches.push(patch)
+        return new Promise<void>((resolve) => { patch.release = resolve })
+      }
+      const a = createRenderAgent({ blockCount: 5 })
+      const e = new Engine('test', a, [heldPlatform], '', 'en')
+      e.planRenderEnabled = true
+      e.planRenderProvider = 'p'
+      e.planRenderSkillSource = () => Promise.resolve(renderSkillBodyFixture())
+      e.planRenderTimeoutMs = 60_000
+
+      const state = newRenderState(heldPlatform)
+      renderAndDeliverReply(e, state, 'k1', longText, 'om_1')
+
+      // Initial 'rendering' PATCH, then the 30s tick fires while attempt 1
+      // (60s timeout) is still blocked.
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(patches.length).toBeGreaterThanOrEqual(2)
+      expect(patches.some(p => p.text.includes('30s')), 'the tick PATCH was issued').toBe(true)
+
+      // Drive both attempt timeouts (60s, 120s) so the failure exit runs.
+      for (let i = 0; i < 30; i++) {
+        await vi.advanceTimersByTimeAsync(5_000)
+        // Red marker: the terminal PATCH must not be issued while a tick
+        // PATCH is still in flight.
+        if (patches.some(p => p.text.includes('Render failed'))) break
+      }
+
+      expect(patches.some(p => p.text.includes('Render failed')), 'no terminal PATCH before the tick PATCHes settle').toBe(false)
+      expect(getRenderStatus(state, 'om_1')?.status).toBe('rendering')
+
+      // Settle the held tick PATCHes; now the terminal PATCH may land.
+      for (const patch of patches) patch.release()
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(1_000)
+        if (patches.some(p => p.text.includes('Render failed'))) break
+      }
+      const terminalIdx = patches.findIndex(p => p.text.includes('Render failed'))
+      expect(terminalIdx).toBeGreaterThan(-1)
+      expect(patches.at(-1)?.text, 'the terminal PATCH is the last one issued').toContain('Render failed')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
