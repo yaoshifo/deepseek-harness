@@ -3437,6 +3437,10 @@ export class Engine {
           // Go parity: fail the card before the kill so it cannot freeze in
           // its Running state next to the stall-timeout notice.
           await sp.markFailed()
+          // The killed turn's completed streamed text must not die with it
+          // (dsh-im absorption batch 1): deliver before the state cleanup
+          // drops textParts.
+          if (p !== undefined) await this.deliverKilledTurnPartial(state, session, p, replyCtx)
           await this.cleanupInteractiveState(sessionKey, state)
           // A stalled-out child never reports; the parent gets the synthetic
           // timeout notice instead of waiting forever.
@@ -3471,6 +3475,9 @@ export class Engine {
           // kill so it cannot freeze in its Running state next to the reset
           // notice (an already-terminal card no-ops inside markFailed).
           await sp.markFailed()
+          // Same as the stall kill: deliver the completed streamed text
+          // before the state cleanup drops it.
+          if (p !== undefined) await this.deliverKilledTurnPartial(state, session, p, replyCtx)
           await this.cleanupInteractiveState(sessionKey, state)
           // The capped child owes its parent a settlement it can no longer deliver.
           this.reportSubtaskTimeout(sessionKey)
@@ -4370,6 +4377,46 @@ export class Engine {
           await this.send(p, replyCtx, chunk)
         }
       }
+    }
+  }
+
+  /**
+   * Deliver the turn's completed streamed text before a forceful kill
+   * (dsh-im absorption batch 1, u4): stall exhaustion and the hard turn cap
+   * return without any delivery point, so the streamed answer dies with the
+   * turn — the channel-closed path already delivers it. Mirrors that path's
+   * segmentation (inter-segment chunks were already surfaced; deliver the
+   * unsent remainder) with the interrupted-subtask settlement, and records
+   * the delivery outcome like the turn-end path.
+   * @param state - Turn state whose completed textParts are delivered.
+   * @param session - Session for the subtask settlement.
+   * @param p - Platform to deliver on.
+   * @param replyCtx - Platform reply context addressing the chat.
+   */
+  private async deliverKilledTurnPartial(
+    state: InteractiveState,
+    session: Session,
+    p: Platform,
+    replyCtx: unknown,
+  ): Promise<void> {
+    if (state.textParts.length === 0) return
+    let fullResponse = state.textParts.join('')
+    if (isSilentReply(fullResponse)) return
+    const [stripped, ok] = stripTrailingSilent(fullResponse)
+    if (ok && stripped.trim() === '') return
+    if (ok) fullResponse = stripped
+    // The parent gets the real partial (interrupted-marked) instead of the
+    // synthetic never-reported timeout; reportSubtaskTimeout no-ops when the
+    // auto-report delivered.
+    const prefixed = `${this.i18n.t(Msg.SubtaskTurnInterrupted)}\n\n${fullResponse}`
+    this.maybeAutoReportSubtask(state, session, prefixed, isSilentReply(prefixed))
+    if (state.toolCount > 0 && state.segmentStart > 0) {
+      const unsent = state.textParts.slice(state.segmentStart).join('')
+      const [uStripped, uOk] = stripTrailingSilent(unsent)
+      const deliver = uOk ? uStripped : unsent
+      if (deliver !== '') await this.deliverAnswerText(state, p, replyCtx, deliver)
+    } else {
+      await this.deliverAnswerText(state, p, replyCtx, fullResponse)
     }
   }
 
