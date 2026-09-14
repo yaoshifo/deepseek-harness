@@ -131,16 +131,17 @@ export function apply(ctx: Context, config: Config = {}): void {
       // The agent is its own scope key, so the lookup resolves the layered
       // registry exactly as this agent's composition sees it.
       const lookup = { cwd: exec.agent?.session.header.cwd, signal: exec.signal, scope: exec.agent }
-      const summary = (await ctx.skills.list(lookup)).find(skill => skill.name === args.name)
+      const summaries = await ctx.skills.list(lookup)
+      const summary = summaries.find(skill => skill.name === args.name)
       if (!summary) {
-        throw new Error(`skill "${args.name}" is unknown or no longer available`)
+        throw new Error(unknownSkillDiagnostic(args.name, summaries))
       }
       if (!isModelInvocable(summary)) {
         throw new Error(`skill "${args.name}" is not available for model invocation`)
       }
       const skill = await ctx.skills.get(args.name, lookup)
       if (!skill) {
-        throw new Error(`skill "${args.name}" is unknown or no longer available`)
+        throw new Error(unknownSkillDiagnostic(args.name, summaries))
       }
       if (!isModelInvocable(skill)) {
         throw new Error(`skill "${args.name}" is not available for model invocation`)
@@ -249,6 +250,28 @@ export function apply(ctx: Context, config: Config = {}): void {
         : decision.messages.map(message => message.id === existing.message.id ? catalog : message),
     }
   })
+}
+
+/**
+ * Render the unknown-skill refusal with the closest model-invocable names, so the
+ * model can correct a mistyped selection in one turn. Only model-invocable skills
+ * are suggested (the `skill` tool refuses to load the others); a name whose
+ * lowercase form the request contains ranks first, and without any containment
+ * the alphabetical first three stand in. The message stays bounded either way.
+ * @param requested - the (already `isSkillName`-validated) requested name.
+ * @param summaries - the session-visible skill summaries from the same lookup.
+ * @returns the diagnostic error message.
+ */
+function unknownSkillDiagnostic(requested: string, summaries: readonly SkillSummary[]): string {
+  const available = summaries.filter(isModelInvocable).map(skill => skill.name)
+  if (available.length === 0) {
+    return `skill "${requested}" is unknown or no longer available; no skills are available in this session`
+  }
+  const lower = requested.toLowerCase()
+  const containing = available.filter(name => name.toLowerCase().includes(lower)).sort()
+  const listed = (containing.length > 0 ? containing : [...available].sort()).slice(0, 3)
+  return `skill "${requested}" is unknown or no longer available; `
+    + `available skills include: ${listed.join(', ')} (${available.length} total) — use the closest name`
 }
 
 function renderCatalogMessage(entries: SkillCatalogSource['entries']): UserMessage {

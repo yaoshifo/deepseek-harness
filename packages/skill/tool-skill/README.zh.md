@@ -209,7 +209,7 @@ Load referenced resources only as needed.
 
 #### 模型看到什么
 
-无效或陈旧选择会精确返回 `Error: invalid skill name "<name>"`、`Error: skill "<name>" is unknown or no longer available` 或 `Error: skill "<name>" is not available for model invocation`。提供方抛出的查找文本取决于数据，并套用同一个 `Error: <message>` 包装层。
+无效或陈旧选择会精确返回 `Error: invalid skill name "<name>"`、`Error: skill "<name>" is unknown or no longer available; available skills include: <a>, <b>, <c> (<N> total) — use the closest name`（至多三个小写形式包含请求名的可模型调用名，无包含时取字母序前三；一个都没有时为 `...; no skills are available in this session`）或 `Error: skill "<name>" is not available for model invocation`。提供方抛出的查找文本取决于数据，并套用同一个 `Error: <message>` 包装层。
 
 #### Token 影响
 
