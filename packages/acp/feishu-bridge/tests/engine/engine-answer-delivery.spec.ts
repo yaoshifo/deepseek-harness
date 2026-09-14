@@ -438,4 +438,32 @@ describe('answer delivery outcome', () => {
     }, { timeout: 5000 })
     expect(p.sent.join('\n'), `sent=${JSON.stringify(p.sent)}`).toContain('precious pre-ask segment')
   })
+
+  it('a definitely rejected restart flush keeps the segment observable despite the reset', async () => {
+    // restartAskSurfaces swallows the flush failure, then clears textParts
+    // and answerDelivery — the segment existed on no surface and the reset
+    // erased even the failure verdict: the loss was invisible. A definite
+    // rejection must stay recoverable (saved copy) and recorded for the
+    // turn-end warning block.
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-restart-flush-'))
+    try {
+      const p = askFlakyPlatform(forbiddenError, 99)
+      const e = new Engine('test', createStubAgent(), [p], '', 'en')
+      e.setBaseWorkDir(workDir)
+      const state = await parkAskOverSegment(e, p, 'testchat', 'precious restart segment')
+      const decision = e.askUser('testchat', permRequest)
+      await new Promise((r) => { setTimeout(r, 30) })
+      e.routeAskResponse(p, msg('allow'), 'allow')
+      await decision
+      await vi.waitFor(() => {
+        expect(state.textParts).toEqual([])
+      }, { timeout: 5000 })
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('precious restart segment')
+      expect(state.answerDelivery, 'the verdict survives the restart reset').toBe('failed')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
+  })
 })
