@@ -14,6 +14,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '../../src/engine/session.ts'
+import { Engine } from '../../src/engine/engine.ts'
+import { createStubAgent, createStubPlatform } from '../stubs/engine-stubs.ts'
 
 /** Counted real writes through the mocked atomic writer. */
 const writes = vi.hoisted(() => ({ count: 0 }))
@@ -87,5 +89,43 @@ describe('SessionManager save debounce', () => {
     // A later flushNow with nothing pending is a no-op, not a spurious write.
     sm.flushNow()
     expect(writes.count).toBe(baseline + 1)
+  })
+})
+
+describe('SIGTERM flush of pending debounced saves', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('a SIGTERM flushes the pending debounced save and re-raises the default death', async () => {
+    const path = await tempSessionsPath()
+    // The handler re-raises SIGTERM to keep dying-by-signal semantics; spy
+    // it so the emitted (not killed) signal cannot take the worker down.
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as never)
+    const e = new Engine('test', createStubAgent(), [createStubPlatform('test')], path, 'en')
+    try {
+      e.sessions.getOrCreateActive('user1')
+      const baseline = writes.count // the creation itself persisted synchronously
+
+      e.sessions.save()
+      expect(writes.count, 'the debounced save has not landed yet').toBe(baseline)
+
+      process.emit('SIGTERM', 'SIGTERM')
+
+      expect(writes.count, 'the signal flushed the pending write').toBe(baseline + 1)
+      const snap = JSON.parse(readFileSync(path, 'utf8')) as { userSessions: Record<string, string[]> }
+      expect(snap.userSessions.user1).toHaveLength(1)
+      expect(killSpy).toHaveBeenCalledWith(process.pid, 'SIGTERM')
+    } finally {
+      await e.stop().catch(() => undefined)
+    }
+  })
+
+  it('engine stop unregisters the signal hook', async () => {
+    const before = process.listenerCount('SIGTERM')
+    const e = new Engine('test', createStubAgent(), [createStubPlatform('test')], '', 'en')
+    expect(process.listenerCount('SIGTERM'), 'a live engine owns one hook').toBe(before + 1)
+    await e.stop()
+    expect(process.listenerCount('SIGTERM'), 'the stopped engine leaves no hook behind').toBe(before)
   })
 })

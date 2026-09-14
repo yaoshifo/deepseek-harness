@@ -114,7 +114,7 @@ import {
   type Interval,
 } from './status-footer.ts'
 import type { UsageProvider } from './usage.ts'
-import { Session, SessionManager } from './session.ts'
+import { hookSigtermFlush, Session, SessionManager } from './session.ts'
 import { pendingDirFor, saveFilesToDir, saveImagesToDir, spliceStagedAttachments, type StagedAttachment } from './attachments.ts'
 import { childLabel, failureBriefForAgentContext, SubtaskGather } from './subtask.ts'
 import {
@@ -709,6 +709,14 @@ function isEllipsisOnly(text: string): boolean {
 }
 
 /**
+ * One-line status replacing a subtask report body that verbatim repeats the
+ * sender's last direct agent-message (2026-09-13 chatroom postmortem): the
+ * parent model must not read the same body twice — neither as the single
+ * report wake nor as a row of the gather summary.
+ */
+const reportRepeatsDirectStatus = '内容与刚才的直发消息相同，全文见群内卡片'
+
+/**
  * Whether an event represents real turn content the unsolicited reader should
  * open a turn on, versus stream noise it must drop (Go
  * isSubstantiveUnsolicitedEvent): a bare empty or silent-marker text frame
@@ -1271,6 +1279,8 @@ export class Engine {
   autoCompressMinGap: number = 0
 
   private reaperTimer: ReturnType<typeof setInterval> | undefined
+  /** Disposer of the process-level SIGTERM save flush; runs on {@link Engine.stop}. */
+  private readonly unhookSigtermFlush: () => void
   /** Host-wired foreground subprocess runner; cron exec fails loud without it. */
   private readonly subprocess: EngineSubprocess | undefined
   /** Host-wired cold inbox reader; restart visibility stays silent without it. */
@@ -1297,6 +1307,10 @@ export class Engine {
     this.bridge = bridge ?? bareBridgeDispatch()
     this.sessions = new SessionManager(sessionStorePath)
     this.i18n = new I18n(lang)
+    // SIGTERM (launchctl/systemctl stop, the /reload restart) never fires
+    // beforeExit; the hook flushes a pending debounced save and re-raises
+    // the default death. Scoped to this engine's lifetime — stop() unhooks.
+    this.unhookSigtermFlush = hookSigtermFlush()
     this.sessions.invalidateForAgent(agent.name())
     this.monitor = new MonitorCore(this)
     // Feed observed runtime agent-to-agent messages (relayed straight onto a
@@ -1896,6 +1910,7 @@ export class Engine {
     this.rateLimiter?.stop()
     // Flush any debounced session-store write before the process can go down.
     this.sessions.dispose()
+    this.unhookSigtermFlush()
     await this.agent.stop()
   }
 
@@ -1961,6 +1976,33 @@ export class Engine {
       }
     }
     state.answerDelivery = outcome
+  }
+
+  /**
+   * Warn that the turn's answer did not provably land and persist a copy
+   * next to the session (dsh-im absorption batch 1): no-op unless the
+   * recorded outcome is 'unknown' or 'failed'. Shared by the post-barrier
+   * turn-end settlement and the kill-path partial delivery.
+   * @param state - Turn state whose answerDelivery holds the outcome.
+   * @param p - Platform to send the warning on.
+   * @param replyCtx - Platform reply context addressing the chat.
+   * @param sessionKey - Key whose chat workspace receives the saved copy.
+   */
+  private async warnUndeliveredAnswer(
+    state: InteractiveState,
+    p: Platform,
+    replyCtx: unknown,
+    sessionKey: string,
+  ): Promise<void> {
+    if (state.answerDelivery !== 'unknown' && state.answerDelivery !== 'failed') return
+    const savedPath = this.saveUndeliveredAnswer(state, sessionKey)
+    let warn = state.answerDelivery === 'unknown'
+      ? this.i18n.t(Msg.AnswerDeliveryUnknown)
+      : this.i18n.t(Msg.AnswerDeliveryFailed)
+    if (savedPath !== undefined) {
+      warn = `${warn}\n${this.i18n.tf(Msg.AnswerDeliverySaved, savedPath)}`
+    }
+    await this.send(p, replyCtx, warn)
   }
 
   /**
@@ -3472,7 +3514,7 @@ export class Engine {
           // The killed turn's completed streamed text must not die with it
           // (dsh-im absorption batch 1): deliver before the state cleanup
           // drops textParts.
-          if (p !== undefined) await this.deliverKilledTurnPartial(state, session, p, replyCtx)
+          if (p !== undefined) await this.deliverKilledTurnPartial(state, session, sessionKey, p, replyCtx)
           await this.cleanupInteractiveState(sessionKey, state)
           // A stalled-out child never reports; the parent gets the synthetic
           // timeout notice instead of waiting forever.
@@ -3509,7 +3551,7 @@ export class Engine {
           await sp.markFailed()
           // Same as the stall kill: deliver the completed streamed text
           // before the state cleanup drops it.
-          if (p !== undefined) await this.deliverKilledTurnPartial(state, session, p, replyCtx)
+          if (p !== undefined) await this.deliverKilledTurnPartial(state, session, sessionKey, p, replyCtx)
           await this.cleanupInteractiveState(sessionKey, state)
           // The capped child owes its parent a settlement it can no longer deliver.
           this.reportSubtaskTimeout(sessionKey)
@@ -4227,31 +4269,26 @@ export class Engine {
       }
     }
 
-    // Answer-delivery warning (dsh-im absorption batch 1): a turn that
-    // finished must not read as success when its answer did not provably
-    // land. Sits right after the delivery branches and rides the plain send
-    // path, so card-less platforms see it too; the ✅ card repeats it in its
-    // body. The streaming-card surfaces report through sp.answerDelivery
-    // (deliverAnswer / terminal PATCH); when the answer could not be
-    // delivered at all, it is also saved next to the session so the work is
-    // recoverable, and the warning carries the path.
-    if (state.answerDelivery === undefined && sp.answerDelivery !== undefined) {
-      state.answerDelivery = sp.answerDelivery
-    }
-    if (p !== undefined && (state.answerDelivery === 'unknown' || state.answerDelivery === 'failed')) {
-      const savedPath = this.saveUndeliveredAnswer(state, sessionKey)
-      let warn = state.answerDelivery === 'unknown'
-        ? this.i18n.t(Msg.AnswerDeliveryUnknown)
-        : this.i18n.t(Msg.AnswerDeliveryFailed)
-      if (savedPath !== undefined) {
-        warn = `${warn}\n${this.i18n.tf(Msg.AnswerDeliverySaved, savedPath)}`
-      }
-      await this.send(p, replyCtx, warn)
-    }
-
     // Guarantee the terminal PATCH has landed before the ✅ notification so
     // the progress card is not still mid-state when the push arrives.
     await barrier()
+
+    // Answer-delivery warning (dsh-im absorption batch 1): a turn that
+    // finished must not read as success when its answer did not provably
+    // land. Runs after the barrier — the streaming-card surfaces settle
+    // sp.answerDelivery inside the async terminal (final PATCH, then the
+    // fallback re-delivery), so only the drained sender holds the final
+    // outcome — and before the ✅ card below, so the warning precedes the
+    // push and the card body repeats it. Card-less platforms ride the plain
+    // send path: deliverAnswerText wrote state.answerDelivery directly.
+    // When the answer could not be delivered at all, it is also saved next
+    // to the session so the work is recoverable, and the warning carries
+    // the path.
+    if (state.answerDelivery === undefined && sp.answerDelivery !== undefined) {
+      state.answerDelivery = sp.answerDelivery
+    }
+    if (p !== undefined) await this.warnUndeliveredAnswer(state, p, replyCtx, sessionKey)
+
     if (sendCompletionNotification && p !== undefined && state.pendingMessages.length === 0) {
       // Parked-ask wall time is the user deciding, not the agent working —
       // the hard cap above already exempts it (resumeCapPark banks it into
@@ -4432,15 +4469,18 @@ export class Engine {
    * turn — the channel-closed path already delivers it. Mirrors that path's
    * segmentation (inter-segment chunks were already surfaced; deliver the
    * unsent remainder) with the interrupted-subtask settlement, and records
-   * the delivery outcome like the turn-end path.
+   * the delivery outcome like the turn-end path, warning and saving a copy
+   * when the partial could not be proven delivered.
    * @param state - Turn state whose completed textParts are delivered.
    * @param session - Session for the subtask settlement.
+   * @param sessionKey - Key whose chat workspace receives the saved copy.
    * @param p - Platform to deliver on.
    * @param replyCtx - Platform reply context addressing the chat.
    */
   private async deliverKilledTurnPartial(
     state: InteractiveState,
     session: Session,
+    sessionKey: string,
     p: Platform,
     replyCtx: unknown,
   ): Promise<void> {
@@ -4450,19 +4490,26 @@ export class Engine {
     const [stripped, ok] = stripTrailingSilent(fullResponse)
     if (ok && stripped.trim() === '') return
     if (ok) fullResponse = stripped
+    // The kill happens before the turn-end path records the reply text;
+    // lastBaseResponse is what saveUndeliveredAnswer persists below.
+    state.lastBaseResponse = fullResponse
     // The parent gets the real partial (interrupted-marked) instead of the
     // synthetic never-reported timeout; reportSubtaskTimeout no-ops when the
     // auto-report delivered.
     const prefixed = `${this.i18n.t(Msg.SubtaskTurnInterrupted)}\n\n${fullResponse}`
     this.maybeAutoReportSubtask(state, session, prefixed, isSilentReply(prefixed))
-    if (state.toolCount > 0 && state.segmentStart > 0) {
+    // Same in-progress guard as the turn-end segmentation: a live 实时播报
+    // card keeps the streamed segment on its failed render, so a plain-text
+    // copy would double it. Card-less paths re-deliver the unsent remainder.
+    if (state.toolCount > 0 && state.segmentStart > 0 && state.preview?.inProgressMode() !== true) {
       const unsent = state.textParts.slice(state.segmentStart).join('')
       const [uStripped, uOk] = stripTrailingSilent(unsent)
       const deliver = uOk ? uStripped : unsent
       if (deliver !== '') await this.deliverAnswerText(state, p, replyCtx, deliver)
-    } else {
+    } else if (state.preview?.inProgressMode() !== true) {
       await this.deliverAnswerText(state, p, replyCtx, fullResponse)
     }
+    await this.warnUndeliveredAnswer(state, p, replyCtx, sessionKey)
   }
 
   // ── stall retry ─────────────────────────────────────────────────────────
@@ -8411,11 +8458,23 @@ export class Engine {
       return
     }
 
+    // A report whose body is verbatim identical to the sender's last direct
+    // agent-message (the runtime send_message wake recorded by
+    // noteAgentDirectMessage) never re-enters the parent agent as full text:
+    // the gather barrier banks the one-line status, the single wake below
+    // injects it, and the card above keeps the full text for the human.
+    const last = parentSess.lastAgentDirectMessage
+    const childAgentSID = this.sessions.findActive(childKey)?.getAgentSessionID() ?? ''
+    const repeatsDirect = last !== undefined
+      && (last.fromKey === childKey || (childAgentSID !== '' && last.fromKey === childAgentSID))
+      && last.hash === createHash('sha256').update(content).digest('hex')
+
     // Gather barrier: bank this report and wake the parent only when all
     // expected children have reported (or the timeout fires).
     const g = parentSess.getPendingSubtaskGather()
     if (g !== undefined) {
-      const { done, summary, alreadyWoken } = g.accumulate(childKey, label, content)
+      const { done, summary, alreadyWoken } = g.accumulate(childKey, label,
+        repeatsDirect ? reportRepeatsDirectStatus : content)
       if (done) {
         parentSess.setPendingSubtaskGather(undefined)
         this.sessions.save()
@@ -8427,21 +8486,11 @@ export class Engine {
       // normal wake so this late report is not lost.
     }
 
-    // The card body stays clean; the synthetic message the parent agent sees
-    // carries a hint with the child's session key so it can follow up via
-    // the subtask tool even after context compaction. A report whose body is
-    // verbatim identical to the sender's last direct agent-message (the
-    // runtime send_message wake recorded by noteAgentDirectMessage) injects
-    // a one-line status instead — the parent model must not read the same
-    // body twice (2026-09-13 chatroom postmortem); the card above keeps the
-    // full text.
-    const last = parentSess.lastAgentDirectMessage
-    const childAgentSID = this.sessions.findActive(childKey)?.getAgentSessionID() ?? ''
-    const repeatsDirect = last !== undefined
-      && (last.fromKey === childKey || (childAgentSID !== '' && last.fromKey === childAgentSID))
-      && last.hash === createHash('sha256').update(content).digest('hex')
+    // The synthetic message the parent agent sees carries a hint with the
+    // child's session key so it can follow up via the subtask tool even
+    // after context compaction.
     let agentContent = repeatsDirect
-      ? `[子任务完成] ${label}：内容与刚才的直发消息相同，全文见群内卡片`
+      ? `[子任务完成] ${label}：${reportRepeatsDirectStatus}`
       : `[子任务完成] ${label}:\n\n${content}`
     if (childKey !== '') {
       agentContent += `\n\n(如需追问该子任务: feishu_bridge_subtask 工具 action: send, child: ${childKey})`
