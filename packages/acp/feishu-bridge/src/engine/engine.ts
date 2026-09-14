@@ -6168,6 +6168,13 @@ export class Engine {
   private routePermissionResponse(p: Platform, msg: Message, content: string, pending: PendingAsk, state: InteractiveState): boolean {
     const verdict = parsePermissionVerdict(content)
     if (verdict === undefined) {
+      // A non-verdict reply may ride with attachments (「看这张图」+ screenshot):
+      // the text only draws the hint, but the attachments must not silently
+      // vanish — stage them for the turn the eventual verdict resumes, like
+      // the questions path's answer+stage coexistence.
+      if (msg.images.length > 0 || msg.files.length > 0) {
+        this.stageAttachments(p, msg, msg.sessionKey)
+      }
       void this.reply(p, msg.replyCtx, this.i18n.t(Msg.PermissionHint))
       return true
     }
