@@ -2051,11 +2051,14 @@ export class Engine {
    * goes out without a path.
    * @param state - Turn state carrying the last base response.
    * @param sessionKey - Key whose chat workspace receives the file.
+   * @param explicitText - Text to persist instead of the turn's last base
+   *   response — the restart flush saves the segment its own span is about
+   *   to lose, before the turn's final reply exists.
    * @returns The written file path, or undefined when nothing to save or the
    *   write failed.
    */
-  private saveUndeliveredAnswer(state: InteractiveState, sessionKey: string): string | undefined {
-    const text = state.lastBaseResponse?.trim()
+  private saveUndeliveredAnswer(state: InteractiveState, sessionKey: string, explicitText?: string): string | undefined {
+    const text = (explicitText ?? state.lastBaseResponse)?.trim()
     if (text === undefined || text === '') return undefined
     // The chat's effective workspace (per-chat override, else the agent's
     // work dir), falling back to the engine's configured base dir — the
@@ -4242,8 +4245,11 @@ export class Engine {
         await sp.markFailed()
         await sp.detachPreview()
       } else {
-        await sp.discard()
-        await this.deliverAnswerText(state, p, replyCtx, fullResponse)
+        // fallbackSend order (u5): delete the frozen card only after the
+        // error text landed — the frozen card is the last surface able to
+        // carry it, so a failed send leaves it in place. deliverAnswerText
+        // records the verdict the post-barrier warning block below consumes.
+        if (await this.deliverAnswerText(state, p, replyCtx, fullResponse) === 'sent') await sp.discard()
       }
     } else if (isSilent) {
       await sp.setAnalysisText(this.i18n.t(Msg.SilentReply))
@@ -5674,9 +5680,10 @@ export class Engine {
     const deliverCards = async (): Promise<void> => {
       // Pre-card flush + detach (Go engine_events.go ~4192-4225): with the
       // preview degraded the accumulated text segment goes out as plain
-      // messages now — the live card cannot carry it — and segmentStart
-      // advances either way. The live card is completed and detached BEFORE
-      // the ask card reaches the user.
+      // messages now — the live card cannot carry it — advancing the
+      // boundary only when the delivery is not a definite rejection. The
+      // live card is completed and detached BEFORE the ask card reaches the
+      // user.
       if (planContent !== '') {
         // The plan card owns the exact plan text: strip it from the final
         // reply source so it is not delivered twice.
@@ -5693,14 +5700,14 @@ export class Engine {
         if (planContent !== '') await sp.removeText(planContent)
         if (state.textParts.length > state.segmentStart) {
           if (!sp.canPreview()) {
-            const segment = state.textParts.slice(state.segmentStart).join('')
-            if (segment !== '') {
-              for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-                await this.send(p, replyCtx, chunk)
-              }
-            }
+            // The pre-card segment goes out with the flush verdict semantics:
+            // a definite rejection holds the boundary so the post-decision
+            // restartAskSurfaces flush re-delivers this span (its success
+            // then clears the recorded failure).
+            await this.flushTextSegment(state, p, replyCtx)
+          } else {
+            state.segmentStart = state.textParts.length
           }
-          state.segmentStart = state.textParts.length
           state.silentHold = false
         }
         // Pre-detach speculative reply render (Go captureReplyForExport +
@@ -5881,17 +5888,25 @@ export class Engine {
   ): Promise<void> {
     const old = state.preview
     state.sender ??= newAsyncSender(sessionKey)
-    if (old !== undefined && old.hasStarted()) {
+    // The re-send's verdict survives the reset below: the segment's span is
+    // cleared with textParts, so no later success can cover it — a definite
+    // rejection persists the segment copy now (the turn-end warning then
+    // still sees the recorded outcome), an uncertain one stays sticky.
+    let flushed: DeliveryOutcome | undefined
+    if (old !== undefined) {
+      // deliverCards parks the pre-ask card before the decision waits, so
+      // hasStarted() no longer holds there — the un-flushed segment re-send
+      // must cover the parked card too (a definite rejection back in
+      // deliverCards left the boundary un-advanced).
       if (state.textParts.length > state.segmentStart) {
         const segment = state.textParts.slice(state.segmentStart).join('')
         if (segment !== '') {
-          for (const chunk of splitMessage(segment, MaxPlatformMessageLen)) {
-            await this.send(p, replyCtx, chunk)
-          }
+          flushed = await this.deliverAnswerText(state, p, replyCtx, segment)
+          if (flushed === 'failed') this.saveUndeliveredAnswer(state, sessionKey, segment)
         }
       }
       state.segmentStart = state.textParts.length
-      await old.completeAndDetach()
+      if (old.hasStarted()) await old.completeAndDetach()
     }
     const sp = newStreamPreview(this.streamPreview, p, replyCtx, undefined, state.sender, sessionKey)
     state.preview = sp
@@ -5901,11 +5916,14 @@ export class Engine {
     // Reset for the new execution phase — the old surfaces tracked
     // pre-interaction state; stale textParts would leak into the final reply
     // and re-trigger the reply-HTML render a plan turn already covered.
+    // answerDelivery keeps the re-send's verdict (written after this reset)
+    // instead of starting blank: the flushed span no longer exists in
+    // textParts, so its failure must ride the state to the turn-end warning.
     state.textParts = []
     state.segmentStart = 0
     state.toolCount = 0
     state.silentHold = false
-    state.answerDelivery = undefined
+    state.answerDelivery = flushed
   }
 
   /**

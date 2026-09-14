@@ -14,10 +14,11 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join as joinPath } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { Engine } from '../../src/engine/engine.ts'
+import { Engine, InteractiveState } from '../../src/engine/engine.ts'
 import { createStubAgent, createStubPlatform, newControllableSession, newResultAgentSession, newStubMessage } from '../stubs/engine-stubs.ts'
 import { classifyDeliveryFailure } from '../../src/feishu/delivery-outcome.ts'
-import type { Agent, Message, Platform } from '../../src/core/types.ts'
+import { newStreamPreview } from '../../src/streaming.ts'
+import type { Agent, AskRequest, Message, Platform } from '../../src/core/types.ts'
 
 /** Controllable agent whose session answers with one result event. */
 function resultAgent(text: string): Agent {
@@ -164,6 +165,78 @@ function frozenCardPlatform(error: unknown): Platform & { sent: string[]; cards:
       throw error
     },
   }) as Platform & { sent: string[]; cards: unknown[]; deletes: unknown[] }
+}
+
+/**
+ * Ask-path platform: the preview card starts and updates cleanly (so the
+ * parked card lifecycle runs), the first `failCount` plain sends throw the
+ * given error through the real Feishu classification, later sends succeed
+ * and are recorded.
+ */
+function askFlakyPlatform(error: unknown, failCount: number): Platform & { sent: string[] } {
+  const p = createStubPlatform('test')
+  let failures = 0
+  return Object.assign(p, {
+    async sendPreviewStart(): Promise<unknown> {
+      return 'preview-handle'
+    },
+    async updateMessage(): Promise<void> {},
+    classifyDeliveryFailure: (err: unknown): 'failed' | 'unknown' => classifyDeliveryFailure(err),
+    send: async (_rc: unknown, content: string) => {
+      if (failures < failCount) {
+        failures++
+        throw error
+      }
+      p.sent.push(content)
+    },
+  }) as Platform & { sent: string[] }
+}
+
+/**
+ * Park a permission ask over a started-then-recalled preview carrying one
+ * unsent text segment, mirroring a degraded in-progress card at the moment
+ * the agent asks for permission.
+ */
+async function parkAskOverSegment(
+  e: Engine, p: Platform, key: string, segment: string,
+): Promise<InteractiveState> {
+  const state = new InteractiveState()
+  state.platform = p
+  state.replyCtx = 'ctx'
+  state.textParts = [segment]
+  state.preview = newStreamPreview(e.streamPreview, p, 'ctx', undefined, undefined, key)
+  await state.preview.forceStart('placeholder')
+  await state.preview.markRecalled()
+  e.interactiveStates.set(key, state)
+  return state
+}
+
+/** Permission ask the parked-ask tests route a decision through. */
+const permRequest: AskRequest = { kind: 'permission', toolName: 'Bash', preview: 'ls' }
+
+/**
+ * Agent whose session drives five tool calls (each PATCHing the progress
+ * card) then an error-reasoned result, so a platform whose updateMessage
+ * always rejects degrades the in-progress card before the turn fails.
+ */
+function degradingErrorAgent(): Agent {
+  const base = createStubAgent()
+  return {
+    ...base,
+    startSession: async () => {
+      const s = newControllableSession('degrade-error-session')
+      let sentOnce = false
+      s.send = async () => {
+        if (sentOnce) return
+        sentOnce = true
+        for (let i = 0; i < 5; i++) {
+          s.channel.push({ type: 'tool_use', toolName: `bash${i}`, toolInput: `ls ${i}`, toolID: `call-${i}`, content: '', done: false })
+        }
+        s.channel.push({ type: 'result', content: '', errorText: '1301 sensitive content rejected', done: true })
+      }
+      return s
+    },
+  } as Agent
 }
 
 /**
@@ -367,6 +440,78 @@ describe('answer delivery outcome', () => {
       expect(saved, `dir=${workDir}`).toHaveLength(1)
       expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('the recoverable degraded answer')
       expect(JSON.stringify(p.cards[0]), 'the ✅ card leads with the delivery warning').toContain('failed to deliver')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
+  })
+
+  it('a definitely rejected pre-ask segment flush re-delivers after the decision', async () => {
+    // deliverCards' pre-card flush swallowed the definite rejection and
+    // advanced the segment boundary unconditionally: the span sat on no
+    // surface (the degraded card cannot carry it, the plain send failed),
+    // and the post-decision restart had nothing left to flush — the segment
+    // vanished without a trace.
+    const p = askFlakyPlatform(forbiddenError, 1)
+    const e = new Engine('test', createStubAgent(), [p], '', 'en')
+    const state = await parkAskOverSegment(e, p, 'testchat', 'precious pre-ask segment')
+    const decision = e.askUser('testchat', permRequest)
+    await new Promise((r) => { setTimeout(r, 30) })
+    e.routeAskResponse(p, msg('allow'), 'allow')
+    await decision
+    await vi.waitFor(() => {
+      expect(state.textParts).toEqual([])
+    }, { timeout: 5000 })
+    expect(p.sent.join('\n'), `sent=${JSON.stringify(p.sent)}`).toContain('precious pre-ask segment')
+  })
+
+  it('a definitely rejected restart flush keeps the segment observable despite the reset', async () => {
+    // restartAskSurfaces swallows the flush failure, then clears textParts
+    // and answerDelivery — the segment existed on no surface and the reset
+    // erased even the failure verdict: the loss was invisible. A definite
+    // rejection must stay recoverable (saved copy) and recorded for the
+    // turn-end warning block.
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-restart-flush-'))
+    try {
+      const p = askFlakyPlatform(forbiddenError, 99)
+      const e = new Engine('test', createStubAgent(), [p], '', 'en')
+      e.setBaseWorkDir(workDir)
+      const state = await parkAskOverSegment(e, p, 'testchat', 'precious restart segment')
+      const decision = e.askUser('testchat', permRequest)
+      await new Promise((r) => { setTimeout(r, 30) })
+      e.routeAskResponse(p, msg('allow'), 'allow')
+      await decision
+      await vi.waitFor(() => {
+        expect(state.textParts).toEqual([])
+      }, { timeout: 5000 })
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('precious restart segment')
+      expect(state.answerDelivery, 'the verdict survives the restart reset').toBe('failed')
+    } finally {
+      await rm(workDir, { recursive: true, force: true })
+    }
+  })
+
+  it('an errored degraded turn keeps the frozen card when the error text send fails', async () => {
+    // The errored branch discarded the frozen card before delivering the
+    // error text — the fallbackSend anti-pattern (u5/be3d05bb17): once the
+    // plain send also failed, the error wording existed nowhere, while the
+    // frozen card was still the last surface able to carry it.
+    const workDir = await mkdtemp(joinPath(tmpdir(), 'fb-errored-card-'))
+    try {
+      const p = frozenCardPlatform(forbiddenError)
+      const e = new Engine('test', degradingErrorAgent(), [p], '', 'en')
+      e.setDisplayConfig({ toolProgress: true })
+      e.streamPreview.progressFlushIntervalMs = 0
+      e.setBaseWorkDir(workDir)
+      e.receiveMessage(p, msg('please answer'))
+      await vi.waitFor(() => {
+        expect(e.interactiveStates.get('testchat')?.answerDelivery).toBe('failed')
+      }, { timeout: 5000 })
+      expect(p.deletes, 'the frozen card survives the failed error-text send').toHaveLength(0)
+      const saved = readdirSync(workDir).filter(f => f.startsWith('undelivered-reply-'))
+      expect(saved, `dir=${workDir}`).toHaveLength(1)
+      expect(readFileSync(joinPath(workDir, saved[0]!), 'utf8')).toContain('1301 sensitive content rejected')
     } finally {
       await rm(workDir, { recursive: true, force: true })
     }
