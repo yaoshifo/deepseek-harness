@@ -1373,7 +1373,11 @@ export function renderAndDeliverReply(
         } catch (error) {
           await drainProgress()
           console.warn(`reply-html-pre: deliver failed (${sessionKey}): ${String(error)}`)
-          void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, 'failed', 0)
+          // A deliver-stage throw after a user cancel is the cancel landing
+          // (renderHTMLToPNG and deliverReplyHTML both abort-check first),
+          // not a render failure — the card must not read 渲染失败.
+          const status: RenderStatus = parentCtl.signal.aborted ? 'cancelled' : 'failed'
+          void patchReplyRenderStatus(e, platform, replyCtx, state, exportKey, status, 0)
         }
       }
       void removeRenderedTemp(hp)
@@ -1476,7 +1480,10 @@ export function launchPlanRender(
         updatePlanCardStatus(e, state, exportKey, 'delivered', Date.now() - renderStart)
       } catch (error) {
         console.warn(`plan-render: deliver failed (${sessionKey}): ${String(error)}`)
-        updatePlanCardStatus(e, state, exportKey, 'failed', 0)
+        // Same cancel-vs-failure read as the reply path's deliver catch: an
+        // abort that lands mid-delivery threw here, not a render failure.
+        const status: RenderStatus = parentCtl.signal.aborted ? 'cancelled' : 'failed'
+        updatePlanCardStatus(e, state, exportKey, status, 0)
       }
       await removeRenderedTemp(htmlPath)
     } finally {

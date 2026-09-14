@@ -42,6 +42,7 @@ import {
   pollUntil,
   renderSkillBodyFixture,
   tempDir,
+  writeRenderTestScript,
 } from './plan-render-helpers.ts'
 import { afterEach } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
@@ -401,6 +402,32 @@ describe('RenderAndDeliverReply', () => {
     expect(p.files).toHaveLength(0)
   })
 
+  it('CancelDuringDeliverRecordsCancelled: aborting while the png retries settles cancelled, not failed', async () => {
+    // The fork already completed (html on disk), the png script keeps
+    // failing, and the user cancels during the png retry backoff: the
+    // aborted renderHTMLToPNG throws and deliverReplyHTML rethrows on its
+    // abort check — the catch must read that as the user's cancel, never as
+    // 渲染失败.
+    const tmp = tempDir('reply-deliver-cancel-')
+    const calls = join(tmp, 'calls')
+    const a = createRenderAgent()
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p)
+    e.planRenderPngScript = writeRenderTestScript(tmp, 'fail-png.sh', `#!/bin/sh\necho x >> "${calls}"\nexit 1\n`)
+
+    const state = newRenderState(p)
+    renderAndDeliverReply(e, state, 'k1', longText, 'om_1')
+
+    // The fork succeeded and the deliver stage ran its first png attempt.
+    await pollUntil(() => existsSync(calls), 2000)
+    cancelRendersFor(state)
+
+    await pollUntil(() => getRenderStatus(state, 'om_1')?.status !== undefined
+      && getRenderStatus(state, 'om_1')?.status !== 'rendering' && !state.preRenderRunning, 3000)
+    expect(getRenderStatus(state, 'om_1')?.status).toBe('cancelled')
+    expect(p.files).toHaveLength(0)
+  })
+
   it('GivesUpAfterTwoFailures: two blocked attempts then no delivery', async () => {
     const a = createRenderAgent({ blockCount: 5 })
     const p = createStubMediaPlatform()
@@ -619,6 +646,31 @@ describe('LaunchPlanRender', () => {
       const hp = htmlPathFromPrompt(a.getCalls()[0]?.prompt ?? '')
       return hp !== '' && existsSync(hp)
     }, 2000)
+    cancelRendersFor(state)
+
+    await pollUntil(() => getRenderStatus(state, 'plan:1')?.status !== undefined
+      && getRenderStatus(state, 'plan:1')?.status !== 'rendering' && !state.planRenderRunning, 3000)
+    expect(getRenderStatus(state, 'plan:1')?.status).toBe('cancelled')
+    expect(p.files).toHaveLength(0)
+  })
+
+  it('CancelDuringDeliverRecordsCancelled: aborting while the png retries settles cancelled, not failed', async () => {
+    // Plan-path sibling of the reply-path case: the fork completed, the png
+    // keeps failing, and the user's cancel lands during the png retry
+    // backoff — the deliver catch must settle cancelled, never failed.
+    const tmp = tempDir('plan-deliver-cancel-')
+    const calls = join(tmp, 'calls')
+    const a = createRenderAgent()
+    const p = createStubMediaPlatform()
+    const e = newRenderEngine(a, p)
+    e.planRenderPngScript = writeRenderTestScript(tmp, 'fail-png.sh', `#!/bin/sh\necho x >> "${calls}"\nexit 1\n`)
+
+    const state = newRenderState(p)
+    expect(shouldRenderPlan(state, '# 计划', 1)).toBe(true)
+    launchPlanRender(e, state, 'feishu:user1', '# 计划', '', 1, 'plan:1')
+
+    // The fork succeeded and the deliver stage ran its first png attempt.
+    await pollUntil(() => existsSync(calls), 2000)
     cancelRendersFor(state)
 
     await pollUntil(() => getRenderStatus(state, 'plan:1')?.status !== undefined
